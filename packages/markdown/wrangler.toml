@@ -12,7 +12,7 @@ class_name = "MarkdownOperator"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["MarkdownEditor", "MarkdownOperator"]
+new_sqlite_classes = ["MarkdownEditor", "MarkdownOperator"]
 
 [[d1_databases]]
 binding = "SNAPSHOTS_DB"

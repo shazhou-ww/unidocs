@@ -35,15 +35,16 @@ export default {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // /create — create new document
-    if (parts.length === 0 && request.method === "POST") {
-      const id = env.MARKDOWN_EDITOR.newUniqueId();
+    // /{docId}/create — create new document (or POST / with X-Doc-Id header)
+    if ((parts.length === 0 || (parts.length === 1 && parts[0] === "create")) && request.method === "POST") {
+      const docId = request.headers.get("X-Doc-Id") || crypto.randomUUID();
+      const id = env.MARKDOWN_EDITOR.idFromName(docId);
       const stub = env.MARKDOWN_EDITOR.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = "/_internal/create";
       const headers = new Headers(request.headers);
       headers.set("X-Doc-Type", "markdown");
-      headers.set("X-Doc-Id", id.toString());
+      headers.set("X-Doc-Id", docId);
       return stub.fetch(new Request(forwardUrl.toString(), {
         method: request.method,
         headers,

@@ -193,9 +193,14 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       // Write to R2 CAS (idempotent - same content = same hash)
       await this.#env.CAS.put(hash, bytes);
 
-      // Record in shared D1
+      // Record in shared D1 (ensure table exists first)
       const docType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
       const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
+      
+      await this.#env.SNAPSHOTS_DB.exec(
+        "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))"
+      );
+      
       await this.#env.SNAPSHOTS_DB.prepare(
         `INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
       ).bind(hash, docType, docId, this.#version, Date.now()).run();
@@ -240,9 +245,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
           await this.#ctx.storage.put(KEY_DOC_ID, docId);
 
-          const formData = await request.formData();
-          const file = formData.get("file") as File | null;
-          const sourceId = formData.get("sourceId") as string | null;
+          const contentType = request.headers.get("content-type") || "";
+          let file: File | null = null;
+          let sourceId: string | null = null;
+
+          if (contentType.includes("multipart/form-data")) {
+            const formData = await request.formData();
+            file = formData.get("file") as File | null;
+            sourceId = formData.get("sourceId") as string | null;
+          }
 
           if (file) {
             const bytes = new Uint8Array(await file.arrayBuffer());
