@@ -8,7 +8,7 @@
  * routing requests to the appropriate DO based on path.
  */
 
-import { createEditorDO, createOperatorDO } from "@unidocs/sdk";
+import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/sdk";
 import { markdown } from "./markdown.js";
 
 // Generate Editor and Operator Durable Objects from the markdown DocumentType
@@ -24,7 +24,7 @@ export const MarkdownOperator = createOperatorDO({
   },
 });
 
-interface Env {
+interface Env extends EditorEnv {
   MARKDOWN_EDITOR: DurableObjectNamespace;
   MARKDOWN_OPERATOR: DurableObjectNamespace;
 }
@@ -41,9 +41,12 @@ export default {
       const stub = env.MARKDOWN_EDITOR.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = "/_internal/create";
+      const headers = new Headers(request.headers);
+      headers.set("X-Doc-Type", "markdown");
+      headers.set("X-Doc-Id", id.toString());
       return stub.fetch(new Request(forwardUrl.toString(), {
         method: request.method,
-        headers: request.headers,
+        headers,
         body: request.body,
       }));
     }
@@ -56,14 +59,17 @@ export default {
     }
 
     // Editor endpoints
-    if (["query", "apply", "history", "rollback"].includes(method)) {
+    if (["query", "apply", "history", "rollback", "export", "snapshot", "init_from_hash"].includes(method)) {
       const id = env.MARKDOWN_EDITOR.idFromName(docId);
       const stub = env.MARKDOWN_EDITOR.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = `/_internal/${method}`;
+      const headers = new Headers(request.headers);
+      headers.set("X-Doc-Type", "markdown");
+      headers.set("X-Doc-Id", docId);
       return stub.fetch(new Request(forwardUrl.toString(), {
         method: request.method,
-        headers: request.headers,
+        headers,
         body: request.body,
       }));
     }

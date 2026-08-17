@@ -10,5 +10,5 @@ export type { HistoryEntry, ApplyResult, RollbackResult, CreateResult } from "./
 export type { DocContext, SnapshotRecord } from "./editor-do.js";
 
 // Runtime
-export { createEditorDO } from "./editor-do.js";
+export { createEditorDO, type Env as EditorEnv } from "./editor-do.js";
 export { createOperatorDO, type OperatorConfig } from "./operator-do.js";

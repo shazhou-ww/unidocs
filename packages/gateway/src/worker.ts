@@ -5,7 +5,7 @@
  * Auth is handled here (future), DOs trust authenticated requests.
  *
  * API pattern:
- *   POST /{docType}/                          → create document (multipart)
+ *   POST /{docType}/                          → create document (multipart, or clone with sourceId)
  *   GET  /{docType}/{docId}/export            → download document
  *   POST /{docType}/{docId}/query             → query document
  *   POST /{docType}/{docId}/apply             → apply delta
@@ -13,6 +13,12 @@
  *   GET  /{docType}/{docId}/history           → get delta history
  *   POST /{docType}/{docId}/rollback          → rollback to version
  *   POST /{docType}/{docId}/reset             → reset operator session
+ *
+ * Clone flow (POST /{docType}/ with sourceId):
+ *   1. Gateway calls source editor's /snapshot to get current hash
+ *   2. Gateway creates new editor DO
+ *   3. Gateway calls new editor's /init_from_hash with the hash
+ *   4. R2 CAS ensures no duplicate storage
  */
 
 interface Env {
@@ -47,6 +53,65 @@ export default {
       if (!editorNs) {
         return Response.json({ error: `Editor not available for: ${docType}` }, { status: 404 });
       }
+
+      // Check if this is a clone request
+      const contentType = request.headers.get("content-type") || "";
+      if (contentType.includes("multipart/form-data")) {
+        // Parse form data to check for sourceId
+        const formData = await request.formData();
+        const sourceId = formData.get("sourceId") as string | null;
+        const sourceVersion = formData.get("version") as string | null;
+
+        if (sourceId) {
+          // Clone flow:
+          // 1. Get snapshot hash from source document
+          const sourceStub = editorNs.get(editorNs.idFromName(sourceId));
+          const snapshotUrl = new URL(request.url);
+          snapshotUrl.pathname = "/_internal/snapshot";
+          const snapshotHeaders = new Headers();
+          snapshotHeaders.set("X-Doc-Type", docType);
+          snapshotHeaders.set("X-Doc-Id", sourceId);
+          
+          const snapshotResp = await sourceStub.fetch(new Request(snapshotUrl.toString(), {
+            method: "GET",
+            headers: snapshotHeaders,
+          }));
+
+          if (!snapshotResp.ok) {
+            const err = await snapshotResp.json() as { error?: string };
+            return Response.json({ error: `Failed to get source snapshot: ${err.error || "unknown error"}` }, { status: 404 });
+          }
+
+          const snapshotData = await snapshotResp.json() as { hash: string; version: number };
+          
+          // If specific version requested, we need to handle that
+          // For now, we only support cloning from current version
+          if (sourceVersion && parseInt(sourceVersion) !== snapshotData.version) {
+            return Response.json(
+              { error: "Cloning from specific version not yet supported, only current version" },
+              { status: 501 }
+            );
+          }
+
+          // 2. Create new document from hash
+          const newId = editorNs.newUniqueId();
+          const newStub = editorNs.get(newId);
+          const initUrl = new URL(request.url);
+          initUrl.pathname = "/_internal/init_from_hash";
+          const initHeaders = new Headers();
+          initHeaders.set("X-Doc-Type", docType);
+          initHeaders.set("X-Doc-Id", newId.toString());
+          initHeaders.set("Content-Type", "application/json");
+
+          return newStub.fetch(new Request(initUrl.toString(), {
+            method: "POST",
+            headers: initHeaders,
+            body: JSON.stringify({ hash: snapshotData.hash, sourceVersion: snapshotData.version }),
+          }));
+        }
+      }
+
+      // Normal create flow
       const id = editorNs.newUniqueId();
       const stub = editorNs.get(id);
       const createUrl = new URL(request.url);
@@ -67,7 +132,7 @@ export default {
     }
 
     // Editor endpoints
-    if (["export", "query", "apply", "history", "rollback"].includes(method)) {
+    if (["export", "query", "apply", "history", "rollback", "snapshot", "init_from_hash"].includes(method)) {
       if (!editorNs) {
         return Response.json({ error: `Editor not available for: ${docType}` }, { status: 404 });
       }

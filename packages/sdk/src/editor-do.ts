@@ -5,18 +5,26 @@
  * Document types provide a DocumentType config; this class wires it all together.
  *
  * Storage layout:
- *   KV:
- *     - docType: string (immutable)
- *     - docId: string (immutable)
+ *   KV (immutable facts):
+ *     - docType: string
+ *     - docId: string
  *     - snapshot: { version: number, bytes: Uint8Array } (latest known version, may lag one delta)
  *
- *   sqlite:
+ *   DO sqlite:
  *     - deltas(version INTEGER PK, timestamp INTEGER, description TEXT, operations TEXT)
- *     - snapshots(version INTEGER PK, timestamp INTEGER)
+ *     - snapshots(version INTEGER PK, hash TEXT, timestamp INTEGER)
+ *
+ *   Shared D1 (unidocs-snapshots):
+ *     - snapshots(hash TEXT PK, doc_type TEXT, doc_id TEXT, version INTEGER, timestamp INTEGER)
+ *
+ *   R2 CAS (unidocs-cas):
+ *     - key: hash (SHA-256 truncated 16 hex)
+ *     - value: document bytes
  *
  * Write order (consistency guarantee):
  *   1. sqlite INSERT delta
  *   2. KV PUT snapshot
+ *   3. (if needed) R2 PUT + D1 INSERT snapshot
  *   → worst case: snapshot lags one delta, but never inconsistent
  *
  * Internal endpoints (called by Gateway):
@@ -26,6 +34,8 @@
  *   GET  /_internal/export    — download document as binary
  *   GET  /_internal/history   — get delta history
  *   POST /_internal/rollback  — rollback to version (body: { version })
+ *   GET  /_internal/snapshot  — get current snapshot hash (for clone)
+ *   POST /_internal/init_from_hash — initialize from existing snapshot hash (for clone)
  */
 
 import type { DocumentType } from "./types.js";
@@ -48,7 +58,19 @@ export interface DocContext {
 
 export interface SnapshotRecord {
   version: number;
+  hash: string;
   timestamp: number;
+}
+
+export interface Env {
+  SNAPSHOTS_DB: D1Database;
+  CAS: R2Bucket;
+}
+
+async function computeHash(bytes: Uint8Array): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQuery, TOp>) {
@@ -56,9 +78,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     #doc: TDoc | null = null;
     #version: number = 0;
     #ctx: DurableObjectState;
+    #env: Env;
 
-    constructor(ctx: DurableObjectState, env: unknown) {
+    constructor(ctx: DurableObjectState, env: Env) {
       this.#ctx = ctx;
+      this.#env = env;
     }
 
     async #ensureLoaded(): Promise<void> {
@@ -76,6 +100,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       this.#ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS snapshots (
           version INTEGER PRIMARY KEY,
+          hash TEXT NOT NULL,
           timestamp INTEGER NOT NULL
         )
       `);
@@ -136,14 +161,28 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     }
 
     async #saveSnapshot(): Promise<void> {
-      // Record in sqlite snapshots table
+      if (!this.#doc) return;
+
+      const bytes = config.save(this.#doc);
+      const hash = await computeHash(bytes);
+
+      // Write to R2 CAS (idempotent - same content = same hash)
+      await this.#env.CAS.put(hash, bytes);
+
+      // Record in shared D1
+      const docType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
+      const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
+      await this.#env.SNAPSHOTS_DB.prepare(
+        `INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
+      ).bind(hash, docType, docId, this.#version, Date.now()).run();
+
+      // Record in local sqlite snapshots table (for rollback)
       this.#ctx.storage.sql.exec(
-        `INSERT OR REPLACE INTO snapshots (version, timestamp) VALUES (?, ?)`,
+        `INSERT OR REPLACE INTO snapshots (version, hash, timestamp) VALUES (?, ?, ?)`,
         this.#version,
+        hash,
         Date.now(),
       );
-
-      // TODO (#2): Write to R2 — key = {docType}/{docId}/{version}
     }
 
     async fetch(request: Request): Promise<Response> {
@@ -332,11 +371,146 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             );
           }
 
-          // TODO (#3): Implement rollback with snapshot + delta replay
-          return Response.json(
-            { success: false, version: this.#version, error: "Rollback not yet implemented (requires #2 R2 + #3 delta replay)" },
-            { status: 501 },
+          // Find nearest snapshot at or before target version
+          const snapResult = this.#ctx.storage.sql.exec(
+            `SELECT version, hash FROM snapshots WHERE version <= ? ORDER BY version DESC LIMIT 1`,
+            body.version,
           );
+
+          let baseDoc: TDoc;
+          let baseVersion: number;
+
+          const snapRow = snapResult.one();
+          if (snapRow && (snapRow.cnt as number) > 0) {
+            // Load from R2
+            const hash = snapRow.hash as string;
+            const obj = await this.#env.CAS.get(hash);
+            if (!obj) {
+              return Response.json(
+                { success: false, version: this.#version, error: `Snapshot ${hash} not found in R2` },
+                { status: 500 },
+              );
+            }
+            const bytes = await obj.bytes();
+            baseDoc = config.load(bytes);
+            baseVersion = snapRow.version as number;
+          } else {
+            // No snapshot, replay from beginning
+            baseDoc = config.init();
+            baseVersion = 0;
+          }
+
+          // Replay deltas from baseVersion to target version
+          const deltaResult = this.#ctx.storage.sql.exec(
+            `SELECT version, operations FROM deltas WHERE version > ? AND version <= ? ORDER BY version ASC`,
+            baseVersion,
+            body.version,
+          );
+
+          for (const row of deltaResult.toArray()) {
+            const ops = JSON.parse(row.operations as string) as TOp[];
+            for (const op of ops) {
+              baseDoc = config.apply(op, baseDoc);
+            }
+          }
+
+          // Insert rollback delta
+          const newVersion = await this.#getNextVersion();
+          this.#ctx.storage.sql.exec(
+            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
+            newVersion,
+            Date.now(),
+            `Rollback to version ${body.version}`,
+            JSON.stringify([]), // Rollback is a synthetic delta, no operations
+          );
+
+          // Update state
+          this.#doc = baseDoc;
+          this.#version = newVersion;
+
+          // Save to KV
+          await this.#saveSnapshotKV();
+
+          // Check if we need a snapshot
+          if (await this.#shouldSnapshot()) {
+            await this.#saveSnapshot();
+          }
+
+          return Response.json({ success: true, version: newVersion });
+        }
+
+        // GET /_internal/snapshot — get current snapshot hash (for clone)
+        if (method === "GET" && endpoint === "/_internal/snapshot") {
+          if (!this.#doc) {
+            return Response.json({ success: false, error: "Document not initialized" }, { status: 404 });
+          }
+
+          // Ensure we have a snapshot for current version
+          await this.#saveSnapshot();
+
+          const bytes = config.save(this.#doc);
+          const hash = await computeHash(bytes);
+
+          return Response.json({
+            success: true,
+            version: this.#version,
+            hash,
+            docType: await this.#ctx.storage.get<string>(KEY_DOC_TYPE),
+            docId: await this.#ctx.storage.get<string>(KEY_DOC_ID),
+          });
+        }
+
+        // POST /_internal/init_from_hash — initialize from existing snapshot hash (for clone)
+        if (method === "POST" && endpoint === "/_internal/init_from_hash") {
+          const existingDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
+          if (existingDocType) {
+            return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
+          }
+
+          const body = await request.json() as { hash: string; sourceVersion: number };
+
+          // Fetch from R2
+          const obj = await this.#env.CAS.get(body.hash);
+          if (!obj) {
+            return Response.json({ success: false, error: `Snapshot ${body.hash} not found in R2` }, { status: 404 });
+          }
+
+          const bytes = await obj.bytes();
+          this.#doc = config.load(bytes);
+
+          // Store immutable context
+          const docType = request.headers.get("X-Doc-Type") || "unknown";
+          const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
+          await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
+          await this.#ctx.storage.put(KEY_DOC_ID, docId);
+
+          // Insert initial delta
+          this.#version = 1;
+          this.#ctx.storage.sql.exec(
+            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
+            1,
+            Date.now(),
+            `Cloned from snapshot ${body.hash} (source version ${body.sourceVersion})`,
+            JSON.stringify([]),
+          );
+
+          // Save to KV
+          await this.#saveSnapshotKV();
+
+          // Record snapshot reference in D1 (same hash, different doc)
+          await this.#env.SNAPSHOTS_DB.prepare(
+            `INSERT INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
+          ).bind(body.hash, docType, docId, 1, Date.now()).run();
+
+          // Record in local sqlite
+          this.#ctx.storage.sql.exec(
+            `INSERT INTO snapshots (version, hash, timestamp) VALUES (?, ?, ?)`,
+            1,
+            body.hash,
+            Date.now(),
+          );
+
+          return Response.json({ success: true, docId, version: 1 });
         }
 
         return Response.json({ success: false, error: `Unknown endpoint: ${endpoint}` }, { status: 404 });
