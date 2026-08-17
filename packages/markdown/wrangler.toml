@@ -1,0 +1,15 @@
+name = "unidocs-markdown"
+main = "dist/worker.js"
+compatibility_date = "2025-08-17"
+
+[[durable_objects.bindings]]
+name = "MARKDOWN_EDITOR"
+class_name = "MarkdownEditor"
+
+[[durable_objects.bindings]]
+name = "MARKDOWN_OPERATOR"
+class_name = "MarkdownOperator"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MarkdownEditor", "MarkdownOperator"]

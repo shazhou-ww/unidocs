@@ -1,0 +1,32 @@
+{
+  "name": "@unidocs/sdk",
+  "version": "0.1.0",
+  "description": "UniDocs SDK — types and runtime for building document editor/operator pairs",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250817.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "peerDependencies": {
+    "@cloudflare/workers-types": ">=4"
+  }
+}
