@@ -2,16 +2,20 @@
  * History and versioning primitives.
  */
 
-/** One entry in the document's history log. */
+/**
+ * One entry in the document's delta history.
+ * A delta is a batch of operations applied transactionally, producing one version.
+ */
 export interface HistoryEntry<TOp = unknown> {
-  /** xxhash64 hex string of the document state at this version. */
+  /** SHA-256 truncated to 16 hex chars, hash of document state after this delta. */
   version: string;
   timestamp: string; // ISO 8601
   description: string;
-  operation?: TOp;
+  /** Batch of operations applied in this delta (transactional). */
+  operations: TOp[];
 }
 
-/** Result of applying an operation. */
+/** Result of applying a delta. */
 export interface ApplyResult<T = unknown> {
   success: boolean;
   version: string;

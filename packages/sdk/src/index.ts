@@ -7,6 +7,7 @@
 // Types
 export type { DocumentType, AgentToolDefinition } from "./types.js";
 export type { HistoryEntry, ApplyResult, RollbackResult, CreateResult } from "./history.js";
+export type { DocContext, SnapshotRecord } from "./editor-do.js";
 
 // Runtime
 export { createEditorDO } from "./editor-do.js";

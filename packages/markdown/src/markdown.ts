@@ -80,7 +80,7 @@ export const markdown: DocumentType<MDoc, MQuery, MOp> = {
       }
       case "deleteSection": {
         const section = getSection(doc.content, op.payload.heading);
-        if (!section) throw new Error(`Section not found: op.payload.heading}`);
+        if (!section) throw new Error(`Section not found: ${op.payload.heading}`);
         const newContent = doc.content.replace(section, "");
         return { content: newContent };
       }
@@ -89,6 +89,7 @@ export const markdown: DocumentType<MDoc, MQuery, MOp> = {
 
   load: (data) => ({ content: new TextDecoder().decode(data) }),
   save: (doc) => new TextEncoder().encode(doc.content),
+  contentType: "text/markdown; charset=utf-8",
 
   tools: {
     getContent: {

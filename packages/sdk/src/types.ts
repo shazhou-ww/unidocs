@@ -35,7 +35,7 @@ export interface DocumentType<TDoc, TQuery, TOp> {
   /** Execute a read query against the document. Returns JSON-serializable result. */
   query: (q: TQuery, doc: TDoc) => unknown;
 
-  /** Apply a mutation operation. Returns the new document state. */
+  /** Apply a single atomic operation. Returns the new document state. Throws on failure. */
   apply: (op: TOp, doc: TDoc) => TDoc;
 
   /** Deserialize document from binary bytes (e.g. from DO storage). */
@@ -43,6 +43,9 @@ export interface DocumentType<TDoc, TQuery, TOp> {
 
   /** Serialize document to binary bytes for persistence. */
   save: (doc: TDoc) => Uint8Array;
+
+  /** Optional: MIME type for export endpoint. Default: application/octet-stream */
+  contentType?: string;
 
   // === Prompts & Tools ===
   /** Agent tool definitions for Operator's ReAct loop. */
