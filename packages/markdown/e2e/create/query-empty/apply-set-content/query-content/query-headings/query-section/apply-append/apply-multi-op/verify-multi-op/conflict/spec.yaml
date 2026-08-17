@@ -1,6 +1,14 @@
 description: "Stale baseVersion triggers 409 Conflict (optimistic lock)"
 steps:
   - type: exec
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: jsonata
+      expression: "exit_code = 0"
+  - type: exec
     command: >-
       curl -s -X POST http://localhost:8787/md-e2e-001/apply
       -H "Content-Type: application/json"

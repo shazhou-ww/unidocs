@@ -1,5 +1,6 @@
-name: unidocs-markdown
+name: unidocs
 image:
   dockerfile: e2e/Dockerfile
-projectDir: ../..
+  tag: unidocs-test:base
+projectDir: .
 spec: packages/markdown/e2e

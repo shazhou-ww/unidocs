@@ -1,6 +1,14 @@
 description: "History returns 5 deltas: create, setContent, append, multi-op, rollback"
 steps:
   - type: exec
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: jsonata
+      expression: "exit_code = 0"
+  - type: exec
     command: curl -s http://localhost:8787/md-e2e-001/history
     assert:
       type: jsonata

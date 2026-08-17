@@ -1,9 +1,18 @@
 description: "Snapshot + clone via init_from_hash: new doc gets same content"
 steps:
   - type: exec
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: jsonata
+      expression: "exit_code = 0"
+  - type: exec
     command: >-
-      HASH=$(curl -s http://localhost:8787/md-e2e-001/snapshot | jq -r .hash) &&
-      VER=$(curl -s http://localhost:8787/md-e2e-001/snapshot | jq -r .version) &&
+      SNAP=$(curl -s http://localhost:8787/md-e2e-001/snapshot) &&
+      HASH=$(node -e "console.log(JSON.parse(process.argv[1]).hash)" "$SNAP") &&
+      VER=$(node -e "console.log(JSON.parse(process.argv[1]).version)" "$SNAP") &&
       curl -s -X POST http://localhost:8787/clone-e2e-001/init_from_hash
       -H "Content-Type: application/json"
       -H "X-Doc-Id: clone-e2e-001"

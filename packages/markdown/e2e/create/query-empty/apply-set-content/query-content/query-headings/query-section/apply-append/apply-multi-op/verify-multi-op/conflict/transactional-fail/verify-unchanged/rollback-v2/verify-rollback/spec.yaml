@@ -1,6 +1,14 @@
 description: "After rollback to v2: has Section A and B, no Section C"
 steps:
   - type: exec
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: jsonata
+      expression: "exit_code = 0"
+  - type: exec
     command: >-
       curl -s -X POST http://localhost:8787/md-e2e-001/query
       -H "Content-Type: application/json"
