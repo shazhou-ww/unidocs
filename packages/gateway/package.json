@@ -1,0 +1,20 @@
+{
+  "name": "@unidocs/gateway",
+  "version": "0.1.0",
+  "description": "UniDocs API Gateway — routes requests to document type workers",
+  "type": "module",
+  "main": "./dist/worker.js",
+  "types": "./dist/worker.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250817.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.20.0"
+  }
+}

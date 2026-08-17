@@ -1,40 +1,86 @@
 /**
  * Cloudflare Worker entry point for Markdown document type.
+ *
+ * This worker exports two Durable Object classes (MarkdownEditor, MarkdownOperator)
+ * that are referenced by the Gateway worker via cross-script bindings.
+ *
+ * It also exposes a direct fetch handler for standalone testing,
+ * routing requests to the appropriate DO based on path.
  */
 
 import { createEditorDO, createOperatorDO } from "@unidocs/sdk";
 import { markdown } from "./markdown.js";
 
-// Generate Editor and Operator Durable Objects
+// Generate Editor and Operator Durable Objects from the markdown DocumentType
 export const MarkdownEditor = createEditorDO(markdown);
 export const MarkdownOperator = createOperatorDO({
   ...markdown,
-  // LLM provider and editor stub will be injected at runtime via env bindings
+  // LLM provider and editor stub factory — injected via env bindings at runtime
   llmProvider: async (messages, tools) => {
-    // Placeholder — actual implementation reads from env.OPENAI_API_KEY or similar
     throw new Error("LLM provider not configured. Set env.LLM_PROVIDER_URL and env.LLM_API_KEY.");
   },
-  editorStub: null as any, // Injected via env binding at runtime
+  getEditorStub: (docId: string) => {
+    throw new Error("Editor stub factory not configured.");
+  },
 });
 
-// Worker entry point — routes requests to the appropriate DO
+interface Env {
+  MARKDOWN_EDITOR: DurableObjectNamespace;
+  MARKDOWN_OPERATOR: DurableObjectNamespace;
+}
+
+// Standalone fetch handler (for direct testing without Gateway)
 export default {
-  async fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    const docId = url.searchParams.get("docId") || "default";
+    const parts = url.pathname.split("/").filter(Boolean);
 
-    if (url.pathname.startsWith("/editor")) {
-      const editorId = env.MARKDOWN_EDITOR.idFromName(docId);
-      const editorStub = env.MARKDOWN_EDITOR.get(editorId);
-      return editorStub.fetch(request);
+    // /create — create new document
+    if (parts.length === 0 && request.method === "POST") {
+      const id = env.MARKDOWN_EDITOR.newUniqueId();
+      const stub = env.MARKDOWN_EDITOR.get(id);
+      const forwardUrl = new URL(request.url);
+      forwardUrl.pathname = "/_internal/create";
+      return stub.fetch(new Request(forwardUrl.toString(), {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      }));
     }
 
-    if (url.pathname.startsWith("/operator")) {
-      const operatorId = env.MARKDOWN_OPERATOR.idFromName(docId);
-      const operatorStub = env.MARKDOWN_OPERATOR.get(operatorId);
-      return operatorStub.fetch(request);
+    const docId = parts[0];
+    const method = parts[1];
+
+    if (!docId) {
+      return new Response("Use /{docId}/* endpoints", { status: 404 });
     }
 
-    return new Response("Use /editor/* or /operator/* endpoints", { status: 404 });
+    // Editor endpoints
+    if (["query", "apply", "history", "rollback"].includes(method)) {
+      const id = env.MARKDOWN_EDITOR.idFromName(docId);
+      const stub = env.MARKDOWN_EDITOR.get(id);
+      const forwardUrl = new URL(request.url);
+      forwardUrl.pathname = `/_internal/${method}`;
+      return stub.fetch(new Request(forwardUrl.toString(), {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      }));
+    }
+
+    // Operator endpoints
+    if (["run", "reset"].includes(method)) {
+      const id = env.MARKDOWN_OPERATOR.idFromName(docId);
+      const stub = env.MARKDOWN_OPERATOR.get(id);
+      const forwardUrl = new URL(request.url);
+      forwardUrl.pathname = `/_internal/${method}`;
+      return stub.fetch(new Request(forwardUrl.toString(), {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+      }));
+    }
+
+    return Response.json({ error: `Unknown endpoint: ${method}` }, { status: 404 });
   },
 };

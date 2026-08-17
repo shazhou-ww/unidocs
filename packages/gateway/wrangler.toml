@@ -1,0 +1,23 @@
+name = "unidocs-gateway"
+main = "dist/worker.js"
+compatibility_date = "2025-08-17"
+
+# Document type bindings follow the naming convention:
+#   {DOC_TYPE_UPPER}_EDITOR
+#   {DOC_TYPE_UPPER}_OPERATOR
+
+[[durable_objects.bindings]]
+name = "MARKDOWN_EDITOR"
+class_name = "MarkdownEditor"
+script_name = "unidocs-markdown"
+
+[[durable_objects.bindings]]
+name = "MARKDOWN_OPERATOR"
+class_name = "MarkdownOperator"
+script_name = "unidocs-markdown"
+
+# Add more document types here:
+# [[durable_objects.bindings]]
+# name = "SPREADSHEET_EDITOR"
+# class_name = "SpreadsheetEditor"
+# script_name = "unidocs-spreadsheet"

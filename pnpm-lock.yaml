@@ -18,6 +18,18 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.13.3)
 
+  packages/gateway:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
   packages/markdown:
     dependencies:
       '@unidocs/sdk':
@@ -39,9 +51,9 @@ importers:
 
   packages/sdk:
     dependencies:
-      zod:
-        specifier: ^4.0.0
-        version: 4.4.3
+      xxhash-wasm:
+        specifier: ^1.1.0
+        version: 1.1.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -1096,14 +1108,14 @@ packages:
       utf-8-validate:
         optional: true
 
+  xxhash-wasm@1.1.0:
+    resolution: {integrity: sha512-147y/6YNh+tlp6nd/2pWq38i9h6mz/EuQ6njIrmW8D1BS5nCqs0P6DG+m6zTGnNz5I+uhZ0SHxBs9BsPrwcKDA==}
+
   youch-core@0.3.3:
     resolution: {integrity: sha512-ho7XuGjLaJ2hWHoK8yFnsUGy2Y5uDpqSTq1FkHLK4/oqKtyUU1AFbOOxY4IpC9f0fTLjwYbslUz0Po5BpD1wrA==}
 
   youch@4.1.0-beta.10:
     resolution: {integrity: sha512-rLfVLB4FgQneDr0dv1oddCVZmKjcJ6yX6mS4pU82Mq/Dt9a3cLZQ62pDBL4AUO+uVrCvtWz3ZFUL2HFAFJ/BXQ==}
-
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
@@ -1918,6 +1930,8 @@ snapshots:
 
   ws@8.21.0: {}
 
+  xxhash-wasm@1.1.0: {}
+
   youch-core@0.3.3:
     dependencies:
       '@poppinss/exception': 1.2.3
@@ -1930,5 +1944,3 @@ snapshots:
       '@speed-highlight/core': 1.2.24
       cookie: 1.1.1
       youch-core: 0.3.3
-
-  zod@4.4.3: {}

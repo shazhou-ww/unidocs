@@ -5,6 +5,7 @@
   },
   "references": [
     { "path": "packages/sdk" },
-    { "path": "packages/markdown" }
+    { "path": "packages/markdown" },
+    { "path": "packages/gateway" }
   ]
 }
