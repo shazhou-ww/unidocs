@@ -12,24 +12,19 @@
  *   POST /_internal/rollback  — rollback to version (body: { version })
  */
 
-import xxhash from "xxhash-wasm";
 import type { DocumentType } from "./types.js";
 import type { HistoryEntry, ApplyResult, RollbackResult } from "./history.js";
 
 const DOC_KEY = "__doc";
 const HISTORY_KEY = "__history";
 
-// Singleton xxhash instance, lazy initialized
-let hasher: Awaited<ReturnType<typeof xxhash>> | null = null;
-async function getHasher() {
-  if (!hasher) hasher = await xxhash();
-  return hasher;
-}
-
 async function computeHash(data: Uint8Array): Promise<string> {
-  const h = await getHasher();
-  const bigint = h.h64Raw(data);
-  return bigint.toString(16).padStart(16, "0");
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = new Uint8Array(hashBuffer);
+  const hexString = Array.from(hashArray.slice(0, 8))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return hexString;
 }
 
 export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQuery, TOp>) {
