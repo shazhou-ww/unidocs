@@ -286,6 +286,65 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           return Response.json({ success: true, docId, version: 1 });
         }
 
+        // POST /_internal/init_from_hash — must be checked BEFORE the doc-is-null guard
+        if (method === "POST" && endpoint === "/_internal/init_from_hash") {
+          const existingDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
+          if (existingDocType) {
+            return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
+          }
+
+          const body = await request.json() as { hash: string; sourceVersion: number };
+
+          // Fetch from R2
+          const obj = await this.#env.CAS.get(body.hash);
+          if (!obj) {
+            return Response.json({ success: false, error: `Snapshot ${body.hash} not found in R2` }, { status: 404 });
+          }
+
+          const bytes = await obj.bytes();
+          this.#doc = config.load(bytes);
+
+          // Store immutable context
+          const docType = request.headers.get("X-Doc-Type") || "unknown";
+          const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
+          await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
+          await this.#ctx.storage.put(KEY_DOC_ID, docId);
+
+          // Insert initial delta
+          this.#version = 1;
+          this.#ctx.storage.sql.exec(
+            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
+            1,
+            Date.now(),
+            `Cloned from snapshot ${body.hash} (source version ${body.sourceVersion})`,
+            JSON.stringify([]),
+          );
+
+          // Save to KV
+          await this.#saveSnapshotKV();
+
+          // Record snapshot reference in D1
+          await this.#env.SNAPSHOTS_DB.exec(
+            "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))"
+          );
+          await this.#env.SNAPSHOTS_DB.prepare(
+            `INSERT INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
+          ).bind(body.hash, docType, docId, 1, Date.now()).run();
+
+          // Record in local sqlite
+          this.#ctx.storage.sql.exec(
+            `INSERT INTO snapshots (version, hash, timestamp) VALUES (?, ?, ?)`,
+            1,
+            body.hash,
+            Date.now(),
+          );
+
+          // Update last activity
+          await this.#updateLastActivity();
+
+          return Response.json({ success: true, docId, version: 1 });
+        }
+
         // All other endpoints require an initialized document
         if (this.#doc === null) {
           return Response.json({ success: false, error: "Document not initialized. POST /{docType}/ to create." }, { status: 404 });
@@ -512,62 +571,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             docType: await this.#ctx.storage.get<string>(KEY_DOC_TYPE),
             docId: await this.#ctx.storage.get<string>(KEY_DOC_ID),
           });
-        }
-
-        // POST /_internal/init_from_hash — initialize from existing snapshot hash (for clone)
-        if (method === "POST" && endpoint === "/_internal/init_from_hash") {
-          const existingDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
-          if (existingDocType) {
-            return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
-          }
-
-          const body = await request.json() as { hash: string; sourceVersion: number };
-
-          // Fetch from R2
-          const obj = await this.#env.CAS.get(body.hash);
-          if (!obj) {
-            return Response.json({ success: false, error: `Snapshot ${body.hash} not found in R2` }, { status: 404 });
-          }
-
-          const bytes = await obj.bytes();
-          this.#doc = config.load(bytes);
-
-          // Store immutable context
-          const docType = request.headers.get("X-Doc-Type") || "unknown";
-          const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
-          await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
-          await this.#ctx.storage.put(KEY_DOC_ID, docId);
-
-          // Insert initial delta
-          this.#version = 1;
-          this.#ctx.storage.sql.exec(
-            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
-            1,
-            Date.now(),
-            `Cloned from snapshot ${body.hash} (source version ${body.sourceVersion})`,
-            JSON.stringify([]),
-          );
-
-          // Save to KV
-          await this.#saveSnapshotKV();
-
-          // Record snapshot reference in D1 (same hash, different doc)
-          await this.#env.SNAPSHOTS_DB.prepare(
-            `INSERT INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
-          ).bind(body.hash, docType, docId, 1, Date.now()).run();
-
-          // Record in local sqlite
-          this.#ctx.storage.sql.exec(
-            `INSERT INTO snapshots (version, hash, timestamp) VALUES (?, ?, ?)`,
-            1,
-            body.hash,
-            Date.now(),
-          );
-
-          // Update last activity
-          await this.#updateLastActivity();
-
-          return Response.json({ success: true, docId, version: 1 });
         }
 
         return Response.json({ success: false, error: `Unknown endpoint: ${endpoint}` }, { status: 404 });
