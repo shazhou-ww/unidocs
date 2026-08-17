@@ -7,8 +7,8 @@
  * A delta is a batch of operations applied transactionally, producing one version.
  */
 export interface HistoryEntry<TOp = unknown> {
-  /** SHA-256 truncated to 16 hex chars, hash of document state after this delta. */
-  version: string;
+  /** Monotonically increasing version number. */
+  version: number;
   timestamp: string; // ISO 8601
   description: string;
   /** Batch of operations applied in this delta (transactional). */
@@ -18,7 +18,7 @@ export interface HistoryEntry<TOp = unknown> {
 /** Result of applying a delta. */
 export interface ApplyResult<T = unknown> {
   success: boolean;
-  version: string;
+  version: number;
   data?: T;
   error?: string;
 }
@@ -26,7 +26,7 @@ export interface ApplyResult<T = unknown> {
 /** Result of a rollback operation. */
 export interface RollbackResult {
   success: boolean;
-  version: string;
+  version: number;
   error?: string;
 }
 
@@ -34,6 +34,6 @@ export interface RollbackResult {
 export interface CreateResult {
   success: boolean;
   docId: string;
-  version: string;
+  version: number;
   error?: string;
 }

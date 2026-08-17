@@ -4,6 +4,21 @@
  * Handles HTTP routing, state persistence, history management.
  * Document types provide a DocumentType config; this class wires it all together.
  *
+ * Storage layout:
+ *   KV:
+ *     - docType: string (immutable)
+ *     - docId: string (immutable)
+ *     - snapshot: { version: number, bytes: Uint8Array } (latest known version, may lag one delta)
+ *
+ *   sqlite:
+ *     - deltas(version INTEGER PK, timestamp INTEGER, description TEXT, operations TEXT)
+ *     - snapshots(version INTEGER PK, timestamp INTEGER)
+ *
+ * Write order (consistency guarantee):
+ *   1. sqlite INSERT delta
+ *   2. KV PUT snapshot
+ *   → worst case: snapshot lags one delta, but never inconsistent
+ *
  * Internal endpoints (called by Gateway):
  *   POST /_internal/create    — create new document (multipart/form-data)
  *   POST /_internal/query     — query document (body: TQuery) → { data, version }
@@ -16,11 +31,15 @@
 import type { DocumentType } from "./types.js";
 import type { HistoryEntry, ApplyResult, RollbackResult } from "./history.js";
 
-// KV keys for document context and state
-const CONTEXT_KEY = "__context";       // { docType, docId }
-const DOC_KEY = "__doc";               // Uint8Array (serialized document)
-const HISTORY_KEY = "__history";       // DeltaEntry[]
-const SNAPSHOT_INDEX_KEY = "__snapshots"; // { version, timestamp, deltaCount }[]
+// KV keys
+const KEY_DOC_TYPE = "docType";
+const KEY_DOC_ID = "docId";
+const KEY_SNAPSHOT = "snapshot";
+
+interface SnapshotKV {
+  version: number;
+  bytes: Uint8Array;
+}
 
 export interface DocContext {
   docType: string;
@@ -28,26 +47,14 @@ export interface DocContext {
 }
 
 export interface SnapshotRecord {
-  version: string;
+  version: number;
   timestamp: number;
-  deltaCount: number;
-}
-
-async function computeHash(data: Uint8Array): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = new Uint8Array(hashBuffer);
-  return Array.from(hashArray.slice(0, 8))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQuery, TOp>) {
   return class EditorDO {
     #doc: TDoc | null = null;
-    #version: string = "";
-    #history: HistoryEntry<TOp>[] = [];
-    #snapshots: SnapshotRecord[] = [];
-    #context: DocContext | null = null;
+    #version: number = 0;
     #ctx: DurableObjectState;
 
     constructor(ctx: DurableObjectState, env: unknown) {
@@ -57,53 +64,86 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     async #ensureLoaded(): Promise<void> {
       if (this.#doc !== null) return;
 
-      // Load context
-      this.#context = (await this.#ctx.storage.get<DocContext>(CONTEXT_KEY)) ?? null;
+      // Init sqlite tables
+      this.#ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS deltas (
+          version INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp INTEGER NOT NULL,
+          description TEXT,
+          operations TEXT NOT NULL
+        )
+      `);
+      this.#ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS snapshots (
+          version INTEGER PRIMARY KEY,
+          timestamp INTEGER NOT NULL
+        )
+      `);
 
-      // Load document
-      const bytes = await this.#ctx.storage.get<Uint8Array>(DOC_KEY);
-      if (bytes) {
-        this.#doc = config.load(bytes);
-        this.#version = await computeHash(bytes);
-        this.#history = (await this.#ctx.storage.get<HistoryEntry<TOp>[]>(HISTORY_KEY)) ?? [];
-        this.#snapshots = (await this.#ctx.storage.get<SnapshotRecord[]>(SNAPSHOT_INDEX_KEY)) ?? [];
+      // Load from KV snapshot
+      const snapshot = await this.#ctx.storage.get<SnapshotKV>(KEY_SNAPSHOT);
+      if (snapshot) {
+        this.#doc = config.load(snapshot.bytes);
+        this.#version = snapshot.version;
       }
-      // If no bytes, doc is uninitialized — create must be called first
+
+      // Replay deltas after snapshot version
+      const result = this.#ctx.storage.sql.exec(
+        `SELECT version, operations FROM deltas WHERE version > ? ORDER BY version ASC`,
+        this.#version,
+      );
+
+      for (const row of result.toArray()) {
+        const ops = JSON.parse(row.operations as string) as TOp[];
+        for (const op of ops) {
+          this.#doc = config.apply(op, this.#doc!);
+        }
+        this.#version = row.version as number;
+      }
+
+      // If we replayed any deltas, persist the updated snapshot to KV
+      if (snapshot && this.#version > snapshot.version) {
+        await this.#saveSnapshotKV();
+      }
     }
 
-    async #persist(): Promise<string> {
-      if (!this.#doc) throw new Error("Document not loaded");
+    async #saveSnapshotKV(): Promise<void> {
+      if (!this.#doc) return;
       const bytes = config.save(this.#doc);
-      const hash = await computeHash(bytes);
-      await this.#ctx.storage.put(DOC_KEY, bytes);
-      this.#version = hash;
-      return hash;
+      const snapshotKV: SnapshotKV = { version: this.#version, bytes };
+      await this.#ctx.storage.put(KEY_SNAPSHOT, snapshotKV);
+    }
+
+    async #getNextVersion(): Promise<number> {
+      const result = this.#ctx.storage.sql.exec(`SELECT MAX(version) as max_v FROM deltas`);
+      const row = result.one();
+      return (row.max_v as number) + 1;
     }
 
     async #shouldSnapshot(): Promise<boolean> {
-      if (this.#snapshots.length === 0) return true;
-      if (this.#history.length === 0) return false;
-      const lastSnapshot = this.#snapshots[this.#snapshots.length - 1];
-      const lastSnapshotTs = new Date(lastSnapshot.timestamp).getTime();
-      const deltasSince = this.#history.filter(e => new Date(e.timestamp).getTime() > lastSnapshotTs).length;
+      const snapResult = this.#ctx.storage.sql.exec(`SELECT MAX(version) as max_v FROM snapshots`);
+      const snapRow = snapResult.one();
+      const lastSnapshotVersion = (snapRow.max_v as number) ?? 0;
+
+      const deltaResult = this.#ctx.storage.sql.exec(
+        `SELECT COUNT(*) as cnt FROM deltas WHERE version > ?`,
+        lastSnapshotVersion,
+      );
+      const deltaRow = deltaResult.one();
+      const deltasSince = (deltaRow.cnt as number) ?? 0;
+
       return deltasSince >= 20;
     }
 
     async #saveSnapshot(): Promise<void> {
-      if (!this.#doc || !this.#context) return;
+      // Record in sqlite snapshots table
+      this.#ctx.storage.sql.exec(
+        `INSERT OR REPLACE INTO snapshots (version, timestamp) VALUES (?, ?)`,
+        this.#version,
+        Date.now(),
+      );
 
-      const bytes = config.save(this.#doc);
-      const r2Key = `${this.#context.docType}/${this.#context.docId}/${this.#version}`;
-
-      // TODO: Store to R2 bucket
-      // await env.R2.put(r2Key, bytes);
-
-      this.#snapshots.push({
-        version: this.#version,
-        timestamp: Date.now(),
-        deltaCount: 0, // Will be calculated on next check
-      });
-      await this.#ctx.storage.put(SNAPSHOT_INDEX_KEY, this.#snapshots);
+      // TODO (#2): Write to R2 — key = {docType}/{docId}/{version}
     }
 
     async fetch(request: Request): Promise<Response> {
@@ -116,36 +156,45 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       try {
         // POST /_internal/create — create new document
         if (method === "POST" && endpoint === "/_internal/create") {
-          if (this.#doc !== null) {
+          const existingDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
+          if (existingDocType) {
             return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
           }
 
-          // Extract docType and docId from headers (set by Gateway)
+          // Store immutable context in KV
           const docType = request.headers.get("X-Doc-Type") || "unknown";
           const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
-
-          this.#context = { docType, docId };
-          await this.#ctx.storage.put(CONTEXT_KEY, this.#context);
+          await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
+          await this.#ctx.storage.put(KEY_DOC_ID, docId);
 
           const formData = await request.formData();
           const file = formData.get("file") as File | null;
           const sourceId = formData.get("sourceId") as string | null;
-          const sourceVersion = formData.get("version") as string | null;
 
           if (file) {
             const bytes = new Uint8Array(await file.arrayBuffer());
             this.#doc = config.load(bytes);
           } else if (sourceId) {
-            // TODO: Clone from another document (worker handles this, not DO)
             return Response.json({ success: false, error: "Clone should be handled at worker level" }, { status: 400 });
           } else {
             this.#doc = config.init();
           }
 
-          const version = await this.#persist();
-          await this.#saveSnapshot(); // Initial snapshot
+          // Insert initial delta in sqlite
+          this.#version = 1;
+          this.#ctx.storage.sql.exec(
+            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
+            1,
+            Date.now(),
+            "Document created",
+            JSON.stringify([]),
+          );
 
-          return Response.json({ success: true, docId: this.#context.docId, version });
+          // Write snapshot to KV + sqlite snapshots table
+          await this.#saveSnapshotKV();
+          await this.#saveSnapshot();
+
+          return Response.json({ success: true, docId, version: 1 });
         }
 
         // All other endpoints require an initialized document
@@ -156,12 +205,12 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         // GET /_internal/export — download document
         if (method === "GET" && endpoint === "/_internal/export") {
           const bytes = config.save(this.#doc);
-          // Content-Type could be provided by config, default to octet-stream
           const contentType = config.contentType || "application/octet-stream";
+          const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
           return new Response(bytes, {
             headers: {
               "Content-Type": contentType,
-              "Content-Disposition": `attachment; filename="${this.#context?.docId || "document"}"`,
+              "Content-Disposition": `attachment; filename="${docId || "document"}"`,
             },
           });
         }
@@ -178,7 +227,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           const body = await request.json() as {
             operations: TOp[];
             description: string;
-            baseVersion: string;
+            baseVersion: number;
           };
 
           // Optimistic lock check
@@ -193,39 +242,42 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             );
           }
 
-          // Apply all operations transactionally
+          // Apply all operations transactionally (in-memory)
           let newDoc: TDoc = this.#doc!;
           try {
             for (const op of body.operations) {
               newDoc = config.apply(op, newDoc);
             }
           } catch (err) {
-            // Transaction failed — document unchanged
             return Response.json(
               { success: false, version: this.#version, error: `Delta failed: ${err}` },
               { status: 400 },
             );
           }
 
-          // All operations succeeded — persist
+          // All operations succeeded
           this.#doc = newDoc;
-          const version = await this.#persist();
 
-          // Record delta in history
-          this.#history.push({
-            version,
-            timestamp: new Date().toISOString(),
-            description: body.description,
-            operations: body.operations,
-          });
-          await this.#ctx.storage.put(HISTORY_KEY, this.#history);
+          // 1. sqlite: INSERT delta (first — source of truth)
+          const newVersion = await this.#getNextVersion();
+          this.#ctx.storage.sql.exec(
+            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
+            newVersion,
+            Date.now(),
+            body.description,
+            JSON.stringify(body.operations),
+          );
+          this.#version = newVersion;
 
-          // Check if we need a snapshot
+          // 2. KV: PUT snapshot (may lag if crashes here, but won't be inconsistent)
+          await this.#saveSnapshotKV();
+
+          // 3. Check if we need an R2 snapshot
           if (await this.#shouldSnapshot()) {
             await this.#saveSnapshot();
           }
 
-          const result: ApplyResult = { success: true, version };
+          const result: ApplyResult = { success: true, version: newVersion };
           return Response.json(result);
         }
 
@@ -233,37 +285,56 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         if (method === "GET" && endpoint === "/_internal/history") {
           const from = url.searchParams.get("from");
           const to = url.searchParams.get("to");
-          let entries = this.#history;
 
-          if (from || to) {
-            const fromTs = from ? new Date(from).getTime() : 0;
-            const toTs = to ? new Date(to).getTime() : Date.now();
-            entries = this.#history.filter(e => {
-              const ts = new Date(e.timestamp).getTime();
-              return ts >= fromTs && ts <= toTs;
-            });
+          let query = `SELECT version, timestamp, description, operations FROM deltas`;
+          const params: (string | number)[] = [];
+          const conditions: string[] = [];
+
+          if (from) {
+            conditions.push("version >= ?");
+            params.push(parseInt(from));
           }
+          if (to) {
+            conditions.push("version <= ?");
+            params.push(parseInt(to));
+          }
+          if (conditions.length > 0) {
+            query += " WHERE " + conditions.join(" AND ");
+          }
+          query += " ORDER BY version ASC";
+
+          const result = this.#ctx.storage.sql.exec(query, ...params);
+          const entries: HistoryEntry<TOp>[] = result.toArray().map(row => ({
+            version: row.version as number,
+            timestamp: new Date(row.timestamp as number).toISOString(),
+            description: row.description as string,
+            operations: JSON.parse(row.operations as string) as TOp[],
+          }));
 
           return Response.json({ success: true, data: entries, version: this.#version });
         }
 
         // POST /_internal/rollback
         if (method === "POST" && endpoint === "/_internal/rollback") {
-          const body = await request.json() as { version: string };
+          const body = await request.json() as { version: number };
 
-          // Find target version in history
-          const targetEntry = this.#history.find(e => e.version === body.version);
-          if (!targetEntry) {
+          // Check target version exists
+          const checkResult = this.#ctx.storage.sql.exec(
+            `SELECT COUNT(*) as cnt FROM deltas WHERE version = ?`,
+            body.version,
+          );
+          const exists = ((checkResult.one()).cnt as number) > 0;
+
+          if (!exists) {
             return Response.json(
               { success: false, version: this.#version, error: `Version ${body.version} not found` },
               { status: 404 },
             );
           }
 
-          // TODO: Implement rollback by finding nearest snapshot in R2 and replaying deltas
-          // For now, just return not implemented
+          // TODO (#3): Implement rollback with snapshot + delta replay
           return Response.json(
-            { success: false, version: this.#version, error: "Rollback not yet implemented (requires R2 + delta replay)" },
+            { success: false, version: this.#version, error: "Rollback not yet implemented (requires #2 R2 + #3 delta replay)" },
             { status: 501 },
           );
         }
