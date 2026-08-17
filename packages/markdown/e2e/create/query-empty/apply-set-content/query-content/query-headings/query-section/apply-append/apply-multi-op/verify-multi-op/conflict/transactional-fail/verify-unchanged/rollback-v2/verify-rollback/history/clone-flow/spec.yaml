@@ -1,0 +1,13 @@
+description: "Snapshot + clone via init_from_hash: new doc gets same content"
+steps:
+  - type: exec
+    command: >-
+      HASH=$(curl -s http://localhost:8787/md-e2e-001/snapshot | jq -r .hash) &&
+      VER=$(curl -s http://localhost:8787/md-e2e-001/snapshot | jq -r .version) &&
+      curl -s -X POST http://localhost:8787/clone-e2e-001/init_from_hash
+      -H "Content-Type: application/json"
+      -H "X-Doc-Id: clone-e2e-001"
+      -d "{\"hash\":\"$HASH\",\"sourceVersion\":$VER}"
+    assert:
+      type: jsonata
+      expression: "success = true"

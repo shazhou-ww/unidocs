@@ -1,0 +1,10 @@
+description: "Apply appendSection adds a new section to the document"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/apply
+      -H "Content-Type: application/json"
+      -d '{"baseVersion":2,"description":"Add Section C","operations":[{"kind":"appendSection","payload":{"heading":"Section C","content":"Content of C."}}]}'
+    assert:
+      type: jsonata
+      expression: "success = true and version = 3"

@@ -1,0 +1,12 @@
+description: "Verify multi-op result: B updated, A deleted, C still present"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/query
+      -H "Content-Type: application/json"
+      -d '{"kind":"getContent"}'
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "Updated B" }
+        - { path: "stdout", regex: "Section C" }

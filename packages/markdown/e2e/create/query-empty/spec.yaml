@@ -1,0 +1,10 @@
+description: "Query empty document returns empty content"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/query
+      -H "Content-Type: application/json"
+      -d '{"kind":"getContent"}'
+    assert:
+      type: jsonata
+      expression: "success = true and data = '' and version = 1"

@@ -1,0 +1,10 @@
+description: "After failed delta, version is still 4 and content unchanged"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/query
+      -H "Content-Type: application/json"
+      -d '{"kind":"getContent"}'
+    assert:
+      type: jsonata
+      expression: "version = 4"

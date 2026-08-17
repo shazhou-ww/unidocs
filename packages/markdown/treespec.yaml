@@ -1,0 +1,5 @@
+name: unidocs-markdown
+image:
+  dockerfile: e2e/Dockerfile
+projectDir: ../..
+spec: packages/markdown/e2e

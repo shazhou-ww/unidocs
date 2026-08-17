@@ -1,0 +1,9 @@
+description: "Create empty document via POST /create"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/create
+      -H "X-Doc-Id: md-e2e-001"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 1"

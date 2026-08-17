@@ -1,0 +1,10 @@
+description: "Second op fails (deleteSection on non-existent heading) → entire delta rejected, version unchanged"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/apply
+      -H "Content-Type: application/json"
+      -d '{"baseVersion":4,"description":"bad delta","operations":[{"kind":"setContent","payload":{"content":"should not persist"}},{"kind":"deleteSection","payload":{"heading":"NonExistent"}}]}'
+    assert:
+      type: jsonata
+      expression: "success = false"

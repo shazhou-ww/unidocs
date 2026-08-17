@@ -5,10 +5,14 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "e2e": "treespec run --config packages/markdown/treespec.yaml --no-mount --verbose",
+    "e2e:tree": "treespec tree --config packages/markdown/treespec.yaml",
+    "e2e:validate": "treespec validate --config packages/markdown/treespec.yaml"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "treespec": "^0.3.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },

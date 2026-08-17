@@ -1,0 +1,10 @@
+description: "Apply setContent to initialize document with markdown structure"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/apply
+      -H "Content-Type: application/json"
+      -d '{"baseVersion":1,"description":"Set initial content","operations":[{"kind":"setContent","payload":{"content":"# Hello World\n\nThis is a test document.\n\n## Section A\n\nContent of A.\n\n## Section B\n\nContent of B."}}]}'
+    assert:
+      type: jsonata
+      expression: "success = true and version = 2"

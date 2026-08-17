@@ -1,0 +1,10 @@
+description: "Apply multi-op delta: replaceSection + deleteSection in one transaction"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/apply
+      -H "Content-Type: application/json"
+      -d '{"baseVersion":3,"description":"Replace B, delete A","operations":[{"kind":"replaceSection","payload":{"heading":"Section B","content":"Updated B."}},{"kind":"deleteSection","payload":{"heading":"Section A"}}]}'
+    assert:
+      type: jsonata
+      expression: "success = true and version = 4"

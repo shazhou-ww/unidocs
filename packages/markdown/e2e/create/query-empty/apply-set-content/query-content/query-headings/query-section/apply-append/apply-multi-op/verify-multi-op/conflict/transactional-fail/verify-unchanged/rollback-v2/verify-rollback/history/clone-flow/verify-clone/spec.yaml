@@ -1,0 +1,13 @@
+description: "Cloned document has same content as source at snapshot version"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/clone-e2e-001/query
+      -H "Content-Type: application/json"
+      -d '{"kind":"getContent"}'
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "Hello World" }
+        - { path: "stdout", regex: "Section A" }
+        - { path: "stdout", regex: "Section B" }

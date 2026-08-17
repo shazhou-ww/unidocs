@@ -1,0 +1,10 @@
+description: "Rollback to v2 restores pre-append content (before Section C was added)"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/rollback
+      -H "Content-Type: application/json"
+      -d '{"version":2}'
+    assert:
+      type: jsonata
+      expression: "success = true and version = 5"

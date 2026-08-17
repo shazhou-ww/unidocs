@@ -1,0 +1,11 @@
+description: "Query getSection returns specific section content"
+steps:
+  - type: exec
+    command: >-
+      curl -s -X POST http://localhost:8787/md-e2e-001/query
+      -H "Content-Type: application/json"
+      -d '{"kind":"getSection","payload":{"heading":"Section A"}}'
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "Content of A" }
