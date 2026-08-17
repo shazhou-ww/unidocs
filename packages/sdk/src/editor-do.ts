@@ -84,22 +84,25 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
       try {
         // POST /_internal/create — create new document
+        // Body: multipart/form-data with optional fields:
+        //   - file: File (binary content to initialize from)
+        //   - sourceId: string (clone from existing document)
+        //   - version: string (specific version to clone, optional)
         if (method === "POST" && endpoint === "/_internal/create") {
           if (this.#doc !== null) {
             return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
           }
 
-          let body: Record<string, unknown> = {};
-          if (request.body) {
-            const text = await request.text();
-            if (text) body = JSON.parse(text);
-          }
+          const formData = await request.formData();
+          const file = formData.get("file") as File | null;
+          const sourceId = formData.get("sourceId") as string | null;
+          const version = formData.get("version") as string | null;
 
-          if (body.content) {
-            // Initialize from binary content
-            const content = new Uint8Array(Object.values(body.content as Record<string, number>));
-            this.#doc = config.load(content);
-          } else if (body.sourceId) {
+          if (file) {
+            // Initialize from uploaded file
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            this.#doc = config.load(bytes);
+          } else if (sourceId) {
             // TODO: Clone from another document (needs cross-DO communication via env)
             return Response.json({ success: false, error: "Clone not yet implemented" }, { status: 501 });
           } else {
@@ -107,8 +110,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             this.#doc = config.init();
           }
 
-          const version = await this.#persist();
-          return Response.json({ success: true, docId: this.#ctx.id.toString(), version });
+          const hash = await this.#persist();
+          return Response.json({ success: true, docId: this.#ctx.id.toString(), version: hash });
         }
 
         // All other endpoints require an initialized document
