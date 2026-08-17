@@ -2,49 +2,71 @@
 
 **Universal Docs** — online document editing tools for AI agents.
 
-UniDocs provides a framework for building document-type-specific editing infrastructure that AI agents can interact with programmatically. Each supported document type exposes two layers:
+UniDocs provides a framework for building document-type-specific editing infrastructure that AI agents can interact with programmatically. Each supported document type is defined as a declarative configuration, from which the SDK generates a pair of deployable Cloudflare Durable Objects.
 
 ## Architecture
 
-For each document type, a single document instance is backed by two Cloudflare Durable Objects:
+### DocumentType — the ten-tuple contract
 
-### Document Editor (DO)
+Every document type is defined by providing:
+
+**Types:**
+- `TDocument` — document's in-memory model
+- `TQuery` — query types (discriminated union)
+- `TOperation` — operation types (discriminated union)
+
+**Functions:**
+- `init: () => TDocument` — create a new empty document
+- `query: (q: TQuery, doc: TDocument) => JSON` — read document slices
+- `apply: (op: TOperation, doc: TDocument) => TDocument` — mutate document
+- `load: (data: Uint8Array) => TDocument` — deserialize from storage
+- `save: (doc: TDocument) => Uint8Array` — serialize for storage
+
+**Prompts:**
+- `tools: Record<string, AgentToolDefinition>` — tool definitions for the Operator
+- `instructions: string` — system prompt with operational knowledge
+
+Given this ten-tuple, the SDK generates a complete Editor + Operator service pair.
+
+### Two-layer service per document instance
+
+Each document instance is backed by two Cloudflare Durable Objects:
+
+#### Document Editor (DO)
 Pure code logic — **no LLM**. Manages document state with full integrity.
 
-- **TQuery**: Read document content slices via structured query objects
-- **TOperation**: Apply edits via structured operation objects
-- **History**: Built-in version tracking, snapshot, and rollback
-- **Batching**: Supports scripted batch processing of TQuery/TOperation (future)
+- HTTP API for executing `TQuery` (read) and `TOperation` (write)
+- Built-in version tracking and history log
+- Rollback support (snapshot-based)
+- Future: batch processing of queries/operations
 
-### Document Operator (DO)
-Agent wrapper on top of the Editor. One Operator per document instance = one agent session.
+#### Document Operator (DO)
+Agent wrapper on top of the Editor. One Operator = one document instance = one agent session.
 
-- Holds all Editor TQuery/TOperation as tools
-- Carries document-type-specific operational knowledge as prompts
+- Holds all Editor operations as tools
+- Carries document-type-specific operational knowledge
 - Runs ReAct loop to decompose and fulfill complex edit instructions
 - Isolates implementation details from the calling (main) agent
 
-## Usage
+### Two access levels for the main agent
 
-The main agent can interact with documents at two levels:
-
-1. **Lightweight** — Call Editor directly for simple reads/writes
-2. **Complex** — Route through Operator for multi-step, context-aware operations
+1. **Lightweight** — call Editor API directly for simple reads/writes
+2. **Complex** — route through Operator for multi-step, context-aware operations
 
 ## Packages
 
 | Package | Description |
 |---------|-------------|
-| `@unidocs/core` | TQuery/TOperation type contracts, history types, abstract Editor |
-| `@unidocs/do-editor` | Base Editor Durable Object — HTTP routing, state, history |
-| `@unidocs/do-operator` | Base Operator Durable Object — ReAct loop, tool management |
+| `@unidocs/sdk` | Types + generic runtime (DocumentType → Editor DO + Operator DO) |
+| `@unidocs/markdown` | Markdown document type (first implementation) |
 
-## Adding a Document Type
+## Adding a new document type
 
-1. Define TQuery/TOperation types extending core interfaces
-2. Implement Editor by extending `EditorDO` with query/apply logic
-3. Implement Operator by extending `OperatorDO` with tools + prompts
-4. Deploy as Cloudflare Workers with DO bindings
+1. Create a new package in `packages/`
+2. Define `TDocument`, `TQuery`, `TOperation` types
+3. Implement the ten-tuple (init, query, apply, load, save, tools, instructions)
+4. Use `createEditorDO(config)` and `createOperatorDO(config)` from `@unidocs/sdk`
+5. Deploy as a Cloudflare Worker with DO bindings
 
 ## Development
 
@@ -53,3 +75,12 @@ pnpm install
 pnpm build
 pnpm test
 ```
+
+## Roadmap
+
+- [ ] Stabilize Editor/Operator HTTP API contracts
+- [ ] Implement full snapshot-based rollback
+- [ ] SSE streaming for Operator ReAct loop
+- [ ] Lightweight client SDK for main agents
+- [ ] Scaffold template (`pnpm create @unidocs/doc-type`)
+- [ ] Additional document types (spreadsheet, slide, etc.)
