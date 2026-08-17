@@ -27,6 +27,10 @@
  *   3. (if needed) R2 PUT + D1 INSERT snapshot
  *   → worst case: snapshot lags one delta, but never inconsistent
  *
+ * Snapshot strategy:
+ *   - Every 20 deltas since last snapshot
+ *   - After 5 minutes of inactivity (idle threshold)
+ *
  * Internal endpoints (called by Gateway):
  *   POST /_internal/create    — create new document (multipart/form-data)
  *   POST /_internal/query     — query document (body: TQuery) → { data, version }
@@ -45,6 +49,11 @@ import type { HistoryEntry, ApplyResult, RollbackResult } from "./history.js";
 const KEY_DOC_TYPE = "docType";
 const KEY_DOC_ID = "docId";
 const KEY_SNAPSHOT = "snapshot";
+const KEY_LAST_ACTIVITY = "lastActivity";
+
+// Snapshot thresholds
+const DELTA_THRESHOLD = 20; // Snapshot every N deltas
+const IDLE_THRESHOLD_MS = 5 * 60 * 1000; // Snapshot after 5 min inactivity
 
 interface SnapshotKV {
   version: number;
@@ -157,7 +166,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       const deltaRow = deltaResult.one();
       const deltasSince = (deltaRow.cnt as number) ?? 0;
 
-      return deltasSince >= 20;
+      return deltasSince >= DELTA_THRESHOLD;
+    }
+
+    async #shouldSnapshotIdle(): Promise<boolean> {
+      const lastActivity = await this.#ctx.storage.get<number>(KEY_LAST_ACTIVITY);
+      if (!lastActivity) return false;
+
+      const idleTime = Date.now() - lastActivity;
+      if (idleTime < IDLE_THRESHOLD_MS) return false;
+
+      // Check if there are unsnapshotted deltas
+      const snapResult = this.#ctx.storage.sql.exec(`SELECT MAX(version) as max_v FROM snapshots`);
+      const snapRow = snapResult.one();
+      const lastSnapshotVersion = (snapRow.max_v as number) ?? 0;
+
+      return this.#version > lastSnapshotVersion;
     }
 
     async #saveSnapshot(): Promise<void> {
@@ -183,6 +207,16 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         hash,
         Date.now(),
       );
+    }
+
+    async #updateLastActivity(): Promise<void> {
+      await this.#ctx.storage.put(KEY_LAST_ACTIVITY, Date.now());
+    }
+
+    async #checkIdleSnapshot(): Promise<void> {
+      if (await this.#shouldSnapshotIdle()) {
+        await this.#saveSnapshot();
+      }
     }
 
     async fetch(request: Request): Promise<Response> {
@@ -229,9 +263,14 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             JSON.stringify([]),
           );
 
-          // Write snapshot to KV + sqlite snapshots table
+          // Write snapshot to KV
           await this.#saveSnapshotKV();
+
+          // Save initial snapshot to R2 + D1
           await this.#saveSnapshot();
+
+          // Update last activity
+          await this.#updateLastActivity();
 
           return Response.json({ success: true, docId, version: 1 });
         }
@@ -240,6 +279,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         if (this.#doc === null) {
           return Response.json({ success: false, error: "Document not initialized. POST /{docType}/ to create." }, { status: 404 });
         }
+
+        // Update last activity for all operations
+        await this.#updateLastActivity();
 
         // GET /_internal/export — download document
         if (method === "GET" && endpoint === "/_internal/export") {
@@ -380,9 +422,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           let baseDoc: TDoc;
           let baseVersion: number;
 
-          const snapRow = snapResult.one();
-          if (snapRow && (snapRow.cnt as number) > 0) {
+          const snapRows = snapResult.toArray();
+          if (snapRows.length > 0) {
             // Load from R2
+            const snapRow = snapRows[0];
             const hash = snapRow.hash as string;
             const obj = await this.#env.CAS.get(hash);
             if (!obj) {
@@ -509,6 +552,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             body.hash,
             Date.now(),
           );
+
+          // Update last activity
+          await this.#updateLastActivity();
 
           return Response.json({ success: true, docId, version: 1 });
         }

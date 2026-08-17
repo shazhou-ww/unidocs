@@ -1,17 +1,20 @@
 /**
- * OperatorDO — base Durable Object for agent-driven document operations.
+ * Operator Durable Object for document-type-specific AI agents.
  *
- * Wraps the Editor with a ReAct loop, tool dispatch, and LLM integration.
+ * Each Operator wraps a DocumentType's tools and runs a ReAct loop,
+ * calling the Editor DO to execute operations. It maintains conversation
+ * history and enforces optimistic locking (read-before-write).
  *
- * Internal endpoints (called by Gateway):
- *   POST /_internal/run    — execute ReAct loop (body: { instruction })
- *   POST /_internal/reset  — clear operator session
+ * Key behaviors:
+ * - query_ tools return { data, version } — version is tracked for locking
+ * - apply_ tools use the last known version as baseVersion
+ * - If 409 conflict, the error includes current version so LLM can retry
  */
 
 import type { DocumentType } from "./types.js";
 
 export interface OperatorConfig<TDoc, TQuery, TOp> extends DocumentType<TDoc, TQuery, TOp> {
-  /** LLM provider function: takes messages, returns completion with tool calls. */
+  /** LLM provider function: takes messages + tools, returns completion. */
   llmProvider: (messages: unknown[], tools: unknown[]) => Promise<unknown>;
   /** Factory to get Editor DO stub for a given docId. */
   getEditorStub: (docId: string) => DurableObjectStub;
@@ -20,6 +23,7 @@ export interface OperatorConfig<TDoc, TQuery, TOp> extends DocumentType<TDoc, TQ
 export function createOperatorDO<TDoc, TQuery, TOp>(config: OperatorConfig<TDoc, TQuery, TOp>) {
   return class OperatorDO {
     #session: unknown[] = [];
+    #lastKnownVersion: number | null = null;
     #ctx: DurableObjectState;
 
     constructor(ctx: DurableObjectState, env: unknown) {
@@ -79,23 +83,50 @@ export function createOperatorDO<TDoc, TQuery, TOp>(config: OperatorConfig<TDoc,
                 const editorStub = config.getEditorStub(this.#ctx.id.toString());
 
                 if (toolName.startsWith("query_")) {
+                  // Query operation — track version from response
                   const queryKind = toolName.slice(6);
                   const resp = await editorStub.fetch("http://editor/_internal/query", {
                     method: "POST",
                     body: JSON.stringify({ kind: queryKind, payload: args }),
                   });
-                  result = await resp.json();
+                  const json = await resp.json() as { success: boolean; data: unknown; version: number };
+                  if (json.success) {
+                    this.#lastKnownVersion = json.version;
+                    result = { data: json.data, version: json.version };
+                  } else {
+                    result = json;
+                  }
                 } else if (toolName.startsWith("apply_")) {
+                  // Apply operation — enforce optimistic lock with last known version
                   const opKind = toolName.slice(6);
-                  const resp = await editorStub.fetch("http://editor/_internal/apply", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      operation: { kind: opKind, payload: args },
-                      description: `Operator: ${toolName}`,
-                      baseVersion: null, // Operator will need to fetch current version first
-                    }),
-                  });
-                  result = await resp.json();
+
+                  if (this.#lastKnownVersion === null) {
+                    result = { error: "No version known. You must query the document first before applying changes." };
+                  } else {
+                    const resp = await editorStub.fetch("http://editor/_internal/apply", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        operations: [{ kind: opKind, payload: args }],
+                        description: `Operator: ${toolName}`,
+                        baseVersion: this.#lastKnownVersion,
+                      }),
+                    });
+                    const json = await resp.json() as { success: boolean; version: number; error?: string };
+                    if (json.success) {
+                      this.#lastKnownVersion = json.version;
+                      result = { success: true, version: json.version };
+                    } else {
+                      // Version conflict — tell LLM the current version so it can retry
+                      result = {
+                        error: json.error,
+                        currentVersion: json.version,
+                        hint: "Re-query the document to get the latest version, then retry your changes.",
+                      };
+                      if (json.version) {
+                        this.#lastKnownVersion = json.version;
+                      }
+                    }
+                  }
                 } else {
                   result = { error: `Unknown tool: ${toolName}` };
                 }
@@ -120,6 +151,7 @@ export function createOperatorDO<TDoc, TQuery, TOp>(config: OperatorConfig<TDoc,
         // POST /_internal/reset — clear session
         if (method === "POST" && endpoint === "/_internal/reset") {
           this.#session = [];
+          this.#lastKnownVersion = null;
           return Response.json({ success: true });
         }
 
