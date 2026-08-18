@@ -338,7 +338,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         // POST /_internal/query
         if (method === "POST" && endpoint === "/_internal/query") {
           const q = await request.json() as TQuery;
-          const data = config.query(q, this.#doc);
+          const data = await config.query(q, this.#doc);
           return Response.json({ success: true, data, version: this.#version });
         }
 

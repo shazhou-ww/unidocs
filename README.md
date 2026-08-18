@@ -174,7 +174,7 @@ TOperation    // operation types (discriminated union)
 
 // functions
 init()                              → TDocument
-query(q: TQuery, doc: TDocument)    → any
+query(q: TQuery, doc: TDocument)    → Promise<any>
 apply(op: TOperation, doc: TDocument) → TDocument
 load(bytes: Uint8Array)             → TDocument
 save(doc: TDocument)                → Uint8Array

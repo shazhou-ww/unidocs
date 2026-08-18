@@ -53,7 +53,7 @@ function escapeRegex(str: string): string {
 export const markdown: DocumentType<MDoc, MQuery, MOp> = {
   init: () => ({ content: "" }),
 
-  query: (q, doc) => {
+  query: async (q, doc) => {
     switch (q.kind) {
       case "getContent":
         return doc.content;

@@ -23,8 +23,8 @@ export interface DocumentType<TDoc, TQuery, TOp> {
   /** Create a new empty document. */
   init: () => TDoc;
 
-  /** Execute a read query against the document. Returns JSON-serializable result. */
-  query: (q: TQuery, doc: TDoc) => unknown;
+  /** Execute a read query against the document. Resolves to a JSON-serializable result. */
+  query: (q: TQuery, doc: TDoc) => Promise<unknown>;
 
   /** Apply a single atomic operation. Returns the new document state. Throws on failure. */
   apply: (op: TOp, doc: TDoc) => TDoc;
