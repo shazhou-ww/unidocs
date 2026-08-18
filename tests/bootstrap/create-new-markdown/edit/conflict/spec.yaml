@@ -1,0 +1,24 @@
+description: "Optimistic lock rejects stale writes, transactional failure rejects partial deltas"
+steps:
+  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+    timeout: "5s"
+  - command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^4" }
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"stale write\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"should fail\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = false"
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":4,\"description\":\"bad delta\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"A\",\"content\":\"x\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"NonExistent\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = false"
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 4"

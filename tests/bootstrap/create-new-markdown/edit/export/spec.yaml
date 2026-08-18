@@ -1,0 +1,20 @@
+description: "Export document as markdown file"
+steps:
+  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+    timeout: "5s"
+  - command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^4" }
+  - command: "curl -s http://localhost:8787/md-doc-001/export -o /tmp/exported.md"
+  - command: "cat /tmp/exported.md"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "Updated B" }
+        - { path: "stdout", regex: "Section C" }
+primary: import

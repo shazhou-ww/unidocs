@@ -1,0 +1,37 @@
+description: "Apply multiple deltas: append, replace, delete, verify via queries"
+steps:
+  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+    timeout: "5s"
+  - command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^4" }
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Append C\",\"operations\":[{\"kind\":\"appendSection\",\"payload\":{\"heading\":\"C\",\"content\":\"Section C content.\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 3"
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":3,\"description\":\"Replace B, delete A\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"B\",\"content\":\"Updated B.\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"A\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 4"
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getHeadings\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true and $count(data) = 3"
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getSection\",\"payload\":{\"heading\":\"B\"}}'"
+    assert:
+      type: jsonata
+      expression: "success = true and $contains(data, 'Updated B')"
+  - command: "curl -s -X POST http://localhost:8787/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 4"
+primary: export
+branches:
+  - conflict
+  - clone
+  - rollback

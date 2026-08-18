@@ -1,4 +1,4 @@
-description: "Create document and query empty content"
+description: "Import exported file to create new document, verify content matches"
 steps:
   - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
     timeout: "5s"
@@ -10,11 +10,11 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "^4" }
-  - command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-test-001'"
+  - command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-imported-001' -F 'file=@/tmp/exported.md'"
     assert:
       type: jsonata
       expression: "success = true"
-  - command: "curl -s -X POST http://localhost:8787/md-test-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+  - command: "curl -s -X POST http://localhost:8787/md-imported-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
     assert:
       type: jsonata
-      expression: "success = true and data = '' and version = 1"
+      expression: "success = true and $contains(data, 'Updated B') and $contains(data, 'Section C')"

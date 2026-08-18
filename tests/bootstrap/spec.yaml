@@ -1,4 +1,4 @@
-description: "Copy project from /app mount, install deps, build all packages"
+description: "Copy project, install deps, build all packages"
 steps:
   - command: "cp -r /app /workspace"
     timeout: "30s"
@@ -11,4 +11,4 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "worker.js" }
-primary: markdown
+primary: create-new-markdown
