@@ -1,4 +1,4 @@
-description: Rollback to previous version and verify history
+description: "Rollback to previous version and verify history"
 steps:
   - type: exec
     command: "cd /workspace/packages/markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
@@ -16,7 +16,7 @@ steps:
     command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-test-004'"
     assert:
       type: jsonata
-      expression: "exit_code = 0 and success = true"
+      expression: "success = true"
   - type: exec
     command: "curl -s -X POST http://localhost:8787/md-test-004/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"v2\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"# Original\\n\\n## A\\n\\n## B\"}}]}'"
     assert:

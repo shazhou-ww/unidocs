@@ -1,0 +1,8 @@
+description: "Markdown document type — test group"
+steps: []
+primary: create
+branches:
+  - edit-lifecycle
+  - conflict
+  - rollback
+  - clone
