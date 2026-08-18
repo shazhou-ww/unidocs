@@ -1,16 +1,12 @@
 description: "Copy project from /app mount, install deps, build all packages"
 steps:
-  - type: exec
-    command: "cp -r /app /workspace"
+  - command: "cp -r /app /workspace"
     timeout: "30s"
-  - type: exec
-    command: "cd /workspace && pnpm install"
+  - command: "cd /workspace && pnpm install"
     timeout: "300s"
-  - type: exec
-    command: "cd /workspace && pnpm -r build"
+  - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
-  - type: exec
-    command: "ls /workspace/packages/markdown/dist/worker.js"
+  - command: "ls /workspace/packages/markdown/dist/worker.js"
     assert:
       type: regex
       conditions:

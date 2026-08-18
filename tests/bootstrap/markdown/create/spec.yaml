@@ -1,10 +1,8 @@
 description: "Create document and query empty content"
 steps:
-  - type: exec
-    command: "cd /workspace/packages/markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+  - command: "cd /workspace/packages/markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
     timeout: "5s"
-  - type: exec
-    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+  - command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
     wait:
       timeout: "60s"
       delay: "2s"
@@ -12,13 +10,11 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "^4" }
-  - type: exec
-    command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-test-001'"
+  - command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-test-001'"
     assert:
       type: jsonata
       expression: "success = true"
-  - type: exec
-    command: "curl -s -X POST http://localhost:8787/md-test-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+  - command: "curl -s -X POST http://localhost:8787/md-test-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
     assert:
       type: jsonata
       expression: "success = true and data = '' and version = 1"
