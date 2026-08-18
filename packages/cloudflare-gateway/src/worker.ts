@@ -71,7 +71,7 @@ export default {
           const snapshotHeaders = new Headers();
           snapshotHeaders.set("X-Doc-Type", docType);
           snapshotHeaders.set("X-Doc-Id", sourceId);
-          
+
           const snapshotResp = await sourceStub.fetch(new Request(snapshotUrl.toString(), {
             method: "GET",
             headers: snapshotHeaders,
@@ -83,7 +83,7 @@ export default {
           }
 
           const snapshotData = await snapshotResp.json() as { hash: string; version: number };
-          
+
           // If specific version requested, we need to handle that
           // For now, we only support cloning from current version
           if (sourceVersion && parseInt(sourceVersion) !== snapshotData.version) {

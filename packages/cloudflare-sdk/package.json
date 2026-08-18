@@ -1,7 +1,7 @@
 {
-  "name": "@unidocs/sdk",
+  "name": "@unidocs/cloudflare-sdk",
   "version": "0.1.0",
-  "description": "UniDocs SDK — types and runtime for building document editor/operator pairs",
+  "description": "Cloudflare runtime for UniDocs document editor/operator pairs",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,12 +11,17 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@unidocs/core": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

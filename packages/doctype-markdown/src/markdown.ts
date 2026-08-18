@@ -2,8 +2,11 @@
  * Markdown DocumentType implementation.
  */
 
-import type { DocumentType } from "@unidocs/sdk";
+import type { DocumentTypeFactory } from "@unidocs/core";
 import type { MDoc, MQuery, MOp } from "./types.js";
+
+export type MarkdownOptions = Record<string, never>;
+export type MarkdownDocumentTypeFactory = DocumentTypeFactory<MarkdownOptions, MDoc, MQuery, MOp>;
 
 /** Helper: extract section by heading (case-insensitive, supports nested headings). */
 function getSection(content: string, heading: string): string | null {
@@ -50,7 +53,7 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export const markdown: DocumentType<MDoc, MQuery, MOp> = {
+export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_options) => ({
   init: () => ({ content: "" }),
 
   query: async (q, doc) => {
@@ -166,4 +169,4 @@ When editing:
 - Use deleteSection to remove sections
 
 Be precise with heading names (case-insensitive matching).`,
-};
+});

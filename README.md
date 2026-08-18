@@ -44,9 +44,11 @@ Snapshots are created every 20 deltas since the last snapshot.
 
 ```
 packages/
-├── sdk/         @unidocs/sdk       — Core types + DO factories (createEditorDO, createOperatorDO)
-├── gateway/     @unidocs/gateway   — API Gateway (auth + routing)
-└── markdown/    @unidocs/markdown  — Markdown document type (reference implementation)
+├── core/                  @unidocs/core                  — Cloud-neutral document contracts
+├── doctype-markdown/      @unidocs/doctype-markdown      — Cloud-neutral Markdown document type
+├── cloudflare-sdk/        @unidocs/cloudflare-sdk        — Durable Object runtime factories
+├── cloudflare-gateway/    @unidocs/cloudflare-gateway    — Cloudflare API Gateway
+└── cloudflare-markdown/   @unidocs/cloudflare-markdown   — Cloudflare Markdown deployment
 ```
 
 ## API
@@ -163,32 +165,36 @@ Clears conversation history and version tracking.
 
 ## Adding a document type
 
-1. Create a new package: `packages/mytype/`
-2. Implement the ten-tuple contract:
+1. Create a cloud-neutral package: `packages/doctype-mytype/`
+2. Export a configured `DocumentType` factory:
 
 ```typescript
-// types
-TDocument     // in-memory model
-TQuery        // query types (discriminated union)
-TOperation    // operation types (discriminated union)
+import type { DocumentTypeFactory } from "@unidocs/core";
 
-// functions
-init()                              → TDocument
-query(q: TQuery, doc: TDocument)    → Promise<any>
-apply(op: TOperation, doc: TDocument) → TDocument
-load(bytes: Uint8Array)             → TDocument
-save(doc: TDocument)                → Uint8Array
+export interface MytypeOptions {
+  renderPage(page: number): Promise<string>;
+}
 
-// prompts
-tools: Record<string, ToolDefinition>
-instructions: string
+export const createMytypeDocumentType:
+  DocumentTypeFactory<MytypeOptions, MyDocument, MyQuery, MyOperation> =
+  options => ({
+    init: ...,
+    query: ...,
+    apply: ...,
+    load: ...,
+    save: ...,
+    tools: ...,
+    instructions: ...,
+  });
 ```
 
-3. Use SDK factories:
+3. Create a separate Cloudflare adapter package and use the runtime factories:
 
 ```typescript
-import { createEditorDO, createOperatorDO } from "@unidocs/sdk";
-import { mytype } from "./mytype.js";
+import { createEditorDO, createOperatorDO } from "@unidocs/cloudflare-sdk";
+import { createMytypeDocumentType } from "@unidocs/doctype-mytype";
+
+const mytype = createMytypeDocumentType(options);
 
 export const MytypeEditor = createEditorDO(mytype);
 export const MytypeOperator = createOperatorDO({

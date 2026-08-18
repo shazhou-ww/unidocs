@@ -11,7 +11,7 @@
  * - If 409 conflict, the error includes current version so LLM can retry
  */
 
-import type { DocumentType } from "./types.js";
+import type { DocumentType } from "@unidocs/core";
 
 export interface OperatorConfig<TDoc, TQuery, TOp> extends DocumentType<TDoc, TQuery, TOp> {
   /** LLM provider function: takes messages + tools, returns completion. */

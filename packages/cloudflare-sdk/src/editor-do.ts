@@ -41,7 +41,7 @@
  *   POST /_internal/init_from_hash — initialize from existing snapshot hash (for clone)
  */
 
-import type { DocumentType } from "./types.js";
+import type { DocumentType } from "@unidocs/core";
 import type { HistoryEntry, ApplyResult } from "./history.js";
 
 // KV keys

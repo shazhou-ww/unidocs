@@ -8,8 +8,10 @@
  * routing requests to the appropriate DO based on path.
  */
 
-import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/sdk";
-import { markdown } from "./markdown.js";
+import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
+import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
+
+const markdown = createMarkdownDocumentType({});
 
 // Generate Editor and Operator Durable Objects from the markdown DocumentType
 export const MarkdownEditor = createEditorDO(markdown);

@@ -6,7 +6,7 @@ steps:
     timeout: "300s"
   - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
-  - command: "ls /workspace/packages/markdown/dist/worker.js"
+  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js"
     assert:
       type: regex
       conditions:

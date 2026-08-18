@@ -4,8 +4,20 @@
     "noEmit": true
   },
   "references": [
-    { "path": "packages/sdk" },
-    { "path": "packages/markdown" },
-    { "path": "packages/gateway" }
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/doctype-markdown"
+    },
+    {
+      "path": "packages/cloudflare-sdk"
+    },
+    {
+      "path": "packages/cloudflare-markdown"
+    },
+    {
+      "path": "packages/cloudflare-gateway"
+    }
   ]
 }

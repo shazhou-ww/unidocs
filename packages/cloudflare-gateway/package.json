@@ -1,25 +1,22 @@
 {
-  "name": "@unidocs/markdown",
+  "name": "@unidocs/cloudflare-gateway",
   "version": "0.1.0",
-  "description": "Markdown document type for UniDocs",
+  "description": "Cloudflare API Gateway for UniDocs document type workers",
   "type": "module",
   "main": "./dist/worker.js",
   "types": "./dist/worker.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "deploy": "wrangler deploy"
   },
-  "dependencies": {
-    "@unidocs/sdk": "workspace:*"
-  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0",
     "wrangler": "^4.20.0"
   }
 }

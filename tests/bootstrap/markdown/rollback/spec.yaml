@@ -1,6 +1,6 @@
 description: "Rollback to previous version and verify history"
 steps:
-  - command: "cd /workspace/packages/markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
     timeout: "5s"
   - command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
     wait:

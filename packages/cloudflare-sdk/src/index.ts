@@ -1,11 +1,11 @@
 /**
- * @unidocs/sdk — Universal Docs SDK.
+ * @unidocs/cloudflare-sdk — Cloudflare runtime for UniDocs.
  *
  * Provides types and runtime for building document editor/operator pairs.
  */
 
-// Types
-export type { DocumentType, AgentToolDefinition } from "./types.js";
+// Cloud-neutral types
+export type { DocumentType, AgentToolDefinition, DocumentTypeFactory } from "@unidocs/core";
 export type { HistoryEntry, ApplyResult, RollbackResult, CreateResult } from "./history.js";
 export type { DocContext, SnapshotRecord, EditorDOClass, EditorDOInstance } from "./editor-do.js";
 export type { OperatorDOClass, OperatorDOInstance } from "./operator-do.js";
