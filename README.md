@@ -46,6 +46,7 @@ Snapshots are created every 20 deltas since the last snapshot.
 packages/
 ├── core/                  @unidocs/core                  — Cloud-neutral document contracts
 ├── doctype-markdown/      @unidocs/doctype-markdown      — Cloud-neutral Markdown document type
+├── doctype-docx/          @unidocs/doctype-docx          — Cloud-neutral DOCX document type
 ├── cloudflare-sdk/        @unidocs/cloudflare-sdk        — Durable Object runtime factories
 ├── cloudflare-gateway/    @unidocs/cloudflare-gateway    — Cloudflare API Gateway
 └── cloudflare-markdown/   @unidocs/cloudflare-markdown   — Cloudflare Markdown deployment

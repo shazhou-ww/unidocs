@@ -74,6 +74,22 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  packages/doctype-docx:
+    dependencies:
+      '@ariadng/office':
+        specifier: 0.3.0
+        version: 0.3.0
+      '@unidocs/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/doctype-markdown:
     dependencies:
       '@unidocs/core':
@@ -88,6 +104,10 @@ importers:
         version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
 packages:
+
+  '@ariadng/office@0.3.0':
+    resolution: {integrity: sha512-a1x/o66QXd23ak/vd7K1P0LWFQAkisplk1d8ZMbQ6P2+Hx6WXeA7qIqKDcMEyZWec72b+hcLHyRnKUQi7qZ3Mg==}
+    engines: {node: '>=20'}
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -1142,6 +1162,8 @@ packages:
     resolution: {integrity: sha512-rLfVLB4FgQneDr0dv1oddCVZmKjcJ6yX6mS4pU82Mq/Dt9a3cLZQ62pDBL4AUO+uVrCvtWz3ZFUL2HFAFJ/BXQ==}
 
 snapshots:
+
+  '@ariadng/office@0.3.0': {}
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 

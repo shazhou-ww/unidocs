@@ -11,6 +11,9 @@
       "path": "packages/doctype-markdown"
     },
     {
+      "path": "packages/doctype-docx"
+    },
+    {
       "path": "packages/cloudflare-sdk"
     },
     {
