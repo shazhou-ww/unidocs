@@ -21,7 +21,11 @@ steps:
   - command: "curl -s -X POST http://localhost:8787/md-test-002/query -H 'Content-Type: application/json' -d '{\"kind\":\"getHeadings\"}'"
     assert:
       type: jsonata
-      expression: "success = true"
+      expression: "success = true and $count(data) = 3"
+  - command: "curl -s -X POST http://localhost:8787/md-test-002/query -H 'Content-Type: application/json' -d '{\"kind\":\"getSection\",\"payload\":{\"heading\":\"A\"}}'"
+    assert:
+      type: jsonata
+      expression: "success = true and $contains(data, '## A')"
   - command: "curl -s -X POST http://localhost:8787/md-test-002/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Append C\",\"operations\":[{\"kind\":\"appendSection\",\"payload\":{\"heading\":\"C\",\"content\":\"Content C.\"}}]}'"
     assert:
       type: jsonata
@@ -34,3 +38,8 @@ steps:
     assert:
       type: jsonata
       expression: "success = true and version = 4"
+  - command: "curl -s http://localhost:8787/md-test-002/export"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "Updated B" }
