@@ -3,4 +3,4 @@ image:
   dockerfile: e2e/Dockerfile
   tag: unidocs-test:base
 projectDir: .
-spec: packages/markdown/e2e
+spec: tests
