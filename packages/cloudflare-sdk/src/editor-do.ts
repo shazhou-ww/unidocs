@@ -43,6 +43,7 @@
 
 import type { DocumentType } from "@unidocs/core";
 import type { HistoryEntry, ApplyResult } from "./history.js";
+import { encodeQueryValue } from "./query-value.js";
 
 // KV keys
 const KEY_DOC_TYPE = "docType";
@@ -91,6 +92,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     #version: number = 0;
     #ctx: DurableObjectState;
     #env: Env;
+    #requestTail: Promise<void> = Promise.resolve();
 
     constructor(ctx: DurableObjectState, env: Env) {
       this.#ctx = ctx;
@@ -120,7 +122,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       // Load from KV snapshot
       const snapshot = await this.#ctx.storage.get<SnapshotKV>(KEY_SNAPSHOT);
       if (snapshot) {
-        this.#doc = config.load(snapshot.bytes);
+        this.#doc = await config.load(snapshot.bytes);
         this.#version = snapshot.version;
       }
 
@@ -132,9 +134,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
       for (const row of result.toArray()) {
         const ops = JSON.parse(row.operations as string) as TOp[];
-        for (const op of ops) {
-          this.#doc = config.apply(op, this.#doc!);
-        }
+        this.#doc = await config.apply(ops, this.#doc!);
         this.#version = row.version as number;
       }
 
@@ -146,7 +146,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
     async #saveSnapshotKV(): Promise<void> {
       if (!this.#doc) return;
-      const bytes = config.save(this.#doc);
+      const bytes = await config.save(this.#doc);
       const snapshotKV: SnapshotKV = { version: this.#version, bytes };
       await this.#ctx.storage.put(KEY_SNAPSHOT, snapshotKV);
     }
@@ -175,7 +175,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     async #saveSnapshot(): Promise<void> {
       if (!this.#doc) return;
 
-      const bytes = config.save(this.#doc);
+      const bytes = await config.save(this.#doc);
       const hash = await computeHash(bytes);
 
       // Write to R2 CAS (idempotent - same content = same hash)
@@ -203,6 +203,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     }
 
     async fetch(request: Request): Promise<Response> {
+      const response = this.#requestTail.then(() => this.#handleRequest(request));
+      this.#requestTail = response.then(
+        () => undefined,
+        () => undefined,
+      );
+      return response;
+    }
+
+    async #handleRequest(request: Request): Promise<Response> {
       await this.#ensureLoaded();
 
       const url = new URL(request.url);
@@ -235,11 +244,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
           if (file) {
             const bytes = new Uint8Array(await file.arrayBuffer());
-            this.#doc = config.load(bytes);
+            this.#doc = await config.load(bytes);
           } else if (sourceId) {
             return Response.json({ success: false, error: "Clone should be handled at worker level" }, { status: 400 });
           } else {
-            this.#doc = config.init();
+            this.#doc = await config.init();
           }
 
           // Insert initial delta in sqlite
@@ -277,7 +286,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           }
 
           const bytes = await obj.bytes();
-          this.#doc = config.load(bytes);
+          this.#doc = await config.load(bytes);
 
           // Store immutable context
           const docType = request.headers.get("X-Doc-Type") || "unknown";
@@ -324,12 +333,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
         // GET /_internal/export — download document
         if (method === "GET" && endpoint === "/_internal/export") {
-          const bytes = config.save(this.#doc);
-          const contentType = config.contentType || "application/octet-stream";
+          const bytes = await config.save(this.#doc);
           const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
           return new Response(bytes, {
             headers: {
-              "Content-Type": contentType,
+              "Content-Type": config.contentType,
               "Content-Disposition": `attachment; filename="${docId || "document"}"`,
             },
           });
@@ -339,7 +347,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         if (method === "POST" && endpoint === "/_internal/query") {
           const q = await request.json() as TQuery;
           const data = await config.query(q, this.#doc);
-          return Response.json({ success: true, data, version: this.#version });
+          return Response.json({ success: true, data: encodeQueryValue(data), version: this.#version });
         }
 
         // POST /_internal/apply — apply delta (batch of operations, transactional)
@@ -363,11 +371,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           }
 
           // Apply all operations transactionally (in-memory)
-          let newDoc: TDoc = this.#doc!;
+          let newDoc: TDoc;
           try {
-            for (const op of body.operations) {
-              newDoc = config.apply(op, newDoc);
-            }
+            newDoc = await config.apply(body.operations, this.#doc!);
           } catch (err) {
             return Response.json(
               { success: false, version: this.#version, error: `Delta failed: ${err}` },
@@ -474,11 +480,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
               );
             }
             const bytes = await obj.bytes();
-            baseDoc = config.load(bytes);
+            baseDoc = await config.load(bytes);
             baseVersion = snapRow.version as number;
           } else {
             // No snapshot, replay from beginning
-            baseDoc = config.init();
+            baseDoc = await config.init();
             baseVersion = 0;
           }
 
@@ -491,9 +497,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
           for (const row of deltaResult.toArray()) {
             const ops = JSON.parse(row.operations as string) as TOp[];
-            for (const op of ops) {
-              baseDoc = config.apply(op, baseDoc);
-            }
+            baseDoc = await config.apply(ops, baseDoc);
           }
 
           // Insert rollback delta
@@ -530,7 +534,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           // Ensure we have a snapshot for current version
           await this.#saveSnapshot();
 
-          const bytes = config.save(this.#doc);
+          const bytes = await config.save(this.#doc);
           const hash = await computeHash(bytes);
 
           return Response.json({

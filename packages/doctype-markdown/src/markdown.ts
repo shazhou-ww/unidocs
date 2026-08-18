@@ -54,7 +54,7 @@ function escapeRegex(str: string): string {
 }
 
 export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_options) => ({
-  init: () => ({ content: "" }),
+  init: async () => ({ content: "" }),
 
   query: async (q, doc) => {
     switch (q.kind) {
@@ -67,31 +67,37 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_options
     }
   },
 
-  apply: (op, doc) => {
-    switch (op.kind) {
-      case "setContent":
-        return { content: op.payload.content };
-      case "appendSection":
-        return {
-          content: doc.content + `\n\n## ${op.payload.heading}\n\n${op.payload.content}`,
-        };
-      case "replaceSection": {
-        const section = getSection(doc.content, op.payload.heading);
-        if (!section) throw new Error(`Section not found: ${op.payload.heading}`);
-        const newContent = doc.content.replace(section, `## ${op.payload.heading}\n\n${op.payload.content}`);
-        return { content: newContent };
-      }
-      case "deleteSection": {
-        const section = getSection(doc.content, op.payload.heading);
-        if (!section) throw new Error(`Section not found: ${op.payload.heading}`);
-        const newContent = doc.content.replace(section, "");
-        return { content: newContent };
+  apply: async (operations, doc) => {
+    let content = doc.content;
+
+    for (const op of operations) {
+      switch (op.kind) {
+        case "setContent":
+          content = op.payload.content;
+          break;
+        case "appendSection":
+          content += `\n\n## ${op.payload.heading}\n\n${op.payload.content}`;
+          break;
+        case "replaceSection": {
+          const section = getSection(content, op.payload.heading);
+          if (!section) throw new Error(`Section not found: ${op.payload.heading}`);
+          content = content.replace(section, `## ${op.payload.heading}\n\n${op.payload.content}`);
+          break;
+        }
+        case "deleteSection": {
+          const section = getSection(content, op.payload.heading);
+          if (!section) throw new Error(`Section not found: ${op.payload.heading}`);
+          content = content.replace(section, "");
+          break;
+        }
       }
     }
+
+    return { content };
   },
 
-  load: (data) => ({ content: new TextDecoder().decode(data) }),
-  save: (doc) => new TextEncoder().encode(doc.content),
+  load: async (data) => ({ content: new TextDecoder().decode(data) }),
+  save: async (doc) => new TextEncoder().encode(doc.content),
   contentType: "text/markdown; charset=utf-8",
 
   tools: {

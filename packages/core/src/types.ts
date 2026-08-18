@@ -5,25 +5,34 @@ export interface AgentToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+/** Scalar value returned by a document query. */
+export type QueryPrimitive = string | number | boolean | null | Uint8Array;
+
+/** Recursively structured document query result. */
+export type QueryValue =
+  | QueryPrimitive
+  | readonly QueryValue[]
+  | { readonly [key: string]: QueryValue };
+
 /** Cloud-neutral specification of a document type. */
 export interface DocumentType<TDoc, TQuery, TOp> {
   /** Create a new empty document. */
-  init: () => TDoc;
+  init: () => Promise<TDoc>;
 
-  /** Execute a read query against the document. Resolves to a JSON-serializable result. */
-  query: (query: TQuery, doc: TDoc) => Promise<unknown>;
+  /** Execute a read query against the document. Binary values are encoded by the runtime. */
+  query: (query: TQuery, doc: TDoc) => Promise<QueryValue>;
 
-  /** Apply a single atomic operation. Returns the new document state. Throws on failure. */
-  apply: (operation: TOp, doc: TDoc) => TDoc;
+  /** Apply an ordered operation batch atomically. Resolves to the new document state. */
+  apply: (operations: readonly TOp[], doc: TDoc) => Promise<TDoc>;
 
   /** Deserialize a document from binary bytes. */
-  load: (data: Uint8Array) => TDoc;
+  load: (data: Uint8Array) => Promise<TDoc>;
 
   /** Serialize a document to binary bytes. */
-  save: (doc: TDoc) => Uint8Array;
+  save: (doc: TDoc) => Promise<Uint8Array>;
 
-  /** Optional MIME type for document export. */
-  contentType?: string;
+  /** MIME type for document export. */
+  contentType: string;
 
   /** Agent tool definitions for the operator loop. */
   tools: Record<string, AgentToolDefinition>;
