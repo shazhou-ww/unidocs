@@ -18,7 +18,7 @@ Client → Gateway (auth + routing) → Editor DO / Operator DO (per document in
 
 | Layer | Storage | Purpose |
 |-------|---------|---------|
-| KV | `docType`, `docId`, `snapshot`, `lastActivity` | Immutable facts + latest snapshot cache |
+| KV | `docType`, `docId`, `snapshot` | Immutable facts + latest snapshot cache |
 | DO sqlite | `deltas`, `snapshots` | Operation history + snapshot index |
 | Shared D1 | `snapshots` | Global snapshot index (cross-DO clone support) |
 | R2 CAS | `hash → bytes` | Content-addressed snapshot storage (dedup) |
@@ -38,9 +38,7 @@ Write order on every delta:
 
 ### Snapshot strategy
 
-Two triggers:
-- **Delta threshold**: every 20 deltas since last snapshot
-- **Idle threshold**: after 5 minutes of inactivity (if unsnapshotted deltas exist)
+Snapshots are created every 20 deltas since the last snapshot.
 
 ## Packages
 

@@ -29,7 +29,6 @@
  *
  * Snapshot strategy:
  *   - Every 20 deltas since last snapshot
- *   - After 5 minutes of inactivity (idle threshold)
  *
  * Internal endpoints (called by Gateway):
  *   POST /_internal/create    — create new document (multipart/form-data)
@@ -43,17 +42,15 @@
  */
 
 import type { DocumentType } from "./types.js";
-import type { HistoryEntry, ApplyResult, RollbackResult } from "./history.js";
+import type { HistoryEntry, ApplyResult } from "./history.js";
 
 // KV keys
 const KEY_DOC_TYPE = "docType";
 const KEY_DOC_ID = "docId";
 const KEY_SNAPSHOT = "snapshot";
-const KEY_LAST_ACTIVITY = "lastActivity";
 
 // Snapshot thresholds
 const DELTA_THRESHOLD = 20; // Snapshot every N deltas
-const IDLE_THRESHOLD_MS = 5 * 60 * 1000; // Snapshot after 5 min inactivity
 
 interface SnapshotKV {
   version: number;
@@ -76,13 +73,19 @@ export interface Env {
   CAS: R2Bucket;
 }
 
+export interface EditorDOInstance {
+  fetch(request: Request): Promise<Response>;
+}
+
+export type EditorDOClass = new (ctx: DurableObjectState, env: Env) => EditorDOInstance;
+
 async function computeHash(bytes: Uint8Array): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQuery, TOp>) {
+export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQuery, TOp>): EditorDOClass {
   return class EditorDO {
     #doc: TDoc | null = null;
     #version: number = 0;
@@ -169,21 +172,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       return deltasSince >= DELTA_THRESHOLD;
     }
 
-    async #shouldSnapshotIdle(): Promise<boolean> {
-      const lastActivity = await this.#ctx.storage.get<number>(KEY_LAST_ACTIVITY);
-      if (!lastActivity) return false;
-
-      const idleTime = Date.now() - lastActivity;
-      if (idleTime < IDLE_THRESHOLD_MS) return false;
-
-      // Check if there are unsnapshotted deltas
-      const snapResult = this.#ctx.storage.sql.exec(`SELECT MAX(version) as max_v FROM snapshots`);
-      const snapRow = snapResult.one();
-      const lastSnapshotVersion = (snapRow.max_v as number) ?? 0;
-
-      return this.#version > lastSnapshotVersion;
-    }
-
     async #saveSnapshot(): Promise<void> {
       if (!this.#doc) return;
 
@@ -196,11 +184,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       // Record in shared D1 (ensure table exists first)
       const docType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
       const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
-      
+
       await this.#env.SNAPSHOTS_DB.exec(
         "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))"
       );
-      
+
       await this.#env.SNAPSHOTS_DB.prepare(
         `INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
       ).bind(hash, docType, docId, this.#version, Date.now()).run();
@@ -212,16 +200,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         hash,
         Date.now(),
       );
-    }
-
-    async #updateLastActivity(): Promise<void> {
-      await this.#ctx.storage.put(KEY_LAST_ACTIVITY, Date.now());
-    }
-
-    async #checkIdleSnapshot(): Promise<void> {
-      if (await this.#shouldSnapshotIdle()) {
-        await this.#saveSnapshot();
-      }
     }
 
     async fetch(request: Request): Promise<Response> {
@@ -280,9 +258,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           // Save initial snapshot to R2 + D1
           await this.#saveSnapshot();
 
-          // Update last activity
-          await this.#updateLastActivity();
-
           return Response.json({ success: true, docId, version: 1 });
         }
 
@@ -339,9 +314,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             Date.now(),
           );
 
-          // Update last activity
-          await this.#updateLastActivity();
-
           return Response.json({ success: true, docId, version: 1 });
         }
 
@@ -349,9 +321,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         if (this.#doc === null) {
           return Response.json({ success: false, error: "Document not initialized. POST /{docType}/ to create." }, { status: 404 });
         }
-
-        // Update last activity for all operations
-        await this.#updateLastActivity();
 
         // GET /_internal/export — download document
         if (method === "GET" && endpoint === "/_internal/export") {

@@ -5,11 +5,10 @@
  */
 
 /** Agent tool definition for Operator's tool dispatch. */
-export interface AgentToolDefinition<TInput = unknown, TOutput = unknown> {
+export interface AgentToolDefinition {
   name: string;
   description: string;
-  inputSchema: TInput; // Zod schema or JSON Schema
-  outputSchema?: TOutput; // Optional, for documentation
+  inputSchema: Record<string, unknown>;
 }
 
 /**
@@ -20,14 +19,6 @@ export interface AgentToolDefinition<TInput = unknown, TOutput = unknown> {
  * @typeParam TOp    - Operation type (discriminated union)
  */
 export interface DocumentType<TDoc, TQuery, TOp> {
-  // === Types ===
-  /** Document in-memory model type (for documentation/type hints). */
-  readonly _docType?: TDoc;
-  /** Query type (for documentation/type hints). */
-  readonly _queryType?: TQuery;
-  /** Operation type (for documentation/type hints). */
-  readonly _opType?: TOp;
-
   // === Functions ===
   /** Create a new empty document. */
   init: () => TDoc;

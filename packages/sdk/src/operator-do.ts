@@ -20,13 +20,19 @@ export interface OperatorConfig<TDoc, TQuery, TOp> extends DocumentType<TDoc, TQ
   getEditorStub: (docId: string) => DurableObjectStub;
 }
 
-export function createOperatorDO<TDoc, TQuery, TOp>(config: OperatorConfig<TDoc, TQuery, TOp>) {
+export interface OperatorDOInstance {
+  fetch(request: Request): Promise<Response>;
+}
+
+export type OperatorDOClass = new (ctx: DurableObjectState, env: unknown) => OperatorDOInstance;
+
+export function createOperatorDO<TDoc, TQuery, TOp>(config: OperatorConfig<TDoc, TQuery, TOp>): OperatorDOClass {
   return class OperatorDO {
-    #session: unknown[] = [];
+    #session: unknown[] = [{ role: "system", content: config.instructions }];
     #lastKnownVersion: number | null = null;
     #ctx: DurableObjectState;
 
-    constructor(ctx: DurableObjectState, env: unknown) {
+    constructor(ctx: DurableObjectState, _env: unknown) {
       this.#ctx = ctx;
     }
 
@@ -150,7 +156,7 @@ export function createOperatorDO<TDoc, TQuery, TOp>(config: OperatorConfig<TDoc,
 
         // POST /_internal/reset — clear session
         if (method === "POST" && endpoint === "/_internal/reset") {
-          this.#session = [];
+          this.#session = [{ role: "system", content: config.instructions }];
           this.#lastKnownVersion = null;
           return Response.json({ success: true });
         }
