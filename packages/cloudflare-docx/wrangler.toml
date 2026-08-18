@@ -1,18 +1,18 @@
-name = "unidocs-markdown"
+name = "unidocs-docx"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
 [[durable_objects.bindings]]
-name = "MARKDOWN_EDITOR"
-class_name = "MarkdownEditor"
+name = "DOCX_EDITOR"
+class_name = "DocxEditor"
 
 [[durable_objects.bindings]]
-name = "MARKDOWN_OPERATOR"
-class_name = "MarkdownOperator"
+name = "DOCX_OPERATOR"
+class_name = "DocxOperator"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["MarkdownEditor", "MarkdownOperator"]
+new_sqlite_classes = ["DocxEditor", "DocxOperator"]
 
 [[d1_databases]]
 binding = "SNAPSHOTS_DB"

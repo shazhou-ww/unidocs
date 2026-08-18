@@ -48,6 +48,7 @@ import { encodeQueryValue } from "./query-value.js";
 // KV keys
 const KEY_DOC_TYPE = "docType";
 const KEY_DOC_ID = "docId";
+const KEY_USER_ID = "userId";
 const KEY_SNAPSHOT = "snapshot";
 
 // Snapshot thresholds
@@ -193,6 +194,17 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         `INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
       ).bind(hash, docType, docId, this.#version, Date.now()).run();
 
+      // Update docs table timestamp
+      const userId = await this.#ctx.storage.get<string>(KEY_USER_ID);
+      if (userId) {
+        await this.#env.SNAPSHOTS_DB.exec(
+          "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))"
+        );
+        await this.#env.SNAPSHOTS_DB.prepare(
+          `UPDATE docs SET updated_at = ? WHERE doc_id = ? AND doc_type = ? AND owner_id = ?`
+        ).bind(Date.now(), docId, docType, userId).run();
+      }
+
       // Record in local sqlite snapshots table (for rollback)
       this.#ctx.storage.sql.exec(
         `INSERT OR REPLACE INTO snapshots (version, hash, timestamp) VALUES (?, ?, ?)`,
@@ -229,8 +241,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           // Store immutable context in KV
           const docType = request.headers.get("X-Doc-Type") || "unknown";
           const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
+          const userId = request.headers.get("X-User-Id") || "anonymous";
           await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
           await this.#ctx.storage.put(KEY_DOC_ID, docId);
+          await this.#ctx.storage.put(KEY_USER_ID, userId);
 
           const contentType = request.headers.get("content-type") || "";
           let file: File | null = null;
@@ -267,6 +281,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           // Save initial snapshot to R2 + D1
           await this.#saveSnapshot();
 
+          // Register in docs table (global index for listing)
+          await this.#env.SNAPSHOTS_DB.exec(
+            "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))"
+          );
+          const now = Date.now();
+          await this.#env.SNAPSHOTS_DB.prepare(
+            `INSERT OR REPLACE INTO docs (doc_id, doc_type, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+          ).bind(docId, docType, userId, now, now).run();
+
           return Response.json({ success: true, docId, version: 1 });
         }
 
@@ -291,8 +314,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           // Store immutable context
           const docType = request.headers.get("X-Doc-Type") || "unknown";
           const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
+          const userId = request.headers.get("X-User-Id") || "anonymous";
           await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
           await this.#ctx.storage.put(KEY_DOC_ID, docId);
+          await this.#ctx.storage.put(KEY_USER_ID, userId);
 
           // Insert initial delta
           this.#version = 1;
@@ -322,6 +347,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             body.hash,
             Date.now(),
           );
+
+          // Register in docs table (global index for listing)
+          await this.#env.SNAPSHOTS_DB.exec(
+            "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))"
+          );
+          const now = Date.now();
+          await this.#env.SNAPSHOTS_DB.prepare(
+            `INSERT OR REPLACE INTO docs (doc_id, doc_type, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+          ).bind(docId, docType, userId, now, now).run();
 
           return Response.json({ success: true, docId, version: 1 });
         }

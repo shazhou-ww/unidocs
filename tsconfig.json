@@ -20,6 +20,9 @@
       "path": "packages/cloudflare-markdown"
     },
     {
+      "path": "packages/cloudflare-docx"
+    },
+    {
       "path": "packages/cloudflare-gateway"
     }
   ]

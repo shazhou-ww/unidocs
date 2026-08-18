@@ -1,7 +1,7 @@
 /**
- * Cloudflare Worker entry point for Markdown document type.
+ * Cloudflare Worker entry point for DOCX document type.
  *
- * Exports two Durable Object classes (MarkdownEditor, MarkdownOperator)
+ * Exports two Durable Object classes (DocxEditor, DocxOperator)
  * that the Gateway forwards to via HTTP.
  *
  * URL pattern (called by Gateway after stripping /{docType}):
@@ -20,14 +20,14 @@
  */
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
-import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
+import { createDocxDocumentType } from "@unidocs/doctype-docx";
 
-const markdown = createMarkdownDocumentType({});
+const docx = createDocxDocumentType({});
 
-// Generate Editor and Operator Durable Objects from the markdown DocumentType
-export const MarkdownEditor = createEditorDO(markdown);
-export const MarkdownOperator = createOperatorDO({
-  ...markdown,
+// Generate Editor and Operator Durable Objects from the docx DocumentType
+export const DocxEditor = createEditorDO(docx);
+export const DocxOperator = createOperatorDO({
+  ...docx,
   llmProvider: async () => {
     throw new Error("LLM provider not configured. Set env.LLM_PROVIDER_URL and env.LLM_API_KEY.");
   },
@@ -37,8 +37,8 @@ export const MarkdownOperator = createOperatorDO({
 });
 
 interface Env extends EditorEnv {
-  MARKDOWN_EDITOR: DurableObjectNamespace;
-  MARKDOWN_OPERATOR: DurableObjectNamespace;
+  DOCX_EDITOR: DurableObjectNamespace;
+  DOCX_OPERATOR: DurableObjectNamespace;
   INTERNAL_TOKEN: string;
 }
 
@@ -73,12 +73,12 @@ export default {
     // POST /users/{userId}/ — create new document
     if (!docId && request.method === "POST") {
       const newDocId = request.headers.get("X-Doc-Id") || crypto.randomUUID();
-      const id = env.MARKDOWN_EDITOR.idFromName(`${userId}:${newDocId}`);
-      const stub = env.MARKDOWN_EDITOR.get(id);
+      const id = env.DOCX_EDITOR.idFromName(`${userId}:${newDocId}`);
+      const stub = env.DOCX_EDITOR.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = "/_internal/create";
       const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", "markdown");
+      headers.set("X-Doc-Type", "docx");
       headers.set("X-Doc-Id", newDocId);
       headers.set("X-User-Id", userId);
       return stub.fetch(new Request(forwardUrl.toString(), {
@@ -94,12 +94,12 @@ export default {
 
     // Editor endpoints
     if (EDITOR_METHODS.has(method)) {
-      const id = env.MARKDOWN_EDITOR.idFromName(`${userId}:${docId}`);
-      const stub = env.MARKDOWN_EDITOR.get(id);
+      const id = env.DOCX_EDITOR.idFromName(`${userId}:${docId}`);
+      const stub = env.DOCX_EDITOR.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = `/_internal/${method}`;
       const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", "markdown");
+      headers.set("X-Doc-Type", "docx");
       headers.set("X-User-Id", userId);
       headers.set("X-Doc-Id", docId);
       return stub.fetch(new Request(forwardUrl.toString(), {
@@ -111,12 +111,12 @@ export default {
 
     // Operator endpoints
     if (OPERATOR_METHODS.has(method)) {
-      const id = env.MARKDOWN_OPERATOR.idFromName(`${userId}:${docId}`);
-      const stub = env.MARKDOWN_OPERATOR.get(id);
+      const id = env.DOCX_OPERATOR.idFromName(`${userId}:${docId}`);
+      const stub = env.DOCX_OPERATOR.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = `/_internal/${method}`;
       const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", "markdown");
+      headers.set("X-Doc-Type", "docx");
       headers.set("X-User-Id", userId);
       headers.set("X-Doc-Id", docId);
       return stub.fetch(new Request(forwardUrl.toString(), {

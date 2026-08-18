@@ -1,0 +1,21 @@
+description: "Start wrangler, create DOCX document with initial paragraphs"
+steps:
+  - command: "cd /workspace/packages/cloudflare-docx && nohup pnpm wrangler dev --inspector-port 9230 --local --ip 0.0.0.0 --port 8789 > /tmp/docx.log 2>&1 & cd /workspace/packages/cloudflare-gateway && nohup pnpm wrangler dev --inspector-port 9231 --local --ip 0.0.0.0 --port 8787 > /tmp/gw.log 2>&1 & for i in $(seq 1 30); do sleep 2; DX=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8789/ 2>/dev/null || echo 000); GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $DX | grep -q '^4' && echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
+    timeout: "120s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "READY" }
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docx/ -H 'X-Doc-Id: docx-doc-001'"
+    assert:
+      type: jsonata
+      expression: "success = true"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docx/docx-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"Initial content\",\"operations\":[{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Hello World\"}},{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Section A\",\"options\":{\"style\":\"Heading1\"}}},{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Content of A.\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 2"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true and $contains(data, 'Hello World') and $contains(data, 'Section A')"
+primary: edit

@@ -1,24 +1,20 @@
 description: "Start wrangler, create markdown document with initial content"
 steps:
-  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
-    timeout: "5s"
-  - command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
-    wait:
-      timeout: "60s"
-      delay: "2s"
+  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --inspector-port 9229 --local --ip 0.0.0.0 --port 8788 > /tmp/md.log 2>&1 & cd /workspace/packages/cloudflare-gateway && nohup pnpm wrangler dev --inspector-port 9231 --local --ip 0.0.0.0 --port 8787 > /tmp/gw.log 2>&1 & for i in $(seq 1 30); do sleep 2; MD=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8788/ 2>/dev/null || echo 000); GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $MD | grep -q '^4' && echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
+    timeout: "120s"
     assert:
       type: regex
       conditions:
-        - { path: "stdout", regex: "^4" }
-  - command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-doc-001'"
+        - { path: "stdout", regex: "READY" }
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/ -H 'X-Doc-Id: md-doc-001'"
     assert:
       type: jsonata
       expression: "success = true"
-  - command: "curl -s -X POST http://localhost:8787/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"Initial content\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"# Title\\n\\n## A\\n\\nSection A content.\\n\\n## B\\n\\nSection B content.\"}}]}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"Initial content\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"# Title\\n\\n## A\\n\\nSection A content.\\n\\n## B\\n\\nSection B content.\"}}]}'"
     assert:
       type: jsonata
       expression: "success = true and version = 2"
-  - command: "curl -s -X POST http://localhost:8787/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
     assert:
       type: jsonata
       expression: "success = true and version = 2 and $contains(data, 'Title')"

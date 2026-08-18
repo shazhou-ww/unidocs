@@ -3,12 +3,16 @@ steps:
   - command: "cp -r /app /workspace"
     timeout: "30s"
   - command: "cd /workspace && pnpm install"
-    timeout: "300s"
+    timeout: "600s"
   - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
-  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js"
+  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js /workspace/packages/cloudflare-docx/dist/worker.js /workspace/packages/cloudflare-gateway/dist/worker.js"
     assert:
       type: regex
       conditions:
-        - { path: "stdout", regex: "worker.js" }
+        - { path: "stdout", regex: "cloudflare-markdown/dist/worker.js" }
+        - { path: "stdout", regex: "cloudflare-docx/dist/worker.js" }
+        - { path: "stdout", regex: "cloudflare-gateway/dist/worker.js" }
 primary: create-new-markdown
+branches:
+  - create-new-docx

@@ -1,24 +1,20 @@
 description: "Rollback to v2 and verify content reverts, history grows"
 steps:
-  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
-    timeout: "5s"
-  - command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
-    wait:
-      timeout: "60s"
-      delay: "2s"
+  - command: "cd /workspace/packages/cloudflare-markdown && nohup pnpm wrangler dev --inspector-port 9229 --local --ip 0.0.0.0 --port 8788 > /tmp/md.log 2>&1 & cd /workspace/packages/cloudflare-gateway && nohup pnpm wrangler dev --inspector-port 9231 --local --ip 0.0.0.0 --port 8787 > /tmp/gw.log 2>&1 & for i in $(seq 1 30); do sleep 2; MD=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8788/ 2>/dev/null || echo 000); GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $MD | grep -q '^4' && echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
+    timeout: "120s"
     assert:
       type: regex
       conditions:
-        - { path: "stdout", regex: "^4" }
-  - command: "curl -s -X POST http://localhost:8787/md-doc-001/rollback -H 'Content-Type: application/json' -d '{\"version\":2}'"
+        - { path: "stdout", regex: "READY" }
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/rollback -H 'Content-Type: application/json' -d '{\"version\":2}'"
     assert:
       type: jsonata
       expression: "success = true and version = 5"
-  - command: "curl -s -X POST http://localhost:8787/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
     assert:
       type: jsonata
       expression: "success = true and version = 5 and $contains(data, 'Section A content')"
-  - command: "curl -s http://localhost:8787/md-doc-001/history"
+  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/markdown/md-doc-001/history"
     assert:
       type: jsonata
       expression: "success = true and $count(data) = 5"
