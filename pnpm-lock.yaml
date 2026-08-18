@@ -11,12 +11,18 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      miniflare:
+        specifier: 5.20260811.1-alpha
+        version: 5.20260811.1-alpha
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
       vitest:
         specifier: ^3.2.0
-        version: 3.2.7(@types/node@24.13.3)(yaml@2.9.0)
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
   packages/cloudflare-docx:
     dependencies:
@@ -35,7 +41,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^3.2.0
-        version: 3.2.7(@types/node@24.13.3)(yaml@2.9.0)
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
       wrangler:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
@@ -69,7 +75,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^3.2.0
-        version: 3.2.7(@types/node@24.13.3)(yaml@2.9.0)
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
       wrangler:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
@@ -88,7 +94,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^3.2.0
-        version: 3.2.7(@types/node@24.13.3)(yaml@2.9.0)
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
   packages/core:
     devDependencies:
@@ -110,7 +116,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^3.2.0
-        version: 3.2.7(@types/node@24.13.3)(yaml@2.9.0)
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
   packages/doctype-markdown:
     dependencies:
@@ -123,7 +129,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^3.2.0
-        version: 3.2.7(@types/node@24.13.3)(yaml@2.9.0)
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
 packages:
 
@@ -1659,9 +1665,11 @@ snapshots:
 
   cookie@1.1.1: {}
 
-  debug@4.4.3:
+  debug@4.4.3(supports-color@10.2.2):
     dependencies:
       ms: 2.1.3
+    optionalDependencies:
+      supports-color: 10.2.2
 
   deep-eql@5.0.2: {}
 
@@ -1892,10 +1900,10 @@ snapshots:
     dependencies:
       pathe: 2.0.3
 
-  vite-node@3.2.4(@types/node@24.13.3)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       es-module-lexer: 1.7.0
       pathe: 2.0.3
       vite: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
@@ -1926,7 +1934,7 @@ snapshots:
       fsevents: 2.3.3
       yaml: 2.9.0
 
-  vitest@3.2.7(@types/node@24.13.3)(yaml@2.9.0):
+  vitest@3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.7
@@ -1937,7 +1945,7 @@ snapshots:
       '@vitest/spy': 3.2.7
       '@vitest/utils': 3.2.7
       chai: 5.3.3
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       expect-type: 1.4.0
       magic-string: 0.30.21
       pathe: 2.0.3
@@ -1949,7 +1957,7 @@ snapshots:
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
       vite: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@24.13.3)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.13.3

@@ -246,8 +246,14 @@ script_name = "unidocs-mytype"
 
 ```bash
 pnpm install
-pnpm build
-pnpm test        # (TODO)
+pnpm dev
+```
+
+Starts gateway (`:8787`), markdown (`:8788`), and docx (`:8789`) in one Miniflare process with shared D1/R2. The KV registry is seeded with each worker's URL:
+
+```
+POST http://127.0.0.1:8787/users/{userId}/markdown/
+POST http://127.0.0.1:8787/users/{userId}/docx/
 ```
 
 ## Infrastructure

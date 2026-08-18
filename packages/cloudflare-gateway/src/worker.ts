@@ -160,16 +160,9 @@ async function listDocuments(
   userId: string,
   docType: string,
 ): Promise<Response> {
-  await env.SNAPSHOTS_DB.exec(`
-    CREATE TABLE IF NOT EXISTS docs (
-      doc_id TEXT NOT NULL,
-      doc_type TEXT NOT NULL,
-      owner_id TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      PRIMARY KEY (doc_id, doc_type)
-    )
-  `);
+  await env.SNAPSHOTS_DB.exec(
+    "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))",
+  );
 
   const result = await env.SNAPSHOTS_DB
     .prepare("SELECT doc_id, doc_type, owner_id, created_at, updated_at FROM docs WHERE owner_id = ? AND doc_type = ? ORDER BY updated_at DESC")

@@ -2,13 +2,17 @@
   "name": "unidocs",
   "private": true,
   "scripts": {
+    "dev": "node scripts/dev.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "test:local": "vitest run scripts/local-runtime.test.mjs",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r clean"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "miniflare": "5.20260811.1-alpha",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
