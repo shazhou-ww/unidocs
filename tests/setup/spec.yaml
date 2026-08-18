@@ -1,0 +1,17 @@
+description: Copy project from ro mount, install dependencies, build packages
+steps:
+  - type: exec
+    command: "cp -r /app /workspace"
+    timeout: "30s"
+  - type: exec
+    command: "cd /workspace && pnpm install --frozen-lockfile"
+    timeout: "300s"
+  - type: exec
+    command: "cd /workspace && pnpm -r build"
+    timeout: "120s"
+  - type: exec
+    command: "ls /workspace/packages/markdown/dist/worker.js"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "worker.js" }

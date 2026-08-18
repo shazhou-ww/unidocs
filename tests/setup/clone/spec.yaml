@@ -1,0 +1,39 @@
+description: Snapshot and clone via content hash
+steps:
+  - type: exec
+    command: "cd /workspace/packages/markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+    timeout: "5s"
+  - type: exec
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^4" }
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-test-005'"
+    assert:
+      type: jsonata
+      expression: "exit_code = 0 and success = true"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-005/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"v2\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"# Source\\n\\n## A\\n\\n## B\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 2"
+  - type: exec
+    command: "curl -s http://localhost:8787/md-test-005/snapshot"
+    assert:
+      type: jsonata
+      expression: "success = true and hash != ''"
+  - type: exec
+    command: "HASH=$(curl -s http://localhost:8787/md-test-005/snapshot | node -e 'let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>console.log(JSON.parse(d).hash))') && VER=$(curl -s http://localhost:8787/md-test-005/snapshot | node -e 'let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>console.log(JSON.parse(d).version))') && curl -s -X POST http://localhost:8787/md-test-005-clone/init_from_hash -H 'Content-Type: application/json' -d \"{\\\"hash\\\":\\\"$HASH\\\",\\\"sourceVersion\\\":$VER}\""
+    assert:
+      type: jsonata
+      expression: "success = true and docId = 'md-test-005-clone'"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-005-clone/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 1"

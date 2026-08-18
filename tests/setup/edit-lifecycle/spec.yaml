@@ -1,0 +1,44 @@
+description: Set content, query, append, multi-op, verify
+steps:
+  - type: exec
+    command: "cd /workspace/packages/markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+    timeout: "5s"
+  - type: exec
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^4" }
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-test-002'"
+    assert:
+      type: jsonata
+      expression: "exit_code = 0 and success = true"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-002/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"Set content\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"# Hello\\n\\n## A\\n\\n## B\\n\\nContent B.\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 2"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-002/query -H 'Content-Type: application/json' -d '{\"kind\":\"getHeadings\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-002/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Append C\",\"operations\":[{\"kind\":\"appendSection\",\"payload\":{\"heading\":\"C\",\"content\":\"Content C.\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 3"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-002/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":3,\"description\":\"Replace B, delete A\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"B\",\"content\":\"Updated B.\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"A\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 4"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-002/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 4"

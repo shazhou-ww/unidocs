@@ -1,0 +1,39 @@
+description: Optimistic lock and transactional failure
+steps:
+  - type: exec
+    command: "cd /workspace/packages/markdown && nohup pnpm wrangler dev --local --ip 0.0.0.0 --port 8787 > /tmp/wrangler.log 2>&1 &"
+    timeout: "5s"
+  - type: exec
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/"
+    wait:
+      timeout: "60s"
+      delay: "2s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^4" }
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/create -H 'X-Doc-Id: md-test-003'"
+    assert:
+      type: jsonata
+      expression: "exit_code = 0 and success = true"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-003/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"v2\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"# Test\\n\\n## A\\n\\n## B\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 2"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-003/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"stale write\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"should fail\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = false"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-003/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"multi-op with failure\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"A\",\"content\":\"Updated A\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"NonExistent\"}}]}'"
+    assert:
+      type: jsonata
+      expression: "success = false"
+  - type: exec
+    command: "curl -s -X POST http://localhost:8787/md-test-003/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+    assert:
+      type: jsonata
+      expression: "success = true and version = 2"
