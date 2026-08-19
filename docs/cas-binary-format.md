@@ -4,7 +4,7 @@ Status: version 1 design specification
 
 Date: 2026-08-19
 
-Magic: `CAS\x02`
+Signature/version: `UD\x01\x00`
 
 This specification defines the canonical byte representation used to identify UniDocs CAS nodes. It is derived from the design principles in [CASFA Binary Format v2.2](https://github.com/shazhou-ww/casfa/blob/main/docs/tech-details/cas-binary-format.md), with these intentional changes:
 
@@ -12,6 +12,7 @@ This specification defines the canonical byte representation used to identify Un
 - 32-byte child references;
 - no digest-byte size flag;
 - a generic Merkle DAG node core rather than mandatory d-node/f-node/s-node types;
+- no built-in large-file chunking or directory model;
 - variable-length content type strings;
 - physical separation of immutable metadata in D1 and content bytes in R2;
 - canonical logical node bytes used as the SHA-256 preimage.
@@ -29,9 +30,6 @@ The lifecycle, lease, reference-count, and GC behavior is specified in [CAS Arch
 | Child ref | One ordered 32-byte hash embedded in immutable metadata |
 | Logical node bytes | Canonical header + content type + child refs + own content |
 | Ready node | A node with matching immutable D1 metadata and R2 own content |
-| Node limit | Maximum canonical logical node size for a profile, default 1 MiB |
-| Sequential file profile | An informative Merkle-tree layout whose preorder content concatenation reconstructs a file |
-| Directory profile | A canonical named child list modeled after CASFA d-nodes |
 
 ## 2. Core identity
 
@@ -85,7 +83,8 @@ Every logical node starts with a 24-byte header.
 
 ```text
 Offset  Size  Field               Type     Version 1 value
-0       4     magic               bytes    43 41 53 02 ("CAS\x02")
+0       2     signature           bytes    55 44 ("UD")
+2       2     version             u16 LE   1
 4       4     flags               u32 LE   0
 8       8     contentSize         u64 LE   own R2 content byte length
 16      4     refCount            u32 LE   ordered child hash count
@@ -93,7 +92,7 @@ Offset  Size  Field               Type     Version 1 value
 22      2     reserved            u16 LE   0
 ```
 
-Version 1 requires `flags == 0` and `reserved == 0`. Decoders must reject unknown non-zero bits rather than silently ignoring them.
+Version 1 requires `signature == "UD"`, `version == 1`, `flags == 0`, and `reserved == 0`. Decoders must reject unsupported versions and unknown non-zero bits rather than silently ignoring them.
 
 The canonical logical node length is:
 
@@ -168,7 +167,7 @@ CREATE TABLE cas_nodes (
 );
 ```
 
-The fixed version-1 header fields `magic`, `flags`, and `reserved` need not be stored because they are implied by the schema/version. If future versions allow non-zero immutable flags, they must be stored explicitly.
+The fixed version-1 header fields `signature`, `version`, `flags`, and `reserved` need not be stored because they are implied by the schema/version. If future versions allow non-zero immutable flags, they must be stored explicitly.
 
 ### 6.3 D1 ordered edges
 
@@ -238,7 +237,8 @@ A metadata-only read cannot prove full node integrity because R2 content is requ
 
 ### 8.2 Header
 
-- magic equals `CAS\x02`;
+- signature equals `UD`;
+- version equals `1`;
 - flags equal zero;
 - reserved equals zero;
 - content type length is within version-1 limits;
@@ -320,118 +320,18 @@ This representation is useful for:
 
 It is not required as the public upload wire format; the HTTP API may send metadata as JSON and content as a separate binary request.
 
-## 11. Sequential file profile (informative)
+## 11. Scope: no files or folders
 
-The core node format is a generic ordered DAG. This section sketches an optional large-file profile derived from CASFA's f-node/s-node B-tree. It is informative, not canonical, until the exact topology algorithm and locked test vectors are specified.
+The CAS core stores one opaque content object per node. It does not split large files into chunks and does not define folders, paths, or directory entries.
 
-### 11.1 Media types
+- A large file is one node whose own content is one R2 object, subject to R2, HTTP, account, and per-user quota limits.
+- Child refs represent application-defined Merkle DAG edges only. The CAS does not concatenate child content to reconstruct a file.
+- Names, paths, and folder semantics belong to a higher-level application format if a future use case needs them.
+- The CAS never infers structure from `contentType`.
 
-Root node:
+This keeps node identity and lifecycle independent from a file-system abstraction that UniDocs does not currently need.
 
-```text
-<actual file content type>
-```
-
-Successor/chunk node:
-
-```text
-application/vnd.unidocs.cas-chunk.v1
-```
-
-### 11.2 Reconstruction
-
-A file is reconstructed using depth-first preorder:
-
-```text
-read node own content
-for child in node.refs order:
-  recursively read child
-concatenate all byte sequences
-```
-
-Only chunk-profile children are valid below the root.
-
-### 11.3 Canonical node limit
-
-Default canonical logical node limit:
-
-```text
-1,048,576 bytes (1 MiB)
-```
-
-For a node with content-type length `T` and `N` children, own-content capacity is:
-
-```text
-capacity = nodeLimit - 24 - T - 32 * N
-```
-
-Capacity must be non-negative.
-
-### 11.4 Greedy layout sketch
-
-The intended profile fills each node's own content before assigning bytes to children.
-
-A node may have children only when its own content region is filled to the capacity implied by its final child count. Child subtrees are filled left-to-right.
-
-At depth 1:
-
-```text
-maxContent = nodeLimit - 24 - contentTypeLength
-```
-
-At greater depth, each child consumes 32 bytes in its parent and contributes the capacity of a subtree one level shallower. Implementations choose the minimum depth that can hold the file and the minimum child count needed at each node.
-
-The root uses the actual file content type length; all descendants use the fixed chunk media type length.
-
-This sketch does not yet normatively define the exact depth-selection formula, child-count bounds, byte partition, zero-length subtree rule, or tie breaking. Implementations must not claim interoperable root hashes from this profile until those rules and required test vectors are fixed in a future revision.
-
-### 11.5 Bottom-up creation
-
-Creation is bottom-up:
-
-1. compute deterministic layout;
-2. create and upload leaf chunks;
-3. create parents containing ordered child hashes;
-4. create the root last;
-5. return the root hash.
-
-The root's CAS lease protects the root. Child nodes are protected by `childRefCount` once parent metadata is inserted. Intermediate unready parents retain child refs until they are completed or collected.
-
-### 11.6 Scope
-
-The sequential file profile is deferred from the first implementation. A client may store a file as one node when it is below service size limits. The generic CAS API must not assume every node follows this profile.
-
-## 12. Directory profile
-
-This optional profile models a named ordered directory, derived from CASFA d-nodes.
-
-Media type:
-
-```text
-application/vnd.unidocs.cas-directory.v1
-```
-
-Own content contains exactly one name per child ref:
-
-```text
-repeated refCount times:
-  nameLength  u16 LE
-  nameBytes   UTF-8
-```
-
-Rules:
-
-- names and refs correspond by ordinal;
-- names are valid UTF-8;
-- names are non-empty;
-- names must not contain `/`, `\`, NUL, `.` or `..` path segments;
-- names are strictly increasing by unsigned UTF-8 byte lexicographic order;
-- duplicate names are forbidden;
-- content contains exactly `refCount` complete strings and no trailing bytes.
-
-The generic CAS does not interpret directory content unless the media type matches this profile.
-
-## 13. Empty nodes and well-known values
+## 12. Empty nodes and well-known values
 
 An empty generic node is valid when:
 
@@ -443,9 +343,9 @@ contentType = a non-empty valid media type
 
 Different content types produce different hashes, so there is no single universal empty-node key.
 
-Implementations may publish well-known keys for specific empty profiles, such as an empty directory, after the version-1 encoder is finalized. Such keys must be generated from the canonical format and locked by test vectors.
+Implementations may publish well-known keys for specific application-defined empty values after the version-1 encoder is finalized. Such keys must be generated from the canonical format and locked by test vectors.
 
-## 14. Security and resource limits
+## 13. Security and resource limits
 
 The service must enforce configurable limits before allocation or traversal:
 
@@ -464,17 +364,17 @@ A valid hash does not authorize access. Every operation is authenticated and sco
 
 Content type is descriptive metadata and must not be trusted for content sniffing, browser execution policy, or DOCX image validation. Consumers validate actual bytes for their domain.
 
-## 15. Versioning
+## 14. Versioning
 
-The fourth magic byte is the binary-format version:
+The first two bytes identify the UniDocs node format family and the next two bytes carry its little-endian version:
 
 ```text
-CAS\x02 = UniDocs CAS node format version 1
+55 44 01 00 = "UD" + u16 LE version 1
 ```
 
-`CAS\x01` remains associated with the earlier CASFA format and must not be interpreted as this format.
+The UniDocs decoder does not accept the earlier `CAS\x01` CASFA format as a UniDocs node.
 
-Future incompatible layouts use a new magic version. Future compatible immutable features may use currently reserved header flags only after specifying:
+Future incompatible layouts increment the `u16` version. Future compatible immutable features may use currently reserved header flags only after specifying:
 
 - their canonical encoding;
 - whether old readers reject or can safely ignore them;
@@ -483,7 +383,7 @@ Future incompatible layouts use a new magic version. Future compatible immutable
 
 Version 1 readers reject all non-zero flags and reserved values.
 
-## 16. Required test vectors
+## 15. Required test vectors
 
 Before implementation is considered stable, fixtures must pin at least:
 
@@ -495,11 +395,10 @@ Before implementation is considered stable, fixtures must pin at least:
 6. same content/metadata with reversed refs producing different hashes;
 7. zero-byte R2 content;
 8. maximum content type length;
-9. malformed magic/flags/reserved values;
+9. malformed signature/version/flags/reserved values;
 10. content length mismatch;
 11. digest mismatch;
-12. directory names in canonical UTF-8 byte order;
-13. a multi-level sequential file profile tree;
-14. D1 metadata + R2 content reconstructing exactly the portable full-node digest.
+12. D1 metadata + R2 content reconstructing exactly the portable full-node digest;
+13. a node whose opaque content exceeds 1 MiB, proving that the format imposes no chunking profile.
 
 Test vectors should include canonical bytes, raw SHA-256 bytes, lowercase hexadecimal keys, parsed metadata, and own content.
