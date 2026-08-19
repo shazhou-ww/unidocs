@@ -1,0 +1,33 @@
+name = "unidocs-psd"
+main = "dist/worker.js"
+compatibility_date = "2025-08-17"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "PSD_EDITOR"
+class_name = "PsdEditor"
+
+[[durable_objects.bindings]]
+name = "PSD_OPERATOR"
+class_name = "PsdOperator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PsdEditor", "PsdOperator"]
+
+# Shared global snapshot index (same DB as other doctypes)
+[[d1_databases]]
+binding = "SNAPSHOTS_DB"
+database_name = "unidocs-snapshots"
+database_id = "d3c78c42-b32f-4a4d-86e4-6cf6341baa8f"
+
+# Shared content-addressed snapshot store
+[[r2_buckets]]
+bucket_name = "unidocs-cas"
+binding = "CAS"
+
+# Internal token for gateway → worker auth
+# Set via wrangler secret: `wrangler secret put INTERNAL_TOKEN`
+# For local dev: uncomment [vars] below
+# [vars]
+# INTERNAL_TOKEN = "dev-token"
