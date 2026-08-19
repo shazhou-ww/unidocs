@@ -1,5 +1,7 @@
 import type { PsdDoc, Layer } from "./model/types.js";
 import type { QueryValue } from "@unidocs/core";
+import { encode } from "fast-png";
+import { render } from "./render/index.js";
 
 export type PsdQuery =
   | { kind: "getLayers"; payload?: Record<string, never> }
@@ -17,7 +19,9 @@ export async function runQuery(q: PsdQuery, doc: PsdDoc): Promise<QueryValue> {
   switch (q.kind) {
     case "getLayers":
       return doc.layers.map(summarize);
-    case "getPreview":
-      throw new Error("getPreview: render not implemented yet (see render plan)");
+    case "getPreview": {
+      const px = render(doc);
+      return encode({ width: px.width, height: px.height, data: px.data, channels: 4, depth: 8 });
+    }
   }
 }
