@@ -52,7 +52,13 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
 
         // Table operations
         case "addTable":
-          addTable(working, operation.payload.rows, operation.payload.cols, operation.payload.style);
+          addTable(
+            working,
+            operation.payload.rows,
+            operation.payload.cols,
+            operation.payload.style,
+            operation.payload.widthsTwips,
+          );
           break;
         case "setCellText":
           setCellText(

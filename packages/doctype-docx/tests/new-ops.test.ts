@@ -16,6 +16,32 @@ describe("table operations", () => {
     ]);
   });
 
+  it("adds a table with custom column widths", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.apply([
+      {
+        kind: "addTable",
+        payload: { rows: 1, cols: 2, widthsTwips: [3000, 6000] },
+      },
+    ], await docx.init());
+
+    const table = doc.document.tables()[0];
+    const firstWidth = table.cell(0, 0).element
+      .find("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "tcPr")
+      ?.find("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "tcW")
+      ?.getAttributeNs("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "w");
+    expect(firstWidth).toBe("3000");
+  });
+
+  it("rejects invalid custom column widths", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.init();
+
+    await expect(docx.apply([
+      { kind: "addTable", payload: { rows: 1, cols: 2, widthsTwips: [3000] } },
+    ], doc)).rejects.toThrow("widthsTwips must contain exactly 2 values");
+  });
+
   it("sets cell text in a table", async () => {
     const docx = createDocxDocumentType({});
     let doc = await docx.init();
@@ -80,6 +106,12 @@ describe("list operations", () => {
 
     const paragraphs = await docx.query({ kind: "getParagraphs", payload: undefined }, doc) as any;
     expect(paragraphs).toHaveLength(3);
+
+    const list = await docx.query(
+      { kind: "getParagraphList", payload: { paragraphIndex: 0 } },
+      doc,
+    );
+    expect(list).toMatchObject({ level: 0, format: "bullet", isBullet: true });
   });
 
   it("adds a nested bullet list", async () => {
@@ -141,6 +173,42 @@ describe("list operations", () => {
 
     const text = await docx.query({ kind: "getText", payload: undefined }, result);
     expect(text).toBe("");
+  });
+});
+
+describe("effective formatting queries", () => {
+  it("resolves paragraph and run formatting", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.apply([
+      {
+        kind: "appendParagraph",
+        payload: { text: "Heading", options: { style: "Heading1", bold: true } },
+      },
+    ], await docx.init());
+
+    const paragraphFormat = await docx.query(
+      { kind: "getParagraphFormat", payload: { paragraphIndex: 0 } },
+      doc,
+    );
+    expect(paragraphFormat).toMatchObject({ styleId: "Heading1" });
+
+    const runFormat = await docx.query(
+      { kind: "getRunFormat", payload: { paragraphIndex: 0, runIndex: 0 } },
+      doc,
+    );
+    expect(runFormat).toMatchObject({ bold: true });
+  });
+
+  it("returns null list metadata for a normal paragraph", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.apply([
+      { kind: "appendParagraph", payload: { text: "Body" } },
+    ], await docx.init());
+
+    await expect(docx.query(
+      { kind: "getParagraphList", payload: { paragraphIndex: 0 } },
+      doc,
+    )).resolves.toBeNull();
   });
 });
 
@@ -212,6 +280,9 @@ describe("tools and instructions", () => {
     expect(docx.tools.getText).toBeDefined();
     expect(docx.tools.getParagraphs).toBeDefined();
     expect(docx.tools.getParagraph).toBeDefined();
+    expect(docx.tools.getParagraphFormat).toBeDefined();
+    expect(docx.tools.getRunFormat).toBeDefined();
+    expect(docx.tools.getParagraphList).toBeDefined();
     expect(docx.tools.getTables).toBeDefined();
     expect(docx.tools.getTable).toBeDefined();
     expect(docx.tools.getHeaders).toBeDefined();

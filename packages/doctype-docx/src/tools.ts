@@ -34,6 +34,36 @@ export const tools: ToolsMap = {
       required: ["index"],
     },
   },
+  getParagraphFormat: {
+    name: "query_getParagraphFormat",
+    description: "Get the effective formatting Word renders for one paragraph",
+    inputSchema: {
+      type: "object",
+      properties: { paragraphIndex: { type: "integer", minimum: 0 } },
+      required: ["paragraphIndex"],
+    },
+  },
+  getRunFormat: {
+    name: "query_getRunFormat",
+    description: "Get the effective formatting Word renders for one text run",
+    inputSchema: {
+      type: "object",
+      properties: {
+        paragraphIndex: { type: "integer", minimum: 0 },
+        runIndex: { type: "integer", minimum: 0 },
+      },
+      required: ["paragraphIndex", "runIndex"],
+    },
+  },
+  getParagraphList: {
+    name: "query_getParagraphList",
+    description: "Get resolved list metadata for one paragraph, or null if it is not a list item",
+    inputSchema: {
+      type: "object",
+      properties: { paragraphIndex: { type: "integer", minimum: 0 } },
+      required: ["paragraphIndex"],
+    },
+  },
   getTables: {
     name: "query_getTables",
     description: "List all tables with dimensions (rows, cols) and style",
@@ -103,6 +133,11 @@ export const tools: ToolsMap = {
         rows: { type: "integer", minimum: 1 },
         cols: { type: "integer", minimum: 1 },
         style: { type: "string", description: "Table style id, e.g. 'TableGrid'" },
+        widthsTwips: {
+          type: "array",
+          description: "Positive column widths in twips; length must equal cols",
+          items: { type: "number", exclusiveMinimum: 0 },
+        },
       },
       required: ["rows", "cols"],
     },
@@ -224,6 +259,9 @@ export const instructions = `You are a DOCX document operator. Use query tools b
 - getText — plain-text overview of the document
 - getParagraphs — list all paragraphs with style, runs, and formatting
 - getParagraph — inspect one paragraph by index
+- getParagraphFormat — resolve paragraph formatting through Word's style cascade
+- getRunFormat — resolve run formatting through Word's style cascade
+- getParagraphList — inspect resolved bullet/numbering metadata
 - getTables — list all tables with dimensions and style
 - getTable — full table detail including every row and cell
 - getHeaders / getFooters — inspect document headers and footers
@@ -233,7 +271,7 @@ export const instructions = `You are a DOCX document operator. Use query tools b
 - setRunText — replace text of one run, preserving its formatting
 
 ## Edit tools — tables
-- addTable — insert a new table (rows × cols, optional style)
+- addTable — insert a new table (rows × cols, optional style and column widths)
 - setCellText — set text in a specific cell (tableIndex, row, col)
 - addTableRow — append a row to a table (copies formatting from last row)
 

@@ -26,6 +26,9 @@ export type DocxQuery =
   | { kind: "getText"; payload: undefined }
   | { kind: "getParagraphs"; payload: undefined }
   | { kind: "getParagraph"; payload: { index: number } }
+  | { kind: "getParagraphFormat"; payload: { paragraphIndex: number } }
+  | { kind: "getRunFormat"; payload: { paragraphIndex: number; runIndex: number } }
+  | { kind: "getParagraphList"; payload: { paragraphIndex: number } }
   | { kind: "getTables"; payload: undefined }
   | { kind: "getTable"; payload: { index: number } }
   | { kind: "getHeaders"; payload: undefined }
@@ -33,6 +36,8 @@ export type DocxQuery =
 
 // ─── Operation types ────────────────────────────────────────────────
 
+// Binary image operations are deferred until operations can reference
+// CAS-backed payloads instead of embedding image bytes in delta history.
 export type DocxOperation =
   // Paragraph operations
   | {
@@ -46,7 +51,7 @@ export type DocxOperation =
   // Table operations
   | {
       kind: "addTable";
-      payload: { rows: number; cols: number; style?: string };
+      payload: { rows: number; cols: number; style?: string; widthsTwips?: number[] };
     }
   | {
       kind: "setCellText";
