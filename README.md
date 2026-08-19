@@ -2,6 +2,11 @@
 
 Universal document editing framework for AI agents. Built on Cloudflare Workers + Durable Objects.
 
+## Design documents
+
+- [CAS Architecture](docs/cas-architecture.md) — user-scoped storage, leases, reference counts, GC, APIs, and DocumentType integration
+- [CAS Binary Format](docs/cas-binary-format.md) — canonical SHA-256 Merkle DAG node encoding derived from CASFA
+
 ## Architecture
 
 ```
@@ -14,7 +19,9 @@ Client → Gateway (auth + routing) → Editor DO / Operator DO (per document in
 - **Editor DO** — document state management, CRUD operations, history, snapshots
 - **Operator DO** — AI agent interface, ReAct loop, tool dispatch to Editor
 
-### Storage layout
+### Current storage layout
+
+The table below describes the implementation before the user-scoped CAS migration. The accepted target design is documented in [CAS Architecture](docs/cas-architecture.md).
 
 | Layer | Storage | Purpose |
 |-------|---------|---------|
@@ -23,7 +30,7 @@ Client → Gateway (auth + routing) → Editor DO / Operator DO (per document in
 | Shared D1 | `snapshots` | Global snapshot index (cross-DO clone support) |
 | R2 CAS | `hash → bytes` | Content-addressed snapshot storage (dedup) |
 
-### Consistency model
+### Current consistency model
 
 Write order on every delta:
 1. sqlite INSERT delta (source of truth)
