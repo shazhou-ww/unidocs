@@ -1,6 +1,7 @@
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseDocTypes } from "./doc-types.mjs";
+import { DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -31,9 +32,27 @@ for (const [name, url] of Object.entries(runtime.urls)) {
 console.log(
   `Registry: ${docTypes.map((t) => `docType:${t}`).join(" / ")} → workerUrl`,
 );
+
+// Start each selected doc type's dev frontend (if it declares one), with the
+// gateway URL injected so its Vite proxy can forward API calls end-to-end.
+const webChildren = [];
+for (const name of docTypes) {
+  const web = DOC_TYPES[name].web;
+  if (!web) continue;
+  const child = spawn("npx", ["vite", "--port", String(web.port), "--strictPort"], {
+    cwd: join(root, web.dir),
+    stdio: "inherit",
+    env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
+  });
+  child.on("error", (err) => console.error(`[${name} web] failed to start:`, err.message));
+  webChildren.push(child);
+  console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${web.port}`);
+}
+
 console.log("Ctrl+C to stop.");
 
 const shutdown = async () => {
+  for (const child of webChildren) child.kill("SIGINT");
   await runtime.dispose();
   process.exit(0);
 };

@@ -9,9 +9,6 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@unidocs/doctype-psd": "workspace:*"
-  },
   "devDependencies": {
     "typescript": "^5.9.0",
     "vite": "^7.3.0"

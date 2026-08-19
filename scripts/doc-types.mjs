@@ -44,6 +44,9 @@ export const DOC_TYPES = {
     operator: "PSD_OPERATOR",
     operatorClass: "PsdOperator",
     port: 8790,
+    // Optional dev-only frontend: a Vite app started alongside the worker,
+    // with GATEWAY_URL injected so it proxies API calls to the gateway.
+    web: { dir: "packages/web-psd", port: 5173 },
   },
 };
 
