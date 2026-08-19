@@ -262,7 +262,7 @@ apply:等价于把这张 raster 结果层 `add_layer` 插入(非破坏,盖在源
 - `getLayers` → 图层树 JSON
 - **`getPreview` → 渲染后的 PNG 字节**(客户端靠它看当前图)
 
-**渲染引擎 = `doctype-psd/src/render/`**:纯函数 `render(doc) → 像素`,cloud-neutral,**webui 和 DO 共用同一份**(避免两套渲染逻辑对不上)。引擎选 **canvaskit-wasm(Skia)**,浏览器和 Workers/DO 都能跑(§9)。
+**渲染引擎 = `doctype-psd/src/render/`**:纯函数 `render(doc) → 像素`,cloud-neutral,**webui 和 DO 共用同一份**(避免两套渲染逻辑对不上)。MVP 引擎 = **纯 TS 软件合成器**(逐像素对 `Uint8ClampedArray` 做合成/混合/调整,无 wasm,Node/workerd/浏览器通吃,消灭 workerd 门槛)。浏览器端可后续用 canvas/WebGL/canvaskit 作**加速器**(计划④)。
 
 两条渲染路径:
 - **交互热路径**:webui import `render/` 在浏览器本地合成;编辑时本地 `apply(op)`(ops 也是纯函数、前后端共用)→ 本地 render 立即出图 → op 异步发 `/apply` 落库(带 baseVersion,409 则重新 query 同步)。
@@ -377,13 +377,13 @@ doctype.ts  组装 DocumentType
 - op = `{kind, payload}`;版本/回放/乐观锁归平台。
 - 生成式:先出图再 apply,payload 携带结果(§5.4)。
 - PSD 库 ag-psd;仅 8-bit RGB;MVP 导入方案 B;透传留 post-MVP。
-- **渲染引擎:canvaskit-wasm(Skia)**,浏览器 + Workers/DO 通吃;render 放 `doctype-psd/src/render/`,webui 与 DO 共用(§5.3/§8)。
+- **渲染引擎:纯 TS 软件合成器**(MVP),无 wasm、Node/workerd/浏览器通吃;render 放 `doctype-psd/src/render/`,webui 与 DO 共用(§5.3/§8)。canvaskit/WebGL 留作浏览器加速器(计划④)。
 
 **待定:**
 1. 像素承载(§3.5):MVP 内联字节 vs 经 `options` 注入 R2 blob 存引用。**注意**:snapshot 每 20 delta 调一次 `save()`,图片的 PSD 字节远比 markdown 重,内联会让 snapshot/delta 偏大 —— 这条影响此选择。
 2. **DO-runtime spike**:
    - ✅ **ag-psd 已在 Node 验证**:纯 JS `createImageData` shim + `useImageData` + `skipThumbnail`,读写往返完整、无 canvas 依赖(`tests/fixtures/generate.mjs` 生成的 `sample.psd`)。剩:同一路径在 **workerd** 里跑一遍确认。
-   - ⬜ **canvaskit-wasm 渲染**:能否在 Workers/DO 里实例化并合成 —— 唯一未验证的运行时风险。
+   - ✅ **渲染改用纯 TS 合成器**(逐像素数学),无 wasm,workerd 天然可跑 —— canvaskit 门槛已消除。剩:PNG 编码用纯 JS 编码器(getPreview)。
 
 ---
 
