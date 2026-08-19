@@ -110,6 +110,8 @@ test("CAS: read metadata", async () => {
 // ─── Test 2: Child refs → parent creation + ref counts ───
 
 test.skip("CAS: node with child refs increments child ref count", async () => {
+  // Miniflare limitation: DO cannot access R2 binding properly in tests
+  // This works correctly in production Cloudflare Workers
   // TODO: Miniflare DO + R2 binding issue — works in production
   const child = await casUpload("alice", "text/plain", "child node");
   console.log("Child uploaded:", child.hash);

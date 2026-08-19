@@ -201,10 +201,15 @@ export class CasDurableObject implements DurableObject {
 
     // New node: verify all children are ready
     for (const childHash of descriptor.refs) {
-      const childR2Key = `users/${userId}/nodes/${childHash}`;
-      const childR2 = await this.env.CAS_R2.head(childR2Key);
-      if (!childR2) {
-        throw new Error(`Child node ${childHash} is not ready`);
+      try {
+        const childR2Key = `users/${userId}/nodes/${childHash}`;
+        const childR2 = await this.env.CAS_R2.head(childR2Key);
+        if (!childR2) {
+          throw new Error(`Child node ${childHash} is not ready`);
+        }
+      } catch (err) {
+        console.error(`[CAS DO] Failed to check child ${childHash}:`, err);
+        throw err;
       }
     }
 
