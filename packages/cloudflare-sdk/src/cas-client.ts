@@ -1,10 +1,12 @@
 /**
  * CAS HTTP client for cloudflare-sdk.
  *
- * Implements CasReadContext by calling the gateway's CAS endpoints.
- * Uploading a node is a single lease-with-content POST.
+ * Public mode talks to Gateway (`baseUrl` + optional Bearer).
+ * Editor mode talks to the CAS worker through a service binding
+ * (`fetcher` + `X-Internal-Token` + `X-User-Id`).
  */
 
+import type { CasRootRefUpdate } from "@unidocs/cas";
 import type { CasRef, CasReadContext, CasReferences } from "@unidocs/core";
 
 /** Result of a lease claim or extension. */
@@ -15,59 +17,81 @@ interface CasLeaseResult {
   readonly leaseExpiresAt: number;
 }
 
-export interface CasClientConfig {
-  /** Gateway base URL (e.g. "http://localhost:8787" or "https://gateway.example.com"). */
-  baseUrl: string;
-  /** User ID for CAS scoping. */
-  userId: string;
-  /** Optional auth token for gateway requests. */
-  authToken?: string;
+export type CasClientConfig =
+  | { baseUrl: string; userId: string; authToken?: string }
+  | { fetcher: Fetcher; userId: string; internalToken: string };
+
+export class CasClientError extends Error {
+  readonly status: number;
+
+  constructor(status: number, statusText: string, operation: string) {
+    super(`CAS ${operation} failed: ${status} ${statusText}`);
+    this.name = "CasClientError";
+    this.status = status;
+  }
+}
+
+function isInternalConfig(
+  config: CasClientConfig,
+): config is { fetcher: Fetcher; userId: string; internalToken: string } {
+  return "fetcher" in config;
 }
 
 /**
  * CAS HTTP client implementing CasReadContext + upload operations.
  */
 export class CasClient implements CasReadContext {
-  private baseUrl: string;
-  private userId: string;
-  private authToken?: string;
+  private config: CasClientConfig;
 
   constructor(config: CasClientConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/$/, "");
-    this.userId = config.userId;
-    this.authToken = config.authToken;
+    this.config = isInternalConfig(config)
+      ? config
+      : { ...config, baseUrl: config.baseUrl.replace(/\/$/, "") };
+  }
+
+  private origin(): string {
+    return isInternalConfig(this.config)
+      ? "https://cas.internal"
+      : this.config.baseUrl;
   }
 
   private casUrl(path: string): string {
-    return `${this.baseUrl}/users/${this.userId}/cas${path}`;
+    return `${this.origin()}/users/${this.config.userId}/cas${path}`;
   }
 
-  private headers(extra: Record<string, string> = {}): HeadersInit {
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = { ...extra };
-    if (this.authToken) {
-      h.Authorization = `Bearer ${this.authToken}`;
+    if (isInternalConfig(this.config)) {
+      h["X-Internal-Token"] = this.config.internalToken;
+      h["X-User-Id"] = this.config.userId;
+    } else if (this.config.authToken) {
+      h.Authorization = `Bearer ${this.config.authToken}`;
     }
     return h;
   }
 
+  private request(url: string, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> {
+    const headers = this.headers(init.headers ?? {});
+    if (isInternalConfig(this.config)) {
+      return this.config.fetcher.fetch(url, { ...init, headers });
+    }
+    return fetch(url, { ...init, headers });
+  }
+
   /** Read CAS node content. */
   async read(ref: CasRef): Promise<Uint8Array> {
-    const resp = await fetch(this.casUrl(`/nodes/${ref.hash}/content`), {
-      headers: this.headers(),
-    });
+    const resp = await this.request(this.casUrl(`/nodes/${ref.hash}/content`));
     if (!resp.ok) {
-      throw new Error(`CAS read failed: ${resp.status} ${resp.statusText}`);
+      throw new CasClientError(resp.status, resp.statusText, "read");
     }
     return new Uint8Array(await resp.arrayBuffer());
   }
 
   /** Read CAS node metadata. */
   async metadata(ref: CasRef): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }> {
-    const resp = await fetch(this.casUrl(`/nodes/${ref.hash}/metadata`), {
-      headers: this.headers(),
-    });
+    const resp = await this.request(this.casUrl(`/nodes/${ref.hash}/metadata`));
     if (!resp.ok) {
-      throw new Error(`CAS metadata failed: ${resp.status} ${resp.statusText}`);
+      throw new CasClientError(resp.status, resp.statusText, "metadata");
     }
     const body = await resp.json() as { metadata: { hash: string; size: number; contentType: string; refs: string[] } };
     return body.metadata;
@@ -92,13 +116,13 @@ export class CasClient implements CasReadContext {
     if (refs.length > 0) extra["X-CAS-Refs"] = refs.join(",");
     if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
 
-    const resp = await fetch(this.casUrl(`/nodes/${hash}`), {
+    const resp = await this.request(this.casUrl(`/nodes/${hash}`), {
       method: "POST",
-      headers: this.headers(extra),
+      headers: extra,
       body: content,
     });
     if (!resp.ok) {
-      throw new Error(`CAS lease failed: ${resp.status} ${resp.statusText}`);
+      throw new CasClientError(resp.status, resp.statusText, "lease");
     }
     return resp.json() as Promise<CasLeaseResult>;
   }
@@ -112,14 +136,33 @@ export class CasClient implements CasReadContext {
     const extra: Record<string, string> = {};
     if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
 
-    const resp = await fetch(this.casUrl(`/nodes/${hash}/lease`), {
+    const resp = await this.request(this.casUrl(`/nodes/${hash}/lease`), {
       method: "POST",
-      headers: this.headers(extra),
+      headers: extra,
     });
     if (!resp.ok) {
-      throw new Error(`CAS leaseExisting failed: ${resp.status} ${resp.statusText}`);
+      throw new CasClientError(resp.status, resp.statusText, "leaseExisting");
     }
     return resp.json() as Promise<CasLeaseResult>;
+  }
+
+  /**
+   * Editor-only: increment root-reference counts on the CAS worker.
+   *
+   * POST /_internal/root-refs
+   */
+  async updateRootRefs(update: CasRootRefUpdate): Promise<void> {
+    if (!isInternalConfig(this.config)) {
+      throw new Error("updateRootRefs is only available in Editor (service-binding) mode");
+    }
+    const resp = await this.request(`${this.origin()}/_internal/root-refs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+    });
+    if (!resp.ok) {
+      throw new CasClientError(resp.status, resp.statusText, "updateRootRefs");
+    }
   }
 }
 
@@ -140,4 +183,36 @@ export function aggregateRefs<TOp>(
     }
   }
   return result;
+}
+
+/** Lease every hash referenced by a delta. Empty maps are a no-op. */
+export async function leaseOpRefs<TOp>(
+  operations: readonly TOp[],
+  refsFromOp: (op: TOp) => CasReferences,
+  cas: Pick<CasClient, "leaseExisting">,
+): Promise<CasReferences> {
+  const refs = aggregateRefs(operations, refsFromOp);
+  for (const hash of Object.keys(refs)) {
+    await cas.leaseExisting(hash);
+  }
+  return refs;
+}
+
+/**
+ * Persist root-ref increments after a delta insert. On failure, run rollback
+ * (typically DELETE the new delta row) and rethrow.
+ */
+export async function commitRootRefsOrRollback(
+  cas: Pick<CasClient, "updateRootRefs">,
+  requestId: string,
+  changes: CasReferences,
+  rollback: () => void,
+): Promise<void> {
+  if (Object.keys(changes).length === 0) return;
+  try {
+    await cas.updateRootRefs({ requestId, changes });
+  } catch (err) {
+    rollback();
+    throw err;
+  }
 }

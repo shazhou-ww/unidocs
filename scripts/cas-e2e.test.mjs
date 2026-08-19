@@ -206,12 +206,12 @@ test("CAS: parent with unknown child is 409", async () => {
   expect(res.status).toBe(409);
 });
 
-test("CAS: PUT /content is no longer accepted", async () => {
+test("CAS: PUT /content is not a public Gateway route", async () => {
   const { hash } = await computeCasHash("text/plain", "no put");
   const res = await casFetch(casUrl("alice", `/nodes/${hash}/content`), {
     method: "PUT",
     headers: { "Content-Type": "text/plain" },
     body: "no put",
   });
-  expect(res.status).toBe(405);
+  expect(res.status).toBe(404);
 });

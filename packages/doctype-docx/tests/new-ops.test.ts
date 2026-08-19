@@ -287,6 +287,7 @@ describe("tools and instructions", () => {
     expect(docx.tools.getTable).toBeDefined();
     expect(docx.tools.getHeaders).toBeDefined();
     expect(docx.tools.getFooters).toBeDefined();
+    expect(docx.tools.getImages).toBeDefined();
 
     // Paragraph operations
     expect(docx.tools.appendParagraph).toBeDefined();
@@ -304,6 +305,7 @@ describe("tools and instructions", () => {
     // Section operations
     expect(docx.tools.setHeader).toBeDefined();
     expect(docx.tools.setFooter).toBeDefined();
+    expect(docx.tools.insertImage).toBeDefined();
   });
 
   it("has non-empty instructions", async () => {
@@ -312,3 +314,72 @@ describe("tools and instructions", () => {
     expect(docx.instructions.length).toBeGreaterThan(100);
   });
 });
+
+const PNG_1x1 = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+  0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+  0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+]);
+
+describe("insertImage and getImages", () => {
+  const hash = "a".repeat(64);
+
+  function casWith(bytes: Uint8Array) {
+    return {
+      read: async () => bytes,
+      metadata: async () => ({
+        hash,
+        size: bytes.length,
+        contentType: "image/png",
+        refs: [] as string[],
+      }),
+    };
+  }
+
+  it("refsFromOp counts insertImage hashes", () => {
+    const docx = createDocxDocumentType({});
+    expect(docx.refsFromOp({
+      kind: "insertImage",
+      payload: { hash, widthPx: 16 },
+    })).toEqual({ [hash]: 1 });
+    expect(docx.refsFromOp({
+      kind: "appendParagraph",
+      payload: { text: "x" },
+    })).toEqual({});
+  });
+
+  it("inserts a PNG from CAS and lists it", async () => {
+    const docx = createDocxDocumentType({});
+    const initial = await docx.init();
+    const updated = await docx.apply([
+      { kind: "insertImage", payload: { hash, widthPx: 16, altText: "dot" } },
+    ], initial, { cas: casWith(PNG_1x1) });
+
+    const images = await docx.query({ kind: "getImages", payload: undefined }, updated);
+    expect(images).toEqual([
+      expect.objectContaining({
+        index: 0,
+        format: "png",
+        altText: "dot",
+        placement: "inline",
+      }),
+    ]);
+    expect((images as { partName: string }[])[0].partName).toMatch(/image1\.png$/);
+  });
+
+  it("rejects an invalid hash before reading CAS", async () => {
+    const docx = createDocxDocumentType({});
+    const read = async () => {
+      throw new Error("should not read");
+    };
+    await expect(docx.apply([
+      { kind: "insertImage", payload: { hash: "not-a-hash" } },
+    ], await docx.init(), {
+      cas: { read, metadata: async () => ({ hash: "", size: 0, contentType: "", refs: [] }) },
+    })).rejects.toThrow(/Hash must be/);
+  });
+});
+

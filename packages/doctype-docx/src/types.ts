@@ -32,12 +32,11 @@ export type DocxQuery =
   | { kind: "getTables"; payload: undefined }
   | { kind: "getTable"; payload: { index: number } }
   | { kind: "getHeaders"; payload: undefined }
-  | { kind: "getFooters"; payload: undefined };
+  | { kind: "getFooters"; payload: undefined }
+  | { kind: "getImages"; payload: undefined };
 
 // ─── Operation types ────────────────────────────────────────────────
 
-// Binary image operations are deferred until operations can reference
-// CAS-backed payloads instead of embedding image bytes in delta history.
 export type DocxOperation =
   // Paragraph operations
   | {
@@ -78,4 +77,8 @@ export type DocxOperation =
   | {
       kind: "setFooter";
       payload: { text: string; type?: DocxHeaderFooterType };
+    }
+  | {
+      kind: "insertImage";
+      payload: { hash: string; widthPx?: number; altText?: string };
     };

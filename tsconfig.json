@@ -23,6 +23,9 @@
       "path": "packages/cloudflare-docx"
     },
     {
+      "path": "packages/cloudflare-cas"
+    },
+    {
       "path": "packages/cloudflare-gateway"
     }
   ]

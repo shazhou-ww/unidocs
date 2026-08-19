@@ -82,6 +82,17 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
         partName: f.partName,
         text: f.text(),
       }));
+
+    case "getImages":
+      return doc.document.images().map((img, index) => ({
+        index,
+        format: img.format,
+        partName: img.partName,
+        widthEmu: img.widthEmu,
+        heightEmu: img.heightEmu,
+        altText: img.altText,
+        placement: img.placement,
+      }));
   }
 }
 

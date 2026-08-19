@@ -33,6 +33,25 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/cloudflare-cas:
+    dependencies:
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
   packages/cloudflare-docx:
     dependencies:
       '@unidocs/cloudflare-sdk':
@@ -57,9 +76,9 @@ importers:
 
   packages/cloudflare-gateway:
     dependencies:
-      '@unidocs/cas':
+      '@unidocs/cloudflare-cas':
         specifier: workspace:*
-        version: link:../cas
+        version: link:../cloudflare-cas
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -126,6 +145,9 @@ importers:
       '@ariadng/office':
         specifier: 0.3.0
         version: 0.3.0
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
       '@unidocs/core':
         specifier: workspace:*
         version: link:../core

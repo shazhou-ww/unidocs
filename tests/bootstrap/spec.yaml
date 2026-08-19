@@ -7,13 +7,14 @@ steps:
     timeout: "600s"
   - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
-  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js /workspace/packages/cloudflare-docx/dist/worker.js /workspace/packages/cloudflare-gateway/dist/worker.js /workspace/packages/cas/dist/index.js"
+  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js /workspace/packages/cloudflare-docx/dist/worker.js /workspace/packages/cloudflare-gateway/dist/worker.js /workspace/packages/cloudflare-cas/dist/worker.js /workspace/packages/cas/dist/index.js"
     assert:
       type: regex
       conditions:
         - { path: "stdout", regex: "cloudflare-markdown/dist/worker.js" }
         - { path: "stdout", regex: "cloudflare-docx/dist/worker.js" }
         - { path: "stdout", regex: "cloudflare-gateway/dist/worker.js" }
+        - { path: "stdout", regex: "cloudflare-cas/dist/worker.js" }
         - { path: "stdout", regex: "cas/dist/index.js" }
 primary: create-new-markdown
 branches:

@@ -12,6 +12,7 @@ import { join } from "node:path";
 export const INTERNAL_TOKEN = "unidocs-dev-token";
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
+export const CAS_WORKER = "unidocs-cas";
 export const COMPATIBILITY_DATE = "2025-08-17";
 export const SNAPSHOTS_DB = "unidocs-snapshots";
 export const CAS_BUCKET = "unidocs-cas";
@@ -72,6 +73,7 @@ export function resolvePorts(docTypes, overrides = {}) {
 export function bundleTargets(docTypes) {
   return [
     { entry: "packages/cloudflare-gateway/src/worker.ts", outfile: "gateway.js" },
+    { entry: "packages/cloudflare-cas/src/worker.ts", outfile: "cas.js" },
     ...docTypes.map((name) => ({
       entry: DOC_TYPES[name].entry,
       outfile: `${name}.js`,
@@ -91,11 +93,20 @@ export function buildWorkers({ docTypes, host, ports, bundleDir }) {
       compatibilityDate: COMPATIBILITY_DATE,
       bindings,
       kvNamespaces: { REGISTRY: REGISTRY_KV },
-      d1Databases: { SNAPSHOTS_DB, CAS_DB },
-      r2Buckets: { CAS_R2: CAS_BUCKET },
+      d1Databases: { SNAPSHOTS_DB },
+      serviceBindings: { CAS_SERVICE: CAS_WORKER },
+    },
+    {
+      name: CAS_WORKER,
+      modules: true,
+      scriptPath: join(bundleDir, "cas.js"),
+      compatibilityDate: COMPATIBILITY_DATE,
+      bindings,
       durableObjects: {
         CAS_DO: { className: "CasDurableObject" },
       },
+      d1Databases: { CAS_DB },
+      r2Buckets: { CAS_R2: CAS_BUCKET },
     },
   ];
 
@@ -113,6 +124,7 @@ export function buildWorkers({ docTypes, host, ports, bundleDir }) {
       },
       d1Databases: { SNAPSHOTS_DB },
       r2Buckets: { CAS: CAS_BUCKET },
+      serviceBindings: { CAS_SERVICE: CAS_WORKER },
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }

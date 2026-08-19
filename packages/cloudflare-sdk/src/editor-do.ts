@@ -21,11 +21,12 @@
  *     - key: hash (SHA-256 truncated 16 hex)
  *     - value: document bytes
  *
- * Write order (consistency guarantee):
+ * Write order for apply (architecture §13):
  *   1. sqlite INSERT delta
- *   2. KV PUT snapshot
- *   3. (if needed) R2 PUT + D1 INSERT snapshot
- *   → worst case: snapshot lags one delta, but never inconsistent
+ *   2. updateRootRefs via CAS_SERVICE
+ *   3. commit in-memory doc/version + KV snapshot
+ *   4. (if needed) R2 PUT + D1 INSERT document snapshot
+ *   → if step 2 fails, DELETE the new delta and discard the working document
  *
  * Snapshot strategy:
  *   - Every 20 deltas since last snapshot
@@ -41,7 +42,13 @@
  *   POST /_internal/init_from_hash — initialize from existing snapshot hash (for clone)
  */
 
-import type { DocumentType } from "@unidocs/core";
+import type { DocumentType, DocumentTypeContext } from "@unidocs/core";
+import {
+  CasClient,
+  CasClientError,
+  commitRootRefsOrRollback,
+  leaseOpRefs,
+} from "./cas-client.js";
 import type { HistoryEntry, ApplyResult } from "./history.js";
 import { encodeQueryValue } from "./query-value.js";
 
@@ -73,6 +80,8 @@ export interface SnapshotRecord {
 export interface Env {
   SNAPSHOTS_DB: D1Database;
   CAS: R2Bucket;
+  CAS_SERVICE: Fetcher;
+  INTERNAL_TOKEN: string;
 }
 
 export interface EditorDOInstance {
@@ -100,6 +109,42 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       this.#env = env;
     }
 
+    #makeCasClient(userId: string): CasClient {
+      return new CasClient({
+        fetcher: this.#env.CAS_SERVICE,
+        userId,
+        internalToken: this.#env.INTERNAL_TOKEN,
+      });
+    }
+
+    #casClientFromRequest(request: Request): CasClient | Response {
+      const userId = request.headers.get("X-User-Id");
+      if (!userId) {
+        return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
+      }
+      return this.#makeCasClient(userId);
+    }
+
+    async #storedCasContext(): Promise<DocumentTypeContext | undefined> {
+      const userId = await this.#ctx.storage.get<string>(KEY_USER_ID);
+      if (!userId) return undefined;
+      return { cas: this.#makeCasClient(userId) };
+    }
+
+    #leaseFailure(err: unknown): Response {
+      if (err instanceof CasClientError) {
+        const status = err.status === 409 ? 409 : err.status === 404 ? 400 : 502;
+        return Response.json(
+          { success: false, version: this.#version, error: err.message },
+          { status },
+        );
+      }
+      return Response.json(
+        { success: false, version: this.#version, error: String(err) },
+        { status: 400 },
+      );
+    }
+
     async #ensureLoaded(): Promise<void> {
       if (this.#doc !== null) return;
 
@@ -120,10 +165,12 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         )
       `);
 
+      const ctx = await this.#storedCasContext();
+
       // Load from KV snapshot
       const snapshot = await this.#ctx.storage.get<SnapshotKV>(KEY_SNAPSHOT);
       if (snapshot) {
-        this.#doc = await config.load(snapshot.bytes);
+        this.#doc = await config.load(snapshot.bytes, ctx);
         this.#version = snapshot.version;
       }
 
@@ -135,7 +182,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
       for (const row of result.toArray()) {
         const ops = JSON.parse(row.operations as string) as TOp[];
-        this.#doc = await config.apply(ops, this.#doc!);
+        this.#doc = await config.apply(ops, this.#doc!, ctx);
         this.#version = row.version as number;
       }
 
@@ -258,11 +305,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
           if (file) {
             const bytes = new Uint8Array(await file.arrayBuffer());
-            this.#doc = await config.load(bytes);
+            const cas = this.#makeCasClient(userId);
+            this.#doc = await config.load(bytes, { cas });
           } else if (sourceId) {
             return Response.json({ success: false, error: "Clone should be handled at worker level" }, { status: 400 });
           } else {
-            this.#doc = await config.init();
+            const cas = this.#makeCasClient(userId);
+            this.#doc = await config.init({ cas });
           }
 
           // Insert initial delta in sqlite
@@ -309,12 +358,12 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           }
 
           const bytes = await obj.bytes();
-          this.#doc = await config.load(bytes);
 
           // Store immutable context
           const docType = request.headers.get("X-Doc-Type") || "unknown";
           const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
           const userId = request.headers.get("X-User-Id") || "anonymous";
+          this.#doc = await config.load(bytes, { cas: this.#makeCasClient(userId) });
           await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
           await this.#ctx.storage.put(KEY_DOC_ID, docId);
           await this.#ctx.storage.put(KEY_USER_ID, userId);
@@ -380,7 +429,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         // POST /_internal/query
         if (method === "POST" && endpoint === "/_internal/query") {
           const q = await request.json() as TQuery;
-          const data = await config.query(q, this.#doc);
+          const casOrErr = this.#casClientFromRequest(request);
+          if (casOrErr instanceof Response) return casOrErr;
+          const data = await config.query(q, this.#doc, { cas: casOrErr });
           return Response.json({ success: true, data: encodeQueryValue(data), version: this.#version });
         }
 
@@ -404,10 +455,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             );
           }
 
-          // Apply all operations transactionally (in-memory)
+          const casOrErr = this.#casClientFromRequest(request);
+          if (casOrErr instanceof Response) return casOrErr;
+          const cas = casOrErr;
+          const ctx: DocumentTypeContext = { cas };
+
+          let refs;
+          try {
+            refs = await leaseOpRefs(body.operations, config.refsFromOp, cas);
+          } catch (err) {
+            return this.#leaseFailure(err);
+          }
+
+          // Apply all operations transactionally (in-memory working copy)
           let newDoc: TDoc;
           try {
-            newDoc = await config.apply(body.operations, this.#doc!);
+            newDoc = await config.apply(body.operations, this.#doc!, ctx);
           } catch (err) {
             return Response.json(
               { success: false, version: this.#version, error: `Delta failed: ${err}` },
@@ -415,10 +478,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             );
           }
 
-          // All operations succeeded
-          this.#doc = newDoc;
-
-          // 1. sqlite: INSERT delta (first — source of truth)
+          // sqlite: INSERT delta (source of truth) before root-refs
           const newVersion = await this.#getNextVersion();
           this.#ctx.storage.sql.exec(
             `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
@@ -427,12 +487,30 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             body.description,
             JSON.stringify(body.operations),
           );
+
+          const userId = await this.#ctx.storage.get<string>(KEY_USER_ID);
+          const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
+          try {
+            await commitRootRefsOrRollback(
+              cas,
+              `apply:${userId}:${docId}:${newVersion}`,
+              refs,
+              () => {
+                this.#ctx.storage.sql.exec(`DELETE FROM deltas WHERE version = ?`, newVersion);
+              },
+            );
+          } catch (err) {
+            return Response.json(
+              { success: false, version: this.#version, error: `CAS root-refs failed: ${err}` },
+              { status: 502 },
+            );
+          }
+
+          this.#doc = newDoc;
           this.#version = newVersion;
 
-          // 2. KV: PUT snapshot (may lag if crashes here, but won't be inconsistent)
           await this.#saveSnapshotKV();
 
-          // 3. Check if we need an R2 snapshot
           if (await this.#shouldSnapshot()) {
             await this.#saveSnapshot();
           }
@@ -498,6 +576,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             body.version,
           );
 
+          const casOrErr = this.#casClientFromRequest(request);
+          if (casOrErr instanceof Response) return casOrErr;
+          const ctx: DocumentTypeContext = { cas: casOrErr };
+
           let baseDoc: TDoc;
           let baseVersion: number;
 
@@ -514,11 +596,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
               );
             }
             const bytes = await obj.bytes();
-            baseDoc = await config.load(bytes);
+            baseDoc = await config.load(bytes, ctx);
             baseVersion = snapRow.version as number;
           } else {
             // No snapshot, replay from beginning
-            baseDoc = await config.init();
+            baseDoc = await config.init(ctx);
             baseVersion = 0;
           }
 
@@ -531,7 +613,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
           for (const row of deltaResult.toArray()) {
             const ops = JSON.parse(row.operations as string) as TOp[];
-            baseDoc = await config.apply(ops, baseDoc);
+            baseDoc = await config.apply(ops, baseDoc, ctx);
           }
 
           // Insert rollback delta

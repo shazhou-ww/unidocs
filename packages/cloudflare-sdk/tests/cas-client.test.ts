@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { CasClient } from "../src/cas-client";
+import { CasClient, CasClientError, leaseOpRefs, commitRootRefsOrRollback } from "../src/cas-client";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -247,4 +247,113 @@ describe("CasClient", () => {
       );
     });
   });
+
+  describe("Editor service-binding mode", () => {
+    it("sets internal headers and uses the fetcher", async () => {
+      const fetcherFetch = vi.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2]).buffer,
+      }));
+      const internal = new CasClient({
+        fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
+        userId: "user1",
+        internalToken: "tok",
+      });
+
+      await internal.read({ kind: "cas", hash: "a".repeat(64) });
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(fetcherFetch).toHaveBeenCalledWith(
+        `https://cas.internal/users/user1/cas/nodes/${"a".repeat(64)}/content`,
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "X-Internal-Token": "tok",
+            "X-User-Id": "user1",
+          }),
+        }),
+      );
+    });
+
+    it("posts updateRootRefs to /_internal/root-refs", async () => {
+      const fetcherFetch = vi.fn(async () => ({ ok: true }));
+      const internal = new CasClient({
+        fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
+        userId: "user1",
+        internalToken: "tok",
+      });
+      const hash = "b".repeat(64);
+
+      await internal.updateRootRefs({
+        requestId: "apply:user1:doc:2",
+        changes: { [hash]: 1 },
+      });
+
+      expect(fetcherFetch).toHaveBeenCalledWith(
+        "https://cas.internal/_internal/root-refs",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "X-Internal-Token": "tok",
+            "X-User-Id": "user1",
+            "Content-Type": "application/json",
+          }),
+        }),
+      );
+    });
+
+    it("throws if public mode calls updateRootRefs", async () => {
+      await expect(
+        client.updateRootRefs({ requestId: "x", changes: { ["c".repeat(64)]: 1 } }),
+      ).rejects.toThrow(/service-binding/);
+    });
+  });
 });
+
+describe("leaseOpRefs", () => {
+  it("leases each aggregated hash and skips empty maps", async () => {
+    const leaseExisting = vi.fn(async () => ({ ready: true }));
+    const hash = "d".repeat(64);
+    const refs = await leaseOpRefs(
+      [{ kind: "insertImage", hash }, { kind: "appendParagraph" }],
+      (op) => (op.kind === "insertImage" ? { [op.hash]: 1 } : {}),
+      { leaseExisting },
+    );
+    expect(refs).toEqual({ [hash]: 1 });
+    expect(leaseExisting).toHaveBeenCalledTimes(1);
+    expect(leaseExisting).toHaveBeenCalledWith(hash);
+  });
+
+  it("maps missing nodes as CasClientError 404", async () => {
+    const leaseExisting = vi.fn(async () => {
+      throw new CasClientError(404, "Not Found", "leaseExisting");
+    });
+    await expect(leaseOpRefs(
+      [{ hash: "e".repeat(64) }],
+      (op) => ({ [op.hash]: 1 }),
+      { leaseExisting },
+    )).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("commitRootRefsOrRollback", () => {
+  it("skips empty changes", async () => {
+    const updateRootRefs = vi.fn();
+    const rollback = vi.fn();
+    await commitRootRefsOrRollback({ updateRootRefs }, "id", {}, rollback);
+    expect(updateRootRefs).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the delta when root-refs fail", async () => {
+    const updateRootRefs = vi.fn(async () => {
+      throw new CasClientError(500, "Internal Server Error", "updateRootRefs");
+    });
+    const rollback = vi.fn();
+    const hash = "f".repeat(64);
+    await expect(
+      commitRootRefsOrRollback({ updateRootRefs }, "apply:u:d:2", { [hash]: 1 }, rollback),
+    ).rejects.toThrow(/updateRootRefs/);
+    expect(rollback).toHaveBeenCalledTimes(1);
+  });
+});
+

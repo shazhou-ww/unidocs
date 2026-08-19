@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@ariadng/office": "0.3.0",
+    "@unidocs/cas": "workspace:*",
     "@unidocs/core": "workspace:*"
   },
   "devDependencies": {

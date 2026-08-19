@@ -34,6 +34,20 @@ export function isCasRoute(pathname: string): boolean {
 }
 
 /**
+ * POST /_internal/root-refs — Editor-only root-reference updates.
+ */
+export async function handleRootRefs(
+  request: Request,
+  env: CasEnv,
+  userId: string,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
+  }
+  return callCasDO(env, userId, "/updateRootRefs", "POST", request.body);
+}
+
+/**
  * Handle a CAS HTTP request.
  */
 export async function handleCasRequest(
@@ -142,7 +156,7 @@ async function callCasDO(
   try {
     return await stub.fetch(url, { method, headers, body: body ?? undefined });
   } catch (err) {
-    console.error("[Gateway] CAS DO call failed:", { userId, action, method, hash, err });
+    console.error("[CAS] DO call failed:", { userId, action, method, hash, err });
     throw err;
   }
 }

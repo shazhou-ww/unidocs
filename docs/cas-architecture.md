@@ -334,6 +334,10 @@ export interface CasGcResult {
 
 Public CAS endpoints live under `/users/{userId}/cas/`. Document APIs live under `/users/{userId}/docs/{docType}/`. The path `userId` is the current identity. Future Bearer tokens must bind to that userId; a mismatch will be rejected.
 
+A dedicated CAS worker owns `CasDurableObject`, D1 `CAS_DB`, and R2 `CAS_R2`. The Gateway allowlist-proxies only the public routes in this section to service binding `CAS_SERVICE`, injecting `X-Internal-Token` and `X-User-Id` from the path. Unknown `/users/{userId}/cas/...` paths, including `root-refs`, are not proxied.
+
+CAS requires `X-Internal-Token` on every request and never reads an end-user Bearer. Document Editors call the same CAS worker through `CAS_SERVICE`; they do not HTTP-hairpin through the Gateway.
+
 HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
 
 ### 11.1 Read content
@@ -405,6 +409,21 @@ Authorization: Bearer ...
 
 GC is advisory. Triggering it does not guarantee that every eligible node is removed in one call.
 
+### 11.6 Internal root-reference updates
+
+Editors update root counts on the CAS worker only:
+
+```http
+POST /_internal/root-refs
+X-Internal-Token: ...
+X-User-Id: {userId}
+Content-Type: application/json
+
+{ "requestId": "apply:{userId}:{docId}:{version}", "changes": { "<hash>": 1 } }
+```
+
+This route is not part of the Gateway allowlist. A public `POST /users/{userId}/cas/root-refs` is a spec bug.
+
 ## 12. DocumentType integration
 
 Document types receive read-only, user-scoped CAS access.
@@ -471,19 +490,23 @@ DOCX snapshots contain embedded image bytes and therefore do not retain the sour
 
 ## 13. Delta transaction flow
 
-For an apply request, the SDK:
+For an apply request, the SDK builds a `CasClient` from `env.CAS_SERVICE`, `env.INTERNAL_TOKEN`, and `X-User-Id`. Missing user id → `401`. It does not `fetch` the Gateway.
 
 1. aggregates references using `refsFromOp` for every operation;
 2. calls `leaseExisting` to extend leases and verify every referenced node is ready;
-3. runs `DocumentType.apply()` against a working document;
+3. runs `DocumentType.apply()` against a working document with `{ cas }`;
 4. serializes the resulting document;
 5. writes the Delta to DO SQLite;
-6. calls idempotent `updateRootRefs()` with positive deltas;
+6. calls idempotent `updateRootRefs()` (`POST /_internal/root-refs`) with positive deltas and `requestId = apply:{userId}:{docId}:{version}`;
 7. only after root-reference success commits in-memory document/version and KV snapshot state.
 
 If step 6 fails, the SDK deletes the newly inserted Delta and discards the working document.
 
-`refsFromOp()` never creates nodes and never supplies upload content. Clients create nodes through the CAS lease-with-content API before submitting a Delta. If `leaseExisting` finds a not-ready reference, apply fails and the client must complete a lease-with-content request before retrying.
+Empty `refsFromOp` (Markdown, and DOCX ops other than `insertImage`) is a no-op for steps 2 and 6.
+
+`refsFromOp()` never creates nodes and never supplies upload content. Clients create nodes through the CAS lease-with-content API before submitting a Delta. If `leaseExisting` finds a missing node, apply fails with `400`. A not-ready reference fails apply with `409`; the client must complete a lease-with-content request before retrying.
+
+Replay, rollback, load, query, and clone pass `{ cas }` so operations such as `insertImage` can `cas.read`. They must not call `leaseExisting` or `updateRootRefs`. Root counts change only on persist/retention.
 
 The accepted residual failure is:
 
@@ -537,12 +560,14 @@ The first implementation should include:
 - GC for zero-referenced, expired nodes;
 - usage and manual GC endpoints;
 - read-only `DocumentTypeContext`;
-- synchronous `refsFromSnapshot` and `refsFromOp` hooks.
+- synchronous `refsFromSnapshot` and `refsFromOp` hooks;
+- CAS worker plus Gateway/Editor `CAS_SERVICE` bindings;
+- DOCX `insertImage` and `getImages`.
 
 Deferred work:
 
 - automatic GC scheduling policy refinements;
 - storage quotas and billing policy;
 - repair tooling for rare cross-storage Delta corruption;
-- CAS-backed DOCX image operations;
+- replace / delete / resize / floating images;
 - historical compaction and reference release.

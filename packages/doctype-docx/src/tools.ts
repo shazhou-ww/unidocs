@@ -88,6 +88,11 @@ export const tools: ToolsMap = {
     description: "List document footers with type and text",
     inputSchema: {},
   },
+  getImages: {
+    name: "query_getImages",
+    description: "List inline and anchored images (index, format, partName, size). Does not return CAS hashes.",
+    inputSchema: {},
+  },
 
   // ─── Paragraph operations ────────────────────────────────────────
   appendParagraph: {
@@ -251,6 +256,22 @@ export const tools: ToolsMap = {
       required: ["text"],
     },
   },
+
+  // ─── Image operations ────────────────────────────────────────────
+  insertImage: {
+    name: "apply_insertImage",
+    description:
+      "Append an inline image. The hash must already be uploaded via POST /users/{userId}/cas/nodes/{hash} (PNG or JPEG).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        hash: { type: "string", minLength: 64, maxLength: 64 },
+        widthPx: { type: "number", exclusiveMinimum: 0 },
+        altText: { type: "string" },
+      },
+      required: ["hash"],
+    },
+  },
 };
 
 export const instructions = `You are a DOCX document operator. Use query tools before editing so indexes are current.
@@ -265,6 +286,7 @@ export const instructions = `You are a DOCX document operator. Use query tools b
 - getTables — list all tables with dimensions and style
 - getTable — full table detail including every row and cell
 - getHeaders / getFooters — inspect document headers and footers
+- getImages — list embedded images (index, format, partName, display size)
 
 ## Edit tools — paragraphs
 - appendParagraph — add a paragraph (optionally with style, bold, italic)
@@ -283,9 +305,13 @@ export const instructions = `You are a DOCX document operator. Use query tools b
 - setHeader — set document header (type: default/first/even)
 - setFooter — set document footer (type: default/first/even)
 
+## Edit tools — images
+- insertImage — append an inline PNG/JPEG. Upload the bytes to CAS first and pass the 64-char hash. Optional widthPx and altText.
+
 ## Rules
 - Indexes are zero-based.
 - Always re-query after edits because document structure may change.
 - Use getParagraphs to find paragraph and run indexes before editing.
 - Use getTables to find table indexes before editing cells.
-- When building tables, addTable first, then setCellText for each cell.`;
+- When building tables, addTable first, then setCellText for each cell.
+- insertImage does not upload bytes; the CAS node must already exist.`;

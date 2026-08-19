@@ -8,6 +8,7 @@
 import { Document } from "@ariadng/office/docx";
 import type { DocumentTypeFactory } from "@unidocs/core";
 import { createState } from "./helpers.js";
+import { insertImage } from "./ops/image-ops.js";
 import { appendParagraph, setRunText } from "./ops/paragraph-ops.js";
 import { addTable, addTableRow, setCellText } from "./ops/table-ops.js";
 import { addBulletList, addNumberedList } from "./ops/list-ops.js";
@@ -32,7 +33,7 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
 
   query: async (query, doc) => executeQuery(query, doc),
 
-  apply: async (operations, doc) => {
+  apply: async (operations, doc, context) => {
     const working = await Document.open(doc.bytes);
 
     for (const operation of operations) {
@@ -88,6 +89,11 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
         case "setFooter":
           setFooter(working, operation.payload.text, operation.payload.type);
           break;
+
+        // Image operations
+        case "insertImage":
+          await insertImage(working, operation.payload, context);
+          break;
       }
     }
 
@@ -104,7 +110,12 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
   // DOCX snapshots contain embedded image bytes and therefore do not
   // retain the source image CAS nodes.
   refsFromSnapshot: () => ({}),
-  refsFromOp: () => ({}),
+  refsFromOp: (operation) => {
+    if (operation.kind === "insertImage") {
+      return { [operation.payload.hash]: 1 };
+    }
+    return {};
+  },
 
   tools,
   instructions,

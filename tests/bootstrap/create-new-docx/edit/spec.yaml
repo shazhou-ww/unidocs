@@ -32,3 +32,4 @@ branches:
   - conflict
   - clone
   - rollback
+  - image

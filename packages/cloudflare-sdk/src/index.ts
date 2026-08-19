@@ -25,4 +25,11 @@ export type { BinaryQueryValue, EscapedQueryObject, WireQueryValue } from "./que
 export { createEditorDO, type Env as EditorEnv } from "./editor-do.js";
 export { createOperatorDO, type OperatorConfig } from "./operator-do.js";
 export { encodeQueryValue } from "./query-value.js";
-export { CasClient, type CasClientConfig, aggregateRefs } from "./cas-client.js";
+export {
+	CasClient,
+	CasClientError,
+	type CasClientConfig,
+	aggregateRefs,
+	leaseOpRefs,
+	commitRootRefsOrRollback,
+} from "./cas-client.js";

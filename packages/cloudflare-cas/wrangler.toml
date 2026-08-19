@@ -1,0 +1,24 @@
+name = "unidocs-cas"
+main = "dist/worker.js"
+compatibility_date = "2025-08-17"
+
+[[durable_objects.bindings]]
+name = "CAS_DO"
+class_name = "CasDurableObject"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["CasDurableObject"]
+
+[[d1_databases]]
+binding = "CAS_DB"
+database_name = "unidocs-cas"
+database_id = "REPLACE_WITH_CAS_D1_ID"
+
+[[r2_buckets]]
+bucket_name = "unidocs-cas"
+binding = "CAS_R2"
+
+# Set via wrangler secret: `wrangler secret put INTERNAL_TOKEN`
+# [vars]
+# INTERNAL_TOKEN = "dev-token"

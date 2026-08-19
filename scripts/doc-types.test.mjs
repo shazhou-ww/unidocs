@@ -48,19 +48,19 @@ test("resolvePorts lets a caller override individual ports", () => {
     .toEqual({ gateway: 18787, markdown: 18788 });
 });
 
-test("bundleTargets builds the gateway plus only the selected types", () => {
+test("bundleTargets builds the gateway, cas worker, plus only the selected types", () => {
   expect(bundleTargets(["docx"]).map((t) => t.outfile))
-    .toEqual(["gateway.js", "docx.js"]);
+    .toEqual(["gateway.js", "cas.js", "docx.js"]);
 });
 
-test("buildWorkers always includes the gateway", () => {
+test("buildWorkers always includes the gateway and cas", () => {
   const workers = buildWorkers({
     docTypes: [],
     host: "127.0.0.1",
     ports: { gateway: 8787 },
     bundleDir: "/b",
   });
-  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway"]);
+  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas"]);
 });
 
 test("buildWorkers omits doc types that were not selected", () => {
@@ -70,11 +70,11 @@ test("buildWorkers omits doc types that were not selected", () => {
     ports: { gateway: 8787, docx: 8789 },
     bundleDir: "/b",
   });
-  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-docx"]);
+  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas", "unidocs-docx"]);
 });
 
 test("buildWorkers binds each selected type's own DO classes and socket", () => {
-  const [, docx] = buildWorkers({
+  const [, , docx] = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
     ports: { gateway: 8787, docx: 8789 },
@@ -86,6 +86,23 @@ test("buildWorkers binds each selected type's own DO classes and socket", () => 
   });
   expect(docx.unsafeDirectSockets).toEqual([{ host: "127.0.0.1", port: 8789 }]);
   expect(docx.scriptPath).toBe(join("/b", "docx.js"));
+  expect(docx.serviceBindings).toEqual({ CAS_SERVICE: "unidocs-cas" });
+});
+
+test("gateway proxies CAS via service binding and cas worker owns the stores", () => {
+  const [gateway, cas] = buildWorkers({
+    docTypes: [],
+    host: "127.0.0.1",
+    ports: { gateway: 8787 },
+    bundleDir: "/b",
+  });
+  expect(gateway.serviceBindings).toEqual({ CAS_SERVICE: "unidocs-cas" });
+  expect(gateway.durableObjects).toBeUndefined();
+  expect(cas.durableObjects).toEqual({
+    CAS_DO: { className: "CasDurableObject" },
+  });
+  expect(cas.d1Databases).toEqual({ CAS_DB: "unidocs-cas-db" });
+  expect(cas.r2Buckets).toEqual({ CAS_R2: "unidocs-cas" });
 });
 
 test("registryEntries seeds only the selected doc types", () => {
