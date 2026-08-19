@@ -22,10 +22,22 @@
  *   POST /users/{userId}/{docType}/{docId}/run        → forward (operator)
  *   POST /users/{userId}/{docType}/{docId}/reset      → forward (operator)
  *
+ * CAS routes:
+ *   GET  /v1/cas/nodes/{hash}/content   → read content
+ *   GET  /v1/cas/nodes/{hash}/metadata  → read metadata
+ *   POST /v1/cas/nodes/{hash}/lease     → claim lease
+ *   PUT  /v1/cas/nodes/{hash}/content   → upload content
+ *   GET  /v1/cas/usage                  → storage usage
+ *   POST /v1/cas/gc                     → trigger GC
+ *
  * Internal auth:
  *   Gateway → doc worker: X-Internal-Token header (shared secret from env)
  *   User → gateway: future (Bearer token, session, etc.)
  */
+
+import { isCasRoute, handleCasRequest, migrateCasSchema } from "./cas/index.js";
+
+export { CasDurableObject } from "./cas/do.js";
 
 interface RegistryEntry {
   workerUrl: string;
@@ -35,6 +47,9 @@ interface Env {
   REGISTRY: KVNamespace;
   SNAPSHOTS_DB: D1Database;
   INTERNAL_TOKEN: string;
+  CAS_DB: D1Database;
+  CAS_R2: R2Bucket;
+  CAS_DO: DurableObjectNamespace;
   // Env var fallback for local dev (wrangler dev has per-worker KV isolation)
   [key: string]: unknown;
 }
@@ -65,6 +80,18 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
+
+    // CAS routes: /v1/cas/...
+    if (isCasRoute(url.pathname)) {
+      // Extract userId from auth context (for now, use header or query param)
+      const userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      if (!userId) {
+        return Response.json({ error: "Authentication required" }, { status: 401 });
+      }
+      // Lazy schema migration (idempotent)
+      await migrateCasSchema(env.CAS_DB);
+      return handleCasRequest(request, env, userId);
+    }
 
     // Must be: /users/{userId}/{docType}/...
     if (parts.length < 3 || parts[0] !== "users") {

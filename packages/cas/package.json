@@ -1,7 +1,7 @@
 {
-  "name": "@unidocs/cloudflare-sdk",
+  "name": "@unidocs/cas",
   "version": "0.1.0",
-  "description": "Cloudflare runtime for UniDocs document editor/operator pairs",
+  "description": "Cloud-neutral content-addressed storage kernel for UniDocs",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,16 +20,8 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "@unidocs/core": "workspace:*",
-    "@unidocs/cas": "workspace:*"
-  },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250817.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
-  },
-  "peerDependencies": {
-    "@cloudflare/workers-types": ">=4"
   }
 }

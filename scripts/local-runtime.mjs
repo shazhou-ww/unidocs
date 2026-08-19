@@ -25,6 +25,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const WORKSPACE_ALIASES = {
   "@unidocs/core": join(ROOT, "packages/core/src/index.ts"),
+  "@unidocs/cas": join(ROOT, "packages/cas/src/index.ts"),
   "@unidocs/cloudflare-sdk": join(ROOT, "packages/cloudflare-sdk/src/index.ts"),
   "@unidocs/doctype-markdown": join(
     ROOT,

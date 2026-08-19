@@ -101,6 +101,11 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
   save: async (doc) => doc.bytes.slice(),
   contentType: DOCX_CONTENT_TYPE,
 
+  // DOCX snapshots contain embedded image bytes and therefore do not
+  // retain the source image CAS nodes.
+  refsFromSnapshot: () => ({}),
+  refsFromOp: () => ({}),
+
   tools,
   instructions,
 });

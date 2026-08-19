@@ -24,6 +24,15 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/cas:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/cloudflare-docx:
     dependencies:
       '@unidocs/cloudflare-sdk':
@@ -47,6 +56,10 @@ importers:
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
   packages/cloudflare-gateway:
+    dependencies:
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -82,6 +95,9 @@ importers:
 
   packages/cloudflare-sdk:
     dependencies:
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
       '@unidocs/core':
         specifier: workspace:*
         version: link:../core

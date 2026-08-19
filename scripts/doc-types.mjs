@@ -15,6 +15,7 @@ export const GATEWAY_WORKER = "unidocs-gateway";
 export const COMPATIBILITY_DATE = "2025-08-17";
 export const SNAPSHOTS_DB = "unidocs-snapshots";
 export const CAS_BUCKET = "unidocs-cas";
+export const CAS_DB = "unidocs-cas-db";
 export const REGISTRY_KV = "unidocs-registry";
 
 export const DOC_TYPES = {
@@ -90,7 +91,11 @@ export function buildWorkers({ docTypes, host, ports, bundleDir }) {
       compatibilityDate: COMPATIBILITY_DATE,
       bindings,
       kvNamespaces: { REGISTRY: REGISTRY_KV },
-      d1Databases: { SNAPSHOTS_DB },
+      d1Databases: { SNAPSHOTS_DB, CAS_DB },
+      r2Buckets: { CAS_R2: CAS_BUCKET },
+      durableObjects: {
+        CAS_DO: { className: "CasDurableObject" },
+      },
     },
   ];
 

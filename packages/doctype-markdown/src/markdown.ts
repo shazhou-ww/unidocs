@@ -100,6 +100,10 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_options
   save: async (doc) => new TextEncoder().encode(doc.content),
   contentType: "text/markdown; charset=utf-8",
 
+  // Markdown snapshots are self-contained text, no CAS references.
+  refsFromSnapshot: () => ({}),
+  refsFromOp: () => ({}),
+
   tools: {
     getContent: {
       name: "query_getContent",

@@ -14,6 +14,27 @@ binding = "SNAPSHOTS_DB"
 database_name = "unidocs-snapshots"
 database_id = "d3c78c42-b32f-4a4d-86e4-6cf6341baa8f"
 
+# CAS D1 — content-addressed storage metadata
+[[d1_databases]]
+binding = "CAS_DB"
+database_name = "unidocs-cas"
+database_id = "REPLACE_WITH_CAS_D1_ID"
+
+# CAS R2 — content-addressed storage blobs
+[[r2_buckets]]
+binding = "CAS_R2"
+bucket_name = "unidocs-cas"
+
+# CAS Durable Object — per-user queue
+[durable_objects]
+bindings = [
+  { name = "CAS_DO", class_name = "CasDurableObject" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["CasDurableObject"]
+
 # Local dev: env var fallback for worker URLs (KV is per-worker in wrangler dev)
 # Production uses KV registry exclusively
 [vars]
