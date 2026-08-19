@@ -7,7 +7,7 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "READY" }
-  - command: "python3 -c \"import pathlib; pathlib.Path('/tmp/tiny.png').write_bytes(bytes([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,0x89,0x00,0x00,0x00,0x0a,0x49,0x44,0x41,0x54,0x78,0x9c,0x63,0x00,0x01,0x00,0x00,0x05,0x00,0x01,0x0d,0x0a,0x2d,0xb4,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,0x42,0x60,0x82]))\" && HASH=$(cd /workspace && node scripts/cas-digest.mjs image/png < /tmp/tiny.png) && echo \"$HASH\" > /tmp/img.hash && curl -s -X POST \"http://localhost:8787/users/test-user-001/cas/nodes/$HASH\" -H 'Content-Type: image/png' -H 'X-CAS-Lease-Duration: 900000' --data-binary @/tmp/tiny.png"
+  - command: "HASH=$(cd /workspace && node scripts/cas-digest.mjs image/png < /workspace/tests/bootstrap/create-new-docx/edit/image/tiny.png) && echo \"$HASH\" > /tmp/img.hash && curl -s -X POST \"http://localhost:8787/users/test-user-001/cas/nodes/$HASH\" -H 'Content-Type: image/png' -H 'X-CAS-Lease-Duration: 900000' --data-binary @/workspace/tests/bootstrap/create-new-docx/edit/image/tiny.png"
     assert:
       type: jsonata
       expression: "ready = true"
@@ -19,7 +19,7 @@ steps:
     assert:
       type: jsonata
       expression: "success = true and $count(data) = 1 and data[0].format = 'png' and data[0].altText = 'dot'"
-  - command: "curl -s --compressed -o /tmp/docx-export.docx http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/export && python3 -c \"d=open('/tmp/docx-export.docx','rb').read(); assert d[:2]==b'PK' and len(d)>0; print('OK')\""
+  - command: "curl -s --compressed -o /tmp/docx-export.docx http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/export && node -e \"const d=require('fs').readFileSync('/tmp/docx-export.docx'); if (d[0]!==0x50||d[1]!==0x4b||d.length===0) process.exit(1); console.log('OK');\""
     assert:
       type: regex
       conditions:
