@@ -2,9 +2,6 @@
  * Tool definitions and operator instructions for the DOCX document type.
  */
 
-import type { DocumentTypeFactory } from "@unidocs/core";
-import type { DocxDoc, DocxQuery, DocxOperation } from "./types.js";
-
 type ToolDef = {
   name: string;
   description: string;
@@ -92,6 +89,24 @@ export const tools: ToolsMap = {
     name: "query_getImages",
     description: "List inline and anchored images (index, format, partName, size). Does not return CAS hashes.",
     inputSchema: {},
+  },
+  getImage: {
+    name: "query_getImage",
+    description: "Get one image by its zero-based index",
+    inputSchema: {
+      type: "object",
+      properties: { index: { type: "integer", minimum: 0 } },
+      required: ["index"],
+    },
+  },
+  getImageByPartName: {
+    name: "query_getImageByPartName",
+    description: "Find an image by its part name (e.g. '/word/media/image1.png')",
+    inputSchema: {
+      type: "object",
+      properties: { partName: { type: "string" } },
+      required: ["partName"],
+    },
   },
 
   // ─── Paragraph operations ────────────────────────────────────────
@@ -272,6 +287,52 @@ export const tools: ToolsMap = {
       required: ["hash"],
     },
   },
+  deleteImage: {
+    name: "apply_deleteImage",
+    description: "Delete an image by its zero-based index",
+    inputSchema: {
+      type: "object",
+      properties: { index: { type: "integer", minimum: 0 } },
+      required: ["index"],
+    },
+  },
+  replaceImage: {
+    name: "apply_replaceImage",
+    description: "Replace an image's bytes with new content from CAS. The hash must already be uploaded.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        index: { type: "integer", minimum: 0 },
+        hash: { type: "string", minLength: 64, maxLength: 64 },
+      },
+      required: ["index", "hash"],
+    },
+  },
+  setImageSize: {
+    name: "apply_setImageSize",
+    description: "Set the display size of an image (in EMU: 914400 EMU = 1 inch)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        index: { type: "integer", minimum: 0 },
+        widthEmu: { type: "integer", exclusiveMinimum: 0 },
+        heightEmu: { type: "integer", exclusiveMinimum: 0 },
+      },
+      required: ["index"],
+    },
+  },
+  setImageAltText: {
+    name: "apply_setImageAltText",
+    description: "Set the alt text (description) of an image",
+    inputSchema: {
+      type: "object",
+      properties: {
+        index: { type: "integer", minimum: 0 },
+        altText: { type: "string" },
+      },
+      required: ["index", "altText"],
+    },
+  },
 };
 
 export const instructions = `You are a DOCX document operator. Use query tools before editing so indexes are current.
@@ -287,6 +348,8 @@ export const instructions = `You are a DOCX document operator. Use query tools b
 - getTable — full table detail including every row and cell
 - getHeaders / getFooters — inspect document headers and footers
 - getImages — list embedded images (index, format, partName, display size)
+- getImage — get one image by index
+- getImageByPartName — find an image by its part name (e.g. '/word/media/image1.png')
 
 ## Edit tools — paragraphs
 - appendParagraph — add a paragraph (optionally with style, bold, italic)
@@ -307,6 +370,10 @@ export const instructions = `You are a DOCX document operator. Use query tools b
 
 ## Edit tools — images
 - insertImage — append an inline PNG/JPEG. Upload the bytes to CAS first and pass the 64-char hash. Optional widthPx and altText.
+- deleteImage — remove an image by index
+- replaceImage — replace an image's bytes with new CAS content (hash must be uploaded first)
+- setImageSize — set display size in EMU (914400 EMU = 1 inch, 9525 EMU = 1 pixel at 96 DPI)
+- setImageAltText — set the alt text (description) of an image
 
 ## Rules
 - Indexes are zero-based.
@@ -314,4 +381,5 @@ export const instructions = `You are a DOCX document operator. Use query tools b
 - Use getParagraphs to find paragraph and run indexes before editing.
 - Use getTables to find table indexes before editing cells.
 - When building tables, addTable first, then setCellText for each cell.
-- insertImage does not upload bytes; the CAS node must already exist.`;
+- insertImage and replaceImage do not upload bytes; the CAS node must already exist.
+- For image sizes: 9525 EMU = 1 pixel at 96 DPI, so widthPx * 9525 = widthEmu.`;

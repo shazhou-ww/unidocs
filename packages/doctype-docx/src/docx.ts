@@ -8,7 +8,13 @@
 import { Document } from "@ariadng/office/docx";
 import type { DocumentTypeFactory } from "@unidocs/core";
 import { createState } from "./helpers.js";
-import { insertImage } from "./ops/image-ops.js";
+import {
+  insertImage,
+  deleteImage,
+  replaceImage,
+  setImageSize,
+  setImageAltText,
+} from "./ops/image-ops.js";
 import { appendParagraph, setRunText } from "./ops/paragraph-ops.js";
 import { addTable, addTableRow, setCellText } from "./ops/table-ops.js";
 import { addBulletList, addNumberedList } from "./ops/list-ops.js";
@@ -94,6 +100,23 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
         case "insertImage":
           await insertImage(working, operation.payload, context);
           break;
+        case "deleteImage":
+          deleteImage(working, operation.payload.index);
+          break;
+        case "replaceImage":
+          await replaceImage(working, operation.payload.index, operation.payload.hash, context);
+          break;
+        case "setImageSize":
+          setImageSize(
+            working,
+            operation.payload.index,
+            operation.payload.widthEmu,
+            operation.payload.heightEmu,
+          );
+          break;
+        case "setImageAltText":
+          setImageAltText(working, operation.payload.index, operation.payload.altText);
+          break;
       }
     }
 
@@ -112,6 +135,9 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
   refsFromSnapshot: () => ({}),
   refsFromOp: (operation) => {
     if (operation.kind === "insertImage") {
+      return { [operation.payload.hash]: 1 };
+    }
+    if (operation.kind === "replaceImage") {
       return { [operation.payload.hash]: 1 };
     }
     return {};

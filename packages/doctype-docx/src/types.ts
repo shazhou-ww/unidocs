@@ -33,7 +33,9 @@ export type DocxQuery =
   | { kind: "getTable"; payload: { index: number } }
   | { kind: "getHeaders"; payload: undefined }
   | { kind: "getFooters"; payload: undefined }
-  | { kind: "getImages"; payload: undefined };
+  | { kind: "getImages"; payload: undefined }
+  | { kind: "getImage"; payload: { index: number } }
+  | { kind: "getImageByPartName"; payload: { partName: string } };
 
 // ─── Operation types ────────────────────────────────────────────────
 
@@ -78,7 +80,24 @@ export type DocxOperation =
       kind: "setFooter";
       payload: { text: string; type?: DocxHeaderFooterType };
     }
+  // Image operations
   | {
       kind: "insertImage";
       payload: { hash: string; widthPx?: number; altText?: string };
+    }
+  | {
+      kind: "deleteImage";
+      payload: { index: number };
+    }
+  | {
+      kind: "replaceImage";
+      payload: { index: number; hash: string };
+    }
+  | {
+      kind: "setImageSize";
+      payload: { index: number; widthEmu?: number; heightEmu?: number };
+    }
+  | {
+      kind: "setImageAltText";
+      payload: { index: number; altText: string };
     };

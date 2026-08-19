@@ -93,6 +93,44 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
         altText: img.altText,
         placement: img.placement,
       }));
+
+    case "getImage": {
+      const { index } = query.payload;
+      requireIndex(index, "image index");
+      const images = doc.document.images();
+      if (index < 0 || index >= images.length) {
+        throw new RangeError(`Image index ${index} out of range (0-${images.length - 1})`);
+      }
+      const img = images[index];
+      return {
+        index,
+        format: img.format,
+        partName: img.partName,
+        widthEmu: img.widthEmu,
+        heightEmu: img.heightEmu,
+        altText: img.altText,
+        placement: img.placement,
+      };
+    }
+
+    case "getImageByPartName": {
+      const { partName } = query.payload;
+      const images = doc.document.images();
+      const index = images.findIndex((img) => img.partName === partName);
+      if (index === -1) {
+        return null;
+      }
+      const img = images[index];
+      return {
+        index,
+        format: img.format,
+        partName: img.partName,
+        widthEmu: img.widthEmu,
+        heightEmu: img.heightEmu,
+        altText: img.altText,
+        placement: img.placement,
+      };
+    }
   }
 }
 
