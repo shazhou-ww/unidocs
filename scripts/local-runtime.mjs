@@ -9,19 +9,19 @@ import {
   LogLevel,
   Miniflare,
 } from "miniflare";
+import {
+  buildWorkers,
+  bundleTargets,
+  DOC_TYPES,
+  registryEntries,
+  resolvePorts,
+} from "./doc-types.mjs";
 
-export const INTERNAL_TOKEN = "unidocs-dev-token";
-export const DEFAULT_PORTS = {
-  gateway: 8787,
-  markdown: 8788,
-  docx: 8789,
-};
+export { DOC_TYPES, INTERNAL_TOKEN, parseDocTypes } from "./doc-types.mjs";
+
+export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const COMPATIBILITY_DATE = "2025-08-17";
-const SNAPSHOTS_DB = "unidocs-snapshots";
-const CAS_BUCKET = "unidocs-cas";
-const REGISTRY_KV = "unidocs-registry";
 
 const WORKSPACE_ALIASES = {
   "@unidocs/core": join(ROOT, "packages/core/src/index.ts"),
@@ -78,117 +78,59 @@ function assertPortFree(host, port) {
 }
 
 /**
- * Start gateway + markdown + docx in one Miniflare runtime.
- * Shared D1/R2; KV registry is seeded with each worker's HTTP URL.
+ * Start the gateway plus the selected document type workers in one Miniflare
+ * runtime. Shared D1/R2; the KV registry is seeded only with the doc types
+ * that are actually running, so the gateway 404s on the rest.
  */
 export async function startLocalRuntime({
   host = "127.0.0.1",
-  ports = DEFAULT_PORTS,
+  docTypes = Object.keys(DOC_TYPES),
+  ports: portOverrides = {},
   persistPath,
   logLevel = LogLevel.WARN,
 } = {}) {
+  const ports = resolvePorts(docTypes, portOverrides);
+
   await Promise.all(
     Object.values(ports).map((port) => assertPortFree(host, port)),
   );
 
   const bundleDir = join(ROOT, ".wrangler", "local-bundles");
 
-  await Promise.all([
-    bundleWorker(
-      join(ROOT, "packages/cloudflare-gateway/src/worker.ts"),
-      join(bundleDir, "gateway.js"),
+  await Promise.all(
+    bundleTargets(docTypes).map(({ entry, outfile }) =>
+      bundleWorker(join(ROOT, entry), join(bundleDir, outfile)),
     ),
-    bundleWorker(
-      join(ROOT, "packages/cloudflare-markdown/src/worker.ts"),
-      join(bundleDir, "markdown.js"),
-    ),
-    bundleWorker(
-      join(ROOT, "packages/cloudflare-docx/src/worker.ts"),
-      join(bundleDir, "docx.js"),
-    ),
-  ]);
+  );
 
-  const urls = {
-    gateway: workerUrl(host, ports.gateway),
-    markdown: workerUrl(host, ports.markdown),
-    docx: workerUrl(host, ports.docx),
-  };
-
-  const sharedBindings = {
-    INTERNAL_TOKEN,
-  };
-  const sharedStorage = {
-    d1Databases: { SNAPSHOTS_DB },
-    r2Buckets: { CAS: CAS_BUCKET },
-  };
+  const urls = Object.fromEntries(
+    Object.entries(ports).map(([name, port]) => [name, workerUrl(host, port)]),
+  );
 
   let mf;
   try {
     mf = new Miniflare(
-    convertV4MiniflareOptions({
-      host,
-      port: ports.gateway,
-      log: new Log(logLevel),
-      logRequests: logLevel >= LogLevel.INFO,
-      ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
-      workers: [
-        {
-          name: "unidocs-gateway",
-          modules: true,
-          scriptPath: join(bundleDir, "gateway.js"),
-          compatibilityDate: COMPATIBILITY_DATE,
-          bindings: sharedBindings,
-          kvNamespaces: { REGISTRY: REGISTRY_KV },
-          d1Databases: { SNAPSHOTS_DB },
-        },
-        {
-          name: "unidocs-markdown",
-          modules: true,
-          scriptPath: join(bundleDir, "markdown.js"),
-          compatibilityDate: COMPATIBILITY_DATE,
-          bindings: sharedBindings,
-          durableObjects: {
-            MARKDOWN_EDITOR: { className: "MarkdownEditor", useSQLite: true },
-            MARKDOWN_OPERATOR: {
-              className: "MarkdownOperator",
-              useSQLite: true,
-            },
-          },
-          ...sharedStorage,
-          unsafeDirectSockets: [{ host, port: ports.markdown }],
-        },
-        {
-          name: "unidocs-docx",
-          modules: true,
-          scriptPath: join(bundleDir, "docx.js"),
-          compatibilityDate: COMPATIBILITY_DATE,
-          bindings: sharedBindings,
-          durableObjects: {
-            DOCX_EDITOR: { className: "DocxEditor", useSQLite: true },
-            DOCX_OPERATOR: { className: "DocxOperator", useSQLite: true },
-          },
-          ...sharedStorage,
-          unsafeDirectSockets: [{ host, port: ports.docx }],
-        },
-      ],
-    }),
+      convertV4MiniflareOptions({
+        host,
+        port: ports.gateway,
+        log: new Log(logLevel),
+        logRequests: logLevel >= LogLevel.INFO,
+        ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
+        workers: buildWorkers({ docTypes, host, ports, bundleDir }),
+      }),
     );
 
     await mf.ready;
 
     const registry = await mf.getKVNamespace("REGISTRY", "unidocs-gateway");
-    await registry.put(
-      "docType:markdown",
-      JSON.stringify({ workerUrl: urls.markdown }),
-    );
-    await registry.put(
-      "docType:docx",
-      JSON.stringify({ workerUrl: urls.docx }),
-    );
+    for (const [key, value] of registryEntries(docTypes, urls)) {
+      await registry.put(key, value);
+    }
 
     return {
       mf,
       urls,
+      docTypes,
       async dispose() {
         await mf.dispose();
       },

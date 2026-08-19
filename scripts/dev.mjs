@@ -1,20 +1,36 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LogLevel } from "miniflare";
-import { startLocalRuntime } from "./local-runtime.mjs";
+import { parseDocTypes } from "./doc-types.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
+let docTypes;
+try {
+  docTypes = parseDocTypes(process.argv.slice(2));
+} catch (err) {
+  console.error(err.message);
+  console.error("Usage: pnpm dev [docType ...]   e.g. pnpm dev docx markdown");
+  process.exit(1);
+}
+
+// Imported after argv validation so a typo fails fast instead of paying for
+// the esbuild + Miniflare import graph first.
+const { LogLevel } = await import("miniflare");
+const { startLocalRuntime } = await import("./local-runtime.mjs");
+
 const runtime = await startLocalRuntime({
+  docTypes,
   persistPath: join(root, ".wrangler", "miniflare"),
   logLevel: LogLevel.INFO,
 });
 
 console.log("UniDocs local runtime");
-console.log(`  gateway  ${runtime.urls.gateway}`);
-console.log(`  markdown ${runtime.urls.markdown}`);
-console.log(`  docx     ${runtime.urls.docx}`);
-console.log("Registry: docType:markdown / docType:docx → workerUrl");
+for (const [name, url] of Object.entries(runtime.urls)) {
+  console.log(`  ${name.padEnd(8)} ${url}`);
+}
+console.log(
+  `Registry: ${docTypes.map((t) => `docType:${t}`).join(" / ")} → workerUrl`,
+);
 console.log("Ctrl+C to stop.");
 
 const shutdown = async () => {
