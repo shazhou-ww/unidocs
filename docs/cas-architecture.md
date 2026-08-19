@@ -35,7 +35,7 @@ Each user has an independent CAS address space.
 - R2 objects use `users/{user_id}/nodes/{digest}`.
 - Identical content owned by different users is stored independently.
 - Storage usage and GC are calculated per user.
-- Every HTTP endpoint is authenticated and resolves the user from its auth context. A user ID is never accepted as a caller-controlled URL or body parameter.
+- Public HTTP APIs are namespaced under `/users/{userId}/`. The path userId is the current identity. Future Bearer authentication must bind to that userId.
 
 A user-scoped CAS Durable Object serializes all mutable operations for that user:
 
@@ -337,12 +337,14 @@ export interface CasGcResult {
 
 ## 11. Authenticated HTTP API
 
-HTTP cannot express a server-side callback, so lease/upload is a two-phase protocol. Every endpoint requires user authentication.
+Public CAS endpoints live under `/users/{userId}/cas/`. Document APIs live under `/users/{userId}/docs/{docType}/`. The path `userId` is the current identity. Future Bearer tokens must bind to that userId; a mismatch will be rejected.
+
+HTTP cannot express a server-side callback, so lease/upload is a two-phase protocol.
 
 ### 11.1 Read content
 
 ```http
-GET /v1/cas/nodes/{sha256}/content
+GET /users/{userId}/cas/nodes/{sha256}/content
 Authorization: Bearer ...
 ```
 
@@ -354,7 +356,7 @@ Responses:
 ### 11.2 Read metadata
 
 ```http
-GET /v1/cas/nodes/{sha256}/metadata
+GET /users/{userId}/cas/nodes/{sha256}/metadata
 Authorization: Bearer ...
 ```
 
@@ -363,7 +365,7 @@ Returns immutable metadata and mutable state. Unknown nodes return `404`.
 ### 11.3 Claim a lease
 
 ```http
-POST /v1/cas/nodes/{sha256}/lease
+POST /users/{userId}/cas/nodes/{sha256}/lease
 Authorization: Bearer ...
 Content-Type: application/json
 
@@ -403,7 +405,7 @@ Not-ready response additionally contains a short-lived upload token:
 ### 11.4 Upload content
 
 ```http
-PUT /v1/cas/nodes/{sha256}/content
+PUT /users/{userId}/cas/nodes/{sha256}/content
 Authorization: Bearer ...
 X-CAS-Upload-Token: ...
 Content-Type: application/octet-stream
@@ -425,8 +427,8 @@ A successful response returns the final lease and ready state.
 ### 11.5 User control plane
 
 ```http
-GET  /v1/cas/usage
-POST /v1/cas/gc
+GET  /users/{userId}/cas/usage
+POST /users/{userId}/cas/gc
 Authorization: Bearer ...
 ```
 

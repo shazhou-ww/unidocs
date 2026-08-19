@@ -1,13 +1,13 @@
 /**
  * CAS HTTP route handlers.
  *
- * Routes:
- *   GET  /v1/cas/nodes/{hash}/content   — read content
- *   GET  /v1/cas/nodes/{hash}/metadata  — read metadata
- *   POST /v1/cas/nodes/{hash}/lease     — claim lease
- *   PUT  /v1/cas/nodes/{hash}/content   — upload content
- *   GET  /v1/cas/usage                  — storage usage
- *   POST /v1/cas/gc                     — trigger GC
+ * Public routes (userId comes from the URL path):
+ *   GET  /users/{userId}/cas/nodes/{hash}/content   — read content
+ *   GET  /users/{userId}/cas/nodes/{hash}/metadata  — read metadata
+ *   POST /users/{userId}/cas/nodes/{hash}/lease     — claim lease
+ *   PUT  /users/{userId}/cas/nodes/{hash}/content   — upload content
+ *   GET  /users/{userId}/cas/usage                  — storage usage
+ *   POST /users/{userId}/cas/gc                     — trigger GC
  */
 
 import { validateHash } from "@unidocs/cas";
@@ -19,10 +19,11 @@ interface CasEnv {
 }
 
 /**
- * Check if a path is a CAS route.
+ * Check if a path is a public CAS route: /users/{userId}/cas/...
  */
 export function isCasRoute(pathname: string): boolean {
-  return pathname.startsWith("/v1/cas");
+  const parts = pathname.split("/").filter(Boolean);
+  return parts.length >= 3 && parts[0] === "users" && parts[2] === "cas";
 }
 
 /**
@@ -36,26 +37,26 @@ export async function handleCasRequest(
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean);
 
-  // /v1/cas/usage
-  if (parts.length === 3 && parts[2] === "usage") {
+  // /users/{userId}/cas/usage
+  if (parts.length === 4 && parts[3] === "usage") {
     if (request.method !== "GET") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
     return callCasDO(env, userId, "/usage", "GET");
   }
 
-  // /v1/cas/gc
-  if (parts.length === 3 && parts[2] === "gc") {
+  // /users/{userId}/cas/gc
+  if (parts.length === 4 && parts[3] === "gc") {
     if (request.method !== "POST") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
     return callCasDO(env, userId, "/gc", "POST", request.body);
   }
 
-  // /v1/cas/nodes/{hash}/...
-  if (parts.length >= 5 && parts[2] === "nodes") {
-    const hash = parts[3];
-    const action = parts[4];
+  // /users/{userId}/cas/nodes/{hash}/...
+  if (parts.length >= 6 && parts[3] === "nodes") {
+    const hash = parts[4];
+    const action = parts[5];
 
     try {
       validateHash(hash);
@@ -96,6 +97,7 @@ export async function handleCasRequest(
 
 /**
  * Call the CAS Durable Object for a user.
+ * X-User-Id is an internal hop header, not part of the public API.
  */
 async function callCasDO(
   env: CasEnv,

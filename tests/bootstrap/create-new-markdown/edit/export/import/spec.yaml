@@ -6,11 +6,11 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/ -H 'X-Doc-Id: md-imported-001' -F 'file=@/tmp/exported.md'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/ -H 'X-Doc-Id: md-imported-001' -F 'file=@/tmp/exported.md'"
     assert:
       type: jsonata
       expression: "success = true"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-imported-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-imported-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
     assert:
       type: jsonata
       expression: "success = true and $contains(data, 'Updated B') and $contains(data, 'Section C')"

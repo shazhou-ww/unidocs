@@ -6,7 +6,7 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docx/docx-doc-001/export -o /tmp/exported.docx"
+  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/export -o /tmp/exported.docx"
   - command: "wc -c < /tmp/exported.docx"
     assert:
       type: regex

@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { createHash } from "node:crypto";
 import { startLocalRuntime } from "./local-runtime.mjs";
 import {
   encodeHeader,
@@ -11,8 +10,8 @@ import {
 let runtime;
 const GW = () => runtime.urls.gateway;
 
-function authHeaders(userId) {
-  return { "X-User-Id": userId };
+function casUrl(userId, suffix) {
+  return `${GW()}/users/${userId}/cas${suffix}`;
 }
 
 /** Compute the CAS hash for a node (header + contentType + refs + content). */
@@ -29,9 +28,9 @@ async function casUpload(userId, contentType, content, refs = []) {
   const { hash, content: contentBytes } = await computeCasHash(contentType, content, refs);
 
   // Phase 1: claim lease
-  const leaseRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/lease`, {
+  const leaseRes = await fetch(casUrl(userId, `/nodes/${hash}/lease`), {
     method: "POST",
-    headers: { ...authHeaders(userId), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       size: contentBytes.length,
       contentType,
@@ -48,10 +47,9 @@ async function casUpload(userId, contentType, content, refs = []) {
 
   if (lease.uploadRequired) {
     // Phase 2: upload content
-    const uploadRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/content`, {
+    const uploadRes = await fetch(casUrl(userId, `/nodes/${hash}/content`), {
       method: "PUT",
       headers: {
-        ...authHeaders(userId),
         "Content-Type": "application/octet-stream",
         "Content-Length": String(contentBytes.length),
         "X-CAS-Upload-Token": lease.uploadToken,
@@ -83,9 +81,7 @@ test("CAS: create node, upload content, read back", async () => {
   const { hash } = await casUpload("alice", "text/plain", "Hello CAS!");
 
   // Read content
-  const readRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/content`, {
-    headers: authHeaders("alice"),
-  });
+  const readRes = await fetch(casUrl("alice", `/nodes/${hash}/content`));
   expect(readRes.ok).toBe(true);
   const body = await readRes.text();
   expect(body).toBe("Hello CAS!");
@@ -94,9 +90,7 @@ test("CAS: create node, upload content, read back", async () => {
 test("CAS: read metadata", async () => {
   const { hash } = await casUpload("alice", "text/plain", "metadata test");
 
-  const metaRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/metadata`, {
-    headers: authHeaders("alice"),
-  });
+  const metaRes = await fetch(casUrl("alice", `/nodes/${hash}/metadata`));
   expect(metaRes.ok).toBe(true);
   const { metadata, state } = await metaRes.json();
   expect(metadata.hash).toBe(hash);
@@ -113,9 +107,9 @@ test("CAS: GC reclaims zero-ref expired nodes", async () => {
   // Upload a node with a short lease
   const { hash, content: contentBytes } = await computeCasHash("text/plain", "gc me");
 
-  const leaseRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/lease`, {
+  const leaseRes = await fetch(casUrl("alice", `/nodes/${hash}/lease`), {
     method: "POST",
-    headers: { ...authHeaders("alice"), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       size: contentBytes.length,
       contentType: "text/plain",
@@ -126,10 +120,9 @@ test("CAS: GC reclaims zero-ref expired nodes", async () => {
   const lease = await leaseRes.json();
 
   // Upload content
-  const uploadRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/content`, {
+  const uploadRes = await fetch(casUrl("alice", `/nodes/${hash}/content`), {
     method: "PUT",
     headers: {
-      ...authHeaders("alice"),
       "Content-Type": "application/octet-stream",
       "Content-Length": String(contentBytes.length),
       "X-CAS-Upload-Token": lease.uploadToken,
@@ -139,16 +132,14 @@ test("CAS: GC reclaims zero-ref expired nodes", async () => {
   expect(uploadRes.ok).toBe(true);
 
   // Node should be readable
-  const readRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/content`, {
-    headers: authHeaders("alice"),
-  });
+  const readRes = await fetch(casUrl("alice", `/nodes/${hash}/content`));
   expect(readRes.ok).toBe(true);
 
   // Note: GC only works on expired leases. Since the minimum lease is 1 minute,
   // we can't easily test GC in a fast test. Instead, verify the GC endpoint works.
-  const gcRes = await fetch(`${GW()}/v1/cas/gc`, {
+  const gcRes = await fetch(casUrl("alice", "/gc"), {
     method: "POST",
-    headers: { ...authHeaders("alice"), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ maxNodes: 10 }),
   });
   expect(gcRes.ok).toBe(true);
@@ -163,25 +154,19 @@ test("CAS: GC reclaims zero-ref expired nodes", async () => {
 test("CAS: user isolation — alice's nodes not accessible by bob", async () => {
   const { hash } = await casUpload("alice", "text/plain", "alice secret");
 
-  // Bob tries to read alice's node
-  const readRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/content`, {
-    headers: authHeaders("bob"),
-  });
+  // Bob tries to read alice's node under his own namespace
+  const readRes = await fetch(casUrl("bob", `/nodes/${hash}/content`));
   expect(readRes.status).toBe(404);
 
   // Bob tries to read metadata
-  const metaRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/metadata`, {
-    headers: authHeaders("bob"),
-  });
+  const metaRes = await fetch(casUrl("bob", `/nodes/${hash}/metadata`));
   expect(metaRes.status).toBe(404);
 });
 
 test("CAS: user isolation — bob can create own nodes", async () => {
   const { hash } = await casUpload("bob", "text/plain", "bob content");
 
-  const readRes = await fetch(`${GW()}/v1/cas/nodes/${hash}/content`, {
-    headers: authHeaders("bob"),
-  });
+  const readRes = await fetch(casUrl("bob", `/nodes/${hash}/content`));
   expect(readRes.ok).toBe(true);
   const body = await readRes.text();
   expect(body).toBe("bob content");
@@ -192,9 +177,7 @@ test("CAS: user isolation — bob can create own nodes", async () => {
 test("CAS: usage endpoint returns stats", async () => {
   await casUpload("alice", "text/plain", "usage test");
 
-  const usageRes = await fetch(`${GW()}/v1/cas/usage`, {
-    headers: authHeaders("alice"),
-  });
+  const usageRes = await fetch(casUrl("alice", "/usage"));
   expect(usageRes.ok).toBe(true);
   const usage = await usageRes.json();
   expect(usage).toHaveProperty("nodeCount");
@@ -212,9 +195,7 @@ test("CAS: same content uploaded twice is idempotent", async () => {
   expect(hash1).toBe(hash2);
 
   // Still readable
-  const readRes = await fetch(`${GW()}/v1/cas/nodes/${hash1}/content`, {
-    headers: authHeaders("alice"),
-  });
+  const readRes = await fetch(casUrl("alice", `/nodes/${hash1}/content`));
   expect(readRes.ok).toBe(true);
   const body = await readRes.text();
   expect(body).toBe("dedup test");

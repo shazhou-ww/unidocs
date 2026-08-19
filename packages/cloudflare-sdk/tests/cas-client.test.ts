@@ -27,12 +27,8 @@ describe("CasClient", () => {
       const result = await client.read({ kind: "cas", hash: "a".repeat(64) });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/v1/cas/nodes/${"a".repeat(64)}/content`,
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            "X-User-Id": "user1",
-          }),
-        })
+        `http://localhost:8787/users/user1/cas/nodes/${"a".repeat(64)}/content`,
+        expect.any(Object)
       );
       expect(result).toEqual(content);
     });
@@ -70,7 +66,7 @@ describe("CasClient", () => {
       const result = await client.metadata({ kind: "cas", hash });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/v1/cas/nodes/${hash}/metadata`,
+        `http://localhost:8787/users/user1/cas/nodes/${hash}/metadata`,
         expect.any(Object)
       );
       expect(result).toEqual(metadata.metadata);
@@ -109,11 +105,10 @@ describe("CasClient", () => {
       const result = await client.claimLease(hash, 100, "text/plain", [], 60000);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/v1/cas/nodes/${hash}/lease`,
+        `http://localhost:8787/users/user1/cas/nodes/${hash}/lease`,
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
-            "X-User-Id": "user1",
             "Content-Type": "application/json",
           }),
           body: expect.any(String),
@@ -186,11 +181,10 @@ describe("CasClient", () => {
       const result = await client.uploadContent(hash, content, uploadToken);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/v1/cas/nodes/${hash}/content`,
+        `http://localhost:8787/users/user1/cas/nodes/${hash}/content`,
         expect.objectContaining({
           method: "PUT",
           headers: expect.objectContaining({
-            "X-User-Id": "user1",
             "Content-Type": "application/octet-stream",
             "Content-Length": String(content.length),
             "X-CAS-Upload-Token": uploadToken,
@@ -235,7 +229,7 @@ describe("CasClient", () => {
       const result = await client.leaseExisting(hash, 120000);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/v1/cas/nodes/${hash}/lease`,
+        `http://localhost:8787/users/user1/cas/nodes/${hash}/lease`,
         expect.objectContaining({
           method: "POST",
           body: expect.stringContaining('"requestedDurationMs":120000'),
@@ -337,7 +331,6 @@ describe("CasClient", () => {
         expect.any(String),
         expect.objectContaining({
           headers: expect.objectContaining({
-            "X-User-Id": "user1",
             Authorization: "Bearer secret123",
           }),
         })
@@ -360,7 +353,7 @@ describe("CasClient", () => {
       clientWithSlash.read({ kind: "cas", hash: "n".repeat(64) });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        "http://localhost:8787/v1/cas/nodes/n" + "n".repeat(63) + "/content",
+        "http://localhost:8787/users/user1/cas/nodes/n" + "n".repeat(63) + "/content",
         expect.any(Object)
       );
     });

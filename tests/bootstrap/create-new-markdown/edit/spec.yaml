@@ -6,23 +6,23 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Append C\",\"operations\":[{\"kind\":\"appendSection\",\"payload\":{\"heading\":\"C\",\"content\":\"Section C content.\"}}]}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Append C\",\"operations\":[{\"kind\":\"appendSection\",\"payload\":{\"heading\":\"C\",\"content\":\"Section C content.\"}}]}'"
     assert:
       type: jsonata
       expression: "success = true and version = 3"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":3,\"description\":\"Replace B, delete A\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"B\",\"content\":\"Updated B.\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"A\"}}]}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":3,\"description\":\"Replace B, delete A\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"B\",\"content\":\"Updated B.\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"A\"}}]}'"
     assert:
       type: jsonata
       expression: "success = true and version = 4"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getHeadings\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getHeadings\"}'"
     assert:
       type: jsonata
       expression: "success = true and $count(data) = 3"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getSection\",\"payload\":{\"heading\":\"B\"}}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getSection\",\"payload\":{\"heading\":\"B\"}}'"
     assert:
       type: jsonata
       expression: "success = true and $contains(data, 'Updated B')"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
     assert:
       type: jsonata
       expression: "success = true and version = 4"

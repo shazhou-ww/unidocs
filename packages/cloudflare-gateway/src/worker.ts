@@ -10,32 +10,36 @@
  *   Written by CI/CD via `wrangler kv:key put` after deploying each doc worker.
  *
  * URL pattern:
- *   POST /users/{userId}/{docType}/                   → create (forward to worker)
- *   GET  /users/{userId}/{docType}/                   → list (query D1 directly)
- *   POST /users/{userId}/{docType}/{docId}/apply      → forward to worker
- *   POST /users/{userId}/{docType}/{docId}/query      → forward to worker
- *   GET  /users/{userId}/{docType}/{docId}/export     → forward to worker
- *   GET  /users/{userId}/{docType}/{docId}/history    → forward to worker
- *   POST /users/{userId}/{docType}/{docId}/rollback   → forward to worker
- *   GET  /users/{userId}/{docType}/{docId}/snapshot   → forward to worker
- *   POST /users/{userId}/{docType}/{docId}/init_from_hash → forward to worker
- *   POST /users/{userId}/{docType}/{docId}/run        → forward (operator)
- *   POST /users/{userId}/{docType}/{docId}/reset      → forward (operator)
+ *   POST /users/{userId}/docs/{docType}/                   → create (forward to worker)
+ *   GET  /users/{userId}/docs/{docType}/                   → list (query D1 directly)
+ *   POST /users/{userId}/docs/{docType}/{docId}/apply      → forward to worker
+ *   POST /users/{userId}/docs/{docType}/{docId}/query      → forward to worker
+ *   GET  /users/{userId}/docs/{docType}/{docId}/export     → forward to worker
+ *   GET  /users/{userId}/docs/{docType}/{docId}/history    → forward to worker
+ *   POST /users/{userId}/docs/{docType}/{docId}/rollback   → forward to worker
+ *   GET  /users/{userId}/docs/{docType}/{docId}/snapshot   → forward to worker
+ *   POST /users/{userId}/docs/{docType}/{docId}/init_from_hash → forward to worker
+ *   POST /users/{userId}/docs/{docType}/{docId}/run        → forward (operator)
+ *   POST /users/{userId}/docs/{docType}/{docId}/reset      → forward (operator)
  *
  * CAS routes:
- *   GET  /v1/cas/nodes/{hash}/content   → read content
- *   GET  /v1/cas/nodes/{hash}/metadata  → read metadata
- *   POST /v1/cas/nodes/{hash}/lease     → claim lease
- *   PUT  /v1/cas/nodes/{hash}/content   → upload content
- *   GET  /v1/cas/usage                  → storage usage
- *   POST /v1/cas/gc                     → trigger GC
+ *   GET  /users/{userId}/cas/nodes/{hash}/content   → read content
+ *   GET  /users/{userId}/cas/nodes/{hash}/metadata  → read metadata
+ *   POST /users/{userId}/cas/nodes/{hash}/lease     → claim lease
+ *   PUT  /users/{userId}/cas/nodes/{hash}/content   → upload content
+ *   GET  /users/{userId}/cas/usage                  → storage usage
+ *   POST /users/{userId}/cas/gc                     → trigger GC
+ *
+ * Identity:
+ *   Public userId comes from the URL path.
+ *   Future Bearer tokens must bind to that userId.
  *
  * Internal auth:
  *   Gateway → doc worker: X-Internal-Token header (shared secret from env)
- *   User → gateway: future (Bearer token, session, etc.)
+ *   Gateway → CAS DO / doc worker: X-User-Id derived from the URL path
  */
 
-import { isCasRoute, handleCasRequest, migrateCasSchema } from "./cas/index.js";
+import { handleCasRequest, migrateCasSchema } from "./cas/index.js";
 
 export { CasDurableObject } from "./cas/do.js";
 
@@ -81,29 +85,36 @@ export default {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // CAS routes: /v1/cas/...
-    if (isCasRoute(url.pathname)) {
-      // Extract userId from auth context (for now, use header or query param)
-      const userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
-      if (!userId) {
-        return Response.json({ error: "Authentication required" }, { status: 401 });
-      }
-      // Lazy schema migration (idempotent)
-      await migrateCasSchema(env.CAS_DB);
-      return handleCasRequest(request, env, userId);
-    }
-
-    // Must be: /users/{userId}/{docType}/...
     if (parts.length < 3 || parts[0] !== "users") {
       return Response.json({
-        error: "Use /users/{userId}/{docType}/* endpoints",
+        error: "Use /users/{userId}/docs/{docType}/* or /users/{userId}/cas/* endpoints",
       }, { status: 404 });
     }
 
     const userId = parts[1];
-    const docType = parts[2];
-    const docId = parts[3]; // may be undefined
-    const method = parts[4]; // may be undefined
+    const namespace = parts[2];
+
+    // CAS routes: /users/{userId}/cas/...
+    if (namespace === "cas") {
+      await migrateCasSchema(env.CAS_DB);
+      return handleCasRequest(request, env, userId);
+    }
+
+    if (namespace !== "docs") {
+      return Response.json({
+        error: "Use /users/{userId}/docs/{docType}/* or /users/{userId}/cas/* endpoints",
+      }, { status: 404 });
+    }
+
+    const docType = parts[3];
+    const docId = parts[4]; // may be undefined
+    const method = parts[5]; // may be undefined
+
+    if (!docType) {
+      return Response.json({
+        error: "Use /users/{userId}/docs/{docType}/* endpoints",
+      }, { status: 404 });
+    }
 
     // Look up worker URL from registry (KV + env var fallback)
     const workerUrl = await resolveWorkerUrl(env, docType);
@@ -137,8 +148,8 @@ export default {
 
 /**
  * Forward request to document type worker.
- * Strips the /{docType} segment from the path:
- *   Gateway:  /users/{userId}/markdown/{docId}/apply
+ * Strips the /docs/{docType} segments from the path:
+ *   Gateway:  /users/{userId}/docs/markdown/{docId}/apply
  *   Worker:   /users/{userId}/{docId}/apply
  */
 async function forwardToWorker(
@@ -150,9 +161,9 @@ async function forwardToWorker(
 ): Promise<Response> {
   const originalUrl = new URL(request.url);
   const parts = originalUrl.pathname.split("/").filter(Boolean);
-  // parts = ["users", userId, docType, docId, method, ...]
+  // parts = ["users", userId, "docs", docType, docId, method, ...]
   // Build: /users/{userId}/{docId}/{method}/...
-  const targetPath = [parts[0], parts[1], ...parts.slice(3)].join("/");
+  const targetPath = [parts[0], parts[1], ...parts.slice(4)].join("/");
   const targetUrl = `${workerUrl}/${targetPath}${originalUrl.search}`;
 
   const headers = new Headers();

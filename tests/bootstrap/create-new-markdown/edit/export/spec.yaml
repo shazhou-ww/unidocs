@@ -6,7 +6,7 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/markdown/md-doc-001/export -o /tmp/exported.md"
+  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/export -o /tmp/exported.md"
   - command: "cat /tmp/exported.md"
     assert:
       type: regex

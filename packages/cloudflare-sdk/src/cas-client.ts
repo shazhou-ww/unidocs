@@ -40,19 +40,21 @@ export class CasClient implements CasReadContext {
     this.authToken = config.authToken;
   }
 
-  private headers(): HeadersInit {
-    const h: Record<string, string> = {
-      "X-User-Id": this.userId,
-    };
+  private casUrl(path: string): string {
+    return `${this.baseUrl}/users/${this.userId}/cas${path}`;
+  }
+
+  private headers(extra: Record<string, string> = {}): HeadersInit {
+    const h: Record<string, string> = { ...extra };
     if (this.authToken) {
-      h["Authorization"] = `Bearer ${this.authToken}`;
+      h.Authorization = `Bearer ${this.authToken}`;
     }
     return h;
   }
 
   /** Read CAS node content. */
   async read(ref: CasRef): Promise<Uint8Array> {
-    const resp = await fetch(`${this.baseUrl}/v1/cas/nodes/${ref.hash}/content`, {
+    const resp = await fetch(this.casUrl(`/nodes/${ref.hash}/content`), {
       headers: this.headers(),
     });
     if (!resp.ok) {
@@ -63,7 +65,7 @@ export class CasClient implements CasReadContext {
 
   /** Read CAS node metadata. */
   async metadata(ref: CasRef): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }> {
-    const resp = await fetch(`${this.baseUrl}/v1/cas/nodes/${ref.hash}/metadata`, {
+    const resp = await fetch(this.casUrl(`/nodes/${ref.hash}/metadata`), {
       headers: this.headers(),
     });
     if (!resp.ok) {
@@ -76,7 +78,7 @@ export class CasClient implements CasReadContext {
   /**
    * Claim a lease for a CAS node (two-phase upload protocol).
    *
-   * Phase 1: POST /v1/cas/nodes/{hash}/lease
+   * Phase 1: POST /users/{userId}/cas/nodes/{hash}/lease
    * Returns uploadRequired=true if content needs to be uploaded.
    */
   async claimLease(
@@ -86,12 +88,9 @@ export class CasClient implements CasReadContext {
     refs: string[],
     requestedDurationMs?: number,
   ): Promise<CasLeaseResult & { uploadToken?: string }> {
-    const resp = await fetch(`${this.baseUrl}/v1/cas/nodes/${hash}/lease`, {
+    const resp = await fetch(this.casUrl(`/nodes/${hash}/lease`), {
       method: "POST",
-      headers: {
-        ...this.headers(),
-        "Content-Type": "application/json",
-      },
+      headers: this.headers({ "Content-Type": "application/json" }),
       body: JSON.stringify({ size, contentType, refs, requestedDurationMs }),
     });
     if (!resp.ok) {
@@ -103,7 +102,7 @@ export class CasClient implements CasReadContext {
   /**
    * Upload CAS node content (two-phase upload protocol).
    *
-   * Phase 2: PUT /v1/cas/nodes/{hash}/content
+   * Phase 2: PUT /users/{userId}/cas/nodes/{hash}/content
    * Requires the uploadToken from claimLease.
    */
   async uploadContent(
@@ -111,14 +110,13 @@ export class CasClient implements CasReadContext {
     content: Uint8Array,
     uploadToken: string,
   ): Promise<CasLeaseResult> {
-    const resp = await fetch(`${this.baseUrl}/v1/cas/nodes/${hash}/content`, {
+    const resp = await fetch(this.casUrl(`/nodes/${hash}/content`), {
       method: "PUT",
-      headers: {
-        ...this.headers(),
+      headers: this.headers({
         "Content-Type": "application/octet-stream",
         "Content-Length": String(content.length),
         "X-CAS-Upload-Token": uploadToken,
-      },
+      }),
       body: content,
     });
     if (!resp.ok) {
@@ -132,12 +130,9 @@ export class CasClient implements CasReadContext {
    */
   async leaseExisting(hash: string, requestedDurationMs?: number): Promise<CasLeaseResult> {
     // Use the DO directly via internal endpoint
-    const resp = await fetch(`${this.baseUrl}/v1/cas/nodes/${hash}/lease`, {
+    const resp = await fetch(this.casUrl(`/nodes/${hash}/lease`), {
       method: "POST",
-      headers: {
-        ...this.headers(),
-        "Content-Type": "application/json",
-      },
+      headers: this.headers({ "Content-Type": "application/json" }),
       body: JSON.stringify({ size: 0, contentType: "", refs: [], requestedDurationMs }),
     });
     if (!resp.ok) {

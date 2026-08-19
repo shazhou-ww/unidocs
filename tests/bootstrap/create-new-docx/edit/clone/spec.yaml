@@ -6,15 +6,15 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docx/docx-doc-001/snapshot"
+  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/snapshot"
     assert:
       type: jsonata
       expression: "success = true and hash != ''"
-  - command: "HASH=$(curl -s --compressed http://localhost:8787/users/test-user-001/docx/docx-doc-001/snapshot | node -e 'let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>console.log(JSON.parse(d).hash))') && VER=$(curl -s --compressed http://localhost:8787/users/test-user-001/docx/docx-doc-001/snapshot | node -e 'let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>console.log(JSON.parse(d).version))') && curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docx/docx-clone-001/init_from_hash -H 'Content-Type: application/json' -d \"{\\\"hash\\\":\\\"$HASH\\\",\\\"sourceVersion\\\":$VER}\""
+  - command: "HASH=$(curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/snapshot | node -e 'let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>console.log(JSON.parse(d).hash))') && VER=$(curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/snapshot | node -e 'let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>console.log(JSON.parse(d).version))') && curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-clone-001/init_from_hash -H 'Content-Type: application/json' -d \"{\\\"hash\\\":\\\"$HASH\\\",\\\"sourceVersion\\\":$VER}\""
     assert:
       type: jsonata
       expression: "success = true and docId = 'docx-clone-001'"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docx/docx-clone-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-clone-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"
     assert:
       type: jsonata
       expression: "success = true and version = 1 and $contains(data, 'Updated Hello')"

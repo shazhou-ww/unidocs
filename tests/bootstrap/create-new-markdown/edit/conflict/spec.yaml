@@ -6,15 +6,15 @@ steps:
       type: regex
       conditions:
         - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"stale write\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"should fail\"}}]}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":1,\"description\":\"stale write\",\"operations\":[{\"kind\":\"setContent\",\"payload\":{\"content\":\"should fail\"}}]}'"
     assert:
       type: jsonata
       expression: "success = false"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":4,\"description\":\"bad delta\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"A\",\"content\":\"x\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"NonExistent\"}}]}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":4,\"description\":\"bad delta\",\"operations\":[{\"kind\":\"replaceSection\",\"payload\":{\"heading\":\"A\",\"content\":\"x\"}},{\"kind\":\"deleteSection\",\"payload\":{\"heading\":\"NonExistent\"}}]}'"
     assert:
       type: jsonata
       expression: "success = false"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/markdown/md-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getContent\"}'"
     assert:
       type: jsonata
       expression: "success = true and version = 4"

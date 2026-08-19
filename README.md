@@ -61,25 +61,39 @@ packages/
 
 ## API
 
-All endpoints go through the Gateway. Document type is determined by URL path.
+All endpoints go through the Gateway. Document APIs live under `/users/{userId}/docs/{docType}/`. CAS APIs live under `/users/{userId}/cas/`. The path `userId` is the current identity; future Bearer tokens must bind to that userId.
 
 ### Document lifecycle
 
 ```
-POST   /{docType}/                              → create document (multipart/form-data)
-GET    /{docType}/{docId}/export                → download document (binary)
-POST   /{docType}/{docId}/query                 → query document → { data, version }
-POST   /{docType}/{docId}/apply                 → apply delta → { version }
-GET    /{docType}/{docId}/history               → get delta history
-POST   /{docType}/{docId}/rollback              → rollback to version
-POST   /{docType}/{docId}/run                   → Operator ReAct loop
-POST   /{docType}/{docId}/reset                 → reset Operator session
+POST   /users/{userId}/docs/{docType}/                              → create document (multipart/form-data)
+GET    /users/{userId}/docs/{docType}/                              → list documents
+GET    /users/{userId}/docs/{docType}/{docId}/export                → download document (binary)
+POST   /users/{userId}/docs/{docType}/{docId}/query                 → query document → { data, version }
+POST   /users/{userId}/docs/{docType}/{docId}/apply                 → apply delta → { version }
+GET    /users/{userId}/docs/{docType}/{docId}/history               → get delta history
+POST   /users/{userId}/docs/{docType}/{docId}/rollback              → rollback to version
+POST   /users/{userId}/docs/{docType}/{docId}/run                   → Operator ReAct loop
+POST   /users/{userId}/docs/{docType}/{docId}/reset                 → reset Operator session
 ```
+
+### CAS
+
+```
+GET    /users/{userId}/cas/nodes/{hash}/content    → read node bytes
+GET    /users/{userId}/cas/nodes/{hash}/metadata   → read metadata + state
+POST   /users/{userId}/cas/nodes/{hash}/lease      → claim or extend a lease
+PUT    /users/{userId}/cas/nodes/{hash}/content    → upload content (requires X-CAS-Upload-Token)
+GET    /users/{userId}/cas/usage                   → storage usage
+POST   /users/{userId}/cas/gc                      → trigger GC
+```
+
+See [CAS Architecture](docs/cas-architecture.md) for the two-phase lease/upload protocol.
 
 ### Create document
 
 ```
-POST /{docType}/
+POST /users/{userId}/docs/{docType}/
 Content-Type: multipart/form-data
 
 Fields (mutually exclusive):
@@ -99,7 +113,7 @@ Clone flow:
 ### Query
 
 ```
-POST /{docType}/{docId}/query
+POST /users/{userId}/docs/{docType}/{docId}/query
 Content-Type: application/json
 
 { "kind": "...", "payload": {...} }
@@ -112,7 +126,7 @@ Every query response includes the current document version.
 ### Apply (delta)
 
 ```
-POST /{docType}/{docId}/apply
+POST /users/{userId}/docs/{docType}/{docId}/apply
 Content-Type: application/json
 
 {
@@ -131,7 +145,7 @@ Response: { success: true, version: 43 }
 ### Rollback
 
 ```
-POST /{docType}/{docId}/rollback
+POST /users/{userId}/docs/{docType}/{docId}/rollback
 Content-Type: application/json
 
 { "version": 10 }
@@ -148,7 +162,7 @@ Rollback implementation:
 ### Operator (AI agent interface)
 
 ```
-POST /{docType}/{docId}/run
+POST /users/{userId}/docs/{docType}/{docId}/run
 Content-Type: application/json
 
 { "instruction": "natural language task description" }
@@ -164,7 +178,7 @@ Operator behavior:
 - Max 10 iterations per run (configurable)
 
 ```
-POST /{docType}/{docId}/reset
+POST /users/{userId}/docs/{docType}/{docId}/reset
 
 Response: { success: true }
 ```
@@ -259,8 +273,8 @@ pnpm dev
 Starts gateway (`:8787`), markdown (`:8788`), and docx (`:8789`) in one Miniflare process with shared D1/R2. The KV registry is seeded with each worker's URL:
 
 ```
-POST http://127.0.0.1:8787/users/{userId}/markdown/
-POST http://127.0.0.1:8787/users/{userId}/docx/
+POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
+POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ```
 
 ## Infrastructure

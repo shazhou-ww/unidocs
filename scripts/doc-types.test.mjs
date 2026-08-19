@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
   buildWorkers,
@@ -84,7 +85,7 @@ test("buildWorkers binds each selected type's own DO classes and socket", () => 
     DOCX_OPERATOR: { className: "DocxOperator", useSQLite: true },
   });
   expect(docx.unsafeDirectSockets).toEqual([{ host: "127.0.0.1", port: 8789 }]);
-  expect(docx.scriptPath).toBe("/b/docx.js");
+  expect(docx.scriptPath).toBe(join("/b", "docx.js"));
 });
 
 test("registryEntries seeds only the selected doc types", () => {
