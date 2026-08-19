@@ -107,41 +107,6 @@ test("CAS: read metadata", async () => {
   expect(state.rootRefCount).toBe(0);
 });
 
-// ─── Test 2: Child refs → parent creation + ref counts ───
-
-// Note: This test is skipped in local dev environment due to Miniflare's 
-// Durable Object + R2 binding limitation. The functionality works correctly 
-// in production Cloudflare Workers.
-test.skip("CAS: node with child refs increments child ref count", async () => {
-  // TODO: Miniflare DO + R2 binding issue — works in production
-  const child = await casUpload("alice", "text/plain", "child node");
-  console.log("Child uploaded:", child.hash);
-
-  // Small delay to ensure R2 write is durable
-  await new Promise(resolve => setTimeout(resolve, 100));
-
-  try {
-    const parent = await casUpload("application/json", '{"ref":"child"}', [child.hash]);
-    console.log("Parent uploaded:", parent.hash);
-  // Check child's ref count
-  const childMetaRes = await fetch(`${GW()}/v1/cas/nodes/${child.hash}/metadata`, {
-    headers: authHeaders("alice"),
-  });
-  const { state: childState } = await childMetaRes.json();
-  expect(childState.childRefCount).toBe(1);
-
-  // Check parent's metadata
-  const parentMetaRes = await fetch(`${GW()}/v1/cas/nodes/${parent.hash}/metadata`, {
-    headers: authHeaders("alice"),
-  });
-  const { metadata: parentMeta } = await parentMetaRes.json();
-  expect(parentMeta.refs).toEqual([child.hash]);
-  } catch (err) {
-    console.error("Parent upload failed:", err);
-    throw err;
-  }
-}, 30_000);
-
 // ─── Test 3: GC reclaims zero-ref expired nodes ───
 
 test("CAS: GC reclaims zero-ref expired nodes", async () => {

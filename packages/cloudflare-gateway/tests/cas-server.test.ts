@@ -1,40 +1,35 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { CasDurableObject } from "../src/cas/do";
-import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas";
 
-// Mock D1 database
+// ─── Mock D1 Database ───────────────────────────────────────────────
+// Stores rows as plain objects with named columns.
+
 class MockD1Database {
-  private tables: Map<string, any[]> = new Map();
+  tables: Map<string, Record<string, any>[]> = new Map();
 
   async exec(sql: string) {
-    const createMatch = sql.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
-    if (createMatch) {
-      const tableName = createMatch[1];
-      if (!this.tables.has(tableName)) {
-        this.tables.set(tableName, []);
-      }
-    }
+    const m = sql.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
+    if (m && !this.tables.has(m[1])) this.tables.set(m[1], []);
   }
 
   prepare(sql: string) {
-    return new MockD1PreparedStatement(sql, this.tables);
+    return new MockD1PreparedStatement(sql, this);
   }
 
-  async batch(statements: MockD1PreparedStatement[]) {
-    for (const stmt of statements) {
-      await stmt.run();
-    }
+  async batch(stmts: MockD1PreparedStatement[]) {
+    for (const s of stmts) await s.run();
   }
 }
 
 class MockD1PreparedStatement {
   private sql: string;
   private params: any[] = [];
-  private tables: Map<string, any[]>;
+  private db: MockD1Database;
 
-  constructor(sql: string, tables: Map<string, any[]>) {
+  constructor(sql: string, db: MockD1Database) {
     this.sql = sql;
-    this.tables = tables;
+    this.db = db;
   }
 
   bind(...params: any[]) {
@@ -43,90 +38,140 @@ class MockD1PreparedStatement {
   }
 
   async run() {
-    const insertMatch = this.sql.match(/INSERT INTO (\w+)/);
+    // INSERT INTO table (cols...) VALUES (?, ...)
+    const insertMatch = this.sql.match(/INSERT INTO (\w+)\s*\(([^)]+)\)/i);
     if (insertMatch) {
-      const tableName = insertMatch[1];
-      const table = this.tables.get(tableName) || [];
-      table.push({ ...this.params });
-      this.tables.set(tableName, table);
+      const table = insertMatch[1];
+      const cols = insertMatch[2].split(",").map((s) => s.trim());
+      const rows = this.db.tables.get(table) || [];
+      const row: Record<string, any> = {};
+      cols.forEach((col, i) => { row[col] = this.params[i]; });
+      // Simulate DEFAULT values for columns not in INSERT
+      if (table === "cas_nodes") {
+        row.child_ref_count ??= 0;
+        row.root_ref_count ??= 0;
+      }
+      rows.push(row);
+      this.db.tables.set(table, rows);
+      return { success: true };
     }
 
-    const updateMatch = this.sql.match(/UPDATE (\w+) SET (\w+) = (\w+) \+ (\d+)/);
-    if (updateMatch) {
-      const tableName = updateMatch[1];
-      const column = updateMatch[2];
-      const table = this.tables.get(tableName) || [];
-      const row = table.find((r) => r[1] === this.params[1]);
-      if (row) {
-        row[column] = (row[column] || 0) + parseInt(updateMatch[4]);
+    // UPDATE table SET col = col + ? WHERE ...
+    const updateIncMatch = this.sql.match(/UPDATE (\w+) SET (\w+) = (\w+) \+ (\d+|\?)/i);
+    if (updateIncMatch) {
+      const table = updateIncMatch[1];
+      const col = updateIncMatch[2];
+      const rows = this.db.tables.get(table) || [];
+      const incrementStr = updateIncMatch[4];
+      let increment: number;
+      if (incrementStr === "?") {
+        increment = this.params[0];
+      } else {
+        increment = parseInt(incrementStr);
       }
+      const whereParams = this.findWhereParams();
+      for (const row of rows) {
+        if (this.matchesWhere(row, whereParams)) {
+          row[col] = (row[col] || 0) + increment;
+        }
+      }
+      return { success: true };
+    }
+
+    // UPDATE table SET col = ? WHERE ...
+    const updateSetMatch = this.sql.match(/UPDATE (\w+) SET (\w+) = \?/i);
+    if (updateSetMatch) {
+      const table = updateSetMatch[1];
+      const col = updateSetMatch[2];
+      const rows = this.db.tables.get(table) || [];
+      const whereParams = this.findWhereParams();
+      for (const row of rows) {
+        if (this.matchesWhere(row, whereParams)) {
+          row[col] = this.params[0];
+        }
+      }
+      return { success: true };
+    }
+
+    // DELETE FROM table WHERE ...
+    const deleteMatch = this.sql.match(/DELETE FROM (\w+)/i);
+    if (deleteMatch) {
+      const table = deleteMatch[1];
+      const rows = this.db.tables.get(table) || [];
+      const whereParams = this.findWhereParams();
+      const remaining = rows.filter((r) => !this.matchesWhere(r, whereParams));
+      this.db.tables.set(table, remaining);
+      return { success: true };
     }
 
     return { success: true };
   }
 
   async first<T>(): Promise<T | null> {
-    // Handle SELECT * FROM table
-    const selectAllMatch = this.sql.match(/SELECT \* FROM (\w+)/);
-    if (selectAllMatch) {
-      const tableName = selectAllMatch[1];
-      const table = this.tables.get(tableName) || [];
-      
-      const row = table.find((r) => {
-        for (let i = 0; i < this.params.length; i++) {
-          if (r[i] !== this.params[i]) return false;
-        }
-        return true;
-      });
-      
-      if (row) {
-        return {
-          content_size: row[2],
-          content_type: row[3],
-          lease_started_at: row[4] || 0,
-          lease_expires_at: row[5] || 0,
-          child_ref_count: row[6] || 0,
-          root_ref_count: row[7] || 0,
-        } as T;
-      }
-    }
-
-    // Handle SELECT column FROM table
-    const selectColMatch = this.sql.match(/SELECT (\w+) FROM (\w+)/);
-    if (selectColMatch) {
-      const column = selectColMatch[1];
-      const tableName = selectColMatch[2];
-      const table = this.tables.get(tableName) || [];
-      
-      const row = table.find((r) => {
-        for (let i = 0; i < this.params.length; i++) {
-          if (r[i] !== this.params[i]) return false;
-        }
-        return true;
-      });
-      
-      if (row) {
-        // Map column name to index
-        const columnMap: Record<string, number> = {
-          content_size: 2,
-          content_type: 3,
-          lease_started_at: 4,
-          lease_expires_at: 5,
-          child_ref_count: 6,
-          root_ref_count: 7,
-        };
-        const idx = columnMap[column];
-        if (idx !== undefined) {
-          return { [column]: row[idx] || 0 } as T;
-        }
-      }
-    }
-
-    return null;
+    const tableMatch = this.sql.match(/FROM (\w+)/i);
+    if (!tableMatch) return null;
+    const table = tableMatch[1];
+    const rows = this.db.tables.get(table) || [];
+    const whereParams = this.findWhereParams();
+    const row = rows.find((r) => this.matchesWhere(r, whereParams));
+    return (row || null) as T | null;
   }
 
   async all<T>(): Promise<{ results: T[] }> {
-    return { results: [] };
+    const tableMatch = this.sql.match(/FROM (\w+)/i);
+    if (!tableMatch) return { results: [] };
+    const table = tableMatch[1];
+    const rows = this.db.tables.get(table) || [];
+    const whereParams = this.findWhereParams();
+    const matched = rows.filter((r) => this.matchesWhere(r, whereParams));
+
+    // Handle ORDER BY ordinal ASC for cas_edges
+    if (this.sql.match(/ORDER BY (\w+) ASC/i)) {
+      const orderCol = this.sql.match(/ORDER BY (\w+) ASC/i)![1];
+      matched.sort((a, b) => (a[orderCol] || 0) - (b[orderCol] || 0));
+    }
+
+    // Handle SELECT specific columns
+    const selectMatch = this.sql.match(/SELECT\s+(.+?)\s+FROM/i);
+    if (selectMatch && !selectMatch[1].includes("*")) {
+      const cols = selectMatch[1].split(",").map((s) => s.trim());
+      return {
+        results: matched.map((r) => {
+          const obj: Record<string, any> = {};
+          for (const col of cols) {
+            obj[col] = r[col];
+          }
+          return obj as T;
+        }),
+      };
+    }
+
+    return { results: matched as T[] };
+  }
+
+  /** Extract WHERE params: everything after the non-WHERE params. */
+  private findWhereParams(): any[] {
+    // Count the ? placeholders before WHERE
+    const whereIdx = this.sql.toUpperCase().indexOf("WHERE");
+    if (whereIdx === -1) return [];
+    const beforeWhere = this.sql.substring(0, whereIdx);
+    const preCount = (beforeWhere.match(/\?/g) || []).length;
+    return this.params.slice(preCount);
+  }
+
+  /** Check if a row matches WHERE params (assumes col = ? pattern). */
+  private matchesWhere(row: Record<string, any>, whereParams: any[]): boolean {
+    if (whereParams.length === 0) return true;
+    const whereIdx = this.sql.toUpperCase().indexOf("WHERE");
+    if (whereIdx === -1) return true;
+    const whereClause = this.sql.substring(whereIdx);
+    const colMatches = whereClause.match(/(\w+)\s*=\s*\?/gi);
+    if (!colMatches) return true;
+    for (let i = 0; i < colMatches.length; i++) {
+      const col = colMatches[i].match(/(\w+)\s*=\s*\?/i)![1];
+      if (row[col] !== whereParams[i]) return false;
+    }
+    return true;
   }
 }
 
@@ -456,6 +501,145 @@ describe("CAS Durable Object", () => {
       expect(result.metadata.refs).toEqual([]);
       expect(result.state.childRefCount).toBe(0);
       expect(result.state.rootRefCount).toBe(0);
+    });
+  });
+
+  describe("child refs", () => {
+    it("creates parent with child ref and increments child ref count", async () => {
+      // Create and upload child node
+      const childContent = new TextEncoder().encode("child content");
+      const childHash = await computeHash(childContent, "text/plain");
+
+      const childLeaseRequest = new Request("http://localhost/lease", {
+        method: "POST",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": childHash,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          size: childContent.length,
+          contentType: "text/plain",
+          refs: [],
+          requestedDurationMs: 60000,
+        }),
+      });
+
+      const childLeaseResponse = await doInstance.fetch(childLeaseRequest);
+      const childLease = await childLeaseResponse.json();
+
+      const childUploadRequest = new Request("http://localhost/upload", {
+        method: "POST",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": childHash,
+          "X-CAS-Upload-Token": childLease.uploadToken,
+        },
+        body: childContent,
+      });
+
+      await doInstance.fetch(childUploadRequest);
+
+      // Create parent node with child ref
+      const parentContent = new TextEncoder().encode('{"ref":"child"}');
+      const header = encodeHeader(parentContent.length, "application/json", 1);
+      const hashBytes = await computeNodeDigest(header, "application/json", [hexToHash(childHash)], parentContent);
+      const parentHash = hashToHex(hashBytes);
+
+      const parentLeaseRequest = new Request("http://localhost/lease", {
+        method: "POST",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": parentHash,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          size: parentContent.length,
+          contentType: "application/json",
+          refs: [childHash],
+          requestedDurationMs: 60000,
+        }),
+      });
+
+      const parentLeaseResponse = await doInstance.fetch(parentLeaseRequest);
+      expect(parentLeaseResponse.status).toBe(200);
+
+      const parentLease = await parentLeaseResponse.json();
+      expect(parentLease.hash).toBe(parentHash);
+      expect(parentLease.uploadRequired).toBe(true);
+
+      // Upload parent
+      const parentUploadRequest = new Request("http://localhost/upload", {
+        method: "POST",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": parentHash,
+          "X-CAS-Upload-Token": parentLease.uploadToken,
+        },
+        body: parentContent,
+      });
+
+      const parentUploadResponse = await doInstance.fetch(parentUploadRequest);
+      expect(parentUploadResponse.status).toBe(200);
+
+      // Verify child's ref count incremented
+      const childMetadataRequest = new Request("http://localhost/metadata", {
+        method: "GET",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": childHash,
+        },
+      });
+
+      const childMetadataResponse = await doInstance.fetch(childMetadataRequest);
+      expect(childMetadataResponse.status).toBe(200);
+
+      const childMetadata = await childMetadataResponse.json();
+      expect(childMetadata.state.childRefCount).toBe(1);
+
+      // Verify parent's metadata includes the ref
+      const parentMetadataRequest = new Request("http://localhost/metadata", {
+        method: "GET",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": parentHash,
+        },
+      });
+
+      const parentMetadataResponse = await doInstance.fetch(parentMetadataRequest);
+      expect(parentMetadataResponse.status).toBe(200);
+
+      const parentMetadata = await parentMetadataResponse.json();
+      expect(parentMetadata.metadata.refs).toEqual([childHash]);
+    });
+
+    it("rejects parent creation when child is not ready", async () => {
+      const childHash = "b".repeat(64);
+      const parentContent = new TextEncoder().encode('{"ref":"not-ready-child"}');
+      const header = encodeHeader(parentContent.length, "application/json", 1);
+      const hashBytes = await computeNodeDigest(header, "application/json", [hexToHash(childHash)], parentContent);
+      const parentHash = hashToHex(hashBytes);
+
+      const leaseRequest = new Request("http://localhost/lease", {
+        method: "POST",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": parentHash,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          size: parentContent.length,
+          contentType: "application/json",
+          refs: [childHash],
+          requestedDurationMs: 60000,
+        }),
+      });
+
+      const leaseResponse = await doInstance.fetch(leaseRequest);
+      expect(leaseResponse.status).toBe(500);
+
+      const error = await leaseResponse.json();
+      expect(error.error).toContain("not ready");
     });
   });
 
