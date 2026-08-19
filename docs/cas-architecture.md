@@ -1,6 +1,7 @@
 # CAS Architecture
 
-Status: accepted design, not yet fully implemented  
+Status: accepted design, not yet fully implemented
+
 Date: 2026-08-19
 
 This document defines the target content-addressed storage (CAS) architecture for UniDocs. The current snapshot-only R2/D1 implementation predates this design and will be migrated incrementally.

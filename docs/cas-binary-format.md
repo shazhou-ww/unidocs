@@ -1,7 +1,9 @@
 # UniDocs CAS Binary Format
 
-Status: version 1 design specification  
-Date: 2026-08-19  
+Status: version 1 design specification
+
+Date: 2026-08-19
+
 Magic: `CAS\x02`
 
 This specification defines the canonical byte representation used to identify UniDocs CAS nodes. It is derived from the design principles in [CASFA Binary Format v2.2](https://github.com/shazhou-ww/casfa/blob/main/docs/tech-details/cas-binary-format.md), with these intentional changes:
