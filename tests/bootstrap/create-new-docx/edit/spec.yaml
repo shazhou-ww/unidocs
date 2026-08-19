@@ -1,3 +1,4 @@
+sut_type: cli
 description: "Apply multiple deltas: append, setRunText, verify via queries"
 steps:
   - command: "cd /workspace && nohup node scripts/dev.mjs > /tmp/miniflare.log 2>&1 & for i in $(seq 1 30); do sleep 2; GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"

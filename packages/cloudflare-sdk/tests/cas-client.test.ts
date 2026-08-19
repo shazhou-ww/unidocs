@@ -85,138 +85,12 @@ describe("CasClient", () => {
     });
   });
 
-  describe("claimLease", () => {
-    it("claims a lease for a new node", async () => {
-      const hash = "d".repeat(64);
-      const leaseResult = {
-        hash,
-        ready: false,
-        uploadRequired: true,
-        uploadToken: "token123",
-        leaseStartedAt: Date.now(),
-        leaseExpiresAt: Date.now() + 60000,
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => leaseResult,
-      });
-
-      const result = await client.claimLease(hash, 100, "text/plain", [], 60000);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/users/user1/cas/nodes/${hash}/lease`,
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            "Content-Type": "application/json",
-          }),
-          body: expect.any(String),
-        })
-      );
-
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body).toEqual({
-        size: 100,
-        contentType: "text/plain",
-        refs: [],
-        requestedDurationMs: 60000,
-      });
-
-      expect(result).toEqual(leaseResult);
-    });
-
-    it("claims a lease for an existing node", async () => {
-      const hash = "e".repeat(64);
-      const leaseResult = {
-        hash,
-        ready: true,
-        uploadRequired: false,
-        leaseStartedAt: Date.now(),
-        leaseExpiresAt: Date.now() + 60000,
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => leaseResult,
-      });
-
-      const result = await client.claimLease(hash, 100, "text/plain", []);
-
-      expect(result.ready).toBe(true);
-      expect(result.uploadRequired).toBe(false);
-    });
-
-    it("throws on non-2xx response", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        statusText: "Bad Request",
-      });
-
-      await expect(
-        client.claimLease("f".repeat(64), 100, "text/plain", [])
-      ).rejects.toThrow("CAS lease claim failed: 400 Bad Request");
-    });
-  });
-
-  describe("uploadContent", () => {
-    it("uploads content with token", async () => {
-      const hash = "g".repeat(64);
-      const content = new TextEncoder().encode("upload content");
-      const uploadToken = "token456";
-      const leaseResult = {
-        hash,
-        ready: true,
-        uploadRequired: false,
-        leaseStartedAt: Date.now(),
-        leaseExpiresAt: Date.now() + 60000,
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => leaseResult,
-      });
-
-      const result = await client.uploadContent(hash, content, uploadToken);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/users/user1/cas/nodes/${hash}/content`,
-        expect.objectContaining({
-          method: "PUT",
-          headers: expect.objectContaining({
-            "Content-Type": "application/octet-stream",
-            "Content-Length": String(content.length),
-            "X-CAS-Upload-Token": uploadToken,
-          }),
-          body: content,
-        })
-      );
-
-      expect(result).toEqual(leaseResult);
-    });
-
-    it("throws on non-2xx response", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 403,
-        statusText: "Forbidden",
-      });
-
-      const content = new TextEncoder().encode("forbidden");
-      await expect(
-        client.uploadContent("h".repeat(64), content, "token")
-      ).rejects.toThrow("CAS upload failed: 403 Forbidden");
-    });
-  });
-
   describe("leaseExisting", () => {
     it("extends lease on existing ready node", async () => {
       const hash = "i".repeat(64);
       const leaseResult = {
         hash,
         ready: true,
-        uploadRequired: false,
         leaseStartedAt: Date.now(),
         leaseExpiresAt: Date.now() + 120000,
       };
@@ -232,12 +106,13 @@ describe("CasClient", () => {
         `http://localhost:8787/users/user1/cas/nodes/${hash}/lease`,
         expect.objectContaining({
           method: "POST",
-          body: expect.stringContaining('"requestedDurationMs":120000'),
+          headers: expect.objectContaining({
+            "X-CAS-Lease-Duration": "120000",
+          }),
         })
       );
 
       expect(result.ready).toBe(true);
-      expect(result.uploadRequired).toBe(false);
     });
 
     it("throws on non-2xx response", async () => {
@@ -254,48 +129,12 @@ describe("CasClient", () => {
   });
 
   describe("ensureNode", () => {
-    it("creates and uploads new node", async () => {
+    it("posts content as a single lease", async () => {
       const hash = "k".repeat(64);
       const content = new TextEncoder().encode("new node");
       const leaseResult = {
         hash,
-        ready: false,
-        uploadRequired: true,
-        uploadToken: "token789",
-        leaseStartedAt: Date.now(),
-        leaseExpiresAt: Date.now() + 60000,
-      };
-      const uploadResult = {
-        hash,
         ready: true,
-        uploadRequired: false,
-        leaseStartedAt: Date.now(),
-        leaseExpiresAt: Date.now() + 60000,
-      };
-
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => leaseResult,
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => uploadResult,
-        });
-
-      const result = await client.ensureNode(hash, content, "text/plain");
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(result.ready).toBe(true);
-    });
-
-    it("skips upload for existing ready node", async () => {
-      const hash = "l".repeat(64);
-      const content = new TextEncoder().encode("existing");
-      const leaseResult = {
-        hash,
-        ready: true,
-        uploadRequired: false,
         leaseStartedAt: Date.now(),
         leaseExpiresAt: Date.now() + 60000,
       };
@@ -305,10 +144,60 @@ describe("CasClient", () => {
         json: async () => leaseResult,
       });
 
-      const result = await client.ensureNode(hash, content, "text/plain");
+      const result = await client.ensureNode(hash, content, "text/plain", [], 60000);
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `http://localhost:8787/users/user1/cas/nodes/${hash}`,
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "Content-Type": "text/plain",
+            "Content-Length": String(content.length),
+            "X-CAS-Lease-Duration": "60000",
+          }),
+          body: content,
+        })
+      );
       expect(result.ready).toBe(true);
+    });
+
+    it("includes child refs header", async () => {
+      const hash = "l".repeat(64);
+      const child = "c".repeat(64);
+      const content = new TextEncoder().encode("parent");
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          hash,
+          ready: true,
+          leaseStartedAt: Date.now(),
+          leaseExpiresAt: Date.now() + 60000,
+        }),
+      });
+
+      await client.ensureNode(hash, content, "application/json", [child]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "X-CAS-Refs": child,
+          }),
+        })
+      );
+    });
+
+    it("throws on non-2xx response", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        statusText: "Conflict",
+      });
+      const content = new TextEncoder().encode("x");
+      await expect(
+        client.ensureNode("m".repeat(64), content, "text/plain")
+      ).rejects.toThrow("CAS lease failed: 409 Conflict");
     });
   });
 

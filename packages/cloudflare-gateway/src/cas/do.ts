@@ -2,8 +2,7 @@
  * CAS Durable Object — per-user queue.
  *
  * Serializes all mutable CAS operations for one user:
- * - lease claims and extensions
- * - upload completion
+ * - lease with content and lease extensions
  * - child-reference creation
  * - root-reference count updates
  * - garbage collection
@@ -13,7 +12,6 @@
  */
 
 import {
-  type CasHash,
   type CasNodeDescriptor,
   type CasLeaseResult,
   type CasRootRefUpdate,
@@ -21,7 +19,6 @@ import {
   type CasGcResult,
   type CasNodeMetadata,
   type CasNodeState,
-  HASH_SIZE,
   encodeHeader,
   computeNodeDigest,
   hashToHex,
@@ -36,13 +33,6 @@ interface CasEnv {
   CAS_R2: R2Bucket;
 }
 
-interface LeaseRequestBody {
-  size: number;
-  contentType: string;
-  refs: string[];
-  requestedDurationMs: number;
-}
-
 /** Default lease duration if not specified. */
 const DEFAULT_LEASE_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -52,13 +42,12 @@ const MIN_LEASE_MS = 60 * 1000; // 1 minute
 /** Maximum lease duration. */
 const MAX_LEASE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-/** Generate a random upload token. */
-function generateUploadToken(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+class CasHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
 }
 
 export class CasDurableObject implements DurableObject {
@@ -79,12 +68,10 @@ export class CasDurableObject implements DurableObject {
 
     try {
       switch (action) {
-        case "/lease":
-          return await this.handleLease(request, userId);
+        case "/leaseWithContent":
+          return await this.handleLeaseWithContent(request, userId);
         case "/leaseExisting":
           return await this.handleLeaseExisting(request, userId);
-        case "/upload":
-          return await this.handleUpload(request, userId);
         case "/read":
           return await this.handleRead(request, userId);
         case "/metadata":
@@ -101,173 +88,182 @@ export class CasDurableObject implements DurableObject {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : undefined;
+      const status = err instanceof CasHttpError ? err.status : 500;
       console.error("[CAS DO] Error:", { action, userId, message, stack });
-      return Response.json({ error: message }, { status: 500 });
+      return Response.json({ error: message }, { status });
     }
   }
 
-  // ─── Lease ────────────────────────────────────────────────
+  // ─── Lease with content ───────────────────────────────────
 
-  private async handleLease(request: Request, userId: string): Promise<Response> {
-    const body = (await request.json()) as LeaseRequestBody;
-    const hash = request.headers.get("X-CAS-Hash")!;
-
-    validateHash(hash);
-    validateContentType(body.contentType);
-
-    if (!Array.isArray(body.refs)) {
-      throw new Error("refs must be an array");
-    }
-    for (const ref of body.refs) {
-      validateHash(ref);
+  private async handleLeaseWithContent(request: Request, userId: string): Promise<Response> {
+    const hash = request.headers.get("X-CAS-Hash") ?? "";
+    try {
+      validateHash(hash);
+    } catch {
+      throw new CasHttpError(400, "Invalid hash");
     }
 
-    const durationMs = clamp(
-      body.requestedDurationMs || DEFAULT_LEASE_MS,
-      MIN_LEASE_MS,
-      MAX_LEASE_MS,
-    );
+    const contentType = request.headers.get("Content-Type");
+    if (!contentType) {
+      throw new CasHttpError(400, "Content-Type is required");
+    }
+    try {
+      validateContentType(contentType);
+    } catch (err) {
+      throw new CasHttpError(400, err instanceof Error ? err.message : String(err));
+    }
 
-    const result = await this.claimLease(
-      userId,
-      {
-        hash,
-        size: body.size,
-        contentType: body.contentType,
-        refs: body.refs,
-      },
-      durationMs,
-    );
+    const lengthHeader = request.headers.get("Content-Length");
+    const size = Number(lengthHeader);
+    if (!Number.isFinite(size) || size < 0) {
+      throw new CasHttpError(400, "Content-Length is required");
+    }
 
-    return Response.json(result);
-  }
+    let refs: string[];
+    try {
+      refs = parseRefsHeader(request.headers.get("X-CAS-Refs"));
+    } catch (err) {
+      throw new CasHttpError(400, err instanceof Error ? err.message : String(err));
+    }
 
-  private async claimLease(userId: string, 
-    descriptor: CasNodeDescriptor,
-    durationMs: number,
-  ): Promise<CasLeaseResult & { uploadToken?: string }> {
+    const durationMs = parseDurationMs(request.headers.get("X-CAS-Lease-Duration"));
+    const descriptor: CasNodeDescriptor = { hash, size, contentType, refs };
+
     const now = Date.now();
     const db = this.env.CAS_DB;
+    const r2Key = `users/${userId}/nodes/${hash}`;
 
-    // Check if node already exists
     const existing = await db
-      .prepare("SELECT * FROM cas_nodes WHERE user_id = ? AND hash = ?")
-      .bind(userId, descriptor.hash)
+      .prepare("SELECT content_size, content_type, lease_started_at, lease_expires_at FROM cas_nodes WHERE user_id = ? AND hash = ?")
+      .bind(userId, hash)
       .first<{
         content_size: number;
         content_type: string;
         lease_started_at: number;
         lease_expires_at: number;
-        child_ref_count: number;
-        root_ref_count: number;
       }>();
 
-    if (existing) {
-      // Verify immutable metadata matches
-      if (
-        existing.content_size !== descriptor.size ||
-        existing.content_type !== descriptor.contentType
-      ) {
-        throw new Error("Immutable metadata mismatch");
+    const existingRefs = existing
+      ? (await db
+          .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
+          .bind(userId, hash)
+          .all<{ child_hash: string }>())
+          .results.map((row) => row.child_hash)
+      : [];
+
+    const r2Head = await this.env.CAS_R2.head(r2Key);
+
+    if (existing && r2Head) {
+      if (!metadataMatches(existing, existingRefs, descriptor)) {
+        await cancelBody(request);
+        throw new CasHttpError(409, "Immutable metadata mismatch");
       }
-
-      // Check if R2 content exists (ready?)
-      const r2Key = `users/${userId}/nodes/${descriptor.hash}`;
-      const r2Obj = await this.env.CAS_R2.head(r2Key);
-      const ready = r2Obj !== null;
-
-      // Extend lease
-      const leaseStartedAt = existing.lease_expires_at > now
-        ? existing.lease_started_at
-        : now;
-      const leaseExpiresAt = now + durationMs;
-
-      await db
-        .prepare(
-          "UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE user_id = ? AND hash = ?",
-        )
-        .bind(leaseStartedAt, leaseExpiresAt, userId, descriptor.hash)
-        .run();
-
-      return {
-        hash: descriptor.hash,
-        ready,
-        uploadRequired: !ready,
-        leaseStartedAt,
-        leaseExpiresAt,
-        uploadToken: !ready ? generateUploadToken() : undefined,
-      };
+      await cancelBody(request);
+      return Response.json(await this.extendLease(userId, hash, existing.lease_started_at, existing.lease_expires_at, durationMs, now));
     }
 
-    // New node: verify all children are ready
-    for (const childHash of descriptor.refs) {
-      try {
-        const childR2Key = `users/${userId}/nodes/${childHash}`;
-        const childR2 = await this.env.CAS_R2.head(childR2Key);
-        if (!childR2) {
-          throw new Error(`Child node ${childHash} is not ready`);
-        }
-      } catch (err) {
-        console.error(`[CAS DO] Failed to check child ${childHash}:`, err);
-        throw err;
+    for (const childHash of refs) {
+      const childR2 = await this.env.CAS_R2.head(`users/${userId}/nodes/${childHash}`);
+      if (!childR2) {
+        await cancelBody(request);
+        throw new CasHttpError(409, `Child node ${childHash} is not ready`);
       }
     }
 
-    // Insert node row + edges in one transaction
-    const leaseStartedAt = now;
+    const content = new Uint8Array(await request.arrayBuffer());
+    try {
+      validateContentLength(content.length, size);
+    } catch (err) {
+      throw new CasHttpError(400, err instanceof Error ? err.message : String(err));
+    }
+
+    const childHashes = refs.map(hexToHash);
+    const header = encodeHeader(size, contentType, childHashes.length);
+    const digest = await computeNodeDigest(header, contentType, childHashes, content);
+    const computedHex = hashToHex(digest);
+    if (computedHex !== hash) {
+      throw new CasHttpError(400, `Digest mismatch: expected ${hash}, got ${computedHex}`);
+    }
+
+    if (existing && !metadataMatches(existing, existingRefs, descriptor)) {
+      throw new CasHttpError(409, "Immutable metadata mismatch");
+    }
+
+    await this.env.CAS_R2.put(r2Key, content);
+
+    const leaseStartedAt = existing && existing.lease_expires_at > now ? existing.lease_started_at : now;
     const leaseExpiresAt = now + durationMs;
 
-    const batch: D1PreparedStatement[] = [
-      db.prepare(
-        `INSERT INTO cas_nodes (user_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).bind(userId, descriptor.hash, descriptor.size, descriptor.contentType, leaseStartedAt, leaseExpiresAt),
-    ];
-
-    // Insert ordered edges and increment child ref counts
-    for (let i = 0; i < descriptor.refs.length; i++) {
-      batch.push(
+    if (existing) {
+      await db
+        .prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE user_id = ? AND hash = ?")
+        .bind(leaseStartedAt, leaseExpiresAt, userId, hash)
+        .run();
+    } else {
+      const batch: D1PreparedStatement[] = [
         db.prepare(
-          "INSERT INTO cas_edges (user_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, ?)",
-        ).bind(userId, descriptor.hash, i, descriptor.refs[i]),
-      );
-      batch.push(
-        db.prepare(
-          "UPDATE cas_nodes SET child_ref_count = child_ref_count + 1 WHERE user_id = ? AND hash = ?",
-        ).bind(userId, descriptor.refs[i]),
-      );
+          `INSERT INTO cas_nodes (user_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        ).bind(userId, hash, size, contentType, leaseStartedAt, leaseExpiresAt),
+      ];
+      for (let i = 0; i < refs.length; i++) {
+        batch.push(
+          db.prepare(
+            "INSERT INTO cas_edges (user_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, ?)",
+          ).bind(userId, hash, i, refs[i]),
+        );
+        batch.push(
+          db.prepare(
+            "UPDATE cas_nodes SET child_ref_count = child_ref_count + 1 WHERE user_id = ? AND hash = ?",
+          ).bind(userId, refs[i]),
+        );
+      }
+      await db.batch(batch);
     }
 
-    await db.batch(batch);
-
-    // Check if R2 content exists
-    const r2Key = `users/${userId}/nodes/${descriptor.hash}`;
-    const r2Obj = await this.env.CAS_R2.head(r2Key);
-    const ready = r2Obj !== null;
-
-    return {
-      hash: descriptor.hash,
-      ready,
-      uploadRequired: !ready,
+    const result: CasLeaseResult = {
+      hash,
+      ready: true,
       leaseStartedAt,
       leaseExpiresAt,
-      uploadToken: !ready ? generateUploadToken() : undefined,
     };
+    return Response.json(result);
+  }
+
+  private async extendLease(
+    userId: string,
+    hash: string,
+    currentStartedAt: number,
+    currentExpiresAt: number,
+    durationMs: number,
+    now: number,
+  ): Promise<CasLeaseResult> {
+    const leaseStartedAt = currentExpiresAt > now ? currentStartedAt : now;
+    const leaseExpiresAt = now + durationMs;
+    await this.env.CAS_DB
+      .prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE user_id = ? AND hash = ?")
+      .bind(leaseStartedAt, leaseExpiresAt, userId, hash)
+      .run();
+    return { hash, ready: true, leaseStartedAt, leaseExpiresAt };
   }
 
   // ─── Lease Existing ───────────────────────────────────────
 
   private async handleLeaseExisting(request: Request, userId: string): Promise<Response> {
-    const hash = request.headers.get("X-CAS-Hash")!;
-    const durationMs = Number(request.headers.get("X-CAS-Duration") || DEFAULT_LEASE_MS);
+    const hash = request.headers.get("X-CAS-Hash") ?? "";
+    try {
+      validateHash(hash);
+    } catch {
+      throw new CasHttpError(400, "Invalid hash");
+    }
 
-    validateHash(hash);
-
+    const durationMs = parseDurationMs(request.headers.get("X-CAS-Lease-Duration"));
     const now = Date.now();
     const db = this.env.CAS_DB;
 
     const existing = await db
-      .prepare("SELECT * FROM cas_nodes WHERE user_id = ? AND hash = ?")
+      .prepare("SELECT lease_started_at, lease_expires_at FROM cas_nodes WHERE user_id = ? AND hash = ?")
       .bind(userId, hash)
       .first<{
         lease_started_at: number;
@@ -275,108 +271,18 @@ export class CasDurableObject implements DurableObject {
       }>();
 
     if (!existing) {
-      throw new Error(`Node ${hash} not found`);
+      throw new CasHttpError(404, `Node ${hash} not found`);
     }
 
-    // Check if ready
     const r2Key = `users/${userId}/nodes/${hash}`;
     const r2Obj = await this.env.CAS_R2.head(r2Key);
     if (!r2Obj) {
-      throw new Error(`Node ${hash} is not ready`);
+      throw new CasHttpError(409, `Node ${hash} is not ready`);
     }
 
-    const clamped = clamp(durationMs, MIN_LEASE_MS, MAX_LEASE_MS);
-    const leaseStartedAt = existing.lease_expires_at > now
-      ? existing.lease_started_at
-      : now;
-    const leaseExpiresAt = now + clamped;
-
-    await db
-      .prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE user_id = ? AND hash = ?")
-      .bind(leaseStartedAt, leaseExpiresAt, userId, hash)
-      .run();
-
-    const result: CasLeaseResult = {
-      hash,
-      ready: true,
-      uploadRequired: false,
-      leaseStartedAt,
-      leaseExpiresAt,
-    };
-
-    return Response.json(result);
-  }
-
-  // ─── Upload ───────────────────────────────────────────────
-
-  private async handleUpload(request: Request, userId: string): Promise<Response> {
-    const hash = request.headers.get("X-CAS-Hash")!;
-    const uploadToken = request.headers.get("X-CAS-Upload-Token");
-
-    validateHash(hash);
-
-    if (!uploadToken) {
-      throw new Error("Missing upload token");
-    }
-
-    const now = Date.now();
-    const db = this.env.CAS_DB;
-
-    // Check lease is still valid
-    const node = await db
-      .prepare("SELECT * FROM cas_nodes WHERE user_id = ? AND hash = ?")
-      .bind(userId, hash)
-      .first<{
-        content_size: number;
-        content_type: string;
-        lease_expires_at: number;
-      }>();
-
-    if (!node) {
-      throw new Error(`Node ${hash} not found`);
-    }
-
-    if (node.lease_expires_at <= now) {
-      throw new Error("Lease expired");
-    }
-
-    // Read and validate content
-    const content = new Uint8Array(await request.arrayBuffer());
-    validateContentLength(content.length, node.content_size);
-
-    // Validate digest
-    const refs = await db
-      .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
-      .bind(userId, hash)
-      .all<{ child_hash: string }>();
-
-    const childHashes = refs.results.map((r) => hexToHash(r.child_hash));
-    const header = encodeHeader(node.content_size, node.content_type, childHashes.length);
-    const digest = await computeNodeDigest(header, node.content_type, childHashes, content);
-    const computedHex = hashToHex(digest);
-
-    if (computedHex !== hash) {
-      throw new Error(`Digest mismatch: expected ${hash}, got ${computedHex}`);
-    }
-
-    // Write to R2 at canonical key
-    const r2Key = `users/${userId}/nodes/${hash}`;
-    await this.env.CAS_R2.put(r2Key, content);
-
-    const result: CasLeaseResult = {
-      hash,
-      ready: true,
-      uploadRequired: false,
-      leaseStartedAt: node.lease_expires_at > now
-        ? (await db
-            .prepare("SELECT lease_started_at FROM cas_nodes WHERE user_id = ? AND hash = ?")
-            .bind(userId, hash)
-            .first<{ lease_started_at: number }>())!.lease_started_at
-        : now,
-      leaseExpiresAt: node.lease_expires_at,
-    };
-
-    return Response.json(result);
+    return Response.json(
+      await this.extendLease(userId, hash, existing.lease_started_at, existing.lease_expires_at, durationMs, now),
+    );
   }
 
   // ─── Read ─────────────────────────────────────────────────
@@ -641,4 +547,41 @@ export class CasDurableObject implements DurableObject {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function parseDurationMs(header: string | null): number {
+  if (header == null || header === "") return DEFAULT_LEASE_MS;
+  const n = Number(header);
+  if (!Number.isFinite(n)) {
+    throw new CasHttpError(400, "Invalid lease duration");
+  }
+  return clamp(n, MIN_LEASE_MS, MAX_LEASE_MS);
+}
+
+function parseRefsHeader(header: string | null): string[] {
+  if (!header || header.trim() === "") return [];
+  const refs = header.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const ref of refs) {
+    validateHash(ref);
+  }
+  return refs;
+}
+
+function metadataMatches(
+  existing: { content_size: number; content_type: string },
+  existingRefs: string[],
+  descriptor: CasNodeDescriptor,
+): boolean {
+  return existing.content_size === descriptor.size
+    && existing.content_type === descriptor.contentType
+    && existingRefs.length === descriptor.refs.length
+    && existingRefs.every((ref, i) => ref === descriptor.refs[i]);
+}
+
+async function cancelBody(request: Request): Promise<void> {
+  try {
+    await request.body?.cancel();
+  } catch {
+    // Body may already be consumed or locked.
+  }
 }

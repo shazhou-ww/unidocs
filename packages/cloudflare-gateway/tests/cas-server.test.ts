@@ -231,10 +231,36 @@ class MockR2Bucket {
   }
 }
 
-async function computeHash(content: Uint8Array, contentType: string): Promise<string> {
-  const header = encodeHeader(content.length, contentType, 0);
-  const hashBytes = await computeNodeDigest(header, contentType, [], content);
+async function computeHash(content: Uint8Array, contentType: string, refs: string[] = []): Promise<string> {
+  const childHashes = refs.map(hexToHash);
+  const header = encodeHeader(content.length, contentType, childHashes.length);
+  const hashBytes = await computeNodeDigest(header, contentType, childHashes, content);
   return hashToHex(hashBytes);
+}
+
+async function leaseWithContent(
+  doInstance: CasDurableObject,
+  content: Uint8Array,
+  contentType: string,
+  options: { userId?: string; refs?: string[]; durationMs?: number; hash?: string } = {},
+) {
+  const userId = options.userId ?? "user1";
+  const refs = options.refs ?? [];
+  const hash = options.hash ?? await computeHash(content, contentType, refs);
+  const headers: Record<string, string> = {
+    "X-User-Id": userId,
+    "X-CAS-Hash": hash,
+    "Content-Type": contentType,
+    "Content-Length": String(content.length),
+    "X-CAS-Lease-Duration": String(options.durationMs ?? 60000),
+  };
+  if (refs.length > 0) headers["X-CAS-Refs"] = refs.join(",");
+  const response = await doInstance.fetch(new Request("http://localhost/leaseWithContent", {
+    method: "POST",
+    headers,
+    body: content,
+  }));
+  return { hash, response };
 }
 
 describe("CAS Durable Object", () => {
@@ -256,194 +282,94 @@ describe("CAS Durable Object", () => {
     });
   });
 
-  describe("lease", () => {
-    it("creates a new node lease", async () => {
+  describe("lease with content", () => {
+    it("creates a ready node in one request", async () => {
       const content = new TextEncoder().encode("test content");
-      const hash = await computeHash(content, "text/plain");
+      const { hash, response } = await leaseWithContent(doInstance, content, "text/plain");
 
-      const request = new Request("http://localhost/lease", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: content.length,
-          contentType: "text/plain",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
-      });
-
-      const response = await doInstance.fetch(request);
       expect(response.status).toBe(200);
-
       const result = await response.json();
       expect(result.hash).toBe(hash);
-      expect(result.uploadRequired).toBe(true);
-      expect(result.uploadToken).toBeDefined();
+      expect(result.ready).toBe(true);
+      expect(result.uploadToken).toBeUndefined();
+      expect(result.uploadRequired).toBeUndefined();
+    });
+
+    it("extends a ready node without requiring a second upload", async () => {
+      const content = new TextEncoder().encode("idempotent");
+      const first = await leaseWithContent(doInstance, content, "text/plain");
+      expect(first.response.status).toBe(200);
+
+      const second = await leaseWithContent(doInstance, content, "text/plain", { hash: first.hash });
+      expect(second.response.status).toBe(200);
+      const result = await second.response.json();
+      expect(result.ready).toBe(true);
+      expect(result.hash).toBe(first.hash);
     });
 
     it("rejects invalid hash format", async () => {
-      const request = new Request("http://localhost/lease", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": "invalid",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: 100,
-          contentType: "text/plain",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
-      });
-
-      const response = await doInstance.fetch(request);
-      expect(response.status).toBe(500);
+      const content = new TextEncoder().encode("x");
+      const { response } = await leaseWithContent(doInstance, content, "text/plain", { hash: "invalid" });
+      expect(response.status).toBe(400);
     });
 
-    it("rejects invalid content type", async () => {
-      const request = new Request("http://localhost/lease", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": "a".repeat(64),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: 100,
-          contentType: "invalid\x00type",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
-      });
-
-      const response = await doInstance.fetch(request);
-      expect(response.status).toBe(500);
-    });
-  });
-
-  describe("upload", () => {
-    it("completes upload and verifies digest", async () => {
-      const content = new TextEncoder().encode("upload test");
+    it("rejects missing content type", async () => {
+      const content = new TextEncoder().encode("x");
       const hash = await computeHash(content, "text/plain");
-
-      const leaseRequest = new Request("http://localhost/lease", {
+      const response = await doInstance.fetch(new Request("http://localhost/leaseWithContent", {
         method: "POST",
         headers: {
           "X-User-Id": "user1",
           "X-CAS-Hash": hash,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: content.length,
-          contentType: "text/plain",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
-      });
-
-      const leaseResponse = await doInstance.fetch(leaseRequest);
-      const lease = await leaseResponse.json();
-
-      const uploadRequest = new Request("http://localhost/upload", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-          "X-CAS-Upload-Token": lease.uploadToken,
+          "Content-Length": String(content.length),
         },
         body: content,
-      });
-
-      const uploadResponse = await doInstance.fetch(uploadRequest);
-      expect(uploadResponse.status).toBe(200);
-
-      const result = await uploadResponse.json();
-      expect(result.ready).toBe(true);
+      }));
+      expect(response.status).toBe(400);
     });
 
-    it("rejects upload without token", async () => {
-      const content = new TextEncoder().encode("no token");
-      const hash = await computeHash(content, "text/plain");
-
-      const uploadRequest = new Request("http://localhost/upload", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-        },
-        body: content,
+    it("rejects digest mismatch", async () => {
+      const content = new TextEncoder().encode("real bytes");
+      const { response } = await leaseWithContent(doInstance, content, "text/plain", {
+        hash: "a".repeat(64),
       });
+      expect(response.status).toBe(400);
+      const error = await response.json();
+      expect(error.error).toContain("Digest mismatch");
+    });
 
-      const uploadResponse = await doInstance.fetch(uploadRequest);
-      expect(uploadResponse.status).toBe(500);
+    it("rejects immutable metadata mismatch on a ready node", async () => {
+      const content = new TextEncoder().encode("same bytes");
+      const first = await leaseWithContent(doInstance, content, "text/plain");
+      expect(first.response.status).toBe(200);
+
+      const second = await leaseWithContent(doInstance, content, "application/json", {
+        hash: first.hash,
+      });
+      expect(second.response.status).toBe(409);
+      expect((await second.response.json()).error).toContain("metadata mismatch");
     });
   });
 
   describe("read", () => {
     it("reads uploaded content", async () => {
       const content = new TextEncoder().encode("read test");
-      const hash = await computeHash(content, "text/plain");
+      const { hash, response } = await leaseWithContent(doInstance, content, "text/plain");
+      expect(response.status).toBe(200);
 
-      const leaseRequest = new Request("http://localhost/lease", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: content.length,
-          contentType: "text/plain",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
-      });
-
-      const leaseResponse = await doInstance.fetch(leaseRequest);
-      const lease = await leaseResponse.json();
-
-      const uploadRequest = new Request("http://localhost/upload", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-          "X-CAS-Upload-Token": lease.uploadToken,
-        },
-        body: content,
-      });
-
-      await doInstance.fetch(uploadRequest);
-
-      const readRequest = new Request("http://localhost/read", {
+      const readResponse = await doInstance.fetch(new Request("http://localhost/read", {
         method: "GET",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-        },
-      });
-
-      const readResponse = await doInstance.fetch(readRequest);
+        headers: { "X-User-Id": "user1", "X-CAS-Hash": hash },
+      }));
       expect(readResponse.status).toBe(200);
-
-      const text = await readResponse.text();
-      expect(text).toBe("read test");
+      expect(await readResponse.text()).toBe("read test");
     });
 
     it("returns 404 for non-existent node", async () => {
-      const readRequest = new Request("http://localhost/read", {
+      const readResponse = await doInstance.fetch(new Request("http://localhost/read", {
         method: "GET",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": "a".repeat(64),
-        },
-      });
-
-      const readResponse = await doInstance.fetch(readRequest);
+        headers: { "X-User-Id": "user1", "X-CAS-Hash": "a".repeat(64) },
+      }));
       expect(readResponse.status).toBe(404);
     });
   });
@@ -451,47 +377,13 @@ describe("CAS Durable Object", () => {
   describe("metadata", () => {
     it("returns node metadata", async () => {
       const content = new TextEncoder().encode("metadata test");
-      const hash = await computeHash(content, "application/json");
+      const { hash, response } = await leaseWithContent(doInstance, content, "application/json");
+      expect(response.status).toBe(200);
 
-      const leaseRequest = new Request("http://localhost/lease", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: content.length,
-          contentType: "application/json",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
-      });
-
-      const leaseResponse = await doInstance.fetch(leaseRequest);
-      const lease = await leaseResponse.json();
-
-      const uploadRequest = new Request("http://localhost/upload", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-          "X-CAS-Upload-Token": lease.uploadToken,
-        },
-        body: content,
-      });
-
-      await doInstance.fetch(uploadRequest);
-
-      const metadataRequest = new Request("http://localhost/metadata", {
+      const metadataResponse = await doInstance.fetch(new Request("http://localhost/metadata", {
         method: "GET",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": hash,
-        },
-      });
-
-      const metadataResponse = await doInstance.fetch(metadataRequest);
+        headers: { "X-User-Id": "user1", "X-CAS-Hash": hash },
+      }));
       expect(metadataResponse.status).toBe(200);
 
       const result = await metadataResponse.json();
@@ -506,140 +398,74 @@ describe("CAS Durable Object", () => {
 
   describe("child refs", () => {
     it("creates parent with child ref and increments child ref count", async () => {
-      // Create and upload child node
       const childContent = new TextEncoder().encode("child content");
-      const childHash = await computeHash(childContent, "text/plain");
+      const child = await leaseWithContent(doInstance, childContent, "text/plain");
+      expect(child.response.status).toBe(200);
 
-      const childLeaseRequest = new Request("http://localhost/lease", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": childHash,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: childContent.length,
-          contentType: "text/plain",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
-      });
-
-      const childLeaseResponse = await doInstance.fetch(childLeaseRequest);
-      const childLease = await childLeaseResponse.json();
-
-      const childUploadRequest = new Request("http://localhost/upload", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": childHash,
-          "X-CAS-Upload-Token": childLease.uploadToken,
-        },
-        body: childContent,
-      });
-
-      await doInstance.fetch(childUploadRequest);
-
-      // Create parent node with child ref
       const parentContent = new TextEncoder().encode('{"ref":"child"}');
-      const header = encodeHeader(parentContent.length, "application/json", 1);
-      const hashBytes = await computeNodeDigest(header, "application/json", [hexToHash(childHash)], parentContent);
-      const parentHash = hashToHex(hashBytes);
-
-      const parentLeaseRequest = new Request("http://localhost/lease", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": parentHash,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          size: parentContent.length,
-          contentType: "application/json",
-          refs: [childHash],
-          requestedDurationMs: 60000,
-        }),
+      const parent = await leaseWithContent(doInstance, parentContent, "application/json", {
+        refs: [child.hash],
       });
+      expect(parent.response.status).toBe(200);
+      const parentLease = await parent.response.json();
+      expect(parentLease.hash).toBe(parent.hash);
+      expect(parentLease.ready).toBe(true);
 
-      const parentLeaseResponse = await doInstance.fetch(parentLeaseRequest);
-      expect(parentLeaseResponse.status).toBe(200);
-
-      const parentLease = await parentLeaseResponse.json();
-      expect(parentLease.hash).toBe(parentHash);
-      expect(parentLease.uploadRequired).toBe(true);
-
-      // Upload parent
-      const parentUploadRequest = new Request("http://localhost/upload", {
-        method: "POST",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": parentHash,
-          "X-CAS-Upload-Token": parentLease.uploadToken,
-        },
-        body: parentContent,
-      });
-
-      const parentUploadResponse = await doInstance.fetch(parentUploadRequest);
-      expect(parentUploadResponse.status).toBe(200);
-
-      // Verify child's ref count incremented
-      const childMetadataRequest = new Request("http://localhost/metadata", {
+      const childMetadataResponse = await doInstance.fetch(new Request("http://localhost/metadata", {
         method: "GET",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": childHash,
-        },
-      });
-
-      const childMetadataResponse = await doInstance.fetch(childMetadataRequest);
+        headers: { "X-User-Id": "user1", "X-CAS-Hash": child.hash },
+      }));
       expect(childMetadataResponse.status).toBe(200);
+      expect((await childMetadataResponse.json()).state.childRefCount).toBe(1);
 
-      const childMetadata = await childMetadataResponse.json();
-      expect(childMetadata.state.childRefCount).toBe(1);
-
-      // Verify parent's metadata includes the ref
-      const parentMetadataRequest = new Request("http://localhost/metadata", {
+      const parentMetadataResponse = await doInstance.fetch(new Request("http://localhost/metadata", {
         method: "GET",
-        headers: {
-          "X-User-Id": "user1",
-          "X-CAS-Hash": parentHash,
-        },
-      });
-
-      const parentMetadataResponse = await doInstance.fetch(parentMetadataRequest);
+        headers: { "X-User-Id": "user1", "X-CAS-Hash": parent.hash },
+      }));
       expect(parentMetadataResponse.status).toBe(200);
-
-      const parentMetadata = await parentMetadataResponse.json();
-      expect(parentMetadata.metadata.refs).toEqual([childHash]);
+      expect((await parentMetadataResponse.json()).metadata.refs).toEqual([child.hash]);
     });
 
     it("rejects parent creation when child is not ready", async () => {
       const childHash = "b".repeat(64);
       const parentContent = new TextEncoder().encode('{"ref":"not-ready-child"}');
-      const header = encodeHeader(parentContent.length, "application/json", 1);
-      const hashBytes = await computeNodeDigest(header, "application/json", [hexToHash(childHash)], parentContent);
-      const parentHash = hashToHex(hashBytes);
+      const parent = await leaseWithContent(doInstance, parentContent, "application/json", {
+        refs: [childHash],
+      });
+      expect(parent.response.status).toBe(409);
+      expect((await parent.response.json()).error).toContain("not ready");
+    });
+  });
 
-      const leaseRequest = new Request("http://localhost/lease", {
+  describe("lease existing", () => {
+    it("extends a ready node", async () => {
+      const content = new TextEncoder().encode("lease existing");
+      const { hash, response } = await leaseWithContent(doInstance, content, "text/plain");
+      expect(response.status).toBe(200);
+
+      const extend = await doInstance.fetch(new Request("http://localhost/leaseExisting", {
         method: "POST",
         headers: {
           "X-User-Id": "user1",
-          "X-CAS-Hash": parentHash,
-          "Content-Type": "application/json",
+          "X-CAS-Hash": hash,
+          "X-CAS-Lease-Duration": "120000",
         },
-        body: JSON.stringify({
-          size: parentContent.length,
-          contentType: "application/json",
-          refs: [childHash],
-          requestedDurationMs: 60000,
-        }),
-      });
+      }));
+      expect(extend.status).toBe(200);
+      const result = await extend.json();
+      expect(result.ready).toBe(true);
+      expect(result.hash).toBe(hash);
+    });
 
-      const leaseResponse = await doInstance.fetch(leaseRequest);
-      expect(leaseResponse.status).toBe(500);
-
-      const error = await leaseResponse.json();
-      expect(error.error).toContain("not ready");
+    it("returns 404 for unknown hash", async () => {
+      const extend = await doInstance.fetch(new Request("http://localhost/leaseExisting", {
+        method: "POST",
+        headers: {
+          "X-User-Id": "user1",
+          "X-CAS-Hash": "a".repeat(64),
+        },
+      }));
+      expect(extend.status).toBe(404);
     });
   });
 
@@ -686,18 +512,14 @@ describe("CAS Durable Object", () => {
 
   describe("error handling", () => {
     it("returns 401 for missing user ID", async () => {
-      const request = new Request("http://localhost/lease", {
+      const request = new Request("http://localhost/leaseWithContent", {
         method: "POST",
         headers: {
           "X-CAS-Hash": "a".repeat(64),
-          "Content-Type": "application/json",
+          "Content-Type": "text/plain",
+          "Content-Length": "1",
         },
-        body: JSON.stringify({
-          size: 100,
-          contentType: "text/plain",
-          refs: [],
-          requestedDurationMs: 60000,
-        }),
+        body: "x",
       });
 
       const response = await doInstance.fetch(request);

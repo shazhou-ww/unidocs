@@ -1,18 +1,21 @@
+sut_type: cli
 description: "Copy project, install deps, build all packages"
 steps:
-  - command: "cp -r /app /workspace"
-    timeout: "30s"
+  - command: "mkdir -p /workspace && tar -C /app --exclude=node_modules --exclude=dist --exclude=.git --exclude=.treespec-output --exclude=.wrangler --exclude=tsconfig.tsbuildinfo -cf - . | tar -C /workspace -xf -"
+    timeout: "60s"
   - command: "cd /workspace && pnpm install"
     timeout: "600s"
   - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
-  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js /workspace/packages/cloudflare-docx/dist/worker.js /workspace/packages/cloudflare-gateway/dist/worker.js"
+  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js /workspace/packages/cloudflare-docx/dist/worker.js /workspace/packages/cloudflare-gateway/dist/worker.js /workspace/packages/cas/dist/index.js"
     assert:
       type: regex
       conditions:
         - { path: "stdout", regex: "cloudflare-markdown/dist/worker.js" }
         - { path: "stdout", regex: "cloudflare-docx/dist/worker.js" }
         - { path: "stdout", regex: "cloudflare-gateway/dist/worker.js" }
+        - { path: "stdout", regex: "cas/dist/index.js" }
 primary: create-new-markdown
 branches:
   - create-new-docx
+  - cas

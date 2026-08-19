@@ -4,8 +4,8 @@
  * Public routes (userId comes from the URL path):
  *   GET  /users/{userId}/cas/nodes/{hash}/content   — read content
  *   GET  /users/{userId}/cas/nodes/{hash}/metadata  — read metadata
- *   POST /users/{userId}/cas/nodes/{hash}/lease     — claim lease
- *   PUT  /users/{userId}/cas/nodes/{hash}/content   — upload content
+ *   POST /users/{userId}/cas/nodes/{hash}           — lease with content
+ *   POST /users/{userId}/cas/nodes/{hash}/lease     — extend ready node
  *   GET  /users/{userId}/cas/usage                  — storage usage
  *   POST /users/{userId}/cas/gc                     — trigger GC
  */
@@ -17,6 +17,13 @@ interface CasEnv {
   CAS_R2: R2Bucket;
   CAS_DO: DurableObjectNamespace;
 }
+
+const FORWARDED_HEADERS = [
+  "Content-Type",
+  "Content-Length",
+  "X-CAS-Refs",
+  "X-CAS-Lease-Duration",
+];
 
 /**
  * Check if a path is a public CAS route: /users/{userId}/cas/...
@@ -53,6 +60,20 @@ export async function handleCasRequest(
     return callCasDO(env, userId, "/gc", "POST", request.body);
   }
 
+  // /users/{userId}/cas/nodes/{hash}
+  if (parts.length === 5 && parts[3] === "nodes") {
+    const hash = parts[4];
+    try {
+      validateHash(hash);
+    } catch {
+      return Response.json({ error: "Invalid hash" }, { status: 400 });
+    }
+    if (request.method !== "POST") {
+      return Response.json({ error: "Method not allowed" }, { status: 405 });
+    }
+    return callCasDO(env, userId, "/leaseWithContent", "POST", request.body, hash, request);
+  }
+
   // /users/{userId}/cas/nodes/{hash}/...
   if (parts.length >= 6 && parts[3] === "nodes") {
     const hash = parts[4];
@@ -69,10 +90,6 @@ export async function handleCasRequest(
         if (request.method === "GET") {
           return callCasDO(env, userId, "/read", "GET", undefined, hash);
         }
-        if (request.method === "PUT") {
-          const uploadToken = request.headers.get("X-CAS-Upload-Token");
-          return callCasDO(env, userId, "/upload", "POST", request.body, hash, uploadToken ?? undefined);
-        }
         return Response.json({ error: "Method not allowed" }, { status: 405 });
 
       case "metadata":
@@ -85,7 +102,7 @@ export async function handleCasRequest(
         if (request.method !== "POST") {
           return Response.json({ error: "Method not allowed" }, { status: 405 });
         }
-        return callCasDO(env, userId, "/lease", "POST", request.body, hash);
+        return callCasDO(env, userId, "/leaseExisting", "POST", undefined, hash, request);
 
       default:
         return Response.json({ error: `Unknown action: ${action}` }, { status: 404 });
@@ -106,7 +123,7 @@ async function callCasDO(
   method: string,
   body?: ReadableStream | null,
   hash?: string,
-  uploadToken?: string,
+  original?: Request,
 ): Promise<Response> {
   const doId = env.CAS_DO.idFromName(userId);
   const stub = env.CAS_DO.get(doId);
@@ -114,7 +131,12 @@ async function callCasDO(
   const headers = new Headers();
   headers.set("X-User-Id", userId);
   if (hash) headers.set("X-CAS-Hash", hash);
-  if (uploadToken) headers.set("X-CAS-Upload-Token", uploadToken);
+  if (original) {
+    for (const name of FORWARDED_HEADERS) {
+      const value = original.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+  }
 
   const url = `https://cas-do.internal${action}`;
   try {

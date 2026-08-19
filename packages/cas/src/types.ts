@@ -33,15 +33,12 @@ export interface CasNodeDescriptor {
   readonly refs: readonly CasHash[];
 }
 
-/** Result of a lease claim or extension. */
+/** Result of a lease claim or extension. Successful leases are always ready. */
 export interface CasLeaseResult {
   readonly hash: CasHash;
-  readonly ready: boolean;
-  readonly uploadRequired: boolean;
+  readonly ready: true;
   readonly leaseStartedAt: number;
   readonly leaseExpiresAt: number;
-  /** Short-lived upload token (only when uploadRequired is true). */
-  readonly uploadToken?: string;
 }
 
 /** A CAS reference from document state. */

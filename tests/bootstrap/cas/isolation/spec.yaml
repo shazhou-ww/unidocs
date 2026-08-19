@@ -1,0 +1,18 @@
+sut_type: cli
+description: "CAS nodes are scoped by the path userId"
+steps:
+  - command: "cd /workspace && nohup node scripts/dev.mjs > /tmp/miniflare.log 2>&1 & for i in $(seq 1 30); do sleep 2; GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
+    timeout: "120s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "READY" }
+  - command: "HASH=$(cat /tmp/cas.hash) && curl -s -o /tmp/cas-bob -w '%{http_code}' \"http://localhost:8787/users/bob/cas/nodes/$HASH/content\""
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^404$" }
+  - command: "printf 'bob content' > /tmp/cas-bob.txt && HASH=$(cd /workspace && node scripts/cas-digest.mjs text/plain < /tmp/cas-bob.txt) && curl -s -X POST \"http://localhost:8787/users/bob/cas/nodes/$HASH\" -H 'Content-Type: text/plain' --data-binary @/tmp/cas-bob.txt"
+    assert:
+      type: jsonata
+      expression: "ready = true"

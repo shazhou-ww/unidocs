@@ -1,0 +1,23 @@
+sut_type: cli
+description: "Extend a ready CAS node via POST .../lease; unknown hash is 404"
+steps:
+  - command: "cd /workspace && nohup node scripts/dev.mjs > /tmp/miniflare.log 2>&1 & for i in $(seq 1 30); do sleep 2; GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
+    timeout: "120s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "READY" }
+  - command: "HASH=$(cat /tmp/cas.hash) && curl -s -X POST \"http://localhost:8787/users/test-user-001/cas/nodes/$HASH/lease\" -H 'X-CAS-Lease-Duration: 120000'"
+    assert:
+      type: jsonata
+      expression: "ready = true"
+  - command: "curl -s -o /tmp/cas-missing -w '%{http_code}' -X POST \"http://localhost:8787/users/test-user-001/cas/nodes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/lease\""
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^404$" }
+  - command: "HASH=$(cat /tmp/cas.hash) && curl -s -o /tmp/cas-put -w '%{http_code}' -X PUT \"http://localhost:8787/users/test-user-001/cas/nodes/$HASH/content\" -H 'Content-Type: text/plain' --data-binary @/tmp/cas.txt"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "^405$" }

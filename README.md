@@ -82,13 +82,13 @@ POST   /users/{userId}/docs/{docType}/{docId}/reset                 → reset Op
 ```
 GET    /users/{userId}/cas/nodes/{hash}/content    → read node bytes
 GET    /users/{userId}/cas/nodes/{hash}/metadata   → read metadata + state
-POST   /users/{userId}/cas/nodes/{hash}/lease      → claim or extend a lease
-PUT    /users/{userId}/cas/nodes/{hash}/content    → upload content (requires X-CAS-Upload-Token)
+POST   /users/{userId}/cas/nodes/{hash}            → lease with content
+POST   /users/{userId}/cas/nodes/{hash}/lease      → extend a ready node
 GET    /users/{userId}/cas/usage                   → storage usage
 POST   /users/{userId}/cas/gc                      → trigger GC
 ```
 
-See [CAS Architecture](docs/cas-architecture.md) for the two-phase lease/upload protocol.
+See [CAS Architecture](docs/cas-architecture.md) for lease-with-content and lease-extend.
 
 ### Create document
 

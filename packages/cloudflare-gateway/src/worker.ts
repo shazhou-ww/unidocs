@@ -25,8 +25,8 @@
  * CAS routes:
  *   GET  /users/{userId}/cas/nodes/{hash}/content   → read content
  *   GET  /users/{userId}/cas/nodes/{hash}/metadata  → read metadata
- *   POST /users/{userId}/cas/nodes/{hash}/lease     → claim lease
- *   PUT  /users/{userId}/cas/nodes/{hash}/content   → upload content
+ *   POST /users/{userId}/cas/nodes/{hash}           → lease with content
+ *   POST /users/{userId}/cas/nodes/{hash}/lease     → extend ready node
  *   GET  /users/{userId}/cas/usage                  → storage usage
  *   POST /users/{userId}/cas/gc                     → trigger GC
  *

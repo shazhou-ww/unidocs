@@ -2,7 +2,7 @@
  * CAS HTTP client for cloudflare-sdk.
  *
  * Implements CasReadContext by calling the gateway's CAS endpoints.
- * Also provides upload helpers for the two-phase lease/upload protocol.
+ * Uploading a node is a single lease-with-content POST.
  */
 
 import type { CasRef, CasReadContext, CasReferences } from "@unidocs/core";
@@ -10,11 +10,9 @@ import type { CasRef, CasReadContext, CasReferences } from "@unidocs/core";
 /** Result of a lease claim or extension. */
 interface CasLeaseResult {
   readonly hash: string;
-  readonly ready: boolean;
-  readonly uploadRequired: boolean;
+  readonly ready: true;
   readonly leaseStartedAt: number;
   readonly leaseExpiresAt: number;
-  readonly uploadToken?: string;
 }
 
 export interface CasClientConfig {
@@ -76,85 +74,52 @@ export class CasClient implements CasReadContext {
   }
 
   /**
-   * Claim a lease for a CAS node (two-phase upload protocol).
+   * Lease a node, uploading content when the node is not already ready.
    *
-   * Phase 1: POST /users/{userId}/cas/nodes/{hash}/lease
-   * Returns uploadRequired=true if content needs to be uploaded.
-   */
-  async claimLease(
-    hash: string,
-    size: number,
-    contentType: string,
-    refs: string[],
-    requestedDurationMs?: number,
-  ): Promise<CasLeaseResult & { uploadToken?: string }> {
-    const resp = await fetch(this.casUrl(`/nodes/${hash}/lease`), {
-      method: "POST",
-      headers: this.headers({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ size, contentType, refs, requestedDurationMs }),
-    });
-    if (!resp.ok) {
-      throw new Error(`CAS lease claim failed: ${resp.status} ${resp.statusText}`);
-    }
-    return resp.json() as Promise<CasLeaseResult & { uploadToken?: string }>;
-  }
-
-  /**
-   * Upload CAS node content (two-phase upload protocol).
-   *
-   * Phase 2: PUT /users/{userId}/cas/nodes/{hash}/content
-   * Requires the uploadToken from claimLease.
-   */
-  async uploadContent(
-    hash: string,
-    content: Uint8Array,
-    uploadToken: string,
-  ): Promise<CasLeaseResult> {
-    const resp = await fetch(this.casUrl(`/nodes/${hash}/content`), {
-      method: "PUT",
-      headers: this.headers({
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(content.length),
-        "X-CAS-Upload-Token": uploadToken,
-      }),
-      body: content,
-    });
-    if (!resp.ok) {
-      throw new Error(`CAS upload failed: ${resp.status} ${resp.statusText}`);
-    }
-    return resp.json() as Promise<CasLeaseResult>;
-  }
-
-  /**
-   * Extend a lease on an existing ready node.
-   */
-  async leaseExisting(hash: string, requestedDurationMs?: number): Promise<CasLeaseResult> {
-    // Use the DO directly via internal endpoint
-    const resp = await fetch(this.casUrl(`/nodes/${hash}/lease`), {
-      method: "POST",
-      headers: this.headers({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ size: 0, contentType: "", refs: [], requestedDurationMs }),
-    });
-    if (!resp.ok) {
-      throw new Error(`CAS leaseExisting failed: ${resp.status} ${resp.statusText}`);
-    }
-    return resp.json() as Promise<CasLeaseResult>;
-  }
-
-  /**
-   * Convenience: create or lease a node, upload if needed.
+   * POST /users/{userId}/cas/nodes/{hash}
    */
   async ensureNode(
     hash: string,
     content: Uint8Array,
     contentType: string,
     refs: string[] = [],
+    requestedDurationMs?: number,
   ): Promise<CasLeaseResult> {
-    const lease = await this.claimLease(hash, content.length, contentType, refs);
-    if (lease.uploadRequired && lease.uploadToken) {
-      return this.uploadContent(hash, content, lease.uploadToken);
+    const extra: Record<string, string> = {
+      "Content-Type": contentType,
+      "Content-Length": String(content.length),
+    };
+    if (refs.length > 0) extra["X-CAS-Refs"] = refs.join(",");
+    if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
+
+    const resp = await fetch(this.casUrl(`/nodes/${hash}`), {
+      method: "POST",
+      headers: this.headers(extra),
+      body: content,
+    });
+    if (!resp.ok) {
+      throw new Error(`CAS lease failed: ${resp.status} ${resp.statusText}`);
     }
-    return lease;
+    return resp.json() as Promise<CasLeaseResult>;
+  }
+
+  /**
+   * Extend a lease on an existing ready node.
+   *
+   * POST /users/{userId}/cas/nodes/{hash}/lease
+   */
+  async leaseExisting(hash: string, requestedDurationMs?: number): Promise<CasLeaseResult> {
+    const extra: Record<string, string> = {};
+    if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
+
+    const resp = await fetch(this.casUrl(`/nodes/${hash}/lease`), {
+      method: "POST",
+      headers: this.headers(extra),
+    });
+    if (!resp.ok) {
+      throw new Error(`CAS leaseExisting failed: ${resp.status} ${resp.statusText}`);
+    }
+    return resp.json() as Promise<CasLeaseResult>;
   }
 }
 

@@ -165,8 +165,7 @@ A claim requests a duration, but the service chooses the actual expiry. It may e
 ```ts
 export interface CasLeaseResult {
   readonly hash: CasHash;
-  readonly ready: boolean;
-  readonly uploadRequired: boolean;
+  readonly ready: true;
   readonly leaseStartedAt: number;
   readonly leaseExpiresAt: number;
 }
@@ -175,8 +174,7 @@ export interface CasLeaseResult {
 Rules:
 
 - A ready node renews or extends its lease without re-uploading content.
-- A not-ready node returns `uploadRequired: true`.
-- Upload completion after the granted lease expires is rejected. The caller must claim a new lease and retry.
+- HTTP upload is a lease that carries content. The server never returns `uploadRequired` or an upload token.
 - Leases are not explicitly released.
 - Lease state is stored directly on the node row; there is no separate lease table.
 
@@ -195,23 +193,20 @@ export interface CasNodeDescriptor {
 
 Creation proceeds inside the user CAS queue:
 
-1. Validate descriptor syntax and canonical constraints.
-2. If the D1 row exists, require immutable metadata to match exactly.
+1. Validate descriptor syntax and canonical constraints from URL and headers. Do not read the body yet.
+2. If the D1 row exists and R2 content is present, require immutable metadata to match, cancel the body, extend the lease, and return ready.
 3. If inserting a row, verify every child is ready.
-4. Choose the actual initial lease interval.
-5. In one D1 transaction:
-   - insert immutable metadata and default mutable state;
-   - insert ordered child edges;
-   - increment each child's `childRefCount` once per occurrence.
-  - persist `leaseStartedAt` and `leaseExpiresAt` for the initial lease.
-6. If R2 content exists at the canonical key, return ready without requesting content.
-7. Otherwise obtain content.
-8. Verify content length and the complete canonical SHA-256 digest before publishing it at the canonical R2 key.
-9. Store validated content in R2 before returning ready.
+4. Read the body. Verify content length and the complete canonical SHA-256 digest.
+5. Store validated content at the canonical R2 key (idempotent).
+6. In one D1 transaction:
+   - insert immutable metadata and default mutable state, or update the lease on a not-ready row;
+   - insert ordered child edges on first insert;
+   - increment each child's `childRefCount` once per occurrence on first insert;
+   - persist `leaseStartedAt` and `leaseExpiresAt`.
 
-The D1 row intentionally precedes R2 upload. Its initial lease is committed in the same D1 transaction, so a crash cannot leave a newly inserted row immediately GC-eligible. Failed uploads leave a not-ready leased node. After lease expiration, GC may remove that row and decrement its child references.
+R2 is published before the D1 row. A crash after R2 and before D1 leaves an orphan object; retry is idempotent and completes the row. A D1 row is never committed without canonical R2 content.
 
-No operation may add a reference to the parent while its R2 content is missing.
+No operation may add a reference to a parent that is not ready.
 
 ## 8. Garbage collection
 
@@ -333,13 +328,13 @@ export interface CasGcResult {
 
 `lease()` calls `provideContent()` only when the node is not ready. This avoids retransmitting content that already exists.
 
-`leaseExisting()` is used by document apply flows. It has no descriptor or content callback: the node must already have matching D1 metadata and canonical R2 content. A not-ready node is rejected so the client can complete the normal upload flow first.
+`leaseExisting()` is used by document apply flows. It has no descriptor or content callback: the node must already have matching D1 metadata and canonical R2 content. A not-ready node is rejected so the client can complete a lease-with-content request first.
 
 ## 11. Authenticated HTTP API
 
 Public CAS endpoints live under `/users/{userId}/cas/`. Document APIs live under `/users/{userId}/docs/{docType}/`. The path `userId` is the current identity. Future Bearer tokens must bind to that userId; a mismatch will be rejected.
 
-HTTP cannot express a server-side callback, so lease/upload is a two-phase protocol.
+HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
 
 ### 11.1 Read content
 
@@ -362,67 +357,43 @@ Authorization: Bearer ...
 
 Returns immutable metadata and mutable state. Unknown nodes return `404`.
 
-### 11.3 Claim a lease
+### 11.3 Lease with content
 
 ```http
-POST /users/{userId}/cas/nodes/{sha256}/lease
+POST /users/{userId}/cas/nodes/{sha256}
 Authorization: Bearer ...
-Content-Type: application/json
+Content-Type: image/png
+Content-Length: 12345
+X-CAS-Refs: <hash>[,<hash>...]
+X-CAS-Lease-Duration: 900000
 
-{
-  "size": 12345,
-  "contentType": "image/png",
-  "refs": [],
-  "requestedDurationMs": 900000
-}
+<raw bytes>
 ```
 
-Ready response:
+`X-CAS-Refs` may be omitted for a leaf node. `X-CAS-Lease-Duration` may be omitted (default 15 minutes, clamped to 1 minute … 24 hours).
+
+If the node is already ready and immutable metadata matches, the service cancels the body, extends the lease, and returns success. Otherwise it reads the body, verifies the digest, writes R2, then commits the D1 row.
 
 ```json
 {
   "hash": "...",
   "ready": true,
-  "uploadRequired": false,
   "leaseStartedAt": 1787100000000,
   "leaseExpiresAt": 1787100900000
 }
 ```
 
-Not-ready response additionally contains a short-lived upload token:
-
-```json
-{
-  "hash": "...",
-  "ready": false,
-  "uploadRequired": true,
-  "uploadToken": "...",
-  "leaseStartedAt": 1787100000000,
-  "leaseExpiresAt": 1787100900000
-}
-```
-
-### 11.4 Upload content
+### 11.4 Extend an existing lease
 
 ```http
-PUT /users/{userId}/cas/nodes/{sha256}/content
+POST /users/{userId}/cas/nodes/{sha256}/lease
 Authorization: Bearer ...
-X-CAS-Upload-Token: ...
-Content-Type: application/octet-stream
-Content-Length: 12345
-
-<binary body>
+X-CAS-Lease-Duration: 900000
 ```
 
-The service rejects completion when:
+No body. Missing nodes return `404`. A not-ready node returns `409`; the caller must use lease-with-content.
 
-- the lease has expired;
-- the token is invalid or belongs to another user/node;
-- size differs from immutable metadata;
-- the canonical node digest differs from the URL digest;
-- any immutable metadata differs from the existing row.
-
-A successful response returns the final lease and ready state.
+A successful response is the same lease result as 11.3.
 
 ### 11.5 User control plane
 
@@ -512,7 +483,7 @@ For an apply request, the SDK:
 
 If step 6 fails, the SDK deletes the newly inserted Delta and discards the working document.
 
-`refsFromOp()` never creates nodes and never supplies upload content. Clients create/upload nodes through the CAS write API before submitting a Delta. If `leaseExisting` finds a not-ready reference, apply fails and the client must complete a new lease/upload flow before retrying.
+`refsFromOp()` never creates nodes and never supplies upload content. Clients create nodes through the CAS lease-with-content API before submitting a Delta. If `leaseExisting` finds a not-ready reference, apply fails and the client must complete a lease-with-content request before retrying.
 
 The accepted residual failure is:
 
@@ -560,7 +531,7 @@ The first implementation should include:
 - user-scoped CAS Durable Object queue;
 - D1 node/edge tables and both non-negative ref counts;
 - R2 content storage;
-- lease claim and authenticated two-phase upload;
+- lease with content and authenticated lease extension;
 - ready checks for reads and references;
 - idempotent batched root-reference updates;
 - GC for zero-referenced, expired nodes;
