@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./port-contract": {
+      "types": "./dist/testing/port-contract.d.ts",
+      "import": "./dist/testing/port-contract.js"
     }
   },
   "files": [
@@ -23,6 +27,9 @@
   "dependencies": {
     "@unidocs/core": "workspace:*",
     "@unidocs/cas": "workspace:*"
+  },
+  "peerDependencies": {
+    "vitest": "^3.2.0"
   },
   "devDependencies": {
     "typescript": "^5.9.0",
