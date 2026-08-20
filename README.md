@@ -2,6 +2,11 @@
 
 Universal document editing framework for AI agents. Built on Cloudflare Workers + Durable Objects.
 
+## Design documents
+
+- [CAS Architecture](docs/cas-architecture.md) — user-scoped storage, leases, reference counts, GC, APIs, and DocumentType integration
+- [CAS Binary Format](docs/cas-binary-format.md) — canonical SHA-256 Merkle DAG node encoding derived from CASFA
+
 ## Architecture
 
 ```
@@ -14,7 +19,9 @@ Client → Gateway (auth + routing) → Editor DO / Operator DO (per document in
 - **Editor DO** — document state management, CRUD operations, history, snapshots
 - **Operator DO** — AI agent interface, ReAct loop, tool dispatch to Editor
 
-### Storage layout
+### Current storage layout
+
+The table below describes the implementation before the user-scoped CAS migration. The accepted target design is documented in [CAS Architecture](docs/cas-architecture.md).
 
 | Layer | Storage | Purpose |
 |-------|---------|---------|
@@ -23,7 +30,7 @@ Client → Gateway (auth + routing) → Editor DO / Operator DO (per document in
 | Shared D1 | `snapshots` | Global snapshot index (cross-DO clone support) |
 | R2 CAS | `hash → bytes` | Content-addressed snapshot storage (dedup) |
 
-### Consistency model
+### Current consistency model
 
 Write order on every delta:
 1. sqlite INSERT delta (source of truth)
@@ -54,25 +61,39 @@ packages/
 
 ## API
 
-All endpoints go through the Gateway. Document type is determined by URL path.
+All endpoints go through the Gateway. Document APIs live under `/users/{userId}/docs/{docType}/`. CAS APIs live under `/users/{userId}/cas/`. The path `userId` is the current identity; future Bearer tokens must bind to that userId.
 
 ### Document lifecycle
 
 ```
-POST   /{docType}/                              → create document (multipart/form-data)
-GET    /{docType}/{docId}/export                → download document (binary)
-POST   /{docType}/{docId}/query                 → query document → { data, version }
-POST   /{docType}/{docId}/apply                 → apply delta → { version }
-GET    /{docType}/{docId}/history               → get delta history
-POST   /{docType}/{docId}/rollback              → rollback to version
-POST   /{docType}/{docId}/run                   → Operator ReAct loop
-POST   /{docType}/{docId}/reset                 → reset Operator session
+POST   /users/{userId}/docs/{docType}/                              → create document (multipart/form-data)
+GET    /users/{userId}/docs/{docType}/                              → list documents
+GET    /users/{userId}/docs/{docType}/{docId}/export                → download document (binary)
+POST   /users/{userId}/docs/{docType}/{docId}/query                 → query document → { data, version }
+POST   /users/{userId}/docs/{docType}/{docId}/apply                 → apply delta → { version }
+GET    /users/{userId}/docs/{docType}/{docId}/history               → get delta history
+POST   /users/{userId}/docs/{docType}/{docId}/rollback              → rollback to version
+POST   /users/{userId}/docs/{docType}/{docId}/run                   → Operator ReAct loop
+POST   /users/{userId}/docs/{docType}/{docId}/reset                 → reset Operator session
 ```
+
+### CAS
+
+```
+GET    /users/{userId}/cas/nodes/{hash}/content    → read node bytes
+GET    /users/{userId}/cas/nodes/{hash}/metadata   → read metadata + state
+POST   /users/{userId}/cas/nodes/{hash}            → lease with content
+POST   /users/{userId}/cas/nodes/{hash}/lease      → extend a ready node
+GET    /users/{userId}/cas/usage                   → storage usage
+POST   /users/{userId}/cas/gc                      → trigger GC
+```
+
+See [CAS Architecture](docs/cas-architecture.md) for lease-with-content and lease-extend.
 
 ### Create document
 
 ```
-POST /{docType}/
+POST /users/{userId}/docs/{docType}/
 Content-Type: multipart/form-data
 
 Fields (mutually exclusive):
@@ -92,7 +113,7 @@ Clone flow:
 ### Query
 
 ```
-POST /{docType}/{docId}/query
+POST /users/{userId}/docs/{docType}/{docId}/query
 Content-Type: application/json
 
 { "kind": "...", "payload": {...} }
@@ -105,7 +126,7 @@ Every query response includes the current document version.
 ### Apply (delta)
 
 ```
-POST /{docType}/{docId}/apply
+POST /users/{userId}/docs/{docType}/{docId}/apply
 Content-Type: application/json
 
 {
@@ -124,7 +145,7 @@ Response: { success: true, version: 43 }
 ### Rollback
 
 ```
-POST /{docType}/{docId}/rollback
+POST /users/{userId}/docs/{docType}/{docId}/rollback
 Content-Type: application/json
 
 { "version": 10 }
@@ -141,7 +162,7 @@ Rollback implementation:
 ### Operator (AI agent interface)
 
 ```
-POST /{docType}/{docId}/run
+POST /users/{userId}/docs/{docType}/{docId}/run
 Content-Type: application/json
 
 { "instruction": "natural language task description" }
@@ -157,7 +178,7 @@ Operator behavior:
 - Max 10 iterations per run (configurable)
 
 ```
-POST /{docType}/{docId}/reset
+POST /users/{userId}/docs/{docType}/{docId}/reset
 
 Response: { success: true }
 ```
@@ -252,9 +273,52 @@ pnpm dev
 Starts gateway (`:8787`), markdown (`:8788`), and docx (`:8789`) in one Miniflare process with shared D1/R2. The KV registry is seeded with each worker's URL:
 
 ```
-POST http://127.0.0.1:8787/users/{userId}/markdown/
-POST http://127.0.0.1:8787/users/{userId}/docx/
+POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
+POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ```
+
+## Workspace package resolution
+
+Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry a
+`publishConfig` block that restores the `dist/*` paths at publish time:
+
+```json
+{
+  "exports": { ".": { "types": "./src/index.ts", "import": "./src/index.ts" } },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }
+  }
+}
+```
+
+Why: with `dist`-only exports, `pnpm -r test` and `pnpm --filter <pkg> test` fail on a
+fresh clone — vitest resolves a sibling workspace package before anything has built it
+(`Failed to resolve entry for package "@unidocs/cas"`). Pointing the workspace-facing
+entry at source removes the ordering dependency; `publishConfig` keeps packaged
+consumers on the built artifacts (`pnpm pack` rewrites the fields and drops the block).
+
+`typecheck` scripts use `tsc -b` rather than `tsc --noEmit`: TypeScript project
+references cannot resolve an unbuilt dependency, and `tsc -b --noEmit` is rejected
+outright (`TS6310: Referenced project may not disable emit`). Build mode walks the
+reference graph and builds what it needs, so a clean checkout typechecks without a
+manual pre-build.
+
+**When adding a package**, follow both conventions — otherwise its first consumer
+breaks the recursive test run.
+
+## Deployment
+
+**New environment only — before the first `wrangler deploy`:** run
+`wrangler d1 migrations apply unidocs-snapshots` (from any package whose
+`wrangler.toml` points `migrations_dir` at `../../migrations`, e.g.
+`packages/cloudflare-gateway`). `wrangler deploy` does **not** apply
+migrations automatically — `migrations_dir` is just configuration. The
+shared `docs`/`snapshots` tables used to be created lazily by
+`listDocuments`/`D1DocIndex.register`; they no longer are. Skipping this
+step is harmless on an already-provisioned database, but on a brand-new one
+every query/apply/list call will 500 with `no such table: docs`.
 
 ## Infrastructure
 

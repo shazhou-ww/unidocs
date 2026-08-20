@@ -8,6 +8,12 @@
       "path": "packages/core"
     },
     {
+      "path": "packages/cas"
+    },
+    {
+      "path": "packages/server-core"
+    },
+    {
       "path": "packages/doctype-markdown"
     },
     {
@@ -21,6 +27,9 @@
     },
     {
       "path": "packages/cloudflare-docx"
+    },
+    {
+      "path": "packages/cloudflare-cas"
     },
     {
       "path": "packages/cloudflare-gateway"

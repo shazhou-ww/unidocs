@@ -13,6 +13,7 @@ import {
   buildWorkers,
   bundleTargets,
   DOC_TYPES,
+  GATEWAY_WORKER,
   registryEntries,
   resolvePorts,
 } from "./doc-types.mjs";
@@ -25,13 +26,18 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const WORKSPACE_ALIASES = {
   "@unidocs/core": join(ROOT, "packages/core/src/index.ts"),
+  "@unidocs/cas": join(ROOT, "packages/cas/src/index.ts"),
+  "@unidocs/server-core": join(ROOT, "packages/server-core/src/index.ts"),
+  "@unidocs/cloudflare-cas/public": join(
+    ROOT,
+    "packages/cloudflare-cas/src/public-cas-route.ts",
+  ),
   "@unidocs/cloudflare-sdk": join(ROOT, "packages/cloudflare-sdk/src/index.ts"),
   "@unidocs/doctype-markdown": join(
     ROOT,
     "packages/doctype-markdown/src/index.ts",
   ),
   "@unidocs/doctype-docx": join(ROOT, "packages/doctype-docx/src/index.ts"),
-  "@unidocs/doctype-psd": join(ROOT, "packages/doctype-psd/src/index.ts"),
 };
 
 async function bundleWorker(entry, outfile) {
@@ -54,32 +60,26 @@ function workerUrl(host, port) {
   return `http://${host}:${port}`;
 }
 
+const MIGRATIONS_PATH = join(ROOT, "migrations", "0001_init.sql");
+
 /**
- * Parse a wrangler-style .dev.vars file (KEY=VALUE lines, # comments,
- * optional surrounding quotes). Missing file → empty object.
+ * Apply migrations/0001_init.sql to the shared SNAPSHOTS_DB. Real Cloudflare
+ * D1 (via wrangler) gets this from `migrations_dir` in wrangler.toml; local
+ * Miniflare has no migrations runner, so we read the file and exec each
+ * statement ourselves. The gateway and every doc-type worker bind the same
+ * underlying D1 database under the "SNAPSHOTS_DB" name, so applying it once
+ * — against any one worker's binding — is enough for all of them.
  */
-async function readDevVars(path) {
-  let text;
-  try {
-    text = await readFile(path, "utf8");
-  } catch {
-    return {};
+async function migrateSnapshotsDb(mf) {
+  const db = await mf.getD1Database("SNAPSHOTS_DB", GATEWAY_WORKER);
+  const sql = await readFile(MIGRATIONS_PATH, "utf8");
+  const statements = sql
+    .split(";")
+    .map((stmt) => stmt.trim())
+    .filter(Boolean);
+  for (const statement of statements) {
+    await db.exec(statement);
   }
-  const out = {};
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    if (key) out[key] = value;
-  }
-  return out;
 }
 
 function assertPortFree(host, port) {
@@ -116,6 +116,7 @@ export async function startLocalRuntime({
   docTypes = Object.keys(DOC_TYPES),
   ports: portOverrides = {},
   persistPath,
+  casFault = false,
   logLevel = LogLevel.WARN,
 } = {}) {
   const ports = resolvePorts(docTypes, portOverrides);
@@ -136,13 +137,6 @@ export async function startLocalRuntime({
     Object.entries(ports).map(([name, port]) => [name, workerUrl(host, port)]),
   );
 
-  // Load per-doc-type secrets from .dev.vars into that worker's bindings.
-  const extraBindings = {};
-  for (const name of docTypes) {
-    const devVars = DOC_TYPES[name].devVars;
-    if (devVars) extraBindings[name] = await readDevVars(join(ROOT, devVars));
-  }
-
   let mf;
   try {
     mf = new Miniflare(
@@ -152,11 +146,13 @@ export async function startLocalRuntime({
         log: new Log(logLevel),
         logRequests: logLevel >= LogLevel.INFO,
         ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
-        workers: buildWorkers({ docTypes, host, ports, bundleDir, extraBindings }),
+        workers: buildWorkers({ docTypes, host, ports, bundleDir, casFault }),
       }),
     );
 
     await mf.ready;
+
+    await migrateSnapshotsDb(mf);
 
     const registry = await mf.getKVNamespace("REGISTRY", "unidocs-gateway");
     for (const [key, value] of registryEntries(docTypes, urls)) {

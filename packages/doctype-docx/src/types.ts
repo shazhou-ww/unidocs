@@ -26,10 +26,16 @@ export type DocxQuery =
   | { kind: "getText"; payload: undefined }
   | { kind: "getParagraphs"; payload: undefined }
   | { kind: "getParagraph"; payload: { index: number } }
+  | { kind: "getParagraphFormat"; payload: { paragraphIndex: number } }
+  | { kind: "getRunFormat"; payload: { paragraphIndex: number; runIndex: number } }
+  | { kind: "getParagraphList"; payload: { paragraphIndex: number } }
   | { kind: "getTables"; payload: undefined }
   | { kind: "getTable"; payload: { index: number } }
   | { kind: "getHeaders"; payload: undefined }
-  | { kind: "getFooters"; payload: undefined };
+  | { kind: "getFooters"; payload: undefined }
+  | { kind: "getImages"; payload: undefined }
+  | { kind: "getImage"; payload: { index: number } }
+  | { kind: "getImageByPartName"; payload: { partName: string } };
 
 // ─── Operation types ────────────────────────────────────────────────
 
@@ -46,7 +52,7 @@ export type DocxOperation =
   // Table operations
   | {
       kind: "addTable";
-      payload: { rows: number; cols: number; style?: string };
+      payload: { rows: number; cols: number; style?: string; widthsTwips?: number[] };
     }
   | {
       kind: "setCellText";
@@ -73,4 +79,25 @@ export type DocxOperation =
   | {
       kind: "setFooter";
       payload: { text: string; type?: DocxHeaderFooterType };
+    }
+  // Image operations
+  | {
+      kind: "insertImage";
+      payload: { hash: string; widthPx?: number; altText?: string };
+    }
+  | {
+      kind: "deleteImage";
+      payload: { index: number };
+    }
+  | {
+      kind: "replaceImage";
+      payload: { index: number; hash: string };
+    }
+  | {
+      kind: "setImageSize";
+      payload: { index: number; widthEmu?: number; heightEmu?: number };
+    }
+  | {
+      kind: "setImageAltText";
+      payload: { index: number; altText: string };
     };

@@ -11,6 +11,7 @@ export function addTable(
   rows: number,
   cols: number,
   style?: string,
+  widthsTwips?: number[],
 ): void {
   if (!Number.isSafeInteger(rows) || rows < 1) {
     throw new RangeError("rows must be a positive integer");
@@ -18,7 +19,14 @@ export function addTable(
   if (!Number.isSafeInteger(cols) || cols < 1) {
     throw new RangeError("cols must be a positive integer");
   }
-  document.addTable(rows, cols, style ? { style } : undefined);
+  if (widthsTwips && widthsTwips.length !== cols) {
+    throw new RangeError(`widthsTwips must contain exactly ${cols} values`);
+  }
+  if (widthsTwips?.some((width) => !Number.isFinite(width) || width <= 0)) {
+    throw new RangeError("widthsTwips values must be positive finite numbers");
+  }
+
+  document.addTable(rows, cols, { style, widthsTwips });
 }
 
 /** Set the text of a specific table cell. */

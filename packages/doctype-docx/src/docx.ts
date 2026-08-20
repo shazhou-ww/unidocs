@@ -8,6 +8,13 @@
 import { Document } from "@ariadng/office/docx";
 import type { DocumentTypeFactory } from "@unidocs/core";
 import { createState } from "./helpers.js";
+import {
+  insertImage,
+  deleteImage,
+  replaceImage,
+  setImageSize,
+  setImageAltText,
+} from "./ops/image-ops.js";
 import { appendParagraph, setRunText } from "./ops/paragraph-ops.js";
 import { addTable, addTableRow, setCellText } from "./ops/table-ops.js";
 import { addBulletList, addNumberedList } from "./ops/list-ops.js";
@@ -32,7 +39,7 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
 
   query: async (query, doc) => executeQuery(query, doc),
 
-  apply: async (operations, doc) => {
+  apply: async (operations, doc, context) => {
     const working = await Document.open(doc.bytes);
 
     for (const operation of operations) {
@@ -52,7 +59,13 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
 
         // Table operations
         case "addTable":
-          addTable(working, operation.payload.rows, operation.payload.cols, operation.payload.style);
+          addTable(
+            working,
+            operation.payload.rows,
+            operation.payload.cols,
+            operation.payload.style,
+            operation.payload.widthsTwips,
+          );
           break;
         case "setCellText":
           setCellText(
@@ -82,6 +95,28 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
         case "setFooter":
           setFooter(working, operation.payload.text, operation.payload.type);
           break;
+
+        // Image operations
+        case "insertImage":
+          await insertImage(working, operation.payload, context);
+          break;
+        case "deleteImage":
+          deleteImage(working, operation.payload.index);
+          break;
+        case "replaceImage":
+          await replaceImage(working, operation.payload.index, operation.payload.hash, context);
+          break;
+        case "setImageSize":
+          setImageSize(
+            working,
+            operation.payload.index,
+            operation.payload.widthEmu,
+            operation.payload.heightEmu,
+          );
+          break;
+        case "setImageAltText":
+          setImageAltText(working, operation.payload.index, operation.payload.altText);
+          break;
       }
     }
 
@@ -94,6 +129,19 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (_options) => ({
   },
   save: async (doc) => doc.bytes.slice(),
   contentType: DOCX_CONTENT_TYPE,
+
+  // DOCX snapshots contain embedded image bytes and therefore do not
+  // retain the source image CAS nodes.
+  refsFromSnapshot: () => ({}),
+  refsFromOp: (operation) => {
+    if (operation.kind === "insertImage") {
+      return { [operation.payload.hash]: 1 };
+    }
+    if (operation.kind === "replaceImage") {
+      return { [operation.payload.hash]: 1 };
+    }
+    return {};
+  },
 
   tools,
   instructions,

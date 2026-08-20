@@ -12,9 +12,29 @@ import { join } from "node:path";
 export const INTERNAL_TOKEN = "unidocs-dev-token";
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
+export const CAS_WORKER = "unidocs-cas";
+/** 故障注入用的假 CAS,只在测试里启用。 */
+export const CAS_FAULT_WORKER = "unidocs-cas-fault";
+
+/**
+ * 代理式假 CAS:除 root-refs 外全部原样转发给真 CAS,
+ * 使 lease 与读内容照常成功,只让引用计数写入失败。
+ */
+export const CAS_FAULT_SCRIPT = `
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/_internal/root-refs") {
+      return Response.json({ error: "injected root-refs failure" }, { status: 503 });
+    }
+    return env.CAS_UPSTREAM.fetch(request);
+  },
+};
+`;
 export const COMPATIBILITY_DATE = "2025-08-17";
 export const SNAPSHOTS_DB = "unidocs-snapshots";
 export const CAS_BUCKET = "unidocs-cas";
+export const CAS_DB = "unidocs-cas-db";
 export const REGISTRY_KV = "unidocs-registry";
 
 export const DOC_TYPES = {
@@ -35,21 +55,6 @@ export const DOC_TYPES = {
     operator: "DOCX_OPERATOR",
     operatorClass: "DocxOperator",
     port: 8789,
-  },
-  psd: {
-    entry: "packages/cloudflare-psd/src/worker.ts",
-    worker: "unidocs-psd",
-    editor: "PSD_EDITOR",
-    editorClass: "PsdEditor",
-    operator: "PSD_OPERATOR",
-    operatorClass: "PsdOperator",
-    port: 8790,
-    // Optional dev-only frontend: a Vite app started alongside the worker,
-    // with GATEWAY_URL injected so it proxies API calls to the gateway.
-    web: { dir: "packages/web-psd", port: 5173 },
-    // Optional .dev.vars file merged into this worker's bindings (secrets:
-    // the Operator's LLM_API_KEY / LLM_BASE_URL / LLM_MODEL). Not committed.
-    devVars: "packages/cloudflare-psd/.dev.vars",
   },
 };
 
@@ -86,6 +91,7 @@ export function resolvePorts(docTypes, overrides = {}) {
 export function bundleTargets(docTypes) {
   return [
     { entry: "packages/cloudflare-gateway/src/worker.ts", outfile: "gateway.js" },
+    { entry: "packages/cloudflare-cas/src/worker.ts", outfile: "cas.js" },
     ...docTypes.map((name) => ({
       entry: DOC_TYPES[name].entry,
       outfile: `${name}.js`,
@@ -93,12 +99,8 @@ export function bundleTargets(docTypes) {
   ];
 }
 
-/**
- * Miniflare worker configs: the gateway always, then one per selected type.
- * `extraBindings` maps a doc type name to additional bindings (e.g. secrets
- * loaded from its .dev.vars) merged into that worker only.
- */
-export function buildWorkers({ docTypes, host, ports, bundleDir, extraBindings = {} }) {
+/** Miniflare worker configs: the gateway always, then one per selected type. */
+export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = false }) {
   const bindings = { INTERNAL_TOKEN };
 
   const workers = [
@@ -110,8 +112,32 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, extraBindings =
       bindings,
       kvNamespaces: { REGISTRY: REGISTRY_KV },
       d1Databases: { SNAPSHOTS_DB },
+      serviceBindings: { CAS_SERVICE: CAS_WORKER },
+    },
+    {
+      name: CAS_WORKER,
+      modules: true,
+      scriptPath: join(bundleDir, "cas.js"),
+      compatibilityDate: COMPATIBILITY_DATE,
+      bindings,
+      durableObjects: {
+        CAS_DO: { className: "CasDurableObject" },
+      },
+      d1Databases: { CAS_DB },
+      r2Buckets: { CAS_R2: CAS_BUCKET },
     },
   ];
+
+  if (casFault) {
+    workers.push({
+      name: CAS_FAULT_WORKER,
+      modules: true,
+      script: CAS_FAULT_SCRIPT,
+      compatibilityDate: COMPATIBILITY_DATE,
+      bindings,
+      serviceBindings: { CAS_UPSTREAM: CAS_WORKER },
+    });
+  }
 
   for (const name of docTypes) {
     const spec = DOC_TYPES[name];
@@ -120,13 +146,14 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, extraBindings =
       modules: true,
       scriptPath: join(bundleDir, `${name}.js`),
       compatibilityDate: COMPATIBILITY_DATE,
-      bindings: { ...bindings, ...(extraBindings[name] ?? {}) },
+      bindings,
       durableObjects: {
         [spec.editor]: { className: spec.editorClass, useSQLite: true },
         [spec.operator]: { className: spec.operatorClass, useSQLite: true },
       },
       d1Databases: { SNAPSHOTS_DB },
       r2Buckets: { CAS: CAS_BUCKET },
+      serviceBindings: { CAS_SERVICE: casFault ? CAS_FAULT_WORKER : CAS_WORKER },
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }

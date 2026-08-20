@@ -16,6 +16,32 @@ describe("table operations", () => {
     ]);
   });
 
+  it("adds a table with custom column widths", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.apply([
+      {
+        kind: "addTable",
+        payload: { rows: 1, cols: 2, widthsTwips: [3000, 6000] },
+      },
+    ], await docx.init());
+
+    const table = doc.document.tables()[0];
+    const firstWidth = table.cell(0, 0).element
+      .find("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "tcPr")
+      ?.find("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "tcW")
+      ?.getAttributeNs("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "w");
+    expect(firstWidth).toBe("3000");
+  });
+
+  it("rejects invalid custom column widths", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.init();
+
+    await expect(docx.apply([
+      { kind: "addTable", payload: { rows: 1, cols: 2, widthsTwips: [3000] } },
+    ], doc)).rejects.toThrow("widthsTwips must contain exactly 2 values");
+  });
+
   it("sets cell text in a table", async () => {
     const docx = createDocxDocumentType({});
     let doc = await docx.init();
@@ -80,6 +106,12 @@ describe("list operations", () => {
 
     const paragraphs = await docx.query({ kind: "getParagraphs", payload: undefined }, doc) as any;
     expect(paragraphs).toHaveLength(3);
+
+    const list = await docx.query(
+      { kind: "getParagraphList", payload: { paragraphIndex: 0 } },
+      doc,
+    );
+    expect(list).toMatchObject({ level: 0, format: "bullet", isBullet: true });
   });
 
   it("adds a nested bullet list", async () => {
@@ -141,6 +173,42 @@ describe("list operations", () => {
 
     const text = await docx.query({ kind: "getText", payload: undefined }, result);
     expect(text).toBe("");
+  });
+});
+
+describe("effective formatting queries", () => {
+  it("resolves paragraph and run formatting", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.apply([
+      {
+        kind: "appendParagraph",
+        payload: { text: "Heading", options: { style: "Heading1", bold: true } },
+      },
+    ], await docx.init());
+
+    const paragraphFormat = await docx.query(
+      { kind: "getParagraphFormat", payload: { paragraphIndex: 0 } },
+      doc,
+    );
+    expect(paragraphFormat).toMatchObject({ styleId: "Heading1" });
+
+    const runFormat = await docx.query(
+      { kind: "getRunFormat", payload: { paragraphIndex: 0, runIndex: 0 } },
+      doc,
+    );
+    expect(runFormat).toMatchObject({ bold: true });
+  });
+
+  it("returns null list metadata for a normal paragraph", async () => {
+    const docx = createDocxDocumentType({});
+    const doc = await docx.apply([
+      { kind: "appendParagraph", payload: { text: "Body" } },
+    ], await docx.init());
+
+    await expect(docx.query(
+      { kind: "getParagraphList", payload: { paragraphIndex: 0 } },
+      doc,
+    )).resolves.toBeNull();
   });
 });
 
@@ -212,10 +280,14 @@ describe("tools and instructions", () => {
     expect(docx.tools.getText).toBeDefined();
     expect(docx.tools.getParagraphs).toBeDefined();
     expect(docx.tools.getParagraph).toBeDefined();
+    expect(docx.tools.getParagraphFormat).toBeDefined();
+    expect(docx.tools.getRunFormat).toBeDefined();
+    expect(docx.tools.getParagraphList).toBeDefined();
     expect(docx.tools.getTables).toBeDefined();
     expect(docx.tools.getTable).toBeDefined();
     expect(docx.tools.getHeaders).toBeDefined();
     expect(docx.tools.getFooters).toBeDefined();
+    expect(docx.tools.getImages).toBeDefined();
 
     // Paragraph operations
     expect(docx.tools.appendParagraph).toBeDefined();
@@ -233,6 +305,7 @@ describe("tools and instructions", () => {
     // Section operations
     expect(docx.tools.setHeader).toBeDefined();
     expect(docx.tools.setFooter).toBeDefined();
+    expect(docx.tools.insertImage).toBeDefined();
   });
 
   it("has non-empty instructions", async () => {
@@ -241,3 +314,72 @@ describe("tools and instructions", () => {
     expect(docx.instructions.length).toBeGreaterThan(100);
   });
 });
+
+const PNG_1x1 = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+  0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+  0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+]);
+
+describe("insertImage and getImages", () => {
+  const hash = "a".repeat(64);
+
+  function casWith(bytes: Uint8Array) {
+    return {
+      read: async () => bytes,
+      metadata: async () => ({
+        hash,
+        size: bytes.length,
+        contentType: "image/png",
+        refs: [] as string[],
+      }),
+    };
+  }
+
+  it("refsFromOp counts insertImage hashes", () => {
+    const docx = createDocxDocumentType({});
+    expect(docx.refsFromOp({
+      kind: "insertImage",
+      payload: { hash, widthPx: 16 },
+    })).toEqual({ [hash]: 1 });
+    expect(docx.refsFromOp({
+      kind: "appendParagraph",
+      payload: { text: "x" },
+    })).toEqual({});
+  });
+
+  it("inserts a PNG from CAS and lists it", async () => {
+    const docx = createDocxDocumentType({});
+    const initial = await docx.init();
+    const updated = await docx.apply([
+      { kind: "insertImage", payload: { hash, widthPx: 16, altText: "dot" } },
+    ], initial, { cas: casWith(PNG_1x1) });
+
+    const images = await docx.query({ kind: "getImages", payload: undefined }, updated);
+    expect(images).toEqual([
+      expect.objectContaining({
+        index: 0,
+        format: "png",
+        altText: "dot",
+        placement: "inline",
+      }),
+    ]);
+    expect((images as { partName: string }[])[0].partName).toMatch(/image1\.png$/);
+  });
+
+  it("rejects an invalid hash before reading CAS", async () => {
+    const docx = createDocxDocumentType({});
+    const read = async () => {
+      throw new Error("should not read");
+    };
+    await expect(docx.apply([
+      { kind: "insertImage", payload: { hash: "not-a-hash" } },
+    ], await docx.init(), {
+      cas: { read, metadata: async () => ({ hash: "", size: 0, contentType: "", refs: [] }) },
+    })).rejects.toThrow(/Hash must be/);
+  });
+});
+

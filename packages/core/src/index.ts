@@ -1,10 +1,11 @@
 export type {
 	AgentToolDefinition,
-	BlobStore,
 	DocumentType,
 	DocumentTypeFactory,
-	QueryCtx,
-	StoreCtx,
+	DocumentTypeContext,
+	CasRef,
+	CasReferences,
+	CasReadContext,
 	QueryPrimitive,
 	QueryValue,
 } from "./types.js";

@@ -20,6 +20,42 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
     case "getParagraph":
       return paragraphValue(doc, query.payload.index);
 
+    case "getParagraphFormat": {
+      const paragraph = requireParagraph(doc, query.payload.paragraphIndex);
+      const format = paragraph.format();
+      return {
+        alignment: format.alignment,
+        indentLeftTwips: format.indentLeftTwips,
+        indentRightTwips: format.indentRightTwips,
+        indentFirstLineTwips: format.indentFirstLineTwips,
+        spacingBeforeTwips: format.spacingBeforeTwips,
+        spacingAfterTwips: format.spacingAfterTwips,
+        lineSpacing: format.lineSpacing
+          ? { value: format.lineSpacing.value, rule: format.lineSpacing.rule }
+          : null,
+        styleId: format.styleId,
+        styleName: format.styleName,
+      };
+    }
+
+    case "getRunFormat": {
+      const paragraph = requireParagraph(doc, query.payload.paragraphIndex);
+      requireIndex(query.payload.runIndex, "runIndex");
+      const run = paragraph.runs()[query.payload.runIndex];
+      if (!run) {
+        throw new RangeError(
+          `Run ${query.payload.runIndex} not found in paragraph ${query.payload.paragraphIndex}`,
+        );
+      }
+      return { ...run.format() };
+    }
+
+    case "getParagraphList": {
+      const paragraph = requireParagraph(doc, query.payload.paragraphIndex);
+      const list = paragraph.list();
+      return list ? { ...list } : null;
+    }
+
     case "getTables":
       return doc.document.tables().map((table, index) => tableSummary(table, index));
 
@@ -46,7 +82,63 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
         partName: f.partName,
         text: f.text(),
       }));
+
+    case "getImages":
+      return doc.document.images().map((img, index) => ({
+        index,
+        format: img.format,
+        partName: img.partName,
+        widthEmu: img.widthEmu,
+        heightEmu: img.heightEmu,
+        altText: img.altText,
+        placement: img.placement,
+      }));
+
+    case "getImage": {
+      const { index } = query.payload;
+      requireIndex(index, "image index");
+      const images = doc.document.images();
+      if (index < 0 || index >= images.length) {
+        throw new RangeError(`Image index ${index} out of range (0-${images.length - 1})`);
+      }
+      const img = images[index];
+      return {
+        index,
+        format: img.format,
+        partName: img.partName,
+        widthEmu: img.widthEmu,
+        heightEmu: img.heightEmu,
+        altText: img.altText,
+        placement: img.placement,
+      };
+    }
+
+    case "getImageByPartName": {
+      const { partName } = query.payload;
+      const images = doc.document.images();
+      const index = images.findIndex((img) => img.partName === partName);
+      if (index === -1) {
+        return null;
+      }
+      const img = images[index];
+      return {
+        index,
+        format: img.format,
+        partName: img.partName,
+        widthEmu: img.widthEmu,
+        heightEmu: img.heightEmu,
+        altText: img.altText,
+        placement: img.placement,
+      };
+    }
   }
+}
+
+function requireParagraph(doc: DocxDoc, index: number) {
+  requireIndex(index, "paragraphIndex");
+  const paragraph = doc.document.paragraphs()[index];
+  if (!paragraph) throw new RangeError(`Paragraph ${index} not found`);
+  return paragraph;
 }
 
 /** Summary view of a table (for getTables). */

@@ -1,71 +1,63 @@
 /**
- * EditorDO — base Durable Object for document editing.
+ * EditorDO — Cloudflare adapter for `DocumentSession` (@unidocs/server-core).
  *
- * Handles HTTP routing, state persistence, history management.
- * Document types provide a DocumentType config; this class wires it all together.
+ * Everything about *how a document evolves* — in-memory state, snapshot +
+ * replay reconstruction, the delta write order, the snapshot threshold —
+ * lives in `DocumentSession`. This class is the Cloudflare-shaped shell around
+ * it and owns exactly four things:
  *
- * Storage layout:
- *   KV (immutable facts):
- *     - docType: string
- *     - docId: string
- *     - snapshot: { version: number, hash: string } — pointer to the latest
- *       document bytes in R2 (may lag one delta). The bytes live in R2, not
- *       here: DO storage values are capped (~128 KiB), too small for a real
- *       document, so only the small {version, hash} pointer is kept in KV.
+ *   1. serializing requests per Durable Object (`#requestTail`)
+ *   2. building `SessionDeps` from `ctx` / `env` / request headers
+ *   3. parsing the `/_internal/*` HTTP surface
+ *   4. mapping the typed errors of server-core onto status codes (`#errorResponse`)
  *
- *   DO sqlite:
- *     - deltas(version INTEGER PK, timestamp INTEGER, description TEXT, operations TEXT)
- *     - snapshots(version INTEGER PK, hash TEXT, timestamp INTEGER)
+ * Storage layout (unchanged — see ports-cf.ts for the SQL):
+ *   DO KV storage : docType / docId / userId (immutable identity), snapshot
+ *   DO sqlite     : deltas(version PK, timestamp, description, operations)
+ *                   snapshots(version PK, hash, timestamp)
+ *   Shared D1     : snapshots(hash, doc_type, doc_id, version, timestamp)
+ *                   docs(doc_id, doc_type, owner_id, created_at, updated_at)
+ *   R2 CAS        : hash -> document bytes
  *
- *   Shared D1 (unidocs-snapshots):
- *     - snapshots(hash TEXT PK, doc_type TEXT, doc_id TEXT, version INTEGER, timestamp INTEGER)
- *
- *   R2 CAS (unidocs-cas):
- *     - key: hash (SHA-256 truncated 16 hex)
- *     - value: document bytes
- *
- * Write order (consistency guarantee):
- *   1. sqlite INSERT delta
- *   2. KV PUT snapshot
- *   3. (if needed) R2 PUT + D1 INSERT snapshot
- *   → worst case: snapshot lags one delta, but never inconsistent
- *
- * Snapshot strategy:
- *   - Every 20 deltas since last snapshot
- *
- * Internal endpoints (called by Gateway):
- *   POST /_internal/create    — create new document (multipart/form-data)
- *   POST /_internal/query     — query document (body: TQuery) → { data, version }
- *   POST /_internal/apply     — apply delta (body: { operations[], description, baseVersion }) → { version }
- *   GET  /_internal/export    — download document as binary
- *   GET  /_internal/history   — get delta history
- *   POST /_internal/rollback  — rollback to version (body: { version })
- *   GET  /_internal/snapshot  — get current snapshot hash (for clone)
- *   POST /_internal/init_from_hash — initialize from existing snapshot hash (for clone)
+ * Internal endpoints (called by the doc-type worker):
+ *   POST /_internal/create          — create new document (multipart/form-data)
+ *   POST /_internal/query           — query document (body: TQuery) -> { data, version }
+ *   POST /_internal/apply           — apply delta (body: { operations[], description, baseVersion }) -> { version }
+ *   GET  /_internal/export          — download document as binary
+ *   GET  /_internal/history         — get delta history
+ *   POST /_internal/rollback        — rollback to version (body: { version })
+ *   GET  /_internal/snapshot        — get current snapshot hash (for clone)
+ *   POST /_internal/init_from_hash  — initialize from existing snapshot hash (for clone)
  */
 
 import type { DocumentType } from "@unidocs/core";
-import type { HistoryEntry, ApplyResult } from "./history.js";
-import { encodeQueryValue } from "./query-value.js";
-import { computeHash } from "./content-hash.js";
-import { createR2BlobStore } from "./blob-store.js";
-import { encodeSnapshot, decodeSnapshot } from "./snapshot-codec.js";
+import {
+  DeltaRejectedError,
+  DocExistsError,
+  DocNotFoundError,
+  DocumentSession,
+  RootRefsError,
+  StorageCorruptError,
+  VersionConflictError,
+  type DocIdentity,
+  type SessionDeps,
+} from "@unidocs/server-core";
+import { CasClient, CasClientError } from "./cas-client.js";
+import type { ApplyResult } from "./history.js";
+import {
+  D1DocIndex,
+  DoDeltaLog,
+  DoSnapshotCache,
+  R2BlobCas,
+} from "./ports-cf.js";
 
-// KV keys
+// DO storage keys for the document's immutable identity. The values are
+// load-bearing: changing them orphans every already-deployed document.
 const KEY_DOC_TYPE = "docType";
 const KEY_DOC_ID = "docId";
 const KEY_USER_ID = "userId";
-const KEY_SNAPSHOT = "snapshot";
 
-// Snapshot thresholds
-const DELTA_THRESHOLD = 20; // Snapshot every N deltas
-
-interface SnapshotKV {
-  version: number;
-  hash: string;
-  /** Legacy inline bytes (pre-R2 snapshots); read for back-compat only. */
-  bytes?: Uint8Array;
-}
+const NOT_INITIALIZED = "Document not initialized. POST /{docType}/ to create.";
 
 export interface DocContext {
   docType: string;
@@ -81,6 +73,8 @@ export interface SnapshotRecord {
 export interface Env {
   SNAPSHOTS_DB: D1Database;
   CAS: R2Bucket;
+  CAS_SERVICE: Fetcher;
+  INTERNAL_TOKEN: string;
 }
 
 export interface EditorDOInstance {
@@ -91,158 +85,193 @@ export type EditorDOClass = new (ctx: DurableObjectState, env: Env) => EditorDOI
 
 export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQuery, TOp>): EditorDOClass {
   return class EditorDO {
-    #doc: TDoc | null = null;
-    #version: number = 0;
     #ctx: DurableObjectState;
     #env: Env;
+
+    /**
+     * Serializes requests to this Durable Object.
+     *
+     * NOT purely a performance optimization. Correctness of the conditional
+     * write itself is guaranteed by `DeltaLog.append` (ports-cf.ts
+     * `DoDeltaLog`), whose conditional insert only accepts `head + 1` and
+     * otherwise throws `VersionConflictError` — that part holds with or
+     * without this queue. But `DocumentSession.apply()`'s root-refs failure
+     * path still leans on single-writer ordering: `deltas.remove(nextVersion)`
+     * is only safe to run unconditionally-in-effect because this queue
+     * guarantees nothing else can have appended on top of `nextVersion` yet.
+     * `remove()` is now conditional on the port side too (only removes the
+     * current head), so a stray call is a no-op rather than a torn log, but
+     * the queue is still what keeps that compensation path simple and
+     * effectively single-writer here. Phase 2 (Azure, stateless replicas, no
+     * queue) must confirm the root-refs-failure path is fully correct under
+     * true concurrency before this can be dropped — see the design doc and
+     * the `remove()` sentinels in port-contract.ts.
+     */
     #requestTail: Promise<void> = Promise.resolve();
+
+    #session: DocumentSession<TDoc, TQuery, TOp> | null = null;
+    #sessionKey: string | null = null;
+    #tablesReady = false;
 
     constructor(ctx: DurableObjectState, env: Env) {
       this.#ctx = ctx;
       this.#env = env;
     }
 
-    /** CAS-backed BlobStore for IR snapshot codec (per-layer pixel blobs). */
-    #store() {
-      return createR2BlobStore(this.#env.CAS);
+    // ----------------------------------------------------------------
+    // Dependency construction
+    // ----------------------------------------------------------------
+
+    #makeCasClient(userId: string): CasClient {
+      return new CasClient({
+        fetcher: this.#env.CAS_SERVICE,
+        userId,
+        internalToken: this.#env.INTERNAL_TOKEN,
+      });
     }
 
-    async #ensureLoaded(): Promise<void> {
-      if (this.#doc !== null) return;
+    /**
+     * The document's identity. Persisted in DO storage by `create` /
+     * `init_from_hash`; every later request reads it back from there. Requests
+     * that arrive before the document exists fall back to the headers the
+     * doc-type worker sets, so an uninitialized DO still has a coherent
+     * identity to build ports with.
+     *
+     * `KEY_USER_ID` was introduced after documents already existed, so a doc
+     * created before it will have `storedDocType` but no stored `userId`. If
+     * that fell back to the literal "anonymous", `#requireUser` would then
+     * reject every request for that document with 403 (the caller's real
+     * `X-User-Id` never equals "anonymous"). Fall back to the request's
+     * `X-User-Id` header instead: on Cloudflare it is the same value that
+     * would have been stored — the DO is addressed by
+     * `idFromName("{userId}:{docId}")` and both workers set the header from
+     * that same path segment — so this recovers the correct owner instead of
+     * locking the document. "anonymous" remains only the last resort, for
+     * the (routing-broken) case where even the header is missing.
+     */
+    async #resolveIdentity(request: Request): Promise<DocIdentity> {
+      const storedDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
+      if (storedDocType) {
+        return {
+          docType: storedDocType,
+          docId: (await this.#ctx.storage.get<string>(KEY_DOC_ID)) ?? this.#ctx.id.toString(),
+          userId:
+            (await this.#ctx.storage.get<string>(KEY_USER_ID)) ??
+            request.headers.get("X-User-Id") ??
+            "anonymous",
+        };
+      }
+      return {
+        docType: request.headers.get("X-Doc-Type") || "unknown",
+        docId: request.headers.get("X-Doc-Id") || this.#ctx.id.toString(),
+        userId: request.headers.get("X-User-Id") || "anonymous",
+      };
+    }
 
-      // Init sqlite tables
-      this.#ctx.storage.sql.exec(`
-        CREATE TABLE IF NOT EXISTS deltas (
-          version INTEGER PRIMARY KEY AUTOINCREMENT,
-          timestamp INTEGER NOT NULL,
-          description TEXT,
-          operations TEXT NOT NULL
-        )
-      `);
-      this.#ctx.storage.sql.exec(`
-        CREATE TABLE IF NOT EXISTS snapshots (
-          version INTEGER PRIMARY KEY,
-          hash TEXT NOT NULL,
-          timestamp INTEGER NOT NULL
-        )
-      `);
+    async #persistIdentity(identity: DocIdentity): Promise<void> {
+      await this.#ctx.storage.put(KEY_DOC_TYPE, identity.docType);
+      await this.#ctx.storage.put(KEY_DOC_ID, identity.docId);
+      await this.#ctx.storage.put(KEY_USER_ID, identity.userId);
+    }
 
-      // Load from the latest snapshot: KV holds a {version, hash} pointer;
-      // the bytes come from R2 (content-addressed by hash).
-      const snapshot = await this.#ctx.storage.get<SnapshotKV>(KEY_SNAPSHOT);
-      if (snapshot) {
-        let bytes: Uint8Array | undefined;
-        if (snapshot.hash) {
-          const obj = await this.#env.CAS.get(snapshot.hash);
-          if (!obj) throw new Error(`Snapshot bytes missing from R2: ${snapshot.hash}`);
-          bytes = await obj.bytes();
-        } else if (snapshot.bytes) {
-          bytes = snapshot.bytes; // legacy inline-bytes snapshot
-        }
-        if (bytes) {
-          // Route by magic byte: legacy PSD-binary snapshots ('8BPS') go
-          // through config.load; IR JSON snapshots ('{') through deserialize.
-          this.#doc = await decodeSnapshot(bytes, this.#store(), config);
-          this.#version = snapshot.version;
-        }
+    /**
+     * The session is cached for the lifetime of the DO so its in-memory
+     * document survives between requests. It is rebuilt only if the identity
+     * changed under it — which happens exactly once, when `create` promotes a
+     * header-derived identity into stored state.
+     */
+    #openSession(identity: DocIdentity): DocumentSession<TDoc, TQuery, TOp> {
+      if (!this.#tablesReady) {
+        DoDeltaLog.ensureTables(this.#ctx);
+        this.#tablesReady = true;
       }
 
-      // Replay deltas after snapshot version
-      const result = this.#ctx.storage.sql.exec(
-        `SELECT version, operations FROM deltas WHERE version > ? ORDER BY version ASC`,
-        this.#version,
-      );
+      const key = `${identity.docType} ${identity.docId} ${identity.userId}`;
+      if (this.#session && this.#sessionKey === key) return this.#session;
 
-      for (const row of result.toArray()) {
-        const ops = JSON.parse(row.operations as string) as TOp[];
-        // Pass the store so a replayed flip faults in its target's PixelRef
-        // instead of throwing on a cold-reloaded lazy doc.
-        this.#doc = await config.apply(ops, this.#doc!, { store: this.#store() });
-        this.#version = row.version as number;
-      }
+      const deps: SessionDeps = {
+        deltas: new DoDeltaLog(this.#ctx),
+        snapshots: new DoSnapshotCache(this.#ctx),
+        blobs: new R2BlobCas(this.#env.CAS),
+        index: new D1DocIndex(this.#env.SNAPSHOTS_DB, identity),
+        cas: this.#makeCasClient(identity.userId),
+        identity,
+        now: () => Date.now(),
+      };
 
-      // If we replayed any deltas, persist the updated snapshot to KV
-      if (snapshot && this.#version > snapshot.version) {
-        await this.#saveSnapshotKV();
-      }
+      this.#session = new DocumentSession(config, deps);
+      this.#sessionKey = key;
+      return this.#session;
     }
 
-    async #saveSnapshotKV(): Promise<void> {
-      if (!this.#doc) return;
-      // IR snapshot when the doctype supports it (per-layer pixel blobs are
-      // side-effect-written into CAS by serialize); else full binary save.
-      const bytes = await encodeSnapshot(this.#doc, this.#store(), config);
-      const hash = await computeHash(bytes);
-      // Bytes go to R2 (no size cap); DO storage keeps only the small pointer.
-      // R2 is content-addressed, so this put is idempotent per unique content.
-      await this.#env.CAS.put(hash, bytes);
-      const snapshotKV: SnapshotKV = { version: this.#version, hash };
-      await this.#ctx.storage.put(KEY_SNAPSHOT, snapshotKV);
-    }
+    // ----------------------------------------------------------------
+    // Error mapping — the single place status codes are decided
+    // ----------------------------------------------------------------
 
-    async #getNextVersion(): Promise<number> {
-      const result = this.#ctx.storage.sql.exec(`SELECT MAX(version) as max_v FROM deltas`);
-      const row = result.one();
-      return (row.max_v as number) + 1;
-    }
-
-    async #shouldSnapshot(): Promise<boolean> {
-      const snapResult = this.#ctx.storage.sql.exec(`SELECT MAX(version) as max_v FROM snapshots`);
-      const snapRow = snapResult.one();
-      const lastSnapshotVersion = (snapRow.max_v as number) ?? 0;
-
-      const deltaResult = this.#ctx.storage.sql.exec(
-        `SELECT COUNT(*) as cnt FROM deltas WHERE version > ?`,
-        lastSnapshotVersion,
-      );
-      const deltaRow = deltaResult.one();
-      const deltasSince = (deltaRow.cnt as number) ?? 0;
-
-      return deltasSince >= DELTA_THRESHOLD;
-    }
-
-    async #saveSnapshot(): Promise<void> {
-      if (!this.#doc) return;
-
-      // IR snapshot when supported (per-layer blobs land in CAS as a side
-      // effect); else full binary save.
-      const bytes = await encodeSnapshot(this.#doc, this.#store(), config);
-      const hash = await computeHash(bytes);
-
-      // Write to R2 CAS (idempotent - same content = same hash)
-      await this.#env.CAS.put(hash, bytes);
-
-      // Record in shared D1 (ensure table exists first)
-      const docType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
-      const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
-
-      await this.#env.SNAPSHOTS_DB.exec(
-        "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))"
-      );
-
-      await this.#env.SNAPSHOTS_DB.prepare(
-        `INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
-      ).bind(hash, docType, docId, this.#version, Date.now()).run();
-
-      // Update docs table timestamp
-      const userId = await this.#ctx.storage.get<string>(KEY_USER_ID);
-      if (userId) {
-        await this.#env.SNAPSHOTS_DB.exec(
-          "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))"
+    /**
+     * The response bodies here are asserted verbatim by the e2e suites
+     * (scripts/cas-rollback.test.mjs, scripts/editor-characterization.test.mjs,
+     * the treespec tree under tests/bootstrap). Field names and message text
+     * are part of the contract — do not reword them.
+     */
+    #errorResponse(err: unknown, version: number): Response {
+      if (err instanceof VersionConflictError) {
+        return Response.json(
+          { success: false, version: err.currentVersion, error: err.message },
+          { status: 409 },
         );
-        await this.#env.SNAPSHOTS_DB.prepare(
-          `UPDATE docs SET updated_at = ? WHERE doc_id = ? AND doc_type = ? AND owner_id = ?`
-        ).bind(Date.now(), docId, docType, userId).run();
       }
-
-      // Record in local sqlite snapshots table (for rollback)
-      this.#ctx.storage.sql.exec(
-        `INSERT OR REPLACE INTO snapshots (version, hash, timestamp) VALUES (?, ?, ?)`,
-        this.#version,
-        hash,
-        Date.now(),
-      );
+      if (err instanceof DeltaRejectedError) {
+        // message is already `Delta failed: ...`
+        return Response.json({ success: false, version, error: err.message }, { status: 400 });
+      }
+      if (err instanceof DocExistsError) {
+        return Response.json({ success: false, error: err.message }, { status: 409 });
+      }
+      if (err instanceof DocNotFoundError) {
+        return Response.json({ success: false, version, error: err.message }, { status: 404 });
+      }
+      if (err instanceof RootRefsError) {
+        // message is already `CAS root-refs failed: ...`
+        return Response.json({ success: false, version, error: err.message }, { status: 502 });
+      }
+      if (err instanceof StorageCorruptError) {
+        // message is already `Snapshot ${hash} not found in R2`
+        return Response.json({ success: false, version, error: err.message }, { status: 500 });
+      }
+      if (err instanceof CasClientError) {
+        // Same three-way split the pre-refactor `#leaseFailure` used.
+        const status = err.status === 409 ? 409 : err.status === 404 ? 400 : 502;
+        return Response.json({ success: false, version, error: err.message }, { status });
+      }
+      return Response.json({ success: false, error: String(err), version }, { status: 500 });
     }
+
+    /**
+     * The requester must be the document's owner, because `deps.cas` is built
+     * once from the stored owner id and every CAS read/lease this request
+     * makes will be charged to that user.
+     *
+     * On Cloudflare this is unreachable: the DO is addressed by
+     * `idFromName("{userId}:{docId}")` and both workers set `X-User-Id` from
+     * the same path segment, so the requester IS the owner by construction.
+     * The check exists so the invariant is enforced by code rather than by
+     * routing — Azure has no name-bound instance to make it true for free.
+     */
+    #requireUser(request: Request, identity: DocIdentity): Response | null {
+      const userId = request.headers.get("X-User-Id");
+      if (!userId) {
+        return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
+      }
+      if (userId !== identity.userId) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
+      return null;
+    }
+
+    // ----------------------------------------------------------------
+    // HTTP
+    // ----------------------------------------------------------------
 
     async fetch(request: Request): Promise<Response> {
       const response = this.#requestTail.then(() => this.#handleRequest(request));
@@ -254,28 +283,16 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     }
 
     async #handleRequest(request: Request): Promise<Response> {
-      await this.#ensureLoaded();
-
       const url = new URL(request.url);
       const method = request.method;
       const endpoint = url.pathname;
 
+      const identity = await this.#resolveIdentity(request);
+      const session = this.#openSession(identity);
+
       try {
         // POST /_internal/create — create new document
         if (method === "POST" && endpoint === "/_internal/create") {
-          const existingDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
-          if (existingDocType) {
-            return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
-          }
-
-          // Store immutable context in KV
-          const docType = request.headers.get("X-Doc-Type") || "unknown";
-          const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
-          const userId = request.headers.get("X-User-Id") || "anonymous";
-          await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
-          await this.#ctx.storage.put(KEY_DOC_ID, docId);
-          await this.#ctx.storage.put(KEY_USER_ID, userId);
-
           const contentType = request.headers.get("content-type") || "";
           let file: File | null = null;
           let sourceId: string | null = null;
@@ -286,201 +303,69 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             sourceId = formData.get("sourceId") as string | null;
           }
 
+          let bytes: Uint8Array | undefined;
           if (file) {
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            this.#doc = await config.load(bytes);
-            // Archive the ORIGINAL uploaded bytes to CAS under their own hash
-            // (for re-export / fidelity comparison) — not on the state path.
-            const originalHash = await this.#store().put(bytes);
-            await this.#ctx.storage.put("originalHash", originalHash);
+            bytes = new Uint8Array(await file.arrayBuffer());
           } else if (sourceId) {
-            return Response.json({ success: false, error: "Clone should be handled at worker level" }, { status: 400 });
-          } else {
-            this.#doc = await config.init();
+            return Response.json(
+              { success: false, error: "Clone should be handled at worker level" },
+              { status: 400 },
+            );
           }
 
-          // Insert initial delta in sqlite
-          this.#version = 1;
-          this.#ctx.storage.sql.exec(
-            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
-            1,
-            Date.now(),
-            "Document created",
-            JSON.stringify([]),
-          );
-
-          // Write snapshot to KV
-          await this.#saveSnapshotKV();
-
-          // Save initial snapshot to R2 + D1
-          await this.#saveSnapshot();
-
-          // Register in docs table (global index for listing)
-          await this.#env.SNAPSHOTS_DB.exec(
-            "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))"
-          );
-          const now = Date.now();
-          await this.#env.SNAPSHOTS_DB.prepare(
-            `INSERT OR REPLACE INTO docs (doc_id, doc_type, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-          ).bind(docId, docType, userId, now, now).run();
-
-          return Response.json({ success: true, docId, version: 1 });
+          const created = await session.create({ bytes });
+          await this.#persistIdentity(identity);
+          return Response.json({ success: true, docId: created.docId, version: created.version });
         }
 
-        // POST /_internal/init_from_hash — must be checked BEFORE the doc-is-null guard
+        // POST /_internal/init_from_hash — checked BEFORE the not-initialized guard
         if (method === "POST" && endpoint === "/_internal/init_from_hash") {
-          const existingDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
-          if (existingDocType) {
-            return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
-          }
-
           const body = await request.json() as { hash: string; sourceVersion: number };
-
-          // Fetch from R2
-          const obj = await this.#env.CAS.get(body.hash);
-          if (!obj) {
-            return Response.json({ success: false, error: `Snapshot ${body.hash} not found in R2` }, { status: 404 });
-          }
-
-          const bytes = await obj.bytes();
-          // The clone source is a snapshot hash → bytes are IR JSON (new) or
-          // legacy PSD binary; route by magic byte. (No originalHash archival:
-          // a clone has no own original upload; `bytes` is a snapshot, not a
-          // source PSD.)
-          this.#doc = await decodeSnapshot(bytes, this.#store(), config);
-
-          // Store immutable context
-          const docType = request.headers.get("X-Doc-Type") || "unknown";
-          const docId = request.headers.get("X-Doc-Id") || this.#ctx.id.toString();
-          const userId = request.headers.get("X-User-Id") || "anonymous";
-          await this.#ctx.storage.put(KEY_DOC_TYPE, docType);
-          await this.#ctx.storage.put(KEY_DOC_ID, docId);
-          await this.#ctx.storage.put(KEY_USER_ID, userId);
-
-          // Insert initial delta
-          this.#version = 1;
-          this.#ctx.storage.sql.exec(
-            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
-            1,
-            Date.now(),
-            `Cloned from snapshot ${body.hash} (source version ${body.sourceVersion})`,
-            JSON.stringify([]),
-          );
-
-          // Save to KV
-          await this.#saveSnapshotKV();
-
-          // Record snapshot reference in D1
-          await this.#env.SNAPSHOTS_DB.exec(
-            "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))"
-          );
-          await this.#env.SNAPSHOTS_DB.prepare(
-            `INSERT INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`
-          ).bind(body.hash, docType, docId, 1, Date.now()).run();
-
-          // Record in local sqlite
-          this.#ctx.storage.sql.exec(
-            `INSERT INTO snapshots (version, hash, timestamp) VALUES (?, ?, ?)`,
-            1,
-            body.hash,
-            Date.now(),
-          );
-
-          // Register in docs table (global index for listing)
-          await this.#env.SNAPSHOTS_DB.exec(
-            "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))"
-          );
-          const now = Date.now();
-          await this.#env.SNAPSHOTS_DB.prepare(
-            `INSERT OR REPLACE INTO docs (doc_id, doc_type, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-          ).bind(docId, docType, userId, now, now).run();
-
-          return Response.json({ success: true, docId, version: 1 });
+          const created = await session.initFromHash(body.hash, body.sourceVersion);
+          await this.#persistIdentity(identity);
+          return Response.json({ success: true, docId: created.docId, version: created.version });
         }
 
-        // All other endpoints require an initialized document
-        if (this.#doc === null) {
-          return Response.json({ success: false, error: "Document not initialized. POST /{docType}/ to create." }, { status: 404 });
+        // All other endpoints require an initialized document.
+        await session.load();
+        if (!session.initialized) {
+          return Response.json({ success: false, error: NOT_INITIALIZED }, { status: 404 });
         }
 
         // GET /_internal/export — download document
         if (method === "GET" && endpoint === "/_internal/export") {
-          // Full materialization: a lazy (PixelRef-backed) doc must have every
-          // layer faulted-in before save (save cannot tolerate unresolved
-          // refs). Inherent to producing a .psd; the resolved doc is transient.
-          const doc = config.resolve ? await config.resolve(this.#doc, this.#store()) : this.#doc;
-          const bytes = await config.save(doc);
-          const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
-          return new Response(bytes, {
+          const exported = await session.exportBytes();
+          return new Response(exported.bytes, {
             headers: {
-              "Content-Type": config.contentType,
-              "Content-Disposition": `attachment; filename="${docId || "document"}"`,
+              "Content-Type": exported.contentType,
+              "Content-Disposition": `attachment; filename="${identity.docId || "document"}"`,
             },
           });
         }
 
         // POST /_internal/query
         if (method === "POST" && endpoint === "/_internal/query") {
+          const unauthorized = this.#requireUser(request, identity);
+          if (unauthorized) return unauthorized;
+
           const q = await request.json() as TQuery;
-          const store = createR2BlobStore(this.#env.CAS);
-          const data = await config.query(q, this.#doc, { store });
-          return Response.json({ success: true, data: encodeQueryValue(data), version: this.#version });
+          const result = await session.query(q);
+          return Response.json({ success: true, data: result.data, version: result.version });
         }
 
         // POST /_internal/apply — apply delta (batch of operations, transactional)
         if (method === "POST" && endpoint === "/_internal/apply") {
+          const unauthorized = this.#requireUser(request, identity);
+          if (unauthorized) return unauthorized;
+
           const body = await request.json() as {
             operations: TOp[];
             description: string;
             baseVersion: number;
           };
 
-          // Optimistic lock check
-          if (body.baseVersion !== this.#version) {
-            return Response.json(
-              {
-                success: false,
-                version: this.#version,
-                error: `Version conflict: baseVersion ${body.baseVersion} does not match current ${this.#version}`,
-              },
-              { status: 409 },
-            );
-          }
-
-          // Apply all operations transactionally (in-memory)
-          let newDoc: TDoc;
-          try {
-            newDoc = await config.apply(body.operations, this.#doc!, { store: this.#store() });
-          } catch (err) {
-            return Response.json(
-              { success: false, version: this.#version, error: `Delta failed: ${err}` },
-              { status: 400 },
-            );
-          }
-
-          // All operations succeeded
-          this.#doc = newDoc;
-
-          // 1. sqlite: INSERT delta (first — source of truth)
-          const newVersion = await this.#getNextVersion();
-          this.#ctx.storage.sql.exec(
-            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
-            newVersion,
-            Date.now(),
-            body.description,
-            JSON.stringify(body.operations),
-          );
-          this.#version = newVersion;
-
-          // 2. KV: PUT snapshot (may lag if crashes here, but won't be inconsistent)
-          await this.#saveSnapshotKV();
-
-          // 3. Check if we need an R2 snapshot
-          if (await this.#shouldSnapshot()) {
-            await this.#saveSnapshot();
-          }
-
-          const result: ApplyResult = { success: true, version: newVersion };
+          const applied = await session.apply(body.operations, body.description, body.baseVersion);
+          const result: ApplyResult = { success: true, version: applied.version };
           return Response.json(result);
         }
 
@@ -488,150 +373,41 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         if (method === "GET" && endpoint === "/_internal/history") {
           const from = url.searchParams.get("from");
           const to = url.searchParams.get("to");
-
-          let query = `SELECT version, timestamp, description, operations FROM deltas`;
-          const params: (string | number)[] = [];
-          const conditions: string[] = [];
-
-          if (from) {
-            conditions.push("version >= ?");
-            params.push(parseInt(from));
-          }
-          if (to) {
-            conditions.push("version <= ?");
-            params.push(parseInt(to));
-          }
-          if (conditions.length > 0) {
-            query += " WHERE " + conditions.join(" AND ");
-          }
-          query += " ORDER BY version ASC";
-
-          const result = this.#ctx.storage.sql.exec(query, ...params);
-          const entries: HistoryEntry<TOp>[] = result.toArray().map(row => ({
-            version: row.version as number,
-            timestamp: new Date(row.timestamp as number).toISOString(),
-            description: row.description as string,
-            operations: JSON.parse(row.operations as string) as TOp[],
-          }));
-
-          return Response.json({ success: true, data: entries, version: this.#version });
+          // Truthy check, not `!== null`: `?from=` (empty string) must be
+          // ignored the way it always was. `parseInt("")` is NaN, and a NaN
+          // bound into the range query is not a bound at all.
+          const entries = await session.history(
+            from ? parseInt(from) : undefined,
+            to ? parseInt(to) : undefined,
+          );
+          return Response.json({ success: true, data: entries, version: session.version });
         }
 
         // POST /_internal/rollback
         if (method === "POST" && endpoint === "/_internal/rollback") {
+          const unauthorized = this.#requireUser(request, identity);
+          if (unauthorized) return unauthorized;
+
           const body = await request.json() as { version: number };
-
-          // Check target version exists
-          const checkResult = this.#ctx.storage.sql.exec(
-            `SELECT COUNT(*) as cnt FROM deltas WHERE version = ?`,
-            body.version,
-          );
-          const exists = ((checkResult.one()).cnt as number) > 0;
-
-          if (!exists) {
-            return Response.json(
-              { success: false, version: this.#version, error: `Version ${body.version} not found` },
-              { status: 404 },
-            );
-          }
-
-          // Find nearest snapshot at or before target version
-          const snapResult = this.#ctx.storage.sql.exec(
-            `SELECT version, hash FROM snapshots WHERE version <= ? ORDER BY version DESC LIMIT 1`,
-            body.version,
-          );
-
-          let baseDoc: TDoc;
-          let baseVersion: number;
-
-          const snapRows = snapResult.toArray();
-          if (snapRows.length > 0) {
-            // Load from R2
-            const snapRow = snapRows[0];
-            const hash = snapRow.hash as string;
-            const obj = await this.#env.CAS.get(hash);
-            if (!obj) {
-              return Response.json(
-                { success: false, version: this.#version, error: `Snapshot ${hash} not found in R2` },
-                { status: 500 },
-              );
-            }
-            const bytes = await obj.bytes();
-            // Snapshot bytes in CAS may be IR JSON (new) or legacy PSD binary;
-            // route by magic byte so both decode correctly.
-            baseDoc = await decodeSnapshot(bytes, this.#store(), config);
-            baseVersion = snapRow.version as number;
-          } else {
-            // No snapshot, replay from beginning
-            baseDoc = await config.init();
-            baseVersion = 0;
-          }
-
-          // Replay deltas from baseVersion to target version
-          const deltaResult = this.#ctx.storage.sql.exec(
-            `SELECT version, operations FROM deltas WHERE version > ? AND version <= ? ORDER BY version ASC`,
-            baseVersion,
-            body.version,
-          );
-
-          for (const row of deltaResult.toArray()) {
-            const ops = JSON.parse(row.operations as string) as TOp[];
-            baseDoc = await config.apply(ops, baseDoc, { store: this.#store() });
-          }
-
-          // Insert rollback delta
-          const newVersion = await this.#getNextVersion();
-          this.#ctx.storage.sql.exec(
-            `INSERT INTO deltas (version, timestamp, description, operations) VALUES (?, ?, ?, ?)`,
-            newVersion,
-            Date.now(),
-            `Rollback to version ${body.version}`,
-            JSON.stringify([]), // Rollback is a synthetic delta, no operations
-          );
-
-          // Update state
-          this.#doc = baseDoc;
-          this.#version = newVersion;
-
-          // Save to KV
-          await this.#saveSnapshotKV();
-
-          // Check if we need a snapshot
-          if (await this.#shouldSnapshot()) {
-            await this.#saveSnapshot();
-          }
-
-          return Response.json({ success: true, version: newVersion });
+          const rolled = await session.rollback(body.version);
+          return Response.json({ success: true, version: rolled.version });
         }
 
         // GET /_internal/snapshot — get current snapshot hash (for clone)
         if (method === "GET" && endpoint === "/_internal/snapshot") {
-          if (!this.#doc) {
-            return Response.json({ success: false, error: "Document not initialized" }, { status: 404 });
-          }
-
-          // Ensure we have a snapshot for current version. This writes the
-          // (IR or binary) snapshot bytes into CAS and updates the KV pointer.
-          await this.#saveSnapshot();
-
-          // Return the hash that IS in CAS (the KV snapshot pointer). Do NOT
-          // recompute from config.save — those PSD bytes are never CAS.put, so
-          // a recomputed hash would 404 on init_from_hash.
-          const snap = await this.#ctx.storage.get<SnapshotKV>(KEY_SNAPSHOT);
-          const hash = snap!.hash;
-
+          const snap = await session.snapshot();
           return Response.json({
             success: true,
-            version: this.#version,
-            hash,
-            docType: await this.#ctx.storage.get<string>(KEY_DOC_TYPE),
-            docId: await this.#ctx.storage.get<string>(KEY_DOC_ID),
+            version: snap.version,
+            hash: snap.hash,
+            docType: snap.docType,
+            docId: snap.docId,
           });
         }
 
         return Response.json({ success: false, error: `Unknown endpoint: ${endpoint}` }, { status: 404 });
       } catch (err) {
-        return Response.json({ success: false, error: String(err), version: this.#version }, { status: 500 });
+        return this.#errorResponse(err, session.version);
       }
     }
   };

@@ -1,8 +1,12 @@
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
   buildWorkers,
   bundleTargets,
+  CAS_FAULT_WORKER,
+  CAS_WORKER,
   DOC_TYPES,
+  GATEWAY_WORKER,
   parseDocTypes,
   registryEntries,
   resolvePorts,
@@ -47,19 +51,19 @@ test("resolvePorts lets a caller override individual ports", () => {
     .toEqual({ gateway: 18787, markdown: 18788 });
 });
 
-test("bundleTargets builds the gateway plus only the selected types", () => {
+test("bundleTargets builds the gateway, cas worker, plus only the selected types", () => {
   expect(bundleTargets(["docx"]).map((t) => t.outfile))
-    .toEqual(["gateway.js", "docx.js"]);
+    .toEqual(["gateway.js", "cas.js", "docx.js"]);
 });
 
-test("buildWorkers always includes the gateway", () => {
+test("buildWorkers always includes the gateway and cas", () => {
   const workers = buildWorkers({
     docTypes: [],
     host: "127.0.0.1",
     ports: { gateway: 8787 },
     bundleDir: "/b",
   });
-  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway"]);
+  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas"]);
 });
 
 test("buildWorkers omits doc types that were not selected", () => {
@@ -69,11 +73,11 @@ test("buildWorkers omits doc types that were not selected", () => {
     ports: { gateway: 8787, docx: 8789 },
     bundleDir: "/b",
   });
-  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-docx"]);
+  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas", "unidocs-docx"]);
 });
 
 test("buildWorkers binds each selected type's own DO classes and socket", () => {
-  const [, docx] = buildWorkers({
+  const [, , docx] = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
     ports: { gateway: 8787, docx: 8789 },
@@ -84,7 +88,24 @@ test("buildWorkers binds each selected type's own DO classes and socket", () => 
     DOCX_OPERATOR: { className: "DocxOperator", useSQLite: true },
   });
   expect(docx.unsafeDirectSockets).toEqual([{ host: "127.0.0.1", port: 8789 }]);
-  expect(docx.scriptPath).toBe("/b/docx.js");
+  expect(docx.scriptPath).toBe(join("/b", "docx.js"));
+  expect(docx.serviceBindings).toEqual({ CAS_SERVICE: "unidocs-cas" });
+});
+
+test("gateway proxies CAS via service binding and cas worker owns the stores", () => {
+  const [gateway, cas] = buildWorkers({
+    docTypes: [],
+    host: "127.0.0.1",
+    ports: { gateway: 8787 },
+    bundleDir: "/b",
+  });
+  expect(gateway.serviceBindings).toEqual({ CAS_SERVICE: "unidocs-cas" });
+  expect(gateway.durableObjects).toBeUndefined();
+  expect(cas.durableObjects).toEqual({
+    CAS_DO: { className: "CasDurableObject" },
+  });
+  expect(cas.d1Databases).toEqual({ CAS_DB: "unidocs-cas-db" });
+  expect(cas.r2Buckets).toEqual({ CAS_R2: "unidocs-cas" });
 });
 
 test("registryEntries seeds only the selected doc types", () => {
@@ -94,4 +115,41 @@ test("registryEntries seeds only the selected doc types", () => {
       docx: "http://h:8789",
     }),
   ).toEqual([["docType:docx", JSON.stringify({ workerUrl: "http://h:8789" })]]);
+});
+
+test("casFault 为 true 时,doc-type worker 指向假 CAS,gateway 仍指向真 CAS", () => {
+  const workers = buildWorkers({
+    docTypes: ["docx"],
+    host: "127.0.0.1",
+    ports: { gateway: 8787, docx: 8789 },
+    bundleDir: "/tmp/bundles",
+    casFault: true,
+  });
+
+  const names = workers.map((w) => w.name);
+  expect(names).toContain(CAS_FAULT_WORKER);
+  expect(names).toContain(CAS_WORKER);
+
+  const gateway = workers.find((w) => w.name === GATEWAY_WORKER);
+  expect(gateway.serviceBindings.CAS_SERVICE).toBe(CAS_WORKER);
+
+  const docx = workers.find((w) => w.name === "unidocs-docx");
+  expect(docx.serviceBindings.CAS_SERVICE).toBe(CAS_FAULT_WORKER);
+
+  const fault = workers.find((w) => w.name === CAS_FAULT_WORKER);
+  expect(fault.serviceBindings.CAS_UPSTREAM).toBe(CAS_WORKER);
+  expect(fault.script).toContain("/_internal/root-refs");
+});
+
+test("casFault 默认关闭时,不产生假 CAS worker", () => {
+  const workers = buildWorkers({
+    docTypes: ["docx"],
+    host: "127.0.0.1",
+    ports: { gateway: 8787, docx: 8789 },
+    bundleDir: "/tmp/bundles",
+  });
+
+  expect(workers.map((w) => w.name)).not.toContain(CAS_FAULT_WORKER);
+  const docx = workers.find((w) => w.name === "unidocs-docx");
+  expect(docx.serviceBindings.CAS_SERVICE).toBe(CAS_WORKER);
 });

@@ -18,7 +18,7 @@ afterAll(async () => {
 });
 
 test("unregistered doc types are rejected", async () => {
-  const res = await fetch(`${runtime.urls.gateway}/users/alice/pdf/`, {
+  const res = await fetch(`${runtime.urls.gateway}/users/alice/docs/pdf/`, {
     method: "POST",
   });
   expect(res.status).toBe(404);
@@ -28,7 +28,7 @@ test("unregistered doc types are rejected", async () => {
 });
 
 test("gateway creates a markdown doc via registry workerUrl and lists it from shared D1", async () => {
-  const create = await fetch(`${runtime.urls.gateway}/users/alice/markdown/`, {
+  const create = await fetch(`${runtime.urls.gateway}/users/alice/docs/markdown/`, {
     method: "POST",
   });
   expect(create.ok).toBe(true);
@@ -36,7 +36,7 @@ test("gateway creates a markdown doc via registry workerUrl and lists it from sh
   expect(created.success).toBe(true);
   expect(created.docId).toEqual(expect.any(String));
 
-  const list = await fetch(`${runtime.urls.gateway}/users/alice/markdown/`);
+  const list = await fetch(`${runtime.urls.gateway}/users/alice/docs/markdown/`);
   expect(list.ok).toBe(true);
   const listed = await list.json();
   expect(listed.success).toBe(true);
@@ -44,14 +44,14 @@ test("gateway creates a markdown doc via registry workerUrl and lists it from sh
 });
 
 test("gateway creates a docx doc via a separate registered workerUrl", async () => {
-  const create = await fetch(`${runtime.urls.gateway}/users/alice/docx/`, {
+  const create = await fetch(`${runtime.urls.gateway}/users/alice/docs/docx/`, {
     method: "POST",
   });
   expect(create.ok).toBe(true);
   const created = await create.json();
   expect(created.success).toBe(true);
 
-  const list = await fetch(`${runtime.urls.gateway}/users/alice/docx/`);
+  const list = await fetch(`${runtime.urls.gateway}/users/alice/docs/docx/`);
   const listed = await list.json();
   expect(listed.data.map((row) => row.doc_id)).toContain(created.docId);
 });
@@ -63,7 +63,7 @@ test("registry seed works with a persist directory", async () => {
     persistPath,
   });
   try {
-    const create = await fetch(`${persisted.urls.gateway}/users/bob/markdown/`, {
+    const create = await fetch(`${persisted.urls.gateway}/users/bob/docs/markdown/`, {
       method: "POST",
     });
     expect(create.ok).toBe(true);
@@ -84,12 +84,12 @@ test("only the selected doc types are started and routable", async () => {
     const { keys } = await registry.list();
     expect(keys.map((k) => k.name)).toEqual(["docType:docx"]);
 
-    const create = await fetch(`${only.urls.gateway}/users/alice/docx/`, {
+    const create = await fetch(`${only.urls.gateway}/users/alice/docs/docx/`, {
       method: "POST",
     });
     expect(create.ok).toBe(true);
 
-    const unstarted = await fetch(`${only.urls.gateway}/users/alice/markdown/`, {
+    const unstarted = await fetch(`${only.urls.gateway}/users/alice/docs/markdown/`, {
       method: "POST",
     });
     expect(unstarted.status).toBe(404);

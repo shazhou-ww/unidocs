@@ -5,17 +5,20 @@
   "type": "module",
   "main": "./dist/worker.js",
   "types": "./dist/worker.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b",
     "clean": "rm -rf dist",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@unidocs/cloudflare-sdk": "workspace:*",
-    "@unidocs/doctype-docx": "workspace:*"
+    "@unidocs/doctype-docx": "workspace:*",
+    "@unidocs/server-core": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

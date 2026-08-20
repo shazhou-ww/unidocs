@@ -1,4 +1,6 @@
 name: unidocs
+sut:
+  type: cli
 image:
   dockerfile: e2e/Dockerfile
   tag: unidocs-test:base

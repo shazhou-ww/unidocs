@@ -3,13 +3,6 @@ export interface AgentToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  /**
-   * How the operator routes this tool. `mode` selects the Editor endpoint
-   * (query = read, apply = write); `kind` is the query kind or op kind sent
-   * to it. When omitted, the operator falls back to the legacy `query_`/
-   * `apply_` name-prefix convention.
-   */
-  op?: { mode: "query" | "apply"; kind: string };
 }
 
 /** Scalar value returned by a document query. */
@@ -21,60 +14,49 @@ export type QueryValue =
   | readonly QueryValue[]
   | { readonly [key: string]: QueryValue };
 
-/** Content-addressed byte storage (CAS) for doctype-managed blobs (e.g. pixel data). */
-export interface BlobStore {
-  put(bytes: Uint8Array): Promise<string>;
-  get(hash: string): Promise<Uint8Array | null>;
+/** CAS reference from document state. */
+export interface CasRef {
+  readonly kind: "cas";
+  readonly hash: string;
 }
 
-/** Context carrying the BlobStore, threaded into the paths that may need to
- *  fault in lazy (PixelRef-backed) layers: `query` (render), `apply` (a
- *  pixel-mutating op). Core carries ONLY the store — decoded-pixel caching is a
- *  doctype/render concern and must not leak its types back into core. ONE
- *  shared shape is used everywhere so the contract stays single-sourced. */
-export interface StoreCtx {
-  store: BlobStore;
+/** Reference counts: hash → positive integer count. */
+export type CasReferences = Readonly<Record<string, number>>;
+
+/** Read-only CAS access for document types. */
+export interface CasReadContext {
+  read(ref: CasRef): Promise<Uint8Array>;
+  metadata(ref: CasRef): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }>;
 }
 
-/** @deprecated Use {@link StoreCtx}. Kept as an alias for back-compat. */
-export type QueryCtx = StoreCtx;
+/** Context passed to document type lifecycle methods. */
+export interface DocumentTypeContext {
+  readonly cas: CasReadContext;
+  readonly signal?: AbortSignal;
+}
 
 /** Cloud-neutral specification of a document type. */
 export interface DocumentType<TDoc, TQuery, TOp> {
   /** Create a new empty document. */
-  init: () => Promise<TDoc>;
+  init: (context?: DocumentTypeContext) => Promise<TDoc>;
 
-  /** Execute a read query against the document. Binary values are encoded by
-   *  the runtime. `ctx` is optional: resident documents (or existing 2-arg
-   *  callers) render with no store; lazy documents need `ctx.store` to fault
-   *  in PixelRef layers. */
-  query: (query: TQuery, doc: TDoc, ctx?: StoreCtx) => Promise<QueryValue>;
+  /** Execute a read query against the document. Binary values are encoded by the runtime. */
+  query: (query: TQuery, doc: TDoc, context?: DocumentTypeContext) => Promise<QueryValue>;
 
-  /** Apply an ordered operation batch atomically. Resolves to the new document
-   *  state. `ctx` is optional: resident documents (or existing 2-arg callers)
-   *  apply with no store; lazy documents need `ctx.store` so a pixel-mutating
-   *  op (a flip) can fault in its target layer's PixelRef before editing. */
-  apply: (operations: readonly TOp[], doc: TDoc, ctx?: StoreCtx) => Promise<TDoc>;
+  /** Apply an ordered operation batch atomically. Resolves to the new document state. */
+  apply: (operations: readonly TOp[], doc: TDoc, context?: DocumentTypeContext) => Promise<TDoc>;
 
   /** Deserialize a document from binary bytes. */
-  load: (data: Uint8Array) => Promise<TDoc>;
+  load: (data: Uint8Array, context?: DocumentTypeContext) => Promise<TDoc>;
 
   /** Serialize a document to binary bytes. */
-  save: (doc: TDoc) => Promise<Uint8Array>;
+  save: (doc: TDoc, context?: DocumentTypeContext) => Promise<Uint8Array>;
 
-  /** Serialize a document to a CAS-aware byte-free representation, offloading
-   *  large binary payloads (e.g. pixel buffers) to `store`. */
-  serialize?: (doc: TDoc, store: BlobStore) => Promise<Uint8Array>;
+  /** Extract CAS references from a snapshot (synchronous pure function). */
+  refsFromSnapshot: (data: Uint8Array) => CasReferences;
 
-  /** Deserialize a document produced by `serialize`, resolving blobs via `store`. */
-  deserialize?: (bytes: Uint8Array, store: BlobStore) => Promise<TDoc>;
-
-  /** Fully materialize a lazy (PixelRef-backed) document — faulting every
-   *  layer's pixels to resident via `store` — before a full serialization
-   *  (`save`/export) that cannot tolerate unresolved refs. Returns a new,
-   *  transient doc; a no-op-return of the same doc is valid for doctypes with
-   *  no lazy representation. Optional: doctypes without lazy blobs omit it. */
-  resolve?: (doc: TDoc, store: BlobStore) => Promise<TDoc>;
+  /** Extract CAS references from an operation (synchronous pure function). */
+  refsFromOp: (operation: TOp) => CasReferences;
 
   /** MIME type for document export. */
   contentType: string;

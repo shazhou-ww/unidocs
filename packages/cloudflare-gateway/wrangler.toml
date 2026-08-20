@@ -2,20 +2,20 @@ name = "unidocs-gateway"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
-# KV registry — doc type → worker URL mapping
-# Production: populated at deploy time via `wrangler kv:key put`
 [[kv_namespaces]]
 binding = "REGISTRY"
 id = "REPLACE_WITH_REGISTRY_KV_ID"
 
-# Shared D1 — global document index
 [[d1_databases]]
 binding = "SNAPSHOTS_DB"
 database_name = "unidocs-snapshots"
 database_id = "d3c78c42-b32f-4a4d-86e4-6cf6341baa8f"
+migrations_dir = "../../migrations"
 
-# Local dev: env var fallback for worker URLs (KV is per-worker in wrangler dev)
-# Production uses KV registry exclusively
+[[services]]
+binding = "CAS_SERVICE"
+service = "unidocs-cas"
+
 [vars]
 MARKDOWN_WORKER_URL = "http://localhost:8788"
 DOCX_WORKER_URL = "http://localhost:8789"
