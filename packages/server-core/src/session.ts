@@ -19,6 +19,12 @@
  * primary-key/etag constraint on `version` and throw `VersionConflictError`.
  * There is deliberately no in-memory `baseVersion === this.#version` check:
  * an in-memory check is only correct while a single writer owns the state.
+ *
+ * Every public method starts with `await this.load()`. The DO original did
+ * this once at the top of its request handler; making each entry point carry
+ * the obligation keeps the invariant inside the session instead of relying on
+ * an adapter to remember it. `load()` is idempotent, so this is a flag check
+ * after the first call.
  */
 
 import type {
@@ -124,7 +130,19 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     }
 
     // Replay deltas recorded after the cached snapshot.
-    for (const delta of await this.#deps.deltas.since(this.#version)) {
+    const pending = await this.#deps.deltas.since(this.#version);
+
+    if (pending.length > 0 && this.#doc === null) {
+      // The delta log knows about this document but the snapshot cache does
+      // not. That is expected, not corruption: the cache is a droppable layer
+      // (KV/Redis) while the log is the database, so the two WILL diverge.
+      // Replay from an empty document, exactly like rollback() does when no
+      // snapshot exists at or before its target.
+      this.#doc = await this.#config.init(ctx);
+      this.#version = 0;
+    }
+
+    for (const delta of pending) {
       this.#doc = await this.#config.apply(
         delta.operations as TOp[],
         this.#doc as TDoc,
@@ -133,8 +151,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       this.#version = delta.version;
     }
 
-    // The cached snapshot may lag the log by one or more deltas; refresh it.
-    if (snapshot && this.#version > snapshot.version) {
+    // Whatever we replayed is not in the cache yet — write it back.
+    if (pending.length > 0) {
       await this.#saveSnapshotCache();
     }
 
@@ -190,6 +208,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * Multipart parsing stays in the adapter; this only takes the bytes.
    */
   async create(input?: { bytes?: Uint8Array }): Promise<{ docId: string; version: number }> {
+    await this.load();
+
     if (this.#doc !== null) {
       throw new DocExistsError("Document already exists");
     }
@@ -197,10 +217,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     const ctx = this.#context();
     const { docType, docId, userId } = this.#deps.identity;
 
-    this.#doc = input?.bytes
+    // Build the document on the side. Same rule as apply(): nothing touches
+    // #doc/#version until the conditional write has actually landed.
+    const doc = input?.bytes
       ? await this.#config.load(input.bytes, ctx)
       : await this.#config.init(ctx);
-    this.#version = 1;
 
     const timestamp = this.#deps.now();
     await this.#deps.deltas.append({
@@ -210,11 +231,12 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       operations: [],
     });
 
-    await this.#saveSnapshotCache();
-    // Deliberate: version 1 gets a durable snapshot immediately, so a fresh
-    // document is restorable without replaying from `init()`.
-    await this.#writeSnapshot();
+    this.#doc = doc;
+    this.#version = 1;
 
+    // Register BEFORE writing the snapshot: DocIndex.recordSnapshot files a
+    // snapshot against a known document, so a document the index has never
+    // seen has nowhere to file it and the record is silently dropped.
     await this.#deps.index.register({
       docId,
       docType,
@@ -222,6 +244,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+
+    await this.#saveSnapshotCache();
+    // Deliberate: version 1 gets a durable snapshot immediately, so a fresh
+    // document is restorable without replaying from `init()`.
+    await this.#writeSnapshot();
 
     this.#loaded = true;
     return { docId, version: 1 };
@@ -235,6 +262,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     hash: string,
     sourceVersion: number,
   ): Promise<{ docId: string; version: number }> {
+    await this.load();
+
     if (this.#doc !== null) {
       throw new DocExistsError("Document already exists");
     }
@@ -245,8 +274,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     }
 
     const { docType, docId, userId } = this.#deps.identity;
-    this.#doc = await this.#config.load(bytes, this.#context());
-    this.#version = 1;
+    const doc = await this.#config.load(bytes, this.#context());
 
     const timestamp = this.#deps.now();
     await this.#deps.deltas.append({
@@ -256,10 +284,10 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       operations: [],
     });
 
-    await this.#saveSnapshotCache();
-    await this.#deps.index.recordSnapshot(1, hash, timestamp);
-    await this.#deps.deltas.recordSnapshot(1, hash, timestamp);
+    this.#doc = doc;
+    this.#version = 1;
 
+    // Register before recording the snapshot — see create().
     await this.#deps.index.register({
       docId,
       docType,
@@ -267,6 +295,10 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+
+    await this.#saveSnapshotCache();
+    await this.#deps.index.recordSnapshot(1, hash, timestamp);
+    await this.#deps.deltas.recordSnapshot(1, hash, timestamp);
 
     this.#loaded = true;
     return { docId, version: 1 };
@@ -277,18 +309,21 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   // ------------------------------------------------------------------
 
   async query(q: TQuery): Promise<{ data: WireQueryValue; version: number }> {
+    await this.load();
     const doc = this.#requireDoc();
     const data = await this.#config.query(q, doc, this.#context());
     return { data: encodeQueryValue(data), version: this.#version };
   }
 
   async exportBytes(): Promise<{ bytes: Uint8Array; contentType: string }> {
+    await this.load();
     const doc = this.#requireDoc();
     const bytes = await this.#config.save(doc);
     return { bytes, contentType: this.#config.contentType };
   }
 
   async history(from?: number, to?: number): Promise<HistoryEntry<TOp>[]> {
+    await this.load();
     const deltas = await this.#deps.deltas.range(from, to);
     return deltas.map((d) => ({
       version: d.version,
@@ -323,6 +358,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     description: string,
     baseVersion: number,
   ): Promise<{ version: number }> {
+    await this.load();
+
     const doc = this.#requireDoc();
     const ctx = this.#context();
 
@@ -383,6 +420,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * delta rather than deleting history.
    */
   async rollback(target: number): Promise<{ version: number }> {
+    await this.load();
+
     this.#requireDoc();
     const ctx = this.#context();
 
@@ -443,6 +482,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     docType: string;
     docId: string;
   }> {
+    await this.load();
+
     const doc = this.#requireDoc();
 
     await this.#writeSnapshot();

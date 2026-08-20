@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CasRef, CasReferences, DocumentType } from "@unidocs/core";
+import type { Delta, DeltaLog, DocIndex, DocRecord } from "../src/ports.js";
 import { createMemoryPorts } from "../src/memory-ports.js";
 import { computeHash } from "../src/hash.js";
 import {
   DeltaRejectedError,
+  DocExistsError,
   RootRefsError,
   VersionConflictError,
 } from "../src/errors.js";
@@ -91,21 +93,66 @@ class FakeCas implements CasGateway {
 // Harness
 // --------------------------------------------------------------------------
 
-function makeHarness(startTime = 1_000) {
+/**
+ * Delegating spy over DocIndex — the *global* index side (D1 `snapshots` +
+ * `docs` in the Cloudflare deployment), as opposed to the delta log's own
+ * snapshot refs. The two are written separately, and a bug can hit one while
+ * the other stays healthy, so tests must look at both.
+ */
+class SpyDocIndex implements DocIndex {
+  calls: string[] = [];
+  registered: DocRecord[] = [];
+  /** Snapshots the index actually kept (see recordSnapshot below). */
+  snapshots: { version: number; hash: string; timestamp: number }[] = [];
+  touched: number[] = [];
+
+  #inner: DocIndex;
+
+  constructor(inner: DocIndex) {
+    this.#inner = inner;
+  }
+
+  async register(rec: DocRecord): Promise<void> {
+    this.calls.push("register");
+    this.registered.push(rec);
+    await this.#inner.register(rec);
+  }
+
+  async touch(at: number): Promise<void> {
+    this.calls.push("touch");
+    this.touched.push(at);
+    await this.#inner.touch(at);
+  }
+
+  async recordSnapshot(version: number, hash: string, timestamp: number): Promise<void> {
+    this.calls.push("recordSnapshot");
+    await this.#inner.recordSnapshot(version, hash, timestamp);
+    // Mirror the real index's semantics: a snapshot filed against a document
+    // the index has never been told about has nowhere to go and is dropped.
+    // `snapshots` is therefore what the index KEPT, not what it was asked to
+    // keep — asserting on the call alone would not have caught C1.
+    if (this.registered.length > 0) {
+      this.snapshots.push({ version, hash, timestamp });
+    }
+  }
+}
+
+function makeHarness(startTime = 1_000, deltaLog?: DeltaLog) {
   const ports = createMemoryPorts();
   const cas = new FakeCas();
+  const index = new SpyDocIndex(ports.index);
   let clock = startTime;
   const deps: SessionDeps = {
-    deltas: ports.deltas,
+    deltas: deltaLog ?? ports.deltas,
     snapshots: ports.snapshots,
     blobs: ports.blobs,
-    index: ports.index,
+    index,
     cas,
     identity: { docType: "text", docId: "doc-1", userId: "user-1" },
     now: () => clock++,
   };
   const session = new DocumentSession(makeTextDocType(), deps);
-  return { ports, cas, deps, session };
+  return { ports, cas, deps, session, index };
 }
 
 async function deltaCount(deps: SessionDeps): Promise<number> {
@@ -237,7 +284,7 @@ describe("DocumentSession.apply — failure paths", () => {
 
 describe("DocumentSession — normal paths", () => {
   it("5. create() writes version 1, an empty delta, a durable snapshot and an index row", async () => {
-    const { session, deps, ports } = makeHarness();
+    const { session, deps, ports, index } = makeHarness();
     await session.load();
 
     const result = await session.create();
@@ -260,6 +307,15 @@ describe("DocumentSession — normal paths", () => {
     expect(ref?.version).toBe(1);
     expect(await deps.blobs.get(ref!.hash)).toEqual(encoder.encode(""));
     expect(ref!.hash).toBe(await computeHash(encoder.encode("")));
+
+    // ...and the SAME snapshot must reach the global index. The delta log and
+    // the global index are two independent writes; asserting only the log let
+    // a regression through once already, because DocIndex.recordSnapshot
+    // drops records filed against a document it has not been told about.
+    expect(index.snapshots).toContainEqual({ version: 1, hash: ref!.hash, timestamp: expect.any(Number) });
+    // Hence the ordering invariant: register comes first.
+    expect(index.calls.indexOf("register")).toBeGreaterThanOrEqual(0);
+    expect(index.calls.indexOf("register")).toBeLessThan(index.calls.indexOf("recordSnapshot"));
 
     // Snapshot cache refreshed too.
     expect(await deps.snapshots.get()).toEqual({ version: 1, bytes: encoder.encode("") });
@@ -349,8 +405,106 @@ describe("DocumentSession — normal paths", () => {
     expect(session.version).toBe(5);
   });
 
-  it("9. initFromHash() adopts an existing blob as version 1", async () => {
+  it("11. load() rebuilds from an empty snapshot cache by replaying the whole log", async () => {
+    // The snapshot cache (KV/Redis) is a droppable layer; the delta log is the
+    // database. When the cache is gone the log alone must be enough.
     const { session, deps } = makeHarness();
+
+    await deps.deltas.append({
+      version: 1,
+      timestamp: 1,
+      description: "Document created",
+      operations: [],
+    });
+    await deps.deltas.append({
+      version: 2,
+      timestamp: 2,
+      description: "a",
+      operations: [{ kind: "append", text: "a" }],
+    });
+    await deps.deltas.append({
+      version: 3,
+      timestamp: 3,
+      description: "b",
+      operations: [{ kind: "append", text: "b" }],
+    });
+    expect(await deps.snapshots.get()).toBeNull();
+
+    await session.load();
+
+    expect(session.initialized).toBe(true);
+    expect(session.version).toBe(3);
+    expect((await session.query({ kind: "text" })).data).toBe("ab");
+    // The rebuilt state is written back into the empty cache.
+    expect(await deps.snapshots.get()).toEqual({ version: 3, bytes: encoder.encode("ab") });
+  });
+
+  it("11b. load() on a completely empty store leaves the session uninitialized", async () => {
+    // Guard for the fix above: replaying from init() must not make a document
+    // that was never created look like it exists — create() checks this.
+    const { session, deps } = makeHarness();
+    await session.load();
+    expect(session.initialized).toBe(false);
+    expect(session.version).toBe(0);
+    expect(await deps.snapshots.get()).toBeNull();
+    await expect(session.create()).resolves.toEqual({ docId: "doc-1", version: 1 });
+  });
+
+  it("13. public methods load themselves — no caller-side load() required", async () => {
+    // The DO original loaded once at the top of its request handler. Nothing
+    // in the type system forces an adapter to do the same, so the session
+    // carries the obligation itself.
+    const { session, deps } = makeHarness();
+    await deps.deltas.append({
+      version: 1,
+      timestamp: 1,
+      description: "Document created",
+      operations: [],
+    });
+    await deps.deltas.append({
+      version: 2,
+      timestamp: 2,
+      description: "hi",
+      operations: [{ kind: "append", text: "hi" }],
+    });
+
+    // No session.load() anywhere below.
+    expect((await session.query({ kind: "text" })).version).toBe(2);
+    expect((await session.query({ kind: "text" })).data).toBe("hi");
+    expect(await session.history()).toHaveLength(2);
+    expect((await session.exportBytes()).bytes).toEqual(encoder.encode("hi"));
+    await expect(session.create()).rejects.toBeInstanceOf(DocExistsError);
+    expect((await session.apply([{ kind: "append", text: "!" }], "bang", 2)).version).toBe(3);
+  });
+
+  it("12. create() leaves no in-memory state behind when the conditional write loses", async () => {
+    // A racing replica committed version 1 between our load() and our append.
+    const ports = createMemoryPorts();
+    const racing: DeltaLog = {
+      ...ports.deltas,
+      append: async (d: Delta) => {
+        throw new VersionConflictError(1, d.version);
+      },
+      head: () => ports.deltas.head(),
+      since: (v: number) => ports.deltas.since(v),
+      range: (from?: number, to?: number) => ports.deltas.range(from, to),
+      remove: (v: number) => ports.deltas.remove(v),
+      latestSnapshotRef: (at?: number) => ports.deltas.latestSnapshotRef(at),
+      recordSnapshot: (v: number, h: string, t: number) => ports.deltas.recordSnapshot(v, h, t),
+      countSince: (v: number) => ports.deltas.countSince(v),
+    };
+    const { session, index } = makeHarness(1_000, racing);
+
+    await expect(session.create()).rejects.toBeInstanceOf(VersionConflictError);
+
+    // Nothing was committed: no document, no version, no index row.
+    expect(session.initialized).toBe(false);
+    expect(session.version).toBe(0);
+    expect(index.calls).toEqual([]);
+  });
+
+  it("9. initFromHash() adopts an existing blob as version 1", async () => {
+    const { session, deps, index } = makeHarness();
     const bytes = encoder.encode("cloned content");
     const hash = await computeHash(bytes);
     await deps.blobs.putIfAbsent(hash, bytes);
@@ -370,5 +524,8 @@ describe("DocumentSession — normal paths", () => {
 
     // The snapshot reference points at the adopted blob — no new blob written.
     expect(await deps.deltas.latestSnapshotRef()).toEqual({ version: 1, hash });
+    // The global index gets it too, and only because register ran first.
+    expect(index.snapshots).toContainEqual({ version: 1, hash, timestamp: expect.any(Number) });
+    expect(index.calls.indexOf("register")).toBeLessThan(index.calls.indexOf("recordSnapshot"));
   });
 });
