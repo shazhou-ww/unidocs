@@ -26,7 +26,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,10 +57,43 @@ const AZURITE_PORT = 10000;
 /** Must match `docker-compose.azure.yml`'s `postgres` service image — used only to decide whether to print the one-time-download notice below. */
 const POSTGRES_IMAGE = "postgres:18-alpine";
 
+/**
+ * Async replacement for the old `execFileSync`-based `run()`. This runs
+ * inside a vitest worker (via `azure-behavior.test.mjs`'s `beforeAll`), and
+ * `execFileSync` blocks the whole event loop for as long as the child runs —
+ * on a cold machine that's tens of seconds for `docker compose up -d`
+ * (image pull) or several seconds for `pnpm run migrate` (it shells out to
+ * esbuild internally). While the event loop is blocked, the worker can't
+ * answer the main vitest process's `onTaskUpdate` RPC, which then times out
+ * and fails the whole run — even though every individual test passed. Using
+ * `spawn` + awaiting its `exit` event keeps `stdio: "inherit"` (so e.g. a
+ * `docker pull`'s progress output still streams straight to the terminal,
+ * same as before) without blocking anything else sharing this process.
+ */
 function run(cmd, args, opts = {}) {
-  execFileSync(cmd, args, { cwd: ROOT, stdio: "inherit", ...opts });
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { cwd: ROOT, stdio: "inherit", ...opts });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`${cmd} ${args.join(" ")} terminated by signal ${signal}`));
+      } else if (code !== 0) {
+        reject(new Error(`${cmd} ${args.join(" ")} exited with code ${code}`));
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
+/**
+ * Left as `execFileSync`, deliberately: `docker image inspect` reads local
+ * image metadata only (no daemon-side pull, no network call), so it returns
+ * in low single-digit milliseconds even on a cold machine. Blocking the
+ * event loop for that long can't threaten the vitest RPC timeout the way the
+ * multi-second/multi-ten-second calls above can, so there's no correctness
+ * reason to pay for making this one async too.
+ */
 function dockerImageExistsLocally(image) {
   try {
     execFileSync("docker", ["image", "inspect", image], { stdio: "ignore" });
@@ -219,7 +252,7 @@ async function waitForPort(host, port, timeoutMs) {
 }
 
 function runMigrations() {
-  run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "migrate"], {
+  return run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "migrate"], {
     env: { ...process.env, DATABASE_URL },
   });
 }
@@ -249,6 +282,150 @@ function stopProcess(child, graceMs = 5_000) {
     });
     child.kill("SIGTERM");
   });
+}
+
+/**
+ * The four ports `startAzureRuntime()` needs exclusive use of: the two Node
+ * services it spawns, plus the two backing stores (`docker-compose.azure.yml`'s
+ * Postgres and the spawned `azurite-blob` process). Kept local to this module
+ * (rather than reusing `scripts/dev.mjs`'s copy) because `dev.mjs` isn't
+ * something other code imports from, and `azure-behavior.test.mjs` calls
+ * `startAzureRuntime()` directly — never through `dev.mjs` — so the guard has
+ * to live here to cover that path at all.
+ */
+function describeAzurePorts(ports) {
+  return {
+    [ports.gateway]: "expected by the azure-gateway service this run is about to spawn",
+    [ports.markdown]: "expected by the azure-markdown service this run is about to spawn",
+    [AZURITE_PORT]: "expected by the azurite-blob process this run is about to spawn",
+    5433: "expected by docker-compose.azure.yml's postgres service (host port mapping)",
+  };
+}
+
+/**
+ * Probe a port by trying to listen on it, same technique as
+ * `scripts/dev.mjs`'s `assertPortFree()`: `listen()` succeeding means
+ * nothing else is bound there, so close right back up and report free;
+ * `EADDRINUSE` means something already is.
+ *
+ * This exists because, before it did, `startAzureRuntime()` went straight to
+ * `spawn()` for the gateway/markdown services and straight to
+ * `docker compose up` for Postgres, with no check that the ports they need
+ * were actually free. A previous run's leaked process (see
+ * `installChildProcessCleanup()` below for why one can leak in the first
+ * place) sitting on 41787 answers HTTP requests well enough that the new
+ * run's readiness poll (`waitForPort`) succeeds against the *old* process,
+ * and the whole behavior suite then runs green against stale state instead
+ * of the fresh stack it thinks it started — a false pass in exactly the
+ * suite meant to prove the stack works. Failing loudly here, before anything
+ * is spawned, turns that silent false-green into an explicit, actionable
+ * error instead.
+ *
+ * Always probes `0.0.0.0`, not whatever host the caller eventually talks to
+ * the service on (`startAzureRuntime()`'s `host` param, `127.0.0.1` by
+ * default — used for building URLs and for `waitForPort`, nothing more).
+ * `azure-gateway`/`azure-markdown` both bind `host: "0.0.0.0"` explicitly
+ * (`packages/azure-{gateway,markdown}/src/main.ts`), and Docker's default
+ * port publish does the same for Postgres — probing the same address they
+ * bind is required, not cosmetic: on BSD/Darwin sockets, a wildcard
+ * (`0.0.0.0`) bind conflicts with *any* other bind already on that port,
+ * wildcard or address-specific, but a bind to one specific address (say,
+ * `127.0.0.1`) does **not** conflict with a pre-existing wildcard bind — the
+ * OS treats the specific address as more specific and routes to it. Verified
+ * empirically on this stack's dev machine: a stray process bound with no
+ * explicit host (Node's default, effectively wildcard) still let a fresh
+ * probe bind `127.0.0.1` on the same port without error, while `0.0.0.0`
+ * correctly reported `EADDRINUSE` against it — which is exactly the
+ * leaked-process shape this check exists to catch. Probing `0.0.0.0`
+ * also still catches a leaked `azurite-blob` (bound to the specific
+ * `127.0.0.1` via `AZURITE_HOST`): a wildcard probe conflicts with an
+ * existing specific bind too, just not the reverse.
+ */
+function assertPortFree(port, hint) {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        reject(
+          new Error(
+            `port ${port} is already in use (${hint}). This is most likely a process leaked by a ` +
+              `previous \`startAzureRuntime()\` run (a parent process killed with SIGKILL can't take its ` +
+              `spawned children down with it — see the comment on \`installChildProcessCleanup()\`) or an ` +
+              `unrelated stack bound to the same port. Find and stop it (e.g. \`lsof -i :${port}\`), then retry.`,
+          ),
+        );
+        return;
+      }
+      reject(err);
+    });
+    server.once("listening", () => {
+      server.close((closeErr) => {
+        if (closeErr) reject(closeErr);
+        else resolve();
+      });
+    });
+    server.listen(port, "0.0.0.0");
+  });
+}
+
+async function assertPortsFree(ports) {
+  const byPort = describeAzurePorts(ports);
+  await Promise.all(
+    Object.entries(byPort).map(([port, hint]) => assertPortFree(Number(port), hint)),
+  );
+}
+
+/**
+ * Best-effort "take the children down with the parent" cleanup for the
+ * gateway/markdown/azurite child processes `startAzureRuntime()` spawns.
+ *
+ * `process.once("exit", ...)` only allows synchronous work, which is exactly
+ * why this calls plain `child.kill()` (fire-and-forget SIGTERM) rather than
+ * `stopProcess()`'s graceful-wait-then-SIGKILL — there's no event loop left
+ * to wait on by the time `exit` fires. `SIGINT`/`SIGTERM` are handled
+ * explicitly too: registering a listener for either suppresses Node's
+ * default "terminate immediately" behavior, so without an explicit handler
+ * that itself calls `process.exit()`, a Ctrl-C wouldn't reliably reach the
+ * `exit` cleanup at all.
+ *
+ * This is a mitigation, not a fix — it cannot be one. If the parent process
+ * itself is killed with `SIGKILL` (or the machine loses power, or the parent
+ * segfaults), no JS handler in that process ever runs, and `spawn()`'s
+ * children become orphans reparented to `launchd`/`init`, exactly like the
+ * leaked `gateway.mjs` process this task was filed over. That's an inherent
+ * boundary of the `spawn()` process model, not a bug in this function, and
+ * no amount of signal handling here closes it. What actually keeps a leaked
+ * process from causing a *silent* false-green next time is
+ * `assertPortsFree()` above: it can't stop the leak, but it guarantees the
+ * next run notices the port is still held and fails loudly instead of
+ * quietly talking to the stale process.
+ */
+function installChildProcessCleanup(getChildren) {
+  const killAll = () => {
+    for (const child of getChildren()) {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill();
+        } catch {
+          // Best-effort; the process may already be gone.
+        }
+      }
+    }
+  };
+  const makeSignalHandler = (exitCode) => () => {
+    killAll();
+    process.exit(exitCode);
+  };
+  const onSigint = makeSignalHandler(130);
+  const onSigterm = makeSignalHandler(143);
+  process.once("exit", killAll);
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+  return function uninstall() {
+    process.off("exit", killAll);
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+  };
 }
 
 /**
@@ -308,18 +485,30 @@ export async function startAzureRuntime({
   const gatewayBundle = join(bundleDir, "gateway.mjs");
   const markdownBundle = join(bundleDir, "markdown.mjs");
 
+  // Fail loudly on a held port before anything is spawned — see
+  // `assertPortFree()`'s comment for why this matters more than it looks
+  // like it should (a leaked process from a previous run answering in place
+  // of the fresh stack, making the behavior suite pass against stale state).
+  await assertPortsFree(ports);
+
   announceFirstPullIfNeeded();
-  run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
+  await run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
 
   let gatewayProc;
   let markdownProc;
   let azuriteProc;
   let azuriteDataDir;
   let probe;
+  // Registered before anything is spawned so it covers every child from the
+  // moment it exists; `getChildren` reads the `let` bindings above at
+  // cleanup time, not at registration time, so it sees whichever of them got
+  // assigned before the process went down. See the function's own comment
+  // for what this can and can't guarantee.
+  const uninstallCleanup = installChildProcessCleanup(() => [gatewayProc, markdownProc, azuriteProc]);
   try {
     ({ child: azuriteProc, dataDir: azuriteDataDir } = await spawnAzurite());
     await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
-    runMigrations();
+    await runMigrations();
 
     await Promise.all([
       bundleService(join(ROOT, "packages/azure-gateway/src/main.ts"), gatewayBundle),
@@ -363,6 +552,12 @@ export async function startAzureRuntime({
       urls,
       storage: probe,
       async dispose() {
+        // Processes are being stopped deliberately below, via the graceful
+        // stopProcess() path — uninstall the exit/signal handlers first so
+        // they don't also fire a redundant kill() (harmless, since kill() on
+        // an already-exited child is a no-op, but there's no reason to leave
+        // process-level listeners registered past this runtime's lifetime).
+        uninstallCleanup();
         await Promise.all([
           stopProcess(gatewayProc),
           stopProcess(markdownProc),
@@ -370,7 +565,7 @@ export async function startAzureRuntime({
         ]);
         await probe?.dispose();
         await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
-        run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
+        await run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
       },
     };
   } catch (err) {
@@ -379,6 +574,7 @@ export async function startAzureRuntime({
     // migration, a port that never comes up) must not leak the azurite-blob
     // child process the way an unhandled exception would if it were only
     // ever cleaned up by the caller's `dispose()`, which never gets called.
+    uninstallCleanup();
     await Promise.allSettled([
       stopProcess(gatewayProc),
       stopProcess(markdownProc),
@@ -389,7 +585,7 @@ export async function startAzureRuntime({
       await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
     }
     try {
-      run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
+      await run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
     } catch {
       // Best-effort cleanup; the original error is what matters.
     }

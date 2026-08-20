@@ -30,7 +30,7 @@
  * for free).
  */
 
-import { execFileSync, execSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -58,6 +58,13 @@ const require = createRequire(import.meta.url);
 let azuriteProcess: ChildProcess | undefined;
 let azuriteDataDir: string | undefined;
 
+/**
+ * Left as `execFileSync`, deliberately: this is a local image-metadata read,
+ * not a pull, so it returns in low single-digit milliseconds even on a cold
+ * machine — nowhere near long enough to threaten the vitest worker RPC
+ * timeout the way the `docker compose up`/`down` calls below can (see
+ * `run()`'s comment).
+ */
 function dockerImageExistsLocally(image: string): boolean {
   try {
     execFileSync("docker", ["image", "inspect", image], { stdio: "ignore" });
@@ -65,6 +72,32 @@ function dockerImageExistsLocally(image: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Async replacement for the old `execSync`-based compose calls. This module
+ * is a vitest `globalSetup`/`globalTeardown`, which — like the worker
+ * process `scripts/azure-runtime.mjs` runs in — has to stay responsive to
+ * vitest's own RPC while `docker compose up -d` pulls an image (tens of
+ * seconds cold) or `down -v` tears the stack back down (several seconds).
+ * `execSync` blocks the event loop for the whole duration; `spawn` + await
+ * on `exit` does not, while still keeping `stdio: "inherit"` so the pull's
+ * progress output streams straight through as before.
+ */
+function run(command: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, { shell: true, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (signal) {
+        reject(new Error(`${command} terminated by signal ${signal}`));
+      } else if (code !== 0) {
+        reject(new Error(`${command} exited with code ${code}`));
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
 /**
@@ -176,7 +209,7 @@ async function waitForAzurite(timeoutMs: number): Promise<void> {
 
 export async function setup(): Promise<void> {
   announceFirstPullIfNeeded();
-  execSync(`docker compose -f "${COMPOSE_FILE}" up -d`, { stdio: "inherit" });
+  await run(`docker compose -f "${COMPOSE_FILE}" up -d`);
   try {
     await startAzurite();
     await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
@@ -187,7 +220,7 @@ export async function setup(): Promise<void> {
     // `teardown()` is never called when `setup()` itself rejects.
     await stopAzurite();
     try {
-      execSync(`docker compose -f "${COMPOSE_FILE}" down -v`, { stdio: "inherit" });
+      await run(`docker compose -f "${COMPOSE_FILE}" down -v`);
     } catch {
       // Best-effort cleanup; the original error is what matters.
     }
@@ -201,5 +234,5 @@ export async function teardown(): Promise<void> {
   // of this suite left behind a dangling anonymous volume (the compose file
   // does not name its Postgres volume), and a bare `down` also leaves no
   // guarantee that the next `up` sees a clean Postgres data directory.
-  execSync(`docker compose -f "${COMPOSE_FILE}" down -v`, { stdio: "inherit" });
+  await run(`docker compose -f "${COMPOSE_FILE}" down -v`);
 }
