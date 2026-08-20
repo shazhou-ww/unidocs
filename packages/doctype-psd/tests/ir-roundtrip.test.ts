@@ -171,7 +171,7 @@ describe("psd IR serialize/deserialize", () => {
     expect(child.blendMode).toBe("normal");
     expect(isRef(child.pixels!)).toBe(true);
 
-    const cache = new PixelCache(8);
+    const cache = new PixelCache(1 << 20);
     const resolvedChild = await resolvePixels(child.pixels!, store, cache);
     expect([...resolvedChild.data]).toEqual([...fill(2, 2, [10, 20, 30, 255])]);
 

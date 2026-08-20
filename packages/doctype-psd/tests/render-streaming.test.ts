@@ -71,7 +71,7 @@ describe("streaming compositor (async fault-in)", () => {
     const top = await put1x1(store, [0, 0, 255, 255]); // blue
     const doc: PsdDoc = { canvas, layers: [refLayer("bottom", bottom), refLayer("top", top)] };
 
-    const out = await render(doc, { store, cache: new PixelCache(64) });
+    const out = await render(doc, { store, cache: new PixelCache(1 << 20) });
     expect([...out.data]).toEqual([0, 0, 255, 255]); // opaque blue over red → blue
   });
 
@@ -81,7 +81,7 @@ describe("streaming compositor (async fault-in)", () => {
     const top = await put1x1(store, [0, 0, 255, 255]);
     const doc: PsdDoc = { canvas, layers: [refLayer("bottom", bottom), refLayer("top", top)] };
 
-    await render(doc, { store, cache: new PixelCache(64) });
+    await render(doc, { store, cache: new PixelCache(1 << 20) });
     expect(store.peakInFlight).toBe(1);
   });
 
@@ -94,7 +94,7 @@ describe("streaming compositor (async fault-in)", () => {
       layers: [refLayer("vis", visRef), refLayer("hidden", hiddenRef, false)],
     };
 
-    await render(doc, { store, cache: new PixelCache(64) });
+    await render(doc, { store, cache: new PixelCache(1 << 20) });
     expect(store.gets.get(visRef.hash) ?? 0).toBe(1);
     expect(store.gets.get(hiddenRef.hash) ?? 0).toBe(0); // hidden → never faulted in
   });
@@ -121,9 +121,9 @@ describe("streaming compositor (async fault-in)", () => {
 
     // Same doc object both times → doc identity is the framebuffer cache key.
     // 1st render rejects (transient failure) and must NOT be cached.
-    await expect(renderCached(doc, { store, cache: new PixelCache(64) })).rejects.toThrow(/transient blob store failure/);
+    await expect(renderCached(doc, { store, cache: new PixelCache(1 << 20) })).rejects.toThrow(/transient blob store failure/);
     // 2nd render on the SAME doc retries (slot was dropped) and resolves.
-    const px = await renderCached(doc, { store, cache: new PixelCache(64) });
+    const px = await renderCached(doc, { store, cache: new PixelCache(1 << 20) });
     expect([...px.data]).toEqual([0, 200, 0, 255]);
   });
 });

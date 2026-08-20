@@ -21,13 +21,19 @@ export const isRef = (p: PixelSource): p is PixelRef =>
 /** Content-addressed byte storage for PNG-encoded pixel blobs. */
 export type { BlobStore };
 
-/** A simple entry-count-bounded LRU cache of decoded Pixels, keyed by hash. */
+/** A byte-budget-bounded LRU cache of decoded Pixels, keyed by hash. Capacity
+ *  is measured in decoded bytes (`pixels.data.length`), not entry count — an
+ *  entry-count cap could hold arbitrarily large full-canvas layers and blow
+ *  past any real memory bound. A single entry larger than the whole budget is
+ *  still inserted (a render cannot refuse to hold the layer it just needs to
+ *  draw) and stays resident only until the next `set` evicts it. */
 export class PixelCache {
-  private readonly capacity: number;
+  private readonly maxBytes: number;
   private readonly map = new Map<string, Pixels>();
+  private totalBytes = 0;
 
-  constructor(capacity: number) {
-    this.capacity = capacity;
+  constructor(maxBytes: number) {
+    this.maxBytes = maxBytes;
   }
 
   get(hash: string): Pixels | undefined {
@@ -40,12 +46,23 @@ export class PixelCache {
   }
 
   set(hash: string, pixels: Pixels): void {
-    if (this.map.has(hash)) this.map.delete(hash);
+    const existing = this.map.get(hash);
+    if (existing !== undefined) {
+      this.totalBytes -= existing.data.length;
+      this.map.delete(hash);
+    }
     this.map.set(hash, pixels);
-    while (this.map.size > this.capacity) {
-      const oldest = this.map.keys().next().value;
-      if (oldest === undefined) break;
-      this.map.delete(oldest);
+    this.totalBytes += pixels.data.length;
+    // Evict LRU entries until back within budget, but always keep the entry
+    // we just inserted (it's most-recently-used, so it's evicted last) — a
+    // lone oversized entry is allowed to exceed the budget rather than be
+    // dropped, since it's needed for the render in progress.
+    while (this.totalBytes > this.maxBytes && this.map.size > 1) {
+      const oldestKey = this.map.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = this.map.get(oldestKey)!;
+      this.map.delete(oldestKey);
+      this.totalBytes -= oldest.data.length;
     }
   }
 }
