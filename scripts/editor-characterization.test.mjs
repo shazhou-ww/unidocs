@@ -70,3 +70,29 @@ test("并发的两个同 baseVersion apply:恰好一个成功,另一个 409 且�
   const { data } = await history.json();
   expect(data.map((entry) => entry.version)).toEqual([1, 2]);
 });
+
+test("第 20 个 delta 触发自动快照:R2 有对象,D1 snapshots 表有 version=20 的行", async () => {
+  const userId = "snapshot-user";
+  const docId = await createDoc(userId);
+
+  // 创建时已写入 version 1;这里再 apply 25 次,版本推进到 26。
+  // #shouldSnapshot() 在 delta 数量达到 20 时触发,即 version 20 那一次。
+  for (let baseVersion = 1; baseVersion <= 25; baseVersion += 1) {
+    const res = await applyOp(docId, baseVersion, `content ${baseVersion}`, userId);
+    expect(res.status, `apply at baseVersion ${baseVersion}`).toBe(200);
+  }
+
+  const db = await runtime.mf.getD1Database("SNAPSHOTS_DB", "unidocs-markdown");
+  const rows = await db
+    .prepare("SELECT version, hash FROM snapshots WHERE doc_id = ? ORDER BY version ASC")
+    .bind(docId)
+    .all();
+
+  expect(rows.results.map((row) => row.version)).toEqual([1, 21]);
+
+  const bucket = await runtime.mf.getR2Bucket("CAS", "unidocs-markdown");
+  for (const snap of rows.results) {
+    const object = await bucket.get(snap.hash);
+    expect(object, `R2 缺少快照对象 ${snap.hash}`).not.toBeNull();
+  }
+}, 60_000);
