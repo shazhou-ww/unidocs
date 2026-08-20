@@ -114,11 +114,11 @@ async function forwardToWorker(
   const targetUrl = `${workerUrl}/${targetPath}${originalUrl.search}`;
 
   const headers = new Headers();
-  for (const [key, value] of request.headers) {
+  request.headers.forEach((value, key) => {
     if (key.toLowerCase() !== "host" && key.toLowerCase() !== "connection") {
       headers.set(key, value);
     }
-  }
+  });
   headers.set("X-Internal-Token", internalToken);
   headers.set("X-User-Id", userId);
   headers.set("X-Doc-Type", docType);
