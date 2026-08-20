@@ -165,12 +165,14 @@ git commit -m "test(sdk): characterize concurrent apply version conflict"
 在 `scripts/editor-characterization.test.mjs` 末尾追加:
 
 ```js
-test("第 20 个 delta 触发自动快照:R2 有对象,D1 snapshots 表有 version=20 的行", async () => {
+test("初始快照 version 1 + 阈值快照 version 21:两次快照的 R2 对象都存在,D1 记录完整", async () => {
   const userId = "snapshot-user";
   const docId = await createDoc(userId);
 
-  // 创建时已写入 version 1;这里再 apply 25 次,版本推进到 26。
-  // #shouldSnapshot() 在 delta 数量达到 20 时触发,即 version 20 那一次。
+  // POST /_internal/create 会立刻把 version 1 快照到 R2 + D1。
+  // 之后 apply 25 次,版本推进到 26。#shouldSnapshot() 数的是
+  // version > lastSnapshotVersion 的 delta 数;lastSnapshotVersion = 1,
+  // 因此到 version 21 时累积 20 个新 delta,触发第二次快照。
   for (let baseVersion = 1; baseVersion <= 25; baseVersion += 1) {
     const res = await applyOp(docId, baseVersion, `content ${baseVersion}`, userId);
     expect(res.status, `apply at baseVersion ${baseVersion}`).toBe(200);
@@ -182,11 +184,13 @@ test("第 20 个 delta 触发自动快照:R2 有对象,D1 snapshots 表有 versi
     .bind(docId)
     .all();
 
-  expect(rows.results.map((row) => row.version)).toEqual([20]);
+  expect(rows.results.map((row) => row.version)).toEqual([1, 21]);
 
   const bucket = await runtime.mf.getR2Bucket("CAS", "unidocs-markdown");
-  const object = await bucket.get(rows.results[0].hash);
-  expect(object, `R2 缺少快照对象 ${rows.results[0].hash}`).not.toBeNull();
+  for (const snap of rows.results) {
+    const object = await bucket.get(snap.hash);
+    expect(object, `R2 缺少快照对象 ${snap.hash}`).not.toBeNull();
+  }
 }, 60_000);
 ```
 
