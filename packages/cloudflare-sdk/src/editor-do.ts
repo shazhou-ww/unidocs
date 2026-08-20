@@ -37,6 +37,7 @@ import type { DocumentType } from "@unidocs/core";
 import {
   createSessionHandler,
   DocumentSession,
+  errorResponse,
   type DocIdentity,
   type SessionDeps,
 } from "@unidocs/server-core";
@@ -232,7 +233,17 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         response.ok &&
         (endpoint === "/_internal/create" || endpoint === "/_internal/init_from_hash")
       ) {
-        await this.#persistIdentity(identity);
+        // This write happens after createSessionHandler's own try/catch has
+        // already returned, so a storage failure here would otherwise escape
+        // as an uncaught exception instead of the usual JSON error contract.
+        // Reuse the same `errorResponse` mapping so it still comes back as
+        // `{ success: false, version, error }` / 500, matching the
+        // pre-refactor behavior where this call lived inside that catch.
+        try {
+          await this.#persistIdentity(identity);
+        } catch (err) {
+          return errorResponse(err, session.version);
+        }
       }
 
       return response;

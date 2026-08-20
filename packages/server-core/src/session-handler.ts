@@ -8,7 +8,10 @@
  *   1. parsing the `/_internal/*` HTTP surface and calling the matching
  *      `DocumentSession` method
  *   2. mapping the typed errors of server-core onto status codes
- *      (`#errorResponse`)
+ *      (`errorResponse`, exported so callers can reuse it for errors that
+ *      happen outside the handler's own try/catch — e.g. a transport
+ *      adapter's post-success bookkeeping, such as EditorDO persisting the
+ *      document identity after `create` / `init_from_hash`)
  *
  * Everything about *how a document evolves* — in-memory state, snapshot +
  * replay reconstruction, the delta write order, the snapshot threshold —
@@ -55,7 +58,7 @@ export interface CreateSessionHandlerConfig<TDoc, TQuery, TOp> {
  * the treespec tree under tests/bootstrap). Field names and message text
  * are part of the contract — do not reword them.
  */
-function errorResponse(err: unknown, version: number): Response {
+export function errorResponse(err: unknown, version: number): Response {
   if (err instanceof VersionConflictError) {
     return Response.json(
       { success: false, version: err.currentVersion, error: err.message },
