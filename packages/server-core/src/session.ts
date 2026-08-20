@@ -225,6 +225,34 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // Content-addressed: the same bytes are the same blob.
     await this.#deps.blobs.putIfAbsent(hash, bytes);
 
+    // Pin the per-layer content blobs this snapshot references so CAS GC
+    // retains them. `refsFromSnapshot` is a pure function; markdown/docx
+    // return {} and skip this path entirely (zero behaviour change). This
+    // runs BEFORE recordSnapshot on purpose: we must not register a snapshot
+    // as a restore point until the content it references is protected, or a
+    // GC pass between the two writes could delete a blob the snapshot needs.
+    //
+    // The requestId is deterministic per (user, doc, version). Re-running
+    // #writeSnapshot for the same version commits the identical payload under
+    // the identical id, which the CAS worker dedupes by (requestId, payload):
+    // no double-count, no inflated root-ref counts. A snapshot has no delta to
+    // roll back, so the rollback is a no-op; a pin failure surfaces as
+    // RootRefsError, mirroring apply().
+    const refs = this.#config.refsFromSnapshot(bytes);
+    if (Object.keys(refs).length > 0) {
+      const { userId, docId } = this.#deps.identity;
+      try {
+        await commitRootRefsOrRollback(
+          this.#deps.cas,
+          `snapshot:${userId}:${docId}:${this.#version}`,
+          refs,
+          () => {},
+        );
+      } catch (err) {
+        throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
+      }
+    }
+
     const timestamp = this.#deps.now();
     await this.#deps.index.recordSnapshot(this.#version, hash, timestamp);
     await this.#deps.index.touch(timestamp);

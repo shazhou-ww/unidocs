@@ -663,6 +663,83 @@ describe("DocumentSession — normal paths", () => {
     expect(await deps.snapshots.get()).toEqual({ version: 1, bytes });
   });
 
+  // ------------------------------------------------------------------
+  // Snapshot root-refs: refsFromSnapshot GC pinning (Phase 3, Task 2)
+  // ------------------------------------------------------------------
+
+  /**
+   * Fold a batch of root-ref updates into effective per-hash counts using the
+   * SAME idempotency rule the CAS worker enforces: dedupe by requestId (a
+   * repeat of a requestId is a no-op — see cloudflare-cas handleUpdateRootRefs).
+   * This proves the session hands the worker a key that collapses re-runs.
+   */
+  function foldRootRefs(
+    updates: { requestId: string; changes: CasReferences }[],
+  ): Record<string, number> {
+    const seen = new Set<string>();
+    const counts: Record<string, number> = {};
+    for (const u of updates) {
+      if (seen.has(u.requestId)) continue;
+      seen.add(u.requestId);
+      for (const [hash, delta] of Object.entries(u.changes)) {
+        counts[hash] = (counts[hash] ?? 0) + delta;
+      }
+    }
+    return counts;
+  }
+
+  it("18. commits refsFromSnapshot hashes as root-refs when writing a durable snapshot", async () => {
+    const refs: CasReferences = { h1: 1, h2: 1 };
+    const docType = { ...makeTextDocType(), refsFromSnapshot: () => refs };
+    const { session, cas } = makeHarness(1_000, undefined, docType);
+    await session.load();
+
+    // create() writes the durable v1 snapshot.
+    await session.create();
+
+    const snapCommits = cas.rootRefUpdates.filter((u) =>
+      u.requestId.startsWith("snapshot:"),
+    );
+    expect(snapCommits).toHaveLength(1);
+    expect(snapCommits[0]).toEqual({
+      requestId: "snapshot:user-1:doc-1:1",
+      changes: { h1: 1, h2: 1 },
+    });
+  });
+
+  it("19. commits nothing to root-refs when refsFromSnapshot returns {} (markdown/docx unchanged)", async () => {
+    // The default text doc type returns {} from refsFromSnapshot — exactly
+    // like markdown/docx. The new pin path must be skipped entirely.
+    const { session, cas } = makeHarness();
+    await session.load();
+    await session.create();
+
+    expect(cas.rootRefUpdates).toEqual([]);
+  });
+
+  it("20. re-writing a snapshot at the same version reuses one deterministic, idempotent requestId (no double-count)", async () => {
+    const refs: CasReferences = { h1: 1, h2: 1 };
+    const docType = { ...makeTextDocType(), refsFromSnapshot: () => refs };
+    const { session, cas } = makeHarness(1_000, undefined, docType);
+    await session.load();
+
+    await session.create(); // snapshot at v1
+    await session.snapshot(); // force another durable snapshot, still at v1
+
+    const snapCommits = cas.rootRefUpdates.filter((u) =>
+      u.requestId.startsWith("snapshot:"),
+    );
+    // Two physical commits reached the (dumb) fake...
+    expect(snapCommits.length).toBeGreaterThanOrEqual(2);
+    // ...but under ONE deterministic requestId, so the CAS worker's
+    // (requestId, payload) idempotency collapses them to a single application.
+    expect(new Set(snapCommits.map((u) => u.requestId))).toEqual(
+      new Set(["snapshot:user-1:doc-1:1"]),
+    );
+    // Folded with the worker's real dedupe rule, each blob is pinned once.
+    expect(foldRootRefs(snapCommits)).toEqual({ h1: 1, h2: 1 });
+  });
+
   it("9. initFromHash() adopts an existing blob as version 1", async () => {
     const { session, deps, ports } = makeHarness();
     const bytes = encoder.encode("cloned content");
