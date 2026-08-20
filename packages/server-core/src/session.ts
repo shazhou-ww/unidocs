@@ -202,7 +202,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // be a falsy value (the DO original used `!this.#doc`, which silently
     // skipped the write for such documents).
     if (this.#doc === null) return;
-    const bytes = await this.#config.save(this.#doc);
+    const bytes = await this.#config.save(this.#doc, this.#context());
     await this.#deps.snapshots.put(this.#version, bytes);
   }
 
@@ -219,7 +219,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   async #writeSnapshot(): Promise<void> {
     if (this.#doc === null) return;
 
-    const bytes = await this.#config.save(this.#doc);
+    const bytes = await this.#config.save(this.#doc, this.#context());
     const hash = await computeHash(bytes);
 
     // Content-addressed: the same bytes are the same blob.

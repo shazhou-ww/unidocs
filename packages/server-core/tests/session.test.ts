@@ -66,11 +66,20 @@ function makeTextDocType(): DocumentType<string, TextQuery, TextOp> {
 class FakeCas implements CasGateway {
   leased: string[] = [];
   rootRefUpdates: { requestId: string; changes: CasReferences }[] = [];
+  stored: { bytes: Uint8Array; contentType: string }[] = [];
   failLease: Error | null = null;
   failRootRefs: Error | null = null;
 
   async read(_ref: CasRef): Promise<Uint8Array> {
     throw new Error("not used");
+  }
+
+  // Present => this is the editor-side, write-capable context. A doc type's
+  // save() branches on `ctx.cas.store` (PSD emits IR + uploads layer blobs);
+  // its mere presence is what the ctx-aware save test below observes.
+  async store(bytes: Uint8Array, contentType: string): Promise<string> {
+    this.stored.push({ bytes, contentType });
+    return await computeHash(bytes);
   }
 
   async metadata(_ref: CasRef) {
@@ -177,6 +186,25 @@ function makeCountingTextDocType(): {
 
 async function deltaCount(deps: SessionDeps): Promise<number> {
   return (await deps.deltas.range()).length;
+}
+
+/**
+ * A PSD-shaped doc type: save() branches on whether it was handed a
+ * store-capable context. WITH one it returns the cheap IR snapshot
+ * (`IR:<doc>`); WITHOUT one it returns the real document bytes
+ * (`8BPS:<doc>`). This is exactly the fork the CAS-IR feature depends on —
+ * a save called without ctx silently takes the legacy (real-bytes) path.
+ */
+function makeCtxAwareDocType(): DocumentType<string, TextQuery, TextOp> {
+  const inner = makeTextDocType();
+  return {
+    ...inner,
+    async save(doc, ctx) {
+      return ctx?.cas?.store
+        ? encoder.encode(`IR:${doc}`)
+        : encoder.encode(`8BPS:${doc}`);
+    },
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -763,5 +791,58 @@ describe("DocumentSession — normal paths", () => {
     expect(await deps.deltas.latestSnapshotRef()).toEqual({ version: 1, hash });
     // The global index gets it too, and only because register ran first.
     expect(await ports.indexQuery.snapshots("text", "doc-1")).toEqual([{ version: 1, hash }]);
+  });
+
+  // ------------------------------------------------------------------
+  // CAS-IR snapshots: internal snapshot writes must pass the context
+  // (Phase 3, Task 3b). Regression guard for the dead-code bug where
+  // #saveSnapshotCache / #writeSnapshot called save(doc) WITHOUT ctx, so a
+  // PSD-shaped save always took its legacy (real-bytes) branch.
+  // ------------------------------------------------------------------
+
+  it("21. internal snapshot writes (cache + durable) hand save() a store-capable ctx (the IR branch), while exportBytes() gets none (real bytes)", async () => {
+    const { session, deps } = makeHarness(1_000, undefined, makeCtxAwareDocType());
+    await session.load();
+
+    // create() writes the durable v1 snapshot (doc == "") and the cache.
+    await session.create();
+    // apply() refreshes the cache at v2 (doc == "a").
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    // 1. The fast (non-durable) snapshot cache got the IR branch.
+    expect(await deps.snapshots.get()).toEqual({
+      version: 2,
+      bytes: encoder.encode("IR:a"),
+    });
+
+    // 2. The durable, content-addressed snapshot (written at create, v1, doc "")
+    //    also got the IR branch — the blob under its ref is IR bytes.
+    const ref = await deps.deltas.latestSnapshotRef();
+    expect(ref?.version).toBe(1);
+    expect(await deps.blobs.get(ref!.hash)).toEqual(encoder.encode("IR:"));
+    // And the ref hash is the hash of the IR bytes, proving putIfAbsent stored them.
+    expect(ref!.hash).toBe(await computeHash(encoder.encode("IR:")));
+
+    // 3. A user-facing export/download must be the REAL bytes, never the CAS-IR
+    //    snapshot — exportBytes() calls save(doc) with NO ctx.
+    const exported = await session.exportBytes();
+    expect(exported.bytes).toEqual(encoder.encode("8BPS:a"));
+  });
+
+  it("22. a save() that ignores ctx (markdown/docx-like) is unaffected: cache, durable and export bytes all match", async () => {
+    // The default text doc type ignores ctx entirely, exactly like markdown/docx.
+    // Passing the context to the internal writes must not change its behaviour.
+    const { session, deps } = makeHarness();
+    await session.load();
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    // Cache == plain save(doc), context or not.
+    expect(await deps.snapshots.get()).toEqual({ version: 2, bytes: encoder.encode("a") });
+    // Durable v1 snapshot == plain save("").
+    const ref = await deps.deltas.latestSnapshotRef();
+    expect(await deps.blobs.get(ref!.hash)).toEqual(encoder.encode(""));
+    // Export == plain save(doc). All three agree.
+    expect((await session.exportBytes()).bytes).toEqual(encoder.encode("a"));
   });
 });
