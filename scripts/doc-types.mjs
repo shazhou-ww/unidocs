@@ -13,6 +13,24 @@ export const INTERNAL_TOKEN = "unidocs-dev-token";
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
 export const CAS_WORKER = "unidocs-cas";
+/** 故障注入用的假 CAS,只在测试里启用。 */
+export const CAS_FAULT_WORKER = "unidocs-cas-fault";
+
+/**
+ * 代理式假 CAS:除 root-refs 外全部原样转发给真 CAS,
+ * 使 lease 与读内容照常成功,只让引用计数写入失败。
+ */
+export const CAS_FAULT_SCRIPT = `
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/_internal/root-refs") {
+      return Response.json({ error: "injected root-refs failure" }, { status: 503 });
+    }
+    return env.CAS_UPSTREAM.fetch(request);
+  },
+};
+`;
 export const COMPATIBILITY_DATE = "2025-08-17";
 export const SNAPSHOTS_DB = "unidocs-snapshots";
 export const CAS_BUCKET = "unidocs-cas";
@@ -82,7 +100,7 @@ export function bundleTargets(docTypes) {
 }
 
 /** Miniflare worker configs: the gateway always, then one per selected type. */
-export function buildWorkers({ docTypes, host, ports, bundleDir }) {
+export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = false }) {
   const bindings = { INTERNAL_TOKEN };
 
   const workers = [
@@ -110,6 +128,17 @@ export function buildWorkers({ docTypes, host, ports, bundleDir }) {
     },
   ];
 
+  if (casFault) {
+    workers.push({
+      name: CAS_FAULT_WORKER,
+      modules: true,
+      script: CAS_FAULT_SCRIPT,
+      compatibilityDate: COMPATIBILITY_DATE,
+      bindings,
+      serviceBindings: { CAS_UPSTREAM: CAS_WORKER },
+    });
+  }
+
   for (const name of docTypes) {
     const spec = DOC_TYPES[name];
     workers.push({
@@ -124,7 +153,7 @@ export function buildWorkers({ docTypes, host, ports, bundleDir }) {
       },
       d1Databases: { SNAPSHOTS_DB },
       r2Buckets: { CAS: CAS_BUCKET },
-      serviceBindings: { CAS_SERVICE: CAS_WORKER },
+      serviceBindings: { CAS_SERVICE: casFault ? CAS_FAULT_WORKER : CAS_WORKER },
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }
