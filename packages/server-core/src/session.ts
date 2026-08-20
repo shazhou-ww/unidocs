@@ -216,8 +216,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * Write a durable, content-addressed snapshot of the current version and
    * record it in every index that tracks snapshots.
    */
-  async #writeSnapshot(): Promise<void> {
-    if (this.#doc === null) return;
+  async #writeSnapshot(): Promise<{ hash: string; version: number } | null> {
+    if (this.#doc === null) return null;
 
     const bytes = await this.#config.save(this.#doc, this.#context());
     const hash = await computeHash(bytes);
@@ -258,6 +258,13 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     await this.#deps.index.touch(timestamp);
     // Local log record — this is what rollback searches.
     await this.#deps.deltas.recordSnapshot(this.#version, hash, timestamp);
+
+    // Return the hash actually persisted (of the ctx-aware bytes). snapshot()
+    // reuses this instead of recomputing: for a ctx-aware doc type (PSD) the
+    // stored bytes are the IR snapshot, so a second save(doc) WITHOUT ctx would
+    // hash the real (8BPS) bytes and hand back a hash no blob was stored under —
+    // breaking clone-from-snapshot. Other callers ignore the return.
+    return { hash, version: this.#version };
   }
 
   // ------------------------------------------------------------------
@@ -586,16 +593,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   }> {
     await this.load();
 
-    const doc = this.#requireDoc();
+    // #requireDoc guarantees #doc is non-null, so #writeSnapshot returns a hash.
+    this.#requireDoc();
 
-    await this.#writeSnapshot();
-
-    const bytes = await this.#config.save(doc);
-    const hash = await computeHash(bytes);
+    const snap = await this.#writeSnapshot();
 
     return {
-      hash,
-      version: this.#version,
+      hash: snap!.hash,
+      version: snap!.version,
       docType: this.#deps.identity.docType,
       docId: this.#deps.identity.docId,
     };

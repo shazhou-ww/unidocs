@@ -845,4 +845,59 @@ describe("DocumentSession — normal paths", () => {
     // Export == plain save(doc). All three agree.
     expect((await session.exportBytes()).bytes).toEqual(encoder.encode("a"));
   });
+
+  it("23. snapshot() returns the hash actually persisted (ctx-aware IR bytes), so clone-from-snapshot round-trips", async () => {
+    // Regression for the divergence bug: snapshot() used to recompute the hash
+    // via a SECOND save(doc) with NO ctx. For a ctx-aware doc type (PSD) that
+    // second save yields the real (8BPS) bytes, whose hash no blob was stored
+    // under — #writeSnapshot had already persisted the IR bytes under a
+    // different hash. The returned hash is the clone hash, so this broke
+    // clone-from-snapshot (initFromHash -> blobs.get -> DocNotFoundError).
+    const { session, deps } = makeHarness(1_000, undefined, makeCtxAwareDocType());
+    await session.load();
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    const snap = await session.snapshot();
+    expect(snap.version).toBe(2);
+
+    // (a) The returned hash resolves to a blob ACTUALLY in the store — the IR
+    //     bytes. Before the fix this was the real-bytes hash and get() was null.
+    const stored = await deps.blobs.get(snap.hash);
+    expect(stored).not.toBeNull();
+    expect(stored).toEqual(encoder.encode("IR:a"));
+    expect(snap.hash).toBe(await computeHash(encoder.encode("IR:a")));
+
+    // (b) Clone round-trips: a fresh session (its own deltas/snapshots/index and
+    //     a new docId) sharing the global blob store adopts the snapshot without
+    //     DocNotFoundError.
+    const clonePorts = createMemoryPorts();
+    const cloneDeps: SessionDeps = {
+      deltas: clonePorts.deltas,
+      snapshots: clonePorts.snapshots,
+      blobs: deps.blobs, // shared global CAS
+      index: clonePorts.index,
+      cas: new FakeCas(),
+      identity: { docType: "text", docId: "doc-2", userId: "user-1" },
+      now: () => 2_000,
+    };
+    const clone = new DocumentSession(makeCtxAwareDocType(), cloneDeps);
+    const result = await clone.initFromHash(snap.hash, snap.version);
+    expect(result).toEqual({ docId: "doc-2", version: 1 });
+    expect((await clone.query({ kind: "text" })).data).toBe("IR:a");
+  });
+
+  it("24. snapshot() with a ctx-ignoring doc type (markdown/docx-like) is byte-identical to before: plain-bytes hash", async () => {
+    // save ignores ctx, so IR-hash == real-hash; reusing #writeSnapshot's hash
+    // must equal what the old recompute produced.
+    const { session, deps } = makeHarness();
+    await session.load();
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    const snap = await session.snapshot();
+    expect(snap.version).toBe(2);
+    expect(snap.hash).toBe(await computeHash(encoder.encode("a")));
+    expect(await deps.blobs.get(snap.hash)).toEqual(encoder.encode("a"));
+  });
 });
