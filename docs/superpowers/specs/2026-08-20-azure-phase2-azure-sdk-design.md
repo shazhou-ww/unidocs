@@ -215,3 +215,4 @@ treespec 的 22 个 spec 不动。
 | `withTransaction` 在 CF 上是空实现 | 每加一个写路径都要判断"要不要进事务",而 CF 侧永远无差别 | 只有 `create`/`initFromHash` 用它;新增写路径时在 review 清单里显式过一遍 |
 | session 跨请求复用 | `apply()` 不比较 `head()` 与 `#version`,复用陈旧 session 会写进"版本号正确但内容错误"的快照 | 阶段 1 已把契约写进类注释;本轮 Azure 入口**每请求新建 session**,不做 LRU |
 | 行为测试改造面 | 存储断言抽 probe 会动到阶段 0 的测试文件 | 只改取数方式,断言值逐字不动;改完先在 Miniflare 上跑绿再接 Azure |
+| **`DeltaLog.remove` 与并发 `append` 之间仍有窗口(已知、有意接受)** | `remove` 的条件删除只挡得住**已提交**的 `append(v+1)`。对**在途**的 append 挡不住:READ COMMITTED 下两条语句各持自己的快照,都看到 `MAX = v`,又分别锁 `v` 与 `v+1` 两个不同索引键、互不阻塞,于是 remove 删掉 `v`、append 插入 `v+1`,日志留下空洞 `… v-1, v+1` → 重放静默跳过 → 与已经读到版本 `v` 的客户端分叉。Cloudflare 侧不存在:DO 把进入它的所有调用串行化了,这是换成无状态副本的代价,不是 SQL 翻译错误 | **本轮接受**(仓库主人拍板):`append` 热路径要保持无锁,而该窗口只在「root-refs 提交失败的补偿」与「另一个写者恰好在途」同时发生时才出现。关闭它的做法已定:`append` 与 `remove` 各加一个按 `(docType, docId)` 取 `pg_advisory_xact_lock` 的 CTE,把上述交错的前两步变成真正的等待。契约覆盖不到这一项(它只有串行的 remove 用例),补的时候需要一条与 append 哨兵同构的并发用例 |
