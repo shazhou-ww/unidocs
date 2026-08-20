@@ -10,13 +10,21 @@ const solid = (id: string, w: number, h: number, rgba: number[]): Layer => {
 };
 const doc: PsdDoc = { canvas: { width: 2, height: 2, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [solid("a", 2, 2, [10, 20, 30, 255])] };
 
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = Buffer.from(b64, "base64");
+  return new Uint8Array(bin);
+}
+
 describe("getPreview", () => {
-  it("returns a valid PNG of the rendered canvas", async () => {
-    const bytes = await runQuery({ kind: "getPreview" }, doc) as Uint8Array;
+  it("returns a base64 PNG of the rendered canvas", async () => {
+    const out = await runQuery({ kind: "getPreview" }, doc) as any;
+    expect(out.$image.mediaType).toBe("image/png");
+    const bytes = b64ToBytes(out.$image.base64);
     // PNG signature
     expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
     const img = decode(bytes);
     expect([img.width, img.height]).toEqual([2, 2]);
     expect([...img.data.slice(0, 4)]).toEqual([10, 20, 30, 255]);
+    expect([out.width, out.height]).toEqual([2, 2]);
   });
 });

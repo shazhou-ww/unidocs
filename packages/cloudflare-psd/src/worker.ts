@@ -8,17 +8,19 @@
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
 import { createPsdDocumentType } from "@unidocs/doctype-psd";
+import { createAnthropicLlmProvider } from "./anthropic";
 
 const psd = createPsdDocumentType({});
 
 export const PsdEditor = createEditorDO(psd);
 export const PsdOperator = createOperatorDO({
   ...psd,
-  llmProvider: async () => {
-    throw new Error("LLM provider not configured. Set env.LLM_PROVIDER_URL and env.LLM_API_KEY.");
-  },
-  getEditorStub: () => {
-    throw new Error("Editor stub factory not configured.");
+  // Claude (Anthropic) provider; reads LLM_* from env (see .dev.vars).
+  llmProvider: (env, messages, tools) => createAnthropicLlmProvider(env)(messages, tools),
+  // The Operator's Editor lives at idFromName(`${userId}:${docId}`).
+  getEditorStub: (env, docName) => {
+    const ns = (env as Env).PSD_EDITOR;
+    return ns.get(ns.idFromName(docName));
   },
 });
 
@@ -26,6 +28,10 @@ interface Env extends EditorEnv {
   PSD_EDITOR: DurableObjectNamespace;
   PSD_OPERATOR: DurableObjectNamespace;
   INTERNAL_TOKEN: string;
+  // Populated from packages/cloudflare-psd/.dev.vars (or wrangler secrets).
+  LLM_BASE_URL?: string;
+  LLM_API_KEY?: string;
+  LLM_MODEL?: string;
 }
 
 const EDITOR_METHODS = new Set([

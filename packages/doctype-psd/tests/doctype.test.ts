@@ -21,9 +21,11 @@ describe("createPsdDocumentType", () => {
     expect(layers.find(l => l.name === "red-box").opacity).toBe(0.5);
   });
 
-  it("exposes apply_* and query_* tools + contentType", () => {
+  it("exposes clean tool names with op routing metadata + contentType", () => {
     expect(dt.contentType).toBe("image/vnd.adobe.photoshop");
-    expect(dt.tools.add_layer.name).toBe("apply_add_layer");
-    expect(dt.tools.getLayers.name).toBe("query_getLayers");
+    expect(dt.tools.add_layer.name).toBe("addLayer");
+    expect(dt.tools.add_layer.op).toEqual({ mode: "apply", kind: "add_layer" });
+    expect(dt.tools.getLayers.name).toBe("getLayers");
+    expect(dt.tools.getLayers.op).toEqual({ mode: "query", kind: "getLayers" });
   });
 });

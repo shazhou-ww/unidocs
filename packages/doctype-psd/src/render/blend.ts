@@ -1,6 +1,18 @@
 export type BlendFn = (cb: number, cs: number) => number;
 
-/** Separable blend functions (backdrop, source in 0..1). Unlisted modes fall back to normal. */
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+const colorDodge: BlendFn = (cb, cs) => (cs >= 1 ? 1 : Math.min(1, cb / (1 - cs)));
+const colorBurn: BlendFn = (cb, cs) => (cs <= 0 ? 0 : 1 - Math.min(1, (1 - cb) / cs));
+// W3C soft-light D(cb) helper.
+const softLightD = (cb: number) => (cb <= 0.25 ? ((16 * cb - 12) * cb + 4) * cb : Math.sqrt(cb));
+
+/**
+ * Separable blend functions (backdrop, source in 0..1). Keys are canonical
+ * hyphenated names (see load.ts normalization). Unlisted / non-separable
+ * modes (hue/saturation/color/luminosity, dissolve, pass-through) fall back
+ * to normal.
+ */
 const BLEND: Record<string, BlendFn> = {
   normal: (_cb, cs) => cs,
   multiply: (cb, cs) => cb * cs,
@@ -8,8 +20,20 @@ const BLEND: Record<string, BlendFn> = {
   darken: (cb, cs) => Math.min(cb, cs),
   lighten: (cb, cs) => Math.max(cb, cs),
   overlay: (cb, cs) => (cb <= 0.5 ? 2 * cb * cs : 1 - 2 * (1 - cb) * (1 - cs)),
-  "color-dodge": (cb, cs) => (cs >= 1 ? 1 : Math.min(1, cb / (1 - cs))),
-  "color-burn": (cb, cs) => (cs <= 0 ? 0 : 1 - Math.min(1, (1 - cb) / cs)),
+  "hard-light": (cb, cs) => (cs <= 0.5 ? 2 * cb * cs : 1 - 2 * (1 - cb) * (1 - cs)),
+  "color-dodge": colorDodge,
+  "color-burn": colorBurn,
+  "linear-dodge": (cb, cs) => clamp01(cb + cs),
+  "linear-burn": (cb, cs) => clamp01(cb + cs - 1),
+  "linear-light": (cb, cs) => clamp01(cb + 2 * cs - 1),
+  "vivid-light": (cb, cs) => (cs <= 0.5 ? colorBurn(cb, 2 * cs) : colorDodge(cb, 2 * (cs - 0.5))),
+  "pin-light": (cb, cs) => (cs <= 0.5 ? Math.min(cb, 2 * cs) : Math.max(cb, 2 * cs - 1)),
+  "soft-light": (cb, cs) =>
+    cs <= 0.5 ? cb - (1 - 2 * cs) * cb * (1 - cb) : cb + (2 * cs - 1) * (softLightD(cb) - cb),
+  difference: (cb, cs) => Math.abs(cb - cs),
+  exclusion: (cb, cs) => cb + cs - 2 * cb * cs,
+  subtract: (cb, cs) => Math.max(0, cb - cs),
+  divide: (cb, cs) => (cs <= 0 ? 1 : Math.min(1, cb / cs)),
 };
 
 export function blendFn(mode: string): BlendFn {

@@ -1,19 +1,49 @@
 import { writePsd, type Psd, type Layer as AgLayer } from "ag-psd";
-import type { PsdDoc, Layer } from "../model/types.js";
+import type { PsdDoc, Layer, Mask } from "../model/types.js";
 import { installCanvasShim } from "./canvas-shim.js";
 
+function agAdjustType(k: string): string {
+  switch (k) {
+    case "blwh": return "black & white";
+    case "hue2": return "hue/saturation";
+    case "brit": return "brightness/contrast";
+    case "levl": return "levels";
+    case "curv": return "curves";
+    default: return k;
+  }
+}
+
+function mapMask(m: Mask): AgLayer["mask"] {
+  const [top, left, bottom, right] = m.bounds;
+  const out: Record<string, unknown> = { top, left, bottom, right, defaultColor: m.defaultColor };
+  if (m.pixels.width > 0) {
+    out.imageData = { width: m.pixels.width, height: m.pixels.height, data: m.pixels.data };
+  }
+  return out as AgLayer["mask"];
+}
+
 function mapLayer(l: Layer): AgLayer {
-  const [top, left, bottom, right] = l.bounds;
+  // Defensive: tolerate a layer with missing bounds so a previously-corrupted
+  // document can still be serialized (and thus recovered) instead of throwing.
+  const [top, left, bottom, right] = l.bounds ?? [0, 0, 0, 0];
   const out: AgLayer = {
     name: l.name,
     opacity: l.opacity,
-    blendMode: l.blendMode as any,
+    // Back to ag-psd's space-separated names ("color-dodge" → "color dodge").
+    blendMode: l.blendMode.replace(/-/g, " ") as any,
     hidden: !l.visible,
     clipping: l.clipping,
     left, top, right, bottom,
   };
-  if (l.children) out.children = l.children.map(mapLayer);
-  else if (l.pixels) out.imageData = { width: l.pixels.width, height: l.pixels.height, data: l.pixels.data } as any;
+  if (l.fillOpacity !== undefined && l.fillOpacity !== 1) out.fillOpacity = l.fillOpacity;
+  if (l.mask) out.mask = mapMask(l.mask);
+  if (l.type === "adjustment" && l.adjustType) {
+    out.adjustment = { type: agAdjustType(l.adjustType), ...(l.params ?? {}) } as any;
+  } else if (l.children) {
+    out.children = l.children.map(mapLayer);
+  } else if (l.pixels) {
+    out.imageData = { width: l.pixels.width, height: l.pixels.height, data: l.pixels.data } as any;
+  }
   return out;
 }
 

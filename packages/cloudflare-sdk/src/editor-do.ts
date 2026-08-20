@@ -8,7 +8,10 @@
  *   KV (immutable facts):
  *     - docType: string
  *     - docId: string
- *     - snapshot: { version: number, bytes: Uint8Array } (latest known version, may lag one delta)
+ *     - snapshot: { version: number, hash: string } — pointer to the latest
+ *       document bytes in R2 (may lag one delta). The bytes live in R2, not
+ *       here: DO storage values are capped (~128 KiB), too small for a real
+ *       document, so only the small {version, hash} pointer is kept in KV.
  *
  *   DO sqlite:
  *     - deltas(version INTEGER PK, timestamp INTEGER, description TEXT, operations TEXT)
@@ -56,7 +59,9 @@ const DELTA_THRESHOLD = 20; // Snapshot every N deltas
 
 interface SnapshotKV {
   version: number;
-  bytes: Uint8Array;
+  hash: string;
+  /** Legacy inline bytes (pre-R2 snapshots); read for back-compat only. */
+  bytes?: Uint8Array;
 }
 
 export interface DocContext {
@@ -120,11 +125,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         )
       `);
 
-      // Load from KV snapshot
+      // Load from the latest snapshot: KV holds a {version, hash} pointer;
+      // the bytes come from R2 (content-addressed by hash).
       const snapshot = await this.#ctx.storage.get<SnapshotKV>(KEY_SNAPSHOT);
       if (snapshot) {
-        this.#doc = await config.load(snapshot.bytes);
-        this.#version = snapshot.version;
+        let bytes: Uint8Array | undefined;
+        if (snapshot.hash) {
+          const obj = await this.#env.CAS.get(snapshot.hash);
+          if (!obj) throw new Error(`Snapshot bytes missing from R2: ${snapshot.hash}`);
+          bytes = await obj.bytes();
+        } else if (snapshot.bytes) {
+          bytes = snapshot.bytes; // legacy inline-bytes snapshot
+        }
+        if (bytes) {
+          this.#doc = await config.load(bytes);
+          this.#version = snapshot.version;
+        }
       }
 
       // Replay deltas after snapshot version
@@ -148,7 +164,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     async #saveSnapshotKV(): Promise<void> {
       if (!this.#doc) return;
       const bytes = await config.save(this.#doc);
-      const snapshotKV: SnapshotKV = { version: this.#version, bytes };
+      const hash = await computeHash(bytes);
+      // Bytes go to R2 (no size cap); DO storage keeps only the small pointer.
+      // R2 is content-addressed, so this put is idempotent per unique content.
+      await this.#env.CAS.put(hash, bytes);
+      const snapshotKV: SnapshotKV = { version: this.#version, hash };
       await this.#ctx.storage.put(KEY_SNAPSHOT, snapshotKV);
     }
 

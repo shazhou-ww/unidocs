@@ -15,6 +15,10 @@ const layersEl = document.getElementById("layers") as HTMLDivElement;
 const statusEl = document.getElementById("status") as HTMLSpanElement;
 const fileInput = document.getElementById("file") as HTMLInputElement;
 const saveBtn = document.getElementById("save") as HTMLButtonElement;
+const chatLog = document.getElementById("chat-log") as HTMLDivElement;
+const chatForm = document.getElementById("chat-form") as HTMLFormElement;
+const chatInput = document.getElementById("chat-input") as HTMLTextAreaElement;
+const chatSend = document.getElementById("chat-send") as HTMLButtonElement;
 
 interface LayerSummary {
   id: string; type: string; name: string; opacity: number; blendMode: string; visible: boolean;
@@ -23,20 +27,19 @@ type Op = { kind: string; payload: Record<string, unknown> };
 
 function setStatus(msg: string): void { statusEl.textContent = msg; }
 
-/** Unwrap the runtime's binary encoding: { $unidocs: { type: "bytes", base64 } }. */
-function unwrapBytes(v: unknown): Uint8Array {
-  const b64 = (v as { $unidocs: { base64: string } }).$unidocs.base64;
+/** Decode a base64 string into raw bytes. */
+function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
 
-async function query(kind: string): Promise<unknown> {
+async function query(kind: string, payload?: Record<string, unknown>): Promise<unknown> {
   const r = await fetch(`${GW}/users/${USER}/${TYPE}/${docId}/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ kind }),
+    body: JSON.stringify(payload ? { kind, payload } : { kind }),
   });
   const body = await r.json();
   if (!body.success) throw new Error(body.error ?? `query ${kind} failed`);
@@ -45,7 +48,11 @@ async function query(kind: string): Promise<unknown> {
 }
 
 async function refreshView(): Promise<void> {
-  const png = unwrapBytes(await query("getPreview"));
+  // getPreview returns { $image: { base64, mediaType }, width, height, region }.
+  // Pass a large maxSize so the viewer gets a full-resolution render (the
+  // agent, which omits maxSize, gets a downscaled preview instead).
+  const res = await query("getPreview", { maxSize: 8192 }) as { $image: { base64: string } };
+  const png = b64ToBytes(res.$image.base64);
   const url = URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }));
   view.src = url;
   if (lastUrl) URL.revokeObjectURL(lastUrl);
@@ -156,6 +163,68 @@ saveBtn.onclick = () => {
   a.href = `${GW}/users/${USER}/${TYPE}/${docId}/export`;
   a.download = "export.psd";
   a.click();
+};
+
+// --- Chat: talk directly to the PSD domain agent (Operator DO) ---
+
+function addMsg(role: "user" | "agent" | "err", text: string, pending = false): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = `msg ${role}${pending ? " pending" : ""}`;
+  el.textContent = text;
+  chatLog.append(el);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  return el;
+}
+
+let chatBusy = false;
+
+/** Send a natural-language instruction to the Operator; it runs its own
+ *  ReAct loop (query_/apply_ PSD tools) and mutates the document server-side. */
+async function sendChat(text: string): Promise<void> {
+  if (!docId || chatBusy) return;
+  chatBusy = true;
+  chatSend.disabled = true;
+  addMsg("user", text);
+  const thinking = addMsg("agent", "thinking…", true);
+  try {
+    const r = await fetch(`${GW}/users/${USER}/${TYPE}/${docId}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ instruction: text }),
+    });
+    const body = await r.json();
+    thinking.remove();
+    if (!body.success) throw new Error(body.error ?? "agent run failed");
+    const reply = body.data?.response;
+    addMsg("agent", typeof reply === "string" && reply.trim() ? reply : "(done)");
+    // The agent may have applied ops — resync the view, layers, and version.
+    await refreshView();
+    await refreshLayers();
+    setStatus(`v${version} · ${docId?.slice(0, 8)}`);
+  } catch (e) {
+    thinking.remove();
+    addMsg("err", (e as Error).message);
+  } finally {
+    chatBusy = false;
+    chatSend.disabled = false;
+    chatInput.focus();
+  }
+}
+
+chatForm.onsubmit = (e) => {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text) return;
+  chatInput.value = "";
+  void sendChat(text);
+};
+
+// Enter sends; Shift+Enter inserts a newline.
+chatInput.onkeydown = (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    chatForm.requestSubmit();
+  }
 };
 
 // On start: upload the bundled sample and open it (fully server-side).

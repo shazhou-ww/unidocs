@@ -3,7 +3,7 @@ import type { PsdDoc, Layer } from "../src/model/types.js";
 import { addLayer, removeLayer, reorder, setProps } from "../src/ops/layer-ops.js";
 import { findLayer, findParentList } from "../src/model/tree.js";
 
-const leaf = (id: string): Layer => ({ id, type: "raster", name: id, bounds: [0,0,1,1], opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false });
+const leaf = (id: string): Layer => ({ id, type: "raster", name: id, bounds: [0,0,1,1], opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false, pixels: { width: 1, height: 1, data: new Uint8ClampedArray(4) } });
 const doc = (): PsdDoc => ({ canvas: { width: 10, height: 10, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [leaf("a")] });
 
 describe("layer ops", () => {

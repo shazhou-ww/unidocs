@@ -3,6 +3,13 @@ export interface AgentToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * How the operator routes this tool. `mode` selects the Editor endpoint
+   * (query = read, apply = write); `kind` is the query kind or op kind sent
+   * to it. When omitted, the operator falls back to the legacy `query_`/
+   * `apply_` name-prefix convention.
+   */
+  op?: { mode: "query" | "apply"; kind: string };
 }
 
 /** Scalar value returned by a document query. */
