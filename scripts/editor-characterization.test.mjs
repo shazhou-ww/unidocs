@@ -71,12 +71,13 @@ test("并发的两个同 baseVersion apply:恰好一个成功,另一个 409 且�
   expect(data.map((entry) => entry.version)).toEqual([1, 2]);
 });
 
-test("第 20 个 delta 触发自动快照:R2 有对象,D1 snapshots 表有 version=20 的行", async () => {
+test("初始快照 version 1 + 阈值快照 version 21:两次快照的 R2 对象都存在,D1 记录完整", async () => {
   const userId = "snapshot-user";
   const docId = await createDoc(userId);
 
-  // 创建时已写入 version 1;这里再 apply 25 次,版本推进到 26。
-  // #shouldSnapshot() 在 delta 数量达到 20 时触发,即 version 20 那一次。
+  // POST /_internal/create 时 version 1 的 delta 被立即快照到 R2 + D1。
+  // 之后 apply 25 次,版本推进到 26。#shouldSnapshot() 检查 version > lastSnapshotVersion 的 delta 数:
+  // 由于 lastSnapshotVersion = 1,当 version 21 被创建时已累积 20 个新 delta,达到阈值 DELTA_THRESHOLD = 20,触发第二次快照。
   for (let baseVersion = 1; baseVersion <= 25; baseVersion += 1) {
     const res = await applyOp(docId, baseVersion, `content ${baseVersion}`, userId);
     expect(res.status, `apply at baseVersion ${baseVersion}`).toBe(200);
