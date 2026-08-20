@@ -36,6 +36,13 @@ export class PixelCache {
     this.maxBytes = maxBytes;
   }
 
+  /** Current total decoded bytes held in the cache (sum of `data.length`
+   *  across all entries). Exposed so callers/tests can verify the byte
+   *  budget is actually enforced, without reaching into private state. */
+  get sizeBytes(): number {
+    return this.totalBytes;
+  }
+
   get(hash: string): Pixels | undefined {
     const hit = this.map.get(hash);
     if (hit === undefined) return undefined;
