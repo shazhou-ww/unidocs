@@ -47,6 +47,7 @@
 import type { DocumentType } from "@unidocs/core";
 import type { HistoryEntry, ApplyResult } from "./history.js";
 import { encodeQueryValue } from "./query-value.js";
+import { computeHash } from "./content-hash.js";
 
 // KV keys
 const KEY_DOC_TYPE = "docType";
@@ -85,12 +86,6 @@ export interface EditorDOInstance {
 }
 
 export type EditorDOClass = new (ctx: DurableObjectState, env: Env) => EditorDOInstance;
-
-async function computeHash(bytes: Uint8Array): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, "0")).join("");
-}
 
 export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQuery, TOp>): EditorDOClass {
   return class EditorDO {
