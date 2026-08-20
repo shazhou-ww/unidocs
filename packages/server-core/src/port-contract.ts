@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import type { BlobCas, Delta, DeltaLog, SnapshotCache } from "./ports.js";
+import type {
+  BlobCas,
+  Delta,
+  DeltaLog,
+  DocIndex,
+  DocIndexQuery,
+  SnapshotCache,
+} from "./ports.js";
 import { VersionConflictError } from "./errors.js";
 
 function makeDelta(version: number, description = `delta ${version}`): Delta {
@@ -8,7 +15,13 @@ function makeDelta(version: number, description = `delta ${version}`): Delta {
 
 export function runPortContract(
   label: string,
-  factory: () => Promise<{ deltas: DeltaLog; snapshots: SnapshotCache; blobs: BlobCas }>,
+  factory: () => Promise<{
+    deltas: DeltaLog;
+    snapshots: SnapshotCache;
+    blobs: BlobCas;
+    index: DocIndex;
+    indexQuery: DocIndexQuery;
+  }>,
 ): void {
   describe(label, () => {
     test("head() starts at 0, becomes the appended version after append", async () => {
@@ -153,6 +166,69 @@ export function runPortContract(
       const bytes = new Uint8Array([1, 2, 3]);
       await snapshots.put(5, bytes);
       expect(await snapshots.get()).toEqual({ version: 5, bytes });
+    });
+
+    // DocIndex.register() must precede recordSnapshot()/touch() for a
+    // document — the index learns the identity it keys those rows by from
+    // register, and may drop calls for a document it has never seen. That is
+    // exactly what happened once: a session snapshotted before registering
+    // and the creation-time snapshot was silently dropped, while the delta
+    // log's own copy of the same snapshot wrote fine. Assert the state the
+    // index KEPT, never merely that the method was called.
+    test("DocIndex: a snapshot recorded after register() is readable back", async () => {
+      const { index, indexQuery } = await factory();
+      const now = 1_700_000_000_000;
+
+      await index.register({
+        docId: "doc-1",
+        docType: "text",
+        ownerId: "user-1",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await index.recordSnapshot(1, "hash-1", now);
+      await index.recordSnapshot(21, "hash-21", now + 1);
+
+      expect(await indexQuery.snapshots("text", "doc-1")).toEqual([
+        { version: 1, hash: "hash-1" },
+        { version: 21, hash: "hash-21" },
+      ]);
+    });
+
+    test("DocIndex: snapshots() is ascending by version and empty for an unknown document", async () => {
+      const { index, indexQuery } = await factory();
+      const now = 1_700_000_000_000;
+      await index.register({
+        docId: "doc-1",
+        docType: "text",
+        ownerId: "user-1",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await index.recordSnapshot(41, "hash-41", now);
+      await index.recordSnapshot(21, "hash-21", now);
+      await index.recordSnapshot(1, "hash-1", now);
+
+      expect((await indexQuery.snapshots("text", "doc-1")).map((r) => r.version)).toEqual([
+        1, 21, 41,
+      ]);
+      expect(await indexQuery.snapshots("text", "no-such-doc")).toEqual([]);
+      expect(await indexQuery.snapshots("no-such-type", "doc-1")).toEqual([]);
+    });
+
+    test("DocIndex: register() then list() finds the document by owner and type", async () => {
+      const { index, indexQuery } = await factory();
+      const now = 1_700_000_000_000;
+      await index.register({
+        docId: "doc-1",
+        docType: "text",
+        ownerId: "user-1",
+        createdAt: now,
+        updatedAt: now,
+      });
+      expect(await indexQuery.list("user-1", "text")).toHaveLength(1);
+      expect(await indexQuery.list("user-2", "text")).toEqual([]);
+      expect(await indexQuery.list("user-1", "other")).toEqual([]);
     });
 
     test("BlobCas: putIfAbsent is idempotent, get roundtrips, unknown hash is null", async () => {

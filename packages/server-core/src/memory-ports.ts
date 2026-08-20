@@ -110,8 +110,15 @@ interface SharedDocStore {
   snapshots: Map<string, { version: number; hash: string; timestamp: number }[]>;
 }
 
+function docKey(docType: string, docId: string): string {
+  return `${docType}:${docId}`;
+}
+
 class MemoryDocIndex implements DocIndex {
-  #docId: string | null = null;
+  // Learned from register(). Until then this index does not know which
+  // document it is indexing, so touch()/recordSnapshot() have nowhere to
+  // write — see the contract note on DocIndex.
+  #identity: { docType: string; docId: string } | null = null;
   #store: SharedDocStore;
 
   constructor(store: SharedDocStore) {
@@ -119,21 +126,22 @@ class MemoryDocIndex implements DocIndex {
   }
 
   async register(rec: DocRecord): Promise<void> {
-    this.#docId = rec.docId;
-    this.#store.docs.set(rec.docId, { ...rec });
+    this.#identity = { docType: rec.docType, docId: rec.docId };
+    this.#store.docs.set(docKey(rec.docType, rec.docId), { ...rec });
   }
 
   async touch(at: number): Promise<void> {
-    if (this.#docId === null) return;
-    const rec = this.#store.docs.get(this.#docId);
+    if (this.#identity === null) return;
+    const rec = this.#store.docs.get(docKey(this.#identity.docType, this.#identity.docId));
     if (rec) rec.updatedAt = at;
   }
 
   async recordSnapshot(version: number, hash: string, timestamp: number): Promise<void> {
-    if (this.#docId === null) return;
-    const list = this.#store.snapshots.get(this.#docId) ?? [];
+    if (this.#identity === null) return;
+    const key = docKey(this.#identity.docType, this.#identity.docId);
+    const list = this.#store.snapshots.get(key) ?? [];
     list.push({ version, hash, timestamp });
-    this.#store.snapshots.set(this.#docId, list);
+    this.#store.snapshots.set(key, list);
   }
 }
 
@@ -148,6 +156,13 @@ class MemoryDocIndexQuery implements DocIndexQuery {
     return [...this.#store.docs.values()].filter(
       (r) => r.ownerId === userId && r.docType === docType,
     );
+  }
+
+  async snapshots(docType: string, docId: string): Promise<SnapshotRef[]> {
+    const list = this.#store.snapshots.get(docKey(docType, docId)) ?? [];
+    return [...list]
+      .sort((a, b) => a.version - b.version)
+      .map(({ version, hash }) => ({ version, hash }));
   }
 }
 

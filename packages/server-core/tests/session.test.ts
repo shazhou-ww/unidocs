@@ -94,16 +94,15 @@ class FakeCas implements CasGateway {
 // --------------------------------------------------------------------------
 
 /**
- * Delegating spy over DocIndex — the *global* index side (D1 `snapshots` +
- * `docs` in the Cloudflare deployment), as opposed to the delta log's own
- * snapshot refs. The two are written separately, and a bug can hit one while
- * the other stays healthy, so tests must look at both.
+ * Delegating spy over DocIndex. Pure observation — it records which methods
+ * were called and delegates everything to the real index. What the index
+ * actually KEPT is read back through `DocIndexQuery.snapshots()`, never
+ * reconstructed here: a spy that reimplements the index's semantics can
+ * drift from it and go green on a bug the real implementation has.
  */
 class SpyDocIndex implements DocIndex {
   calls: string[] = [];
   registered: DocRecord[] = [];
-  /** Snapshots the index actually kept (see recordSnapshot below). */
-  snapshots: { version: number; hash: string; timestamp: number }[] = [];
   touched: number[] = [];
 
   #inner: DocIndex;
@@ -127,13 +126,6 @@ class SpyDocIndex implements DocIndex {
   async recordSnapshot(version: number, hash: string, timestamp: number): Promise<void> {
     this.calls.push("recordSnapshot");
     await this.#inner.recordSnapshot(version, hash, timestamp);
-    // Mirror the real index's semantics: a snapshot filed against a document
-    // the index has never been told about has nowhere to go and is dropped.
-    // `snapshots` is therefore what the index KEPT, not what it was asked to
-    // keep — asserting on the call alone would not have caught C1.
-    if (this.registered.length > 0) {
-      this.snapshots.push({ version, hash, timestamp });
-    }
   }
 }
 
@@ -284,7 +276,7 @@ describe("DocumentSession.apply — failure paths", () => {
 
 describe("DocumentSession — normal paths", () => {
   it("5. create() writes version 1, an empty delta, a durable snapshot and an index row", async () => {
-    const { session, deps, ports, index } = makeHarness();
+    const { session, deps, ports } = makeHarness();
     await session.load();
 
     const result = await session.create();
@@ -312,10 +304,10 @@ describe("DocumentSession — normal paths", () => {
     // the global index are two independent writes; asserting only the log let
     // a regression through once already, because DocIndex.recordSnapshot
     // drops records filed against a document it has not been told about.
-    expect(index.snapshots).toContainEqual({ version: 1, hash: ref!.hash, timestamp: expect.any(Number) });
-    // Hence the ordering invariant: register comes first.
-    expect(index.calls.indexOf("register")).toBeGreaterThanOrEqual(0);
-    expect(index.calls.indexOf("register")).toBeLessThan(index.calls.indexOf("recordSnapshot"));
+    // Read what the index KEPT, not what it was asked to keep.
+    expect(await ports.indexQuery.snapshots("text", "doc-1")).toEqual([
+      { version: 1, hash: ref!.hash },
+    ]);
 
     // Snapshot cache refreshed too.
     expect(await deps.snapshots.get()).toEqual({ version: 1, bytes: encoder.encode("") });
@@ -327,7 +319,7 @@ describe("DocumentSession — normal paths", () => {
   });
 
   it("6. snapshots every 20 deltas: after 21 applies the latest snapshot is version 21", async () => {
-    const { session, deps } = makeHarness();
+    const { session, deps, ports } = makeHarness();
     await session.load();
     await session.create();
 
@@ -338,6 +330,11 @@ describe("DocumentSession — normal paths", () => {
     expect(session.version).toBe(22);
     const ref = await deps.deltas.latestSnapshotRef();
     expect(ref?.version).toBe(21);
+    // Both snapshot sides agree — this is the phase-0 [1, 21] assertion, which
+    // reads the global index, reproduced as a pure unit test.
+    expect((await ports.indexQuery.snapshots("text", "doc-1")).map((r) => r.version)).toEqual([
+      1, 21,
+    ]);
   });
 
   it("7. rollback() replays from the nearest snapshot and moves the version forward", async () => {
@@ -504,7 +501,7 @@ describe("DocumentSession — normal paths", () => {
   });
 
   it("9. initFromHash() adopts an existing blob as version 1", async () => {
-    const { session, deps, index } = makeHarness();
+    const { session, deps, ports } = makeHarness();
     const bytes = encoder.encode("cloned content");
     const hash = await computeHash(bytes);
     await deps.blobs.putIfAbsent(hash, bytes);
@@ -525,7 +522,6 @@ describe("DocumentSession — normal paths", () => {
     // The snapshot reference points at the adopted blob — no new blob written.
     expect(await deps.deltas.latestSnapshotRef()).toEqual({ version: 1, hash });
     // The global index gets it too, and only because register ran first.
-    expect(index.snapshots).toContainEqual({ version: 1, hash, timestamp: expect.any(Number) });
-    expect(index.calls.indexOf("register")).toBeLessThan(index.calls.indexOf("recordSnapshot"));
+    expect(await ports.indexQuery.snapshots("text", "doc-1")).toEqual([{ version: 1, hash }]);
   });
 });

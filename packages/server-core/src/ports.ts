@@ -47,6 +47,17 @@ export interface BlobCas {
   get(hash: string): Promise<Uint8Array | null>;
 }
 
+/**
+ * The global, cross-document index (the shared D1 database in the Cloudflare
+ * deployment): which documents exist, when they were last touched, and which
+ * snapshots they have.
+ *
+ * **Contract: `register()` MUST be called before any `recordSnapshot()` or
+ * `touch()` for that document.** An implementation may rely on this — it is
+ * how it learns the identity it needs to key those rows by, and it is free to
+ * drop calls that arrive for a document it has never been told about. Callers
+ * that snapshot first and register second silently lose the record.
+ */
 export interface DocIndex {
   register(rec: DocRecord): Promise<void>;
   touch(at: number): Promise<void>;
@@ -55,4 +66,9 @@ export interface DocIndex {
 
 export interface DocIndexQuery {
   list(userId: string, docType: string): Promise<DocRecord[]>;
+  /**
+   * Snapshots the index holds for one document, ascending by version.
+   * Keyed by `(docType, docId)` to match the index's primary key.
+   */
+  snapshots(docType: string, docId: string): Promise<SnapshotRef[]>;
 }
