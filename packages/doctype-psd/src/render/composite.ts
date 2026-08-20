@@ -1,6 +1,30 @@
 import type { PsdDoc, Layer, Pixels, Mask } from "../model/types.js";
 import { compositeOver } from "./blend.js";
 import { findLayer } from "../model/tree.js";
+import { type BlobStore, PixelCache, resolvePixels } from "./pixel-source.js";
+
+/** Render context: where lazy pixel refs are faulted in from, and the decoded
+ *  cache they land in. Resident-only documents never touch the store. */
+export interface RenderCtx {
+  store: BlobStore;
+  cache: PixelCache;
+}
+
+/** A store that fails loudly if a lazy PixelRef is ever resolved without a real
+ *  BlobStore — resident documents never hit `get`, so they pass. */
+const NO_STORE: BlobStore = {
+  async put() {
+    throw new Error("no BlobStore");
+  },
+  async get() {
+    throw new Error("render: lazy PixelRef but no BlobStore provided in RenderCtx");
+  },
+};
+
+/** Default context for resident-only callers that have no store yet. */
+function defaultCtx(): RenderCtx {
+  return { store: NO_STORE, cache: new PixelCache(64) };
+}
 
 /** Mask coverage at canvas pixel (cx,cy), 0..1. Value is channel 0 of the
  *  mask; outside the mask rect it is `defaultColor`. */
@@ -17,11 +41,11 @@ function maskCoverageAt(mask: Mask, cx: number, cy: number): number {
 }
 
 /** Flatten a document to a single RGBA buffer (canvas-sized). Pure TS, no canvas/wasm. */
-export function render(doc: PsdDoc): Pixels {
+export async function render(doc: PsdDoc, ctx: RenderCtx = defaultCtx()): Promise<Pixels> {
   const w = doc.canvas.width;
   const h = doc.canvas.height;
   const acc = new Uint8ClampedArray(w * h * 4);
-  renderList(acc, w, h, doc.layers);
+  await renderList(acc, w, h, doc.layers, ctx);
   return { width: w, height: h, data: acc };
 }
 
@@ -31,24 +55,26 @@ export function render(doc: PsdDoc): Pixels {
  * (the nearest non-clipping layer). A new non-clipping layer starts a new
  * clip base.
  */
-function renderList(acc: Uint8ClampedArray, w: number, h: number, layers: Layer[]): void {
+async function renderList(acc: Uint8ClampedArray, w: number, h: number, layers: Layer[], ctx: RenderCtx): Promise<void> {
   let baseCoverage: Uint8ClampedArray | null = null;
   for (let i = 0; i < layers.length; i++) {
     const layer = layers[i];
+    // Hidden layers are skipped BEFORE any fault-in: a hidden lazy PixelRef is
+    // never fetched or decoded.
     if (!layer.visible) {
       if (!layer.clipping) baseCoverage = null;
       continue;
     }
     if (layer.clipping && baseCoverage) {
-      applyLayer(acc, w, h, layer, baseCoverage);
+      await applyLayer(acc, w, h, layer, ctx, baseCoverage);
     } else {
-      applyLayer(acc, w, h, layer);
+      await applyLayer(acc, w, h, layer, ctx);
       // The clip base is only needed if a following sibling actually clips to
       // it. Computing it eagerly for every layer is very expensive — for a
       // group it re-renders the whole group into a fresh canvas buffer — so
       // derive it lazily only when the next visible layer is a clipping layer.
       const next = nextVisible(layers, i + 1);
-      baseCoverage = layer.type !== "adjustment" && next?.clipping ? layerAlpha(w, h, layer) : null;
+      baseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(w, h, layer, ctx) : null;
     }
   }
 }
@@ -73,17 +99,17 @@ function nextVisible(layers: Layer[], from: number): Layer | null {
  * TODO(perf): render into the existing buffer when the canvas size is unchanged
  * to avoid re-allocating; pool the group/adjustment/clip scratch buffers.
  */
-let framebuffer: { doc: PsdDoc; px: Pixels } | null = null;
-export function renderCached(doc: PsdDoc): Pixels {
+let framebuffer: { doc: PsdDoc; px: Promise<Pixels> } | null = null;
+export function renderCached(doc: PsdDoc, ctx?: RenderCtx): Promise<Pixels> {
   if (framebuffer && framebuffer.doc === doc) return framebuffer.px;
-  const px = render(doc);
+  const px = render(doc, ctx); // cache the Promise so concurrent renders of the same doc dedupe
   framebuffer = { doc, px }; // replaces the previous composite → old buffer is freed
   return px;
 }
 
 /** Reuse the cached composite, then crop to a canvas rectangle [top,left,bottom,right]. */
-export function renderRegion(doc: PsdDoc, rect: [number, number, number, number]): Pixels {
-  const full = renderCached(doc);
+export async function renderRegion(doc: PsdDoc, rect: [number, number, number, number], ctx?: RenderCtx): Promise<Pixels> {
+  const full = await renderCached(doc, ctx);
   const t = Math.max(0, Math.floor(rect[0]));
   const l = Math.max(0, Math.floor(rect[1]));
   const b = Math.min(full.height, Math.ceil(rect[2]));
@@ -106,12 +132,12 @@ export function renderRegion(doc: PsdDoc, rect: [number, number, number, number]
  * standalone pixels — or `context:true` fall back to the composite cropped to
  * the layer's bounds.
  */
-export function renderLayer(doc: PsdDoc, layerId: string, opts: { context?: boolean } = {}): Pixels {
+export async function renderLayer(doc: PsdDoc, layerId: string, opts: { context?: boolean } = {}, ctx?: RenderCtx): Promise<Pixels> {
   const layer = findLayer(doc.layers, layerId);
   if (!layer) throw new Error(`layer not found: ${layerId}`);
   const isolatable = (layer.type === "raster" || layer.type === "group") && !opts.context;
   const source: PsdDoc = isolatable ? { canvas: doc.canvas, layers: [layer] } : doc;
-  return renderRegion(source, layer.bounds);
+  return renderRegion(source, layer.bounds, ctx);
 }
 
 /** Nearest-neighbour downscale so the longer side is at most `maxSize`. No-op if already small. */
@@ -132,12 +158,12 @@ export function downscale(px: Pixels, maxSize: number): Pixels {
   return { width: tw, height: th, data };
 }
 
-function applyLayer(acc: Uint8ClampedArray, w: number, h: number, layer: Layer, clip?: Uint8ClampedArray): void {
+async function applyLayer(acc: Uint8ClampedArray, w: number, h: number, layer: Layer, ctx: RenderCtx, clip?: Uint8ClampedArray): Promise<void> {
   if (!layer.visible) return;
 
   if (layer.type === "group") {
     const sub = new Uint8ClampedArray(w * h * 4);
-    renderList(sub, w, h, layer.children ?? []);
+    await renderList(sub, w, h, layer.children ?? [], ctx);
     compositeBuffer(acc, w, h, sub, w, h, 0, 0, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip);
     return;
   }
@@ -154,24 +180,28 @@ function applyLayer(acc: Uint8ClampedArray, w: number, h: number, layer: Layer, 
   }
 
   if (layer.pixels) {
+    // Fault in this layer's pixels (resident passthrough or lazy PixelRef). We
+    // await here, and renderList awaits each layer in turn, so at most one
+    // layer's pixels are being resolved at any instant.
+    const px = await resolvePixels(layer.pixels, ctx.store, ctx.cache);
     const [top, left] = layer.bounds;
     // Drop Shadow renders BEHIND the fill (and is an effect, so it uses layer
     // opacity, not fillOpacity — visible even on a fill:0 layer).
-    if (layer.dropShadow) dropShadowEffect(acc, w, h, layer, clip);
+    if (layer.dropShadow) dropShadowEffect(acc, w, h, layer, px, clip);
     // Fill contribution. `fillOpacity` scales ONLY the layer's own fill, never
     // its effects — a fill:0 layer shows only its stroke/overlay (the classic
     // "frame" technique: transparent glass with a visible border).
     // Color Overlay is folded into the fill composite (unchanged legacy path,
     // kept exact for verified renders); it is not attenuated by fillOpacity.
     if (layer.colorOverlay) {
-      compositeBuffer(acc, w, h, layer.pixels.data, layer.pixels.width, layer.pixels.height, left, top, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip, layer.colorOverlay);
+      compositeBuffer(acc, w, h, px.data, px.width, px.height, left, top, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip, layer.colorOverlay);
     } else {
       const fill = layer.opacity * (layer.fillOpacity ?? 1);
       if (fill > 0) {
-        compositeBuffer(acc, w, h, layer.pixels.data, layer.pixels.width, layer.pixels.height, left, top, fill, layer.blendMode, layer.mask ?? undefined, clip);
+        compositeBuffer(acc, w, h, px.data, px.width, px.height, left, top, fill, layer.blendMode, layer.mask ?? undefined, clip);
       }
     }
-    if (layer.stroke) strokeEffect(acc, w, h, layer, clip);
+    if (layer.stroke) strokeEffect(acc, w, h, layer, px, clip);
   }
 }
 
@@ -185,8 +215,7 @@ function applyLayer(acc: Uint8ClampedArray, w: number, h: number, layer: Layer, 
  *   center  → within `size/2` on whichever side
  * Stroke is a layer effect, so it uses layer.opacity (not fillOpacity).
  */
-function strokeEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Layer, clip?: Uint8ClampedArray): void {
-  const px = layer.pixels!;
+function strokeEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Layer, px: Pixels, clip?: Uint8ClampedArray): void {
   const st = layer.stroke!;
   const { width: sw, height: sh, data } = px;
   const [top, left] = layer.bounds;
@@ -239,9 +268,8 @@ function strokeEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Lay
  * layer's own fill (drawn afterwards) conceals the overlapping part, matching
  * Photoshop's default "layer knocks out drop shadow".
  */
-function dropShadowEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Layer, clip?: Uint8ClampedArray): void {
+function dropShadowEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Layer, px: Pixels, clip?: Uint8ClampedArray): void {
   const ds = layer.dropShadow!;
-  const px = layer.pixels!;
   const { width: sw, height: sh, data } = px;
   const [top, left] = layer.bounds;
   // Offset. Photoshop angle is CCW from east with y-up; screen y is down.
@@ -368,11 +396,11 @@ function chamferDist(w: number, h: number, isZero: (i: number) => boolean, oobIs
 
 /** Per-pixel canvas alpha (0..255) of a single layer, used as a clipping base
  *  (the base's own transparency + mask; opacity does not affect clip shape). */
-function layerAlpha(w: number, h: number, layer: Layer): Uint8ClampedArray | null {
+async function layerAlpha(w: number, h: number, layer: Layer, ctx: RenderCtx): Promise<Uint8ClampedArray | null> {
   const cov = new Uint8ClampedArray(w * h);
   if (layer.type === "group") {
     const sub = new Uint8ClampedArray(w * h * 4);
-    renderList(sub, w, h, layer.children ?? []);
+    await renderList(sub, w, h, layer.children ?? [], ctx);
     for (let i = 0; i < w * h; i++) {
       let a = sub[i * 4 + 3] / 255;
       if (layer.mask) a *= maskCoverageAt(layer.mask, i % w, Math.floor(i / w));
@@ -381,8 +409,10 @@ function layerAlpha(w: number, h: number, layer: Layer): Uint8ClampedArray | nul
     return cov;
   }
   if (layer.pixels) {
+    // Base already faulted in when it was applied → cache hit, no extra get.
+    const px = await resolvePixels(layer.pixels, ctx.store, ctx.cache);
     const [top, left] = layer.bounds;
-    const { width: sw, height: sh, data } = layer.pixels;
+    const { width: sw, height: sh, data } = px;
     for (let y = 0; y < sh; y++) {
       const cy = top + y;
       if (cy < 0 || cy >= h) continue;

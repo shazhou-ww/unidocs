@@ -1,5 +1,6 @@
 import type { PsdDoc, Layer } from "../model/types.js";
 import { findLayer } from "../model/tree.js";
+import { isRef } from "../render/pixel-source.js";
 
 function shiftBounds(b: [number, number, number, number], dx: number, dy: number): [number, number, number, number] {
   return [b[0] + dy, b[1] + dx, b[2] + dy, b[3] + dx];
@@ -27,7 +28,8 @@ export function transform(doc: PsdDoc, p: { layerId: string; op: Record<string, 
   const t = p.op.translate as [number, number] | undefined;
   if (t) shiftLayer(layer, t[0], t[1]);
   const flip = p.op.flip as "h" | "v" | undefined;
-  if (flip && layer.pixels) flipPixels(layer.pixels, flip);
+  // flipPixels needs resident Pixels; a PixelRef here is a bug in this phase.
+  if (flip && layer.pixels && !isRef(layer.pixels)) flipPixels(layer.pixels, flip);
 }
 
 function flipPixels(px: { width: number; height: number; data: Uint8ClampedArray }, dir: "h" | "v"): void {

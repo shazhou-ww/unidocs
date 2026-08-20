@@ -46,7 +46,7 @@ export async function compareToComposite(
   const tol = opts.tol ?? 12;
   const composite = readComposite(bytes);
   const doc = await load(bytes);
-  const ours = render(doc);
+  const ours = await render(doc);
 
   if (!composite) {
     return { width: ours.width, height: ours.height, meanErr: 0, maxErr: 0, pctOff: 0, hasComposite: false };

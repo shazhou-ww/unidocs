@@ -63,13 +63,15 @@ export async function runQuery(q: PsdQuery, doc: PsdDoc): Promise<QueryValue> {
       if (p.layerId) {
         const l = findLayer(doc.layers, p.layerId);
         if (!l) throw new Error(`layer not found: ${p.layerId}`);
-        px = renderLayer(doc, p.layerId);
+        // runQuery has no BlobStore yet (arrives in Task 4); resident docs
+        // never touch the store, so the default ctx is safe for now.
+        px = await renderLayer(doc, p.layerId);
         region = l.bounds;
       } else if (p.rect) {
-        px = renderRegion(doc, p.rect);
+        px = await renderRegion(doc, p.rect);
         region = p.rect;
       } else {
-        px = renderCached(doc);
+        px = await renderCached(doc);
         region = [0, 0, doc.canvas.height, doc.canvas.width];
       }
       return toImageResult(downscale(px, maxSize), region);

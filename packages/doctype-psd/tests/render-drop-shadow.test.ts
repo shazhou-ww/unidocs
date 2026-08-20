@@ -19,9 +19,9 @@ const square = (overrides: Partial<Layer>): Layer => ({
 const doc = (l: Layer): PsdDoc => ({ canvas: { width: 8, height: 8, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [l] });
 
 describe("drop shadow", () => {
-  it("offsets a hard-edged coloured copy behind the layer", () => {
+  it("offsets a hard-edged coloured copy behind the layer", async () => {
     // angle 90° (light from top) → shadow cast straight down by `distance`.
-    const out = render(doc(square({
+    const out = await render(doc(square({
       dropShadow: { color: { r: 255, g: 0, b: 0 }, opacity: 1, blendMode: "normal", angle: 90, distance: 2, size: 0, choke: 0 },
     })));
     // layer fill still at its own rows (2..3)
@@ -33,10 +33,10 @@ describe("drop shadow", () => {
     expect(rgbaAt(out, 0, 0)).toEqual([0, 0, 0, 0]);
   });
 
-  it("blurred shadow (size>0) softens beyond the shape edge", () => {
+  it("blurred shadow (size>0) softens beyond the shape edge", async () => {
     // No offset, size 1 blur → shadow bleeds one ring outside the 2x2 square,
     // proving the bounds-local blur buffer works (the ring is 0 without blur).
-    const out = render(doc(square({
+    const out = await render(doc(square({
       dropShadow: { color: { r: 255, g: 0, b: 0 }, opacity: 1, blendMode: "normal", angle: 0, distance: 0, size: 1, choke: 0 },
     })));
     // pixel just outside the square (row 1, col 2) picks up faint red from blur

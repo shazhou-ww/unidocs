@@ -1,3 +1,5 @@
+import type { PixelSource } from "../render/pixel-source.js";
+
 export type BlendMode =
   | "normal" | "dissolve" | "darken" | "multiply" | "color-burn" | "linear-burn"
   | "lighten" | "screen" | "color-dodge" | "linear-dodge" | "overlay"
@@ -50,7 +52,7 @@ export interface Layer {
   visible: boolean;
   locked: boolean;
   clipping: boolean;
-  pixels?: Pixels;                       // raster
+  pixels?: PixelSource;                  // raster: resident Pixels or a lazy PixelRef
   mask?: Mask | null;
   adjustType?: string;                   // adjustment (PSD key: brit/levl/curv/hue2/…)
   params?: Record<string, unknown>;      // adjustment params

@@ -13,28 +13,28 @@ const blue: Layer = { id: "blue", type: "raster", name: "blue", bounds: [0, 1, 1
 const doc: PsdDoc = { canvas: { width: 2, height: 1, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [red, blue] };
 
 describe("renderRegion", () => {
-  it("crops the composite to a rect", () => {
-    const out = renderRegion(doc, [0, 1, 1, 2]); // right pixel
+  it("crops the composite to a rect", async () => {
+    const out = await renderRegion(doc, [0, 1, 1, 2]); // right pixel
     expect(out.width).toBe(1); expect(out.height).toBe(1);
     expect([...out.data]).toEqual([0, 0, 255, 255]);
   });
 });
 
 describe("renderLayer", () => {
-  it("renders a single layer cropped to its bounds", () => {
-    const out = renderLayer(doc, "blue");
+  it("renders a single layer cropped to its bounds", async () => {
+    const out = await renderLayer(doc, "blue");
     expect(out.width).toBe(1); expect(out.height).toBe(1);
     expect([...out.data]).toEqual([0, 0, 255, 255]);
   });
 });
 
 describe("downscale", () => {
-  it("shrinks so the longer side is at most maxSize", () => {
+  it("shrinks so the longer side is at most maxSize", async () => {
     const px = { width: 4, height: 2, data: new Uint8ClampedArray(4 * 2 * 4) };
     const out = downscale(px, 2);
     expect(out.width).toBe(2); expect(out.height).toBe(1);
   });
-  it("is a no-op when already small", () => {
+  it("is a no-op when already small", async () => {
     const px = { width: 2, height: 2, data: new Uint8ClampedArray(2 * 2 * 4) };
     expect(downscale(px, 768)).toBe(px);
   });

@@ -19,23 +19,23 @@ const alphaAt = (px: { width: number; data: Uint8ClampedArray }, x: number, y: n
 const rgbAt = (px: { width: number; data: Uint8ClampedArray }, x: number, y: number) => [...px.data.slice((y*px.width+x)*4, (y*px.width+x)*4 + 3)];
 
 describe("fillOpacity", () => {
-  it("fillOpacity:0 makes the fill fully transparent", () => {
-    const out = render(docWith(base({ fillOpacity: 0 })));
+  it("fillOpacity:0 makes the fill fully transparent", async () => {
+    const out = await render(docWith(base({ fillOpacity: 0 })));
     for (let i = 0; i < 4 * 4; i++) expect(out.data[i * 4 + 3]).toBe(0);
   });
-  it("fillOpacity:0.5 halves the fill alpha", () => {
-    const out = render(docWith(base({ fillOpacity: 0.5 })));
+  it("fillOpacity:0.5 halves the fill alpha", async () => {
+    const out = await render(docWith(base({ fillOpacity: 0.5 })));
     expect(alphaAt(out, 2, 2)).toBe(128);
   });
-  it("absent fillOpacity keeps a fully opaque fill", () => {
-    const out = render(docWith(base({})));
+  it("absent fillOpacity keeps a fully opaque fill", async () => {
+    const out = await render(docWith(base({})));
     expect(alphaAt(out, 2, 2)).toBe(255);
   });
 });
 
 describe("stroke effect", () => {
-  it("inside stroke on a fill:0 layer draws a border, interior stays transparent", () => {
-    const out = render(docWith(base({
+  it("inside stroke on a fill:0 layer draws a border, interior stays transparent", async () => {
+    const out = await render(docWith(base({
       fillOpacity: 0,
       stroke: { color: { r: 128, g: 128, b: 128 }, opacity: 1, size: 1, position: "inside", blendMode: "normal" },
     })));

@@ -17,35 +17,35 @@ const solid = (id: string, w: number, h: number, rgba: number[], opts: Partial<{
 const doc = (w: number, h: number, layers: Layer[]): PsdDoc => ({ canvas: { width: w, height: h, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers });
 
 describe("render (software compositor)", () => {
-  it("opaque layer over transparent", () => {
-    const { data } = render(doc(1, 1, [solid("a", 1, 1, [255, 0, 0, 255])]));
+  it("opaque layer over transparent", async () => {
+    const { data } = await render(doc(1, 1, [solid("a", 1, 1, [255, 0, 0, 255])]));
     expect([...data]).toEqual([255, 0, 0, 255]);
   });
 
-  it("50% layer over opaque backdrop blends (normal)", () => {
-    const { data } = render(doc(1, 1, [solid("b", 1, 1, [0, 0, 255, 255]), solid("r", 1, 1, [255, 0, 0, 255], { opacity: 0.5 })]));
+  it("50% layer over opaque backdrop blends (normal)", async () => {
+    const { data } = await render(doc(1, 1, [solid("b", 1, 1, [0, 0, 255, 255]), solid("r", 1, 1, [255, 0, 0, 255], { opacity: 0.5 })]));
     expect([...data]).toEqual([128, 0, 128, 255]);
   });
 
-  it("multiply blend: red × white = red", () => {
-    const { data } = render(doc(1, 1, [solid("w", 1, 1, [255, 255, 255, 255]), solid("r", 1, 1, [255, 0, 0, 255], { blendMode: "multiply" })]));
+  it("multiply blend: red × white = red", async () => {
+    const { data } = await render(doc(1, 1, [solid("w", 1, 1, [255, 255, 255, 255]), solid("r", 1, 1, [255, 0, 0, 255], { blendMode: "multiply" })]));
     expect([...data]).toEqual([255, 0, 0, 255]);
   });
 
-  it("brightness adjustment raises value", () => {
+  it("brightness adjustment raises value", async () => {
     const adj: Layer = { id: "adj", type: "adjustment", name: "adj", adjustType: "brit", params: { brightness: 0.2 }, bounds: [0,0,1,1], opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false };
-    const { data } = render(doc(1, 1, [solid("g", 1, 1, [128, 128, 128, 255]), adj]));
+    const { data } = await render(doc(1, 1, [solid("g", 1, 1, [128, 128, 128, 255]), adj]));
     expect(data[0]).toBeGreaterThan(170);
     expect(data[0]).toBeLessThan(185);
   });
 
-  it("invisible layer is skipped", () => {
-    const { data } = render(doc(1, 1, [solid("a", 1, 1, [255, 0, 0, 255], { visible: false })]));
+  it("invisible layer is skipped", async () => {
+    const { data } = await render(doc(1, 1, [solid("a", 1, 1, [255, 0, 0, 255], { visible: false })]));
     expect([...data]).toEqual([0, 0, 0, 0]);
   });
 
-  it("layer only affects its bounds region", () => {
-    const { data } = render(doc(2, 1, [solid("a", 1, 1, [255, 0, 0, 255], { left: 1, top: 0 })]));
+  it("layer only affects its bounds region", async () => {
+    const { data } = await render(doc(2, 1, [solid("a", 1, 1, [255, 0, 0, 255], { left: 1, top: 0 })]));
     expect([...data.slice(0, 4)]).toEqual([0, 0, 0, 0]);   // (0,0) untouched
     expect([...data.slice(4, 8)]).toEqual([255, 0, 0, 255]); // (1,0) red
   });

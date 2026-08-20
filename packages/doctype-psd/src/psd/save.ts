@@ -1,5 +1,6 @@
 import { writePsd, type Psd, type Layer as AgLayer } from "ag-psd";
 import type { PsdDoc, Layer, Mask } from "../model/types.js";
+import { isRef } from "../render/pixel-source.js";
 import { installCanvasShim } from "./canvas-shim.js";
 
 function agAdjustType(k: string): string {
@@ -42,6 +43,11 @@ function mapLayer(l: Layer): AgLayer {
   } else if (l.children) {
     out.children = l.children.map(mapLayer);
   } else if (l.pixels) {
+    // A PixelRef must be resolved to resident pixels before it can be written
+    // to PSD; in this phase (resident docs) a ref should never reach save.
+    if (isRef(l.pixels)) {
+      throw new Error("save: layer pixels not resolved (PixelRef) — resolve before export");
+    }
     out.imageData = { width: l.pixels.width, height: l.pixels.height, data: l.pixels.data } as any;
   }
   return out;
