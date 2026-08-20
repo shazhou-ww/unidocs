@@ -17,12 +17,13 @@
  *
  * Fix: `esbuild` transpiles TS itself, so bundling resolves and inlines
  * every `@unidocs/*` import directly from its `.ts` source (`alias` below —
- * same technique `scripts/local-runtime.mjs` uses to bundle Cloudflare
- * workers for Miniflare, adapted for `platform: "node"` instead of
- * `"browser"`). `packages: "external"` keeps genuine npm dependencies (`pg`,
- * `@azure/storage-blob`) OUT of the bundle — they already ship real
- * JS/CJS and are resolved normally through `node_modules` at runtime; only
- * the alias entries below are pulled in as source.
+ * shared with `scripts/local-runtime.mjs` and
+ * `packages/azure-gateway/scripts/bundle.mjs` via
+ * `scripts/workspace-aliases.mjs`, see that module's doc for why). `packages:
+ * "external"` keeps genuine npm dependencies (`pg`, `@azure/storage-blob`)
+ * OUT of the bundle — they already ship real JS/CJS and are resolved
+ * normally through `node_modules` at runtime; only the alias entries are
+ * pulled in as source.
  *
  * `package.json`'s `build` script runs `tsc` first (for `dist/*.d.ts`, kept
  * for consistency with the repo's `main`/`types`/`exports` -> `dist/*`
@@ -32,17 +33,10 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = join(PKG_ROOT, "..", "..");
-
-const WORKSPACE_ALIASES = {
-  "@unidocs/core": join(REPO_ROOT, "packages/core/src/index.ts"),
-  "@unidocs/cas": join(REPO_ROOT, "packages/cas/src/index.ts"),
-  "@unidocs/server-core": join(REPO_ROOT, "packages/server-core/src/index.ts"),
-  "@unidocs/azure-sdk": join(REPO_ROOT, "packages/azure-sdk/src/index.ts"),
-  "@unidocs/doctype-markdown": join(REPO_ROOT, "packages/doctype-markdown/src/index.ts"),
-};
 
 await esbuild.build({
   absWorkingDir: PKG_ROOT,
@@ -53,6 +47,6 @@ await esbuild.build({
   format: "esm",
   target: "node24",
   packages: "external",
-  alias: WORKSPACE_ALIASES,
+  alias: resolveWorkspaceAliases(REPO_ROOT),
   logLevel: "info",
 });

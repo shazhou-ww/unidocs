@@ -17,6 +17,7 @@ import {
   registryEntries,
   resolvePorts,
 } from "./doc-types.mjs";
+import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
 
 export { DOC_TYPES, INTERNAL_TOKEN, parseDocTypes } from "./doc-types.mjs";
 
@@ -24,21 +25,9 @@ export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const WORKSPACE_ALIASES = {
-  "@unidocs/core": join(ROOT, "packages/core/src/index.ts"),
-  "@unidocs/cas": join(ROOT, "packages/cas/src/index.ts"),
-  "@unidocs/server-core": join(ROOT, "packages/server-core/src/index.ts"),
-  "@unidocs/cloudflare-cas/public": join(
-    ROOT,
-    "packages/cloudflare-cas/src/public-cas-route.ts",
-  ),
-  "@unidocs/cloudflare-sdk": join(ROOT, "packages/cloudflare-sdk/src/index.ts"),
-  "@unidocs/doctype-markdown": join(
-    ROOT,
-    "packages/doctype-markdown/src/index.ts",
-  ),
-  "@unidocs/doctype-docx": join(ROOT, "packages/doctype-docx/src/index.ts"),
-};
+// See scripts/workspace-aliases.mjs — shared with the Azure services'
+// own esbuild bundlers so this table is kept in one place.
+const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 
 async function bundleWorker(entry, outfile) {
   await mkdir(dirname(outfile), { recursive: true });

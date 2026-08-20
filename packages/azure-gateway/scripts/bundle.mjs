@@ -4,24 +4,18 @@
  *
  * See `packages/azure-markdown/scripts/bundle.mjs` for the full rationale —
  * this is the same technique (esbuild inlines every `@unidocs/*` workspace
- * import from its `.ts` source via `alias`, while `packages: "external"`
- * keeps real npm dependencies like `pg` out of the bundle, resolved normally
- * through `node_modules` at runtime), scoped to this package's dependency
- * graph.
+ * import from its `.ts` source via `alias`, shared across every bundler in
+ * this repo through `scripts/workspace-aliases.mjs`, while `packages:
+ * "external"` keeps real npm dependencies like `pg` out of the bundle,
+ * resolved normally through `node_modules` at runtime).
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = join(PKG_ROOT, "..", "..");
-
-const WORKSPACE_ALIASES = {
-  "@unidocs/core": join(REPO_ROOT, "packages/core/src/index.ts"),
-  "@unidocs/cas": join(REPO_ROOT, "packages/cas/src/index.ts"),
-  "@unidocs/server-core": join(REPO_ROOT, "packages/server-core/src/index.ts"),
-  "@unidocs/azure-sdk": join(REPO_ROOT, "packages/azure-sdk/src/index.ts"),
-};
 
 await esbuild.build({
   absWorkingDir: PKG_ROOT,
@@ -32,6 +26,6 @@ await esbuild.build({
   format: "esm",
   target: "node24",
   packages: "external",
-  alias: WORKSPACE_ALIASES,
+  alias: resolveWorkspaceAliases(REPO_ROOT),
   logLevel: "info",
 });
