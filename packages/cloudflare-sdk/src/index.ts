@@ -26,6 +26,13 @@ export { createEditorDO, type Env as EditorEnv } from "./editor-do.js";
 export { createOperatorDO, type OperatorConfig } from "./operator-do.js";
 export { encodeQueryValue } from "./query-value.js";
 export {
+	DoDeltaLog,
+	DoSnapshotCache,
+	R2BlobCas,
+	D1DocIndex,
+	D1DocIndexQuery,
+} from "./ports-cf.js";
+export {
 	CasClient,
 	CasClientError,
 	type CasClientConfig,
