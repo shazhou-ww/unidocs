@@ -100,7 +100,9 @@ function createSessionHandler<TDoc, TQuery, TOp>(cfg: {
 
 **为什么必须先于 Azure 入口**:`#errorResponse` 是纯云中立的"类型化错误 → 状态码 + body 字段"映射,而它正是 49 个 e2e 与 22 个 treespec 逐字断言的东西。顺序反了就会有两份状态码表,漂移只是时间问题。
 
-身份 403 校验(比对请求头 `X-User-Id` 与存储里的 owner)一并搬过去 —— Azure 没有 DO 名绑定,那边更需要它。
+身份 403 校验(`requireUser`,比对 `requesterId` 与 `identity.userId`)一并搬过去。
+
+**这条校验目前只在 Cloudflare 上是真校验。** 在 Cloudflare 上 `identity.userId` 来自 DO 自己持久化的存储状态(创建时写入、之后不随请求头变化),而 `requesterId` 来自当次请求的 `X-User-Id` 头,两者是独立来源,校验能挡住"用别人的 docId、报别人的 userId"。在 Azure 上(见 `packages/azure-markdown/src/local-editor.ts` 的 `identityFromRequest`)`identity.userId` **同样**取自当次请求的 `X-User-Id` 头(只在头缺失时才回退到 `id` 里解出的字符串)—— 也就是说 `requesterId` 与 `identity.userId` 同源于同一个头,`requireUser` 变成一句恒真比较,请求方说自己是谁,校验就信是谁,一句都挡不住。根因与阻塞点见第 9 节风险表。
 
 ### 3.4 给契约套件做体检:对 Cloudflare 端口跑 `runPortContract`
 
@@ -216,3 +218,4 @@ treespec 的 22 个 spec 不动。
 | session 跨请求复用 | `apply()` 不比较 `head()` 与 `#version`,复用陈旧 session 会写进"版本号正确但内容错误"的快照 | 阶段 1 已把契约写进类注释;本轮 Azure 入口**每请求新建 session**,不做 LRU |
 | 行为测试改造面 | 存储断言抽 probe 会动到阶段 0 的测试文件 | 只改取数方式,断言值逐字不动;改完先在 Miniflare 上跑绿再接 Azure |
 | **`DeltaLog.remove` 与并发 `append` 之间仍有窗口(已知、有意接受)** | `remove` 的条件删除只挡得住**已提交**的 `append(v+1)`。对**在途**的 append 挡不住:READ COMMITTED 下两条语句各持自己的快照,都看到 `MAX = v`,又分别锁 `v` 与 `v+1` 两个不同索引键、互不阻塞,于是 remove 删掉 `v`、append 插入 `v+1`,日志留下空洞 `… v-1, v+1` → 重放静默跳过 → 与已经读到版本 `v` 的客户端分叉。Cloudflare 侧不存在:DO 把进入它的所有调用串行化了,这是换成无状态副本的代价,不是 SQL 翻译错误 | **本轮接受**(仓库主人拍板):`append` 热路径要保持无锁,而该窗口只在「root-refs 提交失败的补偿」与「另一个写者恰好在途」同时发生时才出现。关闭它的做法已定:`append` 与 `remove` 各加一个按 `(docType, docId)` 取 `pg_advisory_xact_lock` 的 CTE,把上述交错的前两步变成真正的等待。契约覆盖不到这一项(它只有串行的 remove 用例),补的时候需要一条与 append 哨兵同构的并发用例 |
+| **Azure 后端不按 user 隔离文档(已知、有意接受,未记录到本次审查之前)** | `deltas` / `docs` / snapshot blob(`{docType}/{docId}/latest`)全部只按 `(docType, docId)` 键控,`userId` 不参与任何存储键。Cloudflare 侧靠 `env.{TYPE}_EDITOR.idFromName("{userId}:{docId}")` 天然按 user 隔离 —— 不同 user 撞同一个 `docId` 会各自落在不同的 DO 实例上。Azure 侧没有这层:同一个 `docId` 落进同一行 / 同一个 blob,与哪个 user 发的请求无关。可观察差异:`GET /users/B/docs/markdown/{A的docId}/query` 在 Cloudflare 上是 404(不同 DO、B 那边什么都没有),在 Azure 上**返回 A 的内容**。行为测试里客户端可自选的 `X-Doc-Id`(如 `${docId}-imported`、`${sourceId}-clone`)在 Azure 上因此是**全局**命名空间,在 CF 上是 **per-user** 命名空间。系统目前整体无鉴权(见本节及第 3.3 节),`userId` 本身就是自报的、不做认证,所以这不是相对现状的越权提升,但它是一条真实存在、此前未被写下来的后端语义分叉 | **本轮接受**。根因是没有任何端口能读出"这个文档属于谁"——`DocIndexQuery` 只有 `list(userId, docType)` 和 `snapshots(docType, docId)`,前者是反向查询(给 userId 要文档列表),后者不带 userId,都不是"给 docId 要 owner"。阶段 3 需要新增 `DocIndexQuery.get(docType, docId): Promise<DocRecord | null>`,并让 Azure 的 `identityFromRequest`(`packages/azure-markdown/src/local-editor.ts`)在校验前先用它查出 `docs.owner_id`,而不是直接信任请求头里的 `X-User-Id`;在此之前 `requireUser` 在 Azure 上无法做成真校验 |
