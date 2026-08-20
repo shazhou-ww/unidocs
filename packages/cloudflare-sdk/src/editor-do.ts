@@ -155,7 +155,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
       for (const row of result.toArray()) {
         const ops = JSON.parse(row.operations as string) as TOp[];
-        this.#doc = await config.apply(ops, this.#doc!);
+        // Pass the store so a replayed flip faults in its target's PixelRef
+        // instead of throwing on a cold-reloaded lazy doc.
+        this.#doc = await config.apply(ops, this.#doc!, { store: this.#store() });
         this.#version = row.version as number;
       }
 
@@ -403,7 +405,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
         // GET /_internal/export — download document
         if (method === "GET" && endpoint === "/_internal/export") {
-          const bytes = await config.save(this.#doc);
+          // Full materialization: a lazy (PixelRef-backed) doc must have every
+          // layer faulted-in before save (save cannot tolerate unresolved
+          // refs). Inherent to producing a .psd; the resolved doc is transient.
+          const doc = config.resolve ? await config.resolve(this.#doc, this.#store()) : this.#doc;
+          const bytes = await config.save(doc);
           const docId = await this.#ctx.storage.get<string>(KEY_DOC_ID);
           return new Response(bytes, {
             headers: {
@@ -444,7 +450,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           // Apply all operations transactionally (in-memory)
           let newDoc: TDoc;
           try {
-            newDoc = await config.apply(body.operations, this.#doc!);
+            newDoc = await config.apply(body.operations, this.#doc!, { store: this.#store() });
           } catch (err) {
             return Response.json(
               { success: false, version: this.#version, error: `Delta failed: ${err}` },
@@ -570,7 +576,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
           for (const row of deltaResult.toArray()) {
             const ops = JSON.parse(row.operations as string) as TOp[];
-            baseDoc = await config.apply(ops, baseDoc);
+            baseDoc = await config.apply(ops, baseDoc, { store: this.#store() });
           }
 
           // Insert rollback delta

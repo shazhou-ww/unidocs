@@ -4,6 +4,7 @@ export type {
 	DocumentType,
 	DocumentTypeFactory,
 	QueryCtx,
+	StoreCtx,
 	QueryPrimitive,
 	QueryValue,
 } from "./types.js";

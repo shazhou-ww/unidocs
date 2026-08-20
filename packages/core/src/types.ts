@@ -27,12 +27,17 @@ export interface BlobStore {
   get(hash: string): Promise<Uint8Array | null>;
 }
 
-/** Context passed to a query for resolving lazy (PixelRef-backed) documents.
- *  Core carries ONLY the store — decoded-pixel caching is a doctype/render
- *  concern and must not leak its types back into core. */
-export interface QueryCtx {
+/** Context carrying the BlobStore, threaded into the paths that may need to
+ *  fault in lazy (PixelRef-backed) layers: `query` (render), `apply` (a
+ *  pixel-mutating op). Core carries ONLY the store — decoded-pixel caching is a
+ *  doctype/render concern and must not leak its types back into core. ONE
+ *  shared shape is used everywhere so the contract stays single-sourced. */
+export interface StoreCtx {
   store: BlobStore;
 }
+
+/** @deprecated Use {@link StoreCtx}. Kept as an alias for back-compat. */
+export type QueryCtx = StoreCtx;
 
 /** Cloud-neutral specification of a document type. */
 export interface DocumentType<TDoc, TQuery, TOp> {
@@ -43,10 +48,13 @@ export interface DocumentType<TDoc, TQuery, TOp> {
    *  the runtime. `ctx` is optional: resident documents (or existing 2-arg
    *  callers) render with no store; lazy documents need `ctx.store` to fault
    *  in PixelRef layers. */
-  query: (query: TQuery, doc: TDoc, ctx?: QueryCtx) => Promise<QueryValue>;
+  query: (query: TQuery, doc: TDoc, ctx?: StoreCtx) => Promise<QueryValue>;
 
-  /** Apply an ordered operation batch atomically. Resolves to the new document state. */
-  apply: (operations: readonly TOp[], doc: TDoc) => Promise<TDoc>;
+  /** Apply an ordered operation batch atomically. Resolves to the new document
+   *  state. `ctx` is optional: resident documents (or existing 2-arg callers)
+   *  apply with no store; lazy documents need `ctx.store` so a pixel-mutating
+   *  op (a flip) can fault in its target layer's PixelRef before editing. */
+  apply: (operations: readonly TOp[], doc: TDoc, ctx?: StoreCtx) => Promise<TDoc>;
 
   /** Deserialize a document from binary bytes. */
   load: (data: Uint8Array) => Promise<TDoc>;
@@ -60,6 +68,13 @@ export interface DocumentType<TDoc, TQuery, TOp> {
 
   /** Deserialize a document produced by `serialize`, resolving blobs via `store`. */
   deserialize?: (bytes: Uint8Array, store: BlobStore) => Promise<TDoc>;
+
+  /** Fully materialize a lazy (PixelRef-backed) document — faulting every
+   *  layer's pixels to resident via `store` — before a full serialization
+   *  (`save`/export) that cannot tolerate unresolved refs. Returns a new,
+   *  transient doc; a no-op-return of the same doc is valid for doctypes with
+   *  no lazy representation. Optional: doctypes without lazy blobs omit it. */
+  resolve?: (doc: TDoc, store: BlobStore) => Promise<TDoc>;
 
   /** MIME type for document export. */
   contentType: string;

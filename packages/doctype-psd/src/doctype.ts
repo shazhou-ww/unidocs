@@ -4,6 +4,7 @@ import { apply, type PsdOp } from "./ops/index.js";
 import { load } from "./psd/load.js";
 import { save } from "./psd/save.js";
 import { serialize, deserialize } from "./psd/ir.js";
+import { resolveDoc } from "./resolve.js";
 import { runQuery, type PsdQuery } from "./queries.js";
 import { tools, instructions } from "./tools.js";
 
@@ -19,6 +20,7 @@ export const createPsdDocumentType: DocumentTypeFactory<PsdOptions, PsdDoc, PsdQ
   save,
   serialize,
   deserialize,
+  resolve: resolveDoc,
   apply,
   query: runQuery,
   contentType: "image/vnd.adobe.photoshop",
