@@ -1,7 +1,7 @@
 {
-  "name": "@unidocs/cloudflare-sdk",
+  "name": "@unidocs/server-core",
   "version": "0.1.0",
-  "description": "Cloudflare runtime for UniDocs document editor/operator pairs",
+  "description": "Cloud-neutral document session core for UniDocs",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./port-contract": {
+      "types": "./dist/testing/port-contract.d.ts",
+      "import": "./dist/testing/port-contract.js"
     }
   },
   "files": [
@@ -16,21 +20,24 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@unidocs/core": "workspace:*",
-    "@unidocs/cas": "workspace:*",
-    "@unidocs/server-core": "workspace:*"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250817.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "@unidocs/cas": "workspace:*"
   },
   "peerDependencies": {
-    "@cloudflare/workers-types": ">=4"
+    "vitest": "^3.2.0"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   }
 }

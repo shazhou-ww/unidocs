@@ -60,6 +60,9 @@ importers:
       '@unidocs/doctype-docx':
         specifier: workspace:*
         version: link:../doctype-docx
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -79,6 +82,12 @@ importers:
       '@unidocs/cloudflare-cas':
         specifier: workspace:*
         version: link:../cloudflare-cas
+      '@unidocs/cloudflare-sdk':
+        specifier: workspace:*
+        version: link:../cloudflare-sdk
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -101,6 +110,9 @@ importers:
       '@unidocs/doctype-markdown':
         specifier: workspace:*
         version: link:../doctype-markdown
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -123,6 +135,9 @@ importers:
       '@unidocs/core':
         specifier: workspace:*
         version: link:../core
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -161,6 +176,22 @@ importers:
 
   packages/doctype-markdown:
     dependencies:
+      '@unidocs/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/server-core:
+    dependencies:
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
       '@unidocs/core':
         specifier: workspace:*
         version: link:../core

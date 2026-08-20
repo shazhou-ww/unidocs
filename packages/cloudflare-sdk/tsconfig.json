@@ -17,6 +17,9 @@
     },
     {
       "path": "../cas"
+    },
+    {
+      "path": "../server-core"
     }
   ]
 }

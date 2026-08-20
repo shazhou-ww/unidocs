@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -13,6 +13,7 @@ import {
   buildWorkers,
   bundleTargets,
   DOC_TYPES,
+  GATEWAY_WORKER,
   registryEntries,
   resolvePorts,
 } from "./doc-types.mjs";
@@ -26,6 +27,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKSPACE_ALIASES = {
   "@unidocs/core": join(ROOT, "packages/core/src/index.ts"),
   "@unidocs/cas": join(ROOT, "packages/cas/src/index.ts"),
+  "@unidocs/server-core": join(ROOT, "packages/server-core/src/index.ts"),
   "@unidocs/cloudflare-cas/public": join(
     ROOT,
     "packages/cloudflare-cas/src/public-cas-route.ts",
@@ -56,6 +58,28 @@ async function bundleWorker(entry, outfile) {
 
 function workerUrl(host, port) {
   return `http://${host}:${port}`;
+}
+
+const MIGRATIONS_PATH = join(ROOT, "migrations", "0001_init.sql");
+
+/**
+ * Apply migrations/0001_init.sql to the shared SNAPSHOTS_DB. Real Cloudflare
+ * D1 (via wrangler) gets this from `migrations_dir` in wrangler.toml; local
+ * Miniflare has no migrations runner, so we read the file and exec each
+ * statement ourselves. The gateway and every doc-type worker bind the same
+ * underlying D1 database under the "SNAPSHOTS_DB" name, so applying it once
+ * — against any one worker's binding — is enough for all of them.
+ */
+async function migrateSnapshotsDb(mf) {
+  const db = await mf.getD1Database("SNAPSHOTS_DB", GATEWAY_WORKER);
+  const sql = await readFile(MIGRATIONS_PATH, "utf8");
+  const statements = sql
+    .split(";")
+    .map((stmt) => stmt.trim())
+    .filter(Boolean);
+  for (const statement of statements) {
+    await db.exec(statement);
+  }
 }
 
 function assertPortFree(host, port) {
@@ -127,6 +151,8 @@ export async function startLocalRuntime({
     );
 
     await mf.ready;
+
+    await migrateSnapshotsDb(mf);
 
     const registry = await mf.getKVNamespace("REGISTRY", "unidocs-gateway");
     for (const [key, value] of registryEntries(docTypes, urls)) {
