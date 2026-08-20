@@ -64,14 +64,22 @@ function assertDockerRunning() {
 // technique, same error shape). Duplicated rather than imported because
 // local-runtime.mjs doesn't export it and this task is entry-layer wiring
 // only — see the report for the follow-up note.
-function assertPortFree(host, port) {
+//
+// `describeConflict` lets callers give a port-specific hint about *why* the
+// port might be taken: for the Node services (41787/41788) it's almost
+// always a leftover process from a previous `pnpm dev --azure`, but for the
+// container ports (5433/10000) the far more common cause in practice is a
+// completely unrelated project's `docker compose` stack squatting on the
+// same host port — that's what actually happened during review of this
+// change, on this very machine.
+function assertPortFree(host, port, describeConflict) {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", (err) => {
       if (err.code === "EADDRINUSE") {
         reject(
           new Error(
-            `Port ${port} is already in use. Stop the leftover process occupying it, then retry \`pnpm dev --azure\`.`,
+            `Port ${port} is already in use${describeConflict ? ` (${describeConflict})` : ""}. Stop the leftover process occupying it, then retry \`pnpm dev --azure\`.`,
           ),
         );
         return;
@@ -94,14 +102,35 @@ function assertPortFree(host, port) {
 const AZURE_HOST = "127.0.0.1";
 const AZURE_PORTS = { gateway: 41787, markdown: 41788 };
 
+// The host ports `docker-compose.azure.yml` maps Postgres and Azurite onto
+// (see that file and `packages/azure-sdk/tests/containers.ts`). CLAUDE.md
+// promises "occupied port fails fast" for the local runtime; before this
+// check existed, the Azure path only honoured that promise for the two Node
+// services and let `docker compose up -d` hit these two silently, which
+// either wedges on an unrelated container already bound to the port or —
+// worse — quietly attaches to whatever stack got there first.
+const AZURE_CONTAINER_PORTS = {
+  postgres: {
+    port: 5433,
+    hint: "needed by the local Azure stack's Postgres container — likely either a leftover `docker compose` stack from this repo, or an unrelated project's Postgres container bound to the same host port",
+  },
+  azurite: {
+    port: 10000,
+    hint: "needed by the local Azure stack's Azurite container — likely either a leftover `docker compose` stack from this repo, or an unrelated project's compose stack bound to the same host port",
+  },
+};
+
 let runtime;
 let backend;
 
 if (useAzure) {
   assertDockerRunning();
-  await Promise.all(
-    Object.values(AZURE_PORTS).map((port) => assertPortFree(AZURE_HOST, port)),
-  );
+  await Promise.all([
+    ...Object.values(AZURE_PORTS).map((port) => assertPortFree(AZURE_HOST, port)),
+    ...Object.values(AZURE_CONTAINER_PORTS).map(({ port, hint }) =>
+      assertPortFree(AZURE_HOST, port, hint),
+    ),
+  ]);
 
   const { startAzureRuntime, DATABASE_URL, BLOB_CONNECTION_STRING } = await import(
     "./azure-runtime.mjs"
