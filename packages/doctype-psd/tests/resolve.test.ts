@@ -120,24 +120,33 @@ describe("resolveDoc / resolveLayerPixels (C1/C2 fault-in)", () => {
     expect(isRef(findLayer(lazy.layers, "top-1")!.pixels!)).toBe(true);
   });
 
-  it("C2: apply([flip], lazyDoc, {store}) resolves + flips; without store it throws loudly", async () => {
+  // NOTE: the apply-level flip fault-in pre-step (auto-resolving a lazy target
+  // before flipping) was removed while conforming to main's DocumentType
+  // interface — apply no longer touches a store. So a flip against a lazy doc
+  // now hits geometry-ops' loud PixelRef guard regardless of any ctx. Callers
+  // that need a lazy flip must resolveLayerPixels() first (covered above). The
+  // apply-level auto-fault path returns with the lazy-pixel stage.
+  it("C2: apply([flip], lazyDoc) throws loudly on the lazy ref (pre-resolve deferred)", async () => {
     const store = memStore();
-
     const flipOp = { kind: "transform", payload: { layerId: "top-1", op: { flip: "h" } } };
 
-    // With store: pre-resolves the target, flip succeeds.
     const lazy1 = await lazyReload(store, buildDoc());
-    const flipped = await apply([flipOp], lazy1, { store });
+    await expect(apply([flipOp], lazy1)).rejects.toThrow(/PixelRef/);
+
+    // A ctx no longer changes this — apply ignores it, the guard still fires.
+    const lazy2 = await lazyReload(store, buildDoc());
+    await expect(apply([flipOp], lazy2)).rejects.toThrow(/PixelRef/);
+
+    // Manually faulting the target first lets the flip succeed.
+    const lazy3 = await lazyReload(store, buildDoc());
+    const resolved = await resolveLayerPixels(lazy3, "top-1", store);
+    const flipped = await apply([flipOp], resolved);
     const px = findLayer(flipped.layers, "top-1")!.pixels as any;
     expect(isRef(px)).toBe(false);
     // horizontal flip of [red, green] → [green, red]
     expect([...px.data]).toEqual([0, 255, 0, 255, 255, 0, 0, 255]);
     // untouched layer stays lazy
     expect(isRef(findLayer(flipped.layers, "child-1")!.pixels!)).toBe(true);
-
-    // Without store: the loud no-store guard still fires on the lazy ref.
-    const lazy2 = await lazyReload(store, buildDoc());
-    await expect(apply([flipOp], lazy2)).rejects.toThrow(/PixelRef/);
   });
 
   it("resident-doc apply(flip) is unchanged whether or not a store is passed", async () => {

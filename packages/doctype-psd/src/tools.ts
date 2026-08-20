@@ -35,20 +35,17 @@ const LAYER_SCHEMA = {
 
 export const tools: Record<string, AgentToolDefinition> = {
   getLayers: {
-    name: "getLayers",
-    op: { mode: "query", kind: "getLayers" },
+    name: "query_getLayers",
     description: "READ. List the layer tree (id, type, name, opacity, blendMode, visible, bounds, children).",
     inputSchema: { type: "object", properties: {} },
   },
   getDoc: {
-    name: "getDoc",
-    op: { mode: "query", kind: "getDoc" },
+    name: "query_getDoc",
     description: "READ. Full structure of the document (or one layer via layerId): exact bounds, masks, adjustments, effects. Pixel data is omitted.",
     inputSchema: { type: "object", properties: { layerId: { type: "string" } } },
   },
   getPreview: {
-    name: "getPreview",
-    op: { mode: "query", kind: "getPreview" },
+    name: "query_getPreview",
     description: "READ (see the image). {} = whole canvas; {rect:[top,left,bottom,right]} = zoom into an area; {layerId} = one layer. Look here after edits to verify. Downscaled to maxSize (default 768, rect up to 1536).",
     inputSchema: {
       type: "object",
@@ -60,8 +57,7 @@ export const tools: Record<string, AgentToolDefinition> = {
     },
   },
   add_layer: {
-    name: "addLayer",
-    op: { mode: "apply", kind: "add_layer" },
+    name: "apply_add_layer",
     description: "WRITE. Add a layer. Caller assigns the id; raster layers must include pixels.",
     inputSchema: {
       type: "object",
@@ -70,14 +66,12 @@ export const tools: Record<string, AgentToolDefinition> = {
     },
   },
   remove_layer: {
-    name: "removeLayer",
-    op: { mode: "apply", kind: "remove_layer" },
+    name: "apply_remove_layer",
     description: "WRITE. Delete a layer by id.",
     inputSchema: { type: "object", properties: { layerId: { type: "string" } }, required: ["layerId"] },
   },
   reorder: {
-    name: "reorderLayer",
-    op: { mode: "apply", kind: "reorder" },
+    name: "apply_reorder",
     description: "WRITE. Move a layer to a new parent/index.",
     inputSchema: {
       type: "object",
@@ -86,8 +80,7 @@ export const tools: Record<string, AgentToolDefinition> = {
     },
   },
   set_props: {
-    name: "setLayerProps",
-    op: { mode: "apply", kind: "set_props" },
+    name: "apply_set_props",
     description: "WRITE. Change name/opacity/blendMode/visible/locked/clipping of a layer.",
     inputSchema: {
       type: "object",
@@ -109,14 +102,12 @@ export const tools: Record<string, AgentToolDefinition> = {
     },
   },
   crop: {
-    name: "cropCanvas",
-    op: { mode: "apply", kind: "crop" },
+    name: "apply_crop",
     description: "WRITE. Crop the canvas to [top,left,bottom,right].",
     inputSchema: { type: "object", properties: { rect: BOUNDS }, required: ["rect"] },
   },
   transform: {
-    name: "transformLayer",
-    op: { mode: "apply", kind: "transform" },
+    name: "apply_transform",
     description: "WRITE. Translate or flip a layer. Only translate/flip are supported (no scale/rotate).",
     inputSchema: {
       type: "object",
@@ -134,8 +125,7 @@ export const tools: Record<string, AgentToolDefinition> = {
     },
   },
   adjust: {
-    name: "setAdjustment",
-    op: { mode: "apply", kind: "adjust" },
+    name: "apply_adjust",
     description: "WRITE. Change params of an existing adjustment layer.",
     inputSchema: {
       type: "object",
@@ -144,8 +134,7 @@ export const tools: Record<string, AgentToolDefinition> = {
     },
   },
   mask_edit: {
-    name: "editMask",
-    op: { mode: "apply", kind: "mask_edit" },
+    name: "apply_mask_edit",
     description: "WRITE. Set, replace, or remove (null) a layer mask.",
     inputSchema: {
       type: "object",
@@ -154,8 +143,7 @@ export const tools: Record<string, AgentToolDefinition> = {
     },
   },
   generative_fill: {
-    name: "generativeFill",
-    op: { mode: "apply", kind: "generative_fill" },
+    name: "apply_generative_fill",
     description: "WRITE. Insert a pre-generated raster layer with provenance (pixels supplied by the tool step).",
     inputSchema: {
       type: "object",

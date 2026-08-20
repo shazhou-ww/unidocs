@@ -2,11 +2,10 @@ import { describe, it, expect } from "vitest";
 import { tools, instructions } from "../src/tools.js";
 
 describe("tools", () => {
-  it("every tool has a clean name + op metadata", () => {
+  it("every tool has a prefixed name and no op metadata", () => {
     for (const t of Object.values(tools)) {
-      expect(t.name).not.toMatch(/^(query_|apply_)/);
-      expect(["query", "apply"]).toContain(t.op!.mode);
-      expect(typeof t.op!.kind).toBe("string");
+      expect(t.name).toMatch(/^(query_|apply_)/);
+      expect((t as any).op).toBeUndefined();
     }
   });
 

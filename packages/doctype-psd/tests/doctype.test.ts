@@ -21,11 +21,19 @@ describe("createPsdDocumentType", () => {
     expect(layers.find(l => l.name === "red-box").opacity).toBe(0.5);
   });
 
-  it("exposes clean tool names with op routing metadata + contentType", () => {
+  it("exposes prefixed tool names for name-prefix routing + contentType", () => {
     expect(dt.contentType).toBe("image/vnd.adobe.photoshop");
-    expect(dt.tools.add_layer.name).toBe("addLayer");
-    expect(dt.tools.add_layer.op).toEqual({ mode: "apply", kind: "add_layer" });
-    expect(dt.tools.getLayers.name).toBe("getLayers");
-    expect(dt.tools.getLayers.op).toEqual({ mode: "query", kind: "getLayers" });
+    expect(dt.tools.add_layer.name).toBe("apply_add_layer");
+    expect((dt.tools.add_layer as any).op).toBeUndefined();
+    expect(dt.tools.getLayers.name).toBe("query_getLayers");
+    expect((dt.tools.getLayers as any).op).toBeUndefined();
+  });
+
+  it("exposes refsFromSnapshot/refsFromOp returning empty refs, and no serialize/resolve", () => {
+    expect(dt.refsFromSnapshot(new Uint8Array())).toEqual({});
+    expect(dt.refsFromOp({ kind: "set_props", payload: {} })).toEqual({});
+    expect((dt as any).serialize).toBeUndefined();
+    expect((dt as any).deserialize).toBeUndefined();
+    expect((dt as any).resolve).toBeUndefined();
   });
 });
