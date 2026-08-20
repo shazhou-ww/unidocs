@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { CasRef, CasReferences, DocumentType } from "@unidocs/core";
-import type { Delta, DeltaLog, DocIndex, DocRecord } from "../src/ports.js";
+import type {
+  Delta,
+  DeltaLog,
+  DocIndex,
+  DocRecord,
+  SnapshotCache,
+  TransactionalPorts,
+  UnitOfWork,
+} from "../src/ports.js";
 import {
   createMemoryPorts,
   createMemoryUnitOfWork,
@@ -109,7 +117,6 @@ class FakeCas implements CasGateway {
 class SpyDocIndex implements DocIndex {
   calls: string[] = [];
   registered: DocRecord[] = [];
-  touched: number[] = [];
 
   #inner: DocIndex;
 
@@ -125,7 +132,6 @@ class SpyDocIndex implements DocIndex {
 
   async touch(at: number): Promise<void> {
     this.calls.push("touch");
-    this.touched.push(at);
     await this.#inner.touch(at);
   }
 
@@ -143,6 +149,26 @@ class SpyDocIndex implements DocIndex {
 
   restoreTxState(state: unknown): void {
     if (isMemoryTxParticipant(this.#inner)) this.#inner.restoreTxState(state);
+  }
+}
+
+/**
+ * The non-transactional UnitOfWork, mirroring `DirectUnitOfWork` in
+ * cloudflare-sdk (which server-core must not import). It runs the callback
+ * and rolls nothing back, so a failure part-way through leaves exactly what
+ * it wrote — which is how the tests below observe the write ORDER inside the
+ * transaction. Under a real transaction the order is invisible by
+ * construction: everything lands or nothing does.
+ */
+class PassThroughUnitOfWork implements UnitOfWork {
+  #ports: TransactionalPorts;
+
+  constructor(ports: TransactionalPorts) {
+    this.#ports = ports;
+  }
+
+  withTransaction<T>(fn: (tx: TransactionalPorts) => Promise<T>): Promise<T> {
+    return fn(this.#ports);
   }
 }
 
@@ -808,6 +834,102 @@ describe("DocumentSession — normal paths", () => {
     // assertion above already proves the index KEPT the snapshot, which is
     // the outcome that matters; this pins the order that produces it.
     expect(index.calls).toEqual(["register", "recordSnapshot"]);
+  });
+
+  it("22. on a backend without rollback, an index failure still leaves the content recoverable", async () => {
+    // The write order INSIDE the transaction only becomes observable on a
+    // backend whose withTransaction cannot roll back — Cloudflare, where the
+    // delta log is a Durable Object's sqlite and the index is D1. There, the
+    // two DO-local writes (the v1 delta and the delta log's snapshot record)
+    // must land before either index write, or a failing D1 call leaves a v1
+    // delta whose snapshot hash NOTHING records. load() would then take the
+    // `latestSnapshotRef() === null` branch, replay the empty v1 delta onto
+    // init(), and hand back a BLANK document — no error anywhere — while the
+    // uploaded bytes sit unreachable in the blob store.
+    const ports = createMemoryPorts();
+    const failingIndex: DocIndex = {
+      register: async () => {
+        throw new Error("D1 unavailable");
+      },
+      touch: (at: number) => ports.index.touch(at),
+      recordSnapshot: (v: number, h: string, t: number) => ports.index.recordSnapshot(v, h, t),
+    };
+    const deps: SessionDeps = {
+      deltas: ports.deltas,
+      snapshots: ports.snapshots,
+      blobs: ports.blobs,
+      index: failingIndex,
+      // No rollback — the whole point of this test.
+      unitOfWork: new PassThroughUnitOfWork({ deltas: ports.deltas, index: failingIndex }),
+      cas: new FakeCas(),
+      identity: { docType: "text", docId: "doc-1", userId: "user-1" },
+      now: () => 1_000,
+    };
+
+    const bytes = encoder.encode("uploaded content");
+    await expect(
+      new DocumentSession(makeTextDocType(), deps).create({ bytes }),
+    ).rejects.toThrow("D1 unavailable");
+
+    // The delta landed and so did the reference to its snapshot — the two
+    // writes that share a store went in together.
+    expect(await deps.deltas.head()).toBe(1);
+    expect(await deps.deltas.latestSnapshotRef()).toEqual({
+      version: 1,
+      hash: await computeHash(bytes),
+    });
+    // The index never learned about the document: this is the accepted
+    // residue on a non-transactional backend — missing from the listing.
+    expect(await ports.indexQuery.list("user-1", "text")).toEqual([]);
+
+    // And the payoff: a fresh session recovers the CONTENT, not a blank
+    // document, even with an empty snapshot cache.
+    expect(await deps.snapshots.get()).toBeNull();
+    const reopened = new DocumentSession(makeTextDocType(), deps);
+    expect((await reopened.query({ kind: "text" })).data).toBe("uploaded content");
+    expect(reopened.version).toBe(1);
+  });
+
+  it("23. a failing snapshot cache does not fail create() — the cache is best-effort", async () => {
+    // Step 4 of create() is a cache write over already-committed durable
+    // state. Letting its throw out would turn a creation that SUCCEEDED into
+    // an error response, and the caller's retry would then hit 409
+    // DocExists — a healthy document the client believes is broken. Safe to
+    // swallow only because load() falls back to the durable snapshot.
+    const ports = createMemoryPorts();
+    const failingCache: SnapshotCache = {
+      get: () => ports.snapshots.get(),
+      put: async () => {
+        throw new Error("KV unavailable");
+      },
+    };
+    const deps: SessionDeps = {
+      deltas: ports.deltas,
+      snapshots: failingCache,
+      blobs: ports.blobs,
+      index: ports.index,
+      unitOfWork: createMemoryUnitOfWork({ deltas: ports.deltas, index: ports.index }),
+      cas: new FakeCas(),
+      identity: { docType: "text", docId: "doc-1", userId: "user-1" },
+      now: () => 1_000,
+    };
+
+    const bytes = encoder.encode("uploaded content");
+    const session = new DocumentSession(makeTextDocType(), deps);
+
+    // Resolves — this is the whole assertion.
+    expect(await session.create({ bytes })).toEqual({ docId: "doc-1", version: 1 });
+    expect(session.version).toBe(1);
+
+    // Everything durable is committed, and the cache is simply empty.
+    expect(await deps.deltas.head()).toBe(1);
+    expect(await ports.indexQuery.list("user-1", "text")).toHaveLength(1);
+    expect(await ports.snapshots.get()).toBeNull();
+
+    // A later load() reconstructs from the durable snapshot, so nothing was
+    // lost by swallowing.
+    const reopened = new DocumentSession(makeTextDocType(), deps);
+    expect((await reopened.query({ kind: "text" })).data).toBe("uploaded content");
   });
 
   it("9. initFromHash() adopts an existing blob as version 1", async () => {

@@ -236,6 +236,26 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     await this.#deps.snapshots.put(this.#version, bytes);
   }
 
+  /**
+   * `#saveSnapshotCache()` for callers that have already committed durable
+   * state and must not fail because of a cache.
+   *
+   * Deliberately narrow: only the creation paths use it. `apply()` and
+   * `rollback()` keep the strict version — their in-memory document has
+   * moved ahead of what the cache holds and the caller is still mid-write,
+   * so surfacing the failure is the right call there.
+   */
+  async #saveSnapshotCacheBestEffort(): Promise<void> {
+    try {
+      await this.#saveSnapshotCache();
+    } catch {
+      // Intentionally swallowed. The cache is reconstructible from the
+      // durable snapshot on the next load(); the creation it would abort is
+      // not reconstructible from a 500 the caller cannot retry (a retried
+      // create() answers 409 DocExists).
+    }
+  }
+
   async #shouldSnapshot(): Promise<boolean> {
     const ref = await this.#deps.deltas.latestSnapshotRef();
     const deltasSince = await this.#deps.deltas.countSince(ref?.version ?? 0);
@@ -321,7 +341,24 @@ export class DocumentSession<TDoc, TQuery, TOp> {
         operations: [],
       });
 
-      // register() BEFORE either recordSnapshot(): DocIndex.recordSnapshot
+      // The delta log's own snapshot record goes SECOND, immediately after
+      // the delta and before anything touches the index. This is what
+      // rollback() and load()'s durable fallback search, and pairing it with
+      // the append matters on a backend whose withTransaction cannot roll
+      // back (Cloudflare: the log is DO sqlite, the index is D1). There, a
+      // failing index write must not be able to leave a v1 delta whose
+      // snapshot hash nothing records — that combination makes the next
+      // load() take the `latestSnapshotRef() === null` branch and replay the
+      // empty v1 delta onto init(), handing back a BLANK document instead of
+      // the uploaded bytes, silently. Writing both DO-local rows first
+      // downgrades that to "content intact, just missing from the listing".
+      //
+      // The DocIndex contract constrains register() before
+      // index.recordSnapshot()/touch(); it says nothing about
+      // deltas.recordSnapshot(), which is a different port.
+      await tx.deltas.recordSnapshot(1, hash, timestamp);
+
+      // register() BEFORE index.recordSnapshot(): DocIndex.recordSnapshot
       // files a snapshot against a document the index already knows, so a
       // document it has never seen has nowhere to file it and the record is
       // silently dropped (DocIndex contract).
@@ -333,9 +370,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
         updatedAt: timestamp,
       });
       await tx.index.recordSnapshot(1, hash, timestamp);
-      // The delta log's own snapshot record — this is what rollback() and
-      // load()'s durable fallback search.
-      await tx.deltas.recordSnapshot(1, hash, timestamp);
     });
 
     // 3. Commit in memory only once the durable writes have landed — the
@@ -343,11 +377,20 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     this.#doc = doc;
     this.#version = 1;
 
-    // 4. Best-effort cache refresh, last. It can be last precisely because
-    //    load() now falls back to the durable snapshot recorded in step 2:
-    //    a lost cache write costs one blob read on the next load, not the
-    //    document.
-    await this.#saveSnapshotCache();
+    // 4. Cache refresh, last and genuinely best-effort: the throw is
+    //    swallowed. The document is already created at this point — the
+    //    delta, the blob and the index rows are all committed and the
+    //    version-1 result below is valid — so letting a cache write turn a
+    //    succeeded creation into an error response would be actively
+    //    harmful: the caller would retry and get 409 DocExists for a
+    //    document that is fine.
+    //
+    //    Swallowing is only safe because load() falls back to the durable
+    //    snapshot recorded in step 2 (latestSnapshotRef -> blobs.get), so an
+    //    empty cache costs one blob read on the next load, not the content.
+    //    Do not "fix" this by rethrowing without also restoring that
+    //    fallback.
+    await this.#saveSnapshotCacheBestEffort();
 
     this.#loaded = true;
     return { docId, version: 1 };
@@ -387,7 +430,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
         operations: [],
       });
 
-      // register() before either recordSnapshot() — see create().
+      // Delta-log snapshot record second, index writes after — see create()
+      // for why the two DO-local rows must land together.
+      await tx.deltas.recordSnapshot(1, hash, timestamp);
+
+      // register() before index.recordSnapshot() — see create().
       await tx.index.register({
         docId,
         docType,
@@ -396,14 +443,13 @@ export class DocumentSession<TDoc, TQuery, TOp> {
         updatedAt: timestamp,
       });
       await tx.index.recordSnapshot(1, hash, timestamp);
-      await tx.deltas.recordSnapshot(1, hash, timestamp);
     });
 
     this.#doc = doc;
     this.#version = 1;
 
-    // Best-effort cache refresh, last — see create().
-    await this.#saveSnapshotCache();
+    // Best-effort cache refresh, last, throw swallowed — see create().
+    await this.#saveSnapshotCacheBestEffort();
 
     this.#loaded = true;
     return { docId, version: 1 };

@@ -38,7 +38,12 @@ export function runPortContract(
     indexQuery: DocIndexQuery;
     unitOfWork: UnitOfWork;
   }>,
-  options: PortContractOptions = { transactional: false },
+  // Required, with no default. A default of `false` would let a backend that
+  // CAN roll back — the Postgres adapter this suite exists to guard — skip
+  // the two most important tests here by omission, and the skip would even
+  // print "backend has no cross-store transaction" as its justification. An
+  // author who must type the answer has to know it.
+  options: PortContractOptions,
 ): void {
   // Named in the test title so a skipped run reads as "this backend cannot
   // do it", not as "someone forgot to write it".
