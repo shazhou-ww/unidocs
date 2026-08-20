@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@azure/storage-blob':
+        specifier: ^12.33.0
+        version: 12.33.0(supports-color@10.2.2)
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -17,6 +20,9 @@ importers:
       miniflare:
         specifier: 5.20260811.1-alpha
         version: 5.20260811.1-alpha
+      pg:
+        specifier: ^8.23.0
+        version: 8.23.0
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
