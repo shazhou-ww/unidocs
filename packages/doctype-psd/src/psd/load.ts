@@ -48,7 +48,10 @@ export function cropPixelsToCanvas(
 ): { pixels: { width: number; height: number; data: Uint8ClampedArray }; bounds: [number, number, number, number] } {
   const [top, left, bottom, right] = bounds;
   const nt = Math.max(0, top), nl = Math.max(0, left);
-  const nb = Math.min(ch, bottom), nr = Math.min(cw, right);
+  // Clamp bottom/right against the clamped top/left (not just the canvas) so
+  // a layer entirely outside the canvas yields a degenerate, non-inverted
+  // rect (e.g. [nt,nl,nt,nl]) rather than bottom<top or right<left.
+  const nb = Math.max(nt, Math.min(ch, bottom)), nr = Math.max(nl, Math.min(cw, right));
   if (nt === top && nl === left && nb === bottom && nr === right) return { pixels: px, bounds };
   const nw = Math.max(0, nr - nl), nh = Math.max(0, nb - nt);
   const data = new Uint8ClampedArray(nw * nh * 4);
