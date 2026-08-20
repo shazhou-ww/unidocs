@@ -746,3 +746,56 @@ git commit -m "refactor: move operator into server-core and create D1 tables via
 ## 交给阶段 2 的东西
 
 `server-core` 导出的 `runPortContract(label, factory)` 就是阶段 2 的验收工具:`azure-sdk` 的 Postgres/Blob 实现必须原样通过它。`DocumentSession` 与两个 handler 到阶段 2 时一行不用改,只是换一套端口实现注入。
+
+---
+
+## 阶段 2 交接说明
+
+阶段 1 执行中发现的、会影响阶段 2 的事项。**开工前读这一节。**
+
+### 1. 条件写的冲突分支目前零自动化覆盖(优先级最高)
+
+`DoDeltaLog.append` 的冲突分支**没有任何自动化测试执行过**:
+
+- `runPortContract` 只跑内存实现,五个 Cloudflare 端口类零覆盖;
+- `scripts/editor-characterization.test.mjs` 那条并发 e2e 看起来在验它,**实际不是** —— `#requestTail` 把两个请求串行化,后到的那个在 `DocumentSession.apply()` 开头的 `head()` 快速失败处就返回 409 了,根本走不到条件插入。
+
+整个阶段的立身之本目前只靠一次人工实证支撑(真实 workerd 下 `INSERT...SELECT...WHERE <false>` 的 `cursor.rowsWritten` 确为 0)。
+
+**开工第一件事**:用 Miniflare 或 vitest-pool-workers 起一个 DO,把 `runPortContract` 跑到 `DoDeltaLog` / `DoSnapshotCache` / `R2BlobCas` / `D1DocIndex` / `D1DocIndexQuery` 上。契约测试套已通过 `@unidocs/server-core/port-contract` 子路径导出,可以直接 import。
+
+### 2. 先抽 `createSessionHandler` 再写 Azure 入口
+
+`editor-do.ts` 的 `#errorResponse` 是纯云中立的"类型化错误 → 状态码 + body 字段"映射,而它正是 49 个 e2e 与 22 个 treespec 逐字断言的东西。顺序反了就会有两份状态码表,漂移只是时间问题。
+
+同理,`createDocTypeHandler` 的 `DoNamespaceLike`(`idFromName` / `get`)本质是"按名字路由到有状态实例",正是设计 3.1 说 Azure 没有的能力。设计 4.4 承诺的"两侧共用同一路由"目前只兑现了 Cloudflare 侧的去重。
+
+### 3. 端口没有事务/工作单元概念
+
+Azure 侧 `DeltaLog` 与 `DocIndex` 是同一个 Postgres 库,但端口把 `append` / `register` / `recordSnapshot` / `touch` 拆成四次独立 await。**`create()` 在 Postgres 上无法做成原子的**,只能沿用现在的补偿窗口。
+
+设计文档没说这是有意取舍还是遗漏。开工前要定:要么给端口加一个可选的工作单元概念,要么明确接受补偿语义并写进设计。
+
+### 4. `DocumentSession` 不得跨请求复用,除非宿主自己 revalidate
+
+`apply()` 只比较 `head()` 与 `baseVersion`,从不比较 `head()` 与 `#version`;`load()` 被 `#loaded` 标志设成一次性。所以"session 存活期内 `#version === head()`"只在单写者或每请求新建 session 时成立。
+
+设计第 8 节的冷启动缓解措施写着 Azure 要"按 `(docId, version)` 做进程内 LRU"—— 一旦复用 session,`baseVersion` 来自另一个副本的新版本,`head()` 检查会通过而 `#doc` 是旧的,ops 被应用到陈旧文档上,append 还会成功(version 算对了),最后往快照缓存里写进一份**打着正确版本号的错误字节**,全链路无处报错。
+
+契约已写进 `DocumentSession` 的类注释。要做 LRU 就必须先实现 revalidate。
+
+### 5. `runPortContract` 挡不住什么
+
+- **同进程之外的竞态**:哨兵只抓同进程内的让出点。用进程内锁串行化 `append`、或对单连接跑契约而真实竞态在跨进程的实现,都能蒙混过关。**Azure 实现 review 时必须直接看建表语句有没有主键/唯一约束。**
+- **`remove()` 的非条件性**:唯一那条 remove 哨兵是单线程的。Postgres 实现照抄 `DELETE WHERE version = $1` 会在多副本下直接产生空洞。
+- **`touch()` 零覆盖**。
+- **`putIfAbsent` 的两种语义**:内存实现真的"若存在则跳过",`R2BlobCas` 无条件覆盖。内容寻址下无害,但契约没写明允许哪种。
+- **`SnapshotCache.put` 写入虚高版本号**:`load()` 会无条件信任缓存里的 version 并 `since(v)`,一个虚高的 version 会静默跳过真实 delta。
+
+### 6. `DeltaLog.append` 的冲突检测在两朵云上机制不同
+
+Cloudflare 侧靠条件插入 + `rowsWritten === 0`。Azure 侧要换 etag `If-Match` 或唯一键捕获 duplicate-key 来满足同一份契约。契约本身(只接受 `head + 1`、检查与插入必须原子)不变。
+
+### 7. 身份 403 校验现在在 Cloudflare 适配器里
+
+`editor-do.ts` 的 `#requireUser` 比对请求头 `X-User-Id` 与存储里的 owner。阶段 2 把路由搬进 `server-core` 时必须跟着搬 —— 否则 Azure 入口会重新丢掉它,而 Azure 没有 DO 名绑定,那边正是最需要它的地方。
