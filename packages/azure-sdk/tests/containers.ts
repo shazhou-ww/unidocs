@@ -80,5 +80,10 @@ export async function setup(): Promise<void> {
 }
 
 export async function teardown(): Promise<void> {
-  execSync(`docker compose -f "${COMPOSE_FILE}" down`, { stdio: "inherit" });
+  // `-v` matches `scripts/azure-runtime.mjs`'s teardown: without it, every run
+  // of this suite left behind a dangling anonymous volume (the compose file
+  // does not name its Postgres/Azurite volumes), and a bare `down` also
+  // leaves no guarantee that the next `up` sees a clean Postgres data
+  // directory.
+  execSync(`docker compose -f "${COMPOSE_FILE}" down -v`, { stdio: "inherit" });
 }
