@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "@unidocs/core": "workspace:*",
-    "@unidocs/cas": "workspace:*"
+    "@unidocs/cas": "workspace:*",
+    "@unidocs/server-core": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

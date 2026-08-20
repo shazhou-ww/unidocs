@@ -20,6 +20,10 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@unidocs/core": "workspace:*",
+    "@unidocs/cas": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

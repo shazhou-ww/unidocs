@@ -123,6 +123,9 @@ importers:
       '@unidocs/core':
         specifier: workspace:*
         version: link:../core
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -173,6 +176,13 @@ importers:
         version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
   packages/server-core:
+    dependencies:
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
+      '@unidocs/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       typescript:
         specifier: ^5.9.0
