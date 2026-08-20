@@ -341,11 +341,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           }
 
           const bytes = await obj.bytes();
-          this.#doc = await config.load(bytes);
-          // Archive the ORIGINAL source bytes to CAS under their own hash
-          // (for re-export / fidelity comparison) — not on the state path.
-          const originalHash = await this.#store().put(bytes);
-          await this.#ctx.storage.put("originalHash", originalHash);
+          // The clone source is a snapshot hash → bytes are IR JSON (new) or
+          // legacy PSD binary; route by magic byte. (No originalHash archival:
+          // a clone has no own original upload; `bytes` is a snapshot, not a
+          // source PSD.)
+          this.#doc = await decodeSnapshot(bytes, this.#store(), config);
 
           // Store immutable context
           const docType = request.headers.get("X-Doc-Type") || "unknown";
@@ -551,7 +551,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
               );
             }
             const bytes = await obj.bytes();
-            baseDoc = await config.load(bytes);
+            // Snapshot bytes in CAS may be IR JSON (new) or legacy PSD binary;
+            // route by magic byte so both decode correctly.
+            baseDoc = await decodeSnapshot(bytes, this.#store(), config);
             baseVersion = snapRow.version as number;
           } else {
             // No snapshot, replay from beginning
@@ -602,11 +604,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
             return Response.json({ success: false, error: "Document not initialized" }, { status: 404 });
           }
 
-          // Ensure we have a snapshot for current version
+          // Ensure we have a snapshot for current version. This writes the
+          // (IR or binary) snapshot bytes into CAS and updates the KV pointer.
           await this.#saveSnapshot();
 
-          const bytes = await config.save(this.#doc);
-          const hash = await computeHash(bytes);
+          // Return the hash that IS in CAS (the KV snapshot pointer). Do NOT
+          // recompute from config.save — those PSD bytes are never CAS.put, so
+          // a recomputed hash would 404 on init_from_hash.
+          const snap = await this.#ctx.storage.get<SnapshotKV>(KEY_SNAPSHOT);
+          const hash = snap!.hash;
 
           return Response.json({
             success: true,
