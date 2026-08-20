@@ -277,6 +277,19 @@ POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
 POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ```
 
+## Deployment
+
+**New environment only — before the first `wrangler deploy`:** run
+`wrangler d1 migrations apply unidocs-snapshots` (from any package whose
+`wrangler.toml` points `migrations_dir` at `../../migrations`, e.g.
+`packages/cloudflare-gateway`). `wrangler deploy` does **not** apply
+migrations automatically — `migrations_dir` is just configuration. The
+shared `docs`/`snapshots` tables used to be created lazily by
+`listDocuments`/`D1DocIndex.register`; they no longer are. Skipping this
+step on a fresh D1 database is harmless for an already-provisioned one, but
+on a brand-new database every query/apply/list call will 500 with
+`no such table: docs`.
+
 ## Infrastructure
 
 - **Cloudflare Workers** — runtime
