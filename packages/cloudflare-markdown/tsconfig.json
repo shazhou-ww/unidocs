@@ -17,6 +17,9 @@
     },
     {
       "path": "../doctype-markdown"
+    },
+    {
+      "path": "../server-core"
     }
   ]
 }

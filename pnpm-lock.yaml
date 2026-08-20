@@ -60,6 +60,9 @@ importers:
       '@unidocs/doctype-docx':
         specifier: workspace:*
         version: link:../doctype-docx
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -101,6 +104,9 @@ importers:
       '@unidocs/doctype-markdown':
         specifier: workspace:*
         version: link:../doctype-markdown
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0

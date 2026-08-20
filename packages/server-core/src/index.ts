@@ -5,3 +5,4 @@ export * from "./history.js";
 export * from "./query-value.js";
 export * from "./cas-client.js";
 export * from "./session.js";
+export * from "./doc-type-handler.js";
