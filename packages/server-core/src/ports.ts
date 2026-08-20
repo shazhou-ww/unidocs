@@ -31,6 +31,27 @@ export interface DeltaLog {
   head(): Promise<number>;                  // 无 delta 时返回 0
   since(v: number): Promise<Delta[]>;
   range(from?: number, to?: number): Promise<Delta[]>;
+  /**
+   * Compensating action for a failed root-refs commit (`DocumentSession.apply`
+   * step 4): undo the delta `append()` just wrote, but ONLY if `v` is still
+   * the current head. If `v` is no longer the head — a concurrent writer has
+   * since appended `v + 1` on top of it — this MUST be a silent no-op, not a
+   * delete and not a throw.
+   *
+   * Why conditional: without a stateless deployment, two racing `apply()`
+   * calls can interleave as append(v) [A] → append(v+1) [B, now legitimately
+   * committed on top of v] → remove(v) [A's failed rollback]. An
+   * unconditional delete there removes a delta that a later, successful
+   * delta already depends on, leaving a permanent hole in the log — replay
+   * silently skips it and diverges from what any client that already read
+   * version v was shown. Restricting the delete to "only when v is still
+   * head" downgrades that failure to a retained delta with uncommitted
+   * root-refs (a reclaimable reference leak), never a gap.
+   *
+   * Must not throw on the no-op path: this runs on an already-failing
+   * compensation branch, and a race losing this check is an expected
+   * outcome, not a new error to surface.
+   */
   remove(v: number): Promise<void>;
   latestSnapshotRef(atOrBefore?: number): Promise<SnapshotRef | null>;
   recordSnapshot(v: number, hash: string, timestamp: number): Promise<void>;

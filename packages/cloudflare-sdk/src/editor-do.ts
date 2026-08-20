@@ -91,13 +91,21 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     /**
      * Serializes requests to this Durable Object.
      *
-     * This is a **performance optimization, not a correctness mechanism**.
-     * Correctness of concurrent writes is guaranteed by `DeltaLog.append`
-     * (ports-cf.ts `DoDeltaLog`), whose conditional insert only accepts
-     * `head + 1` and otherwise throws `VersionConflictError`. The queue simply
-     * keeps two requests for the same document from replaying the delta log
-     * against each other and from doing work that one of them would then lose.
-     * Removing it would still be correct, only slower and noisier.
+     * NOT purely a performance optimization. Correctness of the conditional
+     * write itself is guaranteed by `DeltaLog.append` (ports-cf.ts
+     * `DoDeltaLog`), whose conditional insert only accepts `head + 1` and
+     * otherwise throws `VersionConflictError` — that part holds with or
+     * without this queue. But `DocumentSession.apply()`'s root-refs failure
+     * path still leans on single-writer ordering: `deltas.remove(nextVersion)`
+     * is only safe to run unconditionally-in-effect because this queue
+     * guarantees nothing else can have appended on top of `nextVersion` yet.
+     * `remove()` is now conditional on the port side too (only removes the
+     * current head), so a stray call is a no-op rather than a torn log, but
+     * the queue is still what keeps that compensation path simple and
+     * effectively single-writer here. Phase 2 (Azure, stateless replicas, no
+     * queue) must confirm the root-refs-failure path is fully correct under
+     * true concurrency before this can be dropped — see the design doc and
+     * the `remove()` sentinels in port-contract.ts.
      */
     #requestTail: Promise<void> = Promise.resolve();
 

@@ -147,9 +147,20 @@ export class DoDeltaLog implements DeltaLog {
     }));
   }
 
-  // editor-do.ts `commitRootRefsOrRollback` failure path: `DELETE FROM deltas WHERE version = ?`.
+  // editor-do.ts `commitRootRefsOrRollback` failure path.
+  //
+  // Conditional delete: only removes `v` if it is still the current head.
+  // Without the `AND version = (SELECT MAX(version) ...)` guard, a delta
+  // that a later, already-committed delta was appended on top of could be
+  // deleted out from under it, leaving a permanent gap in the log — see the
+  // contract note on DeltaLog.remove. If the guard doesn't hold, this is a
+  // no-op: the delta stays (an uncommitted-root-refs reference leak, GC-able
+  // later), which is far cheaper than a hole.
   async remove(v: number): Promise<void> {
-    this.#ctx.storage.sql.exec(`DELETE FROM deltas WHERE version = ?`, v);
+    this.#ctx.storage.sql.exec(
+      `DELETE FROM deltas WHERE version = ? AND version = (SELECT MAX(version) FROM deltas)`,
+      v,
+    );
   }
 
   // editor-do.ts POST /_internal/rollback: nearest snapshot at or before target version.

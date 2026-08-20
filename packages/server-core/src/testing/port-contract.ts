@@ -6,8 +6,8 @@ import type {
   DocIndex,
   DocIndexQuery,
   SnapshotCache,
-} from "./ports.js";
-import { VersionConflictError } from "./errors.js";
+} from "../ports.js";
+import { VersionConflictError } from "../errors.js";
 
 function makeDelta(version: number, description = `delta ${version}`): Delta {
   return { version, timestamp: Date.now(), description, operations: [] };
@@ -135,6 +135,44 @@ export function runPortContract(
       expect(await deltas.head()).toBe(2);
       await deltas.remove(2);
       expect(await deltas.head()).toBe(1);
+    });
+
+    // remove() is the root-refs-failure compensation for `apply()`. It must
+    // be conditional on `v` still being the head: once a concurrent writer
+    // has appended on top of it, deleting `v` would tear a hole in the log
+    // that replay silently skips over — see the contract note on
+    // DeltaLog.remove. This is the race from the design doc: A appends v,
+    // B appends v+1 on top of A's (still uncommitted) delta, A's root-refs
+    // commit then fails and tries to remove(v) — that must be a no-op, not
+    // a deletion of a delta B's version now depends on.
+    test("remove(v) is a no-op once a later delta has been appended on top of v", async () => {
+      const { deltas } = await factory();
+      await deltas.append(makeDelta(1));
+      await deltas.append(makeDelta(2)); // "v" — the one that will be removed
+      await deltas.append(makeDelta(3)); // committed on top of v before the remove
+
+      await deltas.remove(2);
+
+      // No gap: head is unchanged and version 2 is still in the log.
+      expect(await deltas.head()).toBe(3);
+      expect((await deltas.range(2, 2)).map((d) => d.version)).toEqual([2]);
+      expect((await deltas.range()).map((d) => d.version)).toEqual([1, 2, 3]);
+    });
+
+    // The other half of the same compensation path: when remove() DOES apply
+    // (v is still head, nothing landed on top of it), a caller must be able
+    // to retry — append the same version again — and have it succeed. This
+    // is exactly what a failed root-refs commit does next.
+    test("append(v) after remove(v) succeeds when v was the head that got removed", async () => {
+      const { deltas } = await factory();
+      await deltas.append(makeDelta(1));
+      await deltas.append(makeDelta(2));
+      await deltas.remove(2);
+      expect(await deltas.head()).toBe(1);
+
+      await expect(deltas.append(makeDelta(2, "retry"))).resolves.toBeUndefined();
+      expect(await deltas.head()).toBe(2);
+      expect((await deltas.range(2, 2))[0]?.description).toBe("retry");
     });
 
     test("recordSnapshot + latestSnapshotRef: latest, atOrBefore, and null before all", async () => {

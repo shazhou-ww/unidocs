@@ -56,6 +56,11 @@ class MemoryDeltaLog implements DeltaLog {
   }
 
   async remove(v: number): Promise<void> {
+    // Conditional: only the current head may be removed. If a concurrent
+    // append already moved head past v, this is a silent no-op — see the
+    // contract note on DeltaLog.remove. Never throw here: the caller is
+    // already on a failure/compensation path.
+    if (this.#headSync() !== v) return;
     this.#deltas = this.#deltas.filter((d) => d.version !== v);
   }
 
