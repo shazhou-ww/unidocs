@@ -650,6 +650,67 @@ git commit -m "test: run the behavior suite against both the Miniflare and Azure
 
 ---
 
+## Task 9: `pnpm dev --azure` 开关
+
+**执行期追加(不在原设计里)。** 设计第 6 节写的是"保持 `pnpm dev` 走 Miniflare 不变,新增独立的 Azure 本地命令",这句话的**意图**是"别让默认路径变重"(Azure 要 Docker,Miniflare 不要)。照字面实现成两套命令后,实际用起来是别扭的:两个 runtime 的返回形状本来就一样(`{ urls, storage, dispose }`),却要记两套命令、外加一串手抄的环境变量。用一个**默认关闭**的开关同样能满足那个意图。
+
+**Files:**
+- Modify: `scripts/dev.mjs`、`README.md`(Development 一节)
+
+**Interfaces:**
+- Consumes: `startLocalRuntime()`(`scripts/local-runtime.mjs`)、`startAzureRuntime()`(`scripts/azure-runtime.mjs`),两者都返回 `{ urls, storage, dispose }`
+- Produces: 无
+
+- [ ] **Step 1: 解析开关**
+
+```
+pnpm dev                    # 默认 Miniflare,行为逐字不变
+pnpm dev --azure            # Postgres + Azurite + 两个 Node 进程
+pnpm dev --azure markdown   # 位置参数照旧选文档类型
+```
+
+`--azure` 从 argv 里摘掉之后,剩下的位置参数仍然交给 `parseDocTypes()`,用法不变。
+
+- [ ] **Step 2: 三处快速失败**
+
+这三条都必须在**起任何东西之前**检查,并给出能直接照做的错误信息:
+
+1. **Docker daemon 没起** —— `--azure` 时先探测(`docker info` 之类),失败就直接说"Azure 本地栈需要 Docker,请先启动 Docker Desktop",而不是把 `docker compose` 的原始报错吐给用户。
+2. **选了 markdown 之外的文档类型** —— `pnpm dev --azure docx` 必须立即失败并说明"docx 依赖用户级 CAS,Azure 侧尚未实现(阶段 4);Azure 本地栈目前只支持 markdown"。否则用户会看到一个起来了但打不通的 gateway。
+3. **端口被占** —— 沿用 Miniflare 那边既有的处理方式。
+
+- [ ] **Step 3: 接线**
+
+按开关选 `startLocalRuntime` 或 `startAzureRuntime`,其余逻辑(打印 URL、`SIGINT`/`SIGTERM` 时 `dispose()`)两条路径共用。
+
+**Azure 侧的端口默认值不要和 Miniflare 撞** —— `startAzureRuntime()` 现在用 41787/41788,保持它,这样两套可以同时开着。
+
+启动信息里要说明当前是哪个后端,以及 Azure 侧那两个容器的位置(Postgres 5433 / Azurite 10000),方便用 psql 直接连进去看。
+
+**迁移由 `startAzureRuntime()` 自己跑**(它已经这么做了),用户不需要单独敲命令。
+
+- [ ] **Step 4: 更新 README**
+
+`## Development` 一节补上这个开关,并写明 Azure 侧的两个前提(需要 Docker、目前只有 markdown)。**不要动 `CLAUDE.md`** —— 它在这个 clone 里是本地专用文件,被 `.git/info/exclude` 排除,写进去不会到达团队。
+
+- [ ] **Step 5: 手工验证两条路径**
+
+- `pnpm dev`(不带开关)起来后仍是 Miniflare,URL 与改动前一致
+- `pnpm dev --azure` 起来后能 curl 通:建文档 → apply → query
+- `pnpm dev --azure docx` 立即报错并说明原因
+- 两条路径 Ctrl+C 都能干净退出(Azure 侧容器要被 `down` 掉,用 `docker ps` 确认无残留)
+
+命令与输出贴进报告。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add scripts/dev.mjs README.md
+git commit -m "feat(dev): add a --azure switch to pnpm dev"
+```
+
+---
+
 ## 阶段 2 完成判据
 
 - [ ] `runPortContract` 在三套实现上全绿:内存、Cloudflare、Postgres/Blob
