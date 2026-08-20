@@ -129,7 +129,11 @@ class SpyDocIndex implements DocIndex {
   }
 }
 
-function makeHarness(startTime = 1_000, deltaLog?: DeltaLog) {
+function makeHarness(
+  startTime = 1_000,
+  deltaLog?: DeltaLog,
+  docType: DocumentType<string, TextQuery, TextOp> = makeTextDocType(),
+) {
   const ports = createMemoryPorts();
   const cas = new FakeCas();
   const index = new SpyDocIndex(ports.index);
@@ -143,8 +147,31 @@ function makeHarness(startTime = 1_000, deltaLog?: DeltaLog) {
     identity: { docType: "text", docId: "doc-1", userId: "user-1" },
     now: () => clock++,
   };
-  const session = new DocumentSession(makeTextDocType(), deps);
+  const session = new DocumentSession(docType, deps);
   return { ports, cas, deps, session, index };
+}
+
+/**
+ * The text doc type, wrapped so a test can prove `config.apply` was never
+ * reached. Counting calls is the only way to observe the fast-fail: a session
+ * that ran `apply` and then threw a conflict looks identical from the outside.
+ */
+function makeCountingTextDocType(): {
+  docType: DocumentType<string, TextQuery, TextOp>;
+  applyCalls: () => number;
+} {
+  const inner = makeTextDocType();
+  let calls = 0;
+  return {
+    docType: {
+      ...inner,
+      async apply(operations, doc, context) {
+        calls += 1;
+        return inner.apply(operations, doc, context);
+      },
+    },
+    applyCalls: () => calls,
+  };
 }
 
 async function deltaCount(deps: SessionDeps): Promise<number> {
@@ -246,6 +273,43 @@ describe("DocumentSession.apply — failure paths", () => {
     expect((caught as VersionConflictError).attempted).toBe(6);
     expect(await deltaCount(deps)).toBe(before);
     expect(await deps.deltas.head()).toBe(headBefore);
+    expect(session.version).toBe(2);
+  });
+
+  it("14. fast-fails a stale baseVersion before config.apply runs, even for a batch that would itself throw", async () => {
+    // Two things are asserted together on purpose, because they are the same
+    // bug seen from two sides. Without the fast-fail, a stale write whose ops
+    // also happen to be invalid gets rejected by config.apply first and comes
+    // back as DeltaRejectedError -> 400 "Delta failed", which tells the client
+    // its write is permanently broken when all it needs is to re-read the
+    // version and retry. And getting there costs a full document parse
+    // (an unzip, for docx) for a write that could never have landed.
+    const { docType, applyCalls } = makeCountingTextDocType();
+    const { session, deps } = makeHarness(1_000, undefined, docType);
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    const callsBefore = applyCalls();
+    const deltasBefore = await deltaCount(deps);
+    expect(session.version).toBe(2);
+
+    let caught: unknown;
+    try {
+      // baseVersion 1 is stale (head is 2) AND `boom` throws in config.apply.
+      await session.apply([{ kind: "boom" }], "doomed and stale", 1);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(VersionConflictError);
+    expect(caught).not.toBeInstanceOf(DeltaRejectedError);
+    expect((caught as VersionConflictError).currentVersion).toBe(2);
+    expect((caught as VersionConflictError).attempted).toBe(2);
+
+    // The point of the fast path: the document was never parsed.
+    expect(applyCalls()).toBe(callsBefore);
+
+    expect(await deltaCount(deps)).toBe(deltasBefore);
     expect(session.version).toBe(2);
   });
 

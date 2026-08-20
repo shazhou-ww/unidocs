@@ -9,8 +9,8 @@
  * `.superpowers/sdd/2026-08-20-azure-phase1-server-core/task-4-report.md`
  * for the line-by-line mapping.
  *
- * NOT WIRED IN YET: nothing in this file is called from editor-do.ts or
- * any worker. That happens in a later task.
+ * These are the ports `editor-do.ts` hands to `DocumentSession` — every
+ * document read and write on Cloudflare goes through this file.
  */
 
 import type {

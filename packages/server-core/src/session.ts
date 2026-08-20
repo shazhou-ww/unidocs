@@ -19,6 +19,8 @@
  * primary-key/etag constraint on `version` and throw `VersionConflictError`.
  * There is deliberately no in-memory `baseVersion === this.#version` check:
  * an in-memory check is only correct while a single writer owns the state.
+ * `apply()` does open with a `DeltaLog.head()` read, but that is a fast-fail
+ * against durable state, not concurrency control — see the comment there.
  *
  * Every public method starts with `await this.load()`. The DO original did
  * this once at the top of its request handler; making each entry point carry
@@ -40,6 +42,7 @@ import {
   DocNotFoundError,
   RootRefsError,
   StorageCorruptError,
+  VersionConflictError,
 } from "./errors.js";
 import { computeHash } from "./hash.js";
 import type { HistoryEntry } from "./history.js";
@@ -362,6 +365,25 @@ export class DocumentSession<TDoc, TQuery, TOp> {
 
     const doc = this.#requireDoc();
     const ctx = this.#context();
+
+    // 0. Fast-fail on a stale baseVersion (design 3.2, the "可选优化").
+    //
+    //    This is ONLY a fast path. It buys two things: we skip leasing refs and
+    //    skip `config.apply` — which for docx means unzipping and reparsing the
+    //    whole document — for a write that provably cannot land; and the caller
+    //    gets a conflict (re-read the version and retry) instead of whatever
+    //    that doomed `config.apply` happened to throw, which would surface as
+    //    `DeltaRejectedError` and read to a client as a permanent failure.
+    //
+    //    It is NOT the concurrency control, and it does not make the check in
+    //    `DeltaLog.append` redundant: two callers can both pass this check and
+    //    race on to `append()`, where the conditional write decides the winner.
+    //    These are not alternatives — dropping `append()`'s check breaks
+    //    correctness, dropping this one only costs performance.
+    const head = await this.#deps.deltas.head();
+    if (head !== baseVersion) {
+      throw new VersionConflictError(head, baseVersion + 1);
+    }
 
     // 1. Lease refs. Failures propagate verbatim (CasClientError carries the
     //    status the adapter maps to 409/400/502).
