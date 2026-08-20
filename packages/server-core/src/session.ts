@@ -170,10 +170,16 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       const ref = await this.#deps.deltas.latestSnapshotRef();
       if (ref) {
         const bytes = await this.#deps.blobs.get(ref.hash);
-        if (bytes) {
-          this.#doc = await this.#config.load(bytes, ctx);
-          this.#version = ref.version;
+        if (!bytes) {
+          // The delta log records this snapshot, so the blob store losing it
+          // is corruption, not a missing document — same as rollback(), and
+          // for the same reason: silently falling through to init() here
+          // would replay create()'s EMPTY version-1 delta and hand back a
+          // blank document instead of surfacing the lost content as an error.
+          throw new StorageCorruptError(`Snapshot ${ref.hash} not found in R2`);
         }
+        this.#doc = await this.#config.load(bytes, ctx);
+        this.#version = ref.version;
       }
     }
 
@@ -181,9 +187,10 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     const pending = await this.#deps.deltas.since(this.#version);
 
     if (pending.length > 0 && this.#doc === null) {
-      // Neither the cache nor a durable snapshot had anything usable. That is
-      // expected, not corruption — replay from an empty document, exactly
-      // like rollback() does when no snapshot exists at or before its target.
+      // No durable snapshot ref exists at all — a document that has never
+      // been snapshotted is a legitimate state, not corruption. Replay from
+      // an empty document, exactly like rollback() does when no snapshot
+      // exists at or before its target.
       this.#doc = await this.#config.init(ctx);
       this.#version = 0;
     }

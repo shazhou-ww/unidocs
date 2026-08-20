@@ -7,6 +7,7 @@ import {
   DeltaRejectedError,
   DocExistsError,
   RootRefsError,
+  StorageCorruptError,
   VersionConflictError,
 } from "../src/errors.js";
 import { CasClientError } from "../src/cas-client.js";
@@ -527,9 +528,13 @@ describe("DocumentSession — normal paths", () => {
     expect(session.version).toBe(5);
   });
 
-  it("11. load() rebuilds from an empty snapshot cache by replaying the whole log", async () => {
+  it("11. load() rebuilds from an empty snapshot cache (and no durable snapshot ref) by replaying the whole log", async () => {
     // The snapshot cache (KV/Redis) is a droppable layer; the delta log is the
-    // database. When the cache is gone the log alone must be enough.
+    // database. When the cache is gone AND the document has never had a
+    // durable snapshot recorded, the log alone must be enough — this is the
+    // legitimate "never snapshotted yet" case, not corruption (contrast with
+    // the StorageCorruptError case below, where a ref exists but its blob is
+    // missing).
     const { session, deps } = makeHarness();
 
     await deps.deltas.append({
@@ -551,6 +556,7 @@ describe("DocumentSession — normal paths", () => {
       operations: [{ kind: "append", text: "b" }],
     });
     expect(await deps.snapshots.get()).toBeNull();
+    expect(await deps.deltas.latestSnapshotRef()).toBeNull();
 
     await session.load();
 
@@ -604,11 +610,20 @@ describe("DocumentSession — normal paths", () => {
     expect((await session.query({ kind: "text" })).data).not.toBe("");
   });
 
-  it("19. load() still replays from init() when neither the cache nor a durable snapshot exists", async () => {
-    // Regression guard for the fix above: a document that genuinely has no
-    // durable snapshot yet (only a delta log) must still reconstruct via
-    // config.init() + full replay, exactly as before this change.
+  it("20. load() throws StorageCorruptError when a recorded snapshot ref has no matching blob", async () => {
+    // Symmetric with rollback(): the delta log recording a snapshot ref is a
+    // promise that the blob exists (writeSnapshot() always writes the blob
+    // BEFORE recording the ref, in both the current and the upcoming write
+    // order). If the blob is gone anyway, silently falling through to
+    // init() + replay would replay create()'s EMPTY version-1 delta and hand
+    // back a blank document instead of surfacing the lost content as an
+    // error — see task-3 Finding 1.
     const { session, deps } = makeHarness();
+
+    const bytes = encoder.encode("durable content");
+    const hash = await computeHash(bytes);
+    // Deliberately never written to deps.blobs — simulates the blob store
+    // (R2) losing the object the log still references.
 
     await deps.deltas.append({
       version: 1,
@@ -616,22 +631,11 @@ describe("DocumentSession — normal paths", () => {
       description: "Document created",
       operations: [],
     });
-    await deps.deltas.append({
-      version: 2,
-      timestamp: 2,
-      description: "a",
-      operations: [{ kind: "append", text: "a" }],
-    });
+    await deps.deltas.recordSnapshot(1, hash, 1);
     expect(await deps.snapshots.get()).toBeNull();
-    expect(await deps.deltas.latestSnapshotRef()).toBeNull();
+    expect(await deps.blobs.get(hash)).toBeNull();
 
-    await session.load();
-
-    expect(session.version).toBe(2);
-    expect(session.initialized).toBe(true);
-    expect((await session.query({ kind: "text" })).data).toBe("a");
-    // Rebuilt state is written back into the cache, same as before.
-    expect(await deps.snapshots.get()).toEqual({ version: 2, bytes: encoder.encode("a") });
+    await expect(session.load()).rejects.toBeInstanceOf(StorageCorruptError);
   });
 
   it("13. public methods load themselves — no caller-side load() required", async () => {
