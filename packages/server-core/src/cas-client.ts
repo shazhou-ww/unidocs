@@ -190,11 +190,27 @@ export function aggregateRefs<TOp>(
   return result;
 }
 
+/**
+ * Structural view of the lease capability a delta write needs.
+ * Satisfied by `CasClient`, and by any cloud-neutral gateway.
+ */
+export interface CasLeaseGateway {
+  leaseExisting(hash: string): Promise<unknown>;
+}
+
+/**
+ * Structural view of the root-reference capability a delta commit needs.
+ * Satisfied by `CasClient` (Editor mode), and by any cloud-neutral gateway.
+ */
+export interface CasRootRefGateway {
+  updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<void>;
+}
+
 /** Lease every hash referenced by a delta. Empty maps are a no-op. */
 export async function leaseOpRefs<TOp>(
   operations: readonly TOp[],
   refsFromOp: (op: TOp) => CasReferences,
-  cas: Pick<CasClient, "leaseExisting">,
+  cas: CasLeaseGateway,
 ): Promise<CasReferences> {
   const refs = aggregateRefs(operations, refsFromOp);
   for (const hash of Object.keys(refs)) {
@@ -208,16 +224,16 @@ export async function leaseOpRefs<TOp>(
  * (typically DELETE the new delta row) and rethrow.
  */
 export async function commitRootRefsOrRollback(
-  cas: Pick<CasClient, "updateRootRefs">,
+  cas: CasRootRefGateway,
   requestId: string,
   changes: CasReferences,
-  rollback: () => void,
+  rollback: () => void | Promise<void>,
 ): Promise<void> {
   if (Object.keys(changes).length === 0) return;
   try {
     await cas.updateRootRefs({ requestId, changes });
   } catch (err) {
-    rollback();
+    await rollback();
     throw err;
   }
 }
