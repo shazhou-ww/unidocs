@@ -27,6 +27,11 @@ export type CasReferences = Readonly<Record<string, number>>;
 export interface CasReadContext {
   read(ref: CasRef): Promise<Uint8Array>;
   metadata(ref: CasRef): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }>;
+  /**
+   * Store content, returning its CAS hash. Present on the editor-side context
+   * where writes are allowed.
+   */
+  store?(bytes: Uint8Array, contentType: string): Promise<string>;
 }
 
 /** Context passed to document type lifecycle methods. */

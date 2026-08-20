@@ -10,6 +10,7 @@
 
 import type { CasRootRefUpdate } from "@unidocs/cas";
 import type { CasRef, CasReadContext, CasReferences } from "@unidocs/core";
+import { computeHash } from "./hash.js";
 
 /** Structural interface for a fetch-capable binding (e.g. a Cloudflare service binding). */
 export interface HttpFetcher {
@@ -92,6 +93,16 @@ export class CasClient implements CasReadContext {
       throw new CasClientError(resp.status, resp.statusText, "read");
     }
     return new Uint8Array(await resp.arrayBuffer());
+  }
+
+  /**
+   * Store content, returning its CAS hash. Satisfies the editor-side
+   * `CasReadContext.store` — content-addressed upload via `ensureNode`.
+   */
+  async store(bytes: Uint8Array, contentType: string): Promise<string> {
+    const hash = await computeHash(bytes);
+    await this.ensureNode(hash, bytes, contentType);
+    return hash;
   }
 
   /** Read CAS node metadata. */
