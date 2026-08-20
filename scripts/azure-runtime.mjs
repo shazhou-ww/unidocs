@@ -3,16 +3,19 @@
  * boots the Miniflare one, so `scripts/behavior-suite.mjs` can run the same
  * test bodies against either.
  *
- * Topology: `docker compose -f docker-compose.azure.yml up -d` (Postgres +
- * Azurite) -> poll Postgres AND Azurite -> apply migrations via the package's own
- * standalone entry point (`pnpm --filter @unidocs/azure-sdk run migrate`,
- * documented in CLAUDE.md) -> esbuild-bundle `azure-gateway`/`azure-markdown`
- * fresh from source (same technique `local-runtime.mjs` uses for the
- * Miniflare worker bundles: `packages: "external"` + the shared
- * `workspace-aliases.mjs` table, so real npm deps like `pg` resolve normally
- * through node_modules and only `@unidocs/*` specifiers get pointed at their
- * `.ts` source) -> `spawn` each bundle as a plain `node` process -> poll each
- * port -> return `{ urls, storage, dispose }`.
+ * Topology: `docker compose -f docker-compose.azure.yml up -d` (Postgres
+ * only) + spawn `azurite-blob` as a plain `node` process (same technique as
+ * the gateway/markdown services below — Azurite's npm package ships its
+ * server as a Node CLI, so it doesn't need a container) -> poll Postgres AND
+ * Azurite -> apply migrations via the package's own standalone entry point
+ * (`pnpm --filter @unidocs/azure-sdk run migrate`, documented in
+ * CLAUDE.md) -> esbuild-bundle `azure-gateway`/`azure-markdown` fresh from
+ * source (same technique `local-runtime.mjs` uses for the Miniflare worker
+ * bundles: `packages: "external"` + the shared `workspace-aliases.mjs`
+ * table, so real npm deps like `pg` resolve normally through node_modules
+ * and only `@unidocs/*` specifiers get pointed at their `.ts` source) ->
+ * `spawn` each bundle as a plain `node` process -> poll each port -> return
+ * `{ urls, storage, dispose }`.
  *
  * Bundling from source rather than reusing each package's own prebuilt
  * `dist/main.js` keeps this in sync with whatever is on disk right now,
@@ -21,8 +24,10 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { connect } from "node:net";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -32,6 +37,7 @@ import { INTERNAL_TOKEN } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
 
 const { Pool } = pg;
+const require = createRequire(import.meta.url);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const COMPOSE_FILE = join(ROOT, "docker-compose.azure.yml");
@@ -45,9 +51,82 @@ export const BLOB_CONNECTION_STRING = "UseDevelopmentStorage=true";
 const CAS_CONTAINER = "cas";
 
 const DEFAULT_PORTS = { gateway: 41787, markdown: 41788 };
+const AZURITE_HOST = "127.0.0.1";
+const AZURITE_PORT = 10000;
+
+/** Must match `docker-compose.azure.yml`'s `postgres` service image — used only to decide whether to print the one-time-download notice below. */
+const POSTGRES_IMAGE = "postgres:18-alpine";
 
 function run(cmd, args, opts = {}) {
   execFileSync(cmd, args, { cwd: ROOT, stdio: "inherit", ...opts });
+}
+
+function dockerImageExistsLocally(image) {
+  try {
+    execFileSync("docker", ["image", "inspect", image], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `docker compose up -d` is silent about pulling an image (vitest also
+ * swallows child-process stdout inside `beforeAll`, but this print happens
+ * before that hook's stdio matters, and `run()` below is `stdio: "inherit"`
+ * either way). Without this, a cold machine just sits there for the length
+ * of the pull with no indication why — print an explicit one-time-download
+ * notice first so the wait is explicable instead of looking hung.
+ */
+function announceFirstPullIfNeeded() {
+  if (!dockerImageExistsLocally(POSTGRES_IMAGE)) {
+    console.log(
+      `azure-runtime: ${POSTGRES_IMAGE} isn't cached locally yet — pulling it now (~100 MB, one-time cost; cached for every run after this one)...`,
+    );
+  }
+}
+
+/**
+ * Resolve `azurite-blob`'s real entry script instead of shelling out to the
+ * `azurite-blob` bin shim (`node_modules/.bin/azurite-blob` is a POSIX shell
+ * script). Reading the path straight out of the `azurite` package's own
+ * `package.json#bin` field — the same thing the shim itself does — means
+ * this keeps working across azurite versions without hard-coding an
+ * internal `dist/...` path here.
+ */
+function resolveAzuriteBlobEntry() {
+  const pkgJsonPath = require.resolve("azurite/package.json");
+  const pkg = require(pkgJsonPath);
+  return join(dirname(pkgJsonPath), pkg.bin["azurite-blob"]);
+}
+
+/**
+ * Spawns `azurite-blob` the same way `spawnService()` spawns the
+ * gateway/markdown bundles below — this repo already runs Node services as
+ * child processes rather than containers, and Azurite's npm package is
+ * nothing more than a Node CLI, so it gets the same treatment. Data goes to
+ * a fresh temp directory every run (mirrors what the container gave us for
+ * free: a clean volume each time `docker compose up` created one) and gets
+ * removed on teardown.
+ */
+async function spawnAzurite() {
+  const dataDir = await mkdtemp(join(tmpdir(), "unidocs-azurite-"));
+  const entry = resolveAzuriteBlobEntry();
+  const child = spawnService(
+    entry,
+    [
+      "--blobHost",
+      AZURITE_HOST,
+      "--blobPort",
+      String(AZURITE_PORT),
+      "--location",
+      dataDir,
+      "--skipApiVersionCheck",
+    ],
+    {},
+    "azurite",
+  );
+  return { child, dataDir };
 }
 
 async function bundleService(entry, outfile) {
@@ -145,8 +224,9 @@ function runMigrations() {
   });
 }
 
-function spawnService(scriptPath, env, label) {
-  const child = spawn(process.execPath, [scriptPath], {
+/** `args` lets non-`@unidocs/*` services (azurite-blob) take CLI flags too, not just env vars. */
+function spawnService(scriptPath, args, env, label) {
+  const child = spawn(process.execPath, [scriptPath, ...args], {
     cwd: ROOT,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -228,12 +308,16 @@ export async function startAzureRuntime({
   const gatewayBundle = join(bundleDir, "gateway.mjs");
   const markdownBundle = join(bundleDir, "markdown.mjs");
 
+  announceFirstPullIfNeeded();
   run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
 
   let gatewayProc;
   let markdownProc;
+  let azuriteProc;
+  let azuriteDataDir;
   let probe;
   try {
+    ({ child: azuriteProc, dataDir: azuriteDataDir } = await spawnAzurite());
     await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
     runMigrations();
 
@@ -249,6 +333,7 @@ export async function startAzureRuntime({
 
     markdownProc = spawnService(
       markdownBundle,
+      [],
       {
         DATABASE_URL,
         BLOB_CONNECTION_STRING,
@@ -261,6 +346,7 @@ export async function startAzureRuntime({
 
     gatewayProc = spawnService(
       gatewayBundle,
+      [],
       {
         DATABASE_URL,
         INTERNAL_TOKEN,
@@ -277,14 +363,31 @@ export async function startAzureRuntime({
       urls,
       storage: probe,
       async dispose() {
-        await Promise.all([stopProcess(gatewayProc), stopProcess(markdownProc)]);
+        await Promise.all([
+          stopProcess(gatewayProc),
+          stopProcess(markdownProc),
+          stopProcess(azuriteProc),
+        ]);
         await probe?.dispose();
+        await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
         run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
       },
     };
   } catch (err) {
-    await Promise.allSettled([stopProcess(gatewayProc), stopProcess(markdownProc)]);
+    // Every resource acquired above must be released here too, not just in
+    // the happy-path `dispose()` — a throw anywhere in the `try` (a failed
+    // migration, a port that never comes up) must not leak the azurite-blob
+    // child process the way an unhandled exception would if it were only
+    // ever cleaned up by the caller's `dispose()`, which never gets called.
+    await Promise.allSettled([
+      stopProcess(gatewayProc),
+      stopProcess(markdownProc),
+      stopProcess(azuriteProc),
+    ]);
     await probe?.dispose().catch(() => {});
+    if (azuriteDataDir) {
+      await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
+    }
     try {
       run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
     } catch {

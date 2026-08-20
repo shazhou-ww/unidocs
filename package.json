@@ -14,6 +14,7 @@
   "devDependencies": {
     "@azure/storage-blob": "^12.33.0",
     "@types/node": "^24.0.0",
+    "azurite": "3.36.0",
     "esbuild": "^0.28.2",
     "miniflare": "5.20260811.1-alpha",
     "pg": "^8.23.0",
