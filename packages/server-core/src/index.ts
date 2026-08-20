@@ -7,3 +7,4 @@ export * from "./cas-client.js";
 export * from "./session.js";
 export * from "./doc-type-handler.js";
 export * from "./gateway-handler.js";
+export * from "./operator.js";

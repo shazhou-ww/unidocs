@@ -256,11 +256,9 @@ export class D1DocIndex implements DocIndex {
     this.#identity = identity;
   }
 
-  // editor-do.ts create / init_from_hash: docs table CREATE + INSERT OR REPLACE.
+  // editor-do.ts create / init_from_hash: docs table INSERT OR REPLACE.
+  // Table creation now happens once via migrations/0001_init.sql, not here.
   async register(rec: DocRecord): Promise<void> {
-    await this.#db.exec(
-      "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))",
-    );
     await this.#db
       .prepare(
         `INSERT OR REPLACE INTO docs (doc_id, doc_type, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
@@ -269,24 +267,18 @@ export class D1DocIndex implements DocIndex {
       .run();
   }
 
-  // editor-do.ts `#saveSnapshot()`: docs table CREATE + UPDATE updated_at.
+  // editor-do.ts `#saveSnapshot()`: docs table UPDATE updated_at.
   // ownerId isn't part of DocIndex.touch(), so we key on (doc_id, doc_type)
   // alone, matching the docs table primary key.
   async touch(at: number): Promise<void> {
-    await this.#db.exec(
-      "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))",
-    );
     await this.#db
       .prepare(`UPDATE docs SET updated_at = ? WHERE doc_id = ? AND doc_type = ?`)
       .bind(at, this.#identity.docId, this.#identity.docType)
       .run();
   }
 
-  // editor-do.ts `#saveSnapshot()`: snapshots table CREATE + INSERT OR REPLACE.
+  // editor-do.ts `#saveSnapshot()`: snapshots table INSERT OR REPLACE.
   async recordSnapshot(version: number, hash: string, timestamp: number): Promise<void> {
-    await this.#db.exec(
-      "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))",
-    );
     await this.#db
       .prepare(
         `INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`,
@@ -309,9 +301,6 @@ export class D1DocIndexQuery implements DocIndexQuery {
   }
 
   async list(userId: string, docType: string): Promise<DocRecord[]> {
-    await this.#db.exec(
-      "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))",
-    );
     const result = await this.#db
       .prepare(
         `SELECT doc_id, doc_type, owner_id, created_at, updated_at FROM docs WHERE owner_id = ? AND doc_type = ? ORDER BY updated_at DESC`,
@@ -328,9 +317,6 @@ export class D1DocIndexQuery implements DocIndexQuery {
   }
 
   async snapshots(docType: string, docId: string): Promise<SnapshotRef[]> {
-    await this.#db.exec(
-      "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))",
-    );
     const result = await this.#db
       .prepare(
         `SELECT version, hash FROM snapshots WHERE doc_type = ? AND doc_id = ? ORDER BY version ASC`,
