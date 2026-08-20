@@ -365,6 +365,24 @@ export class PgDocIndexQuery implements DocIndexQuery {
  *
  * A normal return commits; a throw rolls back and propagates the original
  * error. The connection is released in `finally` either way.
+ *
+ * The `BEGIN` pins the isolation level explicitly to `READ COMMITTED` rather
+ * than trusting the server's `default_transaction_isolation`. This is not
+ * defensive boilerplate: `PgDeltaLog.append()`'s conflict handling and
+ * `remove()`'s window analysis above are both written *as arguments about
+ * READ COMMITTED specifically* — they reason about what a statement's
+ * snapshot can and cannot see relative to concurrent, possibly-uncommitted
+ * writes under that isolation level. A deployment that raises the server
+ * default to REPEATABLE READ (a single `ALTER DATABASE ... SET
+ * default_transaction_isolation`, no code change, easy to do without
+ * noticing) would silently invalidate both arguments: `append()`'s `INSERT
+ * ... ON CONFLICT` would start raising serialization failures (`40001`)
+ * instead of hitting `DO NOTHING`, turning `VersionConflictError` (409) into
+ * an unhandled `40001` (500); and the `head()` re-read that follows a lost
+ * race would run inside the same repeatable-read snapshot as the failed
+ * insert, so `VersionConflictError.currentVersion` — the exact field the e2e
+ * suite asserts on in the 409 body — would come back stale. Pinning the
+ * level makes the code's correctness independent of server configuration.
  */
 export class PgUnitOfWork implements UnitOfWork {
   #pool: Pool;
@@ -381,7 +399,9 @@ export class PgUnitOfWork implements UnitOfWork {
     // unknown state — see the release() call below.
     let poisoned = false;
     try {
-      await client.query("BEGIN");
+      // Pinned, not inherited from the server default — see the class doc
+      // comment above for why this specific level is load-bearing.
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
       const tx: TransactionalPorts = {
         deltas: new PgDeltaLog(client, this.#identity),
         index: new PgDocIndex(client, this.#identity),
