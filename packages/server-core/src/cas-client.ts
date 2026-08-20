@@ -1,9 +1,11 @@
 /**
- * CAS HTTP client for cloudflare-sdk.
+ * CAS HTTP client for @unidocs/server-core.
  *
  * Public mode talks to Gateway (`baseUrl` + optional Bearer).
- * Editor mode talks to the CAS worker through a service binding
- * (`fetcher` + `X-Internal-Token` + `X-User-Id`).
+ * Editor mode talks to the CAS worker through a fetch-capable binding
+ * (`fetcher` + `X-Internal-Token` + `X-User-Id`) — see `HttpFetcher` below,
+ * which is structural so this file stays cloud-neutral (no Cloudflare
+ * `Fetcher` type import).
  */
 
 import type { CasRootRefUpdate } from "@unidocs/cas";
