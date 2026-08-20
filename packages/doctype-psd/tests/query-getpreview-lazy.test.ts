@@ -1,0 +1,101 @@
+import { describe, it, expect } from "vitest";
+import { decode } from "fast-png";
+import type { PsdDoc, Layer } from "../src/model/types.js";
+import type { BlobStore } from "../src/render/pixel-source.js";
+import { serialize, deserialize } from "../src/psd/ir.js";
+import { runQuery } from "../src/queries.js";
+
+function memStore(): BlobStore & { blobs: Map<string, Uint8Array> } {
+  const blobs = new Map<string, Uint8Array>();
+  let n = 0;
+  return {
+    blobs,
+    async put(bytes: Uint8Array) {
+      const hash = `blob${n++}`;
+      blobs.set(hash, bytes);
+      return hash;
+    },
+    async get(hash: string) {
+      return blobs.get(hash) ?? null;
+    },
+  };
+}
+
+function fill(w: number, h: number, [r, g, b, a]: number[]): Uint8ClampedArray {
+  const d = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    d[i * 4] = r;
+    d[i * 4 + 1] = g;
+    d[i * 4 + 2] = b;
+    d[i * 4 + 3] = a;
+  }
+  return d;
+}
+
+const canvas = { width: 4, height: 4, colorMode: "RGB" as const, depth: 8 as const, resolution: 72, profile: "sRGB" };
+
+function buildDoc(): PsdDoc {
+  const bottom: Layer = {
+    id: "bottom",
+    type: "raster",
+    name: "Bottom",
+    bounds: [0, 0, 4, 4],
+    opacity: 1,
+    blendMode: "normal",
+    visible: true,
+    locked: false,
+    clipping: false,
+    pixels: { width: 4, height: 4, data: fill(4, 4, [255, 0, 0, 255]) },
+  };
+  const top: Layer = {
+    id: "top",
+    type: "raster",
+    name: "Top",
+    bounds: [0, 0, 2, 2],
+    opacity: 0.5,
+    blendMode: "normal",
+    visible: true,
+    locked: false,
+    clipping: false,
+    pixels: { width: 2, height: 2, data: fill(2, 2, [0, 0, 255, 255]) },
+  };
+  return { canvas, layers: [bottom, top] };
+}
+
+describe("runQuery getPreview on a lazy (PixelRef) doc", () => {
+  it("throws NO_STORE when no ctx is supplied", async () => {
+    const store = memStore();
+    const resident = buildDoc();
+    const bytes = await serialize(resident, store);
+    const lazyDoc = await deserialize(bytes, store);
+
+    await expect(runQuery({ kind: "getPreview" }, lazyDoc)).rejects.toThrow(/BlobStore/);
+  });
+
+  it("renders correctly when ctx.store is supplied, matching the resident render", async () => {
+    const store = memStore();
+    const resident = buildDoc();
+    const bytes = await serialize(resident, store);
+    const lazyDoc = await deserialize(bytes, store);
+
+    const residentOut = (await runQuery({ kind: "getPreview" }, resident)) as any;
+    const lazyOut = (await runQuery({ kind: "getPreview" }, lazyDoc, { store })) as any;
+
+    expect(lazyOut.$image.mediaType).toBe("image/png");
+    expect(lazyOut.width).toBe(residentOut.width);
+    expect(lazyOut.height).toBe(residentOut.height);
+    expect(lazyOut.region).toEqual(residentOut.region);
+
+    const residentPng = decode(Uint8Array.from(atob(residentOut.$image.base64), (c) => c.charCodeAt(0)));
+    const lazyPng = decode(Uint8Array.from(atob(lazyOut.$image.base64), (c) => c.charCodeAt(0)));
+    expect([...lazyPng.data]).toEqual([...residentPng.data]);
+  });
+
+  it("existing no-ctx resident-doc path is unaffected (back-compat)", async () => {
+    const resident = buildDoc();
+    const out = (await runQuery({ kind: "getPreview" }, resident)) as any;
+    expect(out.$image.mediaType).toBe("image/png");
+    expect(out.width).toBe(4);
+    expect(out.height).toBe(4);
+  });
+});

@@ -3,6 +3,7 @@ export type {
 	BlobStore,
 	DocumentType,
 	DocumentTypeFactory,
+	QueryCtx,
 	QueryPrimitive,
 	QueryValue,
 } from "./types.js";

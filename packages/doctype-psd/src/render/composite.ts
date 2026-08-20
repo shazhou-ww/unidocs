@@ -26,7 +26,7 @@ const NO_STORE: BlobStore = {
 // resolvePixels), so this mostly bounds memory for lazy (PixelRef) docs.
 // Tunable; 64 MiB comfortably holds a handful of full-canvas layers decoded
 // as RGBA without letting an unbounded layer count blow past a real budget.
-const DEFAULT_CACHE_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_CACHE_BYTES = 64 * 1024 * 1024;
 
 /** Default context for resident-only callers that have no store yet. */
 function defaultCtx(): RenderCtx {

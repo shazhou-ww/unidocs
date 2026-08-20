@@ -27,13 +27,23 @@ export interface BlobStore {
   get(hash: string): Promise<Uint8Array | null>;
 }
 
+/** Context passed to a query for resolving lazy (PixelRef-backed) documents.
+ *  Core carries ONLY the store — decoded-pixel caching is a doctype/render
+ *  concern and must not leak its types back into core. */
+export interface QueryCtx {
+  store: BlobStore;
+}
+
 /** Cloud-neutral specification of a document type. */
 export interface DocumentType<TDoc, TQuery, TOp> {
   /** Create a new empty document. */
   init: () => Promise<TDoc>;
 
-  /** Execute a read query against the document. Binary values are encoded by the runtime. */
-  query: (query: TQuery, doc: TDoc) => Promise<QueryValue>;
+  /** Execute a read query against the document. Binary values are encoded by
+   *  the runtime. `ctx` is optional: resident documents (or existing 2-arg
+   *  callers) render with no store; lazy documents need `ctx.store` to fault
+   *  in PixelRef layers. */
+  query: (query: TQuery, doc: TDoc, ctx?: QueryCtx) => Promise<QueryValue>;
 
   /** Apply an ordered operation batch atomically. Resolves to the new document state. */
   apply: (operations: readonly TOp[], doc: TDoc) => Promise<TDoc>;

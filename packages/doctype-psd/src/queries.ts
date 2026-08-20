@@ -1,7 +1,9 @@
 import type { PsdDoc, Layer } from "./model/types.js";
-import type { QueryValue } from "@unidocs/core";
+import type { QueryValue, QueryCtx } from "@unidocs/core";
 import { encode } from "fast-png";
 import { renderCached, renderRegion, renderLayer, downscale } from "./render/index.js";
+import { DEFAULT_CACHE_BYTES } from "./render/composite.js";
+import { PixelCache } from "./render/pixel-source.js";
 import { findLayer } from "./model/tree.js";
 
 export type PsdQuery =
@@ -38,7 +40,7 @@ function toImageResult(px: { width: number; height: number; data: Uint8ClampedAr
   return { $image: { base64: btoa(bin), mediaType: "image/png" }, width: px.width, height: px.height, region };
 }
 
-export async function runQuery(q: PsdQuery, doc: PsdDoc): Promise<QueryValue> {
+export async function runQuery(q: PsdQuery, doc: PsdDoc, ctx?: QueryCtx): Promise<QueryValue> {
   switch (q.kind) {
     case "getLayers":
       return doc.layers.map(summarize);
@@ -58,20 +60,27 @@ export async function runQuery(q: PsdQuery, doc: PsdDoc): Promise<QueryValue> {
       // as-is; downscale never upscales, so it's a no-op when already smaller.
       const cap = p.rect ? 1536 : 768;
       const maxSize = p.maxSize ?? cap;
+      // When ctx is present (lazy docs), build a fresh RenderCtx per call: a
+      // new byte-budget cache bounds memory WITHIN this render pass. The
+      // module-level framebuffer in renderCached already memoizes the
+      // *composite* by doc identity, so successive getPreviews of the same
+      // doc reuse the finished framebuffer and never re-decode — no need for
+      // a longer-lived cache here. When ctx is absent (resident docs /
+      // existing callers), pass undefined and let the render entrypoints
+      // fall back to their resident defaultCtx() (no store).
+      const renderCtx = ctx ? { store: ctx.store, cache: new PixelCache(DEFAULT_CACHE_BYTES) } : undefined;
       let px: { width: number; height: number; data: Uint8ClampedArray };
       let region: [number, number, number, number];
       if (p.layerId) {
         const l = findLayer(doc.layers, p.layerId);
         if (!l) throw new Error(`layer not found: ${p.layerId}`);
-        // runQuery has no BlobStore yet (arrives in Task 4); resident docs
-        // never touch the store, so the default ctx is safe for now.
-        px = await renderLayer(doc, p.layerId);
+        px = await renderLayer(doc, p.layerId, {}, renderCtx);
         region = l.bounds;
       } else if (p.rect) {
-        px = await renderRegion(doc, p.rect);
+        px = await renderRegion(doc, p.rect, renderCtx);
         region = p.rect;
       } else {
-        px = await renderCached(doc);
+        px = await renderCached(doc, renderCtx);
         region = [0, 0, doc.canvas.height, doc.canvas.width];
       }
       return toImageResult(downscale(px, maxSize), region);

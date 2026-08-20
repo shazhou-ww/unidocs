@@ -48,6 +48,7 @@ import type { DocumentType } from "@unidocs/core";
 import type { HistoryEntry, ApplyResult } from "./history.js";
 import { encodeQueryValue } from "./query-value.js";
 import { computeHash } from "./content-hash.js";
+import { createR2BlobStore } from "./blob-store.js";
 
 // KV keys
 const KEY_DOC_TYPE = "docType";
@@ -395,7 +396,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         // POST /_internal/query
         if (method === "POST" && endpoint === "/_internal/query") {
           const q = await request.json() as TQuery;
-          const data = await config.query(q, this.#doc);
+          const store = createR2BlobStore(this.#env.CAS);
+          const data = await config.query(q, this.#doc, { store });
           return Response.json({ success: true, data: encodeQueryValue(data), version: this.#version });
         }
 
