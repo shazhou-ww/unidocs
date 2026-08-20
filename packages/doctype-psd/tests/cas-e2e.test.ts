@@ -193,5 +193,25 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     expect([exported.bytes[0], exported.bytes[1], exported.bytes[2], exported.bytes[3]]).toEqual([
       0x38, 0x42, 0x50, 0x53, // "8BPS"
     ]);
+
+    // ----------------------------------------------------------------
+    // 5. exportBytes() on the COLD-RELOADED (lazy) session must also
+    //    produce a real PSD — not throw, and not the IR.
+    // ----------------------------------------------------------------
+    // session2's document is lazy (PixelRef layers). Before the resolve()
+    // hook, exportBytes() -> save(doc) with no ctx hit the writePsd fallback
+    // and threw on the unresolved PixelRefs. It must now materialize first.
+    const coldExport = await session2.exportBytes();
+    expect(coldExport.contentType).toBe("image/vnd.adobe.photoshop");
+    // Real PSD magic "8BPS", NOT the IR JSON "{".
+    expect(coldExport.bytes[0]).not.toBe(0x7b);
+    expect(String.fromCharCode(
+      coldExport.bytes[0], coldExport.bytes[1], coldExport.bytes[2], coldExport.bytes[3],
+    )).toBe("8BPS");
+
+    // Decode it back and confirm it's a valid PSD of the right dimensions.
+    const roundTripped = await loadPsd(coldExport.bytes);
+    expect(roundTripped.canvas.width).toBe(rawDoc.canvas.width);
+    expect(roundTripped.canvas.height).toBe(rawDoc.canvas.height);
   });
 });

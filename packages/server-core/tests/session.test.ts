@@ -900,4 +900,115 @@ describe("DocumentSession — normal paths", () => {
     expect(snap.hash).toBe(await computeHash(encoder.encode("a")));
     expect(await deps.blobs.get(snap.hash)).toEqual(encoder.encode("a"));
   });
+
+  // ------------------------------------------------------------------
+  // C1: exportBytes() must materialize a lazy document before save().
+  // A cold-reloaded PSD is lazy (PixelRef layers); save() WITHOUT ctx would
+  // hit the writePsd fallback and throw. The optional resolve() hook faults
+  // the lazy refs resident first, then save() (still no ctx) emits real bytes.
+  // ------------------------------------------------------------------
+
+  it("25. exportBytes() calls resolve() before save() (resolve gets ctx, save gets none)", async () => {
+    const resolveCtx: ({ cas?: unknown } | undefined)[] = [];
+    const calls: string[] = [];
+    // A lazy-aware doc type: resolve() materializes the doc (LAZY -> resident)
+    // and records the ctx it received; save() records whether it saw a ctx and,
+    // WITHOUT one, would "throw" on a still-lazy doc — mirroring PSD writePsd.
+    const docType: DocumentType<string, TextQuery, TextOp> = {
+      ...makeCtxAwareDocType(),
+      async resolve(doc, ctx) {
+        calls.push("resolve");
+        resolveCtx.push(ctx);
+        // Materialize: strip the LAZY marker so save() sees a resident doc.
+        return doc.startsWith("LAZY:") ? doc.slice("LAZY:".length) : doc;
+      },
+      async save(doc, ctx) {
+        calls.push("save");
+        // A save without ctx on a still-lazy doc is the failure C1 fixes.
+        if (!ctx?.cas?.store && doc.startsWith("LAZY:")) {
+          throw new Error("writePsd fallback on a lazy PixelRef doc");
+        }
+        return ctx?.cas?.store ? encoder.encode(`IR:${doc}`) : encoder.encode(`8BPS:${doc}`);
+      },
+    };
+
+    const { session } = makeHarness(1_000, undefined, docType);
+    await session.load();
+    await session.create();
+    // Simulate a cold-reloaded lazy document.
+    await session.apply([{ kind: "append", text: "LAZY:pixels" }], "lazy", 1);
+
+    // Ignore the internal snapshot save()s from create()/apply(); observe only
+    // what exportBytes() does.
+    calls.length = 0;
+    const exported = await session.exportBytes();
+    // resolve ran, then save; save produced REAL (non-IR) bytes off the
+    // materialized doc — never threw.
+    expect(calls).toEqual(["resolve", "save"]);
+    expect(exported.bytes).toEqual(encoder.encode("8BPS:pixels"));
+    // resolve() received a real context (carrying cas); save() did not.
+    expect(resolveCtx[0]?.cas).toBeDefined();
+  });
+
+  it("26. exportBytes() on a doc type WITHOUT resolve is unchanged (no call, real bytes)", async () => {
+    // markdown/docx have no resolve — export must be byte-identical to before.
+    const { session } = makeHarness(1_000, undefined, makeCtxAwareDocType());
+    await session.load();
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    const exported = await session.exportBytes();
+    expect(exported.bytes).toEqual(encoder.encode("8BPS:a"));
+  });
+
+  // ------------------------------------------------------------------
+  // I2: a clone must independently pin the blobs its snapshot references.
+  // initFromHash adopts the source IR snapshot as v1; it must commit the
+  // snapshot's refs to root-refs under the CLONE's own requestId so the blobs
+  // survive independently of the source doc's root-refs.
+  // ------------------------------------------------------------------
+
+  it("27. initFromHash() pins the cloned snapshot's referenced blobs under the clone's own requestId", async () => {
+    const refs: CasReferences = { h1: 1, h2: 1 };
+    const docType = { ...makeTextDocType(), refsFromSnapshot: () => refs };
+
+    // Clone identity differs from any source: user-9 / doc-clone.
+    const ports = createMemoryPorts();
+    const cas = new FakeCas();
+    const deps: SessionDeps = {
+      deltas: ports.deltas,
+      snapshots: ports.snapshots,
+      blobs: ports.blobs,
+      index: ports.index,
+      cas,
+      identity: { docType: "text", docId: "doc-clone", userId: "user-9" },
+      now: () => 5_000,
+    };
+    const bytes = encoder.encode("cloned snapshot");
+    const hash = await computeHash(bytes);
+    await deps.blobs.putIfAbsent(hash, bytes);
+
+    const session = new DocumentSession(docType, deps);
+    await session.load();
+    await session.initFromHash(hash, 3);
+
+    const snapCommits = cas.rootRefUpdates.filter((u) => u.requestId.startsWith("snapshot:"));
+    expect(snapCommits).toHaveLength(1);
+    expect(snapCommits[0]).toEqual({
+      requestId: "snapshot:user-9:doc-clone:1",
+      changes: { h1: 1, h2: 1 },
+    });
+  });
+
+  it("28. initFromHash() pins nothing when refsFromSnapshot returns {} (markdown/docx unchanged)", async () => {
+    const { session, deps, cas } = makeHarness();
+    const bytes = encoder.encode("plain clone");
+    const hash = await computeHash(bytes);
+    await deps.blobs.putIfAbsent(hash, bytes);
+
+    await session.load();
+    await session.initFromHash(hash, 2);
+
+    expect(cas.rootRefUpdates).toEqual([]);
+  });
 });

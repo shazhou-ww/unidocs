@@ -363,6 +363,26 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     this.#doc = doc;
     this.#version = 1;
 
+    // Independently pin the per-layer blobs this cloned snapshot references.
+    // The adopted snapshot's blobs otherwise survive only via the SOURCE doc's
+    // root-refs; a clone must own its own pin so its content cannot be GC'd out
+    // from under it when the source is deleted. Mirror #writeSnapshot's pin,
+    // scoped to the CLONE's own (user, doc, version) — deterministic and
+    // idempotent. markdown/docx return {} and skip this entirely.
+    const refs = this.#config.refsFromSnapshot(bytes);
+    if (Object.keys(refs).length > 0) {
+      try {
+        await commitRootRefsOrRollback(
+          this.#deps.cas,
+          `snapshot:${userId}:${docId}:${this.#version}`,
+          refs,
+          async () => {},
+        );
+      } catch (err) {
+        throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
+      }
+    }
+
     // Snapshot cache first, register second — same reasoning as create():
     // register() is the D1 network call most likely to fail, and the delta
     // + cache must already agree on version 1 before we risk it.
@@ -397,7 +417,15 @@ export class DocumentSession<TDoc, TQuery, TOp> {
 
   async exportBytes(): Promise<{ bytes: Uint8Array; contentType: string }> {
     await this.load();
-    const doc = this.#requireDoc();
+    const doc0 = this.#requireDoc();
+    // Materialize any lazy references (e.g. a cold-reloaded PSD's PixelRef
+    // layers) BEFORE serializing — the resolve hook faults them resident via
+    // the CAS context. Then save WITHOUT ctx so export produces the real
+    // document bytes (a full 8BPS PSD), never the CAS-IR snapshot. Doc types
+    // without a resolve hook (markdown/docx) are byte-identical to before.
+    const doc = this.#config.resolve
+      ? await this.#config.resolve(doc0, this.#context())
+      : doc0;
     const bytes = await this.#config.save(doc);
     return { bytes, contentType: this.#config.contentType };
   }

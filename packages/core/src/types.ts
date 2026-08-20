@@ -57,6 +57,12 @@ export interface DocumentType<TDoc, TQuery, TOp> {
   /** Serialize a document to binary bytes. */
   save: (doc: TDoc, context?: DocumentTypeContext) => Promise<Uint8Array>;
 
+  /**
+   * Materialize any lazy/external references into a self-contained document
+   * (e.g. before export). Optional; doctypes without lazy state omit it.
+   */
+  resolve?: (doc: TDoc, context?: DocumentTypeContext) => Promise<TDoc>;
+
   /** Extract CAS references from a snapshot (synchronous pure function). */
   refsFromSnapshot: (data: Uint8Array) => CasReferences;
 

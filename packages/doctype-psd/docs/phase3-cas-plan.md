@@ -49,3 +49,6 @@
 - server-core 改动 = 1 个新可选方法(运行时已支持)+ 补全 refsFromSnapshot TODO,均小而贴合。
 - doctype-psd 复用既有 ir/pixel-source/resolve(BlobStore 抽象),只加一个 CAS 适配器 + 重接 save/load/render。
 - 向后兼容:magic-byte 分流(PSD 导入 vs IR 快照);无 ctx 场景回退旧行为。
+
+## Follow-ups
+- **I3 (tracked, not fixed): root-refs 只增不减 → 无界增长。** 每次 `#writeSnapshot` / 克隆 pin 都对 `refsFromSnapshot` 的 hash 提交 +1 的 root-ref,但旧版本的 root-ref 从不 -1。属于过度保留(over-retention),merge-safe(不丢数据、不破坏正确性),但会让被引用 blob 的引用计数随版本单调增长。后续:快照 supersession —— 写新版本快照时,retire/decrement 旧版本 root-refs,让 GC 能回收不再被任何存活快照引用的层 blob。
