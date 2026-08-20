@@ -5,7 +5,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "test:local": "vitest run scripts/doc-types.test.mjs scripts/local-runtime.test.mjs scripts/cas-e2e.test.mjs scripts/docx-image-e2e.test.mjs scripts/editor-characterization.test.mjs",
+    "test:local": "vitest run scripts/doc-types.test.mjs scripts/local-runtime.test.mjs scripts/cas-e2e.test.mjs scripts/docx-image-e2e.test.mjs scripts/editor-characterization.test.mjs scripts/editor-restart.test.mjs",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r clean"
   },
