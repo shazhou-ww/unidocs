@@ -4,7 +4,7 @@
  * test bodies against either.
  *
  * Topology: `docker compose -f docker-compose.azure.yml up -d` (Postgres +
- * Azurite) -> poll Postgres -> apply migrations via the package's own
+ * Azurite) -> poll Postgres AND Azurite -> apply migrations via the package's own
  * standalone entry point (`pnpm --filter @unidocs/azure-sdk run migrate`,
  * documented in CLAUDE.md) -> esbuild-bundle `azure-gateway`/`azure-markdown`
  * fresh from source (same technique `local-runtime.mjs` uses for the
@@ -89,6 +89,32 @@ async function waitForPostgres(timeoutMs) {
   throw new Error(`postgres did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
 }
 
+/**
+ * Same idea for Azurite: the blob endpoint accepts TCP before it serves the
+ * API. Mirrors `packages/azure-sdk/tests/containers.ts`'s `waitForAzurite`
+ * exactly (same probe container name, same poll shape) — that file's comment
+ * is the rationale for why this can't be skipped: `BlobCasStore`/
+ * `BlobSnapshotCache` create their real containers lazily on first use, so
+ * without this, a slow-to-start Azurite would surface as an opaque timeout
+ * on whichever behavior test happens to touch storage first, not as a clear
+ * "Azurite isn't up yet" failure at boot.
+ */
+async function waitForAzurite(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  const svc = BlobServiceClient.fromConnectionString(BLOB_CONNECTION_STRING);
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      await svc.getContainerClient("readiness-probe").createIfNotExists();
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw new Error(`azurite did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
+}
+
 /** Poll a TCP port rather than an HTTP route, so readiness doesn't depend on any one endpoint's own logic working. */
 async function waitForPort(host, port, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -171,8 +197,10 @@ function createStorageProbe() {
          ORDER BY version ASC`,
         [docType, docId],
       );
+      // `doc_snapshots.version` is Postgres `INTEGER`, which `pg` already
+      // hands back as a JS number (unlike `bigint`/`int8` columns).
       return result.rows.map((row) => ({
-        version: typeof row.version === "number" ? row.version : Number(row.version),
+        version: row.version,
         hash: row.hash,
       }));
     },
@@ -206,7 +234,7 @@ export async function startAzureRuntime({
   let markdownProc;
   let probe;
   try {
-    await waitForPostgres(60_000);
+    await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
     runMigrations();
 
     await Promise.all([
