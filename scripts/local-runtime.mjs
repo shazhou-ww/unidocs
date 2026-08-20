@@ -92,6 +92,7 @@ export async function startLocalRuntime({
   docTypes = Object.keys(DOC_TYPES),
   ports: portOverrides = {},
   persistPath,
+  casFault = false,
   logLevel = LogLevel.WARN,
 } = {}) {
   const ports = resolvePorts(docTypes, portOverrides);
@@ -121,7 +122,7 @@ export async function startLocalRuntime({
         log: new Log(logLevel),
         logRequests: logLevel >= LogLevel.INFO,
         ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
-        workers: buildWorkers({ docTypes, host, ports, bundleDir }),
+        workers: buildWorkers({ docTypes, host, ports, bundleDir, casFault }),
       }),
     );
 
