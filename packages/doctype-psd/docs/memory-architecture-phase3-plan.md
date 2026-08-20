@@ -63,3 +63,12 @@
 - 向后兼容:T4 magic 分流旧 PSD 快照。
 - 类型一致:`BlobStore` 单一源在 core;`QueryCtx` 只带 store,cache 归 editor/doctype。
 - 安全网:每任务保真三数不变;T6 量化内存下界。
+
+---
+
+## 完成后残留(评审判定可推迟,记录以免遗漏)
+Phase 3 已完成并通过整支评审(常驻文档保真逐字节不变,doctype 98 + sdk 18 测试全绿)。以下为已判定"可推迟"的后续项:
+- **DO 集成测试**:目前没有 DurableObject/D1/R2 的处理器级测试;clone/rollback/export/cold-reload 的端到端行为由纯 helper 单测 + doctype 级测试 + tsc + 评审覆盖。补一个轻量 editor-do 处理器测试(import→apply(flip)→丢弃内存态强制 lazy 重载→export→rollback across flip)是值得做的后续。
+- **I2 热会话重编码**:导入后 `this.#doc` 保持常驻,每次 apply→`#saveSnapshotKV`→`serialize` 会把所有常驻层重新 PNG 编码(CAS.put 幂等,不涨存储,但 CPU 花掉)。"未改动层跳过重编码"只在 cold-reload 后(文档变 lazy)才兑现。可选优化:首次 serialize 后把 `this.#doc` rehydrate 成 lazy(引用),后续 apply 靠已加的 store-resolve 支持。
+- **originalHash 未被读取**:导入时归档了原始 PSD(`originalHash`),但目前无处读取;留待"重新导出原图"功能或删除。
+- **T6 测试**:合成用例无重叠图层(全画布平铺已覆盖 lazy 取用路径);真实 landing/~174MB 内存场景仅 existsSync-gated、CI 不跑;硬编码个人路径应改环境变量/提交夹具。
