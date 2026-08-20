@@ -625,6 +625,44 @@ describe("DocumentSession — normal paths", () => {
     expect(index.calls).toEqual([]);
   });
 
+  it("17. create() saves the snapshot cache before register(), so a register() failure doesn't lose the uploaded bytes", async () => {
+    // register() is a D1 network call — the step in create() most likely to
+    // fail. If #saveSnapshotCache() ran AFTER register() (the old, reverted
+    // ordering), a register() throw here would leave version 1's delta
+    // landed but the cache empty: a later load() would replay onto an
+    // init()-produced empty document instead of the uploaded bytes, and
+    // #doc being non-null would then block any retry with DocExistsError —
+    // the upload permanently lost. Assert the cache directly KEPT the bytes,
+    // not merely that create() rejected.
+    const ports = createMemoryPorts();
+    const failingIndex: DocIndex = {
+      register: async () => {
+        throw new Error("D1 unavailable");
+      },
+      touch: (at: number) => ports.index.touch(at),
+      recordSnapshot: (v: number, h: string, t: number) => ports.index.recordSnapshot(v, h, t),
+    };
+    const deps: SessionDeps = {
+      deltas: ports.deltas,
+      snapshots: ports.snapshots,
+      blobs: ports.blobs,
+      index: failingIndex,
+      cas: new FakeCas(),
+      identity: { docType: "text", docId: "doc-1", userId: "user-1" },
+      now: () => 1_000,
+    };
+    const session = new DocumentSession(makeTextDocType(), deps);
+    await session.load();
+
+    const bytes = encoder.encode("uploaded content");
+    await expect(session.create({ bytes })).rejects.toThrow("D1 unavailable");
+
+    // The delta landed...
+    expect(await deps.deltas.head()).toBe(1);
+    // ...and the uploaded bytes are already in the snapshot cache — not lost.
+    expect(await deps.snapshots.get()).toEqual({ version: 1, bytes });
+  });
+
   it("9. initFromHash() adopts an existing blob as version 1", async () => {
     const { session, deps, ports } = makeHarness();
     const bytes = encoder.encode("cloned content");

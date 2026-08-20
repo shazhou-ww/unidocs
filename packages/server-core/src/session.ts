@@ -27,6 +27,36 @@
  * the obligation keeps the invariant inside the session instead of relying on
  * an adapter to remember it. `load()` is idempotent, so this is a flag check
  * after the first call.
+ *
+ * **Lifecycle contract — do not cache a session across requests without
+ * revalidating it.** `apply()` only ever compares the log's `head()` against
+ * the caller-supplied `baseVersion`; it never compares `head()` against this
+ * instance's own `#version`. And `load()` is one-shot — `#loaded` makes every
+ * call after the first a no-op, including the snapshot+replay that would
+ * otherwise catch `#doc`/`#version` up to what's durable. So the implicit
+ * precondition "this instance's `#version` equals the log's `head()`" is only
+ * actually maintained by the *caller's* deployment topology, not by anything
+ * in this class:
+ *
+ *   - Cloudflare holds it for free — one Durable Object instance per document,
+ *     single-writer, and `editor-do.ts` builds a fresh (or DO-lifetime-cached
+ *     but exclusively-owned) session per identity.
+ *   - A host that keeps a process-local LRU of sessions keyed by
+ *     `(docId, version)` across requests — as the design doc's cold-start
+ *     mitigation for Azure's N stateless replicas proposes — breaks this the
+ *     moment two replicas ever touch the same document: replica B's `apply()`
+ *     can pass a `baseVersion` that is fresh on the shared log but stale
+ *     against replica A's cached `#doc`. `head()` in `DeltaLog.append` will
+ *     happily accept it (the *version* is correct), `config.apply` will run
+ *     the new ops against A's outdated in-memory document, and the result —
+ *     silently wrong content tagged with a version number that looks right —
+ *     gets written straight into the snapshot cache. There is no error
+ *     anywhere in that path to catch it.
+ *
+ * A host that wants to reuse session instances across requests MUST
+ * revalidate `head()` against `#version` (and reload if they've diverged)
+ * before every use, not just at construction. This class does not do that
+ * revalidation itself — see the phase-2 Azure design doc.
  */
 
 import type {
@@ -237,9 +267,18 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     this.#doc = doc;
     this.#version = 1;
 
-    // Register BEFORE writing the snapshot: DocIndex.recordSnapshot files a
-    // snapshot against a known document, so a document the index has never
-    // seen has nowhere to file it and the record is silently dropped.
+    // Refresh the (non-durable) snapshot cache right after the delta lands,
+    // before the network round-trip to register(). register() is a D1 call
+    // and the most likely thing here to fail; if it throws after the cache
+    // write, the delta and the cache already agree on version 1, so a later
+    // load() replays zero deltas onto a correct cached doc instead of
+    // replaying one empty delta onto an empty init() doc (which would also
+    // make #doc non-null and permanently block a retry with DocExistsError).
+    await this.#saveSnapshotCache();
+
+    // Register BEFORE writing the durable snapshot: DocIndex.recordSnapshot
+    // files a snapshot against a known document, so a document the index has
+    // never seen has nowhere to file it and the record is silently dropped.
     await this.#deps.index.register({
       docId,
       docType,
@@ -248,7 +287,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       updatedAt: timestamp,
     });
 
-    await this.#saveSnapshotCache();
     // Deliberate: version 1 gets a durable snapshot immediately, so a fresh
     // document is restorable without replaying from `init()`.
     await this.#writeSnapshot();
@@ -290,7 +328,12 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     this.#doc = doc;
     this.#version = 1;
 
-    // Register before recording the snapshot — see create().
+    // Snapshot cache first, register second — same reasoning as create():
+    // register() is the D1 network call most likely to fail, and the delta
+    // + cache must already agree on version 1 before we risk it.
+    await this.#saveSnapshotCache();
+
+    // Register before recording the durable snapshot — see create().
     await this.#deps.index.register({
       docId,
       docType,
@@ -299,7 +342,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       updatedAt: timestamp,
     });
 
-    await this.#saveSnapshotCache();
     await this.#deps.index.recordSnapshot(1, hash, timestamp);
     await this.#deps.deltas.recordSnapshot(1, hash, timestamp);
 
