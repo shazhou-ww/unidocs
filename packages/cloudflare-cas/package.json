@@ -3,16 +3,16 @@
   "version": "0.1.0",
   "description": "User-scoped CAS worker for UniDocs",
   "type": "module",
-  "main": "./dist/worker.js",
-  "types": "./dist/worker.d.ts",
+  "main": "./src/worker.ts",
+  "types": "./src/worker.ts",
   "exports": {
     ".": {
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/worker.js"
+      "types": "./src/worker.ts",
+      "import": "./src/worker.ts"
     },
     "./public": {
-      "types": "./dist/public-cas-route.d.ts",
-      "import": "./dist/public-cas-route.js"
+      "types": "./src/public-cas-route.ts",
+      "import": "./src/public-cas-route.ts"
     }
   },
   "files": [
@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -b",
     "clean": "rm -rf dist",
     "deploy": "wrangler deploy"
   },
@@ -33,5 +33,19 @@
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
     "wrangler": "^4.20.0"
+  },
+  "publishConfig": {
+    "main": "./dist/worker.js",
+    "types": "./dist/worker.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/worker.d.ts",
+        "import": "./dist/worker.js"
+      },
+      "./public": {
+        "types": "./dist/public-cas-route.d.ts",
+        "import": "./dist/public-cas-route.js"
+      }
+    }
   }
 }

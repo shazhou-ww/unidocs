@@ -277,6 +277,37 @@ POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
 POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ```
 
+## Workspace package resolution
+
+Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry a
+`publishConfig` block that restores the `dist/*` paths at publish time:
+
+```json
+{
+  "exports": { ".": { "types": "./src/index.ts", "import": "./src/index.ts" } },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }
+  }
+}
+```
+
+Why: with `dist`-only exports, `pnpm -r test` and `pnpm --filter <pkg> test` fail on a
+fresh clone — vitest resolves a sibling workspace package before anything has built it
+(`Failed to resolve entry for package "@unidocs/cas"`). Pointing the workspace-facing
+entry at source removes the ordering dependency; `publishConfig` keeps packaged
+consumers on the built artifacts (`pnpm pack` rewrites the fields and drops the block).
+
+`typecheck` scripts use `tsc -b` rather than `tsc --noEmit`: TypeScript project
+references cannot resolve an unbuilt dependency, and `tsc -b --noEmit` is rejected
+outright (`TS6310: Referenced project may not disable emit`). Build mode walks the
+reference graph and builds what it needs, so a clean checkout typechecks without a
+manual pre-build.
+
+**When adding a package**, follow both conventions — otherwise its first consumer
+breaks the recursive test run.
+
 ## Deployment
 
 **New environment only — before the first `wrangler deploy`:** run
