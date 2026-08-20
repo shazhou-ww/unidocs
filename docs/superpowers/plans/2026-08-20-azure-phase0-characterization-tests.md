@@ -269,8 +269,9 @@ test("优雅重启后从持久化存储恢复,版本与内容保持不变", asyn
     );
     ({ docId } = await create.json());
 
-    // 21 次 apply 让版本走到 22,跨过 version 20 的快照点,
-    // 恢复时才会真正经历"加载快照 + replay 其后的 delta"。
+    // 21 次 apply 让版本走到 22。#saveSnapshotKV() 在每次 apply 后都无条件刷新 KV 快照,
+    // 因此优雅重启后 KV 快照的 version 等于当前版本,不会有任何 delta 可重放。
+    // 这个测试验证的是持久化状态的完整性:优雅重启后版本与内容原样恢复。
     for (let baseVersion = 1; baseVersion <= 21; baseVersion += 1) {
       const res = await closeFetch(
         `${runtime.urls.gateway}/users/${userId}/docs/markdown/${docId}/apply`,
