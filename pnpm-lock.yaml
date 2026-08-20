@@ -82,6 +82,12 @@ importers:
       '@unidocs/cloudflare-cas':
         specifier: workspace:*
         version: link:../cloudflare-cas
+      '@unidocs/cloudflare-sdk':
+        specifier: workspace:*
+        version: link:../cloudflare-sdk
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
