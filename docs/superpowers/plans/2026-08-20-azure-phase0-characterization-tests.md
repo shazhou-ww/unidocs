@@ -210,9 +210,16 @@ git commit -m "test(sdk): characterize automatic snapshot at delta threshold"
 
 ---
 
-## Task 3: 重启后从快照 + replay 恢复
+## Task 3: 重启恢复与 snapshot-replay 路径
 
 DO 被驱逐或进程重启后,文档要能从"最近快照 + 其后的 delta"重建。阶段 1 之后 Azure 侧**每次冷请求**都走这条路径,所以它从边缘路径升级成主路径,必须先锁住。
+
+**执行期修正(重要)**:原计划设想"重启 runtime"就能触发 replay,这是错的。`#saveSnapshotKV()` 在每次 apply 后无条件刷新 DO storage 里的 `KEY_SNAPSHOT`,所以优雅关停后 `#ensureLoaded()` 的 `SELECT ... FROM deltas WHERE version > ?` 恒为 0 行 —— 一条 delta 都不会重放。只有崩溃发生在 delta INSERT 与快照 PUT 之间才会留下陈旧快照,测试无法制造。
+
+因此本任务实际产出两个测试:
+
+1. **优雅重启后持久化状态完整** —— 版本与内容不变。这仍是真不变量(Azure 冷启动就是读持久化状态),只是不涉及 replay。
+2. **rollback 走 snapshot-replay** —— rollback 是测试里唯一能稳定触发"加载不晚于目标版本的最近 R2 快照 → replay 其后的 delta"的入口。apply 22 次(阈值快照落在 version 21),rollback 到 version 22,强制加载快照 21 并重放 delta 22,得到内容 `# v21`、版本 24。
 
 单独一个测试文件,因为它需要在测试中途 dispose 并重启 runtime,与共享 runtime 的文件不兼容。
 
@@ -244,7 +251,7 @@ function closeFetch(url, init = {}) {
   });
 }
 
-test("重启运行时后从快照 + replay 恢复,版本与内容一致", async () => {
+test("优雅重启后从持久化存储恢复,版本与内容保持不变", async () => {
   const persistPath = await mkdtemp(join(tmpdir(), "unidocs-restart-"));
   const userId = "restart-user";
 

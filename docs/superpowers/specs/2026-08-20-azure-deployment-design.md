@@ -338,7 +338,7 @@ e2e 的三个盲点恰好都在重构要动的位置:
 以 `startLocalRuntime()`(进程内 Miniflare,不需要 Docker,已包含 CAS worker)为载体补充表征测试:
 
 - 连续 apply 25 次 → 断言第 20 个 delta 处产生 BlobCas 对象与全局索引记录
-- 重启运行时 → 断言从快照 + replay 恢复后版本与内容一致
+- 重启运行时 → 断言持久化状态完整(版本与内容不变);snapshot + replay 路径改用 rollback 触发 —— 优雅关停不会留下陈旧快照,`#saveSnapshotKV()` 每次 apply 都刷新它
 - 并发发送两个 `baseVersion` 相同的 apply → 断言恰好一个成功、一个 409 —— **这是那把锁的验收标准,重构前后都必须通过**
 - rollback 后的 replay、clone 走 hash 路径、export/import 往返
 - **docx 带图片的 apply** → 断言 lease → apply → root-refs 顺序成立;并断言 `updateRootRefs` 失败时 delta 被删除、版本不变(注入失败的 CAS)
