@@ -49,6 +49,7 @@ import type { HistoryEntry, ApplyResult } from "./history.js";
 import { encodeQueryValue } from "./query-value.js";
 import { computeHash } from "./content-hash.js";
 import { createR2BlobStore } from "./blob-store.js";
+import { encodeSnapshot, decodeSnapshot } from "./snapshot-codec.js";
 
 // KV keys
 const KEY_DOC_TYPE = "docType";
@@ -101,6 +102,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       this.#env = env;
     }
 
+    /** CAS-backed BlobStore for IR snapshot codec (per-layer pixel blobs). */
+    #store() {
+      return createR2BlobStore(this.#env.CAS);
+    }
+
     async #ensureLoaded(): Promise<void> {
       if (this.#doc !== null) return;
 
@@ -134,7 +140,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           bytes = snapshot.bytes; // legacy inline-bytes snapshot
         }
         if (bytes) {
-          this.#doc = await config.load(bytes);
+          // Route by magic byte: legacy PSD-binary snapshots ('8BPS') go
+          // through config.load; IR JSON snapshots ('{') through deserialize.
+          this.#doc = await decodeSnapshot(bytes, this.#store(), config);
           this.#version = snapshot.version;
         }
       }
@@ -159,7 +167,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
     async #saveSnapshotKV(): Promise<void> {
       if (!this.#doc) return;
-      const bytes = await config.save(this.#doc);
+      // IR snapshot when the doctype supports it (per-layer pixel blobs are
+      // side-effect-written into CAS by serialize); else full binary save.
+      const bytes = await encodeSnapshot(this.#doc, this.#store(), config);
       const hash = await computeHash(bytes);
       // Bytes go to R2 (no size cap); DO storage keeps only the small pointer.
       // R2 is content-addressed, so this put is idempotent per unique content.
@@ -192,7 +202,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
     async #saveSnapshot(): Promise<void> {
       if (!this.#doc) return;
 
-      const bytes = await config.save(this.#doc);
+      // IR snapshot when supported (per-layer blobs land in CAS as a side
+      // effect); else full binary save.
+      const bytes = await encodeSnapshot(this.#doc, this.#store(), config);
       const hash = await computeHash(bytes);
 
       // Write to R2 CAS (idempotent - same content = same hash)
@@ -275,6 +287,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
           if (file) {
             const bytes = new Uint8Array(await file.arrayBuffer());
             this.#doc = await config.load(bytes);
+            // Archive the ORIGINAL uploaded bytes to CAS under their own hash
+            // (for re-export / fidelity comparison) — not on the state path.
+            const originalHash = await this.#store().put(bytes);
+            await this.#ctx.storage.put("originalHash", originalHash);
           } else if (sourceId) {
             return Response.json({ success: false, error: "Clone should be handled at worker level" }, { status: 400 });
           } else {
@@ -326,6 +342,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
           const bytes = await obj.bytes();
           this.#doc = await config.load(bytes);
+          // Archive the ORIGINAL source bytes to CAS under their own hash
+          // (for re-export / fidelity comparison) — not on the state path.
+          const originalHash = await this.#store().put(bytes);
+          await this.#ctx.storage.put("originalHash", originalHash);
 
           // Store immutable context
           const docType = request.headers.get("X-Doc-Type") || "unknown";
