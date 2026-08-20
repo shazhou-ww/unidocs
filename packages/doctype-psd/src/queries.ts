@@ -1,7 +1,9 @@
 import type { PsdDoc, Layer } from "./model/types.js";
 import type { QueryValue, DocumentTypeContext } from "@unidocs/core";
 import { encode } from "fast-png";
-import { renderCached, renderRegion, renderLayer, downscale } from "./render/index.js";
+import { renderCached, renderRegion, renderLayer, downscale, DEFAULT_CACHE_BYTES, type RenderCtx } from "./render/index.js";
+import { PixelCache } from "./render/pixel-source.js";
+import { casBlobStore } from "./psd/cas-blobstore.js";
 import { findLayer } from "./model/tree.js";
 
 export type PsdQuery =
@@ -38,7 +40,7 @@ function toImageResult(px: { width: number; height: number; data: Uint8ClampedAr
   return { $image: { base64: btoa(bin), mediaType: "image/png" }, width: px.width, height: px.height, region };
 }
 
-export async function runQuery(q: PsdQuery, doc: PsdDoc, _ctx?: DocumentTypeContext): Promise<QueryValue> {
+export async function runQuery(q: PsdQuery, doc: PsdDoc, ctx?: DocumentTypeContext): Promise<QueryValue> {
   switch (q.kind) {
     case "getLayers":
       return doc.layers.map(summarize);
@@ -58,21 +60,26 @@ export async function runQuery(q: PsdQuery, doc: PsdDoc, _ctx?: DocumentTypeCont
       // as-is; downscale never upscales, so it's a no-op when already smaller.
       const cap = p.rect ? 1536 : 768;
       const maxSize = p.maxSize ?? cap;
-      // Render RESIDENT: the render entrypoints fall back to their resident
-      // defaultCtx() (no store) when no RenderCtx is passed. The lazy-pixel
-      // path (rendering from a BlobStore) returns in a later stage.
+      // Resident docs (no ctx.cas) render via the resident entrypoints — the
+      // render entrypoints fall back to their own resident defaultCtx() (no
+      // store) when no RenderCtx is passed, so this is byte-identical to
+      // before. Lazy (PixelRef) docs pass a RenderCtx that faults pixels in
+      // from the CAS as the compositor streams over each layer.
+      const rc: RenderCtx | undefined = ctx?.cas
+        ? { store: casBlobStore(ctx), cache: new PixelCache(DEFAULT_CACHE_BYTES) }
+        : undefined;
       let px: { width: number; height: number; data: Uint8ClampedArray };
       let region: [number, number, number, number];
       if (p.layerId) {
         const l = findLayer(doc.layers, p.layerId);
         if (!l) throw new Error(`layer not found: ${p.layerId}`);
-        px = await renderLayer(doc, p.layerId);
+        px = await renderLayer(doc, p.layerId, {}, rc);
         region = l.bounds;
       } else if (p.rect) {
-        px = await renderRegion(doc, p.rect);
+        px = await renderRegion(doc, p.rect, rc);
         region = p.rect;
       } else {
-        px = await renderCached(doc);
+        px = await renderCached(doc, rc);
         region = [0, 0, doc.canvas.height, doc.canvas.width];
       }
       return toImageResult(downscale(px, maxSize), region);

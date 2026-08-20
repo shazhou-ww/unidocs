@@ -71,10 +71,9 @@ describe("runQuery getPreview on a lazy (PixelRef) doc", () => {
     await expect(runQuery({ kind: "getPreview" }, lazyDoc)).rejects.toThrow(/BlobStore/);
   });
 
-  // NOTE: the lazy render-from-store path through runQuery is deferred to a
-  // later stage (the ctx.store → RenderCtx branch was removed while conforming
-  // to main's DocumentType interface). The former "renders correctly when
-  // ctx.store is supplied" case will return when that path is reinstated.
+  // The lazy render-from-store path through runQuery (ctx.cas → RenderCtx) is
+  // covered end-to-end in tests/cas-render.test.ts, which builds a real
+  // CAS-backed ctx and asserts byte-identical output vs the resident render.
 
   it("existing no-ctx resident-doc path is unaffected (back-compat)", async () => {
     const resident = buildDoc();

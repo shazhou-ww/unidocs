@@ -5,6 +5,8 @@ import { crop, transform } from "./geometry-ops.js";
 import { adjust } from "./adjust-ops.js";
 import { maskEdit } from "./mask-ops.js";
 import { generativeFill } from "./generative-ops.js";
+import { resolveLayerPixels } from "../resolve.js";
+import { casBlobStore } from "../psd/cas-blobstore.js";
 
 export type PsdOp = { kind: string; payload: Record<string, unknown> };
 
@@ -55,10 +57,23 @@ export function applyOne(doc: PsdDoc, op: PsdOp): PsdDoc {
 export async function apply(
   operations: readonly PsdOp[],
   doc: PsdDoc,
-  _ctx?: DocumentTypeContext,
+  ctx?: DocumentTypeContext,
 ): Promise<PsdDoc> {
   let cur = doc;
   for (const op of operations) {
+    // A `transform` op that flips mutates the layer's pixel bytes in place
+    // (see geometry-ops.ts `flipPixels`), so it needs resident pixels. On a
+    // lazy (PixelRef) doc, pre-resolve just that one layer from the CAS
+    // before applyOne runs — siblings stay lazy. With no ctx.cas (or a
+    // resident doc), applyOne's loud PixelRef throw in geometry-ops is the
+    // guard: a PixelRef reaching flip unresolved still fails loudly rather
+    // than silently no-op-ing.
+    if (op.kind === "transform" && ctx?.cas) {
+      const payload = op.payload as { layerId?: string; op?: { flip?: unknown } };
+      if (payload?.op?.flip && payload.layerId) {
+        cur = await resolveLayerPixels(cur, payload.layerId, casBlobStore(ctx));
+      }
+    }
     cur = applyOne(cur, op);
   }
   return cur;
