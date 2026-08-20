@@ -18,7 +18,8 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "migrate": "node scripts/bundle-migrate-cli.mjs && node dist/migrate-cli.js"
   },
   "dependencies": {
     "@unidocs/server-core": "workspace:*",
@@ -28,7 +29,8 @@
   "devDependencies": {
     "@types/pg": "^8.23.1",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^3.2.0",
+    "esbuild": "^0.28.2"
   },
   "publishConfig": {
     "main": "./dist/index.js",

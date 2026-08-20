@@ -8,8 +8,9 @@
  * and collectable) and the snapshot cache is droppable.
  *
  * Both classes create their container lazily on first use and remember the
- * promise, so the `createIfNotExists()` round trip happens once per process
- * rather than once per operation.
+ * promise, so the `createIfNotExists()` round trip happens once per
+ * `BlobServiceClient` rather than once per operation — see `containerReady`
+ * below for why it is keyed that way rather than per-instance.
  */
 
 import type { BlobCas, DocIdentity, SnapshotCache } from "@unidocs/server-core";
@@ -96,16 +97,45 @@ function parseVersion(raw: string | undefined): number | null {
 }
 
 /**
- * Lazily `createIfNotExists()` a container, at most once per instance.
+ * Lazily `createIfNotExists()` a container, at most once per
+ * `(BlobServiceClient, containerName)` pair — NOT once per `BlobCasStore` /
+ * `BlobSnapshotCache` instance.
+ *
+ * That distinction matters here specifically: `@unidocs/azure-markdown`
+ * builds a fresh `DocumentSession` (and with it, fresh port instances,
+ * including these two) on every single request — see
+ * `azure-markdown/src/local-editor.ts` for why no session is cached across
+ * requests. A per-instance memo would silently turn back into a per-request
+ * one under that call pattern, costing an extra `createIfNotExists()` round
+ * trip to Blob Storage on every query/apply. Keying by the long-lived
+ * `BlobServiceClient` (constructed once in `main.ts`) instead restores the
+ * "once per process" intent the memo is actually for; `getContainerClient()`
+ * returns a fresh `ContainerClient` object per call even for the same name,
+ * so the `ContainerClient` itself is not a usable cache key.
  *
  * The memo is cleared when the call fails, so a single transient error (the
  * storage account briefly unreachable, a throttled request) does not hand the
  * same rejected promise to every later operation for the lifetime of the
  * process. Only a success is remembered.
  */
-function containerReady(container: ContainerClient): () => Promise<void> {
+const containerReadyByService = new WeakMap<BlobServiceClient, Map<string, () => Promise<void>>>();
+
+function containerReady(
+  svc: BlobServiceClient,
+  containerName: string,
+  container: ContainerClient,
+): () => Promise<void> {
+  let byContainer = containerReadyByService.get(svc);
+  if (!byContainer) {
+    byContainer = new Map();
+    containerReadyByService.set(svc, byContainer);
+  }
+
+  const cached = byContainer.get(containerName);
+  if (cached) return cached;
+
   let pending: Promise<unknown> | null = null;
-  return async () => {
+  const ensure = async (): Promise<void> => {
     if (pending === null) {
       pending = container.createIfNotExists().catch((err: unknown) => {
         pending = null;
@@ -114,6 +144,8 @@ function containerReady(container: ContainerClient): () => Promise<void> {
     }
     await pending;
   };
+  byContainer.set(containerName, ensure);
+  return ensure;
 }
 
 /**
@@ -125,7 +157,7 @@ export class BlobCasStore implements BlobCas {
 
   constructor(svc: BlobServiceClient) {
     this.#container = svc.getContainerClient(CAS_CONTAINER);
-    this.#ensure = containerReady(this.#container);
+    this.#ensure = containerReady(svc, CAS_CONTAINER, this.#container);
   }
 
   /**
@@ -177,7 +209,7 @@ export class BlobSnapshotCache implements SnapshotCache {
 
   constructor(svc: BlobServiceClient, identity: DocIdentity) {
     this.#container = svc.getContainerClient(SNAPSHOT_CONTAINER);
-    this.#ensure = containerReady(this.#container);
+    this.#ensure = containerReady(svc, SNAPSHOT_CONTAINER, this.#container);
     this.#blobName = `${identity.docType}/${identity.docId}/latest`;
   }
 
