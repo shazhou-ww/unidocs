@@ -44,6 +44,7 @@ import {
 import { CasClient } from "./cas-client.js";
 import {
   D1DocIndex,
+  DirectUnitOfWork,
   DoDeltaLog,
   DoSnapshotCache,
   R2BlobCas,
@@ -185,11 +186,17 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       const key = `${identity.docType} ${identity.docId} ${identity.userId}`;
       if (this.#session && this.#sessionKey === key) return this.#session;
 
+      const deltas = new DoDeltaLog(this.#ctx);
+      const index = new D1DocIndex(this.#env.SNAPSHOTS_DB, identity);
+
       const deps: SessionDeps = {
-        deltas: new DoDeltaLog(this.#ctx),
+        deltas,
         snapshots: new DoSnapshotCache(this.#ctx),
         blobs: new R2BlobCas(this.#env.CAS),
-        index: new D1DocIndex(this.#env.SNAPSHOTS_DB, identity),
+        index,
+        // Pass-through, not a transaction: DO sqlite and D1 are separate
+        // services with nothing to commit across. See DirectUnitOfWork.
+        unitOfWork: new DirectUnitOfWork({ deltas, index }),
         cas: this.#makeCasClient(identity.userId),
         identity,
         now: () => Date.now(),

@@ -23,6 +23,8 @@ import type {
   DocRecord,
   SnapshotCache,
   SnapshotRef,
+  TransactionalPorts,
+  UnitOfWork,
 } from "@unidocs/server-core";
 import { VersionConflictError } from "@unidocs/server-core";
 
@@ -338,5 +340,38 @@ export class D1DocIndexQuery implements DocIndexQuery {
       version: row.version as number,
       hash: row.hash as string,
     }));
+  }
+}
+
+/**
+ * `UnitOfWork` for Cloudflare: run the callback, commit nothing, roll back
+ * nothing.
+ *
+ * This is not an unfinished implementation — it is the strongest thing this
+ * platform can offer. The two ports a transaction would have to span live in
+ * two physically separate services: the delta log is a Durable Object's
+ * private sqlite, reachable only from inside that DO, and the index is D1,
+ * a separate database behind its own binding. There is no distributed
+ * transaction between them and no two-phase commit to enlist them in, so a
+ * failure partway through `withTransaction` leaves exactly what it wrote.
+ *
+ * What that costs, concretely: if `DocIndex.register()` fails during
+ * `DocumentSession.create()`, the version-1 delta stays in the DO's sqlite
+ * while the document is missing from the global listing, and a retried
+ * `create()` answers 409 because the DO now holds a document. That orphan is
+ * the known, accepted limitation of the Cloudflare deployment; the Postgres
+ * backend on Azure closes it with a real transaction. The port contract
+ * marks this by running against `runPortContract(..., { transactional: false })`,
+ * which skips the two rollback assertions this class cannot satisfy.
+ */
+export class DirectUnitOfWork implements UnitOfWork {
+  #ports: TransactionalPorts;
+
+  constructor(ports: TransactionalPorts) {
+    this.#ports = ports;
+  }
+
+  withTransaction<T>(fn: (tx: TransactionalPorts) => Promise<T>): Promise<T> {
+    return fn(this.#ports);
   }
 }

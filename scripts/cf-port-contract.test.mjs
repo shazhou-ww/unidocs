@@ -28,6 +28,7 @@ import { afterAll, beforeAll } from "vitest";
 import { COMPATIBILITY_DATE } from "./doc-types.mjs";
 import { runPortContract } from "../packages/server-core/src/testing/port-contract.ts";
 import { VersionConflictError } from "../packages/server-core/src/errors.ts";
+import { DirectUnitOfWork } from "../packages/cloudflare-sdk/src/ports-cf.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PROBE_WORKER = "unidocs-port-probe";
@@ -161,6 +162,13 @@ function makeCfPorts(instance) {
       ]),
     );
   }
+  // The real Cloudflare UnitOfWork, wrapping the same two proxied ports the
+  // contract will drive. It runs the callback and nothing else — see
+  // DirectUnitOfWork for why that is the strongest thing available here.
+  ports.unitOfWork = new DirectUnitOfWork({
+    deltas: ports.deltas,
+    index: ports.index,
+  });
   return ports;
 }
 
@@ -196,10 +204,20 @@ afterAll(async () => {
   await mf?.dispose();
 });
 
-runPortContract("cloudflare ports", async () => {
-  const instance = `probe-${++instanceSeq}`;
-  const res = await mf.dispatchFetch("http://probe/reset", { method: "POST" });
-  if (!res.ok) throw new Error(`probe reset failed: ${res.status}`);
-  await res.json();
-  return makeCfPorts(instance);
-});
+runPortContract(
+  "cloudflare ports",
+  async () => {
+    const instance = `probe-${++instanceSeq}`;
+    const res = await mf.dispatchFetch("http://probe/reset", { method: "POST" });
+    if (!res.ok) throw new Error(`probe reset failed: ${res.status}`);
+    await res.json();
+    return makeCfPorts(instance);
+  },
+  // transactional: false — the delta log lives in a Durable Object's private
+  // sqlite and the index lives in D1. Two physically separate services, no
+  // shared transaction, nothing to roll back across them. This is structural,
+  // not unimplemented: the contract's two rollback tests are skipped here and
+  // every other test still has to pass. Azure's Postgres backend, where both
+  // are tables in one database, passes them with `true`.
+  { transactional: false },
+);

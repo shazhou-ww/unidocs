@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CasRef, CasReferences, DocumentType } from "@unidocs/core";
 import type { Delta, DeltaLog, DocIndex, DocRecord } from "../src/ports.js";
-import { createMemoryPorts } from "../src/memory-ports.js";
+import {
+  createMemoryPorts,
+  createMemoryUnitOfWork,
+  isMemoryTxParticipant,
+} from "../src/memory-ports.js";
 import { computeHash } from "../src/hash.js";
 import {
   DeltaRejectedError,
@@ -129,6 +133,17 @@ class SpyDocIndex implements DocIndex {
     this.calls.push("recordSnapshot");
     await this.#inner.recordSnapshot(version, hash, timestamp);
   }
+
+  // Delegated so a transaction rolls the wrapped memory index back too. The
+  // recorded call list is deliberately NOT rolled back: a test that asserts
+  // "register was attempted and then undone" needs to see the attempt.
+  captureTxState(): unknown {
+    return isMemoryTxParticipant(this.#inner) ? this.#inner.captureTxState() : null;
+  }
+
+  restoreTxState(state: unknown): void {
+    if (isMemoryTxParticipant(this.#inner)) this.#inner.restoreTxState(state);
+  }
 }
 
 function makeHarness(
@@ -139,12 +154,17 @@ function makeHarness(
   const ports = createMemoryPorts();
   const cas = new FakeCas();
   const index = new SpyDocIndex(ports.index);
+  const deltas = deltaLog ?? ports.deltas;
   let clock = startTime;
   const deps: SessionDeps = {
-    deltas: deltaLog ?? ports.deltas,
+    deltas,
     snapshots: ports.snapshots,
     blobs: ports.blobs,
     index,
+    // Built over the ports this harness actually injects, not over the raw
+    // memory ports — a transaction that rolled back a different delta log
+    // than the session writes to would prove nothing.
+    unitOfWork: createMemoryUnitOfWork({ deltas, index }),
     cas,
     identity: { docType: "text", docId: "doc-1", userId: "user-1" },
     now: () => clock++,
@@ -691,15 +711,16 @@ describe("DocumentSession — normal paths", () => {
     expect(index.calls).toEqual([]);
   });
 
-  it("17. create() saves the snapshot cache before register(), so a register() failure doesn't lose the uploaded bytes", async () => {
-    // register() is a D1 network call — the step in create() most likely to
-    // fail. If #saveSnapshotCache() ran AFTER register() (the old, reverted
-    // ordering), a register() throw here would leave version 1's delta
-    // landed but the cache empty: a later load() would replay onto an
-    // init()-produced empty document instead of the uploaded bytes, and
-    // #doc being non-null would then block any retry with DocExistsError —
-    // the upload permanently lost. Assert the cache directly KEPT the bytes,
-    // not merely that create() rejected.
+  it("17. create() rolls the whole delta back when register() fails, leaving no orphan document", async () => {
+    // register() is the index write most likely to fail (a network call to
+    // D1/Postgres). Before create() ran inside a transaction, a failure here
+    // left the worst possible residue: the version-1 delta had landed, so
+    // the document answered reads and writes and #doc was non-null, but it
+    // appeared in no listing and a retried create() answered 409 DocExists
+    // — an orphan with no way back.
+    //
+    // Now the delta and the index row are one unit. Assert the durable state
+    // the failure LEFT, not merely that create() rejected.
     const ports = createMemoryPorts();
     const failingIndex: DocIndex = {
       register: async () => {
@@ -713,6 +734,11 @@ describe("DocumentSession — normal paths", () => {
       snapshots: ports.snapshots,
       blobs: ports.blobs,
       index: failingIndex,
+      // Over the FAILING index, not the memory one behind it: withTransaction
+      // hands the callback the ports it was built with, and the session is
+      // required to use those. Building it over ports.index instead would
+      // route register() around the failure and the test would prove nothing.
+      unitOfWork: createMemoryUnitOfWork({ deltas: ports.deltas, index: failingIndex }),
       cas: new FakeCas(),
       identity: { docType: "text", docId: "doc-1", userId: "user-1" },
       now: () => 1_000,
@@ -723,10 +749,65 @@ describe("DocumentSession — normal paths", () => {
     const bytes = encoder.encode("uploaded content");
     await expect(session.create({ bytes })).rejects.toThrow("D1 unavailable");
 
-    // The delta landed...
+    // The delta log is back where it started — this is the transaction.
+    expect(await deps.deltas.head()).toBe(0);
+    expect(await deps.deltas.range()).toEqual([]);
+    expect(await deps.deltas.latestSnapshotRef()).toBeNull();
+
+    // Nothing was committed in memory or in the index either.
+    expect(session.initialized).toBe(false);
+    expect(session.version).toBe(0);
+    expect(await ports.indexQuery.list("user-1", "text")).toEqual([]);
+
+    // The one thing that DOES survive, by design: the content-addressed
+    // blob written before the transaction. Nothing references it, so it is
+    // a collectable orphan — the cheapest residue of the three, and the
+    // reason blob-first is the right order.
+    expect(await deps.blobs.get(await computeHash(bytes))).toEqual(bytes);
+
+    // And because nothing was committed, a retry is a clean create() — the
+    // orphan-document failure mode is gone, not merely reported.
+    const retried = new DocumentSession(makeTextDocType(), {
+      ...deps,
+      index: ports.index,
+      unitOfWork: createMemoryUnitOfWork({ deltas: ports.deltas, index: ports.index }),
+    });
+    expect(await retried.create({ bytes })).toEqual({ docId: "doc-1", version: 1 });
+    expect(await ports.indexQuery.list("user-1", "text")).toHaveLength(1);
+  });
+
+  it("21. create() commits blob, delta, index row and snapshot cache together", async () => {
+    // The four writes creating a document spreads across, asserted as a set:
+    // the content-addressed blob, the version-1 delta, the global index
+    // (both the docs row and the snapshot row), and the snapshot cache. The
+    // cache is written LAST now and is only allowed to be last because
+    // load() falls back to the durable snapshot recorded here.
+    const { session, deps, ports, index } = makeHarness();
+    const bytes = encoder.encode("hello");
+
+    await session.create({ bytes });
+
+    const hash = await computeHash(bytes);
+
+    // 1. blob
+    expect(await deps.blobs.get(hash)).toEqual(bytes);
+    // 2. delta log: version 1 plus its snapshot ref
     expect(await deps.deltas.head()).toBe(1);
-    // ...and the uploaded bytes are already in the snapshot cache — not lost.
+    expect(await deps.deltas.latestSnapshotRef()).toEqual({ version: 1, hash });
+    // 3. global index: the document row and the version-1 snapshot row
+    expect((await ports.indexQuery.list("user-1", "text")).map((r) => r.docId)).toEqual([
+      "doc-1",
+    ]);
+    expect(await ports.indexQuery.snapshots("text", "doc-1")).toEqual([
+      { version: 1, hash },
+    ]);
+    // 4. snapshot cache
     expect(await deps.snapshots.get()).toEqual({ version: 1, bytes });
+
+    // register() ran before recordSnapshot() — the DocIndex contract. The
+    // assertion above already proves the index KEPT the snapshot, which is
+    // the outcome that matters; this pins the order that produces it.
+    expect(index.calls).toEqual(["register", "recordSnapshot"]);
   });
 
   it("9. initFromHash() adopts an existing blob as version 1", async () => {

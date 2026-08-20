@@ -101,3 +101,47 @@ export interface DocIndexQuery {
    */
   snapshots(docType: string, docId: string): Promise<SnapshotRef[]>;
 }
+
+/**
+ * The two ports that can take part in one atomic unit of work.
+ *
+ * Deliberately *not* all five. `BlobCas` is content-addressed — an orphan
+ * blob is harmless and collectable — and `SnapshotCache` is a droppable
+ * cache, so neither belongs inside a transaction. What must be atomic is the
+ * pair that a document's existence is spread across: the delta log (the
+ * source of truth for content and version) and the global index (the source
+ * of truth for "this document exists and is owned by X").
+ */
+export interface TransactionalPorts {
+  deltas: DeltaLog;
+  index: DocIndex;
+}
+
+/**
+ * Optional-strength atomicity over `TransactionalPorts`.
+ *
+ * Backends differ in what they can honestly promise here, and the difference
+ * is structural, not a matter of effort:
+ *
+ *   - Postgres (Azure): `deltas` and `docs` are two tables in one database,
+ *     so `withTransaction` is a real `BEGIN`/`COMMIT` and a throw is a real
+ *     `ROLLBACK`.
+ *   - Cloudflare: the delta log lives in a Durable Object's private sqlite
+ *     and the index lives in D1 — two physically separate services with no
+ *     shared transaction. `DirectUnitOfWork` there just runs the callback,
+ *     and a partial failure stays partial.
+ *
+ * `DocumentSession` writes against the stronger contract and gets whatever
+ * the backend can give; it never branches on which one it has.
+ */
+export interface UnitOfWork {
+  /**
+   * Run the callback's writes as one atomic unit. A normal return commits;
+   * a throw rolls back (where the backend supports it) and propagates.
+   *
+   * The callback **must** use the port instances handed to it, not ones
+   * captured from an enclosing scope — that is how a Postgres implementation
+   * binds every statement to the same connection.
+   */
+  withTransaction<T>(fn: (tx: TransactionalPorts) => Promise<T>): Promise<T>;
+}
