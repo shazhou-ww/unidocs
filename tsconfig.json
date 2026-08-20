@@ -17,6 +17,12 @@
       "path": "packages/azure-sdk"
     },
     {
+      "path": "packages/azure-gateway"
+    },
+    {
+      "path": "packages/azure-markdown"
+    },
+    {
       "path": "packages/doctype-markdown"
     },
     {
