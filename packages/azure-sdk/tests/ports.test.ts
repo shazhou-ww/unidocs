@@ -1,7 +1,8 @@
 /**
  * Runs the cloud-neutral port contract (`runPortContract`) against the real
  * Azure implementations: `ports-pg.ts` on a Postgres container and
- * `ports-blob.ts` on an Azurite container, both from `docker-compose.azure.yml`.
+ * `ports-blob.ts` on an Azurite container. Both containers are started once for
+ * the whole run by `tests/containers.ts` (`globalSetup`).
  *
  * `transactional: true` — and it is not a formality. `deltas` and `docs` are two
  * tables in one database, so `PgUnitOfWork` gives a real `BEGIN`/`ROLLBACK` and
@@ -10,10 +11,7 @@
  * omission.
  */
 
-import { afterAll, beforeAll } from "vitest";
-import { execSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, expect } from "vitest";
 import type { Pool } from "pg";
 import type { BlobServiceClient } from "@azure/storage-blob";
 import { runPortContract } from "@unidocs/server-core/port-contract";
@@ -28,13 +26,7 @@ import {
   createPool,
   runMigrations,
 } from "../src/index.js";
-
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const COMPOSE_FILE = path.resolve(__dirname, "../../../docker-compose.azure.yml");
-const DATABASE_URL = "postgres://unidocs:unidocs@localhost:5433/unidocs";
-// Azurite's well-known emulator account, resolved by the SDK to
-// http://127.0.0.1:10000/devstoreaccount1.
-const BLOB_CONNECTION_STRING = "UseDevelopmentStorage=true";
+import { BLOB_CONNECTION_STRING, DATABASE_URL } from "./containers.js";
 
 // The contract's DocIndex tests address the indexed document as
 // ("text", "doc-1") owned by "user-1" — those names are baked into the
@@ -47,6 +39,13 @@ const DOC_TYPE = "text";
 const INDEX_DOC_ID = "doc-1";
 const USER_ID = "user-1";
 
+/**
+ * How many idle connections the pool must hold before the contract's
+ * concurrency sentinel runs. Two is the minimum for the two writers to overlap
+ * at all; four leaves headroom.
+ */
+const WARM_CONNECTIONS = 4;
+
 let pool: Pool;
 let blobService: BlobServiceClient;
 let docSeq = 0;
@@ -56,61 +55,30 @@ function nextDocId(): string {
   return `contract-doc-${docSeq}`;
 }
 
-/** Poll with a real query: a freshly created container may still be running initdb. */
-async function waitForPostgres(timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    const probe = createPool({ databaseUrl: DATABASE_URL, blobConnectionString: "" });
-    try {
-      await probe.query("SELECT 1");
-      return;
-    } catch (err) {
-      lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    } finally {
-      await probe.end();
-    }
-  }
-  throw new Error(`postgres did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
-}
-
-/** Same idea for Azurite: the blob endpoint accepts TCP before it serves the API. */
-async function waitForAzurite(svc: BlobServiceClient, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      await svc.getContainerClient("readiness-probe").createIfNotExists();
-      return;
-    } catch (err) {
-      lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  }
-  throw new Error(`azurite did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
-}
-
 /**
- * Make sure the pool holds at least `n` IDLE connections, by checking that many
- * out at once and handing them straight back.
+ * Make sure the pool holds at least `n` IDLE, ALREADY-USED connections.
  *
  * This is what makes the contract's concurrency sentinel actually concurrent,
- * and it is not optional. `pg.Pool` opens connections purely on demand, so
- * after a run of sequential statements it holds exactly one. The two racing
- * `append()` calls then do not overlap at all: the first takes the single idle
- * connection and completes its read AND its write in ~0.7ms, while the second
- * has to wait ~4ms for a fresh TCP connect + auth handshake, and so reads the
- * head only after the first writer has already committed. Measured on this
- * machine, the split is exact — with 1 idle connection the two writers
- * serialised in 4/4 attempts, with 2 or more they interleaved in 6/6.
+ * and it is not optional. Two separate effects each hide the race on their own:
  *
- * Two things keep eroding the idle count, which is why this runs per-factory
- * rather than once in `beforeAll`:
- *   - `pg-pool` calls `client.release(err)` on any failed query, and a release
- *     carrying an error DESTROYS the connection. One rejected statement = one
- *     fewer pooled connection.
- *   - idle connections also expire on `idleTimeoutMillis` (10s by default).
+ *   - `pg.Pool` opens connections purely on demand, so after a run of
+ *     sequential statements it holds exactly one. The two racing `append()`
+ *     calls then do not overlap: the first takes the single idle connection and
+ *     completes its read AND its write in ~0.7ms, while the second waits ~4ms
+ *     for a fresh TCP connect + auth handshake and so reads the head only after
+ *     the first writer has committed. Measured here: with 1 idle connection the
+ *     writers serialised 4/4, with 2 or more they interleaved 6/6.
+ *   - A connection that has only completed its handshake still has a cold
+ *     backend and answers its first statement ~0.5ms slower than one that has
+ *     already run a query. `pg-pool` hands out the most recently used
+ *     connection first, so writer A got a hot one and writer B a cold one —
+ *     enough asymmetry, on its own, to close the window again. Hence the warm-up
+ *     runs a real statement, not just `connect()`.
+ *
+ * The idle count keeps eroding, which is why this runs per-factory rather than
+ * once in `beforeAll`: `pg-pool` calls `client.release(err)` on any failed
+ * query and a release carrying an error DESTROYS the connection, and idle
+ * connections also expire on `idleTimeoutMillis` (10s by default).
  *
  * A production server under load holds warm idle connections for exactly the
  * same reason, so this restores the realistic state rather than inventing one.
@@ -119,11 +87,8 @@ async function warmPool(n: number): Promise<void> {
   const clients = await Promise.all(
     Array.from({ length: n }, () => pool.connect()),
   );
-  // Run a real statement on every one of them, of the same shape the contract
-  // will race. A connection that has only completed its handshake still has a
-  // cold backend (no parsed/planned statement, nothing paged in) and answers
-  // its first query measurably slower than a connection that has already run
-  // one. That difference alone is enough to hide the race.
+  // A real statement on every one of them, of the same shape the contract will
+  // race — see the note above on cold backends.
   await Promise.all(
     clients.map((client) =>
       client.query(
@@ -133,6 +98,13 @@ async function warmPool(n: number): Promise<void> {
     ),
   );
   for (const client of clients) client.release();
+
+  // Assert, don't assume. Whether the sentinel can turn red depends entirely on
+  // this warm-up, and `runPortContract` knows nothing about it — a backend
+  // author who copies this harness and drops the warm-up gets a sentinel that
+  // passes without ever having raced anything. That is precisely the failure
+  // Task 1 hit on Cloudflare. Fail loudly instead of silently green.
+  expect(pool.idleCount).toBeGreaterThanOrEqual(2);
 }
 
 async function makeAzurePorts(docId: string) {
@@ -140,7 +112,7 @@ async function makeAzurePorts(docId: string) {
   // global, so they get cleared to give each factory() the clean state the
   // contract assumes.
   await pool.query("TRUNCATE docs, doc_snapshots");
-  await warmPool(4);
+  await warmPool(WARM_CONNECTIONS);
 
   const identity = { docType: DOC_TYPE, docId, userId: USER_ID };
   const indexIdentity = { docType: DOC_TYPE, docId: INDEX_DOC_ID, userId: USER_ID };
@@ -156,27 +128,21 @@ async function makeAzurePorts(docId: string) {
 }
 
 beforeAll(async () => {
-  execSync(`docker compose -f "${COMPOSE_FILE}" up -d`, { stdio: "inherit" });
-  await waitForPostgres(60_000);
   pool = createPool({
     databaseUrl: DATABASE_URL,
     blobConnectionString: BLOB_CONNECTION_STRING,
   });
+  // Idempotent: whichever test file gets here first applies the schema.
   await runMigrations(pool);
-
   blobService = createBlobService({
     databaseUrl: DATABASE_URL,
     blobConnectionString: BLOB_CONNECTION_STRING,
   });
-  await waitForAzurite(blobService, 60_000);
-}, 180_000);
+}, 60_000);
 
 afterAll(async () => {
-  if (pool) {
-    await pool.end();
-  }
-  execSync(`docker compose -f "${COMPOSE_FILE}" down`, { stdio: "inherit" });
-}, 120_000);
+  await pool?.end();
+});
 
 runPortContract("postgres + blob ports", async () => makeAzurePorts(nextDocId()), {
   transactional: true,

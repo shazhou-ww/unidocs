@@ -160,14 +160,38 @@ export class PgDeltaLog implements DeltaLog {
   }
 
   /**
-   * Conditional delete: `v` is removed only while it is still the head.
+   * Conditional delete: `v` is removed only if `v` is still the head *as this
+   * statement sees it*. Never throws — this runs on an already-failing
+   * compensation branch (a failed root-refs commit), and losing the race is an
+   * expected outcome, not a new error to surface.
    *
-   * If a concurrent writer has already appended `v + 1` on top of it, this is a
-   * silent no-op — deleting `v` there would tear a hole in the log that replay
-   * skips over, which is strictly worse than the reference leak that keeping it
-   * costs. Never throws: this runs on an already-failing compensation branch
-   * (a failed root-refs commit), and losing the race is an expected outcome,
-   * not a new error to surface.
+   * **This narrows the race with a concurrent `append`; it does not close it.**
+   * Against an append that has already COMMITTED `v + 1`, the guard holds: the
+   * sub-select sees `MAX(version) = v + 1`, the predicate fails, and the delete
+   * is a no-op — which is the case the port contract exercises. Against an
+   * append that is still IN FLIGHT, it does not:
+   *
+   *   1. B: `INSERT ... version = v + 1` starts. Its snapshot sees `MAX = v`,
+   *      so its own WHERE clause passes. Not committed yet.
+   *   2. A: `DELETE ... version = v` starts. Under READ COMMITTED it takes its
+   *      own snapshot, which does not include B's uncommitted row, so it also
+   *      sees `MAX = v` and the guard passes.
+   *   3. Neither blocks the other: they lock different index keys (`v` and
+   *      `v + 1`), so there is nothing for either to wait on.
+   *   4. Both commit. The log now holds `... v - 1, v + 1` — the hole this
+   *      guard exists to prevent. Replay skips straight over the gap and
+   *      silently diverges from what any client that read version `v` was shown.
+   *
+   * This gap is known and deliberately accepted for now (see section 9 of
+   * `docs/superpowers/specs/2026-08-20-azure-phase2-azure-sdk-design.md`); the
+   * fix is a `pg_advisory_xact_lock` on `(docType, docId)` taken by BOTH
+   * `append` and `remove`, which turns steps 1-2 into a real wait. It is not
+   * taken here because `append` alone must stay lock-free on its hot path.
+   *
+   * Cloudflare has no such window: every call into a Durable Object is
+   * serialised by the DO itself, so `remove` and `append` can never overlap
+   * there. This is a cost of moving to stateless replicas, not a translation
+   * error in the SQL.
    */
   async remove(v: number): Promise<void> {
     await this.#q.query(
@@ -353,6 +377,9 @@ export class PgUnitOfWork implements UnitOfWork {
 
   async withTransaction<T>(fn: (tx: TransactionalPorts) => Promise<T>): Promise<T> {
     const client = await this.#pool.connect();
+    // Set when ROLLBACK itself failed, which leaves the connection in an
+    // unknown state — see the release() call below.
+    let poisoned = false;
     try {
       await client.query("BEGIN");
       const tx: TransactionalPorts = {
@@ -365,17 +392,23 @@ export class PgUnitOfWork implements UnitOfWork {
         return result;
       } catch (err) {
         // The rollback itself must not replace the error the caller cares
-        // about — if the connection is already broken there is nothing left to
-        // roll back anyway, and releasing it below discards it.
+        // about, so its failure is recorded rather than thrown.
         try {
           await client.query("ROLLBACK");
         } catch {
-          /* ignore: the original error wins */
+          poisoned = true;
         }
         throw err;
       }
     } finally {
-      client.release();
+      // `release()` with no argument RETURNS the connection to the pool;
+      // `pg-pool` only destroys it when the release carries a truthy error. A
+      // failed ROLLBACK (a statement timeout, say) can leave the connection
+      // still queryable but still inside an open — or aborted — transaction,
+      // and handing that back to the pool means the next borrower opens with
+      // `current transaction is aborted` or, worse, writes into someone else's
+      // transaction. So a failed rollback discards the connection instead.
+      client.release(poisoned || undefined);
     }
   }
 }

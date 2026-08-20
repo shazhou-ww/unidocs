@@ -21,6 +21,13 @@ const CAS_CONTAINER = "cas";
 const SNAPSHOT_CONTAINER = "snapshots";
 /** Blob metadata key carrying the snapshot's version. Azure lower-cases keys. */
 const VERSION_METADATA_KEY = "version";
+/**
+ * How many times `BlobSnapshotCache.get()` re-reads a blob that was overwritten
+ * between its properties call and its download. Bounded because each retry only
+ * helps if the writer has stopped, and the caller can always fall back to the
+ * durable snapshot.
+ */
+const GET_ATTEMPTS = 3;
 
 interface StorageErrorish {
   statusCode?: number;
@@ -51,23 +58,60 @@ function isNotFound(err: unknown): boolean {
  * `BlobAlreadyExists`; some emulators/paths answer 412 `ConditionNotMet`
  * instead. Both mean the same thing for a content-addressed put: the bytes are
  * already stored (same hash implies same bytes), so this is success.
+ *
+ * The error code is checked FIRST and the status code is only a fallback for
+ * responses that carry no code, because 409 on Blob Storage is not exclusively
+ * "already exists": `ContainerBeingDeleted`, `LeaseIdMissing` and
+ * `SnapshotOperationRateExceeded` are all 409 too. Treating those as success
+ * would have `putIfAbsent()` report a write that never happened, and the
+ * matching `get(hash)` would then answer `null` — silent data loss in the store
+ * every root-refs commit is built on.
  */
 function isAlreadyExists(err: unknown): boolean {
-  const status = errorShape(err).statusCode;
   const code = errorCodeOf(err);
-  return (
-    status === 409 ||
-    status === 412 ||
-    code === "BlobAlreadyExists" ||
-    code === "ConditionNotMet"
-  );
+  if (code) return code === "BlobAlreadyExists" || code === "ConditionNotMet";
+  const status = errorShape(err).statusCode;
+  return status === 409 || status === 412;
 }
 
-/** Lazily `createIfNotExists()` a container, at most once per instance. */
+/** The `ifMatch` / `ifNoneMatch` condition did not hold. */
+function isPreconditionFailed(err: unknown): boolean {
+  const code = errorCodeOf(err);
+  if (code) return code === "ConditionNotMet";
+  return errorShape(err).statusCode === 412;
+}
+
+/**
+ * A snapshot blob's version, or `null` when the blob carries no usable one.
+ *
+ * `null` must mean "cache miss", never "version 0": a blob whose metadata is
+ * missing or unparseable tells us nothing about which deltas its bytes already
+ * contain, and calling that 0 would have the session replay the entire log on
+ * top of an already-advanced document.
+ */
+function parseVersion(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const version = Number(raw);
+  return Number.isFinite(version) ? version : null;
+}
+
+/**
+ * Lazily `createIfNotExists()` a container, at most once per instance.
+ *
+ * The memo is cleared when the call fails, so a single transient error (the
+ * storage account briefly unreachable, a throttled request) does not hand the
+ * same rejected promise to every later operation for the lifetime of the
+ * process. Only a success is remembered.
+ */
 function containerReady(container: ContainerClient): () => Promise<void> {
   let pending: Promise<unknown> | null = null;
   return async () => {
-    pending ??= container.createIfNotExists();
+    if (pending === null) {
+      pending = container.createIfNotExists().catch((err: unknown) => {
+        pending = null;
+        throw err;
+      });
+    }
     await pending;
   };
 }
@@ -137,20 +181,47 @@ export class BlobSnapshotCache implements SnapshotCache {
     this.#blobName = `${identity.docType}/${identity.docId}/latest`;
   }
 
+  /**
+   * Reads the version and the bytes as ONE consistent snapshot.
+   *
+   * It takes two round trips — properties carry the version, the download
+   * carries the bytes — and another replica's `put()` can land between them.
+   * Returning the version from before that write next to the bytes from after
+   * it is not a stale cache, it is a corrupt one: the session would replay the
+   * deltas above `v` onto content that already contains them, applying the same
+   * operations twice. So the download is conditioned on the ETag the properties
+   * call observed; if the blob moved underneath us the download fails the
+   * precondition and the whole read is retried.
+   *
+   * Exhausting the retries answers `null` (a miss) rather than throwing. This
+   * is a droppable cache — a miss costs a replay from the durable snapshot,
+   * which is always correct — so failing soft is right here, while returning a
+   * mismatched pair never is.
+   */
   async get(): Promise<{ version: number; bytes: Uint8Array } | null> {
     await this.#ensure();
     const blob = this.#container.getBlockBlobClient(this.#blobName);
-    try {
-      // Properties first: it is the cheap call, so a cache miss costs one
-      // round trip instead of a download.
-      const props = await blob.getProperties();
-      const raw = props.metadata?.[VERSION_METADATA_KEY];
-      const buffer = await blob.downloadToBuffer();
-      return { version: Number(raw ?? 0), bytes: new Uint8Array(buffer) };
-    } catch (err) {
-      if (isNotFound(err)) return null;
-      throw err;
+
+    for (let attempt = 0; attempt < GET_ATTEMPTS; attempt += 1) {
+      try {
+        // Properties first: it is the cheap call, so a cache miss costs one
+        // round trip instead of a download.
+        const props = await blob.getProperties();
+        const version = parseVersion(props.metadata?.[VERSION_METADATA_KEY]);
+        // No usable version means the bytes cannot be placed in the delta
+        // history, which makes them useless as a cache entry.
+        if (version === null) return null;
+        const buffer = await blob.downloadToBuffer(0, undefined, {
+          conditions: { ifMatch: props.etag },
+        });
+        return { version, bytes: new Uint8Array(buffer) };
+      } catch (err) {
+        if (isNotFound(err)) return null;
+        if (!isPreconditionFailed(err)) throw err;
+        // Overwritten mid-read: go around and read the newer blob instead.
+      }
     }
+    return null;
   }
 
   async put(v: number, bytes: Uint8Array): Promise<void> {

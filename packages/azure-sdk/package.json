@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run --fileParallelism=false",
+    "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rm -rf dist"
   },

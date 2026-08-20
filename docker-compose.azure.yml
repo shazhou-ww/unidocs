@@ -9,7 +9,10 @@ services:
       - "5433:5432"
 
   azurite:
-    image: mcr.microsoft.com/azure-storage/azurite
+    # Pinned: --skipApiVersionCheck below is a workaround for THIS version's
+    # API allow-list. On a floating tag the symptom would change under us and
+    # the note would no longer be checkable against anything.
+    image: mcr.microsoft.com/azure-storage/azurite:3.36.0
     # --skipApiVersionCheck: the @azure/storage-blob client sends a newer
     # x-ms-version than the Azurite image knows about and Azurite rejects it
     # outright (400 InvalidHeaderValue). The wire format is compatible; only
