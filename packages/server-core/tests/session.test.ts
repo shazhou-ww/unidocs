@@ -572,6 +572,68 @@ describe("DocumentSession — normal paths", () => {
     await expect(session.create()).resolves.toEqual({ docId: "doc-1", version: 1 });
   });
 
+  it("18. load() falls back to the durable snapshot when the cache is empty but a durable snapshot exists", async () => {
+    // Mirrors rollback()'s fallback order: cache miss -> durable snapshot ->
+    // only then init() + replay from zero. Without this fallback, create()'s
+    // uploaded bytes are unrecoverable the moment the (droppable) snapshot
+    // cache is evicted, because create() writes an EMPTY version-1 delta —
+    // see the module doc / task-3 brief.
+    const { session, deps } = makeHarness();
+
+    const bytes = encoder.encode("durable content");
+    const hash = await computeHash(bytes);
+    await deps.blobs.putIfAbsent(hash, bytes);
+
+    // A delta log that knows about the document...
+    await deps.deltas.append({
+      version: 1,
+      timestamp: 1,
+      description: "Document created",
+      operations: [],
+    });
+    // ...and a durable snapshot recorded against it (what create()/#writeSnapshot
+    // does for real) — but the snapshot CACHE was never populated/was evicted.
+    await deps.deltas.recordSnapshot(1, hash, 1);
+    expect(await deps.snapshots.get()).toBeNull();
+
+    await session.load();
+
+    expect(session.version).toBe(1);
+    expect(session.initialized).toBe(true);
+    expect((await session.query({ kind: "text" })).data).toBe("durable content");
+    expect((await session.query({ kind: "text" })).data).not.toBe("");
+  });
+
+  it("19. load() still replays from init() when neither the cache nor a durable snapshot exists", async () => {
+    // Regression guard for the fix above: a document that genuinely has no
+    // durable snapshot yet (only a delta log) must still reconstruct via
+    // config.init() + full replay, exactly as before this change.
+    const { session, deps } = makeHarness();
+
+    await deps.deltas.append({
+      version: 1,
+      timestamp: 1,
+      description: "Document created",
+      operations: [],
+    });
+    await deps.deltas.append({
+      version: 2,
+      timestamp: 2,
+      description: "a",
+      operations: [{ kind: "append", text: "a" }],
+    });
+    expect(await deps.snapshots.get()).toBeNull();
+    expect(await deps.deltas.latestSnapshotRef()).toBeNull();
+
+    await session.load();
+
+    expect(session.version).toBe(2);
+    expect(session.initialized).toBe(true);
+    expect((await session.query({ kind: "text" })).data).toBe("a");
+    // Rebuilt state is written back into the cache, same as before.
+    expect(await deps.snapshots.get()).toEqual({ version: 2, bytes: encoder.encode("a") });
+  });
+
   it("13. public methods load themselves — no caller-side load() required", async () => {
     // The DO original loaded once at the top of its request handler. Nothing
     // in the type system forces an adapter to do the same, so the session

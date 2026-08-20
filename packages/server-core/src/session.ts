@@ -160,17 +160,30 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     if (snapshot) {
       this.#doc = await this.#config.load(snapshot.bytes, ctx);
       this.#version = snapshot.version;
+    } else {
+      // The cache is a droppable layer (KV/Redis) while the delta log is the
+      // database, so the two WILL diverge. Before falling all the way back to
+      // an empty document, try the durable snapshot — same fallback order as
+      // rollback(): it is the actual backstop, because create() writes an
+      // EMPTY version-1 delta, so replaying the log alone from init() would
+      // silently discard uploaded content the moment the cache is evicted.
+      const ref = await this.#deps.deltas.latestSnapshotRef();
+      if (ref) {
+        const bytes = await this.#deps.blobs.get(ref.hash);
+        if (bytes) {
+          this.#doc = await this.#config.load(bytes, ctx);
+          this.#version = ref.version;
+        }
+      }
     }
 
-    // Replay deltas recorded after the cached snapshot.
+    // Replay deltas recorded after the cached (or durable) snapshot.
     const pending = await this.#deps.deltas.since(this.#version);
 
     if (pending.length > 0 && this.#doc === null) {
-      // The delta log knows about this document but the snapshot cache does
-      // not. That is expected, not corruption: the cache is a droppable layer
-      // (KV/Redis) while the log is the database, so the two WILL diverge.
-      // Replay from an empty document, exactly like rollback() does when no
-      // snapshot exists at or before its target.
+      // Neither the cache nor a durable snapshot had anything usable. That is
+      // expected, not corruption — replay from an empty document, exactly
+      // like rollback() does when no snapshot exists at or before its target.
       this.#doc = await this.#config.init(ctx);
       this.#version = 0;
     }
