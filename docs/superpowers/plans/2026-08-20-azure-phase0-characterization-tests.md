@@ -847,3 +847,37 @@ treespec 本身需要 Docker(`treespec.yaml` → `e2e/Dockerfile`),`package.json
 - `operator-do.ts` 仍然零覆盖。它的 `llmProvider` 与 `getEditorStub` 都是抛异常的 stub,现在没有可断言的行为;阶段 1 按原样迁入 `server-core`,不新增功能。
 - **lease → apply → root-refs 的正常路径**已由既有的 `scripts/docx-image-e2e.test.mjs` 覆盖(上传节点 → insertImage → getImages 查回),本计划不重复,只补它的失败路径(Task 6)。
 - 用户级 CAS 服务端(lease / GC / 引用计数)的行为由 `packages/cloudflare-cas/tests/` 与 6 个 treespec CAS spec 覆盖,本阶段不重复。本阶段只覆盖 **editor 与 CAS 的交互边界**,因为那是阶段 1 要动的部分。
+
+---
+
+## 阶段 1 交接说明
+
+阶段 0 执行过程中发现的、会影响阶段 1 的事项。**动 `editor-do.ts` 之前先读这一节。**
+
+### 1. 两处断言会误报,它们不是不变量
+
+`scripts/editor-characterization.test.mjs` 与 `scripts/editor-restart.test.mjs` 里的 `expect(...).toEqual([1, 21])`。
+
+`21` 是两个事实的乘积:`DELTA_THRESHOLD = 20`(真不变量)**和** `/_internal/create` 在 version 1 就立刻写一次全局快照(实现细节)。阶段 1 把快照索引抽进 `BlobCas` + `DocIndex` 端口后,如果 create 不再立即落全局快照,`lastSnapshotVersion` 变成 0,阈值改落 version **20** —— 行为完全没坏,测试却红。
+
+`editor-restart.test.mjs` 里 rollback 的期望版本 `24` 是同一条链的下游,同因同果。
+
+判断标准:红了先确认"两次快照的间隔是否仍等于 `DELTA_THRESHOLD`"。是,就改断言;否,才是真回归。
+
+### 2. 三个测试的存储断言无法参数化到 Azure 后端
+
+`runtime.mf.getD1Database(...)` / `getR2Bucket(...)` 是 Miniflare 专有 API。设计第 7 节说"阶段 0 的测试套参数化后端,对 Azure 栈重跑",这句话对这几条断言目前只成立一半。
+
+建议阶段 1 顺手把存储断言抽到一个后端可换的小 helper 后面(例如 `readSnapshotIndex(runtime, docId)`),别等到阶段 2 才发现要重写。
+
+### 3. CAS 失败的判别依赖错误文案
+
+`scripts/cas-rollback.test.mjs` 断言 `error` 包含 `CAS root-refs failed`。这不是洁癖 —— `#leaseFailure` 对未知错误**也返回 502**,单看状态码无法区分"lease 失败"和"root-refs 失败"。这条字符串是当前唯一的判别器。
+
+阶段 1 如果给错误响应加了机器可读字段(例如 `stage: "root-refs"`),把断言换过去,别只是改文案。
+
+### 4. 已知的既有问题,不由阶段 0 负责
+
+`cloudflare-docx` / `cloudflare-markdown` / `cloudflare-gateway` 三个包没有测试文件,`vitest run` 因此 exit 1,使 `pnpm -r test` 整体非零退出。远端有一个未合并的 PR(`fix/workspace-test-no-test-files`,加 `--passWithNoTests`)专门修它。
+
+因此本计划完成判据里的"`pnpm test` 全绿"在那个 PR 合并前无法勾上;`pnpm test:local` 是阶段 0 的有效判据。
