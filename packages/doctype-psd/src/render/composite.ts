@@ -104,6 +104,13 @@ export function renderCached(doc: PsdDoc, ctx?: RenderCtx): Promise<Pixels> {
   if (framebuffer && framebuffer.doc === doc) return framebuffer.px;
   const px = render(doc, ctx); // cache the Promise so concurrent renders of the same doc dedupe
   framebuffer = { doc, px }; // replaces the previous composite → old buffer is freed
+  // A rejected render must NOT stick in the slot: a transient failure (e.g. a
+  // blob briefly missing, or a lazy ref rendered once with the NO_STORE
+  // default) would otherwise be cached forever and brick the doc. Drop the slot
+  // on rejection so the next call retries; do not swallow the error.
+  px.catch(() => {
+    if (framebuffer?.px === px) framebuffer = null;
+  });
   return px;
 }
 

@@ -3,7 +3,7 @@ import { encode } from "fast-png";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import type { PixelRef, BlobStore } from "../src/render/pixel-source.js";
 import { PixelCache } from "../src/render/pixel-source.js";
-import { render } from "../src/render/index.js";
+import { render, renderCached } from "../src/render/index.js";
 
 /** In-memory content-addressed store that counts gets and tracks the peak
  *  number of concurrently in-flight `get` calls (to prove sequential fault-in).
@@ -97,5 +97,33 @@ describe("streaming compositor (async fault-in)", () => {
     await render(doc, { store, cache: new PixelCache(64) });
     expect(store.gets.get(visRef.hash) ?? 0).toBe(1);
     expect(store.gets.get(hiddenRef.hash) ?? 0).toBe(0); // hidden → never faulted in
+  });
+
+  it("a transient render failure does not permanently brick a doc (renderCached retries)", async () => {
+    // Store whose get() throws on the FIRST call then succeeds afterwards.
+    const blobs = new Map<string, Uint8Array>();
+    let calls = 0;
+    let n = 0;
+    const store: BlobStore = {
+      async put(bytes: Uint8Array) {
+        const hash = `blob${n++}`;
+        blobs.set(hash, bytes);
+        return hash;
+      },
+      async get(hash: string) {
+        calls++;
+        if (calls === 1) throw new Error("transient blob store failure");
+        return blobs.get(hash) ?? null;
+      },
+    };
+    const ref = await put1x1(store, [0, 200, 0, 255]);
+    const doc: PsdDoc = { canvas, layers: [refLayer("only", ref)] };
+
+    // Same doc object both times → doc identity is the framebuffer cache key.
+    // 1st render rejects (transient failure) and must NOT be cached.
+    await expect(renderCached(doc, { store, cache: new PixelCache(64) })).rejects.toThrow(/transient blob store failure/);
+    // 2nd render on the SAME doc retries (slot was dropped) and resolves.
+    const px = await renderCached(doc, { store, cache: new PixelCache(64) });
+    expect([...px.data]).toEqual([0, 200, 0, 255]);
   });
 });
