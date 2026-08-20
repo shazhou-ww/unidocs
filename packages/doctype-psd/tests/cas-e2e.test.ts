@@ -73,6 +73,7 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
       snapshots: ports.snapshots,
       blobs: ports.blobs,
       index: ports.index,
+      unitOfWork: ports.unitOfWork,
       cas: ports.cas,
       identity: { docType: "psd", docId: "doc-1", userId: "user-1" },
       now: () => Date.now(),

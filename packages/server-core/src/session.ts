@@ -82,6 +82,7 @@ import type {
   DocIdentity,
   DocIndex,
   SnapshotCache,
+  UnitOfWork,
 } from "./ports.js";
 import { encodeQueryValue, type WireQueryValue } from "./query-value.js";
 
@@ -96,6 +97,15 @@ export interface SessionDeps {
   snapshots: SnapshotCache;
   blobs: BlobCas;
   index: DocIndex;
+  /**
+   * Atomicity over `deltas` + `index` for the creation path. Required, never
+   * optional: an optional dependency would put a `if (deps.unitOfWork)`
+   * branch inside the core, i.e. two creation write orders to reason about
+   * instead of one. A backend without real transactions supplies a
+   * pass-through implementation (`DirectUnitOfWork` on Cloudflare) and the
+   * degradation stays in the adapter where it is documented.
+   */
+  unitOfWork: UnitOfWork;
   cas: CasGateway;
   identity: DocIdentity;
   /** Injected clock so pure unit tests can assert on timestamps. */
@@ -160,17 +170,37 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     if (snapshot) {
       this.#doc = await this.#config.load(snapshot.bytes, ctx);
       this.#version = snapshot.version;
+    } else {
+      // The cache is a droppable layer (KV/Redis) while the delta log is the
+      // database, so the two WILL diverge. Before falling all the way back to
+      // an empty document, try the durable snapshot — same fallback order as
+      // rollback(): it is the actual backstop, because create() writes an
+      // EMPTY version-1 delta, so replaying the log alone from init() would
+      // silently discard uploaded content the moment the cache is evicted.
+      const ref = await this.#deps.deltas.latestSnapshotRef();
+      if (ref) {
+        const bytes = await this.#deps.blobs.get(ref.hash);
+        if (!bytes) {
+          // The delta log records this snapshot, so the blob store losing it
+          // is corruption, not a missing document — same as rollback(), and
+          // for the same reason: silently falling through to init() here
+          // would replay create()'s EMPTY version-1 delta and hand back a
+          // blank document instead of surfacing the lost content as an error.
+          throw new StorageCorruptError(`Snapshot ${ref.hash} not found in R2`);
+        }
+        this.#doc = await this.#config.load(bytes, ctx);
+        this.#version = ref.version;
+      }
     }
 
-    // Replay deltas recorded after the cached snapshot.
+    // Replay deltas recorded after the cached (or durable) snapshot.
     const pending = await this.#deps.deltas.since(this.#version);
 
     if (pending.length > 0 && this.#doc === null) {
-      // The delta log knows about this document but the snapshot cache does
-      // not. That is expected, not corruption: the cache is a droppable layer
-      // (KV/Redis) while the log is the database, so the two WILL diverge.
-      // Replay from an empty document, exactly like rollback() does when no
-      // snapshot exists at or before its target.
+      // No durable snapshot ref exists at all — a document that has never
+      // been snapshotted is a legitimate state, not corruption. Replay from
+      // an empty document, exactly like rollback() does when no snapshot
+      // exists at or before its target.
       this.#doc = await this.#config.init(ctx);
       this.#version = 0;
     }
@@ -202,8 +232,31 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // be a falsy value (the DO original used `!this.#doc`, which silently
     // skipped the write for such documents).
     if (this.#doc === null) return;
+    // Pass ctx so a ctx-aware doc type (PSD) caches the IR snapshot (JSON +
+    // per-layer CAS blobs) rather than the full serialized document. Doc types
+    // that ignore ctx (markdown/docx) are byte-identical to before.
     const bytes = await this.#config.save(this.#doc, this.#context());
     await this.#deps.snapshots.put(this.#version, bytes);
+  }
+
+  /**
+   * `#saveSnapshotCache()` for callers that have already committed durable
+   * state and must not fail because of a cache.
+   *
+   * Deliberately narrow: only the creation paths use it. `apply()` and
+   * `rollback()` keep the strict version — their in-memory document has
+   * moved ahead of what the cache holds and the caller is still mid-write,
+   * so surfacing the failure is the right call there.
+   */
+  async #saveSnapshotCacheBestEffort(): Promise<void> {
+    try {
+      await this.#saveSnapshotCache();
+    } catch {
+      // Intentionally swallowed. The cache is reconstructible from the
+      // durable snapshot on the next load(); the creation it would abort is
+      // not reconstructible from a 500 the caller cannot retry (a retried
+      // create() answers 409 DocExists).
+    }
   }
 
   async #shouldSnapshot(): Promise<boolean> {
@@ -213,17 +266,47 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   }
 
   /**
+   * Serialize a document and put it in the blob store, returning its hash and
+   * the persisted bytes.
+   *
+   * Nothing references the blob yet when this returns, and that is why the
+   * creation path can run it first, outside the transaction: the store is
+   * content-addressed, so a blob whose transaction then fails is an orphan
+   * that costs storage and nothing else — no reader can reach it and a GC
+   * pass can reclaim it. Writing the reference first and the bytes second
+   * would be the unsafe order.
+   *
+   * The save passes ctx, so a ctx-aware doc type (PSD) produces its IR JSON
+   * and uploads per-layer content blobs to the CAS, and the returned hash is
+   * the IR hash. Since BOTH `#writeSnapshot` and `create` go through here, the
+   * durable and creation paths are IR-aware from this one change, and the hash
+   * `snapshot()`/clone round-trip on is the IR hash the blob was stored under.
+   * markdown/docx ignore ctx and are byte-identical to before.
+   *
+   * The bytes are returned alongside the hash so callers that must pin the
+   * snapshot's CAS root-refs (`#writeSnapshot`) can run `refsFromSnapshot` on
+   * the exact bytes that were persisted, without a second (re-encoding) save.
+   */
+  async #writeBlob(doc: TDoc): Promise<{ hash: string; bytes: Uint8Array }> {
+    const bytes = await this.#config.save(doc, this.#context());
+    const hash = await computeHash(bytes);
+    // Content-addressed: the same bytes are the same blob.
+    await this.#deps.blobs.putIfAbsent(hash, bytes);
+    return { hash, bytes };
+  }
+
+  /**
    * Write a durable, content-addressed snapshot of the current version and
-   * record it in every index that tracks snapshots.
+   * record it in every index that tracks snapshots. Returns the persisted
+   * hash and version (null only when there is no document), so `snapshot()`
+   * can hand back the hash the blob was actually stored under — for a
+   * ctx-aware doc type that is the IR hash, and re-saving without ctx would
+   * yield a hash no blob exists at, breaking clone-from-snapshot.
    */
   async #writeSnapshot(): Promise<{ hash: string; version: number } | null> {
     if (this.#doc === null) return null;
 
-    const bytes = await this.#config.save(this.#doc, this.#context());
-    const hash = await computeHash(bytes);
-
-    // Content-addressed: the same bytes are the same blob.
-    await this.#deps.blobs.putIfAbsent(hash, bytes);
+    const { hash, bytes } = await this.#writeBlob(this.#doc);
 
     // Pin the per-layer content blobs this snapshot references so CAS GC
     // retains them. `refsFromSnapshot` is a pure function; markdown/docx
@@ -235,9 +318,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // The requestId is deterministic per (user, doc, version). Re-running
     // #writeSnapshot for the same version commits the identical payload under
     // the identical id, which the CAS worker dedupes by (requestId, payload):
-    // no double-count, no inflated root-ref counts. A snapshot has no delta to
-    // roll back, so the rollback is a no-op; a pin failure surfaces as
-    // RootRefsError, mirroring apply().
+    // no double-count. A snapshot has no delta to roll back, so the rollback
+    // is a no-op; a pin failure surfaces as RootRefsError, mirroring apply().
     const refs = this.#config.refsFromSnapshot(bytes);
     if (Object.keys(refs).length > 0) {
       const { userId, docId } = this.#deps.identity;
@@ -246,7 +328,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
           this.#deps.cas,
           `snapshot:${userId}:${docId}:${this.#version}`,
           refs,
-          () => {},
+          async () => {},
         );
       } catch (err) {
         throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
@@ -259,11 +341,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // Local log record — this is what rollback searches.
     await this.#deps.deltas.recordSnapshot(this.#version, hash, timestamp);
 
-    // Return the hash actually persisted (of the ctx-aware bytes). snapshot()
-    // reuses this instead of recomputing: for a ctx-aware doc type (PSD) the
-    // stored bytes are the IR snapshot, so a second save(doc) WITHOUT ctx would
-    // hash the real (8BPS) bytes and hand back a hash no blob was stored under —
-    // breaking clone-from-snapshot. Other callers ignore the return.
     return { hash, version: this.#version };
   }
 
@@ -291,40 +368,100 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       ? await this.#config.load(input.bytes, ctx)
       : await this.#config.init(ctx);
 
+    // 1. Durable bytes first, outside the transaction. Version 1 is
+    //    snapshotted immediately and deliberately, so a fresh document is
+    //    restorable without replaying from `init()` — and an orphaned blob
+    //    is the cheapest possible failure residue (see #writeBlob).
+    const { hash, bytes } = await this.#writeBlob(doc);
+
+    // 1b. Pin the v1 snapshot's per-layer content blobs BEFORE the transaction
+    //     records it as a restore point — the same ordering rule as
+    //     #writeSnapshot: content must be protected before anything registers
+    //     the snapshot as restorable, or a GC pass between the two writes could
+    //     delete a blob the snapshot needs. Azure's refactor records the v1
+    //     snapshot inline in the transaction (create() no longer routes through
+    //     #writeSnapshot), so the CAS pin the durable path owns is re-applied
+    //     here. A fresh document is always version 1. markdown/docx return {}
+    //     from refsFromSnapshot and skip this entirely (zero behaviour change).
+    const refs = this.#config.refsFromSnapshot(bytes);
+    if (Object.keys(refs).length > 0) {
+      try {
+        await commitRootRefsOrRollback(
+          this.#deps.cas,
+          `snapshot:${userId}:${docId}:1`,
+          refs,
+          async () => {},
+        );
+      } catch (err) {
+        throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
+      }
+    }
+
+    // 2. One atomic unit: the delta log and the global index either both
+    //    learn about this document or neither does. Before this was a
+    //    transaction, a register() failure left a document that had deltas,
+    //    answered reads and writes, was missing from every listing, and
+    //    could not be re-created (create() answered 409 DocExists) — an
+    //    orphan with no way back.
     const timestamp = this.#deps.now();
-    await this.#deps.deltas.append({
-      version: 1,
-      timestamp,
-      description: "Document created",
-      operations: [],
+    await this.#deps.unitOfWork.withTransaction(async (tx) => {
+      await tx.deltas.append({
+        version: 1,
+        timestamp,
+        description: "Document created",
+        operations: [],
+      });
+
+      // The delta log's own snapshot record goes SECOND, immediately after
+      // the delta and before anything touches the index. This is what
+      // rollback() and load()'s durable fallback search, and pairing it with
+      // the append matters on a backend whose withTransaction cannot roll
+      // back (Cloudflare: the log is DO sqlite, the index is D1). There, a
+      // failing index write must not be able to leave a v1 delta whose
+      // snapshot hash nothing records — that combination makes the next
+      // load() take the `latestSnapshotRef() === null` branch and replay the
+      // empty v1 delta onto init(), handing back a BLANK document instead of
+      // the uploaded bytes, silently. Writing both DO-local rows first
+      // downgrades that to "content intact, just missing from the listing".
+      //
+      // The DocIndex contract constrains register() before
+      // index.recordSnapshot()/touch(); it says nothing about
+      // deltas.recordSnapshot(), which is a different port.
+      await tx.deltas.recordSnapshot(1, hash, timestamp);
+
+      // register() BEFORE index.recordSnapshot(): DocIndex.recordSnapshot
+      // files a snapshot against a document the index already knows, so a
+      // document it has never seen has nowhere to file it and the record is
+      // silently dropped (DocIndex contract).
+      await tx.index.register({
+        docId,
+        docType,
+        ownerId: userId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await tx.index.recordSnapshot(1, hash, timestamp);
     });
 
+    // 3. Commit in memory only once the durable writes have landed — the
+    //    same rule as apply() step 5.
     this.#doc = doc;
     this.#version = 1;
 
-    // Refresh the (non-durable) snapshot cache right after the delta lands,
-    // before the network round-trip to register(). register() is a D1 call
-    // and the most likely thing here to fail; if it throws after the cache
-    // write, the delta and the cache already agree on version 1, so a later
-    // load() replays zero deltas onto a correct cached doc instead of
-    // replaying one empty delta onto an empty init() doc (which would also
-    // make #doc non-null and permanently block a retry with DocExistsError).
-    await this.#saveSnapshotCache();
-
-    // Register BEFORE writing the durable snapshot: DocIndex.recordSnapshot
-    // files a snapshot against a known document, so a document the index has
-    // never seen has nowhere to file it and the record is silently dropped.
-    await this.#deps.index.register({
-      docId,
-      docType,
-      ownerId: userId,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-
-    // Deliberate: version 1 gets a durable snapshot immediately, so a fresh
-    // document is restorable without replaying from `init()`.
-    await this.#writeSnapshot();
+    // 4. Cache refresh, last and genuinely best-effort: the throw is
+    //    swallowed. The document is already created at this point — the
+    //    delta, the blob and the index rows are all committed and the
+    //    version-1 result below is valid — so letting a cache write turn a
+    //    succeeded creation into an error response would be actively
+    //    harmful: the caller would retry and get 409 DocExists for a
+    //    document that is fine.
+    //
+    //    Swallowing is only safe because load() falls back to the durable
+    //    snapshot recorded in step 2 (latestSnapshotRef -> blobs.get), so an
+    //    empty cache costs one blob read on the next load, not the content.
+    //    Do not "fix" this by rethrowing without also restoring that
+    //    fallback.
+    await this.#saveSnapshotCacheBestEffort();
 
     this.#loaded = true;
     return { docId, version: 1 };
@@ -352,30 +489,22 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     const { docType, docId, userId } = this.#deps.identity;
     const doc = await this.#config.load(bytes, this.#context());
 
-    const timestamp = this.#deps.now();
-    await this.#deps.deltas.append({
-      version: 1,
-      timestamp,
-      description: `Cloned from snapshot ${hash} (source version ${sourceVersion})`,
-      operations: [],
-    });
-
-    this.#doc = doc;
-    this.#version = 1;
-
-    // Independently pin the per-layer blobs this cloned snapshot references.
-    // The adopted snapshot's blobs otherwise survive only via the SOURCE doc's
-    // root-refs; a clone must own its own pin so its content cannot be GC'd out
-    // from under it when the source is deleted. Mirror #writeSnapshot's pin,
-    // scoped to the CLONE's own (user, doc, version) — deterministic and
-    // idempotent. markdown/docx return {} and skip this entirely.
-    const refs = this.#config.refsFromSnapshot(bytes);
-    if (Object.keys(refs).length > 0) {
+    // Independently pin the per-layer blobs this cloned snapshot references,
+    // BEFORE the transaction records it as a restore point — the same ordering
+    // rule as #writeSnapshot: content must be protected before anything
+    // registers the snapshot as restorable, or a GC pass could delete a
+    // referenced blob. The adopted snapshot's blobs otherwise survive only via
+    // the SOURCE doc's root-refs; a clone must own its own pin so its content
+    // cannot be GC'd out from under it when the source is deleted. Scoped to
+    // the CLONE's own (user, doc, version=1) — deterministic and idempotent.
+    // markdown/docx return {} and skip this entirely.
+    const cloneRefs = this.#config.refsFromSnapshot(bytes);
+    if (Object.keys(cloneRefs).length > 0) {
       try {
         await commitRootRefsOrRollback(
           this.#deps.cas,
-          `snapshot:${userId}:${docId}:${this.#version}`,
-          refs,
+          `snapshot:${userId}:${docId}:1`,
+          cloneRefs,
           async () => {},
         );
       } catch (err) {
@@ -383,22 +512,38 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       }
     }
 
-    // Snapshot cache first, register second — same reasoning as create():
-    // register() is the D1 network call most likely to fail, and the delta
-    // + cache must already agree on version 1 before we risk it.
-    await this.#saveSnapshotCache();
+    // Step 1 of create()'s write order is already done here: the blob exists
+    // (we just read it), and content-addressing means the clone shares it.
+    // So this path starts at the transaction.
+    const timestamp = this.#deps.now();
+    await this.#deps.unitOfWork.withTransaction(async (tx) => {
+      await tx.deltas.append({
+        version: 1,
+        timestamp,
+        description: `Cloned from snapshot ${hash} (source version ${sourceVersion})`,
+        operations: [],
+      });
 
-    // Register before recording the durable snapshot — see create().
-    await this.#deps.index.register({
-      docId,
-      docType,
-      ownerId: userId,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      // Delta-log snapshot record second, index writes after — see create()
+      // for why the two DO-local rows must land together.
+      await tx.deltas.recordSnapshot(1, hash, timestamp);
+
+      // register() before index.recordSnapshot() — see create().
+      await tx.index.register({
+        docId,
+        docType,
+        ownerId: userId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await tx.index.recordSnapshot(1, hash, timestamp);
     });
 
-    await this.#deps.index.recordSnapshot(1, hash, timestamp);
-    await this.#deps.deltas.recordSnapshot(1, hash, timestamp);
+    this.#doc = doc;
+    this.#version = 1;
+
+    // Best-effort cache refresh, last, throw swallowed — see create().
+    await this.#saveSnapshotCacheBestEffort();
 
     this.#loaded = true;
     return { docId, version: 1 };
@@ -624,6 +769,10 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // #requireDoc guarantees #doc is non-null, so #writeSnapshot returns a hash.
     this.#requireDoc();
 
+    // Reuse the hash #writeSnapshot actually persisted rather than re-saving:
+    // for a ctx-aware doc type (PSD) the stored bytes are the IR snapshot, so a
+    // second save(doc) WITHOUT ctx would hash the real (8BPS) bytes and hand
+    // back a hash no blob was stored under — breaking clone-from-snapshot.
     const snap = await this.#writeSnapshot();
 
     return {

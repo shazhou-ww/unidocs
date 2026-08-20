@@ -267,7 +267,9 @@ script_name = "unidocs-mytype"
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev                     # gateway :8787 + every doc type, Miniflare backend
+pnpm dev docx                # gateway + docx only
+pnpm dev docx markdown       # explicit doc type selection
 ```
 
 Starts gateway (`:8787`), markdown (`:8788`), and docx (`:8789`) in one Miniflare process with shared D1/R2. The KV registry is seeded with each worker's URL:
@@ -277,6 +279,27 @@ POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
 POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ```
 
+### Running against the local Azure stack
+
+```bash
+pnpm dev --azure              # gateway :41787 + markdown :41788, Postgres + Azurite backend
+pnpm dev --azure markdown     # same thing, explicit
+```
+
+Two prerequisites:
+
+- **Docker must be running.** `pnpm dev --azure` starts a `docker compose` stack (Postgres on `:5433`, Azurite on `:10000`) and fails fast with an actionable message if the Docker daemon isn't up, rather than surfacing the raw `docker compose` error.
+- **Only `markdown` is supported today.** `docx` depends on user-scoped CAS, which the Azure backend hasn't implemented yet (planned for phase 4); `pnpm dev --azure docx` fails immediately rather than starting a stack it can't route to.
+
+Migrations run automatically as part of startup — no separate command needed. The Azure ports (`41787`/`41788`) are deliberately offset from Miniflare's (`8787`/`8788`) so both backends can run side by side. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/markdown processes and tears down the docker compose stack (`down -v`).
+
+### Tests that need Docker
+
+`pnpm test:local` (via `scripts/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `docker-compose.azure.yml` stack — Postgres on host port `:5433`, Azurite on `:10000` — under an unnamed default compose project, i.e. the same containers and the same host ports. `pnpm dev --azure` starts the identical stack for interactive use.
+
+**Do not run `pnpm test:local`, `pnpm -r test`, and `pnpm dev --azure` at the same time.** They are not isolated from each other: whichever one tears its stack down first (`docker compose ... down -v`) pulls Postgres/Azurite out from under whichever else is still using it, mid-test or mid-session. Run them one at a time, or stop `pnpm dev --azure` before running either test command.
+
+Docker must be running before invoking `pnpm test:local` or `pnpm -r test` for the first time — both will start the compose stack themselves and run migrations against it, but the Docker daemon itself has to already be up.
 ## Workspace package resolution
 
 Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry a

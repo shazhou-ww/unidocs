@@ -129,7 +129,8 @@ async function forwardToWorker(
       method: request.method,
       headers,
       body: request.body,
-    });
+      duplex: "half",
+    } as RequestInit);
   } catch (err) {
     return Response.json({
       error: `Document worker unreachable: ${err}`,

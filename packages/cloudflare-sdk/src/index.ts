@@ -31,6 +31,7 @@ export {
 	R2BlobCas,
 	D1DocIndex,
 	D1DocIndexQuery,
+	DirectUnitOfWork,
 } from "./ports-cf.js";
 export {
 	CasClient,

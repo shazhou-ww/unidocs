@@ -8,6 +8,8 @@ import type {
   SnapshotCache,
   SnapshotRef,
   DocRecord,
+  TransactionalPorts,
+  UnitOfWork,
 } from "./ports.js";
 import type { CasGateway } from "./session.js";
 import { VersionConflictError } from "./errors.js";
@@ -86,6 +88,20 @@ class MemoryDeltaLog implements DeltaLog {
   async countSince(v: number): Promise<number> {
     return this.#deltas.filter((d) => d.version > v).length;
   }
+
+  // --- MemoryTxParticipant: rollback support for MemoryUnitOfWork ---------
+  // Shallow array copies are enough: nothing ever mutates a Delta or a
+  // SnapshotRef in place, they are only added and removed.
+
+  captureTxState(): unknown {
+    return { deltas: [...this.#deltas], snapshotRefs: [...this.#snapshotRefs] };
+  }
+
+  restoreTxState(state: unknown): void {
+    const s = state as { deltas: Delta[]; snapshotRefs: SnapshotRef[] };
+    this.#deltas = [...s.deltas];
+    this.#snapshotRefs = [...s.snapshotRefs];
+  }
 }
 
 class MemorySnapshotCache implements SnapshotCache {
@@ -150,6 +166,40 @@ class MemoryDocIndex implements DocIndex {
     const list = this.#store.snapshots.get(key) ?? [];
     list.push({ version, hash, timestamp });
     this.#store.snapshots.set(key, list);
+  }
+
+  // --- MemoryTxParticipant: rollback support for MemoryUnitOfWork ---------
+  //
+  // Three things move under a transaction here and all three must come back:
+  // the learned #identity (register() sets it), the shared docs map (whose
+  // DocRecord values touch() mutates in place, hence the per-record copy),
+  // and the shared snapshots map (whose arrays recordSnapshot() pushes onto).
+  // The shared maps are restored by mutation, not reassignment —
+  // MemoryDocIndexQuery holds the same SharedDocStore by reference.
+
+  captureTxState(): unknown {
+    return {
+      identity: this.#identity === null ? null : { ...this.#identity },
+      docs: new Map(
+        [...this.#store.docs].map(([k, v]) => [k, { ...v }] as const),
+      ),
+      snapshots: new Map(
+        [...this.#store.snapshots].map(([k, v]) => [k, [...v]] as const),
+      ),
+    };
+  }
+
+  restoreTxState(state: unknown): void {
+    const s = state as {
+      identity: { docType: string; docId: string } | null;
+      docs: Map<string, DocRecord>;
+      snapshots: Map<string, { version: number; hash: string; timestamp: number }[]>;
+    };
+    this.#identity = s.identity === null ? null : { ...s.identity };
+    this.#store.docs.clear();
+    for (const [k, v] of s.docs) this.#store.docs.set(k, { ...v });
+    this.#store.snapshots.clear();
+    for (const [k, v] of s.snapshots) this.#store.snapshots.set(k, [...v]);
   }
 }
 
@@ -221,6 +271,80 @@ export class MemoryCas implements CasGateway {
   }
 }
 
+/**
+ * Opt-in capability that lets `MemoryUnitOfWork` undo a port's writes: take a
+ * snapshot of its internal state on the way in, put it back if the callback
+ * throws. This is the simplest honest rollback an in-memory implementation
+ * can offer, and the port contract's transaction tests depend on it being a
+ * real one rather than a no-op.
+ *
+ * A port that does not implement it simply is not rolled back — see
+ * `MemoryUnitOfWork`.
+ */
+export interface MemoryTxParticipant {
+  captureTxState(): unknown;
+  restoreTxState(state: unknown): void;
+}
+
+// Generic in T so `array.filter(isMemoryTxParticipant)` narrows the element
+// type instead of widening it to MemoryTxParticipant.
+export function isMemoryTxParticipant<T>(value: T): value is T & MemoryTxParticipant {
+  const candidate = value as unknown as Partial<MemoryTxParticipant> | null;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof candidate?.captureTxState === "function" &&
+    typeof candidate?.restoreTxState === "function"
+  );
+}
+
+/**
+ * Snapshot-and-restore transactions for the in-memory ports.
+ *
+ * Scope, stated plainly: this is a test double. It gives real *rollback*
+ * (the whole point — the port contract asserts that a throw inside
+ * `withTransaction` leaves nothing behind), but it gives no isolation, so
+ * two overlapping transactions over the same ports would restore each
+ * other's state. Nothing in `DocumentSession` runs concurrent transactions
+ * over one document, and a real backend gets this from its database.
+ *
+ * Ports that do not implement `MemoryTxParticipant` — a test spy, a fake
+ * that throws — are passed through to the callback untouched and not rolled
+ * back. That is deliberate: such a port is the *cause* of the rollback in
+ * the tests that use one, not a participant in it.
+ */
+export class MemoryUnitOfWork implements UnitOfWork {
+  #ports: TransactionalPorts;
+
+  constructor(ports: TransactionalPorts) {
+    this.#ports = ports;
+  }
+
+  async withTransaction<T>(fn: (tx: TransactionalPorts) => Promise<T>): Promise<T> {
+    const saved = [this.#ports.deltas, this.#ports.index]
+      .filter(isMemoryTxParticipant)
+      .map((port) => ({ port, state: port.captureTxState() }));
+
+    try {
+      return await fn(this.#ports);
+    } catch (err) {
+      // Reverse order so a port that appears twice (it cannot today, but the
+      // list is not the invariant) unwinds like a stack.
+      for (const { port, state } of saved.reverse()) port.restoreTxState(state);
+      throw err;
+    }
+  }
+}
+
+/**
+ * A `UnitOfWork` over an arbitrary pair of ports — used by tests that swap
+ * one of the memory ports for a spy or a failing fake and still need the
+ * other one to roll back.
+ */
+export function createMemoryUnitOfWork(ports: TransactionalPorts): UnitOfWork {
+  return new MemoryUnitOfWork(ports);
+}
+
 export function createMemoryPorts(): {
   deltas: DeltaLog;
   snapshots: SnapshotCache;
@@ -228,14 +352,18 @@ export function createMemoryPorts(): {
   index: DocIndex;
   indexQuery: DocIndexQuery;
   cas: MemoryCas;
+  unitOfWork: UnitOfWork;
 } {
   const store: SharedDocStore = { docs: new Map(), snapshots: new Map() };
+  const deltas = new MemoryDeltaLog();
+  const index = new MemoryDocIndex(store);
   return {
-    deltas: new MemoryDeltaLog(),
+    deltas,
     snapshots: new MemorySnapshotCache(),
     blobs: new MemoryBlobCas(),
-    index: new MemoryDocIndex(store),
+    index,
     indexQuery: new MemoryDocIndexQuery(store),
     cas: new MemoryCas(),
+    unitOfWork: new MemoryUnitOfWork({ deltas, index }),
   };
 }

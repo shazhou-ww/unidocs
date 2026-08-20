@@ -1,0 +1,295 @@
+/**
+ * Boots the Azure/Postgres/Blob backend the same way `local-runtime.mjs`
+ * boots the Miniflare one, so `scripts/behavior-suite.mjs` can run the same
+ * test bodies against either.
+ *
+ * Topology: `docker compose -f docker-compose.azure.yml up -d` (Postgres +
+ * Azurite) -> poll Postgres AND Azurite -> apply migrations via the package's own
+ * standalone entry point (`pnpm --filter @unidocs/azure-sdk run migrate`,
+ * documented in CLAUDE.md) -> esbuild-bundle `azure-gateway`/`azure-markdown`
+ * fresh from source (same technique `local-runtime.mjs` uses for the
+ * Miniflare worker bundles: `packages: "external"` + the shared
+ * `workspace-aliases.mjs` table, so real npm deps like `pg` resolve normally
+ * through node_modules and only `@unidocs/*` specifiers get pointed at their
+ * `.ts` source) -> `spawn` each bundle as a plain `node` process -> poll each
+ * port -> return `{ urls, storage, dispose }`.
+ *
+ * Bundling from source rather than reusing each package's own prebuilt
+ * `dist/main.js` keeps this in sync with whatever is on disk right now,
+ * mirroring how `local-runtime.mjs` never trusts a stale `.wrangler` bundle
+ * either.
+ */
+
+import { execFileSync, spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { connect } from "node:net";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import * as esbuild from "esbuild";
+import pg from "pg";
+import { BlobServiceClient } from "@azure/storage-blob";
+import { INTERNAL_TOKEN } from "./doc-types.mjs";
+import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
+
+const { Pool } = pg;
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const COMPOSE_FILE = join(ROOT, "docker-compose.azure.yml");
+const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
+
+/** Matches `packages/azure-sdk/tests/containers.ts` — same compose stack. */
+export const DATABASE_URL = "postgres://unidocs:unidocs@localhost:5433/unidocs";
+export const BLOB_CONNECTION_STRING = "UseDevelopmentStorage=true";
+
+/** Blob container name `BlobCasStore` uses (`packages/azure-sdk/src/ports-blob.ts`). */
+const CAS_CONTAINER = "cas";
+
+const DEFAULT_PORTS = { gateway: 41787, markdown: 41788 };
+
+function run(cmd, args, opts = {}) {
+  execFileSync(cmd, args, { cwd: ROOT, stdio: "inherit", ...opts });
+}
+
+async function bundleService(entry, outfile) {
+  await mkdir(dirname(outfile), { recursive: true });
+  await esbuild.build({
+    absWorkingDir: ROOT,
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    packages: "external",
+    alias: WORKSPACE_ALIASES,
+    logOverride: { "empty-import-meta": "silent" },
+  });
+}
+
+/**
+ * Poll with a real query, same rationale as `containers.ts`'s
+ * `waitForPostgres`: a just-created container accepts TCP before `initdb`
+ * has finished, so a fixed sleep is not reliable.
+ */
+async function waitForPostgres(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    const probe = new Pool({ connectionString: DATABASE_URL });
+    try {
+      await probe.query("SELECT 1");
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } finally {
+      await probe.end();
+    }
+  }
+  throw new Error(`postgres did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
+}
+
+/**
+ * Same idea for Azurite: the blob endpoint accepts TCP before it serves the
+ * API. Mirrors `packages/azure-sdk/tests/containers.ts`'s `waitForAzurite`
+ * exactly (same probe container name, same poll shape) — that file's comment
+ * is the rationale for why this can't be skipped: `BlobCasStore`/
+ * `BlobSnapshotCache` create their real containers lazily on first use, so
+ * without this, a slow-to-start Azurite would surface as an opaque timeout
+ * on whichever behavior test happens to touch storage first, not as a clear
+ * "Azurite isn't up yet" failure at boot.
+ */
+async function waitForAzurite(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  const svc = BlobServiceClient.fromConnectionString(BLOB_CONNECTION_STRING);
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      await svc.getContainerClient("readiness-probe").createIfNotExists();
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw new Error(`azurite did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
+}
+
+/** Poll a TCP port rather than an HTTP route, so readiness doesn't depend on any one endpoint's own logic working. */
+async function waitForPort(host, port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      await new Promise((resolve, reject) => {
+        const socket = connect({ host, port }, () => {
+          socket.end();
+          resolve();
+        });
+        socket.once("error", reject);
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+  throw new Error(
+    `nothing listening on ${host}:${port} within ${timeoutMs}ms: ${String(lastError)}`,
+  );
+}
+
+function runMigrations() {
+  run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "migrate"], {
+    env: { ...process.env, DATABASE_URL },
+  });
+}
+
+function spawnService(scriptPath, env, label) {
+  const child = spawn(process.execPath, [scriptPath], {
+    cwd: ROOT,
+    env: { ...process.env, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", (chunk) => process.stdout.write(`[${label}] ${chunk}`));
+  child.stderr.on("data", (chunk) => process.stderr.write(`[${label}] ${chunk}`));
+  return child;
+}
+
+/** SIGTERM, then SIGKILL if the process hasn't exited within `graceMs`. */
+function stopProcess(child, graceMs = 5_000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => child.kill("SIGKILL"), graceMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.kill("SIGTERM");
+  });
+}
+
+/**
+ * The backend-neutral `StorageProbe`: a global snapshot index lookup and a
+ * CAS blob existence check, expressed directly over `pg` and
+ * `@azure/storage-blob` (per the task brief) rather than by importing
+ * `@unidocs/azure-sdk`'s own port classes — this script runs under plain
+ * `node`, which (unlike vitest/esbuild) does not resolve a TS package's
+ * `./foo.js`-referring-to-`foo.ts` specifiers, so importing that package's
+ * `src/index.ts` here directly would fail to resolve its own internal
+ * imports.
+ */
+function createStorageProbe() {
+  const pool = new Pool({ connectionString: DATABASE_URL });
+  pool.on("error", (err) => {
+    console.error("azure-runtime: storage probe pg pool error", err);
+  });
+  const blobService = BlobServiceClient.fromConnectionString(BLOB_CONNECTION_STRING);
+  const container = blobService.getContainerClient(CAS_CONTAINER);
+
+  return {
+    async snapshotIndex(docType, docId) {
+      const result = await pool.query(
+        `SELECT version, hash FROM doc_snapshots
+         WHERE doc_type = $1 AND doc_id = $2
+         ORDER BY version ASC`,
+        [docType, docId],
+      );
+      // `doc_snapshots.version` is Postgres `INTEGER`, which `pg` already
+      // hands back as a JS number (unlike `bigint`/`int8` columns).
+      return result.rows.map((row) => ({
+        version: row.version,
+        hash: row.hash,
+      }));
+    },
+    async blobExists(hash) {
+      return container.getBlockBlobClient(hash).exists();
+    },
+    async dispose() {
+      await pool.end();
+    },
+  };
+}
+
+/**
+ * Start the Azure gateway + markdown services against a freshly migrated
+ * Postgres/Azurite stack. Mirrors `startLocalRuntime()`'s return shape
+ * (`urls`, `storage`, `dispose`) so `scripts/behavior-suite.mjs` can target
+ * either without knowing which backend it got.
+ */
+export async function startAzureRuntime({
+  host = "127.0.0.1",
+  ports: portOverrides = {},
+} = {}) {
+  const ports = { ...DEFAULT_PORTS, ...portOverrides };
+  const bundleDir = join(ROOT, ".azure-runtime", "bundles");
+  const gatewayBundle = join(bundleDir, "gateway.mjs");
+  const markdownBundle = join(bundleDir, "markdown.mjs");
+
+  run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
+
+  let gatewayProc;
+  let markdownProc;
+  let probe;
+  try {
+    await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
+    runMigrations();
+
+    await Promise.all([
+      bundleService(join(ROOT, "packages/azure-gateway/src/main.ts"), gatewayBundle),
+      bundleService(join(ROOT, "packages/azure-markdown/src/main.ts"), markdownBundle),
+    ]);
+
+    const urls = {
+      gateway: `http://${host}:${ports.gateway}`,
+      markdown: `http://${host}:${ports.markdown}`,
+    };
+
+    markdownProc = spawnService(
+      markdownBundle,
+      {
+        DATABASE_URL,
+        BLOB_CONNECTION_STRING,
+        INTERNAL_TOKEN,
+        PORT: String(ports.markdown),
+      },
+      "azure-markdown",
+    );
+    await waitForPort(host, ports.markdown, 30_000);
+
+    gatewayProc = spawnService(
+      gatewayBundle,
+      {
+        DATABASE_URL,
+        INTERNAL_TOKEN,
+        PORT: String(ports.gateway),
+        MARKDOWN_WORKER_URL: urls.markdown,
+      },
+      "azure-gateway",
+    );
+    await waitForPort(host, ports.gateway, 30_000);
+
+    probe = createStorageProbe();
+
+    return {
+      urls,
+      storage: probe,
+      async dispose() {
+        await Promise.all([stopProcess(gatewayProc), stopProcess(markdownProc)]);
+        await probe?.dispose();
+        run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
+      },
+    };
+  } catch (err) {
+    await Promise.allSettled([stopProcess(gatewayProc), stopProcess(markdownProc)]);
+    await probe?.dispose().catch(() => {});
+    try {
+      run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
+    } catch {
+      // Best-effort cleanup; the original error is what matters.
+    }
+    throw err;
+  }
+}
