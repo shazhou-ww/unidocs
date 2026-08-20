@@ -74,6 +74,33 @@ describe("init op", () => {
     expect(result.layers).toEqual([]);
   });
 
+  it("throws and does not mutate doc when canvas is missing", async () => {
+    const start = startDoc();
+    const startSnapshot = structuredClone(start);
+
+    await expect(
+      apply([{ kind: "init", payload: { canvas: undefined, layers: [] } }], start)
+    ).rejects.toThrow(/init: malformed payload/);
+
+    expect(start).toEqual(startSnapshot);
+  });
+
+  it("throws when canvas has non-numeric width/height", async () => {
+    const start = startDoc();
+
+    await expect(
+      apply([{ kind: "init", payload: { canvas: { width: "x", height: 1 } } }], start)
+    ).rejects.toThrow(/init: malformed payload/);
+  });
+
+  it("throws when layers is present but not an array", async () => {
+    const start = startDoc();
+
+    await expect(
+      apply([{ kind: "init", payload: { canvas: irDoc().canvas, layers: "x" } }], start)
+    ).rejects.toThrow(/init: malformed payload/);
+  });
+
   it("round-trip smoke: deserialize(serialize(doc)) fed as init payload restores it structurally", async () => {
     const store = memStore();
     const start = startDoc();

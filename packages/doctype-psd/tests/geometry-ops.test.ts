@@ -25,4 +25,20 @@ describe("geometry ops", () => {
     const d = doc();
     expect(() => transform(d, { layerId: "a", op: { scale: [2, 2] } as any })).toThrow(/not supported/);
   });
+
+  it("flip throws loudly when layer pixels is an unresolved PixelRef", () => {
+    const d = doc();
+    const l = findLayer(d.layers, "a")!;
+    l.pixels = { width: 20, height: 20, hash: "deadbeef" } as any;
+    expect(() => transform(d, { layerId: "a", op: { flip: "h" } })).toThrow(
+      /transform flip: pixels not resolved \(PixelRef\) — resolve before edit/
+    );
+  });
+
+  it("flip still works normally for resident-pixel layers", () => {
+    const d = doc();
+    const l = findLayer(d.layers, "a")!;
+    l.pixels!.data.set([1, 2, 3, 4, 5, 6, 7, 8]); // first two pixels of row 0
+    expect(() => transform(d, { layerId: "a", op: { flip: "h" } })).not.toThrow();
+  });
 });

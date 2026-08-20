@@ -13,6 +13,19 @@ export type PsdOp = { kind: string; payload: Record<string, unknown> };
  *  per-layer validation is performed — payload layers may carry lazy
  *  PixelRef pixels with no `data`. */
 function init(doc: PsdDoc, payload: any): void {
+  const canvas = payload?.canvas;
+  if (typeof canvas !== "object" || canvas === null) {
+    throw new Error("init: malformed payload — canvas must be a non-null object");
+  }
+  if (typeof canvas.width !== "number" || !Number.isFinite(canvas.width)) {
+    throw new Error("init: malformed payload — canvas.width must be a finite number");
+  }
+  if (typeof canvas.height !== "number" || !Number.isFinite(canvas.height)) {
+    throw new Error("init: malformed payload — canvas.height must be a finite number");
+  }
+  if (payload.layers !== undefined && !Array.isArray(payload.layers)) {
+    throw new Error("init: malformed payload — layers must be an array when present");
+  }
   doc.canvas = payload.canvas;
   doc.layers = payload.layers ?? [];
 }
