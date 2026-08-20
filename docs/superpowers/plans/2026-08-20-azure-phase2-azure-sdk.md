@@ -723,3 +723,58 @@ git commit -m "feat(dev): add a --azure switch to pnpm dev"
 ## 交给阶段 3 的东西
 
 docx 上 Azure 需要用户级 CAS。按设计,阶段 3 先让 `CAS_BASE_URL` 指向现有的 Cloudflare CAS worker 打通链路,阶段 4 再写 `azure-cas`。`CasClient` 已经是一份实现两边通用,届时只换 baseUrl。
+
+## 阶段 3 交接说明
+
+最终审查(2026-08-20)在"可以合并"的前提下留下的五条交接事项。前四条是本轮**已知但未处理**的问题,第五条是**测试覆盖的缺口清单**,建议阶段 3 开工前先扫一遍。
+
+### 核心命题的准确表述
+
+"49 个行为测试在 Miniflare 与本地 Azure 栈上各跑一遍全绿,断言逐字未改"这句话是真的,但**只在单副本拓扑下成立**——`scripts/azure-runtime.mjs` 的 `startAzureRuntime()` 只起一个 `azure-markdown` 进程,不是设计第 2 节论证要求的"N 个无状态副本"。也就是说,行为测试证明的是"这套 Postgres/Blob 端口实现在语义上是对的",而不是"这套实现在多副本下是对的"——后者是本设计存在的**理由**(见第 2 节),却不在 49 个测试的覆盖范围内。
+
+跨副本才会暴露的东西,本轮全部零覆盖:
+
+- `BlobSnapshotCache.get()` 的 ETag 一致读 + 重试(本轮已补单测,见 `packages/azure-sdk/tests/ports-blob.test.ts`,但那是隔离的单元测试,不是"两个真实副本同时写"的集成场景)
+- `packages/azure-markdown/src/local-editor.ts` 模块注释里"每请求新建 session,不做 LRU"这条约束——它防的正是"另一个副本已经把版本推进了,而本副本还拿着一个看似版本号对、内容却陈旧的缓存 session"这种情况,单副本下这条路径根本不会被触发
+- `remove()`/`append()` 之间的已接受窗口(design 文档第 9 节)——这个窗口本质上就是"两个并发写者",单副本单进程的行为测试连制造这个场景的能力都没有
+
+建议阶段 3 第一项就是把 `azure-markdown` 起两份(哪怕本地跑两个 Node 进程指向同一个 Postgres/Azurite),再跑一遍行为测试和一组专门的多副本并发场景。
+
+### `doc_snapshots` 表合并的真实后果
+
+设计文档 5.2/5.4 一带而过地把这件事说成"索引成超集"式的好处,但准确的说法是:**它使"Azure 侧行为测试的索引断言"变成恒真命题**。`PgDocIndex.recordSnapshot()`(`packages/azure-sdk/src/ports-pg.ts` 第 299 行)和 `PgDeltaLog.recordSnapshot()`(同文件第 233-241 行)写的是**同一张** `doc_snapshots` 表——这是 Postgres 相对 Cloudflare 的结构性优势(设计第 2 节最后一段),但副作用是:如果删掉行为测试里那条断言"通过 `DocIndexQuery` 能看到刚记录的快照"的测试,该断言在 Azure 上照样是绿的,因为写路径根本没有分叉,断言验证的其实是同一次写。
+
+真正把这条索引语义**钉住**的,是端口契约(`packages/server-core/src/testing/port-contract.ts` 第 245 行)里的 `DocIndex: a snapshot recorded after register() is readable back` 这条用例——它跑在 `PgDocIndex` 自己的实例上(见 `packages/azure-sdk/tests/ports.test.ts`),`deltas` 和 `index` 分开构造,即使将来两张表拆开也测得出来。**下一个人如果看到"行为测试覆盖了索引"这句话,会以为行为测试验的是索引语义本身——不是,行为测试验的是"两张表现在是一张表"这个当前实现细节的副产品。** 措辞要按这个更准确的版本理解,不要在阶段 3 的文档里继续沿用"索引成超集"这种听起来像是验证过泛化能力的表述。
+
+### 契约的已知盲区(建议阶段 3 开工前补齐,都在 `server-core`,与 doctype 无关)
+
+- `runPortContract`(`packages/server-core/src/testing/port-contract.ts`)目前只接受一个 `transactional: boolean` 选项(第 16-29 行)。`packages/azure-sdk/tests/ports.test.ts` 里为了跑通并发哨兵,自己在 harness 层面维护了一个 `WARM_CONNECTIONS`/连接预热的前提(把连接池"焐热"到有空闲连接,并发写才真正并发得起来)——但这条前提只活在调用方,契约本身不知道、也不检查调用方是否满足了它。建议加一个必填的并发前置钩子,让契约在跑并发哨兵前主动向 harness 要一份"我已经满足并发前提"的证明,而不是靠每个新后端的作者自己想起来抄 `ports.test.ts` 这一段。
+- `remove()` 没有并发哨兵。契约里 `remove` 只有串行用例(design 文档第 9 节风险表也点名了这一条),而 `remove` 与 `append` 之间那个"已知、有意接受"的窗口恰恰是并发场景。补一条与 `append` 哨兵同构的并发用例,即使阶段 3 暂不修窗口本身,至少让盲区可见。
+- `DocIndex.touch()` 没有专门用例。`touch()` 只在契约文件第 238 行的注释里被提到过一次(作为 `register()` 必须先于它的排序说明),三个后端(内存、Cloudflare、Postgres)都没有一条用例直接验证 `touch()` 本身的语义(比如它是否真的推进了 `updatedAt` 而不动 `createdAt`)。
+- 没有"两个文档互不可见"的显式用例。`DeltaLog`/`DocIndex` 的文档作用域谓词(`WHERE doc_type = $1 AND doc_id = $2`)目前只有间接覆盖——每条用例都只操作一个文档,从没有一条用例专门验证"操作文档 A 不会影响或读到文档 B"。这在专用存储(每个 DO 一个私有 sqlite)上几乎不可能出错,但在共享表后端(Postgres 上所有文档挤在同一张 `deltas` 表里)上,这类"作用域谓词漏写一个 WHERE 条件"是最容易犯、也最难通过审查发现的一类 bug——审查代码看起来完全正常,只有跑起来才会串号。
+
+### `pg.Pool` 没有任何超时保护
+
+`packages/azure-sdk/src/pool.ts` 的 `createPool()` 只传了 `connectionString`:
+
+```ts
+export function createPool(cfg: AzureConfig): Pool {
+  return new Pool({ connectionString: cfg.databaseUrl });
+}
+```
+
+`statement_timeout`、`lock_timeout`、`idle_in_transaction_session_timeout`、`connectionTimeoutMillis` 全部留空。具体后果:两个并发 `create()` 撞同一个 `docId` 时,`withTransaction` 里的 `INSERT ... ON CONFLICT` 推测插入会让后到的事务在锁上等待——等的不是一条语句,是**前一个事务提交或回滚为止**,这段时间里它占着从池里借出的那一条连接不放。默认 `Pool` 的 `max` 是 10;只要有一个事务因为任何原因(应用层 bug、网络分区、客户端提前断开却没走到 `ROLLBACK`)卡住不提交,就会有更多请求排队等锁、连接被逐个占满,而没有 `connectionTimeoutMillis` 意味着连 "排队等连接的请求也超时报错"这条自愈路径都没有——整个服务会挂起而不是降级。阶段 3 动手写任何新的写路径之前必须先补上这四个超时。
+
+### `azure-sdk` 的 `migrate` script 在生产安装下会失败
+
+`packages/azure-sdk/package.json` 的 `migrate` script 是 `node scripts/bundle-migrate-cli.mjs && node dist/migrate-cli.js`——每次调用都用 esbuild 重新打包 `dist/migrate-cli.js` 再运行它,而不是运行一次固化好的产物。`esbuild` 在这个包里是 `devDependency`。一次 `npm install --production`/`pnpm install --prod` 之后的部署环境里没有 `esbuild`,`migrate` script 会在 `bundle-migrate-cli.mjs` 的 `import * as esbuild from "esbuild"` 那一步直接失败。阶段 3 如果要在真实部署里跑迁移(而不是只在本地 docker-compose 栈里跑),这个 script 需要先改成运行一份构建时产出的固定 `dist/migrate-cli.js`,或者把 `esbuild` 挪成 `dependencies`。
+
+### Cloudflare 侧变了但目前无测试覆盖的行为
+
+这几处改动都是本轮为了让 `create()`/`initFromHash()` 能安全接入 `withTransaction`(设计 3.1、3.2)而对 `packages/server-core/src/session.ts` 做的修改,Cloudflare 与 Azure 共用这份代码,但 49 个 e2e 目前都打不到这几条分支:
+
+- **`load()` 的 blob 回退分支**(`session.ts` 约 174-193 行):快照缓存未命中时回退到 `latestSnapshotRef()` + `blobs.get()` 重放。Cloudflare 上快照缓存是 `DoSnapshotCache`(`packages/cloudflare-sdk/src/ports-cf.ts`),由 DO 自己的持久化存储支撑,`create()`/`apply()`/`rollback()` 每次写都会刷新它,正常生命周期里它实际上从不为空——这条回退路径只有直接改 DO storage 才能触发,e2e 打不到。
+- **"有 ref 无 blob"从静默降级改成 fail-closed**(`session.ts` 182-190 行,`rollback()` 同款逻辑在 616-623 行):现在抛 `StorageCorruptError` → 500(见 `session-handler.ts` 82-85 行的映射)。commit `b79bdf9` 之前是 `if (bytes) {...}`,blob 缺失时直接透传到 `init()`/空文档重放,静默吞掉数据丢失。这是本轮刻意的行为收紧,但没有一条测试专门证明"blob 缺失时确实返回 500 而不是静默返回空文档"。
+- **`create()`/`initFromHash()` 的快照缓存写变成吞异常的 best-effort**(`#saveSnapshotCacheBestEffort`,`session.ts` 248-257 行,调用点在 393、452 行):commit `a93a70f` 之前是直接 `await this.#saveSnapshotCache()`,失败会让已经落盘的创建操作报 500;现在失败被吞掉,创建请求返回 200 但快照缓存可能没写成功(下次靠 blob 回退兜底)。这个行为翻转(500 → 200)没有测试锁住。
+- **`create()` 不再调 `index.touch()`**:`touch()` 现在只从 `#writeSnapshot()`(`session.ts` 294 行)触发,而 `#writeSnapshot()` 只在 `apply()`(591 行)、`rollback()`(652 行)、`snapshot()`(669 行)里被调用——`create()`/`initFromHash()`(307-456 行)不在其中,commit `b7c153a` 把 `create()` 的快照写改成直接 `tx.index.recordSnapshot()`,`createdAt`/`updatedAt` 在同一次写里被设成同一个 `timestamp`(369-370 行)。也就是说新建文档的 `updatedAt === createdAt` 现在是保证的行为,而不是巧合,但没有测试断言过这一点。
+- **`#persistIdentity` 抛异常时的 `errorResponse` 兜底路径**(`packages/cloudflare-sdk/src/editor-do.ts` 168-172 行定义,250 行调用,249-253 行的 `try/catch` 把任何异常都路由到通用的 `errorResponse`,最终落到 `session-handler.ts` 91 行 `Response.json({ success: false, error: String(err), version }, { status: 500 })`)——这条路径依赖存储层在"身份已经算出来、但持久化失败"这个具体时机报错,e2e 的故障注入目前打不到这个精确窗口。
