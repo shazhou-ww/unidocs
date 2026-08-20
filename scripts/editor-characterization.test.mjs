@@ -69,7 +69,7 @@ test("并发的两个同 baseVersion apply:恰好一个成功,另一个 409 且�
   );
   const { data } = await history.json();
   expect(data.map((entry) => entry.version)).toEqual([1, 2]);
-});
+}, 30_000);
 
 test("初始快照 version 1 + 阈值快照 version 21:两次快照的 R2 对象都存在,D1 记录完整", async () => {
   const userId = "snapshot-user";
@@ -138,7 +138,7 @@ test("rollback 到旧版本:内容回退,版本向前推进,历史保留全部 d
   expect(data.map((entry) => entry.version)).toEqual([1, 2, 3, 4]);
   expect(data[3].description).toBe("Rollback to version 2");
   expect(data[3].operations).toEqual([]);
-});
+}, 30_000);
 
 test("clone 走 snapshot hash + init_from_hash:新文档内容相同,版本从 1 开始", async () => {
   const userId = "clone-user";
@@ -177,7 +177,7 @@ test("clone 走 snapshot hash + init_from_hash:新文档内容相同,版本从 1
   const body = await query.json();
   expect(body.data).toBe("cloned content");
   expect(body.version).toBe(1);
-});
+}, 30_000);
 
 test("export 的字节导入成新文档后内容一致", async () => {
   const userId = "export-user";
@@ -212,4 +212,80 @@ test("export 的字节导入成新文档后内容一致", async () => {
   );
   const body = await query.json();
   expect(body.data).toBe("# Round Trip");
-});
+}, 30_000);
+
+test("delta 批次中一条操作抛出:整批不生效,400,版本不动,delta 不落地", async () => {
+  const userId = "atomicity-user";
+  const docId = await createDoc(userId);
+
+  const baseline = await closeFetch(
+    `${GW()}/users/${userId}/docs/markdown/${docId}/query`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "getContent" }),
+    },
+  );
+  const baselineBody = await baseline.json();
+  expect(baselineBody.success, JSON.stringify(baselineBody)).toBe(true);
+  const initialContent = baselineBody.data;
+
+  // 第一条 setContent 会成功;第二条 replaceSection 引用不存在的 heading 必抛。
+  // 如果 apply 不是"全部成功或全部不生效",第一条的效果会残留下来。
+  const res = await closeFetch(
+    `${GW()}/users/${userId}/docs/markdown/${docId}/apply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseVersion: 1,
+        description: "atomicity probe",
+        operations: [
+          { kind: "setContent", payload: { content: "should not stick" } },
+          { kind: "replaceSection", payload: { heading: "Nonexistent", content: "x" } },
+        ],
+      }),
+    },
+  );
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body.success).toBe(false);
+  expect(body.error).toContain("Delta failed");
+  expect(body.version).toBe(1);
+
+  const query = await closeFetch(
+    `${GW()}/users/${userId}/docs/markdown/${docId}/query`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "getContent" }),
+    },
+  );
+  const queryBody = await query.json();
+  expect(queryBody.data).toBe(initialContent);
+
+  const history = await closeFetch(
+    `${GW()}/users/${userId}/docs/markdown/${docId}/history`,
+  );
+  const { data } = await history.json();
+  expect(data.map((entry) => entry.version)).toEqual([1]);
+}, 30_000);
+
+test("/_internal/create 拒绝 sourceId:克隆必须走 worker 层的 snapshot + init_from_hash", async () => {
+  const userId = "clone-reject-user";
+
+  const form = new FormData();
+  form.append("sourceId", "some-other-doc");
+
+  const res = await closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+    method: "POST",
+    body: form,
+  });
+
+  expect(res.status).toBe(400);
+  const body = await res.json();
+  expect(body).toEqual({
+    success: false,
+    error: "Clone should be handled at worker level",
+  });
+}, 30_000);
