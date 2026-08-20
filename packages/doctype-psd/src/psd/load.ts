@@ -36,11 +36,39 @@ function mapAdjustType(t: string | undefined): string {
   }
 }
 
-function mapLayer(a: AgLayer, i: number): Layer {
+/**
+ * Crop a layer's pixel buffer (and bounds) to the canvas rect, dropping any
+ * pixels that fall outside [0,0,cw,ch]. A no-op if the layer is already
+ * fully within the canvas.
+ */
+export function cropPixelsToCanvas(
+  px: { width: number; height: number; data: Uint8ClampedArray },
+  bounds: [number, number, number, number],
+  cw: number, ch: number,
+): { pixels: { width: number; height: number; data: Uint8ClampedArray }; bounds: [number, number, number, number] } {
+  const [top, left, bottom, right] = bounds;
+  const nt = Math.max(0, top), nl = Math.max(0, left);
+  const nb = Math.min(ch, bottom), nr = Math.min(cw, right);
+  if (nt === top && nl === left && nb === bottom && nr === right) return { pixels: px, bounds };
+  const nw = Math.max(0, nr - nl), nh = Math.max(0, nb - nt);
+  const data = new Uint8ClampedArray(nw * nh * 4);
+  for (let y = 0; y < nh; y++) {
+    for (let x = 0; x < nw; x++) {
+      const sx = nl - left + x, sy = nt - top + y;
+      const si = (sy * px.width + sx) * 4, di = (y * nw + x) * 4;
+      data[di] = px.data[si]; data[di + 1] = px.data[si + 1];
+      data[di + 2] = px.data[si + 2]; data[di + 3] = px.data[si + 3];
+    }
+  }
+  return { pixels: { width: nw, height: nh, data }, bounds: [nt, nl, nb, nr] };
+}
+
+function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
   const isGroup = Array.isArray(a.children);
   const adj = (a as { adjustment?: { type?: string } & Record<string, unknown> }).adjustment;
   const type: Layer["type"] = isGroup ? "group" : adj ? "adjustment" : "raster";
-  const px = a.imageData
+  let bounds: [number, number, number, number] = [a.top ?? 0, a.left ?? 0, a.bottom ?? 0, a.right ?? 0];
+  let px = a.imageData
     ? { width: a.imageData.width, height: a.imageData.height, data: a.imageData.data as Uint8ClampedArray }
     : undefined;
   const mask = mapMask(a.mask);
@@ -88,11 +116,21 @@ function mapLayer(a: AgLayer, i: number): Layer {
     adjType = mapAdjustType(adj.type);
     adjParams = rest;
   }
+  // Crop overflowing pixels to the canvas to avoid retaining off-canvas
+  // memory. Skipped for layers with a stroke or drop-shadow effect: both
+  // read the pixel buffer beyond its own bounds (chamfer distance / offset
+  // blur), so pixels outside the canvas can still influence the rendered
+  // result and must be kept.
+  if (px && !stroke && !dropShadow && (bounds[0] < 0 || bounds[1] < 0 || bounds[2] > ch || bounds[3] > cw)) {
+    const cropped = cropPixelsToCanvas(px, bounds, cw, ch);
+    px = cropped.pixels;
+    bounds = cropped.bounds;
+  }
   return {
     id: `l${i}_${a.name ?? "layer"}`.replace(/\s+/g, "_"),
     type,
     name: a.name ?? "",
-    bounds: [a.top ?? 0, a.left ?? 0, a.bottom ?? 0, a.right ?? 0],
+    bounds,
     opacity: a.opacity ?? 1,
     ...(a.fillOpacity !== undefined && a.fillOpacity !== 1 ? { fillOpacity: a.fillOpacity } : {}),
     // ag-psd emits space-separated names ("color dodge", "pass through");
@@ -108,7 +146,7 @@ function mapLayer(a: AgLayer, i: number): Layer {
     ...(dropShadow ? { dropShadow } : {}),
     ...(adjType ? { adjustType: adjType, params: adjParams } : {}),
     ...(mask ? { mask } : {}),
-    ...(isGroup ? { children: (a.children ?? []).map(mapLayer) } : {}),
+    ...(isGroup ? { children: (a.children ?? []).map((c, ci) => mapLayer(c, ci, cw, ch)) } : {}),
   };
 }
 
@@ -128,6 +166,6 @@ export async function load(data: Uint8Array): Promise<PsdDoc> {
   }
   return {
     canvas: { width: psd.width, height: psd.height, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
-    layers: (psd.children ?? []).map(mapLayer),
+    layers: (psd.children ?? []).map((a, i) => mapLayer(a, i, psd.width, psd.height)),
   };
 }
