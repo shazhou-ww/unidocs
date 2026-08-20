@@ -136,6 +136,18 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
      * that arrive before the document exists fall back to the headers the
      * doc-type worker sets, so an uninitialized DO still has a coherent
      * identity to build ports with.
+     *
+     * `KEY_USER_ID` was introduced after documents already existed, so a doc
+     * created before it will have `storedDocType` but no stored `userId`. If
+     * that fell back to the literal "anonymous", `#requireUser` would then
+     * reject every request for that document with 403 (the caller's real
+     * `X-User-Id` never equals "anonymous"). Fall back to the request's
+     * `X-User-Id` header instead: on Cloudflare it is the same value that
+     * would have been stored — the DO is addressed by
+     * `idFromName("{userId}:{docId}")` and both workers set the header from
+     * that same path segment — so this recovers the correct owner instead of
+     * locking the document. "anonymous" remains only the last resort, for
+     * the (routing-broken) case where even the header is missing.
      */
     async #resolveIdentity(request: Request): Promise<DocIdentity> {
       const storedDocType = await this.#ctx.storage.get<string>(KEY_DOC_TYPE);
@@ -143,7 +155,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         return {
           docType: storedDocType,
           docId: (await this.#ctx.storage.get<string>(KEY_DOC_ID)) ?? this.#ctx.id.toString(),
-          userId: (await this.#ctx.storage.get<string>(KEY_USER_ID)) ?? "anonymous",
+          userId:
+            (await this.#ctx.storage.get<string>(KEY_USER_ID)) ??
+            request.headers.get("X-User-Id") ??
+            "anonymous",
         };
       }
       return {
