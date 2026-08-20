@@ -257,3 +257,16 @@ Run: `pnpm --filter @unidocs/doctype-psd test`
 2. **无占位符:** 关键函数(cropPixelsToCanvas、resolvePixels、serialize)均给出实现或精确签名。
 3. **类型一致:** `Pixels`/`PixelRef`/`PixelSource`/`BlobStore`/`RenderCtx` 跨任务同名一致;`render*` 全部返回 `Promise`。
 4. **安全网:** 每阶段以保真度三数不变为验收。
+
+---
+
+## Phase 3 必备输入(来自 Phase 0-2 最终评审,务必先解决)
+
+Phase 0-2 已落地(异步流式合成 + PixelSource + IR 序列化 + init op),对常驻文档保真度逐字节不变、84 测试全绿。但最终整体评审指出:**端到端的内存目标要在 Phase 3 才真正兑现**,且有两处结构性缺口 + 两处正确性隐患,Phase 3 接线前必须处理:
+
+1. **PixelCache 要改成按字节预算淘汰(当前是按条目数,默认 64)。** 现状:`resolvePixels` 把每个解码图层塞进缓存、合成后不释放,直到条目数超限。对一个反序列化后全是 `PixelRef` 的文档(N≤64 层),所有图层会同时常驻 → 计划要消除的 OOM 并没被真正 bound 住。修复:`PixelCache` 用**解码字节数**做容量,而不是条目数(会牵动 Task 1 的 `PixelCache(4)` 测试语义,一并更新)。合成后是否主动 evict 也在此定。
+2. **把 `BlobStore` 接进查询/渲染路径。** `getPreview` 在 `runQuery` 内部调用 `renderCached(doc)` 却没有 ctx;一旦文档是 lazy(`PixelRef`),就会命中 `NO_STORE` 抛错。需要给 `DocumentType.query`/`apply`(以及 editor-do 的查询端点)加上 store 通道,并把 `queries.ts` 里那句 "arrives in Task 4" 的过时注释改掉(Task 4 并未接线)。
+3. **`geometry-ops.ts` 的 flip 对 `PixelRef` 应"报错或先解析",不要静默 no-op。** 现状 `!isRef(...)` 会让 lazy 层的翻转被悄悄丢弃 → 渲染错误且无报错,与 `save.ts` 的"遇到未解析 ref 就抛错"策略不一致。按 [[unidocs-editor-commits-before-save]] 的教训,应改为 loud。
+4. **`init` op 加 payload 校验。** 现在零校验(`doc.canvas = payload.canvas`);`init` 尚未进 `tools` 注册表故 agent 不可达,但 Phase 3 的 apply 端点一旦接受未经 tools 过滤的 op kind,一个 `canvas: undefined` 的 payload 会提交后 brick 掉 save/render——正是 [[unidocs-editor-commits-before-save]] 记录的陷阱。接线前补上结构校验。
+
+可安全推迟的表面项(评审已判定无正确性影响):T0 调用点冗余的溢出预检查;T0 对带 imageData 的调整层"裁剪后丢弃"的无用拷贝;T2 clip-base `layerAlpha` 并发路径缺测试;T3 效果字段与显式 `mask:null` 的往返缺测试;T4 `BlobStore` 重导出上方的过时 JSDoc。
