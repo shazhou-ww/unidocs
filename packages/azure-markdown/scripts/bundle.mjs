@@ -48,5 +48,9 @@ await esbuild.build({
   target: "node24",
   packages: "external",
   alias: resolveWorkspaceAliases(REPO_ROOT),
+  // esbuild overwrites the plain-`tsc` `main.js` with the bundle; without
+  // this, the `tsc`-emitted `main.js.map` from before would keep pointing
+  // at source that no longer matches the file it's attached to.
+  sourcemap: true,
   logLevel: "info",
 });

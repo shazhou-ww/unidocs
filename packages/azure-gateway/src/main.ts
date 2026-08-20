@@ -44,6 +44,12 @@ async function main(): Promise<void> {
   // `createPool`, so an empty string is fine (same idiom as
   // azure-sdk/tests/containers.ts's `waitForPostgres`).
   const pool = createPool({ databaseUrl, blobConnectionString: "" });
+  // See azure-markdown/src/main.ts for why this listener is required, not
+  // optional: an unlistened `error` event on the pool is an uncaught
+  // exception that kills the process.
+  pool.on("error", (err) => {
+    console.error("azure-gateway: pg pool error", err);
+  });
   const docIndex = new PgDocIndexQuery(pool);
 
   const casFetcher = {

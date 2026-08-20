@@ -62,6 +62,14 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 8788);
 
   const pool = createPool({ databaseUrl, blobConnectionString });
+  // `pg-pool` emits `error` on an idle client that goes bad (a dropped
+  // connection, the DB restarting, ...). EventEmitter treats an `error`
+  // event with no listener as an uncaught exception and kills the process —
+  // without this listener, a routine DB blip takes the whole service down
+  // instead of just failing the one request holding that connection.
+  pool.on("error", (err) => {
+    console.error("azure-markdown: pg pool error", err);
+  });
   const blobService = createBlobService({ databaseUrl, blobConnectionString });
 
   const markdown = createMarkdownDocumentType({});
