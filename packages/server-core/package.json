@@ -13,6 +13,10 @@
     "./port-contract": {
       "types": "./src/testing/port-contract.ts",
       "import": "./src/testing/port-contract.ts"
+    },
+    "./memory-ports": {
+      "types": "./src/memory-ports.ts",
+      "import": "./src/memory-ports.ts"
     }
   },
   "files": [
@@ -51,6 +55,10 @@
       "./port-contract": {
         "types": "./dist/testing/port-contract.d.ts",
         "import": "./dist/testing/port-contract.js"
+      },
+      "./memory-ports": {
+        "types": "./dist/memory-ports.d.ts",
+        "import": "./dist/memory-ports.js"
       }
     }
   }

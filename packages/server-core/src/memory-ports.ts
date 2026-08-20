@@ -183,6 +183,13 @@ export class MemoryCas implements CasGateway {
   #nodes = new Map<string, { bytes: Uint8Array; contentType: string; refs: string[] }>();
   rootRefUpdates: { requestId: string; changes: CasReferences }[] = [];
 
+  /** Count of distinct content-addressed nodes currently stored. Content
+   *  addressing means a re-upload of already-stored bytes is a no-op, so this
+   *  is the observable "did dedup happen?" signal for tests. */
+  get size(): number {
+    return this.#nodes.size;
+  }
+
   async store(bytes: Uint8Array, contentType: string): Promise<string> {
     const hash = await computeHash(bytes);
     if (!this.#nodes.has(hash)) {

@@ -1,0 +1,197 @@
+/**
+ * End-to-end verification of Phase 3 (CAS IR snapshots) through the REAL
+ * `DocumentSession` — not doctype-level units. This proves the whole chain:
+ *
+ *   1. import a PSD -> the durable/cached snapshot becomes small IR JSON
+ *      referencing per-layer pixel blobs in the CAS (not another 8BPS copy)
+ *   2. a structural edit that touches no pixels does not re-upload any
+ *      layer blob (content addressing dedupes the unchanged pixels)
+ *   3. a brand-new session, sharing only the storage ports (no warm
+ *      in-memory document), cold-loads the IR snapshot and renders a
+ *      byte-identical composite by lazily faulting pixels in from the CAS
+ *   4. exportBytes() still hands back a real PSD, never the IR
+ *
+ * Every doctype-level piece this exercises already has focused unit
+ * coverage (cas-snapshot.test.ts, lazy-render-verification.test.ts,
+ * cas-render.test.ts). What's new here is driving them through the actual
+ * `DocumentSession` write/read paths (`create` / `apply` / `query` /
+ * `exportBytes`) with memory ports, exactly as a real deployment would.
+ */
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { decode as decodePng } from "fast-png";
+import { DocumentSession, type SessionDeps } from "@unidocs/server-core";
+import { createMemoryPorts, MemoryCas } from "@unidocs/server-core/memory-ports";
+import type { WireQueryValue } from "@unidocs/server-core";
+import { createPsdDocumentType } from "../src/doctype.js";
+import { render } from "../src/render/index.js";
+import { load as loadPsd } from "../src/psd/load.js";
+import { refsFromSnapshot } from "../src/psd/snapshot.js";
+
+const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));
+
+// --------------------------------------------------------------------------
+// Helpers
+// --------------------------------------------------------------------------
+
+/** Pull the `$image` PNG out of a getPreview query result and decode it to
+ *  raw RGBA pixels, so two previews can be compared byte-for-byte. */
+function decodePreviewImage(data: WireQueryValue): { width: number; height: number; data: Uint8ClampedArray } {
+  const $image = (data as { $image?: { base64: string; mediaType: string } }).$image;
+  expect($image).toBeDefined();
+  expect($image!.mediaType).toBe("image/png");
+  const bytes = new Uint8Array(Buffer.from($image!.base64, "base64"));
+  const decoded = decodePng(bytes);
+  const arr =
+    decoded.data instanceof Uint8ClampedArray
+      ? decoded.data
+      : new Uint8ClampedArray(decoded.data.buffer, decoded.data.byteOffset, decoded.data.length);
+  return { width: decoded.width, height: decoded.height, data: arr };
+}
+
+function compareBytes(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
+  return Buffer.compare(
+    Buffer.from(a.buffer, a.byteOffset, a.length),
+    Buffer.from(b.buffer, b.byteOffset, b.length),
+  );
+}
+
+describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
+  it("import -> IR snapshot; edit dedups unchanged pixels; cold reload renders byte-identically; export stays a real PSD", async () => {
+    const psdBytes = new Uint8Array(readFileSync(fixture));
+
+    // Independent oracle: what our own renderer produces straight off the raw
+    // PSD, with no session/CAS machinery involved at all.
+    const rawDoc = await loadPsd(psdBytes);
+    const rawRender = await render(rawDoc);
+
+    const config = createPsdDocumentType();
+    const ports = createMemoryPorts();
+    const deps: SessionDeps = {
+      deltas: ports.deltas,
+      snapshots: ports.snapshots,
+      blobs: ports.blobs,
+      index: ports.index,
+      cas: ports.cas,
+      identity: { docType: "psd", docId: "doc-1", userId: "user-1" },
+      now: () => Date.now(),
+    };
+    const cas: MemoryCas = ports.cas;
+    const session = new DocumentSession(config, deps);
+
+    // ----------------------------------------------------------------
+    // 1. Import -> IR snapshot
+    // ----------------------------------------------------------------
+    const created = await session.create({ bytes: psdBytes });
+    expect(created).toEqual({ docId: "doc-1", version: 1 });
+
+    // The durable, content-addressed snapshot: read what was actually
+    // persisted, not what save() merely returns in memory.
+    const ref = await deps.deltas.latestSnapshotRef();
+    expect(ref?.version).toBe(1);
+    const durableSnapshot = await deps.blobs.get(ref!.hash);
+    expect(durableSnapshot).not.toBeNull();
+
+    // The fast (non-durable) snapshot cache agrees.
+    const cachedSnapshot = await deps.snapshots.get();
+    expect(cachedSnapshot?.version).toBe(1);
+
+    for (const snapBytes of [durableSnapshot!, cachedSnapshot!.bytes]) {
+      // First byte is "{" (IR JSON), not the "8BPS" PSD magic.
+      expect(snapBytes[0]).toBe(0x7b);
+      expect(String.fromCharCode(snapBytes[0], snapBytes[1], snapBytes[2], snapBytes[3])).not.toBe("8BPS");
+      // MUCH smaller than the input PSD: no pixel bytes inline, only refs.
+      expect(snapBytes.length).toBeLessThan(psdBytes.length);
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[cas-e2e] input PSD=${psdBytes.length}B, durable IR snapshot=${durableSnapshot!.length}B ` +
+        `(${((durableSnapshot!.length / psdBytes.length) * 100).toFixed(1)}% of input)`,
+    );
+
+    // Every layer/mask hash the IR references is actually readable from the CAS.
+    const refsAfterImport = refsFromSnapshot(durableSnapshot!);
+    const hashesAfterImport = Object.keys(refsAfterImport);
+    expect(hashesAfterImport.length).toBeGreaterThan(0);
+    for (const hash of hashesAfterImport) {
+      const blob = await deps.cas.read({ kind: "cas", hash });
+      expect(blob).toBeInstanceOf(Uint8Array);
+      expect(blob.length).toBeGreaterThan(0);
+    }
+
+    const casSizeAfterImport = cas.size;
+    // eslint-disable-next-line no-console
+    console.log(`[cas-e2e] distinct CAS blobs after import=${casSizeAfterImport}`);
+    expect(casSizeAfterImport).toBe(hashesAfterImport.length);
+
+    // Sanity: the session's own preview of the freshly-imported doc already
+    // matches the independent raw-PSD render (round-trip through IR is lossless).
+    const previewAfterImport = await session.query({ kind: "getPreview" });
+    const imgAfterImport = decodePreviewImage(previewAfterImport.data);
+    expect(imgAfterImport.width).toBe(rawRender.width);
+    expect(imgAfterImport.height).toBe(rawRender.height);
+    expect(compareBytes(imgAfterImport.data, rawRender.data)).toBe(0);
+
+    // ----------------------------------------------------------------
+    // 2. Edit dedup: a structural edit touching no pixels
+    // ----------------------------------------------------------------
+    const layerId = rawDoc.layers[0].id; // the background raster layer
+    expect(layerId).toBeTruthy();
+
+    const casSizeBeforeEdit = cas.size;
+    const edited = await session.apply(
+      [{ kind: "set_props", payload: { layerId, props: { opacity: 0.5 } } }],
+      "lower background opacity",
+      created.version,
+    );
+    expect(edited.version).toBe(2);
+    const casSizeAfterEdit = cas.size;
+
+    // eslint-disable-next-line no-console
+    console.log(`[cas-e2e] distinct CAS blobs before edit=${casSizeBeforeEdit}, after edit=${casSizeAfterEdit}`);
+
+    // The edit changed no pixels, so no layer blob was re-uploaded: the fast
+    // snapshot cache refresh triggered by apply() re-serializes every layer
+    // (PNG-encodes the SAME unchanged pixel bytes again), but MemoryCas.store
+    // hashes to the identical existing node and skips the insert.
+    expect(casSizeAfterEdit).toBe(casSizeBeforeEdit);
+
+    // Baseline for the cold-reload comparison below: the resident session's
+    // own preview of the current (post-edit) state.
+    const residentPreview = await session.query({ kind: "getPreview" });
+    expect(residentPreview.version).toBe(2);
+    const residentImg = decodePreviewImage(residentPreview.data);
+
+    // ----------------------------------------------------------------
+    // 3. Cold reload -> lazy render, byte-identical
+    // ----------------------------------------------------------------
+    // A brand-new DocumentSession instance: zero warm in-memory document,
+    // sharing ONLY the storage ports (same deltas/snapshots/blobs/cas/index)
+    // with session 1. Its first query() forces load() end to end: read the
+    // persisted snapshot, deserialize the IR into a lazy PixelRef document,
+    // and fault every visible layer's pixels in from the CAS on render.
+    const session2 = new DocumentSession(config, deps);
+    const coldPreview = await session2.query({ kind: "getPreview" });
+    expect(coldPreview.version).toBe(2);
+    expect((coldPreview.data as { $image?: unknown }).$image).toBeDefined();
+
+    const coldImg = decodePreviewImage(coldPreview.data);
+    expect(coldImg.width).toBe(residentImg.width);
+    expect(coldImg.height).toBe(residentImg.height);
+    expect(compareBytes(coldImg.data, residentImg.data)).toBe(0);
+
+    // Cold reload must not have grown the CAS either — it only reads.
+    expect(cas.size).toBe(casSizeAfterEdit);
+
+    // ----------------------------------------------------------------
+    // 4. exportBytes() still returns a real PSD, never the IR
+    // ----------------------------------------------------------------
+    const exported = await session.exportBytes();
+    expect(exported.contentType).toBe("image/vnd.adobe.photoshop");
+    expect([exported.bytes[0], exported.bytes[1], exported.bytes[2], exported.bytes[3]]).toEqual([
+      0x38, 0x42, 0x50, 0x53, // "8BPS"
+    ]);
+  });
+});

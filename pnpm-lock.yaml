@@ -127,6 +127,31 @@ importers:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
+  packages/cloudflare-psd:
+    dependencies:
+      '@unidocs/cloudflare-sdk':
+        specifier: workspace:*
+        version: link:../cloudflare-sdk
+      '@unidocs/doctype-psd':
+        specifier: workspace:*
+        version: link:../doctype-psd
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
   packages/cloudflare-sdk:
     dependencies:
       '@unidocs/cas':
@@ -187,6 +212,28 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/doctype-psd:
+    dependencies:
+      '@unidocs/core':
+        specifier: workspace:*
+        version: link:../core
+      ag-psd:
+        specifier: ^31.0.0
+        version: 31.0.2
+      fast-png:
+        specifier: ^8.0.0
+        version: 8.0.0
+    devDependencies:
+      '@unidocs/server-core':
+        specifier: workspace:*
+        version: link:../server-core
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/server-core:
     dependencies:
       '@unidocs/cas':
@@ -202,6 +249,15 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/web-psd:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.0
+        version: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
 
 packages:
 
@@ -948,9 +1004,15 @@ packages:
   '@vitest/utils@3.2.7':
     resolution: {integrity: sha512-x6BDOd7dyo3PFLY3I9/HJ25X/6OurhGXk2/B9gOZNPF7XDVjeBK4k01lQE5uvDpbuheErh91qYuE1E2OEjK3Rw==}
 
+  ag-psd@31.0.2:
+    resolution: {integrity: sha512-5s5PvqbomPIIJ9YjL6robz55rT4RYPiQkww4brisyZEb5jzlHB1EKh47IJg7gIFj0RUrD0cMgdntM907qaZjXA==}
+
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
+
+  base64-js@1.5.1:
+    resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
 
   blake3-wasm@2.1.5:
     resolution: {integrity: sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g==}
@@ -1011,6 +1073,9 @@ packages:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
 
+  fast-png@8.0.0:
+    resolution: {integrity: sha512-gCysNasJ8KEMgfdYIKd/wTDo6ENK1PWT0RJO7O+0pgmuHPw2O6tA1WvdxFRJoLf9V8yFYpG0FA1YgI8X97OhJA==}
+
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
     engines: {node: '>=12.0.0'}
@@ -1020,10 +1085,16 @@ packages:
       picomatch:
         optional: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  iobuffer@6.0.1:
+    resolution: {integrity: sha512-SZWYkWNfjIXIBYSDpXDYIgshqtbOPsi4lviawAEceR1Kqk+sHDlcQjWrzNQsii80AyBY0q5c8HCTNjqo74ul+Q==}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
@@ -1049,6 +1120,9 @@ packages:
     resolution: {integrity: sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
+
+  pako@2.1.0:
+    resolution: {integrity: sha512-w+eufiZ1WuJYgPXbV/PO3NCMEc3xqylkKHzp8bxp1uW4qaSNQUkwmLLEc3kKsfz8lpV1F8Ht3U1Cm+9Srog2ug==}
 
   path-to-regexp@6.3.0:
     resolution: {integrity: sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ==}
@@ -1719,7 +1793,14 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
+  ag-psd@31.0.2:
+    dependencies:
+      base64-js: 1.5.1
+      pako: 2.1.0
+
   assertion-error@2.0.1: {}
+
+  base64-js@1.5.1: {}
 
   blake3-wasm@2.1.5: {}
 
@@ -1815,12 +1896,21 @@ snapshots:
 
   expect-type@1.4.0: {}
 
+  fast-png@8.0.0:
+    dependencies:
+      fflate: 0.8.3
+      iobuffer: 6.0.1
+
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
 
+  fflate@0.8.3: {}
+
   fsevents@2.3.3:
     optional: true
+
+  iobuffer@6.0.1: {}
 
   js-tokens@9.0.1: {}
 
@@ -1847,6 +1937,8 @@ snapshots:
   ms@2.1.3: {}
 
   nanoid@3.3.18: {}
+
+  pako@2.1.0: {}
 
   path-to-regexp@6.3.0: {}
 
