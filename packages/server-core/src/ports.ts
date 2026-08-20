@@ -38,8 +38,10 @@ export interface DeltaLog {
    * since appended `v + 1` on top of it — this MUST be a silent no-op, not a
    * delete and not a throw.
    *
-   * Why conditional: without a stateless deployment, two racing `apply()`
-   * calls can interleave as append(v) [A] → append(v+1) [B, now legitimately
+   * Why conditional: without a single-writer queue in front of the log —
+   * Cloudflare has one (the Durable Object's `#requestTail`), Azure's
+   * stateless replicas do not — two racing `apply()` calls can interleave
+   * as append(v) [A] → append(v+1) [B, now legitimately
    * committed on top of v] → remove(v) [A's failed rollback]. An
    * unconditional delete there removes a delta that a later, successful
    * delta already depends on, leaving a permanent hole in the log — replay

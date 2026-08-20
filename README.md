@@ -286,9 +286,8 @@ POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 migrations automatically — `migrations_dir` is just configuration. The
 shared `docs`/`snapshots` tables used to be created lazily by
 `listDocuments`/`D1DocIndex.register`; they no longer are. Skipping this
-step on a fresh D1 database is harmless for an already-provisioned one, but
-on a brand-new database every query/apply/list call will 500 with
-`no such table: docs`.
+step is harmless on an already-provisioned database, but on a brand-new one
+every query/apply/list call will 500 with `no such table: docs`.
 
 ## Infrastructure
 
