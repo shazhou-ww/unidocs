@@ -1,26 +1,36 @@
 /**
  * Cloudflare Worker entry point for the PSD image document type.
  *
- * Exports two Durable Object classes (PsdEditor, PsdOperator) that the
- * Gateway forwards to via HTTP. Mirrors the markdown adapter; see the
- * markdown worker for the full URL contract.
+ * Exports two Durable Object classes (PsdEditor, PsdOperator) that the Gateway
+ * forwards to via HTTP. Routing (path parsing, method dispatch, header
+ * injection) lives in @unidocs/server-core's createDocTypeHandler — see the
+ * markdown worker for the URL contract.
+ *
+ * NOTE: the PSD operator (chat/agent) is a stub here. main's createOperatorDO
+ * does not thread `env` into its `llmProvider`/`getEditorStub` (its DO
+ * constructor ignores env), so an env-based LLM provider — the Anthropic
+ * provider in ./anthropic.ts — cannot be wired through it yet. This is the same
+ * limitation main's own markdown/docx operators have. The render engine +
+ * editor path (create/query/apply/export/rollback/snapshot) is fully wired;
+ * the chatbox needs the platform to pass env to operators (follow-up).
  */
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
 import { createPsdDocumentType } from "@unidocs/doctype-psd";
-import { createAnthropicLlmProvider } from "./anthropic";
+import { createDocTypeHandler } from "@unidocs/server-core";
 
 const psd = createPsdDocumentType({});
 
 export const PsdEditor = createEditorDO(psd);
 export const PsdOperator = createOperatorDO({
   ...psd,
-  // Claude (Anthropic) provider; reads LLM_* from env (see .dev.vars).
-  llmProvider: (env, messages, tools) => createAnthropicLlmProvider(env)(messages, tools),
-  // The Operator's Editor lives at idFromName(`${userId}:${docId}`).
-  getEditorStub: (env, docName) => {
-    const ns = (env as Env).PSD_EDITOR;
-    return ns.get(ns.idFromName(docName));
+  llmProvider: async () => {
+    throw new Error(
+      "PSD operator LLM provider not configured: main's createOperatorDO does not pass env to llmProvider. See ./anthropic.ts for the intended provider.",
+    );
+  },
+  getEditorStub: () => {
+    throw new Error("PSD operator editor-stub factory not configured (needs env threading).");
   },
 });
 
@@ -28,80 +38,15 @@ interface Env extends EditorEnv {
   PSD_EDITOR: DurableObjectNamespace;
   PSD_OPERATOR: DurableObjectNamespace;
   INTERNAL_TOKEN: string;
-  // Populated from packages/cloudflare-psd/.dev.vars (or wrangler secrets).
-  LLM_BASE_URL?: string;
-  LLM_API_KEY?: string;
-  LLM_MODEL?: string;
 }
-
-const EDITOR_METHODS = new Set([
-  "query", "apply", "history", "rollback", "export",
-  "snapshot", "init_from_hash",
-]);
-const OPERATOR_METHODS = new Set(["run", "reset"]);
-
-const DOC_TYPE = "psd";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const token = request.headers.get("X-Internal-Token");
-    if (env.INTERNAL_TOKEN && token !== env.INTERNAL_TOKEN) {
-      return Response.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const url = new URL(request.url);
-    const parts = url.pathname.split("/").filter(Boolean);
-
-    // Expected: ["users", userId, docId?, method?]
-    if (parts.length < 2 || parts[0] !== "users") {
-      return Response.json({ error: "Use /users/{userId}/{docId}/* endpoints" }, { status: 404 });
-    }
-
-    const userId = parts[1];
-    const docId = parts[2];
-    const method = parts[3];
-
-    // POST /users/{userId}/ — create new document
-    if (!docId && request.method === "POST") {
-      const newDocId = request.headers.get("X-Doc-Id") || crypto.randomUUID();
-      const id = env.PSD_EDITOR.idFromName(`${userId}:${newDocId}`);
-      const stub = env.PSD_EDITOR.get(id);
-      const forwardUrl = new URL(request.url);
-      forwardUrl.pathname = "/_internal/create";
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", DOC_TYPE);
-      headers.set("X-Doc-Id", newDocId);
-      headers.set("X-User-Id", userId);
-      return stub.fetch(new Request(forwardUrl.toString(), {
-        method: "POST",
-        headers,
-        body: request.body,
-      }));
-    }
-
-    if (!docId || !method) {
-      return Response.json({ error: "Missing docId or method" }, { status: 400 });
-    }
-
-    const forward = (ns: DurableObjectNamespace) => {
-      const id = ns.idFromName(`${userId}:${docId}`);
-      const stub = ns.get(id);
-      const forwardUrl = new URL(request.url);
-      forwardUrl.pathname = `/_internal/${method}`;
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", DOC_TYPE);
-      headers.set("X-User-Id", userId);
-      headers.set("X-Doc-Id", docId);
-      return stub.fetch(new Request(forwardUrl.toString(), {
-        method: request.method,
-        headers,
-        body: request.body,
-      }));
-    };
-
-    if (EDITOR_METHODS.has(method)) return forward(env.PSD_EDITOR);
-    if (OPERATOR_METHODS.has(method)) return forward(env.PSD_OPERATOR);
-
-    return Response.json({ error: `Unknown endpoint: ${method}` }, { status: 404 });
+    return createDocTypeHandler({
+      docType: "psd",
+      internalToken: env.INTERNAL_TOKEN,
+      editor: env.PSD_EDITOR,
+      operator: env.PSD_OPERATOR,
+    })(request);
   },
 };
