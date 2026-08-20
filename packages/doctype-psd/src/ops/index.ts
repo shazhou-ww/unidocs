@@ -7,7 +7,18 @@ import { generativeFill } from "./generative-ops.js";
 
 export type PsdOp = { kind: string; payload: Record<string, unknown> };
 
+/** Replaces the document wholesale with the supplied IR payload
+ *  (`{canvas, layers}`), rather than merging into the existing doc.
+ *  Used to restore a trusted snapshot (e.g. from `deserialize`), so no
+ *  per-layer validation is performed — payload layers may carry lazy
+ *  PixelRef pixels with no `data`. */
+function init(doc: PsdDoc, payload: any): void {
+  doc.canvas = payload.canvas;
+  doc.layers = payload.layers ?? [];
+}
+
 const HANDLERS: Record<string, (doc: PsdDoc, payload: any) => void> = {
+  init,
   add_layer: addLayer,
   remove_layer: removeLayer,
   reorder,

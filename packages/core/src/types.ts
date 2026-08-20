@@ -21,6 +21,12 @@ export type QueryValue =
   | readonly QueryValue[]
   | { readonly [key: string]: QueryValue };
 
+/** Content-addressed byte storage (CAS) for doctype-managed blobs (e.g. pixel data). */
+export interface BlobStore {
+  put(bytes: Uint8Array): Promise<string>;
+  get(hash: string): Promise<Uint8Array | null>;
+}
+
 /** Cloud-neutral specification of a document type. */
 export interface DocumentType<TDoc, TQuery, TOp> {
   /** Create a new empty document. */
@@ -37,6 +43,13 @@ export interface DocumentType<TDoc, TQuery, TOp> {
 
   /** Serialize a document to binary bytes. */
   save: (doc: TDoc) => Promise<Uint8Array>;
+
+  /** Serialize a document to a CAS-aware byte-free representation, offloading
+   *  large binary payloads (e.g. pixel buffers) to `store`. */
+  serialize?: (doc: TDoc, store: BlobStore) => Promise<Uint8Array>;
+
+  /** Deserialize a document produced by `serialize`, resolving blobs via `store`. */
+  deserialize?: (bytes: Uint8Array, store: BlobStore) => Promise<TDoc>;
 
   /** MIME type for document export. */
   contentType: string;

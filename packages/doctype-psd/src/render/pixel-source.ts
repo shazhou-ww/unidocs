@@ -1,4 +1,5 @@
 import { decode } from "fast-png";
+import type { BlobStore } from "@unidocs/core";
 import type { Pixels } from "../model/types.js";
 
 /** A reference to a decoded (resident) pixel buffer's PNG-encoded bytes,
@@ -18,10 +19,7 @@ export const isRef = (p: PixelSource): p is PixelRef =>
   "hash" in p && !("data" in (p as any));
 
 /** Content-addressed byte storage for PNG-encoded pixel blobs. */
-export interface BlobStore {
-  put(bytes: Uint8Array): Promise<string>;
-  get(hash: string): Promise<Uint8Array | null>;
-}
+export type { BlobStore };
 
 /** A simple entry-count-bounded LRU cache of decoded Pixels, keyed by hash. */
 export class PixelCache {
