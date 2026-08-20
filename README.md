@@ -267,7 +267,9 @@ script_name = "unidocs-mytype"
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev                     # gateway :8787 + every doc type, Miniflare backend
+pnpm dev docx                # gateway + docx only
+pnpm dev docx markdown       # explicit doc type selection
 ```
 
 Starts gateway (`:8787`), markdown (`:8788`), and docx (`:8789`) in one Miniflare process with shared D1/R2. The KV registry is seeded with each worker's URL:
@@ -276,6 +278,20 @@ Starts gateway (`:8787`), markdown (`:8788`), and docx (`:8789`) in one Miniflar
 POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
 POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ```
+
+### Running against the local Azure stack
+
+```bash
+pnpm dev --azure              # gateway :41787 + markdown :41788, Postgres + Azurite backend
+pnpm dev --azure markdown     # same thing, explicit
+```
+
+Two prerequisites:
+
+- **Docker must be running.** `pnpm dev --azure` starts a `docker compose` stack (Postgres on `:5433`, Azurite on `:10000`) and fails fast with an actionable message if the Docker daemon isn't up, rather than surfacing the raw `docker compose` error.
+- **Only `markdown` is supported today.** `docx` depends on user-scoped CAS, which the Azure backend hasn't implemented yet (planned for phase 4); `pnpm dev --azure docx` fails immediately rather than starting a stack it can't route to.
+
+Migrations run automatically as part of startup — no separate command needed. The Azure ports (`41787`/`41788`) are deliberately offset from Miniflare's (`8787`/`8788`) so both backends can run side by side. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/markdown processes and tears down the docker compose stack (`down -v`).
 
 ## Workspace package resolution
 
