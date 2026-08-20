@@ -12,11 +12,13 @@ import {
 import {
   buildWorkers,
   bundleTargets,
+  CAS_WORKER,
   DOC_TYPES,
   GATEWAY_WORKER,
   registryEntries,
   resolvePorts,
 } from "./doc-types.mjs";
+import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
 
 export { DOC_TYPES, INTERNAL_TOKEN, parseDocTypes } from "./doc-types.mjs";
 
@@ -24,21 +26,9 @@ export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const WORKSPACE_ALIASES = {
-  "@unidocs/core": join(ROOT, "packages/core/src/index.ts"),
-  "@unidocs/cas": join(ROOT, "packages/cas/src/index.ts"),
-  "@unidocs/server-core": join(ROOT, "packages/server-core/src/index.ts"),
-  "@unidocs/cloudflare-cas/public": join(
-    ROOT,
-    "packages/cloudflare-cas/src/public-cas-route.ts",
-  ),
-  "@unidocs/cloudflare-sdk": join(ROOT, "packages/cloudflare-sdk/src/index.ts"),
-  "@unidocs/doctype-markdown": join(
-    ROOT,
-    "packages/doctype-markdown/src/index.ts",
-  ),
-  "@unidocs/doctype-docx": join(ROOT, "packages/doctype-docx/src/index.ts"),
-};
+// See scripts/workspace-aliases.mjs — shared with the Azure services'
+// own esbuild bundlers so this table is kept in one place.
+const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 
 async function bundleWorker(entry, outfile) {
   await mkdir(dirname(outfile), { recursive: true });
@@ -107,6 +97,38 @@ function assertPortFree(host, port) {
 }
 
 /**
+ * Backend-neutral storage assertions (see `StorageProbe` in the task brief):
+ * a global snapshot index lookup and a CAS blob existence check. Miniflare's
+ * implementation is exactly the two `getD1Database`/`getR2Bucket` calls the
+ * behavior tests used to make directly; `scripts/azure-runtime.mjs` provides
+ * the Postgres/Azurite equivalent behind the same two methods so the test
+ * bodies in `scripts/behavior-suite.mjs` don't need to know which backend
+ * they're running against.
+ */
+function createStorageProbe(mf) {
+  return {
+    async snapshotIndex(docType, docId) {
+      const worker = DOC_TYPES[docType].worker;
+      const db = await mf.getD1Database("SNAPSHOTS_DB", worker);
+      const rows = await db
+        .prepare(
+          "SELECT version, hash FROM snapshots WHERE doc_type = ? AND doc_id = ? ORDER BY version ASC",
+        )
+        .bind(docType, docId)
+        .all();
+      return rows.results.map((row) => ({ version: row.version, hash: row.hash }));
+    },
+    async blobExists(hash) {
+      // CAS_WORKER is always started regardless of which doc types were
+      // selected, and it's the one that binds the shared bucket as "CAS_R2".
+      const bucket = await mf.getR2Bucket("CAS_R2", CAS_WORKER);
+      const object = await bucket.get(hash);
+      return object !== null;
+    },
+  };
+}
+
+/**
  * Start the gateway plus the selected document type workers in one Miniflare
  * runtime. Shared D1/R2; the KV registry is seeded only with the doc types
  * that are actually running, so the gateway 404s on the rest.
@@ -163,6 +185,7 @@ export async function startLocalRuntime({
       mf,
       urls,
       docTypes,
+      storage: createStorageProbe(mf),
       async dispose() {
         await mf.dispose();
       },

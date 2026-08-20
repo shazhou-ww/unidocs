@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: unidocs
+      POSTGRES_USER: unidocs
+      POSTGRES_PASSWORD: unidocs
+    ports:
+      - "5433:5432"
+
+  azurite:
+    # Pinned: --skipApiVersionCheck below is a workaround for THIS version's
+    # API allow-list. On a floating tag the symptom would change under us and
+    # the note would no longer be checkable against anything.
+    image: mcr.microsoft.com/azure-storage/azurite:3.36.0
+    # --skipApiVersionCheck: the @azure/storage-blob client sends a newer
+    # x-ms-version than the Azurite image knows about and Azurite rejects it
+    # outright (400 InvalidHeaderValue). The wire format is compatible; only
+    # the version allow-list is stale.
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck"]
+    ports:
+      - "10000:10000"

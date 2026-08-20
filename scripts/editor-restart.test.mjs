@@ -117,12 +117,8 @@ test("rollback 到阈值快照之后的版本:从 R2 快照加载并 replay 其�
     }
 
     // 先确认 R2 快照真的存在,否则 rollback 会退化成 init + 全量 replay
-    const db = await runtime.mf.getD1Database("SNAPSHOTS_DB", "unidocs-markdown");
-    const snapshots = await db
-      .prepare("SELECT version FROM snapshots WHERE doc_id = ? ORDER BY version ASC")
-      .bind(docId)
-      .all();
-    expect(snapshots.results.map((row) => row.version)).toEqual([1, 21]);
+    const snapshots = await runtime.storage.snapshotIndex("markdown", docId);
+    expect(snapshots.map((row) => row.version)).toEqual([1, 21]);
 
     // 回滚到 22:最近的快照是 21,因此必须加载它并 replay version 22 这一条 delta
     const rollback = await closeFetch(

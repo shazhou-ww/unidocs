@@ -80,7 +80,8 @@ export function createDocTypeHandler(
         method: "POST",
         headers,
         body: request.body,
-      }));
+        duplex: "half",
+      } as RequestInit));
     }
 
     if (!docId || !method) {
@@ -101,7 +102,8 @@ export function createDocTypeHandler(
         method: request.method,
         headers,
         body: request.body,
-      }));
+        duplex: "half",
+      } as RequestInit));
     }
 
     // Operator endpoints
@@ -118,7 +120,8 @@ export function createDocTypeHandler(
         method: request.method,
         headers,
         body: request.body,
-      }));
+        duplex: "half",
+      } as RequestInit));
     }
 
     return Response.json({ error: `Unknown endpoint: ${method}` }, { status: 404 });

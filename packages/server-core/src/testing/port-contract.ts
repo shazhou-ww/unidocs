@@ -6,11 +6,26 @@ import type {
   DocIndex,
   DocIndexQuery,
   SnapshotCache,
+  UnitOfWork,
 } from "../ports.js";
 import { VersionConflictError } from "../errors.js";
 
 function makeDelta(version: number, description = `delta ${version}`): Delta {
   return { version, timestamp: Date.now(), description, operations: [] };
+}
+
+export interface PortContractOptions {
+  /**
+   * Whether `unitOfWork.withTransaction` really rolls back. Only backends
+   * where `deltas` and `index` share one database can say `true`
+   * (Postgres, the in-memory ports); Cloudflare says `false` because DO
+   * sqlite and D1 are separate services.
+   *
+   * `false` skips the two rollback assertions — and nothing else. This is
+   * the single sanctioned behavioural fork between backends; every other
+   * test in this file must pass everywhere.
+   */
+  transactional: boolean;
 }
 
 export function runPortContract(
@@ -21,8 +36,22 @@ export function runPortContract(
     blobs: BlobCas;
     index: DocIndex;
     indexQuery: DocIndexQuery;
+    unitOfWork: UnitOfWork;
   }>,
+  // Required, with no default. A default of `false` would let a backend that
+  // CAN roll back — the Postgres adapter this suite exists to guard — skip
+  // the two most important tests here by omission, and the skip would even
+  // print "backend has no cross-store transaction" as its justification. An
+  // author who must type the answer has to know it.
+  options: PortContractOptions,
 ): void {
+  // Named in the test title so a skipped run reads as "this backend cannot
+  // do it", not as "someone forgot to write it".
+  const txTest = test.skipIf(!options.transactional);
+  const txNote = options.transactional
+    ? ""
+    : " [skipped: backend has no cross-store transaction]";
+
   describe(label, () => {
     test("head() starts at 0, becomes the appended version after append", async () => {
       const { deltas } = await factory();
@@ -314,5 +343,74 @@ export function runPortContract(
       expect(await blobs.get("hash-a")).toEqual(bytes);
       expect(await blobs.get("unknown-hash")).toBeNull();
     });
+
+    // ------------------------------------------------------------------
+    // UnitOfWork
+    //
+    // These two are what makes document creation atomic: the version-1
+    // delta and the index row go in together or not at all. A backend that
+    // cannot roll back leaves the orphan this pair exists to rule out —
+    // a document with deltas that no listing shows and that create() then
+    // refuses to re-create. Skipped rather than weakened where the storage
+    // is genuinely two services (Cloudflare); see PortContractOptions.
+    // ------------------------------------------------------------------
+
+    txTest(
+      `withTransaction: a throw inside the callback rolls back everything it wrote${txNote}`,
+      async () => {
+        const { deltas, index, indexQuery, unitOfWork } = await factory();
+        await deltas.append(makeDelta(1));
+        const headBefore = await deltas.head();
+        const listBefore = await indexQuery.list("user-tx", "text");
+
+        const boom = new Error("callback failed");
+        await expect(
+          unitOfWork.withTransaction(async (tx) => {
+            await tx.deltas.append(makeDelta(headBefore + 1, "doomed"));
+            await tx.index.register({
+              docId: "doc-tx",
+              docType: "text",
+              ownerId: "user-tx",
+              createdAt: 1,
+              updatedAt: 1,
+            });
+            throw boom;
+          }),
+        ).rejects.toBe(boom);
+
+        expect(await deltas.head()).toBe(headBefore);
+        expect(await deltas.range(headBefore + 1, headBefore + 1)).toEqual([]);
+        expect(await indexQuery.list("user-tx", "text")).toEqual(listBefore);
+        expect(
+          (await indexQuery.list("user-tx", "text")).map((r) => r.docId),
+        ).not.toContain("doc-tx");
+      },
+    );
+
+    txTest(
+      `withTransaction: a normal return commits every write in the callback${txNote}`,
+      async () => {
+        const { deltas, indexQuery, unitOfWork } = await factory();
+
+        const result = await unitOfWork.withTransaction(async (tx) => {
+          await tx.deltas.append(makeDelta(1, "committed"));
+          await tx.index.register({
+            docId: "doc-tx",
+            docType: "text",
+            ownerId: "user-tx",
+            createdAt: 1,
+            updatedAt: 1,
+          });
+          return "returned";
+        });
+
+        expect(result).toBe("returned");
+        expect(await deltas.head()).toBe(1);
+        expect((await deltas.range(1, 1))[0]?.description).toBe("committed");
+        expect((await indexQuery.list("user-tx", "text")).map((r) => r.docId)).toEqual([
+          "doc-tx",
+        ]);
+      },
+    );
   });
 }
