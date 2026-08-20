@@ -9,6 +9,7 @@ import {
   RootRefsError,
   VersionConflictError,
 } from "../src/errors.js";
+import { CasClientError } from "../src/cas-client.js";
 import { DocumentSession, type CasGateway, type SessionDeps } from "../src/session.js";
 
 // --------------------------------------------------------------------------
@@ -311,6 +312,66 @@ describe("DocumentSession.apply — failure paths", () => {
 
     expect(await deltaCount(deps)).toBe(deltasBefore);
     expect(session.version).toBe(2);
+  });
+
+  it("15. a non-CasClientError raised while leasing refs is a rejected delta, not a server fault", async () => {
+    // `refsFromOp` is a doc-type pure function over caller-supplied operations,
+    // so a malformed op makes it throw (TypeError and friends). The
+    // pre-refactor `#leaseFailure` had a branch for exactly this and answered
+    // 400. Letting it fall through to a generic 500 tells the client to retry
+    // an operation that can never succeed.
+    const inner = makeTextDocType();
+    const exploding: DocumentType<string, TextQuery, TextOp> = {
+      ...inner,
+      refsFromOp() {
+        throw new TypeError("Cannot read properties of undefined (reading 'hash')");
+      },
+    };
+    const { session, deps } = makeHarness(1_000, undefined, exploding);
+    await session.create();
+
+    const before = await deltaCount(deps);
+
+    let caught: unknown;
+    try {
+      await session.apply([{ kind: "append", text: "a" }], "a", 1);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(DeltaRejectedError);
+    expect((caught as Error).message).toContain("Delta failed");
+    expect(await deltaCount(deps)).toBe(before);
+    expect(session.version).toBe(1);
+  });
+
+  it("16. a CasClientError raised while leasing refs still propagates verbatim", async () => {
+    // The other half of the same branch: CasClientError carries the status the
+    // adapter splits into 409/400/502, so it must NOT be swallowed into
+    // DeltaRejectedError.
+    const { session, deps, cas } = makeHarness();
+    await session.create();
+
+    const failure = new CasClientError(409, "Conflict", "leaseExisting");
+    cas.failLease = failure;
+
+    const before = await deltaCount(deps);
+
+    let caught: unknown;
+    try {
+      await session.apply(
+        [{ kind: "append", text: "a", refs: { ["f".repeat(64)]: 1 } }],
+        "a",
+        1,
+      );
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBe(failure);
+    expect(caught).not.toBeInstanceOf(DeltaRejectedError);
+    expect(await deltaCount(deps)).toBe(before);
+    expect(session.version).toBe(1);
   });
 
   it("4. serializes concurrent applies sharing a baseVersion: exactly one wins", async () => {

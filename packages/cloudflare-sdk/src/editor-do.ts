@@ -224,9 +224,24 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
       return Response.json({ success: false, error: String(err), version }, { status: 500 });
     }
 
-    #requireUser(request: Request): Response | null {
-      if (!request.headers.get("X-User-Id")) {
+    /**
+     * The requester must be the document's owner, because `deps.cas` is built
+     * once from the stored owner id and every CAS read/lease this request
+     * makes will be charged to that user.
+     *
+     * On Cloudflare this is unreachable: the DO is addressed by
+     * `idFromName("{userId}:{docId}")` and both workers set `X-User-Id` from
+     * the same path segment, so the requester IS the owner by construction.
+     * The check exists so the invariant is enforced by code rather than by
+     * routing — Azure has no name-bound instance to make it true for free.
+     */
+    #requireUser(request: Request, identity: DocIdentity): Response | null {
+      const userId = request.headers.get("X-User-Id");
+      if (!userId) {
         return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
+      }
+      if (userId !== identity.userId) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
       }
       return null;
     }
@@ -307,7 +322,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
         // POST /_internal/query
         if (method === "POST" && endpoint === "/_internal/query") {
-          const unauthorized = this.#requireUser(request);
+          const unauthorized = this.#requireUser(request, identity);
           if (unauthorized) return unauthorized;
 
           const q = await request.json() as TQuery;
@@ -317,7 +332,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
 
         // POST /_internal/apply — apply delta (batch of operations, transactional)
         if (method === "POST" && endpoint === "/_internal/apply") {
-          const unauthorized = this.#requireUser(request);
+          const unauthorized = this.#requireUser(request, identity);
           if (unauthorized) return unauthorized;
 
           const body = await request.json() as {
@@ -335,16 +350,19 @@ export function createEditorDO<TDoc, TQuery, TOp>(config: DocumentType<TDoc, TQu
         if (method === "GET" && endpoint === "/_internal/history") {
           const from = url.searchParams.get("from");
           const to = url.searchParams.get("to");
+          // Truthy check, not `!== null`: `?from=` (empty string) must be
+          // ignored the way it always was. `parseInt("")` is NaN, and a NaN
+          // bound into the range query is not a bound at all.
           const entries = await session.history(
-            from === null ? undefined : parseInt(from),
-            to === null ? undefined : parseInt(to),
+            from ? parseInt(from) : undefined,
+            to ? parseInt(to) : undefined,
           );
           return Response.json({ success: true, data: entries, version: session.version });
         }
 
         // POST /_internal/rollback
         if (method === "POST" && endpoint === "/_internal/rollback") {
-          const unauthorized = this.#requireUser(request);
+          const unauthorized = this.#requireUser(request, identity);
           if (unauthorized) return unauthorized;
 
           const body = await request.json() as { version: number };

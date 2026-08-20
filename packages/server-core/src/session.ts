@@ -35,7 +35,7 @@ import type {
   CasReadContext,
   CasReferences,
 } from "@unidocs/core";
-import { commitRootRefsOrRollback, leaseOpRefs } from "./cas-client.js";
+import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "./cas-client.js";
 import {
   DeltaRejectedError,
   DocExistsError,
@@ -385,9 +385,19 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       throw new VersionConflictError(head, baseVersion + 1);
     }
 
-    // 1. Lease refs. Failures propagate verbatim (CasClientError carries the
-    //    status the adapter maps to 409/400/502).
-    const refs = await leaseOpRefs(ops, this.#config.refsFromOp, this.#deps.cas);
+    // 1. Lease refs. A CasClientError propagates verbatim — it carries the
+    //    status the adapter maps to 409/400/502. Anything else is the caller's
+    //    problem, not the infrastructure's: `refsFromOp` is a doc-type pure
+    //    function and a malformed operation makes it throw (TypeError, etc.).
+    //    That must read as a rejected delta (400 — don't retry), not as a
+    //    server fault (500 — retry forever against an op that can never work).
+    let refs: CasReferences;
+    try {
+      refs = await leaseOpRefs(ops, this.#config.refsFromOp, this.#deps.cas);
+    } catch (err) {
+      if (err instanceof CasClientError) throw err;
+      throw new DeltaRejectedError(`Delta failed: ${err}`);
+    }
 
     // 2. Apply transactionally to a working copy — nothing is written yet.
     let newDoc: TDoc;
