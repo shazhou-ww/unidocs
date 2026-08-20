@@ -10,6 +10,10 @@ services:
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite
-    command: ["azurite-blob", "--blobHost", "0.0.0.0"]
+    # --skipApiVersionCheck: the @azure/storage-blob client sends a newer
+    # x-ms-version than the Azurite image knows about and Azurite rejects it
+    # outright (400 InvalidHeaderValue). The wire format is compatible; only
+    # the version allow-list is stale.
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck"]
     ports:
       - "10000:10000"
