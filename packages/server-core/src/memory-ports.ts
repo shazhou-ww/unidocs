@@ -153,9 +153,9 @@ class MemoryDocIndexQuery implements DocIndexQuery {
   }
 
   async list(userId: string, docType: string): Promise<DocRecord[]> {
-    return [...this.#store.docs.values()].filter(
-      (r) => r.ownerId === userId && r.docType === docType,
-    );
+    return [...this.#store.docs.values()]
+      .filter((r) => r.ownerId === userId && r.docType === docType)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   async snapshots(docType: string, docId: string): Promise<SnapshotRef[]> {

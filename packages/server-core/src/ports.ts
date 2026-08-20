@@ -65,6 +65,12 @@ export interface DocIndex {
 }
 
 export interface DocIndexQuery {
+  /**
+   * Documents owned by `userId` of type `docType`, **descending by
+   * `updatedAt`** (most recently touched first). Callers (list UIs) depend
+   * on this order; an implementation that returns physical/insertion order
+   * instead silently breaks "recently updated" sorting.
+   */
   list(userId: string, docType: string): Promise<DocRecord[]>;
   /**
    * Snapshots the index holds for one document, ascending by version.

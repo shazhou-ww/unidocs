@@ -231,6 +231,43 @@ export function runPortContract(
       expect(await indexQuery.list("user-1", "other")).toEqual([]);
     });
 
+    // list() must sort by updatedAt descending, not insertion/physical order
+    // — a "recently updated" list UI depends on this. Register the docs in
+    // an order that does NOT match updatedAt order, so a naive
+    // insertion-order implementation would fail this.
+    test("DocIndex: list() is ordered by updatedAt descending", async () => {
+      const { index, indexQuery } = await factory();
+      const now = 1_700_000_000_000;
+
+      await index.register({
+        docId: "doc-mid",
+        docType: "text",
+        ownerId: "user-1",
+        createdAt: now,
+        updatedAt: now + 10,
+      });
+      await index.register({
+        docId: "doc-newest",
+        docType: "text",
+        ownerId: "user-1",
+        createdAt: now,
+        updatedAt: now + 20,
+      });
+      await index.register({
+        docId: "doc-oldest",
+        docType: "text",
+        ownerId: "user-1",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      expect((await indexQuery.list("user-1", "text")).map((r) => r.docId)).toEqual([
+        "doc-newest",
+        "doc-mid",
+        "doc-oldest",
+      ]);
+    });
+
     test("BlobCas: putIfAbsent is idempotent, get roundtrips, unknown hash is null", async () => {
       const { blobs } = await factory();
       const bytes = new Uint8Array([9, 8, 7]);

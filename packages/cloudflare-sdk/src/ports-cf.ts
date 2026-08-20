@@ -314,7 +314,7 @@ export class D1DocIndexQuery implements DocIndexQuery {
     );
     const result = await this.#db
       .prepare(
-        `SELECT doc_id, doc_type, owner_id, created_at, updated_at FROM docs WHERE owner_id = ? AND doc_type = ?`,
+        `SELECT doc_id, doc_type, owner_id, created_at, updated_at FROM docs WHERE owner_id = ? AND doc_type = ? ORDER BY updated_at DESC`,
       )
       .bind(userId, docType)
       .all();
