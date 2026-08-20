@@ -32,11 +32,38 @@ export function runPortContract(
       }
     });
 
+    test("append rejects a version ahead of head + 1, leaving no gap", async () => {
+      const { deltas } = await factory();
+      await deltas.append(makeDelta(1));
+      await deltas.append(makeDelta(2));
+      const head = await deltas.head();
+
+      try {
+        await deltas.append(makeDelta(head + 2));
+        throw new Error("expected append to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(VersionConflictError);
+        expect((err as VersionConflictError).currentVersion).toBe(head);
+        expect((err as VersionConflictError).attempted).toBe(head + 2);
+      }
+
+      expect(await deltas.head()).toBe(head);
+      expect((await deltas.range()).length).toBe(2);
+    });
+
+    test("append rejects a version behind head + 1", async () => {
+      const { deltas } = await factory();
+      await deltas.append(makeDelta(1));
+      await deltas.append(makeDelta(2));
+      await expect(deltas.append(makeDelta(2))).rejects.toBeInstanceOf(VersionConflictError);
+      expect(await deltas.head()).toBe(2);
+    });
+
     test("since(v) returns only versions > v, ascending", async () => {
       const { deltas } = await factory();
       await deltas.append(makeDelta(1));
-      await deltas.append(makeDelta(3));
       await deltas.append(makeDelta(2));
+      await deltas.append(makeDelta(3));
       const result = await deltas.since(1);
       expect(result.map((d) => d.version)).toEqual([2, 3]);
     });

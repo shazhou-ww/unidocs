@@ -14,18 +14,29 @@ class MemoryDeltaLog implements DeltaLog {
   #deltas: Delta[] = [];
   #snapshotRefs: SnapshotRef[] = [];
 
+  #headSync(): number {
+    if (this.#deltas.length === 0) return 0;
+    return this.#deltas.reduce((max, d) => Math.max(max, d.version), 0);
+  }
+
   async append(d: Delta): Promise<void> {
-    const exists = this.#deltas.some((x) => x.version === d.version);
-    if (exists) {
-      throw new VersionConflictError(await this.head(), d.version);
+    // Conditional write: the only acceptable version is head + 1. Behind or
+    // equal means someone else already took it; ahead would leave a gap.
+    //
+    // The check and the insert must be one atomic step — a real store gets
+    // that from a primary key or a conditional insert, so this one reads the
+    // head synchronously rather than awaiting head() and handing a concurrent
+    // writer a window between the check and the push.
+    const head = this.#headSync();
+    if (d.version !== head + 1) {
+      throw new VersionConflictError(head, d.version);
     }
     this.#deltas.push(d);
     this.#deltas.sort((a, b) => a.version - b.version);
   }
 
   async head(): Promise<number> {
-    if (this.#deltas.length === 0) return 0;
-    return this.#deltas.reduce((max, d) => Math.max(max, d.version), 0);
+    return this.#headSync();
   }
 
   async since(v: number): Promise<Delta[]> {

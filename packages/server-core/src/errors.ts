@@ -26,6 +26,15 @@ export class DocExistsError extends Error {         // → HTTP 409
   }
 }
 
+export class StorageCorruptError extends Error {    // → HTTP 500
+  // The source of truth references a snapshot the blob store does not have.
+  // Not "document missing" — the log says it must exist, so storage lost it.
+  constructor(message?: string) {
+    super(message);
+    this.name = "StorageCorruptError";
+  }
+}
+
 export class RootRefsError extends Error {          // → HTTP 502
   constructor(message?: string) {
     super(message);

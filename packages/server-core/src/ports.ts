@@ -15,7 +15,19 @@ export interface DocRecord {
 }
 
 export interface DeltaLog {
-  append(d: Delta): Promise<void>;          // 版本冲突抛 VersionConflictError
+  /**
+   * Append one delta. **Contract: only `d.version === head() + 1` is accepted.**
+   * Every other version — behind, equal, or ahead of `head() + 1` — is a
+   * conflict and MUST throw `VersionConflictError(head(), d.version)`.
+   *
+   * This is the conditional write. The session computes the version as
+   * `baseVersion + 1` and never reads `MAX(version) + 1`, so this is the only
+   * thing standing between a wrong `baseVersion` and a corrupt log:
+   * a stale `baseVersion` would rewrite history, a future one would leave a
+   * gap that replay silently skips. Enforce it structurally (primary key /
+   * etag / conditional insert), not with a read-then-write check.
+   */
+  append(d: Delta): Promise<void>;
   head(): Promise<number>;                  // 无 delta 时返回 0
   since(v: number): Promise<Delta[]>;
   range(from?: number, to?: number): Promise<Delta[]>;

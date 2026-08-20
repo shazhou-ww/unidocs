@@ -185,6 +185,31 @@ describe("DocumentSession.apply — failure paths", () => {
     expect(session.version).toBe(headBefore);
   });
 
+  it("10. rejects a baseVersion ahead of the log rather than leaving a version gap", async () => {
+    const { session, deps } = makeHarness();
+    await session.load();
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    const before = await deltaCount(deps);
+    const headBefore = await deps.deltas.head();
+    expect(session.version).toBe(2);
+
+    let caught: unknown;
+    try {
+      await session.apply([{ kind: "append", text: "b" }], "b", 5);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(VersionConflictError);
+    expect((caught as VersionConflictError).currentVersion).toBe(headBefore);
+    expect((caught as VersionConflictError).attempted).toBe(6);
+    expect(await deltaCount(deps)).toBe(before);
+    expect(await deps.deltas.head()).toBe(headBefore);
+    expect(session.version).toBe(2);
+  });
+
   it("4. serializes concurrent applies sharing a baseVersion: exactly one wins", async () => {
     const { session, deps } = makeHarness();
     await session.load();
@@ -288,6 +313,16 @@ describe("DocumentSession — normal paths", () => {
     const { session, deps } = makeHarness();
 
     await deps.snapshots.put(3, encoder.encode("abc"));
+    // Versions 1-3 are already folded into the cached snapshot; they only
+    // exist here because the log contract requires contiguous versions.
+    for (const version of [1, 2, 3]) {
+      await deps.deltas.append({
+        version,
+        timestamp: version,
+        description: `seed ${version}`,
+        operations: [],
+      });
+    }
     await deps.deltas.append({
       version: 4,
       timestamp: 10,

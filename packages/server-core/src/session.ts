@@ -33,6 +33,7 @@ import {
   DocExistsError,
   DocNotFoundError,
   RootRefsError,
+  StorageCorruptError,
 } from "./errors.js";
 import { computeHash } from "./hash.js";
 import type { HistoryEntry } from "./history.js";
@@ -240,7 +241,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
 
     const bytes = await this.#deps.blobs.get(hash);
     if (!bytes) {
-      throw new DocNotFoundError(`Snapshot ${hash} not found in blob store`);
+      throw new DocNotFoundError(`Snapshot ${hash} not found in R2`);
     }
 
     const { docType, docId, userId } = this.#deps.identity;
@@ -397,7 +398,9 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     if (ref) {
       const bytes = await this.#deps.blobs.get(ref.hash);
       if (!bytes) {
-        throw new DocNotFoundError(`Snapshot ${ref.hash} not found in blob store`);
+        // The delta log records this snapshot, so the blob store losing it is
+        // corruption, not a missing document — the adapter maps this to 500.
+        throw new StorageCorruptError(`Snapshot ${ref.hash} not found in R2`);
       }
       baseDoc = await this.#config.load(bytes, ctx);
       baseVersion = ref.version;
