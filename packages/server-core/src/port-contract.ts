@@ -59,6 +59,43 @@ export function runPortContract(
       expect(await deltas.head()).toBe(2);
     });
 
+    // This one exists because the check-and-insert in `append` MUST be a
+    // single atomic operation — a primary key, a conditional insert, an ETag.
+    // Any implementation that reads `SELECT MAX(version)` and then INSERTs is
+    // two steps with a window in between, and two concurrent writers will both
+    // clear the check and both write the same version.
+    //
+    // This is not hypothetical: the in-memory implementation was first written
+    // as `const head = await this.head()` followed by a push, and that single
+    // `await` was enough of a yield point for both concurrent appends to slip
+    // through. It was only caught by a session-level concurrency test, which a
+    // phase-2 backend author never runs — they run this contract. Hence the
+    // sentinel lives here.
+    test("concurrent appends of the same version: exactly one wins", async () => {
+      const { deltas } = await factory();
+      await deltas.append(makeDelta(1));
+      await deltas.append(makeDelta(2));
+      const head = await deltas.head();
+
+      const results = await Promise.allSettled([
+        deltas.append(makeDelta(head + 1, "writer A")),
+        deltas.append(makeDelta(head + 1, "writer B")),
+      ]);
+
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+        VersionConflictError,
+      );
+
+      // The loser left nothing behind: one record at that version, head moved
+      // forward by exactly one.
+      expect(await deltas.range(head + 1, head + 1)).toHaveLength(1);
+      expect(await deltas.head()).toBe(head + 1);
+    });
+
     test("since(v) returns only versions > v, ascending", async () => {
       const { deltas } = await factory();
       await deltas.append(makeDelta(1));
