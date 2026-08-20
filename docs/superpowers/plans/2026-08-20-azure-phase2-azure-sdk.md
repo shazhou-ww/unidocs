@@ -711,6 +711,56 @@ git commit -m "feat(dev): add a --azure switch to pnpm dev"
 
 ---
 
+## Task 10: 砍掉本地栈的镜像开销
+
+**PR 评审发现的 blocking 问题。** `pnpm test:local` 在**冷环境**下失败:`scripts/azure-behavior.test.mjs` 的 `beforeAll(..., 120_000)` 超时。
+
+根因不是逻辑错,是那个预算里包含了一次 **~1.2 GB 的镜像拉取** —— `startAzureRuntime()` 里的 `docker compose up -d`(`scripts/azure-runtime.mjs:231`)在冷机器上要拉 `postgres:18`(671 MB)+ `azurite:3.36.0`(531 MB)。即便 20 MB/s,光传输就 60 秒,再加上等就绪、跑迁移(内部一次 esbuild)、打包两个服务(两次 esbuild)、起进程等端口,120 秒必然不够。
+
+评审者单跑该文件是过的,因为镜像只需拉一次:先跑标准命令(失败但把镜像拉下来了),再单跑就通过了。
+
+**Files:**
+- Modify: `docker-compose.azure.yml`、`scripts/azure-runtime.mjs`、`packages/azure-sdk/tests/containers.ts`、`packages/azure-sdk/package.json`、`README.md`
+
+- [ ] **Step 1: Azurite 改用 npm 子进程,镜像归零**
+
+`azurite` npm 包(3.36.0,镜像源上有)自带 `azurite-blob` 可执行文件 —— 它本来就是个 Node 程序,为它拉一个 531 MB 的容器没有道理。而这个仓库**已经在用子进程跑两个 Node 服务**(gateway 与 markdown),多起一个是同一套做法。
+
+- `docker-compose.azure.yml` 删掉 azurite 服务
+- `azurite` 加进 `packages/azure-sdk` 的 devDependencies
+- `scripts/azure-runtime.mjs` 与 `packages/azure-sdk/tests/containers.ts` 各自 spawn 一个 azurite-blob 进程,监听 10000,数据落到临时目录(每次干净),`dispose()` / `teardown()` 里关掉
+- `--skipApiVersionCheck` 原样搬到命令行参数
+
+- [ ] **Step 2: Postgres 换 alpine**
+
+`postgres:18` → `postgres:18-alpine`(官方 tag,约 100 MB)。表只有 integer/text,不依赖 collation,无语义风险。
+
+- [ ] **Step 3: 首次拉取要可见**
+
+现在 `run()` 虽然是 `stdio: "inherit"`,但 vitest 在 `beforeAll` 里吞掉子进程输出,现象是"静默卡住 120 秒然后 hook timeout"。
+
+在 `docker compose up -d` **之前**检测镜像在不在(`docker image inspect`),不在就先打印一行明确提示(说明这是一次性开销、大约多大),再继续。让长时间等待可解释。
+
+- [ ] **Step 4: 超时值与文档**
+
+`beforeAll` 的超时提到对一次百 MB 级下载有意义的值。README 的 Development 一节写明首次运行的这笔开销,并说明 Azurite 现在是 npm 子进程、不再需要镜像。
+
+- [ ] **Step 5: 验证**
+
+- `pnpm test:local` 全绿(9 文件)
+- `pnpm --filter @unidocs/azure-sdk test` 全绿(它也用同一套栈)
+- `pnpm -r test` 从零产物状态退出码 0
+- **冷镜像验证**:`docker image rm mcr.microsoft.com/azure-storage/azurite:3.36.0`(它现在应当不再被任何东西引用),确认删掉之后 `pnpm test:local` 仍然全绿 —— 这是本任务成立的直接证据
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add -A
+git commit -m "fix(test): drop the Azurite image and shrink Postgres to alpine"
+```
+
+---
+
 ## 阶段 2 完成判据
 
 - [ ] `runPortContract` 在三套实现上全绿:内存、Cloudflare、Postgres/Blob
