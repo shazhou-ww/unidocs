@@ -16,3 +16,7 @@ export type { PixelSource, PixelRef, BlobStore } from "./render/pixel-source.js"
 export type {
   Layer, Mask, Pixels, Canvas, PsdDoc, BlendMode, LayerType,
 } from "./model/types.js";
+export { IncrementalCompositor } from "./render/incremental.js";
+export { allTiles, tilesForRect, tileKey } from "./render/tile-grid.js";
+export type { Tile } from "./render/tile-grid.js";
+export { opDirtyRect } from "./render/dirty-rect.js";
