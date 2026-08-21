@@ -26,6 +26,7 @@
     "fast-png": "^8.0.0"
   },
   "devDependencies": {
+    "@unidocs/server-core": "workspace:*",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },

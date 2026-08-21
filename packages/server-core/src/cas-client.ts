@@ -8,7 +8,7 @@
  * `Fetcher` type import).
  */
 
-import type { CasRootRefUpdate } from "@unidocs/cas";
+import { type CasRootRefUpdate, computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
 import type { CasRef, CasReadContext, CasReferences } from "@unidocs/core";
 
 /** Structural interface for a fetch-capable binding (e.g. a Cloudflare service binding). */
@@ -92,6 +92,21 @@ export class CasClient implements CasReadContext {
       throw new CasClientError(resp.status, resp.statusText, "read");
     }
     return new Uint8Array(await resp.arrayBuffer());
+  }
+
+  /**
+   * Store content, returning its CAS hash. Satisfies the editor-side
+   * `CasReadContext.store` — content-addressed upload via `ensureNode`.
+   */
+  async store(bytes: Uint8Array, contentType: string): Promise<string> {
+    // The CAS service is content-addressed by its canonical node digest —
+    // SHA-256(header ‖ contentType ‖ childHashes ‖ content) — and rejects any
+    // other hash. A stored blob is a leaf node (no children), so refCount 0.
+    const header = encodeHeader(bytes.length, contentType, 0);
+    const digest = await computeNodeDigest(header, contentType, [], bytes);
+    const hash = hashToHex(digest);
+    await this.ensureNode(hash, bytes, contentType);
+    return hash;
   }
 
   /** Read CAS node metadata. */

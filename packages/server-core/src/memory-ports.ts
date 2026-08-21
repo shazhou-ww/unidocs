@@ -1,16 +1,19 @@
+import type { CasRef, CasReferences } from "@unidocs/core";
 import type {
   BlobCas,
   Delta,
   DeltaLog,
   DocIndex,
   DocIndexQuery,
-  DocRecord,
   SnapshotCache,
   SnapshotRef,
+  DocRecord,
   TransactionalPorts,
   UnitOfWork,
 } from "./ports.js";
+import type { CasGateway } from "./session.js";
 import { VersionConflictError } from "./errors.js";
+import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
 
 class MemoryDeltaLog implements DeltaLog {
   #deltas: Delta[] = [];
@@ -222,6 +225,56 @@ class MemoryDocIndexQuery implements DocIndexQuery {
 }
 
 /**
+ * In-memory CAS gateway for tests. Content-addressed: `store` computes the
+ * same canonical CAS node digest as `CasClient` and keeps the bytes so `read`
+ * returns them verbatim. Faithful to `CasClient`'s editor-mode surface.
+ */
+export class MemoryCas implements CasGateway {
+  #nodes = new Map<string, { bytes: Uint8Array; contentType: string; refs: string[] }>();
+  rootRefUpdates: { requestId: string; changes: CasReferences }[] = [];
+
+  /** Count of distinct content-addressed nodes currently stored. Content
+   *  addressing means a re-upload of already-stored bytes is a no-op, so this
+   *  is the observable "did dedup happen?" signal for tests. */
+  get size(): number {
+    return this.#nodes.size;
+  }
+
+  async store(bytes: Uint8Array, contentType: string): Promise<string> {
+    // Mirror the real CAS service's canonical node digest so tests exercise
+    // the same hashes production does (a plain content hash would diverge).
+    const header = encodeHeader(bytes.length, contentType, 0);
+    const hash = hashToHex(await computeNodeDigest(header, contentType, [], bytes));
+    if (!this.#nodes.has(hash)) {
+      this.#nodes.set(hash, { bytes, contentType, refs: [] });
+    }
+    return hash;
+  }
+
+  async read(ref: CasRef): Promise<Uint8Array> {
+    const node = this.#nodes.get(ref.hash);
+    if (!node) throw new Error(`CAS node ${ref.hash} not found`);
+    return node.bytes;
+  }
+
+  async metadata(
+    ref: CasRef,
+  ): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }> {
+    const node = this.#nodes.get(ref.hash);
+    if (!node) throw new Error(`CAS node ${ref.hash} not found`);
+    return { hash: ref.hash, size: node.bytes.length, contentType: node.contentType, refs: node.refs };
+  }
+
+  async leaseExisting(hash: string): Promise<unknown> {
+    return { hash, ready: true };
+  }
+
+  async updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<void> {
+    this.rootRefUpdates.push(update);
+  }
+}
+
+/**
  * Opt-in capability that lets `MemoryUnitOfWork` undo a port's writes: take a
  * snapshot of its internal state on the way in, put it back if the callback
  * throws. This is the simplest honest rollback an in-memory implementation
@@ -301,6 +354,7 @@ export function createMemoryPorts(): {
   blobs: BlobCas;
   index: DocIndex;
   indexQuery: DocIndexQuery;
+  cas: MemoryCas;
   unitOfWork: UnitOfWork;
 } {
   const store: SharedDocStore = { docs: new Map(), snapshots: new Map() };
@@ -312,6 +366,7 @@ export function createMemoryPorts(): {
     blobs: new MemoryBlobCas(),
     index,
     indexQuery: new MemoryDocIndexQuery(store),
+    cas: new MemoryCas(),
     unitOfWork: new MemoryUnitOfWork({ deltas, index }),
   };
 }

@@ -36,6 +36,7 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/cloudflare-cas/public": "packages/cloudflare-cas/src/public-cas-route.ts",
   "@unidocs/doctype-markdown": "packages/doctype-markdown/src/index.ts",
   "@unidocs/doctype-docx": "packages/doctype-docx/src/index.ts",
+  "@unidocs/doctype-psd": "packages/doctype-psd/src/index.ts",
 };
 
 /**

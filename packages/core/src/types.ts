@@ -27,6 +27,11 @@ export type CasReferences = Readonly<Record<string, number>>;
 export interface CasReadContext {
   read(ref: CasRef): Promise<Uint8Array>;
   metadata(ref: CasRef): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }>;
+  /**
+   * Store content, returning its CAS hash. Present on the editor-side context
+   * where writes are allowed.
+   */
+  store?(bytes: Uint8Array, contentType: string): Promise<string>;
 }
 
 /** Context passed to document type lifecycle methods. */
@@ -51,6 +56,12 @@ export interface DocumentType<TDoc, TQuery, TOp> {
 
   /** Serialize a document to binary bytes. */
   save: (doc: TDoc, context?: DocumentTypeContext) => Promise<Uint8Array>;
+
+  /**
+   * Materialize any lazy/external references into a self-contained document
+   * (e.g. before export). Optional; doctypes without lazy state omit it.
+   */
+  resolve?: (doc: TDoc, context?: DocumentTypeContext) => Promise<TDoc>;
 
   /** Extract CAS references from a snapshot (synchronous pure function). */
   refsFromSnapshot: (data: Uint8Array) => CasReferences;

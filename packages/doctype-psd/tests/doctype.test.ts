@@ -29,11 +29,12 @@ describe("createPsdDocumentType", () => {
     expect((dt.tools.getLayers as any).op).toBeUndefined();
   });
 
-  it("exposes refsFromSnapshot/refsFromOp returning empty refs, and no serialize/resolve", () => {
+  it("exposes refsFromSnapshot/refsFromOp returning empty refs, a resolve hook, and no serialize/deserialize", () => {
     expect(dt.refsFromSnapshot(new Uint8Array())).toEqual({});
     expect(dt.refsFromOp({ kind: "set_props", payload: {} })).toEqual({});
     expect((dt as any).serialize).toBeUndefined();
     expect((dt as any).deserialize).toBeUndefined();
-    expect((dt as any).resolve).toBeUndefined();
+    // resolve() materializes lazy PixelRef layers before a ctx-less export.
+    expect(typeof dt.resolve).toBe("function");
   });
 });

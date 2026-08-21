@@ -232,7 +232,10 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // be a falsy value (the DO original used `!this.#doc`, which silently
     // skipped the write for such documents).
     if (this.#doc === null) return;
-    const bytes = await this.#config.save(this.#doc);
+    // Pass ctx so a ctx-aware doc type (PSD) caches the IR snapshot (JSON +
+    // per-layer CAS blobs) rather than the full serialized document. Doc types
+    // that ignore ctx (markdown/docx) are byte-identical to before.
+    const bytes = await this.#config.save(this.#doc, this.#context());
     await this.#deps.snapshots.put(this.#version, bytes);
   }
 
@@ -263,7 +266,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   }
 
   /**
-   * Serialize a document and put it in the blob store, returning its hash.
+   * Serialize a document and put it in the blob store, returning its hash and
+   * the persisted bytes.
    *
    * Nothing references the blob yet when this returns, and that is why the
    * creation path can run it first, outside the transaction: the store is
@@ -271,29 +275,73 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * that costs storage and nothing else — no reader can reach it and a GC
    * pass can reclaim it. Writing the reference first and the bytes second
    * would be the unsafe order.
+   *
+   * The save passes ctx, so a ctx-aware doc type (PSD) produces its IR JSON
+   * and uploads per-layer content blobs to the CAS, and the returned hash is
+   * the IR hash. Since BOTH `#writeSnapshot` and `create` go through here, the
+   * durable and creation paths are IR-aware from this one change, and the hash
+   * `snapshot()`/clone round-trip on is the IR hash the blob was stored under.
+   * markdown/docx ignore ctx and are byte-identical to before.
+   *
+   * The bytes are returned alongside the hash so callers that must pin the
+   * snapshot's CAS root-refs (`#writeSnapshot`) can run `refsFromSnapshot` on
+   * the exact bytes that were persisted, without a second (re-encoding) save.
    */
-  async #writeBlob(doc: TDoc): Promise<string> {
-    const bytes = await this.#config.save(doc);
+  async #writeBlob(doc: TDoc): Promise<{ hash: string; bytes: Uint8Array }> {
+    const bytes = await this.#config.save(doc, this.#context());
     const hash = await computeHash(bytes);
     // Content-addressed: the same bytes are the same blob.
     await this.#deps.blobs.putIfAbsent(hash, bytes);
-    return hash;
+    return { hash, bytes };
   }
 
   /**
    * Write a durable, content-addressed snapshot of the current version and
-   * record it in every index that tracks snapshots.
+   * record it in every index that tracks snapshots. Returns the persisted
+   * hash and version (null only when there is no document), so `snapshot()`
+   * can hand back the hash the blob was actually stored under — for a
+   * ctx-aware doc type that is the IR hash, and re-saving without ctx would
+   * yield a hash no blob exists at, breaking clone-from-snapshot.
    */
-  async #writeSnapshot(): Promise<void> {
-    if (this.#doc === null) return;
+  async #writeSnapshot(): Promise<{ hash: string; version: number } | null> {
+    if (this.#doc === null) return null;
 
-    const hash = await this.#writeBlob(this.#doc);
+    const { hash, bytes } = await this.#writeBlob(this.#doc);
+
+    // Pin the per-layer content blobs this snapshot references so CAS GC
+    // retains them. `refsFromSnapshot` is a pure function; markdown/docx
+    // return {} and skip this path entirely (zero behaviour change). This
+    // runs BEFORE recordSnapshot on purpose: we must not register a snapshot
+    // as a restore point until the content it references is protected, or a
+    // GC pass between the two writes could delete a blob the snapshot needs.
+    //
+    // The requestId is deterministic per (user, doc, version). Re-running
+    // #writeSnapshot for the same version commits the identical payload under
+    // the identical id, which the CAS worker dedupes by (requestId, payload):
+    // no double-count. A snapshot has no delta to roll back, so the rollback
+    // is a no-op; a pin failure surfaces as RootRefsError, mirroring apply().
+    const refs = this.#config.refsFromSnapshot(bytes);
+    if (Object.keys(refs).length > 0) {
+      const { userId, docId } = this.#deps.identity;
+      try {
+        await commitRootRefsOrRollback(
+          this.#deps.cas,
+          `snapshot:${userId}:${docId}:${this.#version}`,
+          refs,
+          async () => {},
+        );
+      } catch (err) {
+        throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
+      }
+    }
 
     const timestamp = this.#deps.now();
     await this.#deps.index.recordSnapshot(this.#version, hash, timestamp);
     await this.#deps.index.touch(timestamp);
     // Local log record — this is what rollback searches.
     await this.#deps.deltas.recordSnapshot(this.#version, hash, timestamp);
+
+    return { hash, version: this.#version };
   }
 
   // ------------------------------------------------------------------
@@ -324,7 +372,30 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     //    snapshotted immediately and deliberately, so a fresh document is
     //    restorable without replaying from `init()` — and an orphaned blob
     //    is the cheapest possible failure residue (see #writeBlob).
-    const hash = await this.#writeBlob(doc);
+    const { hash, bytes } = await this.#writeBlob(doc);
+
+    // 1b. Pin the v1 snapshot's per-layer content blobs BEFORE the transaction
+    //     records it as a restore point — the same ordering rule as
+    //     #writeSnapshot: content must be protected before anything registers
+    //     the snapshot as restorable, or a GC pass between the two writes could
+    //     delete a blob the snapshot needs. Azure's refactor records the v1
+    //     snapshot inline in the transaction (create() no longer routes through
+    //     #writeSnapshot), so the CAS pin the durable path owns is re-applied
+    //     here. A fresh document is always version 1. markdown/docx return {}
+    //     from refsFromSnapshot and skip this entirely (zero behaviour change).
+    const refs = this.#config.refsFromSnapshot(bytes);
+    if (Object.keys(refs).length > 0) {
+      try {
+        await commitRootRefsOrRollback(
+          this.#deps.cas,
+          `snapshot:${userId}:${docId}:1`,
+          refs,
+          async () => {},
+        );
+      } catch (err) {
+        throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
+      }
+    }
 
     // 2. One atomic unit: the delta log and the global index either both
     //    learn about this document or neither does. Before this was a
@@ -418,6 +489,29 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     const { docType, docId, userId } = this.#deps.identity;
     const doc = await this.#config.load(bytes, this.#context());
 
+    // Independently pin the per-layer blobs this cloned snapshot references,
+    // BEFORE the transaction records it as a restore point — the same ordering
+    // rule as #writeSnapshot: content must be protected before anything
+    // registers the snapshot as restorable, or a GC pass could delete a
+    // referenced blob. The adopted snapshot's blobs otherwise survive only via
+    // the SOURCE doc's root-refs; a clone must own its own pin so its content
+    // cannot be GC'd out from under it when the source is deleted. Scoped to
+    // the CLONE's own (user, doc, version=1) — deterministic and idempotent.
+    // markdown/docx return {} and skip this entirely.
+    const cloneRefs = this.#config.refsFromSnapshot(bytes);
+    if (Object.keys(cloneRefs).length > 0) {
+      try {
+        await commitRootRefsOrRollback(
+          this.#deps.cas,
+          `snapshot:${userId}:${docId}:1`,
+          cloneRefs,
+          async () => {},
+        );
+      } catch (err) {
+        throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
+      }
+    }
+
     // Step 1 of create()'s write order is already done here: the blob exists
     // (we just read it), and content-addressing means the clone shares it.
     // So this path starts at the transaction.
@@ -468,7 +562,15 @@ export class DocumentSession<TDoc, TQuery, TOp> {
 
   async exportBytes(): Promise<{ bytes: Uint8Array; contentType: string }> {
     await this.load();
-    const doc = this.#requireDoc();
+    const doc0 = this.#requireDoc();
+    // Materialize any lazy references (e.g. a cold-reloaded PSD's PixelRef
+    // layers) BEFORE serializing — the resolve hook faults them resident via
+    // the CAS context. Then save WITHOUT ctx so export produces the real
+    // document bytes (a full 8BPS PSD), never the CAS-IR snapshot. Doc types
+    // without a resolve hook (markdown/docx) are byte-identical to before.
+    const doc = this.#config.resolve
+      ? await this.#config.resolve(doc0, this.#context())
+      : doc0;
     const bytes = await this.#config.save(doc);
     return { bytes, contentType: this.#config.contentType };
   }
@@ -664,16 +766,18 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   }> {
     await this.load();
 
-    const doc = this.#requireDoc();
+    // #requireDoc guarantees #doc is non-null, so #writeSnapshot returns a hash.
+    this.#requireDoc();
 
-    await this.#writeSnapshot();
-
-    const bytes = await this.#config.save(doc);
-    const hash = await computeHash(bytes);
+    // Reuse the hash #writeSnapshot actually persisted rather than re-saving:
+    // for a ctx-aware doc type (PSD) the stored bytes are the IR snapshot, so a
+    // second save(doc) WITHOUT ctx would hash the real (8BPS) bytes and hand
+    // back a hash no blob was stored under — breaking clone-from-snapshot.
+    const snap = await this.#writeSnapshot();
 
     return {
-      hash,
-      version: this.#version,
+      hash: snap!.hash,
+      version: snap!.version,
       docType: this.#deps.identity.docType,
       docId: this.#deps.identity.docId,
     };
