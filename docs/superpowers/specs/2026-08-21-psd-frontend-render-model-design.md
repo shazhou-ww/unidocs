@@ -24,10 +24,15 @@
 - 不引入 CRDT。冲突解决用"服务端权威 + 本地重放"的简化 OT（见 §2）。
 - 不设计 PSD 解析/导出改动（沿用现有 `load`/`save`）。
 
-### 外部依赖（已定为**单独先行任务**，本 spec 假设其就绪）
+### 外部依赖
 
-- **`GET …/ir` 端点 + KV 快照缓存**：返回**当前版本**的 IR JSON。现状 `SnapshotCache`（`ports.ts`）本就是"可丢弃快缓存"，每次 apply 后 `#saveSnapshotCache()` 写回当前版本；PSD 的 `save(doc, ctx)` 产出的是去字节的小 IR JSON（像素已在 CAS）。当年快照挪去 R2 是因含整幅图字节太大顶不住 KV；像素进 CAS 后压力消失，`SnapshotCache` 指回 KV 合适且更快，并**恰好提供"精确当前版本 IR"**（不受 20-delta 快照间隔影响）。
-- **op-id 幂等去重**：服务端对携带相同 client 幂等 key 的重复 op 去重（见 §5 幂等）。
+**读取"当前版本 IR"用现有能力，无需新端点。** 核对代码后确认（本节曾计划 `GET …/ir` + KV 迁移，均不需要）：
+
+- **当前版本 IR 读取**：现有 `GET …/{docId}/snapshot` 调 `session.snapshot()` → `#writeSnapshot()` → `save(doc, ctx)`，对 PSD 产出**当前版本**的 IR JSON 存入 CAS，返回的 `hash` 即 **IR 的 hash**。前端两步拿到当前 IR：`GET …/snapshot` → `{version, hash}` → `GET /cas/nodes/{hash}/content` → IR JSON。
+- **KV 快照缓存**：Cloudflare 下 `SnapshotCache` 实为 `DoSnapshotCache`（`ports-cf.ts`），本就落在 DO KV 存储（`ctx.storage`），**不在 R2**；PSD 存的是小 IR JSON。已是恢复态，无需改动。
+- **op-id 幂等去重（唯一真实后端依赖，可推迟）**：服务端对携带相同 client 幂等 key 的重复 op 去重（见 §5 幂等）。仅为"丢包重试→双应用"边界所需，可在建 `DocSession` 同步时再做。
+
+> **可选优化（非 MVP）**：`session.snapshot()` 每次调用会顺带写一份 durable 快照并记 D1 index（本为 clone 用）。若每次 rebase 都调，会给快照索引带来 churn。未来可加只读、不落 durable 的 `GET …/ir`（直接返回 `SnapshotCache` 字节）规避——不影响 MVP 正确性。
 
 ## 术语
 
@@ -96,11 +101,12 @@
 
 ### 冷启动
 
-1. `GET /users/{u}/docs/{type}/{docId}/ir` → `{ version, ir }`（当前版本 IR JSON，来自 KV 快照缓存）。
-2. `deserialize(ir, casBlobStore)` → 懒 doc；`baseVersion = version`。
-3. 首帧：按可见 tile + 粗 LOD 出图，blob 到齐再精修（复用懒像素 fault-in）。
+1. `GET /users/{u}/docs/{type}/{docId}/snapshot` → `{ version, hash }`（`session.snapshot()` 落当前版本 IR 到 CAS 并返回其 hash）。
+2. `GET /users/{u}/cas/nodes/{hash}/content` → IR JSON。
+3. `deserialize(ir, casBlobStore)` → 懒 doc；`baseVersion = version`。
+4. 首帧：按可见 tile + 粗 LOD 出图，blob 到齐再精修（复用懒像素 fault-in）。
 
-> `GET …/ir` 返回**当前版本**，不受"每 20 delta 才落快照"的稀疏性影响，保证 `baseVersion` 与拿到的 IR 对齐。
+> `snapshot()` 落的是**当前版本**（`#writeSnapshot` materialize 当前 doc），不受"每 20 delta 才落快照"的稀疏性影响，保证 `baseVersion` 与拿到的 IR 对齐。
 
 ### 本地编辑回路（乐观）
 
@@ -114,14 +120,14 @@
        409 → 进入 rebase
 ```
 
-Class A op 后**不回读 CAS**：后台 apply 仅持久化，客户端信任本地渲染（同代码 → 同结果）。`GET /cas/nodes/{hash}/content` 只在冷启动、409 rebase、Class B 新像素三处使用。
+Class A op 后**不回读 CAS**：后台 apply 仅持久化，客户端信任本地渲染（同代码 → 同结果）。冷启动 / 409 rebase / Class B 新像素三处才读 CAS（`GET /cas/nodes/{hash}/content`）。
 
 ### 冲突 / agent 并发（409 rebase）
 
 Operator DO（agent）也在改同一个 doc，故服务端版本可能领先。
 
 ```
-409 → GET …/ir 取新 base(version) 作为新工作副本基
+409 → GET …/snapshot 取 {version, hash} → GET /cas/nodes/{hash}/content 取新 base IR
      → base' = deserialize(newIR, casBlobStore)
      → 把 pending 逐个 applyOne 重放到 base'（按提交顺序）
           某 op 重放失败(如目标图层已被 agent 删) → 丢弃该 op + 非致命提示
@@ -214,7 +220,7 @@ input → DocSession.applyOp(op)                 [主]
 1. **blob 缺失 / 拉取失败**：镜像服务端 `renderCached` "失败即丢槽、不缓存坏结果" —— **绝不 brick 文档**。该 tile 显示占位（棋盘/上一帧好图），退避重试；某图层 blob 永久缺失 → 非致命的逐图层错误提示，其余合成照常。
 
 2. **409 rebase 边界**（补 §2）：
-   - `GET …/ir` 取新 base → `deserialize` → 按提交顺序重放 pending。
+   - `GET …/snapshot` + `GET /cas/nodes/{hash}/content` 取新 base → `deserialize` → 按提交顺序重放 pending。
    - **重放丢弃**：pending 某 op 目标 layerId 已被删 → 丢弃 + 非致命提示（"对图层 X 的改动已作废：它已不存在"）。
    - **at-most-once 幂等**：某次提交响应丢包但服务端已入库 → 重试 409，rebase 的新 base 已含该 op，重放本地副本会**双重应用**。缓解：每个 op 带 **client 幂等 key**，服务端对重复 op id 去重（对后端的小依赖）。
 
@@ -258,5 +264,5 @@ input → DocSession.applyOp(op)                 [主]
 
 ## 依赖的先行任务
 
-1. `GET …/ir`（当前版本 IR）+ `SnapshotCache` 指回 KV。
-2. op-id 幂等去重（服务端）。
+- **无阻塞性先行后端任务**。当前版本 IR 读取用现有 `GET …/snapshot` + CAS content（见"外部依赖"）；`SnapshotCache` 已在 DO KV（恢复态）。
+- **op-id 幂等去重**（服务端）：唯一真实后端依赖，但仅为 §5 的丢包重试边界所需，**可推迟**到建 `DocSession` 同步时随手做。
