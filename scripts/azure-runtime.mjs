@@ -35,6 +35,8 @@ import pg from "pg";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { INTERNAL_TOKEN } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
+import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./azure-ports.mjs";
+import { startReplicaProxy } from "./replica-proxy.mjs";
 
 const { Pool } = pg;
 const require = createRequire(import.meta.url);
@@ -50,9 +52,9 @@ export const BLOB_CONNECTION_STRING = "UseDevelopmentStorage=true";
 /** Blob container name `BlobCasStore` uses (`packages/azure-sdk/src/ports-blob.ts`). */
 const CAS_CONTAINER = "cas";
 
-const DEFAULT_PORTS = { gateway: 41787, markdown: 41788 };
 const AZURITE_HOST = "127.0.0.1";
 const AZURITE_PORT = 10000;
+const POSTGRES_PORT = 5433;
 
 /** Must match `docker-compose.azure.yml`'s `postgres` service image — used only to decide whether to print the one-time-download notice below. */
 const POSTGRES_IMAGE = "postgres:18-alpine";
@@ -285,24 +287,6 @@ function stopProcess(child, graceMs = 5_000) {
 }
 
 /**
- * The four ports `startAzureRuntime()` needs exclusive use of: the two Node
- * services it spawns, plus the two backing stores (`docker-compose.azure.yml`'s
- * Postgres and the spawned `azurite-blob` process). Kept local to this module
- * (rather than reusing `scripts/dev.mjs`'s copy) because `dev.mjs` isn't
- * something other code imports from, and `azure-behavior.test.mjs` calls
- * `startAzureRuntime()` directly — never through `dev.mjs` — so the guard has
- * to live here to cover that path at all.
- */
-function describeAzurePorts(ports) {
-  return {
-    [ports.gateway]: "expected by the azure-gateway service this run is about to spawn",
-    [ports.markdown]: "expected by the azure-markdown service this run is about to spawn",
-    [AZURITE_PORT]: "expected by the azurite-blob process this run is about to spawn",
-    5433: "expected by docker-compose.azure.yml's postgres service (host port mapping)",
-  };
-}
-
-/**
  * Probe a port by trying to listen on it, same technique as
  * `scripts/dev.mjs`'s `assertPortFree()`: `listen()` succeeding means
  * nothing else is bound there, so close right back up and report free;
@@ -368,10 +352,24 @@ function assertPortFree(port, hint) {
   });
 }
 
-async function assertPortsFree(ports) {
-  const byPort = describeAzurePorts(ports);
+/**
+ * Ports `startAzureRuntime()` needs exclusive use of: every port in the
+ * layout (Task 3's `azure-ports.mjs` — gateway, per-doc-type proxy, and
+ * every replica), plus the two backing stores that aren't part of that
+ * layout because they're fixed infrastructure rather than spawned Node
+ * services (`docker-compose.azure.yml`'s Postgres and the spawned
+ * `azurite-blob` process).
+ */
+async function assertPortsFree(layout) {
+  const byPort = {
+    ...describeAzurePorts(layout),
+    [AZURITE_PORT]: "expected by the azurite-blob process this run is about to spawn",
+    [POSTGRES_PORT]: "expected by docker-compose.azure.yml's postgres service (host port mapping)",
+  };
   await Promise.all(
-    Object.entries(byPort).map(([port, hint]) => assertPortFree(Number(port), hint)),
+    allAzurePorts(layout)
+      .concat([AZURITE_PORT, POSTGRES_PORT])
+      .map((port) => assertPortFree(port, byPort[port])),
   );
 }
 
@@ -471,16 +469,49 @@ function createStorageProbe() {
 }
 
 /**
- * Start the Azure gateway + markdown services against a freshly migrated
- * Postgres/Azurite stack. Mirrors `startLocalRuntime()`'s return shape
- * (`urls`, `storage`, `dispose`) so `scripts/behavior-suite.mjs` can target
- * either without knowing which backend it got.
+ * Doc types this task actually knows how to spawn a bundle for. The port
+ * layout (Task 3's `azure-ports.mjs`) already knows about `docx`'s band,
+ * but `packages/azure-docx` doesn't exist yet — it's Task 7's job to create
+ * it and generalise the loop below to more than one doc type. Passing
+ * `"docx"` here must fail before anything is spawned, not partway through
+ * an `esbuild.build()` against a path that doesn't exist.
+ */
+const SUPPORTED_DOC_TYPES = ["markdown"];
+
+function assertDocTypesSupported(docTypes) {
+  const unsupported = docTypes.filter((name) => !SUPPORTED_DOC_TYPES.includes(name));
+  if (unsupported.length > 0) {
+    throw new Error(
+      `startAzureRuntime() only supports ${SUPPORTED_DOC_TYPES.join(", ")} right now (got ` +
+        `${unsupported.join(", ")}). azure-docx doesn't exist yet — it's Task 7's job to create ` +
+        `the package and generalise this loop to more than one doc type.`,
+    );
+  }
+}
+
+/**
+ * Start the Azure gateway + markdown services — `replicas` copies of
+ * markdown, all sharing the same Postgres/Azurite, fronted by a round-robin
+ * proxy that stands in for the platform ingress — against a freshly
+ * migrated Postgres/Azurite stack. Mirrors `startLocalRuntime()`'s return
+ * shape (`urls`, `storage`, `dispose`) so `scripts/behavior-suite.mjs` can
+ * target either without knowing which backend it got.
+ *
+ * Defaults to 2 replicas, not 1: what dev runs against and what tests run
+ * against should not diverge, since that gap is itself a source of
+ * incidents. `replicas` stays configurable only for troubleshooting (drop to
+ * 1 to tell apart "only reproduces with multiple replicas" from "was always
+ * broken") — `scripts/azure-multi-replica.test.mjs` asserts `replicas >= 2`
+ * itself so that dropping to 1 can't quietly become the new normal.
  */
 export async function startAzureRuntime({
   host = "127.0.0.1",
-  ports: portOverrides = {},
+  docTypes = ["markdown"],
+  replicas = 2,
 } = {}) {
-  const ports = { ...DEFAULT_PORTS, ...portOverrides };
+  assertDocTypesSupported(docTypes);
+  const layout = azurePortLayout({ docTypes, replicas });
+
   const bundleDir = join(ROOT, ".azure-runtime", "bundles");
   const gatewayBundle = join(bundleDir, "gateway.mjs");
   const markdownBundle = join(bundleDir, "markdown.mjs");
@@ -489,22 +520,28 @@ export async function startAzureRuntime({
   // `assertPortFree()`'s comment for why this matters more than it looks
   // like it should (a leaked process from a previous run answering in place
   // of the fresh stack, making the behavior suite pass against stale state).
-  await assertPortsFree(ports);
+  await assertPortsFree(layout);
 
   announceFirstPullIfNeeded();
   await run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
 
   let gatewayProc;
-  let markdownProc;
+  const markdownProcs = [];
   let azuriteProc;
   let azuriteDataDir;
   let probe;
+  let proxy;
   // Registered before anything is spawned so it covers every child from the
-  // moment it exists; `getChildren` reads the `let` bindings above at
-  // cleanup time, not at registration time, so it sees whichever of them got
-  // assigned before the process went down. See the function's own comment
-  // for what this can and can't guarantee.
-  const uninstallCleanup = installChildProcessCleanup(() => [gatewayProc, markdownProc, azuriteProc]);
+  // moment it exists; `getChildren` reads these bindings at cleanup time,
+  // not at registration time, so it sees whichever of them got assigned
+  // before the process went down. `markdownProcs` is read live (not spread
+  // here) so replicas spawned after registration are still covered. See the
+  // function's own comment for what this can and can't guarantee.
+  const uninstallCleanup = installChildProcessCleanup(() => [
+    gatewayProc,
+    ...markdownProcs,
+    azuriteProc,
+  ]);
   try {
     ({ child: azuriteProc, dataDir: azuriteDataDir } = await spawnAzurite());
     await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
@@ -515,23 +552,37 @@ export async function startAzureRuntime({
       bundleService(join(ROOT, "packages/azure-markdown/src/main.ts"), markdownBundle),
     ]);
 
-    const urls = {
-      gateway: `http://${host}:${ports.gateway}`,
-      markdown: `http://${host}:${ports.markdown}`,
-    };
+    const replicaUrls = [];
+    for (const [i, port] of layout.docTypes.markdown.replicas.entries()) {
+      const proc = spawnService(
+        markdownBundle,
+        [],
+        {
+          DATABASE_URL,
+          BLOB_CONNECTION_STRING,
+          INTERNAL_TOKEN,
+          PORT: String(port),
+        },
+        `azure-markdown-${i + 1}`,
+      );
+      markdownProcs.push(proc);
+      await waitForPort(host, port, 30_000);
+      replicaUrls.push(`http://${host}:${port}`);
+    }
 
-    markdownProc = spawnService(
-      markdownBundle,
-      [],
-      {
-        DATABASE_URL,
-        BLOB_CONNECTION_STRING,
-        INTERNAL_TOKEN,
-        PORT: String(ports.markdown),
-      },
-      "azure-markdown",
-    );
-    await waitForPort(host, ports.markdown, 30_000);
+    // The proxy plays ACA ingress. The gateway only ever learns this one
+    // address — it must never know replicas exist.
+    proxy = await startReplicaProxy({
+      host,
+      port: layout.docTypes.markdown.proxy,
+      targets: replicaUrls,
+    });
+
+    const urls = {
+      gateway: `http://${host}:${layout.gateway}`,
+      markdown: proxy.url, // unchanged meaning: the address the gateway should talk to
+      markdownReplicas: replicaUrls, // new: direct-to-replica, for cross-replica scenarios
+    };
 
     gatewayProc = spawnService(
       gatewayBundle,
@@ -539,12 +590,12 @@ export async function startAzureRuntime({
       {
         DATABASE_URL,
         INTERNAL_TOKEN,
-        PORT: String(ports.gateway),
+        PORT: String(layout.gateway),
         MARKDOWN_WORKER_URL: urls.markdown,
       },
       "azure-gateway",
     );
-    await waitForPort(host, ports.gateway, 30_000);
+    await waitForPort(host, layout.gateway, 30_000);
 
     probe = createStorageProbe();
 
@@ -558,9 +609,10 @@ export async function startAzureRuntime({
         // an already-exited child is a no-op, but there's no reason to leave
         // process-level listeners registered past this runtime's lifetime).
         uninstallCleanup();
+        await proxy?.close();
         await Promise.all([
           stopProcess(gatewayProc),
-          stopProcess(markdownProc),
+          ...markdownProcs.map((proc) => stopProcess(proc)),
           stopProcess(azuriteProc),
         ]);
         await probe?.dispose();
@@ -575,9 +627,10 @@ export async function startAzureRuntime({
     // child process the way an unhandled exception would if it were only
     // ever cleaned up by the caller's `dispose()`, which never gets called.
     uninstallCleanup();
+    await proxy?.close().catch(() => {});
     await Promise.allSettled([
       stopProcess(gatewayProc),
-      stopProcess(markdownProc),
+      ...markdownProcs.map((proc) => stopProcess(proc)),
       stopProcess(azuriteProc),
     ]);
     await probe?.dispose().catch(() => {});

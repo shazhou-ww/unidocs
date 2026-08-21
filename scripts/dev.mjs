@@ -30,16 +30,20 @@ try {
 // that actually pull in heavy dependencies (pg, @azure/storage-blob,
 // esbuild, miniflare).
 
+// Populated below when `useAzure` — hoisted out of that block so the port
+// check and the `startAzureRuntime()` call further down can both reuse the
+// same validated selection instead of recomputing it.
+let azureDocTypes;
+
 if (useAzure) {
-  // startAzureRuntime() doesn't take a docTypes selector — it always starts
-  // exactly one worker (azure-markdown), because docx depends on
-  // user-scoped CAS, which the Azure backend doesn't implement yet (see
-  // phase 4). No positional args means "start what Azure supports", i.e.
-  // markdown; any positional arg other than markdown is a request we can't
-  // fulfill and must reject up front rather than starting a stack that
-  // can't route to it.
-  const requested = positional.length === 0 ? ["markdown"] : docTypes;
-  const unsupported = requested.filter((type) => type !== "markdown");
+  // startAzureRuntime() only supports markdown right now (Task 4) — docx
+  // depends on user-scoped CAS, which the Azure backend doesn't implement
+  // yet (see phase 4/Task 7). No positional args means "start what Azure
+  // supports", i.e. markdown; any positional arg other than markdown is a
+  // request we can't fulfill and must reject up front rather than starting
+  // a stack that can't route to it.
+  azureDocTypes = positional.length === 0 ? ["markdown"] : docTypes;
+  const unsupported = azureDocTypes.filter((type) => type !== "markdown");
   if (unsupported.length > 0) {
     console.error(
       `Azure local stack only supports markdown right now (${unsupported.join(", ")} depends on user-scoped CAS, which isn't implemented for Azure yet — see phase 4). Drop ${unsupported.length > 1 ? "those doc types" : "that doc type"} or run \`pnpm dev ${unsupported.join(" ")}\` on the Miniflare backend instead.`,
@@ -96,11 +100,12 @@ function assertPortFree(host, port, describeConflict) {
   });
 }
 
-// Must match `DEFAULT_PORTS` in azure-runtime.mjs (41787/41788), which
-// doesn't export it. Kept deliberately apart from Miniflare's 8787/8788 so
-// both backends can run at once.
+// Kept deliberately apart from Miniflare's 8787/8788 band so both backends
+// can run at once. The Node-service ports themselves come from
+// `azure-ports.mjs`'s layout below, not a local copy — that module has no
+// imports at all, so pulling it in here is cheap and keeps this file from
+// drifting out of sync with `azure-runtime.mjs`'s own port math.
 const AZURE_HOST = "127.0.0.1";
-const AZURE_PORTS = { gateway: 41787, markdown: 41788 };
 
 // The host ports `docker-compose.azure.yml` maps Postgres onto, and the port
 // the spawned `azurite-blob` process listens on (see that file and
@@ -126,18 +131,25 @@ let backend;
 
 if (useAzure) {
   assertDockerRunning();
+
+  // `azure-ports.mjs` has no imports at all, so this can go ahead of the
+  // heavier imports further down (mirrors `doc-types.mjs`'s same
+  // dependency-free convention) — argv validation has already happened
+  // above, so this is just cheap port math before the port probe.
+  const { azurePortLayout, allAzurePorts, describeAzurePorts } = await import("./azure-ports.mjs");
+  const layout = azurePortLayout({ docTypes: azureDocTypes, replicas: 2 });
+  const described = describeAzurePorts(layout);
   await Promise.all([
-    ...Object.values(AZURE_PORTS).map((port) => assertPortFree(AZURE_HOST, port)),
-    ...Object.values(AZURE_CONTAINER_PORTS).map(({ port, hint }) =>
-      assertPortFree(AZURE_HOST, port, hint),
-    ),
+    ...allAzurePorts(layout).map((port) => assertPortFree(AZURE_HOST, port, described[port])),
+    assertPortFree(AZURE_HOST, 5433, AZURE_CONTAINER_PORTS.postgres.hint),
+    assertPortFree(AZURE_HOST, 10000, AZURE_CONTAINER_PORTS.azurite.hint),
   ]);
 
   const { startAzureRuntime, DATABASE_URL, BLOB_CONNECTION_STRING } = await import(
     "./azure-runtime.mjs"
   );
 
-  runtime = await startAzureRuntime({ host: AZURE_HOST, ports: AZURE_PORTS });
+  runtime = await startAzureRuntime({ host: AZURE_HOST, docTypes: azureDocTypes, replicas: 2 });
   backend = { name: "Azure (Postgres + Azurite)", DATABASE_URL, BLOB_CONNECTION_STRING };
 } else {
   // Imported after argv validation so a typo fails fast instead of paying for
@@ -155,6 +167,15 @@ if (useAzure) {
 
 console.log(`UniDocs local runtime (${backend.name})`);
 for (const [name, url] of Object.entries(runtime.urls)) {
+  if (Array.isArray(url)) {
+    // e.g. `markdownReplicas` — print each replica's own address so
+    // "there are really two of these running" is visible in the terminal,
+    // not just implied by a single proxy URL.
+    url.forEach((replicaUrl, i) => {
+      console.log(`  ${`${name} #${i + 1}`.padEnd(20)} ${replicaUrl}`);
+    });
+    continue;
+  }
   console.log(`  ${name.padEnd(8)} ${url}`);
 }
 
