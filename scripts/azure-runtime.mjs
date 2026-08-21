@@ -602,6 +602,11 @@ export async function startAzureRuntime({
     return {
       urls,
       storage: probe,
+      // A function, not a snapshot: `startReplicaProxy()`'s own `hits()` is
+      // itself a live accessor, and callers here (the multi-replica suite,
+      // in particular) need counts taken *after* a batch of gateway
+      // requests, not whatever the count happened to be at boot.
+      replicaHits: () => proxy.hits(),
       async dispose() {
         // Processes are being stopped deliberately below, via the graceful
         // stopProcess() path — uninstall the exit/signal handlers first so

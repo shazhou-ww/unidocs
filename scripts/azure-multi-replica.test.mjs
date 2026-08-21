@@ -125,3 +125,27 @@ test("alternating replicas advance the version with no holes", async () => {
   expect(versions).toEqual([...versions].sort((x, y) => x - y));
   expect(new Set(versions).size).toBe(versions.length);
 });
+
+// Finding 1 (fix round 1): every scenario above sends its "which replica"
+// traffic *directly* to a replica URL, bypassing the proxy entirely. None
+// of them — nor `azure-behavior.test.mjs`, which never sees a proxy at all
+// — actually proves that traffic arriving through the gateway (the only
+// path a real client ever uses) gets spread across replicas rather than
+// pinned to one. `markdown: proxy.url` is the one line of wiring that
+// makes that true; this test is what would catch it if that line silently
+// became `markdown: replicaUrls[0]` again. Counts are read before and
+// after rather than assumed to start at zero, since earlier tests in this
+// file already sent gateway-routed create/history requests against the
+// same shared `runtime`.
+test("gateway traffic actually reaches at least two replicas", async () => {
+  const before = runtime.replicaHits();
+  for (let i = 0; i < 8; i += 1) {
+    await createDoc(`multi-hits-${i}`);
+  }
+  const after = runtime.replicaHits();
+  const delta = after.map((count, i) => count - before[i]);
+  const replicasHit = delta.filter((count) => count > 0).length;
+  expect(replicasHit, `hit deltas per replica were ${JSON.stringify(delta)}`).toBeGreaterThanOrEqual(
+    2,
+  );
+});

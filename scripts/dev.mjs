@@ -96,7 +96,11 @@ function assertPortFree(host, port, describeConflict) {
         else resolve();
       });
     });
-    server.listen(port, host);
+    // Always probe 0.0.0.0, regardless of `host` — see
+    // `assertPortFree()`'s comment in azure-runtime.mjs (around line
+    // 308-323) for why a probe bound to a specific address (127.0.0.1)
+    // fails to detect a pre-existing wildcard bind on BSD/Darwin.
+    server.listen(port, "0.0.0.0");
   });
 }
 
