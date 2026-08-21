@@ -14,6 +14,15 @@ function makeDelta(version: number, description = `delta ${version}`): Delta {
   return { version, timestamp: Date.now(), description, operations: [] };
 }
 
+export interface ConcurrencyReadiness {
+  /** How many writers this harness can genuinely issue statements from at
+   * the same time. The contract requires >= 2. */
+  concurrentWriters: number;
+  /** What the harness did to satisfy that precondition. Printed verbatim in
+   * the sentinel's failure message. */
+  how: string;
+}
+
 export interface PortContractOptions {
   /**
    * Whether `unitOfWork.withTransaction` really rolls back. Only backends
@@ -26,6 +35,20 @@ export interface PortContractOptions {
    * test in this file must pass everywhere.
    */
   transactional: boolean;
+  /**
+   * Required, with no default — same reasoning as `transactional`: a
+   * precondition that CAN be omitted is a precondition that WILL be omitted.
+   *
+   * The concurrency sentinel only observes anything if two writers can
+   * genuinely issue statements at the same time. On Postgres this needs a
+   * warmed connection pool (`pg.Pool` opens connections lazily, so after a
+   * run of sequential statements it holds exactly one, and the second writer
+   * then waits ~4ms for a TCP connect + auth handshake, reading the head
+   * only after the first writer has already committed). That precondition
+   * used to live only inside `azure-sdk/tests/ports.test.ts`, invisible to
+   * the contract. The contract now asks the harness to prove it.
+   */
+  prepareConcurrency: () => Promise<ConcurrencyReadiness>;
 }
 
 export function runPortContract(
@@ -114,6 +137,14 @@ export function runPortContract(
     // phase-2 backend author never runs — they run this contract. Hence the
     // sentinel lives here.
     test("concurrent appends of the same version: exactly one wins", async () => {
+      const readiness = await options.prepareConcurrency();
+      expect(
+        readiness.concurrentWriters,
+        `This backend's harness reported only ${readiness.concurrentWriters} concurrent writer(s) ` +
+          `("${readiness.how}"). The sentinel below cannot observe a race with fewer than 2, ` +
+          `and would pass without testing anything.`,
+      ).toBeGreaterThanOrEqual(2);
+
       const { deltas } = await factory();
       await deltas.append(makeDelta(1));
       await deltas.append(makeDelta(2));
@@ -202,6 +233,100 @@ export function runPortContract(
       await expect(deltas.append(makeDelta(2, "retry"))).resolves.toBeUndefined();
       expect(await deltas.head()).toBe(2);
       expect((await deltas.range(2, 2))[0]?.description).toBe("retry");
+    });
+
+    /**
+     * remove() and append() have a **known, deliberately accepted** window
+     * (see design doc section 9): remove(v) confirms v is still head, then
+     * deletes; between those two steps another writer can append(v+1),
+     * leaving a hole behind.
+     *
+     * This case does not fix that window — it pins it in the open: every
+     * outcome is in the allowed set, and all of them must satisfy "head and
+     * range agree with each other". Any new failure shape (remove deleting a
+     * non-head version, or head disagreeing with range) still turns this
+     * red. If the allowed set is ever widened to something that is NOT one
+     * of the three legitimate serializations below, that is the window
+     * getting worse, not the test being too strict.
+     *
+     * Three outcomes are legitimate, not two — the third fell out of
+     * actually running this against a backend with no I/O between the check
+     * and the delete:
+     *   - remove loses entirely (append(3) commits before remove(2) even
+     *     starts): the hole is missed -> [1, 2, 3].
+     *   - remove wins entirely (remove(2) completes — check AND delete —
+     *     before append(3) starts): head drops to 1, and append(3) then
+     *     correctly conflicts because head + 1 is 2, not 3 -> [1]. This is
+     *     plain serialization, not a race outcome at all, but it is the
+     *     ONLY thing that can happen on a backend whose remove() has no
+     *     await between its check and its delete (this contract's in-memory
+     *     ports; a Durable Object, which serialises every call so remove and
+     *     append can never overlap) — Promise.all's array literal still
+     *     invokes remove() first, and a synchronous body runs to completion
+     *     before the second element is even evaluated.
+     *   - both see the pre-removal head and both proceed: the accepted hole
+     *     -> [1, 3].
+     */
+    test("remove(v) racing append(v+1): the accepted window is visible, nothing worse happens", async () => {
+      const { deltas } = await factory();
+      await options.prepareConcurrency();
+      await deltas.append(makeDelta(1));
+      await deltas.append(makeDelta(2));
+
+      await Promise.all([
+        deltas.remove(2).catch(() => undefined),
+        deltas.append(makeDelta(3)).catch(() => undefined),
+      ]);
+
+      const versions = (await deltas.range()).map((d) => d.version);
+      expect([[1, 2, 3], [1, 3], [1]]).toContainEqual(versions);
+      expect(await deltas.head()).toBe(Math.max(...versions));
+      expect(versions).toEqual([...versions].sort((a, b) => a - b));
+    });
+
+    // touch() has only ever been mentioned in passing, in another test's
+    // comment (as the ordering note that register() must precede it). None
+    // of the three backends had a case exercising its own semantics.
+    test("DocIndex: touch() advances updatedAt and leaves createdAt alone", async () => {
+      const { index, indexQuery } = await factory();
+      const created = 1_700_000_000_000;
+      await index.register({
+        docId: "doc-1",
+        docType: "text",
+        ownerId: "user-1",
+        createdAt: created,
+        updatedAt: created,
+      });
+
+      await index.touch(created + 5_000);
+
+      const [row] = await indexQuery.list("user-1", "text");
+      expect(row.createdAt).toBe(created);
+      expect(row.updatedAt).toBe(created + 5_000);
+    });
+
+    /**
+     * Document-scope predicates. On dedicated storage (Cloudflare: one
+     * private sqlite per DO) this is nearly impossible to get wrong; on a
+     * shared-table backend (Postgres: every document in one `deltas` table)
+     * a missing `WHERE doc_id = ...` is the easiest mistake to make and the
+     * hardest to catch by reading the code — it looks correct until it runs.
+     */
+    test("DeltaLog: operating on one document neither affects nor reads another", async () => {
+      const a = await factory();
+      const b = await factory();
+
+      await a.deltas.append(makeDelta(1, "doc-a-v1"));
+      await a.deltas.append(makeDelta(2, "doc-a-v2"));
+      await b.deltas.append(makeDelta(1, "doc-b-v1"));
+
+      expect(await a.deltas.head()).toBe(2);
+      expect(await b.deltas.head()).toBe(1);
+      expect((await b.deltas.range()).map((d) => d.description)).toEqual(["doc-b-v1"]);
+
+      await a.deltas.remove(2);
+      expect(await b.deltas.head()).toBe(1);
+      expect((await b.deltas.range()).map((d) => d.description)).toEqual(["doc-b-v1"]);
     });
 
     test("recordSnapshot + latestSnapshotRef: latest, atOrBefore, and null before all", async () => {
