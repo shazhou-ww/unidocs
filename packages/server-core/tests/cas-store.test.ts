@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
 import { CasClient } from "../src/cas-client";
-import { computeHash } from "../src/hash";
 import { MemoryCas } from "../src/memory-ports";
+
+/** The CAS service's canonical leaf-node digest (no children). */
+async function casHash(bytes: Uint8Array, contentType: string): Promise<string> {
+  const header = encodeHeader(bytes.length, contentType, 0);
+  return hashToHex(await computeNodeDigest(header, contentType, [], bytes));
+}
 
 // Mock fetch globally (same harness as cas-client.test.ts).
 const mockFetch = vi.fn();
@@ -20,7 +26,7 @@ describe("CasClient.store", () => {
 
   it("uploads content and returns the content hash", async () => {
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
-    const expected = await computeHash(bytes);
+    const expected = await casHash(bytes, "image/png");
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -35,7 +41,7 @@ describe("CasClient.store", () => {
     const hash = await client.store(bytes, "image/png");
 
     expect(hash).toBe(expected);
-    // store() = computeHash + ensureNode (POST /nodes/{hash}).
+    // store() = canonical CAS node digest + ensureNode (POST /nodes/{hash}).
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
       `http://localhost:8787/users/user1/cas/nodes/${expected}`,
@@ -67,7 +73,7 @@ describe("MemoryCas.store", () => {
     const hash = await cas.store(bytes, "image/png");
     const back = await cas.read({ kind: "cas", hash });
 
-    expect(hash).toBe(await computeHash(bytes));
+    expect(hash).toBe(await casHash(bytes, "image/png"));
     expect(back).toEqual(bytes);
   });
 

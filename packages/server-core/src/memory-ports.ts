@@ -13,7 +13,7 @@ import type {
 } from "./ports.js";
 import type { CasGateway } from "./session.js";
 import { VersionConflictError } from "./errors.js";
-import { computeHash } from "./hash.js";
+import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
 
 class MemoryDeltaLog implements DeltaLog {
   #deltas: Delta[] = [];
@@ -226,7 +226,7 @@ class MemoryDocIndexQuery implements DocIndexQuery {
 
 /**
  * In-memory CAS gateway for tests. Content-addressed: `store` computes the
- * same hash as `CasClient` (via `computeHash`) and keeps the bytes so `read`
+ * same canonical CAS node digest as `CasClient` and keeps the bytes so `read`
  * returns them verbatim. Faithful to `CasClient`'s editor-mode surface.
  */
 export class MemoryCas implements CasGateway {
@@ -241,7 +241,10 @@ export class MemoryCas implements CasGateway {
   }
 
   async store(bytes: Uint8Array, contentType: string): Promise<string> {
-    const hash = await computeHash(bytes);
+    // Mirror the real CAS service's canonical node digest so tests exercise
+    // the same hashes production does (a plain content hash would diverge).
+    const header = encodeHeader(bytes.length, contentType, 0);
+    const hash = hashToHex(await computeNodeDigest(header, contentType, [], bytes));
     if (!this.#nodes.has(hash)) {
       this.#nodes.set(hash, { bytes, contentType, refs: [] });
     }

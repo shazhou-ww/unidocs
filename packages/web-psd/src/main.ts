@@ -36,7 +36,7 @@ function b64ToBytes(b64: string): Uint8Array {
 }
 
 async function query(kind: string, payload?: Record<string, unknown>): Promise<unknown> {
-  const r = await fetch(`${GW}/users/${USER}/${TYPE}/${docId}/query`, {
+  const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload ? { kind, payload } : { kind }),
@@ -108,7 +108,7 @@ async function dispatch(op: Op): Promise<void> {
     while (pending) {
       const cur = pending;
       pending = null;
-      const r = await fetch(`${GW}/users/${USER}/${TYPE}/${docId}/apply`, {
+      const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/apply`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ operations: [cur], baseVersion: version }),
@@ -137,7 +137,7 @@ async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   try {
     const fd = new FormData();
     fd.append("file", new Blob([bytes as BlobPart]), label);
-    const r = await fetch(`${GW}/users/${USER}/${TYPE}/`, { method: "POST", body: fd });
+    const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/`, { method: "POST", body: fd });
     const body = await r.json();
     if (!body.success) throw new Error(body.error ?? "create failed");
     docId = body.docId;
@@ -160,7 +160,7 @@ saveBtn.onclick = () => {
   if (!docId) return;
   // Server export (GET) — same-origin via proxy, so the browser downloads it.
   const a = document.createElement("a");
-  a.href = `${GW}/users/${USER}/${TYPE}/${docId}/export`;
+  a.href = `${GW}/users/${USER}/docs/${TYPE}/${docId}/export`;
   a.download = "export.psd";
   a.click();
 };
@@ -187,7 +187,7 @@ async function sendChat(text: string): Promise<void> {
   addMsg("user", text);
   const thinking = addMsg("agent", "thinking…", true);
   try {
-    const r = await fetch(`${GW}/users/${USER}/${TYPE}/${docId}/run`, {
+    const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/run`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ instruction: text }),
