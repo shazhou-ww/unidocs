@@ -19,16 +19,14 @@
  * per registered document type (e.g. MARKDOWN_WORKER_URL).
  */
 
-import { createPool, PgDocIndexQuery, serve } from "@unidocs/azure-sdk";
+import {
+  attachPoolErrorLogger,
+  createPool,
+  PgDocIndexQuery,
+  requireEnv,
+  serve,
+} from "@unidocs/azure-sdk";
 import { createGatewayHandler } from "@unidocs/server-core";
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required env var ${name}`);
-  }
-  return value;
-}
 
 function resolveWorkerUrl(docType: string): Promise<string | null> {
   const envKey = `${docType.toUpperCase()}_WORKER_URL`;
@@ -44,12 +42,7 @@ async function main(): Promise<void> {
   // `createPool`, so an empty string is fine (same idiom as
   // azure-sdk/tests/containers.ts's `waitForPostgres`).
   const pool = createPool({ databaseUrl, blobConnectionString: "" });
-  // See azure-markdown/src/main.ts for why this listener is required, not
-  // optional: an unlistened `error` event on the pool is an uncaught
-  // exception that kills the process.
-  pool.on("error", (err) => {
-    console.error("azure-gateway: pg pool error", err);
-  });
+  attachPoolErrorLogger(pool, "azure-gateway");
   const docIndex = new PgDocIndexQuery(pool);
 
   const casFetcher = {
