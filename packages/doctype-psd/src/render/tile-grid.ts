@@ -4,14 +4,19 @@ export type Tile = { tx: number; ty: number; region: Rect };
 
 export const tileKey = (tx: number, ty: number): string => `${tx},${ty}`;
 
+/** Canvas-space region [top,left,bottom,right] of tile (tx,ty), clipped to canvas. */
+export function tileRegion(canvas: { width: number; height: number }, tileSize: number, tx: number, ty: number): Rect {
+  const top = ty * tileSize, left = tx * tileSize;
+  return [top, left, Math.min(canvas.height, top + tileSize), Math.min(canvas.width, left + tileSize)];
+}
+
 export function allTiles(canvas: { width: number; height: number }, tileSize: number): Tile[] {
   const out: Tile[] = [];
   const cols = Math.ceil(canvas.width / tileSize);
   const rows = Math.ceil(canvas.height / tileSize);
   for (let ty = 0; ty < rows; ty++) {
     for (let tx = 0; tx < cols; tx++) {
-      const top = ty * tileSize, left = tx * tileSize;
-      out.push({ tx, ty, region: [top, left, Math.min(canvas.height, top + tileSize), Math.min(canvas.width, left + tileSize)] });
+      out.push({ tx, ty, region: tileRegion(canvas, tileSize, tx, ty) });
     }
   }
   return out;
@@ -28,8 +33,7 @@ export function tilesForRect(canvas: { width: number; height: number }, tileSize
   const out: Tile[] = [];
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
-      const top = ty * tileSize, left = tx * tileSize;
-      out.push({ tx, ty, region: [top, left, Math.min(canvas.height, top + tileSize), Math.min(canvas.width, left + tileSize)] });
+      out.push({ tx, ty, region: tileRegion(canvas, tileSize, tx, ty) });
     }
   }
   return out;

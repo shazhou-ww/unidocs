@@ -35,8 +35,8 @@ const ops = [
 const bytes = (p: { data: Uint8ClampedArray }) => [...p.data];
 
 describe("IncrementalCompositor ≡ render(doc) across an op sequence", () => {
-  it("matches full render after each op (tileSize 32)", async () => {
-    const comp = new IncrementalCompositor(base, { tileSize: 32 });
+  it("matches full render after each op (tileSize 40, partial edge tiles)", async () => {
+    const comp = new IncrementalCompositor(base, { tileSize: 40 });
     // initial frame
     expect(bytes(await comp.composite())).toEqual(bytes(await render(base)));
     let doc = base;
@@ -48,12 +48,25 @@ describe("IncrementalCompositor ≡ render(doc) across an op sequence", () => {
   });
 
   it("only dirty tiles are recomputed (cache reuse)", async () => {
-    const comp = new IncrementalCompositor(base, { tileSize: 32 });
+    const comp = new IncrementalCompositor(base, { tileSize: 40 });
     await comp.composite();                       // warm all tiles
     const dirty = await comp.applyOp({ kind: "set_props", payload: { layerId: "red", props: { opacity: 0.5 } } } as any);
     // red influence [8,8,40,40] → dirty rect within top-left; a far tile stays byte-equal to full render
     const full = await render(comp.doc);
     expect(bytes(await comp.composite())).toEqual(bytes(full));
     expect(dirty[0]).toBeLessThan(dirty[2]); // non-empty rect
+  });
+
+  it("reuses cached tiles outside the dirty rect (identity), recomputes dirty ones", async () => {
+    const comp = new IncrementalCompositor(base, { tileSize: 40 });
+    await comp.composite(); // warm all tiles
+    // a far tile clearly outside `red`'s influence [8,8,40,40] — bottom-right
+    const farTx = 2, farTy = 2;   // tile origin (80,80) on the 96x96 canvas
+    const dirtyTx = 0, dirtyTy = 0;
+    const farBefore = await comp.readTile(farTx, farTy);
+    const dirtyBefore = await comp.readTile(dirtyTx, dirtyTy);
+    await comp.applyOp({ kind: "set_props", payload: { layerId: "red", props: { opacity: 0.3 } } } as any);
+    expect(await comp.readTile(farTx, farTy)).toBe(farBefore);        // untouched → same reference (reused)
+    expect(await comp.readTile(dirtyTx, dirtyTy)).not.toBe(dirtyBefore); // invalidated → recomputed (new object)
   });
 });

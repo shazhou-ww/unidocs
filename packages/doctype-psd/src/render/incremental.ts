@@ -3,7 +3,7 @@ import type { PsdOp } from "../ops/index.js";
 import type { RenderCtx } from "./composite.js";
 import { applyOne } from "../ops/index.js";
 import { renderRegionDirect } from "./region.js";
-import { allTiles, tilesForRect, tileKey, type Tile } from "./tile-grid.js";
+import { allTiles, tilesForRect, tileKey, tileRegion } from "./tile-grid.js";
 import { opDirtyRect } from "./dirty-rect.js";
 
 type Rect = [number, number, number, number];
@@ -25,6 +25,7 @@ export class IncrementalCompositor {
   }
 
   get doc(): PsdDoc { return this.#doc; }
+  get tileSize(): number { return this.#tileSize; }
 
   async applyOp(op: PsdOp): Promise<Rect> {
     const next = applyOne(this.#doc, op);
@@ -32,7 +33,7 @@ export class IncrementalCompositor {
     this.#doc = next;
     // Invalidate every tile the dirty rect touches. A canvas-size change
     // (crop) can change the grid, so on size change drop the whole cache.
-    if (next.canvas.width !== undefined && this.#cacheGridMismatch(next)) {
+    if (this.#cacheGridMismatch(next)) {
       this.#cache.clear();
     } else {
       for (const t of tilesForRect(next.canvas, this.#tileSize, dirty)) this.#cache.delete(tileKey(t.tx, t.ty));
@@ -44,8 +45,7 @@ export class IncrementalCompositor {
     const key = tileKey(tx, ty);
     const hit = this.#cache.get(key);
     if (hit) return hit;
-    const top = ty * this.#tileSize, left = tx * this.#tileSize;
-    const region: Rect = [top, left, Math.min(this.#doc.canvas.height, top + this.#tileSize), Math.min(this.#doc.canvas.width, left + this.#tileSize)];
+    const region = tileRegion(this.#doc.canvas, this.#tileSize, tx, ty);
     const px = await renderRegionDirect(this.#doc, region, this.#ctx);
     this.#cache.set(key, px);
     return px;
