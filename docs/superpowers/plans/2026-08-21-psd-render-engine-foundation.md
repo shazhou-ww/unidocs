@@ -199,6 +199,27 @@ describe("layerInfluenceBounds", () => {
     const l = base({ type: "adjustment", adjustType: "brit" });
     expect(layerInfluenceBounds(l, CANVAS)).toEqual([0, 0, 100, 100]);
   });
+
+  const mask = (over: Partial<import("../src/model/types.js").Mask>) => ({
+    pixels: { width: 0, height: 0, data: new Uint8ClampedArray(0) },
+    bounds: [40, 40, 60, 60] as [number, number, number, number],
+    defaultColor: 0 as 0 | 255, inverted: false, ...over,
+  });
+
+  it("adjustment+mask: restricts to mask bounds when outside-coverage is zero (defaultColor 0, not inverted)", () => {
+    const l = base({ type: "adjustment", adjustType: "brit", mask: mask({ defaultColor: 0, inverted: false }) });
+    expect(layerInfluenceBounds(l, CANVAS)).toEqual([40, 40, 60, 60]);
+  });
+
+  it("adjustment+mask: full canvas when defaultColor 255 reveals outside the mask bounds", () => {
+    const l = base({ type: "adjustment", adjustType: "brit", mask: mask({ defaultColor: 255, inverted: false }) });
+    expect(layerInfluenceBounds(l, CANVAS)).toEqual([0, 0, 100, 100]);
+  });
+
+  it("adjustment+mask: full canvas when inverted flips a defaultColor-0 mask to reveal-all outside", () => {
+    const l = base({ type: "adjustment", adjustType: "brit", mask: mask({ defaultColor: 0, inverted: true }) });
+    expect(layerInfluenceBounds(l, CANVAS)).toEqual([0, 0, 100, 100]);
+  });
 });
 ```
 
@@ -226,9 +247,18 @@ const clamp = (r: Rect, w: number, h: number): Rect =>
 /** Canvas rect a layer may write into, including layer-effect bleed. */
 export function layerInfluenceBounds(layer: Layer, canvas: { width: number; height: number }): Rect {
   // Adjustment layers transform the backdrop across their whole extent.
+  // Restrict to the mask's bounds ONLY when the mask reveals nothing outside
+  // them: maskCoverageAt (composite.ts) returns `defaultColor` outside bounds,
+  // flipped by `inverted`, so outside-coverage is zero iff
+  // (defaultColor === 0) !== inverted. Otherwise the adjustment applies across
+  // the whole canvas → influence is the full canvas (conservative).
   if (layer.type === "adjustment") {
-    const m = layer.mask?.bounds;
-    return clamp(m ? [m[0], m[1], m[2], m[3]] : [0, 0, canvas.height, canvas.width], canvas.width, canvas.height);
+    const m = layer.mask;
+    const restrict = !!m && ((m.defaultColor === 0) !== m.inverted);
+    const r: Rect = restrict
+      ? [m!.bounds[0], m!.bounds[1], m!.bounds[2], m!.bounds[3]]
+      : [0, 0, canvas.height, canvas.width];
+    return clamp(r, canvas.width, canvas.height);
   }
   let r: Rect = layer.type === "group"
     ? (layer.children ?? []).reduce<Rect | null>((acc, c) => {
