@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./engine": {
+      "types": "./src/engine.ts",
+      "import": "./src/engine.ts"
     }
   },
   "files": [
@@ -37,6 +41,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./engine": {
+        "types": "./dist/engine.d.ts",
+        "import": "./dist/engine.js"
       }
     }
   }
