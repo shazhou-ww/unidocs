@@ -171,9 +171,10 @@ git commit -m "feat(doctype-psd): TileGrid — canvas tiling + rect coverage"
 - Produces: `opDirtyRect(op: PsdOp, before: PsdDoc, after: PsdDoc): [number,number,number,number]` — op 改变区域的**保守超集**（画布坐标 `[top,left,bottom,right]`，已 clamp 到画布）。
 
 **规则**（`layerId = op.payload.layerId`；`fullCanvas = [0,0,after.canvas.height, after.canvas.width]`）：
-- `crop` / `init`：`fullCanvas`（画布尺寸/整体可能变）。
-- 其它 op：取 `before` 与 `after` 中该 `layerId` 图层的 `layerInfluenceBounds` 的**并集**；任一侧找不到该图层则用另一侧；两侧都没有（或无 layerId）→ `fullCanvas`（保守兜底）。
-  - 覆盖了移动/变换（两侧 bounds 不同 → 并集覆盖旧+新位置）、可见性/opacity/blend/效果参数（同位置，influence 覆盖）、add（after 有 / before 无）、remove（before 有 / after 无）、reorder（同图层两侧 influence）、adjust/mask_edit/generative_fill（该图层 influence）。
+- `crop` / `init`：`fullCanvas`。
+- **裁剪基耦合兜底**：`clipping:true` 图层的输出取决于其下方**最近的非裁剪可见图层**（结构性事实，`layerInfluenceBounds` 看不到）。因此当 `before` 或 `after` 存在任何裁剪图层（`hasClipping`）时，**结构性 op（`reorder`/`remove_layer`/`add_layer`）以及改动 `visible`/`clipping` 的 `set_props` → `fullCanvas`**。这些 op 可能改变某个裁剪图层的裁剪基，从而改变**裁剪图层自身**的像素（在移动图层 bounds 之外）。
+- 其它 op：取 `before` 与 `after` 中该 `layerId` 图层的 `layerInfluenceBounds` 的**并集**；任一侧找不到则用另一侧；两侧都没有（或无 layerId）→ `fullCanvas`。
+  - 为何并集足够（无裁剪基问题的 op）：move/transform（并集覆盖旧+新位置）、opacity/blend/效果/mask_edit（不改裁剪基的 alpha 形状，且在该图层 influence 内）、adjust/generative_fill（该图层 influence）。**opacity/blend/效果/transform 作用在裁剪基上也安全**——裁剪 alpha 不含 opacity/blend/效果；transform 移动基 alpha，裁剪图层只在基有 alpha 处显示 = 基的旧∪新 influence，已被并集覆盖。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -231,6 +232,37 @@ describe("opDirtyRect", () => {
     const after = before;
     expect(opDirtyRect(op, before, after)).toEqual([0, 0, 100, 100]);
   });
+
+  // Clip-base coupling: a clip layer (bottom→top: far, base, clip) — clip is
+  // clipped to `base`'s alpha. Structural ops that change the clip base must
+  // widen to the full canvas, since the changed pixels land in the CLIP layer's
+  // footprint, not the moved/removed layer's bounds.
+  const clipDoc = () => doc([
+    raster("far", [0, 0, 10, 10]),
+    raster("base", [50, 50, 90, 90]),
+    raster("clip", [50, 50, 90, 90], { clipping: true }),
+  ]);
+
+  it("reorder that changes a clip base → full canvas (not the moved layer's bounds)", () => {
+    const before = clipDoc();
+    const op = { kind: "reorder", payload: { layerId: "far", parentId: null, index: 1 } };
+    const after = applyOne(before, op); // [base, far, clip] → clip's base becomes far
+    expect(opDirtyRect(op, before, after)).toEqual([0, 0, 100, 100]);
+  });
+
+  it("set_props visible:false on a clip base → full canvas", () => {
+    const before = clipDoc();
+    const op = { kind: "set_props", payload: { layerId: "base", props: { visible: false } } };
+    const after = applyOne(before, op);
+    expect(opDirtyRect(op, before, after)).toEqual([0, 0, 100, 100]);
+  });
+
+  it("reorder in a doc with NO clipping layer → tight union (fallback is scoped to clip-present docs)", () => {
+    const before = doc([raster("a", [10, 10, 20, 20]), raster("b", [50, 50, 60, 60])]);
+    const op = { kind: "reorder", payload: { layerId: "a", parentId: null, index: 0 } };
+    const after = applyOne(before, op);
+    expect(opDirtyRect(op, before, after)).toEqual([10, 10, 20, 20]); // a's influence, not full canvas
+  });
 });
 ```
 
@@ -246,7 +278,7 @@ Expected: FAIL — 未定义。
 创建 `src/render/dirty-rect.ts`：
 
 ```typescript
-import type { PsdDoc } from "../model/types.js";
+import type { PsdDoc, Layer } from "../model/types.js";
 import { layerInfluenceBounds } from "./region.js";
 import { findLayer } from "../model/tree.js";
 
@@ -255,10 +287,33 @@ type Rect = [number, number, number, number];
 const union = (a: Rect, b: Rect): Rect =>
   [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
 
+/** Any clipping layer anywhere in the tree (clip-base coupling matters only then). */
+function hasClipping(layers: Layer[]): boolean {
+  for (const l of layers) {
+    if (l.clipping) return true;
+    if (l.children && hasClipping(l.children)) return true;
+  }
+  return false;
+}
+const STRUCTURAL = new Set(["reorder", "remove_layer", "add_layer"]);
+
 export function opDirtyRect(op: { kind: string; payload: Record<string, unknown> }, before: PsdDoc, after: PsdDoc): Rect {
   const canvas = after.canvas;
   const full: Rect = [0, 0, canvas.height, canvas.width];
   if (op.kind === "crop" || op.kind === "init") return full;
+
+  // Clip-base coupling: an op that changes stacking / membership / visibility /
+  // the clipping flag can change which sibling is a clip base, altering a CLIP
+  // layer's pixels outside the target layer's own bounds. layerInfluenceBounds
+  // is single-layer and can't see this — fall back to full canvas.
+  const clipPresent = hasClipping(before.layers) || hasClipping(after.layers);
+  if (clipPresent) {
+    if (STRUCTURAL.has(op.kind)) return full;
+    if (op.kind === "set_props") {
+      const props = (op.payload as { props?: Record<string, unknown> }).props ?? {};
+      if ("visible" in props || "clipping" in props) return full;
+    }
+  }
 
   const layerId = (op.payload as { layerId?: string }).layerId;
   if (!layerId) return full;
@@ -334,6 +389,7 @@ const raster = (id: string, b: [number,number,number,number], rgba: number[], ov
 const base: PsdDoc = { canvas, layers: [
   raster("bg", [0,0,96,96], [20,30,40,255]),
   raster("red", [8,8,40,40], [255,0,0,200], { blendMode: "multiply" }),
+  raster("clp", [8,8,40,40], [0,0,255,255], { clipping: true }), // clips to red (its base) — exercises clip-base coupling
   raster("grn", [50,50,80,80], [0,255,0,255], { dropShadow: { color:{r:0,g:0,b:0}, opacity:0.7, blendMode:"normal", angle:135, distance:5, size:3, choke:0 } }),
 ]};
 
