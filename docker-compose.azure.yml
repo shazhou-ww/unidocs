@@ -1,6 +1,10 @@
 services:
   postgres:
-    image: postgres:18
+    # Alpine variant of the official image: same Postgres, ~100 MB instead of
+    # ~670 MB. Safe here because the schema is integer/text only and doesn't
+    # depend on collation (where Alpine's musl-based locale support is the
+    # usual gotcha).
+    image: postgres:18-alpine
     environment:
       POSTGRES_DB: unidocs
       POSTGRES_USER: unidocs
@@ -8,15 +12,10 @@ services:
     ports:
       - "5433:5432"
 
-  azurite:
-    # Pinned: --skipApiVersionCheck below is a workaround for THIS version's
-    # API allow-list. On a floating tag the symptom would change under us and
-    # the note would no longer be checkable against anything.
-    image: mcr.microsoft.com/azure-storage/azurite:3.36.0
-    # --skipApiVersionCheck: the @azure/storage-blob client sends a newer
-    # x-ms-version than the Azurite image knows about and Azurite rejects it
-    # outright (400 InvalidHeaderValue). The wire format is compatible; only
-    # the version allow-list is stale.
-    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--skipApiVersionCheck"]
-    ports:
-      - "10000:10000"
+# Azurite used to run here as a second container. It doesn't need to: the
+# `azurite` npm package ships `azurite-blob` as a plain Node CLI, and this
+# repo already runs its other local services (gateway/markdown) as spawned
+# `node` processes rather than containers. `scripts/azure-runtime.mjs` and
+# `packages/azure-sdk/tests/containers.ts` each spawn `azurite-blob` directly
+# instead — same `--skipApiVersionCheck` flag, same port 10000, no image to
+# pull.

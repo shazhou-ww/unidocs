@@ -102,12 +102,13 @@ function assertPortFree(host, port, describeConflict) {
 const AZURE_HOST = "127.0.0.1";
 const AZURE_PORTS = { gateway: 41787, markdown: 41788 };
 
-// The host ports `docker-compose.azure.yml` maps Postgres and Azurite onto
-// (see that file and `packages/azure-sdk/tests/containers.ts`). CLAUDE.md
-// promises "occupied port fails fast" for the local runtime; before this
-// check existed, the Azure path only honoured that promise for the two Node
-// services and let `docker compose up -d` hit these two silently, which
-// either wedges on an unrelated container already bound to the port or —
+// The host ports `docker-compose.azure.yml` maps Postgres onto, and the port
+// the spawned `azurite-blob` process listens on (see that file and
+// `packages/azure-sdk/tests/containers.ts`). CLAUDE.md promises "occupied
+// port fails fast" for the local runtime; before this check existed, the
+// Azure path only honoured that promise for the two Node services and let
+// `docker compose up -d` / the azurite-blob spawn hit these two silently,
+// which either wedges on something unrelated already bound to the port or —
 // worse — quietly attaches to whatever stack got there first.
 const AZURE_CONTAINER_PORTS = {
   postgres: {
@@ -116,7 +117,7 @@ const AZURE_CONTAINER_PORTS = {
   },
   azurite: {
     port: 10000,
-    hint: "needed by the local Azure stack's Azurite container — likely either a leftover `docker compose` stack from this repo, or an unrelated project's compose stack bound to the same host port",
+    hint: "needed by the local Azure stack's azurite-blob process — likely either a leftover `pnpm dev --azure` / test run from this repo, or an unrelated process bound to the same host port",
   },
 };
 

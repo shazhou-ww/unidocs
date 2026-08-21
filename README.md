@@ -288,18 +288,20 @@ pnpm dev --azure markdown     # same thing, explicit
 
 Two prerequisites:
 
-- **Docker must be running.** `pnpm dev --azure` starts a `docker compose` stack (Postgres on `:5433`, Azurite on `:10000`) and fails fast with an actionable message if the Docker daemon isn't up, rather than surfacing the raw `docker compose` error.
+- **Docker must be running**, for Postgres. `pnpm dev --azure` starts a `docker compose` stack with just Postgres in it (`:5433`) and fails fast with an actionable message if the Docker daemon isn't up, rather than surfacing the raw `docker compose` error. Azurite is *not* a container — it's the `azurite` npm package's `azurite-blob` CLI, spawned directly as a Node child process on `:10000`, the same way the gateway/markdown services themselves are spawned. There's no image to pull for it.
 - **Only `markdown` is supported today.** `docx` depends on user-scoped CAS, which the Azure backend hasn't implemented yet (planned for phase 4); `pnpm dev --azure docx` fails immediately rather than starting a stack it can't route to.
 
-Migrations run automatically as part of startup — no separate command needed. The Azure ports (`41787`/`41788`) are deliberately offset from Miniflare's (`8787`/`8788`) so both backends can run side by side. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/markdown processes and tears down the docker compose stack (`down -v`).
+Migrations run automatically as part of startup — no separate command needed. The Azure ports (`41787`/`41788`) are deliberately offset from Miniflare's (`8787`/`8788`) so both backends can run side by side. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/markdown/azurite-blob processes and tears down the docker compose stack (`down -v`).
+
+**First run only:** if `postgres:18-alpine` isn't cached locally yet, `docker compose up` pulls it (~100 MB) before anything else can start; every run after that is instant. There's no equivalent cost for Azurite — it installed with `pnpm install` like any other dependency.
 
 ### Tests that need Docker
 
-`pnpm test:local` (via `scripts/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `docker-compose.azure.yml` stack — Postgres on host port `:5433`, Azurite on `:10000` — under an unnamed default compose project, i.e. the same containers and the same host ports. `pnpm dev --azure` starts the identical stack for interactive use.
+`pnpm test:local` (via `scripts/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `docker-compose.azure.yml` Postgres container (host port `:5433`, unnamed default compose project) and each spawn their own `azurite-blob` process on `:10000`. `pnpm dev --azure` starts the identical stack for interactive use.
 
-**Do not run `pnpm test:local`, `pnpm -r test`, and `pnpm dev --azure` at the same time.** They are not isolated from each other: whichever one tears its stack down first (`docker compose ... down -v`) pulls Postgres/Azurite out from under whichever else is still using it, mid-test or mid-session. Run them one at a time, or stop `pnpm dev --azure` before running either test command.
+**Do not run `pnpm test:local`, `pnpm -r test`, and `pnpm dev --azure` at the same time.** They still share the Postgres container: whichever one tears it down first (`docker compose ... down -v`) pulls the database out from under whichever else is still using it, mid-test or mid-session. They also all bind `:10000` for their own `azurite-blob` process, so a second one starting up simply fails to claim the port. Run them one at a time, or stop `pnpm dev --azure` before running either test command.
 
-Docker must be running before invoking `pnpm test:local` or `pnpm -r test` for the first time — both will start the compose stack themselves and run migrations against it, but the Docker daemon itself has to already be up.
+Docker must be running before invoking `pnpm test:local` or `pnpm -r test` for the first time — both will start the Postgres container themselves and run migrations against it, but the Docker daemon itself has to already be up. The first-run Postgres image pull noted above applies here too, and both entry points print an explicit notice before it happens so a slow pull doesn't read as a hang.
 ## Workspace package resolution
 
 Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry a
