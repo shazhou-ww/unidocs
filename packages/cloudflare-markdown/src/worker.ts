@@ -19,20 +19,28 @@
  * Auth: verifies X-Internal-Token from Gateway.
  */
 
-import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
-import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
+import {
+  createEditorDO,
+  createOperatorDO,
+  type EditorEnv,
+} from "@unidocs/cloudflare-sdk";
+import {
+  createMarkdownDocumentAgent,
+  createMarkdownDocumentType,
+} from "@unidocs/doctype-markdown";
 
-const markdown = createMarkdownDocumentType({});
+const markdownFactory = createMarkdownDocumentType;
 
 // Generate Editor and Operator Durable Objects from the markdown DocumentType
-export const MarkdownEditor = createEditorDO(markdown);
+export const MarkdownEditor = createEditorDO(markdownFactory);
 export const MarkdownOperator = createOperatorDO({
-  ...markdown,
+  agentFactory: createMarkdownDocumentAgent,
   llmProvider: async () => {
     throw new Error("LLM provider not configured. Set env.LLM_PROVIDER_URL and env.LLM_API_KEY.");
   },
-  getEditorStub: () => {
-    throw new Error("Editor stub factory not configured.");
+  getEditorStub: (env: Env, userId, docId) => {
+    const id = env.MARKDOWN_EDITOR.idFromName(`${userId}:${docId}`);
+    return env.MARKDOWN_EDITOR.get(id);
   },
 });
 

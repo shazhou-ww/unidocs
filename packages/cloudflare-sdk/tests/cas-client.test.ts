@@ -356,4 +356,3 @@ describe("commitRootRefsOrRollback", () => {
     expect(rollback).toHaveBeenCalledTimes(1);
   });
 });
-

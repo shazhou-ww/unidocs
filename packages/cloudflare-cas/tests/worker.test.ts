@@ -71,4 +71,65 @@ describe("CAS worker root-refs", () => {
     expect(new URL(url).pathname).toBe("/updateRootRefs");
     expect(init.headers.get("X-User-Id")).toBe("alice");
   });
+
+  it("forwards POST /_internal/root-assignments to the Durable Object", async () => {
+    const bindings = env();
+    const res = await worker.fetch(
+      new Request("https://cas/_internal/root-assignments", {
+        method: "POST",
+        headers: {
+          "X-Internal-Token": TOKEN,
+          "X-User-Id": "alice",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          requestId: "doc:d:delta:1",
+          assignments: [{ owner: "doc:d:delta:1", hash }],
+        }),
+      }),
+      bindings as never,
+    );
+    expect(res.ok).toBe(true);
+    const [url, init] = bindings.doFetch.mock.calls[0] as [string, { headers: Headers }];
+    expect(new URL(url).pathname).toBe("/assignRoots");
+    expect(init.headers.get("X-User-Id")).toBe("alice");
+  });
+});
+
+describe("CAS worker full-node reads", () => {
+  it("forwards an authenticated internal node read", async () => {
+    const bindings = env();
+    const res = await worker.fetch(
+      new Request(`https://cas/_internal/nodes/${hash}`, {
+        headers: {
+          "X-Internal-Token": TOKEN,
+          "X-User-Id": "alice",
+        },
+      }),
+      bindings as never,
+    );
+    expect(res.ok).toBe(true);
+    const [url, init] = bindings.doFetch.mock.calls[0] as [string, { headers: Headers }];
+    expect(new URL(url).pathname).toBe("/readNode");
+    expect(init.headers.get("X-CAS-Hash")).toBe(hash);
+  });
+
+  it("forwards an authenticated portable node upload", async () => {
+    const bindings = env();
+    const res = await worker.fetch(
+      new Request(`https://cas/_internal/nodes/${hash}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/vnd.unidocs.cas-node",
+          "X-Internal-Token": TOKEN,
+          "X-User-Id": "alice",
+        },
+        body: new Uint8Array([1]),
+      }),
+      bindings as never,
+    );
+    expect(res.ok).toBe(true);
+    const [url] = bindings.doFetch.mock.calls[0] as [string];
+    expect(new URL(url).pathname).toBe("/leasePortableNode");
+  });
 });

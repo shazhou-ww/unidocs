@@ -38,6 +38,9 @@ importers:
       '@unidocs/cas':
         specifier: workspace:*
         version: link:../cas
+      '@unidocs/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -135,6 +138,10 @@ importers:
         version: 3.2.7(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
   packages/core:
+    dependencies:
+      cborg:
+        specifier: ^6.1.1
+        version: 6.1.1
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -145,13 +152,13 @@ importers:
       '@ariadng/office':
         specifier: 0.3.0
         version: 0.3.0
-      '@unidocs/cas':
-        specifier: workspace:*
-        version: link:../cas
       '@unidocs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -928,6 +935,10 @@ packages:
     resolution: {integrity: sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==}
     engines: {node: '>=8'}
 
+  cborg@6.1.1:
+    resolution: {integrity: sha512-Ci8+V1OMFtqea8EXicsATqV+3kEqCGXCicM+5MEzpKTxqy58WMzhJUjtUqAjfWpKPZ0wpG8F+u5mC8Xy/0Zevg==}
+    hasBin: true
+
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
     engines: {node: '>=18'}
@@ -1693,6 +1704,8 @@ snapshots:
   blake3-wasm@2.1.5: {}
 
   cac@6.7.14: {}
+
+  cborg@6.1.1: {}
 
   chai@5.3.3:
     dependencies:

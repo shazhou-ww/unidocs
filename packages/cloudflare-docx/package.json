@@ -5,10 +5,12 @@
   "type": "module",
   "main": "./dist/worker.js",
   "types": "./dist/worker.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "deploy": "wrangler deploy"

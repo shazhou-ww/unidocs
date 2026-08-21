@@ -19,20 +19,28 @@
  * Auth: verifies X-Internal-Token from Gateway.
  */
 
-import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
-import { createDocxDocumentType } from "@unidocs/doctype-docx";
+import {
+  createEditorDO,
+  createOperatorDO,
+  type EditorEnv,
+} from "@unidocs/cloudflare-sdk";
+import {
+  createDocxDocumentAgent,
+  createDocxDocumentType,
+} from "@unidocs/doctype-docx";
 
-const docx = createDocxDocumentType({});
+const docxFactory = createDocxDocumentType;
 
 // Generate Editor and Operator Durable Objects from the docx DocumentType
-export const DocxEditor = createEditorDO(docx);
+export const DocxEditor = createEditorDO(docxFactory);
 export const DocxOperator = createOperatorDO({
-  ...docx,
+  agentFactory: createDocxDocumentAgent,
   llmProvider: async () => {
     throw new Error("LLM provider not configured. Set env.LLM_PROVIDER_URL and env.LLM_API_KEY.");
   },
-  getEditorStub: () => {
-    throw new Error("Editor stub factory not configured.");
+  getEditorStub: (env: Env, userId, docId) => {
+    const id = env.DOCX_EDITOR.idFromName(`${userId}:${docId}`);
+    return env.DOCX_EDITOR.get(id);
   },
 });
 
