@@ -2,6 +2,7 @@ import type { PsdDoc, Layer, Pixels, Mask } from "../model/types.js";
 import { compositeOver } from "./blend.js";
 import { findLayer } from "../model/tree.js";
 import { type BlobStore, PixelCache, resolvePixels } from "./pixel-source.js";
+import { layerInfluenceBounds } from "./region.js";
 
 /** Render context: where lazy pixel refs are faulted in from, and the decoded
  *  cache they land in. Resident-only documents never touch the store. */
@@ -9,6 +10,27 @@ export interface RenderCtx {
   store: BlobStore;
   cache: PixelCache;
 }
+
+/** Where composited pixels land: a buffer whose (0,0) maps to canvas
+ *  (originY, originX). Writes outside [0,width)×[0,height) are dropped.
+ *  The full-canvas default (origin 0,0; width=cw; height=ch) is byte-identical
+ *  to the pre-refactor behavior. */
+export interface Target {
+  data: Uint8ClampedArray;
+  originX: number; originY: number; // canvas coord of this buffer's (0,0)
+  width: number; height: number;    // buffer dimensions
+}
+const fullTarget = (data: Uint8ClampedArray, cw: number, ch: number): Target =>
+  ({ data, originX: 0, originY: 0, width: cw, height: ch });
+
+type Rect = [number, number, number, number]; // [top,left,bottom,right]
+/** Rect intersection. Degenerate/inverted rects (top≥bottom or left≥right) —
+ *  e.g. an off-canvas layer's influence clamped to an inverted box — never
+ *  intersect, so such layers read as "misses region" and are safely skipped. */
+const intersects = (a: Rect, b: Rect): boolean => {
+  if (a[0] >= a[2] || a[1] >= a[3] || b[0] >= b[2] || b[1] >= b[3]) return false;
+  return a[1] < b[3] && b[1] < a[3] && a[0] < b[2] && b[0] < a[2];
+};
 
 /** A store that fails loudly if a lazy PixelRef is ever resolved without a real
  *  BlobStore — resident documents never hit `get`, so they pass. */
@@ -33,6 +55,11 @@ function defaultCtx(): RenderCtx {
   return { store: NO_STORE, cache: new PixelCache(DEFAULT_CACHE_BYTES) };
 }
 
+/** Public alias of the internal default context, for region-direct callers. */
+export function defaultRenderCtx(): RenderCtx {
+  return defaultCtx();
+}
+
 /** Mask coverage at canvas pixel (cx,cy), 0..1. Value is channel 0 of the
  *  mask; outside the mask rect it is `defaultColor`. */
 function maskCoverageAt(mask: Mask, cx: number, cy: number): number {
@@ -52,8 +79,40 @@ export async function render(doc: PsdDoc, ctx: RenderCtx = defaultCtx()): Promis
   const w = doc.canvas.width;
   const h = doc.canvas.height;
   const acc = new Uint8ClampedArray(w * h * 4);
-  await renderList(acc, w, h, doc.layers, ctx);
+  await renderList(fullTarget(acc, w, h), w, h, doc.layers, ctx);
   return { width: w, height: h, data: acc };
+}
+
+/**
+ * Region-limited composite: run the layer stack into `target` (which may be a
+ * sub-rectangle of the canvas), skipping top-level layers whose influence
+ * bounds miss `clipRegion`. Byte-identical to a full render cropped to the
+ * region — the skip is conservative (adjustments and clip bases are never
+ * dropped, and inverted/degenerate influence reads as "misses"). Canvas
+ * dimensions drive clip/mask indexing; `target` only remaps the final write.
+ */
+export async function compositeInto(
+  target: Target,
+  doc: PsdDoc,
+  clipRegion: Rect,
+  ctx: RenderCtx,
+): Promise<void> {
+  const canvas = { width: doc.canvas.width, height: doc.canvas.height };
+  const layers = doc.layers;
+  const kept: Layer[] = [];
+  for (let i = 0; i < layers.length; i++) {
+    const layer = layers[i];
+    // Never skip adjustment layers: they transform the backdrop, not a shape.
+    if (layer.type === "adjustment") { kept.push(layer); continue; }
+    // Never skip a layer that serves as the clip base for a following clipping
+    // layer (matches renderList's `next?.clipping` base logic) — dropping it
+    // would leave the clipping layer unconfined.
+    const next = nextVisible(layers, i + 1);
+    if (next?.clipping) { kept.push(layer); continue; }
+    // Conservative influence skip: drop only when the layer cannot touch region.
+    if (intersects(layerInfluenceBounds(layer, canvas), clipRegion)) kept.push(layer);
+  }
+  await renderList(target, canvas.width, canvas.height, kept, ctx);
 }
 
 /**
@@ -62,7 +121,7 @@ export async function render(doc: PsdDoc, ctx: RenderCtx = defaultCtx()): Promis
  * (the nearest non-clipping layer). A new non-clipping layer starts a new
  * clip base.
  */
-async function renderList(acc: Uint8ClampedArray, w: number, h: number, layers: Layer[], ctx: RenderCtx): Promise<void> {
+async function renderList(target: Target, cw: number, ch: number, layers: Layer[], ctx: RenderCtx): Promise<void> {
   let baseCoverage: Uint8ClampedArray | null = null;
   for (let i = 0; i < layers.length; i++) {
     const layer = layers[i];
@@ -73,15 +132,15 @@ async function renderList(acc: Uint8ClampedArray, w: number, h: number, layers: 
       continue;
     }
     if (layer.clipping && baseCoverage) {
-      await applyLayer(acc, w, h, layer, ctx, baseCoverage);
+      await applyLayer(target, cw, ch, layer, ctx, baseCoverage);
     } else {
-      await applyLayer(acc, w, h, layer, ctx);
+      await applyLayer(target, cw, ch, layer, ctx);
       // The clip base is only needed if a following sibling actually clips to
       // it. Computing it eagerly for every layer is very expensive — for a
       // group it re-renders the whole group into a fresh canvas buffer — so
       // derive it lazily only when the next visible layer is a clipping layer.
       const next = nextVisible(layers, i + 1);
-      baseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(w, h, layer, ctx) : null;
+      baseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(cw, ch, layer, ctx) : null;
     }
   }
 }
@@ -172,23 +231,28 @@ export function downscale(px: Pixels, maxSize: number): Pixels {
   return { width: tw, height: th, data };
 }
 
-async function applyLayer(acc: Uint8ClampedArray, w: number, h: number, layer: Layer, ctx: RenderCtx, clip?: Uint8ClampedArray): Promise<void> {
+async function applyLayer(target: Target, cw: number, ch: number, layer: Layer, ctx: RenderCtx, clip?: Uint8ClampedArray): Promise<void> {
   if (!layer.visible) return;
 
   if (layer.type === "group") {
-    const sub = new Uint8ClampedArray(w * h * 4);
-    await renderList(sub, w, h, layer.children ?? [], ctx);
-    compositeBuffer(acc, w, h, sub, w, h, 0, 0, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip);
+    // Group children render into a fresh full-canvas buffer (correctness over
+    // savings); the composited group then lands into `target`, cropped there.
+    const sub = new Uint8ClampedArray(cw * ch * 4);
+    await renderList(fullTarget(sub, cw, ch), cw, ch, layer.children ?? [], ctx);
+    compositeBuffer(target, cw, sub, cw, ch, 0, 0, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip);
     return;
   }
 
   if (layer.type === "adjustment") {
     // Photoshop applies an adjustment to the backdrop, then composites the
     // result back using the layer's blend mode / opacity / mask. Copy the
-    // backdrop, transform the copy, then composite it over the original.
-    const adjusted = new Uint8ClampedArray(acc);
+    // backdrop (the target buffer's current content), transform the copy
+    // pointwise, then composite it back 1:1 over the target. The transform is
+    // dimension-agnostic, so it works whether the target is the full canvas or
+    // a sub-region.
+    const adjusted = new Uint8ClampedArray(target.data);
     if (applyAdjustment(adjusted, layer.adjustType, layer.params ?? {})) {
-      compositeBuffer(acc, w, h, adjusted, w, h, 0, 0, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip);
+      compositeBuffer(target, cw, adjusted, target.width, target.height, target.originX, target.originY, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip);
     }
     return;
   }
@@ -201,21 +265,21 @@ async function applyLayer(acc: Uint8ClampedArray, w: number, h: number, layer: L
     const [top, left] = layer.bounds;
     // Drop Shadow renders BEHIND the fill (and is an effect, so it uses layer
     // opacity, not fillOpacity — visible even on a fill:0 layer).
-    if (layer.dropShadow) dropShadowEffect(acc, w, h, layer, px, clip);
+    if (layer.dropShadow) dropShadowEffect(target, cw, ch, layer, px, clip);
     // Fill contribution. `fillOpacity` scales ONLY the layer's own fill, never
     // its effects — a fill:0 layer shows only its stroke/overlay (the classic
     // "frame" technique: transparent glass with a visible border).
     // Color Overlay is folded into the fill composite (unchanged legacy path,
     // kept exact for verified renders); it is not attenuated by fillOpacity.
     if (layer.colorOverlay) {
-      compositeBuffer(acc, w, h, px.data, px.width, px.height, left, top, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip, layer.colorOverlay);
+      compositeBuffer(target, cw, px.data, px.width, px.height, left, top, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip, layer.colorOverlay);
     } else {
       const fill = layer.opacity * (layer.fillOpacity ?? 1);
       if (fill > 0) {
-        compositeBuffer(acc, w, h, px.data, px.width, px.height, left, top, fill, layer.blendMode, layer.mask ?? undefined, clip);
+        compositeBuffer(target, cw, px.data, px.width, px.height, left, top, fill, layer.blendMode, layer.mask ?? undefined, clip);
       }
     }
-    if (layer.stroke) strokeEffect(acc, w, h, layer, px, clip);
+    if (layer.stroke) strokeEffect(target, cw, layer, px, clip);
   }
 }
 
@@ -229,7 +293,8 @@ async function applyLayer(acc: Uint8ClampedArray, w: number, h: number, layer: L
  *   center  → within `size/2` on whichever side
  * Stroke is a layer effect, so it uses layer.opacity (not fillOpacity).
  */
-function strokeEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Layer, px: Pixels, clip?: Uint8ClampedArray): void {
+function strokeEffect(target: Target, cw: number, layer: Layer, px: Pixels, clip?: Uint8ClampedArray): void {
+  const { data: acc, originX, originY, width: tw, height: th } = target;
   const st = layer.stroke!;
   const { width: sw, height: sh, data } = px;
   const [top, left] = layer.bounds;
@@ -246,10 +311,10 @@ function strokeEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Lay
   const base = layer.opacity * st.opacity;
   for (let y = 0; y < sh; y++) {
     const cy = top + y;
-    if (cy < 0 || cy >= ch) continue;
     for (let x = 0; x < sw; x++) {
       const cx = left + x;
-      if (cx < 0 || cx >= cw) continue;
+      const bx = cx - originX, by = cy - originY;
+      if (bx < 0 || bx >= tw || by < 0 || by >= th) continue;
       const i = y * sw + x;
       const on = solid(i);
       let hit = false;
@@ -261,7 +326,7 @@ function strokeEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Lay
       if (layer.mask) sa *= maskCoverageAt(layer.mask, cx, cy);
       if (clip) sa *= clip[cy * cw + cx] / 255;
       if (sa === 0) continue;
-      const di = (cy * cw + cx) * 4;
+      const di = (by * tw + bx) * 4;
       const out = compositeOver(
         [acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255],
         [sr, sg, sb, sa],
@@ -282,7 +347,8 @@ function strokeEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Lay
  * layer's own fill (drawn afterwards) conceals the overlapping part, matching
  * Photoshop's default "layer knocks out drop shadow".
  */
-function dropShadowEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer: Layer, px: Pixels, clip?: Uint8ClampedArray): void {
+function dropShadowEffect(target: Target, cw: number, ch: number, layer: Layer, px: Pixels, clip?: Uint8ClampedArray): void {
+  const { data: acc, originX, originY, width: tw, height: th } = target;
   const ds = layer.dropShadow!;
   const { width: sw, height: sh, data } = px;
   const [top, left] = layer.bounds;
@@ -295,11 +361,12 @@ function dropShadowEffect(acc: Uint8ClampedArray, cw: number, ch: number, layer:
 
   // Composite one shadow sample (canvas coords, coverage 0..1) behind acc.
   const put = (tx: number, ty: number, a: number): void => {
-    if (a <= 0 || tx < 0 || tx >= cw || ty < 0 || ty >= ch) return;
+    const bx = tx - originX, by = ty - originY;
+    if (a <= 0 || bx < 0 || bx >= tw || by < 0 || by >= th) return;
     let sa = a * base;
     if (clip) sa *= clip[ty * cw + tx] / 255;
     if (sa <= 0) return;
-    const di = (ty * cw + tx) * 4;
+    const di = (by * tw + bx) * 4;
     const out = compositeOver(
       [acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255],
       [sr, sg, sb, sa],
@@ -414,7 +481,7 @@ async function layerAlpha(w: number, h: number, layer: Layer, ctx: RenderCtx): P
   const cov = new Uint8ClampedArray(w * h);
   if (layer.type === "group") {
     const sub = new Uint8ClampedArray(w * h * 4);
-    await renderList(sub, w, h, layer.children ?? [], ctx);
+    await renderList(fullTarget(sub, w, h), w, h, layer.children ?? [], ctx);
     for (let i = 0; i < w * h; i++) {
       let a = sub[i * 4 + 3] / 255;
       if (layer.mask) a *= maskCoverageAt(layer.mask, i % w, Math.floor(i / w));
@@ -444,25 +511,26 @@ async function layerAlpha(w: number, h: number, layer: Layer, ctx: RenderCtx): P
 }
 
 function compositeBuffer(
-  acc: Uint8ClampedArray, cw: number, ch: number,
+  target: Target, cw: number,
   src: Uint8ClampedArray, sw: number, sh: number,
   ox: number, oy: number, opacity: number, mode: string,
   mask?: Mask, clip?: Uint8ClampedArray,
   colorOverlay?: { r: number; g: number; b: number; opacity: number },
 ): void {
+  const { data: acc, originX, originY, width: tw, height: th } = target;
   const oa = colorOverlay ? colorOverlay.opacity : 0;
   for (let y = 0; y < sh; y++) {
     const cy = oy + y;
-    if (cy < 0 || cy >= ch) continue;
     for (let x = 0; x < sw; x++) {
       const cx = ox + x;
-      if (cx < 0 || cx >= cw) continue;
+      const bx = cx - originX, by = cy - originY;
+      if (bx < 0 || bx >= tw || by < 0 || by >= th) continue;
       const si = (y * sw + x) * 4;
       let sa = (src[si + 3] / 255) * opacity;
       if (mask) sa *= maskCoverageAt(mask, cx, cy);
       if (clip) sa *= clip[cy * cw + cx] / 255;
       if (sa === 0) continue;
-      const di = (cy * cw + cx) * 4;
+      const di = (by * tw + bx) * 4;
       // Color Overlay effect: replace the layer's colour within its alpha
       // (normal-blend approximation of the effect blend mode).
       let sr = src[si] / 255, sg = src[si + 1] / 255, sb = src[si + 2] / 255;

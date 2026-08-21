@@ -1,4 +1,5 @@
-import type { Layer } from "../model/types.js";
+import type { Layer, PsdDoc, Pixels } from "../model/types.js";
+import { compositeInto, defaultRenderCtx, type RenderCtx } from "./composite.js";
 
 type Rect = [number, number, number, number]; // [top,left,bottom,right]
 
@@ -40,4 +41,29 @@ export function layerInfluenceBounds(layer: Layer, canvas: { width: number; heig
     r = union(r, grow(shift(layer.bounds as Rect, dx, dy), ds.size + ds.choke));
   }
   return clamp(r, canvas.width, canvas.height);
+}
+
+/**
+ * Composite only what falls in `region`, into a region-sized buffer. Iterates
+ * only the region's pixels and skips layers whose influence bounds miss the
+ * region (via compositeInto). Byte-identical to renderRegion(doc, region),
+ * which renders the full canvas then crops — this is the compute-saving
+ * primitive later incremental/tiled renders build on.
+ *
+ * Returns an empty (0-sized) Pixels when the requested region has zero area
+ * (e.g. an off-canvas or inverted region clamps to width/height 0).
+ */
+export async function renderRegionDirect(doc: PsdDoc, region: Rect, ctx?: RenderCtx): Promise<Pixels> {
+  const t = Math.max(0, Math.floor(region[0])), l = Math.max(0, Math.floor(region[1]));
+  const b = Math.min(doc.canvas.height, Math.ceil(region[2])), r = Math.min(doc.canvas.width, Math.ceil(region[3]));
+  const w = Math.max(0, r - l), h = Math.max(0, b - t);
+  const data = new Uint8ClampedArray(w * h * 4);
+  // Composite the (skip-filtered) layer stack straight into the region buffer,
+  // via the same core as render(). The clip region is the clamped rect.
+  await compositeInto(
+    { data, originX: l, originY: t, width: w, height: h },
+    doc, [t, l, b, r],
+    ctx ?? defaultRenderCtx(),
+  );
+  return { width: w, height: h, data };
 }
