@@ -309,7 +309,9 @@ const canvas = { width: 20, height: 20, colorMode: "RGB" as const, depth: 8 as c
 // A doc exercising: opacity/blend, drop shadow (bleeds outside bounds),
 // stroke, a masked adjustment, a group, and a clipping layer.
 const shadowLayer = raster("sh", [8, 8, 12, 12], [255,0,0,255], {
-  dropShadow: { color:{r:0,g:0,b:0}, opacity:0.8, blendMode:"normal", angle:315, distance:4, size:2, choke:0 },
+  // angle 135 → composite.ts offset dx=round(-4·cos135)=+3, dy=round(4·sin135)=+3
+  // (shadow falls down-right of the fill). influence ≈ [8,8,17,17].
+  dropShadow: { color:{r:0,g:0,b:0}, opacity:0.8, blendMode:"normal", angle:135, distance:4, size:2, choke:0 },
 });
 const doc: PsdDoc = {
   canvas,
@@ -326,7 +328,8 @@ const REGIONS: [number,number,number,number][] = [
   [0,0,20,20],   // full
   [0,0,10,10],   // top-left quadrant
   [10,10,20,20], // bottom-right quadrant
-  [13,5,16,8],   // OUTSIDE shadowLayer's fill bounds but inside its shadow bleed (angle 315 → dx>0,dy>0)
+  [12,12,14,14], // OUTSIDE shadowLayer's fill [8,8,12,12] but INSIDE its shadow bleed [8,8,17,17]
+                 // (forces renderRegionDirect to NOT skip the shadow layer here); avoids group child [14,14,..]
   [4,4,10,10],   // exactly the multiply layer
 ];
 
