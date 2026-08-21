@@ -56,6 +56,15 @@ export const DOC_TYPES = {
     operatorClass: "DocxOperator",
     port: 8789,
   },
+  psd: {
+    entry: "packages/cloudflare-psd/src/worker.ts",
+    worker: "unidocs-psd",
+    editor: "PSD_EDITOR",
+    editorClass: "PsdEditor",
+    operator: "PSD_OPERATOR",
+    operatorClass: "PsdOperator",
+    port: 8790,
+  },
 };
 
 /**
