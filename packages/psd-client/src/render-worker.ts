@@ -100,5 +100,14 @@ async function handle(req: WorkerRequest): Promise<void> {
 let queue: Promise<void> = Promise.resolve();
 
 self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
-  queue = queue.then(() => handle(ev.data));
+  // `handle()` already catches and reports every request-scoped failure as
+  // an `error` response, so this `.catch` is a last-resort backstop for
+  // anything that escapes it (e.g. a bug in `handle` itself throwing before
+  // its own try/catch). Without it, a rejection here would propagate into
+  // `queue` and every future `.then(() => handle(...))` chained onto it
+  // would be skipped — one bad message would permanently wedge the worker
+  // for the rest of the session.
+  queue = queue.then(() => handle(ev.data)).catch((err) => {
+    console.error("render-worker: unhandled error draining message queue", err);
+  });
 };
