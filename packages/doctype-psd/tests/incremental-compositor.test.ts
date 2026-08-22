@@ -70,3 +70,42 @@ describe("IncrementalCompositor ≡ render(doc) across an op sequence", () => {
     expect(await comp.readTile(dirtyTx, dirtyTy)).not.toBe(dirtyBefore); // invalidated → recomputed (new object)
   });
 });
+
+describe("below-checkpoint reuse across edits to the same active layer", () => {
+  // grn is the top-most layer (index 3); red is a lower layer (index 1).
+  const setOpacity = (layerId: string, opacity: number) =>
+    ({ kind: "set_props", payload: { layerId, props: { opacity } } });
+
+  it("does not rebuild belowChk on consecutive edits to the same layer, but rebuilds when the active layer changes", async () => {
+    const comp = new IncrementalCompositor(base, { tileSize: 40 });
+    await comp.composite(); // warm all tiles (activeIndex starts at 0)
+
+    // First edit to a high-index layer L=grn → activeIndex moves to 3, belowChk discarded.
+    await comp.applyOp(setOpacity("grn", 0.9) as any);
+    await comp.composite();
+    const r1 = comp._belowRebuilds;
+
+    // Second edit to the SAME layer L=grn → activeIndex unchanged, belowChk reused.
+    await comp.applyOp(setOpacity("grn", 0.8) as any);
+    await comp.composite();
+    const r2 = comp._belowRebuilds;
+    expect(r2).toBe(r1); // no belowChk rebuild while the active layer is stable
+
+    // Switch the active layer to M=red (a lower index) → belowChk discarded, rebuilt.
+    await comp.applyOp(setOpacity("red", 0.7) as any);
+    await comp.composite();
+    const r3 = comp._belowRebuilds;
+    expect(r3).toBeGreaterThan(r2); // active-layer change forces a below rebuild
+  });
+
+  it("stays byte-identical to render(doc) while reusing the checkpoint", async () => {
+    const comp = new IncrementalCompositor(base, { tileSize: 40 });
+    await comp.composite();
+    let doc = base;
+    for (const op of [setOpacity("grn", 0.9), setOpacity("grn", 0.8), setOpacity("grn", 0.6), setOpacity("red", 0.5)]) {
+      await comp.applyOp(op as any);
+      doc = applyOne(doc, op as any);
+      expect(bytes(await comp.composite())).toEqual(bytes(await render(doc)));
+    }
+  });
+});

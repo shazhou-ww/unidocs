@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { applyOne } from "../src/ops/index.js";
-import { opDirtyRect } from "../src/render/dirty-rect.js";
+import { opDirtyRect, opActiveIndex } from "../src/render/dirty-rect.js";
 
 const canvas = { width: 100, height: 100, colorMode: "RGB" as const, depth: 8 as const, resolution: 72, profile: "sRGB" };
 const px = (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) });
@@ -90,5 +90,60 @@ describe("opDirtyRect", () => {
     const after = applyOne(before, op);
     // Should be the union of a's influence before and after (no structural coupling).
     expect(opDirtyRect(op, before, after)).toEqual([10, 10, 20, 20]);
+  });
+});
+
+const group = (id: string, children: Layer[], over: Partial<Layer> = {}): Layer => ({
+  id, type: "group", name: id, bounds: [0, 0, 100, 100], opacity: 1, blendMode: "normal",
+  visible: true, locked: false, clipping: false, children, ...over,
+});
+
+describe("opActiveIndex", () => {
+  it("set_props on the k-th top-level layer → k", () => {
+    const before = doc([raster("a", [0, 0, 10, 10]), raster("b", [0, 0, 10, 10]), raster("c", [0, 0, 10, 10])]);
+    const op = { kind: "set_props", payload: { layerId: "b", props: { opacity: 0.5 } } };
+    const after = applyOne(before, op);
+    expect(opActiveIndex(op, before, after)).toBe(1);
+  });
+
+  it("set_props on a group's child → the group's top-level index (top ancestor)", () => {
+    const before = doc([raster("a", [0, 0, 10, 10]), group("g", [raster("child", [0, 0, 10, 10])])]); // g at index 1
+    const op = { kind: "set_props", payload: { layerId: "child", props: { opacity: 0.5 } } };
+    const after = applyOne(before, op);
+    expect(opActiveIndex(op, before, after)).toBe(1);
+  });
+
+  it("reorder → min(old top index, new top index)", () => {
+    const before = doc([raster("a", [0, 0, 10, 10]), raster("b", [0, 0, 10, 10]), raster("c", [0, 0, 10, 10])]); // c at 2
+    const op = { kind: "reorder", payload: { layerId: "c", parentId: null, index: 0 } }; // c: 2 → 0
+    const after = applyOne(before, op);
+    expect(opActiveIndex(op, before, after)).toBe(0); // min(2, 0)
+  });
+
+  it("crop → 0", () => {
+    const before = doc([raster("a", [0, 0, 10, 10]), raster("b", [0, 0, 10, 10])]);
+    const op = { kind: "crop", payload: { rect: [0, 0, 5, 5] } };
+    const after = applyOne(before, op);
+    expect(opActiveIndex(op, before, after)).toBe(0);
+  });
+
+  it("remove_layer → the removed layer's top index in before (absent from after)", () => {
+    const before = doc([raster("a", [0, 0, 10, 10]), raster("b", [0, 0, 10, 10]), raster("c", [0, 0, 10, 10])]);
+    const op = { kind: "remove_layer", payload: { layerId: "b" } }; // index 1 in before, gone in after
+    const after = applyOne(before, op);
+    expect(opActiveIndex(op, before, after)).toBe(1);
+  });
+
+  it("add_layer at top index i → i (new layer absent from before)", () => {
+    const before = doc([raster("a", [0, 0, 10, 10]), raster("b", [0, 0, 10, 10])]);
+    const op = { kind: "add_layer", payload: { layer: raster("n", [0, 0, 10, 10]), parentId: null, index: 1 } };
+    const after = applyOne(before, op);
+    expect(opActiveIndex(op, before, after)).toBe(1);
+  });
+
+  it("set_props on an absent layer → 0 (conservative)", () => {
+    const before = doc([raster("a", [0, 0, 10, 10])]);
+    const op = { kind: "set_props", payload: { layerId: "nope", props: {} } };
+    expect(opActiveIndex(op, before, before)).toBe(0);
   });
 });

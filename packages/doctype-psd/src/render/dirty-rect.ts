@@ -1,6 +1,6 @@
 import type { PsdDoc, Layer } from "../model/types.js";
 import { layerInfluenceBounds } from "./region.js";
-import { findLayer } from "../model/tree.js";
+import { findLayer, isDescendant } from "../model/tree.js";
 
 type Rect = [number, number, number, number];
 
@@ -45,4 +45,30 @@ export function opDirtyRect(op: { kind: string; payload: Record<string, unknown>
   if (rb) return rb;
   if (ra) return ra;
   return full; // neither side has it → conservative
+}
+
+/** Top-level index of the layer that owns `layerId`: the top-level layer that
+ *  either IS `layerId` or has it anywhere in its `children` subtree. -1 if the
+ *  id is not present in the document. */
+function topIndexOf(doc: PsdDoc, layerId: string): number {
+  return doc.layers.findIndex((l) => l.id === layerId || isDescendant(l, layerId));
+}
+
+/**
+ * The minimum TOP-LEVEL layer index an op affects — the checkpoint-invalidation
+ * threshold for the below-checkpoint cache (`fold[0, A)` stays valid iff nothing
+ * at or below A changed). `crop`/`init` → 0 (whole stack). Structural ops
+ * (`reorder`/`remove_layer`/`add_layer`) and every other layer-scoped op resolve
+ * the affected layer's top-level ancestor index in `before` and `after` and take
+ * the smaller — 0 (conservative) when the id is absent from both sides.
+ */
+export function opActiveIndex(op: { kind: string; payload: Record<string, unknown> }, before: PsdDoc, after: PsdDoc): number {
+  if (op.kind === "crop" || op.kind === "init") return 0;
+  // add_layer names the new layer under `layer`; every other layer-scoped op
+  // (structural or not) names it under `layerId`.
+  const p = op.payload as { layerId?: string; layer?: { id?: string } };
+  const id = op.kind === "add_layer" ? p.layer?.id : p.layerId;
+  if (!id) return 0; // no target layer → conservative (invalidate from the base)
+  const candidates = [topIndexOf(before, id), topIndexOf(after, id)].filter((i) => i >= 0);
+  return candidates.length ? Math.min(...candidates) : 0;
 }

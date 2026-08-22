@@ -1,20 +1,31 @@
 import type { PsdDoc, Pixels } from "../model/types.js";
 import type { PsdOp } from "../ops/index.js";
-import type { RenderCtx } from "./composite.js";
+import type { RenderCtx, Target } from "./composite.js";
 import { applyOne } from "../ops/index.js";
-import { renderRegionDirect } from "./region.js";
+import { foldRange } from "./composite.js";
 import { allTiles, tilesForRect, tileKey, tileRegion } from "./tile-grid.js";
-import { opDirtyRect } from "./dirty-rect.js";
+import { opDirtyRect, opActiveIndex } from "./dirty-rect.js";
 
 type Rect = [number, number, number, number];
 
 /** Stateful tile-incremental compositor. composite() is byte-identical to
- *  render(doc); applyOp recomputes only tiles covering the op's dirty rect. */
+ *  render(doc); applyOp recomputes only tiles covering the op's dirty rect.
+ *
+ *  Active-layer below-checkpoint: per tile it caches the accumulator of layers
+ *  `[0, A)` (A = the active/edited layer's top-level index). Re-editing the same
+ *  layer reuses that checkpoint and replays only `[A, N)` per frame. The cache is
+ *  discarded whenever the active layer changes or anything at/below A changes
+ *  (`A' !== #activeIndex`), so a tile is never composited over a stale below —
+ *  `foldRange`'s proven parity does the rest, keeping output byte-identical. */
 export class IncrementalCompositor {
   #doc: PsdDoc;
   readonly #tileSize: number;
   readonly #ctx?: RenderCtx;
   readonly #cache = new Map<string, Pixels>();
+  // Per-tile accumulator of layers [0, #activeIndex), sized to the tile region.
+  readonly #belowChk = new Map<string, Uint8ClampedArray>();
+  #activeIndex = 0;
+  #belowRebuilds = 0;
 
   constructor(doc: PsdDoc, opts: { tileSize?: number; ctx?: RenderCtx } = {}) {
     this.#doc = doc;
@@ -26,18 +37,31 @@ export class IncrementalCompositor {
 
   get doc(): PsdDoc { return this.#doc; }
   get tileSize(): number { return this.#tileSize; }
+  /** Test-observable count of below-checkpoint (`fold[0, A)`) builds. Stable
+   *  across edits to the same active layer; grows when the checkpoint is rebuilt. */
+  get _belowRebuilds(): number { return this.#belowRebuilds; }
 
   async applyOp(op: PsdOp): Promise<Rect> {
     const next = applyOne(this.#doc, op);
     const dirty = opDirtyRect(op, this.#doc, next);
+    const activeNext = opActiveIndex(op, this.#doc, next);
     this.#doc = next;
-    // Invalidate every tile the dirty rect touches. A canvas-size change
-    // (crop) can change the grid, so on size change drop the whole cache.
+    // A canvas-size change (crop/init) can change the tile grid — drop
+    // everything (finished tiles AND checkpoints).
     if (this.#cacheGridMismatch(next)) {
       this.#cache.clear();
-    } else {
-      for (const t of tilesForRect(next.canvas, this.#tileSize, dirty)) this.#cache.delete(tileKey(t.tx, t.ty));
+      this.#belowChk.clear();
+      this.#activeIndex = activeNext;
+      return dirty;
     }
+    // Active layer changed, or something at/below A changed → the cached
+    // `fold[0, A)` may be stale; discard all checkpoints and re-anchor A.
+    if (activeNext !== this.#activeIndex || activeNext < this.#activeIndex) {
+      this.#belowChk.clear();
+      this.#activeIndex = activeNext;
+    }
+    // Tile-level invalidation of finished tiles is still driven by the dirty rect.
+    for (const t of tilesForRect(next.canvas, this.#tileSize, dirty)) this.#cache.delete(tileKey(t.tx, t.ty));
     return dirty;
   }
 
@@ -46,7 +70,25 @@ export class IncrementalCompositor {
     const hit = this.#cache.get(key);
     if (hit) return hit;
     const region = tileRegion(this.#doc.canvas, this.#tileSize, tx, ty);
-    const px = await renderRegionDirect(this.#doc, region, this.#ctx);
+    const [top, left, bottom, right] = region;
+    const w = right - left, h = bottom - top;
+    const N = this.#doc.layers.length;
+    const a = Math.max(0, Math.min(this.#activeIndex, N));
+    const targetOf = (data: Uint8ClampedArray): Target => ({ data, originX: left, originY: top, width: w, height: h });
+
+    // Below-checkpoint: acc of layers [0, a). Build (and count) on miss.
+    let below = this.#belowChk.get(key);
+    if (!below) {
+      below = new Uint8ClampedArray(w * h * 4);
+      await foldRange(targetOf(below), this.#doc, 0, a, this.#ctx);
+      this.#belowChk.set(key, below);
+      this.#belowRebuilds++;
+    }
+    // Finished tile = checkpoint copy with layers [a, N) folded on top. This
+    // equals foldRange(zero, doc, 0, N) == renderRegionDirect(doc, region).
+    const out = new Uint8ClampedArray(below);
+    await foldRange(targetOf(out), this.#doc, a, N, this.#ctx);
+    const px: Pixels = { width: w, height: h, data: out };
     this.#cache.set(key, px);
     return px;
   }

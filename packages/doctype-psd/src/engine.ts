@@ -21,4 +21,4 @@ export type {
 export { IncrementalCompositor } from "./render/incremental.js";
 export { allTiles, tilesForRect, tileKey } from "./render/tile-grid.js";
 export type { Tile } from "./render/tile-grid.js";
-export { opDirtyRect } from "./render/dirty-rect.js";
+export { opDirtyRect, opActiveIndex } from "./render/dirty-rect.js";
