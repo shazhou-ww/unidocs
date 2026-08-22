@@ -21,21 +21,34 @@ function makeDoc(): PsdDoc { return { canvas, layers: [
   raster("r1", [10,10,50,50], [255,0,0,180], { blendMode: "multiply" }),
   raster("clp", [10,10,50,50], [0,0,255,255], { clipping: true }),
   { id:"adj", type:"adjustment", name:"adj", bounds:[0,0,100,100], opacity:1, blendMode:"normal", visible:true, locked:false, clipping:false, adjustType:"brit", params:{ brightness:0.05, contrast:0.1 } },
+  { id:"grp", type:"group", name:"grp", bounds:[0,0,100,100], opacity:0.9, blendMode:"normal", visible:true, locked:false, clipping:false,
+    children:[ raster("gc", [60,10,90,40], [200,200,0,255]) ] },
   raster("r2", [55,55,90,90], [0,200,0,255], { dropShadow:{ color:{r:0,g:0,b:0}, opacity:0.6, blendMode:"normal", angle:135, distance:5, size:3, choke:0 } }),
 ]}; }
 
-// Deterministic op stream over the fixture's layer ids.
-function genOp(rng: () => number, doc: PsdDoc): PsdOp {
-  const ids = doc.layers.map((l) => l.id);
+// Deterministic op stream over the fixture's layer ids (recursing into group children).
+function allIds(layers: Layer[]): string[] {
+  const out: string[] = [];
+  for (const l of layers) { out.push(l.id); if (l.children) out.push(...allIds(l.children)); }
+  return out;
+}
+function genOp(rng: () => number, doc: PsdDoc, n: number): PsdOp {
+  const ids = allIds(doc.layers);
   const id = ids[Math.floor(rng() * ids.length)];
-  const kinds = ["opacity", "visible", "blend", "translate", "reorder"] as const;
+  const kinds = ["opacity","visible","blend","translate","reorder","adjust","mask","add","remove"] as const;
   const k = kinds[Math.floor(rng() * kinds.length)];
   switch (k) {
-    case "opacity": return { kind: "set_props", payload: { layerId: id, props: { opacity: Math.round(rng()*100)/100 } } };
-    case "visible": return { kind: "set_props", payload: { layerId: id, props: { visible: rng() > 0.5 } } };
-    case "blend":   return { kind: "set_props", payload: { layerId: id, props: { blendMode: rng() > 0.5 ? "screen" : "normal" } } };
-    case "translate": return { kind: "transform", payload: { layerId: id, op: { translate: [Math.floor(rng()*20)-10, Math.floor(rng()*20)-10] } } };
-    case "reorder": return { kind: "reorder", payload: { layerId: id, parentId: null, index: Math.floor(rng() * doc.layers.length) } };
+    case "opacity": return { kind:"set_props", payload:{ layerId:id, props:{ opacity: Math.round(rng()*100)/100 } } };
+    case "visible": return { kind:"set_props", payload:{ layerId:id, props:{ visible: rng()>0.5 } } };
+    case "blend":   return { kind:"set_props", payload:{ layerId:id, props:{ blendMode: rng()>0.5?"screen":"normal" } } };
+    case "translate": return { kind:"transform", payload:{ layerId:id, op:{ translate:[Math.floor(rng()*20)-10, Math.floor(rng()*20)-10] } } };
+    case "reorder": return { kind:"reorder", payload:{ layerId:id, parentId:null, index: Math.floor(rng()*doc.layers.length) } };
+    case "adjust":  return { kind:"adjust", payload:{ layerId:"adj", params:{ brightness: Math.round((rng()*0.4-0.2)*100)/100, contrast: Math.round((rng()*0.4-0.2)*100)/100 } } };
+    case "mask":    return rng()>0.5
+      ? { kind:"mask_edit", payload:{ layerId:id, mask:null } }
+      : { kind:"mask_edit", payload:{ layerId:id, mask:{ pixels:{ width:20, height:20, data: fill(20,20,[128,128,128,255]) }, bounds:[10,10,30,30], defaultColor:0, inverted:false } } };
+    case "add":     return { kind:"add_layer", payload:{ layer: raster(`add${n}`, [(n*7)%80, (n*11)%80, (n*7)%80+15, (n*11)%80+15], [(n*40)%256,(n*70)%256,(n*90)%256,255]), parentId:null, index: Math.floor(rng()*(doc.layers.length+1)) } };
+    case "remove":  return { kind:"remove_layer", payload:{ layerId:id } };
   }
 }
 
@@ -49,7 +62,7 @@ describe("IncrementalCompositor ≡ render — seeded random op sequences (adjus
       const comp = new IncrementalCompositor(doc, { tileSize: 40 });
       expect(bytes(await comp.composite())).toEqual(bytes(await render(doc)));
       for (let n = 0; n < 40; n++) {
-        const op = genOp(rng, doc);
+        const op = genOp(rng, doc, n);
         let next: PsdDoc;
         try { next = applyOne(doc, op); } catch { continue; } // skip ops the handler rejects (e.g. invalid reorder)
         await comp.applyOp(op);
