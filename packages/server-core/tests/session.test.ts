@@ -1289,3 +1289,116 @@ describe("DocumentSession — normal paths", () => {
     expect(cas.rootRefUpdates).toEqual([]);
   });
 });
+
+// --------------------------------------------------------------------------
+// opId idempotency (Task 4, plan 2026-08-22-psd-docsession-sync)
+// --------------------------------------------------------------------------
+
+describe("DocumentSession.apply — opId idempotency", () => {
+  it("29. the same opId applied twice does not double-apply — second call returns the first call's version and the doc is unchanged", async () => {
+    const { session, deps } = makeHarness();
+    await session.load();
+    await session.create();
+
+    const first = await session.apply(
+      [{ kind: "append", text: "a" }],
+      "a",
+      1,
+      "op-1",
+    );
+    expect(first.version).toBe(2);
+
+    const before = await deltaCount(deps);
+    const docBefore = (await session.query({ kind: "text" })).data;
+
+    const second = await session.apply(
+      [{ kind: "append", text: "a" }],
+      "a",
+      1,
+      "op-1",
+    );
+
+    expect(second.version).toBe(2);
+    expect(session.version).toBe(2);
+    expect(await deltaCount(deps)).toBe(before);
+    expect((await session.query({ kind: "text" })).data).toBe(docBefore);
+    expect((await session.query({ kind: "text" })).data).toBe("a");
+  });
+
+  it("30. a retried op with a stale baseVersion but a seen opId returns success instead of 409", async () => {
+    const { session, deps } = makeHarness();
+    await session.load();
+    await session.create();
+
+    const first = await session.apply(
+      [{ kind: "append", text: "a" }],
+      "a",
+      1,
+      "op-1",
+    );
+    expect(first.version).toBe(2);
+
+    // A second, unrelated apply advances the doc/version further, so op-1's
+    // original baseVersion (1) is now stale against the log head.
+    await session.apply([{ kind: "append", text: "b" }], "b", 2);
+    expect(session.version).toBe(3);
+
+    const before = await deltaCount(deps);
+
+    // The client retries op-1 with its original (now-stale) baseVersion.
+    const retried = await session.apply(
+      [{ kind: "append", text: "a" }],
+      "a",
+      1,
+      "op-1",
+    );
+
+    expect(retried.version).toBe(2);
+    expect(session.version).toBe(3);
+    expect(await deltaCount(deps)).toBe(before);
+  });
+
+  it("31. two different opIds both apply normally and each advances the version", async () => {
+    const { session, deps } = makeHarness();
+    await session.load();
+    await session.create();
+    const afterCreate = await deltaCount(deps);
+
+    const first = await session.apply(
+      [{ kind: "append", text: "a" }],
+      "a",
+      1,
+      "op-1",
+    );
+    expect(first.version).toBe(2);
+
+    const second = await session.apply(
+      [{ kind: "append", text: "b" }],
+      "b",
+      2,
+      "op-2",
+    );
+    expect(second.version).toBe(3);
+
+    expect(session.version).toBe(3);
+    expect(await deltaCount(deps)).toBe(afterCreate + 2);
+    expect((await session.query({ kind: "text" })).data).toBe("ab");
+  });
+
+  it("32. an absent opId behaves exactly as before — no dedup, normal apply every time", async () => {
+    const { session, deps } = makeHarness();
+    await session.load();
+    await session.create();
+    const afterCreate = await deltaCount(deps);
+
+    const first = await session.apply([{ kind: "append", text: "a" }], "a", 1);
+    expect(first.version).toBe(2);
+
+    const second = await session.apply([{ kind: "append", text: "a" }], "a", 2);
+    expect(second.version).toBe(3);
+
+    expect(session.version).toBe(3);
+    expect(await deltaCount(deps)).toBe(afterCreate + 2);
+    expect((await session.query({ kind: "text" })).data).toBe("aa");
+  });
+});

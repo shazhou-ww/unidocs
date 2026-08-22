@@ -123,9 +123,27 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   #version = 0;
   #loaded = false;
 
+  // Bounded, DO-instance-lifetime record of recently-applied opIds -> the
+  // version each produced. Exists solely to dedup a client's retried
+  // `/apply` after a lost ack (design 5's op-id idempotency) — it is NOT a
+  // durable log: it is never persisted, and does not survive an eviction or
+  // a fresh DO. A `Map` gives us insertion order for free, so eviction is
+  // just "delete the oldest key" once we're over the cap.
+  static readonly #MAX_RECENT_OPS = 256;
+  readonly #recentOps = new Map<string, number>();
+
   constructor(config: DocumentType<TDoc, TQuery, TOp>, deps: SessionDeps) {
     this.#config = config;
     this.#deps = deps;
+  }
+
+  /** Record `opId -> version`, evicting the oldest entry once over the cap. */
+  #rememberOp(opId: string, version: number): void {
+    this.#recentOps.set(opId, version);
+    if (this.#recentOps.size > DocumentSession.#MAX_RECENT_OPS) {
+      const oldest = this.#recentOps.keys().next().value;
+      if (oldest !== undefined) this.#recentOps.delete(oldest);
+    }
   }
 
   // ------------------------------------------------------------------
@@ -610,8 +628,23 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     ops: readonly TOp[],
     description: string,
     baseVersion: number,
+    opId?: string,
   ): Promise<{ version: number }> {
     await this.load();
+
+    // -1. opId dedup — MUST run before the baseVersion check below. A
+    //     retried `/apply` (client resending after a lost ack) legitimately
+    //     carries the ORIGINAL, now-stale `baseVersion`; if we let that reach
+    //     the fast-fail first every retry would 409 instead of returning the
+    //     success the first attempt already produced. This is intentionally
+    //     not durable (see `#recentOps`'s doc comment) — it only needs to
+    //     cover the lost-ack retry window within one DO's lifetime.
+    if (opId !== undefined) {
+      const seenVersion = this.#recentOps.get(opId);
+      if (seenVersion !== undefined) {
+        return { version: seenVersion };
+      }
+    }
 
     const doc = this.#requireDoc();
     const ctx = this.#context();
@@ -691,6 +724,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // 7.
     if (await this.#shouldSnapshot()) {
       await this.#writeSnapshot();
+    }
+
+    // Record the opId only after every durable write above has succeeded —
+    // a batch that got rejected or rolled back must remain retryable under
+    // the same opId, not silently dedup'd against a version that never
+    // actually landed.
+    if (opId !== undefined) {
+      this.#rememberOp(opId, nextVersion);
     }
 
     return { version: nextVersion };

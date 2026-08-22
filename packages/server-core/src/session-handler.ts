@@ -196,9 +196,15 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
           operations: TOp[];
           description: string;
           baseVersion: number;
+          opId?: string;
         };
 
-        const applied = await session.apply(body.operations, body.description, body.baseVersion);
+        const applied = await session.apply(
+          body.operations,
+          body.description,
+          body.baseVersion,
+          body.opId,
+        );
         const result: ApplyResult = { success: true, version: applied.version };
         return Response.json(result);
       }
