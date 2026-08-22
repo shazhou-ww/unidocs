@@ -137,7 +137,7 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       // 这个 worker。service binding 只在 Miniflare 进程内有效,而
       // CasClient 的 updateRootRefs 走 /_internal/root-refs,gateway 不
       // 代理这条路由 —— 所以必须直连 worker 本身。
-      unsafeDirectSockets: ports.cas ? [{ host, port: ports.cas }] : [],
+      unsafeDirectSockets: [{ host, port: ports.cas }],
     },
   ];
 

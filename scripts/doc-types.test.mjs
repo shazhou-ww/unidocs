@@ -4,6 +4,7 @@ import {
   buildWorkers,
   bundleTargets,
   CAS_FAULT_WORKER,
+  CAS_PORT,
   CAS_WORKER,
   DOC_TYPES,
   GATEWAY_WORKER,
@@ -60,7 +61,7 @@ test("buildWorkers always includes the gateway and cas", () => {
   const workers = buildWorkers({
     docTypes: [],
     host: "127.0.0.1",
-    ports: { gateway: 8787 },
+    ports: { gateway: 8787, cas: CAS_PORT },
     bundleDir: "/b",
   });
   expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas"]);
@@ -70,7 +71,7 @@ test("buildWorkers omits doc types that were not selected", () => {
   const workers = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789 },
+    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
     bundleDir: "/b",
   });
   expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas", "unidocs-docx"]);
@@ -80,7 +81,7 @@ test("buildWorkers binds each selected type's own DO classes and socket", () => 
   const [, , docx] = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789 },
+    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
     bundleDir: "/b",
   });
   expect(docx.durableObjects).toEqual({
@@ -96,7 +97,7 @@ test("gateway proxies CAS via service binding and cas worker owns the stores", (
   const [gateway, cas] = buildWorkers({
     docTypes: [],
     host: "127.0.0.1",
-    ports: { gateway: 8787 },
+    ports: { gateway: 8787, cas: CAS_PORT },
     bundleDir: "/b",
   });
   expect(gateway.serviceBindings).toEqual({ CAS_SERVICE: "unidocs-cas" });
@@ -121,7 +122,7 @@ test("casFault 为 true 时,doc-type worker 指向假 CAS,gateway 仍指向真 C
   const workers = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789 },
+    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
     bundleDir: "/tmp/bundles",
     casFault: true,
   });
@@ -145,7 +146,7 @@ test("casFault 默认关闭时,不产生假 CAS worker", () => {
   const workers = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789 },
+    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
     bundleDir: "/tmp/bundles",
   });
 
