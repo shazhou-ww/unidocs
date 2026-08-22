@@ -3,7 +3,9 @@ description: "Copy project, install deps, build all packages"
 steps:
   - command: "mkdir -p /workspace && tar -C /app --exclude=node_modules --exclude=dist --exclude=.git --exclude=.treespec-output --exclude=.wrangler --exclude=tsconfig.tsbuildinfo -cf - . | tar -C /workspace -xf -"
     timeout: "60s"
-  - command: "cd /workspace && pnpm install"
+  # --registry: public npm registries are SNI-blocked in this environment
+  # (see e2e/Dockerfile's comment on the same constraint for `corepack`).
+  - command: "cd /workspace && pnpm install --registry=https://repo.huaweicloud.com/repository/npm"
     timeout: "600s"
   - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
@@ -16,6 +18,59 @@ steps:
         - { path: "stdout", regex: "cloudflare-gateway/dist/worker.js" }
         - { path: "stdout", regex: "cloudflare-cas/dist/worker.js" }
         - { path: "stdout", regex: "cas/dist/index.js" }
+  # Postgres for the local Azure stack lives baked into e2e/Dockerfile (this
+  # container has no docker, so `docker compose` isn't an option) — start it
+  # and create the role/database `startAzureRuntime({ postgres: "external" })`
+  # expects at `DATABASE_URL` (postgres://unidocs:unidocs@localhost:5433/unidocs).
+  # Deliberately `pg_ctl` against our own PGDATA, not `pg_ctlcluster main
+  # start`: installing the `postgresql` apt package also auto-creates its
+  # own default Debian-managed cluster ("15/main", port 5432, a totally
+  # different data directory from the one `e2e/Dockerfile` initdb'd). Since
+  # that cluster's data already exists on disk from build time,
+  # `pg_ctlcluster ... main start` succeeds against *it* rather than
+  # failing over to our fallback — silently starting Postgres on the wrong
+  # port while every downstream `DATABASE_URL` (5433) then fails to
+  # connect. Verified empirically while building this task's e2e image.
+  - command: "su postgres -c \"/usr/lib/postgresql/*/bin/pg_ctl -D /var/lib/postgresql/data -o '-p 5433' -w start\" && su postgres -c \"psql -p 5433 -c \\\"CREATE USER unidocs WITH PASSWORD 'unidocs' SUPERUSER\\\"\" && su postgres -c \"createdb -p 5433 -O unidocs unidocs\" && echo PGREADY"
+    timeout: "120s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "PGREADY" }
+  # Both gateways, side by side: Miniflare on 8787 (its CAS worker exposed
+  # directly on 8790 via `urls.cas`) and the Azure stack on 41787, pointed at
+  # that same CAS worker through the transitional `casBaseUrl` wiring so the
+  # docx image step below has somewhere to write.
+  #
+  # This is a fail-fast smoke test, not the thing that leaves both stacks up
+  # for `create-new-markdown`/`create-new-docx`/`cas` below — it doesn't.
+  # Verified empirically (by running the tree's ancestor commit's spec files
+  # and by direct container testing): a treespec step's *filesystem* state
+  # carries forward to the next spec.yaml (this is why `pnpm install`/
+  # `pnpm -r build` above only run once, here), but a background *process*
+  # started by one step does not survive into the next spec.yaml — which is
+  # exactly why every one of the 21 leaf spec files this tree had before
+  # this task each re-started their own stack as their first step, and why
+  # every markdown/docx leaf spec below does the same for both stacks now
+  # (see the identical step repeated at the top of each
+  # `create-new-markdown/**` / `create-new-docx/**` spec.yaml). This step
+  # only proves the dual-stack/`postgres:"external"` wiring itself works,
+  # immediately after build, instead of first finding out several files
+  # deep into the primary chain.
+  #
+  # Each `nohup ... &` is wrapped in its own `(cd /workspace && ...)`
+  # subshell, not one shared leading `cd /workspace &&`: bash's `&&`/`&`
+  # precedence only scopes a leading `cd` to the *first* backgrounded
+  # command, so a single shared `cd /workspace && nohup A & nohup B & ...`
+  # runs B from the shell's default cwd instead — which is `/`, not
+  # `/workspace`, in this container — and B's relative `./scripts/...`
+  # import then fails with ERR_MODULE_NOT_FOUND. Verified empirically.
+  - command: "(cd /workspace && nohup node -e \"import('./scripts/local-runtime.mjs').then(m=>m.startLocalRuntime({docTypes:['markdown','docx'],persistPath:'/workspace/.wrangler/miniflare'}))\" > /tmp/miniflare.log 2>&1) & (cd /workspace && nohup node -e \"import('./scripts/azure-runtime.mjs').then(m=>m.startAzureRuntime({docTypes:['markdown','docx'],postgres:'external',casBaseUrl:'http://127.0.0.1:8790',azuriteDataDir:'/workspace/.azure-runtime/azurite-data'}))\" > /tmp/azure.log 2>&1) & for i in $(seq 1 60); do sleep 2; CF=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); AZ=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:41787/ 2>/dev/null || echo 000); if echo $CF | grep -q '^4' && echo $AZ | grep -q '^4'; then echo BOTHREADY; exit 0; fi; done; echo TIMEOUT; tail -50 /tmp/miniflare.log /tmp/azure.log; exit 1"
+    timeout: "300s"
+    assert:
+      type: regex
+      conditions:
+        - { path: "stdout", regex: "BOTHREADY" }
 primary: create-new-markdown
 branches:
   - create-new-docx

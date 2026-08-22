@@ -54,3 +54,6 @@ export {
   validateChildRefs,
   validateContentLength,
 } from "./validation.js";
+
+// Gateway routing
+export { isPublicCasRoute } from "./public-route.js";

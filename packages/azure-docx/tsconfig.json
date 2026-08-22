@@ -15,10 +15,7 @@
       "path": "../azure-sdk"
     },
     {
-      "path": "../cas"
-    },
-    {
-      "path": "../server-core"
+      "path": "../doctype-docx"
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
-  "name": "@unidocs/azure-gateway",
+  "name": "@unidocs/azure-docx",
   "version": "0.1.0",
-  "description": "Azure/Node entry point for the UniDocs API Gateway",
+  "description": "Azure/Node entry point for the DOCX document type",
   "type": "module",
   "main": "./src/main.ts",
   "types": "./src/main.ts",
@@ -23,13 +23,9 @@
   },
   "dependencies": {
     "@unidocs/azure-sdk": "workspace:*",
-    "@unidocs/cas": "workspace:*",
-    "@unidocs/server-core": "workspace:*",
-    "@azure/storage-blob": "^12.33.0",
-    "pg": "^8.23.0"
+    "@unidocs/doctype-docx": "workspace:*"
   },
   "devDependencies": {
-    "@types/pg": "^8.23.1",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

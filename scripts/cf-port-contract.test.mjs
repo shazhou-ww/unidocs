@@ -219,5 +219,11 @@ runPortContract(
   // not unimplemented: the contract's two rollback tests are skipped here and
   // every other test still has to pass. Azure's Postgres backend, where both
   // are tables in one database, passes them with `true`.
-  { transactional: false },
+  {
+    transactional: false,
+    prepareConcurrency: async () => ({
+      concurrentWriters: 2,
+      how: "each port call is a separate fetch into the worker; no pool to warm",
+    }),
+  },
 );

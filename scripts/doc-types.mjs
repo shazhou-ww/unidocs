@@ -13,6 +13,14 @@ export const INTERNAL_TOKEN = "unidocs-dev-token";
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
 export const CAS_WORKER = "unidocs-cas";
+/**
+ * 过渡形态(阶段 4 删除):Azure 栈的 CAS_BASE_URL 要能从进程外打到这个
+ * worker。service binding 只在 Miniflare 进程内有效,而 CasClient 的
+ * updateRootRefs 走 /_internal/root-refs,gateway 不代理这条路由 ——
+ * 所以必须直连 worker 本身。8787/8788/8789 已被 gateway 与两个 doc type
+ * 占用,这里用 8790。
+ */
+export const CAS_PORT = 8790;
 /** 故障注入用的假 CAS,只在测试里启用。 */
 export const CAS_FAULT_WORKER = "unidocs-cas-fault";
 
@@ -137,6 +145,11 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       },
       d1Databases: { CAS_DB },
       r2Buckets: { CAS_R2: CAS_BUCKET },
+      // 过渡形态(阶段 4 删除):Azure 栈的 CAS_BASE_URL 要能从进程外打到
+      // 这个 worker。service binding 只在 Miniflare 进程内有效,而
+      // CasClient 的 updateRootRefs 走 /_internal/root-refs,gateway 不
+      // 代理这条路由 —— 所以必须直连 worker 本身。
+      unsafeDirectSockets: [{ host, port: ports.cas }],
     },
   ];
 
