@@ -16,6 +16,9 @@
     },
     {
       "path": "../cas"
+    },
+    {
+      "path": "../doctype-markdown"
     }
   ]
 }

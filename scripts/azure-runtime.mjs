@@ -69,8 +69,9 @@ const POSTGRES_IMAGE = "postgres:18-alpine";
  * inside a vitest worker (via `azure-behavior.test.mjs`'s `beforeAll`), and
  * `execFileSync` blocks the whole event loop for as long as the child runs —
  * on a cold machine that's tens of seconds for `docker compose up -d`
- * (image pull) or several seconds for `pnpm run migrate` (it shells out to
- * esbuild internally). While the event loop is blocked, the worker can't
+ * (image pull) or several seconds for `pnpm run build` + `pnpm run migrate`
+ * (tsc plus an esbuild bundle, then plain `node`). While the event loop is
+ * blocked, the worker can't
  * answer the main vitest process's `onTaskUpdate` RPC, which then times out
  * and fails the whole run — even though every individual test passed. Using
  * `spawn` + awaiting its `exit` event keeps `stdio: "inherit"` (so e.g. a
@@ -266,8 +267,20 @@ async function waitForPort(host, port, timeoutMs) {
   );
 }
 
-function runMigrations() {
-  return run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "migrate"], {
+/**
+ * `migrate` now only runs the build-time artifact `dist/migrate-cli.js`
+ * (`packages/azure-sdk/package.json`) — it no longer bundles itself with
+ * esbuild on every invocation, so esbuild can stay a devDependency instead
+ * of being required at production-install runtime. That moved the bundling
+ * into `build`, so it must run first here: `startAzureRuntime()` is meant to
+ * be runnable standalone (e.g. bare `pnpm test:local` on a workspace that
+ * never ran a top-level `pnpm build`), and without this the plain `node
+ * dist/migrate-cli.js` in `migrate` fails `MODULE_NOT_FOUND` against a dist
+ * directory that was never produced.
+ */
+async function runMigrations() {
+  await run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "build"]);
+  await run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "migrate"], {
     env: { ...process.env, DATABASE_URL },
   });
 }

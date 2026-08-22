@@ -37,6 +37,7 @@
     }
   },
   "devDependencies": {
+    "@unidocs/doctype-markdown": "workspace:*",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },

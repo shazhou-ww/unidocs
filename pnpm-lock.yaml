@@ -367,6 +367,9 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@unidocs/doctype-markdown':
+        specifier: workspace:*
+        version: link:../doctype-markdown
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

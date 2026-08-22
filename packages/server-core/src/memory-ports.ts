@@ -111,6 +111,18 @@ class MemorySnapshotCache implements SnapshotCache {
   async put(v: number, bytes: Uint8Array): Promise<void> {
     this.#entry = { version: v, bytes };
   }
+
+  /**
+   * Test-only. Drops the cached snapshot without touching the delta log or
+   * blob store, so a test can force the next `load()` down the durable
+   * (`latestSnapshotRef()` + `blobs.get()`) fallback path — the situation
+   * `session.ts`'s own comments describe as "the cache WILL diverge from the
+   * delta log" but that no real backend's lifecycle ever produces on its
+   * own. Not part of the `SnapshotCache` port contract.
+   */
+  clear(): void {
+    this.#entry = null;
+  }
 }
 
 class MemoryBlobCas implements BlobCas {
@@ -123,6 +135,16 @@ class MemoryBlobCas implements BlobCas {
 
   async get(hash: string): Promise<Uint8Array | null> {
     return this.#blobs.get(hash) ?? null;
+  }
+
+  /**
+   * Test-only. Drops every blob while leaving delta-log snapshot refs
+   * intact, so a test can reproduce "the log records a snapshot but the
+   * blob behind it is gone" — the fail-closed `StorageCorruptError` branch
+   * in `session.ts`'s `load()`. Not part of the `BlobCas` port contract.
+   */
+  deleteAll(): void {
+    this.#blobs.clear();
   }
 }
 
@@ -297,8 +319,15 @@ export function createMemoryUnitOfWork(ports: TransactionalPorts): UnitOfWork {
 
 export function createMemoryPorts(): {
   deltas: DeltaLog;
-  snapshots: SnapshotCache;
-  blobs: BlobCas;
+  // Widened over the plain SnapshotCache/BlobCas port types to surface the
+  // test-only clear()/deleteAll() methods above — fault-injection tests
+  // (packages/server-core/tests/session-faults.test.ts) need them to force
+  // session.ts's durable-fallback and fail-closed branches, which nothing
+  // in a normal lifecycle ever reaches. The `SessionDeps`/`ports.ts`
+  // contracts themselves are untouched: this is only the concrete return
+  // type of the in-memory test double.
+  snapshots: SnapshotCache & { clear(): void };
+  blobs: BlobCas & { deleteAll(): void };
   index: DocIndex;
   indexQuery: DocIndexQuery;
   unitOfWork: UnitOfWork;

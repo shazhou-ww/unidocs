@@ -15,11 +15,11 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/bundle-migrate-cli.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rm -rf dist",
-    "migrate": "node scripts/bundle-migrate-cli.mjs && node dist/migrate-cli.js"
+    "migrate": "node dist/migrate-cli.js"
   },
   "dependencies": {
     "@unidocs/core": "workspace:*",

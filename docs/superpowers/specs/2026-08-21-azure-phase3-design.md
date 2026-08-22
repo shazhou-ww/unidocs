@@ -241,3 +241,4 @@ CLAUDE.md「新增 document type」的第 4 步补上 Azure 侧的对应条目(`
 | Postgres 装进 e2e 镜像 | 与 PR #21 削减镜像体积的方向相反 | 不同链路(e2e 镜像 vs `pnpm test:local`);后者不受影响,前者以计时验收 |
 | `web-psd` 的 409 处理有 bug | `packages/web-psd/src/main.ts:116-119` 读的是 `e.currentVersion`,而服务端 409 body 里的字段是 `version` —— resync 从未发生,版本号永远停在过期值;且 `continue` 时 `pending` 已置空,注释声称的「重试」也没发生,该 op 被静默丢弃。合起来:第一次冲突之后每次编辑都 409 且静默丢失,状态栏仍显示正常版本号。单副本下几乎撞不到,多副本会真正走到 | 本轮不修(属 PSD 那条线,PR #23 在改同一个包)。记录在此,多副本上线前必须由 PSD 那边修掉 |
 | 轮询代理的保真度 | 本地轮询代理不等于 ACA ingress(无健康检查、无粘性、无重试) | 本轮只要求「请求会落到不同副本」这一条性质;更真实的 ingress 行为不在本轮范围 |
+| `#persistIdentity` 兜底路径仍无覆盖 | 该分支在 `packages/cloudflare-sdk/src/editor-do.ts`,不在 `session.ts`,需要 DO storage 层的故障注入,内存端口够不到 | 本轮不覆盖。spec §9 列的五处里其余四处已由 `packages/server-core/tests/session-faults.test.ts` 钉住 |
