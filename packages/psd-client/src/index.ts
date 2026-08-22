@@ -1,3 +1,8 @@
 export { CasBlobStore } from "./cas-blob-store.js";
 export { loadDoc } from "./doc-source.js";
 export { RenderCore } from "./render-core.js";
+export { Viewport, viewTransform, screenToCanvas, canvasToScreen, visibleTiles } from "./viewport.js";
+export type { View, Point, Size } from "./viewport.js";
+export { RenderClient } from "./render-client.js";
+export type { TileMessage } from "./render-client.js";
+export type { WorkerRequest, WorkerResponse } from "./render-worker.js";
