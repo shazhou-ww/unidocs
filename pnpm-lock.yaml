@@ -339,6 +339,9 @@ importers:
         specifier: workspace:*
         version: link:../doctype-psd
     devDependencies:
+      fast-png:
+        specifier: ^8.0.0
+        version: 8.0.0
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
