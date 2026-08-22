@@ -1543,6 +1543,8 @@ export function parseArgs(argv) {
    ```
    **注意 `item.service` 与 `item.name` 对迁移镜像是不同的两个值**:构建参数是 `azure-sdk`(工作区包名),镜像名是 `azure-migrate`(`infra/main.bicep` 里引用的名字)。传错会让 main 部署时拉不到镜像。
    然后 `az acr login -n <acrName>`(走 az 身份,不是 admin 密码),再 `docker push <ref>`。`--skip-build` 跳过构建与推送,只用已有 tag。
+
+   > **最终评审已推翻这一步的做法**(实施后修正):本机是 Apple Silicon,`docker build` 产出 `linux/arm64`,而 Azure Container Apps 只接受 `linux/amd64` —— 镜像会推送成功、部署也会成功,然后副本 `exec format error`,报出来的却是第 6 步的"迁移 Job 超时"。第 4 步现在改为 `az acr build --registry <acrName> --platform linux/amd64 --image unidocs/<name>:<tag> --build-arg SERVICE=... --build-arg ENTRY=... --file Dockerfile .`,它在 ACR 里原生 amd64 构建,并**取代** `az acr login` + `docker push`。以脚本 `scripts/azure-deploy.mjs` 的现状为准,设计 §7 已同步。
 5. **main**:先 `what-if` 再 `create`,参数:
    ```
    az deployment group create -g <rg> -f infra/main.bicep -n main -o json \
@@ -1742,26 +1744,33 @@ cd packages/cloudflare-cas && npx wrangler deployments list 2>&1 | head -20
 
 拿到形如 `https://unidocs-cas.<account>.workers.dev` 的地址。若 CAS worker 尚未部署到 Cloudflare,先 `npx wrangler deploy` 部署它 —— 没有它 docx 上不了云。
 
-- [ ] **Step 1b: 先在宿主机跑一次 `pnpm build`(部署的隐式前置条件)**
+- [ ] **Step 1b: 确认宿主机已有构建产物(preflight 已自检,此步仅作确认)**
 
 ```bash
 pnpm build
 test -f packages/cas/dist/index.js && echo "cas dist ok"
 ```
 
-**为什么必须显式做这一步**:`scripts/azure-smoke.mjs`(部署脚本的第 7 步)从 `packages/cas/dist/index.js` import CAS 哈希算法 —— 这是仓库既有惯例,`scripts/cas-digest.mjs` 同样如此。而 `scripts/azure-deploy.mjs` **全程不在宿主机跑 `pnpm build`**:它只构建 docker 镜像,而那是在容器内编译的(`.dockerignore` 排除了 `**/dist`)。
+**为什么这条存在**:`scripts/azure-smoke.mjs`(部署脚本的第 7 步)从 `packages/cas/dist/index.js` import CAS 哈希算法 —— 这是仓库既有惯例,`scripts/cas-digest.mjs` 同样如此。而 `scripts/azure-deploy.mjs` **全程不在宿主机跑 `pnpm build`**:它只构建镜像,而那是在容器内编译的(`.dockerignore` 排除了 `**/dist`)。
 
 后果:在干净检出(或 `pnpm clean` 之后)直接跑部署,会一路成功到第 7 步,**在十几分钟的镜像构建和真实资源创建之后**才以 `ERR_MODULE_NOT_FOUND` 失败。
 
-这是 `azure-deploy.mjs` 的 preflight 应该自检的东西(记入最终评审的分诊清单);在它补上之前,这一步是人工前置条件。
+`azure-deploy.mjs` 的 preflight 现在自检这一项(`existsSync(packages/cas/dist/index.js)`,缺失即中止并提示先跑 `pnpm build`),所以这一步不再是把关的人工前置条件,只是让执行者别去撞那条错误信息。
 
 - [ ] **Step 2: 跑第一次完整部署**
 
 ```bash
-node scripts/azure-deploy.mjs --cas-base-url <上一步拿到的地址> 2>&1 | tee /tmp/azure-deploy-first.log
+# --internal-token 必须等于该 CAS worker 自己的 INTERNAL_TOKEN。
+# 确认它在 Cloudflare 侧存在:cd packages/cloudflare-cas && npx wrangler secret list
+node scripts/azure-deploy.mjs \
+  --cas-base-url <上一步拿到的地址> \
+  --internal-token <与该 CAS worker 相同的 INTERNAL_TOKEN> \
+  2>&1 | tee /tmp/azure-deploy-first.log
 ```
 
 (`tee` 是为了 Step 2b 能回头搜这份输出里有没有密钥回显。)
+
+`--internal-token` **不能省、也不能让脚本随便生成**:CAS worker 对每个请求校验它,两侧不同源会让 docx 的图片路径(验收第 5 条那项跨云断言)全部 401。首次部署之后该值进了 Key Vault,后续重跑不必再传。
 
 这一步会:注册 RP(若未注册)、建资源组、跑 bootstrap、播种密钥、构建推送四个镜像、跑 main、触发迁移、跑冒烟。
 
@@ -1825,19 +1834,26 @@ node scripts/azure-smoke.mjs --gateway "https://$GW"
 - [ ] **Step 7: 验收第 6 条 —— 幂等**
 
 ```bash
+# 第二次不必再传 --internal-token:它已在 Key Vault 里,脚本读回既有值。
 node scripts/azure-deploy.mjs --cas-base-url <地址> 2>&1 | tee /tmp/second-deploy.log
 ```
 
 三条都要成立:
-1. 两次 `what-if` 输出里没有 `Create` / `Delete` / `Modify`(`Modify` 也不行 —— "每次都会变一点"不是幂等)
+1. 两次 `what-if` 输出里**没有** `Create`、**没有** `Delete`;`Modify` **仅允许**出现在下面两个 **write-only** 属性上:
+   - `Microsoft.App/containerApps` 的 `configuration.secrets[].value`
+   - `Microsoft.DBforPostgreSQL/flexibleServers` 的 `administratorLoginPassword`
 2. 冒烟仍然全绿
 3. Postgres 密码未被重置 —— 由第 2 条间接证明(密码若变了,Container App 的连接串与实际密码就对不上,冒烟会失败)
 
-若 `what-if` 有 `Modify`,查明是哪个属性并修 Bicep;不要接受"这个属性 Azure 每次都会改"这种解释,除非能指出具体是哪个只读属性被误写成了可写参数。
+这两个属性上的 `Modify` 是**预期的、正确的**:RP 的 GET 不回传 write-only 属性的值,what-if 读不到当前值,只能把"模板里有、当前读不到"报成差异。要求它们也干净,等于要求把密钥从模板里挪走 —— 那是把一个正确的模板改坏。
+
+其余任何属性上的 `Modify` 都要查明是哪个属性并修 Bicep;那里不接受"这个属性 Azure 每次都会改"这种解释,除非能指出具体是哪个只读属性被误写成了可写参数。
 
 - [ ] **Step 7b: 核查密钥没有明文进入部署历史**
 
-Bicep 评审提出、但在不部署的情况下无法确认的一项:`main.bicep` 的 `migrateJob` 把由 `@secure() pgAdminPassword` 拼出的 `var databaseUrl` **直接写进外层模板的资源属性**(三个 Container App 走的是模块边界,`expressionEvaluationOptions.scope: "inner"`,属已知安全模式;Job 没有这层边界)。Container Apps 的 `secrets[].value` 在设计上就是承载敏感值的字段,大概率被 RP 标注为敏感,但那个标注状态查不到,只能部署后实测。
+`migrateJob` 早先把由 `@secure() pgAdminPassword` 拼出的 `var databaseUrl` **直接写进外层模板的资源属性**(三个 Container App 走的是模块边界,`expressionEvaluationOptions.scope: "inner"`,属已知安全模式;Job 缺这层边界)。这条不对称已经修掉 —— `migrateJob` 现在也走模块(`infra/migrate-job.bicep`,`@secure() param databaseUrl`),编译产物里外层模板不再含明文连接串表达式。
+
+本步保留为**部署后的复核**:Container Apps 的 `secrets[].value` 在设计上就是承载敏感值的字段,大概率被 RP 标注为敏感,但那个标注状态查不到,只能部署后实测。
 
 ```bash
 az deployment operation group list -g rg-unidocs-dev -n main -o json \
@@ -1846,7 +1862,7 @@ az deployment operation group list -g rg-unidocs-dev -n main -o json \
 
 预期:`clean`。
 
-若打印 `HIT`,说明密码明文落进了部署历史。**这是必须修的安全问题,不是可接受风险**:把 `migrateJob` 也改成走一个模块(与 `container-app.bicep` 同样的模式,让 secure 值跨越模块边界),重新部署,并**轮换 Postgres 密码**(删除 Key Vault 里的 `pg-admin-password` secret 让部署脚本重新生成,再重跑部署)—— 已经泄进历史的那个密码不能继续用。
+若打印 `HIT`,说明密码明文仍落进了部署历史(模块边界之外还有别的泄漏点)。**这是必须修的安全问题,不是可接受风险**:查明是哪个资源属性,让它同样跨越模块边界,重新部署,并**轮换 Postgres 密码**(删除 Key Vault 里的 `pg-admin-password` secret 让部署脚本重新生成,再重跑部署)—— 已经泄进历史的那个密码不能继续用。
 
 - [ ] **Step 8: 验收第 7 条 —— 没有绕开策略**
 

@@ -136,12 +136,23 @@ Container Apps 用消费型环境、不接自定义 VNet,Postgres Flexible Serve
 
 ## 5. 密钥与身份
 
-**只有两个真密钥**:Postgres 管理员密码,以及 `INTERNAL_TOKEN`。Blob 与 ACR 都因 §3(b) 的 policy 改成了身份认证,不再产生密钥。
+**有两个密钥,但性质不同 —— 这个区别是本节的要点**:
+
+| 密钥 | 性质 | 谁产生它 |
+|---|---|---|
+| Postgres 管理员密码 | **本轮生成**的新密钥 | 部署脚本 `crypto.randomBytes(48)`,写进 Key Vault,存在则读回 |
+| `INTERNAL_TOKEN` | **既有密钥,本轮必须对齐** —— 它已经存在于已部署的 Cloudflare CAS worker(`packages/cloudflare-cas`)上 | 由人从 Cloudflare 侧取得,经 `--internal-token` 传入并写进 Key Vault;**绝不现场生成** |
+
+Blob 与 ACR 都因 §3(b) 的 policy 改成了身份认证,不再产生密钥 —— 所以密钥总数是二不是四。
+
+`INTERNAL_TOKEN` 为什么不能像 Postgres 密码那样生成:`packages/cloudflare-cas/src/worker.ts` 对**每个**请求校验 `X-Internal-Token !== env.INTERNAL_TOKEN` 就返回 401,而 docx 的图片路径经 `packages/server-core/src/cas-client.ts` 发出去的是 **Azure 侧**的这个值。两侧不同源 = 所有跨云 CAS 请求 401,也就是 §10 第 5 条第三项那条专门用来证明跨云接线的断言必然失败。本地测试看不出来:`scripts/doc-types.mjs` 硬编码的 `INTERNAL_TOKEN = "unidocs-dev-token"` 被 Miniflare 与本地 Azure 栈共用,掩盖了这个不变量。
+
+部署脚本因此对这个 secret 走的是「Key Vault 里有则读用;没有且给了 `--internal-token` 则写入后使用;没有也没给则**报错中止**」——不生成、不猜。
 
 **Key Vault 的角色是给部署脚本提供幂等性**,不是给运行时读取。流程:
 
 1. `bootstrap.bicep` 建出 Key Vault(RBAC 模式)、UAMI、ACR、Storage、Log Analytics,并做两条角色分配:UAMI 在 ACR 上 `AcrPull`,在 Storage 上 `Storage Blob Data Contributor`
-2. 部署脚本对 `pg-admin-password` 与 `internal-token` 两个 secret 执行"存在则读,不存在则用 `crypto.randomBytes` 生成并写入" —— 这使得重复执行部署不会重置密码
+2. 部署脚本对两个 secret 都执行"存在则读回" —— 这使得重复执行部署不会重置它们。不存在时两者分道:`pg-admin-password` 用 `crypto.randomBytes` 生成并写入;`internal-token` 只接受 `--internal-token` 传入的值(缺失即中止),理由见上表
 3. 脚本把两个值作为 `@secure()` 参数传给 `main.bicep`。`@secure()` 参数**不进入部署历史**,这正是它存在的目的
 4. `main.bicep` 用密码拼出 `DATABASE_URL`(含 `sslmode=require`),连同 `INTERNAL_TOKEN` 一起设为 Container App 的 **secret**,再由 `env` 以 `secretRef` 引用
 
@@ -226,14 +237,16 @@ export function createBlobService(cfg: AzureConfig): BlobServiceClient {
 
 镜像 tag 用 git short sha,不用 `latest` —— Container Apps 的 revision 需要镜像引用变化才会滚动。
 
+**四个镜像都在 ACR 里构建(`az acr build --platform linux/amd64`),不在本机 `docker build`**。Azure Container Apps 只接受 `linux/amd64`,而开发机是 Apple Silicon:本机 `docker build` 产出 `linux/arm64`,镜像会推送成功、`main.bicep` 会部署成功,然后副本 `exec format error` —— 而部署脚本报出来的错误是"迁移 Job 超时",发生在四次镜像构建 + Postgres + ACA 环境全部创建之后,完全指不到根因。本机加 `--platform linux/amd64` 交叉构建同样不行:在 arm64 上用 QEMU 模拟跑四遍完整的 `pnpm install` + `pnpm -r build` 慢到不可用。`az acr build` 在 ACR 中原生 amd64 构建,并且**取代**了 `az acr login` + `docker push`(产物直接落在 registry 里)。`Dockerfile` 不需要改,它是平台无关的。
+
 ## 8. 部署编排与迁移
 
 Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`scripts/azure-deploy.mjs` 按序编排:
 
-1. **预检**:`az account show` 确认订阅;确认 `Microsoft.App` 已注册,未注册则执行 `az provider register -n Microsoft.App --wait`
+1. **预检**:`az account show` 确认订阅;两条只读自检排在任何写操作之前 —— (a) `az role assignment list --include-groups --include-inherited` 断言执行者有 `Owner` 或 `User Access Administrator`(§11),(b) `packages/cas/dist/index.js` 存在(第 7 步的冒烟脚本从它 import CAS 哈希算法,而本脚本全程不在宿主机跑 `pnpm build`);随后确认 `Microsoft.App` 已注册,未注册则执行 `az provider register -n Microsoft.App --wait`
 2. **bootstrap**:`az deployment group create -f infra/bootstrap.bicep`(先 `what-if` 打印差异)
 3. **播种密钥**:Key Vault 中两个 secret 存在则读、不存在则生成(§5)
-4. **构建与推送**:四个镜像,tag = git short sha;`az acr login`(走 az 身份,**不是** admin 密码,policy 禁止)
+4. **构建**:`az acr build --platform linux/amd64`,四个镜像,tag = git short sha(走 az 身份,**不是** admin 密码,policy 禁止;构建发生在 ACR 里,见 §7)
 5. **main**:`what-if` → `create`,传入 `@secure()` 参数与镜像 tag
 6. **迁移**:`az containerapp job start` 触发 `caj-unidocs-migrate`,轮询至成功;失败则中止并打印 Job 日志
 7. **冒烟**:`scripts/azure-smoke.mjs` 打公网网关 FQDN
@@ -263,7 +276,14 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
    - 至少一次 `apply` 使用过期的 `baseVersion`,断言返回 409 且响应体带当前 `version`
    **为什么这几条断言足以验证托管标识的 Blob 通路**:`apply` 每次都经 `#saveSnapshotCache()` 写一次 Blob 快照,走的是**严格**版本 —— 失败直接冒泡(`packages/server-core/src/session.ts:689,751`)。因此上面任何一次成功的 `apply` 都证明了托管标识写 Blob 成立,不需要为此另加测试。反过来必须注意:`create` 走的是**尽力而为**版本(`session.ts:464,546` → `#saveSnapshotCacheBestEffort`,会吞掉 Blob 失败),所以**只做 create 的冒烟不能验证托管标识** —— 冒烟必须包含 apply,这是上述断言的必要成分而非顺带。
 
-6. **幂等**:紧接着再次执行 `scripts/azure-deploy.mjs`,两次 `what-if` 均无变更,冒烟仍然全绿,且 Postgres 密码未被重置
+6. **幂等**:紧接着再次执行 `scripts/azure-deploy.mjs`,冒烟仍然全绿,Postgres 密码未被重置,且两次 `what-if` 输出里:
+
+   - **没有** `Create`、**没有** `Delete`
+   - `Modify` **仅允许**出现在下面两个 **write-only** 属性上;出现在其余任何属性上都要查清:
+     - `Microsoft.App/containerApps` 的 `configuration.secrets[].value`
+     - `Microsoft.DBforPostgreSQL/flexibleServers` 的 `administratorLoginPassword`
+
+   这两个属性上的 `Modify` **不是模板写错**:RP 的 GET 不回传它们的值,what-if 拿不到当前值,只能把"模板里有、当前读不到"报成差异。要求它们也干净等于要求把密钥从模板里挪走 —— 那会把一个正确的模板改坏。
 7. ACR 的 `adminUserEnabled` 为 `false`、存储账户的 `allowSharedKeyAccess` 为 `false` —— 即部署未因绕开 §3(b) 的 policy 而成功
 
 ## 11. 风险与未决事项
@@ -274,7 +294,8 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 | Postgres 用密码认证而非 Entra ID | **本轮接受** | 路径明确(§9 第三行),但属独立工作量 |
 | `sslmode=require` 的证书校验强度 | **待实施时确认** | 见 §6.3。收紧到 `verify-full` 是后续加固 |
 | docx 依赖 Cloudflare CAS worker | **本轮接受** | 已确认的范围决定。**后果:本轮的部署形态不可私有化交付**,阶段 4 的 `azure-cas` 落地后才可 |
+| 跨云 CAS 要求两侧 `INTERNAL_TOKEN` 相同 | **本轮接受(有操作约束)** | 上一行的直接推论,原先漏登记。CAS worker 对每个请求校验该 token,不同源即 401,而本地栈共用 `unidocs-dev-token` 会掩盖它。约束:Azure 侧的值必须由人从 Cloudflare 侧取得并经 `--internal-token` 传入(§5),脚本不生成。代价:轮换该 token 必须**两侧同时**做 |
 | 无 CI | **本轮接受** | 已确认的范围决定。部署脚本本身即将来 CI 调用的对象 |
 | `azure-markdown` / `azure-docx` 未合并 | **推后** | 已确认。代价:3 份服务镜像,以及两份已经漂移过一次的 `bundle.mjs`(§6.2 的 bug 正源于此)仍然并存。合并成单一 `DOC_TYPE` 参数化镜像可一次性消除该漂移面 |
 | 常驻副本成本 | **已知** | 粗估 $85–105/月(Container Apps 5 个常驻副本占大头,Postgres B1ms 约 $13,ACR Basic $5)。`minReplicas` 是旋钮,下调的含义见 §4.2 |
-| 部署者的 RBAC 权限未只读验证 | **待第一步确认** | `az role assignment list` 对本账号返回空(权限疑似经组继承,命令查不到)。首次 `az group create` 会给出确定答案 |
+| 部署者的 RBAC 权限 | **preflight 已自检** | 早先记的"`az role assignment list` 对本账号返回空"是**查询写错了**:缺 `--include-groups`,而本账号的权限正是经组继承的。`scripts/azure-deploy.mjs` 的 preflight 现在用 `az role assignment list --include-groups --include-inherited` 断言存在 `Owner` 或 `User Access Administrator`(订阅级或资源组级均可)。`Contributor` 不够 —— 它的 `notActions` 含 `Microsoft.Authorization/*/Write`,建不了 bootstrap 里那两条角色分配,失败会发生在 ACR/Storage/KV/LAW 已经建出来之后,留下部分创建的资源组 |
