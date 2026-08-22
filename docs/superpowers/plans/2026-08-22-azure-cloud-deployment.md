@@ -575,6 +575,31 @@ pnpm deploy --legacy --filter @unidocs/azure-docx --prod   --registry=https://re
 test -f /tmp/deploy-probe2/dist/main.js && echo "docx entry ok"
 ```
 
+- [ ] **Step 1c: 跑完 `pnpm deploy --prod` 之后必须重置工作区安装状态**
+
+**这一步是强制的,漏掉会让后续每一条 `pnpm` 命令都失败。**
+
+宿主机上的 `pnpm deploy --prod` 会把 `node_modules/.pnpm-workspace-state-v1.json` 里的 `settings.dev` 写成 `false`,即把整个工作区的安装状态记成「production 安装」。此后任何 `pnpm <script>`(包括 `pnpm build`)都会先触发一次 `pnpm install --production`,而它想**删除整个 `node_modules`** 再重装 —— 在非 TTY 环境下会以
+
+```
+[ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY] Aborted removal of modules directory due to no TTY
+```
+
+中止(有 TTY 时会真的删)。这是实测踩到的,不是推测。
+
+重置:
+
+```bash
+pnpm install --registry=https://repo.huaweicloud.com/repository/npm/
+node -e "const s=require('./node_modules/.pnpm-workspace-state-v1.json');console.log('dev:',s.settings?.dev)"
+pnpm build
+```
+
+第二条必须打印 `dev: true`,第三条必须退出码 0。
+
+**不要**为了绕过那条报错去设 `CI=true` 或 `confirmModulesPurge=false` —— 那只会让它真的把 `node_modules` 删掉。
+
+
 - [ ] **Step 2: 写 Dockerfile**
 
 在仓库根创建 `Dockerfile`。把 Step 1 实测可用的 `pnpm deploy` 调用形式填进去(下面写的是不带 `--legacy` 的版本):
