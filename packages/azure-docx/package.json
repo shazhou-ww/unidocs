@@ -1,0 +1,43 @@
+{
+  "name": "@unidocs/azure-docx",
+  "version": "0.1.0",
+  "description": "Azure/Node entry point for the DOCX document type",
+  "type": "module",
+  "main": "./src/main.ts",
+  "types": "./src/main.ts",
+  "exports": {
+    ".": {
+      "types": "./src/main.ts",
+      "import": "./src/main.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/bundle.mjs",
+    "start": "node dist/main.js",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@unidocs/azure-sdk": "workspace:*",
+    "@unidocs/doctype-docx": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "publishConfig": {
+    "main": "./dist/main.js",
+    "types": "./dist/main.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/main.d.ts",
+        "import": "./dist/main.js"
+      }
+    }
+  }
+}

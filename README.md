@@ -263,6 +263,13 @@ class_name = "MytypeOperator"
 script_name = "unidocs-mytype"
 ```
 
+6. Azure side — no Durable Objects, so no DO bindings to wire up. Instead:
+   - New `packages/azure-mytype/` (`package.json`, `tsconfig.json`, `src/main.ts`, `scripts/bundle.mjs`) — copy `packages/azure-docx` as the template rather than `packages/azure-markdown`: its `bundle.mjs` explicitly externalizes only `pg`/`@azure/storage-blob` instead of using `packages: "external"`, which matters the moment your doc type pulls in a real (non-`@unidocs/*`) npm dependency that isn't also a root `package.json` devDependency — `packages: "external"` would leave that import unresolvable at runtime. `src/main.ts` should differ from the docx entry by nothing but the doc type string and the default port; if it needs more than that, the gap belongs in `@unidocs/azure-sdk`, not in the entry point.
+   - Add a `mytype: <port>` row to `AZURE_DOC_TYPE_PORT_BASE` in `scripts/azure-ports.mjs` (pick a base at least `AZURE_PORT_STRIDE` past the last one).
+   - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `scripts/azure-runtime.mjs`.
+   - Add `{ "path": "packages/azure-mytype" }` to the root `tsconfig.json`'s `references`.
+   - `resolveWorkerUrl()` in `packages/azure-gateway/src/main.ts` and the replica/env wiring in `scripts/azure-runtime.mjs` already generalise over `docTypes`/`{TYPE}_WORKER_URL` — nothing to change there.
+
 ## Development
 
 ```bash
@@ -282,16 +289,17 @@ POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ### Running against the local Azure stack
 
 ```bash
-pnpm dev --azure              # gateway :41787 + markdown :41788, Postgres + Azurite backend
-pnpm dev --azure markdown     # same thing, explicit
+pnpm dev --azure              # gateway :41787 + markdown :41800 + docx :41810, Postgres + Azurite backend
+pnpm dev --azure markdown     # markdown only, explicit
+pnpm dev --azure docx         # docx only — see the CAS prerequisite below
 ```
 
-Two prerequisites:
+Prerequisites:
 
-- **Docker must be running**, for Postgres. `pnpm dev --azure` starts a `docker compose` stack with just Postgres in it (`:5433`) and fails fast with an actionable message if the Docker daemon isn't up, rather than surfacing the raw `docker compose` error. Azurite is *not* a container — it's the `azurite` npm package's `azurite-blob` CLI, spawned directly as a Node child process on `:10000`, the same way the gateway/markdown services themselves are spawned. There's no image to pull for it.
-- **Only `markdown` is supported today.** `docx` depends on user-scoped CAS, which the Azure backend hasn't implemented yet (planned for phase 4); `pnpm dev --azure docx` fails immediately rather than starting a stack it can't route to.
+- **Docker must be running**, for Postgres. `pnpm dev --azure` starts a `docker compose` stack with just Postgres in it (`:5433`) and fails fast with an actionable message if the Docker daemon isn't up, rather than surfacing the raw `docker compose` error. Azurite is *not* a container — it's the `azurite` npm package's `azurite-blob` CLI, spawned directly as a Node child process on `:10000`, the same way the gateway/doc-type services themselves are spawned. There's no image to pull for it.
+- **`docx` needs the Miniflare stack running too, in a second terminal.** `docx`'s image path depends on user-scoped CAS, which the Azure backend doesn't implement natively yet (planned for phase 4). Until then, `pnpm dev --azure docx` (or `pnpm dev --azure` with no doc type filter, since `docx` is included by default) points `CAS_BASE_URL` at the Cloudflare CAS worker from the Miniflare stack (`http://127.0.0.1:8790` by default — `startLocalRuntime()`'s direct-socket port for the CAS worker, *not* the Miniflare gateway, since `CasClient.updateRootRefs` calls `/_internal/root-refs`, which no gateway proxies). Before starting anything, `pnpm dev --azure docx` probes that address; if nothing answers, it exits immediately with the actionable fix (start `pnpm dev docx` in another terminal first) instead of letting the first image-touching `apply` fail with a bare `ECONNREFUSED`. `pnpm dev --azure markdown` has no such prerequisite — markdown's `refsFromOp` never touches CAS.
 
-Migrations run automatically as part of startup — no separate command needed. The Azure ports (`41787`/`41788`) are deliberately offset from Miniflare's (`8787`/`8788`) so both backends can run side by side. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/markdown/azurite-blob processes and tears down the docker compose stack (`down -v`).
+Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `scripts/azure-ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side, which `docx` on Azure now requires. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes and tears down the docker compose stack (`down -v`).
 
 **First run only:** if `postgres:18-alpine` isn't cached locally yet, `docker compose up` pulls it (~100 MB) before anything else can start; every run after that is instant. There's no equivalent cost for Azurite — it installed with `pnpm install` like any other dependency.
 

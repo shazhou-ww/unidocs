@@ -34,21 +34,36 @@ try {
 // check and the `startAzureRuntime()` call further down can both reuse the
 // same validated selection instead of recomputing it.
 let azureDocTypes;
+// Set only when docx is part of the Azure selection (see the reachability
+// probe below); passed through to `startAzureRuntime()` so the gateway and
+// docx services get `CAS_BASE_URL` wired up the same way the e2e test does.
+let azureCasBaseUrl;
 
 if (useAzure) {
-  // startAzureRuntime() only supports markdown right now (Task 4) — docx
-  // depends on user-scoped CAS, which the Azure backend doesn't implement
-  // yet (see phase 4/Task 7). No positional args means "start what Azure
-  // supports", i.e. markdown; any positional arg other than markdown is a
-  // request we can't fulfill and must reject up front rather than starting
-  // a stack that can't route to it.
-  azureDocTypes = positional.length === 0 ? ["markdown"] : docTypes;
-  const unsupported = azureDocTypes.filter((type) => type !== "markdown");
-  if (unsupported.length > 0) {
-    console.error(
-      `Azure local stack only supports markdown right now (${unsupported.join(", ")} depends on user-scoped CAS, which isn't implemented for Azure yet — see phase 4). Drop ${unsupported.length > 1 ? "those doc types" : "that doc type"} or run \`pnpm dev ${unsupported.join(" ")}\` on the Miniflare backend instead.`,
-    );
-    process.exit(1);
+  // No positional args means "start every known doc type" (same default as
+  // the Miniflare backend).
+  azureDocTypes = positional.length === 0 ? Object.keys(DOC_TYPES) : docTypes;
+
+  // docx's image path needs user-scoped CAS. This round is transitional:
+  // CAS_BASE_URL points at the Miniflare stack's CAS worker (default
+  // http://127.0.0.1:8790). Probe it here, before starting anything, so
+  // "you forgot to run `pnpm dev docx` in another terminal" is clear at
+  // startup instead of surfacing as an ECONNREFUSED on the first apply that
+  // touches an image.
+  if (azureDocTypes.includes("docx")) {
+    azureCasBaseUrl = process.env.CAS_BASE_URL ?? "http://127.0.0.1:8790";
+    const casBaseUrl = azureCasBaseUrl;
+    const reachable = await fetch(`${casBaseUrl}/users/_probe/cas/usage`, {
+      headers: { "X-Internal-Token": "unidocs-dev-token", Connection: "close" },
+    }).then(() => true, () => false);
+    if (!reachable) {
+      console.error(
+        `docx on the Azure stack needs the transitional CAS worker at ${casBaseUrl}, which is not answering.\n` +
+          `Start the Miniflare stack in another terminal first:\n\n  pnpm dev docx\n\n` +
+          `(This cross-stack dependency goes away in phase 4, when azure-cas lands.)`,
+      );
+      process.exit(1);
+    }
   }
 }
 
@@ -153,7 +168,12 @@ if (useAzure) {
     "./azure-runtime.mjs"
   );
 
-  runtime = await startAzureRuntime({ host: AZURE_HOST, docTypes: azureDocTypes, replicas: 2 });
+  runtime = await startAzureRuntime({
+    host: AZURE_HOST,
+    docTypes: azureDocTypes,
+    replicas: 2,
+    ...(azureCasBaseUrl ? { casBaseUrl: azureCasBaseUrl } : {}),
+  });
   backend = { name: "Azure (Postgres + Azurite)", DATABASE_URL, BLOB_CONNECTION_STRING };
 } else {
   // Imported after argv validation so a typo fails fast instead of paying for

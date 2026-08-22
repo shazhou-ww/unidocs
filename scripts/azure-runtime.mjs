@@ -164,6 +164,22 @@ async function spawnAzurite() {
   return { child, dataDir };
 }
 
+/**
+ * Not `packages: "external"` — see the matching comment in
+ * `packages/azure-docx/scripts/bundle.mjs` for why. In short: a blanket
+ * external marking only stays resolvable at runtime for npm deps that are
+ * also root `package.json` devDependencies (`pg`, `@azure/storage-blob` —
+ * pnpm hoists those to the repo root `node_modules`, an ancestor of every
+ * bundle this function writes). DOCX's own real dependency,
+ * `@ariadng/office` (declared on `packages/doctype-docx` only, pulled in
+ * because `@unidocs/doctype-docx` is alias-inlined as source), is not
+ * hoisted anywhere reachable from `.azure-runtime/bundles/*.mjs` — leaving
+ * it external produces an unresolvable bare import at runtime. Naming only
+ * the two packages that genuinely do resolve lets esbuild inline everything
+ * else, `@ariadng/office` included.
+ */
+const EXTERNAL_NPM_PACKAGES = ["pg", "@azure/storage-blob"];
+
 async function bundleService(entry, outfile) {
   await mkdir(dirname(outfile), { recursive: true });
   await esbuild.build({
@@ -174,7 +190,7 @@ async function bundleService(entry, outfile) {
     platform: "node",
     format: "esm",
     target: "node24",
-    packages: "external",
+    external: EXTERNAL_NPM_PACKAGES,
     alias: WORKSPACE_ALIASES,
     logOverride: { "empty-import-meta": "silent" },
   });
@@ -469,22 +485,21 @@ function createStorageProbe() {
 }
 
 /**
- * Doc types this task actually knows how to spawn a bundle for. The port
- * layout (Task 3's `azure-ports.mjs`) already knows about `docx`'s band,
- * but `packages/azure-docx` doesn't exist yet — it's Task 7's job to create
- * it and generalise the loop below to more than one doc type. Passing
- * `"docx"` here must fail before anything is spawned, not partway through
- * an `esbuild.build()` against a path that doesn't exist.
+ * Doc types this task knows how to spawn a bundle for. Each name here must
+ * have a corresponding `packages/azure-${name}/src/main.ts` entry point
+ * (see `packages/azure-markdown` and `packages/azure-docx` for the shape).
+ * Passing an unlisted name must fail before anything is spawned, not
+ * partway through an `esbuild.build()` against a path that doesn't exist.
  */
-const SUPPORTED_DOC_TYPES = ["markdown"];
+const SUPPORTED_DOC_TYPES = ["markdown", "docx"];
 
 function assertDocTypesSupported(docTypes) {
   const unsupported = docTypes.filter((name) => !SUPPORTED_DOC_TYPES.includes(name));
   if (unsupported.length > 0) {
     throw new Error(
       `startAzureRuntime() only supports ${SUPPORTED_DOC_TYPES.join(", ")} right now (got ` +
-        `${unsupported.join(", ")}). azure-docx doesn't exist yet — it's Task 7's job to create ` +
-        `the package and generalise this loop to more than one doc type.`,
+        `${unsupported.join(", ")}). Add a packages/azure-${unsupported[0]} entry point and list ` +
+        `it in SUPPORTED_DOC_TYPES to support it.`,
     );
   }
 }
@@ -523,7 +538,10 @@ export async function startAzureRuntime({
 
   const bundleDir = join(ROOT, ".azure-runtime", "bundles");
   const gatewayBundle = join(bundleDir, "gateway.mjs");
-  const markdownBundle = join(bundleDir, "markdown.mjs");
+  // One bundle per selected doc type, entry point `packages/azure-${name}/src/main.ts`.
+  const docTypeBundles = Object.fromEntries(
+    docTypes.map((name) => [name, join(bundleDir, `${name}.mjs`)]),
+  );
 
   // Fail loudly on a held port before anything is spawned — see
   // `assertPortFree()`'s comment for why this matters more than it looks
@@ -535,20 +553,23 @@ export async function startAzureRuntime({
   await run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
 
   let gatewayProc;
-  const markdownProcs = [];
+  // One replica-process array per doc type, keyed by name.
+  const docTypeProcs = Object.fromEntries(docTypes.map((name) => [name, []]));
   let azuriteProc;
   let azuriteDataDir;
   let probe;
-  let proxy;
+  // One replica proxy per doc type, keyed by name.
+  const proxies = {};
   // Registered before anything is spawned so it covers every child from the
   // moment it exists; `getChildren` reads these bindings at cleanup time,
   // not at registration time, so it sees whichever of them got assigned
-  // before the process went down. `markdownProcs` is read live (not spread
-  // here) so replicas spawned after registration are still covered. See the
-  // function's own comment for what this can and can't guarantee.
+  // before the process went down. `docTypeProcs[name]` arrays are read live
+  // (not spread here) so replicas spawned after registration are still
+  // covered. See the function's own comment for what this can and can't
+  // guarantee.
   const uninstallCleanup = installChildProcessCleanup(() => [
     gatewayProc,
-    ...markdownProcs,
+    ...docTypes.flatMap((name) => docTypeProcs[name]),
     azuriteProc,
   ]);
   try {
@@ -558,41 +579,48 @@ export async function startAzureRuntime({
 
     await Promise.all([
       bundleService(join(ROOT, "packages/azure-gateway/src/main.ts"), gatewayBundle),
-      bundleService(join(ROOT, "packages/azure-markdown/src/main.ts"), markdownBundle),
+      ...docTypes.map((name) =>
+        bundleService(join(ROOT, `packages/azure-${name}/src/main.ts`), docTypeBundles[name]),
+      ),
     ]);
 
-    const replicaUrls = [];
-    for (const [i, port] of layout.docTypes.markdown.replicas.entries()) {
-      const proc = spawnService(
-        markdownBundle,
-        [],
-        {
-          DATABASE_URL,
-          BLOB_CONNECTION_STRING,
-          INTERNAL_TOKEN,
-          PORT: String(port),
-          ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
-        },
-        `azure-markdown-${i + 1}`,
-      );
-      markdownProcs.push(proc);
-      await waitForPort(host, port, 30_000);
-      replicaUrls.push(`http://${host}:${port}`);
+    const urls = { gateway: `http://${host}:${layout.gateway}` };
+    // `{TYPE}_WORKER_URL` per doc type — matches `azure-gateway/src/main.ts`'s
+    // `resolveWorkerUrl()`, which already generalises over any doc type.
+    const workerUrlEnv = {};
+
+    for (const name of docTypes) {
+      const replicaUrls = [];
+      for (const [i, port] of layout.docTypes[name].replicas.entries()) {
+        const proc = spawnService(
+          docTypeBundles[name],
+          [],
+          {
+            DATABASE_URL,
+            BLOB_CONNECTION_STRING,
+            INTERNAL_TOKEN,
+            PORT: String(port),
+            ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
+          },
+          `azure-${name}-${i + 1}`,
+        );
+        docTypeProcs[name].push(proc);
+        await waitForPort(host, port, 30_000);
+        replicaUrls.push(`http://${host}:${port}`);
+      }
+
+      // The proxy plays ACA ingress. The gateway only ever learns this one
+      // address — it must never know replicas exist.
+      proxies[name] = await startReplicaProxy({
+        host,
+        port: layout.docTypes[name].proxy,
+        targets: replicaUrls,
+      });
+
+      urls[name] = proxies[name].url; // unchanged meaning: the address the gateway should talk to
+      urls[`${name}Replicas`] = replicaUrls; // direct-to-replica, for cross-replica scenarios
+      workerUrlEnv[`${name.toUpperCase()}_WORKER_URL`] = urls[name];
     }
-
-    // The proxy plays ACA ingress. The gateway only ever learns this one
-    // address — it must never know replicas exist.
-    proxy = await startReplicaProxy({
-      host,
-      port: layout.docTypes.markdown.proxy,
-      targets: replicaUrls,
-    });
-
-    const urls = {
-      gateway: `http://${host}:${layout.gateway}`,
-      markdown: proxy.url, // unchanged meaning: the address the gateway should talk to
-      markdownReplicas: replicaUrls, // new: direct-to-replica, for cross-replica scenarios
-    };
 
     gatewayProc = spawnService(
       gatewayBundle,
@@ -601,7 +629,7 @@ export async function startAzureRuntime({
         DATABASE_URL,
         INTERNAL_TOKEN,
         PORT: String(layout.gateway),
-        MARKDOWN_WORKER_URL: urls.markdown,
+        ...workerUrlEnv,
         ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
       },
       "azure-gateway",
@@ -616,8 +644,10 @@ export async function startAzureRuntime({
       // A function, not a snapshot: `startReplicaProxy()`'s own `hits()` is
       // itself a live accessor, and callers here (the multi-replica suite,
       // in particular) need counts taken *after* a batch of gateway
-      // requests, not whatever the count happened to be at boot.
-      replicaHits: () => proxy.hits(),
+      // requests, not whatever the count happened to be at boot. Defaults to
+      // the first requested doc type so single-doc-type callers (existing
+      // markdown-only tests) can keep calling `replicaHits()` with no args.
+      replicaHits: (name = docTypes[0]) => proxies[name].hits(),
       async dispose() {
         // Processes are being stopped deliberately below, via the graceful
         // stopProcess() path — uninstall the exit/signal handlers first so
@@ -625,10 +655,10 @@ export async function startAzureRuntime({
         // an already-exited child is a no-op, but there's no reason to leave
         // process-level listeners registered past this runtime's lifetime).
         uninstallCleanup();
-        await proxy?.close();
+        await Promise.all(docTypes.map((name) => proxies[name]?.close()));
         await Promise.all([
           stopProcess(gatewayProc),
-          ...markdownProcs.map((proc) => stopProcess(proc)),
+          ...docTypes.flatMap((name) => docTypeProcs[name].map((proc) => stopProcess(proc))),
           stopProcess(azuriteProc),
         ]);
         await probe?.dispose();
@@ -643,10 +673,12 @@ export async function startAzureRuntime({
     // child process the way an unhandled exception would if it were only
     // ever cleaned up by the caller's `dispose()`, which never gets called.
     uninstallCleanup();
-    await proxy?.close().catch(() => {});
+    await Promise.all(
+      Object.values(proxies).map((proxy) => proxy?.close().catch(() => {})),
+    );
     await Promise.allSettled([
       stopProcess(gatewayProc),
-      ...markdownProcs.map((proc) => stopProcess(proc)),
+      ...docTypes.flatMap((name) => docTypeProcs[name].map((proc) => stopProcess(proc))),
       stopProcess(azuriteProc),
     ]);
     await probe?.dispose().catch(() => {});

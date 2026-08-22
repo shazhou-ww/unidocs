@@ -33,6 +33,25 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/azure-docx:
+    dependencies:
+      '@unidocs/azure-sdk':
+        specifier: workspace:*
+        version: link:../azure-sdk
+      '@unidocs/doctype-docx':
+        specifier: workspace:*
+        version: link:../doctype-docx
+    devDependencies:
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/azure-gateway:
     dependencies:
       '@azure/storage-blob':

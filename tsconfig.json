@@ -23,6 +23,9 @@
       "path": "packages/azure-markdown"
     },
     {
+      "path": "packages/azure-docx"
+    },
+    {
       "path": "packages/doctype-markdown"
     },
     {
