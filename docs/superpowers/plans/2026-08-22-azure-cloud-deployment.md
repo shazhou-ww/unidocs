@@ -638,9 +638,19 @@ CMD ["sh", "-c", "exec node $ENTRY"]
 ```
 .azure-runtime
 **/dist
+**/*.tsbuildinfo
 ```
 
-排除 `**/dist` 是安全的:构建阶段自己会跑 `pnpm -r build`。
+**三行必须一起加,`**/*.tsbuildinfo` 不是可选的。** 只排除 `**/dist` 会让构建在容器里失败:仓库每个包都有 `packages/*/tsconfig.tsbuildinfo`,而 `packages/core` 是 composite 项目(`compilerOptions.composite: true`)。`tsc` 读到被拷进容器的那份 tsbuildinfo 会认为输出已是最新、**跳过 emit**,于是 `packages/core/dist/` 根本不生成,接着 `packages/doctype-markdown` 报
+
+```
+src/markdown.ts(5,42): error TS6305: Output file '/repo/packages/core/dist/index.d.ts'
+  has not been built from source file '/repo/packages/core/src/index.ts'.
+```
+
+后面一串 `TS7006 implicitly has an 'any' type` 都是它的下游。这是实测踩到的,不是推测。
+
+排除这两类之后容器里 dist 与 tsbuildinfo 都不存在,`pnpm -r build` 做一次干净的完整构建。
 
 - [ ] **Step 4: 构建四个镜像**
 
