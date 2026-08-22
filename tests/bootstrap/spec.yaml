@@ -40,8 +40,24 @@ steps:
   # Both gateways, side by side: Miniflare on 8787 (its CAS worker exposed
   # directly on 8790 via `urls.cas`) and the Azure stack on 41787, pointed at
   # that same CAS worker through the transitional `casBaseUrl` wiring so the
-  # docx image step below has somewhere to write. Every downstream step now
-  # curls both.
+  # docx image step below has somewhere to write.
+  #
+  # This is a fail-fast smoke test, not the thing that leaves both stacks up
+  # for `create-new-markdown`/`create-new-docx`/`cas` below — it doesn't.
+  # Verified empirically (by running the tree's ancestor commit's spec files
+  # and by direct container testing): a treespec step's *filesystem* state
+  # carries forward to the next spec.yaml (this is why `pnpm install`/
+  # `pnpm -r build` above only run once, here), but a background *process*
+  # started by one step does not survive into the next spec.yaml — which is
+  # exactly why every one of the 21 leaf spec files this tree had before
+  # this task each re-started their own stack as their first step, and why
+  # every markdown/docx leaf spec below does the same for both stacks now
+  # (see the identical step repeated at the top of each
+  # `create-new-markdown/**` / `create-new-docx/**` spec.yaml). This step
+  # only proves the dual-stack/`postgres:"external"` wiring itself works,
+  # immediately after build, instead of first finding out several files
+  # deep into the primary chain.
+  #
   # Each `nohup ... &` is wrapped in its own `(cd /workspace && ...)`
   # subshell, not one shared leading `cd /workspace &&`: bash's `&&`/`&`
   # precedence only scopes a leading `cd` to the *first* backgrounded

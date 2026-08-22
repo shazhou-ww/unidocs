@@ -38,9 +38,22 @@ USER root
 # (`corepack --version` => 0.35.0) regardless of Accept header. Installing
 # pnpm via plain `npm install -g` instead sidesteps corepack's resolution
 # path entirely and hits the registry root, which this mirror does serve
-# with absolute tarball URLs. Version pinned to match root package.json's
-# `packageManager` field (`pnpm@11.22.0`).
-RUN npm install -g pnpm@11.22.0 --registry=https://repo.huaweicloud.com/repository/npm/
+# with absolute tarball URLs.
+#
+# The version is read out of root package.json's `packageManager` field at
+# build time rather than hardcoded here — a hardcoded version would be a
+# second source of truth that nothing keeps in sync with `packageManager`,
+# so a future pnpm bump would silently leave this image on a stale pnpm
+# until someone hit a confusing lockfile/engine mismatch. `docker build`'s
+# context is the repo root (see `treespec.yaml`'s `projectDir: .`), so
+# package.json is available to COPY in even though nothing else in this
+# image needs the repository itself (that's tar'd in at container-run time
+# by tests/bootstrap/spec.yaml's first step, not at build time).
+COPY package.json /tmp/package.json
+RUN PNPM_VERSION=$(node -e "process.stdout.write(require('/tmp/package.json').packageManager.match(/^pnpm@([0-9.]+)/)[1])") \
+    && rm /tmp/package.json \
+    && npm install -g "pnpm@${PNPM_VERSION}" --registry=https://repo.huaweicloud.com/repository/npm/ \
+    && [ "$(pnpm --version)" = "$PNPM_VERSION" ]
 
 # No ENTRYPOINT — treespec sets Cmd: ["sleep", "infinity"] itself
 # and mounts projectDir at /app:ro
