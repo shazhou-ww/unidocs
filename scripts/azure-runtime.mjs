@@ -34,7 +34,7 @@ import * as esbuild from "esbuild";
 import pg from "pg";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { INTERNAL_TOKEN } from "./doc-types.mjs";
-import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
+import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "./workspace-aliases.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./azure-ports.mjs";
 import { startReplicaProxy } from "./replica-proxy.mjs";
 
@@ -165,21 +165,13 @@ async function spawnAzurite() {
 }
 
 /**
- * Not `packages: "external"` — see the matching comment in
- * `packages/azure-docx/scripts/bundle.mjs` for why. In short: a blanket
- * external marking only stays resolvable at runtime for npm deps that are
- * also root `package.json` devDependencies (`pg`, `@azure/storage-blob` —
- * pnpm hoists those to the repo root `node_modules`, an ancestor of every
- * bundle this function writes). DOCX's own real dependency,
- * `@ariadng/office` (declared on `packages/doctype-docx` only, pulled in
- * because `@unidocs/doctype-docx` is alias-inlined as source), is not
- * hoisted anywhere reachable from `.azure-runtime/bundles/*.mjs` — leaving
- * it external produces an unresolvable bare import at runtime. Naming only
- * the two packages that genuinely do resolve lets esbuild inline everything
- * else, `@ariadng/office` included.
+ * Not `packages: "external"` for the npm dependency side of this build —
+ * `EXTERNAL_NPM_PACKAGES`, imported above from `scripts/workspace-aliases.mjs`
+ * (the same shared list `packages/azure-docx/scripts/bundle.mjs` uses), names
+ * exactly the npm specifiers that genuinely resolve at runtime from a bundle
+ * written anywhere under this repo. See that module's doc comment for the
+ * full runtime-resolution reasoning.
  */
-const EXTERNAL_NPM_PACKAGES = ["pg", "@azure/storage-blob"];
-
 async function bundleService(entry, outfile) {
   await mkdir(dirname(outfile), { recursive: true });
   await esbuild.build({
