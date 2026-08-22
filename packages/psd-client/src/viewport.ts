@@ -58,12 +58,23 @@ export class Viewport {
   private readonly ctx: CanvasRenderingContext2D;
   private docSize: Size = { width: 0, height: 0 };
   private view: View = { pan: { x: 0, y: 0 }, zoom: 1 };
+  private container: HTMLElement | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Viewport: canvas 2d context unavailable");
     this.ctx = ctx;
+  }
+
+  /** Registers the scrolling container the canvas sits inside (e.g. `#stage`,
+   *  which has `overflow:auto` and is usually much smaller on-screen than a
+   *  large document rendered at native resolution). Once set, `visibleTiles`
+   *  culls to the on-screen intersection of the canvas and this element
+   *  instead of the whole canvas — see the module doc on `visibleTiles`
+   *  above for why that distinction matters. */
+  setViewportEl(el: HTMLElement): void {
+    this.container = el;
   }
 
   /** Records the document's pixel dimensions, used to clip `visibleTiles`
@@ -99,12 +110,34 @@ export class Viewport {
     return canvasToScreen(this.view, cx, cy);
   }
 
-  /** Tiles currently visible given the canvas element's on-screen size. */
+  /** Tiles currently visible on-screen. When the canvas is rendered at
+   *  native document resolution inside a scrolling container (e.g. `#stage`,
+   *  `overflow:auto`), `canvas.clientWidth/Height` equal the FULL bitmap
+   *  size — not what's actually on-screen — so falling back to that (no
+   *  `setViewportEl` call) returns every tile of the whole canvas. With a
+   *  container registered, we instead intersect the canvas's and
+   *  container's on-screen rects (`getBoundingClientRect`) and map that
+   *  intersection into bitmap-pixel coordinates, so only the tiles actually
+   *  visible through the scroll viewport are requested. */
   visibleTiles(tileSize: number): Tile[] {
-    return visibleTiles(this.view, this.docSize, tileSize, {
-      width: this.canvas.clientWidth || this.canvas.width,
-      height: this.canvas.clientHeight || this.canvas.height,
-    });
+    if (!this.container) {
+      return visibleTiles(this.view, this.docSize, tileSize, {
+        width: this.canvas.clientWidth || this.canvas.width,
+        height: this.canvas.clientHeight || this.canvas.height,
+      });
+    }
+    const cr = this.canvas.getBoundingClientRect();
+    const vr = this.container.getBoundingClientRect();
+    // displayed->bitmap ratio (==1 at native size; robust if CSS ever scales
+    // the canvas element itself, independent of the Viewport's own zoom).
+    const rx = this.canvas.width / (cr.width || this.canvas.width);
+    const ry = this.canvas.height / (cr.height || this.canvas.height);
+    const left = Math.max(0, (Math.max(cr.left, vr.left) - cr.left) * rx);
+    const top = Math.max(0, (Math.max(cr.top, vr.top) - cr.top) * ry);
+    const right = Math.min(this.canvas.width, (Math.min(cr.right, vr.right) - cr.left) * rx);
+    const bottom = Math.min(this.canvas.height, (Math.min(cr.bottom, vr.bottom) - cr.top) * ry);
+    if (right <= left || bottom <= top) return [];
+    return tilesForRect(this.docSize, tileSize, [Math.floor(top), Math.floor(left), Math.ceil(bottom), Math.ceil(right)]);
   }
 
   /** Paints one decoded tile at (tx,ty) onto the canvas at its pan/zoom-mapped

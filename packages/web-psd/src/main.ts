@@ -32,6 +32,7 @@ let currentWorker: Worker | null = null;
 let tileSize = 256;
 
 const view = document.getElementById("view") as HTMLCanvasElement;
+const stageEl = document.getElementById("stage") as HTMLDivElement; // scrolling container around #view — see Viewport.setViewportEl
 const layersEl = document.getElementById("layers") as HTMLDivElement;
 const statusEl = document.getElementById("status") as HTMLSpanElement;
 const fileInput = document.getElementById("file") as HTMLInputElement;
@@ -142,6 +143,7 @@ async function initRender(): Promise<void> {
 
   viewport = new Viewport(view);
   viewport.setDoc(init.canvas);
+  viewport.setViewportEl(stageEl);
 
   session = new DocSession({
     gw: GW,
@@ -187,6 +189,34 @@ async function repaintAfterDocChange(doc: DocSession["doc"]): Promise<void> {
   if (tiles.length > 0) await renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
   refreshLayers();
 }
+
+/** Requests whatever tiles `viewport.visibleTiles` currently reports —
+ *  called on scroll/resize of `#stage` so panning around a large doc
+ *  streams in newly-visible tiles. Already-composed clean tiles are cache
+ *  hits in the Worker (`IncrementalCompositor` returns the cached tile
+ *  unless it's been invalidated), so re-requesting the on-screen set on
+ *  every scroll is cheap — only tiles that haven't been composed yet (or
+ *  were invalidated by an edit) actually do work. */
+function requestVisibleTiles(): void {
+  if (!renderClient || !viewport) return;
+  const tiles = viewport.visibleTiles(tileSize);
+  if (tiles.length > 0) void renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
+}
+
+function debounce(fn: () => void, ms: number): () => void {
+  let handle: ReturnType<typeof setTimeout> | null = null;
+  return () => {
+    if (handle !== null) clearTimeout(handle);
+    handle = setTimeout(fn, ms);
+  };
+}
+
+// Registered once at module scope (not per `initRender`) — `renderClient`/
+// `viewport` are read fresh inside `requestVisibleTiles` on each fire, so a
+// doc swap (new worker + Viewport) is picked up automatically without
+// needing to tear down and re-add listeners.
+stageEl.addEventListener("scroll", debounce(requestVisibleTiles, 60), { passive: true });
+window.addEventListener("resize", debounce(requestVisibleTiles, 120));
 
 function refreshLayers(): void {
   if (!session) return;
