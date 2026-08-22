@@ -297,6 +297,8 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 | 跨云 CAS 要求两侧 `INTERNAL_TOKEN` 相同 | **本轮接受(有操作约束)** | 上一行的直接推论,原先漏登记。CAS worker 对每个请求校验该 token,不同源即 401,而本地栈共用 `unidocs-dev-token` 会掩盖它。约束:Azure 侧的值必须由人从 Cloudflare 侧取得并经 `--internal-token` 传入(§5),脚本不生成。代价:轮换该 token 必须**两侧同时**做 |
 | 无 CI | **本轮接受** | 已确认的范围决定。部署脚本本身即将来 CI 调用的对象 |
 | `azure-markdown` / `azure-docx` 未合并 | **推后** | 已确认。代价:3 份服务镜像,以及两份已经漂移过一次的 `bundle.mjs`(§6.2 的 bug 正源于此)仍然并存。合并成单一 `DOC_TYPE` 参数化镜像可一次性消除该漂移面 |
+| 镜像引用有两个真相来源,无测试绑定 | **已知,未解决** | 脚本用 `IMAGES` 数组生成 `az acr build --image` 的仓库路径,而 `infra/main.bicep` 里四处独立手写 `'${acr.properties.loginServer}/unidocs/<name>:${imageTag}'` 字面量。当前四个名字一致(已由编译产物核实),但没有任何测试读 Bicep 去比对 —— 改了 `IMAGES` 里的 `name` 而忘了同步 Bicep,测试全绿,要到真实部署「拉不到镜像」才暴露。非本轮引入,本轮也未加剧 |
+| RBAC 预检按角色**名字**白名单,会误伤自定义角色 | **已知,可接受** | `checkRbac()` 断言存在内置的 `Owner` 或 `User Access Administrator`。任何包含 `Microsoft.Authorization/roleAssignments/write`(即 bootstrap.bicep 实际所需权限)但不叫这两个名字的自定义角色,会被误判为无权限而拦下,尽管它真能跑通。按实际操作权限判断需要 `az provider operation` 展开角色定义,复杂度远高于收益。刻意不留 `--skip-rbac-check` 逃生口 —— 留了等于把这道墙拆掉 |
 | 连接池上限只保证常驻形态,不保证满载 | **已知,未解决** | `PG_POOL_MAX` 默认 5 让 5 个常驻副本(5×5=25)安全落在 B1ms 的 `max_connections`(约 35)之下。但 `maxReplicas` 满载是 13 个副本,13×5=65,仍然超。**一旦真的扩容,`FATAL: sorry, too many clients already` 会以同样的方式回来**,且冒烟测试(串行)照样通过、只有并发才暴露。彻底的解法是按副本数下发 `PG_POOL_MAX`,或把 Postgres 升到更大规格 —— 两者都不在本轮 |
 | `az acr build` 的构建机能否访问华为云镜像源 | **待首次部署确认** | C1 的修复把镜像构建从本机挪到了 ACR Tasks(Azure 东南亚),而 `Dockerfile` 里的 `pnpm install --registry=https://repo.huaweicloud.com/...` 是为**本机**被 SNI 拦截的网络写的。那台构建机能否访问该镜像源没人验证过。失败会发生在第 4 步(比 C1 原来的失败点早得多、也好诊断)。退路:该源不可达时改用默认 registry —— 从 Azure 出网大概率不受本机那条拦截影响 |
 | 常驻副本成本 | **已知** | 粗估 $85–105/月(Container Apps 5 个常驻副本占大头,Postgres B1ms 约 $13,ACR Basic $5)。`minReplicas` 是旋钮,下调的含义见 §4.2 |
