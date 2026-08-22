@@ -1806,6 +1806,19 @@ node scripts/azure-deploy.mjs --cas-base-url <地址> 2>&1 | tee /tmp/second-dep
 
 若 `what-if` 有 `Modify`,查明是哪个属性并修 Bicep;不要接受"这个属性 Azure 每次都会改"这种解释,除非能指出具体是哪个只读属性被误写成了可写参数。
 
+- [ ] **Step 7b: 核查密钥没有明文进入部署历史**
+
+Bicep 评审提出、但在不部署的情况下无法确认的一项:`main.bicep` 的 `migrateJob` 把由 `@secure() pgAdminPassword` 拼出的 `var databaseUrl` **直接写进外层模板的资源属性**(三个 Container App 走的是模块边界,`expressionEvaluationOptions.scope: "inner"`,属已知安全模式;Job 没有这层边界)。Container Apps 的 `secrets[].value` 在设计上就是承载敏感值的字段,大概率被 RP 标注为敏感,但那个标注状态查不到,只能部署后实测。
+
+```bash
+az deployment operation group list -g rg-unidocs-dev -n main -o json \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('HIT' if 'postgres://' in json.dumps(d) else 'clean')"
+```
+
+预期:`clean`。
+
+若打印 `HIT`,说明密码明文落进了部署历史。**这是必须修的安全问题,不是可接受风险**:把 `migrateJob` 也改成走一个模块(与 `container-app.bicep` 同样的模式,让 secure 值跨越模块边界),重新部署,并**轮换 Postgres 密码**(删除 Key Vault 里的 `pg-admin-password` secret 让部署脚本重新生成,再重跑部署)—— 已经泄进历史的那个密码不能继续用。
+
 - [ ] **Step 8: 验收第 7 条 —— 没有绕开策略**
 
 ```bash
