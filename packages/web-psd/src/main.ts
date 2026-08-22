@@ -48,6 +48,36 @@ interface LocalLayer {
   children?: LocalLayer[];
 }
 
+// Superset of LocalLayer used only for sizing the render cache — adds the
+// (lazy-ref or resident) pixel dimensions `decodedBytes` walks. Both
+// `Layer.pixels` (a `PixelRef`/`Pixels`) and `Layer.mask.pixels` carry
+// `width`/`height` regardless of whether they're resolved yet.
+interface SizedLayer extends LocalLayer {
+  pixels?: { width: number; height: number };
+  mask?: { pixels: { width: number; height: number } };
+  children?: SizedLayer[];
+}
+
+/** Sum of every layer's (and mask's) decoded RGBA byte size, walking group
+ *  children. Used to size the Worker's PixelCache to the doc: the engine
+ *  default (64 MiB) is fine for small docs but evicts constantly on a large
+ *  PSD (hundreds of MB–1GB+ of decoded pixels), which defeats the whole
+ *  point of the persistent cache — every composite re-faults (re-fetches +
+ *  re-decodes from CAS) whatever got evicted since the last one. */
+function decodedBytes(layers: SizedLayer[]): number {
+  let n = 0;
+  for (const l of layers) {
+    if (l.pixels) n += l.pixels.width * l.pixels.height * 4;
+    if (l.mask?.pixels) n += l.mask.pixels.width * l.mask.pixels.height * 4;
+    if (l.children) n += decodedBytes(l.children);
+  }
+  return n;
+}
+
+const CACHE_FLOOR = 128 * 1024 * 1024; // 128 MiB — small docs still get real headroom
+const CACHE_HEADROOM = 64 * 1024 * 1024; // slack for tile buffers alongside layer pixels
+const CACHE_CAP = 1024 * 1024 * 1024; // 1 GiB ceiling — don't reserve unbounded memory for huge docs
+
 function setStatus(msg: string): void { statusEl.textContent = msg; }
 
 function rectsOverlap(a: Rect, b: Rect): boolean {
@@ -104,7 +134,13 @@ async function initRender(): Promise<void> {
     viewport?.draw(tile.tx, tile.ty, { width: tile.width, height: tile.height, data: tile.data }, tileSize);
   });
 
-  const init = await renderClient.init({ ir, gw: GW, user: USER });
+  // Size the browser cache to actually hold this doc's decoded layers (see
+  // `decodedBytes` above), not the engine's small resident-doc default.
+  const cacheBytes = Math.min(
+    CACHE_CAP,
+    Math.max(CACHE_FLOOR, decodedBytes(doc.layers as unknown as SizedLayer[]) + CACHE_HEADROOM),
+  );
+  const init = await renderClient.init({ ir, gw: GW, user: USER, cacheBytes });
   tileSize = init.tileSize;
 
   view.width = init.canvas.width;
