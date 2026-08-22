@@ -1,4 +1,4 @@
-import type { PsdOp } from "@unidocs/doctype-psd/engine";
+import type { PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
 import type { WorkerRequest, WorkerResponse } from "./render-worker.js";
 
 type Rect = [number, number, number, number];
@@ -24,7 +24,8 @@ type InitResult = { tileSize: number; canvas: { width: number; height: number } 
 type PendingEntry =
   | { kind: "init"; resolve: (v: InitResult) => void; reject: (e: unknown) => void }
   | { kind: "applyOp"; resolve: (rect: Rect) => void; reject: (e: unknown) => void }
-  | { kind: "tiles"; resolve: () => void; reject: (e: unknown) => void };
+  | { kind: "tiles"; resolve: () => void; reject: (e: unknown) => void }
+  | { kind: "reset"; resolve: () => void; reject: (e: unknown) => void };
 
 /** Main-thread handle on the render Worker: serializes/deserializes the
  *  {@link WorkerRequest}/{@link WorkerResponse} protocol. Thin message
@@ -73,6 +74,12 @@ export class RenderClient {
         this.pending.delete(msg.id);
         break;
       }
+      case "resetDone": {
+        const entry = this.pending.get(msg.id);
+        if (entry?.kind === "reset") entry.resolve();
+        this.pending.delete(msg.id);
+        break;
+      }
       case "error": {
         // Routed strictly by id: rejects only the request this error
         // actually belongs to, never an unrelated pending applyOp/init.
@@ -114,6 +121,21 @@ export class RenderClient {
     return new Promise((resolve, reject) => {
       this.pending.set(id, { kind: "applyOp", resolve, reject });
       const req: WorkerRequest = { type: "applyOp", id, op };
+      this.worker.postMessage(req);
+    });
+  }
+
+  /** Swaps the Worker's resident doc for `doc` (e.g. after a 409/agent
+   *  rebase), keeping the Worker's warm `PixelCache`: layers whose blob hash
+   *  is unchanged are served from cache instead of being re-fetched. `doc`
+   *  is a lazy doc (layers are `PixelRef{width,height,hash}`, no resident
+   *  pixel arrays), so it's cheap to structured-clone across `postMessage` —
+   *  sent with no transfer list. */
+  reset(doc: PsdDoc): Promise<void> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { kind: "reset", resolve, reject });
+      const req: WorkerRequest = { type: "reset", id, doc };
       this.worker.postMessage(req);
     });
   }

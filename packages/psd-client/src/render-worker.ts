@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import type { PsdOp } from "@unidocs/doctype-psd/engine";
+import type { PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
 import { deserialize } from "@unidocs/doctype-psd/engine";
 import { CasBlobStore } from "./cas-blob-store.js";
 import { RenderCore } from "./render-core.js";
@@ -16,13 +16,15 @@ type Rect = [number, number, number, number];
 export type WorkerRequest =
   | { type: "init"; id: number; ir: Uint8Array; gw: string; user: string; tileSize?: number; cacheBytes?: number }
   | { type: "applyOp"; id: number; op: PsdOp }
-  | { type: "tiles"; id: number; tiles: Array<[number, number]> };
+  | { type: "tiles"; id: number; tiles: Array<[number, number]> }
+  | { type: "reset"; id: number; doc: PsdDoc };
 
 export type WorkerResponse =
   | { type: "ready"; id: number; tileSize: number; canvas: { width: number; height: number } }
   | { type: "dirty"; id: number; rect: Rect }
   | { type: "tile"; id: number; tx: number; ty: number; width: number; height: number; data: Uint8ClampedArray }
   | { type: "tilesDone"; id: number }
+  | { type: "resetDone"; id: number }
   | { type: "error"; id: number; message: string };
 
 // `self` is the DedicatedWorkerGlobalScope per the webworker lib reference
@@ -87,6 +89,16 @@ async function handle(req: WorkerRequest): Promise<void> {
         }
       }
       post({ type: "tilesDone", id: req.id });
+      break;
+    }
+    case "reset": {
+      try {
+        if (!core) throw new Error("render-worker: received reset before init");
+        core.reset(req.doc);
+        post({ type: "resetDone", id: req.id });
+      } catch (err) {
+        post({ type: "error", id: req.id, message: errorMessage(err) });
+      }
       break;
     }
   }
