@@ -18,4 +18,20 @@ describe("CasBlobStore.get", () => {
     const s = new CasBlobStore({ gw: "/gw", user: "u1", fetchImpl: mockFetch({}) });
     expect(await s.get("missing")).toBeNull();
   });
+
+  it("uses the global fetch bound correctly (no 'Illegal invocation' when called as a method)", async () => {
+    const original = globalThis.fetch;
+    // A fetch that throws 'Illegal invocation' if `this` is a non-global object — mimics the browser's WebIDL brand check.
+    const guarded = function (this: unknown): Promise<Response> {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+      return Promise.resolve({ status: 200, ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer } as unknown as Response);
+    };
+    globalThis.fetch = guarded as unknown as typeof fetch;
+    try {
+      const store = new CasBlobStore({ gw: "/gw", user: "u1" }); // NO fetchImpl → uses the bound default
+      await expect(store.get("h")).resolves.not.toBeUndefined(); // must NOT throw Illegal invocation
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 });

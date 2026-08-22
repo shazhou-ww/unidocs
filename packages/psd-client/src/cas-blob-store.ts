@@ -14,7 +14,7 @@ export class CasBlobStore implements BlobStore {
   constructor(opts: { gw: string; user: string; fetchImpl?: typeof fetch }) {
     this.gw = opts.gw;
     this.user = opts.user;
-    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   async get(hash: string): Promise<Uint8Array | null> {

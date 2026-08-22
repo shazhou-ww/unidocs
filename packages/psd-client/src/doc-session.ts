@@ -123,7 +123,7 @@ export class DocSession {
     this.#docId = opts.docId;
     this.#store = opts.store;
     this.#render = opts.render;
-    this.#fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+    this.#fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#genId = opts.genId ?? defaultGenId();
     this.#onRebase = opts.onRebase;
     this.#doc = opts.doc;

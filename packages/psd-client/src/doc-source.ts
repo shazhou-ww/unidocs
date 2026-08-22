@@ -21,7 +21,7 @@ export async function loadDoc(opts: {
   store: BlobStore;
   fetchImpl?: typeof fetch;
 }): Promise<{ doc: PsdDoc; version: number }> {
-  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const res = await fetchImpl(`${opts.gw}/users/${opts.user}/docs/${opts.type}/${opts.docId}/snapshot`);
   if (!res.ok) throw new Error(`loadDoc: unexpected status ${res.status} fetching snapshot for doc "${opts.docId}"`);
   const snap = (await res.json()) as SnapshotResponse;
