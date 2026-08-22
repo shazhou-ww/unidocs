@@ -20,8 +20,25 @@ let miniflare;
 let azure;
 const USER = "docx-img-user";
 
+/**
+ * 专用端口,不用默认的 8787/8789/8790 —— `scripts/` 下每个测试文件都这么做
+ * (18787 / 28787 / 29787 / 31787 / 32787),原因在这条测试上尤其硬:
+ * **本轮自己的 docx 工作流要求另开一个终端跑 `pnpm dev`**,而那正是绑
+ * 8787 的进程。用默认端口等于让这条测试与它所依赖的开发流程互相排斥,
+ * `pnpm test:local` 会以 "Port 8787 is already in use" 失败。
+ */
+const MINIFLARE_PORTS = { gateway: 33787, docx: 33789, cas: 33790 };
+
 beforeAll(async () => {
-  miniflare = await startLocalRuntime({ docTypes: ["docx"] });
+  miniflare = await startLocalRuntime({
+    docTypes: ["docx"],
+    ports: MINIFLARE_PORTS,
+  });
+  // Azure 侧刻意不覆盖端口:`startAzureRuntime()` 没有端口覆盖参数,而
+  // `azure-behavior` / `azure-multi-replica` 是有意跑默认布局的(那条副本数
+  // 闸门验的就是默认值)。三个 Azure 测试在 `--fileParallelism=false` 下顺序
+  // 执行,互不重叠;与外部 `pnpm dev --azure` 的冲突由 `assertPortsFree()`
+  // 明确报出,不是静默失败。
   azure = await startAzureRuntime({
     docTypes: ["docx"],
     casBaseUrl: miniflare.urls.cas,
