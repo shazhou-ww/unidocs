@@ -110,7 +110,9 @@ doc type 的 `minReplicas = 2` 是刻意的:阶段 3 证明的是**多副本拓�
 | gateway | `PORT=8787`、`DATABASE_URL`(secret)、`INTERNAL_TOKEN`(secret)、`MARKDOWN_WORKER_URL`、`DOCX_WORKER_URL`、`CAS_BASE_URL` |
 | markdown | `PORT=8788`、`DATABASE_URL`(secret)、`INTERNAL_TOKEN`(secret)、`BLOB_ACCOUNT_URL`、`AZURE_CLIENT_ID` |
 | docx | `PORT=8789`、同上 + `CAS_BASE_URL` |
-| migrate Job | `DATABASE_URL`(secret)、`BLOB_ACCOUNT_URL`、`AZURE_CLIENT_ID` |
+| migrate Job | `DATABASE_URL`(secret)**仅此一个** |
+
+迁移 Job 不需要任何 Blob 变量:`migrate-cli.ts` 只调用 `createPool()` 与 `runMigrations(pool)`,不构造 `BlobServiceClient`。它现有的 `blobConnectionString: process.env.BLOB_CONNECTION_STRING ?? ""` 是残留参数,实施时随 §6.1 一并去掉(`AzureConfig` 的两个 blob 字段都改为可选)。
 
 `CAS_BASE_URL` 指向**已部署的 Cloudflare CAS worker 自身的 base URL**,不是网关的 —— 这条约束在阶段 3 的设计 §6 中确立,`packages/azure-sdk/src/doc-type-service.ts` 的 `httpCasFetcher` 与 `azure-gateway/src/main.ts:56-73` 两侧都依赖它。
 
