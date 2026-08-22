@@ -2355,3 +2355,43 @@ ps -eo pid,ppid,etime,command | grep -E "azure-runtime|workerd|azurite" | grep -
 - [ ] 端口契约新增的四条用例在内存、Cloudflare、Postgres 三个后端全绿
 - [ ] `packages/azure-markdown/src/` 与 `packages/azure-docx/src/` 中不存在逐字重复的 session 构造逻辑(两个 `main.ts` 都只有 doc type 与端口的差别)
 - [ ] `grep -rE "D1Database|R2Bucket|DurableObject|KVNamespace" packages/server-core/src/ packages/azure-sdk/src/ packages/cas/src/` 无输出
+
+---
+
+## 阶段 4 交接说明
+
+最终整支审查(2026-08-22)在「可以合并」的前提下留下的事项。分四类:**验证缺口**(本轮声称成立但证据不完整的)、**已知未修**(判定为跟进项的真实缺陷)、**约定不一致**(跨任务才看得见的)、**阶段 4 的直接输入**。
+
+### 验证缺口
+
+- **treespec 整棵树从未真正执行过。** CLI 没有安装在开发机上,本轮的验证方式是:构建 e2e 镜像、在容器里手工跑 bootstrap 步骤、以及对一组代表性 curl 逐条比对两个网关。**「双网关 e2e 全绿」这句话目前没有证据支撑** —— 有证据的是「接线正确、代表性步骤在两个网关上产出相同结果」。装上 CLI 后跑一次 `treespec run` 是阶段 4 开工前的第一件事。
+- **跨步骤存储持久化只手工验过一条链。** `bootstrap → create-new-markdown → edit` 这条做过真实的「杀掉栈再重启」验证,确认文档在两个网关上都还在;`create-new-docx/*` 与 `cas/*` 依赖的是「16 个 spec 接线完全一致」这个推断。
+- **`prepareConcurrency` 钩子在三个后端里只有一个是真凭证。** 只有 Postgres harness 会实际测量(`pool.idleCount >= 2`);内存与 Cloudflare 两侧返回的是声明。内存后端的 `how` 字符串说「两个 promise 直接交错」,而 `MemoryDeltaLog.append` 是同步的、恰恰不交错 —— 措辞需要按「harness 不串行化写者;SUT 没有让出点这件事正是哨兵要证明的」来改。
+
+### 已知未修
+
+- **`pnpm dev --azure` 按 Ctrl+C 不会停掉 Postgres 容器。** `installChildProcessCleanup()` 的信号处理器抢先调用 `process.exit(130)`,`dev.mjs` 的 `dispose()` 没机会跑,`docker compose down -v` 从不执行。**先于本轮存在**(`main` 上即可复现),自动化测试不受影响(它们直接调 `dispose()`)。本轮只改了 `README.md` 里那句不实描述并指向 `pnpm azure:down`;真修需要改动信号退出语义,不适合放在合并闸口做。
+- **提交进仓库的代码引用仓库外文件。** `packages/cloudflare-sdk/src/ports-cf.ts:9` 引用 `.superpowers/sdd/2026-08-20-azure-phase1-server-core/task-4-report.md`,`packages/doctype-psd/tests/load-crop.test.ts:72` 引用 `task-0-report.md`。`.superpowers/` 由 `.git/info/exclude` 忽略,任何人 clone 都读不到。两处都在 `main` 上、不在本分支范围内。本轮清掉了自己引入的 15 处同类引用。
+- **`scripts/replica-proxy.mjs`** 在 `headersSent` 之后仍会写 JSON 错误体,会把垃圾追加到已部分流出的响应上;`req` 没有 `error` 监听器。
+
+### 约定不一致(跨任务才看得见)
+
+- **三个打包器,两套约定。** `packages/azure-markdown/scripts/bundle.mjs` 仍用 `packages: "external"`,而 `azure-docx` 与 `bundleService()` 用共享的 `EXTERNAL_NPM_PACKAGES`。`README.md` 目前是**记录**这个分裂(「照抄 azure-docx,不要抄 azure-markdown」)而不是消除它。
+- **`packages/azure-markdown/package.json`** 仍声明 `@unidocs/core`、`@unidocs/server-core`、`@azure/storage-blob`、`pg`、`@types/pg`,SDK 抽取之后一个都没用到;它的孪生包 `azure-docx` 只声明两个。
+- **`scripts/azure-runtime.mjs` 的 `SUPPORTED_DOC_TYPES`** 与 `scripts/azure-ports.mjs` 的 `AZURE_DOC_TYPE_PORT_BASE` 重复编码同一份清单,新增 doc type 要改两处。
+- **`packages/azure-docx/src/main.ts` 的 `defaultPort: 8789`** 正是 Miniflare 的 docx 端口。本轮的 docx 方案要求两套栈同时跑,所以裸跑 `node dist/main.js` 会撞端口 —— 应当从 `azure-ports.mjs` 的端口段取值。
+- **`pnpm dev --azure` 不带参数现在默认 markdown+docx**,于是最朴素的那条命令在没有第二个终端跑 `pnpm dev` 时会直接失败。双栈的代价从「按需承担」变成了「默认承担」。
+
+### 阶段 4 的直接输入
+
+阶段 4 写 `azure-cas`(用户级 CAS 的 Postgres/Blob 实现,含 lease 与 GC 的串行化)。落地后**整块过渡形态一起删除**,每一处都已在代码注释里标注并指向阶段 4:
+
+- `packages/azure-sdk/src/doc-type-service.ts` 的 `httpCasFetcher` 与 `casBaseUrl` 分支
+- `packages/azure-gateway/src/main.ts` 的 `casFetcher` 与 `isPublicCasRoute` 门控
+- `scripts/doc-types.mjs` 给 CAS worker 开的 `unsafeDirectSockets`(8790)与 `scripts/local-runtime.mjs` 的 `urls.cas`
+- `scripts/azure-runtime.mjs` 与 `scripts/dev.mjs` 的 `casBaseUrl` 透传与可达性探测
+- 双栈开发流程(`pnpm dev` + `pnpm dev --azure`)本身
+
+删除时注意:`scripts/azure-docx-image.test.mjs` 是「CAS 客户端确实带鉴权头」这条修复的**唯一**自动化回归网(baseUrl 模式发 `Authorization: Bearer`,fetcher 模式才发 `X-Internal-Token`/`X-User-Id`,而 CAS worker 的内部路由认后者)。换成 `azure-cas` 时要保证等价覆盖不丢。
+
+`#persistIdentity` 的兜底分支仍无覆盖 —— 它在 `packages/cloudflare-sdk/src/editor-do.ts`,需要往 Durable Object 存储里注入故障,内存端口够不到。见设计文档第 11 节。
