@@ -1,14 +1,24 @@
 /**
- * 部署脚本里能被纯逻辑覆盖的部分。其余(az 调用、docker 构建)由 Task 8
+ * 部署脚本里能被纯逻辑覆盖的部分。其余(az 调用、ACR 构建)由 Task 8
  * 的真实部署验收。
  */
 import { describe, expect, test } from "vitest";
-import { IMAGES, generateSecret, imageRef, parseArgs } from "./azure-deploy.mjs";
+import { IMAGES, generateSecret, imageRef, imageRepoTag, parseArgs } from "./azure-deploy.mjs";
 
 describe("imageRef", () => {
   test("拼出完整的 ACR 镜像引用", () => {
     expect(imageRef("crunidocsabc.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
       "crunidocsabc.azurecr.io/unidocs/azure-markdown:a1b2c3d",
+    );
+  });
+
+  // `az acr build --image` 要的是 registry 内的相对路径。带上 loginServer
+  // 前缀会建出一个名叫 `crunidocsabc.azurecr.io/unidocs/...` 的仓库,而
+  // main.bicep 引用的是 `unidocs/...`,部署时拉不到镜像。
+  test("imageRepoTag 不含 loginServer 前缀,且是 imageRef 的后缀", () => {
+    expect(imageRepoTag("azure-markdown", "a1b2c3d")).toBe("unidocs/azure-markdown:a1b2c3d");
+    expect(imageRef("crunidocsabc.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
+      `crunidocsabc.azurecr.io/${imageRepoTag("azure-markdown", "a1b2c3d")}`,
     );
   });
 });
@@ -71,5 +81,17 @@ describe("parseArgs", () => {
 
   test("未知参数响亮失败,而不是被忽略", () => {
     expect(() => parseArgs(["--typo-flag", "x"])).toThrow(/--typo-flag/);
+  });
+
+  // INTERNAL_TOKEN 不是本轮生成的密钥,而是必须与已部署的 Cloudflare CAS
+  // worker 对齐的既有值 —— 所以它必须能从命令行传进来。
+  test("--internal-token 被解析", () => {
+    expect(parseArgs(["--internal-token", "shared-with-cloudflare"]).internalToken).toBe(
+      "shared-with-cloudflare",
+    );
+  });
+
+  test("不传 --internal-token 时是空串(留给 Key Vault 里的既有值)", () => {
+    expect(parseArgs([]).internalToken).toBe("");
   });
 });

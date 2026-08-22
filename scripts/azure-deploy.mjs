@@ -7,16 +7,21 @@
  *   1 预检(订阅、Microsoft.App 注册)
  *   2 bootstrap.bicep     —— ACR 必须先于推镜像存在,Key Vault 必须先于播种存在
  *   3 播种/读取密钥        —— 幂等的关键
- *   4 构建并推四个镜像
+ *   4 在 ACR 里构建四个 linux/amd64 镜像
  *   5 main.bicep          —— 消费 @secure() 参数与镜像 tag
  *   6 触发迁移 Job 并等它成功
  *   7 冒烟(scripts/azure-smoke.mjs)
  *
  * 用法:
- *   node scripts/azure-deploy.mjs --cas-base-url https://unidocs-cas.<account>.workers.dev
+ *   node scripts/azure-deploy.mjs \
+ *     --cas-base-url https://unidocs-cas.<account>.workers.dev \
+ *     --internal-token <与 Cloudflare CAS worker 相同的 INTERNAL_TOKEN>
+ *
+ * `--internal-token` 只在 Key Vault 里还没有该 secret 时需要(首次部署)。
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,8 +48,18 @@ export const IMAGES = [
   { service: "azure-sdk", name: "azure-migrate", entry: "dist/migrate-cli.js" },
 ];
 
-export function imageRef(loginServer, service, tag) {
-  return `${loginServer}/unidocs/${service}:${tag}`;
+/**
+ * registry 内的仓库路径 + tag。`az acr build --image` 要的就是这个形式
+ * (不带 loginServer 前缀 —— 带上会建出名叫 `crxxx.azurecr.io/unidocs/...`
+ * 的仓库)。
+ */
+export function imageRepoTag(name, tag) {
+  return `unidocs/${name}:${tag}`;
+}
+
+/** main.bicep 消费的完整镜像引用。与 `imageRepoTag()` 同源,不各写一份。 */
+export function imageRef(loginServer, name, tag) {
+  return `${loginServer}/${imageRepoTag(name, tag)}`;
 }
 
 /**
@@ -57,7 +72,7 @@ export function generateSecret(byteLength) {
 }
 
 export function parseArgs(argv) {
-  const args = { ...DEFAULTS, casBaseUrl: "", skipBuild: false, requireCas: false };
+  const args = { ...DEFAULTS, casBaseUrl: "", internalToken: "", skipBuild: false, requireCas: false };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     switch (flag) {
@@ -65,6 +80,7 @@ export function parseArgs(argv) {
       case "--resource-group": args.resourceGroup = argv[++i]; break;
       case "--location": args.location = argv[++i]; break;
       case "--cas-base-url": args.casBaseUrl = argv[++i]; break;
+      case "--internal-token": args.internalToken = argv[++i]; break;
       case "--skip-build": args.skipBuild = true; break;
       case "--require-cas": args.requireCas = true; break;
       default:
@@ -78,7 +94,7 @@ export function parseArgs(argv) {
 }
 
 /**
- * 输出直接透传给终端(what-if 结果、docker build 进度、az 登录提示……
+ * 输出直接透传给终端(what-if 结果、az acr build 进度、az 登录提示……
  * 都是给人看的),非零退出即抛错并中止整条部署链。
  *
  * 失败时的错误信息绝不拼 `args.join(" ")`:好几个调用点(Key Vault 播种、
@@ -126,10 +142,104 @@ function tryCapture(cmd, args, opts = {}) {
   return result.stdout.trim();
 }
 
-/** Step 1:预检 —— 订阅、资源提供者注册、资源组(全部幂等)。 */
+/**
+ * 执行部署的身份必须能建**角色分配** —— `bootstrap.bicep` 里 UAMI 在 ACR 上
+ * 的 `AcrPull` 与在 Storage 上的 `Storage Blob Data Contributor` 是两条
+ * `Microsoft.Authorization/roleAssignments/write`。内置 `Contributor` 的
+ * `notActions` 恰好含 `Microsoft.Authorization/*\/Write`,所以「有 Contributor
+ * 就够」是错的:那样会在 **bootstrap 部署中途**失败,而此时 ACR / Storage /
+ * Key Vault / Log Analytics 已经建出来了 —— 部分创建、需手工清理。
+ */
+const PRIVILEGED_ROLES = ["Owner", "User Access Administrator"];
+
+/**
+ * `--include-groups` **不可省**:本仓库当前账号的权限是经组继承的,缺了它
+ * 查询返回空,会得出「完全没有任何权限」的错误结论(设计 §11 里那句话就是
+ * 这么写错的)。`--include-inherited` 覆盖订阅之上的管理组层级。
+ */
+function roleNamesAtScope(assignee, scope) {
+  const stdout = tryCapture("az", [
+    "role", "assignment", "list",
+    "--include-groups", "--include-inherited",
+    "--assignee", assignee,
+    "--scope", scope,
+    "--query", "[].roleDefinitionName",
+    "-o", "tsv",
+  ]);
+  if (stdout === null) return null;
+  return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+function checkRbac(args) {
+  // 服务主体登录时 `az ad signed-in-user show` 无结果,退回 `account show`
+  // 的 user.name(`--assignee` 同时接受 objectId、SPN 和 UPN)。
+  const assignee =
+    tryCapture("az", ["ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"]) ||
+    capture("az", ["account", "show", "--query", "user.name", "-o", "tsv"]);
+
+  const scopes = [
+    `/subscriptions/${args.subscription}`,
+    `/subscriptions/${args.subscription}/resourceGroups/${args.resourceGroup}`,
+  ];
+  const found = new Set();
+  let anyScopeQueried = false;
+  for (const scope of scopes) {
+    // 资源组尚不存在时这条会失败,返回 null —— 不是「没权限」,跳过即可。
+    const roles = roleNamesAtScope(assignee, scope);
+    if (roles === null) continue;
+    anyScopeQueried = true;
+    for (const role of roles) found.add(role);
+  }
+
+  if (!anyScopeQueried) {
+    throw new Error(
+      "preflight: could not read role assignments for the signed-in identity " +
+      `(assignee ${assignee}). Cannot prove the deployment will be able to create ` +
+      "role assignments; fix `az login` / directory read access and retry.",
+    );
+  }
+  if (!PRIVILEGED_ROLES.some((role) => found.has(role))) {
+    throw new Error(
+      `preflight: the signed-in identity (${assignee}) has none of ${PRIVILEGED_ROLES.join(" / ")} ` +
+      `on /subscriptions/${args.subscription} or resource group ${args.resourceGroup} ` +
+      `(roles seen: ${[...found].join(", ") || "none"}).\n` +
+      "infra/bootstrap.bicep creates two role assignments (UAMI -> AcrPull on ACR, " +
+      "UAMI -> Storage Blob Data Contributor on the storage account). Contributor is NOT " +
+      "enough: its notActions include Microsoft.Authorization/*/Write, so the bootstrap " +
+      "deployment would fail halfway, after ACR / Storage / Key Vault / Log Analytics " +
+      "already exist — leaving a partially created resource group to clean up by hand.\n" +
+      "Ask for Owner (or User Access Administrator alongside Contributor) at subscription " +
+      "or resource-group scope before rerunning.",
+    );
+  }
+}
+
+/**
+ * `scripts/azure-smoke.mjs`(第 7 步)从 `packages/cas/dist/index.js` import CAS
+ * 哈希算法(仓库既有惯例,`scripts/cas-digest.mjs` 同样如此),而本脚本全程
+ * **不在宿主机跑 `pnpm build`** —— 它只构建镜像,那是容器内编译,`.dockerignore`
+ * 还排除了 `**\/dist`。干净检出上不自检的话,会一路成功到第 7 步,在十几分钟
+ * 的镜像构建与真实资源创建之后才以 ERR_MODULE_NOT_FOUND 失败。
+ */
+function checkHostBuild() {
+  const casDist = join(ROOT, "packages/cas/dist/index.js");
+  if (!existsSync(casDist)) {
+    throw new Error(
+      `preflight: ${casDist} is missing. scripts/azure-smoke.mjs (step 7) imports the CAS ` +
+      "hash algorithm from it, and this script never runs `pnpm build` on the host " +
+      "(images compile inside the container). Run `pnpm build` first.",
+    );
+  }
+}
+
+/** Step 1:预检 —— 订阅、RBAC、宿主机构建产物、资源提供者注册、资源组。 */
 function preflight(args) {
-  console.log("[1/7] preflight: subscription + Microsoft.App registration + resource group");
+  console.log("[1/7] preflight: subscription + RBAC + host build + Microsoft.App registration + resource group");
   run("az", ["account", "set", "--subscription", args.subscription]);
+
+  // 两条只读自检都排在任何写操作之前:它们要拦住的正是「建到一半才失败」。
+  checkRbac(args);
+  checkHostBuild();
 
   const state = capture("az", [
     "provider", "show", "-n", "Microsoft.App", "--query", "registrationState", "-o", "tsv",
@@ -210,33 +320,98 @@ function seedSecret(keyVaultName, secretName, byteLength) {
   return generated;
 }
 
-function seedSecrets(keyVaultName) {
+/**
+ * `INTERNAL_TOKEN` 与 Postgres 密码性质**不同**,不能共用 `seedSecret()`:
+ * 它不是本轮新生成的密钥,而是**已经存在于 Cloudflare 侧、本轮必须对齐**的
+ * 既有密钥。`packages/cloudflare-cas/src/worker.ts` 对每个请求校验
+ * `token !== env.INTERNAL_TOKEN` 就 401,而 docx 的图片路径经
+ * `packages/server-core/src/cas-client.ts` 发出去的正是 Azure 侧的这个值。
+ * 现场随机生成一个只会让所有跨云 CAS 请求 401。
+ *
+ * (本地栈之所以看不出来:`scripts/doc-types.mjs` 硬编码的
+ * `INTERNAL_TOKEN = "unidocs-dev-token"` 被 Miniflare 与本地 Azure 栈共用。)
+ */
+function resolveInternalToken(keyVaultName, provided) {
+  const existing = tryCapture("az", [
+    "keyvault", "secret", "show",
+    "--vault-name", keyVaultName,
+    "-n", INTERNAL_TOKEN_SECRET,
+    "--query", "value",
+    "-o", "tsv",
+  ]);
+  if (existing) {
+    // 已有则读用 —— 幂等,且第二次部署不需要再传 --internal-token。
+    return existing;
+  }
+  if (!provided) {
+    throw new Error(
+      `Key Vault ${keyVaultName} has no "${INTERNAL_TOKEN_SECRET}" secret and --internal-token was not given.\n` +
+      "This value is NOT generated by this deployment: it must equal the INTERNAL_TOKEN of the " +
+      "already-deployed Cloudflare CAS worker (packages/cloudflare-cas). That worker rejects every " +
+      "request whose X-Internal-Token differs, so a mismatch makes every cross-cloud CAS request " +
+      "from azure-docx fail with 401 — the docx image path would break in production while every " +
+      "local test stays green.\n" +
+      "Confirm the Cloudflare-side secret exists with:\n" +
+      "  cd packages/cloudflare-cas && npx wrangler secret list\n" +
+      "then rerun with --internal-token <that value>.",
+    );
+  }
+  // label 显式给出:args 里的 `--value <provided>` 绝不能进 Error.message。
+  run(
+    "az",
+    ["keyvault", "secret", "set", "--vault-name", keyVaultName, "-n", INTERNAL_TOKEN_SECRET, "--value", provided, "-o", "none"],
+    {},
+    `az keyvault secret set --vault-name ${keyVaultName} -n ${INTERNAL_TOKEN_SECRET}`,
+  );
+  return provided;
+}
+
+function seedSecrets(keyVaultName, args) {
   console.log("[3/7] seeding/reading secrets from Key Vault (values withheld from logs)");
   const pgAdminPassword = seedSecret(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48);
-  const internalToken = seedSecret(keyVaultName, INTERNAL_TOKEN_SECRET, 32);
+  const internalToken = resolveInternalToken(keyVaultName, args.internalToken);
   return { pgAdminPassword, internalToken };
 }
 
-/** Step 4:构建并推四个镜像;`--skip-build` 时跳过,只复用已有 tag。 */
+/**
+ * Step 4:在 ACR 里构建四个镜像;`--skip-build` 时跳过,只复用已有 tag。
+ *
+ * 用 `az acr build` 而不是本机 `docker build` + `docker push`,原因只有一个
+ * 但足够硬:**Azure Container Apps 只接受 `linux/amd64`**,而开发机是 Apple
+ * Silicon,`docker build` 产出的是 `linux/arm64`。那种镜像会推送成功、
+ * `main.bicep` 部署成功,然后副本 `exec format error` —— 报出来的错误是第 6 步
+ * 的「migration job did not finish within ...ms」,发生在四次镜像构建 + Postgres
+ * + ACA 环境全部创建之后,且完全指不到根因。
+ *
+ * 本机加 `--platform linux/amd64` 交叉构建同样不行:在 arm64 上用 QEMU 模拟
+ * 跑四遍完整的 `pnpm install` + `pnpm -r build` 慢到不可用。`az acr build` 在
+ * ACR 中以原生 amd64 构建,不需要模拟。
+ *
+ * 它同时**取代**了 `az acr login` + `docker push`:构建产物直接落在 registry 里。
+ * 构建上下文仍是仓库根(`.`),`.dockerignore` 继续生效;`Dockerfile` 本身
+ * 不需要改,它是平台无关的。
+ */
 function buildAndPushImages(args, bootstrap, tag) {
   if (args.skipBuild) {
     console.log("[4/7] --skip-build: reusing existing images for tag", tag);
     return;
   }
 
-  console.log("[4/7] building and pushing 4 images for tag", tag);
-  run("az", ["acr", "login", "-n", bootstrap.acrName]);
+  console.log("[4/7] building 4 linux/amd64 images in ACR for tag", tag);
 
   for (const item of IMAGES) {
-    const ref = imageRef(bootstrap.acrLoginServer, item.name, tag);
-    run("docker", [
-      "build",
+    // `az acr build` 的 --image 取的是 registry 内的相对路径,不带 loginServer
+    // 前缀;`imageRef()` 拼出的完整引用留给 main.bicep 消费。
+    run("az", [
+      "acr", "build",
+      "--registry", bootstrap.acrName,
+      "--platform", "linux/amd64",
+      "--image", imageRepoTag(item.name, tag),
       "--build-arg", `SERVICE=${item.service}`,
       "--build-arg", `ENTRY=${item.entry}`,
-      "-t", ref,
+      "--file", "Dockerfile",
       ".",
     ]);
-    run("docker", ["push", ref]);
   }
 }
 
@@ -361,7 +536,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   preflight(args);
   const bootstrap = deployBootstrap(args);
-  const secrets = seedSecrets(bootstrap.keyVaultName);
+  const secrets = seedSecrets(bootstrap.keyVaultName, args);
   const tag = capture("git", ["rev-parse", "--short", "HEAD"]);
   buildAndPushImages(args, bootstrap, tag);
   const mainOutputs = deployMain(args, secrets, tag);
