@@ -656,6 +656,26 @@ describe("DocumentSession — normal paths", () => {
     expect((await session.query({ kind: "text" })).data).not.toBe("");
   });
 
+  it("19. a freshly created document has updatedAt === createdAt", async () => {
+    // b7c153a folded create()'s snapshot write into the same
+    // tx.index.recordSnapshot() call that register() uses, so both rows are
+    // stamped from the same `timestamp` local — createdAt/updatedAt landing
+    // together is now a guarantee, not a coincidence of a slow clock. Uses
+    // makeHarness()'s incrementing clock (`now: () => clock++`), not a
+    // constant, because a constant clock can't distinguish "one timestamp
+    // read twice" from "two separate #deps.now() calls that happened to
+    // land in the same tick" — and #writeSnapshot() (used by apply() and
+    // rollback()) calls now() again on every invocation, so a regression
+    // that made create() do the same would only show up against a clock
+    // that actually advances.
+    const { session, ports } = makeHarness();
+
+    await session.create({ bytes: encoder.encode("hello") });
+
+    const [row] = await ports.indexQuery.list("user-1", "text");
+    expect(row.updatedAt).toBe(row.createdAt);
+  });
+
   it("20. load() throws StorageCorruptError when a recorded snapshot ref has no matching blob", async () => {
     // Symmetric with rollback(): the delta log recording a snapshot ref is a
     // promise that the blob exists (writeSnapshot() always writes the blob

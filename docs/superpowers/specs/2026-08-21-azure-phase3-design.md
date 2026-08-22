@@ -205,15 +205,15 @@ CLAUDE.md「新增 document type」的第 4 步补上 Azure 侧的对应条目(`
 3. **`DocIndex.touch()` 语义**。三个后端都没有一条用例直接验 `touch()`:断言它推进 `updatedAt` 而不动 `createdAt`。
 4. **文档作用域谓词**。目前每条用例只操作一个文档,「操作文档 A 不影响也读不到文档 B」从未被直接验证。在专用存储(每 DO 一个私有 sqlite)上几乎不可能出错,但在共享表后端(Postgres 上所有文档挤在同一张 `deltas` 表)上,漏写一个 `WHERE` 条件是最容易犯、代码审查最难发现的一类 bug。
 
-### 五处无覆盖的 Cloudflare 侧行为变更
+### 五处 e2e 打不到的 Cloudflare 侧行为变更
 
-阶段 2 为了让 `create()`/`initFromHash()` 能安全接入 `withTransaction` 而改动了 `packages/server-core/src/session.ts`,Cloudflare 与 Azure 共用这份代码,但现有 e2e 都打不到这几条分支。用**内存端口做故障注入**补测,不碰 Miniflare:
+阶段 2 为了让 `create()`/`initFromHash()` 能安全接入 `withTransaction` 而改动了 `packages/server-core/src/session.ts`,Cloudflare 与 Azure 共用这份代码,49 条 e2e 断言都打不到这五条分支——但这不等于完全无测试覆盖。其中 3 处已经由 `packages/server-core/tests/session.test.ts` 的单元测试钉住(与引入这些行为变更的同一批提交一起加的);只有第 4 处在任务 9 之前是真正无覆盖的。用**内存端口做故障注入**补测,不碰 Miniflare:
 
-1. `load()` 的 blob 回退分支:快照缓存未命中时回退到 `latestSnapshotRef()` + `blobs.get()` 重放
-2. 「有 ref 无 blob」fail-closed:断言抛 `StorageCorruptError` → 500,而不是静默返回空文档(阶段 2 之前是静默吞掉数据丢失)
-3. 创建路径快照缓存写的 best-effort:断言缓存写失败时创建仍返回 200(阶段 2 之前是 500),且随后的 `load()` 靠 blob 回退拿到正确内容
-4. 新建文档 `updatedAt === createdAt`:阶段 2 起这是保证的行为而非巧合
-5. `#persistIdentity` 抛异常时的 `errorResponse` 兜底:身份已算出但持久化失败的时机,断言落到 500 而不是崩溃
+1. `load()` 的 blob 回退分支:快照缓存未命中时回退到 `latestSnapshotRef()` + `blobs.get()` 重放。已覆盖:`session.test.ts` 测试 18。
+2. 「有 ref 无 blob」fail-closed:断言抛 `StorageCorruptError` → 500,而不是静默返回空文档(阶段 2 之前是静默吞掉数据丢失)。已覆盖:`session.test.ts` 测试 20。
+3. 创建路径快照缓存写的 best-effort:断言缓存写失败时创建仍返回 200(阶段 2 之前是 500),且随后的 `load()` 靠 blob 回退拿到正确内容。已覆盖:`session.test.ts` 测试 23。
+4. 新建文档 `updatedAt === createdAt`:阶段 2 起这是保证的行为而非巧合。任务 9 之前无覆盖——补的测试见 `session.test.ts` 测试 19(复用该文件既有的、会自增的 `makeHarness()` 时钟,而不是常量时钟,否则测不出 `create()` 里两次分别调用 `now()` 这类回归)。
+5. `#persistIdentity` 抛异常时的 `errorResponse` 兜底:身份已算出但持久化失败的时机,断言落到 500 而不是崩溃。本轮不覆盖,见第 11 节风险表。
 
 ### `migrate` script
 
@@ -241,4 +241,4 @@ CLAUDE.md「新增 document type」的第 4 步补上 Azure 侧的对应条目(`
 | Postgres 装进 e2e 镜像 | 与 PR #21 削减镜像体积的方向相反 | 不同链路(e2e 镜像 vs `pnpm test:local`);后者不受影响,前者以计时验收 |
 | `web-psd` 的 409 处理有 bug | `packages/web-psd/src/main.ts:116-119` 读的是 `e.currentVersion`,而服务端 409 body 里的字段是 `version` —— resync 从未发生,版本号永远停在过期值;且 `continue` 时 `pending` 已置空,注释声称的「重试」也没发生,该 op 被静默丢弃。合起来:第一次冲突之后每次编辑都 409 且静默丢失,状态栏仍显示正常版本号。单副本下几乎撞不到,多副本会真正走到 | 本轮不修(属 PSD 那条线,PR #23 在改同一个包)。记录在此,多副本上线前必须由 PSD 那边修掉 |
 | 轮询代理的保真度 | 本地轮询代理不等于 ACA ingress(无健康检查、无粘性、无重试) | 本轮只要求「请求会落到不同副本」这一条性质;更真实的 ingress 行为不在本轮范围 |
-| `#persistIdentity` 兜底路径仍无覆盖 | 该分支在 `packages/cloudflare-sdk/src/editor-do.ts`,不在 `session.ts`,需要 DO storage 层的故障注入,内存端口够不到 | 本轮不覆盖。spec §9 列的五处里其余四处已由 `packages/server-core/tests/session-faults.test.ts` 钉住 |
+| `#persistIdentity` 兜底路径仍无覆盖 | 该分支在 `packages/cloudflare-sdk/src/editor-do.ts`,不在 `session.ts`,需要 DO storage 层的故障注入,内存端口够不到 | 本轮不覆盖。spec §9 列的五处里,3 处(blob 回退、fail-closed、快照缓存 best-effort)已由 `packages/server-core/tests/session.test.ts` 测试 18/20/23 覆盖;第 4 处(`updatedAt === createdAt`)由本轮新增的 `session.test.ts` 测试 19 补上 |
