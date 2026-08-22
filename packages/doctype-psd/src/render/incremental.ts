@@ -41,6 +41,23 @@ export class IncrementalCompositor {
    *  across edits to the same active layer; grows when the checkpoint is rebuilt. */
   get _belowRebuilds(): number { return this.#belowRebuilds; }
 
+  /** Swaps the resident document for `newDoc`, discarding all tile-level and
+   *  below-checkpoint state (both are keyed to the OLD doc's layer stack and
+   *  are stale for the new one). Deliberately does NOT touch `#ctx` — the
+   *  same `store` + `PixelCache` carry over, so a layer whose `PixelRef`
+   *  hash is unchanged between the old and new doc is served from the warm
+   *  decoded-pixel cache instead of being re-fetched/re-decoded. This is
+   *  what makes a 409/agent rebase in the browser cheap: only genuinely new
+   *  or changed layer blobs get faulted in on the next composite/applyOp. */
+  reset(newDoc: PsdDoc): void {
+    this.#doc = newDoc;
+    this.#cache.clear();
+    this.#belowChk.clear();
+    this.#activeIndex = 0;
+    this.#cachedW = newDoc.canvas.width;
+    this.#cachedH = newDoc.canvas.height;
+  }
+
   async applyOp(op: PsdOp): Promise<Rect> {
     const next = applyOne(this.#doc, op);
     const dirty = opDirtyRect(op, this.#doc, next);

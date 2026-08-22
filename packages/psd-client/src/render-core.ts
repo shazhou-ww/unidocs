@@ -22,6 +22,13 @@ export class RenderCore {
     return this.compositor.applyOp(op);
   }
 
+  /** Swaps the resident doc for `newDoc` (e.g. after a 409/agent rebase),
+   *  keeping the decoded-pixel cache warm: layers whose blob hash is
+   *  unchanged are served from cache instead of being re-fetched. */
+  reset(newDoc: PsdDoc): void {
+    this.compositor.reset(newDoc);
+  }
+
   /** Reads one tile, recomputing only if dirty (else served from the tile cache). */
   tile(tx: number, ty: number): Promise<Pixels> {
     return this.compositor.readTile(tx, ty);
