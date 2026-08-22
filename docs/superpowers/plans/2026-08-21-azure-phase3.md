@@ -1566,10 +1566,19 @@ git commit -m "test(server-core): close the port contract's four blind spots"
   - `startLocalRuntime()` 的 `urls` 增加 `cas`(指向 Miniflare CAS worker 的直连端口 **8790**)
   - `startAzureRuntime({ casBaseUrl })`,透传给每个副本的 `CAS_BASE_URL` 与 gateway
 
-**背景(两个必须先理解的事实):**
+**背景(三个必须先理解的事实):**
 
 1. `CasClient` 的 `updateRootRefs` 打 `${origin}/_internal/root-refs`(`packages/server-core/src/cas-client.ts:165`),**不在** `/users/{userId}/cas/` 下面。`createGatewayHandler` 只路由 `/users/...`。所以 **`CAS_BASE_URL` 必须指向 CAS worker 本身,不能指向 gateway**。
 2. docx 的图片 e2e 是**经 gateway** 打 `POST /users/{userId}/cas/nodes/{hash}` 上传的(见 `tests/bootstrap/create-new-docx/edit/image/spec.yaml`)。所以 Azure 的 gateway 也必须代理公开 CAS 路由 —— 它现在是 `isPublicCasRoute: () => false`。
+
+3. **`CasClient` 的两种模式发的鉴权头不同,选错等于不鉴权。** `CasClientConfig`(`packages/server-core/src/cas-client.ts:27-29`)是个二选一联合:
+
+   ```ts
+   | { baseUrl: string; userId: string; authToken?: string }         // 发 Authorization: Bearer
+   | { fetcher: HttpFetcher; userId: string; internalToken: string } // 发 X-Internal-Token + X-User-Id
+   ```
+
+   过渡形态要打的是 CAS worker 的**内部**路由,认的是 `X-Internal-Token` + `X-User-Id` —— baseUrl 分支根本不发这两个头。传 `{ baseUrl, userId, internalToken }` 会走 baseUrl 分支、`authToken` 为空,结果是**一个鉴权头都不发**;TypeScript 拦不住,因为 `internalToken` 在联合的另一个成员里存在。Task 2 committed 的 `packages/azure-sdk/src/doc-type-service.ts` 里正是这么写的,而那条分支在本任务之前没有任何测试能到达 —— **本任务必须改掉它**(见 Step 6)。
 
 而 `isPublicCasRoute` 是个纯函数(只解析 pathname,零 Cloudflare 类型),却住在 `packages/cloudflare-cas`。`azure-gateway` 直接 import 它会让 Azure 依赖 Cloudflare 适配包,违反分层。先把它移到云中立的 `@unidocs/cas`。
 
@@ -1664,6 +1673,41 @@ export const CAS_PORT = 8790;
 - [ ] **Step 6: 让 Azure 栈接上它**
 
 改 `scripts/azure-runtime.mjs`:`startAzureRuntime({ ..., casBaseUrl })`,把 `CAS_BASE_URL: casBaseUrl` 加进每个副本的 env(未给时不设该变量,服务端自然退回 501 桩)。
+
+改 `packages/azure-sdk/src/doc-type-service.ts` —— 修掉背景第 3 条那个不鉴权的分支。不要去改 `CasClient`:保持 **fetcher 分支**,把基地址藏进 fetcher 里。Cloudflare 侧的 service binding 本来就是这么接的,`origin()` 在 fetcher 模式下返回的 `https://cas.internal` 就是个等着被重写掉的假源。
+
+```ts
+/**
+ * 过渡形态(阶段 4 删除):把 CasClient 在 fetcher 模式下生成的假源
+ * (`https://cas.internal`)重写到真实的 CAS worker 基地址,其余原样转发。
+ *
+ * 之所以走 fetcher 而不是 CasClient 的 baseUrl 模式:baseUrl 模式发的是
+ * `Authorization: Bearer`,而 CAS worker 的内部路由认的是 `X-Internal-Token`
+ * 与 `X-User-Id` —— 那两个头只有 fetcher 模式会发。
+ */
+function httpCasFetcher(baseUrl: string): HttpFetcher {
+  const origin = baseUrl.replace(/\/$/, "");
+  return {
+    fetch: (input, init) => {
+      const req = new Request(input, init);
+      const url = new URL(req.url);
+      return fetch(`${origin}${url.pathname}${url.search}`, req);
+    },
+  };
+}
+```
+
+`buildDeps` 里 CAS 端口因此只有一处构造,两种模式的差别收敛成「用哪个 fetcher」:
+
+```ts
+      cas: new CasClient({
+        fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+        userId: identity.userId,
+        internalToken: config.internalToken,
+      }),
+```
+
+`HttpFetcher` 从 `@unidocs/server-core` 导入(它就是 `cas-client.ts` 里那个窄接口)。
 
 改 `packages/azure-gateway/src/main.ts`:
 
