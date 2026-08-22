@@ -1745,8 +1745,10 @@ cd packages/cloudflare-cas && npx wrangler deployments list 2>&1 | head -20
 - [ ] **Step 2: 跑第一次完整部署**
 
 ```bash
-node scripts/azure-deploy.mjs --cas-base-url <上一步拿到的地址>
+node scripts/azure-deploy.mjs --cas-base-url <上一步拿到的地址> 2>&1 | tee /tmp/azure-deploy-first.log
 ```
+
+(`tee` 是为了 Step 2b 能回头搜这份输出里有没有密钥回显。)
 
 这一步会:注册 RP(若未注册)、建资源组、跑 bootstrap、播种密钥、构建推送四个镜像、跑 main、触发迁移、跑冒烟。
 
@@ -1759,6 +1761,20 @@ az containerapp job logs show -g rg-unidocs-dev --name caj-unidocs-migrate --con
 ```
 
 若失败原因是 TLS/`sslmode`(设计 §6.3 标注为待实测的那条),**这是已知的可能性,不是意外**:退路是在 `packages/azure-sdk/src/pool.ts` 的 `createPool()` 中按连接串里的 `sslmode` 显式构造 `ssl` 选项。改完回到 Task 1 的验证步骤重跑 `pnpm test` 与 `pnpm test:local`,再重跑本步。
+
+- [ ] **Step 2b: 人工过一遍首次部署的输出,确认没有密钥回显**
+
+`scripts/azure-deploy.mjs` 已经保证**它自己**不会把密钥打进日志(带密钥的调用点显式传不含密钥的 `label`,顶层 `catch` 只输出 `err.message`)。但它用 `stdio: "inherit"` 与 `process.stderr.write(result.stderr)` 原样透传 `az` 自身的输出,而 `az` 在某些失败场景(ARM 部署校验失败、Key Vault 权限错误)下会不会把传入的参数值回显出来,脚本控制不了 —— 这是 Task 6 评审标记的残余风险。
+
+Step 2 的完整输出里搜一遍:
+
+```bash
+grep -nE "pgAdminPassword=[^ ]|internalToken=[^ ]|postgres://[^ ]*:[^@]" /tmp/azure-deploy-first.log || echo "clean"
+```
+
+(Step 2 执行时把输出 `tee` 到 `/tmp/azure-deploy-first.log`。)
+
+预期:`clean`。若命中,说明 `az` 确实会回显,需要在 `run()` / `capture()` 里对带 `label` 的调用点做 stderr 过滤,并**轮换已泄漏的密钥**(删掉 Key Vault 里对应的 secret 让脚本重新生成,再重跑部署)。
 
 - [ ] **Step 3: 验收第 1、2 条 —— 本地栈与 e2e 树未被破坏**
 
