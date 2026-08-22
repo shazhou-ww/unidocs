@@ -133,12 +133,7 @@ module markdownApp 'container-app.bicep' = {
     maxReplicas: 5
     databaseUrl: databaseUrl
     internalToken: internalToken
-    extraEnv: concat([
-      {
-        name: 'PORT'
-        value: '8788'
-      }
-    ], blobEnv)
+    extraEnv: blobEnv
   }
 }
 
@@ -158,10 +153,6 @@ module docxApp 'container-app.bicep' = {
     databaseUrl: databaseUrl
     internalToken: internalToken
     extraEnv: concat([
-      {
-        name: 'PORT'
-        value: '8789'
-      }
       {
         name: 'CAS_BASE_URL'
         value: casBaseUrl
@@ -190,10 +181,6 @@ module gatewayApp 'container-app.bicep' = {
     // 这条路径复用 azure-gateway/src/main.ts 已有的 {TYPE}_WORKER_URL
     // 解析，不需要注册表服务。
     extraEnv: [
-      {
-        name: 'PORT'
-        value: '8787'
-      }
       {
         name: 'MARKDOWN_WORKER_URL'
         value: 'https://${markdownApp.outputs.fqdn}'

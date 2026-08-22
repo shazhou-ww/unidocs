@@ -16,13 +16,19 @@ param external bool
 param minReplicas int
 param maxReplicas int
 
-@description('明文环境变量，形如 [{ name: "PORT", value: "8788" }]。')
+@description('明文环境变量，形如 [{ name: "BLOB_ACCOUNT_URL", value: "https://..." }]。PORT 由模块从 targetPort 自动派生，不要在这里再传一份。')
 param extraEnv array = []
 
 @secure()
 param databaseUrl string
 @secure()
 param internalToken string
+
+// PORT 必须和 ingress.targetPort 是同一个值的两种表现形式，而不是
+// 调用方各自再写一份字符串字面量——否则 ingress 转发到一个端口、
+// 容器监听另一个端口的漂移只会在运行时以连接失败的形式出现，
+// az bicep build / what-if 都不会报错。
+var port = string(targetPort)
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
@@ -72,6 +78,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: concat(
             [
+              {
+                name: 'PORT'
+                value: port
+              }
               {
                 name: 'DATABASE_URL'
                 secretRef: 'database-url'
