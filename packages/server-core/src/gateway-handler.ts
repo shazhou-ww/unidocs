@@ -27,7 +27,7 @@ export interface GatewayHandlerConfig {
 
 const EDITOR_METHODS = new Set([
   "apply", "query", "export", "history", "rollback",
-  "snapshot", "init_from_hash",
+  "snapshot", "ir", "init_from_hash",
 ]);
 
 const OPERATOR_METHODS = new Set(["run", "reset"]);

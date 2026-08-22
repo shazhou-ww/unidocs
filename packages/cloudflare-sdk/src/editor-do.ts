@@ -30,6 +30,7 @@
  *   GET  /_internal/history         — get delta history
  *   POST /_internal/rollback        — rollback to version (body: { version })
  *   GET  /_internal/snapshot        — get current snapshot hash (for clone)
+ *   GET  /_internal/ir              — get current IR bytes directly
  *   POST /_internal/init_from_hash  — initialize from existing snapshot hash (for clone)
  */
 

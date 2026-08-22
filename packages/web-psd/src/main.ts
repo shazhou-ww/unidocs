@@ -90,17 +90,19 @@ function rectsOverlap(a: Rect, b: Rect): boolean {
   return at < bb && ab > bt && al < br && ar > bl;
 }
 
-/** Fetches the doc's current snapshot hash + raw IR bytes (separately from
+/** Fetches the doc's raw current IR bytes directly (separately from
  *  `loadDoc`, which deserializes its own copy for this tab's local `doc`) —
  *  the Worker needs its own `Uint8Array` because `RenderClient.init`
- *  transfers (detaches) the buffer it's handed. */
-async function fetchIrBytes(store: CasBlobStore): Promise<Uint8Array> {
-  const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/snapshot`);
-  if (!r.ok) throw new Error(`snapshot fetch failed: ${r.status}`);
-  const snap = (await r.json()) as { hash: string };
-  const ir = await store.get(snap.hash);
-  if (!ir) throw new Error(`IR blob missing for hash "${snap.hash}"`);
-  return ir;
+ *  transfers (detaches) the buffer it's handed.
+ *
+ *  Goes through `GET .../ir` rather than `.../snapshot` + the user-scoped
+ *  CAS: the snapshot hash is a 16-char durable-storage (R2) key, not a
+ *  64-char user-CAS node hash, so `store.get(hash)` on it 400s ("Invalid
+ *  hash") — see `DocumentSession.ir()` in server-core. */
+async function fetchIrBytes(): Promise<Uint8Array> {
+  const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/ir`);
+  if (!r.ok) throw new Error(`ir fetch failed: ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
 }
 
 /** Cold-starts local rendering for `docId`: loads this tab's own doc copy,
@@ -114,7 +116,7 @@ async function initRender(): Promise<void> {
   const store = new CasBlobStore({ gw: GW, user: USER });
   const [{ doc, version }, ir] = await Promise.all([
     loadDoc({ gw: GW, user: USER, type: TYPE, docId, store }),
-    fetchIrBytes(store),
+    fetchIrBytes(),
   ]);
 
   // Tear down any previous doc's worker before starting a new one.

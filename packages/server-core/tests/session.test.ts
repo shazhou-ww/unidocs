@@ -1174,6 +1174,23 @@ describe("DocumentSession — normal paths", () => {
     expect(await deps.blobs.get(snap.hash)).toEqual(encoder.encode("a"));
   });
 
+  it("24b. ir() hands back the current IR bytes directly, without a blob-store round trip", async () => {
+    // Regression for the CasBlobStore 400 bug: snapshot()'s hash is only a
+    // durable-storage (R2 BlobCas) key — computeHash truncates to 16 hex
+    // chars, too short to pass the user-scoped CAS content endpoint's 64-char
+    // hash validation. A caller that needs the bytes (the browser's cold-start
+    // loadDoc) must get them directly from the session, never by re-deriving
+    // a hash and fetching it through CAS. ir() is that direct path.
+    const { session } = makeHarness(1_000, undefined, makeCtxAwareDocType());
+    await session.load();
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "a", 1);
+
+    const ir = await session.ir();
+    expect(ir.version).toBe(2);
+    expect(ir.bytes).toEqual(encoder.encode("IR:a"));
+  });
+
   // ------------------------------------------------------------------
   // C1: exportBytes() must materialize a lazy document before save().
   // A cold-reloaded PSD is lazy (PixelRef layers); save() WITHOUT ctx would

@@ -68,7 +68,7 @@ function identityFromRequest(request: Request, id: unknown): DocIdentity {
 /**
  * Builds the `editor` namespace `createDocTypeHandler` forwards editor
  * endpoints (`query`, `apply`, `history`, `rollback`, `export`, `snapshot`,
- * `init_from_hash`, plus the bare `POST /users/{userId}/` create) to.
+ * `ir`, `init_from_hash`, plus the bare `POST /users/{userId}/` create) to.
  *
  * `buildDeps` is called fresh on every `fetch()` — see the module doc for why
  * that matters. It is the caller's job to make it cheap (a `pg.Pool` and a

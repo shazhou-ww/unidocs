@@ -823,4 +823,27 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       docId: this.#deps.identity.docId,
     };
   }
+
+  /**
+   * Return the current document's IR bytes directly, without going through
+   * the blob store.
+   *
+   * `snapshot()`'s hash is only a durable-storage key (R2, via `BlobCas`) —
+   * it is NOT a user-scoped CAS node, and is too short (16 hex chars, see
+   * `computeHash`) to pass the CAS content endpoint's hash validation (64
+   * hex chars) anyway. A caller that wants the IR bytes themselves (e.g. the
+   * browser's cold-start `loadDoc`) has no way to fetch them via CAS, so this
+   * method hands them back directly instead of a fetchable reference.
+   *
+   * Pass ctx so a ctx-aware doc type (PSD) produces IR JSON and uploads its
+   * per-layer content blobs to the user CAS idempotently (`save` is a plain
+   * re-upload of already-content-addressed blobs) — the same call `#writeBlob`
+   * and `#saveSnapshotCache` make. Doc types that ignore ctx are unaffected.
+   */
+  async ir(): Promise<{ version: number; bytes: Uint8Array }> {
+    await this.load();
+    this.#requireDoc();
+    const bytes = await this.#config.save(this.#doc as TDoc, this.#context());
+    return { version: this.#version, bytes };
+  }
 }

@@ -27,6 +27,9 @@
  *   GET  /_internal/history         — get delta history
  *   POST /_internal/rollback        — rollback to version (body: { version })
  *   GET  /_internal/snapshot        — get current snapshot hash (for clone)
+ *   GET  /_internal/ir              — get current IR bytes directly (for browser cold-start loadDoc;
+ *                                      the snapshot hash is a durable-storage key, not a fetchable
+ *                                      user-CAS node — see DocumentSession.ir())
  *   POST /_internal/init_from_hash  — initialize from existing snapshot hash (for clone)
  */
 
@@ -242,6 +245,14 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
           hash: snap.hash,
           docType: snap.docType,
           docId: snap.docId,
+        });
+      }
+
+      // GET /_internal/ir — get current IR bytes directly (browser cold-start loadDoc)
+      if (method === "GET" && endpoint === "/_internal/ir") {
+        const { version, bytes } = await session.ir();
+        return new Response(bytes as BodyInit, {
+          headers: { "content-type": "application/json", "X-Doc-Version": String(version) },
         });
       }
 

@@ -1,5 +1,6 @@
-import { applyOne, deserialize } from "@unidocs/doctype-psd/engine";
+import { applyOne } from "@unidocs/doctype-psd/engine";
 import type { BlobStore, PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
+import { loadDoc } from "./doc-source.js";
 
 type Rect = [number, number, number, number];
 
@@ -20,12 +21,6 @@ interface PendingEntry {
 interface ApplyResponse {
   success: boolean;
   version: number;
-}
-
-interface SnapshotResponse {
-  success: boolean;
-  version: number;
-  hash: string;
 }
 
 /** Default `opId` generator: a one-time random session nonce plus a
@@ -227,20 +222,22 @@ export class DocSession {
     return true;
   }
 
-  /** Fetches the server's current snapshot, deserializes it into a fresh
-   *  base doc, and replays `#pending` on top — dropping (with a warning,
-   *  not a throw) any op that no longer applies, e.g. because its target
-   *  layer was removed by whatever changed the doc server-side. Updates
-   *  `#doc`/`#version`/`#pending` and warm-resets the render onto the
-   *  replayed doc. */
+  /** Fetches the server's current IR (via the shared `loadDoc`, which hits
+   *  `GET .../ir` directly rather than `snapshot` + user-CAS — the snapshot
+   *  hash is a durable-storage key, not a fetchable CAS node), and replays
+   *  `#pending` on top — dropping (with a warning, not a throw) any op that
+   *  no longer applies, e.g. because its target layer was removed by
+   *  whatever changed the doc server-side. Updates `#doc`/`#version`/
+   *  `#pending` and warm-resets the render onto the replayed doc. */
   async #rebase(): Promise<void> {
-    const res = await this.#fetchImpl(`${this.#gw}/users/${this.#user}/docs/${this.#type}/${this.#docId}/snapshot`);
-    if (!res.ok) throw new Error(`DocSession: snapshot fetch failed with status ${res.status}`);
-    const snap = (await res.json()) as SnapshotResponse;
-
-    const ir = await this.#store.get(snap.hash);
-    if (ir === null) throw new Error(`DocSession: IR blob missing for hash "${snap.hash}"`);
-    const base = await deserialize(ir, this.#store);
+    const { doc: base, version } = await loadDoc({
+      gw: this.#gw,
+      user: this.#user,
+      type: this.#type,
+      docId: this.#docId,
+      store: this.#store,
+      fetchImpl: this.#fetchImpl,
+    });
 
     let doc = base;
     const survivors: PendingEntry[] = [];
@@ -258,7 +255,7 @@ export class DocSession {
 
     this.#doc = doc;
     this.#pending = survivors;
-    this.#version = snap.version;
+    this.#version = version;
     await this.#render.reset(this.#doc);
     this.#onRebase?.(this.#doc);
   }

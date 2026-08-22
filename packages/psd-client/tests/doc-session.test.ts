@@ -68,28 +68,41 @@ interface FetchCall {
 }
 
 type Scripted = { status: number; body?: unknown };
+type ScriptedIr = { status: number; version?: number; bytes?: Uint8Array };
 
-/** Mock fetch routing `.../apply` (POST) and `.../snapshot` (GET) against
- *  per-endpoint response queues, recording every call (method + parsed
- *  body) in order for assertion. */
-function mockFetch(opts: { apply?: Scripted[]; snapshot?: Scripted[] }): { fn: typeof fetch; calls: FetchCall[] } {
+/** Mock fetch routing `.../apply` (POST) and `.../ir` (GET — the direct IR
+ *  fetch `#rebase` now uses via `loadDoc`, replacing the old
+ *  snapshot+user-CAS path) against per-endpoint response queues, recording
+ *  every call (method + parsed body) in order for assertion. */
+function mockFetch(opts: { apply?: Scripted[]; ir?: ScriptedIr[] }): { fn: typeof fetch; calls: FetchCall[] } {
   const applyQueue = [...(opts.apply ?? [])];
-  const snapshotQueue = [...(opts.snapshot ?? [])];
+  const irQueue = [...(opts.ir ?? [])];
   const calls: FetchCall[] = [];
   const fn = (async (url: unknown, init?: RequestInit) => {
     const u = String(url);
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url: u, method, body });
-    let scripted: Scripted | undefined;
-    if (u.endsWith("/apply")) scripted = applyQueue.shift();
-    else if (u.endsWith("/snapshot")) scripted = snapshotQueue.shift();
-    if (!scripted) throw new Error(`mockFetch: no scripted response left for ${method} ${u}`);
-    return {
-      status: scripted.status,
-      ok: scripted.status >= 200 && scripted.status < 300,
-      json: async () => scripted.body,
-    } as unknown as Response;
+    if (u.endsWith("/apply")) {
+      const scripted = applyQueue.shift();
+      if (!scripted) throw new Error(`mockFetch: no scripted response left for ${method} ${u}`);
+      return {
+        status: scripted.status,
+        ok: scripted.status >= 200 && scripted.status < 300,
+        json: async () => scripted.body,
+      } as unknown as Response;
+    }
+    if (u.endsWith("/ir")) {
+      const scripted = irQueue.shift();
+      if (!scripted) throw new Error(`mockFetch: no scripted response left for ${method} ${u}`);
+      return {
+        status: scripted.status,
+        ok: scripted.status >= 200 && scripted.status < 300,
+        headers: { get: (name: string) => (name === "X-Doc-Version" ? String(scripted.version ?? 0) : null) },
+        arrayBuffer: async () => (scripted.bytes ?? new Uint8Array()).buffer,
+      } as unknown as Response;
+    }
+    throw new Error(`mockFetch: unexpected url ${u}`);
   }) as unknown as typeof fetch;
   return { fn, calls };
 }
@@ -182,9 +195,9 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 },
         { status: 200, body: { success: true, version: 11 } },
       ],
-      snapshot: [{ status: 200, body: { success: true, version: 10, hash: "h-new" } }],
+      ir: [{ status: 200, version: 10, bytes: irBytesFor(newBase) }],
     });
-    const store = memStore({ "h-new": irBytesFor(newBase) });
+    const store = memStore({});
     const session = new DocSession(opts({ version: 5, store, render, fetchImpl: fn, genId: () => "op-x" }));
 
     const op = setOp("l1", 0.5);
@@ -205,8 +218,8 @@ describe("DocSession rebase (409 and reconcile)", () => {
     // Resubmitted against the rebased version.
     expect((applyCalls[1]!.body as { baseVersion: number }).baseVersion).toBe(10);
 
-    const snapshotCalls = calls.filter((c) => c.url.endsWith("/snapshot"));
-    expect(snapshotCalls).toHaveLength(1);
+    const irCalls = calls.filter((c) => c.url.endsWith("/ir"));
+    expect(irCalls).toHaveLength(1);
   });
 
   it("invokes onRebase with the rebased doc when a background drain hits a 409 — not just on an explicit reconcile()", async () => {
@@ -219,9 +232,9 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 },
         { status: 200, body: { success: true, version: 11 } },
       ],
-      snapshot: [{ status: 200, body: { success: true, version: 10, hash: "h-new" } }],
+      ir: [{ status: 200, version: 10, bytes: irBytesFor(newBase) }],
     });
-    const store = memStore({ "h-new": irBytesFor(newBase) });
+    const store = memStore({});
     const onRebase = vi.fn();
     const session = new DocSession(opts({ version: 5, store, render, fetchImpl: fn, genId: () => "op-x", onRebase }));
 
@@ -242,9 +255,9 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 }, // simulates a lost ack: server already has a newer baseVersion
         { status: 200, body: { success: true, version: 31 } },
       ],
-      snapshot: [{ status: 200, body: { success: true, version: 30, hash: "h-retry" } }],
+      ir: [{ status: 200, version: 30, bytes: irBytesFor(newBase) }],
     });
-    const store = memStore({ "h-retry": irBytesFor(newBase) });
+    const store = memStore({});
     const idsGenerated: string[] = [];
     const session = new DocSession(
       opts({
@@ -280,9 +293,9 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 },
         { status: 200, body: { success: true, version: 21 } },
       ],
-      snapshot: [{ status: 200, body: { success: true, version: 20, hash: "h-new2" } }],
+      ir: [{ status: 200, version: 20, bytes: irBytesFor(newBase) }],
     });
-    const store = memStore({ "h-new2": irBytesFor(newBase) });
+    const store = memStore({});
     let n = 0;
     const session = new DocSession(
       opts({ doc: docWithLayers(["l1", "l2"]), version: 5, store, render, fetchImpl: fn, genId: () => `op-${++n}` }),
@@ -328,7 +341,10 @@ describe("DocSession concurrency", () => {
     const applyADeferred = defer<Response>();
     const calls: FetchCall[] = [];
     const opBApplyQueue: Scripted[] = [{ status: 200, body: { success: true, version: 11 } }];
-    const snapshotQueue: Scripted[] = [{ status: 200, body: { success: true, version: 10, hash: "h-new" } }];
+    const irQueue: ScriptedIr[] = [{ status: 200, version: 10 }]; // bytes filled in below once newBase exists
+
+    const newBase = docWithLayers(["l2"]); // agent's /run deleted l1 while opA was in flight
+    irQueue[0]!.bytes = irBytesFor(newBase);
 
     // Custom router (not the shared `mockFetch` helper): opA's /apply call
     // is parked on a manually-resolved deferred so the test controls
@@ -345,16 +361,20 @@ describe("DocSession concurrency", () => {
         if (!r) throw new Error("mock: no more opB /apply responses queued");
         return { status: r.status, ok: r.status >= 200 && r.status < 300, json: async () => r.body } as unknown as Response;
       }
-      if (u.endsWith("/snapshot")) {
-        const r = snapshotQueue.shift();
-        if (!r) throw new Error("mock: no more /snapshot responses queued");
-        return { status: r.status, ok: r.status >= 200 && r.status < 300, json: async () => r.body } as unknown as Response;
+      if (u.endsWith("/ir")) {
+        const r = irQueue.shift();
+        if (!r) throw new Error("mock: no more /ir responses queued");
+        return {
+          status: r.status,
+          ok: r.status >= 200 && r.status < 300,
+          headers: { get: (name: string) => (name === "X-Doc-Version" ? String(r.version ?? 0) : null) },
+          arrayBuffer: async () => (r.bytes ?? new Uint8Array()).buffer,
+        } as unknown as Response;
       }
       throw new Error(`mock: unexpected url ${u}`);
     }) as unknown as typeof fetch;
 
-    const newBase = docWithLayers(["l2"]); // agent's /run deleted l1 while opA was in flight
-    const store = memStore({ "h-new": irBytesFor(newBase) });
+    const store = memStore({});
     let n = 0;
     const session = new DocSession(
       opts({ doc: docWithLayers(["l1", "l2"]), version: 5, store, render, fetchImpl, genId: () => `id-${n++}` }),
@@ -368,14 +388,14 @@ describe("DocSession concurrency", () => {
     // The agent's /run lands server-side while opA's POST is still parked.
     const reconcileP = session.reconcile();
 
-    // reconcile() must NOT be able to start its rebase (no /snapshot fetch
-    // yet) while a drain iteration is parked mid-fetch — otherwise it races
-    // the eventual (possibly stale) /apply response against its own
+    // reconcile() must NOT be able to start its rebase (no /ir fetch yet)
+    // while a drain iteration is parked mid-fetch — otherwise it races the
+    // eventual (possibly stale) /apply response against its own
     // #pending/#version writes.
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    expect(calls.filter((c) => c.url.endsWith("/snapshot"))).toHaveLength(0);
+    expect(calls.filter((c) => c.url.endsWith("/ir"))).toHaveLength(0);
 
     // Now let opA's parked POST resolve as an ordinary success.
     applyADeferred.resolve({ status: 200, ok: true, json: async () => ({ success: true, version: 6 }) } as unknown as Response);
@@ -395,13 +415,13 @@ describe("DocSession concurrency", () => {
 });
 
 describe("DocSession.reconcile", () => {
-  it("walks the same rebase path as a 409 — fetches the new snapshot and warm-resets the render", async () => {
+  it("walks the same rebase path as a 409 — fetches the new IR and warm-resets the render", async () => {
     const render = mockRender();
     const agentDoc = docWithLayers(["l1", "l2"]); // agent's /run added l2
     const { fn, calls } = mockFetch({
-      snapshot: [{ status: 200, body: { success: true, version: 42, hash: "h-agent" } }],
+      ir: [{ status: 200, version: 42, bytes: irBytesFor(agentDoc) }],
     });
-    const store = memStore({ "h-agent": irBytesFor(agentDoc) });
+    const store = memStore({});
     const session = new DocSession(opts({ doc: docWithLayers(["l1"]), version: 5, store, render, fetchImpl: fn }));
 
     await session.reconcile();
@@ -411,8 +431,8 @@ describe("DocSession.reconcile", () => {
     expect(render.resetCalls).toHaveLength(1);
     expect(render.resetCalls[0]!.layers.map((l) => l.id)).toEqual(["l1", "l2"]);
 
-    const snapshotCalls = calls.filter((c) => c.url.endsWith("/snapshot"));
-    expect(snapshotCalls).toHaveLength(1);
+    const irCalls = calls.filter((c) => c.url.endsWith("/ir"));
+    expect(irCalls).toHaveLength(1);
     // No pending ops to resubmit — reconcile must not fire a spurious /apply.
     expect(calls.filter((c) => c.url.endsWith("/apply"))).toHaveLength(0);
   });

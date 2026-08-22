@@ -10,6 +10,7 @@
  *   GET  /users/{userId}/{docId}/history              → get delta history
  *   POST /users/{userId}/{docId}/rollback             → rollback to version
  *   GET  /users/{userId}/{docId}/snapshot             → get snapshot hash (for clone)
+ *   GET  /users/{userId}/{docId}/ir                   → get current IR bytes directly
  *   POST /users/{userId}/{docId}/init_from_hash       → clone from snapshot
  *   POST /users/{userId}/{docId}/run                  → operator ReAct loop
  *   POST /users/{userId}/{docId}/reset                → reset operator session
@@ -37,7 +38,7 @@ export interface DocTypeHandlerConfig {
 
 const EDITOR_METHODS = new Set([
   "query", "apply", "history", "rollback", "export",
-  "snapshot", "init_from_hash",
+  "snapshot", "ir", "init_from_hash",
 ]);
 const OPERATOR_METHODS = new Set(["run", "reset"]);
 
