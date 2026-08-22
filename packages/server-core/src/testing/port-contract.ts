@@ -349,14 +349,28 @@ export function runPortContract(
       await a.deltas.append(makeDelta(1, "doc-a-v1"));
       await a.deltas.append(makeDelta(2, "doc-a-v2"));
       await b.deltas.append(makeDelta(1, "doc-b-v1"));
+      // `b` gets a version 2 too, matching the version `a.deltas.remove(2)`
+      // below removes: on a shared-table backend, a `remove()` missing
+      // `WHERE doc_id = ...` (or whose "is this the head" subquery is
+      // missing it) would delete *any* row at version 2, `b`'s included —
+      // not just `a`'s. Without this second delta, `b` only ever holds
+      // version 1, so a doc-id-blind `remove(2)` has nothing of `b`'s to
+      // delete and the test passes regardless of whether the SQL is scoped.
+      await b.deltas.append(makeDelta(2, "doc-b-v2"));
 
       expect(await a.deltas.head()).toBe(2);
-      expect(await b.deltas.head()).toBe(1);
-      expect((await b.deltas.range()).map((d) => d.description)).toEqual(["doc-b-v1"]);
+      expect(await b.deltas.head()).toBe(2);
+      expect((await b.deltas.range()).map((d) => d.description)).toEqual([
+        "doc-b-v1",
+        "doc-b-v2",
+      ]);
 
       await a.deltas.remove(2);
-      expect(await b.deltas.head()).toBe(1);
-      expect((await b.deltas.range()).map((d) => d.description)).toEqual(["doc-b-v1"]);
+      expect(await b.deltas.head()).toBe(2);
+      expect((await b.deltas.range()).map((d) => d.description)).toEqual([
+        "doc-b-v1",
+        "doc-b-v2",
+      ]);
     });
 
     test("recordSnapshot + latestSnapshotRef: latest, atOrBefore, and null before all", async () => {

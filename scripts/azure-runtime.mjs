@@ -145,13 +145,24 @@ function resolveAzuriteBlobEntry() {
  * Spawns `azurite-blob` the same way `spawnService()` spawns the
  * gateway/markdown bundles below — this repo already runs Node services as
  * child processes rather than containers, and Azurite's npm package is
- * nothing more than a Node CLI, so it gets the same treatment. Data goes to
- * a fresh temp directory every run (mirrors what the container gave us for
- * free: a clean volume each time `docker compose up` created one) and gets
- * removed on teardown.
+ * nothing more than a Node CLI, so it gets the same treatment.
+ *
+ * `dataDir`, if given, is used as-is (created if missing) and is never
+ * removed by this run's `dispose()` — that's the whole point of passing one
+ * explicitly (see `startAzureRuntime()`'s `azuriteDataDir` option doc for
+ * why). Omitted, the default is what this always did: a fresh temp
+ * directory every run (mirrors what the container gave us for free — a
+ * clean volume each time `docker compose up` created one), owned by this
+ * run and removed on teardown.
  */
-async function spawnAzurite() {
-  const dataDir = await mkdtemp(join(tmpdir(), "unidocs-azurite-"));
+async function spawnAzurite(dataDir) {
+  const ownsDataDir = dataDir === undefined;
+  const resolvedDataDir = ownsDataDir
+    ? await mkdtemp(join(tmpdir(), "unidocs-azurite-"))
+    : dataDir;
+  if (!ownsDataDir) {
+    await mkdir(resolvedDataDir, { recursive: true });
+  }
   const entry = resolveAzuriteBlobEntry();
   const child = spawnService(
     entry,
@@ -161,13 +172,13 @@ async function spawnAzurite() {
       "--blobPort",
       String(AZURITE_PORT),
       "--location",
-      dataDir,
+      resolvedDataDir,
       "--skipApiVersionCheck",
     ],
     {},
     "azurite",
   );
-  return { child, dataDir };
+  return { child, dataDir: resolvedDataDir, ownsDataDir };
 }
 
 /**
@@ -559,6 +570,22 @@ function assertDocTypesSupported(docTypes) {
  * `postgres` is `"external"`, `assertPortsFree()` skips the 5433 probe too
  * — that port is expected to be held, by the external server, on purpose —
  * while every other port this function claims is still checked.
+ *
+ * `azuriteDataDir` (default: unset, meaning "own a fresh `mkdtemp()`
+ * directory and remove it in `dispose()`" — see `spawnAzurite()`): pass an
+ * explicit, stable path to have Azurite's blob data survive this process
+ * exiting, the same way `postgres: "external"`'s Postgres data directory
+ * already survives on the container filesystem. Without this, every
+ * `startAzureRuntime()` call gets a brand-new empty Azurite, so a process
+ * restart between treespec leaves loses every blob a prior leaf wrote —
+ * `load()` then finds a `doc_snapshots` row whose blob is gone and takes
+ * the fail-closed `StorageCorruptError` branch in
+ * `packages/server-core/src/session.ts`. This is an explicit opt-in, same
+ * reasoning as `postgres: "external"`: the vitest suites (`azure-behavior`,
+ * `azure-multi-replica`, `packages/azure-sdk`'s own tests) each want a
+ * throwaway directory per run — sharing one between runs would leak blobs
+ * from one test run into the next — so the default must stay "fresh
+ * mkdtemp", never auto-detected from e.g. an env var.
  */
 export async function startAzureRuntime({
   host = "127.0.0.1",
@@ -566,6 +593,7 @@ export async function startAzureRuntime({
   replicas = 2,
   casBaseUrl,
   postgres = "compose",
+  azuriteDataDir,
 } = {}) {
   if (postgres !== "compose" && postgres !== "external") {
     throw new Error(`startAzureRuntime(): postgres must be "compose" or "external", got ${JSON.stringify(postgres)}`);
@@ -601,7 +629,8 @@ export async function startAzureRuntime({
   // One replica-process array per doc type, keyed by name.
   const docTypeProcs = Object.fromEntries(docTypes.map((name) => [name, []]));
   let azuriteProc;
-  let azuriteDataDir;
+  let resolvedAzuriteDataDir;
+  let ownsAzuriteDataDir;
   let probe;
   // One replica proxy per doc type, keyed by name.
   const proxies = {};
@@ -618,7 +647,8 @@ export async function startAzureRuntime({
     azuriteProc,
   ]);
   try {
-    ({ child: azuriteProc, dataDir: azuriteDataDir } = await spawnAzurite());
+    ({ child: azuriteProc, dataDir: resolvedAzuriteDataDir, ownsDataDir: ownsAzuriteDataDir } =
+      await spawnAzurite(azuriteDataDir));
     await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
     await runMigrations();
 
@@ -707,7 +737,13 @@ export async function startAzureRuntime({
           stopProcess(azuriteProc),
         ]);
         await probe?.dispose();
-        await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
+        // Only remove the data directory this run actually owns — an
+        // explicit `azuriteDataDir` is meant to survive this process
+        // exiting (that's the entire point of passing one), the same way
+        // `postgres: "external"`'s data directory is never touched here.
+        if (ownsAzuriteDataDir) {
+          await rm(resolvedAzuriteDataDir, { recursive: true, force: true }).catch(() => {});
+        }
         // `postgres: "external"` never ran `docker compose up` above, so it
         // must not run `down -v` here either — this run doesn't own that
         // server's lifecycle.
@@ -732,8 +768,8 @@ export async function startAzureRuntime({
       stopProcess(azuriteProc),
     ]);
     await probe?.dispose().catch(() => {});
-    if (azuriteDataDir) {
-      await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
+    if (resolvedAzuriteDataDir && ownsAzuriteDataDir) {
+      await rm(resolvedAzuriteDataDir, { recursive: true, force: true }).catch(() => {});
     }
     if (!externalPostgres) {
       try {

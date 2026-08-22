@@ -7,10 +7,16 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { startAzureRuntime } from "./azure-runtime.mjs";
 
 let runtime;
-const REPLICAS = 2;
 
+// No explicit `replicas` here, deliberately: this suite exists to guard
+// `startAzureRuntime()`'s *default* replica count (`scripts/azure-runtime.mjs`),
+// the same default `scripts/azure-behavior.test.mjs` runs its 49 behaviour
+// assertions against. Passing `replicas: 2` here would only prove the
+// function honours its own argument — the default could regress to 1 and
+// every suite would stay green while the whole point of this branch (two
+// real replicas sharing one Postgres) quietly reverted.
 beforeAll(async () => {
-  runtime = await startAzureRuntime({ replicas: REPLICAS });
+  runtime = await startAzureRuntime();
 }, 180_000);
 
 afterAll(async () => {
