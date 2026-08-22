@@ -333,6 +333,19 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/psd-client:
+    dependencies:
+      '@unidocs/doctype-psd':
+        specifier: workspace:*
+        version: link:../doctype-psd
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/server-core:
     dependencies:
       '@unidocs/cas':
