@@ -241,31 +241,48 @@ export function runPortContract(
      * deletes; between those two steps another writer can append(v+1),
      * leaving a hole behind.
      *
-     * This case does not fix that window — it pins it in the open: every
-     * outcome is in the allowed set, and all of them must satisfy "head and
-     * range agree with each other". Any new failure shape (remove deleting a
-     * non-head version, or head disagreeing with range) still turns this
-     * red. If the allowed set is ever widened to something that is NOT one
-     * of the three legitimate serializations below, that is the window
-     * getting worse, not the test being too strict.
-     *
-     * Three outcomes are legitimate, not two — the third fell out of
-     * actually running this against a backend with no I/O between the check
-     * and the delete:
+     * This case does not fix that window — it pins it in the open. Three
+     * outcomes are legitimate:
      *   - remove loses entirely (append(3) commits before remove(2) even
-     *     starts): the hole is missed -> [1, 2, 3].
+     *     starts): the hole is missed -> [1, 2, 3], append(3) fulfilled.
      *   - remove wins entirely (remove(2) completes — check AND delete —
      *     before append(3) starts): head drops to 1, and append(3) then
-     *     correctly conflicts because head + 1 is 2, not 3 -> [1]. This is
-     *     plain serialization, not a race outcome at all, but it is the
-     *     ONLY thing that can happen on a backend whose remove() has no
-     *     await between its check and its delete (this contract's in-memory
-     *     ports; a Durable Object, which serialises every call so remove and
-     *     append can never overlap) — Promise.all's array literal still
-     *     invokes remove() first, and a synchronous body runs to completion
-     *     before the second element is even evaluated.
+     *     correctly conflicts because head + 1 is 2, not 3 -> [1], append(3)
+     *     rejected with VersionConflictError. This is plain serialization,
+     *     not a race outcome at all, but it is the ONLY thing that can
+     *     happen on a backend whose remove() has no await between its check
+     *     and its delete (this contract's in-memory ports; a Durable
+     *     Object, which serialises every call so remove and append can
+     *     never overlap) — Promise.allSettled's array literal still invokes
+     *     remove() first, and a synchronous body runs to completion before
+     *     the second element is even evaluated.
      *   - both see the pre-removal head and both proceed: the accepted hole
-     *     -> [1, 3].
+     *     -> [1, 3], append(3) fulfilled.
+     *
+     * `[1]` only earns its place in the allowed set by having its cause
+     * checked, not merely its shape: append(3) must have been REJECTED, and
+     * rejected specifically with VersionConflictError. Without that check,
+     * `[1]` would also match a strictly worse shape this test exists to
+     * rule out — append(3) reporting success while its own delta silently
+     * vanishes — which the original two-outcome set caught only by
+     * accident (that shape wasn't in `[[1,2,3],[1,3]]` either, but for the
+     * wrong reason: because the set was too narrow, not because the shape
+     * was checked for). Symmetrically, whenever append(3) DOES fulfill,
+     * the assertion demands version 3 actually be present in the log,
+     * ruling out "reported success but didn't stick" there too.
+     *
+     * What this case does NOT prove: whether remove()'s own guard is
+     * conditional on v still being head. remove()'s outcome is never
+     * inspected here — the contract does not currently promise anything
+     * about how a no-op remove reports itself, so both a clean no-op and a
+     * throw are tolerated equally. Concretely, this test cannot tell a
+     * correctly conditional remove from a naive, unconditional
+     * `DELETE ... WHERE version = v`: an unconditional remove that deletes
+     * v after append(3) has already committed produces exactly [1, 3] —
+     * indistinguishable from the accepted hole. Coverage for "remove only
+     * touches v when v is still head" comes from the earlier, non-racing
+     * "remove(v) is a no-op once a later delta has been appended on top of
+     * v" case above, not from this one.
      */
     test("remove(v) racing append(v+1): the accepted window is visible, nothing worse happens", async () => {
       const { deltas } = await factory();
@@ -273,15 +290,28 @@ export function runPortContract(
       await deltas.append(makeDelta(1));
       await deltas.append(makeDelta(2));
 
-      await Promise.all([
-        deltas.remove(2).catch(() => undefined),
-        deltas.append(makeDelta(3)).catch(() => undefined),
+      // remove()'s own settlement is deliberately not inspected — see the
+      // comment above on what this case does and does not prove.
+      const [, appendResult] = await Promise.allSettled([
+        deltas.remove(2),
+        deltas.append(makeDelta(3)),
       ]);
 
       const versions = (await deltas.range()).map((d) => d.version);
       expect([[1, 2, 3], [1, 3], [1]]).toContainEqual(versions);
       expect(await deltas.head()).toBe(Math.max(...versions));
       expect(versions).toEqual([...versions].sort((a, b) => a - b));
+
+      if (appendResult.status === "fulfilled") {
+        // append(3) landed: version 3 must actually be present, not merely
+        // reported as written.
+        expect(versions).toContain(3);
+      } else {
+        // append(3) was rejected: it must be rejected for the specific
+        // reason that makes [1] safe rather than silent data loss — a
+        // stale-head conflict, not some other failure.
+        expect(appendResult.reason).toBeInstanceOf(VersionConflictError);
+      }
     });
 
     // touch() has only ever been mentioned in passing, in another test's
