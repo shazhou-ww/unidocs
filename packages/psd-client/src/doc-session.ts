@@ -69,6 +69,7 @@ export class DocSession {
   readonly #render: RenderLike;
   readonly #fetchImpl: typeof fetch;
   readonly #genId: () => string;
+  readonly #onRebase?: (doc: PsdDoc) => void;
 
   #doc: PsdDoc;
   #version: number;
@@ -108,6 +109,13 @@ export class DocSession {
     render: RenderLike;
     fetchImpl?: typeof fetch;
     genId?: () => string;
+    /** Called at the end of every rebase (both the autonomous 409-during-drain
+     *  path and an explicit `reconcile()`) with the rebased `#doc`, so a
+     *  caller can resync the UI (repaint tiles, refresh a layers panel, etc.)
+     *  even when the rebase wasn't triggered by a user-visible action — e.g.
+     *  a 409 firing on a background drain while an agent `/run` (or another
+     *  tab) is mid-flight. Optional; a no-op if omitted. */
+    onRebase?: (doc: PsdDoc) => void;
   }) {
     this.#gw = opts.gw;
     this.#user = opts.user;
@@ -117,6 +125,7 @@ export class DocSession {
     this.#render = opts.render;
     this.#fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.#genId = opts.genId ?? defaultGenId();
+    this.#onRebase = opts.onRebase;
     this.#doc = opts.doc;
     this.#version = opts.version;
   }
@@ -251,5 +260,6 @@ export class DocSession {
     this.#pending = survivors;
     this.#version = snap.version;
     await this.#render.reset(this.#doc);
+    this.#onRebase?.(this.#doc);
   }
 }

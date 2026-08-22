@@ -209,6 +209,31 @@ describe("DocSession rebase (409 and reconcile)", () => {
     expect(snapshotCalls).toHaveLength(1);
   });
 
+  it("invokes onRebase with the rebased doc when a background drain hits a 409 — not just on an explicit reconcile()", async () => {
+    const render = mockRender();
+    const newBase = docWithLayers(["l1"]);
+    newBase.layers[0]!.opacity = 0.9; // someone else's server-side edit
+
+    const { fn } = mockFetch({
+      apply: [
+        { status: 409 },
+        { status: 200, body: { success: true, version: 11 } },
+      ],
+      snapshot: [{ status: 200, body: { success: true, version: 10, hash: "h-new" } }],
+    });
+    const store = memStore({ "h-new": irBytesFor(newBase) });
+    const onRebase = vi.fn();
+    const session = new DocSession(opts({ version: 5, store, render, fetchImpl: fn, genId: () => "op-x", onRebase }));
+
+    await session.applyLocal(setOp("l1", 0.5));
+    await vi.waitFor(() => expect(session.version).toBe(11));
+
+    // Fired exactly once, autonomously — no reconcile() call anywhere in
+    // this test — carrying the same rebased doc `session.doc` ends up with.
+    expect(onRebase).toHaveBeenCalledTimes(1);
+    expect(onRebase).toHaveBeenCalledWith(session.doc);
+  });
+
   it("reuses the SAME opId when a lost-ack forces a retry, rather than generating a fresh one", async () => {
     const render = mockRender();
     const newBase = docWithLayers(["l1"]);

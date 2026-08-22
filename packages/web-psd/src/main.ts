@@ -141,13 +141,49 @@ async function initRender(): Promise<void> {
   viewport = new Viewport(view);
   viewport.setDoc(init.canvas);
 
-  session = new DocSession({ gw: GW, user: USER, type: TYPE, docId, doc, version, store, render: renderClient });
+  session = new DocSession({
+    gw: GW,
+    user: USER,
+    type: TYPE,
+    docId,
+    doc,
+    version,
+    store,
+    render: renderClient,
+    // Fires on EVERY rebase, not just the explicit chat->reconcile() path
+    // below — including an autonomous 409 during a background drain (e.g.
+    // an edit queued while an agent `/run` or another tab is mid-flight),
+    // which otherwise has no UI-refresh hook and would leave the canvas +
+    // layers panel stale until the next unrelated user interaction.
+    onRebase: (rebasedDoc) => {
+      void repaintAfterDocChange(rebasedDoc);
+    },
+  });
 
   const tiles = viewport.visibleTiles(tileSize);
   if (tiles.length > 0) await renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
 
   refreshLayers();
   setStatus(`v${session.version} · ${docId.slice(0, 8)}`);
+}
+
+/** Resyncs the DOM canvas + Viewport transform to `doc`'s current
+ *  dimensions if they changed (e.g. an agent crop/resize) — mirroring what
+ *  `initRender` does on cold start — then repaints the currently visible
+ *  tiles and refreshes the layers panel. Called both from `DocSession`'s
+ *  `onRebase` hook (an autonomous rebase, see above) and explicitly after
+ *  chat's `reconcile()` below, so a canvas-dimension change is always
+ *  picked up regardless of which path triggered the rebase. */
+async function repaintAfterDocChange(doc: DocSession["doc"]): Promise<void> {
+  if (!viewport || !renderClient) return;
+  if (doc.canvas.width !== view.width || doc.canvas.height !== view.height) {
+    view.width = doc.canvas.width;
+    view.height = doc.canvas.height;
+    viewport.setDoc(doc.canvas);
+  }
+  const tiles = viewport.visibleTiles(tileSize);
+  if (tiles.length > 0) await renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
+  refreshLayers();
 }
 
 function refreshLayers(): void {
@@ -257,8 +293,12 @@ let chatBusy = false;
  *  doc/Worker state, so on success we `session.reconcile()`: it fetches the
  *  server's new snapshot, replays any still-pending local ops on top, and
  *  warm-resets the render onto the rebased doc (keeping the Worker's pixel
- *  cache instead of a cold re-init / full-page reload). We then just need
- *  to repaint the visible tiles and refresh the layers panel. */
+ *  cache instead of a cold re-init / full-page reload). We then call
+ *  `repaintAfterDocChange` to resync the canvas size (in case the agent
+ *  cropped/resized) and repaint — `onRebase` already does this for the
+ *  DocSession-internal parts of a rebase, but we call it again explicitly
+ *  here since `reconcile()`'s promise resolving is our reliable signal that
+ *  the agent's response is fully settled and it's safe to update status. */
 async function sendChat(text: string): Promise<void> {
   if (!docId || chatBusy || !session) return;
   chatBusy = true;
@@ -278,11 +318,7 @@ async function sendChat(text: string): Promise<void> {
     addMsg("agent", typeof reply === "string" && reply.trim() ? reply : "(done)");
 
     await session.reconcile();
-    refreshLayers();
-    if (renderClient && viewport) {
-      const tiles = viewport.visibleTiles(tileSize);
-      if (tiles.length > 0) await renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
-    }
+    await repaintAfterDocChange(session.doc);
     setStatus(`v${session.version} · ${docId.slice(0, 8)}`);
   } catch (e) {
     thinking.remove();
