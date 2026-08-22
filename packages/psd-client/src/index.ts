@@ -6,3 +6,5 @@ export type { View, Point, Size } from "./viewport.js";
 export { RenderClient } from "./render-client.js";
 export type { TileMessage } from "./render-client.js";
 export type { WorkerRequest, WorkerResponse } from "./render-worker.js";
+export { DocSession } from "./doc-session.js";
+export type { RenderLike } from "./doc-session.js";
