@@ -41,6 +41,9 @@ importers:
       '@unidocs/azure-sdk':
         specifier: workspace:*
         version: link:../azure-sdk
+      '@unidocs/cas':
+        specifier: workspace:*
+        version: link:../cas
       '@unidocs/server-core':
         specifier: workspace:*
         version: link:../server-core

@@ -10,13 +10,20 @@
  * `docIndex` is `PgDocIndexQuery` over the same Postgres database the
  * doc-type workers write to (shared `docs` table).
  *
- * CAS is phase 4: `casFetcher` is a stub that 501s every request, and
- * `isPublicCasRoute` is a constant `false`, so `/users/{userId}/cas/*` always
- * 404s under `createGatewayHandler`'s own routing (`isPublicCasRoute` gates
- * before the fetcher is ever called).
+ * CAS: transitional (deleted in phase 4). Without `CAS_BASE_URL` set,
+ * `casFetcher` is a stub that 501s every request and `isPublicCasRoute` is a
+ * constant `false`, so `/users/{userId}/cas/*` always 404s under
+ * `createGatewayHandler`'s own routing (`isPublicCasRoute` gates before the
+ * fetcher is ever called) — this keeps a markdown-only deployment from
+ * failing to start over a variable it doesn't use. With `CAS_BASE_URL` set,
+ * requests are proxied straight to the Cloudflare CAS worker; see
+ * `packages/azure-sdk/src/doc-type-service.ts`'s `httpCasFetcher` for the
+ * matching doc-type-service-side wiring and why this has to be the CAS
+ * worker's own base URL, never the gateway's.
  *
- * Env vars: DATABASE_URL, INTERNAL_TOKEN, PORT, and one `{TYPE}_WORKER_URL`
- * per registered document type (e.g. MARKDOWN_WORKER_URL).
+ * Env vars: DATABASE_URL, INTERNAL_TOKEN, PORT, CAS_BASE_URL (optional), and
+ * one `{TYPE}_WORKER_URL` per registered document type (e.g.
+ * MARKDOWN_WORKER_URL).
  */
 
 import {
@@ -26,6 +33,7 @@ import {
   requireEnv,
   serve,
 } from "@unidocs/azure-sdk";
+import { isPublicCasRoute } from "@unidocs/cas";
 import { createGatewayHandler } from "@unidocs/server-core";
 
 function resolveWorkerUrl(docType: string): Promise<string | null> {
@@ -45,17 +53,31 @@ async function main(): Promise<void> {
   attachPoolErrorLogger(pool, "azure-gateway");
   const docIndex = new PgDocIndexQuery(pool);
 
-  const casFetcher = {
-    fetch: async () =>
-      Response.json({ error: "CAS is not implemented on Azure yet" }, { status: 501 }),
-  };
+  // Transitional (deleted in phase 4): CAS_BASE_URL points at the
+  // Cloudflare CAS worker itself. Unset means unchanged behavior — CAS
+  // routes always 404 (isPublicCasRoute is a constant false) — so a
+  // markdown-only deployment doesn't fail to start over a variable it has
+  // no use for.
+  const casBaseUrl = process.env.CAS_BASE_URL;
+  const casFetcher = casBaseUrl
+    ? {
+        fetch: async (input: string | Request, init?: RequestInit): Promise<Response> => {
+          const req = new Request(input, init);
+          const url = new URL(req.url);
+          return fetch(`${casBaseUrl.replace(/\/$/, "")}${url.pathname}${url.search}`, req);
+        },
+      }
+    : {
+        fetch: async () =>
+          Response.json({ error: "CAS is not implemented on Azure yet" }, { status: 501 }),
+      };
 
   const handler = createGatewayHandler({
     internalToken,
     resolveWorkerUrl,
     casFetcher,
     docIndex,
-    isPublicCasRoute: () => false,
+    isPublicCasRoute: casBaseUrl ? isPublicCasRoute : () => false,
   });
 
   const { close } = await serve(handler, { port, host: "0.0.0.0" });

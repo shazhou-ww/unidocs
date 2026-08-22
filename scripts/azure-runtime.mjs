@@ -503,11 +503,20 @@ function assertDocTypesSupported(docTypes) {
  * 1 to tell apart "only reproduces with multiple replicas" from "was always
  * broken") — `scripts/azure-multi-replica.test.mjs` asserts `replicas >= 2`
  * itself so that dropping to 1 can't quietly become the new normal.
+ *
+ * `casBaseUrl` (过渡形态,阶段 4 删除): forwarded as `CAS_BASE_URL` to every
+ * markdown replica's env *and* the gateway's env — both need it, for
+ * different reasons (see `doc-type-service.ts` and `azure-gateway/main.ts`).
+ * Points at the Cloudflare CAS worker's direct port (Miniflare's
+ * `unsafeDirectSockets`, e.g. `startLocalRuntime()`'s `urls.cas`), never at
+ * a gateway. Omitted entirely (not set to an empty string) when the caller
+ * doesn't pass one, so the services fall back to their own 501 stubs.
  */
 export async function startAzureRuntime({
   host = "127.0.0.1",
   docTypes = ["markdown"],
   replicas = 2,
+  casBaseUrl,
 } = {}) {
   assertDocTypesSupported(docTypes);
   const layout = azurePortLayout({ docTypes, replicas });
@@ -562,6 +571,7 @@ export async function startAzureRuntime({
           BLOB_CONNECTION_STRING,
           INTERNAL_TOKEN,
           PORT: String(port),
+          ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
         },
         `azure-markdown-${i + 1}`,
       );
@@ -592,6 +602,7 @@ export async function startAzureRuntime({
         INTERNAL_TOKEN,
         PORT: String(layout.gateway),
         MARKDOWN_WORKER_URL: urls.markdown,
+        ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
       },
       "azure-gateway",
     );

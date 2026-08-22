@@ -9,7 +9,7 @@ let runtime;
 
 beforeAll(async () => {
   runtime = await startLocalRuntime({
-    ports: { gateway: 18787, markdown: 18788, docx: 18789 },
+    ports: { gateway: 18787, markdown: 18788, docx: 18789, cas: 18790 },
   });
 }, 60_000);
 
@@ -56,10 +56,23 @@ test("gateway creates a docx doc via a separate registered workerUrl", async () 
   expect(listed.data.map((row) => row.doc_id)).toContain(created.docId);
 });
 
+// 过渡形态(阶段 4 删除):Azure 栈的 CAS_BASE_URL 要打到这个直连端口
+// (见 doc-types.mjs 的 CAS_PORT 与 buildWorkers 里的 unsafeDirectSockets)。
+// 这条测试证明 CAS worker 现在在 Miniflare 进程外可达,而不只是通过
+// gateway 的 service binding。
+test("the CAS worker is directly reachable on its own port, outside the gateway", async () => {
+  expect(runtime.urls.cas).toBe("http://127.0.0.1:18790");
+
+  const res = await fetch(`${runtime.urls.cas}/users/alice/cas/usage`, {
+    headers: { "X-Internal-Token": "unidocs-dev-token" },
+  });
+  expect(res.status).toBe(200);
+});
+
 test("registry seed works with a persist directory", async () => {
   const persistPath = await mkdtemp(join(tmpdir(), "unidocs-mf-"));
   const persisted = await startLocalRuntime({
-    ports: { gateway: 18887, markdown: 18888, docx: 18889 },
+    ports: { gateway: 18887, markdown: 18888, docx: 18889, cas: 18890 },
     persistPath,
   });
   try {
@@ -75,7 +88,7 @@ test("registry seed works with a persist directory", async () => {
 test("only the selected doc types are started and routable", async () => {
   const only = await startLocalRuntime({
     docTypes: ["docx"],
-    ports: { gateway: 18987, docx: 18989 },
+    ports: { gateway: 18987, docx: 18989, cas: 18990 },
   });
   try {
     expect(only.urls.markdown).toBeUndefined();
@@ -107,7 +120,7 @@ test("a port belonging to an unselected doc type stays available", async () => {
   try {
     const only = await startLocalRuntime({
       docTypes: ["docx"],
-      ports: { gateway: 19087, markdown: 19088, docx: 19089 },
+      ports: { gateway: 19087, markdown: 19088, docx: 19089, cas: 19090 },
     });
     await only.dispose();
   } finally {

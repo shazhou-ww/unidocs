@@ -16,6 +16,7 @@ import {
   CasClient,
   createDocTypeHandler,
   type DocIdentity,
+  type HttpFetcher,
   type SessionDeps,
 } from "@unidocs/server-core";
 import { attachPoolErrorLogger, requireEnv } from "./env.js";
@@ -53,6 +54,29 @@ export interface DocTypeServiceHandle {
   close(): Promise<void>;
 }
 
+/**
+ * 过渡形态（阶段 4 删除）：把 CasClient 在 fetcher 模式下生成的假源
+ * (`https://cas.internal`)重写到真实的 CAS worker 基地址，其余原样转发。
+ *
+ * 之所以走 fetcher 而不是 CasClient 的 baseUrl 模式：baseUrl 模式发的是
+ * `Authorization: Bearer`，而 CAS worker 的内部路由认的是 `X-Internal-Token`
+ * 与 `X-User-Id` —— 那两个头只有 fetcher 模式会发。之前这里用的是
+ * `{ baseUrl, userId, internalToken }`，选中的正是 baseUrl 分支：
+ * `internalToken` 在那个分支上不存在对应字段，`authToken` 又没给，结果是
+ * 一个鉴权头都不发，TypeScript 因为联合类型的另一个成员里存在
+ * `internalToken` 而没有报错。
+ */
+function httpCasFetcher(baseUrl: string): HttpFetcher {
+  const origin = baseUrl.replace(/\/$/, "");
+  return {
+    fetch: (input, init) => {
+      const req = new Request(input, init);
+      const url = new URL(req.url);
+      return fetch(`${origin}${url.pathname}${url.search}`, req);
+    },
+  };
+}
+
 export async function startDocTypeService<TDoc, TQuery, TOp>(
   options: DocTypeServiceOptions<TDoc, TQuery, TOp>,
 ): Promise<DocTypeServiceHandle> {
@@ -76,17 +100,11 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       blobs: new BlobCasStore(blobService),
       index: new PgDocIndex(pool, identity),
       unitOfWork: new PgUnitOfWork(pool, identity),
-      cas: config.casBaseUrl
-        ? new CasClient({
-            baseUrl: config.casBaseUrl,
-            userId: identity.userId,
-            internalToken: config.internalToken,
-          })
-        : new CasClient({
-            fetcher: casStubFetcher,
-            userId: identity.userId,
-            internalToken: config.internalToken,
-          }),
+      cas: new CasClient({
+        fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+        userId: identity.userId,
+        internalToken: config.internalToken,
+      }),
       identity,
       now: () => Date.now(),
     };
