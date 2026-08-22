@@ -1,29 +1,43 @@
 sut_type: cli
 description: "Apply multiple deltas: append, setRunText, verify via queries"
 steps:
-  - command: "cd /workspace && nohup node scripts/dev.mjs > /tmp/miniflare.log 2>&1 & for i in $(seq 1 30); do sleep 2; GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
-    timeout: "120s"
-    assert:
-      type: regex
-      conditions:
-        - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Add Section B\",\"operations\":[{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Section B\",\"options\":{\"style\":\"Heading1\"}}},{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Content of B.\",\"options\":{\"bold\":true}}}]}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Add Section B\",\"operations\":[{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Section B\",\"options\":{\"style\":\"Heading1\"}}},{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Content of B.\",\"options\":{\"bold\":true}}}]}'"  # (cloudflare)
     assert:
       type: jsonata
       expression: "success = true and version = 3"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":3,\"description\":\"Update run text\",\"operations\":[{\"kind\":\"setRunText\",\"payload\":{\"paragraphIndex\":0,\"runIndex\":0,\"text\":\"Updated Hello\"}}]}'"
+  - command: "curl -s --compressed -X POST http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":2,\"description\":\"Add Section B\",\"operations\":[{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Section B\",\"options\":{\"style\":\"Heading1\"}}},{\"kind\":\"appendParagraph\",\"payload\":{\"text\":\"Content of B.\",\"options\":{\"bold\":true}}}]}'"  # (azure)
+    assert:
+      type: jsonata
+      expression: "success = true and version = 3"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":3,\"description\":\"Update run text\",\"operations\":[{\"kind\":\"setRunText\",\"payload\":{\"paragraphIndex\":0,\"runIndex\":0,\"text\":\"Updated Hello\"}}]}'"  # (cloudflare)
     assert:
       type: jsonata
       expression: "success = true and version = 4"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/apply -H 'Content-Type: application/json' -d '{\"baseVersion\":3,\"description\":\"Update run text\",\"operations\":[{\"kind\":\"setRunText\",\"payload\":{\"paragraphIndex\":0,\"runIndex\":0,\"text\":\"Updated Hello\"}}]}'"  # (azure)
+    assert:
+      type: jsonata
+      expression: "success = true and version = 4"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"  # (cloudflare)
     assert:
       type: jsonata
       expression: "success = true and $contains(data, 'Updated Hello') and $contains(data, 'Content of B')"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getParagraphs\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"  # (azure)
+    assert:
+      type: jsonata
+      expression: "success = true and $contains(data, 'Updated Hello') and $contains(data, 'Content of B')"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getParagraphs\"}'"  # (cloudflare)
     assert:
       type: jsonata
       expression: "success = true and $count(data) = 5"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getParagraph\",\"payload\":{\"index\":4}}'"
+  - command: "curl -s --compressed -X POST http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getParagraphs\"}'"  # (azure)
+    assert:
+      type: jsonata
+      expression: "success = true and $count(data) = 5"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getParagraph\",\"payload\":{\"index\":4}}'"  # (cloudflare)
+    assert:
+      type: jsonata
+      expression: "success = true and $contains(data.text, 'Content of B')"
+  - command: "curl -s --compressed -X POST http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getParagraph\",\"payload\":{\"index\":4}}'"  # (azure)
     assert:
       type: jsonata
       expression: "success = true and $contains(data.text, 'Content of B')"

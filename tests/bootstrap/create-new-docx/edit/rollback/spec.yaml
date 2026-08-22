@@ -1,21 +1,28 @@
 sut_type: cli
 description: "Rollback to v2 and verify content reverts, history grows"
 steps:
-  - command: "cd /workspace && nohup node scripts/dev.mjs > /tmp/miniflare.log 2>&1 & for i in $(seq 1 30); do sleep 2; GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
-    timeout: "120s"
-    assert:
-      type: regex
-      conditions:
-        - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/rollback -H 'Content-Type: application/json' -d '{\"version\":2}'"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/rollback -H 'Content-Type: application/json' -d '{\"version\":2}'"  # (cloudflare)
     assert:
       type: jsonata
       expression: "success = true and version = 5"
-  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"
+  - command: "curl -s --compressed -X POST http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/rollback -H 'Content-Type: application/json' -d '{\"version\":2}'"  # (azure)
+    assert:
+      type: jsonata
+      expression: "success = true and version = 5"
+  - command: "curl -s --compressed -X POST http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"  # (cloudflare)
     assert:
       type: jsonata
       expression: "success = true and version = 5 and $contains(data, 'Hello World') and $contains(data, 'Section A')"
-  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/history"
+  - command: "curl -s --compressed -X POST http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/query -H 'Content-Type: application/json' -d '{\"kind\":\"getText\"}'"  # (azure)
+    assert:
+      type: jsonata
+      expression: "success = true and version = 5 and $contains(data, 'Hello World') and $contains(data, 'Section A')"
+  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/history"  # (cloudflare)
+    assert:
+      type: jsonata
+      expression: "success = true and $count(data) = 5"
+
+  - command: "curl -s --compressed http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/history"  # (azure)
     assert:
       type: jsonata
       expression: "success = true and $count(data) = 5"

@@ -21,6 +21,11 @@
  * `dist/main.js` keeps this in sync with whatever is on disk right now,
  * mirroring how `local-runtime.mjs` never trusts a stale `.wrangler` bundle
  * either.
+ *
+ * The `docker compose up -d` step for Postgres is itself optional: pass
+ * `postgres: "external"` to skip it and connect to an already-running
+ * server instead (see `startAzureRuntime()`'s own doc comment) — the mode
+ * `tests/bootstrap/` uses, since that container has no docker at all.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -367,18 +372,24 @@ function assertPortFree(port, hint) {
  * layout because they're fixed infrastructure rather than spawned Node
  * services (`docker-compose.azure.yml`'s Postgres and the spawned
  * `azurite-blob` process).
+ *
+ * `skipPostgresPort` is set when `postgres: "external"` is in effect: 5433
+ * is then deliberately held by a Postgres server this run did not start and
+ * has no business asserting exclusivity over — it's the one port this mode
+ * *expects* to find already bound. Every other port probe (gateway, proxy,
+ * replicas, Azurite) still runs unchanged; only the Postgres check is
+ * skipped, never inferred.
  */
-async function assertPortsFree(layout) {
+async function assertPortsFree(layout, { skipPostgresPort = false } = {}) {
   const byPort = {
     ...describeAzurePorts(layout),
     [AZURITE_PORT]: "expected by the azurite-blob process this run is about to spawn",
     [POSTGRES_PORT]: "expected by docker-compose.azure.yml's postgres service (host port mapping)",
   };
-  await Promise.all(
-    allAzurePorts(layout)
-      .concat([AZURITE_PORT, POSTGRES_PORT])
-      .map((port) => assertPortFree(port, byPort[port])),
+  const ports = allAzurePorts(layout).concat(
+    skipPostgresPort ? [AZURITE_PORT] : [AZURITE_PORT, POSTGRES_PORT],
   );
+  await Promise.all(ports.map((port) => assertPortFree(port, byPort[port])));
 }
 
 /**
@@ -518,13 +529,35 @@ function assertDocTypesSupported(docTypes) {
  * `unsafeDirectSockets`, e.g. `startLocalRuntime()`'s `urls.cas`), never at
  * a gateway. Omitted entirely (not set to an empty string) when the caller
  * doesn't pass one, so the services fall back to their own 501 stubs.
+ *
+ * `postgres` (default `"compose"`): how this run gets a Postgres to talk to.
+ * `"compose"` is today's behavior — `docker compose up -d` against
+ * `docker-compose.azure.yml`, torn down with `down -v` in `dispose()`.
+ * `"external"` skips compose entirely (no `announceFirstPullIfNeeded()`, no
+ * `up`, no `down -v`) and just polls the already-running server at
+ * `DATABASE_URL` via `waitForPostgres()` — for environments with no docker
+ * at all (the treespec e2e container; see `e2e/Dockerfile`, which bakes a
+ * Postgres listening on 5433 straight into the image). This has to be an
+ * explicit opt-in, never auto-detected: auto-detecting "is something
+ * already listening on 5433" would turn a genuine failure ("compose didn't
+ * start") into a silent wrong-target success ("connected to some other
+ * Postgres on that port") — the same shape of false-green
+ * `assertPortsFree()` above exists to rule out for the other ports. When
+ * `postgres` is `"external"`, `assertPortsFree()` skips the 5433 probe too
+ * — that port is expected to be held, by the external server, on purpose —
+ * while every other port this function claims is still checked.
  */
 export async function startAzureRuntime({
   host = "127.0.0.1",
   docTypes = ["markdown"],
   replicas = 2,
   casBaseUrl,
+  postgres = "compose",
 } = {}) {
+  if (postgres !== "compose" && postgres !== "external") {
+    throw new Error(`startAzureRuntime(): postgres must be "compose" or "external", got ${JSON.stringify(postgres)}`);
+  }
+  const externalPostgres = postgres === "external";
   assertDocTypesSupported(docTypes);
   const layout = azurePortLayout({ docTypes, replicas });
 
@@ -539,10 +572,17 @@ export async function startAzureRuntime({
   // `assertPortFree()`'s comment for why this matters more than it looks
   // like it should (a leaked process from a previous run answering in place
   // of the fresh stack, making the behavior suite pass against stale state).
-  await assertPortsFree(layout);
+  await assertPortsFree(layout, { skipPostgresPort: externalPostgres });
 
-  announceFirstPullIfNeeded();
-  await run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
+  if (externalPostgres) {
+    // Nothing to pull, nothing to start — the caller's environment already
+    // has a Postgres listening on `DATABASE_URL`. `waitForPostgres()` below
+    // still runs unconditionally, so a not-yet-ready external server is
+    // waited out exactly the same way a not-yet-ready compose one would be.
+  } else {
+    announceFirstPullIfNeeded();
+    await run("docker", ["compose", "-f", COMPOSE_FILE, "up", "-d"]);
+  }
 
   let gatewayProc;
   // One replica-process array per doc type, keyed by name.
@@ -655,7 +695,12 @@ export async function startAzureRuntime({
         ]);
         await probe?.dispose();
         await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
-        await run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
+        // `postgres: "external"` never ran `docker compose up` above, so it
+        // must not run `down -v` here either — this run doesn't own that
+        // server's lifecycle.
+        if (!externalPostgres) {
+          await run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
+        }
       },
     };
   } catch (err) {
@@ -677,10 +722,12 @@ export async function startAzureRuntime({
     if (azuriteDataDir) {
       await rm(azuriteDataDir, { recursive: true, force: true }).catch(() => {});
     }
-    try {
-      await run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
-    } catch {
-      // Best-effort cleanup; the original error is what matters.
+    if (!externalPostgres) {
+      try {
+        await run("docker", ["compose", "-f", COMPOSE_FILE, "down", "-v"]);
+      } catch {
+        // Best-effort cleanup; the original error is what matters.
+      }
     }
     throw err;
   }

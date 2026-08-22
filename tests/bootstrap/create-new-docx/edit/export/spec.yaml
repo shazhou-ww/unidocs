@@ -1,14 +1,15 @@
 sut_type: cli
 description: "Export DOCX document as binary file"
 steps:
-  - command: "cd /workspace && nohup node scripts/dev.mjs > /tmp/miniflare.log 2>&1 & for i in $(seq 1 30); do sleep 2; GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
-    timeout: "120s"
+  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/export -o /tmp/exported-cf.docx"  # (cloudflare)
+  - command: "curl -s --compressed http://localhost:41787/users/test-user-001/docs/docx/docx-doc-001/export -o /tmp/exported-az.docx"  # (azure)
+  - command: "wc -c < /tmp/exported-cf.docx"  # (cloudflare)
     assert:
       type: regex
       conditions:
-        - { path: "stdout", regex: "READY" }
-  - command: "curl -s --compressed http://localhost:8787/users/test-user-001/docs/docx/docx-doc-001/export -o /tmp/exported.docx"
-  - command: "wc -c < /tmp/exported.docx"
+        - { path: "stdout", regex: "^[0-9]+" }
+        - { path: "exit_code", regex: "^0$" }
+  - command: "wc -c < /tmp/exported-az.docx"  # (azure)
     assert:
       type: regex
       conditions:

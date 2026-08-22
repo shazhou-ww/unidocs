@@ -1,5 +1,5 @@
 sut_type: cli
-description: "Start Miniflare runtime, lease a CAS node with content, read it back"
+description: "Start Miniflare runtime, lease a CAS node with content, read it back. Miniflare-only on purpose (not duplicated against the Azure gateway on 41787 like every step under create-new-markdown/create-new-docx): these steps test the CAS worker's own semantics (lease, ref counts, isolation, GC), and Azure has no CAS implementation of its own — under the transitional wiring, an Azure-directed CAS request lands on this very same Cloudflare worker anyway (see startAzureRuntime()'s casBaseUrl), so duplicating them would only cost time without adding information."
 steps:
   - command: "cd /workspace && nohup node scripts/dev.mjs > /tmp/miniflare.log 2>&1 & for i in $(seq 1 30); do sleep 2; GW=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); if echo $GW | grep -q '^4'; then echo READY; exit 0; fi; done; echo TIMEOUT; exit 1"
     timeout: "120s"
