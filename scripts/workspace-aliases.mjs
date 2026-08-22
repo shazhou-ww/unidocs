@@ -58,13 +58,14 @@ export function resolveWorkspaceAliases(repoRoot) {
  * — `packages/azure-docx/scripts/bundle.mjs` and `scripts/azure-runtime.mjs`'s
  * `bundleService()` both import this rather than hardcoding their own copy.
  *
- * Why these two, and why not just `packages: "external"` (which marks EVERY
+ * Why these three, and why not just `packages: "external"` (which marks EVERY
  * bare import external, no list needed): that blanket flag only stays
  * resolvable at runtime for an npm dependency that is *also* hoisted to the
  * repo-root `node_modules` — an ancestor of every path these bundles get
  * written to (`packages/azure-{name}/dist/`, `.azure-runtime/bundles/`).
- * `pg` and `@azure/storage-blob` qualify only because they're *also* direct
- * `devDependencies` of the root `package.json`, so pnpm hoists them there.
+ * `pg`, `@azure/storage-blob`, and `@azure/identity` qualify only because
+ * they're *also* direct `devDependencies` of the root `package.json`, so
+ * pnpm hoists them there.
  * A doc type's own real npm dependency declared on a nested workspace
  * package only (e.g. `doctype-docx`'s `@ariadng/office`) is NOT hoisted
  * anywhere reachable from those bundle locations — since
@@ -85,4 +86,4 @@ export function resolveWorkspaceAliases(repoRoot) {
  * `resolveWorkspaceAliases` above already exists to prevent for the alias
  * table.
  */
-export const EXTERNAL_NPM_PACKAGES = ["pg", "@azure/storage-blob"];
+export const EXTERNAL_NPM_PACKAGES = ["pg", "@azure/storage-blob", "@azure/identity"];

@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)
@@ -119,6 +122,9 @@ importers:
 
   packages/azure-sdk:
     dependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)

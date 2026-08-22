@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { BlobServiceClient } from "@azure/storage-blob";
+import { DefaultAzureCredential } from "@azure/identity";
 
 /**
  * Connection configuration for the local/Azure storage stack.
@@ -10,7 +11,10 @@ import { BlobServiceClient } from "@azure/storage-blob";
  */
 export interface AzureConfig {
   databaseUrl: string;
-  blobConnectionString: string;
+  /** 本地/Azurite 模式。与 `blobAccountUrl` 互斥，见 `resolveBlobConfig()`。 */
+  blobConnectionString?: string;
+  /** 云上模式：账户端点 URL，配合用户分配的托管标识。 */
+  blobAccountUrl?: string;
 }
 
 /**
@@ -64,5 +68,11 @@ export function createPool(cfg: AzureConfig): Pool {
  * a real Azure Storage account and a local Azurite instance.
  */
 export function createBlobService(cfg: AzureConfig): BlobServiceClient {
-  return BlobServiceClient.fromConnectionString(cfg.blobConnectionString);
+  if (cfg.blobConnectionString) {
+    return BlobServiceClient.fromConnectionString(cfg.blobConnectionString);
+  }
+  if (cfg.blobAccountUrl) {
+    return new BlobServiceClient(cfg.blobAccountUrl, new DefaultAzureCredential());
+  }
+  throw new Error("neither blobConnectionString nor blobAccountUrl is set");
 }

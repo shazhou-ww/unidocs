@@ -12,6 +12,7 @@
     "azure:down": "docker compose -f docker-compose.azure.yml down"
   },
   "devDependencies": {
+    "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
     "@types/node": "^24.0.0",
     "azurite": "3.36.0",
