@@ -116,6 +116,22 @@ doc type 的 `minReplicas = 2` 是刻意的:阶段 3 证明的是**多副本拓�
 
 `AZURE_CLIENT_ID` 必须显式注入 UAMI 的 clientId。使用**用户分配**的托管标识时,`DefaultAzureCredential` 无法自行判断该用哪个身份;缺了它容器能启动但取不到 token,失败点会推迟到第一次 Blob 操作。
 
+### 4.4 网络与数据库可达性
+
+Container Apps 用消费型环境、不接自定义 VNet,Postgres Flexible Server 开公网端点。这两个选择合起来必须回答一个问题:防火墙放行谁?
+
+**本设计刻意不依赖"消费型环境有稳定的出口 IP"这个前提。** 该前提未经验证,且消费型 Container Apps 环境并不保证出站 IP 稳定 —— `managedEnvironments` 上的 `staticIp` 是给**入站**用的,不是一个可枚举、可写进防火墙的出站集合。把它当既成事实写进设计,等于把整个连通性模型架在一个可能不成立的假设上。
+
+因此本轮采用**显式的 dev 期妥协**:在 Flexible Server 上建一条 `0.0.0.0 - 0.0.0.0` 的防火墙规则(即门户里的"允许 Azure 服务和资源访问此服务器")。它的真实含义必须写清楚,不能含糊过去:
+
+- 放行的是**整个 Azure 平台**的出站流量 —— 不只是本订阅,更不只是本环境
+- 唯一的实际屏障是 Postgres 凭据(§5 生成的强随机管理员密码)
+- 它**不**放行公网任意来源
+
+要真正做到按 IP 限制,路径不是"以后再加固",而是换环境形态:工作负载配置文件型环境 + 自定义 VNet + NAT 网关(固定出口),或直接上私有端点。换句话说,**如果 IP 级限制是硬要求,它就是前置条件而不是延后项**。本轮明确选择不把它当硬要求,理由是 dev 环境且凭据强随机;这个选择连同其后果记在 §11。
+
+实施时若发现该防火墙规则被订阅策略拒绝(§3 列出的三条 policy 均与 Postgres 无关,但策略集可能变化),则本节的结论翻转 —— VNet + 私有端点变成前置条件,须回到设计层重新决定,而不是在脚本里找绕过办法。
+
 ## 5. 密钥与身份
 
 **只有两个真密钥**:Postgres 管理员密码,以及 `INTERNAL_TOKEN`。Blob 与 ACR 都因 §3(b) 的 policy 改成了身份认证,不再产生密钥。
@@ -161,6 +177,20 @@ export function createBlobService(cfg: AzureConfig): BlobServiceClient {
 - `azure-sdk` 增加依赖 `@azure/identity`
 - `packages/azure-sdk/src/doc-type-service.ts:152` 与 `packages/azure-sdk/src/migrate-cli.ts:35` 的 `requireEnv("BLOB_CONNECTION_STRING")` 改为二选一,且**两者同时提供时报错** —— 静默优先某一个会让配置错误潜伏到运行时
 - `ports-blob.ts` 无需改动:它的两个类都接收已构造好的 `BlobServiceClient`,`pool.ts:66` 是唯一构造点
+
+**配置契约(判定点在进程启动,不在第一次 Blob 操作)**
+
+`BLOB_CONNECTION_STRING` 与 `BLOB_ACCOUNT_URL` 是互斥的两种模式:
+
+| 情形 | 行为 |
+|---|---|
+| 只有 `BLOB_CONNECTION_STRING` | 本地 / Azurite 模式 |
+| 只有 `BLOB_ACCOUNT_URL` | 云上托管标识模式;**此时 `AZURE_CLIENT_ID` 必须同时存在** |
+| 两者都有 | **启动失败** |
+| 两者都无 | **启动失败** |
+| 有 `BLOB_ACCOUNT_URL` 但无 `AZURE_CLIENT_ID` | **启动失败** |
+
+最后一行是关键的一条,原先只在 §4.3 写成了提示:用**用户分配**的托管标识时,`DefaultAzureCredential` 缺了 `AZURE_CLIENT_ID` 照样能构造成功,失败会推迟到第一次 Blob 操作 —— 那时容器已经通过健康检查、已经开始接流量。因此它必须和另外两个变量一样,进 `doc-type-service.ts` 与 `migrate-cli.ts` 的启动检查,而不是作为一句注释。
 
 保留连接字符串分支是必需的:Azurite 不支持托管标识,`scripts/azure-runtime.mjs` 与 `tests/bootstrap/` 的 e2e 树都走连接字符串。因此 `pnpm test:local` 与 e2e 树不受本改动影响 —— 这是验收的一部分。
 
@@ -229,6 +259,8 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
    - docx:create → apply → query → export
    - docx 图片路径:上传到 Cloudflare CAS → `insertImage` → `getImages` → `export` 得到合法 zip。**这一条专门证明跨云 HTTP 接线在真实网络下成立**
    - 至少一次 `apply` 使用过期的 `baseVersion`,断言返回 409 且响应体带当前 `version`
+   **为什么这几条断言足以验证托管标识的 Blob 通路**:`apply` 每次都经 `#saveSnapshotCache()` 写一次 Blob 快照,走的是**严格**版本 —— 失败直接冒泡(`packages/server-core/src/session.ts:689,751`)。因此上面任何一次成功的 `apply` 都证明了托管标识写 Blob 成立,不需要为此另加测试。反过来必须注意:`create` 走的是**尽力而为**版本(`session.ts:464,546` → `#saveSnapshotCacheBestEffort`,会吞掉 Blob 失败),所以**只做 create 的冒烟不能验证托管标识** —— 冒烟必须包含 apply,这是上述断言的必要成分而非顺带。
+
 6. **幂等**:紧接着再次执行 `scripts/azure-deploy.mjs`,两次 `what-if` 均无变更,冒烟仍然全绿,且 Postgres 密码未被重置
 7. ACR 的 `adminUserEnabled` 为 `false`、存储账户的 `allowSharedKeyAccess` 为 `false` —— 即部署未因绕开 §3(b) 的 policy 而成功
 
@@ -236,7 +268,7 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| Postgres 走公网端点 + 防火墙白名单 | **本轮接受** | 私有端点需引入自定义 VNet 与工作负载配置文件,IaC 量与成本翻倍。白名单放行 Container Apps 环境的静态出口 IP;dev 环境可接受 |
+| Postgres 公网端点 + `0.0.0.0` 防火墙规则(放行整个 Azure 平台) | **本轮接受** | 见 §4.4。**不**依赖"消费型环境出口 IP 稳定"这一未验证前提;唯一屏障是强随机凭据。若 IP 级限制成为硬要求,它是前置条件(需换成工作负载配置文件 + VNet + NAT 网关或私有端点),不是延后加固 |
 | Postgres 用密码认证而非 Entra ID | **本轮接受** | 路径明确(§9 第三行),但属独立工作量 |
 | `sslmode=require` 的证书校验强度 | **待实施时确认** | 见 §6.3。收紧到 `verify-full` 是后续加固 |
 | docx 依赖 Cloudflare CAS worker | **本轮接受** | 已确认的范围决定。**后果:本轮的部署形态不可私有化交付**,阶段 4 的 `azure-cas` 落地后才可 |
