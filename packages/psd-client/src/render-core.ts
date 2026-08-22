@@ -22,6 +22,14 @@ export class RenderCore {
     return this.compositor.applyOp(op);
   }
 
+  /** Warms the decoded-pixel cache with every lazy layer/mask blob, fetched
+   *  concurrently, so the first composite/tile pass is CPU-only (no serial
+   *  per-layer network faults). Call once, right after construction, before
+   *  the first `tile()`/`composite()`. */
+  prefetch(): Promise<void> {
+    return this.compositor.prefetch();
+  }
+
   /** Swaps the resident doc for `newDoc` (e.g. after a 409/agent rebase),
    *  keeping the decoded-pixel cache warm: layers whose blob hash is
    *  unchanged are served from cache instead of being re-fetched. */

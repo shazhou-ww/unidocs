@@ -1,10 +1,11 @@
-import type { PsdDoc, Pixels } from "../model/types.js";
+import type { PsdDoc, Pixels, Layer } from "../model/types.js";
 import type { PsdOp } from "../ops/index.js";
 import type { RenderCtx, Target } from "./composite.js";
 import { applyOne } from "../ops/index.js";
 import { foldRange } from "./composite.js";
 import { allTiles, tilesForRect, tileKey, tileRegion } from "./tile-grid.js";
 import { opDirtyRect, opActiveIndex } from "./dirty-rect.js";
+import { resolvePixels, isRef, type PixelRef } from "./pixel-source.js";
 
 type Rect = [number, number, number, number];
 
@@ -108,6 +109,35 @@ export class IncrementalCompositor {
     const px: Pixels = { width: w, height: h, data: out };
     this.#cache.set(key, px);
     return px;
+  }
+
+  /** Warms the persistent PixelCache with EVERY lazy layer/mask blob in the
+   *  document, fetched+decoded CONCURRENTLY via `Promise.all`, before any tile
+   *  is composited. Without this, the first `composite()`/`readTile()` faults
+   *  layers in one at a time (`resolvePixels` is awaited per layer inside
+   *  `renderList`), so cold start costs (#tiles × #layers) SERIAL round-trips
+   *  to the BlobStore. Calling `prefetch()` once at init turns that into ONE
+   *  parallel batch; every later composite is then a pure cache hit (CPU-only,
+   *  no network), so a queued `applyOp` no longer waits behind serial faults.
+   *  No-op for a resident-only doc (no PixelRefs) or when `ctx` was never
+   *  supplied (nothing to prefetch into). */
+  async prefetch(): Promise<void> {
+    if (!this.#ctx) return;
+    const { store, cache } = this.#ctx;
+    const refs: PixelRef[] = [];
+    const walk = (layers: Layer[]): void => {
+      for (const l of layers) {
+        if (l.pixels && isRef(l.pixels)) refs.push(l.pixels);
+        if (l.mask?.pixels && isRef(l.mask.pixels)) refs.push(l.mask.pixels);
+        if (l.children) walk(l.children);
+      }
+    };
+    walk(this.#doc.layers);
+    // Dedup by content hash — the same blob (e.g. a duplicated layer, or a
+    // mask sharing a layer's pixels) must not be fetched twice.
+    const seen = new Set<string>();
+    const unique = refs.filter((r) => (seen.has(r.hash) ? false : (seen.add(r.hash), true)));
+    await Promise.all(unique.map((r) => resolvePixels(r, store, cache)));
   }
 
   async composite(): Promise<Pixels> {

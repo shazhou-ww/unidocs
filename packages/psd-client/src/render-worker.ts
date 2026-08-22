@@ -49,6 +49,14 @@ async function handle(req: WorkerRequest): Promise<void> {
         const store = new CasBlobStore({ gw: req.gw, user: req.user });
         const doc = await deserialize(req.ir, store);
         core = new RenderCore(doc, store, { tileSize: req.tileSize, cacheBytes: req.cacheBytes });
+        // Warm the decoded-pixel cache with ONE parallel batch of blob fetches
+        // before answering "ready". Without this, the first `tiles` batch
+        // faults every layer in serially (tiles × layers round-trips), and a
+        // queued `applyOp` (from a live edit) is stuck behind that whole slow
+        // batch — the ~1min "editing hangs" symptom. Awaiting it here means
+        // "ready" itself is delayed by the warm-up, but every subsequent
+        // "tiles"/"applyOp" is fast (cache hits only), so the queue never backs up.
+        await core.prefetch();
         post({ type: "ready", id: req.id, tileSize: core.tileSize, canvas: { width: core.doc.canvas.width, height: core.doc.canvas.height } });
       } catch (err) {
         post({ type: "error", id: req.id, message: errorMessage(err) });
