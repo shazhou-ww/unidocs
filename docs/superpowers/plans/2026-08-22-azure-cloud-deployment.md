@@ -520,36 +520,60 @@ git commit -m "fix(azure): 统一四个 bundler 的外部化策略,补齐 azure-
 **Files:**
 - Create: `Dockerfile`(仓库根)
 - Modify: `.dockerignore`(已存在)
+- Modify: `packages/azure-sdk/package.json`(`files` 加上 `migrations`,见 Step 1)
 
 **Interfaces:**
 - Consumes: Task 1 的 `resolveBlobConfig()` 启动契约(Step 6 的验证依赖它的错误信息);Task 2 保证的依赖声明完整性
 - Produces: 镜像构建命令 `docker build --build-arg SERVICE=<name> --build-arg ENTRY=<path> -t <ref> .`,Task 6 的部署脚本按此调用
 
-- [ ] **Step 1: 先确定 `pnpm deploy` 在本仓库的可用调用形式**
+- [ ] **Step 1: 补上 `azure-sdk` 的 `files`,否则迁移镜像必然崩**
 
-pnpm 10 起 `pnpm deploy` 对不启用 `inject-workspace-packages` 的工作区会报错并建议 `--legacy`。先在宿主机上实测,不要凭猜写进 Dockerfile:
+这一条是本任务的前置修复,**不做的话 Step 7 一定失败**。
+
+`runMigrations()` 通过 `MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url))` 定位 SQL 文件(`packages/azure-sdk/src/migrate.ts`)。打包产物 `dist/migrate-cli.js` 落在包根下一层,`../migrations` 因此指向包根的 `migrations/` —— 在仓库里成立。
+
+但 `packages/azure-sdk/package.json` 的 `files` 只有 `["dist"]`,而下面用的 `pnpm deploy` **严格按 `files` 裁剪**:产出里不会有 `migrations/`,容器里 `readdirSync` 直接 ENOENT。
+
+把 `files` 改成:
+
+```json
+  "files": [
+    "dist",
+    "migrations"
+  ],
+```
+
+**这个修法已实测验证**:改完后 `pnpm deploy` 的产出里 `dist/` 与 `migrations/` 是兄弟目录,正是 `dist/migrate-cli.js` 的 `../migrations` 所需的相对深度。
+
+- [ ] **Step 1b: 确认 `pnpm deploy` 的可用调用形式(结论已实测,照用即可)**
+
+pnpm 10 起 `pnpm deploy` 对不启用 `inject-workspace-packages` 的工作区会直接报 `ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE`,而且它会**重新向 registry 解析依赖**,因此本机还必须带镜像源。两个开关缺一不可,已实测:
 
 ```bash
 pnpm -r build
 rm -rf /tmp/deploy-probe
-pnpm deploy --filter @unidocs/azure-markdown --prod /tmp/deploy-probe
-echo "exit=$?"
-ls /tmp/deploy-probe /tmp/deploy-probe/node_modules 2>/dev/null | head
+pnpm deploy --legacy --filter @unidocs/azure-sdk --prod   --registry=https://repo.huaweicloud.com/repository/npm/ /tmp/deploy-probe
 ```
 
-若失败且提示需要 `--legacy`,改试 `pnpm deploy --legacy --filter @unidocs/azure-markdown --prod /tmp/deploy-probe`。**记下真正可用的那条命令**,Step 2 用它。
-
-验证产物正确性:
+验证产物:
 
 ```bash
-node -e "require('fs').accessSync('/tmp/deploy-probe/dist/main.js')" && echo "dist ok"
-test -d /tmp/deploy-probe/node_modules/pg && echo "pg ok"
-test -d /tmp/deploy-probe/node_modules/@azure/storage-blob && echo "blob ok"
+ls -1 /tmp/deploy-probe                       # 必须含 dist / migrations / node_modules
+test -f /tmp/deploy-probe/dist/migrate-cli.js && echo "entry ok"
+for p in pg @azure/storage-blob @azure/identity; do
+  test -d "/tmp/deploy-probe/node_modules/$p" && echo "  $p ok" || echo "  $p 缺失"
+done
 ```
 
-三条都要打印 ok。若 `pg` / `blob` 缺失,说明 Task 2 的声明没生效,回头查而不是在 Dockerfile 里补装。
+`dist`、`migrations`、`node_modules` 三者都要在,三个 npm 包都要 ok。若某个 npm 包缺失,说明 Task 2 建立的依赖声明不变量被破坏了 —— 回头查 `package.json`,**不要**在 Dockerfile 里补 `npm install` 绕过。
 
-若两种形式都不可用,**停下来报告**。退路(需要设计变更,不要自行采用)是运行阶段改为 `COPY packages/<svc>/dist` 加 `npm install --omit=dev` 显式安装 `EXTERNAL_NPM_PACKAGES`。
+再对一个服务包验证一次(它比 `azure-sdk` 多一层 workspace 依赖):
+
+```bash
+rm -rf /tmp/deploy-probe2
+pnpm deploy --legacy --filter @unidocs/azure-docx --prod   --registry=https://repo.huaweicloud.com/repository/npm/ /tmp/deploy-probe2
+test -f /tmp/deploy-probe2/dist/main.js && echo "docx entry ok"
+```
 
 - [ ] **Step 2: 写 Dockerfile**
 
@@ -589,7 +613,12 @@ COPY . .
 
 RUN pnpm install --frozen-lockfile --registry=https://repo.huaweicloud.com/repository/npm/
 RUN pnpm -r build
-RUN pnpm deploy --filter "@unidocs/${SERVICE}" --prod /out
+# --legacy:pnpm 10 起,未启用 inject-workspace-packages 的工作区不加这个
+# 会直接 ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE。
+# --registry:deploy 会重新向 registry 解析依赖,不带镜像源会卡在被 SNI
+# 拦截的公网源上。两个开关都是实测确认必需的,不要删。
+RUN pnpm deploy --legacy --filter "@unidocs/${SERVICE}" --prod \
+    --registry=https://repo.huaweicloud.com/repository/npm/ /out
 
 FROM node:24-alpine AS runtime
 ARG ENTRY
