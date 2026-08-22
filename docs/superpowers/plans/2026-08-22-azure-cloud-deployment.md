@@ -19,7 +19,11 @@
 - **不要删除或清理 `postgres:18` Docker 镜像** —— 另一个项目(Societas)有容器在用它。
 - **不得提交 `CLAUDE.md`**(由 `.git/info/exclude` 忽略),也不得把它写进 `.gitignore`。任何提交的文件都不得引用 `.superpowers/` 下的路径。
 - **不得把 Gitea token 或 Azure 密钥写进任何文件**。密钥只在进程内存与 Key Vault 中存在。
-- **每个任务结束时** `pnpm build`、`pnpm typecheck`、`pnpm test` 必须通过;涉及本地栈的任务另需 `pnpm test:local` 通过。
+- **每个任务结束时** `pnpm build`、`pnpm typecheck`、`pnpm test` 必须通过。
+- **`pnpm test:local` 的基线是「不新增失败」,不是「全绿」** —— 分支起点 `fb2b773` 上已有两个与本轮无关的失败,已独立核实:
+  1. `scripts/doc-types.test.mjs` 断言 `["markdown","docx"]`,而 `psd` 已注册进 `DOC_TYPES`
+  2. `scripts/local-runtime.test.mjs` 的 "registry seed works with a persist directory" —— 一次 `startLocalRuntime` 调用内重复绑定端口 8790
+  除这两条外的任何失败都属于当前任务,必须修。**不要顺手修这两条** —— 它们是独立问题,混进本分支会让评审无法分辨。
 
 ## File Structure
 
@@ -314,7 +318,11 @@ git commit -m "feat(azure-sdk): Blob 改托管标识,配置契约提前到启动
 
 这个分叉已经造成过一次生产级 bug:`packages: "external"` 把**所有**裸导入留在外面,用它的包因此必须声明 `pg` / `@azure/storage-blob`,markdown 与 gateway 确实声明了;docx 用显式列表,同样把这两个留在外面,却漏了声明 —— monorepo 里靠根 `node_modules` 提升能解析,生产安装会 `ERR_MODULE_NOT_FOUND`。Task 3 的 `pnpm deploy` 严格按声明裁剪,会让这个漏洞直接变成容器起不来。
 
-统一到 `external: EXTERNAL_NPM_PACKAGES`(即向已经在跑整个本地 Azure 栈、已被验证的 `azure-runtime.mjs` 对齐),`@azure/identity` 因此会被 esbuild 内联进产物,不需要在运行时解析。
+统一到 `external: EXTERNAL_NPM_PACKAGES`,即向已经在跑整个本地 Azure 栈、已被验证的 `scripts/azure-runtime.mjs` 对齐。
+
+**关于 `@azure/identity`(Task 1 的实测结论,已推翻本计划最初的假设)**:它**不能**被 esbuild 内联 —— 内联会把它的 CJS 传递依赖(`jsonwebtoken` / `jws`)一起打进产物,运行时崩在 `Dynamic require of "buffer"`,`azure-markdown` / `azure-docx` 的本地进程启动即死。Task 1 因此已经把 `@azure/identity` 加进 `EXTERNAL_NPM_PACKAGES` 与根 `package.json` 的 `devDependencies`(后者提供本地开发所需的根 `node_modules` 提升)。
+
+**本任务因此要做的是**:让三个服务包的 `dependencies` 都声明 `@azure/identity`(它现在是外部化列表的第三项,不声明就会在 `pnpm deploy --prod` 裁剪时消失)。这条由 Step 1 的测试自动覆盖 —— 该测试断言的是"声明了 `EXTERNAL_NPM_PACKAGES` 的**全部**条目",列表变长时断言自动跟着变严。
 
 **Files:**
 - Modify: `packages/azure-markdown/scripts/bundle.mjs`、`packages/azure-gateway/scripts/bundle.mjs`、`packages/azure-sdk/scripts/bundle-migrate-cli.mjs`
@@ -409,12 +417,17 @@ pnpm exec vitest run scripts/bundle-deps.test.mjs
   "dependencies": {
     "@unidocs/azure-sdk": "workspace:*",
     "@unidocs/doctype-docx": "workspace:*",
+    "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
     "pg": "^8.23.0"
   },
 ```
 
-版本号与 `packages/azure-markdown/package.json` 保持一致。同时给 `devDependencies` 补 `"@types/pg": "^8.23.1"`(与 markdown 一致)。
+同时给 `devDependencies` 补 `"@types/pg": "^8.23.1"`(与 markdown 一致)。
+
+**`azure-gateway` 与 `azure-markdown` 也要补 `@azure/identity`** —— 它们原先只声明了 `pg` 与 `@azure/storage-blob`,而 Task 1 把 `@azure/identity` 加进了外部化列表。版本号一律用 `^4.13.2`,与 `packages/azure-sdk/package.json` 里 Task 1 装进去的那个一致(去那个文件里读实际值,不要照抄本段 —— 若两者不符,以该文件为准)。
+
+依赖改动后必须跑一次 `pnpm install --registry=https://repo.huaweicloud.com/repository/npm/` 让 lockfile 跟上,并把 `pnpm-lock.yaml` 一并提交。
 
 - [ ] **Step 4: 三个 bundler 改用显式列表**
 
@@ -442,7 +455,9 @@ esbuild 配置里的 `packages: "external",` 替换为:
 
 - [ ] **Step 5: 更新 `EXTERNAL_NPM_PACKAGES` 的文档**
 
-`scripts/workspace-aliases.mjs` 里 `EXTERNAL_NPM_PACKAGES` 上方的长注释,当前写的是"`packages/azure-docx/scripts/bundle.mjs` 和 `scripts/azure-runtime.mjs` 的 `bundleService()` 都 import 这个"。改为说明**全部五个打包点**都用它,并补一句:`@azure/identity` 刻意不在此列表中 —— 它是纯 JS,由 esbuild 内联进产物,因此不需要在运行时解析,也就不需要被任何服务包声明。
+`scripts/workspace-aliases.mjs` 里 `EXTERNAL_NPM_PACKAGES` 上方的长注释,当前写的是"`packages/azure-docx/scripts/bundle.mjs` 和 `scripts/azure-runtime.mjs` 的 `bundleService()` 都 import 这个"。改为说明**全部五个打包点**都用它(Task 1 已把 `@azure/identity` 加进列表并同步改过一部分措辞,在此基础上改,不要推倒重写)。
+
+同时补上 `@azure/identity` **为什么必须外部化**的记录:内联会把它的 CJS 传递依赖(`jsonwebtoken` / `jws`)打进产物,运行时崩在 `Dynamic require of "buffer"`。这是实测结论,写下来是为了让下一个想"少一个外部依赖"的人不必再踩一遍。
 
 - [ ] **Step 6: 运行测试确认通过**
 
@@ -456,13 +471,20 @@ pnpm exec vitest run scripts/bundle-deps.test.mjs
 
 ```bash
 pnpm build
-grep -c 'from "@azure/identity"' packages/azure-markdown/dist/main.js packages/azure-docx/dist/main.js packages/azure-gateway/dist/main.js || true
-grep -c 'from "pg"' packages/azure-docx/dist/main.js
+for f in packages/azure-gateway/dist/main.js packages/azure-markdown/dist/main.js packages/azure-docx/dist/main.js; do
+  echo "$f: identity=$(grep -c 'from "@azure/identity"' $f) pg=$(grep -c 'from "pg"' $f) blob=$(grep -c 'from "@azure/storage-blob"' $f)"
+done
 ```
 
-预期:第一条三个文件都是 `0`(已内联);第二条是 `1`(仍然外部化,且现在已被声明)。
+预期:三个文件的 `identity` / `pg` / `blob` **都不是 0** —— 三个包都在外部化列表里,产物应保留裸导入,而它们现在都已被 `dependencies` 声明。
 
-若第一条不是 0(esbuild 无法内联 `@azure/identity`,例如它有动态 require),**停下来报告**,不要自行改设计。退路是把 `@azure/identity` 加进 `EXTERNAL_NPM_PACKAGES` 与根 `package.json` 的 `devDependencies`,但那需要连同 Step 5 的文档一起改,属于设计变更。
+**同时验证产物真的能被 node 加载**(裸导入是否可解析,`grep` 看不出来):
+
+```bash
+node -e "import('./packages/azure-docx/dist/main.js').catch(e => { console.log(e.constructor.name + ': ' + e.message.split('\n')[0]); process.exit(0); })"
+```
+
+预期:打印一条**缺环境变量**的错误(形如 `Set either BLOB_CONNECTION_STRING ... or BLOB_ACCOUNT_URL ...`)。若打印的是 `ERR_MODULE_NOT_FOUND` 或 `Dynamic require of "buffer" is not supported`,**停下来报告** —— 前者说明外部化的包没被声明或没被提升,后者说明某个 CJS 包被误内联了。
 
 - [ ] **Step 8: 把新测试加进 `test:local`**
 
