@@ -11,7 +11,10 @@
  *
  * `--skip-cas` 跳过第 3 组(docx 图片路径)。它只用于对本地 Azure 栈
  * 验证本脚本自身的 wire 形状 —— 本地栈默认没有 casBaseUrl。真实部署的
- * 验收**不得**带这个开关:第 3 组正是跨云 CAS 接线的唯一证明。
+ * 验收**不得**带这个开关:第 3 组正是跨云 CAS 接线的唯一证明。为了不让
+ * 这条规矩只停留在注释里,`--gateway` 指向非本地主机时若同时带了
+ * `--skip-cas`,脚本在发出任何请求之前就直接拒绝退出——不允许对一个
+ * `https://` 真部署跑一次"假绿"的验收。
  *
  * wire 形状(路由带一个 `docs` 命名空间段,建文档路径以 `/` 结尾、id 走
  * `X-Doc-Id` 头、无 body):见 packages/server-core/src/gateway-handler.ts:44,61
@@ -57,6 +60,16 @@ function parseArgs(argv) {
     throw new Error("--gateway is required");
   }
   return args;
+}
+
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/**
+ * 只信任 `new URL(gateway).hostname`,不做字符串 `includes` 判断——
+ * 后者会被 `https://evil.com/?x=127.0.0.1` 这类输入骗过。
+ */
+function isLocalHost(gateway) {
+  return LOCAL_HOSTNAMES.has(new URL(gateway).hostname);
 }
 
 async function createDoc(gateway, docType, docId) {
@@ -222,6 +235,16 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const gateway = args.gateway.replace(/\/+$/, "");
 
+  if (args.skipCas && !isLocalHost(gateway)) {
+    throw new Error(
+      `--skip-cas was passed with a non-local --gateway (${gateway}). ` +
+        "--skip-cas only exists for self-checking this script against the local Azure stack, " +
+        "which has no casBaseUrl by default. A real deployment's acceptance run must not skip " +
+        "group 3 (docx image path through Cloudflare CAS) — that group is the only proof the " +
+        "cross-cloud CAS wiring actually works. Re-run without --skip-cas.",
+    );
+  }
+
   console.log(`azure-smoke: gateway=${gateway} run=${RUN} skipCas=${args.skipCas}`);
 
   await markdownFlow(gateway);
@@ -243,7 +266,14 @@ async function main() {
     console.error(`\n${failures} assertion(s) failed`);
     process.exit(1);
   }
-  console.log("\nall smoke assertions passed");
+  if (args.skipCas) {
+    // Deliberately not "all smoke assertions passed" — a grep for that exact
+    // phrase (or a bare exit-code check) must not read this as a full
+    // deployment acceptance pass when group 3 never ran.
+    console.log("\nsmoke passed (CAS group SKIPPED — not a deployment acceptance run)");
+  } else {
+    console.log("\nall smoke assertions passed");
+  }
 }
 
 main().catch((err) => {
