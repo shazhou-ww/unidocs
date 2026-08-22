@@ -1742,6 +1742,19 @@ cd packages/cloudflare-cas && npx wrangler deployments list 2>&1 | head -20
 
 拿到形如 `https://unidocs-cas.<account>.workers.dev` 的地址。若 CAS worker 尚未部署到 Cloudflare,先 `npx wrangler deploy` 部署它 —— 没有它 docx 上不了云。
 
+- [ ] **Step 1b: 先在宿主机跑一次 `pnpm build`(部署的隐式前置条件)**
+
+```bash
+pnpm build
+test -f packages/cas/dist/index.js && echo "cas dist ok"
+```
+
+**为什么必须显式做这一步**:`scripts/azure-smoke.mjs`(部署脚本的第 7 步)从 `packages/cas/dist/index.js` import CAS 哈希算法 —— 这是仓库既有惯例,`scripts/cas-digest.mjs` 同样如此。而 `scripts/azure-deploy.mjs` **全程不在宿主机跑 `pnpm build`**:它只构建 docker 镜像,而那是在容器内编译的(`.dockerignore` 排除了 `**/dist`)。
+
+后果:在干净检出(或 `pnpm clean` 之后)直接跑部署,会一路成功到第 7 步,**在十几分钟的镜像构建和真实资源创建之后**才以 `ERR_MODULE_NOT_FOUND` 失败。
+
+这是 `azure-deploy.mjs` 的 preflight 应该自检的东西(记入最终评审的分诊清单);在它补上之前,这一步是人工前置条件。
+
 - [ ] **Step 2: 跑第一次完整部署**
 
 ```bash
