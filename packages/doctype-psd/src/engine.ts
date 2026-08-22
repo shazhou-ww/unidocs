@@ -7,6 +7,8 @@ export type { RenderCtx } from "./render/index.js";
 export { apply, applyOne } from "./ops/index.js";
 export type { PsdOp } from "./ops/index.js";
 export { renderRegionDirect, layerInfluenceBounds } from "./render/region.js";
+export { foldRange } from "./render/composite.js";
+export type { Target } from "./render/composite.js";
 export { resolveDoc, resolveLayerPixels } from "./resolve.js";
 export { deserialize } from "./psd/ir.js";
 export {

@@ -116,13 +116,59 @@ export async function compositeInto(
 }
 
 /**
+ * Fold top-level layers `[fromIndex, toIndex)` into `target.data`, treated as
+ * the running accumulator: the caller pre-fills it with a checkpoint (or zeros)
+ * and it is NOT cleared. Region clipping comes from `target`'s origin/size (as
+ * in Plan 1); canvas dims drive clip/mask indexing.
+ *
+ * Start boundary: `layers[fromIndex]`'s clip base may live below the slice. We
+ * replay `renderList`'s exact `baseCoverage` state machine over `layers[0..
+ * fromIndex)` and inject the state entering `fromIndex` as `initialBaseCoverage`,
+ * so a mid-stack resume is byte-identical to folding from 0. Replaying (rather
+ * than a nearest-base scan) is required because a visible clipping layer that
+ * enters its turn with a null base applies UNCONFINED and is PROMOTED to the
+ * clip base for the clipping layers above it — a scan that skips clipping layers
+ * would miss that promotion and leave an upper clip layer unconfined.
+ *
+ * `foldRange(t, doc, 0, N)` from a zeroed `t` equals `renderRegionDirect(doc,
+ * region)`, and `foldRange[0,A)` then `foldRange[A,N)` equals `foldRange[0,N)`.
+ */
+export async function foldRange(
+  target: Target,
+  doc: PsdDoc,
+  fromIndex: number,
+  toIndex: number,
+  ctx: RenderCtx = defaultCtx(),
+): Promise<void> {
+  const cw = doc.canvas.width, ch = doc.canvas.height;
+  const slice = doc.layers.slice(fromIndex, toIndex);
+  // Replay renderList's baseCoverage transitions over the prefix [0, fromIndex).
+  // The final value is the base state entering fromIndex — mirroring renderList
+  // exactly (hidden non-clip resets, promotion of an unconfined visible clip,
+  // adjustment→null, multi-clip runs sharing one base). layerAlpha is canvas-
+  // sized (the clip buffer is indexed in canvas coords: clip[cy*cw+cx]).
+  let initialBaseCoverage: Uint8ClampedArray | null = null;
+  for (let i = 0; i < fromIndex; i++) {
+    const layer = doc.layers[i];
+    if (!layer.visible) { if (!layer.clipping) initialBaseCoverage = null; continue; }
+    if (layer.clipping && initialBaseCoverage) continue; // confined; base persists
+    const next = nextVisible(doc.layers, i + 1);
+    initialBaseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(cw, ch, layer, ctx) : null;
+  }
+  await renderList(target, cw, ch, slice, ctx, initialBaseCoverage);
+}
+
+/**
  * Render a sibling list bottom-to-top, honoring clipping masks: a layer with
  * `clipping` is confined to the alpha of the base layer directly below it
  * (the nearest non-clipping layer). A new non-clipping layer starts a new
  * clip base.
  */
-async function renderList(target: Target, cw: number, ch: number, layers: Layer[], ctx: RenderCtx): Promise<void> {
-  let baseCoverage: Uint8ClampedArray | null = null;
+async function renderList(target: Target, cw: number, ch: number, layers: Layer[], ctx: RenderCtx, initialBaseCoverage: Uint8ClampedArray | null = null): Promise<void> {
+  // `initialBaseCoverage` seeds the clip base for a slice whose first layer is a
+  // clipping layer whose base lives below the slice (foldRange resume). The two
+  // existing callers (render, compositeInto) pass nothing → null → unchanged.
+  let baseCoverage: Uint8ClampedArray | null = initialBaseCoverage;
   for (let i = 0; i < layers.length; i++) {
     const layer = layers[i];
     // Hidden layers are skipped BEFORE any fault-in: a hidden lazy PixelRef is
