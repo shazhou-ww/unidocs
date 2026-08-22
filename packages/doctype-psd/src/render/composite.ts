@@ -1,5 +1,5 @@
 import type { PsdDoc, Layer, Pixels, Mask } from "../model/types.js";
-import { compositeOver } from "./blend.js";
+import { blendFn, compositeOverInto } from "./blend.js";
 import { findLayer } from "../model/tree.js";
 import { type BlobStore, PixelCache, resolvePixels } from "./pixel-source.js";
 import { layerInfluenceBounds } from "./region.js";
@@ -355,6 +355,10 @@ function strokeEffect(target: Target, cw: number, layer: Layer, px: Pixels, clip
   const band = st.position === "center" ? Math.max(1, Math.round(st.size / 2)) * CH_ORTH : st.size * CH_ORTH;
   const sr = st.color.r / 255, sg = st.color.g / 255, sb = st.color.b / 255;
   const base = layer.opacity * st.opacity;
+  // Hoisted out of the per-pixel loop: one blend-table lookup and one 4-slot
+  // scratch for the whole band, instead of both per pixel.
+  const B = blendFn(st.blendMode);
+  const out = new Float64Array(4);
   for (let y = 0; y < sh; y++) {
     const cy = top + y;
     for (let x = 0; x < sw; x++) {
@@ -373,10 +377,11 @@ function strokeEffect(target: Target, cw: number, layer: Layer, px: Pixels, clip
       if (clip) sa *= clip[cy * cw + cx] / 255;
       if (sa === 0) continue;
       const di = (by * tw + bx) * 4;
-      const out = compositeOver(
-        [acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255],
-        [sr, sg, sb, sa],
-        st.blendMode,
+      compositeOverInto(
+        out, 0,
+        acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255,
+        sr, sg, sb, sa,
+        B,
       );
       acc[di] = out[0] * 255;
       acc[di + 1] = out[1] * 255;
@@ -404,6 +409,10 @@ function dropShadowEffect(target: Target, cw: number, ch: number, layer: Layer, 
   const dy = Math.round(ds.distance * Math.sin(rad));
   const sr = ds.color.r / 255, sg = ds.color.g / 255, sb = ds.color.b / 255;
   const base = layer.opacity * ds.opacity;
+  // Hoisted out of the per-sample path: one blend-table lookup and one 4-slot
+  // scratch for the whole shadow, instead of both per sample.
+  const B = blendFn(ds.blendMode);
+  const out = new Float64Array(4);
 
   // Composite one shadow sample (canvas coords, coverage 0..1) behind acc.
   const put = (tx: number, ty: number, a: number): void => {
@@ -413,10 +422,11 @@ function dropShadowEffect(target: Target, cw: number, ch: number, layer: Layer, 
     if (clip) sa *= clip[ty * cw + tx] / 255;
     if (sa <= 0) return;
     const di = (by * tw + bx) * 4;
-    const out = compositeOver(
-      [acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255],
-      [sr, sg, sb, sa],
-      ds.blendMode,
+    compositeOverInto(
+      out, 0,
+      acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255,
+      sr, sg, sb, sa,
+      B,
     );
     acc[di] = out[0] * 255;
     acc[di + 1] = out[1] * 255;
@@ -565,6 +575,11 @@ function compositeBuffer(
 ): void {
   const { data: acc, originX, originY, width: tw, height: th } = target;
   const oa = colorOverlay ? colorOverlay.opacity : 0;
+  // This is the compositor's dominant loop (one iteration per layer-pixel of
+  // the whole document), so the blend-function lookup and the result buffer are
+  // hoisted here rather than paid per pixel.
+  const B = blendFn(mode);
+  const out = new Float64Array(4);
   for (let y = 0; y < sh; y++) {
     const cy = oy + y;
     for (let x = 0; x < sw; x++) {
@@ -585,10 +600,11 @@ function compositeBuffer(
         sg = sg * (1 - oa) + (colorOverlay.g / 255) * oa;
         sb = sb * (1 - oa) + (colorOverlay.b / 255) * oa;
       }
-      const out = compositeOver(
-        [acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255],
-        [sr, sg, sb, sa],
-        mode,
+      compositeOverInto(
+        out, 0,
+        acc[di] / 255, acc[di + 1] / 255, acc[di + 2] / 255, acc[di + 3] / 255,
+        sr, sg, sb, sa,
+        B,
       );
       acc[di] = out[0] * 255;
       acc[di + 1] = out[1] * 255;
