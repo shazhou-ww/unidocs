@@ -197,61 +197,22 @@ module gatewayApp 'container-app.bicep' = {
   }
 }
 
-// 迁移只需要 DATABASE_URL：migrate-cli.ts 只调 createPool() 与
-// runMigrations(pool)，从不构造 BlobServiceClient。
-resource migrateJob 'Microsoft.App/jobs@2024-03-01' = {
-  name: 'caj-unidocs-migrate'
-  location: location
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${identity.id}': {}
-    }
-  }
-  properties: {
+// 迁移 Job 必须走模块边界，理由见 infra/migrate-job.bicep 顶部的注释：
+// databaseUrl 由 @secure() pgAdminPassword 拼出，直接写进外层模板的资源
+// 属性会让 what-if 把明文连接串打进终端与日志。
+module migrateJob 'migrate-job.bicep' = {
+  name: 'migrate-job'
+  params: {
+    name: 'caj-unidocs-migrate'
+    location: location
     environmentId: containerEnv.id
-    configuration: {
-      triggerType: 'Manual'
-      replicaTimeout: 600
-      replicaRetryLimit: 1
-      manualTriggerConfig: {
-        parallelism: 1
-        replicaCompletionCount: 1
-      }
-      registries: [
-        {
-          server: acr.properties.loginServer
-          identity: identity.id
-        }
-      ]
-      secrets: [
-        {
-          name: 'database-url'
-          value: databaseUrl
-        }
-      ]
-    }
-    template: {
-      containers: [
-        {
-          name: 'migrate'
-          image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
-          resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
-          }
-          env: [
-            {
-              name: 'DATABASE_URL'
-              secretRef: 'database-url'
-            }
-          ]
-        }
-      ]
-    }
+    identityId: identity.id
+    acrLoginServer: acr.properties.loginServer
+    image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
+    databaseUrl: databaseUrl
   }
 }
 
 output gatewayFqdn string = gatewayApp.outputs.fqdn
-output migrateJobName string = migrateJob.name
+output migrateJobName string = migrateJob.outputs.name
 output postgresFqdn string = pg.properties.fullyQualifiedDomainName
