@@ -717,7 +717,9 @@ docker run --rm -e DATABASE_URL=postgres://x/y -e INTERNAL_TOKEN=t \
 docker run --rm unidocs/azure-migrate:probe 2>&1 | tail -5
 ```
 
-预期:非零退出,输出里含 `Missing required env var DATABASE_URL`。这证明迁移镜像的入口指向了 `dist/migrate-cli.js` 而不是 `dist/main.js`。
+预期:非零退出,输出里同时含 `Missing required env var DATABASE_URL` **和 `migrate-cli.js`**(后者出现在栈帧路径 `at requireEnv (file:///app/dist/migrate-cli.js:...)` 里)。
+
+**必须断言后者。** 只断言前半句是不够的:`requireEnv("DATABASE_URL")` 在 `doc-type-service.ts` 与 `migrate-cli.ts` 里都是第一个调用,抛的是逐字相同的字符串,单看它无法区分入口。它在本包上碰巧仍有区分力 —— `azure-sdk` 包里没有 `dist/main.js`,`ENTRY` 若回退到默认值会是 `ERR_MODULE_NOT_FOUND` —— 但那依赖一个未言明的事实,以后 `azure-sdk` 一旦有了 `main.js` 这条断言就会静默失效。直接断言栈帧里的文件名才是真正在测入口。
 
 - [ ] **Step 8: Commit**
 
