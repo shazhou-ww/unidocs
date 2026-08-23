@@ -11,8 +11,8 @@
       "import": "./src/index.ts"
     },
     "./internal": {
-      "types": "./dist/internal.d.ts",
-      "import": "./dist/internal.js"
+      "types": "./src/internal.ts",
+      "import": "./src/internal.ts"
     }
   },
   "files": [

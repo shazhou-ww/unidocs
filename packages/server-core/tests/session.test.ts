@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { CasRef, CasReferences, DocumentType } from "@unidocs/core";
+import { createSBlob } from "@unidocs/core";
+import type { CasRef, CasReferences, DocumentType, SBlob } from "@unidocs/core";
 import type {
   Delta,
   DeltaLog,
@@ -30,13 +31,18 @@ import { DocumentSession, type CasGateway, type SessionDeps } from "../src/sessi
 // --------------------------------------------------------------------------
 
 type TextOp =
-  | { kind: "append"; text: string; refs?: Record<string, number> }
+  | { kind: "append"; text: string; blob?: SBlob }
   | { kind: "boom" };
 
 type TextQuery = { kind: "text" };
 
+type BlobDoc = { text: string; blobs: SBlob[] };
+
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+const HASH_F = "f".repeat(64);
+const HASH_1 = "11".repeat(32);
+const HASH_2 = "22".repeat(32);
 
 function makeTextDocType(): DocumentType<string, TextQuery, TextOp> {
   return {
@@ -54,19 +60,59 @@ function makeTextDocType(): DocumentType<string, TextQuery, TextOp> {
       }
       return next;
     },
-    async load(bytes) {
-      return decoder.decode(bytes);
+    formats: {
+      text: {
+        mediaTypes: ["text/plain"],
+        extensions: [".txt"],
+        async load(bytes) {
+          return decoder.decode(bytes);
+        },
+        async save(doc) {
+          return encoder.encode(doc);
+        },
+      },
     },
-    async save(doc) {
-      return encoder.encode(doc);
-    },
-    refsFromSnapshot() {
-      return {};
-    },
-    refsFromOp(op) {
-      return op.kind === "append" ? (op.refs ?? {}) : {};
-    },
+    defaultFormat: "text",
     contentType: "text/plain",
+    tools: {},
+    instructions: "",
+  };
+}
+
+/** TDoc carries branded SBlobs so snapshot/clone pinning does not need refsFromSnapshot. */
+function makeBlobDocType(): DocumentType<BlobDoc, TextQuery, TextOp> {
+  return {
+    async init() {
+      return { text: "", blobs: [createSBlob(HASH_1), createSBlob(HASH_2)] };
+    },
+    async query(_q, doc) {
+      return doc.text;
+    },
+    async apply(operations, doc) {
+      let text = doc.text;
+      for (const op of operations) {
+        if (op.kind === "boom") throw new Error("boom");
+        text += op.text;
+      }
+      return { text, blobs: doc.blobs };
+    },
+    formats: {
+      json: {
+        mediaTypes: ["application/json"],
+        extensions: [".json"],
+        async load(bytes) {
+          const parsed = JSON.parse(decoder.decode(bytes)) as { text: string; hashes: string[] };
+          return { text: parsed.text, blobs: parsed.hashes.map(createSBlob) };
+        },
+        async save(doc) {
+          return encoder.encode(
+            JSON.stringify({ text: doc.text, hashes: doc.blobs.map((b) => b.hash) }),
+          );
+        },
+      },
+    },
+    defaultFormat: "json",
+    contentType: "application/json",
     tools: {},
     instructions: "",
   };
@@ -184,7 +230,7 @@ class PassThroughUnitOfWork implements UnitOfWork {
 function makeHarness(
   startTime = 1_000,
   deltaLog?: DeltaLog,
-  docType: DocumentType<string, TextQuery, TextOp> = makeTextDocType(),
+  docType: DocumentType<any, TextQuery, TextOp> = makeTextDocType(),
 ) {
   const ports = createMemoryPorts();
   const cas = new FakeCas();
@@ -222,9 +268,9 @@ function makeCountingTextDocType(): {
   return {
     docType: {
       ...inner,
-      async apply(operations, doc, context) {
+      async apply(operations, doc) {
         calls += 1;
-        return inner.apply(operations, doc, context);
+        return inner.apply(operations, doc);
       },
     },
     applyCalls: () => calls,
@@ -236,20 +282,21 @@ async function deltaCount(deps: SessionDeps): Promise<number> {
 }
 
 /**
- * A PSD-shaped doc type: save() branches on whether it was handed a
- * store-capable context. WITH one it returns the cheap IR snapshot
- * (`IR:<doc>`); WITHOUT one it returns the real document bytes
- * (`8BPS:<doc>`). This is exactly the fork the CAS-IR feature depends on —
- * a save called without ctx silently takes the legacy (real-bytes) path.
+ * A PSD-shaped doc type whose formats.save emits IR bytes. Session snapshots
+ * and export share that save path (context is closed over by the factory, not
+ * passed per call), so both surfaces persist `IR:<doc>`.
  */
 function makeCtxAwareDocType(): DocumentType<string, TextQuery, TextOp> {
   const inner = makeTextDocType();
   return {
     ...inner,
-    async save(doc, ctx) {
-      return ctx?.cas?.store
-        ? encoder.encode(`IR:${doc}`)
-        : encoder.encode(`8BPS:${doc}`);
+    formats: {
+      text: {
+        ...inner.formats.text,
+        async save(doc) {
+          return encoder.encode(`IR:${doc}`);
+        },
+      },
     },
   };
 }
@@ -316,7 +363,7 @@ describe("DocumentSession.apply — failure paths", () => {
 
     await expect(
       session.apply(
-        [{ kind: "append", text: "x", refs: { ["f".repeat(64)]: 1 } }],
+        [{ kind: "append", text: "x", blob: createSBlob(HASH_F) }],
         "with refs",
         headBefore,
       ),
@@ -390,26 +437,20 @@ describe("DocumentSession.apply — failure paths", () => {
   });
 
   it("15. a non-CasClientError raised while leasing refs is a rejected delta, not a server fault", async () => {
-    // `refsFromOp` is a doc-type pure function over caller-supplied operations,
-    // so a malformed op makes it throw (TypeError and friends). The
-    // pre-refactor `#leaseFailure` had a branch for exactly this and answered
-    // 400. Letting it fall through to a generic 500 tells the client to retry
-    // an operation that can never succeed.
-    const inner = makeTextDocType();
-    const exploding: DocumentType<string, TextQuery, TextOp> = {
-      ...inner,
-      refsFromOp() {
-        throw new TypeError("Cannot read properties of undefined (reading 'hash')");
-      },
-    };
-    const { session, deps } = makeHarness(1_000, undefined, exploding);
+    // Lease walks ops as SValue. A circular structure cannot be encoded, so
+    // leaseOpRefs throws a TypeError. That must surface as DeltaRejectedError
+    // (400), not a generic 500 that tells the client to retry forever.
+    const { session, deps } = makeHarness();
     await session.create();
 
     const before = await deltaCount(deps);
 
+    const cyclic: { kind: "append"; text: string; cycle?: unknown } = { kind: "append", text: "a" };
+    cyclic.cycle = cyclic;
+
     let caught: unknown;
     try {
-      await session.apply([{ kind: "append", text: "a" }], "a", 1);
+      await session.apply([cyclic as TextOp], "a", 1);
     } catch (err) {
       caught = err;
     }
@@ -435,7 +476,7 @@ describe("DocumentSession.apply — failure paths", () => {
     let caught: unknown;
     try {
       await session.apply(
-        [{ kind: "append", text: "a", refs: { ["f".repeat(64)]: 1 } }],
+        [{ kind: "append", text: "a", blob: createSBlob(HASH_F) }],
         "a",
         1,
       );
@@ -1005,10 +1046,8 @@ describe("DocumentSession — normal paths", () => {
     return counts;
   }
 
-  it("18. commits refsFromSnapshot hashes as root-refs when writing a durable snapshot", async () => {
-    const refs: CasReferences = { h1: 1, h2: 1 };
-    const docType = { ...makeTextDocType(), refsFromSnapshot: () => refs };
-    const { session, cas } = makeHarness(1_000, undefined, docType);
+  it("18. commits TDoc SBlob hashes as root-refs when writing a durable snapshot", async () => {
+    const { session, cas } = makeHarness(1_000, undefined, makeBlobDocType());
     await session.load();
 
     // create() writes the durable v1 snapshot.
@@ -1020,7 +1059,7 @@ describe("DocumentSession — normal paths", () => {
     expect(snapCommits).toHaveLength(1);
     expect(snapCommits[0]).toEqual({
       requestId: "snapshot:user-1:doc-1:1",
-      changes: { h1: 1, h2: 1 },
+      changes: { [HASH_1]: 1, [HASH_2]: 1 },
     });
   });
 
@@ -1035,9 +1074,7 @@ describe("DocumentSession — normal paths", () => {
   });
 
   it("20. re-writing a snapshot at the same version reuses one deterministic, idempotent requestId (no double-count)", async () => {
-    const refs: CasReferences = { h1: 1, h2: 1 };
-    const docType = { ...makeTextDocType(), refsFromSnapshot: () => refs };
-    const { session, cas } = makeHarness(1_000, undefined, docType);
+    const { session, cas } = makeHarness(1_000, undefined, makeBlobDocType());
     await session.load();
 
     await session.create(); // snapshot at v1
@@ -1054,7 +1091,7 @@ describe("DocumentSession — normal paths", () => {
       new Set(["snapshot:user-1:doc-1:1"]),
     );
     // Folded with the worker's real dedupe rule, each blob is pinned once.
-    expect(foldRootRefs(snapCommits)).toEqual({ h1: 1, h2: 1 });
+    expect(foldRootRefs(snapCommits)).toEqual({ [HASH_1]: 1, [HASH_2]: 1 });
   });
 
   it("9. initFromHash() adopts an existing blob as version 1", async () => {
@@ -1112,10 +1149,10 @@ describe("DocumentSession — normal paths", () => {
     // And the ref hash is the hash of the IR bytes, proving putIfAbsent stored them.
     expect(ref!.hash).toBe(await computeHash(encoder.encode("IR:")));
 
-    // 3. A user-facing export/download must be the REAL bytes, never the CAS-IR
-    //    snapshot — exportBytes() calls save(doc) with NO ctx.
+    // 3. Export uses the same formats.save as snapshots (context is closed
+    //    over by the factory), so it also emits IR bytes.
     const exported = await session.exportBytes();
-    expect(exported.bytes).toEqual(encoder.encode("8BPS:a"));
+    expect(exported.bytes).toEqual(encoder.encode("IR:a"));
   });
 
   it("22. a save() that ignores ctx (markdown/docx-like) is unaffected: cache, durable and export bytes all match", async () => {
@@ -1195,63 +1232,62 @@ describe("DocumentSession — normal paths", () => {
   });
 
   // ------------------------------------------------------------------
-  // C1: exportBytes() must materialize a lazy document before save().
-  // A cold-reloaded PSD is lazy (PixelRef layers); save() WITHOUT ctx would
-  // hit the writePsd fallback and throw. The optional resolve() hook faults
-  // the lazy refs resident first, then save() (still no ctx) emits real bytes.
+  // C1: exportBytes() uses defaultFormat.save. Lazy materialization is the
+  // format adapter's job (e.g. PSD's .psd save resolves PixelRefs), not a
+  // DocumentType.resolve hook.
   // ------------------------------------------------------------------
 
-  it("25. exportBytes() calls resolve() before save() (resolve gets ctx, save gets none)", async () => {
-    const resolveCtx: ({ cas?: unknown } | undefined)[] = [];
+  it("25. exportBytes() uses defaultFormat.save even when snapshotFormat differs", async () => {
     const calls: string[] = [];
-    // A lazy-aware doc type: resolve() materializes the doc (LAZY -> resident)
-    // and records the ctx it received; save() records whether it saw a ctx and,
-    // WITHOUT one, would "throw" on a still-lazy doc — mirroring PSD writePsd.
     const docType: DocumentType<string, TextQuery, TextOp> = {
       ...makeCtxAwareDocType(),
-      async resolve(doc, ctx) {
-        calls.push("resolve");
-        resolveCtx.push(ctx);
-        // Materialize: strip the LAZY marker so save() sees a resident doc.
-        return doc.startsWith("LAZY:") ? doc.slice("LAZY:".length) : doc;
-      },
-      async save(doc, ctx) {
-        calls.push("save");
-        // A save without ctx on a still-lazy doc is the failure C1 fixes.
-        if (!ctx?.cas?.store && doc.startsWith("LAZY:")) {
-          throw new Error("writePsd fallback on a lazy PixelRef doc");
-        }
-        return ctx?.cas?.store ? encoder.encode(`IR:${doc}`) : encoder.encode(`8BPS:${doc}`);
+      snapshotFormat: "ir",
+      defaultFormat: "psd",
+      formats: {
+        ir: {
+          mediaTypes: ["application/json"],
+          extensions: [".json"],
+          async load(bytes) {
+            return decoder.decode(bytes);
+          },
+          async save(doc) {
+            calls.push("ir");
+            return encoder.encode(`IR:${doc}`);
+          },
+        },
+        psd: {
+          mediaTypes: ["image/vnd.adobe.photoshop"],
+          extensions: [".psd"],
+          async load(bytes) {
+            return decoder.decode(bytes);
+          },
+          async save(doc) {
+            calls.push("psd");
+            return encoder.encode(`8BPS:${doc}`);
+          },
+        },
       },
     };
 
     const { session } = makeHarness(1_000, undefined, docType);
     await session.load();
     await session.create();
-    // Simulate a cold-reloaded lazy document.
-    await session.apply([{ kind: "append", text: "LAZY:pixels" }], "lazy", 1);
+    await session.apply([{ kind: "append", text: "pixels" }], "pixels", 1);
 
-    // Ignore the internal snapshot save()s from create()/apply(); observe only
-    // what exportBytes() does.
     calls.length = 0;
     const exported = await session.exportBytes();
-    // resolve ran, then save; save produced REAL (non-IR) bytes off the
-    // materialized doc — never threw.
-    expect(calls).toEqual(["resolve", "save"]);
+    expect(calls).toEqual(["psd"]);
     expect(exported.bytes).toEqual(encoder.encode("8BPS:pixels"));
-    // resolve() received a real context (carrying cas); save() did not.
-    expect(resolveCtx[0]?.cas).toBeDefined();
   });
 
-  it("26. exportBytes() on a doc type WITHOUT resolve is unchanged (no call, real bytes)", async () => {
-    // markdown/docx have no resolve — export must be byte-identical to before.
+  it("26. exportBytes() is defaultFormat.save with no DocumentType.resolve", async () => {
     const { session } = makeHarness(1_000, undefined, makeCtxAwareDocType());
     await session.load();
     await session.create();
     await session.apply([{ kind: "append", text: "a" }], "a", 1);
 
     const exported = await session.exportBytes();
-    expect(exported.bytes).toEqual(encoder.encode("8BPS:a"));
+    expect(exported.bytes).toEqual(encoder.encode("IR:a"));
   });
 
   // ------------------------------------------------------------------
@@ -1262,8 +1298,7 @@ describe("DocumentSession — normal paths", () => {
   // ------------------------------------------------------------------
 
   it("27. initFromHash() pins the cloned snapshot's referenced blobs under the clone's own requestId", async () => {
-    const refs: CasReferences = { h1: 1, h2: 1 };
-    const docType = { ...makeTextDocType(), refsFromSnapshot: () => refs };
+    const docType = makeBlobDocType();
 
     // Clone identity differs from any source: user-9 / doc-clone.
     const ports = createMemoryPorts();
@@ -1281,7 +1316,7 @@ describe("DocumentSession — normal paths", () => {
       identity: { docType: "text", docId: "doc-clone", userId: "user-9" },
       now: () => 5_000,
     };
-    const bytes = encoder.encode("cloned snapshot");
+    const bytes = encoder.encode(JSON.stringify({ text: "cloned snapshot", hashes: [HASH_1, HASH_2] }));
     const hash = await computeHash(bytes);
     await deps.blobs.putIfAbsent(hash, bytes);
 
@@ -1293,7 +1328,7 @@ describe("DocumentSession — normal paths", () => {
     expect(snapCommits).toHaveLength(1);
     expect(snapCommits[0]).toEqual({
       requestId: "snapshot:user-9:doc-clone:1",
-      changes: { h1: 1, h2: 1 },
+      changes: { [HASH_1]: 1, [HASH_2]: 1 },
     });
   });
 

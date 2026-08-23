@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  collectSBlobRefs,
   decodeSValue,
   encodeSValue,
   isSBlob,
+  refsFromSValue,
   SBlobTag,
   SValueContentType,
 } from "../src/index.js";
@@ -63,6 +65,17 @@ describe("SValue version 1", () => {
     expect(decoded.refs).toEqual(encoded.refs);
     expect(isSBlob((decoded.value as { x: readonly unknown[] }).x[0])).toBe(true);
     expect(Object.isFrozen(decoded.value)).toBe(true);
+    expect(refsFromSValue(value)).toEqual({ [second.hash]: 1, [first.hash]: 2 });
+  });
+
+  it("collectSBlobRefs walks mixed trees and skips binary leaves", () => {
+    const blob = createSBlob("33".repeat(32));
+    const tree = {
+      files: { "/a": blob, "/b": blob },
+      pixels: { width: 1, height: 1, data: new Uint8Array([1, 2, 3, 4]) },
+    };
+    expect(collectSBlobRefs(tree)).toEqual({ [blob.hash]: 2 });
+    expect(collectSBlobRefs("plain")).toEqual({});
   });
 
   it("round trips null-prototype objects and prototype-sensitive keys", () => {

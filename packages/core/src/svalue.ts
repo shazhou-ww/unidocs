@@ -11,7 +11,7 @@ import {
   sBlobSignature,
   SValueContentType,
 } from "./types.js";
-import type { SBlob, SValue } from "./types.js";
+import type { CasReferences, SBlob, SValue } from "./types.js";
 
 export { SValueContentType };
 
@@ -346,6 +346,51 @@ export function encodeSValueWithRefs(
   options?: SValueCodecOptions,
 ): EncodedSValue {
   return encodeDetailed(value, codecLimits(options));
+}
+
+/** Count each SBlob occurrence produced by a canonical SValue encode. */
+export function refsFromSValue(value: SValue, options?: SValueCodecOptions): CasReferences {
+  const counts: Record<string, number> = {};
+  for (const hash of encodeSValueWithRefs(value, options).refs) {
+    counts[hash] = (counts[hash] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * Collect branded SBlobs from a document-shaped tree that may still contain
+ * non-SValue leaves (e.g. PSD `Uint8Array` pixels). Used when pinning snapshot
+ * CAS refs from in-memory TDoc. Cycles, typed arrays, and class instances are
+ * skipped; only `isSBlob` nodes contribute counts.
+ */
+export function collectSBlobRefs(value: unknown): CasReferences {
+  const counts: Record<string, number> = {};
+  walkSBlobs(value, counts, new Set());
+  return counts;
+}
+
+function walkSBlobs(
+  value: unknown,
+  counts: Record<string, number>,
+  seen: Set<object>,
+): void {
+  if (isSBlob(value)) {
+    counts[value.hash] = (counts[value.hash] ?? 0) + 1;
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return;
+  if (seen.has(value)) return;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) walkSBlobs(item, counts, seen);
+    return;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return;
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    walkSBlobs(child, counts, seen);
+  }
 }
 
 function normalizeDecoded(

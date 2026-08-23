@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import type { BlobStore } from "../src/render/pixel-source.js";
 import { apply } from "../src/ops/index.js";
@@ -6,11 +7,10 @@ import { serialize, deserialize } from "../src/psd/ir.js";
 
 function memStore(): BlobStore & { blobs: Map<string, Uint8Array> } {
   const blobs = new Map<string, Uint8Array>();
-  let n = 0;
   return {
     blobs,
     async put(bytes: Uint8Array) {
-      const hash = `blob${n++}`;
+      const hash = createHash("sha256").update(bytes).digest("hex");
       blobs.set(hash, bytes);
       return hash;
     },

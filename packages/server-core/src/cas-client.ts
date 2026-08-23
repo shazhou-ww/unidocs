@@ -9,7 +9,8 @@
  */
 
 import { type CasRootRefUpdate, computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
-import type { CasRef, CasReadContext, CasReferences } from "@unidocs/core";
+import { refsFromSValue } from "@unidocs/core";
+import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/core";
 
 /** Structural interface for a fetch-capable binding (e.g. a Cloudflare service binding). */
 export interface HttpFetcher {
@@ -201,22 +202,11 @@ export class CasClient implements CasReadContext {
 }
 
 /**
- * Aggregate CAS references from a batch of operations.
- * Returns hash → count map with positive safe-integer counts.
+ * Aggregate CAS references from a batch of SValue operations by walking
+ * branded SBlobs. Returns hash → count map with positive occurrence counts.
  */
-export function aggregateRefs<TOp>(
-  operations: readonly TOp[],
-  refsFromOp: (op: TOp) => CasReferences,
-): CasReferences {
-  const result: Record<string, number> = {};
-  for (const op of operations) {
-    const refs = refsFromOp(op);
-    for (const [hash, count] of Object.entries(refs)) {
-      if (!Number.isSafeInteger(count) || count <= 0) continue;
-      result[hash] = (result[hash] ?? 0) + count;
-    }
-  }
-  return result;
+export function aggregateRefs(operations: readonly SValue[]): CasReferences {
+  return refsFromSValue(operations as SValue);
 }
 
 /**
@@ -235,13 +225,12 @@ export interface CasRootRefGateway {
   updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<void>;
 }
 
-/** Lease every hash referenced by a delta. Empty maps are a no-op. */
-export async function leaseOpRefs<TOp>(
-  operations: readonly TOp[],
-  refsFromOp: (op: TOp) => CasReferences,
+/** Lease every SBlob hash referenced by a delta. Empty maps are a no-op. */
+export async function leaseOpRefs(
+  operations: readonly SValue[],
   cas: CasLeaseGateway,
 ): Promise<CasReferences> {
-  const refs = aggregateRefs(operations, refsFromOp);
+  const refs = aggregateRefs(operations);
   for (const hash of Object.keys(refs)) {
     await cas.leaseExisting(hash);
   }

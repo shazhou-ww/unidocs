@@ -156,16 +156,11 @@ export interface DocumentType<TDoc, TQuery, TOp> {
   defaultFormat: string;
 
   /**
-   * Materialize any lazy/external references into a self-contained document
-   * (e.g. before export). Optional; doctypes without lazy state omit it.
+   * Format used for durable/cache snapshots. Defaults to `defaultFormat`.
+   * PSD uses this to persist CAS-IR JSON while keeping `.psd` as the
+   * user-facing import/export format.
    */
-  resolve?: (doc: TDoc, context?: DocumentTypeContext) => Promise<TDoc>;
-
-  /** Extract CAS references from a snapshot (synchronous pure function). */
-  refsFromSnapshot: (data: Uint8Array) => CasReferences;
-
-  /** Extract CAS references from an operation (synchronous pure function). */
-  refsFromOp: (operation: TOp) => CasReferences;
+  snapshotFormat?: string;
 
   /** MIME type for document export. */
   contentType: string;

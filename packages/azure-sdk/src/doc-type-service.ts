@@ -35,7 +35,7 @@ export interface DocTypeServiceConfig {
    * 注意它必须指向 CAS worker 本身，不能指向 gateway —— `CasClient`
    * 的 `updateRootRefs` 打的是 `${origin}/_internal/root-refs`，
    * gateway 只路由 `/users/...`，不代理 `/_internal/*`。
-   * 未给时 CAS 调用一律 501（markdown 的 refsFromOp 恒返回 {}，
+   * 未给时 CAS 调用一律 501（markdown 的 TDoc/ops 不含 SBlob，
    * 不给它配 CAS 是正确的默认）。
    */
   casBaseUrl?: string;

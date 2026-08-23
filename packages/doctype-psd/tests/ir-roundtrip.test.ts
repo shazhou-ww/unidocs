@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import type { BlobStore } from "../src/render/pixel-source.js";
@@ -6,11 +7,10 @@ import { serialize, deserialize } from "../src/psd/ir.js";
 
 function memStore(): BlobStore & { blobs: Map<string, Uint8Array> } {
   const blobs = new Map<string, Uint8Array>();
-  let n = 0;
   return {
     blobs,
     async put(bytes: Uint8Array) {
-      const hash = `blob${n++}`;
+      const hash = createHash("sha256").update(bytes).digest("hex");
       blobs.set(hash, bytes);
       return hash;
     },
@@ -239,8 +239,9 @@ describe("psd IR serialize/deserialize", () => {
 
   it("PixelRef pixels are kept as-is on serialize (not re-stored) and preserved on deserialize", async () => {
     const store = memStore();
-    const preRef = { width: 2, height: 2, hash: "pre-existing-hash" };
-    store.blobs.set("pre-existing-hash", (await import("fast-png")).encode({
+    const preHash = "ab".repeat(32);
+    const preRef = { width: 2, height: 2, hash: preHash };
+    store.blobs.set(preHash, (await import("fast-png")).encode({
       width: 2,
       height: 2,
       data: fill(2, 2, [7, 8, 9, 255]),
@@ -265,10 +266,10 @@ describe("psd IR serialize/deserialize", () => {
     expect(store.blobs.size).toBe(sizeBefore); // not re-stored
 
     const ir = JSON.parse(new TextDecoder().decode(bytes));
-    expect(ir.layers[0].pixels.hash).toBe("pre-existing-hash");
+    expect(ir.layers[0].pixels.hash).toBe(preHash);
 
     const back = await deserialize(bytes, store);
     expect(isRef(back.layers[0].pixels!)).toBe(true);
-    expect((back.layers[0].pixels as any).hash).toBe("pre-existing-hash");
+    expect((back.layers[0].pixels as any).hash).toBe(preHash);
   });
 });

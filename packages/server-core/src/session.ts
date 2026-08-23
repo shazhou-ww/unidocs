@@ -65,6 +65,7 @@ import type {
   SValueType,
   SValue,
 } from "@unidocs/core";
+import { collectSBlobRefs } from "@unidocs/core";
 import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "./cas-client.js";
 import {
   DeltaRejectedError,
@@ -154,6 +155,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     return this.#doc;
   }
 
+  #snapshotSave(): (doc: SValueType<TDoc>) => Promise<Uint8Array> {
+    const name = this.#config.snapshotFormat ?? this.#config.defaultFormat;
+    return this.#config.formats[name].save;
+  }
+
   /**
    * Rebuild in-memory state from the snapshot cache plus delta replay.
    * Idempotent: repeated calls return immediately.
@@ -234,7 +240,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // Pass ctx so a ctx-aware doc type (PSD) caches the IR snapshot (JSON +
     // per-layer CAS blobs) rather than the full serialized document. Doc types
     // that ignore ctx (markdown/docx) are byte-identical to before.
-    const bytes = await this.#config.formats[this.#config.defaultFormat].save(this.#doc);
+    const bytes = await this.#snapshotSave()(this.#doc);
     await this.#deps.snapshots.put(this.#version, bytes);
   }
 
@@ -282,12 +288,12 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * `snapshot()`/clone round-trip on is the IR hash the blob was stored under.
    * markdown/docx ignore ctx and are byte-identical to before.
    *
-   * The bytes are returned alongside the hash so callers that must pin the
-   * snapshot's CAS root-refs (`#writeSnapshot`) can run `refsFromSnapshot` on
-   * the exact bytes that were persisted, without a second (re-encoding) save.
+   * The bytes are returned alongside the hash so callers can persist the
+   * snapshot blob. CAS root-refs are derived from SBlobs on the in-memory
+   * TDoc after save (see `#writeSnapshot`), not from a doctype hook over bytes.
    */
   async #writeBlob(doc: SValueType<TDoc>): Promise<{ hash: string; bytes: Uint8Array }> {
-    const bytes = await this.#config.formats[this.#config.defaultFormat].save(doc);
+    const bytes = await this.#snapshotSave()(doc);
     const hash = await computeHash(bytes);
     // Content-addressed: the same bytes are the same blob.
     await this.#deps.blobs.putIfAbsent(hash, bytes);
@@ -305,21 +311,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   async #writeSnapshot(): Promise<{ hash: string; version: number } | null> {
     if (this.#doc === null) return null;
 
-    const { hash, bytes } = await this.#writeBlob(this.#doc);
+    const { hash } = await this.#writeBlob(this.#doc);
 
-    // Pin the per-layer content blobs this snapshot references so CAS GC
-    // retains them. `refsFromSnapshot` is a pure function; markdown/docx
-    // return {} and skip this path entirely (zero behaviour change). This
-    // runs BEFORE recordSnapshot on purpose: we must not register a snapshot
-    // as a restore point until the content it references is protected, or a
-    // GC pass between the two writes could delete a blob the snapshot needs.
-    //
-    // The requestId is deterministic per (user, doc, version). Re-running
-    // #writeSnapshot for the same version commits the identical payload under
-    // the identical id, which the CAS worker dedupes by (requestId, payload):
-    // no double-count. A snapshot has no delta to roll back, so the rollback
-    // is a no-op; a pin failure surfaces as RootRefsError, mirroring apply().
-    const refs = this.#config.refsFromSnapshot(bytes);
+    // Pin SBlobs reachable from the in-memory TDoc so CAS GC retains them.
+    // Save may attach SBlobs onto the doc (PSD externalizes layer pixels);
+    // markdown/docx with no SBlobs yield {} and skip this path. This runs
+    // BEFORE recordSnapshot: we must not register a restore point until the
+    // content it references is protected.
+    const refs = collectSBlobRefs(this.#doc);
     if (Object.keys(refs).length > 0) {
       const { userId, docId } = this.#deps.identity;
       try {
@@ -371,18 +370,12 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     //    snapshotted immediately and deliberately, so a fresh document is
     //    restorable without replaying from `init()` — and an orphaned blob
     //    is the cheapest possible failure residue (see #writeBlob).
-    const { hash, bytes } = await this.#writeBlob(doc);
+    const { hash } = await this.#writeBlob(doc);
 
-    // 1b. Pin the v1 snapshot's per-layer content blobs BEFORE the transaction
-    //     records it as a restore point — the same ordering rule as
-    //     #writeSnapshot: content must be protected before anything registers
-    //     the snapshot as restorable, or a GC pass between the two writes could
-    //     delete a blob the snapshot needs. Azure's refactor records the v1
-    //     snapshot inline in the transaction (create() no longer routes through
-    //     #writeSnapshot), so the CAS pin the durable path owns is re-applied
-    //     here. A fresh document is always version 1. markdown/docx return {}
-    //     from refsFromSnapshot and skip this entirely (zero behaviour change).
-    const refs = this.#config.refsFromSnapshot(bytes);
+    // Pin TDoc SBlobs BEFORE the transaction records v1 as a restore point —
+    // the same ordering rule as #writeSnapshot. markdown/docx with no SBlobs
+    // yield {} and skip this entirely.
+    const refs = collectSBlobRefs(doc);
     if (Object.keys(refs).length > 0) {
       try {
         await commitRootRefsOrRollback(
@@ -497,7 +490,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // cannot be GC'd out from under it when the source is deleted. Scoped to
     // the CLONE's own (user, doc, version=1) — deterministic and idempotent.
     // markdown/docx return {} and skip this entirely.
-    const cloneRefs = this.#config.refsFromSnapshot(bytes);
+    const cloneRefs = collectSBlobRefs(doc);
     if (Object.keys(cloneRefs).length > 0) {
       try {
         await commitRootRefsOrRollback(
@@ -561,15 +554,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
 
   async exportBytes(): Promise<{ bytes: Uint8Array; contentType: string }> {
     await this.load();
-    const doc0 = this.#requireDoc();
-    // Materialize any lazy references (e.g. a cold-reloaded PSD's PixelRef
-    // layers) BEFORE serializing — the resolve hook faults them resident via
-    // the CAS context. Then save WITHOUT ctx so export produces the real
-    // document bytes (a full 8BPS PSD), never the CAS-IR snapshot. Doc types
-    // without a resolve hook (markdown/docx) are byte-identical to before.
-    const doc = this.#config.resolve
-      ? await this.#config.resolve(doc0)
-      : doc0;
+    const doc = this.#requireDoc();
     const bytes = await this.#config.formats[this.#config.defaultFormat].save(doc as SValueType<TDoc>);
     return { bytes, contentType: this.#config.contentType };
   }
@@ -634,15 +619,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       throw new VersionConflictError(head, baseVersion + 1);
     }
 
-    // 1. Lease refs. A CasClientError propagates verbatim — it carries the
-    //    status the adapter maps to 409/400/502. Anything else is the caller's
-    //    problem, not the infrastructure's: `refsFromOp` is a doc-type pure
-    //    function and a malformed operation makes it throw (TypeError, etc.).
-    //    That must read as a rejected delta (400 — don't retry), not as a
-    //    server fault (500 — retry forever against an op that can never work).
+    // 1. Lease refs derived from SBlobs in the operation SValue. A
+    //    CasClientError propagates verbatim — it carries the status the
+    //    adapter maps to 409/400/502. Anything else (including a malformed
+    //    SValue that cannot be encoded) is a rejected delta (400 — don't
+    //    retry), not a server fault.
     let refs: CasReferences;
     try {
-      refs = await leaseOpRefs(ops, this.#config.refsFromOp, this.#deps.cas);
+      refs = await leaseOpRefs(ops as SValue[], this.#deps.cas);
     } catch (err) {
       if (err instanceof CasClientError) throw err;
       throw new DeltaRejectedError(`Delta failed: ${err}`);

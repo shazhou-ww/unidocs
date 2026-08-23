@@ -1,7 +1,8 @@
 import type { DocumentType, DocumentTypeContext, SValue } from "@unidocs/core";
 import type { PsdDoc } from "./model/types.js";
 import { apply, type PsdOp } from "./ops/index.js";
-import { saveSnapshot, loadSnapshot, refsFromSnapshot } from "./psd/snapshot.js";
+import { saveSnapshot, loadSnapshot } from "./psd/snapshot.js";
+import { save } from "./psd/save.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
 import { resolveDoc } from "./resolve.js";
 import { runQuery, type PsdQuery } from "./queries.js";
@@ -25,8 +26,6 @@ export function createPsdDocumentType(ctx: DocumentTypeContext): DocumentType<Ps
       layers: [],
     }),
 
-    resolve: (doc: PsdDoc) => resolveDoc(doc, casBlobStore(ctx)),
-
     apply: async (ops: readonly PsdOp[], doc: PsdDoc): Promise<PsdDoc> =>
       apply(ops, doc, ctx),
 
@@ -38,15 +37,20 @@ export function createPsdDocumentType(ctx: DocumentTypeContext): DocumentType<Ps
         mediaTypes: ["image/vnd.adobe.photoshop"],
         extensions: [".psd"],
         load: async (data: Uint8Array): Promise<PsdDoc> => loadSnapshot(data, ctx),
+        save: async (doc: PsdDoc): Promise<Uint8Array> =>
+          save(await resolveDoc(doc, casBlobStore(ctx))),
+      },
+      ir: {
+        mediaTypes: ["application/json"],
+        extensions: [".json"],
+        load: async (data: Uint8Array): Promise<PsdDoc> => loadSnapshot(data, ctx),
         save: async (doc: PsdDoc): Promise<Uint8Array> => saveSnapshot(doc, ctx),
       },
     },
     defaultFormat: "psd",
+    snapshotFormat: "ir",
 
     contentType: "image/vnd.adobe.photoshop",
-
-    refsFromSnapshot,
-    refsFromOp: () => ({}),
 
     tools,
     instructions,

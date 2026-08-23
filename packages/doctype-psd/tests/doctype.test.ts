@@ -1,12 +1,22 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import type { DocumentTypeContext } from "@unidocs/core";
 import { createPsdDocumentType } from "../src/doctype.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));
 
+const dummyCtx: DocumentTypeContext = {
+  async makeSBlob() {
+    throw new Error("dummy ctx: makeSBlob not used by these tests");
+  },
+  async readSBlob() {
+    throw new Error("dummy ctx: readSBlob not used by these tests");
+  },
+};
+
 describe("createPsdDocumentType", () => {
-  const dt = createPsdDocumentType();
+  const dt = createPsdDocumentType(dummyCtx);
 
   it("init makes an empty doc", async () => {
     const d = await dt.init();
@@ -15,10 +25,10 @@ describe("createPsdDocumentType", () => {
   });
 
   it("load → apply → query flows through", async () => {
-    const doc = await dt.load(new Uint8Array(readFileSync(fixture)));
+    const doc = await dt.formats.psd.load(new Uint8Array(readFileSync(fixture)));
     const doc2 = await dt.apply([{ kind: "set_props", payload: { layerId: doc.layers[1].id, props: { opacity: 0.5 } } }], doc);
     const layers = await dt.query({ kind: "getLayers" }, doc2) as any[];
-    expect(layers.find(l => l.name === "red-box").opacity).toBe(0.5);
+    expect(layers.find((l: { name: string }) => l.name === "red-box").opacity).toBe(0.5);
   });
 
   it("exposes prefixed tool names for name-prefix routing + contentType", () => {
@@ -29,12 +39,11 @@ describe("createPsdDocumentType", () => {
     expect((dt.tools.getLayers as any).op).toBeUndefined();
   });
 
-  it("exposes refsFromSnapshot/refsFromOp returning empty refs, a resolve hook, and no serialize/deserialize", () => {
-    expect(dt.refsFromSnapshot(new Uint8Array())).toEqual({});
-    expect(dt.refsFromOp({ kind: "set_props", payload: {} })).toEqual({});
+  it("has no resolve, serialize/deserialize, or refsFrom* hooks", () => {
+    expect((dt as any).refsFromSnapshot).toBeUndefined();
+    expect((dt as any).refsFromOp).toBeUndefined();
     expect((dt as any).serialize).toBeUndefined();
     expect((dt as any).deserialize).toBeUndefined();
-    // resolve() materializes lazy PixelRef layers before a ctx-less export.
-    expect(typeof dt.resolve).toBe("function");
+    expect((dt as any).resolve).toBeUndefined();
   });
 });

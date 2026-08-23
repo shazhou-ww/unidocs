@@ -212,17 +212,6 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
 
     contentType: DOCX_CONTENT_TYPE,
 
-    refsFromSnapshot: () => ({}),
-    refsFromOp: (operation) => {
-      if (operation.kind === "insertImage") {
-        return { [operation.payload.blob.hash]: 1 };
-      }
-      if (operation.kind === "replaceImage") {
-        return { [operation.payload.blob.hash]: 1 };
-      }
-      return {};
-    },
-
     tools,
     instructions,
   };

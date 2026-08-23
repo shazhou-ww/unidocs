@@ -1,7 +1,9 @@
 export {
+  collectSBlobRefs,
   createSBlob,
   decodeSValueWithRefs,
   encodeSValueWithRefs,
+  refsFromSValue,
 } from "./svalue.js";
 
 export { SValueContentType } from "./types.js";

@@ -107,9 +107,6 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_context
 
   contentType: "text/markdown; charset=utf-8",
 
-  refsFromSnapshot: () => ({}),
-  refsFromOp: () => ({}),
-
   tools: {
     getContent: {
       name: "query_getContent",

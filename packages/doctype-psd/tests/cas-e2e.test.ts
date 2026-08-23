@@ -21,6 +21,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { decode as decodePng } from "fast-png";
+import { createSBlob } from "@unidocs/core";
+import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/core";
 import { DocumentSession, type SessionDeps } from "@unidocs/server-core";
 import { createMemoryPorts, MemoryCas } from "@unidocs/server-core/memory-ports";
 import type { WireQueryValue } from "@unidocs/server-core";
@@ -66,8 +68,30 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     const rawDoc = await loadPsd(psdBytes);
     const rawRender = await render(rawDoc);
 
-    const config = createPsdDocumentType();
     const ports = createMemoryPorts();
+    const cas: MemoryCas = ports.cas;
+    const ctx: DocumentTypeContext = {
+      async makeSBlob(dataOrHash: SBlobData | string, loadData?: () => Promise<SBlobData>): Promise<SBlob> {
+        if (typeof dataOrHash === "string") {
+          try {
+            await cas.read({ kind: "cas", hash: dataOrHash });
+            return createSBlob(dataOrHash);
+          } catch {
+            if (!loadData) throw new Error(`CAS node ${dataOrHash} not found`);
+            const loaded = await loadData();
+            await cas.store(loaded.data, loaded.contentType);
+            return createSBlob(dataOrHash);
+          }
+        }
+        const hash = await cas.store(dataOrHash.data, dataOrHash.contentType);
+        return createSBlob(hash);
+      },
+      async readSBlob(blob: SBlob): Promise<SBlobData> {
+        const data = await cas.read({ kind: "cas", hash: blob.hash });
+        return { data, contentType: "image/png" };
+      },
+    };
+    const config = createPsdDocumentType(ctx);
     const deps: SessionDeps = {
       deltas: ports.deltas,
       snapshots: ports.snapshots,
@@ -78,7 +102,6 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
       identity: { docType: "psd", docId: "doc-1", userId: "user-1" },
       now: () => Date.now(),
     };
-    const cas: MemoryCas = ports.cas;
     const session = new DocumentSession(config, deps);
 
     // ----------------------------------------------------------------
@@ -199,9 +222,8 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     // 5. exportBytes() on the COLD-RELOADED (lazy) session must also
     //    produce a real PSD — not throw, and not the IR.
     // ----------------------------------------------------------------
-    // session2's document is lazy (PixelRef layers). Before the resolve()
-    // hook, exportBytes() -> save(doc) with no ctx hit the writePsd fallback
-    // and threw on the unresolved PixelRefs. It must now materialize first.
+    // session2's document is lazy (PixelRef layers). formats.psd.save
+    // materializes them via resolveDoc before writing 8BPS.
     const coldExport = await session2.exportBytes();
     expect(coldExport.contentType).toBe("image/vnd.adobe.photoshop");
     // Real PSD magic "8BPS", NOT the IR JSON "{".

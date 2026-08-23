@@ -28,9 +28,12 @@ export type {
 export { toJsonValue } from "./json.js";
 
 export {
+	collectSBlobRefs,
+	createSBlob,
 	decodeSValue,
 	encodeSValue,
 	isSBlob,
+	refsFromSValue,
 	SBlobTag,
 	SValueContentType,
 } from "./svalue.js";
