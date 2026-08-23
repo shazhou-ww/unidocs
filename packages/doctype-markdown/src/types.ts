@@ -10,9 +10,9 @@ export interface MDoc {
 
 /** Query types for markdown documents. */
 export type MQuery =
-  | { kind: "getContent"; payload: undefined }
+  | { kind: "getContent" }
   | { kind: "getSection"; payload: { heading: string } }
-  | { kind: "getHeadings"; payload: undefined };
+  | { kind: "getHeadings" };
 
 /** Operation types for markdown documents. */
 export type MOp =

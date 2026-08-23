@@ -3,8 +3,7 @@
  */
 
 import { Document } from "@ariadng/office/docx";
-import type { DocxDoc, DocxParagraphOptions } from "./types.js";
-import type { QueryValue } from "@unidocs/core";
+import type { SValue } from "@unidocs/core";
 
 /** Validate that a value is a non-negative safe integer. */
 export function requireIndex(value: number, label: string): void {
@@ -14,9 +13,9 @@ export function requireIndex(value: number, label: string): void {
 }
 
 /** Build a query-friendly view of one paragraph. */
-export function paragraphValue(doc: DocxDoc, index: number): QueryValue | null {
+export function paragraphValue(doc: Document, index: number): SValue | null {
   requireIndex(index, "paragraph index");
-  const paragraph = doc.document.paragraphs()[index];
+  const paragraph = doc.paragraphs()[index];
   if (!paragraph) return null;
 
   return {
@@ -30,9 +29,4 @@ export function paragraphValue(doc: DocxDoc, index: number): QueryValue | null {
       italic: run.italic(),
     })),
   };
-}
-
-/** Save a Document into a DocxDoc state. */
-export async function createState(document: Document): Promise<DocxDoc> {
-  return { bytes: await document.save(), document };
 }

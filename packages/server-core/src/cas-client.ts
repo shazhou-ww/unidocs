@@ -186,6 +186,18 @@ export class CasClient implements CasReadContext {
       throw new CasClientError(resp.status, resp.statusText, "updateRootRefs");
     }
   }
+
+  /**
+   * Compatibility wrapper for SValue editor: assign root references.
+   * Converts assignments array to changes map format.
+   */
+  async assignRoots(params: { requestId: string; assignments: readonly { owner: string; hash: string }[] }): Promise<void> {
+    const changes: Record<string, number> = {};
+    for (const { hash } of params.assignments) {
+      changes[hash] = (changes[hash] ?? 0) + 1;
+    }
+    await this.updateRootRefs({ requestId: params.requestId, changes });
+  }
 }
 
 /**

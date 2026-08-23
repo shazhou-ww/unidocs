@@ -29,6 +29,7 @@ import { join } from "node:path";
  */
 const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/core": "packages/core/src/index.ts",
+  "@unidocs/core/internal": "packages/core/src/internal.ts",
   "@unidocs/cas": "packages/cas/src/index.ts",
   "@unidocs/server-core": "packages/server-core/src/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",

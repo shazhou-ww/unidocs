@@ -6,8 +6,7 @@
  */
 
 import type { Document } from "@ariadng/office/docx";
-import type { DocumentTypeContext } from "@unidocs/core";
-import { validateHash } from "@unidocs/cas";
+import type { SBlob, SBlobData } from "@unidocs/core";
 import type { XmlElement } from "@ariadng/office/xml";
 
 // ─── OOXML namespace URIs (standard constants) ──────────────────────
@@ -78,16 +77,11 @@ function collectImageContainers(
  */
 export async function insertImage(
   document: Document,
-  payload: { hash: string; widthPx?: number; altText?: string },
-  context?: DocumentTypeContext,
+  payload: { blob: SBlob; widthPx?: number; altText?: string },
+  readSBlob: (blob: SBlob) => Promise<SBlobData>,
 ): Promise<void> {
-  validateHash(payload.hash);
-  if (!context?.cas) {
-    throw new Error("insertImage requires a CAS context");
-  }
-
-  const bytes = await context.cas.read({ kind: "cas", hash: payload.hash });
-  document.addImage(bytes, {
+  const stored = await readSBlob(payload.blob);
+  document.addImage(stored.data, {
     widthPx: payload.widthPx,
     altText: payload.altText,
   });
@@ -119,14 +113,9 @@ export function deleteImage(document: Document, index: number): void {
 export async function replaceImage(
   document: Document,
   index: number,
-  hash: string,
-  context?: DocumentTypeContext,
+  blob: SBlob,
+  readSBlob: (blob: SBlob) => Promise<SBlobData>,
 ): Promise<void> {
-  validateHash(hash);
-  if (!context?.cas) {
-    throw new Error("replaceImage requires a CAS context");
-  }
-
   const di = document._internal();
   const images = document.images();
 
@@ -135,7 +124,7 @@ export async function replaceImage(
   }
 
   // Read new bytes from CAS
-  const newBytes = await context.cas.read({ kind: "cas", hash });
+  const newBytes = (await readSBlob(blob)).data;
 
   // Get the media part and overwrite
   const part = di.office.package.getPart(images[index].partName);

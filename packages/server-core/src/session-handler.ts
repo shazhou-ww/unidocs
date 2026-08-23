@@ -183,7 +183,7 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         if (unauthorized) return unauthorized;
 
         const q = await request.json() as TQuery;
-        const result = await session.query(q);
+        const result = await session.query(q as never);
         return Response.json({ success: true, data: result.data, version: result.version });
       }
 
@@ -198,7 +198,7 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
           baseVersion: number;
         };
 
-        const applied = await session.apply(body.operations, body.description, body.baseVersion);
+        const applied = await session.apply(body.operations as never, body.description, body.baseVersion);
         const result: ApplyResult = { success: true, version: applied.version };
         return Response.json(result);
       }
