@@ -64,11 +64,11 @@ export async function apply(
     // A `transform` op that flips mutates the layer's pixel bytes in place
     // (see geometry-ops.ts `flipPixels`), so it needs resident pixels. On a
     // lazy (PixelRef) doc, pre-resolve just that one layer from the CAS
-    // before applyOne runs — siblings stay lazy. With no ctx.cas (or a
+    // before applyOne runs — siblings stay lazy. With no ctx (or a
     // resident doc), applyOne's loud PixelRef throw in geometry-ops is the
     // guard: a PixelRef reaching flip unresolved still fails loudly rather
     // than silently no-op-ing.
-    if (op.kind === "transform" && ctx?.cas) {
+    if (op.kind === "transform" && ctx) {
       const payload = op.payload as { layerId?: string; op?: { flip?: unknown } };
       if (payload?.op?.flip && payload.layerId) {
         cur = await resolveLayerPixels(cur, payload.layerId, casBlobStore(ctx));

@@ -26,13 +26,12 @@ function isJsonSnapshot(bytes: Uint8Array): boolean {
 
 /**
  * Serialize a document to snapshot bytes. With a write-capable CAS context
- * (`ctx.cas.store` present), produces the byte-free IR JSON and uploads every
- * layer/mask pixel blob to the CAS. Without one (legacy / no-ctx / stores that
- * cannot write), falls back to a full PSD (`8BPS`) so existing callers keep
- * working.
+ * (`ctx.makeSBlob` present), produces the byte-free IR JSON and uploads every
+ * layer/mask pixel blob to the CAS. Without one (legacy / no-ctx), falls back
+ * to a full PSD (`8BPS`) so existing callers keep working.
  */
 export async function saveSnapshot(doc: PsdDoc, ctx?: DocumentTypeContext): Promise<Uint8Array> {
-  if (ctx?.cas?.store) {
+  if (ctx?.makeSBlob) {
     return serialize(doc, casBlobStore(ctx));
   }
   return save(doc);
@@ -46,7 +45,7 @@ export async function saveSnapshot(doc: PsdDoc, ctx?: DocumentTypeContext): Prom
  */
 export async function loadSnapshot(bytes: Uint8Array, ctx?: DocumentTypeContext): Promise<PsdDoc> {
   if (isJsonSnapshot(bytes)) {
-    if (!ctx?.cas) {
+    if (!ctx) {
       throw new Error("loadSnapshot: an IR JSON snapshot requires a CAS context to resolve its lazy pixel blobs");
     }
     return deserialize(bytes, casBlobStore(ctx));

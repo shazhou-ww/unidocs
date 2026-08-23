@@ -65,7 +65,7 @@ export async function runQuery(q: PsdQuery, doc: PsdDoc, ctx?: DocumentTypeConte
       // store) when no RenderCtx is passed, so this is byte-identical to
       // before. Lazy (PixelRef) docs pass a RenderCtx that faults pixels in
       // from the CAS as the compositor streams over each layer.
-      const rc: RenderCtx | undefined = ctx?.cas
+      const rc: RenderCtx | undefined = ctx
         ? { store: casBlobStore(ctx), cache: new PixelCache(DEFAULT_CACHE_BYTES) }
         : undefined;
       let px: { width: number; height: number; data: Uint8ClampedArray };

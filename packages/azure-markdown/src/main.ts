@@ -15,7 +15,10 @@ import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
 
 runDocTypeService({
   docType: "markdown",
-  documentType: createMarkdownDocumentType({}),
+  documentType: createMarkdownDocumentType({
+    makeSBlob: async () => { throw new Error("makeSBlob not available in azure-markdown"); },
+    readSBlob: async () => { throw new Error("readSBlob not available in azure-markdown"); },
+  } as any),
   defaultPort: 8788,
 }).catch((err) => {
   console.error("azure-markdown failed to start:", err);
