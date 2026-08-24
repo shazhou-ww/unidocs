@@ -18,7 +18,7 @@ new_sqlite_classes = ["DocxEditor", "DocxOperator"]
 binding = "SNAPSHOTS_DB"
 database_name = "unidocs-snapshots"
 database_id = "d3c78c42-b32f-4a4d-86e4-6cf6341baa8f"
-migrations_dir = "../../migrations"
+migrations_dir = "../cloudflare-gateway/migrations"
 
 [[r2_buckets]]
 bucket_name = "unidocs-cas"

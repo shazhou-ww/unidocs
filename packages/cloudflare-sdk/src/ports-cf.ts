@@ -270,7 +270,7 @@ export class D1DocIndex implements DocIndex {
   }
 
   // editor-do.ts create / init_from_hash: docs table INSERT OR REPLACE.
-  // Table creation now happens once via migrations/0001_init.sql, not here.
+  // Table creation now happens once via packages/cloudflare-gateway/migrations/0001_init.sql, not here.
   async register(rec: DocRecord): Promise<void> {
     await this.#db
       .prepare(

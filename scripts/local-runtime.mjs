@@ -51,15 +51,22 @@ function workerUrl(host, port) {
   return `http://${host}:${port}`;
 }
 
-const MIGRATIONS_PATH = join(ROOT, "migrations", "0001_init.sql");
+const MIGRATIONS_PATH = join(
+  ROOT,
+  "packages",
+  "cloudflare-gateway",
+  "migrations",
+  "0001_init.sql",
+);
 
 /**
- * Apply migrations/0001_init.sql to the shared SNAPSHOTS_DB. Real Cloudflare
- * D1 (via wrangler) gets this from `migrations_dir` in wrangler.toml; local
- * Miniflare has no migrations runner, so we read the file and exec each
- * statement ourselves. The gateway and every doc-type worker bind the same
- * underlying D1 database under the "SNAPSHOTS_DB" name, so applying it once
- * — against any one worker's binding — is enough for all of them.
+ * Apply the shared SNAPSHOTS_DB schema (owned by cloudflare-gateway). Real
+ * Cloudflare D1 (via wrangler) gets this from `migrations_dir` in
+ * wrangler.toml; local Miniflare has no migrations runner, so we read the
+ * file and exec each statement ourselves. The gateway and every doc-type
+ * worker bind the same underlying D1 database under the "SNAPSHOTS_DB"
+ * name, so applying it once — against any one worker's binding — is enough
+ * for all of them.
  */
 async function migrateSnapshotsDb(mf) {
   const db = await mf.getD1Database("SNAPSHOTS_DB", GATEWAY_WORKER);

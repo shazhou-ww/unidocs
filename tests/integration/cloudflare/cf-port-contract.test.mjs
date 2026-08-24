@@ -102,7 +102,10 @@ async function bundleProbeWorker() {
 
 async function migrateSnapshotsDb() {
   const db = await mf.getD1Database("SNAPSHOTS_DB", PROBE_WORKER);
-  const sql = await readFile(join(ROOT, "migrations", "0001_init.sql"), "utf8");
+  const sql = await readFile(
+    join(ROOT, "packages/cloudflare-gateway/migrations/0001_init.sql"),
+    "utf8",
+  );
   for (const statement of sql.split(";").map((s) => s.trim()).filter(Boolean)) {
     await db.exec(statement);
   }

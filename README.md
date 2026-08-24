@@ -269,6 +269,7 @@ class_name = "MytypeOperator"
 binding = "SNAPSHOTS_DB"
 database_name = "unidocs-snapshots"
 database_id = "..."
+migrations_dir = "../cloudflare-gateway/migrations"
 
 [[services]]
 binding = "CAS_SERVICE"
@@ -376,9 +377,10 @@ breaks the recursive test run.
 ## Deployment
 
 **New environment only — before the first `wrangler deploy`:** run
-`wrangler d1 migrations apply unidocs-snapshots` (from any package whose
-`wrangler.toml` points `migrations_dir` at `../../migrations`, e.g.
-`packages/cloudflare-gateway`). `wrangler deploy` does **not** apply
+`wrangler d1 migrations apply unidocs-snapshots` from
+`packages/cloudflare-gateway` (the shared D1 schema lives in that package's
+`migrations/`; markdown / docx / psd `wrangler.toml` files point at it).
+`wrangler deploy` does **not** apply
 migrations automatically — `migrations_dir` is just configuration. The
 shared `docs`/`snapshots` tables used to be created lazily by
 `listDocuments`/`D1DocIndex.register`; they no longer are. Skipping this
