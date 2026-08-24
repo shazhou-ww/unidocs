@@ -103,7 +103,7 @@ function assertPortFree(host, port) {
  * implementation is exactly the two `getD1Database`/`getR2Bucket` calls the
  * behavior tests used to make directly; `scripts/azure-runtime.mjs` provides
  * the Postgres/Azurite equivalent behind the same two methods so the test
- * bodies in `scripts/behavior-suite.mjs` don't need to know which backend
+ * bodies in `tests/integration/shared/behavior-suite.mjs` don't need to know which backend
  * they're running against.
  */
 function createStorageProbe(mf) {

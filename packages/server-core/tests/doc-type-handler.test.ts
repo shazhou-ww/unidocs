@@ -18,7 +18,7 @@
  * These are Node-runtime tests (this package's tests run under `vitest` on
  * Node); Cloudflare-side coverage that `duplex: "half"` doesn't break
  * anything there lives in the e2e/treespec suites (`pnpm test:local`,
- * `tests/bootstrap`), not here.
+ * `tests/treespec`), not here.
  */
 import { describe, expect, it } from "vitest";
 import { createDocTypeHandler } from "../src/doc-type-handler.js";

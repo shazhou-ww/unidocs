@@ -56,8 +56,8 @@ export interface CreateSessionHandlerConfig<TDoc, TQuery, TOp> {
 
 /**
  * The response bodies here are asserted verbatim by the e2e suites
- * (scripts/cas-rollback.test.mjs, scripts/editor-characterization.test.mjs,
- * the treespec tree under tests/bootstrap). Field names and message text
+ * (tests/integration/cloudflare/cas-rollback.test.mjs, tests/integration/cloudflare/editor-characterization.test.mjs,
+ * the treespec tree under tests/treespec). Field names and message text
  * are part of the contract — do not reword them.
  */
 export function errorResponse(err: unknown, version: number): Response {

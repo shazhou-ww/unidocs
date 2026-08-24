@@ -1,6 +1,6 @@
 /**
  * Boots the Azure/Postgres/Blob backend the same way `local-runtime.mjs`
- * boots the Miniflare one, so `scripts/behavior-suite.mjs` can run the same
+ * boots the Miniflare one, so `tests/integration/shared/behavior-suite.mjs` can run the same
  * test bodies against either.
  *
  * Topology: `docker compose -f docker-compose.azure.yml up -d` (Postgres
@@ -25,7 +25,7 @@
  * The `docker compose up -d` step for Postgres is itself optional: pass
  * `postgres: "external"` to skip it and connect to an already-running
  * server instead (see `startAzureRuntime()`'s own doc comment) — the mode
- * `tests/bootstrap/` uses, since that container has no docker at all.
+ * `tests/treespec/` uses, since that container has no docker at all.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -536,14 +536,14 @@ function assertDocTypesSupported(docTypes) {
  * markdown, all sharing the same Postgres/Azurite, fronted by a round-robin
  * proxy that stands in for the platform ingress — against a freshly
  * migrated Postgres/Azurite stack. Mirrors `startLocalRuntime()`'s return
- * shape (`urls`, `storage`, `dispose`) so `scripts/behavior-suite.mjs` can
+ * shape (`urls`, `storage`, `dispose`) so `tests/integration/shared/behavior-suite.mjs` can
  * target either without knowing which backend it got.
  *
  * Defaults to 2 replicas, not 1: what dev runs against and what tests run
  * against should not diverge, since that gap is itself a source of
  * incidents. `replicas` stays configurable only for troubleshooting (drop to
  * 1 to tell apart "only reproduces with multiple replicas" from "was always
- * broken") — `scripts/azure-multi-replica.test.mjs` asserts `replicas >= 2`
+ * broken") — `tests/integration/azure/azure-multi-replica.test.mjs` asserts `replicas >= 2`
  * itself so that dropping to 1 can't quietly become the new normal.
  *
  * `casBaseUrl` (过渡形态,阶段 4 删除): forwarded as `CAS_BASE_URL` to every
@@ -560,7 +560,7 @@ function assertDocTypesSupported(docTypes) {
  * `"external"` skips compose entirely (no `announceFirstPullIfNeeded()`, no
  * `up`, no `down -v`) and just polls the already-running server at
  * `DATABASE_URL` via `waitForPostgres()` — for environments with no docker
- * at all (the treespec e2e container; see `e2e/Dockerfile`, which bakes a
+ * at all (the treespec e2e container; see `tests/treespec/Dockerfile`, which bakes a
  * Postgres listening on 5433 straight into the image). This has to be an
  * explicit opt-in, never auto-detected: auto-detecting "is something
  * already listening on 5433" would turn a genuine failure ("compose didn't

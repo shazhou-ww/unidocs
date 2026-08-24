@@ -34,7 +34,7 @@ import { BLOB_CONNECTION_STRING, DATABASE_URL } from "./containers.js";
 // So the index identity is pinned and per-test isolation rides on a fresh
 // delta-log doc id plus a truncate of the two cross-document tables. This
 // mirrors how the Cloudflare contract run separates X-Probe-Instance from
-// X-Doc-Id (scripts/cf-port-contract.test.mjs).
+// X-Doc-Id (tests/integration/cloudflare/cf-port-contract.test.mjs).
 const DOC_TYPE = "text";
 const INDEX_DOC_ID = "doc-1";
 const USER_ID = "user-1";

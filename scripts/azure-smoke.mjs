@@ -18,7 +18,7 @@
  *
  * wire 形状(路由带一个 `docs` 命名空间段,建文档路径以 `/` 结尾、id 走
  * `X-Doc-Id` 头、无 body):见 packages/server-core/src/gateway-handler.ts:44,61
- * 以及 tests/bootstrap/create-new-markdown、create-new-docx 下的 spec.yaml。
+ * 以及 tests/treespec/create-new-markdown、create-new-docx 下的 spec.yaml。
  */
 import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -172,7 +172,7 @@ async function docxTextFlow(gateway, docId) {
 async function docxImageFlow(gateway, docId) {
   console.log("\n[3/4] docx image path through Cloudflare CAS");
 
-  const imagePath = join(REPO_ROOT, "tests/bootstrap/create-new-docx/edit/image/tiny.png");
+  const imagePath = join(REPO_ROOT, "tests/treespec/create-new-docx/edit/image/tiny.png");
   const imageBytes = new Uint8Array(readFileSync(imagePath));
   const header = encodeHeader(imageBytes.length, "image/png", 0);
   const digest = await computeNodeDigest(header, "image/png", [], imageBytes);

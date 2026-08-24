@@ -2,7 +2,7 @@ name: unidocs
 sut:
   type: cli
 image:
-  dockerfile: e2e/Dockerfile
+  dockerfile: tests/treespec/Dockerfile
   tag: unidocs-test:base
 projectDir: .
-spec: tests
+spec: tests/treespec

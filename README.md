@@ -329,9 +329,15 @@ Migrations run automatically as part of startup — no separate command needed. 
 
 **First run only:** if `postgres:18-alpine` isn't cached locally yet, `docker compose up` pulls it (~100 MB) before anything else can start; every run after that is instant. There's no equivalent cost for Azurite — it installed with `pnpm install` like any other dependency.
 
-### Tests that need Docker
+### Tests
 
-`pnpm test:local` (via `scripts/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `docker-compose.azure.yml` Postgres container (host port `:5433`, unnamed default compose project) and each spawn their own `azurite-blob` process on `:10000`. `pnpm dev --azure` starts the identical stack for interactive use.
+| 命令 | 覆盖 |
+|---|---|
+| `pnpm test` | 各包 `packages/*/tests` 单测 |
+| `pnpm test:local` | `tests/unit`（脚本单测）+ `tests/integration`（起 Miniflare / 本地 Azure 栈的 HTTP） |
+| treespec | `tests/treespec/`（容器里从干净安装跑 YAML 树；镜像见同目录 `Dockerfile`） |
+
+`pnpm test:local` (via `tests/integration/azure/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `docker-compose.azure.yml` Postgres container (host port `:5433`, unnamed default compose project) and each spawn their own `azurite-blob` process on `:10000`. `pnpm dev --azure` starts the identical stack for interactive use.
 
 **Do not run `pnpm test:local`, `pnpm -r test`, and `pnpm dev --azure` at the same time.** They still share the Postgres container: whichever one tears it down first (`docker compose ... down -v`) pulls the database out from under whichever else is still using it, mid-test or mid-session. They also all bind `:10000` for their own `azurite-blob` process, so a second one starting up simply fails to claim the port. Run them one at a time, or stop `pnpm dev --azure` before running either test command.
 

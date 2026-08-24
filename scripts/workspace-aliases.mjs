@@ -69,7 +69,7 @@ export function resolveWorkspaceAliases(repoRoot) {
  * production install (not the monorepo's root `node_modules` hoisting)
  * exposes as `ERR_MODULE_NOT_FOUND`. All five now use this one list so
  * there is exactly one place the "did every external package get declared"
- * invariant needs to hold (enforced by `scripts/bundle-deps.test.mjs`).
+ * invariant needs to hold (enforced by `tests/unit/scripts/bundle-deps.test.mjs`).
  *
  * Why these three, and why not just `packages: "external"` (which marks EVERY
  * bare import external, no list needed): that blanket flag only stays
