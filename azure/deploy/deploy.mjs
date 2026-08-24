@@ -177,12 +177,31 @@ function roleNamesAtScope(assignee, scope) {
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
-function checkRbac(args) {
-  // 服务主体登录时 `az ad signed-in-user show` 无结果,退回 `account show`
-  // 的 user.name(`--assignee` 同时接受 objectId、SPN 和 UPN)。
-  const assignee =
+/**
+ * 服务主体登录时 `az ad signed-in-user show` 无结果,退回 `account show`
+ * 的 user.name(`--assignee` 同时接受 objectId、SPN 和 UPN)。
+ *
+ * 这个值本轮多了第二个用途:`bootstrap.bicep` 的 `deployerObjectId` 参数,
+ * 建 `Key Vault Secrets Officer` 角色分配时要填的 `principalId` 必须是真正
+ * 的 AAD objectId。人类账号(本仓库当前唯一验证过的登录方式,PIM 激活的
+ * 订阅级 Owner)走的正是第一个分支,`id` 本身就是 objectId,两个用途完全
+ * 吻合。服务主体登录会退到第二个分支,那里的 `user.name` 不保证是
+ * objectId(可能是 appId 或显示名)——这条路径此前只服务于
+ * `az role assignment list --assignee` 的角色查询,该命令对标识符类型宽松;
+ * 用作 `principalId` 会在 bootstrap 部署时报出 Azure 自己的校验错误,不是
+ * 静默错误,但这是本轮已知未覆盖的场景(见 checkRbac() 调用点)。
+ */
+function resolveDeployerAssignee() {
+  return (
     tryCapture("az", ["ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"]) ||
-    capture("az", ["account", "show", "--query", "user.name", "-o", "tsv"]);
+    capture("az", ["account", "show", "--query", "user.name", "-o", "tsv"])
+  );
+}
+
+/** 返回 `assignee`(见 `resolveDeployerAssignee()`)—— `preflight()` 把它转交给
+ *  `deployBootstrap()` 当 `deployerObjectId`,只取一次,不重复查询。 */
+function checkRbac(args) {
+  const assignee = resolveDeployerAssignee();
 
   const scopes = [
     `/subscriptions/${args.subscription}`,
@@ -219,6 +238,7 @@ function checkRbac(args) {
       "or resource-group scope before rerunning.",
     );
   }
+  return assignee;
 }
 
 /**
@@ -239,13 +259,19 @@ function checkHostBuild() {
   }
 }
 
-/** Step 1:预检 —— 订阅、RBAC、宿主机构建产物、资源提供者注册、资源组。 */
+/**
+ * Step 1:预检 —— 订阅、RBAC、宿主机构建产物、资源提供者注册、资源组。
+ * 返回 `deployerObjectId`:`checkRbac()` 里已经查过一次登录者的
+ * objectId/assignee,`deployBootstrap()` 要把同一个值喂给
+ * `bootstrap.bicep` 的 `deployerObjectId` 参数(见该文件顶部新增的角色
+ * 分配),这里原样转交,不重新查询一遍。
+ */
 function preflight(args) {
   console.log("[1/7] preflight: subscription + RBAC + host build + Microsoft.App registration + resource group");
   run("az", ["account", "set", "--subscription", args.subscription]);
 
   // 两条只读自检都排在任何写操作之前:它们要拦住的正是「建到一半才失败」。
-  checkRbac(args);
+  const deployerObjectId = checkRbac(args);
   checkHostBuild();
 
   const state = capture("az", [
@@ -262,15 +288,22 @@ function preflight(args) {
   }
 
   run("az", ["group", "create", "-n", args.resourceGroup, "-l", args.location, "-o", "none"]);
+  return deployerObjectId;
 }
 
-/** Step 2:bootstrap.bicep —— ACR / Key Vault / 存储 / 身份 / Log Analytics。 */
-function deployBootstrap(args) {
+/**
+ * Step 2:bootstrap.bicep —— ACR / Key Vault / 存储 / 身份 / Log Analytics /
+ * 部署者的 Key Vault Secrets Officer 角色分配(见 `infra/bootstrap.bicep`
+ * 顶部注释:RBAC 模式 Key Vault 的数据平面权限不含在订阅级 Owner 里,不建
+ * 这条分配,Step 3 第一次写 secret 就会被 Forbidden 拒绝)。
+ */
+function deployBootstrap(args, deployerObjectId) {
   console.log("[2/7] bootstrap.bicep: what-if then create");
   run("az", [
     "deployment", "group", "what-if",
     "-g", args.resourceGroup,
     "-f", "azure/deploy/bootstrap.bicep",
+    "--parameters", `deployerObjectId=${deployerObjectId}`,
   ]);
 
   const stdout = capture("az", [
@@ -278,6 +311,7 @@ function deployBootstrap(args) {
     "-g", args.resourceGroup,
     "-f", "azure/deploy/bootstrap.bicep",
     "-n", "bootstrap",
+    "--parameters", `deployerObjectId=${deployerObjectId}`,
     "-o", "json",
   ]);
   const outputs = JSON.parse(stdout).properties.outputs;
@@ -296,6 +330,80 @@ function deployBootstrap(args) {
   return bootstrap;
 }
 
+/** 传播延迟重试:间隔 10 秒,最多 6 次尝试(首次 + 5 次重试,约 1 分钟)。 */
+const KV_FORBIDDEN_RETRY_INTERVAL_MS = 10_000;
+const KV_FORBIDDEN_MAX_ATTEMPTS = 6;
+
+export function isKeyVaultForbidden(stderr) {
+  return typeof stderr === "string" && /forbidden/i.test(stderr);
+}
+
+/**
+ * 退避重试的核心循环,与 `spawnSync`/`az` 解耦(`attempt` 只需要返回
+ * `{status, stdout, stderr}`)——这样能用单测直接喂假的 attempt/wait/log,
+ * 覆盖"首次 Forbidden 后成功""非 Forbidden 立即失败""耗尽重试仍 Forbidden
+ * 就中止"这几条分支,不用真的跑 `az`、也不用真的等 10 秒 × 6 次。生产路径
+ * (`runKeyVaultSecretOp()`)只是拿真实的 `spawnSync` 调用喂给它。
+ *
+ * 有限次数、**不是**无限重试,耗尽仍是 Forbidden 就中止,不静默吞掉。非
+ * Forbidden 的失败第一次就交给 `onNonForbiddenFailure` 处理,不重试、不
+ * 拖慢——那种失败(密钥名打错、vault 不存在)重试也不会自己好。
+ *
+ * 背景:`infra/bootstrap.bicep` 的 `deployerKvSecretsOfficer` 角色分配刚在
+ * Step 2 建出来,Step 3 紧接着就要写 secret —— RBAC 模式 Key Vault 的数据
+ * 平面权限生效有传播延迟,真实首次部署已经在这里撞过一次 Forbidden(见
+ * 设计 §11、`cas-optional-report.md`)。
+ */
+export async function retryOnForbidden(label, attempt, onNonForbiddenFailure, opts = {}) {
+  const {
+    intervalMs = KV_FORBIDDEN_RETRY_INTERVAL_MS,
+    maxAttempts = KV_FORBIDDEN_MAX_ATTEMPTS,
+    wait = sleep,
+    log = console.log,
+  } = opts;
+  for (let n = 1; n <= maxAttempts; n++) {
+    const result = attempt();
+    if (result.status === 0) return result.stdout.trim();
+    if (!isKeyVaultForbidden(result.stderr)) {
+      return onNonForbiddenFailure(result);
+    }
+    if (n === maxAttempts) {
+      throw new Error(
+        `${label}: still getting Forbidden from Key Vault after ${maxAttempts} attempts ` +
+        `over ~${(maxAttempts * intervalMs) / 1000}s. This is very likely not a propagation delay ` +
+        "any more — confirm the deployer identity actually holds \"Key Vault Secrets Officer\" on " +
+        "this vault (infra/bootstrap.bicep's deployerKvSecretsOfficer role assignment), and that its " +
+        "principalId matches the identity running this script " +
+        "(`az ad signed-in-user show --query id -o tsv`).",
+      );
+    }
+    log(
+      `[3/7] ${label}: got Forbidden (attempt ${n}/${maxAttempts}) — likely the Key Vault Secrets ` +
+      `Officer role assignment hasn't propagated yet. Waiting ${intervalMs / 1000}s and retrying...`,
+    );
+    await wait(intervalMs);
+  }
+}
+
+/**
+ * 跑一个 `az keyvault secret ...` 子命令,套 `retryOnForbidden()`。不用
+ * `run()`/`capture()`:两者都不把 `stderr` 文本交回调用者,而这里必须检查
+ * `stderr` 里有没有 "Forbidden" 才能决定要不要重试。失败时仍然只让调用方
+ * 看到不含参数的 `label`(经 `onNonForbiddenFailure`),不落回
+ * `args.join(" ")`。
+ */
+async function runKeyVaultSecretOp(label, args, onNonForbiddenFailure) {
+  return retryOnForbidden(
+    label,
+    () => {
+      const result = spawnSync("az", args, { cwd: ROOT, encoding: "utf8" });
+      if (result.error) throw result.error;
+      return result;
+    },
+    onNonForbiddenFailure,
+  );
+}
+
 /**
  * Step 3:播种(或读回)Postgres 管理员密码与 internal token。存在则读、
  * 不存在则生成 —— 这是整条脚本可重复执行的关键:第二次跑绝不能重置
@@ -304,25 +412,29 @@ function deployBootstrap(args) {
  * 读到的值只放进内存变量,绝不写文件、绝不 console.log —— 见 Step 5 的
  * 审查记录。
  */
-function seedSecret(keyVaultName, secretName, byteLength) {
-  const existing = tryCapture("az", [
-    "keyvault", "secret", "show",
-    "--vault-name", keyVaultName,
-    "-n", secretName,
-    "--query", "value",
-    "-o", "tsv",
-  ]);
+async function seedSecret(keyVaultName, secretName, byteLength) {
+  const showLabel = `az keyvault secret show --vault-name ${keyVaultName} -n ${secretName}`;
+  const existing = await runKeyVaultSecretOp(
+    showLabel,
+    ["keyvault", "secret", "show", "--vault-name", keyVaultName, "-n", secretName, "--query", "value", "-o", "tsv"],
+    // 非 Forbidden 的失败(最常见的就是 SecretNotFound——第一次部署,secret
+    // 还不存在)当"不存在"处理,与原先 `tryCapture()` 的行为一致。
+    () => null,
+  );
   if (existing) {
     return existing;
   }
   const generated = generateSecret(byteLength);
   // label 显式给出,不落回默认的裸 `args.join(" ")`(已经删掉了那条路径)——
   // args 里的 `--value <generated>` 绝不能出现在 Error.message 里。
-  run(
-    "az",
+  const setLabel = `az keyvault secret set --vault-name ${keyVaultName} -n ${secretName}`;
+  await runKeyVaultSecretOp(
+    setLabel,
     ["keyvault", "secret", "set", "--vault-name", keyVaultName, "-n", secretName, "--value", generated, "-o", "none"],
-    {},
-    `az keyvault secret set --vault-name ${keyVaultName} -n ${secretName}`,
+    (result) => {
+      if (result.stderr) process.stderr.write(result.stderr);
+      throw new Error(`${setLabel} exited with code ${result.status}`);
+    },
   );
   return generated;
 }
@@ -349,14 +461,13 @@ export function decideInternalTokenAction({ existing, provided, casBaseUrl }) {
   return "error";
 }
 
-function resolveInternalToken(keyVaultName, provided, casBaseUrl) {
-  const existing = tryCapture("az", [
-    "keyvault", "secret", "show",
-    "--vault-name", keyVaultName,
-    "-n", INTERNAL_TOKEN_SECRET,
-    "--query", "value",
-    "-o", "tsv",
-  ]);
+async function resolveInternalToken(keyVaultName, provided, casBaseUrl) {
+  const showLabel = `az keyvault secret show --vault-name ${keyVaultName} -n ${INTERNAL_TOKEN_SECRET}`;
+  const existing = await runKeyVaultSecretOp(
+    showLabel,
+    ["keyvault", "secret", "show", "--vault-name", keyVaultName, "-n", INTERNAL_TOKEN_SECRET, "--query", "value", "-o", "tsv"],
+    () => null,
+  );
 
   const action = decideInternalTokenAction({ existing, provided, casBaseUrl });
 
@@ -395,22 +506,36 @@ function resolveInternalToken(keyVaultName, provided, casBaseUrl) {
       `"${INTERNAL_TOKEN_SECRET}" secret from Key Vault ${keyVaultName}, then redeploy with ` +
       "--internal-token <the Cloudflare CAS worker's INTERNAL_TOKEN>.",
     );
+  } else if (action === "write" && !casBaseUrl) {
+    // 邻居路径:调用者显式传了 --internal-token,但这次没配 --cas-base-url。
+    // 值本身写进 Key Vault 就好(不是本脚本生成的,不需要不同处理),但同样
+    // 提醒一句对齐要求——用户很可能是提前备好了将来要用的 Cloudflare 值,
+    // 只是这一轮还没传 --cas-base-url,不提示的话这条约束容易被忘掉。
+    console.log(
+      "[3/7] --internal-token given without --cas-base-url: writing it to Key Vault as-is.\n" +
+      "  Whenever you do wire up the Cloudflare CAS worker, make sure --cas-base-url is paired with " +
+      `the SAME "${INTERNAL_TOKEN_SECRET}" value as that worker's own INTERNAL_TOKEN — a mismatch ` +
+      "makes every cross-cloud CAS request from azure-docx fail with 401.",
+    );
   }
 
   // label 显式给出:args 里的 `--value <value>` 绝不能进 Error.message。
-  run(
-    "az",
+  const setLabel = `az keyvault secret set --vault-name ${keyVaultName} -n ${INTERNAL_TOKEN_SECRET}`;
+  await runKeyVaultSecretOp(
+    setLabel,
     ["keyvault", "secret", "set", "--vault-name", keyVaultName, "-n", INTERNAL_TOKEN_SECRET, "--value", value, "-o", "none"],
-    {},
-    `az keyvault secret set --vault-name ${keyVaultName} -n ${INTERNAL_TOKEN_SECRET}`,
+    (result) => {
+      if (result.stderr) process.stderr.write(result.stderr);
+      throw new Error(`${setLabel} exited with code ${result.status}`);
+    },
   );
   return value;
 }
 
-function seedSecrets(keyVaultName, args) {
+async function seedSecrets(keyVaultName, args) {
   console.log("[3/7] seeding/reading secrets from Key Vault (values withheld from logs)");
-  const pgAdminPassword = seedSecret(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48);
-  const internalToken = resolveInternalToken(keyVaultName, args.internalToken, args.casBaseUrl);
+  const pgAdminPassword = await seedSecret(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48);
+  const internalToken = await resolveInternalToken(keyVaultName, args.internalToken, args.casBaseUrl);
   return { pgAdminPassword, internalToken };
 }
 
@@ -561,10 +686,21 @@ async function runMigration(args, jobName) {
   }
 }
 
-/** Step 7:冒烟测试。 */
-function runSmoke(gatewayFqdn) {
+/**
+ * Step 7:冒烟测试。`--no-cas` 是否传给 `azure-smoke.mjs` 由**这次部署自己
+ * 有没有配 CAS** 决定(`args.casBaseUrl` 是否为空),不是从这个脚本的调用者
+ * 手上再透传一个独立开关——这样人为选择影响不到它:部署没配 CAS,冒烟就必须
+ * 认那个事实;部署配了 CAS,冒烟就必须去证明跨云接线成立,没有第三条路可选。
+ * `azure-smoke.mjs` 自己还会在跑任何断言前用一次真实探测复核这个事实
+ * (`assertCasNotConfigured()`),见该脚本头注释。
+ */
+function runSmoke(gatewayFqdn, casBaseUrl) {
   console.log("[7/7] smoke testing", gatewayFqdn);
-  run("node", ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`]);
+  const args = ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
+  if (!casBaseUrl) {
+    args.push("--no-cas");
+  }
+  run("node", args);
 }
 
 function sleep(ms) {
@@ -580,14 +716,14 @@ export async function main(argv = process.argv.slice(2)) {
     );
   }
 
-  preflight(args);
-  const bootstrap = deployBootstrap(args);
-  const secrets = seedSecrets(bootstrap.keyVaultName, args);
+  const deployerObjectId = preflight(args);
+  const bootstrap = deployBootstrap(args, deployerObjectId);
+  const secrets = await seedSecrets(bootstrap.keyVaultName, args);
   const tag = capture("git", ["rev-parse", "--short", "HEAD"]);
   buildAndPushImages(args, bootstrap, tag);
   const mainOutputs = deployMain(args, secrets, tag);
   await runMigration(args, mainOutputs.migrateJobName);
-  runSmoke(mainOutputs.gatewayFqdn);
+  runSmoke(mainOutputs.gatewayFqdn, args.casBaseUrl);
 
   console.log(`deployed: https://${mainOutputs.gatewayFqdn}`);
 }

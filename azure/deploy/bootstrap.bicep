@@ -3,6 +3,9 @@ targetScope = 'resourceGroup'
 @description('部署位置。默认取资源组自身的位置。')
 param location string = resourceGroup().location
 
+@description('执行部署的主体 objectId。下面的 Key Vault Secrets Officer 角色分配要用。')
+param deployerObjectId string
+
 var acrName = 'unidocsacr'
 var kvName = 'unidocs-kv'
 var storageName = 'unidocsblob'
@@ -81,6 +84,8 @@ resource law 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 // Storage Blob Data Contributor
 var blobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+// Key Vault Secrets Officer
+var kvSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
 
 resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: acr
@@ -99,6 +104,25 @@ resource blobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobDataContributorRoleId)
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// RBAC 模式的 Key Vault(上面 `enableRbacAuthorization: true`)把**管理平面**
+// (建/删 vault 本身)和**数据平面**(读写 secret)分成两套完全独立的权限。
+// 部署者持有的订阅级 `Owner` 覆盖前者,让这个 `kv` 资源建得出来,但**不**
+// 隐含后者 —— 没有这条角色分配,`scripts/azure-deploy.mjs` 第 3 步第一次
+// `az keyvault secret set` 就会被 Key Vault 数据平面拒绝(`Forbidden`,
+// `Microsoft.KeyVault/vaults/secrets/setSecret/action` 无匹配的角色分配),
+// 而此时 identity/ACR/Storage/Key Vault/Log Analytics 已经建出来了。这不是
+// 一个理论风险 —— 第一次真实部署就是在这一步撞上的。
+// `principalType: 'User'`:部署者是登录 `az` 的人类账号,不是服务主体。
+resource deployerKvSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: kv
+  name: guid(kv.id, deployerObjectId, kvSecretsOfficerRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsOfficerRoleId)
+    principalId: deployerObjectId
+    principalType: 'User'
   }
 }
 

@@ -40,7 +40,7 @@
 | `scripts/bundle-deps.test.mjs` | 静态测试:防止声明与外部化列表再次漂移 | 2 |
 | `Dockerfile` | 参数化服务镜像(`ARG SERVICE`) | 3 |
 | `.dockerignore` | 已存在,按需补充 | 3 |
-| `infra/bootstrap.bicep` | Key Vault、UAMI、ACR、Storage、Log Analytics + 两条角色分配 | 4 |
+| `infra/bootstrap.bicep` | Key Vault、UAMI、ACR、Storage、Log Analytics + 三条角色分配(UAMI→ACR/Storage 两条,部署者→Key Vault 数据平面一条) | 4 |
 | `infra/main.bicep` | Postgres、防火墙规则、Container Apps 环境、三个 App、迁移 Job | 5 |
 | `scripts/azure-deploy.mjs` | 部署编排(可重复执行) | 6 |
 | `scripts/azure-deploy.test.mjs` | 部署脚本纯逻辑部分的单测 | 6 |

@@ -155,12 +155,14 @@ Blob 与 ACR 都因 §3(b) 的 policy 改成了身份认证,不再产生密钥 �
 
 **Key Vault 的角色是给部署脚本提供幂等性**,不是给运行时读取。流程:
 
-1. `bootstrap.bicep` 建出 Key Vault(RBAC 模式)、UAMI、ACR、Storage、Log Analytics,并做两条角色分配:UAMI 在 ACR 上 `AcrPull`,在 Storage 上 `Storage Blob Data Contributor`
-2. 部署脚本对两个 secret 都执行"存在则读回" —— 这使得重复执行部署不会重置它们。不存在时两者分道:`pg-admin-password` 用 `crypto.randomBytes` 生成并写入;`internal-token` 只接受 `--internal-token` 传入的值(缺失即中止),理由见上表
+1. `bootstrap.bicep` 建出 Key Vault(RBAC 模式)、UAMI、ACR、Storage、Log Analytics,并做**三条**角色分配:UAMI 在 ACR 上 `AcrPull`,在 Storage 上 `Storage Blob Data Contributor`,以及部署者(`deployerObjectId` 参数)在这个 Key Vault 上的 `Key Vault Secrets Officer`(见下方"数据平面"说明)
+2. 部署脚本对两个 secret 都执行"存在则读回" —— 这使得重复执行部署不会重置它们。不存在时按密钥自己的规则生成或拒绝:`pg-admin-password` 用 `crypto.randomBytes` 生成并写入;`internal-token` 按是否配了 `--cas-base-url` 分叉(配了则只接受 `--internal-token` 传入的值、缺失即中止;未配则允许现场生成),理由见上表
 3. 脚本把两个值作为 `@secure()` 参数传给 `main.bicep`。`@secure()` 参数**不进入部署历史**,这正是它存在的目的
 4. `main.bicep` 用密码拼出 `DATABASE_URL`(含 `sslmode=require`),连同 `INTERNAL_TOKEN` 一起设为 Container App 的 **secret**,再由 `env` 以 `secretRef` 引用
 
-这样运行时不需要访问 Key Vault,UAMI 的角色分配只有 `AcrPull` 和 `Storage Blob Data Contributor` 两条;执行部署的人类身份需要 `Key Vault Secrets Officer`。
+这样运行时不需要访问 Key Vault,UAMI 的角色分配只有 `AcrPull` 和 `Storage Blob Data Contributor` 两条。
+
+**执行部署的人类身份需要 `Key Vault Secrets Officer`,这条角色分配由 `bootstrap.bicep` 自动创建,不是运维手工操作。** 早先这里只写了一句"需要该角色",没有落成任何一条角色分配 —— 首次真实部署就在 Step 3(播种密钥)撞上了 `Forbidden`:RBAC 模式的 Key Vault 把**管理平面**(建/删 vault 本身)和**数据平面**(读写 secret)分成两套完全独立的权限,部署者持有的订阅级 `Owner` 覆盖前者、不隐含后者。`bootstrap.bicep` 现在有第三个必填参数 `deployerObjectId`(`scripts/azure-deploy.mjs` 从 `checkRbac()` 里已经查过的登录者 objectId 转交,不重复查询),建一条 `deployerKvSecretsOfficer` 角色分配把这个洞补上。**这条角色分配的生效有传播延迟**,而 Step 3 紧跟在 Step 2(`bootstrap.bicep` 部署完成)之后就要写 secret —— `scripts/azure-deploy.mjs` 对 `az keyvault secret show`/`set` 遇到 `Forbidden` 时做有限重试(10 秒一次、最多 6 次、约 1 分钟,见 `retryOnForbidden()`),超过上限仍失败才中止,不无限重试、也不静默吞掉。
 
 两阶段拆分(`bootstrap` / `main`)是被密钥的先后依赖**逼出来**的,不是为了分层而分层:ACR 必须先于镜像推送存在,Key Vault 必须先于 secret 播种存在,而 `main` 消费的正是这两者的产物。
 
@@ -305,6 +307,7 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 | `scripts/azure-smoke.mjs` 未随「不配 CAS」形态更新 | **已知,未解决** | 见 §10 第 5 条尾注。该脚本对非本地 `--gateway` 无条件拒绝 `--skip-cas`,而 `scripts/azure-deploy.mjs` 的 Step 7 也没有按 `casBaseUrl` 是否为空决定要不要传这个开关。结果是「不配 CAS」形态目前会在 Step 1–6 成功之后于 Step 7 失败(第三组断言对着 404 的 `/cas/*` 路由)。本轮未修,因为它超出了本次改动的范围(`--cas-base-url`/`internal-token` 分叉);留给下一轮 |
 | 无 CI | **本轮接受** | 已确认的范围决定。部署脚本本身即将来 CI 调用的对象 |
 | `azure-markdown` / `azure-docx` 未合并 | **推后** | 已确认。代价:3 份服务镜像,以及两份已经漂移过一次的 `bundle.mjs`(§6.2 的 bug 正源于此)仍然并存。合并成单一 `DOC_TYPE` 参数化镜像可一次性消除该漂移面 |
+| RBAC 模式 Key Vault 的数据平面角色分配有传播延迟 | **已知,已缓解** | `bootstrap.bicep` 新增的 `deployerKvSecretsOfficer` 角色分配(§5)修的是首次真实部署实际撞上的 `Forbidden`(Step 3 紧跟 Step 2 部署完成就要写 secret,角色分配还没在 AAD 里传播完成)。`scripts/azure-deploy.mjs` 用 `retryOnForbidden()` 做有限重试(10 秒一次、最多 6 次、约 1 分钟),仍失败才中止,并在错误信息里指名需要的角色。**不是理论风险**:第一次部署就在这里中止过,资源组里已经建出了 5 个资源(identity/logs/blob/kv/acr)才发现 |
 | Key Vault 软删除会挡住「删掉资源组再重建」 | **已知,未解决** | `unidocs-kv` 是固定字面量,而 Key Vault 开了软删除(保留 7 天)。按 §10/计划 Task 8 写的拆除方式 `az group delete -n Unidocs --yes` 删掉之后,7 天内重新部署会在 Key Vault 上报 `ConflictError: Vault name 'unidocs-kv' is already in use`,而且发生在 bootstrap 部署到一半时。人工出路是 `az keyvault recover` 或 `az keyvault purge`,但没人会预料到。**这个风险与是否用 `uniqueString` 后缀无关** —— 后缀是按资源组 ID 算的,同名资源组重建后后缀相同,名字照样撞。彻底的解法是 preflight 里 `az keyvault list-deleted` 命中则打印具体的 recover/purge 命令后中止 |
 | 镜像引用有两个真相来源,无测试绑定 | **已知,未解决** | 脚本用 `IMAGES` 数组生成 `az acr build --image` 的仓库路径,而 `infra/main.bicep` 里四处独立手写 `'${acr.properties.loginServer}/unidocs/<name>:${imageTag}'` 字面量。当前四个名字一致(已由编译产物核实),但没有任何测试读 Bicep 去比对 —— 改了 `IMAGES` 里的 `name` 而忘了同步 Bicep,测试全绿,要到真实部署「拉不到镜像」才暴露。非本轮引入,本轮也未加剧 |
 | RBAC 预检按角色**名字**白名单,会误伤自定义角色 | **已知,可接受** | `checkRbac()` 断言存在内置的 `Owner` 或 `User Access Administrator`。任何包含 `Microsoft.Authorization/roleAssignments/write`(即 bootstrap.bicep 实际所需权限)但不叫这两个名字的自定义角色,会被误判为无权限而拦下,尽管它真能跑通。按实际操作权限判断需要 `az provider operation` 展开角色定义,复杂度远高于收益。刻意不留 `--skip-rbac-check` 逃生口 —— 留了等于把这道墙拆掉 |

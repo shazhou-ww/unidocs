@@ -2,14 +2,16 @@
  * 部署脚本里能被纯逻辑覆盖的部分。其余(az 调用、ACR 构建)由 Task 8
  * 的真实部署验收。
  */
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   IMAGES,
   decideInternalTokenAction,
   generateSecret,
   imageRef,
   imageRepoTag,
+  isKeyVaultForbidden,
   parseArgs,
+  retryOnForbidden,
 } from "../../../azure/deploy/deploy.mjs";
 
 describe("imageRef", () => {
@@ -136,5 +138,105 @@ describe("decideInternalTokenAction", () => {
     expect(
       decideInternalTokenAction({ existing: "", provided: "", casBaseUrl: "https://cas.example" }),
     ).toBe("error");
+  });
+});
+
+describe("isKeyVaultForbidden", () => {
+  test("stderr 里含 Forbidden(不分大小写)时判定为 true", () => {
+    expect(isKeyVaultForbidden("ERROR: (Forbidden) Caller is not authorized...")).toBe(true);
+    expect(isKeyVaultForbidden("some forbidden text")).toBe(true);
+  });
+
+  test("其它错误、或者根本没有 stderr 时判定为 false", () => {
+    expect(isKeyVaultForbidden("ERROR: (SecretNotFound) A secret with...")).toBe(false);
+    expect(isKeyVaultForbidden("")).toBe(false);
+    expect(isKeyVaultForbidden(undefined)).toBe(false);
+  });
+});
+
+// `retryOnForbidden()` 是 Task 8 真实部署撞上的 Critical 修复:
+// bootstrap.bicep 刚建完 Key Vault Secrets Officer 角色分配,Step 3 紧接着
+// 写 secret 就被 Forbidden 拒绝(数据平面权限传播延迟)。这里注入假的
+// attempt/wait/log,不跑真实 `az`、也不用真的等 10 秒 × 6 次。
+describe("retryOnForbidden", () => {
+  test("第一次就成功 -> 直接返回,不重试、不等待", async () => {
+    const attempt = vi.fn(() => ({ status: 0, stdout: "the-value\n", stderr: "" }));
+    const wait = vi.fn(() => Promise.resolve());
+    const log = vi.fn();
+    const onNonForbiddenFailure = vi.fn();
+
+    const result = await retryOnForbidden("label", attempt, onNonForbiddenFailure, {
+      maxAttempts: 6,
+      intervalMs: 10_000,
+      wait,
+      log,
+    });
+
+    expect(result).toBe("the-value");
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+    expect(onNonForbiddenFailure).not.toHaveBeenCalled();
+  });
+
+  // 核心场景:第一次 Forbidden(角色分配还没传播),重试一次就成功。
+  test("先 Forbidden 后成功 -> 重试一次,期间打印等待提示", async () => {
+    let call = 0;
+    const attempt = vi.fn(() => {
+      call++;
+      if (call === 1) {
+        return { status: 1, stdout: "", stderr: "ERROR: (Forbidden) Caller is not authorized..." };
+      }
+      return { status: 0, stdout: "the-value\n", stderr: "" };
+    });
+    const wait = vi.fn(() => Promise.resolve());
+    const log = vi.fn();
+
+    const result = await retryOnForbidden("az keyvault secret set ...", attempt, () => {
+      throw new Error("should not be called");
+    }, { maxAttempts: 6, intervalMs: 10_000, wait, log });
+
+    expect(result).toBe("the-value");
+    expect(attempt).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(wait).toHaveBeenCalledWith(10_000);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toMatch(/Forbidden.*attempt 1\/6/);
+  });
+
+  // 非 Forbidden 的失败(密钥名打错、vault 不存在……)第一次就交给调用方
+  // 处理,不重试、不拖慢。
+  test("非 Forbidden 的失败 -> 立即调用 onNonForbiddenFailure,不重试", async () => {
+    const attempt = vi.fn(() => ({ status: 1, stdout: "", stderr: "ERROR: (SecretNotFound) ..." }));
+    const wait = vi.fn(() => Promise.resolve());
+    const onNonForbiddenFailure = vi.fn(() => "not-found-sentinel");
+
+    const result = await retryOnForbidden("label", attempt, onNonForbiddenFailure, {
+      maxAttempts: 6,
+      intervalMs: 10_000,
+      wait,
+      log: vi.fn(),
+    });
+
+    expect(result).toBe("not-found-sentinel");
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+    expect(onNonForbiddenFailure).toHaveBeenCalledTimes(1);
+  });
+
+  // 对立路径:持续 Forbidden 到重试耗尽 -> 中止,不静默吞掉、不无限重试。
+  test("持续 Forbidden 直到耗尽重试次数 -> 中止并报出角色名", async () => {
+    const attempt = vi.fn(() => ({ status: 1, stdout: "", stderr: "ERROR: (Forbidden) ..." }));
+    const wait = vi.fn(() => Promise.resolve());
+    const log = vi.fn();
+
+    await expect(
+      retryOnForbidden("az keyvault secret set ...", attempt, () => {
+        throw new Error("should not be called");
+      }, { maxAttempts: 3, intervalMs: 10_000, wait, log }),
+    ).rejects.toThrow(/still getting Forbidden.*3 attempts.*Key Vault Secrets Officer/s);
+
+    // 3 次尝试、2 次等待(每两次尝试之间等一次,最后一次尝试后直接中止)。
+    expect(attempt).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
   });
 });
