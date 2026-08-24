@@ -24,10 +24,10 @@
   },
   "dependencies": {
     "@unidocs/cas-client": "workspace:*",
-    "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/http-protocol": "workspace:*",
     "@unidocs/protocol": "workspace:*",
-    "@unidocs/server-core": "workspace:*",
+    "@unidocs/doctype-server-common": "workspace:*",
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
     "pg": "^8.23.0"

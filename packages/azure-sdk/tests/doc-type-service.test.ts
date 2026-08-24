@@ -5,7 +5,7 @@
  * LRU 优化掉的实现细节）。
  */
 import { afterEach, expect, test } from "vitest";
-import { createSBlob } from "@unidocs/doctype-server-common";
+import { createSBlob } from "@unidocs/svalue-codec";
 import type { DocumentType, SBlob } from "@unidocs/protocol";
 import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
 import { startDocTypeService } from "../src/doc-type-service.js";

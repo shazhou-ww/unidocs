@@ -1,4 +1,4 @@
-import { toJsonValue } from "@unidocs/doctype-server-common";
+import { toJsonValue } from "@unidocs/svalue-codec";
 import type { AgentToolDefinition, DocumentAgentFactory, JsonValue } from "@unidocs/protocol";
 import type { MOp, MQuery } from "./types.js";
 

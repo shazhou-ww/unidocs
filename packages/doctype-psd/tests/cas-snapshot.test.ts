@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { collectSBlobRefs, createSBlob } from "@unidocs/doctype-server-common";
+import { collectSBlobRefs, createSBlob } from "@unidocs/svalue-codec";
 import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/protocol";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { isRef, resolvePixels, PixelCache } from "../src/render/pixel-source.js";

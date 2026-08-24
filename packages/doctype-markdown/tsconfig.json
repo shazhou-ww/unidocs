@@ -15,7 +15,7 @@
   ],
   "references": [
     {
-      "path": "../doctype-server-common"
+      "path": "../svalue-codec"
     },
     {
       "path": "../protocol"

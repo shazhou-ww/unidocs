@@ -1,7 +1,7 @@
 /**
  * CAS client wire abstractions — the shape of talking to the CAS service
  * over HTTP, shared by the client implementation (@unidocs/cas-client) and
- * the gateway routing (@unidocs/server-core).
+ * the gateway routing (@unidocs/gateway-common).
  */
 
 /** Structural interface for a fetch-capable binding (e.g. a Cloudflare service binding). */

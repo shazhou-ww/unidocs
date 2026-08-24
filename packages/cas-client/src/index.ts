@@ -10,7 +10,7 @@
 
 import type { CasRootRefUpdate } from "@unidocs/http-protocol";
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
-import { refsFromSValue } from "@unidocs/doctype-server-common";
+import { refsFromSValue } from "@unidocs/svalue-codec";
 import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/protocol";
 import { CasClientError, type CasClientConfig, type HttpFetcher } from "@unidocs/http-protocol";
 

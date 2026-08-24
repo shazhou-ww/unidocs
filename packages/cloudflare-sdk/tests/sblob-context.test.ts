@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas-server-common";
 import { SValueContentType } from "@unidocs/protocol";
-import { encodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
+import { encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { CasClientError } from "@unidocs/cas-client";
 import {
   createSBlobContext,

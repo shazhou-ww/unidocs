@@ -60,7 +60,7 @@
  */
 
 import type { DocumentType, CasReferences, SValueType, SValue } from "@unidocs/protocol";
-import { decodeSValue, encodeSValue, refsFromSValue } from "@unidocs/doctype-server-common";
+import { decodeSValue, encodeSValue, refsFromSValue } from "@unidocs/svalue-codec";
 import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "@unidocs/cas-client";
 import {
   DeltaRejectedError,

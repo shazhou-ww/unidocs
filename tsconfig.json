@@ -9,7 +9,7 @@
       "path": "packages/protocol"
     },
     {
-      "path": "packages/doctype-server-common"
+      "path": "packages/svalue-codec"
     },
     {
       "path": "packages/http-protocol"
@@ -24,7 +24,7 @@
       "path": "packages/cas-client"
     },
     {
-      "path": "packages/server-core"
+      "path": "packages/doctype-server-common"
     },
     {
       "path": "packages/azure-sdk"

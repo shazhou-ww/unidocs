@@ -1,5 +1,5 @@
 /**
- * Cloudflare storage-port implementations for @unidocs/server-core.
+ * Cloudflare storage-port implementations for @unidocs/doctype-server-common.
  *
  * Each class implements one server-core port on top of a Cloudflare
  * primitive (Durable Object sqlite, Durable Object KV storage, R2, D1).
@@ -13,7 +13,7 @@
  * document read and write on Cloudflare goes through this file.
  */
 
-import type { BlobCas, Delta, DeltaLog, DocIdentity, DocIndex, SnapshotCache, TransactionalPorts, UnitOfWork } from "@unidocs/server-core";
+import type { BlobCas, Delta, DeltaLog, DocIdentity, DocIndex, SnapshotCache, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
 import type { DocIndexQuery, DocRecord, SnapshotRef } from "@unidocs/http-protocol";
 import { VersionConflictError } from "@unidocs/http-protocol";
 

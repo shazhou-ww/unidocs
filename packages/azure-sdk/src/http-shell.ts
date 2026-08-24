@@ -1,6 +1,6 @@
 /**
  * Node HTTP shell: bridges `node:http` to the WHATWG `Request`/`Response`
- * handlers that `@unidocs/server-core` exports (`createDocTypeHandler`,
+ * handlers that `@unidocs/doctype-server-common` exports (`createDocTypeHandler`,
  * `createSessionHandler`, `createGatewayHandler`). Node 24 has native
  * `Request`/`Response`/`FormData`/`Headers`, so no polyfill is needed — this
  * file only does the plumbing: turn an `IncomingMessage` into a `Request`,

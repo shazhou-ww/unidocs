@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@unidocs/cas-server-common": "workspace:*",
-    "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/http-protocol": "workspace:*",
     "@unidocs/protocol": "workspace:*"
   },

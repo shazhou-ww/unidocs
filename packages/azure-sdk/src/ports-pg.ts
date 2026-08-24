@@ -4,7 +4,7 @@
  *
  * Table shapes come from `migrations/0001_init.sql`. Nothing here imports a
  * Cloudflare type: the semantics are the ones documented on
- * `@unidocs/server-core`'s `ports.ts`, re-expressed as Postgres SQL (the
+ * `@unidocs/doctype-server-common`'s `ports.ts`, re-expressed as Postgres SQL (the
  * Cloudflare adapter expresses the same semantics as sqlite/D1).
  *
  * A note on numbers: `pg` returns `int8`/`bigint` columns as *strings* (they do
@@ -16,7 +16,7 @@
  * `JSON.parse`d again.
  */
 
-import type { Delta, DeltaLog, DocIdentity, DocIndex, TransactionalPorts, UnitOfWork } from "@unidocs/server-core";
+import type { Delta, DeltaLog, DocIdentity, DocIndex, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
 import type { DocIndexQuery, DocRecord, SnapshotRef } from "@unidocs/http-protocol";
 import { VersionConflictError } from "@unidocs/http-protocol";
 import type { Pool } from "pg";

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { createSBlob } from "@unidocs/doctype-server-common";
+import { createSBlob } from "@unidocs/svalue-codec";
 import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/protocol";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { serialize, deserialize } from "../src/psd/ir.js";

@@ -1,4 +1,4 @@
-import { isSBlob, toJsonValue } from "@unidocs/doctype-server-common";
+import { isSBlob, toJsonValue } from "@unidocs/svalue-codec";
 import type { DocumentAgentFactory, JsonValue, SValue } from "@unidocs/protocol";
 import { instructions, tools } from "./tools.js";
 import type { DocxOperation, DocxQuery } from "./types.js";

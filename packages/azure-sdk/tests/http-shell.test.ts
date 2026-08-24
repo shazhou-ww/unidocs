@@ -9,7 +9,7 @@
  * Streaming-body forwarding through server-core's `createDocTypeHandler` /
  * `createGatewayHandler` (the `duplex: "half"` requirement under Node) is
  * covered directly against those modules in
- * `packages/server-core/tests/doc-type-handler.test.ts` and
+ * `packages/doctype-server-common/tests/doc-type-handler.test.ts` and
  * `gateway-handler.test.ts` — that's the layer that actually needed the fix,
  * so the regression tests live there rather than here.
  *

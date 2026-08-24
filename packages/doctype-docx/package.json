@@ -21,7 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/protocol": "workspace:*",
     "@ariadng/office": "0.3.0"
   },

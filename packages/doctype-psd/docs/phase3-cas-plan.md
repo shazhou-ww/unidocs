@@ -20,12 +20,12 @@
 ---
 
 ### Task 1: server-core — 给 doctype 暴露 CAS 写入
-**Files:** `packages/protocol/src/types.ts`(`CasReadContext` 加可选写法或新增 `CasWriteContext`); `packages/server-core/src/cas-client.ts`(在 `CasClient` 上加 `store(bytes, contentType): Promise<string>` = `computeHash`+`ensureNode`); `packages/server-core/src/session.ts`(`#context()` 暴露写能力); `packages/server-core/src/memory-ports.ts`(内存 CAS 也支持)。
+**Files:** `packages/protocol/src/types.ts`(`CasReadContext` 加可选写法或新增 `CasWriteContext`); `packages/doctype-server-common/src/cas-client.ts`(在 `CasClient` 上加 `store(bytes, contentType): Promise<string>` = `computeHash`+`ensureNode`); `packages/doctype-server-common/src/session.ts`(`#context()` 暴露写能力); `packages/doctype-server-common/src/memory-ports.ts`(内存 CAS 也支持)。
 - **决策:** 在 `core` 的 `CasReadContext` 增加可选 `store?(bytes: Uint8Array, contentType: string): Promise<string>`(返回内容哈希)。`CasClient.store` 实现:`const h = await computeHash(bytes); await this.ensureNode(h, bytes, contentType); return h;`。session 的 `#context()` 原样把 `this.#deps.cas`(CasClient)传下去 —— 它已实现 `store`,只是类型现在暴露出来。
 - Test:cas-client 单测 `store` 返回哈希、内容可 `read` 回来;memory CAS 同样。
 
 ### Task 2: server-core — 把 `refsFromSnapshot` 接进快照 root-refs(补全 main TODO)
-**Files:** `packages/server-core/src/session.ts`(`#writeSnapshot`)
+**Files:** `packages/doctype-server-common/src/session.ts`(`#writeSnapshot`)
 - `#writeSnapshot` 里 `config.save` 之后:`const refs = this.#config.refsFromSnapshot(bytes);` 若非空,`commitRootRefsOrRollback`(或 `cas.updateRootRefs`)把这些 hash 提交为 root-refs(保证被引用的每层 blob 不被 GC)。注意写序与 apply 一致、失败回滚。
 - Test:session 契约测试 —— 一个 `refsFromSnapshot` 返回若干 hash 的假 config,快照后这些 hash 出现在 root-refs 更新里。
 

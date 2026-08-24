@@ -580,7 +580,7 @@ function assertDocTypesSupported(docTypes) {
  * restart between treespec leaves loses every blob a prior leaf wrote —
  * `load()` then finds a `doc_snapshots` row whose blob is gone and takes
  * the fail-closed `StorageCorruptError` branch in
- * `packages/server-core/src/session.ts`. This is an explicit opt-in, same
+ * `packages/doctype-server-common/src/session.ts`. This is an explicit opt-in, same
  * reasoning as `postgres: "external"`: the vitest suites (`azure-behavior`,
  * `azure-multi-replica`, `packages/azure-sdk`'s own tests) each want a
  * throwaway directory per run — sharing one between runs would leak blobs

@@ -13,7 +13,7 @@
  * below for why it is keyed that way rather than per-instance.
  */
 
-import type { BlobCas, DocIdentity, SnapshotCache } from "@unidocs/server-core";
+import type { BlobCas, DocIdentity, SnapshotCache } from "@unidocs/doctype-server-common";
 import type { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
 
 /** Container holding the content-addressed blobs; blob name is the hash. */

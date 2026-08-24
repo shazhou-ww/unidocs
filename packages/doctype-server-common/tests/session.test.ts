@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSBlob, encodeSValue } from "@unidocs/doctype-server-common";
+import { createSBlob, encodeSValue } from "@unidocs/svalue-codec";
 import type { CasRef, CasReferences, DocumentType, SBlob, SValue } from "@unidocs/protocol";
 import type {
   Delta,

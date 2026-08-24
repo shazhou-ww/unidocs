@@ -13,7 +13,7 @@
 
 import type { CasNodeDescriptor, CasLeaseResult, CasAssignRootsRequest, CasRootRefUpdate, CasUsage, CasGcResult, CasNodeMetadata, CasNodeState } from "@unidocs/http-protocol";
 import { encodeHeader, concatenateNodeBytes, decodeHeader, parseNodeBytes, computeNodeDigest, hashToHex, hexToHash, validateHash, validateContentType, validateContentLength, validateChildRefs, validateDecodedHeader } from "@unidocs/cas-server-common";
-import { decodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
+import { decodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { SValueContentType } from "@unidocs/protocol";
 
 interface CasEnv {

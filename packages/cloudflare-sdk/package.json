@@ -23,10 +23,10 @@
   "dependencies": {
     "@unidocs/cas-client": "workspace:*",
     "@unidocs/cas-server-common": "workspace:*",
-    "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/http-protocol": "workspace:*",
     "@unidocs/protocol": "workspace:*",
-    "@unidocs/server-core": "workspace:*"
+    "@unidocs/doctype-server-common": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

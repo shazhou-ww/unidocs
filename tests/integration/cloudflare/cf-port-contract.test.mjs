@@ -26,7 +26,7 @@ import * as esbuild from "esbuild";
 import { convertV4MiniflareOptions, Log, LogLevel, Miniflare } from "miniflare";
 import { afterAll, beforeAll } from "vitest";
 import { COMPATIBILITY_DATE } from "../../../scripts/doc-types.mjs";
-import { runPortContract } from "../../../packages/server-core/src/testing/port-contract.ts";
+import { runPortContract } from "../../../packages/doctype-server-common/src/testing/port-contract.ts";
 import { VersionConflictError } from "../../../packages/http-protocol/src/errors.ts";
 import { DirectUnitOfWork } from "../../../packages/cloudflare-sdk/src/ports-cf.ts";
 
@@ -92,8 +92,10 @@ async function bundleProbeWorker() {
     conditions: ["workerd", "worker", "browser"],
     alias: {
       "@unidocs/protocol": join(ROOT, "packages/protocol/src/index.ts"),
+      "@unidocs/svalue-codec": join(ROOT, "packages/svalue-codec/src/index.ts"),
+      "@unidocs/http-protocol": join(ROOT, "packages/http-protocol/src/index.ts"),
       "@unidocs/cas-server-common": join(ROOT, "packages/cas-server-common/src/index.ts"),
-      "@unidocs/server-core": join(ROOT, "packages/server-core/src/index.ts"),
+      "@unidocs/doctype-server-common": join(ROOT, "packages/doctype-server-common/src/index.ts"),
     },
     logOverride: { "empty-import-meta": "silent" },
   });

@@ -152,9 +152,9 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/server-core':
+      '@unidocs/svalue-codec':
         specifier: workspace:*
-        version: link:../server-core
+        version: link:../svalue-codec
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -183,15 +183,15 @@ importers:
       '@unidocs/cas-server-common':
         specifier: workspace:*
         version: link:../cas-server-common
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
       '@unidocs/http-protocol':
         specifier: workspace:*
         version: link:../http-protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -214,15 +214,15 @@ importers:
       '@unidocs/cas-server-common':
         specifier: workspace:*
         version: link:../cas-server-common
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
       '@unidocs/http-protocol':
         specifier: workspace:*
         version: link:../http-protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -345,9 +345,9 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/server-core':
+      '@unidocs/svalue-codec':
         specifier: workspace:*
-        version: link:../server-core
+        version: link:../svalue-codec
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -364,12 +364,12 @@ importers:
       '@ariadng/office':
         specifier: 0.3.0
         version: 0.3.0
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
     devDependencies:
       '@unidocs/cas-server-common':
         specifier: workspace:*
@@ -383,12 +383,12 @@ importers:
 
   packages/doctype-markdown:
     dependencies:
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -399,12 +399,12 @@ importers:
 
   packages/doctype-psd:
     dependencies:
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
       ag-psd:
         specifier: ^31.0.0
         version: 31.0.2
@@ -412,12 +412,12 @@ importers:
         specifier: ^8.0.0
         version: 8.0.0
     devDependencies:
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
       '@unidocs/http-protocol':
         specifier: workspace:*
         version: link:../http-protocol
-      '@unidocs/server-core':
-        specifier: workspace:*
-        version: link:../server-core
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -427,12 +427,21 @@ importers:
 
   packages/doctype-server-common:
     dependencies:
+      '@unidocs/cas-client':
+        specifier: workspace:*
+        version: link:../cas-client
+      '@unidocs/cas-server-common':
+        specifier: workspace:*
+        version: link:../cas-server-common
+      '@unidocs/http-protocol':
+        specifier: workspace:*
+        version: link:../http-protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      cborg:
-        specifier: ^6.1.1
-        version: 6.1.1
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -481,12 +490,12 @@ importers:
       '@unidocs/doctype-psd':
         specifier: workspace:*
         version: link:../doctype-psd
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
     devDependencies:
       fast-png:
         specifier: ^8.0.0
@@ -498,23 +507,14 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
-  packages/server-core:
+  packages/svalue-codec:
     dependencies:
-      '@unidocs/cas-client':
-        specifier: workspace:*
-        version: link:../cas-client
-      '@unidocs/cas-server-common':
-        specifier: workspace:*
-        version: link:../cas-server-common
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
-      '@unidocs/http-protocol':
-        specifier: workspace:*
-        version: link:../http-protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      cborg:
+        specifier: ^6.1.1
+        version: 6.1.1
     devDependencies:
       typescript:
         specifier: ^5.9.0

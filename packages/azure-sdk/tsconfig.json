@@ -18,7 +18,7 @@
       "path": "../cas-client"
     },
     {
-      "path": "../doctype-server-common"
+      "path": "../svalue-codec"
     },
     {
       "path": "../http-protocol"
@@ -27,7 +27,7 @@
       "path": "../protocol"
     },
     {
-      "path": "../server-core"
+      "path": "../doctype-server-common"
     }
   ]
 }

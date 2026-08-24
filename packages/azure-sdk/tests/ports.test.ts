@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, expect } from "vitest";
 import type { Pool } from "pg";
 import type { BlobServiceClient } from "@azure/storage-blob";
-import { runPortContract } from "@unidocs/server-core/port-contract";
+import { runPortContract } from "@unidocs/doctype-server-common/port-contract";
 import {
   BlobCasStore,
   BlobSnapshotCache,

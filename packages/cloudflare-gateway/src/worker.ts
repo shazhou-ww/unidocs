@@ -2,7 +2,7 @@
  * UniDocs API Gateway
  *
  * Cloudflare entry point: wires the cloud-neutral routing logic in
- * `@unidocs/server-core`'s `createGatewayHandler` to Cloudflare-specific
+ * `@unidocs/gateway-common`'s `createGatewayHandler` to Cloudflare-specific
  * bindings (KV registry, D1 doc index, CAS service binding).
  *
  * Registry (KV "unidocs-registry"):

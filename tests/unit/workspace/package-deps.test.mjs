@@ -2,8 +2,8 @@
  * 防漂移：包依赖声明 vs 源码实际 import 的一致性校验。
  *
  * 背景（2026-08 依赖梳理轮）：`azure-markdown` 声明了 `@unidocs/core`、
- * `@unidocs/server-core` 却从不 import，`cloudflare-docx/markdown/psd`
- * 声明了 `@unidocs/server-core` 同样不用——这些都是靠人眼才发现的。
+ * `@unidocs/doctype-server-common` 却从不 import，`cloudflare-docx/markdown/psd`
+ * 声明了 `@unidocs/doctype-server-common` 同样不用——这些都是靠人眼才发现的。
  * 四条规则把它变成 CI 里的硬约束：
  *
  * 1. src 里的 `@unidocs/*` import 必须声明在 `dependencies`（不能只放
@@ -40,7 +40,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-/** `@unidocs/server-core/port-contract` -> `@unidocs/server-core` */
+/** `@unidocs/doctype-server-common/memory-ports` -> `@unidocs/doctype-server-common` */
 function bareName(specifier) {
   return specifier.split("/").slice(0, 2).join("/");
 }

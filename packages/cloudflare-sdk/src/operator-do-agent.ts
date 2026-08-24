@@ -1,4 +1,4 @@
-import { decodeSValue, encodeSValue, isSBlob, toJsonValue } from "@unidocs/doctype-server-common";
+import { decodeSValue, encodeSValue, isSBlob, toJsonValue } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { AgentToolResult, DocumentAgent, DocumentAgentContext, DocumentAgentFactory, SBlob, SBlobData, SValue, SValueType } from "@unidocs/protocol";
 

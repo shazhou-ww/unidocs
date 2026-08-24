@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { CasDurableObject } from "../src/cas/do";
 import { computeNodeDigest, concatenateNodeBytes, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas-server-common";
-import { createSBlob, encodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
+import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { SValueContentType } from "@unidocs/protocol";
 
 // ─── Mock D1 Database ───────────────────────────────────────────────

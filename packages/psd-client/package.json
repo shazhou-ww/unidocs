@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@unidocs/doctype-psd": "workspace:*",
-    "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/protocol": "workspace:*"
   },
   "devDependencies": {

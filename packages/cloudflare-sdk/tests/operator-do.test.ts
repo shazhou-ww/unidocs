@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/doctype-server-common";
+import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentAgentFactory, JsonValue, SBlob, SValue } from "@unidocs/protocol";
-import { createSBlob } from "@unidocs/doctype-server-common/internal";
+import { createSBlob } from "@unidocs/svalue-codec/internal";
 import {
   createOperatorDO,
   renderDefaultAgentToolResult,

@@ -1,7 +1,7 @@
 /** DOCX DocumentType implementation over an immutable OpenXML Merkle manifest. */
 
 import { Document } from "@ariadng/office/docx";
-import { isSBlob } from "@unidocs/doctype-server-common";
+import { isSBlob } from "@unidocs/svalue-codec";
 import type { DocumentTypeFactory, SBlob } from "@unidocs/protocol";
 import { tools, instructions } from "./tools.js";
 import {

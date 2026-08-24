@@ -325,7 +325,7 @@ function seedSecret(keyVaultName, secretName, byteLength) {
  * 它不是本轮新生成的密钥,而是**已经存在于 Cloudflare 侧、本轮必须对齐**的
  * 既有密钥。`packages/cloudflare-cas/src/worker.ts` 对每个请求校验
  * `token !== env.INTERNAL_TOKEN` 就 401,而 docx 的图片路径经
- * `packages/server-core/src/cas-client.ts` 发出去的正是 Azure 侧的这个值。
+ * `packages/doctype-server-common/src/cas-client.ts` 发出去的正是 Azure 侧的这个值。
  * 现场随机生成一个只会让所有跨云 CAS 请求 401。
  *
  * (本地栈之所以看不出来:`scripts/doc-types.mjs` 硬编码的

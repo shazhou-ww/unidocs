@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
+import { encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import type { SBlob } from "@unidocs/protocol";
 import { createTestDocx, type TestDocumentTypeContext } from "./test-context.js";
 

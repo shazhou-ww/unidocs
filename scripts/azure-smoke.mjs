@@ -17,7 +17,7 @@
  * `https://` 真部署跑一次"假绿"的验收。
  *
  * wire 形状(路由带一个 `docs` 命名空间段,建文档路径以 `/` 结尾、id 走
- * `X-Doc-Id` 头、无 body):见 packages/server-core/src/gateway-handler.ts:44,61
+ * `X-Doc-Id` 头、无 body):见 packages/doctype-server-common/src/gateway-handler.ts:44,61
  * 以及 tests/treespec/create-new-markdown、create-new-docx 下的 spec.yaml。
  */
 import { readFileSync } from "node:fs";

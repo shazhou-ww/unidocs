@@ -2,7 +2,7 @@
  * @unidocs/protocol — Cloud-neutral document protocol contracts.
  *
  * Pure type definitions and protocol constants only — no logic, no I/O.
- * The SValue/SBlob codec lives in @unidocs/doctype-server-common, which
+ * The SValue/SBlob codec lives in @unidocs/svalue-codec, which
  * depends on this package for its types.
  */
 

@@ -29,7 +29,7 @@ export {
 	decodeSValue,
 	encodeSValue,
 	isSBlob,
-} from "@unidocs/doctype-server-common";
+} from "@unidocs/svalue-codec";
 export { SValueContentType } from "@unidocs/protocol";
 export type { HistoryEntry, ApplyResult, RollbackResult, CreateResult } from "./history.js";
 export type { DocContext, SnapshotRecord, EditorDOClass, EditorDOInstance } from "./editor-do.js";

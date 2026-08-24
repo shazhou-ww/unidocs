@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createSBlob, encodeSValue } from "@unidocs/doctype-server-common";
+import { createSBlob, encodeSValue } from "@unidocs/svalue-codec";
 import type { SValue } from "@unidocs/protocol";
 import { DocSession } from "../src/doc-session.js";
 import type { RenderLike } from "../src/doc-session.js";

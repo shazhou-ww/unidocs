@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeSValue } from "../../../packages/doctype-server-common/src/index.ts";
+import { decodeSValue } from "../../../packages/svalue-codec/src/index.ts";
 import { SValueContentType } from "../../../packages/protocol/src/index.ts";
 import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
 

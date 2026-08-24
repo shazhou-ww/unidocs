@@ -29,13 +29,13 @@ import { join } from "node:path";
  */
 const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/protocol": "packages/protocol/src/index.ts",
-  "@unidocs/doctype-server-common": "packages/doctype-server-common/src/index.ts",
-  "@unidocs/doctype-server-common/internal": "packages/doctype-server-common/src/internal.ts",
+  "@unidocs/svalue-codec": "packages/svalue-codec/src/index.ts",
+  "@unidocs/svalue-codec/internal": "packages/svalue-codec/src/internal.ts",
   "@unidocs/http-protocol": "packages/http-protocol/src/index.ts",
   "@unidocs/gateway-common": "packages/gateway-common/src/index.ts",
   "@unidocs/cas-server-common": "packages/cas-server-common/src/index.ts",
   "@unidocs/cas-client": "packages/cas-client/src/index.ts",
-  "@unidocs/server-core": "packages/server-core/src/index.ts",
+  "@unidocs/doctype-server-common": "packages/doctype-server-common/src/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",
   "@unidocs/cloudflare-sdk": "packages/cloudflare-sdk/src/index.ts",
   "@unidocs/doctype-markdown": "packages/doctype-markdown/src/index.ts",
