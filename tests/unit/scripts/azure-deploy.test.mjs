@@ -3,7 +3,14 @@
  * 的真实部署验收。
  */
 import { describe, expect, test } from "vitest";
-import { IMAGES, generateSecret, imageRef, imageRepoTag, parseArgs } from "../../../azure/deploy/deploy.mjs";
+import {
+  IMAGES,
+  decideInternalTokenAction,
+  generateSecret,
+  imageRef,
+  imageRepoTag,
+  parseArgs,
+} from "../../../azure/deploy/deploy.mjs";
 
 describe("imageRef", () => {
   test("拼出完整的 ACR 镜像引用", () => {
@@ -75,8 +82,9 @@ describe("parseArgs", () => {
     expect(args.location).toBe("japaneast");
   });
 
-  test("--cas-base-url 是必填的,缺失时报错点名它", () => {
-    expect(() => parseArgs(["--require-cas"])).toThrow(/--cas-base-url/);
+  test("--cas-base-url 是可选的,不传也不报错", () => {
+    expect(() => parseArgs([])).not.toThrow();
+    expect(parseArgs([]).casBaseUrl).toBe("");
   });
 
   test("未知参数响亮失败,而不是被忽略", () => {
@@ -93,5 +101,40 @@ describe("parseArgs", () => {
 
   test("不传 --internal-token 时是空串(留给 Key Vault 里的既有值)", () => {
     expect(parseArgs([]).internalToken).toBe("");
+  });
+});
+
+// resolveInternalToken() 的分叉逻辑抽成纯函数,四种情形都能在不 mock `az`
+// 的前提下直接断言 —— 这正是本轮改动的核心:是否配 --cas-base-url 决定了
+// 「都没有」时是生成还是报错。
+describe("decideInternalTokenAction", () => {
+  test("Key Vault 里已有 internal-token -> read,与 provided/casBaseUrl 都无关", () => {
+    expect(decideInternalTokenAction({ existing: "kv-value", provided: "", casBaseUrl: "" })).toBe("read");
+    expect(
+      decideInternalTokenAction({ existing: "kv-value", provided: "cli-value", casBaseUrl: "https://cas.example" }),
+    ).toBe("read");
+  });
+
+  test("没有既有值但传了 --internal-token -> write,与是否配 CAS 无关", () => {
+    expect(decideInternalTokenAction({ existing: "", provided: "cli-value", casBaseUrl: "" })).toBe("write");
+    expect(
+      decideInternalTokenAction({ existing: "", provided: "cli-value", casBaseUrl: "https://cas.example" }),
+    ).toBe("write");
+  });
+
+  // 对立路径之一:都没有,且未配 --cas-base-url -> 允许生成。此时
+  // INTERNAL_TOKEN 只用于 Azure 内部 gateway -> doc-type-worker 鉴权,没有
+  // Cloudflare 侧需要对齐。
+  test("都没有,且未配 --cas-base-url -> generate", () => {
+    expect(decideInternalTokenAction({ existing: "", provided: "", casBaseUrl: "" })).toBe("generate");
+  });
+
+  // 对立路径之二:都没有,但配了 --cas-base-url -> 必须报错中止(C2 的
+  // 保护原样保留)。自行生成的值必然对不上已部署的 Cloudflare CAS worker,
+  // 会让所有跨云 CAS 请求 401。
+  test("都没有,但配了 --cas-base-url -> error", () => {
+    expect(
+      decideInternalTokenAction({ existing: "", provided: "", casBaseUrl: "https://cas.example" }),
+    ).toBe("error");
   });
 });

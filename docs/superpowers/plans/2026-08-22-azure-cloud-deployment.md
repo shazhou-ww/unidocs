@@ -1677,15 +1677,23 @@ git commit -m "feat(azure): 部署后冒烟脚本"
 **Interfaces:**
 - Consumes: 前七个任务的全部产物
 
-- [ ] **Step 1: 确认 Cloudflare CAS worker 的基地址**
+- [ ] **Step 1: 决定本轮走哪种模式 —— 配 CAS 还是不配 CAS**
 
-docx 的图片路径要经它。它必须是 **CAS worker 自身**的基地址,不是 gateway 的 —— `CasClient` 的 `updateRootRefs` 打的是 `${origin}/_internal/root-refs`,gateway 只路由 `/users/...`,不代理 `/_internal/*`。
+`scripts/azure-deploy.mjs` 的 `--cas-base-url` 是可选的(见设计 §1、§4.3)。截至本计划编写时,`packages/cloudflare-cas/wrangler.toml` 的 `database_id` 仍是占位符 `REPLACE_WITH_CAS_D1_ID` —— **该 worker 从未部署过**,此前所有 CAS 测试跑的都是 Miniflare 本地模拟。两种模式二选一:
+
+**模式 A —— 配 CAS(支持 docx 图片路径)**:前提是 Cloudflare CAS worker 已经真实 `wrangler deploy` 过。它必须是 **CAS worker 自身**的基地址,不是 gateway 的 —— `CasClient` 的 `updateRootRefs` 打的是 `${origin}/_internal/root-refs`,gateway 只路由 `/users/...`,不代理 `/_internal/*`。
 
 ```bash
 cd packages/cloudflare-cas && npx wrangler deployments list 2>&1 | head -20
 ```
 
-拿到形如 `https://unidocs-cas.<account>.workers.dev` 的地址。若 CAS worker 尚未部署到 Cloudflare,先 `npx wrangler deploy` 部署它 —— 没有它 docx 上不了云。
+拿到形如 `https://unidocs-cas.<account>.workers.dev` 的地址,并确认其 `INTERNAL_TOKEN`(`npx wrangler secret list` 只能看到名字,值需要问部署过它的人)。跳到 Step 1b,继续走本任务下方所有步骤。
+
+**验收标准**:设计 §10 全部七条,含第 5 条第三项(docx 图片路径经 Cloudflare CAS)。
+
+**模式 B —— 不配 CAS(当前默认形态,Cloudflare CAS worker 尚未部署时唯一可跑的模式)**:不需要本步的任何操作,`--cas-base-url` 留空即可。`CAS_BASE_URL` 传空串,gateway 与 azure-docx 两侧都当 falsy 处理,docx 的图片路径(`insertImage`/`getImages` 等)404/501,其余功能(markdown 全部操作、docx 除图片外的操作)不受影响。跳到 Step 1b。
+
+**验收标准**:设计 §10 第 1–4、6、7 条,以及第 5 条除「docx 图片路径」外的其余断言(markdown 全流程、docx 文本流程、409 冲突)。**已知缺口(设计 §11)**:`scripts/azure-smoke.mjs` 本轮未随「不配 CAS」形态更新 —— 它对非本地 `--gateway` 无条件拒绝 `--skip-cas`,而 `scripts/azure-deploy.mjs` 的 Step 7 也不会按 `casBaseUrl` 是否为空去决定要不要传这个开关。结果是模式 B 下,`node scripts/azure-deploy.mjs`(不带 `--cas-base-url`)会在 Step 1–6 全部成功之后,于自动跑的 Step 7(冒烟)因第三组断言对着一个 404 的 `/cas/*` 路由失败而报错退出 —— **这是预期中的已知失败,不代表 Step 1–6 建出的部署本身有问题**。在该缺口修好之前,模式 B 的验收流程是:接受 `scripts/azure-deploy.mjs` 以非零退出码结束,但确认失败发生在 `[7/7] smoke testing` 且日志显示只有 CAS 相关断言(以及因此级联失败的 409 冲突断言,因为它假设了 CAS 组把版本推到了 3)未通过;随后按本任务 Step 4–5 分别核对资源与迁移是否成功,再单独执行 Step 6 的验收(它同样会在 CAS 组失败,读日志确认失败面与预期一致即可)。
 
 - [ ] **Step 1b: 确认宿主机已有构建产物(preflight 已自检,此步仅作确认)**
 
@@ -1702,18 +1710,28 @@ test -f packages/cas/dist/index.js && echo "cas dist ok"
 
 - [ ] **Step 2: 跑第一次完整部署**
 
+模式 A(配 CAS):
+
 ```bash
 # --internal-token 必须等于该 CAS worker 自己的 INTERNAL_TOKEN。
 # 确认它在 Cloudflare 侧存在:cd packages/cloudflare-cas && npx wrangler secret list
 node scripts/azure-deploy.mjs \
-  --cas-base-url <上一步拿到的地址> \
+  --cas-base-url <Step 1 拿到的地址> \
   --internal-token <与该 CAS worker 相同的 INTERNAL_TOKEN> \
   2>&1 | tee /tmp/azure-deploy-first.log
 ```
 
-(`tee` 是为了 Step 2b 能回头搜这份输出里有没有密钥回显。)
-
 `--internal-token` **不能省、也不能让脚本随便生成**:CAS worker 对每个请求校验它,两侧不同源会让 docx 的图片路径(验收第 5 条那项跨云断言)全部 401。首次部署之后该值进了 Key Vault,后续重跑不必再传。
+
+模式 B(不配 CAS):
+
+```bash
+node scripts/azure-deploy.mjs 2>&1 | tee /tmp/azure-deploy-first.log
+```
+
+不传 `--internal-token` 时脚本会自动生成一个仅供 Azure 内部使用的 token(`decideInternalTokenAction()` 的 `generate` 分支,见设计 §5),并在日志里醒目提示:该 token 只对本次 Azure 部署有效,将来接入 Cloudflare CAS worker 时必须删掉 Key Vault 里的 `internal-token` secret、用 `--internal-token <与 Cloudflare 相同的值>` 重新部署。**按 Step 1 模式 B 的说明,这次运行预期在 Step 7 失败**——那是已知缺口,不是本步操作错误。
+
+(两种模式都用 `tee` 是为了 Step 2b 能回头搜这份输出里有没有密钥回显。)
 
 这一步会:注册 RP(若未注册)、建资源组、跑 bootstrap、播种密钥、构建推送四个镜像、跑 main、触发迁移、跑冒烟。
 
@@ -1772,21 +1790,24 @@ GW=$(az containerapp show -g Unidocs -n unidocs-gateway --query properties.confi
 node scripts/azure-smoke.mjs --gateway "https://$GW"
 ```
 
-预期:`all smoke assertions passed`,退出码 0。
+模式 A 预期:`all smoke assertions passed`,退出码 0。
+
+模式 B 预期(见 Step 1 的已知缺口):退出码非零,失败集中在「docx 图片路径」组以及依赖它推进版本号的 409 冲突断言;markdown 全流程与 docx 文本流程(create/apply/query/export)仍应全部 `ok`。逐条核对失败原因确实是「CAS 未配置导致 `/cas/*` 404」而非其他 —— 出现非预期的失败(比如 markdown 或 docx 文本流程本身失败)仍然是真实回归,要按常规流程排查。
 
 - [ ] **Step 7: 验收第 6 条 —— 幂等**
 
 ```bash
 # 第二次不必再传 --internal-token:它已在 Key Vault 里,脚本读回既有值。
-node scripts/azure-deploy.mjs --cas-base-url <地址> 2>&1 | tee /tmp/second-deploy.log
+# 模式:与 Step 2 用的是同一种(模式 A 带 --cas-base-url <地址>,模式 B 不带)。
+node scripts/azure-deploy.mjs [--cas-base-url <地址>] 2>&1 | tee /tmp/second-deploy.log
 ```
 
 三条都要成立:
 1. 两次 `what-if` 输出里**没有** `Create`、**没有** `Delete`;`Modify` **仅允许**出现在下面两个 **write-only** 属性上:
    - `Microsoft.App/containerApps` 的 `configuration.secrets[].value`
    - `Microsoft.DBforPostgreSQL/flexibleServers` 的 `administratorLoginPassword`
-2. 冒烟仍然全绿
-3. Postgres 密码未被重置 —— 由第 2 条间接证明(密码若变了,Container App 的连接串与实际密码就对不上,冒烟会失败)
+2. 冒烟仍然全绿(模式 A)/ 仍然只在 Step 6 记录的同一批 CAS 相关断言上失败、其余不变(模式 B,见 Step 1 的已知缺口)
+3. Postgres 密码未被重置 —— 由第 2 条间接证明(密码若变了,markdown/docx 文本流程连不上库,两种模式下都会失败,不止 CAS 那几条)
 
 这两个属性上的 `Modify` 是**预期的、正确的**:RP 的 GET 不回传 write-only 属性的值,what-if 读不到当前值,只能把"模板里有、当前读不到"报成差异。要求它们也干净,等于要求把密钥从模板里挪走 —— 那是把一个正确的模板改坏。
 

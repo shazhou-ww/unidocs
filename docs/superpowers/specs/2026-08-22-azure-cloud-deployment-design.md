@@ -21,6 +21,8 @@
 
 **验收终点**:`scripts/azure-deploy.mjs` 一条命令可重复执行,执行后 `scripts/azure-smoke.mjs` 对**公网网关**的全部断言通过,且再次 `what-if` 无变更。详见 §10。
 
+**CAS 是否配置,决定了实际交付的部署形态。** 本设计假设的是 Cloudflare CAS worker(`packages/cloudflare-cas`)已经部署、`--cas-base-url` 指向它 —— 但截至本轮实施,该 worker **从未部署过**(`packages/cloudflare-cas/wrangler.toml` 的 `database_id` 仍是占位符 `REPLACE_WITH_CAS_D1_ID`,见 §11)。`scripts/azure-deploy.mjs` 因此把 `--cas-base-url` 设计成可选:不给时,`CAS_BASE_URL` 传空串,`azure-gateway`(`packages/azure-gateway/src/main.ts`)与 `azure-docx`(经 `packages/azure-sdk/src/doc-type-service.ts`)都把它当 falsy 处理 —— `casFetcher` 退化成 501 桩、`isPublicCasRoute` 恒为 `false`,`/users/{userId}/cas/*` 与 docx 的 `insertImage`/`getImages` 等图片路径一律 404/501。**除图片路径外的一切**(markdown 的全部操作、docx 的文本/表格/列表/结构操作)不受影响。换句话说,本轮在 CAS worker 部署之前交付的是一个**不含 docx 图片能力**的部署形态;§10、§11 已按此更新验收标准与风险登记。
+
 ## 2. 范围
 
 本轮交付六类产物:
@@ -114,7 +116,7 @@ doc type 的 `minReplicas = 2` 是刻意的:阶段 3 证明的是**多副本拓�
 
 迁移 Job 不需要任何 Blob 变量:`migrate-cli.ts` 只调用 `createPool()` 与 `runMigrations(pool)`,不构造 `BlobServiceClient`。它现有的 `blobConnectionString: process.env.BLOB_CONNECTION_STRING ?? ""` 是残留参数,实施时随 §6.1 一并去掉(`AzureConfig` 的两个 blob 字段都改为可选)。
 
-`CAS_BASE_URL` 指向**已部署的 Cloudflare CAS worker 自身的 base URL**,不是网关的 —— 这条约束在阶段 3 的设计 §6 中确立,`packages/azure-sdk/src/doc-type-service.ts` 的 `httpCasFetcher` 与 `azure-gateway/src/main.ts:56-73` 两侧都依赖它。
+`CAS_BASE_URL` 是**可选的**。配置时它指向**已部署的 Cloudflare CAS worker 自身的 base URL**,不是网关的 —— 这条约束在阶段 3 的设计 §6 中确立,`packages/azure-sdk/src/doc-type-service.ts` 的 `httpCasFetcher` 与 `azure-gateway/src/main.ts:56-73` 两侧都依赖它。不配置(当前形态,见 §1)时留空即可:两侧都把空串当 falsy 处理,`casFetcher` 退化成 501 桩、`isPublicCasRoute` 恒 `false`,CAS 路由一律 404 —— 这样一个不需要 CAS 的部署不会因为一个用不到的变量而起不来。
 
 `AZURE_CLIENT_ID` 必须显式注入 UAMI 的 clientId。使用**用户分配**的托管标识时,`DefaultAzureCredential` 无法自行判断该用哪个身份;缺了它容器能启动但取不到 token,失败点会推迟到第一次 Blob 操作。
 
@@ -141,13 +143,15 @@ Container Apps 用消费型环境、不接自定义 VNet,Postgres Flexible Serve
 | 密钥 | 性质 | 谁产生它 |
 |---|---|---|
 | Postgres 管理员密码 | **本轮生成**的新密钥 | 部署脚本 `crypto.randomBytes(48)`,写进 Key Vault,存在则读回 |
-| `INTERNAL_TOKEN` | **既有密钥,本轮必须对齐** —— 它已经存在于已部署的 Cloudflare CAS worker(`packages/cloudflare-cas`)上 | 由人从 Cloudflare 侧取得,经 `--internal-token` 传入并写进 Key Vault;**绝不现场生成** |
+| `INTERNAL_TOKEN` | **配了 `--cas-base-url` 时是既有密钥,本轮必须对齐**;未配时是可生成的新密钥(见下) | 配 CAS:由人从 Cloudflare 侧取得,经 `--internal-token` 传入并写进 Key Vault,**绝不现场生成**。未配 CAS:没有既有值也没传 `--internal-token` 时,脚本自动生成 |
 
 Blob 与 ACR 都因 §3(b) 的 policy 改成了身份认证,不再产生密钥 —— 所以密钥总数是二不是四。
 
-`INTERNAL_TOKEN` 为什么不能像 Postgres 密码那样生成:`packages/cloudflare-cas/src/worker.ts` 对**每个**请求校验 `X-Internal-Token !== env.INTERNAL_TOKEN` 就返回 401,而 docx 的图片路径经 `packages/server-core/src/cas-client.ts` 发出去的是 **Azure 侧**的这个值。两侧不同源 = 所有跨云 CAS 请求 401,也就是 §10 第 5 条第三项那条专门用来证明跨云接线的断言必然失败。本地测试看不出来:`scripts/doc-types.mjs` 硬编码的 `INTERNAL_TOKEN = "unidocs-dev-token"` 被 Miniflare 与本地 Azure 栈共用,掩盖了这个不变量。
+`INTERNAL_TOKEN` 为什么在**配了** `--cas-base-url` 时不能像 Postgres 密码那样生成:`packages/cloudflare-cas/src/worker.ts` 对**每个**请求校验 `X-Internal-Token !== env.INTERNAL_TOKEN` 就返回 401,而 docx 的图片路径经 `packages/server-core/src/cas-client.ts` 发出去的是 **Azure 侧**的这个值。两侧不同源 = 所有跨云 CAS 请求 401,也就是 §10 第 5 条第三项那条专门用来证明跨云接线的断言必然失败。本地测试看不出来:`scripts/doc-types.mjs` 硬编码的 `INTERNAL_TOKEN = "unidocs-dev-token"` 被 Miniflare 与本地 Azure 栈共用,掩盖了这个不变量。
 
-部署脚本因此对这个 secret 走的是「Key Vault 里有则读用;没有且给了 `--internal-token` 则写入后使用;没有也没给则**报错中止**」——不生成、不猜。
+但**未配** `--cas-base-url` 时(§1 的当前形态),`INTERNAL_TOKEN` 只用于 Azure 内部 gateway → doc-type-worker 鉴权,没有 Cloudflare 侧需要对齐,现场生成是安全的。
+
+部署脚本因此对这个 secret 走的是:「Key Vault 里有则读用(与是否配 CAS 无关);没有且给了 `--internal-token` 则写入后使用(同样与是否配 CAS 无关);都没有时按是否配了 `--cas-base-url` 分叉 —— **配了则报错中止**(不生成、不猜),**未配则生成**并在日志中提示:该 token 仅对 Azure 内部有效,将来接入 Cloudflare CAS worker 时必须让两边一致(删掉 Key Vault 里的 `internal-token` secret,用 `--internal-token <与 Cloudflare 相同的值>` 重新部署)」。实现见 `scripts/azure-deploy.mjs` 的 `decideInternalTokenAction()`。
 
 **Key Vault 的角色是给部署脚本提供幂等性**,不是给运行时读取。流程:
 
@@ -272,8 +276,10 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 5. `scripts/azure-smoke.mjs` 对**公网网关 FQDN** 的全部断言通过:
    - markdown:create → apply → query → export
    - docx:create → apply → query → export
-   - docx 图片路径:上传到 Cloudflare CAS → `insertImage` → `getImages` → `export` 得到合法 zip。**这一条专门证明跨云 HTTP 接线在真实网络下成立**
+   - docx 图片路径:上传到 Cloudflare CAS → `insertImage` → `getImages` → `export` 得到合法 zip。**这一条专门证明跨云 HTTP 接线在真实网络下成立** —— **仅在配置了 `--cas-base-url` 时适用**
    - 至少一次 `apply` 使用过期的 `baseVersion`,断言返回 409 且响应体带当前 `version`
+
+   **未配 `--cas-base-url` 时,第三项不适用,但 `scripts/azure-smoke.mjs` 本轮未随之更新**:它对非本地 `--gateway` 无条件拒绝 `--skip-cas`(见脚本头注释),而 `scripts/azure-deploy.mjs` 的 Step 7 也没有按 `casBaseUrl` 是否为空去决定要不要传这个开关。结果是「不配 CAS」形态目前会在 Step 1–6 全部成功之后,于 Step 7 因第三项断言对着一个 404 的 `/cas/*` 路由失败而收尾。这不是本设计假装不存在的问题,而是记在 §11 的已知缺口 —— 让 `--skip-cas` 的拒绝条件感知「本次部署是否配置了 CAS」而不只是「gateway 是否本地」,是它的解法,留给后续一轮。
    **为什么这几条断言足以验证托管标识的 Blob 通路**:`apply` 每次都经 `#saveSnapshotCache()` 写一次 Blob 快照,走的是**严格**版本 —— 失败直接冒泡(`packages/server-core/src/session.ts:689,751`)。因此上面任何一次成功的 `apply` 都证明了托管标识写 Blob 成立,不需要为此另加测试。反过来必须注意:`create` 走的是**尽力而为**版本(`session.ts:464,546` → `#saveSnapshotCacheBestEffort`,会吞掉 Blob 失败),所以**只做 create 的冒烟不能验证托管标识** —— 冒烟必须包含 apply,这是上述断言的必要成分而非顺带。
 
 6. **幂等**:紧接着再次执行 `scripts/azure-deploy.mjs`,冒烟仍然全绿,Postgres 密码未被重置,且两次 `what-if` 输出里:
@@ -294,7 +300,9 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 | Postgres 用密码认证而非 Entra ID | **本轮接受** | 路径明确(§9 第三行),但属独立工作量 |
 | `sslmode=require` 的证书校验强度 | **待实施时确认** | 见 §6.3。收紧到 `verify-full` 是后续加固 |
 | docx 依赖 Cloudflare CAS worker | **本轮接受** | 已确认的范围决定。**后果:本轮的部署形态不可私有化交付**,阶段 4 的 `azure-cas` 落地后才可 |
-| 跨云 CAS 要求两侧 `INTERNAL_TOKEN` 相同 | **本轮接受(有操作约束)** | 上一行的直接推论,原先漏登记。CAS worker 对每个请求校验该 token,不同源即 401,而本地栈共用 `unidocs-dev-token` 会掩盖它。约束:Azure 侧的值必须由人从 Cloudflare 侧取得并经 `--internal-token` 传入(§5),脚本不生成。代价:轮换该 token 必须**两侧同时**做 |
+| Cloudflare CAS worker 尚未部署 | **已知,未解决 —— 本轮以「不配 CAS」形态交付** | `packages/cloudflare-cas/wrangler.toml` 的 `database_id` 仍是占位符 `REPLACE_WITH_CAS_D1_ID`,该 worker 从未 `wrangler deploy` 过;此前所有 CAS 测试跑的都是 Miniflare 本地模拟,不是真实 Cloudflare 环境。因此 `scripts/azure-deploy.mjs` 把 `--cas-base-url` 改成了可选(见 §1、§4.3、§5、§10):不给时部署照常完成,但交付形态**不含 docx 图片能力**(`insertImage`/`getImages` 等路径 404/501)。待 Cloudflare CAS worker 实际部署、拿到其 `INTERNAL_TOKEN` 后,重新以 `--cas-base-url` + `--internal-token` 跑一次即可补上该能力 |
+| 跨云 CAS 要求两侧 `INTERNAL_TOKEN` 相同 | **本轮接受(有操作约束,按是否配 CAS 分叉)** | CAS worker 对每个请求校验该 token,不同源即 401,而本地栈共用 `unidocs-dev-token` 会掩盖它。**配了 `--cas-base-url`** 时约束不变:Azure 侧的值必须由人从 Cloudflare 侧取得并经 `--internal-token` 传入(§5),脚本不生成,轮换该 token 必须**两侧同时**做。**未配 `--cas-base-url`** 时(见上一行)没有 Cloudflare 侧需要对齐,`scripts/azure-deploy.mjs` 允许现场生成该 token 并醒目提示:它只对 Azure 内部有效,将来接入 Cloudflare CAS worker 时必须删掉 Key Vault 里的 `internal-token` secret、用 `--internal-token <与 Cloudflare 相同的值>` 重新部署,否则两边不同源、CAS 请求全部 401 |
+| `scripts/azure-smoke.mjs` 未随「不配 CAS」形态更新 | **已知,未解决** | 见 §10 第 5 条尾注。该脚本对非本地 `--gateway` 无条件拒绝 `--skip-cas`,而 `scripts/azure-deploy.mjs` 的 Step 7 也没有按 `casBaseUrl` 是否为空决定要不要传这个开关。结果是「不配 CAS」形态目前会在 Step 1–6 成功之后于 Step 7 失败(第三组断言对着 404 的 `/cas/*` 路由)。本轮未修,因为它超出了本次改动的范围(`--cas-base-url`/`internal-token` 分叉);留给下一轮 |
 | 无 CI | **本轮接受** | 已确认的范围决定。部署脚本本身即将来 CI 调用的对象 |
 | `azure-markdown` / `azure-docx` 未合并 | **推后** | 已确认。代价:3 份服务镜像,以及两份已经漂移过一次的 `bundle.mjs`(§6.2 的 bug 正源于此)仍然并存。合并成单一 `DOC_TYPE` 参数化镜像可一次性消除该漂移面 |
 | Key Vault 软删除会挡住「删掉资源组再重建」 | **已知,未解决** | `unidocs-kv` 是固定字面量,而 Key Vault 开了软删除(保留 7 天)。按 §10/计划 Task 8 写的拆除方式 `az group delete -n Unidocs --yes` 删掉之后,7 天内重新部署会在 Key Vault 上报 `ConflictError: Vault name 'unidocs-kv' is already in use`,而且发生在 bootstrap 部署到一半时。人工出路是 `az keyvault recover` 或 `az keyvault purge`,但没人会预料到。**这个风险与是否用 `uniqueString` 后缀无关** —— 后缀是按资源组 ID 算的,同名资源组重建后后缀相同,名字照样撞。彻底的解法是 preflight 里 `az keyvault list-deleted` 命中则打印具体的 recover/purge 命令后中止 |
