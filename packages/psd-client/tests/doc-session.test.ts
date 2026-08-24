@@ -1,9 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
+import { createSBlob, encodeSValue } from "@unidocs/core";
+import type { SValue } from "@unidocs/core";
 import { DocSession } from "../src/doc-session.js";
 import type { RenderLike } from "../src/doc-session.js";
-import type { BlobStore, PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
+import type { BlobStore, Layer, PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
 
 const canvas = { width: 4, height: 4, colorMode: "RGB" as const, depth: 8 as const, resolution: 72, profile: "sRGB" };
+
+function testHash(id: string): string {
+  let hex = "";
+  for (const char of id) hex += char.charCodeAt(0).toString(16).padStart(2, "0");
+  return hex.padEnd(64, "0").slice(0, 64);
+}
 
 function docWithLayers(ids: string[]): PsdDoc {
   return {
@@ -18,7 +26,7 @@ function docWithLayers(ids: string[]): PsdDoc {
       visible: true,
       locked: false,
       clipping: false,
-      pixels: { width: 1, height: 1, hash: `h-${id}` },
+      pixels: { width: 1, height: 1, hash: testHash(id) },
     })),
   };
 }
@@ -27,13 +35,23 @@ function setOp(layerId: string, opacity: number): PsdOp {
   return { kind: "set_props", payload: { layerId, props: { opacity } } };
 }
 
-function irBytesFor(doc: PsdDoc): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(doc));
+function storedLayer(layer: Layer): SValue {
+  const { pixels, children, ...rest } = layer;
+  if (pixels === undefined || !("hash" in pixels)) {
+    throw new Error("storedLayer fixture requires lazy pixel refs");
+  }
+  return {
+    ...rest,
+    pixels: { width: pixels.width, height: pixels.height, blob: createSBlob(pixels.hash) },
+    ...(children !== undefined ? { children: children.map(storedLayer) } : {}),
+  } as unknown as SValue;
 }
 
-/** Memory BlobStore keyed by hash → IR bytes (mask/layer pixel blobs aren't
- *  exercised here — every layer's `pixels` is already a `{width,height,hash}`
- *  ref, so `deserialize` never calls `store.get` beyond the top-level IR). */
+function snapshotBytesFor(doc: PsdDoc): Uint8Array {
+  return encodeSValue({ canvas: doc.canvas, layers: doc.layers.map(storedLayer) });
+}
+
+/** Memory BlobStore for lazy layer refs; these tests never render the pixels. */
 function memStore(blobs: Record<string, Uint8Array>): BlobStore {
   return {
     async get(hash) {
@@ -144,6 +162,7 @@ describe("DocSession.applyLocal", () => {
     expect(calls[0]!.url).toBe("/gw/users/u1/docs/psd/d1/apply");
     expect(calls[0]!.body).toEqual({
       operations: [setOp("l1", 0.5)],
+      description: "Apply set_props",
       baseVersion: 5,
       opId: "op-1",
     });
@@ -195,7 +214,7 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 },
         { status: 200, body: { success: true, version: 11 } },
       ],
-      ir: [{ status: 200, version: 10, bytes: irBytesFor(newBase) }],
+      ir: [{ status: 200, version: 10, bytes: snapshotBytesFor(newBase) }],
     });
     const store = memStore({});
     const session = new DocSession(opts({ version: 5, store, render, fetchImpl: fn, genId: () => "op-x" }));
@@ -232,7 +251,7 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 },
         { status: 200, body: { success: true, version: 11 } },
       ],
-      ir: [{ status: 200, version: 10, bytes: irBytesFor(newBase) }],
+      ir: [{ status: 200, version: 10, bytes: snapshotBytesFor(newBase) }],
     });
     const store = memStore({});
     const onRebase = vi.fn();
@@ -255,7 +274,7 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 }, // simulates a lost ack: server already has a newer baseVersion
         { status: 200, body: { success: true, version: 31 } },
       ],
-      ir: [{ status: 200, version: 30, bytes: irBytesFor(newBase) }],
+      ir: [{ status: 200, version: 30, bytes: snapshotBytesFor(newBase) }],
     });
     const store = memStore({});
     const idsGenerated: string[] = [];
@@ -293,7 +312,7 @@ describe("DocSession rebase (409 and reconcile)", () => {
         { status: 409 },
         { status: 200, body: { success: true, version: 21 } },
       ],
-      ir: [{ status: 200, version: 20, bytes: irBytesFor(newBase) }],
+      ir: [{ status: 200, version: 20, bytes: snapshotBytesFor(newBase) }],
     });
     const store = memStore({});
     let n = 0;
@@ -344,7 +363,7 @@ describe("DocSession concurrency", () => {
     const irQueue: ScriptedIr[] = [{ status: 200, version: 10 }]; // bytes filled in below once newBase exists
 
     const newBase = docWithLayers(["l2"]); // agent's /run deleted l1 while opA was in flight
-    irQueue[0]!.bytes = irBytesFor(newBase);
+    irQueue[0]!.bytes = snapshotBytesFor(newBase);
 
     // Custom router (not the shared `mockFetch` helper): opA's /apply call
     // is parked on a manually-resolved deferred so the test controls
@@ -415,11 +434,11 @@ describe("DocSession concurrency", () => {
 });
 
 describe("DocSession.reconcile", () => {
-  it("walks the same rebase path as a 409 — fetches the new IR and warm-resets the render", async () => {
+  it("walks the same rebase path as a 409 — fetches current TDoc and warm-resets the render", async () => {
     const render = mockRender();
     const agentDoc = docWithLayers(["l1", "l2"]); // agent's /run added l2
     const { fn, calls } = mockFetch({
-      ir: [{ status: 200, version: 42, bytes: irBytesFor(agentDoc) }],
+      ir: [{ status: 200, version: 42, bytes: snapshotBytesFor(agentDoc) }],
     });
     const store = memStore({});
     const session = new DocSession(opts({ doc: docWithLayers(["l1"]), version: 5, store, render, fetchImpl: fn }));

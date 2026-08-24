@@ -2,18 +2,19 @@
  * All query implementations for the DOCX document type.
  */
 
-import type { QueryValue } from "@unidocs/core";
+import type { Document } from "@ariadng/office/docx";
+import type { SValue } from "@unidocs/core";
 import { paragraphValue, requireIndex } from "./helpers.js";
-import type { DocxDoc, DocxQuery } from "./types.js";
+import type { DocxQuery } from "./types.js";
 
 /** Execute a query against a DOCX document. */
-export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
+export function executeQuery(query: DocxQuery, doc: Document): SValue {
   switch (query.kind) {
     case "getText":
-      return doc.document.text();
+      return doc.text();
 
     case "getParagraphs":
-      return doc.document
+      return doc
         .paragraphs()
         .map((_, index) => paragraphValue(doc, index)!);
 
@@ -57,18 +58,18 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
     }
 
     case "getTables":
-      return doc.document.tables().map((table, index) => tableSummary(table, index));
+      return doc.tables().map((table, index) => tableSummary(table, index));
 
     case "getTable": {
       const index = query.payload.index;
       requireIndex(index, "table index");
-      const table = doc.document.tables()[index];
+      const table = doc.tables()[index];
       if (!table) return null;
       return tableDetail(table, index);
     }
 
     case "getHeaders":
-      return doc.document.headers().map((h) => ({
+      return doc.headers().map((h) => ({
         kind: h.kind,
         type: h.type,
         partName: h.partName,
@@ -76,7 +77,7 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
       }));
 
     case "getFooters":
-      return doc.document.footers().map((f) => ({
+      return doc.footers().map((f) => ({
         kind: f.kind,
         type: f.type,
         partName: f.partName,
@@ -84,7 +85,7 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
       }));
 
     case "getImages":
-      return doc.document.images().map((img, index) => ({
+      return doc.images().map((img, index) => ({
         index,
         format: img.format,
         partName: img.partName,
@@ -97,7 +98,7 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
     case "getImage": {
       const { index } = query.payload;
       requireIndex(index, "image index");
-      const images = doc.document.images();
+      const images = doc.images();
       if (index < 0 || index >= images.length) {
         throw new RangeError(`Image index ${index} out of range (0-${images.length - 1})`);
       }
@@ -113,9 +114,12 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
       };
     }
 
+    case "getImageContent":
+      throw new Error("getImageContent is resolved by the DOCX manifest adapter");
+
     case "getImageByPartName": {
       const { partName } = query.payload;
-      const images = doc.document.images();
+      const images = doc.images();
       const index = images.findIndex((img) => img.partName === partName);
       if (index === -1) {
         return null;
@@ -134,15 +138,15 @@ export function executeQuery(query: DocxQuery, doc: DocxDoc): QueryValue {
   }
 }
 
-function requireParagraph(doc: DocxDoc, index: number) {
+function requireParagraph(doc: Document, index: number) {
   requireIndex(index, "paragraphIndex");
-  const paragraph = doc.document.paragraphs()[index];
+  const paragraph = doc.paragraphs()[index];
   if (!paragraph) throw new RangeError(`Paragraph ${index} not found`);
   return paragraph;
 }
 
 /** Summary view of a table (for getTables). */
-function tableSummary(table: { rowCount(): number; columnCount(): number; styleId(): string | undefined; depth: number }, index: number): QueryValue {
+function tableSummary(table: { rowCount(): number; columnCount(): number; styleId(): string | undefined; depth: number }, index: number): SValue {
   return {
     index,
     depth: table.depth,
@@ -153,7 +157,7 @@ function tableSummary(table: { rowCount(): number; columnCount(): number; styleI
 }
 
 /** Detailed view of a table (for getTable). */
-function tableDetail(table: { rowCount(): number; columnCount(): number; styleId(): string | undefined; depth: number; rows(): readonly { cells(): readonly { text(): string }[] }[] }, index: number): QueryValue {
+function tableDetail(table: { rowCount(): number; columnCount(): number; styleId(): string | undefined; depth: number; rows(): readonly { cells(): readonly { text(): string }[] }[] }, index: number): SValue {
   return {
     index,
     depth: table.depth,

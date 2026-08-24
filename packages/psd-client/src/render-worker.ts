@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
-import type { PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
-import { deserialize } from "@unidocs/doctype-psd/engine";
+import { decodeSValue } from "@unidocs/core";
+import type { PsdDoc, PsdOp, PsdStoredDoc } from "@unidocs/doctype-psd/engine";
+import { materializePsdDocFromStore } from "@unidocs/doctype-psd/engine";
 import { CasBlobStore } from "./cas-blob-store.js";
 import { RenderCore } from "./render-core.js";
 
@@ -14,7 +15,7 @@ type Rect = [number, number, number, number];
  *  can emit several responses per request, and errors need to name which
  *  request they belong to). */
 export type WorkerRequest =
-  | { type: "init"; id: number; ir: Uint8Array; gw: string; user: string; tileSize?: number; cacheBytes?: number }
+  | { type: "init"; id: number; snapshot: Uint8Array; gw: string; user: string; tileSize?: number; cacheBytes?: number }
   | { type: "applyOp"; id: number; op: PsdOp }
   | { type: "tiles"; id: number; tiles: Array<[number, number]> }
   | { type: "reset"; id: number; doc: PsdDoc };
@@ -47,7 +48,8 @@ async function handle(req: WorkerRequest): Promise<void> {
     case "init": {
       try {
         const store = new CasBlobStore({ gw: req.gw, user: req.user });
-        const doc = await deserialize(req.ir, store);
+        const state = decodeSValue(req.snapshot) as unknown as PsdStoredDoc;
+        const doc = await materializePsdDocFromStore(state, store);
         core = new RenderCore(doc, store, { tileSize: req.tileSize, cacheBytes: req.cacheBytes });
         // Warm the decoded-pixel cache with ONE parallel batch of blob fetches
         // before answering "ready". Without this, the first `tiles` batch

@@ -93,24 +93,24 @@ export class RenderClient {
     }
   }
 
-  /** Sends the cold-start IR bytes (already fetched via `loadDoc`) to the
+  /** Sends the cold-start TDoc snapshot bytes (already fetched via `loadDoc`) to the
    *  Worker; it builds its own `CasBlobStore` from `gw`/`user` to fault in
    *  layer pixels and stands up the persistent `RenderCore`. Resolves once
    *  the Worker acks with the doc's tile size and canvas dimensions. */
-  init(opts: { ir: Uint8Array; gw: string; user: string; tileSize?: number; cacheBytes?: number }): Promise<InitResult> {
+  init(opts: { snapshot: Uint8Array; gw: string; user: string; tileSize?: number; cacheBytes?: number }): Promise<InitResult> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { kind: "init", resolve, reject });
       const req: WorkerRequest = {
         type: "init",
         id,
-        ir: opts.ir,
+        snapshot: opts.snapshot,
         gw: opts.gw,
         user: opts.user,
         tileSize: opts.tileSize,
         cacheBytes: opts.cacheBytes,
       };
-      this.worker.postMessage(req, [opts.ir.buffer]);
+      this.worker.postMessage(req, [opts.snapshot.buffer]);
     });
   }
 

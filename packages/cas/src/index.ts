@@ -11,13 +11,13 @@ export type {
   CasNodeState,
   CasNodeDescriptor,
   CasLeaseResult,
-  CasRef,
   CasReferences,
   CasRefChanges,
   CasRootRefUpdate,
+  CasRootAssignment,
+  CasAssignRootsRequest,
   CasUsage,
   CasGcResult,
-  CasReadContext,
   UserCasService,
   CasNode,
 } from "./types.js";
@@ -54,3 +54,6 @@ export {
   validateChildRefs,
   validateContentLength,
 } from "./validation.js";
+
+// Gateway routing
+export { isPublicCasRoute } from "./public-route.js";

@@ -27,12 +27,11 @@
  *   GET  /_internal/history         — get delta history
  *   POST /_internal/rollback        — rollback to version (body: { version })
  *   GET  /_internal/snapshot        — get current snapshot hash (for clone)
- *   GET  /_internal/ir              — get current IR bytes directly (for browser cold-start loadDoc;
- *                                      the snapshot hash is a durable-storage key, not a fetchable
- *                                      user-CAS node — see DocumentSession.ir())
+ *   GET  /_internal/ir              — get canonical current-TDoc bytes for browser cold start
  *   POST /_internal/init_from_hash  — initialize from existing snapshot hash (for clone)
  */
 
+import { SValueContentType } from "@unidocs/core";
 import { CasClientError } from "./cas-client.js";
 import {
   DeltaRejectedError,
@@ -186,7 +185,7 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         if (unauthorized) return unauthorized;
 
         const q = await request.json() as TQuery;
-        const result = await session.query(q);
+        const result = await session.query(q as never);
         return Response.json({ success: true, data: result.data, version: result.version });
       }
 
@@ -203,7 +202,7 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         };
 
         const applied = await session.apply(
-          body.operations,
+    body.operations as never,
           body.description,
           body.baseVersion,
           body.opId,
@@ -248,11 +247,11 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         });
       }
 
-      // GET /_internal/ir — get current IR bytes directly (browser cold-start loadDoc)
+      // GET /_internal/ir — get canonical current-TDoc bytes for browser cold start
       if (method === "GET" && endpoint === "/_internal/ir") {
         const { version, bytes } = await session.ir();
         return new Response(bytes as BodyInit, {
-          headers: { "content-type": "application/json", "X-Doc-Version": String(version) },
+          headers: { "content-type": SValueContentType, "X-Doc-Version": String(version) },
         });
       }
 

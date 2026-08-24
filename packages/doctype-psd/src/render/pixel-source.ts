@@ -1,12 +1,16 @@
 import { decode } from "fast-png";
+import type { SBlob } from "@unidocs/core";
 import type { Pixels } from "../model/types.js";
 
 /** A reference to a decoded (resident) pixel buffer's PNG-encoded bytes,
- *  stored externally (e.g. blob storage) and addressed by content hash. */
+ *  stored externally (e.g. blob storage) and addressed by content hash.
+ *  `blob` is the branded SBlob the runtime walks for CAS root-refs; it is
+ *  omitted from IR JSON (only `width`/`height`/`hash` are serialized). */
 export interface PixelRef {
   width: number;
   height: number;
   hash: string;
+  blob?: SBlob;
 }
 
 /** A layer's pixel data: either resident in memory, or a lazy reference

@@ -5,7 +5,13 @@
  * X-Internal-Token. Public CAS URLs are reached only via Gateway proxy.
  */
 
-import { handleCasRequest, handleRootRefs, isCasRoute } from "./cas/routes.js";
+import {
+  handleCasRequest,
+  handleRootAssignments,
+  handleRootRefs,
+  handleReadNode,
+  isCasRoute,
+} from "./cas/routes.js";
 import { migrateCasSchema } from "./cas/schema.js";
 
 export { CasDurableObject } from "./cas/do.js";
@@ -34,6 +40,25 @@ export default {
       }
       await migrateCasSchema(env.CAS_DB);
       return handleRootRefs(request, env, userId);
+    }
+
+    if (url.pathname === "/_internal/root-assignments") {
+      const userId = request.headers.get("X-User-Id");
+      if (!userId) {
+        return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
+      }
+      await migrateCasSchema(env.CAS_DB);
+      return handleRootAssignments(request, env, userId);
+    }
+
+    const readNodeMatch = url.pathname.match(/^\/_internal\/nodes\/([^/]+)$/);
+    if (readNodeMatch) {
+      const userId = request.headers.get("X-User-Id");
+      if (!userId) {
+        return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
+      }
+      await migrateCasSchema(env.CAS_DB);
+      return handleReadNode(request, env, userId, readNodeMatch[1]);
     }
 
     if (isCasRoute(url.pathname)) {

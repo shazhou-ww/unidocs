@@ -1,5 +1,8 @@
+import { encode } from "fast-png";
+import { createSBlob } from "@unidocs/core";
 import type { CasReferences, DocumentTypeContext } from "@unidocs/core";
-import type { PsdDoc } from "../model/types.js";
+import type { Layer, Mask, PsdDoc } from "../model/types.js";
+import { isRef, type BlobStore } from "../render/pixel-source.js";
 import { serialize, deserialize } from "./ir.js";
 import { save } from "./save.js";
 import { load } from "./load.js";
@@ -24,16 +27,71 @@ function isJsonSnapshot(bytes: Uint8Array): boolean {
   return i !== -1 && bytes[i] === OPEN_BRACE;
 }
 
+async function persistMask(mask: Mask, store: BlobStore): Promise<void> {
+  if (mask.blob || mask.pixels.width === 0) return;
+  const png = encode({
+    width: mask.pixels.width,
+    height: mask.pixels.height,
+    data: mask.pixels.data,
+    channels: 4,
+    depth: 8,
+  });
+  const hash = await store.put(png);
+  mask.blob = createSBlob(hash);
+}
+
+async function persistLayer(layer: Layer, store: BlobStore): Promise<void> {
+  if (layer.pixels !== undefined) {
+    if (isRef(layer.pixels)) {
+      layer.pixels = {
+        width: layer.pixels.width,
+        height: layer.pixels.height,
+        hash: layer.pixels.hash,
+        blob: layer.pixels.blob ?? createSBlob(layer.pixels.hash),
+      };
+    } else {
+      const png = encode({
+        width: layer.pixels.width,
+        height: layer.pixels.height,
+        data: layer.pixels.data,
+        channels: 4,
+        depth: 8,
+      });
+      const hash = await store.put(png);
+      layer.pixels = {
+        width: layer.pixels.width,
+        height: layer.pixels.height,
+        hash,
+        blob: createSBlob(hash),
+      };
+    }
+  }
+  if (layer.mask) await persistMask(layer.mask, store);
+  if (layer.children) {
+    for (const child of layer.children) await persistLayer(child, store);
+  }
+}
+
+/**
+ * Upload resident pixels, then hang branded SBlobs on the in-memory TDoc so
+ * `collectSBlobRefs` can pin them after save. Mask buffers stay resident for
+ * the compositor. Existing PixelRefs keep their hash and gain a blob handle.
+ */
+async function persistDoc(doc: PsdDoc, store: BlobStore): Promise<void> {
+  for (const layer of doc.layers) await persistLayer(layer, store);
+}
+
 /**
  * Serialize a document to snapshot bytes. With a write-capable CAS context
- * (`ctx.cas.store` present), produces the byte-free IR JSON and uploads every
- * layer/mask pixel blob to the CAS. Without one (legacy / no-ctx / stores that
- * cannot write), falls back to a full PSD (`8BPS`) so existing callers keep
- * working.
+ * (`ctx.makeSBlob` present), produces the byte-free IR JSON and uploads every
+ * layer/mask pixel blob to the CAS. Without one (legacy / no-ctx), falls back
+ * to a full PSD (`8BPS`) so existing callers keep working.
  */
 export async function saveSnapshot(doc: PsdDoc, ctx?: DocumentTypeContext): Promise<Uint8Array> {
-  if (ctx?.cas?.store) {
-    return serialize(doc, casBlobStore(ctx));
+  if (ctx?.makeSBlob) {
+    const store = casBlobStore(ctx);
+    await persistDoc(doc, store);
+    return serialize(doc, store);
   }
   return save(doc);
 }
@@ -46,7 +104,7 @@ export async function saveSnapshot(doc: PsdDoc, ctx?: DocumentTypeContext): Prom
  */
 export async function loadSnapshot(bytes: Uint8Array, ctx?: DocumentTypeContext): Promise<PsdDoc> {
   if (isJsonSnapshot(bytes)) {
-    if (!ctx?.cas) {
+    if (!ctx) {
       throw new Error("loadSnapshot: an IR JSON snapshot requires a CAS context to resolve its lazy pixel blobs");
     }
     return deserialize(bytes, casBlobStore(ctx));
@@ -79,6 +137,8 @@ function collectLayerRefs(layer: RefLayer, out: Record<string, number>): void {
  * touching any store. For an IR JSON snapshot, walks all layers (recursively
  * into group children) and masks, collecting each `pixels.hash` and
  * `mask.pixels.hash`. A PSD (or empty/non-JSON) snapshot references nothing.
+ *
+ * Kept as a test/debug helper; DocumentType no longer exposes refsFromSnapshot.
  */
 export function refsFromSnapshot(bytes: Uint8Array): CasReferences {
   if (!isJsonSnapshot(bytes)) return {};

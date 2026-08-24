@@ -198,7 +198,12 @@ export class DocSession {
     const res = await this.#fetchImpl(`${this.#gw}/users/${this.#user}/docs/${this.#type}/${this.#docId}/apply`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operations: [entry.op], baseVersion: this.#version, opId: entry.opId }),
+      body: JSON.stringify({
+        operations: [entry.op],
+        description: `Apply ${entry.op.kind}`,
+        baseVersion: this.#version,
+        opId: entry.opId,
+      }),
     });
 
     if (res.status === 409) {
@@ -222,9 +227,7 @@ export class DocSession {
     return true;
   }
 
-  /** Fetches the server's current IR (via the shared `loadDoc`, which hits
-   *  `GET .../ir` directly rather than `snapshot` + user-CAS — the snapshot
-   *  hash is a durable-storage key, not a fetchable CAS node), and replays
+  /** Fetches the server's canonical current-TDoc bytes via `loadDoc`, then replays
    *  `#pending` on top — dropping (with a warning, not a throw) any op that
    *  no longer applies, e.g. because its target layer was removed by
    *  whatever changed the doc server-side. Updates `#doc`/`#version`/

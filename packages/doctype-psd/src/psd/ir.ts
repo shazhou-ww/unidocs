@@ -1,4 +1,5 @@
 import { encode, decode } from "fast-png";
+import { createSBlob } from "@unidocs/core";
 import type { PsdDoc, Layer, Mask } from "../model/types.js";
 import { isRef, type BlobStore, type PixelRef } from "../render/pixel-source.js";
 
@@ -10,10 +11,10 @@ interface IrMask {
   pixels: { width: number; height: number; hash?: string };
 }
 
-/** Byte-free IR shape for a Layer: `pixels` (if present) is a PixelRef triple,
- *  `mask` (if present) is an IrMask, `children` (if present) recurse. */
+/** Byte-free IR shape for a Layer: `pixels` (if present) is a PixelRef triple
+ *  without the branded SBlob (JSON cannot carry the symbol). */
 type IrLayer = Omit<Layer, "pixels" | "mask" | "children"> & {
-  pixels?: PixelRef;
+  pixels?: { width: number; height: number; hash: string };
   mask?: IrMask | null;
   children?: IrLayer[];
 };
@@ -23,10 +24,17 @@ interface Ir {
   layers: IrLayer[];
 }
 
+function pixelRefWire(ref: PixelRef): { width: number; height: number; hash: string } {
+  return { width: ref.width, height: ref.height, hash: ref.hash };
+}
+
 async function serializeMask(mask: Mask, store: BlobStore): Promise<IrMask> {
-  const { pixels, ...rest } = mask;
+  const { pixels, blob, ...rest } = mask;
   if (pixels.width === 0) {
     return { ...rest, pixels: { width: 0, height: 0 } };
+  }
+  if (blob) {
+    return { ...rest, pixels: { width: pixels.width, height: pixels.height, hash: blob.hash } };
   }
   const png = encode({ width: pixels.width, height: pixels.height, data: pixels.data, channels: 4, depth: 8 });
   const hash = await store.put(png);
@@ -47,7 +55,11 @@ async function deserializeMask(irMask: IrMask, store: BlobStore): Promise<Mask> 
     decoded.data instanceof Uint8ClampedArray
       ? decoded.data
       : new Uint8ClampedArray(decoded.data.buffer, decoded.data.byteOffset, decoded.data.length);
-  return { ...rest, pixels: { width: decoded.width, height: decoded.height, data } };
+  return {
+    ...rest,
+    pixels: { width: decoded.width, height: decoded.height, data },
+    blob: createSBlob(pixels.hash),
+  };
 }
 
 async function serializeLayer(layer: Layer, store: BlobStore): Promise<IrLayer> {
@@ -56,7 +68,7 @@ async function serializeLayer(layer: Layer, store: BlobStore): Promise<IrLayer> 
 
   if (pixels !== undefined) {
     if (isRef(pixels)) {
-      irLayer.pixels = pixels;
+      irLayer.pixels = pixelRefWire(pixels);
     } else {
       const png = encode({ width: pixels.width, height: pixels.height, data: pixels.data, channels: 4, depth: 8 });
       const hash = await store.put(png);
@@ -80,7 +92,12 @@ async function deserializeLayer(irLayer: IrLayer, store: BlobStore): Promise<Lay
   const layer: Layer = { ...rest } as Layer;
 
   if (pixels !== undefined) {
-    layer.pixels = pixels; // lazy — keep as PixelRef, do not fetch/decode
+    layer.pixels = {
+      width: pixels.width,
+      height: pixels.height,
+      hash: pixels.hash,
+      blob: createSBlob(pixels.hash),
+    };
   }
 
   if (mask !== undefined) {
@@ -97,7 +114,8 @@ async function deserializeLayer(irLayer: IrLayer, store: BlobStore): Promise<Lay
 /** Serializes a PsdDoc to a byte-free JSON IR: every layer's resident pixel
  *  buffer (and mask pixel buffer) is PNG-encoded and stored in `store`,
  *  replaced in the IR by a `{width,height,hash}` reference. Layers whose
- *  pixels are already a PixelRef keep their existing hash (not re-stored). */
+ *  pixels are already a PixelRef keep their existing hash (not re-stored).
+ *  Branded SBlobs are never written into the JSON. */
 export async function serialize(doc: PsdDoc, store: BlobStore): Promise<Uint8Array> {
   const ir: Ir = {
     canvas: doc.canvas,
@@ -110,7 +128,7 @@ export async function serialize(doc: PsdDoc, store: BlobStore): Promise<Uint8Arr
  *  pixels are reconstructed as lazy PixelRefs (not fetched/decoded) — the
  *  compositor faults them in on demand. Mask pixels, which the compositor
  *  reads synchronously, are eagerly fetched and decoded back to resident
- *  Pixels. */
+ *  Pixels. Both carry a branded SBlob so `collectSBlobRefs` can pin them. */
 export async function deserialize(bytes: Uint8Array, store: BlobStore): Promise<PsdDoc> {
   const ir = JSON.parse(new TextDecoder().decode(bytes)) as Ir;
   return {

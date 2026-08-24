@@ -41,12 +41,6 @@ export interface CasLeaseResult {
   readonly leaseExpiresAt: number;
 }
 
-/** A CAS reference from document state. */
-export interface CasRef {
-  readonly kind: "cas";
-  readonly hash: CasHash;
-}
-
 /** Reference counts: hash → positive integer count. */
 export type CasReferences = Readonly<Record<CasHash, number>>;
 
@@ -57,6 +51,18 @@ export type CasRefChanges = Readonly<Record<CasHash, number>>;
 export interface CasRootRefUpdate {
   readonly requestId: string;
   readonly changes: CasRefChanges;
+}
+
+/** One durable business-root owner assignment. Null releases the owner. */
+export interface CasRootAssignment {
+  readonly owner: string;
+  readonly hash: CasHash | null;
+}
+
+/** Idempotent owner-bound root assignment batch. */
+export interface CasAssignRootsRequest {
+  readonly requestId: string;
+  readonly assignments: readonly CasRootAssignment[];
 }
 
 /** Storage usage statistics. */
@@ -72,12 +78,6 @@ export interface CasGcResult {
   readonly examined: number;
   readonly deleted: number;
   readonly reclaimedContentBytes: number;
-}
-
-/** Read-only CAS access for document types. */
-export interface CasReadContext {
-  read(ref: CasRef): Promise<Uint8Array>;
-  metadata(ref: CasRef): Promise<CasNodeMetadata>;
 }
 
 /** Service interface for CAS operations (server-side contract). */
@@ -98,6 +98,8 @@ export interface UserCasService {
   ): Promise<CasLeaseResult>;
 
   updateRootRefs(update: CasRootRefUpdate): Promise<void>;
+
+  assignRoots(update: CasAssignRootsRequest): Promise<void>;
 
   usage(): Promise<CasUsage>;
   triggerGc(options?: { maxNodes?: number }): Promise<CasGcResult>;

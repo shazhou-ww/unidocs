@@ -1,5 +1,7 @@
 # Phase 3 实施计划:持久化接线(IR 快照 + CAS 每层 blob + 按需渲染)
 
+> **已被 2026-08-21 SValue 协议取代。** 本文仅保留为历史实现记录。当前 snapshot 固定为 canonical `PsdStoredDoc` SValue;JSON IR 是 doctype 内部 materialization 适配层,不是 snapshot format;PSD format 只用于导入导出。以 [CAS Architecture](../../../docs/cas-architecture.md) 为准。
+
 > **给执行者:** 必需子技能:superpowers:subagent-driven-development。步骤用 `- [ ]` 勾选。
 
 **目标(一句话):** 让 editor-do 用 **IR 快照(小 JSON + 每层 PNG blob 进 R2 CAS)** 取代"每次 apply 重编码整个 23MB PSD",并把 BlobStore 接进渲染/查询路径,使**懒加载文档能在生产中真正跑起来、峰值内存被 bound 住**。

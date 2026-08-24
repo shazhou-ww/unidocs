@@ -12,6 +12,7 @@ import {
 import {
   buildWorkers,
   bundleTargets,
+  CAS_PORT,
   CAS_WORKER,
   DOC_TYPES,
   GATEWAY_WORKER,
@@ -142,12 +143,16 @@ export async function startLocalRuntime({
   logLevel = LogLevel.WARN,
 } = {}) {
   const ports = resolvePorts(docTypes, portOverrides);
+  // 过渡形态(阶段 4 删除):CAS worker 的直连端口,供 Azure 栈的
+  // CAS_BASE_URL 从进程外访问(见 doc-types.mjs 里 CAS_PORT 的注释)。
+  // 并入 ports 后 urls 会自动多出一项 "cas"(urls 是从 ports 映射来的)。
+  ports.cas = portOverrides.cas ?? CAS_PORT;
 
   await Promise.all(
     Object.values(ports).map((port) => assertPortFree(host, port)),
   );
 
-  const bundleDir = join(ROOT, ".wrangler", "local-bundles");
+  const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway));
 
   await Promise.all(
     bundleTargets(docTypes).map(({ entry, outfile }) =>

@@ -1,8 +1,8 @@
 # CAS Architecture
 
-Status: accepted design, not yet fully implemented
+Status: SValue/SBlob core implemented; legacy migration and retention tooling pending
 
-Date: 2026-08-19
+Date: 2026-08-21
 
 This document defines the target content-addressed storage (CAS) architecture for UniDocs. The current snapshot-only R2/D1 implementation predates this design and will be migrated incrementally.
 
@@ -10,7 +10,7 @@ The node encoding referenced below is defined in [CAS Binary Format](./cas-binar
 
 ## 1. Goals
 
-The CAS stores a user-scoped Merkle DAG for persistent document assets and custom snapshot formats.
+The CAS stores a user-scoped Merkle DAG for persistent SValue document roots and binary assets.
 
 The design must provide:
 
@@ -409,165 +409,231 @@ Authorization: Bearer ...
 
 GC is advisory. Triggering it does not guarantee that every eligible node is removed in one call.
 
-### 11.6 Internal root-reference updates
+### 11.6 Internal root ownership
 
-Editors update root counts on the CAS worker only:
+Editors assign durable roots by stable owner, not by caller-computed count deltas:
 
 ```http
-POST /_internal/root-refs
+POST /_internal/root-assignments
 X-Internal-Token: ...
 X-User-Id: {userId}
 Content-Type: application/json
 
-{ "requestId": "apply:{userId}:{docId}:{version}", "changes": { "<hash>": 1 } }
+{
+  "requestId": "doc:documentId:version:7:roots",
+  "assignments": [
+    { "owner": "doc:documentId:delta:7", "hash": "..." },
+    { "owner": "doc:documentId:snapshot:7", "hash": "..." }
+  ]
+}
 ```
 
-This route is not part of the Gateway allowlist. A public `POST /users/{userId}/cas/root-refs` is a spec bug.
+CAS stores `(user_id, owner, hash)`. In one idempotent D1 batch it reads prior
+assignments, derives aggregate count changes, updates `rootRefCount`, replaces
+owner rows, and records the request hash. Assigning `hash: null` releases an
+owner. Two owners of the same hash count independently.
 
-## 12. DocumentType integration
+The legacy `/_internal/root-refs` route remains only for migration of old
+operation roots. Neither internal route is Gateway-proxied.
 
-Document types receive read-only, user-scoped CAS access.
+### 11.7 Internal portable nodes
+
+Document workers exchange the canonical full-node representation from
+[CAS Binary Format](./cas-binary-format.md):
+
+```http
+GET  /_internal/nodes/{hash}
+POST /_internal/nodes/{hash}
+X-Internal-Token: ...
+X-User-Id: {userId}
+Content-Type: application/vnd.unidocs.cas-node
+```
+
+GET returns header, content type, ordered child hashes, and own content in one
+response. POST accepts the same bytes and avoids an unbounded child-ref HTTP
+header. CAS validates the header, refs, children, content length, SValue tags,
+and complete digest before publishing the node.
+
+Public leaf upload and content/metadata endpoints remain compatible.
+
+## 12. SValue and SBlob
+
+All document states, queries, operations, and query results use the restricted
+`SValue` model. Binary values are stored nodes represented by branded `SBlob`
+handles:
 
 ```ts
-export interface CasRef {
-  readonly kind: "cas";
-  readonly hash: CasHash;
+interface SBlob {
+  readonly [privateSignature]: true;
+  readonly hash: string;
 }
 
-export interface CasReadContext {
-  read(ref: CasRef): Promise<Uint8Array>;
-  metadata(ref: CasRef): Promise<CasNodeMetadata>;
-}
-
-export interface DocumentTypeContext {
-  readonly cas: CasReadContext;
-  readonly signal?: AbortSignal;
-}
+type SValue =
+  | string | number | boolean | null | SBlob
+  | readonly SValue[]
+  | { readonly [key: string]: SValue };
 ```
 
-The context already contains the authenticated user scope. A document type neither receives nor selects a user ID.
-
-Every lifecycle method receives the context:
-
-```ts
-export interface DocumentType<TDoc, TQuery, TOp> {
-  refsFromSnapshot(data: Uint8Array): CasReferences;
-  refsFromOp(operation: TOp): CasReferences;
-
-  init(context: DocumentTypeContext): Promise<TDoc>;
-  query(query: TQuery, doc: TDoc, context: DocumentTypeContext): Promise<QueryValue>;
-  apply(
-    operations: readonly TOp[],
-    doc: TDoc,
-    context: DocumentTypeContext,
-  ): Promise<TDoc>;
-  load(data: Uint8Array, context: DocumentTypeContext): Promise<TDoc>;
-  save(doc: TDoc, context: DocumentTypeContext): Promise<Uint8Array>;
-
-  contentType: string;
-  tools: Record<string, AgentToolDefinition>;
-  instructions: string;
-}
-```
-
-Reference extractors are synchronous pure functions:
-
-- no CAS access;
-- no I/O;
-- no mutation;
-- no hidden persistence;
-- positive safe-integer counts only; zero entries are omitted.
-
-`refsFromSnapshot` remains synchronous by design. It is intended for custom snapshot formats that explicitly encode UniDocs CAS references. Ordinary self-contained formats return an empty map.
-
-For DOCX:
-
-```ts
-refsFromSnapshot: () => ({});
-```
-
-DOCX snapshots contain embedded image bytes and therefore do not retain the source image CAS nodes.
-
-## 13. Delta transaction flow
-
-For an apply request, the SDK builds a `CasClient` from `env.CAS_SERVICE`, `env.INTERNAL_TOKEN`, and `X-User-Id`. Missing user id → `401`. It does not `fetch` the Gateway.
-
-1. aggregates references using `refsFromOp` for every operation;
-2. calls `leaseExisting` to extend leases and verify every referenced node is ready;
-3. runs `DocumentType.apply()` against a working document with `{ cas }`;
-4. serializes the resulting document;
-5. writes the Delta to DO SQLite;
-6. calls idempotent `updateRootRefs()` (`POST /_internal/root-refs`) with positive deltas and `requestId = apply:{userId}:{docId}:{version}`;
-7. only after root-reference success commits in-memory document/version and KV snapshot state.
-
-If step 6 fails, the SDK deletes the newly inserted Delta and discards the working document.
-
-Empty `refsFromOp` (Markdown, and DOCX ops other than `insertImage`) is a no-op for steps 2 and 6.
-
-`refsFromOp()` never creates nodes and never supplies upload content. Clients create nodes through the CAS lease-with-content API before submitting a Delta. If `leaseExisting` finds a missing node, apply fails with `400`. A not-ready reference fails apply with `409`; the client must complete a lease-with-content request before retrying.
-
-Replay, rollback, load, query, and clone pass `{ cas }` so operations such as `insertImage` can `cas.read`. They must not call `leaseExisting` or `updateRootRefs`. Root counts change only on persist/retention.
-
-The accepted residual failure is:
+SValue version 1 is deterministic RFC 8949 CBOR with media type:
 
 ```text
-Delta insert succeeds
--> root-reference update fails
--> compensating Delta delete also fails
+application/vnd.unidocs.svalue+cbor;version=1
 ```
 
-This can leave one document history entry whose referenced CAS content may later disappear. The probability is considered low; document-level repair/compensation will handle this case. The design deliberately does not add a cross-storage owner/outbox model in the first version.
+SBlob is CBOR tag 65536 around exactly 32 hash bytes. Encoding walks values in
+deterministic order and returns both bytes and ordered direct child refs.
+Duplicate handles remain duplicate refs. Decoding uses strict limits, a bounded
+pre-allocation tokenizer, deterministic re-encoding, and byte equality.
 
-## 14. Snapshot and history lifecycle
+For this reserved content type, CAS derives refs from tags and rejects
+caller-supplied metadata that differs. Doctypes never implement reference
+extractors.
 
-Persisting a custom snapshot:
+## 13. DocumentType integration
 
-1. serialize snapshot bytes;
-2. store the snapshot itself as a CAS node;
-3. call `refsFromSnapshot(snapshotBytes)`;
-4. increment root counts for any external CAS refs returned by the custom format;
-5. record the snapshot index only after required reference updates succeed.
+The runtime binds one authenticated SBlob context per document and curries it
+into the doctype factory:
 
-For self-contained DOCX and Markdown snapshots, `refsFromSnapshot()` is empty.
+```ts
+interface DocumentTypeContext {
+  makeSBlob(
+    hash: string,
+    loadData: () => Promise<SBlobData>,
+  ): Promise<SBlob>;
+  makeSBlob(data: SBlobData): Promise<SBlob>;
+  readSBlob(blob: SBlob): Promise<SBlobData>;
+}
 
-When history truncation is introduced:
+type DocumentTypeFactory<TDoc, TQuery, TOp> =
+  (context: DocumentTypeContext) => DocumentType<TDoc, TQuery, TOp>;
+```
 
-1. aggregate `refsFromOp()` for removed Deltas;
-2. remove or mark the history range unavailable;
-3. decrement root counts with an idempotent request ID;
-4. compensate at the business layer if the cross-storage sequence partially fails.
+The hash-first overload leases an existing node without invoking `loadData`.
+For a missing node it calls the callback once, derives SValue refs when needed,
+leases distinct children, verifies the complete logical digest, and uploads.
 
-Loading, replaying, rolling back, querying, and cloning must never change root reference counts. Reference changes are tied only to persistence or retention lifecycle events.
+`readSBlob` verifies metadata, content length, SValue refs, and digest. Reads and
+in-flight promises use a bounded context-scoped cache; returned bytes are copies.
+The doctype sees no user ID, HTTP, lease, root-count, or CAS metadata API.
 
-## 15. Query values
+Core defines only `Context -> DocumentType`. A doctype that needs options owns
+an outer `Options -> Factory` function.
 
-`TQuery` remains transient and does not automatically accept CAS refs.
+```ts
+interface DocumentType<TDoc, TQuery, TOp> {
+  init(): Promise<SValueType<TDoc>>;
+  query(query: SValueType<TQuery>, doc: SValueType<TDoc>): Promise<SValue>;
+  apply(
+    operations: readonly SValueType<TOp>[],
+    doc: SValueType<TDoc>,
+  ): Promise<SValueType<TDoc>>;
 
-`QueryValue` continues to support `Uint8Array`. Runtime adapters may encode binary values as tagged base64 JSON. Query execution must not persist temporary results into CAS.
+  formats: Readonly<Record<string, DocumentFormat<TDoc>>>;
+  defaultFormat: string;
+}
+```
 
-A query may return a `CasRef` only when that ref already exists as part of persistent document state. It must not create a new CAS node merely to return query data.
+Named formats perform external import/export only. TDoc itself is the snapshot
+shape. There is no `snapshotFormat`: the runtime always persists
+`encodeSValue(TDoc)` and always restores it with `decodeSValue`. Neither
+`defaultFormat` nor any `DocumentFormat.save` participates in snapshot I/O.
+Agent tools are a separate contract:
 
-## 16. First implementation scope
+```ts
+interface DocumentAgent {
+  tools: Readonly<Record<string, AgentToolDefinition>>;
+  instructions: string;
+  toolCall(name: string, parameters: JsonValue): Promise<AgentToolResult>;
+}
+```
 
-The first implementation should include:
+The context-bound handler converts JSON DTOs such as `{hash}` to typed domain
+operations containing SBlob. Provider-neutral result content may reference an
+SBlob internally; a provider renderer reads it and emits the model vendor's
+media representation. SBlob never appears in JSON or directly on the provider
+wire.
 
-- user-scoped CAS Durable Object queue;
-- D1 node/edge tables and both non-negative ref counts;
-- R2 content storage;
-- lease with content and authenticated lease extension;
-- ready checks for reads and references;
-- idempotent batched root-reference updates;
-- GC for zero-referenced, expired nodes;
-- usage and manual GC endpoints;
-- read-only `DocumentTypeContext`;
-- synchronous `refsFromSnapshot` and `refsFromOp` hooks;
-- CAS worker plus Gateway/Editor `CAS_SERVICE` bindings;
-- DOCX `insertImage` and `getImages`.
+## 14. Delta transaction flow
 
-Deferred work:
+Each committed version stores a retained SValue delta root. Selected versions
+also store an independent retained TDoc snapshot root.
 
-- automatic GC scheduling policy refinements;
-- storage quotas and billing policy;
-- repair tooling for rare cross-storage Delta corruption;
-- replace / delete / resize / floating images;
-- historical compaction and reference release.
+Apply is an outbox state machine:
+
+1. authenticate the request user against the stored document owner;
+2. settle an older pending version and check `baseVersion`;
+3. decode and validate already-canonical operations;
+4. store the operation batch as an SValue delta root;
+5. run doctype apply against immutable current state;
+6. optionally store the resulting TDoc as a snapshot root;
+7. write one local `svalue_pending` row containing hashes and canonical bytes;
+8. idempotently assign delta and optional snapshot root owners in CAS;
+9. insert local committed rows and delete the pending row;
+10. publish the new in-memory state and return success.
+
+If CAS times out, pending bytes allow recovery to re-ensure nodes. If local
+finalization fails after CAS success, owner assignment is idempotent and the
+pending row is finalized on restart. There is no compensating-delete window.
+
+Version 1 does not persist a TDoc head on every delta. Active SBlob leases protect
+the in-memory state between snapshots. Normal startup loads the latest standalone
+snapshot and replays retained delta roots. Default snapshot cadence is 10 deltas;
+the snapshot endpoint may retain the current version opportunistically.
+
+## 15. Snapshot and history lifecycle
+
+- Delta owner: `doc:{docId}:delta:{version}`.
+- Snapshot owner: `doc:{docId}:snapshot:{version}`.
+- Delta and snapshot roots may share descendants; redundant protection is
+  intentional.
+- A restore is a retained delta containing `{kind: "restore", doc: SBlob}`;
+  replay jumps to that standalone state instead of recording an empty operation.
+- Same-user clone retains the source snapshot DAG in the destination partition.
+  Cross-user clone is rejected until recursive authorized DAG copy exists.
+- Before future history truncation, the surviving boundary receives a standalone
+  snapshot; removed owner rows are then released idempotently.
+
+DOCX TDoc is a two-level OpenXML Merkle manifest:
+
+```ts
+interface DocxDoc {
+  readonly kind: "openxml-package";
+  readonly files: Readonly<Record<AbsoluteOpcPath, SBlob>>;
+}
+```
+
+The doctype uses public Ariadng `ZipReader`, `ZipWriter`, and `Document.open/save`
+to convert between the manifest and a cached in-memory Document. Apply clones a
+working document and stores changed package leaves; unchanged hashes reuse nodes.
+ZIP paths, content types, CRC, entry count, compression ratio, part size, and
+total size are bounded and validated.
+
+PSD follows the same separation. Its TDoc is `PsdStoredDoc`, an SValue tree of
+canvas/layer metadata and pixel SBlobs. `PsdDoc`, which contains resident or
+lazy pixel sources, is only a context-scoped editing/render cache. Import and
+apply externalize that model back to `PsdStoredDoc`; export materializes it and
+writes PSD bytes. PSD bytes and the doctype-local JSON IR are never snapshots.
+
+## 16. Query and transport values
+
+Query results are SValue. Inline `Uint8Array` and the old base64 `QueryValue`
+escape layer are removed. Binary query state is an existing SBlob or a named
+format download.
+
+Query/apply/history accept SValue CBOR. A temporary JSON adapter remains for
+values with no SBlob. Responses containing SBlob require an SValue `Accept`
+header and return `406` to JSON-only callers.
+
+Implemented validation includes unit vectors, CAS/SDK tests, Markdown and DOCX
+restart recovery, rollback, same-user and cross-user clone behavior, native
+SValue image operations, JSON agent tool-hash conversion, provider-rendered
+multimodal SBlob results, and independent delta plus snapshot retention of
+shared image blobs.
+
+Deferred operational work:
+
+- automatic GC scheduling and quotas;
+- owner-prefix cleanup and count-repair tooling;
+- production migration and reconciliation of legacy snapshot R2/root counts;
+- history truncation and document deletion APIs;
+- CBOR tag registration before version 1 production persistence.

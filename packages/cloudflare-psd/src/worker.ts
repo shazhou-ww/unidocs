@@ -6,11 +6,7 @@
  * injection) lives in @unidocs/server-core's createDocTypeHandler — see the
  * markdown worker for the URL contract.
  *
- * NOTE: the PSD operator (chat/agent) is a stub here. main's createOperatorDO
- * does not thread `env` into its `llmProvider`/`getEditorStub` (its DO
- * constructor ignores env), so an env-based LLM provider — the Anthropic
- * provider in ./anthropic.ts — cannot be wired through it yet. This is the same
- * limitation main's own markdown/docx operators have. The render engine +
+ * NOTE: the PSD operator (chat/agent) is a stub here. The render engine +
  * editor path (create/query/apply/export/rollback/snapshot) is fully wired;
  * the chatbox needs the platform to pass env to operators (follow-up).
  */
@@ -19,18 +15,23 @@ import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloud
 import { createPsdDocumentType } from "@unidocs/doctype-psd";
 import { createDocTypeHandler } from "@unidocs/server-core";
 
-const psd = createPsdDocumentType({});
+const psdFactory = createPsdDocumentType;
 
-export const PsdEditor = createEditorDO(psd);
+export const PsdEditor = createEditorDO(psdFactory);
 export const PsdOperator = createOperatorDO({
-  ...psd,
+  agentFactory: (_ctx) => ({
+    tools: {},
+    instructions: "PSD operator is a stub. Agent support requires threading env into createOperatorDO.",
+    toolCall: async () => ({ content: [{ type: "text" as const, text: "PSD operator not implemented" }] }),
+  }),
   llmProvider: async () => {
     throw new Error(
-      "PSD operator LLM provider not configured: main's createOperatorDO does not pass env to llmProvider. See ./anthropic.ts for the intended provider.",
+      "PSD operator LLM provider not configured. See ./anthropic.ts for the intended provider.",
     );
   },
-  getEditorStub: () => {
-    throw new Error("PSD operator editor-stub factory not configured (needs env threading).");
+  getEditorStub: (env: Env, userId, docId) => {
+    const id = env.PSD_EDITOR.idFromName(`${userId}:${docId}`);
+    return env.PSD_EDITOR.get(id);
   },
 });
 
@@ -40,13 +41,85 @@ interface Env extends EditorEnv {
   INTERNAL_TOKEN: string;
 }
 
+const EDITOR_METHODS = new Set([
+  "query", "apply", "history", "rollback", "export",
+  "snapshot", "ir", "init_from_hash",
+]);
+const OPERATOR_METHODS = new Set(["run", "reset"]);
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    return createDocTypeHandler({
-      docType: "psd",
-      internalToken: env.INTERNAL_TOKEN,
-      editor: env.PSD_EDITOR,
-      operator: env.PSD_OPERATOR,
-    })(request);
+    const token = request.headers.get("X-Internal-Token");
+    if (env.INTERNAL_TOKEN && token !== env.INTERNAL_TOKEN) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+
+    if (parts.length < 2 || parts[0] !== "users") {
+      return Response.json({
+        error: "Use /users/{userId}/{docId}/* endpoints",
+      }, { status: 404 });
+    }
+
+    const userId = parts[1];
+    const docId = parts[2];
+    const method = parts[3];
+
+    if (!docId && request.method === "POST") {
+      const newDocId = request.headers.get("X-Doc-Id") || crypto.randomUUID();
+      const id = env.PSD_EDITOR.idFromName(`${userId}:${newDocId}`);
+      const stub = env.PSD_EDITOR.get(id);
+      const forwardUrl = new URL(request.url);
+      forwardUrl.pathname = "/_internal/create";
+      const headers = new Headers(request.headers);
+      headers.set("X-Doc-Type", "psd");
+      headers.set("X-Doc-Id", newDocId);
+      headers.set("X-User-Id", userId);
+      return stub.fetch(new Request(forwardUrl.toString(), {
+        method: "POST",
+        headers,
+        body: request.body,
+      }));
+    }
+
+    if (!docId || !method) {
+      return Response.json({ error: "Missing docId or method" }, { status: 400 });
+    }
+
+    if (EDITOR_METHODS.has(method)) {
+      const id = env.PSD_EDITOR.idFromName(`${userId}:${docId}`);
+      const stub = env.PSD_EDITOR.get(id);
+      const forwardUrl = new URL(request.url);
+      forwardUrl.pathname = `/_internal/${method}`;
+      const headers = new Headers(request.headers);
+      headers.set("X-Doc-Type", "psd");
+      headers.set("X-User-Id", userId);
+      headers.set("X-Doc-Id", docId);
+      return stub.fetch(new Request(forwardUrl.toString(), {
+        method: request.method,
+        headers,
+        body: request.body,
+      }));
+    }
+
+    if (OPERATOR_METHODS.has(method)) {
+      const id = env.PSD_OPERATOR.idFromName(`${userId}:${docId}`);
+      const stub = env.PSD_OPERATOR.get(id);
+      const forwardUrl = new URL(request.url);
+      forwardUrl.pathname = `/_internal/${method}`;
+      const headers = new Headers(request.headers);
+      headers.set("X-Doc-Type", "psd");
+      headers.set("X-User-Id", userId);
+      headers.set("X-Doc-Id", docId);
+      return stub.fetch(new Request(forwardUrl.toString(), {
+        method: request.method,
+        headers,
+        body: request.body,
+      }));
+    }
+
+    return Response.json({ error: `Unknown endpoint: ${method}` }, { status: 404 });
   },
 };

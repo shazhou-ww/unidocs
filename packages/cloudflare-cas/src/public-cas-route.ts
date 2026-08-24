@@ -1,17 +1,6 @@
 /**
- * Gateway allowlist: public CAS methods the Gateway may proxy.
- * Internal `/_internal/root-refs` is never public.
+ * 兼容再导出。这个函数只解析 pathname，没有一个 Cloudflare 类型 ——
+ * 它属于云中立的 @unidocs/cas，因为 azure-gateway 也要用同一份允许列表，
+ * 而 Azure 侧不该依赖 Cloudflare 适配包。
  */
-export function isPublicCasRoute(method: string, pathname: string): boolean {
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length < 3 || parts[0] !== "users" || parts[2] !== "cas") return false;
-
-  if (parts.length === 4 && parts[3] === "usage") return method === "GET";
-  if (parts.length === 4 && parts[3] === "gc") return method === "POST";
-  if (parts.length === 5 && parts[3] === "nodes") return method === "POST";
-  if (parts.length === 6 && parts[3] === "nodes") {
-    if (parts[5] === "content" || parts[5] === "metadata") return method === "GET";
-    if (parts[5] === "lease") return method === "POST";
-  }
-  return false;
-}
+export { isPublicCasRoute } from "@unidocs/cas";

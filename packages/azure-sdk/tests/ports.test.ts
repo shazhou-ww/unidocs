@@ -112,7 +112,6 @@ async function makeAzurePorts(docId: string) {
   // global, so they get cleared to give each factory() the clean state the
   // contract assumes.
   await pool.query("TRUNCATE docs, doc_snapshots");
-  await warmPool(WARM_CONNECTIONS);
 
   const identity = { docType: DOC_TYPE, docId, userId: USER_ID };
   const indexIdentity = { docType: DOC_TYPE, docId: INDEX_DOC_ID, userId: USER_ID };
@@ -146,4 +145,11 @@ afterAll(async () => {
 
 runPortContract("postgres + blob ports", async () => makeAzurePorts(nextDocId()), {
   transactional: true,
+  prepareConcurrency: async () => {
+    await warmPool(WARM_CONNECTIONS);
+    return {
+      concurrentWriters: WARM_CONNECTIONS,
+      how: `warmed the pg pool to ${WARM_CONNECTIONS} idle, already-used connections (see warmPool)`,
+    };
+  },
 });

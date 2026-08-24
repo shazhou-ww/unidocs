@@ -10,7 +10,7 @@
  *   GET  /users/{userId}/{docId}/history              → get delta history
  *   POST /users/{userId}/{docId}/rollback             → rollback to version
  *   GET  /users/{userId}/{docId}/snapshot             → get snapshot hash (for clone)
- *   GET  /users/{userId}/{docId}/ir                   → get current IR bytes directly
+ *   GET  /users/{userId}/{docId}/ir                   → get canonical current-TDoc bytes
  *   POST /users/{userId}/{docId}/init_from_hash       → clone from snapshot
  *   POST /users/{userId}/{docId}/run                  → operator ReAct loop
  *   POST /users/{userId}/{docId}/reset                → reset operator session

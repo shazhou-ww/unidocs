@@ -11,6 +11,8 @@ export { foldRange } from "./render/composite.js";
 export type { Target } from "./render/composite.js";
 export { resolveDoc, resolveLayerPixels } from "./resolve.js";
 export { deserialize } from "./psd/ir.js";
+export { materializePsdDocFromStore } from "./state.js";
+export type { PsdStoredDoc } from "./state.js";
 export {
   PixelCache, resolvePixels, isRef,
 } from "./render/pixel-source.js";

@@ -21,6 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@unidocs/core": "workspace:*",
     "@unidocs/doctype-psd": "workspace:*"
   },
   "devDependencies": {

@@ -19,11 +19,13 @@
  * every `@unidocs/*` import directly from its `.ts` source (`alias` below —
  * shared with `scripts/local-runtime.mjs` and
  * `packages/azure-gateway/scripts/bundle.mjs` via
- * `scripts/workspace-aliases.mjs`, see that module's doc for why). `packages:
- * "external"` keeps genuine npm dependencies (`pg`, `@azure/storage-blob`)
- * OUT of the bundle — they already ship real JS/CJS and are resolved
- * normally through `node_modules` at runtime; only the alias entries are
- * pulled in as source.
+ * `scripts/workspace-aliases.mjs`, see that module's doc for why).
+ * `external: EXTERNAL_NPM_PACKAGES` (also from `scripts/workspace-aliases.mjs`)
+ * keeps genuine npm dependencies (`pg`, `@azure/storage-blob`,
+ * `@azure/identity`) OUT of the bundle — they already ship real JS/CJS and
+ * are resolved normally through `node_modules` at runtime; only the alias
+ * entries are pulled in as source. See that module's doc comment for why
+ * this is an explicit list rather than `packages: "external"`.
  *
  * `package.json`'s `build` script runs `tsc` first (for `dist/*.d.ts`, kept
  * for consistency with the repo's `main`/`types`/`exports` -> `dist/*`
@@ -33,7 +35,10 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
-import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
+import {
+  EXTERNAL_NPM_PACKAGES,
+  resolveWorkspaceAliases,
+} from "../../../scripts/workspace-aliases.mjs";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = join(PKG_ROOT, "..", "..");
@@ -46,7 +51,10 @@ await esbuild.build({
   platform: "node",
   format: "esm",
   target: "node24",
-  packages: "external",
+  // 全仓统一用这一份显式列表:`packages: "external"` 会把每一个裸导入
+  // 都留在外面,包括 `@azure/identity` 这种没有被提升到根 node_modules
+  // 的包,产物只有在生产安装时才会以 ERR_MODULE_NOT_FOUND 暴露。
+  external: EXTERNAL_NPM_PACKAGES,
   alias: resolveWorkspaceAliases(REPO_ROOT),
   // esbuild overwrites the plain-`tsc` `main.js` with the bundle; without
   // this, the `tsc`-emitted `main.js.map` from before would keep pointing
