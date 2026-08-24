@@ -23,9 +23,13 @@
   },
   "dependencies": {
     "@unidocs/azure-sdk": "workspace:*",
-    "@unidocs/doctype-docx": "workspace:*"
+    "@unidocs/doctype-docx": "workspace:*",
+    "@azure/identity": "^4.13.2",
+    "@azure/storage-blob": "^12.33.0",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

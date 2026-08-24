@@ -19,7 +19,7 @@ import {
   type HttpFetcher,
   type SessionDeps,
 } from "@unidocs/server-core";
-import { attachPoolErrorLogger, requireEnv } from "./env.js";
+import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";
 import { createLocalEditorNamespace, createStubOperatorNamespace } from "./local-editor.js";
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";
 import { PgDeltaLog, PgDocIndex, PgUnitOfWork } from "./ports-pg.js";
@@ -28,7 +28,9 @@ import { serve } from "./http-shell.js";
 
 export interface DocTypeServiceConfig {
   databaseUrl: string;
-  blobConnectionString: string;
+  blobConnectionString?: string;
+  /** 云上模式：Blob 账户端点 URL，与 `blobConnectionString` 互斥。 */
+  blobAccountUrl?: string;
   internalToken: string;
   /**
    * 过渡形态（阶段 4 删除）：指向 Cloudflare CAS worker 的基地址。
@@ -149,7 +151,7 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
     port: Number(process.env.PORT ?? defaultPort),
     config: {
       databaseUrl: requireEnv("DATABASE_URL"),
-      blobConnectionString: requireEnv("BLOB_CONNECTION_STRING"),
+      ...resolveBlobConfig(),
       internalToken: requireEnv("INTERNAL_TOKEN"),
       casBaseUrl: process.env.CAS_BASE_URL,
     },

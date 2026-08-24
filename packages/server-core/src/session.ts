@@ -626,7 +626,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     //    retry), not a server fault.
     let refs: CasReferences;
     try {
-      refs = await leaseOpRefs(ops as SValue[], this.#deps.cas);
+      refs = await leaseOpRefs(ops as readonly SValue[], this.#deps.cas);
     } catch (err) {
       if (err instanceof CasClientError) throw err;
       throw new DeltaRejectedError(`Delta failed: ${err}`);

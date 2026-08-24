@@ -12,7 +12,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "migrations"
   ],
   "scripts": {
     "build": "tsc && node scripts/bundle-migrate-cli.mjs",
@@ -22,18 +23,19 @@
     "migrate": "node dist/migrate-cli.js"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.2",
+    "@azure/storage-blob": "^12.33.0",
     "@unidocs/core": "workspace:*",
     "@unidocs/server-core": "workspace:*",
-    "pg": "^8.23.0",
-    "@azure/storage-blob": "^12.33.0"
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",
     "@unidocs/doctype-markdown": "workspace:*",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0",
+    "azurite": "3.36.0",
     "esbuild": "^0.28.2",
-    "azurite": "3.36.0"
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   },
   "publishConfig": {
     "main": "./dist/index.js",

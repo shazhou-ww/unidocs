@@ -4,3 +4,6 @@ node_modules
 **/.wrangler
 **/.treespec-output
 .treespec-output
+.azure-runtime
+**/dist
+**/*.tsbuildinfo
