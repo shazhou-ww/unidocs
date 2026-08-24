@@ -1,5 +1,5 @@
 import type { PsdDoc, Layer } from "./model/types.js";
-import type { QueryValue, DocumentTypeContext } from "@unidocs/core";
+import type { QueryValue, DocumentTypeContext } from "@unidocs/protocol";
 import { encode } from "fast-png";
 import { renderCached, renderRegion, renderLayer, downscale, DEFAULT_CACHE_BYTES, type RenderCtx } from "./render/index.js";
 import { PixelCache } from "./render/pixel-source.js";

@@ -24,7 +24,7 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../packages/cas/dist/index.js";
+import { computeNodeDigest, encodeHeader, hashToHex } from "../packages/cas-server-common/dist/index.js";
 
 const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const RUN = randomBytes(4).toString("hex");

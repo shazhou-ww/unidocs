@@ -1,4 +1,4 @@
-import type { AgentToolDefinition } from "@unidocs/core";
+import type { AgentToolDefinition } from "@unidocs/protocol";
 
 const BLEND_MODES = [
   "normal", "dissolve", "darken", "multiply", "color-burn", "linear-burn",

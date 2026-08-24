@@ -5,23 +5,23 @@ import {
   hexToHash,
   validateContentType,
   validateHash,
-} from "@unidocs/cas";
-import type { CasNodeMetadata } from "@unidocs/cas";
+} from "@unidocs/cas-server-common";
+import type { CasNodeMetadata } from "@unidocs/cas-server-common";
 import {
   isSBlob,
   SValueContentType,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import type {
   DocumentTypeContext,
   MakeSBlob,
   SBlob,
   SBlobData,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import {
   createSBlob,
   decodeSValueWithRefs,
-} from "@unidocs/core/internal";
-import { CasClientError } from "./cas-client.js";
+} from "@unidocs/protocol/internal";
+import { CasClientError } from "@unidocs/cas-client";
 
 export interface SBlobCasAdapter {
   ensureNode(

@@ -1,4 +1,4 @@
-import type { QueryValue } from "@unidocs/core";
+import type { QueryValue } from "@unidocs/protocol";
 
 export interface BinaryQueryValue {
   $unidocs: {

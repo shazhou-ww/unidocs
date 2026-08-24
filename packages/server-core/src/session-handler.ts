@@ -31,8 +31,8 @@
  *   POST /_internal/init_from_hash  — initialize from existing snapshot hash (for clone)
  */
 
-import { SValueContentType } from "@unidocs/core";
-import { CasClientError } from "./cas-client.js";
+import { SValueContentType } from "@unidocs/protocol";
+import { CasClientError } from "@unidocs/cas-client";
 import {
   DeltaRejectedError,
   DocExistsError,

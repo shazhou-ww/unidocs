@@ -32,7 +32,7 @@ runDocTypeService({
     makeSBlob: async () => { throw new Error("makeSBlob not available in azure-docx"); },
     readSBlob: async () => { throw new Error("readSBlob not available in azure-docx"); },
   } as any),
-  defaultPort: 8789,
+  defaultPort: 41810,
 }).catch((err) => {
   console.error("azure-docx failed to start:", err);
   process.exit(1);

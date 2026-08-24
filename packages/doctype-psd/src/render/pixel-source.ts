@@ -1,5 +1,5 @@
 import { decode } from "fast-png";
-import type { SBlob } from "@unidocs/core";
+import type { SBlob } from "@unidocs/protocol";
 import type { Pixels } from "../model/types.js";
 
 /** A reference to a decoded (resident) pixel buffer's PNG-encoded bytes,

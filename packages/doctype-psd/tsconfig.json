@@ -15,7 +15,7 @@
   ],
   "references": [
     {
-      "path": "../core"
+      "path": "../protocol"
     },
     {
       "path": "../server-core"

@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { decodeSValue } from "@unidocs/core";
+import { decodeSValue } from "@unidocs/protocol";
 import type { PsdDoc, PsdOp, PsdStoredDoc } from "@unidocs/doctype-psd/engine";
 import { materializePsdDocFromStore } from "@unidocs/doctype-psd/engine";
 import { CasBlobStore } from "./cas-blob-store.js";

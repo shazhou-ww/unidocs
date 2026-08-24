@@ -1,9 +1,9 @@
-import { toJsonValue } from "@unidocs/core";
+import { toJsonValue } from "@unidocs/protocol";
 import type {
   AgentToolDefinition,
   DocumentAgentFactory,
   JsonValue,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import type { MOp, MQuery } from "./types.js";
 
 export type MarkdownDocumentAgentFactory = DocumentAgentFactory<MQuery, MOp>;

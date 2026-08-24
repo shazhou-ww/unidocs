@@ -1,5 +1,5 @@
 {
-  "name": "@unidocs/core",
+  "name": "@unidocs/protocol",
   "version": "0.1.0",
   "description": "Cloud-neutral document type contracts for UniDocs",
   "type": "module",

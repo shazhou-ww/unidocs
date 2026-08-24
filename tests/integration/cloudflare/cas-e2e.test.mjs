@@ -5,7 +5,7 @@ import {
   computeNodeDigest,
   hashToHex,
   hexToHash,
-} from "../../../packages/cas/src/index.ts";
+} from "../../../packages/cas-server-common/src/index.ts";
 
 let runtime;
 const GW = () => runtime.urls.gateway;

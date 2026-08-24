@@ -1,5 +1,5 @@
 /**
- * @unidocs/cas — Content-addressed storage kernel for UniDocs.
+ * @unidocs/cas-server-common — Content-addressed storage kernel for UniDocs.
  *
  * Pure logic, no I/O. Types, binary format, digest, validation.
  */

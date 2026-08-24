@@ -1068,7 +1068,7 @@ Expected: FAIL.
 ```ts
 // queries.ts
 import type { PsdDoc, Layer } from "./model/types.js";
-import type { QueryValue } from "@unidocs/core";
+import type { QueryValue } from "@unidocs/protocol";
 
 export type PsdQuery = { kind: "getLayers"; payload?: Record<string, never> } | { kind: "getPreview"; payload?: { scale?: number } };
 
@@ -1092,7 +1092,7 @@ export async function runQuery(q: PsdQuery, doc: PsdDoc): Promise<QueryValue> {
 
 ```ts
 // tools.ts
-import type { AgentToolDefinition } from "@unidocs/core";
+import type { AgentToolDefinition } from "@unidocs/protocol";
 
 export const tools: Record<string, AgentToolDefinition> = {
   getLayers: { name: "query_getLayers", description: "List the layer tree (id, name, type, opacity, blendMode, bounds).", inputSchema: {} },
@@ -1117,7 +1117,7 @@ Rules:
 
 ```ts
 // doctype.ts (replaces the stub)
-import type { DocumentTypeFactory } from "@unidocs/core";
+import type { DocumentTypeFactory } from "@unidocs/protocol";
 import type { PsdDoc } from "./model/types.js";
 import { apply, type PsdOp } from "./ops/index.js";
 import { load } from "./psd/load.js";

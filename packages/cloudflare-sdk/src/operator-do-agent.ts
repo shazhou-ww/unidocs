@@ -4,7 +4,7 @@ import {
   isSBlob,
   SValueContentType,
   toJsonValue,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import type {
   AgentToolResult,
   DocumentAgent,
@@ -14,7 +14,7 @@ import type {
   SBlobData,
   SValue,
   SValueType,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 
 export interface AgentToolResultRendererContext {
   readonly readBlob: (blob: SBlob) => Promise<SBlobData>;

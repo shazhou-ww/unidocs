@@ -3,7 +3,7 @@
  */
 
 import { Document } from "@ariadng/office/docx";
-import type { SValue } from "@unidocs/core";
+import type { SValue } from "@unidocs/protocol";
 
 /** Validate that a value is a non-negative safe integer. */
 export function requireIndex(value: number, label: string): void {

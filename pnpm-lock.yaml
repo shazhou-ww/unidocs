@@ -78,9 +78,9 @@ importers:
       '@unidocs/azure-sdk':
         specifier: workspace:*
         version: link:../azure-sdk
-      '@unidocs/cas':
+      '@unidocs/cas-server-common':
         specifier: workspace:*
-        version: link:../cas
+        version: link:../cas-server-common
       '@unidocs/server-core':
         specifier: workspace:*
         version: link:../server-core
@@ -112,15 +112,9 @@ importers:
       '@unidocs/azure-sdk':
         specifier: workspace:*
         version: link:../azure-sdk
-      '@unidocs/core':
-        specifier: workspace:*
-        version: link:../core
       '@unidocs/doctype-markdown':
         specifier: workspace:*
         version: link:../doctype-markdown
-      '@unidocs/server-core':
-        specifier: workspace:*
-        version: link:../server-core
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -146,9 +140,12 @@ importers:
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)
-      '@unidocs/core':
+      '@unidocs/cas-client':
         specifier: workspace:*
-        version: link:../core
+        version: link:../cas-client
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@unidocs/server-core':
         specifier: workspace:*
         version: link:../server-core
@@ -175,7 +172,23 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
-  packages/cas:
+  packages/cas-client:
+    dependencies:
+      '@unidocs/cas-server-common':
+        specifier: workspace:*
+        version: link:../cas-server-common
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/cas-server-common:
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -186,12 +199,12 @@ importers:
 
   packages/cloudflare-cas:
     dependencies:
-      '@unidocs/cas':
+      '@unidocs/cas-server-common':
         specifier: workspace:*
-        version: link:../cas
-      '@unidocs/core':
+        version: link:../cas-server-common
+      '@unidocs/protocol':
         specifier: workspace:*
-        version: link:../core
+        version: link:../protocol
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -214,9 +227,6 @@ importers:
       '@unidocs/doctype-docx':
         specifier: workspace:*
         version: link:../doctype-docx
-      '@unidocs/server-core':
-        specifier: workspace:*
-        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -233,9 +243,9 @@ importers:
 
   packages/cloudflare-gateway:
     dependencies:
-      '@unidocs/cloudflare-cas':
+      '@unidocs/cas-server-common':
         specifier: workspace:*
-        version: link:../cloudflare-cas
+        version: link:../cas-server-common
       '@unidocs/cloudflare-sdk':
         specifier: workspace:*
         version: link:../cloudflare-sdk
@@ -264,9 +274,6 @@ importers:
       '@unidocs/doctype-markdown':
         specifier: workspace:*
         version: link:../doctype-markdown
-      '@unidocs/server-core':
-        specifier: workspace:*
-        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -289,9 +296,6 @@ importers:
       '@unidocs/doctype-psd':
         specifier: workspace:*
         version: link:../doctype-psd
-      '@unidocs/server-core':
-        specifier: workspace:*
-        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -308,12 +312,15 @@ importers:
 
   packages/cloudflare-sdk:
     dependencies:
-      '@unidocs/cas':
+      '@unidocs/cas-client':
         specifier: workspace:*
-        version: link:../cas
-      '@unidocs/core':
+        version: link:../cas-client
+      '@unidocs/cas-server-common':
         specifier: workspace:*
-        version: link:../core
+        version: link:../cas-server-common
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@unidocs/server-core':
         specifier: workspace:*
         version: link:../server-core
@@ -328,28 +335,18 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
-  packages/core:
-    dependencies:
-      cborg:
-        specifier: ^6.1.1
-        version: 6.1.1
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
   packages/doctype-docx:
     dependencies:
       '@ariadng/office':
         specifier: 0.3.0
         version: 0.3.0
-      '@unidocs/core':
+      '@unidocs/protocol':
         specifier: workspace:*
-        version: link:../core
+        version: link:../protocol
     devDependencies:
-      '@unidocs/cas':
+      '@unidocs/cas-server-common':
         specifier: workspace:*
-        version: link:../cas
+        version: link:../cas-server-common
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -359,9 +356,9 @@ importers:
 
   packages/doctype-markdown:
     dependencies:
-      '@unidocs/core':
+      '@unidocs/protocol':
         specifier: workspace:*
-        version: link:../core
+        version: link:../protocol
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -372,9 +369,9 @@ importers:
 
   packages/doctype-psd:
     dependencies:
-      '@unidocs/core':
+      '@unidocs/protocol':
         specifier: workspace:*
-        version: link:../core
+        version: link:../protocol
       ag-psd:
         specifier: ^31.0.0
         version: 31.0.2
@@ -392,14 +389,24 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/protocol:
+    dependencies:
+      cborg:
+        specifier: ^6.1.1
+        version: 6.1.1
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
   packages/psd-client:
     dependencies:
-      '@unidocs/core':
-        specifier: workspace:*
-        version: link:../core
       '@unidocs/doctype-psd':
         specifier: workspace:*
         version: link:../doctype-psd
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       fast-png:
         specifier: ^8.0.0
@@ -413,12 +420,15 @@ importers:
 
   packages/server-core:
     dependencies:
-      '@unidocs/cas':
+      '@unidocs/cas-client':
         specifier: workspace:*
-        version: link:../cas
-      '@unidocs/core':
+        version: link:../cas-client
+      '@unidocs/cas-server-common':
         specifier: workspace:*
-        version: link:../core
+        version: link:../cas-server-common
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -1842,7 +1852,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Glob versions prior to v9 are no longer supported
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}

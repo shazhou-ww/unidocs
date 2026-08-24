@@ -1,4 +1,4 @@
-import type { DocumentTypeContext, SBlob, SValue } from "@unidocs/core";
+import type { DocumentTypeContext, SBlob, SValue } from "@unidocs/protocol";
 import type {
   BlendMode,
   Canvas,

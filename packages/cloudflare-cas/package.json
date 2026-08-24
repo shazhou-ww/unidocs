@@ -9,10 +9,6 @@
     ".": {
       "types": "./src/worker.ts",
       "import": "./src/worker.ts"
-    },
-    "./public": {
-      "types": "./src/public-cas-route.ts",
-      "import": "./src/public-cas-route.ts"
     }
   },
   "files": [
@@ -26,8 +22,8 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@unidocs/cas": "workspace:*",
-    "@unidocs/core": "workspace:*"
+    "@unidocs/cas-server-common": "workspace:*",
+    "@unidocs/protocol": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",
@@ -42,10 +38,6 @@
       ".": {
         "types": "./dist/worker.d.ts",
         "import": "./dist/worker.js"
-      },
-      "./public": {
-        "types": "./dist/public-cas-route.d.ts",
-        "import": "./dist/public-cas-route.js"
       }
     }
   }

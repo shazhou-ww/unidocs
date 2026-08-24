@@ -8,7 +8,7 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../cloudflare-cas" },
+    { "path": "../cas-server-common" },
     { "path": "../cloudflare-sdk" },
     { "path": "../server-core" }
   ]

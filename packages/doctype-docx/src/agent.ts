@@ -1,9 +1,9 @@
-import { isSBlob, toJsonValue } from "@unidocs/core";
+import { isSBlob, toJsonValue } from "@unidocs/protocol";
 import type {
   DocumentAgentFactory,
   JsonValue,
   SValue,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import { instructions, tools } from "./tools.js";
 import type { DocxOperation, DocxQuery } from "./types.js";
 
@@ -87,7 +87,7 @@ async function queryImageContent(
 async function makeOperation(
   kind: string,
   parameters: Readonly<Record<string, JsonValue>>,
-  resolveBlob: (hash: string) => Promise<import("@unidocs/core").SBlob>,
+  resolveBlob: (hash: string) => Promise<import("@unidocs/protocol").SBlob>,
 ): Promise<DocxOperation> {
   if (kind === "insertImage") {
     const hash = requireString(parameters.hash, "hash");

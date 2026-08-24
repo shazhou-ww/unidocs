@@ -15,10 +15,10 @@
   ],
   "references": [
     {
-      "path": "../core"
+      "path": "../protocol"
     },
     {
-      "path": "../cas"
+      "path": "../cas-server-common"
     }
   ]
 }

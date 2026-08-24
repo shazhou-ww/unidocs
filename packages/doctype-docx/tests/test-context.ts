@@ -3,18 +3,18 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "@unidocs/cas";
+} from "@unidocs/cas-server-common";
 import type {
   DocumentTypeContext,
   MakeSBlob,
   SBlob,
   SBlobData,
-} from "@unidocs/core";
-import { SValueContentType } from "@unidocs/core";
+} from "@unidocs/protocol";
+import { SValueContentType } from "@unidocs/protocol";
 import {
   createSBlob,
   decodeSValueWithRefs,
-} from "@unidocs/core/internal";
+} from "@unidocs/protocol/internal";
 import { createDocxDocumentType } from "../src/index.js";
 
 export interface TestDocumentTypeContext extends DocumentTypeContext {

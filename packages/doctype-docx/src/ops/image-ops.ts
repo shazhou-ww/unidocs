@@ -6,7 +6,7 @@
  */
 
 import type { Document } from "@ariadng/office/docx";
-import type { SBlob, SBlobData } from "@unidocs/core";
+import type { SBlob, SBlobData } from "@unidocs/protocol";
 import type { XmlElement } from "@ariadng/office/xml";
 
 // ─── OOXML namespace URIs (standard constants) ──────────────────────

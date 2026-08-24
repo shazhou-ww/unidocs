@@ -21,14 +21,14 @@ LLM 走 Anthropic Messages(经 `cloudflare-psd/src/anthropic.ts` 转换)。
 - 语义对齐 Adobe PSD,不造新概念;沿用 PSD 字段名与 4 字符键(brit/blwh/hue2…)。
 - `bounds` 一律 `[top,left,bottom,right]`,单位像素,原点左上,y 向下。
 - 只支持 8-bit RGB。
-- 改动共享包(`packages/core`、`cloudflare-sdk`)必须对 markdown/docx 向后兼容。
+- 改动共享包(`packages/protocol`、`cloudflare-sdk`)必须对 markdown/docx 向后兼容。
 - 每个任务结束跑 `pnpm --filter @unidocs/doctype-psd test`(及所动包的 test)保持全绿。
 
 ---
 
 ## 文件结构
 
-- `packages/core/src/index.ts` — `AgentToolDefinition` 加 `op` 元数据。
+- `packages/protocol/src/index.ts` — `AgentToolDefinition` 加 `op` 元数据。
 - `packages/cloudflare-sdk/src/operator-do.ts` — 路由改元数据驱动(带前缀兜底);
   提取纯函数 `resolveToolRoute` 便于测试。
 - `packages/cloudflare-sdk/src/tool-route.ts` — 新增,纯路由解析 + 单测目标。
@@ -44,7 +44,7 @@ LLM 走 Anthropic Messages(经 `cloudflare-psd/src/anthropic.ts` 转换)。
 ## 任务 1:`AgentToolDefinition` 增加 `op` 元数据 + 纯路由解析
 
 **Files:**
-- 改:`packages/core/src/index.ts`(`AgentToolDefinition`)
+- 改:`packages/protocol/src/index.ts`(`AgentToolDefinition`)
 - 建:`packages/cloudflare-sdk/src/tool-route.ts`
 - 测:`packages/cloudflare-sdk/tests/tool-route.test.ts`
 
@@ -76,14 +76,14 @@ describe("resolveToolRoute", () => {
 `pnpm --filter @unidocs/cloudflare-sdk exec vitest run tests/tool-route.test.ts` → 期望 FAIL(模块不存在)。
 
 - [ ] **步骤 3:在 core 加 `op` 字段**
-`packages/core/src/index.ts` 的 `AgentToolDefinition` 增加可选字段:
+`packages/protocol/src/index.ts` 的 `AgentToolDefinition` 增加可选字段:
 ```ts
 op?: { mode: "query" | "apply"; kind: string };
 ```
 
 - [ ] **步骤 4:实现 `tool-route.ts`**
 ```ts
-import type { AgentToolDefinition } from "@unidocs/core";
+import type { AgentToolDefinition } from "@unidocs/protocol";
 
 export function resolveToolRoute(
   name: string,
@@ -96,7 +96,7 @@ export function resolveToolRoute(
 }
 ```
 
-- [ ] **步骤 5:运行测试,确认通过**;`pnpm --filter @unidocs/core exec tsc --noEmit` 同过。
+- [ ] **步骤 5:运行测试,确认通过**;`pnpm --filter @unidocs/protocol exec tsc --noEmit` 同过。
 
 - [ ] **步骤 6:提交** `feat(sdk): tool op metadata + resolveToolRoute`
 

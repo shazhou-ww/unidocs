@@ -1,4 +1,4 @@
-import type { SBlob } from "@unidocs/core";
+import type { SBlob } from "@unidocs/protocol";
 
 /** Immutable OpenXML package manifest. */
 export interface DocxDoc {

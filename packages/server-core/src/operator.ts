@@ -20,7 +20,7 @@
  * throwing stubs everywhere they are wired up).
  */
 
-import type { AgentToolDefinition } from "@unidocs/core";
+import type { AgentToolDefinition } from "@unidocs/protocol";
 
 /**
  * Structural view of a Durable Object stub. Deliberately not

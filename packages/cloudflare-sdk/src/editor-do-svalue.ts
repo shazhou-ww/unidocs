@@ -3,7 +3,7 @@ import {
   encodeSValue,
   isSBlob,
   SValueContentType,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import type {
   DocumentFormat,
   DocumentType,
@@ -12,12 +12,12 @@ import type {
   SBlob,
   SValue,
   SValueType,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import {
   createSBlob,
   encodeSValueWithRefs,
-} from "@unidocs/core/internal";
-import { CasClient, CasClientError } from "./cas-client.js";
+} from "@unidocs/protocol/internal";
+import { CasClient, CasClientError } from "@unidocs/cas-client";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
 

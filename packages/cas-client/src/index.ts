@@ -1,5 +1,5 @@
 /**
- * CAS HTTP client for @unidocs/server-core.
+ * CAS HTTP client for @unidocs/cas-client.
  *
  * Public mode talks to Gateway (`baseUrl` + optional Bearer).
  * Editor mode talks to the CAS worker through a fetch-capable binding
@@ -8,9 +8,9 @@
  * `Fetcher` type import).
  */
 
-import { type CasRootRefUpdate, computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
-import { refsFromSValue } from "@unidocs/core";
-import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/core";
+import { type CasRootRefUpdate, computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
+import { refsFromSValue } from "@unidocs/protocol";
+import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/protocol";
 
 /** Structural interface for a fetch-capable binding (e.g. a Cloudflare service binding). */
 export interface HttpFetcher {

@@ -1,6 +1,6 @@
 import { encode } from "fast-png";
-import { createSBlob } from "@unidocs/core";
-import type { CasReferences, DocumentTypeContext } from "@unidocs/core";
+import { createSBlob } from "@unidocs/protocol";
+import type { CasReferences, DocumentTypeContext } from "@unidocs/protocol";
 import type { Layer, Mask, PsdDoc } from "../model/types.js";
 import { isRef, type BlobStore } from "../render/pixel-source.js";
 import { serialize, deserialize } from "./ir.js";

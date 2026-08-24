@@ -24,13 +24,13 @@ export type {
 	SPrimitive,
 	SValue,
 	SValueType,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 export {
 	decodeSValue,
 	encodeSValue,
 	isSBlob,
 	SValueContentType,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 export type { HistoryEntry, ApplyResult, RollbackResult, CreateResult } from "./history.js";
 export type { DocContext, SnapshotRecord, EditorDOClass, EditorDOInstance } from "./editor-do.js";
 export type { OperatorDOClass, OperatorDOInstance } from "./operator-do.js";
@@ -56,7 +56,7 @@ export {
 	CasClient,
 	CasClientError,
 	type CasClientConfig,
-} from "./cas-client.js";
+} from "@unidocs/cas-client";
 export {
 	createSBlobContext,
 	SBlobIntegrityError,

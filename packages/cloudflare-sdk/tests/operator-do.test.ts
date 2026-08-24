@@ -4,14 +4,14 @@ import {
   encodeSValue,
   isSBlob,
   SValueContentType,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import type {
   DocumentAgentFactory,
   JsonValue,
   SBlob,
   SValue,
-} from "@unidocs/core";
-import { createSBlob } from "@unidocs/core/internal";
+} from "@unidocs/protocol";
+import { createSBlob } from "@unidocs/protocol/internal";
 import {
   createOperatorDO,
   renderDefaultAgentToolResult,

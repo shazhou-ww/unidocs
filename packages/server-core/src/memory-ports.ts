@@ -1,4 +1,4 @@
-import type { CasRef, CasReferences } from "@unidocs/core";
+import type { CasRef, CasReferences } from "@unidocs/protocol";
 import type {
   BlobCas,
   Delta,
@@ -13,7 +13,7 @@ import type {
 } from "./ports.js";
 import type { CasGateway } from "./session.js";
 import { VersionConflictError } from "./errors.js";
-import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
+import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
 
 class MemoryDeltaLog implements DeltaLog {
   #deltas: Delta[] = [];

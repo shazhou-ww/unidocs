@@ -14,7 +14,7 @@ import {
 } from "../../../scripts/doc-types.mjs";
 
 test("parseDocTypes defaults to every registered doc type", () => {
-  expect(parseDocTypes([])).toEqual(["markdown", "docx"]);
+  expect(parseDocTypes([])).toEqual(["markdown", "docx", "psd"]);
 });
 
 test("parseDocTypes selects the doc types named as positional args", () => {

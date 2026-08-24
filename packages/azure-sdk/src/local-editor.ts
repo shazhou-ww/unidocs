@@ -30,7 +30,7 @@
  * writeup.
  */
 
-import type { DocumentType } from "@unidocs/core";
+import type { DocumentType } from "@unidocs/protocol";
 import {
   createSessionHandler,
   DocumentSession,

@@ -1,4 +1,4 @@
-import type { DocumentTypeContext } from "@unidocs/core";
+import type { DocumentTypeContext } from "@unidocs/protocol";
 import type { PsdDoc } from "../model/types.js";
 import { addLayer, removeLayer, reorder, setProps } from "./layer-ops.js";
 import { crop, transform } from "./geometry-ops.js";

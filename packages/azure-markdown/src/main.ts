@@ -22,7 +22,7 @@ runDocTypeService({
     makeSBlob: async () => { throw new Error("makeSBlob not available in azure-markdown"); },
     readSBlob: async () => { throw new Error("readSBlob not available in azure-markdown"); },
   } as any),
-  defaultPort: 8788,
+  defaultPort: 41800,
 }).catch((err) => {
   console.error("azure-markdown failed to start:", err);
   process.exit(1);

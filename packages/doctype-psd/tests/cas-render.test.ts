@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { createSBlob } from "@unidocs/core";
-import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/core";
+import { createSBlob } from "@unidocs/protocol";
+import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/protocol";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { serialize, deserialize } from "../src/psd/ir.js";
 import { casBlobStore } from "../src/psd/cas-blobstore.js";

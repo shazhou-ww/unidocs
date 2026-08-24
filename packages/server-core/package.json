@@ -29,8 +29,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@unidocs/core": "workspace:*",
-    "@unidocs/cas": "workspace:*"
+    "@unidocs/cas-client": "workspace:*",
+    "@unidocs/cas-server-common": "workspace:*",
+    "@unidocs/protocol": "workspace:*"
   },
   "peerDependencies": {
     "vitest": "^3.2.0"

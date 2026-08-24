@@ -2,7 +2,7 @@
  * Markdown DocumentType implementation.
  */
 
-import type { DocumentTypeFactory } from "@unidocs/core";
+import type { DocumentTypeFactory } from "@unidocs/protocol";
 import type { MDoc, MQuery, MOp } from "./types.js";
 
 export type MarkdownDocumentTypeFactory = DocumentTypeFactory<MDoc, MQuery, MOp>;

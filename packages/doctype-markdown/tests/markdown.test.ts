@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DocumentTypeContext } from "@unidocs/core";
+import type { DocumentTypeContext } from "@unidocs/protocol";
 import { createMarkdownDocumentType } from "../src/index.js";
 
 describe("createMarkdownDocumentType", () => {

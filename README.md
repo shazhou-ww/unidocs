@@ -56,14 +56,25 @@ and share unchanged Blob descendants through CAS.
 
 ```
 packages/
-├── cas/                   @unidocs/cas                   — CAS binary/digest kernel
-├── core/                  @unidocs/core                  — Cloud-neutral document contracts
+├── protocol/              @unidocs/protocol              — Cloud-neutral document protocol contracts (SValue/SBlob)
+├── cas-server-common/     @unidocs/cas-server-common     — Cloud-neutral CAS server kernel (binary/digest/contract)
+├── cas-client/            @unidocs/cas-client            — Cloud-neutral CAS HTTP client
+├── server-core/           @unidocs/server-core           — Cloud-neutral session/gateway/ports core
 ├── doctype-markdown/      @unidocs/doctype-markdown      — Cloud-neutral Markdown document type
 ├── doctype-docx/          @unidocs/doctype-docx          — Cloud-neutral DOCX document type
+├── doctype-psd/           @unidocs/doctype-psd           — Cloud-neutral PSD image document type
+├── psd-client/            @unidocs/psd-client            — Browser-side PSD render client
 ├── cloudflare-sdk/        @unidocs/cloudflare-sdk        — Durable Object runtime factories
 ├── cloudflare-cas/        @unidocs/cloudflare-cas        — User-scoped CAS worker
 ├── cloudflare-gateway/    @unidocs/cloudflare-gateway    — Cloudflare API Gateway
-└── cloudflare-markdown/   @unidocs/cloudflare-markdown   — Cloudflare Markdown deployment
+├── cloudflare-markdown/   @unidocs/cloudflare-markdown   — Cloudflare Markdown deployment
+├── cloudflare-docx/       @unidocs/cloudflare-docx       — Cloudflare DOCX deployment
+├── cloudflare-psd/        @unidocs/cloudflare-psd        — Cloudflare PSD deployment
+├── azure-sdk/             @unidocs/azure-sdk             — Azure (Postgres + Blob) storage adapters
+├── azure-gateway/         @unidocs/azure-gateway         — Azure/Node API Gateway
+├── azure-markdown/        @unidocs/azure-markdown        — Azure/Node Markdown service
+├── azure-docx/            @unidocs/azure-docx            — Azure/Node DOCX service
+└── web-psd/               @unidocs/web-psd               — PSD dev frontend (Vite)
 ```
 
 ## API
@@ -211,7 +222,7 @@ Clears conversation history and version tracking.
   the core factory generic:
 
 ```typescript
-import type { DocumentTypeFactory } from "@unidocs/core";
+import type { DocumentTypeFactory } from "@unidocs/protocol";
 
 export const createMytypeDocumentType:
   DocumentTypeFactory<MyDocument, MyQuery, MyOperation> =
@@ -361,7 +372,7 @@ Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry
 
 Why: with `dist`-only exports, `pnpm -r test` and `pnpm --filter <pkg> test` fail on a
 fresh clone — vitest resolves a sibling workspace package before anything has built it
-(`Failed to resolve entry for package "@unidocs/cas"`). Pointing the workspace-facing
+(`Failed to resolve entry for package "@unidocs/cas-server-common"`). Pointing the workspace-facing
 entry at source removes the ordering dependency; `publishConfig` keeps packaged
 consumers on the built artifacts (`pnpm pack` rewrites the fields and drops the block).
 

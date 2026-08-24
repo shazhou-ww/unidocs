@@ -4,10 +4,10 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "@unidocs/cas";
-import { SValueContentType } from "@unidocs/core";
-import { encodeSValueWithRefs } from "@unidocs/core/internal";
-import { CasClientError } from "../src/cas-client.js";
+} from "@unidocs/cas-server-common";
+import { SValueContentType } from "@unidocs/protocol";
+import { encodeSValueWithRefs } from "@unidocs/protocol/internal";
+import { CasClientError } from "@unidocs/cas-client";
 import {
   createSBlobContext,
   SBlobIntegrityError,

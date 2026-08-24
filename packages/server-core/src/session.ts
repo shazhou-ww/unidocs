@@ -64,13 +64,13 @@ import type {
   CasReferences,
   SValueType,
   SValue,
-} from "@unidocs/core";
+} from "@unidocs/protocol";
 import {
   decodeSValue,
   encodeSValue,
   refsFromSValue,
-} from "@unidocs/core";
-import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "./cas-client.js";
+} from "@unidocs/protocol";
+import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "@unidocs/cas-client";
 import {
   DeltaRejectedError,
   DocExistsError,

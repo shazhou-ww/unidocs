@@ -1,4 +1,4 @@
-import type { DocumentTypeContext } from "@unidocs/core";
+import type { DocumentTypeContext } from "@unidocs/protocol";
 import type { BlobStore } from "../render/pixel-source.js";
 
 /**

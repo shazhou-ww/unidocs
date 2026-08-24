@@ -1,4 +1,4 @@
-import type { SBlob } from "@unidocs/core";
+import type { SBlob } from "@unidocs/protocol";
 import type { PixelSource } from "../render/pixel-source.js";
 
 export type BlendMode =

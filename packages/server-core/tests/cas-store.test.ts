@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas";
-import { CasClient } from "../src/cas-client";
+import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
+import { CasClient } from "@unidocs/cas-client";
 import { MemoryCas } from "../src/memory-ports";
 
 /** The CAS service's canonical leaf-node digest (no children). */

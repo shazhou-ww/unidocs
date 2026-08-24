@@ -11,12 +11,14 @@
  * 直接原因是 `local-editor.ts` 携带的多副本不变量（每请求新建 session）——
  * 复制那条规则等于制造一条「只改一边就能悄悄产生数据损坏」的路径。
  */
-import type { DocumentType } from "@unidocs/core";
+import type { DocumentType } from "@unidocs/protocol";
 import {
   CasClient,
+  type HttpFetcher,
+} from "@unidocs/cas-client";
+import {
   createDocTypeHandler,
   type DocIdentity,
-  type HttpFetcher,
   type SessionDeps,
 } from "@unidocs/server-core";
 import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";

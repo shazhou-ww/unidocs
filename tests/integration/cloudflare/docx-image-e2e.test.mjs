@@ -4,7 +4,7 @@ import {
   encodeHeader,
   computeNodeDigest,
   hashToHex,
-} from "../../../packages/cas/src/index.ts";
+} from "../../../packages/cas-server-common/src/index.ts";
 import {
   CasClient,
   createSBlobContext,

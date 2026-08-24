@@ -28,13 +28,13 @@ import { join } from "node:path";
  * left to check when it happens.
  */
 const WORKSPACE_PACKAGE_ENTRYPOINTS = {
-  "@unidocs/core": "packages/core/src/index.ts",
-  "@unidocs/core/internal": "packages/core/src/internal.ts",
-  "@unidocs/cas": "packages/cas/src/index.ts",
+  "@unidocs/protocol": "packages/protocol/src/index.ts",
+  "@unidocs/protocol/internal": "packages/protocol/src/internal.ts",
+  "@unidocs/cas-server-common": "packages/cas-server-common/src/index.ts",
+  "@unidocs/cas-client": "packages/cas-client/src/index.ts",
   "@unidocs/server-core": "packages/server-core/src/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",
   "@unidocs/cloudflare-sdk": "packages/cloudflare-sdk/src/index.ts",
-  "@unidocs/cloudflare-cas/public": "packages/cloudflare-cas/src/public-cas-route.ts",
   "@unidocs/doctype-markdown": "packages/doctype-markdown/src/index.ts",
   "@unidocs/doctype-docx": "packages/doctype-docx/src/index.ts",
   "@unidocs/doctype-psd": "packages/doctype-psd/src/index.ts",

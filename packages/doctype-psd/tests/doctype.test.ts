@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { collectSBlobRefs, createSBlob, decodeSValue, encodeSValue } from "@unidocs/core";
-import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/core";
+import { collectSBlobRefs, createSBlob, decodeSValue, encodeSValue } from "@unidocs/protocol";
+import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/protocol";
 import { createPsdDocumentType, type PsdStoredDoc } from "../src/doctype.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));

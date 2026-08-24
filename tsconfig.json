@@ -3,12 +3,16 @@
   "compilerOptions": {
     "noEmit": true
   },
+  "files": [],
   "references": [
     {
-      "path": "packages/core"
+      "path": "packages/protocol"
     },
     {
-      "path": "packages/cas"
+      "path": "packages/cas-server-common"
+    },
+    {
+      "path": "packages/cas-client"
     },
     {
       "path": "packages/server-core"
@@ -32,6 +36,12 @@
       "path": "packages/doctype-docx"
     },
     {
+      "path": "packages/doctype-psd"
+    },
+    {
+      "path": "packages/psd-client"
+    },
+    {
       "path": "packages/cloudflare-sdk"
     },
     {
@@ -39,6 +49,9 @@
     },
     {
       "path": "packages/cloudflare-docx"
+    },
+    {
+      "path": "packages/cloudflare-psd"
     },
     {
       "path": "packages/cloudflare-cas"

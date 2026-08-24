@@ -20,7 +20,7 @@
 
 ### Task 1: R2 BlobStore 适配器(cloudflare-sdk)
 **Files:** Create `packages/cloudflare-sdk/src/blob-store.ts`; Test `packages/cloudflare-sdk/tests/blob-store.test.ts`
-**Interfaces:** Produces `createR2BlobStore(cas: R2Bucket): BlobStore`（`BlobStore` 从 `@unidocs/core` 导入）。`put(bytes)`: `hash=computeHash(bytes)`(复用 editor-do 的同款 SHA-256→16hex,抽到共享处或复制)、`cas.put(hash,bytes)`、返回 hash(内容寻址、幂等)。`get(hash)`: `const o=await cas.get(hash); return o? new Uint8Array(await o.arrayBuffer()) : null`。
+**Interfaces:** Produces `createR2BlobStore(cas: R2Bucket): BlobStore`（`BlobStore` 从 `@unidocs/protocol` 导入）。`put(bytes)`: `hash=computeHash(bytes)`(复用 editor-do 的同款 SHA-256→16hex,抽到共享处或复制)、`cas.put(hash,bytes)`、返回 hash(内容寻址、幂等)。`get(hash)`: `const o=await cas.get(hash); return o? new Uint8Array(await o.arrayBuffer()) : null`。
 - [ ] Step1 失败测试:用一个内存 R2 桩(`put/get/head` 的 Map 版)验证 put 返回内容哈希、相同字节同哈希、get 取回一致、缺失返回 null。
 - [ ] Step2 跑,失败。 - [ ] Step3 实现。 - [ ] Step4 绿。 - [ ] Step5 提交 `feat(sdk): R2-backed BlobStore adapter`。
 
@@ -31,7 +31,7 @@
 - [ ] Step2 失败。 - [ ] Step3 实现字节预算 LRU;`defaultCtx()` 用一个合理默认(如 `64*1024*1024`)。 - [ ] Step4 全绿+保真不变。 - [ ] Step5 提交 `refactor(psd): byte-budget PixelCache`。
 
 ### Task 3: 把 BlobStore 接进查询/渲染路径(core+doctype+sdk,修 Finding 2)
-**Files:** Modify `packages/core/src/types.ts`（`query` 签名加可选 ctx）; Modify `packages/doctype-psd/src/queries.ts`; Modify `packages/doctype-psd/src/doctype.ts`; Modify `packages/cloudflare-sdk/src/editor-do.ts`（`/_internal/query` 处构造并传入 ctx）
+**Files:** Modify `packages/protocol/src/types.ts`（`query` 签名加可选 ctx）; Modify `packages/doctype-psd/src/queries.ts`; Modify `packages/doctype-psd/src/doctype.ts`; Modify `packages/cloudflare-sdk/src/editor-do.ts`（`/_internal/query` 处构造并传入 ctx）
 **Interfaces:**
 - core: `query: (query: TQuery, doc: TDoc, ctx?: QueryCtx) => Promise<QueryValue>`,新增 `export interface QueryCtx { store: BlobStore; cache: PixelCache }`（`PixelCache` 也需在 core 有个最小类型,或 ctx 用 `unknown` 由 doctype 内部断言——优先在 core 定义 `QueryCtx { store: BlobStore }` 只放 store,cache 由 doctype 侧的 render ctx 持有;editor-do 持有一个长生命周期 cache 传给 render)。**决策:** `QueryCtx = { store: BlobStore; cache?: PixelCache-like }`;为避免 core 依赖 doctype 的 PixelCache,core 只声明 `store: BlobStore`,doctype 的 `runQuery` 内部再补一个自己的 cache 或从 ctx 里拿 store 构 RenderCtx。执行时以"core 只认 BlobStore,cache 归 doctype/editor 持有"为准,消除跨包类型泄漏。
 - doctype `runQuery(query, doc, ctx?)`: getPreview 分支把 `ctx.store` + 一个 cache 组成 `RenderCtx` 传给 `renderCached/renderRegion/renderLayer`;无 ctx 时保持现默认(resident 文档)。删掉 queries.ts 里 "arrives in Task 4" 过时注释。

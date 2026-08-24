@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
 import { startAzureRuntime } from "../../../scripts/azure-runtime.mjs";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../../../packages/cas/src/index.ts";
+import { computeNodeDigest, encodeHeader, hashToHex } from "../../../packages/cas-server-common/src/index.ts";
 
 let miniflare;
 let azure;

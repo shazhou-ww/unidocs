@@ -220,7 +220,7 @@ Run: `pnpm --filter @unidocs/doctype-psd test`
 **Files:**
 - Modify: `packages/doctype-psd/src/doctype.ts`(挂上 `serialize`/`deserialize`)
 - Modify: `packages/doctype-psd/src/ops/index.ts`(新增 `init` op handler:payload=IR,直接置换 doc)
-- Modify: `packages/core/src/types.ts`(`DocumentType` 增加可选 `serialize?/deserialize?(…, store)`)
+- Modify: `packages/protocol/src/types.ts`(`DocumentType` 增加可选 `serialize?/deserialize?(…, store)`)
 - Test: `packages/doctype-psd/tests/init-op.test.ts`
 
 **Interfaces:**

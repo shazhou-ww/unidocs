@@ -12,7 +12,7 @@ import {
   computeNodeDigest,
   hashToHex,
   hexToHash,
-} from "../packages/cas/dist/index.js";
+} from "../packages/cas-server-common/dist/index.js";
 
 const contentType = process.argv[2];
 if (!contentType) {

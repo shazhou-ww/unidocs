@@ -12,3 +12,4 @@ dist/
 .treespec-output/
 .wrangler/
 .azure-runtime/
+.pnpm-store/

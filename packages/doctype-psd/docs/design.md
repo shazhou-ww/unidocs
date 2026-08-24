@@ -21,7 +21,7 @@ UniDocs 已经提供了我们前期设计里辛苦推导的**全部基础设施*
 | 三张 DB 表 | KV / DO-sqlite / D1 / R2,平台托管 |
 | agent 编辑循环 | **Operator DO**(ReAct 循环 + 工具派发) |
 
-**所以我们要写的,只是一个 `DocumentType<PsdStoredDoc, PsdQuery, PsdOp>`** —— 持久状态遵循 `@unidocs/core` 的 SValue 契约:
+**所以我们要写的,只是一个 `DocumentType<PsdStoredDoc, PsdQuery, PsdOp>`** —— 持久状态遵循 `@unidocs/protocol` 的 SValue 契约:
 
 | DocumentType 成员 | 我们的实现 | 本规范 |
 |---|---|---|
@@ -389,6 +389,6 @@ doctype.ts  组装 DocumentType
 ---
 
 ### 参考来源
-- UniDocs README + `@unidocs/core` `DocumentType` 契约 + `doctype-markdown` 参考实现(本仓库 `~/workspace/unidocs`)
+- UniDocs README + `@unidocs/protocol` `DocumentType` 契约 + `doctype-markdown` 参考实现(本仓库 `~/workspace/unidocs`)
 - Adobe Photoshop File Format Summary — https://www.fileformat.info/format/psd/egff.htm
 - ag-psd — https://github.com/Agamnentzar/ag-psd

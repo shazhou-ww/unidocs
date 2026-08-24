@@ -25,7 +25,8 @@
   "dependencies": {
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
-    "@unidocs/core": "workspace:*",
+    "@unidocs/cas-client": "workspace:*",
+    "@unidocs/protocol": "workspace:*",
     "@unidocs/server-core": "workspace:*",
     "pg": "^8.23.0"
   },

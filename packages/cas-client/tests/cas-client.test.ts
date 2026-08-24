@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { CasClient, CasClientError, leaseOpRefs, commitRootRefsOrRollback } from "../src/cas-client";
+import { CasClient, CasClientError, leaseOpRefs, commitRootRefsOrRollback } from "../src/index.js";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -311,7 +311,7 @@ describe("CasClient", () => {
 
 describe("leaseOpRefs", () => {
   it("leases each aggregated hash and skips empty maps", async () => {
-    const { createSBlob } = await import("@unidocs/core");
+    const { createSBlob } = await import("@unidocs/protocol");
     const leaseExisting = vi.fn(async () => ({ ready: true }));
     const hash = "d".repeat(64);
     const refs = await leaseOpRefs(
@@ -324,7 +324,7 @@ describe("leaseOpRefs", () => {
   });
 
   it("maps missing nodes as CasClientError 404", async () => {
-    const { createSBlob } = await import("@unidocs/core");
+    const { createSBlob } = await import("@unidocs/protocol");
     const leaseExisting = vi.fn(async () => {
       throw new CasClientError(404, "Not Found", "leaseExisting");
     });

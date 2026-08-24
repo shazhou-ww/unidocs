@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@unidocs/azure-sdk": "workspace:*",
-    "@unidocs/cas": "workspace:*",
+    "@unidocs/cas-server-common": "workspace:*",
     "@unidocs/server-core": "workspace:*",
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { encodeSValueWithRefs } from "@unidocs/core/internal";
-import type { SBlob } from "@unidocs/core";
+import { encodeSValueWithRefs } from "@unidocs/protocol/internal";
+import type { SBlob } from "@unidocs/protocol";
 import { createTestDocx, type TestDocumentTypeContext } from "./test-context.js";
 
 const PNG_1x1 = new Uint8Array([

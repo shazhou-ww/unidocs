@@ -3,8 +3,8 @@
  *
  * Exports two Durable Object classes (PsdEditor, PsdOperator) that the Gateway
  * forwards to via HTTP. Routing (path parsing, method dispatch, header
- * injection) lives in @unidocs/server-core's createDocTypeHandler — see the
- * markdown worker for the URL contract.
+ * injection) is inline here, mirroring the docx/markdown workers — see the
+ * docx worker for the URL contract.
  *
  * NOTE: the PSD operator (chat/agent) is a stub here. The render engine +
  * editor path (create/query/apply/export/rollback/snapshot) is fully wired;
@@ -13,7 +13,6 @@
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
 import { createPsdDocumentType } from "@unidocs/doctype-psd";
-import { createDocTypeHandler } from "@unidocs/server-core";
 
 const psdFactory = createPsdDocumentType;
 

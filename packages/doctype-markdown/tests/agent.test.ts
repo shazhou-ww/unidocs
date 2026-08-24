@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DocumentAgentContext } from "@unidocs/core";
-import { createSBlob } from "@unidocs/core/internal";
+import type { DocumentAgentContext } from "@unidocs/protocol";
+import { createSBlob } from "@unidocs/protocol/internal";
 import { createMarkdownDocumentAgent } from "../src/index.js";
 import type { MOp, MQuery } from "../src/types.js";
 

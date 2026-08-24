@@ -12,10 +12,13 @@
   ],
   "references": [
     {
+      "path": "../cas-client"
+    },
+    {
       "path": "../server-core"
     },
     {
-      "path": "../core"
+      "path": "../protocol"
     }
   ]
 }

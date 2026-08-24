@@ -32,11 +32,11 @@ import {
   validateContentLength,
   validateChildRefs,
   validateDecodedHeader,
-} from "@unidocs/cas";
+} from "@unidocs/cas-server-common";
 import {
   decodeSValueWithRefs,
   SValueContentType,
-} from "@unidocs/core/internal";
+} from "@unidocs/protocol/internal";
 
 interface CasEnv {
   CAS_DB: D1Database;

@@ -1,8 +1,8 @@
 /** DOCX DocumentType implementation over an immutable OpenXML Merkle manifest. */
 
 import { Document } from "@ariadng/office/docx";
-import { isSBlob } from "@unidocs/core";
-import type { DocumentTypeFactory, SBlob } from "@unidocs/core";
+import { isSBlob } from "@unidocs/protocol";
+import type { DocumentTypeFactory, SBlob } from "@unidocs/protocol";
 import { tools, instructions } from "./tools.js";
 import {
   insertImage,
@@ -104,7 +104,7 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
           || isSBlob(metadata)) {
           throw new Error(`Image ${query.payload.index} has no metadata`);
         }
-        const record = metadata as { readonly [key: string]: import("@unidocs/core").SValue };
+        const record = metadata as { readonly [key: string]: import("@unidocs/protocol").SValue };
         const partName = record.partName;
         if (typeof partName !== "string") {
           throw new Error(`Image ${query.payload.index} has no package part`);

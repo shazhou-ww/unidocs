@@ -10,7 +10,7 @@
  *   POST /users/{userId}/cas/gc                     — trigger GC
  */
 
-import { validateHash } from "@unidocs/cas";
+import { validateHash } from "@unidocs/cas-server-common";
 
 interface CasEnv {
   CAS_DB: D1Database;

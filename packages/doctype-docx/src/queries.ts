@@ -3,7 +3,7 @@
  */
 
 import type { Document } from "@ariadng/office/docx";
-import type { SValue } from "@unidocs/core";
+import type { SValue } from "@unidocs/protocol";
 import { paragraphValue, requireIndex } from "./helpers.js";
 import type { DocxQuery } from "./types.js";
 

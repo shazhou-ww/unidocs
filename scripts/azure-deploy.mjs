@@ -215,14 +215,14 @@ function checkRbac(args) {
 }
 
 /**
- * `scripts/azure-smoke.mjs`(第 7 步)从 `packages/cas/dist/index.js` import CAS
+ * `scripts/azure-smoke.mjs`(第 7 步)从 `packages/cas-server-common/dist/index.js` import CAS
  * 哈希算法(仓库既有惯例,`scripts/cas-digest.mjs` 同样如此),而本脚本全程
  * **不在宿主机跑 `pnpm build`** —— 它只构建镜像,那是容器内编译,`.dockerignore`
  * 还排除了 `**\/dist`。干净检出上不自检的话,会一路成功到第 7 步,在十几分钟
  * 的镜像构建与真实资源创建之后才以 ERR_MODULE_NOT_FOUND 失败。
  */
 function checkHostBuild() {
-  const casDist = join(ROOT, "packages/cas/dist/index.js");
+  const casDist = join(ROOT, "packages/cas-server-common/dist/index.js");
   if (!existsSync(casDist)) {
     throw new Error(
       `preflight: ${casDist} is missing. scripts/azure-smoke.mjs (step 7) imports the CAS ` +

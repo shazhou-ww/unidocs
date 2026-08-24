@@ -15,7 +15,7 @@
       "path": "../azure-sdk"
     },
     {
-      "path": "../cas"
+      "path": "../cas-server-common"
     },
     {
       "path": "../server-core"

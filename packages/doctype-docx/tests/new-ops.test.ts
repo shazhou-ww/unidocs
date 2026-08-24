@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Document } from "@ariadng/office/docx";
-import { encodeSValueWithRefs } from "@unidocs/core/internal";
+import { encodeSValueWithRefs } from "@unidocs/protocol/internal";
 import { createTestDocx } from "./test-context.js";
 
 function createDocxDocumentType(_options: Record<string, never>) {

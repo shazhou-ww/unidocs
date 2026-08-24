@@ -1,4 +1,4 @@
-import type { DocumentType, DocumentTypeContext, SValue } from "@unidocs/core";
+import type { DocumentType, DocumentTypeContext, SValue } from "@unidocs/protocol";
 import type { PsdDoc } from "./model/types.js";
 import { apply, type PsdOp } from "./ops/index.js";
 import { save } from "./psd/save.js";

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { createSBlob, encodeSValue } from "@unidocs/core";
-import type { SValue } from "@unidocs/core";
+import { createSBlob, encodeSValue } from "@unidocs/protocol";
+import type { SValue } from "@unidocs/protocol";
 import { DocSession } from "../src/doc-session.js";
 import type { RenderLike } from "../src/doc-session.js";
 import type { BlobStore, Layer, PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";

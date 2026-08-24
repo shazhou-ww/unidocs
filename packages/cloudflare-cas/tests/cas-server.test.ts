@@ -6,8 +6,8 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "@unidocs/cas";
-import { createSBlob, encodeSValueWithRefs, SValueContentType } from "@unidocs/core/internal";
+} from "@unidocs/cas-server-common";
+import { createSBlob, encodeSValueWithRefs, SValueContentType } from "@unidocs/protocol/internal";
 
 // ─── Mock D1 Database ───────────────────────────────────────────────
 // Stores rows as plain objects with named columns.

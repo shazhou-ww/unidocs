@@ -91,8 +91,8 @@ async function bundleProbeWorker() {
     target: "es2024",
     conditions: ["workerd", "worker", "browser"],
     alias: {
-      "@unidocs/core": join(ROOT, "packages/core/src/index.ts"),
-      "@unidocs/cas": join(ROOT, "packages/cas/src/index.ts"),
+      "@unidocs/protocol": join(ROOT, "packages/protocol/src/index.ts"),
+      "@unidocs/cas-server-common": join(ROOT, "packages/cas-server-common/src/index.ts"),
       "@unidocs/server-core": join(ROOT, "packages/server-core/src/index.ts"),
     },
     logOverride: { "empty-import-meta": "silent" },
