@@ -22,6 +22,11 @@ export interface Target {
 }
 const fullTarget = (data: Uint8ClampedArray, cw: number, ch: number): Target =>
   ({ data, originX: 0, originY: 0, width: cw, height: ch });
+/** A Target over `data` covering EXACTLY the same canvas region as `t`. Used for
+ *  group scratch buffers so a group costs work proportional to the region being
+ *  rendered (a tile) instead of the whole canvas. */
+const sameRegion = (data: Uint8ClampedArray, t: Target): Target =>
+  ({ data, originX: t.originX, originY: t.originY, width: t.width, height: t.height });
 
 type Rect = [number, number, number, number]; // [top,left,bottom,right]
 /** Rect intersection. Degenerate/inverted rects (top≥bottom or left≥right) —
@@ -145,15 +150,16 @@ export async function foldRange(
   // Replay renderList's baseCoverage transitions over the prefix [0, fromIndex).
   // The final value is the base state entering fromIndex — mirroring renderList
   // exactly (hidden non-clip resets, promotion of an unconfined visible clip,
-  // adjustment→null, multi-clip runs sharing one base). layerAlpha is canvas-
-  // sized (the clip buffer is indexed in canvas coords: clip[cy*cw+cx]).
+  // adjustment→null, multi-clip runs sharing one base). The clip buffer stays
+  // canvas-indexed (clip[cy*cw+cx]); `target` only tells layerAlpha which region
+  // it actually has to fill.
   let initialBaseCoverage: Uint8ClampedArray | null = null;
   for (let i = 0; i < fromIndex; i++) {
     const layer = doc.layers[i];
     if (!layer.visible) { if (!layer.clipping) initialBaseCoverage = null; continue; }
     if (layer.clipping && initialBaseCoverage) continue; // confined; base persists
     const next = nextVisible(doc.layers, i + 1);
-    initialBaseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(cw, ch, layer, ctx) : null;
+    initialBaseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(cw, ch, layer, ctx, target) : null;
   }
   await renderList(target, cw, ch, slice, ctx, initialBaseCoverage);
 }
@@ -182,11 +188,12 @@ async function renderList(target: Target, cw: number, ch: number, layers: Layer[
     } else {
       await applyLayer(target, cw, ch, layer, ctx);
       // The clip base is only needed if a following sibling actually clips to
-      // it. Computing it eagerly for every layer is very expensive — for a
-      // group it re-renders the whole group into a fresh canvas buffer — so
-      // derive it lazily only when the next visible layer is a clipping layer.
+      // it. Computing it eagerly for every layer is expensive — for a group it
+      // re-renders the group's children — so derive it lazily only when the
+      // next visible layer is a clipping layer. `target` is passed through so a
+      // group base is re-rendered only over the region being composited.
       const next = nextVisible(layers, i + 1);
-      baseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(cw, ch, layer, ctx) : null;
+      baseCoverage = layer.type !== "adjustment" && next?.clipping ? await layerAlpha(cw, ch, layer, ctx, target) : null;
     }
   }
 }
@@ -281,11 +288,19 @@ async function applyLayer(target: Target, cw: number, ch: number, layer: Layer, 
   if (!layer.visible) return;
 
   if (layer.type === "group") {
-    // Group children render into a fresh full-canvas buffer (correctness over
-    // savings); the composited group then lands into `target`, cropped there.
-    const sub = new Uint8ClampedArray(cw * ch * 4);
-    await renderList(fullTarget(sub, cw, ch), cw, ch, layer.children ?? [], ctx);
-    compositeBuffer(target, cw, sub, cw, ch, 0, 0, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip);
+    // Group children render into a scratch buffer covering exactly the CALLER's
+    // region — not the whole canvas. When `target` IS the full canvas this is
+    // the old behavior verbatim; when it is a tile, the group now costs work
+    // proportional to the tile instead of re-rendering the whole document per
+    // tile. Byte-identical: the full-canvas scratch was cropped to this very
+    // region by compositeBuffer anyway, and the children still see canvas dims
+    // (`cw`/`ch`) so mask sampling and clip indexing are untouched — only the
+    // scratch buffer's write mapping moves from canvas- to region-space.
+    const sub = new Uint8ClampedArray(target.width * target.height * 4);
+    await renderList(sameRegion(sub, target), cw, ch, layer.children ?? [], ctx);
+    // `sub` is region-space and aligned with `target`, so its (0,0) is canvas
+    // (originY, originX) — pass those as the source offset (was 0,0).
+    compositeBuffer(target, cw, sub, target.width, target.height, target.originX, target.originY, layer.opacity, layer.blendMode, layer.mask ?? undefined, clip);
     return;
   }
 
@@ -531,17 +546,34 @@ function chamferDist(w: number, h: number, isZero: (i: number) => boolean, oobIs
   return d;
 }
 
-/** Per-pixel canvas alpha (0..255) of a single layer, used as a clipping base
- *  (the base's own transparency + mask; opacity does not affect clip shape). */
-async function layerAlpha(w: number, h: number, layer: Layer, ctx: RenderCtx): Promise<Uint8ClampedArray | null> {
+/**
+ * Per-pixel canvas alpha (0..255) of a single layer, used as a clipping base
+ * (the base's own transparency + mask; opacity does not affect clip shape).
+ *
+ * The buffer stays CANVAS-sized and canvas-indexed — every consumer reads it as
+ * `clip[cy*cw+cx]` — but for a group base it is only FILLED over `region` (the
+ * caller's target rect). That is safe and byte-identical because every clip read
+ * sits behind the target's `bx/by` bounds check (compositeBuffer, strokeEffect,
+ * dropShadowEffect), so no consumer can ever read a pixel outside `region`. The
+ * canvas-sized allocation is 1 byte/px and cheap; the expensive part — rendering
+ * the group's children — is what becomes region-scoped.
+ */
+async function layerAlpha(w: number, h: number, layer: Layer, ctx: RenderCtx, region: Target): Promise<Uint8ClampedArray | null> {
   const cov = new Uint8ClampedArray(w * h);
   if (layer.type === "group") {
-    const sub = new Uint8ClampedArray(w * h * 4);
-    await renderList(fullTarget(sub, w, h), w, h, layer.children ?? [], ctx);
-    for (let i = 0; i < w * h; i++) {
-      let a = sub[i * 4 + 3] / 255;
-      if (layer.mask) a *= maskCoverageAt(layer.mask, i % w, Math.floor(i / w));
-      cov[i] = a * 255;
+    const rw = region.width, rh = region.height;
+    const sub = new Uint8ClampedArray(rw * rh * 4);
+    await renderList(sameRegion(sub, region), w, h, layer.children ?? [], ctx);
+    for (let y = 0; y < rh; y++) {
+      const cy = region.originY + y;
+      if (cy < 0 || cy >= h) continue;
+      for (let x = 0; x < rw; x++) {
+        const cx = region.originX + x;
+        if (cx < 0 || cx >= w) continue;
+        let a = sub[(y * rw + x) * 4 + 3] / 255;
+        if (layer.mask) a *= maskCoverageAt(layer.mask, cx, cy);
+        cov[cy * w + cx] = a * 255;
+      }
     }
     return cov;
   }
