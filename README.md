@@ -59,9 +59,10 @@ packages/
 ├── protocol/              @unidocs/protocol              — Document protocol contracts (types + constants, no logic)
 ├── doctype-server-common/ @unidocs/doctype-server-common — SValue/SBlob codec + doctype protocol helpers
 ├── http-protocol/         @unidocs/http-protocol         — HTTP wire contracts for gateway/cas/sdk microservices
+├── gateway-common/        @unidocs/gateway-common        — Cloud-neutral API Gateway routing
 ├── cas-server-common/     @unidocs/cas-server-common     — CAS server kernel (binary/digest/validation)
 ├── cas-client/            @unidocs/cas-client            — Cloud-neutral CAS HTTP client
-├── server-core/           @unidocs/server-core           — Cloud-neutral session/gateway/ports core
+├── server-core/           @unidocs/server-core           — Cloud-neutral session/ports core (doctype 类共享)
 ├── doctype-markdown/      @unidocs/doctype-markdown      — Cloud-neutral Markdown document type
 ├── doctype-docx/          @unidocs/doctype-docx          — Cloud-neutral DOCX document type
 ├── doctype-psd/           @unidocs/doctype-psd           — Cloud-neutral PSD image document type

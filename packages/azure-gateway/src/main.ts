@@ -34,7 +34,7 @@ import {
   serve,
 } from "@unidocs/azure-sdk";
 import { isPublicCasRoute } from "@unidocs/http-protocol";
-import { createGatewayHandler } from "@unidocs/server-core";
+import { createGatewayHandler } from "@unidocs/gateway-common";
 
 function resolveWorkerUrl(docType: string): Promise<string | null> {
   const envKey = `${docType.toUpperCase()}_WORKER_URL`;

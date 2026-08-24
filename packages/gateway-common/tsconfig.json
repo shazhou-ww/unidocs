@@ -4,20 +4,13 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "types": [
-      "@cloudflare/workers-types"
-    ]
+    "lib": ["ES2024", "DOM"],
+    "types": []
   },
   "include": [
     "src"
   ],
   "references": [
-    {
-      "path": "../cloudflare-sdk"
-    },
-    {
-      "path": "../gateway-common"
-    },
     {
       "path": "../http-protocol"
     }

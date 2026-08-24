@@ -18,10 +18,10 @@
       "path": "../azure-sdk"
     },
     {
-      "path": "../http-protocol"
+      "path": "../gateway-common"
     },
     {
-      "path": "../server-core"
+      "path": "../http-protocol"
     }
   ]
 }

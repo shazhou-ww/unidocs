@@ -14,8 +14,7 @@
  *   Gateway → CAS worker: X-User-Id from the URL path
  */
 
-import type { HttpFetcher } from "@unidocs/cas-client";
-import type { DocIndexQuery } from "./ports.js";
+import type { HttpFetcher, DocIndexQuery } from "@unidocs/http-protocol";
 
 export interface GatewayHandlerConfig {
   internalToken: string;

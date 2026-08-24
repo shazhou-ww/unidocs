@@ -17,7 +17,7 @@
  *   Gateway → CAS worker: X-User-Id from the URL path
  */
 
-import { createGatewayHandler } from "@unidocs/server-core";
+import { createGatewayHandler } from "@unidocs/gateway-common";
 import { D1DocIndexQuery } from "@unidocs/cloudflare-sdk";
 import { isPublicCasRoute } from "@unidocs/http-protocol";
 

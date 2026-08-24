@@ -16,7 +16,7 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { createGatewayHandler } from "../src/gateway-handler.js";
-import type { DocRecord } from "../src/ports.js";
+import type { DocRecord } from "@unidocs/http-protocol";
 
 /** A body that is a genuine `ReadableStream`, not an already-buffered string. */
 function streamBody(text: string): ReadableStream<Uint8Array> {

@@ -24,10 +24,10 @@
   "dependencies": {
     "@unidocs/azure-sdk": "workspace:*",
     "@unidocs/http-protocol": "workspace:*",
-    "@unidocs/server-core": "workspace:*",
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "@unidocs/gateway-common": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

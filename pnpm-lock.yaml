@@ -78,12 +78,12 @@ importers:
       '@unidocs/azure-sdk':
         specifier: workspace:*
         version: link:../azure-sdk
+      '@unidocs/gateway-common':
+        specifier: workspace:*
+        version: link:../gateway-common
       '@unidocs/http-protocol':
         specifier: workspace:*
         version: link:../http-protocol
-      '@unidocs/server-core':
-        specifier: workspace:*
-        version: link:../server-core
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -264,12 +264,12 @@ importers:
       '@unidocs/cloudflare-sdk':
         specifier: workspace:*
         version: link:../cloudflare-sdk
+      '@unidocs/gateway-common':
+        specifier: workspace:*
+        version: link:../gateway-common
       '@unidocs/http-protocol':
         specifier: workspace:*
         version: link:../http-protocol
-      '@unidocs/server-core':
-        specifier: workspace:*
-        version: link:../server-core
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -433,6 +433,19 @@ importers:
       cborg:
         specifier: ^6.1.1
         version: 6.1.1
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/gateway-common:
+    dependencies:
+      '@unidocs/http-protocol':
+        specifier: workspace:*
+        version: link:../http-protocol
     devDependencies:
       typescript:
         specifier: ^5.9.0

@@ -4,13 +4,11 @@ import type {
   Delta,
   DeltaLog,
   DocIndex,
-  DocIndexQuery,
   SnapshotCache,
-  SnapshotRef,
-  DocRecord,
   TransactionalPorts,
   UnitOfWork,
 } from "./ports.js";
+import type { DocIndexQuery, SnapshotRef, DocRecord } from "@unidocs/http-protocol";
 import type { CasGateway } from "./session.js";
 import { VersionConflictError } from "@unidocs/http-protocol";
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";

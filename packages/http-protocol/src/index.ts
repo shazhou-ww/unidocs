@@ -55,3 +55,6 @@ export { isPublicCasRoute } from "./public-route.js";
 // CAS client wire abstractions
 export type { HttpFetcher, CasClientConfig } from "./cas-client.js";
 export { CasClientError } from "./cas-client.js";
+
+// Shared document index contract (gateway lists docs, backends implement it)
+export type { DocRecord, SnapshotRef, DocIndexQuery } from "./doc-index.js";

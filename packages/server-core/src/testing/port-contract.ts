@@ -4,10 +4,10 @@ import type {
   Delta,
   DeltaLog,
   DocIndex,
-  DocIndexQuery,
   SnapshotCache,
   UnitOfWork,
 } from "../ports.js";
+import type { DocIndexQuery } from "@unidocs/http-protocol";
 import { VersionConflictError } from "@unidocs/http-protocol";
 
 function makeDelta(version: number, description = `delta ${version}`): Delta {

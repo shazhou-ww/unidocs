@@ -18,7 +18,7 @@
   "dependencies": {
     "@unidocs/cloudflare-sdk": "workspace:*",
     "@unidocs/http-protocol": "workspace:*",
-    "@unidocs/server-core": "workspace:*"
+    "@unidocs/gateway-common": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

@@ -1,3 +1,13 @@
+/**
+ * Storage port contracts for the document session core.
+ *
+ * `DocRecord` / `SnapshotRef` / `DocIndexQuery` live in
+ * @unidocs/http-protocol — they cross the gateway/doctype boundary
+ * (the gateway lists documents through `DocIndexQuery`).
+ */
+
+import type { DocRecord, SnapshotRef } from "@unidocs/http-protocol";
+
 export interface Delta {
   version: number;
   timestamp: number;
@@ -5,14 +15,7 @@ export interface Delta {
   operations: unknown[];
 }
 
-export interface SnapshotRef { version: number; hash: string }
-
 export interface DocIdentity { docType: string; docId: string; userId: string }
-
-export interface DocRecord {
-  docId: string; docType: string; ownerId: string;
-  createdAt: number; updatedAt: number;
-}
 
 export interface DeltaLog {
   /**
@@ -85,21 +88,6 @@ export interface DocIndex {
   register(rec: DocRecord): Promise<void>;
   touch(at: number): Promise<void>;
   recordSnapshot(version: number, hash: string, timestamp: number): Promise<void>;
-}
-
-export interface DocIndexQuery {
-  /**
-   * Documents owned by `userId` of type `docType`, **descending by
-   * `updatedAt`** (most recently touched first). Callers (list UIs) depend
-   * on this order; an implementation that returns physical/insertion order
-   * instead silently breaks "recently updated" sorting.
-   */
-  list(userId: string, docType: string): Promise<DocRecord[]>;
-  /**
-   * Snapshots the index holds for one document, ascending by version.
-   * Keyed by `(docType, docId)` to match the index's primary key.
-   */
-  snapshots(docType: string, docId: string): Promise<SnapshotRef[]>;
 }
 
 /**
