@@ -9,6 +9,7 @@ import { DATABASE_URL, BLOB_CONNECTION_STRING } from "./containers.js";
 
 const CFG = { databaseUrl: DATABASE_URL, blobConnectionString: BLOB_CONNECTION_STRING };
 const ENV_KEYS = [
+  "PG_POOL_MAX",
   "PG_CONNECTION_TIMEOUT_MS",
   "PG_LOCK_TIMEOUT_MS",
   "PG_STATEMENT_TIMEOUT_MS",
@@ -64,6 +65,71 @@ describe("createPool timeouts", () => {
         "SELECT current_setting('lock_timeout') AS lock, current_setting('statement_timeout') AS stmt, current_setting('idle_in_transaction_session_timeout') AS idle",
       );
       expect(rows[0]).toEqual({ lock: "5s", stmt: "15s", idle: "10s" });
+    } finally {
+      await pool.end();
+    }
+  });
+});
+
+/**
+ * 池上限。node-postgres 的默认 10 在云上会打爆 Postgres:`Standard_B1ms` /
+ * Burstable 的 `max_connections` 约 35,常驻副本 5 个 → 50 条。串行的冒烟
+ * 测试每副本只开 1–2 条连接,发现不了它;并发一上来就是
+ * `FATAL: sorry, too many clients already`。
+ */
+describe("createPool max", () => {
+  test("默认 5 —— 5 副本 × 5 = 25,低于 B1ms 的 ~35", async () => {
+    const pool = createPool(CFG);
+    try {
+      expect(pool.options.max).toBe(5);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  test("PG_POOL_MAX 覆盖默认值", async () => {
+    process.env.PG_POOL_MAX = "3";
+    const pool = createPool(CFG);
+    try {
+      expect(pool.options.max).toBe(3);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  // 与四个超时同样的校验风格:打错必须响亮失败,不能静默退回默认值。
+  test("非正整数响亮失败,点名变量", () => {
+    process.env.PG_POOL_MAX = "many";
+    expect(() => createPool(CFG)).toThrow(/PG_POOL_MAX/);
+    process.env.PG_POOL_MAX = "0";
+    expect(() => createPool(CFG)).toThrow(/PG_POOL_MAX/);
+  });
+
+  // 上面三条只证明配置传进去了。这条证明它**约束了真实的并发连接数**:
+  // 借出 max+1 条连接时,最后一条必须等待,而不是新开一条打到服务端。
+  test("池真的不会同时借出超过 max 条连接", async () => {
+    process.env.PG_POOL_MAX = "2";
+    const pool = createPool(CFG);
+    try {
+      const a = await pool.connect();
+      const b = await pool.connect();
+      expect(pool.totalCount).toBe(2);
+
+      let thirdAcquired = false;
+      const third = pool.connect().then((client) => {
+        thirdAcquired = true;
+        return client;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(thirdAcquired).toBe(false);
+      expect(pool.totalCount).toBe(2);
+
+      a.release();
+      const c = await third;
+      expect(thirdAcquired).toBe(true);
+      expect(pool.totalCount).toBe(2);
+      b.release();
+      c.release();
     } finally {
       await pool.end();
     }

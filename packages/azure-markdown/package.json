@@ -26,6 +26,7 @@
     "@unidocs/core": "workspace:*",
     "@unidocs/doctype-markdown": "workspace:*",
     "@unidocs/server-core": "workspace:*",
+    "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
     "pg": "^8.23.0"
   },

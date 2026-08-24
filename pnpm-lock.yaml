@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)
@@ -35,13 +38,25 @@ importers:
 
   packages/azure-docx:
     dependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
+      '@azure/storage-blob':
+        specifier: ^12.33.0
+        version: 12.33.0(supports-color@10.2.2)
       '@unidocs/azure-sdk':
         specifier: workspace:*
         version: link:../azure-sdk
       '@unidocs/doctype-docx':
         specifier: workspace:*
         version: link:../doctype-docx
+      pg:
+        specifier: ^8.23.0
+        version: 8.23.0
     devDependencies:
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -54,6 +69,9 @@ importers:
 
   packages/azure-gateway:
     dependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)
@@ -85,6 +103,9 @@ importers:
 
   packages/azure-markdown:
     dependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)
@@ -119,6 +140,9 @@ importers:
 
   packages/azure-sdk:
     dependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)

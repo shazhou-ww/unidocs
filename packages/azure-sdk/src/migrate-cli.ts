@@ -1,8 +1,8 @@
 /**
  * Standalone migration entry point: `pnpm --filter @unidocs/azure-sdk run
- * migrate`. Reads `DATABASE_URL` (required) and `BLOB_CONNECTION_STRING`
- * (optional — this script never touches Blob Storage) from the environment,
- * applies pending migrations, and exits.
+ * migrate`. Reads `DATABASE_URL` (the only variable it needs — this script
+ * never touches Blob Storage) from the environment, applies pending
+ * migrations, and exits.
  *
  * Why this exists: before it did, the only way to apply migrations without
  * hand-writing a one-off script was `vitest run tests/migrate.test.ts` —
@@ -30,10 +30,7 @@ function requireEnv(name: string): string {
 
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
-  const pool = createPool({
-    databaseUrl,
-    blobConnectionString: process.env.BLOB_CONNECTION_STRING ?? "",
-  });
+  const pool = createPool({ databaseUrl });
   pool.on("error", (err) => {
     console.error("azure-sdk migrate-cli: pg pool error", err);
   });

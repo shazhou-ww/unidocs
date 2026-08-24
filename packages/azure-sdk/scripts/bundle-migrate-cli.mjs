@@ -8,7 +8,11 @@
  * `migrate-cli.ts` only imports siblings within this package (`./pool.js`,
  * `./migrate.js`) — never a bare `@unidocs/*` specifier — so unlike the two
  * Azure services' bundlers, this one needs no workspace alias table at all;
- * esbuild resolves the relative imports directly.
+ * esbuild resolves the relative imports directly. It still needs the
+ * `external: EXTERNAL_NPM_PACKAGES` list from `scripts/workspace-aliases.mjs`
+ * (see that module's doc comment) so genuine npm dependencies like `pg`
+ * stay out of the bundle instead of `packages: "external"`, which every
+ * Azure bundler in this repo now avoids.
  *
  * The output path matters: it must land at `dist/migrate-cli.js`, one
  * directory below the package root, the same depth as a plain `tsc`-built
@@ -21,6 +25,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+import { EXTERNAL_NPM_PACKAGES } from "../../../scripts/workspace-aliases.mjs";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -32,7 +37,10 @@ await esbuild.build({
   platform: "node",
   format: "esm",
   target: "node24",
-  packages: "external",
+  // 全仓统一用这一份显式列表:`packages: "external"` 会把每一个裸导入
+  // 都留在外面,包括 `@azure/identity` 这种没有被提升到根 node_modules
+  // 的包,产物只有在生产安装时才会以 ERR_MODULE_NOT_FOUND 暴露。
+  external: EXTERNAL_NPM_PACKAGES,
   // esbuild overwrites the plain-`tsc` `migrate-cli.js` with the bundle;
   // without this, a stale `tsc`-emitted `migrate-cli.js.map` would keep
   // pointing at source that no longer matches the file it's attached to.
