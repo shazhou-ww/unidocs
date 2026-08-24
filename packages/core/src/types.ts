@@ -155,13 +155,6 @@ export interface DocumentType<TDoc, TQuery, TOp> {
   /** Format used when callers do not select one explicitly. */
   defaultFormat: string;
 
-  /**
-   * Format used for durable/cache snapshots. Defaults to `defaultFormat`.
-   * PSD uses this to persist CAS-IR JSON while keeping `.psd` as the
-   * user-facing import/export format.
-   */
-  snapshotFormat?: string;
-
   /** MIME type for document export. */
   contentType: string;
 

@@ -358,10 +358,9 @@ export function refsFromSValue(value: SValue, options?: SValueCodecOptions): Cas
 }
 
 /**
- * Collect branded SBlobs from a document-shaped tree that may still contain
- * non-SValue leaves (e.g. PSD `Uint8Array` pixels). Used when pinning snapshot
- * CAS refs from in-memory TDoc. Cycles, typed arrays, and class instances are
- * skipped; only `isSBlob` nodes contribute counts.
+ * Collect branded SBlobs from an arbitrary object tree. This diagnostic helper
+ * skips cycles, typed arrays, and class instances; durable SValue reference
+ * counts should use `refsFromSValue` so they follow canonical codec semantics.
  */
 export function collectSBlobRefs(value: unknown): CasReferences {
   const counts: Record<string, number> = {};

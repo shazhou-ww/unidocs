@@ -1,58 +1,73 @@
 import type { DocumentType, DocumentTypeContext, SValue } from "@unidocs/core";
 import type { PsdDoc } from "./model/types.js";
 import { apply, type PsdOp } from "./ops/index.js";
-import { saveSnapshot, loadSnapshot } from "./psd/snapshot.js";
 import { save } from "./psd/save.js";
+import { load } from "./psd/load.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
 import { resolveDoc } from "./resolve.js";
 import { runQuery, type PsdQuery } from "./queries.js";
+import {
+  materializePsdDoc,
+  storePsdDoc,
+  type PsdStoredDoc,
+} from "./state.js";
 import { tools, instructions } from "./tools.js";
 
-export type { PsdDoc, PsdQuery, PsdOp };
+export type { PsdDoc, PsdStoredDoc, PsdQuery, PsdOp };
 
 /**
  * PSD DocumentType factory.
  *
- * PSD documents contain binary pixel data (Uint8Array) that is not directly
- * SValue-encodable, so this factory uses a type assertion to bridge the gap
- * between the SValue-constrained DocumentType interface and PSD's binary model.
- * The runtime layer (server-core session) already handles this with its own
- * casts.
+ * PsdStoredDoc is the persistent SValue TDoc. The binary PsdDoc editing model
+ * is materialized on demand and cached only for the lifetime of this factory.
  */
-export function createPsdDocumentType(ctx: DocumentTypeContext): DocumentType<PsdDoc, PsdQuery, PsdOp> {
+export function createPsdDocumentType(
+  ctx: DocumentTypeContext,
+): DocumentType<PsdStoredDoc, PsdQuery, PsdOp> {
+  const modelCache = new WeakMap<PsdStoredDoc, PsdDoc>();
+
+  async function materialize(state: PsdStoredDoc): Promise<PsdDoc> {
+    const cached = modelCache.get(state);
+    if (cached) return cached;
+    const model = await materializePsdDoc(state, ctx);
+    modelCache.set(state, model);
+    return model;
+  }
+
+  async function store(model: PsdDoc): Promise<PsdStoredDoc> {
+    const state = await storePsdDoc(model, ctx);
+    modelCache.set(state, model);
+    return state;
+  }
+
   return {
-    init: async (): Promise<PsdDoc> => ({
+    init: async (): Promise<PsdStoredDoc> => store({
       canvas: { width: 0, height: 0, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
       layers: [],
     }),
 
-    apply: async (ops: readonly PsdOp[], doc: PsdDoc): Promise<PsdDoc> =>
-      apply(ops, doc, ctx),
+    apply: async (ops: readonly PsdOp[], state: PsdStoredDoc): Promise<PsdStoredDoc> =>
+      store(await apply(ops, await materialize(state), ctx)),
 
-    query: async (q: PsdQuery, doc: PsdDoc): Promise<SValue> =>
-      runQuery(q, doc, ctx) as Promise<SValue>,
+    query: async (q: PsdQuery, state: PsdStoredDoc): Promise<SValue> =>
+      runQuery(q, await materialize(state), ctx) as Promise<SValue>,
 
     formats: {
       psd: {
         mediaTypes: ["image/vnd.adobe.photoshop"],
         extensions: [".psd"],
-        load: async (data: Uint8Array): Promise<PsdDoc> => loadSnapshot(data, ctx),
-        save: async (doc: PsdDoc): Promise<Uint8Array> =>
-          save(await resolveDoc(doc, casBlobStore(ctx))),
-      },
-      ir: {
-        mediaTypes: ["application/json"],
-        extensions: [".json"],
-        load: async (data: Uint8Array): Promise<PsdDoc> => loadSnapshot(data, ctx),
-        save: async (doc: PsdDoc): Promise<Uint8Array> => saveSnapshot(doc, ctx),
+        load: async (data: Uint8Array): Promise<PsdStoredDoc> => store(await load(data)),
+        save: async (state: PsdStoredDoc): Promise<Uint8Array> =>
+          save(await resolveDoc(await materialize(state), casBlobStore(ctx))),
       },
     },
     defaultFormat: "psd",
-    snapshotFormat: "ir",
 
     contentType: "image/vnd.adobe.photoshop",
 
     tools,
     instructions,
-  } as unknown as DocumentType<PsdDoc, PsdQuery, PsdOp>;
+  // PsdStoredLayer.children is recursive; this assertion only stops
+  // SValueType from exceeding TypeScript's instantiation-depth limit.
+  } as unknown as DocumentType<PsdStoredDoc, PsdQuery, PsdOp>;
 }

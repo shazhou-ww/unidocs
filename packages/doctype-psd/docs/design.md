@@ -1,4 +1,4 @@
-# cloudflare-psd — PSD DocumentType 规范 (v0.3)
+# cloudflare-psd — PSD DocumentType 规范 (v0.4)
 
 > 目标：在 **UniDocs 平台**上新增一个 PSD 图片文档类型（`@unidocs/cloudflare-psd`），让 agent 能对图片做可追溯、可回放的编辑与再生成。
 >
@@ -21,37 +21,38 @@ UniDocs 已经提供了我们前期设计里辛苦推导的**全部基础设施*
 | 三张 DB 表 | KV / DO-sqlite / D1 / R2,平台托管 |
 | agent 编辑循环 | **Operator DO**(ReAct 循环 + 工具派发) |
 
-**所以我们要写的,只是一个 `DocumentType<PsdDoc, PsdQuery, PsdOp>`** —— 七个成员(`@unidocs/core`):
+**所以我们要写的,只是一个 `DocumentType<PsdStoredDoc, PsdQuery, PsdOp>`** —— 持久状态遵循 `@unidocs/core` 的 SValue 契约:
 
 | DocumentType 成员 | 我们的实现 | 本规范 |
 |---|---|---|
-| `init()` | 空图片文档 | §1 |
-| `load(bytes)` | ag-psd `readPsd` → `PsdDoc` | §6 |
-| `save(doc)` | ag-psd `writePsd` → PSD 字节 | §6 |
-| `apply(ops, doc)` | 逐 op 改文档模型 | §5 |
-| `query(q, doc)` | 读状态 / 渲染预览(可返回 PNG 字节) | §5.3 |
+| `init()` | 空 `PsdStoredDoc` | §1 |
+| `formats.psd.load(bytes)` | ag-psd `readPsd` → `PsdDoc` → 外置像素 | §6 |
+| `formats.psd.save(doc)` | 物化 `PsdDoc` → ag-psd `writePsd` | §6 |
+| `apply(ops, doc)` | 物化、应用 op、再返回 `PsdStoredDoc` | §5 |
+| `query(q, doc)` | 物化后读状态 / 渲染预览 | §5.3 |
 | `tools` | 每个 op/query 一个 agent 工具 | §7 |
 | `instructions` | agent 系统提示 | §7 |
 | `contentType` | `image/vnd.adobe.photoshop` | §6 |
 
 设计原则:
 
-1. **运行 = 文档模型(`PsdDoc`),存储 = PSD**。`load`/`save` 由 ag-psd 桥接;版本化的持久化由平台负责。
+1. **TDoc = `PsdStoredDoc`,编辑模型 = `PsdDoc`,外部格式 = PSD**。平台直接序列化 TDoc;`formats.psd.load/save` 只负责导入导出。
 2. **非破坏编辑**:原图作为只读背景层(第 0 层),编辑叠加为新层/新 op。
 3. **概念对齐 PSD**:每节 `PSD:` 标注;我们的扩展 `EXT:` 标注。
 
 ---
 
-## 1. PsdDoc(文档模型 = DocumentType 的 `TDoc`)
+## 1. PsdStoredDoc(DocumentType 的 `TDoc`)
 
 ```jsonc
 {
   "canvas": { /* §2 */ },
-  "layers": [ /* §3，数组顺序 = 从底到顶 */ ]
+  "layers": [ /* §3，像素为 SBlob,数组顺序 = 从底到顶 */ ]
 }
 ```
 
-> 这就是运行时文档模型,也是平台 snapshot 里 `save()` 出来的东西(PSD 字节)。
+> 这就是平台 snapshot 的值:运行时对它做 canonical SValue 编解码,不调用任何 format。
+> 含 `Uint8ClampedArray`/lazy PixelRef 的 `PsdDoc` 只在 factory 内按需物化并用 WeakMap 缓存,不是 TDoc。
 > **没有 ops/version/checkpoints 字段** —— 那些是平台层的概念,不在文档模型里。
 > `init()` 返回一张空文档(空图层数组 + 默认画布)。
 
@@ -295,7 +296,7 @@ apply:等价于把这张 raster 结果层 `add_layer` 插入(非破坏,盖在源
 ## 6. PSD load / save（ag-psd）
 
 - **库:`ag-psd`**(纯 JS,读写皆强)。`load` = `readPsd`,`save` = `writePsd`。
-- **`save()` 的字节 = 平台的 snapshot 内容,也 = `/export` 的产物** —— 即 PSD。所以"任意版本实时导出"由平台 rollback + `save()` 天然实现;PSD 作为 snapshot 由平台物化进 R2 CAS(内容寻址去重),这属于平台的加速/导出机制,不是我们额外存成品。
+- **`formats.psd.save()` 只产生 `/export` 的 PSD 字节,绝不参与 snapshot。** snapshot 是 `encodeSValue(PsdStoredDoc)`;导入把 PSD 解析并外置像素,导出才重新物化并写回 PSD。
 - `contentType: "image/vnd.adobe.photoshop"`。
 - 运行环境:**ag-psd 读写不需要 node-canvas / wasm**。用 `initializeCanvas(createCanvas, createImageData)` 注入一个**纯 JS 的 `createImageData`**(返回 `{width,height,data:Uint8ClampedArray}`),配合 `readPsd({ useImageData:true, skipThumbnail:true })` 与 `writePsd`,全程不碰真 canvas。已在 Node 验证(见 `tests/fixtures/`)。
 
@@ -373,15 +374,15 @@ doctype.ts  组装 DocumentType
 ## 9. 决策与待定
 
 **已定:**
-- 落在 UniDocs 上,实现 `DocumentType<PsdDoc, PsdQuery, PsdOp>`;**不自建存储/版本/历史/快照/agent 循环**。
+- 落在 UniDocs 上,实现 `DocumentType<PsdStoredDoc, PsdQuery, PsdOp>`;`PsdDoc` 仅作 materialized cache;**不自建存储/版本/历史/快照/agent 循环**。
+- 像素通过 SBlob 外置到 CAS;snapshot 直接编码 `PsdStoredDoc`,不设 `snapshotFormat`,不调用 PSD save。
 - op = `{kind, payload}`;版本/回放/乐观锁归平台。
 - 生成式:先出图再 apply,payload 携带结果(§5.4)。
 - PSD 库 ag-psd;仅 8-bit RGB;MVP 导入方案 B;透传留 post-MVP。
 - **渲染引擎:纯 TS 软件合成器**(MVP),无 wasm、Node/workerd/浏览器通吃;render 放 `doctype-psd/src/render/`,webui 与 DO 共用(§5.3/§8)。canvaskit/WebGL 留作浏览器加速器(计划④)。
 
 **待定:**
-1. 像素承载(§3.5):MVP 内联字节 vs 经 `options` 注入 R2 blob 存引用。**注意**:snapshot 每 20 delta 调一次 `save()`,图片的 PSD 字节远比 markdown 重,内联会让 snapshot/delta 偏大 —— 这条影响此选择。
-2. **DO-runtime spike**:
+1. **DO-runtime spike**:
    - ✅ **ag-psd 已在 Node 验证**:纯 JS `createImageData` shim + `useImageData` + `skipThumbnail`,读写往返完整、无 canvas 依赖(`tests/fixtures/generate.mjs` 生成的 `sample.psd`)。剩:同一路径在 **workerd** 里跑一遍确认。
    - ✅ **渲染改用纯 TS 合成器**(逐像素数学),无 wasm,workerd 天然可跑 —— canvaskit 门槛已消除。剩:PNG 编码用纯 JS 编码器(getPreview)。
 

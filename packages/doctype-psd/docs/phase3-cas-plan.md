@@ -1,5 +1,7 @@
 # Phase 3 (完成版):IR 快照 + 每层像素进 CAS,接到 server-core
 
+> **已被 2026-08-21 SValue 协议取代。** 本文仅保留为历史实现记录。`refsFromSnapshot`、ctx-aware format save 和 IR snapshot 均不再属于 `DocumentType` 契约;当前 TDoc 是 `PsdStoredDoc`,snapshot 是其 canonical SValue bytes。以 [CAS Architecture](../../../docs/cas-architecture.md) 为准。
+
 > 分支 `feat/psd-cas-snapshots`(基于已 reconcile 到 server-core 的 render 引擎)。
 
 **目标:** 让 PSD 的 `save` 产出 **IR JSON(结构 + 每层像素哈希)**、每层 PNG 进 **CAS 服务**;`load` 得到 lazy 文档(`PixelRef`),渲染按需 `ctx.cas.read` fault-in;快照因此从 23MB PSD 变成小 JSON,未变的层内容寻址去重。复用 Phase 3 已写好的 `ir.ts`/`pixel-source.ts`/`resolve.ts`(都基于 `BlobStore` 抽象)。

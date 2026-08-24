@@ -1,15 +1,16 @@
 /**
- * End-to-end verification of Phase 3 (CAS IR snapshots) through the REAL
+ * End-to-end verification of SValue snapshots through the real
  * `DocumentSession` — not doctype-level units. This proves the whole chain:
  *
- *   1. import a PSD -> the durable/cached snapshot becomes small IR JSON
+ *   1. import a PSD -> the durable/cached snapshot becomes a compact
+ *      serialized PsdStoredDoc
  *      referencing per-layer pixel blobs in the CAS (not another 8BPS copy)
  *   2. a structural edit that touches no pixels does not re-upload any
  *      layer blob (content addressing dedupes the unchanged pixels)
  *   3. a brand-new session, sharing only the storage ports (no warm
- *      in-memory document), cold-loads the IR snapshot and renders a
+ *      in-memory document), cold-loads the SValue snapshot and renders a
  *      byte-identical composite by lazily faulting pixels in from the CAS
- *   4. exportBytes() still hands back a real PSD, never the IR
+ *   4. exportBytes() still hands back a real PSD, never snapshot bytes
  *
  * Every doctype-level piece this exercises already has focused unit
  * coverage (cas-snapshot.test.ts, lazy-render-verification.test.ts,
@@ -21,7 +22,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { decode as decodePng } from "fast-png";
-import { createSBlob } from "@unidocs/core";
+import { collectSBlobRefs, createSBlob, decodeSValue } from "@unidocs/core";
 import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/core";
 import { DocumentSession, type SessionDeps } from "@unidocs/server-core";
 import { createMemoryPorts, MemoryCas } from "@unidocs/server-core/memory-ports";
@@ -29,7 +30,6 @@ import type { WireQueryValue } from "@unidocs/server-core";
 import { createPsdDocumentType } from "../src/doctype.js";
 import { render } from "../src/render/index.js";
 import { load as loadPsd } from "../src/psd/load.js";
-import { refsFromSnapshot } from "../src/psd/snapshot.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));
 
@@ -59,8 +59,8 @@ function compareBytes(a: Uint8ClampedArray, b: Uint8ClampedArray): number {
   );
 }
 
-describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
-  it("import -> IR snapshot; edit dedups unchanged pixels; cold reload renders byte-identically; export stays a real PSD", async () => {
+describe("PSD SValue snapshots through DocumentSession", () => {
+  it("import -> TDoc snapshot; edit dedups unchanged pixels; cold reload renders byte-identically; export stays a real PSD", async () => {
     const psdBytes = new Uint8Array(readFileSync(fixture));
 
     // Independent oracle: what our own renderer produces straight off the raw
@@ -105,7 +105,7 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     const session = new DocumentSession(config, deps);
 
     // ----------------------------------------------------------------
-    // 1. Import -> IR snapshot
+    // 1. Import -> serialized PsdStoredDoc snapshot
     // ----------------------------------------------------------------
     const created = await session.create({ bytes: psdBytes });
     expect(created).toEqual({ docId: "doc-1", version: 1 });
@@ -121,24 +121,33 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     const cachedSnapshot = await deps.snapshots.get();
     expect(cachedSnapshot?.version).toBe(1);
 
+    const durableState = decodeSValue(durableSnapshot!);
+    expect(decodeSValue(cachedSnapshot!.bytes)).toEqual(durableState);
+
     for (const snapBytes of [durableSnapshot!, cachedSnapshot!.bytes]) {
-      // First byte is "{" (IR JSON), not the "8BPS" PSD magic.
-      expect(snapBytes[0]).toBe(0x7b);
+      // Snapshot is valid SValue, not the "8BPS" external PSD format.
+      expect(decodeSValue(snapBytes)).toMatchObject({
+        canvas: { colorMode: "RGB", depth: 8 },
+      });
       expect(String.fromCharCode(snapBytes[0], snapBytes[1], snapBytes[2], snapBytes[3])).not.toBe("8BPS");
-      // MUCH smaller than the input PSD: no pixel bytes inline, only refs.
+      // Pixel bytes are externalized, so only SBlob handles remain inline.
       expect(snapBytes.length).toBeLessThan(psdBytes.length);
     }
 
     // eslint-disable-next-line no-console
     console.log(
-      `[cas-e2e] input PSD=${psdBytes.length}B, durable IR snapshot=${durableSnapshot!.length}B ` +
+      `[cas-e2e] input PSD=${psdBytes.length}B, durable SValue snapshot=${durableSnapshot!.length}B ` +
         `(${((durableSnapshot!.length / psdBytes.length) * 100).toFixed(1)}% of input)`,
     );
 
-    // Every layer/mask hash the IR references is actually readable from the CAS.
-    const refsAfterImport = refsFromSnapshot(durableSnapshot!);
+    // Every SBlob reachable from TDoc is actually readable from the CAS.
+    const refsAfterImport = collectSBlobRefs(durableState);
     const hashesAfterImport = Object.keys(refsAfterImport);
     expect(hashesAfterImport.length).toBeGreaterThan(0);
+    expect(cas.rootRefUpdates).toContainEqual({
+      requestId: "snapshot:user-1:doc-1:1",
+      changes: refsAfterImport,
+    });
     for (const hash of hashesAfterImport) {
       const blob = await deps.cas.read({ kind: "cas", hash });
       expect(blob).toBeInstanceOf(Uint8Array);
@@ -151,7 +160,7 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     expect(casSizeAfterImport).toBe(hashesAfterImport.length);
 
     // Sanity: the session's own preview of the freshly-imported doc already
-    // matches the independent raw-PSD render (round-trip through IR is lossless).
+    // matches the independent raw-PSD render (state materialization is lossless).
     const previewAfterImport = await session.query({ kind: "getPreview" });
     const imgAfterImport = decodePreviewImage(previewAfterImport.data);
     expect(imgAfterImport.width).toBe(rawRender.width);
@@ -177,8 +186,8 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     console.log(`[cas-e2e] distinct CAS blobs before edit=${casSizeBeforeEdit}, after edit=${casSizeAfterEdit}`);
 
     // The edit changed no pixels, so no layer blob was re-uploaded: the fast
-    // snapshot cache refresh triggered by apply() re-serializes every layer
-    // (PNG-encodes the SAME unchanged pixel bytes again), but MemoryCas.store
+    // operation result externalization re-serializes every layer (PNG-encodes
+    // the SAME unchanged pixel bytes again), but MemoryCas.store
     // hashes to the identical existing node and skips the insert.
     expect(casSizeAfterEdit).toBe(casSizeBeforeEdit);
 
@@ -194,7 +203,7 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     // A brand-new DocumentSession instance: zero warm in-memory document,
     // sharing ONLY the storage ports (same deltas/snapshots/blobs/cas/index)
     // with session 1. Its first query() forces load() end to end: read the
-    // persisted snapshot, deserialize the IR into a lazy PixelRef document,
+    // persisted snapshot, materialize TDoc into a lazy PixelRef document,
     // and fault every visible layer's pixels in from the CAS on render.
     const session2 = new DocumentSession(config, deps);
     const coldPreview = await session2.query({ kind: "getPreview" });
@@ -210,7 +219,7 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
     expect(cas.size).toBe(casSizeAfterEdit);
 
     // ----------------------------------------------------------------
-    // 4. exportBytes() still returns a real PSD, never the IR
+    // 4. exportBytes() still returns a real PSD, never snapshot bytes
     // ----------------------------------------------------------------
     const exported = await session.exportBytes();
     expect(exported.contentType).toBe("image/vnd.adobe.photoshop");
@@ -220,14 +229,13 @@ describe("PSD CAS-IR snapshots — end-to-end through DocumentSession", () => {
 
     // ----------------------------------------------------------------
     // 5. exportBytes() on the COLD-RELOADED (lazy) session must also
-    //    produce a real PSD — not throw, and not the IR.
+    //    produce a real PSD — not throw, and not snapshot bytes.
     // ----------------------------------------------------------------
     // session2's document is lazy (PixelRef layers). formats.psd.save
     // materializes them via resolveDoc before writing 8BPS.
     const coldExport = await session2.exportBytes();
     expect(coldExport.contentType).toBe("image/vnd.adobe.photoshop");
-    // Real PSD magic "8BPS", NOT the IR JSON "{".
-    expect(coldExport.bytes[0]).not.toBe(0x7b);
+    // Real PSD magic "8BPS".
     expect(String.fromCharCode(
       coldExport.bytes[0], coldExport.bytes[1], coldExport.bytes[2], coldExport.bytes[3],
     )).toBe("8BPS");

@@ -10,7 +10,7 @@ The node encoding referenced below is defined in [CAS Binary Format](./cas-binar
 
 ## 1. Goals
 
-The CAS stores a user-scoped Merkle DAG for persistent document assets and custom snapshot formats.
+The CAS stores a user-scoped Merkle DAG for persistent SValue document roots and binary assets.
 
 The design must provide:
 
@@ -521,9 +521,12 @@ an outer `Options -> Factory` function.
 
 ```ts
 interface DocumentType<TDoc, TQuery, TOp> {
-  init(): Promise<TDoc>;
-  query(query: TQuery, doc: TDoc): Promise<SValue>;
-  apply(operations: readonly TOp[], doc: TDoc): Promise<TDoc>;
+  init(): Promise<SValueType<TDoc>>;
+  query(query: SValueType<TQuery>, doc: SValueType<TDoc>): Promise<SValue>;
+  apply(
+    operations: readonly SValueType<TOp>[],
+    doc: SValueType<TDoc>,
+  ): Promise<SValueType<TDoc>>;
 
   formats: Readonly<Record<string, DocumentFormat<TDoc>>>;
   defaultFormat: string;
@@ -531,7 +534,10 @@ interface DocumentType<TDoc, TQuery, TOp> {
 ```
 
 Named formats perform external import/export only. TDoc itself is the snapshot
-shape. Agent tools are a separate contract:
+shape. There is no `snapshotFormat`: the runtime always persists
+`encodeSValue(TDoc)` and always restores it with `decodeSValue`. Neither
+`defaultFormat` nor any `DocumentFormat.save` participates in snapshot I/O.
+Agent tools are a separate contract:
 
 ```ts
 interface DocumentAgent {
@@ -601,6 +607,12 @@ to convert between the manifest and a cached in-memory Document. Apply clones a
 working document and stores changed package leaves; unchanged hashes reuse nodes.
 ZIP paths, content types, CRC, entry count, compression ratio, part size, and
 total size are bounded and validated.
+
+PSD follows the same separation. Its TDoc is `PsdStoredDoc`, an SValue tree of
+canvas/layer metadata and pixel SBlobs. `PsdDoc`, which contains resident or
+lazy pixel sources, is only a context-scoped editing/render cache. Import and
+apply externalize that model back to `PsdStoredDoc`; export materializes it and
+writes PSD bytes. PSD bytes and the doctype-local JSON IR are never snapshots.
 
 ## 16. Query and transport values
 

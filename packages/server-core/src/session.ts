@@ -65,7 +65,11 @@ import type {
   SValueType,
   SValue,
 } from "@unidocs/core";
-import { collectSBlobRefs } from "@unidocs/core";
+import {
+  decodeSValue,
+  encodeSValue,
+  refsFromSValue,
+} from "@unidocs/core";
 import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "./cas-client.js";
 import {
   DeltaRejectedError,
@@ -155,11 +159,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     return this.#doc;
   }
 
-  #snapshotSave(): (doc: SValueType<TDoc>) => Promise<Uint8Array> {
-    const name = this.#config.snapshotFormat ?? this.#config.defaultFormat;
-    return this.#config.formats[name].save;
-  }
-
   /**
    * Rebuild in-memory state from the snapshot cache plus delta replay.
    * Idempotent: repeated calls return immediately.
@@ -174,7 +173,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
 
     const snapshot = await this.#deps.snapshots.get();
     if (snapshot) {
-      this.#doc = await this.#config.formats[this.#config.defaultFormat].load(snapshot.bytes);
+      this.#doc = decodeSnapshot<TDoc>(snapshot.bytes);
       this.#version = snapshot.version;
     } else {
       // The cache is a droppable layer (KV/Redis) while the delta log is the
@@ -194,7 +193,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
           // blank document instead of surfacing the lost content as an error.
           throw new StorageCorruptError(`Snapshot ${ref.hash} not found in R2`);
         }
-        this.#doc = await this.#config.formats[this.#config.defaultFormat].load(bytes);
+        this.#doc = decodeSnapshot<TDoc>(bytes);
         this.#version = ref.version;
       }
     }
@@ -237,10 +236,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // be a falsy value (the DO original used `!this.#doc`, which silently
     // skipped the write for such documents).
     if (this.#doc === null) return;
-    // Pass ctx so a ctx-aware doc type (PSD) caches the IR snapshot (JSON +
-    // per-layer CAS blobs) rather than the full serialized document. Doc types
-    // that ignore ctx (markdown/docx) are byte-identical to before.
-    const bytes = await this.#snapshotSave()(this.#doc);
+    const bytes = encodeSValue(this.#doc as unknown as SValue);
     await this.#deps.snapshots.put(this.#version, bytes);
   }
 
@@ -281,19 +277,12 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * pass can reclaim it. Writing the reference first and the bytes second
    * would be the unsafe order.
    *
-   * The save passes ctx, so a ctx-aware doc type (PSD) produces its IR JSON
-   * and uploads per-layer content blobs to the CAS, and the returned hash is
-   * the IR hash. Since BOTH `#writeSnapshot` and `create` go through here, the
-   * durable and creation paths are IR-aware from this one change, and the hash
-   * `snapshot()`/clone round-trip on is the IR hash the blob was stored under.
-   * markdown/docx ignore ctx and are byte-identical to before.
-   *
-   * The bytes are returned alongside the hash so callers can persist the
-   * snapshot blob. CAS root-refs are derived from SBlobs on the in-memory
-   * TDoc after save (see `#writeSnapshot`), not from a doctype hook over bytes.
+  * The bytes are returned alongside the hash so callers can persist the
+  * snapshot blob. CAS root-refs are derived directly from SBlobs in TDoc
+  * (see `#writeSnapshot`), not from a doctype hook over serialized bytes.
    */
   async #writeBlob(doc: SValueType<TDoc>): Promise<{ hash: string; bytes: Uint8Array }> {
-    const bytes = await this.#snapshotSave()(doc);
+    const bytes = encodeSValue(doc as unknown as SValue);
     const hash = await computeHash(bytes);
     // Content-addressed: the same bytes are the same blob.
     await this.#deps.blobs.putIfAbsent(hash, bytes);
@@ -302,23 +291,20 @@ export class DocumentSession<TDoc, TQuery, TOp> {
 
   /**
    * Write a durable, content-addressed snapshot of the current version and
-   * record it in every index that tracks snapshots. Returns the persisted
-   * hash and version (null only when there is no document), so `snapshot()`
-   * can hand back the hash the blob was actually stored under — for a
-   * ctx-aware doc type that is the IR hash, and re-saving without ctx would
-   * yield a hash no blob exists at, breaking clone-from-snapshot.
+  * record it in every index that tracks snapshots. Returns the persisted
+  * hash and version (null only when there is no document), so `snapshot()`
+  * can hand back the exact hash written by this operation.
    */
   async #writeSnapshot(): Promise<{ hash: string; version: number } | null> {
     if (this.#doc === null) return null;
 
     const { hash } = await this.#writeBlob(this.#doc);
 
-    // Pin SBlobs reachable from the in-memory TDoc so CAS GC retains them.
-    // Save may attach SBlobs onto the doc (PSD externalizes layer pixels);
-    // markdown/docx with no SBlobs yield {} and skip this path. This runs
+    // Pin SBlobs reachable from TDoc so CAS GC retains them. Document types
+    // with no SBlobs yield {} and skip this path. This runs
     // BEFORE recordSnapshot: we must not register a restore point until the
     // content it references is protected.
-    const refs = collectSBlobRefs(this.#doc);
+    const refs = refsFromSValue(this.#doc as unknown as SValue);
     if (Object.keys(refs).length > 0) {
       const { userId, docId } = this.#deps.identity;
       try {
@@ -375,7 +361,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // Pin TDoc SBlobs BEFORE the transaction records v1 as a restore point —
     // the same ordering rule as #writeSnapshot. markdown/docx with no SBlobs
     // yield {} and skip this entirely.
-    const refs = collectSBlobRefs(doc);
+    const refs = refsFromSValue(doc as unknown as SValue);
     if (Object.keys(refs).length > 0) {
       try {
         await commitRootRefsOrRollback(
@@ -479,7 +465,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     }
 
     const { docType, docId, userId } = this.#deps.identity;
-    const doc = await this.#config.formats[this.#config.defaultFormat].load(bytes);
+    const doc = decodeSnapshot<TDoc>(bytes);
 
     // Independently pin the per-layer blobs this cloned snapshot references,
     // BEFORE the transaction records it as a restore point — the same ordering
@@ -490,7 +476,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // cannot be GC'd out from under it when the source is deleted. Scoped to
     // the CLONE's own (user, doc, version=1) — deterministic and idempotent.
     // markdown/docx return {} and skip this entirely.
-    const cloneRefs = collectSBlobRefs(doc);
+    const cloneRefs = refsFromSValue(doc as unknown as SValue);
     if (Object.keys(cloneRefs).length > 0) {
       try {
         await commitRootRefsOrRollback(
@@ -626,7 +612,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     //    retry), not a server fault.
     let refs: CasReferences;
     try {
-      refs = await leaseOpRefs(ops as SValue[], this.#deps.cas);
+      refs = await leaseOpRefs(ops as unknown as readonly SValue[], this.#deps.cas);
     } catch (err) {
       if (err instanceof CasClientError) throw err;
       throw new DeltaRejectedError(`Delta failed: ${err}`);
@@ -705,7 +691,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
         // corruption, not a missing document — the adapter maps this to 500.
         throw new StorageCorruptError(`Snapshot ${ref.hash} not found in R2`);
       }
-      baseDoc = await this.#config.formats[this.#config.defaultFormat].load(bytes);
+      baseDoc = decodeSnapshot<TDoc>(bytes) as TDoc;
       baseVersion = ref.version;
     } else {
       // No snapshot at or before the target — replay from the beginning.
@@ -751,10 +737,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // #requireDoc guarantees #doc is non-null, so #writeSnapshot returns a hash.
     this.#requireDoc();
 
-    // Reuse the hash #writeSnapshot actually persisted rather than re-saving:
-    // for a ctx-aware doc type (PSD) the stored bytes are the IR snapshot, so a
-    // second save(doc) WITHOUT ctx would hash the real (8BPS) bytes and hand
-    // back a hash no blob was stored under — breaking clone-from-snapshot.
+    // Reuse the hash #writeSnapshot actually persisted.
     const snap = await this.#writeSnapshot();
 
     return {
@@ -764,4 +747,8 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       docId: this.#deps.identity.docId,
     };
   }
+}
+
+function decodeSnapshot<TDoc>(bytes: Uint8Array): SValueType<TDoc> {
+  return decodeSValue(bytes) as SValueType<TDoc>;
 }

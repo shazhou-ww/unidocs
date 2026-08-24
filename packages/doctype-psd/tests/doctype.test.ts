@@ -1,22 +1,42 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { DocumentTypeContext } from "@unidocs/core";
-import { createPsdDocumentType } from "../src/doctype.js";
+import { collectSBlobRefs, createSBlob, decodeSValue, encodeSValue } from "@unidocs/core";
+import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/core";
+import { createPsdDocumentType, type PsdStoredDoc } from "../src/doctype.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));
 
-const dummyCtx: DocumentTypeContext = {
-  async makeSBlob() {
-    throw new Error("dummy ctx: makeSBlob not used by these tests");
-  },
-  async readSBlob() {
-    throw new Error("dummy ctx: readSBlob not used by these tests");
-  },
-};
+function createMemoryContext(): DocumentTypeContext {
+  const blobs = new Map<string, SBlobData>();
+  return {
+    async makeSBlob(
+      dataOrHash: SBlobData | string,
+      loadData?: () => Promise<SBlobData>,
+    ): Promise<SBlob> {
+      if (typeof dataOrHash === "string") {
+        if (!blobs.has(dataOrHash)) {
+          if (loadData === undefined) throw new Error(`SBlob ${dataOrHash} not found`);
+          const loaded = await loadData();
+          blobs.set(dataOrHash, loaded);
+        }
+        return createSBlob(dataOrHash);
+      }
+      const hash = createHash("sha256").update(dataOrHash.data).digest("hex");
+      blobs.set(hash, dataOrHash);
+      return createSBlob(hash);
+    },
+    async readSBlob(blob: SBlob): Promise<SBlobData> {
+      const data = blobs.get(blob.hash);
+      if (data === undefined) throw new Error(`SBlob ${blob.hash} not found`);
+      return data;
+    },
+  };
+}
 
 describe("createPsdDocumentType", () => {
-  const dt = createPsdDocumentType(dummyCtx);
+  const dt = createPsdDocumentType(createMemoryContext());
 
   it("init makes an empty doc", async () => {
     const d = await dt.init();
@@ -29,6 +49,17 @@ describe("createPsdDocumentType", () => {
     const doc2 = await dt.apply([{ kind: "set_props", payload: { layerId: doc.layers[1].id, props: { opacity: 0.5 } } }], doc);
     const layers = await dt.query({ kind: "getLayers" }, doc2) as any[];
     expect(layers.find((l: { name: string }) => l.name === "red-box").opacity).toBe(0.5);
+  });
+
+  it("uses a serializable PsdStoredDoc as TDoc", async () => {
+    const doc = await dt.formats.psd.load(new Uint8Array(readFileSync(fixture)));
+    const bytes = encodeSValue(doc as unknown as SValue);
+    const decoded = decodeSValue(bytes) as PsdStoredDoc;
+
+    expect(decoded.canvas).toEqual(doc.canvas);
+    expect(Object.keys(collectSBlobRefs(decoded)).length).toBeGreaterThan(0);
+    const layers = await dt.query({ kind: "getLayers" }, decoded) as any[];
+    expect(layers.map((layer: { name: string }) => layer.name)).toContain("red-box");
   });
 
   it("exposes prefixed tool names for name-prefix routing + contentType", () => {

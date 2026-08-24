@@ -43,6 +43,11 @@ makes recovery faster and provides a safe history-truncation boundary.
 9. A doctype may expose multiple named import/export formats.
 10. Version 1 keeps periodic snapshots rather than storing a TDoc snapshot for
     every delta.
+11. `DocumentType` has no `snapshotFormat`. A snapshot is always the canonical
+  SValue serialization of TDoc; named formats are never persistence codecs.
+12. A doctype whose editing model is not an SValue exposes a separate stored
+  TDoc and keeps the editing model in a scoped cache. PSD therefore uses
+  `PsdStoredDoc` as TDoc and treats `PsdDoc` only as a materialized model.
 
 ## 1. Core contract
 
