@@ -63,6 +63,17 @@ interface SizedLayer extends LocalLayer {
   children?: SizedLayer[];
 }
 
+/** Recursive count of every layer, including group children — used by the
+ *  [psd-perf] init log to report doc complexity alongside tile counts. */
+function countLayers(layers: LocalLayer[]): number {
+  let n = 0;
+  for (const l of layers) {
+    n += 1;
+    if (l.children) n += countLayers(l.children);
+  }
+  return n;
+}
+
 /** Sum of every layer's (and mask's) decoded RGBA byte size, walking group
  *  children. Used to size the Worker's PixelCache to the doc: the engine
  *  default (64 MiB) is fine for small docs but evicts constantly on a large
@@ -135,7 +146,9 @@ async function initRender(): Promise<void> {
     CACHE_CAP,
     Math.max(CACHE_FLOOR, decodedBytes(doc.layers as unknown as SizedLayer[]) + CACHE_HEADROOM),
   );
+  const workerInitStart = performance.now();
   const init = await renderClient.init({ ir, gw: GW, user: USER, cacheBytes });
+  const workerInitMs = performance.now() - workerInitStart;
   tileSize = init.tileSize;
 
   view.width = init.canvas.width;
@@ -165,7 +178,18 @@ async function initRender(): Promise<void> {
   });
 
   const tiles = viewport.visibleTiles(tileSize);
+  const totalTiles = Math.ceil(init.canvas.width / tileSize) * Math.ceil(init.canvas.height / tileSize);
+  console.log(
+    `[psd-perf] init: doc ${init.canvas.width}x${init.canvas.height}, tileSize=${tileSize}, ` +
+    `layers=${countLayers(doc.layers as unknown as LocalLayer[])}, totalTiles=${totalTiles}, ` +
+    `visibleTiles=${tiles.length}, stageRect=${stageEl.clientWidth}x${stageEl.clientHeight}, ` +
+    `canvasRect=${view.width}x${view.height}`,
+  );
+
+  const firstPaintStart = performance.now();
   if (tiles.length > 0) await renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
+  const firstPaintMs = performance.now() - firstPaintStart;
+  console.log(`[psd-perf] init: workerInit=${Math.round(workerInitMs)}ms firstPaint=${Math.round(firstPaintMs)}ms (tiles=${tiles.length})`);
 
   refreshLayers();
   setStatus(`v${session.version} · ${docId.slice(0, 8)}`);
@@ -264,14 +288,38 @@ function refreshLayers(): void {
  *  agent-driven server change is rebased onto inside `DocSession` itself. */
 async function dispatch(op: Op): Promise<void> {
   if (!session) return;
+  const totalStart = performance.now();
+  let rect: Rect | undefined;
+  let applyOpMs = 0;
+  let tilesMs = 0;
+  let visibleCount = 0;
+  let requestedCount = 0;
   try {
-    const rect = await session.applyLocal(op);
+    const applyStart = performance.now();
+    rect = await session.applyLocal(op);
+    applyOpMs = performance.now() - applyStart;
     if (renderClient && viewport) {
-      const dirty = viewport.visibleTiles(tileSize).filter((t) => rectsOverlap(t.region, rect));
-      if (dirty.length > 0) await renderClient.requestTiles(dirty.map((t) => [t.tx, t.ty]));
+      const visible = viewport.visibleTiles(tileSize);
+      visibleCount = visible.length;
+      const dirty = visible.filter((t) => rectsOverlap(t.region, rect as Rect));
+      requestedCount = dirty.length;
+      if (dirty.length > 0) {
+        const tilesStart = performance.now();
+        await renderClient.requestTiles(dirty.map((t) => [t.tx, t.ty]));
+        tilesMs = performance.now() - tilesStart;
+      }
     }
   } catch (e) {
     setStatus(`local apply failed: ${(e as Error).message}`);
+  } finally {
+    const totalMs = performance.now() - totalStart;
+    const layerId = (op.payload as { layerId?: string }).layerId ?? "?";
+    const [t, l, b, r] = rect ?? [0, 0, 0, 0];
+    console.log(
+      `[psd-perf] toggle ${op.kind}/${layerId}: dirty=[${t},${l},${b},${r}] dirtyArea=${r - l}x${b - t} ` +
+      `visible=${visibleCount} requested=${requestedCount} applyOpMs=${Math.round(applyOpMs)}ms ` +
+      `tilesMs=${Math.round(tilesMs)}ms totalMs=${Math.round(totalMs)}ms`,
+    );
   }
 }
 

@@ -25,8 +25,9 @@ export class RenderCore {
   /** Warms the decoded-pixel cache with every lazy layer/mask blob, fetched
    *  concurrently, so the first composite/tile pass is CPU-only (no serial
    *  per-layer network faults). Call once, right after construction, before
-   *  the first `tile()`/`composite()`. */
-  prefetch(): Promise<void> {
+   *  the first `tile()`/`composite()`. Returns the count of unique blobs
+   *  fetched. */
+  prefetch(): Promise<number> {
     return this.compositor.prefetch();
   }
 

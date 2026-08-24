@@ -12,13 +12,16 @@
       header h1 { font-size: 15px; margin: 0; font-weight: 600; }
       header .spacer { flex: 1; }
       main { display: grid; grid-template-columns: 1fr 340px; gap: 0; height: calc(100vh - 54px); }
-      #stage { display: flex; align-items: center; justify-content: center; overflow: auto; padding: 24px;
+      #stage { display: flex; overflow: auto; padding: 24px;
                background: repeating-conic-gradient(#8882 0 25%, transparent 0 50%) 50% / 20px 20px; }
       /* Rendered at its native document resolution (no CSS max-width/height
          shrink-to-fit like the old <img>): #stage's overflow:auto scrolls
          large documents instead. Native size keeps canvas.clientWidth/Height
-         (used by Viewport.visibleTiles) equal to the bitmap's pixel size. */
-      #view { box-shadow: 0 2px 12px #0005; image-rendering: pixelated; }
+         (used by Viewport.visibleTiles) equal to the bitmap's pixel size.
+         #view uses margin:auto (not #stage's align/justify-items: center) so it
+         centers only when it fits; when it overflows, the start-side (left/top)
+         stays reachable by scrolling instead of being clipped by flex centering. */
+      #view { margin: auto; box-shadow: 0 2px 12px #0005; image-rendering: pixelated; }
       /* Right column splits into a scrolling layers panel and a chat dock. */
       aside { border-left: 1px solid #8884; display: flex; flex-direction: column; min-height: 0; }
       aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; opacity: .6; margin: 0 0 8px; }

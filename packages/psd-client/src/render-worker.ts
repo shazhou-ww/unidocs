@@ -56,7 +56,9 @@ async function handle(req: WorkerRequest): Promise<void> {
         // batch — the ~1min "editing hangs" symptom. Awaiting it here means
         // "ready" itself is delayed by the warm-up, but every subsequent
         // "tiles"/"applyOp" is fast (cache hits only), so the queue never backs up.
-        await core.prefetch();
+        const prefetchStart = performance.now();
+        const prefetchCount = await core.prefetch();
+        console.log(`[psd-perf] worker: prefetch ${prefetchCount} blobs in ${Math.round(performance.now() - prefetchStart)}ms`);
         post({ type: "ready", id: req.id, tileSize: core.tileSize, canvas: { width: core.doc.canvas.width, height: core.doc.canvas.height } });
       } catch (err) {
         post({ type: "error", id: req.id, message: errorMessage(err) });
@@ -84,17 +86,24 @@ async function handle(req: WorkerRequest): Promise<void> {
       // batch. `tilesDone` always fires at the end so the client's
       // `requestTiles` promise settles even if every tile in the batch
       // failed.
-      for (const [tx, ty] of req.tiles) {
-        try {
-          const px = await core.tile(tx, ty);
-          // Copy into a fresh, transferable buffer: px.data may be a view
-          // backed by the persistent PixelCache's storage, which we must
-          // not hand off (transfer detaches the buffer on the sending side).
-          const data = new Uint8ClampedArray(px.data);
-          post({ type: "tile", id: req.id, tx, ty, width: px.width, height: px.height, data }, [data.buffer]);
-        } catch (err) {
-          post({ type: "error", id: req.id, message: errorMessage(err) });
+      {
+        const batchStart = performance.now();
+        let slowestTileMs = 0;
+        for (const [tx, ty] of req.tiles) {
+          const tileStart = performance.now();
+          try {
+            const px = await core.tile(tx, ty);
+            // Copy into a fresh, transferable buffer: px.data may be a view
+            // backed by the persistent PixelCache's storage, which we must
+            // not hand off (transfer detaches the buffer on the sending side).
+            const data = new Uint8ClampedArray(px.data);
+            post({ type: "tile", id: req.id, tx, ty, width: px.width, height: px.height, data }, [data.buffer]);
+          } catch (err) {
+            post({ type: "error", id: req.id, message: errorMessage(err) });
+          }
+          slowestTileMs = Math.max(slowestTileMs, performance.now() - tileStart);
         }
+        console.log(`[psd-perf] worker: batch tiles=${req.tiles.length} totalMs=${Math.round(performance.now() - batchStart)}ms slowestTileMs=${Math.round(slowestTileMs)}ms`);
       }
       post({ type: "tilesDone", id: req.id });
       break;

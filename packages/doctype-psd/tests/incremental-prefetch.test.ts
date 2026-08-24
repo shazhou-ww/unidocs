@@ -131,6 +131,6 @@ describe("IncrementalCompositor.prefetch", () => {
     };
     const doc: PsdDoc = { canvas: { width: 2, height: 2, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [resident] };
     const comp = new IncrementalCompositor(doc, { ctx: { store, cache: new PixelCache(1 << 20) } });
-    await expect(comp.prefetch()).resolves.toBeUndefined();
+    await expect(comp.prefetch()).resolves.toBe(0);
   });
 });

@@ -120,9 +120,10 @@ export class IncrementalCompositor {
    *  parallel batch; every later composite is then a pure cache hit (CPU-only,
    *  no network), so a queued `applyOp` no longer waits behind serial faults.
    *  No-op for a resident-only doc (no PixelRefs) or when `ctx` was never
-   *  supplied (nothing to prefetch into). */
-  async prefetch(): Promise<void> {
-    if (!this.#ctx) return;
+   *  supplied (nothing to prefetch into). Returns the count of unique blobs
+   *  fetched (0 in the no-op case), so callers can log prefetch coverage. */
+  async prefetch(): Promise<number> {
+    if (!this.#ctx) return 0;
     const { store, cache } = this.#ctx;
     const refs: PixelRef[] = [];
     const walk = (layers: Layer[]): void => {
@@ -138,6 +139,7 @@ export class IncrementalCompositor {
     const seen = new Set<string>();
     const unique = refs.filter((r) => (seen.has(r.hash) ? false : (seen.add(r.hash), true)));
     await Promise.all(unique.map((r) => resolvePixels(r, store, cache)));
+    return unique.length;
   }
 
   async composite(): Promise<Pixels> {
