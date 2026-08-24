@@ -1,32 +1,58 @@
-import type { DocumentTypeFactory } from "@unidocs/core";
+import type { DocumentType, DocumentTypeContext, SValue } from "@unidocs/core";
 import type { PsdDoc } from "./model/types.js";
 import { apply, type PsdOp } from "./ops/index.js";
-import { saveSnapshot, loadSnapshot, refsFromSnapshot } from "./psd/snapshot.js";
+import { saveSnapshot, loadSnapshot } from "./psd/snapshot.js";
+import { save } from "./psd/save.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
 import { resolveDoc } from "./resolve.js";
 import { runQuery, type PsdQuery } from "./queries.js";
 import { tools, instructions } from "./tools.js";
 
-export type PsdOptions = Record<string, never>;
 export type { PsdDoc, PsdQuery, PsdOp };
 
-export const createPsdDocumentType: DocumentTypeFactory<PsdOptions, PsdDoc, PsdQuery, PsdOp> = (_options) => ({
-  init: async (): Promise<PsdDoc> => ({
-    canvas: { width: 0, height: 0, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
-    layers: [],
-  }),
-  load: loadSnapshot,
-  save: saveSnapshot,
-  // Fault every lazy PixelRef layer resident so a subsequent ctx-less save()
-  // can emit a real (8BPS) PSD. A no-op on an already-resident doc (byte-
-  // identical export) and when there is no CAS context to read blobs from.
-  resolve: (doc, ctx) => (ctx?.cas ? resolveDoc(doc, casBlobStore(ctx)) : Promise.resolve(doc)),
-  apply,
-  query: runQuery,
-  // Snapshots are IR JSON referencing per-layer/mask pixel blobs in the CAS.
-  refsFromSnapshot,
-  refsFromOp: () => ({}),
-  contentType: "image/vnd.adobe.photoshop",
-  tools,
-  instructions,
-});
+/**
+ * PSD DocumentType factory.
+ *
+ * PSD documents contain binary pixel data (Uint8Array) that is not directly
+ * SValue-encodable, so this factory uses a type assertion to bridge the gap
+ * between the SValue-constrained DocumentType interface and PSD's binary model.
+ * The runtime layer (server-core session) already handles this with its own
+ * casts.
+ */
+export function createPsdDocumentType(ctx: DocumentTypeContext): DocumentType<PsdDoc, PsdQuery, PsdOp> {
+  return {
+    init: async (): Promise<PsdDoc> => ({
+      canvas: { width: 0, height: 0, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
+      layers: [],
+    }),
+
+    apply: async (ops: readonly PsdOp[], doc: PsdDoc): Promise<PsdDoc> =>
+      apply(ops, doc, ctx),
+
+    query: async (q: PsdQuery, doc: PsdDoc): Promise<SValue> =>
+      runQuery(q, doc, ctx) as Promise<SValue>,
+
+    formats: {
+      psd: {
+        mediaTypes: ["image/vnd.adobe.photoshop"],
+        extensions: [".psd"],
+        load: async (data: Uint8Array): Promise<PsdDoc> => loadSnapshot(data, ctx),
+        save: async (doc: PsdDoc): Promise<Uint8Array> =>
+          save(await resolveDoc(doc, casBlobStore(ctx))),
+      },
+      ir: {
+        mediaTypes: ["application/json"],
+        extensions: [".json"],
+        load: async (data: Uint8Array): Promise<PsdDoc> => loadSnapshot(data, ctx),
+        save: async (doc: PsdDoc): Promise<Uint8Array> => saveSnapshot(doc, ctx),
+      },
+    },
+    defaultFormat: "psd",
+    snapshotFormat: "ir",
+
+    contentType: "image/vnd.adobe.photoshop",
+
+    tools,
+    instructions,
+  } as unknown as DocumentType<PsdDoc, PsdQuery, PsdOp>;
+}

@@ -3,27 +3,27 @@ import type { BlobStore } from "../render/pixel-source.js";
 
 /**
  * Bridges the doctype-local content-addressed `BlobStore` (`put`/`get` by hash)
- * onto the runtime CAS exposed via `ctx.cas`. `put` uploads PNG bytes through
- * `ctx.cas.store` (write-capable / editor-side context only), returning the CAS
- * content hash; `get` reads a blob by hash, translating a CAS miss (which throws)
- * into the BlobStore's `null` contract.
+ * onto the runtime `DocumentTypeContext` (SValue protocol). `put` uploads PNG
+ * bytes through `ctx.makeSBlob` (which stores to CAS and returns an SBlob with
+ * the content hash); `get` reads a blob by hash via `ctx.readSBlob`.
  *
- * Only build this when saving with a write-capable context — `serialize` calls
- * `put`, which requires `ctx.cas.store` to be present.
+ * Only build this when a write-capable context is available — `put` requires
+ * `ctx.makeSBlob` to be functional.
  */
 export function casBlobStore(ctx: DocumentTypeContext): BlobStore {
   return {
     async put(bytes: Uint8Array): Promise<string> {
-      if (!ctx.cas.store) {
-        throw new Error("casBlobStore: ctx.cas.store is required to put blobs (write-capable context expected)");
-      }
-      return ctx.cas.store(bytes, "image/png");
+      const blob = await ctx.makeSBlob({ data: bytes, contentType: "image/png" });
+      return blob.hash;
     },
     async get(hash: string): Promise<Uint8Array | null> {
       try {
-        return await ctx.cas.read({ kind: "cas", hash });
+        const blob = await ctx.makeSBlob(hash, async () => {
+          throw new Error(`BlobStore.get: CAS read failed for ${hash}`);
+        });
+        const data = await ctx.readSBlob(blob);
+        return data.data;
       } catch {
-        // CAS read throws on miss; the BlobStore contract returns null.
         return null;
       }
     },

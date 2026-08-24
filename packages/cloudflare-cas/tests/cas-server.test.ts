@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { CasDurableObject } from "../src/cas/do";
-import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas";
+import {
+  computeNodeDigest,
+  concatenateNodeBytes,
+  encodeHeader,
+  hashToHex,
+  hexToHash,
+} from "@unidocs/cas";
+import { createSBlob, encodeSValueWithRefs, SValueContentType } from "@unidocs/core/internal";
 
 // ─── Mock D1 Database ───────────────────────────────────────────────
 // Stores rows as plain objects with named columns.
@@ -275,6 +282,7 @@ describe("CAS Durable Object", () => {
     await db.exec("CREATE TABLE IF NOT EXISTS cas_nodes");
     await db.exec("CREATE TABLE IF NOT EXISTS cas_edges");
     await db.exec("CREATE TABLE IF NOT EXISTS cas_root_ref_requests");
+    await db.exec("CREATE TABLE IF NOT EXISTS cas_root_owners");
 
     doInstance = new CasDurableObject({} as any, {
       CAS_DB: db as any,
@@ -349,6 +357,31 @@ describe("CAS Durable Object", () => {
       expect(second.response.status).toBe(409);
       expect((await second.response.json()).error).toContain("metadata mismatch");
     });
+
+    it("creates a node from portable canonical bytes", async () => {
+      const content = new TextEncoder().encode("portable upload");
+      const contentType = "text/plain";
+      const header = encodeHeader(content.length, contentType, 0);
+      const bytes = concatenateNodeBytes(
+        header,
+        new TextEncoder().encode(contentType),
+        [],
+        content,
+      );
+      const hash = await computeHash(content, contentType);
+      const response = await doInstance.fetch(new Request("http://localhost/leasePortableNode", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/vnd.unidocs.cas-node",
+          "X-CAS-Hash": hash,
+          "X-User-Id": "user1",
+        },
+        body: bytes,
+      }));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ hash, ready: true });
+    });
   });
 
   describe("read", () => {
@@ -371,6 +404,19 @@ describe("CAS Durable Object", () => {
         headers: { "X-User-Id": "user1", "X-CAS-Hash": "a".repeat(64) },
       }));
       expect(readResponse.status).toBe(404);
+    });
+
+    it("returns portable full-node bytes", async () => {
+      const content = new TextEncoder().encode("portable");
+      const { hash } = await leaseWithContent(doInstance, content, "text/plain");
+      const response = await doInstance.fetch(new Request("http://localhost/readNode", {
+        headers: { "X-User-Id": "user1", "X-CAS-Hash": hash },
+      }));
+
+      expect(response.status).toBe(200);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      expect(bytes.length).toBeGreaterThan(content.length);
+      expect(response.headers.get("Content-Type")).toBe("application/vnd.unidocs.cas-node");
     });
   });
 
@@ -435,6 +481,45 @@ describe("CAS Durable Object", () => {
       expect(parent.response.status).toBe(409);
       expect((await parent.response.json()).error).toContain("not ready");
     });
+
+    it("derives and validates SValue child refs", async () => {
+      const child = await leaseWithContent(
+        doInstance,
+        new TextEncoder().encode("stored child"),
+        "text/plain",
+      );
+      const encoded = encodeSValueWithRefs({ blob: createSBlob(child.hash) });
+      const parent = await leaseWithContent(doInstance, encoded.data, SValueContentType, {
+        refs: [...encoded.refs],
+      });
+
+      expect(parent.response.status).toBe(200);
+      const metadata = await doInstance.fetch(new Request("http://localhost/metadata", {
+        headers: { "X-User-Id": "user1", "X-CAS-Hash": parent.hash },
+      }));
+      expect((await metadata.json()).metadata.refs).toEqual([child.hash]);
+    });
+
+    it("rejects SValue refs that disagree with encoded tags", async () => {
+      const child = await leaseWithContent(
+        doInstance,
+        new TextEncoder().encode("stored child"),
+        "text/plain",
+      );
+      const encoded = encodeSValueWithRefs({ blob: createSBlob(child.hash) });
+      const parent = await leaseWithContent(doInstance, encoded.data, SValueContentType);
+
+      expect(parent.response.status).toBe(400);
+      expect((await parent.response.json()).error).toContain("refs do not match");
+    });
+
+    it("rejects non-canonical SValue content", async () => {
+      const nonCanonicalOne = new Uint8Array([0x18, 0x01]);
+      const parent = await leaseWithContent(doInstance, nonCanonicalOne, SValueContentType);
+
+      expect(parent.response.status).toBe(400);
+      expect((await parent.response.json()).error).toContain("Invalid SValue content");
+    });
   });
 
   describe("lease existing", () => {
@@ -466,6 +551,80 @@ describe("CAS Durable Object", () => {
         },
       }));
       expect(extend.status).toBe(404);
+    });
+  });
+
+  describe("root assignments", () => {
+    async function assign(
+      requestId: string,
+      assignments: { owner: string; hash: string | null }[],
+    ): Promise<Response> {
+      return doInstance.fetch(new Request("http://localhost/assignRoots", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": "user1",
+        },
+        body: JSON.stringify({ requestId, assignments }),
+      }));
+    }
+
+    async function rootCount(hash: string): Promise<number> {
+      const response = await doInstance.fetch(new Request("http://localhost/metadata", {
+        headers: { "X-CAS-Hash": hash, "X-User-Id": "user1" },
+      }));
+      return (await response.json()).state.rootRefCount;
+    }
+
+    it("moves one owner between roots and releases it", async () => {
+      const first = await leaseWithContent(doInstance, new TextEncoder().encode("first"), "text/plain");
+      const second = await leaseWithContent(doInstance, new TextEncoder().encode("second"), "text/plain");
+
+      expect((await assign("assign:1", [{ owner: "doc:d:delta:1", hash: first.hash }])).status).toBe(200);
+      expect(await rootCount(first.hash)).toBe(1);
+
+      expect((await assign("assign:2", [{ owner: "doc:d:delta:1", hash: second.hash }])).status).toBe(200);
+      expect(await rootCount(first.hash)).toBe(0);
+      expect(await rootCount(second.hash)).toBe(1);
+
+      expect((await assign("assign:3", [{ owner: "doc:d:delta:1", hash: null }])).status).toBe(200);
+      expect(await rootCount(second.hash)).toBe(0);
+      expect(db.tables.get("cas_root_owners")).toEqual([]);
+    });
+
+    it("is idempotent and rejects request ID conflicts", async () => {
+      const node = await leaseWithContent(doInstance, new TextEncoder().encode("root"), "text/plain");
+      const assignment = [{ owner: "doc:d:snapshot:1", hash: node.hash }];
+
+      expect((await assign("same", assignment)).status).toBe(200);
+      const retry = await assign("same", assignment);
+      expect(retry.status).toBe(200);
+      expect((await retry.json()).idempotent).toBe(true);
+      expect(await rootCount(node.hash)).toBe(1);
+
+      expect((await assign("same", [{ owner: "doc:d:snapshot:1", hash: null }])).status).toBe(409);
+      expect(await rootCount(node.hash)).toBe(1);
+    });
+
+    it("counts distinct owners of the same root", async () => {
+      const node = await leaseWithContent(doInstance, new TextEncoder().encode("shared"), "text/plain");
+      const response = await assign("two", [
+        { owner: "doc:d:delta:1", hash: node.hash },
+        { owner: "doc:d:snapshot:1", hash: node.hash },
+      ]);
+
+      expect(response.status).toBe(200);
+      expect(await rootCount(node.hash)).toBe(2);
+    });
+
+    it("rejects duplicate owners and missing roots", async () => {
+      expect((await assign("duplicate", [
+        { owner: "same", hash: null },
+        { owner: "same", hash: null },
+      ])).status).toBe(400);
+      expect((await assign("missing", [
+        { owner: "doc:d:delta:1", hash: "f".repeat(64) },
+      ])).status).toBe(404);
     });
   });
 

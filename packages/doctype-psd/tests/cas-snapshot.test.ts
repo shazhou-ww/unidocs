@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import type { CasRef, DocumentTypeContext } from "@unidocs/core";
+import { collectSBlobRefs, createSBlob } from "@unidocs/core";
+import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/core";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { isRef, resolvePixels, PixelCache } from "../src/render/pixel-source.js";
 import { render } from "../src/render/index.js";
@@ -8,48 +9,39 @@ import { casBlobStore } from "../src/psd/cas-blobstore.js";
 import { saveSnapshot, loadSnapshot, refsFromSnapshot } from "../src/psd/snapshot.js";
 
 /**
- * Minimal content-addressed CAS matching CasReadContext's editor surface:
- * `store` hashes the bytes and keeps them; `read` returns them verbatim and
- * throws on a miss (as MemoryCas / the real CasClient do).
+ * Minimal content-addressed CAS matching DocumentTypeContext's editor surface:
+ * `makeSBlob` hashes the bytes and keeps them; `readSBlob` returns them verbatim.
  */
 function memCas(): { ctx: DocumentTypeContext; nodes: Map<string, Uint8Array> } {
   const nodes = new Map<string, Uint8Array>();
   const ctx: DocumentTypeContext = {
-    cas: {
-      async store(bytes: Uint8Array): Promise<string> {
-        const hash = createHash("sha256").update(bytes).digest("hex");
-        if (!nodes.has(hash)) nodes.set(hash, bytes);
-        return hash;
-      },
-      async read(ref: CasRef): Promise<Uint8Array> {
-        const b = nodes.get(ref.hash);
-        if (!b) throw new Error(`CAS node ${ref.hash} not found`);
-        return b;
-      },
-      async metadata(ref: CasRef) {
-        const b = nodes.get(ref.hash);
-        if (!b) throw new Error(`CAS node ${ref.hash} not found`);
-        return { hash: ref.hash, size: b.length, contentType: "image/png", refs: [] as string[] };
-      },
+    async makeSBlob(dataOrHash: SBlobData | string, loadData?: () => Promise<SBlobData>): Promise<SBlob> {
+      if (typeof dataOrHash === "string") {
+        if (nodes.has(dataOrHash)) return createSBlob(dataOrHash);
+        if (!loadData) throw new Error(`CAS node ${dataOrHash} not found`);
+        const loaded = await loadData();
+        nodes.set(dataOrHash, loaded.data);
+        return createSBlob(dataOrHash);
+      }
+      const hash = createHash("sha256").update(dataOrHash.data).digest("hex");
+      if (!nodes.has(hash)) nodes.set(hash, dataOrHash.data);
+      return createSBlob(hash);
+    },
+    async readSBlob(blob: SBlob): Promise<SBlobData> {
+      const data = nodes.get(blob.hash);
+      if (!data) throw new Error(`CAS node ${blob.hash} not found`);
+      return { data, contentType: "image/png" };
     },
   };
   return { ctx, nodes };
 }
 
-/** A read-only context (no `store`) — save must fall back to full PSD. */
-function readOnlyCtx(nodes: Map<string, Uint8Array>): DocumentTypeContext {
+/** A read-only context (no usable makeSBlob) — save must fall back to full PSD. */
+function readOnlyCtx(_nodes: Map<string, Uint8Array>): DocumentTypeContext {
   return {
-    cas: {
-      async read(ref: CasRef): Promise<Uint8Array> {
-        const b = nodes.get(ref.hash);
-        if (!b) throw new Error(`CAS node ${ref.hash} not found`);
-        return b;
-      },
-      async metadata(ref: CasRef) {
-        const b = nodes.get(ref.hash);
-        if (!b) throw new Error(`CAS node ${ref.hash} not found`);
-        return { hash: ref.hash, size: b.length, contentType: "image/png", refs: [] as string[] };
-      },
+    makeSBlob: undefined as unknown as DocumentTypeContext["makeSBlob"],
+    async readSBlob() {
+      throw new Error("read-only");
     },
   };
 }
@@ -132,7 +124,8 @@ function findLayer(layers: Layer[], id: string): Layer | undefined {
 describe("PSD CAS snapshot save/load", () => {
   it("saveSnapshot with a write CAS ctx produces IR JSON and uploads every layer blob", async () => {
     const { ctx, nodes } = memCas();
-    const bytes = await saveSnapshot(residentDoc(), ctx);
+    const doc = residentDoc();
+    const bytes = await saveSnapshot(doc, ctx);
 
     // JSON, not PSD.
     expect(bytes[0]).toBe(0x7b); // "{"
@@ -146,8 +139,13 @@ describe("PSD CAS snapshot save/load", () => {
     const topHash = ir.layers[1].pixels.hash;
     for (const h of [childHash, maskHash, topHash]) {
       expect(typeof h).toBe("string");
-      expect(await ctx.cas.read({ kind: "cas", hash: h })).toBeInstanceOf(Uint8Array);
+      expect(nodes.get(h)).toBeInstanceOf(Uint8Array);
     }
+    expect(collectSBlobRefs(doc)).toEqual({
+      [childHash]: 1,
+      [maskHash]: 1,
+      [topHash]: 1,
+    });
   });
 
   it("refsFromSnapshot returns every layer + mask hash (sync, no store)", async () => {

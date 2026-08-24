@@ -311,11 +311,11 @@ describe("CasClient", () => {
 
 describe("leaseOpRefs", () => {
   it("leases each aggregated hash and skips empty maps", async () => {
+    const { createSBlob } = await import("@unidocs/core");
     const leaseExisting = vi.fn(async () => ({ ready: true }));
     const hash = "d".repeat(64);
     const refs = await leaseOpRefs(
-      [{ kind: "insertImage", hash }, { kind: "appendParagraph" }],
-      (op) => (op.kind === "insertImage" ? { [op.hash]: 1 } : {}),
+      [{ kind: "insertImage", blob: createSBlob(hash) }, { kind: "appendParagraph" }],
       { leaseExisting },
     );
     expect(refs).toEqual({ [hash]: 1 });
@@ -324,12 +324,12 @@ describe("leaseOpRefs", () => {
   });
 
   it("maps missing nodes as CasClientError 404", async () => {
+    const { createSBlob } = await import("@unidocs/core");
     const leaseExisting = vi.fn(async () => {
       throw new CasClientError(404, "Not Found", "leaseExisting");
     });
     await expect(leaseOpRefs(
-      [{ hash: "e".repeat(64) }],
-      (op) => ({ [op.hash]: 1 }),
+      [{ blob: createSBlob("e".repeat(64)) }],
       { leaseExisting },
     )).rejects.toMatchObject({ status: 404 });
   });
@@ -356,4 +356,3 @@ describe("commitRootRefsOrRollback", () => {
     expect(rollback).toHaveBeenCalledTimes(1);
   });
 });
-

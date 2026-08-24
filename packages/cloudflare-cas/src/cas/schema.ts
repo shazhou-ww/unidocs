@@ -17,6 +17,12 @@ export const CAS_SCHEMA_MIGRATIONS = [
 
   // Migration 4: cas_root_ref_requests table
   "CREATE TABLE IF NOT EXISTS cas_root_ref_requests (user_id TEXT NOT NULL, request_id TEXT NOT NULL, payload_hash TEXT NOT NULL, applied_at INTEGER NOT NULL, PRIMARY KEY (user_id, request_id))",
+
+  // Migration 5: durable owner ledger for repairable root counts
+  "CREATE TABLE IF NOT EXISTS cas_root_owners (user_id TEXT NOT NULL, owner TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (user_id, owner))",
+
+  // Migration 6: lookup owners by retained hash
+  "CREATE INDEX IF NOT EXISTS cas_root_owners_by_hash ON cas_root_owners(user_id, hash)",
 ];
 
 /**

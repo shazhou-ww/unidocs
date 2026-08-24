@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import type { CasRef, DocumentTypeContext } from "@unidocs/core";
+import { createSBlob } from "@unidocs/core";
+import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/core";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { serialize, deserialize } from "../src/psd/ir.js";
 import { casBlobStore } from "../src/psd/cas-blobstore.js";
@@ -10,29 +11,28 @@ import { apply } from "../src/ops/index.js";
 
 /**
  * Wires the render (getPreview) and the flip op to fault lazy PixelRef
- * pixels in from the CAS via `ctx.cas` (Task 4). Reuses the in-memory
- * content-addressed CAS stub from tests/cas-snapshot.test.ts.
+ * pixels in from the CAS via `ctx.makeSBlob` / `ctx.readSBlob`.
  */
 
 function memCas(): { ctx: DocumentTypeContext; nodes: Map<string, Uint8Array> } {
   const nodes = new Map<string, Uint8Array>();
   const ctx: DocumentTypeContext = {
-    cas: {
-      async store(bytes: Uint8Array): Promise<string> {
-        const hash = createHash("sha256").update(bytes).digest("hex");
-        if (!nodes.has(hash)) nodes.set(hash, bytes);
-        return hash;
-      },
-      async read(ref: CasRef): Promise<Uint8Array> {
-        const b = nodes.get(ref.hash);
-        if (!b) throw new Error(`CAS node ${ref.hash} not found`);
-        return b;
-      },
-      async metadata(ref: CasRef) {
-        const b = nodes.get(ref.hash);
-        if (!b) throw new Error(`CAS node ${ref.hash} not found`);
-        return { hash: ref.hash, size: b.length, contentType: "image/png", refs: [] as string[] };
-      },
+    async makeSBlob(dataOrHash: SBlobData | string, loadData?: () => Promise<SBlobData>): Promise<SBlob> {
+      if (typeof dataOrHash === "string") {
+        if (nodes.has(dataOrHash)) return createSBlob(dataOrHash);
+        if (!loadData) throw new Error(`CAS node ${dataOrHash} not found`);
+        const loaded = await loadData();
+        nodes.set(dataOrHash, loaded.data);
+        return createSBlob(dataOrHash);
+      }
+      const hash = createHash("sha256").update(dataOrHash.data).digest("hex");
+      if (!nodes.has(hash)) nodes.set(hash, dataOrHash.data);
+      return createSBlob(hash);
+    },
+    async readSBlob(blob: SBlob): Promise<SBlobData> {
+      const data = nodes.get(blob.hash);
+      if (!data) throw new Error(`CAS node ${blob.hash} not found`);
+      return { data, contentType: "image/png" };
     },
   };
   return { ctx, nodes };

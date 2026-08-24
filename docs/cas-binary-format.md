@@ -291,6 +291,25 @@ export interface CasNode {
 
 Consumers that need recursive logical size must encode or derive it in an application-specific root format. The generic CAS does not traverse the graph to validate a claimed total size.
 
+### 9.1 SValue nodes
+
+UniDocs structured values use the exact content type:
+
+```text
+application/vnd.unidocs.svalue+cbor;version=1
+```
+
+Their own content is deterministic RFC 8949 CBOR. An SBlob is CBOR tag 65536
+whose content is exactly one 32-byte raw SHA-256 hash. The node's ordered child
+hash list is the sequence of SBlob tags encountered by deterministic traversal
+of the encoded value. Duplicate tag occurrences produce duplicate child refs.
+
+For this content type, creation validates that encoded tag refs exactly equal
+the immutable CAS descriptor. Generic caller-supplied refs are not authoritative.
+Reads recheck the same relationship before returning a structured value. This
+additional semantic rule does not change the version-1 CAS header or digest:
+the verified ordered refs still occupy the ordinary child-hash region.
+
 ## 10. Portable full-node encoding
 
 Although Cloudflare storage is split, tooling may exchange a full node using the canonical layout directly.

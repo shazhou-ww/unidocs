@@ -5,7 +5,8 @@
  * LRU 优化掉的实现细节）。
  */
 import { afterEach, expect, test } from "vitest";
-import type { DocumentType } from "@unidocs/core";
+import { createSBlob } from "@unidocs/core";
+import type { DocumentType, SBlob } from "@unidocs/core";
 import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
 import { startDocTypeService } from "../src/doc-type-service.js";
 import { runMigrations } from "../src/migrate.js";
@@ -20,34 +21,36 @@ afterEach(async () => {
   handle = undefined;
 });
 
+interface CasProbeDoc {
+  blob: SBlob;
+}
+
 interface CasProbeOp {
   kind: "noop";
 }
 
+const PROBE_HASH = "d".repeat(64);
+
 /**
- * A minimal synthetic `DocumentType` whose only distinguishing feature is a
- * `refsFromOp` that returns a non-empty ref. It lives only in this test file
- * — production code gets no new export or seam to make this reachable.
- *
- * Why this is needed: markdown's `refsFromOp` always returns `{}`
- * (doctype-markdown/src/markdown.ts), so `DocumentSession.apply()`'s
- * `leaseOpRefs(ops, config.refsFromOp, deps.cas)` call (session.ts) never
- * actually calls `deps.cas.leaseExisting()` for a markdown document — the
- * CAS stub wired up in `doc-type-service.ts`'s `buildDeps()` is dead code as
- * far as any markdown-only test is concerned. A document type whose
- * `refsFromOp` returns a hash makes `apply()` actually call
- * `cas.leaseExisting(hash)`, which is the only way to drive a real HTTP
- * request into the stub fetcher and observe what it does.
+ * A minimal synthetic `DocumentType` whose TDoc carries a branded SBlob.
+ * JSON apply payloads cannot transport the SBlob brand, so this probe pins
+ * refs at create() via collectSBlobRefs(init()), which hits updateRootRefs
+ * on the 501 CAS stub.
  */
-function createCasProbeDocumentType(): DocumentType<string, unknown, CasProbeOp> {
+function createCasProbeDocumentType(): DocumentType<CasProbeDoc, unknown, CasProbeOp> {
   return {
-    init: async () => "",
+    init: async () => ({ blob: createSBlob(PROBE_HASH) }),
     query: async () => null,
     apply: async (_operations, doc) => doc,
-    load: async (data) => new TextDecoder().decode(data),
-    save: async (doc) => new TextEncoder().encode(doc),
-    refsFromSnapshot: () => ({}),
-    refsFromOp: () => ({ deadbeef: 1 }),
+    formats: {
+      text: {
+        mediaTypes: ["text/plain"],
+        extensions: [".txt"],
+        load: async () => ({ blob: createSBlob(PROBE_HASH) }),
+        save: async () => new TextEncoder().encode("{}"),
+      },
+    },
+    defaultFormat: "text",
     contentType: "text/plain",
     tools: {},
     instructions: "",
@@ -144,7 +147,7 @@ test("create → apply → query round-trips through the service", async () => {
  * status isn't 409 or 404 to HTTP 502 — so 502 is the status the code under
  * test actually produces, not a guess.
  */
-test("without casBaseUrl, apply() leasing a CAS ref hits the 501 stub and surfaces as 502", async () => {
+test("without casBaseUrl, create() pinning TDoc SBlobs hits the 501 stub and surfaces as 502", async () => {
   handle = await start(41998, {
     docType: "cas-probe",
     documentType: createCasProbeDocumentType(),
@@ -155,24 +158,10 @@ test("without casBaseUrl, apply() leasing a CAS ref hits the 501 stub and surfac
     method: "POST",
     headers: { "X-Doc-Id": docId },
   });
-  expect((await created.json()).success).toBe(true);
 
-  const applied = await internal(handle.url, `/users/u1/${docId}/apply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      baseVersion: 1,
-      description: "probe",
-      operations: [{ kind: "noop" }],
-    }),
-  });
-
-  expect(applied.status).toBe(502);
-  const body = await applied.json();
+  expect(created.status).toBe(502);
+  const body = await created.json();
   expect(body.success).toBe(false);
-  // `CasClientError`'s message is `CAS ${operation} failed: ${status} ${statusText}`
-  // (cas-client.ts) — "leaseExisting" and "501" are what prove the stub, not
-  // some other failure, is what answered.
-  expect(body.error).toMatch(/leaseExisting/);
+  expect(body.error).toMatch(/updateRootRefs/);
   expect(body.error).toMatch(/501/);
 });

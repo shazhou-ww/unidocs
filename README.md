@@ -19,42 +19,49 @@ Client → Gateway (auth + routing) → Editor DO / Operator DO (per document in
 - **Editor DO** — document state management, CRUD operations, history, snapshots
 - **Operator DO** — AI agent interface, ReAct loop, tool dispatch to Editor
 
-### Current storage layout
-
-The table below describes the implementation before the user-scoped CAS migration. The accepted target design is documented in [CAS Architecture](docs/cas-architecture.md).
+### Storage layout
 
 | Layer | Storage | Purpose |
 |-------|---------|---------|
-| KV | `docType`, `docId`, `snapshot` | Immutable facts + latest snapshot cache |
-| DO sqlite | `deltas`, `snapshots` | Operation history + snapshot index |
-| Shared D1 | `snapshots` | Global snapshot index (cross-DO clone support) |
-| R2 CAS | `hash → bytes` | Content-addressed snapshot storage (dedup) |
+| DO KV | `docType`, `docId`, `userId` | Immutable document identity |
+| DO sqlite | `svalue_deltas`, `svalue_snapshots`, `svalue_pending` | Root indexes + recoverable outbox |
+| Shared D1 | `docs`, `snapshots` | Global listing and clone index |
+| User CAS D1/R2 | nodes, edges, root owners + content | SValue/SBlob Merkle DAG storage |
 
-### Current consistency model
+### Consistency model
 
 Write order on every delta:
-1. sqlite INSERT delta (source of truth)
-2. KV PUT snapshot cache (may lag on crash, never inconsistent)
-3. (if threshold met) R2 PUT + D1 INSERT snapshot
+1. encode and lease the SValue delta root;
+2. apply against immutable TDoc;
+3. optionally encode and lease a TDoc snapshot root;
+4. write one local pending/outbox row containing root hashes and bytes;
+5. idempotently assign durable CAS root owners;
+6. finalize local indexes and publish in-memory state.
+
+Recovery retries pending bytes and owner assignment. A timeout cannot expose a
+partially committed version.
 
 ### Versioning
 
 - **Version**: monotonically increasing integer (auto-increment)
 - **Delta**: a batch of operations applied atomically (all-or-nothing)
-- **Snapshot**: full document state at a point in time
+- **Snapshot**: a standalone retained TDoc SValue root
 
 ### Snapshot strategy
 
-Snapshots are created every 20 deltas since the last snapshot.
+Every delta is retained as an SValue root. Snapshots default to every 10 deltas
+and share unchanged Blob descendants through CAS.
 
 ## Packages
 
 ```
 packages/
+├── cas/                   @unidocs/cas                   — CAS binary/digest kernel
 ├── core/                  @unidocs/core                  — Cloud-neutral document contracts
 ├── doctype-markdown/      @unidocs/doctype-markdown      — Cloud-neutral Markdown document type
 ├── doctype-docx/          @unidocs/doctype-docx          — Cloud-neutral DOCX document type
 ├── cloudflare-sdk/        @unidocs/cloudflare-sdk        — Durable Object runtime factories
+├── cloudflare-cas/        @unidocs/cloudflare-cas        — User-scoped CAS worker
 ├── cloudflare-gateway/    @unidocs/cloudflare-gateway    — Cloudflare API Gateway
 └── cloudflare-markdown/   @unidocs/cloudflare-markdown   — Cloudflare Markdown deployment
 ```
@@ -108,13 +115,16 @@ Clone flow:
 1. Gateway calls source Editor's `/snapshot` to get current hash
 2. Gateway creates new Editor DO
 3. Gateway calls new Editor's `/init_from_hash` with the hash
-4. R2 CAS ensures no duplicate storage
+4. the destination retains the same snapshot DAG without copying content
+
+Clone hashes are scoped to one user. Cross-user clone is rejected until an
+authorized recursive DAG-copy operation is provided.
 
 ### Query
 
 ```
 POST /users/{userId}/docs/{docType}/{docId}/query
-Content-Type: application/json
+Content-Type: application/vnd.unidocs.svalue+cbor;version=1
 
 { "kind": "...", "payload": {...} }
 
@@ -123,11 +133,13 @@ Response: { success: true, data: any, version: number }
 
 Every query response includes the current document version.
 
+JSON remains a compatibility transport for values that contain no SBlob.
+
 ### Apply (delta)
 
 ```
 POST /users/{userId}/docs/{docType}/{docId}/apply
-Content-Type: application/json
+Content-Type: application/vnd.unidocs.svalue+cbor;version=1
 
 {
   "operations": [ { "kind": "...", "payload": {...} }, ... ],
@@ -142,6 +154,11 @@ Response: { success: true, version: 43 }
 
 **Transactional**: all operations in a delta succeed or fail together. If any operation throws, the entire delta is rejected.
 
+Blob-taking domain operations carry SBlob, not a magic JSON property. Agent
+tools may accept explicit uploaded hashes; the doctype's JSON `toolCall` handler
+resolves them to SBlob before typed apply and persistence. Direct `/apply` never
+performs this conversion.
+
 ### Rollback
 
 ```
@@ -155,9 +172,9 @@ Response: { success: true, version: 43 }
 
 Rollback implementation:
 1. Find nearest snapshot ≤ target version (from sqlite snapshots table)
-2. Load snapshot from R2
-3. Replay deltas from snapshot version to target version
-4. Insert rollback as a synthetic delta (new version, empty operations)
+2. Load the retained TDoc root from user CAS
+3. Replay retained SValue delta roots to the target
+4. Insert a restore delta that references the reconstructed standalone TDoc root
 
 ### Operator (AI agent interface)
 
@@ -172,8 +189,9 @@ Response: { success: true, data: { response: string, iterations: number } }
 
 Operator behavior:
 - Maintains conversation history
-- `query_*` tools return `{ data, version }` — version is tracked internally
-- `apply_*` tools require a known version (must query first)
+- Dispatches `(tool name, JSON parameters)` to the doctype's DocumentAgent
+- Agent query updates the optimistic-lock version; agent apply uses it
+- Structured results are JSON; optional media content is rendered by the model-provider adapter
 - On `409` conflict, error includes `currentVersion` and retry hint
 - Max 10 iterations per run (configurable)
 
@@ -188,25 +206,35 @@ Clears conversation history and version tracking.
 ## Adding a document type
 
 1. Create a cloud-neutral package: `packages/doctype-mytype/`
-2. Export a configured `DocumentType` factory:
+2. Export a context-curried `DocumentType` factory. Optional doctype settings
+  belong in an outer function (`Options -> Context -> DocumentType`), not in
+  the core factory generic:
 
 ```typescript
 import type { DocumentTypeFactory } from "@unidocs/core";
 
-export interface MytypeOptions {
-  renderPage(page: number): Promise<string>;
-}
-
 export const createMytypeDocumentType:
-  DocumentTypeFactory<MytypeOptions, MyDocument, MyQuery, MyOperation> =
-  options => ({
+  DocumentTypeFactory<MyDocument, MyQuery, MyOperation> =
+  context => ({
     init: ...,
     query: ...,
     apply: ...,
-    load: ...,
-    save: ...,
+    formats: {
+      myformat: { mediaTypes: [...], extensions: [...], load: ..., save: ... },
+    },
+    defaultFormat: "myformat",
+  });
+
+export const createMytypeDocumentAgent:
+  DocumentAgentFactory<MyQuery, MyOperation> =
+  context => ({
     tools: ...,
     instructions: ...,
+    async toolCall(name, parameters) {
+      // parameters and structuredContent are JSON-only. Internally the handler
+      // can call context.query/apply/resolveBlob/readBlob.
+      return { structuredContent: ... };
+    },
   });
 ```
 
@@ -216,11 +244,9 @@ export const createMytypeDocumentType:
 import { createEditorDO, createOperatorDO } from "@unidocs/cloudflare-sdk";
 import { createMytypeDocumentType } from "@unidocs/doctype-mytype";
 
-const mytype = createMytypeDocumentType(options);
-
-export const MytypeEditor = createEditorDO(mytype);
+export const MytypeEditor = createEditorDO(createMytypeDocumentType);
 export const MytypeOperator = createOperatorDO({
-  ...mytype,
+  agentFactory: createMytypeDocumentAgent,
   llmProvider: ...,
   getEditorStub: ...,
 });
@@ -244,9 +270,9 @@ binding = "SNAPSHOTS_DB"
 database_name = "unidocs-snapshots"
 database_id = "..."
 
-[[r2_buckets]]
-binding = "CAS"
-bucket_name = "unidocs-cas"
+[[services]]
+binding = "CAS_SERVICE"
+service = "unidocs-cas"
 ```
 
 5. Add binding to Gateway's `wrangler.toml`:
@@ -357,9 +383,9 @@ every query/apply/list call will 500 with `no such table: docs`.
 
 - **Cloudflare Workers** — runtime
 - **Durable Objects** — per-document state + isolation
-- **D1** — shared snapshot index (SQLite-compatible)
-- **R2** — content-addressed snapshot storage
-- **KV** — per-DO metadata + snapshot cache
+- **D1** — CAS metadata/root owners and shared document indexes
+- **R2** — user-scoped immutable CAS node content
+- **KV** — immutable per-document identity only
 
 ## Roadmap
 

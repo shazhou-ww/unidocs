@@ -61,10 +61,11 @@
 
 import type {
   DocumentType,
-  DocumentTypeContext,
-  CasReadContext,
   CasReferences,
+  SValueType,
+  SValue,
 } from "@unidocs/core";
+import { collectSBlobRefs } from "@unidocs/core";
 import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "./cas-client.js";
 import {
   DeltaRejectedError,
@@ -87,7 +88,10 @@ import type {
 import { encodeQueryValue, type WireQueryValue } from "./query-value.js";
 
 /** Everything the session needs from the CAS service. */
-export interface CasGateway extends CasReadContext {
+export interface CasGateway {
+  read(ref: { kind: "cas"; hash: string }): Promise<Uint8Array>;
+  metadata(ref: { kind: "cas"; hash: string }): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }>;
+  store?(bytes: Uint8Array, contentType: string): Promise<string>;
   leaseExisting(hash: string): Promise<unknown>;
   updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<void>;
 }
@@ -119,7 +123,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   readonly #config: DocumentType<TDoc, TQuery, TOp>;
   readonly #deps: SessionDeps;
 
-  #doc: TDoc | null = null;
+  #doc: SValueType<TDoc> | null = null;
   #version = 0;
   #loaded = false;
 
@@ -141,9 +145,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     return this.#doc !== null;
   }
 
-  #context(): DocumentTypeContext {
-    return { cas: this.#deps.cas };
-  }
 
   #requireDoc(): TDoc {
     if (this.#doc === null) {
@@ -152,6 +153,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       );
     }
     return this.#doc;
+  }
+
+  #snapshotSave(): (doc: SValueType<TDoc>) => Promise<Uint8Array> {
+    const name = this.#config.snapshotFormat ?? this.#config.defaultFormat;
+    return this.#config.formats[name].save;
   }
 
   /**
@@ -164,11 +170,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   async load(): Promise<void> {
     if (this.#loaded) return;
 
-    const ctx = this.#context();
+    
 
     const snapshot = await this.#deps.snapshots.get();
     if (snapshot) {
-      this.#doc = await this.#config.load(snapshot.bytes, ctx);
+      this.#doc = await this.#config.formats[this.#config.defaultFormat].load(snapshot.bytes);
       this.#version = snapshot.version;
     } else {
       // The cache is a droppable layer (KV/Redis) while the delta log is the
@@ -188,7 +194,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
           // blank document instead of surfacing the lost content as an error.
           throw new StorageCorruptError(`Snapshot ${ref.hash} not found in R2`);
         }
-        this.#doc = await this.#config.load(bytes, ctx);
+        this.#doc = await this.#config.formats[this.#config.defaultFormat].load(bytes);
         this.#version = ref.version;
       }
     }
@@ -201,15 +207,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       // been snapshotted is a legitimate state, not corruption. Replay from
       // an empty document, exactly like rollback() does when no snapshot
       // exists at or before its target.
-      this.#doc = await this.#config.init(ctx);
+      this.#doc = await this.#config.init();
       this.#version = 0;
     }
 
     for (const delta of pending) {
       this.#doc = await this.#config.apply(
-        delta.operations as TOp[],
-        this.#doc as TDoc,
-        ctx,
+        delta.operations as readonly SValueType<TOp>[],
+        this.#doc as SValueType<TDoc>,
       );
       this.#version = delta.version;
     }
@@ -235,7 +240,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // Pass ctx so a ctx-aware doc type (PSD) caches the IR snapshot (JSON +
     // per-layer CAS blobs) rather than the full serialized document. Doc types
     // that ignore ctx (markdown/docx) are byte-identical to before.
-    const bytes = await this.#config.save(this.#doc, this.#context());
+    const bytes = await this.#snapshotSave()(this.#doc);
     await this.#deps.snapshots.put(this.#version, bytes);
   }
 
@@ -283,12 +288,12 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * `snapshot()`/clone round-trip on is the IR hash the blob was stored under.
    * markdown/docx ignore ctx and are byte-identical to before.
    *
-   * The bytes are returned alongside the hash so callers that must pin the
-   * snapshot's CAS root-refs (`#writeSnapshot`) can run `refsFromSnapshot` on
-   * the exact bytes that were persisted, without a second (re-encoding) save.
+   * The bytes are returned alongside the hash so callers can persist the
+   * snapshot blob. CAS root-refs are derived from SBlobs on the in-memory
+   * TDoc after save (see `#writeSnapshot`), not from a doctype hook over bytes.
    */
-  async #writeBlob(doc: TDoc): Promise<{ hash: string; bytes: Uint8Array }> {
-    const bytes = await this.#config.save(doc, this.#context());
+  async #writeBlob(doc: SValueType<TDoc>): Promise<{ hash: string; bytes: Uint8Array }> {
+    const bytes = await this.#snapshotSave()(doc);
     const hash = await computeHash(bytes);
     // Content-addressed: the same bytes are the same blob.
     await this.#deps.blobs.putIfAbsent(hash, bytes);
@@ -306,21 +311,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   async #writeSnapshot(): Promise<{ hash: string; version: number } | null> {
     if (this.#doc === null) return null;
 
-    const { hash, bytes } = await this.#writeBlob(this.#doc);
+    const { hash } = await this.#writeBlob(this.#doc);
 
-    // Pin the per-layer content blobs this snapshot references so CAS GC
-    // retains them. `refsFromSnapshot` is a pure function; markdown/docx
-    // return {} and skip this path entirely (zero behaviour change). This
-    // runs BEFORE recordSnapshot on purpose: we must not register a snapshot
-    // as a restore point until the content it references is protected, or a
-    // GC pass between the two writes could delete a blob the snapshot needs.
-    //
-    // The requestId is deterministic per (user, doc, version). Re-running
-    // #writeSnapshot for the same version commits the identical payload under
-    // the identical id, which the CAS worker dedupes by (requestId, payload):
-    // no double-count. A snapshot has no delta to roll back, so the rollback
-    // is a no-op; a pin failure surfaces as RootRefsError, mirroring apply().
-    const refs = this.#config.refsFromSnapshot(bytes);
+    // Pin SBlobs reachable from the in-memory TDoc so CAS GC retains them.
+    // Save may attach SBlobs onto the doc (PSD externalizes layer pixels);
+    // markdown/docx with no SBlobs yield {} and skip this path. This runs
+    // BEFORE recordSnapshot: we must not register a restore point until the
+    // content it references is protected.
+    const refs = collectSBlobRefs(this.#doc);
     if (Object.keys(refs).length > 0) {
       const { userId, docId } = this.#deps.identity;
       try {
@@ -359,31 +357,25 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       throw new DocExistsError("Document already exists");
     }
 
-    const ctx = this.#context();
+    
     const { docType, docId, userId } = this.#deps.identity;
 
     // Build the document on the side. Same rule as apply(): nothing touches
     // #doc/#version until the conditional write has actually landed.
     const doc = input?.bytes
-      ? await this.#config.load(input.bytes, ctx)
-      : await this.#config.init(ctx);
+      ? await this.#config.formats[this.#config.defaultFormat].load(input.bytes)
+      : await this.#config.init();
 
     // 1. Durable bytes first, outside the transaction. Version 1 is
     //    snapshotted immediately and deliberately, so a fresh document is
     //    restorable without replaying from `init()` — and an orphaned blob
     //    is the cheapest possible failure residue (see #writeBlob).
-    const { hash, bytes } = await this.#writeBlob(doc);
+    const { hash } = await this.#writeBlob(doc);
 
-    // 1b. Pin the v1 snapshot's per-layer content blobs BEFORE the transaction
-    //     records it as a restore point — the same ordering rule as
-    //     #writeSnapshot: content must be protected before anything registers
-    //     the snapshot as restorable, or a GC pass between the two writes could
-    //     delete a blob the snapshot needs. Azure's refactor records the v1
-    //     snapshot inline in the transaction (create() no longer routes through
-    //     #writeSnapshot), so the CAS pin the durable path owns is re-applied
-    //     here. A fresh document is always version 1. markdown/docx return {}
-    //     from refsFromSnapshot and skip this entirely (zero behaviour change).
-    const refs = this.#config.refsFromSnapshot(bytes);
+    // Pin TDoc SBlobs BEFORE the transaction records v1 as a restore point —
+    // the same ordering rule as #writeSnapshot. markdown/docx with no SBlobs
+    // yield {} and skip this entirely.
+    const refs = collectSBlobRefs(doc);
     if (Object.keys(refs).length > 0) {
       try {
         await commitRootRefsOrRollback(
@@ -487,7 +479,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     }
 
     const { docType, docId, userId } = this.#deps.identity;
-    const doc = await this.#config.load(bytes, this.#context());
+    const doc = await this.#config.formats[this.#config.defaultFormat].load(bytes);
 
     // Independently pin the per-layer blobs this cloned snapshot references,
     // BEFORE the transaction records it as a restore point — the same ordering
@@ -498,7 +490,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // cannot be GC'd out from under it when the source is deleted. Scoped to
     // the CLONE's own (user, doc, version=1) — deterministic and idempotent.
     // markdown/docx return {} and skip this entirely.
-    const cloneRefs = this.#config.refsFromSnapshot(bytes);
+    const cloneRefs = collectSBlobRefs(doc);
     if (Object.keys(cloneRefs).length > 0) {
       try {
         await commitRootRefsOrRollback(
@@ -553,25 +545,17 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   // Reads
   // ------------------------------------------------------------------
 
-  async query(q: TQuery): Promise<{ data: WireQueryValue; version: number }> {
+  async query(q: SValueType<TQuery>): Promise<{ data: WireQueryValue; version: number }> {
     await this.load();
     const doc = this.#requireDoc();
-    const data = await this.#config.query(q, doc, this.#context());
-    return { data: encodeQueryValue(data), version: this.#version };
+    const data = await this.#config.query(q, doc as SValueType<TDoc>);
+    return { data: encodeQueryValue(data as never), version: this.#version };
   }
 
   async exportBytes(): Promise<{ bytes: Uint8Array; contentType: string }> {
     await this.load();
-    const doc0 = this.#requireDoc();
-    // Materialize any lazy references (e.g. a cold-reloaded PSD's PixelRef
-    // layers) BEFORE serializing — the resolve hook faults them resident via
-    // the CAS context. Then save WITHOUT ctx so export produces the real
-    // document bytes (a full 8BPS PSD), never the CAS-IR snapshot. Doc types
-    // without a resolve hook (markdown/docx) are byte-identical to before.
-    const doc = this.#config.resolve
-      ? await this.#config.resolve(doc0, this.#context())
-      : doc0;
-    const bytes = await this.#config.save(doc);
+    const doc = this.#requireDoc();
+    const bytes = await this.#config.formats[this.#config.defaultFormat].save(doc as SValueType<TDoc>);
     return { bytes, contentType: this.#config.contentType };
   }
 
@@ -607,14 +591,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * not be polluted by a batch that was rolled back on disk.
    */
   async apply(
-    ops: readonly TOp[],
+    ops: readonly SValueType<TOp>[],
     description: string,
     baseVersion: number,
   ): Promise<{ version: number }> {
     await this.load();
 
     const doc = this.#requireDoc();
-    const ctx = this.#context();
+    
 
     // 0. Fast-fail on a stale baseVersion (design 3.2, the "可选优化").
     //
@@ -635,15 +619,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       throw new VersionConflictError(head, baseVersion + 1);
     }
 
-    // 1. Lease refs. A CasClientError propagates verbatim — it carries the
-    //    status the adapter maps to 409/400/502. Anything else is the caller's
-    //    problem, not the infrastructure's: `refsFromOp` is a doc-type pure
-    //    function and a malformed operation makes it throw (TypeError, etc.).
-    //    That must read as a rejected delta (400 — don't retry), not as a
-    //    server fault (500 — retry forever against an op that can never work).
+    // 1. Lease refs derived from SBlobs in the operation SValue. A
+    //    CasClientError propagates verbatim — it carries the status the
+    //    adapter maps to 409/400/502. Anything else (including a malformed
+    //    SValue that cannot be encoded) is a rejected delta (400 — don't
+    //    retry), not a server fault.
     let refs: CasReferences;
     try {
-      refs = await leaseOpRefs(ops, this.#config.refsFromOp, this.#deps.cas);
+      refs = await leaseOpRefs(ops as readonly SValue[], this.#deps.cas);
     } catch (err) {
       if (err instanceof CasClientError) throw err;
       throw new DeltaRejectedError(`Delta failed: ${err}`);
@@ -652,7 +635,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // 2. Apply transactionally to a working copy — nothing is written yet.
     let newDoc: TDoc;
     try {
-      newDoc = await this.#config.apply(ops, doc, ctx);
+      newDoc = await this.#config.apply(ops, doc as SValueType<TDoc>);
     } catch (err) {
       throw new DeltaRejectedError(`Delta failed: ${err}`);
     }
@@ -682,7 +665,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     }
 
     // 5. Commit in memory — only after the durable writes have succeeded.
-    this.#doc = newDoc;
+    this.#doc = newDoc as SValueType<TDoc>;
     this.#version = nextVersion;
 
     // 6.
@@ -705,7 +688,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     await this.load();
 
     this.#requireDoc();
-    const ctx = this.#context();
 
     const existing = await this.#deps.deltas.range(target, target);
     if (existing.length === 0) {
@@ -723,16 +705,16 @@ export class DocumentSession<TDoc, TQuery, TOp> {
         // corruption, not a missing document — the adapter maps this to 500.
         throw new StorageCorruptError(`Snapshot ${ref.hash} not found in R2`);
       }
-      baseDoc = await this.#config.load(bytes, ctx);
+      baseDoc = await this.#config.formats[this.#config.defaultFormat].load(bytes);
       baseVersion = ref.version;
     } else {
       // No snapshot at or before the target — replay from the beginning.
-      baseDoc = await this.#config.init(ctx);
+      baseDoc = await this.#config.init();
       baseVersion = 0;
     }
 
     for (const delta of await this.#deps.deltas.range(baseVersion + 1, target)) {
-      baseDoc = await this.#config.apply(delta.operations as TOp[], baseDoc, ctx);
+      baseDoc = await this.#config.apply(delta.operations as readonly SValueType<TOp>[], baseDoc as SValueType<TDoc>);
     }
 
     // Same conditional-write rule as apply(): never MAX(version) + 1 read
@@ -745,7 +727,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       operations: [], // synthetic delta — the state comes from the replay
     });
 
-    this.#doc = baseDoc;
+    this.#doc = baseDoc as SValueType<TDoc>;
     this.#version = newVersion;
 
     await this.#saveSnapshotCache();

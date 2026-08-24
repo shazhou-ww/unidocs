@@ -47,6 +47,47 @@ export async function handleRootRefs(
   return callCasDO(env, userId, "/updateRootRefs", "POST", request.body);
 }
 
+/** POST /_internal/root-assignments — owner-bound root updates. */
+export async function handleRootAssignments(
+  request: Request,
+  env: CasEnv,
+  userId: string,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
+  }
+  return callCasDO(env, userId, "/assignRoots", "POST", request.body);
+}
+
+/** GET/POST /_internal/nodes/{hash} — portable canonical node bytes. */
+export async function handleReadNode(
+  request: Request,
+  env: CasEnv,
+  userId: string,
+  hash: string,
+): Promise<Response> {
+  try {
+    validateHash(hash);
+  } catch {
+    return Response.json({ error: "Invalid hash" }, { status: 400 });
+  }
+  if (request.method === "GET") {
+    return callCasDO(env, userId, "/readNode", "GET", undefined, hash);
+  }
+  if (request.method === "POST") {
+    return callCasDO(
+      env,
+      userId,
+      "/leasePortableNode",
+      "POST",
+      request.body,
+      hash,
+      request,
+    );
+  }
+  return Response.json({ error: "Method not allowed" }, { status: 405 });
+}
+
 /**
  * Handle a CAS HTTP request.
  */

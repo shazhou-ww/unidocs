@@ -152,7 +152,7 @@ export async function startLocalRuntime({
     Object.values(ports).map((port) => assertPortFree(host, port)),
   );
 
-  const bundleDir = join(ROOT, ".wrangler", "local-bundles");
+  const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway));
 
   await Promise.all(
     bundleTargets(docTypes).map(({ entry, outfile }) =>

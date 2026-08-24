@@ -14,19 +14,29 @@
 import {
   type CasNodeDescriptor,
   type CasLeaseResult,
+  type CasAssignRootsRequest,
   type CasRootRefUpdate,
   type CasUsage,
   type CasGcResult,
   type CasNodeMetadata,
   type CasNodeState,
   encodeHeader,
+  concatenateNodeBytes,
+  decodeHeader,
+  parseNodeBytes,
   computeNodeDigest,
   hashToHex,
   hexToHash,
   validateHash,
   validateContentType,
   validateContentLength,
+  validateChildRefs,
+  validateDecodedHeader,
 } from "@unidocs/cas";
+import {
+  decodeSValueWithRefs,
+  SValueContentType,
+} from "@unidocs/core/internal";
 
 interface CasEnv {
   CAS_DB: D1Database;
@@ -70,14 +80,20 @@ export class CasDurableObject implements DurableObject {
       switch (action) {
         case "/leaseWithContent":
           return await this.handleLeaseWithContent(request, userId);
+        case "/leasePortableNode":
+          return await this.handleLeasePortableNode(request, userId);
         case "/leaseExisting":
           return await this.handleLeaseExisting(request, userId);
         case "/read":
           return await this.handleRead(request, userId);
+        case "/readNode":
+          return await this.handleReadNode(request, userId);
         case "/metadata":
           return await this.handleMetadata(request, userId);
         case "/updateRootRefs":
           return await this.handleUpdateRootRefs(request, userId);
+        case "/assignRoots":
+          return await this.handleAssignRoots(request, userId);
         case "/usage":
           return await this.handleUsage(userId);
         case "/gc":
@@ -89,7 +105,9 @@ export class CasDurableObject implements DurableObject {
       const message = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : undefined;
       const status = err instanceof CasHttpError ? err.status : 500;
-      console.error("[CAS DO] Error:", { action, userId, message, stack });
+      if (status >= 500) {
+        console.error("[CAS DO] Error:", { action, userId, message, stack });
+      }
       return Response.json({ error: message }, { status });
     }
   }
@@ -130,6 +148,58 @@ export class CasDurableObject implements DurableObject {
     const durationMs = parseDurationMs(request.headers.get("X-CAS-Lease-Duration"));
     const descriptor: CasNodeDescriptor = { hash, size, contentType, refs };
 
+    return this.leaseNode(
+      userId,
+      descriptor,
+      durationMs,
+      async () => new Uint8Array(await request.arrayBuffer()),
+      () => cancelBody(request),
+    );
+  }
+
+  private async handleLeasePortableNode(request: Request, userId: string): Promise<Response> {
+    const hash = request.headers.get("X-CAS-Hash") ?? "";
+    try {
+      validateHash(hash);
+    } catch {
+      throw new CasHttpError(400, "Invalid hash");
+    }
+    const durationMs = parseDurationMs(request.headers.get("X-CAS-Lease-Duration"));
+    let parsed: ReturnType<typeof parseNodeBytes>;
+    try {
+      parsed = parseNodeBytes(new Uint8Array(await request.arrayBuffer()));
+      const decoded = decodeHeader(parsed.header);
+      validateDecodedHeader(decoded);
+      validateContentType(parsed.contentType);
+      const refs = parsed.childHashes.map(hashToHex);
+      validateChildRefs(refs, decoded.refCount);
+      return this.leaseNode(
+        userId,
+        {
+          hash,
+          size: parsed.content.length,
+          contentType: parsed.contentType,
+          refs,
+        },
+        durationMs,
+        async () => parsed.content,
+        async () => undefined,
+      );
+    } catch (err) {
+      if (err instanceof CasHttpError) throw err;
+      throw new CasHttpError(400, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  private async leaseNode(
+    userId: string,
+    descriptor: CasNodeDescriptor,
+    durationMs: number,
+    provideContent: () => Promise<Uint8Array>,
+    cancelContent: () => Promise<void>,
+  ): Promise<Response> {
+    const { hash, size, contentType, refs } = descriptor;
+
     const now = Date.now();
     const db = this.env.CAS_DB;
     const r2Key = `users/${userId}/nodes/${hash}`;
@@ -146,36 +216,51 @@ export class CasDurableObject implements DurableObject {
 
     const existingRefs = existing
       ? (await db
-          .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
-          .bind(userId, hash)
-          .all<{ child_hash: string }>())
-          .results.map((row) => row.child_hash)
+        .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
+        .bind(userId, hash)
+        .all<{ child_hash: string }>())
+        .results.map((row) => row.child_hash)
       : [];
 
     const r2Head = await this.env.CAS_R2.head(r2Key);
 
     if (existing && r2Head) {
       if (!metadataMatches(existing, existingRefs, descriptor)) {
-        await cancelBody(request);
+        await cancelContent();
         throw new CasHttpError(409, "Immutable metadata mismatch");
       }
-      await cancelBody(request);
+      await cancelContent();
       return Response.json(await this.extendLease(userId, hash, existing.lease_started_at, existing.lease_expires_at, durationMs, now));
     }
 
     for (const childHash of refs) {
       const childR2 = await this.env.CAS_R2.head(`users/${userId}/nodes/${childHash}`);
       if (!childR2) {
-        await cancelBody(request);
+        await cancelContent();
         throw new CasHttpError(409, `Child node ${childHash} is not ready`);
       }
     }
 
-    const content = new Uint8Array(await request.arrayBuffer());
+    const content = await provideContent();
     try {
       validateContentLength(content.length, size);
     } catch (err) {
       throw new CasHttpError(400, err instanceof Error ? err.message : String(err));
+    }
+
+    if (contentType === SValueContentType) {
+      let derivedRefs: readonly string[];
+      try {
+        derivedRefs = decodeSValueWithRefs(content).refs;
+      } catch (err) {
+        throw new CasHttpError(
+          400,
+          `Invalid SValue content: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      if (!sameRefs(refs, derivedRefs)) {
+        throw new CasHttpError(400, "SValue child refs do not match encoded content");
+      }
     }
 
     const childHashes = refs.map(hexToHash);
@@ -302,6 +387,41 @@ export class CasDurableObject implements DurableObject {
     });
   }
 
+  private async handleReadNode(request: Request, userId: string): Promise<Response> {
+    const hash = request.headers.get("X-CAS-Hash") ?? "";
+    validateHash(hash);
+    const node = await this.env.CAS_DB
+      .prepare("SELECT content_size, content_type FROM cas_nodes WHERE user_id = ? AND hash = ?")
+      .bind(userId, hash)
+      .first<{ content_size: number; content_type: string }>();
+    if (!node) throw new CasHttpError(404, `Node ${hash} not found`);
+
+    const object = await this.env.CAS_R2.get(`users/${userId}/nodes/${hash}`);
+    if (!object) throw new CasHttpError(404, `Node ${hash} is not ready`);
+    const content = new Uint8Array(await object.arrayBuffer());
+    if (content.length !== node.content_size) {
+      throw new Error(`Stored content length mismatch for ${hash}`);
+    }
+    const edges = await this.env.CAS_DB
+      .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
+      .bind(userId, hash)
+      .all<{ child_hash: string }>();
+    const refs = edges.results.map(edge => hexToHash(edge.child_hash));
+    const header = encodeHeader(content.length, node.content_type, refs.length);
+    const bytes = concatenateNodeBytes(
+      header,
+      new TextEncoder().encode(node.content_type),
+      refs,
+      content,
+    );
+    return new Response(Uint8Array.from(bytes).buffer, {
+      headers: {
+        "Content-Length": String(bytes.length),
+        "Content-Type": "application/vnd.unidocs.cas-node",
+      },
+    });
+  }
+
   // ─── Metadata ─────────────────────────────────────────────
 
   private async handleMetadata(request: Request, userId: string): Promise<Response> {
@@ -425,6 +545,128 @@ export class CasDurableObject implements DurableObject {
     await db.batch(batch);
 
     return Response.json({ success: true });
+  }
+
+  private async handleAssignRoots(request: Request, userId: string): Promise<Response> {
+    const body = (await request.json()) as CasAssignRootsRequest;
+    validateRequestId(body.requestId);
+    if (!Array.isArray(body.assignments) || body.assignments.length === 0) {
+      throw new CasHttpError(400, "assignments must be a non-empty array");
+    }
+    if (body.assignments.length > 1_000) {
+      throw new CasHttpError(400, "assignments exceeds the limit of 1000");
+    }
+
+    const assignments = body.assignments.map((assignment) => {
+      if (!assignment || typeof assignment !== "object") {
+        throw new CasHttpError(400, "Invalid root assignment");
+      }
+      validateRootOwner(assignment.owner);
+      if (assignment.hash !== null) {
+        try {
+          validateHash(assignment.hash);
+        } catch (err) {
+          throw new CasHttpError(400, err instanceof Error ? err.message : String(err));
+        }
+      }
+      return { owner: assignment.owner, hash: assignment.hash };
+    }).sort((left, right) => left.owner.localeCompare(right.owner));
+
+    for (let index = 1; index < assignments.length; index++) {
+      if (assignments[index - 1].owner === assignments[index].owner) {
+        throw new CasHttpError(400, `Duplicate root owner: ${assignments[index].owner}`);
+      }
+    }
+
+    const payloadHash = await hashJson({ kind: "assignRoots", assignments });
+    const db = this.env.CAS_DB;
+    const existingRequest = await db
+      .prepare("SELECT payload_hash FROM cas_root_ref_requests WHERE user_id = ? AND request_id = ?")
+      .bind(userId, body.requestId)
+      .first<{ payload_hash: string }>();
+
+    if (existingRequest) {
+      if (existingRequest.payload_hash !== payloadHash) {
+        throw new CasHttpError(409, "Conflicting request ID");
+      }
+      return Response.json({ success: true, idempotent: true });
+    }
+
+    const changes = new Map<string, number>();
+    const priorByOwner = new Map<string, string | null>();
+
+    for (const assignment of assignments) {
+      const prior = await db
+        .prepare("SELECT hash FROM cas_root_owners WHERE user_id = ? AND owner = ?")
+        .bind(userId, assignment.owner)
+        .first<{ hash: string }>();
+      const priorHash = prior?.hash ?? null;
+      priorByOwner.set(assignment.owner, priorHash);
+
+      if (priorHash === assignment.hash) continue;
+      if (priorHash !== null) addCount(changes, priorHash, -1);
+      if (assignment.hash !== null) {
+        const node = await db
+          .prepare("SELECT root_ref_count FROM cas_nodes WHERE user_id = ? AND hash = ?")
+          .bind(userId, assignment.hash)
+          .first<{ root_ref_count: number }>();
+        if (!node) throw new CasHttpError(404, `Node ${assignment.hash} not found`);
+        const ready = await this.env.CAS_R2.head(`users/${userId}/nodes/${assignment.hash}`);
+        if (!ready) throw new CasHttpError(409, `Node ${assignment.hash} is not ready`);
+        addCount(changes, assignment.hash, 1);
+      }
+    }
+
+    for (const [hash, delta] of changes) {
+      if (delta === 0) continue;
+      const node = await db
+        .prepare("SELECT root_ref_count FROM cas_nodes WHERE user_id = ? AND hash = ?")
+        .bind(userId, hash)
+        .first<{ root_ref_count: number }>();
+      if (!node) throw new CasHttpError(409, `Assigned node ${hash} is missing`);
+      const nextCount = node.root_ref_count + delta;
+      if (!Number.isSafeInteger(nextCount) || nextCount < 0) {
+        throw new CasHttpError(409, `Root ref count would be invalid for ${hash}`);
+      }
+    }
+
+    const batch: D1PreparedStatement[] = [];
+    for (const [hash, delta] of changes) {
+      if (delta === 0) continue;
+      batch.push(
+        db.prepare(
+          "UPDATE cas_nodes SET root_ref_count = root_ref_count + ? WHERE user_id = ? AND hash = ?",
+        ).bind(delta, userId, hash),
+      );
+    }
+    for (const assignment of assignments) {
+      const priorHash = priorByOwner.get(assignment.owner) ?? null;
+      if (priorHash === assignment.hash) continue;
+      if (assignment.hash === null) {
+        batch.push(
+          db.prepare("DELETE FROM cas_root_owners WHERE user_id = ? AND owner = ?")
+            .bind(userId, assignment.owner),
+        );
+      } else if (priorHash === null) {
+        batch.push(
+          db.prepare("INSERT INTO cas_root_owners (user_id, owner, hash) VALUES (?, ?, ?)")
+            .bind(userId, assignment.owner, assignment.hash),
+        );
+      } else {
+        batch.push(
+          db.prepare("UPDATE cas_root_owners SET hash = ? WHERE user_id = ? AND owner = ?")
+            .bind(assignment.hash, userId, assignment.owner),
+        );
+      }
+    }
+    batch.push(
+      db.prepare(
+        "INSERT INTO cas_root_ref_requests (user_id, request_id, payload_hash, applied_at) VALUES (?, ?, ?, ?)",
+      ).bind(userId, body.requestId, payloadHash, Date.now()),
+    );
+    await db.batch(batch);
+
+    return Response.json({ success: true, idempotent: false });
   }
 
   // ─── Usage ────────────────────────────────────────────────
@@ -578,10 +820,41 @@ function metadataMatches(
     && existingRefs.every((ref, i) => ref === descriptor.refs[i]);
 }
 
+function sameRefs(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((hash, index) => hash === right[index]);
+}
+
 async function cancelBody(request: Request): Promise<void> {
   try {
     await request.body?.cancel();
   } catch {
     // Body may already be consumed or locked.
   }
+}
+
+function addCount(changes: Map<string, number>, hash: string, delta: number): void {
+  changes.set(hash, (changes.get(hash) ?? 0) + delta);
+}
+
+function validateRequestId(requestId: unknown): asserts requestId is string {
+  if (typeof requestId !== "string" || requestId.length === 0 || requestId.length > 512) {
+    throw new CasHttpError(400, "requestId must contain 1-512 characters");
+  }
+}
+
+function validateRootOwner(owner: unknown): asserts owner is string {
+  if (typeof owner !== "string" || owner.length === 0 || owner.length > 512) {
+    throw new CasHttpError(400, "root owner must contain 1-512 characters");
+  }
+  if (!/^[\x20-\x7e]+$/.test(owner)) {
+    throw new CasHttpError(400, "root owner must contain printable ASCII only");
+  }
+}
+
+async function hashJson(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+  return hashToHex(new Uint8Array(digest));
 }

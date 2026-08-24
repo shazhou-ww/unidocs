@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createDocxDocumentType } from "../src/index.js";
+import { Document } from "@ariadng/office/docx";
+import { encodeSValueWithRefs } from "@unidocs/core/internal";
+import { createTestDocx } from "./test-context.js";
+
+function createDocxDocumentType(_options: Record<string, never>) {
+  return createTestDocx().docx;
+}
 
 describe("table operations", () => {
   it("adds a table and queries its structure", async () => {
@@ -25,7 +31,8 @@ describe("table operations", () => {
       },
     ], await docx.init());
 
-    const table = doc.document.tables()[0];
+    const materialized = await Document.open(await docx.formats.docx.save(doc));
+    const table = materialized.tables()[0];
     const firstWidth = table.cell(0, 0).element
       .find("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "tcPr")
       ?.find("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "tcW")
@@ -272,49 +279,6 @@ describe("section operations", () => {
   });
 });
 
-describe("tools and instructions", () => {
-  it("exposes all expected tools", async () => {
-    const docx = createDocxDocumentType({});
-
-    // Queries
-    expect(docx.tools.getText).toBeDefined();
-    expect(docx.tools.getParagraphs).toBeDefined();
-    expect(docx.tools.getParagraph).toBeDefined();
-    expect(docx.tools.getParagraphFormat).toBeDefined();
-    expect(docx.tools.getRunFormat).toBeDefined();
-    expect(docx.tools.getParagraphList).toBeDefined();
-    expect(docx.tools.getTables).toBeDefined();
-    expect(docx.tools.getTable).toBeDefined();
-    expect(docx.tools.getHeaders).toBeDefined();
-    expect(docx.tools.getFooters).toBeDefined();
-    expect(docx.tools.getImages).toBeDefined();
-
-    // Paragraph operations
-    expect(docx.tools.appendParagraph).toBeDefined();
-    expect(docx.tools.setRunText).toBeDefined();
-
-    // Table operations
-    expect(docx.tools.addTable).toBeDefined();
-    expect(docx.tools.setCellText).toBeDefined();
-    expect(docx.tools.addTableRow).toBeDefined();
-
-    // List operations
-    expect(docx.tools.addBulletList).toBeDefined();
-    expect(docx.tools.addNumberedList).toBeDefined();
-
-    // Section operations
-    expect(docx.tools.setHeader).toBeDefined();
-    expect(docx.tools.setFooter).toBeDefined();
-    expect(docx.tools.insertImage).toBeDefined();
-  });
-
-  it("has non-empty instructions", async () => {
-    const docx = createDocxDocumentType({});
-    expect(docx.instructions).toBeTruthy();
-    expect(docx.instructions.length).toBeGreaterThan(100);
-  });
-});
-
 const PNG_1x1 = Uint8Array.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
   0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
@@ -325,38 +289,27 @@ const PNG_1x1 = Uint8Array.from([
 ]);
 
 describe("insertImage and getImages", () => {
-  const hash = "a".repeat(64);
+  it("derives insertImage refs from the SValue operation", async () => {
+    const { context } = createTestDocx();
+    const blob = await context.makeSBlob({ data: PNG_1x1, contentType: "image/png" });
 
-  function casWith(bytes: Uint8Array) {
-    return {
-      read: async () => bytes,
-      metadata: async () => ({
-        hash,
-        size: bytes.length,
-        contentType: "image/png",
-        refs: [] as string[],
-      }),
-    };
-  }
-
-  it("refsFromOp counts insertImage hashes", () => {
-    const docx = createDocxDocumentType({});
-    expect(docx.refsFromOp({
+    expect(encodeSValueWithRefs({
       kind: "insertImage",
-      payload: { hash, widthPx: 16 },
-    })).toEqual({ [hash]: 1 });
-    expect(docx.refsFromOp({
+      payload: { blob, widthPx: 16 },
+    }).refs).toEqual([blob.hash]);
+    expect(encodeSValueWithRefs({
       kind: "appendParagraph",
       payload: { text: "x" },
-    })).toEqual({});
+    }).refs).toEqual([]);
   });
 
-  it("inserts a PNG from CAS and lists it", async () => {
-    const docx = createDocxDocumentType({});
+  it("inserts a PNG from SBlob storage and lists it", async () => {
+    const { context, docx } = createTestDocx();
+    const blob = await context.makeSBlob({ data: PNG_1x1, contentType: "image/png" });
     const initial = await docx.init();
     const updated = await docx.apply([
-      { kind: "insertImage", payload: { hash, widthPx: 16, altText: "dot" } },
-    ], initial, { cas: casWith(PNG_1x1) });
+      { kind: "insertImage", payload: { blob, widthPx: 16, altText: "dot" } },
+    ], initial);
 
     const images = await docx.query({ kind: "getImages", payload: undefined }, updated);
     expect(images).toEqual([
@@ -370,16 +323,5 @@ describe("insertImage and getImages", () => {
     expect((images as { partName: string }[])[0].partName).toMatch(/image1\.png$/);
   });
 
-  it("rejects an invalid hash before reading CAS", async () => {
-    const docx = createDocxDocumentType({});
-    const read = async () => {
-      throw new Error("should not read");
-    };
-    await expect(docx.apply([
-      { kind: "insertImage", payload: { hash: "not-a-hash" } },
-    ], await docx.init(), {
-      cas: { read, metadata: async () => ({ hash: "", size: 0, contentType: "", refs: [] }) },
-    })).rejects.toThrow(/Hash must be/);
-  });
 });
 

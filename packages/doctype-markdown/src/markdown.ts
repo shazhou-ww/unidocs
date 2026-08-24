@@ -5,8 +5,7 @@
 import type { DocumentTypeFactory } from "@unidocs/core";
 import type { MDoc, MQuery, MOp } from "./types.js";
 
-export type MarkdownOptions = Record<string, never>;
-export type MarkdownDocumentTypeFactory = DocumentTypeFactory<MarkdownOptions, MDoc, MQuery, MOp>;
+export type MarkdownDocumentTypeFactory = DocumentTypeFactory<MDoc, MQuery, MOp>;
 
 /** Helper: extract section by heading (case-insensitive, supports nested headings). */
 function getSection(content: string, heading: string): string | null {
@@ -53,7 +52,7 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_options) => ({
+export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_context) => ({
   init: async () => ({ content: "" }),
 
   query: async (q, doc) => {
@@ -96,13 +95,17 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_options
     return { content };
   },
 
-  load: async (data) => ({ content: new TextDecoder().decode(data) }),
-  save: async (doc) => new TextEncoder().encode(doc.content),
-  contentType: "text/markdown; charset=utf-8",
+  formats: {
+    markdown: {
+      mediaTypes: ["text/markdown", "text/markdown; charset=utf-8"],
+      extensions: [".md", ".markdown"],
+      load: async (data) => ({ content: new TextDecoder().decode(data) }),
+      save: async (doc) => new TextEncoder().encode(doc.content),
+    },
+  },
+  defaultFormat: "markdown",
 
-  // Markdown snapshots are self-contained text, no CAS references.
-  refsFromSnapshot: () => ({}),
-  refsFromOp: () => ({}),
+  contentType: "text/markdown; charset=utf-8",
 
   tools: {
     getContent: {
@@ -173,10 +176,9 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_options
 When editing:
 - Use getContent to see the full document
 - Use getHeadings to understand structure
-- Use getSection to read specific sections
+- Use getSection to read a specific section
+- Use setContent to replace the entire document
 - Use appendSection to add new sections
 - Use replaceSection to modify existing sections
-- Use deleteSection to remove sections
-
-Be precise with heading names (case-insensitive matching).`,
+- Use deleteSection to remove sections`,
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { PsdDoc, Layer, Pixels } from "../src/model/types.js";
 import type { PixelRef, BlobStore } from "../src/render/pixel-source.js";
 import { isRef, PixelCache } from "../src/render/pixel-source.js";
@@ -27,7 +28,7 @@ function countingStore(): BlobStore & { gets: Map<string, number> } {
   return {
     gets,
     async put(bytes: Uint8Array) {
-      const hash = `blob${n++}`;
+      const hash = createHash("sha256").update(bytes).digest("hex");
       blobs.set(hash, bytes);
       return hash;
     },

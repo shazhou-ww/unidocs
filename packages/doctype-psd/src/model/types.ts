@@ -1,3 +1,4 @@
+import type { SBlob } from "@unidocs/core";
 import type { PixelSource } from "../render/pixel-source.js";
 
 export type BlendMode =
@@ -17,6 +18,8 @@ export interface Mask {
   bounds: [number, number, number, number]; // [top,left,bottom,right]
   defaultColor: 0 | 255;
   inverted: boolean;
+  /** Branded CAS handle for the PNG-encoded mask; compositor still reads `pixels`. */
+  blob?: SBlob;
 }
 
 /** Stroke effect: a solid-colour border of width `size` px placed relative to

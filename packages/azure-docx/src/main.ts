@@ -28,7 +28,10 @@ import { createDocxDocumentType } from "@unidocs/doctype-docx";
 
 runDocTypeService({
   docType: "docx",
-  documentType: createDocxDocumentType({}),
+  documentType: createDocxDocumentType({
+    makeSBlob: async () => { throw new Error("makeSBlob not available in azure-docx"); },
+    readSBlob: async () => { throw new Error("readSBlob not available in azure-docx"); },
+  } as any),
   defaultPort: 8789,
 }).catch((err) => {
   console.error("azure-docx failed to start:", err);
