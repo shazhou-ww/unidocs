@@ -4,12 +4,22 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "types": ["@cloudflare/workers-types"]
+    "types": [
+      "@cloudflare/workers-types"
+    ]
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
-    { "path": "../cas-server-common" },
-    { "path": "../cloudflare-sdk" },
-    { "path": "../server-core" }
+    {
+      "path": "../cloudflare-sdk"
+    },
+    {
+      "path": "../http-protocol"
+    },
+    {
+      "path": "../server-core"
+    }
   ]
 }

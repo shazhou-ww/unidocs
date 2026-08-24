@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSBlob, encodeSValue } from "@unidocs/protocol";
+import { createSBlob, encodeSValue } from "@unidocs/doctype-server-common";
 import type { CasRef, CasReferences, DocumentType, SBlob, SValue } from "@unidocs/protocol";
 import type {
   Delta,
@@ -22,7 +22,7 @@ import {
   RootRefsError,
   StorageCorruptError,
   VersionConflictError,
-} from "../src/errors.js";
+} from "@unidocs/http-protocol";
 import { CasClientError } from "@unidocs/cas-client";
 import { DocumentSession, type CasGateway, type SessionDeps } from "../src/session.js";
 

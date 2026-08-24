@@ -1,4 +1,4 @@
-import { decodeSValue } from "@unidocs/protocol";
+import { decodeSValue } from "@unidocs/doctype-server-common";
 import { materializePsdDocFromStore } from "@unidocs/doctype-psd/engine";
 import type { BlobStore, PsdDoc, PsdStoredDoc } from "@unidocs/doctype-psd/engine";
 

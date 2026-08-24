@@ -40,8 +40,8 @@ import {
   RootRefsError,
   StorageCorruptError,
   VersionConflictError,
-} from "./errors.js";
-import type { ApplyResult } from "./history.js";
+  type ApplyResult,
+} from "@unidocs/http-protocol";
 import type { DocIdentity } from "./ports.js";
 import type { DocumentSession } from "./session.js";
 

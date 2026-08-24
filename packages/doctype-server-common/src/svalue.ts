@@ -7,40 +7,8 @@ import {
   Type,
 } from "cborg";
 import type { DecodeOptions, Token } from "cborg";
-import {
-  sBlobSignature,
-  SValueContentType,
-} from "./types.js";
-import type { CasReferences, SBlob, SValue } from "./types.js";
-
-export { SValueContentType };
-
-export const SBlobTag = 65_536;
-
-export interface SValueCodecLimits {
-  readonly maxArrayLength: number;
-  readonly maxByteStringBytes: number;
-  readonly maxDepth: number;
-  readonly maxEncodedBytes: number;
-  readonly maxMapEntries: number;
-  readonly maxRefs: number;
-  readonly maxStringBytes: number;
-  readonly maxValues: number;
-}
-
-export interface SValueCodecOptions {
-  readonly limits?: Partial<SValueCodecLimits>;
-}
-
-export interface EncodedSValue {
-  readonly data: Uint8Array;
-  readonly refs: readonly string[];
-}
-
-export interface DecodedSValue {
-  readonly value: SValue;
-  readonly refs: readonly string[];
-}
+import { sBlobSignature, SBlobTag, SValueContentType } from "@unidocs/protocol";
+import type { CasReferences, DecodedSValue, EncodedSValue, SBlob, SValue, SValueCodecLimits, SValueCodecOptions } from "@unidocs/protocol";
 
 const DEFAULT_LIMITS: SValueCodecLimits = Object.freeze({
   maxArrayLength: 100_000,

@@ -11,32 +11,10 @@
  * that prevents a lease claim from racing a GC deletion decision.
  */
 
-import {
-  type CasNodeDescriptor,
-  type CasLeaseResult,
-  type CasAssignRootsRequest,
-  type CasRootRefUpdate,
-  type CasUsage,
-  type CasGcResult,
-  type CasNodeMetadata,
-  type CasNodeState,
-  encodeHeader,
-  concatenateNodeBytes,
-  decodeHeader,
-  parseNodeBytes,
-  computeNodeDigest,
-  hashToHex,
-  hexToHash,
-  validateHash,
-  validateContentType,
-  validateContentLength,
-  validateChildRefs,
-  validateDecodedHeader,
-} from "@unidocs/cas-server-common";
-import {
-  decodeSValueWithRefs,
-  SValueContentType,
-} from "@unidocs/protocol/internal";
+import type { CasNodeDescriptor, CasLeaseResult, CasAssignRootsRequest, CasRootRefUpdate, CasUsage, CasGcResult, CasNodeMetadata, CasNodeState } from "@unidocs/http-protocol";
+import { encodeHeader, concatenateNodeBytes, decodeHeader, parseNodeBytes, computeNodeDigest, hashToHex, hexToHash, validateHash, validateContentType, validateContentLength, validateChildRefs, validateDecodedHeader } from "@unidocs/cas-server-common";
+import { decodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
+import { SValueContentType } from "@unidocs/protocol";
 
 interface CasEnv {
   CAS_DB: D1Database;

@@ -1,46 +1,44 @@
+/**
+ * @unidocs/protocol — Cloud-neutral document protocol contracts.
+ *
+ * Pure type definitions and protocol constants only — no logic, no I/O.
+ * The SValue/SBlob codec lives in @unidocs/doctype-server-common, which
+ * depends on this package for its types.
+ */
+
 export type {
-	AgentToolDefinition,
-	AgentContentPart,
-	AgentToolResult,
-	CasRef,
-	CasReferences,
-	CasReadContext,
-	DocumentFormat,
-	DocumentAgent,
-	DocumentAgentContext,
-	DocumentAgentFactory,
-	DocumentType,
-	DocumentTypeContext,
-	DocumentTypeFactory,
-	MakeSBlob,
-	JsonPrimitive,
-	JsonValue,
-	QueryPrimitive,
-	QueryValue,
-	SBlob,
-	SBlobData,
-	SPrimitive,
-	SValue,
-	SValueShape,
-	SValueType,
+  AgentToolDefinition,
+  AgentContentPart,
+  AgentToolResult,
+  CasRef,
+  CasReferences,
+  CasReadContext,
+  DocumentFormat,
+  DocumentAgent,
+  DocumentAgentContext,
+  DocumentAgentFactory,
+  DocumentType,
+  DocumentTypeContext,
+  DocumentTypeFactory,
+  MakeSBlob,
+  JsonPrimitive,
+  JsonValue,
+  QueryPrimitive,
+  QueryValue,
+  SBlob,
+  SBlobData,
+  SPrimitive,
+  SValue,
+  SValueShape,
+  SValueType,
+  DecodedSValue,
+  EncodedSValue,
+  SValueCodecLimits,
+  SValueCodecOptions,
 } from "./types.js";
 
-export { toJsonValue } from "./json.js";
-
 export {
-	collectSBlobRefs,
-	createSBlob,
-	decodeSValue,
-	encodeSValue,
-	isSBlob,
-	refsFromSValue,
-	SBlobTag,
-	SValueContentType,
-} from "./svalue.js";
-
-export type {
-	DecodedSValue,
-	EncodedSValue,
-	SValueCodecLimits,
-	SValueCodecOptions,
-} from "./svalue.js";
+  sBlobSignature,
+  SBlobTag,
+  SValueContentType,
+} from "./types.js";

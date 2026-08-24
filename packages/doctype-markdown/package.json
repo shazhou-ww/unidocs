@@ -21,6 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*"
   },
   "devDependencies": {

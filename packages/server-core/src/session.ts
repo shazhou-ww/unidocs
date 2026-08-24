@@ -59,17 +59,8 @@
  * revalidation itself — see the phase-2 Azure design doc.
  */
 
-import type {
-  DocumentType,
-  CasReferences,
-  SValueType,
-  SValue,
-} from "@unidocs/protocol";
-import {
-  decodeSValue,
-  encodeSValue,
-  refsFromSValue,
-} from "@unidocs/protocol";
+import type { DocumentType, CasReferences, SValueType, SValue } from "@unidocs/protocol";
+import { decodeSValue, encodeSValue, refsFromSValue } from "@unidocs/doctype-server-common";
 import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "@unidocs/cas-client";
 import {
   DeltaRejectedError,
@@ -78,9 +69,9 @@ import {
   RootRefsError,
   StorageCorruptError,
   VersionConflictError,
-} from "./errors.js";
+} from "@unidocs/http-protocol";
 import { computeHash } from "./hash.js";
-import type { HistoryEntry } from "./history.js";
+import type { HistoryEntry } from "@unidocs/http-protocol";
 import type {
   BlobCas,
   DeltaLog,
@@ -89,7 +80,7 @@ import type {
   SnapshotCache,
   UnitOfWork,
 } from "./ports.js";
-import { encodeQueryValue, type WireQueryValue } from "./query-value.js";
+import { encodeQueryValue, type WireQueryValue } from "@unidocs/http-protocol";
 
 /** Everything the session needs from the CAS service. */
 export interface CasGateway {

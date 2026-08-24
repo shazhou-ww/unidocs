@@ -1,20 +1,6 @@
-import {
-  decodeSValue,
-  encodeSValue,
-  isSBlob,
-  SValueContentType,
-  toJsonValue,
-} from "@unidocs/protocol";
-import type {
-  AgentToolResult,
-  DocumentAgent,
-  DocumentAgentContext,
-  DocumentAgentFactory,
-  SBlob,
-  SBlobData,
-  SValue,
-  SValueType,
-} from "@unidocs/protocol";
+import { decodeSValue, encodeSValue, isSBlob, toJsonValue } from "@unidocs/doctype-server-common";
+import { SValueContentType } from "@unidocs/protocol";
+import type { AgentToolResult, DocumentAgent, DocumentAgentContext, DocumentAgentFactory, SBlob, SBlobData, SValue, SValueType } from "@unidocs/protocol";
 
 export interface AgentToolResultRendererContext {
   readonly readBlob: (blob: SBlob) => Promise<SBlobData>;

@@ -49,7 +49,7 @@ for (const [name, { dir }] of pkgs) {
     const rel = relative(root, f).split(sep).join("/");
     for (const m of content.matchAll(importRe)) {
       const target = m[1];
-      // strip subpath, e.g. @unidocs/protocol/internal -> @unidocs/protocol
+      // strip subpath, e.g. @unidocs/doctype-server-common/internal -> @unidocs/doctype-server-common
       const bare = target.split("/").slice(0, 2).join("/");
       found.add(bare);
       if (!byTarget.has(bare)) byTarget.set(bare, new Set());

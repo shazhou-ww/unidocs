@@ -12,7 +12,7 @@ import type {
   UnitOfWork,
 } from "./ports.js";
 import type { CasGateway } from "./session.js";
-import { VersionConflictError } from "./errors.js";
+import { VersionConflictError } from "@unidocs/http-protocol";
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
 
 class MemoryDeltaLog implements DeltaLog {

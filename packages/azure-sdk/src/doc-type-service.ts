@@ -16,11 +16,8 @@ import {
   CasClient,
   type HttpFetcher,
 } from "@unidocs/cas-client";
-import {
-  createDocTypeHandler,
-  type DocIdentity,
-  type SessionDeps,
-} from "@unidocs/server-core";
+import type { DocIdentity, SessionDeps } from "@unidocs/server-core";
+import { createDocTypeHandler } from "@unidocs/server-core";
 import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";
 import { createLocalEditorNamespace, createStubOperatorNamespace } from "./local-editor.js";
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";

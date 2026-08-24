@@ -5,14 +5,13 @@ import {
   encodeSValue,
   isSBlob,
   refsFromSValue,
-  SBlobTag,
-  SValueContentType,
 } from "../src/index.js";
 import {
   createSBlob,
   decodeSValueWithRefs,
   encodeSValueWithRefs,
 } from "../src/svalue.js";
+import { SBlobTag, SValueContentType } from "@unidocs/protocol";
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");

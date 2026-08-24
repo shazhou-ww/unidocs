@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeSValue } from "@unidocs/protocol";
+import { encodeSValue } from "@unidocs/doctype-server-common";
 import { loadDoc } from "../src/doc-source.js";
 import type { BlobStore } from "@unidocs/doctype-psd/engine";
 

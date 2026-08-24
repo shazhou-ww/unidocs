@@ -31,12 +31,8 @@
  */
 
 import type { DocumentType } from "@unidocs/protocol";
-import {
-  createSessionHandler,
-  DocumentSession,
-  type DocIdentity,
-  type SessionDeps,
-} from "@unidocs/server-core";
+import type { DocIdentity, SessionDeps } from "@unidocs/server-core";
+import { createSessionHandler, DocumentSession } from "@unidocs/server-core";
 
 /** Matches server-core's `DoNamespaceLike` structurally. */
 export interface LocalNamespace {

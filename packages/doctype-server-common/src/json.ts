@@ -1,5 +1,5 @@
 import { isSBlob } from "./svalue.js";
-import type { JsonValue } from "./types.js";
+import type { JsonValue } from "@unidocs/protocol";
 
 /** Validate and copy an unknown value into the strict JSON agent model. */
 export function toJsonValue(value: unknown): JsonValue {

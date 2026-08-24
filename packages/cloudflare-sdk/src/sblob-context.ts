@@ -1,26 +1,9 @@
-import {
-  computeNodeDigest,
-  encodeHeader,
-  hashToHex,
-  hexToHash,
-  validateContentType,
-  validateHash,
-} from "@unidocs/cas-server-common";
-import type { CasNodeMetadata } from "@unidocs/cas-server-common";
-import {
-  isSBlob,
-  SValueContentType,
-} from "@unidocs/protocol";
-import type {
-  DocumentTypeContext,
-  MakeSBlob,
-  SBlob,
-  SBlobData,
-} from "@unidocs/protocol";
-import {
-  createSBlob,
-  decodeSValueWithRefs,
-} from "@unidocs/protocol/internal";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash, validateContentType, validateHash } from "@unidocs/cas-server-common";
+import type { CasNodeMetadata } from "@unidocs/http-protocol";
+import { isSBlob } from "@unidocs/doctype-server-common";
+import { SValueContentType } from "@unidocs/protocol";
+import type { DocumentTypeContext, MakeSBlob, SBlob, SBlobData } from "@unidocs/protocol";
+import { createSBlob, decodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
 import { CasClientError } from "@unidocs/cas-client";
 
 export interface SBlobCasAdapter {

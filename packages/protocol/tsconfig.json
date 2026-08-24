@@ -4,10 +4,11 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "lib": ["ES2024", "DOM"],
+    "lib": ["ES2024"],
     "types": []
   },
   "include": [
     "src"
-  ]
+  ],
+  "references": []
 }

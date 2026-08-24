@@ -19,7 +19,7 @@
 
 import { createGatewayHandler } from "@unidocs/server-core";
 import { D1DocIndexQuery } from "@unidocs/cloudflare-sdk";
-import { isPublicCasRoute } from "@unidocs/cas-server-common";
+import { isPublicCasRoute } from "@unidocs/http-protocol";
 
 interface RegistryEntry {
   workerUrl: string;

@@ -1,5 +1,5 @@
 import { encode, decode } from "fast-png";
-import { createSBlob } from "@unidocs/protocol";
+import { createSBlob } from "@unidocs/doctype-server-common";
 import type { PsdDoc, Layer, Mask } from "../model/types.js";
 import { isRef, type BlobStore, type PixelRef } from "../render/pixel-source.js";
 

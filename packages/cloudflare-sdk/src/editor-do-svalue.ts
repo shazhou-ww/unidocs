@@ -1,22 +1,7 @@
-import {
-  decodeSValue,
-  encodeSValue,
-  isSBlob,
-  SValueContentType,
-} from "@unidocs/protocol";
-import type {
-  DocumentFormat,
-  DocumentType,
-  DocumentTypeContext,
-  DocumentTypeFactory,
-  SBlob,
-  SValue,
-  SValueType,
-} from "@unidocs/protocol";
-import {
-  createSBlob,
-  encodeSValueWithRefs,
-} from "@unidocs/protocol/internal";
+import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/doctype-server-common";
+import { SValueContentType } from "@unidocs/protocol";
+import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
+import { createSBlob, encodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
 import { CasClient, CasClientError } from "@unidocs/cas-client";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";

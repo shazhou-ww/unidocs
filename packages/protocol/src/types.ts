@@ -171,3 +171,30 @@ export type DocumentTypeFactory<
   TQuery,
   TOp,
 > = (context: DocumentTypeContext) => DocumentType<TDoc, TQuery, TOp>;
+/** CBOR tag for SBlob refs in encoded SValue payloads. */
+export const SBlobTag = 65_536;
+
+export interface SValueCodecLimits {
+  readonly maxArrayLength: number;
+  readonly maxByteStringBytes: number;
+  readonly maxDepth: number;
+  readonly maxEncodedBytes: number;
+  readonly maxMapEntries: number;
+  readonly maxRefs: number;
+  readonly maxStringBytes: number;
+  readonly maxValues: number;
+}
+
+export interface SValueCodecOptions {
+  readonly limits?: Partial<SValueCodecLimits>;
+}
+
+export interface EncodedSValue {
+  readonly data: Uint8Array;
+  readonly refs: readonly string[];
+}
+
+export interface DecodedSValue {
+  readonly value: SValue;
+  readonly refs: readonly string[];
+}

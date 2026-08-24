@@ -1,26 +1,9 @@
 /**
  * @unidocs/cas-server-common — Content-addressed storage kernel for UniDocs.
  *
- * Pure logic, no I/O. Types, binary format, digest, validation.
+ * Pure logic, no I/O. Binary format, digest, validation. The CAS wire
+ * contract types live in @unidocs/http-protocol.
  */
-
-// Types
-export type {
-  CasHash,
-  CasNodeMetadata,
-  CasNodeState,
-  CasNodeDescriptor,
-  CasLeaseResult,
-  CasReferences,
-  CasRefChanges,
-  CasRootRefUpdate,
-  CasRootAssignment,
-  CasAssignRootsRequest,
-  CasUsage,
-  CasGcResult,
-  UserCasService,
-  CasNode,
-} from "./types.js";
 
 // Binary format
 export {
@@ -54,6 +37,3 @@ export {
   validateChildRefs,
   validateContentLength,
 } from "./validation.js";
-
-// Gateway routing
-export { isPublicCasRoute } from "./public-route.js";

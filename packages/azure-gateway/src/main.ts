@@ -33,7 +33,7 @@ import {
   requireEnv,
   serve,
 } from "@unidocs/azure-sdk";
-import { isPublicCasRoute } from "@unidocs/cas-server-common";
+import { isPublicCasRoute } from "@unidocs/http-protocol";
 import { createGatewayHandler } from "@unidocs/server-core";
 
 function resolveWorkerUrl(docType: string): Promise<string | null> {

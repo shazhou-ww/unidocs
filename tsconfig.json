@@ -9,6 +9,12 @@
       "path": "packages/protocol"
     },
     {
+      "path": "packages/doctype-server-common"
+    },
+    {
+      "path": "packages/http-protocol"
+    },
+    {
       "path": "packages/cas-server-common"
     },
     {

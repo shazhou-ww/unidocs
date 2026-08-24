@@ -16,18 +16,8 @@
  * `JSON.parse`d again.
  */
 
-import type {
-  Delta,
-  DeltaLog,
-  DocIdentity,
-  DocIndex,
-  DocIndexQuery,
-  DocRecord,
-  SnapshotRef,
-  TransactionalPorts,
-  UnitOfWork,
-} from "@unidocs/server-core";
-import { VersionConflictError } from "@unidocs/server-core";
+import type { Delta, DeltaLog, DocIdentity, DocIndex, DocIndexQuery, DocRecord, SnapshotRef, TransactionalPorts, UnitOfWork } from "@unidocs/server-core";
+import { VersionConflictError } from "@unidocs/http-protocol";
 import type { Pool } from "pg";
 
 /**

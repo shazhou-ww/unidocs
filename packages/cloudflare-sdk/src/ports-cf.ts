@@ -13,20 +13,8 @@
  * document read and write on Cloudflare goes through this file.
  */
 
-import type {
-  BlobCas,
-  Delta,
-  DeltaLog,
-  DocIdentity,
-  DocIndex,
-  DocIndexQuery,
-  DocRecord,
-  SnapshotCache,
-  SnapshotRef,
-  TransactionalPorts,
-  UnitOfWork,
-} from "@unidocs/server-core";
-import { VersionConflictError } from "@unidocs/server-core";
+import type { BlobCas, Delta, DeltaLog, DocIdentity, DocIndex, DocIndexQuery, DocRecord, SnapshotCache, SnapshotRef, TransactionalPorts, UnitOfWork } from "@unidocs/server-core";
+import { VersionConflictError } from "@unidocs/http-protocol";
 
 // Must stay "snapshot" — changing it orphans the KV snapshot of every
 // document already deployed (see editor-do.ts KEY_SNAPSHOT).

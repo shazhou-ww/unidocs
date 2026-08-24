@@ -21,8 +21,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@unidocs/protocol": "workspace:*",
-    "@unidocs/doctype-psd": "workspace:*"
+    "@unidocs/doctype-psd": "workspace:*",
+    "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/protocol": "workspace:*"
   },
   "devDependencies": {
     "fast-png": "^8.0.0",

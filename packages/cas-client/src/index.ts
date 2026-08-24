@@ -3,19 +3,22 @@
  *
  * Public mode talks to Gateway (`baseUrl` + optional Bearer).
  * Editor mode talks to the CAS worker through a fetch-capable binding
- * (`fetcher` + `X-Internal-Token` + `X-User-Id`) — see `HttpFetcher` below,
- * which is structural so this file stays cloud-neutral (no Cloudflare
- * `Fetcher` type import).
+ * (`fetcher` + `X-Internal-Token` + `X-User-Id`) — see `HttpFetcher`,
+ * which is structural so this package stays cloud-neutral (no Cloudflare
+ * `Fetcher` type import). The wire types live in @unidocs/http-protocol.
  */
 
-import { type CasRootRefUpdate, computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
-import { refsFromSValue } from "@unidocs/protocol";
+import type { CasRootRefUpdate } from "@unidocs/http-protocol";
+import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
+import { refsFromSValue } from "@unidocs/doctype-server-common";
 import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/protocol";
+import { CasClientError, type CasClientConfig, type HttpFetcher } from "@unidocs/http-protocol";
 
-/** Structural interface for a fetch-capable binding (e.g. a Cloudflare service binding). */
-export interface HttpFetcher {
-  fetch(input: string | Request, init?: RequestInit): Promise<Response>;
-}
+export {
+  CasClientError,
+  type CasClientConfig,
+  type HttpFetcher,
+} from "@unidocs/http-protocol";
 
 /** Result of a lease claim or extension. */
 interface CasLeaseResult {
@@ -23,20 +26,6 @@ interface CasLeaseResult {
   readonly ready: true;
   readonly leaseStartedAt: number;
   readonly leaseExpiresAt: number;
-}
-
-export type CasClientConfig =
-  | { baseUrl: string; userId: string; authToken?: string }
-  | { fetcher: HttpFetcher; userId: string; internalToken: string };
-
-export class CasClientError extends Error {
-  readonly status: number;
-
-  constructor(status: number, statusText: string, operation: string) {
-    super(`CAS ${operation} failed: ${status} ${statusText}`);
-    this.name = "CasClientError";
-    this.status = status;
-  }
 }
 
 function isInternalConfig(

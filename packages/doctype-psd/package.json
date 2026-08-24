@@ -25,11 +25,13 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*",
     "ag-psd": "^31.0.0",
     "fast-png": "^8.0.0"
   },
   "devDependencies": {
+    "@unidocs/http-protocol": "workspace:*",
     "@unidocs/server-core": "workspace:*",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

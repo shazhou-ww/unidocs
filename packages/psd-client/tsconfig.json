@@ -16,10 +16,13 @@
   ],
   "references": [
     {
-      "path": "../protocol"
+      "path": "../doctype-psd"
     },
     {
-      "path": "../doctype-psd"
+      "path": "../doctype-server-common"
+    },
+    {
+      "path": "../protocol"
     }
   ]
 }

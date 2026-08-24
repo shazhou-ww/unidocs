@@ -27,7 +27,7 @@ import { convertV4MiniflareOptions, Log, LogLevel, Miniflare } from "miniflare";
 import { afterAll, beforeAll } from "vitest";
 import { COMPATIBILITY_DATE } from "../../../scripts/doc-types.mjs";
 import { runPortContract } from "../../../packages/server-core/src/testing/port-contract.ts";
-import { VersionConflictError } from "../../../packages/server-core/src/errors.ts";
+import { VersionConflictError } from "../../../packages/http-protocol/src/errors.ts";
 import { DirectUnitOfWork } from "../../../packages/cloudflare-sdk/src/ports-cf.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");

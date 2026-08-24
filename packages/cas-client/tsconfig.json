@@ -15,6 +15,12 @@
       "path": "../cas-server-common"
     },
     {
+      "path": "../doctype-server-common"
+    },
+    {
+      "path": "../http-protocol"
+    },
+    {
       "path": "../protocol"
     }
   ]

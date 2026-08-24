@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentAgentContext } from "@unidocs/protocol";
-import { createSBlob } from "@unidocs/protocol/internal";
+import { createSBlob } from "@unidocs/doctype-server-common/internal";
 import { createDocxDocumentAgent } from "../src/index.js";
 import type { DocxOperation, DocxQuery } from "../src/types.js";
 

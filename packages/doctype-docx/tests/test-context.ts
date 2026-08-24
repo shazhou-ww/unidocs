@@ -1,20 +1,7 @@
-import {
-  computeNodeDigest,
-  encodeHeader,
-  hashToHex,
-  hexToHash,
-} from "@unidocs/cas-server-common";
-import type {
-  DocumentTypeContext,
-  MakeSBlob,
-  SBlob,
-  SBlobData,
-} from "@unidocs/protocol";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas-server-common";
+import type { DocumentTypeContext, MakeSBlob, SBlob, SBlobData } from "@unidocs/protocol";
 import { SValueContentType } from "@unidocs/protocol";
-import {
-  createSBlob,
-  decodeSValueWithRefs,
-} from "@unidocs/protocol/internal";
+import { createSBlob, decodeSValueWithRefs } from "@unidocs/doctype-server-common/internal";
 import { createDocxDocumentType } from "../src/index.js";
 
 export interface TestDocumentTypeContext extends DocumentTypeContext {

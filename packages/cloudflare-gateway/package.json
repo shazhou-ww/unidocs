@@ -16,8 +16,8 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@unidocs/cas-server-common": "workspace:*",
     "@unidocs/cloudflare-sdk": "workspace:*",
+    "@unidocs/http-protocol": "workspace:*",
     "@unidocs/server-core": "workspace:*"
   },
   "devDependencies": {

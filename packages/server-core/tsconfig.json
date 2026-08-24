@@ -4,7 +4,10 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "lib": ["ES2024", "DOM"],
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
     "types": []
   },
   "include": [
@@ -16,6 +19,12 @@
     },
     {
       "path": "../cas-server-common"
+    },
+    {
+      "path": "../doctype-server-common"
+    },
+    {
+      "path": "../http-protocol"
     },
     {
       "path": "../protocol"
