@@ -7,18 +7,18 @@ import { IMAGES, generateSecret, imageRef, imageRepoTag, parseArgs } from "../..
 
 describe("imageRef", () => {
   test("拼出完整的 ACR 镜像引用", () => {
-    expect(imageRef("crunidocsabc.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
-      "crunidocsabc.azurecr.io/unidocs/azure-markdown:a1b2c3d",
+    expect(imageRef("unidocsacr.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
+      "unidocsacr.azurecr.io/unidocs/azure-markdown:a1b2c3d",
     );
   });
 
   // `az acr build --image` 要的是 registry 内的相对路径。带上 loginServer
-  // 前缀会建出一个名叫 `crunidocsabc.azurecr.io/unidocs/...` 的仓库,而
+  // 前缀会建出一个名叫 `unidocsacr.azurecr.io/unidocs/...` 的仓库,而
   // main.bicep 引用的是 `unidocs/...`,部署时拉不到镜像。
   test("imageRepoTag 不含 loginServer 前缀,且是 imageRef 的后缀", () => {
     expect(imageRepoTag("azure-markdown", "a1b2c3d")).toBe("unidocs/azure-markdown:a1b2c3d");
-    expect(imageRef("crunidocsabc.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
-      `crunidocsabc.azurecr.io/${imageRepoTag("azure-markdown", "a1b2c3d")}`,
+    expect(imageRef("unidocsacr.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
+      `unidocsacr.azurecr.io/${imageRepoTag("azure-markdown", "a1b2c3d")}`,
     );
   });
 });
@@ -65,7 +65,7 @@ describe("parseArgs", () => {
   test("默认值指向设计里确定的订阅、资源组与位置", () => {
     const args = parseArgs([]);
     expect(args.subscription).toBe("24c9acbd-c2f5-4ef9-b9a2-486d90208b3e");
-    expect(args.resourceGroup).toBe("rg-unidocs-dev");
+    expect(args.resourceGroup).toBe("Unidocs");
     expect(args.location).toBe("southeastasia");
   });
 

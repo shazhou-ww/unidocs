@@ -38,7 +38,7 @@
 
 目标订阅 `Societas-MSIT-NonProd`(`24c9acbd-c2f5-4ef9-b9a2-486d90208b3e`,Microsoft 租户)。以下事实通过 `az` 只读查询确认,并直接约束了设计:
 
-**a) 订阅是多项目共用,一项目一 RG。** 现有 RG 包括 `SocietasProject`、`SocietasLab`、`BizTable`、`Evaluation`、`PMStudioProject`、`rg-csicolab-auth-dev` 等。新建 `rg-unidocs-dev` 顺应既有惯例,与其他项目资源完全隔离。
+**a) 订阅是多项目共用,一项目一 RG。** 现有 RG 包括 `SocietasProject`、`SocietasLab`、`BizTable`、`Evaluation`、`PMStudioProject`、`rg-csicolab-auth-dev` 等。新建 `Unidocs` 顺应既有惯例,与其他项目资源完全隔离。
 
 **b) 三条已生效的 deny policy**(`enforcementMode: Default`):
 
@@ -56,13 +56,13 @@
 
 ## 4. 目标拓扑
 
-单个 RG `rg-unidocs-dev`,region `southeastasia`。
+单个 RG `Unidocs`,region `southeastasia`。
 
 ```
-公网 → ca-unidocs-gateway (external ingress, :8787)
+公网 → unidocs-gateway (external ingress, :8787)
             ↓ 环境内部 DNS (https, 443)
-       ca-unidocs-markdown (internal ingress, :8788)
-       ca-unidocs-docx     (internal ingress, :8789)
+       unidocs-markdown (internal ingress, :8788)
+       unidocs-docx     (internal ingress, :8789)
             ↓                      ↓
    PostgreSQL Flexible Server   Blob Storage        公网 → Cloudflare CAS worker
                                 (Managed Identity)          (仅 docx + gateway)
@@ -72,20 +72,20 @@
 
 | 资源 | 名称 | 归属 | 关键配置 |
 |---|---|---|---|
-| Container Registry | `crunidocs{uniqueString}` | bootstrap | Basic,`adminUserEnabled: false` |
-| Log Analytics | `log-unidocs-dev` | bootstrap | Container Apps 环境的日志接收端 |
-| Key Vault | `kv-unidocs-{uniqueString}` | bootstrap | RBAC 授权模式;仅供部署脚本持久化生成的密钥(§5) |
-| Storage Account | `stunidocs{uniqueString}` | bootstrap | StorageV2,`allowSharedKeyAccess: false` |
-| User-assigned MI | `id-unidocs-dev` | bootstrap | 挂在三个 App 与迁移 Job 上 |
+| Container Registry | `unidocsacr` | bootstrap | Basic,`adminUserEnabled: false` |
+| Log Analytics | `unidocs-logs` | bootstrap | Container Apps 环境的日志接收端 |
+| Key Vault | `unidocs-kv` | bootstrap | RBAC 授权模式;仅供部署脚本持久化生成的密钥(§5) |
+| Storage Account | `unidocsblob` | bootstrap | StorageV2,`allowSharedKeyAccess: false` |
+| User-assigned MI | `unidocs-identity` | bootstrap | 挂在三个 App 与迁移 Job 上 |
 | 角色分配 ×2 | — | bootstrap | UAMI 在 ACR 上 `AcrPull`,在 Storage 上 `Storage Blob Data Contributor` |
-| PostgreSQL Flexible Server | `psql-unidocs-{uniqueString}` | main | **v17**,`Standard_B1ms`,32 GB,库名 `unidocs` |
-| Container Apps Env | `cae-unidocs-dev` | main | 消费型,不接自定义 VNet |
-| Container App ×3 | `ca-unidocs-gateway` / `-markdown` / `-docx` | main | 见 4.2 |
-| Container Apps Job | `caj-unidocs-migrate` | main | `manual` 触发,跑 `node dist/migrate-cli.js` |
+| PostgreSQL Flexible Server | `unidocs-pg` | main | **v17**,`Standard_B1ms`,32 GB,库名 `unidocs` |
+| Container Apps Env | `unidocs-env` | main | 消费型,不接自定义 VNet |
+| Container App ×3 | `unidocs-gateway` / `-markdown` / `-docx` | main | 见 4.2 |
+| Container Apps Job | `unidocs-migrate` | main | `manual` 触发,跑 `node dist/migrate-cli.js` |
 
 归属划分的依据见 §5:`bootstrap` 是不消费密钥、且必须先于镜像推送与密钥播种存在的资源;`main` 是消费 `@secure()` 参数的计算与数据库资源。
 
-ACR、Key Vault、Storage、Postgres 四个名称需全局唯一,统一用 `uniqueString(resourceGroup().id)` 后缀,保证同一 RG 重复部署得到同一名称(幂等)。
+ACR、Storage 两个名称需全局唯一(DNS 单标签,不能带连字符,这是它们没有 `unidocs-` 前缀连字符的原因);Key Vault、Postgres 的唯一性作用域更窄(资源组 / 各自服务)。四者现在都是字面量(`unidocsacr` / `unidocsblob` / `unidocs-kv` / `unidocs-pg`),不再靠 `uniqueString(resourceGroup().id)` 后缀 —— 同一 RG 重复部署天然得到同一名称,幂等性由命名本身的确定性保证,不依赖任何运行时求值。
 
 Blob 容器 `cas` 与 `snapshots` **不在 Bicep 中声明** —— `ports-blob.ts` 已经 `createIfNotExists()` 懒建(`packages/azure-sdk/src/ports-blob.ts:19,21`)。`Storage Blob Data Contributor` 角色包含建容器权限,懒建路径在云上成立。
 
@@ -101,7 +101,7 @@ doc type 的 `minReplicas = 2` 是刻意的:阶段 3 证明的是**多副本拓�
 
 健康检查用 Container Apps 对 `targetPort` 的默认 TCP 探针,不新增 `/health` 端点(YAGNI —— 没有任何现有需求要求它)。
 
-内部 FQDN 形如 `ca-unidocs-markdown.internal.<envDefaultDomain>`,由 Bicep 输出并注入网关的 `MARKDOWN_WORKER_URL` / `DOCX_WORKER_URL`。注意走 **443/https**,不是容器端口 —— ingress 负责映射。这条路径复用 `azure-gateway/src/main.ts:39` 已有的 `{TYPE}_WORKER_URL` 解析,无需注册表服务(父设计 §4.5 的原话:"KV 的角色由平台 DNS 承担")。
+内部 FQDN 形如 `unidocs-markdown.internal.<envDefaultDomain>`,由 Bicep 输出并注入网关的 `MARKDOWN_WORKER_URL` / `DOCX_WORKER_URL`。注意走 **443/https**,不是容器端口 —— ingress 负责映射。这条路径复用 `azure-gateway/src/main.ts:39` 已有的 `{TYPE}_WORKER_URL` 解析,无需注册表服务(父设计 §4.5 的原话:"KV 的角色由平台 DNS 承担")。
 
 ### 4.3 环境变量
 
@@ -248,7 +248,7 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 3. **播种密钥**:Key Vault 中两个 secret 存在则读、不存在则生成(§5)
 4. **构建**:`az acr build --platform linux/amd64`,四个镜像,tag = git short sha(走 az 身份,**不是** admin 密码,policy 禁止;构建发生在 ACR 里,见 §7)
 5. **main**:`what-if` → `create`,传入 `@secure()` 参数与镜像 tag
-6. **迁移**:`az containerapp job start` 触发 `caj-unidocs-migrate`,轮询至成功;失败则中止并打印 Job 日志
+6. **迁移**:`az containerapp job start` 触发 `unidocs-migrate`,轮询至成功;失败则中止并打印 Job 日志
 7. **冒烟**:`scripts/azure-smoke.mjs` 打公网网关 FQDN
 
 首轮部署时三个 App 会先于迁移完成而存在,其副本会因表不存在而反复重启;迁移成功后自愈。这是可接受的:Container Apps 的重启退避会覆盖迁移耗时,且首轮之后不再发生。脚本在第 6 步失败时中止,不会把一个连不上库的部署当成成功。

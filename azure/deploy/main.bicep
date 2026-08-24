@@ -1,7 +1,6 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
-param nameSuffix string = uniqueString(resourceGroup().id)
 
 @description('镜像 tag，由部署脚本传入（git short sha）。不用 latest —— Container Apps 需要镜像引用变化才会滚动 revision。')
 param imageTag string
@@ -18,23 +17,23 @@ param internalToken string
 param pgAdminUser string = 'unidocs'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-unidocs-dev'
+  name: 'unidocs-identity'
 }
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: 'crunidocs${nameSuffix}'
+  name: 'unidocsacr'
 }
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: 'stunidocs${nameSuffix}'
+  name: 'unidocsblob'
 }
 
 resource law 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
-  name: 'log-unidocs-dev'
+  name: 'unidocs-logs'
 }
 
 resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
-  name: 'psql-unidocs-${nameSuffix}'
+  name: 'unidocs-pg'
   location: location
   sku: {
     name: 'Standard_B1ms'
@@ -86,7 +85,7 @@ resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@202
 var databaseUrl = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.fullyQualifiedDomainName}:5432/unidocs?sslmode=require'
 
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'cae-unidocs-dev'
+  name: 'unidocs-env'
   location: location
   properties: {
     appLogsConfiguration: {
@@ -118,7 +117,7 @@ var blobEnv = [
 module markdownApp 'container-app.bicep' = {
   name: 'markdown-app'
   params: {
-    name: 'ca-unidocs-markdown'
+    name: 'unidocs-markdown'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
@@ -140,7 +139,7 @@ module markdownApp 'container-app.bicep' = {
 module docxApp 'container-app.bicep' = {
   name: 'docx-app'
   params: {
-    name: 'ca-unidocs-docx'
+    name: 'unidocs-docx'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
@@ -164,7 +163,7 @@ module docxApp 'container-app.bicep' = {
 module gatewayApp 'container-app.bicep' = {
   name: 'gateway-app'
   params: {
-    name: 'ca-unidocs-gateway'
+    name: 'unidocs-gateway'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
@@ -203,7 +202,7 @@ module gatewayApp 'container-app.bicep' = {
 module migrateJob 'migrate-job.bicep' = {
   name: 'migrate-job'
   params: {
-    name: 'caj-unidocs-migrate'
+    name: 'unidocs-migrate'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id

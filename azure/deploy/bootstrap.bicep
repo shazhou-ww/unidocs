@@ -3,15 +3,12 @@ targetScope = 'resourceGroup'
 @description('部署位置。默认取资源组自身的位置。')
 param location string = resourceGroup().location
 
-@description('全局唯一资源名的稳定后缀。同一资源组重复部署得到同一后缀,这是幂等的依据。')
-param nameSuffix string = uniqueString(resourceGroup().id)
-
-var acrName = 'crunidocs${nameSuffix}'
-var kvName = 'kvunidocs${nameSuffix}'
-var storageName = 'stunidocs${nameSuffix}'
+var acrName = 'unidocsacr'
+var kvName = 'unidocs-kv'
+var storageName = 'unidocsblob'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-unidocs-dev'
+  name: 'unidocs-identity'
   location: location
 }
 
@@ -70,7 +67,7 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 resource law 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
-  name: 'log-unidocs-dev'
+  name: 'unidocs-logs'
   location: location
   properties: {
     sku: {
@@ -105,7 +102,6 @@ resource blobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-output nameSuffix string = nameSuffix
 output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
 output keyVaultName string = kv.name

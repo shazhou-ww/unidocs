@@ -6,7 +6,7 @@ param environmentId string
 @description('用户分配托管标识的资源 ID。只用于从 ACR 拉镜像 —— 迁移不碰 Blob。')
 param identityId string
 
-@description('完整镜像引用，形如 crunidocsxxx.azurecr.io/unidocs/azure-migrate:abc1234。')
+@description('完整镜像引用，形如 unidocsacr.azurecr.io/unidocs/azure-migrate:abc1234。')
 param image string
 param acrLoginServer string
 

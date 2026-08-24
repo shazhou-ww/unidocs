@@ -6,7 +6,7 @@
  * 固定 id 会在第二次运行时撞 DocExists。
  *
  * 用法:
- *   node azure/deploy/smoke.mjs --gateway https://ca-unidocs-gateway.<region>.azurecontainerapps.io
+ *   node azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io
  *   node azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
  *
  * `--skip-cas` 跳过第 3 组(docx 图片路径)。它只用于对本地 Azure 栈

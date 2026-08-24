@@ -29,7 +29,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const DEFAULTS = {
   subscription: "24c9acbd-c2f5-4ef9-b9a2-486d90208b3e",
-  resourceGroup: "rg-unidocs-dev",
+  resourceGroup: "Unidocs",
   location: "southeastasia",
 };
 
