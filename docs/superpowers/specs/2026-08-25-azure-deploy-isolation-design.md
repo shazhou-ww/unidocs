@@ -38,6 +38,7 @@ azure/
     gateway.bicep        网关 Container App
     container-app.bicep  模块:三个 App 共用的形状
     migrate-job.bicep    模块:迁移 Job(由 platform.bicep 调用)
+    Dockerfile           原根目录的 Dockerfile(只构建四个 azure-* 镜像)
     deploy.mjs           编排(原 scripts/azure-deploy.mjs)
     smoke.mjs            验收(原 scripts/azure-smoke.mjs)
   local/
@@ -54,6 +55,10 @@ packages/azure-sdk/docker-compose.yml   原根目录的 docker-compose.azure.yml
 不建 `modules/` 子目录:被复用的模板只有 `container-app.bicep` 与 `migrate-job.bicep` 两个,为两个文件建一层目录是过度组织。
 
 **`migrate-job.bicep` 必须保留为独立模块,不得并入 `platform.bicep`。** 它存在的唯一理由是模块边界:Bicep 会把外层模板的表达式内联到资源属性上,由 `@secure()` 参数拼出的连接串一旦落在外层模板里,`az deployment group what-if` 对一个 Create 变更会把含明文连接串的完整资源体打印到终端,而部署脚本用 `stdio:"inherit"` 透传、计划还把输出 `tee` 进日志文件。作为模块参数传入时,编译产物是嵌套部署的 `expressionEvaluationOptions.scope: "inner"` + `securestring` 参数,明文不出现在外层。这是上一轮修掉的一个安全缺陷(部署设计的 I1),合并回去会原样重现。
+
+**`Dockerfile` 移进 `azure/deploy/`。** 它只构建 `azure-gateway` / `azure-markdown` / `azure-docx` / `azure-sdk` 四个镜像,是纯 Azure 资产。构建上下文仍是仓库根,调用方式从 `--file Dockerfile .` 改为 `--file azure/deploy/Dockerfile .` —— `az acr build` 的 `--file` 与上下文本就可以分离,不需要把上下文也搬走(搬走会让它看不到 `packages/`)。
+
+**`.dockerignore` 留在仓库根,不能搬。** Docker 只读取**构建上下文根目录**的那一份,而 `azure/deploy/Dockerfile` 与 `tests/treespec/Dockerfile` 的上下文都是仓库根 —— 它是两者共用的,且位置由 Docker 规定而非我们选择。这一点要写进 `azure/README.md`,否则下一个做隔离的人会想把它也搬进 `azure/`,结果是排除规则**静默失效**(Docker 不会因为找不到 `.dockerignore` 而报错,只会把 `node_modules`、`dist`、`.git` 全部塞进构建上下文)。
 
 **`docker-compose.azure.yml` 移到 `packages/azure-sdk/docker-compose.yml`,不放进 `azure/local/`。** 它的第一消费者是 `packages/azure-sdk/tests/containers.ts:43`(端口契约测试要起 Postgres),而那套测试留在强制门禁里。放进 `azure/` 会让"删掉 `azure/` 后 `pnpm test` 仍全绿"这条验收不成立。`azure/local/runtime.mjs` 改为指向该包内的位置 —— 它是借用者,不是拥有者。
 
@@ -308,7 +313,7 @@ ARM 增量模式不删除模板里没有的资源,因此拆分本身对现有资
 2. `pnpm test:local` 全绿,且**不再包含任何 Azure 集成测试**
 3. `pnpm test:azure` 单独可跑,三套集成测试通过
 4. `tests/treespec/` 的 16 个 spec 仍能找到本地 Azure 栈(路径已更新)
-5. 根目录不再有 `infra/`、`docker-compose.azure.yml`、`scripts/azure-*.mjs`、`scripts/replica-proxy.mjs`
+5. 根目录不再有 `infra/`、`Dockerfile`、`docker-compose.azure.yml`、`scripts/azure-*.mjs`、`scripts/replica-proxy.mjs`;`.dockerignore` **仍在根目录**(Docker 规定,且与 `tests/treespec/Dockerfile` 共用)
 6. `az bicep build` 对 `azure/deploy/` 下**六个**模板全部通过且无 warning
 6b. 从 `platform.bicep` 的编译产物核实:含 `pgAdminPassword` 的 `format(...)` 表达式**只出现在** `migrate-job` 嵌套部署的 `properties.parameters` 里,不落在任何资源自身的 `properties` 上(上一轮 I1 的回归检查)
 7. 按 §8 的顺序对现有环境完成过渡后:
