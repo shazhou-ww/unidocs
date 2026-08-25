@@ -133,23 +133,34 @@ function parsePositiveInt(flagName, raw) {
 }
 
 /**
- * 读 `packages/azure-{name}/azure.service.json`(设计 §3.4)。文件不存在,
- * 或者存在但 `docType` 字段与 `name` 对不上——例如误把
+ * 读一个 `packages/{packageDir}/azure.service.json` 并 `JSON.parse`。不做
+ * `docType` 之类的语义校验——那是调用方(`readServiceParams()`/
+ * `readGatewayParams()`)的事,取决于是不是走 `--service` 路径。文件不存在
+ * 时抛错并点名,不要留到 `az deployment group create` 才报一个不知所云的
+ * 错误。
+ */
+function readAzureServiceJson(packageDir, context) {
+  const path = join(ROOT, `packages/${packageDir}/azure.service.json`);
+  if (!existsSync(path)) {
+    throw new Error(`${context}: no packages/${packageDir}/azure.service.json found.`);
+  }
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/**
+ * 读 `packages/azure-{name}/azure.service.json`(设计 §3.4),专给 `--service`
+ * 路径用。文件不存在,或者存在但 `docType` 字段与 `name` 对不上——例如误把
  * `packages/azure-gateway/azure.service.json` 当成一个可 `--service` 的
- * doc type(那份 json 没有 `docType` 字段,是给 `--gateway` 自己用的)——
- * 都在这里响亮失败并点名,不要拖到 `az deployment group create` 才报一个
- * 不知所云的错误。
+ * doc type(那份 json 没有 `docType` 字段,是给 `--gateway` 自己用的,读它
+ * 走 `readGatewayParams()`,不走这个函数)——都在这里响亮失败并点名。这条
+ * `docType` 防呆只对 `--service` 路径成立,不要为了让网关也能复用这个函数
+ * 而削弱它。
  */
 export function readServiceParams(name) {
-  const path = join(ROOT, `packages/azure-${name}/azure.service.json`);
-  if (!existsSync(path)) {
-    throw new Error(
-      `--service ${name}: no packages/azure-${name}/azure.service.json found. ` +
-        "Known doc-type services each ship their own azure.service.json (see packages/azure-markdown, " +
-        "packages/azure-docx) — check the doc type name.",
-    );
-  }
-  const params = JSON.parse(readFileSync(path, "utf8"));
+  const params = readAzureServiceJson(
+    `azure-${name}`,
+    `--service ${name}`,
+  );
   if (params.docType !== name) {
     throw new Error(
       `--service ${name}: packages/azure-${name}/azure.service.json has docType=${JSON.stringify(params.docType)}, ` +
@@ -158,6 +169,16 @@ export function readServiceParams(name) {
     );
   }
   return params;
+}
+
+/**
+ * 读 `packages/azure-gateway/azure.service.json`,专给 `deployGateway()` 用。
+ * 与 `readServiceParams()` 分开成两个函数,不是共用一个再加 if:那份 json
+ * 没有 `docType` 字段(网关不是一个 `--service` 的 doc type,见上面的注释),
+ * 硬塞同一条校验只会让 `--gateway` 路径也报出一个说不通的错误。
+ */
+export function readGatewayParams() {
+  return readAzureServiceJson("azure-gateway", "--gateway");
 }
 
 export function parseArgs(argv) {
@@ -921,13 +942,24 @@ function deployService(args, secrets, tag, docType) {
   );
 }
 
-/** gateway.bicep —— 网关 Container App。 */
+/**
+ * gateway.bicep —— 网关 Container App。`external`/`targetPort`/
+ * `minReplicas`/`maxReplicas` 从 `packages/azure-gateway/azure.service.json`
+ * 读出来传给模板(那四个 bicep 参数现在都带着与这份 json 逐字相同的默认值,
+ * 见 gateway.bicep——传等于默认值的值不改变行为,只是让这份此前没人读的
+ * 配置文件真正生效)。
+ */
 function deployGateway(args, secrets, tag) {
+  const gw = readGatewayParams();
   console.log(`[5/7] gateway.bicep: what-if then create (deployment ${DEPLOYMENT_NAMES.gateway})`);
   const label = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/gateway.bicep -n ${DEPLOYMENT_NAMES.gateway}`;
   const parameters = [
     `imageTag=${tag}`,
     `casBaseUrl=${args.casBaseUrl}`,
+    `external=${gw.external}`,
+    `targetPort=${gw.targetPort}`,
+    `minReplicas=${gw.minReplicas}`,
+    `maxReplicas=${gw.maxReplicas}`,
     `pgAdminPassword=${secrets.pgAdminPassword}`,
     `internalToken=${secrets.internalToken}`,
   ];
@@ -1033,11 +1065,62 @@ async function runMigration(args, jobName) {
 }
 
 /**
+ * 冒烟子进程的失败分类。`smoke.mjs` 的 `check()` 把每条失败的断言写成
+ * `  FAIL ...`(stderr,见 smoke.mjs);网络不通/网关还没接管流量时,
+ * `fetch()` 会抛,顶层 `catch` 把 `err.stack ?? err.message` 打到 stderr,
+ * 形状是 `ECONNREFUSED`/`ENOTFOUND`/`fetch failed`/`AggregateError` 这类
+ * Node 网络错误,不会有任何 `FAIL` 行(压根没跑到断言那一步)。
+ *
+ * 只要抓到至少一行 `FAIL`,就判定为 "assertion"——即使同时也有网络类
+ * 关键词(例如某条断言本身就在描述一个连接失败),因为这说明冒烟已经
+ * 跑到了断言阶段,单纯"还没就绪"解释不通。
+ */
+const SMOKE_NETWORK_ERROR_PATTERN = /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|AggregateError|network/i;
+
+export function classifySmokeFailure(stdout, stderr) {
+  const combined = `${stdout ?? ""}\n${stderr ?? ""}`;
+  const failLines = combined
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("FAIL"));
+  if (failLines.length > 0) {
+    return { kind: "assertion", detail: failLines.join(" | ") };
+  }
+  if (SMOKE_NETWORK_ERROR_PATTERN.test(combined)) {
+    const tail = combined
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-3)
+      .join(" | ");
+    return { kind: "network", detail: tail || "(matched a network error pattern but no output captured)" };
+  }
+  const tail = combined
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-3)
+    .join(" | ");
+  return { kind: "unknown", detail: tail || "(no output captured)" };
+}
+
+/**
  * 跑一次冒烟子进程。`--no-cas` 是否传给 `smoke.mjs` 由**这次部署自己
  * 有没有配 CAS** 决定(`casBaseUrl` 是否为空),不是从这个脚本的调用者
  * 手上再透传一个独立开关——这样人为选择影响不到它。`only` 非空时加
  * `--only <docType>`,把冒烟收窄到刚被重新部署的那一个 doc type
  * (`--service docx` 不该因为 markdown 冒烟失败而报红)。
+ *
+ * 不用 `run()`(那个只透传 stdio、拿不到文本):冒烟在重试窗口里会跑几十次,
+ * `retryUntil()` 耗尽后抛出的最终 Error 必须能让人**只看这一行报错**就
+ * 分清「revision 还没接管流量,再等等」和「服务起来了但功能是坏的」——
+ * 之前两种失败的错误信息完全相同(`exited with code 1`),人必须去翻几十次
+ * 重试滚过的实时输出才能找到最后一次的真实原因。
+ *
+ * 用 `spawnSync` + `encoding:"utf8"` 捕获而不是 `stdio:"inherit"`,但捕获后
+ * 立刻原样 `process.stdout.write`/`process.stderr.write` 回终端——对着终端
+ * 看的人体验和之前一样(冒烟单次跑几秒钟,不是流式逐字符也看不出差别),
+ * 换来的是失败时能用 `classifySmokeFailure()` 从这份文本里分类。
  */
 function smokeOnce(gatewayFqdn, casBaseUrl, only) {
   const smokeArgs = ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
@@ -1047,13 +1130,26 @@ function smokeOnce(gatewayFqdn, casBaseUrl, only) {
   if (only) {
     smokeArgs.push("--only", only);
   }
-  run("node", smokeArgs, {}, `node azure/deploy/smoke.mjs (only=${only ?? "all"})`);
+  const label = `node azure/deploy/smoke.mjs (only=${only ?? "all"})`;
+  const result = spawnSync("node", smokeArgs, { cwd: ROOT, encoding: "utf8" });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const { kind, detail } = classifySmokeFailure(result.stdout, result.stderr);
+    throw new Error(`${label} exited with code ${result.status} [${kind}]: ${detail}`);
+  }
 }
 
 /**
  * 冒烟测试,套 `retryUntil()` 重试。**这条重试与 Postgres 注册表无关** ——
  * 新 revision 接管流量本来就要几十秒,没有重试的话冒烟在那段窗口里必然
  * 失败;注册表的 30 秒 TTL 只是让这个窗口稍微长一点。
+ *
+ * 重试耗尽时 `retryUntil()` 原样重新抛出最后一次 `attempt()` 的 Error——
+ * 也就是 `smokeOnce()` 里那条带 `[assertion]`/`[network]`/`[unknown]` 分类
+ * 与失败摘要的 Error,不是某个泛化的"重试耗尽"包装错误。`main()` 顶层
+ * `catch` 打的 `err.message` 因此直接就是可判断的那一行。
  */
 async function runSmoke(gatewayFqdn, casBaseUrl, only) {
   console.log(`[7/7] smoke testing ${gatewayFqdn}${only ? ` (only=${only})` : ""}`);

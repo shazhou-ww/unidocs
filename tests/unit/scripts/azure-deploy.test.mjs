@@ -5,6 +5,7 @@
 import { describe, expect, test, vi } from "vitest";
 import {
   IMAGES,
+  classifySmokeFailure,
   decideInternalTokenAction,
   generateSecret,
   imageRef,
@@ -12,6 +13,7 @@ import {
   isKeyVaultForbidden,
   mapWithConcurrency,
   parseArgs,
+  readGatewayParams,
   readServiceParams,
   retryOnForbidden,
   retryUntil,
@@ -305,6 +307,18 @@ describe("readServiceParams", () => {
   });
 });
 
+// gateway 的 azure.service.json 此前是一份没人读的死文件——gateway.bicep
+// 把 external/targetPort/minReplicas/maxReplicas 硬编码在模板内部。评审后
+// 把这四个值改成了带同名默认值的 bicep param,deployGateway() 改为读这份
+// json 并显式传参。这里确认「读出来的值」与「gateway.bicep 里那四个 param
+// 的默认值」逐字一致——这是零行为变更重构的前提,不是巧合。
+describe("readGatewayParams", () => {
+  test("读 packages/azure-gateway/azure.service.json,值与 gateway.bicep 的默认值一致", () => {
+    const p = readGatewayParams();
+    expect(p).toEqual({ external: true, targetPort: 8787, minReplicas: 1, maxReplicas: 3 });
+  });
+});
+
 // mapWithConcurrency 是「有界并发,不是无界 Promise.all」这条要求的核心：
 // 用一个会记录同时在飞数量的 worker 直接断言峰值并发不超过 limit。
 describe("mapWithConcurrency", () => {
@@ -386,5 +400,52 @@ describe("retryUntil", () => {
       retryUntil(attempt, { timeoutMs: 50, intervalMs: 1, wait, log: vi.fn() }),
     ).rejects.toThrow(/still failing/);
     expect(attempt.mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
+// classifySmokeFailure() 是本轮评审要求的修复:冒烟重试耗尽之前,
+// "revision 还没接管流量"和"服务起来了但断言失败"两种失败的错误信息完全
+// 相同(`exited with code 1`)。这里直接喂 smoke.mjs 真实会产出的 stdout/
+// stderr 形状,断言两种情况被分类成不同的 kind,且失败摘要进了 detail——
+// 不用真的起子进程。
+describe("classifySmokeFailure", () => {
+  test("含 FAIL 行 -> assertion,摘要里带着具体哪条断言挂了", () => {
+    const stderr =
+      "  FAIL apply setContent → success && version === 2 — " +
+      '{"success":false,"error":"conflict"}\n' +
+      "\n2 assertion(s) failed";
+    const { kind, detail } = classifySmokeFailure("", stderr);
+    expect(kind).toBe("assertion");
+    expect(detail).toMatch(/FAIL apply setContent/);
+  });
+
+  test("网络错误(ECONNREFUSED 等)且没有 FAIL 行 -> network", () => {
+    const stderr =
+      "Error: connect ECONNREFUSED 127.0.0.1:8787\n" +
+      "    at TCPConnectWrap.afterConnect [as oncomplete]";
+    const { kind, detail } = classifySmokeFailure("", stderr);
+    expect(kind).toBe("network");
+    expect(detail).toMatch(/ECONNREFUSED/);
+  });
+
+  test("既没有 FAIL 行也没有网络错误关键词 -> unknown,仍然带着尾部输出", () => {
+    const stderr = "TypeError: Cannot read properties of undefined (reading 'foo')";
+    const { kind, detail } = classifySmokeFailure("", stderr);
+    expect(kind).toBe("unknown");
+    expect(detail).toMatch(/Cannot read properties/);
+  });
+
+  test("同时出现 FAIL 与网络关键词时优先判定为 assertion(已经跑到断言阶段了)", () => {
+    const stderr =
+      "  FAIL export → HTTP 200 with non-empty body — status=502\n" +
+      "some unrelated ECONNRESET noise from an earlier retry";
+    const { kind } = classifySmokeFailure("", stderr);
+    expect(kind).toBe("assertion");
+  });
+
+  test("stdout 与 stderr 都为空 -> unknown,不抛错", () => {
+    const { kind, detail } = classifySmokeFailure("", "");
+    expect(kind).toBe("unknown");
+    expect(typeof detail).toBe("string");
   });
 });

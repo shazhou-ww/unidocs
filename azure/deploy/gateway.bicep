@@ -8,6 +8,15 @@ param imageTag string
 @description('Cloudflare CAS worker 自身的基地址（不是 gateway 的）。过渡形态，阶段 4 删除。')
 param casBaseUrl string
 
+@description('网关的 Container App 是否挂公网 ingress。默认值就是网关唯一有意义的取值——它必须能被公网访问；参数化只是为了让 packages/azure-gateway/azure.service.json 这份既有配置文件真正被读取，不是预期会被传别的值。')
+param external bool = true
+
+@description('网关容器监听的端口。默认值来自 packages/azure-gateway/src/main.ts 的监听端口，与 packages/azure-gateway/azure.service.json 一致。')
+param targetPort int = 8787
+
+param minReplicas int = 1
+param maxReplicas int = 3
+
 param pgAdminUser string = 'unidocs'
 
 @secure()
@@ -47,10 +56,10 @@ module app 'container-app.bicep' = {
     identityId: identity.id
     acrLoginServer: acr.properties.loginServer
     image: '${acr.properties.loginServer}/unidocs/azure-gateway:${imageTag}'
-    targetPort: 8787
-    external: true
-    minReplicas: 1
-    maxReplicas: 3
+    targetPort: targetPort
+    external: external
+    minReplicas: minReplicas
+    maxReplicas: maxReplicas
     databaseUrl: databaseUrl
     internalToken: internalToken
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
