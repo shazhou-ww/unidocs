@@ -1,10 +1,11 @@
 import type { DocumentType, DocumentTypeContext, SValue } from "@unidocs/protocol";
 import type { PsdDoc } from "./model/types.js";
-import { apply, type PsdOp } from "./ops/index.js";
+import { type PsdOp } from "./ops/index.js";
 import { save } from "./psd/save.js";
 import { load } from "./psd/load.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
-import { resolveDoc } from "./resolve.js";
+import { resolveDoc, resolveLayerPixels } from "./resolve.js";
+import { DocRenderState } from "./render/doc-render-state.js";
 import { runQuery, type PsdQuery } from "./queries.js";
 import {
   materializePsdDoc,
@@ -26,6 +27,28 @@ export function createPsdDocumentType(
 ): DocumentType<PsdStoredDoc, PsdQuery, PsdOp> {
   const modelCache = new WeakMap<PsdStoredDoc, PsdDoc>();
 
+  // Render state that lives as long as this factory — i.e. one Editor DO
+  // instance, which is one document (`idFromName("${userId}:${docId}")`).
+  //
+  // Previously every `getPreview` built a fresh PixelCache and re-composited
+  // the whole canvas, so an agent's edit→preview→edit loop paid a full decode
+  // plus a full composite per step (~1s on a 3556x2000 file). Keeping one
+  // warm cache and one incremental compositor here makes both incremental:
+  // pixels are decoded once, and an op only invalidates the tiles its dirty
+  // rect covers. Budgets are byte-bounded to fit a DO isolate — see
+  // DocRenderState's memory note.
+  const renderState = new DocRenderState(casBlobStore(ctx));
+
+  /** The pre-op fault-in the free `apply()` performs: a flip mutates pixel
+   *  bytes in place, so a lazy PixelRef must be resolved before it runs.
+   *  Returns the doc unchanged for every other op. */
+  const resolveForOp = async (doc: PsdDoc, op: PsdOp): Promise<PsdDoc> => {
+    if (op.kind !== "transform") return doc;
+    const payload = op.payload as { layerId?: string; op?: { flip?: unknown } };
+    if (!payload?.op?.flip || !payload.layerId) return doc;
+    return resolveLayerPixels(doc, payload.layerId, casBlobStore(ctx));
+  };
+
   async function materialize(state: PsdStoredDoc): Promise<PsdDoc> {
     const cached = modelCache.get(state);
     if (cached) return cached;
@@ -46,11 +69,14 @@ export function createPsdDocumentType(
       layers: [],
     }),
 
+    // Ops run THROUGH the resident compositor (not the free `apply`) so each
+    // one invalidates only the tiles its dirty rect covers; the resulting doc
+    // is identical either way (tests/doc-render-state.test.ts).
     apply: async (ops: readonly PsdOp[], state: PsdStoredDoc): Promise<PsdStoredDoc> =>
-      store(await apply(ops, await materialize(state), ctx)),
+      store(await renderState.applyOps(ops, await materialize(state), resolveForOp)),
 
     query: async (q: PsdQuery, state: PsdStoredDoc): Promise<SValue> =>
-      runQuery(q, await materialize(state), ctx) as Promise<SValue>,
+      runQuery(q, await materialize(state), ctx, renderState) as Promise<SValue>,
 
     formats: {
       psd: {

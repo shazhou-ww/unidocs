@@ -3,6 +3,7 @@ import type { QueryValue, DocumentTypeContext } from "@unidocs/protocol";
 import { encode } from "fast-png";
 import { renderCached, renderRegion, renderLayer, downscale, DEFAULT_CACHE_BYTES, type RenderCtx } from "./render/index.js";
 import { PixelCache } from "./render/pixel-source.js";
+import type { DocRenderState } from "./render/doc-render-state.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
 import { findLayer } from "./model/tree.js";
 
@@ -40,7 +41,12 @@ function toImageResult(px: { width: number; height: number; data: Uint8ClampedAr
   return { $image: { base64: btoa(bin), mediaType: "image/png" }, width: px.width, height: px.height, region };
 }
 
-export async function runQuery(q: PsdQuery, doc: PsdDoc, ctx?: DocumentTypeContext): Promise<QueryValue> {
+export async function runQuery(
+  q: PsdQuery,
+  doc: PsdDoc,
+  ctx?: DocumentTypeContext,
+  render?: DocRenderState,
+): Promise<QueryValue> {
   switch (q.kind) {
     case "getLayers":
       return doc.layers.map(summarize);
@@ -60,26 +66,38 @@ export async function runQuery(q: PsdQuery, doc: PsdDoc, ctx?: DocumentTypeConte
       // as-is; downscale never upscales, so it's a no-op when already smaller.
       const cap = p.rect ? 1536 : 768;
       const maxSize = p.maxSize ?? cap;
-      // Resident docs (no ctx.cas) render via the resident entrypoints — the
-      // render entrypoints fall back to their own resident defaultCtx() (no
-      // store) when no RenderCtx is passed, so this is byte-identical to
-      // before. Lazy (PixelRef) docs pass a RenderCtx that faults pixels in
-      // from the CAS as the compositor streams over each layer.
-      const rc: RenderCtx | undefined = ctx
-        ? { store: casBlobStore(ctx), cache: new PixelCache(DEFAULT_CACHE_BYTES) }
-        : undefined;
+      // With a `render` state (an Editor DO, which keeps one per document),
+      // previews go through its resident compositor: decoded pixels stay warm
+      // across requests and an edit only invalidates the tiles its dirty rect
+      // covers. Byte-identical to the stateless path below — see
+      // tests/doc-render-state.test.ts, which pins `composite`/`region`
+      // against `render`/`renderRegion` across edits, rollback and eviction.
+      //
+      // Without one (resident docs, direct callers, tests) this falls back to
+      // the original stateless path verbatim: a fresh PixelCache per call, and
+      // the resident entrypoints' own defaultCtx() when there is no `ctx`.
+      const rc: RenderCtx | undefined = render
+        ? render.ctx
+        : ctx
+          ? { store: casBlobStore(ctx), cache: new PixelCache(DEFAULT_CACHE_BYTES) }
+          : undefined;
       let px: { width: number; height: number; data: Uint8ClampedArray };
       let region: [number, number, number, number];
       if (p.layerId) {
         const l = findLayer(doc.layers, p.layerId);
         if (!l) throw new Error(`layer not found: ${p.layerId}`);
+        // A single-layer preview renders an ISOLATED one-layer document, which
+        // shares no tiles with this document — but it does share blobs, so it
+        // still takes the warm decoded-pixel cache via `rc`.
         px = await renderLayer(doc, p.layerId, {}, rc);
         region = l.bounds;
       } else if (p.rect) {
-        px = await renderRegion(doc, p.rect, rc);
+        // `renderRegion` composites the whole canvas and then crops; the
+        // tile-backed path composites only the tiles the rect touches.
+        px = render ? await render.region(doc, p.rect) : await renderRegion(doc, p.rect, rc);
         region = p.rect;
       } else {
-        px = await renderCached(doc, rc);
+        px = render ? await render.composite(doc) : await renderCached(doc, rc);
         region = [0, 0, doc.canvas.height, doc.canvas.width];
       }
       return toImageResult(downscale(px, maxSize), region);
