@@ -16,9 +16,10 @@ Bicep 模板和 Dockerfile,不放业务逻辑。
 炸掉(找不到要打包/部署的源码),这不是巧合,是刻意的单向依赖。
 
 - `azure/deploy/` —— 真实云部署:`deploy.mjs`(编排脚本)、`smoke.mjs`
-  (部署后冒烟)、`main.bicep`/`bootstrap.bicep`/`container-app.bicep`/
-  `migrate-job.bicep`(Bicep 模板)、`Dockerfile`(四个 Azure 服务共用的
-  构建产物镜像)。
+  (部署后冒烟)、`bootstrap.bicep`/`platform.bicep`/`service.bicep`/
+  `gateway.bicep`/`container-app.bicep`/`migrate-job.bicep`(Bicep 模板,
+  四个可独立部署的 target + 两个被 module 引用的公共模板)、`Dockerfile`
+  (四个 Azure 服务共用的构建产物镜像)。
 - `azure/local/` —— 本地开发/测试用的 Azure 栈:`runtime.mjs`
   (`startAzureRuntime()`,`pnpm dev --azure` 和 `tests/integration/azure/`
   都靠它起服务)、`ports.mjs`(端口布局,无依赖)、`replica-proxy.mjs`
@@ -60,5 +61,43 @@ pnpm test:local           # 默认门禁,不含任何 Azure 集成测试
 pnpm test:azure           # Azure 集成测试(tests/integration/azure/),需要 Docker
 pnpm azure:up             # docker compose -f packages/azure-sdk/docker-compose.yml up -d
 pnpm azure:down           # docker compose -f packages/azure-sdk/docker-compose.yml down
-node azure/deploy/deploy.mjs --cas-base-url ... --internal-token ...   # 真实云部署
+node azure/deploy/deploy.mjs --cas-base-url ... --internal-token ...   # 真实云部署(全量)
+```
+
+## `deploy.mjs` 的选择器
+
+`azure/deploy/deploy.mjs` 部署四个独立单元:`bootstrap.bicep`(ACR / Key
+Vault / 存储 / 身份 / Log Analytics)、`platform.bicep`(Postgres / ACA
+环境 / 迁移 Job)、`service.bicep`(单个 doc type 的 Container App)、
+`gateway.bicep`(网关 Container App)。不带任何选择器时四个按依赖顺序
+(bootstrap → platform → services → gateway)全量部署一遍;带了选择器时
+只跑被选中的那些:
+
+```bash
+node azure/deploy/deploy.mjs                          # 冷启动全量
+node azure/deploy/deploy.mjs --bootstrap               # 只 bootstrap
+node azure/deploy/deploy.mjs --platform                # 只 Postgres / ACA 环境 / 迁移
+node azure/deploy/deploy.mjs --service docx             # 只构建 docx 镜像 + 只部它
+node azure/deploy/deploy.mjs --service docx,markdown    # 多选,逗号分隔,镜像并发构建
+node azure/deploy/deploy.mjs --gateway                  # 只网关
+node azure/deploy/deploy.mjs --service docx --build-concurrency 1   # 覆盖镜像构建并发(默认 2)
+```
+
+`--service docx` 的冒烟只测 docx(`smoke.mjs --only docx`),不碰 markdown;
+`--service docx,markdown`(或不带选择器的全量部署)冒烟测全部。冒烟本身会
+在 2 分钟窗口内每 5 秒重试一次——新 revision 接管流量要几十秒,这与
+Postgres 注册表的 30 秒 TTL 无关,没有注册表也需要这条重试。
+
+**多个独立的 `--service` 进程并行跑是可以这么用的,但这是使用方式,不是
+脚本对并发本身的保证**:各 target 用各自独立的 deployment 名
+(`bootstrap`/`platform`/`service-{docType}`/`gateway`,并发安全的前提)、
+各 doc type 有各自独立的镜像仓库(`unidocs/azure-{docType}`)与 Container
+App(`unidocs-{docType}`)、Postgres 注册表按 `doc_type` 主键分行——不同
+`--service` 进程之间没有共享的可变状态会被互相踩。对 ACA 环境 / 托管身份 /
+ACR 的引用都是只读的 `existing` 声明。
+
+```bash
+node azure/deploy/deploy.mjs --service docx &
+node azure/deploy/deploy.mjs --service markdown &
+wait
 ```

@@ -3,22 +3,23 @@
  * 密码(它存在 Key Vault 里,存在则读、不存在则生成),两次 what-if
  * 都应无变更。
  *
- * 顺序是有依赖的,不能重排:
- *   1 预检(订阅、Microsoft.App 注册)
- *   2 bootstrap.bicep     —— ACR 必须先于推镜像存在,Key Vault 必须先于播种存在
- *   3 播种/读取密钥        —— 幂等的关键
- *   4 在 ACR 里构建四个 linux/amd64 镜像
- *   5 main.bicep          —— 消费 @secure() 参数与镜像 tag
- *   6 触发迁移 Job 并等它成功
- *   7 冒烟(azure/deploy/smoke.mjs)
+ * 四个部署单元,各自独立的 deployment 名(DEPLOYMENT_NAMES):
+ *   bootstrap.bicep   ACR / Key Vault / 存储 / 身份 / Log Analytics
+ *   platform.bicep    Postgres / ACA 环境 / 迁移 Job
+ *   service.bicep     单个 doc type 的 Container App(每个服务各自的 deployment 名 service-{docType})
+ *   gateway.bicep     网关 Container App
  *
- * 用法(配 Cloudflare CAS,支持 docx 图片路径):
+ * 用法(不传任何选择器 = 冷启动全量,顺序 bootstrap -> platform -> services -> gateway):
  *   node azure/deploy/deploy.mjs \
  *     --cas-base-url https://unidocs-cas.<account>.workers.dev \
  *     --internal-token <与 Cloudflare CAS worker 相同的 INTERNAL_TOKEN>
  *
- * 用法(不配 CAS —— Cloudflare CAS worker 尚未部署时的当前形态):
- *   node scripts/azure-deploy.mjs
+ * 用法(只部一个 target —— 见 parseArgs()):
+ *   node azure/deploy/deploy.mjs --bootstrap
+ *   node azure/deploy/deploy.mjs --platform
+ *   node azure/deploy/deploy.mjs --service docx
+ *   node azure/deploy/deploy.mjs --service docx,markdown
+ *   node azure/deploy/deploy.mjs --gateway
  *
  * `--cas-base-url` 是可选的:不给时 docx 的图片路径返回 501,其余功能
  * (markdown、docx 除图片外的操作)不受影响,见 `packages/azure-gateway/src/main.ts`
@@ -29,10 +30,13 @@
  *     INTERNAL_TOKEN 对齐,本脚本绝不会替你生成一个注定对不上的值);
  *   - 不配 `--cas-base-url` 时可以不传,脚本会自动生成一个仅供 Azure 内部
  *     使用的 token(见 `resolveInternalToken()`)。
+ *
+ * `--build-concurrency`(默认 2):ACR 镜像构建的有界并发数,见
+ * `buildAndPushImages()` 顶部注释。
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,6 +55,39 @@ const INTERNAL_TOKEN_SECRET = "internal-token";
 const MIGRATION_POLL_INTERVAL_MS = 5_000;
 const MIGRATION_TIMEOUT_MS = 10 * 60 * 1000;
 
+/** 冒烟重试:新 revision 接管流量要几十秒,与注册表 30 秒 TTL 无关——即使
+ *  没有注册表,不重试的冒烟在这段窗口里也会失败。总窗口 2 分钟,每 5 秒试一次。 */
+const SMOKE_RETRY_TIMEOUT_MS = 120_000;
+const SMOKE_RETRY_INTERVAL_MS = 5_000;
+
+/** 镜像构建的默认并发数,可用 `--build-concurrency` 覆盖。见 buildAndPushImages()。 */
+const DEFAULT_BUILD_CONCURRENCY = 2;
+
+/**
+ * bootstrap.bicep 里这两个资源名是硬编码的字面量 var(不是随机生成、不带
+ * 环境后缀),所以本脚本不需要每次都先跑一遍 bootstrap 或查询它的部署输出
+ * 才知道 ACR/Key Vault 叫什么——只在本次真的选中了 `bootstrap` target 时才
+ * 用 `deployBootstrap()` 的实时 output(顺便当作"这两个资源确实存在"的
+ * 验证),否则直接用这份常量。
+ */
+const BOOTSTRAP_RESOURCE_NAMES = {
+  acrName: "unidocsacr",
+  keyVaultName: "unidocs-kv",
+};
+
+/**
+ * 四个 target 用各自独立的 deployment 名。这既让
+ * `az deployment operation group list` 能分辨是谁改的,也是并发部署安全的
+ * 必要条件——两个 `--service` 进程同时跑时,它们写的是不同的 deployment
+ * 记录,不会互相覆盖对方的 `az deployment group create` 记录。
+ */
+export const DEPLOYMENT_NAMES = {
+  bootstrap: "bootstrap",
+  platform: "platform",
+  gateway: "gateway",
+  service: (docType) => `service-${docType}`,
+};
+
 /** 四个镜像:三个服务 + 迁移。第四个的入口是 dist/migrate-cli.js。 */
 export const IMAGES = [
   { service: "azure-gateway", name: "azure-gateway", entry: "dist/main.js" },
@@ -68,7 +105,7 @@ export function imageRepoTag(name, tag) {
   return `unidocs/${name}:${tag}`;
 }
 
-/** main.bicep 消费的完整镜像引用。与 `imageRepoTag()` 同源,不各写一份。 */
+/** 各 target 消费的完整镜像引用。与 `imageRepoTag()` 同源,不各写一份。 */
 export function imageRef(loginServer, name, tag) {
   return `${loginServer}/${imageRepoTag(name, tag)}`;
 }
@@ -82,8 +119,61 @@ export function generateSecret(byteLength) {
   return randomBytes(byteLength).toString("base64url");
 }
 
+/**
+ * 与 `packages/azure-sdk/src/pool.ts` 里几个超时环境变量同一套校验风格:
+ * 打错的配置必须响亮失败,而不是静默退回默认值——这类配置往往只在真正
+ * 用到那天(这里是并发构建炸了排查半天)才会被验证。
+ */
+function parsePositiveInt(flagName, raw) {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${flagName} must be a positive integer, got ${JSON.stringify(raw)}`);
+  }
+  return value;
+}
+
+/**
+ * 读 `packages/azure-{name}/azure.service.json`(设计 §3.4)。文件不存在,
+ * 或者存在但 `docType` 字段与 `name` 对不上——例如误把
+ * `packages/azure-gateway/azure.service.json` 当成一个可 `--service` 的
+ * doc type(那份 json 没有 `docType` 字段,是给 `--gateway` 自己用的)——
+ * 都在这里响亮失败并点名,不要拖到 `az deployment group create` 才报一个
+ * 不知所云的错误。
+ */
+export function readServiceParams(name) {
+  const path = join(ROOT, `packages/azure-${name}/azure.service.json`);
+  if (!existsSync(path)) {
+    throw new Error(
+      `--service ${name}: no packages/azure-${name}/azure.service.json found. ` +
+        "Known doc-type services each ship their own azure.service.json (see packages/azure-markdown, " +
+        "packages/azure-docx) — check the doc type name.",
+    );
+  }
+  const params = JSON.parse(readFileSync(path, "utf8"));
+  if (params.docType !== name) {
+    throw new Error(
+      `--service ${name}: packages/azure-${name}/azure.service.json has docType=${JSON.stringify(params.docType)}, ` +
+        `expected ${JSON.stringify(name)}. (packages/azure-gateway/azure.service.json has no docType field — ` +
+        "it is not a --service target, use --gateway instead.)",
+    );
+  }
+  return params;
+}
+
 export function parseArgs(argv) {
-  const args = { ...DEFAULTS, casBaseUrl: "", internalToken: "", skipBuild: false };
+  const args = {
+    ...DEFAULTS,
+    casBaseUrl: "",
+    internalToken: "",
+    skipBuild: false,
+    buildConcurrency: DEFAULT_BUILD_CONCURRENCY,
+  };
+
+  let bootstrapFlag = false;
+  let platformFlag = false;
+  let gatewayFlag = false;
+  let serviceNames = null;
+
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     switch (flag) {
@@ -93,10 +183,48 @@ export function parseArgs(argv) {
       case "--cas-base-url": args.casBaseUrl = argv[++i]; break;
       case "--internal-token": args.internalToken = argv[++i]; break;
       case "--skip-build": args.skipBuild = true; break;
+      case "--bootstrap": bootstrapFlag = true; break;
+      case "--platform": platformFlag = true; break;
+      case "--gateway": gatewayFlag = true; break;
+      case "--service":
+        serviceNames = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
+        break;
+      case "--build-concurrency":
+        args.buildConcurrency = parsePositiveInt("--build-concurrency", argv[++i]);
+        break;
       default:
         throw new Error(`Unknown argument ${flag}`);
     }
   }
+
+  // 没给任何选择器 = 冷启动全量,四个 target 按依赖顺序跑一遍(bootstrap ->
+  // platform -> services -> gateway,见文件头注释与 main() 里的调用顺序)。
+  // 给了任意一个选择器,就只跑被选中的那些——多个选择器可以同时给
+  // (例如 `--platform --gateway`),按同样的固定顺序执行,与 argv 里出现
+  // 的先后无关。
+  const anySelector = bootstrapFlag || platformFlag || gatewayFlag || serviceNames !== null;
+  const targets = [];
+  if (anySelector) {
+    if (bootstrapFlag) targets.push("bootstrap");
+    if (platformFlag) targets.push("platform");
+    if (serviceNames !== null) targets.push("services");
+    if (gatewayFlag) targets.push("gateway");
+  } else {
+    targets.push("bootstrap", "platform", "services", "gateway");
+  }
+  args.targets = targets;
+
+  if (serviceNames !== null) {
+    // 校验放在 parseArgs 里,不是等到真的要部署那个 target 才发现——拼错
+    // docType 应该在第一时间响亮失败,见 readServiceParams()。
+    for (const name of serviceNames) {
+      readServiceParams(name);
+    }
+    args.services = serviceNames;
+  } else {
+    args.services = null;
+  }
+
   return args;
 }
 
@@ -105,7 +233,7 @@ export function parseArgs(argv) {
  * 都是给人看的),非零退出即抛错并中止整条部署链。
  *
  * 失败时的错误信息绝不拼 `args.join(" ")`:好几个调用点(Key Vault 播种、
- * main.bicep 部署)把密码/token 直接当 `--value`/`--parameters` 的值传给
+ * 各 target 的部署)把密码/token 直接当 `--value`/`--parameters` 的值传给
  * 子进程,若把完整 args 塞进 Error.message,顶层 `catch` 里的
  * `console.error(err.message)` 就会把密钥打进日志。所以这里只用调用方
  * 显式给的、不含密钥的 `label` 描述失败的是哪条命令;不传 label 时退化
@@ -119,6 +247,27 @@ function run(cmd, args, opts = {}, label = cmd) {
     throw new Error(`${label} exited with code ${result.status}`);
   }
   return result;
+}
+
+/**
+ * `run()` 的异步版本(`spawn` 而不是 `spawnSync`)——专给
+ * `buildAndPushImages()` 的有界并发用。`spawnSync` 会整个阻塞 Node 的
+ * 事件循环,两个 `spawnSync` 调用不可能真正并发跑;换成 `spawn` + Promise
+ * 才谈得上"有界并发"而不是"看起来并发、实际串行"。同样的 label 安全规则:
+ * 失败信息只用调用方给的 label,不拼完整 args。
+ */
+function spawnAsync(cmd, args, opts = {}, label = cmd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { cwd: ROOT, stdio: "inherit", ...opts });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${label} exited with code ${code}${signal ? ` (signal ${signal})` : ""}`));
+      }
+    });
+  });
 }
 
 /**
@@ -147,6 +296,52 @@ function tryCapture(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, { cwd: ROOT, encoding: "utf8", ...opts });
   if (result.error || result.status !== 0) return null;
   return result.stdout.trim();
+}
+
+/**
+ * 有界并发的 map:同时在飞的 worker 数不超过 `concurrency`。**不是**无界
+ * `Promise.all(items.map(worker))`——那样并发数恒等于 `items.length`。
+ * ACR Tasks(我们用 Basic SKU)的并发构建数上限未经实测,超限的构建会
+ * 排队而不是失败,但不该在没实测过上限之前就一次性把全部构建甩过去。
+ */
+export async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function lane() {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await worker(items[i], i);
+    }
+  }
+  const laneCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: laneCount }, lane));
+  return results;
+}
+
+/**
+ * 通用的"重试直到超时"循环,与冒烟(或任何幂等的探测式操作)解耦——
+ * `attempt` 只需要是一个可能失败的 async 函数。这条重试本来就该有,
+ * 与 Postgres 注册表无关:新 revision 接管流量要几十秒,不重试的冒烟在
+ * 这段窗口里必然失败。`wait`/`log` 可注入,方便单测用极小的时钟。
+ */
+export async function retryUntil(attempt, opts = {}) {
+  const { timeoutMs, intervalMs, wait = sleep, log = console.log } = opts;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (Date.now() >= deadline) {
+        throw err;
+      }
+      log(
+        `retryUntil: attempt failed (${err.message}); waiting ${intervalMs}ms before retrying ` +
+          `(deadline in ${Math.max(0, deadline - Date.now())}ms)...`,
+      );
+      await wait(intervalMs);
+    }
+  }
 }
 
 /**
@@ -242,17 +437,17 @@ function checkRbac(args) {
 }
 
 /**
- * `azure/deploy/smoke.mjs`(第 7 步)从 `packages/cas-server-common/dist/index.js` import CAS
+ * `azure/deploy/smoke.mjs`(冒烟)从 `packages/cas-server-common/dist/index.js` import CAS
  * 哈希算法(仓库既有惯例,`scripts/cas-digest.mjs` 同样如此),而本脚本全程
  * **不在宿主机跑 `pnpm build`** —— 它只构建镜像,那是容器内编译,`.dockerignore`
- * 还排除了 `**\/dist`。干净检出上不自检的话,会一路成功到第 7 步,在十几分钟
+ * 还排除了 `**\/dist`。干净检出上不自检的话,会一路成功到冒烟那一步,在十几分钟
  * 的镜像构建与真实资源创建之后才以 ERR_MODULE_NOT_FOUND 失败。
  */
 function checkHostBuild() {
   const casDist = join(ROOT, "packages/cas-server-common/dist/index.js");
   if (!existsSync(casDist)) {
     throw new Error(
-      `preflight: ${casDist} is missing. azure/deploy/smoke.mjs (step 7) imports the CAS ` +
+      `preflight: ${casDist} is missing. azure/deploy/smoke.mjs imports the CAS ` +
       "hash algorithm from it, and this script never runs `pnpm build` on the host " +
       "(images compile inside the container). Run `pnpm build` first.",
     );
@@ -265,6 +460,10 @@ function checkHostBuild() {
  * objectId/assignee,`deployBootstrap()` 要把同一个值喂给
  * `bootstrap.bicep` 的 `deployerObjectId` 参数(见该文件顶部新增的角色
  * 分配),这里原样转交,不重新查询一遍。
+ *
+ * 这条预检对所有 target 都跑,不按选中的 target 精简——即便只选了
+ * `--service docx`,RBAC/宿主机构建产物这些检查仍然便宜且是只读的
+ * (`az group create` 对已存在的资源组是幂等 no-op)。
  */
 function preflight(args) {
   console.log("[1/7] preflight: subscription + RBAC + host build + Microsoft.App registration + resource group");
@@ -292,13 +491,13 @@ function preflight(args) {
 }
 
 /**
- * Step 2:bootstrap.bicep —— ACR / Key Vault / 存储 / 身份 / Log Analytics /
- * 部署者的 Key Vault Secrets Officer 角色分配(见 `infra/bootstrap.bicep`
+ * bootstrap.bicep —— ACR / Key Vault / 存储 / 身份 / Log Analytics /
+ * 部署者的 Key Vault Secrets Officer 角色分配(见 `bootstrap.bicep`
  * 顶部注释:RBAC 模式 Key Vault 的数据平面权限不含在订阅级 Owner 里,不建
- * 这条分配,Step 3 第一次写 secret 就会被 Forbidden 拒绝)。
+ * 这条分配,后面第一次写 secret 就会被 Forbidden 拒绝)。
  */
 function deployBootstrap(args, deployerObjectId) {
-  console.log("[2/7] bootstrap.bicep: what-if then create");
+  console.log(`[2/7] bootstrap.bicep: what-if then create (deployment ${DEPLOYMENT_NAMES.bootstrap})`);
   run("az", [
     "deployment", "group", "what-if",
     "-g", args.resourceGroup,
@@ -310,7 +509,7 @@ function deployBootstrap(args, deployerObjectId) {
     "deployment", "group", "create",
     "-g", args.resourceGroup,
     "-f", "azure/deploy/bootstrap.bicep",
-    "-n", "bootstrap",
+    "-n", DEPLOYMENT_NAMES.bootstrap,
     "--parameters", `deployerObjectId=${deployerObjectId}`,
     "-o", "json",
   ]);
@@ -349,10 +548,9 @@ export function isKeyVaultForbidden(stderr) {
  * Forbidden 的失败第一次就交给 `onNonForbiddenFailure` 处理,不重试、不
  * 拖慢——那种失败(密钥名打错、vault 不存在)重试也不会自己好。
  *
- * 背景:`infra/bootstrap.bicep` 的 `deployerKvSecretsOfficer` 角色分配刚在
- * Step 2 建出来,Step 3 紧接着就要写 secret —— RBAC 模式 Key Vault 的数据
- * 平面权限生效有传播延迟,真实首次部署已经在这里撞过一次 Forbidden(见
- * 设计 §11、`cas-optional-report.md`)。
+ * 背景:`bootstrap.bicep` 的 `deployerKvSecretsOfficer` 角色分配刚建出来,
+ * 紧接着就要写 secret —— RBAC 模式 Key Vault 的数据平面权限生效有传播延迟,
+ * 真实首次部署已经在这里撞过一次 Forbidden(见设计 §11、`cas-optional-report.md`)。
  */
 export async function retryOnForbidden(label, attempt, onNonForbiddenFailure, opts = {}) {
   const {
@@ -372,7 +570,7 @@ export async function retryOnForbidden(label, attempt, onNonForbiddenFailure, op
         `${label}: still getting Forbidden from Key Vault after ${maxAttempts} attempts ` +
         `over ~${(maxAttempts * intervalMs) / 1000}s. This is very likely not a propagation delay ` +
         "any more — confirm the deployer identity actually holds \"Key Vault Secrets Officer\" on " +
-        "this vault (infra/bootstrap.bicep's deployerKvSecretsOfficer role assignment), and that its " +
+        "this vault (bootstrap.bicep's deployerKvSecretsOfficer role assignment), and that its " +
         "principalId matches the identity running this script " +
         "(`az ad signed-in-user show --query id -o tsv`).",
       );
@@ -405,7 +603,7 @@ async function runKeyVaultSecretOp(label, args, onNonForbiddenFailure) {
 }
 
 /**
- * Step 3:播种(或读回)Postgres 管理员密码与 internal token。存在则读、
+ * 播种(或读回)Postgres 管理员密码与 internal token。存在则读、
  * 不存在则生成 —— 这是整条脚本可重复执行的关键:第二次跑绝不能重置
  * Postgres 密码,否则会让已经用旧密码建好的连接串全部失效。
  *
@@ -532,25 +730,58 @@ async function resolveInternalToken(keyVaultName, provided, casBaseUrl) {
   return value;
 }
 
+/**
+ * 只播种被选中 target 实际需要的密钥:`platform`/`services`/`gateway` 都
+ * 要 `pgAdminPassword`(拼进各自的 Postgres 连接串),只有 `services`/
+ * `gateway` 要 `internalToken`(gateway -> doc-type-worker 鉴权)。
+ * `--bootstrap` 单独跑时(main() 根本不调用这个函数)不需要任何一个。
+ */
 async function seedSecrets(keyVaultName, args) {
   console.log("[3/7] seeding/reading secrets from Key Vault (values withheld from logs)");
-  const pgAdminPassword = await seedSecret(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48);
-  const internalToken = await resolveInternalToken(keyVaultName, args.internalToken, args.casBaseUrl);
+  const needsPg = args.targets.some((t) => t === "platform" || t === "services" || t === "gateway");
+  const needsInternalToken = args.targets.some((t) => t === "services" || t === "gateway");
+  const pgAdminPassword = needsPg ? await seedSecret(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48) : null;
+  const internalToken = needsInternalToken
+    ? await resolveInternalToken(keyVaultName, args.internalToken, args.casBaseUrl)
+    : null;
   return { pgAdminPassword, internalToken };
 }
 
+/** 按被选中的 target 选出真正要构建的镜像子集——`--service docx` 时不该
+ *  顺带构建 markdown / gateway / migrate 镜像。 */
+function imagesForTargets(args) {
+  const images = [];
+  if (args.targets.includes("platform")) {
+    images.push(IMAGES.find((i) => i.name === "azure-migrate"));
+  }
+  if (args.targets.includes("services")) {
+    for (const docType of args.services ?? ["markdown", "docx"]) {
+      const image = IMAGES.find((i) => i.name === `azure-${docType}`);
+      if (!image) {
+        throw new Error(`no IMAGES entry for service doc type ${docType} (expected name azure-${docType})`);
+      }
+      images.push(image);
+    }
+  }
+  if (args.targets.includes("gateway")) {
+    images.push(IMAGES.find((i) => i.name === "azure-gateway"));
+  }
+  return images;
+}
+
 /**
- * Step 4:在 ACR 里构建四个镜像;`--skip-build` 时跳过,只复用已有 tag。
+ * 在 ACR 里构建被选中 target 需要的镜像;`--skip-build` 时跳过,只复用
+ * 已有 tag。
  *
  * 用 `az acr build` 而不是本机 `docker build` + `docker push`,原因只有一个
  * 但足够硬:**Azure Container Apps 只接受 `linux/amd64`**,而开发机是 Apple
  * Silicon,`docker build` 产出的是 `linux/arm64`。那种镜像会推送成功、
- * `main.bicep` 部署成功,然后副本 `exec format error` —— 报出来的错误是第 6 步
- * 的「migration job did not finish within ...ms」,发生在四次镜像构建 + Postgres
+ * 部署成功,然后副本 `exec format error` —— 报出来的错误是迁移那一步的
+ * 「migration job did not finish within ...ms」,发生在镜像构建 + Postgres
  * + ACA 环境全部创建之后,且完全指不到根因。
  *
  * 本机加 `--platform linux/amd64` 交叉构建同样不行:在 arm64 上用 QEMU 模拟
- * 跑四遍完整的 `pnpm install` + `pnpm -r build` 慢到不可用。`az acr build` 在
+ * 跑一遍完整的 `pnpm install` + `pnpm -r build` 慢到不可用。`az acr build` 在
  * ACR 中以原生 amd64 构建,不需要模拟。
  *
  * 它同时**取代**了 `az acr login` + `docker push`:构建产物直接落在 registry 里。
@@ -558,57 +789,73 @@ async function seedSecrets(keyVaultName, args) {
  * `azure/deploy/Dockerfile`,与上下文本就可以分离 —— 把上下文也搬进
  * `azure/deploy/` 会让它看不到 `packages/`。`Dockerfile` 本身不需要改,
  * 它是平台无关的。
+ *
+ * **有界并发**,默认 2,可用 `--build-concurrency` 覆盖——不用无界
+ * `Promise.all`:ACR Tasks(我们用 Basic SKU)的并发构建数上限未经实测,
+ * 超限的构建会排队而不是失败,但这个数字本身没有被验证过,见
+ * `mapWithConcurrency()`。
  */
-function buildAndPushImages(args, bootstrap, tag) {
+async function buildAndPushImages(args, bootstrap, tag) {
+  const images = imagesForTargets(args);
+  if (images.length === 0) {
+    return;
+  }
   if (args.skipBuild) {
-    console.log("[4/7] --skip-build: reusing existing images for tag", tag);
+    console.log(
+      `[4/7] --skip-build: reusing existing images for tag ${tag} (${images.map((i) => i.name).join(", ")})`,
+    );
     return;
   }
 
-  console.log("[4/7] building 4 linux/amd64 images in ACR for tag", tag);
+  console.log(`[4/7] building ${images.length} linux/amd64 images in ACR (concurrency ${args.buildConcurrency})`);
 
-  for (const item of IMAGES) {
+  await mapWithConcurrency(images, args.buildConcurrency, (item) =>
     // `az acr build` 的 --image 取的是 registry 内的相对路径,不带 loginServer
-    // 前缀;`imageRef()` 拼出的完整引用留给 main.bicep 消费。
-    run("az", [
-      "acr", "build",
-      "--registry", bootstrap.acrName,
-      "--platform", "linux/amd64",
-      "--image", imageRepoTag(item.name, tag),
-      "--build-arg", `SERVICE=${item.service}`,
-      "--build-arg", `ENTRY=${item.entry}`,
-      "--file", "azure/deploy/Dockerfile",
-      ".",
-    ]);
-  }
+    // 前缀;`imageRef()` 拼出的完整引用留给各 target 的 bicep 部署消费。
+    spawnAsync(
+      "az",
+      [
+        "acr", "build",
+        "--registry", bootstrap.acrName,
+        "--platform", "linux/amd64",
+        "--image", imageRepoTag(item.name, tag),
+        "--build-arg", `SERVICE=${item.service}`,
+        "--build-arg", `ENTRY=${item.entry}`,
+        "--file", "azure/deploy/Dockerfile",
+        ".",
+      ],
+      {},
+      `az acr build --image ${imageRepoTag(item.name, tag)}`,
+    ),
+  );
 }
 
-/** Step 5:main.bicep —— Postgres、Container Apps 环境、三个 App、迁移 Job。 */
-function deployMain(args, secrets, tag) {
-  console.log("[5/7] main.bicep: what-if then create");
-  // what-if 不接受 @secure() 参数以外的方式规避交互式确认,但 -o none
-  // 之类的静默不适用于 what-if 本身的可读性目的,所以这里不吞输出。
-  //
-  // 两条命令的 args 里都直接带着 pgAdminPassword/internalToken 的明文
-  // (main.bicep 的 @secure() 参数就是这么从 CLI 喂进去的,brief 定的
-  // 形态)。所以两处都必须显式传 label,绝不能落回默认的
-  // `args.join(" ")`——那样失败时 Error.message 会把密钥打进
-  // console.error。label 本身只列 -g/-f/-n 这些非密钥信息。
-  const mainDeployLabel = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/main.bicep`;
+/**
+ * platform.bicep —— Postgres、Container Apps 环境、迁移 Job。`main.bicep`
+ * 已经在 Task 3 被删除——`platform` 不是它的延续,是拆分出来的四个独立
+ * target 之一,`-f`/deployment 名都不再指向那个已不存在的文件。
+ */
+function deployPlatform(args, secrets, tag) {
+  console.log(`[5/7] platform.bicep: what-if then create (deployment ${DEPLOYMENT_NAMES.platform})`);
+  // what-if 不接受 @secure() 参数以外的方式规避交互式确认,所以这里不吞输出。
+  // 两条命令的 args 里都直接带着 pgAdminPassword 的明文(platform.bicep 的
+  // @secure() 参数就是这么从 CLI 喂进去的),所以两处都必须显式传 label,
+  // 绝不能落回默认的 `args.join(" ")`。
+  const label = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/platform.bicep -n ${DEPLOYMENT_NAMES.platform}`;
+  const parameters = [
+    `imageTag=${tag}`,
+    `pgAdminPassword=${secrets.pgAdminPassword}`,
+  ];
   run(
     "az",
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/main.bicep",
-      "--parameters",
-      `imageTag=${tag}`,
-      `casBaseUrl=${args.casBaseUrl}`,
-      `pgAdminPassword=${secrets.pgAdminPassword}`,
-      `internalToken=${secrets.internalToken}`,
+      "-f", "azure/deploy/platform.bicep",
+      "--parameters", ...parameters,
     ],
     {},
-    `${mainDeployLabel} what-if`,
+    `${label} what-if`,
   );
 
   const stdout = capture(
@@ -616,31 +863,130 @@ function deployMain(args, secrets, tag) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/main.bicep",
-      "-n", "main",
+      "-f", "azure/deploy/platform.bicep",
+      "-n", DEPLOYMENT_NAMES.platform,
       "-o", "json",
-      "--parameters",
-      `imageTag=${tag}`,
-      `casBaseUrl=${args.casBaseUrl}`,
-      `pgAdminPassword=${secrets.pgAdminPassword}`,
-      `internalToken=${secrets.internalToken}`,
+      "--parameters", ...parameters,
     ],
     {},
-    `${mainDeployLabel} -n main create`,
+    `${label} create`,
   );
   const outputs = JSON.parse(stdout).properties.outputs;
-  return {
-    gatewayFqdn: outputs.gatewayFqdn.value,
-    migrateJobName: outputs.migrateJobName.value,
-  };
+  return { migrateJobName: outputs.migrateJobName.value };
 }
 
 /**
- * Step 6:触发迁移 Job,轮询直到 Succeeded/Failed,超时 10 分钟。
+ * service.bicep —— 单个 doc type 的 Container App。deployment 名按 docType
+ * 区分(`service-{docType}`,DEPLOYMENT_NAMES.service)——两个 `--service`
+ * 进程同时跑时,它们必须写不同的 deployment 记录,否则会互相覆盖。
+ */
+function deployService(args, secrets, tag, docType) {
+  const svc = readServiceParams(docType);
+  const deploymentName = DEPLOYMENT_NAMES.service(docType);
+  console.log(`[5/7] service.bicep (${docType}): what-if then create (deployment ${deploymentName})`);
+  const label = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/service.bicep -n ${deploymentName}`;
+  const parameters = [
+    `docType=${docType}`,
+    `imageTag=${tag}`,
+    `targetPort=${svc.targetPort}`,
+    `minReplicas=${svc.minReplicas}`,
+    `maxReplicas=${svc.maxReplicas}`,
+    `casBaseUrl=${args.casBaseUrl}`,
+    `pgAdminPassword=${secrets.pgAdminPassword}`,
+    `internalToken=${secrets.internalToken}`,
+  ];
+  run(
+    "az",
+    [
+      "deployment", "group", "what-if",
+      "-g", args.resourceGroup,
+      "-f", "azure/deploy/service.bicep",
+      "--parameters", ...parameters,
+    ],
+    {},
+    `${label} what-if`,
+  );
+  run(
+    "az",
+    [
+      "deployment", "group", "create",
+      "-g", args.resourceGroup,
+      "-f", "azure/deploy/service.bicep",
+      "-n", deploymentName,
+      "-o", "none",
+      "--parameters", ...parameters,
+    ],
+    {},
+    `${label} create`,
+  );
+}
+
+/** gateway.bicep —— 网关 Container App。 */
+function deployGateway(args, secrets, tag) {
+  console.log(`[5/7] gateway.bicep: what-if then create (deployment ${DEPLOYMENT_NAMES.gateway})`);
+  const label = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/gateway.bicep -n ${DEPLOYMENT_NAMES.gateway}`;
+  const parameters = [
+    `imageTag=${tag}`,
+    `casBaseUrl=${args.casBaseUrl}`,
+    `pgAdminPassword=${secrets.pgAdminPassword}`,
+    `internalToken=${secrets.internalToken}`,
+  ];
+  run(
+    "az",
+    [
+      "deployment", "group", "what-if",
+      "-g", args.resourceGroup,
+      "-f", "azure/deploy/gateway.bicep",
+      "--parameters", ...parameters,
+    ],
+    {},
+    `${label} what-if`,
+  );
+
+  const stdout = capture(
+    "az",
+    [
+      "deployment", "group", "create",
+      "-g", args.resourceGroup,
+      "-f", "azure/deploy/gateway.bicep",
+      "-n", DEPLOYMENT_NAMES.gateway,
+      "-o", "json",
+      "--parameters", ...parameters,
+    ],
+    {},
+    `${label} create`,
+  );
+  const outputs = JSON.parse(stdout).properties.outputs;
+  return { gatewayFqdn: outputs.gatewayFqdn.value };
+}
+
+/**
+ * `--service` 单独跑时(本次 target 不含 gateway)冒烟仍要打公网网关——
+ * 网关这次没被重新部署,拿不到 `deployGateway()` 的 output,只能查已经
+ * 存在的 Container App。`unidocs-gateway` 是 `gateway.bicep` 里的固定
+ * 资源名(`name: 'unidocs-gateway'`),不是本脚本猜的。
+ */
+function resolveExistingGatewayFqdn(args) {
+  return capture(
+    "az",
+    [
+      "containerapp", "show",
+      "-g", args.resourceGroup,
+      "-n", "unidocs-gateway",
+      "--query", "properties.configuration.ingress.fqdn",
+      "-o", "tsv",
+    ],
+    {},
+    `az containerapp show -g ${args.resourceGroup} -n unidocs-gateway (resolve gateway fqdn for smoke)`,
+  );
+}
+
+/**
+ * 触发迁移 Job,轮询直到 Succeeded/Failed,超时 10 分钟。
  *
- * `jobName` 来自 Step 5 里 main.bicep 部署的 `migrateJobName` output,不
+ * `jobName` 来自 `deployPlatform()` 的 `migrateJobName` output,不
  * 在这里另起一个字面量常量 —— 那会造成两个真相来源(job 的真实名字只由
- * `azure/deploy/main.bicep` 的 `migrateJob` 资源决定)。
+ * `azure/deploy/platform.bicep` 的 `migrateJob` 模块决定)。
  */
 async function runMigration(args, jobName) {
   console.log("[6/7] starting migration job", jobName);
@@ -687,20 +1033,34 @@ async function runMigration(args, jobName) {
 }
 
 /**
- * Step 7:冒烟测试。`--no-cas` 是否传给 `azure-smoke.mjs` 由**这次部署自己
- * 有没有配 CAS** 决定(`args.casBaseUrl` 是否为空),不是从这个脚本的调用者
- * 手上再透传一个独立开关——这样人为选择影响不到它:部署没配 CAS,冒烟就必须
- * 认那个事实;部署配了 CAS,冒烟就必须去证明跨云接线成立,没有第三条路可选。
- * `azure-smoke.mjs` 自己还会在跑任何断言前用一次真实探测复核这个事实
- * (`assertCasNotConfigured()`),见该脚本头注释。
+ * 跑一次冒烟子进程。`--no-cas` 是否传给 `smoke.mjs` 由**这次部署自己
+ * 有没有配 CAS** 决定(`casBaseUrl` 是否为空),不是从这个脚本的调用者
+ * 手上再透传一个独立开关——这样人为选择影响不到它。`only` 非空时加
+ * `--only <docType>`,把冒烟收窄到刚被重新部署的那一个 doc type
+ * (`--service docx` 不该因为 markdown 冒烟失败而报红)。
  */
-function runSmoke(gatewayFqdn, casBaseUrl) {
-  console.log("[7/7] smoke testing", gatewayFqdn);
-  const args = ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
+function smokeOnce(gatewayFqdn, casBaseUrl, only) {
+  const smokeArgs = ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
   if (!casBaseUrl) {
-    args.push("--no-cas");
+    smokeArgs.push("--no-cas");
   }
-  run("node", args);
+  if (only) {
+    smokeArgs.push("--only", only);
+  }
+  run("node", smokeArgs, {}, `node azure/deploy/smoke.mjs (only=${only ?? "all"})`);
+}
+
+/**
+ * 冒烟测试,套 `retryUntil()` 重试。**这条重试与 Postgres 注册表无关** ——
+ * 新 revision 接管流量本来就要几十秒,没有重试的话冒烟在那段窗口里必然
+ * 失败;注册表的 30 秒 TTL 只是让这个窗口稍微长一点。
+ */
+async function runSmoke(gatewayFqdn, casBaseUrl, only) {
+  console.log(`[7/7] smoke testing ${gatewayFqdn}${only ? ` (only=${only})` : ""}`);
+  await retryUntil(() => smokeOnce(gatewayFqdn, casBaseUrl, only), {
+    timeoutMs: SMOKE_RETRY_TIMEOUT_MS,
+    intervalMs: SMOKE_RETRY_INTERVAL_MS,
+  });
 }
 
 function sleep(ms) {
@@ -709,7 +1069,8 @@ function sleep(ms) {
 
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
-  if (!args.casBaseUrl) {
+  const touchesCasConsumers = args.targets.includes("services") || args.targets.includes("gateway");
+  if (touchesCasConsumers && !args.casBaseUrl) {
     console.log(
       "[0/7] no --cas-base-url given: deploying without the Cloudflare CAS worker. " +
       "docx image endpoints will 501; every other endpoint is unaffected.",
@@ -717,15 +1078,53 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const deployerObjectId = preflight(args);
-  const bootstrap = deployBootstrap(args, deployerObjectId);
-  const secrets = await seedSecrets(bootstrap.keyVaultName, args);
-  const tag = capture("git", ["rev-parse", "--short", "HEAD"]);
-  buildAndPushImages(args, bootstrap, tag);
-  const mainOutputs = deployMain(args, secrets, tag);
-  await runMigration(args, mainOutputs.migrateJobName);
-  runSmoke(mainOutputs.gatewayFqdn, args.casBaseUrl);
 
-  console.log(`deployed: https://${mainOutputs.gatewayFqdn}`);
+  const bootstrap = args.targets.includes("bootstrap")
+    ? deployBootstrap(args, deployerObjectId)
+    : { acrName: BOOTSTRAP_RESOURCE_NAMES.acrName, keyVaultName: BOOTSTRAP_RESOURCE_NAMES.keyVaultName };
+
+  const needsSecrets = args.targets.some((t) => t !== "bootstrap");
+  const secrets = needsSecrets
+    ? await seedSecrets(bootstrap.keyVaultName, args)
+    : { pgAdminPassword: null, internalToken: null };
+
+  const tag = capture("git", ["rev-parse", "--short", "HEAD"]);
+
+  await buildAndPushImages(args, bootstrap, tag);
+
+  if (args.targets.includes("platform")) {
+    const platformOutputs = deployPlatform(args, secrets, tag);
+    await runMigration(args, platformOutputs.migrateJobName);
+  }
+
+  const deployedServiceDocTypes = [];
+  if (args.targets.includes("services")) {
+    for (const docType of args.services ?? ["markdown", "docx"]) {
+      deployService(args, secrets, tag, docType);
+      deployedServiceDocTypes.push(docType);
+    }
+  }
+
+  let gatewayFqdn = null;
+  if (args.targets.includes("gateway")) {
+    gatewayFqdn = deployGateway(args, secrets, tag).gatewayFqdn;
+  }
+
+  if (deployedServiceDocTypes.length > 0 || args.targets.includes("gateway")) {
+    if (!gatewayFqdn) {
+      // 这次没重新部署网关(纯 `--service` 跑),但服务变了,仍然要证明
+      // 公网网关能路由到新 revision —— 查已存在的网关 FQDN。
+      gatewayFqdn = resolveExistingGatewayFqdn(args);
+    }
+    const only = deployedServiceDocTypes.length === 1 ? deployedServiceDocTypes[0] : null;
+    await runSmoke(gatewayFqdn, args.casBaseUrl, only);
+  }
+
+  if (gatewayFqdn) {
+    console.log(`deployed: https://${gatewayFqdn}`);
+  } else {
+    console.log(`deployed: targets=${args.targets.join(",")} (bootstrap/platform only — no gateway URL to report)`);
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

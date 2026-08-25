@@ -9,6 +9,12 @@
  *   node azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io
  *   node azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --no-cas
  *   node azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
+ *   node azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --only docx
+ *
+ * `--only <docType>`(`markdown` 或 `docx`)把冒烟收窄到一个 doc type 的
+ * 流程,不给时测全部。`azure/deploy/deploy.mjs` 在 `--service docx` 之后
+ * 传 `--only docx`,这样一次只部一个服务不会因为另一个 doc type(这次根本
+ * 没被触碰)恰好挂掉而报红。
  *
  * 有两个独立的开关,语义不同,**不可互换**:
  *
@@ -62,8 +68,11 @@ function check(label, ok, detail) {
   }
 }
 
+/** 目前只有两个可冒烟的 doc type,与 azure/deploy/deploy.mjs 的 IMAGES/service.bicep 一致。 */
+const KNOWN_DOC_TYPES = ["markdown", "docx"];
+
 export function parseArgs(argv) {
-  const args = { gateway: "", skipCas: false, noCas: false };
+  const args = { gateway: "", skipCas: false, noCas: false, only: null };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     switch (flag) {
@@ -75,6 +84,9 @@ export function parseArgs(argv) {
         break;
       case "--no-cas":
         args.noCas = true;
+        break;
+      case "--only":
+        args.only = argv[++i];
         break;
       default:
         throw new Error(`Unknown argument ${flag}`);
@@ -89,6 +101,9 @@ export function parseArgs(argv) {
       "for self-checking this script locally\", --no-cas means \"this deployment genuinely has no CAS " +
       "configured\" — passing both means the caller hasn't decided which one applies.",
     );
+  }
+  if (args.only !== null && !KNOWN_DOC_TYPES.includes(args.only)) {
+    throw new Error(`--only must be one of ${KNOWN_DOC_TYPES.join(", ")}, got ${JSON.stringify(args.only)}`);
   }
   return args;
 }
@@ -320,24 +335,34 @@ export async function main() {
     await assertCasNotConfigured(gateway);
   }
 
-  console.log(`azure-smoke: gateway=${gateway} run=${RUN} skipCas=${args.skipCas} noCas=${args.noCas}`);
+  console.log(
+    `azure-smoke: gateway=${gateway} run=${RUN} skipCas=${args.skipCas} noCas=${args.noCas} only=${args.only ?? "all"}`,
+  );
 
-  await markdownFlow(gateway);
-
-  const docxDocId = `docx-${RUN}`;
-  await docxTextFlow(gateway, docxDocId);
-
-  let docxVersionAfterGroup2Or3 = 2;
-  if (args.skipCas) {
-    console.log("\n[3/4] docx image path through Cloudflare CAS — SKIPPED (--skip-cas)");
-  } else if (args.noCas) {
-    console.log("\n[3/4] docx image path through Cloudflare CAS — CAS not configured, group 3 not applicable (--no-cas, verified)");
-  } else {
-    await docxImageFlow(gateway, docxDocId);
-    docxVersionAfterGroup2Or3 = 3;
+  // `--only <docType>` narrows the run to one doc type's flow — used by
+  // `azure/deploy/deploy.mjs` after `--service docx` so a stale/unrelated
+  // markdown deployment can't fail a docx-only smoke run. Not given (or
+  // given the other doc type) skips the corresponding flow entirely.
+  if (!args.only || args.only === "markdown") {
+    await markdownFlow(gateway);
   }
 
-  await conflictFlow(gateway, docxDocId, docxVersionAfterGroup2Or3);
+  if (!args.only || args.only === "docx") {
+    const docxDocId = `docx-${RUN}`;
+    await docxTextFlow(gateway, docxDocId);
+
+    let docxVersionAfterGroup2Or3 = 2;
+    if (args.skipCas) {
+      console.log("\n[3/4] docx image path through Cloudflare CAS — SKIPPED (--skip-cas)");
+    } else if (args.noCas) {
+      console.log("\n[3/4] docx image path through Cloudflare CAS — CAS not configured, group 3 not applicable (--no-cas, verified)");
+    } else {
+      await docxImageFlow(gateway, docxDocId);
+      docxVersionAfterGroup2Or3 = 3;
+    }
+
+    await conflictFlow(gateway, docxDocId, docxVersionAfterGroup2Or3);
+  }
 
   if (failures > 0) {
     console.error(`\n${failures} assertion(s) failed`);

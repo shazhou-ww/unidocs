@@ -10,8 +10,11 @@ import {
   imageRef,
   imageRepoTag,
   isKeyVaultForbidden,
+  mapWithConcurrency,
   parseArgs,
+  readServiceParams,
   retryOnForbidden,
+  retryUntil,
 } from "../../../azure/deploy/deploy.mjs";
 
 describe("imageRef", () => {
@@ -23,7 +26,8 @@ describe("imageRef", () => {
 
   // `az acr build --image` 要的是 registry 内的相对路径。带上 loginServer
   // 前缀会建出一个名叫 `unidocsacr.azurecr.io/unidocs/...` 的仓库,而
-  // main.bicep 引用的是 `unidocs/...`,部署时拉不到镜像。
+  // service.bicep/gateway.bicep/platform.bicep 引用的是 `unidocs/...`,
+  // 部署时拉不到镜像。
   test("imageRepoTag 不含 loginServer 前缀,且是 imageRef 的后缀", () => {
     expect(imageRepoTag("azure-markdown", "a1b2c3d")).toBe("unidocs/azure-markdown:a1b2c3d");
     expect(imageRef("unidocsacr.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
@@ -34,8 +38,9 @@ describe("imageRef", () => {
 
 describe("IMAGES", () => {
   // 迁移镜像是唯一一个「构建参数」与「镜像名」不同名的:构建参数是
-  // 工作区包名 azure-sdk,镜像名是 azure/deploy/main.bicep 引用的 azure-migrate。
-  // 传错会让 main 部署时拉不到镜像,而那是个部署到一半才暴露的错误。
+  // 工作区包名 azure-sdk,镜像名是 azure/deploy/platform.bicep(通过
+  // migrate-job.bicep 模块)引用的 azure-migrate。传错会让 platform
+  // 部署时拉不到镜像,而那是个部署到一半才暴露的错误。
   test("迁移镜像的构建参数与镜像名刻意不同", () => {
     const migrate = IMAGES.find((i) => i.name === "azure-migrate");
     expect(migrate).toBeDefined();
@@ -238,5 +243,148 @@ describe("retryOnForbidden", () => {
     // 3 次尝试、2 次等待(每两次尝试之间等一次,最后一次尝试后直接中止)。
     expect(attempt).toHaveBeenCalledTimes(3);
     expect(wait).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("parseArgs 选择器", () => {
+  test("无参数:全量部署", () => {
+    const a = parseArgs([]);
+    expect(a.targets).toEqual(["bootstrap", "platform", "services", "gateway"]);
+  });
+
+  test("--service docx:只部一个", () => {
+    const a = parseArgs(["--service", "docx"]);
+    expect(a.targets).toEqual(["services"]);
+    expect(a.services).toEqual(["docx"]);
+  });
+
+  test("--service 多选用逗号分隔", () => {
+    expect(parseArgs(["--service", "docx,markdown"]).services).toEqual(["docx", "markdown"]);
+  });
+
+  test("--service 的取值必须存在对应的 azure.service.json", () => {
+    expect(() => parseArgs(["--service", "nosuch"])).toThrow(/nosuch/);
+  });
+
+  // gateway 的 azure.service.json 没有 docType 字段——它不是一个可 --service
+  // 的 doc type,那是 --gateway 自己的 target。
+  test("--service gateway 被拒绝(那份 json 没有 docType 字段)", () => {
+    expect(() => parseArgs(["--service", "gateway"])).toThrow(/docType/);
+  });
+
+  test("--bootstrap / --platform / --gateway 可以组合,顺序与 argv 无关", () => {
+    expect(parseArgs(["--gateway", "--bootstrap"]).targets).toEqual(["bootstrap", "gateway"]);
+    expect(parseArgs(["--platform"]).targets).toEqual(["platform"]);
+  });
+
+  test("--build-concurrency 默认 2,可覆盖", () => {
+    expect(parseArgs([]).buildConcurrency).toBe(2);
+    expect(parseArgs(["--build-concurrency", "1"]).buildConcurrency).toBe(1);
+  });
+
+  test("--build-concurrency 非正整数要响亮失败", () => {
+    expect(() => parseArgs(["--build-concurrency", "0"])).toThrow(/build-concurrency/);
+    expect(() => parseArgs(["--build-concurrency", "-1"])).toThrow(/build-concurrency/);
+    expect(() => parseArgs(["--build-concurrency", "abc"])).toThrow(/build-concurrency/);
+  });
+});
+
+describe("readServiceParams", () => {
+  test("读 packages/azure-docx/azure.service.json", () => {
+    const p = readServiceParams("docx");
+    expect(p).toMatchObject({ docType: "docx", targetPort: 8789, minReplicas: 2 });
+  });
+
+  test("读 packages/azure-markdown/azure.service.json", () => {
+    const p = readServiceParams("markdown");
+    expect(p).toMatchObject({ docType: "markdown", targetPort: 8788, minReplicas: 2 });
+  });
+
+  test("不存在的 doc type 响亮失败并点名", () => {
+    expect(() => readServiceParams("nosuch")).toThrow(/nosuch/);
+  });
+});
+
+// mapWithConcurrency 是「有界并发,不是无界 Promise.all」这条要求的核心：
+// 用一个会记录同时在飞数量的 worker 直接断言峰值并发不超过 limit。
+describe("mapWithConcurrency", () => {
+  test("并发数不超过给定上限", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const items = Array.from({ length: 6 }, (_, i) => i);
+    const results = await mapWithConcurrency(items, 2, async (item) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return item * 10;
+    });
+
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(results).toEqual([0, 10, 20, 30, 40, 50]);
+  });
+
+  test("concurrency 大于 items 数时不会多起 lane", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const results = await mapWithConcurrency([1, 2], 10, async (item) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return item;
+    });
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(results).toEqual([1, 2]);
+  });
+
+  test("单个 worker 失败会让整体 reject", async () => {
+    await expect(
+      mapWithConcurrency([1, 2, 3], 2, async (item) => {
+        if (item === 2) throw new Error("boom");
+        return item;
+      }),
+    ).rejects.toThrow(/boom/);
+  });
+});
+
+// retryUntil 是冒烟重试的核心循环——与注册表无关，见 azure/deploy/deploy.mjs
+// 里 runSmoke() 的注释。这里同样注入假的 wait/log，不真的等待。
+describe("retryUntil", () => {
+  test("第一次就成功 -> 不重试、不等待", async () => {
+    const attempt = vi.fn(async () => "ok");
+    const wait = vi.fn(() => Promise.resolve());
+    const result = await retryUntil(attempt, { timeoutMs: 1000, intervalMs: 100, wait, log: vi.fn() });
+    expect(result).toBe("ok");
+    expect(attempt).toHaveBeenCalledTimes(1);
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  test("失败几次后成功 -> 重试直到成功", async () => {
+    let call = 0;
+    const attempt = vi.fn(async () => {
+      call++;
+      if (call < 3) throw new Error(`not ready yet (${call})`);
+      return "ok";
+    });
+    const wait = vi.fn(() => Promise.resolve());
+    const result = await retryUntil(attempt, { timeoutMs: 1000, intervalMs: 100, wait, log: vi.fn() });
+    expect(result).toBe("ok");
+    expect(attempt).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
+  });
+
+  test("持续失败直到超时 -> 抛出最后一次的错误，不静默吞掉", async () => {
+    const attempt = vi.fn(async () => {
+      throw new Error("still failing");
+    });
+    // wait 立即 resolve(不真的等待),但 timeoutMs 本身用一个很小的真实值
+    // (50ms),循环会在真实时钟上很快越过 deadline 并中止 —— 不需要 mock
+    // Date.now,测试仍然快且不脆弱。
+    const wait = vi.fn(() => Promise.resolve());
+    await expect(
+      retryUntil(attempt, { timeoutMs: 50, intervalMs: 1, wait, log: vi.fn() }),
+    ).rejects.toThrow(/still failing/);
+    expect(attempt.mock.calls.length).toBeGreaterThan(0);
   });
 });
