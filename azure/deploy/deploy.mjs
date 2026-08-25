@@ -60,6 +60,16 @@ const MIGRATION_TIMEOUT_MS = 10 * 60 * 1000;
 const SMOKE_RETRY_TIMEOUT_MS = 120_000;
 const SMOKE_RETRY_INTERVAL_MS = 5_000;
 
+/**
+ * 单次冒烟尝试的超时。`smoke.mjs` 里的 `fetch()` 没有自己的超时,一旦某次
+ * 请求在网络层挂起,`smokeOnce()` 会无限期不返回——`retryUntil()` 的
+ * `timeoutMs` 只在两次尝试**之间**检查,单次挂起完全不受它约束,总耗时会
+ * 远超名义上限。30 秒留了充足的余量给一次正常但偏慢的冒烟(通常几秒),
+ * 同时保证 120 秒的总窗口里至少能挂满 3 次(3 × (30 + 5) = 105s < 120s)
+ * 才会被 `retryUntil()` 的总超时截断。
+ */
+const SMOKE_ATTEMPT_TIMEOUT_MS = 30_000;
+
 /** 镜像构建的默认并发数,可用 `--build-concurrency` 覆盖。见 buildAndPushImages()。 */
 const DEFAULT_BUILD_CONCURRENCY = 2;
 
@@ -271,22 +281,89 @@ function run(cmd, args, opts = {}, label = cmd) {
 }
 
 /**
- * `run()` 的异步版本(`spawn` 而不是 `spawnSync`)——专给
- * `buildAndPushImages()` 的有界并发用。`spawnSync` 会整个阻塞 Node 的
- * 事件循环,两个 `spawnSync` 调用不可能真正并发跑;换成 `spawn` + Promise
- * 才谈得上"有界并发"而不是"看起来并发、实际串行"。同样的 label 安全规则:
- * 失败信息只用调用方给的 label,不拼完整 args。
+ * `run()` 的异步版本(`spawn` 而不是 `spawnSync`)——服务两个场景,不写第
+ * 二套:
+ *
+ * - `buildAndPushImages()` 的有界并发:`spawnSync` 会整个阻塞 Node 的事件
+ *   循环,两个 `spawnSync` 调用不可能真正并发跑;换成 `spawn` + Promise 才
+ *   谈得上"有界并发"而不是"看起来并发、实际串行"。这条路径不传
+ *   `captureOutput`/`timeoutMs`,行为与原来逐字一致(`stdio:"inherit"`,
+ *   不捕获、不超时)。
+ * - `smokeOnce()` 的冒烟子进程:`opts.captureOutput: true` 时改走管道
+ *   `stdio`,`stdout`/`stderr` 的每个 chunk 一到就立即 `process.stdout
+ *   .write()`/`process.stderr.write()` 转发——**边跑边看**,不是等子进程
+ *   退出才一次性刷出(`spawnSync` 完全同步阻塞,做不到这件事,这正是把
+ *   `smokeOnce()` 从 `spawnSync` 换回 `spawn` 要修的问题)。同一份 chunk
+ *   也累积进返回值/错误对象的 `stdout`/`stderr`,供调用方做失败分类。
+ *   `opts.timeoutMs` 给单次尝试设上限,超时后 `SIGKILL` 子进程并以
+ *   `err.timedOut = true` 拒绝——冒烟单次尝试不该无限期挂起,见
+ *   `SMOKE_ATTEMPT_TIMEOUT_MS` 的注释。
+ *
+ * 同样的 label 安全规则:失败信息只用调用方给的 label,不拼完整 args。
+ *
+ * 用 `close` 而不是 `exit`:后者在 stdio 管道(以及上面两个 `data`
+ * 监听器)真正读完之前就可能先触发,`close` 才保证 `stdout`/`stderr`
+ * 缓冲区已经收全。
  */
 function spawnAsync(cmd, args, opts = {}, label = cmd) {
+  const { timeoutMs, captureOutput = false, ...spawnOpts } = opts;
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: ROOT, stdio: "inherit", ...opts });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`${label} exited with code ${code}${signal ? ` (signal ${signal})` : ""}`));
-      }
+    const stdio = captureOutput ? ["ignore", "pipe", "pipe"] : "inherit";
+    const child = spawn(cmd, args, { cwd: ROOT, stdio, ...spawnOpts });
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+
+    if (captureOutput) {
+      child.stdout.on("data", (chunk) => {
+        process.stdout.write(chunk);
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk) => {
+        process.stderr.write(chunk);
+        stderr += chunk;
+      });
+    }
+
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, timeoutMs)
+      : null;
+
+    function settle(fn) {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn();
+    }
+
+    child.on("error", (err) => settle(() => reject(err)));
+    child.on("close", (code, signal) => {
+      settle(() => {
+        if (timedOut) {
+          const err = new Error(
+            `${label} timed out after ${timeoutMs}ms and was killed${signal ? ` (signal ${signal})` : ""}`,
+          );
+          err.timedOut = true;
+          err.stdout = stdout;
+          err.stderr = stderr;
+          reject(err);
+          return;
+        }
+        if (code === 0) {
+          resolve({ stdout, stderr });
+          return;
+        }
+        const err = new Error(`${label} exited with code ${code}${signal ? ` (signal ${signal})` : ""}`);
+        err.exitCode = code;
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      });
     });
   });
 }
@@ -1064,6 +1141,17 @@ async function runMigration(args, jobName) {
   }
 }
 
+/** 取最后 `n` 行非空文本,trim 过、`" | "` 拼起来——`classifySmokeFailure()`
+ *  与超时错误信息共用,不重复写两遍。 */
+function tailLines(text, n) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-n)
+    .join(" | ");
+}
+
 /**
  * 冒烟子进程的失败分类。`smoke.mjs` 的 `check()` 把每条失败的断言写成
  * `  FAIL ...`(stderr,见 smoke.mjs);网络不通/网关还没接管流量时,
@@ -1074,6 +1162,10 @@ async function runMigration(args, jobName) {
  * 只要抓到至少一行 `FAIL`,就判定为 "assertion"——即使同时也有网络类
  * 关键词(例如某条断言本身就在描述一个连接失败),因为这说明冒烟已经
  * 跑到了断言阶段,单纯"还没就绪"解释不通。
+ *
+ * 子进程被 `spawnAsync()` 的 `timeoutMs` 杀掉(挂起,不是退出)不走这个
+ * 函数——那种情况连"退出码"都没有,`smokeOnce()` 单独处理并归为独立的
+ * `"timeout"` kind,不混进这里的 `"unknown"`(挂起和"分类不出来"是两回事)。
  */
 const SMOKE_NETWORK_ERROR_PATTERN = /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|AggregateError|network/i;
 
@@ -1087,21 +1179,9 @@ export function classifySmokeFailure(stdout, stderr) {
     return { kind: "assertion", detail: failLines.join(" | ") };
   }
   if (SMOKE_NETWORK_ERROR_PATTERN.test(combined)) {
-    const tail = combined
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .slice(-3)
-      .join(" | ");
-    return { kind: "network", detail: tail || "(matched a network error pattern but no output captured)" };
+    return { kind: "network", detail: tailLines(combined, 3) || "(matched a network error pattern but no output captured)" };
   }
-  const tail = combined
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(-3)
-    .join(" | ");
-  return { kind: "unknown", detail: tail || "(no output captured)" };
+  return { kind: "unknown", detail: tailLines(combined, 3) || "(no output captured)" };
 }
 
 /**
@@ -1111,18 +1191,21 @@ export function classifySmokeFailure(stdout, stderr) {
  * `--only <docType>`,把冒烟收窄到刚被重新部署的那一个 doc type
  * (`--service docx` 不该因为 markdown 冒烟失败而报红)。
  *
- * 不用 `run()`(那个只透传 stdio、拿不到文本):冒烟在重试窗口里会跑几十次,
- * `retryUntil()` 耗尽后抛出的最终 Error 必须能让人**只看这一行报错**就
- * 分清「revision 还没接管流量,再等等」和「服务起来了但功能是坏的」——
- * 之前两种失败的错误信息完全相同(`exited with code 1`),人必须去翻几十次
- * 重试滚过的实时输出才能找到最后一次的真实原因。
+ * 用 `spawnAsync(..., {captureOutput:true, timeoutMs: SMOKE_ATTEMPT_TIMEOUT_MS})`
+ * ——**不是** `spawnSync`:后者完全同步阻塞,父进程在子进程退出前拿不到
+ * 任何数据,冒烟在重试窗口里跑几十秒的输出会在终端上完全静止,直到最后
+ * 一次性刷出,人没法分辨"还在跑"还是"卡死了"。`spawnAsync()` 的
+ * `captureOutput` 边收到 chunk 边转发到父进程的流(边跑边看),同时把同一份
+ * chunk 攒起来供失败时分类;`timeoutMs` 顶住"`smoke.mjs` 的 `fetch()` 没有
+ * 自己的超时,单次尝试可能无限期挂起"这个口子——`retryUntil()` 的总超时
+ * 只在两次尝试*之间*检查,单次挂起不受它约束。
  *
- * 用 `spawnSync` + `encoding:"utf8"` 捕获而不是 `stdio:"inherit"`,但捕获后
- * 立刻原样 `process.stdout.write`/`process.stderr.write` 回终端——对着终端
- * 看的人体验和之前一样(冒烟单次跑几秒钟,不是流式逐字符也看不出差别),
- * 换来的是失败时能用 `classifySmokeFailure()` 从这份文本里分类。
+ * `retryUntil()` 耗尽后抛出的最终 Error 必须能让人**只看这一行报错**就
+ * 分清「revision 还没接管流量,再等等」「网络层直接挂起,再等等」和
+ * 「服务起来了但功能是坏的」——三种失败分别是 `[network]`/`[timeout]`/
+ * `[assertion]`。
  */
-function smokeOnce(gatewayFqdn, casBaseUrl, only) {
+async function smokeOnce(gatewayFqdn, casBaseUrl, only) {
   const smokeArgs = ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
   if (!casBaseUrl) {
     smokeArgs.push("--no-cas");
@@ -1131,13 +1214,24 @@ function smokeOnce(gatewayFqdn, casBaseUrl, only) {
     smokeArgs.push("--only", only);
   }
   const label = `node azure/deploy/smoke.mjs (only=${only ?? "all"})`;
-  const result = spawnSync("node", smokeArgs, { cwd: ROOT, encoding: "utf8" });
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const { kind, detail } = classifySmokeFailure(result.stdout, result.stderr);
-    throw new Error(`${label} exited with code ${result.status} [${kind}]: ${detail}`);
+  try {
+    await spawnAsync(
+      "node",
+      smokeArgs,
+      { captureOutput: true, timeoutMs: SMOKE_ATTEMPT_TIMEOUT_MS },
+      label,
+    );
+  } catch (err) {
+    if (err.timedOut) {
+      const tail = tailLines(`${err.stdout ?? ""}\n${err.stderr ?? ""}`, 3);
+      throw new Error(
+        `${label} [timeout]: ${err.message} — likely the gateway/revision is still not ready ` +
+          "(smoke.mjs's fetch() calls have no timeout of their own and can hang indefinitely). " +
+          `Last output before kill: ${tail || "(none)"}`,
+      );
+    }
+    const { kind, detail } = classifySmokeFailure(err.stdout, err.stderr);
+    throw new Error(`${label} exited with code ${err.exitCode} [${kind}]: ${detail}`);
   }
 }
 
