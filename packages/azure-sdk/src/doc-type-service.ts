@@ -23,6 +23,7 @@ import { createLocalEditorNamespace, createStubOperatorNamespace } from "./local
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";
 import { PgDeltaLog, PgDocIndex, PgUnitOfWork } from "./ports-pg.js";
 import { createBlobService, createPool } from "./pool.js";
+import { PgDocTypeRegistry } from "./registry-pg.js";
 import { serve } from "./http-shell.js";
 
 export interface DocTypeServiceConfig {
@@ -144,18 +145,43 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   defaultPort: number;
 }): Promise<void> {
   const { docType, documentType, defaultPort } = options;
+  const databaseUrl = requireEnv("DATABASE_URL");
   const handle = await startDocTypeService({
     docType,
     documentType,
     port: Number(process.env.PORT ?? defaultPort),
     config: {
-      databaseUrl: requireEnv("DATABASE_URL"),
+      databaseUrl,
       ...resolveBlobConfig(),
       internalToken: requireEnv("INTERNAL_TOKEN"),
       casBaseUrl: process.env.CAS_BASE_URL,
     },
   });
   console.log(`azure-${docType} listening on ${handle.url}`);
+
+  // 注册发生在服务真的 listen 之后:注册表反映的是「谁真的起来了」,不是
+  // 「谁被部署过」。部署成功但进程起不来时,不该在表里留一行指向死地址。
+  //
+  // SELF_WORKER_URL 由 service.bicep 注入(Container Apps 的内部 FQDN)。
+  // 本地栈没有 Container Apps,拿不到这个值 —— 此时跳过注册,本地继续走
+  // {TYPE}_WORKER_URL 环境变量的兜底路径,行为完全不变。
+  //
+  // 这里另建一条只用于注册的连接,而不是复用 startDocTypeService 内部的
+  // 连接池:那个池没有从 handle 上暴露出来,为此改 startDocTypeService
+  // 的签名会波及 local-editor.ts 及其调用方,超出本次改动范围。
+  const selfWorkerUrl = process.env.SELF_WORKER_URL;
+  if (selfWorkerUrl) {
+    const registryPool = createPool({ databaseUrl });
+    try {
+      const registry = new PgDocTypeRegistry(registryPool);
+      await registry.register(docType, selfWorkerUrl);
+      console.log(`azure-${docType} registered at ${selfWorkerUrl}`);
+    } finally {
+      await registryPool.end();
+    }
+  } else {
+    console.log(`azure-${docType} SELF_WORKER_URL not set — skipping registry (local mode)`);
+  }
 
   await new Promise<void>((resolve) => {
     let shuttingDown = false;

@@ -54,21 +54,12 @@ module app 'container-app.bicep' = {
     databaseUrl: databaseUrl
     internalToken: internalToken
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
-    // 两个 doc type worker —— 不是容器端口，ingress 负责映射。
-    // 这条路径复用 azure-gateway/src/main.ts 已有的 {TYPE}_WORKER_URL
-    // 解析，不需要注册表服务。
-    //
-    // 过渡：Task 4 把网关改成查注册表之后，这两个变量整体删除。保留到那时是
-    // 为了让本任务可以独立部署验证，不制造一个「网关找不到任何服务」的中间态。
+    // doc type worker —— 不是容器端口，ingress 负责映射。
+    // 路由目标不在这里静态列出：网关在启动时读 Postgres 的 doc_types
+    // 注册表（azure-gateway/src/main.ts 的 `makeResolveWorkerUrl`），
+    // 各 doc type 服务自己在 listen 之后把 SELF_WORKER_URL upsert 进那张表。
+    // 这就是「加新 doc type 不用改网关」的关键——本文件不含任何 doc type 名。
     extraEnv: [
-      {
-        name: 'MARKDOWN_WORKER_URL'
-        value: 'https://unidocs-markdown.internal.${containerEnv.properties.defaultDomain}'
-      }
-      {
-        name: 'DOCX_WORKER_URL'
-        value: 'https://unidocs-docx.internal.${containerEnv.properties.defaultDomain}'
-      }
       {
         name: 'CAS_BASE_URL'
         value: casBaseUrl

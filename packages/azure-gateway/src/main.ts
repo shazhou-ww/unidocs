@@ -3,9 +3,11 @@
  *
  * Cloudflare's equivalent (`packages/cloudflare-gateway/src/worker.ts`)
  * resolves `docType` -> worker URL from a KV registry, with an env var as
- * local fallback. Design doc 4.5: Azure has no KV-backed registry, so this
- * process resolves `docType` -> worker URL from `{TYPE}_WORKER_URL` env vars
- * only — platform DNS/service discovery stands in for the KV registry.
+ * local fallback. Here the registry is `PgDocTypeRegistry` (Postgres-backed,
+ * same database the doc-type workers write to): doc-type services upsert
+ * their own `SELF_WORKER_URL` into it once they're actually listening, and
+ * the gateway reads it back. An env var (`{TYPE}_WORKER_URL`) remains as a
+ * fallback for local dev, where there's no Container Apps FQDN to register.
  *
  * `docIndex` is `PgDocIndexQuery` over the same Postgres database the
  * doc-type workers write to (shared `docs` table).
@@ -22,23 +24,34 @@
  * worker's own base URL, never the gateway's.
  *
  * Env vars: DATABASE_URL, INTERNAL_TOKEN, PORT, CAS_BASE_URL (optional), and
- * one `{TYPE}_WORKER_URL` per registered document type (e.g.
- * MARKDOWN_WORKER_URL).
+ * (local-dev fallback only) one `{TYPE}_WORKER_URL` per document type.
  */
 
 import {
   attachPoolErrorLogger,
   createPool,
   PgDocIndexQuery,
+  PgDocTypeRegistry,
   requireEnv,
   serve,
 } from "@unidocs/azure-sdk";
 import { isPublicCasRoute } from "@unidocs/http-protocol";
 import { createGatewayHandler } from "@unidocs/gateway-common";
 
-function resolveWorkerUrl(docType: string): Promise<string | null> {
-  const envKey = `${docType.toUpperCase()}_WORKER_URL`;
-  return Promise.resolve(process.env[envKey] ?? null);
+/**
+ * 两级解析,与 Cloudflare 侧同形(`cloudflare-gateway/src/worker.ts` 先查
+ * KV 的 `docType:{type}`、未命中再读环境变量)。
+ *
+ * 环境变量兜底保留给本地开发与临时调试:本地栈没有 Container Apps,服务
+ * 不会注册,只能靠它。云上 `gateway.bicep` 不再设置这些变量 —— 若它去算
+ * 那些地址,就得知道有哪些 doc type,耦合又回来了。
+ */
+function makeResolveWorkerUrl(registry: PgDocTypeRegistry) {
+  return async (docType: string): Promise<string | null> => {
+    const fromRegistry = await registry.resolve(docType);
+    if (fromRegistry) return fromRegistry;
+    return process.env[`${docType.toUpperCase()}_WORKER_URL`] ?? null;
+  };
 }
 
 async function main(): Promise<void> {
@@ -52,6 +65,8 @@ async function main(): Promise<void> {
   const pool = createPool({ databaseUrl, blobConnectionString: "" });
   attachPoolErrorLogger(pool, "azure-gateway");
   const docIndex = new PgDocIndexQuery(pool);
+  const registry = new PgDocTypeRegistry(pool);
+  const resolveWorkerUrl = makeResolveWorkerUrl(registry);
 
   // Transitional (deleted in phase 4): CAS_BASE_URL points at the
   // Cloudflare CAS worker itself. Unset means unchanged behavior — CAS
