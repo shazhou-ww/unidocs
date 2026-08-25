@@ -485,6 +485,50 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/protocol-cas:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/protocol-doc:
+    dependencies:
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unidocs/protocol-cas':
+        specifier: workspace:*
+        version: link:../protocol-cas
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/protocol-gateway:
+    dependencies:
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unidocs/protocol-cas':
+        specifier: workspace:*
+        version: link:../protocol-cas
+      '@unidocs/protocol-doc':
+        specifier: workspace:*
+        version: link:../protocol-doc
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/psd-client:
     dependencies:
       '@unidocs/doctype-psd':
@@ -1938,7 +1982,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}

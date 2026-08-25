@@ -9,6 +9,15 @@
       "path": "packages/protocol"
     },
     {
+      "path": "packages/protocol-cas"
+    },
+    {
+      "path": "packages/protocol-doc"
+    },
+    {
+      "path": "packages/protocol-gateway"
+    },
+    {
       "path": "packages/svalue-codec"
     },
     {
