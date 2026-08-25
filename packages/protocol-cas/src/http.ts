@@ -99,9 +99,9 @@ export interface CasReadPortableNodeRequest {
 
 export type CasReadPortableNodeResponse =
   | {
-      body: Uint8Array;
-      headers: { contentType: typeof CasPortableNodeContentType };
-    }
+    body: Uint8Array;
+    headers: { contentType: typeof CasPortableNodeContentType };
+  }
   | CasErrorResponse;
 
 export interface CasLeasePortableNodeRequest {

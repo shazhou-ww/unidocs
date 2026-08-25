@@ -91,9 +91,9 @@ export interface DocExportRequest {
 
 export type DocExportResponse =
   | {
-      body: Uint8Array;
-      headers: { contentType: string; contentDisposition: string };
-    }
+    body: Uint8Array;
+    headers: { contentType: string; contentDisposition: string };
+  }
   | DocErrorResponse;
 
 export interface DocHistoryRequest {
@@ -104,10 +104,10 @@ export interface DocHistoryRequest {
 
 export type DocHistoryResponse<TOp extends SValue = SValue> =
   | DocNegotiatedResponse<{
-      success: true;
-      data: HistoryEntry<TOp>[];
-      version: number;
-    }>
+    success: true;
+    data: HistoryEntry<TOp>[];
+    version: number;
+  }>
   | DocErrorResponse;
 
 export interface DocRollbackRequest {
@@ -123,12 +123,12 @@ export interface DocSnapshotRequest {
 
 export type DocSnapshotResponse =
   | {
-      success: true;
-      version: number;
-      hash: CasHash;
-      docType: string;
-      docId: string;
-    }
+    success: true;
+    version: number;
+    hash: CasHash;
+    docType: string;
+    docId: string;
+  }
   | DocErrorResponse;
 
 export interface DocIrRequest {
@@ -137,9 +137,9 @@ export interface DocIrRequest {
 
 export type DocIrResponse =
   | {
-      body: Uint8Array;
-      headers: { contentType: typeof SValueContentType; docVersion: number };
-    }
+    body: Uint8Array;
+    headers: { contentType: typeof SValueContentType; docVersion: number };
+  }
   | DocErrorResponse;
 
 export interface DocInitFromHashRequest {
@@ -179,7 +179,7 @@ export interface DocReadBlobRequest {
 
 export type DocReadBlobResponse =
   | {
-      body: Uint8Array;
-      headers: { contentType: string; sblobHash: string };
-    }
+    body: Uint8Array;
+    headers: { contentType: string; sblobHash: string };
+  }
   | DocErrorResponse;

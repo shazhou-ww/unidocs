@@ -71,16 +71,16 @@ export interface GatewayListDocumentsRequest {
 
 export type GatewayListDocumentsResponse =
   | {
-      success: true;
-      data: Array<{
-        doc_id: string;
-        doc_type: string;
-        owner_id: string;
-        created_at: number;
-        updated_at: number;
-      }>;
-      count: number;
-    }
+    success: true;
+    data: Array<{
+      doc_id: string;
+      doc_type: string;
+      owner_id: string;
+      created_at: number;
+      updated_at: number;
+    }>;
+    count: number;
+  }
   | GatewayErrorResponse;
 
 export interface GatewayCreateDocumentRequest {
