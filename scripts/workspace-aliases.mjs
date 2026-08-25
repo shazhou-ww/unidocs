@@ -64,7 +64,7 @@ export function resolveWorkspaceAliases(repoRoot) {
  * `packages/azure-gateway/scripts/bundle.mjs`,
  * `packages/azure-sdk/scripts/bundle-migrate-cli.mjs`,
  * `packages/azure-docx/scripts/bundle.mjs`, and
- * `scripts/azure-runtime.mjs`'s `bundleService()`. They used to be split
+ * `azure/local/runtime.mjs`'s `bundleService()`. They used to be split
  * between two strategies — `packages: "external"` for the first three,
  * this explicit list for the last two — and that split itself caused a
  * production bug: `azure-docx` used the explicit list but never declared

@@ -23,6 +23,7 @@ import { createLocalEditorNamespace, createStubOperatorNamespace } from "./local
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";
 import { PgDeltaLog, PgDocIndex, PgUnitOfWork } from "./ports-pg.js";
 import { createBlobService, createPool } from "./pool.js";
+import { PgDocTypeRegistry } from "./registry-pg.js";
 import { serve } from "./http-shell.js";
 
 export interface DocTypeServiceConfig {
@@ -130,6 +131,65 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
 }
 
 /**
+ * 服务 listen 成功后,把自己 upsert 进 `doc_types` 注册表——或者,若
+ * `SELF_WORKER_URL` 没设(本地栈没有 Container Apps,拿不到内部 FQDN),
+ * 打一行日志跳过,本地继续走 `{TYPE}_WORKER_URL` 环境变量的兜底路径。
+ *
+ * 拆成独立、可导出的函数是为了可测性:`runDocTypeService()` 本身从
+ * `process.env` 取配置、装 SIGINT/SIGTERM 处理器、返回的 Promise 只在收到
+ * 信号后才 resolve——不适合直接在单元测试里调用。这里只做注册这一件事,
+ * 输入输出都是显式参数/Promise,测试可以直接对着真实 Postgres 调用并查
+ * `doc_types` 表验证。
+ *
+ * 两层失败都不致命,只记日志:
+ * - `register()` 抛错(通常是 Postgres 抖动):这个副本已经 listen 成功、
+ *   已经能正常处理请求了,一次注册表写入失败不代表它本身有问题。让进程
+ *   崩溃重启并不能更快地重新注册——Container Apps 的重启退避通常比"等
+ *   下一次部署/人工重启再试一次"更慢,反而制造了一次不必要的、真实存在
+ *   的服务中断。日志把后果说清楚:注册没写进去,网关这段时间只能靠
+ *   `{TYPE}_WORKER_URL` 环境变量兜底发现本服务;云上部署不设这个变量,
+ *   所以网关会打不到这个副本,直到下次重启重试注册或人工介入。
+ * - `registryPool.end()` 抛错:与"这个副本能不能服务请求"无关,单独
+ *   catch 掉,不让它冒泡到顶层杀掉一个健康进程,也不会覆盖掉上面
+ *   `register()` 的原始错误(那条已经在它自己的 catch 里记下来了)。
+ *
+ * 这里另建一条只用于注册的连接,而不是复用 `startDocTypeService` 内部的
+ * 连接池:那个池没有从 handle 上暴露出来,为此改 `startDocTypeService`
+ * 的签名会波及 `local-editor.ts` 及其调用方,超出本次改动范围。
+ */
+export async function registerSelfIfConfigured(options: {
+  docType: string;
+  databaseUrl: string;
+  selfWorkerUrl: string | undefined;
+}): Promise<void> {
+  const { docType, databaseUrl, selfWorkerUrl } = options;
+  if (!selfWorkerUrl) {
+    console.log(`azure-${docType} SELF_WORKER_URL not set — skipping registry (local mode)`);
+    return;
+  }
+
+  const registryPool = createPool({ databaseUrl });
+  try {
+    const registry = new PgDocTypeRegistry(registryPool);
+    await registry.register(docType, selfWorkerUrl);
+    console.log(`azure-${docType} registered at ${selfWorkerUrl}`);
+  } catch (err) {
+    console.error(
+      `azure-${docType} failed to register at ${selfWorkerUrl} — the gateway will not ` +
+        `discover this replica via the registry until a retry succeeds (falling back to ` +
+        `{TYPE}_WORKER_URL if set); continuing to serve requests:`,
+      err,
+    );
+  } finally {
+    try {
+      await registryPool.end();
+    } catch (closeErr) {
+      console.error(`azure-${docType} failed to close the registry pg connection:`, closeErr);
+    }
+  }
+}
+
+/**
  * 进程级入口：从环境变量取配置、起服务、装信号处理器。返回的 Promise
  * 只在收到 SIGINT/SIGTERM 并关停完成后 resolve。
  *
@@ -144,18 +204,27 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   defaultPort: number;
 }): Promise<void> {
   const { docType, documentType, defaultPort } = options;
+  const databaseUrl = requireEnv("DATABASE_URL");
   const handle = await startDocTypeService({
     docType,
     documentType,
     port: Number(process.env.PORT ?? defaultPort),
     config: {
-      databaseUrl: requireEnv("DATABASE_URL"),
+      databaseUrl,
       ...resolveBlobConfig(),
       internalToken: requireEnv("INTERNAL_TOKEN"),
       casBaseUrl: process.env.CAS_BASE_URL,
     },
   });
   console.log(`azure-${docType} listening on ${handle.url}`);
+
+  // 注册发生在服务真的 listen 之后:注册表反映的是「谁真的起来了」,不是
+  // 「谁被部署过」。部署成功但进程起不来时,不该在表里留一行指向死地址。
+  await registerSelfIfConfigured({
+    docType,
+    databaseUrl,
+    selfWorkerUrl: process.env.SELF_WORKER_URL,
+  });
 
   await new Promise<void>((resolve) => {
     let shuttingDown = false;

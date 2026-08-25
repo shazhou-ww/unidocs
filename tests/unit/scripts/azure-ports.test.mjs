@@ -3,7 +3,7 @@ import {
   allAzurePorts,
   azurePortLayout,
   describeAzurePorts,
-} from "../../../scripts/azure-ports.mjs";
+} from "../../../azure/local/ports.mjs";
 
 describe("azurePortLayout", () => {
   test("defaults to markdown with two replicas", () => {

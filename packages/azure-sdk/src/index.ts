@@ -6,3 +6,4 @@ export * from "./http-shell.js";
 export * from "./env.js";
 export * from "./local-editor.js";
 export * from "./doc-type-service.js";
+export * from "./registry-pg.js";

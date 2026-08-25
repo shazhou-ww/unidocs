@@ -38,6 +38,6 @@ describe("runMigrations", () => {
     const { rows: migrationRows } = await pool.query<{ name: string }>(
       "SELECT name FROM schema_migrations"
     );
-    expect(migrationRows.map((row) => row.name)).toEqual(["0001_init.sql"]);
+    expect(migrationRows.map((row) => row.name)).toEqual(["0001_init.sql", "0002_doc_types.sql"]);
   }, 120_000);
 });
