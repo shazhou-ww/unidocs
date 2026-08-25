@@ -768,6 +768,27 @@ const DEPLOYMENT_NAMES = {
 
 独立的 deployment 名既让 `az deployment operation group list` 能分辨是谁改的,**也是并发部署安全的必要条件** —— 两个 `--service` 进程同时跑时,它们写的是不同的 deployment 记录。
 
+- [ ] **Step 3b: 把 `-f` 从 `main.bicep` 换成三个新模板**
+
+Task 3 删掉了 `azure/deploy/main.bicep`,但 `deploy.mjs` 里仍有两处 `"-f", "azure/deploy/main.bicep"`(what-if 与 create 各一处)。**不改这两处,部署脚本是坏的** —— 而 `az bicep build` 和单元测试都发现不了,只有真部署时才报"文件不存在"。
+
+按 target 分派模板:
+
+| target | `-f` | deployment 名 |
+|---|---|---|
+| bootstrap | `azure/deploy/bootstrap.bicep` | `bootstrap` |
+| platform | `azure/deploy/platform.bicep` | `platform` |
+| service | `azure/deploy/service.bicep` | `service-{docType}` |
+| gateway | `azure/deploy/gateway.bicep` | `gateway` |
+
+每个 target 的参数也不同:`platform` 要 `imageTag` / `pgAdminUser` / `@secure() pgAdminPassword`;`service` 额外要 `docType` / `targetPort` / `minReplicas` / `maxReplicas` / `casBaseUrl` / `internalToken`;`gateway` 要 `imageTag` / `casBaseUrl` / 两个 `@secure()`。**去读那三个模板的 `param` 声明确认**,不要照抄本表 —— 模板是真相。
+
+改完后自查:
+
+```bash
+grep -n 'main\.bicep' azure/deploy/deploy.mjs && echo "↑ 仍有残留" || echo "无残留 ✓"
+```
+
 - [ ] **Step 4: 镜像构建改为有界并发**
 
 把现在顺序 `for` 循环的 `az acr build` 改成有界并发(默认 2)。**不要用无界 `Promise.all`** —— ACR Tasks 的并发构建数受 SKU 限制,我们用 Basic,超限的构建会排队。
