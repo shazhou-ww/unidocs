@@ -130,11 +130,10 @@ try {
   const ids = (Array.isArray(layers) ? layers : []).map((l) => l.id);
   console.log(`  ${ids.length} top-level layers\n`);
 
-  // NOTE: a full-canvas preview at the default cap can exceed SValue's 1 MiB
-  // string limit once base64-encoded (pre-existing, unrelated to render state
-  // — see the probe's output notes). Ask for a smaller one so the probe can
-  // get past it and measure what it came to measure.
-  const FULL = { kind: "getPreview", payload: { maxSize: 384 } };
+  // Deliberately the DEFAULTS, with no maxSize: that combination used to 500
+  // with `string exceeds 1048576 UTF-8 bytes`, so exercising it here is also
+  // the end-to-end regression check for the preview byte cap.
+  const FULL = { kind: "getPreview", payload: {} };
 
   await query(docId, FULL);
   sample("first full getPreview (cold)");
@@ -150,11 +149,11 @@ try {
   for (let i = 0; i < PREVIEWS; i++) {
     const id = ids[i % ids.length];
     let s = performance.now();
-    await query(docId, { kind: "getPreview", payload: { rect: [0, 0, 512, 512], maxSize: 512 } });
+    await query(docId, { kind: "getPreview", payload: { rect: [0, 0, 512, 512] } });
     rectMs.push(performance.now() - s);
     await applyOp(docId, { kind: "set_props", payload: { layerId: id, props: { visible: i % 2 === 0 ? false : true } } });
     s = performance.now();
-    await query(docId, { kind: "getPreview", payload: { rect: [200, 200, 900, 900], maxSize: 512 } });
+    await query(docId, { kind: "getPreview", payload: { rect: [200, 200, 900, 900] } });
     rectMs.push(performance.now() - s);
     if (i % 4 === 3) sample(`after ${i + 1} edit+preview rounds`);
   }
