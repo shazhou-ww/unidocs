@@ -6,38 +6,48 @@
  * injection) is inline here, mirroring the docx/markdown workers — see the
  * docx worker for the URL contract.
  *
- * NOTE: the PSD operator (chat/agent) is a stub here. The render engine +
- * editor path (create/query/apply/export/rollback/snapshot) is fully wired;
- * the chatbox needs the platform to pass env to operators (follow-up).
+ * The operator (chatbox agent) runs the PSD tool set from @unidocs/doctype-psd
+ * against Claude via ./anthropic.ts. Credentials come from env
+ * (LLM_API_KEY / LLM_BASE_URL / LLM_MODEL, or the ANTHROPIC_* aliases): in
+ * production from wrangler secrets, in local dev from
+ * packages/cloudflare-psd/.dev.vars — `readDevVars` in
+ * scripts/local-runtime.mjs parses it and `buildWorkers` merges it into this
+ * worker's Miniflare bindings.
  */
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
-import { createPsdDocumentType } from "@unidocs/doctype-psd";
+import { createPsdDocumentAgent, createPsdDocumentType } from "@unidocs/doctype-psd";
+import { createAnthropicLlmProvider } from "./anthropic.js";
 
 const psdFactory = createPsdDocumentType;
 
 export const PsdEditor = createEditorDO(psdFactory);
 export const PsdOperator = createOperatorDO({
-  agentFactory: (_ctx) => ({
-    tools: {},
-    instructions: "PSD operator is a stub. Agent support requires threading env into createOperatorDO.",
-    toolCall: async () => ({ content: [{ type: "text" as const, text: "PSD operator not implemented" }] }),
-  }),
-  llmProvider: async () => {
-    throw new Error(
-      "PSD operator LLM provider not configured. See ./anthropic.ts for the intended provider.",
-    );
-  },
+  agentFactory: createPsdDocumentAgent,
+  // The provider is bound per call: a DO instance outlives a config change,
+  // and `env` is only handed to us here.
+  llmProvider: (messages, tools, env: Env) =>
+    createAnthropicLlmProvider(env)(messages, tools),
   getEditorStub: (env: Env, userId, docId) => {
     const id = env.PSD_EDITOR.idFromName(`${userId}:${docId}`);
     return env.PSD_EDITOR.get(id);
   },
+  // A PSD edit is inherently multi-step — find the layer, preview it,
+  // transform it, preview again to check — so the platform default (10) cuts
+  // real instructions off mid-edit.
+  maxIterations: 25,
 });
 
 interface Env extends EditorEnv {
   PSD_EDITOR: DurableObjectNamespace;
   PSD_OPERATOR: DurableObjectNamespace;
   INTERNAL_TOKEN: string;
+  // Operator LLM config — see ./anthropic.ts and .dev.vars.example.
+  // Absent in deployments that never run the chatbox; the provider throws a
+  // clear error on the first /run instead of at construction time.
+  LLM_BASE_URL?: string;
+  LLM_API_KEY?: string;
+  LLM_MODEL?: string;
 }
 
 const EDITOR_METHODS = new Set([

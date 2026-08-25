@@ -51,6 +51,37 @@ function workerUrl(host, port) {
   return `http://${host}:${port}`;
 }
 
+/**
+ * Parse a wrangler-style .dev.vars file (KEY=VALUE lines, # comments,
+ * optional surrounding quotes). Missing file → empty object.
+ *
+ * The values are secrets (the PSD Operator's LLM_API_KEY, …): they go straight
+ * into Miniflare bindings and must never be logged.
+ */
+export async function readDevVars(path) {
+  let text;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    return {};
+  }
+  const out = {};
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (key) out[key] = value;
+  }
+  return out;
+}
+
 const MIGRATIONS_PATH = join(
   ROOT,
   "packages",
@@ -171,6 +202,14 @@ export async function startLocalRuntime({
     Object.entries(ports).map(([name, port]) => [name, workerUrl(host, port)]),
   );
 
+  // Load per-doc-type secrets from .dev.vars into that worker's bindings.
+  // Never log these — they are API keys.
+  const extraBindings = {};
+  for (const name of docTypes) {
+    const devVars = DOC_TYPES[name].devVars;
+    if (devVars) extraBindings[name] = await readDevVars(join(ROOT, devVars));
+  }
+
   let mf;
   try {
     mf = new Miniflare(
@@ -180,7 +219,7 @@ export async function startLocalRuntime({
         log: new Log(logLevel),
         logRequests: logLevel >= LogLevel.INFO,
         ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
-        workers: buildWorkers({ docTypes, host, ports, bundleDir, casFault }),
+        workers: buildWorkers({ docTypes, host, ports, bundleDir, casFault, extraBindings }),
       }),
     );
 

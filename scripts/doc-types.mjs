@@ -71,10 +71,19 @@ export const DOC_TYPES = {
     editorClass: "PsdEditor",
     operator: "PSD_OPERATOR",
     operatorClass: "PsdOperator",
-    port: 8790,
+    // 8791, not 8790: CAS_PORT is 8790, and `startLocalRuntime` merges
+    // `ports.cas = CAS_PORT` into the same map it port-checks. Reusing 8790
+    // here put the same port in that map twice, so the two concurrent
+    // `assertPortFree(8790)` probes raced — one bound, the other reported
+    // EADDRINUSE — making `pnpm dev psd` fail every time on a free machine.
+    port: 8791,
     // Optional dev-only frontend: a Vite app started alongside the worker,
     // with GATEWAY_URL injected so it proxies API calls to the gateway.
     web: { dir: "packages/web-psd", port: 5173 },
+    // Optional .dev.vars file merged into this worker's bindings (secrets:
+    // the Operator's LLM_API_KEY / LLM_BASE_URL / LLM_MODEL). Not committed —
+    // see .dev.vars.example. Read by `readDevVars` in local-runtime.mjs.
+    devVars: "packages/cloudflare-psd/.dev.vars",
   },
 };
 
@@ -119,8 +128,12 @@ export function bundleTargets(docTypes) {
   ];
 }
 
-/** Miniflare worker configs: the gateway always, then one per selected type. */
-export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = false }) {
+/**
+ * Miniflare worker configs: the gateway always, then one per selected type.
+ * `extraBindings` maps a doc type name to additional bindings (e.g. secrets
+ * loaded from its .dev.vars) merged into that worker only.
+ */
+export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = false, extraBindings = {} }) {
   const bindings = { INTERNAL_TOKEN };
 
   const workers = [
@@ -171,7 +184,7 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       modules: true,
       scriptPath: join(bundleDir, `${name}.js`),
       compatibilityDate: COMPATIBILITY_DATE,
-      bindings,
+      bindings: { ...bindings, ...(extraBindings[name] ?? {}) },
       durableObjects: {
         [spec.editor]: { className: spec.editorClass, useSQLite: true },
         [spec.operator]: { className: spec.operatorClass, useSQLite: true },
