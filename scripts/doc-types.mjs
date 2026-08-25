@@ -71,7 +71,12 @@ export const DOC_TYPES = {
     editorClass: "PsdEditor",
     operator: "PSD_OPERATOR",
     operatorClass: "PsdOperator",
-    port: 8790,
+    // 8791, not 8790: CAS_PORT is 8790, and `startLocalRuntime` merges
+    // `ports.cas = CAS_PORT` into the same map it port-checks. Reusing 8790
+    // here put the same port in that map twice, so the two concurrent
+    // `assertPortFree(8790)` probes raced — one bound, the other reported
+    // EADDRINUSE — making `pnpm dev psd` fail every time on a free machine.
+    port: 8791,
     // Optional dev-only frontend: a Vite app started alongside the worker,
     // with GATEWAY_URL injected so it proxies API calls to the gateway.
     web: { dir: "packages/web-psd", port: 5173 },

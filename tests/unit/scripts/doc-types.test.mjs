@@ -47,6 +47,38 @@ test("resolvePorts only allocates ports for the gateway and selected types", () 
   expect(resolvePorts(["docx"])).toEqual({ gateway: 8787, docx: 8789 });
 });
 
+// Regression: psd was registered on 8790, the same port as CAS_PORT.
+// `startLocalRuntime` merges `ports.cas = CAS_PORT` into the very map it
+// port-checks, so the duplicate produced two concurrent `assertPortFree(8790)`
+// probes — one bound the port, the other saw EADDRINUSE — and `pnpm dev psd`
+// failed with "Port 8790 is already in use" on a completely free machine.
+test("every doc-type port is distinct from the gateway and CAS ports", () => {
+  const taken = new Map([
+    [8787, "gateway"],
+    [CAS_PORT, "cas"],
+  ]);
+  for (const [name, spec] of Object.entries(DOC_TYPES)) {
+    expect(taken.has(spec.port), `${name} port ${spec.port} collides with ${taken.get(spec.port)}`)
+      .toBe(false);
+    taken.set(spec.port, name);
+    if (spec.web) {
+      expect(taken.has(spec.web.port), `${name}.web port ${spec.web.port} collides with ${taken.get(spec.web.port)}`)
+        .toBe(false);
+      taken.set(spec.web.port, `${name}.web`);
+    }
+  }
+});
+
+// The port map startLocalRuntime actually probes (doc types + gateway + cas)
+// must have no duplicate values, or the concurrent probes race each other.
+test("the probed port map has no duplicates for any doc-type selection", () => {
+  for (const sel of [["psd"], ["markdown"], ["docx"], ["markdown", "docx", "psd"]]) {
+    const ports = { ...resolvePorts(sel), cas: CAS_PORT };
+    const values = Object.values(ports);
+    expect(new Set(values).size, `duplicate port in ${JSON.stringify(ports)}`).toBe(values.length);
+  }
+});
+
 test("resolvePorts lets a caller override individual ports", () => {
   expect(resolvePorts(["markdown"], { gateway: 18787, markdown: 18788 }))
     .toEqual({ gateway: 18787, markdown: 18788 });
