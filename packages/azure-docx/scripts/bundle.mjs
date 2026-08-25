@@ -29,7 +29,7 @@
  * comment for the full runtime-resolution reasoning (why `pg`/
  * `@azure/storage-blob` are safe to leave external and `@ariadng/office` is
  * not) and why this list has exactly one definition, shared with
- * `scripts/azure-runtime.mjs`'s `bundleService()`.
+ * `azure/local/runtime.mjs`'s `bundleService()`.
  *
  * `package.json`'s `build` script runs `tsc` first (for `dist/*.d.ts`, kept
  * for consistency with the repo's `main`/`types`/`exports` -> `dist/*`

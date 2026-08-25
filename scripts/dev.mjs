@@ -67,7 +67,7 @@ if (useAzure) {
   }
 }
 
-/** Matches `docker compose -f docker-compose.azure.yml up -d` failing for the same reason, but with an actionable message instead of the raw compose error. */
+/** Matches `docker compose -f packages/azure-sdk/docker-compose.yml up -d` failing for the same reason, but with an actionable message instead of the raw compose error. */
 function assertDockerRunning() {
   try {
     execFileSync("docker", ["info"], { stdio: "ignore" });
@@ -112,7 +112,7 @@ function assertPortFree(host, port, describeConflict) {
       });
     });
     // Always probe 0.0.0.0, regardless of `host` — see
-    // `assertPortFree()`'s comment in azure-runtime.mjs (around line
+    // `assertPortFree()`'s comment in azure/local/runtime.mjs (around line
     // 308-323) for why a probe bound to a specific address (127.0.0.1)
     // fails to detect a pre-existing wildcard bind on BSD/Darwin.
     server.listen(port, "0.0.0.0");
@@ -121,12 +121,12 @@ function assertPortFree(host, port, describeConflict) {
 
 // Kept deliberately apart from Miniflare's 8787/8788 band so both backends
 // can run at once. The Node-service ports themselves come from
-// `azure-ports.mjs`'s layout below, not a local copy — that module has no
+// `azure/local/ports.mjs`'s layout below, not a local copy — that module has no
 // imports at all, so pulling it in here is cheap and keeps this file from
-// drifting out of sync with `azure-runtime.mjs`'s own port math.
+// drifting out of sync with `azure/local/runtime.mjs`'s own port math.
 const AZURE_HOST = "127.0.0.1";
 
-// The host ports `docker-compose.azure.yml` maps Postgres onto, and the port
+// The host ports `packages/azure-sdk/docker-compose.yml` maps Postgres onto, and the port
 // the spawned `azurite-blob` process listens on (see that file and
 // `packages/azure-sdk/tests/containers.ts`). CLAUDE.md promises "occupied
 // port fails fast" for the local runtime; before this check existed, the
@@ -151,11 +151,11 @@ let backend;
 if (useAzure) {
   assertDockerRunning();
 
-  // `azure-ports.mjs` has no imports at all, so this can go ahead of the
+  // `azure/local/ports.mjs` has no imports at all, so this can go ahead of the
   // heavier imports further down (mirrors `doc-types.mjs`'s same
   // dependency-free convention) — argv validation has already happened
   // above, so this is just cheap port math before the port probe.
-  const { azurePortLayout, allAzurePorts, describeAzurePorts } = await import("./azure-ports.mjs");
+  const { azurePortLayout, allAzurePorts, describeAzurePorts } = await import("../azure/local/ports.mjs");
   const layout = azurePortLayout({ docTypes: azureDocTypes, replicas: 2 });
   const described = describeAzurePorts(layout);
   await Promise.all([
@@ -170,7 +170,7 @@ if (useAzure) {
     docDatabaseUrl,
     BLOB_CONNECTION_STRING,
   } = await import(
-    "./azure-runtime.mjs"
+    "../azure/local/runtime.mjs"
   );
 
   runtime = await startAzureRuntime({

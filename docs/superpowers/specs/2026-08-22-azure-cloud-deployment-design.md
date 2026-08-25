@@ -21,6 +21,8 @@
 
 **验收终点**:`scripts/azure-deploy.mjs` 一条命令可重复执行,执行后 `scripts/azure-smoke.mjs` 对**公网网关**的全部断言通过,且再次 `what-if` 无变更。详见 §10。
 
+**CAS 是否配置,决定了实际交付的部署形态。** 本设计假设的是 Cloudflare CAS worker(`packages/cloudflare-cas`)已经部署、`--cas-base-url` 指向它 —— 但截至本轮实施,该 worker **从未部署过**(`packages/cloudflare-cas/wrangler.toml` 的 `database_id` 仍是占位符 `REPLACE_WITH_CAS_D1_ID`,见 §11)。`scripts/azure-deploy.mjs` 因此把 `--cas-base-url` 设计成可选:不给时,`CAS_BASE_URL` 传空串,`azure-gateway`(`packages/azure-gateway/src/main.ts`)与 `azure-docx`(经 `packages/azure-sdk/src/doc-type-service.ts`)都把它当 falsy 处理 —— `casFetcher` 退化成 501 桩、`isPublicCasRoute` 恒为 `false`,`/users/{userId}/cas/*` 与 docx 的 `insertImage`/`getImages` 等图片路径一律 404/501。**除图片路径外的一切**(markdown 的全部操作、docx 的文本/表格/列表/结构操作)不受影响。换句话说,本轮在 CAS worker 部署之前交付的是一个**不含 docx 图片能力**的部署形态;§10、§11 已按此更新验收标准与风险登记。
+
 ## 2. 范围
 
 本轮交付六类产物:
@@ -38,7 +40,7 @@
 
 目标订阅 `Societas-MSIT-NonProd`(`24c9acbd-c2f5-4ef9-b9a2-486d90208b3e`,Microsoft 租户)。以下事实通过 `az` 只读查询确认,并直接约束了设计:
 
-**a) 订阅是多项目共用,一项目一 RG。** 现有 RG 包括 `SocietasProject`、`SocietasLab`、`BizTable`、`Evaluation`、`PMStudioProject`、`rg-csicolab-auth-dev` 等。新建 `rg-unidocs-dev` 顺应既有惯例,与其他项目资源完全隔离。
+**a) 订阅是多项目共用,一项目一 RG。** 现有 RG 包括 `SocietasProject`、`SocietasLab`、`BizTable`、`Evaluation`、`PMStudioProject`、`rg-csicolab-auth-dev` 等。新建 `Unidocs` 顺应既有惯例,与其他项目资源完全隔离。
 
 **b) 三条已生效的 deny policy**(`enforcementMode: Default`):
 
@@ -56,13 +58,13 @@
 
 ## 4. 目标拓扑
 
-单个 RG `rg-unidocs-dev`,region `southeastasia`。
+单个 RG `Unidocs`,region `southeastasia`。
 
 ```
-公网 → ca-unidocs-gateway (external ingress, :8787)
+公网 → unidocs-gateway (external ingress, :8787)
             ↓ 环境内部 DNS (https, 443)
-       ca-unidocs-markdown (internal ingress, :8788)
-       ca-unidocs-docx     (internal ingress, :8789)
+       unidocs-markdown (internal ingress, :8788)
+       unidocs-docx     (internal ingress, :8789)
             ↓                      ↓
    PostgreSQL Flexible Server   Blob Storage        公网 → Cloudflare CAS worker
                                 (Managed Identity)          (仅 docx + gateway)
@@ -72,20 +74,20 @@
 
 | 资源 | 名称 | 归属 | 关键配置 |
 |---|---|---|---|
-| Container Registry | `crunidocs{uniqueString}` | bootstrap | Basic,`adminUserEnabled: false` |
-| Log Analytics | `log-unidocs-dev` | bootstrap | Container Apps 环境的日志接收端 |
-| Key Vault | `kv-unidocs-{uniqueString}` | bootstrap | RBAC 授权模式;仅供部署脚本持久化生成的密钥(§5) |
-| Storage Account | `stunidocs{uniqueString}` | bootstrap | StorageV2,`allowSharedKeyAccess: false` |
-| User-assigned MI | `id-unidocs-dev` | bootstrap | 挂在三个 App 与迁移 Job 上 |
+| Container Registry | `unidocsacr` | bootstrap | Basic,`adminUserEnabled: false` |
+| Log Analytics | `unidocs-logs` | bootstrap | Container Apps 环境的日志接收端 |
+| Key Vault | `unidocs-kv` | bootstrap | RBAC 授权模式;仅供部署脚本持久化生成的密钥(§5) |
+| Storage Account | `unidocsblob` | bootstrap | StorageV2,`allowSharedKeyAccess: false` |
+| User-assigned MI | `unidocs-identity` | bootstrap | 挂在三个 App 与迁移 Job 上 |
 | 角色分配 ×2 | — | bootstrap | UAMI 在 ACR 上 `AcrPull`,在 Storage 上 `Storage Blob Data Contributor` |
-| PostgreSQL Flexible Server | `psql-unidocs-{uniqueString}` | main | **v17**,`Standard_B1ms`,32 GB,库名 `unidocs` |
-| Container Apps Env | `cae-unidocs-dev` | main | 消费型,不接自定义 VNet |
-| Container App ×3 | `ca-unidocs-gateway` / `-markdown` / `-docx` | main | 见 4.2 |
-| Container Apps Job | `caj-unidocs-migrate` | main | `manual` 触发,跑 `node dist/migrate-cli.js` |
+| PostgreSQL Flexible Server | `unidocs-pg` | main | **v17**,`Standard_B1ms`,32 GB,库名 `unidocs` |
+| Container Apps Env | `unidocs-env` | main | 消费型,不接自定义 VNet |
+| Container App ×3 | `unidocs-gateway` / `-markdown` / `-docx` | main | 见 4.2 |
+| Container Apps Job | `unidocs-migrate` | main | `manual` 触发,跑 `node dist/migrate-cli.js` |
 
 归属划分的依据见 §5:`bootstrap` 是不消费密钥、且必须先于镜像推送与密钥播种存在的资源;`main` 是消费 `@secure()` 参数的计算与数据库资源。
 
-ACR、Key Vault、Storage、Postgres 四个名称需全局唯一,统一用 `uniqueString(resourceGroup().id)` 后缀,保证同一 RG 重复部署得到同一名称(幂等)。
+ACR、Storage 两个名称需全局唯一(DNS 单标签,不能带连字符,这是它们没有 `unidocs-` 前缀连字符的原因);Key Vault、Postgres 的唯一性作用域更窄(资源组 / 各自服务)。四者现在都是字面量(`unidocsacr` / `unidocsblob` / `unidocs-kv` / `unidocs-pg`),不再靠 `uniqueString(resourceGroup().id)` 后缀 —— 同一 RG 重复部署天然得到同一名称,幂等性由命名本身的确定性保证,不依赖任何运行时求值。
 
 Blob 容器 `cas` 与 `snapshots` **不在 Bicep 中声明** —— `ports-blob.ts` 已经 `createIfNotExists()` 懒建(`packages/azure-sdk/src/ports-blob.ts:19,21`)。`Storage Blob Data Contributor` 角色包含建容器权限,懒建路径在云上成立。
 
@@ -101,7 +103,7 @@ doc type 的 `minReplicas = 2` 是刻意的:阶段 3 证明的是**多副本拓�
 
 健康检查用 Container Apps 对 `targetPort` 的默认 TCP 探针,不新增 `/health` 端点(YAGNI —— 没有任何现有需求要求它)。
 
-内部 FQDN 形如 `ca-unidocs-markdown.internal.<envDefaultDomain>`,由 Bicep 输出并注入网关的 `MARKDOWN_WORKER_URL` / `DOCX_WORKER_URL`。注意走 **443/https**,不是容器端口 —— ingress 负责映射。这条路径复用 `azure-gateway/src/main.ts:39` 已有的 `{TYPE}_WORKER_URL` 解析,无需注册表服务(父设计 §4.5 的原话:"KV 的角色由平台 DNS 承担")。
+内部 FQDN 形如 `unidocs-markdown.internal.<envDefaultDomain>`,由 Bicep 输出并注入网关的 `MARKDOWN_WORKER_URL` / `DOCX_WORKER_URL`。注意走 **443/https**,不是容器端口 —— ingress 负责映射。这条路径复用 `azure-gateway/src/main.ts:39` 已有的 `{TYPE}_WORKER_URL` 解析,无需注册表服务(父设计 §4.5 的原话:"KV 的角色由平台 DNS 承担")。
 
 ### 4.3 环境变量
 
@@ -114,7 +116,7 @@ doc type 的 `minReplicas = 2` 是刻意的:阶段 3 证明的是**多副本拓�
 
 迁移 Job 不需要任何 Blob 变量:`migrate-cli.ts` 只调用 `createPool()` 与 `runMigrations(pool)`,不构造 `BlobServiceClient`。它现有的 `blobConnectionString: process.env.BLOB_CONNECTION_STRING ?? ""` 是残留参数,实施时随 §6.1 一并去掉(`AzureConfig` 的两个 blob 字段都改为可选)。
 
-`CAS_BASE_URL` 指向**已部署的 Cloudflare CAS worker 自身的 base URL**,不是网关的 —— 这条约束在阶段 3 的设计 §6 中确立,`packages/azure-sdk/src/doc-type-service.ts` 的 `httpCasFetcher` 与 `azure-gateway/src/main.ts:56-73` 两侧都依赖它。
+`CAS_BASE_URL` 是**可选的**。配置时它指向**已部署的 Cloudflare CAS worker 自身的 base URL**,不是网关的 —— 这条约束在阶段 3 的设计 §6 中确立,`packages/azure-sdk/src/doc-type-service.ts` 的 `httpCasFetcher` 与 `azure-gateway/src/main.ts:56-73` 两侧都依赖它。不配置(当前形态,见 §1)时留空即可:两侧都把空串当 falsy 处理,`casFetcher` 退化成 501 桩、`isPublicCasRoute` 恒 `false`,CAS 路由一律 404 —— 这样一个不需要 CAS 的部署不会因为一个用不到的变量而起不来。
 
 `AZURE_CLIENT_ID` 必须显式注入 UAMI 的 clientId。使用**用户分配**的托管标识时,`DefaultAzureCredential` 无法自行判断该用哪个身份;缺了它容器能启动但取不到 token,失败点会推迟到第一次 Blob 操作。
 
@@ -141,22 +143,26 @@ Container Apps 用消费型环境、不接自定义 VNet,Postgres Flexible Serve
 | 密钥 | 性质 | 谁产生它 |
 |---|---|---|
 | Postgres 管理员密码 | **本轮生成**的新密钥 | 部署脚本 `crypto.randomBytes(48)`,写进 Key Vault,存在则读回 |
-| `INTERNAL_TOKEN` | **既有密钥,本轮必须对齐** —— 它已经存在于已部署的 Cloudflare CAS worker(`packages/cloudflare-cas`)上 | 由人从 Cloudflare 侧取得,经 `--internal-token` 传入并写进 Key Vault;**绝不现场生成** |
+| `INTERNAL_TOKEN` | **配了 `--cas-base-url` 时是既有密钥,本轮必须对齐**;未配时是可生成的新密钥(见下) | 配 CAS:由人从 Cloudflare 侧取得,经 `--internal-token` 传入并写进 Key Vault,**绝不现场生成**。未配 CAS:没有既有值也没传 `--internal-token` 时,脚本自动生成 |
 
 Blob 与 ACR 都因 §3(b) 的 policy 改成了身份认证,不再产生密钥 —— 所以密钥总数是二不是四。
 
-`INTERNAL_TOKEN` 为什么不能像 Postgres 密码那样生成:`packages/cloudflare-cas/src/worker.ts` 对**每个**请求校验 `X-Internal-Token !== env.INTERNAL_TOKEN` 就返回 401,而 docx 的图片路径经 `packages/server-core/src/cas-client.ts` 发出去的是 **Azure 侧**的这个值。两侧不同源 = 所有跨云 CAS 请求 401,也就是 §10 第 5 条第三项那条专门用来证明跨云接线的断言必然失败。本地测试看不出来:`scripts/doc-types.mjs` 硬编码的 `INTERNAL_TOKEN = "unidocs-dev-token"` 被 Miniflare 与本地 Azure 栈共用,掩盖了这个不变量。
+`INTERNAL_TOKEN` 为什么在**配了** `--cas-base-url` 时不能像 Postgres 密码那样生成:`packages/cloudflare-cas/src/worker.ts` 对**每个**请求校验 `X-Internal-Token !== env.INTERNAL_TOKEN` 就返回 401,而 docx 的图片路径经 `packages/server-core/src/cas-client.ts` 发出去的是 **Azure 侧**的这个值。两侧不同源 = 所有跨云 CAS 请求 401,也就是 §10 第 5 条第三项那条专门用来证明跨云接线的断言必然失败。本地测试看不出来:`scripts/doc-types.mjs` 硬编码的 `INTERNAL_TOKEN = "unidocs-dev-token"` 被 Miniflare 与本地 Azure 栈共用,掩盖了这个不变量。
 
-部署脚本因此对这个 secret 走的是「Key Vault 里有则读用;没有且给了 `--internal-token` 则写入后使用;没有也没给则**报错中止**」——不生成、不猜。
+但**未配** `--cas-base-url` 时(§1 的当前形态),`INTERNAL_TOKEN` 只用于 Azure 内部 gateway → doc-type-worker 鉴权,没有 Cloudflare 侧需要对齐,现场生成是安全的。
+
+部署脚本因此对这个 secret 走的是:「Key Vault 里有则读用(与是否配 CAS 无关);没有且给了 `--internal-token` 则写入后使用(同样与是否配 CAS 无关);都没有时按是否配了 `--cas-base-url` 分叉 —— **配了则报错中止**(不生成、不猜),**未配则生成**并在日志中提示:该 token 仅对 Azure 内部有效,将来接入 Cloudflare CAS worker 时必须让两边一致(删掉 Key Vault 里的 `internal-token` secret,用 `--internal-token <与 Cloudflare 相同的值>` 重新部署)」。实现见 `scripts/azure-deploy.mjs` 的 `decideInternalTokenAction()`。
 
 **Key Vault 的角色是给部署脚本提供幂等性**,不是给运行时读取。流程:
 
-1. `bootstrap.bicep` 建出 Key Vault(RBAC 模式)、UAMI、ACR、Storage、Log Analytics,并做两条角色分配:UAMI 在 ACR 上 `AcrPull`,在 Storage 上 `Storage Blob Data Contributor`
-2. 部署脚本对两个 secret 都执行"存在则读回" —— 这使得重复执行部署不会重置它们。不存在时两者分道:`pg-admin-password` 用 `crypto.randomBytes` 生成并写入;`internal-token` 只接受 `--internal-token` 传入的值(缺失即中止),理由见上表
+1. `bootstrap.bicep` 建出 Key Vault(RBAC 模式)、UAMI、ACR、Storage、Log Analytics,并做**三条**角色分配:UAMI 在 ACR 上 `AcrPull`,在 Storage 上 `Storage Blob Data Contributor`,以及部署者(`deployerObjectId` 参数)在这个 Key Vault 上的 `Key Vault Secrets Officer`(见下方"数据平面"说明)
+2. 部署脚本对两个 secret 都执行"存在则读回" —— 这使得重复执行部署不会重置它们。不存在时按密钥自己的规则生成或拒绝:`pg-admin-password` 用 `crypto.randomBytes` 生成并写入;`internal-token` 按是否配了 `--cas-base-url` 分叉(配了则只接受 `--internal-token` 传入的值、缺失即中止;未配则允许现场生成),理由见上表
 3. 脚本把两个值作为 `@secure()` 参数传给 `main.bicep`。`@secure()` 参数**不进入部署历史**,这正是它存在的目的
 4. `main.bicep` 用密码拼出 `DATABASE_URL`(含 `sslmode=require`),连同 `INTERNAL_TOKEN` 一起设为 Container App 的 **secret**,再由 `env` 以 `secretRef` 引用
 
-这样运行时不需要访问 Key Vault,UAMI 的角色分配只有 `AcrPull` 和 `Storage Blob Data Contributor` 两条;执行部署的人类身份需要 `Key Vault Secrets Officer`。
+这样运行时不需要访问 Key Vault,UAMI 的角色分配只有 `AcrPull` 和 `Storage Blob Data Contributor` 两条。
+
+**执行部署的人类身份需要 `Key Vault Secrets Officer`,这条角色分配由 `bootstrap.bicep` 自动创建,不是运维手工操作。** 早先这里只写了一句"需要该角色",没有落成任何一条角色分配 —— 首次真实部署就在 Step 3(播种密钥)撞上了 `Forbidden`:RBAC 模式的 Key Vault 把**管理平面**(建/删 vault 本身)和**数据平面**(读写 secret)分成两套完全独立的权限,部署者持有的订阅级 `Owner` 覆盖前者、不隐含后者。`bootstrap.bicep` 现在有第三个必填参数 `deployerObjectId`(`scripts/azure-deploy.mjs` 从 `checkRbac()` 里已经查过的登录者 objectId 转交,不重复查询),建一条 `deployerKvSecretsOfficer` 角色分配把这个洞补上。**这条角色分配的生效有传播延迟**,而 Step 3 紧跟在 Step 2(`bootstrap.bicep` 部署完成)之后就要写 secret —— `scripts/azure-deploy.mjs` 对 `az keyvault secret show`/`set` 遇到 `Forbidden` 时做有限重试(10 秒一次、最多 6 次、约 1 分钟,见 `retryOnForbidden()`),超过上限仍失败才中止,不无限重试、也不静默吞掉。
 
 两阶段拆分(`bootstrap` / `main`)是被密钥的先后依赖**逼出来**的,不是为了分层而分层:ACR 必须先于镜像推送存在,Key Vault 必须先于 secret 播种存在,而 `main` 消费的正是这两者的产物。
 
@@ -248,7 +254,7 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 3. **播种密钥**:Key Vault 中两个 secret 存在则读、不存在则生成(§5)
 4. **构建**:`az acr build --platform linux/amd64`,四个镜像,tag = git short sha(走 az 身份,**不是** admin 密码,policy 禁止;构建发生在 ACR 里,见 §7)
 5. **main**:`what-if` → `create`,传入 `@secure()` 参数与镜像 tag
-6. **迁移**:`az containerapp job start` 触发 `caj-unidocs-migrate`,轮询至成功;失败则中止并打印 Job 日志
+6. **迁移**:`az containerapp job start` 触发 `unidocs-migrate`,轮询至成功;失败则中止并打印 Job 日志
 7. **冒烟**:`scripts/azure-smoke.mjs` 打公网网关 FQDN
 
 首轮部署时三个 App 会先于迁移完成而存在,其副本会因表不存在而反复重启;迁移成功后自愈。这是可接受的:Container Apps 的重启退避会覆盖迁移耗时,且首轮之后不再发生。脚本在第 6 步失败时中止,不会把一个连不上库的部署当成成功。
@@ -272,8 +278,10 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 5. `scripts/azure-smoke.mjs` 对**公网网关 FQDN** 的全部断言通过:
    - markdown:create → apply → query → export
    - docx:create → apply → query → export
-   - docx 图片路径:上传到 Cloudflare CAS → `insertImage` → `getImages` → `export` 得到合法 zip。**这一条专门证明跨云 HTTP 接线在真实网络下成立**
+   - docx 图片路径:上传到 Cloudflare CAS → `insertImage` → `getImages` → `export` 得到合法 zip。**这一条专门证明跨云 HTTP 接线在真实网络下成立** —— **仅在配置了 `--cas-base-url` 时适用**
    - 至少一次 `apply` 使用过期的 `baseVersion`,断言返回 409 且响应体带当前 `version`
+
+   **未配 `--cas-base-url` 时,第三项不适用,但 `scripts/azure-smoke.mjs` 本轮未随之更新**:它对非本地 `--gateway` 无条件拒绝 `--skip-cas`(见脚本头注释),而 `scripts/azure-deploy.mjs` 的 Step 7 也没有按 `casBaseUrl` 是否为空去决定要不要传这个开关。结果是「不配 CAS」形态目前会在 Step 1–6 全部成功之后,于 Step 7 因第三项断言对着一个 404 的 `/cas/*` 路由失败而收尾。这不是本设计假装不存在的问题,而是记在 §11 的已知缺口 —— 让 `--skip-cas` 的拒绝条件感知「本次部署是否配置了 CAS」而不只是「gateway 是否本地」,是它的解法,留给后续一轮。
    **为什么这几条断言足以验证托管标识的 Blob 通路**:`apply` 每次都经 `#saveSnapshotCache()` 写一次 Blob 快照,走的是**严格**版本 —— 失败直接冒泡(`packages/server-core/src/session.ts:689,751`)。因此上面任何一次成功的 `apply` 都证明了托管标识写 Blob 成立,不需要为此另加测试。反过来必须注意:`create` 走的是**尽力而为**版本(`session.ts:464,546` → `#saveSnapshotCacheBestEffort`,会吞掉 Blob 失败),所以**只做 create 的冒烟不能验证托管标识** —— 冒烟必须包含 apply,这是上述断言的必要成分而非顺带。
 
 6. **幂等**:紧接着再次执行 `scripts/azure-deploy.mjs`,冒烟仍然全绿,Postgres 密码未被重置,且两次 `what-if` 输出里:
@@ -294,9 +302,13 @@ Bicep 不负责跑数据库迁移(基础设施变更与数据变更分离)。`sc
 | Postgres 用密码认证而非 Entra ID | **本轮接受** | 路径明确(§9 第三行),但属独立工作量 |
 | `sslmode=require` 的证书校验强度 | **待实施时确认** | 见 §6.3。收紧到 `verify-full` 是后续加固 |
 | docx 依赖 Cloudflare CAS worker | **本轮接受** | 已确认的范围决定。**后果:本轮的部署形态不可私有化交付**,阶段 4 的 `azure-cas` 落地后才可 |
-| 跨云 CAS 要求两侧 `INTERNAL_TOKEN` 相同 | **本轮接受(有操作约束)** | 上一行的直接推论,原先漏登记。CAS worker 对每个请求校验该 token,不同源即 401,而本地栈共用 `unidocs-dev-token` 会掩盖它。约束:Azure 侧的值必须由人从 Cloudflare 侧取得并经 `--internal-token` 传入(§5),脚本不生成。代价:轮换该 token 必须**两侧同时**做 |
+| Cloudflare CAS worker 尚未部署 | **已知,未解决 —— 本轮以「不配 CAS」形态交付** | `packages/cloudflare-cas/wrangler.toml` 的 `database_id` 仍是占位符 `REPLACE_WITH_CAS_D1_ID`,该 worker 从未 `wrangler deploy` 过;此前所有 CAS 测试跑的都是 Miniflare 本地模拟,不是真实 Cloudflare 环境。因此 `scripts/azure-deploy.mjs` 把 `--cas-base-url` 改成了可选(见 §1、§4.3、§5、§10):不给时部署照常完成,但交付形态**不含 docx 图片能力**(`insertImage`/`getImages` 等路径 404/501)。待 Cloudflare CAS worker 实际部署、拿到其 `INTERNAL_TOKEN` 后,重新以 `--cas-base-url` + `--internal-token` 跑一次即可补上该能力 |
+| 跨云 CAS 要求两侧 `INTERNAL_TOKEN` 相同 | **本轮接受(有操作约束,按是否配 CAS 分叉)** | CAS worker 对每个请求校验该 token,不同源即 401,而本地栈共用 `unidocs-dev-token` 会掩盖它。**配了 `--cas-base-url`** 时约束不变:Azure 侧的值必须由人从 Cloudflare 侧取得并经 `--internal-token` 传入(§5),脚本不生成,轮换该 token 必须**两侧同时**做。**未配 `--cas-base-url`** 时(见上一行)没有 Cloudflare 侧需要对齐,`scripts/azure-deploy.mjs` 允许现场生成该 token 并醒目提示:它只对 Azure 内部有效,将来接入 Cloudflare CAS worker 时必须删掉 Key Vault 里的 `internal-token` secret、用 `--internal-token <与 Cloudflare 相同的值>` 重新部署,否则两边不同源、CAS 请求全部 401 |
+| `scripts/azure-smoke.mjs` 未随「不配 CAS」形态更新 | **已知,未解决** | 见 §10 第 5 条尾注。该脚本对非本地 `--gateway` 无条件拒绝 `--skip-cas`,而 `scripts/azure-deploy.mjs` 的 Step 7 也没有按 `casBaseUrl` 是否为空决定要不要传这个开关。结果是「不配 CAS」形态目前会在 Step 1–6 成功之后于 Step 7 失败(第三组断言对着 404 的 `/cas/*` 路由)。本轮未修,因为它超出了本次改动的范围(`--cas-base-url`/`internal-token` 分叉);留给下一轮 |
 | 无 CI | **本轮接受** | 已确认的范围决定。部署脚本本身即将来 CI 调用的对象 |
 | `azure-markdown` / `azure-docx` 未合并 | **推后** | 已确认。代价:3 份服务镜像,以及两份已经漂移过一次的 `bundle.mjs`(§6.2 的 bug 正源于此)仍然并存。合并成单一 `DOC_TYPE` 参数化镜像可一次性消除该漂移面 |
+| RBAC 模式 Key Vault 的数据平面角色分配有传播延迟 | **已知,已缓解** | `bootstrap.bicep` 新增的 `deployerKvSecretsOfficer` 角色分配(§5)修的是首次真实部署实际撞上的 `Forbidden`(Step 3 紧跟 Step 2 部署完成就要写 secret,角色分配还没在 AAD 里传播完成)。`scripts/azure-deploy.mjs` 用 `retryOnForbidden()` 做有限重试(10 秒一次、最多 6 次、约 1 分钟),仍失败才中止,并在错误信息里指名需要的角色。**不是理论风险**:第一次部署就在这里中止过,资源组里已经建出了 5 个资源(identity/logs/blob/kv/acr)才发现 |
+| Key Vault 软删除会挡住「删掉资源组再重建」 | **已知,未解决** | `unidocs-kv` 是固定字面量,而 Key Vault 开了软删除(保留 7 天)。按 §10/计划 Task 8 写的拆除方式 `az group delete -n Unidocs --yes` 删掉之后,7 天内重新部署会在 Key Vault 上报 `ConflictError: Vault name 'unidocs-kv' is already in use`,而且发生在 bootstrap 部署到一半时。人工出路是 `az keyvault recover` 或 `az keyvault purge`,但没人会预料到。**这个风险与是否用 `uniqueString` 后缀无关** —— 后缀是按资源组 ID 算的,同名资源组重建后后缀相同,名字照样撞。彻底的解法是 preflight 里 `az keyvault list-deleted` 命中则打印具体的 recover/purge 命令后中止 |
 | 镜像引用有两个真相来源,无测试绑定 | **已知,未解决** | 脚本用 `IMAGES` 数组生成 `az acr build --image` 的仓库路径,而 `infra/main.bicep` 里四处独立手写 `'${acr.properties.loginServer}/unidocs/<name>:${imageTag}'` 字面量。当前四个名字一致(已由编译产物核实),但没有任何测试读 Bicep 去比对 —— 改了 `IMAGES` 里的 `name` 而忘了同步 Bicep,测试全绿,要到真实部署「拉不到镜像」才暴露。非本轮引入,本轮也未加剧 |
 | RBAC 预检按角色**名字**白名单,会误伤自定义角色 | **已知,可接受** | `checkRbac()` 断言存在内置的 `Owner` 或 `User Access Administrator`。任何包含 `Microsoft.Authorization/roleAssignments/write`(即 bootstrap.bicep 实际所需权限)但不叫这两个名字的自定义角色,会被误判为无权限而拦下,尽管它真能跑通。按实际操作权限判断需要 `az provider operation` 展开角色定义,复杂度远高于收益。刻意不留 `--skip-rbac-check` 逃生口 —— 留了等于把这道墙拆掉 |
 | 连接池上限只保证常驻形态,不保证满载 | **已知,未解决** | `PG_POOL_MAX` 默认 5 让 5 个常驻副本(5×5=25)安全落在 B1ms 的 `max_connections`(约 35)之下。但 `maxReplicas` 满载是 13 个副本,13×5=65,仍然超。**一旦真的扩容,`FATAL: sorry, too many clients already` 会以同样的方式回来**,且冒烟测试(串行)照样通过、只有并发才暴露。彻底的解法是按副本数下发 `PG_POOL_MAX`,或把 Postgres 升到更大规格 —— 两者都不在本轮 |

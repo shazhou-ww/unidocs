@@ -23,7 +23,17 @@ export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
     sessionId: string,
   ) => DurableObjectStub;
   readonly renderToolResult?: AgentToolResultRenderer;
+  /**
+   * Cap on ReAct loop turns for one `/run`. Defaults to
+   * `DEFAULT_MAX_ITERATIONS`. Doc types whose edits are inherently multi-step
+   * (PSD: locate a layer, preview it, transform it, re-preview to verify)
+   * raise this — the default cuts such a run off mid-edit.
+   */
+  readonly maxIterations?: number;
 }
+
+/** Turn cap when a doc type doesn't set `maxIterations`. */
+export const DEFAULT_MAX_ITERATIONS = 10;
 
 export interface OperatorDOInstance {
   fetch(request: Request): Promise<Response>;
@@ -82,7 +92,7 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
             },
           }));
 
-          const maxIterations = 10;
+          const maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
           for (let iterations = 1; iterations <= maxIterations; iterations++) {
             const response = await config.llmProvider(this.#session, providerTools, this.#env) as any;
             const message = response.choices?.[0]?.message;

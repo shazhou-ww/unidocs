@@ -5,11 +5,12 @@
     "dev": "node scripts/dev.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "test:local": "vitest run --fileParallelism=false tests/unit tests/integration",
+    "test:local": "vitest run --fileParallelism=false tests/unit tests/integration/cloudflare tests/integration/shared",
+    "test:azure": "vitest run --fileParallelism=false tests/integration/azure",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r clean",
-    "azure:up": "docker compose -f docker-compose.azure.yml up -d",
-    "azure:down": "docker compose -f docker-compose.azure.yml down"
+    "azure:up": "docker compose -f packages/azure-sdk/docker-compose.yml up -d",
+    "azure:down": "docker compose -f packages/azure-sdk/docker-compose.yml down"
   },
   "devDependencies": {
     "@azure/identity": "^4.13.2",

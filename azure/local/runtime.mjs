@@ -3,7 +3,7 @@
  * boots the Miniflare one, so `tests/integration/shared/behavior-suite.mjs` can run the same
  * test bodies against either.
  *
- * Topology: `docker compose -f docker-compose.azure.yml up -d` (Postgres
+ * Topology: `docker compose -f packages/azure-sdk/docker-compose.yml up -d` (Postgres
  * only) + spawn `azurite-blob` as a plain `node` process (same technique as
  * the gateway/markdown services below — Azurite's npm package ships its
  * server as a Node CLI, so it doesn't need a container) -> poll Postgres AND
@@ -41,16 +41,16 @@ import { BlobServiceClient } from "@azure/storage-blob";
 import {
   CAS_ACCESS_KEY,
   docServiceAccessKey,
-} from "./doc-types.mjs";
-import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "./workspace-aliases.mjs";
-import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./azure-ports.mjs";
+} from "../../scripts/doc-types.mjs";
+import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../scripts/workspace-aliases.mjs";
+import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./ports.mjs";
 import { startReplicaProxy } from "./replica-proxy.mjs";
 
 const { Pool } = pg;
 const require = createRequire(import.meta.url);
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const COMPOSE_FILE = join(ROOT, "docker-compose.azure.yml");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const COMPOSE_FILE = join(ROOT, "packages/azure-sdk/docker-compose.yml");
 const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 
 /** Matches `packages/azure-sdk/tests/containers.ts` — same Postgres server. */
@@ -65,7 +65,7 @@ const AZURITE_HOST = "127.0.0.1";
 const AZURITE_PORT = 10000;
 const POSTGRES_PORT = 5433;
 
-/** Must match `docker-compose.azure.yml`'s `postgres` service image — used only to decide whether to print the one-time-download notice below. */
+/** Must match `packages/azure-sdk/docker-compose.yml`'s `postgres` service image — used only to decide whether to print the one-time-download notice below. */
 const POSTGRES_IMAGE = "postgres:18-alpine";
 
 /**
@@ -417,10 +417,10 @@ function assertPortFree(port, hint) {
 
 /**
  * Ports `startAzureRuntime()` needs exclusive use of: every port in the
- * layout (Task 3's `azure-ports.mjs` — gateway, per-doc-type proxy, and
+ * layout (Task 3's `ports.mjs` — gateway, per-doc-type proxy, and
  * every replica), plus the two backing stores that aren't part of that
  * layout because they're fixed infrastructure rather than spawned Node
- * services (`docker-compose.azure.yml`'s Postgres and the spawned
+ * services (`packages/azure-sdk/docker-compose.yml`'s Postgres and the spawned
  * `azurite-blob` process).
  *
  * `skipPostgresPort` is set when `postgres: "external"` is in effect: 5433
@@ -434,7 +434,7 @@ async function assertPortsFree(layout, { skipPostgresPort = false } = {}) {
   const byPort = {
     ...describeAzurePorts(layout),
     [AZURITE_PORT]: "expected by the azurite-blob process this run is about to spawn",
-    [POSTGRES_PORT]: "expected by docker-compose.azure.yml's postgres service (host port mapping)",
+    [POSTGRES_PORT]: "expected by packages/azure-sdk/docker-compose.yml's postgres service (host port mapping)",
   };
   const ports = allAzurePorts(layout).concat(
     skipPostgresPort ? [AZURITE_PORT] : [AZURITE_PORT, POSTGRES_PORT],
@@ -607,7 +607,7 @@ function assertDocTypesSupported(docTypes) {
  *
  * `postgres` (default `"compose"`): how this run gets a Postgres to talk to.
  * `"compose"` is today's behavior — `docker compose up -d` against
- * `docker-compose.azure.yml`, torn down with `down -v` in `dispose()`.
+ * `packages/azure-sdk/docker-compose.yml`, torn down with `down -v` in `dispose()`.
  * `"external"` skips compose entirely (no `announceFirstPullIfNeeded()`, no
  * `up`, no `down -v`) and just polls the already-running server at
  * the admin database URL via `waitForPostgres()` — for environments with no docker

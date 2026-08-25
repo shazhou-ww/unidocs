@@ -14,7 +14,7 @@
 
 - **npm 源**:公网 npm registry 在本机被 SNI 拦截。任何 `pnpm install` / `npm install` 必须带 `--registry=https://repo.huaweicloud.com/repository/npm/`(命令行参数,不是环境变量)。
 - **Node ≥ 24,pnpm 11.22.0**(由根 `package.json` 的 `packageManager` 钉死)。镜像里的 pnpm 版本必须从该字段读取,不得硬编码 —— 照抄 `e2e/Dockerfile` 已验证的写法。
-- **订阅与位置**:订阅 `24c9acbd-c2f5-4ef9-b9a2-486d90208b3e`(`Societas-MSIT-NonProd`),资源组 `rg-unidocs-dev`,region `southeastasia`。这三个值必须是脚本/Bicep 的参数,默认值取上述,不得散落硬编码。
+- **订阅与位置**:订阅 `24c9acbd-c2f5-4ef9-b9a2-486d90208b3e`(`Societas-MSIT-NonProd`),资源组 `Unidocs`,region `southeastasia`。这三个值必须是脚本/Bicep 的参数,默认值取上述,不得散落硬编码。
 - **策略红线(不得绕过)**:存储账户 `allowSharedKeyAccess` 必须为 `false`,ACR `adminUserEnabled` 必须为 `false`。若某步因这两条策略失败,正确反应是改设计,不是关掉策略或换用密钥认证。
 - **不要删除或清理 `postgres:18` Docker 镜像** —— 另一个项目(Societas)有容器在用它。
 - **不得提交 `CLAUDE.md`**(由 `.git/info/exclude` 忽略),也不得把它写进 `.gitignore`。任何提交的文件都不得引用 `.superpowers/` 下的路径。
@@ -40,7 +40,7 @@
 | `scripts/bundle-deps.test.mjs` | 静态测试:防止声明与外部化列表再次漂移 | 2 |
 | `Dockerfile` | 参数化服务镜像(`ARG SERVICE`) | 3 |
 | `.dockerignore` | 已存在,按需补充 | 3 |
-| `infra/bootstrap.bicep` | Key Vault、UAMI、ACR、Storage、Log Analytics + 两条角色分配 | 4 |
+| `infra/bootstrap.bicep` | Key Vault、UAMI、ACR、Storage、Log Analytics + 三条角色分配(UAMI→ACR/Storage 两条,部署者→Key Vault 数据平面一条) | 4 |
 | `infra/main.bicep` | Postgres、防火墙规则、Container Apps 环境、三个 App、迁移 Job | 5 |
 | `scripts/azure-deploy.mjs` | 部署编排(可重复执行) | 6 |
 | `scripts/azure-deploy.test.mjs` | 部署脚本纯逻辑部分的单测 | 6 |
@@ -104,17 +104,17 @@ describe("resolveBlobConfig", () => {
   });
 
   test("只有账户 URL 且有 client id:云上托管标识模式", () => {
-    process.env.BLOB_ACCOUNT_URL = "https://stunidocs.blob.core.windows.net";
+    process.env.BLOB_ACCOUNT_URL = "https://unidocsblob.blob.core.windows.net";
     process.env.AZURE_CLIENT_ID = "00000000-0000-0000-0000-000000000000";
     expect(resolveBlobConfig()).toEqual({
       blobConnectionString: "",
-      blobAccountUrl: "https://stunidocs.blob.core.windows.net",
+      blobAccountUrl: "https://unidocsblob.blob.core.windows.net",
     });
   });
 
   test("两者都有:启动失败,错误里同时点名两个变量", () => {
     process.env.BLOB_CONNECTION_STRING = "UseDevelopmentStorage=true";
-    process.env.BLOB_ACCOUNT_URL = "https://stunidocs.blob.core.windows.net";
+    process.env.BLOB_ACCOUNT_URL = "https://unidocsblob.blob.core.windows.net";
     expect(() => resolveBlobConfig()).toThrow(/BLOB_CONNECTION_STRING.*BLOB_ACCOUNT_URL/s);
   });
 
@@ -126,7 +126,7 @@ describe("resolveBlobConfig", () => {
   // DefaultAzureCredential 缺了 AZURE_CLIENT_ID 照样能构造成功,
   // 失败会推迟到第一次 Blob 操作。所以它必须在启动就炸。
   test("有账户 URL 但无 AZURE_CLIENT_ID:启动失败,错误点名 AZURE_CLIENT_ID", () => {
-    process.env.BLOB_ACCOUNT_URL = "https://stunidocs.blob.core.windows.net";
+    process.env.BLOB_ACCOUNT_URL = "https://unidocsblob.blob.core.windows.net";
     expect(() => resolveBlobConfig()).toThrow(/AZURE_CLIENT_ID/);
   });
 
@@ -740,7 +740,7 @@ git commit -m "feat(azure): 参数化服务镜像,四个服务共用一份 Docke
 - Create: `infra/bootstrap.bicep`
 
 **Interfaces:**
-- Produces(Task 5 与 Task 6 都依赖这些 output 名):`acrName`、`acrLoginServer`、`keyVaultName`、`storageAccountName`、`blobAccountUrl`、`identityId`、`identityClientId`、`nameSuffix`
+- Produces(Task 5 与 Task 6 都依赖这些 output 名):`acrName`、`acrLoginServer`、`keyVaultName`、`storageAccountName`、`blobAccountUrl`、`identityId`、`identityClientId`
 
 - [ ] **Step 1: 写 `infra/bootstrap.bicep`**
 
@@ -750,15 +750,12 @@ targetScope = 'resourceGroup'
 @description('部署位置。默认取资源组自身的位置。')
 param location string = resourceGroup().location
 
-@description('全局唯一资源名的稳定后缀。同一资源组重复部署得到同一后缀,这是幂等的依据。')
-param nameSuffix string = uniqueString(resourceGroup().id)
-
-var acrName = 'crunidocs${nameSuffix}'
-var kvName = 'kvunidocs${nameSuffix}'
-var storageName = 'stunidocs${nameSuffix}'
+var acrName = 'unidocsacr'
+var kvName = 'unidocs-kv'
+var storageName = 'unidocsblob'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-unidocs-dev'
+  name: 'unidocs-identity'
   location: location
 }
 
@@ -817,7 +814,7 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 resource law 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
-  name: 'log-unidocs-dev'
+  name: 'unidocs-logs'
   location: location
   properties: {
     sku: {
@@ -852,7 +849,6 @@ resource blobData 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-output nameSuffix string = nameSuffix
 output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
 output keyVaultName string = kv.name
@@ -887,7 +883,7 @@ az provider show -n Microsoft.App --query registrationState -o tsv   # 必须是
 ```
 
 ```bash
-az group create -n rg-unidocs-dev -l southeastasia -o none && echo "rg ok"
+az group create -n Unidocs -l southeastasia -o none && echo "rg ok"
 ```
 
 若 `az group create` 报权限不足,**停下来报告** —— 设计 §11 记着这是唯一无法只读确认的前提。
@@ -895,7 +891,7 @@ az group create -n rg-unidocs-dev -l southeastasia -o none && echo "rg ok"
 - [ ] **Step 4: `what-if` 预览**
 
 ```bash
-az deployment group what-if -g rg-unidocs-dev -f infra/bootstrap.bicep
+az deployment group what-if -g Unidocs -f infra/bootstrap.bicep
 ```
 
 预期:列出 7 个待创建资源(identity、acr、storage、kv、law,加两条 roleAssignment)。检查 ACR 的 `adminUserEnabled` 是 `false`、存储的 `allowSharedKeyAccess` 是 `false`。
@@ -903,18 +899,18 @@ az deployment group what-if -g rg-unidocs-dev -f infra/bootstrap.bicep
 - [ ] **Step 5: 部署并检查 output**
 
 ```bash
-az deployment group create -g rg-unidocs-dev -f infra/bootstrap.bicep -n bootstrap -o json \
+az deployment group create -g Unidocs -f infra/bootstrap.bicep -n bootstrap -o json \
   | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['properties']['outputs'], indent=2))"
 ```
 
-预期:8 个 output 都有值,`blobAccountUrl` 形如 `https://stunidocs<suffix>.blob.core.windows.net/`。
+预期:7 个 output 都有值,`blobAccountUrl` 形如 `https://unidocsblob.blob.core.windows.net/`。
 
 若存储账户或 ACR 被策略拒绝,**停下来报告**并把策略的完整错误信息带上 —— 按全局约束,正确反应是改设计,不是关策略。
 
 - [ ] **Step 6: 幂等性检查**
 
 ```bash
-az deployment group what-if -g rg-unidocs-dev -f infra/bootstrap.bicep
+az deployment group what-if -g Unidocs -f infra/bootstrap.bicep
 ```
 
 预期:全部资源显示为 `NoChange` 或 `Ignore`,没有 `Create` / `Delete` / `Modify`。若有 `Modify`,说明某个属性不是幂等的,查明并修 Bicep,不要接受"每次都会变一点"。
@@ -939,7 +935,7 @@ git commit -m "feat(infra): bootstrap Bicep —— 身份、ACR、存储、Key V
 - Create: `infra/main.bicep`
 
 **Interfaces:**
-- Consumes: Task 4 的 output —— `nameSuffix`、`acrLoginServer`、`blobAccountUrl`、`identityId`、`identityClientId`
+- Consumes: Task 4 的 output —— `acrLoginServer`、`blobAccountUrl`、`identityId`、`identityClientId`
 - Produces:`gatewayFqdn`(Task 6、Task 7 用它做冒烟入口)、`migrateJobName`(Task 6 触发迁移用)
 
 - [ ] **Step 1: 写 `infra/container-app.bicep`**
@@ -953,7 +949,7 @@ param environmentId string
 @description('用户分配托管标识的资源 ID。同时用于拉镜像与访问 Blob。')
 param identityId string
 
-@description('完整镜像引用,形如 crunidocsxxx.azurecr.io/unidocs/azure-markdown:abc1234。')
+@description('完整镜像引用,形如 unidocsacr.azurecr.io/unidocs/azure-markdown:abc1234。')
 param image string
 param acrLoginServer string
 
@@ -1049,12 +1045,11 @@ output fqdn string = app.properties.configuration.ingress.fqdn
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
-param nameSuffix string = uniqueString(resourceGroup().id)
 
-@description('镜像 tag,由部署脚本传入(git short sha)。不用 latest —— Container Apps 需要镜像引用变化才会滚动 revision。')
+@description('镜像 tag，由部署脚本传入（git short sha）。不用 latest —— Container Apps 需要镜像引用变化才会滚动 revision。')
 param imageTag string
 
-@description('Cloudflare CAS worker 自身的基地址(不是 gateway 的)。过渡形态,阶段 4 删除。')
+@description('Cloudflare CAS worker 自身的基地址（不是 gateway 的）。过渡形态，阶段 4 删除。')
 param casBaseUrl string
 
 @secure()
@@ -1066,30 +1061,30 @@ param internalToken string
 param pgAdminUser string = 'unidocs'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-unidocs-dev'
+  name: 'unidocs-identity'
 }
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: 'crunidocs${nameSuffix}'
+  name: 'unidocsacr'
 }
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: 'stunidocs${nameSuffix}'
+  name: 'unidocsblob'
 }
 
 resource law 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
-  name: 'log-unidocs-dev'
+  name: 'unidocs-logs'
 }
 
 resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
-  name: 'psql-unidocs-${nameSuffix}'
+  name: 'unidocs-pg'
   location: location
   sku: {
     name: 'Standard_B1ms'
     tier: 'Burstable'
   }
   properties: {
-    // 17:与本订阅现有 8 台 Flexible Server 一致。
+    // 17：与本订阅现有 8 台 Flexible Server 一致。
     version: '17'
     administratorLogin: pgAdminUser
     administratorLoginPassword: pgAdminPassword
@@ -1114,12 +1109,12 @@ resource pgDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08
   name: 'unidocs'
 }
 
-// 设计 §4.4:显式的 dev 期妥协。0.0.0.0-0.0.0.0 是 Azure 约定的
+// 设计 §4.4：显式的 dev 期妥协。0.0.0.0-0.0.0.0 是 Azure 约定的
 // "允许 Azure 服务和资源访问此服务器" —— 放行整个 Azure 平台的出站
-// 流量(不只本订阅),但不放行公网任意来源。唯一的实际屏障是强随机
+// 流量（不只本订阅），但不放行公网任意来源。唯一的实际屏障是强随机
 // 管理员密码。本设计刻意不依赖"消费型 Container Apps 环境有稳定的
-// 可枚举出口 IP"这一未验证前提。要做 IP 级限制需换环境形态(工作负载
-// 配置文件 + VNet + NAT 网关或私有端点),那是前置条件而非延后加固。
+// 可枚举出口 IP"这一未验证前提。要做 IP 级限制需换环境形态（工作负载
+// 配置文件 + VNet + NAT 网关或私有端点），那是前置条件而非延后加固。
 resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2024-08-01' = {
   parent: pg
   name: 'AllowAllAzureServices'
@@ -1129,12 +1124,12 @@ resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@202
   }
 }
 
-// sslmode=require:Flexible Server 强制 TLS,而 createPool() 不设 ssl
-// 选项,行为完全由连接串决定(设计 §6.3 —— 这条需要实测确认)。
+// sslmode=require：Flexible Server 强制 TLS，而 createPool() 不设 ssl
+// 选项，行为完全由连接串决定（设计 §6.3 —— 这条需要实测确认）。
 var databaseUrl = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.fullyQualifiedDomainName}:5432/unidocs?sslmode=require'
 
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'cae-unidocs-dev'
+  name: 'unidocs-env'
   location: location
   properties: {
     appLogsConfiguration: {
@@ -1150,7 +1145,7 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 var blobAccountUrl = storage.properties.primaryEndpoints.blob
 
 // 用户分配的托管标识必须显式告诉 DefaultAzureCredential 用哪个身份。
-// 缺了它容器能启动、能通过健康检查,失败推迟到第一次 Blob 操作 ——
+// 缺了它容器能启动、能通过健康检查，失败推迟到第一次 Blob 操作 ——
 // azure-sdk 的 resolveBlobConfig() 因此把它作为启动期硬性要求。
 var blobEnv = [
   {
@@ -1166,7 +1161,7 @@ var blobEnv = [
 module markdownApp 'container-app.bicep' = {
   name: 'markdown-app'
   params: {
-    name: 'ca-unidocs-markdown'
+    name: 'unidocs-markdown'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
@@ -1174,26 +1169,21 @@ module markdownApp 'container-app.bicep' = {
     image: '${acr.properties.loginServer}/unidocs/azure-markdown:${imageTag}'
     targetPort: 8788
     external: false
-    // minReplicas = 2 是刻意的:阶段 3 证明的是多副本拓扑下的并发
-    // 正确性(条件写 + (doc_type, doc_id, version) 主键),生产上跑
+    // minReplicas = 2 是刻意的：阶段 3 证明的是多副本拓扑下的并发
+    // 正确性（条件写 + (doc_type, doc_id, version) 主键），生产上跑
     // 单副本等于把那份保证退回未验证状态。
     minReplicas: 2
     maxReplicas: 5
     databaseUrl: databaseUrl
     internalToken: internalToken
-    extraEnv: concat([
-      {
-        name: 'PORT'
-        value: '8788'
-      }
-    ], blobEnv)
+    extraEnv: blobEnv
   }
 }
 
 module docxApp 'container-app.bicep' = {
   name: 'docx-app'
   params: {
-    name: 'ca-unidocs-docx'
+    name: 'unidocs-docx'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
@@ -1207,10 +1197,6 @@ module docxApp 'container-app.bicep' = {
     internalToken: internalToken
     extraEnv: concat([
       {
-        name: 'PORT'
-        value: '8789'
-      }
-      {
         name: 'CAS_BASE_URL'
         value: casBaseUrl
       }
@@ -1221,7 +1207,7 @@ module docxApp 'container-app.bicep' = {
 module gatewayApp 'container-app.bicep' = {
   name: 'gateway-app'
   params: {
-    name: 'ca-unidocs-gateway'
+    name: 'unidocs-gateway'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
@@ -1233,15 +1219,11 @@ module gatewayApp 'container-app.bicep' = {
     maxReplicas: 3
     databaseUrl: databaseUrl
     internalToken: internalToken
-    // 网关不碰 Blob,所以没有 blobEnv。它经内部 ingress 的 443 访问
-    // 两个 doc type worker —— 不是容器端口,ingress 负责映射。
+    // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
+    // 两个 doc type worker —— 不是容器端口，ingress 负责映射。
     // 这条路径复用 azure-gateway/src/main.ts 已有的 {TYPE}_WORKER_URL
-    // 解析,不需要注册表服务。
+    // 解析，不需要注册表服务。
     extraEnv: [
-      {
-        name: 'PORT'
-        value: '8787'
-      }
       {
         name: 'MARKDOWN_WORKER_URL'
         value: 'https://${markdownApp.outputs.fqdn}'
@@ -1258,63 +1240,24 @@ module gatewayApp 'container-app.bicep' = {
   }
 }
 
-// 迁移只需要 DATABASE_URL:migrate-cli.ts 只调 createPool() 与
-// runMigrations(pool),从不构造 BlobServiceClient。
-resource migrateJob 'Microsoft.App/jobs@2024-03-01' = {
-  name: 'caj-unidocs-migrate'
-  location: location
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${identity.id}': {}
-    }
-  }
-  properties: {
+// 迁移 Job 必须走模块边界，理由见 infra/migrate-job.bicep 顶部的注释：
+// databaseUrl 由 @secure() pgAdminPassword 拼出，直接写进外层模板的资源
+// 属性会让 what-if 把明文连接串打进终端与日志。
+module migrateJob 'migrate-job.bicep' = {
+  name: 'migrate-job'
+  params: {
+    name: 'unidocs-migrate'
+    location: location
     environmentId: containerEnv.id
-    configuration: {
-      triggerType: 'Manual'
-      replicaTimeout: 600
-      replicaRetryLimit: 1
-      manualTriggerConfig: {
-        parallelism: 1
-        replicaCompletionCount: 1
-      }
-      registries: [
-        {
-          server: acr.properties.loginServer
-          identity: identity.id
-        }
-      ]
-      secrets: [
-        {
-          name: 'database-url'
-          value: databaseUrl
-        }
-      ]
-    }
-    template: {
-      containers: [
-        {
-          name: 'migrate'
-          image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
-          resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
-          }
-          env: [
-            {
-              name: 'DATABASE_URL'
-              secretRef: 'database-url'
-            }
-          ]
-        }
-      ]
-    }
+    identityId: identity.id
+    acrLoginServer: acr.properties.loginServer
+    image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
+    databaseUrl: databaseUrl
   }
 }
 
 output gatewayFqdn string = gatewayApp.outputs.fqdn
-output migrateJobName string = migrateJob.name
+output migrateJobName string = migrateJob.outputs.name
 output postgresFqdn string = pg.properties.fullyQualifiedDomainName
 ```
 
@@ -1377,8 +1320,8 @@ import { IMAGES, generateSecret, imageRef, parseArgs } from "./azure-deploy.mjs"
 
 describe("imageRef", () => {
   test("拼出完整的 ACR 镜像引用", () => {
-    expect(imageRef("crunidocsabc.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
-      "crunidocsabc.azurecr.io/unidocs/azure-markdown:a1b2c3d",
+    expect(imageRef("unidocsacr.azurecr.io", "azure-markdown", "a1b2c3d")).toBe(
+      "unidocsacr.azurecr.io/unidocs/azure-markdown:a1b2c3d",
     );
   });
 });
@@ -1425,7 +1368,7 @@ describe("parseArgs", () => {
   test("默认值指向设计里确定的订阅、资源组与位置", () => {
     const args = parseArgs([]);
     expect(args.subscription).toBe("24c9acbd-c2f5-4ef9-b9a2-486d90208b3e");
-    expect(args.resourceGroup).toBe("rg-unidocs-dev");
+    expect(args.resourceGroup).toBe("Unidocs");
     expect(args.location).toBe("southeastasia");
   });
 
@@ -1480,7 +1423,7 @@ import { randomBytes } from "node:crypto";
 
 const DEFAULTS = {
   subscription: "24c9acbd-c2f5-4ef9-b9a2-486d90208b3e",
-  resourceGroup: "rg-unidocs-dev",
+  resourceGroup: "Unidocs",
   location: "southeastasia",
 };
 
@@ -1551,9 +1494,9 @@ export function parseArgs(argv) {
      --parameters imageTag=<tag> casBaseUrl=<url> pgAdminPassword=<pw> internalToken=<token>
    ```
    解析 output 拿 `gatewayFqdn`、`migrateJobName`。
-6. **迁移**:`az containerapp job start -g <rg> -n caj-unidocs-migrate -o json` 拿执行名,然后每 5 秒轮询
+6. **迁移**:`az containerapp job start -g <rg> -n unidocs-migrate -o json` 拿执行名,然后每 5 秒轮询
    ```
-   az containerapp job execution show -g <rg> --job-name caj-unidocs-migrate -n <exec> --query properties.status -o tsv
+   az containerapp job execution show -g <rg> --job-name unidocs-migrate -n <exec> --query properties.status -o tsv
    ```
    直到 `Succeeded`(继续)或 `Failed`(打印 `az containerapp job logs show` 的输出并以非零退出)。超时上限 10 分钟。
 7. **冒烟**:`node scripts/azure-smoke.mjs --gateway https://<gatewayFqdn>`,非零退出即整体失败。
@@ -1630,7 +1573,7 @@ markdown 的操作是 `setContent`(payload `{ content }`),查询是 `getContent`
  * 固定 id 会在第二次运行时撞 DocExists。
  *
  * 用法:
- *   node scripts/azure-smoke.mjs --gateway https://ca-unidocs-gateway.<region>.azurecontainerapps.io
+ *   node scripts/azure-smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io
  *   node scripts/azure-smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
  *
  * `--skip-cas` 跳过第 3 组(docx 图片路径)。它只用于对本地 Azure 栈
@@ -1734,15 +1677,23 @@ git commit -m "feat(azure): 部署后冒烟脚本"
 **Interfaces:**
 - Consumes: 前七个任务的全部产物
 
-- [ ] **Step 1: 确认 Cloudflare CAS worker 的基地址**
+- [ ] **Step 1: 决定本轮走哪种模式 —— 配 CAS 还是不配 CAS**
 
-docx 的图片路径要经它。它必须是 **CAS worker 自身**的基地址,不是 gateway 的 —— `CasClient` 的 `updateRootRefs` 打的是 `${origin}/_internal/root-refs`,gateway 只路由 `/users/...`,不代理 `/_internal/*`。
+`scripts/azure-deploy.mjs` 的 `--cas-base-url` 是可选的(见设计 §1、§4.3)。截至本计划编写时,`packages/cloudflare-cas/wrangler.toml` 的 `database_id` 仍是占位符 `REPLACE_WITH_CAS_D1_ID` —— **该 worker 从未部署过**,此前所有 CAS 测试跑的都是 Miniflare 本地模拟。两种模式二选一:
+
+**模式 A —— 配 CAS(支持 docx 图片路径)**:前提是 Cloudflare CAS worker 已经真实 `wrangler deploy` 过。它必须是 **CAS worker 自身**的基地址,不是 gateway 的 —— `CasClient` 的 `updateRootRefs` 打的是 `${origin}/_internal/root-refs`,gateway 只路由 `/users/...`,不代理 `/_internal/*`。
 
 ```bash
 cd packages/cloudflare-cas && npx wrangler deployments list 2>&1 | head -20
 ```
 
-拿到形如 `https://unidocs-cas.<account>.workers.dev` 的地址。若 CAS worker 尚未部署到 Cloudflare,先 `npx wrangler deploy` 部署它 —— 没有它 docx 上不了云。
+拿到形如 `https://unidocs-cas.<account>.workers.dev` 的地址,并确认其 `INTERNAL_TOKEN`(`npx wrangler secret list` 只能看到名字,值需要问部署过它的人)。跳到 Step 1b,继续走本任务下方所有步骤。
+
+**验收标准**:设计 §10 全部七条,含第 5 条第三项(docx 图片路径经 Cloudflare CAS)。
+
+**模式 B —— 不配 CAS(当前默认形态,Cloudflare CAS worker 尚未部署时唯一可跑的模式)**:不需要本步的任何操作,`--cas-base-url` 留空即可。`CAS_BASE_URL` 传空串,gateway 与 azure-docx 两侧都当 falsy 处理,docx 的图片路径(`insertImage`/`getImages` 等)404/501,其余功能(markdown 全部操作、docx 除图片外的操作)不受影响。跳到 Step 1b。
+
+**验收标准**:设计 §10 第 1–4、6、7 条,以及第 5 条除「docx 图片路径」外的其余断言(markdown 全流程、docx 文本流程、409 冲突)。**已知缺口(设计 §11)**:`scripts/azure-smoke.mjs` 本轮未随「不配 CAS」形态更新 —— 它对非本地 `--gateway` 无条件拒绝 `--skip-cas`,而 `scripts/azure-deploy.mjs` 的 Step 7 也不会按 `casBaseUrl` 是否为空去决定要不要传这个开关。结果是模式 B 下,`node scripts/azure-deploy.mjs`(不带 `--cas-base-url`)会在 Step 1–6 全部成功之后,于自动跑的 Step 7(冒烟)因第三组断言对着一个 404 的 `/cas/*` 路由失败而报错退出 —— **这是预期中的已知失败,不代表 Step 1–6 建出的部署本身有问题**。在该缺口修好之前,模式 B 的验收流程是:接受 `scripts/azure-deploy.mjs` 以非零退出码结束,但确认失败发生在 `[7/7] smoke testing` 且日志显示只有 CAS 相关断言(以及因此级联失败的 409 冲突断言,因为它假设了 CAS 组把版本推到了 3)未通过;随后按本任务 Step 4–5 分别核对资源与迁移是否成功,再单独执行 Step 6 的验收(它同样会在 CAS 组失败,读日志确认失败面与预期一致即可)。
 
 - [ ] **Step 1b: 确认宿主机已有构建产物(preflight 已自检,此步仅作确认)**
 
@@ -1759,18 +1710,28 @@ test -f packages/cas/dist/index.js && echo "cas dist ok"
 
 - [ ] **Step 2: 跑第一次完整部署**
 
+模式 A(配 CAS):
+
 ```bash
 # --internal-token 必须等于该 CAS worker 自己的 INTERNAL_TOKEN。
 # 确认它在 Cloudflare 侧存在:cd packages/cloudflare-cas && npx wrangler secret list
 node scripts/azure-deploy.mjs \
-  --cas-base-url <上一步拿到的地址> \
+  --cas-base-url <Step 1 拿到的地址> \
   --internal-token <与该 CAS worker 相同的 INTERNAL_TOKEN> \
   2>&1 | tee /tmp/azure-deploy-first.log
 ```
 
-(`tee` 是为了 Step 2b 能回头搜这份输出里有没有密钥回显。)
-
 `--internal-token` **不能省、也不能让脚本随便生成**:CAS worker 对每个请求校验它,两侧不同源会让 docx 的图片路径(验收第 5 条那项跨云断言)全部 401。首次部署之后该值进了 Key Vault,后续重跑不必再传。
+
+模式 B(不配 CAS):
+
+```bash
+node scripts/azure-deploy.mjs 2>&1 | tee /tmp/azure-deploy-first.log
+```
+
+不传 `--internal-token` 时脚本会自动生成一个仅供 Azure 内部使用的 token(`decideInternalTokenAction()` 的 `generate` 分支,见设计 §5),并在日志里醒目提示:该 token 只对本次 Azure 部署有效,将来接入 Cloudflare CAS worker 时必须删掉 Key Vault 里的 `internal-token` secret、用 `--internal-token <与 Cloudflare 相同的值>` 重新部署。**按 Step 1 模式 B 的说明,这次运行预期在 Step 7 失败**——那是已知缺口,不是本步操作错误。
+
+(两种模式都用 `tee` 是为了 Step 2b 能回头搜这份输出里有没有密钥回显。)
 
 这一步会:注册 RP(若未注册)、建资源组、跑 bootstrap、播种密钥、构建推送四个镜像、跑 main、触发迁移、跑冒烟。
 
@@ -1779,7 +1740,7 @@ node scripts/azure-deploy.mjs \
 若在迁移 Job 处失败,先看它的日志:
 
 ```bash
-az containerapp job logs show -g rg-unidocs-dev --name caj-unidocs-migrate --container migrate
+az containerapp job logs show -g Unidocs --name unidocs-migrate --container migrate
 ```
 
 若失败原因是 TLS/`sslmode`(设计 §6.3 标注为待实测的那条),**这是已知的可能性,不是意外**:退路是在 `packages/azure-sdk/src/pool.ts` 的 `createPool()` 中按连接串里的 `sslmode` 显式构造 `ssl` 选项。改完回到 Task 1 的验证步骤重跑 `pnpm test` 与 `pnpm test:local`,再重跑本步。
@@ -1809,7 +1770,7 @@ pnpm build && pnpm typecheck && pnpm test && pnpm test:local
 - [ ] **Step 4: 验收第 3 条 —— 资源齐全**
 
 ```bash
-az resource list -g rg-unidocs-dev --query "[].{name:name,type:type}" -o table
+az resource list -g Unidocs --query "[].{name:name,type:type}" -o table
 ```
 
 对照设计 §4.1 的资源清单逐项核对:ACR、Log Analytics、Key Vault、Storage、UAMI、Postgres、Container Apps 环境、三个 Container App、迁移 Job。
@@ -1817,7 +1778,7 @@ az resource list -g rg-unidocs-dev --query "[].{name:name,type:type}" -o table
 - [ ] **Step 5: 验收第 4 条 —— 表结构正确**
 
 ```bash
-az containerapp job logs show -g rg-unidocs-dev --name caj-unidocs-migrate --container migrate | tail -5
+az containerapp job logs show -g Unidocs --name unidocs-migrate --container migrate | tail -5
 ```
 
 预期:含 `migrations applied`。
@@ -1825,25 +1786,28 @@ az containerapp job logs show -g rg-unidocs-dev --name caj-unidocs-migrate --con
 - [ ] **Step 6: 验收第 5 条 —— 冒烟(已在 Step 2 内跑过,这里单独复跑一次确认可重复)**
 
 ```bash
-GW=$(az containerapp show -g rg-unidocs-dev -n ca-unidocs-gateway --query properties.configuration.ingress.fqdn -o tsv)
+GW=$(az containerapp show -g Unidocs -n unidocs-gateway --query properties.configuration.ingress.fqdn -o tsv)
 node scripts/azure-smoke.mjs --gateway "https://$GW"
 ```
 
-预期:`all smoke assertions passed`,退出码 0。
+模式 A 预期:`all smoke assertions passed`,退出码 0。
+
+模式 B 预期(见 Step 1 的已知缺口):退出码非零,失败集中在「docx 图片路径」组以及依赖它推进版本号的 409 冲突断言;markdown 全流程与 docx 文本流程(create/apply/query/export)仍应全部 `ok`。逐条核对失败原因确实是「CAS 未配置导致 `/cas/*` 404」而非其他 —— 出现非预期的失败(比如 markdown 或 docx 文本流程本身失败)仍然是真实回归,要按常规流程排查。
 
 - [ ] **Step 7: 验收第 6 条 —— 幂等**
 
 ```bash
 # 第二次不必再传 --internal-token:它已在 Key Vault 里,脚本读回既有值。
-node scripts/azure-deploy.mjs --cas-base-url <地址> 2>&1 | tee /tmp/second-deploy.log
+# 模式:与 Step 2 用的是同一种(模式 A 带 --cas-base-url <地址>,模式 B 不带)。
+node scripts/azure-deploy.mjs [--cas-base-url <地址>] 2>&1 | tee /tmp/second-deploy.log
 ```
 
 三条都要成立:
 1. 两次 `what-if` 输出里**没有** `Create`、**没有** `Delete`;`Modify` **仅允许**出现在下面两个 **write-only** 属性上:
    - `Microsoft.App/containerApps` 的 `configuration.secrets[].value`
    - `Microsoft.DBforPostgreSQL/flexibleServers` 的 `administratorLoginPassword`
-2. 冒烟仍然全绿
-3. Postgres 密码未被重置 —— 由第 2 条间接证明(密码若变了,Container App 的连接串与实际密码就对不上,冒烟会失败)
+2. 冒烟仍然全绿(模式 A)/ 仍然只在 Step 6 记录的同一批 CAS 相关断言上失败、其余不变(模式 B,见 Step 1 的已知缺口)
+3. Postgres 密码未被重置 —— 由第 2 条间接证明(密码若变了,markdown/docx 文本流程连不上库,两种模式下都会失败,不止 CAS 那几条)
 
 这两个属性上的 `Modify` 是**预期的、正确的**:RP 的 GET 不回传 write-only 属性的值,what-if 读不到当前值,只能把"模板里有、当前读不到"报成差异。要求它们也干净,等于要求把密钥从模板里挪走 —— 那是把一个正确的模板改坏。
 
@@ -1856,7 +1820,7 @@ node scripts/azure-deploy.mjs --cas-base-url <地址> 2>&1 | tee /tmp/second-dep
 本步保留为**部署后的复核**:Container Apps 的 `secrets[].value` 在设计上就是承载敏感值的字段,大概率被 RP 标注为敏感,但那个标注状态查不到,只能部署后实测。
 
 ```bash
-az deployment operation group list -g rg-unidocs-dev -n main -o json \
+az deployment operation group list -g Unidocs -n main -o json \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print('HIT' if 'postgres://' in json.dumps(d) else 'clean')"
 ```
 
@@ -1867,8 +1831,8 @@ az deployment operation group list -g rg-unidocs-dev -n main -o json \
 - [ ] **Step 8: 验收第 7 条 —— 没有绕开策略**
 
 ```bash
-az acr show -n $(az acr list -g rg-unidocs-dev --query "[0].name" -o tsv) --query adminUserEnabled -o tsv
-az storage account show -g rg-unidocs-dev -n $(az storage account list -g rg-unidocs-dev --query "[0].name" -o tsv) --query allowSharedKeyAccess -o tsv
+az acr show -n $(az acr list -g Unidocs --query "[0].name" -o tsv) --query adminUserEnabled -o tsv
+az storage account show -g Unidocs -n $(az storage account list -g Unidocs --query "[0].name" -o tsv) --query allowSharedKeyAccess -o tsv
 ```
 
 两条都必须输出 `false`。任一为 `true` 说明部署是靠绕开策略才成功的,该结果不算通过。
@@ -1884,7 +1848,7 @@ az storage account show -g rg-unidocs-dev -n $(az storage account list -g rg-uni
 - **本轮明确不做的四项**:CI/CD、`azure-cas`、`azure-markdown`/`azure-docx` 合并、VNet 私有端点
 - **一条必须写进去的知情提示**:docx 依赖 Cloudflare CAS worker,因此**当前的部署形态不可私有化交付**,要等 `azure-cas` 落地
 - 成本粗估与 `minReplicas` 这个旋钮的含义(设计 §4.2:doc type 的 min 2 是为了让多副本并发正确性在生产上持续被验证,下调即放弃该验证)
-- 拆除方式:`az group delete -n rg-unidocs-dev --yes`
+- 拆除方式:`az group delete -n Unidocs --yes`
 
 不要把任何密钥、连接串、订阅 ID 之外的敏感值写进 README。
 

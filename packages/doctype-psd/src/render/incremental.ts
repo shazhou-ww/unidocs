@@ -6,8 +6,15 @@ import { foldRange } from "./composite.js";
 import { allTiles, tilesForRect, tileKey, tileRegion } from "./tile-grid.js";
 import { opDirtyRect, opActiveIndex } from "./dirty-rect.js";
 import { resolvePixels, isRef, type PixelRef } from "./pixel-source.js";
+import { ByteLru } from "./byte-lru.js";
 
 type Rect = [number, number, number, number];
+
+/** Default byte budget for EACH of the two tile-level caches. Sized to hold a
+ *  full tile grid for a large (roughly 4000x4000) document, so the common case
+ *  keeps the old unbounded behaviour verbatim while a pathological canvas can
+ *  no longer grow without limit. Hosts with a tighter ceiling pass their own. */
+export const DEFAULT_TILE_CACHE_BYTES = 64 * 1024 * 1024;
 
 /** Stateful tile-incremental compositor. composite() is byte-identical to
  *  render(doc); applyOp recomputes only tiles covering the op's dirty rect.
@@ -22,18 +29,33 @@ export class IncrementalCompositor {
   #doc: PsdDoc;
   readonly #tileSize: number;
   readonly #ctx?: RenderCtx;
-  readonly #cache = new Map<string, Pixels>();
+  // Both caches are byte-bounded. They used to be plain unbounded Maps, which
+  // is fine for one screenful in a browser tab but not somewhere with a hard
+  // memory ceiling: a full tile grid is W*H*4 bytes of finished tiles plus as
+  // much again in checkpoints (56 MB for a 3556x2000 document, and unbounded
+  // as canvases grow). Everything in them is reconstructible, so evicting is
+  // purely a speed/memory trade — see `ByteLru`.
+  readonly #cache: ByteLru<Pixels>;
   // Per-tile accumulator of layers [0, #activeIndex), sized to the tile region.
-  readonly #belowChk = new Map<string, Uint8ClampedArray>();
+  readonly #belowChk: ByteLru<Uint8ClampedArray>;
   #activeIndex = 0;
   #belowRebuilds = 0;
 
-  constructor(doc: PsdDoc, opts: { tileSize?: number; ctx?: RenderCtx } = {}) {
+  constructor(doc: PsdDoc, opts: { tileSize?: number; ctx?: RenderCtx; tileCacheBytes?: number; checkpointBytes?: number } = {}) {
     this.#doc = doc;
     this.#tileSize = opts.tileSize ?? 256;
     this.#ctx = opts.ctx;
+    this.#cache = new ByteLru(opts.tileCacheBytes ?? DEFAULT_TILE_CACHE_BYTES, (p) => p.data.length);
+    this.#belowChk = new ByteLru(opts.checkpointBytes ?? DEFAULT_TILE_CACHE_BYTES, (b) => b.length);
     this.#cachedW = doc.canvas.width;
     this.#cachedH = doc.canvas.height;
+  }
+
+  /** Bytes currently held by the finished-tile and checkpoint caches. Exposed
+   *  so a memory-constrained host (an Editor DO) can observe its own footprint
+   *  instead of inferring it. */
+  get cacheBytes(): { tiles: number; checkpoints: number } {
+    return { tiles: this.#cache.sizeBytes, checkpoints: this.#belowChk.sizeBytes };
   }
 
   get doc(): PsdDoc { return this.#doc; }

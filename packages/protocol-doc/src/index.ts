@@ -1,0 +1,60 @@
+export {
+  DeltaRejectedError,
+  DocExistsError,
+  DocNotFoundError,
+  RootRefsError,
+  StorageCorruptError,
+  VersionConflictError,
+} from "./errors.js";
+
+export { SValueContentType } from "./http.js";
+export type {
+  ApplyResult,
+  CreateResult,
+  DocApplyRequest,
+  DocApplyResponse,
+  DocCreateRequest,
+  DocCreateResponse,
+  DocErrorResponse,
+  DocExportRequest,
+  DocExportResponse,
+  DocHistoryRequest,
+  DocHistoryResponse,
+  DocInitFromHashRequest,
+  DocInitFromHashResponse,
+  DocIrRequest,
+  DocIrResponse,
+  DocNegotiatedResponse,
+  DocQueryRequest,
+  DocQueryResponse,
+  DocReadBlobRequest,
+  DocReadBlobResponse,
+  DocResetOperatorRequest,
+  DocResetOperatorResponse,
+  DocResolveBlobRequest,
+  DocResolveBlobResponse,
+  DocRollbackRequest,
+  DocRollbackResponse,
+  DocRunOperatorRequest,
+  DocRunOperatorResponse,
+  DocSessionPath,
+  DocSnapshotRequest,
+  DocSnapshotResponse,
+  DocStructuredRequestBody,
+  HistoryEntry,
+  RollbackResult,
+  SnapshotRef,
+} from "./http.js";
+
+export {
+  docInternalRoutes,
+  docRoutes,
+  matchDocInternalRoute,
+  matchDocRoute,
+} from "./routes.js";
+export type {
+  DocInternalOperation,
+  DocInternalRoute,
+  DocOperation,
+  DocRoute,
+} from "./routes.js";

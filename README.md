@@ -314,8 +314,8 @@ Set the Doc worker's own `SERVICE_ACCESS_KEY` and outbound `CAS_ACCESS_KEY`.
 
 6. Azure side — no Durable Objects, so no DO bindings to wire up. Instead:
    - New `packages/azure-mytype/` (`package.json`, `tsconfig.json`, `src/main.ts`, `scripts/bundle.mjs`) — copy `packages/azure-docx` as the template rather than `packages/azure-markdown`: its `bundle.mjs` explicitly externalizes only `pg`/`@azure/storage-blob` instead of using `packages: "external"`, which matters the moment your doc type pulls in a real (non-`@unidocs/*`) npm dependency that isn't also a root `package.json` devDependency — `packages: "external"` would leave that import unresolvable at runtime. `src/main.ts` should differ from the docx entry by nothing but the doc type string and the default port; if it needs more than that, the gap belongs in `@unidocs/azure-sdk`, not in the entry point.
-   - Add a `mytype: <port>` row to `AZURE_DOC_TYPE_PORT_BASE` in `scripts/azure-ports.mjs` (pick a base at least `AZURE_PORT_STRIDE` past the last one).
-   - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `scripts/azure-runtime.mjs`.
+   - Add a `mytype: <port>` row to `AZURE_DOC_TYPE_PORT_BASE` in `azure/local/ports.mjs` (pick a base at least `AZURE_PORT_STRIDE` past the last one).
+   - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `azure/local/runtime.mjs`.
    - Add `{ "path": "packages/azure-mytype" }` to the root `tsconfig.json`'s `references`.
    - Provision a service-owned database and migration job, then include its URL
      and access key in Gateway's static registry.
@@ -354,22 +354,24 @@ Start `pnpm dev docx` in another terminal first, or set `CAS_BASE_URL`. The
 probe authenticates with the dedicated CAS key and calls the tenant-scoped CAS
 service URL directly.
 
-The Azure ports are intentionally offset from Miniflare, so both stacks can run
-side by side. `Ctrl+C` stops Node child processes; run `pnpm azure:down` to stop
-the Postgres container.
+Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side, which `docx` on Azure now requires. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
+
+**First run only:** if `postgres:18-alpine` isn't cached locally yet, `docker compose up` pulls it (~100 MB) before anything else can start; every run after that is instant. There's no equivalent cost for Azurite — it installed with `pnpm install` like any other dependency.
 
 ### Tests
 
 | Command | Coverage |
 |---|---|
-| `pnpm test` | package tests under `packages/*/tests` |
-| `pnpm test:local` | script tests and HTTP integration tests for both local stacks |
-| treespec | clean-install YAML scenarios under `tests/treespec` |
+| `pnpm test` | 各包 `packages/*/tests` 单测 |
+| `pnpm test:local` | `tests/unit`（脚本单测）+ `tests/integration/cloudflare` + `tests/integration/shared`（起 Miniflare 的 HTTP） |
+| `pnpm test:azure` | `tests/integration/azure`（起本地 Azure 栈的 HTTP，需要 Docker） |
+| treespec | `tests/treespec/`（容器里从干净安装跑 YAML 树；镜像见同目录 `Dockerfile`） |
 
-Do not run `pnpm test:local`, `pnpm test`, and `pnpm dev --azure` concurrently.
-They share the local Postgres server process and Azurite port even though each
-service uses its own database and Blob containers.
+`pnpm test:azure` (via `tests/integration/azure/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `packages/azure-sdk/docker-compose.yml` Postgres container (host port `:5433`, unnamed default compose project) and each spawn their own `azurite-blob` process on `:10000`. `pnpm dev --azure` starts the identical stack for interactive use.
 
+**Do not run `pnpm test:azure`, `pnpm -r test`, and `pnpm dev --azure` at the same time.** They still share the Postgres container: whichever one tears it down first (`docker compose ... down -v`) pulls the database out from under whichever else is still using it, mid-test or mid-session. They also all bind `:10000` for their own `azurite-blob` process, so a second one starting up simply fails to claim the port. Run them one at a time, or stop `pnpm dev --azure` before running either test command.
+
+Docker must be running before invoking `pnpm test:azure` or `pnpm -r test` for the first time — both will start the Postgres container themselves and run migrations against it, but the Docker daemon itself has to already be up. The first-run Postgres image pull noted above applies here too, and both entry points print an explicit notice before it happens so a slow pull doesn't read as a hang. `pnpm test:local` needs no Docker at all — it no longer runs the Azure integration tests.
 ## Workspace package resolution
 
 Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry a

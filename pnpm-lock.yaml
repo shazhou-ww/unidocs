@@ -491,6 +491,50 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/protocol-cas:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/protocol-doc:
+    dependencies:
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unidocs/protocol-cas':
+        specifier: workspace:*
+        version: link:../protocol-cas
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/protocol-gateway:
+    dependencies:
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unidocs/protocol-cas':
+        specifier: workspace:*
+        version: link:../protocol-cas
+      '@unidocs/protocol-doc':
+        specifier: workspace:*
+        version: link:../protocol-doc
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/psd-client:
     dependencies:
       '@unidocs/doctype-psd':

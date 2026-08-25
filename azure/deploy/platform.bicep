@@ -1,46 +1,29 @@
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
-param nameSuffix string = uniqueString(resourceGroup().id)
 
-@description('镜像 tag，由部署脚本传入（git short sha）。不用 latest —— Container Apps 需要镜像引用变化才会滚动 revision。')
+@description('镜像 tag，由部署脚本传入（git short sha）。这里只有 migrateJob 用得到。')
 param imageTag string
 
-@description('Cloudflare CAS worker 自身的基地址（不是 gateway 的）。过渡形态，阶段 4 删除。')
-param casBaseUrl string
+param pgAdminUser string = 'unidocs'
 
 @secure()
 param pgAdminPassword string
 
-@secure()
-param casAccessKey string
-
-@secure()
-param markdownAccessKey string
-
-@secure()
-param docxAccessKey string
-
-param pgAdminUser string = 'unidocs'
-
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-unidocs-dev'
+  name: 'unidocs-identity'
 }
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: 'crunidocs${nameSuffix}'
-}
-
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: 'stunidocs${nameSuffix}'
+  name: 'unidocsacr'
 }
 
 resource law 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
-  name: 'log-unidocs-dev'
+  name: 'unidocs-logs'
 }
 
 resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
-  name: 'psql-unidocs-${nameSuffix}'
+  name: 'unidocs-pg'
   location: location
   sku: {
     name: 'Standard_B1ms'
@@ -67,6 +50,8 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   }
 }
 
+// P0 边界：Gateway 与每个 Doc service 各有独占的数据库。网关不再与
+// doc-type worker 共享同一个 schema —— 目录表归网关、会话表归服务。
 resource gatewayDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
   parent: pg
   name: 'unidocs_gateway'
@@ -99,13 +84,15 @@ resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@202
 
 // sslmode=require：Flexible Server 强制 TLS，而 createPool() 不设 ssl
 // 选项，行为完全由连接串决定（设计 §6.3 —— 这条需要实测确认）。
+// 只在这里拼一次，供下面的 migrateJob 用 —— 不从别的模板 output 传入，
+// 也不把它自己 output 出去：那会把明文密码写进部署历史。
 var databaseOrigin = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.fullyQualifiedDomainName}:5432'
 var gatewayDatabaseUrl = '${databaseOrigin}/${gatewayDatabase.name}?sslmode=require'
 var markdownDatabaseUrl = '${databaseOrigin}/${markdownDatabase.name}?sslmode=require'
 var docxDatabaseUrl = '${databaseOrigin}/${docxDatabase.name}?sslmode=require'
 
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'cae-unidocs-dev'
+  name: 'unidocs-env'
   location: location
   properties: {
     appLogsConfiguration: {
@@ -118,116 +105,13 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-var blobAccountUrl = storage.properties.primaryEndpoints.blob
-
-// 用户分配的托管标识必须显式告诉 DefaultAzureCredential 用哪个身份。
-// 缺了它容器能启动、能通过健康检查，失败推迟到第一次 Blob 操作 ——
-// azure-sdk 的 resolveBlobConfig() 因此把它作为启动期硬性要求。
-var blobEnv = [
-  {
-    name: 'BLOB_ACCOUNT_URL'
-    value: blobAccountUrl
-  }
-  {
-    name: 'AZURE_CLIENT_ID'
-    value: identity.properties.clientId
-  }
-]
-
-module markdownApp 'container-app.bicep' = {
-  name: 'markdown-app'
-  params: {
-    name: 'ca-unidocs-markdown'
-    location: location
-    environmentId: containerEnv.id
-    identityId: identity.id
-    acrLoginServer: acr.properties.loginServer
-    image: '${acr.properties.loginServer}/unidocs/azure-markdown:${imageTag}'
-    targetPort: 8788
-    external: false
-    // minReplicas = 2 是刻意的：阶段 3 证明的是多副本拓扑下的并发
-    // 正确性（条件写 + (doc_type, doc_id, version) 主键），生产上跑
-    // 单副本等于把那份保证退回未验证状态。
-    minReplicas: 2
-    maxReplicas: 5
-    databaseUrl: markdownDatabaseUrl
-    serviceAccessKey: markdownAccessKey
-    extraEnv: blobEnv
-  }
-}
-
-module docxApp 'container-app.bicep' = {
-  name: 'docx-app'
-  params: {
-    name: 'ca-unidocs-docx'
-    location: location
-    environmentId: containerEnv.id
-    identityId: identity.id
-    acrLoginServer: acr.properties.loginServer
-    image: '${acr.properties.loginServer}/unidocs/azure-docx:${imageTag}'
-    targetPort: 8789
-    external: false
-    minReplicas: 2
-    maxReplicas: 5
-    databaseUrl: docxDatabaseUrl
-    serviceAccessKey: docxAccessKey
-    casAccessKey: casAccessKey
-    extraEnv: concat([
-      {
-        name: 'CAS_BASE_URL'
-        value: casBaseUrl
-      }
-    ], blobEnv)
-  }
-}
-
-module gatewayApp 'container-app.bicep' = {
-  name: 'gateway-app'
-  params: {
-    name: 'ca-unidocs-gateway'
-    location: location
-    environmentId: containerEnv.id
-    identityId: identity.id
-    acrLoginServer: acr.properties.loginServer
-    image: '${acr.properties.loginServer}/unidocs/azure-gateway:${imageTag}'
-    targetPort: 8787
-    external: true
-    minReplicas: 1
-    maxReplicas: 3
-    databaseUrl: gatewayDatabaseUrl
-    casAccessKey: casAccessKey
-    docServicesJson: string({
-      markdown: {
-        serviceId: 'markdown'
-        url: 'https://${markdownApp.outputs.fqdn}'
-        accessKey: markdownAccessKey
-      }
-      docx: {
-        serviceId: 'docx'
-        url: 'https://${docxApp.outputs.fqdn}'
-        accessKey: docxAccessKey
-      }
-    })
-    // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
-    // 两个 doc type worker —— 不是容器端口，ingress 负责映射。
-    extraEnv: [
-      {
-        name: 'CAS_BASE_URL'
-        value: casBaseUrl
-      }
-      // This template deploys the explicitly named dev stack. Production
-      // deployments must omit this and provide a real Gateway identity resolver.
-      {
-        name: 'INSECURE_PATH_IDENTITY'
-        value: 'true'
-      }
-    ]
-  }
-}
-
-// 迁移 Job 必须走模块边界，理由见 infra/migrate-job.bicep 顶部的注释：
+// 迁移 Job 必须走模块边界，理由见 azure/deploy/migrate-job.bicep 顶部的注释：
 // databaseUrl 由 @secure() pgAdminPassword 拼出，直接写进外层模板的资源
 // 属性会让 what-if 把明文连接串打进终端与日志。
+//
+// 三个 Job 对应三个独占数据库：网关的目录 schema 走 azure-gateway 自己的
+// 迁移镜像（dist/migrate-cli.js），两个 Doc service 复用 azure-sdk 的
+// 会话 schema 迁移镜像。
 module gatewayMigrateJob 'migrate-job.bicep' = {
   name: 'gateway-migrate-job'
   params: {
@@ -267,10 +151,9 @@ module docxMigrateJob 'migrate-job.bicep' = {
   }
 }
 
-output gatewayFqdn string = gatewayApp.outputs.fqdn
+output postgresFqdn string = pg.properties.fullyQualifiedDomainName
 output migrateJobNames array = [
   gatewayMigrateJob.outputs.name
   markdownMigrateJob.outputs.name
   docxMigrateJob.outputs.name
 ]
-output postgresFqdn string = pg.properties.fullyQualifiedDomainName

@@ -8,14 +8,14 @@ ENV CI=true
 # option; Postgres has to live in the image itself. See
 # `tests/treespec/spec.yaml` for the runtime side of this (starting the
 # server and creating the unidocs role/database) and
-# `scripts/azure-runtime.mjs`'s `postgres: "external"` option for how
+# `azure/local/runtime.mjs`'s `postgres: "external"` option for how
 # `startAzureRuntime()` connects to it instead of shelling out to compose.
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get install -y curl postgresql \
     && rm -rf /var/lib/apt/lists/*
 
 # treespec 的容器里没有 docker，所以本地 Azure 栈的 Postgres 只能装在
-# 这个镜像里。端口 5433 与 docker-compose.azure.yml 的宿主机映射一致，
+# 这个镜像里。端口 5433 与 packages/azure-sdk/docker-compose.yml 的宿主机映射一致，
 # 这样 startAzureRuntime() 的连接串两种模式下完全相同。
 ENV PGDATA=/var/lib/postgresql/data
 RUN mkdir -p "$PGDATA" && chown postgres:postgres "$PGDATA"

@@ -79,10 +79,18 @@ export const DOC_TYPES = {
     editorClass: "PsdEditor",
     operator: "PSD_OPERATOR",
     operatorClass: "PsdOperator",
+    // 8790, not 8791: CAS_PORT is 8791 (see its comment above — 8787-8790
+    // are taken by gateway and the doc types), and `startLocalRuntime`
+    // merges `ports.cas = CAS_PORT` into the same map it port-checks.
+    // Putting psd on 8791 would collide with CAS.
     port: 8790,
     // Optional dev-only frontend: a Vite app started alongside the worker,
     // with GATEWAY_URL injected so it proxies API calls to the gateway.
     web: { dir: "packages/web-psd", port: 5173 },
+    // Optional .dev.vars file merged into this worker's bindings (secrets:
+    // the Operator's LLM_API_KEY / LLM_BASE_URL / LLM_MODEL). Not committed —
+    // see .dev.vars.example. Read by `readDevVars` in local-runtime.mjs.
+    devVars: "packages/cloudflare-psd/.dev.vars",
   },
 };
 
@@ -139,8 +147,12 @@ export function docServicesJson(docTypes, host, ports) {
   }])));
 }
 
-/** Miniflare worker configs: the gateway always, then one per selected type. */
-export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = false }) {
+/**
+ * Miniflare worker configs: the gateway always, then one per selected type.
+ * `extraBindings` maps a doc type name to additional bindings (e.g. secrets
+ * loaded from its .dev.vars) merged into that worker only.
+ */
+export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = false, extraBindings = {} }) {
   const workers = [
     {
       name: GATEWAY_WORKER,
@@ -194,6 +206,7 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       bindings: {
         CAS_ACCESS_KEY,
         SERVICE_ACCESS_KEY: docServiceAccessKey(name),
+        ...(extraBindings[name] ?? {}),
       },
       durableObjects: {
         [spec.editor]: { className: spec.editorClass, useSQLite: true },
