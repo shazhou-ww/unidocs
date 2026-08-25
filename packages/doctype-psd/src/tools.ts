@@ -46,7 +46,7 @@ export const tools: Record<string, AgentToolDefinition> = {
   },
   getPreview: {
     name: "query_getPreview",
-    description: "READ (see the image). {} = whole canvas; {rect:[top,left,bottom,right]} = zoom into an area; {layerId} = one layer. Look here after edits to verify. Downscaled to maxSize (default 768, rect up to 1536).",
+    description: "READ (see the image). {} = whole canvas; {rect:[top,left,bottom,right]} = zoom into an area; {layerId} = one layer. Look here after edits to verify. Downscaled to maxSize (default 768, rect up to 1536), and shrunk further when needed to keep the image transferable — on a detailed document the whole canvas comes back smaller than you asked, so use rect to actually inspect detail. The returned width/height are what you got.",
     inputSchema: {
       type: "object",
       properties: {
