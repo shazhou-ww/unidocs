@@ -46,7 +46,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
-// cas / snapshots 两个容器不在这里声明:ports-blob.ts 已经
+// 每个 Doc service 的 roots / snapshots 容器不在这里声明:ports-blob.ts 已经
 // createIfNotExists() 懒建(packages/azure-sdk/src/ports-blob.ts:19,21),
 // 而 Storage Blob Data Contributor 角色包含建容器的权限。
 // 在这里再声明一遍会造成两个真相来源。

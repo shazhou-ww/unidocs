@@ -19,7 +19,6 @@
  *     `/reset` to truncate them.
  */
 
-import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -34,10 +33,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const PROBE_WORKER = "unidocs-port-probe";
 const BYTES_KEY = "$bytes";
 
-// Fixed identity: the contract's DocIndex tests address the document as
-// ("text", "doc-1") owned by "user-1", and D1DocIndex keys its writes off the
-// identity it was constructed with. Isolation therefore rides on a separate
-// header (X-Probe-Instance), not on the doc id.
+// Fixed request metadata; X-Probe-Instance provides fresh DO-local state.
 const DOC_TYPE = "text";
 const DOC_ID = "doc-1";
 const USER_ID = "user-1";
@@ -102,17 +98,6 @@ async function bundleProbeWorker() {
   return result.outputFiles[0].text;
 }
 
-async function migrateSnapshotsDb() {
-  const db = await mf.getD1Database("SNAPSHOTS_DB", PROBE_WORKER);
-  const sql = await readFile(
-    join(ROOT, "packages/cloudflare-gateway/migrations/0001_init.sql"),
-    "utf8",
-  );
-  for (const statement of sql.split(";").map((s) => s.trim()).filter(Boolean)) {
-    await db.exec(statement);
-  }
-}
-
 /** One port method call: POST to the probe, revive errors as real classes. */
 async function call(instance, port, method, args) {
   const res = await mf.dispatchFetch("http://probe/call", {
@@ -153,8 +138,6 @@ const PORT_METHODS = {
   ],
   snapshots: ["get", "put"],
   blobs: ["putIfAbsent", "get"],
-  index: ["register", "touch", "recordSnapshot"],
-  indexQuery: ["list", "snapshots"],
 };
 
 function makeCfPorts(instance) {
@@ -167,12 +150,9 @@ function makeCfPorts(instance) {
       ]),
     );
   }
-  // The real Cloudflare UnitOfWork, wrapping the same two proxied ports the
-  // contract will drive. It runs the callback and nothing else — see
-  // DirectUnitOfWork for why that is the strongest thing available here.
+  // The real Cloudflare UnitOfWork over the proxied delta log.
   ports.unitOfWork = new DirectUnitOfWork({
     deltas: ports.deltas,
-    index: ports.index,
   });
   return ports;
 }
@@ -194,7 +174,6 @@ beforeAll(async () => {
           durableObjects: {
             PROBE: { className: "PortProbe", useSQLite: true },
           },
-          d1Databases: { SNAPSHOTS_DB: "unidocs-snapshots" },
           r2Buckets: { CAS: "unidocs-cas" },
         },
       ],
@@ -202,7 +181,6 @@ beforeAll(async () => {
   );
 
   await mf.ready;
-  await migrateSnapshotsDb();
 }, 60_000);
 
 afterAll(async () => {

@@ -40,8 +40,8 @@ export interface OperatorSessionConfig {
   instructions: string;
   /** LLM provider function: takes messages + tools, returns completion. */
   llmProvider: (messages: unknown[], tools: unknown[]) => Promise<unknown>;
-  /** Factory to get an Editor stub for a given docId. */
-  getEditorStub: (docId: string) => EditorStubLike;
+  /** Factory to get an Editor stub for a given sessionId. */
+  getEditorStub: (sessionId: string) => EditorStubLike;
 }
 
 /** Outcome of one `run()` call — mirrors the JSON body the DO used to return. */
@@ -68,11 +68,11 @@ export class OperatorSession {
   }
 
   /**
-   * Run one ReAct loop turn for `docId`, seeded with `instruction`.
+  * Run one ReAct loop turn for `sessionId`, seeded with `instruction`.
    * Mirrors `OperatorDO#fetch`'s `/_internal/run` body from before the
    * server-core split, verbatim in behavior.
    */
-  async run(docId: string, instruction: string): Promise<OperatorRunOutcome> {
+  async run(sessionId: string, instruction: string): Promise<OperatorRunOutcome> {
     this.#session.push({ role: "user", content: instruction });
 
     const tools = Object.values(this.#config.tools).map((t) => ({
@@ -110,7 +110,7 @@ export class OperatorSession {
 
         let result: unknown;
         try {
-          const editorStub = this.#config.getEditorStub(docId);
+          const editorStub = this.#config.getEditorStub(sessionId);
 
           if (toolName.startsWith("query_")) {
             // Query operation — track version from response.

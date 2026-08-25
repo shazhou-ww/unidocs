@@ -1,9 +1,9 @@
 /**
  * CAS HTTP client for @unidocs/cas-client.
  *
- * Public mode talks to Gateway (`baseUrl` + optional Bearer).
+ * Public mode talks to Gateway (`baseUrl` + user identity + optional Bearer).
  * Editor mode talks to the CAS worker through a fetch-capable binding
- * (`fetcher` + `X-Internal-Token` + `X-User-Id`) — see `HttpFetcher`,
+ * (`fetcher` + `X-Internal-Token` + `X-Tenant-Id`) — see `HttpFetcher`,
  * which is structural so this package stays cloud-neutral (no Cloudflare
  * `Fetcher` type import). The wire types live in @unidocs/http-protocol.
  */
@@ -30,7 +30,7 @@ interface CasLeaseResult {
 
 function isInternalConfig(
   config: CasClientConfig,
-): config is { fetcher: HttpFetcher; userId: string; internalToken: string } {
+): config is { fetcher: HttpFetcher; tenantId: string; accessKey: string } {
   return "fetcher" in config;
 }
 
@@ -53,14 +53,16 @@ export class CasClient implements CasReadContext {
   }
 
   private casUrl(path: string): string {
-    return `${this.origin()}/users/${this.config.userId}/cas${path}`;
+    return isInternalConfig(this.config)
+      ? `${this.origin()}/tenants/${this.config.tenantId}/cas${path}`
+      : `${this.origin()}/users/${this.config.userId}/cas${path}`;
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = { ...extra };
     if (isInternalConfig(this.config)) {
-      h["X-Internal-Token"] = this.config.internalToken;
-      h["X-User-Id"] = this.config.userId;
+      h["X-Internal-Token"] = this.config.accessKey;
+      h["X-Tenant-Id"] = this.config.tenantId;
     } else if (this.config.authToken) {
       h.Authorization = `Bearer ${this.config.authToken}`;
     }

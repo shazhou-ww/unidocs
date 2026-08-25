@@ -81,7 +81,7 @@ export interface CasGcResult {
 }
 
 /** Service interface for CAS operations (server-side contract). */
-export interface UserCasService {
+export interface TenantCasService {
   read(hash: CasHash): Promise<Uint8Array>;
   metadata(hash: CasHash): Promise<CasNodeMetadata>;
 

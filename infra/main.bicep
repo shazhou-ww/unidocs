@@ -13,7 +13,13 @@ param casBaseUrl string
 param pgAdminPassword string
 
 @secure()
-param internalToken string
+param casAccessKey string
+
+@secure()
+param markdownAccessKey string
+
+@secure()
+param docxAccessKey string
 
 param pgAdminUser string = 'unidocs'
 
@@ -61,9 +67,19 @@ resource pg 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   }
 }
 
-resource pgDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+resource gatewayDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
   parent: pg
-  name: 'unidocs'
+  name: 'unidocs_gateway'
+}
+
+resource markdownDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+  parent: pg
+  name: 'unidocs_markdown'
+}
+
+resource docxDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+  parent: pg
+  name: 'unidocs_docx'
 }
 
 // 设计 §4.4：显式的 dev 期妥协。0.0.0.0-0.0.0.0 是 Azure 约定的
@@ -83,7 +99,10 @@ resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@202
 
 // sslmode=require：Flexible Server 强制 TLS，而 createPool() 不设 ssl
 // 选项，行为完全由连接串决定（设计 §6.3 —— 这条需要实测确认）。
-var databaseUrl = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.fullyQualifiedDomainName}:5432/unidocs?sslmode=require'
+var databaseOrigin = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.fullyQualifiedDomainName}:5432'
+var gatewayDatabaseUrl = '${databaseOrigin}/${gatewayDatabase.name}?sslmode=require'
+var markdownDatabaseUrl = '${databaseOrigin}/${markdownDatabase.name}?sslmode=require'
+var docxDatabaseUrl = '${databaseOrigin}/${docxDatabase.name}?sslmode=require'
 
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: 'cae-unidocs-dev'
@@ -131,8 +150,8 @@ module markdownApp 'container-app.bicep' = {
     // 单副本等于把那份保证退回未验证状态。
     minReplicas: 2
     maxReplicas: 5
-    databaseUrl: databaseUrl
-    internalToken: internalToken
+    databaseUrl: markdownDatabaseUrl
+    serviceAccessKey: markdownAccessKey
     extraEnv: blobEnv
   }
 }
@@ -150,8 +169,9 @@ module docxApp 'container-app.bicep' = {
     external: false
     minReplicas: 2
     maxReplicas: 5
-    databaseUrl: databaseUrl
-    internalToken: internalToken
+    databaseUrl: docxDatabaseUrl
+    serviceAccessKey: docxAccessKey
+    casAccessKey: casAccessKey
     extraEnv: concat([
       {
         name: 'CAS_BASE_URL'
@@ -174,24 +194,32 @@ module gatewayApp 'container-app.bicep' = {
     external: true
     minReplicas: 1
     maxReplicas: 3
-    databaseUrl: databaseUrl
-    internalToken: internalToken
+    databaseUrl: gatewayDatabaseUrl
+    casAccessKey: casAccessKey
+    docServicesJson: string({
+      markdown: {
+        serviceId: 'markdown'
+        url: 'https://${markdownApp.outputs.fqdn}'
+        accessKey: markdownAccessKey
+      }
+      docx: {
+        serviceId: 'docx'
+        url: 'https://${docxApp.outputs.fqdn}'
+        accessKey: docxAccessKey
+      }
+    })
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
     // 两个 doc type worker —— 不是容器端口，ingress 负责映射。
-    // 这条路径复用 azure-gateway/src/main.ts 已有的 {TYPE}_WORKER_URL
-    // 解析，不需要注册表服务。
     extraEnv: [
-      {
-        name: 'MARKDOWN_WORKER_URL'
-        value: 'https://${markdownApp.outputs.fqdn}'
-      }
-      {
-        name: 'DOCX_WORKER_URL'
-        value: 'https://${docxApp.outputs.fqdn}'
-      }
       {
         name: 'CAS_BASE_URL'
         value: casBaseUrl
+      }
+      // This template deploys the explicitly named dev stack. Production
+      // deployments must omit this and provide a real Gateway identity resolver.
+      {
+        name: 'INSECURE_PATH_IDENTITY'
+        value: 'true'
       }
     ]
   }
@@ -200,19 +228,49 @@ module gatewayApp 'container-app.bicep' = {
 // 迁移 Job 必须走模块边界，理由见 infra/migrate-job.bicep 顶部的注释：
 // databaseUrl 由 @secure() pgAdminPassword 拼出，直接写进外层模板的资源
 // 属性会让 what-if 把明文连接串打进终端与日志。
-module migrateJob 'migrate-job.bicep' = {
-  name: 'migrate-job'
+module gatewayMigrateJob 'migrate-job.bicep' = {
+  name: 'gateway-migrate-job'
   params: {
-    name: 'caj-unidocs-migrate'
+    name: 'caj-unidocs-gateway-migrate'
+    location: location
+    environmentId: containerEnv.id
+    identityId: identity.id
+    acrLoginServer: acr.properties.loginServer
+    image: '${acr.properties.loginServer}/unidocs/azure-gateway-migrate:${imageTag}'
+    databaseUrl: gatewayDatabaseUrl
+  }
+}
+
+module markdownMigrateJob 'migrate-job.bicep' = {
+  name: 'markdown-migrate-job'
+  params: {
+    name: 'caj-unidocs-markdown-migrate'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
     acrLoginServer: acr.properties.loginServer
     image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
-    databaseUrl: databaseUrl
+    databaseUrl: markdownDatabaseUrl
+  }
+}
+
+module docxMigrateJob 'migrate-job.bicep' = {
+  name: 'docx-migrate-job'
+  params: {
+    name: 'caj-unidocs-docx-migrate'
+    location: location
+    environmentId: containerEnv.id
+    identityId: identity.id
+    acrLoginServer: acr.properties.loginServer
+    image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
+    databaseUrl: docxDatabaseUrl
   }
 }
 
 output gatewayFqdn string = gatewayApp.outputs.fqdn
-output migrateJobName string = migrateJob.outputs.name
+output migrateJobNames array = [
+  gatewayMigrateJob.outputs.name
+  markdownMigrateJob.outputs.name
+  docxMigrateJob.outputs.name
+]
 output postgresFqdn string = pg.properties.fullyQualifiedDomainName

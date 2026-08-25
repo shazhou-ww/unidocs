@@ -15,20 +15,11 @@ class_name = "PsdOperator"
 tag = "v1"
 new_sqlite_classes = ["PsdEditor", "PsdOperator"]
 
-# Shared global snapshot index (same DB as other doctypes)
-[[d1_databases]]
-binding = "SNAPSHOTS_DB"
-database_name = "unidocs-snapshots"
-database_id = "d3c78c42-b32f-4a4d-86e4-6cf6341baa8f"
-migrations_dir = "../cloudflare-gateway/migrations"
+[[services]]
+binding = "CAS_SERVICE"
+service = "unidocs-cas"
 
-# Shared content-addressed snapshot store
-[[r2_buckets]]
-bucket_name = "unidocs-cas"
-binding = "CAS"
-
-# Internal token for gateway → worker auth
-# Set via wrangler secret: `wrangler secret put INTERNAL_TOKEN`
-# For local dev: uncomment [vars] below
+# Set `SERVICE_ACCESS_KEY` and `CAS_ACCESS_KEY` via wrangler secrets.
 # [vars]
-# INTERNAL_TOKEN = "dev-token"
+# SERVICE_ACCESS_KEY = "dev-psd-key"
+# CAS_ACCESS_KEY = "dev-cas-key"

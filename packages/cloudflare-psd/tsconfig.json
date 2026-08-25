@@ -16,6 +16,9 @@
       "path": "../cloudflare-sdk"
     },
     {
+      "path": "../doctype-server-common"
+    },
+    {
       "path": "../doctype-psd"
     }
   ]

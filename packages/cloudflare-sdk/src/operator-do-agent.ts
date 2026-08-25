@@ -20,8 +20,7 @@ export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
   ) => Promise<unknown>;
   readonly getEditorStub: (
     env: TEnv,
-    userId: string,
-    docId: string,
+    sessionId: string,
   ) => DurableObjectStub;
   readonly renderToolResult?: AgentToolResultRenderer;
 }
@@ -46,8 +45,8 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
     #session: unknown[];
     #lastKnownVersion: number | null = null;
     #identityHeaders = new Headers();
-    #docId: string | null = null;
-    #userId: string | null = null;
+    #sessionId: string | null = null;
+    #tenantId: string | null = null;
 
     constructor(ctx: DurableObjectState, env: TEnv) {
       this.#ctx = ctx;
@@ -156,19 +155,19 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
     }
 
     #captureIdentity(request: Request): Response | null {
-      const userId = request.headers.get("X-User-Id");
-      const docId = request.headers.get("X-Doc-Id");
-      if (!userId || !docId) {
-        return Response.json({ error: "Missing X-User-Id or X-Doc-Id header" }, { status: 401 });
+      const tenantId = request.headers.get("X-Tenant-Id");
+      const sessionId = request.headers.get("X-Session-Id");
+      if (!tenantId || !sessionId) {
+        return Response.json({ error: "Missing tenant or session identity" }, { status: 401 });
       }
-      if ((this.#userId !== null && this.#userId !== userId)
-        || (this.#docId !== null && this.#docId !== docId)) {
-        return Response.json({ error: "Operator identity mismatch" }, { status: 403 });
+      if ((this.#tenantId !== null && this.#tenantId !== tenantId)
+        || (this.#sessionId !== null && this.#sessionId !== sessionId)) {
+        return Response.json({ error: "Operator session mismatch" }, { status: 403 });
       }
-      this.#docId = docId;
-      this.#userId = userId;
+      this.#sessionId = sessionId;
+      this.#tenantId = tenantId;
       this.#identityHeaders = new Headers();
-      for (const name of ["X-User-Id", "X-Doc-Id", "X-Doc-Type", "X-Internal-Token"]) {
+      for (const name of ["X-Tenant-Id", "X-Session-Id", "X-Doc-Type", "X-Internal-Token"]) {
         const value = request.headers.get(name);
         if (value) this.#identityHeaders.set(name, value);
       }
@@ -234,12 +233,12 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
     }
 
     #editorValueRequest(path: string, value: SValue): Promise<Response> {
-      if (!this.#docId || !this.#userId) throw new Error("Agent has no document identity");
+      if (!this.#sessionId || !this.#tenantId) throw new Error("Agent has no session identity");
       const headers = new Headers(this.#identityHeaders);
       headers.set("Content-Type", SValueContentType);
       headers.set("Accept", SValueContentType);
       const bytes = encodeSValue(value);
-      return config.getEditorStub(this.#env, this.#userId, this.#docId).fetch(`http://editor${path}`, {
+      return config.getEditorStub(this.#env, this.#sessionId).fetch(`http://editor${path}`, {
         method: "POST",
         headers,
         body: Uint8Array.from(bytes).buffer,

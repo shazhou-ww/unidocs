@@ -133,8 +133,7 @@ const opts = (extra: Partial<{
   fetchImpl: typeof fetch;
   genId: () => string;
 }>) => ({
-  gw: "/gw",
-  user: "u1",
+  apiBaseUrl: "/gw/users/u1",
   type: "psd",
   docId: "d1",
   doc: docWithLayers(["l1"]),

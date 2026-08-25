@@ -20,7 +20,8 @@
     "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rm -rf dist",
-    "migrate": "node dist/migrate-cli.js"
+    "migrate": "node dist/migrate-cli.js",
+    "migrate:legacy-identities": "node dist/migrate-cli.js --import-legacy-identities"
   },
   "dependencies": {
     "@unidocs/cas-client": "workspace:*",

@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 
-# 一份 Dockerfile 产出四个镜像,由 SERVICE 选择:
+# 一份 Dockerfile 产出服务与迁移镜像,由 SERVICE/ENTRY 选择:
 #   azure-gateway / azure-markdown / azure-docx  -> ENTRY=dist/main.js
-#   azure-sdk                                    -> ENTRY=dist/migrate-cli.js(迁移 Job)
+#   azure-gateway                                -> ENTRY=dist/migrate-cli.js(Gateway migration)
+#   azure-sdk                                    -> ENTRY=dist/migrate-cli.js(Doc migration)
 #
 # 裁剪用 `pnpm deploy --prod`:它产出真实(非软链)的 node_modules,并且
 # 严格按 package.json 的声明裁剪 —— 一个漏声明的运行时依赖会让构建产出

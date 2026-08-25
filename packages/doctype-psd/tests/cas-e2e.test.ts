@@ -97,10 +97,9 @@ describe("PSD SValue snapshots through DocumentSession", () => {
       deltas: ports.deltas,
       snapshots: ports.snapshots,
       blobs: ports.blobs,
-      index: ports.index,
       unitOfWork: ports.unitOfWork,
       cas: ports.cas,
-      identity: { docType: "psd", docId: "doc-1", userId: "user-1" },
+      identity: { docType: "psd", sessionId: "session-1", tenantId: "tenant-1" },
       now: () => Date.now(),
     };
     const session = new DocumentSession(config, deps);
@@ -109,7 +108,7 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     // 1. Import -> serialized PsdStoredDoc snapshot
     // ----------------------------------------------------------------
     const created = await session.create({ bytes: psdBytes });
-    expect(created).toEqual({ docId: "doc-1", version: 1 });
+    expect(created).toEqual({ sessionId: "session-1", version: 1 });
 
     // The durable, content-addressed snapshot: read what was actually
     // persisted, not what save() merely returns in memory.
@@ -146,7 +145,7 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     const hashesAfterImport = Object.keys(refsAfterImport);
     expect(hashesAfterImport.length).toBeGreaterThan(0);
     expect(cas.rootRefUpdates).toContainEqual({
-      requestId: "snapshot:user-1:doc-1:1",
+      requestId: "snapshot:session-1:1",
       changes: refsAfterImport,
     });
     for (const hash of hashesAfterImport) {

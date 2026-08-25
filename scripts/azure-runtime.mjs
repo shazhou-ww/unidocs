@@ -38,7 +38,10 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import pg from "pg";
 import { BlobServiceClient } from "@azure/storage-blob";
-import { INTERNAL_TOKEN } from "./doc-types.mjs";
+import {
+  CAS_ACCESS_KEY,
+  docServiceAccessKey,
+} from "./doc-types.mjs";
 import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "./workspace-aliases.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./azure-ports.mjs";
 import { startReplicaProxy } from "./replica-proxy.mjs";
@@ -50,12 +53,13 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const COMPOSE_FILE = join(ROOT, "docker-compose.azure.yml");
 const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 
-/** Matches `packages/azure-sdk/tests/containers.ts` — same compose stack. */
-export const DATABASE_URL = "postgres://unidocs:unidocs@localhost:5433/unidocs";
+/** Matches `packages/azure-sdk/tests/containers.ts` — same Postgres server. */
+const ADMIN_DATABASE_URL = "postgres://unidocs:unidocs@localhost:5433/unidocs";
+export const GATEWAY_DATABASE_URL = "postgres://unidocs:unidocs@localhost:5433/unidocs_gateway";
+export function docDatabaseUrl(docType) {
+  return `postgres://unidocs:unidocs@localhost:5433/unidocs_${docType}`;
+}
 export const BLOB_CONNECTION_STRING = "UseDevelopmentStorage=true";
-
-/** Blob container name `BlobCasStore` uses (`packages/azure-sdk/src/ports-blob.ts`). */
-const CAS_CONTAINER = "cas";
 
 const AZURITE_HOST = "127.0.0.1";
 const AZURITE_PORT = 10000;
@@ -214,7 +218,7 @@ async function waitForPostgres(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
-    const probe = new Pool({ connectionString: DATABASE_URL });
+    const probe = new Pool({ connectionString: ADMIN_DATABASE_URL });
     try {
       await probe.query("SELECT 1");
       return;
@@ -226,6 +230,20 @@ async function waitForPostgres(timeoutMs) {
     }
   }
   throw new Error(`postgres did not become ready within ${timeoutMs}ms: ${String(lastError)}`);
+}
+
+async function ensureDatabases(docTypes) {
+  const pool = new Pool({ connectionString: ADMIN_DATABASE_URL });
+  try {
+    const names = ["unidocs_gateway", ...docTypes.map(name => `unidocs_${name}`)];
+    const existing = await pool.query("SELECT datname FROM pg_database WHERE datname = ANY($1)", [names]);
+    const found = new Set(existing.rows.map(row => row.datname));
+    for (const name of names) {
+      if (!found.has(name)) await pool.query(`CREATE DATABASE ${name}`);
+    }
+  } finally {
+    await pool.end();
+  }
 }
 
 /**
@@ -289,11 +307,19 @@ async function waitForPort(host, port, timeoutMs) {
  * dist/migrate-cli.js` in `migrate` fails `MODULE_NOT_FOUND` against a dist
  * directory that was never produced.
  */
-async function runMigrations() {
-  await run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "build"]);
-  await run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "migrate"], {
-    env: { ...process.env, DATABASE_URL },
+async function runMigrations(docTypes) {
+  await Promise.all([
+    run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "build"]),
+    run("pnpm", ["--filter", "@unidocs/azure-gateway", "run", "build"]),
+  ]);
+  await run("pnpm", ["--filter", "@unidocs/azure-gateway", "run", "migrate"], {
+    env: { ...process.env, DATABASE_URL: GATEWAY_DATABASE_URL },
   });
+  for (const docType of docTypes) {
+    await run("pnpm", ["--filter", "@unidocs/azure-sdk", "run", "migrate"], {
+      env: { ...process.env, DATABASE_URL: docDatabaseUrl(docType) },
+    });
+  }
 }
 
 /** `args` lets non-`@unidocs/*` services (azurite-blob) take CLI flags too, not just env vars. */
@@ -479,34 +505,58 @@ function installChildProcessCleanup(getChildren) {
  * `src/index.ts` here directly would fail to resolve its own internal
  * imports.
  */
-function createStorageProbe() {
-  const pool = new Pool({ connectionString: DATABASE_URL });
-  pool.on("error", (err) => {
+function createStorageProbe(docTypes) {
+  const gatewayPool = new Pool({ connectionString: GATEWAY_DATABASE_URL });
+  const docPools = Object.fromEntries(docTypes.map(name => [
+    name,
+    new Pool({ connectionString: docDatabaseUrl(name) }),
+  ]));
+  gatewayPool.on("error", (err) => {
     console.error("azure-runtime: storage probe pg pool error", err);
   });
   const blobService = BlobServiceClient.fromConnectionString(BLOB_CONNECTION_STRING);
-  const container = blobService.getContainerClient(CAS_CONTAINER);
+  const docTypeByHash = new Map();
 
   return {
-    async snapshotIndex(docType, docId) {
-      const result = await pool.query(
-        `SELECT version, hash FROM doc_snapshots
-         WHERE doc_type = $1 AND doc_id = $2
-         ORDER BY version ASC`,
+    async sessionIdentity(docType, docId) {
+      const result = await gatewayPool.query(
+        `SELECT session_id, tenant_id FROM gateway_documents
+         WHERE doc_type = $1 AND doc_id = $2`,
         [docType, docId],
+      );
+      if (!result.rows[0]) return null;
+      return {
+        sessionId: result.rows[0].session_id,
+        tenantId: result.rows[0].tenant_id,
+      };
+    },
+    async snapshotIndex(docType, docId) {
+      const identity = await this.sessionIdentity(docType, docId);
+      if (!identity) return [];
+      const result = await docPools[docType].query(
+        `SELECT version, hash FROM doc_snapshots
+         WHERE doc_type = $1 AND session_id = $2
+         ORDER BY version ASC`,
+        [docType, identity.sessionId],
       );
       // `doc_snapshots.version` is Postgres `INTEGER`, which `pg` already
       // hands back as a JS number (unlike `bigint`/`int8` columns).
-      return result.rows.map((row) => ({
-        version: row.version,
-        hash: row.hash,
-      }));
+      return result.rows.map((row) => {
+        docTypeByHash.set(row.hash, docType);
+        return { version: row.version, hash: row.hash };
+      });
     },
     async blobExists(hash) {
+      const docType = docTypeByHash.get(hash);
+      if (!docType) return false;
+      const container = blobService.getContainerClient(`unidocs-${docType}-roots`);
       return container.getBlockBlobClient(hash).exists();
     },
     async dispose() {
-      await pool.end();
+      await Promise.all([
+        gatewayPool.end(),
+        ...Object.values(docPools).map(pool => pool.end()),
+      ]);
     },
   };
 }
@@ -532,8 +582,9 @@ function assertDocTypesSupported(docTypes) {
 }
 
 /**
- * Start the Azure gateway + markdown services — `replicas` copies of
- * markdown, all sharing the same Postgres/Azurite, fronted by a round-robin
+ * Start the Azure gateway + document services — each service has its own
+ * database; replicas of one Doc service share only that service database and
+ * Blob storage, fronted by a round-robin
  * proxy that stands in for the platform ingress — against a freshly
  * migrated Postgres/Azurite stack. Mirrors `startLocalRuntime()`'s return
  * shape (`urls`, `storage`, `dispose`) so `tests/integration/shared/behavior-suite.mjs` can
@@ -559,7 +610,7 @@ function assertDocTypesSupported(docTypes) {
  * `docker-compose.azure.yml`, torn down with `down -v` in `dispose()`.
  * `"external"` skips compose entirely (no `announceFirstPullIfNeeded()`, no
  * `up`, no `down -v`) and just polls the already-running server at
- * `DATABASE_URL` via `waitForPostgres()` — for environments with no docker
+ * the admin database URL via `waitForPostgres()` — for environments with no docker
  * at all (the treespec e2e container; see `tests/treespec/Dockerfile`, which bakes a
  * Postgres listening on 5433 straight into the image). This has to be an
  * explicit opt-in, never auto-detected: auto-detecting "is something
@@ -617,7 +668,7 @@ export async function startAzureRuntime({
 
   if (externalPostgres) {
     // Nothing to pull, nothing to start — the caller's environment already
-    // has a Postgres listening on `DATABASE_URL`. `waitForPostgres()` below
+    // has a Postgres listening on the configured admin URL. `waitForPostgres()` below
     // still runs unconditionally, so a not-yet-ready external server is
     // waited out exactly the same way a not-yet-ready compose one would be.
   } else {
@@ -650,7 +701,8 @@ export async function startAzureRuntime({
     ({ child: azuriteProc, dataDir: resolvedAzuriteDataDir, ownsDataDir: ownsAzuriteDataDir } =
       await spawnAzurite(azuriteDataDir));
     await Promise.all([waitForPostgres(60_000), waitForAzurite(60_000)]);
-    await runMigrations();
+    await ensureDatabases(docTypes);
+    await runMigrations(docTypes);
 
     await Promise.all([
       bundleService(join(ROOT, "packages/azure-gateway/src/main.ts"), gatewayBundle),
@@ -660,9 +712,7 @@ export async function startAzureRuntime({
     ]);
 
     const urls = { gateway: `http://${host}:${layout.gateway}` };
-    // `{TYPE}_WORKER_URL` per doc type — matches `azure-gateway/src/main.ts`'s
-    // `resolveWorkerUrl()`, which already generalises over any doc type.
-    const workerUrlEnv = {};
+    const docServices = {};
 
     for (const name of docTypes) {
       const replicaUrls = [];
@@ -671,11 +721,11 @@ export async function startAzureRuntime({
           docTypeBundles[name],
           [],
           {
-            DATABASE_URL,
+            DATABASE_URL: docDatabaseUrl(name),
             BLOB_CONNECTION_STRING,
-            INTERNAL_TOKEN,
+            SERVICE_ACCESS_KEY: docServiceAccessKey(name),
             PORT: String(port),
-            ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
+            ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl, CAS_ACCESS_KEY } : {}),
           },
           `azure-${name}-${i + 1}`,
         );
@@ -694,24 +744,29 @@ export async function startAzureRuntime({
 
       urls[name] = proxies[name].url; // unchanged meaning: the address the gateway should talk to
       urls[`${name}Replicas`] = replicaUrls; // direct-to-replica, for cross-replica scenarios
-      workerUrlEnv[`${name.toUpperCase()}_WORKER_URL`] = urls[name];
+      docServices[name] = {
+        serviceId: name,
+        url: urls[name],
+        accessKey: docServiceAccessKey(name),
+      };
     }
 
     gatewayProc = spawnService(
       gatewayBundle,
       [],
       {
-        DATABASE_URL,
-        INTERNAL_TOKEN,
+        DATABASE_URL: GATEWAY_DATABASE_URL,
+        CAS_ACCESS_KEY,
+        DOC_SERVICES_JSON: JSON.stringify(docServices),
+        INSECURE_PATH_IDENTITY: "true",
         PORT: String(layout.gateway),
-        ...workerUrlEnv,
         ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
       },
       "azure-gateway",
     );
     await waitForPort(host, layout.gateway, 30_000);
 
-    probe = createStorageProbe();
+    probe = createStorageProbe(docTypes);
 
     return {
       urls,

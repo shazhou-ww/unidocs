@@ -8,7 +8,8 @@ Thin Cloudflare deployment adapter for the PSD image document type. Wires
 - `src/worker.ts` exports the `PsdEditor` / `PsdOperator` Durable Objects
   (built from the DocumentType via `createEditorDO` / `createOperatorDO`) and
   routes Gateway requests to them.
-- `wrangler.toml` declares the DO bindings + shared D1/R2.
+- `wrangler.toml` declares only the PSD DOs and CAS service binding; Gateway
+  owns its directory D1 and CAS owns R2.
 
 That's the whole package. All model, `load`/`save`/`apply`/`query`, tools, and
 instructions are in `doctype-psd`.

@@ -94,10 +94,10 @@ export class RenderClient {
   }
 
   /** Sends the cold-start TDoc snapshot bytes (already fetched via `loadDoc`) to the
-   *  Worker; it builds its own `CasBlobStore` from `gw`/`user` to fault in
+  *  Worker; it builds its own `CasBlobStore` from `apiBaseUrl` to fault in
    *  layer pixels and stands up the persistent `RenderCore`. Resolves once
    *  the Worker acks with the doc's tile size and canvas dimensions. */
-  init(opts: { snapshot: Uint8Array; gw: string; user: string; tileSize?: number; cacheBytes?: number }): Promise<InitResult> {
+  init(opts: { snapshot: Uint8Array; apiBaseUrl: string; tileSize?: number; cacheBytes?: number }): Promise<InitResult> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { kind: "init", resolve, reject });
@@ -105,8 +105,7 @@ export class RenderClient {
         type: "init",
         id,
         snapshot: opts.snapshot,
-        gw: opts.gw,
-        user: opts.user,
+        apiBaseUrl: opts.apiBaseUrl,
         tileSize: opts.tileSize,
         cacheBytes: opts.cacheBytes,
       };

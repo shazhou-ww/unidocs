@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
 import { startAzureRuntime } from "../../../scripts/azure-runtime.mjs";
 import { computeNodeDigest, encodeHeader, hashToHex } from "../../../packages/cas-server-common/src/index.ts";
+import { createSBlob, encodeSValue } from "../../../packages/svalue-codec/src/index.ts";
+import { SValueContentType } from "../../../packages/protocol/src/index.ts";
 
 let miniflare;
 let azure;
@@ -79,20 +81,23 @@ test("insertImage round-trips on the Azure stack", async () => {
   const created = await closeFetch(`${azure.urls.gateway}/users/${USER}/docs/docx/`, {
     method: "POST",
   });
-  const { docId } = await created.json();
+  const createdBody = await created.json();
+  expect(created.ok, JSON.stringify(createdBody)).toBe(true);
+  const { docId } = createdBody;
 
+  const applyBody = encodeSValue({
+    baseVersion: 1,
+    description: "Insert image",
+    operations: [
+      { kind: "insertImage", payload: { blob: createSBlob(hash), widthPx: 16, altText: "dot" } },
+    ],
+  });
   const applied = await closeFetch(
     `${azure.urls.gateway}/users/${USER}/docs/docx/${docId}/apply`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        baseVersion: 1,
-        description: "Insert image",
-        operations: [
-          { kind: "insertImage", payload: { hash, widthPx: 16, altText: "dot" } },
-        ],
-      }),
+      headers: { "Content-Type": SValueContentType },
+      body: applyBody.buffer,
     },
   );
   const appliedBody = await applied.json();

@@ -15,12 +15,8 @@
  *   headers:
  *     X-Probe-Instance  routes to a Durable Object via `idFromName` — a fresh
  *                       value means a virgin sqlite + KV state. This is
- *                       SEPARATE from X-Doc-Id on purpose: the contract pins
- *                       the document identity it indexes under ("doc-1"), so
- *                       identity cannot double as the isolation key.
- *     X-Doc-Type / X-Doc-Id / X-User-Id
- *                       the `DocIdentity` handed to D1DocIndex.
- *   body: { port, method, args }   port ∈ deltas|snapshots|blobs|index|indexQuery
+ *                       SEPARATE from X-Doc-Id so each factory gets fresh DO state.
+ *   body: { port, method, args }   port ∈ deltas|snapshots|blobs
  *   → 200 { ok: true, value }
  *   → 200 { ok: false, error: { name, message, currentVersion, attempted } }
  *
@@ -39,8 +35,6 @@
  */
 
 import {
-  D1DocIndex,
-  D1DocIndexQuery,
   DoDeltaLog,
   DoSnapshotCache,
   R2BlobCas,
@@ -93,11 +87,6 @@ export class PortProbe {
   }
 
   async fetch(request) {
-    const identity = {
-      docType: request.headers.get("X-Doc-Type") ?? "",
-      docId: request.headers.get("X-Doc-Id") ?? "",
-      userId: request.headers.get("X-User-Id") ?? "",
-    };
     const { port, method, args } = await request.json();
 
     // The editor DO does this in `#ensureLoaded`; idempotent, so no need to
@@ -108,8 +97,6 @@ export class PortProbe {
       deltas: new DoDeltaLog(this.#ctx),
       snapshots: new DoSnapshotCache(this.#ctx),
       blobs: new R2BlobCas(this.#env.CAS),
-      index: new D1DocIndex(this.#env.SNAPSHOTS_DB, identity),
-      indexQuery: new D1DocIndexQuery(this.#env.SNAPSHOTS_DB),
     };
 
     const target = ports[port];
@@ -143,8 +130,6 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/reset") {
-      await env.SNAPSHOTS_DB.prepare("DELETE FROM docs").run();
-      await env.SNAPSHOTS_DB.prepare("DELETE FROM snapshots").run();
       const listed = await env.CAS.list();
       await Promise.all(listed.objects.map((obj) => env.CAS.delete(obj.key)));
       return Response.json({ ok: true });

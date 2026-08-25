@@ -1,13 +1,13 @@
 /**
  * CAS HTTP route handlers.
  *
- * Public routes (userId comes from the URL path):
- *   GET  /users/{userId}/cas/nodes/{hash}/content   — read content
- *   GET  /users/{userId}/cas/nodes/{hash}/metadata  — read metadata
- *   POST /users/{userId}/cas/nodes/{hash}           — lease with content
- *   POST /users/{userId}/cas/nodes/{hash}/lease     — extend ready node
- *   GET  /users/{userId}/cas/usage                  — storage usage
- *   POST /users/{userId}/cas/gc                     — trigger GC
+ * Service routes (tenantId comes from the URL path):
+ *   GET  /tenants/{tenantId}/cas/nodes/{hash}/content   — read content
+ *   GET  /tenants/{tenantId}/cas/nodes/{hash}/metadata  — read metadata
+ *   POST /tenants/{tenantId}/cas/nodes/{hash}           — lease with content
+ *   POST /tenants/{tenantId}/cas/nodes/{hash}/lease     — extend ready node
+ *   GET  /tenants/{tenantId}/cas/usage                  — storage usage
+ *   POST /tenants/{tenantId}/cas/gc                     — trigger GC
  */
 
 import { validateHash } from "@unidocs/cas-server-common";
@@ -26,11 +26,11 @@ const FORWARDED_HEADERS = [
 ];
 
 /**
- * Check if a path is a public CAS route: /users/{userId}/cas/...
+ * Check if a path is a tenant-scoped CAS service route.
  */
 export function isCasRoute(pathname: string): boolean {
   const parts = pathname.split("/").filter(Boolean);
-  return parts.length >= 3 && parts[0] === "users" && parts[2] === "cas";
+  return parts.length >= 3 && parts[0] === "tenants" && parts[2] === "cas";
 }
 
 /**
@@ -39,31 +39,31 @@ export function isCasRoute(pathname: string): boolean {
 export async function handleRootRefs(
   request: Request,
   env: CasEnv,
-  userId: string,
+  tenantId: string,
 ): Promise<Response> {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
-  return callCasDO(env, userId, "/updateRootRefs", "POST", request.body);
+  return callCasDO(env, tenantId, "/updateRootRefs", "POST", request.body);
 }
 
 /** POST /_internal/root-assignments — owner-bound root updates. */
 export async function handleRootAssignments(
   request: Request,
   env: CasEnv,
-  userId: string,
+  tenantId: string,
 ): Promise<Response> {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
-  return callCasDO(env, userId, "/assignRoots", "POST", request.body);
+  return callCasDO(env, tenantId, "/assignRoots", "POST", request.body);
 }
 
 /** GET/POST /_internal/nodes/{hash} — portable canonical node bytes. */
 export async function handleReadNode(
   request: Request,
   env: CasEnv,
-  userId: string,
+  tenantId: string,
   hash: string,
 ): Promise<Response> {
   try {
@@ -72,12 +72,12 @@ export async function handleReadNode(
     return Response.json({ error: "Invalid hash" }, { status: 400 });
   }
   if (request.method === "GET") {
-    return callCasDO(env, userId, "/readNode", "GET", undefined, hash);
+    return callCasDO(env, tenantId, "/readNode", "GET", undefined, hash);
   }
   if (request.method === "POST") {
     return callCasDO(
       env,
-      userId,
+      tenantId,
       "/leasePortableNode",
       "POST",
       request.body,
@@ -94,28 +94,28 @@ export async function handleReadNode(
 export async function handleCasRequest(
   request: Request,
   env: CasEnv,
-  userId: string,
+  tenantId: string,
 ): Promise<Response> {
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean);
 
-  // /users/{userId}/cas/usage
+  // /tenants/{tenantId}/cas/usage
   if (parts.length === 4 && parts[3] === "usage") {
     if (request.method !== "GET") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
-    return callCasDO(env, userId, "/usage", "GET");
+    return callCasDO(env, tenantId, "/usage", "GET");
   }
 
-  // /users/{userId}/cas/gc
+  // /tenants/{tenantId}/cas/gc
   if (parts.length === 4 && parts[3] === "gc") {
     if (request.method !== "POST") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
-    return callCasDO(env, userId, "/gc", "POST", request.body);
+    return callCasDO(env, tenantId, "/gc", "POST", request.body);
   }
 
-  // /users/{userId}/cas/nodes/{hash}
+  // /tenants/{tenantId}/cas/nodes/{hash}
   if (parts.length === 5 && parts[3] === "nodes") {
     const hash = parts[4];
     try {
@@ -126,10 +126,10 @@ export async function handleCasRequest(
     if (request.method !== "POST") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
-    return callCasDO(env, userId, "/leaseWithContent", "POST", request.body, hash, request);
+    return callCasDO(env, tenantId, "/leaseWithContent", "POST", request.body, hash, request);
   }
 
-  // /users/{userId}/cas/nodes/{hash}/...
+  // /tenants/{tenantId}/cas/nodes/{hash}/...
   if (parts.length >= 6 && parts[3] === "nodes") {
     const hash = parts[4];
     const action = parts[5];
@@ -143,7 +143,7 @@ export async function handleCasRequest(
     switch (action) {
       case "content":
         if (request.method === "GET") {
-          return callCasDO(env, userId, "/read", "GET", undefined, hash);
+          return callCasDO(env, tenantId, "/read", "GET", undefined, hash);
         }
         return Response.json({ error: "Method not allowed" }, { status: 405 });
 
@@ -151,13 +151,13 @@ export async function handleCasRequest(
         if (request.method !== "GET") {
           return Response.json({ error: "Method not allowed" }, { status: 405 });
         }
-        return callCasDO(env, userId, "/metadata", "GET", undefined, hash);
+        return callCasDO(env, tenantId, "/metadata", "GET", undefined, hash);
 
       case "lease":
         if (request.method !== "POST") {
           return Response.json({ error: "Method not allowed" }, { status: 405 });
         }
-        return callCasDO(env, userId, "/leaseExisting", "POST", undefined, hash, request);
+        return callCasDO(env, tenantId, "/leaseExisting", "POST", undefined, hash, request);
 
       default:
         return Response.json({ error: `Unknown action: ${action}` }, { status: 404 });
@@ -168,23 +168,22 @@ export async function handleCasRequest(
 }
 
 /**
- * Call the CAS Durable Object for a user.
- * X-User-Id is an internal hop header, not part of the public API.
+ * Call the CAS Durable Object for one tenant partition.
  */
 async function callCasDO(
   env: CasEnv,
-  userId: string,
+  tenantId: string,
   action: string,
   method: string,
   body?: ReadableStream | null,
   hash?: string,
   original?: Request,
 ): Promise<Response> {
-  const doId = env.CAS_DO.idFromName(userId);
+  const doId = env.CAS_DO.idFromName(tenantId);
   const stub = env.CAS_DO.get(doId);
 
   const headers = new Headers();
-  headers.set("X-User-Id", userId);
+  headers.set("X-Tenant-Id", tenantId);
   if (hash) headers.set("X-CAS-Hash", hash);
   if (original) {
     for (const name of FORWARDED_HEADERS) {
@@ -197,7 +196,7 @@ async function callCasDO(
   try {
     return await stub.fetch(url, { method, headers, body: body ?? undefined });
   } catch (err) {
-    console.error("[CAS] DO call failed:", { userId, action, method, hash, err });
+    console.error("[CAS] DO call failed:", { tenantId, action, method, hash, err });
     throw err;
   }
 }

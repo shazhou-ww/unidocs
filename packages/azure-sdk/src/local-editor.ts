@@ -10,8 +10,7 @@
  * handful of stateless Node processes stand behind the gateway, so there is
  * no single instance to cache a session on.
  *
- * `idFromName` here is the identity function — the "id" is just the same
- * `{userId}:{docId}` string `createDocTypeHandler` already builds. `get(id)`
+ * `idFromName` here is the identity function. `get(id)`
  * returns an object whose `fetch` builds a **brand new `DocumentSession`**
  * for that one request and hands it straight to `createSessionHandler`.
  *
@@ -31,7 +30,7 @@
  */
 
 import type { DocumentType } from "@unidocs/protocol";
-import type { DocIdentity, SessionDeps } from "@unidocs/doctype-server-common";
+import type { SessionDeps, SessionIdentity } from "@unidocs/doctype-server-common";
 import { createSessionHandler, DocumentSession } from "@unidocs/doctype-server-common";
 
 /** Matches server-core's `DoNamespaceLike` structurally. */
@@ -40,31 +39,22 @@ export interface LocalNamespace {
   get(id: unknown): { fetch(request: Request): Promise<Response> };
 }
 
-/**
- * `id`, as handed back by `idFromName`, is always the same
- * `{userId}:{docId}` string `createDocTypeHandler` builds it from — but the
- * request it forwards already carries `X-User-Id` / `X-Doc-Id` / `X-Doc-Type`
- * headers for the same values (it sets them on every forwarded call, see
- * doc-type-handler.ts), so those are read first and `id` is only the
- * fallback for a header that is somehow missing.
- */
-function identityFromRequest(request: Request, id: unknown): DocIdentity {
-  const idStr = typeof id === "string" ? id : String(id);
-  const sep = idStr.indexOf(":");
-  const fallbackUserId = sep === -1 ? idStr : idStr.slice(0, sep);
-  const fallbackDocId = sep === -1 ? "" : idStr.slice(sep + 1);
-
+function identityFromRequest(request: Request): SessionIdentity {
+  const sessionId = request.headers.get("X-Session-Id");
+  if (!sessionId) throw new Error("Missing X-Session-Id header");
+  const tenantId = request.headers.get("X-Tenant-Id");
+  if (!tenantId) throw new Error("Missing X-Tenant-Id header");
   return {
     docType: request.headers.get("X-Doc-Type") ?? "unknown",
-    docId: request.headers.get("X-Doc-Id") ?? fallbackDocId,
-    userId: request.headers.get("X-User-Id") ?? fallbackUserId ?? "anonymous",
+    sessionId,
+    tenantId,
   };
 }
 
 /**
  * Builds the `editor` namespace `createDocTypeHandler` forwards editor
  * endpoints (`query`, `apply`, `history`, `rollback`, `export`, `snapshot`,
- * `ir`, `init_from_hash`, plus the bare `POST /users/{userId}/` create) to.
+ * `ir`, `init_from_hash`, plus `PUT /sessions/{sessionId}` create) to.
  *
  * `buildDeps` is called fresh on every `fetch()` — see the module doc for why
  * that matters. It is the caller's job to make it cheap (a `pg.Pool` and a
@@ -72,19 +62,30 @@ function identityFromRequest(request: Request, id: unknown): DocIdentity {
  * the port objects around them per request is not a new network handshake).
  */
 export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
-  config: DocumentType<TDoc, TQuery, TOp>,
-  buildDeps: (identity: DocIdentity) => SessionDeps,
+  buildSession: (identity: SessionIdentity) => {
+    documentType: DocumentType<TDoc, TQuery, TOp>;
+    deps: SessionDeps;
+  },
+  prepareSession: (
+    identity: SessionIdentity,
+    creating: boolean,
+  ) => Promise<Response | null>,
 ): LocalNamespace {
   return {
     idFromName: (name: string) => name,
-    get: (id: unknown) => ({
+    get: () => ({
       fetch: async (request: Request): Promise<Response> => {
-        const identity = identityFromRequest(request, id);
-        const session = new DocumentSession(config, buildDeps(identity));
+        const identity = identityFromRequest(request);
+        const creating = request.method === "POST"
+          && (new URL(request.url).pathname === "/_internal/create"
+            || new URL(request.url).pathname === "/_internal/init_from_hash");
+        const identityError = await prepareSession(identity, creating);
+        if (identityError) return identityError;
+        const { documentType, deps } = buildSession(identity);
+        const session = new DocumentSession(documentType, deps);
         const handle = createSessionHandler({
           session,
           identity,
-          requesterId: request.headers.get("X-User-Id"),
         });
         return handle(request);
       },

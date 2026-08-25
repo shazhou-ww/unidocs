@@ -15,7 +15,7 @@ type Rect = [number, number, number, number];
  *  can emit several responses per request, and errors need to name which
  *  request they belong to). */
 export type WorkerRequest =
-  | { type: "init"; id: number; snapshot: Uint8Array; gw: string; user: string; tileSize?: number; cacheBytes?: number }
+  | { type: "init"; id: number; snapshot: Uint8Array; apiBaseUrl: string; tileSize?: number; cacheBytes?: number }
   | { type: "applyOp"; id: number; op: PsdOp }
   | { type: "tiles"; id: number; tiles: Array<[number, number]> }
   | { type: "reset"; id: number; doc: PsdDoc };
@@ -47,7 +47,7 @@ async function handle(req: WorkerRequest): Promise<void> {
   switch (req.type) {
     case "init": {
       try {
-        const store = new CasBlobStore({ gw: req.gw, user: req.user });
+        const store = new CasBlobStore({ apiBaseUrl: req.apiBaseUrl });
         const state = decodeSValue(req.snapshot) as unknown as PsdStoredDoc;
         const doc = await materializePsdDocFromStore(state, store);
         core = new RenderCore(doc, store, { tileSize: req.tileSize, cacheBytes: req.cacheBytes });

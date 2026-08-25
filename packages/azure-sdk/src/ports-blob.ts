@@ -13,7 +13,7 @@
  * below for why it is keyed that way rather than per-instance.
  */
 
-import type { BlobCas, DocIdentity, SnapshotCache } from "@unidocs/doctype-server-common";
+import type { BlobCas, SessionIdentity, SnapshotCache } from "@unidocs/doctype-server-common";
 import type { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
 
 /** Container holding the content-addressed blobs; blob name is the hash. */
@@ -155,9 +155,9 @@ export class BlobCasStore implements BlobCas {
   #container: ContainerClient;
   #ensure: () => Promise<void>;
 
-  constructor(svc: BlobServiceClient) {
-    this.#container = svc.getContainerClient(CAS_CONTAINER);
-    this.#ensure = containerReady(svc, CAS_CONTAINER, this.#container);
+  constructor(svc: BlobServiceClient, containerName: string = CAS_CONTAINER) {
+    this.#container = svc.getContainerClient(containerName);
+    this.#ensure = containerReady(svc, containerName, this.#container);
   }
 
   /**
@@ -195,7 +195,7 @@ export class BlobCasStore implements BlobCas {
 
 /**
  * `SnapshotCache` over the `snapshots` container, one blob per document at
- * `{docType}/{docId}/latest`.
+ * `{docType}/{sessionId}/latest`.
  *
  * Writes are unconditional overwrites: this is a cache of the newest snapshot,
  * so the newest writer wins and a lost write only costs a replay. The version
@@ -207,10 +207,14 @@ export class BlobSnapshotCache implements SnapshotCache {
   #ensure: () => Promise<void>;
   #blobName: string;
 
-  constructor(svc: BlobServiceClient, identity: DocIdentity) {
-    this.#container = svc.getContainerClient(SNAPSHOT_CONTAINER);
-    this.#ensure = containerReady(svc, SNAPSHOT_CONTAINER, this.#container);
-    this.#blobName = `${identity.docType}/${identity.docId}/latest`;
+  constructor(
+    svc: BlobServiceClient,
+    identity: SessionIdentity,
+    containerName: string = SNAPSHOT_CONTAINER,
+  ) {
+    this.#container = svc.getContainerClient(containerName);
+    this.#ensure = containerReady(svc, containerName, this.#container);
+    this.#blobName = `${identity.docType}/${identity.sessionId}/latest`;
   }
 
   /**

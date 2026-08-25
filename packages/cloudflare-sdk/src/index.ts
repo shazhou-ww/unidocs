@@ -32,7 +32,7 @@ export {
 } from "@unidocs/svalue-codec";
 export { SValueContentType } from "@unidocs/protocol";
 export type { HistoryEntry, ApplyResult, RollbackResult, CreateResult } from "./history.js";
-export type { DocContext, SnapshotRecord, EditorDOClass, EditorDOInstance } from "./editor-do.js";
+export type { EditorDOClass, EditorDOInstance } from "./editor-do.js";
 export type { OperatorDOClass, OperatorDOInstance } from "./operator-do.js";
 
 // Runtime
@@ -48,8 +48,6 @@ export {
 	DoDeltaLog,
 	DoSnapshotCache,
 	R2BlobCas,
-	D1DocIndex,
-	D1DocIndexQuery,
 	DirectUnitOfWork,
 } from "./ports-cf.js";
 export {

@@ -19,6 +19,11 @@
  */
 import { createPool } from "./pool.js";
 import { runMigrations } from "./migrate.js";
+import { readFile } from "node:fs/promises";
+import {
+  importLegacySessionIdentities,
+  parseLegacySessionIdentities,
+} from "./legacy-session-import.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -38,6 +43,13 @@ async function main(): Promise<void> {
   try {
     await runMigrations(pool);
     console.log("migrations applied");
+    if (process.argv.includes("--import-legacy-identities")) {
+      const mapFile = requireEnv("LEGACY_SESSION_MAP_FILE");
+      const source = JSON.parse(await readFile(mapFile, "utf8")) as unknown;
+      const identities = parseLegacySessionIdentities(source);
+      const imported = await importLegacySessionIdentities(pool, identities);
+      console.log(`imported ${imported} legacy session identities`);
+    }
   } finally {
     await pool.end();
   }

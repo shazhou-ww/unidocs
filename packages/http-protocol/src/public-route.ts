@@ -7,7 +7,6 @@ export function isPublicCasRoute(method: string, pathname: string): boolean {
   if (parts.length < 3 || parts[0] !== "users" || parts[2] !== "cas") return false;
 
   if (parts.length === 4 && parts[3] === "usage") return method === "GET";
-  if (parts.length === 4 && parts[3] === "gc") return method === "POST";
   if (parts.length === 5 && parts[3] === "nodes") return method === "POST";
   if (parts.length === 6 && parts[3] === "nodes") {
     if (parts[5] === "content" || parts[5] === "metadata") return method === "GET";

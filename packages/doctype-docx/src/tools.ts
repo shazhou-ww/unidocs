@@ -276,7 +276,7 @@ export const tools: ToolsMap = {
   insertImage: {
     name: "apply_insertImage",
     description:
-      "Append an inline image. The hash must already be uploaded via POST /users/{userId}/cas/nodes/{hash} (PNG or JPEG).",
+      "Append an inline image. The hash must already be uploaded through the authenticated Gateway CAS API (PNG or JPEG).",
     inputSchema: {
       type: "object",
       properties: {

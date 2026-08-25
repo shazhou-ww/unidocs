@@ -58,6 +58,48 @@ export function runBehaviorSuite(getRuntime) {
   }
 
   describe("markdown behavior suite", () => {
+    test("同一个 Idempotency-Key 的并发 create 只保留一个 Gateway 文档", async () => {
+      const userId = `idempotent-user-${crypto.randomUUID()}`;
+      const create = () => closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+        method: "POST",
+        headers: { "Idempotency-Key": "create-once" },
+      });
+
+      const responses = await Promise.all([create(), create()]);
+      const bodies = await Promise.all(responses.map(response => response.json()));
+      expect(responses.every(response => response.ok), JSON.stringify(bodies)).toBe(true);
+      expect(new Set(bodies.map(body => body.docId)).size).toBe(1);
+
+      const docId = bodies[0].docId;
+      const status = await closeFetch(
+        `${GW()}/users/${userId}/docs/markdown/${docId}`,
+      );
+      await expect(status.json()).resolves.toMatchObject({
+        success: true,
+        data: { doc_id: docId, state: "ready", version: 1 },
+      });
+
+      const list = await closeFetch(`${GW()}/users/${userId}/docs/markdown/`);
+      const listed = await list.json();
+      expect(listed.data.filter(record => record.doc_id === docId)).toHaveLength(1);
+    });
+
+    test("同一个 Idempotency-Key 不能绑定两个显式 docId", async () => {
+      const userId = `idempotent-explicit-${crypto.randomUUID()}`;
+      const create = (docId) => closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+        method: "POST",
+        headers: {
+          "Idempotency-Key": "explicit-once",
+          "X-Doc-Id": docId,
+        },
+      });
+
+      const first = await create("doc-a");
+      expect(first.ok, await first.clone().text()).toBe(true);
+      const second = await create("doc-b");
+      expect(second.status).toBe(409);
+    });
+
     test("并发的两个同 baseVersion apply:恰好一个成功,另一个 409 且带当前版本", async () => {
       const docId = await createDoc("concurrent-user");
 
@@ -146,25 +188,21 @@ export function runBehaviorSuite(getRuntime) {
       expect(data[3].operations).toEqual([]);
     }, 30_000);
 
-    test("clone 走 snapshot hash + init_from_hash:新文档内容相同,版本从 1 开始", async () => {
+    test("clone 由 Gateway 按 sourceId 编排:新文档内容相同,版本从 1 开始", async () => {
       const userId = "clone-user";
       const sourceId = await createDoc(userId);
       expect((await applyOp(sourceId, 1, "cloned content", userId)).status).toBe(200);
 
-      const snapshot = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${sourceId}/snapshot`,
-      );
-      const snap = await snapshot.json();
-      expect(snap.success, JSON.stringify(snap)).toBe(true);
-      expect(snap.hash).toEqual(expect.any(String));
-
       const targetId = `${sourceId}-clone`;
       const adopt = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${targetId}/init_from_hash`,
+        `${GW()}/users/${userId}/docs/markdown/`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hash: snap.hash, sourceVersion: snap.version }),
+          headers: {
+            "Content-Type": "application/json",
+            "X-Doc-Id": targetId,
+          },
+          body: JSON.stringify({ sourceId }),
         },
       );
       await expect(adopt.json()).resolves.toMatchObject({
@@ -277,23 +315,18 @@ export function runBehaviorSuite(getRuntime) {
       expect(data.map((entry) => entry.version)).toEqual([1]);
     }, 30_000);
 
-    test("/_internal/create 拒绝 sourceId:克隆必须走 worker 层的 snapshot + init_from_hash", async () => {
+    test("公开 API 拒绝裸 hash init_from_hash", async () => {
       const userId = "clone-reject-user";
-
-      const form = new FormData();
-      form.append("sourceId", "some-other-doc");
-
-      const res = await closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+      const res = await closeFetch(
+        `${GW()}/users/${userId}/docs/markdown/raw-clone/init_from_hash`,
+        {
         method: "POST",
-        body: form,
-      });
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hash: "a".repeat(64), sourceVersion: 1 }),
+        },
+      );
 
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body).toEqual({
-        success: false,
-        error: "Clone should be handled at worker level",
-      });
+      expect(res.status).toBe(404);
     }, 30_000);
   });
 }

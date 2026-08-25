@@ -4,7 +4,6 @@ import { isPublicCasRoute } from "../src/public-route.js";
 describe("isPublicCasRoute", () => {
   test("allows the five public shapes", () => {
     expect(isPublicCasRoute("GET", "/users/u1/cas/usage")).toBe(true);
-    expect(isPublicCasRoute("POST", "/users/u1/cas/gc")).toBe(true);
     expect(isPublicCasRoute("POST", "/users/u1/cas/nodes/abc")).toBe(true);
     expect(isPublicCasRoute("GET", "/users/u1/cas/nodes/abc/content")).toBe(true);
     expect(isPublicCasRoute("GET", "/users/u1/cas/nodes/abc/metadata")).toBe(true);
@@ -22,5 +21,6 @@ describe("isPublicCasRoute", () => {
     expect(isPublicCasRoute("GET", "/users/u1/cas/gc")).toBe(false);
     expect(isPublicCasRoute("GET", "/users/u1/docs/markdown/d1")).toBe(false);
     expect(isPublicCasRoute("GET", "/users/u1/cas")).toBe(false);
+    expect(isPublicCasRoute("POST", "/users/u1/cas/gc")).toBe(false);
   });
 });

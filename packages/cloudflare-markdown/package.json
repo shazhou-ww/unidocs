@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@unidocs/cloudflare-sdk": "workspace:*",
+    "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/doctype-markdown": "workspace:*"
   },
   "devDependencies": {

@@ -82,9 +82,8 @@ describe("agent Operator DO", () => {
     const Operator = createOperatorDO({
       agentFactory,
       llmProvider,
-      getEditorStub: (_env, userId, docId) => {
-        expect(userId).toBe("alice");
-        expect(docId).toBe("doc-1");
+      getEditorStub: (_env, sessionId) => {
+        expect(sessionId).toBe("session-1");
         return { fetch: editorFetch } as unknown as DurableObjectStub;
       },
     });
@@ -94,9 +93,9 @@ describe("agent Operator DO", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Doc-Id": "doc-1",
+        "X-Session-Id": "session-1",
         "X-Doc-Type": "test",
-        "X-User-Id": "alice",
+        "X-Tenant-Id": "tenant-1",
       },
       body: JSON.stringify({ instruction: "read then insert" }),
     }));
@@ -122,8 +121,8 @@ describe("agent Operator DO", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Doc-Id": "another-doc",
-        "X-User-Id": "alice",
+        "X-Session-Id": "another-session",
+        "X-Tenant-Id": "tenant-1",
       },
       body: JSON.stringify({ instruction: "wrong document" }),
     }));
@@ -186,8 +185,8 @@ describe("agent Operator DO", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Doc-Id": "doc-2",
-        "X-User-Id": "alice",
+        "X-Session-Id": "session-2",
+        "X-Tenant-Id": "tenant-1",
       },
       body: JSON.stringify({ instruction: "show image" }),
     }));

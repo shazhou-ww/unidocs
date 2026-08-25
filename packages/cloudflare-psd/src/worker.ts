@@ -13,6 +13,7 @@
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
 import { createPsdDocumentType } from "@unidocs/doctype-psd";
+import { createDocTypeHandler } from "@unidocs/doctype-server-common";
 
 const psdFactory = createPsdDocumentType;
 
@@ -28,8 +29,8 @@ export const PsdOperator = createOperatorDO({
       "PSD operator LLM provider not configured. See ./anthropic.ts for the intended provider.",
     );
   },
-  getEditorStub: (env: Env, userId, docId) => {
-    const id = env.PSD_EDITOR.idFromName(`${userId}:${docId}`);
+  getEditorStub: (env: Env, sessionId) => {
+    const id = env.PSD_EDITOR.idFromName(sessionId);
     return env.PSD_EDITOR.get(id);
   },
 });
@@ -37,88 +38,16 @@ export const PsdOperator = createOperatorDO({
 interface Env extends EditorEnv {
   PSD_EDITOR: DurableObjectNamespace;
   PSD_OPERATOR: DurableObjectNamespace;
-  INTERNAL_TOKEN: string;
+  SERVICE_ACCESS_KEY: string;
 }
-
-const EDITOR_METHODS = new Set([
-  "query", "apply", "history", "rollback", "export",
-  "snapshot", "ir", "init_from_hash",
-]);
-const OPERATOR_METHODS = new Set(["run", "reset"]);
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const token = request.headers.get("X-Internal-Token");
-    if (env.INTERNAL_TOKEN && token !== env.INTERNAL_TOKEN) {
-      return Response.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const url = new URL(request.url);
-    const parts = url.pathname.split("/").filter(Boolean);
-
-    if (parts.length < 2 || parts[0] !== "users") {
-      return Response.json({
-        error: "Use /users/{userId}/{docId}/* endpoints",
-      }, { status: 404 });
-    }
-
-    const userId = parts[1];
-    const docId = parts[2];
-    const method = parts[3];
-
-    if (!docId && request.method === "POST") {
-      const newDocId = request.headers.get("X-Doc-Id") || crypto.randomUUID();
-      const id = env.PSD_EDITOR.idFromName(`${userId}:${newDocId}`);
-      const stub = env.PSD_EDITOR.get(id);
-      const forwardUrl = new URL(request.url);
-      forwardUrl.pathname = "/_internal/create";
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", "psd");
-      headers.set("X-Doc-Id", newDocId);
-      headers.set("X-User-Id", userId);
-      return stub.fetch(new Request(forwardUrl.toString(), {
-        method: "POST",
-        headers,
-        body: request.body,
-      }));
-    }
-
-    if (!docId || !method) {
-      return Response.json({ error: "Missing docId or method" }, { status: 400 });
-    }
-
-    if (EDITOR_METHODS.has(method)) {
-      const id = env.PSD_EDITOR.idFromName(`${userId}:${docId}`);
-      const stub = env.PSD_EDITOR.get(id);
-      const forwardUrl = new URL(request.url);
-      forwardUrl.pathname = `/_internal/${method}`;
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", "psd");
-      headers.set("X-User-Id", userId);
-      headers.set("X-Doc-Id", docId);
-      return stub.fetch(new Request(forwardUrl.toString(), {
-        method: request.method,
-        headers,
-        body: request.body,
-      }));
-    }
-
-    if (OPERATOR_METHODS.has(method)) {
-      const id = env.PSD_OPERATOR.idFromName(`${userId}:${docId}`);
-      const stub = env.PSD_OPERATOR.get(id);
-      const forwardUrl = new URL(request.url);
-      forwardUrl.pathname = `/_internal/${method}`;
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", "psd");
-      headers.set("X-User-Id", userId);
-      headers.set("X-Doc-Id", docId);
-      return stub.fetch(new Request(forwardUrl.toString(), {
-        method: request.method,
-        headers,
-        body: request.body,
-      }));
-    }
-
-    return Response.json({ error: `Unknown endpoint: ${method}` }, { status: 404 });
+    return createDocTypeHandler({
+      docType: "psd",
+      accessKey: env.SERVICE_ACCESS_KEY,
+      editor: env.PSD_EDITOR,
+      operator: env.PSD_OPERATOR,
+    })(request);
   },
 };

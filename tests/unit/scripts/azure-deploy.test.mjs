@@ -34,6 +34,15 @@ describe("IMAGES", () => {
     expect(migrate.entry).toBe("dist/migrate-cli.js");
   });
 
+  test("Gateway migration 复用 Gateway package 的独立入口", () => {
+    const migrate = IMAGES.find((i) => i.name === "azure-gateway-migrate");
+    expect(migrate).toEqual({
+      service: "azure-gateway",
+      name: "azure-gateway-migrate",
+      entry: "dist/migrate-cli.js",
+    });
+  });
+
   test("三个服务镜像的构建参数与镜像名一致,入口都是 dist/main.js", () => {
     for (const name of ["azure-gateway", "azure-markdown", "azure-docx"]) {
       const img = IMAGES.find((i) => i.name === name);
@@ -83,15 +92,15 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--typo-flag", "x"])).toThrow(/--typo-flag/);
   });
 
-  // INTERNAL_TOKEN 不是本轮生成的密钥,而是必须与已部署的 Cloudflare CAS
+  // CAS_ACCESS_KEY 不是本轮生成的密钥,而是必须与已部署的 Cloudflare CAS
   // worker 对齐的既有值 —— 所以它必须能从命令行传进来。
-  test("--internal-token 被解析", () => {
-    expect(parseArgs(["--internal-token", "shared-with-cloudflare"]).internalToken).toBe(
+  test("--cas-access-key 被解析", () => {
+    expect(parseArgs(["--cas-access-key", "shared-with-cloudflare"]).casAccessKey).toBe(
       "shared-with-cloudflare",
     );
   });
 
-  test("不传 --internal-token 时是空串(留给 Key Vault 里的既有值)", () => {
-    expect(parseArgs([]).internalToken).toBe("");
+  test("不传 --cas-access-key 时是空串(留给 Key Vault 里的既有值)", () => {
+    expect(parseArgs([]).casAccessKey).toBe("");
   });
 });

@@ -19,8 +19,6 @@ import {
   BlobCasStore,
   BlobSnapshotCache,
   PgDeltaLog,
-  PgDocIndex,
-  PgDocIndexQuery,
   PgUnitOfWork,
   createBlobService,
   createPool,
@@ -28,16 +26,7 @@ import {
 } from "../src/index.js";
 import { BLOB_CONNECTION_STRING, DATABASE_URL } from "./containers.js";
 
-// The contract's DocIndex tests address the indexed document as
-// ("text", "doc-1") owned by "user-1" — those names are baked into the
-// assertions — while every other test wants a document nobody has touched.
-// So the index identity is pinned and per-test isolation rides on a fresh
-// delta-log doc id plus a truncate of the two cross-document tables. This
-// mirrors how the Cloudflare contract run separates X-Probe-Instance from
-// X-Doc-Id (tests/integration/cloudflare/cf-port-contract.test.mjs).
 const DOC_TYPE = "text";
-const INDEX_DOC_ID = "doc-1";
-const USER_ID = "user-1";
 
 /**
  * How many idle connections the pool must hold before the contract's
@@ -50,9 +39,9 @@ let pool: Pool;
 let blobService: BlobServiceClient;
 let docSeq = 0;
 
-function nextDocId(): string {
+function nextSessionId(): string {
   docSeq += 1;
-  return `contract-doc-${docSeq}`;
+  return `contract-session-${docSeq}`;
 }
 
 /**
@@ -92,7 +81,7 @@ async function warmPool(n: number): Promise<void> {
   await Promise.all(
     clients.map((client) =>
       client.query(
-        `SELECT COALESCE(MAX(version), 0) AS head FROM deltas WHERE doc_type = $1 AND doc_id = $2`,
+        `SELECT COALESCE(MAX(version), 0) AS head FROM deltas WHERE doc_type = $1 AND session_id = $2`,
         ["warmup", "warmup"],
       ),
     ),
@@ -107,21 +96,13 @@ async function warmPool(n: number): Promise<void> {
   expect(pool.idleCount).toBeGreaterThanOrEqual(2);
 }
 
-async function makeAzurePorts(docId: string) {
-  // `deltas` is isolated by the fresh doc id; `docs` / `doc_snapshots` are
-  // global, so they get cleared to give each factory() the clean state the
-  // contract assumes.
-  await pool.query("TRUNCATE docs, doc_snapshots");
-
-  const identity = { docType: DOC_TYPE, docId, userId: USER_ID };
-  const indexIdentity = { docType: DOC_TYPE, docId: INDEX_DOC_ID, userId: USER_ID };
+async function makeAzurePorts(sessionId: string) {
+  const identity = { docType: DOC_TYPE, sessionId, tenantId: "tenant-1" };
 
   return {
     deltas: new PgDeltaLog(pool, identity),
     snapshots: new BlobSnapshotCache(blobService, identity),
     blobs: new BlobCasStore(blobService),
-    index: new PgDocIndex(pool, indexIdentity),
-    indexQuery: new PgDocIndexQuery(pool),
     unitOfWork: new PgUnitOfWork(pool, identity),
   };
 }
@@ -143,7 +124,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-runPortContract("postgres + blob ports", async () => makeAzurePorts(nextDocId()), {
+runPortContract("postgres + blob ports", async () => makeAzurePorts(nextSessionId()), {
   transactional: true,
   prepareConcurrency: async () => {
     await warmPool(WARM_CONNECTIONS);

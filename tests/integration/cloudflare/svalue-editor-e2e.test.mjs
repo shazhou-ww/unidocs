@@ -96,16 +96,11 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
     }),
   ]);
 
-  const snapshot = await request(`/users/alice/docs/markdown/${docId}/snapshot`);
-  const snapshotBody = await snapshot.json();
-  expect(snapshot.ok, JSON.stringify(snapshotBody)).toBe(true);
-  expect(snapshotBody).toMatchObject({ success: true, version: 2 });
-  expect(snapshotBody.hash).toMatch(/^[0-9a-f]{64}$/);
-
   const cloneId = "markdown-clone";
-  const clone = await request(`/users/alice/docs/markdown/${cloneId}/init_from_hash`, {
+  const clone = await request("/users/alice/docs/markdown/", {
     method: "POST",
-    body: JSON.stringify({ hash: snapshotBody.hash, sourceVersion: 2 }),
+    headers: { "X-Doc-Id": cloneId },
+    body: JSON.stringify({ sourceId: docId }),
   });
   const cloned = await clone.json();
   expect(clone.ok, JSON.stringify(cloned)).toBe(true);
@@ -121,9 +116,10 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
     version: 1,
   });
 
-  const crossUserClone = await request("/users/bob/docs/markdown/foreign/init_from_hash", {
+  const crossUserClone = await request("/users/bob/docs/markdown/", {
     method: "POST",
-    body: JSON.stringify({ hash: snapshotBody.hash, sourceVersion: 2 }),
+    headers: { "X-Doc-Id": "foreign" },
+    body: JSON.stringify({ sourceId: docId }),
   });
   expect(crossUserClone.ok).toBe(false);
 

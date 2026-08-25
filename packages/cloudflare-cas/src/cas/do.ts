@@ -1,7 +1,7 @@
 /**
- * CAS Durable Object — per-user queue.
+ * CAS Durable Object — per-tenant queue.
  *
- * Serializes all mutable CAS operations for one user:
+ * Serializes all mutable CAS operations for one tenant:
  * - lease with content and lease extensions
  * - child-reference creation
  * - root-reference count updates
@@ -45,37 +45,58 @@ export class CasDurableObject implements DurableObject {
     this.env = env;
   }
 
+  private r2Key(tenantId: string, hash: string): string {
+    return `tenants/${tenantId}/nodes/${hash}`;
+  }
+
+  private legacyR2Key(tenantId: string, hash: string): string {
+    return `users/${tenantId}/nodes/${hash}`;
+  }
+
+  private async ensureR2Object(tenantId: string, hash: string): Promise<R2Object | null> {
+    const key = this.r2Key(tenantId, hash);
+    const current = await this.env.CAS_R2.head(key);
+    if (current) return current;
+
+    const legacyKey = this.legacyR2Key(tenantId, hash);
+    const legacy = await this.env.CAS_R2.get(legacyKey);
+    if (!legacy) return null;
+    await this.env.CAS_R2.put(key, legacy.body);
+    await this.env.CAS_R2.delete(legacyKey);
+    return this.env.CAS_R2.head(key);
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const action = url.pathname;
-    const userId = request.headers.get("X-User-Id");
+    const tenantId = request.headers.get("X-Tenant-Id");
 
-    if (!userId) {
-      return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
+    if (!tenantId) {
+      return Response.json({ error: "Missing X-Tenant-Id header" }, { status: 401 });
     }
 
     try {
       switch (action) {
         case "/leaseWithContent":
-          return await this.handleLeaseWithContent(request, userId);
+          return await this.handleLeaseWithContent(request, tenantId);
         case "/leasePortableNode":
-          return await this.handleLeasePortableNode(request, userId);
+          return await this.handleLeasePortableNode(request, tenantId);
         case "/leaseExisting":
-          return await this.handleLeaseExisting(request, userId);
+          return await this.handleLeaseExisting(request, tenantId);
         case "/read":
-          return await this.handleRead(request, userId);
+          return await this.handleRead(request, tenantId);
         case "/readNode":
-          return await this.handleReadNode(request, userId);
+          return await this.handleReadNode(request, tenantId);
         case "/metadata":
-          return await this.handleMetadata(request, userId);
+          return await this.handleMetadata(request, tenantId);
         case "/updateRootRefs":
-          return await this.handleUpdateRootRefs(request, userId);
+          return await this.handleUpdateRootRefs(request, tenantId);
         case "/assignRoots":
-          return await this.handleAssignRoots(request, userId);
+          return await this.handleAssignRoots(request, tenantId);
         case "/usage":
-          return await this.handleUsage(userId);
+          return await this.handleUsage(tenantId);
         case "/gc":
-          return await this.handleGc(request, userId);
+          return await this.handleGc(request, tenantId);
         default:
           return Response.json({ error: `Unknown action: ${action}` }, { status: 404 });
       }
@@ -84,7 +105,7 @@ export class CasDurableObject implements DurableObject {
       const stack = err instanceof Error ? err.stack : undefined;
       const status = err instanceof CasHttpError ? err.status : 500;
       if (status >= 500) {
-        console.error("[CAS DO] Error:", { action, userId, message, stack });
+        console.error("[CAS DO] Error:", { action, tenantId, message, stack });
       }
       return Response.json({ error: message }, { status });
     }
@@ -92,7 +113,7 @@ export class CasDurableObject implements DurableObject {
 
   // ─── Lease with content ───────────────────────────────────
 
-  private async handleLeaseWithContent(request: Request, userId: string): Promise<Response> {
+  private async handleLeaseWithContent(request: Request, tenantId: string): Promise<Response> {
     const hash = request.headers.get("X-CAS-Hash") ?? "";
     try {
       validateHash(hash);
@@ -127,7 +148,7 @@ export class CasDurableObject implements DurableObject {
     const descriptor: CasNodeDescriptor = { hash, size, contentType, refs };
 
     return this.leaseNode(
-      userId,
+      tenantId,
       descriptor,
       durationMs,
       async () => new Uint8Array(await request.arrayBuffer()),
@@ -135,7 +156,7 @@ export class CasDurableObject implements DurableObject {
     );
   }
 
-  private async handleLeasePortableNode(request: Request, userId: string): Promise<Response> {
+  private async handleLeasePortableNode(request: Request, tenantId: string): Promise<Response> {
     const hash = request.headers.get("X-CAS-Hash") ?? "";
     try {
       validateHash(hash);
@@ -152,7 +173,7 @@ export class CasDurableObject implements DurableObject {
       const refs = parsed.childHashes.map(hashToHex);
       validateChildRefs(refs, decoded.refCount);
       return this.leaseNode(
-        userId,
+        tenantId,
         {
           hash,
           size: parsed.content.length,
@@ -170,7 +191,7 @@ export class CasDurableObject implements DurableObject {
   }
 
   private async leaseNode(
-    userId: string,
+    tenantId: string,
     descriptor: CasNodeDescriptor,
     durationMs: number,
     provideContent: () => Promise<Uint8Array>,
@@ -180,11 +201,11 @@ export class CasDurableObject implements DurableObject {
 
     const now = Date.now();
     const db = this.env.CAS_DB;
-    const r2Key = `users/${userId}/nodes/${hash}`;
+    const r2Key = this.r2Key(tenantId, hash);
 
     const existing = await db
-      .prepare("SELECT content_size, content_type, lease_started_at, lease_expires_at FROM cas_nodes WHERE user_id = ? AND hash = ?")
-      .bind(userId, hash)
+      .prepare("SELECT content_size, content_type, lease_started_at, lease_expires_at FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+      .bind(tenantId, hash)
       .first<{
         content_size: number;
         content_type: string;
@@ -194,13 +215,13 @@ export class CasDurableObject implements DurableObject {
 
     const existingRefs = existing
       ? (await db
-        .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
-        .bind(userId, hash)
+        .prepare("SELECT child_hash FROM cas_edges WHERE tenant_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
+        .bind(tenantId, hash)
         .all<{ child_hash: string }>())
         .results.map((row) => row.child_hash)
       : [];
 
-    const r2Head = await this.env.CAS_R2.head(r2Key);
+    const r2Head = await this.ensureR2Object(tenantId, hash);
 
     if (existing && r2Head) {
       if (!metadataMatches(existing, existingRefs, descriptor)) {
@@ -208,11 +229,11 @@ export class CasDurableObject implements DurableObject {
         throw new CasHttpError(409, "Immutable metadata mismatch");
       }
       await cancelContent();
-      return Response.json(await this.extendLease(userId, hash, existing.lease_started_at, existing.lease_expires_at, durationMs, now));
+      return Response.json(await this.extendLease(tenantId, hash, existing.lease_started_at, existing.lease_expires_at, durationMs, now));
     }
 
     for (const childHash of refs) {
-      const childR2 = await this.env.CAS_R2.head(`users/${userId}/nodes/${childHash}`);
+      const childR2 = await this.ensureR2Object(tenantId, childHash);
       if (!childR2) {
         await cancelContent();
         throw new CasHttpError(409, `Child node ${childHash} is not ready`);
@@ -260,26 +281,26 @@ export class CasDurableObject implements DurableObject {
 
     if (existing) {
       await db
-        .prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE user_id = ? AND hash = ?")
-        .bind(leaseStartedAt, leaseExpiresAt, userId, hash)
+        .prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE tenant_id = ? AND hash = ?")
+        .bind(leaseStartedAt, leaseExpiresAt, tenantId, hash)
         .run();
     } else {
       const batch: D1PreparedStatement[] = [
         db.prepare(
-          `INSERT INTO cas_nodes (user_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
+          `INSERT INTO cas_nodes (tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
            VALUES (?, ?, ?, ?, ?, ?)`,
-        ).bind(userId, hash, size, contentType, leaseStartedAt, leaseExpiresAt),
+        ).bind(tenantId, hash, size, contentType, leaseStartedAt, leaseExpiresAt),
       ];
       for (let i = 0; i < refs.length; i++) {
         batch.push(
           db.prepare(
-            "INSERT INTO cas_edges (user_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, ?)",
-          ).bind(userId, hash, i, refs[i]),
+            "INSERT INTO cas_edges (tenant_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, ?)",
+          ).bind(tenantId, hash, i, refs[i]),
         );
         batch.push(
           db.prepare(
-            "UPDATE cas_nodes SET child_ref_count = child_ref_count + 1 WHERE user_id = ? AND hash = ?",
-          ).bind(userId, refs[i]),
+            "UPDATE cas_nodes SET child_ref_count = child_ref_count + 1 WHERE tenant_id = ? AND hash = ?",
+          ).bind(tenantId, refs[i]),
         );
       }
       await db.batch(batch);
@@ -295,7 +316,7 @@ export class CasDurableObject implements DurableObject {
   }
 
   private async extendLease(
-    userId: string,
+    tenantId: string,
     hash: string,
     currentStartedAt: number,
     currentExpiresAt: number,
@@ -305,15 +326,15 @@ export class CasDurableObject implements DurableObject {
     const leaseStartedAt = currentExpiresAt > now ? currentStartedAt : now;
     const leaseExpiresAt = now + durationMs;
     await this.env.CAS_DB
-      .prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE user_id = ? AND hash = ?")
-      .bind(leaseStartedAt, leaseExpiresAt, userId, hash)
+      .prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE tenant_id = ? AND hash = ?")
+      .bind(leaseStartedAt, leaseExpiresAt, tenantId, hash)
       .run();
     return { hash, ready: true, leaseStartedAt, leaseExpiresAt };
   }
 
   // ─── Lease Existing ───────────────────────────────────────
 
-  private async handleLeaseExisting(request: Request, userId: string): Promise<Response> {
+  private async handleLeaseExisting(request: Request, tenantId: string): Promise<Response> {
     const hash = request.headers.get("X-CAS-Hash") ?? "";
     try {
       validateHash(hash);
@@ -326,8 +347,8 @@ export class CasDurableObject implements DurableObject {
     const db = this.env.CAS_DB;
 
     const existing = await db
-      .prepare("SELECT lease_started_at, lease_expires_at FROM cas_nodes WHERE user_id = ? AND hash = ?")
-      .bind(userId, hash)
+      .prepare("SELECT lease_started_at, lease_expires_at FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+      .bind(tenantId, hash)
       .first<{
         lease_started_at: number;
         lease_expires_at: number;
@@ -337,24 +358,24 @@ export class CasDurableObject implements DurableObject {
       throw new CasHttpError(404, `Node ${hash} not found`);
     }
 
-    const r2Key = `users/${userId}/nodes/${hash}`;
-    const r2Obj = await this.env.CAS_R2.head(r2Key);
+    const r2Obj = await this.ensureR2Object(tenantId, hash);
     if (!r2Obj) {
       throw new CasHttpError(409, `Node ${hash} is not ready`);
     }
 
     return Response.json(
-      await this.extendLease(userId, hash, existing.lease_started_at, existing.lease_expires_at, durationMs, now),
+      await this.extendLease(tenantId, hash, existing.lease_started_at, existing.lease_expires_at, durationMs, now),
     );
   }
 
   // ─── Read ─────────────────────────────────────────────────
 
-  private async handleRead(request: Request, userId: string): Promise<Response> {
+  private async handleRead(request: Request, tenantId: string): Promise<Response> {
     const hash = request.headers.get("X-CAS-Hash")!;
     validateHash(hash);
 
-    const r2Key = `users/${userId}/nodes/${hash}`;
+    const r2Key = this.r2Key(tenantId, hash);
+    await this.ensureR2Object(tenantId, hash);
     const obj = await this.env.CAS_R2.get(r2Key);
     if (!obj) {
       return Response.json({ error: "Not found or not ready" }, { status: 404 });
@@ -365,24 +386,25 @@ export class CasDurableObject implements DurableObject {
     });
   }
 
-  private async handleReadNode(request: Request, userId: string): Promise<Response> {
+  private async handleReadNode(request: Request, tenantId: string): Promise<Response> {
     const hash = request.headers.get("X-CAS-Hash") ?? "";
     validateHash(hash);
     const node = await this.env.CAS_DB
-      .prepare("SELECT content_size, content_type FROM cas_nodes WHERE user_id = ? AND hash = ?")
-      .bind(userId, hash)
+      .prepare("SELECT content_size, content_type FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+      .bind(tenantId, hash)
       .first<{ content_size: number; content_type: string }>();
     if (!node) throw new CasHttpError(404, `Node ${hash} not found`);
 
-    const object = await this.env.CAS_R2.get(`users/${userId}/nodes/${hash}`);
+    await this.ensureR2Object(tenantId, hash);
+    const object = await this.env.CAS_R2.get(this.r2Key(tenantId, hash));
     if (!object) throw new CasHttpError(404, `Node ${hash} is not ready`);
     const content = new Uint8Array(await object.arrayBuffer());
     if (content.length !== node.content_size) {
       throw new Error(`Stored content length mismatch for ${hash}`);
     }
     const edges = await this.env.CAS_DB
-      .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
-      .bind(userId, hash)
+      .prepare("SELECT child_hash FROM cas_edges WHERE tenant_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
+      .bind(tenantId, hash)
       .all<{ child_hash: string }>();
     const refs = edges.results.map(edge => hexToHash(edge.child_hash));
     const header = encodeHeader(content.length, node.content_type, refs.length);
@@ -402,14 +424,14 @@ export class CasDurableObject implements DurableObject {
 
   // ─── Metadata ─────────────────────────────────────────────
 
-  private async handleMetadata(request: Request, userId: string): Promise<Response> {
+  private async handleMetadata(request: Request, tenantId: string): Promise<Response> {
     const hash = request.headers.get("X-CAS-Hash")!;
     validateHash(hash);
 
     const db = this.env.CAS_DB;
     const node = await db
-      .prepare("SELECT * FROM cas_nodes WHERE user_id = ? AND hash = ?")
-      .bind(userId, hash)
+      .prepare("SELECT * FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+      .bind(tenantId, hash)
       .first<{
         content_size: number;
         content_type: string;
@@ -424,8 +446,8 @@ export class CasDurableObject implements DurableObject {
     }
 
     const edges = await db
-      .prepare("SELECT child_hash FROM cas_edges WHERE user_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
-      .bind(userId, hash)
+      .prepare("SELECT child_hash FROM cas_edges WHERE tenant_id = ? AND parent_hash = ? ORDER BY ordinal ASC")
+      .bind(tenantId, hash)
       .all<{ child_hash: string }>();
 
     const metadata: CasNodeMetadata = {
@@ -447,7 +469,7 @@ export class CasDurableObject implements DurableObject {
 
   // ─── Root Refs ────────────────────────────────────────────
 
-  private async handleUpdateRootRefs(request: Request, userId: string): Promise<Response> {
+  private async handleUpdateRootRefs(request: Request, tenantId: string): Promise<Response> {
     const body = (await request.json()) as CasRootRefUpdate;
 
     if (!body.requestId || typeof body.requestId !== "string") {
@@ -462,8 +484,8 @@ export class CasDurableObject implements DurableObject {
 
     // Idempotency check
     const existing = await db
-      .prepare("SELECT payload_hash FROM cas_root_ref_requests WHERE user_id = ? AND request_id = ?")
-      .bind(userId, body.requestId)
+      .prepare("SELECT payload_hash FROM cas_root_ref_requests WHERE tenant_id = ? AND request_id = ?")
+      .bind(tenantId, body.requestId)
       .first<{ payload_hash: string }>();
 
     // Compute payload hash for idempotency
@@ -493,8 +515,8 @@ export class CasDurableObject implements DurableObject {
       }
 
       const node = await db
-        .prepare("SELECT root_ref_count FROM cas_nodes WHERE user_id = ? AND hash = ?")
-        .bind(userId, hash)
+        .prepare("SELECT root_ref_count FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+        .bind(tenantId, hash)
         .first<{ root_ref_count: number }>();
 
       if (!node) {
@@ -508,16 +530,16 @@ export class CasDurableObject implements DurableObject {
 
       batch.push(
         db.prepare(
-          "UPDATE cas_nodes SET root_ref_count = root_ref_count + ? WHERE user_id = ? AND hash = ?",
-        ).bind(delta, userId, hash),
+          "UPDATE cas_nodes SET root_ref_count = root_ref_count + ? WHERE tenant_id = ? AND hash = ?",
+        ).bind(delta, tenantId, hash),
       );
     }
 
     // Record idempotency
     batch.push(
       db.prepare(
-        "INSERT INTO cas_root_ref_requests (user_id, request_id, payload_hash, applied_at) VALUES (?, ?, ?, ?)",
-      ).bind(userId, body.requestId, payloadHash, now),
+        "INSERT INTO cas_root_ref_requests (tenant_id, request_id, payload_hash, applied_at) VALUES (?, ?, ?, ?)",
+      ).bind(tenantId, body.requestId, payloadHash, now),
     );
 
     await db.batch(batch);
@@ -525,7 +547,7 @@ export class CasDurableObject implements DurableObject {
     return Response.json({ success: true });
   }
 
-  private async handleAssignRoots(request: Request, userId: string): Promise<Response> {
+  private async handleAssignRoots(request: Request, tenantId: string): Promise<Response> {
     const body = (await request.json()) as CasAssignRootsRequest;
     validateRequestId(body.requestId);
     if (!Array.isArray(body.assignments) || body.assignments.length === 0) {
@@ -559,8 +581,8 @@ export class CasDurableObject implements DurableObject {
     const payloadHash = await hashJson({ kind: "assignRoots", assignments });
     const db = this.env.CAS_DB;
     const existingRequest = await db
-      .prepare("SELECT payload_hash FROM cas_root_ref_requests WHERE user_id = ? AND request_id = ?")
-      .bind(userId, body.requestId)
+      .prepare("SELECT payload_hash FROM cas_root_ref_requests WHERE tenant_id = ? AND request_id = ?")
+      .bind(tenantId, body.requestId)
       .first<{ payload_hash: string }>();
 
     if (existingRequest) {
@@ -575,8 +597,8 @@ export class CasDurableObject implements DurableObject {
 
     for (const assignment of assignments) {
       const prior = await db
-        .prepare("SELECT hash FROM cas_root_owners WHERE user_id = ? AND owner = ?")
-        .bind(userId, assignment.owner)
+        .prepare("SELECT hash FROM cas_root_owners WHERE tenant_id = ? AND owner = ?")
+        .bind(tenantId, assignment.owner)
         .first<{ hash: string }>();
       const priorHash = prior?.hash ?? null;
       priorByOwner.set(assignment.owner, priorHash);
@@ -585,11 +607,11 @@ export class CasDurableObject implements DurableObject {
       if (priorHash !== null) addCount(changes, priorHash, -1);
       if (assignment.hash !== null) {
         const node = await db
-          .prepare("SELECT root_ref_count FROM cas_nodes WHERE user_id = ? AND hash = ?")
-          .bind(userId, assignment.hash)
+          .prepare("SELECT root_ref_count FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+          .bind(tenantId, assignment.hash)
           .first<{ root_ref_count: number }>();
         if (!node) throw new CasHttpError(404, `Node ${assignment.hash} not found`);
-        const ready = await this.env.CAS_R2.head(`users/${userId}/nodes/${assignment.hash}`);
+        const ready = await this.ensureR2Object(tenantId, assignment.hash);
         if (!ready) throw new CasHttpError(409, `Node ${assignment.hash} is not ready`);
         addCount(changes, assignment.hash, 1);
       }
@@ -598,8 +620,8 @@ export class CasDurableObject implements DurableObject {
     for (const [hash, delta] of changes) {
       if (delta === 0) continue;
       const node = await db
-        .prepare("SELECT root_ref_count FROM cas_nodes WHERE user_id = ? AND hash = ?")
-        .bind(userId, hash)
+        .prepare("SELECT root_ref_count FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+        .bind(tenantId, hash)
         .first<{ root_ref_count: number }>();
       if (!node) throw new CasHttpError(409, `Assigned node ${hash} is missing`);
       const nextCount = node.root_ref_count + delta;
@@ -613,8 +635,8 @@ export class CasDurableObject implements DurableObject {
       if (delta === 0) continue;
       batch.push(
         db.prepare(
-          "UPDATE cas_nodes SET root_ref_count = root_ref_count + ? WHERE user_id = ? AND hash = ?",
-        ).bind(delta, userId, hash),
+          "UPDATE cas_nodes SET root_ref_count = root_ref_count + ? WHERE tenant_id = ? AND hash = ?",
+        ).bind(delta, tenantId, hash),
       );
     }
     for (const assignment of assignments) {
@@ -622,25 +644,25 @@ export class CasDurableObject implements DurableObject {
       if (priorHash === assignment.hash) continue;
       if (assignment.hash === null) {
         batch.push(
-          db.prepare("DELETE FROM cas_root_owners WHERE user_id = ? AND owner = ?")
-            .bind(userId, assignment.owner),
+          db.prepare("DELETE FROM cas_root_owners WHERE tenant_id = ? AND owner = ?")
+            .bind(tenantId, assignment.owner),
         );
       } else if (priorHash === null) {
         batch.push(
-          db.prepare("INSERT INTO cas_root_owners (user_id, owner, hash) VALUES (?, ?, ?)")
-            .bind(userId, assignment.owner, assignment.hash),
+          db.prepare("INSERT INTO cas_root_owners (tenant_id, owner, hash) VALUES (?, ?, ?)")
+            .bind(tenantId, assignment.owner, assignment.hash),
         );
       } else {
         batch.push(
-          db.prepare("UPDATE cas_root_owners SET hash = ? WHERE user_id = ? AND owner = ?")
-            .bind(assignment.hash, userId, assignment.owner),
+          db.prepare("UPDATE cas_root_owners SET hash = ? WHERE tenant_id = ? AND owner = ?")
+            .bind(assignment.hash, tenantId, assignment.owner),
         );
       }
     }
     batch.push(
       db.prepare(
-        "INSERT INTO cas_root_ref_requests (user_id, request_id, payload_hash, applied_at) VALUES (?, ?, ?, ?)",
-      ).bind(userId, body.requestId, payloadHash, Date.now()),
+        "INSERT INTO cas_root_ref_requests (tenant_id, request_id, payload_hash, applied_at) VALUES (?, ?, ?, ?)",
+      ).bind(tenantId, body.requestId, payloadHash, Date.now()),
     );
     await db.batch(batch);
 
@@ -649,7 +671,7 @@ export class CasDurableObject implements DurableObject {
 
   // ─── Usage ────────────────────────────────────────────────
 
-  private async handleUsage(userId: string): Promise<Response> {
+  private async handleUsage(tenantId: string): Promise<Response> {
     const db = this.env.CAS_DB;
 
     const stats = await db
@@ -658,21 +680,20 @@ export class CasDurableObject implements DurableObject {
           COUNT(*) as nodeCount,
           COALESCE(SUM(content_size), 0) as readyContentBytes,
           COUNT(CASE WHEN lease_expires_at > 0 THEN 1 END) as leasedNodeCount
-         FROM cas_nodes WHERE user_id = ?`,
+          FROM cas_nodes WHERE tenant_id = ?`,
       )
-      .bind(userId)
+        .bind(tenantId)
       .first<{ nodeCount: number; readyContentBytes: number; leasedNodeCount: number }>();
 
     // Count not-ready nodes (no R2 content)
     const allNodes = await db
-      .prepare("SELECT hash FROM cas_nodes WHERE user_id = ?")
-      .bind(userId)
+      .prepare("SELECT hash FROM cas_nodes WHERE tenant_id = ?")
+      .bind(tenantId)
       .all<{ hash: string }>();
 
     let notReadyCount = 0;
     for (const node of allNodes.results) {
-      const r2Key = `users/${userId}/nodes/${node.hash}`;
-      const r2Obj = await this.env.CAS_R2.head(r2Key);
+      const r2Obj = await this.ensureR2Object(tenantId, node.hash);
       if (!r2Obj) notReadyCount++;
     }
 
@@ -688,7 +709,7 @@ export class CasDurableObject implements DurableObject {
 
   // ─── GC ───────────────────────────────────────────────────
 
-  private async handleGc(request: Request, userId: string): Promise<Response> {
+  private async handleGc(request: Request, tenantId: string): Promise<Response> {
     const body = await request.json().catch(() => ({})) as { maxNodes?: number };
     const maxNodes = body.maxNodes ?? 100;
 
@@ -699,13 +720,13 @@ export class CasDurableObject implements DurableObject {
     const eligible = await db
       .prepare(
         `SELECT hash, content_size FROM cas_nodes
-         WHERE user_id = ?
+         WHERE tenant_id = ?
            AND child_ref_count = 0
            AND root_ref_count = 0
            AND lease_expires_at <= ?
          LIMIT ?`,
       )
-      .bind(userId, now, maxNodes)
+      .bind(tenantId, now, maxNodes)
       .all<{ hash: string; content_size: number }>();
 
     let deleted = 0;
@@ -715,9 +736,9 @@ export class CasDurableObject implements DurableObject {
       // Re-check eligibility
       const fresh = await db
         .prepare(
-          "SELECT child_ref_count, root_ref_count, lease_expires_at FROM cas_nodes WHERE user_id = ? AND hash = ?",
+          "SELECT child_ref_count, root_ref_count, lease_expires_at FROM cas_nodes WHERE tenant_id = ? AND hash = ?",
         )
-        .bind(userId, node.hash)
+        .bind(tenantId, node.hash)
         .first<{ child_ref_count: number; root_ref_count: number; lease_expires_at: number }>();
 
       if (!fresh || fresh.child_ref_count > 0 || fresh.root_ref_count > 0 || fresh.lease_expires_at > now) {
@@ -725,27 +746,29 @@ export class CasDurableObject implements DurableObject {
       }
 
       // Delete R2 content
-      const r2Key = `users/${userId}/nodes/${node.hash}`;
-      await this.env.CAS_R2.delete(r2Key);
+      await Promise.all([
+        this.env.CAS_R2.delete(this.r2Key(tenantId, node.hash)),
+        this.env.CAS_R2.delete(this.legacyR2Key(tenantId, node.hash)),
+      ]);
 
       // Delete edges and decrement child ref counts
       const edges = await db
-        .prepare("SELECT child_hash, COUNT(*) as cnt FROM cas_edges WHERE user_id = ? AND parent_hash = ? GROUP BY child_hash")
-        .bind(userId, node.hash)
+        .prepare("SELECT child_hash, COUNT(*) as cnt FROM cas_edges WHERE tenant_id = ? AND parent_hash = ? GROUP BY child_hash")
+        .bind(tenantId, node.hash)
         .all<{ child_hash: string; cnt: number }>();
 
       const batch: D1PreparedStatement[] = [
-        db.prepare("DELETE FROM cas_edges WHERE user_id = ? AND parent_hash = ?")
-          .bind(userId, node.hash),
-        db.prepare("DELETE FROM cas_nodes WHERE user_id = ? AND hash = ?")
-          .bind(userId, node.hash),
+        db.prepare("DELETE FROM cas_edges WHERE tenant_id = ? AND parent_hash = ?")
+          .bind(tenantId, node.hash),
+        db.prepare("DELETE FROM cas_nodes WHERE tenant_id = ? AND hash = ?")
+          .bind(tenantId, node.hash),
       ];
 
       for (const edge of edges.results) {
         batch.push(
           db.prepare(
-            "UPDATE cas_nodes SET child_ref_count = child_ref_count - ? WHERE user_id = ? AND hash = ?",
-          ).bind(edge.cnt, userId, edge.child_hash),
+            "UPDATE cas_nodes SET child_ref_count = child_ref_count - ? WHERE tenant_id = ? AND hash = ?",
+          ).bind(edge.cnt, tenantId, edge.child_hash),
         );
       }
 

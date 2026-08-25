@@ -11,17 +11,17 @@
  * 直接原因是 `local-editor.ts` 携带的多副本不变量（每请求新建 session）——
  * 复制那条规则等于制造一条「只改一边就能悄悄产生数据损坏」的路径。
  */
-import type { DocumentType } from "@unidocs/protocol";
+import type { DocumentTypeFactory } from "@unidocs/protocol";
 import {
   CasClient,
   type HttpFetcher,
 } from "@unidocs/cas-client";
-import type { DocIdentity, SessionDeps } from "@unidocs/doctype-server-common";
-import { createDocTypeHandler } from "@unidocs/doctype-server-common";
+import type { SessionDeps, SessionIdentity } from "@unidocs/doctype-server-common";
+import { createDocTypeHandler, createSBlobContext } from "@unidocs/doctype-server-common";
 import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";
 import { createLocalEditorNamespace, createStubOperatorNamespace } from "./local-editor.js";
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";
-import { PgDeltaLog, PgDocIndex, PgUnitOfWork } from "./ports-pg.js";
+import { PgDeltaLog, PgSessionIdentityStore, PgUnitOfWork } from "./ports-pg.js";
 import { createBlobService, createPool } from "./pool.js";
 import { serve } from "./http-shell.js";
 
@@ -30,12 +30,13 @@ export interface DocTypeServiceConfig {
   blobConnectionString?: string;
   /** 云上模式：Blob 账户端点 URL，与 `blobConnectionString` 互斥。 */
   blobAccountUrl?: string;
-  internalToken: string;
+  serviceAccessKey: string;
+    casAccessKey?: string; // Make CAS access key optional for CAS-less local services
   /**
    * 过渡形态（阶段 4 删除）：指向 Cloudflare CAS worker 的基地址。
    * 注意它必须指向 CAS worker 本身，不能指向 gateway —— `CasClient`
    * 的 `updateRootRefs` 打的是 `${origin}/_internal/root-refs`，
-   * gateway 只路由 `/users/...`，不代理 `/_internal/*`。
+  * gateway 不代理 `/_internal/*`。
    * 未给时 CAS 调用一律 501（markdown 的 TDoc/ops 不含 SBlob，
    * 不给它配 CAS 是正确的默认）。
    */
@@ -44,7 +45,7 @@ export interface DocTypeServiceConfig {
 
 export interface DocTypeServiceOptions<TDoc, TQuery, TOp> {
   docType: string;
-  documentType: DocumentType<TDoc, TQuery, TOp>;
+  documentTypeFactory: DocumentTypeFactory<TDoc, TQuery, TOp>;
   port: number;
   host?: string;
   config: DocTypeServiceConfig;
@@ -61,11 +62,11 @@ export interface DocTypeServiceHandle {
  *
  * 之所以走 fetcher 而不是 CasClient 的 baseUrl 模式：baseUrl 模式发的是
  * `Authorization: Bearer`，而 CAS worker 的内部路由认的是 `X-Internal-Token`
- * 与 `X-User-Id` —— 那两个头只有 fetcher 模式会发。之前这里用的是
- * `{ baseUrl, userId, internalToken }`，选中的正是 baseUrl 分支：
- * `internalToken` 在那个分支上不存在对应字段，`authToken` 又没给，结果是
+ * 与 `X-Tenant-Id` —— 那两个头只有 fetcher 模式会发。之前这里用的是
+ * 旧实现错误地选择了 baseUrl 分支：
+ * CAS access key 在那个分支上没有对应字段，`authToken` 又没给，结果是
  * 一个鉴权头都不发，TypeScript 因为联合类型的另一个成员里存在
- * `internalToken` 而没有报错。
+ * 旧联合类型因字段重叠而没有报错。
  */
 function httpCasFetcher(baseUrl: string): HttpFetcher {
   const origin = baseUrl.replace(/\/$/, "");
@@ -81,12 +82,13 @@ function httpCasFetcher(baseUrl: string): HttpFetcher {
 export async function startDocTypeService<TDoc, TQuery, TOp>(
   options: DocTypeServiceOptions<TDoc, TQuery, TOp>,
 ): Promise<DocTypeServiceHandle> {
-  const { docType, documentType, port, config } = options;
+  const { docType, documentTypeFactory, port, config } = options;
   const host = options.host ?? "0.0.0.0";
 
   const pool = createPool(config);
   attachPoolErrorLogger(pool, `azure-${docType}`);
   const blobService = createBlobService(config);
+  const sessionIdentities = new PgSessionIdentityStore(pool);
 
   // 过渡形态（阶段 4 删除）。
   const casStubFetcher = {
@@ -94,27 +96,51 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       Response.json({ error: "CAS is not implemented on Azure yet" }, { status: 501 }),
   };
 
-  function buildDeps(identity: DocIdentity): SessionDeps {
+  function buildSession(identity: SessionIdentity): {
+    documentType: ReturnType<DocumentTypeFactory<TDoc, TQuery, TOp>>;
+    deps: SessionDeps;
+  } {
+    const cas = new CasClient({
+      fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+      tenantId: identity.tenantId,
+      accessKey: config.casAccessKey ?? "",
+    });
+    const context = createSBlobContext({
+      ensureNode: (hash, content, contentType, refs) =>
+        cas.ensureNode(hash, content, contentType, refs ? [...refs] : undefined),
+      leaseExisting: (hash) => cas.leaseExisting(hash),
+      metadata: (hash) => cas.metadata({ kind: "cas", hash }),
+      read: (hash) => cas.read({ kind: "cas", hash }),
+    });
+
     return {
+      documentType: documentTypeFactory(context),
+      deps: {
       deltas: new PgDeltaLog(pool, identity),
-      snapshots: new BlobSnapshotCache(blobService, identity),
-      blobs: new BlobCasStore(blobService),
-      index: new PgDocIndex(pool, identity),
+      snapshots: new BlobSnapshotCache(blobService, identity, `unidocs-${docType}-snapshots`),
+      blobs: new BlobCasStore(blobService, `unidocs-${docType}-roots`),
       unitOfWork: new PgUnitOfWork(pool, identity),
-      cas: new CasClient({
-        fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
-        userId: identity.userId,
-        internalToken: config.internalToken,
-      }),
+      cas,
       identity,
       now: () => Date.now(),
+      },
     };
   }
 
   const handler = createDocTypeHandler({
     docType,
-    internalToken: config.internalToken,
-    editor: createLocalEditorNamespace(documentType, buildDeps),
+    accessKey: config.serviceAccessKey,
+    editor: createLocalEditorNamespace(buildSession, async (identity, creating) => {
+      if (creating) await sessionIdentities.register(identity);
+      const stored = await sessionIdentities.get(identity.sessionId);
+      if (!stored) {
+        return Response.json({ error: "Session not found" }, { status: 404 });
+      }
+      if (stored.tenantId !== identity.tenantId || stored.docType !== identity.docType) {
+        return Response.json({ error: "Session identity mismatch" }, { status: 403 });
+      }
+      return null;
+    }),
     operator: createStubOperatorNamespace(),
   });
 
@@ -140,19 +166,25 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
  */
 export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   docType: string;
-  documentType: DocumentType<TDoc, TQuery, TOp>;
+  documentTypeFactory: DocumentTypeFactory<TDoc, TQuery, TOp>;
   defaultPort: number;
 }): Promise<void> {
-  const { docType, documentType, defaultPort } = options;
+  const { docType, documentTypeFactory, defaultPort } = options;
+  const casBaseUrl = process.env.CAS_BASE_URL;
+  const casAccessKey = process.env.CAS_ACCESS_KEY;
+  if (casBaseUrl && !casAccessKey) {
+    throw new Error("CAS_ACCESS_KEY is required when CAS_BASE_URL is configured");
+  }
   const handle = await startDocTypeService({
     docType,
-    documentType,
+    documentTypeFactory,
     port: Number(process.env.PORT ?? defaultPort),
     config: {
       databaseUrl: requireEnv("DATABASE_URL"),
       ...resolveBlobConfig(),
-      internalToken: requireEnv("INTERNAL_TOKEN"),
-      casBaseUrl: process.env.CAS_BASE_URL,
+      serviceAccessKey: requireEnv("SERVICE_ACCESS_KEY"),
+      casAccessKey,
+      casBaseUrl,
     },
   });
   console.log(`azure-${docType} listening on ${handle.url}`);

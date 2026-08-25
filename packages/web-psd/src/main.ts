@@ -16,6 +16,7 @@ import { CasBlobStore, DocSession, loadDoc, RenderClient, Viewport } from "@unid
 
 const GW = "/gw"; // Vite proxies this to the gateway (see vite.config.ts)
 const USER = "u1";
+const API_BASE_URL = `${GW}/users/${USER}`;
 const TYPE = "psd";
 
 let docId: string | null = null;
@@ -110,10 +111,9 @@ async function initRender(): Promise<void> {
   if (!docId) return;
   setStatus(`loading ${docId.slice(0, 8)}…`);
 
-  const store = new CasBlobStore({ gw: GW, user: USER });
+  const store = new CasBlobStore({ apiBaseUrl: API_BASE_URL });
   const { doc, version, snapshot } = await loadDoc({
-    gw: GW,
-    user: USER,
+    apiBaseUrl: API_BASE_URL,
     type: TYPE,
     docId,
     store,
@@ -135,7 +135,7 @@ async function initRender(): Promise<void> {
     Math.max(CACHE_FLOOR, decodedBytes(doc.layers as unknown as SizedLayer[]) + CACHE_HEADROOM),
   );
   const workerInitStart = performance.now();
-  const init = await renderClient.init({ snapshot, gw: GW, user: USER, cacheBytes });
+  const init = await renderClient.init({ snapshot, apiBaseUrl: API_BASE_URL, cacheBytes });
   const workerInitMs = performance.now() - workerInitStart;
   tileSize = init.tileSize;
 
@@ -147,8 +147,7 @@ async function initRender(): Promise<void> {
   viewport.setViewportEl(stageEl);
 
   session = new DocSession({
-    gw: GW,
-    user: USER,
+    apiBaseUrl: API_BASE_URL,
     type: TYPE,
     docId,
     doc,

@@ -13,8 +13,7 @@
  * document read and write on Cloudflare goes through this file.
  */
 
-import type { BlobCas, Delta, DeltaLog, DocIdentity, DocIndex, SnapshotCache, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
-import type { DocIndexQuery, DocRecord, SnapshotRef } from "@unidocs/http-protocol";
+import type { BlobCas, Delta, DeltaLog, SnapshotCache, SnapshotRef, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
 import { VersionConflictError } from "@unidocs/http-protocol";
 
 // Must stay "snapshot" — changing it orphans the KV snapshot of every
@@ -238,121 +237,7 @@ export class R2BlobCas implements BlobCas {
   }
 }
 
-/**
- * DocIndex on the shared D1 database, scoped to one document identity.
- * Mirrors editor-do.ts `#saveSnapshot()` (snapshots + docs updated_at) and
- * the docs-table registration in the create / init_from_hash handlers.
- *
- * `register()` is a no-op beyond what the constructor already captured:
- * this implementation is handed its `DocIdentity` up front, so it does not
- * need `register()` to learn who it is indexing the way MemoryDocIndex
- * does. It still honors the DocIndex contract (`register()` before
- * `touch()`/`recordSnapshot()`) — callers must still call it first.
- */
-export class D1DocIndex implements DocIndex {
-  #db: D1Database;
-  #identity: DocIdentity;
-
-  constructor(db: D1Database, identity: DocIdentity) {
-    this.#db = db;
-    this.#identity = identity;
-  }
-
-  // editor-do.ts create / init_from_hash: docs table INSERT OR REPLACE.
-  // Table creation now happens once via packages/cloudflare-gateway/migrations/0001_init.sql, not here.
-  async register(rec: DocRecord): Promise<void> {
-    await this.#db
-      .prepare(
-        `INSERT OR REPLACE INTO docs (doc_id, doc_type, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-      )
-      .bind(rec.docId, rec.docType, rec.ownerId, rec.createdAt, rec.updatedAt)
-      .run();
-  }
-
-  // editor-do.ts `#saveSnapshot()`: docs table UPDATE updated_at.
-  // ownerId isn't part of DocIndex.touch(), so we key on (doc_id, doc_type)
-  // alone, matching the docs table primary key.
-  async touch(at: number): Promise<void> {
-    await this.#db
-      .prepare(`UPDATE docs SET updated_at = ? WHERE doc_id = ? AND doc_type = ?`)
-      .bind(at, this.#identity.docId, this.#identity.docType)
-      .run();
-  }
-
-  // editor-do.ts `#saveSnapshot()`: snapshots table INSERT OR REPLACE.
-  async recordSnapshot(version: number, hash: string, timestamp: number): Promise<void> {
-    await this.#db
-      .prepare(
-        `INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)`,
-      )
-      .bind(hash, this.#identity.docType, this.#identity.docId, version, timestamp)
-      .run();
-  }
-}
-
-/**
- * DocIndexQuery on the shared D1 database. Mirrors the (not-yet-existing
- * in editor-do.ts) list/snapshots read paths — table shapes are the same
- * `docs` / `snapshots` tables `D1DocIndex` writes.
- */
-export class D1DocIndexQuery implements DocIndexQuery {
-  #db: D1Database;
-
-  constructor(db: D1Database) {
-    this.#db = db;
-  }
-
-  async list(userId: string, docType: string): Promise<DocRecord[]> {
-    const result = await this.#db
-      .prepare(
-        `SELECT doc_id, doc_type, owner_id, created_at, updated_at FROM docs WHERE owner_id = ? AND doc_type = ? ORDER BY updated_at DESC`,
-      )
-      .bind(userId, docType)
-      .all();
-    return (result.results ?? []).map((row) => ({
-      docId: row.doc_id as string,
-      docType: row.doc_type as string,
-      ownerId: row.owner_id as string,
-      createdAt: row.created_at as number,
-      updatedAt: row.updated_at as number,
-    }));
-  }
-
-  async snapshots(docType: string, docId: string): Promise<SnapshotRef[]> {
-    const result = await this.#db
-      .prepare(
-        `SELECT version, hash FROM snapshots WHERE doc_type = ? AND doc_id = ? ORDER BY version ASC`,
-      )
-      .bind(docType, docId)
-      .all();
-    return (result.results ?? []).map((row) => ({
-      version: row.version as number,
-      hash: row.hash as string,
-    }));
-  }
-}
-
-/**
- * `UnitOfWork` for Cloudflare: run the callback, commit nothing, roll back
- * nothing.
- *
- * This is not an unfinished implementation — it is the strongest thing this
- * platform can offer. The two ports a transaction would have to span live in
- * two physically separate services: the delta log is a Durable Object's
- * private sqlite, reachable only from inside that DO, and the index is D1,
- * a separate database behind its own binding. There is no distributed
- * transaction between them and no two-phase commit to enlist them in, so a
- * failure partway through `withTransaction` leaves exactly what it wrote.
- *
- * What that costs, concretely: if `DocIndex.register()` fails during
- * `DocumentSession.create()`, the version-1 delta stays in the DO's sqlite
- * while the document is missing from the global listing, and a retried
- * `create()` answers 409 because the DO now holds a document. That orphan is
- * the known, accepted limitation of the Cloudflare deployment; the Postgres
- * backend on Azure closes it with a real transaction. The port contract
- * marks this by running against `runPortContract(..., { transactional: false })`,
- * which skips the two rollback assertions this class cannot satisfy.
- */
+/** Cloudflare DO requests are already serialized over one local delta store. */
 export class DirectUnitOfWork implements UnitOfWork {
   #ports: TransactionalPorts;
 

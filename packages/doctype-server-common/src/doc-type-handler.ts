@@ -2,18 +2,19 @@
  * Shared HTTP routing for doc-type Cloudflare Workers (cloudflare-markdown,
  * cloudflare-docx, ...).
  *
- * URL pattern (called by Gateway after stripping /{docType}):
- *   POST /users/{userId}/                             → create document
- *   POST /users/{userId}/{docId}/apply                → apply delta
- *   POST /users/{userId}/{docId}/query                → query document
- *   GET  /users/{userId}/{docId}/export               → download document
- *   GET  /users/{userId}/{docId}/history              → get delta history
- *   POST /users/{userId}/{docId}/rollback             → rollback to version
- *   GET  /users/{userId}/{docId}/snapshot             → get snapshot hash (for clone)
- *   GET  /users/{userId}/{docId}/ir                   → get canonical current-TDoc bytes
- *   POST /users/{userId}/{docId}/init_from_hash       → clone from snapshot
- *   POST /users/{userId}/{docId}/run                  → operator ReAct loop
- *   POST /users/{userId}/{docId}/reset                → reset operator session
+ * Internal URL pattern:
+ *   PUT  /sessions/{sessionId}                 → create session idempotently
+ *   POST /sessions/{sessionId}/apply
+ *   POST /sessions/{sessionId}/query
+ *   GET  /sessions/{sessionId}/export
+ *   GET  /sessions/{sessionId}/history
+ *   POST /sessions/{sessionId}/rollback
+ *   GET  /sessions/{sessionId}/snapshot
+ *   GET  /sessions/{sessionId}/ir
+ *   POST /sessions/{sessionId}/init-from-hash
+ *   GET  /sessions/{sessionId}/status
+ *   POST /sessions/{sessionId}/run
+ *   POST /sessions/{sessionId}/reset
  *
  * Auth: verifies X-Internal-Token from Gateway.
  */
@@ -31,14 +32,21 @@ interface DoNamespaceLike {
 
 export interface DocTypeHandlerConfig {
   docType: string;
-  internalToken: string;
+  accessKey: string;
   editor: DoNamespaceLike;
   operator: DoNamespaceLike;
 }
 
-const EDITOR_METHODS = new Set([
-  "query", "apply", "history", "rollback", "export",
-  "snapshot", "ir", "init_from_hash",
+const EDITOR_METHODS = new Map([
+  ["query", "query"],
+  ["apply", "apply"],
+  ["history", "history"],
+  ["rollback", "rollback"],
+  ["export", "export"],
+  ["snapshot", "snapshot"],
+  ["ir", "ir"],
+  ["init-from-hash", "init_from_hash"],
+  ["status", "status"],
 ]);
 const OPERATOR_METHODS = new Set(["run", "reset"]);
 
@@ -48,35 +56,32 @@ export function createDocTypeHandler(
   return async (request: Request): Promise<Response> => {
     // Verify internal token
     const token = request.headers.get("X-Internal-Token");
-    if (cfg.internalToken && token !== cfg.internalToken) {
+    if (!cfg.accessKey || token !== cfg.accessKey) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (!request.headers.get("X-Tenant-Id")) {
+      return Response.json({ error: "Missing X-Tenant-Id header" }, { status: 401 });
     }
 
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // Expected: ["users", userId, docId?, method?]
-    if (parts.length < 2 || parts[0] !== "users") {
+    // Expected: ["sessions", sessionId, method?]
+    if (parts.length < 2 || parts[0] !== "sessions") {
       return Response.json({
-        error: "Use /users/{userId}/{docId}/* endpoints",
+        error: "Use /sessions/{sessionId}/* endpoints",
       }, { status: 404 });
     }
 
-    const userId = parts[1];
-    const docId = parts[2];
-    const method = parts[3];
+    const sessionId = parts[1];
+    const method = parts[2];
 
-    // POST /users/{userId}/ — create new document
-    if (!docId && request.method === "POST") {
-      const newDocId = request.headers.get("X-Doc-Id") || crypto.randomUUID();
-      const id = cfg.editor.idFromName(`${userId}:${newDocId}`);
+    if (!method && request.method === "PUT") {
+      const id = cfg.editor.idFromName(sessionId);
       const stub = cfg.editor.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = "/_internal/create";
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", cfg.docType);
-      headers.set("X-Doc-Id", newDocId);
-      headers.set("X-User-Id", userId);
+      const headers = internalHeaders(request, cfg.docType, sessionId);
       return stub.fetch(new Request(forwardUrl.toString(), {
         method: "POST",
         headers,
@@ -85,20 +90,17 @@ export function createDocTypeHandler(
       } as RequestInit));
     }
 
-    if (!docId || !method) {
-      return Response.json({ error: "Missing docId or method" }, { status: 400 });
+    if (!method) {
+      return Response.json({ error: "Missing session method" }, { status: 400 });
     }
 
-    // Editor endpoints
-    if (EDITOR_METHODS.has(method)) {
-      const id = cfg.editor.idFromName(`${userId}:${docId}`);
+    const editorMethod = EDITOR_METHODS.get(method);
+    if (editorMethod) {
+      const id = cfg.editor.idFromName(sessionId);
       const stub = cfg.editor.get(id);
       const forwardUrl = new URL(request.url);
-      forwardUrl.pathname = `/_internal/${method}`;
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", cfg.docType);
-      headers.set("X-User-Id", userId);
-      headers.set("X-Doc-Id", docId);
+      forwardUrl.pathname = `/_internal/${editorMethod}`;
+      const headers = internalHeaders(request, cfg.docType, sessionId);
       return stub.fetch(new Request(forwardUrl.toString(), {
         method: request.method,
         headers,
@@ -109,14 +111,11 @@ export function createDocTypeHandler(
 
     // Operator endpoints
     if (OPERATOR_METHODS.has(method)) {
-      const id = cfg.operator.idFromName(`${userId}:${docId}`);
+      const id = cfg.operator.idFromName(sessionId);
       const stub = cfg.operator.get(id);
       const forwardUrl = new URL(request.url);
       forwardUrl.pathname = `/_internal/${method}`;
-      const headers = new Headers(request.headers);
-      headers.set("X-Doc-Type", cfg.docType);
-      headers.set("X-User-Id", userId);
-      headers.set("X-Doc-Id", docId);
+      const headers = internalHeaders(request, cfg.docType, sessionId);
       return stub.fetch(new Request(forwardUrl.toString(), {
         method: request.method,
         headers,
@@ -127,4 +126,15 @@ export function createDocTypeHandler(
 
     return Response.json({ error: `Unknown endpoint: ${method}` }, { status: 404 });
   };
+}
+
+function internalHeaders(request: Request, docType: string, sessionId: string): Headers {
+  const headers = new Headers();
+  for (const name of ["Content-Type", "Content-Length", "Accept", "X-Internal-Token", "X-Tenant-Id"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  headers.set("X-Doc-Type", docType);
+  headers.set("X-Session-Id", sessionId);
+  return headers;
 }

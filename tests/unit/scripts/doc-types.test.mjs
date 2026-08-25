@@ -4,12 +4,14 @@ import {
   buildWorkers,
   bundleTargets,
   CAS_FAULT_WORKER,
+  CAS_ACCESS_KEY,
   CAS_PORT,
   CAS_WORKER,
   DOC_TYPES,
+  docServiceAccessKey,
+  docServicesJson,
   GATEWAY_WORKER,
   parseDocTypes,
-  registryEntries,
   resolvePorts,
 } from "../../../scripts/doc-types.mjs";
 
@@ -41,6 +43,15 @@ test("every registered doc type carries the fields the runtime needs", () => {
     expect(spec.operatorClass, `${name}.operatorClass`).toBeTruthy();
     expect(typeof spec.port, `${name}.port`).toBe("number");
   }
+});
+
+test("gateway, CAS, and every doc type have unique default ports", () => {
+  const ports = [
+    8787,
+    CAS_PORT,
+    ...Object.values(DOC_TYPES).map(spec => spec.port),
+  ];
+  expect(new Set(ports).size).toBe(ports.length);
 });
 
 test("resolvePorts only allocates ports for the gateway and selected types", () => {
@@ -109,13 +120,33 @@ test("gateway proxies CAS via service binding and cas worker owns the stores", (
   expect(cas.r2Buckets).toEqual({ CAS_R2: "unidocs-cas" });
 });
 
-test("registryEntries seeds only the selected doc types", () => {
-  expect(
-    registryEntries(["docx"], {
-      gateway: "http://h:8787",
-      docx: "http://h:8789",
-    }),
-  ).toEqual([["docType:docx", JSON.stringify({ workerUrl: "http://h:8789" })]]);
+test("docServicesJson contains only selected types with their own keys", () => {
+  expect(JSON.parse(docServicesJson(["docx"], "h", {
+    gateway: 8787,
+    docx: 8789,
+  }))).toEqual({
+    docx: {
+      serviceId: "docx",
+      url: "http://h:8789",
+      accessKey: docServiceAccessKey("docx"),
+    },
+  });
+});
+
+test("buildWorkers separates Gateway, Doc, and CAS credentials", () => {
+  const [gateway, cas, docx] = buildWorkers({
+    docTypes: ["docx"],
+    host: "127.0.0.1",
+    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
+    bundleDir: "/b",
+  });
+  expect(gateway.bindings.CAS_ACCESS_KEY).toBe(CAS_ACCESS_KEY);
+  expect(cas.bindings).toEqual({ CAS_ACCESS_KEY });
+  expect(docx.bindings).toEqual({
+    CAS_ACCESS_KEY,
+    SERVICE_ACCESS_KEY: docServiceAccessKey("docx"),
+  });
+  expect(docx.bindings.SERVICE_ACCESS_KEY).not.toBe(CAS_ACCESS_KEY);
 });
 
 test("casFault 为 true 时,doc-type worker 指向假 CAS,gateway 仍指向真 CAS", () => {

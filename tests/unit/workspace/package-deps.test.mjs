@@ -19,7 +19,7 @@
  *
  * 另外校验包目录名与 package.json `name` 一致（改名时两个都要改）。
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
@@ -94,7 +94,8 @@ function loadTsconfigRefs(dirName) {
 }
 
 const packages = readdirSync(PKGS_DIR)
-  .filter((d) => statSync(join(PKGS_DIR, d)).isDirectory())
+  .filter((d) => statSync(join(PKGS_DIR, d)).isDirectory()
+    && existsSync(join(PKGS_DIR, d, "package.json")))
   .sort()
   .map(loadPackage);
 

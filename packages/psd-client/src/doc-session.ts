@@ -56,8 +56,7 @@ function defaultGenId(): () => string {
  * from the server's current state.
  */
 export class DocSession {
-  readonly #gw: string;
-  readonly #user: string;
+  readonly #apiBaseUrl: string;
   readonly #type: string;
   readonly #docId: string;
   readonly #store: BlobStore;
@@ -94,8 +93,7 @@ export class DocSession {
   }
 
   constructor(opts: {
-    gw: string;
-    user: string;
+    apiBaseUrl: string;
     type: string;
     docId: string;
     doc: PsdDoc;
@@ -112,8 +110,7 @@ export class DocSession {
      *  tab) is mid-flight. Optional; a no-op if omitted. */
     onRebase?: (doc: PsdDoc) => void;
   }) {
-    this.#gw = opts.gw;
-    this.#user = opts.user;
+    this.#apiBaseUrl = opts.apiBaseUrl.replace(/\/$/, "");
     this.#type = opts.type;
     this.#docId = opts.docId;
     this.#store = opts.store;
@@ -195,7 +192,7 @@ export class DocSession {
     const entry = this.#pending[0];
     if (!entry) return false;
 
-    const res = await this.#fetchImpl(`${this.#gw}/users/${this.#user}/docs/${this.#type}/${this.#docId}/apply`, {
+    const res = await this.#fetchImpl(`${this.#apiBaseUrl}/docs/${this.#type}/${this.#docId}/apply`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -234,8 +231,7 @@ export class DocSession {
    *  `#pending` and warm-resets the render onto the replayed doc. */
   async #rebase(): Promise<void> {
     const { doc: base, version } = await loadDoc({
-      gw: this.#gw,
-      user: this.#user,
+      apiBaseUrl: this.#apiBaseUrl,
       type: this.#type,
       docId: this.#docId,
       store: this.#store,

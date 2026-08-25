@@ -24,8 +24,11 @@ const REPO_ROOT = join(PKG_ROOT, "..", "..");
 
 await esbuild.build({
   absWorkingDir: PKG_ROOT,
-  entryPoints: ["src/main.ts"],
-  outfile: "dist/main.js",
+  entryPoints: {
+    main: "src/main.ts",
+    "migrate-cli": "src/migrate-cli.ts",
+  },
+  outdir: "dist",
   bundle: true,
   platform: "node",
   format: "esm",

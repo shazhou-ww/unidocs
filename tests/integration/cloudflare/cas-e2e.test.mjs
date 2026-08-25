@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
+import { CAS_ACCESS_KEY, startLocalRuntime } from "../../../scripts/local-runtime.mjs";
 import {
   encodeHeader,
   computeNodeDigest,
@@ -115,9 +115,12 @@ test("CAS: /lease on unknown hash is 404", async () => {
 });
 
 test("CAS: GC endpoint works", async () => {
-  const gcRes = await casFetch(casUrl("alice", "/gc"), {
+  const gcRes = await casFetch(`${runtime.urls.cas}/tenants/alice/cas/gc`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Token": CAS_ACCESS_KEY,
+    },
     body: JSON.stringify({ maxNodes: 10 }),
   });
   expect(gcRes.ok).toBe(true);
@@ -127,7 +130,7 @@ test("CAS: GC endpoint works", async () => {
   expect(gcResult).toHaveProperty("reclaimedContentBytes");
 });
 
-test("CAS: user isolation — alice's nodes not accessible by bob", async () => {
+test("CAS: tenant isolation — alice's nodes not accessible by bob", async () => {
   const { hash } = await casUpload("alice", "text/plain", "alice secret");
 
   const readRes = await casFetch(casUrl("bob", `/nodes/${hash}/content`));
@@ -137,7 +140,7 @@ test("CAS: user isolation — alice's nodes not accessible by bob", async () => 
   expect(metaRes.status).toBe(404);
 });
 
-test("CAS: user isolation — bob can create own nodes", async () => {
+test("CAS: another tenant can create its own nodes", async () => {
   const { hash } = await casUpload("bob", "text/plain", "bob content");
 
   const readRes = await casFetch(casUrl("bob", `/nodes/${hash}/content`));

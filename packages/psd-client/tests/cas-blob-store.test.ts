@@ -11,11 +11,11 @@ function mockFetch(routes: Record<string, { status: number; body?: Uint8Array }>
 describe("CasBlobStore.get", () => {
   it("GETs cas content and returns bytes", async () => {
     const bytes = new Uint8Array([1, 2, 3]);
-    const s = new CasBlobStore({ gw: "/gw", user: "u1", fetchImpl: mockFetch({ "/gw/users/u1/cas/nodes/abc/content": { status: 200, body: bytes } }) });
+    const s = new CasBlobStore({ apiBaseUrl: "/gw/users/u1", fetchImpl: mockFetch({ "/gw/users/u1/cas/nodes/abc/content": { status: 200, body: bytes } }) });
     expect([...(await s.get("abc"))!]).toEqual([1, 2, 3]);
   });
   it("returns null on 404", async () => {
-    const s = new CasBlobStore({ gw: "/gw", user: "u1", fetchImpl: mockFetch({}) });
+    const s = new CasBlobStore({ apiBaseUrl: "/gw/users/u1", fetchImpl: mockFetch({}) });
     expect(await s.get("missing")).toBeNull();
   });
 
@@ -28,7 +28,7 @@ describe("CasBlobStore.get", () => {
     };
     globalThis.fetch = guarded as unknown as typeof fetch;
     try {
-      const store = new CasBlobStore({ gw: "/gw", user: "u1" }); // NO fetchImpl → uses the bound default
+      const store = new CasBlobStore({ apiBaseUrl: "/gw/users/u1" }); // NO fetchImpl → uses the bound default
       await expect(store.get("h")).resolves.not.toBeUndefined(); // must NOT throw Illegal invocation
     } finally {
       globalThis.fetch = original;

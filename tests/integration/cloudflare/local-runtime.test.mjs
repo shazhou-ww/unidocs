@@ -3,12 +3,16 @@ import { createServer } from "node:net";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
+import {
+  CAS_ACCESS_KEY,
+  startLocalRuntime,
+} from "../../../scripts/local-runtime.mjs";
 
 let runtime;
 
 beforeAll(async () => {
   runtime = await startLocalRuntime({
+    docTypes: ["markdown", "docx"],
     ports: { gateway: 18787, markdown: 18788, docx: 18789, cas: 18790 },
   });
 }, 60_000);
@@ -27,7 +31,7 @@ test("unregistered doc types are rejected", async () => {
   });
 });
 
-test("gateway creates a markdown doc via registry workerUrl and lists it from shared D1", async () => {
+test("gateway creates a markdown doc via static registration and lists it", async () => {
   const create = await fetch(`${runtime.urls.gateway}/users/alice/docs/markdown/`, {
     method: "POST",
   });
@@ -63,15 +67,26 @@ test("gateway creates a docx doc via a separate registered workerUrl", async () 
 test("the CAS worker is directly reachable on its own port, outside the gateway", async () => {
   expect(runtime.urls.cas).toBe("http://127.0.0.1:18790");
 
-  const res = await fetch(`${runtime.urls.cas}/users/alice/cas/usage`, {
-    headers: { "X-Internal-Token": "unidocs-dev-token" },
+  const res = await fetch(`${runtime.urls.cas}/tenants/tenant-a/cas/usage`, {
+    headers: { "X-Internal-Token": CAS_ACCESS_KEY },
   });
   expect(res.status).toBe(200);
 });
 
-test("registry seed works with a persist directory", async () => {
+test("a directly reached Doc service rejects requests without its service credential", async () => {
+  const res = await fetch(`${runtime.urls.markdown}/sessions/untrusted-session/status`, {
+    headers: {
+      "X-Tenant-Id": "alice",
+      "X-Session-Id": "untrusted-session",
+    },
+  });
+  expect(res.status).toBe(403);
+});
+
+test("static registration works with a persist directory", async () => {
   const persistPath = await mkdtemp(join(tmpdir(), "unidocs-mf-"));
   const persisted = await startLocalRuntime({
+    docTypes: ["markdown", "docx"],
     ports: { gateway: 18887, markdown: 18888, docx: 18889, cas: 18890 },
     persistPath,
   });
@@ -93,9 +108,8 @@ test("only the selected doc types are started and routable", async () => {
   try {
     expect(only.urls.markdown).toBeUndefined();
 
-    const registry = await only.mf.getKVNamespace("REGISTRY", "unidocs-gateway");
-    const { keys } = await registry.list();
-    expect(keys.map((k) => k.name)).toEqual(["docType:docx"]);
+    const bindings = await only.mf.getBindings("unidocs-gateway");
+    expect(Object.keys(JSON.parse(bindings.DOC_SERVICES_JSON))).toEqual(["docx"]);
 
     const create = await fetch(`${only.urls.gateway}/users/alice/docs/docx/`, {
       method: "POST",

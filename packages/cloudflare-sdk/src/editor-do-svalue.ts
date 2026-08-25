@@ -3,13 +3,15 @@ import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { CasClient, CasClientError } from "@unidocs/cas-client";
+import { DELTA_THRESHOLD } from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
 
 const KEY_DOC_TYPE = "docType";
-const KEY_DOC_ID = "docId";
-const KEY_USER_ID = "userId";
-const SNAPSHOT_DELTA_THRESHOLD = 10;
+const KEY_SESSION_ID = "sessionId";
+const KEY_TENANT_ID = "tenantId";
+const LEGACY_OWNER_KEY = "userId";
+const LEGACY_DOCUMENT_KEY = "docId";
 const RECENT_OP_LIMIT = 1024;
 
 interface ApplyDelta<TOp> {
@@ -47,22 +49,9 @@ interface SnapshotRow {
   readonly timestamp: number;
 }
 
-export interface DocContext {
-  readonly docType: string;
-  readonly docId: string;
-}
-
-export interface SnapshotRecord {
-  readonly version: number;
-  readonly hash: string;
-  readonly timestamp: number;
-}
-
 export interface Env {
-  readonly SNAPSHOTS_DB: D1Database;
   readonly CAS_SERVICE: Fetcher;
-  readonly INTERNAL_TOKEN: string;
-  readonly CAS?: R2Bucket;
+  readonly CAS_ACCESS_KEY: string;
 }
 
 export interface EditorDOInstance {
@@ -87,8 +76,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     #config: DocumentType<TDoc, TQuery, TOp> | null = null;
     #context: DocumentTypeContext | null = null;
     #cas: CasClient | null = null;
-    #userId: string | null = null;
-    #docId: string | null = null;
+    #tenantId: string | null = null;
+    #sessionId: string | null = null;
     #docType: string | null = null;
     readonly #recentOps = new Map<string, number>();
 
@@ -144,12 +133,12 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       `);
     }
 
-    #initializeRuntime(userId: string): void {
+    #initializeRuntime(tenantId: string): void {
       if (this.#context) return;
       const cas = new CasClient({
         fetcher: this.#env.CAS_SERVICE,
-        userId,
-        internalToken: this.#env.INTERNAL_TOKEN,
+        tenantId,
+        accessKey: this.#env.CAS_ACCESS_KEY,
       });
       // Adapter wrapper: SBlobCasAdapter expects metadata(hash: string) but CasClient has metadata(ref: CasRef)
       const casAdapter = {
@@ -170,16 +159,27 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     async #ensureLoaded(): Promise<void> {
       if (this.#loaded) return;
       this.#initializeSchema();
-      const [userId, docId, docType] = await Promise.all([
-        this.#ctx.storage.get<string>(KEY_USER_ID),
-        this.#ctx.storage.get<string>(KEY_DOC_ID),
+      const [storedTenantId, storedSessionId, docType, legacyOwner, legacyDocument] = await Promise.all([
+        this.#ctx.storage.get<string>(KEY_TENANT_ID),
+        this.#ctx.storage.get<string>(KEY_SESSION_ID),
         this.#ctx.storage.get<string>(KEY_DOC_TYPE),
+        this.#ctx.storage.get<string>(LEGACY_OWNER_KEY),
+        this.#ctx.storage.get<string>(LEGACY_DOCUMENT_KEY),
       ]);
-      this.#userId = userId ?? null;
-      this.#docId = docId ?? null;
+      const tenantId = storedTenantId ?? legacyOwner;
+      const sessionId = storedSessionId
+        ?? (legacyOwner && legacyDocument ? `${legacyOwner}:${legacyDocument}` : undefined);
+      if (tenantId && sessionId && (!storedTenantId || !storedSessionId)) {
+        await Promise.all([
+          this.#ctx.storage.put(KEY_TENANT_ID, tenantId),
+          this.#ctx.storage.put(KEY_SESSION_ID, sessionId),
+        ]);
+      }
+      this.#tenantId = tenantId ?? null;
+      this.#sessionId = sessionId ?? null;
       this.#docType = docType ?? null;
-      if (userId) {
-        this.#initializeRuntime(userId);
+      if (this.#tenantId) {
+        this.#initializeRuntime(this.#tenantId);
         await this.#settlePending();
         this.#version = this.#latestVersion();
         if (this.#version > 0) this.#doc = await this.#reconstruct(this.#version);
@@ -223,7 +223,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       if (!pending) return;
       const context = this.#requireContext();
       const cas = this.#requireCas();
-      const docId = this.#requireDocId();
+      const sessionId = this.#requireSessionId();
       const deltaBytes = toBytes(pending.delta_bytes);
       await context.makeSBlob(pending.delta_hash, async () => ({
         data: deltaBytes,
@@ -231,7 +231,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       }));
 
       const assignments = [{
-        owner: `doc:${docId}:delta:${pending.version}`,
+        owner: `session:${sessionId}:delta:${pending.version}`,
         hash: pending.delta_hash,
       }];
       if (pending.snapshot_hash !== null) {
@@ -241,13 +241,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           contentType: SValueContentType,
         }));
         assignments.push({
-          owner: `doc:${docId}:snapshot:${pending.version}`,
+          owner: `session:${sessionId}:snapshot:${pending.version}`,
           hash: pending.snapshot_hash,
         });
       }
 
       await cas.assignRoots({
-        requestId: `doc:${docId}:version:${pending.version}:roots`,
+        requestId: `session:${sessionId}:version:${pending.version}:roots`,
         assignments,
       });
 
@@ -265,11 +265,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           pending.snapshot_hash,
           pending.timestamp,
         );
-        await this.#recordGlobalSnapshot({
-          version: pending.version,
-          hash: pending.snapshot_hash,
-          timestamp: pending.timestamp,
-        });
       }
       this.#ctx.storage.sql.exec("DELETE FROM svalue_pending WHERE singleton = 1");
     }
@@ -285,7 +280,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const timestamp = Date.now();
       const shouldSnapshot = forceSnapshot
         || nextVersion === 1
-        || nextVersion - this.#latestSnapshotVersion() >= SNAPSHOT_DELTA_THRESHOLD;
+        || nextVersion - this.#latestSnapshotVersion() >= DELTA_THRESHOLD;
 
       let snapshotBlob: SBlob | null = null;
       let snapshotBytes: Uint8Array | null = null;
@@ -331,11 +326,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       try {
         await this.#settlePending();
       } catch (err) {
+        if (err instanceof CasClientError) throw err;
         throw new Error(`Finalize pending version failed: ${String(err)}`);
       }
       this.#version = nextVersion;
       this.#doc = doc;
-      await this.#touchDocumentIndex(timestamp);
       return nextVersion;
     }
 
@@ -433,9 +428,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         contentType: SValueContentType,
       });
       await this.#requireCas().assignRoots({
-        requestId: `doc:${this.#requireDocId()}:snapshot:${this.#version}:ensure`,
+        requestId: `session:${this.#requireSessionId()}:snapshot:${this.#version}:ensure`,
         assignments: [{
-          owner: `doc:${this.#requireDocId()}:snapshot:${this.#version}`,
+          owner: `session:${this.#requireSessionId()}:snapshot:${this.#version}`,
           hash: blob.hash,
         }],
       });
@@ -446,30 +441,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         blob.hash,
         timestamp,
       );
-      await this.#recordGlobalSnapshot({ version: this.#version, hash: blob.hash, timestamp });
       return blob.hash;
-    }
-
-    async #recordGlobalSnapshot(snapshot: SnapshotRecord): Promise<void> {
-      if (!this.#docType || !this.#docId) return;
-      await this.#env.SNAPSHOTS_DB.exec(
-        "CREATE TABLE IF NOT EXISTS snapshots (hash TEXT NOT NULL, doc_type TEXT NOT NULL, doc_id TEXT NOT NULL, version INTEGER NOT NULL, timestamp INTEGER NOT NULL, PRIMARY KEY (doc_type, doc_id, version))",
-      );
-      await this.#env.SNAPSHOTS_DB.prepare(
-        "INSERT OR REPLACE INTO snapshots (hash, doc_type, doc_id, version, timestamp) VALUES (?, ?, ?, ?, ?)",
-      ).bind(snapshot.hash, this.#docType, this.#docId, snapshot.version, snapshot.timestamp).run();
-    }
-
-    async #touchDocumentIndex(timestamp: number): Promise<void> {
-      if (!this.#docType || !this.#docId || !this.#userId) return;
-      await this.#env.SNAPSHOTS_DB.exec(
-        "CREATE TABLE IF NOT EXISTS docs (doc_id TEXT NOT NULL, doc_type TEXT NOT NULL, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (doc_id, doc_type))",
-      );
-      await this.#env.SNAPSHOTS_DB.prepare(
-        `INSERT INTO docs (doc_id, doc_type, owner_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(doc_id, doc_type) DO UPDATE SET updated_at = excluded.updated_at`,
-      ).bind(this.#docId, this.#docType, this.#userId, timestamp, timestamp).run();
     }
 
     async #handleRequest(request: Request): Promise<Response> {
@@ -484,10 +456,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           return await this.#initFromHash(request);
         }
 
-        const identityError = this.#verifyIdentity(request);
+        if (request.method === "GET" && url.pathname === "/_internal/status") {
+          const identityError = this.#verifyIdentity(request, true);
+          if (identityError) return identityError;
+          return Response.json({ exists: this.#doc !== null, version: this.#version });
+        }
+        const identityError = this.#verifyIdentity(request, false);
         if (identityError) return identityError;
         if (this.#doc === null) {
           return Response.json({ success: false, error: "Document not initialized" }, { status: 404 });
+        }
+
+        if (request.method === "GET" && url.pathname === "/_internal/snapshot-index") {
+          const data = this.#ctx.storage.sql.exec(
+            "SELECT version, root_hash AS hash FROM svalue_snapshots ORDER BY version ASC",
+          ).toArray();
+          return Response.json({ success: true, data });
         }
 
         if (request.method === "GET" && url.pathname === "/_internal/export") {
@@ -502,7 +486,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           return new Response(Uint8Array.from(bytes).buffer, {
             headers: {
               "Content-Type": format.mediaTypes[0] ?? "application/octet-stream",
-              "Content-Disposition": `attachment; filename="${this.#requireDocId()}${extension}"`,
+              "Content-Disposition": `attachment; filename="document${extension}"`,
             },
           });
         }
@@ -659,7 +643,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(
             version: this.#version,
             hash,
             docType: this.#docType,
-            docId: this.#docId,
           });
         }
 
@@ -691,8 +674,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       if (this.#docType !== null) {
         return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
       }
-      const identity = requestIdentity(request, this.#ctx.id.toString());
-      this.#initializeRuntime(identity.userId);
+      const identity = requestIdentity(request);
+      this.#initializeRuntime(identity.tenantId);
       const config = this.#requireConfig();
       let doc: SValueType<TDoc>;
       const contentType = request.headers.get("content-type") ?? "";
@@ -700,7 +683,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         const formData = await request.formData();
         const sourceId = formData.get("sourceId");
         if (typeof sourceId === "string" && sourceId.length > 0) {
-          return Response.json({ success: false, error: "Use init_from_hash for clone" }, { status: 400 });
+          return Response.json({
+            success: false,
+            error: "Clone should be handled at worker level",
+          }, { status: 400 });
         }
         const file = formData.get("file") as unknown;
         if (isUploadedFile(file)) {
@@ -721,15 +707,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       encodeSValue(doc as unknown as SValue);
       await this.#storeIdentity(identity);
       const version = await this.#commit(doc, { kind: "restore" }, "Document created", true);
-      return Response.json({ success: true, docId: identity.docId, version });
+      return Response.json({ success: true, sessionId: identity.sessionId, version });
     }
 
     async #initFromHash(request: Request): Promise<Response> {
       if (this.#docType !== null) {
         return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
       }
-      const identity = requestIdentity(request, this.#ctx.id.toString());
-      this.#initializeRuntime(identity.userId);
+      const identity = requestIdentity(request);
+      this.#initializeRuntime(identity.tenantId);
       const value = await readRequestValue(request);
       if (!isRecord(value)
         || typeof value.hash !== "string"
@@ -745,25 +731,29 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         `Cloned from snapshot ${value.hash} (source version ${value.sourceVersion})`,
         true,
       );
-      return Response.json({ success: true, docId: identity.docId, version });
+      return Response.json({ success: true, sessionId: identity.sessionId, version });
     }
 
-    async #storeIdentity(identity: { userId: string; docId: string; docType: string }): Promise<void> {
+    async #storeIdentity(identity: { tenantId: string; sessionId: string; docType: string }): Promise<void> {
       await Promise.all([
-        this.#ctx.storage.put(KEY_USER_ID, identity.userId),
-        this.#ctx.storage.put(KEY_DOC_ID, identity.docId),
+        this.#ctx.storage.put(KEY_TENANT_ID, identity.tenantId),
+        this.#ctx.storage.put(KEY_SESSION_ID, identity.sessionId),
         this.#ctx.storage.put(KEY_DOC_TYPE, identity.docType),
       ]);
-      this.#userId = identity.userId;
-      this.#docId = identity.docId;
+      this.#tenantId = identity.tenantId;
+      this.#sessionId = identity.sessionId;
       this.#docType = identity.docType;
     }
 
-    #verifyIdentity(request: Request): Response | null {
-      const userId = request.headers.get("X-User-Id");
-      if (!userId) return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
-      if (userId !== this.#userId) {
-        return Response.json({ error: "Document owner mismatch" }, { status: 403 });
+    #verifyIdentity(request: Request, allowMissing: boolean): Response | null {
+      const tenantId = request.headers.get("X-Tenant-Id");
+      const sessionId = request.headers.get("X-Session-Id");
+      if (!tenantId || !sessionId) {
+        return Response.json({ error: "Missing tenant or session identity" }, { status: 401 });
+      }
+      if (this.#tenantId === null && this.#sessionId === null && allowMissing) return null;
+      if (tenantId !== this.#tenantId || sessionId !== this.#sessionId) {
+        return Response.json({ error: "Session identity mismatch" }, { status: 403 });
       }
       return null;
     }
@@ -788,22 +778,23 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       return this.#doc;
     }
 
-    #requireDocId(): string {
-      if (!this.#docId) throw new Error("Document ID is not initialized");
-      return this.#docId;
+    #requireSessionId(): string {
+      if (!this.#sessionId) throw new Error("Session ID is not initialized");
+      return this.#sessionId;
     }
   };
 }
 
 function requestIdentity(
   request: Request,
-  fallbackDocId: string,
-): { userId: string; docId: string; docType: string } {
-  const userId = request.headers.get("X-User-Id");
-  if (!userId) throw new Error("Missing X-User-Id header");
+): { tenantId: string; sessionId: string; docType: string } {
+  const tenantId = request.headers.get("X-Tenant-Id");
+  if (!tenantId) throw new Error("Missing X-Tenant-Id header");
+  const sessionId = request.headers.get("X-Session-Id");
+  if (!sessionId) throw new Error("Missing X-Session-Id header");
   return {
-    userId,
-    docId: request.headers.get("X-Doc-Id") ?? fallbackDocId,
+    tenantId,
+    sessionId,
     docType: request.headers.get("X-Doc-Type") ?? "unknown",
   };
 }

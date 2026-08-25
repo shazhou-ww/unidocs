@@ -31,7 +31,8 @@
  *   POST /_internal/init_from_hash  — initialize from existing snapshot hash (for clone)
  */
 
-import { SValueContentType } from "@unidocs/protocol";
+import { SValueContentType, type SValue } from "@unidocs/protocol";
+import { decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
 import { CasClientError } from "@unidocs/cas-client";
 import {
   DeltaRejectedError,
@@ -42,16 +43,14 @@ import {
   VersionConflictError,
   type ApplyResult,
 } from "@unidocs/http-protocol";
-import type { DocIdentity } from "./ports.js";
+import type { SessionIdentity } from "./ports.js";
 import type { DocumentSession } from "./session.js";
 
 const NOT_INITIALIZED = "Document not initialized. POST /{docType}/ to create.";
 
 export interface CreateSessionHandlerConfig<TDoc, TQuery, TOp> {
   session: DocumentSession<TDoc, TQuery, TOp>;
-  identity: DocIdentity;
-  /** 请求方声称的 userId;与 identity.userId 不符时返回 403。 */
-  requesterId: string | null;
+  identity: SessionIdentity;
 }
 
 /**
@@ -93,31 +92,10 @@ export function errorResponse(err: unknown, version: number): Response {
   return Response.json({ success: false, error: String(err), version }, { status: 500 });
 }
 
-/**
- * The requester must be the document's owner, because `deps.cas` is built
- * once from the stored owner id and every CAS read/lease this request makes
- * will be charged to that user.
- *
- * On Cloudflare this is unreachable: the DO is addressed by
- * `idFromName("{userId}:{docId}")` and both workers set `X-User-Id` from the
- * same path segment, so the requester IS the owner by construction. The
- * check exists so the invariant is enforced by code rather than by routing
- * — Azure has no name-bound instance to make it true for free.
- */
-function requireUser(requesterId: string | null, identity: DocIdentity): Response | null {
-  if (!requesterId) {
-    return Response.json({ error: "Missing X-User-Id header" }, { status: 401 });
-  }
-  if (requesterId !== identity.userId) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-  return null;
-}
-
 export function createSessionHandler<TDoc, TQuery, TOp>(
   cfg: CreateSessionHandlerConfig<TDoc, TQuery, TOp>,
 ): (request: Request) => Promise<Response> {
-  const { session, identity, requesterId } = cfg;
+  const { session } = cfg;
 
   return async function handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -148,14 +126,27 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         }
 
         const created = await session.create({ bytes });
-        return Response.json({ success: true, docId: created.docId, version: created.version });
+        return Response.json({
+          success: true,
+          sessionId: created.sessionId,
+          version: created.version,
+        });
       }
 
       // POST /_internal/init_from_hash — checked BEFORE the not-initialized guard
       if (method === "POST" && endpoint === "/_internal/init_from_hash") {
-        const body = await request.json() as { hash: string; sourceVersion: number };
+        const body = await readRequestValue(request) as unknown as { hash: string; sourceVersion: number };
         const created = await session.initFromHash(body.hash, body.sourceVersion);
-        return Response.json({ success: true, docId: created.docId, version: created.version });
+        return Response.json({
+          success: true,
+          sessionId: created.sessionId,
+          version: created.version,
+        });
+      }
+
+      if (method === "GET" && endpoint === "/_internal/status") {
+        await session.load();
+        return Response.json({ exists: session.initialized, version: session.version });
       }
 
       // All other endpoints require an initialized document.
@@ -174,27 +165,21 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         return new Response(exported.bytes as BodyInit, {
           headers: {
             "Content-Type": exported.contentType,
-            "Content-Disposition": `attachment; filename="${identity.docId || "document"}"`,
+            "Content-Disposition": "attachment; filename=\"document\"",
           },
         });
       }
 
       // POST /_internal/query
       if (method === "POST" && endpoint === "/_internal/query") {
-        const unauthorized = requireUser(requesterId, identity);
-        if (unauthorized) return unauthorized;
-
-        const q = await request.json() as TQuery;
+        const q = await readRequestValue(request) as unknown as TQuery;
         const result = await session.query(q as never);
         return Response.json({ success: true, data: result.data, version: result.version });
       }
 
       // POST /_internal/apply — apply delta (batch of operations, transactional)
       if (method === "POST" && endpoint === "/_internal/apply") {
-        const unauthorized = requireUser(requesterId, identity);
-        if (unauthorized) return unauthorized;
-
-        const body = await request.json() as {
+        const body = await readRequestValue(request) as unknown as {
           operations: TOp[];
           description: string;
           baseVersion: number;
@@ -227,10 +212,7 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
 
       // POST /_internal/rollback
       if (method === "POST" && endpoint === "/_internal/rollback") {
-        const unauthorized = requireUser(requesterId, identity);
-        if (unauthorized) return unauthorized;
-
-        const body = await request.json() as { version: number };
+        const body = await readRequestValue(request) as unknown as { version: number };
         const rolled = await session.rollback(body.version);
         return Response.json({ success: true, version: rolled.version });
       }
@@ -243,7 +225,6 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
           version: snap.version,
           hash: snap.hash,
           docType: snap.docType,
-          docId: snap.docId,
         });
       }
 
@@ -260,4 +241,13 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
       return errorResponse(err, session.version);
     }
   };
+}
+
+async function readRequestValue(request: Request): Promise<SValue> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.toLowerCase() === SValueContentType) {
+    return decodeSValue(new Uint8Array(await request.arrayBuffer()));
+  }
+  const json = await request.json();
+  return decodeSValue(encodeSValue(json as SValue));
 }

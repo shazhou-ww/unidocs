@@ -38,7 +38,7 @@ steps:
       conditions:
         - { path: "stdout", regex: "PGREADY" }
   # Both gateways, side by side: Miniflare on 8787 (its CAS worker exposed
-  # directly on 8790 via `urls.cas`) and the Azure stack on 41787, pointed at
+  # directly on 8791 via `urls.cas`) and the Azure stack on 41787, pointed at
   # that same CAS worker through the transitional `casBaseUrl` wiring so the
   # docx image step below has somewhere to write.
   #
@@ -65,7 +65,7 @@ steps:
   # runs B from the shell's default cwd instead — which is `/`, not
   # `/workspace`, in this container — and B's relative `./scripts/...`
   # import then fails with ERR_MODULE_NOT_FOUND. Verified empirically.
-  - command: "(cd /workspace && nohup node -e \"import('./scripts/local-runtime.mjs').then(m=>m.startLocalRuntime({docTypes:['markdown','docx'],persistPath:'/workspace/.wrangler/miniflare'}))\" > /tmp/miniflare.log 2>&1) & (cd /workspace && nohup node -e \"import('./scripts/azure-runtime.mjs').then(m=>m.startAzureRuntime({docTypes:['markdown','docx'],postgres:'external',casBaseUrl:'http://127.0.0.1:8790',azuriteDataDir:'/workspace/.azure-runtime/azurite-data'}))\" > /tmp/azure.log 2>&1) & for i in $(seq 1 60); do sleep 2; CF=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); AZ=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:41787/ 2>/dev/null || echo 000); if echo $CF | grep -q '^4' && echo $AZ | grep -q '^4'; then echo BOTHREADY; exit 0; fi; done; echo TIMEOUT; tail -50 /tmp/miniflare.log /tmp/azure.log; exit 1"
+  - command: "(cd /workspace && nohup node -e \"import('./scripts/local-runtime.mjs').then(m=>m.startLocalRuntime({docTypes:['markdown','docx'],persistPath:'/workspace/.wrangler/miniflare'}))\" > /tmp/miniflare.log 2>&1) & (cd /workspace && nohup node -e \"import('./scripts/azure-runtime.mjs').then(m=>m.startAzureRuntime({docTypes:['markdown','docx'],postgres:'external',casBaseUrl:'http://127.0.0.1:8791',azuriteDataDir:'/workspace/.azure-runtime/azurite-data'}))\" > /tmp/azure.log 2>&1) & for i in $(seq 1 60); do sleep 2; CF=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8787/ 2>/dev/null || echo 000); AZ=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:41787/ 2>/dev/null || echo 000); if echo $CF | grep -q '^4' && echo $AZ | grep -q '^4'; then echo BOTHREADY; exit 0; fi; done; echo TIMEOUT; tail -50 /tmp/miniflare.log /tmp/azure.log; exit 1"
     timeout: "300s"
     assert:
       type: regex

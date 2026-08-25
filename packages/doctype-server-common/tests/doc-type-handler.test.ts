@@ -2,7 +2,7 @@
  * `createDocTypeHandler` forwards every request by constructing a fresh
  * `Request` from the incoming one's body stream (`new Request(forwardUrl, {
  * ..., body: request.body })`), at three call sites: the bare `POST
- * /users/{userId}/` create path, editor endpoints, and operator endpoints.
+ * `/sessions/{sessionId}` create path, editor endpoints, and operator endpoints.
  *
  * That shape needs `duplex: "half"` set explicitly once the body is a real
  * `ReadableStream` — Node's `Request` (undici) throws synchronously
@@ -49,23 +49,42 @@ function streamBody(text: string): ReadableStream<Uint8Array> {
 const INTERNAL_TOKEN = "test-token";
 
 describe("createDocTypeHandler — streaming body forwarding", () => {
-  it("forwards the create path (POST /users/{userId}/) body intact", async () => {
+  it("fails closed when the configured internal token is empty", async () => {
+    const handler = createDocTypeHandler({
+      docType: "markdown",
+      accessKey: "",
+      editor: stubNamespace(async () => Response.json({ success: true })),
+      operator: stubNamespace(async () => Response.json({ success: true })),
+    });
+
+    const response = await handler(new Request("http://doc.local/sessions/session-1", {
+      method: "PUT",
+      headers: {
+        "X-Internal-Token": "attacker-selected-token",
+        "X-Tenant-Id": "tenant-1",
+      },
+    }));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("forwards PUT /sessions/{sessionId} body intact", async () => {
     let received: string | undefined;
     const editor = stubNamespace(async (req) => {
       received = await req.text();
-      return Response.json({ success: true, docId: "d1", version: 1 });
+      return Response.json({ success: true, sessionId: "session-1", version: 1 });
     });
 
     const handler = createDocTypeHandler({
       docType: "markdown",
-      internalToken: INTERNAL_TOKEN,
+      accessKey: INTERNAL_TOKEN,
       editor,
       operator: stubNamespace(async () => Response.json({}, { status: 501 })),
     });
 
-    const incoming = new Request("http://gw.local/users/u1/", {
-      method: "POST",
-      headers: { "X-Internal-Token": INTERNAL_TOKEN, "content-type": "text/markdown" },
+    const incoming = new Request("http://gw.local/sessions/session-1", {
+      method: "PUT",
+      headers: { "X-Internal-Token": INTERNAL_TOKEN, "X-Tenant-Id": "tenant-1", "content-type": "text/markdown" },
       body: streamBody("# hello"),
       duplex: "half",
     } as RequestInit);
@@ -84,15 +103,15 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
 
     const handler = createDocTypeHandler({
       docType: "markdown",
-      internalToken: INTERNAL_TOKEN,
+      accessKey: INTERNAL_TOKEN,
       editor,
       operator: stubNamespace(async () => Response.json({}, { status: 501 })),
     });
 
     const payload = JSON.stringify({ operations: [], description: "x", baseVersion: 1 });
-    const incoming = new Request("http://gw.local/users/u1/doc-1/apply", {
+    const incoming = new Request("http://gw.local/sessions/session-1/apply", {
       method: "POST",
-      headers: { "X-Internal-Token": INTERNAL_TOKEN, "content-type": "application/json" },
+      headers: { "X-Internal-Token": INTERNAL_TOKEN, "X-Tenant-Id": "tenant-1", "content-type": "application/json" },
       body: streamBody(payload),
       duplex: "half",
     } as RequestInit);
@@ -111,15 +130,15 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
 
     const handler = createDocTypeHandler({
       docType: "markdown",
-      internalToken: INTERNAL_TOKEN,
+      accessKey: INTERNAL_TOKEN,
       editor: stubNamespace(async () => Response.json({}, { status: 501 })),
       operator,
     });
 
     const payload = JSON.stringify({ prompt: "do the thing" });
-    const incoming = new Request("http://gw.local/users/u1/doc-1/run", {
+    const incoming = new Request("http://gw.local/sessions/session-1/run", {
       method: "POST",
-      headers: { "X-Internal-Token": INTERNAL_TOKEN, "content-type": "application/json" },
+      headers: { "X-Internal-Token": INTERNAL_TOKEN, "X-Tenant-Id": "tenant-1", "content-type": "application/json" },
       body: streamBody(payload),
       duplex: "half",
     } as RequestInit);

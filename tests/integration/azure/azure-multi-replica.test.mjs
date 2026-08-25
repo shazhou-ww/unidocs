@@ -1,10 +1,11 @@
 /**
- * 跨副本场景 —— 只有两个真实副本共享同一个 Postgres/Blob 才制造得出来的
+ * 跨副本场景 —— 只有两个真实副本共享同一个 Doc service database/Blob 才制造得出来的
  * 情况。行为测试套经代理后已经把每个请求打到不同副本；这里直连副本，
  * 制造**真正的同时性**。
  */
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { startAzureRuntime } from "../../../scripts/azure-runtime.mjs";
+import { docServiceAccessKey } from "../../../scripts/doc-types.mjs";
 
 let runtime;
 
@@ -14,7 +15,7 @@ let runtime;
 // assertions against. Passing `replicas: 2` here would only prove the
 // function honours its own argument — the default could regress to 1 and
 // every suite would stay green while the whole point of this branch (two
-// real replicas sharing one Postgres) quietly reverted.
+// real replicas sharing one service database) quietly reverted.
 beforeAll(async () => {
   runtime = await startAzureRuntime();
 }, 180_000);
@@ -40,16 +41,19 @@ async function createDoc(userId) {
   });
   const body = await res.json();
   expect(body.success, JSON.stringify(body)).toBe(true);
-  return body.docId;
+  const identity = await runtime.storage.sessionIdentity("markdown", body.docId);
+  expect(identity).not.toBeNull();
+  return { docId: body.docId, ...identity };
 }
 
-function applyVia(replicaUrl, userId, docId, baseVersion, content) {
-  return closeFetch(`${replicaUrl}/users/${userId}/${docId}/apply`, {
+function applyVia(replicaUrl, identity, baseVersion, content) {
+  return closeFetch(`${replicaUrl}/sessions/${identity.sessionId}/apply`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Internal-Token": "unidocs-dev-token",
-      "X-User-Id": userId,
+      "X-Internal-Token": docServiceAccessKey("markdown"),
+      "X-Tenant-Id": identity.tenantId,
+      "X-Session-Id": identity.sessionId,
       "X-Doc-Type": "markdown",
     },
     body: JSON.stringify({
@@ -62,12 +66,12 @@ function applyVia(replicaUrl, userId, docId, baseVersion, content) {
 
 test("two replicas applying the same baseVersion: exactly one wins", async () => {
   const userId = "multi-1";
-  const docId = await createDoc(userId);
+  const identity = await createDoc(userId);
   const [a, b] = runtime.urls.markdownReplicas;
 
   const [resA, resB] = await Promise.all([
-    applyVia(a, userId, docId, 1, "from-a"),
-    applyVia(b, userId, docId, 1, "from-b"),
+    applyVia(a, identity, 1, "from-a"),
+    applyVia(b, identity, 1, "from-b"),
   ]);
   const bodies = await Promise.all([resA.json(), resB.json()]);
 
@@ -86,18 +90,19 @@ test("two replicas applying the same baseVersion: exactly one wins", async () =>
 
 test("a write on one replica is immediately visible on the other", async () => {
   const userId = "multi-2";
-  const docId = await createDoc(userId);
+  const identity = await createDoc(userId);
   const [a, b] = runtime.urls.markdownReplicas;
 
-  const applied = await applyVia(a, userId, docId, 1, "written-on-a");
+  const applied = await applyVia(a, identity, 1, "written-on-a");
   expect(await applied.json()).toMatchObject({ success: true, version: 2 });
 
-  const queried = await closeFetch(`${b}/users/${userId}/${docId}/query`, {
+  const queried = await closeFetch(`${b}/sessions/${identity.sessionId}/query`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Internal-Token": "unidocs-dev-token",
-      "X-User-Id": userId,
+      "X-Internal-Token": docServiceAccessKey("markdown"),
+      "X-Tenant-Id": identity.tenantId,
+      "X-Session-Id": identity.sessionId,
       "X-Doc-Type": "markdown",
     },
     body: JSON.stringify({ kind: "getContent" }),
@@ -113,17 +118,17 @@ test("a write on one replica is immediately visible on the other", async () => {
 
 test("alternating replicas advance the version with no holes", async () => {
   const userId = "multi-3";
-  const docId = await createDoc(userId);
+  const identity = await createDoc(userId);
   const replicas = runtime.urls.markdownReplicas;
 
   for (let v = 1; v <= 6; v += 1) {
     const replica = replicas[(v - 1) % replicas.length];
-    const res = await applyVia(replica, userId, docId, v, `step-${v}`);
+    const res = await applyVia(replica, identity, v, `step-${v}`);
     expect(await res.json()).toMatchObject({ success: true, version: v + 1 });
   }
 
   const history = await closeFetch(
-    `${runtime.urls.gateway}/users/${userId}/docs/markdown/${docId}/history`,
+    `${runtime.urls.gateway}/users/${userId}/docs/markdown/${identity.docId}/history`,
   );
   const body = await history.json();
   expect(body.success).toBe(true);

@@ -11,7 +11,7 @@ export interface HttpFetcher {
 
 export type CasClientConfig =
   | { baseUrl: string; userId: string; authToken?: string }
-  | { fetcher: HttpFetcher; userId: string; internalToken: string };
+  | { fetcher: HttpFetcher; tenantId: string; accessKey: string };
 
 export class CasClientError extends Error {
   readonly status: number;

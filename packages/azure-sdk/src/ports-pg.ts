@@ -1,6 +1,5 @@
 /**
- * Postgres implementations of the three relational server-core storage ports
- * (`DeltaLog`, `DocIndex`, `DocIndexQuery`) plus the real `UnitOfWork`.
+ * Postgres implementation of the session-local delta log and UnitOfWork.
  *
  * Table shapes come from `migrations/0001_init.sql`. Nothing here imports a
  * Cloudflare type: the semantics are the ones documented on
@@ -16,8 +15,7 @@
  * `JSON.parse`d again.
  */
 
-import type { Delta, DeltaLog, DocIdentity, DocIndex, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
-import type { DocIndexQuery, DocRecord, SnapshotRef } from "@unidocs/http-protocol";
+import type { Delta, DeltaLog, SessionIdentity, SnapshotRef, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
 import { VersionConflictError } from "@unidocs/http-protocol";
 import type { Pool } from "pg";
 
@@ -50,13 +48,13 @@ function toDelta(row: Record<string, unknown>): Delta {
 }
 
 /**
- * `DeltaLog` over the `deltas` table, scoped to one `(doc_type, doc_id)`.
+ * `DeltaLog` over the `deltas` table, scoped to one `(doc_type, session_id)`.
  */
 export class PgDeltaLog implements DeltaLog {
   #q: Queryable;
-  #identity: DocIdentity;
+  #identity: SessionIdentity;
 
-  constructor(q: Queryable, identity: DocIdentity) {
+  constructor(q: Queryable, identity: SessionIdentity) {
     this.#q = q;
     this.#identity = identity;
   }
@@ -73,7 +71,7 @@ export class PgDeltaLog implements DeltaLog {
    *     evaluated inside the same statement as the insert, so there is no
    *     application-visible window between them.
    *
-   *  2. `ON CONFLICT (doc_type, doc_id, version) DO NOTHING` — the primary key.
+  *  2. `ON CONFLICT (doc_type, session_id, version) DO NOTHING` — the primary key.
    *     Guard 1 alone is not enough under concurrency: at READ COMMITTED two
    *     overlapping statements both take their snapshot before either commits,
    *     so both can see the same `MAX(version)` and both clear the WHERE. The
@@ -90,16 +88,16 @@ export class PgDeltaLog implements DeltaLog {
    */
   async append(d: Delta): Promise<void> {
     const result = await this.#q.query(
-      `INSERT INTO deltas (doc_type, doc_id, version, timestamp, description, operations)
+      `INSERT INTO deltas (doc_type, session_id, version, timestamp, description, operations)
        SELECT $1::text, $2::text, $3::int, $4::bigint, $5::text, $6::jsonb
        WHERE (
          SELECT COALESCE(MAX(version), 0) FROM deltas
-         WHERE doc_type = $1::text AND doc_id = $2::text
+         WHERE doc_type = $1::text AND session_id = $2::text
        ) = $3::int - 1
-       ON CONFLICT (doc_type, doc_id, version) DO NOTHING`,
+      ON CONFLICT (doc_type, session_id, version) DO NOTHING`,
       [
         this.#identity.docType,
-        this.#identity.docId,
+        this.#identity.sessionId,
         d.version,
         d.timestamp,
         d.description,
@@ -116,8 +114,8 @@ export class PgDeltaLog implements DeltaLog {
   async head(): Promise<number> {
     const result = await this.#q.query(
       `SELECT COALESCE(MAX(version), 0) AS head FROM deltas
-       WHERE doc_type = $1 AND doc_id = $2`,
-      [this.#identity.docType, this.#identity.docId],
+      WHERE doc_type = $1 AND session_id = $2`,
+      [this.#identity.docType, this.#identity.sessionId],
     );
     return toNumber(result.rows[0]?.head ?? 0);
   }
@@ -125,17 +123,17 @@ export class PgDeltaLog implements DeltaLog {
   async since(v: number): Promise<Delta[]> {
     const result = await this.#q.query(
       `SELECT version, timestamp, description, operations FROM deltas
-       WHERE doc_type = $1 AND doc_id = $2 AND version > $3
+      WHERE doc_type = $1 AND session_id = $2 AND version > $3
        ORDER BY version ASC`,
-      [this.#identity.docType, this.#identity.docId, v],
+      [this.#identity.docType, this.#identity.sessionId, v],
     );
     return result.rows.map(toDelta);
   }
 
   async range(from?: number, to?: number): Promise<Delta[]> {
-    const values: unknown[] = [this.#identity.docType, this.#identity.docId];
+    const values: unknown[] = [this.#identity.docType, this.#identity.sessionId];
     let sql = `SELECT version, timestamp, description, operations FROM deltas
-       WHERE doc_type = $1 AND doc_id = $2`;
+      WHERE doc_type = $1 AND session_id = $2`;
     if (from !== undefined) {
       values.push(from);
       sql += ` AND version >= $${values.length}`;
@@ -175,7 +173,7 @@ export class PgDeltaLog implements DeltaLog {
    *
    * This gap is known and deliberately accepted for now (see section 9 of
    * `docs/superpowers/specs/2026-08-20-azure-phase2-azure-sdk-design.md`); the
-   * fix is a `pg_advisory_xact_lock` on `(docType, docId)` taken by BOTH
+  * fix is a `pg_advisory_xact_lock` on `(docType, sessionId)` taken by BOTH
    * `append` and `remove`, which turns steps 1-2 into a real wait. It is not
    * taken here because `append` alone must stay lock-free on its hot path.
    *
@@ -187,18 +185,18 @@ export class PgDeltaLog implements DeltaLog {
   async remove(v: number): Promise<void> {
     await this.#q.query(
       `DELETE FROM deltas
-       WHERE doc_type = $1 AND doc_id = $2 AND version = $3
+      WHERE doc_type = $1 AND session_id = $2 AND version = $3
          AND version = (
-           SELECT MAX(version) FROM deltas WHERE doc_type = $1 AND doc_id = $2
+           SELECT MAX(version) FROM deltas WHERE doc_type = $1 AND session_id = $2
          )`,
-      [this.#identity.docType, this.#identity.docId, v],
+      [this.#identity.docType, this.#identity.sessionId, v],
     );
   }
 
   async latestSnapshotRef(atOrBefore?: number): Promise<SnapshotRef | null> {
-    const values: unknown[] = [this.#identity.docType, this.#identity.docId];
+    const values: unknown[] = [this.#identity.docType, this.#identity.sessionId];
     let sql = `SELECT version, hash FROM doc_snapshots
-       WHERE doc_type = $1 AND doc_id = $2`;
+      WHERE doc_type = $1 AND session_id = $2`;
     if (atOrBefore !== undefined) {
       values.push(atOrBefore);
       sql += ` AND version <= $${values.length}`;
@@ -215,27 +213,23 @@ export class PgDeltaLog implements DeltaLog {
    * Idempotent by version: re-recording a snapshot for a version already known
    * overwrites it, matching the Cloudflare adapter's `INSERT OR REPLACE`.
    *
-   * This writes the same `doc_snapshots` table `PgDocIndex.recordSnapshot()`
-   * writes. On Cloudflare those are two physically separate stores (the DO's
-   * private sqlite and D1) that happen to hold the same facts; on one Postgres
-   * database they collapse into one table, and the upsert makes the duplicate
-   * write from a session that calls both a no-op rather than a violation.
+  * The upsert makes retries for one session/version idempotent.
    */
   async recordSnapshot(v: number, hash: string, timestamp: number): Promise<void> {
     await this.#q.query(
-      `INSERT INTO doc_snapshots (doc_type, doc_id, version, hash, timestamp)
+      `INSERT INTO doc_snapshots (doc_type, session_id, version, hash, timestamp)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (doc_type, doc_id, version)
+      ON CONFLICT (doc_type, session_id, version)
        DO UPDATE SET hash = EXCLUDED.hash, timestamp = EXCLUDED.timestamp`,
-      [this.#identity.docType, this.#identity.docId, v, hash, timestamp],
+      [this.#identity.docType, this.#identity.sessionId, v, hash, timestamp],
     );
   }
 
   async countSince(v: number): Promise<number> {
     const result = await this.#q.query(
       `SELECT COUNT(*) AS n FROM deltas
-       WHERE doc_type = $1 AND doc_id = $2 AND version > $3`,
-      [this.#identity.docType, this.#identity.docId, v],
+      WHERE doc_type = $1 AND session_id = $2 AND version > $3`,
+      [this.#identity.docType, this.#identity.sessionId, v],
     );
     // COUNT(*) is bigint — `pg` hands it back as a string.
     return toNumber(result.rows[0]?.n ?? 0);
@@ -243,116 +237,14 @@ export class PgDeltaLog implements DeltaLog {
 }
 
 /**
- * `DocIndex` over the shared `docs` / `doc_snapshots` tables, scoped to one
- * document identity.
- *
- * Like the Cloudflare `D1DocIndex`, this is handed its `DocIdentity` up front,
- * so `register()` does not need to teach it who it is indexing. It still
- * honours the port contract's ordering requirement (`register()` before
- * `touch()`/`recordSnapshot()`) — without the `docs` row, `touch()` has nothing
- * to update.
- */
-export class PgDocIndex implements DocIndex {
-  #q: Queryable;
-  #identity: DocIdentity;
-
-  constructor(q: Queryable, identity: DocIdentity) {
-    this.#q = q;
-    this.#identity = identity;
-  }
-
-  /**
-   * Upsert, because the contract allows `register()` to be called repeatedly
-   * for the same document (session creation and `init_from_hash` both do it),
-   * and a second call must refresh the record rather than raise.
-   */
-  async register(rec: DocRecord): Promise<void> {
-    await this.#q.query(
-      `INSERT INTO docs (doc_id, doc_type, owner_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (doc_id, doc_type)
-       DO UPDATE SET owner_id = EXCLUDED.owner_id,
-                     created_at = EXCLUDED.created_at,
-                     updated_at = EXCLUDED.updated_at`,
-      [rec.docId, rec.docType, rec.ownerId, rec.createdAt, rec.updatedAt],
-    );
-  }
-
-  // `ownerId` is not part of `touch()`, so the row is keyed on the `docs`
-  // primary key alone.
-  async touch(at: number): Promise<void> {
-    await this.#q.query(
-      `UPDATE docs SET updated_at = $1 WHERE doc_id = $2 AND doc_type = $3`,
-      [at, this.#identity.docId, this.#identity.docType],
-    );
-  }
-
-  async recordSnapshot(version: number, hash: string, timestamp: number): Promise<void> {
-    await this.#q.query(
-      `INSERT INTO doc_snapshots (doc_type, doc_id, version, hash, timestamp)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (doc_type, doc_id, version)
-       DO UPDATE SET hash = EXCLUDED.hash, timestamp = EXCLUDED.timestamp`,
-      [this.#identity.docType, this.#identity.docId, version, hash, timestamp],
-    );
-  }
-}
-
-/** Read side of the index. Not scoped to a document — it queries across them. */
-export class PgDocIndexQuery implements DocIndexQuery {
-  #q: Queryable;
-
-  constructor(q: Queryable) {
-    this.#q = q;
-  }
-
-  /**
-   * `ORDER BY updated_at DESC` is contractual, not cosmetic: list UIs show
-   * "recently updated" and physical/insertion order would silently break them.
-   * The `docs_owner_type_idx` index in 0001_init.sql covers exactly this
-   * predicate + ordering.
-   */
-  async list(userId: string, docType: string): Promise<DocRecord[]> {
-    const result = await this.#q.query(
-      `SELECT doc_id, doc_type, owner_id, created_at, updated_at FROM docs
-       WHERE owner_id = $1 AND doc_type = $2
-       ORDER BY updated_at DESC`,
-      [userId, docType],
-    );
-    return result.rows.map((row) => ({
-      docId: row.doc_id as string,
-      docType: row.doc_type as string,
-      ownerId: row.owner_id as string,
-      createdAt: toNumber(row.created_at),
-      updatedAt: toNumber(row.updated_at),
-    }));
-  }
-
-  async snapshots(docType: string, docId: string): Promise<SnapshotRef[]> {
-    const result = await this.#q.query(
-      `SELECT version, hash FROM doc_snapshots
-       WHERE doc_type = $1 AND doc_id = $2
-       ORDER BY version ASC`,
-      [docType, docId],
-    );
-    return result.rows.map((row) => ({
-      version: toNumber(row.version),
-      hash: row.hash as string,
-    }));
-  }
-}
-
-/**
- * A real `BEGIN`/`COMMIT`/`ROLLBACK` over the two transactional ports.
+ * A real `BEGIN`/`COMMIT`/`ROLLBACK` over the session delta log.
  *
  * The whole point is that every statement in the callback runs on ONE
  * connection: a pooled `query()` picks an arbitrary connection per call, which
  * would leave the callback's writes scattered across connections and outside
  * the `BEGIN`. So the connection is checked out here and passed *as the
- * `Queryable`* into freshly constructed `PgDeltaLog` / `PgDocIndex` instances,
- * and those instances — not the ones the caller captured from an enclosing
- * scope — are what the callback is handed. That is why the `UnitOfWork`
- * contract insists the callback use the ports it is given.
+ * `Queryable`* into a freshly constructed `PgDeltaLog`; that transaction-local
+ * instance is what the callback receives.
  *
  * A normal return commits; a throw rolls back and propagates the original
  * error. The connection is released in `finally` either way.
@@ -377,9 +269,9 @@ export class PgDocIndexQuery implements DocIndexQuery {
  */
 export class PgUnitOfWork implements UnitOfWork {
   #pool: Pool;
-  #identity: DocIdentity;
+  #identity: SessionIdentity;
 
-  constructor(pool: Pool, identity: DocIdentity) {
+  constructor(pool: Pool, identity: SessionIdentity) {
     this.#pool = pool;
     this.#identity = identity;
   }
@@ -395,7 +287,6 @@ export class PgUnitOfWork implements UnitOfWork {
       await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
       const tx: TransactionalPorts = {
         deltas: new PgDeltaLog(client, this.#identity),
-        index: new PgDocIndex(client, this.#identity),
       };
       try {
         const result = await fn(tx);
@@ -421,5 +312,37 @@ export class PgUnitOfWork implements UnitOfWork {
       // transaction. So a failed rollback discards the connection instead.
       client.release(poisoned || undefined);
     }
+  }
+}
+
+export class PgSessionIdentityStore {
+  readonly #q: Queryable;
+
+  constructor(q: Queryable) {
+    this.#q = q;
+  }
+
+  async register(identity: SessionIdentity): Promise<void> {
+    await this.#q.query(
+      `INSERT INTO doc_sessions (session_id, tenant_id, doc_type)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (session_id) DO NOTHING`,
+      [identity.sessionId, identity.tenantId, identity.docType],
+    );
+  }
+
+  async get(sessionId: string): Promise<SessionIdentity | null> {
+    const result = await this.#q.query(
+      `SELECT session_id, tenant_id, doc_type FROM doc_sessions
+       WHERE session_id = $1`,
+      [sessionId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      sessionId: row.session_id as string,
+      tenantId: row.tenant_id as string,
+      docType: row.doc_type as string,
+    };
   }
 }

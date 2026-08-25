@@ -1,14 +1,12 @@
 /**
  * Azure/Node entry point for the API Gateway.
  *
- * Cloudflare's equivalent (`packages/cloudflare-gateway/src/worker.ts`)
- * resolves `docType` -> worker URL from a KV registry, with an env var as
- * local fallback. Design doc 4.5: Azure has no KV-backed registry, so this
- * process resolves `docType` -> worker URL from `{TYPE}_WORKER_URL` env vars
- * only — platform DNS/service discovery stands in for the KV registry.
+ * Document services come from one deployment-time `DOC_SERVICES_JSON`
+ * registry. There is no runtime registration or env-name fallback.
  *
- * `docIndex` is `PgDocIndexQuery` over the same Postgres database the
- * doc-type workers write to (shared `docs` table).
+ * The Gateway owns its `gateway_documents` directory. Doc services may still
+ * share the physical Postgres instance during migration, but never read or
+ * write that table.
  *
  * CAS: transitional (deleted in phase 4). Without `CAS_BASE_URL` set,
  * `casFetcher` is a stub that 501s every request and `isPublicCasRoute` is a
@@ -21,29 +19,28 @@
  * matching doc-type-service-side wiring and why this has to be the CAS
  * worker's own base URL, never the gateway's.
  *
- * Env vars: DATABASE_URL, INTERNAL_TOKEN, PORT, CAS_BASE_URL (optional), and
- * one `{TYPE}_WORKER_URL` per registered document type (e.g.
- * MARKDOWN_WORKER_URL).
+ * Env vars: DATABASE_URL, DOC_SERVICES_JSON, CAS_ACCESS_KEY, PORT, and
+ * CAS_BASE_URL (optional).
  */
 
 import {
   attachPoolErrorLogger,
   createPool,
-  PgDocIndexQuery,
   requireEnv,
   serve,
 } from "@unidocs/azure-sdk";
 import { isPublicCasRoute } from "@unidocs/http-protocol";
-import { createGatewayHandler } from "@unidocs/gateway-common";
-
-function resolveWorkerUrl(docType: string): Promise<string | null> {
-  const envKey = `${docType.toUpperCase()}_WORKER_URL`;
-  return Promise.resolve(process.env[envKey] ?? null);
-}
+import {
+  createGatewayHandler,
+  createInsecurePathIdentityResolver,
+  StaticDocServiceRegistry,
+} from "@unidocs/gateway-common";
+import { PgGatewayDocumentDirectory } from "./document-directory.js";
 
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
-  const internalToken = requireEnv("INTERNAL_TOKEN");
+  const registry = new StaticDocServiceRegistry(requireEnv("DOC_SERVICES_JSON"));
+  const casAccessKey = requireEnv("CAS_ACCESS_KEY");
   const port = Number(process.env.PORT ?? 8787);
 
   // Gateway never touches Blob Storage — `blobConnectionString` is unused by
@@ -51,7 +48,7 @@ async function main(): Promise<void> {
   // azure-sdk/tests/containers.ts's `waitForPostgres`).
   const pool = createPool({ databaseUrl, blobConnectionString: "" });
   attachPoolErrorLogger(pool, "azure-gateway");
-  const docIndex = new PgDocIndexQuery(pool);
+  const directory = new PgGatewayDocumentDirectory(pool);
 
   // Transitional (deleted in phase 4): CAS_BASE_URL points at the
   // Cloudflare CAS worker itself. Unset means unchanged behavior — CAS
@@ -73,10 +70,13 @@ async function main(): Promise<void> {
       };
 
   const handler = createGatewayHandler({
-    internalToken,
-    resolveWorkerUrl,
+    casAccessKey,
+    identityResolver: createInsecurePathIdentityResolver(
+      process.env.INSECURE_PATH_IDENTITY === "true",
+    ),
+    resolveDocService: (docType) => registry.resolve(docType),
     casFetcher,
-    docIndex,
+    directory,
     isPublicCasRoute: casBaseUrl ? isPublicCasRoute : () => false,
   });
 

@@ -19,6 +19,6 @@ database_id = "REPLACE_WITH_CAS_D1_ID"
 bucket_name = "unidocs-cas"
 binding = "CAS_R2"
 
-# Set via wrangler secret: `wrangler secret put INTERNAL_TOKEN`
+# Set via wrangler secret: `wrangler secret put CAS_ACCESS_KEY`
 # [vars]
-# INTERNAL_TOKEN = "dev-token"
+# CAS_ACCESS_KEY = "dev-cas-key"

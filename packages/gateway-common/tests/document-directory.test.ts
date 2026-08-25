@@ -1,0 +1,74 @@
+import { describe, expect, it } from "vitest";
+import {
+  GatewayDirectoryConflictError,
+  MemoryGatewayDocumentDirectory,
+} from "../src/document-directory.js";
+
+function reservation(overrides: Partial<Parameters<MemoryGatewayDocumentDirectory["reserve"]>[0]> = {}) {
+  return {
+    docId: "doc-1",
+    userId: "user-1",
+    tenantId: "tenant-1",
+    docType: "markdown",
+    serviceId: "markdown",
+    sessionId: "session-1",
+    idempotencyKey: "create-1",
+    requestedDocId: null,
+    now: 100,
+    ...overrides,
+  };
+}
+
+describe("MemoryGatewayDocumentDirectory", () => {
+  it("returns the original document and session for a repeated idempotency key", async () => {
+    const directory = new MemoryGatewayDocumentDirectory();
+    const first = await directory.reserve(reservation());
+    const retry = await directory.reserve(reservation({
+      docId: "discarded-doc",
+      sessionId: "discarded-session",
+      now: 200,
+    }));
+
+    expect(first.created).toBe(true);
+    expect(retry.created).toBe(false);
+    expect(retry.record.docId).toBe("doc-1");
+    expect(retry.record.sessionId).toBe("session-1");
+  });
+
+  it("rejects reusing an idempotency key for a different route", async () => {
+    const directory = new MemoryGatewayDocumentDirectory();
+    await directory.reserve(reservation());
+
+    await expect(directory.reserve(reservation({ docType: "docx" })))
+      .rejects.toBeInstanceOf(GatewayDirectoryConflictError);
+  });
+
+  it("rejects one idempotency key for different explicitly requested doc IDs", async () => {
+    const directory = new MemoryGatewayDocumentDirectory();
+    await directory.reserve(reservation({ docId: "doc-a", requestedDocId: "doc-a" }));
+
+    await expect(directory.reserve(reservation({
+      docId: "doc-b",
+      sessionId: "session-b",
+      requestedDocId: "doc-b",
+    }))).rejects.toBeInstanceOf(GatewayDirectoryConflictError);
+  });
+
+  it("lists only ready documents by recency", async () => {
+    const directory = new MemoryGatewayDocumentDirectory();
+    await directory.reserve(reservation());
+    await directory.reserve(reservation({
+      docId: "doc-2",
+      sessionId: "session-2",
+      idempotencyKey: "create-2",
+      now: 110,
+    }));
+    await directory.markReady("user-1", "doc-1", 1, 120);
+    await directory.markReady("user-1", "doc-2", 2, 130);
+
+    await expect(directory.list("user-1", "markdown")).resolves.toEqual([
+      expect.objectContaining({ docId: "doc-2", version: 2 }),
+      expect.objectContaining({ docId: "doc-1", version: 1 }),
+    ]);
+  });
+});

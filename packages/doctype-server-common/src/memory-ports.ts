@@ -3,12 +3,11 @@ import type {
   BlobCas,
   Delta,
   DeltaLog,
-  DocIndex,
+  SnapshotRef,
   SnapshotCache,
   TransactionalPorts,
   UnitOfWork,
 } from "./ports.js";
-import type { DocIndexQuery, SnapshotRef, DocRecord } from "@unidocs/http-protocol";
 import type { CasGateway } from "./session.js";
 import { VersionConflictError } from "@unidocs/http-protocol";
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
@@ -127,101 +126,6 @@ class MemoryBlobCas implements BlobCas {
   }
 }
 
-interface SharedDocStore {
-  docs: Map<string, DocRecord>;
-  snapshots: Map<string, { version: number; hash: string; timestamp: number }[]>;
-}
-
-function docKey(docType: string, docId: string): string {
-  return `${docType}:${docId}`;
-}
-
-class MemoryDocIndex implements DocIndex {
-  // Learned from register(). Until then this index does not know which
-  // document it is indexing, so touch()/recordSnapshot() have nowhere to
-  // write — see the contract note on DocIndex.
-  #identity: { docType: string; docId: string } | null = null;
-  #store: SharedDocStore;
-
-  constructor(store: SharedDocStore) {
-    this.#store = store;
-  }
-
-  async register(rec: DocRecord): Promise<void> {
-    this.#identity = { docType: rec.docType, docId: rec.docId };
-    this.#store.docs.set(docKey(rec.docType, rec.docId), { ...rec });
-  }
-
-  async touch(at: number): Promise<void> {
-    if (this.#identity === null) return;
-    const rec = this.#store.docs.get(docKey(this.#identity.docType, this.#identity.docId));
-    if (rec) rec.updatedAt = at;
-  }
-
-  async recordSnapshot(version: number, hash: string, timestamp: number): Promise<void> {
-    if (this.#identity === null) return;
-    const key = docKey(this.#identity.docType, this.#identity.docId);
-    const list = this.#store.snapshots.get(key) ?? [];
-    list.push({ version, hash, timestamp });
-    this.#store.snapshots.set(key, list);
-  }
-
-  // --- MemoryTxParticipant: rollback support for MemoryUnitOfWork ---------
-  //
-  // Three things move under a transaction here and all three must come back:
-  // the learned #identity (register() sets it), the shared docs map (whose
-  // DocRecord values touch() mutates in place, hence the per-record copy),
-  // and the shared snapshots map (whose arrays recordSnapshot() pushes onto).
-  // The shared maps are restored by mutation, not reassignment —
-  // MemoryDocIndexQuery holds the same SharedDocStore by reference.
-
-  captureTxState(): unknown {
-    return {
-      identity: this.#identity === null ? null : { ...this.#identity },
-      docs: new Map(
-        [...this.#store.docs].map(([k, v]) => [k, { ...v }] as const),
-      ),
-      snapshots: new Map(
-        [...this.#store.snapshots].map(([k, v]) => [k, [...v]] as const),
-      ),
-    };
-  }
-
-  restoreTxState(state: unknown): void {
-    const s = state as {
-      identity: { docType: string; docId: string } | null;
-      docs: Map<string, DocRecord>;
-      snapshots: Map<string, { version: number; hash: string; timestamp: number }[]>;
-    };
-    this.#identity = s.identity === null ? null : { ...s.identity };
-    this.#store.docs.clear();
-    for (const [k, v] of s.docs) this.#store.docs.set(k, { ...v });
-    this.#store.snapshots.clear();
-    for (const [k, v] of s.snapshots) this.#store.snapshots.set(k, [...v]);
-  }
-}
-
-class MemoryDocIndexQuery implements DocIndexQuery {
-  #store: SharedDocStore;
-
-  constructor(store: SharedDocStore) {
-    this.#store = store;
-  }
-
-  async list(userId: string, docType: string): Promise<DocRecord[]> {
-    return [...this.#store.docs.values()]
-      .filter((r) => r.ownerId === userId && r.docType === docType)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  async snapshots(docType: string, docId: string): Promise<SnapshotRef[]> {
-    const list = this.#store.snapshots.get(docKey(docType, docId)) ?? [];
-    return [...list]
-      .sort((a, b) => a.version - b.version)
-      .map(({ version, hash }) => ({ version, hash }));
-  }
-}
-
 /**
  * In-memory CAS gateway for tests. Content-addressed: `store` computes the
  * same canonical CAS node digest as `CasClient` and keeps the bytes so `read`
@@ -322,7 +226,7 @@ export class MemoryUnitOfWork implements UnitOfWork {
   }
 
   async withTransaction<T>(fn: (tx: TransactionalPorts) => Promise<T>): Promise<T> {
-    const saved = [this.#ports.deltas, this.#ports.index]
+    const saved = [this.#ports.deltas]
       .filter(isMemoryTxParticipant)
       .map((port) => ({ port, state: port.captureTxState() }));
 
@@ -350,21 +254,15 @@ export function createMemoryPorts(): {
   deltas: DeltaLog;
   snapshots: SnapshotCache;
   blobs: BlobCas;
-  index: DocIndex;
-  indexQuery: DocIndexQuery;
   cas: MemoryCas;
   unitOfWork: UnitOfWork;
 } {
-  const store: SharedDocStore = { docs: new Map(), snapshots: new Map() };
   const deltas = new MemoryDeltaLog();
-  const index = new MemoryDocIndex(store);
   return {
     deltas,
     snapshots: new MemorySnapshotCache(),
     blobs: new MemoryBlobCas(),
-    index,
-    indexQuery: new MemoryDocIndexQuery(store),
     cas: new MemoryCas(),
-    unitOfWork: new MemoryUnitOfWork({ deltas, index }),
+    unitOfWork: new MemoryUnitOfWork({ deltas }),
   };
 }

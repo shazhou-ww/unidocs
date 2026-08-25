@@ -42,7 +42,7 @@
  *     single-writer, and `editor-do.ts` builds a fresh (or DO-lifetime-cached
  *     but exclusively-owned) session per identity.
  *   - A host that keeps a process-local LRU of sessions keyed by
- *     `(docId, version)` across requests — as the design doc's cold-start
+ *     `(sessionId, version)` across requests — as the design doc's cold-start
  *     mitigation for Azure's N stateless replicas proposes — breaks this the
  *     moment two replicas ever touch the same document: replica B's `apply()`
  *     can pass a `baseVersion` that is fresh on the shared log but stale
@@ -75,8 +75,7 @@ import type { HistoryEntry } from "@unidocs/http-protocol";
 import type {
   BlobCas,
   DeltaLog,
-  DocIdentity,
-  DocIndex,
+  SessionIdentity,
   SnapshotCache,
   UnitOfWork,
 } from "./ports.js";
@@ -95,7 +94,6 @@ export interface SessionDeps {
   deltas: DeltaLog;
   snapshots: SnapshotCache;
   blobs: BlobCas;
-  index: DocIndex;
   /**
    * Atomicity over `deltas` + `index` for the creation path. Required, never
    * optional: an optional dependency would put a `if (deps.unitOfWork)`
@@ -106,7 +104,7 @@ export interface SessionDeps {
    */
   unitOfWork: UnitOfWork;
   cas: CasGateway;
-  identity: DocIdentity;
+  identity: SessionIdentity;
   /** Injected clock so pure unit tests can assert on timestamps. */
   now: () => number;
 }
@@ -313,11 +311,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // content it references is protected.
     const refs = refsFromSValue(this.#doc as unknown as SValue);
     if (Object.keys(refs).length > 0) {
-      const { userId, docId } = this.#deps.identity;
+      const { sessionId } = this.#deps.identity;
       try {
         await commitRootRefsOrRollback(
           this.#deps.cas,
-          `snapshot:${userId}:${docId}:${this.#version}`,
+          `snapshot:${sessionId}:${this.#version}`,
           refs,
           async () => {},
         );
@@ -327,8 +325,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     }
 
     const timestamp = this.#deps.now();
-    await this.#deps.index.recordSnapshot(this.#version, hash, timestamp);
-    await this.#deps.index.touch(timestamp);
     // Local log record — this is what rollback searches.
     await this.#deps.deltas.recordSnapshot(this.#version, hash, timestamp);
 
@@ -343,14 +339,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * Create a new document, optionally from uploaded bytes.
    * Multipart parsing stays in the adapter; this only takes the bytes.
    */
-  async create(input?: { bytes?: Uint8Array }): Promise<{ docId: string; version: number }> {
+  async create(input?: { bytes?: Uint8Array }): Promise<{ sessionId: string; version: number }> {
     await this.load();
 
     if (this.#doc !== null) {
       throw new DocExistsError("Document already exists");
     }
 
-    const { docType, docId, userId } = this.#deps.identity;
+    const { sessionId } = this.#deps.identity;
 
     // Build the document on the side. Same rule as apply(): nothing touches
     // #doc/#version until the conditional write has actually landed.
@@ -372,7 +368,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       try {
         await commitRootRefsOrRollback(
           this.#deps.cas,
-          `snapshot:${userId}:${docId}:1`,
+          `snapshot:${sessionId}:1`,
           refs,
           async () => {},
         );
@@ -408,23 +404,9 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       // the uploaded bytes, silently. Writing both DO-local rows first
       // downgrades that to "content intact, just missing from the listing".
       //
-      // The DocIndex contract constrains register() before
-      // index.recordSnapshot()/touch(); it says nothing about
-      // deltas.recordSnapshot(), which is a different port.
+      // Record the session-local restore point in the same transaction as v1.
       await tx.deltas.recordSnapshot(1, hash, timestamp);
 
-      // register() BEFORE index.recordSnapshot(): DocIndex.recordSnapshot
-      // files a snapshot against a document the index already knows, so a
-      // document it has never seen has nowhere to file it and the record is
-      // silently dropped (DocIndex contract).
-      await tx.index.register({
-        docId,
-        docType,
-        ownerId: userId,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      await tx.index.recordSnapshot(1, hash, timestamp);
     });
 
     // 3. Commit in memory only once the durable writes have landed — the
@@ -448,7 +430,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     await this.#saveSnapshotCacheBestEffort();
 
     this.#loaded = true;
-    return { docId, version: 1 };
+    return { sessionId, version: 1 };
   }
 
   /**
@@ -458,7 +440,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   async initFromHash(
     hash: string,
     sourceVersion: number,
-  ): Promise<{ docId: string; version: number }> {
+  ): Promise<{ sessionId: string; version: number }> {
     await this.load();
 
     if (this.#doc !== null) {
@@ -470,7 +452,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       throw new DocNotFoundError(`Snapshot ${hash} not found in R2`);
     }
 
-    const { docType, docId, userId } = this.#deps.identity;
+    const { sessionId } = this.#deps.identity;
     const doc = decodeSnapshot<TDoc>(bytes);
 
     // Independently pin the per-layer blobs this cloned snapshot references,
@@ -487,7 +469,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       try {
         await commitRootRefsOrRollback(
           this.#deps.cas,
-          `snapshot:${userId}:${docId}:1`,
+          `snapshot:${sessionId}:1`,
           cloneRefs,
           async () => {},
         );
@@ -512,15 +494,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       // for why the two DO-local rows must land together.
       await tx.deltas.recordSnapshot(1, hash, timestamp);
 
-      // register() before index.recordSnapshot() — see create().
-      await tx.index.register({
-        docId,
-        docType,
-        ownerId: userId,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      await tx.index.recordSnapshot(1, hash, timestamp);
     });
 
     this.#doc = doc;
@@ -530,7 +503,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     await this.#saveSnapshotCacheBestEffort();
 
     this.#loaded = true;
-    return { docId, version: 1 };
+    return { sessionId, version: 1 };
   }
 
   // ------------------------------------------------------------------
@@ -658,11 +631,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     });
 
     // 4. Root-refs. On failure the delta we just wrote is removed again.
-    const { userId, docId } = this.#deps.identity;
+    const { sessionId } = this.#deps.identity;
     try {
       await commitRootRefsOrRollback(
         this.#deps.cas,
-        `apply:${userId}:${docId}:${nextVersion}`,
+        `apply:${sessionId}:${nextVersion}`,
         refs,
         () => this.#deps.deltas.remove(nextVersion),
       );
@@ -758,7 +731,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     hash: string;
     version: number;
     docType: string;
-    docId: string;
   }> {
     await this.load();
 
@@ -772,7 +744,6 @@ export class DocumentSession<TDoc, TQuery, TOp> {
       hash: snap!.hash,
       version: snap!.version,
       docType: this.#deps.identity.docType,
-      docId: this.#deps.identity.docId,
     };
   }
 

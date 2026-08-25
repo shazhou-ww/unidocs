@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -16,12 +16,11 @@ import {
   CAS_WORKER,
   DOC_TYPES,
   GATEWAY_WORKER,
-  registryEntries,
   resolvePorts,
 } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
 
-export { DOC_TYPES, INTERNAL_TOKEN, parseDocTypes } from "./doc-types.mjs";
+export { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
 export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
@@ -51,32 +50,28 @@ function workerUrl(host, port) {
   return `http://${host}:${port}`;
 }
 
-const MIGRATIONS_PATH = join(
+const MIGRATIONS_DIR = join(
   ROOT,
   "packages",
   "cloudflare-gateway",
   "migrations",
-  "0001_init.sql",
 );
 
 /**
- * Apply the shared SNAPSHOTS_DB schema (owned by cloudflare-gateway). Real
+ * Apply the Gateway-owned D1 schema. Real
  * Cloudflare D1 (via wrangler) gets this from `migrations_dir` in
- * wrangler.toml; local Miniflare has no migrations runner, so we read the
- * file and exec each statement ourselves. The gateway and every doc-type
- * worker bind the same underlying D1 database under the "SNAPSHOTS_DB"
- * name, so applying it once — against any one worker's binding — is enough
- * for all of them.
+ * wrangler.toml; local Miniflare has no migrations runner, so we read all SQL
+ * files in filename order and exec each statement ourselves. The gateway and every doc-type
+ * worker uses the `GATEWAY_DB` binding.
  */
 async function migrateSnapshotsDb(mf) {
-  const db = await mf.getD1Database("SNAPSHOTS_DB", GATEWAY_WORKER);
-  const sql = await readFile(MIGRATIONS_PATH, "utf8");
-  const statements = sql
-    .split(";")
-    .map((stmt) => stmt.trim())
-    .filter(Boolean);
-  for (const statement of statements) {
-    await db.exec(statement);
+  const db = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
+  const files = (await readdir(MIGRATIONS_DIR))
+    .filter(file => file.endsWith(".sql"))
+    .sort();
+  for (const file of files) {
+    const sql = await readFile(join(MIGRATIONS_DIR, file), "utf8");
+    await db.exec(sql);
   }
 }
 
@@ -114,23 +109,44 @@ function assertPortFree(host, port) {
  * they're running against.
  */
 function createStorageProbe(mf) {
+  const tenantByHash = new Map();
   return {
     async snapshotIndex(docType, docId) {
-      const worker = DOC_TYPES[docType].worker;
-      const db = await mf.getD1Database("SNAPSHOTS_DB", worker);
-      const rows = await db
+      const db = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
+      const directory = await db
         .prepare(
-          "SELECT version, hash FROM snapshots WHERE doc_type = ? AND doc_id = ? ORDER BY version ASC",
+          `SELECT session_id, tenant_id FROM gateway_documents
+           WHERE doc_type = ? AND doc_id = ?`,
         )
         .bind(docType, docId)
-        .all();
-      return rows.results.map((row) => ({ version: row.version, hash: row.hash }));
+        .first();
+      if (!directory) return [];
+      const spec = DOC_TYPES[docType];
+      const namespace = await mf.getDurableObjectNamespace(spec.editor, spec.worker);
+      const id = namespace.idFromName(directory.session_id);
+      const response = await namespace.get(id).fetch(
+        "https://editor.internal/_internal/snapshot-index",
+        {
+          headers: {
+            "X-Tenant-Id": directory.tenant_id,
+            "X-Session-Id": directory.session_id,
+          },
+        },
+      );
+      const body = await response.json();
+      if (!response.ok || body.success !== true) return [];
+      return body.data.map((row) => {
+        tenantByHash.set(row.hash, directory.tenant_id);
+        return { version: row.version, hash: row.hash };
+      });
     },
     async blobExists(hash) {
       // CAS_WORKER is always started regardless of which doc types were
       // selected, and it's the one that binds the shared bucket as "CAS_R2".
       const bucket = await mf.getR2Bucket("CAS_R2", CAS_WORKER);
-      const object = await bucket.get(hash);
+      const tenantId = tenantByHash.get(hash);
+      if (!tenantId) return false;
+      const object = await bucket.get(`tenants/${tenantId}/nodes/${hash}`);
       return object !== null;
     },
   };
@@ -138,8 +154,8 @@ function createStorageProbe(mf) {
 
 /**
  * Start the gateway plus the selected document type workers in one Miniflare
- * runtime. Shared D1/R2; the KV registry is seeded only with the doc types
- * that are actually running, so the gateway 404s on the rest.
+ * runtime. The Gateway receives a static registry containing only the selected
+ * document types, so it 404s on the rest.
  */
 export async function startLocalRuntime({
   host = "127.0.0.1",
@@ -187,11 +203,6 @@ export async function startLocalRuntime({
     await mf.ready;
 
     await migrateSnapshotsDb(mf);
-
-    const registry = await mf.getKVNamespace("REGISTRY", "unidocs-gateway");
-    for (const [key, value] of registryEntries(docTypes, urls)) {
-      await registry.put(key, value);
-    }
 
     return {
       mf,

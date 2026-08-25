@@ -3,11 +3,9 @@ import type {
   BlobCas,
   Delta,
   DeltaLog,
-  DocIndex,
   SnapshotCache,
   UnitOfWork,
 } from "../ports.js";
-import type { DocIndexQuery } from "@unidocs/http-protocol";
 import { VersionConflictError } from "@unidocs/http-protocol";
 
 function makeDelta(version: number, description = `delta ${version}`): Delta {
@@ -25,10 +23,7 @@ export interface ConcurrencyReadiness {
 
 export interface PortContractOptions {
   /**
-   * Whether `unitOfWork.withTransaction` really rolls back. Only backends
-   * where `deltas` and `index` share one database can say `true`
-   * (Postgres, the in-memory ports); Cloudflare says `false` because DO
-   * sqlite and D1 are separate services.
+  * Whether `unitOfWork.withTransaction` really rolls back delta writes.
    *
    * `false` skips the two rollback assertions — and nothing else. This is
    * the single sanctioned behavioural fork between backends; every other
@@ -57,8 +52,6 @@ export function runPortContract(
     deltas: DeltaLog;
     snapshots: SnapshotCache;
     blobs: BlobCas;
-    index: DocIndex;
-    indexQuery: DocIndexQuery;
     unitOfWork: UnitOfWork;
   }>,
   // Required, with no default. A default of `false` would let a backend that
@@ -314,27 +307,6 @@ export function runPortContract(
       }
     });
 
-    // touch() has only ever been mentioned in passing, in another test's
-    // comment (as the ordering note that register() must precede it). None
-    // of the three backends had a case exercising its own semantics.
-    test("DocIndex: touch() advances updatedAt and leaves createdAt alone", async () => {
-      const { index, indexQuery } = await factory();
-      const created = 1_700_000_000_000;
-      await index.register({
-        docId: "doc-1",
-        docType: "text",
-        ownerId: "user-1",
-        createdAt: created,
-        updatedAt: created,
-      });
-
-      await index.touch(created + 5_000);
-
-      const [row] = await indexQuery.list("user-1", "text");
-      expect(row.createdAt).toBe(created);
-      expect(row.updatedAt).toBe(created + 5_000);
-    });
-
     /**
      * Document-scope predicates. On dedicated storage (Cloudflare: one
      * private sqlite per DO) this is nearly impossible to get wrong; on a
@@ -404,106 +376,6 @@ export function runPortContract(
       expect(await snapshots.get()).toEqual({ version: 5, bytes });
     });
 
-    // DocIndex.register() must precede recordSnapshot()/touch() for a
-    // document — the index learns the identity it keys those rows by from
-    // register, and may drop calls for a document it has never seen. That is
-    // exactly what happened once: a session snapshotted before registering
-    // and the creation-time snapshot was silently dropped, while the delta
-    // log's own copy of the same snapshot wrote fine. Assert the state the
-    // index KEPT, never merely that the method was called.
-    test("DocIndex: a snapshot recorded after register() is readable back", async () => {
-      const { index, indexQuery } = await factory();
-      const now = 1_700_000_000_000;
-
-      await index.register({
-        docId: "doc-1",
-        docType: "text",
-        ownerId: "user-1",
-        createdAt: now,
-        updatedAt: now,
-      });
-      await index.recordSnapshot(1, "hash-1", now);
-      await index.recordSnapshot(21, "hash-21", now + 1);
-
-      expect(await indexQuery.snapshots("text", "doc-1")).toEqual([
-        { version: 1, hash: "hash-1" },
-        { version: 21, hash: "hash-21" },
-      ]);
-    });
-
-    test("DocIndex: snapshots() is ascending by version and empty for an unknown document", async () => {
-      const { index, indexQuery } = await factory();
-      const now = 1_700_000_000_000;
-      await index.register({
-        docId: "doc-1",
-        docType: "text",
-        ownerId: "user-1",
-        createdAt: now,
-        updatedAt: now,
-      });
-      await index.recordSnapshot(41, "hash-41", now);
-      await index.recordSnapshot(21, "hash-21", now);
-      await index.recordSnapshot(1, "hash-1", now);
-
-      expect((await indexQuery.snapshots("text", "doc-1")).map((r) => r.version)).toEqual([
-        1, 21, 41,
-      ]);
-      expect(await indexQuery.snapshots("text", "no-such-doc")).toEqual([]);
-      expect(await indexQuery.snapshots("no-such-type", "doc-1")).toEqual([]);
-    });
-
-    test("DocIndex: register() then list() finds the document by owner and type", async () => {
-      const { index, indexQuery } = await factory();
-      const now = 1_700_000_000_000;
-      await index.register({
-        docId: "doc-1",
-        docType: "text",
-        ownerId: "user-1",
-        createdAt: now,
-        updatedAt: now,
-      });
-      expect(await indexQuery.list("user-1", "text")).toHaveLength(1);
-      expect(await indexQuery.list("user-2", "text")).toEqual([]);
-      expect(await indexQuery.list("user-1", "other")).toEqual([]);
-    });
-
-    // list() must sort by updatedAt descending, not insertion/physical order
-    // — a "recently updated" list UI depends on this. Register the docs in
-    // an order that does NOT match updatedAt order, so a naive
-    // insertion-order implementation would fail this.
-    test("DocIndex: list() is ordered by updatedAt descending", async () => {
-      const { index, indexQuery } = await factory();
-      const now = 1_700_000_000_000;
-
-      await index.register({
-        docId: "doc-mid",
-        docType: "text",
-        ownerId: "user-1",
-        createdAt: now,
-        updatedAt: now + 10,
-      });
-      await index.register({
-        docId: "doc-newest",
-        docType: "text",
-        ownerId: "user-1",
-        createdAt: now,
-        updatedAt: now + 20,
-      });
-      await index.register({
-        docId: "doc-oldest",
-        docType: "text",
-        ownerId: "user-1",
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      expect((await indexQuery.list("user-1", "text")).map((r) => r.docId)).toEqual([
-        "doc-newest",
-        "doc-mid",
-        "doc-oldest",
-      ]);
-    });
-
     test("BlobCas: putIfAbsent is idempotent, get roundtrips, unknown hash is null", async () => {
       const { blobs } = await factory();
       const bytes = new Uint8Array([9, 8, 7]);
@@ -516,69 +388,43 @@ export function runPortContract(
     // ------------------------------------------------------------------
     // UnitOfWork
     //
-    // These two are what makes document creation atomic: the version-1
-    // delta and the index row go in together or not at all. A backend that
-    // cannot roll back leaves the orphan this pair exists to rule out —
-    // a document with deltas that no listing shows and that create() then
-    // refuses to re-create. Skipped rather than weakened where the storage
-    // is genuinely two services (Cloudflare); see PortContractOptions.
+    // Session creation appends the version-1 delta and its durable snapshot
+    // record through this one transaction-local DeltaLog.
     // ------------------------------------------------------------------
 
     txTest(
       `withTransaction: a throw inside the callback rolls back everything it wrote${txNote}`,
       async () => {
-        const { deltas, index, indexQuery, unitOfWork } = await factory();
+        const { deltas, unitOfWork } = await factory();
         await deltas.append(makeDelta(1));
         const headBefore = await deltas.head();
-        const listBefore = await indexQuery.list("user-tx", "text");
 
         const boom = new Error("callback failed");
         await expect(
           unitOfWork.withTransaction(async (tx) => {
             await tx.deltas.append(makeDelta(headBefore + 1, "doomed"));
-            await tx.index.register({
-              docId: "doc-tx",
-              docType: "text",
-              ownerId: "user-tx",
-              createdAt: 1,
-              updatedAt: 1,
-            });
             throw boom;
           }),
         ).rejects.toBe(boom);
 
         expect(await deltas.head()).toBe(headBefore);
         expect(await deltas.range(headBefore + 1, headBefore + 1)).toEqual([]);
-        expect(await indexQuery.list("user-tx", "text")).toEqual(listBefore);
-        expect(
-          (await indexQuery.list("user-tx", "text")).map((r) => r.docId),
-        ).not.toContain("doc-tx");
       },
     );
 
     txTest(
       `withTransaction: a normal return commits every write in the callback${txNote}`,
       async () => {
-        const { deltas, indexQuery, unitOfWork } = await factory();
+        const { deltas, unitOfWork } = await factory();
 
         const result = await unitOfWork.withTransaction(async (tx) => {
           await tx.deltas.append(makeDelta(1, "committed"));
-          await tx.index.register({
-            docId: "doc-tx",
-            docType: "text",
-            ownerId: "user-tx",
-            createdAt: 1,
-            updatedAt: 1,
-          });
           return "returned";
         });
 
         expect(result).toBe("returned");
         expect(await deltas.head()).toBe(1);
         expect((await deltas.range(1, 1))[0]?.description).toBe("committed");
-        expect((await indexQuery.list("user-tx", "text")).map((r) => r.docId)).toEqual([
-          "doc-tx",
-        ]);
       },
     );
   });

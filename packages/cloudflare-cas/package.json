@@ -1,7 +1,7 @@
 {
   "name": "@unidocs/cloudflare-cas",
   "version": "0.1.0",
-  "description": "User-scoped CAS worker for UniDocs",
+  "description": "Tenant-scoped CAS worker for UniDocs",
   "type": "module",
   "main": "./src/worker.ts",
   "types": "./src/worker.ts",

@@ -16,7 +16,6 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@unidocs/cloudflare-sdk": "workspace:*",
     "@unidocs/http-protocol": "workspace:*",
     "@unidocs/gateway-common": "workspace:*"
   },

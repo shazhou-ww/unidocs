@@ -13,7 +13,8 @@ import { runMigrations } from "../src/migrate.js";
 import { createPool } from "../src/pool.js";
 import { BLOB_CONNECTION_STRING, DATABASE_URL } from "./containers.js";
 
-const INTERNAL_TOKEN = "test-token";
+const SERVICE_ACCESS_KEY = "doc-key";
+const CAS_ACCESS_KEY = "cas-key";
 let handle: { url: string; close(): Promise<void> } | undefined;
 
 afterEach(async () => {
@@ -66,13 +67,16 @@ async function start(
   await pool.end();
   return startDocTypeService({
     docType: overrides.docType ?? "markdown",
-    documentType: overrides.documentType ?? createMarkdownDocumentType({}),
+    documentTypeFactory: overrides.documentType
+      ? () => overrides.documentType!
+      : createMarkdownDocumentType,
     port,
     host: "127.0.0.1",
     config: {
       databaseUrl: DATABASE_URL,
       blobConnectionString: BLOB_CONNECTION_STRING,
-      internalToken: INTERNAL_TOKEN,
+      serviceAccessKey: SERVICE_ACCESS_KEY,
+      casAccessKey: CAS_ACCESS_KEY,
     },
   });
 }
@@ -82,8 +86,9 @@ function internal(url: string, path: string, init: RequestInit = {}) {
     ...init,
     headers: {
       Connection: "close",
-      "X-Internal-Token": INTERNAL_TOKEN,
-      "X-User-Id": "u1",
+      "X-Internal-Token": SERVICE_ACCESS_KEY,
+      "X-Tenant-Id": "tenant-1",
+      "X-Session-Id": "session-1",
       "X-Doc-Type": "markdown",
       ...(init.headers ?? {}),
     },
@@ -92,22 +97,15 @@ function internal(url: string, path: string, init: RequestInit = {}) {
 
 test("create → apply → query round-trips through the service", async () => {
   handle = await start(41999);
-  // `createDocTypeHandler` (server-core) parses `/users/{userId}/{docId}/{method}`
-  // — the shape it receives *after* a gateway has already stripped `/docs/{docType}`
-  // (see doc-type-handler.ts's module doc). This test calls the service directly,
-  // with no gateway in front, so it must send that already-stripped shape itself.
-  // Creation in particular is a bare `POST /users/{userId}/` (docId comes back in
-  // the response, or can be pinned via `X-Doc-Id` as done here) — there is no
-  // `/create` method route.
-  const docId = `svc-${Date.now()}`;
+  const sessionId = `svc-${Date.now()}`;
 
-  const created = await internal(handle.url, "/users/u1/", {
-    method: "POST",
-    headers: { "X-Doc-Id": docId },
+  const created = await internal(handle.url, `/sessions/${sessionId}`, {
+    method: "PUT",
+    headers: { "X-Session-Id": sessionId },
   });
   expect((await created.json()).success).toBe(true);
 
-  const applied = await internal(handle.url, `/users/u1/${docId}/apply`, {
+  const applied = await internal(handle.url, `/sessions/${sessionId}/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -118,16 +116,27 @@ test("create → apply → query round-trips through the service", async () => {
   });
   expect(await applied.json()).toMatchObject({ success: true, version: 2 });
 
-  const queried = await internal(handle.url, `/users/u1/${docId}/query`, {
+  const queried = await internal(handle.url, `/sessions/${sessionId}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind: "getContent" }),
   });
   expect(await queried.json()).toMatchObject({ success: true, version: 2, data: "# hi" });
+
+  const wrongTenant = await internal(handle.url, `/sessions/${sessionId}/query`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Session-Id": sessionId,
+      "X-Tenant-Id": "another-tenant",
+    },
+    body: JSON.stringify({ kind: "getContent" }),
+  });
+  expect(wrongTenant.status).toBe(403);
 });
 
 /**
- * Replaces a prior version of this test that hit `/users/u1/cas/nodes/...`
+ * Replaces a prior version of this test that hit an unrelated CAS path
  * directly. That request 404s inside `createDocTypeHandler`'s own router
  * before `buildDeps()`'s `cas` construction is ever touched — `"cas"` isn't
  * a `docId` any editor/operator method recognizes, and `doc-type-handler.ts`
@@ -152,11 +161,11 @@ test("without casBaseUrl, create() pinning TDoc SBlobs hits the 501 stub and sur
     docType: "cas-probe",
     documentType: createCasProbeDocumentType(),
   });
-  const docId = `cas-probe-${Date.now()}`;
+  const sessionId = `cas-probe-${Date.now()}`;
 
-  const created = await internal(handle.url, "/users/u1/", {
-    method: "POST",
-    headers: { "X-Doc-Id": docId },
+  const created = await internal(handle.url, `/sessions/${sessionId}`, {
+    method: "PUT",
+    headers: { "X-Session-Id": sessionId },
   });
 
   expect(created.status).toBe(502);

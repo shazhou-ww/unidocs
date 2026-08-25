@@ -245,6 +245,9 @@ importers:
       '@unidocs/doctype-docx':
         specifier: workspace:*
         version: link:../doctype-docx
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -261,9 +264,6 @@ importers:
 
   packages/cloudflare-gateway:
     dependencies:
-      '@unidocs/cloudflare-sdk':
-        specifier: workspace:*
-        version: link:../cloudflare-sdk
       '@unidocs/gateway-common':
         specifier: workspace:*
         version: link:../gateway-common
@@ -292,6 +292,9 @@ importers:
       '@unidocs/doctype-markdown':
         specifier: workspace:*
         version: link:../doctype-markdown
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -314,6 +317,9 @@ importers:
       '@unidocs/doctype-psd':
         specifier: workspace:*
         version: link:../doctype-psd
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -1938,7 +1944,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}

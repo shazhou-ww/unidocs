@@ -5,6 +5,8 @@ import {
   computeNodeDigest,
   hashToHex,
 } from "../../../packages/cas-server-common/src/index.ts";
+import { createSBlob, decodeSValue, encodeSValue } from "../../../packages/svalue-codec/src/index.ts";
+import { SValueContentType } from "../../../packages/protocol/src/index.ts";
 
 const PNG_1x1 = Uint8Array.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
@@ -37,7 +39,7 @@ afterAll(async () => {
   await runtime?.dispose();
 });
 
-test("updateRootRefs 失败时:apply 返回 502,delta 被删除,版本不变", async () => {
+test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢复", async () => {
   const userId = "rollback-cas-user";
 
   // 图片经由 gateway 上传,gateway 连的是真 CAS,所以节点是 ready 的。
@@ -59,39 +61,47 @@ test("updateRootRefs 失败时:apply 返回 502,delta 被删除,版本不变", a
   const create = await closeFetch(`${GW()}/users/${userId}/docs/docx/`, {
     method: "POST",
   });
-  const { docId } = await create.json();
+  const created = await create.json();
+  expect(create.ok, JSON.stringify(created)).toBe(true);
+  const { docId } = created;
 
   // editor 连的是假 CAS:lease 与读内容照常成功,只有 root-refs 失败。
+  const applyBody = encodeSValue({
+    baseVersion: 1,
+    description: "Insert image",
+    operations: [{
+      kind: "insertImage",
+      payload: { blob: createSBlob(hash), widthPx: 16, altText: "dot" },
+    }],
+  });
   const apply = await closeFetch(
     `${GW()}/users/${userId}/docs/docx/${docId}/apply`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        baseVersion: 1,
-        description: "Insert image",
-        operations: [
-          { kind: "insertImage", payload: { hash, widthPx: 16, altText: "dot" } },
-        ],
-      }),
+      headers: { "Content-Type": SValueContentType },
+      body: applyBody.buffer,
     },
   );
 
-  expect(apply.status).toBe(502);
   const applied = await apply.json();
+  expect(apply.status, JSON.stringify(applied)).toBe(502);
   expect(applied.success).toBe(false);
-  expect(applied.error).toContain("CAS root-refs failed");
+  expect(applied.error).toContain("CAS updateRootRefs failed");
   expect(applied.version).toBe(1);
 
-  // 那条已写入的 delta 必须被删掉,历史里只剩创建时的 version 1
+  // 下一次请求重试 recoverable outbox，成功提交 version 2。
   const history = await closeFetch(
     `${GW()}/users/${userId}/docs/docx/${docId}/history`,
+    { headers: { Accept: SValueContentType } },
   );
-  const { data, version } = await history.json();
-  expect(data.map((entry) => entry.version)).toEqual([1]);
-  expect(version).toBe(1);
+  const historyError = history.ok ? "" : await history.clone().text();
+  expect(history.ok, historyError).toBe(true);
+  const historyBody = decodeSValue(new Uint8Array(await history.arrayBuffer()));
+  const { data, version } = historyBody;
+  expect(data.map((entry) => entry.version)).toEqual([1, 2]);
+  expect(version).toBe(2);
 
-  // 文档内容也不能留下那张图
+  // 恢复后的文档包含已确认提交的操作。
   const query = await closeFetch(
     `${GW()}/users/${userId}/docs/docx/${docId}/query`,
     {
@@ -102,5 +112,6 @@ test("updateRootRefs 失败时:apply 返回 502,delta 被删除,版本不变", a
   );
   const result = await query.json();
   expect(result.success).toBe(true);
-  expect(result.data).toEqual([]);
+  expect(result.data).toHaveLength(1);
+  expect(result.data[0]).toMatchObject({ format: "png", altText: "dot" });
 }, 60_000);

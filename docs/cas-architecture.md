@@ -10,13 +10,13 @@ The node encoding referenced below is defined in [CAS Binary Format](./cas-binar
 
 ## 1. Goals
 
-The CAS stores a user-scoped Merkle DAG for persistent SValue document roots and binary assets.
+The CAS stores a tenant-scoped Merkle DAG for persistent SValue document roots and binary assets.
 
 The design must provide:
 
 - immutable, content-addressed nodes;
-- user isolation and authenticated access;
-- deduplication within one user partition;
+- tenant isolation and authenticated service access;
+- deduplication within one tenant partition;
 - child references between nodes;
 - leases that protect uncommitted nodes from garbage collection;
 - separate child and business-root reference counts;
@@ -27,17 +27,17 @@ The design must provide:
 
 The CAS does not attempt to provide a distributed transaction spanning a document Durable Object, D1, and R2. Cross-system failures are handled with ordering, rollback, retry, and business-level compensation.
 
-## 2. User isolation and execution model
+## 2. Tenant isolation and execution model
 
-Each user has an independent CAS address space.
+Each tenant has an independent CAS address space.
 
-- D1 keys include `(user_id, digest)`.
-- R2 objects use `users/{user_id}/nodes/{digest}`.
-- Identical content owned by different users is stored independently.
-- Storage usage and GC are calculated per user.
-- Public HTTP APIs are namespaced under `/users/{userId}/`. The path userId is the current identity. Future Bearer authentication must bind to that userId.
+- D1 keys include `(tenant_id, digest)`.
+- R2 objects use `tenants/{tenantId}/nodes/{digest}`.
+- Identical content in different tenants is stored independently.
+- Storage usage and GC are calculated per tenant.
+- Gateway derives `tenantId` from authenticated identity or its document directory. CAS never derives tenant context from an end-user path or credential.
 
-A user-scoped CAS Durable Object serializes all mutable operations for that user:
+A tenant-scoped CAS Durable Object serializes all mutable operations for that tenant:
 
 - lease claims and extensions;
 - upload completion;
@@ -56,7 +56,7 @@ A logical node consists of three storage classes.
 The node's own content bytes are immutable and stored in R2.
 
 ```text
-users/{userId}/nodes/{sha256Digest}
+tenants/{tenantId}/nodes/{sha256Digest}
 ```
 
 R2 stores only the content bytes, not mutable lifecycle state.
@@ -191,7 +191,7 @@ export interface CasNodeDescriptor {
 }
 ```
 
-Creation proceeds inside the user CAS queue:
+Creation proceeds inside the tenant CAS queue:
 
 1. Validate descriptor syntax and canonical constraints from URL and headers. Do not read the body yet.
 2. If the D1 row exists and R2 content is present, require immutable metadata to match, cancel the body, extend the lease, and return ready.
@@ -218,11 +218,11 @@ AND rootRefCount == 0
 AND leaseExpiresAt <= now
 ```
 
-GC runs through the same user CAS queue as lease and reference operations.
+GC runs through the same tenant CAS queue as lease and reference operations.
 
 For each eligible node:
 
-1. Re-check eligibility while holding the per-user queue.
+1. Re-check eligibility while holding the per-tenant queue.
 2. Delete the R2 object. R2 deletion is idempotent; missing content is allowed.
 3. In one D1 transaction:
    - re-check both reference counts and lease expiry;
@@ -234,7 +234,7 @@ For each eligible node:
 
 If R2 deletion succeeds but the D1 transaction fails, the row remains as a not-ready node. A future lease can require re-upload, or a later GC pass can retry deletion and metadata cleanup.
 
-The user-level queue closes the lease/GC race: a lease cannot be granted between GC's eligibility decision and R2 deletion.
+The tenant-level queue closes the lease/GC race: a lease cannot be granted between GC's eligibility decision and R2 deletion.
 
 ## 9. Reference-count updates
 
@@ -285,12 +285,12 @@ doc:{documentId}:truncate:{firstVersion}-{lastVersion}:remove-refs
 snapshot:{documentId}:{version}:add-refs
 ```
 
-Idempotency is required for timeout and retry safety. It does not introduce an owner model; aggregate root counts remain scoped only by user and hash.
+Idempotency is required for timeout and retry safety. It does not introduce an owner model; aggregate root counts remain scoped only by tenant and hash.
 
 ## 10. Service-side TypeScript API
 
 ```ts
-export interface UserCasService {
+export interface TenantCasService {
   read(hash: CasHash): Promise<Uint8Array>;
   metadata(hash: CasHash): Promise<CasNodeMetadata>;
 
@@ -332,19 +332,26 @@ export interface CasGcResult {
 
 ## 11. Authenticated HTTP API
 
-Public CAS endpoints live under `/users/{userId}/cas/`. Document APIs live under `/users/{userId}/docs/{docType}/`. The path `userId` is the current identity. Future Bearer tokens must bind to that userId; a mismatch will be rejected.
+Gateway's public compatibility CAS endpoints live under `/users/{userId}/cas/`.
+Gateway authenticates and authorizes that user, resolves `tenantId`, strips
+end-user credentials, and translates the request to the CAS service path
+`/tenants/{tenantId}/cas/`.
 
-A dedicated CAS worker owns `CasDurableObject`, D1 `CAS_DB`, and R2 `CAS_R2`. The Gateway allowlist-proxies only the public routes in this section to service binding `CAS_SERVICE`, injecting `X-Internal-Token` and `X-User-Id` from the path. Unknown `/users/{userId}/cas/...` paths, including `root-refs`, are not proxied.
+A dedicated CAS worker owns `CasDurableObject`, D1 `CAS_DB`, and R2 `CAS_R2`.
+Gateway allowlist-proxies only public node routes, injecting its CAS access key
+and trusted tenant context. Root management and GC are not proxied.
 
-CAS requires `X-Internal-Token` on every request and never reads an end-user Bearer. Document Editors call the same CAS worker through `CAS_SERVICE`; they do not HTTP-hairpin through the Gateway.
+CAS requires the CAS service access key on every request and never reads an
+end-user Bearer. Doc services call CAS directly rather than HTTP-hairpinning
+through Gateway.
 
 HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
 
 ### 11.1 Read content
 
 ```http
-GET /users/{userId}/cas/nodes/{sha256}/content
-Authorization: Bearer ...
+GET /tenants/{tenantId}/cas/nodes/{sha256}/content
+X-Internal-Token: <CAS access key>
 ```
 
 Responses:
@@ -355,8 +362,8 @@ Responses:
 ### 11.2 Read metadata
 
 ```http
-GET /users/{userId}/cas/nodes/{sha256}/metadata
-Authorization: Bearer ...
+GET /tenants/{tenantId}/cas/nodes/{sha256}/metadata
+X-Internal-Token: <CAS access key>
 ```
 
 Returns immutable metadata and mutable state. Unknown nodes return `404`.
@@ -364,8 +371,8 @@ Returns immutable metadata and mutable state. Unknown nodes return `404`.
 ### 11.3 Lease with content
 
 ```http
-POST /users/{userId}/cas/nodes/{sha256}
-Authorization: Bearer ...
+POST /tenants/{tenantId}/cas/nodes/{sha256}
+X-Internal-Token: <CAS access key>
 Content-Type: image/png
 Content-Length: 12345
 X-CAS-Refs: <hash>[,<hash>...]
@@ -390,8 +397,8 @@ If the node is already ready and immutable metadata matches, the service cancels
 ### 11.4 Extend an existing lease
 
 ```http
-POST /users/{userId}/cas/nodes/{sha256}/lease
-Authorization: Bearer ...
+POST /tenants/{tenantId}/cas/nodes/{sha256}/lease
+X-Internal-Token: <CAS access key>
 X-CAS-Lease-Duration: 900000
 ```
 
@@ -399,15 +406,17 @@ No body. Missing nodes return `404`. A not-ready node returns `409`; the caller 
 
 A successful response is the same lease result as 11.3.
 
-### 11.5 User control plane
+### 11.5 Tenant control plane
 
 ```http
-GET  /users/{userId}/cas/usage
-POST /users/{userId}/cas/gc
-Authorization: Bearer ...
+GET  /tenants/{tenantId}/cas/usage
+POST /tenants/{tenantId}/cas/gc
+X-Internal-Token: <CAS access key>
 ```
 
-GC is advisory. Triggering it does not guarantee that every eligible node is removed in one call.
+Gateway may expose usage only to tenant administrators. GC is internal-only and
+advisory; triggering it does not guarantee that every eligible node is removed
+in one call.
 
 ### 11.6 Internal root ownership
 
@@ -416,19 +425,19 @@ Editors assign durable roots by stable owner, not by caller-computed count delta
 ```http
 POST /_internal/root-assignments
 X-Internal-Token: ...
-X-User-Id: {userId}
+X-Tenant-Id: {tenantId}
 Content-Type: application/json
 
 {
-  "requestId": "doc:documentId:version:7:roots",
+  "requestId": "session:sessionId:version:7:roots",
   "assignments": [
-    { "owner": "doc:documentId:delta:7", "hash": "..." },
-    { "owner": "doc:documentId:snapshot:7", "hash": "..." }
+    { "owner": "session:sessionId:delta:7", "hash": "..." },
+    { "owner": "session:sessionId:snapshot:7", "hash": "..." }
   ]
 }
 ```
 
-CAS stores `(user_id, owner, hash)`. In one idempotent D1 batch it reads prior
+CAS stores `(tenant_id, owner, hash)`. In one idempotent D1 batch it reads prior
 assignments, derives aggregate count changes, updates `rootRefCount`, replaces
 owner rows, and records the request hash. Assigning `hash: null` releases an
 owner. Two owners of the same hash count independently.
@@ -445,7 +454,7 @@ Document workers exchange the canonical full-node representation from
 GET  /_internal/nodes/{hash}
 POST /_internal/nodes/{hash}
 X-Internal-Token: ...
-X-User-Id: {userId}
+X-Tenant-Id: {tenantId}
 Content-Type: application/vnd.unidocs.cas-node
 ```
 
@@ -454,7 +463,7 @@ response. POST accepts the same bytes and avoids an unbounded child-ref HTTP
 header. CAS validates the header, refs, children, content length, SValue tags,
 and complete digest before publishing the node.
 
-Public leaf upload and content/metadata endpoints remain compatible.
+Gateway's public leaf upload and content/metadata endpoints remain compatible.
 
 ## 12. SValue and SBlob
 
@@ -514,7 +523,7 @@ leases distinct children, verifies the complete logical digest, and uploads.
 
 `readSBlob` verifies metadata, content length, SValue refs, and digest. Reads and
 in-flight promises use a bounded context-scoped cache; returned bytes are copies.
-The doctype sees no user ID, HTTP, lease, root-count, or CAS metadata API.
+The doctype sees no user or tenant identity, HTTP, lease, root-count, or CAS metadata API.
 
 Core defines only `Context -> DocumentType`. A doctype that needs options owns
 an outer `Options -> Factory` function.
@@ -560,7 +569,7 @@ also store an independent retained TDoc snapshot root.
 
 Apply is an outbox state machine:
 
-1. authenticate the request user against the stored document owner;
+1. authenticate the calling service and resolve immutable session identity;
 2. settle an older pending version and check `baseVersion`;
 3. decode and validate already-canonical operations;
 4. store the operation batch as an SValue delta root;
@@ -577,19 +586,19 @@ pending row is finalized on restart. There is no compensating-delete window.
 
 Version 1 does not persist a TDoc head on every delta. Active SBlob leases protect
 the in-memory state between snapshots. Normal startup loads the latest standalone
-snapshot and replays retained delta roots. Default snapshot cadence is 10 deltas;
+snapshot and replays retained delta roots. Default snapshot cadence is 20 deltas;
 the snapshot endpoint may retain the current version opportunistically.
 
 ## 15. Snapshot and history lifecycle
 
-- Delta owner: `doc:{docId}:delta:{version}`.
-- Snapshot owner: `doc:{docId}:snapshot:{version}`.
+- Delta owner: `session:{sessionId}:delta:{version}`.
+- Snapshot owner: `session:{sessionId}:snapshot:{version}`.
 - Delta and snapshot roots may share descendants; redundant protection is
   intentional.
 - A restore is a retained delta containing `{kind: "restore", doc: SBlob}`;
   replay jumps to that standalone state instead of recording an empty operation.
-- Same-user clone retains the source snapshot DAG in the destination partition.
-  Cross-user clone is rejected until recursive authorized DAG copy exists.
+- Same-tenant clone retains the source snapshot DAG in the destination partition.
+  Cross-tenant clone requires an authorized recursive DAG copy.
 - Before future history truncation, the surviving boundary receives a standalone
   snapshot; removed owner rows are then released idempotently.
 
@@ -625,7 +634,7 @@ values with no SBlob. Responses containing SBlob require an SValue `Accept`
 header and return `406` to JSON-only callers.
 
 Implemented validation includes unit vectors, CAS/SDK tests, Markdown and DOCX
-restart recovery, rollback, same-user and cross-user clone behavior, native
+restart recovery, rollback, same-tenant clone behavior, native
 SValue image operations, JSON agent tool-hash conversion, provider-rendered
 multimodal SBlob results, and independent delta plus snapshot retention of
 shared image blobs.

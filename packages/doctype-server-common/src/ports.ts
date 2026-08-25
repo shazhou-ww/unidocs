@@ -1,12 +1,8 @@
 /**
  * Storage port contracts for the document session core.
  *
- * `DocRecord` / `SnapshotRef` / `DocIndexQuery` live in
- * @unidocs/http-protocol — they cross the gateway/doctype boundary
- * (the gateway lists documents through `DocIndexQuery`).
+ * Every port in this module is scoped to one Doc session.
  */
-
-import type { DocRecord, SnapshotRef } from "@unidocs/http-protocol";
 
 export interface Delta {
   version: number;
@@ -15,7 +11,17 @@ export interface Delta {
   operations: unknown[];
 }
 
-export interface DocIdentity { docType: string; docId: string; userId: string }
+export interface SnapshotRef {
+  version: number;
+  hash: string;
+}
+
+export interface SessionIdentity {
+  docType: string;
+  sessionId: string;
+  /** Immutable CAS accounting and isolation scope; never an end-user identity. */
+  tenantId: string;
+}
 
 export interface DeltaLog {
   /**
@@ -73,54 +79,14 @@ export interface BlobCas {
   get(hash: string): Promise<Uint8Array | null>;
 }
 
-/**
- * The global, cross-document index (the shared D1 database in the Cloudflare
- * deployment): which documents exist, when they were last touched, and which
- * snapshots they have.
- *
- * **Contract: `register()` MUST be called before any `recordSnapshot()` or
- * `touch()` for that document.** An implementation may rely on this — it is
- * how it learns the identity it needs to key those rows by, and it is free to
- * drop calls that arrive for a document it has never been told about. Callers
- * that snapshot first and register second silently lose the record.
- */
-export interface DocIndex {
-  register(rec: DocRecord): Promise<void>;
-  touch(at: number): Promise<void>;
-  recordSnapshot(version: number, hash: string, timestamp: number): Promise<void>;
-}
-
-/**
- * The two ports that can take part in one atomic unit of work.
- *
- * Deliberately *not* all five. `BlobCas` is content-addressed — an orphan
- * blob is harmless and collectable — and `SnapshotCache` is a droppable
- * cache, so neither belongs inside a transaction. What must be atomic is the
- * pair that a document's existence is spread across: the delta log (the
- * source of truth for content and version) and the global index (the source
- * of truth for "this document exists and is owned by X").
- */
+/** Session-local writes that take part in one atomic unit of work. */
 export interface TransactionalPorts {
   deltas: DeltaLog;
-  index: DocIndex;
 }
 
 /**
- * Optional-strength atomicity over `TransactionalPorts`.
- *
- * Backends differ in what they can honestly promise here, and the difference
- * is structural, not a matter of effort:
- *
- *   - Postgres (Azure): `deltas` and `docs` are two tables in one database,
- *     so `withTransaction` is a real `BEGIN`/`COMMIT` and a throw is a real
- *     `ROLLBACK`.
- *   - Cloudflare: the delta log lives in a Durable Object's private sqlite
- *     and the index lives in D1 — two physically separate services with no
- *     shared transaction. `DirectUnitOfWork` there just runs the callback,
- *     and a partial failure stays partial.
- *
- * `DocumentSession` writes against the stronger contract and gets whatever
- * the backend can give; it never branches on which one it has.
+ * Atomicity over the session's delta log. Blob content is written first and
+ * may remain as an unreferenced, collectable orphan if this transaction fails.
  */
 export interface UnitOfWork {
   /**

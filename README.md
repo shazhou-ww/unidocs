@@ -4,29 +4,33 @@ Universal document editing framework for AI agents. Built on Cloudflare Workers 
 
 ## Design documents
 
-- [CAS Architecture](docs/cas-architecture.md) — user-scoped storage, leases, reference counts, GC, APIs, and DocumentType integration
+- [Microservice Architecture](docs/microservice-architecture.md) — service ownership, identity translation, static registration, and deployment boundaries
+- [CAS Architecture](docs/cas-architecture.md) — tenant-scoped storage, leases, reference counts, GC, APIs, and DocumentType integration
 - [CAS Binary Format](docs/cas-binary-format.md) — canonical SHA-256 Merkle DAG node encoding derived from CASFA
 
 ## Architecture
 
-```
-Client → Gateway (auth + routing) → Editor DO / Operator DO (per document instance)
+```text
+Client → Gateway (user auth + directory)
+              ├──→ Doc service (opaque session)
+              └──→ CAS (tenant-scoped storage)
+Doc service ─────→ CAS
 ```
 
 ### Three-layer system
 
-- **Gateway** — unified API entry point, authentication, request routing
-- **Editor DO** — document state management, CRUD operations, history, snapshots
-- **Operator DO** — AI agent interface, ReAct loop, tool dispatch to Editor
+- **Gateway** — the only user-facing service; owns auth, list, public `docId`, and `docId → sessionId` routing
+- **Doc service** — one document type per independently deployable service; owns session state and has no user/list concept
+- **CAS** — tenant-scoped content-addressed storage, usage accounting, leases, references, and GC
 
 ### Storage layout
 
 | Layer | Storage | Purpose |
 |-------|---------|---------|
-| DO KV | `docType`, `docId`, `userId` | Immutable document identity |
+| Gateway DB | user, tenant, `docId`, `sessionId`, lifecycle | User directory and routing |
+| Doc session metadata | `docType`, `sessionId`, `tenantId` | Immutable internal session identity |
 | DO sqlite | `svalue_deltas`, `svalue_snapshots`, `svalue_pending` | Root indexes + recoverable outbox |
-| Shared D1 | `docs`, `snapshots` | Global listing and clone index |
-| User CAS D1/R2 | nodes, edges, root owners + content | SValue/SBlob Merkle DAG storage |
+| Tenant CAS D1/R2 | nodes, edges, root owners + content | SValue/SBlob Merkle DAG storage |
 
 ### Consistency model
 
@@ -49,7 +53,7 @@ partially committed version.
 
 ### Snapshot strategy
 
-Every delta is retained as an SValue root. Snapshots default to every 10 deltas
+Every delta is retained as an SValue root. Snapshots default to every 20 deltas
 and share unchanged Blob descendants through CAS.
 
 ## Packages
@@ -68,7 +72,7 @@ packages/
 ├── doctype-psd/           @unidocs/doctype-psd           — Cloud-neutral PSD image document type
 ├── psd-client/            @unidocs/psd-client            — Browser-side PSD render client
 ├── cloudflare-sdk/        @unidocs/cloudflare-sdk        — Durable Object runtime factories
-├── cloudflare-cas/        @unidocs/cloudflare-cas        — User-scoped CAS worker
+├── cloudflare-cas/        @unidocs/cloudflare-cas        — Tenant-scoped CAS worker
 ├── cloudflare-gateway/    @unidocs/cloudflare-gateway    — Cloudflare API Gateway
 ├── cloudflare-markdown/   @unidocs/cloudflare-markdown   — Cloudflare Markdown deployment
 ├── cloudflare-docx/       @unidocs/cloudflare-docx       — Cloudflare DOCX deployment
@@ -82,7 +86,11 @@ packages/
 
 ## API
 
-All endpoints go through the Gateway. Document APIs live under `/users/{userId}/docs/{docType}/`. CAS APIs live under `/users/{userId}/cas/`. The path `userId` is the current identity; future Bearer tokens must bind to that userId.
+All end-user endpoints go through Gateway. The current compatibility API lives
+under `/users/{userId}/...`; a Gateway identity resolver must bind authenticated
+identity to that path. Gateway never forwards `userId` downstream: Doc calls use
+`sessionId`, and CAS calls use `tenantId`. The path-based development resolver is
+disabled unless `INSECURE_PATH_IDENTITY=true` is explicitly configured.
 
 ### Document lifecycle
 
@@ -106,8 +114,10 @@ GET    /users/{userId}/cas/nodes/{hash}/metadata   → read metadata + state
 POST   /users/{userId}/cas/nodes/{hash}            → lease with content
 POST   /users/{userId}/cas/nodes/{hash}/lease      → extend a ready node
 GET    /users/{userId}/cas/usage                   → storage usage
-POST   /users/{userId}/cas/gc                      → trigger GC
 ```
+
+CAS GC and root management are internal service operations. Usage requires
+tenant-administration authorization at Gateway.
 
 See [CAS Architecture](docs/cas-architecture.md) for lease-with-content and lease-extend.
 
@@ -126,13 +136,16 @@ Response: { success: true, docId: string, version: 1 }
 ```
 
 Clone flow:
-1. Gateway calls source Editor's `/snapshot` to get current hash
-2. Gateway creates new Editor DO
-3. Gateway calls new Editor's `/init_from_hash` with the hash
-4. the destination retains the same snapshot DAG without copying content
+1. Gateway resolves `sourceId` in the authenticated user's document directory
+2. Gateway verifies the source is ready, uses the same Doc service, and belongs
+  to the resolved tenant
+3. Gateway obtains the source snapshot and reserves the target document/session
+4. Gateway calls the target session's internal `/init-from-hash` endpoint
+5. the destination retains the same snapshot DAG without copying content
 
-Clone hashes are scoped to one user. Cross-user clone is rejected until an
-authorized recursive DAG-copy operation is provided.
+Snapshot hashes are never accepted as public clone capabilities. Cross-user or
+cross-tenant clone is rejected; cross-tenant content copy requires a future
+authorized recursive DAG-copy operation.
 
 ### Query
 
@@ -279,29 +292,24 @@ class_name = "MytypeEditor"
 name = "MYTYPE_OPERATOR"
 class_name = "MytypeOperator"
 
-[[d1_databases]]
-binding = "SNAPSHOTS_DB"
-database_name = "unidocs-snapshots"
-database_id = "..."
-migrations_dir = "../cloudflare-gateway/migrations"
-
 [[services]]
 binding = "CAS_SERVICE"
 service = "unidocs-cas"
 ```
 
-5. Add binding to Gateway's `wrangler.toml`:
+Set the Doc worker's own `SERVICE_ACCESS_KEY` and outbound `CAS_ACCESS_KEY`.
 
-```toml
-[[durable_objects.bindings]]
-name = "MYTYPE_EDITOR"
-class_name = "MytypeEditor"
-script_name = "unidocs-mytype"
+5. Add a deployment-time Gateway registration (secure
+`DOC_SERVICES_JSON`); do not add a runtime KV row or Gateway DO binding:
 
-[[durable_objects.bindings]]
-name = "MYTYPE_OPERATOR"
-class_name = "MytypeOperator"
-script_name = "unidocs-mytype"
+```json
+{
+  "mytype": {
+    "serviceId": "mytype",
+    "url": "https://mytype.internal",
+    "accessKey": "..."
+  }
+}
 ```
 
 6. Azure side — no Durable Objects, so no DO bindings to wire up. Instead:
@@ -309,54 +317,59 @@ script_name = "unidocs-mytype"
    - Add a `mytype: <port>` row to `AZURE_DOC_TYPE_PORT_BASE` in `scripts/azure-ports.mjs` (pick a base at least `AZURE_PORT_STRIDE` past the last one).
    - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `scripts/azure-runtime.mjs`.
    - Add `{ "path": "packages/azure-mytype" }` to the root `tsconfig.json`'s `references`.
-   - `resolveWorkerUrl()` in `packages/azure-gateway/src/main.ts` and the replica/env wiring in `scripts/azure-runtime.mjs` already generalise over `docTypes`/`{TYPE}_WORKER_URL` — nothing to change there.
+   - Provision a service-owned database and migration job, then include its URL
+     and access key in Gateway's static registry.
 
 ## Development
 
 ```bash
-pnpm install
-pnpm dev                     # gateway :8787 + every doc type, Miniflare backend
-pnpm dev docx                # gateway + docx only
-pnpm dev docx markdown       # explicit doc type selection
+pnpm dev                     # Gateway + every Doc type, Miniflare backend
+pnpm dev docx                # Gateway + DOCX only
+pnpm dev docx markdown       # explicit Doc type selection
 ```
 
-Starts gateway (`:8787`), markdown (`:8788`), and docx (`:8789`) in one Miniflare process with shared D1/R2. The KV registry is seeded with each worker's URL:
+The Miniflare runtime injects one static `DOC_SERVICES_JSON` containing only
+the selected Doc services. Gateway, each Doc service, and CAS receive distinct
+development access keys. Gateway alone binds `GATEWAY_DB`; Doc workers own only
+their Durable Objects and call CAS through `CAS_SERVICE`.
 
-```
+```text
 POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
-POST http://127.0.0.1:8787/users/{userId}/docs/docx/
 ```
 
-### Running against the local Azure stack
+### Local Azure stack
 
 ```bash
-pnpm dev --azure              # gateway :41787 + markdown :41800 + docx :41810, Postgres + Azurite backend
-pnpm dev --azure markdown     # markdown only, explicit
-pnpm dev --azure docx         # docx only — see the CAS prerequisite below
+pnpm dev --azure              # Gateway :41787 + Markdown :41800 + DOCX :41810
+pnpm dev --azure markdown     # Markdown only
 ```
 
-Prerequisites:
+Docker must be running for Postgres on `:5433`. Azurite runs as a Node child
+process on `:10000`. Startup creates and migrates independent
+`unidocs_gateway`, `unidocs_markdown`, and `unidocs_docx` databases; replicas
+of one Doc service share only that service's database and Blob containers.
 
-- **Docker must be running**, for Postgres. `pnpm dev --azure` starts a `docker compose` stack with just Postgres in it (`:5433`) and fails fast with an actionable message if the Docker daemon isn't up, rather than surfacing the raw `docker compose` error. Azurite is *not* a container — it's the `azurite` npm package's `azurite-blob` CLI, spawned directly as a Node child process on `:10000`, the same way the gateway/doc-type services themselves are spawned. There's no image to pull for it.
-- **`docx` needs the Miniflare stack running too, in a second terminal.** `docx`'s image path depends on user-scoped CAS, which the Azure backend doesn't implement natively yet (planned for phase 4). Until then, `pnpm dev --azure docx` (or `pnpm dev --azure` with no doc type filter, since `docx` is included by default) points `CAS_BASE_URL` at the Cloudflare CAS worker from the Miniflare stack (`http://127.0.0.1:8790` by default — `startLocalRuntime()`'s direct-socket port for the CAS worker, *not* the Miniflare gateway, since `CasClient.updateRootRefs` calls `/_internal/root-refs`, which no gateway proxies). Before starting anything, `pnpm dev --azure docx` probes that address; if nothing answers, it exits immediately with the actionable fix (start `pnpm dev docx` in another terminal first) instead of letting the first image-touching `apply` fail with a bare `ECONNREFUSED`. `pnpm dev --azure markdown` has no such prerequisite — markdown's `refsFromOp` never touches CAS.
+Azure DOCX currently uses the Cloudflare CAS worker as a cross-cloud service.
+Start `pnpm dev docx` in another terminal first, or set `CAS_BASE_URL`. The
+probe authenticates with the dedicated CAS key and calls the tenant-scoped CAS
+service URL directly.
 
-Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `scripts/azure-ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side, which `docx` on Azure now requires. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `azure-runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
-
-**First run only:** if `postgres:18-alpine` isn't cached locally yet, `docker compose up` pulls it (~100 MB) before anything else can start; every run after that is instant. There's no equivalent cost for Azurite — it installed with `pnpm install` like any other dependency.
+The Azure ports are intentionally offset from Miniflare, so both stacks can run
+side by side. `Ctrl+C` stops Node child processes; run `pnpm azure:down` to stop
+the Postgres container.
 
 ### Tests
 
-| 命令 | 覆盖 |
+| Command | Coverage |
 |---|---|
-| `pnpm test` | 各包 `packages/*/tests` 单测 |
-| `pnpm test:local` | `tests/unit`（脚本单测）+ `tests/integration`（起 Miniflare / 本地 Azure 栈的 HTTP） |
-| treespec | `tests/treespec/`（容器里从干净安装跑 YAML 树；镜像见同目录 `Dockerfile`） |
+| `pnpm test` | package tests under `packages/*/tests` |
+| `pnpm test:local` | script tests and HTTP integration tests for both local stacks |
+| treespec | clean-install YAML scenarios under `tests/treespec` |
 
-`pnpm test:local` (via `tests/integration/azure/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `docker-compose.azure.yml` Postgres container (host port `:5433`, unnamed default compose project) and each spawn their own `azurite-blob` process on `:10000`. `pnpm dev --azure` starts the identical stack for interactive use.
+Do not run `pnpm test:local`, `pnpm test`, and `pnpm dev --azure` concurrently.
+They share the local Postgres server process and Azurite port even though each
+service uses its own database and Blob containers.
 
-**Do not run `pnpm test:local`, `pnpm -r test`, and `pnpm dev --azure` at the same time.** They still share the Postgres container: whichever one tears it down first (`docker compose ... down -v`) pulls the database out from under whichever else is still using it, mid-test or mid-session. They also all bind `:10000` for their own `azurite-blob` process, so a second one starting up simply fails to claim the port. Run them one at a time, or stop `pnpm dev --azure` before running either test command.
-
-Docker must be running before invoking `pnpm test:local` or `pnpm -r test` for the first time — both will start the Postgres container themselves and run migrations against it, but the Docker daemon itself has to already be up. The first-run Postgres image pull noted above applies here too, and both entry points print an explicit notice before it happens so a slow pull doesn't read as a hang.
 ## Workspace package resolution
 
 Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry a
@@ -390,24 +403,49 @@ breaks the recursive test run.
 
 ## Deployment
 
-**New environment only — before the first `wrangler deploy`:** run
-`wrangler d1 migrations apply unidocs-snapshots` from
-`packages/cloudflare-gateway` (the shared D1 schema lives in that package's
-`migrations/`; markdown / docx / psd `wrangler.toml` files point at it).
-`wrangler deploy` does **not** apply
-migrations automatically — `migrations_dir` is just configuration. The
-shared `docs`/`snapshots` tables used to be created lazily by
-`listDocuments`/`D1DocIndex.register`; they no longer are. Skipping this
-step is harmless on an already-provisioned database, but on a brand-new one
-every query/apply/list call will 500 with `no such table: docs`.
+Before deploying Cloudflare Gateway, apply its D1 migrations from
+`packages/cloudflare-gateway`:
+
+```text
+wrangler d1 migrations apply unidocs-snapshots
+```
+
+Configure Gateway's secure `DOC_SERVICES_JSON` and `CAS_ACCESS_KEY`. Configure
+each Doc worker's own `SERVICE_ACCESS_KEY` plus its outbound `CAS_ACCESS_KEY`.
+There is no KV registry or runtime registration step.
+
+Azure deployment provisions and migrates separate Gateway, Markdown, and DOCX
+databases. Existing monolithic Azure data is left untouched; import it
+explicitly before switching an environment that contains durable documents.
+For each Doc service, first copy that type's legacy `deltas`, `doc_snapshots`,
+and Blob objects into its service-owned database/containers without changing
+the legacy `doc_id` values. Then provide the tenant mapping that the old schema
+did not store:
+
+```json
+[
+  { "sessionId": "legacy-doc-id", "tenantId": "tenant-1", "docType": "markdown" }
+]
+```
+
+Run the built migration image/CLI with `DATABASE_URL` pointing at that Doc
+database and `LEGACY_SESSION_MAP_FILE` pointing at the JSON file:
+
+```text
+pnpm --filter @unidocs/azure-sdk migrate:legacy-identities
+```
+
+The import is transactional and refuses to write anything unless every session
+present in `deltas` or `doc_snapshots` has a matching identity. Import the
+corresponding Gateway directory mapping before switching traffic. Routine
+migrations never guess a tenant or silently adopt legacy rows.
 
 ## Infrastructure
 
 - **Cloudflare Workers** — runtime
-- **Durable Objects** — per-document state + isolation
-- **D1** — CAS metadata/root owners and shared document indexes
-- **R2** — user-scoped immutable CAS node content
-- **KV** — immutable per-document identity only
+- **Durable Objects** — session state and tenant CAS serialization
+- **D1/Postgres** — service-owned Gateway directory, Doc session logs, and CAS metadata
+- **R2/Blob Storage** — tenant CAS content and Doc-service-owned roots/caches
 
 ## Roadmap
 

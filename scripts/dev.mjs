@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
+import { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -44,18 +44,18 @@ if (useAzure) {
   // the Miniflare backend).
   azureDocTypes = positional.length === 0 ? Object.keys(DOC_TYPES) : docTypes;
 
-  // docx's image path needs user-scoped CAS. This round is transitional:
+  // docx's image path needs tenant-scoped CAS. This round is transitional:
   // CAS_BASE_URL points at the Miniflare stack's CAS worker (default
-  // http://127.0.0.1:8790). Probe it here, before starting anything, so
+  // http://127.0.0.1:8791). Probe it here, before starting anything, so
   // "you forgot to run `pnpm dev docx` in another terminal" is clear at
   // startup instead of surfacing as an ECONNREFUSED on the first apply that
   // touches an image.
   if (azureDocTypes.includes("docx")) {
-    azureCasBaseUrl = process.env.CAS_BASE_URL ?? "http://127.0.0.1:8790";
+    azureCasBaseUrl = process.env.CAS_BASE_URL ?? "http://127.0.0.1:8791";
     const casBaseUrl = azureCasBaseUrl;
-    const reachable = await fetch(`${casBaseUrl}/users/_probe/cas/usage`, {
-      headers: { "X-Internal-Token": "unidocs-dev-token", Connection: "close" },
-    }).then(() => true, () => false);
+    const reachable = await fetch(`${casBaseUrl}/tenants/_probe/cas/usage`, {
+      headers: { "X-Internal-Token": CAS_ACCESS_KEY, Connection: "close" },
+    }).then(response => response.ok, () => false);
     if (!reachable) {
       console.error(
         `docx on the Azure stack needs the transitional CAS worker at ${casBaseUrl}, which is not answering.\n` +
@@ -164,7 +164,12 @@ if (useAzure) {
     assertPortFree(AZURE_HOST, 10000, AZURE_CONTAINER_PORTS.azurite.hint),
   ]);
 
-  const { startAzureRuntime, DATABASE_URL, BLOB_CONNECTION_STRING } = await import(
+  const {
+    startAzureRuntime,
+    GATEWAY_DATABASE_URL,
+    docDatabaseUrl,
+    BLOB_CONNECTION_STRING,
+  } = await import(
     "./azure-runtime.mjs"
   );
 
@@ -174,7 +179,12 @@ if (useAzure) {
     replicas: 2,
     ...(azureCasBaseUrl ? { casBaseUrl: azureCasBaseUrl } : {}),
   });
-  backend = { name: "Azure (Postgres + Azurite)", DATABASE_URL, BLOB_CONNECTION_STRING };
+  backend = {
+    name: "Azure (Postgres + Azurite)",
+    gatewayDatabaseUrl: GATEWAY_DATABASE_URL,
+    docDatabaseUrls: Object.fromEntries(azureDocTypes.map(name => [name, docDatabaseUrl(name)])),
+    BLOB_CONNECTION_STRING,
+  };
 } else {
   // Imported after argv validation so a typo fails fast instead of paying for
   // the esbuild + Miniflare import graph first.
@@ -204,14 +214,14 @@ for (const [name, url] of Object.entries(runtime.urls)) {
 }
 
 if (useAzure) {
-  // The Azure stack has no KV registry — the gateway resolves doc types from
-  // {TYPE}_WORKER_URL — so print the two container endpoints instead, which is
-  // what you actually need to poke at the data by hand.
-  console.log(`  postgres psql "${backend.DATABASE_URL}"`);
+  console.log(`  gateway db psql "${backend.gatewayDatabaseUrl}"`);
+  for (const [name, url] of Object.entries(backend.docDatabaseUrls)) {
+    console.log(`  ${name} db psql "${url}"`);
+  }
   console.log(`  azurite  http://127.0.0.1:10000  (connection string: ${backend.BLOB_CONNECTION_STRING})`);
 } else {
   console.log(
-    `Registry: ${docTypes.map((t) => `docType:${t}`).join(" / ")} → workerUrl`,
+    `Static registrations: ${docTypes.join(" / ")}`,
   );
 }
 

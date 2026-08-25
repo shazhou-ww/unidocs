@@ -3,10 +3,8 @@
  *
  * Cloudflare entry point: wires the cloud-neutral routing logic in
  * `@unidocs/gateway-common`'s `createGatewayHandler` to Cloudflare-specific
- * bindings (KV registry, D1 doc index, CAS service binding).
- *
- * Registry (KV "unidocs-registry"):
- *   Key: "docType:{type}"  →  Value: "{ workerUrl: string }"
+ * bindings (deployment-time Doc registry, Gateway-owned D1 directory,
+ * CAS service binding).
  *
  * Identity:
  *   Public userId comes from the URL path.
@@ -14,40 +12,46 @@
  *
  * Internal auth:
  *   Gateway → doc worker / CAS worker: X-Internal-Token
- *   Gateway → CAS worker: X-User-Id from the URL path
+ *   Gateway → CAS worker: X-Tenant-Id resolved by Gateway
  */
 
-import { createGatewayHandler } from "@unidocs/gateway-common";
-import { D1DocIndexQuery } from "@unidocs/cloudflare-sdk";
+import {
+  createGatewayHandler,
+  createInsecurePathIdentityResolver,
+  StaticDocServiceRegistry,
+} from "@unidocs/gateway-common";
 import { isPublicCasRoute } from "@unidocs/http-protocol";
-
-interface RegistryEntry {
-  workerUrl: string;
-}
+import { D1GatewayDocumentDirectory } from "./document-directory.js";
 
 interface Env {
-  REGISTRY: KVNamespace;
-  SNAPSHOTS_DB: D1Database;
-  INTERNAL_TOKEN: string;
+  GATEWAY_DB: D1Database;
+  DOC_SERVICES_JSON: string;
+  CAS_ACCESS_KEY: string;
+  INSECURE_PATH_IDENTITY?: string;
   CAS_SERVICE: Fetcher;
-  [key: string]: unknown;
 }
 
-async function resolveWorkerUrl(env: Env, docType: string): Promise<string | null> {
-  const entry = await env.REGISTRY.get<RegistryEntry>(`docType:${docType}`, "json");
-  if (entry) return entry.workerUrl;
-  const envKey = `${docType.toUpperCase()}_WORKER_URL`;
-  const url = env[envKey] as string | undefined;
-  return url || null;
+let cachedRegistrySource: string | undefined;
+let cachedRegistry: StaticDocServiceRegistry | undefined;
+
+function registry(env: Env): StaticDocServiceRegistry {
+  if (!cachedRegistry || cachedRegistrySource !== env.DOC_SERVICES_JSON) {
+    cachedRegistry = new StaticDocServiceRegistry(env.DOC_SERVICES_JSON);
+    cachedRegistrySource = env.DOC_SERVICES_JSON;
+  }
+  return cachedRegistry;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const handle = createGatewayHandler({
-      internalToken: env.INTERNAL_TOKEN,
-      resolveWorkerUrl: (docType) => resolveWorkerUrl(env, docType),
+      casAccessKey: env.CAS_ACCESS_KEY,
+      identityResolver: createInsecurePathIdentityResolver(
+        env.INSECURE_PATH_IDENTITY === "true",
+      ),
+      resolveDocService: (docType) => registry(env).resolve(docType),
       casFetcher: env.CAS_SERVICE,
-      docIndex: new D1DocIndexQuery(env.SNAPSHOTS_DB),
+      directory: new D1GatewayDocumentDirectory(env.GATEWAY_DB),
       isPublicCasRoute,
     });
     return handle(request);

@@ -256,19 +256,19 @@ describe("CasClient", () => {
       }));
       const internal = new CasClient({
         fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
-        userId: "user1",
-        internalToken: "tok",
+        tenantId: "tenant1",
+        accessKey: "tok",
       });
 
       await internal.read({ kind: "cas", hash: "a".repeat(64) });
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(fetcherFetch).toHaveBeenCalledWith(
-        `https://cas.internal/users/user1/cas/nodes/${"a".repeat(64)}/content`,
+        `https://cas.internal/tenants/tenant1/cas/nodes/${"a".repeat(64)}/content`,
         expect.objectContaining({
           headers: expect.objectContaining({
             "X-Internal-Token": "tok",
-            "X-User-Id": "user1",
+            "X-Tenant-Id": "tenant1",
           }),
         }),
       );
@@ -278,13 +278,13 @@ describe("CasClient", () => {
       const fetcherFetch = vi.fn(async () => ({ ok: true }));
       const internal = new CasClient({
         fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
-        userId: "user1",
-        internalToken: "tok",
+        tenantId: "tenant1",
+        accessKey: "tok",
       });
       const hash = "b".repeat(64);
 
       await internal.updateRootRefs({
-        requestId: "apply:user1:doc:2",
+        requestId: "apply:session1:2",
         changes: { [hash]: 1 },
       });
 
@@ -294,7 +294,7 @@ describe("CasClient", () => {
           method: "POST",
           headers: expect.objectContaining({
             "X-Internal-Token": "tok",
-            "X-User-Id": "user1",
+            "X-Tenant-Id": "tenant1",
             "Content-Type": "application/json",
           }),
         }),

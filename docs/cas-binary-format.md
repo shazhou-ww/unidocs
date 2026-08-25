@@ -59,10 +59,10 @@ No mutable state participates in identity. Specifically excluded:
 - `childRefCount`;
 - `rootRefCount`;
 - creation/access timestamps;
-- user ID;
+- tenant ID;
 - R2 object metadata.
 
-The same canonical node bytes in two user partitions have the same digest, but remain physically isolated and independently accounted.
+The same canonical node bytes in two tenant partitions have the same digest, but remain physically isolated and independently accounted.
 
 ## 3. Integer and string conventions
 
@@ -139,7 +139,7 @@ The canonical layout is the digest preimage and portable interchange representat
 R2 stores only `ownContent`:
 
 ```text
-users/{userId}/nodes/{hash}
+tenants/{tenantId}/nodes/{hash}
 ```
 
 The R2 object length must equal `contentSize`.
@@ -152,7 +152,7 @@ D1 stores canonical immutable metadata plus mutable lifecycle state:
 
 ```sql
 CREATE TABLE cas_nodes (
-  user_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
   hash TEXT NOT NULL,
 
   content_size INTEGER NOT NULL,
@@ -163,7 +163,7 @@ CREATE TABLE cas_nodes (
   child_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (child_ref_count >= 0),
   root_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (root_ref_count >= 0),
 
-  PRIMARY KEY (user_id, hash)
+  PRIMARY KEY (tenant_id, hash)
 );
 ```
 
@@ -173,25 +173,25 @@ The fixed version-1 header fields `signature`, `version`, `flags`, and `reserved
 
 ```sql
 CREATE TABLE cas_edges (
-  user_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
   parent_hash TEXT NOT NULL,
   ordinal INTEGER NOT NULL,
   child_hash TEXT NOT NULL,
 
-  PRIMARY KEY (user_id, parent_hash, ordinal),
-  FOREIGN KEY (user_id, parent_hash)
-    REFERENCES cas_nodes(user_id, hash),
-  FOREIGN KEY (user_id, child_hash)
-    REFERENCES cas_nodes(user_id, hash)
+  PRIMARY KEY (tenant_id, parent_hash, ordinal),
+  FOREIGN KEY (tenant_id, parent_hash)
+    REFERENCES cas_nodes(tenant_id, hash),
+  FOREIGN KEY (tenant_id, child_hash)
+    REFERENCES cas_nodes(tenant_id, hash)
 );
 
 CREATE INDEX cas_edges_by_child
-  ON cas_edges(user_id, child_hash);
+  ON cas_edges(tenant_id, child_hash);
 ```
 
 Duplicate child hashes use different ordinals. Their contribution to `childRefCount` is the number of occurrences.
 
-`refs` is reconstructed by selecting all edge rows for `(user_id, parent_hash)` ordered by `ordinal ASC`. Ordinals must be exactly the contiguous range `0..refCount-1`, where `refCount` is the number encoded in the canonical header and derived from the immutable edge set. Missing, duplicate, negative, or non-contiguous ordinals make metadata invalid; reads fail rather than returning a partial reference list.
+`refs` is reconstructed by selecting all edge rows for `(tenant_id, parent_hash)` ordered by `ordinal ASC`. Ordinals must be exactly the contiguous range `0..refCount-1`, where `refCount` is the number encoded in the canonical header and derived from the immutable edge set. Missing, duplicate, negative, or non-contiguous ordinals make metadata invalid; reads fail rather than returning a partial reference list.
 
 For a newly inserted node, the initial lease values and all ordered edge rows are committed in the same D1 transaction as the node row. This prevents a crash from exposing an immediately GC-eligible parent while its child counts have already been incremented.
 
@@ -199,12 +199,12 @@ For a newly inserted node, the initial lease values and all ordered edge rows ar
 
 ```sql
 CREATE TABLE cas_root_ref_requests (
-  user_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
   request_id TEXT NOT NULL,
   payload_hash TEXT NOT NULL,
   applied_at INTEGER NOT NULL,
 
-  PRIMARY KEY (user_id, request_id)
+  PRIMARY KEY (tenant_id, request_id)
 );
 ```
 
@@ -258,7 +258,7 @@ A metadata-only read cannot prove full node integrity because R2 content is requ
 
 - exactly `refCount` hashes;
 - each hash is 32 bytes;
-- every child belongs to the same user partition;
+- every child belongs to the same tenant partition;
 - every child must be ready before inserting the parent metadata row;
 - duplicate refs are permitted and counted separately;
 - cycles are cryptographically impractical to construct when a parent digest includes child digests, but implementations may still enforce traversal depth and visited-node limits for hostile or corrupt stores.
@@ -343,7 +343,7 @@ It is not required as the public upload wire format; the HTTP API may send metad
 
 The CAS core stores one opaque content object per node. It does not split large files into chunks and does not define folders, paths, or directory entries.
 
-- A large file is one node whose own content is one R2 object, subject to R2, HTTP, account, and per-user quota limits.
+- A large file is one node whose own content is one R2 object, subject to R2, HTTP, account, and per-tenant quota limits.
 - Child refs represent application-defined Merkle DAG edges only. The CAS does not concatenate child content to reconstruct a file.
 - Names, paths, and folder semantics belong to a higher-level application format if a future use case needs them.
 - The CAS never infers structure from `contentType`.
@@ -376,10 +376,10 @@ The service must enforce configurable limits before allocation or traversal:
 - maximum DAG traversal depth;
 - maximum nodes visited per read;
 - maximum reconstructed response size;
-- per-user storage quota;
-- per-user concurrent upload limit.
+- per-tenant storage quota;
+- per-tenant concurrent upload limit.
 
-A valid hash does not authorize access. Every operation is authenticated and scoped to one user partition.
+A valid hash does not authorize access. Every operation is authenticated and scoped to one tenant partition.
 
 Content type is descriptive metadata and must not be trusted for content sniffing, browser execution policy, or DOCX image validation. Consumers validate actual bytes for their domain.
 

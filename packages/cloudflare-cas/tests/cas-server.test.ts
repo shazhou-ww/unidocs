@@ -244,13 +244,13 @@ async function leaseWithContent(
   doInstance: CasDurableObject,
   content: Uint8Array,
   contentType: string,
-  options: { userId?: string; refs?: string[]; durationMs?: number; hash?: string } = {},
+  options: { tenantId?: string; refs?: string[]; durationMs?: number; hash?: string } = {},
 ) {
-  const userId = options.userId ?? "user1";
+  const tenantId = options.tenantId ?? "tenant1";
   const refs = options.refs ?? [];
   const hash = options.hash ?? await computeHash(content, contentType, refs);
   const headers: Record<string, string> = {
-    "X-User-Id": userId,
+    "X-Tenant-Id": tenantId,
     "X-CAS-Hash": hash,
     "Content-Type": contentType,
     "Content-Length": String(content.length),
@@ -310,6 +310,24 @@ describe("CAS Durable Object", () => {
       expect(result.hash).toBe(first.hash);
     });
 
+    it("stores identical content independently across tenants", async () => {
+      const content = new TextEncoder().encode("same content");
+      const first = await leaseWithContent(doInstance, content, "text/plain", {
+        tenantId: "tenant-a",
+      });
+      const second = await leaseWithContent(doInstance, content, "text/plain", {
+        tenantId: "tenant-b",
+      });
+
+      expect(first.hash).toBe(second.hash);
+      expect(first.response.status).toBe(200);
+      expect(second.response.status).toBe(200);
+      expect(db.tables.get("cas_nodes")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tenant_id: "tenant-a", hash: first.hash }),
+        expect.objectContaining({ tenant_id: "tenant-b", hash: second.hash }),
+      ]));
+    });
+
     it("rejects invalid hash format", async () => {
       const content = new TextEncoder().encode("x");
       const { response } = await leaseWithContent(doInstance, content, "text/plain", { hash: "invalid" });
@@ -322,7 +340,7 @@ describe("CAS Durable Object", () => {
       const response = await doInstance.fetch(new Request("http://localhost/leaseWithContent", {
         method: "POST",
         headers: {
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
           "X-CAS-Hash": hash,
           "Content-Length": String(content.length),
         },
@@ -369,7 +387,7 @@ describe("CAS Durable Object", () => {
         headers: {
           "Content-Type": "application/vnd.unidocs.cas-node",
           "X-CAS-Hash": hash,
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
         },
         body: bytes,
       }));
@@ -380,6 +398,24 @@ describe("CAS Durable Object", () => {
   });
 
   describe("read", () => {
+    it("migrates a legacy R2 object into the tenant key on first read", async () => {
+      const content = new TextEncoder().encode("legacy content");
+      const hash = await computeHash(content, "text/plain");
+      const legacyKey = `users/tenant1/nodes/${hash}`;
+      const tenantKey = `tenants/tenant1/nodes/${hash}`;
+      await r2.put(legacyKey, content);
+
+      const readResponse = await doInstance.fetch(new Request("http://localhost/read", {
+        method: "GET",
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": hash },
+      }));
+
+      expect(readResponse.status).toBe(200);
+      expect(await readResponse.text()).toBe("legacy content");
+      expect(await r2.head(tenantKey)).not.toBeNull();
+      expect(await r2.head(legacyKey)).toBeNull();
+    });
+
     it("reads uploaded content", async () => {
       const content = new TextEncoder().encode("read test");
       const { hash, response } = await leaseWithContent(doInstance, content, "text/plain");
@@ -387,7 +423,7 @@ describe("CAS Durable Object", () => {
 
       const readResponse = await doInstance.fetch(new Request("http://localhost/read", {
         method: "GET",
-        headers: { "X-User-Id": "user1", "X-CAS-Hash": hash },
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": hash },
       }));
       expect(readResponse.status).toBe(200);
       expect(await readResponse.text()).toBe("read test");
@@ -396,7 +432,7 @@ describe("CAS Durable Object", () => {
     it("returns 404 for non-existent node", async () => {
       const readResponse = await doInstance.fetch(new Request("http://localhost/read", {
         method: "GET",
-        headers: { "X-User-Id": "user1", "X-CAS-Hash": "a".repeat(64) },
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": "a".repeat(64) },
       }));
       expect(readResponse.status).toBe(404);
     });
@@ -405,7 +441,7 @@ describe("CAS Durable Object", () => {
       const content = new TextEncoder().encode("portable");
       const { hash } = await leaseWithContent(doInstance, content, "text/plain");
       const response = await doInstance.fetch(new Request("http://localhost/readNode", {
-        headers: { "X-User-Id": "user1", "X-CAS-Hash": hash },
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": hash },
       }));
 
       expect(response.status).toBe(200);
@@ -423,7 +459,7 @@ describe("CAS Durable Object", () => {
 
       const metadataResponse = await doInstance.fetch(new Request("http://localhost/metadata", {
         method: "GET",
-        headers: { "X-User-Id": "user1", "X-CAS-Hash": hash },
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": hash },
       }));
       expect(metadataResponse.status).toBe(200);
 
@@ -454,14 +490,14 @@ describe("CAS Durable Object", () => {
 
       const childMetadataResponse = await doInstance.fetch(new Request("http://localhost/metadata", {
         method: "GET",
-        headers: { "X-User-Id": "user1", "X-CAS-Hash": child.hash },
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": child.hash },
       }));
       expect(childMetadataResponse.status).toBe(200);
       expect((await childMetadataResponse.json()).state.childRefCount).toBe(1);
 
       const parentMetadataResponse = await doInstance.fetch(new Request("http://localhost/metadata", {
         method: "GET",
-        headers: { "X-User-Id": "user1", "X-CAS-Hash": parent.hash },
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": parent.hash },
       }));
       expect(parentMetadataResponse.status).toBe(200);
       expect((await parentMetadataResponse.json()).metadata.refs).toEqual([child.hash]);
@@ -490,7 +526,7 @@ describe("CAS Durable Object", () => {
 
       expect(parent.response.status).toBe(200);
       const metadata = await doInstance.fetch(new Request("http://localhost/metadata", {
-        headers: { "X-User-Id": "user1", "X-CAS-Hash": parent.hash },
+        headers: { "X-Tenant-Id": "tenant1", "X-CAS-Hash": parent.hash },
       }));
       expect((await metadata.json()).metadata.refs).toEqual([child.hash]);
     });
@@ -526,7 +562,7 @@ describe("CAS Durable Object", () => {
       const extend = await doInstance.fetch(new Request("http://localhost/leaseExisting", {
         method: "POST",
         headers: {
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
           "X-CAS-Hash": hash,
           "X-CAS-Lease-Duration": "120000",
         },
@@ -541,7 +577,7 @@ describe("CAS Durable Object", () => {
       const extend = await doInstance.fetch(new Request("http://localhost/leaseExisting", {
         method: "POST",
         headers: {
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
           "X-CAS-Hash": "a".repeat(64),
         },
       }));
@@ -558,7 +594,7 @@ describe("CAS Durable Object", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
         },
         body: JSON.stringify({ requestId, assignments }),
       }));
@@ -566,7 +602,7 @@ describe("CAS Durable Object", () => {
 
     async function rootCount(hash: string): Promise<number> {
       const response = await doInstance.fetch(new Request("http://localhost/metadata", {
-        headers: { "X-CAS-Hash": hash, "X-User-Id": "user1" },
+        headers: { "X-CAS-Hash": hash, "X-Tenant-Id": "tenant1" },
       }));
       return (await response.json()).state.rootRefCount;
     }
@@ -628,7 +664,7 @@ describe("CAS Durable Object", () => {
       const usageRequest = new Request("http://localhost/usage", {
         method: "GET",
         headers: {
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
         },
       });
 
@@ -648,7 +684,7 @@ describe("CAS Durable Object", () => {
       const gcRequest = new Request("http://localhost/gc", {
         method: "POST",
         headers: {
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ maxNodes: 10 }),
@@ -665,7 +701,7 @@ describe("CAS Durable Object", () => {
   });
 
   describe("error handling", () => {
-    it("returns 401 for missing user ID", async () => {
+    it("returns 401 for missing tenant ID", async () => {
       const request = new Request("http://localhost/leaseWithContent", {
         method: "POST",
         headers: {
@@ -684,7 +720,7 @@ describe("CAS Durable Object", () => {
       const request = new Request("http://localhost/unknown", {
         method: "GET",
         headers: {
-          "X-User-Id": "user1",
+          "X-Tenant-Id": "tenant1",
         },
       });
 

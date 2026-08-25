@@ -87,7 +87,7 @@ describe("serve()", () => {
     const form = new FormData();
     form.set("file", new Blob(["# hello\ncontent"], { type: "text/markdown" }), "doc.md");
 
-    const res = await fetch(`${BASE}/users/u1/`, {
+    const res = await fetch(`${BASE}/echo`, {
       method: "POST",
       body: form,
     });
