@@ -37,22 +37,7 @@ import {
 } from "@unidocs/azure-sdk";
 import { isPublicCasRoute } from "@unidocs/http-protocol";
 import { createGatewayHandler } from "@unidocs/gateway-common";
-
-/**
- * 两级解析,与 Cloudflare 侧同形(`cloudflare-gateway/src/worker.ts` 先查
- * KV 的 `docType:{type}`、未命中再读环境变量)。
- *
- * 环境变量兜底保留给本地开发与临时调试:本地栈没有 Container Apps,服务
- * 不会注册,只能靠它。云上 `gateway.bicep` 不再设置这些变量 —— 若它去算
- * 那些地址,就得知道有哪些 doc type,耦合又回来了。
- */
-function makeResolveWorkerUrl(registry: PgDocTypeRegistry) {
-  return async (docType: string): Promise<string | null> => {
-    const fromRegistry = await registry.resolve(docType);
-    if (fromRegistry) return fromRegistry;
-    return process.env[`${docType.toUpperCase()}_WORKER_URL`] ?? null;
-  };
-}
+import { makeResolveWorkerUrl } from "./resolve-worker-url.js";
 
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
