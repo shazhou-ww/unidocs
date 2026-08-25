@@ -365,8 +365,8 @@ function strokeEffect(target: Target, cw: number, layer: Layer, px: Pixels, clip
   // it — the buffer boundary IS the shape edge — so for the inside stroke,
   // out-of-bounds counts as "outside" (a distance source). For the outside
   // stroke, out-of-bounds is not part of the shape.
-  const inside = st.position !== "outside" ? chamferDist(sw, sh, (i) => !solid(i), true) : null;  // dist from shape → outside
-  const outside = st.position !== "inside" ? chamferDist(sw, sh, (i) => solid(i), false) : null;  // dist from outside → shape
+  const inside = st.position !== "outside" ? cachedChamfer(px, "inside", () => chamferDist(sw, sh, (i) => !solid(i), true)) : null;  // dist from shape → outside
+  const outside = st.position !== "inside" ? cachedChamfer(px, "outside", () => chamferDist(sw, sh, (i) => solid(i), false)) : null;  // dist from outside → shape
   const band = st.position === "center" ? Math.max(1, Math.round(st.size / 2)) * CH_ORTH : st.size * CH_ORTH;
   const sr = st.color.r / 255, sg = st.color.g / 255, sb = st.color.b / 255;
   const base = layer.opacity * st.opacity;
@@ -374,12 +374,16 @@ function strokeEffect(target: Target, cw: number, layer: Layer, px: Pixels, clip
   // scratch for the whole band, instead of both per pixel.
   const B = blendFn(st.blendMode);
   const out = new Float64Array(4);
-  for (let y = 0; y < sh; y++) {
+  // Region-clamped bounds (see the note in `compositeBuffer`): visit only the
+  // source pixels that land inside `target`, rather than walking the whole
+  // layer and rejecting the rest one pixel at a time.
+  const y0 = Math.max(0, originY - top), y1 = Math.min(sh, originY - top + th);
+  const x0 = Math.max(0, originX - left), x1 = Math.min(sw, originX - left + tw);
+  for (let y = y0; y < y1; y++) {
     const cy = top + y;
-    for (let x = 0; x < sw; x++) {
+    for (let x = x0; x < x1; x++) {
       const cx = left + x;
       const bx = cx - originX, by = cy - originY;
-      if (bx < 0 || bx >= tw || by < 0 || by >= th) continue;
       const i = y * sw + x;
       const on = solid(i);
       let hit = false;
@@ -452,9 +456,13 @@ function dropShadowEffect(target: Target, cw: number, ch: number, layer: Layer, 
   // Hard-edged (size 0): no buffer at all — read each layer pixel's alpha and
   // composite the coloured shadow straight to the offset position.
   if (ds.size <= 0) {
-    for (let y = 0; y < sh; y++) {
+    // Region-clamped bounds (see `compositeBuffer`). The shadow is written at
+    // an offset, so the window is shifted by (dx,dy) relative to the fill's.
+    const y0 = Math.max(0, originY - top - dy), y1 = Math.min(sh, originY - top - dy + th);
+    const x0 = Math.max(0, originX - left - dx), x1 = Math.min(sw, originX - left - dx + tw);
+    for (let y = y0; y < y1; y++) {
       const cy = top + y;
-      for (let x = 0; x < sw; x++) {
+      for (let x = x0; x < x1; x++) {
         let a = data[(y * sw + x) * 4 + 3] / 255;
         if (a <= 0) continue;
         const cx = left + x;
@@ -482,8 +490,12 @@ function dropShadowEffect(target: Target, cw: number, ch: number, layer: Layer, 
     }
   }
   const blurred = boxBlurAlpha(alpha, bw, bh, m);
-  for (let ly = 0; ly < bh; ly++) {
-    for (let lx = 0; lx < bw; lx++) {
+  // Region-clamped bounds (see `compositeBuffer`); the blur buffer's (0,0) is
+  // canvas (top-m, left-m) and the shadow is offset by (dx,dy).
+  const ly0 = Math.max(0, originY - top + m - dy), ly1 = Math.min(bh, originY - top + m - dy + th);
+  const lx0 = Math.max(0, originX - left + m - dx), lx1 = Math.min(bw, originX - left + m - dx + tw);
+  for (let ly = ly0; ly < ly1; ly++) {
+    for (let lx = lx0; lx < lx1; lx++) {
       const a = blurred[ly * bw + lx];
       if (a <= 0) continue;
       put(left - m + lx + dx, top - m + ly + dy, a);
@@ -525,6 +537,31 @@ function boxBlurAlpha(src: Float32Array, w: number, h: number, r: number): Float
     a = out;
   }
   return a;
+}
+
+/**
+ * Per-layer memo of the two chamfer distance fields a stroke needs. Both are a
+ * pure function of the layer's own pixel buffer (only the `band` THRESHOLD
+ * depends on `stroke.size`/`position`, and that is applied after the lookup),
+ * so the result is identical for every region the layer is drawn into.
+ *
+ * Without this, tiled rendering recomputed a full-layer O(w*h) two-pass
+ * transform — plus a w*h Int32Array allocation — once per tile per stroke
+ * layer. On a 3556x2000 document with four ~1814x1884 stroked layers that is
+ * 112 transforms of 3.4M px to paint one screen, and it is repaid in full on
+ * every edit. Keyed weakly on the pixel buffer, so the memo dies with the
+ * decoded pixels it describes (PixelCache eviction) and a layer whose pixels
+ * change gets a fresh buffer and therefore a fresh entry.
+ */
+const chamferMemo = new WeakMap<Uint8ClampedArray, { inside?: Int32Array; outside?: Int32Array }>();
+function cachedChamfer(px: Pixels, which: "inside" | "outside", compute: () => Int32Array): Int32Array {
+  let entry = chamferMemo.get(px.data);
+  if (!entry) { entry = {}; chamferMemo.set(px.data, entry); }
+  const hit = entry[which];
+  if (hit) return hit;
+  const value = compute();
+  entry[which] = value;
+  return value;
 }
 
 /** 3-4 chamfer distance transform: for each pixel, the distance (in ×3 units)
@@ -582,12 +619,18 @@ async function layerAlpha(w: number, h: number, layer: Layer, ctx: RenderCtx, re
     const px = await resolvePixels(layer.pixels, ctx.store, ctx.cache);
     const [top, left] = layer.bounds;
     const { width: sw, height: sh, data } = px;
-    for (let y = 0; y < sh; y++) {
+    // Fill only the part of `cov` that `region` covers — exactly what the
+    // group branch above already does, and safe for the same reason stated in
+    // this function's doc comment: every consumer reads `clip[cy*cw+cx]` from
+    // behind the target's bounds check, so no pixel outside `region` is ever
+    // read. Filling the whole layer instead made each clip base cost O(layer)
+    // per TILE (a 3404x2000 clip base re-scanned for all 28 on-screen tiles).
+    const y0 = Math.max(0, region.originY - top), y1 = Math.min(sh, h - top, region.originY + region.height - top);
+    const x0 = Math.max(0, region.originX - left), x1 = Math.min(sw, w - left, region.originX + region.width - left);
+    for (let y = y0; y < y1; y++) {
       const cy = top + y;
-      if (cy < 0 || cy >= h) continue;
-      for (let x = 0; x < sw; x++) {
+      for (let x = x0; x < x1; x++) {
         const cx = left + x;
-        if (cx < 0 || cx >= w) continue;
         let a = data[(y * sw + x) * 4 + 3] / 255;
         if (layer.mask) a *= maskCoverageAt(layer.mask, cx, cy);
         cov[cy * w + cx] = a * 255;
@@ -612,12 +655,24 @@ function compositeBuffer(
   // hoisted here rather than paid per pixel.
   const B = blendFn(mode);
   const out = new Float64Array(4);
-  for (let y = 0; y < sh; y++) {
+  // Iterate ONLY the source rows/cols that land inside `target`, instead of
+  // walking the whole source and rejecting out-of-region pixels one at a time.
+  // Solving the old guard `0 <= ox+x-originX < tw` for x (and likewise for y)
+  // gives these bounds exactly, so the pixels visited are precisely the ones
+  // the guard used to let through — byte-identical output.
+  //
+  // This is what makes tiled rendering actually cost tile-sized work. With the
+  // per-pixel guard, compositing a full-canvas layer into one 256x256 tile
+  // walked the entire layer (e.g. 3556x2000 = 7.1M iterations) to keep 65k of
+  // them — so every tile cost O(canvas), not O(tile), and re-tiling after an
+  // edit took seconds per frame regardless of how warm the pixel cache was.
+  const y0 = Math.max(0, originY - oy), y1 = Math.min(sh, originY - oy + th);
+  const x0 = Math.max(0, originX - ox), x1 = Math.min(sw, originX - ox + tw);
+  for (let y = y0; y < y1; y++) {
     const cy = oy + y;
-    for (let x = 0; x < sw; x++) {
+    for (let x = x0; x < x1; x++) {
       const cx = ox + x;
       const bx = cx - originX, by = cy - originY;
-      if (bx < 0 || bx >= tw || by < 0 || by >= th) continue;
       const si = (y * sw + x) * 4;
       let sa = (src[si + 3] / 255) * opacity;
       if (mask) sa *= maskCoverageAt(mask, cx, cy);
