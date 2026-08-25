@@ -32,6 +32,10 @@ export const PsdOperator = createOperatorDO({
     const id = env.PSD_EDITOR.idFromName(`${userId}:${docId}`);
     return env.PSD_EDITOR.get(id);
   },
+  // A PSD edit is inherently multi-step — find the layer, preview it,
+  // transform it, preview again to check — so the platform default (10) cuts
+  // real instructions off mid-edit.
+  maxIterations: 25,
 });
 
 interface Env extends EditorEnv {
