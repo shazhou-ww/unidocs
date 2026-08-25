@@ -13,6 +13,7 @@ import { serialize, deserialize } from "../src/psd/ir.js";
 import { IncrementalCompositor } from "../src/render/incremental.js";
 import { renderCached, renderRegion, DEFAULT_CACHE_BYTES } from "../src/render/composite.js";
 import { renderRegionDirect } from "../src/render/region.js";
+import { DocRenderState } from "../src/render/doc-render-state.js";
 import { applyOne } from "../src/ops/index.js";
 import { PixelCache } from "../src/render/pixel-source.js";
 import { tilesForRect } from "../src/render/tile-grid.js";
@@ -192,6 +193,75 @@ describe.skipIf(!process.env.PSD_TILE_BENCH)("tile recomposite cost (diagnostic)
 
     const px = edited4.canvas.width * edited4.canvas.height;
     console.log(`[split] full canvas = ${(px / 1e6).toFixed(2)}M px; browser's 28-tile screenful = ${(28 * TILE * TILE / 1e6).toFixed(2)}M px (ratio ${(px / (28 * TILE * TILE)).toFixed(1)}x)`);
+
+    // --- The same requests, through the persistent DocRenderState the Editor
+    // DO now holds (warm PixelCache + incremental compositor). ---
+    const rs = new DocRenderState(store);
+    const setProps = (id: string, props: Record<string, unknown>) =>
+      [{ kind: "set_props", payload: { layerId: id, props } }] as never[];
+    const bgId = (lazy.layers[0] as any).id;
+    const textId = (lazy.layers[lazy.layers.length - 1] as any).id;
+
+    let d = lazy;
+    await t("DocRenderState: getPreview #1 (cold)", async () => { await rs.composite(d); });
+    await t("DocRenderState: getPreview #2 (unchanged)", async () => { await rs.composite(d); });
+    await t("DocRenderState: apply set_props on a SMALL top layer", async () => { d = await rs.applyOps(setProps(textId, { visible: false }), d); });
+    await t("DocRenderState: getPreview after that edit", async () => { await rs.composite(d); });
+    await t("DocRenderState: apply set_props on the FULL-CANVAS background", async () => { d = await rs.applyOps(setProps(bgId, { visible: false }), d); });
+    await t("DocRenderState: getPreview after full-canvas edit", async () => { await rs.composite(d); });
+    await t("DocRenderState: region 256x256 (agent-style preview)", async () => { await rs.region(d, [0, 0, 256, 256]); });
+    await t("DocRenderState: apply + region 256x256", async () => {
+      d = await rs.applyOps(setProps(bgId, { visible: true }), d);
+      await rs.region(d, [0, 0, 256, 256]);
+    });
+    const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
+    const cb = rs.cacheBytes;
+    console.log(`[split] DocRenderState footprint: pixels=${mb(cb.pixels)}MB tiles=${mb(cb.tiles)}MB checkpoints=${mb(cb.checkpoints)}MB total=${mb(cb.pixels + cb.tiles + cb.checkpoints)}MB`);
+  }, 600_000);
+
+  // The other regime: a document whose decoded layers FIT the server pixel
+  // cache, so DocRenderState can actually tile and reuse clean tiles.
+  it("server path on a doc that fits the cache (incremental tiles active)", async () => {
+    const resident = syntheticDoc(1500, 1000, 6); // 6 x 6 MB = 36 MB < 48 MB budget
+    const store = memStore();
+    const d0 = await deserialize(await serialize(resident, store), store);
+
+    const t = async (tag: string, fn: () => Promise<unknown>): Promise<void> => {
+      const s = performance.now();
+      await fn();
+      console.log(`[fits] ${tag}: ${(performance.now() - s).toFixed(0)}ms`);
+    };
+
+    const rs = new DocRenderState(store);
+    const setProps = (id: string, props: Record<string, unknown>) =>
+      [{ kind: "set_props", payload: { layerId: id, props } }] as never[];
+    let d = d0;
+    await t("getPreview #1 (cold)", async () => { await rs.composite(d); });
+    await t("getPreview #2 (unchanged)", async () => { await rs.composite(d); });
+    await t("apply set_props on TOP layer + full getPreview", async () => {
+      d = await rs.applyOps(setProps("L5", { visible: false }), d);
+      await rs.composite(d);
+    });
+    await t("apply set_props on BOTTOM layer + full getPreview", async () => {
+      d = await rs.applyOps(setProps("L0", { visible: false }), d);
+      await rs.composite(d);
+    });
+    await t("region 256x256 after an edit", async () => {
+      d = await rs.applyOps(setProps("L0", { visible: true }), d);
+      await rs.region(d, [0, 0, 256, 256]);
+    });
+    const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
+    const cb = rs.cacheBytes;
+    console.log(`[fits] footprint: pixels=${mb(cb.pixels)}MB tiles=${mb(cb.tiles)}MB checkpoints=${mb(cb.checkpoints)}MB`);
+
+    // Same requests down the OLD stateless path, for comparison.
+    const freshCtx = (): RenderCtx => ({ store, cache: new PixelCache(DEFAULT_CACHE_BYTES) });
+    let e = d0;
+    await t("OLD: getPreview cold", () => renderCached(e, freshCtx()));
+    e = applyOne(e, { kind: "set_props", payload: { layerId: "L0", props: { visible: false } } } as never);
+    await t("OLD: getPreview after edit", () => renderCached(e, freshCtx()));
+    e = applyOne(e, { kind: "set_props", payload: { layerId: "L0", props: { visible: true } } } as never);
+    await t("OLD: renderRegion 256x256 after edit", () => renderRegion(e, [0, 0, 256, 256], freshCtx()));
   }, 600_000);
 
   it("synthetic large doc (big background, many layers)", async () => {
