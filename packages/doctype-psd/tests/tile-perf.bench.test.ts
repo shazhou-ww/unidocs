@@ -175,6 +175,23 @@ describe.skipIf(!process.env.PSD_TILE_BENCH)("tile recomposite cost (diagnostic)
     await t("renderRegionDirect 256x256 after edit", () => renderRegionDirect(edited3, [0, 0, 256, 256], freshCtx()));
     const edited4 = applyOne(edited3, { kind: "set_props", payload: { layerId: (lazy.layers[0] as any).id, props: { visible: true } } } as never);
     await t("renderRegionDirect 1024x1024 after edit", () => renderRegionDirect(edited4, [0, 0, 1024, 1024], freshCtx()));
+
+    // --- Where does the ~1s of a post-edit getPreview actually go? ---
+    // Split the cold full-canvas render into (a) faulting every layer in from
+    // the CAS and PNG-decoding it, and (b) the composite itself over already
+    // decoded pixels. `prefetch` does exactly (a) and nothing else.
+    const warm: RenderCtx = { store, cache: new PixelCache(1024 * 1024 * 1024) };
+    const decodeStart = performance.now();
+    const nBlobs = await new IncrementalCompositor(edited4, { tileSize: TILE, ctx: warm }).prefetch();
+    console.log(`[split] fault-in + PNG decode of ${nBlobs} layer blobs: ${(performance.now() - decodeStart).toFixed(0)}ms`);
+
+    const e5 = applyOne(edited4, { kind: "set_props", payload: { layerId: (lazy.layers[0] as any).id, props: { visible: false } } } as never);
+    await t("full-canvas composite, WARM cache", () => renderCached(e5, warm));
+    const e6 = applyOne(e5, { kind: "set_props", payload: { layerId: (lazy.layers[0] as any).id, props: { visible: true } } } as never);
+    await t("full-canvas composite, COLD cache (= getPreview)", () => renderCached(e6, freshCtx()));
+
+    const px = edited4.canvas.width * edited4.canvas.height;
+    console.log(`[split] full canvas = ${(px / 1e6).toFixed(2)}M px; browser's 28-tile screenful = ${(28 * TILE * TILE / 1e6).toFixed(2)}M px (ratio ${(px / (28 * TILE * TILE)).toFixed(1)}x)`);
   }, 600_000);
 
   it("synthetic large doc (big background, many layers)", async () => {
