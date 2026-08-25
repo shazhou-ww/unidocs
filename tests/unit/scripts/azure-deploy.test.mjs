@@ -3,7 +3,7 @@
  * 的真实部署验收。
  */
 import { describe, expect, test } from "vitest";
-import { IMAGES, generateSecret, imageRef, imageRepoTag, parseArgs } from "../../../scripts/azure-deploy.mjs";
+import { IMAGES, generateSecret, imageRef, imageRepoTag, parseArgs } from "../../../azure/deploy/deploy.mjs";
 
 describe("imageRef", () => {
   test("拼出完整的 ACR 镜像引用", () => {
@@ -25,7 +25,7 @@ describe("imageRef", () => {
 
 describe("IMAGES", () => {
   // 迁移镜像是唯一一个「构建参数」与「镜像名」不同名的:构建参数是
-  // 工作区包名 azure-sdk,镜像名是 infra/main.bicep 引用的 azure-migrate。
+  // 工作区包名 azure-sdk,镜像名是 azure/deploy/main.bicep 引用的 azure-migrate。
   // 传错会让 main 部署时拉不到镜像,而那是个部署到一半才暴露的错误。
   test("迁移镜像的构建参数与镜像名刻意不同", () => {
     const migrate = IMAGES.find((i) => i.name === "azure-migrate");

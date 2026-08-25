@@ -6,8 +6,8 @@
  * 固定 id 会在第二次运行时撞 DocExists。
  *
  * 用法:
- *   node scripts/azure-smoke.mjs --gateway https://ca-unidocs-gateway.<region>.azurecontainerapps.io
- *   node scripts/azure-smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
+ *   node azure/deploy/smoke.mjs --gateway https://ca-unidocs-gateway.<region>.azurecontainerapps.io
+ *   node azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
  *
  * `--skip-cas` 跳过第 3 组(docx 图片路径)。它只用于对本地 Azure 栈
  * 验证本脚本自身的 wire 形状 —— 本地栈默认没有 casBaseUrl。真实部署的
@@ -24,9 +24,9 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../packages/cas-server-common/dist/index.js";
+import { computeNodeDigest, encodeHeader, hashToHex } from "../../packages/cas-server-common/dist/index.js";
 
-const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../..");
 const RUN = randomBytes(4).toString("hex");
 const USER = `smoke-${RUN}`;
 

@@ -197,7 +197,7 @@ module gatewayApp 'container-app.bicep' = {
   }
 }
 
-// 迁移 Job 必须走模块边界，理由见 infra/migrate-job.bicep 顶部的注释：
+// 迁移 Job 必须走模块边界，理由见 azure/deploy/migrate-job.bicep 顶部的注释：
 // databaseUrl 由 @secure() pgAdminPassword 拼出，直接写进外层模板的资源
 // 属性会让 what-if 把明文连接串打进终端与日志。
 module migrateJob 'migrate-job.bicep' = {

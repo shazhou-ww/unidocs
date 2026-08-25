@@ -10,10 +10,10 @@
  *   4 在 ACR 里构建四个 linux/amd64 镜像
  *   5 main.bicep          —— 消费 @secure() 参数与镜像 tag
  *   6 触发迁移 Job 并等它成功
- *   7 冒烟(scripts/azure-smoke.mjs)
+ *   7 冒烟(azure/deploy/smoke.mjs)
  *
  * 用法:
- *   node scripts/azure-deploy.mjs \
+ *   node azure/deploy/deploy.mjs \
  *     --cas-base-url https://unidocs-cas.<account>.workers.dev \
  *     --internal-token <与 Cloudflare CAS worker 相同的 INTERNAL_TOKEN>
  *
@@ -25,7 +25,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const DEFAULTS = {
   subscription: "24c9acbd-c2f5-4ef9-b9a2-486d90208b3e",
@@ -203,7 +203,7 @@ function checkRbac(args) {
       `preflight: the signed-in identity (${assignee}) has none of ${PRIVILEGED_ROLES.join(" / ")} ` +
       `on /subscriptions/${args.subscription} or resource group ${args.resourceGroup} ` +
       `(roles seen: ${[...found].join(", ") || "none"}).\n` +
-      "infra/bootstrap.bicep creates two role assignments (UAMI -> AcrPull on ACR, " +
+      "azure/deploy/bootstrap.bicep creates two role assignments (UAMI -> AcrPull on ACR, " +
       "UAMI -> Storage Blob Data Contributor on the storage account). Contributor is NOT " +
       "enough: its notActions include Microsoft.Authorization/*/Write, so the bootstrap " +
       "deployment would fail halfway, after ACR / Storage / Key Vault / Log Analytics " +
@@ -215,7 +215,7 @@ function checkRbac(args) {
 }
 
 /**
- * `scripts/azure-smoke.mjs`(第 7 步)从 `packages/cas-server-common/dist/index.js` import CAS
+ * `azure/deploy/smoke.mjs`(第 7 步)从 `packages/cas-server-common/dist/index.js` import CAS
  * 哈希算法(仓库既有惯例,`scripts/cas-digest.mjs` 同样如此),而本脚本全程
  * **不在宿主机跑 `pnpm build`** —— 它只构建镜像,那是容器内编译,`.dockerignore`
  * 还排除了 `**\/dist`。干净检出上不自检的话,会一路成功到第 7 步,在十几分钟
@@ -225,7 +225,7 @@ function checkHostBuild() {
   const casDist = join(ROOT, "packages/cas-server-common/dist/index.js");
   if (!existsSync(casDist)) {
     throw new Error(
-      `preflight: ${casDist} is missing. scripts/azure-smoke.mjs (step 7) imports the CAS ` +
+      `preflight: ${casDist} is missing. azure/deploy/smoke.mjs (step 7) imports the CAS ` +
       "hash algorithm from it, and this script never runs `pnpm build` on the host " +
       "(images compile inside the container). Run `pnpm build` first.",
     );
@@ -263,13 +263,13 @@ function deployBootstrap(args) {
   run("az", [
     "deployment", "group", "what-if",
     "-g", args.resourceGroup,
-    "-f", "infra/bootstrap.bicep",
+    "-f", "azure/deploy/bootstrap.bicep",
   ]);
 
   const stdout = capture("az", [
     "deployment", "group", "create",
     "-g", args.resourceGroup,
-    "-f", "infra/bootstrap.bicep",
+    "-f", "azure/deploy/bootstrap.bicep",
     "-n", "bootstrap",
     "-o", "json",
   ]);
@@ -388,8 +388,10 @@ function seedSecrets(keyVaultName, args) {
  * ACR 中以原生 amd64 构建,不需要模拟。
  *
  * 它同时**取代**了 `az acr login` + `docker push`:构建产物直接落在 registry 里。
- * 构建上下文仍是仓库根(`.`),`.dockerignore` 继续生效;`Dockerfile` 本身
- * 不需要改,它是平台无关的。
+ * 构建上下文仍是仓库根(`.`),`.dockerignore` 继续生效;`--file` 指向
+ * `azure/deploy/Dockerfile`,与上下文本就可以分离 —— 把上下文也搬进
+ * `azure/deploy/` 会让它看不到 `packages/`。`Dockerfile` 本身不需要改,
+ * 它是平台无关的。
  */
 function buildAndPushImages(args, bootstrap, tag) {
   if (args.skipBuild) {
@@ -409,7 +411,7 @@ function buildAndPushImages(args, bootstrap, tag) {
       "--image", imageRepoTag(item.name, tag),
       "--build-arg", `SERVICE=${item.service}`,
       "--build-arg", `ENTRY=${item.entry}`,
-      "--file", "Dockerfile",
+      "--file", "azure/deploy/Dockerfile",
       ".",
     ]);
   }
@@ -426,13 +428,13 @@ function deployMain(args, secrets, tag) {
   // 形态)。所以两处都必须显式传 label,绝不能落回默认的
   // `args.join(" ")`——那样失败时 Error.message 会把密钥打进
   // console.error。label 本身只列 -g/-f/-n 这些非密钥信息。
-  const mainDeployLabel = `az deployment group ... -g ${args.resourceGroup} -f infra/main.bicep`;
+  const mainDeployLabel = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/main.bicep`;
   run(
     "az",
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "infra/main.bicep",
+      "-f", "azure/deploy/main.bicep",
       "--parameters",
       `imageTag=${tag}`,
       `casBaseUrl=${args.casBaseUrl}`,
@@ -448,7 +450,7 @@ function deployMain(args, secrets, tag) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "infra/main.bicep",
+      "-f", "azure/deploy/main.bicep",
       "-n", "main",
       "-o", "json",
       "--parameters",
@@ -472,7 +474,7 @@ function deployMain(args, secrets, tag) {
  *
  * `jobName` 来自 Step 5 里 main.bicep 部署的 `migrateJobName` output,不
  * 在这里另起一个字面量常量 —— 那会造成两个真相来源(job 的真实名字只由
- * `infra/main.bicep` 的 `migrateJob` 资源决定)。
+ * `azure/deploy/main.bicep` 的 `migrateJob` 资源决定)。
  */
 async function runMigration(args, jobName) {
   console.log("[6/7] starting migration job", jobName);
@@ -521,7 +523,7 @@ async function runMigration(args, jobName) {
 /** Step 7:冒烟测试。 */
 function runSmoke(gatewayFqdn) {
   console.log("[7/7] smoke testing", gatewayFqdn);
-  run("node", ["scripts/azure-smoke.mjs", "--gateway", `https://${gatewayFqdn}`]);
+  run("node", ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`]);
 }
 
 function sleep(ms) {

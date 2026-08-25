@@ -139,7 +139,7 @@ function assertPortFree(host, port) {
  * Backend-neutral storage assertions (see `StorageProbe` in the task brief):
  * a global snapshot index lookup and a CAS blob existence check. Miniflare's
  * implementation is exactly the two `getD1Database`/`getR2Bucket` calls the
- * behavior tests used to make directly; `scripts/azure-runtime.mjs` provides
+ * behavior tests used to make directly; `azure/local/runtime.mjs` provides
  * the Postgres/Azurite equivalent behind the same two methods so the test
  * bodies in `tests/integration/shared/behavior-suite.mjs` don't need to know which backend
  * they're running against.

@@ -1,6 +1,6 @@
 /**
  * Vitest `globalSetup` for this package: bring up Postgres (via
- * `docker-compose.azure.yml`) and Azurite (spawned directly as a Node
+ * `docker-compose.yml`) and Azurite (spawned directly as a Node
  * process — see below) ONCE for the whole run, and tear both down once at
  * the end.
  *
@@ -23,7 +23,7 @@
  * `azurite-blob` as a plain Node CLI (`node_modules/azurite/dist/src/blob/
  * main.js`, per `package.json#bin`) — there's no reason to pay for a 531 MB
  * image pull to run a program that's already just Node. It's spawned the
- * same way `scripts/azure-runtime.mjs` spawns the azure-gateway/azure-markdown
+ * same way `azure/local/runtime.mjs` spawns the azure-gateway/azure-markdown
  * services: a plain child process, `--skipApiVersionCheck` carried over
  * unchanged from the old compose command, data in a fresh temp directory per
  * run (mirroring the clean-volume-per-`up` behaviour the container gave us
@@ -40,7 +40,7 @@ import { BlobServiceClient } from "@azure/storage-blob";
 import { createPool } from "../src/index.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const COMPOSE_FILE = path.resolve(__dirname, "../../../docker-compose.azure.yml");
+const COMPOSE_FILE = path.resolve(__dirname, "../docker-compose.yml");
 
 export const DATABASE_URL = "postgres://unidocs:unidocs@localhost:5433/unidocs";
 // Azurite's well-known emulator account, resolved by the SDK to
@@ -50,7 +50,7 @@ export const BLOB_CONNECTION_STRING = "UseDevelopmentStorage=true";
 const AZURITE_HOST = "127.0.0.1";
 const AZURITE_PORT = 10000;
 
-/** Must match `docker-compose.azure.yml`'s `postgres` service image — used only to decide whether to print the one-time-download notice below. */
+/** Must match `docker-compose.yml`'s `postgres` service image — used only to decide whether to print the one-time-download notice below. */
 const POSTGRES_IMAGE = "postgres:18-alpine";
 
 const require = createRequire(import.meta.url);
@@ -77,7 +77,7 @@ function dockerImageExistsLocally(image: string): boolean {
 /**
  * Async replacement for the old `execSync`-based compose calls. This module
  * is a vitest `globalSetup`/`globalTeardown`, which — like the worker
- * process `scripts/azure-runtime.mjs` runs in — has to stay responsive to
+ * process `azure/local/runtime.mjs` runs in — has to stay responsive to
  * vitest's own RPC while `docker compose up -d` pulls an image (tens of
  * seconds cold) or `down -v` tears the stack back down (several seconds).
  * `execSync` blocks the event loop for the whole duration; `spawn` + await
@@ -117,7 +117,7 @@ function announceFirstPullIfNeeded(): void {
  * Resolve `azurite-blob`'s real entry script via the `azurite` package's own
  * `package.json#bin` field, rather than shelling out to the
  * `node_modules/.bin/azurite-blob` shim (a POSIX shell script, not runnable
- * with `node` directly). Mirrors `scripts/azure-runtime.mjs`'s
+ * with `node` directly). Mirrors `azure/local/runtime.mjs`'s
  * `resolveAzuriteBlobEntry`.
  */
 function resolveAzuriteBlobEntry(): string {
@@ -230,7 +230,7 @@ export async function setup(): Promise<void> {
 
 export async function teardown(): Promise<void> {
   await stopAzurite();
-  // `-v` matches `scripts/azure-runtime.mjs`'s teardown: without it, every run
+  // `-v` matches `azure/local/runtime.mjs`'s teardown: without it, every run
   // of this suite left behind a dangling anonymous volume (the compose file
   // does not name its Postgres volume), and a bare `down` also leaves no
   // guarantee that the next `up` sees a clean Postgres data directory.
