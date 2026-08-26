@@ -24,6 +24,17 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const azureDocTypes = Object.keys(readAzureDocTypes(ROOT));
 const cfDocTypes = Object.keys(DOC_TYPES);
 
+// 守卫自身的守卫:表一旦意外变空，`test.each([])` 会生成零个测试，
+// 上面那些断言就一条都不跑了。当前 vitest 版本会把空 describe 报成失败，
+// 但那是版本行为、不是这个文件的保证——所以显式断一次。
+test("Azure doc type 表非空", () => {
+  expect(azureDocTypes.length).toBeGreaterThan(0);
+});
+
+test("Cloudflare doc type 表非空", () => {
+  expect(cfDocTypes.length).toBeGreaterThan(0);
+});
+
 describe("Azure doc type 的配套物", () => {
   test.each(azureDocTypes)("%s 有 packages/azure-<name>/src/main.ts 入口", (docType) => {
     expect(existsSync(join(ROOT, `packages/azure-${docType}/src/main.ts`))).toBe(true);
@@ -43,9 +54,11 @@ describe("Azure doc type 的配套物", () => {
 
   // 这一条守的正是 Task 4 抓到的那个静默假阳性:表里有、smoke.mjs 里没有
   // 对应 flow，全量冒烟会安静地跳过它。
+  // 正则包含边界保护：docType 之后要么直接是 Flow，要么是大写字母开头的中缀
+  // (如 docxTextFlow 中的 Text)，防止 doc 错误匹配 docxFlow。
   test.each(azureDocTypes)("%s 在 smoke.mjs 里有对应的 flow", (docType) => {
     const smoke = readFileSync(join(ROOT, "stacks/azure/deploy/smoke.mjs"), "utf8");
-    expect(smoke).toMatch(new RegExp(`function\\s+${docType}\\w*Flow\\s*\\(`));
+    expect(smoke).toMatch(new RegExp(`function\\s+${docType}(?:[A-Z]\\w*)?Flow\\s*\\(`));
   });
 });
 
