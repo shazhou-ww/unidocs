@@ -19,6 +19,12 @@ export const CasAdminErrorCodes = {
   INVALID_CURSOR: "INVALID_CURSOR",
   ROOT_REF_SNAPSHOT_CHANGED: "ROOT_REF_SNAPSHOT_CHANGED",
   FORBIDDEN_PLATFORM_ACTION: "FORBIDDEN_PLATFORM_ACTION",
+  /**
+   * Task 2 amendment: generic client error for invalid/malformed request
+   * input (illegal refDomain/kid/displayName, empty bodies, bad limits).
+   * The frozen set had no 400-class code besides INVALID_CURSOR.
+   */
+  INVALID_REQUEST: "INVALID_REQUEST",
 } as const;
 
 export type CasAdminErrorCode =
@@ -47,4 +53,5 @@ export const casAdminErrorHttpStatus: Readonly<Record<CasAdminErrorCode, number>
   INVALID_CURSOR: 400,
   ROOT_REF_SNAPSHOT_CHANGED: 409,
   FORBIDDEN_PLATFORM_ACTION: 403,
+  INVALID_REQUEST: 400,
 };

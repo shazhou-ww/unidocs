@@ -66,7 +66,12 @@ export interface CasStackIssuer {
   readonly revision: number;
 }
 
-export type CasIssuerKeyState = "pending" | "active" | "retiring" | "revoked";
+/**
+ * Issuer key lifecycle. Task 2 amendment: `pending` is removed because the
+ * frozen contract has no pending-to-active transition endpoint; possession
+ * proof on create is the activation gate, so keys enter `active` directly.
+ */
+export type CasIssuerKeyState = "active" | "retiring" | "revoked";
 
 export interface CasStackIssuerKey {
   readonly stackId: CasStackId;

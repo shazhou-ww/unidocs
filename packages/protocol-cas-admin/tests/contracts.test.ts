@@ -30,6 +30,7 @@ describe("control-plane contract freezes", () => {
     expect(casAdminErrorHttpStatus[CasAdminErrorCodes.INVALID_CURSOR]).toBe(400);
     expect(casAdminErrorHttpStatus[CasAdminErrorCodes.ROOT_REF_SNAPSHOT_CHANGED]).toBe(409);
     expect(casAdminErrorHttpStatus[CasAdminErrorCodes.FORBIDDEN_PLATFORM_ACTION]).toBe(403);
+    expect(casAdminErrorHttpStatus[CasAdminErrorCodes.INVALID_REQUEST]).toBe(400);
   });
 
   test("ETag round-trips integer revisions", () => {
@@ -76,7 +77,6 @@ describe("control-plane contract freezes", () => {
     expect(casAdminThreatModel.stackTakeover.lastMemberCannotBeDeleted).toBe(true);
     expect(casAdminThreatModel.issuerJwksSubstitution.neverFetchTokenSuppliedJwksUrl).toBe(true);
     expect(casAdminThreatModel.keyRotation.states).toEqual([
-      "pending",
       "active",
       "retiring",
       "revoked",

@@ -8,7 +8,9 @@
       "ES2024",
       "DOM"
     ],
-    "types": []
+    "types": [
+      "@cloudflare/workers-types"
+    ]
   },
   "include": [
     "src"

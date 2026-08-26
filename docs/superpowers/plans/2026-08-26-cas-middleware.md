@@ -526,9 +526,12 @@ After selecting a stack, members manage it through formal top-level admin APIs:
 
 Deleting a `refDomain` means retiring it for future writes, not deleting its
 history. Issuer key rotation supports overlap, proof of private-key possession,
-and explicit `pending`, `active`, `retiring`, and `revoked` states.
-Configuration mutations append immutable control-plane audit events with actor,
-action, target, timestamp, request/trace ID, and security context.
+and explicit `active`, `retiring`, and `revoked` states. (Task 2 amendment:
+`pending` is removed — the frozen contract has no pending-to-active transition
+endpoint, so possession proof on create is the activation gate and keys enter
+`active` directly.) Configuration mutations append immutable control-plane
+audit events with actor, action, target, timestamp, request/trace ID, and
+security context.
 
 ### Control-plane mutation contract
 
@@ -562,7 +565,8 @@ with unique `kid` and explicit lifecycle state. Domains are child resources
 whose retirement preserves historical audit. Stable control-plane errors
 include `ADMIN_AUTH_REQUIRED`, `STACK_MEMBERSHIP_REQUIRED`, `NOT_FOUND`,
 `LAST_MEMBER`, `ISSUER_CONFLICT`, `KEY_STATE_CONFLICT`, `DOMAIN_RETIRED`,
-`RATE_LIMITED`, and `SERVICE_UNAVAILABLE`, mapped consistently to HTTP status.
+`RATE_LIMITED`, `SERVICE_UNAVAILABLE`, and (Task 2 amendment) `INVALID_REQUEST`,
+mapped consistently to HTTP status.
 
 ### Before: current canonical CAS routes
 

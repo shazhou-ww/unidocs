@@ -21,9 +21,12 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/protocol-cas-admin": "workspace:*"
+    "@unidocs/protocol-cas-admin": "workspace:*",
+    "jose": "^6.2.10"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250817.0",
+    "miniflare": "5.20260811.1-alpha",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },

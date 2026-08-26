@@ -267,7 +267,16 @@ importers:
       '@unidocs/protocol-cas-admin':
         specifier: workspace:*
         version: link:../protocol-cas-admin
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      miniflare:
+        specifier: 5.20260811.1-alpha
+        version: 5.20260811.1-alpha
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

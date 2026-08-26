@@ -21,7 +21,7 @@ export const casAdminThreatModel = {
     oneActiveIssuerPerStack: true,
   },
   keyRotation: {
-    states: ["pending", "active", "retiring", "revoked"] as const,
+    states: ["active", "retiring", "revoked"] as const,
     requireProofOfPossessionOnRegister: true,
     overlappingActiveAndRetiringAllowed: true,
     revokedRejectedAfterPropagationBound: true,
