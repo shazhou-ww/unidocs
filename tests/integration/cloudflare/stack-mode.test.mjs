@@ -92,3 +92,40 @@ test("stack mode: markdown doc flow runs through the middleware", async () => {
   const internal = await fetch(`${runtime.urls.edge}/_internal/health`, { headers: { Connection: "close" } });
   expect(internal.status).toBe(404);
 }, 90_000);
+
+test("stack mode: docx apply/query also runs through the middleware", async () => {
+  runtime = await startLocalRuntime({
+    docTypes: ["docx"],
+    internalAuthMode: "stack",
+    ports: { ...PORTS, markdown: 36789, docx: 36788 },
+  });
+  const stackId = runtime.stackFixture.stackId;
+
+  const create = await gwFetch("/tenants/alice/docs/docx/", { method: "POST" });
+  const created = await create.json();
+  expect(create.ok, JSON.stringify(created)).toBe(true);
+  const { docId } = created;
+
+  const apply = await gwFetch(`/tenants/alice/docs/docx/${docId}/apply`, {
+    method: "POST",
+    body: JSON.stringify({
+      baseVersion: 1,
+      description: "append",
+      operations: [{ kind: "appendParagraph", payload: { text: "Stack docx" } }],
+    }),
+  });
+  const applied = await apply.json();
+  expect(apply.ok, JSON.stringify(applied)).toBe(true);
+  expect(applied).toMatchObject({ success: true, version: 2 });
+
+  const query = await gwFetch(`/tenants/alice/docs/docx/${docId}/query`, {
+    method: "POST",
+    body: JSON.stringify({ kind: "getText" }),
+  });
+  const result = await query.json();
+  expect(result).toMatchObject({ success: true, data: "Stack docx", version: 2 });
+
+  const retained = await runtime.storage.middlewareRetainedRoots(stackId, "alice");
+  expect(retained).toHaveLength(2);
+  expect(retained.every((row) => row.count === 1)).toBe(true);
+}, 90_000);
