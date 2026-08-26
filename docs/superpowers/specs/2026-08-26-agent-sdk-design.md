@@ -53,9 +53,12 @@ flowchart TB
 | 上（逻辑） | `AgentDefinition` = tools + instructions + maxIterations? + handlers? | 文档类型 | 5.2 |
 | 下（实现） | `DocumentAgentContext` —— 文档读写 | 平台 sdk | `protocol/src/types.ts:105`，已存在 |
 | 下（实现） | `LlmProvider` —— 模型访问 | agent-sdk 内置 Anthropic / OpenAI，可另加 | 5.4 |
-| 下（实现） | 事件字节流 → 平台响应对象 | 平台 sdk | 6.4 |
+| 下（实现） | `AgentSessionStore` —— 会话历史落盘 | 平台 sdk | 6.3 |
+| 下（实现） | 事件字节流 → 平台响应对象 | 平台 sdk | 7.4 |
 
-下边界之所以要拆成三个接口而不是一个，是因为它们的变化原因不同：换平台只影响文档读写和传输，换模型供应商只影响 `LlmProvider`。
+下边界之所以要拆成四个接口而不是一个，是因为它们的变化原因不同：换平台影响文档读写、会话存储和传输，换模型供应商只影响 `LlmProvider`。
+
+另有一个接口属于**内核**而非下边界，容易放错位置：`ContextPolicy`（历史裁剪，6.2）。判断"什么该留在上下文里"与运行环境无关，所以它在内核；"字节存到哪儿"才是下边界。两者的分界线是 `Uint8Array`。
 
 ### 1.4 今天这两层都不存在
 
@@ -68,13 +71,15 @@ flowchart TB
 
 ### 1.5 本次范围
 
-| 编号 | 内容 | 本次 |
-|---|---|---|
-| A | 建立两层边界：循环内核、工具分发、消息格式、大模型接口 | ✅ 做 |
-| B | 会话历史裁剪、会话持久化 | ❌ 下一期，本次只留接口位置（5.5） |
-| C | 事件流 + 客户端 SDK | ✅ 做 |
+| 编号 | 内容 | 本次 | 章节 |
+|---|---|---|---|
+| A | 建立两层边界：循环内核、工具分发、消息格式、大模型接口 | ✅ 做 | 3–5 |
+| B | 会话历史裁剪、会话持久化（含两个平台的实现） | ✅ 做 | 6 |
+| C | 事件流 + 客户端 SDK | ✅ 做 | 7–8 |
 
-验证方式：以 PSD 为样板走通全链路，并用 Azure 证明下边界确实可换（10 章 V8）。
+B 里唯一推迟的是**摘要压缩**（把最早若干轮交给模型总结）——接口支持，本次不实现，理由见 6.2.5。
+
+验证方式：以 PSD 为样板走通全链路，并用 Azure 证明下边界确实可换（11 章 V8、V11）。
 
 ---
 
@@ -467,34 +472,329 @@ export interface AgentCompletion {
 
 **随之删除：** `anthropic.ts` 的 `findImage`、`previewMeta`，以及 `OperatorConfig.renderToolResult` 整个钩子（`operator-do-agent.ts:25`）。P5 和 P6 一并解决。
 
-### 5.5 为下一期留的接口位置
+### 5.5 AgentSession 的完整构造签名
 
 ```ts
 export class AgentSession<TQuery, TOp> {
   constructor(definition: AgentDefinition<TQuery, TOp>, deps: {
-    readonly context: DocumentAgentContext<TQuery, TOp>;
-    readonly provider: LlmProvider;
-    readonly contextPolicy?: ContextPolicy;   // 本次只给恒等实现
+    readonly context: DocumentAgentContext<TQuery, TOp>;   // 下边界：文档读写
+    readonly provider: LlmProvider;                        // 下边界：模型访问
+    readonly contextPolicy?: ContextPolicy;                // 见第 6 章
+    readonly store?: AgentSessionStore;                    // 下边界：会话持久化，见第 6 章
   });
   run(instruction: string): AsyncIterable<AgentEvent>;
-  reset(): void;
-}
-
-export interface ContextPolicy {
-  /** 每次调大模型之前，把完整历史裁成实际要发送的消息 */
-  prepare(history: readonly AgentMessage[]): readonly AgentMessage[];
+  reset(): Promise<void>;
+  /** 从 store 恢复历史；进程/实例重建后由平台外壳调用一次 */
+  restore(): Promise<void>;
 }
 ```
 
-本次的默认实现是恒等函数，行为与今天完全一致。下一期做真正的历史裁剪（旧预览图降级成文字描述、长历史压缩）时不需要改动循环。
-
-会话持久化同理：因为历史已经是 SDK 自己的中立类型，下一期给 `AgentSession` 加 `serialize()` / `restore()` 即可，不影响本次接口。
+`contextPolicy` 和 `store` 都可以不传：不传 `contextPolicy` 用默认裁剪策略（6.2），不传 `store` 则会话只存在于内存里，行为与今天一致。
 
 ---
 
-## 6. 事件流
+## 6. 会话历史：裁剪与持久化
 
-### 6.1 事件表
+### 6.1 共同前提：历史是 SValue 可编码的
+
+裁剪和持久化处理的是同一个对象——`AgentSession` 的 `history`。因为 5.4 把它改成了 SDK 自己的中立类型，它整体是 SValue 可编码的：
+
+| 消息 | 字段 | 可编码性 |
+|---|---|---|
+| `user` | `content: string` | SPrimitive |
+| `assistant` | `text?`、`toolCalls?: [{id, name, arguments: JsonValue}]` | 全部是 JSON 值 |
+| `tool` | `callId`、`result: AgentToolResult` | `structuredContent` 是 JsonValue；`content` 里图片的 `blob` 是 SBlob，本身就是 SPrimitive |
+
+推论很关键：**图片在历史里只是一个 CAS hash，不是字节**（SBlob 走 `SBlobTag = 65_536` 编码，`protocol/src/types.ts:174`）。所以一段 25 轮、含 10 张预览图的会话，落盘只有几十 KB，而不是几十 MB。
+
+#### 6.1.1 必须用 SValue 编码，不能用 JSON
+
+这不是偏好，是硬性的：SBlob 的品牌是一个 Symbol（`protocol/src/types.ts:32` 的 `sBlobSignature`），而 `JSON.stringify` **丢弃 Symbol 键**。JSON 往返之后 `isSBlob()` 返回 false，图片引用变成一个普通的 `{hash}` 对象，再也认不出来。
+
+仓库对此的立场是明写在代码里的（`editor-do-svalue.ts:843`）：
+
+```ts
+if (encoded.refs.length > 0) {
+  return Response.json({ error: "This response requires the SValue media type" }, { status: 406 });
+}
+```
+
+含 SBlob 引用的值请求 JSON 输出，直接 406。
+
+值得注意的是，端口层现有的两个 `DeltaLog` 实现恰恰用的是 JSON——`ports-cf.ts:81` 的 `JSON.stringify(d.operations)` 和 `ports-pg.ts:104` 的同一句。**所以那两条路承载不了含 SBlob 的操作**，它们服务的是不带二进制引用的文档类型。真正跑 PSD 的 `editor-do-svalue.ts:305` 走的是 `encodeSValue`。会话历史含图片，必须跟后者。
+
+#### 6.1.2 三件互相独立的事
+
+设计这一章时最容易犯的错，是把下面三件事搅成一件：
+
+| 关注点 | 结论 | 依据 |
+|---|---|---|
+| 用什么格式序列化 | SValue CBOR | 6.1.1 |
+| 编出来的字节存哪儿 | 直接写进表的字节列 | 6.3 |
+| 历史引用的图片怎么不被回收 | 单独提交根引用，与字节存哪儿无关 | 6.4 |
+
+第二件和第三件是正交的：无论字节放在 SQLite、Postgres 还是别处，引用计数都得单独做；反过来，引用计数做好了也不会替你决定字节该放哪。
+
+### 6.2 裁剪
+
+#### 6.2.1 硬约束：不能拆散工具调用的配对
+
+Anthropic 的 Messages API 要求每个 `tool_use` 块在紧随其后的消息里有对应的 `tool_result`；OpenAI 要求每个 `tool_calls` 有对应的 `role:"tool"`。所以**裁剪的最小单位不是消息，是一轮**：
+
+```
+一轮 = 一条 assistant 消息（含 N 个 toolCalls）
+     + 对应的 N 条 tool 消息
+```
+
+这条约束直接排除了「保留最近 K 条消息」这种最直觉的写法——它会切出孤立的 `tool_result`，请求会被 API 拒绝。
+
+#### 6.2.2 三级策略，从轻到重
+
+```mermaid
+flowchart TB
+    IN["完整历史"] --> L1["第 1 级：图片降级<br/>只保留最近 N 张图片，默认 2<br/>更早的 image part 就地换成一行文字<br/>preview 1024x768 region=... v7"]
+    L1 --> C1{"还超预算吗"}
+    C1 -->|否| OUT["发给模型 + 替换 history"]
+    C1 -->|是| L2["第 2 级：大结果降级<br/>structuredContent 超过 M 字节的<br/>只留最近一份，更早的换成<br/>结果过大已省略，需要时请重新查询"]
+    L2 --> C2{"还超预算吗"}
+    C2 -->|否| OUT
+    C2 -->|是| L3["第 3 级：整轮丢弃<br/>从最早的一轮开始整轮丢<br/>永远保留系统提示词和第一条用户指令"]
+    L3 --> OUT
+```
+
+前两级是**就地替换**，不改变消息数量，因此不可能破坏 6.2.1 的配对；只有第 3 级会删消息，而它以「轮」为单位。
+
+第 1 级用的那行文字，正是今天 `cloudflare-psd/src/anthropic.ts:82` 的 `previewMeta` 生成的内容。它从大模型适配层搬到裁剪策略里——这才是它该在的位置：保留多少张图是上下文管理的决定，不是协议翻译的决定。
+
+第 2 级针对的是 PSD 的 `getDoc`——它返回整棵图层树，一次就可能几十 KB。
+
+#### 6.2.3 预算怎么算
+
+`agent-sdk` 不引入 tokenizer 依赖（那会带来一个几 MB 的词表，且各家模型不同）。用估算：
+
+| 内容 | 估算方式 |
+|---|---|
+| 文字 | UTF-8 字节数 ÷ 3.5 |
+| 图片 | 宽 × 高 ÷ 750 |
+
+预算默认取模型上下文窗口的 60%，余量留给回复和估算误差。估算不准不会导致错误，只会裁多或裁少；真的超限时 provider 会报错，此时按错误再裁一次并重试一次，仍失败则以 `run-error` 结束。
+
+#### 6.2.4 一个明确的取舍：裁剪就地生效
+
+`ContextPolicy.prepare` 的返回值**直接替换 `AgentSession` 的 history**，不是只用于本次发送。
+
+| | 就地生效（选定） | 只用于发送 |
+|---|---|---|
+| 历史体量 | 有界 | 无界增长 |
+| 持久化 | 存的就是当前历史，天然有界 | 要么存完整历史（无界），要么存裁剪后的（与发送的不一致） |
+| 可预测性 | 发给模型的 = 存下来的 = 恢复出来的 | 三者不一致，出问题难排查 |
+| 代价 | 降级不可逆，旧预览图找不回来 | 理论上可找回 |
+
+选就地生效。降级本来就是有损的，保留完整历史只是把同一份损失往后推，却换来无界增长和三份不一致的状态。
+
+#### 6.2.5 接口
+
+```ts
+export interface ContextPolicy {
+  prepare(history: readonly AgentMessage[]): Promise<readonly AgentMessage[]>;
+}
+
+export function createDefaultContextPolicy(opts?: {
+  maxImages?: number;        // 默认 2
+  maxResultBytes?: number;   // 默认 8192
+  budgetTokens?: number;     // 默认 120_000
+}): ContextPolicy;
+```
+
+`prepare` 是异步的，为的是给「摘要压缩」留路——把最早若干轮交给模型总结成一段文字需要额外调一次模型，所以 `ContextPolicy` 实现可以在构造时拿到 `LlmProvider`。**本次不实现摘要压缩**，只保证接口不必回头改。
+
+### 6.3 持久化
+
+#### 6.3.1 下边界的第四个接口
+
+持久化回答的是「字节存哪儿」，属于实现抽象，所以它是下边界的接口，与 `DocumentAgentContext` 平级。
+
+```ts
+export interface AgentSessionStore {
+  load(): Promise<{ bytes: Uint8Array; token: string } | null>;
+  /** token 传 null 表示"我认为它还不存在"。不匹配时抛 SessionStoreConflictError */
+  save(bytes: Uint8Array, token: string | null): Promise<string>;
+  clear(): Promise<void>;
+}
+```
+
+三点说明：
+
+- **存字节，不存对象。** `agent-sdk` 负责 `encodeSValue(history)`，平台只管把一串字节按 sessionId 存起来。平台实现不需要理解消息结构，消息格式演进时也不用跟着改。
+- **带条件写。** `token` 是一个自增序号，两个平台都一样。这与仓库现有纪律一致——`ports.ts` 对 `DeltaLog.append` 的要求原文是 "Enforce it structurally (primary key / etag / conditional insert), not with a read-then-write check"。
+- **按会话作用域。** store 实例在构造时就绑定了 sessionId，接口上不再出现它。与 `ports.ts` 开头 "Every port in this module is scoped to one Doc session" 一致。
+
+#### 6.3.2 为什么需要条件写：两个平台的并发模型不同
+
+| | Cloudflare | Azure |
+|---|---|---|
+| 承载 | 一个 sessionId 对应一个 OperatorDO 实例 | 无状态多副本，任一副本都可能处理请求 |
+| 并发 | DO 单线程，天然串行 | 两个并发 run 可能落在不同副本上 |
+| 条件写 | 恒成立，`token` 只是形式 | 真正起作用 |
+
+`ports.ts:44-63` 已经为 `DeltaLog.remove` 点明过这个差异："Cloudflare has one (the Durable Object's `#requestTail`), Azure's stateless replicas do not"。会话历史面对的是完全相同的问题。
+
+除条件写外还需要一条约束：**同一会话同时只允许一个 run**。CF 上由 DO 天然保证；Azure 上靠条件写检测冲突后拒绝第二个 run，返回明确错误，而不是让两段对话互相覆盖。今天客户端其实已经在做这件事（`web-psd/src/main.ts` 的 `chatBusy` 标志），但那是建议而非保证。
+
+#### 6.3.3 字节直接进表的字节列
+
+`encodeSValue` 产出的就是 `Uint8Array`，写进 SQLite 的 `BLOB` 列或 Postgres 的 `BYTEA` 列即可，读回来 `decodeSValue` 就把 SBlob 的品牌重建了。**不需要绕道 CAS。**
+
+仓库已有现成先例——`editor-do-svalue.ts:123-132` 的暂存表就是这么存 SValue 字节的：
+
+```sql
+CREATE TABLE IF NOT EXISTS svalue_pending (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  ...
+  delta_bytes    BLOB NOT NULL,
+  snapshot_bytes BLOB
+)
+```
+
+**曾经考虑过、但不采用的做法：** 把历史本身做成一个 CAS 节点（`makeSBlob({data, contentType: SValueContentType})`），表里只存 hash。它的吸引力在于 `sblob-context.ts:145` 会自动从 CBOR 里提取内部 refs 并逐个 lease，引用计数顺带就做了。不采用的理由：多一次 CAS 往返，恢复时多一次读，而内容寻址的去重收益接近零——每轮对话历史都不同，永远不会命中已有节点。引用计数改为显式提交（6.4），只多几行代码。
+
+#### 6.3.4 Cloudflare 实现
+
+DO 的 SQLite 存储，与 Editor DO 同一做法（`editor-do-svalue.ts:107` 起用的就是 `ctx.storage.sql.exec`）：
+
+```sql
+CREATE TABLE IF NOT EXISTS agent_session (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  seq       INTEGER NOT NULL,
+  bytes     BLOB    NOT NULL
+);
+```
+
+`token` 就是 `seq` 的字符串形式。`save` 是一条 `UPDATE ... WHERE seq = ?`（首次则 `INSERT`），条件写由主键和 WHERE 结构性保证，不做读-改-写。
+
+用 SQLite 而不是 DO 的 KV（`ctx.storage.put`）：KV 单值上限 128KB，而裁剪后的历史以模型上下文窗口的 60% 为目标，会顶破；SQLite 的 BLOB 列没有这个限制。Editor DO 早已因为同样的原因走 SQLite。
+
+#### 6.3.5 Azure 实现
+
+Postgres 一张表，与 `PgDeltaLog` 同一个库、同一套 `Queryable` 抽象（`ports-pg.ts:28`）：
+
+```sql
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  doc_type   TEXT    NOT NULL,
+  session_id TEXT    NOT NULL,
+  seq        INTEGER NOT NULL,
+  bytes      BYTEA   NOT NULL,
+  PRIMARY KEY (doc_type, session_id)
+);
+```
+
+`save` 是 `UPDATE ... WHERE seq = $expected`，受影响行数为 0 即冲突——与 `PgDeltaLog.append`（`ports-pg.ts:89-111`）完全相同的写法，连错误处理都能照抄。
+
+用 Postgres 而不是 Azure Blob：会话历史需要的是条件写，Postgres 一条 `UPDATE ... WHERE` 就够，而 Blob 要走 ETag 的 `If-Match`，多一层往返和一套单独的错误映射。既然 Azure 侧已经有 Postgres 连接池和事务抽象（`PgUnitOfWork`，`ports-pg.ts:270`），复用它比新引一条 Blob 路径简单。Blob 在这套架构里的位置是放大对象（CAS 内容、文档快照），而会话历史几十 KB，不属于那一类。
+
+#### 6.3.6 两个平台对照
+
+| | Cloudflare | Azure |
+|---|---|---|
+| 实现类 | `DoAgentSessionStore` | `PgAgentSessionStore` |
+| 落在 | `packages/cloudflare-sdk/src/agent-store-do.ts` | `packages/azure-sdk/src/agent-store-pg.ts` |
+| 介质 | DO SQLite `BLOB` 列 | Postgres `BYTEA` 列 |
+| 条件写凭据 | 自增 `seq` | 自增 `seq` |
+| 条件写机制 | `UPDATE ... WHERE seq = ?` | `UPDATE ... WHERE seq = $n`，看 `rowCount` |
+| 参照的现有代码 | `editor-do-svalue.ts:107,123` | `ports-pg.ts:89-111` `PgDeltaLog.append` |
+| 本地测试 | Miniflare | Azurite + Postgres（`pnpm azure:up`） |
+
+两边的凭据和机制现在是同构的——这本身是个好信号：说明 `AgentSessionStore` 这个接口没有偏向任何一方。
+
+#### 6.3.7 共享契约测试
+
+`doctype-server-common/src/testing/port-contract.ts` 已经立了「一份契约测试，两个平台各跑一遍」的先例。`agent-sdk` 导出同样形状的 `agentSessionStoreContract(makeStore)`，覆盖：
+
+- 空 store 的 `load()` 返回 null
+- `save(bytes, null)` 之后 `load()` 拿回同样的字节
+- 用过期 token 调 `save` 抛 `SessionStoreConflictError`
+- `clear()` 之后 `load()` 返回 null
+- 两个并发 `save` 只有一个成功
+- **存进去的字节含 SBlob 时，读回来 `isSBlob()` 仍为 true**（这条是为了钉死 6.1.1：任何一天有人把实现悄悄换成 JSON，这条会红）
+
+### 6.4 引用保活：让历史里的图片不被回收
+
+这是与「字节存哪儿」正交的一件事。历史里的图片是 CAS hash；如果没有人声明持有它，CAS 会把它回收，历史就烂了。
+
+仓库现有的做法是显式提交**根引用**（`session.ts:633-643`）：
+
+```ts
+await commitRootRefsOrRollback(
+  cas,
+  `apply:${sessionId}:${nextVersion}`,   // requestId，用于幂等
+  refs,                                   // CasReferences = Record<hash, 增量>
+  () => rollbackTheDeltaWeJustWrote(),
+);
+```
+
+`CasReferences`（`protocol/src/types.ts:24`）是**增量**而不是绝对集合，所以释放旧引用就是提交负数。
+
+会话历史照此办理，只是换一个 requestId 前缀：
+
+```ts
+const { data, refs } = encodeSValueWithRefs(history);
+// changes：新历史引用的 hash 各 +1，上一版引用但新版不再引用的各 -1
+await commitRootRefsOrRollback(
+  cas,
+  `agent:${sessionId}:${seq}`,
+  diffRefs(previousRefs, refs),
+  () => store.save(previousBytes, seq),   // 失败则回滚到上一版
+);
+```
+
+顺序与 `session.ts` 的写入顺序同构：**先落字节，再提交引用，引用失败就回滚字节**。反过来会在崩溃窗口里留下"引用已加、字节没写"的孤儿引用。
+
+一个值得留意的取舍：会话历史持有的引用与文档持有的引用是**独立的两套**（前缀 `agent:` 与 `apply:`）。所以一个图层被删掉之后，文档不再引用那张预览图，但对话历史仍然引用着它——用户往回翻聊天记录时那张图还看得见。代价是这些像素会多留一段时间，直到裁剪把那条消息降级成文字（6.2.2 第 1 级），引用随之释放。
+
+### 6.5 写入时机
+
+选择：**每次 run 结束写一次，中途不写。**
+
+理由：run 中途崩溃时，文档改动已经独立落在 Editor 里（那是另一套持久化，不受影响），丢的只是对话上下文；而在「不重放」的设计下（7.3），客户端本来就要靠 `reconcile()` 拿最终状态。为一个罕见路径付 25 次写的代价不划算。
+
+留一个可配置的中途检查点 `checkpointEveryTurns`，**默认关闭**。PSD 这种单次 run 长达几分钟的场景如果实测体验不好，打开即可，不用改结构。
+
+### 6.6 恢复时的防御性兜底
+
+6.4 的根引用**应当**保证历史里的图片一直在。但引用计数系统总有失灵的可能——迁移脚本、手工清理、跨区域复制延迟。恢复时 `readBlob` 一旦失败：
+
+**必须降级，不能抛异常。** 否则单个 blob 丢失会让整个会话永久打不开，而它本可以只是少一张图。
+
+```mermaid
+flowchart TB
+    R["restore：从 store 读字节"] --> D["decodeSValue 得到 history"]
+    D --> S["逐条扫描 image content part"]
+    S --> T{"readBlob 成功吗"}
+    T -->|成功| K["保留为 image part"]
+    T -->|失败| G["就地降级成文字<br/>preview 已失效，需要时请重新查询"]
+    K --> OK["会话可用"]
+    G --> OK
+```
+
+裁剪策略保证了最多只有 N 张（默认 2）图片还是 image part，更早的早已降级成文字，所以需要保活的 hash 极少，失效的影响面也小。这是 6.2 和 6.4 互相支撑的地方。
+
+### 6.7 与第 1 章两层边界的对应
+
+| 组件 | 属于哪层 | 由谁实现 |
+|---|---|---|
+| `ContextPolicy`（什么该留在上下文里） | 内核（逻辑） | `agent-sdk` 提供默认实现，文档类型只调参数 |
+| `encodeSValue(history)`（序列化格式） | 内核 | `agent-sdk` |
+| 根引用增量的计算（`diffRefs`） | 内核 | `agent-sdk` |
+| `AgentSessionStore`（字节存哪儿） | 下边界（实现） | 平台 sdk |
+| `CasRootRefGateway`（引用提交到哪儿） | 下边界（实现） | 平台 sdk，已存在于 `cas-client` |
+
+分界线就是 `Uint8Array` 和 `CasReferences`：**什么该留在上下文里、编成什么格式、引用增量是多少**都是与平台无关的判断，属于内核；**字节和引用最终落到哪个存储**是与平台强相关的做法，属于下边界。
+
+---
+
+## 7. 事件流
+
+### 7.1 事件表
 
 ```ts
 export type AgentEvent =
@@ -512,7 +812,7 @@ export type AgentEvent =
 1. **`tool-result` 只带一句摘要，不带完整数据。** 工具结果可能是一整棵图层树或一张预览图，客户端不需要它 —— 需要的是模型，而模型在服务端已经拿到了。这样每个事件都很小，不需要分片。
 2. **`document-changed` 单独成一个事件。** 每次 `apply` 成功就发一次，客户端可以立刻调 `reconcile()` 同步画布，不必等整个 run 结束。PSD 跑 25 轮时，用户能看到画布逐步变化，而不是最后一次性跳变。
 
-### 6.2 一次 run 的时序
+### 7.2 一次 run 的时序
 
 ```mermaid
 sequenceDiagram
@@ -550,7 +850,7 @@ sequenceDiagram
     S-->>B: 事件 run-end
 ```
 
-### 6.3 断线的语义
+### 7.3 断线的语义
 
 不做重放。断线时：
 
@@ -559,7 +859,7 @@ sequenceDiagram
 
 所以「保持连接」在这个设计下的实际含义是：心跳保活 + 断线告知。不是断线续传。
 
-### 6.4 传输链路
+### 7.4 传输链路
 
 ```mermaid
 flowchart LR
@@ -590,7 +890,7 @@ data: {"callId":"toolu_01","name":"query_getPreview","arguments":{}}
 
 每 15 秒发一次注释帧作为心跳，防止中间代理判定空闲断连。
 
-### 6.5 向后兼容
+### 7.5 向后兼容
 
 `/run` 按 `Accept` 头分流：
 
@@ -610,9 +910,9 @@ data: {"callId":"toolu_01","name":"query_getPreview","arguments":{}}
 
 ---
 
-## 7. 客户端设计
+## 8. 客户端设计
 
-### 7.1 psd-client 的现状拆分
+### 8.1 psd-client 的现状拆分
 
 `packages/psd-client/src/doc-session.ts`（261 行）已经是一个通用的乐观并发同步引擎：本地立即 apply、待发队列、`opId` 去重重投、409 重整、`reconcile()`。它对 PSD 的耦合只有三处，都可以参数化：
 
@@ -625,7 +925,7 @@ data: {"callId":"toolu_01","name":"query_getPreview","arguments":{}}
 
 剩下的 `render-client` / `render-core` / `render-worker` / `viewport` / `cas-blob-store`（596 行）才是 PSD 专有的，留在 `psd-client`。
 
-### 7.2 类图
+### 8.2 类图
 
 ```mermaid
 classDiagram
@@ -668,7 +968,7 @@ classDiagram
     DocSession --> RenderLike : 可选依赖
 ```
 
-### 7.3 接口
+### 8.3 接口
 
 ```ts
 export class AgentChannel {
@@ -705,7 +1005,7 @@ export class DocSession<TDoc, TOp> {
 
 **为什么不自动重连：** 因为不做重放，重连也拿不到断线期间的事件。自动重连只会制造"好像还连着"的假象。断线就如实告诉调用方。
 
-### 7.4 两者配合
+### 8.4 两者配合
 
 ```ts
 channel.run(text, {
@@ -720,7 +1020,7 @@ channel.run(text, {
 
 ---
 
-## 8. PSD 迁移改动清单
+## 9. PSD 迁移改动清单
 
 | 文件 | 改动 |
 |---|---|
@@ -734,13 +1034,16 @@ channel.run(text, {
 | `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 约 90 行，只剩 DurableObject 外壳、身份校验、把事件流包成 Response |
 | `doctype-server-common/src/operator.ts` | 删除（177 行死代码） |
 | `azure-sdk/src/local-editor.ts:103` | 删掉 501 占位，改为真实的 `DocumentAgentContext` 实现 |
+| `cloudflare-sdk/src/agent-store-do.ts` | 新增：`DoAgentSessionStore`，DO SQLite `BLOB` 列 + `seq` 条件写（6.3.4） |
+| `azure-sdk/src/agent-store-pg.ts` | 新增：`PgAgentSessionStore`，Postgres `BYTEA` 列 + `seq` 条件写，写法照搬 `ports-pg.ts:89-111`（6.3.5） |
+| `azure-sdk` 的建表脚本 | 新增 `agent_sessions` 表；`migrate.ts` 加一版 |
 | `psd-client/src/doc-session.ts` | 移到 `client-sdk`，泛型化 |
 | `psd-client/src/index.ts` | 重新导出 `client-sdk` 的 `DocSession`，并绑定 PSD 的 `applyLocal` / `reload` |
 | `web-psd/src/main.ts:357-397` | 改用 `AgentChannel`，展示逐步进度 |
 
 ---
 
-## 9. 实施顺序
+## 10. 实施顺序
 
 ```mermaid
 flowchart TB
@@ -748,19 +1051,22 @@ flowchart TB
     S2 --> S3["3. psd 图片改走 SBlob<br/>agent.ts 缩到 6 行"]
     S3 --> S4["4. markdown / docx 同样收敛"]
     S4 --> S5["5. 删除 doctype-server-common/operator.ts"]
-    S5 --> S6["6. 事件流 + SSE 编码<br/>按 Accept 头分流"]
-    S6 --> S7["7. client-sdk：DocSession 泛型化 + AgentChannel"]
-    S7 --> S8["8. web-psd 接上流式"]
-    S8 --> S9["9. azure-sdk 实现 DocumentAgentContext<br/>去掉 501"]
+    S5 --> S6["6. ContextPolicy 默认裁剪策略<br/>图片降级 / 大结果降级 / 整轮丢弃"]
+    S6 --> S7["7. AgentSessionStore 接口 + 契约测试<br/>CF 的 DO SQLite 实现"]
+    S7 --> S8["8. 根引用保活<br/>diffRefs + commitRootRefsOrRollback"]
+    S8 --> S9["9. 事件流 + SSE 编码<br/>按 Accept 头分流"]
+    S9 --> S10["10. client-sdk：DocSession 泛型化 + AgentChannel"]
+    S10 --> S11["11. web-psd 接上流式"]
+    S11 --> S12["12. azure-sdk 实现 DocumentAgentContext + PgAgentSessionStore<br/>去掉 501"]
 ```
 
-第 1-5 步是 A 块（抽取），第 6-8 步是 C 块（流式），第 9 步是「平台无关」这个目标的真正证明。
+第 1-5 步是 A 块（两层边界），第 6-8 步是 B 块（裁剪与持久化），第 9-11 步是 C 块（流式），第 12 步是「平台无关」这个目标的真正证明——它同时验证下边界的两个接口（`DocumentAgentContext` 和 `AgentSessionStore`）都确实可换。
 
 每一步结束时全仓库测试必须通过，任何一步都可以独立成为一个提交。
 
 ---
 
-## 10. 验收标准
+## 11. 验收标准
 
 | # | 标准 | 验证方式 |
 |---|---|---|
@@ -774,25 +1080,31 @@ flowchart TB
 | V8 | 同一条指令在 Azure 栈跑通 | `pnpm test:azure` 新增用例 |
 | V9 | docx 的三个图片工具改写成 handler 后行为不变 | 现有 `doctype-docx/tests/agent.test.ts` 已覆盖 `getImage` / `insertImage`，全绿即可 |
 | V10 | handler 里的 `apply` 与自动分发共用同一套乐观锁 | 契约测试：先在 handler 里 `applyOne` 而未先 `query`，断言被拒绝并提示先查询 |
+| V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.7） |
+| V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：存进去含 SBlob 的历史，读回来 `isSBlob()` 仍为 true。这条钉死"不能改用 JSON"（6.1.1） |
+| V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
+| V14 | 长会话不再无限增长 | PSD 跑满 25 轮后，`history` 的编码字节数低于设定预算，且图片 part 不超过 `maxImages` |
+| V15 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
+| V16 | 历史引用的图片不被回收 | 跑一轮产生预览图 → 删掉对应图层并 apply → 断言历史里那张图仍可 `readBlob`（6.4 的根引用生效） |
 
-V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。
+V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。V11 是它在存储维度上的对应判据。
 
 ---
 
-## 11. 不在本次范围
+## 12. 不在本次范围
 
 | 项 | 原因 |
 |---|---|
-| 会话历史裁剪 | 下一期（B 块），本次留 `ContextPolicy` 接口位置 |
-| 会话持久化 | 同上 |
+| 摘要压缩（把最早若干轮交给模型总结） | 需要额外一次模型调用，成本和质量都要实测才好定参数。接口已支持（`prepare` 是 async），前三级裁剪先跑一段时间看是否够用 |
 | 逐字输出 | 需要 provider 支持流式并处理 `input_json_delta` 增量拼接，测试成本高，本次不做 |
-| 事件重放 / 断线续传 | 需要事件持久化，会把 B 块提前拖进来 |
+| 事件重放 / 断线续传 | 需要把**事件序列**也持久化，那是与会话历史不同的一份数据（历史是给模型看的，事件是给界面看的）。7.3 已选定不重放 |
+| 跨会话的长期记忆 | 本次的持久化只保证"同一个文档的对话可以续上"，不涉及跨文档、跨会话的知识沉淀 |
 | 中途打断 / 追加指令 | 需要额外的控制通道，且「已经 apply 的操作要不要回滚」语义需要单独设计 |
 | 数据分片 | 单向进度流下每个事件都很小，SSE 帧天然分帧，不需要 |
 
 ---
 
-## 12. 风险
+## 13. 风险
 
 | # | 风险 | 应对 |
 |---|---|---|
@@ -804,13 +1116,18 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 
 ---
 
-## 13. 已确认的设计决定
+## 14. 已确认的设计决定
 
 | 决定 | 结论 |
 |---|---|
 | 整体形状 | 一个内核 + 两层抽象边界：上边界抽掉文档类型差异，下边界抽掉运行环境差异。新增文档类型、新增平台、新增模型供应商三种扩展互不相交，且都不改内核 |
 | 下边界为何拆成三个接口 | 变化原因不同：换平台影响文档读写和传输，换模型供应商只影响 `LlmProvider` |
-| 本次范围 | A + C，B 只留接口位置 |
+| 本次范围 | A + B + C，B 里只推迟摘要压缩 |
+| 会话历史的序列化格式 | SValue CBOR，**不能用 JSON**——SBlob 的品牌是 Symbol，`JSON.stringify` 会丢。端口层现有的两个 `DeltaLog` 恰恰用了 JSON，所以承载不了含 SBlob 的值 |
+| 字节存哪儿 | 直接进表的字节列：CF 用 DO SQLite `BLOB`，Azure 用 Postgres `BYTEA`。不绕 CAS——历史每轮都变，内容寻址去重收益接近零 |
+| 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
+| 裁剪的最小单位 | 一轮（assistant + 它全部的 tool 消息），不是一条消息——否则会切出孤立的 `tool_result`，被 API 拒绝 |
+| 裁剪是否就地生效 | 是。返回值直接替换 history，让"发给模型的 = 存下来的 = 恢复出来的" |
 | 图片通道 | 协议层归一，统一走 SBlob content part；删除 `$image` 和 `renderToolResult` |
 | 事件流野心 | 单向进度流，不重放 |
 | 客户端范围 | agent 通道 + 泛型化的 DocSession |
