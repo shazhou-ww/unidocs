@@ -5,6 +5,9 @@ param location string = resourceGroup().location
 @description('镜像 tag，由部署脚本传入（git short sha）。这里只有 migrateJob 用得到。')
 param imageTag string
 
+@description('要建库与迁移 Job 的 doc type 列表，由部署脚本从各包的 azure.service.json 展开。')
+param docTypes array
+
 param pgAdminUser string = 'unidocs'
 
 @secure()
@@ -57,15 +60,10 @@ resource gatewayDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@20
   name: 'unidocs_gateway'
 }
 
-resource markdownDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+resource docDatabases 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = [for dt in docTypes: {
   parent: pg
-  name: 'unidocs_markdown'
-}
-
-resource docxDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
-  parent: pg
-  name: 'unidocs_docx'
-}
+  name: 'unidocs_${dt}'
+}]
 
 // 设计 §4.4：显式的 dev 期妥协。0.0.0.0-0.0.0.0 是 Azure 约定的
 // "允许 Azure 服务和资源访问此服务器" —— 放行整个 Azure 平台的出站
@@ -88,8 +86,6 @@ resource pgFirewall 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@202
 // 也不把它自己 output 出去：那会把明文密码写进部署历史。
 var databaseOrigin = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.fullyQualifiedDomainName}:5432'
 var gatewayDatabaseUrl = '${databaseOrigin}/${gatewayDatabase.name}?sslmode=require'
-var markdownDatabaseUrl = '${databaseOrigin}/${markdownDatabase.name}?sslmode=require'
-var docxDatabaseUrl = '${databaseOrigin}/${docxDatabase.name}?sslmode=require'
 
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: 'unidocs-env'
@@ -125,35 +121,19 @@ module gatewayMigrateJob 'migrate-job.bicep' = {
   }
 }
 
-module markdownMigrateJob 'migrate-job.bicep' = {
-  name: 'markdown-migrate-job'
+module docMigrateJobs 'migrate-job.bicep' = [for dt in docTypes: {
+  name: '${dt}-migrate-job'
   params: {
-    name: 'caj-unidocs-markdown-migrate'
+    name: 'caj-unidocs-${dt}-migrate'
     location: location
     environmentId: containerEnv.id
     identityId: identity.id
     acrLoginServer: acr.properties.loginServer
     image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
-    databaseUrl: markdownDatabaseUrl
+    databaseUrl: '${databaseOrigin}/unidocs_${dt}?sslmode=require'
   }
-}
-
-module docxMigrateJob 'migrate-job.bicep' = {
-  name: 'docx-migrate-job'
-  params: {
-    name: 'caj-unidocs-docx-migrate'
-    location: location
-    environmentId: containerEnv.id
-    identityId: identity.id
-    acrLoginServer: acr.properties.loginServer
-    image: '${acr.properties.loginServer}/unidocs/azure-migrate:${imageTag}'
-    databaseUrl: docxDatabaseUrl
-  }
-}
+}]
 
 output postgresFqdn string = pg.properties.fullyQualifiedDomainName
-output migrateJobNames array = [
-  gatewayMigrateJob.outputs.name
-  markdownMigrateJob.outputs.name
-  docxMigrateJob.outputs.name
-]
+output gatewayMigrateJobName string = gatewayMigrateJob.outputs.name
+output docMigrateJobNames array = [for (dt, i) in docTypes: docMigrateJobs[i].outputs.name]
