@@ -17,7 +17,13 @@
   ],
   "references": [
     {
+      "path": "../cas-control-plane"
+    },
+    {
       "path": "../protocol-cas"
+    },
+    {
+      "path": "../service-auth"
     }
   ]
 }

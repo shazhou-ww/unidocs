@@ -337,13 +337,22 @@ importers:
 
   packages/cas-server-cloudflare:
     dependencies:
+      '@unidocs/cas-control-plane':
+        specifier: workspace:*
+        version: link:../cas-control-plane
       '@unidocs/protocol-cas':
         specifier: workspace:*
         version: link:../protocol-cas
+      '@unidocs/service-auth':
+        specifier: workspace:*
+        version: link:../service-auth
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
         version: 4.20260702.1
+      miniflare:
+        specifier: 5.20260811.1-alpha
+        version: 5.20260811.1-alpha
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

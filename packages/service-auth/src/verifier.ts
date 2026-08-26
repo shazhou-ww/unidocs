@@ -6,6 +6,7 @@ import {
   CapabilityVersion,
   MaximumCapabilityClockSkewSeconds,
   MaximumCapabilityLifetimeSeconds,
+  validateRefDomainClaim,
 } from "./claims.js";
 import type {
   CapabilityClaims,
@@ -38,6 +39,7 @@ const AllowedClaimNames = new Set([
   "tenantId",
   "sessionId",
   "permissions",
+  "refDomain",
 ]);
 
 export interface CapabilityVerifierConfig {
@@ -170,6 +172,12 @@ export class CapabilityVerifier {
       invalidToken("Capability session ID is invalid");
     }
 
+    const refDomain = payload.refDomain;
+    if (refDomain !== undefined) {
+      const domainError = validateRefDomainClaim(refDomain);
+      if (domainError) invalidToken(`Capability refDomain is invalid: ${domainError}`);
+    }
+
     const issuedAt = requireNumericDate(payload.iat, "issued-at");
     const notBefore = requireNumericDate(payload.nbf, "not-before");
     const expiresAt = requireNumericDate(payload.exp, "expiration");
@@ -206,6 +214,15 @@ export class CapabilityVerifier {
           "Session capabilities cannot contain CAS administration permission",
         );
       }
+      if (
+        (parsed.kind === "cas:usage:read" || parsed.kind === "cas:gc:trigger")
+        && sessionId !== undefined
+      ) {
+        throw new CapabilityAuthorizationError(
+          "insufficient_permission",
+          "Session capabilities cannot contain tenant CAS usage or GC permissions",
+        );
+      }
       if (!this.#allowedPermissionKinds.has(parsed.kind)) {
         throw new CapabilityAuthorizationError(
           "insufficient_permission",
@@ -230,6 +247,7 @@ export class CapabilityVerifier {
       jti: payload.jti,
       tenantId: payload.tenantId,
       ...(sessionId === undefined ? {} : { sessionId }),
+      ...(refDomain === undefined ? {} : { refDomain }),
       permissions: Object.freeze(permissions),
     }) as CapabilityClaims;
   }

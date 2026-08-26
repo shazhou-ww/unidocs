@@ -1462,52 +1462,64 @@ the legacy surface untouched.
 
 ### Task 4: Add trusted stack and domain authorization
 
-- [ ] Add tenant JWT issuer configuration mapping `(iss, kid)` verification to a
+- [x] Add tenant JWT issuer configuration mapping `(iss, kid)` verification to a
   stable `stackId`, expected CAS audience, allowed algorithms, and
   registered `refDomain` values. Enforce one unique issuer per stack and
   multiple rotation keys selected by `kid`.
-- [ ] Select issuer and key only from static or controlled configuration; never
+- [x] Select issuer and key only from static or controlled configuration; never
   trust or dynamically fetch an issuer or JWKS URL supplied by the token.
-- [ ] Extend capability claim/input types, central stack-authority adapters,
+- [~] Extend capability claim/input types, central stack-authority adapters,
   service-to-CAS delegation, `CasClient` configuration, CAS worker, and DO
-  forwarding with stack, tenant, and signed `refDomain` context.
-- [ ] Remove Gateway/doc subject-prefix interpretation from CAS; treat `sub` as
+  forwarding with stack, tenant, and signed `refDomain` context. (Claims,
+  issuer, verifier, and the canonical worker are done; the legacy-surface
+  `CasClient`/delegation/DO forwarding migrate in Task 8 and Task 5/6.)
+- [x] Remove Gateway/doc subject-prefix interpretation from CAS; treat `sub` as
   opaque audit identity and authorize only verified issuer/stack, tenant,
-  exact operation permission, and domain claims.
-- [ ] Replace tenant `cas:admin` with `cas:usage:read` and `cas:gc:trigger` and
+  exact operation permission, and domain claims. (Canonical worker; the
+  legacy runtime keeps its checks until Task 10 retires it.)
+- [x] Replace tenant `cas:admin` with `cas:usage:read` and `cas:gc:trigger` and
   encode exact permission matrices in protocol/policy tests.
-- [ ] Implement the controlled authority-repository lookup, 30-second cache,
+- [x] Implement the controlled authority-repository lookup, 30-second cache,
   60-second hard stale/revocation bound, fail-closed behavior, telemetry,
   and static-config bootstrap/cutover described above.
-- [ ] Keep tenant JWT verification unavailable to `/admin`; admin OIDC
+- [x] Keep tenant JWT verification unavailable to `/admin`; admin OIDC
       session/membership verification is implemented only by
       `cas-admin-webui` and `cas-control-plane`.
-- [ ] Add a validated `refDomain` claim to the CAS capability shape used by
+- [x] Add a validated `refDomain` claim to the CAS capability shape used by
   Root Refs writes.
-- [ ] Register stable domain names at capability issuance; do not derive them
-      from instance IDs or caller input.
-- [ ] Update Cloudflare SDK and applicable Azure/other runtime adapters to
+- [~] Register stable domain names at capability issuance; do not derive them
+      from instance IDs or caller input. (Registry + worker enforce
+      registration; the gateway's per-doc-type domain issuance is wired with
+      stack onboarding in Task 9.)
+- [~] Update Cloudflare SDK and applicable Azure/other runtime adapters to
   forward the request-bounded delegated capability for Root Refs instead of
-  using `CAS_ACCESS_KEY` as the only credential.
-- [ ] Require issuer-derived stack equality and token tenant equality on every
+  using `CAS_ACCESS_KEY` as the only credential. (Legacy SDK already
+  forwards `X-UniDocs-CAS-Capability` in capability mode; stack-protocol
+  client wiring is Task 8/9.)
+- [x] Require issuer-derived stack equality and token tenant equality on every
   tenant service route.
-- [ ] Keep ordinary `cas:write` credentials from selecting or reading audit
+- [x] Keep ordinary `cas:write` credentials from selecting or reading audit
       domains; audit domain selection is restricted to operator credentials.
-- [ ] Reject missing, unknown, reserved, or caller-overridden domains on the
+- [x] Reject missing, unknown, reserved, or caller-overridden domains on the
       write path. Permit authorized operators to inspect reserved audit domains
       such as `_legacy`.
-- [ ] Add confused-deputy tests proving a writer cannot attribute changes to
+- [x] Add confused-deputy tests proving a writer cannot attribute changes to
       another domain and cannot gain audit access through its write capability.
-- [ ] Prove tenant JWTs are rejected by `/admin` regardless of claims, and OIDC
+- [x] Prove tenant JWTs are rejected by `/admin` regardless of claims, and OIDC
       admin sessions are rejected by tenant routes regardless of membership.
-- [ ] Add tests proving two trusted stacks may use the same `tenantId` without
+- [~] Add tests proving two trusted stacks may use the same `tenantId` without
   sharing nodes, counts, idempotency, audit records, leases, usage, or GC.
-- [ ] Reject unknown issuers, unknown `kid`, wrong audience, path-stack
+  (Authorization-level isolation is proven now; storage-level isolation is
+  Task 5 stack-scoped keys/DO.)
+- [x] Reject unknown issuers, unknown `kid`, wrong audience, path-stack
   mismatch, tenant mismatch, disallowed domains, and reserved write domains
   before any DO, D1, or R2 access.
 
-**Focused validation:** service-auth, gateway-common capability-policy, and CAS
-worker authorization suites.
+**Focused validation:** service-auth (68), `cas-server-cloudflare` stack
+authorization (15: matrix, fail-closed, cache/stale bound, static bootstrap,
+cross-stack, confused-deputy, worker end-to-end), `cas-control-plane`
+authority repository (38), gateway-common policy suites (45), repo-wide
+typecheck, dependency guard (160).
 
 ### Task 5: Add audit schema and baseline migration
 

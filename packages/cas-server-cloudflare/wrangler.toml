@@ -1,0 +1,19 @@
+name = "unidocs-cas-server-cloudflare"
+main = "dist/worker.js"
+compatibility_date = "2025-08-17"
+
+# Canonical stack-scoped CAS tenant server. Private backing Worker (reached
+# through cas-edge CAS_TENANT_SERVICE binding in Task 9). Handlers return 501
+# until Tasks 5-6 land storage/DO dispatch.
+
+[[d1_databases]]
+binding = "CAS_CONTROL_DB"
+database_name = "unidocs-cas-control"
+database_id = "REPLACE_WITH_CAS_CONTROL_D1_ID"
+
+# Read-only tenant authority registry: issuer -> stack, keys, refDomains.
+# The tenant runtime never mutates control schema; the admin BFF migrates it.
+
+# Static legacy-stack bootstrap (migration window, registry wins):
+#   LEGACY_STACK_ID, LEGACY_STACK_ISSUER, LEGACY_STACK_AUDIENCE,
+#   LEGACY_STACK_ALGORITHM, LEGACY_STACK_JWKS (JSON JWKS)

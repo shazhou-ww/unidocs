@@ -3,9 +3,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import worker, { CAS_SERVER_CLOUDFLARE_PACKAGE } from "../src/worker.js";
+import type { Env } from "../src/worker.js";
+
+/** The boundary tests never reach storage; a bare D1-shaped object suffices. */
+const STUB_ENV = { CAS_CONTROL_DB: {} } as unknown as Env;
 
 describe("cas-server-cloudflare package boundary", () => {
-  test("depends on protocol-cas only among CAS packages", () => {
+  test("depends on protocol-cas, the authority repository, and service-auth only", () => {
     const pkg = JSON.parse(
       readFileSync(
         join(dirname(fileURLToPath(import.meta.url)), "../package.json"),
@@ -14,6 +18,8 @@ describe("cas-server-cloudflare package boundary", () => {
     );
     expect(pkg.name).toBe(CAS_SERVER_CLOUDFLARE_PACKAGE);
     expect(pkg.dependencies["@unidocs/protocol-cas"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unidocs/cas-control-plane"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unidocs/service-auth"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/protocol-cas-legacy"]).toBeUndefined();
     expect(pkg.dependencies["@unidocs/cloudflare-cas"]).toBeUndefined();
     expect(pkg.dependencies["@unidocs/cas-client"]).toBeUndefined();
@@ -21,26 +27,30 @@ describe("cas-server-cloudflare package boundary", () => {
     expect(pkg.dependencies["@unidocs/cas-admin-webui"]).toBeUndefined();
   });
 
-  test("matches canonical stack routes and never /admin or legacy paths", async () => {
+  test("tenant routes require a capability; /admin and legacy paths never match", async () => {
+    // Stack-scoped tenant route without a token: authorization runs first → 401.
     const stackRoute = await worker.fetch(
       new Request("https://cas.example/stacks/s1/tenants/t1/root-refs", { method: "POST" }),
+      STUB_ENV,
     );
-    expect(stackRoute.status).toBe(501);
+    expect(stackRoute.status).toBe(401);
 
     const nodeRoute = await worker.fetch(
       new Request("https://cas.example/stacks/s1/tenants/t1/cas/nodes/abc/content"),
+      STUB_ENV,
     );
-    expect(nodeRoute.status).toBe(501);
+    expect(nodeRoute.status).toBe(401);
 
-    const admin = await worker.fetch(new Request("https://cas.example/admin/me"));
+    const admin = await worker.fetch(new Request("https://cas.example/admin/me"), STUB_ENV);
     expect(admin.status).toBe(404);
 
     const legacy = await worker.fetch(
       new Request("https://cas.example/tenants/t1/cas/nodes/abc/content"),
+      STUB_ENV,
     );
     expect(legacy.status).toBe(404);
 
-    const unknown = await worker.fetch(new Request("https://cas.example/health"));
+    const unknown = await worker.fetch(new Request("https://cas.example/health"), STUB_ENV);
     expect(unknown.status).toBe(404);
   });
 });

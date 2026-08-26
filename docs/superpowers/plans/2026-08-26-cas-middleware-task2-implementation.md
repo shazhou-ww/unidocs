@@ -158,6 +158,22 @@ policy moved to Gateway-owned `isGatewayExposedCasRoute` in
 skeleton (501 handlers until Tasks 4–7). The old runtime + local dev + Azure
 keep working unchanged during the compatibility window.
 
+## Task 4 execution notes
+
+The canonical stack authorization lands on `cas-server-cloudflare` (per the
+Option A structure). `service-auth` gains `cas:usage:read`/`cas:gc:trigger`
+(`cas:admin` retained only as the legacy runtime's credential until Task 10),
+an optional validated `refDomain` claim (issuer signs after format checks;
+verifier validates), and new auth error codes. `cas-control-plane` exposes the
+read-only `AuthorityRepository` (issuer → stack/audience/keys, registered
+domains). `StackCapabilityVerifier` enforces the exact operation permission
+matrix, issuer-derived stack equality, token tenant equality, registered
+active refDomains for Root Refs writes (token-only attribution; reserved
+domains rejected), opaque `sub`, a 30s cache / 60s hard stale bound /
+fail-closed policy with telemetry, and a static legacy-stack bootstrap.
+Storage/DO dispatch is Task 5/6; the gateway's legacy `cas:admin` issuance
+and per-doc-type refDomain wiring migrate with stack onboarding (Task 9).
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

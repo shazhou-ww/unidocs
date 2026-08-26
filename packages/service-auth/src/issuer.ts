@@ -7,6 +7,7 @@ import {
   MaximumCapabilityLifetimeSeconds,
   CapabilityTokenType,
   CapabilityVersion,
+  validateRefDomainClaim,
 } from "./claims.js";
 import type {
   CapabilityClaims,
@@ -63,6 +64,10 @@ export interface IssueCapabilityInput {
   readonly permissions: readonly CapabilityPermission[];
   readonly lifetimeSeconds?: number;
   readonly jti?: string;
+  /** Stable Root Refs domain; only stack-authority capabilities that write
+   *  root references carry it. Registration is the stack authority's job —
+   *  the issuer only validates the format so garbage never gets signed. */
+  readonly refDomain?: string;
 }
 
 export class CapabilityIssuer {
@@ -163,6 +168,7 @@ export class CapabilityIssuer {
       jti,
       tenantId: input.tenantId,
       ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(input.refDomain === undefined ? {} : { refDomain: requireValidRefDomain(input.refDomain) }),
       permissions,
     }) as CapabilityClaims;
 
@@ -207,6 +213,12 @@ function validatePermissionSet(
 
 function requireNonEmpty(value: string, label: string): void {
   if (value.length === 0) throw new TypeError(`${label} must not be empty`);
+}
+
+function requireValidRefDomain(value: string): string {
+  const error = validateRefDomainClaim(value);
+  if (error) throw new TypeError(`Capability refDomain is invalid: ${error}`);
+  return value;
 }
 
 function requireIntegerRange(

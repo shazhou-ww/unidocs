@@ -20,6 +20,13 @@ export type {
 export { ControlSessionStore } from "./sessions.js";
 export type { StoredSession } from "./sessions.js";
 
+export { AuthorityRepository } from "./authority.js";
+export type {
+  RegisteredRefDomain,
+  RegisteredStackKey,
+  ResolvedStackAuthority,
+} from "./authority.js";
+
 export { buildStackJwks } from "./jwks.js";
 
 export {

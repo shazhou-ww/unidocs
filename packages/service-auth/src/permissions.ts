@@ -7,6 +7,10 @@ export type CapabilityPermission = string & {
 export type CapabilityPermissionKind =
   | "cas:read"
   | "cas:write"
+  | "cas:usage:read"
+  | "cas:gc:trigger"
+  /** Legacy tenant administration permission; consumed only by the
+   *  migration-only runtime (cloudflare-cas) until it is retired (Task 10). */
   | "cas:admin"
   | "sessions:create"
   | "sessions:read"
@@ -34,6 +38,16 @@ export function casWritePermission(tenantId: string): CapabilityPermission {
   return tenantPermission(tenantId, "cas:write");
 }
 
+export function casUsageReadPermission(tenantId: string): CapabilityPermission {
+  // Wire format is `cas:<action>`; the parsed kind carries the full semantic.
+  return `tenants:${canonicalPermissionSegment(tenantId)}:cas:usage` as CapabilityPermission;
+}
+
+export function casGcTriggerPermission(tenantId: string): CapabilityPermission {
+  return `tenants:${canonicalPermissionSegment(tenantId)}:cas:gc` as CapabilityPermission;
+}
+
+/** @deprecated Legacy tenant CAS administration; removed with cloudflare-cas (Task 10). */
 export function casAdminPermission(tenantId: string): CapabilityPermission {
   return tenantPermission(tenantId, "cas:admin");
 }
@@ -66,8 +80,17 @@ export function parseCapabilityPermission(
 
   if (parts.length === 4 && parts[2] === "cas") {
     const action = parts[3];
-    if (action === "read" || action === "write" || action === "admin") {
+    if (action === "read" || action === "write") {
       return { kind: `cas:${action}`, tenantId };
+    }
+    if (action === "usage") {
+      return { kind: "cas:usage:read", tenantId };
+    }
+    if (action === "gc") {
+      return { kind: "cas:gc:trigger", tenantId };
+    }
+    if (action === "admin") {
+      return { kind: "cas:admin", tenantId };
     }
     return null;
   }
@@ -96,7 +119,11 @@ export function hasCapabilityPermission(
 
 function tenantPermission(
   tenantId: string,
-  suffix: "cas:read" | "cas:write" | "cas:admin" | "sessions:create",
+  suffix:
+    | "cas:read"
+    | "cas:write"
+    | "cas:admin"
+    | "sessions:create",
 ): CapabilityPermission {
   return `tenants:${canonicalPermissionSegment(tenantId)}:${suffix}` as CapabilityPermission;
 }

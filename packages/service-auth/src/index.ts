@@ -1,7 +1,9 @@
 export {
   canonicalPermissionSegment,
   casAdminPermission,
+  casGcTriggerPermission,
   casReadPermission,
+  casUsageReadPermission,
   casWritePermission,
   hasCapabilityPermission,
   parseCapabilityPermission,
@@ -20,8 +22,12 @@ export {
   CapabilityTokenType,
   CapabilityVersion,
   DefaultCapabilityLifetimeSeconds,
+  isReservedRefDomain,
   MaximumCapabilityClockSkewSeconds,
   MaximumCapabilityLifetimeSeconds,
+  REF_DOMAIN_MAX_LENGTH,
+  REF_DOMAIN_PATTERN,
+  validateRefDomainClaim,
 } from "./claims.js";
 export type {
   CapabilityClaims,
