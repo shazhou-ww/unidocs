@@ -21,6 +21,7 @@ let runtime;
 
 beforeAll(async () => {
   runtime = await startLocalRuntime({
+    internalAuthMode: "legacy",
     docTypes: ["markdown", "docx"],
     ports: {
       gateway: 18787,
@@ -255,6 +256,7 @@ test("a directly reached Doc service rejects requests without its service creden
 test("static registration works with a persist directory", async () => {
   const persistPath = await mkdtemp(join(tmpdir(), "unidocs-mf-"));
   const persisted = await startLocalRuntime({
+    internalAuthMode: "legacy",
     docTypes: ["markdown", "docx"],
     ports: {
       gateway: 18887,
@@ -278,6 +280,7 @@ test("static registration works with a persist directory", async () => {
 
 test("only the selected doc types are started and routable", async () => {
   const only = await startLocalRuntime({
+    internalAuthMode: "legacy",
     docTypes: ["docx"],
     ports: {
       gateway: 18987,
@@ -315,7 +318,8 @@ test("a port belonging to an unselected doc type stays available", async () => {
   await new Promise((resolve) => blocker.listen(19088, "127.0.0.1", resolve));
   try {
     const only = await startLocalRuntime({
-      docTypes: ["docx"],
+    internalAuthMode: "legacy",
+    docTypes: ["docx"],
       ports: {
         gateway: 19087,
         markdown: 19088,

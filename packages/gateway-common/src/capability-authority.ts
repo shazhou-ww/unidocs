@@ -5,6 +5,10 @@ import type {
   IssueCapabilityInput,
 } from "@unidocs/service-auth";
 import {
+  casGcTriggerPermission,
+  casUsageReadPermission,
+} from "@unidocs/service-auth";
+import {
   casCapabilityPolicy,
   docCapabilityPolicy,
 } from "./capability-policy.js";
@@ -47,6 +51,18 @@ export interface DocOperationCredentials {
   readonly authorization: string;
   readonly delegatedCasCapability?: string;
   readonly deadlineSeconds: 15 | 30 | 60 | 90;
+}
+
+/** Stack-mode permission mapping: usage/gc use the stack-scoped names. */
+function stackPermissionFor(route: CasRoute, fallback: CapabilityPermission): CapabilityPermission {
+  switch (route.operation) {
+    case "usage":
+      return casUsageReadPermission(route.tenantId);
+    case "gc":
+      return casGcTriggerPermission(route.tenantId);
+    default:
+      return fallback;
+  }
 }
 
 export class GatewayCapabilityAuthority {
@@ -120,13 +136,19 @@ export class GatewayCapabilityAuthority {
 
   async issueCasOperation(route: CasRoute): Promise<string> {
     const policy = casCapabilityPolicy(route);
+    // Stack mode talks to the canonical middleware, which requires the
+    // stack-scoped permission names (cas:usage / cas:gc) rather than the
+    // retired cas:admin.
+    const permission = this.#casStackId !== undefined
+      ? stackPermissionFor(route, policy.permission)
+      : policy.permission;
     const token = await this.#issue(this.#casIssuer, {
       kind: "gateway-cas",
       subject: "gateway",
       audience: this.#casAudience,
       tenantId: route.tenantId,
       refDomain: this.#casRefDomain,
-      permissions: [policy.permission],
+      permissions: [permission],
       lifetimeSeconds: policy.lifetimeSeconds,
     });
     return `Bearer ${token}`;

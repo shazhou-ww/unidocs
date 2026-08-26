@@ -52,7 +52,10 @@ interface Env extends CapabilityRuntimePolicyBindings {
 
 let cachedRegistrySource: string | undefined;
 let cachedRegistry: StaticDocServiceRegistry | undefined;
-let cachedCapabilityAuthority: Promise<GatewayCapabilityAuthority> | undefined;
+// Env-keyed: Miniflare may reuse a worker isolate (and its module state)
+// across sequential runtimes in one process; a bare module-level cache would
+// leak the PREVIOUS runtime's capability authority into the next one.
+const capabilityAuthorityCache = new WeakMap<object, Promise<GatewayCapabilityAuthority>>();
 
 function registry(env: Env): StaticDocServiceRegistry {
   if (!cachedRegistry || cachedRegistrySource !== env.DOC_SERVICES_JSON) {
@@ -87,8 +90,12 @@ function capabilityAuthority(
   mode: GatewayInternalAuthMode,
 ): Promise<GatewayCapabilityAuthority> | undefined {
   if (mode === "legacy") return undefined;
-  cachedCapabilityAuthority ??= createCapabilityAuthority(env);
-  return cachedCapabilityAuthority;
+  let cached = capabilityAuthorityCache.get(env);
+  if (!cached) {
+    cached = createCapabilityAuthority(env);
+    capabilityAuthorityCache.set(env, cached);
+  }
+  return cached;
 }
 
 async function createCapabilityAuthority(env: Env): Promise<GatewayCapabilityAuthority> {

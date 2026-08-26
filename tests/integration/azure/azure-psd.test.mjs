@@ -1,49 +1,34 @@
 /**
  * psd 在本地 Azure 栈上的端到端 —— 本轮的验收之一。
  *
- * 与 azure-docx-image 同样的过渡形态:psd 的像素路径重度依赖 SBlob，而
- * Azure 侧还没有 azure-cas，所以 CAS_BASE_URL 指向 Miniflare 栈里的
- * Cloudflare CAS worker（阶段 4 换成 azure-cas 后这段脚手架整个删掉）。
+ * Stack 模式:psd 的像素路径重度依赖 SBlob,经 azure doc 服务的 CasClient
+ * (capability + stackId) 打到本地嵌入的中间件(unidocs-azure 栈)。
  *
- * 这条测试的重心是 `getPreview`：它走的正是 makeSBlob/readSBlob → CAS 的
+ * 这条测试的重心是 `getPreview`:它走的正是 makeSBlob/readSBlob → CAS 的
  * 那条路径。只 create + getLayers 不足以证明 psd 在 Azure 上可用——那两步
  * 不碰 CAS。
- *
- * Miniflare 侧用专用端口（tests/integration/ 下每个文件都这么做：
- * 18787 / 28787 / 29787 / 31787 / 32787），因为开发流程要求另开终端跑
- * `pnpm dev`，那是绑默认端口的进程。**Azure 侧刻意不覆盖端口**：
- * `startAzureRuntime()` 没有端口覆盖参数，四个 Azure 测试在
- * `--fileParallelism=false` 下顺序执行、互不重叠；与外部 `pnpm dev --azure`
- * 的冲突由 `assertPortsFree()` 明确报出，不是静默失败。
  */
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
 
 const TENANT = "psd-e2e-tenant";
-const MINIFLARE_PORTS = { gateway: 34787, psd: 34790, cas: 34791, admin: 34792, mockOidc: 34793 };
 
-let miniflare;
 let azure;
 
 beforeAll(async () => {
-  miniflare = await startLocalRuntime({ docTypes: ["psd"], ports: MINIFLARE_PORTS });
+  // Stack 模式：psd 的像素路径（SBlob）经 azure doc 服务的 CasClient
+  // (capability + stackId) 打到本地嵌入的中间件（unidocs-azure 栈），
+  // 不再依赖 cf legacy CAS worker。
   azure = await startAzureRuntime({
     docTypes: ["psd"],
-    casBaseUrl: miniflare.urls.cas,
-    // 两套栈必须共用同一把 capability 签名密钥:各自
-    // `createEphemeralCapabilityFixture()` 会生成两把不同的，Azure 侧签出的
-    // 委托 CAS capability 在 Cloudflare 的 CAS worker 上验不过，表现为
-    // `CAS leaseExisting failed: 401 Unauthorized`。同 azure-docx-image。
-    capabilityFixture: miniflare.capabilityFixture,
+    internalAuthMode: "stack",
   });
 }, 300_000);
 
 afterAll(async () => {
   await azure?.dispose();
-  await miniflare?.dispose();
 }, 60_000);
 
 function closeFetch(url, init = {}) {

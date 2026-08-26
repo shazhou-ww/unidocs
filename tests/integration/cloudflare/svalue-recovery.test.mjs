@@ -33,6 +33,7 @@ test("response-loss recovery re-settles idempotently without leaking roots", asy
     casFault: true,
   });
   const userId = "recovery-user";
+  const stackId = runtime.stackFixture.stackId;
 
   const create = await request(`/tenants/${userId}/docs/markdown/`, { method: "POST" });
   const created = await create.json();
@@ -58,7 +59,7 @@ test("response-loss recovery re-settles idempotently without leaking roots", asy
   // 故障只注入一次:version 1 已提交,version 2 从未到达真实 CAS。
   const identity = await runtime.storage.sessionIdentity("markdown", docId, userId);
   const { sessionId } = identity;
-  let requestIds = await runtime.storage.casRootRefRequestIds(userId);
+  let requestIds = await runtime.storage.middlewareRootRefRequestIds(stackId, userId);
   expect(requestIds).toEqual([`session:${sessionId}:version:1:roots`]);
 
   // 重试 apply:恢复 pending(version 2 落地),再因 baseVersion 落后返回 409。
@@ -79,7 +80,7 @@ test("response-loss recovery re-settles idempotently without leaking roots", asy
   expect(result).toMatchObject({ success: true, data: "# Durable", version: 2 });
 
   // 恢复后的保留集:一个当前 delta(v2)+ 一个当前 snapshot(v1),各计 1。
-  const retained = await runtime.storage.casRetainedRoots(userId);
+  const retained = await runtime.storage.middlewareRetainedRoots(stackId, userId);
   expect(retained).toHaveLength(2);
   expect(retained.every((row) => row.count === 1)).toBe(true);
 
@@ -90,7 +91,7 @@ test("response-loss recovery re-settles idempotently without leaking roots", asy
   }
 
   // version 2 的 root-refs 请求在恢复路径上恰好记录一次(无重复计数)。
-  requestIds = await runtime.storage.casRootRefRequestIds(userId);
+  requestIds = await runtime.storage.middlewareRootRefRequestIds(stackId, userId);
   expect(requestIds.filter((id) => id.endsWith(":version:2:roots"))).toEqual([
     `session:${sessionId}:version:2:roots`,
   ]);

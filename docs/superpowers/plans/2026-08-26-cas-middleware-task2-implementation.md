@@ -421,6 +421,28 @@ pnpm via shell on Windows (.cmd shim), and the cf-runtime default
 admin/cas/mockOidc ports in the cf + azure integration tests got explicit
 overrides so the suites run alongside the user's `pnpm dev`.
 
+## Task 9 execution notes (round 6: stack mode is the default)
+
+`startLocalRuntime` now defaults to `internalAuthMode: "stack"` — the
+Cloudflare application stack runs on the canonical middleware by default,
+with legacy/dual/capability kept as explicit opt-ins for the compatibility
+window. The storage probe's `blobExists` checks the middleware bucket in
+stack mode; the fault worker wraps the middleware and recognizes the
+canonical `/stacks/.../root-refs` route (Task 8 bullet 9); `seedMiddlewareStacks`
+upserts the stack issuer on conflict so a persisted-DB restart with a fresh
+ephemeral fixture re-registers correctly (fixes the DOCX restart 401).
+
+The legacy worker emits `cas_legacy_surface` telemetry (sharedKey /
+rootAssignments / portableNode) for the compatibility-phase decision
+(Task 9 bullet 11). Fixes along the way: the gateway's capability authority
+is env-keyed (a bare module cache leaked across Miniflare runtimes in one
+process), the stack-mode gateway-cas capability uses the stack-scoped
+permission names (cas:usage / cas:gc) instead of the retired cas:admin, and
+lease immutability is checked before the digest so re-leasing a ready node
+returns 409 like the legacy runtime. `azure-psd` also migrated to stack mode
+(no cf legacy CAS dependency). Validation: test:local 396, test:azure 29,
+pnpm test, typecheck, and the dependency guard all green.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

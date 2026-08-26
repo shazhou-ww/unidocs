@@ -84,6 +84,7 @@ export default {
         operation: legacyRoute.operation,
         tenantId: legacyRoute.tenantId,
       });
+      emitLegacySurface(env, legacySurface(legacyRoute.operation), legacyRoute.operation, legacyRoute.tenantId);
       await migrateCasSchema(env.CAS_DB);
       return dispatchRoute(request, env, legacyRoute);
     }
@@ -105,13 +106,37 @@ function dispatchRoute(request: Request, env: Env, route: CasRoute): Promise<Res
     case "rootRefs":
       return handleRootRefs(request, env, route.tenantId);
     case "rootAssignments":
+      emitLegacySurface(env, "rootAssignments", route.operation, route.tenantId);
       return handleRootAssignments(request, env, route.tenantId);
     case "readPortableNode":
     case "leasePortableNode":
+      emitLegacySurface(env, "portableNode", route.operation, route.tenantId);
       return handleReadNode(request, env, route.tenantId, route.hash);
     default:
       return handleCasRequest(request, env, route.tenantId);
   }
+}
+
+/**
+ * Compatibility-phase telemetry (Task 9 bullet 11): every use of a retiring
+ * legacy surface — shared-key auth, owner-assignment root writes, or the
+ * portable-node HTTP routes — emits a structured `cas_legacy_surface` event
+ * so operators can prove no supported binary still uses them before the
+ * rollback window closes.
+ */
+function emitLegacySurface(env: Env, surface: string, operation: string, tenantId: string): void {
+  console.log(JSON.stringify({
+    event: "cas_legacy_surface",
+    surface,
+    operation,
+    tenantId,
+  }));
+}
+
+function legacySurface(operation: string): string {
+  if (operation === "rootAssignments") return "rootAssignments";
+  if (operation === "readPortableNode" || operation === "leasePortableNode") return "portableNode";
+  return "sharedKey";
 }
 
 function matchLegacyInternalRoute(request: Request, pathname: string): CasRoute | null {

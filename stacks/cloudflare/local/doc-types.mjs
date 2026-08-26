@@ -50,6 +50,8 @@ export const CAS_ADMIN_SESSION_KEY = "-rlX2kRi6wW59cGagXqw5GYFUWlsE0PXkgv0DLrK5L
 /**
  * 代理式假 CAS:除 root-refs 外全部原样转发给真 CAS,
  * 使 lease 与读内容照常成功,只让引用计数写入失败。
+ * 同时识别规范路由 /stacks/{stackId}/tenants/{tenantId}/root-refs
+ * (stack 模式下的 updateRootRefs 走这里)。
  */
 export const CAS_FAULT_SCRIPT = `
 let failedVersionTwo = false;
@@ -57,7 +59,9 @@ let failedVersionTwo = false;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname.endsWith("/_internal/root-refs")) {
+    // 同时识别 legacy(/_internal/root-refs)与规范(/stacks/.../root-refs)路由。
+    const isRootRefs = url.pathname.endsWith("/root-refs");
+    if (isRootRefs) {
       const body = await request.clone().json().catch(() => null);
       const requestId = body?.requestId;
       const isVersionTwo = typeof requestId === "string"
@@ -377,7 +381,7 @@ export function buildWorkers({
       modules: true,
       script: CAS_FAULT_SCRIPT,
       compatibilityDate: COMPATIBILITY_DATE,
-      serviceBindings: { CAS_UPSTREAM: CAS_WORKER },
+      serviceBindings: { CAS_UPSTREAM: stackMode ? MIDDLEWARE_WORKER : CAS_WORKER },
     });
   }
 
@@ -392,10 +396,11 @@ export function buildWorkers({
     CAS_STACK_ISSUER: stackFixture.issuer,
     CAS_STACK_TRUSTED_JWKS: JSON.stringify(stackFixture.jwks),
   } : {};
-  // Stack mode routes every CAS call to the canonical middleware worker.
-  const casServiceTarget = stackMode
-    ? MIDDLEWARE_WORKER
-    : (casFault ? CAS_FAULT_WORKER : CAS_WORKER);
+  // Fault injection wraps the effective CAS target (the middleware in stack
+  // mode, the legacy worker otherwise); casFault wins over the mode default.
+  const casServiceTarget = casFault
+    ? CAS_FAULT_WORKER
+    : (stackMode ? MIDDLEWARE_WORKER : CAS_WORKER);
 
   for (const name of docTypes) {
     const spec = DOC_TYPES[name];

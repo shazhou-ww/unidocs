@@ -1667,9 +1667,10 @@ domains), `cas-server-cloudflare` audit-reads + reader-RPC suites (70), and
   logical application after restart without leaking or undercounting roots.
 - [x] Preserve Doc rollback semantics when a root update fails.
 - [~] Update local failure injection to recognize the canonical POST route.
-      (Deferred to Task 9: legacy callers still use `/_internal/root-refs`, and
-      the canonical `/stacks/.../root-refs` route is not active until the
-      middleware worker is wired into the local runtime.)
+      (Done: the fault worker intercepts both `/_internal/root-refs` and
+      `/stacks/{stackId}/tenants/{tenantId}/root-refs`, and in stack mode it
+      wraps the middleware instead of the legacy worker. The remaining
+      canonical-route work is deployment-side.)
 
 **Focused validation:** CAS client, Cloudflare SDK, doctype-server-common, and
 local integration tests covering commit, retry, rollback, truncation, snapshot
@@ -1751,9 +1752,10 @@ Tests assert both aggregate counts and emitted domain deltas.
   stack.)
 - [~] Run compatibility-phase telemetry until no supported binary uses
   shared-key, tenantless, root-assignment, or portable-node routes; then
-  disable those paths after the rollback window. (Deferred: the legacy
-  runtime keeps serving the application stacks until the bullet-7/8
-  migrations land; telemetry gates are ops items.)
+  disable those paths after the rollback window. (The legacy worker now
+  emits structured `cas_legacy_surface` events for shared-key auth,
+  rootAssignments, and portable-node usage; disabling those paths after the
+  rollback window is an ops step.)
 - [~] Prove each application stack can deploy, roll back, and operate without
   redeploying CAS, and CAS can deploy compatibly without redeploying either
   stack. (Middleware deployed independently of the application stacks;

@@ -21,6 +21,7 @@ import {
   CAS_WORKER,
   ADMIN_PORT,
   MOCK_OIDC_PORT,
+  EDGE_PORT,
   DOC_TYPES,
   GATEWAY_WORKER,
   MIDDLEWARE_WORKER,
@@ -203,7 +204,7 @@ function assertPortFree(host, port) {
  * bodies in `tests/integration/shared/behavior-suite.mjs` don't need to know which backend
  * they're running against.
  */
-function createStorageProbe(mf) {
+function createStorageProbe(mf, { stackMode = false, stackId } = {}) {
   const tenantByHash = new Map();
   return {
     async sessionIdentity(docType, docId, tenantId) {
@@ -253,11 +254,18 @@ function createStorageProbe(mf) {
       });
     },
     async blobExists(hash) {
+      const tenantId = tenantByHash.get(hash);
+      if (!tenantId) return false;
+      if (stackMode) {
+        // Stack mode stores node content in the MIDDLEWARE bucket under
+        // stack-scoped keys.
+        const bucket = await mf.getR2Bucket("CAS_R2", MIDDLEWARE_WORKER);
+        const object = await bucket.get(`stacks/${stackId}/tenants/${tenantId}/nodes/${hash}`);
+        return object !== null;
+      }
       // CAS_WORKER is always started regardless of which doc types were
       // selected, and it's the one that binds the shared bucket as "CAS_R2".
       const bucket = await mf.getR2Bucket("CAS_R2", CAS_WORKER);
-      const tenantId = tenantByHash.get(hash);
-      if (!tenantId) return false;
       const object = await bucket.get(`tenants/${tenantId}/nodes/${hash}`);
       return object !== null;
     },
@@ -315,6 +323,20 @@ function createStorageProbe(mf) {
         count: Number(row.root_ref_count),
       }));
     },
+    /**
+     * Cloudflare-probe-only: root-ref request ids recorded in the MIDDLEWARE
+     * idempotency table for a (stackId, tenantId).
+     */
+    async middlewareRootRefRequestIds(stackId, tenantId) {
+      const db = await mf.getD1Database("CAS_DB", MIDDLEWARE_WORKER);
+      const rows = await db
+        .prepare(
+          "SELECT request_id FROM cas_root_ref_requests WHERE stack_id = ? AND tenant_id = ? ORDER BY applied_at, request_id",
+        )
+        .bind(stackId, tenantId)
+        .all();
+      return rows.results.map((row) => row.request_id);
+    },
   };
 }
 
@@ -329,7 +351,7 @@ export async function startLocalRuntime({
   ports: portOverrides = {},
   persistPath,
   casFault = false,
-  internalAuthMode = "dual",
+  internalAuthMode = "stack",
   capabilityFixture,
   stackFixture,
   logLevel = LogLevel.WARN,
@@ -424,9 +446,10 @@ export async function startLocalRuntime({
     }
     if (casMiddleware || stackMode) {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
-      if (stackMode) {
+      if (stackMode && !middlewareStacks) {
         // Register the local unidocs-cloudflare stack (issuer/keys/refDomains
-        // identical to what the gateway signs with).
+        // identical to what the gateway signs with). Skipped when the caller
+        // provided explicit middlewareStacks (they own the registration).
         const fixtureStacks = [{
           stackId: resolvedStackFixture.stackId,
           issuer: resolvedStackFixture.issuer,
@@ -450,7 +473,10 @@ export async function startLocalRuntime({
       docTypes,
       capabilityFixture: resolvedCapabilityFixture,
       stackFixture: resolvedStackFixture,
-      storage: createStorageProbe(mf),
+      storage: createStorageProbe(mf, {
+        stackMode,
+        stackId: resolvedStackFixture?.stackId,
+      }),
       async dispose() {
         await mf.dispose();
       },
@@ -530,7 +556,7 @@ export async function seedMiddlewareStacks(
   for (const stack of stacks) {
     await db.batch([
       db.prepare(
-        "INSERT INTO cas_stack_issuer (stack_id, issuer, audience, status, revision) VALUES (?, ?, ?, 'active', 1) ON CONFLICT(stack_id) DO UPDATE SET audience = excluded.audience, status = 'active'",
+        "INSERT INTO cas_stack_issuer (stack_id, issuer, audience, status, revision) VALUES (?, ?, ?, 'active', 1) ON CONFLICT(stack_id) DO UPDATE SET issuer = excluded.issuer, audience = excluded.audience, status = 'active'",
       ).bind(stack.stackId, stack.issuer, stack.audience),
       db.prepare(
         "INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, ?, ?, 'active', 1) ON CONFLICT(stack_id, kid) DO UPDATE SET public_jwk = excluded.public_jwk, state = 'active'",

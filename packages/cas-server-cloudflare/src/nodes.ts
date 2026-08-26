@@ -151,14 +151,6 @@ export async function leaseNode(store: NodeStore, input: LeaseNodeInput): Promis
     }
   }
 
-  const childHashes = refs.map(hexToHash);
-  const header = encodeHeader(content.length, contentType, childHashes.length);
-  const digest = await computeNodeDigest(header, contentType, childHashes, content);
-  const computedHex = hashToHex(digest);
-  if (computedHex !== hash) {
-    throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, `Digest mismatch: expected ${hash}, got ${computedHex}`);
-  }
-
   const existing = await db
     .prepare(
       "SELECT content_size, content_type, lease_started_at, lease_expires_at FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
@@ -166,8 +158,19 @@ export async function leaseNode(store: NodeStore, input: LeaseNodeInput): Promis
     .bind(stackId, tenantId, hash)
     .first<{ content_size: number; content_type: string; lease_started_at: number; lease_expires_at: number }>();
 
+  // Immutability is checked BEFORE the digest: re-leasing a ready node with
+  // different metadata is a 409 CONFLICT (same as the legacy runtime), not a
+  // 400 digest error.
   if (existing && !metadataMatches(existing, refs, input)) {
     throw new NodeOpError(409, NodeOpErrorCodes.CONFLICT, "Immutable metadata mismatch");
+  }
+
+  const childHashes = refs.map(hexToHash);
+  const header = encodeHeader(content.length, contentType, childHashes.length);
+  const digest = await computeNodeDigest(header, contentType, childHashes, content);
+  const computedHex = hashToHex(digest);
+  if (computedHex !== hash) {
+    throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, `Digest mismatch: expected ${hash}, got ${computedHex}`);
   }
 
   for (const childHash of refs) {
