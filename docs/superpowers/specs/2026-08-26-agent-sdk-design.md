@@ -19,7 +19,7 @@ flowchart TB
     end
 
     subgraph core["@unidocs/agent-sdk —— 全仓库唯一一份实现"]
-        K["工具调用循环 · 工具分发 · 会话历史<br/>乐观锁记账 · 事件产出"]
+        K["工具调用循环 · 会话历史 · 历史裁剪<br/>模型访问 · 事件产出"]
     end
 
     subgraph down["下边界 —— 实现抽象：抽掉运行环境的差异"]
@@ -27,7 +27,7 @@ flowchart TB
     end
 
     up -->|"DocumentAgent"| core
-    core -->|"DocumentPort · LlmProvider · AgentSessionStore · 事件字节流"| down
+    core -->|"DocumentAgentContext · LlmProvider · AgentSessionStore · 事件字节流"| down
 ```
 
 **逻辑抽象**回答的是「一个文档 agent 对外长什么样」——一组工具、一段提示词、一个「给我工具名和参数，我还你一个结果」的调用入口。内核不知道 PSD 有图层、docx 有段落，只知道调用一个工具会返回一个 `AgentToolResult`。
@@ -43,7 +43,7 @@ flowchart TB
 | 要新增什么 | 要做的事 | 不需要碰的 |
 |---|---|---|
 | 一个新文档类型（例如 xlsx） | 实现上边界：一个 `DocumentAgentFactory`——工具定义、提示词、以及它自己的 `toolCall` | 内核、所有平台代码 |
-| 一个新平台（例如 AWS） | 实现下边界：`DocumentPort`、`AgentSessionStore`、一层传输外壳 | 内核、所有文档类型 |
+| 一个新平台（例如 AWS） | 实现下边界：`DocumentAgentContext`、`AgentSessionStore`、一层传输外壳 | 内核、所有文档类型 |
 | 一个新大模型供应商 | 实现下边界的一个接口：`LlmProvider` | 内核、所有文档类型、所有平台 |
 
 三种扩展都不修改内核，也不互相牵动。
@@ -53,7 +53,7 @@ flowchart TB
 | 边界 | 接口 | 由谁实现 | 定义在 |
 |---|---|---|---|
 | 上（逻辑） | `DocumentAgentFactory` → `DocumentAgent` = tools + instructions + toolCall | 文档类型 | `protocol/src/types.ts:118-129`，**已存在，本次不改** |
-| 下（实现） | `DocumentPort` —— 文档读写，`apply` 显式收 `baseVersion` | 平台 sdk | 5.2 |
+| 下（实现） | `DocumentAgentContext` —— 文档读写 | 平台 sdk | `protocol/src/types.ts:105`，**已存在，本次不改** |
 | 下（实现） | `LlmProvider` —— 模型访问 | agent-sdk 内置 Anthropic / OpenAI，可另加 | 5.4 |
 | 下（实现） | `AgentSessionStore` —— 会话历史落盘 | 平台 sdk | 6.3 |
 | 下（实现） | 事件字节流 → 平台响应对象 | 平台 sdk | 7.4 |
@@ -184,7 +184,7 @@ flowchart TB
 
     subgraph L2["内核 @unidocs/agent-sdk：唯一一份，与文档类型和平台都无关"]
         B1["工具调用循环"]
-        B2["工具名分发 + 乐观锁记账"]
+        B2["历史裁剪策略"]
         B3["会话历史（中立消息格式）"]
         B4["LlmProvider 接口 + Anthropic / OpenAI 实现"]
         B5["事件产出 + SSE 编码"]
@@ -197,12 +197,12 @@ flowchart TB
     end
 
     L1 -->|"DocumentAgent"| L2
-    L3 -->|"DocumentPort + AgentSessionStore + 传输外壳"| L2
+    L3 -->|"DocumentAgentContext + AgentSessionStore + 传输外壳"| L2
 ```
 
 两条不可越界的规则：
 
-1. **文档类型永远看不到 `DocumentPort` 的实现**。它拿到的是内核包装过的 `DocumentAgentContext`，不知道文档是通过 DurableObject 还是进程内调用读到的。
+1. **文档类型永远看不到 `DocumentAgentContext` 的实现**。它不知道文档是通过 DurableObject 还是进程内调用读到的，也不知道 `baseVersion` 的存在。
 2. **平台 sdk 永远看不到循环内部**。它拿到的是一个事件序列，负责把它变成本平台的响应对象，不参与决定何时调模型、何时调工具。
 
 这两条如果被打破，就退回到今天的状态（1.4）。4.3 给出机器可校验的落地方式。
@@ -278,9 +278,9 @@ classDiagram
 
     class AgentSession~TQuery, TOp~ {
         -history: AgentMessage[]
-        -lastKnownVersion: number | null
         +run(instruction) AsyncIterable~AgentEvent~
-        +reset() void
+        +reset() Promise
+        +restore() Promise
     }
 
     class LlmProvider {
@@ -327,50 +327,50 @@ classDiagram
 |---|---|
 | 什么时候调模型、调几次、什么时候停 | 一个工具名 + 一组参数，具体要做什么 |
 | 把工具表交给模型，把模型的选择转成一次 `toolCall` | 把这次调用翻译成 `query` / `apply`，包括参数转换 |
-| 记录 `lastKnownVersion`，`apply` 前校验，冲突时把提示喂回模型 | 不管版本，只管调 `context.apply` |
 | 会话历史、裁剪、持久化、事件产出 | 无状态 |
+| 把 `toolCall` 抛出的错误变成一条 tool 消息喂回模型 | 该抛就抛，不自己吞 |
 
-内核对工具的全部认知就是「调用它会返回一个 `AgentToolResult`」。它不认识 `query_` / `apply_` 前缀，也不认识图层或段落。
+内核对工具的全部认知就是「调用它会返回一个 `AgentToolResult`，或者抛一个错」。它不认识 `query_` / `apply_` 前缀，不认识图层或段落，**也不认识版本号**（5.2）。
 
-### 5.2 乐观锁记账归内核，但 doctype 看到的接口不变
+### 5.2 内核不管版本
 
-内核不认识 `query_` / `apply_` 前缀，那「`apply` 之前必须先 `query`」这条规则由谁来守？
+`AgentSession` 不持有 `lastKnownVersion`，不强制「apply 之前必须先 query」，也不解读版本冲突。**agent 的职责到「生成 op」为止。**
 
-今天它守在平台侧：`operator-do-agent.ts:187-220` 的 `#query` / `#apply` 一边转发请求，一边维护 `#lastKnownVersion`，并在构造 apply 请求时把 `baseVersion` 塞进去。这是下边界缺失的又一处症状——一条与平台无关的规则寄生在 DurableObject 的实现里，Azure 要重写一遍。
-
-新的做法是加一个包装层：
+理由：`apply` 是确定性算法，它自己就是校验器——这个仓库的编辑器本来就要求 `apply()` 完整校验，否则一个坏 op 会把文档写坏。既然如此，版本号就是个粗糙的替身：它拦的是「世界变了没」，而真正该问的是「我这个 op 现在还成不成立」。别人调了个图层透明度并不影响我裁剪画布，版本检查却会把它拦下来，让模型白跑一轮重新查询。
 
 ```mermaid
 flowchart TB
-    P["平台实现 DocumentPort<br/>apply 显式收 baseVersion<br/>只管把请求送到编辑器"] --> W["AgentSession 的包装层<br/>query 后记下 version<br/>apply 前校验并补上 baseVersion<br/>冲突时把当前版本和提示喂回模型"]
-    W --> C["DocumentAgentContext<br/>protocol/src/types.ts:105，签名不变<br/>query / apply / resolveBlob / readBlob"]
-    C --> A["文档类型的 DocumentAgent<br/>只看得到这一层"]
+    G["模型生成 op"] --> A["context.apply"]
+    A --> C{"apply 通过吗"}
+    C -->|通过| OK["op 合法，结束"]
+    C -->|不通过| E["错误原文回给模型<br/>作为 tool 结果"]
+    E --> G
 ```
 
-两个接口的差别只在 `apply`：
+#### 5.2.1 版本号并没有消失，只是不归 agent 算
 
-```ts
-// 下边界：平台实现这个。版本由调用方给，平台不猜。
-export interface DocumentPort<TQuery, TOp> {
-  query(q: SValueType<TQuery>): Promise<{ data: SValue; version: number }>;
-  apply(
-    operations: readonly SValueType<TOp>[],
-    description: string,
-    baseVersion: number,          // ← 显式参数
-  ): Promise<{ version: number }>;
-  resolveBlob(hash: string): Promise<SBlob>;
-  readBlob(blob: SBlob): Promise<SBlobData>;
-}
+`baseVersion` 是编辑器写入路径的**必需参数**，不是可选校验：`session.ts:625` 的 `nextVersion = baseVersion + 1` 是 delta 日志保持无空洞序列的机制，`editor-do-svalue.ts:534` 缺了它直接报错。
 
-// 上边界：文档类型看到的，与今天完全一致，没有 baseVersion
-// protocol/src/types.ts:105 的 DocumentAgentContext，一个字不改
-```
+所以问题不是「要不要版本号」，而是「agent 发起的 apply，`baseVersion` 由谁算」。选定：**由平台的 `DocumentAgentContext.apply` 实现自己读当前 head**。
 
-这样三件事同时成立：
+| | 今天 | 本次 |
+|---|---|---|
+| 谁记 `lastKnownVersion` | agent 循环，`operator-do-agent.ts:56` | 没人记 |
+| `apply` 用什么 `baseVersion` | 上次 `query` 看到的版本，`:208` | 平台读当前 head |
+| 「必须先 query」 | 循环强制拒绝，`:202-204` | 删掉。提示词里已经写了「先查询再编辑」，而真正的兜底是 apply 自己会拒绝非法 op |
+| op 不成立时 | 版本冲突 → 提示重新查询 → 重试 | apply 的错误原文回给模型 → 重新生成 |
 
-- 乐观锁规则只有一份实现，在内核里，两个平台共享
-- 平台实现变成纯粹的传输，不持有任何会话状态
-- 文档类型完全无感——`context.apply(ops, desc)` 的写法不变
+因为版本记账整个消失，`DocumentAgentContext`（`protocol/src/types.ts:105`）的签名**一个字都不用改**，`apply(operations, description)` 里本来就没有 `baseVersion`——它一直是平台实现的内部细节。下边界不需要新接口。
+
+#### 5.2.2 这样做失去了什么
+
+诚实记一笔：版本检查确实能拦住一类情况——模型基于 v7 的图层树推理出坐标，期间浏览器把图层移走了，op 应用到 v9 上位置就错了，而 `apply` 校验不出来（坐标合法，只是不是模型想要的）。
+
+接受这个代价，理由有三条：
+
+- 这类竞争要求「用户一边手工编辑一边让 agent 跑」，而客户端今天已经在避免（`web-psd/src/main.ts` 的 `chatBusy`）。
+- 就算发生，结果是一次编辑位置不对，用户看得见也能撤销；而版本检查换来的是每次并发都白跑一轮。
+- 模型的工作流本来就是「改完看预览确认」（`doctype-psd/src/tools.ts:166` 的提示词明确要求），位置错了它自己会发现并纠正。
 
 ### 5.3 文档类型侧要改什么
 
@@ -471,8 +471,8 @@ export class AgentSession<TQuery, TOp> {
   constructor(deps: {
     /** 上边界：文档类型的工厂。protocol/src/types.ts:127，签名不变 */
     readonly agentFactory: DocumentAgentFactory<TQuery, TOp>;
-    /** 下边界：文档读写，apply 显式收 baseVersion（5.2） */
-    readonly port: DocumentPort<TQuery, TOp>;
+    /** 下边界：文档读写。protocol/src/types.ts:105，签名不变 */
+    readonly context: DocumentAgentContext<TQuery, TOp>;
     /** 下边界：模型访问 */
     readonly provider: LlmProvider;
     /** 下边界：会话持久化（6.3），不传则只在内存里 */
@@ -491,7 +491,7 @@ export class AgentSession<TQuery, TOp> {
 }
 ```
 
-构造时 `AgentSession` 用 `port` 包出一个带乐观锁记账的 `DocumentAgentContext`，再调 `agentFactory(context)` 拿到 `DocumentAgent`（5.2）。文档类型全程只接触最后那个 context。
+构造时 `AgentSession` 把平台给的 `context` 原样交给 `agentFactory(context)`，拿到 `DocumentAgent`。中间没有包装层——内核不记版本，也就没有要记的东西（5.2）。
 
 `maxIterations` 从 `OperatorConfig`（`operator-do-agent.ts:32`）移到这里——它是循环参数，属于内核，不属于平台配置。PSD 需要 25 的理由不变：一次编辑要「找图层 → 看预览 → 变换 → 再看预览确认」，默认的 10 会把真实指令切在半路。
 
@@ -616,7 +616,7 @@ export function createDefaultContextPolicy(opts?: {
 
 #### 6.3.1 下边界的第四个接口
 
-持久化回答的是「字节存哪儿」，属于实现抽象，所以它是下边界的接口，与 `DocumentPort` 平级。
+持久化回答的是「字节存哪儿」，属于实现抽象，所以它是下边界的接口，与 `DocumentAgentContext` 平级。
 
 ```ts
 export interface AgentSessionStore {
@@ -823,9 +823,10 @@ sequenceDiagram
     participant B as 浏览器
     participant G as 网关
     participant W as doctype 服务
-    participant S as AgentSession
+    participant S as AgentSession（内核）
     participant L as LlmProvider
-    participant C as DocumentPort
+    participant A as DocumentAgent（psd）
+    participant C as DocumentAgentContext（平台）
 
     B->>G: POST /run  Accept: text/event-stream
     G->>W: 转发
@@ -836,15 +837,21 @@ sequenceDiagram
     L-->>S: 要调 query_getPreview
     S-->>B: 事件 tool-call
 
-    S->>C: query getPreview
-    C-->>S: SBlob + version
+    S->>A: toolCall "query_getPreview"
+    Note over A: 内核到这里为止，<br/>前缀解析和参数转换是 psd 的事
+    A->>C: query getPreview
+    C-->>A: SBlob + version
+    A-->>S: AgentToolResult 含 image part
     S-->>B: 事件 tool-result
 
     S->>L: complete 历史已含图片
     L-->>S: 要调 apply_transform
     S-->>B: 事件 tool-call
-    S->>C: apply 带 baseVersion
-    C-->>S: 新 version
+    S->>A: toolCall "apply_transform"
+    A->>C: apply 一批 op
+    Note over C: 平台读当前 head 作 baseVersion
+    C-->>A: 新 version
+    A-->>S: AgentToolResult 含 documentVersion
     S-->>B: 事件 tool-result
     S-->>B: 事件 document-changed
     B->>B: 立刻 reconcile 同步画布
@@ -853,6 +860,25 @@ sequenceDiagram
     L-->>S: 文字回复，不再调工具
     S-->>B: 事件 run-end
 ```
+
+#### 7.2.1 内核怎么知道文档变了
+
+它不认识 `apply_` 前缀，所以无法从工具名推断。让它去猜（比如翻 `structuredContent` 里有没有 `version` 字段）就是重蹈 `$image` 的覆辙——内核不该嗅探文档类型的返回结构。
+
+改为让文档类型显式声明，在 `AgentToolResult` 上加一个可选字段：
+
+```ts
+export interface AgentToolResult {
+  readonly structuredContent?: JsonValue;
+  readonly content?: readonly AgentContentPart[];
+  /** 这次调用改变了文档，值为新版本号。只读工具不设置。 */
+  readonly documentVersion?: number;
+}
+```
+
+内核的规则只有一条：**看到 `documentVersion` 就发一个 `document-changed` 事件，看不到就不发。**
+
+不设置也不会坏：客户端收不到中途的 `document-changed`，就退回到 `run-end` 之后统一 `reconcile()` 一次——也就是今天的行为。所以 psd 设置它（它本来就要为图片改动 `agent.ts`），markdown 和 docx 保持不动，它们今天也没有 web 客户端需要增量同步。
 
 ### 7.3 断线的语义
 
@@ -1029,15 +1055,16 @@ channel.run(text, {
 | 文件 | 改动 |
 |---|---|
 | `doctype-psd/src/queries.ts:101` | `getPreview` 从 `btoa` 产出 base64 改为 `makeSBlob` 返回 SBlob 引用 |
-| `doctype-psd/src/agent.ts` | 分发逻辑保留不动；只改 `query_getPreview` 分支，改为返回 image content part（5.3） |
+| `protocol/src/types.ts:100` | `AgentToolResult` 加可选字段 `documentVersion?: number`（7.2.1） |
+| `doctype-psd/src/agent.ts` | 分发逻辑保留不动。两处小改：`query_getPreview` 返回 image content part（5.3）；`apply_*` 分支带上 `documentVersion`（7.2.1） |
 | `doctype-psd/tests/agent.test.ts:61-76` | 断言反转：从「`$image` 透传且 `content` 为 undefined」改为「返回 image content part」 |
 | `doctype-markdown/src/agent.ts` | **不动** |
 | `doctype-docx/src/agent.ts` | **不动**。它的图片返回方式（`:75`）本来就是对的，只是从没跑通过——删掉 `renderToolResult` 钩子后这条路才真正打开（P6） |
 | `cloudflare-psd/src/anthropic.ts` | 移到 `agent-sdk/src/providers/anthropic.ts`，删掉 `findImage` / `previewMeta`，翻译改为单向 |
-| `cloudflare-psd/src/worker.ts` | 改为注入 `createPsdDocumentAgent` + Cloudflare 的 `DocumentPort` 实现 |
+| `cloudflare-psd/src/worker.ts` | 改为注入 `createPsdDocumentAgent` + Cloudflare 的 `DocumentAgentContext` 实现 |
 | `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 约 90 行，只剩 DurableObject 外壳、身份校验、把事件流包成 Response |
 | `doctype-server-common/src/operator.ts` | 删除（177 行死代码） |
-| `azure-sdk/src/local-editor.ts:103` | 删掉 501 占位，改为真实的 `DocumentPort` 实现 |
+| `azure-sdk/src/local-editor.ts:103` | 删掉 501 占位，改为真实的 `DocumentAgentContext` 实现，`apply` 提交时自己读当前 head 作 baseVersion |
 | `cloudflare-sdk/src/agent-store-do.ts` | 新增：`DoAgentSessionStore`，DO SQLite `BLOB` 列 + `seq` 条件写（6.3.4） |
 | `azure-sdk/src/agent-store-pg.ts` | 新增：`PgAgentSessionStore`，Postgres `BYTEA` 列 + `seq` 条件写，写法照搬 `ports-pg.ts:89-111`（6.3.5） |
 | `azure-sdk` 的建表脚本 | 新增 `agent_sessions` 表；`migrate.ts` 加一版 |
@@ -1051,7 +1078,7 @@ channel.run(text, {
 
 ```mermaid
 flowchart TB
-    S1["1. 建 agent-sdk<br/>循环 + 中立消息格式 + DocumentPort<br/>+ 乐观锁包装层 + Anthropic 适配层"] --> S2["2. cloudflare-sdk 改成薄外壳"]
+    S1["1. 建 agent-sdk<br/>循环 + 中立消息格式<br/>+ Anthropic 适配层"] --> S2["2. cloudflare-sdk 改成薄外壳"]
     S2 --> S3["3. psd 的 getPreview 改走 SBlob<br/>返回 image content part"]
     S3 --> S4["4. 删掉 renderToolResult 钩子<br/>docx 的图片路径第一次跑通"]
     S4 --> S5["5. 删除 doctype-server-common/operator.ts"]
@@ -1061,10 +1088,10 @@ flowchart TB
     S8 --> S9["9. 事件流 + SSE 编码<br/>按 Accept 头分流"]
     S9 --> S10["10. client-sdk：DocSession 泛型化 + AgentChannel"]
     S10 --> S11["11. web-psd 接上流式"]
-    S11 --> S12["12. azure-sdk 实现 DocumentPort + PgAgentSessionStore<br/>去掉 501"]
+    S11 --> S12["12. azure-sdk 实现 DocumentAgentContext + PgAgentSessionStore<br/>去掉 501"]
 ```
 
-第 1-5 步是 A 块（两层边界），第 6-8 步是 B 块（裁剪与持久化），第 9-11 步是 C 块（流式），第 12 步是「平台无关」这个目标的真正证明——它同时验证下边界的两个接口（`DocumentPort` 和 `AgentSessionStore`）都确实可换。
+第 1-5 步是 A 块（两层边界），第 6-8 步是 B 块（裁剪与持久化），第 9-11 步是 C 块（流式），第 12 步是「平台无关」这个目标的真正证明——它同时验证下边界的两个接口（`DocumentAgentContext` 和 `AgentSessionStore`）都确实可换。
 
 每一步结束时全仓库测试必须通过，任何一步都可以独立成为一个提交。
 
@@ -1074,16 +1101,16 @@ flowchart TB
 
 | # | 标准 | 验证方式 |
 |---|---|---|
-| V1 | 文档类型的分发逻辑一行未动 | `git diff` 里 `doctype-markdown/src/agent.ts` 与 `doctype-docx/src/agent.ts` 无改动；`doctype-psd/src/agent.ts` 只有 `getPreview` 分支变化 |
+| V1 | 文档类型的分发逻辑一行未动 | `git diff` 里 `doctype-markdown/src/agent.ts` 与 `doctype-docx/src/agent.ts` 无改动；`doctype-psd/src/agent.ts` 只有 `getPreview` 分支和 `documentVersion` 两处变化 |
 | V2 | 内核不认识 `query_` / `apply_` | 全仓库搜索 `startsWith("query_")` **不应**命中 `packages/agent-sdk/` |
 | V3 | `agent-sdk` 不 import 任何云相关模块 | `tests/unit/agent-sdk-purity.test.ts` |
-| V4 | 循环行为不退化 | 新增契约测试：内存版 `DocumentPort` + 假 provider，跑完整循环，覆盖乐观锁、版本冲突重试、达到上限、未知工具名 |
+| V4 | 循环行为不退化 | 新增契约测试：内存版 `DocumentAgentContext` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
 | V5 | PSD 送给模型的图片字节与改造前完全一致 | 抓一次 provider 请求体，与改造前对比 |
 | V6 | 现有 230 行 `operator-do.test.ts` 全绿 | `pnpm test` |
 | V7 | 浏览器能看到逐步事件，画布逐步更新 | web-psd 手工端到端 |
 | V8 | 同一条指令在 Azure 栈跑通 | `pnpm test:azure` 新增用例 |
 | V9 | docx 的图片路径第一次真正跑通 | 现有 `doctype-docx/tests/agent.test.ts` 已覆盖 `getImage` / `insertImage`；再补一条端到端：删掉 renderToolResult 后，image content part 能被 Anthropic 适配层翻成图片块而不抛异常（P6） |
-| V10 | 乐观锁记账在内核，平台不参与 | 契约测试：文档类型直接调 `context.apply` 而未先 `query`，断言被拒绝并提示先查询；且 `DocumentPort` 的假实现里没有任何版本状态 |
+| V10 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/agent-sdk/src/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止 |
 | V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.7） |
 | V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：存进去含 SBlob 的历史，读回来 `isSBlob()` 仍为 true。这条钉死"不能改用 JSON"（6.1.1） |
 | V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
@@ -1137,5 +1164,6 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 客户端范围 | agent 通道 + 泛型化的 DocSession |
 | 工具分发归谁 | **归文档类型，内核不接管。** `query_` / `apply_` 的解析和参数转换本来就是各文档类型不同的事——docx 的 `apply_insertImage` 要先 `resolveBlob`，psd 的可以直接透传。psd 与 markdown 今天逐行相同是巧合，不是共性。内核对工具的全部认知是「调用它返回一个 `AgentToolResult`」 |
 | 上边界用什么接口 | 沿用已有的 `DocumentAgentFactory` / `DocumentAgent`（`protocol/src/types.ts:118-129`），本次不新造，也不修改 |
-| 乐观锁记账归谁 | **归内核**，但通过包装层实现：平台实现 `DocumentPort`（`apply` 显式收 `baseVersion`），内核包成签名不变的 `DocumentAgentContext` 再交给文档类型。规则只有一份实现，文档类型无感（5.2） |
+| 内核怎么知道文档变了 | 文档类型在 `AgentToolResult` 上显式设 `documentVersion`，内核见到就发 `document-changed` 事件。不让内核嗅探返回结构——那是 `$image` 的老路（7.2.1） |
+| 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:625`），由平台的 `apply` 实现读当前 head 得到（5.2） |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |
