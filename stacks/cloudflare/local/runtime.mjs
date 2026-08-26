@@ -19,6 +19,8 @@ import {
   bundleTargets,
   CAS_PORT,
   CAS_WORKER,
+  ADMIN_PORT,
+  MOCK_OIDC_PORT,
   DOC_TYPES,
   GATEWAY_WORKER,
   resolvePorts,
@@ -274,12 +276,15 @@ export async function startLocalRuntime({
   internalAuthMode = "dual",
   capabilityFixture,
   logLevel = LogLevel.WARN,
+  casAdminPublicOrigin,
 } = {}) {
   const ports = resolvePorts(docTypes, portOverrides);
   // 过渡形态(阶段 4 删除):CAS worker 的直连端口,供 Azure 栈的
   // CAS_BASE_URL 从进程外访问(见 doc-types.mjs 里 CAS_PORT 的注释)。
   // 并入 ports 后 urls 会自动多出一项 "cas"(urls 是从 ports 映射来的)。
   ports.cas = portOverrides.cas ?? CAS_PORT;
+  ports.admin = portOverrides.admin ?? ADMIN_PORT;
+  ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
 
   await Promise.all(
     Object.values(ports).map((port) => assertPortFree(host, port)),
@@ -326,6 +331,12 @@ export async function startLocalRuntime({
           extraBindings,
           internalAuthMode,
           capabilityFixture: resolvedCapabilityFixture,
+          casAdminPublicOrigin: casAdminPublicOrigin
+            ?? process.env.UNIDOCS_CAS_ADMIN_ORIGIN
+            ?? `http://localhost:4070`,
+          googleOidcClientId: process.env.GOOGLE_OIDC_CLIENT_ID,
+          googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
+          googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
         }),
       }),
     );
@@ -333,6 +344,8 @@ export async function startLocalRuntime({
     await mf.ready;
 
     await migrateSnapshotsDb(mf);
+    // CAS_CONTROL_DB schema is migrated idempotently by the admin worker on
+    // its first request (migrateControlSchema in cas-admin-webui index.ts).
 
     return {
       mf,

@@ -13,6 +13,10 @@ export const CAS_ACCESS_KEY = "unidocs-dev-cas-key";
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
 export const CAS_WORKER = "unidocs-cas";
+/** CAS admin BFF Worker (private; reached via the edge or directly in dev). */
+export const ADMIN_WORKER = "unidocs-cas-admin";
+/** Local mock Google OIDC provider (dev only). */
+export const MOCK_OIDC_WORKER = "unidocs-mock-oidc";
 /**
  * 过渡形态(阶段 4 删除):Azure 栈的 CAS_BASE_URL 要能从进程外打到这个
  * worker。service binding 只在 Miniflare 进程内有效,而 CasClient 的
@@ -23,6 +27,14 @@ export const CAS_WORKER = "unidocs-cas";
 export const CAS_PORT = 8791;
 /** 故障注入用的假 CAS,只在测试里启用。 */
 export const CAS_FAULT_WORKER = "unidocs-cas-fault";
+/** Admin BFF 直连端口(Vite dev 通过 5174 代理到它)。 */
+export const ADMIN_PORT = 8792;
+/** Mock OIDC provider 直连端口。 */
+export const MOCK_OIDC_PORT = 8793;
+/** 本地 CAS_CONTROL_DB 名称。 */
+export const CONTROL_DB = "unidocs-cas-control";
+/** 本地 admin 会话加密密钥(仅本地开发;生产用 wrangler secret)。 */
+export const CAS_ADMIN_SESSION_KEY = "-rlX2kRi6wW59cGagXqw5GYFUWlsE0PXkgv0DLrK5L4";
 
 /**
  * 代理式假 CAS:除 root-refs 外全部原样转发给真 CAS,
@@ -128,6 +140,8 @@ export function bundleTargets(docTypes) {
   return [
     { entry: "packages/cloudflare-gateway/src/worker.ts", outfile: "gateway.js" },
     { entry: "packages/cloudflare-cas/src/worker.ts", outfile: "cas.js" },
+    { entry: "packages/cas-admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
+    { entry: "stacks/cloudflare/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
     ...docTypes.map((name) => ({
       entry: DOC_TYPES[name].entry,
       outfile: `${name}.js`,
@@ -162,6 +176,10 @@ export function buildWorkers({
   extraBindings = {},
   internalAuthMode = "legacy",
   capabilityFixture,
+  casAdminPublicOrigin = `http://localhost:4070`,
+  googleOidcClientId,
+  googleOidcClientSecret,
+  googleOidcIssuer,
 }) {
   if (!["legacy", "dual", "capability"].includes(internalAuthMode)) {
     throw new Error("internalAuthMode must be legacy, dual, or capability");
@@ -235,6 +253,42 @@ export function buildWorkers({
       serviceBindings: { CAS_UPSTREAM: CAS_WORKER },
     });
   }
+
+  // CAS admin BFF + local mock OIDC provider. The admin worker is private in
+  // production (reached only through cas-edge); locally it binds a direct
+  // socket so Vite dev (port 4070) and scripts can reach it. When real Google
+  // OIDC credentials are provided (env GOOGLE_OIDC_CLIENT_ID/SECRET), the
+  // admin worker talks to Google; otherwise it uses the local mock provider.
+  const useRealGoogle = Boolean(googleOidcClientId) || Boolean(googleOidcClientSecret);
+  const adminBindings = {
+    GOOGLE_OIDC_CLIENT_ID: googleOidcClientId ?? "unidocs-local-admin",
+    GOOGLE_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "unidocs-local-admin-secret",
+    SESSION_ENCRYPTION_KEYS: JSON.stringify({ local: CAS_ADMIN_SESSION_KEY }),
+    PUBLIC_ORIGIN: casAdminPublicOrigin,
+    SESSION_COOKIE_SECURE: "false",
+  };
+  if (useRealGoogle) {
+    adminBindings.OIDC_ISSUER = googleOidcIssuer ?? "https://accounts.google.com";
+  } else {
+    adminBindings.OIDC_ISSUER = `http://${host}:${ports.mockOidc}`;
+    adminBindings.OIDC_DISCOVERY_URL = `http://${host}:${ports.mockOidc}/.well-known/openid-configuration`;
+  }
+  workers.push({
+    name: ADMIN_WORKER,
+    modules: true,
+    scriptPath: join(bundleDir, "cas-admin.js"),
+    compatibilityDate: COMPATIBILITY_DATE,
+    bindings: adminBindings,
+    d1Databases: { CAS_CONTROL_DB: CONTROL_DB },
+    unsafeDirectSockets: [{ host, port: ports.admin }],
+  });
+  workers.push({
+    name: MOCK_OIDC_WORKER,
+    modules: true,
+    scriptPath: join(bundleDir, "mock-oidc.js"),
+    compatibilityDate: COMPATIBILITY_DATE,
+    unsafeDirectSockets: [{ host, port: ports.mockOidc }],
+  });
 
   for (const name of docTypes) {
     const spec = DOC_TYPES[name];

@@ -60,7 +60,10 @@ export class OidcClient {
     this.#clientId = config.clientId;
     this.#clientSecret = config.clientSecret;
     this.#redirectUri = config.redirectUri;
-    this.#fetch = options.fetchImpl ?? fetch;
+    // Bind fetch: calling the global fetch detached from its receiver throws
+    // "Illegal invocation" in workerd.
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    this.#fetch = (input, init) => fetchImpl(input, init);
     this.#now = options.now ?? (() => Date.now());
     this.#discoveryTtlMs = options.discoveryTtlMs ?? 60 * 60 * 1000;
     this.#jwksTtlMs = options.jwksTtlMs ?? 60 * 60 * 1000;

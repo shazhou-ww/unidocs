@@ -114,7 +114,7 @@ async function createBff(provider: MockProvider): Promise<(request: Request) => 
       discoveryUrl: DISCOVERY_URL,
       clientId: CLIENT_ID,
       clientSecret: CLIENT_SECRET,
-      redirectUri: `${PUBLIC_ORIGIN}/admin/oauth/callback`,
+      redirectUri: `${PUBLIC_ORIGIN}/admin/auth/callback`,
     },
     { fetchImpl: providerFetch },
   );
@@ -141,7 +141,7 @@ function authRequest(
 
 async function signIn(bff: (request: Request) => Promise<Response>, provider: MockProvider): Promise<{ cookie: string; csrf: string }> {
   // 1. Start login.
-  const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/oauth/login?returnTo=/admin/`));
+  const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login?returnTo=/admin/`));
   expect(login.status).toBe(302);
   const preLoginCookie = cookieFrom(login)!;
   const location = new URL(login.headers.get("Location")!);
@@ -151,6 +151,7 @@ async function signIn(bff: (request: Request) => Promise<Response>, provider: Mo
   const codeChallenge = location.searchParams.get("code_challenge")!;
   expect(location.searchParams.get("client_id")).toBe(CLIENT_ID);
   expect(location.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(location.searchParams.get("redirect_uri")).toBe(`${PUBLIC_ORIGIN}/admin/auth/callback`);
   expect(state).toBeTruthy();
   expect(nonce).toBeTruthy();
   expect(codeChallenge).toBeTruthy();
@@ -167,7 +168,7 @@ async function signIn(bff: (request: Request) => Promise<Response>, provider: Mo
 
   // 3. Callback with the authorization code.
   const callback = await bff(new Request(
-    `${PUBLIC_ORIGIN}/admin/oauth/callback?code=mock-code&state=${encodeURIComponent(state)}`,
+    `${PUBLIC_ORIGIN}/admin/auth/callback?code=mock-code&state=${encodeURIComponent(state)}`,
     { headers: { Cookie: preLoginCookie } },
   ));
   expect(callback.status).toBe(302);
@@ -189,7 +190,7 @@ describe("cas-admin-webui BFF", () => {
     provider.expectTokenBody = (body) => {
       expect(body.get("grant_type")).toBe("authorization_code");
       expect(body.get("code")).toBe("mock-code");
-      expect(body.get("redirect_uri")).toBe(`${PUBLIC_ORIGIN}/admin/oauth/callback`);
+      expect(body.get("redirect_uri")).toBe(`${PUBLIC_ORIGIN}/admin/auth/callback`);
       expect(body.get("client_id")).toBe(CLIENT_ID);
       expect(body.get("client_secret")).toBe(CLIENT_SECRET);
       expect(body.get("code_verifier")).toBeTruthy();
@@ -212,10 +213,10 @@ describe("cas-admin-webui BFF", () => {
   test("callback with a mismatched state is rejected", async () => {
     const provider = await createMockProvider();
     const bff = await createBff(provider);
-    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/oauth/login`));
+    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login`));
     const cookie = cookieFrom(login)!;
     const callback = await bff(new Request(
-      `${PUBLIC_ORIGIN}/admin/oauth/callback?code=code&state=wrong-state`,
+      `${PUBLIC_ORIGIN}/admin/auth/callback?code=code&state=wrong-state`,
       { headers: { Cookie: cookie } },
     ));
     expect(callback.status).toBe(302);
@@ -225,7 +226,7 @@ describe("cas-admin-webui BFF", () => {
   test("id_token with a wrong nonce is rejected", async () => {
     const provider = await createMockProvider();
     const bff = await createBff(provider);
-    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/oauth/login`));
+    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login`));
     const cookie = cookieFrom(login)!;
     const location = new URL(login.headers.get("Location")!);
     const state = location.searchParams.get("state")!;
@@ -238,7 +239,7 @@ describe("cas-admin-webui BFF", () => {
       name: null,
     };
     const callback = await bff(new Request(
-      `${PUBLIC_ORIGIN}/admin/oauth/callback?code=code&state=${encodeURIComponent(state)}`,
+      `${PUBLIC_ORIGIN}/admin/auth/callback?code=code&state=${encodeURIComponent(state)}`,
       { headers: { Cookie: cookie } },
     ));
     expect(callback.status).toBe(302);
@@ -340,7 +341,7 @@ describe("cas-admin-webui BFF", () => {
     const bff = await createBff(provider);
     const page = await bff(new Request(`${PUBLIC_ORIGIN}/admin/invitations/token-abc`));
     expect(page.status).toBe(302);
-    expect(page.headers.get("Location")).toContain("/admin/oauth/login");
+    expect(page.headers.get("Location")).toContain("/admin/auth/login");
     expect(page.headers.get("Location")).toContain("returnTo=%2Fadmin%2Finvitations%2Ftoken-abc");
 
     const { cookie } = await signIn(bff, provider);
@@ -396,7 +397,7 @@ describe("cas-admin-webui BFF", () => {
     const provider = await createMockProvider();
     const bff = await createBff(provider);
     const { cookie } = await signIn(bff, provider);
-    const logout = await authRequest(bff, "/admin/oauth/logout", cookie, { method: "POST" });
+    const logout = await authRequest(bff, "/admin/auth/logout", cookie, { method: "POST" });
     expect(logout.status).toBe(204);
     expect(logout.headers.get("Set-Cookie")).toContain("Max-Age=0");
     const me = await authRequest(bff, "/admin/me", cookie);

@@ -31,6 +31,18 @@
    `/admin/invitations/{token}`; unauthenticated visitors are routed through
    Google OIDC login first (state carries the token + return path). The page
    POSTs to the frozen `POST /admin/member-invitations/{token}/accept`.
+7. **OIDC route surface (registered Google OAuth URIs):** the BFF uses
+   `/admin/auth/login`, `/admin/auth/callback`, `/admin/auth/logout`; the
+   redirect URI is `PUBLIC_ORIGIN + /admin/auth/callback`.
+   - prod:  `https://unicas.shazhou.work/admin/auth/callback`
+   - local: `http://localhost:4070/admin/auth/callback`
+8. **Local dev ports:** Vite dev serves the console at `http://localhost:4070`
+   and proxies `/admin/*` (except the shell and assets) to the admin BFF
+   worker's direct socket `127.0.0.1:8792`; the mock OIDC provider listens on
+   `127.0.0.1:8793`. When `GOOGLE_OIDC_CLIENT_ID`/`GOOGLE_OIDC_CLIENT_SECRET`
+   env vars are set, the local runtime points the BFF at the real Google
+   issuer instead of the mock provider. Real credentials are never committed;
+   the local runtime defaults to mock client id/secret.
 
 ## Protocol amendments (Task 2, explicitly recorded)
 
@@ -134,16 +146,42 @@ the same commit.
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).
-- [ ] Phase A — `cas-control-plane`: schema/migrations, IDs/validation,
+- [x] Phase A — `cas-control-plane`: schema/migrations, IDs/validation,
   possession challenges, service, session store, miniflare-backed tests.
-- [ ] Phase B — `cas-admin-webui` BFF: Google OIDC (authorization code + PKCE +
+- [x] Phase B — `cas-admin-webui` BFF: Google OIDC (authorization code + PKCE +
   nonce), encrypted sessions, CSRF/origin, frozen-route handlers, mock-OIDC
   tests.
-- [ ] Phase C — React console (hash router): My Stacks, stack detail, members +
+- [x] Phase C — React console (hash router): My Stacks, stack detail, members +
   invitations + accept page, issuer + keys, ref domains, control audit, Root
-  Ref audit empty state; jsdom component tests; local Miniflare wiring.
+  Ref audit empty state; jsdom component tests; local Miniflare wiring with a
+  mock OIDC provider and real-Google env override.
 - [ ] Phase D — full validation: package tests/typecheck across the four
   packages; local runtime smoke.
+
+## Local development
+
+Start the CAS middleware runtime (gateway + tenant CAS + admin BFF + mock
+OIDC provider):
+
+```text
+pnpm dev
+```
+
+Then serve the console with Vite and open http://localhost:4070/admin/:
+
+```text
+pnpm --filter @unidocs/cas-admin-webui dev:ui
+```
+
+To exercise the real Google OIDC flow locally (registered redirect URI
+`http://localhost:4070/admin/auth/callback`):
+
+```text
+GOOGLE_OIDC_CLIENT_ID=<client id> GOOGLE_OIDC_CLIENT_SECRET=<secret> pnpm dev
+```
+
+Without those env vars the runtime uses the local mock provider (any sign-in
+becomes `local-operator@example.com`).
 
 ## Open notes
 

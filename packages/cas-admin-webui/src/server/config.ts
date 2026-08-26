@@ -40,6 +40,9 @@ export const DEFAULT_OIDC_ISSUER = "https://accounts.google.com";
 export const DEFAULT_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 export const DEFAULT_SESSION_COOKIE_NAME = "cas_admin_session";
 
+/** Mount point of the admin WebUI/BFF on the CAS service domain. */
+export const CAS_ADMIN_WEBUI_MOUNT = "/admin" as const;
+
 export interface AdminBffEnv {
   GOOGLE_OIDC_CLIENT_ID?: string;
   GOOGLE_OIDC_CLIENT_SECRET?: string;

@@ -1,0 +1,39 @@
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
+
+/**
+ * The admin console is served under `/admin/` on the CAS service domain;
+ * the BFF owns `/admin/me`, `/admin/stacks/...` and the OIDC routes. In dev,
+ * Vite serves the SPA and proxies every other `/admin` path (API + OIDC) to
+ * the local BFF Worker (see stacks/cloudflare/local).
+ */
+export default defineConfig({
+  base: "/admin/",
+  plugins: [react()],
+  server: {
+    host: "127.0.0.1",
+    port: 4070,
+    proxy: {
+      "/admin": {
+        target: "http://localhost:8792",
+        changeOrigin: true,
+        bypass: (req) => {
+          const path = req.url ?? "";
+          // The SPA shell and its assets come from Vite, not the BFF.
+          if (path === "/admin" || path === "/admin/" || path.startsWith("/admin/assets/")) {
+            return path;
+          }
+          return undefined;
+        },
+      },
+    },
+  },
+  build: {
+    outDir: "dist/ui",
+    emptyOutDir: true,
+  },
+  test: {
+    environment: "node",
+    setupFiles: ["./tests/setup.ts"],
+  },
+});

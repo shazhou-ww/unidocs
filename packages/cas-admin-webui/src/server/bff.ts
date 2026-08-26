@@ -67,7 +67,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       discoveryUrl: config.oidcDiscoveryUrl,
       clientId: config.googleClientId,
       clientSecret: config.googleClientSecret,
-      redirectUri: `${config.publicOrigin}/admin/oauth/callback`,
+      redirectUri: `${config.publicOrigin}/admin/auth/callback`,
     });
   const assets = options.assets ?? (async () => null);
   const sessionTtlMs = config.sessionTtlMs ?? 8 * 60 * 60 * 1000;
@@ -81,17 +81,27 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   const absolutize = (path: string): string => `${config.publicOrigin}${path}`;
 
   return async function adminFetch(request: Request): Promise<Response> {
+    try {
+      return await dispatch(request);
+    } catch (error) {
+      // Unexpected failure: keep the response structured and observable.
+      console.error("cas-admin BFF unhandled error", error);
+      return json({ error: "SERVICE_UNAVAILABLE", message: "admin request failed" }, 500);
+    }
+  };
+
+  async function dispatch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
     const method = request.method;
 
-    if (pathname === "/admin/oauth/login" && method === "GET") {
+    if (pathname === "/admin/auth/login" && method === "GET") {
       return handleLogin(request, url);
     }
-    if (pathname === "/admin/oauth/callback" && method === "GET") {
+    if (pathname === "/admin/auth/callback" && method === "GET") {
       return handleCallback(request, url);
     }
-    if (pathname === "/admin/oauth/logout" && method === "POST") {
+    if (pathname === "/admin/auth/logout" && method === "POST") {
       return handleLogout(request);
     }
 
@@ -242,7 +252,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     const payload = sessionId ? await readSession(sessionId) : null;
     if (!payload || !payload.authenticated) {
       const returnTo = `/admin/invitations/${encodeURIComponent(token)}`;
-      const loginUrl = new URL("/admin/oauth/login", request.url);
+      const loginUrl = new URL("/admin/auth/login", request.url);
       loginUrl.searchParams.set("returnTo", returnTo);
       return new Response(null, {
         status: 302,
@@ -275,7 +285,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     const sessionId = readSessionId(request);
     const payload = sessionId ? await readSession(sessionId) : null;
     if (!payload || !payload.authenticated) {
-      const loginUrl = new URL("/admin/oauth/login", request.url);
+      const loginUrl = new URL("/admin/auth/login", request.url);
       loginUrl.searchParams.set("returnTo", "/admin/");
       return new Response(null, {
         status: 302,

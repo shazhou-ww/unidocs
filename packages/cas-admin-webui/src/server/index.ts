@@ -12,8 +12,6 @@ import { createAdminBff } from "./bff.js";
 import { configFromEnv } from "./config.js";
 import type { AdminBffEnv } from "./config.js";
 
-export const CAS_ADMIN_WEBUI_MOUNT = "/admin" as const;
-
 export { createAdminBff } from "./bff.js";
 export { configFromEnv } from "./config.js";
 export { OidcClient } from "./oidc.js";

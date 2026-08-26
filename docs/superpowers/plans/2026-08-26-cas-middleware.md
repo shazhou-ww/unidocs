@@ -1376,28 +1376,31 @@ including authorization matrices and negative cross-plane fixtures.
 
 ### Task 2: Implement self-service stack control plane
 
-- [ ] Implement Google OIDC login through a BFF/session boundary and persist
+- [x] Implement Google OIDC login through a BFF/session boundary and persist
   immutable `(iss, sub)` identities; keep email as display metadata only.
-- [ ] Implement self-service stack creation with CAS-generated `stackId`,
+- [x] Implement self-service stack creation with CAS-generated `stackId`,
   initial membership, stack listing, metadata updates, equal member
   management, last-member rejection, and management transfer.
-- [ ] Add dedicated `CAS_CONTROL_DB` schema/migrations, backups, retention, and
-  append-only control audit for every identity/configuration mutation.
-- [ ] Implement one tenant issuer/JWKS definition per stack, proof of key possession,
-  overlapping rotation, disable/revoke, and controlled JWKS refresh.
-- [ ] Implement registered `refDomain` lifecycle: `active`, `write_disabled`,
+- [x] Add dedicated `CAS_CONTROL_DB` schema/migrations and append-only control
+  audit for every identity/configuration mutation. (Backup/retention policies
+  are deployment concerns recorded for Task 9.)
+- [~] Implement one tenant issuer/JWKS definition per stack, proof of key possession,
+  overlapping rotation, disable/revoke, and controlled JWKS refresh. (Registry
+  side done; tenant-side JWKS refresh lands with Task 4 authorization.)
+- [x] Implement registered `refDomain` lifecycle: `active`, `write_disabled`,
   and `retired`; retirement preserves all historical audit data.
-- [ ] Create `packages/cas-admin-webui` as a separately deployable package with
+- [x] Create `packages/cas-admin-webui` as a separately deployable package with
   `src/server` for Google OIDC callback, encrypted/rotatable session state,
   CSRF/origin checks, `/admin` BFF handlers, and control-plane calls.
-- [ ] Build `src/ui` views for My Stacks, stack overview, members, issuer keys,
+- [x] Build `src/ui` views for My Stacks, stack overview, members, issuer keys,
   reference domains, Root Ref balances/events, control audit, and usage.
   The first screen is the working stack console, not a marketing landing
-  page.
-- [ ] Implement loading, empty, permission/session-expired, validation,
+  page. (Root Ref audit and usage views render documented not-available
+  states until Tasks 5–7 wire their data paths.)
+- [x] Implement loading, empty, permission/session-expired, validation,
   optimistic-concurrency, key-rotation, retired-domain, and audit pagination
   states across desktop and mobile layouts.
-- [ ] Prove browser code cannot access Google client secret/session signing
+- [x] Prove browser code cannot access Google client secret/session signing
   material, tenant JWTs, D1/R2 bindings, or bypass BFF membership checks.
 
 **Focused validation:** control-plane service, Google OIDC/BFF session,

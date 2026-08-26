@@ -23,9 +23,15 @@ database_id = "REPLACE_WITH_CAS_CONTROL_D1_ID"
 #   SESSION_COOKIE_SECURE (default true; set false for local http dev)
 #   CSRF_ENFORCE (default true)
 #
+# Google OAuth consent screen redirect URIs (registered in the Google Cloud
+# console):
+#   prod:  https://unicas.shazhou.work/admin/auth/callback
+#   local: http://localhost:4070/admin/auth/callback
+# The BFF builds the redirect URI as PUBLIC_ORIGIN + /admin/auth/callback.
+#
 # CAS_TENANT_AUDIT_READER service binding is added when Task 5-7 wire
 # Root Ref audit reads from the tenant worker.
 
 [vars]
 CAS_ADMIN_MOUNT = "/admin"
-PUBLIC_ORIGIN = "REPLACE_WITH_CAS_PUBLIC_ORIGIN"
+PUBLIC_ORIGIN = "https://unicas.shazhou.work"
