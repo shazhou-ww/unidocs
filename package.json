@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:cas-admin": "node scripts/dev-cas-admin.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:local": "vitest run --fileParallelism=false tests/unit tests/integration/cloudflare tests/integration/shared",

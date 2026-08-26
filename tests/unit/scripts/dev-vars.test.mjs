@@ -13,7 +13,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { readDevVars } from "../../../stacks/cloudflare/local/runtime.mjs";
-import { buildWorkers, CAS_PORT, DOC_TYPES, docServiceAccessKey } from "../../../stacks/cloudflare/local/doc-types.mjs";
+import {
+  ADMIN_PORT,
+  buildWorkers,
+  CAS_PORT,
+  DOC_TYPES,
+  docServiceAccessKey,
+  MOCK_OIDC_PORT,
+} from "../../../stacks/cloudflare/local/doc-types.mjs";
+
+const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, cas: CAS_PORT };
 
 let dir;
 
@@ -75,13 +84,16 @@ test("psd declares a .dev.vars file so the Operator gets its LLM config", () => 
 });
 
 test("buildWorkers merges extraBindings into that doc type's worker only", () => {
-  const [gateway, cas, psd] = buildWorkers({
+  const workers = buildWorkers({
     docTypes: ["psd"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, psd: 8790, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, psd: 8790 },
     bundleDir: "/b",
     extraBindings: { psd: { LLM_API_KEY: "test-value-not-a-secret" } },
   });
+  const gateway = workers.find((w) => w.name === "unidocs-gateway");
+  const cas = workers.find((w) => w.name === "unidocs-cas");
+  const psd = workers.find((w) => w.name === "unidocs-psd");
 
   expect(psd.bindings).toEqual({
     CAS_ACCESS_KEY: "unidocs-dev-cas-key",
@@ -100,12 +112,12 @@ test("buildWorkers merges extraBindings into that doc type's worker only", () =>
 });
 
 test("buildWorkers leaves bindings untouched when no extraBindings are given", () => {
-  const [, , psd] = buildWorkers({
+  const psd = buildWorkers({
     docTypes: ["psd"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, psd: 8790, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, psd: 8790 },
     bundleDir: "/b",
-  });
+  }).find((w) => w.name === "unidocs-psd");
   expect(psd.bindings).toEqual({
     CAS_ACCESS_KEY: "unidocs-dev-cas-key",
     INTERNAL_AUTH_MODE: "legacy",

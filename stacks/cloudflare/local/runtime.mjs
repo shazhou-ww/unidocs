@@ -277,6 +277,7 @@ export async function startLocalRuntime({
   capabilityFixture,
   logLevel = LogLevel.WARN,
   casAdminPublicOrigin,
+  casMiddlewareOnly = false,
 } = {}) {
   const ports = resolvePorts(docTypes, portOverrides);
   // 过渡形态(阶段 4 删除):CAS worker 的直连端口,供 Azure 栈的
@@ -285,15 +286,21 @@ export async function startLocalRuntime({
   ports.cas = portOverrides.cas ?? CAS_PORT;
   ports.admin = portOverrides.admin ?? ADMIN_PORT;
   ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
+  if (casMiddlewareOnly) {
+    // CAS middleware runs alone: no gateway, no doc type workers — the
+    // independent-deployment boundary, mirrored by scripts/dev-cas-admin.mjs.
+    delete ports.gateway;
+    for (const name of docTypes) delete ports[name];
+  }
 
   await Promise.all(
     Object.values(ports).map((port) => assertPortFree(host, port)),
   );
 
-  const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway));
+  const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway ?? "cas-admin"));
 
   await Promise.all(
-    bundleTargets(docTypes).map(({ entry, outfile }) =>
+    bundleTargets(docTypes, { casMiddlewareOnly }).map(({ entry, outfile }) =>
       bundleWorker(join(ROOT, entry), join(bundleDir, outfile)),
     ),
   );
@@ -337,13 +344,16 @@ export async function startLocalRuntime({
           googleOidcClientId: process.env.GOOGLE_OIDC_CLIENT_ID,
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
+          casMiddlewareOnly,
         }),
       }),
     );
 
     await mf.ready;
 
-    await migrateSnapshotsDb(mf);
+    if (!casMiddlewareOnly) {
+      await migrateSnapshotsDb(mf);
+    }
     // CAS_CONTROL_DB schema is migrated idempotently by the admin worker on
     // its first request (migrateControlSchema in cas-admin-webui index.ts).
 

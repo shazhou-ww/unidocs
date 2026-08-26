@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
+  ADMIN_PORT,
+  ADMIN_WORKER,
   buildWorkers,
   bundleTargets,
   CAS_FAULT_WORKER,
@@ -11,9 +13,14 @@ import {
   docServiceAccessKey,
   docServicesJson,
   GATEWAY_WORKER,
+  MOCK_OIDC_PORT,
+  MOCK_OIDC_WORKER,
   parseDocTypes,
   resolvePorts,
 } from "../../../stacks/cloudflare/local/doc-types.mjs";
+
+/** Ports every buildWorkers call needs in these tests. */
+const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, cas: CAS_PORT };
 
 test("parseDocTypes defaults to every registered doc type", () => {
   expect(parseDocTypes([])).toEqual(["markdown", "docx", "psd"]);
@@ -95,38 +102,65 @@ test("resolvePorts lets a caller override individual ports", () => {
     .toEqual({ gateway: 18787, markdown: 18788 });
 });
 
-test("bundleTargets builds the gateway, cas worker, plus only the selected types", () => {
+test("bundleTargets builds the gateway, cas, admin, mock-oidc, plus only the selected types", () => {
   expect(bundleTargets(["docx"]).map((t) => t.outfile))
-    .toEqual(["gateway.js", "cas.js", "docx.js"]);
+    .toEqual(["gateway.js", "cas.js", "cas-admin.js", "mock-oidc.js", "docx.js"]);
 });
 
-test("buildWorkers always includes the gateway and cas", () => {
+test("bundleTargets casMiddlewareOnly skips gateway and doc types", () => {
+  expect(bundleTargets(["docx"], { casMiddlewareOnly: true }).map((t) => t.outfile))
+    .toEqual(["cas.js", "cas-admin.js", "mock-oidc.js"]);
+});
+
+test("buildWorkers always includes the gateway, cas, admin BFF, and mock OIDC", () => {
   const workers = buildWorkers({
     docTypes: [],
     host: "127.0.0.1",
-    ports: { gateway: 8787, cas: CAS_PORT },
+    ports: { ...BASE_PORTS },
     bundleDir: "/b",
   });
-  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas"]);
+  expect(workers.map((w) => w.name)).toEqual([
+    GATEWAY_WORKER,
+    CAS_WORKER,
+    ADMIN_WORKER,
+    MOCK_OIDC_WORKER,
+  ]);
+});
+
+test("casMiddlewareOnly starts the middleware without the gateway", () => {
+  const workers = buildWorkers({
+    docTypes: ["docx"],
+    host: "127.0.0.1",
+    ports: { ...BASE_PORTS, docx: 8789 },
+    bundleDir: "/b",
+    casMiddlewareOnly: true,
+  });
+  expect(workers.map((w) => w.name)).toEqual([CAS_WORKER, ADMIN_WORKER, MOCK_OIDC_WORKER]);
 });
 
 test("buildWorkers omits doc types that were not selected", () => {
   const workers = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, docx: 8789 },
     bundleDir: "/b",
   });
-  expect(workers.map((w) => w.name)).toEqual(["unidocs-gateway", "unidocs-cas", "unidocs-docx"]);
+  expect(workers.map((w) => w.name)).toEqual([
+    GATEWAY_WORKER,
+    CAS_WORKER,
+    ADMIN_WORKER,
+    MOCK_OIDC_WORKER,
+    "unidocs-docx",
+  ]);
 });
 
 test("buildWorkers binds each selected type's own DO classes and socket", () => {
-  const [, , docx] = buildWorkers({
+  const docx = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, docx: 8789 },
     bundleDir: "/b",
-  });
+  }).find((w) => w.name === "unidocs-docx");
   expect(docx.durableObjects).toEqual({
     DOCX_EDITOR: { className: "DocxEditor", useSQLite: true },
     DOCX_OPERATOR: { className: "DocxOperator", useSQLite: true },
@@ -140,7 +174,7 @@ test("gateway proxies CAS via service binding and cas worker owns the stores", (
   const [gateway, cas] = buildWorkers({
     docTypes: [],
     host: "127.0.0.1",
-    ports: { gateway: 8787, cas: CAS_PORT },
+    ports: { ...BASE_PORTS },
     bundleDir: "/b",
   });
   expect(gateway.serviceBindings).toEqual({ CAS_SERVICE: "unidocs-cas" });
@@ -167,12 +201,15 @@ test("docServicesJson contains only selected types with their own keys", () => {
 });
 
 test("buildWorkers separates Gateway, Doc, and CAS credentials", () => {
-  const [gateway, cas, docx] = buildWorkers({
+  const workers = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, docx: 8789 },
     bundleDir: "/b",
   });
+  const gateway = workers.find((w) => w.name === GATEWAY_WORKER);
+  const cas = workers.find((w) => w.name === CAS_WORKER);
+  const docx = workers.find((w) => w.name === "unidocs-docx");
   expect(gateway.bindings.CAS_ACCESS_KEY).toBe(CAS_ACCESS_KEY);
   expect(gateway.bindings.INTERNAL_AUTH_MODE).toBe("legacy");
   expect(cas.bindings).toEqual({
@@ -202,7 +239,7 @@ test("capability local workers require a fixture", () => {
   expect(() => buildWorkers({
     docTypes: ["markdown"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, markdown: 8788, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, markdown: 8788 },
     bundleDir: "/b",
     internalAuthMode: "capability",
   })).toThrow(/capabilityFixture/);
@@ -212,7 +249,7 @@ test("casFault 为 true 时,doc-type worker 指向假 CAS,gateway 仍指向真 C
   const workers = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, docx: 8789 },
     bundleDir: "/tmp/bundles",
     casFault: true,
   });
@@ -236,7 +273,7 @@ test("casFault 默认关闭时,不产生假 CAS worker", () => {
   const workers = buildWorkers({
     docTypes: ["docx"],
     host: "127.0.0.1",
-    ports: { gateway: 8787, docx: 8789, cas: CAS_PORT },
+    ports: { ...BASE_PORTS, docx: 8789 },
     bundleDir: "/tmp/bundles",
   });
 
