@@ -1329,7 +1329,8 @@ channel.run(text, {
 | `azure-sdk/src/local-editor.ts:103` | 删掉 501 占位，改为真实的 `DocumentAgentContext` 实现，`apply` 提交时自己读当前 head 作 baseVersion |
 | `cloudflare-sdk/src/agent-store-do.ts` | 新增：`DoAgentSessionStore`，DO SQLite `BLOB` 列 + `seq` 条件写（6.3.4） |
 | `azure-sdk/src/agent-store-pg.ts` | 新增：`PgAgentSessionStore`，Postgres `BYTEA` 列 + `seq` 条件写，写法照搬 `ports-pg.ts:89-111`（6.3.5） |
-| `azure-sdk` 的建表脚本 | 新增 `agent_sessions` 表；`migrate.ts` 加一版 |
+| `azure-sdk/migrations/0003_agent_sessions.sql` | 新增：`agent_sessions` 表，列照抄 `deltas` 的形状（6.3.4） |
+| `azure-sdk/tests/migrate.test.ts:36` | 断言的表名列表加上 `agent_sessions` |
 | `psd-client/src/doc-session.ts` | 移到 `client-sdk`，泛型化 |
 | `psd-client/src/index.ts` | 重新导出 `client-sdk` 的 `DocSession`，并绑定 PSD 的 `applyLocal` / `reload` |
 | `web-psd/src/main.ts:357-397` | 改用 `AgentChannel`，展示逐步进度 |
