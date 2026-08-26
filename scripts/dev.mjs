@@ -74,9 +74,14 @@ if (useAzure) {
       headers: { "X-Internal-Token": CAS_ACCESS_KEY, Connection: "close" },
     }).then(response => response.ok, () => false);
     if (!reachable) {
+      // Same `needsCas` filter as the probe trigger above, but scoped to
+      // *this run's* selection rather than the whole table — the message
+      // and the copy-pasteable remediation should only name doc types the
+      // user actually asked to start.
+      const casDocTypes = azureDocTypes.filter((name) => azureDocTypeTable[name]?.needsCas);
       console.error(
-        `docx on the Azure stack needs the transitional CAS worker at ${casBaseUrl}, which is not answering.\n` +
-          `Start the Miniflare stack in another terminal first:\n\n  pnpm dev docx\n\n` +
+        `${casDocTypes.join(" / ")} on the Azure stack needs the transitional CAS worker at ${casBaseUrl}, which is not answering.\n` +
+          `Start the Miniflare stack in another terminal first:\n\n  pnpm dev ${casDocTypes.join(" ")}\n\n` +
           `(This cross-stack dependency goes away in phase 4, when azure-cas lands.)`,
       );
       process.exit(1);

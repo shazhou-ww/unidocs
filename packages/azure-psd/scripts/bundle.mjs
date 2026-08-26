@@ -21,15 +21,22 @@
  * `packages/azure-gateway/scripts/bundle.mjs` via
  * `scripts/workspace-aliases.mjs`, see that module's doc for why).
  *
- * Unlike `packages/azure-markdown/scripts/bundle.mjs`, this file does NOT
- * use `packages: "external"` (which would leave PSD's own real npm
- * dependencies, `ag-psd` / `fast-png`, as unresolvable bare imports at
- * runtime — `ERR_MODULE_NOT_FOUND`). It uses the explicit
- * `EXTERNAL_NPM_PACKAGES` list from `scripts/workspace-aliases.mjs` instead
- * — see that module's doc comment for the full runtime-resolution reasoning
- * (why `pg` / `@azure/storage-blob` are safe to leave external and
- * `ag-psd` / `fast-png` are not) and why this list has exactly one definition, shared with
- * `stacks/azure/local/runtime.mjs`'s `bundleService()`.
+ * Every azure-* bundler in this repo, this one included, uses the explicit
+ * `EXTERNAL_NPM_PACKAGES` list from `scripts/workspace-aliases.mjs` rather
+ * than esbuild's `packages: "external"`. The two look interchangeable but
+ * aren't: `packages: "external"` leaves *every* bare import unresolved,
+ * including PSD's own real npm dependencies (`ag-psd`, `fast-png`) — those
+ * would ship as unresolvable imports and blow up at runtime with
+ * `ERR_MODULE_NOT_FOUND` the moment the bundle actually runs. The explicit
+ * list only externalizes the packages that are genuinely safe to leave out
+ * (already real JS/CJS, resolved normally through `node_modules`), and
+ * inlines everything else — `ag-psd` / `fast-png` included. See
+ * `scripts/workspace-aliases.mjs`'s doc comment for the full
+ * runtime-resolution reasoning and why this list has exactly one
+ * definition, shared with `stacks/azure/local/runtime.mjs`'s
+ * `bundleService()`. `tests/unit/scripts/bundle-deps.test.mjs` enforces this
+ * choice repo-wide: it fails any azure-* bundler that uses
+ * `packages: "external"` instead of this explicit list.
  *
  * `package.json`'s `build` script runs `tsc` first (for `dist/*.d.ts`, kept
  * for consistency with the repo's `main`/`types`/`exports` -> `dist/*`

@@ -72,9 +72,10 @@ describe("Cloudflare doc type 的配套物", () => {
   });
 });
 
-// 两朵云支持的集合可以不同（Azure 落后是允许的，psd 就是这种情况），但这个
-// 差集必须是**有意识的**。这条测试把它打印出来，让"Azure 少一个 doc type"
-// 成为一件看得见的事，而不是某次改动里悄悄发生的。
+// 两朵云支持的 doc type 集合必须相等：Cloudflare 有的，Azure 必须跟上——
+// doctype-* 包云中立，Cloudflare 一侧总是先落地，Azure 一侧不允许永久缺席。
+// 这条测试把差集显式打印出来，它变红的那一刻，就是有人只给 Cloudflare
+// 加了 doc type、忘了同步 Azure 的那一刻。
 test("两朵云的 doc type 差集被显式记录", () => {
   const onlyCf = cfDocTypes.filter((t) => !azureDocTypes.includes(t)).sort();
   const onlyAzure = azureDocTypes.filter((t) => !cfDocTypes.includes(t)).sort();

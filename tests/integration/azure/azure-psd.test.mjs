@@ -23,7 +23,7 @@ import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs"
 import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
 
 const USER = "psd-e2e-user";
-const MINIFLARE_PORTS = { gateway: 33787, psd: 33790, cas: 33791 };
+const MINIFLARE_PORTS = { gateway: 34787, psd: 34790, cas: 34791 };
 
 let miniflare;
 let azure;
