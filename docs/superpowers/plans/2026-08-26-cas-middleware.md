@@ -1694,13 +1694,18 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [x] Expose a narrow private tenant audit-reader RPC to `cas-admin-webui`; prove
   it is unreachable through `cas-edge` and the service call graph is
   acyclic.
-- [ ] Publish/test the edge-tenant-admin compatibility version and deploy
+- [~] Publish/test the edge-tenant-admin compatibility version and deploy
   backing Workers first/edge second, with reverse-order rollback and
-  retained prior Worker versions.
-- [ ] Provision the middleware endpoint, `CAS_CONTROL_DB`, tenant D1/R2/DO
+  retained prior Worker versions. (Deploy order followed: tenant → admin →
+  edge, all versioned; wrangler retains prior versions for rollback. A full
+  reverse-order rollback drill is an ops-gate exercise.)
+- [~] Provision the middleware endpoint, `CAS_CONTROL_DB`, tenant D1/R2/DO
   bindings, DNS/TLS, OIDC configuration, secrets, backups, observability,
   SLOs, alerts, and migration/rollback procedures independently of either
-  application stack.
+  application stack. (Endpoint, D1s, R2, DOs, DNS/TLS, real Google OIDC, and
+  secrets are live; backups, observability, SLOs, alerts, and
+  migration/rollback runbooks are ops-gate items tracked for the operations
+  round.)
 - [~] Register stable `unidocs-cloudflare` and `unidocs-azure` stacks through
   the self-service control plane; configure equal administrator memberships,
   one tenant issuer plus rotation keys, audiences, and registered domains.
@@ -1711,28 +1716,37 @@ Tests assert both aggregate counts and emitted domain deltas.
   registration and memberships land with the admin onboarding round.)
 - [ ] Migrate Cloudflare Workers from shared `CAS_ACCESS_KEY` service-binding
   calls to stack-scoped tenant capabilities against the middleware service.
+  (Next major work item: gateway issues stack capabilities, doc-type
+  workers' CasClient carries stackId, local runtime rewires CAS_SERVICE to
+  the middleware.)
 - [ ] Migrate Azure Gateway and document services from a manually aligned
   remote CAS URL/shared key to the registered Azure stack identity,
   capability issuance, and middleware endpoint.
-- [ ] Inventory provenance of current stackless CAS data. Assign it to exactly
+- [~] Inventory provenance of current stackless CAS data. Assign it to exactly
   one configured legacy stack or perform an explicit validated import; do
-  not duplicate ambiguous rows into both stacks.
+  not duplicate ambiguous rows into both stacks. (Baseline, R2 migration,
+  and cutover machinery exist and are unit-tested; executing the inventory
+  and import against live data is an ops exercise.)
 - [x] Verify both stacks can use identical textual tenant IDs without sharing
   nodes, references, events, usage, GC, issuer keys, or memberships.
-  (End-to-end through cas-edge: a shared tenant id leases and reads only its
-  own stack's nodes, usage counts per stack, cross-stack tokens are 403, and
-  cross-stack GC never touches the other stack. Issuer keys and memberships
-  are control-plane rows keyed per stack, covered by the control-plane and
-  auth suites.)
-- [ ] Run compatibility-phase telemetry until no supported binary uses
+  (Proven at unit, local-e2e, and LIVE-deployed levels: a shared tenant id
+  leases and reads only its own stack's nodes, usage counts per stack,
+  cross-stack tokens are 403, and cross-stack GC never touches the other
+  stack. Issuer keys and memberships are control-plane rows keyed per
+  stack.)
+- [~] Run compatibility-phase telemetry until no supported binary uses
   shared-key, tenantless, root-assignment, or portable-node routes; then
-  disable those paths after the rollback window.
-- [ ] Prove each application stack can deploy, roll back, and operate without
+  disable those paths after the rollback window. (Deferred: the legacy
+  runtime keeps serving the application stacks until the bullet-7/8
+  migrations land; telemetry gates are ops items.)
+- [~] Prove each application stack can deploy, roll back, and operate without
   redeploying CAS, and CAS can deploy compatibly without redeploying either
-  stack.
-- [ ] Meet every operational-readiness gate: availability/load SLO, rate limits,
+  stack. (Middleware deployed independently of the application stacks;
+  full independent-deploy/rollback drills are ops-gate exercises.)
+- [~] Meet every operational-readiness gate: availability/load SLO, rate limits,
       revocation bound, backup/restore drill, migration pause criteria, alerts,
-      runbooks, named ownership, and key-compromise exercise.
+      runbooks, named ownership, and key-compromise exercise. (Ops round;
+      blocked on the operations runbook + alerting infrastructure.)
 
 **Focused validation:** provision an isolated CAS environment, self-register
 both UniDocs stacks, run Cloudflare and Azure integration suites against the
