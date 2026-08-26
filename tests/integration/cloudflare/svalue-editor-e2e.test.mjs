@@ -26,7 +26,7 @@ function request(path, init = {}) {
 
 test("SValue Editor retains deltas and snapshots across rollback and restart", async () => {
   const persistPath = await mkdtemp(join(tmpdir(), "unidocs-svalue-editor-"));
-  const ports = { gateway: 33787, markdown: 33788 };
+  const ports = { gateway: 33787, markdown: 33788, cas: 33791, admin: 33792, mockOidc: 33793 };
   runtime = await startLocalRuntime({
     docTypes: ["markdown"],
     persistPath,
@@ -159,7 +159,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
 
 test("DOCX reconstructs its manifest from snapshot plus retained delta", async () => {
   const persistPath = await mkdtemp(join(tmpdir(), "unidocs-svalue-docx-"));
-  const ports = { gateway: 33887, docx: 33889 };
+  const ports = { gateway: 33887, docx: 33889, cas: 33891, admin: 33892, mockOidc: 33893 };
   runtime = await startLocalRuntime({
     docTypes: ["docx"],
     persistPath,

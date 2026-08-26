@@ -1724,9 +1724,19 @@ Tests assert both aggregate counts and emitted domain deltas.
   standalone middleware for the dev command and the Azure round. Wiring the
   application-stack WRANGLER configs to the deployed middleware is the
   remaining deploy step.)
-- [ ] Migrate Azure Gateway and document services from a manually aligned
+- [x] Migrate Azure Gateway and document services from a manually aligned
   remote CAS URL/shared key to the registered Azure stack identity,
-  capability issuance, and middleware endpoint.
+  capability issuance, and middleware endpoint. (Azure stack mode is green:
+  `startAzureRuntime({ internalAuthMode: "stack" })` embeds the local
+  middleware via `startLocalMiddleware` (registered `unidocs-azure`,
+  independent ports so it coexists with `pnpm dev`), the azure gateway signs
+  delegated/gateway CAS capabilities with the azure stack key (refDomain
+  claim, canonical /stacks passthrough), and the azure doc services'
+  CasClient carries stackId to the middleware. `azure-docx-image` (blob lease
+  + retained root) and `azure-stack-mode` prove the storage path
+  end-to-end; the transitional cf legacy-CAS dependency is gone. Full azure
+  suite 29 green; also fixed Windows `run()` pnpm .cmd spawning and the
+  cf-runtime default admin/cas port clashes with a running `pnpm dev`.)
 - [~] Inventory provenance of current stackless CAS data. Assign it to exactly
   one configured legacy stack or perform an explicit validated import; do
   not duplicate ambiguous rows into both stacks. (Baseline, R2 migration,

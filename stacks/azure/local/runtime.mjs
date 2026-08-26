@@ -47,6 +47,7 @@ import {
   CAS_ACCESS_KEY,
   docServiceAccessKey,
 } from "../../cloudflare/local/doc-types.mjs";
+import { startLocalMiddleware } from "../../cloudflare/local/runtime.mjs";
 import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./ports.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../doc-types.mjs";
@@ -90,7 +91,14 @@ const POSTGRES_IMAGE = "postgres:18-alpine";
  */
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd: ROOT, stdio: "inherit", ...opts });
+    // On Windows, pnpm/docker resolve to .cmd shims that spawn() cannot
+    // execute without a shell.
+    const child = spawn(cmd, args, {
+      cwd: ROOT,
+      stdio: "inherit",
+      shell: process.platform === "win32",
+      ...opts,
+    });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (signal) {
@@ -651,12 +659,27 @@ export async function startAzureRuntime({
   casBaseUrl,
   internalAuthMode = "dual",
   capabilityFixture,
+  stackFixture,
+  middlewarePorts = {},
+  middlewareLogLevel,
   postgres = "compose",
   azuriteDataDir,
 } = {}) {
-  if (!['legacy', 'dual', 'capability'].includes(internalAuthMode)) {
-    throw new Error(`startAzureRuntime(): internalAuthMode must be "legacy", "dual", or "capability", got ${JSON.stringify(internalAuthMode)}`);
+  if (!['legacy', 'dual', 'capability', 'stack'].includes(internalAuthMode)) {
+    throw new Error(`startAzureRuntime(): internalAuthMode must be "legacy", "dual", "capability", or "stack", got ${JSON.stringify(internalAuthMode)}`);
   }
+  const stackMode = internalAuthMode === "stack";
+  const resolvedStackFixture = stackMode
+    ? (stackFixture ?? await createEphemeralAzureStackFixture())
+    : undefined;
+  // 嵌入中间件的独立端口：避开 cf dev（`pnpm dev`）占用的 8791-8793/8794。
+  const resolvedMiddlewarePorts = {
+    cas: 37791,
+    admin: 37792,
+    mockOidc: 37793,
+    edge: 36894,
+    ...middlewarePorts,
+  };
   if (postgres !== "compose" && postgres !== "external") {
     throw new Error(`startAzureRuntime(): postgres must be "compose" or "external", got ${JSON.stringify(postgres)}`);
   }
@@ -684,6 +707,27 @@ export async function startAzureRuntime({
   // like it should (a leaked process from a previous run answering in place
   // of the fresh stack, making the behavior suite pass against stale state).
   await assertPortsFree(layout, { skipPostgresPort: externalPostgres });
+
+  // 栈模式：嵌入本地 CAS 中间件（注册 unidocs-azure 栈）。azure 网关与
+  // 服务进程的 CAS_BASE_URL 指向它的 edge 端点，不再依赖 cf legacy CAS
+  // worker（8791 共享密钥的过渡形态）。
+  let middleware;
+  let resolvedCasBaseUrl = casBaseUrl;
+  if (stackMode) {
+    middleware = await startLocalMiddleware({
+      stacks: [{
+        stackId: resolvedStackFixture.stackId,
+        issuer: resolvedStackFixture.issuer,
+        audience: resolvedStackFixture.audience,
+        kid: resolvedStackFixture.kid,
+        publicJwk: resolvedStackFixture.jwks.keys[0],
+        refDomains: resolvedStackFixture.refDomains,
+      }],
+      ports: resolvedMiddlewarePorts,
+      logLevel: middlewareLogLevel,
+    });
+    resolvedCasBaseUrl = middleware.urls.edge;
+  }
 
   if (externalPostgres) {
     // Nothing to pull, nothing to start — the caller's environment already
@@ -744,7 +788,9 @@ export async function startAzureRuntime({
             BLOB_CONNECTION_STRING,
             INTERNAL_AUTH_MODE: internalAuthMode,
             DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
-            CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+            CAS_CAPABILITY_AUDIENCE: stackMode
+              ? resolvedStackFixture.audience
+              : "unidocs-cas",
             CAPABILITY_ALGORITHM: "ES256",
             CAPABILITY_TTL_SECONDS: "120",
             CAPABILITY_MAX_LIFETIME_SECONDS: "300",
@@ -753,9 +799,14 @@ export async function startAzureRuntime({
               CAPABILITY_ISSUER: resolvedCapabilityFixture.issuer,
               CAPABILITY_TRUSTED_JWKS: JSON.stringify(resolvedCapabilityFixture.jwks),
             } : {}),
+            ...(stackMode ? {
+              CAS_STACK_ID: resolvedStackFixture.stackId,
+              CAS_STACK_ISSUER: resolvedStackFixture.issuer,
+              CAS_STACK_TRUSTED_JWKS: JSON.stringify(resolvedStackFixture.jwks),
+            } : {}),
             SERVICE_ACCESS_KEY: docServiceAccessKey(name),
             PORT: String(port),
-            ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl, CAS_ACCESS_KEY } : {}),
+            ...(resolvedCasBaseUrl ? { CAS_BASE_URL: resolvedCasBaseUrl, CAS_ACCESS_KEY } : {}),
           },
           `azure-${name}-${i + 1}`,
         );
@@ -790,7 +841,9 @@ export async function startAzureRuntime({
         CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: JSON.stringify(docServices),
         INTERNAL_AUTH_MODE: internalAuthMode,
-        CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+        CAS_CAPABILITY_AUDIENCE: stackMode
+          ? resolvedStackFixture.audience
+          : "unidocs-cas",
         CAPABILITY_ALGORITHM: "ES256",
         CAPABILITY_TTL_SECONDS: "120",
         CAPABILITY_MAX_LIFETIME_SECONDS: "300",
@@ -800,9 +853,16 @@ export async function startAzureRuntime({
           CAPABILITY_KEY_ID: resolvedCapabilityFixture.kid,
           CAPABILITY_PRIVATE_KEY_PKCS8: resolvedCapabilityFixture.privateKeyPkcs8,
         } : {}),
+        ...(stackMode ? {
+          CAS_STACK_ID: resolvedStackFixture.stackId,
+          CAS_STACK_ISSUER: resolvedStackFixture.issuer,
+          CAS_STACK_KEY_ID: resolvedStackFixture.kid,
+          CAS_STACK_PRIVATE_KEY_PKCS8: resolvedStackFixture.privateKeyPkcs8,
+          CAS_REF_DOMAIN: "doc",
+        } : {}),
         INSECURE_PATH_IDENTITY: "true",
         PORT: String(layout.gateway),
-        ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
+        ...(resolvedCasBaseUrl ? { CAS_BASE_URL: resolvedCasBaseUrl } : {}),
       },
       "azure-gateway",
     );
@@ -813,6 +873,9 @@ export async function startAzureRuntime({
     return {
       urls,
       capabilityFixture: resolvedCapabilityFixture,
+      stackFixture: resolvedStackFixture,
+      /** 栈模式：嵌入的本地中间件运行时（含 urls.edge 与 storage 探针）。 */
+      middleware,
       storage: probe,
       // A function, not a snapshot: `startReplicaProxy()`'s own `hits()` is
       // itself a live accessor, and callers here (the multi-replica suite,
@@ -835,6 +898,8 @@ export async function startAzureRuntime({
           stopProcess(azuriteProc),
         ]);
         await probe?.dispose();
+        // 栈模式：中间件是嵌入的本地实例，随运行时一起释放。
+        await middleware?.dispose();
         // Only remove the data directory this run actually owns — an
         // explicit `azuriteDataDir` is meant to survive this process
         // exiting (that's the entire point of passing one), the same way
@@ -866,6 +931,7 @@ export async function startAzureRuntime({
       stopProcess(azuriteProc),
     ]);
     await probe?.dispose().catch(() => {});
+    await middleware?.dispose().catch(() => {});
     if (resolvedAzuriteDataDir && ownsAzuriteDataDir) {
       await rm(resolvedAzuriteDataDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -891,5 +957,26 @@ async function createEphemeralCapabilityFixture() {
     jwks: {
       keys: [{ ...publicJwk, kid, alg: "ES256", use: "sig" }],
     },
+  };
+}
+
+/** Stack-mode default: the registered unidocs-azure stack CAS identity. */
+async function createEphemeralAzureStackFixture() {
+  const pair = await generateKeyPair("ES256", { extractable: true });
+  const kid = `az-stack-local-${crypto.randomUUID()}`;
+  const publicJwk = await exportJWK(pair.publicKey);
+  return {
+    stackId: "unidocs-azure",
+    issuer: `unidocs-azure:local:${crypto.randomUUID()}`,
+    audience: `unidocs-cas-azure:${crypto.randomUUID()}`,
+    kid,
+    privateKeyPkcs8: await exportPKCS8(pair.privateKey),
+    jwks: {
+      keys: [{ ...publicJwk, kid, alg: "ES256", use: "sig" }],
+    },
+    refDomains: [
+      { refDomain: "doc", status: "active" },
+      { refDomain: "asset", status: "active" },
+    ],
   };
 }

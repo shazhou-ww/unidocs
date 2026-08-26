@@ -36,7 +36,7 @@ function closeFetch(url, init = {}) {
 beforeAll(async () => {
   runtime = await startLocalRuntime({
     docTypes: ["docx", "markdown"],
-    ports: { gateway: 29787, docx: 29789, markdown: 29788 },
+    ports: { gateway: 29787, docx: 29789, markdown: 29788, cas: 29791, admin: 29792, mockOidc: 29793 },
   });
 }, 60_000);
 

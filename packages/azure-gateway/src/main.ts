@@ -47,22 +47,35 @@ async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
   const registry = new StaticDocServiceRegistry(requireEnv("DOC_SERVICES_JSON"));
   const internalAuthMode = parseGatewayInternalAuthMode(process.env.INTERNAL_AUTH_MODE);
-  const casAccessKey = internalAuthMode === "capability"
+  const stackMode = internalAuthMode === "stack";
+  const casAccessKey = internalAuthMode === "capability" || stackMode
     ? undefined
     : requireEnv("CAS_ACCESS_KEY");
   const capabilityAuthority = internalAuthMode === "legacy"
     ? undefined
     : await (async () => {
       const policy = parseCapabilityRuntimePolicy(process.env);
+      const casIssuer = stackMode
+        ? await createPkcs8CapabilityIssuer({
+          issuer: requireEnv("CAS_STACK_ISSUER"),
+          kid: requireEnv("CAS_STACK_KEY_ID"),
+          privateKeyPkcs8: requireEnv("CAS_STACK_PRIVATE_KEY_PKCS8"),
+          defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
+          maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+        })
+        : undefined;
       return new GatewayCapabilityAuthority({
         issuer: await createPkcs8CapabilityIssuer({
-        issuer: requireEnv("CAPABILITY_ISSUER"),
-        kid: requireEnv("CAPABILITY_KEY_ID"),
-        privateKeyPkcs8: requireEnv("CAPABILITY_PRIVATE_KEY_PKCS8"),
+          issuer: requireEnv("CAPABILITY_ISSUER"),
+          kid: requireEnv("CAPABILITY_KEY_ID"),
+          privateKeyPkcs8: requireEnv("CAPABILITY_PRIVATE_KEY_PKCS8"),
           defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
           maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
         }),
+        casIssuer,
         casAudience: requireEnv("CAS_CAPABILITY_AUDIENCE"),
+        casStackId: stackMode ? requireEnv("CAS_STACK_ID") : undefined,
+        casRefDomain: stackMode ? process.env.CAS_REF_DOMAIN : undefined,
         audit: event => console.log(JSON.stringify({ event: "gateway_capability_issued", ...event })),
       });
     })();
@@ -105,6 +118,7 @@ async function main(): Promise<void> {
     casFetcher,
     directory,
     isGatewayExposedCasRoute: casBaseUrl ? isGatewayExposedCasRoute : () => false,
+    casStackId: stackMode ? requireEnv("CAS_STACK_ID") : undefined,
   });
 
   const { close } = await serve(handler, { port, host: "0.0.0.0" });

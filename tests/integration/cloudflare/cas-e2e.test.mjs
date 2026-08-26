@@ -58,7 +58,7 @@ async function casUpload(userId, contentType, content, refs = []) {
 beforeAll(async () => {
   runtime = await startLocalRuntime({
     docTypes: ["markdown"],
-    ports: { gateway: 28787, markdown: 28788 },
+    ports: { gateway: 28787, markdown: 28788, cas: 28791, admin: 28792, mockOidc: 28793 },
   });
 }, 60_000);
 

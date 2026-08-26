@@ -23,7 +23,7 @@ import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs"
 import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
 
 const TENANT = "psd-e2e-tenant";
-const MINIFLARE_PORTS = { gateway: 34787, psd: 34790, cas: 34791 };
+const MINIFLARE_PORTS = { gateway: 34787, psd: 34790, cas: 34791, admin: 34792, mockOidc: 34793 };
 
 let miniflare;
 let azure;

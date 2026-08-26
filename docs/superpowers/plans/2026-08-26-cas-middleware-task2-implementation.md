@@ -397,6 +397,30 @@ retains exactly the current delta + snapshot. Fixes along the way:
 `validateConfig` accepted "stack" (it previously threw "mode must be
 explicit" → the doc worker 500'd).
 
+## Task 9 execution notes (round 5: Azure stack-mode migration)
+
+`startAzureRuntime({ internalAuthMode: "stack" })` embeds the local CAS
+middleware via `startLocalMiddleware` (registered `unidocs-azure`, ports
+37791-37793 + edge 36894 so it coexists with a running `pnpm dev`), and
+passes the middleware edge URL as `CAS_BASE_URL` plus the azure stack
+identity (`CAS_STACK_ID/ISSUER/KEY_ID/PRIVATE_KEY_PKCS8/REF_DOMAIN`) to the
+azure gateway and services. The azure gateway builds the stack `casIssuer`
+and `casStackId`; the azure doc services' CasClient carries `stackId` and
+routes canonical `/stacks/unidocs-azure/tenants/{tenant}/...` to the
+middleware — the transitional cf legacy-CAS/shared-key wiring is gone from
+the azure tests.
+
+Validation (all green): `azure-docx-image` now runs in stack mode — image
+upload through the azure gateway's canonical CAS route, apply's
+leaseOpRefs/commitRootRefsOrRollback through the middleware, and the
+middleware retains the blob root under `unidocs-azure`; `azure-stack-mode`
+proves the markdown flow plus a direct edge capability probe (and that
+blob-less markdown legitimately writes no CAS roots). Full azure suite: 6
+files / 29 tests. Environment fixes along the way: azure `run()` spawns
+pnpm via shell on Windows (.cmd shim), and the cf-runtime default
+admin/cas/mockOidc ports in the cf + azure integration tests got explicit
+overrides so the suites run alongside the user's `pnpm dev`.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

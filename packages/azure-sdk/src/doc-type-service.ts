@@ -57,6 +57,12 @@ export interface DocTypeServiceConfig {
    * 不给它配 CAS 是正确的默认）。
    */
   casBaseUrl?: string;
+  /**
+   * 栈模式：注册的 azure 栈命名空间。设置后 CasClient 的 capability
+   * 模式走规范路由 `/stacks/{stackId}/tenants/{tenantId}/...`，
+   * `casBaseUrl` 指向本地/线上中间件端点而非 legacy CAS worker。
+   */
+  casStackId?: string;
 }
 
 export interface DocTypeServiceOptions<TDoc, TQuery, TOp> {
@@ -126,6 +132,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
           tenantId: identity.tenantId,
           sessionId: identity.sessionId,
           capability: requestContext.delegatedCasCapability,
+          ...(config.casStackId === undefined ? {} : { stackId: config.casStackId }),
         })
         : unavailableCasGateway()
       : new CasClient({
@@ -219,7 +226,8 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   const auth = new DocAuthConfigCache(docType).get(process.env);
   const casBaseUrl = process.env.CAS_BASE_URL;
   const casAccessKey = process.env.CAS_ACCESS_KEY;
-  if (casBaseUrl && !casAccessKey) {
+  const stackMode = auth.internalAuthMode === "stack";
+  if (casBaseUrl && !casAccessKey && !stackMode) {
     throw new Error("CAS_ACCESS_KEY is required when CAS_BASE_URL is configured");
   }
   const handle = await startDocTypeService({
@@ -235,8 +243,10 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
       casCapabilityVerifier: auth.casCapabilityVerifier,
       casAccessKey,
       casBaseUrl,
+      casStackId: process.env.CAS_STACK_ID,
     },
   });
+  console.log(`azure-${docType} CAS: mode=${auth.internalAuthMode} baseUrl=${process.env.CAS_BASE_URL ?? "(none)"} stackId=${process.env.CAS_STACK_ID ?? "(none)"}`);
   console.log(`azure-${docType} listening on ${handle.url}`);
 
   await new Promise<void>((resolve) => {

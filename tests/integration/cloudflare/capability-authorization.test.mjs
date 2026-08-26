@@ -14,6 +14,8 @@ beforeAll(async () => {
       docx: 34789,
       psd: 34790,
       cas: 34791,
+      admin: 34792,
+      mockOidc: 34793,
     },
     internalAuthMode: "capability",
   });

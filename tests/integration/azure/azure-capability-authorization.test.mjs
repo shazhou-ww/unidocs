@@ -10,7 +10,7 @@ let casRuntime;
 beforeAll(async () => {
   casRuntime = await startLocalRuntime({
     docTypes: ["markdown"],
-    ports: { gateway: 35787, markdown: 35788, cas: 35791 },
+    ports: { gateway: 35787, markdown: 35788, cas: 35791, admin: 35792, mockOidc: 35793 },
     internalAuthMode: "capability",
   });
   runtime = await startAzureRuntime({

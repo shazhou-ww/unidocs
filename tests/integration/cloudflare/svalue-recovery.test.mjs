@@ -26,7 +26,7 @@ function request(path, init = {}) {
  * 恰好记录一次(无重复计数)。
  */
 test("response-loss recovery re-settles idempotently without leaking roots", async () => {
-  const ports = { gateway: 34787, markdown: 34788 };
+  const ports = { gateway: 34787, markdown: 34788, cas: 34791, admin: 34792, mockOidc: 34793 };
   runtime = await startLocalRuntime({
     docTypes: ["markdown"],
     ports,
