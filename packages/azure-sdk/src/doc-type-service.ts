@@ -16,10 +16,23 @@ import {
   CasClient,
   type HttpFetcher,
 } from "@unidocs/cas-client";
-import type { SessionDeps, SessionIdentity } from "@unidocs/doctype-server-common";
-import { createDocTypeHandler, createSBlobContext } from "@unidocs/doctype-server-common";
+import type {
+  DocCapabilityVerifier,
+  DocInternalAuthMode,
+  SessionDeps,
+  SessionIdentity,
+} from "@unidocs/doctype-server-common";
+import {
+  createDocTypeHandler,
+  createSBlobContext,
+  DocAuthConfigCache,
+} from "@unidocs/doctype-server-common";
 import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";
-import { createLocalEditorNamespace, createStubOperatorNamespace } from "./local-editor.js";
+import {
+  createLocalEditorNamespace,
+  createStubOperatorNamespace,
+  type PrivateDocRequestContext,
+} from "./local-editor.js";
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";
 import { PgDeltaLog, PgSessionIdentityStore, PgUnitOfWork } from "./ports-pg.js";
 import { createBlobService, createPool } from "./pool.js";
@@ -30,7 +43,10 @@ export interface DocTypeServiceConfig {
   blobConnectionString?: string;
   /** 云上模式：Blob 账户端点 URL，与 `blobConnectionString` 互斥。 */
   blobAccountUrl?: string;
-  serviceAccessKey: string;
+  internalAuthMode: DocInternalAuthMode;
+  serviceAccessKey?: string;
+  docCapabilityVerifier?: DocCapabilityVerifier;
+  casCapabilityVerifier?: DocCapabilityVerifier;
     casAccessKey?: string; // Make CAS access key optional for CAS-less local services
   /**
    * 过渡形态（阶段 4 删除）：指向 Cloudflare CAS worker 的基地址。
@@ -96,15 +112,27 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       Response.json({ error: "CAS is not implemented on Azure yet" }, { status: 501 }),
   };
 
-  function buildSession(identity: SessionIdentity): {
+  function buildSession(
+    identity: SessionIdentity,
+    requestContext: PrivateDocRequestContext,
+  ): {
     documentType: ReturnType<DocumentTypeFactory<TDoc, TQuery, TOp>>;
     deps: SessionDeps;
   } {
-    const cas = new CasClient({
-      fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
-      tenantId: identity.tenantId,
-      accessKey: config.casAccessKey ?? "",
-    });
+    const cas = requestContext.authKind === "capability"
+      ? requestContext.delegatedCasCapability
+        ? new CasClient({
+          fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+          tenantId: identity.tenantId,
+          sessionId: identity.sessionId,
+          capability: requestContext.delegatedCasCapability,
+        })
+        : unavailableCasGateway()
+      : new CasClient({
+        fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+        tenantId: identity.tenantId,
+        accessKey: config.casAccessKey ?? "",
+      });
     const context = createSBlobContext({
       ensureNode: (hash, content, contentType, refs) =>
         cas.ensureNode(hash, content, contentType, refs ? [...refs] : undefined),
@@ -129,10 +157,13 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
 
   const handler = createDocTypeHandler({
     docType,
+    internalAuthMode: config.internalAuthMode,
     accessKey: config.serviceAccessKey,
+    docCapabilityVerifier: config.docCapabilityVerifier,
+    casCapabilityVerifier: config.casCapabilityVerifier,
     editor: createLocalEditorNamespace(buildSession, async (identity, creating) => {
       if (creating) await sessionIdentities.register(identity);
-      const stored = await sessionIdentities.get(identity.sessionId);
+      const stored = await sessionIdentities.get(identity);
       if (!stored) {
         return Response.json({ error: "Session not found" }, { status: 404 });
       }
@@ -155,6 +186,20 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
   };
 }
 
+function unavailableCasGateway(): CasClient {
+  const unavailable = async (): Promise<never> => {
+    throw new Error("This Doc operation has no delegated CAS authority");
+  };
+  return {
+    read: unavailable,
+    metadata: unavailable,
+    store: unavailable,
+    ensureNode: unavailable,
+    leaseExisting: unavailable,
+    updateRootRefs: unavailable,
+  } as unknown as CasClient;
+}
+
 /**
  * 进程级入口：从环境变量取配置、起服务、装信号处理器。返回的 Promise
  * 只在收到 SIGINT/SIGTERM 并关停完成后 resolve。
@@ -170,6 +215,7 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   defaultPort: number;
 }): Promise<void> {
   const { docType, documentTypeFactory, defaultPort } = options;
+  const auth = new DocAuthConfigCache(docType).get(process.env);
   const casBaseUrl = process.env.CAS_BASE_URL;
   const casAccessKey = process.env.CAS_ACCESS_KEY;
   if (casBaseUrl && !casAccessKey) {
@@ -182,7 +228,10 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
     config: {
       databaseUrl: requireEnv("DATABASE_URL"),
       ...resolveBlobConfig(),
-      serviceAccessKey: requireEnv("SERVICE_ACCESS_KEY"),
+      internalAuthMode: auth.internalAuthMode,
+      serviceAccessKey: auth.accessKey,
+      docCapabilityVerifier: auth.docCapabilityVerifier,
+      casCapabilityVerifier: auth.casCapabilityVerifier,
       casAccessKey,
       casBaseUrl,
     },

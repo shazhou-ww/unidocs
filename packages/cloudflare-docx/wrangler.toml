@@ -2,6 +2,11 @@ name = "unidocs-docx"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
+[vars]
+INTERNAL_AUTH_MODE = "legacy"
+DOC_CAPABILITY_AUDIENCE = "unidocs-doc:docx"
+CAS_CAPABILITY_AUDIENCE = "unidocs-cas"
+
 [[durable_objects.bindings]]
 name = "DOCX_EDITOR"
 class_name = "DocxEditor"

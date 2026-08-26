@@ -39,6 +39,11 @@ export interface LocalNamespace {
   get(id: unknown): { fetch(request: Request): Promise<Response> };
 }
 
+export interface PrivateDocRequestContext {
+  readonly authKind: "legacy" | "capability";
+  readonly delegatedCasCapability?: string;
+}
+
 function identityFromRequest(request: Request): SessionIdentity {
   const sessionId = request.headers.get("X-Session-Id");
   if (!sessionId) throw new Error("Missing X-Session-Id header");
@@ -62,7 +67,7 @@ function identityFromRequest(request: Request): SessionIdentity {
  * the port objects around them per request is not a new network handshake).
  */
 export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
-  buildSession: (identity: SessionIdentity) => {
+  buildSession: (identity: SessionIdentity, requestContext: PrivateDocRequestContext) => {
     documentType: DocumentType<TDoc, TQuery, TOp>;
     deps: SessionDeps;
   },
@@ -76,12 +81,13 @@ export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
     get: () => ({
       fetch: async (request: Request): Promise<Response> => {
         const identity = identityFromRequest(request);
+        const requestContext = requestContextFromRequest(request);
         const creating = request.method === "POST"
           && (new URL(request.url).pathname === "/_internal/create"
             || new URL(request.url).pathname === "/_internal/init_from_hash");
         const identityError = await prepareSession(identity, creating);
         if (identityError) return identityError;
-        const { documentType, deps } = buildSession(identity);
+        const { documentType, deps } = buildSession(identity, requestContext);
         const session = new DocumentSession(documentType, deps);
         const handle = createSessionHandler({
           session,
@@ -90,6 +96,18 @@ export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
         return handle(request);
       },
     }),
+  };
+}
+
+function requestContextFromRequest(request: Request): PrivateDocRequestContext {
+  const authKind = request.headers.get("X-UniDocs-Auth-Context");
+  if (authKind !== "legacy" && authKind !== "capability") {
+    throw new Error("Missing private Doc auth context");
+  }
+  const delegatedCasCapability = request.headers.get("X-UniDocs-CAS-Capability") ?? undefined;
+  return {
+    authKind,
+    ...(delegatedCasCapability === undefined ? {} : { delegatedCasCapability }),
   };
 }
 

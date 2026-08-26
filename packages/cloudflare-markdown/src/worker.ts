@@ -18,9 +18,14 @@ import {
   createMarkdownDocumentAgent,
   createMarkdownDocumentType,
 } from "@unidocs/doctype-markdown";
-import { createDocTypeHandler } from "@unidocs/doctype-server-common";
+import {
+  createDocTypeHandler,
+  DocAuthConfigCache,
+  type DocAuthBindings,
+} from "@unidocs/doctype-server-common";
 
 const markdownFactory = createMarkdownDocumentType;
+const authConfig = new DocAuthConfigCache("markdown");
 
 // Generate Editor and Operator Durable Objects from the markdown DocumentType
 export const MarkdownEditor = createEditorDO(markdownFactory);
@@ -35,17 +40,16 @@ export const MarkdownOperator = createOperatorDO({
   },
 });
 
-interface Env extends EditorEnv {
+interface Env extends EditorEnv, DocAuthBindings {
   MARKDOWN_EDITOR: DurableObjectNamespace;
   MARKDOWN_OPERATOR: DurableObjectNamespace;
-  SERVICE_ACCESS_KEY: string;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     return createDocTypeHandler({
       docType: "markdown",
-      accessKey: env.SERVICE_ACCESS_KEY,
+      ...authConfig.get(env),
       editor: env.MARKDOWN_EDITOR,
       operator: env.MARKDOWN_OPERATOR,
     })(request);

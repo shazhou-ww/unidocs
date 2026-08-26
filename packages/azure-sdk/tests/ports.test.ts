@@ -11,7 +11,7 @@
  * omission.
  */
 
-import { afterAll, beforeAll, expect } from "vitest";
+import { afterAll, beforeAll, expect, test } from "vitest";
 import type { Pool } from "pg";
 import type { BlobServiceClient } from "@azure/storage-blob";
 import { runPortContract } from "@unidocs/doctype-server-common/port-contract";
@@ -19,6 +19,7 @@ import {
   BlobCasStore,
   BlobSnapshotCache,
   PgDeltaLog,
+  PgSessionIdentityStore,
   PgUnitOfWork,
   createBlobService,
   createPool,
@@ -81,8 +82,9 @@ async function warmPool(n: number): Promise<void> {
   await Promise.all(
     clients.map((client) =>
       client.query(
-        `SELECT COALESCE(MAX(version), 0) AS head FROM deltas WHERE doc_type = $1 AND session_id = $2`,
-        ["warmup", "warmup"],
+        `SELECT COALESCE(MAX(version), 0) AS head FROM deltas
+         WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3`,
+        ["warmup", "warmup", "warmup"],
       ),
     ),
   );
@@ -98,6 +100,7 @@ async function warmPool(n: number): Promise<void> {
 
 async function makeAzurePorts(sessionId: string) {
   const identity = { docType: DOC_TYPE, sessionId, tenantId: "tenant-1" };
+  await new PgSessionIdentityStore(pool).register(identity);
 
   return {
     deltas: new PgDeltaLog(pool, identity),
@@ -133,4 +136,30 @@ runPortContract("postgres + blob ports", async () => makeAzurePorts(nextSessionI
       how: `warmed the pg pool to ${WARM_CONNECTIONS} idle, already-used connections (see warmPool)`,
     };
   },
+});
+
+test("equal session IDs are isolated across tenants and configured Doc types", async () => {
+  const identities = [
+    { tenantId: "tenant-a", docType: "text", sessionId: "shared-session" },
+    { tenantId: "tenant-b", docType: "text", sessionId: "shared-session" },
+    { tenantId: "tenant-a", docType: "other", sessionId: "shared-session" },
+  ];
+  const store = new PgSessionIdentityStore(pool);
+  for (const [index, identity] of identities.entries()) {
+    await store.register(identity);
+    await new PgDeltaLog(pool, identity).append({
+      version: 1,
+      timestamp: index + 1,
+      description: identity.tenantId,
+      operations: [{ index }],
+    });
+  }
+
+  await expect(Promise.all(identities.map(async identity =>
+    (await new PgDeltaLog(pool, identity).range())[0].operations,
+  ))).resolves.toEqual([
+    [{ index: 0 }],
+    [{ index: 1 }],
+    [{ index: 2 }],
+  ]);
 });

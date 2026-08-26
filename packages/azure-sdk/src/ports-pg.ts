@@ -48,7 +48,8 @@ function toDelta(row: Record<string, unknown>): Delta {
 }
 
 /**
- * `DeltaLog` over the `deltas` table, scoped to one `(doc_type, session_id)`.
+ * `DeltaLog` over the `deltas` table, scoped to one
+ * `(tenant_id, doc_type, session_id)`.
  */
 export class PgDeltaLog implements DeltaLog {
   #q: Queryable;
@@ -71,7 +72,7 @@ export class PgDeltaLog implements DeltaLog {
    *     evaluated inside the same statement as the insert, so there is no
    *     application-visible window between them.
    *
-  *  2. `ON CONFLICT (doc_type, session_id, version) DO NOTHING` — the primary key.
+  *  2. `ON CONFLICT (tenant_id, doc_type, session_id, version) DO NOTHING` — the primary key.
    *     Guard 1 alone is not enough under concurrency: at READ COMMITTED two
    *     overlapping statements both take their snapshot before either commits,
    *     so both can see the same `MAX(version)` and both clear the WHERE. The
@@ -88,14 +89,15 @@ export class PgDeltaLog implements DeltaLog {
    */
   async append(d: Delta): Promise<void> {
     const result = await this.#q.query(
-      `INSERT INTO deltas (doc_type, session_id, version, timestamp, description, operations)
-       SELECT $1::text, $2::text, $3::int, $4::bigint, $5::text, $6::jsonb
+      `INSERT INTO deltas (tenant_id, doc_type, session_id, version, timestamp, description, operations)
+       SELECT $1::text, $2::text, $3::text, $4::int, $5::bigint, $6::text, $7::jsonb
        WHERE (
          SELECT COALESCE(MAX(version), 0) FROM deltas
-         WHERE doc_type = $1::text AND session_id = $2::text
-       ) = $3::int - 1
-      ON CONFLICT (doc_type, session_id, version) DO NOTHING`,
+         WHERE tenant_id = $1::text AND doc_type = $2::text AND session_id = $3::text
+       ) = $4::int - 1
+      ON CONFLICT (tenant_id, doc_type, session_id, version) DO NOTHING`,
       [
+        this.#identity.tenantId,
         this.#identity.docType,
         this.#identity.sessionId,
         d.version,
@@ -114,8 +116,8 @@ export class PgDeltaLog implements DeltaLog {
   async head(): Promise<number> {
     const result = await this.#q.query(
       `SELECT COALESCE(MAX(version), 0) AS head FROM deltas
-      WHERE doc_type = $1 AND session_id = $2`,
-      [this.#identity.docType, this.#identity.sessionId],
+      WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3`,
+      [this.#identity.tenantId, this.#identity.docType, this.#identity.sessionId],
     );
     return toNumber(result.rows[0]?.head ?? 0);
   }
@@ -123,17 +125,21 @@ export class PgDeltaLog implements DeltaLog {
   async since(v: number): Promise<Delta[]> {
     const result = await this.#q.query(
       `SELECT version, timestamp, description, operations FROM deltas
-      WHERE doc_type = $1 AND session_id = $2 AND version > $3
+      WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3 AND version > $4
        ORDER BY version ASC`,
-      [this.#identity.docType, this.#identity.sessionId, v],
+      [this.#identity.tenantId, this.#identity.docType, this.#identity.sessionId, v],
     );
     return result.rows.map(toDelta);
   }
 
   async range(from?: number, to?: number): Promise<Delta[]> {
-    const values: unknown[] = [this.#identity.docType, this.#identity.sessionId];
+    const values: unknown[] = [
+      this.#identity.tenantId,
+      this.#identity.docType,
+      this.#identity.sessionId,
+    ];
     let sql = `SELECT version, timestamp, description, operations FROM deltas
-      WHERE doc_type = $1 AND session_id = $2`;
+      WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3`;
     if (from !== undefined) {
       values.push(from);
       sql += ` AND version >= $${values.length}`;
@@ -185,18 +191,23 @@ export class PgDeltaLog implements DeltaLog {
   async remove(v: number): Promise<void> {
     await this.#q.query(
       `DELETE FROM deltas
-      WHERE doc_type = $1 AND session_id = $2 AND version = $3
+      WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3 AND version = $4
          AND version = (
-           SELECT MAX(version) FROM deltas WHERE doc_type = $1 AND session_id = $2
+           SELECT MAX(version) FROM deltas
+           WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3
          )`,
-      [this.#identity.docType, this.#identity.sessionId, v],
+      [this.#identity.tenantId, this.#identity.docType, this.#identity.sessionId, v],
     );
   }
 
   async latestSnapshotRef(atOrBefore?: number): Promise<SnapshotRef | null> {
-    const values: unknown[] = [this.#identity.docType, this.#identity.sessionId];
+    const values: unknown[] = [
+      this.#identity.tenantId,
+      this.#identity.docType,
+      this.#identity.sessionId,
+    ];
     let sql = `SELECT version, hash FROM doc_snapshots
-      WHERE doc_type = $1 AND session_id = $2`;
+      WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3`;
     if (atOrBefore !== undefined) {
       values.push(atOrBefore);
       sql += ` AND version <= $${values.length}`;
@@ -217,19 +228,26 @@ export class PgDeltaLog implements DeltaLog {
    */
   async recordSnapshot(v: number, hash: string, timestamp: number): Promise<void> {
     await this.#q.query(
-      `INSERT INTO doc_snapshots (doc_type, session_id, version, hash, timestamp)
-       VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (doc_type, session_id, version)
+      `INSERT INTO doc_snapshots (tenant_id, doc_type, session_id, version, hash, timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (tenant_id, doc_type, session_id, version)
        DO UPDATE SET hash = EXCLUDED.hash, timestamp = EXCLUDED.timestamp`,
-      [this.#identity.docType, this.#identity.sessionId, v, hash, timestamp],
+      [
+        this.#identity.tenantId,
+        this.#identity.docType,
+        this.#identity.sessionId,
+        v,
+        hash,
+        timestamp,
+      ],
     );
   }
 
   async countSince(v: number): Promise<number> {
     const result = await this.#q.query(
       `SELECT COUNT(*) AS n FROM deltas
-      WHERE doc_type = $1 AND session_id = $2 AND version > $3`,
-      [this.#identity.docType, this.#identity.sessionId, v],
+      WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3 AND version > $4`,
+      [this.#identity.tenantId, this.#identity.docType, this.#identity.sessionId, v],
     );
     // COUNT(*) is bigint — `pg` hands it back as a string.
     return toNumber(result.rows[0]?.n ?? 0);
@@ -324,18 +342,18 @@ export class PgSessionIdentityStore {
 
   async register(identity: SessionIdentity): Promise<void> {
     await this.#q.query(
-      `INSERT INTO doc_sessions (session_id, tenant_id, doc_type)
+      `INSERT INTO doc_sessions (tenant_id, doc_type, session_id)
        VALUES ($1, $2, $3)
-       ON CONFLICT (session_id) DO NOTHING`,
-      [identity.sessionId, identity.tenantId, identity.docType],
+       ON CONFLICT (tenant_id, doc_type, session_id) DO NOTHING`,
+      [identity.tenantId, identity.docType, identity.sessionId],
     );
   }
 
-  async get(sessionId: string): Promise<SessionIdentity | null> {
+  async get(identity: SessionIdentity): Promise<SessionIdentity | null> {
     const result = await this.#q.query(
       `SELECT session_id, tenant_id, doc_type FROM doc_sessions
-       WHERE session_id = $1`,
-      [sessionId],
+       WHERE tenant_id = $1 AND doc_type = $2 AND session_id = $3`,
+      [identity.tenantId, identity.docType, identity.sessionId],
     );
     const row = result.rows[0];
     if (!row) return null;

@@ -36,7 +36,15 @@ export const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta
  * be wrong for how this code is currently running, e.g. from inside an
  * esbuild bundle. See the doc on `MIGRATIONS_DIR` above.
  */
-export async function runMigrations(pool: Pool, migrationsDir: string = MIGRATIONS_DIR): Promise<void> {
+export interface RunMigrationsOptions {
+  readonly through?: string;
+}
+
+export async function runMigrations(
+  pool: Pool,
+  migrationsDir: string = MIGRATIONS_DIR,
+  options: RunMigrationsOptions = {},
+): Promise<void> {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
       name TEXT PRIMARY KEY,
@@ -52,6 +60,7 @@ export async function runMigrations(pool: Pool, migrationsDir: string = MIGRATIO
   const pending = readdirSync(migrationsDir)
     .filter((file) => file.endsWith(".sql"))
     .sort()
+    .filter((file) => options.through === undefined || file <= options.through)
     .filter((file) => !applied.has(file));
 
   for (const file of pending) {

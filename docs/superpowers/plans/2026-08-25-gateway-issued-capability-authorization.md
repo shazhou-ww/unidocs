@@ -3,7 +3,7 @@
 > **Status:** In progress. The P0 boundary prerequisite completed in
 > `cdce042`. Tasks 0-3 are complete. The implementation was rebased onto
 > `origin/main` commit `d01afd0` on 2026-08-26 after the cloud stack directory
-> reorganization; Task 4 is next.
+> reorganization; Tasks 0-4 are complete and Task 5 is next.
 >
 > **For agentic workers:** Use an executing-plans workflow and complete one
 > task at a time. Keep the checkboxes current. Do not combine this migration
@@ -1220,41 +1220,41 @@ Implementation record (2026-08-26):
 
 ### Task 4: Make every current Doc type tenant-aware and contract-identical
 
-- [ ] Drive each doctype service edge from `protocol-doc`'s current route set.
+- [x] Drive each doctype service edge from `protocol-doc`'s current route set.
       Remove duplicated route-name sets where practical and add conformance
       tests proving every doctype exposes the same methods and operation suffixes.
-- [ ] Add authentication middleware at that edge, before session route dispatch
+- [x] Add authentication middleware at that edge, before session route dispatch
       or request-body parsing.
-- [ ] Configure each Doc deployment with one exact audience, for example
+- [x] Configure each Doc deployment with one exact audience, for example
       `unidocs-doc:docx`.
-- [ ] Apply the Doc route permission matrix. Compare signed tenant/session
+- [x] Apply the Doc route permission matrix. Compare signed tenant/session
       claims with path parameters and persisted immutable session metadata.
-- [ ] Replace `DocIdentity`/owner addressing with immutable logical
+- [x] Replace `DocIdentity`/owner addressing with immutable logical
       `{ tenantId, sessionId }` identity plus the deployment-configured
       `docType` physical partition throughout sessions, indexes, deltas,
       snapshots, unit-of-work records, caches, and idempotency records. The same
       `sessionId` in two tenants or two doctypes must remain isolated and valid.
-- [ ] For the current multipart/empty create and current `init_from_hash`,
+- [x] For the current multipart/empty create and current `init_from_hash`,
       persist the signed tuple without changing request or response framing.
-- [ ] On Cloudflare, use a canonical length-prefixed encoding of both IDs for
+- [x] On Cloudflare, use a canonical length-prefixed encoding of both IDs for
       Durable Object names inside the doctype-specific namespace. On Azure,
       include tenant, configured doctype, and session columns in every key,
       predicate, foreign key, and uniqueness constraint. Add migration and
       collision test vectors for delimiter-containing identifiers.
-- [ ] Verify the delegated CAS capability separately with the CAS audience,
+- [x] Verify the delegated CAS capability separately with the CAS audience,
       required CAS permissions, matching tenant/session, and an expiry no later
       than the Doc token.
-- [ ] Reject an unexpected delegated capability on `status`, `history`, `ir`, and
+- [x] Reject an unexpected delegated capability on `status`, `history`, `ir`, and
       `reset`, and prevent those paths from constructing a CAS client.
-- [ ] Keep the delegated token request-local. Do not add it to session
+- [x] Keep the delegated token request-local. Do not add it to session
       metadata, snapshots, deltas, caches, retry queues, or exception context.
-- [ ] Change the CAS client boundary to receive that request-local capability
+- [x] Change the CAS client boundary to receive that request-local capability
       plus verified tenant/session context, build the tenant-aware current CAS
       routes, and send the delegated token as CAS `Authorization`.
-- [ ] Construct CAS requests from minimal headers. Never forward the Doc token,
+- [x] Construct CAS requests from minimal headers. Never forward the Doc token,
       cookies, public forwarding headers, or user authorization.
-- [ ] Make absent verifier configuration and absent credentials fail closed.
-- [ ] Reject old `/users/*` service-edge routes. Keep adapter-private
+- [x] Make absent verifier configuration and absent credentials fail closed.
+- [x] Reject old `/users/*` service-edge routes. Keep adapter-private
       `/_internal/*` operation names, but derive their tenant/session context
       only after capability verification; do not treat context headers as auth.
 
@@ -1266,6 +1266,41 @@ reaches a mock CAS service.
 
 **Focused validation:** shared Doc runtime, CAS client, and Azure/Cloudflare Doc
 adapter suites.
+
+Implementation record (2026-08-26):
+
+- Replaced duplicated service-edge dispatch with the shared `protocol-doc`
+      matcher. Explicit `legacy`/`dual`/`capability` modes quarantine the old
+      `/sessions/*` shared-key edge; tenant routes accept capabilities only, and
+      missing mode/trust/credentials fail startup.
+- The shared edge verifies the primary Doc token before namespace lookup or
+      body parsing, enforces exact route permissions and signed tenant/session,
+      verifies delegated CAS subject/audience/resources/permission set separately,
+      and rejects delegated expiry after the primary token. No-CAS routes reject
+      unexpected delegated authority.
+- Added immutable process-level public JWKS caches and exact configured
+      audiences for Cloudflare Markdown/DOCX/PSD and Azure Markdown/DOCX. Current
+      deployed/local modes remain explicitly `legacy` until Task 5 and Task 7.
+- Capability Cloudflare objects use UTF-8 byte-length-prefixed tenant/session
+      names; legacy routes retain session-only object names during migration.
+      Azure PostgreSQL, snapshot Blob keys, primary keys, uniqueness constraints,
+      predicates, and foreign keys now include tenant, configured Doc type, and
+      session. The phased migration imports legacy identities before enforcing the
+      composite FK schema, and collision/isolation vectors cover delimiters,
+      Unicode, equal sessions across tenants, and equal sessions across doctypes.
+- CAS clients now accept one request-local delegated capability and emit only
+      CAS Bearer authorization on tenant-aware public/private routes. Azure creates
+      no CAS client for capability no-CAS operations. Cloudflare Editor clients are
+      request-scoped and cleared in `finally`; Operator requests are serialized,
+      forward authority only during the active run, and clear it afterward. The
+      primary Doc Bearer never reaches Editor or CAS.
+- Cloudflare stores canonical delta/snapshot root bytes locally so cold
+      `status`/`history`/`ir` paths do not need CAS authority; legacy requests with
+      CAS access retain pending-write recovery behavior.
+- Focused results: shared Doc 94 passed, CAS client 19 passed, Cloudflare SDK
+      13 passed, Azure SDK 50 passed. Root `pnpm typecheck` and `pnpm build` pass;
+      `pnpm test:local` passed 285 with 2 conditional skips; `pnpm test:azure`
+      passed 15/15 with migrations and infrastructure cleanup.
 
 ### Task 5: Make current CAS routes tenant-aware and enforce capabilities
 

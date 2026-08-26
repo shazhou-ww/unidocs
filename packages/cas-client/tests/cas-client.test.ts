@@ -306,6 +306,28 @@ describe("CasClient", () => {
         client.updateRootRefs({ requestId: "x", changes: { ["c".repeat(64)]: 1 } }),
       ).rejects.toThrow(/service-binding/);
     });
+
+    it("uses only a delegated Bearer capability and tenant-prefixed root route", async () => {
+      const fetcherFetch = vi.fn(async () => ({ ok: true }));
+      const internal = new CasClient({
+        fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
+        tenantId: "tenant1",
+        sessionId: "session1",
+        capability: "cas-capability",
+      });
+
+      await internal.updateRootRefs({ requestId: "apply:session1:2", changes: {} });
+
+      expect(fetcherFetch).toHaveBeenCalledWith(
+        "https://cas.internal/tenants/tenant1/_internal/root-refs",
+        expect.objectContaining({
+          headers: {
+            Authorization: "Bearer cas-capability",
+            "Content-Type": "application/json",
+          },
+        }),
+      );
+    });
   });
 });
 

@@ -41,12 +41,15 @@ describe("runMigrations", () => {
     expect(migrationRows.map((row) => row.name)).toEqual([
       "0001_init.sql",
       "0002_session_identity.sql",
+      "0003_tenant_doc_session_keys.sql",
     ]);
   }, 120_000);
 
   it("imports operator-supplied identities only when every legacy row is covered", async () => {
-    await runMigrations(pool);
-    await pool.query("TRUNCATE TABLE doc_sessions, deltas, doc_snapshots");
+    await pool.query(
+      "DROP TABLE IF EXISTS doc_snapshots, deltas, doc_sessions, schema_migrations CASCADE",
+    );
+    await runMigrations(pool, undefined, { through: "0002_session_identity.sql" });
     await pool.query(
       `INSERT INTO deltas
         (doc_type, session_id, version, timestamp, description, operations)
@@ -60,12 +63,14 @@ describe("runMigrations", () => {
       tenantId: "tenant-7",
       docType: "markdown",
     }])).resolves.toBe(1);
+    await runMigrations(pool);
     const { rows } = await pool.query(
       "SELECT tenant_id, doc_type FROM doc_sessions WHERE session_id = 'legacy-session'",
     );
     expect(rows).toEqual([{ tenant_id: "tenant-7", doc_type: "markdown" }]);
 
-    await pool.query("DELETE FROM deltas WHERE session_id = 'legacy-session'");
-    await pool.query("DELETE FROM doc_sessions WHERE session_id = 'legacy-session'");
+    await pool.query(
+      "TRUNCATE TABLE doc_sessions, deltas, doc_snapshots CASCADE",
+    );
   }, 120_000);
 });

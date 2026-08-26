@@ -85,6 +85,9 @@ test("buildWorkers merges extraBindings into that doc type's worker only", () =>
 
   expect(psd.bindings).toEqual({
     CAS_ACCESS_KEY: "unidocs-dev-cas-key",
+    INTERNAL_AUTH_MODE: "legacy",
+    DOC_CAPABILITY_AUDIENCE: "unidocs-doc:psd",
+    CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
     SERVICE_ACCESS_KEY: docServiceAccessKey("psd"),
     LLM_API_KEY: "test-value-not-a-secret",
   });
@@ -101,6 +104,9 @@ test("buildWorkers leaves bindings untouched when no extraBindings are given", (
   });
   expect(psd.bindings).toEqual({
     CAS_ACCESS_KEY: "unidocs-dev-cas-key",
+    INTERNAL_AUTH_MODE: "legacy",
+    DOC_CAPABILITY_AUDIENCE: "unidocs-doc:psd",
+    CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
     SERVICE_ACCESS_KEY: docServiceAccessKey("psd"),
   });
 });

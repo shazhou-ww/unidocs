@@ -73,6 +73,7 @@ async function start(
     port,
     host: "127.0.0.1",
     config: {
+      internalAuthMode: "legacy",
       databaseUrl: DATABASE_URL,
       blobConnectionString: BLOB_CONNECTION_STRING,
       serviceAccessKey: SERVICE_ACCESS_KEY,
@@ -132,7 +133,7 @@ test("create → apply → query round-trips through the service", async () => {
     },
     body: JSON.stringify({ kind: "getContent" }),
   });
-  expect(wrongTenant.status).toBe(403);
+  expect(wrongTenant.status).toBe(404);
 });
 
 /**

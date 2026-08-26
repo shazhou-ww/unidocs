@@ -6,6 +6,7 @@ import { CasClient, CasClientError } from "@unidocs/cas-client";
 import { DELTA_THRESHOLD } from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
+import { createRequestCasClient } from "./request-cas-client.js";
 
 const KEY_DOC_TYPE = "docType";
 const KEY_SESSION_ID = "sessionId";
@@ -41,17 +42,19 @@ interface DeltaRow {
   readonly timestamp: number;
   readonly description: string;
   readonly root_hash: string;
+  readonly root_bytes?: ArrayBuffer | Uint8Array | null;
 }
 
 interface SnapshotRow {
   readonly version: number;
   readonly root_hash: string;
   readonly timestamp: number;
+  readonly root_bytes?: ArrayBuffer | Uint8Array | null;
 }
 
 export interface Env {
   readonly CAS_SERVICE: Fetcher;
-  readonly CAS_ACCESS_KEY: string;
+  readonly CAS_ACCESS_KEY?: string;
 }
 
 export interface EditorDOInstance {
@@ -75,7 +78,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     #doc: SValueType<TDoc> | null = null;
     #config: DocumentType<TDoc, TQuery, TOp> | null = null;
     #context: DocumentTypeContext | null = null;
-    #cas: CasClient | null = null;
+    #requestCas: CasClient | null = null;
     #tenantId: string | null = null;
     #sessionId: string | null = null;
     #docType: string | null = null;
@@ -109,14 +112,16 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           version INTEGER PRIMARY KEY,
           timestamp INTEGER NOT NULL,
           description TEXT NOT NULL,
-          root_hash TEXT NOT NULL
+          root_hash TEXT NOT NULL,
+          root_bytes BLOB
         )
       `);
       this.#ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS svalue_snapshots (
           version INTEGER PRIMARY KEY,
           root_hash TEXT NOT NULL,
-          timestamp INTEGER NOT NULL
+          timestamp INTEGER NOT NULL,
+          root_bytes BLOB
         )
       `);
       this.#ctx.storage.sql.exec(`
@@ -131,27 +136,29 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           snapshot_bytes BLOB
         )
       `);
+      this.#ensureColumn("svalue_deltas", "root_bytes", "BLOB");
+      this.#ensureColumn("svalue_snapshots", "root_bytes", "BLOB");
     }
 
-    #initializeRuntime(tenantId: string): void {
+    #ensureColumn(table: string, column: string, type: string): void {
+      const columns = this.#ctx.storage.sql.exec(`PRAGMA table_info(${table})`).toArray();
+      if (!columns.some(existing => existing.name === column)) {
+        this.#ctx.storage.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+
+    #initializeRuntime(): void {
       if (this.#context) return;
-      const cas = new CasClient({
-        fetcher: this.#env.CAS_SERVICE,
-        tenantId,
-        accessKey: this.#env.CAS_ACCESS_KEY,
-      });
-      // Adapter wrapper: SBlobCasAdapter expects metadata(hash: string) but CasClient has metadata(ref: CasRef)
       const casAdapter = {
         ensureNode: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
-          cas.ensureNode(hash, content, contentType, refs as string[] | undefined),
-        leaseExisting: (hash: string) => cas.leaseExisting(hash),
-        metadata: (hash: string) => cas.metadata({ kind: "cas", hash }),
-        read: (hash: string) => cas.read({ kind: "cas", hash }),
+          this.#requireCas().ensureNode(hash, content, contentType, refs as string[] | undefined),
+        leaseExisting: (hash: string) => this.#requireCas().leaseExisting(hash),
+        metadata: (hash: string) => this.#requireCas().metadata({ kind: "cas", hash }),
+        read: (hash: string) => this.#requireCas().read({ kind: "cas", hash }),
         assignRoots: (params: { requestId: string; assignments: readonly { owner: string; hash: string }[] }) =>
-          cas.assignRoots(params),
+          this.#requireCas().assignRoots(params),
       };
       const context = createSBlobContext(casAdapter);
-      this.#cas = cas;
       this.#context = context;
       this.#config = factory(context);
     }
@@ -179,8 +186,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       this.#sessionId = sessionId ?? null;
       this.#docType = docType ?? null;
       if (this.#tenantId) {
-        this.#initializeRuntime(this.#tenantId);
-        await this.#settlePending();
+        this.#initializeRuntime();
         this.#version = this.#latestVersion();
         if (this.#version > 0) this.#doc = await this.#reconstruct(this.#version);
       }
@@ -252,18 +258,24 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       });
 
       this.#ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO svalue_deltas (version, timestamp, description, root_hash) VALUES (?, ?, ?, ?)",
+        `INSERT OR REPLACE INTO svalue_deltas
+          (version, timestamp, description, root_hash, root_bytes)
+         VALUES (?, ?, ?, ?, ?)`,
         pending.version,
         pending.timestamp,
         pending.description,
         pending.delta_hash,
+        deltaBytes,
       );
       if (pending.snapshot_hash !== null) {
         this.#ctx.storage.sql.exec(
-          "INSERT OR REPLACE INTO svalue_snapshots (version, root_hash, timestamp) VALUES (?, ?, ?)",
+          `INSERT OR REPLACE INTO svalue_snapshots
+            (version, root_hash, timestamp, root_bytes)
+           VALUES (?, ?, ?, ?)`,
           pending.version,
           pending.snapshot_hash,
           pending.timestamp,
+          toBytes(pending.snapshot_bytes),
         );
       }
       this.#ctx.storage.sql.exec("DELETE FROM svalue_pending WHERE singleton = 1");
@@ -337,14 +349,18 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     async #reconstruct(targetVersion: number): Promise<SValueType<TDoc>> {
       const config = this.#requireConfig();
       const snapshotRows = this.#ctx.storage.sql.exec(
-        "SELECT version, root_hash, timestamp FROM svalue_snapshots WHERE version <= ? ORDER BY version DESC LIMIT 1",
+        `SELECT version, root_hash, timestamp, root_bytes FROM svalue_snapshots
+         WHERE version <= ? ORDER BY version DESC LIMIT 1`,
         targetVersion,
       ).toArray() as unknown as SnapshotRow[];
 
       let doc: SValueType<TDoc>;
       let baseVersion: number;
       if (snapshotRows.length > 0) {
-        doc = await this.#readDocumentRoot(snapshotRows[0].root_hash);
+        doc = await this.#readDocumentRoot(
+          snapshotRows[0].root_hash,
+          snapshotRows[0].root_bytes,
+        );
         baseVersion = snapshotRows[0].version;
       } else {
         doc = await config.init();
@@ -352,12 +368,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       }
 
       const deltaRows = this.#ctx.storage.sql.exec(
-        "SELECT version, timestamp, description, root_hash FROM svalue_deltas WHERE version > ? AND version <= ? ORDER BY version ASC",
+        `SELECT version, timestamp, description, root_hash, root_bytes FROM svalue_deltas
+         WHERE version > ? AND version <= ? ORDER BY version ASC`,
         baseVersion,
         targetVersion,
       ).toArray() as unknown as DeltaRow[];
       for (const row of deltaRows) {
-        const event = await this.#readDeltaRoot(row.root_hash);
+        const event = await this.#readDeltaRoot(row.root_hash, row.root_bytes);
         if (event.kind === "restore") {
           doc = await this.#readDocumentBlob(event.doc);
         } else {
@@ -368,8 +385,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       return doc;
     }
 
-    async #readDeltaRoot(hash: string): Promise<StoredDelta<TOp>> {
-      const value = await this.#readRootValue(createSBlob(hash));
+    async #readDeltaRoot(
+      hash: string,
+      bytes?: ArrayBuffer | Uint8Array | null,
+    ): Promise<StoredDelta<TOp>> {
+      const value = await this.#readRootValue(createSBlob(hash), bytes);
       if (!isRecord(value) || (value.kind !== "apply" && value.kind !== "restore")) {
         throw new Error(`Invalid stored delta root ${hash}`);
       }
@@ -386,15 +406,26 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       };
     }
 
-    async #readDocumentRoot(hash: string): Promise<SValueType<TDoc>> {
-      return this.#readDocumentBlob(createSBlob(hash));
+    async #readDocumentRoot(
+      hash: string,
+      bytes?: ArrayBuffer | Uint8Array | null,
+    ): Promise<SValueType<TDoc>> {
+      return await this.#readRootValue(createSBlob(hash), bytes) as unknown as SValueType<TDoc>;
     }
 
     async #readDocumentBlob(blob: SBlob): Promise<SValueType<TDoc>> {
-      return await this.#readRootValue(blob) as unknown as SValueType<TDoc>;
+      const rows = this.#ctx.storage.sql.exec(
+        "SELECT root_bytes FROM svalue_snapshots WHERE root_hash = ? AND root_bytes IS NOT NULL LIMIT 1",
+        blob.hash,
+      ).toArray() as Array<{ root_bytes?: ArrayBuffer | Uint8Array | null }>;
+      return await this.#readRootValue(blob, rows[0]?.root_bytes) as unknown as SValueType<TDoc>;
     }
 
-    async #readRootValue(blob: SBlob): Promise<SValue> {
+    async #readRootValue(
+      blob: SBlob,
+      bytes?: ArrayBuffer | Uint8Array | null,
+    ): Promise<SValue> {
+      if (bytes) return decodeSValue(toBytes(bytes));
       const stored = await this.#requireContext().readSBlob(blob);
       if (stored.contentType !== SValueContentType) {
         throw new Error(`Root ${blob.hash} is not an SValue node`);
@@ -417,7 +448,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
     async #ensureCurrentSnapshot(): Promise<string> {
       const rows = this.#ctx.storage.sql.exec(
-        "SELECT version, root_hash, timestamp FROM svalue_snapshots WHERE version = ?",
+        "SELECT version, root_hash, timestamp, root_bytes FROM svalue_snapshots WHERE version = ?",
         this.#version,
       ).toArray() as unknown as SnapshotRow[];
       if (rows.length > 0) return rows[0].root_hash;
@@ -436,19 +467,24 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       });
       const timestamp = Date.now();
       this.#ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO svalue_snapshots (version, root_hash, timestamp) VALUES (?, ?, ?)",
+        `INSERT OR REPLACE INTO svalue_snapshots
+          (version, root_hash, timestamp, root_bytes) VALUES (?, ?, ?, ?)`,
         this.#version,
         blob.hash,
         timestamp,
+        bytes,
       );
       return blob.hash;
     }
 
     async #handleRequest(request: Request): Promise<Response> {
-      await this.#ensureLoaded();
+      this.#requestCas = createRequestCasClient(this.#env, request);
       try {
-        await this.#recoverPending();
         const url = new URL(request.url);
+        await this.#ensureLoaded();
+        if (this.#requestCas) {
+          await this.#recoverPending();
+        }
         if (request.method === "POST" && url.pathname === "/_internal/create") {
           return await this.#create(request);
         }
@@ -586,13 +622,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
             conditions.push("version <= ?");
             params.push(to);
           }
-          let sql = "SELECT version, timestamp, description, root_hash FROM svalue_deltas";
+          let sql = "SELECT version, timestamp, description, root_hash, root_bytes FROM svalue_deltas";
           if (conditions.length > 0) sql += ` WHERE ${conditions.join(" AND ")}`;
           sql += " ORDER BY version ASC";
           const rows = this.#ctx.storage.sql.exec(sql, ...params).toArray() as unknown as DeltaRow[];
           const entries: HistoryEntry<TOp & SValue>[] = [];
           for (const row of rows) {
-            const event = await this.#readDeltaRoot(row.root_hash);
+            const event = await this.#readDeltaRoot(row.root_hash, row.root_bytes);
             entries.push({
               version: row.version,
               timestamp: new Date(row.timestamp).toISOString(),
@@ -667,6 +703,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           error: String(err),
           version: this.#version,
         }, { status });
+      } finally {
+        this.#requestCas = null;
       }
     }
 
@@ -675,7 +713,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
       }
       const identity = requestIdentity(request);
-      this.#initializeRuntime(identity.tenantId);
+      this.#initializeRuntime();
       const config = this.#requireConfig();
       let doc: SValueType<TDoc>;
       const contentType = request.headers.get("content-type") ?? "";
@@ -715,7 +753,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         return Response.json({ success: false, error: "Document already exists" }, { status: 409 });
       }
       const identity = requestIdentity(request);
-      this.#initializeRuntime(identity.tenantId);
+      this.#initializeRuntime();
       const value = await readRequestValue(request);
       if (!isRecord(value)
         || typeof value.hash !== "string"
@@ -769,8 +807,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     }
 
     #requireCas(): CasClient {
-      if (!this.#cas) throw new Error("CAS client is not initialized");
-      return this.#cas;
+      if (!this.#requestCas) {
+        throw new Error("This Doc operation has no delegated CAS authority");
+      }
+      return this.#requestCas;
     }
 
     #requireDoc(): SValueType<TDoc> {
@@ -782,6 +822,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       if (!this.#sessionId) throw new Error("Session ID is not initialized");
       return this.#sessionId;
     }
+
   };
 }
 

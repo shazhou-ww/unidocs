@@ -17,6 +17,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
 import { BlobCasStore, BlobSnapshotCache } from "../src/ports-blob.js";
 
+const IDENTITY = { tenantId: "tenant-1", docType: "text", sessionId: "session-1" };
+
 interface FakeBlockBlobClient {
   getProperties: ReturnType<typeof vi.fn>;
   downloadToBuffer: ReturnType<typeof vi.fn>;
@@ -72,12 +74,15 @@ describe("BlobSnapshotCache.get()", () => {
       .mockRejectedValueOnce(storageError(412, "ConditionNotMet"))
       .mockResolvedValueOnce(Buffer.from([9, 9]));
 
-    const { svc } = fakeService(blob);
-    const cache = new BlobSnapshotCache(svc, { docType: "text", docId: "doc-1", userId: "u1" });
+    const { svc, container } = fakeService(blob);
+    const cache = new BlobSnapshotCache(svc, IDENTITY);
 
     const result = await cache.get();
 
     expect(result).toEqual({ version: 2, bytes: new Uint8Array([9, 9]) });
+    expect(container.getBlockBlobClient).toHaveBeenCalledWith(
+      "v1:8:tenant-1:4:text:9:session-1/latest",
+    );
     expect(blob.getProperties).toHaveBeenCalledTimes(2);
     expect(blob.downloadToBuffer).toHaveBeenCalledTimes(2);
     // The retried download must be conditioned on the SECOND properties call's
@@ -93,7 +98,7 @@ describe("BlobSnapshotCache.get()", () => {
     blob.downloadToBuffer.mockRejectedValue(storageError(412, "ConditionNotMet"));
 
     const { svc } = fakeService(blob);
-    const cache = new BlobSnapshotCache(svc, { docType: "text", docId: "doc-1", userId: "u1" });
+    const cache = new BlobSnapshotCache(svc, IDENTITY);
 
     const result = await cache.get();
 
@@ -110,7 +115,7 @@ describe("BlobSnapshotCache.get()", () => {
     blob.downloadToBuffer.mockRejectedValue(storageError(500, "InternalError"));
 
     const { svc } = fakeService(blob);
-    const cache = new BlobSnapshotCache(svc, { docType: "text", docId: "doc-1", userId: "u1" });
+    const cache = new BlobSnapshotCache(svc, IDENTITY);
 
     await expect(cache.get()).rejects.toThrow("InternalError");
     expect(blob.downloadToBuffer).toHaveBeenCalledTimes(1);
@@ -121,7 +126,7 @@ describe("BlobSnapshotCache.get()", () => {
     blob.getProperties.mockResolvedValue({ metadata: {}, etag: "v1" });
 
     const { svc } = fakeService(blob);
-    const cache = new BlobSnapshotCache(svc, { docType: "text", docId: "doc-1", userId: "u1" });
+    const cache = new BlobSnapshotCache(svc, IDENTITY);
 
     const result = await cache.get();
 
@@ -136,7 +141,7 @@ describe("BlobSnapshotCache.get()", () => {
     blob.getProperties.mockResolvedValue({ metadata: { version: "not-a-number" }, etag: "v1" });
 
     const { svc } = fakeService(blob);
-    const cache = new BlobSnapshotCache(svc, { docType: "text", docId: "doc-1", userId: "u1" });
+    const cache = new BlobSnapshotCache(svc, IDENTITY);
 
     const result = await cache.get();
 
@@ -149,7 +154,7 @@ describe("BlobSnapshotCache.get()", () => {
     blob.getProperties.mockRejectedValue(storageError(404, "BlobNotFound"));
 
     const { svc } = fakeService(blob);
-    const cache = new BlobSnapshotCache(svc, { docType: "text", docId: "doc-1", userId: "u1" });
+    const cache = new BlobSnapshotCache(svc, IDENTITY);
 
     await expect(cache.get()).resolves.toBeNull();
   });
@@ -166,7 +171,7 @@ describe("containerReady() failure clears the memo (via BlobCasStore/BlobSnapsho
       .mockRejectedValueOnce(storageError(503, "ServerBusy"))
       .mockResolvedValueOnce(undefined);
     const { svc } = fakeService(blob, createIfNotExists);
-    const cache = new BlobSnapshotCache(svc, { docType: "text", docId: "doc-1", userId: "u1" });
+    const cache = new BlobSnapshotCache(svc, IDENTITY);
 
     // First call: container bootstrap fails, so the whole read fails — this
     // must NOT get memoized as "container is ready".

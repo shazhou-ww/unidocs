@@ -31,6 +31,9 @@ describe("agent Operator DO", () => {
     const hash = "a".repeat(64);
     const applied: SValue[] = [];
     const editorFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("X-UniDocs-Auth-Context")).toBe("capability");
+      expect(headers.get("X-UniDocs-CAS-Capability")).toBe("delegated-token");
       const path = new URL(String(input)).pathname;
       if (path === "/_internal/query") {
         expect(requestBody(init)).toEqual({ kind: "read" });
@@ -82,8 +85,8 @@ describe("agent Operator DO", () => {
     const Operator = createOperatorDO({
       agentFactory,
       llmProvider,
-      getEditorStub: (_env, sessionId) => {
-        expect(sessionId).toBe("session-1");
+      getEditorStub: (_env, editorObjectName) => {
+        expect(editorObjectName).toBe("v1:8:tenant-1:9:session-1");
         return { fetch: editorFetch } as unknown as DurableObjectStub;
       },
     });
@@ -96,6 +99,8 @@ describe("agent Operator DO", () => {
         "X-Session-Id": "session-1",
         "X-Doc-Type": "test",
         "X-Tenant-Id": "tenant-1",
+        "X-UniDocs-Auth-Context": "capability",
+        "X-UniDocs-CAS-Capability": "delegated-token",
       },
       body: JSON.stringify({ instruction: "read then insert" }),
     }));
@@ -187,6 +192,7 @@ describe("agent Operator DO", () => {
         "Content-Type": "application/json",
         "X-Session-Id": "session-2",
         "X-Tenant-Id": "tenant-1",
+        "X-UniDocs-Auth-Context": "legacy",
       },
       body: JSON.stringify({ instruction: "show image" }),
     }));

@@ -215,6 +215,7 @@ function createStorageProbe(mf) {
           headers: {
             "X-Tenant-Id": directory.tenant_id,
             "X-Session-Id": directory.session_id,
+            "X-UniDocs-Auth-Context": "legacy",
           },
         },
       );

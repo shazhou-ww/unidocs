@@ -30,6 +30,9 @@
       "path": "../protocol-doc"
     },
     {
+      "path": "../service-auth"
+    },
+    {
       "path": "../protocol"
     }
   ]

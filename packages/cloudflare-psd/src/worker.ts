@@ -17,10 +17,15 @@
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
 import { createPsdDocumentAgent, createPsdDocumentType } from "@unidocs/doctype-psd";
-import { createDocTypeHandler } from "@unidocs/doctype-server-common";
+import {
+  createDocTypeHandler,
+  DocAuthConfigCache,
+  type DocAuthBindings,
+} from "@unidocs/doctype-server-common";
 import { createAnthropicLlmProvider } from "./anthropic.js";
 
 const psdFactory = createPsdDocumentType;
+const authConfig = new DocAuthConfigCache("psd");
 
 export const PsdEditor = createEditorDO(psdFactory);
 export const PsdOperator = createOperatorDO({
@@ -39,10 +44,9 @@ export const PsdOperator = createOperatorDO({
   maxIterations: 25,
 });
 
-interface Env extends EditorEnv {
+interface Env extends EditorEnv, DocAuthBindings {
   PSD_EDITOR: DurableObjectNamespace;
   PSD_OPERATOR: DurableObjectNamespace;
-  SERVICE_ACCESS_KEY: string;
   // Operator LLM config — see ./anthropic.ts and .dev.vars.example.
   // Absent in deployments that never run the chatbox; the provider throws a
   // clear error on the first /run instead of at construction time.
@@ -55,7 +59,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     return createDocTypeHandler({
       docType: "psd",
-      accessKey: env.SERVICE_ACCESS_KEY,
+      ...authConfig.get(env),
       editor: env.PSD_EDITOR,
       operator: env.PSD_OPERATOR,
     })(request);

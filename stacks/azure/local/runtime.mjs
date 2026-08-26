@@ -723,6 +723,9 @@ export async function startAzureRuntime({
           {
             DATABASE_URL: docDatabaseUrl(name),
             BLOB_CONNECTION_STRING,
+            INTERNAL_AUTH_MODE: "legacy",
+            DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
+            CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
             SERVICE_ACCESS_KEY: docServiceAccessKey(name),
             PORT: String(port),
             ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl, CAS_ACCESS_KEY } : {}),

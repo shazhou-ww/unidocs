@@ -2,8 +2,8 @@
  * CAS HTTP client for @unidocs/cas-client.
  *
  * Public mode talks to Gateway (`baseUrl` + tenant identity + optional Bearer).
- * Editor mode talks to the CAS worker through a fetch-capable binding
- * (`fetcher` + `X-Internal-Token` + `X-Tenant-Id`) — see `HttpFetcher`,
+ * Editor mode talks to the CAS worker through a fetch-capable binding using
+ * either the legacy shared headers or one request-local delegated capability.
  * which is structural so this package stays cloud-neutral (no Cloudflare
  * `Fetcher` type import). CAS wire types live in @unidocs/protocol-cas.
  */
@@ -11,6 +11,7 @@
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
 import { refsFromSValue } from "@unidocs/svalue-codec";
 import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/protocol";
+import { casRoutes } from "@unidocs/protocol-cas";
 import type { CasLeaseResult, CasRootRefUpdate } from "@unidocs/protocol-cas";
 
 /** Structural interface for a fetch-capable service binding. */
@@ -20,7 +21,13 @@ export interface HttpFetcher {
 
 export type CasClientConfig =
   | { baseUrl: string; tenantId: string; authToken?: string }
-  | { fetcher: HttpFetcher; tenantId: string; accessKey: string };
+  | { fetcher: HttpFetcher; tenantId: string; accessKey: string }
+  | {
+    fetcher: HttpFetcher;
+    tenantId: string;
+    sessionId: string;
+    capability: string;
+  };
 
 export class CasClientError extends Error {
   readonly status: number;
@@ -34,8 +41,14 @@ export class CasClientError extends Error {
 
 function isInternalConfig(
   config: CasClientConfig,
-): config is { fetcher: HttpFetcher; tenantId: string; accessKey: string } {
+): config is Extract<CasClientConfig, { fetcher: HttpFetcher }> {
   return "fetcher" in config;
+}
+
+function isCapabilityConfig(
+  config: CasClientConfig,
+): config is Extract<CasClientConfig, { capability: string }> {
+  return "capability" in config;
 }
 
 /**
@@ -45,6 +58,10 @@ export class CasClient implements CasReadContext {
   private config: CasClientConfig;
 
   constructor(config: CasClientConfig) {
+    if (isCapabilityConfig(config)
+      && (config.capability.length === 0 || config.sessionId.length === 0)) {
+      throw new TypeError("Delegated CAS capability and session ID are required");
+    }
     this.config = isInternalConfig(config)
       ? config
       : { ...config, baseUrl: config.baseUrl.replace(/\/$/, "") };
@@ -56,15 +73,15 @@ export class CasClient implements CasReadContext {
       : this.config.baseUrl;
   }
 
-  private casUrl(path: string): string {
-    return isInternalConfig(this.config)
-      ? `${this.origin()}/tenants/${this.config.tenantId}/cas${path}`
-      : `${this.origin()}/tenants/${this.config.tenantId}/cas${path}`;
+  private routeUrl(path: string): string {
+    return `${this.origin()}${path}`;
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = { ...extra };
-    if (isInternalConfig(this.config)) {
+    if (isCapabilityConfig(this.config)) {
+      h.Authorization = `Bearer ${this.config.capability}`;
+    } else if (isInternalConfig(this.config)) {
       h["X-Internal-Token"] = this.config.accessKey;
       h["X-Tenant-Id"] = this.config.tenantId;
     } else if (this.config.authToken) {
@@ -83,7 +100,10 @@ export class CasClient implements CasReadContext {
 
   /** Read CAS node content. */
   async read(ref: CasRef): Promise<Uint8Array> {
-    const resp = await this.request(this.casUrl(`/nodes/${ref.hash}/content`));
+    const resp = await this.request(this.routeUrl(casRoutes.readContent({
+      tenantId: this.config.tenantId,
+      hash: ref.hash,
+    })));
     if (!resp.ok) {
       throw new CasClientError(resp.status, resp.statusText, "read");
     }
@@ -107,7 +127,10 @@ export class CasClient implements CasReadContext {
 
   /** Read CAS node metadata. */
   async metadata(ref: CasRef): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }> {
-    const resp = await this.request(this.casUrl(`/nodes/${ref.hash}/metadata`));
+    const resp = await this.request(this.routeUrl(casRoutes.readMetadata({
+      tenantId: this.config.tenantId,
+      hash: ref.hash,
+    })));
     if (!resp.ok) {
       throw new CasClientError(resp.status, resp.statusText, "metadata");
     }
@@ -134,7 +157,10 @@ export class CasClient implements CasReadContext {
     if (refs.length > 0) extra["X-CAS-Refs"] = refs.join(",");
     if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
 
-    const resp = await this.request(this.casUrl(`/nodes/${hash}`), {
+    const resp = await this.request(this.routeUrl(casRoutes.leaseNode({
+      tenantId: this.config.tenantId,
+      hash,
+    })), {
       method: "POST",
       headers: extra,
       body: content as BufferSource,
@@ -154,7 +180,10 @@ export class CasClient implements CasReadContext {
     const extra: Record<string, string> = {};
     if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
 
-    const resp = await this.request(this.casUrl(`/nodes/${hash}/lease`), {
+    const resp = await this.request(this.routeUrl(casRoutes.leaseExisting({
+      tenantId: this.config.tenantId,
+      hash,
+    })), {
       method: "POST",
       headers: extra,
     });
@@ -173,7 +202,10 @@ export class CasClient implements CasReadContext {
     if (!isInternalConfig(this.config)) {
       throw new Error("updateRootRefs is only available in Editor (service-binding) mode");
     }
-    const resp = await this.request(`${this.origin()}/_internal/root-refs`, {
+    const rootRefsPath = isCapabilityConfig(this.config)
+      ? casRoutes.rootRefs({ tenantId: this.config.tenantId })
+      : "/_internal/root-refs";
+    const resp = await this.request(this.routeUrl(rootRefsPath), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(update),

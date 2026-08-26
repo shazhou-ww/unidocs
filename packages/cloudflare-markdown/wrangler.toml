@@ -2,6 +2,11 @@ name = "unidocs-markdown"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
+[vars]
+INTERNAL_AUTH_MODE = "legacy"
+DOC_CAPABILITY_AUDIENCE = "unidocs-doc:markdown"
+CAS_CAPABILITY_AUDIENCE = "unidocs-cas"
+
 [[durable_objects.bindings]]
 name = "MARKDOWN_EDITOR"
 class_name = "MarkdownEditor"

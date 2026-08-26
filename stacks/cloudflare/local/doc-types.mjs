@@ -207,6 +207,9 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       compatibilityDate: COMPATIBILITY_DATE,
       bindings: {
         CAS_ACCESS_KEY,
+        INTERNAL_AUTH_MODE: "legacy",
+        DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
+        CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
         SERVICE_ACCESS_KEY: docServiceAccessKey(name),
         ...(extraBindings[name] ?? {}),
       },

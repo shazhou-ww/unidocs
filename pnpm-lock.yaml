@@ -454,10 +454,16 @@ importers:
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
+      '@unidocs/service-auth':
+        specifier: workspace:*
+        version: link:../service-auth
       '@unidocs/svalue-codec':
         specifier: workspace:*
         version: link:../svalue-codec
     devDependencies:
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

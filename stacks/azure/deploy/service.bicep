@@ -75,7 +75,22 @@ var casEnv = casBaseUrl != '' ? [
   }
 ] : []
 
-var extraEnv = concat(blobEnv, casEnv)
+var authEnv = [
+  {
+    name: 'INTERNAL_AUTH_MODE'
+    value: 'legacy'
+  }
+  {
+    name: 'DOC_CAPABILITY_AUDIENCE'
+    value: 'unidocs-doc:${docType}'
+  }
+  {
+    name: 'CAS_CAPABILITY_AUDIENCE'
+    value: 'unidocs-cas'
+  }
+]
+
+var extraEnv = concat(blobEnv, casEnv, authEnv)
 
 module app 'container-app.bicep' = {
   name: '${docType}-app'

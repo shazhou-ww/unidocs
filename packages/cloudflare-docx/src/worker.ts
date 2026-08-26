@@ -18,9 +18,14 @@ import {
   createDocxDocumentAgent,
   createDocxDocumentType,
 } from "@unidocs/doctype-docx";
-import { createDocTypeHandler } from "@unidocs/doctype-server-common";
+import {
+  createDocTypeHandler,
+  DocAuthConfigCache,
+  type DocAuthBindings,
+} from "@unidocs/doctype-server-common";
 
 const docxFactory = createDocxDocumentType;
+const authConfig = new DocAuthConfigCache("docx");
 
 // Generate Editor and Operator Durable Objects from the docx DocumentType
 export const DocxEditor = createEditorDO(docxFactory);
@@ -35,17 +40,16 @@ export const DocxOperator = createOperatorDO({
   },
 });
 
-interface Env extends EditorEnv {
+interface Env extends EditorEnv, DocAuthBindings {
   DOCX_EDITOR: DurableObjectNamespace;
   DOCX_OPERATOR: DurableObjectNamespace;
-  SERVICE_ACCESS_KEY: string;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     return createDocTypeHandler({
       docType: "docx",
-      accessKey: env.SERVICE_ACCESS_KEY,
+      ...authConfig.get(env),
       editor: env.DOCX_EDITOR,
       operator: env.DOCX_OPERATOR,
     })(request);

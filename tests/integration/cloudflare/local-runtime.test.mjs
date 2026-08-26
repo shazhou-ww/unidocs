@@ -80,7 +80,7 @@ test("a directly reached Doc service rejects requests without its service creden
       "X-Session-Id": "untrusted-session",
     },
   });
-  expect(res.status).toBe(403);
+  expect(res.status).toBe(401);
 });
 
 test("static registration works with a persist directory", async () => {

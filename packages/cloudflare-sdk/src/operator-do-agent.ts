@@ -1,6 +1,7 @@
 import { decodeSValue, encodeSValue, isSBlob, toJsonValue } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { AgentToolResult, DocumentAgent, DocumentAgentContext, DocumentAgentFactory, SBlob, SBlobData, SValue, SValueType } from "@unidocs/protocol";
+import { docSessionObjectName } from "@unidocs/doctype-server-common";
 
 export interface AgentToolResultRendererContext {
   readonly readBlob: (blob: SBlob) => Promise<SBlobData>;
@@ -20,7 +21,7 @@ export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
   ) => Promise<unknown>;
   readonly getEditorStub: (
     env: TEnv,
-    sessionId: string,
+    editorObjectName: string,
   ) => DurableObjectStub;
   readonly renderToolResult?: AgentToolResultRenderer;
   /**
@@ -52,9 +53,10 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
     readonly #env: TEnv;
     readonly #agent: DocumentAgent;
     readonly #agentContext: DocumentAgentContext<TQuery, TOp>;
+    #requestTail: Promise<void> = Promise.resolve();
     #session: unknown[];
     #lastKnownVersion: number | null = null;
-    #identityHeaders = new Headers();
+    #requestHeaders = new Headers();
     #sessionId: string | null = null;
     #tenantId: string | null = null;
 
@@ -71,7 +73,16 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
       this.#session = [{ role: "system", content: this.#agent.instructions }];
     }
 
-    async fetch(request: Request): Promise<Response> {
+    fetch(request: Request): Promise<Response> {
+      const response = this.#requestTail.then(() => this.#handleRequest(request));
+      this.#requestTail = response.then(
+        () => undefined,
+        () => undefined,
+      );
+      return response;
+    }
+
+    async #handleRequest(request: Request): Promise<Response> {
       const url = new URL(request.url);
       try {
         if (request.method === "POST" && url.pathname === "/_internal/run") {
@@ -125,6 +136,8 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
         }
 
         if (request.method === "POST" && url.pathname === "/_internal/reset") {
+          const identityError = this.#captureIdentity(request);
+          if (identityError) return identityError;
           this.#session = [{ role: "system", content: this.#agent.instructions }];
           this.#lastKnownVersion = null;
           return Response.json({ success: true });
@@ -133,6 +146,8 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
         return Response.json({ success: false, error: `Unknown endpoint: ${url.pathname}` }, { status: 404 });
       } catch (err) {
         return Response.json({ success: false, error: String(err) }, { status: 500 });
+      } finally {
+        this.#requestHeaders = new Headers();
       }
     }
 
@@ -176,10 +191,17 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
       }
       this.#sessionId = sessionId;
       this.#tenantId = tenantId;
-      this.#identityHeaders = new Headers();
-      for (const name of ["X-Tenant-Id", "X-Session-Id", "X-Doc-Type", "X-Internal-Token"]) {
+      this.#requestHeaders = new Headers();
+      for (const name of [
+        "X-Tenant-Id",
+        "X-Session-Id",
+        "X-Doc-Type",
+        "X-Internal-Token",
+        "X-UniDocs-Auth-Context",
+        "X-UniDocs-CAS-Capability",
+      ]) {
         const value = request.headers.get(name);
-        if (value) this.#identityHeaders.set(name, value);
+        if (value) this.#requestHeaders.set(name, value);
       }
       return null;
     }
@@ -244,11 +266,18 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
 
     #editorValueRequest(path: string, value: SValue): Promise<Response> {
       if (!this.#sessionId || !this.#tenantId) throw new Error("Agent has no session identity");
-      const headers = new Headers(this.#identityHeaders);
+      const headers = new Headers(this.#requestHeaders);
+      const authKind = headers.get("X-UniDocs-Auth-Context");
+      if (authKind !== "legacy" && authKind !== "capability") {
+        throw new Error("Agent has no private auth context");
+      }
       headers.set("Content-Type", SValueContentType);
       headers.set("Accept", SValueContentType);
       const bytes = encodeSValue(value);
-      return config.getEditorStub(this.#env, this.#sessionId).fetch(`http://editor${path}`, {
+      const editorObjectName = authKind === "capability"
+        ? docSessionObjectName(this.#tenantId, this.#sessionId)
+        : this.#sessionId;
+      return config.getEditorStub(this.#env, editorObjectName).fetch(`http://editor${path}`, {
         method: "POST",
         headers,
         body: Uint8Array.from(bytes).buffer,

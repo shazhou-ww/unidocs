@@ -41,15 +41,16 @@ async function main(): Promise<void> {
   });
 
   try {
-    await runMigrations(pool);
-    console.log("migrations applied");
     if (process.argv.includes("--import-legacy-identities")) {
+      await runMigrations(pool, undefined, { through: "0002_session_identity.sql" });
       const mapFile = requireEnv("LEGACY_SESSION_MAP_FILE");
       const source = JSON.parse(await readFile(mapFile, "utf8")) as unknown;
       const identities = parseLegacySessionIdentities(source);
       const imported = await importLegacySessionIdentities(pool, identities);
       console.log(`imported ${imported} legacy session identities`);
     }
+    await runMigrations(pool);
+    console.log("migrations applied");
   } finally {
     await pool.end();
   }

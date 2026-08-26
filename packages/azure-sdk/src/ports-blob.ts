@@ -14,6 +14,7 @@
  */
 
 import type { BlobCas, SessionIdentity, SnapshotCache } from "@unidocs/doctype-server-common";
+import { docStorageIdentityKey } from "@unidocs/doctype-server-common";
 import type { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
 
 /** Container holding the content-addressed blobs; blob name is the hash. */
@@ -195,7 +196,7 @@ export class BlobCasStore implements BlobCas {
 
 /**
  * `SnapshotCache` over the `snapshots` container, one blob per document at
- * `{docType}/{sessionId}/latest`.
+ * a canonical length-prefixed tenant/docType/session key.
  *
  * Writes are unconditional overwrites: this is a cache of the newest snapshot,
  * so the newest writer wins and a lost write only costs a replay. The version
@@ -214,7 +215,11 @@ export class BlobSnapshotCache implements SnapshotCache {
   ) {
     this.#container = svc.getContainerClient(containerName);
     this.#ensure = containerReady(svc, containerName, this.#container);
-    this.#blobName = `${identity.docType}/${identity.sessionId}/latest`;
+    this.#blobName = `${docStorageIdentityKey(
+      identity.tenantId,
+      identity.docType,
+      identity.sessionId,
+    )}/latest`;
   }
 
   /**

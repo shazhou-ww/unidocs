@@ -1,6 +1,11 @@
 name = "unidocs-psd"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
+
+[vars]
+INTERNAL_AUTH_MODE = "legacy"
+DOC_CAPABILITY_AUDIENCE = "unidocs-doc:psd"
+CAS_CAPABILITY_AUDIENCE = "unidocs-cas"
 compatibility_flags = ["nodejs_compat"]
 
 [[durable_objects.bindings]]

@@ -49,23 +49,14 @@ function streamBody(text: string): ReadableStream<Uint8Array> {
 const INTERNAL_TOKEN = "test-token";
 
 describe("createDocTypeHandler — streaming body forwarding", () => {
-  it("fails closed when the configured internal token is empty", async () => {
-    const handler = createDocTypeHandler({
+  it("fails startup when the configured legacy credential is empty", () => {
+    expect(() => createDocTypeHandler({
       docType: "markdown",
+      internalAuthMode: "legacy",
       accessKey: "",
       editor: stubNamespace(async () => Response.json({ success: true })),
       operator: stubNamespace(async () => Response.json({ success: true })),
-    });
-
-    const response = await handler(new Request("http://doc.local/sessions/session-1", {
-      method: "PUT",
-      headers: {
-        "X-Internal-Token": "attacker-selected-token",
-        "X-Tenant-Id": "tenant-1",
-      },
-    }));
-
-    expect(response.status).toBe(403);
+    })).toThrow("Legacy Doc auth requires an access key");
   });
 
   it("forwards PUT /sessions/{sessionId} body intact", async () => {
@@ -77,6 +68,7 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
 
     const handler = createDocTypeHandler({
       docType: "markdown",
+      internalAuthMode: "legacy",
       accessKey: INTERNAL_TOKEN,
       editor,
       operator: stubNamespace(async () => Response.json({}, { status: 501 })),
@@ -103,6 +95,7 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
 
     const handler = createDocTypeHandler({
       docType: "markdown",
+      internalAuthMode: "legacy",
       accessKey: INTERNAL_TOKEN,
       editor,
       operator: stubNamespace(async () => Response.json({}, { status: 501 })),
@@ -130,6 +123,7 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
 
     const handler = createDocTypeHandler({
       docType: "markdown",
+      internalAuthMode: "legacy",
       accessKey: INTERNAL_TOKEN,
       editor: stubNamespace(async () => Response.json({}, { status: 501 })),
       operator,
