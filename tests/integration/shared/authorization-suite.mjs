@@ -75,6 +75,8 @@ export function runAuthorizationSuite(getRuntime, { docTypes, directCas = false 
         const tenantId = `auth-${docType}`;
         let sessionId;
         let validToken;
+        let writeResponse;
+        let writeBody;
 
         beforeAll(async () => {
           const runtime = getRuntime();
@@ -93,6 +95,38 @@ export function runAuthorizationSuite(getRuntime, { docTypes, directCas = false 
             sessionId,
             permission: sessionReadPermission(tenantId, sessionId),
           });
+          const [primaryWriteToken, delegatedToken] = await Promise.all([
+            issueDocToken(issuer, {
+              docType,
+              tenantId,
+              sessionId,
+              permission: sessionWritePermission(tenantId, sessionId),
+            }),
+            issuer.issue({
+              subject: `doc:${docType}`,
+              audience: "unidocs-cas",
+              tenantId,
+              sessionId,
+              permissions: [casReadPermission(tenantId), casWritePermission(tenantId)],
+            }),
+          ]);
+          writeResponse = await closeFetch(
+            `${runtime.urls[docType]}/tenants/${tenantId}/sessions/${sessionId}/apply`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${primaryWriteToken}`,
+                "X-UniDocs-CAS-Capability": delegatedToken,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                baseVersion: 1,
+                description: "capability conformance write",
+                operations: [],
+              }),
+            },
+          );
+          writeBody = await writeResponse.json();
         });
 
         function history(headers = {}) {
@@ -102,11 +136,13 @@ export function runAuthorizationSuite(getRuntime, { docTypes, directCas = false 
           );
         }
 
-        test("accepts an exact Gateway-issued read capability", async () => {
+        test("accepts exact Gateway-issued create, write, and read capabilities", async () => {
+          expect(writeResponse.status, JSON.stringify(writeBody)).toBe(200);
+          expect(writeBody).toMatchObject({ success: true, version: 2 });
           const response = await history({ Authorization: `Bearer ${validToken}` });
           const body = await response.json();
           expect(response.status, JSON.stringify(body)).toBe(200);
-          expect(body).toMatchObject({ success: true, version: 1 });
+          expect(body).toMatchObject({ success: true, version: 2 });
         });
 
         test("rejects missing, malformed, tampered, and legacy credentials", async () => {

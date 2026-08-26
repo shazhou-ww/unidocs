@@ -1505,7 +1505,7 @@ Doc/CAS runtime.
 - [ ] Assert all current methods, operation names, query parameters, request and
       response fields, status behavior, media types, and headers remain intact
       after the tenant/auth and package migrations.
-- [ ] Cover valid current create/read/write and CAS read/write/admin operations.
+- [x] Cover valid current create/read/write and CAS read/write/admin operations.
 - [x] Cover missing, malformed, tampered, expired, future, overlong, wrong-key,
       wrong-issuer, wrong-audience, wrong-permission, wrong-tenant, and
       wrong-session tokens.
@@ -1538,7 +1538,10 @@ Task 8 implementation record (in progress, 2026-08-26):
       points for Cloudflare and Azure. Gateway creates the test documents, then
       the suite probes every current Doc edge directly: Cloudflare Markdown,
       DOCX, and PSD plus Azure Markdown and DOCX. The Cloudflare entry also probes
-      the sole current CAS runtime directly.
+      the sole current CAS runtime directly. Every Doc combination performs a
+      real session-write apply with an exact Doc capability plus delegated CAS
+      read/write capability, then reads version 2 with an exact session-read
+      capability.
 - The Doc matrix accepts an exact session-read capability and rejects missing,
       malformed, byte-tampered, expired, future, overlong, wrong-key,
       wrong-issuer, CAS-audience, wrong-permission, wrong-tenant, wrong-session,
