@@ -443,7 +443,7 @@ returns 409 like the legacy runtime. `azure-psd` also migrated to stack mode
 (no cf legacy CAS dependency). Validation: test:local 396, test:azure 29,
 pnpm test, typecheck, and the dependency guard all green.
 
-## Task 9 execution notes (round 7: app-stack deployables + rollback drill)
+## Task 9 execution notes (round 7: app-stack handoff + rollback drill)
 
 The four application-stack `wrangler.toml` files (cloudflare-gateway,
 cloudflare-markdown, cloudflare-docx, cloudflare-psd) are rewritten to stack
@@ -458,17 +458,20 @@ doc workers — wrangler rejects `migrations` and `exports` together
 by export alone. All four parse: `wrangler deploy --dry-run` exits cleanly
 (the gateway first, then the three doc workers).
 
-**App-stack deployment runbook (NOT yet executed — blocked):** the gateway
-still only has `createInsecureTenantIdentityResolver`, so a deployed gateway
-has no production identity/auth mechanism and 401s every request. Do **not**
-deploy the app stack until application identity auth lands (the gateway's
-capability authority must be able to verify doc-service identity JWTs in
-production, per `CAPABILITY_ISSUER` / `CAPABILITY_TRUSTED_JWKS`). The app
-stack has never been deployed ("This Worker does not exist"), so these tomls
-are the deployable artifact, not a live deployment. When unblocked, deploy
-order is doc workers first, gateway last (the gateway depends on the
-registered stack and the doc workers' identity keys); secrets to set via
-`wrangler secret put` before each deploy:
+**App-stack deployment runbook (handed off — OUT OF SCOPE here):** how the
+full UniDocs application stack is organized is a separate plan; this CAS
+plan covers only the middleware itself plus the local stack-mode migration.
+The tomls are the hand-off artifact (parse-verified, never deployed — the
+app stack shows "This Worker does not exist"), and the runbook below is
+carried into the application-stack plan. Note the gateway currently has only
+`createInsecureTenantIdentityResolver`, so a deployed gateway has no
+production identity/auth mechanism and 401s every request — application
+identity auth must land before any app-stack deploy (the capability
+authority must verify doc-service identity JWTs per `CAPABILITY_ISSUER` /
+`CAPABILITY_TRUSTED_JWKS`). When unblocked, deploy order is doc workers
+first, gateway last (the gateway depends on the registered stack and the doc
+workers' identity keys); secrets to set via `wrangler secret put` before
+each deploy:
 
 - doc workers: `CAPABILITY_ISSUER`, `CAPABILITY_TRUSTED_JWKS` (doc-service
   identity), `CAS_STACK_TRUSTED_JWKS` (the `unidocs-cloudflare` stack public

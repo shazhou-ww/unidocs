@@ -1719,7 +1719,7 @@ Tests assert both aggregate counts and emitted domain deltas.
   verified with d1 execute; the deployed tenant worker authorizes the
   provisioned cloudflare stack's capabilities. Console-based possession-proof
   registration and memberships land with the admin onboarding round.)
-- [~] Migrate Cloudflare Workers from shared `CAS_ACCESS_KEY` service-binding
+- [x] Migrate Cloudflare Workers from shared `CAS_ACCESS_KEY` service-binding
   calls to stack-scoped tenant capabilities against the middleware service.
   (Stack mode is implemented and green locally: the gateway signs delegated
   CAS capabilities with the registered `unidocs-cloudflare` stack key
@@ -1727,14 +1727,14 @@ Tests assert both aggregate counts and emitted domain deltas.
   `/stacks/{stackId}/tenants/{tenantId}/...` to the middleware, and the
   markdown doc flow passes end-to-end. `startLocalMiddleware` wraps the
   standalone middleware for the dev command and the Azure round. The
-  application-stack WRANGLER configs are rewritten to stack mode with real
+  application-stack WRANGLER configs were rewritten to stack mode with real
   production values (stack issuer/kid/audience, CAS_SERVICE →
   `unidocs-cas-server-cloudflare`, `[exports.*]` DO declarations) and all
-  four parse via `wrangler deploy --dry-run`; DEPLOYMENT IS BLOCKED until
-  the gateway gains a production identity/auth mechanism — it currently has
-  only `createInsecureTenantIdentityResolver`, so a deployed gateway 401s
-  everything. Deploy order and secrets are documented in the round-7
-  execution notes; do not deploy until app identity auth lands.)
+  four parse via `wrangler deploy --dry-run` — these are handed off as the
+  deployable starting point. PRODUCTION DEPLOYMENT of the application stack
+  (including the gateway's missing production identity/auth mechanism) is
+  explicitly OUT OF SCOPE here: how the full UniDocs application stack is
+  organized is a separate plan.)
 - [x] Migrate Azure Gateway and document services from a manually aligned
   remote CAS URL/shared key to the registered Azure stack identity,
   capability issuance, and middleware endpoint. (Azure stack mode is green:
@@ -1770,9 +1770,9 @@ Tests assert both aggregate counts and emitted domain deltas.
   redeploying CAS, and CAS can deploy compatibly without redeploying either
   stack. (Middleware deployed independently of the application stacks; a
   live rollback+restore drill on the deployed middleware succeeded
-  2026-08-26 (see bullet 4). Application-stack deploy/rollback drills are
-  blocked on the gateway identity-auth prerequisite and then remain as
-  ops-gate exercises.)
+  2026-08-26 (see bullet 4). Application-stack deploy/rollback drills belong
+  to the separate application-stack plan and remain ops-gate exercises
+  there.)
 - [~] Meet every operational-readiness gate: availability/load SLO, rate limits,
       revocation bound, backup/restore drill, migration pause criteria, alerts,
       runbooks, named ownership, and key-compromise exercise. (Ops round;
