@@ -320,9 +320,11 @@ signing key.
 ```
 
 6. Azure side — no Durable Objects, so no DO bindings to wire up. Instead:
-   - New `packages/azure-mytype/` (`package.json`, `tsconfig.json`, `src/main.ts`, `scripts/bundle.mjs`) — copy `packages/azure-docx` as the template rather than `packages/azure-markdown`: its `bundle.mjs` explicitly externalizes only `pg`/`@azure/storage-blob` instead of using `packages: "external"`, which matters the moment your doc type pulls in a real (non-`@unidocs/*`) npm dependency that isn't also a root `package.json` devDependency — `packages: "external"` would leave that import unresolvable at runtime. `src/main.ts` should differ from the docx entry by nothing but the doc type string and the default port; if it needs more than that, the gap belongs in `@unidocs/azure-sdk`, not in the entry point.
-   - Add a `mytype: <port>` row to `AZURE_DOC_TYPE_PORT_BASE` in `stacks/azure/local/ports.mjs` (pick a base at least `AZURE_PORT_STRIDE` past the last one).
-   - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `stacks/azure/local/runtime.mjs`.
+   - New `packages/azure-mytype/` (`package.json`, `tsconfig.json`, `src/main.ts`, `scripts/bundle.mjs`) — copy `packages/azure-docx` as the template rather than `packages/azure-markdown`: its `bundle.mjs` explicitly externalizes only `pg`/`@azure/storage-blob` instead of using `packages: "external"`, which matters the moment your doc type pulls in a real (non-`@unidocs/*`) npm dependency that isn't also a root `package.json` devDependency — `packages: "external"` would leave that import unresolvable at runtime. `src/main.ts` should differ from the docx entry by nothing but the doc type string and the default port; if it needs more than that, the gap belongs in `@unidocs/azure-sdk`, not in the entry point. Also add an `azure.service.json` declaring `docType`, `targetPort`,
+     `localPortBase` (at least `AZURE_PORT_STRIDE` past the last one), `minReplicas`,
+     `maxReplicas` and `needsCas`. Everything else — local ports, the dev stack's
+     supported list, the deploy script's images and secrets, and the Bicep templates —
+     expands from that one file.
    - Add `{ "path": "packages/azure-mytype" }` to the root `tsconfig.json`'s `references`.
    - Provision a service-owned database and migration job, then include its URL
      and exact capability audience in Gateway's static registry.

@@ -141,6 +141,37 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/azure-psd:
+    dependencies:
+      '@azure/identity':
+        specifier: ^4.13.2
+        version: 4.13.2(supports-color@10.2.2)
+      '@azure/storage-blob':
+        specifier: ^12.33.0
+        version: 12.33.0(supports-color@10.2.2)
+      '@unidocs/azure-sdk':
+        specifier: workspace:*
+        version: link:../azure-sdk
+      '@unidocs/doctype-psd':
+        specifier: workspace:*
+        version: link:../doctype-psd
+      pg:
+        specifier: ^8.23.0
+        version: 8.23.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/azure-sdk:
     dependencies:
       '@azure/identity':

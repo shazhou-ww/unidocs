@@ -10,7 +10,7 @@
  *   node stacks/azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
  *   node stacks/azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --only docx
  *
- * `--only <docType>`(`markdown` 或 `docx`)把冒烟收窄到一个 doc type 的
+ * `--only <docType>`(`markdown`、`docx` 或 `psd`)把冒烟收窄到一个 doc type 的
  * 流程,不给时测全部。`stacks/azure/deploy/deploy.mjs` 在 `--service docx` 之后
  * 传 `--only docx`,这样一次只部一个服务不会因为另一个 doc type(这次根本
  * 没被触碰)恰好挂掉而报红。
@@ -194,7 +194,7 @@ async function exportDoc(gateway, docType, docId) {
 }
 
 async function markdownFlow(gateway) {
-  console.log("\n[1/4] markdown full flow");
+  console.log("\n[1/5] markdown full flow");
   const docId = `md-${RUN}`;
 
   const created = await createDoc(gateway, "markdown", docId);
@@ -227,7 +227,7 @@ async function markdownFlow(gateway) {
 }
 
 async function docxTextFlow(gateway, docId) {
-  console.log("\n[2/4] docx full flow");
+  console.log("\n[2/5] docx full flow");
 
   const created = await createDoc(gateway, "docx", docId);
   const createdBody = await created.json();
@@ -258,7 +258,7 @@ async function docxTextFlow(gateway, docId) {
 }
 
 async function docxImageFlow(gateway, docId) {
-  console.log("\n[3/4] docx image path through Cloudflare CAS");
+  console.log("\n[3/5] docx image path through Cloudflare CAS");
 
   const imagePath = join(REPO_ROOT, "tests/treespec/create-new-docx/edit/image/tiny.png");
   const imageBytes = new Uint8Array(readFileSync(imagePath));
@@ -305,8 +305,54 @@ async function docxImageFlow(gateway, docId) {
   );
 }
 
+async function psdFlow(gateway, docId) {
+  console.log("\n[4/5] psd full flow");
+
+  const created = await createDoc(gateway, "psd", docId);
+  const createdBody = await created.json();
+  check("create → success", createdBody.success === true, JSON.stringify(createdBody));
+
+  // A `group` layer needs no pixel data, so this exercises add_layer/getLayers/
+  // export without pulling in the CAS-backed pixel path. Proving the
+  // SBlob → CAS wiring (getPreview on a raster layer) is a separate,
+  // planned integration test, not this deployment smoke flow — see this
+  // plan's Task 6 brief.
+  const layerId = `smoke-layer-${RUN}`;
+  const layerName = `Smoke ${RUN}`;
+  const { body: applyBody } = await apply(gateway, "psd", docId, 1, "smoke: add layer", [
+    {
+      kind: "add_layer",
+      payload: {
+        layer: { id: layerId, type: "group", name: layerName, bounds: [0, 0, 0, 0] },
+        parentId: null,
+      },
+    },
+  ]);
+  check(
+    "apply add_layer → version === 2",
+    applyBody.success === true && applyBody.version === 2,
+    JSON.stringify(applyBody),
+  );
+
+  const { body: queryBody } = await query(gateway, "psd", docId, "getLayers");
+  check(
+    "query getLayers → contains the added layer",
+    queryBody.success === true &&
+      Array.isArray(queryBody.data) &&
+      queryBody.data.some((l) => l.id === layerId && l.name === layerName),
+    JSON.stringify(queryBody),
+  );
+
+  const { res: exportRes, bytes: exportBytes } = await exportDoc(gateway, "psd", docId);
+  check(
+    "export → HTTP 200 with non-empty body",
+    exportRes.status === 200 && exportBytes.length > 0,
+    `status=${exportRes.status} length=${exportBytes.length}`,
+  );
+}
+
 async function conflictFlow(gateway, docId, expectedVersion) {
-  console.log("\n[4/4] concurrent conflict");
+  console.log("\n[5/5] concurrent conflict");
 
   const { res, body } = await apply(gateway, "docx", docId, 1, "smoke: stale write", [
     { kind: "appendParagraph", payload: { text: "should conflict" } },
@@ -360,16 +406,16 @@ export async function main() {
   // `ranFlows` records which doc type(s) *actually* ran a flow below — not
   // which ones KNOWN_DOC_TYPES says exist. KNOWN_DOC_TYPES is now derived
   // from the azure.service.json table (readAzureDocTypes()) and grows on its
-  // own; the two `if` blocks below are still one hand-written branch per doc
+  // own; the three `if` blocks below are still one hand-written branch per doc
   // type, because each flow exercises genuinely different operations
-  // (markdown's setContent/getContent vs. docx's appendParagraph/insertImage/
-  // CAS upload) and there is no generic "run the flow for this doc type"
-  // table to dispatch through. Decoupling the validation table from the
-  // dispatch means a third table entry with no matching branch here would
-  // silently match neither `if`, run zero assertions, and still print "all
-  // smoke assertions passed" — see the completeness check after this block,
-  // which turns that silent gap into a loud failure instead of re-hardcoding
-  // the same doc type list a second time.
+  // (markdown's setContent/getContent, docx's appendParagraph/insertImage/
+  // CAS upload, psd's add_layer/getLayers) and there is no generic "run the
+  // flow for this doc type" table to dispatch through. Decoupling the
+  // validation table from the dispatch means a new table entry with no
+  // matching branch here would silently match no `if`, run zero assertions,
+  // and still print "all smoke assertions passed" — see the completeness
+  // check after this block, which turns that silent gap into a loud failure
+  // instead of re-hardcoding the same doc type list a second time.
   const ranFlows = new Set();
 
   if (!args.only || args.only === "markdown") {
@@ -383,9 +429,9 @@ export async function main() {
 
     let docxVersionAfterGroup2Or3 = 2;
     if (args.skipCas) {
-      console.log("\n[3/4] docx image path through Cloudflare CAS — SKIPPED (--skip-cas)");
+      console.log("\n[3/5] docx image path through Cloudflare CAS — SKIPPED (--skip-cas)");
     } else if (args.noCas) {
-      console.log("\n[3/4] docx image path through Cloudflare CAS — CAS not configured, group 3 not applicable (--no-cas, verified)");
+      console.log("\n[3/5] docx image path through Cloudflare CAS — CAS not configured, group 3 not applicable (--no-cas, verified)");
     } else {
       await docxImageFlow(gateway, docxDocId);
       docxVersionAfterGroup2Or3 = 3;
@@ -393,6 +439,12 @@ export async function main() {
 
     await conflictFlow(gateway, docxDocId, docxVersionAfterGroup2Or3);
     ranFlows.add("docx");
+  }
+
+  if (!args.only || args.only === "psd") {
+    const psdDocId = `psd-${RUN}`;
+    await psdFlow(gateway, psdDocId);
+    ranFlows.add("psd");
   }
 
   // Completeness gate: compare "doc types this run was supposed to cover"
