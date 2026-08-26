@@ -1769,17 +1769,18 @@ Tests assert both aggregate counts and emitted domain deltas.
   implementation surfaces are gone. `protocol-legacy` keeps the frozen
   contracts for the remaining legacy-compatible gateway/cas-client paths
   until the rollback window closes.)
-- [~] Prove each application stack can deploy, roll back, and operate without
-  redeploying CAS, and CAS can deploy compatibly without redeploying either
-  stack. (Middleware deployed independently of the application stacks; a
-  live rollback+restore drill on the deployed middleware succeeded
-  2026-08-26 (see bullet 4). Application-stack deploy/rollback drills belong
-  to the separate application-stack plan and remain ops-gate exercises
-  there.)
 - [~] Meet every operational-readiness gate: availability/load SLO, rate limits,
       revocation bound, backup/restore drill, migration pause criteria, alerts,
       runbooks, named ownership, and key-compromise exercise. (Ops round;
       blocked on the operations runbook + alerting infrastructure.)
+
+> **Handed off on 2026-08-26:** how the full UniDocs application stack is
+> organized and deployed is a separate plan —
+> `docs/superpowers/plans/2026-08-26-app-stack-organization-todo.md`.
+> Handed items include the application-stack production identity/auth,
+> deployment, independent deploy/rollback drills (former bullet 12), and
+> package-organization decisions. This plan keeps only the independently
+> deployable CAS middleware itself.
 
 **Focused validation:** provision an isolated CAS environment, self-register
 both UniDocs stacks, run Cloudflare and Azure integration suites against the
