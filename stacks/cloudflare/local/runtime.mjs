@@ -23,10 +23,12 @@ import {
   MOCK_OIDC_PORT,
   DOC_TYPES,
   GATEWAY_WORKER,
+  MIDDLEWARE_WORKER,
   resolvePorts,
 } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
+import { migrateControlSchema } from "../../../packages/cas-control-plane/src/schema.ts";
 
 export { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
@@ -289,6 +291,13 @@ function createStorageProbe(mf) {
         .all();
       return rows.results.map((row) => row.request_id);
     },
+    /**
+     * Cloudflare-probe-only: the middleware's CAS_CONTROL_DB handle (binding
+     * on the canonical tenant worker). Tests seed registered stacks here.
+     */
+    async middlewareControlDb() {
+      return mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
+    },
   };
 }
 
@@ -308,6 +317,8 @@ export async function startLocalRuntime({
   logLevel = LogLevel.WARN,
   casAdminPublicOrigin,
   casMiddlewareOnly = false,
+  casMiddleware = false,
+  middlewareStacks,
 } = {}) {
   const ports = resolvePorts(docTypes, portOverrides);
   // 过渡形态(阶段 4 删除):CAS worker 的直连端口,供 Azure 栈的
@@ -316,6 +327,9 @@ export async function startLocalRuntime({
   ports.cas = portOverrides.cas ?? CAS_PORT;
   ports.admin = portOverrides.admin ?? ADMIN_PORT;
   ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
+  if (casMiddleware) {
+    ports.edge = portOverrides.edge ?? EDGE_PORT;
+  }
   if (casMiddlewareOnly) {
     // CAS middleware runs alone: no gateway, no doc type workers — the
     // independent-deployment boundary, mirrored by scripts/dev-cas-admin.mjs.
@@ -330,7 +344,7 @@ export async function startLocalRuntime({
   const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway ?? "cas-admin"));
 
   await Promise.all(
-    bundleTargets(docTypes, { casMiddlewareOnly }).map(({ entry, outfile }) =>
+    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware }).map(({ entry, outfile }) =>
       bundleWorker(join(ROOT, entry), join(bundleDir, outfile)),
     ),
   );
@@ -375,6 +389,7 @@ export async function startLocalRuntime({
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
           casMiddlewareOnly,
+          casMiddleware,
         }),
       }),
     );
@@ -383,6 +398,10 @@ export async function startLocalRuntime({
 
     if (!casMiddlewareOnly) {
       await migrateSnapshotsDb(mf);
+    }
+    if (casMiddleware && middlewareStacks) {
+      const controlDb = await mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
+      await seedMiddlewareStacks(controlDb, middlewareStacks);
     }
     // CAS_CONTROL_DB schema is migrated idempotently by the admin worker on
     // its first request (migrateControlSchema in cas-admin-webui index.ts).
@@ -402,7 +421,6 @@ export async function startLocalRuntime({
     throw err;
   }
 }
-
 async function createEphemeralCapabilityFixture() {
   const pair = await generateKeyPair("ES256", { extractable: true });
   const kid = `local-${crypto.randomUUID()}`;
@@ -415,4 +433,30 @@ async function createEphemeralCapabilityFixture() {
       keys: [{ ...publicJwk, kid, alg: "ES256", use: "sig" }],
     },
   };
+}
+
+/**
+ * Seed the middleware's CAS_CONTROL_DB with the locally registered stacks
+ * (issuer + rotation key + refDomains). Callers keep the private keys and
+ * issue stack capabilities with service-auth against the same public JWK.
+ */
+export async function seedMiddlewareStacks(
+  db,
+  stacks,
+) {
+  await migrateControlSchema(db);
+  for (const stack of stacks) {
+    await db.batch([
+      db.prepare(
+        "INSERT INTO cas_stack_issuer (stack_id, issuer, audience, status, revision) VALUES (?, ?, ?, 'active', 1) ON CONFLICT(stack_id) DO UPDATE SET audience = excluded.audience, status = 'active'",
+      ).bind(stack.stackId, stack.issuer, stack.audience),
+      db.prepare(
+        "INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, ?, ?, 'active', 1) ON CONFLICT(stack_id, kid) DO UPDATE SET public_jwk = excluded.public_jwk, state = 'active'",
+      ).bind(stack.stackId, stack.kid, stack.algorithm ?? "ES256", JSON.stringify(stack.publicJwk)),
+      ...(stack.refDomains ?? []).map(({ refDomain, status }) =>
+        db.prepare(
+          "INSERT INTO cas_stack_ref_domains (stack_id, ref_domain, status, revision) VALUES (?, ?, ?, 1) ON CONFLICT(stack_id, ref_domain) DO UPDATE SET status = excluded.status",
+        ).bind(stack.stackId, refDomain, status ?? "active")),
+    ]);
+  }
 }

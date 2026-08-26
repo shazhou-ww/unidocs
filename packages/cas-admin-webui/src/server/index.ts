@@ -25,6 +25,12 @@ export interface Env extends AdminBffEnv {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    // Private readiness probe (unreachable through cas-edge: not under
+    // /stacks or /admin).
+    if (request.method === "GET" && url.pathname === "/_internal/health") {
+      return Response.json({ ok: true, service: "unidocs-cas-admin" });
+    }
     const config = configFromEnv(env);
     await migrateControlSchema(env.CAS_CONTROL_DB);
     const adminFetch = createAdminBff({

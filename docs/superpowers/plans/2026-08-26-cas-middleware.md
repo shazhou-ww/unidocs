@@ -1681,9 +1681,12 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [ ] Produce the tenant CAS runtime and `cas-admin-webui` OIDC/BFF as
   independently versioned/deployable artifacts from the existing monorepo;
   both are routed under one CAS service domain by path.
-- [ ] Deploy `cas-edge` as the only custom-domain Worker, bind private tenant
+- [~] Deploy `cas-edge` as the only custom-domain Worker, bind private tenant
   and admin Workers, enforce prefix/header/cookie isolation, and expose
-  independent edge/tenant/admin readiness checks.
+  independent edge/tenant/admin readiness checks. (Dispatch, header
+  isolation, and readiness are implemented and proven end-to-end through the
+  local edge; the actual custom-domain deployment lands with the
+  Cloudflare credentials round.)
 - [x] Expose a narrow private tenant audit-reader RPC to `cas-admin-webui`; prove
   it is unreachable through `cas-edge` and the service call graph is
   acyclic.
@@ -1694,9 +1697,12 @@ Tests assert both aggregate counts and emitted domain deltas.
   bindings, DNS/TLS, OIDC configuration, secrets, backups, observability,
   SLOs, alerts, and migration/rollback procedures independently of either
   application stack.
-- [ ] Register stable `unidocs-cloudflare` and `unidocs-azure` stacks through
+- [~] Register stable `unidocs-cloudflare` and `unidocs-azure` stacks through
   the self-service control plane; configure equal administrator memberships,
   one tenant issuer plus rotation keys, audiences, and registered domains.
+  (Both stacks are registered and exercised in the local middleware runtime;
+  production registration through the control-plane service/admin console
+  lands with deployment.)
 - [ ] Migrate Cloudflare Workers from shared `CAS_ACCESS_KEY` service-binding
   calls to stack-scoped tenant capabilities against the middleware service.
 - [ ] Migrate Azure Gateway and document services from a manually aligned
@@ -1705,13 +1711,13 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [ ] Inventory provenance of current stackless CAS data. Assign it to exactly
   one configured legacy stack or perform an explicit validated import; do
   not duplicate ambiguous rows into both stacks.
-- [~] Verify both stacks can use identical textual tenant IDs without sharing
+- [x] Verify both stacks can use identical textual tenant IDs without sharing
   nodes, references, events, usage, GC, issuer keys, or memberships.
-  (Round 1 proves storage isolation at the unit level — every node/edge/
-  idempotency/event/projection row and R2 object is keyed by `(stackId,
-  tenantId)`, with a dedicated same-tenantId isolation test for read/usage/GC.
-  End-to-end two-stack verification lands with the local middleware wiring in
-  the next round.)
+  (End-to-end through cas-edge: a shared tenant id leases and reads only its
+  own stack's nodes, usage counts per stack, cross-stack tokens are 403, and
+  cross-stack GC never touches the other stack. Issuer keys and memberships
+  are control-plane rows keyed per stack, covered by the control-plane and
+  auth suites.)
 - [ ] Run compatibility-phase telemetry until no supported binary uses
   shared-key, tenantless, root-assignment, or portable-node routes; then
   disable those paths after the rollback window.

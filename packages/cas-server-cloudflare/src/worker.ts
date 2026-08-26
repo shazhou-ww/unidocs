@@ -29,9 +29,6 @@ import { migrateStackTenantSchema } from "./schema.js";
 export { CasDurableObject } from "./tenant-do.js";
 export { RootRefDomainDurableObject } from "./domain-do.js";
 
-/** Marker that this package is the canonical stack-scoped CAS server. */
-export const CAS_SERVER_CLOUDFLARE_PACKAGE = "@unidocs/cas-server-cloudflare" as const;
-
 export interface Env {
   /** Read-only tenant authority registry (issuer → stack, keys, domains). */
   CAS_CONTROL_DB: D1Database;
@@ -57,6 +54,11 @@ export default {
     // Provision the stack-scoped tenant schema on first request (idempotent).
     await migrateStackTenantSchema(env.CAS_DB);
     const url = new URL(request.url);
+    // Private readiness probe (unreachable through cas-edge: not under
+    // /stacks or /admin). Never forwarded to tenant storage.
+    if (request.method === "GET" && url.pathname === "/_internal/health") {
+      return Response.json({ ok: true, service: "unidocs-cas" });
+    }
     // Narrow private audit-reader RPC for the admin BFF (never an HTTP route;
     // cas-edge only dispatches /stacks and /admin, so this is unreachable
     // from the public front door).
@@ -298,7 +300,6 @@ export {
   readCutoverState,
   readLegacyStackId,
   readSchemaMeta,
-  SCHEMA_VERSION,
   writeCutoverState,
   writeLegacyStackId,
 } from "./schema.js";
@@ -306,7 +307,7 @@ export type { CutoverState } from "./schema.js";
 
 export { canonicalComposite, decodeComposite, stackNodeKey } from "./do-names.js";
 
-export { runLegacyBaseline, LEGACY_BASELINE_MAX_BATCH } from "./baseline.js";
+export { runLegacyBaseline } from "./baseline.js";
 export type { LegacyBaselineResult, LegacyBaselineRow } from "./baseline.js";
 
 export {
@@ -322,12 +323,6 @@ export type { R2ManifestStatus, R2MigrationOptions, R2MigrationStats } from "./r
 export { CutoverController, canTransitionCutover, shouldUseStacklessFallback } from "./cutover.js";
 export type { CutoverContext } from "./cutover.js";
 
-export {
-  CAS_MAX_REQUEST_ID_LENGTH,
-  CAS_MAX_ROOT_REF_CHANGES,
-  CAS_MAX_ROOT_REF_DELTA,
-  RootRefsErrorCodes,
-} from "./root-refs.js";
 export type {
   CanonicalRootRefsUpdate,
   DomainUpdateResult,
@@ -336,11 +331,6 @@ export type {
 } from "./root-refs.js";
 export { RootRefsRetryableError, RootRefsValidationError } from "./root-refs.js";
 
-export {
-  CAS_AUDIT_DEFAULT_LIMIT,
-  CAS_AUDIT_MAX_LIMIT,
-  AuditReadErrorCodes,
-} from "./audit-reads.js";
 export type {
   RootDomainBalanceRow,
   RootDomainEventRow,

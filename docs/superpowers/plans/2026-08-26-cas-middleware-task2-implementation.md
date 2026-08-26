@@ -304,6 +304,34 @@ cross-talk. Plan Task 8 bullet 1 and Task 9 bullet 3/10 updated; remaining
 Task 9 rounds wire `cas-edge` dispatch, register the two stacks in the local
 runtime, and run the end-to-end two-stack integration.
 
+## Task 9 execution notes (round 2: edge dispatch + local middleware wiring)
+
+`cas-edge` is now a real front door: `/stacks/...` forwards to the private
+canonical tenant worker (stripping `Cookie`, `X-Internal-Token`, and the
+audit-reader key), `/admin/...` forwards to the admin BFF (stripping tenant
+`Authorization`), `/health` is the edge readiness probe, and everything else
+404s — the private `/_internal/audit/*` and `/_internal/health` probes are
+never reachable through the public path. Readiness: edge `GET /health`;
+tenant worker `GET /_internal/health`; admin BFF `GET /_internal/health`.
+
+The local runtime wires the middleware with `casMiddleware: true`:
+`unidocs-cas-middleware` (canonical tenant worker with its own stack-scoped
+`CAS_MIDDLEWARE_DB`/bucket, `CAS_DO` + `CAS_DOMAIN_DO`, `CAS_AUDIT_READER_KEY`)
+and `unidocs-cas-edge` (the only public socket, port 8794) with
+`CAS_TENANT_SERVICE` → middleware and `CAS_ADMIN_SERVICE` → admin BFF. The
+admin BFF gains the private `CAS_TENANT_AUDIT_READER` binding (edge → admin →
+tenant; acyclic). `seedMiddlewareStacks` migrates `CAS_CONTROL_DB` and
+registers the two stacks (issuer + rotation key + refDomains); callers keep
+the private keys and issue stack capabilities with service-auth.
+
+`middleware-e2e.test.mjs` drives the full canonical flow through the edge —
+lease → read → metadata → updateRootRefs (typed revision + idempotent retry)
+→ usage → GC — plus edge isolation, readiness, admin forwarding, and the
+cross-stack proof: identical textual tenant ids in `unidocs-cloudflare` and
+`unidocs-azure` share no nodes, refs, usage, or GC; cross-stack tokens are
+403. The worker module drops all non-handler named exports (workerd
+constraint); constants stay in their home modules.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

@@ -7,12 +7,18 @@ import {
   bundleTargets,
   CAS_FAULT_WORKER,
   CAS_ACCESS_KEY,
+  CAS_AUDIT_READER_KEY,
+  CAS_MIDDLEWARE_BUCKET,
+  CAS_MIDDLEWARE_DB,
   CAS_PORT,
   CAS_WORKER,
+  CONTROL_DB,
   DOC_TYPES,
   docServiceAccessKey,
   docServicesJson,
+  EDGE_WORKER,
   GATEWAY_WORKER,
+  MIDDLEWARE_WORKER,
   MOCK_OIDC_PORT,
   MOCK_OIDC_WORKER,
   parseDocTypes,
@@ -280,4 +286,45 @@ test("casFault 默认关闭时,不产生假 CAS worker", () => {
   expect(workers.map((w) => w.name)).not.toContain(CAS_FAULT_WORKER);
   const docx = workers.find((w) => w.name === "unidocs-docx");
   expect(docx.serviceBindings.CAS_SERVICE).toBe(CAS_WORKER);
+});
+
+test("casMiddleware 接线:edge 是唯一公网入口,tenant/admin 私有绑定,admin 持有审计读取绑定", () => {
+  const workers = buildWorkers({
+    docTypes: [],
+    host: "127.0.0.1",
+    ports: { ...BASE_PORTS, edge: 8794 },
+    bundleDir: "/tmp/bundles",
+    casMiddleware: true,
+  });
+  const names = workers.map((w) => w.name);
+  expect(names).toContain(MIDDLEWARE_WORKER);
+  expect(names).toContain(EDGE_WORKER);
+
+  const edge = workers.find((w) => w.name === EDGE_WORKER);
+  expect(edge.serviceBindings.CAS_TENANT_SERVICE).toBe(MIDDLEWARE_WORKER);
+  expect(edge.serviceBindings.CAS_ADMIN_SERVICE).toBe(ADMIN_WORKER);
+  expect(edge.unsafeDirectSockets[0].port).toBe(8794);
+
+  const middleware = workers.find((w) => w.name === MIDDLEWARE_WORKER);
+  expect(middleware.bindings.CAS_AUDIT_READER_KEY).toBe(CAS_AUDIT_READER_KEY);
+  expect(middleware.d1Databases.CAS_CONTROL_DB).toBe(CONTROL_DB);
+  expect(middleware.d1Databases.CAS_DB).toBe(CAS_MIDDLEWARE_DB);
+  expect(middleware.r2Buckets.CAS_R2).toBe(CAS_MIDDLEWARE_BUCKET);
+  expect(middleware.durableObjects.CAS_DO.className).toBe("CasDurableObject");
+  expect(middleware.durableObjects.CAS_DOMAIN_DO.className).toBe("RootRefDomainDurableObject");
+  expect(middleware.unsafeDirectSockets).toBeUndefined(); // private; behind cas-edge
+
+  const admin = workers.find((w) => w.name === ADMIN_WORKER);
+  expect(admin.serviceBindings.CAS_TENANT_AUDIT_READER).toBe(MIDDLEWARE_WORKER);
+});
+
+test("casMiddleware 默认关闭时,不产生中间件与 edge worker", () => {
+  const workers = buildWorkers({
+    docTypes: ["docx"],
+    host: "127.0.0.1",
+    ports: { ...BASE_PORTS, docx: 8789 },
+    bundleDir: "/tmp/bundles",
+  });
+  expect(workers.map((w) => w.name)).not.toContain(MIDDLEWARE_WORKER);
+  expect(workers.map((w) => w.name)).not.toContain(EDGE_WORKER);
 });

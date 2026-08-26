@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import worker, { CAS_SERVER_CLOUDFLARE_PACKAGE } from "../src/worker.js";
+import worker from "../src/worker.js";
 import type { Env } from "../src/worker.js";
 
 /** The boundary tests never reach storage; bare D1/R2-shaped stubs suffice. */
@@ -21,7 +21,7 @@ describe("cas-server-cloudflare package boundary", () => {
         "utf8",
       ),
     );
-    expect(pkg.name).toBe(CAS_SERVER_CLOUDFLARE_PACKAGE);
+    expect(pkg.name).toBe("@unidocs/cas-server-cloudflare");
     expect(pkg.dependencies["@unidocs/protocol-cas"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/cas-control-plane"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/cas-server-common"]).toBe("workspace:*");
