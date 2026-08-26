@@ -51,6 +51,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { computeNodeDigest, encodeHeader, hashToHex } from "../../../packages/cas-server-common/dist/index.js";
+import { readAzureDocTypes } from "../doc-types.mjs";
 
 const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..");
 const RUN = randomBytes(4).toString("hex");
@@ -67,8 +68,9 @@ function check(label, ok, detail) {
   }
 }
 
-/** 目前只有两个可冒烟的 doc type,与 stacks/azure/deploy/deploy.mjs 的 IMAGES/service.bicep 一致。 */
-const KNOWN_DOC_TYPES = ["markdown", "docx"];
+/** 可冒烟的 doc type 由各包的 azure.service.json 声明，与 deploy.mjs 的
+ *  azureImages()/service.bicep 同一个来源。 */
+const KNOWN_DOC_TYPES = Object.keys(readAzureDocTypes(REPO_ROOT));
 
 export function parseArgs(argv) {
   const args = { gateway: "", skipCas: false, noCas: false, only: null };

@@ -4,7 +4,7 @@
  */
 import { describe, expect, test, vi } from "vitest";
 import {
-  IMAGES,
+  azureImages,
   classifySmokeFailure,
   generateSecret,
   imageRef,
@@ -37,20 +37,20 @@ describe("imageRef", () => {
   });
 });
 
-describe("IMAGES", () => {
+describe("azureImages", () => {
   // 迁移镜像是唯一一个「构建参数」与「镜像名」不同名的:构建参数是
   // 工作区包名 azure-sdk,镜像名是 stacks/azure/deploy/platform.bicep(通过
   // migrate-job.bicep 模块)引用的 azure-migrate。传错会让 platform
   // 部署时拉不到镜像,而那是个部署到一半才暴露的错误。
   test("迁移镜像的构建参数与镜像名刻意不同", () => {
-    const migrate = IMAGES.find((i) => i.name === "azure-migrate");
+    const migrate = azureImages().find((i) => i.name === "azure-migrate");
     expect(migrate).toBeDefined();
     expect(migrate.service).toBe("azure-sdk");
     expect(migrate.entry).toBe("dist/migrate-cli.js");
   });
 
   test("Gateway migration 复用 Gateway package 的独立入口", () => {
-    const migrate = IMAGES.find((i) => i.name === "azure-gateway-migrate");
+    const migrate = azureImages().find((i) => i.name === "azure-gateway-migrate");
     expect(migrate).toEqual({
       service: "azure-gateway",
       name: "azure-gateway-migrate",
@@ -60,10 +60,28 @@ describe("IMAGES", () => {
 
   test("三个服务镜像的构建参数与镜像名一致,入口都是 dist/main.js", () => {
     for (const name of ["azure-gateway", "azure-markdown", "azure-docx"]) {
-      const img = IMAGES.find((i) => i.name === name);
+      const img = azureImages().find((i) => i.name === name);
       expect(img.service).toBe(name);
       expect(img.entry).toBe("dist/main.js");
     }
+  });
+
+  test("azureImages 从 azure.service.json 展开每个 doc type 的服务镜像", () => {
+    const names = azureImages().map((i) => i.name);
+    expect(names).toContain("azure-markdown");
+    expect(names).toContain("azure-docx");
+    expect(names).toContain("azure-gateway");
+    expect(names).toContain("azure-gateway-migrate");
+    expect(names).toContain("azure-migrate");
+  });
+
+  // 加一个 doc type 只该改那个包，不该改 deploy.mjs。
+  test("azureImages 接受注入的表，新 doc type 自动出现", () => {
+    const names = azureImages({
+      markdown: { docType: "markdown" },
+      psd: { docType: "psd" },
+    }).map((i) => i.name);
+    expect(names).toContain("azure-psd");
   });
 });
 
