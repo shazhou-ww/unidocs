@@ -348,7 +348,13 @@ import type {
 
 实际不会有问题：`./engine` 子路径不 import agent 相关的任何东西，而 agent 那部分对 `doctype-server-common` 是**仅类型依赖**（`import type`），编译后擦除。
 
-验证用内容断言，不用体积断言（V5）。体积会因为构建器升级、依赖顺序、符号改名、sourcemap 设置而波动，而这些波动跟这里要守住的性质无关——把体积当硬判据，结果是它经常因为无关原因变红，然后被调宽或忽略。真正要守的是三条：依赖只出现在 `devDependencies`、对它的 import 全是 `import type`、产物里不出现 `src/agent/**` 的模块和服务端符号。体积可以顺手记录，但只作为观察值。
+验证用内容断言，不用体积断言（V5）。体积会因为构建器升级、依赖顺序、符号改名、sourcemap 设置而波动，而这些波动跟这里要守住的性质无关——把体积当硬判据，结果是它经常因为无关原因变红，然后被调宽或忽略。体积可以顺手记录，但只作为观察值。
+
+**也不拿 `package.json` 的字段名当判据。** 「`doctype-server-common` 必须放在 `devDependencies`」看着像个方便的检查，但它是代理指标而不是不变量：type-only import 被编译擦除，所以它**能**放 devDependencies；可这推不出它**必须**放那儿。哪天某个文档类型真的需要一个运行时 helper，正确做法是把它变成真依赖，而不是让这条断言变红。
+
+真正要守的只有**运行时代码隔离**这一条，拆成三个可断言的事实：对 `doctype-server-common` 的 import 全是 `import type`；浏览器产物里不出现 `src/agent/**` 的模块；产物里不出现服务端符号。
+
+顺带说明现状：`doctype-psd` 今天已经把它放在 `devDependencies`，而 `doctype-docx` / `doctype-markdown` 还完全没有这个依赖——它们本次才会加上。三者之后是不是都落在同一个字段里，取决于各自 import 了什么，不该由一条验收标准反过来规定。
 
 如果将来觉得名字别扭，可以把包改名为 `@unidocs/doctype-sdk`——但那是纯改名，不属于本次范围。
 
@@ -429,7 +435,7 @@ export interface DocumentAgent<TQuery, TOp> {
 `toResult` 的 `data` 类型是 `SValue`——它是从编辑器返回、跨过一次序列化的数据，静态类型到这里就断了。文档类型需要自己窄化一次，**不要写 `as any`**：
 
 ```ts
-// doctype-server-common/agent 导出，供各文档类型使用
+// @unidocs/svalue-codec 导出 —— 不是 agent 内核
 export function requireRecord(v: SValue, what: string): Readonly<Record<string, SValue>>;
 export function requireNumber(v: SValue | undefined, what: string): number;
 export function requireSBlob(v: SValue | undefined, what: string): SBlob;
@@ -445,7 +451,11 @@ toResult: (data, version) => {
 }
 ```
 
-这三个函数不是新发明——docx 今天就有一模一样的（`doctype-docx/src/agent.ts:120-137` 的 `requireSValueRecord` / `requireNumber` / `requireString`）。本次把它们从 docx 提到共享位置，三个文档类型不用各写一份。窄化失败时抛错，被内核接住变成一条给模型的错误消息（5.1.5）。
+这三个函数不是新发明——docx 今天就有一模一样的（`doctype-docx/src/agent.ts:120-137` 的 `requireSValueRecord` / `requireNumber` / `requireString`）。本次把它们提到共享位置，三个文档类型不用各写一份。
+
+**放 `svalue-codec` 而不是 agent 内核**，这一点是有讲究的：它们是**运行时函数**，不是类型。放进 `doctype-server-common/agent` 会让三个文档类型对它产生**运行时**依赖，「仅类型依赖」这个前提（4.3.2、V5）立刻不成立。而它们做的事——把 `SValue` 窄化成具体形状——本来就与 agent 无关，`isSBlob` 也早就住在 `svalue-codec` 里，三个文档类型也已经运行时依赖它。放那儿是它们本来的位置。
+
+窄化失败时抛错，被内核接住变成一条给模型的错误消息（5.1.5）。
 
 文档类型侧于是只剩一个常量：
 
@@ -785,10 +795,18 @@ export class AgentSession<TQuery, TOp> {
   });
 
   /**
+   * 抢占这个会话的执行权。抢不到抛 SessionBusyError，此时一次模型都没调。
+   * 外壳必须先调它、再决定响应形状——这样「拒绝」能表达成 HTTP 409，
+   * 而不是先建好一条 SSE 再往里塞一个错误事件。理由见 5.5.5。
+   */
+  acquire(): Promise<AgentRunLease>;
+
+  /**
    * 跑一轮对话。**推送式**：事件通过 onEvent 送出，不是返回一个可迭代对象。
    * 理由见 5.5.2。onEvent 同步返回，内核不等它，它抛错也被忽略。
+   * lease 用完即释放，无论成功失败。
    */
-  run(instruction: string, onEvent: (event: AgentEvent) => void): Promise<AgentRunOutcome>;
+  run(lease: AgentRunLease, instruction: string, onEvent: (event: AgentEvent) => void): Promise<AgentRunOutcome>;
 
   /** 清空这个会话：内存、存储、以及它持有的全部根引用。见 5.5.4 */
   reset(): Promise<void>;
@@ -875,7 +893,7 @@ flowchart TB
 running_since BIGINT NULL     -- 有值表示正在跑
 ```
 
-`run()` 的第一件事是抢这个租约：
+租约由**单独的 `acquire()`** 抢，不藏在 `run()` 里：
 
 ```sql
 UPDATE agent_sessions
@@ -885,7 +903,31 @@ UPDATE agent_sessions
    AND (running_since IS NULL OR running_since < $now - RUN_LEASE_MS);
 ```
 
-受影响行数为 0 → 别人正在跑，`run()` 立刻返回 `{ ok: false, error: "会话正在处理另一条指令" }`，一次模型都不调。跑完（无论成功失败）把 `running_since` 置回 NULL。
+受影响行数为 0 → 别人正在跑，`acquire()` 抛 `SessionBusyError`。`run()` 压根不会被调到，一次模型都没有。跑完（无论成功失败）把 `running_since` 置回 NULL。
+
+**为什么要拆成两个方法。** 如果租约藏在 `run()` 内部，外壳在调用它之前就得先决定响应形状——于是流式路径会先建好一条 200 的 SSE 连接，再往流里塞一个 `run-error`。那把两件不同的事混成了一类：
+
+| | 语义 | 该怎么表达 |
+|---|---|---|
+| 抢不到租约 | 请求的前置条件不满足，**run 根本没开始** | HTTP 409，不建 SSE |
+| `run-error` | run 已经开始，执行过程中失败 | 流里的一个事件 |
+
+拆开之后外壳的顺序是固定的，写错都难：
+
+```ts
+let lease: AgentRunLease;
+try {
+  lease = await session.acquire();
+} catch (err) {
+  if (err instanceof SessionBusyError) return Response.json({ success: false, error: err.message }, { status: 409 });
+  throw;
+}
+// 到这里才决定响应形状：流式还是一次性
+return wantsStream ? this.#runStreaming(lease, session, instruction)
+                   : this.#runBlocking(lease, session, instruction);
+```
+
+两条路径对「并发被拒」的对外表现因此完全一致：**都是 HTTP 409，都不产生任何事件**。
 
 `RUN_LEASE_MS` 取一个略大于最坏情况的值（PSD 25 轮，给 10 分钟），避免进程崩溃后会话被永久锁住。
 
@@ -1296,24 +1338,45 @@ await commitRootRefsOrRollback(
 
 PSD 一次 run 可能跑几分钟。中途崩溃时：文档改动本来就独立落在 Editor 里不受影响，而对话历史现在也停在最后一个完整的轮次上，用户重开就能接着聊，不是从头开始。
 
-### 6.6 恢复时的防御性兜底
+### 6.6 blob 读不到时降级 —— 发生在发送前，不在恢复时
 
-6.4 的根引用**应当**保证历史里的图片一直在。但引用计数系统总有失灵的可能——迁移脚本、手工清理、跨区域复制延迟。恢复时 `readBlob` 一旦失败：
+6.4 的根引用**应当**保证历史里的图片一直在。但引用计数系统总有失灵的可能——迁移脚本、手工清理、跨区域复制延迟。`readBlob` 一旦失败，**必须降级，不能抛异常**：否则单个 blob 丢失会让整个会话永久打不开，而它本可以只是少一张图。
 
-**必须降级，不能抛异常。** 否则单个 blob 丢失会让整个会话永久打不开，而它本可以只是少一张图。降级用的文字与裁剪走同一条路——该图自己的 `altText`（6.2.3），内核不需要为此多认识任何文档类型概念。
+关键是这件事发生在**哪一步**。
+
+恢复历史不需要读 blob。6.1 已经讲清了前提：历史里存的是 SBlob **引用**，不是图片字节。所以恢复只做三件事，全程零 blob IO：
+
+```mermaid
+flowchart LR
+    A["store.load({ limit: 200 })"] --> B["逐条 decodeSValue(payload)"] --> C["SBlob 引用由 CBOR tag 自动重建"] --> D["历史可用"]
+```
+
+真正需要字节的是**把 image part 变成模型输入**的那一步（5.4 的物化），降级也应该在那里：
 
 ```mermaid
 flowchart TB
-    R["restore：store.load 按 msgNo 读回所有消息"] --> D["逐条 decodeSValue(payload)"]
-    D --> S["扫描其中的 image content part"]
-    S --> T{"readBlob 成功吗"}
-    T -->|成功| K["保留为 image part"]
-    T -->|失败| G["就地降级成文字<br/>用该图的 altText，同 6.2.3 第 1 级"]
-    K --> OK["会话可用"]
-    G --> OK
+    T["裁剪后，即将发给模型的那份历史"] --> S["扫描其中的 image part"]
+    S --> H{"字节缓存里有吗"}
+    H -->|有| K["直接用"]
+    H -->|没有| R{"readBlob 成功吗"}
+    R -->|成功| K2["用它，并写进缓存"]
+    R -->|失败| G["就地降级成文字<br/>用该图的 altText，同 6.2.3 第 1 级"]
+    K --> OUT["交给大模型适配层"]
+    K2 --> OUT
+    G --> OUT
 ```
 
-裁剪策略保证了最多只有 N 张（默认 2）图片还是 image part，更早的早已降级成文字，所以需要保活的 hash 极少，失效的影响面也小。这是 6.2 和 6.4 互相支撑的地方。
+**为什么不放在恢复里**，有三条实际后果：
+
+- 恢复要读回最近 200 条消息（6.3.5），其中可能有几十张图片；而裁剪马上就会把绝大多数降级成文字（`MAX_IMAGES` 默认 2）。在恢复阶段探测它们的可读性，是为一堆立刻要丢弃的东西做 IO。
+- 恢复的职责会变成「读回历史，顺带探测图片可读性」——两件事绑在一起，而且和 `load({ limit })` 的参数选择产生了不该有的耦合。
+- 一张图在恢复那一刻可读、在几轮之后发送时被回收了，放在恢复里检查也拦不住。**降级本来就该发生在真正要用它的时刻。**
+
+一句话：**blob 丢失是发送时的降级问题，不是恢复时的解码问题。**
+
+降级用的文字与裁剪走同一条路——该图自己的 `altText`（6.2.3），内核不需要为此多认识任何文档类型概念。
+
+裁剪保证了同时最多只有 `MAX_IMAGES` 张图还是 image part，所以需要保活的 hash 极少，失效的影响面也小。这是 6.2 和 6.4 互相支撑的地方。
 
 ### 6.7 与第 1 章两层边界的对应
 
@@ -1368,14 +1431,14 @@ sequenceDiagram
     S->>W: 抢 run 租约：UPDATE ... WHERE running_since IS NULL（5.5.5）
     S->>W: store.load({ limit: 200 })　仅首次
     W-->>S: 最近 200 条消息 + token
-    Note over S: 逐条 decodeSValue；读不到的图片降级成文字（6.6）
+    Note over S: 逐条 decodeSValue，只重建 SBlob 引用；不读 blob（6.6）
 
     Note over S,B: 下面每条 S-->>B 实际是 S 调 onEvent(事件) →<br/>W 编成 SSE 帧写进响应流 → doctype 服务透传 →<br/>网关透传 → 浏览器。推送式，S 不等任何人（5.5.2）。<br/>为了看清主线不再重复画这几跳，完整链路见 7.4
     S-->>B: run-start
 
     loop 直到模型不再调工具，或达到 maxIterations
         S->>S: trimHistory(history)　只影响这次发送（6.2.6）
-        S->>W: readBlob 取图片字节　命中缓存则跳过（5.4）
+        S->>W: readBlob 取图片字节　命中缓存则跳过；<br/>读不到就降级成 altText 文字（5.4、6.6）
         S->>L: complete(裁剪后的历史 + 工具表)
         L-->>S: 文字 / 工具调用 / 两者都有
 
@@ -1506,10 +1569,11 @@ return outcome.ok
 | 结果 | HTTP |
 |---|---|
 | `ok: true` | 200，`{ success: true, data: { response, iterations } }` |
-| 抢不到 run 租约（5.5.5） | **409**，`{ success: false, error }` |
 | 其余失败 | 500，`{ success: false, error }` |
 
-除 409 之外与今天 `operator-do-agent.ts:105-124` 的返回完全一致。409 是新增的——今天没有并发拒绝这条路径，所以不存在兼容问题。流式路径下同一件事表现为一个 `run-error` 事件。这样 markdown / docx 的现有调用和现有测试（`cloudflare-sdk/tests/operator-do.test.ts`，230 行）不受影响，迁移可以逐个文档类型推进。
+与今天 `operator-do-agent.ts:105-124` 的返回完全一致。
+
+**抢不到 run 租约不在这张表里**，因为那发生在决定响应形状之前（5.5.5）——两条路径都直接返回 HTTP 409，流式路径连 SSE 都不会建立。409 是新增状态码，今天没有并发拒绝这条路径，所以不存在兼容问题。这样 markdown / docx 的现有调用和现有测试（`cloudflare-sdk/tests/operator-do.test.ts`，230 行）不受影响，迁移可以逐个文档类型推进。
 
 ---
 
@@ -1666,7 +1730,7 @@ channel.run(text, {
 | `doctype-markdown/tests/agent.test.ts` | 同 psd，改为直接测各工具的纯函数 |
 | `doctype-docx/src/tools.ts` | 同样改成 `AgentTool[]`，工具名去前缀 |
 | `doctype-docx/src/agent.ts` | 137 行 → 一个常量导出。`makeOperation`（`:86-113`）拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，其中 `await resolveBlob(hash)` 改为同步的 `createSBlob(hash)`（5.1.1）；`queryImageContent`（`:53-84`）变成 `getImage` 工具的 `toResult` |
-| `doctype-docx/src/agent.ts:120-137` | `requireSValueRecord` / `requireNumber` / `requireString` 提到 `doctype-server-common/agent` 共享导出，三个文档类型共用（5.1.2） |
+| `doctype-docx/src/agent.ts:120-137` | `requireSValueRecord` / `requireNumber` / `requireString` 提到 **`svalue-codec`**（不是 agent 内核，理由见 5.1.2），三个文档类型共用 |
 | `doctype-docx/tests/agent.test.ts` | 同上改造。docx 的图片路径此前从未真正跑通（P6），改造后补一条端到端 |
 
 **语义不变**这一点值得确认：改造前 docx 的 `apply_insertImage` 做的是「取 hash → 换成 SBlob → 构造 op → 调 apply」，改造后是「`toOps` 里取 hash → `createSBlob` → 返回 op」，由内核去调 apply。中间少了一次 CAS 租约往返，因为那件事 `session.ts:608` 已经在做（5.1.1）。
@@ -1729,7 +1793,7 @@ flowchart TB
 | V2 | 内核不按名字猜工具语义 | 全仓库搜索 `startsWith("query_")` / `startsWith("apply_")` 应无任何命中——前缀彻底消失（5.3.1） |
 | V3 | 内核不 import 任何云相关模块，也不用 `Request` / `Response` | `tests/unit/agent-kernel-purity.test.ts` 按目录扫 `src/agent/**`（4.4） |
 | V4 | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk（4.4） |
-| V5 | 文档类型对 SDK 是仅类型依赖，服务端代码进不了浏览器 | 三条内容断言，都不看体积：① `doctype-*/package.json` 里 `@unidocs/doctype-server-common` 只出现在 `devDependencies`；② 源码里对它的 import 全部是 `import type`；③ 打包 `psd-client`，产物中不出现 `src/agent/**` 的任何模块，也不出现 `AgentSession` / provider / store 等服务端符号（4.3.2） |
+| V5 | **运行时代码隔离**：服务端 agent 代码进不了浏览器 | 三条断言，都不看体积、也不看 `package.json` 的字段名：① `doctype-*/src/**` 里对 `@unidocs/doctype-server-common` 的 import **全部是 `import type`**；② 打包 `psd-client`，产物中不出现 `src/agent/**` 的任何模块；③ 产物中不出现 `AgentSession` / provider / store 等服务端符号（4.3.2） |
 | V6 | 循环行为不退化 | 新增契约测试：内存版 `AgentPlatform` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
 | V7 | `toQuery` / `toOps` 确实是纯函数 | 契约测试：同一组参数连调两次，结果深相等；调用期间不发生任何 IO（用假的全局 fetch 断言未被调用）（5.1.2） |
 | V8 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/doctype-server-common/src/agent/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止（5.2） |
@@ -1739,7 +1803,7 @@ flowchart TB
 | V12 | `cloudflare-sdk/tests/operator-do.test.ts` 按新形状重写并全绿 | 现有三个用例测的全是本次要删除的东西——`toolCall` 分发、`renderToolResult` 钩子、`renderDefaultAgentToolResult` 的抛异常分支——所以**不是「保持全绿」而是「逐条改写」**。改写后的对应关系：<br/>① 「dispatches JSON tool calls」→ 改测 `toQuery` / `toOps` 经内核到达平台；<br/>② 「materialize multimodal SBlob results」→ 改测 image content part 直达适配层，无需渲染钩子；<br/>③ 「requires a provider renderer for non-text content」→ **删除**，它断言的那个异常不再存在 |
 | V13 | 浏览器能实时看到 agent 的每一步 | web-psd 手工端到端：发一条多步指令，chat 区逐条出现工具调用；画布在 run 结束后一次性更新（本次不做逐步更新，见 7.2.1） |
 | V14 | 断线之后服务端跑完 | 端到端：发一条多步指令，中途关掉浏览器标签；等待后重新打开，`reconcile()` 能拿到 agent 全部改动的结果，且 `agent_messages` 里本次对话完整（5.5.2） |
-| V15 | 并发 run 在入口就被拒绝 | 同一 sessionId 连发两个 run，第二个立刻返回（流式下是 `run-error`，非流式是 HTTP 409），且**假 provider 的调用次数只增加了第一个 run 的量**——证明第二个一次模型都没调（5.5.5） |
+| V15 | 并发 run 在入口就被拒绝，两条路径表现一致 | 同一 sessionId 连发两个 run：第二个**无论带不带 `Accept: text/event-stream` 都返回 HTTP 409**，且响应体里没有任何 SSE 帧；同时断言**假 provider 的调用次数只增加了第一个 run 的量**——证明第二个一次模型都没调（5.5.5） |
 | V16 | `reset()` 清干净 | reset 之后：`load()` 返回 null，且该会话此前引用的 blob 引用计数归零（5.5.4） |
 | V17 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.9） |
 | V18 | 会话历史存取不丢 SBlob | 契约测试最后一条：`payload` 含 SBlob 存进去，读回来解码后 `isSBlob()` 仍为 true。这条对应 6.1.1「不能改用 JSON」 |
@@ -1749,8 +1813,9 @@ flowchart TB
 | V22 | 发给模型的历史不超预算 | PSD 跑满 25 轮后，抓一次 provider 请求体：估算 token 低于 `BUDGET_TOKENS`，图片 part 不超过 `MAX_IMAGES` |
 | V23 | 裁剪不动存储 | 同一次运行结束后查库：`agent_messages` 里本轮所有消息一条不少，且早期那些含图片的消息 `payload` 与写入时逐字节相同——裁剪只发生在发送路径上（6.2.6） |
 | V24 | 图片字节不重复读取 | PSD 跑满 25 轮，统计 `platform.readBlob` 的调用次数应等于出现过的**不同** hash 数，而不是轮数乘图片数（5.4） |
-| V25 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
-| V26 | 历史引用的图片不被回收 | 跑一轮产生预览图 → 删掉对应图层并 apply → 断言历史里那张图仍可 `readBlob`（6.4 的根引用生效） |
+| V25 | 恢复历史不做 blob IO | 用一个会计数的 `AgentPlatform` 假实现：`restore` 走完之后 `readBlob` 调用次数为 0，即便历史里有几十条含图片的消息（6.6） |
+| V26 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
+| V27 | 历史引用的图片不被回收 | 跑一轮产生预览图 → 删掉对应图层并 apply → 断言历史里那张图仍可 `readBlob`（6.4 的根引用生效） |
 
 V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。V17 是它在存储维度上的对应判据。
 
@@ -1818,7 +1883,10 @@ V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽
 | 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:625`），由平台的 `apply` 实现读当前 head 得到（5.2） |
 | `run` 是推送式而不是返回可迭代对象 | `run(instruction, onEvent): Promise<AgentRunOutcome>`。可迭代对象是拉取式的——客户端一断线就没人拉，循环冻在 `yield` 上，与 7.3 承诺的「服务端继续跑完」直接冲突。推送式下内核不等任何人；外壳把 `onEvent` 实现成「写 SSE，写失败就标记断开、后续丢弃」，并用 `waitUntil` 让响应返回后循环继续（5.5.2） |
 | 恢复历史谁负责 | **内核自己**，`run()` 内部惰性执行，没有公开的 `restore()`。让外壳记住「必须先调 restore」是缺陷——两个平台各记一遍，迟早有一个忘，症状是模型莫名失忆（5.5.3） |
-| 并发 run 怎么拒绝 | 在 `run()` **入口**就拒绝，不等落盘时靠 token 冲突发现——那时模型已白跑一轮。用 `agent_sessions.running_since` 做带过期的租约，两端同一份代码，CF 上恒成功（5.5.5） |
+| 并发 run 怎么拒绝 | 用**单独的 `acquire()`** 抢 `agent_sessions.running_since` 租约，外壳先调它、再决定响应形状。抢不到时两条路径都返回 **HTTP 409**，流式路径连 SSE 都不建——因为「run 根本没开始」和「run 开始后失败」是两件事，不该混成同一个 `run-error` 事件。租约带过期时间，两端同一份代码，CF 上恒成功（5.5.5） |
 | `reset()` 做哪些事 | 四步：读全量算引用 → `clear()` → 提交负增量释放引用 → 清内存。删除顺序与写入相反，但原则一致——任何时刻崩溃只能留下可回收的多余引用，不能留下悬空引用（5.5.4） |
 | 图片字节要缓存 | 每轮调模型前都要把 image part 变成字节，25 轮 2 张图会读 50 次而只有 2 个 hash。缓存放**内核**不放平台，因为「同一个 blob 被反复要」是循环的性质，平台没理由知道（5.4） |
+| blob 读不到时在哪降级 | **发送前，不在恢复时。** 恢复历史只需要 decode 出 SBlob 引用，零 blob IO；真正要字节的是物化 image part 那一步，降级也在那里。放恢复里会为一堆马上被裁掉的图片做 IO，而且一张图在恢复时可读、几轮后发送时被回收了也拦不住（6.6） |
+| SValue 窄化 helper 放哪 | **`svalue-codec`，不是 agent 内核。** 它们是运行时函数；放进内核会让文档类型对它产生运行时依赖，「仅类型依赖」的前提立刻不成立。而窄化 `SValue` 本来就与 agent 无关，`isSBlob` 早就住在那儿（5.1.2） |
+| 怎么验证服务端代码不进浏览器 | 断言**运行时代码隔离**本身，不拿 `package.json` 的字段名当代理指标：import 全是 `import type`、产物无 `src/agent/**` 模块、产物无服务端符号。要求「必须放 devDependencies」是错的——那只是 type-only 擦除的一个副作用，不是不变量（V5、4.3.2） |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |
