@@ -1,7 +1,8 @@
 # CAS Middleware Implementation Plan
 
-> **Status:** In progress. Task 1 (middleware/control-plane contract freeze) is
-> complete; later implementation tasks are not started.
+> **Status:** In progress. Task 1 (middleware/control-plane contract freeze) and
+> Task 2 (self-service stack control plane) are complete; later implementation
+> tasks are not started.
 >
 > **For agentic workers:** Implement one task at a time and keep the checkboxes
 > current. Preserve the middleware/control-plane boundary and do not
@@ -1384,9 +1385,10 @@ including authorization matrices and negative cross-plane fixtures.
 - [x] Add dedicated `CAS_CONTROL_DB` schema/migrations and append-only control
   audit for every identity/configuration mutation. (Backup/retention policies
   are deployment concerns recorded for Task 9.)
-- [~] Implement one tenant issuer/JWKS definition per stack, proof of key possession,
+- [x] Implement one tenant issuer/JWKS definition per stack, proof of key possession,
   overlapping rotation, disable/revoke, and controlled JWKS refresh. (Registry
-  side done; tenant-side JWKS refresh lands with Task 4 authorization.)
+  side complete, including registry-derived JWKS assembly; tenant-side
+  verifier caching/refresh lands with Task 4 authorization.)
 - [x] Implement registered `refDomain` lifecycle: `active`, `write_disabled`,
   and `retired`; retirement preserves all historical audit data.
 - [x] Create `packages/cas-admin-webui` as a separately deployable package with
@@ -1405,7 +1407,9 @@ including authorization matrices and negative cross-plane fixtures.
 
 **Focused validation:** control-plane service, Google OIDC/BFF session,
 membership, issuer/key rotation, domain lifecycle, control-audit, and
-`cas-admin-webui` component/Playwright integration tests.
+`cas-admin-webui` component tests. (Playwright integration tests are deferred
+to the deploy task by operator decision; jsdom component + BFF handler tests
+cover the same states this task's scope requires.)
 
 ### Task 3: Freeze tenant and admin CAS protocol behavior
 

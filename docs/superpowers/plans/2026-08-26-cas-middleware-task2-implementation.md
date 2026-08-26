@@ -155,8 +155,11 @@ the same commit.
   invitations + accept page, issuer + keys, ref domains, control audit, Root
   Ref audit empty state; jsdom component tests; local Miniflare wiring with a
   mock OIDC provider and real-Google env override.
-- [ ] Phase D — full validation: package tests/typecheck across the four
-  packages; local runtime smoke.
+- [x] Phase D — full validation: typecheck + unit suites across
+  `protocol-cas-admin` (36), `cas-control-plane` (36 incl. JWKS assembly),
+  `cas-admin-webui` (33), workspace dependency guard (150), local runtime
+  smoke (standalone + full stack + Vite proxy chain). Playwright remains
+  deferred to Task 9 per decision.
 
 ## Local development
 

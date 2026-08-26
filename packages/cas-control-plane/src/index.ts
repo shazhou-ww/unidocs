@@ -20,6 +20,8 @@ export type {
 export { ControlSessionStore } from "./sessions.js";
 export type { StoredSession } from "./sessions.js";
 
+export { buildStackJwks } from "./jwks.js";
+
 export {
   CONTROL_SCHEMA_MIGRATIONS,
   migrateControlSchema,
