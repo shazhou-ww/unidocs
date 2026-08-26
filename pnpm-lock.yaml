@@ -218,6 +218,28 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/cas-admin-webui:
+    dependencies:
+      '@unidocs/cas-control-plane':
+        specifier: workspace:*
+        version: link:../cas-control-plane
+      '@unidocs/protocol-cas-admin':
+        specifier: workspace:*
+        version: link:../protocol-cas-admin
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
   packages/cas-client:
     dependencies:
       '@unidocs/cas-server-common':
@@ -239,6 +261,34 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/cas-control-plane:
+    dependencies:
+      '@unidocs/protocol-cas-admin':
+        specifier: workspace:*
+        version: link:../protocol-cas-admin
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/cas-edge:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
   packages/cas-server-common:
     devDependencies:
@@ -543,6 +593,15 @@ importers:
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
 
   packages/protocol-cas:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/protocol-cas-admin:
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -2064,7 +2123,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}

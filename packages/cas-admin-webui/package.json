@@ -1,0 +1,39 @@
+{
+  "name": "@unidocs/cas-admin-webui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CAS stack administration WebUI and OIDC BFF",
+  "type": "module",
+  "main": "./src/server/index.ts",
+  "types": "./src/server/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/server/index.ts",
+      "import": "./src/server/index.ts"
+    },
+    "./ui": {
+      "types": "./src/ui/index.ts",
+      "import": "./src/ui/index.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc -b",
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@unidocs/cas-control-plane": "workspace:*",
+    "@unidocs/protocol-cas-admin": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250817.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.20.0"
+  }
+}

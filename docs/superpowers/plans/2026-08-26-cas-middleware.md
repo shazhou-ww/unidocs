@@ -1,7 +1,7 @@
 # CAS Middleware Implementation Plan
 
-> **Status:** Proposed. This plan records the agreed target behavior; no
-> implementation tasks are complete.
+> **Status:** In progress. Task 1 (middleware/control-plane contract freeze) is
+> complete; later implementation tasks are not started.
 >
 > **For agentic workers:** Implement one task at a time and keep the checkboxes
 > current. Preserve the middleware/control-plane boundary and do not
@@ -1344,25 +1344,25 @@ the deployment runbook and reviewed at go-live.
 
 ### Task 1: Freeze middleware and control-plane contracts
 
-- [ ] Add `@unidocs/protocol-cas-admin` request/response contracts for administrator identity,
+- [x] Add `@unidocs/protocol-cas-admin` request/response contracts for administrator identity,
   stack registration/listing, membership, one tenant issuer and its keys,
   domains, stack metadata, and control audit.
-- [ ] Define immutable IDs, lifecycle states, pagination, optimistic
+- [x] Define immutable IDs, lifecycle states, pagination, optimistic
   concurrency, idempotency, and stable error codes for every mutation.
-- [ ] Freeze equal membership semantics, last-member protection, and management
+- [x] Freeze equal membership semantics, last-member protection, and management
   transfer through add-member then remove-member.
-- [ ] Define the platform-operator plane separately from stack ownership;
+- [x] Define the platform-operator plane separately from stack ownership;
   stack members cannot grant platform suspension/recovery powers.
-- [ ] Threat-model OIDC account linking, stack takeover, issuer/JWKS
+- [x] Threat-model OIDC account linking, stack takeover, issuer/JWKS
   substitution, key rotation, confused-deputy paths, WebUI CSRF/session
   theft, and control-audit tampering.
-- [ ] Prove `/admin` routes are absent from `@unidocs/protocol-cas`, tenant
+- [x] Prove `/admin` routes are absent from `@unidocs/protocol-cas`, tenant
   clients, and the tenant/public CAS proxy; the admin protocol has its own
   matcher and authentication middleware.
-- [ ] Add package manifests, composite tsconfigs/root references,
+- [x] Add package manifests, composite tsconfigs/root references,
   build/typecheck/test/clean scripts, Wrangler compatibility/environment
   configuration, and dependency-boundary tests for all four new packages.
-- [ ] Enforce dependency direction:
+- [x] Enforce dependency direction:
   `cas-admin-webui -> protocol-cas-admin + cas-control-plane`,
   `cas-control-plane -> protocol-cas-admin`, and no dependency from either
   admin package to tenant worker/DO implementation modules.

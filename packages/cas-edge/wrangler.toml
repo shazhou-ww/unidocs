@@ -1,0 +1,17 @@
+name = "unidocs-cas-edge"
+main = "dist/worker.js"
+compatibility_date = "2025-08-17"
+
+# Sole public Worker on the CAS service hostname.
+# Backing Workers remain private (no independent public routes).
+
+[[services]]
+binding = "CAS_TENANT_SERVICE"
+service = "unidocs-cas"
+
+[[services]]
+binding = "CAS_ADMIN_SERVICE"
+service = "unidocs-cas-admin-webui"
+
+[vars]
+CAS_EDGE_COMPAT_VERSION = "0"

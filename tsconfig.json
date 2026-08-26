@@ -12,6 +12,18 @@
       "path": "packages/protocol-cas"
     },
     {
+      "path": "packages/protocol-cas-admin"
+    },
+    {
+      "path": "packages/cas-control-plane"
+    },
+    {
+      "path": "packages/cas-admin-webui"
+    },
+    {
+      "path": "packages/cas-edge"
+    },
+    {
       "path": "packages/protocol-doc"
     },
     {

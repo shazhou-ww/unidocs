@@ -54,4 +54,11 @@ describe("CAS routes", () => {
     expect(matchCasRoute("PUT", casRoutes.leaseNode({ tenantId: "t", hash: "h" }))).toBeNull();
     expect(matchCasRoute("GET", "/tenants/%ZZ/cas/usage")).toBeNull();
   });
+
+  test("does not recognize /admin control-plane paths", () => {
+    expect(matchCasRoute("GET", "/admin/me")).toBeNull();
+    expect(matchCasRoute("GET", "/admin/stacks")).toBeNull();
+    expect(matchCasRoute("POST", "/admin/stacks")).toBeNull();
+    expect(matchCasRoute("GET", "/admin/stacks/s/root-ref-domains/doc/refs")).toBeNull();
+  });
 });
