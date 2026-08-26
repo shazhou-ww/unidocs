@@ -270,6 +270,19 @@ for (const name of docTypes) {
   console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${webPort}`);
 }
 
+// The CAS admin console ships with the Miniflare stack's admin worker; spawn
+// its Vite dev server too so `pnpm dev` runs the whole middleware + apps.
+if (!useAzure) {
+  const adminWeb = spawn("pnpm --filter @unidocs/cas-admin-webui dev:ui", {
+    cwd: root,
+    stdio: "inherit",
+    shell: true,
+  });
+  adminWeb.on("error", (err) => console.error("[cas-admin web] failed to start:", err.message));
+  webChildren.push(adminWeb);
+  console.log(`  ${"cas-admin web".padEnd(8)} http://127.0.0.1:4070`);
+}
+
 console.log("Ctrl+C to stop.");
 
 const shutdown = async () => {

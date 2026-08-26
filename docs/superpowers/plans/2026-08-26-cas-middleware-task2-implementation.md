@@ -161,26 +161,31 @@ the same commit.
 ## Local development
 
 The CAS middleware runs standalone (no gateway / doc type workers) — the
-independent-deployment boundary:
+independent-deployment boundary. **One command** starts the backend (tenant
+CAS 8791 + admin BFF 8792 + mock OIDC 8793) and spawns the console frontend
+(Vite dev on 4070):
 
 ```text
-pnpm dev:cas-admin                       # tenant CAS 8791 + admin BFF 8792 + mock OIDC 8793
-pnpm --filter @unidocs/cas-admin-webui dev:ui   # console at http://localhost:4070/admin/
+pnpm dev:cas-admin                    # -> http://localhost:4070/admin/
 ```
 
-`pnpm dev` (full UniDocs stack) also includes the admin BFF and mock OIDC
-workers, so the console works there too — but the middleware itself does not
-depend on the application stack.
+`pnpm dev` (full UniDocs stack) also includes the admin BFF, mock OIDC, and
+the console — but the middleware itself does not depend on the application
+stack. Either frontend can also be started separately:
 
-To exercise the real Google OIDC flow locally (registered redirect URI
-`http://localhost:4070/admin/auth/callback`):
+```text
+pnpm --filter @unidocs/cas-admin-webui dev:ui
+```
+
+With the local mock OIDC provider, **no Google configuration is needed**: no
+client id/secret and no registered redirect URI (the mock provider accepts
+any redirect_uri). The Google-console redirect URI
+`http://localhost:4070/admin/auth/callback` only applies when running against
+the real Google issuer locally:
 
 ```text
 GOOGLE_OIDC_CLIENT_ID=<client id> GOOGLE_OIDC_CLIENT_SECRET=<secret> pnpm dev:cas-admin
 ```
-
-Without those env vars the runtime uses the local mock provider (any sign-in
-becomes `local-operator@example.com`).
 
 ## Open notes
 

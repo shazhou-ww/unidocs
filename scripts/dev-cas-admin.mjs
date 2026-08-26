@@ -1,17 +1,20 @@
 /**
- * Standalone CAS middleware local runtime.
+ * Standalone CAS middleware local dev — ONE command.
  *
- * Starts only the CAS middleware — the tenant CAS worker (8791), the admin
- * BFF (8792), and the local mock OIDC provider (8793) — with no gateway and
- * no doc type workers, mirroring the middleware's independent deployment
- * boundary. The admin console UI is served separately by Vite:
+ * Starts the CAS middleware backend (tenant CAS 8791 + admin BFF 8792 +
+ * local mock OIDC 8793) and spawns the admin console frontend (Vite dev on
+ * 4070) as a child process. Ctrl+C tears both down.
  *
- *   pnpm dev:cas-admin
- *   pnpm --filter @unidocs/cas-admin-webui dev:ui   # -> http://localhost:4070/admin/
+ *   pnpm dev:cas-admin        # -> http://localhost:4070/admin/
  *
- * Set GOOGLE_OIDC_CLIENT_ID / GOOGLE_OIDC_CLIENT_SECRET to use the real
- * Google issuer instead of the local mock provider.
+ * With the local mock OIDC provider, no Google configuration is needed —
+ * no client id/secret, and no registered redirect URI (the mock provider
+ * accepts any redirect_uri). Set GOOGLE_OIDC_CLIENT_ID /
+ * GOOGLE_OIDC_CLIENT_SECRET to use the real Google issuer instead; then the
+ * Google-console redirect URI http://localhost:4070/admin/auth/callback
+ * applies.
  */
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,12 +34,19 @@ console.log("CAS middleware local runtime (standalone)");
 for (const [name, url] of Object.entries(runtime.urls)) {
   console.log(`  ${name.padEnd(8)} ${url}`);
 }
-console.log(
-  "Admin console: run `pnpm --filter @unidocs/cas-admin-webui dev:ui` then open http://localhost:4070/admin/",
-);
+
+// Admin console frontend: one command runs the whole middleware dev env.
+const web = spawn("pnpm --filter @unidocs/cas-admin-webui dev:ui", {
+  cwd: root,
+  stdio: "inherit",
+  shell: true,
+});
+web.on("error", (err) => console.error("[cas-admin web] failed to start:", err.message));
+console.log("Admin console: http://localhost:4070/admin/");
 console.log("Ctrl+C to stop.");
 
 const shutdown = async () => {
+  web.kill("SIGINT");
   await runtime.dispose();
   process.exit(0);
 };
