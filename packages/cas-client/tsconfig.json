@@ -24,6 +24,9 @@
       "path": "../protocol-cas-legacy"
     },
     {
+      "path": "../protocol-cas"
+    },
+    {
       "path": "../protocol"
     }
   ]

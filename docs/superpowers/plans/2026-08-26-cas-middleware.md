@@ -1644,9 +1644,11 @@ domains), `cas-server-cloudflare` audit-reads + reader-RPC suites (70), and
 
 - [~] Add stable `stackId` to `CasClient` configuration and update
   `updateRootRefs()` to use the canonical stack-and-tenant route and typed
-  revision response. (Deferred to Task 9: the canonical route needs registered
-  issuers and the new-worker binding, and node ops read/lease/usage/gc are
-  still 501.)
+  revision response. (Client surface done in Task 9 round 1: `stackId` config
+  variants, canonical `/stacks/...` routes for every node op, typed
+  `{success, idempotent, revision}` response. The local runtime still binds
+  editors to the legacy worker; middleware binding lands with stack
+  onboarding.)
 - [~] Keep current-balance and event-log reads out of the ordinary `CasClient`;
   expose them only through `cas-admin-webui` BFF handlers after OIDC session
   and stack membership checks. (Deferred to Task 9: the audit-reader binding is
@@ -1682,7 +1684,7 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [ ] Deploy `cas-edge` as the only custom-domain Worker, bind private tenant
   and admin Workers, enforce prefix/header/cookie isolation, and expose
   independent edge/tenant/admin readiness checks.
-- [ ] Expose a narrow private tenant audit-reader RPC to `cas-admin-webui`; prove
+- [x] Expose a narrow private tenant audit-reader RPC to `cas-admin-webui`; prove
   it is unreachable through `cas-edge` and the service call graph is
   acyclic.
 - [ ] Publish/test the edge-tenant-admin compatibility version and deploy
@@ -1703,8 +1705,13 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [ ] Inventory provenance of current stackless CAS data. Assign it to exactly
   one configured legacy stack or perform an explicit validated import; do
   not duplicate ambiguous rows into both stacks.
-- [ ] Verify both stacks can use identical textual tenant IDs without sharing
+- [~] Verify both stacks can use identical textual tenant IDs without sharing
   nodes, references, events, usage, GC, issuer keys, or memberships.
+  (Round 1 proves storage isolation at the unit level — every node/edge/
+  idempotency/event/projection row and R2 object is keyed by `(stackId,
+  tenantId)`, with a dedicated same-tenantId isolation test for read/usage/GC.
+  End-to-end two-stack verification lands with the local middleware wiring in
+  the next round.)
 - [ ] Run compatibility-phase telemetry until no supported binary uses
   shared-key, tenantless, root-assignment, or portable-node routes; then
   disable those paths after the rollback window.

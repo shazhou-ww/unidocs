@@ -351,22 +351,50 @@ describe("stack authorization (Task 4)", () => {
     ), 401);
   });
 
-  test("worker end-to-end: authorized requests reach dispatch; failures are 401/403", async () => {
+  test("worker end-to-end: authorized node ops reach the tenant DO; failures are 401/403", async () => {
     const { db: controlDb, stacks } = await createSeededDb();
-    const env = { CAS_CONTROL_DB: controlDb, CAS_DB: controlDb, CAS_R2: {}, CAS_DO: {} } as Env;
+    const forwarded: { path: string; headers: Headers; body: string }[] = [];
+    const tenantDoStub = {
+      idFromName: (name: string) => ({ name }),
+      get: (id: { name: string }) => ({
+        fetch: async (input: unknown, init?: RequestInit) => {
+          forwarded.push({
+            path: new URL(String(input)).pathname,
+            headers: new Headers(init?.headers),
+            body: String(init?.body ?? ""),
+          });
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      }),
+    };
+    const env = {
+      CAS_CONTROL_DB: controlDb,
+      CAS_DB: controlDb,
+      CAS_R2: {},
+      CAS_DO: tenantDoStub,
+      CAS_DOMAIN_DO: {},
+    } as unknown as Env;
     const stack = stacks.a!;
     const tenant = "tenant-1";
 
     const readToken = await issue(stack, { tenantId: tenant, permissions: [casReadPermission(tenant)] });
     const authorized = await worker.fetch(
       new Request(`https://cas.example/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${"a".repeat(64)}/content`, {
-        headers: { Authorization: `Bearer ${readToken}` },
+        headers: {
+          Authorization: `Bearer ${readToken}`,
+          // Caller-supplied identity headers must be ignored.
+          "X-CAS-Stack-Id": "forged-stack",
+          "X-CAS-Tenant-Id": "forged-tenant",
+        },
       }),
       env,
     );
-    expect(authorized.status).toBe(501); // authorization complete; dispatch is Task 5/6
-    const body = await authorized.json();
-    expect(body).toMatchObject({ stackId: stack.stackId, tenantId: tenant });
+    expect(authorized.status).toBe(200);
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0].path).toBe("/read");
+    expect(forwarded[0].headers.get("X-CAS-Stack-Id")).toBe(stack.stackId);
+    expect(forwarded[0].headers.get("X-CAS-Tenant-Id")).toBe(tenant);
+    expect(forwarded[0].headers.get("X-CAS-Hash")).toBe("a".repeat(64));
 
     // A token from the other stack hitting this path → 403.
     const tokenB = await issue(stacks.b!, { tenantId: tenant, permissions: [casReadPermission(tenant)] });
@@ -386,6 +414,63 @@ describe("stack authorization (Task 4)", () => {
     expect(noToken.status).toBe(401);
     const admin = await worker.fetch(new Request("https://cas.example/admin/me"), env);
     expect(admin.status).toBe(404);
+  });
+
+  test("worker forwards leaseNode with content metadata and the raw body, never forged identity", async () => {
+    const { db: controlDb, stacks } = await createSeededDb();
+    let forwarded: { path: string; headers: Headers; body: string } | undefined;
+    const tenantDoStub = {
+      idFromName: (name: string) => ({ name }),
+      get: (id: { name: string }) => ({
+        fetch: async (input: unknown, init?: RequestInit) => {
+          forwarded = {
+            path: new URL(String(input)).pathname,
+            headers: new Headers(init?.headers),
+            body: await new Response(init?.body as BodyInit).text(),
+          };
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      }),
+    };
+    const env = {
+      CAS_CONTROL_DB: controlDb,
+      CAS_DB: controlDb,
+      CAS_R2: {},
+      CAS_DO: tenantDoStub,
+      CAS_DOMAIN_DO: {},
+    } as unknown as Env;
+    const stack = stacks.a!;
+    const tenant = "tenant-1";
+    const hash = "a".repeat(64);
+    const writer = await issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)] });
+
+    const response = await worker.fetch(
+      new Request(`https://cas.example/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${hash}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${writer}`,
+          "Content-Type": "text/plain",
+          "X-CAS-Refs": "b".repeat(64),
+          "X-CAS-Lease-Duration": "120000",
+          "X-CAS-Stack-Id": "forged-stack",
+          "X-CAS-Tenant-Id": "forged-tenant",
+          "X-CAS-Ref-Domain": "asset",
+        },
+        body: "node-content",
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(forwarded).toBeDefined();
+    expect(forwarded!.path).toBe("/leaseNode");
+    expect(forwarded!.headers.get("X-CAS-Stack-Id")).toBe(stack.stackId);
+    expect(forwarded!.headers.get("X-CAS-Tenant-Id")).toBe(tenant);
+    expect(forwarded!.headers.get("X-CAS-Hash")).toBe(hash);
+    expect(forwarded!.headers.get("Content-Type")).toBe("text/plain");
+    expect(forwarded!.headers.get("X-CAS-Refs")).toBe("b".repeat(64));
+    expect(forwarded!.headers.get("X-CAS-Lease-Duration")).toBe("120000");
+    expect(forwarded!.headers.get("X-CAS-Ref-Domain")).toBeNull();
+    expect(forwarded!.body).toBe("node-content");
   });
 
   test("worker forwards updateRootRefs with the VERIFIED context, never caller headers", async () => {

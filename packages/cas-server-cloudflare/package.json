@@ -25,8 +25,10 @@
   "dependencies": {
     "@unidocs/cas-control-plane": "workspace:*",
     "@unidocs/cas-server-common": "workspace:*",
+    "@unidocs/protocol": "workspace:*",
     "@unidocs/protocol-cas": "workspace:*",
-    "@unidocs/service-auth": "workspace:*"
+    "@unidocs/service-auth": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

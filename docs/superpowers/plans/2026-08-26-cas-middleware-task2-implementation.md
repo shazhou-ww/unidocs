@@ -271,6 +271,39 @@ Rollback semantics on root failure are unchanged: `#commit` rethrows
 `session.test.ts` covers updateRootRefs-failure rollback; `cas-rollback`
 integration covers the end-to-end 502 → retry-409 recovery).
 
+## Task 9 execution notes (round 1: canonical storage + client surface)
+
+The tenant CAS runtime is now a complete storage server, not just Root Refs:
+`packages/cas-server-cloudflare/src/nodes.ts` implements stack-scoped
+lease/read/metadata/usage/GC against `cas_nodes`/`cas_edges`/R2, every row and
+object keyed by `(stackId, tenantId)` (R2 keys via `stackNodeKey`). The tenant
+DO dispatches `/leaseNode`, `/leaseExisting`, `/read`, `/metadata`, `/usage`,
+`/gc` in addition to `/updateRootRefs`, keeping the per-tenant serialization
+boundary (a lease claim can never race a GC deletion decision). The worker
+forwards each verified node op to the DO with the VERIFIED stack/tenant
+context — caller-supplied identity headers are never forwarded; only
+content-metadata headers (Content-Type, `X-CAS-Refs`, `X-CAS-Lease-Duration`)
+and the content body pass through. Lease validation mirrors the legacy
+content-addressed kernel: hash format, content length, SValue child-ref
+agreement, digest equality, immutable metadata on re-lease, and
+children-ready-before-parent.
+
+`CasClient` gains the canonical stack surface: `stackId` config variants
+(public `{baseUrl, stackId, tenantId}` and capability `{fetcher, stackId,
+tenantId, sessionId, capability}`); every node op routes to
+`/stacks/{stackId}/tenants/{tenantId}/...` when `stackId` is present and keeps
+the legacy tenant-scoped routes otherwise. `updateRootRefs` returns the typed
+`{success, idempotent, revision}` response from the canonical
+`/stacks/{stackId}/tenants/{tenantId}/root-refs` route. `doctype-server-common`
+`CasGateway`/`MemoryCasGateway` and `cas-client` `CasRootRefGateway` were
+widened to the richer return type so all structural implementers line up.
+
+Isolation is asserted at the unit level: the tenant-DO suite proves a shared
+textual tenant id across two stacks sees no node, no usage, and no GC
+cross-talk. Plan Task 8 bullet 1 and Task 9 bullet 3/10 updated; remaining
+Task 9 rounds wire `cas-edge` dispatch, register the two stacks in the local
+runtime, and run the end-to-end two-stack integration.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

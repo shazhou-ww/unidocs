@@ -25,6 +25,8 @@ describe("cas-server-cloudflare package boundary", () => {
     expect(pkg.dependencies["@unidocs/protocol-cas"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/cas-control-plane"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/cas-server-common"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unidocs/protocol"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unidocs/svalue-codec"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/service-auth"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/protocol-cas-legacy"]).toBeUndefined();
     expect(pkg.dependencies["@unidocs/cloudflare-cas"]).toBeUndefined();

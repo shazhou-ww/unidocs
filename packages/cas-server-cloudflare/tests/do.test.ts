@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas-server-common";
+import { createSBlob, encodeSValue } from "@unidocs/svalue-codec";
+import { SValueContentType } from "@unidocs/protocol";
+import type { SValue } from "@unidocs/protocol";
 import { migrateStackTenantSchema } from "../src/schema.js";
 import { canonicalComposite, stackNodeKey } from "../src/do-names.js";
 import { RootRefDomainDurableObject } from "../src/domain-do.js";
@@ -8,6 +12,8 @@ import type { RootRefDomainDoEnv } from "../src/domain-do.js";
 import { CasDurableObject } from "../src/tenant-do.js";
 import type { TenantCasDoEnv } from "../src/tenant-do.js";
 import { RootRefsErrorCodes } from "../src/root-refs.js";
+import { NodeOpErrorCodes, leaseNode } from "../src/nodes.js";
+import type { NodeStore } from "../src/nodes.js";
 
 let miniflare: Miniflare | undefined;
 let db: D1Database | undefined;
@@ -166,17 +172,248 @@ describe("CasDurableObject (tenant DO)", () => {
     expect(response.status).toBe(400);
     expect(forwarded).toBe(false);
   });
+});
 
-  test("other tenant operations are not implemented yet", async () => {
+async function digestOf(content: string, contentType = "text/plain", refs: readonly string[] = []): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  const header = encodeHeader(bytes.length, contentType, refs.length);
+  const digest = await computeNodeDigest(header, contentType, refs.map(hexToHash), bytes);
+  return hashToHex(digest);
+}
+
+function tenantDo(): CasDurableObject {
+  return new CasDurableObject(
+    {} as DurableObjectState,
+    { CAS_DB: db!, CAS_R2: bucket!, CAS_DOMAIN_DO: {} as TenantCasDoEnv["CAS_DOMAIN_DO"] },
+  );
+}
+
+function store(): NodeStore {
+  return { db: db!, bucket: bucket!, stackId: STACK, tenantId: TENANT };
+}
+
+function tenantRequest(path: string, method: string, headers: Record<string, string>, body?: Uint8Array): Request {
+  return new Request(`https://tenant.internal${path}`, {
+    method,
+    headers: { "X-CAS-Stack-Id": STACK, "X-CAS-Tenant-Id": TENANT, ...headers },
+    body: body as unknown as BodyInit | undefined,
+  });
+}
+
+describe("CasDurableObject (tenant DO) — node storage operations", () => {
+  test("leaseNode stores content and records edges; read/metadata/usage round-trip", async () => {
     await createStore();
-    const doInstance = new CasDurableObject(
+    const childContent = "child";
+    const childHash = await digestOf(childContent);
+    await leaseNode(store(), {
+      hash: childHash,
+      contentType: "text/plain",
+      contentLength: childContent.length,
+      refs: [],
+      leaseDurationMs: 60_000,
+      content: new TextEncoder().encode(childContent),
+    });
+    const parentContent = "parent";
+    const hash = await digestOf(parentContent, "text/plain", [childHash]);
+    const doInstance = tenantDo();
+    const lease = await doInstance.fetch(tenantRequest("/leaseNode", "POST", {
+      "X-CAS-Hash": hash,
+      "Content-Type": "text/plain",
+      "X-CAS-Refs": childHash,
+      "X-CAS-Lease-Duration": "120000",
+    }, new TextEncoder().encode(parentContent)));
+    expect(lease.status).toBe(200);
+    const leaseBody = await lease.json();
+    expect(leaseBody).toMatchObject({ hash, ready: true });
+    expect((await bucket!.head(stackNodeKey(STACK, TENANT, hash)))?.size).toBe(parentContent.length);
+
+    const read = await doInstance.fetch(tenantRequest("/read", "GET", { "X-CAS-Hash": hash }));
+    expect(read.status).toBe(200);
+    expect(new Uint8Array(await read.arrayBuffer())).toEqual(new TextEncoder().encode(parentContent));
+
+    const metadata = await doInstance.fetch(tenantRequest("/metadata", "GET", { "X-CAS-Hash": hash }));
+    expect(metadata.status).toBe(200);
+    const { metadata: meta, state } = await metadata.json();
+    expect(meta).toMatchObject({ hash, size: parentContent.length, contentType: "text/plain", refs: [childHash] });
+    expect(state.childRefCount).toBe(0);
+
+    const childMeta = await doInstance.fetch(tenantRequest("/metadata", "GET", { "X-CAS-Hash": childHash }));
+    const childBody = await childMeta.json();
+    expect(childBody.state.childRefCount).toBe(1);
+
+    const usageResponse = await doInstance.fetch(tenantRequest("/usage", "GET"));
+    expect(usageResponse.status).toBe(200);
+    const usageBody = await usageResponse.json();
+    expect(usageBody).toMatchObject({
+      nodeCount: 2,
+      readyContentBytes: parentContent.length + childContent.length,
+      notReadyNodeCount: 0,
+      leasedNodeCount: 2,
+    });
+  });
+
+  test("leaseNode rejects digest mismatches and missing children", async () => {
+    await createStore();
+    const doInstance = tenantDo();
+    const content = new TextEncoder().encode("mismatch");
+    const wrong = await doInstance.fetch(tenantRequest("/leaseNode", "POST", {
+      "X-CAS-Hash": H1,
+      "Content-Type": "text/plain",
+    }, content));
+    expect(wrong.status).toBe(400);
+    await expect(wrong.json()).resolves.toMatchObject({ error: NodeOpErrorCodes.INVALID_REQUEST });
+
+    // Child not ready → 409 before anything is written.
+    const childHash = "e".repeat(64);
+    const parentContent = "parent-with-child";
+    const hash = await digestOf(parentContent, "text/plain", [childHash]);
+    const missingChild = await doInstance.fetch(tenantRequest("/leaseNode", "POST", {
+      "X-CAS-Hash": hash,
+      "Content-Type": "text/plain",
+      "X-CAS-Refs": childHash,
+    }, new TextEncoder().encode(parentContent)));
+    expect(missingChild.status).toBe(409);
+  });
+
+  test("leaseNode validates SValue refs against encoded content", async () => {
+    await createStore();
+    const blobContent = "blob";
+    const blobHash = await digestOf(blobContent, "application/octet-stream");
+    await leaseNode(store(), {
+      hash: blobHash,
+      contentType: "application/octet-stream",
+      contentLength: blobContent.length,
+      refs: [],
+      leaseDurationMs: 60_000,
+      content: new TextEncoder().encode(blobContent),
+    });
+    const value = { ops: [{ kind: "insertImage", blob: createSBlob(blobHash) }] };
+    const bytes = encodeSValue(value as SValue);
+    const header = encodeHeader(bytes.length, SValueContentType, 1);
+    const digest = await computeNodeDigest(header, SValueContentType, [hexToHash(blobHash)], bytes);
+    const hash = hashToHex(digest);
+    const doInstance = tenantDo();
+
+    const matching = await doInstance.fetch(tenantRequest("/leaseNode", "POST", {
+      "X-CAS-Hash": hash,
+      "Content-Type": SValueContentType,
+      "X-CAS-Refs": blobHash,
+    }, bytes));
+    expect(matching.status).toBe(200);
+
+    const mismatched = await doInstance.fetch(tenantRequest("/leaseNode", "POST", {
+      "X-CAS-Hash": hash,
+      "Content-Type": SValueContentType,
+      "X-CAS-Refs": "0".repeat(64),
+    }, bytes));
+    expect(mismatched.status).toBe(400);
+  });
+
+  test("leaseExisting extends a ready lease and 404s missing nodes", async () => {
+    await createStore();
+    const content = "abc";
+    const hash = await digestOf(content);
+    await leaseNode(store(), {
+      hash,
+      contentType: "text/plain",
+      contentLength: content.length,
+      refs: [],
+      leaseDurationMs: 60_000,
+      content: new TextEncoder().encode(content),
+    });
+    const doInstance = tenantDo();
+    const extended = await doInstance.fetch(tenantRequest("/leaseExisting", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Lease-Duration": "180000",
+    }));
+    expect(extended.status).toBe(200);
+    const body = await extended.json();
+    expect(body).toMatchObject({ hash, ready: true });
+
+    const missing = await doInstance.fetch(tenantRequest("/leaseExisting", "POST", {
+      "X-CAS-Hash": "1".repeat(64),
+    }));
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({ error: NodeOpErrorCodes.NOT_FOUND });
+  });
+
+  test("GC deletes unreferenced expired nodes but keeps referenced and leased nodes", async () => {
+    await createStore();
+    for (const content of ["keep", "held"]) {
+      const hash = await digestOf(content);
+      await leaseNode(store(), {
+        hash,
+        contentType: "text/plain",
+        contentLength: content.length,
+        refs: [],
+        leaseDurationMs: 60_000,
+        content: new TextEncoder().encode(content),
+      });
+    }
+    // Unreferenced node with an expired lease (root_ref_count 0, lease in the past).
+    const dead = "d".repeat(64);
+    await db!.prepare(
+      "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count) VALUES (?, ?, ?, 5, 'text/plain', 1, 1, 0, 0)",
+    ).bind(STACK, TENANT, dead).run();
+    await bucket!.put(stackNodeKey(STACK, TENANT, dead), new TextEncoder().encode("dead!"));
+
+    const doInstance = tenantDo();
+    const gc = await doInstance.fetch(tenantRequest("/gc", "POST", {}, new TextEncoder().encode("{}")));
+    expect(gc.status).toBe(200);
+    await expect(gc.json()).resolves.toMatchObject({ examined: 1, deleted: 1, reclaimedContentBytes: 5 });
+
+    expect(await bucket!.get(stackNodeKey(STACK, TENANT, dead))).toBeNull();
+    for (const content of ["keep", "held"]) {
+      const hash = await digestOf(content);
+      expect(await bucket!.get(stackNodeKey(STACK, TENANT, hash))).not.toBeNull();
+    }
+  });
+
+  test("nodes, leases, usage, and GC are isolated per stack for the same tenant id", async () => {
+    await createStore();
+    const otherStack = "cas_stack_b";
+    const content = "stack-a";
+    const hash = await digestOf(content);
+    await leaseNode(store(), {
+      hash,
+      contentType: "text/plain",
+      contentLength: content.length,
+      refs: [],
+      leaseDurationMs: 60_000,
+      content: new TextEncoder().encode(content),
+    });
+    const doInstance = tenantDo();
+
+    // Same tenant id under another stack: the node is invisible.
+    const otherDo = new CasDurableObject(
       {} as DurableObjectState,
       { CAS_DB: db!, CAS_R2: bucket!, CAS_DOMAIN_DO: {} as TenantCasDoEnv["CAS_DOMAIN_DO"] },
     );
-    const response = await doInstance.fetch(new Request("https://tenant.internal/read", {
+    const otherRead = await otherDo.fetch(new Request("https://tenant.internal/read", {
       method: "GET",
-      headers: { "X-CAS-Stack-Id": STACK, "X-CAS-Tenant-Id": TENANT },
+      headers: { "X-CAS-Stack-Id": otherStack, "X-CAS-Tenant-Id": TENANT, "X-CAS-Hash": hash },
     }));
-    expect(response.status).toBe(501);
+    expect(otherRead.status).toBe(404);
+
+    // Usage counts only the owning stack's nodes.
+    const usageA = await doInstance.fetch(tenantRequest("/usage", "GET"));
+    const usageB = await otherDo.fetch(new Request("https://tenant.internal/usage", {
+      method: "GET",
+      headers: { "X-CAS-Stack-Id": otherStack, "X-CAS-Tenant-Id": TENANT },
+    }));
+    expect((await usageA.json()).nodeCount).toBe(1);
+    expect((await usageB.json()).nodeCount).toBe(0);
+
+    // GC in the other stack must not delete this stack's unreferenced nodes.
+    await db!.prepare(
+      "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count) VALUES (?, ?, ?, 5, 'text/plain', 1, 1, 0, 0)",
+    ).bind(otherStack, TENANT, "e".repeat(64)).run();
+    const gcB = await otherDo.fetch(new Request("https://tenant.internal/gc", {
+      method: "POST",
+      headers: { "X-CAS-Stack-Id": otherStack, "X-CAS-Tenant-Id": TENANT },
+      body: "{}",
+    }));
+    expect(gcB.status).toBe(200);
+    expect(await bucket!.get(stackNodeKey(STACK, TENANT, hash))).not.toBeNull();
   });
 });

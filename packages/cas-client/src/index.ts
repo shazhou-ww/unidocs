@@ -11,7 +11,8 @@
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
 import { refsFromSValue } from "@unidocs/svalue-codec";
 import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/protocol";
-import { casRoutes } from "@unidocs/protocol-cas-legacy";
+import { casRoutes as canonicalCasRoutes } from "@unidocs/protocol-cas";
+import { casRoutes as legacyCasRoutes } from "@unidocs/protocol-cas-legacy";
 import type { CasLeaseResult, CasRootRefUpdate } from "@unidocs/protocol-cas-legacy";
 
 /** Structural interface for a fetch-capable service binding. */
@@ -21,13 +22,54 @@ export interface HttpFetcher {
 
 export type CasClientConfig =
   | { baseUrl: string; tenantId: string; authToken?: string }
+  | { baseUrl: string; stackId: string; tenantId: string; authToken?: string }
   | { fetcher: HttpFetcher; tenantId: string; accessKey: string }
   | {
     fetcher: HttpFetcher;
     tenantId: string;
     sessionId: string;
     capability: string;
+    stackId?: string;
   };
+
+/** The optional stack namespace; canonical routes are used only when present. */
+function stackIdOf(config: CasClientConfig): string | undefined {
+  return "stackId" in config ? config.stackId : undefined;
+}
+
+/** Tenant route builder: canonical `/stacks/...` when stackId is present. */
+function tenantRoutesFor(config: CasClientConfig): {
+  readContent: (hash: string) => string;
+  readMetadata: (hash: string) => string;
+  leaseNode: (hash: string) => string;
+  leaseExisting: (hash: string) => string;
+  usage: () => string;
+  gc: () => string;
+  rootRefs: () => string;
+} {
+  const tenantId = config.tenantId;
+  const stackId = stackIdOf(config);
+  if (stackId !== undefined) {
+    return {
+      readContent: hash => canonicalCasRoutes.readContent({ stackId, tenantId, hash }),
+      readMetadata: hash => canonicalCasRoutes.readMetadata({ stackId, tenantId, hash }),
+      leaseNode: hash => canonicalCasRoutes.leaseNode({ stackId, tenantId, hash }),
+      leaseExisting: hash => canonicalCasRoutes.leaseExisting({ stackId, tenantId, hash }),
+      usage: () => canonicalCasRoutes.usage({ stackId, tenantId }),
+      gc: () => canonicalCasRoutes.gc({ stackId, tenantId }),
+      rootRefs: () => canonicalCasRoutes.updateRootRefs({ stackId, tenantId }),
+    };
+  }
+  return {
+    readContent: hash => legacyCasRoutes.readContent({ tenantId, hash }),
+    readMetadata: hash => legacyCasRoutes.readMetadata({ tenantId, hash }),
+    leaseNode: hash => legacyCasRoutes.leaseNode({ tenantId, hash }),
+    leaseExisting: hash => legacyCasRoutes.leaseExisting({ tenantId, hash }),
+    usage: () => legacyCasRoutes.usage({ tenantId }),
+    gc: () => legacyCasRoutes.gc({ tenantId }),
+    rootRefs: () => legacyCasRoutes.rootRefs({ tenantId }),
+  };
+}
 
 export class CasClientError extends Error {
   readonly status: number;
@@ -37,6 +79,13 @@ export class CasClientError extends Error {
     this.name = "CasClientError";
     this.status = status;
   }
+}
+
+/** Typed result of a Root Refs write; canonical responses carry `revision`. */
+export interface CasRootRefsResult {
+  readonly success: boolean;
+  readonly idempotent?: boolean;
+  readonly revision?: number;
 }
 
 function isInternalConfig(
@@ -73,6 +122,10 @@ export class CasClient implements CasReadContext {
       : this.config.baseUrl;
   }
 
+  private routes(): ReturnType<typeof tenantRoutesFor> {
+    return tenantRoutesFor(this.config);
+  }
+
   private routeUrl(path: string): string {
     return `${this.origin()}${path}`;
   }
@@ -100,10 +153,7 @@ export class CasClient implements CasReadContext {
 
   /** Read CAS node content. */
   async read(ref: CasRef): Promise<Uint8Array> {
-    const resp = await this.request(this.routeUrl(casRoutes.readContent({
-      tenantId: this.config.tenantId,
-      hash: ref.hash,
-    })));
+    const resp = await this.request(this.routeUrl(this.routes().readContent(ref.hash)));
     if (!resp.ok) {
       throw new CasClientError(resp.status, resp.statusText, "read");
     }
@@ -127,10 +177,7 @@ export class CasClient implements CasReadContext {
 
   /** Read CAS node metadata. */
   async metadata(ref: CasRef): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }> {
-    const resp = await this.request(this.routeUrl(casRoutes.readMetadata({
-      tenantId: this.config.tenantId,
-      hash: ref.hash,
-    })));
+    const resp = await this.request(this.routeUrl(this.routes().readMetadata(ref.hash)));
     if (!resp.ok) {
       throw new CasClientError(resp.status, resp.statusText, "metadata");
     }
@@ -157,10 +204,7 @@ export class CasClient implements CasReadContext {
     if (refs.length > 0) extra["X-CAS-Refs"] = refs.join(",");
     if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
 
-    const resp = await this.request(this.routeUrl(casRoutes.leaseNode({
-      tenantId: this.config.tenantId,
-      hash,
-    })), {
+    const resp = await this.request(this.routeUrl(this.routes().leaseNode(hash)), {
       method: "POST",
       headers: extra,
       body: content as BufferSource,
@@ -180,10 +224,7 @@ export class CasClient implements CasReadContext {
     const extra: Record<string, string> = {};
     if (requestedDurationMs != null) extra["X-CAS-Lease-Duration"] = String(requestedDurationMs);
 
-    const resp = await this.request(this.routeUrl(casRoutes.leaseExisting({
-      tenantId: this.config.tenantId,
-      hash,
-    })), {
+    const resp = await this.request(this.routeUrl(this.routes().leaseExisting(hash)), {
       method: "POST",
       headers: extra,
     });
@@ -196,14 +237,18 @@ export class CasClient implements CasReadContext {
   /**
    * Editor-only: increment root-reference counts on the CAS worker.
    *
-   * POST /_internal/root-refs
+   * In canonical stack mode (capability + `stackId`) this posts to
+   * `/stacks/{stackId}/tenants/{tenantId}/root-refs` and returns the typed
+   * `{success, idempotent, revision}` response. Without `stackId` it keeps
+   * the legacy tenant-scoped routes; the shared-key mode still uses
+   * `/_internal/root-refs`.
    */
-  async updateRootRefs(update: CasRootRefUpdate): Promise<void> {
+  async updateRootRefs(update: CasRootRefUpdate): Promise<CasRootRefsResult> {
     if (!isInternalConfig(this.config)) {
       throw new Error("updateRootRefs is only available in Editor (service-binding) mode");
     }
     const rootRefsPath = isCapabilityConfig(this.config)
-      ? casRoutes.rootRefs({ tenantId: this.config.tenantId })
+      ? this.routes().rootRefs()
       : "/_internal/root-refs";
     const resp = await this.request(this.routeUrl(rootRefsPath), {
       method: "POST",
@@ -213,6 +258,7 @@ export class CasClient implements CasReadContext {
     if (!resp.ok) {
       throw new CasClientError(resp.status, resp.statusText, "updateRootRefs");
     }
+    return resp.json() as Promise<CasRootRefsResult>;
   }
 }
 
@@ -237,7 +283,7 @@ export interface CasLeaseGateway {
  * Satisfied by `CasClient` (Editor mode), and by any cloud-neutral gateway.
  */
 export interface CasRootRefGateway {
-  updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<void>;
+  updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<CasRootRefsResult>;
 }
 
 /** Lease every SBlob hash referenced by a delta. Empty maps are a no-op. */

@@ -15,6 +15,7 @@
 
 import { AuthorityRepository } from "@unidocs/cas-control-plane";
 import { matchCasRoute } from "@unidocs/protocol-cas";
+import { CasLeaseDurationHeader, CasRefsHeader } from "@unidocs/protocol-cas";
 import type { CasRoute } from "@unidocs/protocol-cas";
 import {
   CapabilityError,
@@ -76,14 +77,7 @@ export default {
     if (route.operation === "updateRootRefs") {
       return dispatchUpdateRootRefs(request, env, call);
     }
-    // The remaining node operations (read, lease, usage, GC) land as storage
-    // dispatch in the follow-on tasks; authorization is already complete.
-    return Response.json({
-      error: "SERVICE_UNAVAILABLE",
-      message: `CAS ${route.operation} is not implemented yet`,
-      stackId: call.stackId,
-      tenantId: call.tenantId,
-    }, { status: 501 });
+    return dispatchNodeOperation(request, env, route, call);
   },
 };
 
@@ -165,6 +159,77 @@ async function dispatchUpdateRootRefs(
       "X-CAS-Ref-Domain": call.refDomain,
     },
     body,
+  });
+}
+
+/**
+ * Forward a verified node operation to the tenant DO for this
+ * (stackId, tenantId). The DO request is built fresh from the VERIFIED
+ * context — stack/tenant identity always comes from the verified call, never
+ * from caller headers. Only content-metadata headers (Content-Type, child
+ * refs, lease duration) and the content body are copied through.
+ */
+async function dispatchNodeOperation(
+  request: Request,
+  env: Env,
+  route: CasRoute,
+  call: VerifiedStackCall,
+): Promise<Response> {
+  const doId = env.CAS_DO.idFromName(canonicalComposite(call.stackId, call.tenantId));
+  const stub = env.CAS_DO.get(doId);
+  const headers: Record<string, string> = {
+    "X-CAS-Stack-Id": call.stackId,
+    "X-CAS-Tenant-Id": call.tenantId,
+  };
+  let doPath = "";
+  let method = "GET";
+  let body: BodyInit | null | undefined;
+  switch (route.operation) {
+    case "readContent":
+      doPath = "/read";
+      headers["X-CAS-Hash"] = route.hash;
+      break;
+    case "readMetadata":
+      doPath = "/metadata";
+      headers["X-CAS-Hash"] = route.hash;
+      break;
+    case "leaseNode":
+      doPath = "/leaseNode";
+      method = "POST";
+      headers["X-CAS-Hash"] = route.hash;
+      const contentType = request.headers.get("Content-Type");
+      if (contentType) headers["Content-Type"] = contentType;
+      const refs = request.headers.get(CasRefsHeader);
+      if (refs) headers[CasRefsHeader] = refs;
+      const leaseDuration = request.headers.get(CasLeaseDurationHeader);
+      if (leaseDuration) headers[CasLeaseDurationHeader] = leaseDuration;
+      body = request.body;
+      break;
+    case "leaseExisting":
+      doPath = "/leaseExisting";
+      method = "POST";
+      headers["X-CAS-Hash"] = route.hash;
+      const existingDuration = request.headers.get(CasLeaseDurationHeader);
+      if (existingDuration) headers[CasLeaseDurationHeader] = existingDuration;
+      break;
+    case "usage":
+      doPath = "/usage";
+      break;
+    case "gc":
+      doPath = "/gc";
+      method = "POST";
+      body = request.body;
+      break;
+    default:
+      return Response.json(
+        { error: "SERVICE_UNAVAILABLE", message: `CAS ${route.operation} is not implemented yet` },
+        { status: 501 },
+      );
+  }
+  return stub.fetch(`https://tenant.internal${doPath}`, {
+    method,
+    headers,
+    ...(body === null || body === undefined ? {} : { body }),
   });
 }
 

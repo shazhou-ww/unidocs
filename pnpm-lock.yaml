@@ -284,6 +284,9 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/protocol-cas':
+        specifier: workspace:*
+        version: link:../protocol-cas
       '@unidocs/protocol-cas-legacy':
         specifier: workspace:*
         version: link:../protocol-cas-legacy
@@ -343,12 +346,18 @@ importers:
       '@unidocs/cas-server-common':
         specifier: workspace:*
         version: link:../cas-server-common
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@unidocs/protocol-cas':
         specifier: workspace:*
         version: link:../protocol-cas
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0

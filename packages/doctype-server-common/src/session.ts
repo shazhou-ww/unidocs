@@ -86,7 +86,11 @@ export interface CasGateway {
   metadata(ref: { kind: "cas"; hash: string }): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }>;
   store?(bytes: Uint8Array, contentType: string): Promise<string>;
   leaseExisting(hash: string): Promise<unknown>;
-  updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<void>;
+  updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<{
+    success: boolean;
+    idempotent?: boolean;
+    revision?: number;
+  }>;
 }
 
 export interface SessionDeps {

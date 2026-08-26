@@ -275,7 +275,10 @@ describe("CasClient", () => {
     });
 
     it("posts updateRootRefs to /_internal/root-refs", async () => {
-      const fetcherFetch = vi.fn(async () => ({ ok: true }));
+      const fetcherFetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ success: true }),
+      }));
       const internal = new CasClient({
         fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
         tenantId: "tenant1",
@@ -283,11 +286,12 @@ describe("CasClient", () => {
       });
       const hash = "b".repeat(64);
 
-      await internal.updateRootRefs({
+      const result = await internal.updateRootRefs({
         requestId: "apply:session1:2",
         changes: { [hash]: 1 },
       });
 
+      expect(result).toEqual({ success: true });
       expect(fetcherFetch).toHaveBeenCalledWith(
         "https://cas.internal/_internal/root-refs",
         expect.objectContaining({
@@ -308,7 +312,10 @@ describe("CasClient", () => {
     });
 
     it("uses only a delegated Bearer capability and tenant-prefixed root route", async () => {
-      const fetcherFetch = vi.fn(async () => ({ ok: true }));
+      const fetcherFetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ success: true }),
+      }));
       const internal = new CasClient({
         fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
         tenantId: "tenant1",
@@ -326,6 +333,97 @@ describe("CasClient", () => {
             "Content-Type": "application/json",
           },
         }),
+      );
+    });
+  });
+
+  describe("Canonical stack mode", () => {
+    it("routes reads, metadata, and leases through /stacks/{stackId}/tenants/{tenantId}", async () => {
+      const client = new CasClient({
+        baseUrl: "http://cas.example",
+        stackId: "unidocs-cloudflare",
+        tenantId: "tenant1",
+      });
+      const hash = "a".repeat(64);
+      const prefix = `http://cas.example/stacks/unidocs-cloudflare/tenants/tenant1`;
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => new TextEncoder().encode("x").buffer,
+      });
+      await client.read({ kind: "cas", hash });
+      expect(mockFetch).toHaveBeenCalledWith(`${prefix}/cas/nodes/${hash}/content`, expect.any(Object));
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ metadata: { hash, size: 1, contentType: "text/plain", refs: [] } }),
+      });
+      await client.metadata({ kind: "cas", hash });
+      expect(mockFetch).toHaveBeenCalledWith(`${prefix}/cas/nodes/${hash}/metadata`, expect.any(Object));
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 }),
+      });
+      await client.leaseExisting(hash);
+      expect(mockFetch).toHaveBeenCalledWith(`${prefix}/cas/nodes/${hash}/lease`, expect.any(Object));
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 }),
+      });
+      await client.ensureNode(hash, new TextEncoder().encode("x"), "text/plain");
+      expect(mockFetch).toHaveBeenCalledWith(`${prefix}/cas/nodes/${hash}`, expect.any(Object));
+    });
+
+    it("posts updateRootRefs to the canonical root-refs route with a typed revision response", async () => {
+      const fetcherFetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ success: true, idempotent: true, revision: 42 }),
+      }));
+      const client = new CasClient({
+        fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
+        stackId: "unidocs-cloudflare",
+        tenantId: "tenant1",
+        sessionId: "session1",
+        capability: "cas-capability",
+      });
+
+      const result = await client.updateRootRefs({
+        requestId: "session:session1:version:2:roots",
+        changes: { ["c".repeat(64)]: 1 },
+      });
+
+      expect(result).toEqual({ success: true, idempotent: true, revision: 42 });
+      expect(fetcherFetch).toHaveBeenCalledWith(
+        "https://cas.internal/stacks/unidocs-cloudflare/tenants/tenant1/root-refs",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            Authorization: "Bearer cas-capability",
+            "Content-Type": "application/json",
+          },
+        }),
+      );
+    });
+
+    it("keeps the legacy tenant-prefixed root route when stackId is absent", async () => {
+      const fetcherFetch = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ success: true }),
+      }));
+      const client = new CasClient({
+        fetcher: { fetch: fetcherFetch } as unknown as Fetcher,
+        tenantId: "tenant1",
+        sessionId: "session1",
+        capability: "cas-capability",
+      });
+
+      await client.updateRootRefs({ requestId: "r", changes: {} });
+
+      expect(fetcherFetch).toHaveBeenCalledWith(
+        "https://cas.internal/tenants/tenant1/_internal/root-refs",
+        expect.any(Object),
       );
     });
   });

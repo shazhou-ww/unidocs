@@ -171,8 +171,13 @@ export class MemoryCas implements CasGateway {
     return { hash, ready: true };
   }
 
-  async updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<void> {
+  async updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<{
+    success: boolean;
+    idempotent?: boolean;
+    revision?: number;
+  }> {
     this.rootRefUpdates.push(update);
+    return { success: true };
   }
 }
 

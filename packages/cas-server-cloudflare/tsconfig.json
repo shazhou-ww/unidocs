@@ -23,10 +23,16 @@
       "path": "../cas-server-common"
     },
     {
+      "path": "../protocol"
+    },
+    {
       "path": "../protocol-cas"
     },
     {
       "path": "../service-auth"
+    },
+    {
+      "path": "../svalue-codec"
     }
   ]
 }
