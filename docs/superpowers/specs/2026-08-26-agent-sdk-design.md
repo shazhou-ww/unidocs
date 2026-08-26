@@ -6,49 +6,101 @@
 
 ---
 
-## 1. 背景与目标
+## 1. 要建立什么
 
-### 1.1 要解决什么
+### 1.1 一个内核，两层抽象边界
 
-今天全仓库只有 **一条** agent 链路真正能跑通：`cloudflare-psd`。它是唯一配置了真实大模型接入的（`cloudflare-psd/src/anthropic.ts`）。
+建立一份与**文档类型**无关、也与**运行平台**无关的 agent 内核。它的位置由上下两条抽象边界夹住：
 
-| 链路 | 状态 | 卡在哪 |
+```mermaid
+flowchart TB
+    subgraph up["上边界 —— 逻辑抽象：抽掉文档类型的差异"]
+        U["文档类型只声明【它有什么能力】<br/>工具定义 · 提示词 · 必要的参数转换<br/>不知道循环怎么跑 · 历史怎么管 · 模型怎么调"]
+    end
+
+    subgraph core["@unidocs/agent-sdk —— 全仓库唯一一份实现"]
+        K["工具调用循环 · 工具分发 · 会话历史<br/>乐观锁记账 · 事件产出"]
+    end
+
+    subgraph down["下边界 —— 实现抽象：抽掉运行环境的差异"]
+        D["平台只提供【怎么做到】<br/>文档如何读写 · 模型如何访问 · 字节如何送出<br/>不知道循环内部长什么样"]
+    end
+
+    up -->|"AgentDefinition"| core
+    core -->|"DocumentAgentContext · LlmProvider · 事件字节流"| down
+```
+
+**逻辑抽象**回答的是「一个文档 agent 由什么构成」——工具、提示词、工具语义（读 / 写 / 其他）。它对所有文档类型是同一套，PSD 的图层树和 docx 的段落在这一层是同构的。
+
+**实现抽象**回答的是「这些动作靠什么完成」——文档读写通过什么通道、模型通过什么协议、结果字节怎么送到调用方。它对所有平台是同一套，DurableObject 和 Node 进程在这一层是同构的。
+
+### 1.2 两个方向的扩展互不相交
+
+这是「平台可扩展」的具体含义：
+
+| 要新增什么 | 要做的事 | 不需要碰的 |
 |---|---|---|
-| cloudflare-psd | 能跑 | — |
-| cloudflare-markdown | 不能 | `llmProvider` 是抛异常的占位，`cloudflare-markdown/src/worker.ts:29` |
-| cloudflare-docx | 不能 | 同上；且图片路径还会撞 P6（见 2.2） |
-| azure-markdown / azure-docx | 不能 | operator 接口一律返回 501，`azure-sdk/src/local-editor.ts:103` |
-| azure-psd | 不存在 | Azure 栈里没有 psd |
+| 一个新文档类型（例如 xlsx） | 实现上边界：写 `tools` + `instructions`，必要时补几个 handler | 内核、所有平台代码 |
+| 一个新平台（例如 AWS） | 实现下边界：一份 `DocumentAgentContext`、一份大模型接入、一层传输外壳 | 内核、所有文档类型 |
+| 一个新大模型供应商 | 实现下边界的一个接口：`LlmProvider` | 内核、所有文档类型、所有平台 |
 
-要让**第二条**链路跑起来，会连续撞上三件事：
+三种扩展都不修改内核，也不互相牵动。
 
-1. 工具分发骨架要再抄一遍（psd 和 markdown 已经是逐行相同的两份）。
-2. 循环无法复用——唯一能用的那份依赖 `DurableObjectStub` / `Request` / `Response`，Azure 拿不走。
-3. 大模型接入要重写——`anthropic.ts` 躺在 `cloudflare-psd` 这个最外层的叶子包里。
+### 1.3 两层边界的接口
 
-需要说明的是，Azure 至今没有 agent，直接原因是那一期把它划在范围外（`azure-sdk/src/local-editor.ts:97-101` 注明是 future work），并不是被 Cloudflare 的实现"锁"住了。循环与平台绑死，影响的是**现在要补上时的重做成本**，不是它当初没做的原因。
+| 边界 | 接口 | 由谁实现 | 定义在 |
+|---|---|---|---|
+| 上（逻辑） | `AgentDefinition` = tools + instructions + maxIterations? + handlers? | 文档类型 | 5.2 |
+| 下（实现） | `DocumentAgentContext` —— 文档读写 | 平台 sdk | `protocol/src/types.ts:105`，已存在 |
+| 下（实现） | `LlmProvider` —— 模型访问 | agent-sdk 内置 Anthropic / OpenAI，可另加 | 5.4 |
+| 下（实现） | 事件字节流 → 平台响应对象 | 平台 sdk | 6.4 |
 
-### 1.2 目标
+下边界之所以要拆成三个接口而不是一个，是因为它们的变化原因不同：换平台只影响文档读写和传输，换模型供应商只影响 `LlmProvider`。
 
-1. 文档类型接入 agent 时，只需要提供**工具定义**和**提示词**，其余全部由 SDK 承担。
-2. SDK 与云平台无关。Cloudflare 与 Azure 的差异只在各自的 sdk 包里处理，文档类型不感知。
-3. 以 PSD 为样板验证：PSD 接入后功能不退化，且 `agent.ts` 缩减到只剩声明。
+### 1.4 今天这两层都不存在
 
-### 1.3 本次范围
+| 边界 | 应该在哪 | 实际在哪 |
+|---|---|---|
+| 上（逻辑） | 文档类型只做声明 | 文档类型自己实现了循环的一部分——工具分发骨架，三份（2.3 的 P1） |
+| 下（实现） | 平台只做实现 | 平台把循环整个吃进了自己的实现里（`cloudflare-sdk/src/operator-do-agent.ts`，296 行里循环与 DurableObject 交织） |
+
+后果见第 2 章。
+
+### 1.5 本次范围
 
 | 编号 | 内容 | 本次 |
 |---|---|---|
-| A | agent 内核抽取：循环、工具分发、大模型接口、消息格式 | ✅ 做 |
-| B | 会话历史裁剪、会话持久化 | ❌ 下一期，本次只留接口位置 |
+| A | 建立两层边界：循环内核、工具分发、消息格式、大模型接口 | ✅ 做 |
+| B | 会话历史裁剪、会话持久化 | ❌ 下一期，本次只留接口位置（5.5） |
 | C | 事件流 + 客户端 SDK | ✅ 做 |
 
-B 不在本次范围，但 A 的接口必须为它留好位置（见 5.5）。
+验证方式：以 PSD 为样板走通全链路，并用 Azure 证明下边界确实可换（10 章 V8）。
 
 ---
 
-## 2. 现状
+## 2. 现状：两层边界缺失的后果
 
-### 2.1 代码分布
+### 2.1 只有一条链路真正能跑
+
+| 链路 | 状态 | 卡在哪 |
+|---|---|---|
+| cloudflare-psd | 能跑 | 唯一配置了真实大模型接入的，`cloudflare-psd/src/anthropic.ts` |
+| cloudflare-markdown | 不能 | `llmProvider` 是抛异常的占位，`cloudflare-markdown/src/worker.ts:29` |
+| cloudflare-docx | 不能 | 同上；且图片路径还会撞 P6 |
+| azure-markdown / azure-docx | 不能 | operator 接口一律返回 501，`azure-sdk/src/local-editor.ts:103` |
+| azure-psd | 不存在 | Azure 栈里没有 psd |
+
+要让**第二条**链路跑起来，会连续撞上三件事，恰好对应 1.4 的两层缺失：
+
+| # | 撞上什么 | 属于哪层缺失 |
+|---|---|---|
+| 1 | 工具分发骨架要再抄一遍 | 上边界缺失 |
+| 2 | 循环无法复用——唯一能用的那份依赖 `DurableObjectStub` / `Request` / `Response` | 下边界缺失 |
+| 3 | 大模型接入要重写——`anthropic.ts` 躺在 `cloudflare-psd` 这个叶子包里 | 下边界缺失 |
+
+需要说明的是，Azure 至今没有 agent，直接原因是那一期把它划在范围外（`azure-sdk/src/local-editor.ts:97-101` 注明是 future work），并不是被 Cloudflare 的实现挡住了。下边界缺失影响的是**现在补做时的成本**，不是它当初没做的原因。
+
+### 2.2 代码分布
 
 ```mermaid
 flowchart TB
@@ -80,7 +132,7 @@ flowchart TB
     dsc --> proto
 ```
 
-### 2.2 具体问题清单
+### 2.3 具体问题清单
 
 | # | 问题 | 位置 |
 |---|---|---|
@@ -89,12 +141,12 @@ flowchart TB
 | P2 | 唯一可用的循环实现依赖 Cloudflare 类型，Azure 无法复用 | `cloudflare-sdk/src/operator-do-agent.ts` |
 | P3 | 存在第二份无人使用且已落后的循环实现 | `doctype-server-common/src/operator.ts` |
 | P4 | 大模型适配层放在最外层的叶子包里，其他文档类型用不到 | `cloudflare-psd/src/anthropic.ts` |
-| P5 | 同一仓库存在两套互相冲突的图片约定 | 见 2.3 |
+| P5 | 同一仓库存在两套互相冲突的图片约定 | 见 2.4 |
 | P6 | `renderToolResult` 钩子全仓库无人设置，docx 的图片路径一跑就抛异常 | `operator-do-agent.ts:25` 声明、`:112` 调用、`:263` 抛出 |
 | P7 | `/run` 是一次阻塞请求，PSD 最多 25 轮循环期间零反馈，断线即全部丢失 | `web-psd/src/main.ts:374-383` |
 | P8 | 会话历史无上限增长，且只在内存中，进程重启即丢 | `operator-do-agent.ts:55` |
 
-### 2.3 两套冲突的图片约定
+### 2.4 两套冲突的图片约定
 
 | 文档类型 | 做法 | 位置 |
 |---|---|---|
@@ -107,34 +159,43 @@ PSD 那条路的副作用：base64 让数据膨胀三分之一，并且撞过 SV
 
 ---
 
-## 3. 目标分层
+## 3. 两层边界落到具体的包上
+
+1.1 是抽象形状，这一节是它对应的实际代码归属。
 
 ```mermaid
 flowchart TB
-    subgraph L1["doctype 层：只提供工具定义 + 提示词"]
+    subgraph L1["上边界的实现方 —— 文档类型：只声明能力"]
         A1["doctype-psd"]
         A2["doctype-docx"]
         A3["doctype-markdown"]
+        A4["将来的 doctype-xlsx"]
     end
 
-    subgraph L2["@unidocs/agent-sdk：与云平台无关"]
+    subgraph L2["内核 @unidocs/agent-sdk：唯一一份，与文档类型和平台都无关"]
         B1["工具调用循环"]
-        B2["工具名分发"]
-        B3["会话历史"]
-        B4["大模型接口 + Anthropic / OpenAI 实现"]
-        B5["事件输出 + SSE 编码"]
+        B2["工具名分发 + 乐观锁记账"]
+        B3["会话历史（中立消息格式）"]
+        B4["LlmProvider 接口 + Anthropic / OpenAI 实现"]
+        B5["事件产出 + SSE 编码"]
     end
 
-    subgraph L3["平台隔离层"]
-        C1["cloudflare-sdk<br/>用 DurableObject 实现文档访问<br/>把事件字节流包成 Response"]
-        C2["azure-sdk<br/>进程内直接调用实现文档访问<br/>把事件字节流包成 Node 响应"]
+    subgraph L3["下边界的实现方 —— 平台 sdk：只提供做法"]
+        C1["cloudflare-sdk<br/>用 DurableObject 实现文档读写<br/>把事件字节流包成 Response"]
+        C2["azure-sdk<br/>进程内直接调用实现文档读写<br/>把事件字节流包成 Node 响应"]
+        C3["将来的 aws-sdk"]
     end
 
-    L1 -->|"注入 tools + instructions"| L2
-    L3 -->|"注入 DocumentAgentContext 的实现"| L2
+    L1 -->|"AgentDefinition"| L2
+    L3 -->|"DocumentAgentContext + 传输外壳"| L2
 ```
 
-关键点：**文档类型永远看不到 `DocumentAgentContext` 的实现**，那是 `cloudflare-sdk` / `azure-sdk` 的职责。文档类型只看得到 SDK 的注入接口。
+两条不可越界的规则：
+
+1. **文档类型永远看不到 `DocumentAgentContext` 的实现**。它甚至不知道文档是通过 DurableObject 还是进程内调用读到的。
+2. **平台 sdk 永远看不到循环内部**。它拿到的是一个事件序列，负责把它变成本平台的响应对象，不参与决定何时调模型、何时调工具。
+
+这两条如果被打破，就退回到今天的状态（1.4）。4.3 给出机器可校验的落地方式。
 
 ---
 
@@ -173,6 +234,11 @@ flowchart LR
 
 1. `packages/agent-sdk/tsconfig.json` 的 `types` 不包含 `@cloudflare/workers-types`，`lib` 不包含 `DOM`。写出 `DurableObjectStub` 或 `Response` 直接编译失败。
 2. 新增 `tests/unit/agent-sdk-purity.test.ts`：扫描 `packages/agent-sdk/src/**` 的所有 import 语句，断言只出现 `@unidocs/protocol`、`@unidocs/svalue-codec` 和相对路径。
+
+这两道机制守住的是 3 章的**规则 1**（内核不知道平台）。**规则 2**（平台不知道循环内部）没有等价的机器检查——平台 sdk 本来就允许 import `agent-sdk`。它靠两件事守：
+
+- 循环的状态（会话历史、`lastKnownVersion`、迭代计数）全部封在 `AgentSession` 私有字段里，平台拿不到，也就无从参与决策。平台唯一能做的就是消费 `run()` 吐出的事件序列。
+- 代码检视：如果某个平台 sdk 里出现了「判断该不该再调一次模型」这类逻辑，就是越界了。
 
 ### 4.4 一处需要注意的连带影响
 
@@ -742,6 +808,8 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 
 | 决定 | 结论 |
 |---|---|
+| 整体形状 | 一个内核 + 两层抽象边界：上边界抽掉文档类型差异，下边界抽掉运行环境差异。新增文档类型、新增平台、新增模型供应商三种扩展互不相交，且都不改内核 |
+| 下边界为何拆成三个接口 | 变化原因不同：换平台影响文档读写和传输，换模型供应商只影响 `LlmProvider` |
 | 本次范围 | A + C，B 只留接口位置 |
 | 图片通道 | 协议层归一，统一走 SBlob content part；删除 `$image` 和 `renderToolResult` |
 | 事件流野心 | 单向进度流，不重放 |
