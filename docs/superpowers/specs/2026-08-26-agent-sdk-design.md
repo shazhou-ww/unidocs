@@ -32,7 +32,7 @@ flowchart TB
 
 **逻辑抽象**回答的是「一个文档 agent 对外长什么样」——一组工具、一段提示词、一个「给我工具名和参数，我还你一个结果」的调用入口。内核不知道 PSD 有图层、docx 有段落，只知道调用一个工具会返回一个 `AgentToolResult`。
 
-**工具调用如何翻译成 `query` / `apply`，属于上边界的实现方，不属于内核。** 这一点值得写明，因为它容易被当成可以共用的样板：docx 的 `apply_insertImage` 收到 `hash` 字符串，必须先 `resolveBlob` 换成 SBlob 才能构造操作（`doctype-docx/src/agent.ts:86-113`），而 psd 的操作参数可以原样透传。它们今天看起来像，明天就不像——把它抽进内核，只会换来一堆为了让抽象成立而开的口子。
+**工具调用如何翻译成 `query` / `apply`，属于上边界的实现方，不属于内核。** 这一点值得写明，因为它容易被当成可以共用的样板：docx 的 `apply_insertImage` 收到 `hash` 字符串，必须先 `resolveBlob` 换成 SBlob 才能构造操作（`doctype-docx/src/agent.ts:86-113`），而 psd 的操作参数可以原样透传。它们今天看起来像，明天就不像——把它抽进内核，只会换来一堆为了让抽象成立而额外增加的特殊处理。
 
 **实现抽象**回答的是「这些动作靠什么完成」——文档读写通过什么通道、模型通过什么协议、结果字节怎么送到调用方。它对所有平台是同一套，DurableObject 和 Node 进程在这一层是同构的。
 
@@ -354,7 +354,7 @@ import type {
 
 **规则 1（内核不知道平台）** —— 新增 `tests/unit/agent-kernel-purity.test.ts`：扫描 `packages/doctype-server-common/src/agent/**` 的所有 import 与全局标识符，断言不出现 `Request` / `Response` / `DurableObject*` / `@cloudflare/*` / `@azure/*`。
 
-按目录扫而不是按包扫，是因为同包的 `doc-type-handler.ts` 和 `session-handler.ts` 本来就要用 `Request` / `Response`——它们是 HTTP 外壳，不在 agent 内核里。这也是不新建包所付的唯一代价：拿不到「整包 tsconfig 禁用平台类型」那道更硬的保险，只能靠目录级的扫描。这道扫描本来就是主要手段，tsconfig 那道是锦上添花。
+按目录扫而不是按包扫，是因为同包的 `doc-type-handler.ts` 和 `session-handler.ts` 本来就要用 `Request` / `Response`——它们是 HTTP 外壳，不在 agent 内核里。这也是不新建包所付的唯一代价：拿不到「整包 tsconfig 禁用平台类型」那道更硬的保险，只能靠目录级的扫描。不过目录扫描本来就是主要手段，tsconfig 那道只是额外的一层。
 
 **规则 3（两侧互不依赖）** —— 同一测试文件里的 `package.json` 断言：
 
@@ -450,7 +450,7 @@ classDiagram
 
 `AgentSession` 不持有 `lastKnownVersion`，不强制「apply 之前必须先 query」，也不解读版本冲突。**agent 的职责到「生成 op」为止。**
 
-理由：`apply` 是确定性算法，它自己就是校验器——这个仓库的编辑器本来就要求 `apply()` 完整校验，否则一个坏 op 会把文档写坏。既然如此，版本号就是个粗糙的替身：它拦的是「世界变了没」，而真正该问的是「我这个 op 现在还成不成立」。别人调了个图层透明度并不影响我裁剪画布，版本检查却会把它拦下来，让模型白跑一轮重新查询。
+理由：`apply` 是确定性算法，它自己就是校验器——这个仓库的编辑器本来就要求 `apply()` 完整校验，否则一个坏 op 会把文档写坏。既然如此，版本检查就是在问一个不精确的问题：它问的是「文档变了没」，而真正该问的是「我这个 op 现在还成不成立」。别人调了个图层透明度并不影响我裁剪画布，版本检查却会把它拒绝掉，让模型多花一轮重新查询。
 
 ```mermaid
 flowchart TB
@@ -483,12 +483,12 @@ flowchart TB
 接受这个代价，理由有三条：
 
 - 这类竞争要求「用户一边手工编辑一边让 agent 跑」，而客户端今天已经在避免（`web-psd/src/main.ts` 的 `chatBusy`）。
-- 就算发生，结果是一次编辑位置不对，用户看得见也能撤销；而版本检查换来的是每次并发都白跑一轮。
+- 就算发生，结果是一次编辑位置不对，用户看得见也能撤销；而版本检查的代价是每次并发都多花一轮。
 - 模型的工作流本来就是「改完看预览确认」（`doctype-psd/src/tools.ts:166` 的提示词明确要求），位置错了它自己会发现并纠正。
 
 ### 5.3 文档类型侧要改什么
 
-**分发逻辑不动。** `query_` / `apply_` 前缀怎么解析、参数怎么转换，仍然是各文档类型自己的事。psd 和 markdown 今天的 `toolCall` 逐行相同，那是巧合而不是共性——docx 已经先分叉了（它的 `apply_insertImage` 必须先 `resolveBlob` 把 `hash` 换成 SBlob，`doctype-docx/src/agent.ts:86-113`）。把这段抽进内核，只会换来一堆为了让抽象成立而开的口子。
+**分发逻辑不动。** `query_` / `apply_` 前缀怎么解析、参数怎么转换，仍然是各文档类型自己的事。psd 和 markdown 今天的 `toolCall` 逐行相同，那是巧合而不是共性——docx 已经先分叉了（它的 `apply_insertImage` 必须先 `resolveBlob` 把 `hash` 换成 SBlob，`doctype-docx/src/agent.ts:86-113`）。把这段抽进内核，只会换来一堆为了让抽象成立而额外增加的特殊处理。
 
 本次对文档类型只有**一处**要求，而且是协议层的，不是分发逻辑：
 
@@ -690,9 +690,9 @@ Anthropic 的 Messages API 要求每个 `tool_use` 块在紧随其后的消息�
 
 这一节容易被误认为是 PSD 的私事——毕竟只有 PSD 会一次跑 25 轮、每轮塞一张预览图。但有两条理由把它按在内核里。
 
-**第一，撑爆上下文的不只有 PSD。**
+**第一，会让上下文超出上限的不只有 PSD。**
 
-| 文档类型 | 会撑爆的东西 |
+| 文档类型 | 会让上下文超出上限的东西 |
 |---|---|
 | markdown | `query_getContent` 的描述原文是 "Get the **full** markdown content"——一篇长文档一次就是几万 token，多轮对话里会重复出现好几份 |
 | docx | `query_getImage` 返回 image content part（`doctype-docx/src/agent.ts:75`），和 PSD 的预览图一样占位 |
@@ -732,7 +732,7 @@ flowchart TB
 | psd | `preview 1024x768 region=[0,0,1024,768] v7` | `[image: preview 1024x768 region=[0,0,1024,768] v7]` |
 | docx | 图片本身的替换文字 | `[image: 公司组织架构图]` |
 
-这正好把今天 `cloudflare-psd/src/anthropic.ts:82` 的 `previewMeta` 归位了——它一直是 PSD 的知识，此前却长在大模型适配层里。搬家之后它去的是 PSD 自己的 `agent.ts`，作为 `altText` 的值，而不是内核的裁剪代码。
+这样一来，今天 `cloudflare-psd/src/anthropic.ts:82` 的 `previewMeta` 就回到了它该在的位置——它一直是 PSD 的知识，此前却写在大模型适配层里。改造后它移到 PSD 自己的 `agent.ts`，作为 `altText` 的值，而不是写进内核的裁剪代码。
 
 **第 2 级同理不懂文档类型：** 它只看 `structuredContent` 编码后的字节数，不看里面是什么。PSD 的 `getDoc` 返回整棵图层树、markdown 的 `getContent` 返回全文，对它是一回事。
 
@@ -746,7 +746,7 @@ flowchart TB
 | `maxResultBytes` | 8192 | 结果天然很大的可以调大 |
 | `budgetTokens` | 120_000 | 跟模型走，不跟文档类型走 |
 
-如果哪天某个文档类型需要完全不同的裁剪逻辑，可以自己实现 `ContextPolicy` 传进来（6.2.7 的接口）——但那是逃生出口，不是预期路径。默认策略应当覆盖绝大多数情况；如果不覆盖，说明默认策略需要改进，而不是每个文档类型各写一份。
+如果哪天某个文档类型需要完全不同的裁剪逻辑，可以自己实现 `ContextPolicy` 传进来（6.2.7 的接口）——但那是给特殊情况留的出口，不是预期路径。默认策略应当覆盖绝大多数情况；如果不覆盖，说明默认策略需要改进，而不是每个文档类型各写一份。
 
 #### 6.2.5 预算怎么算
 
@@ -925,13 +925,13 @@ save(
 ): Promise<string>;
 ```
 
-**这些列买到了什么**（一条 SQL 就能答的问题）：
+**加了这三列之后，下面这些问题一条 SQL 就能答**：
 
 - 哪些会话存在、各多大、各多少轮
 - 最后活动时间，据此清理长期不动的会话
 - join `doc_sessions` 拿到 `tenant_id`，做租户级用量统计
 
-**没买到的，说清楚**：按对话内容搜索、查「第 3 轮说了什么」。两者都要先解码 `bytes`。本次的设计里没有任何地方需要它们——UI 恢复聊天记录是把整段历史读出来解码，不是查询。真要做内容检索，得另建索引，属于另一件事。
+**仍然答不了的**：按对话内容搜索、查「第 3 轮说了什么」。两者都要先解码 `bytes`。本次的设计里没有任何地方需要它们——UI 恢复聊天记录是把整段历史读出来解码，不是查询。真要做内容检索，得另建索引，属于另一件事。
 
 #### 6.3.7 为什么不是一轮一行
 
@@ -959,7 +959,7 @@ save(
 - `clear()` 之后 `load()` 返回 null
 - 两个并发 `save` 只有一个成功
 - `save` 之后元数据列可查：`turn_count` / `byte_size` / `updated_at` 都不为空且与传入一致（6.3.6）
-- **存进去的字节含 SBlob 时，读回来 `isSBlob()` 仍为 true**（这条是为了钉死 6.1.1：任何一天有人把实现悄悄换成 JSON，这条会红）
+- **存进去的字节含 SBlob 时，读回来 `isSBlob()` 仍为 true**（这条对应 6.1.1：任何一天有人把实现改成 JSON，这个断言会失败）
 
 ### 6.4 引用保活：让历史里的图片不被回收
 
@@ -1119,7 +1119,7 @@ flowchart TB
     end
 ```
 
-左边那张图里，agent 的编辑有通知、人的编辑没有——这就是把 agent 变特殊了。而一旦将来要支持两个人同时编辑，那条 `document-changed` 通道会被整个拆掉重做。
+左边那张图里，agent 的编辑有通知、人的编辑没有——这就等于给 agent 单开了一条别人没有的路径。而一旦将来要支持两个人同时编辑，那条 `document-changed` 通道会被整个拆掉重做。
 
 **所以本次不建它。** 文档变更通道属于协同编辑，需要编辑器向订阅者扇出、需要订阅生命周期、在 Azure 的无状态多副本上尤其麻烦，是独立的一块工作。
 
@@ -1377,7 +1377,7 @@ flowchart TB
 | V9 | docx 的图片路径第一次真正跑通 | 现有 `doctype-docx/tests/agent.test.ts` 已覆盖 `getImage` / `insertImage`；再补一条端到端：删掉 renderToolResult 后，image content part 能被 Anthropic 适配层翻成图片块而不抛异常（P6） |
 | V10 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/doctype-server-common/src/agent/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止 |
 | V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.7） |
-| V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：存进去含 SBlob 的历史，读回来 `isSBlob()` 仍为 true。这条钉死"不能改用 JSON"（6.1.1） |
+| V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：存进去含 SBlob 的历史，读回来 `isSBlob()` 仍为 true。这条对应 6.1.1「不能改用 JSON」 |
 | V12b | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/context-policy.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
 | V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
 | V14 | 长会话不再无限增长 | PSD 跑满 25 轮后，`history` 的编码字节数低于设定预算，且图片 part 不超过 `maxImages` |
@@ -1425,10 +1425,10 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 字节存哪儿 | 直接进表的字节列：CF 用 DO SQLite `BLOB`，Azure 用 Postgres `BYTEA`。不绕 CAS——历史每轮都变，内容寻址去重收益接近零 |
 | 会话表怎么定位 | 用 `session_id`，不用 doc id。这是仓库刻意迁过去的约定——`migrations/0002_session_identity.sql` 把 `deltas` / `doc_snapshots` 的 `doc_id` 列改名成了 `session_id`，`doc_sessions` 负责映射到 `(tenant_id, doc_type)` |
 | 两端表名与列 | 完全一致：`agent_sessions`，同样的 `seq` / `turn_count` / `byte_size` / `updated_at` / `bytes`。唯一差别是主键——CF 用 `singleton`（一个 DO 只装一个 session），Azure 用 `(doc_type, session_id)`（一张表装所有）。这是承载方式的必然差异（6.3.4） |
-| bytes 不可查询怎么办 | 元数据单独成列。`turn_count` 由内核给（只有它知道），`byte_size` / `updated_at` 由平台自己算。买到的是「哪些会话、多大、多少轮、多久没动」；没买到的是内容检索——本次没有任何地方需要它（6.3.6） |
+| bytes 不可查询怎么办 | 元数据单独成列。`turn_count` 由内核给（只有它知道），`byte_size` / `updated_at` 由平台自己算。能答的是「哪些会话、多大、多少轮、多久没动」；答不了的是内容检索——本次没有任何地方需要它（6.3.6） |
 | 为什么不是一轮一行 | 一轮一行**也不能**让内容可查询，只是把不可查询的粒度变细；而裁剪就地生效意味着历史不是纯追加，它的主要优势发挥不出来（6.3.7） |
 | 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
-| 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样撑爆上下文；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`、叶子包传的阈值），不通过代码（6.2.2） |
+| 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样会让上下文超出上限；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`、叶子包传的阈值），不通过代码（6.2.2） |
 | 裁剪的最小单位 | 一轮（assistant + 它全部的 tool 消息），不是一条消息——否则会切出孤立的 `tool_result`，被 API 拒绝 |
 | 裁剪是否就地生效 | 是。返回值直接替换 history，让"发给模型的 = 存下来的 = 恢复出来的" |
 | 图片通道 | 协议层归一，统一走 SBlob content part；删除 `$image` 和 `renderToolResult` |
@@ -1438,6 +1438,6 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 上边界用什么接口 | 沿用已有的 `DocumentAgentFactory` / `DocumentAgent`（`protocol/src/types.ts:118-129`），本次不新造，也不修改 |
 | agent 与人的关系 | **对等的编辑者。** 两边都产生 op，op 提交后云端生成版本，编辑器眼里是同一件事。不给 agent 开任何特殊写入路径 |
 | `apply_xxx` 这类工具名 | 是分发器的机器语言，不是给模型的名字。它把「变换」和「提交」讲成两步，而本来是一步。建议 psd 改成领域动词并对齐提示词（5.3.1），但不属于本次范围——内核不认识前缀，怎么改都不影响内核 |
-| 文档变更怎么通知客户端 | **不通过 agent 事件流。** agent 与浏览器前的人是对等的编辑者，两边都产生 op；「文档变了」属于文档通道，人和 agent 的改动都从那里出来。把它挂在 agent 通道上等于把 agent 变特殊，将来支持多人编辑时要整个拆掉。本次不建那条通道，客户端沿用 run-end 后统一 reconcile（7.2.1） |
+| 文档变更怎么通知客户端 | **不通过 agent 事件流。** agent 与浏览器前的人是对等的编辑者，两边都产生 op；「文档变了」属于文档通道，人和 agent 的改动都从那里出来。把它挂在 agent 通道上，等于给 agent 单开一条人的编辑没有的路径，将来支持多人编辑时要整个拆掉。本次不建那条通道，客户端沿用 run-end 后统一 reconcile（7.2.1） |
 | 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:625`），由平台的 `apply` 实现读当前 head 得到（5.2） |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |
