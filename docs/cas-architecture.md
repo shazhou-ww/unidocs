@@ -360,28 +360,37 @@ tenant.
 
 ## 11. Authenticated HTTP API
 
-CAS owns its native service and admin route contracts. Because the routes are
-served by CAS, they do not repeat a `/cas` mount segment. A Gateway or other
-shared ingress may expose selected operations beneath its own `/cas` mount,
-but that mapping and allowlist are not part of the CAS protocol.
+CAS owns its native service and admin route contracts. A lightweight
+`cas-edge` Worker is the only public Worker on the CAS hostname. It dispatches
+unprefixed `/stacks` routes to the private `cloudflare-cas` tenant Worker and
+top-level `/admin` to the private `cas-admin-webui` Worker through separate
+service bindings; each path strips the other plane's credentials. Admin audit
+reads use a narrow private tenant audit-reader RPC that the edge never exposes,
+keeping the service call graph acyclic. Because the routes are served by CAS,
+they do not repeat a `/cas` mount segment. A Gateway or other shared ingress
+may expose selected tenant operations beneath its own `/cas` mount, but that
+mapping and allowlist are not part of the CAS protocol.
 
 Tenant service routes accept JWT capabilities from configured stack issuers.
-Each issuer maps to one stable `stackId`; multiple issuers and rotation keys may
-be configured for one stack. The tenant verifier checks issuer, `kid`,
-signature, algorithm, CAS data-plane audience, time bounds, permissions, and
-operation-specific claims before any DO, D1, or R2 access. The issuer-derived
-stack must match the path, and token tenant must equal path tenant.
+Each stack registers one stable issuer with multiple rotation keys selected by
+`kid`; the issuer maps uniquely to `stackId`. The tenant verifier checks issuer,
+key, signature, algorithm, CAS data-plane audience, time bounds, permissions,
+and operation-specific claims before any DO, D1, or R2 access. The
+issuer-derived stack must match the path, and token tenant must equal path
+tenant. The controlled authority registry is cached for 30 seconds; records
+older than the 60-second hard stale/revocation bound fail closed when they
+cannot be refreshed.
 
 Root Refs writers carry signed `refDomain`; callers cannot provide or override
 it through path, query, header, or body.
 
-Stack admin routes use an independent short-lived access token and a separate
-admin verifier, trust configuration, and audience. The admin token grants an
-explicit stack set and least-privilege admin permissions; it need not carry a
-tenant claim. Tenant JWTs are never accepted by admin routes even if they
-contain admin-looking scopes, and admin tokens are never accepted by tenant
-routes. A WebUI obtains its token through a control-plane backend or token
-exchange; browser code never embeds a long-lived broad admin secret.
+Top-level `/admin` routes use a Google OIDC-backed BFF session and stack
+membership. MVP members have equal administrator authority. Tenant JWTs are
+never accepted by admin routes even if they contain admin-looking scopes, and
+OIDC admin sessions are never accepted by tenant routes. The
+`cas-admin-webui` package owns the OIDC callback, secure session, CSRF boundary,
+admin BFF routes, and management UI; browser code never receives tenant JWTs,
+OIDC client secrets, or storage bindings.
 
 HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
 
@@ -490,19 +499,18 @@ disabled.
 Root Ref audit reads are formal stack-level admin contracts:
 
 ```http
-GET /stacks/{stackId}/admin/root-ref-domains/{refDomain}/refs
-GET /stacks/{stackId}/admin/root-ref-domains/{refDomain}/events
-Authorization: Bearer <CAS admin access token carrying cas:root-audit:read>
+GET /admin/stacks/{stackId}/root-ref-domains/{refDomain}/refs
+GET /admin/stacks/{stackId}/root-ref-domains/{refDomain}/events
+Cookie: cas_admin_session=<HttpOnly OIDC-backed session>
 ```
 
 Both reads support an optional exact `tenantId` filter and include `tenantId` in
-every row/event. Revisions are monotonic per `(stackId, refDomain)`. The admin
-namespace may later host other formal CAS control-plane APIs; each operation
-uses a dedicated permission rather than a universal admin credential.
+every row/event. Revisions are monotonic per `(stackId, refDomain)`. All stack
+members can use the MVP admin surface; finer-grained control-plane roles are
+deferred.
 
-WebUI and operator tooling use a dedicated admin client and control-plane
-ingress. The ordinary tenant `CasClient` cannot accept admin tokens or call
-admin routes.
+`cas-admin-webui` exposes the admin BFF and UI. The ordinary tenant `CasClient`
+cannot accept OIDC sessions or call admin routes.
 
 ### 11.8 Canonical binary codec
 
