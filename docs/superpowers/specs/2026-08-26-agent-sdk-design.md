@@ -241,7 +241,7 @@ protocol/src/types.ts
 ```ts
 // 新增到 protocol
 export interface LlmProvider { complete(request): Promise<AgentCompletion> }
-export interface AgentSessionStore { load(); save(bytes, token); clear() }
+export interface AgentSessionStore { load(options?); append(messages, meta, token); clear() }
 export type AgentMessage = ...    // 中立消息格式（5.4）
 export type AgentEvent = ...      // 事件表（7.1）
 ```
@@ -881,9 +881,10 @@ flowchart TB
 
 ```ts
 // doctype-server-common/src/agent/history.ts
-const MAX_IMAGES       = 2;        // 保留最近几张图片
-const MAX_RESULT_BYTES = 8_192;    // 单条工具结果超过这个就降级
-const BUDGET_TOKENS    = 120_000;  // 上下文预算，约为窗口的 60%
+const MAX_IMAGES            = 2;        // 发给模型时保留最近几张图片
+const MAX_RESULT_BYTES      = 8_192;    // 单条工具结果超过这个就降级
+const BUDGET_TOKENS         = 120_000;  // 上下文预算，约为窗口的 60%
+const RESTORE_MESSAGE_LIMIT = 200;      // restore 时从存储读回多少条（6.3.5）
 ```
 
 **不做成可配置项，也不暴露成可替换的策略接口。** 理由：
@@ -893,18 +894,27 @@ const BUDGET_TOKENS    = 120_000;  // 上下文预算，约为窗口的 60%
 
 裁剪逻辑单独放在 `history.ts` 一个文件里，输入是 `AgentMessage[]`、输出也是 `AgentMessage[]`，没有其他依赖。真到了需要按文档类型调参、或者需要换整套策略的那天，把这个文件的入口函数改成接口是一次局部改动，不牵动调用方。
 
-#### 6.2.6 一个明确的取舍：裁剪就地生效
+#### 6.2.6 裁剪只作用于发送，不改存储
 
-裁剪函数的返回值**直接替换 `AgentSession` 的 history**，不是只用于本次发送。
+裁剪函数的输出**只用于这一次发给模型**，`AgentSession` 内存里的历史窗口也随之替换，但**存储里的消息一条都不动**。
 
-| | 就地生效（选定） | 只用于发送 |
-|---|---|---|
-| 历史体量 | 有界 | 无界增长 |
-| 持久化 | 存的就是当前历史，天然有界 | 要么存完整历史（无界），要么存裁剪后的（与发送的不一致） |
-| 可预测性 | 发给模型的 = 存下来的 = 恢复出来的 | 三者不一致，出问题难排查 |
-| 代价 | 降级不可逆，旧预览图找不回来 | 理论上可找回 |
+这一条曾经写反过。先前的版本选了「裁剪就地生效、连存储一起改」，理由是「存的就是当前历史，天然有界」。那是错的，代价直到把使用者列全才看清：
 
-选就地生效。降级本来就是有损的，保留完整历史只是把同一份损失往后推，却换来无界增长和三份不一致的状态。
+| 使用者 | 要什么 |
+|---|---|
+| 模型 | 最近若干轮，且总量塞得进上下文窗口 |
+| 用户 | 从头到尾任意往回翻 |
+| 运维 | 这个会话多大、多久没动 |
+
+裁剪服务的是第一个。让它去删存储，等于为了第一个使用者把第二个使用者的数据毁掉——**旧轮次一旦被裁掉就再也翻不出来了**。
+
+所以：
+
+- `agent_messages` **只追加，写入后不再修改**。这与 `deltas` 是同一种表。
+- 图片降级、大结果省略、整轮丢弃，全部发生在读出来之后、发给模型之前，是内存里的一次纯函数变换。
+- 每次 `restore()` 重新算一遍。降级是纯函数，重算的结果一致。
+
+存储会随对话增长——这是正常的，一条消息就是一小段文字加几个 CAS 引用。真需要控制体量时，那是**独立的清理策略**（按 `updated_at` 清理长期不动的会话，或丢弃很老的轮次），与上下文裁剪无关，本次不做。
 
 #### 6.2.7 摘要压缩：本次不做，也不预留接口
 
@@ -978,42 +988,59 @@ export interface StoredMessage {
 }
 
 export interface AgentSessionStore {
-  /** 按 msgNo 升序读回整段历史。空会话返回 null */
-  load(): Promise<{ messages: readonly StoredMessage[]; token: string } | null>;
-  // load 无参数，理由见 6.3.5
+  /**
+   * 按 msgNo **倒序**取，返回时正序排好。
+   * 不传 options 才是读全部——那只用于导出或迁移，正常路径都带 limit。
+   */
+  load(options?: {
+    /** 最多取几条 */
+    readonly limit?: number;
+    /** 只取 msgNo 小于它的，用于往回翻页 */
+    readonly before?: number;
+  }): Promise<{
+    readonly messages: readonly StoredMessage[];   // 正序
+    readonly token: string;
+    /** 还有更早的没取，用于决定要不要显示"加载更多" */
+    readonly hasMore: boolean;
+  } | null>;
 
   /**
-   * 一次事务写入本轮的变化。token 不匹配时抛 SessionStoreConflictError。
-   * 返回新的 token。
+   * 追加本轮产生的消息。表是只追加的，写进去的消息不再修改（6.2.6）。
+   * token 不匹配时抛 SessionStoreConflictError，整个事务不生效。
    */
-  save(changes: {
-    /** 新增的消息，以及被裁剪改写过的消息（按 msgNo 覆盖） */
-    readonly upsert: readonly StoredMessage[];
-    /** 丢弃 turnNo 小于该值的所有消息；不裁剪时不传 */
-    readonly dropTurnsBefore?: number;
-    /** 汇总元数据，写进 agent_sessions */
-    readonly meta: { turnCount: number; byteSize: number };
-  }, token: string | null): Promise<string>;
+  append(
+    messages: readonly StoredMessage[],
+    meta: { turnCount: number; byteSize: number },
+    token: string | null,
+  ): Promise<string>;
 
   clear(): Promise<void>;
 }
 ```
 
-`save` 收的是**变化**而不是整段历史，这样一轮对话只写新增的那两三条，而不是把整段重写一遍。裁剪时的三级操作正好对应三种变化：图片降级和大结果省略是 `upsert`（覆盖已有的 `msgNo`），整轮丢弃是 `dropTurnsBefore`。
+`save` 改成了 `append`，而且不再有 `upsert` 和 `dropTurnsBefore`——因为裁剪不再动存储（6.2.6），消息写进去就不会被改写或删除。这与 `deltas` 是同一种表。
 
-三处写入必须在一个事务里：`agent_messages` 的 upsert、delete，和 `agent_sessions` 的 `seq` 条件更新。Azure 用现成的 `PgUnitOfWork`（`ports-pg.ts:270`），CF 用 `ctx.storage.transaction`。
+两处写入在一个事务里：`agent_messages` 的 INSERT，和 `agent_sessions` 的 `seq` 条件更新。Azure 用现成的 `PgUnitOfWork`（`ports-pg.ts:270`），CF 用 `ctx.storage.transaction`。
 
-#### 6.3.5 为什么 `load` 没有条件而 `save` 有
+#### 6.3.5 `load` 的两个调用方
 
-看着不对称，但两者要解决的问题不同。
+`load` 必须带条件，因为两个调用方要的都不是全部。
 
-`load` 无参数，因为内核只在 `restore()` 时调它一次，而它要的就是**整段历史**——那正是接下来要发给模型的东西，没有「只要其中一部分」的场景。历史的长度已经被裁剪封顶了（6.2），不会无限增长，所以一次读全部不会失控。
+**内核的 `restore()`**：只需要最近若干轮，够裁剪函数挑就行。
 
-并发控制不靠 `load` 的参数，而靠它的**返回值**：`load` 给出 `token`，写的时候 `save(..., token)` 拿它去校验。这一对合起来才是完整的乐观并发，`load` 自己不需要条件。
+```ts
+const RESTORE_MESSAGE_LIMIT = 200;   // 写死在 history.ts，与三个阈值放一起
+const { messages, token } = await store.load({ limit: RESTORE_MESSAGE_LIMIT }) ?? ...;
+```
 
-真正需要条件读的是另一类使用者——界面往回翻聊天记录时的分页。那属于文档变更通道那一侧（7.2.1），不在本次范围；真要做时给 `load` 加一个可选的范围参数即可，不影响现在的调用方。
+取 200 条而不是「最近 10 轮」，是因为一轮的消息条数不固定（一轮可能有多次工具调用）。200 条足够裁剪函数在 12 万 token 的预算里挑满，多取的部分会被裁掉，代价只是一次多读几行。
+
+**界面往回翻**：`load({ limit: 50, before: 最早已显示的 msgNo })`，靠 `hasMore` 决定还要不要显示「加载更多」。这条路要配一个 HTTP 端点，本次不做（7.2.1 的文档变更通道那一侧），但接口现在就支持，不用回头改。
+
+并发控制不靠 `load` 的参数，靠它的**返回值**：`load` 给出 `token`，写的时候 `append(..., token)` 校验。翻页时的 `load` 返回的 token 会是当时的最新值，不影响正在进行的 run——因为翻页只读不写。
 
 #### 6.3.6 条件写
+
 
 凭据是 `agent_sessions.seq`，两端机制同构：
 
@@ -1067,10 +1094,11 @@ GROUP BY s.tenant_id;
 `doctype-server-common/src/testing/port-contract.ts` 已经立了「一份契约测试，两个平台各跑一遍」的先例。内核从 `@unidocs/doctype-server-common/agent` 导出同样形状的 `agentSessionStoreContract(makeStore)`，覆盖：
 
 - 空 store 的 `load()` 返回 null
-- `save({upsert, meta}, null)` 之后 `load()` 按 `msgNo` 升序拿回同样的消息，`role` / `turnNo` / `toolCallId` / `text` 逐字段一致
-- `upsert` 覆盖一条已存在的 `msgNo`，`load()` 拿到的是新内容而不是两条
-- `dropTurnsBefore` 之后，早于该轮的消息全部消失，之后的一条不少
-- 用过期 token 调 `save` 抛 `SessionStoreConflictError`，且**这次调用的所有写入都不生效**（事务性，6.3.4）
+- `append(messages, meta, null)` 之后 `load()` 按 `msgNo` 升序拿回同样的消息，`role` / `turnNo` / `toolCallId` / `text` 逐字段一致
+- `load({ limit: n })` 返回**最后** n 条且正序排好；条数不足时 `hasMore` 为 false
+- `load({ limit: n, before: k })` 只返回 `msgNo < k` 的最后 n 条——翻页读得到更早的内容
+- 追加之后再 `load`，先前写入的消息一条不少、一个字节不变（只追加，6.2.6）
+- 用过期 token 调 `append` 抛 `SessionStoreConflictError`，且**这次调用的所有写入都不生效**（事务性，6.3.4）
 - `clear()` 之后 `load()` 返回 null
 - 两个并发 `save` 只有一个成功
 - `agent_sessions` 的 `turn_count` / `byte_size` / `updated_at` 与传入的 `meta` 一致
@@ -1096,11 +1124,9 @@ await commitRootRefsOrRollback(
 会话历史照此办理，只是换一个 requestId 前缀：
 
 ```ts
-// 每条消息的 payload 各自带 refs，本轮的增量只看变化的那几条
+// 表是只追加的，所以增量永远只有加号，没有减号
 const refs = new Map<string, number>();
-for (const m of changes.upsert)          addRefs(refs, encodeSValueWithRefs(m).refs, +1);
-for (const m of droppedMessages)         addRefs(refs, m.refs, -1);
-for (const m of replacedMessages)        addRefs(refs, m.refs, -1);   // upsert 覆盖掉的旧版本
+for (const m of appendedMessages) addRefs(refs, encodeSValueWithRefs(m).refs, +1);
 
 await commitRootRefsOrRollback(
   cas,
@@ -1110,7 +1136,9 @@ await commitRootRefsOrRollback(
 );
 ```
 
-一条消息一行在这里正好省事：只有本轮**变化过的**消息需要重算引用，没动过的消息引用不变，不用把整段历史重新编码一遍。
+因为裁剪不再动存储（6.2.6），这里比先前的版本简单一档：**引用只增不减**，不需要算差集，也不需要跟踪哪条消息被覆盖或删除了。
+
+释放引用是清理策略的事——将来真要丢弃很老的轮次时，那次操作提交对应的负数增量。那是独立的一件事，本次不做。
 
 顺序与 `session.ts` 的写入顺序同构：**先落消息，再提交引用，引用失败就回滚这次事务**。反过来会在崩溃的时间窗里留下「引用已加、消息没写」的孤立引用。
 
@@ -1192,9 +1220,9 @@ sequenceDiagram
     G->>W: 转发，带身份头
 
     W->>S: restore()
-    S->>W: store.load()
-    W-->>S: 历史字节 + token
-    Note over S: decodeSValue；读不到的图片降级成文字（6.6）
+    S->>W: store.load({ limit: 200 })
+    W-->>S: 最近 200 条消息 + token
+    Note over S: 逐条 decodeSValue；读不到的图片降级成文字（6.6）
 
     W->>S: run(指令)
 
@@ -1224,8 +1252,8 @@ sequenceDiagram
 
     S-->>B: run-end 或 run-error
 
-    S->>S: encodeSValue(history)，算根引用增量
-    S->>W: store.save(bytes, {turnCount}, token)（6.3）
+    S->>S: 把本轮新消息编码，算根引用增量
+    S->>W: store.append(本轮新增的消息, meta, token)（6.3）
     S->>W: commitRootRefs(agent:sessionId:seq, 增量)（6.4）
     Note over B: 收到 run-end 后调 session.reconcile()<br/>同步文档（8.4）
 ```
@@ -1525,7 +1553,8 @@ flowchart TB
 | V12c | 消息的结构字段真的成了列，不用解码就能查 | 跑完一轮后直接查库：`SELECT role, count(*) FROM agent_messages GROUP BY role` 能分出 user / assistant / tool 三类，且条数与实际一致（6.3.8） |
 | V12b | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/history.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
 | V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
-| V14 | 长会话不再无限增长 | PSD 跑满 25 轮后，`history` 的编码字节数低于设定预算，且图片 part 不超过 `maxImages` |
+| V14 | 发给模型的历史不超预算 | PSD 跑满 25 轮后，抓一次 provider 请求体：估算 token 低于 `BUDGET_TOKENS`，图片 part 不超过 `MAX_IMAGES` |
+| V14b | 裁剪不动存储 | 同一次运行结束后查库：`agent_messages` 里本轮所有消息一条不少，且早期那些含图片的消息 `payload` 与写入时逐字节相同——裁剪只发生在发送路径上（6.2.6） |
 | V15 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
 | V16 | 历史引用的图片不被回收 | 跑一轮产生预览图 → 删掉对应图层并 apply → 断言历史里那张图仍可 `readBlob`（6.4 的根引用生效） |
 
@@ -1572,10 +1601,12 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 会话历史怎么存 | **一条消息一行**，两张表：`agent_sessions`（一行，条件写凭据 + 汇总元数据）配 `agent_messages`（一条消息一行，`role` / `turn_no` / `tool_call_id` / `text` 成列，消息本体是 SValue 字节）。形状照搬 `doc_sessions` 配 `deltas`。两端同名同列，只有主键不同——CF 用 `singleton`，Azure 用复合主键（6.3.1、6.3.2） |
 | 哪些东西成列、哪些成字节 | **结构成列，内容成字节。** `role` / `turn_no` / `tool_call_id` 是消息的结构，是纯标量，没有理由埋进 CBOR；消息本体含 SBlob，只能是 SValue 字节（6.1.1）。另存一列派生的 `text` 用于不解码就能看懂对话，它永远不是权威（6.3.2） |
 | 写入时机 | **每一轮结束写一次。** 一条消息一行之后，一轮只 INSERT 两三行，代价与整段重写完全不同，没有理由让崩溃丢掉整段对话（6.5） |
+| 裁剪要不要改存储 | **不要。** 裁剪服务的是「塞进模型窗口」，存储服务的是「用户能往回翻」，两个使用者要的不是一回事。让裁剪去删存储，等于为了前者把后者的数据毁掉——旧轮次一裁就再也翻不出来。表只追加，裁剪是读出来之后的一次内存变换（6.2.6） |
+| `load` 要不要带条件 | **要。** 两个调用方要的都不是全部：内核 `restore()` 只需最近若干条（写死 200），界面往回翻需要 `limit` + `before` 分页。控制体量的清理策略是第三件事，与前两者都无关，本次不做（6.3.5） |
 | 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
 | 文档类型要不要持有平台句柄 | **不要。** 一个工具无非是读或写，声明自己是哪一种再给一个纯函数就够了，不需要有人递给它 `query` / `apply`。`resolveBlob` 也不需要——租约由 `session.ts:608` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，剩下的 `createSBlob(hash)` 是同步纯函数（5.1.1） |
 | `DocumentAgentContext` 的去向 | 它原本是递给文档类型的句柄，现在文档类型不接受句柄，它就退化成纯粹的平台接口 `AgentPlatform`（`query` / `apply` / `readBlob`），只有内核调。`readBlob` 本来也没有任何文档类型在用——今天唯一的调用点 `operator-do-agent.ts:158` 正是要删的那条路（5.1.4） |
-| 裁剪要不要做成可替换的策略 | **不要。** 三个阈值直接写死在 `history.ts`，不做成参数，也不暴露策略接口。这些数字合不合适要跑起来才知道，现在固化成 API 等于在没有依据的情况下先定契约，而它会立刻被三个文档类型和两个平台引用。裁剪逻辑是一个输入输出都是 `AgentMessage[]` 的纯函数，将来真要可配置，改这一个文件即可（6.2.5） |
+| 裁剪要不要做成可替换的策略 | **不要。** 四个阈值直接写死在 `history.ts`，不做成参数，也不暴露策略接口。这些数字合不合适要跑起来才知道，现在固化成 API 等于在没有依据的情况下先定契约，而它会立刻被三个文档类型和两个平台引用。裁剪逻辑是一个输入输出都是 `AgentMessage[]` 的纯函数，将来真要可配置，改这一个文件即可（6.2.5） |
 | 摘要压缩要不要预留接口 | **不预留。** 前三级都是同步纯函数；为一个还没实测过的功能把入口改成异步、再引入 `LlmProvider` 依赖，是为想象中的需求付真实的复杂度（6.2.7） |
 | 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样会让上下文超出上限；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`、叶子包传的阈值），不通过代码（6.2.2） |
 | 裁剪的最小单位 | 一轮（assistant + 它全部的 tool 消息），不是一条消息——否则会切出孤立的 `tool_result`，被 API 拒绝 |
