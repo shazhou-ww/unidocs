@@ -200,7 +200,7 @@ Expected: FAIL,`Cannot find module '../../../stacks/azure/doc-types.mjs'`
 
 ```js
 /**
- * Azure doc type 的唯一事实来源:扫 `packages/azure-*/azure.service.json`。
+ * Azure doc type 的唯一事实来源:扫 `packages/azure-<name>/azure.service.json`。
  *
  * 为什么读文件的逻辑在这里而不在 `local/ports.mjs`:后者刻意零依赖(连
  * `node:` 内置模块都不 import),`dev.mjs` 要在 import 任何重家伙之前就用
@@ -438,7 +438,7 @@ export const AZURE_PORT_STRIDE = 10;
 
 /**
  * `portBases` 是必填的:本模块刻意零依赖,读不了
- * `packages/azure-*/azure.service.json`。由调用方从
+ * `packages/azure-<name>/azure.service.json`。由调用方从
  * `stacks/azure/doc-types.mjs` 的 `azureDocTypePortBases()` 传进来。
  * 这样"有哪些 doc type"只有一个来源,而端口算法仍然可以脱离文件系统单测。
  */
@@ -499,7 +499,7 @@ import { azureDocTypePortBases, readAzureDocTypes } from "../doc-types.mjs";
 ```js
 /**
  * Doc types this task knows how to spawn a bundle for —— 由
- * `packages/azure-*/azure.service.json` 声明,不是这里的一份列表。每个名字
+ * `packages/azure-<name>/azure.service.json` 声明,不是这里的一份列表。每个名字
  * 都必须有对应的 `packages/azure-${name}/src/main.ts` 入口。传一个未声明的
  * 名字必须在 spawn 任何东西之前失败,而不是走到一半在一个不存在的路径上
  * `esbuild.build()`。
@@ -887,7 +887,7 @@ const accessKeySecretName = (docType) => `${docType}-access-key`;
 ```js
 /**
  * 镜像清单:网关 + 网关迁移 + 每个 doc type 一个服务镜像 + 共用的 Doc 迁移。
- * doc type 那一段从 `packages/azure-*/azure.service.json` 展开,不是一份
+ * doc type 那一段从 `packages/azure-<name>/azure.service.json` 展开,不是一份
  * 手写名单 —— 加一个 doc type 只该改那个包,不该改这里。
  */
 export function azureImages(table = readAzureDocTypes(ROOT)) {
