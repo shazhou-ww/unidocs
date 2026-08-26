@@ -1,0 +1,30 @@
+import { afterAll, beforeAll } from "vitest";
+import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { runAuthorizationSuite } from "../shared/authorization-suite.mjs";
+
+let runtime;
+let casRuntime;
+
+beforeAll(async () => {
+  casRuntime = await startLocalRuntime({
+    docTypes: ["markdown"],
+    ports: { gateway: 35787, markdown: 35788, cas: 35791 },
+    internalAuthMode: "capability",
+  });
+  runtime = await startAzureRuntime({
+    docTypes: ["markdown", "docx"],
+    internalAuthMode: "capability",
+    casBaseUrl: casRuntime.urls.cas,
+    capabilityFixture: casRuntime.capabilityFixture,
+  });
+}, 180_000);
+
+afterAll(async () => {
+  await runtime?.dispose();
+  await casRuntime?.dispose();
+}, 60_000);
+
+runAuthorizationSuite(() => runtime, {
+  docTypes: ["markdown", "docx"],
+});

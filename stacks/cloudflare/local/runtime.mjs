@@ -202,7 +202,7 @@ function assertPortFree(host, port) {
 function createStorageProbe(mf) {
   const tenantByHash = new Map();
   return {
-    async snapshotIndex(docType, docId) {
+    async sessionIdentity(docType, docId) {
       const db = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
       const directory = await db
         .prepare(
@@ -211,19 +211,27 @@ function createStorageProbe(mf) {
         )
         .bind(docType, docId)
         .first();
+      if (!directory) return null;
+      return {
+        sessionId: directory.session_id,
+        tenantId: directory.tenant_id,
+      };
+    },
+    async snapshotIndex(docType, docId) {
+      const directory = await this.sessionIdentity(docType, docId);
       if (!directory) return [];
       const spec = DOC_TYPES[docType];
       const namespace = await mf.getDurableObjectNamespace(spec.editor, spec.worker);
       const id = namespace.idFromName(docSessionObjectName(
-        directory.tenant_id,
-        directory.session_id,
+        directory.tenantId,
+        directory.sessionId,
       ));
       const response = await namespace.get(id).fetch(
         "https://editor.internal/_internal/snapshot-index",
         {
           headers: {
-            "X-Tenant-Id": directory.tenant_id,
-            "X-Session-Id": directory.session_id,
+            "X-Tenant-Id": directory.tenantId,
+            "X-Session-Id": directory.sessionId,
             "X-UniDocs-Auth-Context": "capability",
             "X-UniDocs-Doc-Operation": "history",
           },
@@ -232,7 +240,7 @@ function createStorageProbe(mf) {
       const body = await response.json();
       if (!response.ok || body.success !== true) return [];
       return body.data.map((row) => {
-        tenantByHash.set(row.hash, directory.tenant_id);
+        tenantByHash.set(row.hash, directory.tenantId);
         return { version: row.version, hash: row.hash };
       });
     },

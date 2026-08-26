@@ -806,6 +806,7 @@ export async function startAzureRuntime({
 
     return {
       urls,
+      capabilityFixture: resolvedCapabilityFixture,
       storage: probe,
       // A function, not a snapshot: `startReplicaProxy()`'s own `hits()` is
       // itself a live accessor, and callers here (the multi-replica suite,

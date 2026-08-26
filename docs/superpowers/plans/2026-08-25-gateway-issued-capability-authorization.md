@@ -3,7 +3,8 @@
 > **Status:** In progress. The P0 boundary prerequisite completed in
 > `cdce042`. Tasks 0-3 are complete. The implementation was rebased onto
 > `origin/main` commit `d01afd0` on 2026-08-26 after the cloud stack directory
-> reorganization; Tasks 0-6 are complete and Task 7 is next.
+> reorganization; Tasks 0-6 are complete, Task 7 repository rollout support is
+> ready with production observation gates pending, and Task 8 is in progress.
 >
 > **For agentic workers:** Use an executing-plans workflow and complete one
 > task at a time. Keep the checkboxes current. Do not combine this migration
@@ -1498,17 +1499,17 @@ Doc/CAS runtime.
 
 ### Task 8: Protocol conformance, security integration, and canonical docs
 
-- [ ] Add one shared HTTP conformance and authorization behavior suite and run
+- [x] Add one shared HTTP conformance and authorization behavior suite and run
       it against Gateway, every supported Doc runtime/doctype, and every CAS
       runtime.
 - [ ] Assert all current methods, operation names, query parameters, request and
       response fields, status behavior, media types, and headers remain intact
       after the tenant/auth and package migrations.
 - [ ] Cover valid current create/read/write and CAS read/write/admin operations.
-- [ ] Cover missing, malformed, tampered, expired, future, overlong, wrong-key,
+- [x] Cover missing, malformed, tampered, expired, future, overlong, wrong-key,
       wrong-issuer, wrong-audience, wrong-permission, wrong-tenant, and
       wrong-session tokens.
-- [ ] Prove that a Doc token cannot call CAS and a CAS token cannot call Doc.
+- [x] Prove that a Doc token cannot call CAS and a CAS token cannot call Doc.
 - [ ] Prove that delegated CAS capabilities never contain Doc permissions or
       `cas:admin`, and that Doc tokens never reach CAS.
 - [ ] Prove that user credentials/cookies/internal-looking public headers never
@@ -1530,6 +1531,24 @@ Doc/CAS runtime.
 - [ ] Update canonical architecture, deployment, operations, and incident
       response documentation. Mark this plan complete rather than leaving it as
       a competing source of truth.
+
+Task 8 implementation record (in progress, 2026-08-26):
+
+- Added `tests/integration/shared/authorization-suite.mjs` and backend entry
+      points for Cloudflare and Azure. Gateway creates the test documents, then
+      the suite probes every current Doc edge directly: Cloudflare Markdown,
+      DOCX, and PSD plus Azure Markdown and DOCX. The Cloudflare entry also probes
+      the sole current CAS runtime directly.
+- The Doc matrix accepts an exact session-read capability and rejects missing,
+      malformed, byte-tampered, expired, future, overlong, wrong-key,
+      wrong-issuer, CAS-audience, wrong-permission, wrong-tenant, wrong-session,
+      and legacy credentials with the required `401`/`403` split.
+- The CAS matrix performs real capability-authenticated node write/read and
+      tenant-admin usage operations, then rejects missing, legacy, Doc-audience,
+      admin-as-read, and wrong-tenant credentials. Focused Cloudflare/Azure
+      execution passes 22/22. Root typecheck passes; the full local suite passes
+      305 with 2 conditional skips, and the full Azure suite passes 23/23 with
+      Postgres, Azurite, and child-process cleanup.
 
 Final validation:
 
