@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
 
-const USER = "psd-e2e-user";
+const TENANT = "psd-e2e-tenant";
 const MINIFLARE_PORTS = { gateway: 34787, psd: 34790, cas: 34791 };
 
 let miniflare;
@@ -33,6 +33,11 @@ beforeAll(async () => {
   azure = await startAzureRuntime({
     docTypes: ["psd"],
     casBaseUrl: miniflare.urls.cas,
+    // 两套栈必须共用同一把 capability 签名密钥:各自
+    // `createEphemeralCapabilityFixture()` 会生成两把不同的，Azure 侧签出的
+    // 委托 CAS capability 在 Cloudflare 的 CAS worker 上验不过，表现为
+    // `CAS leaseExisting failed: 401 Unauthorized`。同 azure-docx-image。
+    capabilityFixture: miniflare.capabilityFixture,
   });
 }, 300_000);
 
@@ -60,7 +65,7 @@ test("psd imports, lists layers and renders a preview on the Azure stack", async
   // 同一条路子。
   const form = new FormData();
   form.append("file", new File([psd], "sample.psd", { type: "image/vnd.adobe.photoshop" }));
-  const created = await closeFetch(`${azure.urls.gateway}/users/${USER}/docs/psd/`, {
+  const created = await closeFetch(`${azure.urls.gateway}/tenants/${TENANT}/docs/psd/`, {
     method: "POST",
     body: form,
   });
@@ -70,7 +75,7 @@ test("psd imports, lists layers and renders a preview on the Azure stack", async
   expect(docId).toBeTypeOf("string");
 
   const layers = await closeFetch(
-    `${azure.urls.gateway}/users/${USER}/docs/psd/${docId}/query`,
+    `${azure.urls.gateway}/tenants/${TENANT}/docs/psd/${docId}/query`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -85,7 +90,7 @@ test("psd imports, lists layers and renders a preview on the Azure stack", async
 
   // 这一步才碰 CAS：getPreview 要读回被 externalize 出去的像素。
   const preview = await closeFetch(
-    `${azure.urls.gateway}/users/${USER}/docs/psd/${docId}/query`,
+    `${azure.urls.gateway}/tenants/${TENANT}/docs/psd/${docId}/query`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
