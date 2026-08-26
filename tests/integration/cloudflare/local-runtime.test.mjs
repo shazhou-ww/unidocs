@@ -4,6 +4,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+} from "jose";
+import {
   CAS_ACCESS_KEY,
   startLocalRuntime,
 } from "../../../stacks/cloudflare/local/runtime.mjs";
@@ -59,6 +64,54 @@ test("gateway creates a docx doc via a separate registered workerUrl", async () 
   const listed = await list.json();
   expect(listed.data.map((row) => row.doc_id)).toContain(created.docId);
 });
+
+test("capability mode starts with rotation overlap and completes a Doc flow", async () => {
+  const oldPair = await generateKeyPair("ES256", { extractable: true });
+  const newPair = await generateKeyPair("ES256", { extractable: true });
+  const oldPublic = await exportJWK(oldPair.publicKey);
+  const newPublic = await exportJWK(newPair.publicKey);
+  const fixture = {
+    issuer: "unidocs-gateway:local-test",
+    kid: "new-key",
+    privateKeyPkcs8: await exportPKCS8(newPair.privateKey),
+    jwks: {
+      keys: [
+        { ...oldPublic, kid: "old-key", alg: "ES256", use: "sig" },
+        { ...newPublic, kid: "new-key", alg: "ES256", use: "sig" },
+      ],
+    },
+  };
+  const capable = await startLocalRuntime({
+    docTypes: ["markdown"],
+    ports: { gateway: 18687, markdown: 18688, cas: 18690 },
+    internalAuthMode: "capability",
+    capabilityFixture: fixture,
+  });
+  try {
+    const gatewayBindings = await capable.mf.getBindings("unidocs-gateway");
+    const docBindings = await capable.mf.getBindings("unidocs-markdown");
+    const casBindings = await capable.mf.getBindings("unidocs-cas");
+    expect(gatewayBindings.CAPABILITY_PRIVATE_KEY_PKCS8).toContain("BEGIN PRIVATE KEY");
+    expect(docBindings.CAPABILITY_PRIVATE_KEY_PKCS8).toBeUndefined();
+    expect(casBindings.CAPABILITY_PRIVATE_KEY_PKCS8).toBeUndefined();
+    expect(JSON.parse(docBindings.CAPABILITY_TRUSTED_JWKS).keys.map(key => key.kid))
+      .toEqual(["old-key", "new-key"]);
+
+    const create = await fetch(
+      `${capable.urls.gateway}/tenants/tenant-cap/docs/markdown/`,
+      { method: "POST" },
+    );
+    expect(create.status).toBe(200);
+    const created = await create.json();
+    const history = await fetch(
+      `${capable.urls.gateway}/tenants/tenant-cap/docs/markdown/${created.docId}/history`,
+    );
+    expect(history.status).toBe(200);
+    await expect(history.json()).resolves.toMatchObject({ success: true, version: 1 });
+  } finally {
+    await capable.dispose();
+  }
+}, 60_000);
 
 // 过渡形态(阶段 4 删除):Azure 栈的 CAS_BASE_URL 要打到这个直连端口
 // (见 doc-types.mjs 的 CAS_PORT 与 buildWorkers 里的 unsafeDirectSockets)。

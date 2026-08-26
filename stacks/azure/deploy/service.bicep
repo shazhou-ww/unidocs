@@ -26,6 +26,13 @@ param serviceAccessKey string
 @secure()
 param casAccessKey string = ''
 
+@secure()
+param capabilityTrustedJwks string = ''
+
+param internalAuthMode string = 'legacy'
+param capabilityIssuer string = 'unidocs-gateway:azure-dev'
+param casCapabilityAudience string = 'unidocs-cas'
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }
@@ -78,7 +85,7 @@ var casEnv = casBaseUrl != '' ? [
 var authEnv = [
   {
     name: 'INTERNAL_AUTH_MODE'
-    value: 'legacy'
+    value: internalAuthMode
   }
   {
     name: 'DOC_CAPABILITY_AUDIENCE'
@@ -86,7 +93,27 @@ var authEnv = [
   }
   {
     name: 'CAS_CAPABILITY_AUDIENCE'
-    value: 'unidocs-cas'
+    value: casCapabilityAudience
+  }
+  {
+    name: 'CAPABILITY_ISSUER'
+    value: capabilityIssuer
+  }
+  {
+    name: 'CAPABILITY_ALGORITHM'
+    value: 'ES256'
+  }
+  {
+    name: 'CAPABILITY_TTL_SECONDS'
+    value: '120'
+  }
+  {
+    name: 'CAPABILITY_MAX_LIFETIME_SECONDS'
+    value: '300'
+  }
+  {
+    name: 'CAPABILITY_CLOCK_SKEW_SECONDS'
+    value: '30'
   }
 ]
 
@@ -108,6 +135,7 @@ module app 'container-app.bicep' = {
     databaseUrl: databaseUrl
     serviceAccessKey: serviceAccessKey
     casAccessKey: casAccessKey
+    capabilityTrustedJwks: capabilityTrustedJwks
     extraEnv: extraEnv
   }
 }

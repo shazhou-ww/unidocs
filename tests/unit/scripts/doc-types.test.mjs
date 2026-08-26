@@ -178,6 +178,10 @@ test("buildWorkers separates Gateway, Doc, and CAS credentials", () => {
   expect(cas.bindings).toEqual({
     INTERNAL_AUTH_MODE: "legacy",
     CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAPABILITY_ALGORITHM: "ES256",
+    CAPABILITY_TTL_SECONDS: "120",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_CLOCK_SKEW_SECONDS: "30",
     CAS_ACCESS_KEY,
   });
   expect(docx.bindings).toEqual({
@@ -185,9 +189,23 @@ test("buildWorkers separates Gateway, Doc, and CAS credentials", () => {
     INTERNAL_AUTH_MODE: "legacy",
     DOC_CAPABILITY_AUDIENCE: "unidocs-doc:docx",
     CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAPABILITY_ALGORITHM: "ES256",
+    CAPABILITY_TTL_SECONDS: "120",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_CLOCK_SKEW_SECONDS: "30",
     SERVICE_ACCESS_KEY: docServiceAccessKey("docx"),
   });
   expect(docx.bindings.SERVICE_ACCESS_KEY).not.toBe(CAS_ACCESS_KEY);
+});
+
+test("capability local workers require a fixture", () => {
+  expect(() => buildWorkers({
+    docTypes: ["markdown"],
+    host: "127.0.0.1",
+    ports: { gateway: 8787, markdown: 8788, cas: CAS_PORT },
+    bundleDir: "/b",
+    internalAuthMode: "capability",
+  })).toThrow(/capabilityFixture/);
 });
 
 test("casFault 为 true 时,doc-type worker 指向假 CAS,gateway 仍指向真 CAS", () => {

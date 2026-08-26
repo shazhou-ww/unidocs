@@ -153,7 +153,32 @@ export function docServicesJson(docTypes, host, ports) {
  * `extraBindings` maps a doc type name to additional bindings (e.g. secrets
  * loaded from its .dev.vars) merged into that worker only.
  */
-export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = false, extraBindings = {} }) {
+export function buildWorkers({
+  docTypes,
+  host,
+  ports,
+  bundleDir,
+  casFault = false,
+  extraBindings = {},
+  internalAuthMode = "legacy",
+  capabilityFixture,
+}) {
+  if (!["legacy", "dual", "capability"].includes(internalAuthMode)) {
+    throw new Error("internalAuthMode must be legacy, dual, or capability");
+  }
+  if (internalAuthMode !== "legacy" && !capabilityFixture) {
+    throw new Error("capabilityFixture is required for dual/capability local runtime");
+  }
+  const policyBindings = {
+    CAPABILITY_ALGORITHM: "ES256",
+    CAPABILITY_TTL_SECONDS: "120",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+  };
+  const validatorBindings = capabilityFixture ? {
+    CAPABILITY_ISSUER: capabilityFixture.issuer,
+    CAPABILITY_TRUSTED_JWKS: JSON.stringify(capabilityFixture.jwks),
+  } : {};
   const workers = [
     {
       name: GATEWAY_WORKER,
@@ -163,7 +188,14 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       bindings: {
         CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: docServicesJson(docTypes, host, ports),
-        INTERNAL_AUTH_MODE: "legacy",
+        INTERNAL_AUTH_MODE: internalAuthMode,
+        ...policyBindings,
+        ...(capabilityFixture ? {
+          CAPABILITY_ISSUER: capabilityFixture.issuer,
+          CAPABILITY_KEY_ID: capabilityFixture.kid,
+          CAPABILITY_PRIVATE_KEY_PKCS8: capabilityFixture.privateKeyPkcs8,
+          CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+        } : {}),
         INSECURE_PATH_IDENTITY: "true",
       },
       d1Databases: { GATEWAY_DB },
@@ -175,8 +207,10 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       scriptPath: join(bundleDir, "cas.js"),
       compatibilityDate: COMPATIBILITY_DATE,
       bindings: {
-        INTERNAL_AUTH_MODE: "legacy",
+        INTERNAL_AUTH_MODE: internalAuthMode,
         CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+        ...policyBindings,
+        ...validatorBindings,
         CAS_ACCESS_KEY,
       },
       durableObjects: {
@@ -211,9 +245,11 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       compatibilityDate: COMPATIBILITY_DATE,
       bindings: {
         CAS_ACCESS_KEY,
-        INTERNAL_AUTH_MODE: "legacy",
+        INTERNAL_AUTH_MODE: internalAuthMode,
         DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
         CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+        ...policyBindings,
+        ...validatorBindings,
         SERVICE_ACCESS_KEY: docServiceAccessKey(name),
         ...(extraBindings[name] ?? {}),
       },

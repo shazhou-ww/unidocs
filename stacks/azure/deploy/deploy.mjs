@@ -51,6 +51,8 @@ const PG_ADMIN_PASSWORD_SECRET = "pg-admin-password";
 const CAS_ACCESS_KEY_SECRET = "cas-access-key";
 const MARKDOWN_ACCESS_KEY_SECRET = "markdown-access-key";
 const DOCX_ACCESS_KEY_SECRET = "docx-access-key";
+const CAPABILITY_PRIVATE_KEY_SECRET = "capability-private-key-pkcs8";
+const CAPABILITY_TRUSTED_JWKS_SECRET = "capability-trusted-jwks";
 
 /** 迁移轮询:每 5 秒查一次,10 分钟超时。 */
 const MIGRATION_POLL_INTERVAL_MS = 5_000;
@@ -200,6 +202,9 @@ export function parseArgs(argv) {
     ...DEFAULTS,
     casBaseUrl: "",
     casAccessKey: "",
+    internalAuthMode: "legacy",
+    capabilityIssuer: "unidocs-gateway:azure-dev",
+    capabilityKeyId: "",
     skipBuild: false,
     buildConcurrency: DEFAULT_BUILD_CONCURRENCY,
   };
@@ -217,6 +222,9 @@ export function parseArgs(argv) {
       case "--location": args.location = argv[++i]; break;
       case "--cas-base-url": args.casBaseUrl = argv[++i]; break;
       case "--cas-access-key": args.casAccessKey = argv[++i]; break;
+      case "--internal-auth-mode": args.internalAuthMode = argv[++i]; break;
+      case "--capability-issuer": args.capabilityIssuer = argv[++i]; break;
+      case "--capability-key-id": args.capabilityKeyId = argv[++i]; break;
       case "--skip-build": args.skipBuild = true; break;
       case "--bootstrap": bootstrapFlag = true; break;
       case "--platform": platformFlag = true; break;
@@ -246,6 +254,14 @@ export function parseArgs(argv) {
     if (gatewayFlag) targets.push("gateway");
   } else {
     targets.push("bootstrap", "platform", "services", "gateway");
+  }
+  if (!["legacy", "dual", "capability"].includes(args.internalAuthMode)) {
+    throw new Error("--internal-auth-mode must be legacy, dual, or capability");
+  }
+  if (args.internalAuthMode !== "legacy"
+    && targets.includes("gateway")
+    && !args.capabilityKeyId) {
+    throw new Error("--capability-key-id is required for dual/capability deployments");
   }
   args.targets = targets;
 
@@ -788,6 +804,22 @@ async function resolveCasAccessKey(keyVaultName, provided) {
   return provided;
 }
 
+async function requireExistingSecret(keyVaultName, secretName) {
+  const showLabel = `az keyvault secret show --vault-name ${keyVaultName} -n ${secretName}`;
+  const existing = await runKeyVaultSecretOp(
+    showLabel,
+    ["keyvault", "secret", "show", "--vault-name", keyVaultName, "-n", secretName, "--query", "value", "-o", "tsv"],
+    () => null,
+  );
+  if (!existing) {
+    throw new Error(
+      `Key Vault ${keyVaultName} has no required capability secret "${secretName}". ` +
+      "Provision it through the platform secret process before deploying; values are not accepted on this command line.",
+    );
+  }
+  return existing;
+}
+
 /**
  * 只播种被选中 target 实际需要的密钥:`platform`/`services`/`gateway` 都
  * 要 `pgAdminPassword`(拼进各自的 Postgres 连接串)。`services`/`gateway`
@@ -810,7 +842,21 @@ async function seedSecrets(keyVaultName, args) {
   const docxAccessKey = needsServiceKeys
     ? await seedSecret(keyVaultName, DOCX_ACCESS_KEY_SECRET, 48)
     : null;
-  return { pgAdminPassword, casAccessKey, markdownAccessKey, docxAccessKey };
+  const usesCapabilities = args.internalAuthMode !== "legacy";
+  const capabilityPrivateKeyPkcs8 = usesCapabilities && args.targets.includes("gateway")
+    ? await requireExistingSecret(keyVaultName, CAPABILITY_PRIVATE_KEY_SECRET)
+    : null;
+  const capabilityTrustedJwks = usesCapabilities && args.targets.includes("services")
+    ? await requireExistingSecret(keyVaultName, CAPABILITY_TRUSTED_JWKS_SECRET)
+    : null;
+  return {
+    pgAdminPassword,
+    casAccessKey,
+    markdownAccessKey,
+    docxAccessKey,
+    capabilityPrivateKeyPkcs8,
+    capabilityTrustedJwks,
+  };
 }
 
 /** 按被选中的 target 选出真正要构建的镜像子集——`--service docx` 时不该
@@ -964,6 +1010,11 @@ function deployService(args, secrets, tag, docType) {
     `pgAdminPassword=${secrets.pgAdminPassword}`,
     `serviceAccessKey=${secrets[`${docType}AccessKey`]}`,
     `casAccessKey=${secrets.casAccessKey}`,
+    `internalAuthMode=${args.internalAuthMode}`,
+    `capabilityIssuer=${args.capabilityIssuer}`,
+    ...(secrets.capabilityTrustedJwks
+      ? [`capabilityTrustedJwks=${secrets.capabilityTrustedJwks}`]
+      : []),
   ];
   run(
     "az",
@@ -1013,6 +1064,12 @@ function deployGateway(args, secrets, tag) {
     `casAccessKey=${secrets.casAccessKey}`,
     `markdownAccessKey=${secrets.markdownAccessKey}`,
     `docxAccessKey=${secrets.docxAccessKey}`,
+    `internalAuthMode=${args.internalAuthMode}`,
+    `capabilityIssuer=${args.capabilityIssuer}`,
+    `capabilityKeyId=${args.capabilityKeyId}`,
+    ...(secrets.capabilityPrivateKeyPkcs8
+      ? [`capabilityPrivateKeyPkcs8=${secrets.capabilityPrivateKeyPkcs8}`]
+      : []),
   ];
   run(
     "az",
@@ -1257,7 +1314,14 @@ export async function main(argv = process.argv.slice(2)) {
   const needsSecrets = args.targets.some((t) => t !== "bootstrap");
   const secrets = needsSecrets
     ? await seedSecrets(bootstrap.keyVaultName, args)
-    : { pgAdminPassword: null, casAccessKey: null, markdownAccessKey: null, docxAccessKey: null };
+    : {
+      pgAdminPassword: null,
+      casAccessKey: null,
+      markdownAccessKey: null,
+      docxAccessKey: null,
+      capabilityPrivateKeyPkcs8: null,
+      capabilityTrustedJwks: null,
+    };
 
   const tag = capture("git", ["rev-parse", "--short", "HEAD"]);
 

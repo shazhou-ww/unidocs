@@ -27,6 +27,10 @@ param serviceAccessKey string = ''
 param casAccessKey string = ''
 @secure()
 param docServicesJson string = ''
+@secure()
+param capabilityPrivateKeyPkcs8 string = ''
+@secure()
+param capabilityTrustedJwks string = ''
 
 // PORT 必须和 ingress.targetPort 是同一个值的两种表现形式，而不是
 // 调用方各自再写一份字符串字面量——否则 ingress 转发到一个端口、
@@ -51,6 +55,18 @@ var optionalSecrets = concat(
       name: 'doc-services-json'
       value: docServicesJson
     }
+  ],
+  empty(capabilityPrivateKeyPkcs8) ? [] : [
+    {
+      name: 'capability-private-key-pkcs8'
+      value: capabilityPrivateKeyPkcs8
+    }
+  ],
+  empty(capabilityTrustedJwks) ? [] : [
+    {
+      name: 'capability-trusted-jwks'
+      value: capabilityTrustedJwks
+    }
   ]
 )
 var optionalSecretEnv = concat(
@@ -70,6 +86,18 @@ var optionalSecretEnv = concat(
     {
       name: 'DOC_SERVICES_JSON'
       secretRef: 'doc-services-json'
+    }
+  ],
+  empty(capabilityPrivateKeyPkcs8) ? [] : [
+    {
+      name: 'CAPABILITY_PRIVATE_KEY_PKCS8'
+      secretRef: 'capability-private-key-pkcs8'
+    }
+  ],
+  empty(capabilityTrustedJwks) ? [] : [
+    {
+      name: 'CAPABILITY_TRUSTED_JWKS'
+      secretRef: 'capability-trusted-jwks'
     }
   ]
 )

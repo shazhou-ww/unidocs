@@ -88,6 +88,10 @@ test("buildWorkers merges extraBindings into that doc type's worker only", () =>
     INTERNAL_AUTH_MODE: "legacy",
     DOC_CAPABILITY_AUDIENCE: "unidocs-doc:psd",
     CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAPABILITY_ALGORITHM: "ES256",
+    CAPABILITY_TTL_SECONDS: "120",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_CLOCK_SKEW_SECONDS: "30",
     SERVICE_ACCESS_KEY: docServiceAccessKey("psd"),
     LLM_API_KEY: "test-value-not-a-secret",
   });
@@ -107,6 +111,10 @@ test("buildWorkers leaves bindings untouched when no extraBindings are given", (
     INTERNAL_AUTH_MODE: "legacy",
     DOC_CAPABILITY_AUDIENCE: "unidocs-doc:psd",
     CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAPABILITY_ALGORITHM: "ES256",
+    CAPABILITY_TTL_SECONDS: "120",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_CLOCK_SKEW_SECONDS: "30",
     SERVICE_ACCESS_KEY: docServiceAccessKey("psd"),
   });
 });

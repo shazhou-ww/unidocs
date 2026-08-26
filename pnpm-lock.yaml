@@ -23,6 +23,9 @@ importers:
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
       miniflare:
         specifier: 5.20260811.1-alpha
         version: 5.20260811.1-alpha

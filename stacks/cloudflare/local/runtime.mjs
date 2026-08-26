@@ -249,6 +249,8 @@ export async function startLocalRuntime({
   ports: portOverrides = {},
   persistPath,
   casFault = false,
+  internalAuthMode = "legacy",
+  capabilityFixture,
   logLevel = LogLevel.WARN,
 } = {}) {
   const ports = resolvePorts(docTypes, portOverrides);
@@ -290,7 +292,16 @@ export async function startLocalRuntime({
         log: new Log(logLevel),
         logRequests: logLevel >= LogLevel.INFO,
         ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
-        workers: buildWorkers({ docTypes, host, ports, bundleDir, casFault, extraBindings }),
+        workers: buildWorkers({
+          docTypes,
+          host,
+          ports,
+          bundleDir,
+          casFault,
+          extraBindings,
+          internalAuthMode,
+          capabilityFixture,
+        }),
       }),
     );
 

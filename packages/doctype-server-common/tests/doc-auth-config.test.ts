@@ -22,6 +22,13 @@ describe("Doc auth configuration", () => {
       INTERNAL_AUTH_MODE: "legacy",
       SERVICE_ACCESS_KEY: "legacy-key",
     })).toEqual({ internalAuthMode: "legacy", accessKey: "legacy-key" });
+    expect(() => resolveDocAuthConfig("markdown", {
+      INTERNAL_AUTH_MODE: "capability",
+      CAPABILITY_ALGORITHM: "ES256",
+      CAPABILITY_TTL_SECONDS: "120",
+      CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+      CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+    })).toThrow("CAPABILITY_ISSUER");
   });
 
   test("builds exact Doc and CAS verifiers from public JWKS", async () => {
@@ -29,6 +36,10 @@ describe("Doc auth configuration", () => {
     const publicJwk = await exportJWK(pair.publicKey);
     const config = resolveDocAuthConfig("markdown", {
       INTERNAL_AUTH_MODE: "capability",
+      CAPABILITY_ALGORITHM: "ES256",
+      CAPABILITY_TTL_SECONDS: "120",
+      CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+      CAPABILITY_CLOCK_SKEW_SECONDS: "30",
       CAPABILITY_ISSUER: "unidocs-gateway:test",
       DOC_CAPABILITY_AUDIENCE: "unidocs-doc:markdown",
       CAS_CAPABILITY_AUDIENCE: "unidocs-cas",

@@ -9,6 +9,7 @@
     "test:azure": "vitest run --fileParallelism=false tests/integration/azure",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r run clean",
+    "keys:local": "node scripts/generate-local-capability-keys.mjs",
     "azure:up": "docker compose -f packages/azure-sdk/docker-compose.yml up -d",
     "azure:down": "docker compose -f packages/azure-sdk/docker-compose.yml down"
   },
@@ -18,6 +19,7 @@
     "@types/node": "^24.0.0",
     "azurite": "3.36.0",
     "esbuild": "^0.28.2",
+    "jose": "^6.2.10",
     "miniflare": "5.20260811.1-alpha",
     "pg": "^8.23.0",
     "rimraf": "^6.1.3",

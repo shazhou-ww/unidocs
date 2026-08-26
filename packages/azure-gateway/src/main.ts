@@ -37,7 +37,10 @@ import {
   parseGatewayInternalAuthMode,
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
-import { createPkcs8CapabilityIssuer } from "@unidocs/service-auth";
+import {
+  createPkcs8CapabilityIssuer,
+  parseCapabilityRuntimePolicy,
+} from "@unidocs/service-auth";
 import { PgGatewayDocumentDirectory } from "./document-directory.js";
 
 async function main(): Promise<void> {
@@ -49,15 +52,20 @@ async function main(): Promise<void> {
     : requireEnv("CAS_ACCESS_KEY");
   const capabilityAuthority = internalAuthMode === "legacy"
     ? undefined
-    : new GatewayCapabilityAuthority({
-      issuer: await createPkcs8CapabilityIssuer({
+    : await (async () => {
+      const policy = parseCapabilityRuntimePolicy(process.env);
+      return new GatewayCapabilityAuthority({
+        issuer: await createPkcs8CapabilityIssuer({
         issuer: requireEnv("CAPABILITY_ISSUER"),
         kid: requireEnv("CAPABILITY_KEY_ID"),
         privateKeyPkcs8: requireEnv("CAPABILITY_PRIVATE_KEY_PKCS8"),
-      }),
-      casAudience: requireEnv("CAS_CAPABILITY_AUDIENCE"),
-      audit: event => console.log(JSON.stringify({ event: "gateway_capability_issued", ...event })),
-    });
+          defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
+          maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+        }),
+        casAudience: requireEnv("CAS_CAPABILITY_AUDIENCE"),
+        audit: event => console.log(JSON.stringify({ event: "gateway_capability_issued", ...event })),
+      });
+    })();
   const port = Number(process.env.PORT ?? 8787);
 
   // Gateway never touches Blob Storage — `blobConnectionString` is unused by

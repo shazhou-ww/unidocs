@@ -3,7 +3,7 @@
 > **Status:** In progress. The P0 boundary prerequisite completed in
 > `cdce042`. Tasks 0-3 are complete. The implementation was rebased onto
 > `origin/main` commit `d01afd0` on 2026-08-26 after the cloud stack directory
-> reorganization; Tasks 0-5 are complete and Task 6 is next.
+> reorganization; Tasks 0-6 are complete and Task 7 is next.
 >
 > **For agentic workers:** Use an executing-plans workflow and complete one
 > task at a time. Keep the checkboxes current. Do not combine this migration
@@ -1368,23 +1368,23 @@ Implementation record (2026-08-26):
 
 ### Task 6: Add key provisioning, rotation, and runtime configuration
 
-- [ ] Keep signing behind an injected `CapabilitySigner` boundary so a runtime
+- [x] Keep signing behind an injected `CapabilitySigner` boundary so a runtime
       may use either a secret-backed Web Crypto key or a managed KMS/HSM signer
       without changing authorization policy.
-- [ ] Gateway startup requires an active private signing key, matching `kid`,
+- [x] Gateway startup requires an active private signing key, matching `kid`,
       issuer, TTL, and algorithm. Doc/CAS startup requires a non-empty trusted
       JWKS, issuer, audience, max lifetime, and algorithm.
-- [ ] Store private material only in the platform secret facility. Do not place
+- [x] Store private material only in the platform secret facility. Do not place
       it in source, images, Bicep outputs, Wrangler vars, command output, or
       deployment history.
-- [ ] Give Gateway signing access only. Doc/CAS deployment identities must not
+- [x] Give Gateway signing access only. Doc/CAS deployment identities must not
       have read or sign access to the private key.
-- [ ] Add local/test key generation that writes only to ignored runtime state.
+- [x] Add local/test key generation that writes only to ignored runtime state.
       Commit public test fixtures only when deterministic unit tests require
       them; never commit a production-like private key.
-- [ ] Cache imported private/public key objects for process lifetime. Refresh
+- [x] Cache imported private/public key objects for process lifetime. Refresh
       trusted JWKS only through deployment/config reload, not per request.
-- [ ] Document and test rotation:
+- [x] Document and test rotation:
             1. deploy/restart every validator with old and new public keys;
             2. wait until every active Cloudflare deployment/Azure revision is healthy
                   and its startup diagnostic reports the new trusted `kid`;
@@ -1394,10 +1394,10 @@ Implementation record (2026-08-26):
             5. wait at least maximum lifetime plus clock skew;
             6. deploy/restart validators without the old public key, then remove the
                   old private key.
-- [ ] Treat JWKS as immutable process configuration: Cloudflare key changes
+- [x] Treat JWKS as immutable process configuration: Cloudflare key changes
             require a Worker deployment and Azure key changes require a new active
             Container App revision/restart. Do not rely on unspecified hot reload.
-- [ ] Add startup diagnostics that name missing configuration fields but never
+- [x] Add startup diagnostics that name missing configuration fields but never
       print key material.
 
 Cloudflare and Azure may use different private keys and signer adapters. Their
@@ -1407,6 +1407,38 @@ environment is not accepted in another.
 **Focused validation:** configuration unit tests, Bicep build, Wrangler dry-run
 or equivalent package checks, and local runtime startup with missing/rotated
 keys.
+
+Implementation record (2026-08-26):
+
+- Gateway signing remains behind injected `CapabilitySigner` and
+      `GatewayCapabilityIssuer` boundaries. PKCS8 import is a runtime adapter;
+      Cloudflare caches one authority promise and Azure imports once at process
+      startup. Doc/CAS cache public-only local JWKS verifiers for process lifetime.
+- Capability mode requires explicit `ES256`, issued TTL, maximum lifetime,
+      clock skew, issuer, audiences, active `kid`, and private/JWKS bindings. The
+      shared parser enforces `120`/`300`/`30` bounds; startup failures name only the
+      missing or invalid field.
+- Azure secure Bicep parameters mount `CAPABILITY_PRIVATE_KEY_PKCS8` only into
+      Gateway and `CAPABILITY_TRUSTED_JWKS` only into Doc services. The deploy
+      runner reads pre-provisioned Key Vault secrets, never accepts private/JWKS
+      values on its CLI, and uses redacted command labels. Cloudflare uses secret
+      bindings; Wrangler vars contain policy/audience metadata only.
+- Added `pnpm keys:local`, which writes an ES256 fixture to ignored
+      `.wrangler/capability/` state with mode `0600`, refuses overwrite, and prints
+      only path/issuer/`kid`. Tests prove the JWKS has no private `d` member.
+- Added `docs/capability-key-operations.md` covering platform ownership,
+      immutable deployment config, six-step overlap rotation, the required
+      $300+30=330$ second wait, rollback, compromise response, and prohibited key
+      destinations. Unit tests prove old/new overlap and retired-key rejection.
+- A real local capability-mode runtime starts with old+new public keys and a
+      new active private key, completes create/history, and proves only Gateway
+      receives private material. Missing fixtures fail before startup.
+- Validation: service-auth 61 passed, shared Doc 94 passed, CAS 58 passed,
+      local key tests 3 passed, Azure deploy tests 44 passed. All three Azure Bicep
+      templates build; Gateway/CAS/Markdown/DOCX/PSD Wrangler dry-runs pass. Root
+      `pnpm typecheck` and `pnpm build` pass; `pnpm test:local` passed 291 with 2
+      conditional skips; `pnpm test:azure` passed 15/15, with no residual test
+      container or network.
 
 ### Task 7: Migrate credentials and routes without an outage
 

@@ -1,8 +1,15 @@
-import { CapabilityAlgorithm, CapabilityVerifier } from "@unidocs/service-auth";
-import type { CapabilityVerifierConfig } from "@unidocs/service-auth";
+import {
+  CapabilityAlgorithm,
+  CapabilityVerifier,
+  parseCapabilityRuntimePolicy,
+} from "@unidocs/service-auth";
+import type {
+  CapabilityRuntimePolicyBindings,
+  CapabilityVerifierConfig,
+} from "@unidocs/service-auth";
 import type { DocCapabilityVerifier, DocInternalAuthMode } from "./doc-type-handler.js";
 
-export interface DocAuthBindings {
+export interface DocAuthBindings extends CapabilityRuntimePolicyBindings {
   readonly INTERNAL_AUTH_MODE?: string;
   readonly SERVICE_ACCESS_KEY?: string;
   readonly CAPABILITY_TRUSTED_JWKS?: string;
@@ -46,6 +53,7 @@ export function resolveDocAuthConfig(
   if (!usesCapability) return Object.freeze({ internalAuthMode, accessKey });
 
   const issuer = requireBinding(bindings.CAPABILITY_ISSUER, "CAPABILITY_ISSUER");
+  const policy = parseCapabilityRuntimePolicy(bindings);
   const docAudience = requireBinding(bindings.DOC_CAPABILITY_AUDIENCE, "DOC_CAPABILITY_AUDIENCE");
   const casAudience = requireBinding(bindings.CAS_CAPABILITY_AUDIENCE, "CAS_CAPABILITY_AUDIENCE");
   const jwks = parseJwks(
@@ -61,6 +69,8 @@ export function resolveDocAuthConfig(
       jwks,
       allowedPermissionKinds: ["sessions:create", "sessions:read", "sessions:write"],
       allowedSubjects: ["gateway"],
+      maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+      clockSkewSeconds: policy.clockSkewSeconds,
     }),
     casCapabilityVerifier: new CapabilityVerifier({
       issuer,
@@ -69,6 +79,8 @@ export function resolveDocAuthConfig(
       jwks,
       allowedPermissionKinds: ["cas:read", "cas:write"],
       allowedSubjects: [`doc:${docType}`],
+      maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+      clockSkewSeconds: policy.clockSkewSeconds,
     }),
   });
 }

@@ -203,6 +203,10 @@ function capabilityEnv() {
   const dbExec = vi.fn(async () => undefined);
   return {
     INTERNAL_AUTH_MODE: "capability",
+    CAPABILITY_ALGORITHM: "ES256",
+    CAPABILITY_TTL_SECONDS: "120",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_CLOCK_SKEW_SECONDS: "30",
     CAPABILITY_ISSUER: ISSUER,
     CAS_CAPABILITY_AUDIENCE: AUDIENCE,
     CAPABILITY_TRUSTED_JWKS: JSON.stringify({

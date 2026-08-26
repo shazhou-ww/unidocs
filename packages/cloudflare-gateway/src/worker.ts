@@ -23,10 +23,14 @@ import {
 } from "@unidocs/gateway-common";
 import type { GatewayInternalAuthMode } from "@unidocs/gateway-common";
 import { isPublicCasRoute } from "@unidocs/protocol-cas";
-import { createPkcs8CapabilityIssuer } from "@unidocs/service-auth";
+import {
+  createPkcs8CapabilityIssuer,
+  parseCapabilityRuntimePolicy,
+  type CapabilityRuntimePolicyBindings,
+} from "@unidocs/service-auth";
 import { D1GatewayDocumentDirectory } from "./document-directory.js";
 
-interface Env {
+interface Env extends CapabilityRuntimePolicyBindings {
   GATEWAY_DB: D1Database;
   DOC_SERVICES_JSON: string;
   INTERNAL_AUTH_MODE?: string;
@@ -80,6 +84,7 @@ function capabilityAuthority(
 }
 
 async function createCapabilityAuthority(env: Env): Promise<GatewayCapabilityAuthority> {
+  const policy = parseCapabilityRuntimePolicy(env);
   const issuer = await createPkcs8CapabilityIssuer({
     issuer: requireBinding(env.CAPABILITY_ISSUER, "CAPABILITY_ISSUER"),
     kid: requireBinding(env.CAPABILITY_KEY_ID, "CAPABILITY_KEY_ID"),
@@ -87,6 +92,8 @@ async function createCapabilityAuthority(env: Env): Promise<GatewayCapabilityAut
       env.CAPABILITY_PRIVATE_KEY_PKCS8,
       "CAPABILITY_PRIVATE_KEY_PKCS8",
     ),
+    defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
+    maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
   });
   return new GatewayCapabilityAuthority({
     issuer,

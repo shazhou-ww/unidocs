@@ -119,6 +119,26 @@ describe("parseArgs", () => {
   test("不传 --cas-access-key 时是空串(留给 Key Vault 里的既有值)", () => {
     expect(parseArgs([]).casAccessKey).toBe("");
   });
+
+  test("capability rollout metadata is explicit and key values are not CLI inputs", () => {
+    const args = parseArgs([
+      "--gateway",
+      "--internal-auth-mode", "dual",
+      "--capability-issuer", "unidocs-gateway:staging",
+      "--capability-key-id", "staging-key-2",
+    ]);
+    expect(args).toMatchObject({
+      internalAuthMode: "dual",
+      capabilityIssuer: "unidocs-gateway:staging",
+      capabilityKeyId: "staging-key-2",
+    });
+    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "capability"]))
+      .toThrow(/capability-key-id/);
+    expect(() => parseArgs(["--internal-auth-mode", "unknown"]))
+      .toThrow(/internal-auth-mode/);
+    expect(() => parseArgs(["--capability-private-key", "secret"]))
+      .toThrow(/Unknown argument/);
+  });
 });
 
 describe("isKeyVaultForbidden", () => {

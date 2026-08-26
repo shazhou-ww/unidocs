@@ -6,6 +6,10 @@ compatibility_date = "2025-08-17"
 INTERNAL_AUTH_MODE = "legacy"
 DOC_CAPABILITY_AUDIENCE = "unidocs-doc:psd"
 CAS_CAPABILITY_AUDIENCE = "unidocs-cas"
+CAPABILITY_ALGORITHM = "ES256"
+CAPABILITY_TTL_SECONDS = "120"
+CAPABILITY_MAX_LIFETIME_SECONDS = "300"
+CAPABILITY_CLOCK_SKEW_SECONDS = "30"
 compatibility_flags = ["nodejs_compat"]
 
 [[durable_objects.bindings]]

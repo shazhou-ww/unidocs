@@ -5,10 +5,12 @@ import {
   CapabilityAuthorizationError,
   CapabilityVerifier,
   extractBearerCapability,
+  parseCapabilityRuntimePolicy,
   requireCapabilityPermission,
   requireCapabilityTenant,
 } from "@unidocs/service-auth";
 import type {
+  CapabilityRuntimePolicyBindings,
   CapabilityPermission,
   CapabilityVerifierConfig,
   VerifiedCapability,
@@ -21,7 +23,7 @@ import {
 
 export type CasInternalAuthMode = "legacy" | "dual" | "capability";
 
-export interface CasAuthBindings {
+export interface CasAuthBindings extends CapabilityRuntimePolicyBindings {
   readonly INTERNAL_AUTH_MODE?: string;
   readonly CAS_ACCESS_KEY?: string;
   readonly CAPABILITY_TRUSTED_JWKS?: string;
@@ -58,6 +60,7 @@ export class CasAuthConfig {
       this.#accessKey = requireBinding(bindings.CAS_ACCESS_KEY, "CAS_ACCESS_KEY");
     }
     if (this.mode === "capability" || this.mode === "dual") {
+      const policy = parseCapabilityRuntimePolicy(bindings);
       this.#verifier = new CapabilityVerifier({
         issuer: requireBinding(bindings.CAPABILITY_ISSUER, "CAPABILITY_ISSUER"),
         audience: requireBinding(
@@ -70,6 +73,8 @@ export class CasAuthConfig {
           "CAPABILITY_TRUSTED_JWKS",
         )),
         allowedPermissionKinds: ["cas:read", "cas:write", "cas:admin"],
+        maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+        clockSkewSeconds: policy.clockSkewSeconds,
       });
     }
   }

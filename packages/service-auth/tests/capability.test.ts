@@ -90,6 +90,17 @@ describe("capability issuance and verification", () => {
     });
   });
 
+  test("rejects a retired key after it is removed from immutable JWKS", async () => {
+    const retiredToken = await issuer(privateKeyA, "key-a").issue(docInput({ jti: "retired" }));
+    const activeToken = await issuer(privateKeyB, "key-b").issue(docInput({ jti: "active" }));
+    const verifier = docVerifier({ keys: [publicJwkB] });
+
+    await expectInvalid(verifier.verify(retiredToken));
+    await expect(verifier.verify(activeToken)).resolves.toMatchObject({
+      protectedHeader: { kid: "key-b" },
+    });
+  });
+
   test("issues tenant-scoped CAS capabilities without a session claim", async () => {
     const token = await issuer(privateKeyA, "key-a").issue({
       subject: "gateway",

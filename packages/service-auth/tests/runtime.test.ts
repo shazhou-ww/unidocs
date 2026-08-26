@@ -9,6 +9,7 @@ import {
   CapabilityVerifier,
   casReadPermission,
   createPkcs8CapabilityIssuer,
+  parseCapabilityRuntimePolicy,
 } from "../src/index.js";
 
 describe("PKCS8 capability issuer", () => {
@@ -49,5 +50,32 @@ describe("PKCS8 capability issuer", () => {
       kid: "key-1",
       privateKeyPkcs8: "",
     })).rejects.toThrow("private key is required");
+  });
+
+  test("requires the complete fixed runtime policy", () => {
+    expect(parseCapabilityRuntimePolicy({
+      CAPABILITY_ALGORITHM: "ES256",
+      CAPABILITY_TTL_SECONDS: "120",
+      CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+      CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+    })).toEqual({
+      algorithm: "ES256",
+      defaultLifetimeSeconds: 120,
+      maximumLifetimeSeconds: 300,
+      clockSkewSeconds: 30,
+    });
+    expect(() => parseCapabilityRuntimePolicy({})).toThrow("CAPABILITY_ALGORITHM");
+    expect(() => parseCapabilityRuntimePolicy({
+      CAPABILITY_ALGORITHM: "RS256",
+      CAPABILITY_TTL_SECONDS: "120",
+      CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+      CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+    })).toThrow("must be ES256");
+    expect(() => parseCapabilityRuntimePolicy({
+      CAPABILITY_ALGORITHM: "ES256",
+      CAPABILITY_TTL_SECONDS: "301",
+      CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+      CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+    })).toThrow("CAPABILITY_TTL_SECONDS");
   });
 });

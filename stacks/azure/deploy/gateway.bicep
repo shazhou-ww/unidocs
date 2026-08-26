@@ -31,6 +31,14 @@ param markdownAccessKey string
 @secure()
 param docxAccessKey string
 
+@secure()
+param capabilityPrivateKeyPkcs8 string = ''
+
+param internalAuthMode string = 'legacy'
+param capabilityIssuer string = 'unidocs-gateway:azure-dev'
+param capabilityKeyId string = ''
+param casCapabilityAudience string = 'unidocs-cas'
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }
@@ -88,6 +96,7 @@ module app 'container-app.bicep' = {
     databaseUrl: databaseUrl
     casAccessKey: casAccessKey
     docServicesJson: docServicesJson
+    capabilityPrivateKeyPkcs8: capabilityPrivateKeyPkcs8
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
     // 两个 doc type worker —— 不是容器端口，ingress 负责映射。
     // 路由目标在 DOC_SERVICES_JSON 里静态列出，见上面的注释。
@@ -98,7 +107,35 @@ module app 'container-app.bicep' = {
       }
       {
         name: 'INTERNAL_AUTH_MODE'
-        value: 'legacy'
+        value: internalAuthMode
+      }
+      {
+        name: 'CAPABILITY_ISSUER'
+        value: capabilityIssuer
+      }
+      {
+        name: 'CAPABILITY_KEY_ID'
+        value: capabilityKeyId
+      }
+      {
+        name: 'CAS_CAPABILITY_AUDIENCE'
+        value: casCapabilityAudience
+      }
+      {
+        name: 'CAPABILITY_ALGORITHM'
+        value: 'ES256'
+      }
+      {
+        name: 'CAPABILITY_TTL_SECONDS'
+        value: '120'
+      }
+      {
+        name: 'CAPABILITY_MAX_LIFETIME_SECONDS'
+        value: '300'
+      }
+      {
+        name: 'CAPABILITY_CLOCK_SKEW_SECONDS'
+        value: '30'
       }
       // This template deploys the explicitly named dev stack. Production
       // deployments must omit this and provide a real Gateway identity resolver.
