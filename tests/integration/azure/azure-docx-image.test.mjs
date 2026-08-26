@@ -12,8 +12,8 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
-import { startAzureRuntime } from "../../../azure/local/runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
 import { computeNodeDigest, encodeHeader, hashToHex } from "../../../packages/cas-server-common/src/index.ts";
 import { createSBlob, encodeSValue } from "../../../packages/svalue-codec/src/index.ts";
 import { SValueContentType } from "../../../packages/protocol/src/index.ts";

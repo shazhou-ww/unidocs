@@ -4,13 +4,13 @@
  * 制造**真正的同时性**。
  */
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { startAzureRuntime } from "../../../azure/local/runtime.mjs";
-import { docServiceAccessKey } from "../../../scripts/doc-types.mjs";
+import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
+import { docServiceAccessKey } from "../../../stacks/cloudflare/local/doc-types.mjs";
 
 let runtime;
 
 // No explicit `replicas` here, deliberately: this suite exists to guard
-// `startAzureRuntime()`'s *default* replica count (`azure/local/runtime.mjs`),
+// `startAzureRuntime()`'s *default* replica count (`stacks/azure/local/runtime.mjs`),
 // the same default `tests/integration/azure/azure-behavior.test.mjs` runs its 49 behaviour
 // assertions against. Passing `replicas: 2` here would only prove the
 // function honours its own argument — the default could regress to 1 and

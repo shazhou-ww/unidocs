@@ -4,7 +4,7 @@
  */
 import { afterEach, expect, test } from "vitest";
 import { createServer } from "node:http";
-import { startReplicaProxy } from "../../../azure/local/replica-proxy.mjs";
+import { startReplicaProxy } from "../../../stacks/azure/local/replica-proxy.mjs";
 
 const closers = [];
 afterEach(async () => {

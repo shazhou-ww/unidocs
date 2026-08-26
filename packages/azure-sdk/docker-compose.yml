@@ -15,7 +15,7 @@ services:
 # Azurite used to run here as a second container. It doesn't need to: the
 # `azurite` npm package ships `azurite-blob` as a plain Node CLI, and this
 # repo already runs its other local services (gateway/markdown) as spawned
-# `node` processes rather than containers. `azure/local/runtime.mjs` and
+# `node` processes rather than containers. `stacks/azure/local/runtime.mjs` and
 # `packages/azure-sdk/tests/containers.ts` each spawn `azurite-blob` directly
 # instead — same `--skipApiVersionCheck` flag, same port 10000, no image to
 # pull.

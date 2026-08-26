@@ -16,7 +16,7 @@ import {
   readServiceParams,
   retryOnForbidden,
   retryUntil,
-} from "../../../azure/deploy/deploy.mjs";
+} from "../../../stacks/azure/deploy/deploy.mjs";
 
 describe("imageRef", () => {
   test("拼出完整的 ACR 镜像引用", () => {
@@ -39,7 +39,7 @@ describe("imageRef", () => {
 
 describe("IMAGES", () => {
   // 迁移镜像是唯一一个「构建参数」与「镜像名」不同名的:构建参数是
-  // 工作区包名 azure-sdk,镜像名是 azure/deploy/platform.bicep(通过
+  // 工作区包名 azure-sdk,镜像名是 stacks/azure/deploy/platform.bicep(通过
   // migrate-job.bicep 模块)引用的 azure-migrate。传错会让 platform
   // 部署时拉不到镜像,而那是个部署到一半才暴露的错误。
   test("迁移镜像的构建参数与镜像名刻意不同", () => {
@@ -335,7 +335,7 @@ describe("mapWithConcurrency", () => {
   });
 });
 
-// retryUntil 是冒烟重试的核心循环——与注册表无关，见 azure/deploy/deploy.mjs
+// retryUntil 是冒烟重试的核心循环——与注册表无关，见 stacks/azure/deploy/deploy.mjs
 // 里 runSmoke() 的注释。这里同样注入假的 wait/log，不真的等待。
 describe("retryUntil", () => {
   test("第一次就成功 -> 不重试、不等待", async () => {

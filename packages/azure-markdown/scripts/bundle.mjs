@@ -17,7 +17,7 @@
  *
  * Fix: `esbuild` transpiles TS itself, so bundling resolves and inlines
  * every `@unidocs/*` import directly from its `.ts` source (`alias` below —
- * shared with `scripts/local-runtime.mjs` and
+ * shared with `stacks/cloudflare/local/runtime.mjs` and
  * `packages/azure-gateway/scripts/bundle.mjs` via
  * `scripts/workspace-aliases.mjs`, see that module's doc for why).
  * `external: EXTERNAL_NPM_PACKAGES` (also from `scripts/workspace-aliases.mjs`)

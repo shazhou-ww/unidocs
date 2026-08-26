@@ -1,7 +1,7 @@
 /**
  * 本地 Azure 栈的端口布局。
  *
- * 无依赖(连 node: 内置模块都不需要)是刻意的,与 `scripts/doc-types.mjs`
+ * 无依赖(连 node: 内置模块都不需要)是刻意的,与 `stacks/cloudflare/local/doc-types.mjs`
  * 同一条约定:`dev.mjs` 要在 import 任何重家伙(pg、@azure/storage-blob、
  * esbuild、Miniflare)之前就把端口算出来并探测占用,而纯逻辑也才能脱离
  * Docker 单测。

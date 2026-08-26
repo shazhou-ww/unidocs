@@ -23,7 +23,7 @@
  * `azurite-blob` as a plain Node CLI (`node_modules/azurite/dist/src/blob/
  * main.js`, per `package.json#bin`) — there's no reason to pay for a 531 MB
  * image pull to run a program that's already just Node. It's spawned the
- * same way `azure/local/runtime.mjs` spawns the azure-gateway/azure-markdown
+ * same way `stacks/azure/local/runtime.mjs` spawns the azure-gateway/azure-markdown
  * services: a plain child process, `--skipApiVersionCheck` carried over
  * unchanged from the old compose command, data in a fresh temp directory per
  * run (mirroring the clean-volume-per-`up` behaviour the container gave us
@@ -77,7 +77,7 @@ function dockerImageExistsLocally(image: string): boolean {
 /**
  * Async replacement for the old `execSync`-based compose calls. This module
  * is a vitest `globalSetup`/`globalTeardown`, which — like the worker
- * process `azure/local/runtime.mjs` runs in — has to stay responsive to
+ * process `stacks/azure/local/runtime.mjs` runs in — has to stay responsive to
  * vitest's own RPC while `docker compose up -d` pulls an image (tens of
  * seconds cold) or `down -v` tears the stack back down (several seconds).
  * `execSync` blocks the event loop for the whole duration; `spawn` + await
@@ -117,7 +117,7 @@ function announceFirstPullIfNeeded(): void {
  * Resolve `azurite-blob`'s real entry script via the `azurite` package's own
  * `package.json#bin` field, rather than shelling out to the
  * `node_modules/.bin/azurite-blob` shim (a POSIX shell script, not runnable
- * with `node` directly). Mirrors `azure/local/runtime.mjs`'s
+ * with `node` directly). Mirrors `stacks/azure/local/runtime.mjs`'s
  * `resolveAzuriteBlobEntry`.
  */
 function resolveAzuriteBlobEntry(): string {
@@ -230,7 +230,7 @@ export async function setup(): Promise<void> {
 
 export async function teardown(): Promise<void> {
   await stopAzurite();
-  // `-v` matches `azure/local/runtime.mjs`'s teardown: without it, every run
+  // `-v` matches `stacks/azure/local/runtime.mjs`'s teardown: without it, every run
   // of this suite left behind a dangling anonymous volume (the compose file
   // does not name its Postgres volume), and a bare `down` also leaves no
   // guarantee that the next `up` sees a clean Postgres data directory.

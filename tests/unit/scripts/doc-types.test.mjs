@@ -13,7 +13,7 @@ import {
   GATEWAY_WORKER,
   parseDocTypes,
   resolvePorts,
-} from "../../../scripts/doc-types.mjs";
+} from "../../../stacks/cloudflare/local/doc-types.mjs";
 
 test("parseDocTypes defaults to every registered doc type", () => {
   expect(parseDocTypes([])).toEqual(["markdown", "docx", "psd"]);

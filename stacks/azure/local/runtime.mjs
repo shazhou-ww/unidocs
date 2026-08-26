@@ -41,15 +41,15 @@ import { BlobServiceClient } from "@azure/storage-blob";
 import {
   CAS_ACCESS_KEY,
   docServiceAccessKey,
-} from "../../scripts/doc-types.mjs";
-import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../scripts/workspace-aliases.mjs";
+} from "../../cloudflare/local/doc-types.mjs";
+import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./ports.mjs";
 import { startReplicaProxy } from "./replica-proxy.mjs";
 
 const { Pool } = pg;
 const require = createRequire(import.meta.url);
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const COMPOSE_FILE = join(ROOT, "packages/azure-sdk/docker-compose.yml");
 const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 

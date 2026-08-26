@@ -17,7 +17,7 @@
  *
  * Fix: `esbuild` transpiles TS itself, so bundling resolves and inlines
  * every `@unidocs/*` import directly from its `.ts` source (`alias` below —
- * shared with `scripts/local-runtime.mjs` and
+ * shared with `stacks/cloudflare/local/runtime.mjs` and
  * `packages/azure-gateway/scripts/bundle.mjs` via
  * `scripts/workspace-aliases.mjs`, see that module's doc for why).
  *
@@ -29,7 +29,7 @@
  * comment for the full runtime-resolution reasoning (why `pg`/
  * `@azure/storage-blob` are safe to leave external and `@ariadng/office` is
  * not) and why this list has exactly one definition, shared with
- * `azure/local/runtime.mjs`'s `bundleService()`.
+ * `stacks/azure/local/runtime.mjs`'s `bundleService()`.
  *
  * `package.json`'s `build` script runs `tsc` first (for `dist/*.d.ts`, kept
  * for consistency with the repo's `main`/`types`/`exports` -> `dist/*`

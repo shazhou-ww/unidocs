@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   CAS_ACCESS_KEY,
   startLocalRuntime,
-} from "../../../scripts/local-runtime.mjs";
+} from "../../../stacks/cloudflare/local/runtime.mjs";
 
 let runtime;
 
