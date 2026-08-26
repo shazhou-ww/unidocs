@@ -10,9 +10,22 @@ binding = "CAS_CONTROL_DB"
 database_name = "unidocs-cas-control"
 database_id = "REPLACE_WITH_CAS_CONTROL_D1_ID"
 
-# Set via wrangler secret / deploy config:
-# GOOGLE_OIDC_CLIENT_ID, GOOGLE_OIDC_CLIENT_SECRET, SESSION_SIGNING_KEY
-# CAS_TENANT_AUDIT_READER service binding is added when Task 2 wires audit reads.
+# Set via wrangler secret / deploy config (never in this file):
+#   GOOGLE_OIDC_CLIENT_ID
+#   GOOGLE_OIDC_CLIENT_SECRET
+#   SESSION_ENCRYPTION_KEYS   JSON map {"kid":"<base64url 32-byte AES key>"}
+#
+# Optional vars:
+#   OIDC_ISSUER (default https://accounts.google.com)
+#   OIDC_DISCOVERY_URL (override for tests/local mock provider)
+#   SESSION_TTL_MS (default 28800000 = 8h, sliding)
+#   SESSION_COOKIE_NAME (default cas_admin_session)
+#   SESSION_COOKIE_SECURE (default true; set false for local http dev)
+#   CSRF_ENFORCE (default true)
+#
+# CAS_TENANT_AUDIT_READER service binding is added when Task 5-7 wire
+# Root Ref audit reads from the tenant worker.
 
 [vars]
 CAS_ADMIN_MOUNT = "/admin"
+PUBLIC_ORIGIN = "REPLACE_WITH_CAS_PUBLIC_ORIGIN"
