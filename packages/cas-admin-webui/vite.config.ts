@@ -17,13 +17,20 @@ export default defineConfig({
       "/admin": {
         target: "http://localhost:8792",
         changeOrigin: true,
+        // Proxy ONLY the BFF-owned paths; everything else (the SPA shell,
+        // assets, Vite module graph: /admin/src/*, /admin/@vite/*,
+        // /admin/@react-refresh, pre-bundled deps) is served by Vite.
         bypass: (req) => {
           const path = req.url ?? "";
-          // The SPA shell and its assets come from Vite, not the BFF.
-          if (path === "/admin" || path === "/admin/" || path.startsWith("/admin/assets/")) {
-            return path;
-          }
-          return undefined;
+          const isBffRoute =
+            path === "/admin/me"
+            || path.startsWith("/admin/stacks")
+            || path.startsWith("/admin/member-invitations")
+            || path.startsWith("/admin/auth/")
+            || path === "/admin/issuer/possession-challenge"
+            || path.startsWith("/admin/invitations/");
+          if (isBffRoute) return undefined; // forward to the BFF worker
+          return path; // serve from Vite
         },
       },
     },
