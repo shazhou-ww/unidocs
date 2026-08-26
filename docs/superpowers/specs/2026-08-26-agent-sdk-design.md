@@ -60,7 +60,9 @@ flowchart TB
 
 下边界之所以要拆成四个接口而不是一个，是因为它们的变化原因不同：换平台影响文档读写、会话存储和传输，换模型供应商只影响 `LlmProvider`。
 
-另有一个接口属于**内核**而非下边界，容易放错位置：`ContextPolicy`（历史裁剪，6.2）。判断"什么该留在上下文里"与运行环境无关，所以它在内核；"字节存到哪儿"才是下边界。两者的分界线是 `Uint8Array`。
+另有一个接口属于**内核**而非下边界，容易放错位置：`HistoryPolicy`（历史裁剪，6.2）。判断「哪些消息该留在发给模型的历史里」与运行环境无关，所以它在内核；「这些消息落到哪个存储」才是下边界。
+
+顺带说明一处容易混的命名：`DocumentAgentContext` 和 `HistoryPolicy` 毫无关系。前者是平台实现的**文档读写句柄**，后者是内核的**历史裁剪策略**。之所以值得写一句，是因为这两个概念都常被叫作 "context"——一个指交给 agent 的执行环境，一个指模型的上下文窗口。本设计里只有 `DocumentAgentContext` 用这个词。
 
 ### 1.4 上边界已经有了，缺的是下边界
 
@@ -260,7 +262,7 @@ azure-sdk 的 deps:      @azure/*, cas-client, doctype-server-common, http-proto
 ```
 packages/doctype-server-common/src/agent/
   ├── session.ts          AgentSession —— 工具调用循环、会话历史
-  ├── context-policy.ts   默认三级裁剪策略（6.2）
+  ├── history-policy.ts   默认三级裁剪策略（6.2）
   ├── store.ts            AgentSessionStore 的契约测试（6.3.8）
   ├── sse.ts              AgentEvent 序列 → SSE 字节流（7.4）
   └── providers/
@@ -285,7 +287,7 @@ flowchart TB
 
     subgraph sdk["doctype-server-common —— 文档类型和平台共同对着的 SDK"]
         UP["上边界契约<br/>DocumentAgent / DocumentAgentFactory"]
-        KERNEL["src/agent/ 内核实现<br/>AgentSession · ContextPolicy<br/>Anthropic / OpenAI provider · SSE 编码"]
+        KERNEL["src/agent/ 内核实现<br/>AgentSession · HistoryPolicy<br/>Anthropic / OpenAI provider · SSE 编码"]
         DOWN["下边界契约 —— platform 接口，虚拟<br/>DocumentAgentContext / LlmProvider<br/>AgentSessionStore"]
     end
 
@@ -410,9 +412,9 @@ classDiagram
         +readBlob(blob) Promise
     }
 
-    class ContextPolicy {
+    class HistoryPolicy {
         <<interface>>
-        +prepare(history) AgentMessage[]
+        +trim(history) AgentMessage[]
     }
 
     class AnthropicProvider
@@ -423,7 +425,7 @@ classDiagram
     AgentSession --> DocumentAgent : 上边界，构造时传入
     AgentSession --> LlmProvider : 下边界
     AgentSession --> DocumentAgentContext : 下边界
-    AgentSession --> ContextPolicy : 内核策略
+    AgentSession --> HistoryPolicy : 内核策略
     DocumentAgent <|.. PsdAgent
     DocumentAgent <|.. DocxAgent
     DocumentAgent <|.. MarkdownAgent
@@ -433,7 +435,7 @@ classDiagram
     DocumentAgentContext <|.. AzureDocumentContext
 ```
 
-图里只有 `AgentSession`、`LlmProvider`、`ContextPolicy` 是本次新增的。`DocumentAgent`（`protocol/src/types.ts:118`）和 `DocumentAgentContext`（`:105`）都已经存在且形状正合适——纯语义，不知道 HTTP、DurableObject、CBOR 的存在。
+图里只有 `AgentSession`、`LlmProvider`、`HistoryPolicy` 是本次新增的。`DocumentAgent`（`protocol/src/types.ts:118`）和 `DocumentAgentContext`（`:105`）都已经存在且形状正合适——纯语义，不知道 HTTP、DurableObject、CBOR 的存在。
 
 **`AgentSession` 与 `DocumentAgent` 的分工**，这是本章最要紧的一条线：
 
@@ -614,7 +616,7 @@ export class AgentSession<TQuery, TOp> {
     /** 下边界：根引用提交（6.4），不传则不保活 */
     readonly cas?: CasRootRefGateway;
     /** 内核策略：历史裁剪（6.2），不传用默认三级策略 */
-    readonly contextPolicy?: ContextPolicy;
+    readonly historyPolicy?: HistoryPolicy;
     /** 循环上限，不传为 10。PSD 传 25 */
     readonly maxIterations?: number;
   });
@@ -746,7 +748,7 @@ flowchart TB
 | `maxResultBytes` | 8192 | 结果天然很大的可以调大 |
 | `budgetTokens` | 120_000 | 跟模型走，不跟文档类型走 |
 
-如果哪天某个文档类型需要完全不同的裁剪逻辑，可以自己实现 `ContextPolicy` 传进来（6.2.7 的接口）——但那是给特殊情况留的出口，不是预期路径。默认策略应当覆盖绝大多数情况；如果不覆盖，说明默认策略需要改进，而不是每个文档类型各写一份。
+如果哪天某个文档类型需要完全不同的裁剪逻辑，可以自己实现 `HistoryPolicy` 传进来（6.2.7 的接口）——但那是给特殊情况留的出口，不是预期路径。默认策略应当覆盖绝大多数情况；如果不覆盖，说明默认策略需要改进，而不是每个文档类型各写一份。
 
 #### 6.2.5 预算怎么算
 
@@ -761,7 +763,7 @@ flowchart TB
 
 #### 6.2.6 一个明确的取舍：裁剪就地生效
 
-`ContextPolicy.prepare` 的返回值**直接替换 `AgentSession` 的 history**，不是只用于本次发送。
+`HistoryPolicy.trim` 的返回值**直接替换 `AgentSession` 的 history**，不是只用于本次发送。
 
 | | 就地生效（选定） | 只用于发送 |
 |---|---|---|
@@ -775,18 +777,18 @@ flowchart TB
 #### 6.2.7 接口
 
 ```ts
-export interface ContextPolicy {
-  prepare(history: readonly AgentMessage[]): Promise<readonly AgentMessage[]>;
+export interface HistoryPolicy {
+  trim(history: readonly AgentMessage[]): Promise<readonly AgentMessage[]>;
 }
 
-export function createDefaultContextPolicy(opts?: {
+export function createDefaultHistoryPolicy(opts?: {
   maxImages?: number;        // 默认 2
   maxResultBytes?: number;   // 默认 8192
   budgetTokens?: number;     // 默认 120_000
-}): ContextPolicy;
+}): HistoryPolicy;
 ```
 
-`prepare` 是异步的，为的是给「摘要压缩」留路——把最早若干轮交给模型总结成一段文字需要额外调一次模型，所以 `ContextPolicy` 实现可以在构造时拿到 `LlmProvider`。**本次不实现摘要压缩**，只保证接口不必回头改。
+`trim` 是异步的，为的是给「摘要压缩」留路——把最早若干轮交给模型总结成一段文字需要额外调一次模型，所以 `HistoryPolicy` 实现可以在构造时拿到 `LlmProvider`。**本次不实现摘要压缩**，只保证接口不必回头改。
 
 ### 6.3 持久化
 
@@ -1012,7 +1014,7 @@ flowchart TB
 
 | 组件 | 属于哪层 | 由谁实现 |
 |---|---|---|
-| `ContextPolicy`（什么该留在上下文里） | 内核（逻辑） | 内核提供默认实现，文档类型只调参数 |
+| `HistoryPolicy`（什么该留在上下文里） | 内核（逻辑） | 内核提供默认实现，文档类型只调参数 |
 | `encodeSValue(每条消息)`（序列化格式） | 内核 | 内核 |
 | 从消息里抽出 `role` / `turnNo` / `text`（6.3.2） | 内核 | 内核——它知道消息结构，平台不知道 |
 | 根引用增量的计算（`diffRefs`） | 内核 | 内核 |
@@ -1067,7 +1069,7 @@ sequenceDiagram
     S-->>B: run-start
 
     loop 直到模型不再调工具，或达到 maxIterations
-        S->>S: contextPolicy.prepare(history)<br/>裁剪并就地替换（6.2）
+        S->>S: historyPolicy.trim(history)<br/>裁剪并就地替换（6.2）
         S->>L: complete(裁剪后的历史 + 工具表)
         L-->>S: 文字 / 工具调用 / 两者都有
 
@@ -1351,7 +1353,7 @@ flowchart TB
     S2 --> S3["3. psd 的 getPreview 改走 SBlob<br/>返回 image content part"]
     S3 --> S4["4. 删掉 renderToolResult 钩子<br/>docx 的图片路径第一次跑通"]
     S4 --> S5["5. 删除 doctype-server-common/operator.ts"]
-    S5 --> S6["6. ContextPolicy 默认裁剪策略<br/>图片降级 / 大结果降级 / 整轮丢弃"]
+    S5 --> S6["6. HistoryPolicy 默认裁剪策略<br/>图片降级 / 大结果降级 / 整轮丢弃"]
     S6 --> S7["7. AgentSessionStore 接口 + 契约测试<br/>CF 的 DO SQLite 实现"]
     S7 --> S8["8. 根引用保活<br/>diffRefs + commitRootRefsOrRollback"]
     S8 --> S9["9. 事件流 + SSE 编码<br/>按 Accept 头分流"]
@@ -1385,7 +1387,7 @@ flowchart TB
 | V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.8） |
 | V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：`payload` 含 SBlob 存进去，读回来解码后 `isSBlob()` 仍为 true。这条对应 6.1.1「不能改用 JSON」 |
 | V12c | 消息的结构字段真的成了列，不用解码就能查 | 跑完一轮后直接查库：`SELECT role, count(*) FROM agent_messages GROUP BY role` 能分出 user / assistant / tool 三类，且条数与实际一致（6.3.7） |
-| V12b | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/context-policy.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
+| V12b | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/history-policy.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
 | V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
 | V14 | 长会话不再无限增长 | PSD 跑满 25 轮后，`history` 的编码字节数低于设定预算，且图片 part 不超过 `maxImages` |
 | V15 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
@@ -1399,7 +1401,7 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 
 | 项 | 原因 |
 |---|---|
-| 摘要压缩（把最早若干轮交给模型总结） | 需要额外一次模型调用，成本和质量都要实测才好定参数。接口已支持（`prepare` 是 async），前三级裁剪先跑一段时间看是否够用 |
+| 摘要压缩（把最早若干轮交给模型总结） | 需要额外一次模型调用，成本和质量都要实测才好定参数。接口已支持（`trim` 是 async），前三级裁剪先跑一段时间看是否够用 |
 | **文档变更通道** | agent 与人是对等的编辑者，「文档变了」该走文档通道而不是 agent 通道（7.2.1）。建它需要编辑器向订阅者扇出、订阅生命周期管理，Azure 的无状态多副本上尤其麻烦——是协同编辑那一块的工作。本次不建，也不建会被拆掉的临时替代 |
 | 逐字输出 | 需要 provider 支持流式并处理 `input_json_delta` 增量拼接，测试成本高，本次不做 |
 | 事件重放 / 断线续传 | 需要把**事件序列**也持久化，那是与会话历史不同的一份数据（历史是给模型看的，事件是给界面看的）。7.3 已选定不重放 |
@@ -1435,6 +1437,7 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 哪些东西成列、哪些成字节 | **结构成列，内容成字节。** `role` / `turn_no` / `tool_call_id` 是消息的结构，是纯标量，没有理由埋进 CBOR；消息本体含 SBlob，只能是 SValue 字节（6.1.1）。另存一列派生的 `text` 用于不解码就能看懂对话，它永远不是权威（6.3.2） |
 | 写入时机 | **每一轮结束写一次。** 一条消息一行之后，一轮只 INSERT 两三行，代价与整段重写完全不同，没有理由让崩溃丢掉整段对话（6.5） |
 | 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
+| 为什么叫 `HistoryPolicy` 而不是 `ContextPolicy` | 避免和既有的 `DocumentAgentContext` 撞名。两者毫无关系——前者是内核的历史裁剪策略，后者是平台实现的文档读写句柄——但 `context` 一词在两处分别指「模型的上下文窗口」和「交给 agent 的执行环境」，放在一起读者要先分辨一次。既有的名字三个文档类型都在用，让路的应该是新造的那个 |
 | 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样会让上下文超出上限；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`、叶子包传的阈值），不通过代码（6.2.2） |
 | 裁剪的最小单位 | 一轮（assistant + 它全部的 tool 消息），不是一条消息——否则会切出孤立的 `tool_result`，被 API 拒绝 |
 | 裁剪是否就地生效 | 是。返回值直接替换 history，让"发给模型的 = 存下来的 = 恢复出来的" |
