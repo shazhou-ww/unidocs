@@ -196,16 +196,24 @@ flowchart TB
         C3["将来的 aws-sdk"]
     end
 
+    subgraph L4["接线处 —— 叶子包：全仓库唯一同时认识两侧的地方"]
+        D1["cloudflare-psd/src/worker.ts"]
+        D2["azure-docx"]
+    end
+
     L1 -->|"DocumentAgent"| L2
     L3 -->|"DocumentAgentContext + AgentSessionStore + 传输外壳"| L2
+    L4 -.->|"挑一个文档类型"| L1
+    L4 -.->|"挑一个平台"| L3
 ```
 
-两条不可越界的规则：
+三条不可越界的规则：
 
 1. **文档类型永远看不到 `DocumentAgentContext` 的实现**。它不知道文档是通过 DurableObject 还是进程内调用读到的，也不知道 `baseVersion` 的存在。
 2. **平台 sdk 永远看不到循环内部**。它拿到的是一个事件序列，负责把它变成本平台的响应对象，不参与决定何时调模型、何时调工具。
+3. **平台 sdk 永远不依赖任何文档类型，文档类型也不依赖任何平台 sdk**。今天已经如此（4.2 有 `package.json` 的实据），本次不能破坏。两者的组合只发生在叶子包，而叶子包本来就是「某个文档类型 × 某个平台」这一个具体部署的入口——`cloudflare-psd` 就是「PSD 跑在 Cloudflare 上」这一件事。
 
-这两条如果被打破，就退回到今天的状态（1.4）。4.3 给出机器可校验的落地方式。
+前两条如果被打破，就退回到今天的状态（1.4）；第三条被打破，「新增文档类型」和「新增平台」这两个方向就会互相牵动，1.2 的表就不成立了。4.3 给出机器可校验的落地方式。
 
 ---
 
@@ -223,27 +231,55 @@ flowchart TB
 ### 4.2 依赖方向
 
 ```mermaid
-flowchart LR
-    psd["doctype-psd"] --> proto["protocol"]
-    docx["doctype-docx"] --> proto
-    md["doctype-markdown"] --> proto
-    cfsdk["cloudflare-sdk"] --> asdk["agent-sdk"]
-    azsdk["azure-sdk"] --> asdk
-    cfsdk --> psd
-    azsdk --> docx
+flowchart TB
+    proto["protocol"]
+    codec["svalue-codec"]
+
+    subgraph dt["文档类型：上边界的实现方，不认识任何平台"]
+        psd["doctype-psd"]
+        docx["doctype-docx"]
+        md["doctype-markdown"]
+    end
+
+    subgraph core["内核"]
+        asdk["agent-sdk（新增）"]
+    end
+
+    subgraph plat["平台 sdk：下边界的实现方，不认识任何文档类型"]
+        cfsdk["cloudflare-sdk"]
+        azsdk["azure-sdk"]
+    end
+
+    subgraph leaf["叶子包：唯一同时认识两侧的地方"]
+        cfpsd["cloudflare-psd"]
+        cfdocx["cloudflare-docx"]
+        azdocx["azure-docx"]
+    end
+
+    psd --> proto
+    docx --> proto
+    md --> proto
     asdk --> proto
-    asdk --> codec["svalue-codec"]
-    csdk["client-sdk"] --> proto
-    web["web-psd"] --> csdk
-    web --> pclient["psd-client"]
+    asdk --> codec
+    cfsdk --> asdk
+    azsdk --> asdk
+    cfpsd --> cfsdk
+    cfpsd --> psd
+    cfdocx --> cfsdk
+    cfdocx --> docx
+    azdocx --> azsdk
+    azdocx --> docx
 ```
 
-无环。两个值得注意的地方：
+无环。三点：
 
-- **文档类型不依赖 `agent-sdk`。** 它们只实现 `protocol` 里已有的 `DocumentAgentFactory`，一个新依赖都不加。把两者接起来的是平台 sdk：`cloudflare-psd/src/worker.ts` 同时 import 文档类型和 `agent-sdk`，再把前者交给后者。
-- 这也顺带消掉了原本担心的一个问题：`psd-client` 从 `@unidocs/doctype-psd/engine` 引 `applyOne`，如果 `doctype-psd` 依赖了 `agent-sdk`，就要担心服务端代码被卷进浏览器 bundle。现在它不依赖，问题不存在。
+- **两个平台 sdk 都不依赖任何文档类型。** 这不是本次要建立的，今天就已经如此——`cloudflare-sdk` 的依赖是 `cas-client` / `doctype-server-common` / `protocol` / `svalue-codec` 那一组，`azure-sdk` 同理，两边的 `package.json` 里都没有任何 `doctype-*`。本次只是往里加一个 `agent-sdk`。
+- **文档类型也不依赖 `agent-sdk`。** 它们只实现 `protocol` 里已有的 `DocumentAgentFactory`，一个新依赖都不加。
+- **两条边界在叶子包会合。** `cloudflare-psd`（依赖 `cloudflare-sdk` + `doctype-psd`）、`azure-docx`（依赖 `azure-sdk` + `doctype-docx`）这些 worker / service 入口，是全仓库唯一同时认识「哪个文档类型」和「哪个平台」的地方。接线代码就那几行，在 `cloudflare-psd/src/worker.ts` 里。
 
-`agent-sdk` 自身只依赖 `protocol` 和 `svalue-codec`。
+这个形状顺带消掉了原本担心的一个问题：`psd-client` 从 `@unidocs/doctype-psd/engine` 引 `applyOne`，如果 `doctype-psd` 依赖了 `agent-sdk`，就要担心服务端代码被卷进浏览器 bundle。现在它不依赖，问题不存在。
+
+客户端一侧独立：`client-sdk` 只依赖 `protocol`，`web-psd` 依赖 `client-sdk` + `psd-client`。
 
 ### 4.3 平台无关性如何保证
 
@@ -252,9 +288,18 @@ flowchart LR
 1. `packages/agent-sdk/tsconfig.json` 的 `types` 不包含 `@cloudflare/workers-types`，`lib` 不包含 `DOM`。写出 `DurableObjectStub` 或 `Response` 直接编译失败。
 2. 新增 `tests/unit/agent-sdk-purity.test.ts`：扫描 `packages/agent-sdk/src/**` 的所有 import 语句，断言只出现 `@unidocs/protocol`、`@unidocs/svalue-codec` 和相对路径。
 
-这两道机制守住的是 3 章的**规则 1**（内核不知道平台）。**规则 2**（平台不知道循环内部）没有等价的机器检查——平台 sdk 本来就允许 import `agent-sdk`。它靠两件事守：
+**规则 3**（平台 sdk 不依赖任何文档类型）也能机器校验，而且更简单——它是一条 `package.json` 断言，加进同一个测试文件：
 
-- 循环的状态（会话历史、`lastKnownVersion`、迭代计数）全部封在 `AgentSession` 私有字段里，平台拿不到，也就无从参与决策。平台唯一能做的就是消费 `run()` 吐出的事件序列。
+```ts
+// packages/{cloudflare,azure}-sdk/package.json 的 dependencies 里
+// 不得出现任何 @unidocs/doctype-* （doctype-server-common 除外）
+```
+
+反向同理：`packages/doctype-*/package.json` 里不得出现 `@unidocs/cloudflare-sdk` / `@unidocs/azure-sdk` / `@unidocs/agent-sdk`。
+
+这三道机制守住的是规则 1 和规则 3。**规则 2**（平台不知道循环内部）没有等价的机器检查——平台 sdk 本来就允许 import `agent-sdk`。它靠两件事守：
+
+- 循环的状态（会话历史、迭代计数）全部封在 `AgentSession` 私有字段里，平台拿不到，也就无从参与决策。平台唯一能做的就是消费 `run()` 吐出的事件序列。
 - 代码检视：如果某个平台 sdk 里出现了「判断该不该再调一次模型」这类逻辑，就是越界了。
 
 ---
@@ -1145,7 +1190,8 @@ flowchart TB
 |---|---|---|
 | V1 | 文档类型的分发逻辑一行未动 | `git diff` 里 `doctype-markdown/src/agent.ts` 与 `doctype-docx/src/agent.ts` 无改动；`doctype-psd/src/agent.ts` 只有 `getPreview` 分支变化 |
 | V2 | 内核不认识 `query_` / `apply_` | 全仓库搜索 `startsWith("query_")` **不应**命中 `packages/agent-sdk/` |
-| V3 | `agent-sdk` 不 import 任何云相关模块 | `tests/unit/agent-sdk-purity.test.ts` |
+| V3 | `agent-sdk` 不 import 任何云相关模块 | `tests/unit/agent-sdk-purity.test.ts` 扫 import 语句 |
+| V3b | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk 或 `agent-sdk`（4.3） |
 | V4 | 循环行为不退化 | 新增契约测试：内存版 `DocumentAgentContext` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
 | V5 | PSD 送给模型的图片字节与改造前完全一致 | 抓一次 provider 请求体，与改造前对比 |
 | V6 | 现有 230 行 `operator-do.test.ts` 全绿 | `pnpm test` |
