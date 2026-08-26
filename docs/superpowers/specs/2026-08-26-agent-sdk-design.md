@@ -1060,42 +1060,61 @@ export type AgentEvent =
 sequenceDiagram
     participant B as 浏览器
     participant G as 网关
-    participant W as doctype 服务
+    participant W as 平台外壳<br/>OperatorDO / Azure 服务
     participant S as AgentSession（内核）
     participant L as LlmProvider
     participant A as DocumentAgent（psd）
     participant C as DocumentAgentContext（平台）
 
     B->>G: POST /run  Accept: text/event-stream
-    G->>W: 转发
-    W->>S: run 指令
-    S-->>B: 事件 run-start
+    G->>W: 转发，带身份头
 
-    S->>L: complete 历史 + 工具表
-    L-->>S: 要调 query_getPreview
-    S-->>B: 事件 tool-call
+    W->>S: restore()
+    S->>W: store.load()
+    W-->>S: 历史字节 + token
+    Note over S: decodeSValue；读不到的图片降级成文字（6.6）
 
-    S->>A: toolCall "query_getPreview"
-    Note over A: 内核到这里为止，<br/>前缀解析和参数转换是 psd 的事
-    A->>C: query getPreview
-    C-->>A: SBlob + version
-    A-->>S: AgentToolResult 含 image part
-    S-->>B: 事件 tool-result
+    W->>S: run(指令)
 
-    S->>L: complete 历史已含图片
-    L-->>S: 要调 apply_transform
-    S-->>B: 事件 tool-call
-    S->>A: toolCall "apply_transform"
-    A->>C: apply 一批 op
-    Note over C: 平台读当前 head 作 baseVersion
-    C-->>A: 新 version
-    A-->>S: AgentToolResult
-    S-->>B: 事件 tool-result
+    Note over S,B: 下面每条 S-->>B 都不是直达：S 产出事件对象 →<br/>W 调内核的 encodeSse 编成 SSE 帧、再包成本平台的响应 →<br/>doctype 服务透传 → 网关透传 → 浏览器。<br/>为了看清主线不再重复画这几跳，完整链路见 7.4
+    S-->>B: run-start
 
-    S->>L: complete
-    L-->>S: 文字回复，不再调工具
-    S-->>B: 事件 run-end
+    loop 直到模型不再调工具，或达到 maxIterations
+        S->>S: contextPolicy.prepare(history)<br/>裁剪并就地替换（6.2）
+        S->>L: complete(裁剪后的历史 + 工具表)
+        L-->>S: 文字 / 工具调用 / 两者都有
+
+        opt 有文字
+            S-->>B: assistant-text
+        end
+
+        opt 有工具调用，逐个执行
+            S-->>B: tool-call
+            S->>A: toolCall(工具名, 参数)
+            Note over A: 工具名怎么解析、参数怎么转换，<br/>全是 psd 的事，内核不参与（5.3）
+            A->>C: query(...) 或 apply(...)
+            Note over C: apply 时平台自己读当前 head<br/>作 baseVersion（5.2.1）
+            C-->>A: 数据 / 新版本号，或错误
+            A-->>S: AgentToolResult，或抛错
+            S-->>B: tool-result（只带一句摘要，7.1）
+        end
+    end
+
+    S-->>B: run-end 或 run-error
+
+    S->>S: encodeSValue(history)，算根引用增量
+    S->>W: store.save(bytes, {turnCount}, token)（6.3）
+    S->>W: commitRootRefs(agent:sessionId:seq, 增量)（6.4）
+    Note over B: 收到 run-end 后调 session.reconcile()<br/>同步文档（8.4）
 ```
+
+三处顺序是有意为之，不能调换：
+
+1. **`restore()` 在 `run()` 之前。** 平台外壳每次被重建（DO 从休眠中唤醒、Azure 换了一个副本）都要先恢复历史，否则模型会失忆。
+2. **裁剪在每次调模型之前，不是每轮结束之后。** 因为要裁的正是「即将发出去的这一份」，而新一轮的工具结果刚刚追加进来。
+3. **先存字节，再提交根引用。** 反过来会在崩溃的时间窗里留下「引用已加、字节没写」的孤立引用（6.4）。
+
+`tool-result` 事件在工具抛错时也发，`ok: false` 加错误摘要——循环不中断，错误原文作为一条 tool 消息进入历史，模型下一轮自己纠正（5.2）。
 
 #### 7.2.1 为什么事件流里没有「文档变了」
 
