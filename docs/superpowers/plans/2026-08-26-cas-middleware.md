@@ -1708,9 +1708,12 @@ Tests assert both aggregate counts and emitted domain deltas.
   bindings, DNS/TLS, OIDC configuration, secrets, backups, observability,
   SLOs, alerts, and migration/rollback procedures independently of either
   application stack. (Endpoint, D1s, R2, DOs, DNS/TLS, real Google OIDC, and
-  secrets are live; backups, observability, SLOs, alerts, and
-  migration/rollback runbooks are ops-gate items tracked for the operations
-  round.)
+  secrets are live. Backups were verified 2026-08-26 via live `d1 export`
+  of both databases; the D1 export command, restore procedure, SLO table,
+  alerting rules, deploy/rollback/rotation/compromise runbooks, and pending
+  ops items are documented in `docs/cas-operations.md`. Remaining: a
+  scheduled backup job, a throwaway-D1 destructive restore drill, alert
+  delivery integration, and analytics/logpush consumption.)
 - [~] Register stable `unidocs-cloudflare` and `unidocs-azure` stacks through
   the self-service control plane; configure equal administrator memberships,
   one tenant issuer plus rotation keys, audiences, and registered domains.
@@ -1771,8 +1774,13 @@ Tests assert both aggregate counts and emitted domain deltas.
   until the rollback window closes.)
 - [~] Meet every operational-readiness gate: availability/load SLO, rate limits,
       revocation bound, backup/restore drill, migration pause criteria, alerts,
-      runbooks, named ownership, and key-compromise exercise. (Ops round;
-      blocked on the operations runbook + alerting infrastructure.)
+      runbooks, named ownership, and key-compromise exercise. (SLO table,
+      alerting rules, deploy/rollback/backup/rotation/compromise runbooks are
+      documented in `docs/cas-operations.md`; the backup export drill and a
+      live issuer key-rotation drill ran 2026-08-26 (the latter surfaced and
+      fixed the authority-cache hard-stale fail-closed defect, since
+      redeployed). Remaining: scheduled backups, a destructive restore drill,
+      alert delivery wiring, and analytics consumption.)
 
 > **Handed off on 2026-08-26:** how the full UniDocs application stack is
 > organized and deployed is a separate plan —

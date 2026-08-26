@@ -596,6 +596,12 @@ domain-wide revision counter that does not restart. Now uses a per-run
 unique tenant/requestId and asserts revision advanced (not == 1) plus
 idempotent-retry keeps the revision.
 
+**Ops documentation:** `docs/cas-operations.md` now carries the SLO table,
+metrics/events, alerting rules, and the deploy / rollback / backup-restore /
+issuer-rotation / compromise / incident runbooks (plus pending ops items:
+scheduled backups, destructive restore drill, alert delivery, analytics
+consumption). Plan bullets 5 and 13 updated accordingly.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).
