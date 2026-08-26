@@ -1,5 +1,15 @@
+/**
+ * Canonical stack-scoped CAS tenant HTTP contracts.
+ *
+ * Every tenant service route carries `stackId + tenantId`; the tenant
+ * matcher never recognizes `/admin` (that plane belongs to
+ * `@unidocs/protocol-cas-admin`). The retired owner-assignment and
+ * portable-node HTTP contracts are removed; the legacy surface is
+ * quarantined in `@unidocs/protocol-cas-legacy` until the rollback window
+ * closes.
+ */
+
 import type {
-  CasAssignRootsRequest,
   CasGcResult,
   CasHash,
   CasLeaseResult,
@@ -9,25 +19,27 @@ import type {
   CasUsage,
 } from "./types.js";
 
-export const CasPortableNodeContentType = "application/vnd.unidocs.cas-node";
 export const CasRefsHeader = "X-CAS-Refs";
 export const CasLeaseDurationHeader = "X-CAS-Lease-Duration";
 
-export interface CasNodePath {
-  tenantId: string;
-  hash: CasHash;
+export interface CasStackPath {
+  readonly stackId: string;
 }
 
-export interface CasTenantPath {
-  tenantId: string;
+export interface CasTenantPath extends CasStackPath {
+  readonly tenantId: string;
+}
+
+export interface CasNodePath extends CasTenantPath {
+  readonly hash: CasHash;
 }
 
 export interface CasErrorResponse {
-  error: string;
+  readonly error: string;
 }
 
 export interface CasReadContentRequest {
-  path: CasNodePath;
+  readonly path: CasNodePath;
 }
 
 export type CasReadContentResponse =
@@ -35,7 +47,7 @@ export type CasReadContentResponse =
   | CasErrorResponse;
 
 export interface CasReadMetadataRequest {
-  path: CasNodePath;
+  readonly path: CasNodePath;
 }
 
 export type CasReadMetadataResponse =
@@ -43,74 +55,48 @@ export type CasReadMetadataResponse =
   | CasErrorResponse;
 
 export interface CasLeaseNodeRequest {
-  path: CasNodePath;
-  headers: {
+  readonly path: CasNodePath;
+  readonly headers: {
     contentType: string;
     contentLength: number;
     refs?: CasHash[];
     leaseDurationMs?: number;
   };
-  body: Uint8Array;
+  readonly body: Uint8Array;
 }
 
 export type CasLeaseNodeResponse = CasLeaseResult | CasErrorResponse;
 
 export interface CasLeaseExistingRequest {
-  path: CasNodePath;
-  headers: { leaseDurationMs?: number };
+  readonly path: CasNodePath;
+  readonly headers: { leaseDurationMs?: number };
 }
 
 export type CasLeaseExistingResponse = CasLeaseResult | CasErrorResponse;
 
 export interface CasUsageRequest {
-  path: CasTenantPath;
+  readonly path: CasTenantPath;
 }
 
 export type CasUsageResponse = CasUsage | CasErrorResponse;
 
 export interface CasGcRequest {
-  path: CasTenantPath;
-  body?: { maxNodes?: number };
+  readonly path: CasTenantPath;
+  readonly body?: { maxNodes?: number };
 }
 
 export type CasGcResponse = CasGcResult | CasErrorResponse;
 
-export interface CasRootRefsRequest {
-  path: CasTenantPath;
-  body: CasRootRefUpdate;
+/** Signed Root Refs write. `refDomain` is NOT caller-supplied; it comes only
+ *  from the verified tenant capability (Task 4). */
+export interface CasUpdateRootRefsRequest {
+  readonly path: CasTenantPath;
+  readonly body: CasRootRefUpdate;
 }
 
-export type CasRootRefsResponse =
-  | { success: true; idempotent?: true }
+export type CasUpdateRootRefsResponse =
+  | { success: true; idempotent: boolean; revision: number }
   | CasErrorResponse;
-
-export interface CasRootAssignmentsRequest {
-  path: CasTenantPath;
-  body: CasAssignRootsRequest;
-}
-
-export type CasRootAssignmentsResponse =
-  | { success: true; idempotent: boolean }
-  | CasErrorResponse;
-
-export interface CasReadPortableNodeRequest {
-  path: CasNodePath;
-}
-
-export type CasReadPortableNodeResponse =
-  | {
-    body: Uint8Array;
-    headers: { contentType: typeof CasPortableNodeContentType };
-  }
-  | CasErrorResponse;
-
-export interface CasLeasePortableNodeRequest {
-  path: CasNodePath;
-  headers: { leaseDurationMs?: number };
-  body: Uint8Array;
-}
-
-export type CasLeasePortableNodeResponse = CasLeaseResult | CasErrorResponse;
 
 export interface CasEndpointContracts {
   readContent: { request: CasReadContentRequest; response: CasReadContentResponse };
@@ -119,17 +105,8 @@ export interface CasEndpointContracts {
   leaseExisting: { request: CasLeaseExistingRequest; response: CasLeaseExistingResponse };
   usage: { request: CasUsageRequest; response: CasUsageResponse };
   gc: { request: CasGcRequest; response: CasGcResponse };
-  rootRefs: { request: CasRootRefsRequest; response: CasRootRefsResponse };
-  rootAssignments: {
-    request: CasRootAssignmentsRequest;
-    response: CasRootAssignmentsResponse;
-  };
-  readPortableNode: {
-    request: CasReadPortableNodeRequest;
-    response: CasReadPortableNodeResponse;
-  };
-  leasePortableNode: {
-    request: CasLeasePortableNodeRequest;
-    response: CasLeasePortableNodeResponse;
+  updateRootRefs: {
+    request: CasUpdateRootRefsRequest;
+    response: CasUpdateRootRefsResponse;
   };
 }

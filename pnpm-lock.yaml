@@ -87,9 +87,9 @@ importers:
       '@unidocs/gateway-common':
         specifier: workspace:*
         version: link:../gateway-common
-      '@unidocs/protocol-cas':
+      '@unidocs/protocol-gateway':
         specifier: workspace:*
-        version: link:../protocol-cas
+        version: link:../protocol-gateway
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
@@ -284,9 +284,9 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/protocol-cas':
+      '@unidocs/protocol-cas-legacy':
         specifier: workspace:*
-        version: link:../protocol-cas
+        version: link:../protocol-cas-legacy
       '@unidocs/svalue-codec':
         specifier: workspace:*
         version: link:../svalue-codec
@@ -335,6 +335,25 @@ importers:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
+  packages/cas-server-cloudflare:
+    dependencies:
+      '@unidocs/protocol-cas':
+        specifier: workspace:*
+        version: link:../protocol-cas
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
   packages/cas-server-common:
     devDependencies:
       typescript:
@@ -352,9 +371,9 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/protocol-cas':
+      '@unidocs/protocol-cas-legacy':
         specifier: workspace:*
-        version: link:../protocol-cas
+        version: link:../protocol-cas-legacy
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
@@ -408,9 +427,9 @@ importers:
       '@unidocs/gateway-common':
         specifier: workspace:*
         version: link:../gateway-common
-      '@unidocs/protocol-cas':
+      '@unidocs/protocol-gateway':
         specifier: workspace:*
-        version: link:../protocol-cas
+        version: link:../protocol-gateway
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
@@ -611,9 +630,9 @@ importers:
       '@unidocs/cas-client':
         specifier: workspace:*
         version: link:../cas-client
-      '@unidocs/protocol-cas':
+      '@unidocs/protocol-cas-legacy':
         specifier: workspace:*
-        version: link:../protocol-cas
+        version: link:../protocol-cas-legacy
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
@@ -655,6 +674,15 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
+  packages/protocol-cas-legacy:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
   packages/protocol-doc:
     dependencies:
       '@unidocs/protocol':
@@ -676,9 +704,9 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/protocol-cas':
+      '@unidocs/protocol-cas-legacy':
         specifier: workspace:*
-        version: link:../protocol-cas
+        version: link:../protocol-cas-legacy
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc

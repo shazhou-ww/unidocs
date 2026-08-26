@@ -22,7 +22,7 @@ import {
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
 import type { GatewayInternalAuthMode } from "@unidocs/gateway-common";
-import { isPublicCasRoute } from "@unidocs/protocol-cas";
+import { isGatewayExposedCasRoute } from "@unidocs/protocol-gateway";
 import {
   createPkcs8CapabilityIssuer,
   parseCapabilityRuntimePolicy,
@@ -68,7 +68,7 @@ export default {
       resolveDocService: (docType) => registry(env).resolve(docType),
       casFetcher: env.CAS_SERVICE,
       directory: new D1GatewayDocumentDirectory(env.GATEWAY_DB),
-      isPublicCasRoute,
+      isGatewayExposedCasRoute,
     });
     return handle(request);
   },

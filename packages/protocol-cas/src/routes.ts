@@ -1,14 +1,20 @@
+/**
+ * Canonical stack-scoped CAS tenant route matcher.
+ *
+ * Matches only `/stacks/{stackId}/tenants/{tenantId}/...` service routes and
+ * never `/admin`. Every `CasRoute` variant carries `stackId + tenantId`.
+ * Gateway exposure policy is NOT a property of this matcher — the Gateway
+ * owns its allowlist (`isGatewayExposedCasRoute` in @unidocs/protocol-gateway).
+ */
+
 export type CasRoute =
-  | { operation: "readContent"; tenantId: string; hash: string }
-  | { operation: "readMetadata"; tenantId: string; hash: string }
-  | { operation: "leaseNode"; tenantId: string; hash: string }
-  | { operation: "leaseExisting"; tenantId: string; hash: string }
-  | { operation: "usage"; tenantId: string }
-  | { operation: "gc"; tenantId: string }
-  | { operation: "rootRefs"; tenantId: string }
-  | { operation: "rootAssignments"; tenantId: string }
-  | { operation: "readPortableNode"; tenantId: string; hash: string }
-  | { operation: "leasePortableNode"; tenantId: string; hash: string };
+  | { operation: "readContent"; stackId: string; tenantId: string; hash: string }
+  | { operation: "readMetadata"; stackId: string; tenantId: string; hash: string }
+  | { operation: "leaseNode"; stackId: string; tenantId: string; hash: string }
+  | { operation: "leaseExisting"; stackId: string; tenantId: string; hash: string }
+  | { operation: "usage"; stackId: string; tenantId: string }
+  | { operation: "gc"; stackId: string; tenantId: string }
+  | { operation: "updateRootRefs"; stackId: string; tenantId: string };
 
 function segment(value: string): string {
   return encodeURIComponent(value);
@@ -23,84 +29,60 @@ function decodeSegment(value: string): string | null {
 }
 
 export const casRoutes = {
-  readContent: ({ tenantId, hash }: { tenantId: string; hash: string }) =>
-    `/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/content`,
-  readMetadata: ({ tenantId, hash }: { tenantId: string; hash: string }) =>
-    `/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/metadata`,
-  leaseNode: ({ tenantId, hash }: { tenantId: string; hash: string }) =>
-    `/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}`,
-  leaseExisting: ({ tenantId, hash }: { tenantId: string; hash: string }) =>
-    `/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/lease`,
-  usage: ({ tenantId }: { tenantId: string }) =>
-    `/tenants/${segment(tenantId)}/cas/usage`,
-  gc: ({ tenantId }: { tenantId: string }) =>
-    `/tenants/${segment(tenantId)}/cas/gc`,
-  rootRefs: ({ tenantId }: { tenantId: string }) =>
-    `/tenants/${segment(tenantId)}/_internal/root-refs`,
-  rootAssignments: ({ tenantId }: { tenantId: string }) =>
-    `/tenants/${segment(tenantId)}/_internal/root-assignments`,
-  portableNode: ({ tenantId, hash }: { tenantId: string; hash: string }) =>
-    `/tenants/${segment(tenantId)}/_internal/nodes/${segment(hash)}`,
+  readContent: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/content`,
+  readMetadata: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/metadata`,
+  leaseNode: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}`,
+  leaseExisting: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/lease`,
+  usage: ({ stackId, tenantId }: { stackId: string; tenantId: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/usage`,
+  gc: ({ stackId, tenantId }: { stackId: string; tenantId: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/gc`,
+  updateRootRefs: ({ stackId, tenantId }: { stackId: string; tenantId: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/root-refs`,
 } as const;
 
+/** Matches only stack-and-tenant service routes. Never /admin. */
 export function matchCasRoute(method: string, pathname: string): CasRoute | null {
   const parts = pathname.split("/").filter(Boolean);
-  if (parts[0] !== "tenants" || !parts[1]) return null;
-
-  const tenantId = decodeSegment(parts[1]);
-  if (tenantId === null) return null;
-
-  if (parts[2] === "cas") {
-    if (parts.length === 4 && parts[3] === "usage" && method === "GET") {
-      return { operation: "usage", tenantId };
-    }
-    if (parts.length === 4 && parts[3] === "gc" && method === "POST") {
-      return { operation: "gc", tenantId };
-    }
-    if (parts[3] !== "nodes" || !parts[4]) return null;
-
-    const hash = decodeSegment(parts[4]);
-    if (hash === null) return null;
-    if (parts.length === 5 && method === "POST") {
-      return { operation: "leaseNode", tenantId, hash };
-    }
-    if (parts.length !== 6) return null;
-    if (parts[5] === "content" && method === "GET") {
-      return { operation: "readContent", tenantId, hash };
-    }
-    if (parts[5] === "metadata" && method === "GET") {
-      return { operation: "readMetadata", tenantId, hash };
-    }
-    if (parts[5] === "lease" && method === "POST") {
-      return { operation: "leaseExisting", tenantId, hash };
-    }
+  if (parts[0] !== "stacks" || !parts[1] || parts[2] !== "tenants" || !parts[3]) {
     return null;
   }
 
-  if (parts[2] !== "_internal") return null;
-  if (parts.length === 4 && parts[3] === "root-refs" && method === "POST") {
-    return { operation: "rootRefs", tenantId };
+  const stackId = decodeSegment(parts[1]);
+  const tenantId = decodeSegment(parts[3]);
+  if (stackId === null || tenantId === null) return null;
+
+  if (parts.length === 5 && parts[4] === "root-refs" && method === "POST") {
+    return { operation: "updateRootRefs", stackId, tenantId };
   }
-  if (parts.length === 4 && parts[3] === "root-assignments" && method === "POST") {
-    return { operation: "rootAssignments", tenantId };
+
+  if (parts[4] !== "cas") return null;
+  if (parts.length === 6 && parts[5] === "usage" && method === "GET") {
+    return { operation: "usage", stackId, tenantId };
   }
-  if (parts.length === 5 && parts[3] === "nodes" && parts[4]) {
-    const hash = decodeSegment(parts[4]);
-    if (hash === null) return null;
-    if (method === "GET") return { operation: "readPortableNode", tenantId, hash };
-    if (method === "POST") return { operation: "leasePortableNode", tenantId, hash };
+  if (parts.length === 6 && parts[5] === "gc" && method === "POST") {
+    return { operation: "gc", stackId, tenantId };
+  }
+  if (parts[5] !== "nodes" || !parts[6]) return null;
+
+  const hash = decodeSegment(parts[6]);
+  if (hash === null) return null;
+  if (parts.length === 7 && method === "POST") {
+    return { operation: "leaseNode", stackId, tenantId, hash };
+  }
+  if (parts.length !== 8) return null;
+  if (parts[7] === "content" && method === "GET") {
+    return { operation: "readContent", stackId, tenantId, hash };
+  }
+  if (parts[7] === "metadata" && method === "GET") {
+    return { operation: "readMetadata", stackId, tenantId, hash };
+  }
+  if (parts[7] === "lease" && method === "POST") {
+    return { operation: "leaseExisting", stackId, tenantId, hash };
   }
   return null;
-}
-
-export function isPublicCasRoute(method: string, pathname: string): boolean {
-  const route = matchCasRoute(method, pathname);
-  return route !== null && (
-    route.operation === "readContent"
-    || route.operation === "readMetadata"
-    || route.operation === "leaseNode"
-    || route.operation === "leaseExisting"
-    || route.operation === "usage"
-    || route.operation === "gc"
-  );
 }

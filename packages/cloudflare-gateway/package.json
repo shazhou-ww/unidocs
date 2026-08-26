@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@unidocs/gateway-common": "workspace:*",
-    "@unidocs/protocol-cas": "workspace:*",
+    "@unidocs/protocol-gateway": "workspace:*",
     "@unidocs/service-auth": "workspace:*"
   },
   "devDependencies": {

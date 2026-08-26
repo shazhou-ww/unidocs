@@ -82,7 +82,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       resolveDocService: async () => null,
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
     } as never)).toThrow("Gateway internal auth mode must be explicit");
   });
 
@@ -106,7 +106,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       } : null,
       casFetcher: { fetch: async () => new Response(null, { status: 501 }) },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
       generateId: (() => {
         const ids = ["public-doc", "internal-session"];
         return () => ids.shift()!;
@@ -166,7 +166,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
         },
       },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => true,
+      isGatewayExposedCasRoute: () => true,
     });
 
     const res = await handler(new Request("http://gw.local/tenants/tenant-42/cas/usage", {
@@ -206,7 +206,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 501 }) },
       directory,
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
       generateId: (() => {
         const ids = ["public-doc", "session-1", "discarded-doc", "discarded-session"];
         return () => ids.shift()!;
@@ -263,7 +263,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
     });
 
     const response = await handler(new Request("http://gw/tenants/tenant-1/docs/markdown/"));
@@ -288,7 +288,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
     });
 
     const response = await handler(new Request("http://gw/tenants/tenant-1/docs/markdown/"));
@@ -309,7 +309,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       resolveDocService: async () => null,
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
     });
 
     const response = await handler(new Request("http://gw/users/u1/docs/markdown/"));
@@ -337,7 +337,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
         },
       },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => true,
+      isGatewayExposedCasRoute: () => true,
     });
 
     const response = await handler(new Request("http://gw/tenants/tenant-1/cas/usage"));
@@ -376,7 +376,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory,
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
       generateId: () => "target-session",
       now: () => 3,
     });
@@ -469,7 +469,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory,
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
     });
 
     const response = await handler(new Request("http://gw/tenants/tenant-1/docs/markdown/doc-1"));

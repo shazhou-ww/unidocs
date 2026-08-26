@@ -143,6 +143,21 @@ the same commit.
 - Refresh-token retention defaults **off** (config flag); MVP sessions re-auth
   via Google when the ID-token-backed session TTL expires.
 
+## Task 3 execution notes (operator-approved approach)
+
+The canonical `@unidocs/protocol-cas` is frozen to the stack-scoped protocol
+(`/stacks/{stackId}/tenants/{tenantId}/...`, `updateRootRefs`, no
+assignment/portable contracts, no `isPublicCasRoute`). The pre-stack tenant
+surface is quarantined verbatim in the migration-only
+`@unidocs/protocol-cas-legacy` package; the legacy runtime packages
+(cloudflare-cas, cas-client, cloudflare-gateway, azure-gateway, gateway-common,
+protocol-gateway) changed only their import sources (and the Gateway exposure
+policy moved to Gateway-owned `isGatewayExposedCasRoute` in
+`@unidocs/protocol-gateway`, injected by `gateway-handler`). The new
+`@unidocs/cas-server-cloudflare` package hosts the canonical stack protocol
+skeleton (501 handlers until Tasks 4–7). The old runtime + local dev + Azure
+keep working unchanged during the compatibility window.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

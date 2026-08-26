@@ -1,7 +1,12 @@
-import type {
-  CasUpdateRootRefsRequest,
-  CasUpdateRootRefsResponse,
-} from "./http.js";
+/**
+ * MIGRATION-ONLY legacy package. Verbatim snapshot of the pre-stack CAS
+ * tenant protocol (tenant-scoped paths, rootAssignments, portable-node HTTP,
+ * isPublicCasRoute). Consumed only by the legacy runtime packages
+ * (cloudflare-cas, cas-client, gateways) until they migrate to the canonical
+ * stack-scoped `@unidocs/protocol-cas` and the retired handlers are removed
+ * (Task 9/10). Do not extend this package; it is removed when the rollback
+ * window closes.
+ */
 
 /** 64 lowercase hexadecimal SHA-256 characters. */
 export type CasHash = string;
@@ -42,6 +47,16 @@ export interface CasRootRefUpdate {
   readonly changes: CasRefChanges;
 }
 
+export interface CasRootAssignment {
+  readonly owner: string;
+  readonly hash: CasHash | null;
+}
+
+export interface CasAssignRootsRequest {
+  readonly requestId: string;
+  readonly assignments: readonly CasRootAssignment[];
+}
+
 export interface CasUsage {
   readonly nodeCount: number;
   readonly readyContentBytes: number;
@@ -72,7 +87,8 @@ export interface TenantCasService {
     hash: CasHash,
     requestedDurationMs: number,
   ): Promise<CasLeaseResult>;
-  updateRootRefs(request: CasUpdateRootRefsRequest): Promise<CasUpdateRootRefsResponse>;
+  updateRootRefs(update: CasRootRefUpdate): Promise<void>;
+  assignRoots(update: CasAssignRootsRequest): Promise<void>;
   usage(): Promise<CasUsage>;
   triggerGc(options?: { maxNodes?: number }): Promise<CasGcResult>;
 }

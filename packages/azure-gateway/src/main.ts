@@ -29,7 +29,7 @@ import {
   requireEnv,
   serve,
 } from "@unidocs/azure-sdk";
-import { isPublicCasRoute } from "@unidocs/protocol-cas";
+import { isGatewayExposedCasRoute } from "@unidocs/protocol-gateway";
 import {
   createGatewayHandler,
   createInsecureTenantIdentityResolver,
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     resolveDocService: (docType) => registry.resolve(docType),
     casFetcher,
     directory,
-    isPublicCasRoute: casBaseUrl ? isPublicCasRoute : () => false,
+    isGatewayExposedCasRoute: casBaseUrl ? isGatewayExposedCasRoute : () => false,
   });
 
   const { close } = await serve(handler, { port, host: "0.0.0.0" });

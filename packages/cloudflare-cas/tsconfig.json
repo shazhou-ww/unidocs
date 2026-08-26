@@ -19,7 +19,7 @@
       "path": "../svalue-codec"
     },
     {
-      "path": "../protocol-cas"
+      "path": "../protocol-cas-legacy"
     },
     {
       "path": "../service-auth"

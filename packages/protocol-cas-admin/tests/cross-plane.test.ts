@@ -90,9 +90,12 @@ describe("package dependency boundaries", () => {
     expect(webui.dependencies?.["@unidocs/protocol-cas-admin"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unidocs/cas-control-plane"]).toBe("workspace:*");
 
-    // Admin protocol stays independent of the tenant protocol package.
+    // Admin protocol stays independent of the tenant protocol package
+    // (canonical and migration-only legacy surface alike).
     expect(protocol.dependencies?.["@unidocs/protocol-cas"]).toBeUndefined();
     expect(protocol.devDependencies?.["@unidocs/protocol-cas"]).toBeUndefined();
+    expect(protocol.dependencies?.["@unidocs/protocol-cas-legacy"]).toBeUndefined();
+    expect(protocol.devDependencies?.["@unidocs/protocol-cas-legacy"]).toBeUndefined();
 
     for (const pkg of [protocol, control, webui, edge]) {
       const deps = {
@@ -111,7 +114,9 @@ describe("package dependency boundaries", () => {
 
   test("cas-client stays on the tenant protocol only", () => {
     const client = readPkg("cas-client");
-    expect(client.dependencies?.["@unidocs/protocol-cas"]).toBe("workspace:*");
+    // cas-client consumes the migration-only legacy tenant surface until the
+    // caller migration (Task 8) moves it onto the canonical stack protocol.
+    expect(client.dependencies?.["@unidocs/protocol-cas-legacy"]).toBe("workspace:*");
     expect(client.dependencies?.["@unidocs/protocol-cas-admin"]).toBeUndefined();
   });
 });

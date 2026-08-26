@@ -15,8 +15,8 @@
  */
 
 import type { HttpFetcher } from "@unidocs/cas-client";
-import { casRoutes, matchCasRoute } from "@unidocs/protocol-cas";
-import type { CasRoute } from "@unidocs/protocol-cas";
+import { casRoutes, matchCasRoute } from "@unidocs/protocol-cas-legacy";
+import type { CasRoute } from "@unidocs/protocol-cas-legacy";
 import { docRoutes } from "@unidocs/protocol-doc";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {
@@ -45,7 +45,8 @@ export interface GatewayHandlerConfig {
   resolveDocService(docType: string): Promise<DocServiceRegistration | null>;
   casFetcher: HttpFetcher;
   directory: GatewayDocumentDirectory;
-  isPublicCasRoute(method: string, pathname: string): boolean;
+  /** Gateway-owned CAS exposure policy, applied after route matching. */
+  isGatewayExposedCasRoute(route: CasRoute): boolean;
   generateId?(): string;
   now?(): number;
 }
@@ -101,7 +102,7 @@ export function createGatewayHandler(
 
     if (namespace === "cas") {
       const casRoute = matchCasRoute(request.method, url.pathname);
-      if (!casRoute || !cfg.isPublicCasRoute(request.method, url.pathname)) {
+      if (!casRoute || !cfg.isGatewayExposedCasRoute(casRoute)) {
         return Response.json({ error: "Unknown CAS endpoint" }, { status: 404 });
       }
       const policy = casCapabilityPolicy(casRoute);

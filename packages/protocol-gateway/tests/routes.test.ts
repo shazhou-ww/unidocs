@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { casRoutes } from "@unidocs/protocol-cas";
+import { casRoutes } from "@unidocs/protocol-cas-legacy";
 import {
   gatewayRoutes,
+  isGatewayExposedCasRoute,
   isLegacyPublicCasRoute,
   matchGatewayRoute,
 } from "../src/index.js";
@@ -54,6 +55,21 @@ describe("Gateway routes", () => {
     expect(matchGatewayRoute("POST", casRoutes.rootRefs({ tenantId: "t" }))).toBeNull();
     expect(matchGatewayRoute("GET", "/users/u/docs/docx/")).toBeNull();
     expect(matchGatewayRoute("GET", gatewayRoutes.applyDocument(document))).toBeNull();
+  });
+
+  test("Gateway exposure policy excludes private writes and audit operations", () => {
+    expect(isGatewayExposedCasRoute({ operation: "readContent", tenantId: "t", hash: "h" })).toBe(true);
+    expect(isGatewayExposedCasRoute({ operation: "readMetadata", tenantId: "t", hash: "h" })).toBe(true);
+    expect(isGatewayExposedCasRoute({ operation: "leaseNode", tenantId: "t", hash: "h" })).toBe(true);
+    expect(isGatewayExposedCasRoute({ operation: "leaseExisting", tenantId: "t", hash: "h" })).toBe(true);
+    expect(isGatewayExposedCasRoute({ operation: "usage", tenantId: "t" })).toBe(true);
+    expect(isGatewayExposedCasRoute({ operation: "gc", tenantId: "t" })).toBe(true);
+    // Root Refs writes are a private CAS service operation, not gateway-exposed.
+    expect(isGatewayExposedCasRoute({ operation: "rootRefs", tenantId: "t" })).toBe(false);
+    // CAS audit routes are /admin — the gateway's CAS matcher never returns them.
+    expect(matchGatewayRoute("GET", "/admin/stacks/s/root-ref-domains/doc/refs")).toBeNull();
+    expect(matchGatewayRoute("GET", "/admin/stacks/s/root-ref-domains/doc/events")).toBeNull();
+    expect(matchGatewayRoute("POST", "/admin/stacks/s/member-invitations")).toBeNull();
   });
 
   test.each([

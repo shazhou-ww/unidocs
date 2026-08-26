@@ -1,7 +1,8 @@
 {
-  "name": "@unidocs/cloudflare-cas",
+  "name": "@unidocs/cas-server-cloudflare",
   "version": "0.1.0",
-  "description": "Tenant-scoped CAS worker for UniDocs",
+  "private": true,
+  "description": "Canonical stack-scoped CAS tenant server (Cloudflare Workers)",
   "type": "module",
   "main": "./src/worker.ts",
   "types": "./src/worker.ts",
@@ -22,15 +23,10 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@unidocs/cas-server-common": "workspace:*",
-    "@unidocs/protocol": "workspace:*",
-    "@unidocs/protocol-cas-legacy": "workspace:*",
-    "@unidocs/service-auth": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*"
+    "@unidocs/protocol-cas": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",
-    "jose": "^6.2.10",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
     "wrangler": "^4.20.0"

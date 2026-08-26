@@ -6,8 +6,8 @@ import {
   isCasRoute,
 } from "./cas/routes.js";
 import { migrateCasSchema } from "./cas/schema.js";
-import { matchCasRoute } from "@unidocs/protocol-cas";
-import type { CasRoute } from "@unidocs/protocol-cas";
+import { matchCasRoute } from "@unidocs/protocol-cas-legacy";
+import type { CasRoute } from "@unidocs/protocol-cas-legacy";
 import { CapabilityError } from "@unidocs/service-auth";
 import {
   CasAuthConfigCache,

@@ -5,14 +5,14 @@
  * Editor mode talks to the CAS worker through a fetch-capable binding using
  * either the legacy shared headers or one request-local delegated capability.
  * which is structural so this package stays cloud-neutral (no Cloudflare
- * `Fetcher` type import). CAS wire types live in @unidocs/protocol-cas.
+ * `Fetcher` type import). CAS wire types live in @unidocs/protocol-cas-legacy.
  */
 
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
 import { refsFromSValue } from "@unidocs/svalue-codec";
 import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/protocol";
-import { casRoutes } from "@unidocs/protocol-cas";
-import type { CasLeaseResult, CasRootRefUpdate } from "@unidocs/protocol-cas";
+import { casRoutes } from "@unidocs/protocol-cas-legacy";
+import type { CasLeaseResult, CasRootRefUpdate } from "@unidocs/protocol-cas-legacy";
 
 /** Structural interface for a fetch-capable service binding. */
 export interface HttpFetcher {

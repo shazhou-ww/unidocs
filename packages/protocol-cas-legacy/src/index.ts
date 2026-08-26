@@ -1,4 +1,10 @@
+/**
+ * MIGRATION-ONLY legacy package — see ./types.ts header. Verbatim snapshot of
+ * the pre-stack CAS tenant protocol exports.
+ */
+
 export type {
+  CasAssignRootsRequest,
   CasGcResult,
   CasHash,
   CasLeaseResult,
@@ -8,6 +14,7 @@ export type {
   CasNodeState,
   CasRefChanges,
   CasReferences,
+  CasRootAssignment,
   CasRootRefUpdate,
   CasUsage,
   TenantCasService,
@@ -15,29 +22,35 @@ export type {
 
 export {
   CasLeaseDurationHeader,
+  CasPortableNodeContentType,
   CasRefsHeader,
 } from "./http.js";
 export type {
-  CasEndpointContracts,
   CasErrorResponse,
+  CasEndpointContracts,
   CasGcRequest,
   CasGcResponse,
   CasLeaseExistingRequest,
   CasLeaseExistingResponse,
   CasLeaseNodeRequest,
   CasLeaseNodeResponse,
+  CasLeasePortableNodeRequest,
+  CasLeasePortableNodeResponse,
   CasNodePath,
   CasReadContentRequest,
   CasReadContentResponse,
   CasReadMetadataRequest,
   CasReadMetadataResponse,
-  CasStackPath,
+  CasReadPortableNodeRequest,
+  CasReadPortableNodeResponse,
+  CasRootAssignmentsRequest,
+  CasRootAssignmentsResponse,
+  CasRootRefsRequest,
+  CasRootRefsResponse,
   CasTenantPath,
-  CasUpdateRootRefsRequest,
-  CasUpdateRootRefsResponse,
   CasUsageRequest,
   CasUsageResponse,
 } from "./http.js";
 
-export { casRoutes, matchCasRoute } from "./routes.js";
+export { casRoutes, isPublicCasRoute, matchCasRoute } from "./routes.js";
 export type { CasRoute } from "./routes.js";

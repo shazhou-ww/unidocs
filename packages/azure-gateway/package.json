@@ -24,12 +24,12 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/azure-sdk": "workspace:*",
-    "@unidocs/gateway-common": "workspace:*",
-    "@unidocs/protocol-cas": "workspace:*",
-    "@unidocs/service-auth": "workspace:*",
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
+    "@unidocs/azure-sdk": "workspace:*",
+    "@unidocs/gateway-common": "workspace:*",
+    "@unidocs/protocol-gateway": "workspace:*",
+    "@unidocs/service-auth": "workspace:*",
     "pg": "^8.23.0"
   },
   "devDependencies": {

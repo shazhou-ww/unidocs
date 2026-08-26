@@ -12,19 +12,5 @@
   },
   "include": [
     "src"
-  ],
-  "references": [
-    {
-      "path": "../cas-server-common"
-    },
-    {
-      "path": "../svalue-codec"
-    },
-    {
-      "path": "../protocol-cas-legacy"
-    },
-    {
-      "path": "../protocol"
-    }
   ]
 }

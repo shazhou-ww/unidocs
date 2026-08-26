@@ -4,6 +4,10 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
     "types": [
       "@cloudflare/workers-types"
     ]
@@ -13,13 +17,7 @@
   ],
   "references": [
     {
-      "path": "../gateway-common"
-    },
-    {
-      "path": "../protocol-gateway"
-    },
-    {
-      "path": "../service-auth"
+      "path": "../protocol-cas"
     }
   ]
 }

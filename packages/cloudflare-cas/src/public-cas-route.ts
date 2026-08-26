@@ -3,4 +3,4 @@
  * 它属于 CAS 自有的云中立协议包，因为 azure-gateway 也要用同一份允许列表，
  * 而 Azure 侧不该依赖 Cloudflare 适配包。
  */
-export { isPublicCasRoute } from "@unidocs/protocol-cas";
+export { isPublicCasRoute } from "@unidocs/protocol-cas-legacy";

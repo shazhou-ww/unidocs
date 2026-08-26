@@ -1413,26 +1413,37 @@ cover the same states this task's scope requires.)
 
 ### Task 3: Freeze tenant and admin CAS protocol behavior
 
-- [ ] Add failing route tests for POST
+> **Approach (operator-approved):** the canonical `@unidocs/protocol-cas` is
+> frozen to the stack-scoped protocol; the pre-stack tenant surface is
+> quarantined verbatim in the migration-only `@unidocs/protocol-cas-legacy`
+> package, consumed only by the legacy runtime packages (cloudflare-cas,
+> cas-client, gateways) until Task 9/10 retire them. A new
+> `@unidocs/cas-server-cloudflare` package hosts the canonical stack protocol
+> implementation (Tasks 4–7 land there); the old runtime keeps serving
+> unchanged during the compatibility window.
+
+- [x] Add failing route tests for POST
   `/stacks/{stackId}/tenants/{tenantId}/root-refs` and GET domain
   refs/events under `/admin/stacks/{stackId}/root-ref-domains/{refDomain}`.
-- [ ] Add `CasStackPath`, make every tenant/node path stack-scoped, and prove
+- [x] Add `CasStackPath`, make every tenant/node path stack-scoped, and prove
   every tenant service route carries `stackId + tenantId`.
-- [ ] Make top-level path dispatch select authentication middleware before
+- [~] Make top-level path dispatch select authentication middleware before
   resource matching: `/admin` uses OIDC BFF session/membership; `/stacks`
-  uses tenant JWT verification.
-- [ ] Add response/request type tests or compile fixtures for update, balance,
+  uses tenant JWT verification. (Matchers are disjoint and the admin session
+  plane is enforced; the `/stacks` tenant-JWT verification itself is Task 4
+  worker authorization on `cas-server-cloudflare`.)
+- [x] Add response/request type tests or compile fixtures for update, balance,
       event, cursor, and revision contracts.
-- [ ] Remove `isPublicCasRoute()` from `@unidocs/protocol-cas`; move the
+- [x] Remove `isPublicCasRoute()` from `@unidocs/protocol-cas`; move the
       Gateway-exposed CAS operation allowlist into Gateway-owned policy.
-- [ ] Prove the current Gateway policy excludes Root Refs writes and all CAS
+- [x] Prove the current Gateway policy excludes Root Refs writes and all CAS
       audit operations without treating that exclusion as a CAS route property.
-- [ ] Keep `cas-admin-webui` admin ingress separate from the public CAS proxy
+- [x] Keep `cas-admin-webui` admin ingress separate from the public CAS proxy
   and prove it owns `/admin` while tenant/public proxies cannot reach it.
-- [ ] Remove assignment protocol types, routes, contracts, and exports.
-- [ ] Remove portable-node constants, request/response contracts, endpoint
+- [x] Remove assignment protocol types, routes, contracts, and exports.
+- [x] Remove portable-node constants, request/response contracts, endpoint
   entries, route operations, builder, exports, and protocol route tests.
-- [ ] Use explicit `updateRootRefs`, `listRootDomainRefs`, and
+- [x] Use explicit `updateRootRefs`, `listRootDomainRefs`, and
   `listRootDomainEvents` operation names.
 
 **Focused validation:**
@@ -1444,6 +1455,10 @@ pnpm --filter @unidocs/protocol-cas-admin test
 pnpm --filter @unidocs/protocol-cas-admin typecheck
 pnpm --filter @unidocs/protocol-gateway test
 ```
+
+All green, plus repo-wide typecheck, the workspace dependency guard (160), and
+a full local-runtime smoke (gateway → CAS proxy, doc worker, admin BFF) with
+the legacy surface untouched.
 
 ### Task 4: Add trusted stack and domain authorization
 

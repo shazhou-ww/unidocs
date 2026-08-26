@@ -32,7 +32,7 @@ describe("Gateway capability HTTP forwarding", () => {
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
       generateId: sequence("doc-1", "session-1"),
       now: () => 10,
     });
@@ -107,7 +107,7 @@ describe("Gateway capability HTTP forwarding", () => {
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory,
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
     });
 
     const response = await handler(new Request(
@@ -137,7 +137,7 @@ describe("Gateway capability HTTP forwarding", () => {
         },
       },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => true,
+      isGatewayExposedCasRoute: () => true,
     });
 
     const response = await handler(new Request("https://gw/tenants/tenant-1/cas/usage", {
@@ -166,7 +166,7 @@ describe("Gateway capability HTTP forwarding", () => {
       resolveDocService: async () => null,
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
-      isPublicCasRoute: () => false,
+      isGatewayExposedCasRoute: () => false,
     })).toThrow("requires a capability authority");
   });
 });

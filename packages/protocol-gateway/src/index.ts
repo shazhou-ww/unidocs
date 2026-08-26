@@ -1,5 +1,5 @@
 import type { SValue } from "@unidocs/protocol";
-import { isPublicCasRoute, matchCasRoute } from "@unidocs/protocol-cas";
+import { isPublicCasRoute, matchCasRoute } from "@unidocs/protocol-cas-legacy";
 import type {
   CasGcRequest,
   CasGcResponse,
@@ -14,7 +14,7 @@ import type {
   CasRoute,
   CasUsageRequest,
   CasUsageResponse,
-} from "@unidocs/protocol-cas";
+} from "@unidocs/protocol-cas-legacy";
 import type {
   DocApplyRequest,
   DocApplyResponse,
@@ -354,6 +354,28 @@ export function isLegacyPublicCasRoute(method: string, pathname: string): boolea
     if (parts[5] === "lease") return method === "POST";
   }
   return false;
+}
+
+/**
+ * Gateway-owned CAS exposure allowlist. Operates on a matched tenant route —
+ * the Gateway decides which CAS operations it exposes, and that decision is
+ * not a CAS route property (the canonical `@unidocs/protocol-cas` matcher has
+ * no exposure concept). Root Refs writes and all CAS audit operations are
+ * excluded: `updateRootRefs`/`rootRefs` are private service operations, and
+ * audit routes live under `/admin` which the tenant matcher never recognizes.
+ */
+export function isGatewayExposedCasRoute(route: CasRoute): boolean {
+  switch (route.operation) {
+    case "readContent":
+    case "readMetadata":
+    case "leaseNode":
+    case "leaseExisting":
+    case "usage":
+    case "gc":
+      return true;
+    default:
+      return false;
+  }
 }
 
 export function matchGatewayRoute(method: string, pathname: string): GatewayRoute | null {

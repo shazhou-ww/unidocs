@@ -1,7 +1,8 @@
 {
-  "name": "@unidocs/cas-client",
+  "name": "@unidocs/protocol-cas-legacy",
   "version": "0.1.0",
-  "description": "Cloud-neutral CAS HTTP client for UniDocs",
+  "private": true,
+  "description": "Quarantined tenant-scoped CAS contracts (migration-only; removed with the legacy CAS runtime)",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -19,12 +20,6 @@
     "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
-  },
-  "dependencies": {
-    "@unidocs/cas-server-common": "workspace:*",
-    "@unidocs/protocol": "workspace:*",
-    "@unidocs/protocol-cas-legacy": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

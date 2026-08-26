@@ -11,7 +11,7 @@
  * that prevents a lease claim from racing a GC deletion decision.
  */
 
-import type { CasNodeDescriptor, CasLeaseResult, CasAssignRootsRequest, CasRootRefUpdate, CasUsage, CasGcResult, CasNodeMetadata, CasNodeState } from "@unidocs/protocol-cas";
+import type { CasNodeDescriptor, CasLeaseResult, CasAssignRootsRequest, CasRootRefUpdate, CasUsage, CasGcResult, CasNodeMetadata, CasNodeState } from "@unidocs/protocol-cas-legacy";
 import { encodeHeader, concatenateNodeBytes, decodeHeader, parseNodeBytes, computeNodeDigest, hashToHex, hexToHash, validateHash, validateContentType, validateContentLength, validateChildRefs, validateDecodedHeader } from "@unidocs/cas-server-common";
 import { decodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { SValueContentType } from "@unidocs/protocol";
