@@ -32,11 +32,12 @@ describe("Doc capability edge", () => {
       exp: 1120,
     });
     let forwarded: Request | undefined;
+    const audits: unknown[] = [];
     const editor = trackingNamespace(async request => {
       forwarded = request;
       return Response.json({ success: true, version: 2 });
     });
-    const handler = capabilityHandler(primary, delegated, editor);
+    const handler = capabilityHandler(primary, delegated, editor, event => audits.push(event));
     const response = await handler(new Request(
       "https://doc/tenants/tenant-1/sessions/session-1/apply",
       {
@@ -64,6 +65,16 @@ describe("Doc capability edge", () => {
     expect(forwarded!.headers.get("Authorization")).toBeNull();
     expect(forwarded!.headers.get("X-Internal-Token")).toBeNull();
     expect(forwarded!.headers.get("Cookie")).toBeNull();
+    expect(audits).toEqual([expect.objectContaining({
+      credentialKind: "capability",
+      routeGeneration: "tenant",
+      operation: "apply",
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+      kid: "key-1",
+    })]);
+    expect(JSON.stringify(audits)).not.toContain("doc-token");
+    expect(JSON.stringify(audits)).not.toContain("cas-token");
   });
 
   test("omits delegated authority on history and rejects an unexpected one", async () => {
@@ -227,6 +238,7 @@ function capabilityHandler(
   primary: VerifiedCapability,
   delegated: VerifiedCapability | undefined,
   editor: ReturnType<typeof trackingNamespace>,
+  audit?: (event: unknown) => void,
 ) {
   return createDocTypeHandler({
     docType: "markdown",
@@ -240,6 +252,7 @@ function capabilityHandler(
       if (!delegated) throw new Error("Delegated verifier must not run");
       return delegated;
     }),
+    audit,
     editor,
     operator: trackingNamespace(async () => Response.json({ success: true })),
   });

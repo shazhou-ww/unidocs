@@ -710,7 +710,7 @@ Doc edge:
 | `GET .../history`; `GET .../ir` | session `read` | none |
 | `GET .../snapshot` | session `read` | `cas:write` |
 | `POST .../apply`; `POST .../rollback`; `POST .../run` | session `write` | `cas:read` + `cas:write` |
-| `POST .../init-from-hash` | session `write` | `cas:write` |
+| `POST .../init-from-hash` | session `write` | `cas:read` + `cas:write` |
 | `POST .../reset` | session `write` | none |
 
 This is the union of current doctype behavior. Markdown/docx may use less, but
@@ -1468,6 +1468,18 @@ Use an explicit three-phase rollout. There is no implicit fallback mode.
       absent trust configuration must not silently select legacy behavior.
 - [ ] Update local development and integration harnesses to issue real test
       capabilities rather than inserting a magic shared token.
+
+Repository implementation status: Phase A/B code paths are ready for deployment.
+Doc and CAS service edges emit token-free authentication events containing
+credential kind, route generation, operation, tenant, and capability key/token
+identifiers where applicable. In `dual` mode, tenant routes require capabilities
+and legacy credentials are confined to explicit private adapters. Cloudflare and
+Azure local harnesses default to `dual`, generate real ephemeral ES256 fixtures,
+and share a fixture for cross-runtime Azure Doc -> Cloudflare CAS tests. Root
+typecheck, build, and package tests pass; `pnpm test:local` passes 291 with 2
+conditional skips and `pnpm test:azure` passes 15/15 with clean resource teardown.
+The checkboxes above remain open until the corresponding deployment, observation
+window, rollback-window closure, and production secret/route removal are verified.
 
 Rollback during Phase A/B or C1 is an audited forward deployment of the retained
 capability-aware `dual` artifact plus an explicit remount of the retained

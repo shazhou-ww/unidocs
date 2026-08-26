@@ -79,6 +79,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     #config: DocumentType<TDoc, TQuery, TOp> | null = null;
     #context: DocumentTypeContext | null = null;
     #requestCas: CasClient | null = null;
+    #requestOperation: string | null = null;
     #tenantId: string | null = null;
     #sessionId: string | null = null;
     #docType: string | null = null;
@@ -152,7 +153,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const casAdapter = {
         ensureNode: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
           this.#requireCas().ensureNode(hash, content, contentType, refs as string[] | undefined),
-        leaseExisting: (hash: string) => this.#requireCas().leaseExisting(hash),
+        leaseExisting: (hash: string) => this.#isReadOnlyOperation()
+          ? this.#requireCas().metadata({ kind: "cas", hash })
+          : this.#requireCas().leaseExisting(hash),
         metadata: (hash: string) => this.#requireCas().metadata({ kind: "cas", hash }),
         read: (hash: string) => this.#requireCas().read({ kind: "cas", hash }),
         assignRoots: (params: { requestId: string; assignments: readonly { owner: string; hash: string }[] }) =>
@@ -437,12 +440,12 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       if (this.#doc === null) return;
       const refs = encodeSValueWithRefs(this.#doc as unknown as SValue).refs;
       try {
-        await Promise.all([...new Set(refs)].map(hash => this.#requireCas().leaseExisting(hash)));
+        await Promise.all([...new Set(refs)].map(hash => this.#checkExistingRef(hash)));
       } catch (err) {
         if (!(err instanceof CasClientError) || (err.status !== 404 && err.status !== 409)) throw err;
         this.#doc = await this.#reconstruct(this.#version);
         const rebuiltRefs = encodeSValueWithRefs(this.#doc as unknown as SValue).refs;
-        await Promise.all([...new Set(rebuiltRefs)].map(hash => this.#requireCas().leaseExisting(hash)));
+        await Promise.all([...new Set(rebuiltRefs)].map(hash => this.#checkExistingRef(hash)));
       }
     }
 
@@ -479,6 +482,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
     async #handleRequest(request: Request): Promise<Response> {
       this.#requestCas = createRequestCasClient(this.#env, request);
+      this.#requestOperation = request.headers.get("X-UniDocs-Doc-Operation");
       try {
         const url = new URL(request.url);
         await this.#ensureLoaded();
@@ -705,6 +709,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         }, { status });
       } finally {
         this.#requestCas = null;
+        this.#requestOperation = null;
       }
     }
 
@@ -811,6 +816,16 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         throw new Error("This Doc operation has no delegated CAS authority");
       }
       return this.#requestCas;
+    }
+
+    #isReadOnlyOperation(): boolean {
+      return this.#requestOperation === "query" || this.#requestOperation === "export";
+    }
+
+    #checkExistingRef(hash: string): Promise<unknown> {
+      return this.#isReadOnlyOperation()
+        ? this.#requireCas().metadata({ kind: "cas", hash })
+        : this.#requireCas().leaseExisting(hash);
     }
 
     #requireDoc(): SValueType<TDoc> {

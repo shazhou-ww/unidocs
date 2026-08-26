@@ -18,7 +18,7 @@ describe("Gateway capability policy", () => {
     ["apply", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],
     ["rollback", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],
     ["run", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],
-    ["initFromHash", "tenants:t:sessions:s:write", ["tenants:t:cas:write"], 60],
+    ["initFromHash", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 60],
     ["reset", "tenants:t:sessions:s:write", [], 30],
   ] satisfies Array<[DocOperation, string, string[], number]>) (
     "%s uses minimum downstream authority",

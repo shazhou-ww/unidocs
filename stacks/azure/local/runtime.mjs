@@ -39,6 +39,11 @@ import * as esbuild from "esbuild";
 import pg from "pg";
 import { BlobServiceClient } from "@azure/storage-blob";
 import {
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+} from "jose";
+import {
   CAS_ACCESS_KEY,
   docServiceAccessKey,
 } from "../../cloudflare/local/doc-types.mjs";
@@ -643,13 +648,21 @@ export async function startAzureRuntime({
   docTypes = ["markdown"],
   replicas = 2,
   casBaseUrl,
+  internalAuthMode = "dual",
+  capabilityFixture,
   postgres = "compose",
   azuriteDataDir,
 } = {}) {
+  if (!['legacy', 'dual', 'capability'].includes(internalAuthMode)) {
+    throw new Error(`startAzureRuntime(): internalAuthMode must be "legacy", "dual", or "capability", got ${JSON.stringify(internalAuthMode)}`);
+  }
   if (postgres !== "compose" && postgres !== "external") {
     throw new Error(`startAzureRuntime(): postgres must be "compose" or "external", got ${JSON.stringify(postgres)}`);
   }
   const externalPostgres = postgres === "external";
+  const resolvedCapabilityFixture = internalAuthMode === "legacy"
+    ? undefined
+    : capabilityFixture ?? await createEphemeralCapabilityFixture();
   assertDocTypesSupported(docTypes);
   const layout = azurePortLayout({ docTypes, replicas });
 
@@ -723,13 +736,17 @@ export async function startAzureRuntime({
           {
             DATABASE_URL: docDatabaseUrl(name),
             BLOB_CONNECTION_STRING,
-            INTERNAL_AUTH_MODE: "legacy",
+            INTERNAL_AUTH_MODE: internalAuthMode,
             DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
             CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
             CAPABILITY_ALGORITHM: "ES256",
             CAPABILITY_TTL_SECONDS: "120",
             CAPABILITY_MAX_LIFETIME_SECONDS: "300",
             CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+            ...(resolvedCapabilityFixture ? {
+              CAPABILITY_ISSUER: resolvedCapabilityFixture.issuer,
+              CAPABILITY_TRUSTED_JWKS: JSON.stringify(resolvedCapabilityFixture.jwks),
+            } : {}),
             SERVICE_ACCESS_KEY: docServiceAccessKey(name),
             PORT: String(port),
             ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl, CAS_ACCESS_KEY } : {}),
@@ -766,11 +783,17 @@ export async function startAzureRuntime({
         DATABASE_URL: GATEWAY_DATABASE_URL,
         CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: JSON.stringify(docServices),
-        INTERNAL_AUTH_MODE: "legacy",
+        INTERNAL_AUTH_MODE: internalAuthMode,
+        CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
         CAPABILITY_ALGORITHM: "ES256",
         CAPABILITY_TTL_SECONDS: "120",
         CAPABILITY_MAX_LIFETIME_SECONDS: "300",
         CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+        ...(resolvedCapabilityFixture ? {
+          CAPABILITY_ISSUER: resolvedCapabilityFixture.issuer,
+          CAPABILITY_KEY_ID: resolvedCapabilityFixture.kid,
+          CAPABILITY_PRIVATE_KEY_PKCS8: resolvedCapabilityFixture.privateKeyPkcs8,
+        } : {}),
         INSECURE_PATH_IDENTITY: "true",
         PORT: String(layout.gateway),
         ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),
@@ -848,4 +871,18 @@ export async function startAzureRuntime({
     }
     throw err;
   }
+}
+
+async function createEphemeralCapabilityFixture() {
+  const pair = await generateKeyPair("ES256", { extractable: true });
+  const kid = `azure-local-${crypto.randomUUID()}`;
+  const publicJwk = await exportJWK(pair.publicKey);
+  return {
+    issuer: `unidocs-gateway:azure-local:${crypto.randomUUID()}`,
+    kid,
+    privateKeyPkcs8: await exportPKCS8(pair.privateKey),
+    jwks: {
+      keys: [{ ...publicJwk, kid, alg: "ES256", use: "sig" }],
+    },
+  };
 }

@@ -64,7 +64,7 @@ export function docCapabilityPolicy(
     case "initFromHash":
       return policy(
         sessionWritePermission(tenantId, sessionId),
-        [casWritePermission(tenantId)],
+        [casReadPermission(tenantId), casWritePermission(tenantId)],
         60,
       );
     case "reset":

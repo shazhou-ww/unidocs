@@ -161,6 +161,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
     accessKey: config.serviceAccessKey,
     docCapabilityVerifier: config.docCapabilityVerifier,
     casCapabilityVerifier: config.casCapabilityVerifier,
+    audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType, ...event })),
     editor: createLocalEditorNamespace(buildSession, async (identity, creating) => {
       if (creating) await sessionIdentities.register(identity);
       const stored = await sessionIdentities.get(identity);

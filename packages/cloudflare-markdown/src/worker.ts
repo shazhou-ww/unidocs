@@ -50,6 +50,7 @@ export default {
     return createDocTypeHandler({
       docType: "markdown",
       ...authConfig.get(env),
+      audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType: "markdown", ...event })),
       editor: env.MARKDOWN_EDITOR,
       operator: env.MARKDOWN_OPERATOR,
     })(request);

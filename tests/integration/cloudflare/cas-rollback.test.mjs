@@ -89,17 +89,18 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
   expect(applied.error).toContain("CAS updateRootRefs failed");
   expect(applied.version).toBe(1);
 
-  // 下一次请求重试 recoverable outbox，成功提交 version 2。
-  const history = await closeFetch(
-    `${GW()}/tenants/${userId}/docs/docx/${docId}/history`,
-    { headers: { Accept: SValueContentType } },
+  // 重试 apply 会先用 CAS 读写权限恢复 pending，再报告请求版本已落后。
+  const retry = await closeFetch(
+    `${GW()}/tenants/${userId}/docs/docx/${docId}/apply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": SValueContentType },
+      body: applyBody.buffer,
+    },
   );
-  const historyError = history.ok ? "" : await history.clone().text();
-  expect(history.ok, historyError).toBe(true);
-  const historyBody = decodeSValue(new Uint8Array(await history.arrayBuffer()));
-  const { data, version } = historyBody;
-  expect(data.map((entry) => entry.version)).toEqual([1, 2]);
-  expect(version).toBe(2);
+  const retried = await retry.json();
+  expect(retry.status, JSON.stringify(retried)).toBe(409);
+  expect(retried).toMatchObject({ success: false, version: 2 });
 
   // 恢复后的文档包含已确认提交的操作。
   const query = await closeFetch(
@@ -114,4 +115,16 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
   expect(result.success).toBe(true);
   expect(result.data).toHaveLength(1);
   expect(result.data[0]).toMatchObject({ format: "png", altText: "dot" });
+
+  // history 无需 CAS 权限，只读取已经恢复并提交的历史。
+  const history = await closeFetch(
+    `${GW()}/tenants/${userId}/docs/docx/${docId}/history`,
+    { headers: { Accept: SValueContentType } },
+  );
+  const historyError = history.ok ? "" : await history.clone().text();
+  expect(history.ok, historyError).toBe(true);
+  const historyBody = decodeSValue(new Uint8Array(await history.arrayBuffer()));
+  const { data, version } = historyBody;
+  expect(data.map((entry) => entry.version)).toEqual([1, 2]);
+  expect(version).toBe(2);
 }, 60_000);

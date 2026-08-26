@@ -198,6 +198,7 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
         "X-Doc-Type",
         "X-Internal-Token",
         "X-UniDocs-Auth-Context",
+        "X-UniDocs-Doc-Operation",
         "X-UniDocs-CAS-Capability",
       ]) {
         const value = request.headers.get(name);

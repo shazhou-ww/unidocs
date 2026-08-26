@@ -44,6 +44,7 @@ beforeAll(async () => {
   azure = await startAzureRuntime({
     docTypes: ["docx"],
     casBaseUrl: miniflare.urls.cas,
+    capabilityFixture: miniflare.capabilityFixture,
   });
 }, 240_000);
 

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { CAS_ACCESS_KEY, startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import {
   encodeHeader,
   computeNodeDigest,
@@ -115,11 +115,10 @@ test("CAS: /lease on unknown hash is 404", async () => {
 });
 
 test("CAS: GC endpoint works", async () => {
-  const gcRes = await casFetch(`${runtime.urls.cas}/tenants/alice/cas/gc`, {
+  const gcRes = await casFetch(casUrl("alice", "/gc"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Internal-Token": CAS_ACCESS_KEY,
     },
     body: JSON.stringify({ maxNodes: 10 }),
   });

@@ -35,7 +35,11 @@ beforeAll(async () => {
 
 describe("CAS capability worker", () => {
   test("accepts a tenant Gateway read capability", async () => {
-    const bindings = capabilityEnv();
+    const events: unknown[] = [];
+    const bindings = {
+      ...capabilityEnv(),
+      AUTH_AUDIT: (event: unknown) => events.push(event),
+    };
     const token = await issue({
       subject: "gateway",
       tenantId: "tenant-a",
@@ -49,6 +53,14 @@ describe("CAS capability worker", () => {
     expect(response.status).toBe(200);
     expect(bindings.doFetch).toHaveBeenCalledOnce();
     expect(bindings.idFromName).toHaveBeenCalledWith("tenant-a");
+    expect(events).toEqual([expect.objectContaining({
+      credentialKind: "capability",
+      routeGeneration: "tenant",
+      operation: "readContent",
+      tenantId: "tenant-a",
+      kid: "key-1",
+    })]);
+    expect(JSON.stringify(events)).not.toContain(token);
   });
 
   test("rejects a correctly signed Doc-audience token before schema or DO access", async () => {
@@ -194,6 +206,40 @@ describe("CAS capability worker", () => {
       },
     ), capabilityEnv() as never);
     expect(response.status).toBe(401);
+  });
+
+  test("dual mode confines legacy credentials to the private legacy adapter", async () => {
+    const events: unknown[] = [];
+    const bindings = {
+      ...capabilityEnv(),
+      INTERNAL_AUTH_MODE: "dual",
+      CAS_ACCESS_KEY: "legacy-key",
+      AUTH_AUDIT: (event: unknown) => events.push(event),
+    };
+    const tenantRoute = await worker.fetch(new Request(
+      `https://cas/tenants/tenant-a/cas/nodes/${hash}/content`,
+      { headers: { "X-Internal-Token": "legacy-key" } },
+    ), bindings as never);
+    expect(tenantRoute.status).toBe(401);
+    expect(bindings.dbExec).not.toHaveBeenCalled();
+    expect(bindings.doFetch).not.toHaveBeenCalled();
+
+    const legacyRoute = await worker.fetch(new Request(
+      `https://cas/_internal/nodes/${hash}`,
+      {
+        headers: {
+          "X-Internal-Token": "legacy-key",
+          "X-Tenant-Id": "tenant-a",
+        },
+      },
+    ), bindings as never);
+    expect(legacyRoute.status).toBe(200);
+    expect(events).toEqual([expect.objectContaining({
+      credentialKind: "legacy",
+      routeGeneration: "legacy",
+      operation: "readPortableNode",
+      tenantId: "tenant-a",
+    })]);
   });
 });
 

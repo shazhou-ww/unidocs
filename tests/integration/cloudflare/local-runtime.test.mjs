@@ -120,10 +120,13 @@ test("capability mode starts with rotation overlap and completes a Doc flow", as
 test("the CAS worker is directly reachable on its own port, outside the gateway", async () => {
   expect(runtime.urls.cas).toBe("http://127.0.0.1:18790");
 
-  const res = await fetch(`${runtime.urls.cas}/tenants/tenant-a/cas/usage`, {
-    headers: { "X-Internal-Token": CAS_ACCESS_KEY },
+  const res = await fetch(`${runtime.urls.cas}/_internal/nodes/${"a".repeat(64)}`, {
+    headers: {
+      "X-Internal-Token": CAS_ACCESS_KEY,
+      "X-Tenant-Id": "tenant-a",
+    },
   });
-  expect(res.status).toBe(200);
+  expect(res.status).toBe(404);
 });
 
 test("a directly reached Doc service rejects requests without its service credential", async () => {

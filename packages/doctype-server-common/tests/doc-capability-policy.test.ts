@@ -14,7 +14,7 @@ describe("Doc edge capability requirements", () => {
     ["apply", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"]],
     ["rollback", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"]],
     ["run", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"]],
-    ["initFromHash", "tenants:t:sessions:s:write", ["tenants:t:cas:write"]],
+    ["initFromHash", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"]],
     ["reset", "tenants:t:sessions:s:write", []],
   ] satisfies Array<[DocOperation, string, string[]]>) (
     "%s uses exact minimum authority",

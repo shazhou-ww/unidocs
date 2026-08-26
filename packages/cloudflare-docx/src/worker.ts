@@ -50,6 +50,7 @@ export default {
     return createDocTypeHandler({
       docType: "docx",
       ...authConfig.get(env),
+      audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType: "docx", ...event })),
       editor: env.DOCX_EDITOR,
       operator: env.DOCX_OPERATOR,
     })(request);

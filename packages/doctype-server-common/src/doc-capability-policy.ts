@@ -39,7 +39,10 @@ export function docEdgeCapabilityRequirements(
         [casReadPermission(tenantId), casWritePermission(tenantId)],
       );
     case "initFromHash":
-      return requirements(sessionWritePermission(tenantId, sessionId), [casWritePermission(tenantId)]);
+      return requirements(
+        sessionWritePermission(tenantId, sessionId),
+        [casReadPermission(tenantId), casWritePermission(tenantId)],
+      );
     case "reset":
       return requirements(sessionWritePermission(tenantId, sessionId), []);
   }

@@ -61,6 +61,7 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
 
   it("forwards PUT /sessions/{sessionId} body intact", async () => {
     let received: string | undefined;
+    const audits: unknown[] = [];
     const editor = stubNamespace(async (req) => {
       received = await req.text();
       return Response.json({ success: true, sessionId: "session-1", version: 1 });
@@ -70,6 +71,7 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
       docType: "markdown",
       internalAuthMode: "legacy",
       accessKey: INTERNAL_TOKEN,
+      audit: event => audits.push(event),
       editor,
       operator: stubNamespace(async () => Response.json({}, { status: 501 })),
     });
@@ -84,6 +86,14 @@ describe("createDocTypeHandler — streaming body forwarding", () => {
     const res = await handler(incoming);
     expect(res.status).toBe(200);
     expect(received).toBe("# hello");
+    expect(audits).toEqual([{
+      credentialKind: "legacy",
+      routeGeneration: "legacy",
+      operation: "create",
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+    }]);
+    expect(JSON.stringify(audits)).not.toContain(INTERNAL_TOKEN);
   });
 
   it("forwards an editor endpoint (apply) body intact", async () => {

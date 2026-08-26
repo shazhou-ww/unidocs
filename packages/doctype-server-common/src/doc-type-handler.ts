@@ -29,8 +29,19 @@ export interface DocTypeHandlerConfig {
   accessKey?: string;
   docCapabilityVerifier?: DocCapabilityVerifier;
   casCapabilityVerifier?: DocCapabilityVerifier;
+  audit?: (event: DocAuthenticationAuditEvent) => void;
   editor: DoNamespaceLike;
   operator: DoNamespaceLike;
+}
+
+export interface DocAuthenticationAuditEvent {
+  readonly credentialKind: "legacy" | "capability";
+  readonly routeGeneration: "legacy" | "tenant";
+  readonly operation: DocOperation;
+  readonly tenantId: string;
+  readonly sessionId: string;
+  readonly kid?: string;
+  readonly jti?: string;
 }
 
 type MatchedDocEdgeRoute = DocRoute & {
@@ -39,6 +50,8 @@ type MatchedDocEdgeRoute = DocRoute & {
 
 type AuthenticatedDocEdgeRoute = MatchedDocEdgeRoute & {
   readonly delegatedCasCapability?: string;
+  readonly kid?: string;
+  readonly jti?: string;
 };
 
 const legacyOperations = {
@@ -74,6 +87,15 @@ export function createDocTypeHandler(
     } catch (error) {
       return authenticationErrorResponse(error);
     }
+    cfg.audit?.(Object.freeze({
+      credentialKind: authenticated.generation,
+      routeGeneration: authenticated.generation === "capability" ? "tenant" : "legacy",
+      operation: authenticated.operation,
+      tenantId: authenticated.tenantId,
+      sessionId: authenticated.sessionId,
+      ...(authenticated.kid === undefined ? {} : { kid: authenticated.kid }),
+      ...(authenticated.jti === undefined ? {} : { jti: authenticated.jti }),
+    }));
 
     const namespace = authenticated.operation === "run"
         || authenticated.operation === "reset"
@@ -171,7 +193,11 @@ async function authenticateCapabilityRoute(
         "This Doc operation does not accept delegated CAS authority",
       );
     }
-    return route;
+    return {
+      ...route,
+      kid: primary.protectedHeader.kid,
+      jti: primary.claims.jti,
+    };
   }
   if (!delegatedToken) {
     throw new CapabilityAuthenticationError("missing_token", "Delegated CAS capability is required");
@@ -190,7 +216,12 @@ async function authenticateCapabilityRoute(
     );
   }
   requireExactPermissions(delegated, requirements.casPermissions, "Delegated CAS");
-  return { ...route, delegatedCasCapability: delegatedToken };
+  return {
+    ...route,
+    delegatedCasCapability: delegatedToken,
+    kid: primary.protectedHeader.kid,
+    jti: primary.claims.jti,
+  };
 }
 
 function requireExactPermissions(
@@ -224,6 +255,7 @@ function internalHeaders(
   headers.set("X-Doc-Type", cfg.docType);
   headers.set("X-Session-Id", route.sessionId);
   headers.set("X-UniDocs-Auth-Context", route.generation);
+  headers.set("X-UniDocs-Doc-Operation", route.operation);
   if (route.delegatedCasCapability) {
     headers.set("X-UniDocs-CAS-Capability", route.delegatedCasCapability);
   }

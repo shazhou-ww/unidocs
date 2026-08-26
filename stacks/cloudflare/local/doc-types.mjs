@@ -34,7 +34,7 @@ let failedVersionTwo = false;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/_internal/root-refs") {
+    if (url.pathname.endsWith("/_internal/root-refs")) {
       const body = await request.clone().json().catch(() => null);
       const requestId = body?.requestId;
       const isVersionTwo = typeof requestId === "string"

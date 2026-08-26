@@ -4,6 +4,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import {
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+} from "jose";
+import {
   convertV4MiniflareOptions,
   Log,
   LogLevel,
@@ -19,6 +24,7 @@ import {
   resolvePorts,
 } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
+import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
 
 export { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
@@ -208,14 +214,18 @@ function createStorageProbe(mf) {
       if (!directory) return [];
       const spec = DOC_TYPES[docType];
       const namespace = await mf.getDurableObjectNamespace(spec.editor, spec.worker);
-      const id = namespace.idFromName(directory.session_id);
+      const id = namespace.idFromName(docSessionObjectName(
+        directory.tenant_id,
+        directory.session_id,
+      ));
       const response = await namespace.get(id).fetch(
         "https://editor.internal/_internal/snapshot-index",
         {
           headers: {
             "X-Tenant-Id": directory.tenant_id,
             "X-Session-Id": directory.session_id,
-            "X-UniDocs-Auth-Context": "legacy",
+            "X-UniDocs-Auth-Context": "capability",
+            "X-UniDocs-Doc-Operation": "history",
           },
         },
       );
@@ -249,7 +259,7 @@ export async function startLocalRuntime({
   ports: portOverrides = {},
   persistPath,
   casFault = false,
-  internalAuthMode = "legacy",
+  internalAuthMode = "dual",
   capabilityFixture,
   logLevel = LogLevel.WARN,
 } = {}) {
@@ -282,6 +292,9 @@ export async function startLocalRuntime({
     const devVars = DOC_TYPES[name].devVars;
     if (devVars) extraBindings[name] = await readDevVars(join(ROOT, devVars));
   }
+  const resolvedCapabilityFixture = internalAuthMode === "legacy"
+    ? undefined
+    : capabilityFixture ?? await createEphemeralCapabilityFixture();
 
   let mf;
   try {
@@ -300,7 +313,7 @@ export async function startLocalRuntime({
           casFault,
           extraBindings,
           internalAuthMode,
-          capabilityFixture,
+          capabilityFixture: resolvedCapabilityFixture,
         }),
       }),
     );
@@ -313,6 +326,7 @@ export async function startLocalRuntime({
       mf,
       urls,
       docTypes,
+      capabilityFixture: resolvedCapabilityFixture,
       storage: createStorageProbe(mf),
       async dispose() {
         await mf.dispose();
@@ -322,4 +336,18 @@ export async function startLocalRuntime({
     await mf?.dispose();
     throw err;
   }
+}
+
+async function createEphemeralCapabilityFixture() {
+  const pair = await generateKeyPair("ES256", { extractable: true });
+  const kid = `local-${crypto.randomUUID()}`;
+  const publicJwk = await exportJWK(pair.publicKey);
+  return {
+    issuer: `unidocs-gateway:local:${crypto.randomUUID()}`,
+    kid,
+    privateKeyPkcs8: await exportPKCS8(pair.privateKey),
+    jwks: {
+      keys: [{ ...publicJwk, kid, alg: "ES256", use: "sig" }],
+    },
+  };
 }

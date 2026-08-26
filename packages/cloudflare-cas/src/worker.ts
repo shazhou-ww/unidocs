@@ -22,6 +22,16 @@ interface Env extends CasAuthBindings {
   CAS_DB: D1Database;
   CAS_R2: R2Bucket;
   CAS_DO: DurableObjectNamespace;
+  AUTH_AUDIT?: (event: CasAuthenticationAuditEvent) => void;
+}
+
+interface CasAuthenticationAuditEvent {
+  readonly credentialKind: "legacy" | "capability";
+  readonly routeGeneration: "legacy" | "tenant";
+  readonly operation: CasRoute["operation"];
+  readonly tenantId: string;
+  readonly kid?: string;
+  readonly jti?: string;
 }
 
 const authConfig = new CasAuthConfigCache();
@@ -34,12 +44,22 @@ export default {
     if (route) {
       let authorization: CasRouteAuthorization;
       try {
-        authorization = request.headers.has("Authorization")
-          ? await config.authorizeCapability(request, route)
-          : (config.authenticateLegacy(request), {});
+        authorization = config.mode === "legacy"
+          ? (config.authenticateLegacy(request), {})
+          : await config.authorizeCapability(request, route);
       } catch (error) {
         return authErrorResponse(error);
       }
+      emitAuthAudit(env, {
+        credentialKind: authorization.capability ? "capability" : "legacy",
+        routeGeneration: "tenant",
+        operation: route.operation,
+        tenantId: route.tenantId,
+        ...(authorization.capability ? {
+          kid: authorization.capability.protectedHeader.kid,
+          jti: authorization.capability.claims.jti,
+        } : {}),
+      });
       if (route.operation === "rootAssignments") {
         const scopeError = await validateRootAssignmentScope(
           request,
@@ -58,6 +78,12 @@ export default {
       } catch (error) {
         return authErrorResponse(error);
       }
+      emitAuthAudit(env, {
+        credentialKind: "legacy",
+        routeGeneration: "legacy",
+        operation: legacyRoute.operation,
+        tenantId: legacyRoute.tenantId,
+      });
       await migrateCasSchema(env.CAS_DB);
       return dispatchRoute(request, env, legacyRoute);
     }
@@ -144,4 +170,13 @@ function authErrorResponse(error: unknown): Response {
     return Response.json({ error: error.message }, { status: error.status });
   }
   return Response.json({ error: "CAS capability validation failed" }, { status: 401 });
+}
+
+function emitAuthAudit(env: Env, event: CasAuthenticationAuditEvent): void {
+  const frozen = Object.freeze(event);
+  if (env.AUTH_AUDIT) {
+    env.AUTH_AUDIT(frozen);
+    return;
+  }
+  console.log(JSON.stringify({ event: "cas_authentication", ...frozen }));
 }
