@@ -16,6 +16,7 @@ import {
   assertCasNotConfigured,
   assertSkipCasAllowed,
   isLocalHost,
+  missingDocTypeFlows,
   parseArgs,
 } from "../../../stacks/azure/deploy/smoke.mjs";
 
@@ -132,4 +133,38 @@ describe("assertCasNotConfigured", () => {
       }
     },
   );
+});
+
+// missingDocTypeFlows() 是本轮修复的核心：KNOWN_DOC_TYPES 现在从
+// azure.service.json 表派生，会随表增长，但 main() 里的分发仍是
+// markdown/docx 两个手写 `if` 分支——解耦之后，表里新增一个没有对应
+// <docType>Flow 的成员（比如下一个任务要加的 psd）本该让冒烟响亮失败，
+// 而不是安静地只跑 markdown/docx 就打印 "all smoke assertions passed"。
+// 这里直接测这个比较本身，不需要真实网关或在磁盘上伪造
+// azure.service.json——见 stacks/azure/deploy/smoke.mjs 里 main() 对它的
+// 调用点与那条报错文案。
+describe("missingDocTypeFlows", () => {
+  test("expected 与 ran 完全一致 -> 没有缺口", () => {
+    expect(missingDocTypeFlows(["markdown", "docx"], new Set(["markdown", "docx"]))).toEqual([]);
+  });
+
+  // 复现真实 bug 场景：表里比分发多出一个 doc type。
+  test("表里有、但没有对应 flow 跑过的 doc type 被点名", () => {
+    expect(
+      missingDocTypeFlows(["docx", "markdown", "psd"], new Set(["docx", "markdown"])),
+    ).toEqual(["psd"]);
+  });
+
+  // `--only <docType>` 场景：expected 只有一个元素。
+  test("--only 指向一个没有 flow 的 doc type -> 那一个被点名", () => {
+    expect(missingDocTypeFlows(["psd"], new Set())).toEqual(["psd"]);
+  });
+
+  test("--only 指向一个有 flow 的 doc type -> 没有缺口", () => {
+    expect(missingDocTypeFlows(["docx"], new Set(["docx"]))).toEqual([]);
+  });
+
+  test("一个 doc type 都没跑过 -> 全部被点名", () => {
+    expect(missingDocTypeFlows(["markdown", "docx"], new Set())).toEqual(["markdown", "docx"]);
+  });
 });

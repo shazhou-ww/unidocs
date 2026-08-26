@@ -109,6 +109,18 @@ export function parseArgs(argv) {
   return args;
 }
 
+/**
+ * 纯函数,不发请求、不读 fs——`expectedDocTypes` 是"这一轮应该覆盖哪些
+ * doc type"(来自表或 `--only`),`ranDocTypes` 是"main() 实际执行到的
+ * <docType>Flow() 覆盖了哪些"(一个 `Set`)。返回差集:非空即"表里有、
+ * 但 smoke.mjs 没有对应 flow"的 doc type 列表。单独抽出来是为了不用起
+ * 真实网关或在磁盘上伪造 azure.service.json 就能单测这条完整性校验本身,
+ * 见 tests/unit/scripts/azure-smoke.test.mjs。
+ */
+export function missingDocTypeFlows(expectedDocTypes, ranDocTypes) {
+  return expectedDocTypes.filter((docType) => !ranDocTypes.has(docType));
+}
+
 // `new URL(...).hostname` keeps the brackets around an IPv6 literal
 // (`new URL("http://[::1]:8787").hostname === "[::1]"`, not `"::1"`) —
 // pre-existing bug caught while adding `assertSkipCasAllowed()`'s test:
@@ -344,8 +356,25 @@ export async function main() {
   // `stacks/azure/deploy/deploy.mjs` after `--service docx` so a stale/unrelated
   // markdown deployment can't fail a docx-only smoke run. Not given (or
   // given the other doc type) skips the corresponding flow entirely.
+  //
+  // `ranFlows` records which doc type(s) *actually* ran a flow below — not
+  // which ones KNOWN_DOC_TYPES says exist. KNOWN_DOC_TYPES is now derived
+  // from the azure.service.json table (readAzureDocTypes()) and grows on its
+  // own; the two `if` blocks below are still one hand-written branch per doc
+  // type, because each flow exercises genuinely different operations
+  // (markdown's setContent/getContent vs. docx's appendParagraph/insertImage/
+  // CAS upload) and there is no generic "run the flow for this doc type"
+  // table to dispatch through. Decoupling the validation table from the
+  // dispatch means a third table entry with no matching branch here would
+  // silently match neither `if`, run zero assertions, and still print "all
+  // smoke assertions passed" — see the completeness check after this block,
+  // which turns that silent gap into a loud failure instead of re-hardcoding
+  // the same doc type list a second time.
+  const ranFlows = new Set();
+
   if (!args.only || args.only === "markdown") {
     await markdownFlow(gateway);
+    ranFlows.add("markdown");
   }
 
   if (!args.only || args.only === "docx") {
@@ -363,6 +392,34 @@ export async function main() {
     }
 
     await conflictFlow(gateway, docxDocId, docxVersionAfterGroup2Or3);
+    ranFlows.add("docx");
+  }
+
+  // Completeness gate: compare "doc types this run was supposed to cover"
+  // (derived from the table, or the single `--only` target) against "doc
+  // types that actually ran a flow above" (derived from real execution, not
+  // from re-checking membership in KNOWN_DOC_TYPES). A gap here means a doc
+  // type is declared in some packages/azure-<name>/azure.service.json but
+  // smoke.mjs has no matching <docType>Flow wired into the dispatch above —
+  // exactly the case introduced when KNOWN_DOC_TYPES stopped being the same
+  // hand-written list as the `if` branches. Failing loudly here is the whole
+  // point: without it, a new doc type would make every smoke run silently
+  // skip its checks and still report success. `missingDocTypeFlows()` is a
+  // pure function (no fetch, no fs) precisely so this comparison itself is
+  // unit-testable without a real gateway or a fake azure.service.json on
+  // disk — see tests/unit/scripts/azure-smoke.test.mjs.
+  const expectedFlows = args.only ? [args.only] : KNOWN_DOC_TYPES;
+  const missing = missingDocTypeFlows(expectedFlows, ranFlows);
+  if (missing.length > 0) {
+    throw new Error(
+      `smoke.mjs has no flow wired up for doc type(s): ${missing.join(", ")}. ` +
+      "They are declared via packages/azure-<name>/azure.service.json " +
+      "(stacks/azure/doc-types.mjs's readAzureDocTypes(), which is where KNOWN_DOC_TYPES above " +
+      "comes from), but main() only dispatches to markdownFlow()/docxTextFlow() by name — there is " +
+      "no generic per-doc-type flow to fall back to. Add a <docType>Flow() for it and wire it into " +
+      "the `if` blocks above before deploying or smoke-testing this doc type; otherwise this would " +
+      "silently run zero assertions for it and still print \"all smoke assertions passed\".",
+    );
   }
 
   if (failures > 0) {
