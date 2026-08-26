@@ -336,18 +336,29 @@ async function psdFlow(gateway, docId) {
 
   const { body: queryBody } = await query(gateway, "psd", docId, "getLayers");
   check(
-    "query getLayers → contains the added layer",
+    "query getLayers → one group layer with the added id/name",
     queryBody.success === true &&
       Array.isArray(queryBody.data) &&
-      queryBody.data.some((l) => l.id === layerId && l.name === layerName),
+      queryBody.data.length === 1 &&
+      queryBody.data[0].id === layerId &&
+      queryBody.data[0].name === layerName,
     JSON.stringify(queryBody),
   );
 
   const { res: exportRes, bytes: exportBytes } = await exportDoc(gateway, "psd", docId);
+  // PSD files always start with the 4-byte "8BPS" signature (0x38 0x42 0x50
+  // 0x53) — same idea as docxTextFlow's/docxImageFlow's zip magic-byte check,
+  // not just "non-empty", so a routing bug that returns some other non-empty
+  // body (e.g. an error page) still fails this instead of passing by
+  // accident.
   check(
-    "export → HTTP 200 with non-empty body",
-    exportRes.status === 200 && exportBytes.length > 0,
-    `status=${exportRes.status} length=${exportBytes.length}`,
+    "export → PSD magic bytes (8BPS) and non-empty",
+    exportBytes.length > 0 &&
+      exportBytes[0] === 0x38 &&
+      exportBytes[1] === 0x42 &&
+      exportBytes[2] === 0x50 &&
+      exportBytes[3] === 0x53,
+    `status=${exportRes.status} length=${exportBytes.length} first4=${exportBytes[0]},${exportBytes[1]},${exportBytes[2]},${exportBytes[3]}`,
   );
 }
 
