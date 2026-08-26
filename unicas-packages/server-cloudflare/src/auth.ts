@@ -230,16 +230,30 @@ export class StackCapabilityVerifier {
       const age = now - cached.fetchedAt;
       if (age < this.#cacheTtlMs) return cached.authority;
       if (age >= this.#hardStaleBoundMs) {
-        // Never serve a record past the revocation bound, even if the registry
-        // is reachable: a revoked key must stop verifying within 60s.
-        this.#authorityCache.delete(issuer);
-        this.#onEvent({
-          kind: "fail_closed",
-          operation: "unknown",
-          issuer,
-          reason: "authority cache record exceeded the hard stale bound",
-        });
-        throw new CapabilityAuthenticationError("registry_unavailable", "CAS authority registry is unavailable");
+        // Hard bound: never serve the cached record past the revocation
+        // bound, but a REACHABLE registry should serve a fresh record —
+        // failing closed unconditionally would 401 healthy low-traffic
+        // stacks on every request after ~60s of silence.
+        try {
+          const fresh = await this.#repository.resolveIssuer(issuer);
+          if (fresh) {
+            this.#authorityCache.set(issuer, { authority: fresh, fetchedAt: now });
+            return fresh;
+          }
+          // Registry answered: the issuer is gone (revoked/removed) → fail closed.
+          this.#authorityCache.delete(issuer);
+          throw new CapabilityAuthenticationError("unknown_issuer", "CAS capability issuer is not registered");
+        } catch (error) {
+          if (error instanceof CapabilityAuthenticationError) throw error;
+          this.#authorityCache.delete(issuer);
+          this.#onEvent({
+            kind: "fail_closed",
+            operation: "unknown",
+            issuer,
+            reason: "authority registry unreachable past the hard stale bound",
+          });
+          throw new CapabilityAuthenticationError("registry_unavailable", "CAS authority registry is unavailable");
+        }
       }
       // Within the stale window: try to refresh; serve the cached record only
       // if the registry is unreachable.
@@ -296,14 +310,24 @@ export class StackCapabilityVerifier {
       const age = now - cached.fetchedAt;
       if (age < this.#cacheTtlMs) return cached.domains;
       if (age >= this.#hardStaleBoundMs) {
-        this.#domainsCache.delete(stackId);
-        this.#onEvent({
-          kind: "fail_closed",
-          operation: "unknown",
-          stackId,
-          reason: "refDomain registry cache exceeded the hard stale bound",
-        });
-        throw new CapabilityAuthorizationError("registry_unavailable", "CAS refDomain registry is unavailable");
+        // Hard bound: never serve cached domains past the revocation bound,
+        // but a REACHABLE registry serves a fresh list — failing closed
+        // unconditionally would 403 every root-refs write on low-traffic
+        // stacks after ~60s of silence.
+        try {
+          const fresh = await this.#repository.listRegisteredRefDomains(stackId);
+          this.#domainsCache.set(stackId, { domains: fresh, fetchedAt: now });
+          return fresh;
+        } catch {
+          this.#domainsCache.delete(stackId);
+          this.#onEvent({
+            kind: "fail_closed",
+            operation: "unknown",
+            stackId,
+            reason: "refDomain registry unreachable past the hard stale bound",
+          });
+          throw new CapabilityAuthorizationError("registry_unavailable", "CAS refDomain registry is unavailable");
+        }
       }
       try {
         const fresh = await this.#repository.listRegisteredRefDomains(stackId);

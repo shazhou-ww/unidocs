@@ -549,6 +549,53 @@ integration + shared), `pnpm test:azure`, `pnpm test` (per-package), and the
 dependency guard all green; grep shows no residual old package names in
 code/config/current docs (historical plan/spec docs intentionally untouched).
 
+## Task 9 execution notes (round 9: ops gates — backup, key rotation, cache fix)
+
+**Backup/restore drill (2026-08-26):** both deployed D1 databases were
+exported from the production account and verified:
+`wrangler d1 export unidocs-cas-control --remote --no-schema` (4.1 KB:
+operator identity, both registered stacks, issuer keys, refDomains, control
+audit, admin sessions) and `wrangler d1 export unidocs-cas-db --remote
+--no-schema` (2.0 KB: deploy-smoke nodes/edges/root-refs). The `--remote`
+flag is mandatory (without it wrangler exports an empty local DB). Restore
+is `wrangler d1 execute <db> --remote --file=backup-*.sql` after clearing
+target tables (INSERTs are not idempotent); R2 bucket content is referenced
+by the D1 node hashes and is re-verified by the canonical read path.
+Backups were kept at `.wrangler/backup-*.sql` (gitignored); a scheduled
+backup job is part of the ops runbook.
+
+**Issuer key-rotation drill (live, 2026-08-26):** a fresh ES256 key
+(`cf-rotate-2`) was generated, registered in the PROD control plane
+(`INSERT INTO cas_stack_issuer_keys ... ON CONFLICT DO UPDATE`, state
+`active`), and — after the 30s JWKS cache window — capabilities signed with
+the NEW key verified at the live edge (404 NODE_NOT_FOUND = authenticated,
+node absent), while the OLD key (`cf-rotate-1`) kept working throughout
+(smoke PASS). Cleanup used `DELETE` (the `state` CHECK constraint allows
+only `active`/`retiring`/`revoked` — there is no `retired`). Two real bugs
+surfaced and were fixed:
+1. The drill harness initially re-generated a fresh key per run, so the
+   "verification" used a different key than the one registered — persisted
+   the private key + public JWK to files for reuse.
+2. **Production defect found:** both authority caches in
+   `unicas-packages/server-cloudflare/src/auth.ts` (issuer keys and
+   refDomains) failed CLOSED unconditionally once a cached record passed
+   the 60s hard-stale bound — on low-traffic deployments every first
+   request after ~60s of silence got a spurious 401/403 ("registry is
+   unavailable"). Fixed: past the hard bound the verifier now tries a
+   registry refresh first and only fails closed when the registry is
+   unreachable (revoked keys still stop verifying within 60s). New test
+   `auth-cache.test.ts` "a REACHABLE registry past the hard bound serves
+   the fresh record"; rebuilt (`tsc`) and redeployed the tenant worker
+   (wrangler deploys `dist/` — always rebuild first). Verified live: two
+   consecutive smoke runs 70s apart both PASS.
+
+**Smoke-script fixes:** `scripts/cas-middleware-smoke.mjs` was not
+repeatable — a fixed tenant + requestId made the second run hit the
+root-refs idempotency record, and the `revision === 1` assertion broke on a
+domain-wide revision counter that does not restart. Now uses a per-run
+unique tenant/requestId and asserts revision advanced (not == 1) plus
+idempotent-retry keeps the revision.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

@@ -135,6 +135,17 @@ describe("authority cache policy", () => {
     expect(events).toContain("fail_closed");
   });
 
+  test("a REACHABLE registry past the hard bound serves the fresh record (no spurious 401)", async () => {
+    const { repository, token, clock } = await setup();
+    const verify = new StackCapabilityVerifier({ repository, now: () => clock.now });
+    await verify.verify(request(token), ROUTE); // cache warm
+    clock.now += 90_000; // way past the 60s hard bound, but the registry is up
+    await verify.verify(request(token), ROUTE);
+    // A refresh happened and the fresh record was served — the request
+    // succeeded instead of failing closed on healthy traffic.
+    expect(repository.issuerLookups).toBe(2);
+  });
+
   test("a cold registry outage fails closed (unknown issuer)", async () => {
     const { repository, token } = await setup();
     repository.setRegistryDown(true);

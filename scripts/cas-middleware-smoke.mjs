@@ -17,7 +17,11 @@ import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "../unicas
 import { casGcTriggerPermission, casReadPermission, casUsageReadPermission, casWritePermission, createPkcs8CapabilityIssuer } from "../packages/service-auth/dist/index.js";
 
 const BASE = process.argv[2] ?? "https://unicas.shazhou.work";
-const TENANT = "deploy-smoke-tenant";
+// Unique per run so the smoke is repeatable: a fixed tenant/requestId would
+// make the second run hit the root-refs idempotency record and fail the
+// `revision === 1` assertion.
+const RUN = `${process.pid}-${Date.now()}`;
+const TENANT = `deploy-smoke-${RUN}`;
 const KEY_DIR = join(import.meta.dirname, "..", ".wrangler", "cas-deploy");
 
 const stacks = [
@@ -116,19 +120,23 @@ async function main() {
   res = await fetch(`${BASE}${prefix}/root-refs`, {
     method: "POST",
     headers: { Authorization: `Bearer ${writer}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ requestId: "deploy-smoke:roots:1", changes: { [parent.hash]: 1 } }),
+    body: JSON.stringify({ requestId: `${RUN}:roots:1`, changes: { [parent.hash]: 1 } }),
   });
   const rootsBody = await res.json();
-  assert(res.status === 200 && rootsBody.success === true && rootsBody.revision === 1,
-    `root-refs -> revision ${rootsBody.revision}`);
+  // refDomain revision is domain-wide (shared across tenants), so it does not
+  // restart at 1 for a fresh smoke tenant — assert it advanced instead.
+  assert(res.status === 200 && rootsBody.success === true
+    && typeof rootsBody.revision === "number" && rootsBody.revision > 0,
+  `root-refs -> revision ${rootsBody.revision}`);
 
   res = await fetch(`${BASE}${prefix}/root-refs`, {
     method: "POST",
     headers: { Authorization: `Bearer ${writer}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ requestId: "deploy-smoke:roots:1", changes: { [parent.hash]: 1 } }),
+    body: JSON.stringify({ requestId: `${RUN}:roots:1`, changes: { [parent.hash]: 1 } }),
   });
   const retryBody = await res.json();
-  assert(retryBody.idempotent === true && retryBody.revision === 1, "idempotent retry keeps revision 1");
+  assert(retryBody.idempotent === true && retryBody.revision === rootsBody.revision,
+    "idempotent retry keeps revision");
 
   res = await fetch(`${BASE}${prefix}/cas/usage`, { headers: { Authorization: `Bearer ${usageReader}` } });
   const usageBody = await res.json();
