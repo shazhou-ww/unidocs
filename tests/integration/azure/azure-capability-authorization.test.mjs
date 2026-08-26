@@ -2,6 +2,7 @@ import { afterAll, beforeAll } from "vitest";
 import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
 import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import { runAuthorizationSuite } from "../shared/authorization-suite.mjs";
+import { runHttpConformanceSuite } from "../shared/http-conformance-suite.mjs";
 
 let runtime;
 let casRuntime;
@@ -27,4 +28,10 @@ afterAll(async () => {
 
 runAuthorizationSuite(() => runtime, {
   docTypes: ["markdown", "docx"],
+});
+runHttpConformanceSuite(() => runtime, {
+  provider: "azure",
+  snapshotHashPattern: /^[0-9a-f]{16}$/,
+  svalueResponses: false,
+  validatesExportFormat: false,
 });

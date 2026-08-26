@@ -1504,7 +1504,7 @@ Doc/CAS runtime.
 - [x] Add one shared HTTP conformance and authorization behavior suite and run
       it against Gateway, every supported Doc runtime/doctype, and every CAS
       runtime.
-- [ ] Assert all current methods, operation names, query parameters, request and
+- [x] Assert all current methods, operation names, query parameters, request and
       response fields, status behavior, media types, and headers remain intact
       after the tenant/auth and package migrations.
 - [x] Cover valid current create/read/write and CAS read/write/admin operations.
@@ -1551,8 +1551,8 @@ Task 8 implementation record (in progress, 2026-08-26):
 - The CAS matrix performs real capability-authenticated node write/read and
       tenant-admin usage operations, then rejects missing, legacy, Doc-audience,
       admin-as-read, and wrong-tenant credentials. Focused Cloudflare/Azure
-      execution passes 22/22. Root typecheck passes; the full local suite passes
-      305 with 2 conditional skips, and the full Azure suite passes 23/23 with
+      execution passes 33/33. Root typecheck passes; the full local suite passes
+      312 with 2 conditional skips, and the full Azure suite passes 27/27 with
       Postgres, Azurite, and child-process cleanup.
 - The Cloudflare Doc-to-CAS request boundary test now signs distinct real Doc
       and delegated CAS capabilities, captures the actual CAS fetch, verifies
@@ -1582,6 +1582,19 @@ Task 8 implementation record (in progress, 2026-08-26):
       verification of the delegated capability. It emits p50, p95, and
       operations/second metadata without tokens and fails when local p95 reaches
       100 ms; external signer latency remains a deployment gate.
+- Shared HTTP wire conformance now exercises Gateway create/list/status and the
+      complete Markdown apply/query/history-range/rollback/snapshot/IR/export
+      lifecycle against Cloudflare and Azure, including JSON/SValue framing,
+      response field sets, status codes, `Content-Type`, `Content-Disposition`,
+      and `X-Doc-Version`. It records rather than normalizes the existing Azure
+      16-hex Blob snapshot ID, ignored unsupported export format, JSON negotiated
+      responses, and 501 operator behavior versus the Cloudflare CAS hash,
+      format validation, SValue responses, and operator reset behavior.
+- The real CAS runtime matrix covers full lease/metadata/state fields, lease
+      extension, portable canonical-node bytes and media headers, root-ref and
+      root-assignment request/response idempotency, complete usage fields, and GC
+      body/results. Protocol CAS/Doc/Gateway route suites pass 13/28/31 and retain
+      the complete method, operation, path-encoding, and wrong-method matrices.
 
 Final validation:
 

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll } from "vitest";
 import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import { runAuthorizationSuite } from "../shared/authorization-suite.mjs";
+import { runHttpConformanceSuite } from "../shared/http-conformance-suite.mjs";
 
 let runtime;
 
@@ -25,4 +26,10 @@ afterAll(async () => {
 runAuthorizationSuite(() => runtime, {
   docTypes: ["markdown", "docx", "psd"],
   directCas: true,
+});
+runHttpConformanceSuite(() => runtime, {
+  provider: "cloudflare",
+  snapshotHashPattern: /^[0-9a-f]{64}$/,
+  svalueResponses: true,
+  validatesExportFormat: true,
 });

@@ -20,6 +20,7 @@ import {
   computeNodeDigest,
   encodeHeader,
   hashToHex,
+  parseNodeBytes,
 } from "../../../packages/cas-server-common/src/index.ts";
 
 function closeFetch(url, init = {}) {
@@ -377,7 +378,157 @@ export function runAuthorizationSuite(getRuntime, { docTypes, directCas = false 
         );
         const usage = await usageResponse.json();
         expect(usageResponse.status, JSON.stringify(usage)).toBe(200);
-        expect(usage).toMatchObject({ nodeCount: expect.any(Number) });
+        expect(Object.keys(usage).sort()).toEqual([
+          "leasedNodeCount",
+          "nodeCount",
+          "notReadyNodeCount",
+          "readyContentBytes",
+        ]);
+        expect(usage).toMatchObject({
+          nodeCount: expect.any(Number),
+          readyContentBytes: expect.any(Number),
+          notReadyNodeCount: expect.any(Number),
+          leasedNodeCount: expect.any(Number),
+        });
+      });
+
+      test("preserves metadata, lease, portable-node, root, and GC wire contracts", async () => {
+        const metadataResponse = await closeFetch(
+          `${getRuntime().urls.cas}/tenants/${tenantId}/cas/nodes/${hash}/metadata`,
+          { headers: { Authorization: `Bearer ${readToken}` } },
+        );
+        const metadataBody = await metadataResponse.json();
+        expect(metadataResponse.status).toBe(200);
+        expect(metadataBody.metadata).toEqual({
+          hash,
+          size: content.length,
+          contentType: "text/plain",
+          refs: [],
+        });
+        expect(metadataBody.state).toMatchObject({
+          leaseStartedAt: expect.any(Number),
+          leaseExpiresAt: expect.any(Number),
+          childRefCount: 0,
+          rootRefCount: 0,
+        });
+
+        const writeToken = await issueCasToken(
+          issuer,
+          tenantId,
+          casWritePermission(tenantId),
+        );
+        const lease = await closeFetch(
+          `${getRuntime().urls.cas}/tenants/${tenantId}/cas/nodes/${hash}/lease`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${writeToken}`,
+              "X-CAS-Lease-Duration": "180000",
+            },
+          },
+        );
+        const leaseBody = await lease.json();
+        expect(lease.status).toBe(200);
+        expect(leaseBody).toEqual({
+          hash,
+          ready: true,
+          leaseStartedAt: expect.any(Number),
+          leaseExpiresAt: expect.any(Number),
+        });
+        expect(leaseBody.leaseExpiresAt).toBeGreaterThan(leaseBody.leaseStartedAt);
+
+        const portable = await closeFetch(
+          `${getRuntime().urls.cas}/tenants/${tenantId}/_internal/nodes/${hash}`,
+          { headers: { Authorization: `Bearer ${readToken}` } },
+        );
+        const portableBytes = new Uint8Array(await portable.arrayBuffer());
+        expect(portable.status).toBe(200);
+        expect(portable.headers.get("content-type")).toBe("application/vnd.unidocs.cas-node");
+        expect(Number(portable.headers.get("content-length"))).toBe(portableBytes.length);
+        const parsed = parseNodeBytes(portableBytes);
+        expect(parsed.contentType).toBe("text/plain");
+        expect(parsed.childHashes).toEqual([]);
+        expect(parsed.content).toEqual(content);
+
+        const portableLease = await closeFetch(
+          `${getRuntime().urls.cas}/tenants/${tenantId}/_internal/nodes/${hash}`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${writeToken}`,
+              "Content-Type": "application/vnd.unidocs.cas-node",
+              "X-CAS-Lease-Duration": "180000",
+            },
+            body: portableBytes,
+          },
+        );
+        const portableLeaseBody = await portableLease.json();
+        expect(portableLease.status, JSON.stringify(portableLeaseBody)).toBe(200);
+        expect(portableLeaseBody).toEqual({
+          hash,
+          ready: true,
+          leaseStartedAt: expect.any(Number),
+          leaseExpiresAt: expect.any(Number),
+        });
+
+        const sessionId = "cas-wire-session";
+        const delegatedWriteToken = await issueDelegatedCasToken(
+          issuer,
+          "docx",
+          tenantId,
+          sessionId,
+          [casWritePermission(tenantId)],
+        );
+        const rootRefsBody = {
+          requestId: "cas-wire-root-refs",
+          changes: { [hash]: 1 },
+        };
+        const rootRefsUrl = `${getRuntime().urls.cas}/tenants/${tenantId}/_internal/root-refs`;
+        const rootRefs = await postJson(rootRefsUrl, delegatedWriteToken, rootRefsBody);
+        expect(rootRefs.response.status, JSON.stringify(rootRefs.body)).toBe(200);
+        expect(rootRefs.body).toEqual({ success: true });
+        const rootRefsRetry = await postJson(rootRefsUrl, delegatedWriteToken, rootRefsBody);
+        expect(rootRefsRetry.body).toEqual({ success: true, idempotent: true });
+
+        const assignmentsBody = {
+          requestId: "cas-wire-root-assignments",
+          assignments: [{ owner: `session:${sessionId}:wire:1`, hash }],
+        };
+        const assignmentsUrl = `${getRuntime().urls.cas}/tenants/${tenantId}/_internal/root-assignments`;
+        const assignments = await postJson(assignmentsUrl, delegatedWriteToken, assignmentsBody);
+        expect(assignments.response.status, JSON.stringify(assignments.body)).toBe(200);
+        expect(assignments.body).toEqual({ success: true, idempotent: false });
+        const assignmentsRetry = await postJson(
+          assignmentsUrl,
+          delegatedWriteToken,
+          assignmentsBody,
+        );
+        expect(assignmentsRetry.body).toEqual({ success: true, idempotent: true });
+
+        const adminToken = await issueCasToken(
+          issuer,
+          tenantId,
+          casAdminPermission(tenantId),
+        );
+        const gc = await closeFetch(
+          `${getRuntime().urls.cas}/tenants/${tenantId}/cas/gc`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${adminToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ maxNodes: 1 }),
+          },
+        );
+        const gcBody = await gc.json();
+        expect(gc.status).toBe(200);
+        expect(gcBody).toEqual({
+          examined: expect.any(Number),
+          deleted: expect.any(Number),
+          reclaimedContentBytes: expect.any(Number),
+        });
+        expect(gcBody.deleted).toBe(0);
       });
 
       test("rejects missing, legacy, Doc, wrong-permission, and wrong-tenant credentials", async () => {
@@ -472,6 +623,18 @@ function issueDelegatedCasToken(issuer, docType, tenantId, sessionId, permission
     sessionId,
     permissions,
   });
+}
+
+async function postJson(url, token, value) {
+  const response = await closeFetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(value),
+  });
+  return { response, body: await response.json() };
 }
 
 function issueOverlongDocToken(signingKey, fixture, { docType, tenantId, sessionId, permission }) {
