@@ -523,11 +523,12 @@ function createStorageProbe(docTypes) {
   const docTypeByHash = new Map();
 
   return {
-    async sessionIdentity(docType, docId) {
+    async sessionIdentity(docType, docId, tenantId) {
       const result = await gatewayPool.query(
         `SELECT session_id, tenant_id FROM gateway_documents
-         WHERE doc_type = $1 AND doc_id = $2`,
-        [docType, docId],
+         WHERE doc_type = $1 AND doc_id = $2
+         ${tenantId === undefined ? "" : "AND tenant_id = $3"}`,
+        tenantId === undefined ? [docType, docId] : [docType, docId, tenantId],
       );
       if (!result.rows[0]) return null;
       return {

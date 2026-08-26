@@ -12,6 +12,7 @@ import {
   casReadPermission,
   casWritePermission,
   createPkcs8CapabilityIssuer,
+  sessionCreatePermission,
   sessionReadPermission,
   sessionWritePermission,
 } from "../../../packages/service-auth/src/index.ts";
@@ -210,6 +211,115 @@ export function runAuthorizationSuite(getRuntime, { docTypes, directCas = false 
           );
           expect(responses.map(response => response.status)).toEqual([401, 401, 401, 401, 401]);
         });
+
+        test("isolates equal document and session IDs across tenants", async () => {
+          const runtime = getRuntime();
+          const tenants = [`collision-${docType}-a`, `collision-${docType}-b`];
+          const docId = `shared-${docType}-doc`;
+          const createResponses = await Promise.all(tenants.map(tenant => closeFetch(
+            `${runtime.urls.gateway}/tenants/${tenant}/docs/${docType}/`,
+            {
+              method: "POST",
+              headers: {
+                "X-Doc-Id": docId,
+                "Idempotency-Key": "shared-create-key",
+                "X-User-Id": "untrusted-user-key",
+              },
+            },
+          )));
+          const created = await Promise.all(createResponses.map(response => response.json()));
+          expect(createResponses.map(response => response.status), JSON.stringify(created))
+            .toEqual([200, 200]);
+          expect(created.map(body => body.docId)).toEqual([docId, docId]);
+          const identities = await Promise.all(
+            tenants.map(tenant => runtime.storage.sessionIdentity(docType, docId, tenant)),
+          );
+          expect(identities.map(identity => identity.tenantId)).toEqual(tenants);
+          expect(identities[0].sessionId).not.toBe(identities[1].sessionId);
+
+          const sharedSessionId = `shared-${docType}-session`;
+          const createSessions = await Promise.all(tenants.map(async tenant => {
+            const [primaryToken, delegatedToken] = await Promise.all([
+              issueDocToken(issuer, {
+                docType,
+                tenantId: tenant,
+                sessionId: sharedSessionId,
+                permission: sessionCreatePermission(tenant),
+              }),
+              issueDelegatedCasToken(
+                issuer,
+                docType,
+                tenant,
+                sharedSessionId,
+                [casWritePermission(tenant)],
+              ),
+            ]);
+            return closeFetch(
+              `${runtime.urls[docType]}/tenants/${tenant}/sessions/${sharedSessionId}`,
+              {
+                method: "PUT",
+                headers: {
+                  Authorization: `Bearer ${primaryToken}`,
+                  "X-UniDocs-CAS-Capability": delegatedToken,
+                  "X-User-Id": "untrusted-user-key",
+                },
+              },
+            );
+          }));
+          const sessionBodies = await Promise.all(createSessions.map(response => response.json()));
+          expect(createSessions.map(response => response.status), JSON.stringify(sessionBodies))
+            .toEqual([200, 200]);
+
+          const [writeToken, delegatedWriteToken] = await Promise.all([
+            issueDocToken(issuer, {
+              docType,
+              tenantId: tenants[0],
+              sessionId: sharedSessionId,
+              permission: sessionWritePermission(tenants[0], sharedSessionId),
+            }),
+            issueDelegatedCasToken(
+              issuer,
+              docType,
+              tenants[0],
+              sharedSessionId,
+              [casReadPermission(tenants[0]), casWritePermission(tenants[0])],
+            ),
+          ]);
+          const applyResponse = await closeFetch(
+            `${runtime.urls[docType]}/tenants/${tenants[0]}/sessions/${sharedSessionId}/apply`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${writeToken}`,
+                "X-UniDocs-CAS-Capability": delegatedWriteToken,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                baseVersion: 1,
+                description: "advance only tenant A",
+                operations: [],
+              }),
+            },
+          );
+          const applied = await applyResponse.json();
+          expect(applyResponse.status, JSON.stringify(applied)).toBe(200);
+
+          const histories = await Promise.all(tenants.map(async tenant => {
+            const token = await issueDocToken(issuer, {
+              docType,
+              tenantId: tenant,
+              sessionId: sharedSessionId,
+              permission: sessionReadPermission(tenant, sharedSessionId),
+            });
+            const response = await closeFetch(
+              `${runtime.urls[docType]}/tenants/${tenant}/sessions/${sharedSessionId}/history`,
+              { headers: { Authorization: `Bearer ${token}` } },
+            );
+            return { response, body: await response.json() };
+          }));
+          expect(histories.map(({ response }) => response.status)).toEqual([200, 200]);
+          expect(histories.map(({ body }) => body.version)).toEqual([2, 1]);
+        });
       });
     }
   });
@@ -293,6 +403,44 @@ export function runAuthorizationSuite(getRuntime, { docTypes, directCas = false 
         ]);
         expect(responses.map(response => response.status)).toEqual([401, 401, 401, 403, 403]);
       });
+
+      test("stores an equal hash independently in another tenant", async () => {
+        const otherTenant = `${tenantId}-other`;
+        const [otherReadToken, otherWriteToken] = await Promise.all([
+          issueCasToken(issuer, otherTenant, casReadPermission(otherTenant)),
+          issueCasToken(issuer, otherTenant, casWritePermission(otherTenant)),
+        ]);
+        const otherUrl = `${getRuntime().urls.cas}/tenants/${otherTenant}/cas/nodes/${hash}`;
+        const missing = await closeFetch(`${otherUrl}/content`, {
+          headers: { Authorization: `Bearer ${otherReadToken}` },
+        });
+        expect(missing.status).toBe(404);
+
+        const upload = await closeFetch(otherUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${otherWriteToken}`,
+            "Content-Type": "text/plain",
+            "Content-Length": String(content.length),
+            "X-CAS-Lease-Duration": "120000",
+          },
+          body: content,
+        });
+        const uploaded = await upload.json();
+        expect(upload.status, JSON.stringify(uploaded)).toBe(200);
+        expect(uploaded).toMatchObject({ ready: true, hash });
+
+        const reads = await Promise.all([
+          closeFetch(
+            `${getRuntime().urls.cas}/tenants/${tenantId}/cas/nodes/${hash}/content`,
+            { headers: { Authorization: `Bearer ${readToken}` } },
+          ),
+          closeFetch(`${otherUrl}/content`, {
+            headers: { Authorization: `Bearer ${otherReadToken}` },
+          }),
+        ]);
+        expect(reads.map(response => response.status)).toEqual([200, 200]);
+      });
     });
   }
 }
@@ -313,6 +461,16 @@ function issueCasToken(issuer, tenantId, permission) {
     audience: "unidocs-cas",
     tenantId,
     permissions: [permission],
+  });
+}
+
+function issueDelegatedCasToken(issuer, docType, tenantId, sessionId, permissions) {
+  return issuer.issue({
+    subject: `doc:${docType}`,
+    audience: "unidocs-cas",
+    tenantId,
+    sessionId,
+    permissions,
   });
 }
 

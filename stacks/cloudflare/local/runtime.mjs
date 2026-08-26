@@ -202,14 +202,18 @@ function assertPortFree(host, port) {
 function createStorageProbe(mf) {
   const tenantByHash = new Map();
   return {
-    async sessionIdentity(docType, docId) {
+    async sessionIdentity(docType, docId, tenantId) {
       const db = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
-      const directory = await db
+      const tenantFilter = tenantId === undefined ? "" : " AND tenant_id = ?";
+      const statement = db
         .prepare(
           `SELECT session_id, tenant_id FROM gateway_documents
-           WHERE doc_type = ? AND doc_id = ?`,
-        )
-        .bind(docType, docId)
+           WHERE doc_type = ? AND doc_id = ?${tenantFilter}`,
+        );
+      const directory = await statement
+        .bind(...(tenantId === undefined
+          ? [docType, docId]
+          : [docType, docId, tenantId]))
         .first();
       if (!directory) return null;
       return {

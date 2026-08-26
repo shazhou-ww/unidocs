@@ -1514,7 +1514,7 @@ Doc/CAS runtime.
       `cas:admin`, and that Doc tokens never reach CAS.
 - [x] Prove that user credentials/cookies/internal-looking public headers never
       reach Doc/CAS.
-- [ ] Prove equal `docId`, `sessionId`, and CAS hashes in different tenants never
+- [x] Prove equal `docId`, `sessionId`, and CAS hashes in different tenants never
       collide and that no service keys tenant data by user.
 - [ ] Prove rotation overlap accepts both configured keys and removal rejects
       the retired key after the bounded lifetime.
@@ -1560,6 +1560,14 @@ Task 8 implementation record (in progress, 2026-08-26):
       legacy credentials, and forwarding headers are injected at the Doc
       boundary and remain absent from the minimal CAS request; Gateway forwarding
       tests provide the matching public-client-to-Doc stripping evidence.
+- Cross-runtime collision cases create the same explicit Gateway `docId` and
+      idempotency key in two tenants, create the same direct Doc `sessionId` in
+      two tenants, advance only tenant A to version 2 while tenant B remains at
+      version 1, and upload the same CAS hash independently after proving it is
+      initially absent in the second tenant. Focused storage tests additionally
+      prove the Gateway owner column is removed, Cloudflare Doc names and Azure
+      Postgres/Blob keys use canonical tenant identities, and CAS D1/R2/DO state
+      is partitioned by `(tenantId, hash)`, not user identity.
 
 Final validation:
 
