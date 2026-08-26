@@ -10,16 +10,16 @@
  *   gateway.bicep     网关 Container App
  *
  * 用法(不传任何选择器 = 冷启动全量,顺序 bootstrap -> platform -> services -> gateway):
- *   node azure/deploy/deploy.mjs \
+ *   node stacks/azure/deploy/deploy.mjs \
  *     --cas-base-url https://unidocs-cas.<account>.workers.dev \
  *     --cas-access-key <与 Cloudflare CAS worker 相同的 CAS_ACCESS_KEY>
  *
  * 用法(只部一个 target —— 见 parseArgs()):
- *   node azure/deploy/deploy.mjs --bootstrap
- *   node azure/deploy/deploy.mjs --platform
- *   node azure/deploy/deploy.mjs --service docx
- *   node azure/deploy/deploy.mjs --service docx,markdown
- *   node azure/deploy/deploy.mjs --gateway
+ *   node stacks/azure/deploy/deploy.mjs --bootstrap
+ *   node stacks/azure/deploy/deploy.mjs --platform
+ *   node stacks/azure/deploy/deploy.mjs --service docx
+ *   node stacks/azure/deploy/deploy.mjs --service docx,markdown
+ *   node stacks/azure/deploy/deploy.mjs --gateway
  *
  * `--cas-base-url` 是可选的:不给时 docx 的图片路径返回 501,其余功能
  * (markdown、docx 除图片外的操作)不受影响,见 `packages/azure-gateway/src/main.ts`
@@ -39,7 +39,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const DEFAULTS = {
   subscription: "24c9acbd-c2f5-4ef9-b9a2-486d90208b3e",
@@ -526,7 +526,7 @@ function checkRbac(args) {
       `preflight: the signed-in identity (${assignee}) has none of ${PRIVILEGED_ROLES.join(" / ")} ` +
       `on /subscriptions/${args.subscription} or resource group ${args.resourceGroup} ` +
       `(roles seen: ${[...found].join(", ") || "none"}).\n` +
-      "azure/deploy/bootstrap.bicep creates two role assignments (UAMI -> AcrPull on ACR, " +
+      "stacks/azure/deploy/bootstrap.bicep creates two role assignments (UAMI -> AcrPull on ACR, " +
       "UAMI -> Storage Blob Data Contributor on the storage account). Contributor is NOT " +
       "enough: its notActions include Microsoft.Authorization/*/Write, so the bootstrap " +
       "deployment would fail halfway, after ACR / Storage / Key Vault / Log Analytics " +
@@ -539,7 +539,7 @@ function checkRbac(args) {
 }
 
 /**
- * `azure/deploy/smoke.mjs`(冒烟)从 `packages/cas-server-common/dist/index.js` import CAS
+ * `stacks/azure/deploy/smoke.mjs`(冒烟)从 `packages/cas-server-common/dist/index.js` import CAS
  * 哈希算法(仓库既有惯例,`scripts/cas-digest.mjs` 同样如此),而本脚本全程
  * **不在宿主机跑 `pnpm build`** —— 它只构建镜像,那是容器内编译,`.dockerignore`
  * 还排除了 `**\/dist`。干净检出上不自检的话,会一路成功到冒烟那一步,在十几分钟
@@ -549,7 +549,7 @@ function checkHostBuild() {
   const casDist = join(ROOT, "packages/cas-server-common/dist/index.js");
   if (!existsSync(casDist)) {
     throw new Error(
-      `preflight: ${casDist} is missing. azure/deploy/smoke.mjs imports the CAS ` +
+      `preflight: ${casDist} is missing. stacks/azure/deploy/smoke.mjs imports the CAS ` +
       "hash algorithm from it, and this script never runs `pnpm build` on the host " +
       "(images compile inside the container). Run `pnpm build` first.",
     );
@@ -603,14 +603,14 @@ function deployBootstrap(args, deployerObjectId) {
   run("az", [
     "deployment", "group", "what-if",
     "-g", args.resourceGroup,
-    "-f", "azure/deploy/bootstrap.bicep",
+    "-f", "stacks/azure/deploy/bootstrap.bicep",
     "--parameters", `deployerObjectId=${deployerObjectId}`,
   ]);
 
   const stdout = capture("az", [
     "deployment", "group", "create",
     "-g", args.resourceGroup,
-    "-f", "azure/deploy/bootstrap.bicep",
+    "-f", "stacks/azure/deploy/bootstrap.bicep",
     "-n", DEPLOYMENT_NAMES.bootstrap,
     "--parameters", `deployerObjectId=${deployerObjectId}`,
     "-o", "json",
@@ -748,7 +748,7 @@ async function seedSecret(keyVaultName, secretName, byteLength) {
  * 现场随机生成一个只会让所有跨云 CAS 请求 401 —— 所以这里 fail closed:
  * Key Vault 里没有、`--cas-access-key` 也没给,直接报错,绝不自动生成。
  *
- * (本地栈之所以看不出跨云不对齐的问题:`scripts/doc-types.mjs` 硬编码的
+ * (本地栈之所以看不出跨云不对齐的问题:`stacks/cloudflare/local/doc-types.mjs` 硬编码的
  * `CAS_ACCESS_KEY = "unidocs-dev-cas-key"` 被 Miniflare 与本地 Azure 栈共用。)
  */
 async function resolveCasAccessKey(keyVaultName, provided) {
@@ -855,8 +855,8 @@ function imagesForTargets(args) {
  *
  * 它同时**取代**了 `az acr login` + `docker push`:构建产物直接落在 registry 里。
  * 构建上下文仍是仓库根(`.`),`.dockerignore` 继续生效;`--file` 指向
- * `azure/deploy/Dockerfile`,与上下文本就可以分离 —— 把上下文也搬进
- * `azure/deploy/` 会让它看不到 `packages/`。`Dockerfile` 本身不需要改,
+ * `stacks/azure/deploy/Dockerfile`,与上下文本就可以分离 —— 把上下文也搬进
+ * `stacks/azure/deploy/` 会让它看不到 `packages/`。`Dockerfile` 本身不需要改,
  * 它是平台无关的。
  *
  * **有界并发**,默认 2,可用 `--build-concurrency` 覆盖——不用无界
@@ -890,7 +890,7 @@ async function buildAndPushImages(args, bootstrap, tag) {
         "--image", imageRepoTag(item.name, tag),
         "--build-arg", `SERVICE=${item.service}`,
         "--build-arg", `ENTRY=${item.entry}`,
-        "--file", "azure/deploy/Dockerfile",
+        "--file", "stacks/azure/deploy/Dockerfile",
         ".",
       ],
       {},
@@ -910,7 +910,7 @@ function deployPlatform(args, secrets, tag) {
   // 两条命令的 args 里都直接带着 pgAdminPassword 的明文(platform.bicep 的
   // @secure() 参数就是这么从 CLI 喂进去的),所以两处都必须显式传 label,
   // 绝不能落回默认的 `args.join(" ")`。
-  const label = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/platform.bicep -n ${DEPLOYMENT_NAMES.platform}`;
+  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/azure/deploy/platform.bicep -n ${DEPLOYMENT_NAMES.platform}`;
   const parameters = [
     `imageTag=${tag}`,
     `pgAdminPassword=${secrets.pgAdminPassword}`,
@@ -920,7 +920,7 @@ function deployPlatform(args, secrets, tag) {
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/platform.bicep",
+      "-f", "stacks/azure/deploy/platform.bicep",
       "--parameters", ...parameters,
     ],
     {},
@@ -932,7 +932,7 @@ function deployPlatform(args, secrets, tag) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/platform.bicep",
+      "-f", "stacks/azure/deploy/platform.bicep",
       "-n", DEPLOYMENT_NAMES.platform,
       "-o", "json",
       "--parameters", ...parameters,
@@ -953,7 +953,7 @@ function deployService(args, secrets, tag, docType) {
   const svc = readServiceParams(docType);
   const deploymentName = DEPLOYMENT_NAMES.service(docType);
   console.log(`[5/7] service.bicep (${docType}): what-if then create (deployment ${deploymentName})`);
-  const label = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/service.bicep -n ${deploymentName}`;
+  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/azure/deploy/service.bicep -n ${deploymentName}`;
   const parameters = [
     `docType=${docType}`,
     `imageTag=${tag}`,
@@ -970,7 +970,7 @@ function deployService(args, secrets, tag, docType) {
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/service.bicep",
+      "-f", "stacks/azure/deploy/service.bicep",
       "--parameters", ...parameters,
     ],
     {},
@@ -981,7 +981,7 @@ function deployService(args, secrets, tag, docType) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/service.bicep",
+      "-f", "stacks/azure/deploy/service.bicep",
       "-n", deploymentName,
       "-o", "none",
       "--parameters", ...parameters,
@@ -1001,7 +1001,7 @@ function deployService(args, secrets, tag, docType) {
 function deployGateway(args, secrets, tag) {
   const gw = readGatewayParams();
   console.log(`[5/7] gateway.bicep: what-if then create (deployment ${DEPLOYMENT_NAMES.gateway})`);
-  const label = `az deployment group ... -g ${args.resourceGroup} -f azure/deploy/gateway.bicep -n ${DEPLOYMENT_NAMES.gateway}`;
+  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/azure/deploy/gateway.bicep -n ${DEPLOYMENT_NAMES.gateway}`;
   const parameters = [
     `imageTag=${tag}`,
     `casBaseUrl=${args.casBaseUrl}`,
@@ -1019,7 +1019,7 @@ function deployGateway(args, secrets, tag) {
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/gateway.bicep",
+      "-f", "stacks/azure/deploy/gateway.bicep",
       "--parameters", ...parameters,
     ],
     {},
@@ -1031,7 +1031,7 @@ function deployGateway(args, secrets, tag) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "azure/deploy/gateway.bicep",
+      "-f", "stacks/azure/deploy/gateway.bicep",
       "-n", DEPLOYMENT_NAMES.gateway,
       "-o", "json",
       "--parameters", ...parameters,
@@ -1069,7 +1069,7 @@ function resolveExistingGatewayFqdn(args) {
  *
  * `jobName` 来自 `deployPlatform()` 的 `migrateJobNames` output,不
  * 在这里另起一个字面量常量 —— 那会造成两个真相来源(job 的真实名字只由
- * `azure/deploy/platform.bicep` 的 `migrateJob` 模块决定)。
+ * `stacks/azure/deploy/platform.bicep` 的 `migrateJob` 模块决定)。
  */
 async function runMigration(args, jobName) {
   console.log("[6/7] starting migration job", jobName);
@@ -1187,14 +1187,14 @@ export function classifySmokeFailure(stdout, stderr) {
  * `[assertion]`。
  */
 async function smokeOnce(gatewayFqdn, casBaseUrl, only) {
-  const smokeArgs = ["azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
+  const smokeArgs = ["stacks/azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
   if (!casBaseUrl) {
     smokeArgs.push("--no-cas");
   }
   if (only) {
     smokeArgs.push("--only", only);
   }
-  const label = `node azure/deploy/smoke.mjs (only=${only ?? "all"})`;
+  const label = `node stacks/azure/deploy/smoke.mjs (only=${only ?? "all"})`;
   try {
     await spawnAsync(
       "node",

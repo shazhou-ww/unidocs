@@ -8,7 +8,7 @@ ENV CI=true
 # option; Postgres has to live in the image itself. See
 # `tests/treespec/spec.yaml` for the runtime side of this (starting the
 # server and creating the unidocs role/database) and
-# `azure/local/runtime.mjs`'s `postgres: "external"` option for how
+# `stacks/azure/local/runtime.mjs`'s `postgres: "external"` option for how
 # `startAzureRuntime()` connects to it instead of shelling out to compose.
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get install -y curl postgresql \

@@ -314,8 +314,8 @@ Set the Doc worker's own `SERVICE_ACCESS_KEY` and outbound `CAS_ACCESS_KEY`.
 
 6. Azure side — no Durable Objects, so no DO bindings to wire up. Instead:
    - New `packages/azure-mytype/` (`package.json`, `tsconfig.json`, `src/main.ts`, `scripts/bundle.mjs`) — copy `packages/azure-docx` as the template rather than `packages/azure-markdown`: its `bundle.mjs` explicitly externalizes only `pg`/`@azure/storage-blob` instead of using `packages: "external"`, which matters the moment your doc type pulls in a real (non-`@unidocs/*`) npm dependency that isn't also a root `package.json` devDependency — `packages: "external"` would leave that import unresolvable at runtime. `src/main.ts` should differ from the docx entry by nothing but the doc type string and the default port; if it needs more than that, the gap belongs in `@unidocs/azure-sdk`, not in the entry point.
-   - Add a `mytype: <port>` row to `AZURE_DOC_TYPE_PORT_BASE` in `azure/local/ports.mjs` (pick a base at least `AZURE_PORT_STRIDE` past the last one).
-   - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `azure/local/runtime.mjs`.
+   - Add a `mytype: <port>` row to `AZURE_DOC_TYPE_PORT_BASE` in `stacks/azure/local/ports.mjs` (pick a base at least `AZURE_PORT_STRIDE` past the last one).
+   - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `stacks/azure/local/runtime.mjs`.
    - Add `{ "path": "packages/azure-mytype" }` to the root `tsconfig.json`'s `references`.
    - Provision a service-owned database and migration job, then include its URL
      and access key in Gateway's static registry.
@@ -354,7 +354,7 @@ Start `pnpm dev docx` in another terminal first, or set `CAS_BASE_URL`. The
 probe authenticates with the dedicated CAS key and calls the tenant-scoped CAS
 service URL directly.
 
-Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side, which `docx` on Azure now requires. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
+Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `stacks/azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side, which `docx` on Azure now requires. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `stacks/azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
 
 **First run only:** if `postgres:18-alpine` isn't cached locally yet, `docker compose up` pulls it (~100 MB) before anything else can start; every run after that is instant. There's no equivalent cost for Azurite — it installed with `pnpm install` like any other dependency.
 

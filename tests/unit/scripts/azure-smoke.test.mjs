@@ -17,7 +17,7 @@ import {
   assertSkipCasAllowed,
   isLocalHost,
   parseArgs,
-} from "./azure-smoke.mjs";
+} from "../../../stacks/azure/deploy/smoke.mjs";
 
 describe("parseArgs", () => {
   test("--gateway 是必填的", () => {

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll } from "vitest";
-import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import { runBehaviorSuite } from "../shared/behavior-suite.mjs";
 
 let runtime;

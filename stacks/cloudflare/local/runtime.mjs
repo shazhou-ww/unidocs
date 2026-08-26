@@ -18,13 +18,13 @@ import {
   GATEWAY_WORKER,
   resolvePorts,
 } from "./doc-types.mjs";
-import { resolveWorkspaceAliases } from "./workspace-aliases.mjs";
+import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 
 export { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
 export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 // See scripts/workspace-aliases.mjs — shared with the Azure services'
 // own esbuild bundlers so this table is kept in one place.
@@ -134,7 +134,7 @@ function assertPortFree(host, port) {
  * Backend-neutral storage assertions (see `StorageProbe` in the task brief):
  * a global snapshot index lookup and a CAS blob existence check. Miniflare's
  * implementation is exactly the two `getD1Database`/`getR2Bucket` calls the
- * behavior tests used to make directly; `azure/local/runtime.mjs` provides
+ * behavior tests used to make directly; `stacks/azure/local/runtime.mjs` provides
  * the Postgres/Azurite equivalent behind the same two methods so the test
  * bodies in `tests/integration/shared/behavior-suite.mjs` don't need to know which backend
  * they're running against.

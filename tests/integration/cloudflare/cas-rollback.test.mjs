@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { startLocalRuntime } from "../../../scripts/local-runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import {
   encodeHeader,
   computeNodeDigest,

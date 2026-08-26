@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import { convertV4MiniflareOptions, Log, LogLevel, Miniflare } from "miniflare";
 import { afterAll, beforeAll } from "vitest";
-import { COMPATIBILITY_DATE } from "../../../scripts/doc-types.mjs";
+import { COMPATIBILITY_DATE } from "../../../stacks/cloudflare/local/doc-types.mjs";
 import { runPortContract } from "../../../packages/doctype-server-common/src/testing/port-contract.ts";
 import { VersionConflictError } from "../../../packages/http-protocol/src/errors.ts";
 import { DirectUnitOfWork } from "../../../packages/cloudflare-sdk/src/ports-cf.ts";

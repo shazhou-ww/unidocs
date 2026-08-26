@@ -1,7 +1,7 @@
 /**
  * `.dev.vars` is how the local Miniflare runtime gives a doc-type worker its
  * secrets (the PSD Operator's LLM_API_KEY & friends). The parser regressed out
- * of scripts/local-runtime.mjs once already, taking PSD chat with it, so pin
+ * of stacks/cloudflare/local/runtime.mjs once already, taking PSD chat with it, so pin
  * its behavior here.
  *
  * Everything below uses a throwaway temp file — never the real
@@ -12,8 +12,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { readDevVars } from "../../../scripts/local-runtime.mjs";
-import { buildWorkers, CAS_PORT, DOC_TYPES, docServiceAccessKey } from "../../../scripts/doc-types.mjs";
+import { readDevVars } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { buildWorkers, CAS_PORT, DOC_TYPES, docServiceAccessKey } from "../../../stacks/cloudflare/local/doc-types.mjs";
 
 let dir;
 

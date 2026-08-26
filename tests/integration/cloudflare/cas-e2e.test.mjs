@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { CAS_ACCESS_KEY, startLocalRuntime } from "../../../scripts/local-runtime.mjs";
+import { CAS_ACCESS_KEY, startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
 import {
   encodeHeader,
   computeNodeDigest,

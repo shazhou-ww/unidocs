@@ -6,13 +6,13 @@
  * 固定 id 会在第二次运行时撞 DocExists。
  *
  * 用法:
- *   node azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io
- *   node azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --no-cas
- *   node azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
- *   node azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --only docx
+ *   node stacks/azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io
+ *   node stacks/azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --no-cas
+ *   node stacks/azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
+ *   node stacks/azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --only docx
  *
  * `--only <docType>`(`markdown` 或 `docx`)把冒烟收窄到一个 doc type 的
- * 流程,不给时测全部。`azure/deploy/deploy.mjs` 在 `--service docx` 之后
+ * 流程,不给时测全部。`stacks/azure/deploy/deploy.mjs` 在 `--service docx` 之后
  * 传 `--only docx`,这样一次只部一个服务不会因为另一个 doc type(这次根本
  * 没被触碰)恰好挂掉而报红。
  *
@@ -51,9 +51,9 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../../packages/cas-server-common/dist/index.js";
+import { computeNodeDigest, encodeHeader, hashToHex } from "../../../packages/cas-server-common/dist/index.js";
 
-const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../..");
+const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..");
 const RUN = randomBytes(4).toString("hex");
 const USER = `smoke-${RUN}`;
 
@@ -68,7 +68,7 @@ function check(label, ok, detail) {
   }
 }
 
-/** 目前只有两个可冒烟的 doc type,与 azure/deploy/deploy.mjs 的 IMAGES/service.bicep 一致。 */
+/** 目前只有两个可冒烟的 doc type,与 stacks/azure/deploy/deploy.mjs 的 IMAGES/service.bicep 一致。 */
 const KNOWN_DOC_TYPES = ["markdown", "docx"];
 
 export function parseArgs(argv) {
@@ -340,7 +340,7 @@ export async function main() {
   );
 
   // `--only <docType>` narrows the run to one doc type's flow — used by
-  // `azure/deploy/deploy.mjs` after `--service docx` so a stale/unrelated
+  // `stacks/azure/deploy/deploy.mjs` after `--service docx` so a stale/unrelated
   // markdown deployment can't fail a docx-only smoke run. Not given (or
   // given the other doc type) skips the corresponding flow entirely.
   if (!args.only || args.only === "markdown") {
