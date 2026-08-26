@@ -387,4 +387,65 @@ describe("stack authorization (Task 4)", () => {
     const admin = await worker.fetch(new Request("https://cas.example/admin/me"), env);
     expect(admin.status).toBe(404);
   });
+
+  test("worker forwards updateRootRefs with the VERIFIED context, never caller headers", async () => {
+    const { db: controlDb, stacks } = await createSeededDb();
+    let forwarded: { name: string; headers: Headers; body: string } | undefined;
+    const tenantDoStub = {
+      idFromName: (name: string) => ({ name }),
+      get: (id: { name: string }) => ({
+        fetch: async (_input: unknown, init?: RequestInit) => {
+          forwarded = {
+            name: id.name,
+            headers: new Headers(init?.headers),
+            body: String(init?.body ?? ""),
+          };
+          return new Response(JSON.stringify({ success: true, idempotent: false, revision: 9 }), {
+            status: 200,
+          });
+        },
+      }),
+    };
+    const env = {
+      CAS_CONTROL_DB: controlDb,
+      CAS_DB: controlDb,
+      CAS_R2: {},
+      CAS_DO: tenantDoStub,
+      CAS_DOMAIN_DO: {},
+    } as unknown as Env;
+
+    const stack = stacks.a!;
+    const tenant = "tenant-1";
+    const writer = await issue(stack, {
+      tenantId: tenant,
+      permissions: [casWritePermission(tenant)],
+      refDomain: "doc",
+    });
+
+    const response = await worker.fetch(
+      new Request(`https://cas.example/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${writer}`,
+          // Caller-supplied identity headers must be ignored.
+          "X-CAS-Stack-Id": "forged-stack",
+          "X-CAS-Tenant-Id": "forged-tenant",
+          "X-CAS-Ref-Domain": "asset",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ requestId: "r1", changes: { ["a".repeat(64)]: 1 } }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, idempotent: false, revision: 9 });
+
+    expect(forwarded).toBeDefined();
+    expect(forwarded!.headers.get("X-CAS-Stack-Id")).toBe(stack.stackId);
+    expect(forwarded!.headers.get("X-CAS-Tenant-Id")).toBe(tenant);
+    expect(forwarded!.headers.get("X-CAS-Ref-Domain")).toBe("doc"); // verified claim wins
+    const body = JSON.parse(forwarded!.body) as { requestId: string; changes: Record<string, number> };
+    expect(body.requestId).toBe("r1");
+    expect(body.changes["a".repeat(64)]).toBe(1);
+  });
 });

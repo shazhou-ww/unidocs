@@ -20,8 +20,12 @@ import {
   CapabilityError,
 } from "@unidocs/service-auth";
 import { StackCapabilityVerifier } from "./auth.js";
-import type { StackAuthEvent, StaticLegacyStackConfig } from "./auth.js";
+import type { StackAuthEvent, StaticLegacyStackConfig, VerifiedStackCall } from "./auth.js";
+import { canonicalComposite } from "./do-names.js";
 import { migrateStackTenantSchema } from "./schema.js";
+
+export { CasDurableObject } from "./tenant-do.js";
+export { RootRefDomainDurableObject } from "./domain-do.js";
 
 /** Marker that this package is the canonical stack-scoped CAS server. */
 export const CAS_SERVER_CLOUDFLARE_PACKAGE = "@unidocs/cas-server-cloudflare" as const;
@@ -33,6 +37,8 @@ export interface Env {
   CAS_DB: D1Database;
   CAS_R2: R2Bucket;
   CAS_DO: DurableObjectNamespace;
+  /** Root Ref domain DO namespace (tenant DO calls it one-way). */
+  CAS_DOMAIN_DO: DurableObjectNamespace;
   /** Static legacy-stack bootstrap (migration window; registry wins). */
   LEGACY_STACK_ID?: string;
   LEGACY_STACK_ISSUER?: string;
@@ -58,16 +64,50 @@ export default {
     } catch (error) {
       return authErrorResponse(error);
     }
-    // Authorization is complete; storage/DO dispatch lands in Task 6.
+    if (route.operation === "updateRootRefs") {
+      return dispatchUpdateRootRefs(request, env, call);
+    }
+    // The remaining node operations (read, lease, usage, GC) land as storage
+    // dispatch in the follow-on tasks; authorization is already complete.
     return Response.json({
       error: "SERVICE_UNAVAILABLE",
       message: `CAS ${route.operation} is not implemented yet`,
       stackId: call.stackId,
       tenantId: call.tenantId,
-      ...(call.refDomain === undefined ? {} : { refDomain: call.refDomain }),
     }, { status: 501 });
   },
 };
+
+/**
+ * Forward the verified Root Refs write to the tenant DO for this
+ * (stackId, tenantId). The DO request is built fresh from the VERIFIED
+ * context — caller headers, body metadata, and any caller-supplied
+ * stack/tenant/domain are never forwarded.
+ */
+async function dispatchUpdateRootRefs(
+  request: Request,
+  env: Env,
+  call: VerifiedStackCall,
+): Promise<Response> {
+  if (call.refDomain === undefined) {
+    return Response.json(
+      { error: "ROOT_REF_INVALID", message: "Root Refs write requires a verified refDomain" },
+      { status: 403 },
+    );
+  }
+  const doId = env.CAS_DO.idFromName(canonicalComposite(call.stackId, call.tenantId));
+  const stub = env.CAS_DO.get(doId);
+  const body = await request.text();
+  return stub.fetch("https://tenant.internal/updateRootRefs", {
+    method: "POST",
+    headers: {
+      "X-CAS-Stack-Id": call.stackId,
+      "X-CAS-Tenant-Id": call.tenantId,
+      "X-CAS-Ref-Domain": call.refDomain,
+    },
+    body,
+  });
+}
 
 const verifiers = new WeakMap<object, StackCapabilityVerifier>();
 
@@ -157,3 +197,17 @@ export type { R2ManifestStatus, R2MigrationOptions, R2MigrationStats } from "./r
 
 export { CutoverController, canTransitionCutover, shouldUseStacklessFallback } from "./cutover.js";
 export type { CutoverContext } from "./cutover.js";
+
+export {
+  CAS_MAX_REQUEST_ID_LENGTH,
+  CAS_MAX_ROOT_REF_CHANGES,
+  CAS_MAX_ROOT_REF_DELTA,
+  RootRefsErrorCodes,
+} from "./root-refs.js";
+export type {
+  CanonicalRootRefsUpdate,
+  DomainUpdateResult,
+  DomainRetryOptions,
+  RootRefsErrorCode,
+} from "./root-refs.js";
+export { RootRefsRetryableError, RootRefsValidationError } from "./root-refs.js";

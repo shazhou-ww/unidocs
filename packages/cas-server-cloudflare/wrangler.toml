@@ -25,6 +25,10 @@ preview_bucket_name = "unidocs-cas-preview"
 name = "CAS_DO"
 class_name = "CasDurableObject"
 
+[[durable_objects.bindings]]
+name = "CAS_DOMAIN_DO"
+class_name = "RootRefDomainDurableObject"
+
 # Read-only tenant authority registry: issuer -> stack, keys, refDomains.
 # The tenant runtime never mutates control schema; the admin BFF migrates it.
 

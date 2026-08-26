@@ -191,6 +191,22 @@ copy-only, resumable, size+digest verified, with post-contract deletion gated
 on a complete manifest; the stackless fallback is legacy-stack-only and
 non-contracted. The old runtime's schema/owner tables are untouched (Option A).
 
+## Task 6 execution notes
+
+The atomic Root Refs write lands in `cas-server-cloudflare`: the tenant CAS DO
+(per `(stackId, tenantId)` command queue) canonicalizes the caller update
+(dup-key rejection on the raw text, hash-sorted payload) and forwards ONE
+canonical command to the `RootRefDomainDurableObject` (per
+`(stackId, refDomain)`); the domain DO executes the atomic D1 batch —
+domain-scoped idempotency, optimistic revision allocation (CAS on the current
+revision), aggregate `cas_nodes.root_ref_count` updates, one event append,
+projection update (negative balances kept, zero rows removed), idempotency
+insert — and retries only retryable conflicts/transients with bounded
+exponential backoff. Validation reads only `cas_nodes` (never audit tables);
+the worker forwards the VERIFIED stack/tenant/refDomain (never caller
+headers). The remaining node operations (read, lease, usage, GC) return 501
+until their storage dispatch follow-on.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

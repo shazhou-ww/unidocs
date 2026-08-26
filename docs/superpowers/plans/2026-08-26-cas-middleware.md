@@ -1579,25 +1579,32 @@ dependency guard (160).
 
 ### Task 6: Implement atomic update and audit writes
 
-- [ ] Add `RootRefDomainDurableObject` keyed by canonical
+> **Option A remap:** the tenant CAS DO and the `RootRefDomainDurableObject`
+> land in `cas-server-cloudflare` (canonical server); the legacy runtime keeps
+> its own DO paths until Task 9/10. The other tenant node operations (read,
+> lease, usage, GC) return 501 here until their storage dispatch follow-on.
+
+- [x] Add `RootRefDomainDurableObject` keyed by canonical
   `(stackId, refDomain)` and enforce one-way tenant-DO-to-domain-DO calls.
-- [ ] Refactor `handleUpdateRootRefs()` around one canonical payload and one
+- [x] Refactor `handleUpdateRootRefs()` around one canonical payload and one
   domain-DO D1 transaction/batch.
-- [ ] Scope idempotency to stack, tenant, and authenticated domain.
-- [ ] Return the original revision on idempotent retries.
-- [ ] Append exactly one event per newly accepted request.
-- [ ] Update the domain projection by the same deltas, allow negative domain
+- [x] Scope idempotency to stack, tenant, and authenticated domain.
+- [x] Return the original revision on idempotent retries.
+- [x] Append exactly one event per newly accepted request.
+- [x] Update the domain projection by the same deltas, allow negative domain
       balances, and remove zero rows.
-- [ ] Preserve aggregate non-negative, readiness, overflow, and all-or-nothing
+- [x] Preserve aggregate non-negative, readiness, overflow, and all-or-nothing
       validation.
-- [ ] Prove audit write failure rolls back aggregate changes and idempotency.
-- [ ] Prove update validation and GC do not query audit tables.
-- [ ] Force same-domain/different-tenant, different-domain/same-tenant, and
+- [x] Prove audit write failure rolls back aggregate changes and idempotency.
+- [x] Prove update validation and GC do not query audit tables.
+- [x] Force same-domain/different-tenant, different-domain/same-tenant, and
   independent-writer interleavings; inject every transaction failure,
   response loss, retryable conflict, bounded-backoff exhaustion, and
   duplicate request path.
 
-**Focused validation:** focused `cloudflare-cas` DO root-ref and GC tests.
+**Focused validation (remapped):** `cas-server-cloudflare` root-refs + DO
+suites (54 total incl. auth/storage/migration); the legacy `cloudflare-cas`
+DO root-ref/GC tests remain green unchanged.
 
 ### Task 7: Implement audit reads
 
