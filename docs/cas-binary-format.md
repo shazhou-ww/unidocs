@@ -59,10 +59,12 @@ No mutable state participates in identity. Specifically excluded:
 - `childRefCount`;
 - `rootRefCount`;
 - creation/access timestamps;
+- stack ID;
 - tenant ID;
 - R2 object metadata.
 
-The same canonical node bytes in two tenant partitions have the same digest, but remain physically isolated and independently accounted.
+The same canonical node bytes in two `(stackId, tenantId)` partitions have the
+same digest, but remain physically isolated and independently accounted.
 
 ## 3. Integer and string conventions
 
@@ -139,7 +141,7 @@ The canonical layout is the digest preimage and portable interchange representat
 R2 stores only `ownContent`:
 
 ```text
-tenants/{tenantId}/nodes/{hash}
+stacks/{stackId}/tenants/{tenantId}/nodes/{hash}
 ```
 
 The R2 object length must equal `contentSize`.
@@ -152,6 +154,7 @@ D1 stores canonical immutable metadata plus mutable lifecycle state:
 
 ```sql
 CREATE TABLE cas_nodes (
+  stack_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
   hash TEXT NOT NULL,
 
@@ -163,7 +166,7 @@ CREATE TABLE cas_nodes (
   child_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (child_ref_count >= 0),
   root_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (root_ref_count >= 0),
 
-  PRIMARY KEY (tenant_id, hash)
+  PRIMARY KEY (stack_id, tenant_id, hash)
 );
 ```
 
@@ -173,25 +176,31 @@ The fixed version-1 header fields `signature`, `version`, `flags`, and `reserved
 
 ```sql
 CREATE TABLE cas_edges (
+  stack_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
   parent_hash TEXT NOT NULL,
   ordinal INTEGER NOT NULL,
   child_hash TEXT NOT NULL,
 
-  PRIMARY KEY (tenant_id, parent_hash, ordinal),
-  FOREIGN KEY (tenant_id, parent_hash)
-    REFERENCES cas_nodes(tenant_id, hash),
-  FOREIGN KEY (tenant_id, child_hash)
-    REFERENCES cas_nodes(tenant_id, hash)
+  PRIMARY KEY (stack_id, tenant_id, parent_hash, ordinal),
+  FOREIGN KEY (stack_id, tenant_id, parent_hash)
+    REFERENCES cas_nodes(stack_id, tenant_id, hash),
+  FOREIGN KEY (stack_id, tenant_id, child_hash)
+    REFERENCES cas_nodes(stack_id, tenant_id, hash)
 );
 
 CREATE INDEX cas_edges_by_child
-  ON cas_edges(tenant_id, child_hash);
+  ON cas_edges(stack_id, tenant_id, child_hash);
 ```
 
 Duplicate child hashes use different ordinals. Their contribution to `childRefCount` is the number of occurrences.
 
-`refs` is reconstructed by selecting all edge rows for `(tenant_id, parent_hash)` ordered by `ordinal ASC`. Ordinals must be exactly the contiguous range `0..refCount-1`, where `refCount` is the number encoded in the canonical header and derived from the immutable edge set. Missing, duplicate, negative, or non-contiguous ordinals make metadata invalid; reads fail rather than returning a partial reference list.
+`refs` is reconstructed by selecting all edge rows for
+`(stack_id, tenant_id, parent_hash)` ordered by `ordinal ASC`. Ordinals must be
+exactly the contiguous range `0..refCount-1`, where `refCount` is the number
+encoded in the canonical header and derived from the immutable edge set.
+Missing, duplicate, negative, or non-contiguous ordinals make metadata invalid;
+reads fail rather than returning a partial reference list.
 
 For a newly inserted node, the initial lease values and all ordered edge rows are committed in the same D1 transaction as the node row. This prevents a crash from exposing an immediately GC-eligible parent while its child counts have already been incremented.
 
@@ -199,16 +208,22 @@ For a newly inserted node, the initial lease values and all ordered edge rows ar
 
 ```sql
 CREATE TABLE cas_root_ref_requests (
+  stack_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
+  ref_domain TEXT NOT NULL,
   request_id TEXT NOT NULL,
   payload_hash TEXT NOT NULL,
+  revision INTEGER NOT NULL,
   applied_at INTEGER NOT NULL,
 
-  PRIMARY KEY (tenant_id, request_id)
+  PRIMARY KEY (stack_id, tenant_id, ref_domain, request_id)
 );
 ```
 
-`payload_hash` is SHA-256 over the canonical sorted root-reference change map. Reusing a request ID with different changes is an error.
+`payload_hash` is SHA-256 over the canonical sorted root-reference change map.
+Reusing a request ID with different changes in the same stack, tenant, and
+domain is an error. The corresponding audit event is keyed by
+`(stack_id, ref_domain, revision)` and records `tenant_id`.
 
 ## 7. Streaming hash computation
 
@@ -258,7 +273,7 @@ A metadata-only read cannot prove full node integrity because R2 content is requ
 
 - exactly `refCount` hashes;
 - each hash is 32 bytes;
-- every child belongs to the same tenant partition;
+- every child belongs to the same `(stackId, tenantId)` partition;
 - every child must be ready before inserting the parent metadata row;
 - duplicate refs are permitted and counted separately;
 - cycles are cryptographically impractical to construct when a parent digest includes child digests, but implementations may still enforce traversal depth and visited-node limits for hostile or corrupt stores.
@@ -313,6 +328,9 @@ the verified ordered refs still occupy the ordinary child-hash region.
 ## 10. Portable full-node encoding
 
 Although Cloudflare storage is split, tooling may exchange a full node using the canonical layout directly.
+
+This is an independently specified binary codec, not an HTTP API. CAS exposes
+no portable-node HTTP route or handler.
 
 Suggested media type:
 
@@ -376,10 +394,15 @@ The service must enforce configurable limits before allocation or traversal:
 - maximum DAG traversal depth;
 - maximum nodes visited per read;
 - maximum reconstructed response size;
-- per-tenant storage quota;
-- per-tenant concurrent upload limit.
+- per-stack-and-tenant storage quota;
+- per-stack-and-tenant concurrent upload limit.
 
-A valid hash does not authorize access. Every operation is authenticated and scoped to one tenant partition.
+A valid hash does not authorize access. Every tenant data-plane operation is
+authenticated with a trusted stack JWT capability and scoped to a verified
+`(stackId, tenantId)` partition. Root Refs writes derive `refDomain` from the
+verified capability; callers cannot select it through a header, query
+parameter, or body. Stack admin APIs use the separate admin authentication
+plane defined by the CAS architecture.
 
 Content type is descriptive metadata and must not be trusted for content sniffing, browser execution policy, or DOCX image validation. Consumers validate actual bytes for their domain.
 

@@ -47,17 +47,17 @@ This separation is important:
 
 ## 2. Authoritative CAS state
 
-For one tenant, the authoritative root state at time $t$ is the signed-count
-map:
+For one `(stackId, tenantId)` partition, the authoritative root state at time
+$t$ is the signed-count map:
 
 $$
-RootState_t : hash \mapsto rootRefCount_t(hash)
+RootState_{s,n,t} : hash \mapsto rootRefCount_{s,n,t}(hash)
 $$
 
 with the invariant:
 
 $$
-\forall v,\quad rootRefCount_t(v) \ge 0
+\forall v,\quad rootRefCount_{s,n,t}(v) \ge 0
 $$
 
 A positive count means that one or more logical references currently require
@@ -83,9 +83,9 @@ changes which graphs the system is obligated to retain.
 
 The analogy has limits. UniDocs CAS has a counted set of roots rather than one
 canonical root selected by consensus. Root updates may also be emitted by
-independent business domains. Unless CAS adds a tenant-global commit sequence,
-per-domain audit revisions do not define a consensus-like total order across
-all domains.
+independent business domains. Audit revisions are monotonic per
+`(stackId, refDomain)` and span tenant-bearing events inside that stack. They
+do not define a consensus-like total order across domains or stacks.
 
 It is therefore most precise to call Root Refs the authoritative CAS
 **retention state**. The application state described by the content remains
@@ -93,9 +93,9 @@ owned by the business system.
 
 ## 3. The semantic live set
 
-Let:
+For one fixed `(stackId, tenantId)` partition, let:
 
-- $V_t$ be the set of nodes stored for a tenant at time $t$;
+- $V_t$ be the set of nodes stored in that partition at time $t$;
 - $E_t$ be the immutable parent-to-child edges stored for those nodes;
 - $R_t$ be the set of nodes with positive root reference counts.
 
@@ -340,7 +340,7 @@ state boundary:
 ```text
 uploaded + leased       = possible future state
 positive Root Ref       = committed retained state
-released Root Ref       = no longer retained by that logical responsibility
+released Root Ref       = no longer retained by that business-domain lifecycle
 physically deleted      = eventual storage cleanup
 ```
 
@@ -366,7 +366,7 @@ $$
 Collection proceeds incrementally:
 
 1. Select a currently eligible node.
-2. Recheck eligibility within the tenant serialization boundary.
+2. Recheck eligibility within the stack-and-tenant serialization boundary.
 3. Delete its content.
 4. Delete its outgoing edges and node metadata atomically.
 5. Decrement each child's `childRefCount` by edge occurrence count.
@@ -422,8 +422,14 @@ The dangerous implementation errors are those that break the ordering:
 
 ## 10. Audit boundary
 
-The Root Refs ledger records changes to authoritative retention state. It
-answers questions such as:
+The Root Refs ledger records accepted signed deltas by
+`(stackId, refDomain)`. Every event and balance row records the affected
+`tenantId`. The tenant dimension identifies data ownership; the domain
+dimension identifies audit attribution. Domain projections remain audit data,
+while aggregate `cas_nodes.root_ref_count` remains authoritative for
+validation, readiness, leasing, and GC.
+
+The ledger answers questions such as:
 
 - which trusted domain changed a root balance;
 - which signed deltas were accepted;
@@ -453,15 +459,17 @@ or a separate archival policy. The audit ledger alone is not an archive.
 
 ### 10.2 Domain revisions and total order
 
-Per-domain revisions are sufficient for domain balance reads, event replay,
-and reconciliation. Signed deltas from different domains commute when deriving
-the final aggregate balance.
+Revisions are monotonic per `(stackId, refDomain)` and order accepted events
+for that business domain across tenants in the stack. They are sufficient for
+stack-domain balance reads, event replay, and reconciliation. Signed deltas
+from different domains commute when deriving each tenant's final aggregate
+balance.
 
-They do not establish the exact cross-domain order of all tenant root
+Domain revisions do not establish the exact cross-domain order of all root
 transitions. If a future requirement needs to correlate the precise aggregate
 state after every accepted update with GC or another global event stream, CAS
-would need a tenant-global commit sequence in addition to domain revisions.
-That is not required for the current reconciliation model.
+would need a separate stack-global or stack-and-tenant commit sequence. That is
+not required for the current reconciliation model.
 
 ## 11. Design consequences
 
@@ -518,6 +526,8 @@ Implementations should directly test the following properties.
 
 - Every newly accepted Root Refs update writes exactly one audit event in the
   same commit.
+- Every event records the affected `tenantId` and receives the next revision
+  for its `(stackId, refDomain)` stream.
 - Audit write failure rolls back aggregate Root Refs and idempotency state.
 - Idempotent retries append no event.
 - Root validation and GC do not read domain event or balance tables.

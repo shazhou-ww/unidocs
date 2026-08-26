@@ -10,13 +10,14 @@ The node encoding referenced below is defined in [CAS Binary Format](./cas-binar
 
 ## 1. Goals
 
-The CAS stores a tenant-scoped Merkle DAG for persistent SValue document roots and binary assets.
+The CAS stores a stack-and-tenant-scoped Merkle DAG for persistent SValue
+document roots and binary assets.
 
 The design must provide:
 
 - immutable, content-addressed nodes;
-- tenant isolation and authenticated service access;
-- deduplication within one tenant partition;
+- stack-and-tenant isolation and authenticated service access;
+- deduplication within one stack-and-tenant partition;
 - child references between nodes;
 - leases that protect uncommitted nodes from garbage collection;
 - separate child and business-root reference counts;
@@ -27,17 +28,21 @@ The design must provide:
 
 The CAS does not attempt to provide a distributed transaction spanning a document Durable Object, D1, and R2. Cross-system failures are handled with ordering, rollback, retry, and business-level compensation.
 
-## 2. Tenant isolation and execution model
+## 2. Stack and tenant isolation
 
-Each tenant has an independent CAS address space.
+`stackId` is the top-level trust and data namespace. Within a stack,
+`tenantId` identifies data ownership; `refDomain` is an orthogonal Root Ref
+audit dimension.
 
-- D1 keys include `(tenant_id, digest)`.
-- R2 objects use `tenants/{tenantId}/nodes/{digest}`.
-- Identical content in different tenants is stored independently.
-- Storage usage and GC are calculated per tenant.
-- Gateway derives `tenantId` from authenticated identity or its document directory. CAS never derives tenant context from an end-user path or credential.
+- D1 keys include `(stack_id, tenant_id, digest)`.
+- R2 objects use `stacks/{stackId}/tenants/{tenantId}/nodes/{digest}`.
+- Identical content in different stack-and-tenant partitions is stored independently.
+- Storage usage and GC are calculated per stack-and-tenant partition.
+- A configured trusted JWT issuer maps to one stable `stackId`; verified tenant
+  claims and path tenant must agree before storage access.
 
-A tenant-scoped CAS Durable Object serializes all mutable operations for that tenant:
+A CAS Durable Object named from a canonical `(stackId, tenantId)` composite
+serializes mutable tenant operations:
 
 - lease claims and extensions;
 - upload completion;
@@ -45,7 +50,9 @@ A tenant-scoped CAS Durable Object serializes all mutable operations for that te
 - root-reference count updates;
 - garbage collection.
 
-D1 and R2 remain the durable stores. The Durable Object is the concurrency boundary that prevents a lease claim from racing a GC deletion decision.
+D1 and R2 remain the durable stores. The Durable Object is the concurrency
+boundary that prevents a lease claim from racing a GC deletion decision. It
+does not replace stack-aware keys in the shared D1 and R2 bindings.
 
 ## 3. Node model
 
@@ -56,7 +63,7 @@ A logical node consists of three storage classes.
 The node's own content bytes are immutable and stored in R2.
 
 ```text
-tenants/{tenantId}/nodes/{sha256Digest}
+stacks/{stackId}/tenants/{tenantId}/nodes/{sha256Digest}
 ```
 
 R2 stores only the content bytes, not mutable lifecycle state.
@@ -234,7 +241,8 @@ For each eligible node:
 
 If R2 deletion succeeds but the D1 transaction fails, the row remains as a not-ready node. A future lease can require re-upload, or a later GC pass can retry deletion and metadata cleanup.
 
-The tenant-level queue closes the lease/GC race: a lease cannot be granted between GC's eligibility decision and R2 deletion.
+The stack-and-tenant queue closes the lease/GC race: a lease cannot be granted
+between GC's eligibility decision and R2 deletion.
 
 ## 9. Reference-count updates
 
@@ -261,7 +269,18 @@ export interface CasRootRefUpdate {
 }
 ```
 
-The internal update operation:
+The canonical service operation is:
+
+```http
+POST /stacks/{stackId}/tenants/{tenantId}/root-refs
+Authorization: Bearer <capability carrying refDomain>
+```
+
+The request body does not carry stack, tenant, or domain identity. CAS maps the
+verified issuer to `stackId`, requires path stack and token tenant equality,
+and derives `refDomain` from the signed capability.
+
+The update operation:
 
 1. validates a non-empty, bounded request ID;
 2. canonicalizes and hashes the change set;
@@ -270,12 +289,14 @@ The internal update operation:
 5. if the same request ID has a different payload, returns conflict;
 6. verifies every positively referenced target is ready;
 7. verifies every resulting `rootRefCount` is non-negative;
-8. applies all changes in one D1 transaction;
-9. records the successful request ID and payload hash in that transaction.
+8. allocates the next `(stackId, refDomain)` audit revision;
+9. applies aggregate changes, appends one tenant-bearing audit event, updates
+  the domain projection, and records idempotency in one D1 transaction.
 
 Every hash in `changes` must identify an existing D1 node, including hashes with negative deltas. Each delta must be a non-zero safe integer within configured per-request bounds. The service checks addition overflow before applying it. Empty change sets, unknown hashes, non-integer values, overflow, and results below zero reject the entire batch.
 
-This API is internal and is not exposed through the public HTTP surface.
+The API is a stable CAS service contract. Whether a Gateway exposes it is an
+independent ingress policy decision.
 
 A deterministic request ID is recommended, for example:
 
@@ -285,7 +306,10 @@ doc:{documentId}:truncate:{firstVersion}-{lastVersion}:remove-refs
 snapshot:{documentId}:{version}:add-refs
 ```
 
-Idempotency is required for timeout and retry safety. It does not introduce an owner model; aggregate root counts remain scoped only by tenant and hash.
+Idempotency is scoped to `(stackId, tenantId, refDomain, requestId)` and is
+required for timeout and retry safety. It does not introduce owner entities;
+aggregate root counts remain scoped only by stack, tenant, and hash. Business
+domains own logical-reference lifecycle; CAS stores counts and audit facts.
 
 ## 10. Service-side TypeScript API
 
@@ -326,35 +350,46 @@ export interface CasGcResult {
 }
 ```
 
+A `TenantCasService` instance is bound to one verified `(stackId, tenantId)`
+authorization context. Individual methods cannot select another stack or
+tenant.
+
 `lease()` calls `provideContent()` only when the node is not ready. This avoids retransmitting content that already exists.
 
 `leaseExisting()` is used by document apply flows. It has no descriptor or content callback: the node must already have matching D1 metadata and canonical R2 content. A not-ready node is rejected so the client can complete a lease-with-content request first.
 
 ## 11. Authenticated HTTP API
 
-Gateway's public CAS endpoints live under `/tenants/{tenantId}/cas/`. Gateway
-authenticates the user, authorizes membership or tenant administration, strips
-end-user credentials, and forwards only an allowlisted request with a
-tenant-scoped CAS capability.
+CAS owns its native service and admin route contracts. Because the routes are
+served by CAS, they do not repeat a `/cas` mount segment. A Gateway or other
+shared ingress may expose selected operations beneath its own `/cas` mount,
+but that mapping and allowlist are not part of the CAS protocol.
 
-A dedicated CAS worker owns `CasDurableObject`, D1 `CAS_DB`, and R2 `CAS_R2`.
-Gateway allowlist-proxies public node routes and tenant-admin operations with
-short-lived CAS-only capabilities. Root management is never publicly proxied.
+Tenant service routes accept JWT capabilities from configured stack issuers.
+Each issuer maps to one stable `stackId`; multiple issuers and rotation keys may
+be configured for one stack. The tenant verifier checks issuer, `kid`,
+signature, algorithm, CAS data-plane audience, time bounds, permissions, and
+operation-specific claims before any DO, D1, or R2 access. The issuer-derived
+stack must match the path, and token tenant must equal path tenant.
 
-CAS accepts only Gateway-issued Bearer capabilities on tenant-aware routes and
-never reads an end-user Bearer. It verifies issuer, CAS audience, lifetime,
-exact permission, and the signed tenant against the URL before storage access.
-Doc services call CAS directly with a separate request-local delegated CAS
-capability rather than forwarding their Doc token or hairpinning through Gateway.
-`cas:admin` is Gateway-only and is never delegated to Doc.
+Root Refs writers carry signed `refDomain`; callers cannot provide or override
+it through path, query, header, or body.
+
+Stack admin routes use an independent short-lived access token and a separate
+admin verifier, trust configuration, and audience. The admin token grants an
+explicit stack set and least-privilege admin permissions; it need not carry a
+tenant claim. Tenant JWTs are never accepted by admin routes even if they
+contain admin-looking scopes, and admin tokens are never accepted by tenant
+routes. A WebUI obtains its token through a control-plane backend or token
+exchange; browser code never embeds a long-lived broad admin secret.
 
 HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
 
 ### 11.1 Read content
 
 ```http
-GET /tenants/{tenantId}/cas/nodes/{sha256}/content
-Authorization: Bearer <CAS capability with cas:read>
+GET /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}/content
+Authorization: Bearer <CAS capability>
 ```
 
 Responses:
@@ -365,8 +400,8 @@ Responses:
 ### 11.2 Read metadata
 
 ```http
-GET /tenants/{tenantId}/cas/nodes/{sha256}/metadata
-Authorization: Bearer <CAS capability with cas:read>
+GET /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}/metadata
+Authorization: Bearer <CAS capability>
 ```
 
 Returns immutable metadata and mutable state. Unknown nodes return `404`.
@@ -374,8 +409,8 @@ Returns immutable metadata and mutable state. Unknown nodes return `404`.
 ### 11.3 Lease with content
 
 ```http
-POST /tenants/{tenantId}/cas/nodes/{sha256}
-Authorization: Bearer <CAS capability with cas:write>
+POST /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}
+Authorization: Bearer <CAS capability>
 Content-Type: image/png
 Content-Length: 12345
 X-CAS-Refs: <hash>[,<hash>...]
@@ -400,8 +435,8 @@ If the node is already ready and immutable metadata matches, the service cancels
 ### 11.4 Extend an existing lease
 
 ```http
-POST /tenants/{tenantId}/cas/nodes/{sha256}/lease
-Authorization: Bearer <CAS capability with cas:write>
+POST /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}/lease
+Authorization: Bearer <CAS capability>
 X-CAS-Lease-Duration: 900000
 ```
 
@@ -409,66 +444,71 @@ No body. Missing nodes return `404`. A not-ready node returns `409`; the caller 
 
 A successful response is the same lease result as 11.3.
 
-### 11.5 Tenant control plane
+### 11.5 Tenant usage and GC
 
 ```http
-GET  /tenants/{tenantId}/cas/usage
-POST /tenants/{tenantId}/cas/gc
-Authorization: Bearer <Gateway CAS capability with cas:admin>
+GET  /stacks/{stackId}/tenants/{tenantId}/usage
+POST /stacks/{stackId}/tenants/{tenantId}/gc
+Authorization: Bearer <CAS capability>
 ```
 
-Gateway may expose usage only to tenant administrators. GC is internal-only and
-advisory; triggering it does not guarantee that every eligible node is removed
-in one call.
+Gateway exposure remains policy-owned. GC is advisory; triggering it does not
+guarantee that every eligible node is removed in one call.
 
-### 11.6 Internal root ownership
+### 11.6 Root Refs
 
-Editors assign durable roots by stable owner, not by caller-computed count deltas:
+Business services apply signed non-zero count deltas:
 
 ```http
-POST /tenants/{tenantId}/_internal/root-assignments
-Authorization: Bearer <delegated Doc CAS capability with cas:write>
+POST /stacks/{stackId}/tenants/{tenantId}/root-refs
+Authorization: Bearer <CAS capability carrying refDomain>
 Content-Type: application/json
 
 {
   "requestId": "session:sessionId:version:7:roots",
-  "assignments": [
-    { "owner": "session:sessionId:delta:7", "hash": "..." },
-    { "owner": "session:sessionId:snapshot:7", "hash": "..." }
-  ]
+  "changes": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": -1,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 1
+  }
 }
 ```
 
-The delegated capability must carry the calling Doc subject and the same signed
-`tenantId` and `sessionId`; every owner must begin with that session namespace.
-CAS stores `(tenant_id, owner, hash)`. In one idempotent D1 batch it reads prior
-assignments, derives aggregate count changes, updates `rootRefCount`, replaces
-owner rows, and records the request hash. Assigning `hash: null` releases an
-owner. Two owners of the same hash count independently.
+CAS does not store logical owner identities. `cas_nodes.root_ref_count` is the
+authoritative aggregate. Every newly accepted update atomically changes the
+aggregate, allocates a stack-domain revision, appends one event containing the
+affected tenant, updates the domain balance projection, and stores the
+idempotency result. Aggregate counts cannot become negative; audit domain
+balances may.
 
-The tenant-aware `/_internal/root-refs` suffix remains only for migration of old
-operation roots and requires the same delegated session capability. Neither
-internal route is Gateway-proxied. Tenant-less adapters exist only during the
-explicit rollout window and are not part of the target API.
+Owner assignments and `cas_root_owners` are removed. A temporary
+`/_internal/root-refs` compatibility route may exist during cutover only; it is
+bound to trusted server-configured legacy stack/domain identity and is then
+disabled.
 
-### 11.7 Internal portable nodes
+### 11.7 Stack admin audit API
 
-Document workers exchange the canonical full-node representation from
-[CAS Binary Format](./cas-binary-format.md):
+Root Ref audit reads are formal stack-level admin contracts:
 
 ```http
-GET  /tenants/{tenantId}/_internal/nodes/{hash}
-POST /tenants/{tenantId}/_internal/nodes/{hash}
-Authorization: Bearer <CAS capability with cas:read or cas:write>
-Content-Type: application/vnd.unidocs.cas-node
+GET /stacks/{stackId}/admin/root-ref-domains/{refDomain}/refs
+GET /stacks/{stackId}/admin/root-ref-domains/{refDomain}/events
+Authorization: Bearer <CAS admin access token carrying cas:root-audit:read>
 ```
 
-GET returns header, content type, ordered child hashes, and own content in one
-response. POST accepts the same bytes and avoids an unbounded child-ref HTTP
-header. CAS validates the header, refs, children, content length, SValue tags,
-and complete digest before publishing the node.
+Both reads support an optional exact `tenantId` filter and include `tenantId` in
+every row/event. Revisions are monotonic per `(stackId, refDomain)`. The admin
+namespace may later host other formal CAS control-plane APIs; each operation
+uses a dedicated permission rather than a universal admin credential.
 
-Gateway's public leaf upload and content/metadata endpoints remain compatible.
+WebUI and operator tooling use a dedicated admin client and control-plane
+ingress. The ordinary tenant `CasClient` cannot accept admin tokens or call
+admin routes.
+
+### 11.8 Canonical binary codec
+
+The portable full-node representation in [CAS Binary Format](./cas-binary-format.md)
+remains available to export/import tooling, offline verification, migration,
+and fixtures. CAS exposes no portable-node HTTP route or handler.
 
 ## 12. SValue and SBlob
 
@@ -581,13 +621,15 @@ Apply is an outbox state machine:
 5. run doctype apply against immutable current state;
 6. optionally store the resulting TDoc as a snapshot root;
 7. write one local `svalue_pending` row containing hashes and canonical bytes;
-8. idempotently assign delta and optional snapshot root owners in CAS;
+8. idempotently apply signed deltas that acquire the delta and optional
+  snapshot Root Refs using a deterministic request ID;
 9. insert local committed rows and delete the pending row;
 10. publish the new in-memory state and return success.
 
 If CAS times out, pending bytes allow recovery to re-ensure nodes. If local
-finalization fails after CAS success, owner assignment is idempotent and the
-pending row is finalized on restart. There is no compensating-delete window.
+finalization fails after CAS success, recovery retries the same signed-delta
+request ID and finalizes the pending row on restart. There is no
+compensating-delete window.
 
 Version 1 does not persist a TDoc head on every delta. Active SBlob leases protect
 the in-memory state between snapshots. Normal startup loads the latest standalone
@@ -596,16 +638,20 @@ the snapshot endpoint may retain the current version opportunistically.
 
 ## 15. Snapshot and history lifecycle
 
-- Delta owner: `session:{sessionId}:delta:{version}`.
-- Snapshot owner: `session:{sessionId}:snapshot:{version}`.
+- Committing a retained delta acquires one Root Ref for its root hash.
+- Committing a retained snapshot acquires one independent Root Ref for its root
+  hash.
 - Delta and snapshot roots may share descendants; redundant protection is
   intentional.
 - A restore is a retained delta containing `{kind: "restore", doc: SBlob}`;
   replay jumps to that standalone state instead of recording an empty operation.
-- Same-tenant clone retains the source snapshot DAG in the destination partition.
-  Cross-tenant clone requires an authorized recursive DAG copy.
+- A clone within the same `(stackId, tenantId)` partition retains the source
+  snapshot DAG. Cross-tenant or cross-stack clone requires an authorized
+  recursive DAG copy into the destination partition.
 - Before future history truncation, the surviving boundary receives a standalone
-  snapshot; removed owner rows are then released idempotently.
+  snapshot; removed delta/snapshot roots are aggregated into one idempotent
+  negative Root Refs update.
+- Snapshot replacement uses one atomic update containing old `-1` and new `+1`.
 
 DOCX TDoc is a two-level OpenXML Merkle manifest:
 
@@ -639,7 +685,7 @@ values with no SBlob. Responses containing SBlob require an SValue `Accept`
 header and return `406` to JSON-only callers.
 
 Implemented validation includes unit vectors, CAS/SDK tests, Markdown and DOCX
-restart recovery, rollback, same-tenant clone behavior, native
+restart recovery, rollback, same-partition clone behavior, native
 SValue image operations, JSON agent tool-hash conversion, provider-rendered
 multimodal SBlob results, and independent delta plus snapshot retention of
 shared image blobs.
@@ -647,7 +693,7 @@ shared image blobs.
 Deferred operational work:
 
 - automatic GC scheduling and quotas;
-- owner-prefix cleanup and count-repair tooling;
+- legacy owner-table migration/drop verification and count-repair tooling;
 - production migration and reconciliation of legacy snapshot R2/root counts;
 - history truncation and document deletion APIs;
 - CBOR tag registration before version 1 production persistence.
