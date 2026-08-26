@@ -22,7 +22,7 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "devDependencies": {
     "typescript": "^5.9.0",

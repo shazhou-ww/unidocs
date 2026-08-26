@@ -61,8 +61,11 @@ and share unchanged Blob descendants through CAS.
 ```
 packages/
 ├── protocol/              @unidocs/protocol              — Document protocol contracts (types + constants, no logic)
+├── protocol-cas/          @unidocs/protocol-cas          — CAS HTTP routes, wire contracts, and domain types
+├── protocol-doc/          @unidocs/protocol-doc          — Doc HTTP routes, wire contracts, and errors
+├── protocol-gateway/      @unidocs/protocol-gateway      — Gateway HTTP routes and pass-through contracts
+├── service-auth/          @unidocs/service-auth          — Capability claims, permissions, issuance, and verification
 ├── svalue-codec/          @unidocs/svalue-codec          — SValue/SBlob codec + protocol helpers
-├── http-protocol/         @unidocs/http-protocol         — HTTP wire contracts for gateway/cas/sdk microservices
 ├── gateway-common/        @unidocs/gateway-common        — Cloud-neutral API Gateway routing
 ├── cas-server-common/     @unidocs/cas-server-common     — CAS server kernel (binary/digest/validation)
 ├── cas-client/            @unidocs/cas-client            — Cloud-neutral CAS HTTP client

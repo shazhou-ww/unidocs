@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { casRoutes } from "@unidocs/protocol-cas";
-import { gatewayRoutes, matchGatewayRoute } from "../src/index.js";
+import {
+  gatewayRoutes,
+  isLegacyPublicCasRoute,
+  matchGatewayRoute,
+} from "../src/index.js";
 
 const collection = { tenantId: "tenant/a", docType: "doc type" };
 const document = { ...collection, docId: "doc/1" };
@@ -9,6 +13,7 @@ describe("Gateway routes", () => {
   test.each([
     ["GET", gatewayRoutes.listDocuments(collection), "listDocuments"],
     ["POST", gatewayRoutes.createDocument(collection), "createDocument"],
+    ["GET", gatewayRoutes.statusDocument(document), "statusDocument"],
     ["POST", gatewayRoutes.queryDocument(document), "queryDocument"],
     ["POST", gatewayRoutes.applyDocument(document), "applyDocument"],
     ["GET", gatewayRoutes.exportDocument(document), "exportDocument"],
@@ -49,5 +54,34 @@ describe("Gateway routes", () => {
     expect(matchGatewayRoute("POST", casRoutes.rootRefs({ tenantId: "t" }))).toBeNull();
     expect(matchGatewayRoute("GET", "/users/u/docs/docx/")).toBeNull();
     expect(matchGatewayRoute("GET", gatewayRoutes.applyDocument(document))).toBeNull();
+  });
+
+  test.each([
+    ["GET", "/users/u1/cas/usage"],
+    ["POST", "/users/u1/cas/nodes/abc"],
+    ["GET", "/users/u1/cas/nodes/abc/content"],
+    ["GET", "/users/u1/cas/nodes/abc/metadata"],
+    ["POST", "/users/u1/cas/nodes/abc/lease"],
+  ])("matches legacy public CAS %s %s", (method, pathname) => {
+    expect(isLegacyPublicCasRoute(method, pathname)).toBe(true);
+  });
+
+  test.each([
+    ["POST", "/users/u1/cas/gc"],
+    ["POST", "/_internal/root-refs"],
+    ["POST", "/users/u1/cas/_internal/root-refs"],
+    ["POST", "/users/u1/cas/usage"],
+    ["GET", "/users/u1/docs/markdown/d1"],
+  ])("rejects non-legacy-public CAS %s %s", (method, pathname) => {
+    expect(isLegacyPublicCasRoute(method, pathname)).toBe(false);
+  });
+
+  test("freezes encoded public document paths", () => {
+    expect(gatewayRoutes.listDocuments(collection))
+      .toBe("/tenants/tenant%2Fa/docs/doc%20type/");
+    expect(gatewayRoutes.statusDocument(document))
+      .toBe("/tenants/tenant%2Fa/docs/doc%20type/doc%2F1");
+    expect(gatewayRoutes.initFromHash(document))
+      .toBe("/tenants/tenant%2Fa/docs/doc%20type/doc%2F1/init_from_hash");
   });
 });

@@ -26,7 +26,7 @@ export interface RollbackResult {
 
 export interface CreateResult {
   success: boolean;
-  docId: string;
+  sessionId: string;
   version: number;
   error?: string;
 }
@@ -127,8 +127,15 @@ export type DocSnapshotResponse =
     version: number;
     hash: CasHash;
     docType: string;
-    docId: string;
   }
+  | DocErrorResponse;
+
+export interface DocStatusRequest {
+  path: DocSessionPath;
+}
+
+export type DocStatusResponse =
+  | { exists: boolean; version: number }
   | DocErrorResponse;
 
 export interface DocIrRequest {
@@ -183,3 +190,23 @@ export type DocReadBlobResponse =
     headers: { contentType: string; sblobHash: string };
   }
   | DocErrorResponse;
+
+export interface DocEndpointContracts {
+  create: { request: DocCreateRequest; response: DocCreateResponse };
+  query: { request: DocQueryRequest; response: DocQueryResponse };
+  apply: { request: DocApplyRequest; response: DocApplyResponse };
+  export: { request: DocExportRequest; response: DocExportResponse };
+  history: { request: DocHistoryRequest; response: DocHistoryResponse };
+  rollback: { request: DocRollbackRequest; response: DocRollbackResponse };
+  snapshot: { request: DocSnapshotRequest; response: DocSnapshotResponse };
+  status: { request: DocStatusRequest; response: DocStatusResponse };
+  ir: { request: DocIrRequest; response: DocIrResponse };
+  initFromHash: { request: DocInitFromHashRequest; response: DocInitFromHashResponse };
+  run: { request: DocRunOperatorRequest; response: DocRunOperatorResponse };
+  reset: { request: DocResetOperatorRequest; response: DocResetOperatorResponse };
+}
+
+export interface DocPrivateEndpointContracts {
+  resolveBlob: { request: DocResolveBlobRequest; response: DocResolveBlobResponse };
+  readBlob: { request: DocReadBlobRequest; response: DocReadBlobResponse };
+}

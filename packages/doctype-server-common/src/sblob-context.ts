@@ -7,7 +7,7 @@ import {
   validateContentType,
   validateHash,
 } from "@unidocs/cas-server-common";
-import type { CasNodeMetadata } from "@unidocs/http-protocol";
+import type { CasNodeMetadata } from "@unidocs/protocol-cas";
 import type {
   DocumentTypeContext,
   MakeSBlob,

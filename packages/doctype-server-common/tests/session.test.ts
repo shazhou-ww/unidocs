@@ -17,7 +17,7 @@ import {
   RootRefsError,
   StorageCorruptError,
   VersionConflictError,
-} from "@unidocs/http-protocol";
+} from "@unidocs/protocol-doc";
 import { CasClientError } from "@unidocs/cas-client";
 import { DocumentSession, type CasGateway, type SessionDeps } from "../src/session.js";
 

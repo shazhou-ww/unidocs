@@ -1,10 +1,9 @@
 # Gateway-Issued Internal Capability Authorization Implementation Plan
 
-> **Status:** Deferred. Execute only after
-> `docs/superpowers/plans/2026-08-25-p0-microservice-boundaries-working.md`
-> has completed every gate and the final Gateway -> Doc -> CAS boundaries have
-> landed. Task 0 must rebase and re-audit the final ownership surfaces before
-> implementation starts.
+> **Status:** In progress. The P0 boundary prerequisite completed in
+> `cdce042`, and this branch was fast-forwarded to post-P0 commit `012957b` on
+> 2026-08-26. Task 0 is re-auditing the final ownership surfaces before any
+> further implementation work.
 >
 > **For agentic workers:** Use an executing-plans workflow and complete one
 > task at a time. Keep the checkboxes current. Do not combine this migration
@@ -208,7 +207,7 @@ tenants:{tenantId}:sessions:{sessionId}:write
 This migration does not redesign the existing HTTP API. Methods, operation
 names, query parameters, request bodies, response bodies, status behavior, and
 binary/media framing remain as implemented. In particular, it does not add a
-`/v1` prefix, `status` or delete routes, `HEAD`/`PUT` CAS operations,
+`/v1` prefix, delete routes, `HEAD`/`PUT` CAS operations,
 `application/problem+json`, or a new CAS upload format. `init_from_hash`,
 multipart create, SValue negotiation, raw export/IR bytes, `X-CAS-Refs`, and
 `X-CAS-Lease-Duration` remain part of the contract.
@@ -230,9 +229,9 @@ replaced by that Gateway-resolved private `sessionId`.
 | Edge | Current | Target |
 |------|---------|--------|
 | Client -> Gateway | path `userId`; end-user auth is not yet enforced here | path `tenantId`; Gateway authenticates the user and authorizes membership/operation in that tenant |
-| Gateway -> Doc | `X-Internal-Token`, `X-User-Id`, `X-Doc-Type`, `X-Doc-Id` | Doc Bearer capability plus optional `X-UniDocs-CAS-Capability`; tenant/session come from matched path and signed claims |
-| Gateway -> CAS | `X-Internal-Token`, `X-User-Id` | CAS Bearer capability; path `tenantId` must equal the signed claim |
-| Doc -> CAS | `X-Internal-Token`, `X-User-Id` | delegated CAS Bearer capability; path `tenantId` must equal the signed claim |
+| Gateway -> Doc | `X-Internal-Token`, `X-Tenant-Id`, `X-Doc-Type`, `X-Session-Id` | Doc Bearer capability plus optional `X-UniDocs-CAS-Capability`; tenant/session come from matched path and signed claims |
+| Gateway -> CAS | `X-Internal-Token`, `X-Tenant-Id` | CAS Bearer capability; path `tenantId` must equal the signed claim |
+| Doc -> CAS | `X-Internal-Token`, `X-Tenant-Id` | delegated CAS Bearer capability; path `tenantId` must equal the signed claim |
 
 Gateway never treats the public tenant path as authorization by itself. Doc
 and CAS authenticate before parsing a business body or selecting tenant
@@ -251,6 +250,7 @@ and response framing stay unchanged. Only `/users/{userId}` becomes
 |---------------|--------------------|------------------------|
 | `GET /users/{userId}/docs/{docType}/` | `GET /tenants/{tenantId}/docs/{docType}/` | `GatewayListDocumentsRequest` / `GatewayListDocumentsResponse` |
 | `POST /users/{userId}/docs/{docType}/` | `POST /tenants/{tenantId}/docs/{docType}/` | `GatewayCreateDocumentRequest` / `GatewayCreateDocumentResponse` |
+| `GET /users/{userId}/docs/{docType}/{docId}` | `GET /tenants/{tenantId}/docs/{docType}/{docId}` | `GatewayStatusDocumentRequest` / `GatewayStatusDocumentResponse` |
 | `POST /users/{userId}/docs/{docType}/{docId}/query` | `POST /tenants/{tenantId}/docs/{docType}/{docId}/query` | `GatewayQueryDocumentRequest<TQuery>` / `GatewayQueryDocumentResponse` |
 | `POST /users/{userId}/docs/{docType}/{docId}/apply` | `POST /tenants/{tenantId}/docs/{docType}/{docId}/apply` | `GatewayApplyDocumentRequest<TOp>` / `GatewayApplyDocumentResponse` |
 | `GET /users/{userId}/docs/{docType}/{docId}/export?format=` | `GET /tenants/{tenantId}/docs/{docType}/{docId}/export?format=` | `GatewayExportDocumentRequest` / `GatewayExportDocumentResponse` |
@@ -262,8 +262,11 @@ and response framing stay unchanged. Only `/users/{userId}` becomes
 | `POST /users/{userId}/docs/{docType}/{docId}/run` | `POST /tenants/{tenantId}/docs/{docType}/{docId}/run` | `GatewayRunOperatorRequest` / `GatewayRunOperatorResponse` |
 | `POST /users/{userId}/docs/{docType}/{docId}/reset` | `POST /tenants/{tenantId}/docs/{docType}/{docId}/reset` | `GatewayResetOperatorRequest` / `GatewayResetOperatorResponse` |
 
-Gateway still allowlist-proxies the current six public CAS operations. Their
-tenant-aware routes and canonical types are defined by `protocol-cas` below;
+Gateway's legacy `/users/*` allowlist proxies five public CAS operations: node
+content, metadata, create/lease, lease extension, and usage. It currently
+rejects GC. The target tenant-aware Gateway allowlist exposes those five plus
+the existing CAS GC operation after Gateway's tenant-admin authorization.
+Their canonical types are defined by `protocol-cas` below;
 `protocol-gateway` exports these aliases instead of copying their fields:
 `GatewayCasReadContentRequest`/`GatewayCasReadContentResponse`,
 `GatewayCasReadMetadataRequest`/`GatewayCasReadMetadataResponse`,
@@ -283,20 +286,22 @@ operator behavior are recorded rather than normalized in this auth migration.
 
 | Current Doc route | Tenant-aware Doc route | Request/response types |
 |-------------------|------------------------|------------------------|
-| `POST /users/{userId}/` plus `X-Doc-Id` | `POST /tenants/{tenantId}/{sessionId}/` | `DocCreateRequest` / `DocCreateResponse` |
-| `POST /users/{userId}/{docId}/query` | `POST /tenants/{tenantId}/{sessionId}/query` | `DocQueryRequest<TQuery>` / `DocQueryResponse` (`data: SValue`) |
-| `POST /users/{userId}/{docId}/apply` | `POST /tenants/{tenantId}/{sessionId}/apply` | `DocApplyRequest<TOp>` / `DocApplyResponse` |
-| `GET /users/{userId}/{docId}/export?format=` | `GET /tenants/{tenantId}/{sessionId}/export?format=` | `DocExportRequest` / `DocExportResponse` |
-| `GET /users/{userId}/{docId}/history?from=&to=` | `GET /tenants/{tenantId}/{sessionId}/history?from=&to=` | `DocHistoryRequest` / `DocHistoryResponse<TOp>` |
-| `POST /users/{userId}/{docId}/rollback` | `POST /tenants/{tenantId}/{sessionId}/rollback` | `DocRollbackRequest` / `DocRollbackResponse` |
-| `GET /users/{userId}/{docId}/snapshot` | `GET /tenants/{tenantId}/{sessionId}/snapshot` | `DocSnapshotRequest` / `DocSnapshotResponse` |
-| `GET /users/{userId}/{docId}/ir` | `GET /tenants/{tenantId}/{sessionId}/ir` | `DocIrRequest` / `DocIrResponse` |
-| `POST /users/{userId}/{docId}/init_from_hash` | `POST /tenants/{tenantId}/{sessionId}/init_from_hash` | `DocInitFromHashRequest` / `DocInitFromHashResponse` |
-| `POST /users/{userId}/{docId}/run` | `POST /tenants/{tenantId}/{sessionId}/run` | `DocRunOperatorRequest` / `DocRunOperatorResponse` |
-| `POST /users/{userId}/{docId}/reset` | `POST /tenants/{tenantId}/{sessionId}/reset` | `DocResetOperatorRequest` / `DocResetOperatorResponse` |
+| `PUT /sessions/{sessionId}` | `PUT /tenants/{tenantId}/sessions/{sessionId}` | `DocCreateRequest` / `DocCreateResponse` |
+| `POST /sessions/{sessionId}/query` | `POST /tenants/{tenantId}/sessions/{sessionId}/query` | `DocQueryRequest<TQuery>` / `DocQueryResponse` (`data: SValue`) |
+| `POST /sessions/{sessionId}/apply` | `POST /tenants/{tenantId}/sessions/{sessionId}/apply` | `DocApplyRequest<TOp>` / `DocApplyResponse` |
+| `GET /sessions/{sessionId}/export?format=` | `GET /tenants/{tenantId}/sessions/{sessionId}/export?format=` | `DocExportRequest` / `DocExportResponse` |
+| `GET /sessions/{sessionId}/history?from=&to=` | `GET /tenants/{tenantId}/sessions/{sessionId}/history?from=&to=` | `DocHistoryRequest` / `DocHistoryResponse<TOp>` |
+| `POST /sessions/{sessionId}/rollback` | `POST /tenants/{tenantId}/sessions/{sessionId}/rollback` | `DocRollbackRequest` / `DocRollbackResponse` |
+| `GET /sessions/{sessionId}/snapshot` | `GET /tenants/{tenantId}/sessions/{sessionId}/snapshot` | `DocSnapshotRequest` / `DocSnapshotResponse` |
+| `GET /sessions/{sessionId}/status` | `GET /tenants/{tenantId}/sessions/{sessionId}/status` | `DocStatusRequest` / `DocStatusResponse` |
+| `GET /sessions/{sessionId}/ir` | `GET /tenants/{tenantId}/sessions/{sessionId}/ir` | `DocIrRequest` / `DocIrResponse` |
+| `POST /sessions/{sessionId}/init-from-hash` | `POST /tenants/{tenantId}/sessions/{sessionId}/init-from-hash` | `DocInitFromHashRequest` / `DocInitFromHashResponse` |
+| `POST /sessions/{sessionId}/run` | `POST /tenants/{tenantId}/sessions/{sessionId}/run` | `DocRunOperatorRequest` / `DocRunOperatorResponse` |
+| `POST /sessions/{sessionId}/reset` | `POST /tenants/{tenantId}/sessions/{sessionId}/reset` | `DocResetOperatorRequest` / `DocResetOperatorResponse` |
 
 The adapter-private Editor routes remain `/_internal/create`, `query`, `apply`,
-`export`, `history`, `rollback`, `snapshot`, `ir`, and `init_from_hash`; they
+`export`, `history`, `rollback`, `snapshot`, `status`, `ir`, and
+`init_from_hash`; they
 use the corresponding `DocXxxRequest`/`DocXxxResponse` pair. Cloudflare-only
 `POST /_internal/resolve_blob` and `POST /_internal/read_blob` use
 `DocResolveBlobRequest`/`DocResolveBlobResponse` and
@@ -311,23 +316,23 @@ same `sessionId` in two tenants is valid and isolated.
 
 #### CAS API comparison
 
-Public CAS changes only `/users/{userId}` to `/tenants/{tenantId}`. Internal
-CAS routes gain the same tenant prefix so CAS can compare the path with the
-signed claim; their `/_internal/*` suffixes, methods, headers other than auth,
-bodies, and responses stay unchanged.
+The post-P0 CAS service public edge is already tenant-aware; only its shared
+credential changes. Internal CAS routes gain the same tenant prefix so CAS can
+compare the path with the signed claim; their `/_internal/*` suffixes, methods,
+headers other than auth, bodies, and responses stay unchanged.
 
 | Current CAS route | Tenant-aware CAS route | Request/response types |
 |-------------------|------------------------|------------------------|
-| `GET /users/{userId}/cas/nodes/{hash}/content` | `GET /tenants/{tenantId}/cas/nodes/{hash}/content` | `CasReadContentRequest` / `CasReadContentResponse` |
-| `GET /users/{userId}/cas/nodes/{hash}/metadata` | `GET /tenants/{tenantId}/cas/nodes/{hash}/metadata` | `CasReadMetadataRequest` / `CasReadMetadataResponse` |
-| `POST /users/{userId}/cas/nodes/{hash}` | `POST /tenants/{tenantId}/cas/nodes/{hash}` | `CasLeaseNodeRequest` / `CasLeaseNodeResponse` |
-| `POST /users/{userId}/cas/nodes/{hash}/lease` | `POST /tenants/{tenantId}/cas/nodes/{hash}/lease` | `CasLeaseExistingRequest` / `CasLeaseExistingResponse` |
-| `GET /users/{userId}/cas/usage` | `GET /tenants/{tenantId}/cas/usage` | `CasUsageRequest` / `CasUsageResponse` |
-| `POST /users/{userId}/cas/gc` | `POST /tenants/{tenantId}/cas/gc` | `CasGcRequest` / `CasGcResponse` |
-| `POST /_internal/root-refs` plus `X-User-Id` | `POST /tenants/{tenantId}/_internal/root-refs` | `CasRootRefsRequest` / `CasRootRefsResponse` |
-| `POST /_internal/root-assignments` plus `X-User-Id` | `POST /tenants/{tenantId}/_internal/root-assignments` | `CasRootAssignmentsRequest` / `CasRootAssignmentsResponse` |
-| `GET /_internal/nodes/{hash}` plus `X-User-Id` | `GET /tenants/{tenantId}/_internal/nodes/{hash}` | `CasReadPortableNodeRequest` / `CasReadPortableNodeResponse` |
-| `POST /_internal/nodes/{hash}` plus `X-User-Id` | `POST /tenants/{tenantId}/_internal/nodes/{hash}` | `CasLeasePortableNodeRequest` / `CasLeasePortableNodeResponse` |
+| `GET /tenants/{tenantId}/cas/nodes/{hash}/content` | unchanged | `CasReadContentRequest` / `CasReadContentResponse` |
+| `GET /tenants/{tenantId}/cas/nodes/{hash}/metadata` | unchanged | `CasReadMetadataRequest` / `CasReadMetadataResponse` |
+| `POST /tenants/{tenantId}/cas/nodes/{hash}` | unchanged | `CasLeaseNodeRequest` / `CasLeaseNodeResponse` |
+| `POST /tenants/{tenantId}/cas/nodes/{hash}/lease` | unchanged | `CasLeaseExistingRequest` / `CasLeaseExistingResponse` |
+| `GET /tenants/{tenantId}/cas/usage` | unchanged | `CasUsageRequest` / `CasUsageResponse` |
+| `POST /tenants/{tenantId}/cas/gc` | unchanged | `CasGcRequest` / `CasGcResponse` |
+| `POST /_internal/root-refs` plus `X-Tenant-Id` | `POST /tenants/{tenantId}/_internal/root-refs` | `CasRootRefsRequest` / `CasRootRefsResponse` |
+| `POST /_internal/root-assignments` plus `X-Tenant-Id` | `POST /tenants/{tenantId}/_internal/root-assignments` | `CasRootAssignmentsRequest` / `CasRootAssignmentsResponse` |
+| `GET /_internal/nodes/{hash}` plus `X-Tenant-Id` | `GET /tenants/{tenantId}/_internal/nodes/{hash}` | `CasReadPortableNodeRequest` / `CasReadPortableNodeResponse` |
+| `POST /_internal/nodes/{hash}` plus `X-Tenant-Id` | `POST /tenants/{tenantId}/_internal/nodes/{hash}` | `CasLeasePortableNodeRequest` / `CasLeasePortableNodeResponse` |
 
 `CasLeaseNodeRequest` continues to model raw content plus `Content-Type`,
 `Content-Length`, optional `X-CAS-Refs`, and optional
@@ -385,6 +390,12 @@ interface DocCreateRequest {
       path: DocSessionPath;
       form?: { file?: File; format?: string };
 }
+interface CreateResult {
+      success: boolean;
+      sessionId: string;
+      version: number;
+      error?: string;
+}
 type DocCreateResponse = CreateResult | DocErrorResponse;
 
 interface DocQueryRequest<TQuery extends SValue = SValue> {
@@ -439,7 +450,12 @@ type DocRollbackResponse = RollbackResult | DocErrorResponse;
 
 interface DocSnapshotRequest { path: DocSessionPath }
 type DocSnapshotResponse =
-      | { success: true; version: number; hash: string; docType: string; docId: string }
+      | { success: true; version: number; hash: string; docType: string }
+      | DocErrorResponse;
+
+interface DocStatusRequest { path: DocSessionPath }
+type DocStatusResponse =
+      | { exists: boolean; version: number }
       | DocErrorResponse;
 
 interface DocIrRequest { path: DocSessionPath }
@@ -498,6 +514,7 @@ type GatewayListDocumentsResponse =
                         doc_id: string;
                         doc_type: string;
                         owner_id: string;
+                        version: number;
                         created_at: number;
                         updated_at: number;
                   }>;
@@ -507,13 +524,42 @@ type GatewayListDocumentsResponse =
 
 interface GatewayCreateDocumentRequest {
       path: GatewayDocumentCollectionPath;
-      body: DocCreateRequest["body"];
+      form?: DocCreateRequest["form"];
 }
-type GatewayCreateDocumentResponse = DocCreateResponse;
+type GatewayCreateDocumentResponse =
+      | {
+            success: true;
+            docId: string;
+            state: "creating" | "ready";
+            version?: number;
+        }
+      | {
+            success: false;
+            docId: string;
+            state: "failed";
+            error: string | null;
+        }
+      | GatewayErrorResponse;
+
+interface GatewayStatusDocumentRequest { path: GatewayDocumentPath }
+type GatewayStatusDocumentResponse =
+      | {
+            success: true;
+            data: {
+                  doc_id: string;
+                  doc_type: string;
+                  state: "creating" | "ready" | "failed";
+                  version: number | null;
+                  created_at: number;
+                  updated_at: number;
+            };
+        }
+      | GatewayErrorResponse;
 
 interface GatewayQueryDocumentRequest<TQuery extends SValue = SValue> {
       path: GatewayDocumentPath;
-      body: TQuery;
+      headers: DocQueryRequest<TQuery>["headers"];
+      body: DocQueryRequest<TQuery>["body"];
 }
 type GatewayQueryDocumentResponse = DocQueryResponse;
 
@@ -531,6 +577,7 @@ type GatewayExportDocumentResponse = DocExportResponse;
 
 interface GatewayHistoryDocumentRequest {
       path: GatewayDocumentPath;
+      headers: DocHistoryRequest["headers"];
       query: DocHistoryRequest["query"];
 }
 type GatewayHistoryDocumentResponse<TOp> = DocHistoryResponse<TOp>;
@@ -550,7 +597,9 @@ interface GatewayInitFromHashRequest {
       path: GatewayDocumentPath;
       body: DocInitFromHashRequest["body"];
 }
-type GatewayInitFromHashResponse = DocInitFromHashResponse;
+type GatewayInitFromHashResponse =
+      | { success: true; docId: string; version: number }
+      | GatewayErrorResponse;
 
 interface GatewayRunOperatorRequest {
       path: GatewayDocumentPath;
@@ -655,12 +704,13 @@ Doc edge:
 
 | Tenant-aware Doc route | Required Doc permission | Delegated CAS permission |
 |------------------------|-------------------------|----------------------------|
-| `POST /tenants/{tenantId}/{sessionId}/` | tenant `sessions:create`, constrained to signed `sessionId` | `cas:write` |
+| `PUT /tenants/{tenantId}/sessions/{sessionId}` | tenant `sessions:create`, constrained to signed `sessionId` | `cas:write` |
+| `GET .../status` | tenant `sessions:create`, constrained to signed `sessionId` | none |
 | `POST .../query`; `GET .../export` | session `read` | `cas:read` |
 | `GET .../history`; `GET .../ir` | session `read` | none |
 | `GET .../snapshot` | session `read` | `cas:write` |
 | `POST .../apply`; `POST .../rollback`; `POST .../run` | session `write` | `cas:read` + `cas:write` |
-| `POST .../init_from_hash` | session `write` | `cas:write` |
+| `POST .../init-from-hash` | session `write` | `cas:write` |
 | `POST .../reset` | session `write` | none |
 
 This is the union of current doctype behavior. Markdown/docx may use less, but
@@ -669,7 +719,9 @@ snapshot/init can update roots, and apply/rollback/run can do both. Route policy
 stays identical for every doctype rather than deriving authority from a
 caller-selected type-specific shortcut.
 
-For a `none` route, Gateway omits `X-UniDocs-CAS-Capability`; Doc rejects an
+The status route is only for Gateway create reconciliation; the public Gateway
+status response comes from its directory. For a `none` route, Gateway omits
+`X-UniDocs-CAS-Capability`; Doc rejects an
 unexpected delegated capability and the request path cannot construct a CAS
 client.
 
@@ -748,92 +800,264 @@ Gateway calls CAS directly with a separate CAS-only token whose `sub` is
 10. `INTERNAL_TOKEN` compatibility is temporary and must be absent at the
     completion gate.
 
-## Expected ownership map
+## Final post-P0 ownership map
 
-Task 0 must replace provisional filenames with final paths after the P0
-refactor. The ownership boundaries and single-source rules are normative.
+These files are the final ownership boundaries for this migration. A runtime
+adapter may translate an authenticated request into private platform context,
+but it must not redefine route, claim, or permission policy.
 
 | Surface | Expected responsibility |
 |---------|-------------------------|
-| `packages/protocol-cas/` | CAS routes, `CasXxxRequest`/`CasXxxResponse` wire types, CAS domain types, media/header constants, and public-route allowlist |
-| `packages/protocol-doc/` | Doc routes, `DocXxxRequest`/`DocXxxResponse` wire types, history types, and SValue media/header constants |
-| `packages/protocol-gateway/` | Gateway routes, `GatewayXxxRequest`/`GatewayXxxResponse` wire types, directory/list DTOs, and pass-through aliases to Doc/CAS payloads |
-| `packages/service-auth/` | Claims schema, canonical permission helpers, issuer/verifier, typed failures |
-| `packages/gateway-common/` | Tenant-aware Gateway dispatch, directory resolution, route-to-capability policy, and cloud-neutral downstream request construction |
-| `packages/cloudflare-gateway/` | Cloudflare signing-key adapter and configuration |
-| `packages/azure-gateway/` | Azure signing-key adapter and configuration |
-| `packages/doctype-server-common/` | Shared current Doc route set, tenant/session identity, audience/permission enforcement, and CAS delegation used by every doctype |
-| Doctype runtime packages | Bind a configured `DocumentType` and platform storage to the shared Doc contract; preserve documented runtime-specific framing/unsupported results |
-| CAS common/edge package(s) | Current CAS operations with tenant storage identity and capability/resource enforcement |
-| `packages/cas-client/` | Build tenant-aware current CAS routes, preserve existing framing, accept a request-local delegated capability, and emit CAS-only `Authorization` |
-| `scripts/` | Local key fixture/configuration and migration wiring |
-| `infra/` and Wrangler configuration | Secret/JWKS distribution and rotation |
+| CAS protocol | `packages/protocol-cas/src/routes.ts`, `http.ts`, and `types.ts` own CAS routes, endpoint pairs, media/header constants, domain types, and the public allowlist; `index.ts` is only their barrel. |
+| Doc protocol | `packages/protocol-doc/src/routes.ts`, `http.ts`, and `errors.ts` own the shared Doc edge/private route set, endpoint pairs, history/results, SValue media constants, and Doc errors; `index.ts` is only their barrel. |
+| Gateway protocol | `packages/protocol-gateway/src/index.ts` owns public Gateway routes, directory/list DTOs, endpoint pairs, and pass-through Doc/CAS aliases. It must not own service-edge route builders. |
+| Capability protocol | `packages/service-auth/src/claims.ts`, `permissions.ts`, `issuer.ts`, `verifier.ts`, `errors.ts`, and `index.ts` will own the cloud-neutral schema, canonical permissions, issuance/verification, failures, and public API. |
+| Gateway policy | `packages/gateway-common/src/gateway-handler.ts`, `document-directory.ts`, `doc-service-registry.ts`, and `identity.ts` own tenant-aware dispatch, immutable directory resolution, route policy, downstream request construction, and the user-to-tenant authorization boundary. |
+| Gateway adapters | `packages/cloudflare-gateway/src/worker.ts` and `document-directory.ts`, plus `packages/azure-gateway/src/main.ts`, `document-directory.ts`, and `migrations/`, own only platform key/config and directory adapters. |
+| Shared Doc edge | `packages/doctype-server-common/src/doc-type-handler.ts`, `session-handler.ts`, `session.ts`, and `ports.ts` own edge dispatch, immutable tenant/session identity, audience/permission policy, and request-local CAS delegation for every doctype. |
+| Doc platform state | `packages/cloudflare-sdk/src/editor-do-svalue.ts`, `operator-do-agent.ts`, and related SDK ports own Durable Object adaptation. `packages/azure-sdk/src/doc-type-service.ts`, `local-editor.ts`, `ports-pg.ts`, `ports-blob.ts`, and `migrations/` own Azure HTTP/Postgres/blob adaptation. Doctype worker/service entry points bind only configured `docType` and platform dependencies. |
+| CAS implementation | `packages/cloudflare-cas/src/worker.ts`, `cas/routes.ts`, `cas/do.ts`, and `cas/schema.ts` own the CAS edge, operations, tenant storage, roots, usage, and GC. `packages/cas-server-common/src/digest.ts`, `binary.ts`, and `validation.ts` own cloud-neutral CAS encoding and validation only. There is no separate Azure CAS service. |
+| CAS client | `packages/cas-client/src/index.ts` owns `HttpFetcher`, capability-aware client configuration/error types, protocol route construction, current framing, and request-local delegated credentials. |
+| Local runtime | `scripts/doc-types.mjs`, `scripts/local-runtime.mjs`, `local/runtime.mjs`, and `azure/local/runtime.mjs` own local key fixtures, service registration, and migration wiring. |
+| Deployment | Package `wrangler.toml` files and `azure/deploy/container-app.bicep`, `deploy.mjs`, and service `azure.service.json` files own secret/JWKS distribution, audience/issuer configuration, and rotation-triggered deployments. |
 
 ---
 
 ### Task 0: Rebase after P0 and freeze the final protocol surfaces
 
-- [ ] Rebase this branch onto the commit that completes the P0
+- [x] Rebase this branch onto the commit that completes the P0
       microservice-boundary plan. Do not start from an intermediate P0 state.
-- [ ] Verify the current-to-tenant route tables above against every Gateway,
+- [x] Verify the current-to-tenant route tables above against every Gateway,
       Doc, and CAS implementation after the rebase. Include both cloud runtimes,
       every doctype, and private adapter routes; record differences rather than
       silently redesigning them.
-- [ ] Freeze the current methods, operation names, query parameters, request
+- [x] Freeze the current methods, operation names, query parameters, request
       and response bodies, headers, media types, status behavior, and runtime
       differences. Only tenant identity and capability authentication may
       change in this plan.
-- [ ] Record every existing `@unidocs/http-protocol` export and its destination
+- [x] Record every existing `@unidocs/http-protocol` export and its destination
       in `protocol-cas`, `protocol-doc`, `protocol-gateway`, or a client package.
       No compatibility export may remain ownerless.
-- [ ] Confirm the final Gateway directory interface and immutable
+- [x] Confirm the final Gateway directory interface and immutable
       `{ tenantId, docId, docType, sessionId }` record, Doc tenant/session
       storage keys, CAS tenant keys/root owner model, and deployment
       registrations.
-- [ ] Assign every Doc route an end-to-end operation deadline and issued TTL
+- [x] Assign every Doc route an end-to-end operation deadline and issued TTL
       satisfying `deadline + 30 seconds <= TTL <= 300 seconds`. Resolve any
       route that cannot fit without introducing Doc -> Gateway.
-- [ ] Replace the provisional ownership map above with exact final files and
+- [x] Replace the provisional ownership map above with exact final files and
       package names.
-- [ ] Record the current `INTERNAL_TOKEN` call graph and all startup/deployment
+- [x] Record the current `INTERNAL_TOKEN` call graph and all startup/deployment
       configuration that must be removed.
-- [ ] Capture the focused baseline for Gateway, Doc, CAS, CAS client, local
+- [x] Capture the focused baseline for Gateway, Doc, CAS, CAS client, local
       runtime, and Azure/Cloudflare integration suites.
 
 **Gate:** No implementation edit is made until the P0 completion commit, the
 verified current-to-tenant route inventory, complete type-move inventory, and
 the final ownership table are recorded here.
 
+#### Post-P0 rebase record (2026-08-26)
+
+- `cdce042` is the P0 completion commit and is an ancestor of the working HEAD,
+      `012957b`.
+- The provisional protocol commits `5121de6` and `e67284b` are also ancestors
+      of that HEAD. They created and formatted the three target protocol packages
+      before the P0 audit was complete; their contracts are scaffolding, not a
+      completed Task 1 migration.
+- `plan/internal-capability-auth` had no divergent commits and was
+      fast-forwarded from `e67284b` to `012957b`.
+
+#### Verified route inventory and corrections
+
+The post-P0 runtime, rather than the provisional protocol packages, freezes the
+current side of this migration. The following differences must be corrected in
+the comparison tables and explicit endpoint types before runtime adoption:
+
+| Surface | Post-P0 current runtime | Capability target and correction |
+|---------|-------------------------|----------------------------------|
+| Gateway documents | The routes remain under `/users/{userId}/docs/{docType}` with the methods and operation suffixes listed above. There is also `GET /users/{userId}/docs/{docType}/{docId}` for status. | Replace only the identity prefix with `/tenants/{tenantId}` and add the omitted status endpoint pair. Preserve every current method, suffix, query, body, response, and status behavior. |
+| Shared Doc edge | `PUT /sessions/{sessionId}` creates; the remaining routes are `/sessions/{sessionId}/{operation}`. The actual clone spelling is `POST .../init-from-hash`, and `GET .../status` is part of the service contract. | Use `/tenants/{tenantId}/sessions/{sessionId}` while preserving `PUT` create, `init-from-hash`, and status. The provisional `protocol-doc` routes used `POST /tenants/{tenantId}/{sessionId}/`, `init_from_hash`, and omitted status; Task 1 corrected those shapes before runtime adoption. |
+| Doc private adapters | Editor routes remain `/_internal/create`, `query`, `apply`, `export`, `history`, `rollback`, `snapshot`, `ir`, `init_from_hash`, and `status`; Cloudflare additionally exposes `resolve_blob` and `read_blob`. Operator dispatch remains adapter-private. | Keep these route names private. Tenant/session context may be derived only after edge capability verification and is not a credential. |
+| CAS public edge | Cloudflare CAS already serves the six `/tenants/{tenantId}/cas/*` operations with the current raw bodies and headers. Azure Gateway exposes them only when `CAS_BASE_URL` is configured; otherwise its allowlist rejects them with `404`. | Preserve the six-operation allowlist and existing runtime availability. Replace only service authentication. |
+| CAS private edge | Cloudflare CAS still serves tenant-less `/_internal/root-refs`, `root-assignments`, and `nodes/{hash}` routes and receives tenant context through `X-Tenant-Id`. | Move these operations to `/tenants/{tenantId}/_internal/*`, compare the path to the signed claim, and stop accepting `X-Tenant-Id` as edge authority. |
+
+All Cloudflare Markdown, DOCX, and PSD workers use the shared Doc edge. Azure
+Markdown and DOCX use the same shared handler; there is no Azure PSD service.
+The migration preserves their existing multipart/empty create handling,
+JSON/SValue negotiation, raw export and IR bytes, unsupported operator results,
+and service-specific error/status behavior. It does not normalize these
+differences.
+
+#### Complete `http-protocol` export migration inventory
+
+| Existing export | Final owner | Post-P0 state |
+|-----------------|-------------|---------------|
+| `HistoryEntry`, `ApplyResult`, `RollbackResult`, `CreateResult` | `@unidocs/protocol-doc` | Copied, but not fully adopted. The copied `CreateResult.docId` does not model the active private Doc create result `{ sessionId, version }`; the explicit public and private create responses must be separated. |
+| `VersionConflictError`, `DeltaRejectedError`, `DocNotFoundError`, `DocExistsError`, `StorageCorruptError`, `RootRefsError` | `@unidocs/protocol-doc` | Copied, but Doc and SDK consumers still import the old package. |
+| `BinaryQueryValue`, `EscapedQueryObject`, `WireQueryValue`, `encodeQueryValue` | No destination; delete after callers use the completed SValue response framing | Still used by `doctype-server-common`; this is migration work, not a compatibility API to preserve. |
+| `CasHash`, `CasNode`, `CasNodeDescriptor`, `CasNodeMetadata`, `CasNodeState`, `CasLeaseResult`, `CasReferences`, `CasRefChanges`, `CasRootRefUpdate`, `CasRootAssignment`, `CasAssignRootsRequest`, `CasUsage`, `CasGcResult`, `TenantCasService` | `@unidocs/protocol-cas` | Copied, but CAS runtime and client consumers still import the old package. |
+| `isPublicCasRoute` | `@unidocs/protocol-cas` | A tenant-aware implementation exists; Gateway and Cloudflare CAS still import the legacy `/users/*` matcher. |
+| `HttpFetcher`, `CasClientConfig`, `CasClientError` | `@unidocs/cas-client` | Not moved. The client must own and export these symbols before `http-protocol` can be deleted. |
+
+The source consumers that currently prevent deletion are:
+
+| Package | Remaining dependency |
+|---------|----------------------|
+| `gateway-common` | `HttpFetcher` |
+| `cloudflare-gateway`, `azure-gateway` | legacy `isPublicCasRoute` |
+| `cloudflare-cas` | CAS domain types and legacy route re-export |
+| `cas-client` | CAS root update and all three client/transport symbols |
+| `doctype-server-common` | Doc errors/results, CAS metadata, and obsolete query-wire encoding |
+| `azure-sdk`, `cloudflare-sdk` | Doc errors and history/results |
+| `doctype-psd` | stale package-manifest dependency; no source import |
+
+Generated `dist` and `tsconfig.tsbuildinfo` references are not migration
+sources and will be regenerated after the source and manifest dependencies are
+removed.
+
+#### Final identity and storage decisions
+
+- Gateway directory APIs and physical uniqueness move from `(userId, docId)`
+      to `(tenantId, docId)`. The immutable routing identity is
+      `{ tenantId, docId, docType, serviceId, sessionId }`; lifecycle,
+      idempotency, and timestamps remain Gateway-owned metadata. `userId` is not
+      persisted as a routing or storage key.
+- The current `GatewayDocumentDirectory` and its memory, D1, and Postgres
+      adapters are still user-keyed and must migrate together. The provisional
+      `protocol-gateway` directory interface is not a replacement for this
+      lifecycle-aware port.
+- A Doc logical identity is `(tenantId, sessionId)` under the deployment-bound
+      `docType`. Cloudflare Durable Object names must use a canonical
+      length-prefixed encoding of both IDs inside the doctype namespace. Azure
+      session, delta, snapshot, cache, idempotency, foreign-key, and uniqueness
+      predicates include tenant, configured doctype, and session.
+- CAS node identity remains `(tenantId, hash)` in routes, Durable Objects, D1,
+      R2, idempotency, usage, and GC. Session identity constrains root mutations;
+      it never becomes part of an immutable node key.
+- `DOC_SERVICES_JSON` remains the deployment registration source for
+      `{ docType, serviceId, url }`. Its current per-service `accessKey` is replaced
+      by the configured Doc audience and Gateway signer policy; validators receive
+      issuer/JWKS configuration separately.
+
+#### Frozen operation deadlines and issued lifetimes
+
+Gateway issues every Doc token and paired delegated CAS capability with a
+120-second TTL immediately before the first downstream attempt. Both tokens
+share the operation start time; the delegated token must not expire after the
+Doc token. The request deadline below is measured from issuance through the
+final downstream CAS response.
+
+| Post-P0 Doc operation | End-to-end deadline | Issued TTL | Required enforcement |
+|-----------------------|--------------------:|-----------:|----------------------|
+| `GET .../status` | 15 seconds | 120 seconds | No CAS capability; bound directory reconciliation and the Doc status request. |
+| `GET .../history`, `GET .../ir`, `POST .../reset` | 30 seconds | 120 seconds | No CAS capability; reject an unexpected delegated token. |
+| `POST .../query`, `GET .../export` | 60 seconds | 120 seconds | Propagate one request abort signal through all permitted CAS reads. |
+| `GET .../snapshot`, `POST .../init-from-hash` | 60 seconds | 120 seconds | Propagate the deadline through the final CAS write/root update. |
+| `PUT .../sessions/{sessionId}` create | 90 seconds | 120 seconds | Bound multipart parsing, import, storage, and all CAS writes; a timeout leaves Gateway reconciliation metadata, not an unbounded worker. |
+| `POST .../apply`, `POST .../rollback` | 90 seconds | 120 seconds | Bound document work and all CAS reads/writes under the same signal. |
+| `POST .../run` | 90 seconds | 120 seconds | The existing 10/25 iteration caps remain, but every LLM, Editor, and CAS call must also receive the request deadline. Do not start another iteration or CAS call after expiry. |
+
+Every row satisfies `deadline + 30 seconds <= 120 seconds`. A timeout is a
+bounded request failure; Doc never refreshes a token, continues in a queue, or
+calls Gateway. Existing payload limits and operation semantics remain
+unchanged. If production evidence shows an operation cannot finish inside its
+assigned deadline, that operation must be bounded further or designed as a
+separate workload identity before rollout; increasing the shared TTL is not a
+valid migration shortcut.
+
+#### Current shared-key call graph and removal surfaces
+
+1. Gateway resolves the public user/tenant and directory record. For Doc it
+       sends `X-Internal-Token: SERVICE_ACCESS_KEY` plus derived `X-Tenant-Id`,
+       `X-Doc-Type`, and `X-Session-Id`. For CAS it sends
+       `X-Internal-Token: CAS_ACCESS_KEY` plus `X-Tenant-Id`.
+2. `doctype-server-common/src/doc-type-handler.ts` compares the Doc token to
+       its configured service access key before private adapter dispatch. Derived
+       context headers are then consumed by Cloudflare Editor/Operator objects or
+       Azure local-editor storage adapters.
+3. Cloudflare `editor-do-svalue.ts` and Azure `doc-type-service.ts` construct
+       `CasClient` with `CAS_ACCESS_KEY`. The client sends `X-Internal-Token` and
+       `X-Tenant-Id` to the Cloudflare CAS worker, including tenant-less private
+       root routes.
+4. `cloudflare-cas/src/worker.ts` compares `X-Internal-Token` with
+       `CAS_ACCESS_KEY` and accepts `X-Tenant-Id` as edge context before Durable
+       Object dispatch.
+
+Active removal surfaces are Gateway/Doc/CAS source and tests, `cas-client`,
+`scripts/doc-types.mjs`, both local runtime harnesses, all Doc/CAS/Gateway
+Wrangler files, service `azure.service.json` files,
+`azure/deploy/container-app.bicep`, `azure/deploy/deploy.mjs`, and the Azure
+local runtime. `SERVICE_ACCESS_KEY`, `CAS_ACCESS_KEY`, and
+`X-Internal-Token` are the active names; `INTERNAL_TOKEN` itself is now only a
+test variable or historical/generated term. Derived tenant/session/type
+headers may remain behind an authenticated adapter boundary, but no service
+edge may accept them as credentials or allow them to override signed claims.
+
+#### Captured protocol baseline
+
+At `012957b`, before further implementation edits:
+
+```text
+pnpm --filter @unidocs/protocol-cas test          # 12 passed
+pnpm --filter @unidocs/protocol-doc test          # 25 passed
+pnpm --filter @unidocs/protocol-gateway test      # 19 passed
+pnpm --filter @unidocs/protocol-cas typecheck     # passed
+pnpm --filter @unidocs/protocol-doc typecheck     # passed
+pnpm --filter @unidocs/protocol-gateway typecheck # passed
+```
+
+The post-P0 service and integration baseline at the same commit is:
+
+```text
+pnpm --filter @unidocs/gateway-common test          # 14 passed
+pnpm --filter @unidocs/cloudflare-gateway test      # 3 passed
+pnpm --filter @unidocs/azure-gateway typecheck      # passed
+pnpm --filter @unidocs/doctype-server-common test   # 64 passed
+pnpm --filter @unidocs/cloudflare-markdown test     # passed
+pnpm --filter @unidocs/cloudflare-docx test         # passed
+pnpm --filter @unidocs/cloudflare-psd test           # 2 passed
+pnpm --filter @unidocs/azure-sdk test                # 49 passed
+pnpm --filter @unidocs/cloudflare-cas test           # 39 passed
+pnpm --filter @unidocs/cas-server-common test        # 66 passed
+pnpm --filter @unidocs/cas-client test               # 18 passed
+pnpm test:local                                      # 269 passed, 2 skipped
+pnpm test:azure                                      # 15 passed
+```
+
+The Azure baseline successfully started and cleaned up its local Postgres and
+Azurite prerequisites. The two local skips are pre-existing conditional cases,
+not failures.
+
 ### Task 1: Split the HTTP protocol by owning service
 
-- [ ] Create `@unidocs/protocol-cas`, `@unidocs/protocol-doc`, and
+- [x] Create `@unidocs/protocol-cas`, `@unidocs/protocol-doc`, and
       `@unidocs/protocol-gateway` with the dependency direction specified
       above. Do not introduce a fourth catch-all HTTP protocol package.
-- [ ] Move the current CAS domain/wire types, client-independent constants, and
+- [x] Move the current CAS domain/wire types, client-independent constants, and
       `isPublicCasRoute` to `protocol-cas`. Change only its user path parameter
       to `tenantId` and add the tenant prefix to current internal route builders.
-- [ ] Move history types, Doc errors, SValue media constants, and the complete
+- [x] Move history types, Doc errors, SValue media constants, and the complete
       current Doc route set to `protocol-doc`. Do not move the legacy
       `QueryValue`/`WireQueryValue`/`encodeQueryValue` layer: query data is
       `SValue`, as required by the completed SValue protocol plan.
-- [ ] Move document directory/list records and Gateway public route definitions
+- [x] Move document directory/list records and Gateway public route definitions
       to `protocol-gateway`; use aliases to Doc/CAS body types for pass-through
       operations instead of copying structures.
-- [ ] Define the explicit `GatewayXxxRequest`/`GatewayXxxResponse`,
+- [x] Define the explicit `GatewayXxxRequest`/`GatewayXxxResponse`,
       `DocXxxRequest`/`DocXxxResponse`, and
       `CasXxxRequest`/`CasXxxResponse` pair named in every comparison-table row.
       Request types describe path/query/headers/body separately; response types
       preserve current JSON fields, raw bytes, media types, and response headers.
-- [ ] Preserve generics for doctype-specific `TQuery` and `TOp` and
+- [x] Preserve generics for doctype-specific `TQuery` and `TOp` and
       preserve the current JSON/SValue alternatives. Do not normalize Cloudflare
       and Azure framing as part of the package move.
-- [ ] Move `HttpFetcher`, `CasClientConfig`, and `CasClientError` to the owning
+- [x] Move `HttpFetcher`, `CasClientConfig`, and `CasClientError` to the owning
       CAS client/transport package. Keep shared document/SValue domain types in
       `@unidocs/protocol`.
-- [ ] Migrate consumers package by package, then delete
+- [x] Migrate consumers package by package, then delete
       `@unidocs/http-protocol`; do not keep a broad compatibility barrel after
       every consumer has moved.
-- [ ] Add table-driven tests proving each current and tenant-aware route maps to
+- [x] Add table-driven tests proving each current and tenant-aware route maps to
       the expected endpoint type pair and that methods, operation names, query
       parameters, headers, and media framing did not change accidentally.
 
@@ -848,23 +1072,41 @@ pnpm --filter @unidocs/protocol-doc typecheck
 pnpm --filter @unidocs/protocol-gateway typecheck
 ```
 
+Implementation record (2026-08-26):
+
+- Added typed `CasEndpointContracts`, `DocEndpointContracts`,
+      `DocPrivateEndpointContracts`, and `GatewayEndpointContracts` maps so every
+      matched operation names its request and response pair.
+- Corrected the provisional Doc contract to the post-P0
+      `/tenants/{tenantId}/sessions/{sessionId}` edge with `PUT` create,
+      `init-from-hash`, and status. Gateway keeps public `docId` DTOs separate from
+      Doc's private `sessionId` results.
+- Moved CAS client transport/config/error ownership, migrated every source,
+      test, manifest, TypeScript reference, and bundler alias, removed the obsolete
+      query-value escape layer, and deleted `@unidocs/http-protocol` without a
+      compatibility barrel.
+- Focused results: protocol CAS 13 passed, Doc 28 passed, Gateway 31 passed;
+      all three typechecks passed. `pnpm typecheck` passed all 24 projects,
+      `pnpm build` passed, `pnpm test:local` passed 264 with 2 conditional skips,
+      and `pnpm test:azure` passed with Postgres/Azurite cleanup.
+
 ### Task 2: Add the cloud-neutral capability protocol package
 
-- [ ] Create `@unidocs/service-auth` (or the final equivalent chosen in Task 0)
+- [x] Create `@unidocs/service-auth` (or the final equivalent chosen in Task 0)
       with no Cloudflare/Azure imports.
-- [ ] Add `jose` as the JOSE implementation; do not hand-roll JWS parsing,
+- [x] Add `jose` as the JOSE implementation; do not hand-roll JWS parsing,
       DER/raw ECDSA conversion, base64url, or claim serialization.
-- [ ] Define versioned claims and typed verified-capability results. Reject
+- [x] Define versioned claims and typed verified-capability results. Reject
       unknown versions and malformed or duplicate semantic fields.
-- [ ] Add canonical permission builders and exact-match checks for all CAS and
+- [x] Add canonical permission builders and exact-match checks for all CAS and
       session permissions. Encode resource segments centrally; prohibit raw
       interpolation at call sites.
-- [ ] Implement an issuer interface that accepts an injected signer/current
+- [x] Implement an issuer interface that accepts an injected signer/current
       time and always sets the fixed protected headers and registered claims.
-- [ ] Implement a verifier configured with fixed issuer, audience, algorithm,
+- [x] Implement a verifier configured with fixed issuer, audience, algorithm,
       max lifetime, clock skew, and an in-memory JWKS. It must not perform
       network key discovery.
-- [ ] Define typed errors that service edges consistently map to `401` or
+- [x] Define typed errors that service edges consistently map to `401` or
       `403`, without echoing token contents.
 
 Tests must cover:
@@ -886,6 +1128,24 @@ pnpm --filter @unidocs/service-auth test
 pnpm --filter @unidocs/service-auth typecheck
 ```
 
+Implementation record (2026-08-26):
+
+- Added distinct tenant/session claim variants with required registered claims,
+      fixed `ver: 1`, `ES256`, and `typ: "unidocs-cap+jwt"` constants.
+- Centralized RFC 3986 permission segment encoding, strict canonical parsing,
+      all six permission builders, and exact non-implication checks.
+- Added an injected `CapabilitySigner`, a JOSE-backed signer adapter, and an
+      issuer with injected clock/JTI generation, 120-second default lifetime, and
+      absolute 300-second lifetime/30-second skew limits.
+- Added a public-key-only, in-memory local JWKS verifier with fixed
+      issuer/audience/algorithm, strict claim/header allowlists, multiple-`kid`
+      rotation overlap, typed 401/403 errors, and tenant/session/permission guards.
+- `service-auth` has no platform or network key-discovery imports. Its 57 tests
+      cover issuance, tampering, wrong trust parameters, malformed/missing claims,
+      lifetime/skew boundaries, canonical IDs, multi-audience tokens, permission
+      families, resource mismatch, and configuration failures. Package typecheck,
+      root `pnpm typecheck`, and root `pnpm build` pass.
+
 ### Task 3: Make current Gateway routes tenant-aware and issue token pairs
 
 - [ ] Replace `/users/{userId}` with `/tenants/{tenantId}` in the current public
@@ -906,12 +1166,13 @@ pnpm --filter @unidocs/service-auth typecheck
 - [ ] Sign a Doc-only token for the configured target service audience.
 - [ ] When the operation may call CAS, sign a separate CAS-only delegated
       capability with `sub: doc:{docType}` and matching tenant/session claims.
-- [ ] For `history`, `ir`, and `reset`, omit the CAS capability and never mint
+- [ ] For `status`, `history`, `ir`, and `reset`, omit the CAS capability and never mint
       unused downstream authority.
 - [ ] For direct Gateway -> CAS operations, sign a CAS-only token with
       `sub: gateway` and no Doc permissions.
-- [ ] Keep the current six-route CAS proxy allowlist. Replace only its user path
-      with tenant and its legacy internal credentials with a CAS capability.
+- [ ] Replace the legacy five-route CAS proxy allowlist with the target six
+      tenant routes, adding GC only behind tenant-admin authorization, and
+      replace legacy internal credentials with a CAS capability.
 - [ ] Build Doc/CAS URLs with the owning protocol package and construct outbound
       requests from per-operation header allowlists. Replace user
       `Authorization`; never append internal credentials to copied headers.
@@ -956,7 +1217,7 @@ auth/internal headers.
 - [ ] Verify the delegated CAS capability separately with the CAS audience,
       required CAS permissions, matching tenant/session, and an expiry no later
       than the Doc token.
-- [ ] Reject an unexpected delegated capability on `history`, `ir`, and
+- [ ] Reject an unexpected delegated capability on `status`, `history`, `ir`, and
       `reset`, and prevent those paths from constructing a CAS client.
 - [ ] Keep the delegated token request-local. Do not add it to session
       metadata, snapshots, deltas, caches, retry queues, or exception context.

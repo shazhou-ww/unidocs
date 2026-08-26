@@ -8,7 +8,7 @@
     "test:local": "vitest run --fileParallelism=false tests/unit tests/integration/cloudflare tests/integration/shared",
     "test:azure": "vitest run --fileParallelism=false tests/integration/azure",
     "typecheck": "pnpm -r typecheck",
-    "clean": "pnpm -r clean",
+    "clean": "pnpm -r run clean",
     "azure:up": "docker compose -f packages/azure-sdk/docker-compose.yml up -d",
     "azure:down": "docker compose -f packages/azure-sdk/docker-compose.yml down"
   },
@@ -20,6 +20,7 @@
     "esbuild": "^0.28.2",
     "miniflare": "5.20260811.1-alpha",
     "pg": "^8.23.0",
+    "rimraf": "^6.1.3",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },

@@ -2,7 +2,7 @@
  * @unidocs/cas-server-common — Content-addressed storage kernel for UniDocs.
  *
  * Pure logic, no I/O. Binary format, digest, validation. The CAS wire
- * contract types live in @unidocs/http-protocol.
+ * contract types live in @unidocs/protocol-cas.
  */
 
 // Binary format

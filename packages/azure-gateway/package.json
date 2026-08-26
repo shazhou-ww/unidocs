@@ -21,15 +21,15 @@
     "migrate": "node dist/migrate-cli.js",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
     "@unidocs/azure-sdk": "workspace:*",
-    "@unidocs/http-protocol": "workspace:*",
+    "@unidocs/gateway-common": "workspace:*",
+    "@unidocs/protocol-gateway": "workspace:*",
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
-    "pg": "^8.23.0",
-    "@unidocs/gateway-common": "workspace:*"
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

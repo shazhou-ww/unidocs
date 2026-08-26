@@ -16,7 +16,7 @@
       "path": "../gateway-common"
     },
     {
-      "path": "../http-protocol"
+      "path": "../protocol-gateway"
     }
   ]
 }

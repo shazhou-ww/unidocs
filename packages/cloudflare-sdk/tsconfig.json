@@ -22,7 +22,7 @@
       "path": "../svalue-codec"
     },
     {
-      "path": "../http-protocol"
+      "path": "../protocol-doc"
     },
     {
       "path": "../protocol"

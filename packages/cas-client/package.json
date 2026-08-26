@@ -18,13 +18,13 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
     "@unidocs/cas-server-common": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*",
-    "@unidocs/http-protocol": "workspace:*",
-    "@unidocs/protocol": "workspace:*"
+    "@unidocs/protocol": "workspace:*",
+    "@unidocs/protocol-cas": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

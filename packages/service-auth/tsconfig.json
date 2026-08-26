@@ -4,15 +4,13 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "lib": ["ES2024", "DOM"],
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
     "types": []
   },
   "include": [
     "src"
-  ],
-  "references": [
-    {
-      "path": "../protocol"
-    }
   ]
 }

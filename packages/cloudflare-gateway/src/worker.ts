@@ -20,7 +20,7 @@ import {
   createInsecurePathIdentityResolver,
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
-import { isPublicCasRoute } from "@unidocs/http-protocol";
+import { isLegacyPublicCasRoute } from "@unidocs/protocol-gateway";
 import { D1GatewayDocumentDirectory } from "./document-directory.js";
 
 interface Env {
@@ -52,7 +52,7 @@ export default {
       resolveDocService: (docType) => registry(env).resolve(docType),
       casFetcher: env.CAS_SERVICE,
       directory: new D1GatewayDocumentDirectory(env.GATEWAY_DB),
-      isPublicCasRoute,
+      isPublicCasRoute: isLegacyPublicCasRoute,
     });
     return handle(request);
   },

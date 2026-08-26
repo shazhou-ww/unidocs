@@ -24,7 +24,10 @@
       "path": "../svalue-codec"
     },
     {
-      "path": "../http-protocol"
+      "path": "../protocol-cas"
+    },
+    {
+      "path": "../protocol-doc"
     },
     {
       "path": "../protocol"

@@ -18,15 +18,15 @@
     "build": "tsc",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
     "@unidocs/cas-client": "workspace:*",
     "@unidocs/cas-server-common": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*",
-    "@unidocs/http-protocol": "workspace:*",
+    "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*",
-    "@unidocs/doctype-server-common": "workspace:*"
+    "@unidocs/protocol-doc": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

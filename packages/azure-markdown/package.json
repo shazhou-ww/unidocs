@@ -19,7 +19,7 @@
     "start": "node dist/main.js",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
     "@unidocs/azure-sdk": "workspace:*",

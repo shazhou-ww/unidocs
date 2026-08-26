@@ -16,7 +16,7 @@
  */
 
 import type { Delta, DeltaLog, SessionIdentity, SnapshotRef, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
-import { VersionConflictError } from "@unidocs/http-protocol";
+import { VersionConflictError } from "@unidocs/protocol-doc";
 import type { Pool } from "pg";
 
 /**

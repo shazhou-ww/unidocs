@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { casRoutes, isPublicCasRoute, matchCasRoute } from "../src/index.js";
+import {
+  CasLeaseDurationHeader,
+  CasPortableNodeContentType,
+  CasRefsHeader,
+  casRoutes,
+  isPublicCasRoute,
+  matchCasRoute,
+} from "../src/index.js";
 
 describe("CAS routes", () => {
   test.each([
@@ -21,9 +28,26 @@ describe("CAS routes", () => {
   });
 
   test("allowlists only the six public operations", () => {
-    expect(isPublicCasRoute("GET", casRoutes.readContent({ tenantId: "t", hash: "h" }))).toBe(true);
+    expect([
+      isPublicCasRoute("GET", casRoutes.readContent({ tenantId: "t", hash: "h" })),
+      isPublicCasRoute("GET", casRoutes.readMetadata({ tenantId: "t", hash: "h" })),
+      isPublicCasRoute("POST", casRoutes.leaseNode({ tenantId: "t", hash: "h" })),
+      isPublicCasRoute("POST", casRoutes.leaseExisting({ tenantId: "t", hash: "h" })),
+      isPublicCasRoute("GET", casRoutes.usage({ tenantId: "t" })),
+      isPublicCasRoute("POST", casRoutes.gc({ tenantId: "t" })),
+    ]).toEqual([true, true, true, true, true, true]);
     expect(isPublicCasRoute("POST", casRoutes.rootRefs({ tenantId: "t" }))).toBe(false);
     expect(isPublicCasRoute("POST", "/users/u/cas/gc")).toBe(false);
+  });
+
+  test("freezes encoded paths and wire constants", () => {
+    expect(casRoutes.readContent({ tenantId: "tenant/a", hash: "hash value" }))
+      .toBe("/tenants/tenant%2Fa/cas/nodes/hash%20value/content");
+    expect(casRoutes.rootAssignments({ tenantId: "tenant/a" }))
+      .toBe("/tenants/tenant%2Fa/_internal/root-assignments");
+    expect(CasRefsHeader).toBe("X-CAS-Refs");
+    expect(CasLeaseDurationHeader).toBe("X-CAS-Lease-Duration");
+    expect(CasPortableNodeContentType).toBe("application/vnd.unidocs.cas-node");
   });
 
   test("rejects unknown methods and malformed escapes", () => {

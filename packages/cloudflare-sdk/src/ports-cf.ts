@@ -14,7 +14,7 @@
  */
 
 import type { BlobCas, Delta, DeltaLog, SnapshotCache, SnapshotRef, TransactionalPorts, UnitOfWork } from "@unidocs/doctype-server-common";
-import { VersionConflictError } from "@unidocs/http-protocol";
+import { VersionConflictError } from "@unidocs/protocol-doc";
 
 // Must stay "snapshot" — changing it orphans the KV snapshot of every
 // document already deployed (see editor-do.ts KEY_SNAPSHOT).

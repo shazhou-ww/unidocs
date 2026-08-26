@@ -19,13 +19,11 @@ import type {
   DocApplyRequest,
   DocApplyResponse,
   DocCreateRequest,
-  DocCreateResponse,
   DocExportRequest,
   DocExportResponse,
   DocHistoryRequest,
   DocHistoryResponse,
   DocInitFromHashRequest,
-  DocInitFromHashResponse,
   DocIrResponse,
   DocQueryRequest,
   DocQueryResponse,
@@ -42,14 +40,22 @@ export interface GatewayDocumentRecord {
   tenantId: string;
   docId: string;
   docType: string;
+  serviceId: string;
   sessionId: string;
+  idempotencyKey: string;
+  requestedDocId: string | null;
+  state: GatewayDocumentState;
+  version: number | null;
+  error: string | null;
   createdAt: number;
   updatedAt: number;
 }
 
+export type GatewayDocumentState = "creating" | "ready" | "failed";
+
 export interface GatewayDocumentDirectoryQuery {
   list(tenantId: string, docType: string): Promise<GatewayDocumentRecord[]>;
-  snapshots(docType: string, docId: string): Promise<SnapshotRef[]>;
+  snapshots(tenantId: string, docType: string, docId: string): Promise<SnapshotRef[]>;
 }
 
 export interface GatewayDocumentCollectionPath {
@@ -76,6 +82,7 @@ export type GatewayListDocumentsResponse =
       doc_id: string;
       doc_type: string;
       owner_id: string;
+      version: number;
       created_at: number;
       updated_at: number;
     }>;
@@ -87,7 +94,38 @@ export interface GatewayCreateDocumentRequest {
   path: GatewayDocumentCollectionPath;
   form?: DocCreateRequest["form"];
 }
-export type GatewayCreateDocumentResponse = DocCreateResponse;
+export type GatewayCreateDocumentResponse =
+  | {
+    success: true;
+    docId: string;
+    state: "creating" | "ready";
+    version?: number;
+  }
+  | {
+    success: false;
+    docId: string;
+    state: "failed";
+    error: string | null;
+  }
+  | GatewayErrorResponse;
+
+export interface GatewayStatusDocumentRequest {
+  path: GatewayDocumentPath;
+}
+
+export type GatewayStatusDocumentResponse =
+  | {
+    success: true;
+    data: {
+      doc_id: string;
+      doc_type: string;
+      state: GatewayDocumentState;
+      version: number | null;
+      created_at: number;
+      updated_at: number;
+    };
+  }
+  | GatewayErrorResponse;
 
 export interface GatewayQueryDocumentRequest<TQuery extends SValue = SValue> {
   path: GatewayDocumentPath;
@@ -131,7 +169,9 @@ export interface GatewayInitFromHashRequest {
   path: GatewayDocumentPath;
   body: DocInitFromHashRequest["body"];
 }
-export type GatewayInitFromHashResponse = DocInitFromHashResponse;
+export type GatewayInitFromHashResponse =
+  | { success: true; docId: string; version: number }
+  | GatewayErrorResponse;
 
 export interface GatewayRunOperatorRequest {
   path: GatewayDocumentPath;
@@ -154,9 +194,83 @@ export type GatewayCasUsageResponse = CasUsageResponse;
 export type GatewayCasGcRequest = CasGcRequest;
 export type GatewayCasGcResponse = CasGcResponse;
 
+export interface GatewayEndpointContracts {
+  listDocuments: {
+    request: GatewayListDocumentsRequest;
+    response: GatewayListDocumentsResponse;
+  };
+  createDocument: {
+    request: GatewayCreateDocumentRequest;
+    response: GatewayCreateDocumentResponse;
+  };
+  statusDocument: {
+    request: GatewayStatusDocumentRequest;
+    response: GatewayStatusDocumentResponse;
+  };
+  queryDocument: {
+    request: GatewayQueryDocumentRequest;
+    response: GatewayQueryDocumentResponse;
+  };
+  applyDocument: {
+    request: GatewayApplyDocumentRequest;
+    response: GatewayApplyDocumentResponse;
+  };
+  exportDocument: {
+    request: GatewayExportDocumentRequest;
+    response: GatewayExportDocumentResponse;
+  };
+  historyDocument: {
+    request: GatewayHistoryDocumentRequest;
+    response: GatewayHistoryDocumentResponse;
+  };
+  rollbackDocument: {
+    request: GatewayRollbackDocumentRequest;
+    response: GatewayRollbackDocumentResponse;
+  };
+  snapshotDocument: {
+    request: GatewaySnapshotDocumentRequest;
+    response: GatewaySnapshotDocumentResponse;
+  };
+  irDocument: {
+    request: GatewayIrDocumentRequest;
+    response: GatewayIrDocumentResponse;
+  };
+  initFromHash: {
+    request: GatewayInitFromHashRequest;
+    response: GatewayInitFromHashResponse;
+  };
+  runOperator: {
+    request: GatewayRunOperatorRequest;
+    response: GatewayRunOperatorResponse;
+  };
+  resetOperator: {
+    request: GatewayResetOperatorRequest;
+    response: GatewayResetOperatorResponse;
+  };
+  casReadContent: {
+    request: GatewayCasReadContentRequest;
+    response: GatewayCasReadContentResponse;
+  };
+  casReadMetadata: {
+    request: GatewayCasReadMetadataRequest;
+    response: GatewayCasReadMetadataResponse;
+  };
+  casLeaseNode: {
+    request: GatewayCasLeaseNodeRequest;
+    response: GatewayCasLeaseNodeResponse;
+  };
+  casLeaseExisting: {
+    request: GatewayCasLeaseExistingRequest;
+    response: GatewayCasLeaseExistingResponse;
+  };
+  casUsage: { request: GatewayCasUsageRequest; response: GatewayCasUsageResponse };
+  casGc: { request: GatewayCasGcRequest; response: GatewayCasGcResponse };
+}
+
 export type GatewayDocumentOperation =
   | "listDocuments"
   | "createDocument"
+  | "statusDocument"
   | "queryDocument"
   | "applyDocument"
   | "exportDocument"
@@ -216,6 +330,7 @@ function documentPath(path: GatewayDocumentPath): string {
 export const gatewayRoutes = {
   listDocuments: collectionPath,
   createDocument: collectionPath,
+  statusDocument: documentPath,
   queryDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/query`,
   applyDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/apply`,
   exportDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/export`,
@@ -227,6 +342,19 @@ export const gatewayRoutes = {
   runOperator: (path: GatewayDocumentPath) => `${documentPath(path)}/run`,
   resetOperator: (path: GatewayDocumentPath) => `${documentPath(path)}/reset`,
 } as const;
+
+export function isLegacyPublicCasRoute(method: string, pathname: string): boolean {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "users" || parts[2] !== "cas") return false;
+
+  if (parts.length === 4 && parts[3] === "usage") return method === "GET";
+  if (parts.length === 5 && parts[3] === "nodes") return method === "POST";
+  if (parts.length === 6 && parts[3] === "nodes") {
+    if (parts[5] === "content" || parts[5] === "metadata") return method === "GET";
+    if (parts[5] === "lease") return method === "POST";
+  }
+  return false;
+}
 
 export function matchGatewayRoute(method: string, pathname: string): GatewayRoute | null {
   if (isPublicCasRoute(method, pathname)) {
@@ -248,6 +376,13 @@ export function matchGatewayRoute(method: string, pathname: string): GatewayRout
       return { kind: "document", operation: "createDocument", tenantId, docType };
     }
     return null;
+  }
+
+  if (parts.length === 5 && parts[4] && method === "GET") {
+    const docId = decodeSegment(parts[4]);
+    return docId === null
+      ? null
+      : { kind: "document", operation: "statusDocument", tenantId, docType, docId };
   }
 
   if (parts.length !== 6 || !parts[4]) return null;

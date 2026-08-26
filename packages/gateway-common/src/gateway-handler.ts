@@ -15,7 +15,7 @@
  *   Gateway → CAS worker: X-Tenant-Id resolved by Gateway
  */
 
-import type { HttpFetcher } from "@unidocs/http-protocol";
+import type { HttpFetcher } from "@unidocs/cas-client";
 import {
   GatewayDirectoryConflictError,
   type GatewayDocumentDirectory,

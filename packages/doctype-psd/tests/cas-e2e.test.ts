@@ -23,11 +23,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { decode as decodePng } from "fast-png";
 import { collectSBlobRefs, createSBlob, decodeSValue } from "@unidocs/svalue-codec";
-import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/protocol";
+import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/protocol";
 import type { SessionDeps } from "@unidocs/doctype-server-common";
 import { DocumentSession } from "@unidocs/doctype-server-common";
 import { createMemoryPorts, MemoryCas } from "@unidocs/doctype-server-common/memory-ports";
-import type { WireQueryValue } from "@unidocs/http-protocol";
 import { createPsdDocumentType } from "../src/doctype.js";
 import { render } from "../src/render/index.js";
 import { load as loadPsd } from "../src/psd/load.js";
@@ -40,7 +39,7 @@ const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url))
 
 /** Pull the `$image` PNG out of a getPreview query result and decode it to
  *  raw RGBA pixels, so two previews can be compared byte-for-byte. */
-function decodePreviewImage(data: WireQueryValue): { width: number; height: number; data: Uint8ClampedArray } {
+function decodePreviewImage(data: SValue): { width: number; height: number; data: Uint8ClampedArray } {
   const $image = (data as { $image?: { base64: string; mediaType: string } }).$image;
   expect($image).toBeDefined();
   expect($image!.mediaType).toBe("image/png");

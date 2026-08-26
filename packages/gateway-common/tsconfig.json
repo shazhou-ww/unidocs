@@ -12,7 +12,7 @@
   ],
   "references": [
     {
-      "path": "../http-protocol"
+      "path": "../cas-client"
     }
   ]
 }

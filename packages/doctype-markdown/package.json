@@ -18,7 +18,7 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
     "@unidocs/svalue-codec": "workspace:*",

@@ -18,10 +18,10 @@
       "path": "packages/protocol-gateway"
     },
     {
-      "path": "packages/svalue-codec"
+      "path": "packages/service-auth"
     },
     {
-      "path": "packages/http-protocol"
+      "path": "packages/svalue-codec"
     },
     {
       "path": "packages/gateway-common"

@@ -111,3 +111,25 @@ export interface CasLeasePortableNodeRequest {
 }
 
 export type CasLeasePortableNodeResponse = CasLeaseResult | CasErrorResponse;
+
+export interface CasEndpointContracts {
+  readContent: { request: CasReadContentRequest; response: CasReadContentResponse };
+  readMetadata: { request: CasReadMetadataRequest; response: CasReadMetadataResponse };
+  leaseNode: { request: CasLeaseNodeRequest; response: CasLeaseNodeResponse };
+  leaseExisting: { request: CasLeaseExistingRequest; response: CasLeaseExistingResponse };
+  usage: { request: CasUsageRequest; response: CasUsageResponse };
+  gc: { request: CasGcRequest; response: CasGcResponse };
+  rootRefs: { request: CasRootRefsRequest; response: CasRootRefsResponse };
+  rootAssignments: {
+    request: CasRootAssignmentsRequest;
+    response: CasRootAssignmentsResponse;
+  };
+  readPortableNode: {
+    request: CasReadPortableNodeRequest;
+    response: CasReadPortableNodeResponse;
+  };
+  leasePortableNode: {
+    request: CasLeasePortableNodeRequest;
+    response: CasLeasePortableNodeResponse;
+  };
+}

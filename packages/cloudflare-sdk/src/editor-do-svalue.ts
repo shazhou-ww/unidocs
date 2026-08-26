@@ -590,7 +590,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           if (conditions.length > 0) sql += ` WHERE ${conditions.join(" AND ")}`;
           sql += " ORDER BY version ASC";
           const rows = this.#ctx.storage.sql.exec(sql, ...params).toArray() as unknown as DeltaRow[];
-          const entries: HistoryEntry<TOp>[] = [];
+          const entries: HistoryEntry<TOp & SValue>[] = [];
           for (const row of rows) {
             const event = await this.#readDeltaRoot(row.root_hash);
             entries.push({
@@ -598,7 +598,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
               timestamp: new Date(row.timestamp).toISOString(),
               description: row.description,
               operations: event.kind === "apply"
-                ? [...event.operations] as unknown as TOp[]
+                ? [...event.operations] as Array<TOp & SValue>
                 : [],
             });
           }

@@ -42,7 +42,7 @@ import {
   StorageCorruptError,
   VersionConflictError,
   type ApplyResult,
-} from "@unidocs/http-protocol";
+} from "@unidocs/protocol-doc";
 import type { SessionIdentity } from "./ports.js";
 import type { DocumentSession } from "./session.js";
 

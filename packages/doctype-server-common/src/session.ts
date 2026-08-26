@@ -69,9 +69,9 @@ import {
   RootRefsError,
   StorageCorruptError,
   VersionConflictError,
-} from "@unidocs/http-protocol";
+  type HistoryEntry,
+} from "@unidocs/protocol-doc";
 import { computeHash } from "./hash.js";
-import type { HistoryEntry } from "@unidocs/http-protocol";
 import type {
   BlobCas,
   DeltaLog,
@@ -79,7 +79,6 @@ import type {
   SnapshotCache,
   UnitOfWork,
 } from "./ports.js";
-import { encodeQueryValue, type WireQueryValue } from "@unidocs/http-protocol";
 
 /** Everything the session needs from the CAS service. */
 export interface CasGateway {
@@ -510,11 +509,11 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   // Reads
   // ------------------------------------------------------------------
 
-  async query(q: SValueType<TQuery>): Promise<{ data: WireQueryValue; version: number }> {
+  async query(q: SValueType<TQuery>): Promise<{ data: SValue; version: number }> {
     await this.load();
     const doc = this.#requireDoc();
     const data = await this.#config.query(q, doc as SValueType<TDoc>);
-    return { data: encodeQueryValue(data as never), version: this.#version };
+    return { data, version: this.#version };
   }
 
   async exportBytes(): Promise<{ bytes: Uint8Array; contentType: string }> {
@@ -524,14 +523,14 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     return { bytes, contentType: this.#config.contentType };
   }
 
-  async history(from?: number, to?: number): Promise<HistoryEntry<TOp>[]> {
+  async history(from?: number, to?: number): Promise<HistoryEntry<TOp & SValue>[]> {
     await this.load();
     const deltas = await this.#deps.deltas.range(from, to);
     return deltas.map((d) => ({
       version: d.version,
       timestamp: new Date(d.timestamp).toISOString(),
       description: d.description,
-      operations: d.operations as TOp[],
+      operations: d.operations as Array<TOp & SValue>,
     }));
   }
 

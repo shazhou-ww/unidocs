@@ -29,9 +29,12 @@ import { join } from "node:path";
  */
 const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/protocol": "packages/protocol/src/index.ts",
+  "@unidocs/protocol-cas": "packages/protocol-cas/src/index.ts",
+  "@unidocs/protocol-doc": "packages/protocol-doc/src/index.ts",
+  "@unidocs/protocol-gateway": "packages/protocol-gateway/src/index.ts",
+  "@unidocs/service-auth": "packages/service-auth/src/index.ts",
   "@unidocs/svalue-codec": "packages/svalue-codec/src/index.ts",
   "@unidocs/svalue-codec/internal": "packages/svalue-codec/src/internal.ts",
-  "@unidocs/http-protocol": "packages/http-protocol/src/index.ts",
   "@unidocs/gateway-common": "packages/gateway-common/src/index.ts",
   "@unidocs/cas-server-common": "packages/cas-server-common/src/index.ts",
   "@unidocs/cas-client": "packages/cas-client/src/index.ts",

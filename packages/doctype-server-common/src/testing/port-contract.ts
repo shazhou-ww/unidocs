@@ -6,7 +6,7 @@ import type {
   SnapshotCache,
   UnitOfWork,
 } from "../ports.js";
-import { VersionConflictError } from "@unidocs/http-protocol";
+import { VersionConflictError } from "@unidocs/protocol-doc";
 
 function makeDelta(version: number, description = `delta ${version}`): Delta {
   return { version, timestamp: Date.now(), description, operations: [] };

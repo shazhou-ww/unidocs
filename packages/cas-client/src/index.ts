@@ -5,27 +5,31 @@
  * Editor mode talks to the CAS worker through a fetch-capable binding
  * (`fetcher` + `X-Internal-Token` + `X-Tenant-Id`) — see `HttpFetcher`,
  * which is structural so this package stays cloud-neutral (no Cloudflare
- * `Fetcher` type import). The wire types live in @unidocs/http-protocol.
+ * `Fetcher` type import). CAS wire types live in @unidocs/protocol-cas.
  */
 
-import type { CasRootRefUpdate } from "@unidocs/http-protocol";
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
 import { refsFromSValue } from "@unidocs/svalue-codec";
 import type { CasRef, CasReadContext, CasReferences, SValue } from "@unidocs/protocol";
-import { CasClientError, type CasClientConfig, type HttpFetcher } from "@unidocs/http-protocol";
+import type { CasLeaseResult, CasRootRefUpdate } from "@unidocs/protocol-cas";
 
-export {
-  CasClientError,
-  type CasClientConfig,
-  type HttpFetcher,
-} from "@unidocs/http-protocol";
+/** Structural interface for a fetch-capable service binding. */
+export interface HttpFetcher {
+  fetch(input: string | Request, init?: RequestInit): Promise<Response>;
+}
 
-/** Result of a lease claim or extension. */
-interface CasLeaseResult {
-  readonly hash: string;
-  readonly ready: true;
-  readonly leaseStartedAt: number;
-  readonly leaseExpiresAt: number;
+export type CasClientConfig =
+  | { baseUrl: string; userId: string; authToken?: string }
+  | { fetcher: HttpFetcher; tenantId: string; accessKey: string };
+
+export class CasClientError extends Error {
+  readonly status: number;
+
+  constructor(status: number, statusText: string, operation: string) {
+    super(`CAS ${operation} failed: ${status} ${statusText}`);
+    this.name = "CasClientError";
+    this.status = status;
+  }
 }
 
 function isInternalConfig(

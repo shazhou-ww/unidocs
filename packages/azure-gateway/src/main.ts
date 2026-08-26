@@ -29,7 +29,7 @@ import {
   requireEnv,
   serve,
 } from "@unidocs/azure-sdk";
-import { isPublicCasRoute } from "@unidocs/http-protocol";
+import { isLegacyPublicCasRoute } from "@unidocs/protocol-gateway";
 import {
   createGatewayHandler,
   createInsecurePathIdentityResolver,
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
     resolveDocService: (docType) => registry.resolve(docType),
     casFetcher,
     directory,
-    isPublicCasRoute: casBaseUrl ? isPublicCasRoute : () => false,
+    isPublicCasRoute: casBaseUrl ? isLegacyPublicCasRoute : () => false,
   });
 
   const { close } = await serve(handler, { port, host: "0.0.0.0" });

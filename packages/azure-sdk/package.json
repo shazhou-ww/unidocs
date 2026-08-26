@@ -19,16 +19,16 @@
     "build": "tsc && node scripts/bundle-migrate-cli.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rm -rf dist",
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
     "migrate": "node dist/migrate-cli.js",
     "migrate:legacy-identities": "node dist/migrate-cli.js --import-legacy-identities"
   },
   "dependencies": {
     "@unidocs/cas-client": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*",
-    "@unidocs/http-protocol": "workspace:*",
-    "@unidocs/protocol": "workspace:*",
     "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/protocol": "workspace:*",
+    "@unidocs/protocol-doc": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
     "pg": "^8.23.0"

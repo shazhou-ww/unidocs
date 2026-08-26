@@ -6,6 +6,7 @@ export type DocOperation =
   | "history"
   | "rollback"
   | "snapshot"
+  | "status"
   | "ir"
   | "initFromHash"
   | "run"
@@ -27,8 +28,9 @@ const operationRoutes = {
   history: { method: "GET", segment: "history" },
   rollback: { method: "POST", segment: "rollback" },
   snapshot: { method: "GET", segment: "snapshot" },
+  status: { method: "GET", segment: "status" },
   ir: { method: "GET", segment: "ir" },
-  initFromHash: { method: "POST", segment: "init_from_hash" },
+  initFromHash: { method: "POST", segment: "init-from-hash" },
   run: { method: "POST", segment: "run" },
   reset: { method: "POST", segment: "reset" },
 } as const;
@@ -46,19 +48,20 @@ function decodeSegment(value: string): string | null {
 }
 
 function sessionPath({ tenantId, sessionId }: { tenantId: string; sessionId: string }): string {
-  return `/tenants/${segment(tenantId)}/${segment(sessionId)}`;
+  return `/tenants/${segment(tenantId)}/sessions/${segment(sessionId)}`;
 }
 
 export const docRoutes = {
-  create: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/`,
+  create: sessionPath,
   query: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/query`,
   apply: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/apply`,
   export: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/export`,
   history: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/history`,
   rollback: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/rollback`,
   snapshot: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/snapshot`,
+  status: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/status`,
   ir: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/ir`,
-  initFromHash: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/init_from_hash`,
+  initFromHash: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/init-from-hash`,
   run: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/run`,
   reset: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/reset`,
 } as const;
@@ -71,6 +74,7 @@ export const docInternalRoutes = {
   history: "/_internal/history",
   rollback: "/_internal/rollback",
   snapshot: "/_internal/snapshot",
+  status: "/_internal/status",
   ir: "/_internal/ir",
   initFromHash: "/_internal/init_from_hash",
   run: "/_internal/run",
@@ -81,19 +85,19 @@ export const docInternalRoutes = {
 
 export function matchDocRoute(method: string, pathname: string): DocRoute | null {
   const parts = pathname.split("/").filter(Boolean);
-  if (parts.length < 3 || parts[0] !== "tenants") return null;
+  if (parts.length < 4 || parts[0] !== "tenants" || parts[2] !== "sessions") return null;
 
   const tenantId = decodeSegment(parts[1]);
-  const sessionId = decodeSegment(parts[2]);
+  const sessionId = decodeSegment(parts[3]);
   if (tenantId === null || sessionId === null) return null;
 
-  if (parts.length === 3 && method === "POST") {
+  if (parts.length === 4 && method === "PUT") {
     return { operation: "create", tenantId, sessionId };
   }
-  if (parts.length !== 4) return null;
+  if (parts.length !== 5) return null;
 
   for (const [operation, route] of Object.entries(operationRoutes)) {
-    if (route.method === method && route.segment === parts[3]) {
+    if (route.method === method && route.segment === parts[4]) {
       return { operation: operation as keyof typeof operationRoutes, tenantId, sessionId };
     }
   }

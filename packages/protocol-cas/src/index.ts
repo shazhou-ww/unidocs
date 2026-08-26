@@ -22,6 +22,7 @@ export {
 } from "./http.js";
 export type {
   CasErrorResponse,
+  CasEndpointContracts,
   CasGcRequest,
   CasGcResponse,
   CasLeaseExistingRequest,
