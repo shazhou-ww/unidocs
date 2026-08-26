@@ -396,6 +396,26 @@ docx 已经这么做了（`doctype-docx/src/agent.ts:75`）。psd 需要改（2.
 
 改完之后 `cloudflare-psd/src/anthropic.ts:72` 的 `findImage` 递归搜索、`:82` 的 `previewMeta`、以及 `OperatorConfig.renderToolResult` 整个钩子都可以删掉。
 
+#### 5.3.1 顺带发现：psd 的提示词在教模型调不存在的工具
+
+不属于本次范围（工具表是文档类型自己的事），但既然查到了就记下来，建议 psd 一并修。
+
+`doctype-psd/src/tools.ts:156-176` 的提示词里有五个工具名，在工具表里根本不存在：
+
+| 提示词让模型调 | 工具表里实际是 |
+|---|---|
+| `transformLayer` | `apply_transform` |
+| `editMask` | `apply_mask_edit` |
+| `setAdjustment` | `apply_adjust` |
+| `addLayer` | `apply_add_layer` |
+| `generativeFill` | `apply_generative_fill` |
+
+模型只能自己从工具列表里猜映射。这件事本身说明 `query_` / `apply_` 前缀是**给分发器用的机器语言，不是给模型用的名字**——连写提示词的人自己都没照着用。
+
+更根本的一点：`apply_transform` 这个名字把「变换」和「提交」讲成了两步，而它们本来是一步。agent 产生一个 op，op 就应该像人在浏览器里拖动图层一样直接生效并拿到一个版本号——不存在一个单独的「apply」动作需要模型显式发起。工具名叫 `transform` 就够了。
+
+建议 psd 把工具名改成领域动词（`getLayers` / `getPreview` / `transform` / `crop` / `addLayer` …），提示词与工具表对齐。内核不认识前缀（5.1），所以怎么改都不影响 agent-sdk；分发改成一张名字到 op kind 的映射表即可。
+
 ### 5.4 消息格式中立化
 
 这是本次唯一一处**重写而非搬家**的改动。
@@ -802,19 +822,17 @@ flowchart TB
 
 ```ts
 export type AgentEvent =
-  | { readonly type: "run-start";        readonly runId: string }
-  | { readonly type: "assistant-text";   readonly text: string }
-  | { readonly type: "tool-call";        readonly callId: string; readonly name: string; readonly arguments: JsonValue }
-  | { readonly type: "tool-result";      readonly callId: string; readonly ok: boolean; readonly summary: string }
-  | { readonly type: "document-changed"; readonly version: number }
-  | { readonly type: "run-end";          readonly response: string; readonly iterations: number }
-  | { readonly type: "run-error";        readonly error: string };
+  | { readonly type: "run-start";      readonly runId: string }
+  | { readonly type: "assistant-text"; readonly text: string }
+  | { readonly type: "tool-call";      readonly callId: string; readonly name: string; readonly arguments: JsonValue }
+  | { readonly type: "tool-result";    readonly callId: string; readonly ok: boolean; readonly summary: string }
+  | { readonly type: "run-end";        readonly response: string; readonly iterations: number }
+  | { readonly type: "run-error";      readonly error: string };
 ```
 
-两个设计决定：
+**这里只有 agent 自己的事件——它在想什么、调了什么工具、说了什么。没有「文档变了」。** 理由见 7.2.1。
 
-1. **`tool-result` 只带一句摘要，不带完整数据。** 工具结果可能是一整棵图层树或一张预览图，客户端不需要它 —— 需要的是模型，而模型在服务端已经拿到了。这样每个事件都很小，不需要分片。
-2. **`document-changed` 单独成一个事件。** 每次 `apply` 成功就发一次，客户端可以立刻调 `reconcile()` 同步画布，不必等整个 run 结束。PSD 跑 25 轮时，用户能看到画布逐步变化，而不是最后一次性跳变。
+一个设计决定：**`tool-result` 只带一句摘要，不带完整数据。** 工具结果可能是一整棵图层树或一张预览图，客户端不需要它——需要的是模型，而模型在服务端已经拿到了。这样每个事件都很小，不需要分片。
 
 ### 7.2 一次 run 的时序
 
@@ -851,34 +869,43 @@ sequenceDiagram
     A->>C: apply 一批 op
     Note over C: 平台读当前 head 作 baseVersion
     C-->>A: 新 version
-    A-->>S: AgentToolResult 含 documentVersion
+    A-->>S: AgentToolResult
     S-->>B: 事件 tool-result
-    S-->>B: 事件 document-changed
-    B->>B: 立刻 reconcile 同步画布
 
     S->>L: complete
     L-->>S: 文字回复，不再调工具
     S-->>B: 事件 run-end
 ```
 
-#### 7.2.1 内核怎么知道文档变了
+#### 7.2.1 为什么事件流里没有「文档变了」
 
-它不认识 `apply_` 前缀，所以无法从工具名推断。让它去猜（比如翻 `structuredContent` 里有没有 `version` 字段）就是重蹈 `$image` 的覆辙——内核不该嗅探文档类型的返回结构。
+agent 不是特殊的写入者，它和坐在浏览器前的人是**对等的编辑者**：两边都产生 op，op 提交后云端生成一个新版本。人拖动图层和 agent 调 `transform`，在编辑器眼里应该是同一件事。
 
-改为让文档类型显式声明，在 `AgentToolResult` 上加一个可选字段：
+顺着这个前提，「文档变到 v9 了」这条消息就不该从 agent 的事件流里出来：
 
-```ts
-export interface AgentToolResult {
-  readonly structuredContent?: JsonValue;
-  readonly content?: readonly AgentContentPart[];
-  /** 这次调用改变了文档，值为新版本号。只读工具不设置。 */
-  readonly documentVersion?: number;
-}
+```mermaid
+flowchart TB
+    subgraph wrong["把变更挂在 agent 通道上（不采用）"]
+        H1["人的编辑"] --> D1["文档"]
+        A1["agent 的编辑"] --> D1
+        A1 -.->|"document-changed"| B1["浏览器"]
+        H1 -.->|"没有对应通道"| B1
+    end
+
+    subgraph right["变更走文档通道（正确形状）"]
+        H2["人的编辑"] --> D2["文档"]
+        A2["agent 的编辑"] --> D2
+        D2 -.->|"版本变更流"| B2["浏览器<br/>不关心是谁改的"]
+    end
 ```
 
-内核的规则只有一条：**看到 `documentVersion` 就发一个 `document-changed` 事件，看不到就不发。**
+左边那张图里，agent 的编辑有通知、人的编辑没有——这就是把 agent 变特殊了。而一旦将来要支持两个人同时编辑，那条 `document-changed` 通道会被整个拆掉重做。
 
-不设置也不会坏：客户端收不到中途的 `document-changed`，就退回到 `run-end` 之后统一 `reconcile()` 一次——也就是今天的行为。所以 psd 设置它（它本来就要为图片改动 `agent.ts`），markdown 和 docx 保持不动，它们今天也没有 web 客户端需要增量同步。
+**所以本次不建它。** 文档变更通道属于协同编辑，需要编辑器向订阅者扇出、需要订阅生命周期、在 Azure 的无状态多副本上尤其麻烦，是独立的一块工作。
+
+代价说清楚：客户端在一次 run 期间看不到画布逐步变化，仍然是 `run-end` 之后统一 `reconcile()` 一次——也就是今天的行为。用户在 25 轮期间能看到 agent 的思考和工具调用（这是本次流式带来的改进），但画布是最后一次性更新的。
+
+连带取消：上一版我提议给 `AgentToolResult` 加的 `documentVersion` 字段不要了。它存在的唯一理由就是喂那条通道。
 
 ### 7.3 断线的语义
 
@@ -969,7 +996,6 @@ classDiagram
     class AgentRunHandlers {
         <<interface>>
         +onEvent?(event) void
-        +onDocumentChanged?(version) void
         +onDone?(response, iterations) void
         +onError?(error) void
     }
@@ -1039,14 +1065,31 @@ export class DocSession<TDoc, TOp> {
 
 ```ts
 channel.run(text, {
-  onDocumentChanged: () => session.reconcile(),        // 每次 apply 成功立刻同步
-  onEvent: (e) => { if (e.type === "tool-call") showStep(e.name); },
-  onDone: (reply) => addMsg("agent", reply),
-  onError: (err) => { addMsg("err", err.message); session.reconcile(); },
+  onEvent: (e) => {
+    if (e.type === "tool-call")     showStep(e.name);      // 实时看到 agent 在做什么
+    if (e.type === "assistant-text") addMsg("agent", e.text);
+  },
+  onDone: async (reply) => {
+    addMsg("agent", reply);
+    await session.reconcile();                             // 文档同步仍在 run 结束时做
+  },
+  onError: async (err) => {
+    addMsg("err", err.message);
+    await session.reconcile();                             // 服务端可能已经改完了
+  },
 });
 ```
 
-对比今天（`web-psd/src/main.ts:374-390`）：等整个 run 跑完才 `reconcile()` 一次，中途界面上只有一个不动的「thinking…」。
+两个通道各管各的，这是 7.2.1 的直接体现：
+
+| 通道 | 管什么 | 何时同步 |
+|---|---|---|
+| `AgentChannel` | agent 在想什么、调了什么工具、说了什么 | 实时 |
+| `DocSession` | 文档内容 | run 结束后 `reconcile()` 一次 |
+
+对比今天（`web-psd/src/main.ts:374-390`）：中途界面上只有一个不动的「thinking…」，用户不知道 agent 在干什么、跑到哪一步了、是不是卡死了。本次改进的是**这一半**。
+
+画布的逐步更新要等文档变更通道（7.2.1），那时 `DocSession` 订阅它即可，`AgentChannel` 一行都不用改——这正是把两件事分开的好处。
 
 ---
 
@@ -1055,8 +1098,7 @@ channel.run(text, {
 | 文件 | 改动 |
 |---|---|
 | `doctype-psd/src/queries.ts:101` | `getPreview` 从 `btoa` 产出 base64 改为 `makeSBlob` 返回 SBlob 引用 |
-| `protocol/src/types.ts:100` | `AgentToolResult` 加可选字段 `documentVersion?: number`（7.2.1） |
-| `doctype-psd/src/agent.ts` | 分发逻辑保留不动。两处小改：`query_getPreview` 返回 image content part（5.3）；`apply_*` 分支带上 `documentVersion`（7.2.1） |
+| `doctype-psd/src/agent.ts` | 分发逻辑保留不动，只改 `getPreview` 分支返回 image content part（5.3） |
 | `doctype-psd/tests/agent.test.ts:61-76` | 断言反转：从「`$image` 透传且 `content` 为 undefined」改为「返回 image content part」 |
 | `doctype-markdown/src/agent.ts` | **不动** |
 | `doctype-docx/src/agent.ts` | **不动**。它的图片返回方式（`:75`）本来就是对的，只是从没跑通过——删掉 `renderToolResult` 钩子后这条路才真正打开（P6） |
@@ -1101,13 +1143,13 @@ flowchart TB
 
 | # | 标准 | 验证方式 |
 |---|---|---|
-| V1 | 文档类型的分发逻辑一行未动 | `git diff` 里 `doctype-markdown/src/agent.ts` 与 `doctype-docx/src/agent.ts` 无改动；`doctype-psd/src/agent.ts` 只有 `getPreview` 分支和 `documentVersion` 两处变化 |
+| V1 | 文档类型的分发逻辑一行未动 | `git diff` 里 `doctype-markdown/src/agent.ts` 与 `doctype-docx/src/agent.ts` 无改动；`doctype-psd/src/agent.ts` 只有 `getPreview` 分支变化 |
 | V2 | 内核不认识 `query_` / `apply_` | 全仓库搜索 `startsWith("query_")` **不应**命中 `packages/agent-sdk/` |
 | V3 | `agent-sdk` 不 import 任何云相关模块 | `tests/unit/agent-sdk-purity.test.ts` |
 | V4 | 循环行为不退化 | 新增契约测试：内存版 `DocumentAgentContext` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
 | V5 | PSD 送给模型的图片字节与改造前完全一致 | 抓一次 provider 请求体，与改造前对比 |
 | V6 | 现有 230 行 `operator-do.test.ts` 全绿 | `pnpm test` |
-| V7 | 浏览器能看到逐步事件，画布逐步更新 | web-psd 手工端到端 |
+| V7 | 浏览器能实时看到 agent 的每一步 | web-psd 手工端到端：发一条多步指令，chat 区逐条出现工具调用；画布在 run 结束后一次性更新（本次不做逐步更新，见 7.2.1） |
 | V8 | 同一条指令在 Azure 栈跑通 | `pnpm test:azure` 新增用例 |
 | V9 | docx 的图片路径第一次真正跑通 | 现有 `doctype-docx/tests/agent.test.ts` 已覆盖 `getImage` / `insertImage`；再补一条端到端：删掉 renderToolResult 后，image content part 能被 Anthropic 适配层翻成图片块而不抛异常（P6） |
 | V10 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/agent-sdk/src/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止 |
@@ -1127,6 +1169,7 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 项 | 原因 |
 |---|---|
 | 摘要压缩（把最早若干轮交给模型总结） | 需要额外一次模型调用，成本和质量都要实测才好定参数。接口已支持（`prepare` 是 async），前三级裁剪先跑一段时间看是否够用 |
+| **文档变更通道** | agent 与人是对等的编辑者，「文档变了」该走文档通道而不是 agent 通道（7.2.1）。建它需要编辑器向订阅者扇出、订阅生命周期管理，Azure 的无状态多副本上尤其麻烦——是协同编辑那一块的工作。本次不建，也不建会被拆掉的临时替代 |
 | 逐字输出 | 需要 provider 支持流式并处理 `input_json_delta` 增量拼接，测试成本高，本次不做 |
 | 事件重放 / 断线续传 | 需要把**事件序列**也持久化，那是与会话历史不同的一份数据（历史是给模型看的，事件是给界面看的）。7.3 已选定不重放 |
 | 跨会话的长期记忆 | 本次的持久化只保证"同一个文档的对话可以续上"，不涉及跨文档、跨会话的知识沉淀 |
@@ -1164,6 +1207,8 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 客户端范围 | agent 通道 + 泛型化的 DocSession |
 | 工具分发归谁 | **归文档类型，内核不接管。** `query_` / `apply_` 的解析和参数转换本来就是各文档类型不同的事——docx 的 `apply_insertImage` 要先 `resolveBlob`，psd 的可以直接透传。psd 与 markdown 今天逐行相同是巧合，不是共性。内核对工具的全部认知是「调用它返回一个 `AgentToolResult`」 |
 | 上边界用什么接口 | 沿用已有的 `DocumentAgentFactory` / `DocumentAgent`（`protocol/src/types.ts:118-129`），本次不新造，也不修改 |
-| 内核怎么知道文档变了 | 文档类型在 `AgentToolResult` 上显式设 `documentVersion`，内核见到就发 `document-changed` 事件。不让内核嗅探返回结构——那是 `$image` 的老路（7.2.1） |
+| agent 与人的关系 | **对等的编辑者。** 两边都产生 op，op 提交后云端生成版本，编辑器眼里是同一件事。不给 agent 开任何特殊写入路径 |
+| `apply_xxx` 这类工具名 | 是分发器的机器语言，不是给模型的名字。它把「变换」和「提交」讲成两步，而本来是一步。建议 psd 改成领域动词并对齐提示词（5.3.1），但不属于本次范围——内核不认识前缀，怎么改都不影响 agent-sdk |
+| 文档变更怎么通知客户端 | **不通过 agent 事件流。** agent 与浏览器前的人是对等的编辑者，两边都产生 op；「文档变了」属于文档通道，人和 agent 的改动都从那里出来。把它挂在 agent 通道上等于把 agent 变特殊，将来支持多人编辑时要整个拆掉。本次不建那条通道，客户端沿用 run-end 后统一 reconcile（7.2.1） |
 | 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:625`），由平台的 `apply` 实现读当前 head 得到（5.2） |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |
