@@ -41,13 +41,56 @@ function nestedDeployments(arm) {
   return arm.resources.filter((r) => r.type === "Microsoft.Resources/deployments");
 }
 
+/**
+ * 外层模板里，一个 @secure() 参数只允许以**直接引用**
+ * `[parameters('<name>')]` 出现。任何把它包进更长表达式的形式——
+ * format() / concat() / union() / 字符串插值——结果都只是普通字符串，
+ * securestring 的血统在那一步断掉，what-if 对 Create 变更会原样打印。
+ *
+ * 扫描范围含 outputs：`az deployment group create` 默认把 output 值打到
+ * 终端，部署脚本还 tee 进日志，所以它和资源属性一样是泄漏面。
+ * 嵌套部署被排除——跨了 module 边界的值由内层的 securestring 参数接住。
+ *
+ * 返回违规的 `<路径> = <表达式>` 列表；空数组代表这个参数干净。
+ */
+function secureParamOffenders(arm, paramName) {
+  const directRef = `[parameters('${paramName}')]`;
+  const needle = `parameters('${paramName}')`;
+  const offenders = [];
+  const walk = (node, path) => {
+    if (typeof node === "string") {
+      if (node.includes(needle) && node !== directRef) {
+        offenders.push(`${path} = ${node}`);
+      }
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`);
+    }
+  };
+  walk(arm.variables ?? {}, "variables");
+  for (const r of arm.resources ?? []) {
+    if (r.type === "Microsoft.Resources/deployments") continue;
+    walk(r, `resources.${r.type}`);
+  }
+  walk(arm.outputs ?? {}, "outputs");
+  return offenders;
+}
+
 describe.skipIf(!AZ)("gateway.bicep 的密钥不落进外层模板", () => {
-  test("外层 variables 里没有任何密钥派生值", () => {
+  test("docAccessKeysJson 在外层模板里只以直接引用出现，不被拼接", () => {
     const arm = compile("gateway.bicep");
-    const vars = JSON.stringify(arm.variables ?? {});
-    expect(vars).not.toContain("docAccessKeysJson");
-    expect(vars).not.toContain("pgAdminPassword");
-    expect(vars).not.toContain("casAccessKey");
+    expect(secureParamOffenders(arm, "docAccessKeysJson")).toEqual([]);
+  });
+
+  test("casAccessKey 在外层模板里只以直接引用出现，不被拼接", () => {
+    const arm = compile("gateway.bicep");
+    expect(secureParamOffenders(arm, "casAccessKey")).toEqual([]);
+  });
+
+  test("pgAdminPassword 在外层模板里只以直接引用出现，不被拼接", () => {
+    const arm = compile("gateway.bicep");
+    expect(secureParamOffenders(arm, "pgAdminPassword")).toEqual([]);
   });
 
   test("嵌套部署用 inner scope，密钥参数声明为 securestring", () => {
@@ -77,38 +120,11 @@ describe.skipIf(!AZ)("platform.bicep 的连接串不落进外层模板", () => {
 
   test("pgAdminPassword 在外层模板里只以直接引用出现，不被拼接", () => {
     const arm = compile("platform.bicep");
-
-    // 其一：外层 variables 必须完全不持有密钥派生值。
-    expect(JSON.stringify(arm.variables ?? {})).not.toContain("pgAdminPassword");
-
-    // 其二：外层资源属性里，pgAdminPassword 只允许以**直接引用**出现。
     // `[parameters('pgAdminPassword')]` 仍然是 securestring，ARM 在 what-if
     // 与部署历史里会遮蔽它——pg 资源的 administratorLoginPassword 就是这一种，
     // 是 Azure 的标准写法。危险的是**拼接**：一旦被 format() / 字符串插值包
-    // 进去，结果就只是一个普通字符串，securestring 的血统在那一步断掉，
-    // what-if 对 Create 变更会把它原样打印进终端和日志（部署脚本用
-    // stdio:"inherit" 透传并 tee 进文件）。上一轮真的踩过，这条挡的就是它。
-    const offenders = [];
-    const walk = (node, path) => {
-      if (typeof node === "string") {
-        if (
-          node.includes("parameters('pgAdminPassword')")
-          && node !== "[parameters('pgAdminPassword')]"
-        ) {
-          offenders.push(`${path} = ${node}`);
-        }
-        return;
-      }
-      if (node && typeof node === "object") {
-        for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`);
-      }
-    };
-    for (const r of arm.resources) {
-      if (r.type === "Microsoft.Resources/deployments") continue;
-      walk(r, r.type);
-    }
-    // 失败时把违规的路径与表达式一起打出来，而不是只说"包含某个子串"。
-    expect(offenders).toEqual([]);
+    // 进去，结果就只是一个普通字符串，securestring 的血统在那一步断掉。
+    expect(secureParamOffenders(arm, "pgAdminPassword")).toEqual([]);
   });
 
   // R4：上一轮有过一次同类教训——迁移 Job 名写成了嵌套部署名而不是资源名，

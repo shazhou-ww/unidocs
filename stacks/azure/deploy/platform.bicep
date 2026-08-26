@@ -105,9 +105,9 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 // databaseUrl 由 @secure() pgAdminPassword 拼出，直接写进外层模板的资源
 // 属性会让 what-if 把明文连接串打进终端与日志。
 //
-// 三个 Job 对应三个独占数据库：网关的目录 schema 走 azure-gateway 自己的
-// 迁移镜像（dist/migrate-cli.js），两个 Doc service 复用 azure-sdk 的
-// 会话 schema 迁移镜像。
+// 网关与每个 doc type 各有一个独占数据库和一个迁移 Job：网关的目录 schema
+// 走 azure-gateway 自己的迁移镜像（dist/migrate-cli.js），docTypes 里的每个
+// Doc service 各自复用 azure-sdk 的会话 schema 迁移镜像。
 module gatewayMigrateJob 'migrate-job.bicep' = {
   name: 'gateway-migrate-job'
   params: {

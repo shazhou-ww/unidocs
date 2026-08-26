@@ -91,7 +91,7 @@ module app 'container-app.bicep' = {
     docServicesJson: docServicesJson
     capabilityPrivateKeyPkcs8: capabilityPrivateKeyPkcs8
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
-    // 两个 doc type worker —— 不是容器端口，ingress 负责映射。
+    // docTypes 里的每个 doc type worker —— 不是容器端口，ingress 负责映射。
     // 路由目标在 DOC_SERVICES_JSON 里静态列出，见上面的注释。
     extraEnv: [
       {
