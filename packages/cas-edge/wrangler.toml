@@ -5,8 +5,8 @@ compatibility_date = "2025-08-17"
 # Sole public Worker on the CAS service hostname: /stacks + /admin dispatch.
 # Backing Workers remain private (no independent public routes).
 [[routes]]
-pattern = "unicas.shazhou.work"
-custom_domain = true
+pattern = "unicas.shazhou.work/*"
+zone_name = "shazhou.work"
 
 [[services]]
 binding = "CAS_TENANT_SERVICE"

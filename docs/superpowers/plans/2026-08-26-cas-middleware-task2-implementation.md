@@ -332,6 +332,43 @@ cross-stack proof: identical textual tenant ids in `unidocs-cloudflare` and
 403. The worker module drops all non-handler named exports (workerd
 constraint); constants stay in their home modules.
 
+## Task 9 execution notes (round 3: deployment)
+
+The middleware is deployed to Cloudflare (account `92c3c4fd...`,
+zone `shazhou.work`): `unidocs-cas-server-cloudflare` and
+`unidocs-cas-admin-webui` are live with `workers_dev = false` (private;
+reached only through cas-edge service bindings), and `unidocs-cas-edge`
+carries the `unicas.shazhou.work` route with the two service bindings.
+Infrastructure: D1 `unidocs-cas-control` (dc8090eb…) + `unidocs-cas-db`
+(66f8738b…), R2 `unidocs-cas` (+ preview bucket); schemas applied via
+`wrangler d1 execute`. Secrets set via `wrangler secret put`: tenant
+`CAS_AUDIT_READER_KEY`; admin real Google OIDC client id/secret and a fresh
+`SESSION_ENCRYPTION_KEYS` map.
+
+`scripts/provision-cas-middleware.mjs` bootstraps the two stacks into the
+production CAS_CONTROL_DB (issuer + ES256 rotation key + active refDomains);
+private keys stay under gitignored `.wrangler/cas-deploy/`. The deployed
+tenant worker already authorizes the provisioned cloudflare-stack
+capabilities (verified end-to-end against production D1/R2 through a
+`wrangler dev --remote` tunnel — `cas_stack_authorization authorized
+leaseNode` with the seeded key; DO dispatch is not exercisable through
+remote dev, which is a wrangler limitation, not a worker one).
+`scripts/cas-middleware-smoke.mjs` runs the full canonical flow against any
+base URL.
+
+Blocked: the `unicas.shazhou.work` DNS record (custom-domain and manual
+CNAME) is created in the zone but the authoritative nameservers are not
+serving it yet — Cloudflare-side propagation; the final live-edge smoke and
+the admin-console onboarding depend on it.
+
+Resolved: DNS propagated (~10 min) after switching the edge to a classic
+`unicas.shazhou.work/*` route plus a proxied CNAME to
+`unidocs-cas-edge.shazhou.workers.dev` (the auto custom-domain AAAA 100::
+record was stuck). The LIVE smoke now passes end-to-end over HTTPS: edge
+/health 200 and /_internal/health 404, lease/read/metadata/root-refs
+(revision 1, idempotent retry)/usage/GC, cross-stack read 403, azure usage 0
+under the same tenant id, and /admin 302/401 through the edge to the BFF.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

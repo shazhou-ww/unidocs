@@ -1678,15 +1678,19 @@ Tests assert both aggregate counts and emitted domain deltas.
 
 ### Task 9: Deploy middleware and onboard UniDocs stacks
 
-- [ ] Produce the tenant CAS runtime and `cas-admin-webui` OIDC/BFF as
+- [~] Produce the tenant CAS runtime and `cas-admin-webui` OIDC/BFF as
   independently versioned/deployable artifacts from the existing monorepo;
-  both are routed under one CAS service domain by path.
+  both are routed under one CAS service domain by path. (wrangler.toml
+  complete with real D1 ids, DO exports, private bindings, audit-reader
+  binding, and the edge route; both backing workers are DEPLOYED and private.
+  Live smoke through https://unicas.shazhou.work passes: lease/read/
+  metadata/root-refs revision/usage/gc plus cross-stack 403 isolation.)
 - [~] Deploy `cas-edge` as the only custom-domain Worker, bind private tenant
   and admin Workers, enforce prefix/header/cookie isolation, and expose
   independent edge/tenant/admin readiness checks. (Dispatch, header
-  isolation, and readiness are implemented and proven end-to-end through the
-  local edge; the actual custom-domain deployment lands with the
-  Cloudflare credentials round.)
+  isolation, and readiness are implemented and proven end-to-end locally and
+  LIVE: cas-edge serves unicas.shazhou.work/* with the tenant/admin service
+  bindings, /health 200, /_internal/health 404, /admin 302/401.)
 - [x] Expose a narrow private tenant audit-reader RPC to `cas-admin-webui`; prove
   it is unreachable through `cas-edge` and the service call graph is
   acyclic.
@@ -1700,9 +1704,11 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [~] Register stable `unidocs-cloudflare` and `unidocs-azure` stacks through
   the self-service control plane; configure equal administrator memberships,
   one tenant issuer plus rotation keys, audiences, and registered domains.
-  (Both stacks are registered and exercised in the local middleware runtime;
-  production registration through the control-plane service/admin console
-  lands with deployment.)
+  (Both stacks are registered in the PRODUCTION CAS_CONTROL_DB via the
+  bootstrap script — issuer, ES256 rotation key, and active refDomains
+  verified with d1 execute; the deployed tenant worker authorizes the
+  provisioned cloudflare stack's capabilities. Console-based possession-proof
+  registration and memberships land with the admin onboarding round.)
 - [ ] Migrate Cloudflare Workers from shared `CAS_ACCESS_KEY` service-binding
   calls to stack-scoped tenant capabilities against the middleware service.
 - [ ] Migrate Azure Gateway and document services from a manually aligned
