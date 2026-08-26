@@ -3,7 +3,7 @@
 > **Status:** In progress. Companion to `2026-08-26-cas-middleware.md` Task 2.
 > Records the concrete interpretations and phasing decisions agreed with the
 > operator before and during implementation. Supersedes nothing in the frozen
-> `@unidocs/protocol-cas-admin` contract except the two explicit amendments
+> `@unicas/protocol-admin` contract except the two explicit amendments
 > below.
 
 ## Agreed decisions (2026-08-26)
@@ -46,7 +46,7 @@
 
 ## Protocol amendments (Task 2, explicitly recorded)
 
-Both amend `@unidocs/protocol-cas-admin` (Task 1 froze it); tests updated in
+Both amend `@unicas/protocol-admin` (Task 1 froze it); tests updated in
 the same commit.
 
 1. **`INVALID_REQUEST` error code** added to `CasAdminErrorCodes`, mapped to
@@ -145,16 +145,16 @@ the same commit.
 
 ## Task 3 execution notes (operator-approved approach)
 
-The canonical `@unidocs/protocol-cas` is frozen to the stack-scoped protocol
+The canonical `@unicas/protocol` is frozen to the stack-scoped protocol
 (`/stacks/{stackId}/tenants/{tenantId}/...`, `updateRootRefs`, no
 assignment/portable contracts, no `isPublicCasRoute`). The pre-stack tenant
 surface is quarantined verbatim in the migration-only
-`@unidocs/protocol-cas-legacy` package; the legacy runtime packages
+`@unicas/protocol-legacy` package; the legacy runtime packages
 (cloudflare-cas, cas-client, cloudflare-gateway, azure-gateway, gateway-common,
 protocol-gateway) changed only their import sources (and the Gateway exposure
 policy moved to Gateway-owned `isGatewayExposedCasRoute` in
 `@unidocs/protocol-gateway`, injected by `gateway-handler`). The new
-`@unidocs/cas-server-cloudflare` package hosts the canonical stack protocol
+`@unicas/server-cloudflare` package hosts the canonical stack protocol
 skeleton (501 handlers until Tasks 4–7). The old runtime + local dev + Azure
 keep working unchanged during the compatibility window.
 
@@ -274,7 +274,7 @@ integration covers the end-to-end 502 → retry-409 recovery).
 ## Task 9 execution notes (round 1: canonical storage + client surface)
 
 The tenant CAS runtime is now a complete storage server, not just Root Refs:
-`packages/cas-server-cloudflare/src/nodes.ts` implements stack-scoped
+`unicas-packages/server-cloudflare/src/nodes.ts` implements stack-scoped
 lease/read/metadata/usage/GC against `cas_nodes`/`cas_edges`/R2, every row and
 object keyed by `(stackId, tenantId)` (R2 keys via `stackNodeKey`). The tenant
 DO dispatches `/leaseNode`, `/leaseExisting`, `/read`, `/metadata`, `/usage`,
@@ -485,11 +485,69 @@ rotate them via the possession-proof console once identity auth exists.
 
 **Rollback drill (verified live, 2026-08-26):** `wrangler deployments list`
 on the admin worker showed a single 100% version (`aac4ce3f`); `wrangler
-rollback` from `packages/cas-admin-webui` moved traffic to the retained prior
+rollback` from `unicas-packages/admin-webui` moved traffic to the retained prior
 version `8dd1baee`, `GET https://unicas.shazhou.work/admin/me` still answered
 401 (correct unauthenticated BFF response through the edge), and `wrangler
 deploy` restored the current version (`7e7668b9`, 100%). Retained prior
 versions + forward/backward rollback on the deployed middleware are proven.
+
+## Task 9 execution notes (round 8: @unicas rename + unicas-packages + legacy retirement)
+
+**Package naming (decided 2026-08-26):** every CAS middleware package now
+uses the `@unicas` org (the org name itself stands for CAS, so package names
+drop the `cas` segment), and all of them live under a top-level
+`unicas-packages/` directory — the physical boundary for the future
+standalone CAS monorepo (a `git mv` of the whole tree keeps history). The
+application-stack packages stay in `packages/` under `@unidocs/*`, but their
+imports/dependencies now point at `@unicas/*`, so a future CAS monorepo
+extraction only swaps `workspace:*` for registry versions without touching
+import statements.
+
+```
+unicas-packages/            @unicas org (independently deployable CAS middleware)
+  protocol/          @unicas/protocol          (was @unidocs/protocol-cas)
+  protocol-legacy/   @unicas/protocol-legacy   (was @unidocs/protocol-cas-legacy)
+  protocol-admin/    @unicas/protocol-admin    (was @unidocs/protocol-cas-admin)
+  server-common/     @unicas/server-common     (was @unidocs/cas-server-common)
+  control-plane/     @unicas/control-plane     (was @unidocs/cas-control-plane)
+  server-cloudflare/ @unicas/server-cloudflare (was @unidocs/cas-server-cloudflare)
+  edge/              @unicas/edge              (was @unidocs/cas-edge)
+  admin-webui/       @unicas/admin-webui       (was @unidocs/cas-admin-webui)
+  client/            @unicas/client            (was @unidocs/cas-client)
+```
+
+**Legacy runtime retired (decision):** `packages/cloudflare-cas` was deleted
+— it had never been deployed, the canonical `server-cloudflare` fully
+replaced it, and deleting it retires the shared-key/tenantless/
+root-assignment/portable-node surfaces (Task 9 bullet 11 completed early;
+Task 10's implementation items done). The local runtimes (Cloudflare
+`startLocalRuntime`, Azure `startAzureRuntime`) and the Azure deploy script
+now support **stack mode only** (`internalAuthMode` rejects legacy/dual/
+capability; the `casBaseUrl` transition shape and the CAS direct port
+(`ports.cas`/`urls.cas`) are gone; the embedded middleware edge is always the
+CAS endpoint). The frozen contracts survive in `@unicas/protocol-legacy`
+for the remaining legacy-compatible gateway/cas-client paths until the
+rollback window closes. `azure-multi-replica` was adapted to stack-mode
+auth (self-signed session + delegated CAS capabilities, tenant-prefixed
+`/tenants/{tenant}/sessions/...` routes).
+
+**Integration-test gotcha (cost an hour):** Miniflare derives each worker's
+module *name* as `path.relative(modulesRoot, scriptPath)` where `modulesRoot`
+is based on the **process cwd**; a bundle outside that root produces a
+`../..`-prefixed module name that workerd rejects with an opaque
+`Uncaught Error: internal error` at startup. Running the integration suites
+from a package directory (`pnpm --filter ... exec vitest --root ../..`)
+breaks every Miniflare boot; they must run from the repo root
+(`pnpm test:local` / `pnpm test:azure` / `pnpm test`). The dependency guard
+(`tests/unit/workspace/package-deps.test.mjs`) was generalized to cover both
+package directories (`packages/` + `unicas-packages/`) and both orgs
+(`@unidocs` + `@unicas`), resolving tsconfig references relative to each
+tsconfig instead of assuming a `packages/` layout.
+
+Validation: `pnpm typecheck`, `pnpm test:local` (unit + Cloudflare
+integration + shared), `pnpm test:azure`, `pnpm test` (per-package), and the
+dependency guard all green; grep shows no residual old package names in
+code/config/current docs (historical plan/spec docs intentionally untouched).
 
 ## Phase plan and status
 
@@ -525,7 +583,7 @@ the console — but the middleware itself does not depend on the application
 stack. Either frontend can also be started separately:
 
 ```text
-pnpm --filter @unidocs/cas-admin-webui dev:ui
+pnpm --filter @unicas/admin-webui dev:ui
 ```
 
 With the local mock OIDC provider, **no Google configuration is needed**: no

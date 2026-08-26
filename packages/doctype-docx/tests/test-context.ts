@@ -1,4 +1,4 @@
-import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas-server-common";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unicas/server-common";
 import type { DocumentTypeContext, MakeSBlob, SBlob, SBlobData } from "@unidocs/protocol";
 import { SValueContentType } from "@unidocs/protocol";
 import { createSBlob, decodeSValueWithRefs } from "@unidocs/svalue-codec/internal";

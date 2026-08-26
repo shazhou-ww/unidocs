@@ -2,7 +2,7 @@ import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { CasClient, CasClientError } from "@unidocs/cas-client";
+import { CasClient, CasClientError } from "@unicas/client";
 import { DELTA_THRESHOLD } from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";

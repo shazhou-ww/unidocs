@@ -18,7 +18,7 @@ import {
   StorageCorruptError,
   VersionConflictError,
 } from "@unidocs/protocol-doc";
-import { CasClientError } from "@unidocs/cas-client";
+import { CasClientError } from "@unicas/client";
 import { DocumentSession, type CasGateway, type SessionDeps } from "../src/session.js";
 
 // --------------------------------------------------------------------------

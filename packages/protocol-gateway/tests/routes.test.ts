@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { casRoutes } from "@unidocs/protocol-cas-legacy";
+import { casRoutes } from "@unicas/protocol-legacy";
 import {
   gatewayRoutes,
   isGatewayExposedCasRoute,

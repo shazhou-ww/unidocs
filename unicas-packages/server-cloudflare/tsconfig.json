@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
+    "types": [
+      "@cloudflare/workers-types"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../control-plane"
+    },
+    {
+      "path": "../server-common"
+    },
+    {
+      "path": "../protocol"
+    },
+    {
+      "path": "../../packages/protocol"
+    },
+    {
+      "path": "../../packages/service-auth"
+    },
+    {
+      "path": "../../packages/svalue-codec"
+    }
+  ]
+}

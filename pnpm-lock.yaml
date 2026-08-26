@@ -180,9 +180,9 @@ importers:
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)
-      '@unidocs/cas-client':
+      '@unicas/client':
         specifier: workspace:*
-        version: link:../cas-client
+        version: link:../../unicas-packages/client
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
@@ -217,206 +217,6 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  packages/cas-admin-webui:
-    dependencies:
-      '@unidocs/cas-control-plane':
-        specifier: workspace:*
-        version: link:../cas-control-plane
-      '@unidocs/protocol-cas-admin':
-        specifier: workspace:*
-        version: link:../protocol-cas-admin
-      jose:
-        specifier: ^6.2.10
-        version: 6.2.10
-      react:
-        specifier: ^19.0.0
-        version: 19.2.8
-      react-dom:
-        specifier: ^19.0.0
-        version: 19.2.8(react@19.2.8)
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      '@testing-library/jest-dom':
-        specifier: ^6.6.0
-        version: 6.10.0(@testing-library/dom@10.4.1)
-      '@testing-library/react':
-        specifier: ^16.1.0
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@testing-library/user-event':
-        specifier: ^14.5.0
-        version: 14.6.6(@testing-library/dom@10.4.1)
-      '@types/react':
-        specifier: ^19.0.0
-        version: 19.2.18
-      '@types/react-dom':
-        specifier: ^19.0.0
-        version: 19.2.5(@types/react@19.2.18)
-      '@vitejs/plugin-react':
-        specifier: ^4.3.0
-        version: 4.3.0(supports-color@10.2.2)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))
-      jsdom:
-        specifier: ^25.0.0
-        version: 25.0.0(supports-color@10.2.2)
-      miniflare:
-        specifier: 5.20260811.1-alpha
-        version: 5.20260811.1-alpha
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vite:
-        specifier: ^7.3.0
-        version: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-      wrangler:
-        specifier: ^4.20.0
-        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
-
-  packages/cas-client:
-    dependencies:
-      '@unidocs/cas-server-common':
-        specifier: workspace:*
-        version: link:../cas-server-common
-      '@unidocs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@unidocs/protocol-cas':
-        specifier: workspace:*
-        version: link:../protocol-cas
-      '@unidocs/protocol-cas-legacy':
-        specifier: workspace:*
-        version: link:../protocol-cas-legacy
-      '@unidocs/svalue-codec':
-        specifier: workspace:*
-        version: link:../svalue-codec
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  packages/cas-control-plane:
-    dependencies:
-      '@unidocs/protocol-cas-admin':
-        specifier: workspace:*
-        version: link:../protocol-cas-admin
-      jose:
-        specifier: ^6.2.10
-        version: 6.2.10
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      miniflare:
-        specifier: 5.20260811.1-alpha
-        version: 5.20260811.1-alpha
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  packages/cas-edge:
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-      wrangler:
-        specifier: ^4.20.0
-        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
-
-  packages/cas-server-cloudflare:
-    dependencies:
-      '@unidocs/cas-control-plane':
-        specifier: workspace:*
-        version: link:../cas-control-plane
-      '@unidocs/cas-server-common':
-        specifier: workspace:*
-        version: link:../cas-server-common
-      '@unidocs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@unidocs/protocol-cas':
-        specifier: workspace:*
-        version: link:../protocol-cas
-      '@unidocs/service-auth':
-        specifier: workspace:*
-        version: link:../service-auth
-      '@unidocs/svalue-codec':
-        specifier: workspace:*
-        version: link:../svalue-codec
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      miniflare:
-        specifier: 5.20260811.1-alpha
-        version: 5.20260811.1-alpha
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-      wrangler:
-        specifier: ^4.20.0
-        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
-
-  packages/cas-server-common:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  packages/cloudflare-cas:
-    dependencies:
-      '@unidocs/cas-server-common':
-        specifier: workspace:*
-        version: link:../cas-server-common
-      '@unidocs/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@unidocs/protocol-cas-legacy':
-        specifier: workspace:*
-        version: link:../protocol-cas-legacy
-      '@unidocs/service-auth':
-        specifier: workspace:*
-        version: link:../service-auth
-      '@unidocs/svalue-codec':
-        specifier: workspace:*
-        version: link:../svalue-codec
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      jose:
-        specifier: ^6.2.10
-        version: 6.2.10
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-      wrangler:
-        specifier: ^4.20.0
-        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
   packages/cloudflare-docx:
     dependencies:
@@ -520,12 +320,12 @@ importers:
 
   packages/cloudflare-sdk:
     dependencies:
-      '@unidocs/cas-client':
+      '@unicas/client':
         specifier: workspace:*
-        version: link:../cas-client
-      '@unidocs/cas-server-common':
+        version: link:../../unicas-packages/client
+      '@unicas/server-common':
         specifier: workspace:*
-        version: link:../cas-server-common
+        version: link:../../unicas-packages/server-common
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
@@ -561,9 +361,9 @@ importers:
         specifier: workspace:*
         version: link:../svalue-codec
     devDependencies:
-      '@unidocs/cas-server-common':
+      '@unicas/server-common':
         specifier: workspace:*
-        version: link:../cas-server-common
+        version: link:../../unicas-packages/server-common
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -614,18 +414,18 @@ importers:
 
   packages/doctype-server-common:
     dependencies:
-      '@unidocs/cas-client':
+      '@unicas/client':
         specifier: workspace:*
-        version: link:../cas-client
-      '@unidocs/cas-server-common':
+        version: link:../../unicas-packages/client
+      '@unicas/protocol':
         specifier: workspace:*
-        version: link:../cas-server-common
+        version: link:../../unicas-packages/protocol
+      '@unicas/server-common':
+        specifier: workspace:*
+        version: link:../../unicas-packages/server-common
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/protocol-cas':
-        specifier: workspace:*
-        version: link:../protocol-cas
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
@@ -648,15 +448,15 @@ importers:
 
   packages/gateway-common:
     dependencies:
-      '@unidocs/cas-client':
+      '@unicas/client':
         specifier: workspace:*
-        version: link:../cas-client
-      '@unidocs/protocol-cas':
+        version: link:../../unicas-packages/client
+      '@unicas/protocol':
         specifier: workspace:*
-        version: link:../protocol-cas
-      '@unidocs/protocol-cas-legacy':
+        version: link:../../unicas-packages/protocol
+      '@unicas/protocol-legacy':
         specifier: workspace:*
-        version: link:../protocol-cas-legacy
+        version: link:../../unicas-packages/protocol-legacy
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
@@ -680,41 +480,14 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
-  packages/protocol-cas:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  packages/protocol-cas-admin:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  packages/protocol-cas-legacy:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
   packages/protocol-doc:
     dependencies:
+      '@unicas/protocol':
+        specifier: workspace:*
+        version: link:../../unicas-packages/protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/protocol-cas':
-        specifier: workspace:*
-        version: link:../protocol-cas
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -725,12 +498,12 @@ importers:
 
   packages/protocol-gateway:
     dependencies:
+      '@unicas/protocol-legacy':
+        specifier: workspace:*
+        version: link:../../unicas-packages/protocol-legacy
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/protocol-cas-legacy':
-        specifier: workspace:*
-        version: link:../protocol-cas-legacy
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
@@ -805,6 +578,199 @@ importers:
       vite:
         specifier: ^7.3.0
         version: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
+
+  unicas-packages/admin-webui:
+    dependencies:
+      '@unicas/control-plane':
+        specifier: workspace:*
+        version: link:../control-plane
+      '@unicas/protocol-admin':
+        specifier: workspace:*
+        version: link:../protocol-admin
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      '@testing-library/jest-dom':
+        specifier: ^6.6.0
+        version: 6.10.0(@testing-library/dom@10.4.1)
+      '@testing-library/react':
+        specifier: ^16.1.0
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@testing-library/user-event':
+        specifier: ^14.5.0
+        version: 14.6.6(@testing-library/dom@10.4.1)
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.5(@types/react@19.2.18)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.0
+        version: 4.3.0(supports-color@10.2.2)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.0(supports-color@10.2.2)
+      miniflare:
+        specifier: 5.20260811.1-alpha
+        version: 5.20260811.1-alpha
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.0
+        version: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
+  unicas-packages/client:
+    dependencies:
+      '@unicas/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unicas/protocol-legacy':
+        specifier: workspace:*
+        version: link:../protocol-legacy
+      '@unicas/server-common':
+        specifier: workspace:*
+        version: link:../server-common
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../../packages/svalue-codec
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
+  unicas-packages/control-plane:
+    dependencies:
+      '@unicas/protocol-admin':
+        specifier: workspace:*
+        version: link:../protocol-admin
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      miniflare:
+        specifier: 5.20260811.1-alpha
+        version: 5.20260811.1-alpha
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
+  unicas-packages/edge:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
+  unicas-packages/protocol:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
+  unicas-packages/protocol-admin:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
+  unicas-packages/protocol-legacy:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
+  unicas-packages/server-cloudflare:
+    dependencies:
+      '@unicas/control-plane':
+        specifier: workspace:*
+        version: link:../control-plane
+      '@unicas/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unicas/server-common':
+        specifier: workspace:*
+        version: link:../server-common
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@unidocs/service-auth':
+        specifier: workspace:*
+        version: link:../../packages/service-auth
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../../packages/svalue-codec
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
+      miniflare:
+        specifier: 5.20260811.1-alpha
+        version: 5.20260811.1-alpha
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+      wrangler:
+        specifier: ^4.20.0
+        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
+
+  unicas-packages/server-common:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
 packages:
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { CasRoute } from "@unidocs/protocol-cas-legacy";
+import type { CasRoute } from "@unicas/protocol-legacy";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {
   casCapabilityPolicy,

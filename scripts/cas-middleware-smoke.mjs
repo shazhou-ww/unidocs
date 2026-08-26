@@ -13,7 +13,7 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "../packages/cas-server-common/dist/index.js";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "../unicas-packages/server-common/dist/index.js";
 import { casGcTriggerPermission, casReadPermission, casUsageReadPermission, casWritePermission, createPkcs8CapabilityIssuer } from "../packages/service-auth/dist/index.js";
 
 const BASE = process.argv[2] ?? "https://unicas.shazhou.work";

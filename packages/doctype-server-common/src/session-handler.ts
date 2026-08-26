@@ -33,7 +33,7 @@
 
 import { SValueContentType, type SValue } from "@unidocs/protocol";
 import { decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
-import { CasClientError } from "@unidocs/cas-client";
+import { CasClientError } from "@unicas/client";
 import {
   DeltaRejectedError,
   DocExistsError,

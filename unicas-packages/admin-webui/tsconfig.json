@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
+    "types": [
+      "@cloudflare/workers-types"
+    ],
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../protocol-admin"
+    },
+    {
+      "path": "../control-plane"
+    }
+  ]
+}

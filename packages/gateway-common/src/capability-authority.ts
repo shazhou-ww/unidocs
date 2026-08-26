@@ -1,4 +1,4 @@
-import type { CasRoute } from "@unidocs/protocol-cas-legacy";
+import type { CasRoute } from "@unicas/protocol-legacy";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import type {
   CapabilityPermission,

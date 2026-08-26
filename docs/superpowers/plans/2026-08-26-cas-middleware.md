@@ -41,8 +41,8 @@ This plan covers:
 - self-service administrator login, stack registration, membership,
   issuer/public-key configuration, domain management, and control-plane audit;
 - formal stack admin APIs and a WebUI-facing control-plane ingress;
-- the `@unidocs/protocol-cas` tenant contracts and separate
-  `@unidocs/protocol-cas-admin` control-plane contracts;
+- the `@unicas/protocol` tenant contracts and separate
+  `@unicas/protocol-admin` control-plane contracts;
 - CAS tenant clients, admin BFF/session APIs, and stack integration adapters;
 - Cloudflare CAS routing, storage, control-plane state, transactions, and
   migrations;
@@ -139,7 +139,7 @@ broad bearer token.
 
 ### `cas-admin-webui` package boundary
 
-`packages/cas-admin-webui` is a private pnpm workspace package and independent
+`unicas-packages/admin-webui` is a private pnpm workspace package and independent
 deployable. It follows the existing monorepo Web toolchain with a Vite +
 TypeScript client and a Worker BFF/server entry. Deployment routing mounts it
 at `/admin` on the CAS service domain; the tenant CAS runtime owns the
@@ -153,7 +153,7 @@ The package owns:
 - `/admin` BFF route handling and stack membership enforcement;
 - management UI state, forms, tables, pagination, and operator workflows.
 
-It depends on `@unidocs/protocol-cas-admin` and the cloud-neutral
+It depends on `@unicas/protocol-admin` and the cloud-neutral
 `cas-control-plane` service library. It does not import tenant CAS worker/DO
 implementation modules, does not accept stack tenant JWTs, and has no binding
 to tenant D1, R2, or Durable Objects. Control-plane reads/writes go through the
@@ -572,7 +572,7 @@ mapped consistently to HTTP status.
 ### Before: current canonical CAS routes
 
 These are all method/route pairs currently recognized by
-`@unidocs/protocol-cas`. Gateway exposure is intentionally not represented in
+`@unicas/protocol`. Gateway exposure is intentionally not represented in
 this table because it is a separate Gateway policy.
 
 | Method | Route | Operation | Purpose |
@@ -621,7 +621,7 @@ They have no in-repository service consumer and are not renamed or replaced.
 ### Runtime compatibility routes
 
 Cloudflare CAS currently also accepts tenant-header-only forms that are not
-canonical `@unidocs/protocol-cas` routes:
+canonical `@unicas/protocol` routes:
 
 | Method | Runtime route | Target disposition |
 |---|---|---|
@@ -646,7 +646,7 @@ never grants admin access.
 
 The current public CAS proxy policy must not expose Root Refs writes or CAS
 admin routes. That allowlist belongs in Gateway-owned code, not
-`@unidocs/protocol-cas`. `cas-admin-webui` owns the `/admin` BFF/session ingress;
+`@unicas/protocol`. `cas-admin-webui` owns the `/admin` BFF/session ingress;
 it does not turn admin routes into tenant/public CAS routes.
 
 ### Apply signed deltas
@@ -818,7 +818,7 @@ Those utilities are not owned by the retired routes; digest construction is
 also consumed by ordinary CAS clients and Doc runtimes.
 
 Retain `CasRootRefUpdate` and add the tenant write contract to
-`@unidocs/protocol-cas`:
+`@unicas/protocol`:
 
 ```ts
 export interface CasStackPath {
@@ -843,7 +843,7 @@ export type CasUpdateRootRefsResponse =
   | CasErrorResponse;
 ```
 
-Add stack audit contracts to `@unidocs/protocol-cas-admin`:
+Add stack audit contracts to `@unicas/protocol-admin`:
 
 ```ts
 export interface CasAdminRootDomainPath {
@@ -896,7 +896,7 @@ protocol-cas-admin: listRootDomainRefs, listRootDomainEvents
 ```
 
 The tenant route matcher never recognizes `/admin`. Remove `isPublicCasRoute()`
-from `@unidocs/protocol-cas`; Gateway-owned policy matches a tenant `CasRoute`
+from `@unicas/protocol`; Gateway-owned policy matches a tenant `CasRoute`
 and applies its own operation allowlist through a Gateway-specific helper such
 as `isGatewayExposedCasRoute()`. Every tenant `CasRoute` variant carries
 `stackId + tenantId`. The admin matcher recognizes only `/admin` resources and
@@ -1297,26 +1297,26 @@ the deployment runbook and reviewed at go-live.
 
 | Path | Planned change |
 |---|---|
-| `packages/cas-edge/` | Add the public custom-domain Worker that dispatches only `/stacks` and `/admin` to private service bindings |
-| `packages/protocol-cas-admin/` | Add top-level `/admin` contracts, route matcher, stable errors, and pagination types without tenant data-plane operations |
-| `packages/cas-control-plane/` | Add cloud-neutral administrator identity, equal membership, single issuer/multi-key, domain, and control-audit service library |
-| `packages/cas-admin-webui/` | Add the `/admin` OIDC/BFF and stack administration WebUI as a separate deployable artifact in the monorepo |
+| `unicas-packages/edge/` | Add the public custom-domain Worker that dispatches only `/stacks` and `/admin` to private service bindings |
+| `unicas-packages/protocol-admin/` | Add top-level `/admin` contracts, route matcher, stable errors, and pagination types without tenant data-plane operations |
+| `unicas-packages/control-plane/` | Add cloud-neutral administrator identity, equal membership, single issuer/multi-key, domain, and control-audit service library |
+| `unicas-packages/admin-webui/` | Add the `/admin` OIDC/BFF and stack administration WebUI as a separate deployable artifact in the monorepo |
 | `packages/{cas-edge,protocol-cas-admin,cas-control-plane,cas-admin-webui}/package.json` | Add workspace names, build/typecheck/test/clean scripts, explicit dependencies, and private/publish settings |
 | `packages/{cas-edge,protocol-cas-admin,cas-control-plane,cas-admin-webui}/tsconfig.json` | Add composite TypeScript project configuration and root project references |
-| `packages/protocol-cas/src/types.ts` | Remove assignment types; add balance/event domain types; update `TenantCasService` |
-| `packages/protocol-cas/src/http.ts` | Add stack-scoped tenant paths; split update contracts; remove admin and retired contracts |
-| `packages/protocol-cas/src/routes.ts` | Match only stack-and-tenant service routes; remove admin, retired routes, and Gateway exposure policy |
-| `packages/protocol-cas/src/index.ts` | Remove retired exports and publish the target contracts |
-| `packages/protocol-cas/tests/routes.test.ts` | Cover service and operator routes; remove portable-node and Gateway-policy assertions |
+| `unicas-packages/protocol/src/types.ts` | Remove assignment types; add balance/event domain types; update `TenantCasService` |
+| `unicas-packages/protocol/src/http.ts` | Add stack-scoped tenant paths; split update contracts; remove admin and retired contracts |
+| `unicas-packages/protocol/src/routes.ts` | Match only stack-and-tenant service routes; remove admin, retired routes, and Gateway exposure policy |
+| `unicas-packages/protocol/src/index.ts` | Remove retired exports and publish the target contracts |
+| `unicas-packages/protocol/tests/routes.test.ts` | Cover service and operator routes; remove portable-node and Gateway-policy assertions |
 | `packages/protocol-gateway/src/index.ts` | Own the Gateway-exposed CAS operation allowlist |
 | `packages/gateway-common/src/gateway-handler.ts` | Apply injected Gateway CAS exposure policy after route matching |
-| `packages/cas-client/src/index.ts` | Add `stackId`, update the write route, and remove assignment/read emulation |
-| `packages/cas-client/tests/cas-client.test.ts` | Verify stack-scoped URLs, responses, auth, and retries |
+| `unicas-packages/client/src/index.ts` | Add `stackId`, update the write route, and remove assignment/read emulation |
+| `unicas-packages/client/tests/cas-client.test.ts` | Verify stack-scoped URLs, responses, auth, and retries |
 | `packages/cloudflare-cas/src/worker.ts` | Host the private tenant data plane and audit-reader RPC, verify stack JWTs, dispatch tenant operations, and remove retired routes |
 | `packages/cloudflare-cas/src/cas/routes.ts` | Partition tenant commands by stack and tenant; forward Root Refs operations |
 | `packages/cloudflare-cas/src/cas/do.ts` | Use stack-scoped D1/R2 keys, implement Root Ref operations, and remove retired handlers |
 | `packages/cloudflare-cas/src/cas/schema.ts` | Add `stack_id` to tenant keys and stack-domain audit schema; migrate idempotency; retire owner schema |
-| `packages/cas-edge/wrangler.toml` | Own custom-domain routes and bind private `CAS_TENANT_SERVICE` and `CAS_ADMIN_SERVICE` Workers |
+| `unicas-packages/edge/wrangler.toml` | Own custom-domain routes and bind private `CAS_TENANT_SERVICE` and `CAS_ADMIN_SERVICE` Workers |
 | `packages/cloudflare-cas/wrangler.toml` | Provision private tenant D1/R2/DO, domain DO, read-only authority repository, audit-reader RPC, compatibility, and deployment settings |
 | `packages/cloudflare-cas/tests/` | Add cross-stack isolation, migration, and ledger coverage; remove retired API tests |
 | `packages/cloudflare-sdk/src/editor-do-svalue.ts` | Replace owner assignments with explicit acquire/release deltas |
@@ -1324,9 +1324,9 @@ the deployment runbook and reviewed at go-live.
 | `packages/service-auth/src/claims.ts` | Add and validate tenant, permission, and Root Refs domain claims |
 | `packages/service-auth/src/issuer.ts` | Accept registered domains and issue generic stack-authority CAS capabilities |
 | `packages/service-auth/src/verifier.ts` | Verify tenant JWT capabilities and preserve stack, tenant, and domain context |
-| `packages/cas-admin-webui/src/server/` | Implement Google OIDC callback, secure session, CSRF, `/admin` BFF routes, and control-plane service calls |
-| `packages/cas-admin-webui/src/ui/` | Implement stack list/detail, members, issuer keys, domains, Root Ref audit, control audit, and usage views |
-| `packages/cas-admin-webui/wrangler.toml` | Provision `CAS_CONTROL_DB`, OIDC/session secrets, private audit-reader binding, and control-plane deployment settings |
+| `unicas-packages/admin-webui/src/server/` | Implement Google OIDC callback, secure session, CSRF, `/admin` BFF routes, and control-plane service calls |
+| `unicas-packages/admin-webui/src/ui/` | Implement stack list/detail, members, issuer keys, domains, Root Ref audit, control audit, and usage views |
+| `unicas-packages/admin-webui/wrangler.toml` | Provision `CAS_CONTROL_DB`, OIDC/session secrets, private audit-reader binding, and control-plane deployment settings |
 | `packages/gateway-common/src/capability-authority.ts` | Adapt the current central issuer to the generic stack-authority contract |
 | `packages/gateway-common/src/capability-policy.ts` | Define Root Refs write delegation and separate operator audit permission |
 | `packages/doctype-server-common/src/doc-type-handler.ts` | Carry the delegated CAS capability through the request-bounded Doc operation |
@@ -1349,7 +1349,7 @@ the deployment runbook and reviewed at go-live.
 
 ### Task 1: Freeze middleware and control-plane contracts
 
-- [x] Add `@unidocs/protocol-cas-admin` request/response contracts for administrator identity,
+- [x] Add `@unicas/protocol-admin` request/response contracts for administrator identity,
   stack registration/listing, membership, one tenant issuer and its keys,
   domains, stack metadata, and control audit.
 - [x] Define immutable IDs, lifecycle states, pagination, optimistic
@@ -1361,7 +1361,7 @@ the deployment runbook and reviewed at go-live.
 - [x] Threat-model OIDC account linking, stack takeover, issuer/JWKS
   substitution, key rotation, confused-deputy paths, WebUI CSRF/session
   theft, and control-audit tampering.
-- [x] Prove `/admin` routes are absent from `@unidocs/protocol-cas`, tenant
+- [x] Prove `/admin` routes are absent from `@unicas/protocol`, tenant
   clients, and the tenant/public CAS proxy; the admin protocol has its own
   matcher and authentication middleware.
 - [x] Add package manifests, composite tsconfigs/root references,
@@ -1391,7 +1391,7 @@ including authorization matrices and negative cross-plane fixtures.
   verifier caching/refresh lands with Task 4 authorization.)
 - [x] Implement registered `refDomain` lifecycle: `active`, `write_disabled`,
   and `retired`; retirement preserves all historical audit data.
-- [x] Create `packages/cas-admin-webui` as a separately deployable package with
+- [x] Create `unicas-packages/admin-webui` as a separately deployable package with
   `src/server` for Google OIDC callback, encrypted/rotatable session state,
   CSRF/origin checks, `/admin` BFF handlers, and control-plane calls.
 - [x] Build `src/ui` views for My Stacks, stack overview, members, issuer keys,
@@ -1413,12 +1413,12 @@ cover the same states this task's scope requires.)
 
 ### Task 3: Freeze tenant and admin CAS protocol behavior
 
-> **Approach (operator-approved):** the canonical `@unidocs/protocol-cas` is
+> **Approach (operator-approved):** the canonical `@unicas/protocol` is
 > frozen to the stack-scoped protocol; the pre-stack tenant surface is
-> quarantined verbatim in the migration-only `@unidocs/protocol-cas-legacy`
+> quarantined verbatim in the migration-only `@unicas/protocol-legacy`
 > package, consumed only by the legacy runtime packages (cloudflare-cas,
 > cas-client, gateways) until Task 9/10 retire them. A new
-> `@unidocs/cas-server-cloudflare` package hosts the canonical stack protocol
+> `@unicas/server-cloudflare` package hosts the canonical stack protocol
 > implementation (Tasks 4–7 land there); the old runtime keeps serving
 > unchanged during the compatibility window.
 
@@ -1434,7 +1434,7 @@ cover the same states this task's scope requires.)
   worker authorization on `cas-server-cloudflare`.)
 - [x] Add response/request type tests or compile fixtures for update, balance,
       event, cursor, and revision contracts.
-- [x] Remove `isPublicCasRoute()` from `@unidocs/protocol-cas`; move the
+- [x] Remove `isPublicCasRoute()` from `@unicas/protocol`; move the
       Gateway-exposed CAS operation allowlist into Gateway-owned policy.
 - [x] Prove the current Gateway policy excludes Root Refs writes and all CAS
       audit operations without treating that exclusion as a CAS route property.
@@ -1449,10 +1449,10 @@ cover the same states this task's scope requires.)
 **Focused validation:**
 
 ```text
-pnpm --filter @unidocs/protocol-cas test
-pnpm --filter @unidocs/protocol-cas typecheck
-pnpm --filter @unidocs/protocol-cas-admin test
-pnpm --filter @unidocs/protocol-cas-admin typecheck
+pnpm --filter @unicas/protocol test
+pnpm --filter @unicas/protocol typecheck
+pnpm --filter @unicas/protocol-admin test
+pnpm --filter @unicas/protocol-admin typecheck
 pnpm --filter @unidocs/protocol-gateway test
 ```
 
@@ -1526,12 +1526,12 @@ typecheck, dependency guard (160).
 > **Option A remap:** the stack-scoped target schema, audit tables, DO
 > partitioning, `_legacy` baseline, R2 migration, and cutover machinery land
 > in `cas-server-cloudflare` (the canonical server) as its fresh target
-> schema. The legacy runtime (`@unidocs/cloudflare-cas`) keeps its stackless
-> tables and `cas_root_owners` unchanged until Task 9/10 retire it, so the
-> in-place v1→v2 shadow-write/dual-write phases are eliminated; historical
-> data moves through the R2 copy job + `_legacy` baseline instead. Focused
-> validation remaps from `cloudflare-cas` to `cas-server-cloudflare` (the
-> legacy runtime's schema tests still pass unchanged).
+> schema. The legacy runtime was retired on 2026-08-26 (its package deleted
+> and the local runtimes reduced to stack mode only), so the in-place
+> v1→v2 shadow-write/dual-write phases are eliminated; historical data moves
+> through the R2 copy job + `_legacy` baseline instead. Focused validation
+> remaps from `cloudflare-cas` to `cas-server-cloudflare` (the legacy
+> runtime's schema tests were removed with the retired package).
 
 - [x] Add versioned stack-aware tables alongside every tenant-owned current
       table; do not rewrite primary keys in place. Add the durable
@@ -1572,7 +1572,7 @@ typecheck, dependency guard (160).
   gate are tested here; the legacy schema shapes remain covered by the
   unchanged `cloudflare-cas` schema tests.)
 
-**Focused validation (remapped):** `pnpm --filter @unidocs/cas-server-cloudflare
+**Focused validation (remapped):** `pnpm --filter @unicas/server-cloudflare
 test` (35: schema/cutover, DO names, `_legacy` baseline, R2 migration)
 plus the unchanged `cloudflare-cas` schema suite; repo-wide typecheck and the
 dependency guard (160).
@@ -1760,12 +1760,15 @@ Tests assert both aggregate counts and emitted domain deltas.
   cross-stack tokens are 403, and cross-stack GC never touches the other
   stack. Issuer keys and memberships are control-plane rows keyed per
   stack.)
-- [~] Run compatibility-phase telemetry until no supported binary uses
+- [x] Run compatibility-phase telemetry until no supported binary uses
   shared-key, tenantless, root-assignment, or portable-node routes; then
-  disable those paths after the rollback window. (The legacy worker now
-  emits structured `cas_legacy_surface` events for shared-key auth,
-  rootAssignments, and portable-node usage; disabling those paths after the
-  rollback window is an ops step.)
+  disable those paths after the rollback window. (Retired EARLY on
+  2026-08-26 by decision: the legacy runtime package `cloudflare-cas` was
+  deleted and the local runtimes (Cloudflare + Azure) now support stack mode
+  only, so the shared-key/tenantless/root-assignment/portable-node
+  implementation surfaces are gone. `protocol-legacy` keeps the frozen
+  contracts for the remaining legacy-compatible gateway/cas-client paths
+  until the rollback window closes.)
 - [~] Prove each application stack can deploy, roll back, and operate without
   redeploying CAS, and CAS can deploy compatibly without redeploying either
   stack. (Middleware deployed independently of the application stacks; a
@@ -1785,18 +1788,28 @@ plus independent deployment/rollback.
 
 ### Task 10: Remove retired APIs
 
-- [ ] Delete worker and DO `assignRoots` dispatch and implementation.
-- [ ] Delete all owner-assignment tests and replace their intended lifecycle
+> The retired API *implementations* were removed on 2026-08-26 by deleting
+> the legacy runtime package (`packages/cloudflare-cas`) along with the
+> legacy/dual/capability local-runtime modes. What remains below is the
+> original checklist; the frozen contracts still live in
+> `@unicas/protocol-legacy` (consumed by the remaining legacy-compatible
+> gateway/cas-client paths) and are removed when the rollback window closes.
+
+- [x] Delete worker and DO `assignRoots` dispatch and implementation.
+- [x] Delete all owner-assignment tests and replace their intended lifecycle
       coverage with signed-delta tests.
-- [ ] Delete `/_internal/nodes/{hash}` GET/POST dispatch, portable-node route
+- [x] Delete `/_internal/nodes/{hash}` GET/POST dispatch, portable-node route
       forwarding, DO actions and handlers, and API-specific tests.
-- [ ] Keep canonical binary encode/parse/validation/digest helpers and their
+- [x] Keep canonical binary encode/parse/validation/digest helpers and their
       non-route tests; remove only symbols owned by the portable HTTP surface.
 - [ ] Verify no source, generated declaration, route, fixture, or document
       references `CasAssignRootsRequest`, `CasRootAssignment`,
       `rootAssignments`, `cas_root_owners`, `readPortableNode`,
       `leasePortableNode`, portable HTTP contract types, or
-      `/_internal/nodes/{hash}` as a live API.
+      `/_internal/nodes/{hash}` as a live API. (Legacy *implementation*
+      references are gone with the deleted package; the frozen
+      `@unicas/protocol-legacy` contract symbols remain by design until the
+      rollback window closes.)
 - [ ] Stop creating the owner table on fresh databases.
 - [ ] Schedule physical owner-table removal only after compatibility deployment
       verification; do not couple destructive cleanup to the API cutover.
@@ -1883,7 +1896,7 @@ pretend to implement them through hidden optional fields.
 - Tenant routes accept only stack-issuer JWT capabilities for the CAS data
   plane. Admin routes accept only Google OIDC-backed BFF sessions and stack
   membership; each authentication plane rejects the other credential class.
-- `packages/cas-admin-webui` is independently deployable, owns the `/admin`
+- `unicas-packages/admin-webui` is independently deployable, owns the `/admin`
   OIDC/BFF boundary and management UI, and exposes no Google secret, session
   signing material, tenant JWT, or storage binding to browser code.
 - Control-plane creates are idempotent, mutable resources require ETag

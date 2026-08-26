@@ -15,7 +15,7 @@
   ],
   "references": [
     {
-      "path": "../cas-client"
+      "path": "../../unicas-packages/client"
     },
     {
       "path": "../svalue-codec"

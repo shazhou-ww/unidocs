@@ -5,9 +5,17 @@
  */
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
-import { docServiceAccessKey } from "../../../stacks/cloudflare/local/doc-types.mjs";
+import {
+  casReadPermission,
+  casWritePermission,
+  createPkcs8CapabilityIssuer,
+  sessionReadPermission,
+  sessionWritePermission,
+} from "../../../packages/service-auth/src/index.ts";
 
 let runtime;
+let docIssuer;
+let casIssuer;
 
 // No explicit `replicas` here, deliberately: this suite exists to guard
 // `startAzureRuntime()`'s *default* replica count (`stacks/azure/local/runtime.mjs`),
@@ -18,6 +26,21 @@ let runtime;
 // real replicas sharing one service database) quietly reverted.
 beforeAll(async () => {
   runtime = await startAzureRuntime();
+  // 栈模式：直连副本绕过 gateway，鉴权凭证必须在这里自签。
+  // docIssuer = gateway 身份（session capability）；casIssuer = 栈身份
+  // （delegated CAS capability，middleware 按注册的 azure 栈 issuer 验证）。
+  const cap = runtime.capabilityFixture;
+  docIssuer = await createPkcs8CapabilityIssuer({
+    issuer: cap.issuer,
+    kid: cap.kid,
+    privateKeyPkcs8: cap.privateKeyPkcs8,
+  });
+  const stack = runtime.stackFixture;
+  casIssuer = await createPkcs8CapabilityIssuer({
+    issuer: stack.issuer,
+    kid: stack.kid,
+    privateKeyPkcs8: stack.privateKeyPkcs8,
+  });
 }, 180_000);
 
 afterAll(async () => {
@@ -46,22 +69,52 @@ async function createDoc(userId) {
   return { docId: body.docId, ...identity };
 }
 
-function applyVia(replicaUrl, identity, baseVersion, content) {
-  return closeFetch(`${replicaUrl}/sessions/${identity.sessionId}/apply`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Internal-Token": docServiceAccessKey("markdown"),
-      "X-Tenant-Id": identity.tenantId,
-      "X-Session-Id": identity.sessionId,
-      "X-Doc-Type": "markdown",
-    },
-    body: JSON.stringify({
-      baseVersion,
-      description: `set ${content}`,
-      operations: [{ kind: "setContent", payload: { content } }],
+async function sessionTokens(identity, { write }) {
+  const audience = "unidocs-doc:markdown";
+  const sessionPermission = write
+    ? sessionWritePermission(identity.tenantId, identity.sessionId)
+    : sessionReadPermission(identity.tenantId, identity.sessionId);
+  const casPermissions = write
+    ? [casReadPermission(identity.tenantId), casWritePermission(identity.tenantId)]
+    : [casReadPermission(identity.tenantId)];
+  const [sessionToken, casToken] = await Promise.all([
+    docIssuer.issue({
+      subject: "gateway",
+      audience,
+      tenantId: identity.tenantId,
+      sessionId: identity.sessionId,
+      permissions: [sessionPermission],
     }),
-  });
+    casIssuer.issue({
+      subject: "doc:markdown",
+      audience: runtime.stackFixture.audience,
+      tenantId: identity.tenantId,
+      sessionId: identity.sessionId,
+      permissions: casPermissions,
+    }),
+  ]);
+  return { sessionToken, casToken };
+}
+
+function applyVia(replicaUrl, identity, baseVersion, content) {
+  return sessionTokens(identity, { write: true }).then(({ sessionToken, casToken }) =>
+    closeFetch(`${replicaUrl}/tenants/${identity.tenantId}/sessions/${identity.sessionId}/apply`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+        "X-UniDocs-CAS-Capability": casToken,
+        "Content-Type": "application/json",
+        "X-Tenant-Id": identity.tenantId,
+        "X-Session-Id": identity.sessionId,
+        "X-Doc-Type": "markdown",
+      },
+      body: JSON.stringify({
+        baseVersion,
+        description: `set ${content}`,
+        operations: [{ kind: "setContent", payload: { content } }],
+      }),
+    }),
+  );
 }
 
 test("two replicas applying the same baseVersion: exactly one wins", async () => {
@@ -96,11 +149,13 @@ test("a write on one replica is immediately visible on the other", async () => {
   const applied = await applyVia(a, identity, 1, "written-on-a");
   expect(await applied.json()).toMatchObject({ success: true, version: 2 });
 
-  const queried = await closeFetch(`${b}/sessions/${identity.sessionId}/query`, {
+  const { sessionToken, casToken } = await sessionTokens(identity, { write: false });
+  const queried = await closeFetch(`${b}/tenants/${identity.tenantId}/sessions/${identity.sessionId}/query`, {
     method: "POST",
     headers: {
+      Authorization: `Bearer ${sessionToken}`,
+      "X-UniDocs-CAS-Capability": casToken,
       "Content-Type": "application/json",
-      "X-Internal-Token": docServiceAccessKey("markdown"),
       "X-Tenant-Id": identity.tenantId,
       "X-Session-Id": identity.sessionId,
       "X-Doc-Type": "markdown",

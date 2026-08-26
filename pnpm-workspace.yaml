@@ -1,5 +1,6 @@
 packages:
   - 'packages/*'
+  - 'unicas-packages/*'
 allowBuilds:
   cpu-features: true
   esbuild: true

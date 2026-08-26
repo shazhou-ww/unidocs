@@ -6,10 +6,14 @@ not define end-user identity or authorization.
 ## Configuration ownership
 
 Gateway is the only workload that receives `CAPABILITY_PRIVATE_KEY_PKCS8`.
-Doc and CAS receive `CAPABILITY_TRUSTED_JWKS`, which must contain public keys
-only. A deployment must also set:
+Doc services receive `CAPABILITY_TRUSTED_JWKS` (public keys only) for
+session-capability verification. The CAS middleware does **not** verify
+Gateway's identity: it verifies stack-issued delegated capabilities against
+the registered stack's `CAS_STACK_TRUSTED_JWKS` (managed via the control
+plane, `@unicas/control-plane`). A deployment must also set:
 
-- `INTERNAL_AUTH_MODE`: `dual` or `capability` while capabilities are active;
+- `INTERNAL_AUTH_MODE`: `stack` (legacy/dual/capability retired with the
+  legacy runtime);
 - `CAPABILITY_ALGORITHM`: `ES256`;
 - `CAPABILITY_TTL_SECONDS`: `120`;
 - `CAPABILITY_MAX_LIFETIME_SECONDS`: `300`;

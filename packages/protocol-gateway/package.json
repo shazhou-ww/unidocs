@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@unidocs/protocol": "workspace:*",
-    "@unidocs/protocol-cas-legacy": "workspace:*",
+    "@unicas/protocol-legacy": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*"
   },
   "devDependencies": {

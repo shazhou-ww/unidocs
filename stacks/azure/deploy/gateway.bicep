@@ -35,7 +35,7 @@ param casAccessKey string
 @secure()
 param capabilityPrivateKeyPkcs8 string = ''
 
-param internalAuthMode string = 'legacy'
+param internalAuthMode string = 'stack'
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param capabilityKeyId string = ''
 param casCapabilityAudience string = 'unidocs-cas'

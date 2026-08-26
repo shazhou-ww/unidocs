@@ -10,7 +10,7 @@ import type {
 } from "./ports.js";
 import type { CasGateway } from "./session.js";
 import { VersionConflictError } from "@unidocs/protocol-doc";
-import { computeNodeDigest, encodeHeader, hashToHex } from "@unidocs/cas-server-common";
+import { computeNodeDigest, encodeHeader, hashToHex } from "@unicas/server-common";
 
 class MemoryDeltaLog implements DeltaLog {
   #deltas: Delta[] = [];

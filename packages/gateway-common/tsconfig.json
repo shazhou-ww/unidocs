@@ -15,13 +15,13 @@
   ],
   "references": [
     {
-      "path": "../cas-client"
+      "path": "../../unicas-packages/client"
     },
     {
-      "path": "../protocol-cas"
+      "path": "../../unicas-packages/protocol"
     },
     {
-      "path": "../protocol-cas-legacy"
+      "path": "../../unicas-packages/protocol-legacy"
     },
     {
       "path": "../protocol-doc"

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unidocs/cas-server-common";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unicas/server-common";
 import { SValueContentType } from "@unidocs/protocol";
 import { encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { CasClientError } from "@unidocs/cas-client";
+import { CasClientError } from "@unicas/client";
 import {
   createSBlobContext,
   SBlobIntegrityError,

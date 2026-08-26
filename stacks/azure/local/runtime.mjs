@@ -611,14 +611,6 @@ function assertDocTypesSupported(docTypes, table) {
  * broken") — `tests/integration/azure/azure-multi-replica.test.mjs` asserts `replicas >= 2`
  * itself so that dropping to 1 can't quietly become the new normal.
  *
- * `casBaseUrl` (过渡形态,阶段 4 删除): forwarded as `CAS_BASE_URL` to every
- * markdown replica's env *and* the gateway's env — both need it, for
- * different reasons (see `doc-type-service.ts` and `azure-gateway/main.ts`).
- * Points at the Cloudflare CAS worker's direct port (Miniflare's
- * `unsafeDirectSockets`, e.g. `startLocalRuntime()`'s `urls.cas`), never at
- * a gateway. Omitted entirely (not set to an empty string) when the caller
- * doesn't pass one, so the services fall back to their own 501 stubs.
- *
  * `postgres` (default `"compose"`): how this run gets a Postgres to talk to.
  * `"compose"` is today's behavior — `docker compose up -d` against
  * `packages/azure-sdk/docker-compose.yml`, torn down with `down -v` in `dispose()`.
@@ -656,8 +648,7 @@ export async function startAzureRuntime({
   host = "127.0.0.1",
   docTypes = ["markdown"],
   replicas = 2,
-  casBaseUrl,
-  internalAuthMode = "dual",
+  internalAuthMode = "stack",
   capabilityFixture,
   stackFixture,
   middlewarePorts = {},
@@ -665,16 +656,12 @@ export async function startAzureRuntime({
   postgres = "compose",
   azuriteDataDir,
 } = {}) {
-  if (!['legacy', 'dual', 'capability', 'stack'].includes(internalAuthMode)) {
-    throw new Error(`startAzureRuntime(): internalAuthMode must be "legacy", "dual", "capability", or "stack", got ${JSON.stringify(internalAuthMode)}`);
+  if (internalAuthMode !== "stack") {
+    throw new Error("startAzureRuntime() only supports stack mode (legacy/dual/capability retired with the legacy runtime)");
   }
-  const stackMode = internalAuthMode === "stack";
-  const resolvedStackFixture = stackMode
-    ? (stackFixture ?? await createEphemeralAzureStackFixture())
-    : undefined;
+  const resolvedStackFixture = stackFixture ?? await createEphemeralAzureStackFixture();
   // 嵌入中间件的独立端口：避开 cf dev（`pnpm dev`）占用的 8791-8793/8794。
   const resolvedMiddlewarePorts = {
-    cas: 37791,
     admin: 37792,
     mockOidc: 37793,
     edge: 36894,
@@ -684,9 +671,7 @@ export async function startAzureRuntime({
     throw new Error(`startAzureRuntime(): postgres must be "compose" or "external", got ${JSON.stringify(postgres)}`);
   }
   const externalPostgres = postgres === "external";
-  const resolvedCapabilityFixture = internalAuthMode === "legacy"
-    ? undefined
-    : capabilityFixture ?? await createEphemeralCapabilityFixture();
+  const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
   const docTypeTable = readAzureDocTypes(ROOT);
   assertDocTypesSupported(docTypes, docTypeTable);
   const layout = azurePortLayout({
@@ -708,26 +693,21 @@ export async function startAzureRuntime({
   // of the fresh stack, making the behavior suite pass against stale state).
   await assertPortsFree(layout, { skipPostgresPort: externalPostgres });
 
-  // 栈模式：嵌入本地 CAS 中间件（注册 unidocs-azure 栈）。azure 网关与
-  // 服务进程的 CAS_BASE_URL 指向它的 edge 端点，不再依赖 cf legacy CAS
-  // worker（8791 共享密钥的过渡形态）。
-  let middleware;
-  let resolvedCasBaseUrl = casBaseUrl;
-  if (stackMode) {
-    middleware = await startLocalMiddleware({
-      stacks: [{
-        stackId: resolvedStackFixture.stackId,
-        issuer: resolvedStackFixture.issuer,
-        audience: resolvedStackFixture.audience,
-        kid: resolvedStackFixture.kid,
-        publicJwk: resolvedStackFixture.jwks.keys[0],
-        refDomains: resolvedStackFixture.refDomains,
-      }],
-      ports: resolvedMiddlewarePorts,
-      logLevel: middlewareLogLevel,
-    });
-    resolvedCasBaseUrl = middleware.urls.edge;
-  }
+  // 嵌入本地 CAS 中间件（注册 unidocs-azure 栈）。azure 网关与服务进程的
+  // CAS_BASE_URL 指向它的 edge 端点；共享密钥的过渡形态已随 legacy 运行时退役。
+  const middleware = await startLocalMiddleware({
+    stacks: [{
+      stackId: resolvedStackFixture.stackId,
+      issuer: resolvedStackFixture.issuer,
+      audience: resolvedStackFixture.audience,
+      kid: resolvedStackFixture.kid,
+      publicJwk: resolvedStackFixture.jwks.keys[0],
+      refDomains: resolvedStackFixture.refDomains,
+    }],
+    ports: resolvedMiddlewarePorts,
+    logLevel: middlewareLogLevel,
+  });
+  const resolvedCasBaseUrl = middleware.urls.edge;
 
   if (externalPostgres) {
     // Nothing to pull, nothing to start — the caller's environment already
@@ -788,25 +768,20 @@ export async function startAzureRuntime({
             BLOB_CONNECTION_STRING,
             INTERNAL_AUTH_MODE: internalAuthMode,
             DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
-            CAS_CAPABILITY_AUDIENCE: stackMode
-              ? resolvedStackFixture.audience
-              : "unidocs-cas",
+            CAS_CAPABILITY_AUDIENCE: resolvedStackFixture.audience,
             CAPABILITY_ALGORITHM: "ES256",
             CAPABILITY_TTL_SECONDS: "120",
             CAPABILITY_MAX_LIFETIME_SECONDS: "300",
             CAPABILITY_CLOCK_SKEW_SECONDS: "30",
-            ...(resolvedCapabilityFixture ? {
-              CAPABILITY_ISSUER: resolvedCapabilityFixture.issuer,
-              CAPABILITY_TRUSTED_JWKS: JSON.stringify(resolvedCapabilityFixture.jwks),
-            } : {}),
-            ...(stackMode ? {
-              CAS_STACK_ID: resolvedStackFixture.stackId,
-              CAS_STACK_ISSUER: resolvedStackFixture.issuer,
-              CAS_STACK_TRUSTED_JWKS: JSON.stringify(resolvedStackFixture.jwks),
-            } : {}),
+            CAPABILITY_ISSUER: resolvedCapabilityFixture.issuer,
+            CAPABILITY_TRUSTED_JWKS: JSON.stringify(resolvedCapabilityFixture.jwks),
+            CAS_STACK_ID: resolvedStackFixture.stackId,
+            CAS_STACK_ISSUER: resolvedStackFixture.issuer,
+            CAS_STACK_TRUSTED_JWKS: JSON.stringify(resolvedStackFixture.jwks),
             SERVICE_ACCESS_KEY: docServiceAccessKey(name),
             PORT: String(port),
-            ...(resolvedCasBaseUrl ? { CAS_BASE_URL: resolvedCasBaseUrl, CAS_ACCESS_KEY } : {}),
+            CAS_BASE_URL: resolvedCasBaseUrl,
+            CAS_ACCESS_KEY,
           },
           `azure-${name}-${i + 1}`,
         );
@@ -841,28 +816,22 @@ export async function startAzureRuntime({
         CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: JSON.stringify(docServices),
         INTERNAL_AUTH_MODE: internalAuthMode,
-        CAS_CAPABILITY_AUDIENCE: stackMode
-          ? resolvedStackFixture.audience
-          : "unidocs-cas",
+        CAS_CAPABILITY_AUDIENCE: resolvedStackFixture.audience,
         CAPABILITY_ALGORITHM: "ES256",
         CAPABILITY_TTL_SECONDS: "120",
         CAPABILITY_MAX_LIFETIME_SECONDS: "300",
         CAPABILITY_CLOCK_SKEW_SECONDS: "30",
-        ...(resolvedCapabilityFixture ? {
-          CAPABILITY_ISSUER: resolvedCapabilityFixture.issuer,
-          CAPABILITY_KEY_ID: resolvedCapabilityFixture.kid,
-          CAPABILITY_PRIVATE_KEY_PKCS8: resolvedCapabilityFixture.privateKeyPkcs8,
-        } : {}),
-        ...(stackMode ? {
-          CAS_STACK_ID: resolvedStackFixture.stackId,
-          CAS_STACK_ISSUER: resolvedStackFixture.issuer,
-          CAS_STACK_KEY_ID: resolvedStackFixture.kid,
-          CAS_STACK_PRIVATE_KEY_PKCS8: resolvedStackFixture.privateKeyPkcs8,
-          CAS_REF_DOMAIN: "doc",
-        } : {}),
+        CAPABILITY_ISSUER: resolvedCapabilityFixture.issuer,
+        CAPABILITY_KEY_ID: resolvedCapabilityFixture.kid,
+        CAPABILITY_PRIVATE_KEY_PKCS8: resolvedCapabilityFixture.privateKeyPkcs8,
+        CAS_STACK_ID: resolvedStackFixture.stackId,
+        CAS_STACK_ISSUER: resolvedStackFixture.issuer,
+        CAS_STACK_KEY_ID: resolvedStackFixture.kid,
+        CAS_STACK_PRIVATE_KEY_PKCS8: resolvedStackFixture.privateKeyPkcs8,
+        CAS_REF_DOMAIN: "doc",
         INSECURE_PATH_IDENTITY: "true",
         PORT: String(layout.gateway),
-        ...(resolvedCasBaseUrl ? { CAS_BASE_URL: resolvedCasBaseUrl } : {}),
+        CAS_BASE_URL: resolvedCasBaseUrl,
       },
       "azure-gateway",
     );

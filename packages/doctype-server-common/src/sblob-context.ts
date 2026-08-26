@@ -1,4 +1,4 @@
-import { CasClientError } from "@unidocs/cas-client";
+import { CasClientError } from "@unicas/client";
 import {
   computeNodeDigest,
   encodeHeader,
@@ -6,8 +6,8 @@ import {
   hexToHash,
   validateContentType,
   validateHash,
-} from "@unidocs/cas-server-common";
-import type { CasNodeMetadata } from "@unidocs/protocol-cas";
+} from "@unicas/server-common";
+import type { CasNodeMetadata } from "@unicas/protocol";
 import type {
   DocumentTypeContext,
   MakeSBlob,

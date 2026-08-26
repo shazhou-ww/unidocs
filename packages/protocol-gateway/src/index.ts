@@ -1,5 +1,5 @@
 import type { SValue } from "@unidocs/protocol";
-import { isPublicCasRoute, matchCasRoute } from "@unidocs/protocol-cas-legacy";
+import { isPublicCasRoute, matchCasRoute } from "@unicas/protocol-legacy";
 import type {
   CasGcRequest,
   CasGcResponse,
@@ -14,7 +14,7 @@ import type {
   CasRoute,
   CasUsageRequest,
   CasUsageResponse,
-} from "@unidocs/protocol-cas-legacy";
+} from "@unicas/protocol-legacy";
 import type {
   DocApplyRequest,
   DocApplyResponse,
@@ -359,7 +359,7 @@ export function isLegacyPublicCasRoute(method: string, pathname: string): boolea
 /**
  * Gateway-owned CAS exposure allowlist. Operates on a matched tenant route —
  * the Gateway decides which CAS operations it exposes, and that decision is
- * not a CAS route property (the canonical `@unidocs/protocol-cas` matcher has
+ * not a CAS route property (the canonical `@unicas/protocol` matcher has
  * no exposure concept). Root Refs writes and all CAS audit operations are
  * excluded: `updateRootRefs`/`rootRefs` are private service operations, and
  * audit routes live under `/admin` which the tenant matcher never recognizes.

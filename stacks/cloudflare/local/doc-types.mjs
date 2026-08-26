@@ -12,19 +12,10 @@ import { join } from "node:path";
 export const CAS_ACCESS_KEY = "unidocs-dev-cas-key";
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
-export const CAS_WORKER = "unidocs-cas";
 /** CAS admin BFF Worker (private; reached via the edge or directly in dev). */
 export const ADMIN_WORKER = "unidocs-cas-admin";
 /** Local mock Google OIDC provider (dev only). */
 export const MOCK_OIDC_WORKER = "unidocs-mock-oidc";
-/**
- * 过渡形态(阶段 4 删除):Azure 栈的 CAS_BASE_URL 要能从进程外打到这个
- * worker。service binding 只在 Miniflare 进程内有效,而 CasClient 的
- * updateRootRefs 走 /_internal/root-refs,gateway 不代理这条路由 ——
- * 所以必须直连 worker 本身。8787-8790 已被 gateway 与 doc type 占用,
- * 这里用 8791。
- */
-export const CAS_PORT = 8791;
 /** 故障注入用的假 CAS,只在测试里启用。 */
 export const CAS_FAULT_WORKER = "unidocs-cas-fault";
 /** Canonical stack-scoped tenant CAS worker (private; behind cas-edge). */
@@ -77,8 +68,6 @@ export default {
 `;
 export const COMPATIBILITY_DATE = "2025-08-17";
 export const GATEWAY_DB = "unidocs-snapshots";
-export const CAS_BUCKET = "unidocs-cas";
-export const CAS_DB = "unidocs-cas-db";
 
 export const DOC_TYPES = {
   markdown: {
@@ -106,10 +95,8 @@ export const DOC_TYPES = {
     editorClass: "PsdEditor",
     operator: "PSD_OPERATOR",
     operatorClass: "PsdOperator",
-    // 8790, not 8791: CAS_PORT is 8791 (see its comment above — 8787-8790
-    // are taken by gateway and the doc types), and `startLocalRuntime`
-    // merges `ports.cas = CAS_PORT` into the same map it port-checks.
-    // Putting psd on 8791 would collide with CAS.
+    // 8790, not 8791: the gateway (8787) and doc types take 8788-8790,
+    // and `startLocalRuntime` asserts every port in the map is free.
     port: 8790,
     // Optional dev-only frontend: a Vite app started alongside the worker,
     // with GATEWAY_URL injected so it proxies API calls to the gateway.
@@ -152,23 +139,21 @@ export function resolvePorts(docTypes, overrides = {}) {
 
 /** Entry point of every worker that needs bundling for the given selection. */
 export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = false } = {}) {
-  const middlewareTargets = casMiddleware ? [
-    { entry: "packages/cas-server-cloudflare/src/worker.ts", outfile: "cas-middleware.js" },
-    { entry: "packages/cas-edge/src/worker.ts", outfile: "cas-edge.js" },
-  ] : [];
+  const middlewareTargets = [
+    { entry: "unicas-packages/server-cloudflare/src/worker.ts", outfile: "cas-middleware.js" },
+    { entry: "unicas-packages/edge/src/worker.ts", outfile: "cas-edge.js" },
+  ];
   if (casMiddlewareOnly) {
     return [
       ...middlewareTargets,
-      { entry: "packages/cloudflare-cas/src/worker.ts", outfile: "cas.js" },
-      { entry: "packages/cas-admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
+      { entry: "unicas-packages/admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
       { entry: "stacks/cloudflare/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
     ];
   }
   return [
     ...middlewareTargets,
     { entry: "packages/cloudflare-gateway/src/worker.ts", outfile: "gateway.js" },
-    { entry: "packages/cloudflare-cas/src/worker.ts", outfile: "cas.js" },
-    { entry: "packages/cas-admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
+    { entry: "unicas-packages/admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
     { entry: "stacks/cloudflare/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
     ...docTypes.map((name) => ({
       entry: DOC_TYPES[name].entry,
@@ -207,7 +192,7 @@ export function buildWorkers({
   bundleDir,
   casFault = false,
   extraBindings = {},
-  internalAuthMode = "legacy",
+  internalAuthMode = "stack",
   capabilityFixture,
   stackFixture,
   casAdminPublicOrigin = `http://localhost:4070`,
@@ -217,15 +202,14 @@ export function buildWorkers({
   casMiddlewareOnly = false,
   casMiddleware = false,
 }) {
-  if (!["legacy", "dual", "capability", "stack"].includes(internalAuthMode)) {
-    throw new Error("internalAuthMode must be legacy, dual, capability, or stack");
+  if (internalAuthMode !== "stack") {
+    throw new Error("internalAuthMode must be stack (legacy/dual/capability retired with the legacy runtime)");
   }
-  const stackMode = internalAuthMode === "stack";
-  if (stackMode && !stackFixture) {
+  if (!stackFixture) {
     throw new Error("stackFixture is required for the stack local runtime");
   }
-  if (internalAuthMode !== "legacy" && !capabilityFixture) {
-    throw new Error("capabilityFixture is required for dual/capability/stack local runtime");
+  if (!capabilityFixture) {
+    throw new Error("capabilityFixture is required for the stack local runtime");
   }
   const policyBindings = {
     CAPABILITY_ALGORITHM: "ES256",
@@ -233,33 +217,9 @@ export function buildWorkers({
     CAPABILITY_MAX_LIFETIME_SECONDS: "300",
     CAPABILITY_CLOCK_SKEW_SECONDS: "30",
   };
-  const validatorBindings = capabilityFixture ? {
+  const validatorBindings = {
     CAPABILITY_ISSUER: capabilityFixture.issuer,
     CAPABILITY_TRUSTED_JWKS: JSON.stringify(capabilityFixture.jwks),
-  } : {};
-
-  const casWorker = {
-    name: CAS_WORKER,
-    modules: true,
-    scriptPath: join(bundleDir, "cas.js"),
-    compatibilityDate: COMPATIBILITY_DATE,
-    bindings: {
-      INTERNAL_AUTH_MODE: internalAuthMode,
-      CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
-      ...policyBindings,
-      ...validatorBindings,
-      CAS_ACCESS_KEY,
-    },
-    durableObjects: {
-      CAS_DO: { className: "CasDurableObject" },
-    },
-    d1Databases: { CAS_DB },
-    r2Buckets: { CAS_R2: CAS_BUCKET },
-    // 过渡形态(阶段 4 删除):Azure 栈的 CAS_BASE_URL 要能从进程外打到
-    // 这个 worker。service binding 只在 Miniflare 进程内有效,而
-    // CasClient 的 updateRootRefs 走 /_internal/root-refs,gateway 不
-    // 代理这条路由 —— 所以必须直连 worker 本身。
-    unsafeDirectSockets: [{ host, port: ports.cas }],
   };
 
   // CAS admin BFF + local mock OIDC provider. The admin worker is private in
@@ -289,11 +249,9 @@ export function buildWorkers({
     bindings: adminBindings,
     d1Databases: { CAS_CONTROL_DB: CONTROL_DB },
     unsafeDirectSockets: [{ host, port: ports.admin }],
-    ...(casMiddleware || stackMode ? {
-      // Private audit-reader binding: admin BFF -> canonical tenant worker
-      // (acyclic: edge -> admin -> tenant; the tenant worker never calls back).
-      serviceBindings: { CAS_TENANT_AUDIT_READER: MIDDLEWARE_WORKER },
-    } : {}),
+    // Private audit-reader binding: admin BFF -> canonical tenant worker
+    // (acyclic: edge -> admin -> tenant; the tenant worker never calls back).
+    serviceBindings: { CAS_TENANT_AUDIT_READER: MIDDLEWARE_WORKER },
   };
   const mockOidcWorker = {
     name: MOCK_OIDC_WORKER,
@@ -336,8 +294,8 @@ export function buildWorkers({
 
   if (casMiddlewareOnly) {
     return [
-      ...(casMiddleware || stackMode ? [middlewareWorker, edgeWorker] : []),
-      casWorker,
+      middlewareWorker,
+      edgeWorker,
       adminWorker,
       mockOidcWorker,
     ];
@@ -354,25 +312,20 @@ export function buildWorkers({
         DOC_SERVICES_JSON: docServicesJson(docTypes, host, ports),
         INTERNAL_AUTH_MODE: internalAuthMode,
         ...policyBindings,
-        ...(capabilityFixture ? {
-          CAPABILITY_ISSUER: capabilityFixture.issuer,
-          CAPABILITY_KEY_ID: capabilityFixture.kid,
-          CAPABILITY_PRIVATE_KEY_PKCS8: capabilityFixture.privateKeyPkcs8,
-          CAS_CAPABILITY_AUDIENCE: stackMode ? stackFixture.audience : "unidocs-cas",
-        } : {}),
-        ...(stackMode && stackFixture ? {
-          CAS_STACK_ID: stackFixture.stackId,
-          CAS_STACK_ISSUER: stackFixture.issuer,
-          CAS_STACK_KEY_ID: stackFixture.kid,
-          CAS_STACK_PRIVATE_KEY_PKCS8: stackFixture.privateKeyPkcs8,
-          CAS_REF_DOMAIN: "doc",
-        } : {}),
+        CAPABILITY_ISSUER: capabilityFixture.issuer,
+        CAPABILITY_KEY_ID: capabilityFixture.kid,
+        CAPABILITY_PRIVATE_KEY_PKCS8: capabilityFixture.privateKeyPkcs8,
+        CAS_CAPABILITY_AUDIENCE: stackFixture.audience,
+        CAS_STACK_ID: stackFixture.stackId,
+        CAS_STACK_ISSUER: stackFixture.issuer,
+        CAS_STACK_KEY_ID: stackFixture.kid,
+        CAS_STACK_PRIVATE_KEY_PKCS8: stackFixture.privateKeyPkcs8,
+        CAS_REF_DOMAIN: "doc",
         INSECURE_PATH_IDENTITY: "true",
       },
       d1Databases: { GATEWAY_DB },
-      serviceBindings: { CAS_SERVICE: stackMode ? MIDDLEWARE_WORKER : CAS_WORKER },
+      serviceBindings: { CAS_SERVICE: MIDDLEWARE_WORKER },
     },
-    casWorker,
   ];
 
   if (casFault) {
@@ -381,26 +334,21 @@ export function buildWorkers({
       modules: true,
       script: CAS_FAULT_SCRIPT,
       compatibilityDate: COMPATIBILITY_DATE,
-      serviceBindings: { CAS_UPSTREAM: stackMode ? MIDDLEWARE_WORKER : CAS_WORKER },
+      serviceBindings: { CAS_UPSTREAM: MIDDLEWARE_WORKER },
     });
   }
 
-  if (casMiddleware || stackMode) {
-    workers.push(middlewareWorker, edgeWorker);
-  }
+  workers.push(middlewareWorker, edgeWorker);
 
   workers.push(adminWorker, mockOidcWorker);
 
-  const stackBindings = stackFixture ? {
+  const stackBindings = {
     CAS_STACK_ID: stackFixture.stackId,
     CAS_STACK_ISSUER: stackFixture.issuer,
     CAS_STACK_TRUSTED_JWKS: JSON.stringify(stackFixture.jwks),
-  } : {};
-  // Fault injection wraps the effective CAS target (the middleware in stack
-  // mode, the legacy worker otherwise); casFault wins over the mode default.
-  const casServiceTarget = casFault
-    ? CAS_FAULT_WORKER
-    : (stackMode ? MIDDLEWARE_WORKER : CAS_WORKER);
+  };
+  // Fault injection wraps the middleware; casFault wins over the default.
+  const casServiceTarget = casFault ? CAS_FAULT_WORKER : MIDDLEWARE_WORKER;
 
   for (const name of docTypes) {
     const spec = DOC_TYPES[name];
@@ -413,12 +361,10 @@ export function buildWorkers({
         CAS_ACCESS_KEY,
         INTERNAL_AUTH_MODE: internalAuthMode,
         DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
-        CAS_CAPABILITY_AUDIENCE: stackMode
-          ? stackFixture.audience
-          : "unidocs-cas",
+        CAS_CAPABILITY_AUDIENCE: stackFixture.audience,
         ...policyBindings,
         ...validatorBindings,
-        ...(stackMode ? stackBindings : {}),
+        ...stackBindings,
         SERVICE_ACCESS_KEY: docServiceAccessKey(name),
         ...(extraBindings[name] ?? {}),
       },

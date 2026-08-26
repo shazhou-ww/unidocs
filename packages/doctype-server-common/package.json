@@ -29,10 +29,10 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/cas-client": "workspace:*",
-    "@unidocs/cas-server-common": "workspace:*",
+    "@unicas/client": "workspace:*",
+    "@unicas/server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*",
-    "@unidocs/protocol-cas": "workspace:*",
+    "@unicas/protocol": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
     "@unidocs/svalue-codec": "workspace:*"

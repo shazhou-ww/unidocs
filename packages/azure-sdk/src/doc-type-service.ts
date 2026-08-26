@@ -15,7 +15,7 @@ import type { DocumentTypeFactory } from "@unidocs/protocol";
 import {
   CasClient,
   type HttpFetcher,
-} from "@unidocs/cas-client";
+} from "@unicas/client";
 import type {
   DocCapabilityVerifier,
   DocInternalAuthMode,

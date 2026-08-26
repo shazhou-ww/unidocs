@@ -24,7 +24,7 @@
     "migrate:legacy-identities": "node dist/migrate-cli.js --import-legacy-identities"
   },
   "dependencies": {
-    "@unidocs/cas-client": "workspace:*",
+    "@unicas/client": "workspace:*",
     "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",

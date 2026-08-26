@@ -26,7 +26,7 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "../../../packages/cas-server-common/src/index.ts";
+} from "../../../unicas-packages/server-common/src/index.ts";
 
 let runtime;
 

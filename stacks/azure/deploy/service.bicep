@@ -29,7 +29,7 @@ param casAccessKey string = ''
 @secure()
 param capabilityTrustedJwks string = ''
 
-param internalAuthMode string = 'legacy'
+param internalAuthMode string = 'stack'
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param casCapabilityAudience string = 'unidocs-cas'
 

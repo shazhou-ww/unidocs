@@ -61,21 +61,17 @@ and share unchanged Blob descendants through CAS.
 ```
 packages/
 ├── protocol/              @unidocs/protocol              — Document protocol contracts (types + constants, no logic)
-├── protocol-cas/          @unidocs/protocol-cas          — CAS HTTP routes, wire contracts, and domain types
 ├── protocol-doc/          @unidocs/protocol-doc          — Doc HTTP routes, wire contracts, and errors
 ├── protocol-gateway/      @unidocs/protocol-gateway      — Gateway HTTP routes and pass-through contracts
 ├── service-auth/          @unidocs/service-auth          — Capability claims, permissions, issuance, and verification
 ├── svalue-codec/          @unidocs/svalue-codec          — SValue/SBlob codec + protocol helpers
 ├── gateway-common/        @unidocs/gateway-common        — Cloud-neutral API Gateway routing
-├── cas-server-common/     @unidocs/cas-server-common     — CAS server kernel (binary/digest/validation)
-├── cas-client/            @unidocs/cas-client            — Cloud-neutral CAS HTTP client
 ├── doctype-server-common/ @unidocs/doctype-server-common — Cloud-neutral doctype 服务公共实现 (session/ports/operator)
 ├── doctype-markdown/      @unidocs/doctype-markdown      — Cloud-neutral Markdown document type
 ├── doctype-docx/          @unidocs/doctype-docx          — Cloud-neutral DOCX document type
 ├── doctype-psd/           @unidocs/doctype-psd           — Cloud-neutral PSD image document type
 ├── psd-client/            @unidocs/psd-client            — Browser-side PSD render client
 ├── cloudflare-sdk/        @unidocs/cloudflare-sdk        — Durable Object runtime factories
-├── cloudflare-cas/        @unidocs/cloudflare-cas        — Tenant-scoped CAS worker
 ├── cloudflare-gateway/    @unidocs/cloudflare-gateway    — Cloudflare API Gateway
 ├── cloudflare-markdown/   @unidocs/cloudflare-markdown   — Cloudflare Markdown deployment
 ├── cloudflare-docx/       @unidocs/cloudflare-docx       — Cloudflare DOCX deployment
@@ -85,6 +81,17 @@ packages/
 ├── azure-markdown/        @unidocs/azure-markdown        — Azure/Node Markdown service
 ├── azure-docx/            @unidocs/azure-docx            — Azure/Node DOCX service
 └── web-psd/               @unidocs/web-psd               — PSD dev frontend (Vite)
+
+unicas-packages/           (the independently deployable CAS middleware; future standalone monorepo)
+├── protocol/              @unicas/protocol              — CAS protocol: stack-scoped routes, wire contracts, domain types
+├── protocol-legacy/       @unicas/protocol-legacy       — Migration-only frozen pre-stack CAS protocol
+├── protocol-admin/        @unicas/protocol-admin        — CAS admin-plane contracts
+├── server-common/         @unicas/server-common         — CAS server kernel (binary/digest/validation)
+├── control-plane/         @unicas/control-plane         — CAS control plane (issuers/stacks/members/sessions)
+├── server-cloudflare/     @unicas/server-cloudflare     — Canonical stack-scoped tenant server (Cloudflare)
+├── edge/                  @unicas/edge                  — Public CAS edge (/stacks + /admin dispatch)
+├── admin-webui/           @unicas/admin-webui           — Stack administration WebUI + OIDC BFF
+└── client/                @unicas/client                — Cloud-neutral CAS HTTP client
 ```
 
 ## API
@@ -403,7 +410,7 @@ Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry
 
 Why: with `dist`-only exports, `pnpm -r test` and `pnpm --filter <pkg> test` fail on a
 fresh clone — vitest resolves a sibling workspace package before anything has built it
-(`Failed to resolve entry for package "@unidocs/cas-server-common"`). Pointing the workspace-facing
+(`Failed to resolve entry for package "@unicas/server-common"`). Pointing the workspace-facing
 entry at source removes the ordering dependency; `publishConfig` keeps packaged
 consumers on the built artifacts (`pnpm pack` rewrites the fields and drops the block).
 

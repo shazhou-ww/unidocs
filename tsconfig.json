@@ -9,19 +9,19 @@
       "path": "packages/protocol"
     },
     {
-      "path": "packages/protocol-cas"
+      "path": "unicas-packages/protocol"
     },
     {
-      "path": "packages/protocol-cas-admin"
+      "path": "unicas-packages/protocol-admin"
     },
     {
-      "path": "packages/cas-control-plane"
+      "path": "unicas-packages/control-plane"
     },
     {
-      "path": "packages/cas-admin-webui"
+      "path": "unicas-packages/admin-webui"
     },
     {
-      "path": "packages/cas-edge"
+      "path": "unicas-packages/edge"
     },
     {
       "path": "packages/protocol-doc"
@@ -39,10 +39,10 @@
       "path": "packages/gateway-common"
     },
     {
-      "path": "packages/cas-server-common"
+      "path": "unicas-packages/server-common"
     },
     {
-      "path": "packages/cas-client"
+      "path": "unicas-packages/client"
     },
     {
       "path": "packages/doctype-server-common"
@@ -85,9 +85,6 @@
     },
     {
       "path": "packages/cloudflare-psd"
-    },
-    {
-      "path": "packages/cloudflare-cas"
     },
     {
       "path": "packages/cloudflare-gateway"

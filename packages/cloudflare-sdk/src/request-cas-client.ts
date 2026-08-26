@@ -1,5 +1,5 @@
-import { CasClient } from "@unidocs/cas-client";
-import type { HttpFetcher } from "@unidocs/cas-client";
+import { CasClient } from "@unicas/client";
+import type { HttpFetcher } from "@unicas/client";
 
 export interface RequestCasEnv {
   readonly CAS_SERVICE: HttpFetcher;

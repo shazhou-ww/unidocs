@@ -17,8 +17,6 @@ import {
 import {
   buildWorkers,
   bundleTargets,
-  CAS_PORT,
-  CAS_WORKER,
   ADMIN_PORT,
   MOCK_OIDC_PORT,
   EDGE_PORT,
@@ -29,7 +27,7 @@ import {
 } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
-import { migrateControlSchema } from "../../../packages/cas-control-plane/src/schema.ts";
+import { migrateControlSchema } from "../../../unicas-packages/control-plane/src/schema.ts";
 
 export { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
@@ -204,7 +202,7 @@ function assertPortFree(host, port) {
  * bodies in `tests/integration/shared/behavior-suite.mjs` don't need to know which backend
  * they're running against.
  */
-function createStorageProbe(mf, { stackMode = false, stackId } = {}) {
+function createStorageProbe(mf, { stackId } = {}) {
   const tenantByHash = new Map();
   return {
     async sessionIdentity(docType, docId, tenantId) {
@@ -256,48 +254,11 @@ function createStorageProbe(mf, { stackMode = false, stackId } = {}) {
     async blobExists(hash) {
       const tenantId = tenantByHash.get(hash);
       if (!tenantId) return false;
-      if (stackMode) {
-        // Stack mode stores node content in the MIDDLEWARE bucket under
-        // stack-scoped keys.
-        const bucket = await mf.getR2Bucket("CAS_R2", MIDDLEWARE_WORKER);
-        const object = await bucket.get(`stacks/${stackId}/tenants/${tenantId}/nodes/${hash}`);
-        return object !== null;
-      }
-      // CAS_WORKER is always started regardless of which doc types were
-      // selected, and it's the one that binds the shared bucket as "CAS_R2".
-      const bucket = await mf.getR2Bucket("CAS_R2", CAS_WORKER);
-      const object = await bucket.get(`tenants/${tenantId}/nodes/${hash}`);
+      // Stack mode stores node content in the MIDDLEWARE bucket under
+      // stack-scoped keys.
+      const bucket = await mf.getR2Bucket("CAS_R2", MIDDLEWARE_WORKER);
+      const object = await bucket.get(`stacks/${stackId}/tenants/${tenantId}/nodes/${hash}`);
       return object !== null;
-    },
-    /**
-     * Cloudflare-probe-only: every node with a positive root ref count for a
-     * tenant. Used by root-retention tests to assert the exact retained set
-     * (one current delta plus, when present, one current snapshot) without
-     * leaking or undercounting across retries.
-     */
-    async casRetainedRoots(tenantId) {
-      const db = await mf.getD1Database("CAS_DB", CAS_WORKER);
-      const rows = await db
-        .prepare(
-          "SELECT hash, root_ref_count FROM cas_nodes WHERE tenant_id = ? AND root_ref_count > 0 ORDER BY hash",
-        )
-        .bind(tenantId)
-        .all();
-      return rows.results.map((row) => ({
-        hash: row.hash,
-        count: Number(row.root_ref_count),
-      }));
-    },
-    /** Cloudflare-probe-only: root-ref request ids recorded for a tenant. */
-    async casRootRefRequestIds(tenantId) {
-      const db = await mf.getD1Database("CAS_DB", CAS_WORKER);
-      const rows = await db
-        .prepare(
-          "SELECT request_id FROM cas_root_ref_requests WHERE tenant_id = ? ORDER BY applied_at, request_id",
-        )
-        .bind(tenantId)
-        .all();
-      return rows.results.map((row) => row.request_id);
     },
     /**
      * Cloudflare-probe-only: the middleware's CAS_CONTROL_DB handle (binding
@@ -360,20 +321,14 @@ export async function startLocalRuntime({
   casMiddleware = false,
   middlewareStacks,
 } = {}) {
-  const stackMode = internalAuthMode === "stack";
-  const resolvedStackFixture = !stackMode
-    ? undefined
-    : (stackFixture ?? await createEphemeralStackFixture());
+  if (internalAuthMode !== "stack") {
+    throw new Error("startLocalRuntime only supports stack mode (legacy/dual/capability retired with the legacy runtime)");
+  }
+  const resolvedStackFixture = stackFixture ?? await createEphemeralStackFixture();
   const ports = resolvePorts(docTypes, portOverrides);
-  // 过渡形态(阶段 4 删除):CAS worker 的直连端口,供 Azure 栈的
-  // CAS_BASE_URL 从进程外访问(见 doc-types.mjs 里 CAS_PORT 的注释)。
-  // 并入 ports 后 urls 会自动多出一项 "cas"(urls 是从 ports 映射来的)。
-  ports.cas = portOverrides.cas ?? CAS_PORT;
   ports.admin = portOverrides.admin ?? ADMIN_PORT;
   ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
-  if (casMiddleware || stackMode) {
-    ports.edge = portOverrides.edge ?? EDGE_PORT;
-  }
+  ports.edge = portOverrides.edge ?? EDGE_PORT;
   if (casMiddlewareOnly) {
     // CAS middleware runs alone: no gateway, no doc type workers — the
     // independent-deployment boundary, mirrored by scripts/dev-cas-admin.mjs.
@@ -388,7 +343,7 @@ export async function startLocalRuntime({
   const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway ?? "cas-admin"));
 
   await Promise.all(
-    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || stackMode }).map(({ entry, outfile }) =>
+    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || true }).map(({ entry, outfile }) =>
       bundleWorker(join(ROOT, entry), join(bundleDir, outfile)),
     ),
   );
@@ -404,9 +359,7 @@ export async function startLocalRuntime({
     const devVars = DOC_TYPES[name].devVars;
     if (devVars) extraBindings[name] = await readDevVars(join(ROOT, devVars));
   }
-  const resolvedCapabilityFixture = internalAuthMode === "legacy"
-    ? undefined
-    : capabilityFixture ?? await createEphemeralCapabilityFixture();
+  const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 
   let mf;
   try {
@@ -434,7 +387,7 @@ export async function startLocalRuntime({
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
           casMiddlewareOnly,
-          casMiddleware: casMiddleware || stackMode,
+          casMiddleware: casMiddleware || true,
         }),
       }),
     );
@@ -444,9 +397,9 @@ export async function startLocalRuntime({
     if (!casMiddlewareOnly) {
       await migrateSnapshotsDb(mf);
     }
-    if (casMiddleware || stackMode) {
+    {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
-      if (stackMode && !middlewareStacks) {
+      if (!middlewareStacks) {
         // Register the local unidocs-cloudflare stack (issuer/keys/refDomains
         // identical to what the gateway signs with). Skipped when the caller
         // provided explicit middlewareStacks (they own the registration).
@@ -474,8 +427,7 @@ export async function startLocalRuntime({
       capabilityFixture: resolvedCapabilityFixture,
       stackFixture: resolvedStackFixture,
       storage: createStorageProbe(mf, {
-        stackMode,
-        stackId: resolvedStackFixture?.stackId,
+        stackId: resolvedStackFixture.stackId,
       }),
       async dispose() {
         await mf.dispose();

@@ -16,13 +16,29 @@ import { readDevVars } from "../../../stacks/cloudflare/local/runtime.mjs";
 import {
   ADMIN_PORT,
   buildWorkers,
-  CAS_PORT,
   DOC_TYPES,
   docServiceAccessKey,
+  MIDDLEWARE_WORKER,
   MOCK_OIDC_PORT,
 } from "../../../stacks/cloudflare/local/doc-types.mjs";
 
-const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, cas: CAS_PORT };
+const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, edge: 8794 };
+
+const STACK_FIXTURE = {
+  stackId: "unidocs-cloudflare",
+  issuer: "https://cas.example/cas/issuer/cloudflare",
+  audience: "unidocs-cas-cloudflare",
+  kid: "cf-rotate-1",
+  privateKeyPkcs8: "pkcs8",
+  jwks: { keys: [{ kid: "cf-rotate-1" }] },
+  refDomains: ["doc"],
+};
+const CAPABILITY_FIXTURE = {
+  issuer: "https://cas.example/capability",
+  kid: "cap-1",
+  privateKeyPkcs8: "cap-pkcs8",
+  jwks: { keys: [{ kid: "cap-1" }] },
+};
 
 let dir;
 
@@ -89,26 +105,33 @@ test("buildWorkers merges extraBindings into that doc type's worker only", () =>
     host: "127.0.0.1",
     ports: { ...BASE_PORTS, psd: 8790 },
     bundleDir: "/b",
+    stackFixture: STACK_FIXTURE,
+    capabilityFixture: CAPABILITY_FIXTURE,
     extraBindings: { psd: { LLM_API_KEY: "test-value-not-a-secret" } },
   });
   const gateway = workers.find((w) => w.name === "unidocs-gateway");
-  const cas = workers.find((w) => w.name === "unidocs-cas");
+  const middleware = workers.find((w) => w.name === MIDDLEWARE_WORKER);
   const psd = workers.find((w) => w.name === "unidocs-psd");
 
   expect(psd.bindings).toEqual({
     CAS_ACCESS_KEY: "unidocs-dev-cas-key",
-    INTERNAL_AUTH_MODE: "legacy",
+    INTERNAL_AUTH_MODE: "stack",
     DOC_CAPABILITY_AUDIENCE: "unidocs-doc:psd",
-    CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAS_CAPABILITY_AUDIENCE: STACK_FIXTURE.audience,
     CAPABILITY_ALGORITHM: "ES256",
     CAPABILITY_TTL_SECONDS: "120",
     CAPABILITY_MAX_LIFETIME_SECONDS: "300",
     CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+    CAPABILITY_ISSUER: CAPABILITY_FIXTURE.issuer,
+    CAPABILITY_TRUSTED_JWKS: JSON.stringify(CAPABILITY_FIXTURE.jwks),
+    CAS_STACK_ID: STACK_FIXTURE.stackId,
+    CAS_STACK_ISSUER: STACK_FIXTURE.issuer,
+    CAS_STACK_TRUSTED_JWKS: JSON.stringify(STACK_FIXTURE.jwks),
     SERVICE_ACCESS_KEY: docServiceAccessKey("psd"),
     LLM_API_KEY: "test-value-not-a-secret",
   });
   expect(gateway.bindings.LLM_API_KEY).toBeUndefined();
-  expect(cas.bindings.LLM_API_KEY).toBeUndefined();
+  expect(middleware.bindings.LLM_API_KEY).toBeUndefined();
 });
 
 test("buildWorkers leaves bindings untouched when no extraBindings are given", () => {
@@ -117,16 +140,23 @@ test("buildWorkers leaves bindings untouched when no extraBindings are given", (
     host: "127.0.0.1",
     ports: { ...BASE_PORTS, psd: 8790 },
     bundleDir: "/b",
+    stackFixture: STACK_FIXTURE,
+    capabilityFixture: CAPABILITY_FIXTURE,
   }).find((w) => w.name === "unidocs-psd");
   expect(psd.bindings).toEqual({
     CAS_ACCESS_KEY: "unidocs-dev-cas-key",
-    INTERNAL_AUTH_MODE: "legacy",
+    INTERNAL_AUTH_MODE: "stack",
     DOC_CAPABILITY_AUDIENCE: "unidocs-doc:psd",
-    CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAS_CAPABILITY_AUDIENCE: STACK_FIXTURE.audience,
     CAPABILITY_ALGORITHM: "ES256",
     CAPABILITY_TTL_SECONDS: "120",
     CAPABILITY_MAX_LIFETIME_SECONDS: "300",
     CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+    CAPABILITY_ISSUER: CAPABILITY_FIXTURE.issuer,
+    CAPABILITY_TRUSTED_JWKS: JSON.stringify(CAPABILITY_FIXTURE.jwks),
+    CAS_STACK_ID: STACK_FIXTURE.stackId,
+    CAS_STACK_ISSUER: STACK_FIXTURE.issuer,
+    CAS_STACK_TRUSTED_JWKS: JSON.stringify(STACK_FIXTURE.jwks),
     SERVICE_ACCESS_KEY: docServiceAccessKey("psd"),
   });
 });

@@ -9,8 +9,9 @@ export type CapabilityPermissionKind =
   | "cas:write"
   | "cas:usage:read"
   | "cas:gc:trigger"
-  /** Legacy tenant administration permission; consumed only by the
-   *  migration-only runtime (cloudflare-cas) until it is retired (Task 10). */
+  /** Legacy tenant administration permission; retired with the legacy
+   *  runtime (Task 10). Kept only for the remaining legacy-compatible
+   *  callers until they move to the stack-scoped names below. */
   | "cas:admin"
   | "sessions:create"
   | "sessions:read"
@@ -47,7 +48,7 @@ export function casGcTriggerPermission(tenantId: string): CapabilityPermission {
   return `tenants:${canonicalPermissionSegment(tenantId)}:cas:gc` as CapabilityPermission;
 }
 
-/** @deprecated Legacy tenant CAS administration; removed with cloudflare-cas (Task 10). */
+/** @deprecated Legacy tenant CAS administration; retired with the legacy runtime (Task 10). */
 export function casAdminPermission(tenantId: string): CapabilityPermission {
   return tenantPermission(tenantId, "cas:admin");
 }

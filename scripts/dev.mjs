@@ -273,7 +273,7 @@ for (const name of docTypes) {
 // The CAS admin console ships with the Miniflare stack's admin worker; spawn
 // its Vite dev server too so `pnpm dev` runs the whole middleware + apps.
 if (!useAzure) {
-  const adminWeb = spawn("pnpm --filter @unidocs/cas-admin-webui dev:ui", {
+  const adminWeb = spawn("pnpm --filter @unicas/admin-webui dev:ui", {
     cwd: root,
     stdio: "inherit",
     shell: true,

@@ -362,14 +362,15 @@ tenant.
 
 CAS owns its native service and admin route contracts. A lightweight
 `cas-edge` Worker is the only public Worker on the CAS hostname. It dispatches
-unprefixed `/stacks` routes to the private `cloudflare-cas` tenant Worker and
-top-level `/admin` to the private `cas-admin-webui` Worker through separate
-service bindings; each path strips the other plane's credentials. Admin audit
-reads use a narrow private tenant audit-reader RPC that the edge never exposes,
-keeping the service call graph acyclic. Because the routes are served by CAS,
-they do not repeat a `/cas` mount segment. A Gateway or other shared ingress
-may expose selected tenant operations beneath its own `/cas` mount, but that
-mapping and allowlist are not part of the CAS protocol.
+unprefixed `/stacks` routes to the private canonical tenant Worker
+(`@unicas/server-cloudflare`) and top-level `/admin` to the private
+`cas-admin-webui` Worker through separate service bindings; each path strips
+the other plane's credentials. Admin audit reads use a narrow private tenant
+audit-reader RPC that the edge never exposes, keeping the service call graph
+acyclic. Because the routes are served by CAS, they do not repeat a `/cas`
+mount segment. A Gateway or other shared ingress may expose selected tenant
+operations beneath its own `/cas` mount, but that mapping and allowlist are
+not part of the CAS protocol.
 
 Tenant service routes accept JWT capabilities from configured stack issuers.
 Each stack registers one stable issuer with multiple rotation keys selected by

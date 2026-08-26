@@ -105,21 +105,21 @@ describe("generateSecret", () => {
 
 describe("parseArgs", () => {
   test("默认值指向设计里确定的订阅、资源组与位置", () => {
-    const args = parseArgs([]);
+    const args = parseArgs(["--capability-key-id", "test-key"]);
     expect(args.subscription).toBe("24c9acbd-c2f5-4ef9-b9a2-486d90208b3e");
     expect(args.resourceGroup).toBe("Unidocs");
     expect(args.location).toBe("southeastasia");
   });
 
   test("命令行参数覆盖默认值", () => {
-    const args = parseArgs(["--resource-group", "rg-other", "--location", "japaneast"]);
+    const args = parseArgs(["--resource-group", "rg-other", "--location", "japaneast", "--capability-key-id", "test-key"]);
     expect(args.resourceGroup).toBe("rg-other");
     expect(args.location).toBe("japaneast");
   });
 
   test("--cas-base-url 是可选的,不传也不报错", () => {
-    expect(() => parseArgs([])).not.toThrow();
-    expect(parseArgs([]).casBaseUrl).toBe("");
+    expect(() => parseArgs(["--capability-key-id", "test-key"])).not.toThrow();
+    expect(parseArgs(["--capability-key-id", "test-key"]).casBaseUrl).toBe("");
   });
 
   test("未知参数响亮失败,而不是被忽略", () => {
@@ -129,29 +129,33 @@ describe("parseArgs", () => {
   // CAS_ACCESS_KEY 不是本轮生成的密钥,而是必须与已部署的 Cloudflare CAS
   // worker 对齐的既有值 —— 所以它必须能从命令行传进来。
   test("--cas-access-key 被解析", () => {
-    expect(parseArgs(["--cas-access-key", "shared-with-cloudflare"]).casAccessKey).toBe(
+    expect(parseArgs(["--cas-access-key", "shared-with-cloudflare", "--capability-key-id", "test-key"]).casAccessKey).toBe(
       "shared-with-cloudflare",
     );
   });
 
   test("不传 --cas-access-key 时是空串(留给 Key Vault 里的既有值)", () => {
-    expect(parseArgs([]).casAccessKey).toBe("");
+    expect(parseArgs(["--capability-key-id", "test-key"]).casAccessKey).toBe("");
   });
 
-  test("capability rollout metadata is explicit and key values are not CLI inputs", () => {
+  test("stack mode is the only internal auth mode; key values are not CLI inputs", () => {
     const args = parseArgs([
       "--gateway",
-      "--internal-auth-mode", "dual",
+      "--internal-auth-mode", "stack",
       "--capability-issuer", "unidocs-gateway:staging",
       "--capability-key-id", "staging-key-2",
     ]);
     expect(args).toMatchObject({
-      internalAuthMode: "dual",
+      internalAuthMode: "stack",
       capabilityIssuer: "unidocs-gateway:staging",
       capabilityKeyId: "staging-key-2",
     });
     expect(() => parseArgs(["--gateway", "--internal-auth-mode", "capability"]))
-      .toThrow(/capability-key-id/);
+      .toThrow(/stack/);
+    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "legacy"]))
+      .toThrow(/stack/);
+    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "dual"]))
+      .toThrow(/stack/);
     expect(() => parseArgs(["--internal-auth-mode", "unknown"]))
       .toThrow(/internal-auth-mode/);
     expect(() => parseArgs(["--capability-private-key", "secret"]))
@@ -261,18 +265,18 @@ describe("retryOnForbidden", () => {
 
 describe("parseArgs 选择器", () => {
   test("无参数:全量部署", () => {
-    const a = parseArgs([]);
+    const a = parseArgs(["--capability-key-id", "test-key"]);
     expect(a.targets).toEqual(["bootstrap", "platform", "services", "gateway"]);
   });
 
   test("--service docx:只部一个", () => {
-    const a = parseArgs(["--service", "docx"]);
+    const a = parseArgs(["--service", "docx", "--capability-key-id", "test-key"]);
     expect(a.targets).toEqual(["services"]);
     expect(a.services).toEqual(["docx"]);
   });
 
   test("--service 多选用逗号分隔", () => {
-    expect(parseArgs(["--service", "docx,markdown"]).services).toEqual(["docx", "markdown"]);
+    expect(parseArgs(["--service", "docx,markdown", "--capability-key-id", "test-key"]).services).toEqual(["docx", "markdown"]);
   });
 
   test("--service 的取值必须存在对应的 azure.service.json", () => {
@@ -286,13 +290,13 @@ describe("parseArgs 选择器", () => {
   });
 
   test("--bootstrap / --platform / --gateway 可以组合,顺序与 argv 无关", () => {
-    expect(parseArgs(["--gateway", "--bootstrap"]).targets).toEqual(["bootstrap", "gateway"]);
-    expect(parseArgs(["--platform"]).targets).toEqual(["platform"]);
+    expect(parseArgs(["--gateway", "--bootstrap", "--capability-key-id", "test-key"]).targets).toEqual(["bootstrap", "gateway"]);
+    expect(parseArgs(["--platform", "--capability-key-id", "test-key"]).targets).toEqual(["platform"]);
   });
 
   test("--build-concurrency 默认 2,可覆盖", () => {
-    expect(parseArgs([]).buildConcurrency).toBe(2);
-    expect(parseArgs(["--build-concurrency", "1"]).buildConcurrency).toBe(1);
+    expect(parseArgs(["--capability-key-id", "test-key"]).buildConcurrency).toBe(2);
+    expect(parseArgs(["--build-concurrency", "1", "--capability-key-id", "test-key"]).buildConcurrency).toBe(1);
   });
 
   test("--build-concurrency 非正整数要响亮失败", () => {

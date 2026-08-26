@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@unidocs/protocol": "workspace:*",
-    "@unidocs/protocol-cas": "workspace:*"
+    "@unicas/protocol": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

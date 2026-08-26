@@ -54,7 +54,7 @@ export {
 	CasClient,
 	CasClientError,
 	type CasClientConfig,
-} from "@unidocs/cas-client";
+} from "@unicas/client";
 export {
 	createSBlobContext,
 	SBlobIntegrityError,

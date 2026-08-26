@@ -36,7 +36,7 @@ for (const [name, url] of Object.entries(runtime.urls)) {
 }
 
 // Admin console frontend: one command runs the whole middleware dev env.
-const web = spawn("pnpm --filter @unidocs/cas-admin-webui dev:ui", {
+const web = spawn("pnpm --filter @unicas/admin-webui dev:ui", {
   cwd: root,
   stdio: "inherit",
   shell: true,

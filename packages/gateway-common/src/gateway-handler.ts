@@ -14,10 +14,10 @@
  *   Gateway → CAS worker: X-Tenant-Id resolved by Gateway
  */
 
-import type { HttpFetcher } from "@unidocs/cas-client";
-import { casRoutes, matchCasRoute } from "@unidocs/protocol-cas-legacy";
-import type { CasRoute } from "@unidocs/protocol-cas-legacy";
-import { casRoutes as canonicalCasRoutes } from "@unidocs/protocol-cas";
+import type { HttpFetcher } from "@unicas/client";
+import { casRoutes, matchCasRoute } from "@unicas/protocol-legacy";
+import type { CasRoute } from "@unicas/protocol-legacy";
+import { casRoutes as canonicalCasRoutes } from "@unicas/protocol";
 import { docRoutes } from "@unidocs/protocol-doc";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {

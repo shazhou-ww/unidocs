@@ -15,7 +15,7 @@
   ],
   "references": [
     {
-      "path": "../cas-server-common"
+      "path": "../../unicas-packages/server-common"
     },
     {
       "path": "../svalue-codec"

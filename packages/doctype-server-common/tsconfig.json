@@ -15,16 +15,16 @@
   ],
   "references": [
     {
-      "path": "../cas-client"
+      "path": "../../unicas-packages/client"
     },
     {
-      "path": "../cas-server-common"
+      "path": "../../unicas-packages/server-common"
     },
     {
       "path": "../svalue-codec"
     },
     {
-      "path": "../protocol-cas"
+      "path": "../../unicas-packages/protocol"
     },
     {
       "path": "../protocol-doc"
