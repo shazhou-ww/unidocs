@@ -10,7 +10,23 @@
 
 ### 1.1 要解决什么
 
-今天每个文档类型接入 AI 对话能力，都要重复写一遍相同的代码；而真正在运行的那份循环逻辑被锁在 Cloudflare 的包里，导致 Azure 栈至今无法运行 agent（所有 operator 接口一律返回 501）。
+今天全仓库只有 **一条** agent 链路真正能跑通：`cloudflare-psd`。它是唯一配置了真实大模型接入的（`cloudflare-psd/src/anthropic.ts`）。
+
+| 链路 | 状态 | 卡在哪 |
+|---|---|---|
+| cloudflare-psd | 能跑 | — |
+| cloudflare-markdown | 不能 | `llmProvider` 是抛异常的占位，`cloudflare-markdown/src/worker.ts:29` |
+| cloudflare-docx | 不能 | 同上；且图片路径还会撞 P6（见 2.2） |
+| azure-markdown / azure-docx | 不能 | operator 接口一律返回 501，`azure-sdk/src/local-editor.ts:103` |
+| azure-psd | 不存在 | Azure 栈里没有 psd |
+
+要让**第二条**链路跑起来，会连续撞上三件事：
+
+1. 工具分发骨架要再抄一遍（psd 和 markdown 已经是逐行相同的两份）。
+2. 循环无法复用——唯一能用的那份依赖 `DurableObjectStub` / `Request` / `Response`，Azure 拿不走。
+3. 大模型接入要重写——`anthropic.ts` 躺在 `cloudflare-psd` 这个最外层的叶子包里。
+
+需要说明的是，Azure 至今没有 agent，直接原因是那一期把它划在范围外（`azure-sdk/src/local-editor.ts:97-101` 注明是 future work），并不是被 Cloudflare 的实现"锁"住了。循环与平台绑死，影响的是**现在要补上时的重做成本**，不是它当初没做的原因。
 
 ### 1.2 目标
 
@@ -40,10 +56,10 @@ flowchart TB
         T["DocumentAgent / DocumentAgentContext<br/>AgentToolDefinition / AgentToolResult<br/>AgentContentPart"]
     end
 
-    subgraph dt["doctype 层 —— 同一份分发逻辑抄了三遍"]
-        PSD["doctype-psd/src/agent.ts<br/>73 行"]
-        MD["doctype-markdown/src/agent.ts<br/>含同样的分发"]
-        DOCX["doctype-docx/src/agent.ts<br/>含同样的分发"]
+    subgraph dt["doctype 层 —— 分发骨架三份，各约 40 行"]
+        PSD["doctype-psd/src/agent.ts 73 行<br/>纯骨架"]
+        MD["doctype-markdown/src/agent.ts<br/>与 psd 逐行相同"]
+        DOCX["doctype-docx/src/agent.ts 137 行<br/>骨架相同，但插入了约 100 行<br/>docx 特有的参数编解码"]
     end
 
     subgraph cf["cloudflare 层 —— 真正在跑的实现，但与平台绑死"]
@@ -68,7 +84,8 @@ flowchart TB
 
 | # | 问题 | 位置 |
 |---|---|---|
-| P1 | `query_` / `apply_` 前缀分发逻辑在三个 doctype 里各写一遍 | `doctype-psd/src/agent.ts:31-72` 等 |
+| P1 | `query_` / `apply_` 前缀分发骨架在三个 doctype 里各写一遍。psd 与 markdown 逐行相同，连 `requireJsonObject` 都一字不差 | `doctype-psd/src/agent.ts:31-72`、`doctype-markdown/src/agent.ts:85-129` |
+| P1b | 参数不总能原样透传给 `query` / `apply`。docx 需要在分发骨架中间插入转换：`apply_insertImage` / `apply_replaceImage` 要先把 `hash` 字符串经 `resolveBlob` 换成 SBlob，`query_getImage` 要走独立分支返回 image content part | `doctype-docx/src/agent.ts:20,36-38,53-84,86-113` |
 | P2 | 唯一可用的循环实现依赖 Cloudflare 类型，Azure 无法复用 | `cloudflare-sdk/src/operator-do-agent.ts` |
 | P3 | 存在第二份无人使用且已落后的循环实现 | `doctype-server-common/src/operator.ts` |
 | P4 | 大模型适配层放在最外层的叶子包里，其他文档类型用不到 | `cloudflare-psd/src/anthropic.ts` |
@@ -244,16 +261,67 @@ export const psdAgent = defineAgent({
 
 `handlers` 可以不填。填了的话，key 用工具的**全名**（`tools` 里的 `name` 字段，例如 `generate_image`），不是 map 的 key —— 因为 `query_` / `apply_` 前缀在 name 上，用全名分发才没有歧义。
 
-`handlers` 用于既不读也不写文档、而是调外部服务或做纯计算的工具。SDK 会把 `query` / `apply` / `makeSBlob` / `readBlob` 一并交给 handler，所以它可以"调外部 API 生成图片 → 存成 SBlob → 调 apply 插入图层"一气呵成。
+> 上面的 `generate_image` 只是用来说明 `handlers` 怎么写，**不属于本次迁移范围**。PSD 现有的工具集（`doctype-psd/src/tools.ts`）保持不变，包括那个目前实际跑不通的 `apply_generative_fill`。
 
-> 上面的 `generate_image` 只是用来说明 `handlers` 怎么用，**不属于本次迁移范围**。PSD 现有的工具集（`doctype-psd/src/tools.ts`）保持不变，包括那个目前实际跑不通的 `apply_generative_fill`。等真要做生成式填充时，它会是 `handlers` 的第一个使用者。
+### 5.2.1 `handlers` 不是预留，docx 今天就必须用
+
+`handlers` 承担两类工具：
+
+**第一类：参数需要转换后才能交给 `query` / `apply`。** 这是 docx 今天的真实情况（P1b）——`apply_insertImage` 收到的是一个 `hash` 字符串，而 `DocxOperation` 要的是一个 SBlob，中间必须过一次 `resolveBlob`。今天这段转换被写死在分发骨架里（`doctype-docx/src/agent.ts:86-113` 的 `makeOperation`），所以 docx 的骨架没法直接删掉。
+
+改造后，docx 把这三个工具写成 handler，其余工具走自动分发：
+
+```ts
+// packages/doctype-docx/src/agent.ts
+export const docxAgent = defineAgent({
+  tools, instructions,
+  handlers: {
+    query_getImage: async (args, ctx) => {
+      const { data, version } = await ctx.query({ kind: "getImageContent", payload: { index: args.index } });
+      const { blob, ...meta } = requireRecord(data);
+      return {
+        structuredContent: { data: meta, version },
+        content: [{ type: "image", blob, mediaType: mediaTypeOf(meta.format) }],
+      };
+    },
+    apply_insertImage: async (args, ctx) => {
+      const blob = await ctx.resolveBlob(args.hash);
+      return ctx.applyOne({ kind: "insertImage", payload: { blob, widthPx: args.widthPx, altText: args.altText } });
+    },
+    apply_replaceImage: async (args, ctx) => {
+      const blob = await ctx.resolveBlob(args.hash);
+      return ctx.applyOne({ kind: "replaceImage", payload: { index: args.index, blob } });
+    },
+  },
+});
+```
+
+**第二类：既不读也不写文档，而是调外部服务或做纯计算。** 例如未来的生成式填充。
+
+**关键约束：** handler 拿到的 `ctx` 里的 `query` / `apply` / `applyOne` 是 **SDK 包装过的**，与自动分发走同一套乐观锁记账（记录 `lastKnownVersion`、`apply` 前校验、冲突时把当前版本喂回模型）。handler 不能绕过它直接碰 `DocumentAgentContext`，否则乐观锁会破。
+
+```ts
+export interface ToolHandlerContext<TQuery, TOp> {
+  query(q: SValueType<TQuery>): Promise<{ data: SValue; version: number }>;   // 自动记录 version
+  apply(ops: readonly SValueType<TOp>[], description?: string): Promise<AgentToolResult>;
+  applyOne(op: SValueType<TOp>, description?: string): Promise<AgentToolResult>;
+  resolveBlob(hash: string): Promise<SBlob>;
+  readBlob(blob: SBlob): Promise<SBlobData>;
+  makeSBlob(data: SBlobData): Promise<SBlob>;
+}
+
+export type ToolHandler<TQuery, TOp> = (
+  args: Readonly<Record<string, JsonValue>>,
+  ctx: ToolHandlerContext<TQuery, TOp>,
+) => Promise<AgentToolResult>;
+```
 
 ### 5.3 工具名分发
 
 ```mermaid
 flowchart TB
     START["模型要调用工具 name"] --> H{"handlers 里有 name 这个键"}
-    H -->|有| CALL["调 doctype 自己写的 handler<br/>把 query / apply / makeSBlob / readBlob 交给它"]
+    H -->|有| CALL["调 doctype 自己写的 handler<br/>交给它一个 SDK 包装过的 ctx<br/>与自动分发共用同一套乐观锁记账"]
     H -->|没有| Q{"name 以 query_ 开头"}
     Q -->|是| DOQ["调 context.query<br/>记下返回的 version"]
     Q -->|否| AP{"name 以 apply_ 开头"}
@@ -593,8 +661,8 @@ channel.run(text, {
 | `doctype-psd/src/queries.ts:101` | `getPreview` 从 `btoa` 产出 base64 改为 `makeSBlob` 返回 SBlob 引用 |
 | `doctype-psd/src/agent.ts` | 73 行 → 约 6 行 `defineAgent(...)` |
 | `doctype-psd/tests/agent.test.ts:61-76` | 断言反转：从「`$image` 透传且 `content` 为 undefined」改为「返回 image content part」 |
-| `doctype-markdown/src/agent.ts` | 删掉分发逻辑，只留工具定义 + `defineAgent` |
-| `doctype-docx/src/agent.ts` | 同上 |
+| `doctype-markdown/src/agent.ts` | 删掉分发骨架，只留工具定义 + `defineAgent`，129 行 → 约 90 行（工具定义占大头） |
+| `doctype-docx/src/agent.ts` | 删掉分发骨架；`queryImageContent` / `makeOperation` 改写成三个 handler（见 5.2.1）；`requireString` / `requireNumber` 等校验函数保留 |
 | `cloudflare-psd/src/anthropic.ts` | 移到 `agent-sdk/src/providers/anthropic.ts`，删掉 `findImage` / `previewMeta`，翻译改为单向 |
 | `cloudflare-psd/src/worker.ts` | 改为注入 `psdAgent` + Cloudflare 的 `DocumentAgentContext` 实现 |
 | `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 约 90 行，只剩 DurableObject 外壳、身份校验、把事件流包成 Response |
@@ -638,6 +706,8 @@ flowchart TB
 | V6 | 现有 230 行 `operator-do.test.ts` 全绿 | `pnpm test` |
 | V7 | 浏览器能看到逐步事件，画布逐步更新 | web-psd 手工端到端 |
 | V8 | 同一条指令在 Azure 栈跑通 | `pnpm test:azure` 新增用例 |
+| V9 | docx 的三个图片工具改写成 handler 后行为不变 | 现有 `doctype-docx/tests/agent.test.ts` 已覆盖 `getImage` / `insertImage`，全绿即可 |
+| V10 | handler 里的 `apply` 与自动分发共用同一套乐观锁 | 契约测试：先在 handler 里 `applyOne` 而未先 `query`，断言被拒绝并提示先查询 |
 
 V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。
 
@@ -677,4 +747,5 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 事件流野心 | 单向进度流，不重放 |
 | 客户端范围 | agent 通道 + 泛型化的 DocSession |
 | 第三类工具 | 支持，通过可不填的 `handlers` 字段 |
+| `handlers` 的定位 | 不是为将来预留 —— docx 的三个图片工具今天就必须用它（见 5.2.1）。handler 拿到的 `ctx` 由 SDK 包装，与自动分发共用乐观锁记账 |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |
