@@ -2,33 +2,35 @@ name = "unidocs-psd"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
+# Stack mode: the editor DO routes canonical /stacks/unidocs-cloudflare/
+# tenants/{tenantId}/... to the middleware worker; the delegated CAS
+# capability is verified against the registered stack issuer/JWKS.
 [vars]
-INTERNAL_AUTH_MODE = "legacy"
+INTERNAL_AUTH_MODE = "stack"
 DOC_CAPABILITY_AUDIENCE = "unidocs-doc:psd"
-CAS_CAPABILITY_AUDIENCE = "unidocs-cas"
+CAS_CAPABILITY_AUDIENCE = "unidocs-cas-cloudflare"
+CAS_STACK_ID = "unidocs-cloudflare"
+CAS_STACK_ISSUER = "https://unicas.shazhou.work/cas/issuer/cloudflare"
 CAPABILITY_ALGORITHM = "ES256"
 CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "300"
 CAPABILITY_CLOCK_SKEW_SECONDS = "30"
 compatibility_flags = ["nodejs_compat"]
 
-[[durable_objects.bindings]]
-name = "PSD_EDITOR"
-class_name = "PsdEditor"
+[exports.PsdEditor]
+type = "durable-object"
+storage = "sqlite"
 
-[[durable_objects.bindings]]
-name = "PSD_OPERATOR"
-class_name = "PsdOperator"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["PsdEditor", "PsdOperator"]
+[exports.PsdOperator]
+type = "durable-object"
+storage = "sqlite"
 
 [[services]]
 binding = "CAS_SERVICE"
-service = "unidocs-cas"
+service = "unidocs-cas-server-cloudflare"
 
-# Set `SERVICE_ACCESS_KEY` and `CAS_ACCESS_KEY` via wrangler secrets.
-# [vars]
-# SERVICE_ACCESS_KEY = "dev-psd-key"
-# CAS_ACCESS_KEY = "dev-cas-key"
+# Deployment secrets (wrangler secret put, never in this file):
+#   CAPABILITY_ISSUER            doc-service identity issuer
+#   CAPABILITY_TRUSTED_JWKS      doc-service identity public JWKS
+#   CAS_STACK_TRUSTED_JWKS       the unidocs-cloudflare stack public JWKS
+#   SERVICE_ACCESS_KEY           legacy fallback only (unused in stack mode)

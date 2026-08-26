@@ -1698,8 +1698,12 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [~] Publish/test the edge-tenant-admin compatibility version and deploy
   backing Workers first/edge second, with reverse-order rollback and
   retained prior Worker versions. (Deploy order followed: tenant → admin →
-  edge, all versioned; wrangler retains prior versions for rollback. A full
-  reverse-order rollback drill is an ops-gate exercise.)
+  edge, all versioned; wrangler retains prior versions for rollback. A live
+  rollback+restore drill was executed 2026-08-26 on the admin worker:
+  `wrangler rollback` moved traffic to the retained prior version, the BFF
+  still answered correctly through the edge, and `wrangler deploy` restored
+  the current version — reverse-order rollback across all three workers
+  remains an ops-gate exercise.)
 - [~] Provision the middleware endpoint, `CAS_CONTROL_DB`, tenant D1/R2/DO
   bindings, DNS/TLS, OIDC configuration, secrets, backups, observability,
   SLOs, alerts, and migration/rollback procedures independently of either
@@ -1722,9 +1726,15 @@ Tests assert both aggregate counts and emitted domain deltas.
   (carrying the refDomain claim), the editor DO routes canonical
   `/stacks/{stackId}/tenants/{tenantId}/...` to the middleware, and the
   markdown doc flow passes end-to-end. `startLocalMiddleware` wraps the
-  standalone middleware for the dev command and the Azure round. Wiring the
-  application-stack WRANGLER configs to the deployed middleware is the
-  remaining deploy step.)
+  standalone middleware for the dev command and the Azure round. The
+  application-stack WRANGLER configs are rewritten to stack mode with real
+  production values (stack issuer/kid/audience, CAS_SERVICE →
+  `unidocs-cas-server-cloudflare`, `[exports.*]` DO declarations) and all
+  four parse via `wrangler deploy --dry-run`; DEPLOYMENT IS BLOCKED until
+  the gateway gains a production identity/auth mechanism — it currently has
+  only `createInsecureTenantIdentityResolver`, so a deployed gateway 401s
+  everything. Deploy order and secrets are documented in the round-7
+  execution notes; do not deploy until app identity auth lands.)
 - [x] Migrate Azure Gateway and document services from a manually aligned
   remote CAS URL/shared key to the registered Azure stack identity,
   capability issuance, and middleware endpoint. (Azure stack mode is green:
@@ -1758,8 +1768,11 @@ Tests assert both aggregate counts and emitted domain deltas.
   rollback window is an ops step.)
 - [~] Prove each application stack can deploy, roll back, and operate without
   redeploying CAS, and CAS can deploy compatibly without redeploying either
-  stack. (Middleware deployed independently of the application stacks;
-  full independent-deploy/rollback drills are ops-gate exercises.)
+  stack. (Middleware deployed independently of the application stacks; a
+  live rollback+restore drill on the deployed middleware succeeded
+  2026-08-26 (see bullet 4). Application-stack deploy/rollback drills are
+  blocked on the gateway identity-auth prerequisite and then remain as
+  ops-gate exercises.)
 - [~] Meet every operational-readiness gate: availability/load SLO, rate limits,
       revocation bound, backup/restore drill, migration pause criteria, alerts,
       runbooks, named ownership, and key-compromise exercise. (Ops round;

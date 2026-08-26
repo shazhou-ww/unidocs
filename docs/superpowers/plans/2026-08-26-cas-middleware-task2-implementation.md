@@ -443,6 +443,51 @@ returns 409 like the legacy runtime. `azure-psd` also migrated to stack mode
 (no cf legacy CAS dependency). Validation: test:local 396, test:azure 29,
 pnpm test, typecheck, and the dependency guard all green.
 
+## Task 9 execution notes (round 7: app-stack deployables + rollback drill)
+
+The four application-stack `wrangler.toml` files (cloudflare-gateway,
+cloudflare-markdown, cloudflare-docx, cloudflare-psd) are rewritten to stack
+mode with real production values: `INTERNAL_AUTH_MODE="stack"`,
+`CAS_STACK_ID="unidocs-cloudflare"`, `CAS_STACK_ISSUER`
+(`https://unicas.shazhou.work/cas/issuer/cloudflare`), `CAS_CAPABILITY_AUDIENCE`
+(`unidocs-cas-cloudflare`), `CAS_SERVICE` → `unidocs-cas-server-cloudflare`,
+plus `[exports.*]` durable-object declarations. The legacy
+`[durable_objects]` bindings + `[[migrations]]` blocks were removed from the
+doc workers — wrangler rejects `migrations` and `exports` together
+("mutually exclusive"), and with `[exports.*]` the DO lifecycle is declared
+by export alone. All four parse: `wrangler deploy --dry-run` exits cleanly
+(the gateway first, then the three doc workers).
+
+**App-stack deployment runbook (NOT yet executed — blocked):** the gateway
+still only has `createInsecureTenantIdentityResolver`, so a deployed gateway
+has no production identity/auth mechanism and 401s every request. Do **not**
+deploy the app stack until application identity auth lands (the gateway's
+capability authority must be able to verify doc-service identity JWTs in
+production, per `CAPABILITY_ISSUER` / `CAPABILITY_TRUSTED_JWKS`). The app
+stack has never been deployed ("This Worker does not exist"), so these tomls
+are the deployable artifact, not a live deployment. When unblocked, deploy
+order is doc workers first, gateway last (the gateway depends on the
+registered stack and the doc workers' identity keys); secrets to set via
+`wrangler secret put` before each deploy:
+
+- doc workers: `CAPABILITY_ISSUER`, `CAPABILITY_TRUSTED_JWKS` (doc-service
+  identity), `CAS_STACK_TRUSTED_JWKS` (the `unidocs-cloudflare` stack public
+  JWKS), `SERVICE_ACCESS_KEY` (legacy fallback, unused in stack mode).
+- gateway: `CAS_STACK_PRIVATE_KEY_PKCS8` (the `cf-rotate-1` stack signing
+  key — the private half lives in `.wrangler/cas-deploy/`, gitignored),
+  `DOC_SERVICES_JSON` (doc-service identity credentials).
+
+The deployed middleware's private keys are provisional bootstrap keys —
+rotate them via the possession-proof console once identity auth exists.
+
+**Rollback drill (verified live, 2026-08-26):** `wrangler deployments list`
+on the admin worker showed a single 100% version (`aac4ce3f`); `wrangler
+rollback` from `packages/cas-admin-webui` moved traffic to the retained prior
+version `8dd1baee`, `GET https://unicas.shazhou.work/admin/me` still answered
+401 (correct unauthenticated BFF response through the edge), and `wrangler
+deploy` restored the current version (`7e7668b9`, 100%). Retained prior
+versions + forward/backward rollback on the deployed middleware are proven.
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).
