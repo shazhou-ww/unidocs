@@ -38,6 +38,15 @@ export default defineConfig({
   build: {
     outDir: "dist/ui",
     emptyOutDir: true,
+    // Deterministic asset names: the BFF shell hardcodes /admin/assets/main.js
+    // (and main.css), so the entry/chunk names must not be hashed.
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name][extname]",
+      },
+    },
   },
   test: {
     environment: "node",

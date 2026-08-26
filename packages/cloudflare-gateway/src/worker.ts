@@ -39,6 +39,13 @@ interface Env extends CapabilityRuntimePolicyBindings {
   CAPABILITY_KEY_ID?: string;
   CAPABILITY_ISSUER?: string;
   CAS_CAPABILITY_AUDIENCE?: string;
+  /** Stack mode: the registered unidocs-cloudflare stack CAS identity. */
+  CAS_STACK_ID?: string;
+  CAS_STACK_ISSUER?: string;
+  CAS_STACK_KEY_ID?: string;
+  CAS_STACK_PRIVATE_KEY_PKCS8?: string;
+  /** refDomain claim carried by CAS capabilities (stack mode). */
+  CAS_REF_DOMAIN?: string;
   INSECURE_PATH_IDENTITY?: string;
   CAS_SERVICE: Fetcher;
 }
@@ -95,9 +102,25 @@ async function createCapabilityAuthority(env: Env): Promise<GatewayCapabilityAut
     defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
     maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
   });
+  const stackId = env.CAS_STACK_ID;
+  const casIssuer = stackId === undefined
+    ? undefined
+    : await createPkcs8CapabilityIssuer({
+      issuer: requireBinding(env.CAS_STACK_ISSUER, "CAS_STACK_ISSUER"),
+      kid: requireBinding(env.CAS_STACK_KEY_ID, "CAS_STACK_KEY_ID"),
+      privateKeyPkcs8: requireBinding(
+        env.CAS_STACK_PRIVATE_KEY_PKCS8,
+        "CAS_STACK_PRIVATE_KEY_PKCS8",
+      ),
+      defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
+      maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+    });
   return new GatewayCapabilityAuthority({
     issuer,
+    casIssuer,
     casAudience: requireBinding(env.CAS_CAPABILITY_AUDIENCE, "CAS_CAPABILITY_AUDIENCE"),
+    casStackId: stackId,
+    casRefDomain: env.CAS_REF_DOMAIN,
     audit: event => console.log(JSON.stringify({ event: "gateway_capability_issued", ...event })),
   });
 }

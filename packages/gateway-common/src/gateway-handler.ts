@@ -17,6 +17,7 @@
 import type { HttpFetcher } from "@unidocs/cas-client";
 import { casRoutes, matchCasRoute } from "@unidocs/protocol-cas-legacy";
 import type { CasRoute } from "@unidocs/protocol-cas-legacy";
+import { casRoutes as canonicalCasRoutes } from "@unidocs/protocol-cas";
 import { docRoutes } from "@unidocs/protocol-doc";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {
@@ -28,12 +29,14 @@ import type { GatewayIdentityResolver } from "./identity.js";
 import { casCapabilityPolicy, docCapabilityPolicy } from "./capability-policy.js";
 import type { GatewayCapabilityAuthority } from "./capability-authority.js";
 
-export type GatewayInternalAuthMode = "legacy" | "dual" | "capability";
+export type GatewayInternalAuthMode = "legacy" | "dual" | "capability" | "stack";
 
 export function parseGatewayInternalAuthMode(
   value: string | undefined,
 ): GatewayInternalAuthMode {
-  if (value === "legacy" || value === "dual" || value === "capability") return value;
+  if (value === "legacy" || value === "dual" || value === "capability" || value === "stack") {
+    return value;
+  }
   throw new TypeError("Gateway internal auth mode must be explicit");
 }
 
@@ -47,6 +50,8 @@ export interface GatewayHandlerConfig {
   directory: GatewayDocumentDirectory;
   /** Gateway-owned CAS exposure policy, applied after route matching. */
   isGatewayExposedCasRoute(route: CasRoute): boolean;
+  /** Stack namespace: forward public CAS routes to canonical /stacks paths. */
+  casStackId?: string;
   generateId?(): string;
   now?(): number;
 }
@@ -125,7 +130,7 @@ export function createGatewayHandler(
         );
       }
       const targetUrl = new URL(request.url);
-      targetUrl.pathname = publicCasPath(casRoute);
+      targetUrl.pathname = casTargetPath(casRoute, cfg.casStackId);
       return cfg.casFetcher.fetch(new Request(targetUrl, {
         method: request.method,
         headers,
@@ -636,7 +641,7 @@ function usesLegacyAuth(mode: GatewayInternalAuthMode): boolean {
 }
 
 function usesCapabilityAuth(mode: GatewayInternalAuthMode): boolean {
-  return mode === "capability" || mode === "dual";
+  return mode === "capability" || mode === "dual" || mode === "stack";
 }
 
 function validateInternalAuthConfig(cfg: GatewayHandlerConfig): void {
@@ -647,6 +652,32 @@ function validateInternalAuthConfig(cfg: GatewayHandlerConfig): void {
   if (usesCapabilityAuth(cfg.internalAuthMode) && !cfg.capabilityAuthority) {
     throw new TypeError("Capability Gateway auth requires a capability authority");
   }
+  if (cfg.internalAuthMode === "stack" && !cfg.casStackId) {
+    throw new TypeError("Stack Gateway auth requires a CAS stack id");
+  }
+}
+
+/** Public CAS route → internal target path (canonical /stacks in stack mode). */
+function casTargetPath(route: CasRoute, stackId: string | undefined): string {
+  if (stackId !== undefined) {
+    switch (route.operation) {
+      case "readContent":
+        return canonicalCasRoutes.readContent({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
+      case "readMetadata":
+        return canonicalCasRoutes.readMetadata({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
+      case "leaseNode":
+        return canonicalCasRoutes.leaseNode({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
+      case "leaseExisting":
+        return canonicalCasRoutes.leaseExisting({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
+      case "usage":
+        return canonicalCasRoutes.usage({ stackId, tenantId: route.tenantId });
+      case "gc":
+        return canonicalCasRoutes.gc({ stackId, tenantId: route.tenantId });
+      default:
+        throw new TypeError(`CAS operation ${route.operation} is not public`);
+    }
+  }
+  return publicCasPath(route);
 }
 
 function publicCasPath(route: CasRoute): string {

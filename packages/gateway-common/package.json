@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@unidocs/cas-client": "workspace:*",
+    "@unidocs/protocol-cas": "workspace:*",
     "@unidocs/protocol-cas-legacy": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
     "@unidocs/service-auth": "workspace:*"

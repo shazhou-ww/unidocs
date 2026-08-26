@@ -22,12 +22,23 @@ export interface GatewayCapabilityAuditEvent {
   readonly audience: string;
   readonly tenantId: string;
   readonly sessionId?: string;
+  readonly refDomain?: string;
   readonly permissions: readonly CapabilityPermission[];
 }
 
 export interface GatewayCapabilityAuthorityConfig {
+  /** Doc-service identity: signs the doc capabilities (audience unidocs-doc:*). */
   readonly issuer: GatewayCapabilityIssuer;
+  /**
+   * Stack CAS identity: signs delegated-cas and gateway-cas capabilities in
+   * stack mode. When absent, `issuer` is used (legacy/dual/capability modes).
+   */
+  readonly casIssuer?: GatewayCapabilityIssuer;
   readonly casAudience: string;
+  /** Stack namespace for the canonical CAS route prefix (stack mode only). */
+  readonly casStackId?: string;
+  /** refDomain claim carried by CAS capabilities (stack mode only). */
+  readonly casRefDomain?: string;
   readonly generateJti?: () => string;
   readonly audit?: (event: GatewayCapabilityAuditEvent) => void;
 }
@@ -40,7 +51,10 @@ export interface DocOperationCredentials {
 
 export class GatewayCapabilityAuthority {
   readonly #issuer: GatewayCapabilityIssuer;
+  readonly #casIssuer: GatewayCapabilityIssuer;
   readonly #casAudience: string;
+  readonly #casStackId?: string;
+  readonly #casRefDomain?: string;
   readonly #generateJti: () => string;
   readonly #audit: (event: GatewayCapabilityAuditEvent) => void;
 
@@ -48,9 +62,17 @@ export class GatewayCapabilityAuthority {
     if (config.issuer.keyId.length === 0) throw new TypeError("Capability key ID is required");
     if (config.casAudience.length === 0) throw new TypeError("CAS capability audience is required");
     this.#issuer = config.issuer;
+    this.#casIssuer = config.casIssuer ?? config.issuer;
     this.#casAudience = config.casAudience;
+    this.#casStackId = config.casStackId;
+    this.#casRefDomain = config.casRefDomain;
     this.#generateJti = config.generateJti ?? (() => crypto.randomUUID());
     this.#audit = config.audit ?? (() => undefined);
+  }
+
+  /** Stack namespace when stack mode is configured; undefined in legacy modes. */
+  get stackId(): string | undefined {
+    return this.#casStackId;
   }
 
   async issueDocOperation(input: {
@@ -65,18 +87,19 @@ export class GatewayCapabilityAuthority {
 
     let delegatedCasCapability: string | undefined;
     if (policy.delegatedCasPermissions.length > 0) {
-      delegatedCasCapability = await this.#issue({
+      delegatedCasCapability = await this.#issue(this.#casIssuer, {
         kind: "delegated-cas",
         subject: `doc:${input.docType}`,
         audience: this.#casAudience,
         tenantId: input.tenantId,
         sessionId: input.sessionId,
+        refDomain: this.#casRefDomain,
         permissions: policy.delegatedCasPermissions,
         lifetimeSeconds: policy.lifetimeSeconds,
       });
     }
 
-    const authorization = await this.#issue({
+    const authorization = await this.#issue(this.#issuer, {
       kind: "doc",
       subject: "gateway",
       audience: input.docAudience,
@@ -97,45 +120,52 @@ export class GatewayCapabilityAuthority {
 
   async issueCasOperation(route: CasRoute): Promise<string> {
     const policy = casCapabilityPolicy(route);
-    const token = await this.#issue({
+    const token = await this.#issue(this.#casIssuer, {
       kind: "gateway-cas",
       subject: "gateway",
       audience: this.#casAudience,
       tenantId: route.tenantId,
+      refDomain: this.#casRefDomain,
       permissions: [policy.permission],
       lifetimeSeconds: policy.lifetimeSeconds,
     });
     return `Bearer ${token}`;
   }
 
-  async #issue(input: {
-    readonly kind: GatewayCapabilityAuditEvent["kind"];
-    readonly subject: string;
-    readonly audience: string;
-    readonly tenantId: string;
-    readonly sessionId?: string;
-    readonly permissions: readonly CapabilityPermission[];
-    readonly lifetimeSeconds: number;
-  }): Promise<string> {
+  async #issue(
+    issuer: GatewayCapabilityIssuer,
+    input: {
+      readonly kind: GatewayCapabilityAuditEvent["kind"];
+      readonly subject: string;
+      readonly audience: string;
+      readonly tenantId: string;
+      readonly sessionId?: string;
+      readonly refDomain?: string;
+      readonly permissions: readonly CapabilityPermission[];
+      readonly lifetimeSeconds: number;
+    },
+  ): Promise<string> {
     const jti = this.#generateJti();
     if (jti.length === 0) throw new TypeError("Capability token ID is required");
-    const token = await this.#issuer.issue({
+    const token = await issuer.issue({
       subject: input.subject,
       audience: input.audience,
       tenantId: input.tenantId,
       ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(input.refDomain === undefined ? {} : { refDomain: input.refDomain }),
       permissions: input.permissions,
       lifetimeSeconds: input.lifetimeSeconds,
       jti,
     });
     this.#audit(Object.freeze({
       kind: input.kind,
-      kid: this.#issuer.keyId,
+      kid: issuer.keyId,
       jti,
       subject: input.subject,
       audience: input.audience,
       tenantId: input.tenantId,
       ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(input.refDomain === undefined ? {} : { refDomain: input.refDomain }),
       permissions: Object.freeze([...input.permissions]),
     }));
     return token;

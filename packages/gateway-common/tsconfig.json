@@ -18,6 +18,9 @@
       "path": "../cas-client"
     },
     {
+      "path": "../protocol-cas"
+    },
+    {
       "path": "../protocol-cas-legacy"
     },
     {

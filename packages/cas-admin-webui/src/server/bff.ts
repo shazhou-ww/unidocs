@@ -315,10 +315,11 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="x-csrf-token" content="${payload.csrfToken}" />
   <title>CAS Admin</title>
+  <link rel="stylesheet" href="/admin/assets/index.css" />
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/admin/assets/main.js"></script>
+  <script type="module" src="/admin/assets/index.js"></script>
 </body>
 </html>`;
     return new Response(html, {
