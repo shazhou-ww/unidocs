@@ -175,7 +175,11 @@ test("buildWorkers separates Gateway, Doc, and CAS credentials", () => {
   });
   expect(gateway.bindings.CAS_ACCESS_KEY).toBe(CAS_ACCESS_KEY);
   expect(gateway.bindings.INTERNAL_AUTH_MODE).toBe("legacy");
-  expect(cas.bindings).toEqual({ CAS_ACCESS_KEY });
+  expect(cas.bindings).toEqual({
+    INTERNAL_AUTH_MODE: "legacy",
+    CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAS_ACCESS_KEY,
+  });
   expect(docx.bindings).toEqual({
     CAS_ACCESS_KEY,
     INTERNAL_AUTH_MODE: "legacy",

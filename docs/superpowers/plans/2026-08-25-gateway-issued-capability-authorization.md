@@ -3,7 +3,7 @@
 > **Status:** In progress. The P0 boundary prerequisite completed in
 > `cdce042`. Tasks 0-3 are complete. The implementation was rebased onto
 > `origin/main` commit `d01afd0` on 2026-08-26 after the cloud stack directory
-> reorganization; Tasks 0-4 are complete and Task 5 is next.
+> reorganization; Tasks 0-5 are complete and Task 6 is next.
 >
 > **For agentic workers:** Use an executing-plans workflow and complete one
 > task at a time. Keep the checkboxes current. Do not combine this migration
@@ -1304,28 +1304,28 @@ Implementation record (2026-08-26):
 
 ### Task 5: Make current CAS routes tenant-aware and enforce capabilities
 
-- [ ] Dispatch the current `protocol-cas` operation set. Authenticate at the CAS
+- [x] Dispatch the current `protocol-cas` operation set. Authenticate at the CAS
       service edge before schema work, Durable Object lookup, database access,
       or request-body parsing.
-- [ ] Require the exact CAS audience and apply the CAS route permission matrix.
-- [ ] Compare URL `tenantId` with the signed claim for every tenant route.
-- [ ] Migrate every node, edge, root owner, idempotency, usage, object-store,
+- [x] Require the exact CAS audience and apply the CAS route permission matrix.
+- [x] Compare URL `tenantId` with the signed claim for every tenant route.
+- [x] Migrate every node, edge, root owner, idempotency, usage, object-store,
       and Durable Object partition key from user identity to tenant identity.
       Prove equal hashes in different tenants remain physically and
       accountant-wise isolated.
-- [ ] Preserve public raw-content `POST`, `X-CAS-Refs`,
+- [x] Preserve public raw-content `POST`, `X-CAS-Refs`,
       `X-CAS-Lease-Duration`, and internal portable-node framing. Only replace
       user partitioning with tenant partitioning and legacy auth with Bearer.
-- [ ] Preserve `CasRootRefUpdate` and `CasAssignRootsRequest` bodies. Require a
+- [x] Preserve `CasRootRefUpdate` and `CasAssignRootsRequest` bodies. Require a
       session-scoped capability for both root routes and reject an assignment
       owner that is outside the signed session's existing owner namespace.
-- [ ] Keep immutable node keys tenant-scoped as `(tenantId, hash)`; do not add
+- [x] Keep immutable node keys tenant-scoped as `(tenantId, hash)`; do not add
       `sessionId` to physical node keys.
-- [ ] Require only `cas:admin` for usage/GC/admin routes. Confirm explicitly
+- [x] Require only `cas:admin` for usage/GC/admin routes. Confirm explicitly
       that `admin` alone cannot read or write node content.
-- [ ] Reject Doc-audience tokens, multi-audience tokens, and any valid token
+- [x] Reject Doc-audience tokens, multi-audience tokens, and any valid token
       whose permission/resource does not match the route.
-- [ ] Remove trust in identity/context headers from the capability code path and
+- [x] Remove trust in identity/context headers from the capability code path and
       reject old `/users/*` and tenant-less internal CAS paths outside the
       explicit migration mode.
 
@@ -1337,6 +1337,34 @@ to change another session's roots, unchanged node hash/content validation, and
 
 **Focused validation:** CAS common/runtime suites and tenant-isolation
 integration tests.
+
+Implementation record (2026-08-26):
+
+- The CAS edge now dispatches the full `protocol-cas` route set and verifies
+      capability credentials before schema migration, body parsing, Durable Object
+      lookup, D1, or R2 access. Explicit `legacy`/`dual`/`capability` modes retain
+      tenant-less internal routes only inside the quarantined migration mode.
+- A cached public-JWKS verifier enforces exact issuer/audience/algorithm,
+      route-specific read/write/admin permissions, URL tenant equality, and
+      Gateway-vs-Doc subject/session constraints. Tenant-only Gateway admin tokens
+      authorize usage/GC only; admin never implies node read/write.
+- Tenant-prefixed private portable-node and root routes preserve current body,
+      header, and media framing. Root updates require a session-scoped Doc
+      capability, and root assignments are constrained to the signed
+      `session:{sessionId}:` owner namespace before any storage access.
+- Existing P0 physical `(tenantId, hash)` node, edge, root, idempotency, usage,
+      R2, D1, DO, and GC partitioning remains unchanged and does not include
+      session ID.
+- Real ES256 worker tests cover valid read/admin/root operations, wrong tenant,
+      Doc-audience confused deputy, multi-audience rejection, admin-as-read denial,
+      cross-session root owner denial, pre-storage auth failure, and capability-mode
+      rejection of tenant-less legacy paths. The complete route policy covers all
+      ten CAS operations.
+- Focused results: `cloudflare-cas` 56 passed, shared Doc 94 passed, CAS client
+      19 passed, Cloudflare SDK 13 passed, Azure SDK 50 passed. Root
+      `pnpm typecheck` and `pnpm build` pass; `pnpm test:local` passed 285 with 2
+      conditional skips; `pnpm test:azure` passed 15/15 with migrations and
+      infrastructure cleanup.
 
 ### Task 6: Add key provisioning, rotation, and runtime configuration
 

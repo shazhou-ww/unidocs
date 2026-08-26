@@ -174,7 +174,11 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       modules: true,
       scriptPath: join(bundleDir, "cas.js"),
       compatibilityDate: COMPATIBILITY_DATE,
-      bindings: { CAS_ACCESS_KEY },
+      bindings: {
+        INTERNAL_AUTH_MODE: "legacy",
+        CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+        CAS_ACCESS_KEY,
+      },
       durableObjects: {
         CAS_DO: { className: "CasDurableObject" },
       },

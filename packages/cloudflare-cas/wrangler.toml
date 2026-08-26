@@ -20,5 +20,8 @@ bucket_name = "unidocs-cas"
 binding = "CAS_R2"
 
 # Set via wrangler secret: `wrangler secret put CAS_ACCESS_KEY`
+[vars]
+INTERNAL_AUTH_MODE = "legacy"
+CAS_CAPABILITY_AUDIENCE = "unidocs-cas"
 # [vars]
 # CAS_ACCESS_KEY = "dev-cas-key"

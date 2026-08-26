@@ -22,6 +22,9 @@
       "path": "../protocol-cas"
     },
     {
+      "path": "../service-auth"
+    },
+    {
       "path": "../protocol"
     }
   ]

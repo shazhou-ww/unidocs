@@ -25,10 +25,12 @@
     "@unidocs/cas-server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*",
     "@unidocs/protocol-cas": "workspace:*",
+    "@unidocs/service-auth": "workspace:*",
     "@unidocs/svalue-codec": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",
+    "jose": "^6.2.10",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
     "wrangler": "^4.20.0"

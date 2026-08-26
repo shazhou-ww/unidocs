@@ -1,11 +1,3 @@
-/**
- * UniDocs CAS worker.
- *
- * Owns CasDurableObject, CAS_DB, and CAS_R2. All requests require
- * X-Internal-Token. Tenant-scoped CAS URLs are reached only via trusted
- * service calls or Gateway translation.
- */
-
 import {
   handleCasRequest,
   handleRootAssignments,
@@ -14,61 +6,142 @@ import {
   isCasRoute,
 } from "./cas/routes.js";
 import { migrateCasSchema } from "./cas/schema.js";
+import { matchCasRoute } from "@unidocs/protocol-cas";
+import type { CasRoute } from "@unidocs/protocol-cas";
+import { CapabilityError } from "@unidocs/service-auth";
+import {
+  CasAuthConfigCache,
+  type CasAuthBindings,
+  type CasRouteAuthorization,
+} from "./cas-auth.js";
 
 export { CasDurableObject } from "./cas/do.js";
 export { isPublicCasRoute } from "./public-cas-route.js";
 
-interface Env {
+interface Env extends CasAuthBindings {
   CAS_DB: D1Database;
   CAS_R2: R2Bucket;
   CAS_DO: DurableObjectNamespace;
-  CAS_ACCESS_KEY: string;
 }
+
+const authConfig = new CasAuthConfigCache();
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const token = request.headers.get("X-Internal-Token");
-    if (!env.CAS_ACCESS_KEY || token !== env.CAS_ACCESS_KEY) {
-      return Response.json({ error: "Forbidden" }, { status: 401 });
-    }
-
     const url = new URL(request.url);
-
-    if (url.pathname === "/_internal/root-refs") {
-      const tenantId = request.headers.get("X-Tenant-Id");
-      if (!tenantId) {
-        return Response.json({ error: "Missing X-Tenant-Id header" }, { status: 401 });
+    const config = authConfig.get(env);
+    const route = matchCasRoute(request.method, url.pathname);
+    if (route) {
+      let authorization: CasRouteAuthorization;
+      try {
+        authorization = request.headers.has("Authorization")
+          ? await config.authorizeCapability(request, route)
+          : (config.authenticateLegacy(request), {});
+      } catch (error) {
+        return authErrorResponse(error);
+      }
+      if (route.operation === "rootAssignments") {
+        const scopeError = await validateRootAssignmentScope(
+          request,
+          authorization.capability?.claims.sessionId,
+        );
+        if (scopeError) return scopeError;
       }
       await migrateCasSchema(env.CAS_DB);
-      return handleRootRefs(request, env, tenantId);
+      return dispatchRoute(request, env, route);
     }
 
-    if (url.pathname === "/_internal/root-assignments") {
-      const tenantId = request.headers.get("X-Tenant-Id");
-      if (!tenantId) {
-        return Response.json({ error: "Missing X-Tenant-Id header" }, { status: 401 });
+    const legacyRoute = matchLegacyInternalRoute(request, url.pathname);
+    if (legacyRoute) {
+      try {
+        config.authenticateLegacy(request);
+      } catch (error) {
+        return authErrorResponse(error);
       }
       await migrateCasSchema(env.CAS_DB);
-      return handleRootAssignments(request, env, tenantId);
+      return dispatchRoute(request, env, legacyRoute);
     }
-
-    const readNodeMatch = url.pathname.match(/^\/_internal\/nodes\/([^/]+)$/);
-    if (readNodeMatch) {
-      const tenantId = request.headers.get("X-Tenant-Id");
-      if (!tenantId) {
-        return Response.json({ error: "Missing X-Tenant-Id header" }, { status: 401 });
+    if (isLegacyInternalPath(request.method, url.pathname)) {
+      try {
+        config.authenticateLegacy(request);
+      } catch (error) {
+        return authErrorResponse(error);
       }
-      await migrateCasSchema(env.CAS_DB);
-      return handleReadNode(request, env, tenantId, readNodeMatch[1]);
-    }
-
-    if (isCasRoute(url.pathname)) {
-      const parts = url.pathname.split("/").filter(Boolean);
-      const tenantId = parts[1];
-      await migrateCasSchema(env.CAS_DB);
-      return handleCasRequest(request, env, tenantId);
+      return Response.json({ error: "Missing X-Tenant-Id header" }, { status: 401 });
     }
 
     return Response.json({ error: "Unknown CAS endpoint" }, { status: 404 });
   },
 };
+
+function dispatchRoute(request: Request, env: Env, route: CasRoute): Promise<Response> {
+  switch (route.operation) {
+    case "rootRefs":
+      return handleRootRefs(request, env, route.tenantId);
+    case "rootAssignments":
+      return handleRootAssignments(request, env, route.tenantId);
+    case "readPortableNode":
+    case "leasePortableNode":
+      return handleReadNode(request, env, route.tenantId, route.hash);
+    default:
+      return handleCasRequest(request, env, route.tenantId);
+  }
+}
+
+function matchLegacyInternalRoute(request: Request, pathname: string): CasRoute | null {
+  const tenantId = request.headers.get("X-Tenant-Id");
+  if (!tenantId) return null;
+  if (pathname === "/_internal/root-refs" && request.method === "POST") {
+    return { operation: "rootRefs", tenantId };
+  }
+  if (pathname === "/_internal/root-assignments" && request.method === "POST") {
+    return { operation: "rootAssignments", tenantId };
+  }
+  const node = pathname.match(/^\/_internal\/nodes\/([^/]+)$/);
+  if (!node) return null;
+  if (request.method === "GET") {
+    return { operation: "readPortableNode", tenantId, hash: node[1] };
+  }
+  if (request.method === "POST") {
+    return { operation: "leasePortableNode", tenantId, hash: node[1] };
+  }
+  return null;
+}
+
+function isLegacyInternalPath(method: string, pathname: string): boolean {
+  if (method === "POST"
+    && (pathname === "/_internal/root-refs"
+      || pathname === "/_internal/root-assignments")) {
+    return true;
+  }
+  return (method === "GET" || method === "POST")
+    && /^\/_internal\/nodes\/[^/]+$/.test(pathname);
+}
+
+async function validateRootAssignmentScope(
+  request: Request,
+  sessionId: string | undefined,
+): Promise<Response | null> {
+  if (!sessionId) {
+    return Response.json({ error: "CAS root assignment requires a signed session" }, { status: 403 });
+  }
+  const body = await request.clone().json().catch(() => null) as {
+    assignments?: Array<{ owner?: unknown }>;
+  } | null;
+  if (!body || !Array.isArray(body.assignments)) {
+    return Response.json({ error: "Invalid root assignment request" }, { status: 400 });
+  }
+  const prefix = `session:${sessionId}:`;
+  if (body.assignments.some(assignment =>
+    typeof assignment.owner !== "string" || !assignment.owner.startsWith(prefix))) {
+    return Response.json({ error: "Root owner is outside the signed session" }, { status: 403 });
+  }
+  return null;
+}
+
+function authErrorResponse(error: unknown): Response {
+  if (error instanceof CapabilityError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  return Response.json({ error: "CAS capability validation failed" }, { status: 401 });
+}

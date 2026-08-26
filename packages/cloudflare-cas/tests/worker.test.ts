@@ -7,6 +7,7 @@ const hash = "a".repeat(64);
 function env(overrides: Record<string, unknown> = {}) {
   const doFetch = vi.fn(async () => Response.json({ success: true }));
   return {
+    INTERNAL_AUTH_MODE: "legacy",
     CAS_ACCESS_KEY: TOKEN,
     CAS_DB: {
       exec: async () => undefined,
