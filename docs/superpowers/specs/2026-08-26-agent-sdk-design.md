@@ -346,7 +346,9 @@ import type {
 
 `doctype-psd` 通过 `./engine` 子路径供浏览器使用（`psd-client/src/doc-session.ts:1` 就是这么引的），而现在它的主入口要依赖一个名字里带 `server` 的包。
 
-实际不会有问题：`./engine` 子路径不 import agent 相关的任何东西，而 agent 那部分对 `doctype-server-common` 是**仅类型依赖**（`import type`），编译后擦除。实施时用打包体积断言验证一次（V3c）。
+实际不会有问题：`./engine` 子路径不 import agent 相关的任何东西，而 agent 那部分对 `doctype-server-common` 是**仅类型依赖**（`import type`），编译后擦除。
+
+验证用内容断言，不用体积断言（V3c）。体积会因为构建器升级、依赖顺序、符号改名、sourcemap 设置而波动，而这些波动跟这里要守住的性质无关——把体积当硬判据，结果是它经常因为无关原因变红，然后被调宽或忽略。真正要守的是三条：依赖只出现在 `devDependencies`、对它的 import 全是 `import type`、产物里不出现 `src/agent/**` 的模块和服务端符号。体积可以顺手记录，但只作为观察值。
 
 如果将来觉得名字别扭，可以把包改名为 `@unidocs/doctype-sdk`——但那是纯改名，不属于本次范围。
 
@@ -1627,17 +1629,34 @@ channel.run(text, {
 
 ---
 
-## 9. PSD 迁移改动清单
+## 9. 改动清单
+
+三个文档类型都要改，不只 PSD——工具形状变了（5.1.2），`toolCall` 和 `DocumentAgentFactory` 这套形状会消失。改动是机械的，语义一处不变。
+
+### 9.1 文档类型
 
 | 文件 | 改动 |
 |---|---|
+| `doctype-psd/src/tools.ts` | `Record<string, AgentToolDefinition>` → `AgentTool[]`，每项加 `kind` 和 `toQuery` / `toOps`；工具名去掉 `query_` / `apply_` 前缀并与提示词对齐（5.3.1）；`getPreview` 加 `toResult` 返回 image content part |
 | `doctype-psd/src/queries.ts:101` | `getPreview` 从 `btoa` 产出 base64 改为 `makeSBlob` 返回 SBlob 引用 |
-| `doctype-psd/src/agent.ts` | 分发逻辑保留不动，只改 `getPreview` 分支返回 image content part（5.3） |
-| `doctype-psd/tests/agent.test.ts:61-76` | 断言反转：从「`$image` 透传且 `content` 为 undefined」改为「返回 image content part」 |
-| `doctype-markdown/src/agent.ts` | **不动** |
-| `doctype-docx/src/agent.ts` | **不动**。它的图片返回方式（`:75`）本来就是对的，只是从没跑通过——删掉 `renderToolResult` 钩子后这条路才真正打开（P6） |
+| `doctype-psd/src/agent.ts` | 73 行 → 一个常量导出（5.1.2） |
+| `doctype-psd/tests/agent.test.ts:61-76` | 断言反转：从「`$image` 透传且 `content` 为 undefined」改为「返回 image content part」；其余用例从「调 `toolCall`」改为「调 `toQuery` / `toOps` 并断言返回值」 |
+| `doctype-markdown/src/tools.ts` | 同样改成 `AgentTool[]`，工具名去前缀 |
+| `doctype-markdown/src/agent.ts` | 129 行 → 一个常量导出。原 `toolCall` 里的前缀判断、`kind` 拆分、`payload` 拼装，逐个工具化进 `toQuery` / `toOps`，每个一行 |
+| `doctype-markdown/tests/agent.test.ts` | 同 psd，改为直接测各工具的纯函数 |
+| `doctype-docx/src/tools.ts` | 同样改成 `AgentTool[]`，工具名去前缀 |
+| `doctype-docx/src/agent.ts` | 137 行 → 一个常量导出。`makeOperation`（`:86-113`）拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，其中 `await resolveBlob(hash)` 改为同步的 `createSBlob(hash)`（5.1.1）；`queryImageContent`（`:53-84`）变成 `getImage` 工具的 `toResult` |
+| `doctype-docx/src/agent.ts:120-137` | `requireSValueRecord` / `requireNumber` / `requireString` 提到 `doctype-server-common/agent` 共享导出，三个文档类型共用（5.1.2） |
+| `doctype-docx/tests/agent.test.ts` | 同上改造。docx 的图片路径此前从未真正跑通（P6），改造后补一条端到端 |
+
+**语义不变**这一点值得确认：改造前 docx 的 `apply_insertImage` 做的是「取 hash → 换成 SBlob → 构造 op → 调 apply」，改造后是「`toOps` 里取 hash → `createSBlob` → 返回 op」，由内核去调 apply。中间少了一次 CAS 租约往返，因为那件事 `session.ts:608` 已经在做（5.1.1）。
+
+### 9.2 内核与平台
+
+| 文件 | 改动 |
+|---|---|
 | `cloudflare-psd/src/anthropic.ts` | 移到 `doctype-server-common/src/agent/providers/anthropic.ts`，删掉 `findImage` / `previewMeta`，翻译改为单向 |
-| `cloudflare-psd/src/worker.ts` | 改为注入 `createPsdDocumentAgent` + Cloudflare 的 `AgentPlatform` 实现 |
+| `cloudflare-psd/src/worker.ts` | 改为注入 `psdAgent` 常量 + Cloudflare 的 `AgentPlatform` 实现 |
 | `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 约 90 行，只剩 DurableObject 外壳、身份校验、把事件流包成 Response |
 | `doctype-server-common/src/operator.ts` | 删除（177 行死代码） |
 | `azure-sdk/src/local-editor.ts:103` | 删掉 501 占位，改为真实的 `AgentPlatform` 实现，`apply` 提交时自己读当前 head 作 baseVersion |
@@ -1646,6 +1665,11 @@ channel.run(text, {
 | `azure-sdk/src/agent-store-pg.ts` | 新增：`PgAgentSessionStore`，Postgres 两张表 + `seq` 条件写，事务复用 `PgUnitOfWork`（`ports-pg.ts:270`），条件写照搬 `PgDeltaLog.append`（`:89-111`） |
 | `azure-sdk/migrations/0003_agent_sessions.sql` | 新增：`agent_sessions` 与 `agent_messages` 两张表（6.3.2） |
 | `azure-sdk/tests/migrate.test.ts:36` | 断言的表名列表加上 `agent_sessions`、`agent_messages` |
+
+### 9.3 客户端
+
+| 文件 | 改动 |
+|---|---|
 | `psd-client/src/doc-session.ts` | 移到 `client-sdk`，泛型化 |
 | `psd-client/src/index.ts` | 重新导出 `client-sdk` 的 `DocSession`，并绑定 PSD 的 `applyLocal` / `reload` |
 | `web-psd/src/main.ts:357-397` | 改用 `AgentChannel`，展示逐步进度 |
@@ -1684,7 +1708,7 @@ flowchart TB
 | V2 | 内核不按名字猜工具语义 | 全仓库搜索 `startsWith("query_")` / `startsWith("apply_")` 应无任何命中——前缀彻底消失（5.3.1） |
 | V3 | 内核不 import 任何云相关模块，也不用 `Request` / `Response` | `tests/unit/agent-kernel-purity.test.ts` 按目录扫 `src/agent/**`（4.4） |
 | V3b | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk（`doctype-server-common` 是预期的）（4.4） |
-| V3c | 文档类型对 SDK 是仅类型依赖，浏览器 bundle 不受影响 | 打包 `psd-client`，断言产物体积与改造前持平，且不含 `AgentSession` 等符号（4.3.2） |
+| V3c | 文档类型对 SDK 是仅类型依赖，服务端代码进不了浏览器 | 三条内容断言，都不看体积：① `doctype-*/package.json` 里 `@unidocs/doctype-server-common` 只出现在 `devDependencies`；② 源码里对它的 import 全部是 `import type`；③ 打包 `psd-client`，产物中不出现 `src/agent/**` 的任何模块，也不出现 `AgentSession` / provider / store 等服务端符号（4.3.2） |
 | V4 | 循环行为不退化 | 新增契约测试：内存版 `AgentPlatform` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
 | V5 | PSD 送给模型的图片字节与改造前完全一致 | 抓一次 provider 请求体，与改造前对比 |
 | V6 | 现有 230 行 `operator-do.test.ts` 全绿 | `pnpm test` |
