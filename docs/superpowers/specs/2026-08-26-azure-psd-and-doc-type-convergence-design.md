@@ -224,41 +224,50 @@ param docTypes array
 @secure()
 param docAccessKeysJson string    // {"markdown":"…","docx":"…","psd":"…"}
 
-var keys = json(docAccessKeysJson)
 var docServicesJson = string(toObject(docTypes, dt => dt, dt => {
   serviceId: dt
   url: 'https://unidocs-${dt}.internal.${containerEnv.properties.defaultDomain}'
-  accessKey: keys[dt]
+  accessKey: json(docAccessKeysJson)[dt]
 }))
 ```
+
+**`json(docAccessKeysJson)` 必须内联进 lambda,不能先存进 `var keys`。**
+两种写法都编译得过,但 `var` 版本会在外层模板产生
+`"variables": {"keys": "[json(parameters('docAccessKeysJson'))]"}` —— 一个持有
+密钥派生值的外层变量。内联版本的外层 `variables` 是空的,与 main 上现有
+`gateway.bicep` 的编译产物零结构差异。
 
 `toObject` 的三参 lambda 形式需要 Bicep ≥ 0.16;本机 `az bicep version` 是
 **0.46.1**,满足。
 
-### 3.3 必须验证:securestring 传播不能断
+### 3.3 securestring 传播:已验证,结论是安全
 
 上一轮踩过一次同类缺陷(部署设计的 I1):`@secure()` 派生的表达式一旦内联进
-外层模板,`what-if` 在 Create 时会原样打印。现在多了 `json()` → `toObject()`
-→ `string()` 这一串往返,securestring 的标记会不会在中途丢失,**不能凭推理
-下结论**。
+外层模板的资源属性,`what-if` 在 Create 时会原样打印明文。`json()` →
+`toObject()` → `string()` 这一串往返会不会丢掉 securestring 标记,不能凭推理
+下结论,而 `az deployment group what-if` 需要写权限(PIM 当前只有 Reader)。
 
-`az deployment group what-if` 需要写权限(当前 PIM 只有 Reader),验不了。
-替代验证不需要任何 Azure 权限:
+用不需要任何 Azure 权限的方式验过了:写一个与 §3.2 等价的原型,
+`az bicep build --stdout`,比对编译产物与 main 上现有 `gateway.bicep` 的结构。
 
-```bash
-az bicep build --file stacks/azure/deploy/gateway.bicep --stdout
-```
+| 写法 | 外层 `variables` | 嵌套 `expressionEvaluationOptions` | 内层参数类型 | 外层实参 |
+|---|---|---|---|---|
+| main 现状(基线) | `{}` | `inner` | `securestring` | 表达式 |
+| `toObject` + `var keys = json(...)` | `{"keys": "[json(parameters('docAccessKeysJson'))]"}` | `inner` | `securestring` | 表达式 |
+| **`toObject` + 内联 `json()`** | **`{}`** | `inner` | `securestring` | 表达式 |
 
-检查编译产物里 `docServicesJson` 的最终去向:
+第三种与基线零结构差异,**采用它**。密钥仍然只以表达式形式出现在嵌套部署的
+实参位置,由内层的 `securestring` 参数接住;外层模板里没有任何持有密钥派生
+值的变量。
 
-- 落在 `Microsoft.Resources/deployments` 的嵌套模板 `properties.parameters`
-  且对应参数声明为 `"type": "securestring"` → **安全**
-- 被内联进外层模板的 `variables` 或资源属性 → **泄漏,方案作废**
+这条检查要固化成单元测试(`tests/unit/scripts/` 下,与 `azure-deploy.test.mjs`
+同级),对着 `az bicep build` 的产物断言三件事,防止后续改动悄悄破坏它:
 
-这条检查要固化成一条单元测试(`tests/unit/scripts/` 下,与
-`azure-deploy.test.mjs` 同级),而不是只在实施时手工看一次。若结果是泄漏,
-退路是保留每个 doc type 一个独立 `@secure()` 参数、由 `deploy.mjs` 动态生成
-参数名——放弃 `gateway.bicep` 的完全泛化,换回安全性。**这条不接受折中。**
+1. 嵌套部署的 `expressionEvaluationOptions.scope === "inner"`
+2. 内层模板把 `docServicesJson` / `casAccessKey` / `databaseUrl` 声明为
+   `securestring`
+3. 外层模板的 `variables` 里不出现 `docAccessKeysJson` / `pgAdminPassword`
+   的任何派生
 
 ---
 
@@ -416,9 +425,10 @@ CAS 过渡形态**要求两套栈同时跑**——那时两个 Vite 都想要 51
 
 ## 9. 风险
 
-**R1 — `toObject` 破坏 securestring(高影响,可提前验)。** 处置见 §3.3:
-先用 `az bicep build` 验,失败就退回每 doc type 一个独立 `@secure()` 参数。
-这条在实施顺序上必须**排在 gateway.bicep 改造之前**,不能改完再验。
+**R1 — `toObject` 破坏 securestring —— 已排除。** 写设计时已用
+`az bicep build` 对原型验证完毕,见 §3.3 的对照表。结论:内联 `json()` 的写法
+与 main 基线零结构差异。残留要求只有一条 —— 把这个不变式固化成单测,否则下一
+个人把 `json(...)` 提成 `var` 就会悄悄回退(那个写法一样编译得过)。
 
 **R2 — `capability auth` 会重扫本轮产物(中,不可避免)。** 那份计划
 (`docs/superpowers/plans/2026-08-25-gateway-issued-capability-authorization.md`)
@@ -447,11 +457,12 @@ Task 4 是 *"Make every current Doc type tenant-aware and contract-identical"*
    三份 JSON 加 `localPortBase` / `needsCas`。不改任何消费方。
 2. **本地栈收敛** —— `ports.mjs` 改收表、删 `SUPPORTED_DOC_TYPES`、
    `dev.mjs` 的无参默认值与 `needsCas` 特判。§1.2 的 bug 在此修复。
-3. **§3.3 的 securestring 验证** —— 先验后改,结果决定 Task 4 的形态。
-4. **Bicep 泛化** —— `platform.bicep` 与 `gateway.bicep` 收成循环。
-5. **`deploy.mjs` / `smoke.mjs` 泛化** —— 25 处字面量展开。
-6. **`packages/azure-psd`** —— 建包、tsconfig 登记、`azure.service.json`。
-7. **psd e2e + web 端口偏移** —— `tests/integration/azure/` 新增一条,
+3. **Bicep 泛化 + securestring 单测** —— `platform.bicep` 与 `gateway.bicep`
+   收成循环,同时把 §3.3 的三条断言固化成测试。写设计时已验过方案可行
+   (见 §3.3),这里只是实现加上防回退的网。
+4. **`deploy.mjs` / `smoke.mjs` 泛化** —— 25 处字面量展开。
+5. **`packages/azure-psd`** —— 建包、tsconfig 登记、`azure.service.json`。
+6. **psd e2e + web 端口偏移** —— `tests/integration/azure/` 新增一条,
    `dev.mjs` 的 Azure 分支给 web 端口加偏移。
 
-Task 3 必须在 Task 4 之前。Task 6 依赖 Task 1、2、5。其余可按序推进。
+Task 5 依赖 Task 1、2、4。其余可按序推进。
