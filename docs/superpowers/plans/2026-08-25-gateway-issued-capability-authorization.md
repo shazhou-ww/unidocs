@@ -1510,9 +1510,9 @@ Doc/CAS runtime.
       wrong-issuer, wrong-audience, wrong-permission, wrong-tenant, and
       wrong-session tokens.
 - [x] Prove that a Doc token cannot call CAS and a CAS token cannot call Doc.
-- [ ] Prove that delegated CAS capabilities never contain Doc permissions or
+- [x] Prove that delegated CAS capabilities never contain Doc permissions or
       `cas:admin`, and that Doc tokens never reach CAS.
-- [ ] Prove that user credentials/cookies/internal-looking public headers never
+- [x] Prove that user credentials/cookies/internal-looking public headers never
       reach Doc/CAS.
 - [ ] Prove equal `docId`, `sessionId`, and CAS hashes in different tenants never
       collide and that no service keys tenant data by user.
@@ -1549,6 +1549,14 @@ Task 8 implementation record (in progress, 2026-08-26):
       execution passes 22/22. Root typecheck passes; the full local suite passes
       305 with 2 conditional skips, and the full Azure suite passes 23/23 with
       Postgres, Azurite, and child-process cleanup.
+- The Cloudflare Doc-to-CAS request boundary test now signs distinct real Doc
+      and delegated CAS capabilities, captures the actual CAS fetch, verifies
+      that its Bearer has only the expected CAS audience, Doc subject,
+      tenant/session, and read/write permissions, and proves the primary Doc
+      token plus Doc/admin permissions are absent. Hostile cookies, user IDs,
+      legacy credentials, and forwarding headers are injected at the Doc
+      boundary and remain absent from the minimal CAS request; Gateway forwarding
+      tests provide the matching public-client-to-Doc stripping evidence.
 
 Final validation:
 

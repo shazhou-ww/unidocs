@@ -1,23 +1,80 @@
 import { describe, expect, test, vi } from "vitest";
+import {
+  CapabilityAlgorithm,
+  CapabilityIssuer,
+  CapabilityVerifier,
+  JoseCapabilitySigner,
+  casReadPermission,
+  casWritePermission,
+  sessionReadPermission,
+} from "../../service-auth/src/index.js";
 import { createRequestCasClient } from "../src/request-cas-client.js";
 
 describe("createRequestCasClient", () => {
   test("uses only the delegated CAS Bearer on tenant-prefixed routes", async () => {
+    const pair = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const issuer = new CapabilityIssuer({
+      issuer: "unidocs-gateway:request-cas-client-test",
+      signer: new JoseCapabilitySigner(pair.privateKey, "test-key"),
+    });
+    const delegatedToken = await issuer.issue({
+      subject: "doc:docx",
+      audience: "unidocs-cas",
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+      permissions: [casReadPermission("tenant-1"), casWritePermission("tenant-1")],
+    });
+    const primaryDocToken = await issuer.issue({
+      subject: "gateway",
+      audience: "unidocs-doc:docx",
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+      permissions: [sessionReadPermission("tenant-1", "session-1")],
+    });
     const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2])));
     const client = createRequestCasClient(
       { CAS_SERVICE: { fetch } },
       privateRequest({
         "X-UniDocs-Auth-Context": "capability",
-        "X-UniDocs-CAS-Capability": "delegated-token",
-        Authorization: "Bearer primary-doc-token",
+        "X-UniDocs-CAS-Capability": delegatedToken,
+        Authorization: `Bearer ${primaryDocToken}`,
+        Cookie: "session=hostile-cookie",
+        "X-User-Id": "hostile-user",
+        "X-Internal-Token": "hostile-legacy-token",
+        "X-Forwarded-For": "203.0.113.1",
       }),
     );
     await client!.read({ kind: "cas", hash: "a".repeat(64) });
 
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe(`https://cas.internal/tenants/tenant-1/cas/nodes/${"a".repeat(64)}/content`);
-    expect(init?.headers).toEqual({ Authorization: "Bearer delegated-token" });
-    expect(JSON.stringify(init)).not.toContain("primary-doc-token");
+    expect(init?.headers).toEqual({ Authorization: `Bearer ${delegatedToken}` });
+    expect(JSON.stringify(init)).not.toContain(primaryDocToken);
+    expect(JSON.stringify(init)).not.toContain("hostile-cookie");
+    expect(JSON.stringify(init)).not.toContain("hostile-user");
+    expect(JSON.stringify(init)).not.toContain("hostile-legacy-token");
+    expect(JSON.stringify(init)).not.toContain("203.0.113.1");
+
+    const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    const verifier = new CapabilityVerifier({
+      issuer: "unidocs-gateway:request-cas-client-test",
+      audience: "unidocs-cas",
+      algorithm: CapabilityAlgorithm,
+      jwks: { keys: [{ ...publicJwk, kid: "test-key", alg: CapabilityAlgorithm }] },
+      allowedPermissionKinds: ["cas:read", "cas:write", "cas:admin"],
+    });
+    const outbound = await verifier.verify(delegatedToken);
+    expect(outbound.claims).toMatchObject({
+      sub: "doc:docx",
+      aud: "unidocs-cas",
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+      permissions: [casReadPermission("tenant-1"), casWritePermission("tenant-1")],
+    });
   });
 
   test("does not construct a CAS client without delegated authority", () => {
