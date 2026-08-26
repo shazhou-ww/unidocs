@@ -818,13 +818,38 @@ describe.skipIf(!AZ)("platform.bicep 的连接串不落进外层模板", () => {
     }
   });
 
-  test("外层 variables 里没有 pgAdminPassword 的派生值", () => {
+  test("pgAdminPassword 在外层模板里只以直接引用出现，不被拼接", () => {
     const arm = compile("platform.bicep");
-    // databaseOrigin 会出现在外层 variables 里，它确实由 pgAdminPassword
-    // 拼成——但它只被用作嵌套部署的实参，不落在任何资源属性上。这条断言
-    // 因此针对的是"有没有别的变量把它固化下来"，用资源属性做判据。
-    const outerResources = arm.resources.filter((r) => r.type !== "Microsoft.Resources/deployments");
-    expect(JSON.stringify(outerResources)).not.toContain("pgAdminPassword");
+
+    // 其一：外层 variables 必须完全不持有密钥派生值。
+    expect(JSON.stringify(arm.variables ?? {})).not.toContain("pgAdminPassword");
+
+    // 其二：外层资源属性里，pgAdminPassword 只允许以**直接引用**出现。
+    // `[parameters('pgAdminPassword')]` 仍然是 securestring，ARM 在 what-if
+    // 与部署历史里会遮蔽它——pg 资源的 administratorLoginPassword 就是这一种，
+    // 是 Azure 的标准写法。危险的是**拼接**：一旦被 format() / 字符串插值包
+    // 进去，结果就只是一个普通字符串，securestring 的血统在那一步断掉，
+    // what-if 对 Create 变更会把它原样打印进终端和日志。上一轮真的踩过。
+    const offenders = [];
+    const walk = (node, path) => {
+      if (typeof node === "string") {
+        if (
+          node.includes("parameters('pgAdminPassword')")
+          && node !== "[parameters('pgAdminPassword')]"
+        ) {
+          offenders.push(`${path} = ${node}`);
+        }
+        return;
+      }
+      if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`);
+      }
+    };
+    for (const r of arm.resources) {
+      if (r.type === "Microsoft.Resources/deployments") continue;
+      walk(r, r.type);
+    }
+    expect(offenders).toEqual([]);
   });
 
   // R4：上一轮有过一次同类教训——迁移 Job 名写成了嵌套部署名而不是资源名，
