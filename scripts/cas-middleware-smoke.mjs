@@ -1,0 +1,164 @@
+/**
+ * Smoke-test the deployed CAS middleware through a base URL.
+ *
+ * Usage: node scripts/cas-middleware-smoke.mjs [baseUrl]
+ *   baseUrl defaults to https://unicas.shazhou.work (the live edge);
+ *   pass http://127.0.0.1:<port> to test `wrangler dev --remote` tunnels.
+ *
+ * Loads the provisioned stack issuer keys from .wrangler/cas-deploy,
+ * issues stack capabilities, and runs the canonical tenant flow (lease ->
+ * read -> metadata -> updateRootRefs -> usage -> gc) plus cross-stack
+ * isolation and edge-isolation assertions against the deployed workers.
+ */
+
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "../packages/cas-server-common/dist/index.js";
+import { casGcTriggerPermission, casReadPermission, casUsageReadPermission, casWritePermission, createPkcs8CapabilityIssuer } from "../packages/service-auth/dist/index.js";
+
+const BASE = process.argv[2] ?? "https://unicas.shazhou.work";
+const TENANT = "deploy-smoke-tenant";
+const KEY_DIR = join(import.meta.dirname, "..", ".wrangler", "cas-deploy");
+
+const stacks = [
+  {
+    stackId: "unidocs-cloudflare",
+    audience: "unidocs-cas-cloudflare",
+    keyFile: "unidocs-cloudflare.pkcs8.pem",
+    kid: "cf-rotate-1",
+  },
+  {
+    stackId: "unidocs-azure",
+    audience: "unidocs-cas-azure",
+    keyFile: "unidocs-azure.pkcs8.pem",
+    kid: "az-rotate-1",
+  },
+];
+
+function assert(condition, message) {
+  if (!condition) throw new Error(`ASSERT FAILED: ${message}`);
+  console.log(`  ok: ${message}`);
+}
+
+async function digestOf(content, contentType = "text/plain", refs = []) {
+  const bytes = new TextEncoder().encode(content);
+  const header = encodeHeader(bytes.length, contentType, refs.length);
+  const digest = await computeNodeDigest(header, contentType, refs.map(hexToHash), bytes);
+  return { hash: hashToHex(digest), bytes };
+}
+
+async function main() {
+  const issuers = {};
+  for (const stack of stacks) {
+    const privateKeyPkcs8 = await readFile(join(KEY_DIR, stack.keyFile), "utf8");
+    issuers[stack.stackId] = await createPkcs8CapabilityIssuer({
+      issuer: `https://unicas.shazhou.work/cas/issuer/${stack.stackId === "unidocs-cloudflare" ? "cloudflare" : "azure"}`,
+      kid: stack.kid,
+      privateKeyPkcs8,
+    });
+  }
+  const issue = (stack, permissions, refDomain) => issuers[stack.stackId].issue({
+    subject: "deploy-smoke",
+    audience: stack.audience,
+    tenantId: TENANT,
+    permissions,
+    ...(refDomain === undefined ? {} : { refDomain }),
+  });
+
+  console.log(`smoke base: ${BASE}`);
+  const cf = stacks[0];
+  const az = stacks[1];
+  const writer = await issue(cf, [casWritePermission(TENANT)], "doc");
+  const reader = await issue(cf, [casReadPermission(TENANT)]);
+  const usageReader = await issue(cf, [casUsageReadPermission(TENANT)]);
+  const gcTrigger = await issue(cf, [casGcTriggerPermission(TENANT)]);
+  const azReader = await issue(az, [casReadPermission(TENANT)]);
+  const prefix = `/stacks/${cf.stackId}/tenants/${TENANT}`;
+
+  // Edge readiness + isolation (only meaningful against the live edge).
+  const isLiveEdge = BASE.startsWith("https://");
+  if (isLiveEdge) {
+    const health = await fetch(`${BASE}/health`);
+    assert(health.status === 200, `edge /health -> ${health.status}`);
+    const internal = await fetch(`${BASE}/_internal/health`);
+    assert(internal.status === 404, "edge never forwards /_internal/health");
+  }
+
+  // Lease a parent with a child.
+  const child = await digestOf("smoke-child");
+  let res = await fetch(`${BASE}${prefix}/cas/nodes/${child.hash}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${writer}`, "Content-Type": "text/plain" },
+    body: child.bytes,
+  });
+  assert(res.status === 200, `lease child -> ${res.status}`);
+
+  const parent = await digestOf("smoke-parent", "text/plain", [child.hash]);
+  res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${writer}`, "Content-Type": "text/plain", "X-CAS-Refs": child.hash },
+    body: parent.bytes,
+  });
+  assert(res.status === 200, `lease parent -> ${res.status}`);
+
+  res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/content`, {
+    headers: { Authorization: `Bearer ${reader}` },
+  });
+  assert(res.status === 200, `read -> ${res.status}`);
+  const content = new Uint8Array(await res.arrayBuffer());
+  assert(content.join(",") === parent.bytes.join(","), "read content matches");
+
+  res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/metadata`, {
+    headers: { Authorization: `Bearer ${reader}` },
+  });
+  assert(res.status === 200, `metadata -> ${res.status}`);
+
+  res = await fetch(`${BASE}${prefix}/root-refs`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${writer}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId: "deploy-smoke:roots:1", changes: { [parent.hash]: 1 } }),
+  });
+  const rootsBody = await res.json();
+  assert(res.status === 200 && rootsBody.success === true && rootsBody.revision === 1,
+    `root-refs -> revision ${rootsBody.revision}`);
+
+  res = await fetch(`${BASE}${prefix}/root-refs`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${writer}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId: "deploy-smoke:roots:1", changes: { [parent.hash]: 1 } }),
+  });
+  const retryBody = await res.json();
+  assert(retryBody.idempotent === true && retryBody.revision === 1, "idempotent retry keeps revision 1");
+
+  res = await fetch(`${BASE}${prefix}/cas/usage`, { headers: { Authorization: `Bearer ${usageReader}` } });
+  const usageBody = await res.json();
+  assert(res.status === 200 && usageBody.nodeCount === 2, `usage nodeCount -> ${usageBody.nodeCount}`);
+
+  res = await fetch(`${BASE}${prefix}/cas/gc`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${gcTrigger}` },
+    body: "{}",
+  });
+  const gcBody = await res.json();
+  assert(res.status === 200 && gcBody.deleted === 0, "gc keeps leased nodes");
+
+  // Cross-stack isolation: azure token cannot read cloudflare's node.
+  res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/content`, {
+    headers: { Authorization: `Bearer ${azReader}` },
+  });
+  assert(res.status === 403, `cross-stack read -> ${res.status} (403)`);
+
+  // Azure's own stack sees nothing under the same tenant id.
+  res = await fetch(`${BASE}/stacks/${az.stackId}/tenants/${TENANT}/cas/usage`, {
+    headers: { Authorization: `Bearer ${await issue(az, [casUsageReadPermission(TENANT)])}` },
+  });
+  const azUsage = await res.json();
+  assert(azUsage.nodeCount === 0, `azure usage nodeCount -> ${azUsage.nodeCount}`);
+
+  console.log("\nSMOKE PASS");
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});
