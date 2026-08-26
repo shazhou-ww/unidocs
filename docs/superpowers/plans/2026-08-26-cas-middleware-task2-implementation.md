@@ -369,6 +369,34 @@ record was stuck). The LIVE smoke now passes end-to-end over HTTPS: edge
 (revision 1, idempotent retry)/usage/GC, cross-stack read 403, azure usage 0
 under the same tenant id, and /admin 302/401 through the edge to the BFF.
 
+## Task 9 execution notes (round 4: Cloudflare stack-mode migration)
+
+`internalAuthMode: "stack"` is a new local-runtime mode (legacy/dual/
+capability stay intact for the compatibility window):
+
+- `GatewayCapabilityAuthority` signs delegated-cas and gateway-cas
+  capabilities with a separate `casIssuer` (the registered stack identity)
+  carrying `casStackId` + `casRefDomain`; the doc capability keeps the
+  doc-service issuer.
+- The gateway handler forwards public CAS routes to canonical
+  `/stacks/{stackId}/tenants/{tenantId}/cas/...` paths in stack mode.
+- Doc workers verify the delegated capability against the stack issuer/JWKS
+  (new `CAS_STACK_ISSUER`/`CAS_STACK_TRUSTED_JWKS` bindings) and the editor DO
+  adds `CAS_STACK_ID` to its CasClient, routing every CAS call to the
+  middleware worker.
+- The runtime wires CAS_SERVICE → `unidocs-cas-middleware`, seeds
+  `unidocs-cloudflare` (issuer/keys/refDomains identical to the gateway's
+  signing key) into the local CAS_CONTROL_DB, and exposes
+  `startLocalMiddleware({stacks, ports})` for the dev command and the Azure
+  round.
+
+`stack-mode.test.mjs` proves the whole markdown doc flow (create → apply →
+query → history → rollback) through the middleware with stack-authorization
+events for lease/leaseExisting/updateRootRefs, and asserts the middleware
+retains exactly the current delta + snapshot. Fixes along the way:
+`validateConfig` accepted "stack" (it previously threw "mode must be
+explicit" → the doc worker 500'd).
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

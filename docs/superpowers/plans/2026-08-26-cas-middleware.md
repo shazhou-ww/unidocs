@@ -1714,11 +1714,16 @@ Tests assert both aggregate counts and emitted domain deltas.
   verified with d1 execute; the deployed tenant worker authorizes the
   provisioned cloudflare stack's capabilities. Console-based possession-proof
   registration and memberships land with the admin onboarding round.)
-- [ ] Migrate Cloudflare Workers from shared `CAS_ACCESS_KEY` service-binding
+- [~] Migrate Cloudflare Workers from shared `CAS_ACCESS_KEY` service-binding
   calls to stack-scoped tenant capabilities against the middleware service.
-  (Next major work item: gateway issues stack capabilities, doc-type
-  workers' CasClient carries stackId, local runtime rewires CAS_SERVICE to
-  the middleware.)
+  (Stack mode is implemented and green locally: the gateway signs delegated
+  CAS capabilities with the registered `unidocs-cloudflare` stack key
+  (carrying the refDomain claim), the editor DO routes canonical
+  `/stacks/{stackId}/tenants/{tenantId}/...` to the middleware, and the
+  markdown doc flow passes end-to-end. `startLocalMiddleware` wraps the
+  standalone middleware for the dev command and the Azure round. Wiring the
+  application-stack WRANGLER configs to the deployed middleware is the
+  remaining deploy step.)
 - [ ] Migrate Azure Gateway and document services from a manually aligned
   remote CAS URL/shared key to the registered Azure stack identity,
   capability issuance, and middleware endpoint.

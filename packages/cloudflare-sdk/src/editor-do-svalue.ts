@@ -56,6 +56,8 @@ interface SnapshotRow {
 export interface Env {
   readonly CAS_SERVICE: Fetcher;
   readonly CAS_ACCESS_KEY?: string;
+  /** Stack namespace for canonical /stacks routes (stack mode). */
+  readonly CAS_STACK_ID?: string;
 }
 
 export interface EditorDOInstance {

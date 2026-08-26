@@ -651,6 +651,9 @@ importers:
       '@unidocs/cas-client':
         specifier: workspace:*
         version: link:../cas-client
+      '@unidocs/protocol-cas':
+        specifier: workspace:*
+        version: link:../protocol-cas
       '@unidocs/protocol-cas-legacy':
         specifier: workspace:*
         version: link:../protocol-cas-legacy

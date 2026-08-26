@@ -21,7 +21,7 @@ export interface DocCapabilityVerifier {
   verify(token: string): Promise<VerifiedCapability>;
 }
 
-export type DocInternalAuthMode = "legacy" | "dual" | "capability";
+export type DocInternalAuthMode = "legacy" | "dual" | "capability" | "stack";
 
 export interface DocTypeHandlerConfig {
   docType: string;
@@ -272,14 +272,15 @@ function authenticationErrorResponse(error: unknown): Response {
 function validateConfig(cfg: DocTypeHandlerConfig): void {
   if (cfg.internalAuthMode !== "legacy"
     && cfg.internalAuthMode !== "dual"
-    && cfg.internalAuthMode !== "capability") {
+    && cfg.internalAuthMode !== "capability"
+    && cfg.internalAuthMode !== "stack") {
     throw new TypeError("Doc internal auth mode must be explicit");
   }
   if ((cfg.internalAuthMode === "legacy" || cfg.internalAuthMode === "dual")
     && !cfg.accessKey) {
     throw new TypeError("Legacy Doc auth requires an access key");
   }
-  if ((cfg.internalAuthMode === "capability" || cfg.internalAuthMode === "dual")
+  if ((cfg.internalAuthMode === "capability" || cfg.internalAuthMode === "dual" || cfg.internalAuthMode === "stack")
     && (!cfg.docCapabilityVerifier || !cfg.casCapabilityVerifier)) {
     throw new TypeError("Capability Doc auth requires Doc and CAS verifiers");
   }

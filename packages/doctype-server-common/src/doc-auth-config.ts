@@ -16,6 +16,9 @@ export interface DocAuthBindings extends CapabilityRuntimePolicyBindings {
   readonly CAPABILITY_ISSUER?: string;
   readonly DOC_CAPABILITY_AUDIENCE?: string;
   readonly CAS_CAPABILITY_AUDIENCE?: string;
+  /** Stack mode: the registered stack CAS issuer the delegated capability is signed by. */
+  readonly CAS_STACK_ISSUER?: string;
+  readonly CAS_STACK_TRUSTED_JWKS?: string;
 }
 
 export interface ResolvedDocAuthConfig {
@@ -46,7 +49,8 @@ export function resolveDocAuthConfig(
 ): ResolvedDocAuthConfig {
   const internalAuthMode = parseDocInternalAuthMode(bindings.INTERNAL_AUTH_MODE);
   const usesLegacy = internalAuthMode === "legacy" || internalAuthMode === "dual";
-  const usesCapability = internalAuthMode === "capability" || internalAuthMode === "dual";
+  const usesCapability = internalAuthMode === "capability" || internalAuthMode === "dual" || internalAuthMode === "stack";
+  const stackMode = internalAuthMode === "stack";
   const accessKey = usesLegacy
     ? requireBinding(bindings.SERVICE_ACCESS_KEY, "SERVICE_ACCESS_KEY")
     : undefined;
@@ -59,6 +63,14 @@ export function resolveDocAuthConfig(
   const jwks = parseJwks(
     requireBinding(bindings.CAPABILITY_TRUSTED_JWKS, "CAPABILITY_TRUSTED_JWKS"),
   );
+  // Stack mode: the delegated CAS capability is signed by the REGISTERED stack
+  // issuer (stack CAS identity), not the doc-service issuer.
+  const casIssuer = stackMode
+    ? requireBinding(bindings.CAS_STACK_ISSUER, "CAS_STACK_ISSUER")
+    : issuer;
+  const casJwks = stackMode
+    ? parseJwks(requireBinding(bindings.CAS_STACK_TRUSTED_JWKS, "CAS_STACK_TRUSTED_JWKS"))
+    : jwks;
   return Object.freeze({
     internalAuthMode,
     ...(accessKey === undefined ? {} : { accessKey }),
@@ -73,10 +85,10 @@ export function resolveDocAuthConfig(
       clockSkewSeconds: policy.clockSkewSeconds,
     }),
     casCapabilityVerifier: new CapabilityVerifier({
-      issuer,
+      issuer: casIssuer,
       audience: casAudience,
       algorithm: CapabilityAlgorithm,
-      jwks,
+      jwks: casJwks,
       allowedPermissionKinds: ["cas:read", "cas:write"],
       allowedSubjects: [`doc:${docType}`],
       maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
@@ -86,7 +98,9 @@ export function resolveDocAuthConfig(
 }
 
 function parseDocInternalAuthMode(value: string | undefined): DocInternalAuthMode {
-  if (value === "legacy" || value === "dual" || value === "capability") return value;
+  if (value === "legacy" || value === "dual" || value === "capability" || value === "stack") {
+    return value;
+  }
   throw new TypeError("Doc internal auth mode must be explicit");
 }
 

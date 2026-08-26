@@ -298,6 +298,23 @@ function createStorageProbe(mf) {
     async middlewareControlDb() {
       return mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
     },
+    /**
+     * Cloudflare-probe-only: retained roots in the MIDDLEWARE tenant store for
+     * a (stackId, tenantId) — the canonical stack-scoped cas_nodes table.
+     */
+    async middlewareRetainedRoots(stackId, tenantId) {
+      const db = await mf.getD1Database("CAS_DB", MIDDLEWARE_WORKER);
+      const rows = await db
+        .prepare(
+          "SELECT hash, root_ref_count FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND root_ref_count > 0 ORDER BY hash",
+        )
+        .bind(stackId, tenantId)
+        .all();
+      return rows.results.map((row) => ({
+        hash: row.hash,
+        count: Number(row.root_ref_count),
+      }));
+    },
   };
 }
 
@@ -314,12 +331,17 @@ export async function startLocalRuntime({
   casFault = false,
   internalAuthMode = "dual",
   capabilityFixture,
+  stackFixture,
   logLevel = LogLevel.WARN,
   casAdminPublicOrigin,
   casMiddlewareOnly = false,
   casMiddleware = false,
   middlewareStacks,
 } = {}) {
+  const stackMode = internalAuthMode === "stack";
+  const resolvedStackFixture = !stackMode
+    ? undefined
+    : (stackFixture ?? await createEphemeralStackFixture());
   const ports = resolvePorts(docTypes, portOverrides);
   // 过渡形态(阶段 4 删除):CAS worker 的直连端口,供 Azure 栈的
   // CAS_BASE_URL 从进程外访问(见 doc-types.mjs 里 CAS_PORT 的注释)。
@@ -327,7 +349,7 @@ export async function startLocalRuntime({
   ports.cas = portOverrides.cas ?? CAS_PORT;
   ports.admin = portOverrides.admin ?? ADMIN_PORT;
   ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
-  if (casMiddleware) {
+  if (casMiddleware || stackMode) {
     ports.edge = portOverrides.edge ?? EDGE_PORT;
   }
   if (casMiddlewareOnly) {
@@ -344,7 +366,7 @@ export async function startLocalRuntime({
   const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway ?? "cas-admin"));
 
   await Promise.all(
-    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware }).map(({ entry, outfile }) =>
+    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || stackMode }).map(({ entry, outfile }) =>
       bundleWorker(join(ROOT, entry), join(bundleDir, outfile)),
     ),
   );
@@ -382,6 +404,7 @@ export async function startLocalRuntime({
           extraBindings,
           internalAuthMode,
           capabilityFixture: resolvedCapabilityFixture,
+          stackFixture: resolvedStackFixture,
           casAdminPublicOrigin: casAdminPublicOrigin
             ?? process.env.UNIDOCS_CAS_ADMIN_ORIGIN
             ?? `http://localhost:4070`,
@@ -389,7 +412,7 @@ export async function startLocalRuntime({
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
           casMiddlewareOnly,
-          casMiddleware,
+          casMiddleware: casMiddleware || stackMode,
         }),
       }),
     );
@@ -399,9 +422,24 @@ export async function startLocalRuntime({
     if (!casMiddlewareOnly) {
       await migrateSnapshotsDb(mf);
     }
-    if (casMiddleware && middlewareStacks) {
+    if (casMiddleware || stackMode) {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
-      await seedMiddlewareStacks(controlDb, middlewareStacks);
+      if (stackMode) {
+        // Register the local unidocs-cloudflare stack (issuer/keys/refDomains
+        // identical to what the gateway signs with).
+        const fixtureStacks = [{
+          stackId: resolvedStackFixture.stackId,
+          issuer: resolvedStackFixture.issuer,
+          audience: resolvedStackFixture.audience,
+          kid: resolvedStackFixture.kid,
+          publicJwk: resolvedStackFixture.jwks.keys[0],
+          refDomains: resolvedStackFixture.refDomains,
+        }];
+        await seedMiddlewareStacks(controlDb, fixtureStacks);
+      }
+      if (middlewareStacks) {
+        await seedMiddlewareStacks(controlDb, middlewareStacks);
+      }
     }
     // CAS_CONTROL_DB schema is migrated idempotently by the admin worker on
     // its first request (migrateControlSchema in cas-admin-webui index.ts).
@@ -411,6 +449,7 @@ export async function startLocalRuntime({
       urls,
       docTypes,
       capabilityFixture: resolvedCapabilityFixture,
+      stackFixture: resolvedStackFixture,
       storage: createStorageProbe(mf),
       async dispose() {
         await mf.dispose();
@@ -420,6 +459,49 @@ export async function startLocalRuntime({
     await mf?.dispose();
     throw err;
   }
+}
+
+/**
+ * Start the CAS middleware standalone (no gateway / doc type workers) with
+ * the given stacks registered in its CAS_CONTROL_DB. Returns the runtime
+ * with `urls.edge` as the public front door. Reused by the Cloudflare dev
+ * command, integration tests, and the Azure local runtime.
+ */
+export async function startLocalMiddleware({
+  stacks,
+  ports: portOverrides = {},
+  host = "127.0.0.1",
+  logLevel = LogLevel.WARN,
+} = {}) {
+  return startLocalRuntime({
+    host,
+    docTypes: [],
+    ports: portOverrides,
+    logLevel,
+    casMiddlewareOnly: true,
+    casMiddleware: true,
+    middlewareStacks: stacks,
+  });
+}
+
+async function createEphemeralStackFixture() {
+  const pair = await generateKeyPair("ES256", { extractable: true });
+  const kid = `stack-local-${crypto.randomUUID()}`;
+  const publicJwk = await exportJWK(pair.publicKey);
+  return {
+    stackId: "unidocs-cloudflare",
+    issuer: `unidocs-stack:local:${crypto.randomUUID()}`,
+    audience: `unidocs-cas-stack:${crypto.randomUUID()}`,
+    kid,
+    privateKeyPkcs8: await exportPKCS8(pair.privateKey),
+    jwks: {
+      keys: [{ ...publicJwk, kid, alg: "ES256", use: "sig" }],
+    },
+    refDomains: [
+      { refDomain: "doc", status: "active" },
+      { refDomain: "asset", status: "active" },
+    ],
+  };
 }
 async function createEphemeralCapabilityFixture() {
   const pair = await generateKeyPair("ES256", { extractable: true });

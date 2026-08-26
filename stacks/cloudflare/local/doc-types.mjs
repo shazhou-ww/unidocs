@@ -205,6 +205,7 @@ export function buildWorkers({
   extraBindings = {},
   internalAuthMode = "legacy",
   capabilityFixture,
+  stackFixture,
   casAdminPublicOrigin = `http://localhost:4070`,
   googleOidcClientId,
   googleOidcClientSecret,
@@ -212,11 +213,15 @@ export function buildWorkers({
   casMiddlewareOnly = false,
   casMiddleware = false,
 }) {
-  if (!["legacy", "dual", "capability"].includes(internalAuthMode)) {
-    throw new Error("internalAuthMode must be legacy, dual, or capability");
+  if (!["legacy", "dual", "capability", "stack"].includes(internalAuthMode)) {
+    throw new Error("internalAuthMode must be legacy, dual, capability, or stack");
+  }
+  const stackMode = internalAuthMode === "stack";
+  if (stackMode && !stackFixture) {
+    throw new Error("stackFixture is required for the stack local runtime");
   }
   if (internalAuthMode !== "legacy" && !capabilityFixture) {
-    throw new Error("capabilityFixture is required for dual/capability local runtime");
+    throw new Error("capabilityFixture is required for dual/capability/stack local runtime");
   }
   const policyBindings = {
     CAPABILITY_ALGORITHM: "ES256",
@@ -280,7 +285,7 @@ export function buildWorkers({
     bindings: adminBindings,
     d1Databases: { CAS_CONTROL_DB: CONTROL_DB },
     unsafeDirectSockets: [{ host, port: ports.admin }],
-    ...(casMiddleware ? {
+    ...(casMiddleware || stackMode ? {
       // Private audit-reader binding: admin BFF -> canonical tenant worker
       // (acyclic: edge -> admin -> tenant; the tenant worker never calls back).
       serviceBindings: { CAS_TENANT_AUDIT_READER: MIDDLEWARE_WORKER },
@@ -327,7 +332,7 @@ export function buildWorkers({
 
   if (casMiddlewareOnly) {
     return [
-      ...(casMiddleware ? [middlewareWorker, edgeWorker] : []),
+      ...(casMiddleware || stackMode ? [middlewareWorker, edgeWorker] : []),
       casWorker,
       adminWorker,
       mockOidcWorker,
@@ -349,12 +354,19 @@ export function buildWorkers({
           CAPABILITY_ISSUER: capabilityFixture.issuer,
           CAPABILITY_KEY_ID: capabilityFixture.kid,
           CAPABILITY_PRIVATE_KEY_PKCS8: capabilityFixture.privateKeyPkcs8,
-          CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+          CAS_CAPABILITY_AUDIENCE: stackMode ? stackFixture.audience : "unidocs-cas",
+        } : {}),
+        ...(stackMode && stackFixture ? {
+          CAS_STACK_ID: stackFixture.stackId,
+          CAS_STACK_ISSUER: stackFixture.issuer,
+          CAS_STACK_KEY_ID: stackFixture.kid,
+          CAS_STACK_PRIVATE_KEY_PKCS8: stackFixture.privateKeyPkcs8,
+          CAS_REF_DOMAIN: "doc",
         } : {}),
         INSECURE_PATH_IDENTITY: "true",
       },
       d1Databases: { GATEWAY_DB },
-      serviceBindings: { CAS_SERVICE: CAS_WORKER },
+      serviceBindings: { CAS_SERVICE: stackMode ? MIDDLEWARE_WORKER : CAS_WORKER },
     },
     casWorker,
   ];
@@ -369,11 +381,21 @@ export function buildWorkers({
     });
   }
 
-  if (casMiddleware) {
+  if (casMiddleware || stackMode) {
     workers.push(middlewareWorker, edgeWorker);
   }
 
   workers.push(adminWorker, mockOidcWorker);
+
+  const stackBindings = stackFixture ? {
+    CAS_STACK_ID: stackFixture.stackId,
+    CAS_STACK_ISSUER: stackFixture.issuer,
+    CAS_STACK_TRUSTED_JWKS: JSON.stringify(stackFixture.jwks),
+  } : {};
+  // Stack mode routes every CAS call to the canonical middleware worker.
+  const casServiceTarget = stackMode
+    ? MIDDLEWARE_WORKER
+    : (casFault ? CAS_FAULT_WORKER : CAS_WORKER);
 
   for (const name of docTypes) {
     const spec = DOC_TYPES[name];
@@ -386,9 +408,12 @@ export function buildWorkers({
         CAS_ACCESS_KEY,
         INTERNAL_AUTH_MODE: internalAuthMode,
         DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
-        CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+        CAS_CAPABILITY_AUDIENCE: stackMode
+          ? stackFixture.audience
+          : "unidocs-cas",
         ...policyBindings,
         ...validatorBindings,
+        ...(stackMode ? stackBindings : {}),
         SERVICE_ACCESS_KEY: docServiceAccessKey(name),
         ...(extraBindings[name] ?? {}),
       },
@@ -396,7 +421,7 @@ export function buildWorkers({
         [spec.editor]: { className: spec.editorClass, useSQLite: true },
         [spec.operator]: { className: spec.operatorClass, useSQLite: true },
       },
-      serviceBindings: { CAS_SERVICE: casFault ? CAS_FAULT_WORKER : CAS_WORKER },
+      serviceBindings: { CAS_SERVICE: casServiceTarget },
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }

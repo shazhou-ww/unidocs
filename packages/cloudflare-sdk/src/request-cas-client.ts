@@ -4,6 +4,8 @@ import type { HttpFetcher } from "@unidocs/cas-client";
 export interface RequestCasEnv {
   readonly CAS_SERVICE: HttpFetcher;
   readonly CAS_ACCESS_KEY?: string;
+  /** Stack namespace for canonical /stacks routes (stack mode). */
+  readonly CAS_STACK_ID?: string;
 }
 
 export function createRequestCasClient(
@@ -22,6 +24,7 @@ export function createRequestCasClient(
         tenantId,
         sessionId,
         capability,
+        ...(env.CAS_STACK_ID === undefined ? {} : { stackId: env.CAS_STACK_ID }),
       })
       : null;
   }

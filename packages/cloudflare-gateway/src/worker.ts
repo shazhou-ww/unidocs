@@ -76,6 +76,7 @@ export default {
       casFetcher: env.CAS_SERVICE,
       directory: new D1GatewayDocumentDirectory(env.GATEWAY_DB),
       isGatewayExposedCasRoute,
+      casStackId: env.CAS_STACK_ID,
     });
     return handle(request);
   },
