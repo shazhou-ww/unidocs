@@ -60,7 +60,7 @@ flowchart TB
 
 下边界之所以要拆成四个接口而不是一个，是因为它们的变化原因不同：换平台影响文档读写、会话存储和传输，换模型供应商只影响 `LlmProvider`。
 
-另有一个接口属于**内核**而非下边界，容易放错位置：`HistoryPolicy`（历史裁剪，6.2）。判断「哪些消息该留在发给模型的历史里」与运行环境无关，所以它在内核；「这些消息落到哪个存储」才是下边界。
+历史裁剪（6.2）不在这张表里，因为它**不是接口**：判断「哪些消息该留在发给模型的历史里」与运行环境无关，所以它就是内核里的一个函数，写死在 `history.ts`，不暴露成可替换的策略（6.2.5）。属于下边界的是「这些消息落到哪个存储」。
 
 既有的 `DocumentAgentContext` 不再存在。它原本是递给文档类型的一组句柄，而这一版文档类型不接受任何句柄（5.1.1），所以它退化成纯粹的平台接口，改名 `AgentPlatform`。顺带消掉了一处歧义："context" 在这个仓库里曾同时指「交给 agent 的执行环境」和「模型的上下文窗口」，现在不再有任何接口叫 context。
 
@@ -262,8 +262,8 @@ azure-sdk 的 deps:      @azure/*, cas-client, doctype-server-common, http-proto
 ```
 packages/doctype-server-common/src/agent/
   ├── session.ts          AgentSession —— 工具调用循环、会话历史
-  ├── history-policy.ts   默认三级裁剪策略（6.2）
-  ├── store.ts            AgentSessionStore 的契约测试（6.3.8）
+  ├── history.ts          三级裁剪，纯函数，参数写死（6.2）
+  ├── store.ts            AgentSessionStore 的契约测试（6.3.9）
   ├── sse.ts              AgentEvent 序列 → SSE 字节流（7.4）
   └── providers/
       ├── anthropic.ts    从 cloudflare-psd 搬过来，删掉图片嗅探
@@ -287,7 +287,7 @@ flowchart TB
 
     subgraph sdk["doctype-server-common —— 文档类型和平台共同对着的 SDK"]
         UP["上边界契约<br/>DocumentAgent / AgentTool"]
-        KERNEL["src/agent/ 内核实现<br/>AgentSession · HistoryPolicy<br/>Anthropic / OpenAI provider · SSE 编码"]
+        KERNEL["src/agent/ 内核实现<br/>AgentSession · 历史裁剪<br/>Anthropic / OpenAI provider · SSE 编码"]
         DOWN["下边界契约 —— platform 接口，虚拟<br/>AgentPlatform / LlmProvider<br/>AgentSessionStore"]
     end
 
@@ -508,11 +508,6 @@ classDiagram
         +readBlob(blob) Promise
     }
 
-    class HistoryPolicy {
-        <<interface>>
-        +trim(history) AgentMessage[]
-    }
-
     class AnthropicProvider
     class OpenAiProvider
     class CloudflareAgentPlatform
@@ -522,7 +517,6 @@ classDiagram
     AgentSession --> DocumentAgent : 上边界，纯数据
     AgentSession --> AgentPlatform : 下边界
     AgentSession --> LlmProvider : 下边界
-    AgentSession --> HistoryPolicy : 内核策略
     LlmProvider <|.. AnthropicProvider
     LlmProvider <|.. OpenAiProvider
     AgentPlatform <|.. CloudflareAgentPlatform
@@ -751,8 +745,6 @@ export class AgentSession<TQuery, TOp> {
     readonly store?: AgentSessionStore;
     /** 下边界：根引用提交（6.4），不传则不保活 */
     readonly cas?: CasRootRefGateway;
-    /** 内核策略：历史裁剪（6.2），不传用默认三级策略 */
-    readonly historyPolicy?: HistoryPolicy;
     /** 循环上限，不传为 10。PSD 传 25 */
     readonly maxIterations?: number;
   });
@@ -874,19 +866,7 @@ flowchart TB
 
 **第 2 级同理不懂文档类型：** 它只看 `structuredContent` 编码后的字节数，不看里面是什么。PSD 的 `getDoc` 返回整棵图层树、markdown 的 `getContent` 返回全文，对它是一回事。
 
-#### 6.2.4 文档类型能调什么
-
-参数在接线处（叶子包）传入，与 `maxIterations` 同一个位置——`cloudflare-psd/src/worker.ts` 今天传 `maxIterations: 25` 就是先例。
-
-| 参数 | 默认 | 谁该改 |
-|---|---|---|
-| `maxImages` | 2 | 图片信息密度高的文档类型可以调大 |
-| `maxResultBytes` | 8192 | 结果天然很大的可以调大 |
-| `budgetTokens` | 120_000 | 跟模型走，不跟文档类型走 |
-
-如果哪天某个文档类型需要完全不同的裁剪逻辑，可以自己实现 `HistoryPolicy` 传进来（6.2.7 的接口）——但那是给特殊情况留的出口，不是预期路径。默认策略应当覆盖绝大多数情况；如果不覆盖，说明默认策略需要改进，而不是每个文档类型各写一份。
-
-#### 6.2.5 预算怎么算
+#### 6.2.4 预算怎么算
 
 内核不引入 tokenizer 依赖（那会带来一个几 MB 的词表，且各家模型不同）。用估算：
 
@@ -895,11 +875,27 @@ flowchart TB
 | 文字 | UTF-8 字节数 ÷ 3.5 |
 | 图片 | 宽 × 高 ÷ 750 |
 
-预算默认取模型上下文窗口的 60%，余量留给回复和估算误差。估算不准不会导致错误，只会裁多或裁少；真的超限时 provider 会报错，此时按错误再裁一次并重试一次，仍失败则以 `run-error` 结束。
+估算不准不会导致错误，只会裁多或裁少；真的超限时 provider 会报错，此时按错误再裁一次并重试一次，仍失败则以 `run-error` 结束。
+
+#### 6.2.5 三个数字先写死
+
+```ts
+// doctype-server-common/src/agent/history.ts
+const MAX_IMAGES       = 2;        // 保留最近几张图片
+const MAX_RESULT_BYTES = 8_192;    // 单条工具结果超过这个就降级
+const BUDGET_TOKENS    = 120_000;  // 上下文预算，约为窗口的 60%
+```
+
+**不做成可配置项，也不暴露成可替换的策略接口。** 理由：
+
+- 这三个数字合不合适，要跑起来才知道。现在就把它们做成参数，等于在没有依据的情况下先固化一套 API，而这套 API 会立刻被三个文档类型和两个平台引用。
+- 「让文档类型自己实现一套裁剪」这种扩展点更是如此——今天一个使用者都没有。如果将来默认策略覆盖不了某个文档类型，那**首先说明默认策略需要改进**，而不是每个文档类型各写一份。
+
+裁剪逻辑单独放在 `history.ts` 一个文件里，输入是 `AgentMessage[]`、输出也是 `AgentMessage[]`，没有其他依赖。真到了需要按文档类型调参、或者需要换整套策略的那天，把这个文件的入口函数改成接口是一次局部改动，不牵动调用方。
 
 #### 6.2.6 一个明确的取舍：裁剪就地生效
 
-`HistoryPolicy.trim` 的返回值**直接替换 `AgentSession` 的 history**，不是只用于本次发送。
+裁剪函数的返回值**直接替换 `AgentSession` 的 history**，不是只用于本次发送。
 
 | | 就地生效（选定） | 只用于发送 |
 |---|---|---|
@@ -910,21 +906,11 @@ flowchart TB
 
 选就地生效。降级本来就是有损的，保留完整历史只是把同一份损失往后推，却换来无界增长和三份不一致的状态。
 
-#### 6.2.7 接口
+#### 6.2.7 摘要压缩：本次不做，也不预留接口
 
-```ts
-export interface HistoryPolicy {
-  trim(history: readonly AgentMessage[]): Promise<readonly AgentMessage[]>;
-}
+把最早若干轮交给模型总结成一段文字，是第 4 级裁剪的自然候选。本次不做——它需要额外一次模型调用，成本和质量都要实测才好定参数。
 
-export function createDefaultHistoryPolicy(opts?: {
-  maxImages?: number;        // 默认 2
-  maxResultBytes?: number;   // 默认 8192
-  budgetTokens?: number;     // 默认 120_000
-}): HistoryPolicy;
-```
-
-`trim` 是异步的，为的是给「摘要压缩」留路——把最早若干轮交给模型总结成一段文字需要额外调一次模型，所以 `HistoryPolicy` 实现可以在构造时拿到 `LlmProvider`。**本次不实现摘要压缩**，只保证接口不必回头改。
+也不为它预留接口。前三级都是同步纯函数，为一个还没实测过的功能把入口改成异步、再顺带引入一个 `LlmProvider` 依赖，是在为想象中的需求付真实的复杂度。真要加时，改 `history.ts` 一个文件即可。
 
 ### 6.3 持久化
 
@@ -994,6 +980,7 @@ export interface StoredMessage {
 export interface AgentSessionStore {
   /** 按 msgNo 升序读回整段历史。空会话返回 null */
   load(): Promise<{ messages: readonly StoredMessage[]; token: string } | null>;
+  // load 无参数，理由见 6.3.5
 
   /**
    * 一次事务写入本轮的变化。token 不匹配时抛 SessionStoreConflictError。
@@ -1016,7 +1003,17 @@ export interface AgentSessionStore {
 
 三处写入必须在一个事务里：`agent_messages` 的 upsert、delete，和 `agent_sessions` 的 `seq` 条件更新。Azure 用现成的 `PgUnitOfWork`（`ports-pg.ts:270`），CF 用 `ctx.storage.transaction`。
 
-#### 6.3.5 条件写
+#### 6.3.5 为什么 `load` 没有条件而 `save` 有
+
+看着不对称，但两者要解决的问题不同。
+
+`load` 无参数，因为内核只在 `restore()` 时调它一次，而它要的就是**整段历史**——那正是接下来要发给模型的东西，没有「只要其中一部分」的场景。历史的长度已经被裁剪封顶了（6.2），不会无限增长，所以一次读全部不会失控。
+
+并发控制不靠 `load` 的参数，而靠它的**返回值**：`load` 给出 `token`，写的时候 `save(..., token)` 拿它去校验。这一对合起来才是完整的乐观并发，`load` 自己不需要条件。
+
+真正需要条件读的是另一类使用者——界面往回翻聊天记录时的分页。那属于文档变更通道那一侧（7.2.1），不在本次范围；真要做时给 `load` 加一个可选的范围参数即可，不影响现在的调用方。
+
+#### 6.3.6 条件写
 
 凭据是 `agent_sessions.seq`，两端机制同构：
 
@@ -1028,9 +1025,9 @@ WHERE <定位条件> AND seq = ?;      -- 最后一个 ? 是 expectedToken
 
 受影响行数为 0 即冲突，整个事务回滚并抛 `SessionStoreConflictError`。首次写入用 `INSERT ... ON CONFLICT DO NOTHING`（Azure）/ `INSERT OR IGNORE`（CF），同样看受影响行数。这与 `PgDeltaLog.append`（`ports-pg.ts:89-111`）是同一套写法。
 
-为什么需要条件写，见 6.3.6：两个平台的并发模型不同。
+为什么需要条件写，见 6.3.7：两个平台的并发模型不同。
 
-#### 6.3.6 为什么需要条件写：两个平台的并发模型不同
+#### 6.3.7 为什么需要条件写：两个平台的并发模型不同
 
 | | Cloudflare | Azure |
 |---|---|---|
@@ -1042,7 +1039,7 @@ WHERE <定位条件> AND seq = ?;      -- 最后一个 ? 是 expectedToken
 
 除条件写外还需要一条约束：**同一会话同时只允许一个 run**。CF 上由 DO 天然保证；Azure 上靠条件写检测冲突后拒绝第二个 run，返回明确错误，而不是让两段对话互相覆盖。今天客户端其实已经在做这件事（`web-psd/src/main.ts` 的 `chatBusy` 标志），但那是建议而非保证。
 
-#### 6.3.7 现在能从数据库直接问出什么
+#### 6.3.8 现在能从数据库直接问出什么
 
 ```sql
 -- 这个会话里模型说了几次话、调了几次工具
@@ -1065,7 +1062,7 @@ GROUP BY s.tenant_id;
 
 仍然答不了的：`payload` 内部的东西——某次工具调用的具体参数、图片的尺寸。要问这些必须解码。这是 6.1.1 的必然结果（SValue 才能承载 SBlob），不是这一版设计的遗漏。
 
-#### 6.3.8 共享契约测试
+#### 6.3.9 共享契约测试
 
 `doctype-server-common/src/testing/port-contract.ts` 已经立了「一份契约测试，两个平台各跑一遍」的先例。内核从 `@unidocs/doctype-server-common/agent` 导出同样形状的 `agentSessionStoreContract(makeStore)`，覆盖：
 
@@ -1150,7 +1147,7 @@ flowchart TB
 
 | 组件 | 属于哪层 | 由谁实现 |
 |---|---|---|
-| `HistoryPolicy`（什么该留在上下文里） | 内核（逻辑） | 内核提供默认实现，文档类型只调参数 |
+| 历史裁剪（什么该留在上下文里） | 内核（逻辑） | 内核里的一个纯函数，参数写死，不可替换（6.2.5） |
 | `encodeSValue(每条消息)`（序列化格式） | 内核 | 内核 |
 | 从消息里抽出 `role` / `turnNo` / `text`（6.3.2） | 内核 | 内核——它知道消息结构，平台不知道 |
 | 根引用增量的计算（`diffRefs`） | 内核 | 内核 |
@@ -1205,7 +1202,7 @@ sequenceDiagram
     S-->>B: run-start
 
     loop 直到模型不再调工具，或达到 maxIterations
-        S->>S: historyPolicy.trim(history)<br/>裁剪并就地替换（6.2）
+        S->>S: trimHistory(history)<br/>裁剪并就地替换（6.2）
         S->>L: complete(裁剪后的历史 + 工具表)
         L-->>S: 文字 / 工具调用 / 两者都有
 
@@ -1491,7 +1488,7 @@ flowchart TB
     S2b --> S3["4. psd 的 getPreview 改走 SBlob<br/>toResult 返回 image content part"]
     S3 --> S4["5. 删掉 renderToolResult 钩子<br/>docx 的图片路径第一次跑通"]
     S4 --> S5["6. 删除 doctype-server-common/operator.ts"]
-    S5 --> S6["7. HistoryPolicy 默认裁剪策略<br/>图片降级 / 大结果降级 / 整轮丢弃"]
+    S5 --> S6["7. 历史裁剪 history.ts<br/>图片降级 / 大结果降级 / 整轮丢弃"]
     S6 --> S7["8. AgentSessionStore 接口 + 契约测试<br/>CF 的 DO SQLite 实现"]
     S7 --> S8["9. 根引用保活<br/>diffRefs + commitRootRefsOrRollback"]
     S8 --> S9["10. 事件流 + SSE 编码<br/>按 Accept 头分流"]
@@ -1523,10 +1520,10 @@ flowchart TB
 | V9 | docx 的图片路径第一次真正跑通 | 现有 `doctype-docx/tests/agent.test.ts` 已覆盖 `getImage` / `insertImage`；再补一条端到端：删掉 renderToolResult 后，image content part 能被 Anthropic 适配层翻成图片块而不抛异常（P6） |
 | V10 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/doctype-server-common/src/agent/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止 |
 | V10b | `toQuery` / `toOps` 确实是纯函数 | 契约测试：同一组参数连调两次，结果深相等；调用期间不发生任何 IO（用假的全局 fetch 断言未被调用） |
-| V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.8） |
+| V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.9） |
 | V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：`payload` 含 SBlob 存进去，读回来解码后 `isSBlob()` 仍为 true。这条对应 6.1.1「不能改用 JSON」 |
-| V12c | 消息的结构字段真的成了列，不用解码就能查 | 跑完一轮后直接查库：`SELECT role, count(*) FROM agent_messages GROUP BY role` 能分出 user / assistant / tool 三类，且条数与实际一致（6.3.7） |
-| V12b | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/history-policy.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
+| V12c | 消息的结构字段真的成了列，不用解码就能查 | 跑完一轮后直接查库：`SELECT role, count(*) FROM agent_messages GROUP BY role` 能分出 user / assistant / tool 三类，且条数与实际一致（6.3.8） |
+| V12b | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/history.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
 | V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
 | V14 | 长会话不再无限增长 | PSD 跑满 25 轮后，`history` 的编码字节数低于设定预算，且图片 part 不超过 `maxImages` |
 | V15 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
@@ -1540,7 +1537,7 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 
 | 项 | 原因 |
 |---|---|
-| 摘要压缩（把最早若干轮交给模型总结） | 需要额外一次模型调用，成本和质量都要实测才好定参数。接口已支持（`trim` 是 async），前三级裁剪先跑一段时间看是否够用 |
+| 摘要压缩（把最早若干轮交给模型总结） | 需要额外一次模型调用，成本和质量都要实测才好定参数。**也不预留接口**——理由见 6.2.7。前三级裁剪先跑一段时间看是否够用 |
 | **文档变更通道** | agent 与人是对等的编辑者，「文档变了」该走文档通道而不是 agent 通道（7.2.1）。建它需要编辑器向订阅者扇出、订阅生命周期管理，Azure 的无状态多副本上尤其麻烦——是协同编辑那一块的工作。本次不建，也不建会被拆掉的临时替代 |
 | 逐字输出 | 需要 provider 支持流式并处理 `input_json_delta` 增量拼接，测试成本高，本次不做 |
 | 事件重放 / 断线续传 | 需要把**事件序列**也持久化，那是与会话历史不同的一份数据（历史是给模型看的，事件是给界面看的）。7.3 已选定不重放 |
@@ -1578,7 +1575,8 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
 | 文档类型要不要持有平台句柄 | **不要。** 一个工具无非是读或写，声明自己是哪一种再给一个纯函数就够了，不需要有人递给它 `query` / `apply`。`resolveBlob` 也不需要——租约由 `session.ts:608` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，剩下的 `createSBlob(hash)` 是同步纯函数（5.1.1） |
 | `DocumentAgentContext` 的去向 | 它原本是递给文档类型的句柄，现在文档类型不接受句柄，它就退化成纯粹的平台接口 `AgentPlatform`（`query` / `apply` / `readBlob`），只有内核调。`readBlob` 本来也没有任何文档类型在用——今天唯一的调用点 `operator-do-agent.ts:158` 正是要删的那条路（5.1.4） |
-| 为什么叫 `HistoryPolicy` 而不是 `ContextPolicy` | "context" 一词在这个仓库里曾同时指「模型的上下文窗口」和「交给 agent 的执行环境」。现在两边都改了名，本设计里不再有任何接口叫 context |
+| 裁剪要不要做成可替换的策略 | **不要。** 三个阈值直接写死在 `history.ts`，不做成参数，也不暴露策略接口。这些数字合不合适要跑起来才知道，现在固化成 API 等于在没有依据的情况下先定契约，而它会立刻被三个文档类型和两个平台引用。裁剪逻辑是一个输入输出都是 `AgentMessage[]` 的纯函数，将来真要可配置，改这一个文件即可（6.2.5） |
+| 摘要压缩要不要预留接口 | **不预留。** 前三级都是同步纯函数；为一个还没实测过的功能把入口改成异步、再引入 `LlmProvider` 依赖，是为想象中的需求付真实的复杂度（6.2.7） |
 | 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样会让上下文超出上限；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`、叶子包传的阈值），不通过代码（6.2.2） |
 | 裁剪的最小单位 | 一轮（assistant + 它全部的 tool 消息），不是一条消息——否则会切出孤立的 `tool_result`，被 API 拒绝 |
 | 裁剪是否就地生效 | 是。返回值直接替换 history，让"发给模型的 = 存下来的 = 恢复出来的" |
