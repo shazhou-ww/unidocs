@@ -12,6 +12,10 @@ import {
   CAS_ACCESS_KEY,
   startLocalRuntime,
 } from "../../../stacks/cloudflare/local/runtime.mjs";
+import {
+  createPkcs8CapabilityIssuer,
+  sessionReadPermission,
+} from "../../../packages/service-auth/src/index.ts";
 
 let runtime;
 
@@ -68,12 +72,14 @@ test("gateway creates a docx doc via a separate registered workerUrl", async () 
 test("capability mode starts with rotation overlap and completes a Doc flow", async () => {
   const oldPair = await generateKeyPair("ES256", { extractable: true });
   const newPair = await generateKeyPair("ES256", { extractable: true });
+  const oldPrivateKeyPkcs8 = await exportPKCS8(oldPair.privateKey);
+  const newPrivateKeyPkcs8 = await exportPKCS8(newPair.privateKey);
   const oldPublic = await exportJWK(oldPair.publicKey);
   const newPublic = await exportJWK(newPair.publicKey);
   const fixture = {
     issuer: "unidocs-gateway:local-test",
     kid: "new-key",
-    privateKeyPkcs8: await exportPKCS8(newPair.privateKey),
+    privateKeyPkcs8: newPrivateKeyPkcs8,
     jwks: {
       keys: [
         { ...oldPublic, kid: "old-key", alg: "ES256", use: "sig" },
@@ -103,6 +109,36 @@ test("capability mode starts with rotation overlap and completes a Doc flow", as
     );
     expect(create.status).toBe(200);
     const created = await create.json();
+    const identity = await capable.storage.sessionIdentity(
+      "markdown",
+      created.docId,
+      "tenant-cap",
+    );
+    const [oldIssuer, newIssuer] = await Promise.all([
+      createPkcs8CapabilityIssuer({
+        issuer: fixture.issuer,
+        kid: "old-key",
+        privateKeyPkcs8: oldPrivateKeyPkcs8,
+      }),
+      createPkcs8CapabilityIssuer({
+        issuer: fixture.issuer,
+        kid: "new-key",
+        privateKeyPkcs8: newPrivateKeyPkcs8,
+      }),
+    ]);
+    const overlapTokens = await Promise.all([oldIssuer, newIssuer].map(issuer => issuer.issue({
+      subject: "gateway",
+      audience: "unidocs-doc:markdown",
+      tenantId: "tenant-cap",
+      sessionId: identity.sessionId,
+      permissions: [sessionReadPermission("tenant-cap", identity.sessionId)],
+    })));
+    const overlapResponses = await Promise.all(overlapTokens.map(token => fetch(
+      `${capable.urls.markdown}/tenants/tenant-cap/sessions/${identity.sessionId}/history`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )));
+    expect(overlapResponses.map(response => response.status)).toEqual([200, 200]);
+
     const history = await fetch(
       `${capable.urls.gateway}/tenants/tenant-cap/docs/markdown/${created.docId}/history`,
     );
@@ -110,6 +146,64 @@ test("capability mode starts with rotation overlap and completes a Doc flow", as
     await expect(history.json()).resolves.toMatchObject({ success: true, version: 1 });
   } finally {
     await capable.dispose();
+  }
+
+  const retired = await startLocalRuntime({
+    docTypes: ["markdown"],
+    ports: { gateway: 18587, markdown: 18588, cas: 18590 },
+    internalAuthMode: "capability",
+    capabilityFixture: {
+      ...fixture,
+      jwks: {
+        keys: [{ ...newPublic, kid: "new-key", alg: "ES256", use: "sig" }],
+      },
+    },
+  });
+  try {
+    const create = await fetch(
+      `${retired.urls.gateway}/tenants/tenant-retired/docs/markdown/`,
+      { method: "POST" },
+    );
+    const created = await create.json();
+    expect(create.status, JSON.stringify(created)).toBe(200);
+    const identity = await retired.storage.sessionIdentity(
+      "markdown",
+      created.docId,
+      "tenant-retired",
+    );
+    const [oldIssuer, newIssuer] = await Promise.all([
+      createPkcs8CapabilityIssuer({
+        issuer: fixture.issuer,
+        kid: "old-key",
+        privateKeyPkcs8: oldPrivateKeyPkcs8,
+      }),
+      createPkcs8CapabilityIssuer({
+        issuer: fixture.issuer,
+        kid: "new-key",
+        privateKeyPkcs8: newPrivateKeyPkcs8,
+      }),
+    ]);
+    const [oldToken, newToken] = await Promise.all([oldIssuer, newIssuer].map(issuer => issuer.issue({
+      subject: "gateway",
+      audience: "unidocs-doc:markdown",
+      tenantId: "tenant-retired",
+      sessionId: identity.sessionId,
+      permissions: [sessionReadPermission("tenant-retired", identity.sessionId)],
+    })));
+    const [newResponse, oldResponse] = await Promise.all([
+      fetch(
+        `${retired.urls.markdown}/tenants/tenant-retired/sessions/${identity.sessionId}/history`,
+        { headers: { Authorization: `Bearer ${newToken}` } },
+      ),
+      fetch(
+        `${retired.urls.markdown}/tenants/tenant-retired/sessions/${identity.sessionId}/history`,
+        { headers: { Authorization: `Bearer ${oldToken}` } },
+      ),
+    ]);
+    expect(newResponse.status).toBe(200);
+    expect(oldResponse.status).toBe(401);
+  } finally {
+    await retired.dispose();
   }
 }, 60_000);
 

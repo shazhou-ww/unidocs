@@ -1516,7 +1516,7 @@ Doc/CAS runtime.
       reach Doc/CAS.
 - [x] Prove equal `docId`, `sessionId`, and CAS hashes in different tenants never
       collide and that no service keys tenant data by user.
-- [ ] Prove rotation overlap accepts both configured keys and removal rejects
+- [x] Prove rotation overlap accepts both configured keys and removal rejects
       the retired key after the bounded lifetime.
 - [ ] Inspect active Cloudflare secrets/bindings and Azure Container App
       revisions, environment variables, and secret references. Prove local,
@@ -1568,6 +1568,12 @@ Task 8 implementation record (in progress, 2026-08-26):
       prove the Gateway owner column is removed, Cloudflare Doc names and Azure
       Postgres/Blob keys use canonical tenant identities, and CAS D1/R2/DO state
       is partitioned by `(tenantId, hash)`, not user identity.
+- The Cloudflare runtime rotation test deploys an overlap JWKS and proves both
+      old- and new-key Doc capabilities succeed, then deploys immutable new-only
+      trust and proves the new token still succeeds while the retired token gets
+      `401`. The test models the post-wait configuration transition; production
+      operations still enforce the documented $300+30=330$ second wait before
+      removing old trust.
 
 Final validation:
 
