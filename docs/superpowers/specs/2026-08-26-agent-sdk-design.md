@@ -18,7 +18,7 @@ flowchart TB
         U["文档类型提供 DocumentAgent<br/>工具定义 · 提示词 · 工具调用如何翻译成 query/apply<br/>不知道循环怎么跑 · 历史怎么管 · 模型怎么调"]
     end
 
-    subgraph core["@unidocs/agent-sdk —— 全仓库唯一一份实现"]
+    subgraph core["agent 内核 —— 全仓库唯一一份实现"]
         K["工具调用循环 · 会话历史 · 历史裁剪<br/>模型访问 · 事件产出"]
     end
 
@@ -54,7 +54,7 @@ flowchart TB
 |---|---|---|---|
 | 上（逻辑） | `DocumentAgentFactory` → `DocumentAgent` = tools + instructions + toolCall | 文档类型 | `protocol/src/types.ts:118-129`，**已存在，本次不改** |
 | 下（实现） | `DocumentAgentContext` —— 文档读写 | 平台 sdk | `protocol/src/types.ts:105`，**已存在，本次不改** |
-| 下（实现） | `LlmProvider` —— 模型访问 | agent-sdk 内置 Anthropic / OpenAI，可另加 | 5.4 |
+| 下（实现） | `LlmProvider` —— 模型访问 | 内核内置 Anthropic / OpenAI，可另加 | 5.4 |
 | 下（实现） | `AgentSessionStore` —— 会话历史落盘 | 平台 sdk | 6.3 |
 | 下（实现） | 事件字节流 → 平台响应对象 | 平台 sdk | 7.4 |
 
@@ -182,7 +182,7 @@ flowchart TB
         A4["将来的 doctype-xlsx"]
     end
 
-    subgraph L2["内核 @unidocs/agent-sdk：唯一一份，与文档类型和平台都无关"]
+    subgraph L2["内核 doctype-server-common/src/agent/<br/>唯一一份，与文档类型和平台都无关"]
         B1["工具调用循环"]
         B2["历史裁剪策略"]
         B3["会话历史（中立消息格式）"]
@@ -201,8 +201,11 @@ flowchart TB
         D2["azure-docx"]
     end
 
-    L1 -->|"DocumentAgent"| L2
-    L3 -->|"DocumentAgentContext + AgentSessionStore + 传输外壳"| L2
+    ABS["抽象层 protocol<br/>契约在这里，两侧都指向它"]
+
+    L1 -->|"实现 DocumentAgent"| ABS
+    L3 -->|"实现 DocumentAgentContext<br/>AgentSessionStore + 传输外壳"| ABS
+    L2 --> ABS
     L4 -.->|"挑一个文档类型"| L1
     L4 -.->|"挑一个平台"| L3
 ```
@@ -211,96 +214,148 @@ flowchart TB
 
 1. **文档类型永远看不到 `DocumentAgentContext` 的实现**。它不知道文档是通过 DurableObject 还是进程内调用读到的，也不知道 `baseVersion` 的存在。
 2. **平台 sdk 永远看不到循环内部**。它拿到的是一个事件序列，负责把它变成本平台的响应对象，不参与决定何时调模型、何时调工具。
-3. **平台 sdk 永远不依赖任何文档类型，文档类型也不依赖任何平台 sdk**。今天已经如此（4.2 有 `package.json` 的实据），本次不能破坏。两者的组合只发生在叶子包，而叶子包本来就是「某个文档类型 × 某个平台」这一个具体部署的入口——`cloudflare-psd` 就是「PSD 跑在 Cloudflare 上」这一件事。
+3. **平台 sdk 永远不依赖任何文档类型，文档类型也不依赖任何平台 sdk**。今天已经如此（4.3 有 `package.json` 的实据），本次不能破坏。两者的组合只发生在叶子包，而叶子包本来就是「某个文档类型 × 某个平台」这一个具体部署的入口——`cloudflare-psd` 就是「PSD 跑在 Cloudflare 上」这一件事。
 
-前两条如果被打破，就退回到今天的状态（1.4）；第三条被打破，「新增文档类型」和「新增平台」这两个方向就会互相牵动，1.2 的表就不成立了。4.3 给出机器可校验的落地方式。
+前两条如果被打破，就退回到今天的状态（1.4）；第三条被打破，「新增文档类型」和「新增平台」这两个方向就会互相牵动，1.2 的表就不成立了。4.4 给出机器可校验的落地方式。
+
+注意 L2 内核在这张图里是**实现**而不是边界：它和平台 sdk 一样依赖 `protocol` 的契约。区别只在于内核有且只有一份，而平台 sdk 每个云一份。
 
 ---
 
 ## 4. 包与约束
 
-### 4.1 新增包
+### 4.1 抽象层已经存在：`protocol`
 
-| 包名 | 职责 |
+依赖倒置要求两侧都指向同一个抽象，而这个抽象不需要新建——`protocol` 今天就是：
+
+| | 依赖 `protocol` |
 |---|---|
-| `@unidocs/agent-sdk` | 服务端 agent 内核 |
-| `@unidocs/client-sdk` | 浏览器侧：agent 通道 + 文档同步 |
+| `doctype-psd` / `doctype-docx` / `doctype-markdown` | 已依赖 |
+| `cloudflare-sdk` / `azure-sdk` | 已依赖 |
+| 两侧之间 | **无任何依赖** |
 
-两个包都不依赖任何云 SDK。
+而 agent 的两条边界契约也已经住在里面，全是纯类型、零平台代码：
 
-### 4.2 依赖方向
+```
+protocol/src/types.ts
+  :82-98    AgentContentPart                        工具结果里的文字 / 图片 / 文件
+  :100-103  AgentToolResult
+  :105-116  DocumentAgentContext    ← 下边界契约（平台实现）
+  :118-129  DocumentAgent / DocumentAgentFactory  ← 上边界契约（文档类型实现）
+```
+
+本次只往里补下边界还缺的几个契约：
+
+```ts
+// 新增到 protocol
+export interface LlmProvider { complete(request): Promise<AgentCompletion> }
+export interface AgentSessionStore { load(); save(bytes, token); clear() }
+export type AgentMessage = ...    // 中立消息格式（5.4）
+export type AgentEvent = ...      // 事件表（7.1）
+```
+
+规则一句话：**契约在 `protocol`，实现在别处。**
+
+### 4.2 内核实现放在 `doctype-server-common/src/agent/`
+
+不新建包。理由是依赖边：内核只被平台 sdk 使用（文档类型完全用不到它），而两个平台 sdk 今天已经依赖 `doctype-server-common`：
+
+```
+cloudflare-sdk 的 deps: cas-client, cas-server-common, doctype-server-common, http-protocol, protocol, svalue-codec
+azure-sdk 的 deps:      @azure/*, cas-client, doctype-server-common, http-protocol, protocol, svalue-codec, pg
+```
+
+放进去**新增零条依赖边**。新建一个包则要多一套 `package.json` / `tsconfig` / 构建脚本 / 测试配置，换来的只是包名更好听。
+
+```
+packages/doctype-server-common/src/agent/
+  ├── session.ts          AgentSession —— 工具调用循环、会话历史
+  ├── context-policy.ts   默认三级裁剪策略（6.2）
+  ├── store.ts            AgentSessionStore 的契约测试（6.3.7）
+  ├── sse.ts              AgentEvent 序列 → SSE 字节流（7.4）
+  └── providers/
+      ├── anthropic.ts    从 cloudflare-psd 搬过来，删掉图片嗅探
+      └── openai.ts
+```
+
+按包已有的子路径约定（`./port-contract`、`./memory-ports`）再加一个 `./agent` 导出入口。
+
+### 4.3 依赖方向
 
 ```mermaid
 flowchart TB
-    proto["protocol"]
-    codec["svalue-codec"]
-
-    subgraph dt["文档类型：上边界的实现方，不认识任何平台"]
+    subgraph dt["文档类型：实现上边界契约"]
         psd["doctype-psd"]
         docx["doctype-docx"]
         md["doctype-markdown"]
+        xlsx["将来的 doctype-xlsx"]
     end
 
-    subgraph core["内核"]
-        asdk["agent-sdk（新增）"]
+    proto["protocol —— 抽象层<br/>上边界契约 + 下边界契约<br/>纯类型，零实现"]
+
+    subgraph plat["平台 sdk：实现下边界契约"]
+        cf["cloudflare-sdk<br/>DurableObject"]
+        az["azure-sdk<br/>Node 进程 + Postgres"]
+        aws["将来的 aws-sdk"]
     end
 
-    subgraph plat["平台 sdk：下边界的实现方，不认识任何文档类型"]
-        cfsdk["cloudflare-sdk"]
-        azsdk["azure-sdk"]
-    end
+    kernel["doctype-server-common/src/agent/<br/>内核实现：循环 · 裁剪 · provider · SSE"]
 
-    subgraph leaf["叶子包：唯一同时认识两侧的地方"]
-        cfpsd["cloudflare-psd"]
-        cfdocx["cloudflare-docx"]
-        azdocx["azure-docx"]
+    subgraph leaf["叶子包：只做绑定"]
+        L1["cloudflare-psd"]
+        L2["azure-docx"]
     end
 
     psd --> proto
     docx --> proto
     md --> proto
-    asdk --> proto
-    asdk --> codec
-    cfsdk --> asdk
-    azsdk --> asdk
-    cfpsd --> cfsdk
-    cfpsd --> psd
-    cfdocx --> cfsdk
-    cfdocx --> docx
-    azdocx --> azsdk
-    azdocx --> docx
+    xlsx -.-> proto
+    cf --> proto
+    az --> proto
+    aws -.-> proto
+    kernel --> proto
+    cf --> kernel
+    az --> kernel
+    aws -.-> kernel
+
+    L1 -.-> psd
+    L1 -.-> cf
+    L2 -.-> docx
+    L2 -.-> az
 ```
 
-无环。三点：
+这张图的全部意义在箭头方向：**文档类型和平台 sdk 都指向 `protocol`，两者之间没有任何箭头。** 具体实现依赖抽象，抽象不依赖具体。
 
-- **两个平台 sdk 都不依赖任何文档类型。** 这不是本次要建立的，今天就已经如此——`cloudflare-sdk` 的依赖是 `cas-client` / `doctype-server-common` / `protocol` / `svalue-codec` 那一组，`azure-sdk` 同理，两边的 `package.json` 里都没有任何 `doctype-*`。本次只是往里加一个 `agent-sdk`。
-- **文档类型也不依赖 `agent-sdk`。** 它们只实现 `protocol` 里已有的 `DocumentAgentFactory`，一个新依赖都不加。
-- **两条边界在叶子包会合。** `cloudflare-psd`（依赖 `cloudflare-sdk` + `doctype-psd`）、`azure-docx`（依赖 `azure-sdk` + `doctype-docx`）这些 worker / service 入口，是全仓库唯一同时认识「哪个文档类型」和「哪个平台」的地方。接线代码就那几行，在 `cloudflare-psd/src/worker.ts` 里。
+| 包 | 依赖什么 | 本次新增的依赖 |
+|---|---|---|
+| `doctype-*` | `protocol` + `svalue-codec` | **无** |
+| `cloudflare-sdk` / `azure-sdk` | 已有的那组，含 `doctype-server-common` | **无**（内核放进已依赖的包） |
+| `cloudflare-psd` / `azure-docx` | 一个文档类型 + 一个平台 sdk | **无**，只是接线代码变了 |
+| `client-sdk`（唯一新包） | `protocol` | — |
 
-这个形状顺带消掉了原本担心的一个问题：`psd-client` 从 `@unidocs/doctype-psd/engine` 引 `applyOne`，如果 `doctype-psd` 依赖了 `agent-sdk`，就要担心服务端代码被卷进浏览器 bundle。现在它不依赖，问题不存在。
+本次唯一新建的包是浏览器侧的 `@unidocs/client-sdk`（第 8 章）——它服务的是另一侧，没有现成的包可以放。
 
-客户端一侧独立：`client-sdk` 只依赖 `protocol`，`web-psd` 依赖 `client-sdk` + `psd-client`。
+### 4.4 三条边界规则怎么守
 
-### 4.3 平台无关性如何保证
+仓库没有 eslint / biome，只有 `tsc` + `vitest`。
 
-仓库没有 eslint / biome，只有 `tsc` + `vitest`，所以用两道机制：
+**规则 1（内核不知道平台）** —— 新增 `tests/unit/agent-kernel-purity.test.ts`：扫描 `packages/doctype-server-common/src/agent/**` 的所有 import 与全局标识符，断言不出现 `Request` / `Response` / `DurableObject*` / `@cloudflare/*` / `@azure/*`。
 
-1. `packages/agent-sdk/tsconfig.json` 的 `types` 不包含 `@cloudflare/workers-types`，`lib` 不包含 `DOM`。写出 `DurableObjectStub` 或 `Response` 直接编译失败。
-2. 新增 `tests/unit/agent-sdk-purity.test.ts`：扫描 `packages/agent-sdk/src/**` 的所有 import 语句，断言只出现 `@unidocs/protocol`、`@unidocs/svalue-codec` 和相对路径。
+按目录扫而不是按包扫，是因为同包的 `doc-type-handler.ts` 和 `session-handler.ts` 本来就要用 `Request` / `Response`——它们是 HTTP 外壳，不在 agent 内核里。这也是不新建包所付的唯一代价：拿不到「整包 tsconfig 禁用平台类型」那道更硬的保险，只能靠目录级的扫描。这道扫描本来就是主要手段，tsconfig 那道是锦上添花。
 
-**规则 3**（平台 sdk 不依赖任何文档类型）也能机器校验，而且更简单——它是一条 `package.json` 断言，加进同一个测试文件：
+**规则 3（两侧互不依赖）** —— 同一测试文件里的 `package.json` 断言：
 
 ```ts
-// packages/{cloudflare,azure}-sdk/package.json 的 dependencies 里
-// 不得出现任何 @unidocs/doctype-* （doctype-server-common 除外）
+// packages/{cloudflare,azure}-sdk：dependencies 里不得出现任何 @unidocs/doctype-*
+//                                （doctype-server-common 除外）
+// packages/doctype-*：dependencies 里不得出现 @unidocs/cloudflare-sdk /
+//                     @unidocs/azure-sdk / @unidocs/doctype-server-common
 ```
 
-反向同理：`packages/doctype-*/package.json` 里不得出现 `@unidocs/cloudflare-sdk` / `@unidocs/azure-sdk` / `@unidocs/agent-sdk`。
+**规则 2（平台不知道循环内部）** —— 没有等价的机器检查，平台 sdk 本来就允许 import 内核。靠两件事守：
 
-这三道机制守住的是规则 1 和规则 3。**规则 2**（平台不知道循环内部）没有等价的机器检查——平台 sdk 本来就允许 import `agent-sdk`。它靠两件事守：
-
-- 循环的状态（会话历史、迭代计数）全部封在 `AgentSession` 私有字段里，平台拿不到，也就无从参与决策。平台唯一能做的就是消费 `run()` 吐出的事件序列。
-- 代码检视：如果某个平台 sdk 里出现了「判断该不该再调一次模型」这类逻辑，就是越界了。
+- 循环状态（会话历史、迭代计数）全部封在 `AgentSession` 私有字段里，平台拿不到，无从参与决策。平台唯一能做的是消费 `run()` 吐出的事件序列。
+- 代码检视：平台 sdk 里若出现「判断该不该再调一次模型」这类逻辑，就是越界。
 
 ---
 
@@ -459,7 +514,7 @@ docx 已经这么做了（`doctype-docx/src/agent.ts:75`）。psd 需要改（2.
 
 更根本的一点：`apply_transform` 这个名字把「变换」和「提交」讲成了两步，而它们本来是一步。agent 产生一个 op，op 就应该像人在浏览器里拖动图层一样直接生效并拿到一个版本号——不存在一个单独的「apply」动作需要模型显式发起。工具名叫 `transform` 就够了。
 
-建议 psd 把工具名改成领域动词（`getLayers` / `getPreview` / `transform` / `crop` / `addLayer` …），提示词与工具表对齐。内核不认识前缀（5.1），所以怎么改都不影响 agent-sdk；分发改成一张名字到 op kind 的映射表即可。
+建议 psd 把工具名改成领域动词（`getLayers` / `getPreview` / `transform` / `crop` / `addLayer` …），提示词与工具表对齐。内核不认识前缀（5.1），所以怎么改都不影响内核；分发改成一张名字到 op kind 的映射表即可。
 
 ### 5.4 消息格式中立化
 
@@ -481,12 +536,12 @@ flowchart TB
     end
 ```
 
-**之后：** 循环内部用 agent-sdk 自己的中立格式，每个大模型适配层只单向翻译一次。图片是结构化字段，不需要搜索。
+**之后：** 循环内部用内核自己的中立格式，每个大模型适配层只单向翻译一次。图片是结构化字段，不需要搜索。
 
 ```mermaid
 flowchart TB
     subgraph after["之后"]
-        T1["AgentSession 内部：agent-sdk 中立消息格式"] -->|"一次翻译"| T2["Anthropic API"]
+        T1["AgentSession 内部：内核的中立消息格式"] -->|"一次翻译"| T2["Anthropic API"]
         T2 -->|"一次翻译回来"| T1
     end
 
@@ -639,7 +694,7 @@ flowchart TB
 
 #### 6.2.3 预算怎么算
 
-`agent-sdk` 不引入 tokenizer 依赖（那会带来一个几 MB 的词表，且各家模型不同）。用估算：
+内核不引入 tokenizer 依赖（那会带来一个几 MB 的词表，且各家模型不同）。用估算：
 
 | 内容 | 估算方式 |
 |---|---|
@@ -694,7 +749,7 @@ export interface AgentSessionStore {
 
 三点说明：
 
-- **存字节，不存对象。** `agent-sdk` 负责 `encodeSValue(history)`，平台只管把一串字节按 sessionId 存起来。平台实现不需要理解消息结构，消息格式演进时也不用跟着改。
+- **存字节，不存对象。** 内核负责 `encodeSValue(history)`，平台只管把一串字节按 sessionId 存起来。平台实现不需要理解消息结构，消息格式演进时也不用跟着改。
 - **带条件写。** `token` 是一个自增序号，两个平台都一样。这与仓库现有纪律一致——`ports.ts` 对 `DeltaLog.append` 的要求原文是 "Enforce it structurally (primary key / etag / conditional insert), not with a read-then-write check"。
 - **按会话作用域。** store 实例在构造时就绑定了 sessionId，接口上不再出现它。与 `ports.ts` 开头 "Every port in this module is scoped to one Doc session" 一致。
 
@@ -777,7 +832,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 
 #### 6.3.7 共享契约测试
 
-`doctype-server-common/src/testing/port-contract.ts` 已经立了「一份契约测试，两个平台各跑一遍」的先例。`agent-sdk` 导出同样形状的 `agentSessionStoreContract(makeStore)`，覆盖：
+`doctype-server-common/src/testing/port-contract.ts` 已经立了「一份契约测试，两个平台各跑一遍」的先例。内核从 `@unidocs/doctype-server-common/agent` 导出同样形状的 `agentSessionStoreContract(makeStore)`，覆盖：
 
 - 空 store 的 `load()` 返回 null
 - `save(bytes, null)` 之后 `load()` 拿回同样的字节
@@ -851,9 +906,9 @@ flowchart TB
 
 | 组件 | 属于哪层 | 由谁实现 |
 |---|---|---|
-| `ContextPolicy`（什么该留在上下文里） | 内核（逻辑） | `agent-sdk` 提供默认实现，文档类型只调参数 |
-| `encodeSValue(history)`（序列化格式） | 内核 | `agent-sdk` |
-| 根引用增量的计算（`diffRefs`） | 内核 | `agent-sdk` |
+| `ContextPolicy`（什么该留在上下文里） | 内核（逻辑） | 内核提供默认实现，文档类型只调参数 |
+| `encodeSValue(history)`（序列化格式） | 内核 | 内核 |
+| 根引用增量的计算（`diffRefs`） | 内核 | 内核 |
 | `AgentSessionStore`（字节存哪儿） | 下边界（实现） | 平台 sdk |
 | `CasRootRefGateway`（引用提交到哪儿） | 下边界（实现） | 平台 sdk，已存在于 `cas-client` |
 
@@ -965,7 +1020,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    S["AgentSession.run<br/>产出 AsyncIterable AgentEvent"] --> E["agent-sdk 的 encodeSse<br/>纯字符串处理，平台无关<br/>产出 AsyncIterable Uint8Array"]
+    S["AgentSession.run<br/>产出 AsyncIterable AgentEvent"] --> E["内核的 encodeSse<br/>纯字符串处理，平台无关<br/>产出 AsyncIterable Uint8Array"]
     E --> P1["cloudflare-sdk<br/>包成 Response"]
     E --> P2["azure-sdk<br/>包成 Node 响应"]
     P1 --> W["doctype 服务<br/>doc-type-handler.ts:113"]
@@ -1147,7 +1202,7 @@ channel.run(text, {
 | `doctype-psd/tests/agent.test.ts:61-76` | 断言反转：从「`$image` 透传且 `content` 为 undefined」改为「返回 image content part」 |
 | `doctype-markdown/src/agent.ts` | **不动** |
 | `doctype-docx/src/agent.ts` | **不动**。它的图片返回方式（`:75`）本来就是对的，只是从没跑通过——删掉 `renderToolResult` 钩子后这条路才真正打开（P6） |
-| `cloudflare-psd/src/anthropic.ts` | 移到 `agent-sdk/src/providers/anthropic.ts`，删掉 `findImage` / `previewMeta`，翻译改为单向 |
+| `cloudflare-psd/src/anthropic.ts` | 移到 `doctype-server-common/src/agent/providers/anthropic.ts`，删掉 `findImage` / `previewMeta`，翻译改为单向 |
 | `cloudflare-psd/src/worker.ts` | 改为注入 `createPsdDocumentAgent` + Cloudflare 的 `DocumentAgentContext` 实现 |
 | `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 约 90 行，只剩 DurableObject 外壳、身份校验、把事件流包成 Response |
 | `doctype-server-common/src/operator.ts` | 删除（177 行死代码） |
@@ -1165,7 +1220,7 @@ channel.run(text, {
 
 ```mermaid
 flowchart TB
-    S1["1. 建 agent-sdk<br/>循环 + 中立消息格式<br/>+ Anthropic 适配层"] --> S2["2. cloudflare-sdk 改成薄外壳"]
+    S1["1. 建 doctype-server-common/src/agent/<br/>循环 + 中立消息格式 + Anthropic 适配层<br/>契约补进 protocol"] --> S2["2. cloudflare-sdk 改成薄外壳"]
     S2 --> S3["3. psd 的 getPreview 改走 SBlob<br/>返回 image content part"]
     S3 --> S4["4. 删掉 renderToolResult 钩子<br/>docx 的图片路径第一次跑通"]
     S4 --> S5["5. 删除 doctype-server-common/operator.ts"]
@@ -1189,16 +1244,16 @@ flowchart TB
 | # | 标准 | 验证方式 |
 |---|---|---|
 | V1 | 文档类型的分发逻辑一行未动 | `git diff` 里 `doctype-markdown/src/agent.ts` 与 `doctype-docx/src/agent.ts` 无改动；`doctype-psd/src/agent.ts` 只有 `getPreview` 分支变化 |
-| V2 | 内核不认识 `query_` / `apply_` | 全仓库搜索 `startsWith("query_")` **不应**命中 `packages/agent-sdk/` |
-| V3 | `agent-sdk` 不 import 任何云相关模块 | `tests/unit/agent-sdk-purity.test.ts` 扫 import 语句 |
-| V3b | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk 或 `agent-sdk`（4.3） |
+| V2 | 内核不认识 `query_` / `apply_` | 全仓库搜索 `startsWith("query_")` **不应**命中 `packages/doctype-server-common/src/agent/` |
+| V3 | 内核不 import 任何云相关模块，也不用 `Request` / `Response` | `tests/unit/agent-kernel-purity.test.ts` 按目录扫 `src/agent/**`（4.4） |
+| V3b | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk，也无 `doctype-server-common`（4.4） |
 | V4 | 循环行为不退化 | 新增契约测试：内存版 `DocumentAgentContext` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
 | V5 | PSD 送给模型的图片字节与改造前完全一致 | 抓一次 provider 请求体，与改造前对比 |
 | V6 | 现有 230 行 `operator-do.test.ts` 全绿 | `pnpm test` |
 | V7 | 浏览器能实时看到 agent 的每一步 | web-psd 手工端到端：发一条多步指令，chat 区逐条出现工具调用；画布在 run 结束后一次性更新（本次不做逐步更新，见 7.2.1） |
 | V8 | 同一条指令在 Azure 栈跑通 | `pnpm test:azure` 新增用例 |
 | V9 | docx 的图片路径第一次真正跑通 | 现有 `doctype-docx/tests/agent.test.ts` 已覆盖 `getImage` / `insertImage`；再补一条端到端：删掉 renderToolResult 后，image content part 能被 Anthropic 适配层翻成图片块而不抛异常（P6） |
-| V10 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/agent-sdk/src/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止 |
+| V10 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/doctype-server-common/src/agent/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止 |
 | V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.7） |
 | V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：存进去含 SBlob 的历史，读回来 `isSBlob()` 仍为 true。这条钉死"不能改用 JSON"（6.1.1） |
 | V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
@@ -1254,7 +1309,7 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 工具分发归谁 | **归文档类型，内核不接管。** `query_` / `apply_` 的解析和参数转换本来就是各文档类型不同的事——docx 的 `apply_insertImage` 要先 `resolveBlob`，psd 的可以直接透传。psd 与 markdown 今天逐行相同是巧合，不是共性。内核对工具的全部认知是「调用它返回一个 `AgentToolResult`」 |
 | 上边界用什么接口 | 沿用已有的 `DocumentAgentFactory` / `DocumentAgent`（`protocol/src/types.ts:118-129`），本次不新造，也不修改 |
 | agent 与人的关系 | **对等的编辑者。** 两边都产生 op，op 提交后云端生成版本，编辑器眼里是同一件事。不给 agent 开任何特殊写入路径 |
-| `apply_xxx` 这类工具名 | 是分发器的机器语言，不是给模型的名字。它把「变换」和「提交」讲成两步，而本来是一步。建议 psd 改成领域动词并对齐提示词（5.3.1），但不属于本次范围——内核不认识前缀，怎么改都不影响 agent-sdk |
+| `apply_xxx` 这类工具名 | 是分发器的机器语言，不是给模型的名字。它把「变换」和「提交」讲成两步，而本来是一步。建议 psd 改成领域动词并对齐提示词（5.3.1），但不属于本次范围——内核不认识前缀，怎么改都不影响内核 |
 | 文档变更怎么通知客户端 | **不通过 agent 事件流。** agent 与浏览器前的人是对等的编辑者，两边都产生 op；「文档变了」属于文档通道，人和 agent 的改动都从那里出来。把它挂在 agent 通道上等于把 agent 变特殊，将来支持多人编辑时要整个拆掉。本次不建那条通道，客户端沿用 run-end 后统一 reconcile（7.2.1） |
 | 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:625`），由平台的 `apply` 实现读当前 head 得到（5.2） |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |
