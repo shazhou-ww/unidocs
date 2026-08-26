@@ -1,0 +1,1 @@
+{ "docType": "psd", "targetPort": 8790, "localPortBase": 41820, "minReplicas": 2, "maxReplicas": 5, "needsCas": true }

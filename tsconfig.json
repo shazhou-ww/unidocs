@@ -48,6 +48,9 @@
       "path": "packages/azure-docx"
     },
     {
+      "path": "packages/azure-psd"
+    },
+    {
       "path": "packages/doctype-markdown"
     },
     {

@@ -49,6 +49,7 @@ import {
 } from "../../cloudflare/local/doc-types.mjs";
 import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./ports.mjs";
+import { azureDocTypePortBases, readAzureDocTypes } from "../doc-types.mjs";
 import { startReplicaProxy } from "./replica-proxy.mjs";
 
 const { Pool } = pg;
@@ -568,21 +569,20 @@ function createStorageProbe(docTypes) {
 }
 
 /**
- * Doc types this task knows how to spawn a bundle for. Each name here must
- * have a corresponding `packages/azure-${name}/src/main.ts` entry point
- * (see `packages/azure-markdown` and `packages/azure-docx` for the shape).
- * Passing an unlisted name must fail before anything is spawned, not
- * partway through an `esbuild.build()` against a path that doesn't exist.
+ * Doc types this task knows how to spawn a bundle for —— 由
+ * packages/azure-<name>/azure.service.json 声明,不是这里的一份列表。每个名字
+ * 都必须有对应的 `packages/azure-${name}/src/main.ts` 入口。传一个未声明的
+ * 名字必须在 spawn 任何东西之前失败,而不是走到一半在一个不存在的路径上
+ * `esbuild.build()`。
  */
-const SUPPORTED_DOC_TYPES = ["markdown", "docx"];
-
-function assertDocTypesSupported(docTypes) {
-  const unsupported = docTypes.filter((name) => !SUPPORTED_DOC_TYPES.includes(name));
+function assertDocTypesSupported(docTypes, table) {
+  const known = Object.keys(table);
+  const unsupported = docTypes.filter((name) => !known.includes(name));
   if (unsupported.length > 0) {
     throw new Error(
-      `startAzureRuntime() only supports ${SUPPORTED_DOC_TYPES.join(", ")} right now (got ` +
-        `${unsupported.join(", ")}). Add a packages/azure-${unsupported[0]} entry point and list ` +
-        `it in SUPPORTED_DOC_TYPES to support it.`,
+      `startAzureRuntime() supports ${known.join(", ")} (got ${unsupported.join(", ")}). ` +
+        `Add a packages/azure-${unsupported[0]}/ package with a src/main.ts entry point and an ` +
+        "azure.service.json declaring its docType — the table expands from those files.",
     );
   }
 }
@@ -664,8 +664,13 @@ export async function startAzureRuntime({
   const resolvedCapabilityFixture = internalAuthMode === "legacy"
     ? undefined
     : capabilityFixture ?? await createEphemeralCapabilityFixture();
-  assertDocTypesSupported(docTypes);
-  const layout = azurePortLayout({ docTypes, replicas });
+  const docTypeTable = readAzureDocTypes(ROOT);
+  assertDocTypesSupported(docTypes, docTypeTable);
+  const layout = azurePortLayout({
+    docTypes,
+    portBases: azureDocTypePortBases(docTypeTable),
+    replicas,
+  });
 
   const bundleDir = join(ROOT, ".azure-runtime", "bundles");
   const gatewayBundle = join(bundleDir, "gateway.mjs");

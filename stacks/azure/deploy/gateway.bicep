@@ -17,6 +17,13 @@ param targetPort int = 8787
 param minReplicas int = 1
 param maxReplicas int = 3
 
+@description('网关要路由到的 doc type 列表，由部署脚本从各包的 azure.service.json 展开。')
+param docTypes array
+
+@description('doc type -> 该服务的 SERVICE_ACCESS_KEY，JSON 字符串。整体作为一个 @secure() 参数传，而不是每个 doc type 一个参数——后者需要按 doc type 动态生成参数名，Bicep 做不到。')
+@secure()
+param docAccessKeysJson string
+
 param pgAdminUser string = 'unidocs'
 
 @secure()
@@ -24,12 +31,6 @@ param pgAdminPassword string
 
 @secure()
 param casAccessKey string
-
-@secure()
-param markdownAccessKey string
-
-@secure()
-param docxAccessKey string
 
 @secure()
 param capabilityPrivateKeyPkcs8 string = ''
@@ -65,20 +66,12 @@ var databaseUrl = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.
 // 发现。网关只认识这张静态表；加新 doc type 要改这份配置并重部网关，这是
 // 刻意的（见 docs/superpowers/plans/2026-08-25-p0-microservice-boundaries-working.md
 // Step 6 —— 部署期注册取代运行时 KV/Postgres 注册表）。
-var docServicesJson = string({
-  markdown: {
-    serviceId: 'markdown'
-    url: 'https://unidocs-markdown.internal.${containerEnv.properties.defaultDomain}'
-    accessKey: markdownAccessKey
-    audience: 'unidocs-doc:markdown'
-  }
-  docx: {
-    serviceId: 'docx'
-    url: 'https://unidocs-docx.internal.${containerEnv.properties.defaultDomain}'
-    accessKey: docxAccessKey
-    audience: 'unidocs-doc:docx'
-  }
-})
+var docServicesJson = string(toObject(docTypes, dt => dt, dt => {
+  serviceId: dt
+  url: 'https://unidocs-${dt}.internal.${containerEnv.properties.defaultDomain}'
+  accessKey: json(docAccessKeysJson)[dt]
+  audience: 'unidocs-doc:${dt}'
+}))
 
 module app 'container-app.bicep' = {
   name: 'gateway-app'
@@ -98,7 +91,7 @@ module app 'container-app.bicep' = {
     docServicesJson: docServicesJson
     capabilityPrivateKeyPkcs8: capabilityPrivateKeyPkcs8
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
-    // 两个 doc type worker —— 不是容器端口，ingress 负责映射。
+    // docTypes 里的每个 doc type worker —— 不是容器端口，ingress 负责映射。
     // 路由目标在 DOC_SERVICES_JSON 里静态列出，见上面的注释。
     extraEnv: [
       {

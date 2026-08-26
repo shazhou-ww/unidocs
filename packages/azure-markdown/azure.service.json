@@ -1,1 +1,1 @@
-{ "docType": "markdown", "targetPort": 8788, "minReplicas": 2, "maxReplicas": 5 }
+{ "docType": "markdown", "targetPort": 8788, "localPortBase": 41800, "minReplicas": 2, "maxReplicas": 5, "needsCas": false }

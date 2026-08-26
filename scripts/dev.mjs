@@ -3,11 +3,18 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "../stacks/cloudflare/local/doc-types.mjs";
+import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/azure/doc-types.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const USAGE =
   "Usage: pnpm dev [--azure] [docType ...]   e.g. pnpm dev docx markdown / pnpm dev --azure markdown";
+
+// 两套栈可以同时跑(docx/psd 的 CAS 过渡形态正需要这一点),那时两个 Vite
+// 都想要同一个端口。给 Azure 侧加一个固定偏移，与端口段本身的分离
+// (Azure 41787 对 Miniflare 8787)同一个思路。偏移只与后端有关、与 doc
+// type 无关，所以留在这里，不进 azure.service.json。
+const AZURE_WEB_PORT_OFFSET = 1000;
 
 const rawArgs = process.argv.slice(2);
 const useAzure = rawArgs.includes("--azure");
@@ -34,15 +41,23 @@ try {
 // check and the `startAzureRuntime()` call further down can both reuse the
 // same validated selection instead of recomputing it.
 let azureDocTypes;
+// Populated below when `useAzure`, same reason as `azureDocTypes` above:
+// this is assigned inside one `if (useAzure)` block but read from another,
+// further down, so it has to be hoisted out here rather than declared with
+// `const` inside either block.
+let azureDocTypeTable;
 // Set only when docx is part of the Azure selection (see the reachability
 // probe below); passed through to `startAzureRuntime()` so the gateway and
 // docx services get `CAS_BASE_URL` wired up the same way the e2e test does.
 let azureCasBaseUrl;
 
 if (useAzure) {
-  // No positional args means "start every known doc type" (same default as
-  // the Miniflare backend).
-  azureDocTypes = positional.length === 0 ? Object.keys(DOC_TYPES) : docTypes;
+  // 无参数意为「起全部 doc type」。取的必须是 **Azure 自己的**表:
+  // `DOC_TYPES` 是 Cloudflare 的(stacks/cloudflare/local/doc-types.mjs),
+  // 两边的 doc type 集合可以不一样,拿 CF 的表当 Azure 的默认值会在 CF 先
+  // 支持某个类型时直接把 `pnpm dev --azure` 打挂。
+  azureDocTypeTable = readAzureDocTypes(root);
+  azureDocTypes = positional.length === 0 ? Object.keys(azureDocTypeTable) : docTypes;
 
   // docx's image path needs tenant-scoped CAS. This round is transitional:
   // CAS_BASE_URL points at the Miniflare stack's CAS worker (default
@@ -50,16 +65,23 @@ if (useAzure) {
   // "you forgot to run `pnpm dev docx` in another terminal" is clear at
   // startup instead of surfacing as an ECONNREFUSED on the first apply that
   // touches an image.
-  if (azureDocTypes.includes("docx")) {
+  // 哪些 doc type 需要 CAS 由各包的 azure.service.json 声明(needsCas),
+  // 不在这里维护第二份名单。
+  if (azureDocTypes.some((name) => azureDocTypeTable[name]?.needsCas)) {
     azureCasBaseUrl = process.env.CAS_BASE_URL ?? "http://127.0.0.1:8791";
     const casBaseUrl = azureCasBaseUrl;
     const reachable = await fetch(`${casBaseUrl}/tenants/_probe/cas/usage`, {
       headers: { "X-Internal-Token": CAS_ACCESS_KEY, Connection: "close" },
     }).then(response => response.ok, () => false);
     if (!reachable) {
+      // Same `needsCas` filter as the probe trigger above, but scoped to
+      // *this run's* selection rather than the whole table — the message
+      // and the copy-pasteable remediation should only name doc types the
+      // user actually asked to start.
+      const casDocTypes = azureDocTypes.filter((name) => azureDocTypeTable[name]?.needsCas);
       console.error(
-        `docx on the Azure stack needs the transitional CAS worker at ${casBaseUrl}, which is not answering.\n` +
-          `Start the Miniflare stack in another terminal first:\n\n  pnpm dev docx\n\n` +
+        `${casDocTypes.join(" / ")} on the Azure stack needs the transitional CAS worker at ${casBaseUrl}, which is not answering.\n` +
+          `Start the Miniflare stack in another terminal first:\n\n  pnpm dev ${casDocTypes.join(" ")}\n\n` +
           `(This cross-stack dependency goes away in phase 4, when azure-cas lands.)`,
       );
       process.exit(1);
@@ -156,7 +178,11 @@ if (useAzure) {
   // dependency-free convention) — argv validation has already happened
   // above, so this is just cheap port math before the port probe.
   const { azurePortLayout, allAzurePorts, describeAzurePorts } = await import("../stacks/azure/local/ports.mjs");
-  const layout = azurePortLayout({ docTypes: azureDocTypes, replicas: 2 });
+  const layout = azurePortLayout({
+    docTypes: azureDocTypes,
+    portBases: azureDocTypePortBases(azureDocTypeTable),
+    replicas: 2,
+  });
   const described = describeAzurePorts(layout);
   await Promise.all([
     ...allAzurePorts(layout).map((port) => assertPortFree(AZURE_HOST, port, described[port])),
@@ -233,14 +259,15 @@ const webChildren = [];
 for (const name of docTypes) {
   const web = DOC_TYPES[name].web;
   if (!web) continue;
-  const child = spawn("npx", ["vite", "--port", String(web.port), "--strictPort"], {
+  const webPort = web.port + (useAzure ? AZURE_WEB_PORT_OFFSET : 0);
+  const child = spawn("npx", ["vite", "--port", String(webPort), "--strictPort"], {
     cwd: join(root, web.dir),
     stdio: "inherit",
     env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
   });
   child.on("error", (err) => console.error(`[${name} web] failed to start:`, err.message));
   webChildren.push(child);
-  console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${web.port}`);
+  console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${webPort}`);
 }
 
 console.log("Ctrl+C to stop.");
