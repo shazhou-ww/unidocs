@@ -224,6 +224,53 @@ dispatches `/_internal`. `cas-admin-webui` now enforces stack membership via
 readable), and forwards to the reader binding (503 until the binding is wired
 at deployment).
 
+## Task 8 execution notes
+
+`CasClient.assignRoots()` is removed; the SValue editor (`cloudflare-sdk`
+`editor-do-svalue.ts`) now emits explicit `updateRootRefs` deltas. The retained
+set is the **current** delta plus, when present, the **current** snapshot —
+computed by `rootTransitionChanges(previous, next)` in
+`packages/cloudflare-sdk/src/root-transition.ts` (unit-tested). Zero-sum
+entries are dropped, so re-settling an already-retained hash yields an empty
+map and the CAS call is skipped (the legacy handler rejects empty change sets;
+the canonical handler rejects zero deltas).
+
+Durable row transitions (durable tables `svalue_deltas` / `svalue_snapshots`,
+previous roots = `SELECT root_hash ... ORDER BY version DESC LIMIT 1`):
+
+- **Commit** (`#settlePending`, requestId `session:{sid}:version:{N}:roots`):
+  INSERT delta row; INSERT snapshot row when the pending version snapshots.
+  CAS changes: `{newDelta: +1, prevDelta: -1}` when hashes differ, plus
+  `{newSnapshot: +1, prevSnapshot: -1}` when a snapshot is being settled and
+  the previous snapshot differs. Snapshot-less versions leave the previous
+  snapshot retained.
+- **Pending recovery** (same path on the next request with write authority,
+  or on restart): the pending row's version is still the newest durable row,
+  so `previous == next` except for the CAS rows the failed write never
+  recorded — re-running settle completes exactly the missing half. A response
+  lost after CAS commit but before the durable rows yields `previous == next`
+  for every hash → empty changes → no CAS call, no double count. The
+  deterministic requestId makes the legacy `cas_root_ref_requests`
+  idempotency a second layer.
+- **Snapshot repair** (`#ensureCurrentSnapshot`, requestId
+  `session:{sid}:snapshot:{V}:ensure`): INSERT snapshot row for the current
+  version; CAS changes `{snapshotHash: +1}` — additive, never releases.
+- **Rollback** is a normal commit of a `restore` delta with `forceSnapshot`,
+  so it settles through the commit transition above.
+
+Future callers of the editor DO may add truncate (release all-but-current
+roots) and session deletion (release every root) paths; both are just larger
+`changes` maps with the same zero-delta rejection rules. Recovery requires
+write authority — a read-only capability cannot settle a pending outbox, so
+recovery is driven by the next write request (or the gateway's own restore
+path), not by queries.
+
+Rollback semantics on root failure are unchanged: `#commit` rethrows
+`CasClientError` and the pending row survives for the next write request;
+`doctype-server-common` keeps `commitRootRefsOrRollback` (its
+`session.test.ts` covers updateRootRefs-failure rollback; `cas-rollback`
+integration covers the end-to-end 502 → retry-409 recovery).
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

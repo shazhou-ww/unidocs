@@ -1642,26 +1642,32 @@ domains), `cas-server-cloudflare` audit-reads + reader-RPC suites (70), and
 
 ### Task 8: Migrate clients and business callers
 
-- [ ] Add stable `stackId` to `CasClient` configuration and update
+- [~] Add stable `stackId` to `CasClient` configuration and update
   `updateRootRefs()` to use the canonical stack-and-tenant route and typed
-  revision response.
-- [ ] Keep current-balance and event-log reads out of the ordinary `CasClient`;
+  revision response. (Deferred to Task 9: the canonical route needs registered
+  issuers and the new-worker binding, and node ops read/lease/usage/gc are
+  still 501.)
+- [~] Keep current-balance and event-log reads out of the ordinary `CasClient`;
   expose them only through `cas-admin-webui` BFF handlers after OIDC session
-  and stack membership checks.
-- [ ] Remove `CasClient.assignRoots()` and its incorrect assignment-to-`+1`
+  and stack membership checks. (Deferred to Task 9: the audit-reader binding is
+  wired at deployment; the BFF handlers and membership gate already exist.)
+- [x] Remove `CasClient.assignRoots()` and its incorrect assignment-to-`+1`
       compatibility conversion.
-- [ ] Convert SValue delta and snapshot retention to explicit acquire, replace,
+- [x] Convert SValue delta and snapshot retention to explicit acquire, replace,
       truncate, and delete deltas.
-- [ ] Enumerate every current assignment call, including pending-version
+- [x] Enumerate every current assignment call, including pending-version
   recovery and `#ensureCurrentSnapshot()`. For each path, document the
   exact durable row transition that acquires, replaces, or releases delta
   and snapshot roots.
-- [ ] Preserve deterministic request IDs across retries and pending-outbox
+- [x] Preserve deterministic request IDs across retries and pending-outbox
       recovery.
-- [ ] Prove partially completed acquire/release operations recover to one
+- [x] Prove partially completed acquire/release operations recover to one
   logical application after restart without leaking or undercounting roots.
-- [ ] Preserve Doc rollback semantics when a root update fails.
-- [ ] Update local failure injection to recognize the canonical POST route.
+- [x] Preserve Doc rollback semantics when a root update fails.
+- [~] Update local failure injection to recognize the canonical POST route.
+      (Deferred to Task 9: legacy callers still use `/_internal/root-refs`, and
+      the canonical `/stacks/.../root-refs` route is not active until the
+      middleware worker is wired into the local runtime.)
 
 **Focused validation:** CAS client, Cloudflare SDK, doctype-server-common, and
 local integration tests covering commit, retry, rollback, truncation, snapshot

@@ -22,7 +22,14 @@ let runtime;
 beforeAll(async () => {
   runtime = await startLocalRuntime({
     docTypes: ["markdown", "docx"],
-    ports: { gateway: 18787, markdown: 18788, docx: 18789, cas: 18790 },
+    ports: {
+      gateway: 18787,
+      markdown: 18788,
+      docx: 18789,
+      cas: 18790,
+      admin: 18792,
+      mockOidc: 18793,
+    },
   });
 }, 60_000);
 
@@ -89,7 +96,13 @@ test("capability mode starts with rotation overlap and completes a Doc flow", as
   };
   const capable = await startLocalRuntime({
     docTypes: ["markdown"],
-    ports: { gateway: 18687, markdown: 18688, cas: 18690 },
+    ports: {
+      gateway: 18687,
+      markdown: 18688,
+      cas: 18690,
+      admin: 18692,
+      mockOidc: 18693,
+    },
     internalAuthMode: "capability",
     capabilityFixture: fixture,
   });
@@ -150,7 +163,13 @@ test("capability mode starts with rotation overlap and completes a Doc flow", as
 
   const retired = await startLocalRuntime({
     docTypes: ["markdown"],
-    ports: { gateway: 18587, markdown: 18588, cas: 18590 },
+    ports: {
+      gateway: 18587,
+      markdown: 18588,
+      cas: 18590,
+      admin: 18592,
+      mockOidc: 18593,
+    },
     internalAuthMode: "capability",
     capabilityFixture: {
       ...fixture,
@@ -237,7 +256,14 @@ test("static registration works with a persist directory", async () => {
   const persistPath = await mkdtemp(join(tmpdir(), "unidocs-mf-"));
   const persisted = await startLocalRuntime({
     docTypes: ["markdown", "docx"],
-    ports: { gateway: 18887, markdown: 18888, docx: 18889, cas: 18890 },
+    ports: {
+      gateway: 18887,
+      markdown: 18888,
+      docx: 18889,
+      cas: 18890,
+      admin: 18892,
+      mockOidc: 18893,
+    },
     persistPath,
   });
   try {
@@ -253,7 +279,13 @@ test("static registration works with a persist directory", async () => {
 test("only the selected doc types are started and routable", async () => {
   const only = await startLocalRuntime({
     docTypes: ["docx"],
-    ports: { gateway: 18987, docx: 18989, cas: 18990 },
+    ports: {
+      gateway: 18987,
+      docx: 18989,
+      cas: 18990,
+      admin: 18992,
+      mockOidc: 18993,
+    },
   });
   try {
     expect(only.urls.markdown).toBeUndefined();
@@ -284,7 +316,14 @@ test("a port belonging to an unselected doc type stays available", async () => {
   try {
     const only = await startLocalRuntime({
       docTypes: ["docx"],
-      ports: { gateway: 19087, markdown: 19088, docx: 19089, cas: 19090 },
+      ports: {
+        gateway: 19087,
+        markdown: 19088,
+        docx: 19089,
+        cas: 19090,
+        admin: 19092,
+        mockOidc: 19093,
+      },
     });
     await only.dispose();
   } finally {

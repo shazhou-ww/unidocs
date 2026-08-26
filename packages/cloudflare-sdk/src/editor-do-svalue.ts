@@ -7,6 +7,7 @@ import { DELTA_THRESHOLD } from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
 import { createRequestCasClient } from "./request-cas-client.js";
+import { rootTransitionChanges } from "./root-transition.js";
 
 const KEY_DOC_TYPE = "docType";
 const KEY_SESSION_ID = "sessionId";
@@ -158,8 +159,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           : this.#requireCas().leaseExisting(hash),
         metadata: (hash: string) => this.#requireCas().metadata({ kind: "cas", hash }),
         read: (hash: string) => this.#requireCas().read({ kind: "cas", hash }),
-        assignRoots: (params: { requestId: string; assignments: readonly { owner: string; hash: string }[] }) =>
-          this.#requireCas().assignRoots(params),
       };
       const context = createSBlobContext(casAdapter);
       this.#context = context;
@@ -227,6 +226,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       return (rows[0] as unknown as PendingRow | undefined) ?? null;
     }
 
+    #latestRootHash(table: "svalue_deltas" | "svalue_snapshots"): string | null {
+      const rows = this.#ctx.storage.sql.exec(
+        `SELECT root_hash FROM ${table} ORDER BY version DESC LIMIT 1`,
+      ).toArray();
+      return (rows[0] as unknown as { root_hash: string } | undefined)?.root_hash ?? null;
+    }
+
     async #settlePending(): Promise<void> {
       const pending = this.#pending();
       if (!pending) return;
@@ -239,26 +245,27 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         contentType: SValueContentType,
       }));
 
-      const assignments = [{
-        owner: `session:${sessionId}:delta:${pending.version}`,
-        hash: pending.delta_hash,
-      }];
       if (pending.snapshot_hash !== null) {
         const snapshotBytes = toBytes(pending.snapshot_bytes);
         await context.makeSBlob(pending.snapshot_hash, async () => ({
           data: snapshotBytes,
           contentType: SValueContentType,
         }));
-        assignments.push({
-          owner: `session:${sessionId}:snapshot:${pending.version}`,
-          hash: pending.snapshot_hash,
-        });
       }
 
-      await cas.assignRoots({
-        requestId: `session:${sessionId}:version:${pending.version}:roots`,
-        assignments,
-      });
+      const changes = rootTransitionChanges(
+        {
+          delta: this.#latestRootHash("svalue_deltas"),
+          snapshot: this.#latestRootHash("svalue_snapshots"),
+        },
+        { delta: pending.delta_hash, snapshot: pending.snapshot_hash },
+      );
+      if (Object.keys(changes).length > 0) {
+        await cas.updateRootRefs({
+          requestId: `session:${sessionId}:version:${pending.version}:roots`,
+          changes,
+        });
+      }
 
       this.#ctx.storage.sql.exec(
         `INSERT OR REPLACE INTO svalue_deltas
@@ -271,6 +278,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         deltaBytes,
       );
       if (pending.snapshot_hash !== null) {
+        const snapshotBytes = toBytes(pending.snapshot_bytes);
         this.#ctx.storage.sql.exec(
           `INSERT OR REPLACE INTO svalue_snapshots
             (version, root_hash, timestamp, root_bytes)
@@ -278,7 +286,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           pending.version,
           pending.snapshot_hash,
           pending.timestamp,
-          toBytes(pending.snapshot_bytes),
+          snapshotBytes,
         );
       }
       this.#ctx.storage.sql.exec("DELETE FROM svalue_pending WHERE singleton = 1");
@@ -461,12 +469,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         data: bytes,
         contentType: SValueContentType,
       });
-      await this.#requireCas().assignRoots({
+      await this.#requireCas().updateRootRefs({
         requestId: `session:${this.#requireSessionId()}:snapshot:${this.#version}:ensure`,
-        assignments: [{
-          owner: `session:${this.#requireSessionId()}:snapshot:${this.#version}`,
-          hash: blob.hash,
-        }],
+        changes: { [blob.hash]: 1 },
       });
       const timestamp = Date.now();
       this.#ctx.storage.sql.exec(

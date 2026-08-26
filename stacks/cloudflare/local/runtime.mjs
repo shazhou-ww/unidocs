@@ -259,6 +259,36 @@ function createStorageProbe(mf) {
       const object = await bucket.get(`tenants/${tenantId}/nodes/${hash}`);
       return object !== null;
     },
+    /**
+     * Cloudflare-probe-only: every node with a positive root ref count for a
+     * tenant. Used by root-retention tests to assert the exact retained set
+     * (one current delta plus, when present, one current snapshot) without
+     * leaking or undercounting across retries.
+     */
+    async casRetainedRoots(tenantId) {
+      const db = await mf.getD1Database("CAS_DB", CAS_WORKER);
+      const rows = await db
+        .prepare(
+          "SELECT hash, root_ref_count FROM cas_nodes WHERE tenant_id = ? AND root_ref_count > 0 ORDER BY hash",
+        )
+        .bind(tenantId)
+        .all();
+      return rows.results.map((row) => ({
+        hash: row.hash,
+        count: Number(row.root_ref_count),
+      }));
+    },
+    /** Cloudflare-probe-only: root-ref request ids recorded for a tenant. */
+    async casRootRefRequestIds(tenantId) {
+      const db = await mf.getD1Database("CAS_DB", CAS_WORKER);
+      const rows = await db
+        .prepare(
+          "SELECT request_id FROM cas_root_ref_requests WHERE tenant_id = ? ORDER BY applied_at, request_id",
+        )
+        .bind(tenantId)
+        .all();
+      return rows.results.map((row) => row.request_id);
+    },
   };
 }
 
