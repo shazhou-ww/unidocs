@@ -10,6 +10,12 @@ const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const USAGE =
   "Usage: pnpm dev [--azure] [docType ...]   e.g. pnpm dev docx markdown / pnpm dev --azure markdown";
 
+// 两套栈可以同时跑(docx/psd 的 CAS 过渡形态正需要这一点),那时两个 Vite
+// 都想要同一个端口。给 Azure 侧加一个固定偏移，与端口段本身的分离
+// (Azure 41787 对 Miniflare 8787)同一个思路。偏移只与后端有关、与 doc
+// type 无关，所以留在这里，不进 azure.service.json。
+const AZURE_WEB_PORT_OFFSET = 1000;
+
 const rawArgs = process.argv.slice(2);
 const useAzure = rawArgs.includes("--azure");
 const positional = rawArgs.filter((arg) => arg !== "--azure");
@@ -248,14 +254,15 @@ const webChildren = [];
 for (const name of docTypes) {
   const web = DOC_TYPES[name].web;
   if (!web) continue;
-  const child = spawn("npx", ["vite", "--port", String(web.port), "--strictPort"], {
+  const webPort = web.port + (useAzure ? AZURE_WEB_PORT_OFFSET : 0);
+  const child = spawn("npx", ["vite", "--port", String(webPort), "--strictPort"], {
     cwd: join(root, web.dir),
     stdio: "inherit",
     env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
   });
   child.on("error", (err) => console.error(`[${name} web] failed to start:`, err.message));
   webChildren.push(child);
-  console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${web.port}`);
+  console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${webPort}`);
 }
 
 console.log("Ctrl+C to stop.");
