@@ -83,7 +83,7 @@ flowchart TB
 | B | 会话历史裁剪、会话持久化（含两个平台的实现） | ✅ 做 | 6 |
 | C | 事件流 + 客户端 SDK | ✅ 做 | 7–8 |
 
-B 里唯一推迟的是**摘要压缩**（把最早若干轮交给模型总结）——接口支持，本次不实现，理由见 6.2.5。
+B 里唯一推迟的是**摘要压缩**（把最早若干轮交给模型总结）——接口支持，本次不实现，理由见 6.2.7。
 
 验证方式：以 PSD 为样板走通全链路，并用 Azure 证明下边界确实可换（11 章 V8、V11）。
 
@@ -686,11 +686,27 @@ Anthropic 的 Messages API 要求每个 `tool_use` 块在紧随其后的消息�
 
 这条约束直接排除了「保留最近 K 条消息」这种最直觉的写法——它会切出孤立的 `tool_result`，请求会被 API 拒绝。
 
-#### 6.2.2 三级策略，从轻到重
+#### 6.2.2 为什么裁剪属于内核而不是文档类型
+
+这一节容易被误认为是 PSD 的私事——毕竟只有 PSD 会一次跑 25 轮、每轮塞一张预览图。但有两条理由把它按在内核里。
+
+**第一，撑爆上下文的不只有 PSD。**
+
+| 文档类型 | 会撑爆的东西 |
+|---|---|
+| markdown | `query_getContent` 的描述原文是 "Get the **full** markdown content"——一篇长文档一次就是几万 token，多轮对话里会重复出现好几份 |
+| docx | `query_getImage` 返回 image content part（`doctype-docx/src/agent.ts:75`），和 PSD 的预览图一样占位 |
+| psd | 25 轮 × 每轮一张预览图，撞得最狠 |
+
+**第二，只有内核能安全地裁。** 6.2.1 的配对约束要求以「轮」为单位操作，而历史由 `AgentSession` 私有持有——文档类型根本看不到它。把裁剪交给文档类型，等于要么把历史暴露出去，要么每个文档类型自己实现一遍配对逻辑。
+
+所以分工是：**内核提供裁剪的机制和一套通用默认策略；文档类型通过数据影响它，不通过代码。** 后半句的落地方式见 6.2.3 和 6.2.4。
+
+#### 6.2.3 三级策略，从轻到重
 
 ```mermaid
 flowchart TB
-    IN["完整历史"] --> L1["第 1 级：图片降级<br/>只保留最近 N 张图片，默认 2<br/>更早的 image part 就地换成一行文字<br/>preview 1024x768 region=... v7"]
+    IN["完整历史"] --> L1["第 1 级：图片降级<br/>只保留最近 N 张图片，默认 2<br/>更早的 image part 就地换成一行文字<br/>用该图自己的 altText"]
     L1 --> C1{"还超预算吗"}
     C1 -->|否| OUT["发给模型 + 替换 history"]
     C1 -->|是| L2["第 2 级：大结果降级<br/>structuredContent 超过 M 字节的<br/>只留最近一份，更早的换成<br/>结果过大已省略，需要时请重新查询"]
@@ -702,11 +718,37 @@ flowchart TB
 
 前两级是**就地替换**，不改变消息数量，因此不可能破坏 6.2.1 的配对；只有第 3 级会删消息，而它以「轮」为单位。
 
-第 1 级用的那行文字，正是今天 `cloudflare-psd/src/anthropic.ts:82` 的 `previewMeta` 生成的内容。它从大模型适配层搬到裁剪策略里——这才是它该在的位置：保留多少张图是上下文管理的决定，不是协议翻译的决定。
+**第 1 级怎么做到不懂文档类型：** 协议层的 image content part 本来就带一个 `altText` 字段（`protocol/src/types.ts:88-93`），docx 今天已经在设它（`doctype-docx/src/agent.ts:78-82`）。内核降级时只做一件事：
 
-第 2 级针对的是 PSD 的 `getDoc`——它返回整棵图层树，一次就可能几十 KB。
+```ts
+// image part → text part
+{ type: "text", text: `[image: ${part.altText ?? part.mediaType}]` }
+```
 
-#### 6.2.3 预算怎么算
+内核只知道「这里原来有张图，文档类型说它是这样」。至于那句话里写什么，是文档类型的事：
+
+| 文档类型 | 建议的 `altText` | 降级后模型看到 |
+|---|---|---|
+| psd | `preview 1024x768 region=[0,0,1024,768] v7` | `[image: preview 1024x768 region=[0,0,1024,768] v7]` |
+| docx | 图片本身的替换文字 | `[image: 公司组织架构图]` |
+
+这正好把今天 `cloudflare-psd/src/anthropic.ts:82` 的 `previewMeta` 归位了——它一直是 PSD 的知识，此前却长在大模型适配层里。搬家之后它去的是 PSD 自己的 `agent.ts`，作为 `altText` 的值，而不是内核的裁剪代码。
+
+**第 2 级同理不懂文档类型：** 它只看 `structuredContent` 编码后的字节数，不看里面是什么。PSD 的 `getDoc` 返回整棵图层树、markdown 的 `getContent` 返回全文，对它是一回事。
+
+#### 6.2.4 文档类型能调什么
+
+参数在接线处（叶子包）传入，与 `maxIterations` 同一个位置——`cloudflare-psd/src/worker.ts` 今天传 `maxIterations: 25` 就是先例。
+
+| 参数 | 默认 | 谁该改 |
+|---|---|---|
+| `maxImages` | 2 | 图片信息密度高的文档类型可以调大 |
+| `maxResultBytes` | 8192 | 结果天然很大的可以调大 |
+| `budgetTokens` | 120_000 | 跟模型走，不跟文档类型走 |
+
+如果哪天某个文档类型需要完全不同的裁剪逻辑，可以自己实现 `ContextPolicy` 传进来（6.2.7 的接口）——但那是逃生出口，不是预期路径。默认策略应当覆盖绝大多数情况；如果不覆盖，说明默认策略需要改进，而不是每个文档类型各写一份。
+
+#### 6.2.5 预算怎么算
 
 内核不引入 tokenizer 依赖（那会带来一个几 MB 的词表，且各家模型不同）。用估算：
 
@@ -717,7 +759,7 @@ flowchart TB
 
 预算默认取模型上下文窗口的 60%，余量留给回复和估算误差。估算不准不会导致错误，只会裁多或裁少；真的超限时 provider 会报错，此时按错误再裁一次并重试一次，仍失败则以 `run-error` 结束。
 
-#### 6.2.4 一个明确的取舍：裁剪就地生效
+#### 6.2.6 一个明确的取舍：裁剪就地生效
 
 `ContextPolicy.prepare` 的返回值**直接替换 `AgentSession` 的 history**，不是只用于本次发送。
 
@@ -730,7 +772,7 @@ flowchart TB
 
 选就地生效。降级本来就是有损的，保留完整历史只是把同一份损失往后推，却换来无界增长和三份不一致的状态。
 
-#### 6.2.5 接口
+#### 6.2.7 接口
 
 ```ts
 export interface ContextPolicy {
@@ -887,7 +929,7 @@ await commitRootRefsOrRollback(
 
 顺序与 `session.ts` 的写入顺序同构：**先落字节，再提交引用，引用失败就回滚字节**。反过来会在崩溃窗口里留下"引用已加、字节没写"的孤儿引用。
 
-一个值得留意的取舍：会话历史持有的引用与文档持有的引用是**独立的两套**（前缀 `agent:` 与 `apply:`）。所以一个图层被删掉之后，文档不再引用那张预览图，但对话历史仍然引用着它——用户往回翻聊天记录时那张图还看得见。代价是这些像素会多留一段时间，直到裁剪把那条消息降级成文字（6.2.2 第 1 级），引用随之释放。
+一个值得留意的取舍：会话历史持有的引用与文档持有的引用是**独立的两套**（前缀 `agent:` 与 `apply:`）。所以一个图层被删掉之后，文档不再引用那张预览图，但对话历史仍然引用着它——用户往回翻聊天记录时那张图还看得见。代价是这些像素会多留一段时间，直到裁剪把那条消息降级成文字（6.2.3 第 1 级），引用随之释放。
 
 ### 6.5 写入时机
 
@@ -1271,6 +1313,7 @@ flowchart TB
 | V10 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/doctype-server-common/src/agent/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止 |
 | V11 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.7） |
 | V12 | 会话历史存取不丢 SBlob | 契约测试最后一条：存进去含 SBlob 的历史，读回来 `isSBlob()` 仍为 true。这条钉死"不能改用 JSON"（6.1.1） |
+| V12b | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/context-policy.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
 | V13 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
 | V14 | 长会话不再无限增长 | PSD 跑满 25 轮后，`history` 的编码字节数低于设定预算，且图片 part 不超过 `maxImages` |
 | V15 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
@@ -1316,6 +1359,7 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 会话历史的序列化格式 | SValue CBOR，**不能用 JSON**——SBlob 的品牌是 Symbol，`JSON.stringify` 会丢。端口层现有的两个 `DeltaLog` 恰恰用了 JSON，所以承载不了含 SBlob 的值 |
 | 字节存哪儿 | 直接进表的字节列：CF 用 DO SQLite `BLOB`，Azure 用 Postgres `BYTEA`。不绕 CAS——历史每轮都变，内容寻址去重收益接近零 |
 | 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
+| 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样撑爆上下文；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`、叶子包传的阈值），不通过代码（6.2.2） |
 | 裁剪的最小单位 | 一轮（assistant + 它全部的 tool 消息），不是一条消息——否则会切出孤立的 `tool_result`，被 API 拒绝 |
 | 裁剪是否就地生效 | 是。返回值直接替换 history，让"发给模型的 = 存下来的 = 恢复出来的" |
 | 图片通道 | 协议层归一，统一走 SBlob content part；删除 `$image` 和 `renderToolResult` |
