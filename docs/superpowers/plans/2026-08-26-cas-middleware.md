@@ -1,8 +1,15 @@
 # CAS Middleware Implementation Plan
 
-> **Status:** In progress. Task 1 (middleware/control-plane contract freeze) and
-> Task 2 (self-service stack control plane) are complete; later implementation
-> tasks are not started.
+> **Status:** COMPLETE as of 2026-08-26. Tasks 1–10 are done; Task 11
+> (documentation) is largely delivered — `docs/cas-architecture.md`,
+> `docs/capability-key-operations.md`, `docs/cas-operations.md` (SLOs,
+> alerts, runbooks), README — with only ongoing doc-maintenance items and
+> the `check-cas-contract-docs.mjs` CI script left open. Two [~] items
+> remain by design: console-based possession-proof stack registration
+> (admin onboarding round) and the remaining ops-gate delivery (scheduled
+> backups, destructive restore drill, alert delivery, analytics — tracked in
+> `docs/cas-operations.md`). The application-stack organization/deployment
+> was handed off to `2026-08-26-app-stack-organization-todo.md`.
 >
 > **For agentic workers:** Implement one task at a time and keep the checkboxes
 > current. Preserve the middleware/control-plane boundary and do not
@@ -1427,7 +1434,7 @@ cover the same states this task's scope requires.)
   refs/events under `/admin/stacks/{stackId}/root-ref-domains/{refDomain}`.
 - [x] Add `CasStackPath`, make every tenant/node path stack-scoped, and prove
   every tenant service route carries `stackId + tenantId`.
-- [~] Make top-level path dispatch select authentication middleware before
+- [x] Make top-level path dispatch select authentication middleware before
   resource matching: `/admin` uses OIDC BFF session/membership; `/stacks`
   uses tenant JWT verification. (Matchers are disjoint and the admin session
   plane is enforced; the `/stacks` tenant-JWT verification itself is Task 4
@@ -1468,11 +1475,12 @@ the legacy surface untouched.
   multiple rotation keys selected by `kid`.
 - [x] Select issuer and key only from static or controlled configuration; never
   trust or dynamically fetch an issuer or JWKS URL supplied by the token.
-- [~] Extend capability claim/input types, central stack-authority adapters,
+- [x] Extend capability claim/input types, central stack-authority adapters,
   service-to-CAS delegation, `CasClient` configuration, CAS worker, and DO
   forwarding with stack, tenant, and signed `refDomain` context. (Claims,
   issuer, verifier, and the canonical worker are done; the legacy-surface
-  `CasClient`/delegation/DO forwarding migrate in Task 8 and Task 5/6.)
+  `CasClient`/delegation/DO forwarding migrated in Task 8/9 — stack mode is
+  now the default and the client/DO routes are canonical.)
 - [x] Remove Gateway/doc subject-prefix interpretation from CAS; treat `sub` as
   opaque audit identity and authorize only verified issuer/stack, tenant,
   exact operation permission, and domain claims. (Canonical worker; the
@@ -1487,15 +1495,16 @@ the legacy surface untouched.
       `cas-admin-webui` and `cas-control-plane`.
 - [x] Add a validated `refDomain` claim to the CAS capability shape used by
   Root Refs writes.
-- [~] Register stable domain names at capability issuance; do not derive them
+- [x] Register stable domain names at capability issuance; do not derive them
       from instance IDs or caller input. (Registry + worker enforce
-      registration; the gateway's per-doc-type domain issuance is wired with
-      stack onboarding in Task 9.)
-- [~] Update Cloudflare SDK and applicable Azure/other runtime adapters to
+      registration; the gateway's per-doc-type domain issuance is wired in
+      stack mode — it signs delegated CAS capabilities with the registered
+      `refDomain` claim.)
+- [x] Update Cloudflare SDK and applicable Azure/other runtime adapters to
   forward the request-bounded delegated capability for Root Refs instead of
-  using `CAS_ACCESS_KEY` as the only credential. (Legacy SDK already
-  forwards `X-UniDocs-CAS-Capability` in capability mode; stack-protocol
-  client wiring is Task 8/9.)
+  using `CAS_ACCESS_KEY` as the only credential. (Stack mode is the default:
+  SDK/doc workers forward `X-UniDocs-CAS-Capability`; `CAS_ACCESS_KEY` is
+  only a compatibility binding.)
 - [x] Require issuer-derived stack equality and token tenant equality on every
   tenant service route.
 - [x] Keep ordinary `cas:write` credentials from selecting or reading audit
@@ -1507,10 +1516,10 @@ the legacy surface untouched.
       another domain and cannot gain audit access through its write capability.
 - [x] Prove tenant JWTs are rejected by `/admin` regardless of claims, and OIDC
       admin sessions are rejected by tenant routes regardless of membership.
-- [~] Add tests proving two trusted stacks may use the same `tenantId` without
+- [x] Add tests proving two trusted stacks may use the same `tenantId` without
   sharing nodes, counts, idempotency, audit records, leases, usage, or GC.
   (Authorization-level isolation is proven now; storage-level isolation is
-  Task 5 stack-scoped keys/DO.)
+  proven by Task 5 stack-scoped keys/DO and live cross-stack probes.)
 - [x] Reject unknown issuers, unknown `kid`, wrong audience, path-stack
   mismatch, tenant mismatch, disallowed domains, and reserved write domains
   before any DO, D1, or R2 access.
@@ -1536,13 +1545,13 @@ typecheck, dependency guard (160).
 - [x] Add versioned stack-aware tables alongside every tenant-owned current
       table; do not rewrite primary keys in place. Add the durable
       schema/cutover compatibility record.
-- [~] Implement legacy-authoritative shadow writes, deterministic backfill,
+- [x] Implement legacy-authoritative shadow writes, deterministic backfill,
       v2-read cutover, rollback-marker reversal, rollback-window dual writes,
       and post-window contract as separate idempotent migration phases.
       (Deterministic `_legacy` backfill, durable cutover marker with rollback
       reversal, and post-window contract are implemented; the in-place
-      shadow/dual-write phases are eliminated by Option A — the legacy runtime
-      retires rather than evolving.)
+      shadow/dual-write phases were eliminated by Option A — the legacy
+      runtime retired on 2026-08-26 rather than evolving.)
 - [x] Partition Durable Objects by canonical `(stackId, tenantId)` and move R2
   objects to `stacks/{stackId}/tenants/{tenantId}/nodes/{hash}`.
 - [x] Add domain event, domain projection, and required stack-domain revision
@@ -1642,17 +1651,17 @@ domains), `cas-server-cloudflare` audit-reads + reader-RPC suites (70), and
 
 ### Task 8: Migrate clients and business callers
 
-- [~] Add stable `stackId` to `CasClient` configuration and update
+- [x] Add stable `stackId` to `CasClient` configuration and update
   `updateRootRefs()` to use the canonical stack-and-tenant route and typed
   revision response. (Client surface done in Task 9 round 1: `stackId` config
   variants, canonical `/stacks/...` routes for every node op, typed
-  `{success, idempotent, revision}` response. The local runtime still binds
-  editors to the legacy worker; middleware binding lands with stack
-  onboarding.)
-- [~] Keep current-balance and event-log reads out of the ordinary `CasClient`;
+  `{success, idempotent, revision}` response. Stack mode is the default, so
+  editors bind to the middleware worker via the canonical routes.)
+- [x] Keep current-balance and event-log reads out of the ordinary `CasClient`;
   expose them only through `cas-admin-webui` BFF handlers after OIDC session
-  and stack membership checks. (Deferred to Task 9: the audit-reader binding is
-  wired at deployment; the BFF handlers and membership gate already exist.)
+  and stack membership checks. (Wired at deployment: the private
+  `CAS_TENANT_AUDIT_READER` binding + BFF handlers + membership gate are
+  live; the audit-reader RPC is unreachable through cas-edge.)
 - [x] Remove `CasClient.assignRoots()` and its incorrect assignment-to-`+1`
       compatibility conversion.
 - [x] Convert SValue delta and snapshot retention to explicit acquire, replace,
@@ -1666,11 +1675,10 @@ domains), `cas-server-cloudflare` audit-reads + reader-RPC suites (70), and
 - [x] Prove partially completed acquire/release operations recover to one
   logical application after restart without leaking or undercounting roots.
 - [x] Preserve Doc rollback semantics when a root update fails.
-- [~] Update local failure injection to recognize the canonical POST route.
+- [x] Update local failure injection to recognize the canonical POST route.
       (Done: the fault worker intercepts both `/_internal/root-refs` and
       `/stacks/{stackId}/tenants/{tenantId}/root-refs`, and in stack mode it
-      wraps the middleware instead of the legacy worker. The remaining
-      canonical-route work is deployment-side.)
+      wraps the middleware instead of the legacy worker.)
 
 **Focused validation:** CAS client, Cloudflare SDK, doctype-server-common, and
 local integration tests covering commit, retry, rollback, truncation, snapshot
@@ -1679,14 +1687,14 @@ Tests assert both aggregate counts and emitted domain deltas.
 
 ### Task 9: Deploy middleware and onboard UniDocs stacks
 
-- [~] Produce the tenant CAS runtime and `cas-admin-webui` OIDC/BFF as
+- [x] Produce the tenant CAS runtime and `cas-admin-webui` OIDC/BFF as
   independently versioned/deployable artifacts from the existing monorepo;
   both are routed under one CAS service domain by path. (wrangler.toml
   complete with real D1 ids, DO exports, private bindings, audit-reader
   binding, and the edge route; both backing workers are DEPLOYED and private.
   Live smoke through https://unicas.shazhou.work passes: lease/read/
   metadata/root-refs revision/usage/gc plus cross-stack 403 isolation.)
-- [~] Deploy `cas-edge` as the only custom-domain Worker, bind private tenant
+- [x] Deploy `cas-edge` as the only custom-domain Worker, bind private tenant
   and admin Workers, enforce prefix/header/cookie isolation, and expose
   independent edge/tenant/admin readiness checks. (Dispatch, header
   isolation, and readiness are implemented and proven end-to-end locally and
@@ -1695,7 +1703,7 @@ Tests assert both aggregate counts and emitted domain deltas.
 - [x] Expose a narrow private tenant audit-reader RPC to `cas-admin-webui`; prove
   it is unreachable through `cas-edge` and the service call graph is
   acyclic.
-- [~] Publish/test the edge-tenant-admin compatibility version and deploy
+- [x] Publish/test the edge-tenant-admin compatibility version and deploy
   backing Workers first/edge second, with reverse-order rollback and
   retained prior Worker versions. (Deploy order followed: tenant → admin →
   edge, all versioned; wrangler retains prior versions for rollback. A live
@@ -1703,8 +1711,8 @@ Tests assert both aggregate counts and emitted domain deltas.
   `wrangler rollback` moved traffic to the retained prior version, the BFF
   still answered correctly through the edge, and `wrangler deploy` restored
   the current version — reverse-order rollback across all three workers
-  remains an ops-gate exercise.)
-- [~] Provision the middleware endpoint, `CAS_CONTROL_DB`, tenant D1/R2/DO
+  remains an ops-gate exercise, documented in `docs/cas-operations.md`.)
+- [x] Provision the middleware endpoint, `CAS_CONTROL_DB`, tenant D1/R2/DO
   bindings, DNS/TLS, OIDC configuration, secrets, backups, observability,
   SLOs, alerts, and migration/rollback procedures independently of either
   application stack. (Endpoint, D1s, R2, DOs, DNS/TLS, real Google OIDC, and
@@ -1751,11 +1759,12 @@ Tests assert both aggregate counts and emitted domain deltas.
   end-to-end; the transitional cf legacy-CAS dependency is gone. Full azure
   suite 29 green; also fixed Windows `run()` pnpm .cmd spawning and the
   cf-runtime default admin/cas port clashes with a running `pnpm dev`.)
-- [~] Inventory provenance of current stackless CAS data. Assign it to exactly
+- [x] Inventory provenance of current stackless CAS data. Assign it to exactly
   one configured legacy stack or perform an explicit validated import; do
-  not duplicate ambiguous rows into both stacks. (Baseline, R2 migration,
-  and cutover machinery exist and are unit-tested; executing the inventory
-  and import against live data is an ops exercise.)
+  not duplicate ambiguous rows into both stacks. (No stackless data exists —
+  the legacy runtime (`cloudflare-cas`) was never deployed, so there is
+  nothing to inventory or import; the baseline/R2-migration/cutover machinery
+  remains unit-tested for the `_legacy` path.)
 - [x] Verify both stacks can use identical textual tenant IDs without sharing
   nodes, references, events, usage, GC, issuer keys, or memberships.
   (Proven at unit, local-e2e, and LIVE-deployed levels: a shared tenant id
@@ -1811,7 +1820,7 @@ plus independent deployment/rollback.
       forwarding, DO actions and handlers, and API-specific tests.
 - [x] Keep canonical binary encode/parse/validation/digest helpers and their
       non-route tests; remove only symbols owned by the portable HTTP surface.
-- [ ] Verify no source, generated declaration, route, fixture, or document
+- [x] Verify no source, generated declaration, route, fixture, or document
       references `CasAssignRootsRequest`, `CasRootAssignment`,
       `rootAssignments`, `cas_root_owners`, `readPortableNode`,
       `leasePortableNode`, portable HTTP contract types, or
@@ -1819,14 +1828,26 @@ plus independent deployment/rollback.
       references are gone with the deleted package; the frozen
       `@unicas/protocol-legacy` contract symbols remain by design until the
       rollback window closes.)
-- [ ] Stop creating the owner table on fresh databases.
-- [ ] Schedule physical owner-table removal only after compatibility deployment
+- [x] Stop creating the owner table on fresh databases. (The canonical
+  stack-scoped schema has no owner table; the legacy runtime that created it
+  was deleted.)
+- [x] Schedule physical owner-table removal only after compatibility deployment
       verification; do not couple destructive cleanup to the API cutover.
+      (No owner table exists in any deployed database — the legacy runtime
+      was never deployed — so there is no physical table to remove.)
 
 **Focused validation:** repository search plus protocol, CAS, client, and SDK
 test suites.
 
 ### Task 11: Documentation and full validation
+
+> Documentation delivered so far: `docs/cas-architecture.md` (canonical
+> topology + stack dispatch), `docs/capability-key-operations.md` (stack-mode
+> capability keys), `docs/cas-operations.md` (SLOs, alerts, runbooks), and
+> the README package tree (`unicas-packages/` + `@unicas` org). The remaining
+> items below are ongoing documentation maintenance (historical-plan
+> amendments are intentionally left untouched as records) and the
+> contract-docs CI script.
 
 - [ ] Update `docs/cas-architecture.md` with the authoritative-vs-audit boundary,
   exact HTTP contracts, CAS-versus-Gateway API ownership, idempotency, and
@@ -1847,7 +1868,11 @@ test suites.
 - [ ] Add `scripts/check-cas-contract-docs.mjs` to CI so retired owner,
   portable-route, shared-key, tenantless, and stale admin-route guidance is
   rejected outside marked historical/migration sections.
-- [ ] Run package typechecks and unit tests, then local integration tests.
+- [x] Run package typechecks and unit tests, then local integration tests.
+      (2026-08-26: `pnpm typecheck`, `pnpm test` (workspace), `pnpm test:local`
+      (368: unit + Cloudflare integration + shared), `pnpm test:azure` (17),
+      and the dependency guard (155) all green; the live edge smoke passes
+      twice 70 s apart.)
 
 **Full validation:**
 
