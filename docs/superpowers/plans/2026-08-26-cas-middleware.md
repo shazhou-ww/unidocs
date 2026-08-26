@@ -1608,28 +1608,37 @@ DO root-ref/GC tests remain green unchanged.
 
 ### Task 7: Implement audit reads
 
-- [ ] Implement `(tenantId, hash)`-ordered, bounded current-balance pages for
+> **Option A remap:** the audit-read repository and the private reader RPC land
+> in `cas-server-cloudflare`; `cas-admin-webui` reads audit through the
+> `CAS_TENANT_AUDIT_READER` binding (wired at deployment in Task 9). The RPC
+> path `/_internal/audit/*` is never matched by the tenant matcher and never
+> dispatched by cas-edge.
+
+- [x] Implement `(tenantId, hash)`-ordered, bounded current-balance pages for
   the operator-selected stack domain, with optional exact `tenantId`
   filtering and `tenantId` in every row.
-- [ ] Bind cursors to a revision and reject mixed-revision pagination.
-- [ ] Implement current-projection revision-before/query/revision-after guards;
+- [x] Bind cursors to a revision and reject mixed-revision pagination.
+- [x] Implement current-projection revision-before/query/revision-after guards;
   do not imply historical projection snapshots or replay.
-- [ ] Implement per-`(stackId, refDomain)` monotonic revisions, default/max
+- [x] Implement per-`(stackId, refDomain)` monotonic revisions, default/max
   limits of 200/1000, versioned opaque cursors bound to the optional tenant
   filter, non-negative safe-integer `after`, and the specified
   `400`/`409 ROOT_REF_SNAPSHOT_CHANGED` errors.
-- [ ] Return positive and negative non-zero balances.
-- [ ] Implement stack-domain ordered event pages with `tenantId`, exclusive
+- [x] Return positive and negative non-zero balances.
+- [x] Implement stack-domain ordered event pages with `tenantId`, exclusive
   `after`, optional exact tenant filtering, bounded `limit`,
   `latestRevision`, and `nextAfter`.
-- [ ] Advance empty tenant-filtered pages to the consistently read
+- [x] Advance empty tenant-filtered pages to the consistently read
   stack-domain watermark so polling cannot stick on other tenants' events.
-- [ ] Ensure idempotent retries never duplicate events.
-- [ ] Reject cross-stack reads, missing stack membership, malformed domains,
-  and cursor/path-domain/filter mismatches before audit database access.
+- [x] Ensure idempotent retries never duplicate events.
+- [x] Reject cross-stack reads, missing stack membership, missing stacks,
+  malformed domains, and cursor/path-domain/filter mismatches before audit
+  database access.
 
-**Focused validation:** `cas-admin-webui` BFF/control-plane membership and
-pagination tests plus focused CAS projection/event repository tests.
+**Focused validation:** `cas-admin-webui` BFF membership + audit pagination
+(36 incl. reader RPC passthrough, membership gate, malformed/reserved
+domains), `cas-server-cloudflare` audit-reads + reader-RPC suites (70), and
+`cas-edge` boundary proving `/_internal` is never dispatched (3).
 
 ### Task 8: Migrate clients and business callers
 

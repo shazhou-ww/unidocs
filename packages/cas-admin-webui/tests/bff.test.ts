@@ -63,7 +63,10 @@ async function createMockProvider(): Promise<MockProvider> {
   };
 }
 
-async function createBff(provider: MockProvider): Promise<(request: Request) => Promise<Response>> {
+async function createBff(
+  provider: MockProvider,
+  auditReader?: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> },
+): Promise<(request: Request) => Promise<Response>> {
   miniflare = new Miniflare(convertV4MiniflareOptions({
     workers: [{
       name: "admin-bff-test",
@@ -107,6 +110,7 @@ async function createBff(provider: MockProvider): Promise<(request: Request) => 
     oidcDiscoveryUrl: DISCOVERY_URL,
     publicOrigin: PUBLIC_ORIGIN,
     sessionCookieSecure: false,
+    auditReaderKey: "audit-reader-secret",
   };
   const oidc = new OidcClient(
     {
@@ -118,7 +122,7 @@ async function createBff(provider: MockProvider): Promise<(request: Request) => 
     },
     { fetchImpl: providerFetch },
   );
-  return createAdminBff({ config, db, oidc });
+  return createAdminBff({ config, db, oidc, auditReader });
 }
 
 function cookieFrom(response: Response): string | null {
@@ -181,6 +185,36 @@ async function signIn(bff: (request: Request) => Promise<Response>, provider: Mo
   const html = await shell.text();
   const match = /<meta name="x-csrf-token" content="([^"]+)"/.exec(html);
   expect(match).not.toBeNull();
+  return { cookie, csrf: match![1]! };
+}
+
+/** Sign in as an arbitrary Google subject (for non-member checks). */
+async function signInAs(
+  bff: (request: Request) => Promise<Response>,
+  provider: MockProvider,
+  subject: string,
+): Promise<{ cookie: string; csrf: string }> {
+  const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login?returnTo=/admin/`));
+  const preLoginCookie = cookieFrom(login)!;
+  const location = new URL(login.headers.get("Location")!);
+  const state = location.searchParams.get("state")!;
+  const nonce = location.searchParams.get("nonce")!;
+  provider.pendingClaims = {
+    iss: ISSUER,
+    sub: subject,
+    aud: CLIENT_ID,
+    nonce,
+    email: `${subject}@example.com`,
+    name: subject,
+  };
+  const callback = await bff(new Request(
+    `${PUBLIC_ORIGIN}/admin/auth/callback?code=mock-code&state=${encodeURIComponent(state)}`,
+    { headers: { Cookie: preLoginCookie } },
+  ));
+  const cookie = cookieFrom(callback)!;
+  const shell = await authRequest(bff, "/admin/", cookie);
+  const html = await shell.text();
+  const match = /<meta name="x-csrf-token" content="([^"]+)"/.exec(html);
   return { cookie, csrf: match![1]! };
 }
 
@@ -350,7 +384,7 @@ describe("cas-admin-webui BFF", () => {
     expect(authed.headers.get("Location")).toBe("/admin/#/invitations/token-abc");
   });
 
-  test("root-ref audit routes are not available yet", async () => {
+  test("root-ref audit routes are not available yet without the reader binding", async () => {
     const provider = await createMockProvider();
     const bff = await createBff(provider);
     const { cookie, csrf } = await signIn(bff, provider);
@@ -362,6 +396,102 @@ describe("cas-admin-webui BFF", () => {
     );
     expect(audit.status).toBe(503);
     expect(await audit.json()).toMatchObject({ error: "SERVICE_UNAVAILABLE" });
+  });
+
+  test("root-ref audit reads forward to the private reader RPC after membership", async () => {
+    const provider = await createMockProvider();
+    let rpcCalls: { url: URL; key: string }[] = [];
+    const auditReader = {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        rpcCalls.push({
+          url: new URL(String(input)),
+          key: new Headers(init?.headers).get("X-CAS-Audit-Reader-Key") ?? "",
+        });
+        return Response.json({ revision: 1, refs: [{ tenantId: "t", hash: "a".repeat(64), count: 3 }], nextCursor: null });
+      },
+    };
+    const bff = await createBff(provider, auditReader);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Stack");
+
+    const refs = await authRequest(
+      bff,
+      `/admin/stacks/${stackId}/root-ref-domains/doc/refs?tenantId=tenant-1&limit=50`,
+      cookie,
+    );
+    expect(refs.status).toBe(200);
+    expect(await refs.json()).toMatchObject({ revision: 1, refs: [{ tenantId: "t", count: 3 }] });
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]!.url.pathname).toBe("/_internal/audit/refs");
+    expect(rpcCalls[0]!.url.searchParams.get("stackId")).toBe(stackId);
+    expect(rpcCalls[0]!.url.searchParams.get("refDomain")).toBe("doc");
+    expect(rpcCalls[0]!.url.searchParams.get("tenantId")).toBe("tenant-1");
+    expect(rpcCalls[0]!.url.searchParams.get("limit")).toBe("50");
+    expect(rpcCalls[0]!.key).toBe("audit-reader-secret");
+
+    const events = await authRequest(
+      bff,
+      `/admin/stacks/${stackId}/root-ref-domains/doc/events?after=7`,
+      cookie,
+    );
+    expect(events.status).toBe(200);
+    expect(rpcCalls[1]!.url.pathname).toBe("/_internal/audit/events");
+    expect(rpcCalls[1]!.url.searchParams.get("after")).toBe("7");
+  });
+
+  test("audit reads require stack membership before touching the reader", async () => {
+    const provider = await createMockProvider();
+    let readerCalls = 0;
+    const auditReader = {
+      fetch: async () => {
+        readerCalls += 1;
+        return Response.json({ revision: 0, refs: [], nextCursor: null });
+      },
+    };
+    const bff = await createBff(provider, auditReader);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Stack");
+    // A different operator who is not a member cannot read audit.
+    const provider2 = await createMockProvider();
+    const bff2 = await createBff(provider2, auditReader);
+    const { cookie: otherCookie } = await signInAs(bff2, provider2, "other-sub");
+    const denied = await authRequest(
+      bff2,
+      `/admin/stacks/${stackId}/root-ref-domains/doc/refs`,
+      otherCookie,
+    );
+    expect(denied.status).toBe(403);
+    expect(readerCalls).toBe(0);
+  });
+
+  test("malformed refDomains are rejected before the reader; reserved domains are readable", async () => {
+    const provider = await createMockProvider();
+    const rpcPaths: string[] = [];
+    const auditReader = {
+      fetch: async (input: RequestInfo | URL) => {
+        rpcPaths.push(new URL(String(input)).pathname);
+        return Response.json({ revision: 0, refs: [], nextCursor: null });
+      },
+    };
+    const bff = await createBff(provider, auditReader);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Stack");
+
+    const malformed = await authRequest(
+      bff,
+      `/admin/stacks/${stackId}/root-ref-domains/Bad%20Domain/refs`,
+      cookie,
+    );
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({ error: "INVALID_REQUEST" });
+
+    const legacy = await authRequest(
+      bff,
+      `/admin/stacks/${stackId}/root-ref-domains/_legacy/refs`,
+      cookie,
+    );
+    expect(legacy.status).toBe(200);
+    expect(rpcPaths).toEqual(["/_internal/audit/refs"]);
   });
 
   test("possession challenge route requires session and CSRF", async () => {

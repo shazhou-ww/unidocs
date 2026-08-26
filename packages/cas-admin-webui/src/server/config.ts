@@ -32,6 +32,8 @@ export interface AdminBffConfig {
   readonly sessionCookieSameSite?: "Lax" | "Strict" | "None";
   /** Enforce Origin + CSRF checks on mutating methods. */
   readonly csrfEnforced?: boolean;
+  /** Shared secret for the private tenant audit-reader RPC. */
+  readonly auditReaderKey?: string;
   /** Clock for tests. */
   readonly now?: () => number;
 }
@@ -55,6 +57,7 @@ export interface AdminBffEnv {
   SESSION_COOKIE_SECURE?: string;
   SESSION_COOKIE_SAME_SITE?: string;
   CSRF_ENFORCE?: string;
+  CAS_AUDIT_READER_KEY?: string;
 }
 
 /** Parse Worker bindings into a validated BFF config; throws on misconfig. */
@@ -100,5 +103,6 @@ export function configFromEnv(env: AdminBffEnv): AdminBffConfig {
     sessionCookieSecure: env.SESSION_COOKIE_SECURE !== "false",
     sessionCookieSameSite: (env.SESSION_COOKIE_SAME_SITE as "Lax" | "Strict" | "None") ?? "Lax",
     csrfEnforced: env.CSRF_ENFORCE !== "false",
+    auditReaderKey: env.CAS_AUDIT_READER_KEY,
   };
 }

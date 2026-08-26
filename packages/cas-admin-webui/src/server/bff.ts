@@ -51,9 +51,24 @@ export interface CreateAdminBffOptions {
   readonly oidc?: OidcClient;
   /** SPA static asset fetcher (Phase C wires the built console). */
   readonly assets?: (pathname: string) => Promise<Response | null>;
+  /**
+   * Private tenant audit-reader RPC fetcher (CAS_TENANT_AUDIT_READER service
+   * binding). When absent, Root Ref audit routes report not available.
+   */
+  readonly auditReader?: {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  };
 }
 
 const NOT_AVAILABLE_MESSAGE = "Root Ref audit reads are not yet available from the admin plane";
+
+/** Read-side refDomain validation; reserved migration domains are readable. */
+function validateAuditRefDomain(value: string): string | null {
+  if (value.length === 0) return "refDomain must not be empty";
+  if (value.length > 64) return "refDomain is too long";
+  if (!/^[a-z0-9_][a-z0-9_:.-]*$/.test(value)) return "refDomain is malformed";
+  return null;
+}
 
 export function createAdminBff(options: CreateAdminBffOptions): (request: Request) => Promise<Response> {
   const { config } = options;
@@ -474,8 +489,48 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       }
       case "listRootDomainRefs":
       case "listRootDomainEvents": {
-        return adminErrorResponse(CasAdminErrorCodes.SERVICE_UNAVAILABLE, NOT_AVAILABLE_MESSAGE);
+        return handleAuditRead(request, route, ctx, query);
       }
+    }
+  }
+
+  /** Root Ref audit reads: membership first, then the private reader RPC. */
+  async function handleAuditRead(
+    request: Request,
+    route: CasAdminRoute & { operation: "listRootDomainRefs" | "listRootDomainEvents" },
+    ctx: ControlPlaneCallContext,
+    query: Record<string, string>,
+  ): Promise<Response> {
+    const membership = await service.getStack(ctx, { path: { stackId: route.stackId } });
+    if ("error" in membership) {
+      return json(membership, casAdminErrorHttpStatus[membership.error]);
+    }
+    const domainError = validateAuditRefDomain(route.refDomain);
+    if (domainError) return adminErrorResponse(CasAdminErrorCodes.INVALID_REQUEST, domainError);
+    if (!options.auditReader) {
+      return adminErrorResponse(CasAdminErrorCodes.SERVICE_UNAVAILABLE, NOT_AVAILABLE_MESSAGE);
+    }
+    const rpcPath = route.operation === "listRootDomainRefs"
+      ? "/_internal/audit/refs"
+      : "/_internal/audit/events";
+    const rpcUrl = new URL(`https://cas-audit.internal${rpcPath}`);
+    rpcUrl.searchParams.set("stackId", route.stackId);
+    rpcUrl.searchParams.set("refDomain", route.refDomain);
+    if (query.tenantId !== undefined) rpcUrl.searchParams.set("tenantId", query.tenantId);
+    if (query.limit !== undefined) rpcUrl.searchParams.set("limit", query.limit);
+    if (query.cursor !== undefined) rpcUrl.searchParams.set("cursor", query.cursor);
+    if (query.after !== undefined) rpcUrl.searchParams.set("after", query.after);
+    const headers: Record<string, string> = {};
+    if (config.auditReaderKey) headers["X-CAS-Audit-Reader-Key"] = config.auditReaderKey;
+    try {
+      const rpcResponse = await options.auditReader.fetch(rpcUrl.toString(), { headers });
+      const body = await rpcResponse.text();
+      return new Response(body, {
+        status: rpcResponse.status,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    } catch {
+      return adminErrorResponse(CasAdminErrorCodes.SERVICE_UNAVAILABLE, "audit reader is unavailable");
     }
   }
 

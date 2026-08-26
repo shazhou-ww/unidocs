@@ -22,6 +22,7 @@ database_id = "REPLACE_WITH_CAS_CONTROL_D1_ID"
 #   SESSION_COOKIE_NAME (default cas_admin_session)
 #   SESSION_COOKIE_SECURE (default true; set false for local http dev)
 #   CSRF_ENFORCE (default true)
+#   CAS_AUDIT_READER_KEY (shared secret for the tenant audit-reader RPC)
 #
 # Google OAuth consent screen redirect URIs (registered in the Google Cloud
 # console):
@@ -29,8 +30,8 @@ database_id = "REPLACE_WITH_CAS_CONTROL_D1_ID"
 #   local: http://localhost:4070/admin/auth/callback
 # The BFF builds the redirect URI as PUBLIC_ORIGIN + /admin/auth/callback.
 #
-# CAS_TENANT_AUDIT_READER service binding is added when Task 5-7 wire
-# Root Ref audit reads from the tenant worker.
+# Root Ref audit reads: CAS_TENANT_AUDIT_READER service binding to the tenant
+# worker's private /_internal/audit/* RPC (never exposed by cas-edge).
 
 [vars]
 CAS_ADMIN_MOUNT = "/admin"

@@ -19,13 +19,19 @@ export { SessionCrypto } from "./session.js";
 
 export interface Env extends AdminBffEnv {
   CAS_CONTROL_DB: D1Database;
+  /** Private tenant audit-reader service binding (Task 7+). */
+  CAS_TENANT_AUDIT_READER?: Fetcher;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const config = configFromEnv(env);
     await migrateControlSchema(env.CAS_CONTROL_DB);
-    const adminFetch = createAdminBff({ config, db: env.CAS_CONTROL_DB });
+    const adminFetch = createAdminBff({
+      config,
+      db: env.CAS_CONTROL_DB,
+      auditReader: env.CAS_TENANT_AUDIT_READER,
+    });
     return adminFetch(request);
   },
 };

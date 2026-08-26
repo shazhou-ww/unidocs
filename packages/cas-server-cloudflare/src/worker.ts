@@ -21,6 +21,7 @@ import {
 } from "@unidocs/service-auth";
 import { StackCapabilityVerifier } from "./auth.js";
 import type { StackAuthEvent, StaticLegacyStackConfig, VerifiedStackCall } from "./auth.js";
+import { AuditReadError, listRootDomainEvents, listRootDomainRefs } from "./audit-reads.js";
 import { canonicalComposite } from "./do-names.js";
 import { migrateStackTenantSchema } from "./schema.js";
 
@@ -39,6 +40,8 @@ export interface Env {
   CAS_DO: DurableObjectNamespace;
   /** Root Ref domain DO namespace (tenant DO calls it one-way). */
   CAS_DOMAIN_DO: DurableObjectNamespace;
+  /** Shared secret for the private audit-reader RPC (admin BFF ↔ this worker). */
+  CAS_AUDIT_READER_KEY?: string;
   /** Static legacy-stack bootstrap (migration window; registry wins). */
   LEGACY_STACK_ID?: string;
   LEGACY_STACK_ISSUER?: string;
@@ -53,6 +56,12 @@ export default {
     // Provision the stack-scoped tenant schema on first request (idempotent).
     await migrateStackTenantSchema(env.CAS_DB);
     const url = new URL(request.url);
+    // Narrow private audit-reader RPC for the admin BFF (never an HTTP route;
+    // cas-edge only dispatches /stacks and /admin, so this is unreachable
+    // from the public front door).
+    if (url.pathname === "/_internal/audit/refs" || url.pathname === "/_internal/audit/events") {
+      return handleAuditRpc(request, env, url);
+    }
     const route = matchCasRoute(request.method, url.pathname);
     if (!route) {
       return Response.json({ error: "Unknown CAS endpoint" }, { status: 404 });
@@ -77,6 +86,56 @@ export default {
     }, { status: 501 });
   },
 };
+
+/** Private audit-reader RPC. Requires the shared reader key; fail closed. */
+async function handleAuditRpc(request: Request, env: Env, url: URL): Promise<Response> {
+  const expectedKey = env.CAS_AUDIT_READER_KEY;
+  if (!expectedKey || request.headers.get("X-CAS-Audit-Reader-Key") !== expectedKey) {
+    return Response.json({ error: "Unknown CAS endpoint" }, { status: 404 });
+  }
+  if (request.method !== "GET") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
+  }
+  const stackId = url.searchParams.get("stackId") ?? "";
+  const refDomain = url.searchParams.get("refDomain") ?? "";
+  try {
+    if (url.pathname === "/_internal/audit/refs") {
+      const page = await listRootDomainRefs({
+        db: env.CAS_DB,
+        stackId,
+        refDomain,
+        tenantId: url.searchParams.get("tenantId") ?? undefined,
+        limit: optionalNumber(url.searchParams.get("limit")),
+        cursor: url.searchParams.get("cursor") ?? undefined,
+      });
+      return Response.json({ revision: page.revision, refs: page.refs, nextCursor: page.nextCursor }, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+    const page = await listRootDomainEvents({
+      db: env.CAS_DB,
+      stackId,
+      refDomain,
+      tenantId: url.searchParams.get("tenantId") ?? undefined,
+      after: optionalNumber(url.searchParams.get("after")),
+      limit: optionalNumber(url.searchParams.get("limit")),
+    });
+    return Response.json({ events: page.events, latestRevision: page.latestRevision, nextAfter: page.nextAfter }, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof AuditReadError) {
+      return Response.json({ error: error.code, message: error.message }, { status: error.status });
+    }
+    return Response.json({ error: "SERVICE_UNAVAILABLE", message: "audit read failed" }, { status: 503 });
+  }
+}
+
+function optionalNumber(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
 
 /**
  * Forward the verified Root Refs write to the tenant DO for this
@@ -211,3 +270,16 @@ export type {
   RootRefsErrorCode,
 } from "./root-refs.js";
 export { RootRefsRetryableError, RootRefsValidationError } from "./root-refs.js";
+
+export {
+  CAS_AUDIT_DEFAULT_LIMIT,
+  CAS_AUDIT_MAX_LIMIT,
+  AuditReadErrorCodes,
+} from "./audit-reads.js";
+export type {
+  RootDomainBalanceRow,
+  RootDomainEventRow,
+  RootDomainEventsPage,
+  RootDomainRefsPage,
+} from "./audit-reads.js";
+export { AuditReadError } from "./audit-reads.js";

@@ -207,6 +207,23 @@ the worker forwards the VERIFIED stack/tenant/refDomain (never caller
 headers). The remaining node operations (read, lease, usage, GC) return 501
 until their storage dispatch follow-on.
 
+## Task 7 execution notes
+
+The stack-domain audit reads land in `cas-server-cloudflare`:
+`listRootDomainRefs` (keyset `(tenantId, hash)` pages with revision-before/
+query/after guards; first pages retry on revision movement, cursor pages fail
+`ROOT_REF_SNAPSHOT_CHANGED`; versioned opaque cursors bound to revision,
+domain, and tenant filter; positive and negative balances returned) and
+`listRootDomainEvents` (revision-ordered, exclusive `after`, optional tenant
+filter, consistently-read `latestRevision`, `nextAfter` advancing empty
+filtered pages to the stack-domain watermark). A narrow private reader RPC
+(`/_internal/audit/refs`, `/_internal/audit/events`) guarded by a shared
+`CAS_AUDIT_READER_KEY` is served by the tenant worker; cas-edge never
+dispatches `/_internal`. `cas-admin-webui` now enforces stack membership via
+`getStack`, validates the operator-selected refDomain (reserved `_legacy`
+readable), and forwards to the reader binding (503 until the binding is wired
+at deployment).
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).

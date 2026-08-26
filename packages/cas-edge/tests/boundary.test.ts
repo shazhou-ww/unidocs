@@ -26,4 +26,13 @@ describe("cas-edge package boundary", () => {
     const res = await worker.fetch(new Request("https://cas.example/health"));
     expect(res.status).toBe(404);
   });
+
+  test("never forwards the private audit-reader RPC or legacy internal paths", async () => {
+    const rpc = await worker.fetch(new Request("https://cas.example/_internal/audit/refs"));
+    expect(rpc.status).toBe(404);
+    const internal = await worker.fetch(new Request("https://cas.example/_internal/root-refs"));
+    expect(internal.status).toBe(404);
+    const tenantLegacy = await worker.fetch(new Request("https://cas.example/tenants/t/cas/usage"));
+    expect(tenantLegacy.status).toBe(404);
+  });
 });
