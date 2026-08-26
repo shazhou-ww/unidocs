@@ -1492,6 +1492,143 @@ git commit -m "test(azure): psd 端到端，并给 Azure 侧的 Vite 端口加�
 
 ---
 
+### Task 7: doc type 穷尽性守卫
+
+> **执行顺序:本任务必须排在 Task 5 之前**(实际执行序 1→2→3→4→**7**→5→6)。
+> 编号靠后只是因为它是中途追加的。放在 Task 5 之后执行会让它一到场就是绿的,
+> 从而失去"证明这条守卫真的能抓住缺失"的机会 —— 一条从没红过的守卫,能不能
+> 守住只是推测。
+
+**Files:**
+- Create: `tests/unit/workspace/doc-type-coverage.test.mjs`
+
+**Interfaces:**
+- Consumes: `readAzureDocTypes()`(Task 1);`DOC_TYPES` from `stacks/cloudflare/local/doc-types.mjs`
+- 本任务**只加测试,不改任何产品代码**。
+
+**为什么加这个任务**:Task 4 的审查暴露了一类缺陷 —— `smoke.mjs` 的
+`KNOWN_DOC_TYPES` 改成表驱动之后,`--only psd` 能通过合法性校验,但分发仍是
+两个硬编码分支,于是一次零检查的冒烟会打印 "all smoke assertions passed" 并
+`exit 0`。这个具体缺陷已在 Task 4 的修复轮堵上,但**同一类缝在别处还会再长
+出来**:每加一个 doc type,都有若干处"配套物"必须同步存在,而它们不存在时
+现在没有任何东西会红。
+
+这条测试的价值在于**时机**:它在 `packages/azure-psd` 还不存在的时候就会红,
+而不是等到部署上去才发现冒烟是空跑的。因此它也顺带成为 Task 5 的验收 ——
+Task 5 做完之后它必须自动变绿。
+
+**注意本任务只做"穷尽性守卫",不做"契约行为参数化"。** 后者
+(`tests/integration/shared/behavior-suite.mjs` 现在写死 markdown,应当对表
+参数化)需要给每个 doc type 各写一份 conformance fixture(建文档的请求体、
+一个合法 op、期望的 query 结果),那是独立一轮的工作量,不在本计划内。
+
+- [ ] **Step 1: 写测试**
+
+新建 `tests/unit/workspace/doc-type-coverage.test.mjs`:
+
+```js
+/**
+ * 穷尽性守卫:doc type 表里的每个成员，都必须有它全部的配套物。
+ *
+ * 为什么需要这条:一个 doc type 的"存在"分散在多个地方——包入口、服务声明、
+ * tsconfig 引用、冒烟 flow。表是唯一事实来源(stacks/azure/doc-types.mjs)，
+ * 但表增长不会自动带出这些配套物，而缺失时的表现往往是**静默的**:Task 4
+ * 的审查里就抓到过一次——smoke.mjs 的 `--only psd` 通过合法性校验、两个硬编码
+ * 分发分支都不命中、`failures` 保持 0，于是一次零检查的冒烟打印
+ * "all smoke assertions passed" 并 exit 0。
+ *
+ * 这条测试把那类静默变成红色，而且是在**部署之前**变红。
+ *
+ * 它刻意只查"配套物在不在"，不查"行为对不对"。后者是契约行为参数化的事
+ * (behavior-suite 目前写死 markdown)，属于另一轮。
+ */
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, test } from "vitest";
+import { readAzureDocTypes } from "../../../stacks/azure/doc-types.mjs";
+import { DOC_TYPES } from "../../../stacks/cloudflare/local/doc-types.mjs";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const azureDocTypes = Object.keys(readAzureDocTypes(ROOT));
+const cfDocTypes = Object.keys(DOC_TYPES);
+
+describe("Azure doc type 的配套物", () => {
+  test.each(azureDocTypes)("%s 有 packages/azure-<name>/src/main.ts 入口", (docType) => {
+    expect(existsSync(join(ROOT, `packages/azure-${docType}/src/main.ts`))).toBe(true);
+  });
+
+  test.each(azureDocTypes)("%s 有 scripts/bundle.mjs（镜像构建依赖它）", (docType) => {
+    expect(existsSync(join(ROOT, `packages/azure-${docType}/scripts/bundle.mjs`))).toBe(true);
+  });
+
+  // 漏了 reference，`pnpm typecheck` 不会把这个包纳入 composite 构建，
+  // 类型错误要到真正 build 镜像时才暴露。
+  test.each(azureDocTypes)("%s 在根 tsconfig.json 的 references 里", (docType) => {
+    const tsconfig = JSON.parse(readFileSync(join(ROOT, "tsconfig.json"), "utf8"));
+    const paths = tsconfig.references.map((r) => r.path);
+    expect(paths).toContain(`packages/azure-${docType}`);
+  });
+
+  // 这一条守的正是 Task 4 抓到的那个静默假阳性:表里有、smoke.mjs 里没有
+  // 对应 flow，全量冒烟会安静地跳过它。
+  test.each(azureDocTypes)("%s 在 smoke.mjs 里有对应的 flow", (docType) => {
+    const smoke = readFileSync(join(ROOT, "stacks/azure/deploy/smoke.mjs"), "utf8");
+    expect(smoke).toMatch(new RegExp(`function\\s+${docType}\\w*Flow\\s*\\(`));
+  });
+});
+
+describe("Cloudflare doc type 的配套物", () => {
+  test.each(cfDocTypes)("%s 有 packages/cloudflare-<name>/src/worker.ts 入口", (docType) => {
+    expect(existsSync(join(ROOT, `packages/cloudflare-${docType}/src/worker.ts`))).toBe(true);
+  });
+
+  test.each(cfDocTypes)("%s 有 wrangler.toml（部署配置）", (docType) => {
+    expect(existsSync(join(ROOT, `packages/cloudflare-${docType}/wrangler.toml`))).toBe(true);
+  });
+});
+
+// 两朵云支持的集合可以不同（Azure 落后是允许的，psd 就是这种情况），但这个
+// 差集必须是**有意识的**。这条测试把它打印出来，让"Azure 少一个 doc type"
+// 成为一件看得见的事，而不是某次改动里悄悄发生的。
+test("两朵云的 doc type 差集被显式记录", () => {
+  const onlyCf = cfDocTypes.filter((t) => !azureDocTypes.includes(t)).sort();
+  const onlyAzure = azureDocTypes.filter((t) => !cfDocTypes.includes(t)).sort();
+  // Azure 侧不应该有 Cloudflare 没有的 doc type——doctype-* 包是云中立的，
+  // Cloudflare 一侧总是先有。
+  expect(onlyAzure).toEqual([]);
+  // 这个断言会在 Task 5 加进 azure-psd 之后自动变成 []。它变红的那一刻，
+  // 就是有人加了 Cloudflare doc type 却没同步 Azure 的那一刻。
+  expect(onlyCf).toEqual([]);
+});
+```
+
+- [ ] **Step 2: 运行，确认它现在是红的**
+
+Run: `npx vitest run tests/unit/workspace/doc-type-coverage.test.mjs`
+
+Expected: **FAIL**。当前 `packages/azure-psd` 不存在，所以:
+
+- 「两朵云的 doc type 差集被显式记录」失败，`onlyCf` 是 `["psd"]`
+- Azure 侧的 `test.each` 只跑 markdown/docx（表里还没有 psd），全部通过
+
+**这条红是本任务的交付物的一部分，不是缺陷。** 它精确地指出了 Task 5
+要补的东西。如果它此刻是绿的，说明断言写松了，要查出来。
+
+- [ ] **Step 3: 提交（带着这条红）**
+
+```bash
+git add tests/unit/workspace/doc-type-coverage.test.mjs
+git commit -m "test: doc type 穷尽性守卫（当前对 psd 为红，Task 5 补上后转绿）"
+```
+
+**注意**:本任务提交之后 `pnpm test:local` 会有 1 条失败，直到 Task 5 建出
+`packages/azure-psd`。这是刻意的顺序:守卫先立，再让被守的东西补齐。如果你
+觉得"提交一条红测试"不妥，**不要**为了让它变绿而放宽断言或加 skip ——
+那样这条测试就失去了全部意义。
+
+---
+
 ## 完成后
 
 全部 6 个任务完成后:
