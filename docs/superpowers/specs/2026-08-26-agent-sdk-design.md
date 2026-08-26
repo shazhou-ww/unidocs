@@ -182,7 +182,8 @@ flowchart TB
         A4["将来的 doctype-xlsx"]
     end
 
-    subgraph L2["内核 doctype-server-common/src/agent/<br/>唯一一份，与文档类型和平台都无关"]
+    subgraph L2["doctype-server-common —— 三方共同对着的 SDK 层<br/>契约 + 唯一一份内核实现，与文档类型和平台都无关"]
+        B0["上下两条边界的契约"]
         B1["工具调用循环"]
         B2["历史裁剪策略"]
         B3["会话历史（中立消息格式）"]
@@ -201,11 +202,8 @@ flowchart TB
         D2["azure-docx"]
     end
 
-    ABS["抽象层 protocol<br/>契约在这里，两侧都指向它"]
-
-    L1 -->|"实现 DocumentAgent"| ABS
-    L3 -->|"实现 DocumentAgentContext<br/>AgentSessionStore + 传输外壳"| ABS
-    L2 --> ABS
+    L1 -->|"实现 DocumentAgent"| L2
+    L3 -->|"实现 DocumentAgentContext<br/>AgentSessionStore + 传输外壳"| L2
     L4 -.->|"挑一个文档类型"| L1
     L4 -.->|"挑一个平台"| L3
 ```
@@ -218,23 +216,15 @@ flowchart TB
 
 前两条如果被打破，就退回到今天的状态（1.4）；第三条被打破，「新增文档类型」和「新增平台」这两个方向就会互相牵动，1.2 的表就不成立了。4.4 给出机器可校验的落地方式。
 
-注意 L2 内核在这张图里是**实现**而不是边界：它和平台 sdk 一样依赖 `protocol` 的契约。区别只在于内核有且只有一份，而平台 sdk 每个云一份。
+L2 这一层同时装着**契约**和**唯一一份内核实现**。文档类型对着它写 agent，平台 sdk 对着它实现 platform 接口，两者之间没有任何箭头——这就是依赖倒置。它自己只依赖 `protocol`（SValue / SBlob / CAS 那些文档层的东西）。
 
 ---
 
 ## 4. 包与约束
 
-### 4.1 抽象层已经存在：`protocol`
+### 4.1 契约的物理位置：留在 `protocol`
 
-依赖倒置要求两侧都指向同一个抽象，而这个抽象不需要新建——`protocol` 今天就是：
-
-| | 依赖 `protocol` |
-|---|---|
-| `doctype-psd` / `doctype-docx` / `doctype-markdown` | 已依赖 |
-| `cloudflare-sdk` / `azure-sdk` | 已依赖 |
-| 两侧之间 | **无任何依赖** |
-
-而 agent 的两条边界契约也已经住在里面，全是纯类型、零平台代码：
+`doctype-server-common` 是三方对着写代码的那一层（4.3），但两条边界的**契约类型**不必搬进去——它们今天已经在 `protocol` 里，全是纯类型、零平台代码，搬家没有收益还要处理 `DocumentType.tools` 造成的环（4.3.1）：
 
 ```
 protocol/src/types.ts
@@ -254,18 +244,18 @@ export type AgentMessage = ...    // 中立消息格式（5.4）
 export type AgentEvent = ...      // 事件表（7.1）
 ```
 
-规则一句话：**契约在 `protocol`，实现在别处。**
+规则一句话：**契约的定义在 `protocol`，实现和门面在 `doctype-server-common`。** 文档类型作者不需要知道这个区分——`doctype-server-common/agent` 把契约再导出一次，只有一个 import 来源（4.3.1）。
 
 ### 4.2 内核实现放在 `doctype-server-common/src/agent/`
 
-不新建包。理由是依赖边：内核只被平台 sdk 使用（文档类型完全用不到它），而两个平台 sdk 今天已经依赖 `doctype-server-common`：
+不新建包。理由是依赖边：三方里已经有两方（`cloudflare-sdk`、`azure-sdk`）依赖着 `doctype-server-common`——
 
 ```
 cloudflare-sdk 的 deps: cas-client, cas-server-common, doctype-server-common, http-protocol, protocol, svalue-codec
 azure-sdk 的 deps:      @azure/*, cas-client, doctype-server-common, http-protocol, protocol, svalue-codec, pg
 ```
 
-放进去**新增零条依赖边**。新建一个包则要多一套 `package.json` / `tsconfig` / 构建脚本 / 测试配置，换来的只是包名更好听。
+放进去，平台侧新增零条依赖边，只有文档类型侧要加一条（4.3.1）。新建一个包则三方都要加边，还要多一套 `package.json` / `tsconfig` / 构建脚本 / 测试配置，换来的只是包名更好听。
 
 ```
 packages/doctype-server-common/src/agent/
@@ -282,6 +272,8 @@ packages/doctype-server-common/src/agent/
 
 ### 4.3 依赖方向
 
+`doctype-server-common` 是**三方共同对着的那一层**：文档类型对着它写 agent，平台 sdk 对着它实现 platform 接口，内核实现也住在里面。它只依赖 `protocol`。
+
 ```mermaid
 flowchart TB
     subgraph dt["文档类型：实现上边界契约"]
@@ -291,32 +283,35 @@ flowchart TB
         xlsx["将来的 doctype-xlsx"]
     end
 
-    proto["protocol —— 抽象层<br/>上边界契约 + 下边界契约<br/>纯类型，零实现"]
+    subgraph sdk["doctype-server-common —— 文档类型和平台共同对着的 SDK"]
+        UP["上边界契约<br/>DocumentAgent / DocumentAgentFactory"]
+        KERNEL["src/agent/ 内核实现<br/>AgentSession · ContextPolicy<br/>Anthropic / OpenAI provider · SSE 编码"]
+        DOWN["下边界契约 —— platform 接口，虚拟<br/>DocumentAgentContext / LlmProvider<br/>AgentSessionStore"]
+    end
 
-    subgraph plat["平台 sdk：实现下边界契约"]
+    subgraph plat["平台 sdk：实现 platform 接口"]
         cf["cloudflare-sdk<br/>DurableObject"]
         az["azure-sdk<br/>Node 进程 + Postgres"]
         aws["将来的 aws-sdk"]
     end
-
-    kernel["doctype-server-common/src/agent/<br/>内核实现：循环 · 裁剪 · provider · SSE"]
 
     subgraph leaf["叶子包：只做绑定"]
         L1["cloudflare-psd"]
         L2["azure-docx"]
     end
 
-    psd --> proto
-    docx --> proto
-    md --> proto
-    xlsx -.-> proto
-    cf --> proto
-    az --> proto
-    aws -.-> proto
-    kernel --> proto
-    cf --> kernel
-    az --> kernel
-    aws -.-> kernel
+    proto["protocol<br/>SValue / SBlob / CAS / DocumentType<br/>+ agent 契约的类型定义"]
+
+    psd --> UP
+    docx --> UP
+    md --> UP
+    xlsx -.-> UP
+
+    cf -->|"实现"| DOWN
+    az -->|"实现"| DOWN
+    aws -.->|"实现"| DOWN
+
+    sdk --> proto
 
     L1 -.-> psd
     L1 -.-> cf
@@ -324,16 +319,34 @@ flowchart TB
     L2 -.-> az
 ```
 
-这张图的全部意义在箭头方向：**文档类型和平台 sdk 都指向 `protocol`，两者之间没有任何箭头。** 具体实现依赖抽象，抽象不依赖具体。
+箭头方向是这张图的全部意义：**文档类型和平台 sdk 都指向 `doctype-server-common`，两者之间没有任何箭头。** 具体实现依赖抽象，抽象不依赖具体。叶子包在最上面，只负责挑一个文档类型和一个平台把它们接起来。
 
-| 包 | 依赖什么 | 本次新增的依赖 |
+#### 4.3.1 本次唯一新增的依赖边
+
+| 包 | 今天依赖 | 本次之后 |
 |---|---|---|
-| `doctype-*` | `protocol` + `svalue-codec` | **无** |
-| `cloudflare-sdk` / `azure-sdk` | 已有的那组，含 `doctype-server-common` | **无**（内核放进已依赖的包） |
-| `cloudflare-psd` / `azure-docx` | 一个文档类型 + 一个平台 sdk | **无**，只是接线代码变了 |
-| `client-sdk`（唯一新包） | `protocol` | — |
+| `doctype-psd` / `docx` / `markdown` | `protocol`、`svalue-codec` | **加 `doctype-server-common`** ← 唯一的新边 |
+| `cloudflare-sdk` / `azure-sdk` | 已含 `doctype-server-common` | 不变 |
+| `cloudflare-psd` / `azure-docx` | 一个文档类型 + 一个平台 sdk | 不变，只是接线代码变了 |
 
-本次唯一新建的包是浏览器侧的 `@unidocs/client-sdk`（第 8 章）——它服务的是另一侧，没有现成的包可以放。
+平台侧一条边都不用加——内核放进了它们本来就依赖的包（4.2）。文档类型侧加的这一条，是为了让「写一个文档 agent」有一个明确的对着写的地方，而不是去 `protocol` 里翻类型。
+
+**契约的物理位置不动。** `DocumentAgent` 等类型仍然定义在 `protocol/src/types.ts:82-129`——搬家没有收益，还要处理 `DocumentType.tools` 造成的环。`doctype-server-common/agent` 把它们**再导出**一次，于是文档类型作者只需要记住一个 import 来源：
+
+```ts
+import type {
+  DocumentAgentFactory, DocumentAgent,
+  AgentToolDefinition, AgentToolResult, AgentContentPart,
+} from "@unidocs/doctype-server-common/agent";
+```
+
+#### 4.3.2 一个要留意的点：包名里的 "server"
+
+`doctype-psd` 通过 `./engine` 子路径供浏览器使用（`psd-client/src/doc-session.ts:1` 就是这么引的），而现在它的主入口要依赖一个名字里带 `server` 的包。
+
+实际不会有问题：`./engine` 子路径不 import agent 相关的任何东西，而 agent 那部分对 `doctype-server-common` 是**仅类型依赖**（`import type`），编译后擦除。实施时用打包体积断言验证一次（V3c）。
+
+如果将来觉得名字别扭，可以把包改名为 `@unidocs/doctype-sdk`——但那是纯改名，不属于本次范围。
 
 ### 4.4 三条边界规则怎么守
 
@@ -349,7 +362,8 @@ flowchart TB
 // packages/{cloudflare,azure}-sdk：dependencies 里不得出现任何 @unidocs/doctype-*
 //                                （doctype-server-common 除外）
 // packages/doctype-*：dependencies 里不得出现 @unidocs/cloudflare-sdk /
-//                     @unidocs/azure-sdk / @unidocs/doctype-server-common
+//                     @unidocs/azure-sdk
+//                     （@unidocs/doctype-server-common 是预期的，见 4.3.1）
 ```
 
 **规则 2（平台不知道循环内部）** —— 没有等价的机器检查，平台 sdk 本来就允许 import 内核。靠两件事守：
@@ -1246,7 +1260,8 @@ flowchart TB
 | V1 | 文档类型的分发逻辑一行未动 | `git diff` 里 `doctype-markdown/src/agent.ts` 与 `doctype-docx/src/agent.ts` 无改动；`doctype-psd/src/agent.ts` 只有 `getPreview` 分支变化 |
 | V2 | 内核不认识 `query_` / `apply_` | 全仓库搜索 `startsWith("query_")` **不应**命中 `packages/doctype-server-common/src/agent/` |
 | V3 | 内核不 import 任何云相关模块，也不用 `Request` / `Response` | `tests/unit/agent-kernel-purity.test.ts` 按目录扫 `src/agent/**`（4.4） |
-| V3b | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk，也无 `doctype-server-common`（4.4） |
+| V3b | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk（`doctype-server-common` 是预期的）（4.4） |
+| V3c | 文档类型对 SDK 是仅类型依赖，浏览器 bundle 不受影响 | 打包 `psd-client`，断言产物体积与改造前持平，且不含 `AgentSession` 等符号（4.3.2） |
 | V4 | 循环行为不退化 | 新增契约测试：内存版 `DocumentAgentContext` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
 | V5 | PSD 送给模型的图片字节与改造前完全一致 | 抓一次 provider 请求体，与改造前对比 |
 | V6 | 现有 230 行 `operator-do.test.ts` 全绿 | `pnpm test` |
