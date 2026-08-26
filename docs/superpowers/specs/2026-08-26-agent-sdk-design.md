@@ -424,6 +424,27 @@ export interface DocumentAgent<TQuery, TOp> {
 
 两个默认值保证行为与今天一致：`kind: "query"` 不给 `toResult` 时返回 `{ structuredContent: { data, version } }`；`kind: "op"` 固定返回 `{ structuredContent: { success: true, version } }`。这正是三个文档类型今天 `toolCall` 里那两段代码做的事。
 
+`toResult` 的 `data` 类型是 `SValue`——它是从编辑器返回、跨过一次序列化的数据，静态类型到这里就断了。文档类型需要自己窄化一次，**不要写 `as any`**：
+
+```ts
+// doctype-server-common/agent 导出，供各文档类型使用
+export function requireRecord(v: SValue, what: string): Readonly<Record<string, SValue>>;
+export function requireNumber(v: SValue | undefined, what: string): number;
+export function requireSBlob(v: SValue | undefined, what: string): SBlob;
+
+// 用法
+toResult: (data, version) => {
+  const d = requireRecord(data, "renderChart 结果");
+  return {
+    content: [{ type: "image", blob: requireSBlob(d.image, "image"), mediaType: "image/png",
+                altText: `chart ${requireNumber(d.width, "width")}x${requireNumber(d.height, "height")} v${version}` }],
+    structuredContent: { width: d.width, height: d.height, version },
+  };
+}
+```
+
+这三个函数不是新发明——docx 今天就有一模一样的（`doctype-docx/src/agent.ts:120-137` 的 `requireSValueRecord` / `requireNumber` / `requireString`）。本次把它们从 docx 提到共享位置，三个文档类型不用各写一份。窄化失败时抛错，被内核接住变成一条给模型的错误消息（5.1.5）。
+
 文档类型侧于是只剩一个常量：
 
 ```ts
@@ -491,9 +512,9 @@ classDiagram
 
     class AgentSession~TQuery, TOp~ {
         -history: AgentMessage[]
-        +run(instruction) AsyncIterable~AgentEvent~
+        -blobCache: ByteLru
+        +run(instruction, onEvent) Promise~AgentRunOutcome~
         +reset() Promise
-        +restore() Promise
     }
 
     class LlmProvider {
@@ -728,16 +749,28 @@ export interface AgentCompletion {
 
 `role: "tool"` 那一支携带的是结构化的 `AgentToolResult`（`protocol/src/types.ts:100`），其中的 `content` 数组里图片是 `{ type:"image", blob, mediaType }`。适配层直接 `filter(p => p.type === "image")` 拿到它。
 
+**取字节这一步要缓存。** 每次调模型之前，内核都要把历史里的 image part 变成真正的字节交给适配层，走的是 `platform.readBlob`。PSD 一次 run 跑 25 圈，若每圈都重读，就是 50 次 `readBlob`——而裁剪保证了同时最多只有 `MAX_IMAGES` 张图（默认 2），也就是说其中 48 次读的是同样的两个 hash。
+
+`AgentSession` 内部按 hash 缓存字节，按总字节数封顶后淘汰最久未用的：
+
+```ts
+#blobCache = new ByteLru(32 * 1024 * 1024);   // 上限与 sblob-context.ts:69 的默认一致
+```
+
+放在内核而不是平台，因为「同一个 blob 会被反复要」是**循环的性质**，平台没有理由知道这件事。
+
 **随之删除：** `anthropic.ts` 的 `findImage`、`previewMeta`，以及 `OperatorConfig.renderToolResult` 整个钩子（`operator-do-agent.ts:25`）。P5 和 P6 一并解决。
 
-### 5.5 AgentSession 的完整构造签名
+### 5.5 AgentSession 的接口与生命周期
 
 ```ts
 export class AgentSession<TQuery, TOp> {
   constructor(deps: {
+    /** 会话身份。构造时机见 5.5.1 —— 必须等第一个请求带来身份之后 */
+    readonly sessionId: string;
     /** 上边界：文档类型的工具表 + 提示词，纯数据（5.1.2） */
     readonly agent: DocumentAgent<TQuery, TOp>;
-    /** 下边界：文档读写 + 取 blob 字节（5.1.1） */
+    /** 下边界：文档读写 + 取 blob 字节（5.1.4） */
     readonly platform: AgentPlatform<TQuery, TOp>;
     /** 下边界：模型访问 */
     readonly provider: LlmProvider;
@@ -748,16 +781,113 @@ export class AgentSession<TQuery, TOp> {
     /** 循环上限，不传为 10。PSD 传 25 */
     readonly maxIterations?: number;
   });
-  run(instruction: string): AsyncIterable<AgentEvent>;
+
+  /**
+   * 跑一轮对话。**推送式**：事件通过 onEvent 送出，不是返回一个可迭代对象。
+   * 理由见 5.5.2。onEvent 同步返回，内核不等它，它抛错也被忽略。
+   */
+  run(instruction: string, onEvent: (event: AgentEvent) => void): Promise<AgentRunOutcome>;
+
+  /** 清空这个会话：内存、存储、以及它持有的全部根引用。见 5.5.4 */
   reset(): Promise<void>;
-  /** 从 store 恢复历史；进程或实例重建后由平台外壳调用一次 */
-  restore(): Promise<void>;
 }
+
+export type AgentRunOutcome =
+  | { readonly ok: true;  readonly response: string; readonly iterations: number }
+  | { readonly ok: false; readonly error: string };
 ```
 
 `agent` 是一个常量，没有工厂、没有注入——文档类型不接受任何句柄（5.1.1）。`platform` 只有内核自己拿着。
 
 `maxIterations` 从 `OperatorConfig`（`operator-do-agent.ts:32`）移到这里——它是循环参数，属于内核，不属于平台配置。PSD 需要 25 的理由不变：一次编辑要「找图层 → 看预览 → 变换 → 再看预览确认」，默认的 10 会把真实指令切在半路。
+
+没有 `restore()` 这个公开方法，理由见 5.5.3。
+
+#### 5.5.1 构造时机：第一个请求到达之后，不是 DO 构造时
+
+`sessionId` 是构造参数，但**平台外壳不能在自己的构造函数里创建 `AgentSession`**：sessionId 来自请求头 `X-Session-Id`（`operator-do-agent.ts:167-185` 今天就是这么读的），而 DO 实例在第一个请求到达之前就已经存在了。
+
+所以外壳惰性创建，创建之后随实例一直活着：
+
+```ts
+#ensureSession(sessionId: string): AgentSession<TQuery, TOp> {
+  return this.#session ??= new AgentSession({ sessionId, agent, platform, provider, store, cas });
+}
+```
+
+今天那套「后续请求的身份必须与首次一致，否则 403」的校验（`operator-do-agent.ts:173-176`）原样保留，正好守住这个惰性创建。
+
+#### 5.5.2 为什么是推送式而不是返回 `AsyncIterable`
+
+`AsyncIterable` 是**拉取式**的：没有人调 `next()`，生成器就停在 `yield` 上。而平台外壳会这样用它：
+
+```ts
+void encodeSse(session.run(instruction)).pipeTo(writable);
+```
+
+客户端一断线，`writable` 报错，管道停止拉取，**整个循环就此冻住**。这与 7.3 写明的「服务端继续跑完，文档改动照常落到编辑器」直接冲突——两者同时只能成立一个。
+
+推送式没有这个问题：内核调 `onEvent(e)` 就继续往下走，不关心有没有人在听。外壳把 `onEvent` 实现成「写 SSE，写失败就记下断了、后续直接丢弃」：
+
+```ts
+let broken = false;
+const onEvent = (e: AgentEvent) => {
+  if (broken) return;
+  writer.write(encode(sseFrame(e))).catch(() => { broken = true; });
+};
+this.#ctx.waitUntil(session.run(instruction, onEvent).finally(() => writer.close().catch(() => {})));
+```
+
+`waitUntil` 是另一半：它让 DO 在响应已经返回之后继续执行这个 Promise。Azure 侧对应的是不 `await` 这个 Promise 而让请求处理函数先返回。
+
+内核对 `onEvent` 的约定写死两条：**同步返回**（内核不 `await` 它），**抛错被吞掉**（一个坏的监听者不能让 agent 停下来）。
+
+#### 5.5.3 恢复历史由内核自己保证
+
+先前的版本有个公开的 `restore()`，并规定「必须在 `run()` 之前调」。这种顺序要求本身就是缺陷——两个平台外壳各自记着别忘了调，迟早有一个忘，而症状是模型莫名其妙失忆，很难查。
+
+改成内核内部惰性执行：`run()` 开头 `await this.#ensureRestored()`，只在第一次真正读库。外壳没有任何顺序义务。
+
+#### 5.5.4 `reset()` 的完整语义
+
+清三样东西，顺序是固定的：
+
+```mermaid
+flowchart TB
+    A["1. store.load() 不带 limit，读全部消息<br/>算出这个会话持有的全部根引用"] --> B["2. store.clear()<br/>消息和汇总行一起删掉"]
+    B --> C["3. commitRootRefs(负增量)<br/>释放第 1 步算出的引用"]
+    C --> D["4. 清空内存：history / token / turnNo / msgNo"]
+```
+
+**为什么先删数据再释放引用**，与 6.4 的写入顺序正好相反：写入时先落数据再加引用，是为了避免「引用已加、数据没写」的孤立引用；删除时先删数据再减引用，是为了避免「引用已减、数据还在」——那会让存活的历史指向已被回收的 blob，是真正的坏数据。两边遵循的是同一条原则：**任何时刻的崩溃都只能留下可回收的多余引用，不能留下悬空的引用。**
+
+第 1 步是全文档里唯一一处 `load()` 不带 `limit` 的调用（6.3.4）。`reset` 是低频操作，读全量可以接受。
+
+#### 5.5.5 同一会话同时只允许一个 run
+
+两个平台的并发模型不同（6.3.7），但拒绝**必须发生在 `run()` 入口**，不能等到落盘时才靠 token 冲突发现——那时模型已经白跑了一整轮，用户也白等了。
+
+统一做成一个带过期时间的租约，`agent_sessions` 加一列：
+
+```sql
+running_since BIGINT NULL     -- 有值表示正在跑
+```
+
+`run()` 的第一件事是抢这个租约：
+
+```sql
+UPDATE agent_sessions
+   SET running_since = $now, seq = seq + 1
+ WHERE <定位条件>
+   AND seq = $token
+   AND (running_since IS NULL OR running_since < $now - RUN_LEASE_MS);
+```
+
+受影响行数为 0 → 别人正在跑，`run()` 立刻返回 `{ ok: false, error: "会话正在处理另一条指令" }`，一次模型都不调。跑完（无论成功失败）把 `running_since` 置回 NULL。
+
+`RUN_LEASE_MS` 取一个略大于最坏情况的值（PSD 25 轮，给 10 分钟），避免进程崩溃后会话被永久锁住。
+
+**这条在 Cloudflare 上恒成立**——DO 单线程，不可能有并发的 `run`。所以它是一条两端共用的代码，在 CF 上退化成一次必然成功的写，不需要平台分支。
 
 ---
 
@@ -810,11 +940,22 @@ if (encoded.refs.length > 0) {
 Anthropic 的 Messages API 要求每个 `tool_use` 块在紧随其后的消息里有对应的 `tool_result`；OpenAI 要求每个 `tool_calls` 有对应的 `role:"tool"`。所以**裁剪的最小单位不是消息，是一轮**：
 
 ```
-一轮 = 一条 assistant 消息（含 N 个 toolCalls）
-     + 对应的 N 条 tool 消息
+配对块 = 一条 assistant 消息（含 N 个 toolCalls）
+       + 对应的 N 条 tool 消息
 ```
 
 这条约束直接排除了「保留最近 K 条消息」这种最直觉的写法——它会切出孤立的 `tool_result`，请求会被 API 拒绝。
+
+**「配对块」和「轮」不是一回事**，这两个词此前混用过，在这里定清楚：
+
+| | 定义 | 用途 |
+|---|---|---|
+| 配对块 | 一条 assistant + 它的全部 tool 消息 | API 的硬性要求，不能拆 |
+| 轮（`turn_no`） | 一条 user 消息，直到下一条 user 消息之前的所有内容 | 丢弃的单位，也是落盘时的分组 |
+
+一轮里可以有多个配对块——模型为一条指令连着调三次工具，就是一轮里的三个配对块。
+
+**丢弃以「轮」为单位**，因为它是更大的单位，天然包含完整的配对块，所以配对约束自动满足。更重要的是语义：一条用户指令和它引发的全部往返是一个整体，只丢掉其中一半会让历史读起来不连贯——模型会看到一段没有起因的工具调用。
 
 #### 6.2.2 为什么裁剪属于内核而不是文档类型
 
@@ -842,7 +983,7 @@ flowchart TB
     C1 -->|是| L2["第 2 级：大结果降级<br/>structuredContent 超过 M 字节的<br/>只留最近一份，更早的换成<br/>结果过大已省略，需要时请重新查询"]
     L2 --> C2{"还超预算吗"}
     C2 -->|否| OUT
-    C2 -->|是| L3["第 3 级：整轮丢弃<br/>从最早的一轮开始整轮丢<br/>永远保留系统提示词和第一条用户指令"]
+    C2 -->|是| L3["第 3 级：整轮丢弃<br/>从最早的一轮开始，连 user 消息一起丢<br/>永远保留系统提示词和第一条用户指令"]
     L3 --> OUT
 ```
 
@@ -912,7 +1053,7 @@ const RESTORE_MESSAGE_LIMIT = 200;      // restore 时从存储读回多少条�
 
 - `agent_messages` **只追加，写入后不再修改**。这与 `deltas` 是同一种表。
 - 图片降级、大结果省略、整轮丢弃，全部发生在读出来之后、发给模型之前，是内存里的一次纯函数变换。
-- 每次 `restore()` 重新算一遍。降级是纯函数，重算的结果一致。
+- 每次会话恢复时重新算一遍。降级是纯函数，重算的结果一致。
 
 存储会随对话增长——这是正常的，一条消息就是一小段文字加几个 CAS 引用。真需要控制体量时，那是**独立的清理策略**（按 `updated_at` 清理长期不动的会话，或丢弃很老的轮次），与上下文裁剪无关，本次不做。
 
@@ -943,12 +1084,13 @@ const RESTORE_MESSAGE_LIMIT = 200;      // restore 时从存储读回多少条�
 
 ```sql
 CREATE TABLE IF NOT EXISTS agent_sessions (
-  doc_type   TEXT    NOT NULL,
-  session_id TEXT    NOT NULL,
-  seq        INTEGER NOT NULL,   -- 条件写凭据，每次写 +1
-  turn_count INTEGER NOT NULL,
-  byte_size  INTEGER NOT NULL,   -- 所有消息 payload 之和
-  updated_at BIGINT  NOT NULL,
+  doc_type      TEXT    NOT NULL,
+  session_id    TEXT    NOT NULL,
+  seq           INTEGER NOT NULL,   -- 条件写凭据，每次写 +1
+  running_since BIGINT  NULL,       -- run 租约，有值表示正在跑（5.5.5）
+  turn_count    INTEGER NOT NULL,
+  byte_size     INTEGER NOT NULL,   -- 所有消息 payload 之和
+  updated_at    BIGINT  NOT NULL,
   PRIMARY KEY (doc_type, session_id)
 );
 
@@ -1026,7 +1168,7 @@ export interface AgentSessionStore {
 
 `load` 必须带条件，因为两个调用方要的都不是全部。
 
-**内核的 `restore()`**：只需要最近若干轮，够裁剪函数挑就行。
+**内核首次 `run()` 时的恢复**（5.5.3）：只需要最近若干轮，够裁剪函数挑就行。
 
 ```ts
 const RESTORE_MESSAGE_LIMIT = 200;   // 写死在 history.ts，与三个阈值放一起
@@ -1219,18 +1361,19 @@ sequenceDiagram
     B->>G: POST /run  Accept: text/event-stream
     G->>W: 转发，带身份头
 
-    W->>S: restore()
-    S->>W: store.load({ limit: 200 })
+    W->>S: run(指令, onEvent)
+    Note over S: 以下三步都在 run 内部，外壳没有顺序义务（5.5.3）
+    S->>W: 抢 run 租约：UPDATE ... WHERE running_since IS NULL（5.5.5）
+    S->>W: store.load({ limit: 200 })　仅首次
     W-->>S: 最近 200 条消息 + token
     Note over S: 逐条 decodeSValue；读不到的图片降级成文字（6.6）
 
-    W->>S: run(指令)
-
-    Note over S,B: 下面每条 S-->>B 都不是直达：S 产出事件对象 →<br/>W 调内核的 encodeSse 编成 SSE 帧、再包成本平台的响应 →<br/>doctype 服务透传 → 网关透传 → 浏览器。<br/>为了看清主线不再重复画这几跳，完整链路见 7.4
+    Note over S,B: 下面每条 S-->>B 实际是 S 调 onEvent(事件) →<br/>W 编成 SSE 帧写进响应流 → doctype 服务透传 →<br/>网关透传 → 浏览器。推送式，S 不等任何人（5.5.2）。<br/>为了看清主线不再重复画这几跳，完整链路见 7.4
     S-->>B: run-start
 
     loop 直到模型不再调工具，或达到 maxIterations
-        S->>S: trimHistory(history)<br/>裁剪并就地替换（6.2）
+        S->>S: trimHistory(history)　只影响这次发送（6.2.6）
+        S->>W: readBlob 取图片字节　命中缓存则跳过（5.4）
         S->>L: complete(裁剪后的历史 + 工具表)
         L-->>S: 文字 / 工具调用 / 两者都有
 
@@ -1255,14 +1398,16 @@ sequenceDiagram
     S->>S: 把本轮新消息编码，算根引用增量
     S->>W: store.append(本轮新增的消息, meta, token)（6.3）
     S->>W: commitRootRefs(agent:sessionId:seq, 增量)（6.4）
+    S->>W: 释放 run 租约：running_since = NULL
     Note over B: 收到 run-end 后调 session.reconcile()<br/>同步文档（8.4）
 ```
 
 三处顺序是有意为之，不能调换：
 
-1. **`restore()` 在 `run()` 之前。** 平台外壳每次被重建（DO 从休眠中唤醒、Azure 换了一个副本）都要先恢复历史，否则模型会失忆。
-2. **裁剪在每次调模型之前，不是每轮结束之后。** 因为要裁的正是「即将发出去的这一份」，而新一轮的工具结果刚刚追加进来。
-3. **先存字节，再提交根引用。** 反过来会在崩溃的时间窗里留下「引用已加、字节没写」的孤立引用（6.4）。
+1. **抢租约在最前面。** 别人正在跑就立刻返回，一次模型都不调（5.5.5）。
+2. **恢复历史在 `run()` 内部**，外壳没有顺序义务（5.5.3）。DO 从休眠中唤醒、Azure 换了一个副本，都由内核自己发现「还没恢复过」并去读库。
+3. **裁剪在每次调模型之前，不是每轮结束之后。** 因为要裁的正是「即将发出去的这一份」，而新一轮的工具结果刚刚追加进来。
+4. **先存消息，再提交根引用。** 反过来会在崩溃的时间窗里留下「引用已加、消息没写」的孤立引用（6.4）。删除时顺序相反，理由见 5.5.4。
 
 `tool-result` 事件在工具抛错时也发，`ok: false` 加错误摘要——循环不中断，错误原文作为一条 tool 消息进入历史，模型下一轮自己纠正（5.2）。
 
@@ -1556,6 +1701,10 @@ flowchart TB
 | V14 | 发给模型的历史不超预算 | PSD 跑满 25 轮后，抓一次 provider 请求体：估算 token 低于 `BUDGET_TOKENS`，图片 part 不超过 `MAX_IMAGES` |
 | V14b | 裁剪不动存储 | 同一次运行结束后查库：`agent_messages` 里本轮所有消息一条不少，且早期那些含图片的消息 `payload` 与写入时逐字节相同——裁剪只发生在发送路径上（6.2.6） |
 | V15 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
+| V17 | 断线之后服务端跑完 | 端到端：发一条多步指令，中途关掉浏览器标签；等待后重新打开，`reconcile()` 能拿到 agent 全部改动的结果，且 `agent_messages` 里本次对话完整（5.5.2） |
+| V18 | 并发 run 在入口就被拒绝 | 同一 sessionId 连发两个 run，第二个立刻返回错误，且**假 provider 的调用次数只增加了第一个 run 的量**——证明第二个一次模型都没调（5.5.5） |
+| V19 | `reset()` 清干净 | reset 之后：`load()` 返回 null，且该会话此前引用的 blob 引用计数归零 |
+| V20 | 图片字节不重复读取 | PSD 跑满 25 轮，统计 `platform.readBlob` 的调用次数应等于出现过的**不同** hash 数，而不是轮数乘图片数（5.4） |
 | V16 | 历史引用的图片不被回收 | 跑一轮产生预览图 → 删掉对应图层并 apply → 断言历史里那张图仍可 `readBlob`（6.4 的根引用生效） |
 
 V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。V11 是它在存储维度上的对应判据。
