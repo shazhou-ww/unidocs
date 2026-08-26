@@ -797,15 +797,22 @@ export function createDefaultContextPolicy(opts?: {
 ```ts
 export interface AgentSessionStore {
   load(): Promise<{ bytes: Uint8Array; token: string } | null>;
-  /** token 传 null 表示"我认为它还不存在"。不匹配时抛 SessionStoreConflictError */
-  save(bytes: Uint8Array, token: string | null): Promise<string>;
+  /**
+   * token 传 null 表示"我认为它还不存在"。不匹配时抛 SessionStoreConflictError。
+   * meta 是内核才知道、又值得单独成列的元数据，见 6.3.6。
+   */
+  save(
+    bytes: Uint8Array,
+    meta: { turnCount: number },
+    token: string | null,
+  ): Promise<string>;
   clear(): Promise<void>;
 }
 ```
 
 三点说明：
 
-- **存字节，不存对象。** 内核负责 `encodeSValue(history)`，平台只管把一串字节按 sessionId 存起来。平台实现不需要理解消息结构，消息格式演进时也不用跟着改。
+- **存字节，不存对象。** 内核负责 `encodeSValue(history)`，平台只管把一串字节按 session 存起来。平台实现不需要理解消息结构，消息格式演进时也不用跟着改。唯一的例外是 `meta`——它是为了让数据库能回答「这个会话多大、多少轮」而单独抽出来的几个标量（6.3.6）。
 - **带条件写。** `token` 是一个自增序号，两个平台都一样。这与仓库现有纪律一致——`ports.ts` 对 `DeltaLog.append` 的要求原文是 "Enforce it structurally (primary key / etag / conditional insert), not with a read-then-write check"。
 - **按会话作用域。** store 实例在构造时就绑定了 sessionId，接口上不再出现它。与 `ports.ts` 开头 "Every port in this module is scoped to one Doc session" 一致。
 
@@ -838,63 +845,120 @@ CREATE TABLE IF NOT EXISTS svalue_pending (
 
 **曾经考虑过、但不采用的做法：** 把历史本身做成一个 CAS 节点（`makeSBlob({data, contentType: SValueContentType})`），表里只存 hash。它的吸引力在于 `sblob-context.ts:145` 会自动从 CBOR 里提取内部 refs 并逐个 lease，引用计数顺带就做了。不采用的理由：多一次 CAS 往返，恢复时多一次读，而内容寻址的去重收益接近零——每轮对话历史都不同，永远不会命中已有节点。引用计数改为显式提交（6.4），只多几行代码。
 
-#### 6.3.4 Cloudflare 实现
+#### 6.3.4 表结构：两端同名同列
 
-DO 的 SQLite 存储，与 Editor DO 同一做法（`editor-do-svalue.ts:107` 起用的就是 `ctx.storage.sql.exec`）：
+表名统一为 `agent_sessions`，与现有的 `doc_sessions` / `doc_snapshots` / `deltas` 一样用复数。
+
+**身份用 `session_id`，不用 doc id。** 这是仓库既定的约定，而且是刻意迁过去的——`migrations/0002_session_identity.sql:15,24` 把 `deltas` 和 `doc_snapshots` 的 `doc_id` 列改名成了 `session_id`。一个文档对应一个 session（网关按 `(userId, docId)` 查出 `record.sessionId` 再转发，`gateway-handler.ts:195`），而 `doc_sessions` 表负责 `session_id → (tenant_id, doc_type)` 的映射。agent 会话跟着走，不另立身份。
+
+**Cloudflare（DO SQLite）**
 
 ```sql
-CREATE TABLE IF NOT EXISTS agent_session (
-  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-  seq       INTEGER NOT NULL,
-  bytes     BLOB    NOT NULL
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+  session_id  TEXT    NOT NULL,
+  doc_type    TEXT    NOT NULL,
+  seq         INTEGER NOT NULL,   -- 条件写凭据
+  turn_count  INTEGER NOT NULL,   -- 元数据，见 6.3.6
+  byte_size   INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  bytes       BLOB    NOT NULL
 );
 ```
 
-`token` 就是 `seq` 的字符串形式。`save` 是一条 `UPDATE ... WHERE seq = ?`（首次则 `INSERT`），条件写由主键和 WHERE 结构性保证，不做读-改-写。
+主键仍是 `singleton`：一个 OperatorDO 实例**就是**一个 session，表里永远只有一行——与 `editor-do-svalue.ts:123` 的 `svalue_pending` 同样的写法。`session_id` / `doc_type` 两列不参与定位，只为排查问题时能一眼看出这个 DO 是谁（`editor-do-svalue.ts:163-167` 把同样的身份存进 DO storage，是同一个用意）。
 
-用 SQLite 而不是 DO 的 KV（`ctx.storage.put`）：KV 单值上限 128KB，而裁剪后的历史以模型上下文窗口的 60% 为目标，会顶破；SQLite 的 BLOB 列没有这个限制。Editor DO 早已因为同样的原因走 SQLite。
-
-#### 6.3.5 Azure 实现
-
-Postgres 一张表，与 `PgDeltaLog` 同一个库、同一套 `Queryable` 抽象（`ports-pg.ts:28`）：
+**Azure（Postgres）**
 
 ```sql
 CREATE TABLE IF NOT EXISTS agent_sessions (
   doc_type   TEXT    NOT NULL,
   session_id TEXT    NOT NULL,
   seq        INTEGER NOT NULL,
+  turn_count INTEGER NOT NULL,
+  byte_size  INTEGER NOT NULL,
+  updated_at BIGINT  NOT NULL,
   bytes      BYTEA   NOT NULL,
   PRIMARY KEY (doc_type, session_id)
 );
 ```
 
-`save` 是 `UPDATE ... WHERE seq = $expected`，受影响行数为 0 即冲突——与 `PgDeltaLog.append`（`ports-pg.ts:89-111`）完全相同的写法，连错误处理都能照抄。
+列的顺序、命名、`BIGINT` 时间戳都照抄 `deltas`（`migrations/0001_init.sql:6-14`）。作为 `0003_agent_sessions.sql` 加进 `migrations/`。
 
-用 Postgres 而不是 Azure Blob：会话历史需要的是条件写，Postgres 一条 `UPDATE ... WHERE` 就够，而 Blob 要走 ETag 的 `If-Match`，多一层往返和一套单独的错误映射。既然 Azure 侧已经有 Postgres 连接池和事务抽象（`PgUnitOfWork`，`ports-pg.ts:270`），复用它比新引一条 Blob 路径简单。Blob 在这套架构里的位置是放大对象（CAS 内容、文档快照），而会话历史几十 KB，不属于那一类。
+**两端唯一的差别**是主键——CF 用 `singleton` 因为一个 DO 只装一个 session，Azure 用 `(doc_type, session_id)` 因为一张表装所有 session。这是承载方式的必然差异，不是随意选择。
 
-#### 6.3.6 两个平台对照
+#### 6.3.5 条件写
 
-| | Cloudflare | Azure |
+两端都是 `seq`，机制同构：
+
+```sql
+-- Cloudflare
+UPDATE agent_sessions SET seq = ?, turn_count = ?, byte_size = ?, updated_at = ?, bytes = ?
+WHERE singleton = 1 AND seq = ?;        -- ? 为 expectedSeq
+
+-- Azure
+UPDATE agent_sessions SET seq = $1, turn_count = $2, byte_size = $3, updated_at = $4, bytes = $5
+WHERE doc_type = $6 AND session_id = $7 AND seq = $8;
+```
+
+受影响行数为 0 即冲突，抛 `SessionStoreConflictError`。首次写入用 `INSERT ... ON CONFLICT DO NOTHING`（Azure）/ `INSERT OR IGNORE`（CF），同样看受影响行数。这与 `PgDeltaLog.append`（`ports-pg.ts:89-111`）是同一套写法，连错误处理都能照抄。
+
+#### 6.3.6 bytes 不可查询，所以元数据单独成列
+
+`bytes` 是 SValue CBOR，数据库看不进去。这不是缺陷而是选择——但代价要用元数据列补上，否则连「这个会话多大、多久没动了」都要先把几十 KB 解码一遍。
+
+三列元数据由谁填：
+
+| 列 | 谁提供 | 为什么 |
 |---|---|---|
-| 实现类 | `DoAgentSessionStore` | `PgAgentSessionStore` |
-| 落在 | `packages/cloudflare-sdk/src/agent-store-do.ts` | `packages/azure-sdk/src/agent-store-pg.ts` |
-| 介质 | DO SQLite `BLOB` 列 | Postgres `BYTEA` 列 |
-| 条件写凭据 | 自增 `seq` | 自增 `seq` |
-| 条件写机制 | `UPDATE ... WHERE seq = ?` | `UPDATE ... WHERE seq = $n`，看 `rowCount` |
-| 参照的现有代码 | `editor-do-svalue.ts:107,123` | `ports-pg.ts:89-111` `PgDeltaLog.append` |
-| 本地测试 | Miniflare | Azurite + Postgres（`pnpm azure:up`） |
+| `turn_count` | 内核 | 只有它知道历史里有几轮 |
+| `byte_size` | 平台实现 | `bytes.length`，自己能算 |
+| `updated_at` | 平台实现 | 平台有时钟，内核不该依赖它 |
 
-两边的凭据和机制现在是同构的——这本身是个好信号：说明 `AgentSessionStore` 这个接口没有偏向任何一方。
+所以 `AgentSessionStore.save` 多一个参数：
 
-#### 6.3.7 共享契约测试
+```ts
+save(
+  bytes: Uint8Array,
+  meta: { turnCount: number },
+  token: string | null,
+): Promise<string>;
+```
+
+**这些列买到了什么**（一条 SQL 就能答的问题）：
+
+- 哪些会话存在、各多大、各多少轮
+- 最后活动时间，据此清理长期不动的会话
+- join `doc_sessions` 拿到 `tenant_id`，做租户级用量统计
+
+**没买到的，说清楚**：按对话内容搜索、查「第 3 轮说了什么」。两者都要先解码 `bytes`。本次的设计里没有任何地方需要它们——UI 恢复聊天记录是把整段历史读出来解码，不是查询。真要做内容检索，得另建索引，属于另一件事。
+
+#### 6.3.7 为什么不是一轮一行
+
+考虑过 `agent_turns(doc_type, session_id, turn_no, bytes, ...)`——一轮一行，和 `deltas` 一样。它更可查询，追加也是增量的。不采用的理由：
+
+| | 一个会话一行（选定） | 一轮一行 |
+|---|---|---|
+| 读 | 一行，一次 | N 行，要排序拼接 |
+| 写 | 全量重写几十 KB | 追加一行 |
+| 裁剪（6.2） | 本来就是全量替换，天然契合 | 降级要 UPDATE 若干行、丢弃要 DELETE 若干行 |
+| 条件写 | 一个 `seq` 守住整体 | 要额外的版本列，且多行更新的原子性要靠事务 |
+| 内容可查询性 | 无 | **也无**——每行的 `bytes` 一样是 CBOR |
+
+最后一行是关键：一轮一行**并不能**让内容可查询，只是把不可查询的粒度变细了。而裁剪就地生效（6.2.6）意味着历史不是纯追加的，一轮一行的主要优势（增量追加）在这里本就发挥不出来。
+
+如果将来真的需要按轮查询（比如做对话回放或审计），再拆表不迟——那时 `bytes` 的格式已经稳定，拆分是一次机械迁移。
+
+#### 6.3.8 共享契约测试
 
 `doctype-server-common/src/testing/port-contract.ts` 已经立了「一份契约测试，两个平台各跑一遍」的先例。内核从 `@unidocs/doctype-server-common/agent` 导出同样形状的 `agentSessionStoreContract(makeStore)`，覆盖：
 
 - 空 store 的 `load()` 返回 null
-- `save(bytes, null)` 之后 `load()` 拿回同样的字节
+- `save(bytes, meta, null)` 之后 `load()` 拿回同样的字节
 - 用过期 token 调 `save` 抛 `SessionStoreConflictError`
 - `clear()` 之后 `load()` 返回 null
 - 两个并发 `save` 只有一个成功
+- `save` 之后元数据列可查：`turn_count` / `byte_size` / `updated_at` 都不为空且与传入一致（6.3.6）
 - **存进去的字节含 SBlob 时，读回来 `isSBlob()` 仍为 true**（这条是为了钉死 6.1.1：任何一天有人把实现悄悄换成 JSON，这条会红）
 
 ### 6.4 引用保活：让历史里的图片不被回收
@@ -1358,6 +1422,10 @@ V8 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽�
 | 本次范围 | A + B + C，B 里只推迟摘要压缩 |
 | 会话历史的序列化格式 | SValue CBOR，**不能用 JSON**——SBlob 的品牌是 Symbol，`JSON.stringify` 会丢。端口层现有的两个 `DeltaLog` 恰恰用了 JSON，所以承载不了含 SBlob 的值 |
 | 字节存哪儿 | 直接进表的字节列：CF 用 DO SQLite `BLOB`，Azure 用 Postgres `BYTEA`。不绕 CAS——历史每轮都变，内容寻址去重收益接近零 |
+| 会话表怎么定位 | 用 `session_id`，不用 doc id。这是仓库刻意迁过去的约定——`migrations/0002_session_identity.sql` 把 `deltas` / `doc_snapshots` 的 `doc_id` 列改名成了 `session_id`，`doc_sessions` 负责映射到 `(tenant_id, doc_type)` |
+| 两端表名与列 | 完全一致：`agent_sessions`，同样的 `seq` / `turn_count` / `byte_size` / `updated_at` / `bytes`。唯一差别是主键——CF 用 `singleton`（一个 DO 只装一个 session），Azure 用 `(doc_type, session_id)`（一张表装所有）。这是承载方式的必然差异（6.3.4） |
+| bytes 不可查询怎么办 | 元数据单独成列。`turn_count` 由内核给（只有它知道），`byte_size` / `updated_at` 由平台自己算。买到的是「哪些会话、多大、多少轮、多久没动」；没买到的是内容检索——本次没有任何地方需要它（6.3.6） |
+| 为什么不是一轮一行 | 一轮一行**也不能**让内容可查询，只是把不可查询的粒度变细；而裁剪就地生效意味着历史不是纯追加，它的主要优势发挥不出来（6.3.7） |
 | 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
 | 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样撑爆上下文；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`、叶子包传的阈值），不通过代码（6.2.2） |
 | 裁剪的最小单位 | 一轮（assistant + 它全部的 tool 消息），不是一条消息——否则会切出孤立的 `tool_result`，被 API 拒绝 |
