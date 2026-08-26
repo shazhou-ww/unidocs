@@ -1467,10 +1467,12 @@ Use an explicit three-phase rollout. There is no implicit fallback mode.
       and delete `dual` mode.
 - [ ] Make the final/default production mode `capability`; an absent mode or
       absent trust configuration must not silently select legacy behavior.
-- [ ] Update local development and integration harnesses to issue real test
+- [x] Update local development and integration harnesses to issue real test
       capabilities rather than inserting a magic shared token.
 
-Repository implementation status: Phase A/B code paths are ready for deployment.
+Task 7 is not complete: repository implementation for Phase A/B is ready for
+deployment, but the production deployment, observation, rollback-window, and
+secret-destruction gates remain open.
 Doc and CAS service edges emit token-free authentication events containing
 credential kind, route generation, operation, tenant, and capability key/token
 identifiers where applicable. In `dual` mode, tenant routes require capabilities
@@ -1524,7 +1526,7 @@ Doc/CAS runtime.
       equivalent renamed bypass.
 - [ ] Probe every active Doc/CAS runtime with the retired legacy header and
       verify `401`; confirm capability-authenticated smoke paths still succeed.
-- [ ] Add a focused throughput/latency check for two Gateway signatures plus
+- [x] Add a focused throughput/latency check for two Gateway signatures plus
       local Doc/CAS verification. Treat external signer throttling or material
       latency as a deployment issue, not a reason to broaden token lifetime or
       cache bearer tokens across operations.
@@ -1574,6 +1576,12 @@ Task 8 implementation record (in progress, 2026-08-26):
       `401`. The test models the post-wait configuration transition; production
       operations still enforce the documented $300+30=330$ second wait before
       removing old trust.
+- A focused local latency gate warms up and samples 50 complete apply credential
+      sequences. Each sample performs two real ES256 Gateway signatures, local
+      Doc verification of the primary and delegated capabilities, and CAS
+      verification of the delegated capability. It emits p50, p95, and
+      operations/second metadata without tokens and fails when local p95 reaches
+      100 ms; external signer latency remains a deployment gate.
 
 Final validation:
 
