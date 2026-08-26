@@ -37,7 +37,7 @@ export function runBehaviorSuite(getRuntime) {
   const GW = () => getRuntime().urls.gateway;
 
   async function createDoc(userId) {
-    const res = await closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+    const res = await closeFetch(`${GW()}/tenants/${userId}/docs/markdown/`, {
       method: "POST",
     });
     const body = await res.json();
@@ -46,7 +46,7 @@ export function runBehaviorSuite(getRuntime) {
   }
 
   function applyOp(docId, baseVersion, content, userId) {
-    return closeFetch(`${GW()}/users/${userId}/docs/markdown/${docId}/apply`, {
+    return closeFetch(`${GW()}/tenants/${userId}/docs/markdown/${docId}/apply`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -60,7 +60,7 @@ export function runBehaviorSuite(getRuntime) {
   describe("markdown behavior suite", () => {
     test("同一个 Idempotency-Key 的并发 create 只保留一个 Gateway 文档", async () => {
       const userId = `idempotent-user-${crypto.randomUUID()}`;
-      const create = () => closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+      const create = () => closeFetch(`${GW()}/tenants/${userId}/docs/markdown/`, {
         method: "POST",
         headers: { "Idempotency-Key": "create-once" },
       });
@@ -72,21 +72,21 @@ export function runBehaviorSuite(getRuntime) {
 
       const docId = bodies[0].docId;
       const status = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}`,
       );
       await expect(status.json()).resolves.toMatchObject({
         success: true,
         data: { doc_id: docId, state: "ready", version: 1 },
       });
 
-      const list = await closeFetch(`${GW()}/users/${userId}/docs/markdown/`);
+      const list = await closeFetch(`${GW()}/tenants/${userId}/docs/markdown/`);
       const listed = await list.json();
       expect(listed.data.filter(record => record.doc_id === docId)).toHaveLength(1);
     });
 
     test("同一个 Idempotency-Key 不能绑定两个显式 docId", async () => {
       const userId = `idempotent-explicit-${crypto.randomUUID()}`;
-      const create = (docId) => closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+      const create = (docId) => closeFetch(`${GW()}/tenants/${userId}/docs/markdown/`, {
         method: "POST",
         headers: {
           "Idempotency-Key": "explicit-once",
@@ -118,7 +118,7 @@ export function runBehaviorSuite(getRuntime) {
 
       // 只有一条 delta 落地:创建时的 version 1,加上胜出的那个 version 2
       const history = await closeFetch(
-        `${GW()}/users/concurrent-user/docs/markdown/${docId}/history`,
+        `${GW()}/tenants/concurrent-user/docs/markdown/${docId}/history`,
       );
       const { data } = await history.json();
       expect(data.map((entry) => entry.version)).toEqual([1, 2]);
@@ -154,7 +154,7 @@ export function runBehaviorSuite(getRuntime) {
       expect((await applyOp(docId, 2, "B", userId)).status).toBe(200); // v3
 
       const rollback = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/rollback`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/rollback`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -167,7 +167,7 @@ export function runBehaviorSuite(getRuntime) {
       });
 
       const query = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/query`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/query`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -180,7 +180,7 @@ export function runBehaviorSuite(getRuntime) {
 
       // rollback 是一条合成 delta,不删除任何历史
       const history = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/history`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/history`,
       );
       const { data } = await history.json();
       expect(data.map((entry) => entry.version)).toEqual([1, 2, 3, 4]);
@@ -195,7 +195,7 @@ export function runBehaviorSuite(getRuntime) {
 
       const targetId = `${sourceId}-clone`;
       const adopt = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/`,
+        `${GW()}/tenants/${userId}/docs/markdown/`,
         {
           method: "POST",
           headers: {
@@ -211,7 +211,7 @@ export function runBehaviorSuite(getRuntime) {
       });
 
       const query = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${targetId}/query`,
+        `${GW()}/tenants/${userId}/docs/markdown/${targetId}/query`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -229,7 +229,7 @@ export function runBehaviorSuite(getRuntime) {
       expect((await applyOp(docId, 1, "# Round Trip", userId)).status).toBe(200);
 
       const exported = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/export`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/export`,
       );
       expect(exported.ok).toBe(true);
       const bytes = new Uint8Array(await exported.arrayBuffer());
@@ -238,7 +238,7 @@ export function runBehaviorSuite(getRuntime) {
       const form = new FormData();
       form.append("file", new File([bytes], "exported.md", { type: "text/markdown" }));
 
-      const imported = await closeFetch(`${GW()}/users/${userId}/docs/markdown/`, {
+      const imported = await closeFetch(`${GW()}/tenants/${userId}/docs/markdown/`, {
         method: "POST",
         headers: { "X-Doc-Id": `${docId}-imported` },
         body: form,
@@ -247,7 +247,7 @@ export function runBehaviorSuite(getRuntime) {
       expect(importedBody.success, JSON.stringify(importedBody)).toBe(true);
 
       const query = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}-imported/query`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}-imported/query`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -263,7 +263,7 @@ export function runBehaviorSuite(getRuntime) {
       const docId = await createDoc(userId);
 
       const baseline = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/query`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/query`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -277,7 +277,7 @@ export function runBehaviorSuite(getRuntime) {
       // 第一条 setContent 会成功;第二条 replaceSection 引用不存在的 heading 必抛。
       // 如果 apply 不是"全部成功或全部不生效",第一条的效果会残留下来。
       const res = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/apply`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/apply`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -298,7 +298,7 @@ export function runBehaviorSuite(getRuntime) {
       expect(body.version).toBe(1);
 
       const query = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/query`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/query`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -309,7 +309,7 @@ export function runBehaviorSuite(getRuntime) {
       expect(queryBody.data).toBe(initialContent);
 
       const history = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/${docId}/history`,
+        `${GW()}/tenants/${userId}/docs/markdown/${docId}/history`,
       );
       const { data } = await history.json();
       expect(data.map((entry) => entry.version)).toEqual([1]);
@@ -318,7 +318,7 @@ export function runBehaviorSuite(getRuntime) {
     test("公开 API 拒绝裸 hash init_from_hash", async () => {
       const userId = "clone-reject-user";
       const res = await closeFetch(
-        `${GW()}/users/${userId}/docs/markdown/raw-clone/init_from_hash`,
+        `${GW()}/tenants/${userId}/docs/markdown/raw-clone/init_from_hash`,
         {
         method: "POST",
           headers: { "Content-Type": "application/json" },

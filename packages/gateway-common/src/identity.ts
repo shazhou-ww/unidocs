@@ -5,17 +5,17 @@ export interface GatewayIdentity {
 }
 
 export interface GatewayIdentityResolver {
-  resolve(request: Request, requestedUserId: string): Promise<GatewayIdentity | null>;
+  resolve(request: Request, requestedTenantId: string): Promise<GatewayIdentity | null>;
 }
 
 /** Development compatibility only. Production adapters must use real auth. */
-export function createInsecurePathIdentityResolver(enabled: boolean): GatewayIdentityResolver {
+export function createInsecureTenantIdentityResolver(enabled: boolean): GatewayIdentityResolver {
   return {
-    async resolve(_request, requestedUserId) {
+    async resolve(_request, requestedTenantId) {
       if (!enabled) return null;
       return {
-        userId: requestedUserId,
-        tenantId: requestedUserId,
+        userId: `local:${requestedTenantId}`,
+        tenantId: requestedTenantId,
         canManageTenant: true,
       };
     },

@@ -46,6 +46,17 @@ describe("Gateway D1 migrations", () => {
 
     await db.exec(await readFile(migration("0003_drop_legacy_doc_index.sql"), "utf8"));
     await db.exec(await readFile(migration("0004_requested_doc_id.sql"), "utf8"));
+    await db.exec(await readFile(migration("0005_tenant_directory.sql"), "utf8"));
+    await expect(db.prepare(
+      "SELECT * FROM gateway_documents WHERE tenant_id = ? AND doc_id = ?",
+    ).bind("alice", "doc-1").first()).resolves.toMatchObject({
+      tenant_id: "alice",
+      session_id: "alice:doc-1",
+      version: 21,
+    });
+    const columns = await db.prepare("PRAGMA table_info(gateway_documents)")
+      .all<{ name: string }>();
+    expect(columns.results.map(column => column.name)).not.toContain("owner_id");
     const tables = await db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table'",
     ).all<{ name: string }>();

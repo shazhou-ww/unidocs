@@ -47,7 +47,7 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
   const digest = await computeNodeDigest(header, "image/png", [], PNG_1x1);
   const hash = hashToHex(digest);
 
-  const lease = await closeFetch(`${GW()}/users/${userId}/cas/nodes/${hash}`, {
+  const lease = await closeFetch(`${GW()}/tenants/${userId}/cas/nodes/${hash}`, {
     method: "POST",
     headers: {
       "Content-Type": "image/png",
@@ -58,7 +58,7 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
   });
   expect(lease.ok, await lease.text()).toBe(true);
 
-  const create = await closeFetch(`${GW()}/users/${userId}/docs/docx/`, {
+  const create = await closeFetch(`${GW()}/tenants/${userId}/docs/docx/`, {
     method: "POST",
   });
   const created = await create.json();
@@ -75,7 +75,7 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
     }],
   });
   const apply = await closeFetch(
-    `${GW()}/users/${userId}/docs/docx/${docId}/apply`,
+    `${GW()}/tenants/${userId}/docs/docx/${docId}/apply`,
     {
       method: "POST",
       headers: { "Content-Type": SValueContentType },
@@ -91,7 +91,7 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
 
   // 下一次请求重试 recoverable outbox，成功提交 version 2。
   const history = await closeFetch(
-    `${GW()}/users/${userId}/docs/docx/${docId}/history`,
+    `${GW()}/tenants/${userId}/docs/docx/${docId}/history`,
     { headers: { Accept: SValueContentType } },
   );
   const historyError = history.ok ? "" : await history.clone().text();
@@ -103,7 +103,7 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
 
   // 恢复后的文档包含已确认提交的操作。
   const query = await closeFetch(
-    `${GW()}/users/${userId}/docs/docx/${docId}/query`,
+    `${GW()}/tenants/${userId}/docs/docx/${docId}/query`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -66,7 +66,7 @@ test("insertImage round-trips on the Azure stack", async () => {
   const hash = hashToHex(digest);
 
   // 上传经 Azure gateway —— 它把公开 CAS 路由代理到过渡形态的 CAS worker。
-  const upload = await closeFetch(`${azure.urls.gateway}/users/${USER}/cas/nodes/${hash}`, {
+  const upload = await closeFetch(`${azure.urls.gateway}/tenants/${USER}/cas/nodes/${hash}`, {
     method: "POST",
     headers: {
       "Content-Type": "image/png",
@@ -78,7 +78,7 @@ test("insertImage round-trips on the Azure stack", async () => {
   expect(upload.ok, JSON.stringify(await upload.clone().text())).toBe(true);
   expect(await upload.json()).toMatchObject({ ready: true });
 
-  const created = await closeFetch(`${azure.urls.gateway}/users/${USER}/docs/docx/`, {
+  const created = await closeFetch(`${azure.urls.gateway}/tenants/${USER}/docs/docx/`, {
     method: "POST",
   });
   const createdBody = await created.json();
@@ -93,7 +93,7 @@ test("insertImage round-trips on the Azure stack", async () => {
     ],
   });
   const applied = await closeFetch(
-    `${azure.urls.gateway}/users/${USER}/docs/docx/${docId}/apply`,
+    `${azure.urls.gateway}/tenants/${USER}/docs/docx/${docId}/apply`,
     {
       method: "POST",
       headers: { "Content-Type": SValueContentType },
@@ -105,7 +105,7 @@ test("insertImage round-trips on the Azure stack", async () => {
   expect(appliedBody).toMatchObject({ success: true, version: 2 });
 
   const queried = await closeFetch(
-    `${azure.urls.gateway}/users/${USER}/docs/docx/${docId}/query`,
+    `${azure.urls.gateway}/tenants/${USER}/docs/docx/${docId}/query`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

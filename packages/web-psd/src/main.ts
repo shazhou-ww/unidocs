@@ -16,7 +16,7 @@ import { CasBlobStore, DocSession, loadDoc, RenderClient, Viewport } from "@unid
 
 const GW = "/gw"; // Vite proxies this to the gateway (see vite.config.ts)
 const USER = "u1";
-const API_BASE_URL = `${GW}/users/${USER}`;
+const API_BASE_URL = `${GW}/tenants/${USER}`;
 const TYPE = "psd";
 
 let docId: string | null = null;
@@ -315,7 +315,7 @@ async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   try {
     const fd = new FormData();
     fd.append("file", new Blob([bytes as BlobPart]), label);
-    const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/`, { method: "POST", body: fd });
+    const r = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/`, { method: "POST", body: fd });
     const body = await r.json();
     if (!body.success) throw new Error(body.error ?? "create failed");
     docId = body.docId;
@@ -336,7 +336,7 @@ saveBtn.onclick = () => {
   if (!docId) return;
   // Server export (GET) — same-origin via proxy, so the browser downloads it.
   const a = document.createElement("a");
-  a.href = `${GW}/users/${USER}/docs/${TYPE}/${docId}/export`;
+  a.href = `${GW}/tenants/${USER}/docs/${TYPE}/${docId}/export`;
   a.download = "export.psd";
   a.click();
 };
@@ -373,7 +373,7 @@ async function sendChat(text: string): Promise<void> {
   addMsg("user", text);
   const thinking = addMsg("agent", "thinking…", true);
   try {
-    const r = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/run`, {
+    const r = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/${docId}/run`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ instruction: text }),

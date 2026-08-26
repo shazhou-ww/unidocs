@@ -10,7 +10,6 @@ import type { Pool } from "pg";
 
 interface GatewayDocumentRow {
   doc_id: string;
-  owner_id: string;
   tenant_id: string;
   doc_type: string;
   service_id: string;
@@ -34,15 +33,14 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
   async reserve(input: ReserveGatewayDocumentInput): Promise<GatewayDocumentReservation> {
     const inserted = await this.#pool.query<GatewayDocumentRow>(
       `INSERT INTO gateway_documents
-        (owner_id, doc_id, tenant_id, doc_type, service_id, session_id,
+        (tenant_id, doc_id, doc_type, service_id, session_id,
          idempotency_key, requested_doc_id, state, version, error, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'creating', NULL, NULL, $9, $9)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'creating', NULL, NULL, $8, $8)
        ON CONFLICT DO NOTHING
        RETURNING *`,
       [
-        input.userId,
-        input.docId,
         input.tenantId,
+        input.docId,
         input.docType,
         input.serviceId,
         input.sessionId,
@@ -55,9 +53,9 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
       return { record: fromRow(inserted.rows[0]), created: true };
     }
 
-    const existing = await this.#findByIdempotencyKey(input.userId, input.idempotencyKey);
+    const existing = await this.#findByIdempotencyKey(input.tenantId, input.idempotencyKey);
     if (!existing) {
-      if (await this.get(input.userId, input.docId)) {
+      if (await this.get(input.tenantId, input.docId)) {
         throw new GatewayDirectoryConflictError(`Document ${input.docId} already exists`);
       }
       throw new Error("Gateway document reservation was not persisted");
@@ -66,26 +64,26 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
     return { record: existing, created: false };
   }
 
-  async get(userId: string, docId: string): Promise<GatewayDocumentRecord | null> {
+  async get(tenantId: string, docId: string): Promise<GatewayDocumentRecord | null> {
     const result = await this.#pool.query<GatewayDocumentRow>(
-      "SELECT * FROM gateway_documents WHERE owner_id = $1 AND doc_id = $2",
-      [userId, docId],
+      "SELECT * FROM gateway_documents WHERE tenant_id = $1 AND doc_id = $2",
+      [tenantId, docId],
     );
     return result.rows[0] ? fromRow(result.rows[0]) : null;
   }
 
-  async list(userId: string, docType: string): Promise<readonly GatewayDocumentRecord[]> {
+  async list(tenantId: string, docType: string): Promise<readonly GatewayDocumentRecord[]> {
     const result = await this.#pool.query<GatewayDocumentRow>(
       `SELECT * FROM gateway_documents
-       WHERE owner_id = $1 AND doc_type = $2 AND state = 'ready'
+      WHERE tenant_id = $1 AND doc_type = $2 AND state = 'ready'
        ORDER BY updated_at DESC`,
-      [userId, docType],
+      [tenantId, docType],
     );
     return result.rows.map(fromRow);
   }
 
   async markReady(
-    userId: string,
+    tenantId: string,
     docId: string,
     version: number,
     updatedAt: number,
@@ -96,9 +94,9 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
     const result = await this.#pool.query<GatewayDocumentRow>(
       `UPDATE gateway_documents
        SET state = 'ready', version = $3, error = NULL, updated_at = $4
-       WHERE owner_id = $1 AND doc_id = $2 AND state IN ('creating', 'ready')
+      WHERE tenant_id = $1 AND doc_id = $2 AND state IN ('creating', 'ready')
        RETURNING *`,
-      [userId, docId, version, updatedAt],
+      [tenantId, docId, version, updatedAt],
     );
     if (!result.rows[0]) {
       throw new GatewayDirectoryConflictError(`Document ${docId} cannot become ready`);
@@ -107,7 +105,7 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
   }
 
   async markFailed(
-    userId: string,
+    tenantId: string,
     docId: string,
     error: string,
     updatedAt: number,
@@ -115,9 +113,9 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
     const result = await this.#pool.query<GatewayDocumentRow>(
       `UPDATE gateway_documents
        SET state = 'failed', error = $3, updated_at = $4
-       WHERE owner_id = $1 AND doc_id = $2 AND state IN ('creating', 'failed')
+      WHERE tenant_id = $1 AND doc_id = $2 AND state IN ('creating', 'failed')
        RETURNING *`,
-      [userId, docId, error, updatedAt],
+      [tenantId, docId, error, updatedAt],
     );
     if (!result.rows[0]) {
       throw new GatewayDirectoryConflictError(`Document ${docId} cannot become failed`);
@@ -125,11 +123,11 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
     return fromRow(result.rows[0]);
   }
 
-  async touch(userId: string, docId: string, updatedAt: number): Promise<void> {
+  async touch(tenantId: string, docId: string, updatedAt: number): Promise<void> {
     const result = await this.#pool.query(
       `UPDATE gateway_documents SET updated_at = $3
-       WHERE owner_id = $1 AND doc_id = $2 AND state = 'ready'`,
-      [userId, docId, updatedAt],
+      WHERE tenant_id = $1 AND doc_id = $2 AND state = 'ready'`,
+          [tenantId, docId, updatedAt],
     );
     if (result.rowCount !== 1) {
       throw new GatewayDirectoryConflictError(`Document ${docId} is not ready`);
@@ -137,12 +135,12 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
   }
 
   async #findByIdempotencyKey(
-    userId: string,
+    tenantId: string,
     idempotencyKey: string,
   ): Promise<GatewayDocumentRecord | null> {
     const result = await this.#pool.query<GatewayDocumentRow>(
-      "SELECT * FROM gateway_documents WHERE owner_id = $1 AND idempotency_key = $2",
-      [userId, idempotencyKey],
+      "SELECT * FROM gateway_documents WHERE tenant_id = $1 AND idempotency_key = $2",
+      [tenantId, idempotencyKey],
     );
     return result.rows[0] ? fromRow(result.rows[0]) : null;
   }
@@ -151,7 +149,6 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
 function fromRow(row: GatewayDocumentRow): GatewayDocumentRecord {
   return {
     docId: row.doc_id,
-    userId: row.owner_id,
     tenantId: row.tenant_id,
     docType: row.doc_type,
     serviceId: row.service_id,

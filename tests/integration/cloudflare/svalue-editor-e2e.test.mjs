@@ -33,13 +33,13 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
     ports,
   });
 
-  const create = await request("/users/alice/docs/markdown/", { method: "POST" });
+  const create = await request("/tenants/alice/docs/markdown/", { method: "POST" });
   const created = await create.json();
   expect(create.ok, JSON.stringify(created)).toBe(true);
   expect(created).toMatchObject({ success: true, version: 1 });
   const { docId } = created;
 
-  const apply = await request(`/users/alice/docs/markdown/${docId}/apply`, {
+  const apply = await request(`/tenants/alice/docs/markdown/${docId}/apply`, {
     method: "POST",
     body: JSON.stringify({
       baseVersion: 1,
@@ -52,7 +52,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
   expect(apply.ok, JSON.stringify(applied)).toBe(true);
   expect(applied).toMatchObject({ success: true, version: 2 });
 
-  const retry = await request(`/users/alice/docs/markdown/${docId}/apply`, {
+  const retry = await request(`/tenants/alice/docs/markdown/${docId}/apply`, {
     method: "POST",
     body: JSON.stringify({
       baseVersion: 1,
@@ -65,7 +65,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
   expect(retry.ok, JSON.stringify(retried)).toBe(true);
   expect(retried).toMatchObject({ success: true, version: 2 });
 
-  const stateResponse = await request(`/users/alice/docs/markdown/${docId}/ir`);
+  const stateResponse = await request(`/tenants/alice/docs/markdown/${docId}/ir`);
   const stateError = stateResponse.ok ? "" : await stateResponse.clone().text();
   expect(stateResponse.ok, `${stateResponse.status}: ${stateError}`).toBe(true);
   expect(stateResponse.headers.get("content-type")).toContain(SValueContentType);
@@ -74,7 +74,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
     content: "# Durable",
   });
 
-  const query = await request(`/users/alice/docs/markdown/${docId}/query`, {
+  const query = await request(`/tenants/alice/docs/markdown/${docId}/query`, {
     method: "POST",
     body: JSON.stringify({ kind: "getContent" }),
   });
@@ -84,7 +84,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
     version: 2,
   });
 
-  const history = await request(`/users/alice/docs/markdown/${docId}/history`);
+  const history = await request(`/tenants/alice/docs/markdown/${docId}/history`);
   const historyBody = await history.json();
   expect(history.ok, JSON.stringify(historyBody)).toBe(true);
   expect(historyBody.data).toEqual([
@@ -97,7 +97,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
   ]);
 
   const cloneId = "markdown-clone";
-  const clone = await request("/users/alice/docs/markdown/", {
+  const clone = await request("/tenants/alice/docs/markdown/", {
     method: "POST",
     headers: { "X-Doc-Id": cloneId },
     body: JSON.stringify({ sourceId: docId }),
@@ -106,7 +106,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
   expect(clone.ok, JSON.stringify(cloned)).toBe(true);
   expect(cloned).toMatchObject({ success: true, docId: cloneId, version: 1 });
 
-  const cloneQuery = await request(`/users/alice/docs/markdown/${cloneId}/query`, {
+  const cloneQuery = await request(`/tenants/alice/docs/markdown/${cloneId}/query`, {
     method: "POST",
     body: JSON.stringify({ kind: "getContent" }),
   });
@@ -116,14 +116,14 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
     version: 1,
   });
 
-  const crossUserClone = await request("/users/bob/docs/markdown/", {
+  const crossUserClone = await request("/tenants/bob/docs/markdown/", {
     method: "POST",
     headers: { "X-Doc-Id": "foreign" },
     body: JSON.stringify({ sourceId: docId }),
   });
   expect(crossUserClone.ok).toBe(false);
 
-  const rollback = await request(`/users/alice/docs/markdown/${docId}/rollback`, {
+  const rollback = await request(`/tenants/alice/docs/markdown/${docId}/rollback`, {
     method: "POST",
     body: JSON.stringify({ version: 1 }),
   });
@@ -139,7 +139,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
     ports,
   });
 
-  const afterRestart = await request(`/users/alice/docs/markdown/${docId}/query`, {
+  const afterRestart = await request(`/tenants/alice/docs/markdown/${docId}/query`, {
     method: "POST",
     body: JSON.stringify({ kind: "getContent" }),
   });
@@ -147,7 +147,7 @@ test("SValue Editor retains deltas and snapshots across rollback and restart", a
   expect(afterRestart.ok, JSON.stringify(restarted)).toBe(true);
   expect(restarted).toMatchObject({ success: true, data: "", version: 3 });
 
-  const afterHistory = await request(`/users/alice/docs/markdown/${docId}/history`);
+  const afterHistory = await request(`/tenants/alice/docs/markdown/${docId}/history`);
   const afterHistoryBody = await afterHistory.json();
   expect(afterHistoryBody.data).toHaveLength(3);
   expect(afterHistoryBody.data[2]).toMatchObject({
@@ -166,11 +166,11 @@ test("DOCX reconstructs its manifest from snapshot plus retained delta", async (
     ports,
   });
 
-  const create = await request("/users/alice/docs/docx/", { method: "POST" });
+  const create = await request("/tenants/alice/docs/docx/", { method: "POST" });
   const created = await create.json();
   expect(create.ok, JSON.stringify(created)).toBe(true);
 
-  const apply = await request(`/users/alice/docs/docx/${created.docId}/apply`, {
+  const apply = await request(`/tenants/alice/docs/docx/${created.docId}/apply`, {
     method: "POST",
     body: JSON.stringify({
       baseVersion: 1,
@@ -190,7 +190,7 @@ test("DOCX reconstructs its manifest from snapshot plus retained delta", async (
     ports,
   });
 
-  const query = await request(`/users/alice/docs/docx/${created.docId}/query`, {
+  const query = await request(`/tenants/alice/docs/docx/${created.docId}/query`, {
     method: "POST",
     body: JSON.stringify({ kind: "getText" }),
   });

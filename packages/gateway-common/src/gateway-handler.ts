@@ -6,9 +6,8 @@
  * to the CAS worker/service.
  *
  * Identity:
- *   Public userId comes from the URL path.
- *   Future Bearer tokens must bind to that userId.
- *   CAS receives only the tenant resolved by Gateway, never the userId.
+ *   Public tenantId comes from the URL path.
+ *   The identity resolver authenticates the user and authorizes that tenant.
  *
  * Internal auth:
  *   Gateway → doc worker / CAS worker: X-Internal-Token
@@ -16,15 +15,32 @@
  */
 
 import type { HttpFetcher } from "@unidocs/cas-client";
+import { casRoutes, matchCasRoute } from "@unidocs/protocol-cas";
+import type { CasRoute } from "@unidocs/protocol-cas";
+import { docRoutes } from "@unidocs/protocol-doc";
+import type { DocOperation } from "@unidocs/protocol-doc";
 import {
   GatewayDirectoryConflictError,
   type GatewayDocumentDirectory,
   type GatewayDocumentRecord,
 } from "./document-directory.js";
 import type { GatewayIdentityResolver } from "./identity.js";
+import { casCapabilityPolicy, docCapabilityPolicy } from "./capability-policy.js";
+import type { GatewayCapabilityAuthority } from "./capability-authority.js";
+
+export type GatewayInternalAuthMode = "legacy" | "dual" | "capability";
+
+export function parseGatewayInternalAuthMode(
+  value: string | undefined,
+): GatewayInternalAuthMode {
+  if (value === "legacy" || value === "dual" || value === "capability") return value;
+  throw new TypeError("Gateway internal auth mode must be explicit");
+}
 
 export interface GatewayHandlerConfig {
-  casAccessKey: string;
+  internalAuthMode: GatewayInternalAuthMode;
+  casAccessKey?: string;
+  capabilityAuthority?: GatewayCapabilityAuthority;
   identityResolver: GatewayIdentityResolver;
   resolveDocService(docType: string): Promise<DocServiceRegistration | null>;
   casFetcher: HttpFetcher;
@@ -37,7 +53,8 @@ export interface GatewayHandlerConfig {
 export interface DocServiceRegistration {
   readonly serviceId: string;
   readonly url: string;
-  readonly accessKey: string;
+  readonly accessKey?: string;
+  readonly audience?: string;
 }
 
 const EDITOR_METHODS = new Set([
@@ -58,6 +75,7 @@ const CAS_FORWARDED_HEADERS = [
 export function createGatewayHandler(
   cfg: GatewayHandlerConfig,
 ): (request: Request) => Promise<Response> {
+  validateInternalAuthConfig(cfg);
   const generateId = cfg.generateId ?? (() => crypto.randomUUID());
   const now = cfg.now ?? (() => Date.now());
 
@@ -65,28 +83,29 @@ export function createGatewayHandler(
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
 
-    if (parts.length < 3 || parts[0] !== "users") {
+    if (parts.length < 3 || parts[0] !== "tenants") {
       return Response.json({
-        error: "Use /users/{userId}/docs/{docType}/* or /users/{userId}/cas/* endpoints",
+        error: "Use /tenants/{tenantId}/docs/{docType}/* or /tenants/{tenantId}/cas/* endpoints",
       }, { status: 404 });
     }
 
-    const userId = parts[1];
+    const tenantId = parts[1];
     const namespace = parts[2];
-    const identity = await cfg.identityResolver.resolve(request, userId);
+    const identity = await cfg.identityResolver.resolve(request, tenantId);
     if (!identity) {
       return Response.json({ error: "Authentication required" }, { status: 401 });
     }
-    if (identity.userId !== userId) {
+    if (identity.tenantId !== tenantId) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
-    const tenantId = identity.tenantId;
 
     if (namespace === "cas") {
-      if (!cfg.isPublicCasRoute(request.method, url.pathname)) {
+      const casRoute = matchCasRoute(request.method, url.pathname);
+      if (!casRoute || !cfg.isPublicCasRoute(request.method, url.pathname)) {
         return Response.json({ error: "Unknown CAS endpoint" }, { status: 404 });
       }
-      if (parts[3] === "usage" && !identity.canManageTenant) {
+      const policy = casCapabilityPolicy(casRoute);
+      if (policy.requiresTenantAdmin && !identity.canManageTenant) {
         return Response.json({ error: "Tenant administration required" }, { status: 403 });
       }
       const headers = new Headers();
@@ -94,10 +113,18 @@ export function createGatewayHandler(
         const value = request.headers.get(name);
         if (value) headers.set(name, value);
       }
-      headers.set("X-Internal-Token", cfg.casAccessKey);
-      headers.set("X-Tenant-Id", tenantId);
+      if (usesLegacyAuth(cfg.internalAuthMode)) {
+        headers.set("X-Internal-Token", cfg.casAccessKey!);
+        headers.set("X-Tenant-Id", tenantId);
+      }
+      if (usesCapabilityAuth(cfg.internalAuthMode)) {
+        headers.set(
+          "Authorization",
+          await cfg.capabilityAuthority!.issueCasOperation(casRoute),
+        );
+      }
       const targetUrl = new URL(request.url);
-      targetUrl.pathname = `/tenants/${encodeURIComponent(tenantId)}/cas/${parts.slice(3).join("/")}`;
+      targetUrl.pathname = publicCasPath(casRoute);
       return cfg.casFetcher.fetch(new Request(targetUrl, {
         method: request.method,
         headers,
@@ -108,7 +135,7 @@ export function createGatewayHandler(
 
     if (namespace !== "docs") {
       return Response.json({
-        error: "Use /users/{userId}/docs/{docType}/* or /users/{userId}/cas/* endpoints",
+        error: "Use /tenants/{tenantId}/docs/{docType}/* or /tenants/{tenantId}/cas/* endpoints",
       }, { status: 404 });
     }
 
@@ -118,7 +145,7 @@ export function createGatewayHandler(
 
     if (!docType) {
       return Response.json({
-        error: "Use /users/{userId}/docs/{docType}/* endpoints",
+        error: "Use /tenants/{tenantId}/docs/{docType}/* endpoints",
       }, { status: 404 });
     }
 
@@ -138,7 +165,6 @@ export function createGatewayHandler(
             request,
             cfg,
             docService,
-            userId,
             tenantId,
             docType,
             sourceDocId: cloneSource,
@@ -150,7 +176,6 @@ export function createGatewayHandler(
           request,
           cfg,
           docService,
-          userId,
           tenantId,
           docType,
           generateId,
@@ -158,12 +183,12 @@ export function createGatewayHandler(
         });
       }
       if (request.method === "GET") {
-        return listDocuments(cfg.directory, userId, docType);
+        return listDocuments(cfg.directory, tenantId, docType);
       }
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
 
-    const record = await cfg.directory.get(userId, docId);
+    const record = await cfg.directory.get(tenantId, docId);
     if (!record || record.docType !== docType) {
       return Response.json({ error: "Document not found" }, { status: 404 });
     }
@@ -186,17 +211,19 @@ export function createGatewayHandler(
     }
 
     if (method && (EDITOR_METHODS.has(method) || OPERATOR_METHODS.has(method))) {
+      const operation = docOperation(method);
       const response = await forwardToWorker(
         request,
+        cfg,
         docService.url,
         tenantId,
         docType,
-        docService.accessKey,
+        docService,
         record.sessionId,
-        method,
+        operation,
       );
       if (response.ok && MUTATING_METHODS.has(method)) {
-        await cfg.directory.touch(userId, docId, now());
+        await cfg.directory.touch(tenantId, docId, now());
       }
       return response;
     }
@@ -209,35 +236,67 @@ export function createGatewayHandler(
 
 async function forwardToWorker(
   request: Request,
+  cfg: GatewayHandlerConfig,
   workerUrl: string,
   tenantId: string,
   docType: string,
-  accessKey: string,
-  sessionId?: string,
-  method?: string,
+  docService: DocServiceRegistration,
+  sessionId: string,
+  operation: DocOperation,
 ): Promise<Response> {
   const originalUrl = new URL(request.url);
-  if (!sessionId) throw new Error("Doc forwarding requires a sessionId");
-  const targetPath = ["sessions", sessionId, method].filter(Boolean).join("/");
-  const targetUrl = `${workerUrl}/${targetPath}${originalUrl.search}`;
+  const targetPath = usesCapabilityAuth(cfg.internalAuthMode)
+    ? docRoutes[operation]({ tenantId, sessionId })
+    : legacyDocPath(sessionId, operation);
+  const targetUrl = `${workerUrl}${targetPath}${originalUrl.search}`;
 
   const headers = new Headers();
   for (const name of ["Content-Type", "Content-Length", "Accept"]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  headers.set("X-Internal-Token", accessKey);
-  headers.set("X-Tenant-Id", tenantId);
-  headers.set("X-Doc-Type", docType);
-  headers.set("X-Session-Id", sessionId);
+  if (usesLegacyAuth(cfg.internalAuthMode)) {
+    if (!docService.accessKey) {
+      return Response.json({ error: "Document service legacy credential is unavailable" }, { status: 503 });
+    }
+    headers.set("X-Internal-Token", docService.accessKey);
+    headers.set("X-Tenant-Id", tenantId);
+    headers.set("X-Doc-Type", docType);
+    headers.set("X-Session-Id", sessionId);
+  }
+  const operationSignal = usesCapabilityAuth(cfg.internalAuthMode)
+    ? AbortSignal.any([
+      request.signal,
+      AbortSignal.timeout(
+        docCapabilityPolicy(operation, tenantId, sessionId).deadlineSeconds * 1000,
+      ),
+    ])
+    : request.signal;
+  if (usesCapabilityAuth(cfg.internalAuthMode)) {
+    if (!docService.audience) {
+      return Response.json({ error: "Document service capability audience is unavailable" }, { status: 503 });
+    }
+    const credentials = await cfg.capabilityAuthority!.issueDocOperation({
+      operation,
+      docType,
+      docAudience: docService.audience,
+      tenantId,
+      sessionId,
+    });
+    headers.set("Authorization", credentials.authorization);
+    if (credentials.delegatedCasCapability) {
+      headers.set("X-UniDocs-CAS-Capability", credentials.delegatedCasCapability);
+    }
+  }
   headers.set("Accept-Encoding", "identity");
 
   try {
     return await fetch(targetUrl, {
-      method: method ? request.method : "PUT",
+      method: operation === "create" ? "PUT" : request.method,
       headers,
       body: request.body,
       duplex: "half",
+      signal: operationSignal,
     } as RequestInit);
   } catch (err) {
     return Response.json({
@@ -248,17 +307,17 @@ async function forwardToWorker(
 
 async function listDocuments(
   directory: GatewayDocumentDirectory,
-  userId: string,
+  tenantId: string,
   docType: string,
 ): Promise<Response> {
-  const records = await directory.list(userId, docType);
+  const records = await directory.list(tenantId, docType);
 
   return Response.json({
     success: true,
     data: records.map((rec) => ({
       doc_id: rec.docId,
       doc_type: rec.docType,
-      owner_id: rec.userId,
+      owner_id: rec.tenantId,
       version: rec.version,
       created_at: rec.createdAt,
       updated_at: rec.updatedAt,
@@ -271,7 +330,6 @@ interface CreateDocumentContext {
   request: Request;
   cfg: GatewayHandlerConfig;
   docService: DocServiceRegistration;
-  userId: string;
   tenantId: string;
   docType: string;
   generateId(): string;
@@ -289,14 +347,13 @@ async function cloneDocument(context: CloneDocumentContext): Promise<Response> {
     request,
     cfg,
     docService,
-    userId,
     tenantId,
     docType,
     sourceDocId,
     generateId,
     now,
   } = context;
-  const source = await cfg.directory.get(userId, sourceDocId);
+  const source = await cfg.directory.get(tenantId, sourceDocId);
   if (!source || source.docType !== docType || source.tenantId !== tenantId) {
     return Response.json({ error: "Source document not found" }, { status: 404 });
   }
@@ -312,10 +369,11 @@ async function cloneDocument(context: CloneDocumentContext): Promise<Response> {
 
   const snapshot = await forwardToWorker(
     new Request(request.url, { method: "GET" }),
+    cfg,
     docService.url,
     tenantId,
     docType,
-    docService.accessKey,
+    docService,
     source.sessionId,
     "snapshot",
   );
@@ -350,7 +408,6 @@ async function cloneDocument(context: CloneDocumentContext): Promise<Response> {
     request: initRequest,
     cfg,
     docService,
-    userId,
     tenantId,
     docType,
     generateId,
@@ -389,7 +446,6 @@ async function createDocument(context: CreateDocumentContext): Promise<Response>
     request,
     cfg,
     docService,
-    userId,
     tenantId,
     docType,
     generateId,
@@ -406,7 +462,6 @@ async function createDocument(context: CreateDocumentContext): Promise<Response>
   try {
     reservation = await cfg.directory.reserve({
       docId,
-      userId,
       tenantId,
       docType,
       serviceId: docService.serviceId,
@@ -463,12 +518,13 @@ async function createDocument(context: CreateDocumentContext): Promise<Response>
 
   const upstream = await forwardToWorker(
     request,
+    cfg,
     docService.url,
     tenantId,
     docType,
-    docService.accessKey,
+    docService,
     record.sessionId,
-    createMethod,
+    createMethod === "init-from-hash" ? "initFromHash" : "create",
   );
   const body = await upstream.clone().json().catch(() => null) as {
     success?: unknown;
@@ -478,7 +534,7 @@ async function createDocument(context: CreateDocumentContext): Promise<Response>
 
   if (upstream.ok && body?.success === true && Number.isSafeInteger(body.version)) {
     const ready = await cfg.directory.markReady(
-      userId,
+      tenantId,
       record.docId,
       body.version as number,
       now(),
@@ -495,7 +551,7 @@ async function createDocument(context: CreateDocumentContext): Promise<Response>
 
   if (upstream.status < 500) {
     await cfg.directory.markFailed(
-      userId,
+      tenantId,
       record.docId,
       String(body?.error ?? upstream.statusText),
       now(),
@@ -524,17 +580,18 @@ async function reconcileCreatingDocument(
   record: GatewayDocumentRecord,
   timestamp: number,
 ): Promise<GatewayDocumentRecord | null> {
-  const targetUrl = `${docService.url}/sessions/${encodeURIComponent(record.sessionId)}/status`;
   let response: Response;
   try {
-    response = await fetch(targetUrl, {
-      headers: {
-        "X-Internal-Token": docService.accessKey,
-        "X-Tenant-Id": record.tenantId,
-        "X-Doc-Type": record.docType,
-        "X-Session-Id": record.sessionId,
-      },
-    });
+    response = await forwardToWorker(
+      new Request("https://gateway.internal/status", { method: "GET" }),
+      cfg,
+      docService.url,
+      record.tenantId,
+      record.docType,
+      docService,
+      record.sessionId,
+      "status",
+    );
   } catch {
     return null;
   }
@@ -545,9 +602,67 @@ async function reconcileCreatingDocument(
   } | null;
   if (status?.exists !== true || !Number.isSafeInteger(status.version)) return null;
   return cfg.directory.markReady(
-    record.userId,
+    record.tenantId,
     record.docId,
     status.version as number,
     timestamp,
   );
+}
+
+function docOperation(method: string): DocOperation {
+  if (method === "apply"
+    || method === "query"
+    || method === "export"
+    || method === "history"
+    || method === "rollback"
+    || method === "snapshot"
+    || method === "ir"
+    || method === "run"
+    || method === "reset") {
+    return method;
+  }
+  throw new TypeError(`Unsupported Doc operation: ${method}`);
+}
+
+function legacyDocPath(sessionId: string, operation: DocOperation): string {
+  if (operation === "create") return `/sessions/${encodeURIComponent(sessionId)}`;
+  const segment = operation === "initFromHash" ? "init-from-hash" : operation;
+  return `/sessions/${encodeURIComponent(sessionId)}/${segment}`;
+}
+
+function usesLegacyAuth(mode: GatewayInternalAuthMode): boolean {
+  return mode === "legacy" || mode === "dual";
+}
+
+function usesCapabilityAuth(mode: GatewayInternalAuthMode): boolean {
+  return mode === "capability" || mode === "dual";
+}
+
+function validateInternalAuthConfig(cfg: GatewayHandlerConfig): void {
+  parseGatewayInternalAuthMode(cfg.internalAuthMode);
+  if (usesLegacyAuth(cfg.internalAuthMode) && !cfg.casAccessKey) {
+    throw new TypeError("Legacy Gateway auth requires a CAS access key");
+  }
+  if (usesCapabilityAuth(cfg.internalAuthMode) && !cfg.capabilityAuthority) {
+    throw new TypeError("Capability Gateway auth requires a capability authority");
+  }
+}
+
+function publicCasPath(route: CasRoute): string {
+  switch (route.operation) {
+    case "readContent":
+      return casRoutes.readContent(route);
+    case "readMetadata":
+      return casRoutes.readMetadata(route);
+    case "leaseNode":
+      return casRoutes.leaseNode(route);
+    case "leaseExisting":
+      return casRoutes.leaseExisting(route);
+    case "usage":
+      return casRoutes.usage(route);
+    case "gc":
+      return casRoutes.gc(route);
+    default:
+      throw new TypeError(`CAS operation ${route.operation} is not public`);
+  }
 }

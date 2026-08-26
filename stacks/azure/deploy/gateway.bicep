@@ -62,11 +62,13 @@ var docServicesJson = string({
     serviceId: 'markdown'
     url: 'https://unidocs-markdown.internal.${containerEnv.properties.defaultDomain}'
     accessKey: markdownAccessKey
+    audience: 'unidocs-doc:markdown'
   }
   docx: {
     serviceId: 'docx'
     url: 'https://unidocs-docx.internal.${containerEnv.properties.defaultDomain}'
     accessKey: docxAccessKey
+    audience: 'unidocs-doc:docx'
   }
 })
 
@@ -93,6 +95,10 @@ module app 'container-app.bicep' = {
       {
         name: 'CAS_BASE_URL'
         value: casBaseUrl
+      }
+      {
+        name: 'INTERNAL_AUTH_MODE'
+        value: 'legacy'
       }
       // This template deploys the explicitly named dev stack. Production
       // deployments must omit this and provide a real Gateway identity resolver.

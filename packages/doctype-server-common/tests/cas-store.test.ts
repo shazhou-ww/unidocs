@@ -20,7 +20,7 @@ describe("CasClient.store", () => {
     mockFetch.mockReset();
     client = new CasClient({
       baseUrl: "http://localhost:8787",
-      userId: "user1",
+      tenantId: "tenant1",
     });
   });
 
@@ -44,7 +44,7 @@ describe("CasClient.store", () => {
     // store() = canonical CAS node digest + ensureNode (POST /nodes/{hash}).
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
-      `http://localhost:8787/users/user1/cas/nodes/${expected}`,
+      `http://localhost:8787/tenants/tenant1/cas/nodes/${expected}`,
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ "Content-Type": "image/png" }),

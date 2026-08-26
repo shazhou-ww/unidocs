@@ -12,7 +12,7 @@ describe("CasClient", () => {
     mockFetch.mockReset();
     client = new CasClient({
       baseUrl: "http://localhost:8787",
-      userId: "user1",
+      tenantId: "tenant1",
     });
   });
 
@@ -27,7 +27,7 @@ describe("CasClient", () => {
       const result = await client.read({ kind: "cas", hash: "a".repeat(64) });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/users/user1/cas/nodes/${"a".repeat(64)}/content`,
+        `http://localhost:8787/tenants/tenant1/cas/nodes/${"a".repeat(64)}/content`,
         expect.any(Object)
       );
       expect(result).toEqual(content);
@@ -66,7 +66,7 @@ describe("CasClient", () => {
       const result = await client.metadata({ kind: "cas", hash });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/users/user1/cas/nodes/${hash}/metadata`,
+        `http://localhost:8787/tenants/tenant1/cas/nodes/${hash}/metadata`,
         expect.any(Object)
       );
       expect(result).toEqual(metadata.metadata);
@@ -103,7 +103,7 @@ describe("CasClient", () => {
       const result = await client.leaseExisting(hash, 120000);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/users/user1/cas/nodes/${hash}/lease`,
+        `http://localhost:8787/tenants/tenant1/cas/nodes/${hash}/lease`,
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
@@ -148,7 +148,7 @@ describe("CasClient", () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8787/users/user1/cas/nodes/${hash}`,
+        `http://localhost:8787/tenants/tenant1/cas/nodes/${hash}`,
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
@@ -205,7 +205,7 @@ describe("CasClient", () => {
     it("includes auth token in requests", async () => {
       const clientWithAuth = new CasClient({
         baseUrl: "http://localhost:8787",
-        userId: "user1",
+        tenantId: "tenant1",
         authToken: "secret123",
       });
 
@@ -231,7 +231,7 @@ describe("CasClient", () => {
     it("strips trailing slash from baseUrl", () => {
       const clientWithSlash = new CasClient({
         baseUrl: "http://localhost:8787/",
-        userId: "user1",
+        tenantId: "tenant1",
       });
 
       mockFetch.mockResolvedValueOnce({
@@ -242,7 +242,7 @@ describe("CasClient", () => {
       clientWithSlash.read({ kind: "cas", hash: "n".repeat(64) });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        "http://localhost:8787/users/user1/cas/nodes/n" + "n".repeat(63) + "/content",
+        "http://localhost:8787/tenants/tenant1/cas/nodes/n" + "n".repeat(63) + "/content",
         expect.any(Object)
       );
     });

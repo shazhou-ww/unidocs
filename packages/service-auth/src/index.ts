@@ -54,3 +54,5 @@ export {
   requireCapabilityTenant,
 } from "./verifier.js";
 export type { CapabilityVerifierConfig } from "./verifier.js";
+export { createPkcs8CapabilityIssuer } from "./runtime.js";
+export type { Pkcs8CapabilityIssuerConfig } from "./runtime.js";

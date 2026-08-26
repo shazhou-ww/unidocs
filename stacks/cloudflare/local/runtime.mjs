@@ -92,17 +92,71 @@ const MIGRATIONS_DIR = join(
  * Apply the Gateway-owned D1 schema. Real
  * Cloudflare D1 (via wrangler) gets this from `migrations_dir` in
  * wrangler.toml; local Miniflare has no migrations runner, so we read all SQL
- * files in filename order and exec each statement ourselves. The gateway and every doc-type
- * worker uses the `GATEWAY_DB` binding.
+ * files in filename order and record each successful filename. Older local
+ * databases predate the ledger, so bootstrap infers their schema generation
+ * once before applying only genuinely pending migrations.
  */
 async function migrateSnapshotsDb(mf) {
   const db = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
   const files = (await readdir(MIGRATIONS_DIR))
     .filter(file => file.endsWith(".sql"))
     .sort();
+  await db.exec("CREATE TABLE IF NOT EXISTS _unidocs_gateway_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);");
+  const appliedResult = await db.prepare(
+    "SELECT name FROM _unidocs_gateway_migrations ORDER BY name",
+  ).all();
+  const applied = new Set((appliedResult.results ?? []).map(row => row.name));
+  if (applied.size === 0) {
+    await bootstrapMigrationLedger(db, files, applied);
+  }
   for (const file of files) {
+    if (applied.has(file)) continue;
     const sql = await readFile(join(MIGRATIONS_DIR, file), "utf8");
     await db.exec(sql);
+    await db.prepare(
+      "INSERT INTO _unidocs_gateway_migrations (name, applied_at) VALUES (?, ?)",
+    ).bind(file, Date.now()).run();
+  }
+}
+
+async function bootstrapMigrationLedger(db, files, applied) {
+  const gatewayTable = await db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'gateway_documents'",
+  ).first();
+  if (!gatewayTable) return;
+
+  const columns = await db.prepare("PRAGMA table_info(gateway_documents)").all();
+  const columnNames = new Set((columns.results ?? []).map(column => column.name));
+  if (!columnNames.has("owner_id")) {
+    // A prior run completed the tenant-key migration before the ledger existed.
+    // Clean up legacy tables that an interrupted replay may have recreated.
+    await db.exec("DROP TABLE IF EXISTS snapshots;\nDROP TABLE IF EXISTS docs;");
+    await recordAppliedMigrations(db, files, applied);
+    return;
+  }
+
+  const completed = ["0001_init.sql", "0002_gateway_documents.sql"];
+  const legacyDocs = await db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('docs', 'snapshots') LIMIT 1",
+  ).first();
+  if (!legacyDocs) completed.push("0003_drop_legacy_doc_index.sql");
+  const requestsTable = await db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'gateway_document_requests'",
+  ).first();
+  if (requestsTable) completed.push("0004_requested_doc_id.sql");
+  await recordAppliedMigrations(
+    db,
+    completed.filter(file => files.includes(file)),
+    applied,
+  );
+}
+
+async function recordAppliedMigrations(db, files, applied) {
+  for (const file of files) {
+    await db.prepare(
+      "INSERT OR IGNORE INTO _unidocs_gateway_migrations (name, applied_at) VALUES (?, ?)",
+    ).bind(file, Date.now()).run();
+    applied.add(file);
   }
 }
 

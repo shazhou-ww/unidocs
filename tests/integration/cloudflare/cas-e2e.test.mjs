@@ -11,7 +11,7 @@ let runtime;
 const GW = () => runtime.urls.gateway;
 
 function casUrl(userId, suffix) {
-  return `${GW()}/users/${userId}/cas${suffix}`;
+  return `${GW()}/tenants/${userId}/cas${suffix}`;
 }
 
 function casFetch(url, init = {}) {

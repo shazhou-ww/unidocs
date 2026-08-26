@@ -1,7 +1,7 @@
 /**
  * CAS HTTP client for @unidocs/cas-client.
  *
- * Public mode talks to Gateway (`baseUrl` + user identity + optional Bearer).
+ * Public mode talks to Gateway (`baseUrl` + tenant identity + optional Bearer).
  * Editor mode talks to the CAS worker through a fetch-capable binding
  * (`fetcher` + `X-Internal-Token` + `X-Tenant-Id`) — see `HttpFetcher`,
  * which is structural so this package stays cloud-neutral (no Cloudflare
@@ -19,7 +19,7 @@ export interface HttpFetcher {
 }
 
 export type CasClientConfig =
-  | { baseUrl: string; userId: string; authToken?: string }
+  | { baseUrl: string; tenantId: string; authToken?: string }
   | { fetcher: HttpFetcher; tenantId: string; accessKey: string };
 
 export class CasClientError extends Error {
@@ -59,7 +59,7 @@ export class CasClient implements CasReadContext {
   private casUrl(path: string): string {
     return isInternalConfig(this.config)
       ? `${this.origin()}/tenants/${this.config.tenantId}/cas${path}`
-      : `${this.origin()}/users/${this.config.userId}/cas${path}`;
+      : `${this.origin()}/tenants/${this.config.tenantId}/cas${path}`;
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
@@ -118,7 +118,7 @@ export class CasClient implements CasReadContext {
   /**
    * Lease a node, uploading content when the node is not already ready.
    *
-   * POST /users/{userId}/cas/nodes/{hash}
+  * POST /tenants/{tenantId}/cas/nodes/{hash}
    */
   async ensureNode(
     hash: string,
@@ -148,7 +148,7 @@ export class CasClient implements CasReadContext {
   /**
    * Extend a lease on an existing ready node.
    *
-   * POST /users/{userId}/cas/nodes/{hash}/lease
+  * POST /tenants/{tenantId}/cas/nodes/{hash}/lease
    */
   async leaseExisting(hash: string, requestedDurationMs?: number): Promise<CasLeaseResult> {
     const extra: Record<string, string> = {};

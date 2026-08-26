@@ -2,6 +2,9 @@ name = "unidocs-gateway"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
+[vars]
+INTERNAL_AUTH_MODE = "legacy"
+
 [[d1_databases]]
 binding = "GATEWAY_DB"
 database_name = "unidocs-snapshots"
@@ -13,5 +16,7 @@ binding = "CAS_SERVICE"
 service = "unidocs-cas"
 
 # Set through deployment secrets/configuration:
-# DOC_SERVICES_JSON = { docType: { serviceId, url, accessKey } }
+# DOC_SERVICES_JSON = { docType: { serviceId, url, accessKey, audience } }
 # CAS_ACCESS_KEY = CAS service credential
+# Dual/capability mode additionally requires CAPABILITY_PRIVATE_KEY_PKCS8,
+# CAPABILITY_KEY_ID, CAPABILITY_ISSUER, and CAS_CAPABILITY_AUDIENCE.

@@ -10,7 +10,7 @@
  *
  * CAS: transitional (deleted in phase 4). Without `CAS_BASE_URL` set,
  * `casFetcher` is a stub that 501s every request and `isPublicCasRoute` is a
- * constant `false`, so `/users/{userId}/cas/*` always 404s under
+ * constant `false`, so `/tenants/{tenantId}/cas/*` always 404s under
  * `createGatewayHandler`'s own routing (`isPublicCasRoute` gates before the
  * fetcher is ever called) — this keeps a markdown-only deployment from
  * failing to start over a variable it doesn't use. With `CAS_BASE_URL` set,
@@ -29,18 +29,35 @@ import {
   requireEnv,
   serve,
 } from "@unidocs/azure-sdk";
-import { isLegacyPublicCasRoute } from "@unidocs/protocol-gateway";
+import { isPublicCasRoute } from "@unidocs/protocol-cas";
 import {
   createGatewayHandler,
-  createInsecurePathIdentityResolver,
+  createInsecureTenantIdentityResolver,
+  GatewayCapabilityAuthority,
+  parseGatewayInternalAuthMode,
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
+import { createPkcs8CapabilityIssuer } from "@unidocs/service-auth";
 import { PgGatewayDocumentDirectory } from "./document-directory.js";
 
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
   const registry = new StaticDocServiceRegistry(requireEnv("DOC_SERVICES_JSON"));
-  const casAccessKey = requireEnv("CAS_ACCESS_KEY");
+  const internalAuthMode = parseGatewayInternalAuthMode(process.env.INTERNAL_AUTH_MODE);
+  const casAccessKey = internalAuthMode === "capability"
+    ? undefined
+    : requireEnv("CAS_ACCESS_KEY");
+  const capabilityAuthority = internalAuthMode === "legacy"
+    ? undefined
+    : new GatewayCapabilityAuthority({
+      issuer: await createPkcs8CapabilityIssuer({
+        issuer: requireEnv("CAPABILITY_ISSUER"),
+        kid: requireEnv("CAPABILITY_KEY_ID"),
+        privateKeyPkcs8: requireEnv("CAPABILITY_PRIVATE_KEY_PKCS8"),
+      }),
+      casAudience: requireEnv("CAS_CAPABILITY_AUDIENCE"),
+      audit: event => console.log(JSON.stringify({ event: "gateway_capability_issued", ...event })),
+    });
   const port = Number(process.env.PORT ?? 8787);
 
   // Gateway never touches Blob Storage — `blobConnectionString` is unused by
@@ -70,14 +87,16 @@ async function main(): Promise<void> {
       };
 
   const handler = createGatewayHandler({
+    internalAuthMode,
     casAccessKey,
-    identityResolver: createInsecurePathIdentityResolver(
+    capabilityAuthority,
+    identityResolver: createInsecureTenantIdentityResolver(
       process.env.INSECURE_PATH_IDENTITY === "true",
     ),
     resolveDocService: (docType) => registry.resolve(docType),
     casFetcher,
     directory,
-    isPublicCasRoute: casBaseUrl ? isLegacyPublicCasRoute : () => false,
+    isPublicCasRoute: casBaseUrl ? isPublicCasRoute : () => false,
   });
 
   const { close } = await serve(handler, { port, host: "0.0.0.0" });

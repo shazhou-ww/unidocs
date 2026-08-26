@@ -27,5 +27,32 @@ describe("StaticDocServiceRegistry", () => {
     expect(() => new StaticDocServiceRegistry(JSON.stringify({
       markdown: { serviceId: "markdown", url: "https://markdown.internal", accessKey: "" },
     }))).toThrow(/accessKey/);
+    expect(() => new StaticDocServiceRegistry(JSON.stringify({
+      markdown: { serviceId: "markdown", url: "https://markdown.internal" },
+    }))).toThrow(/accessKey or audience/);
+  });
+
+  it("supports capability-only and dual registrations", async () => {
+    const registry = new StaticDocServiceRegistry(JSON.stringify({
+      markdown: {
+        serviceId: "markdown-primary",
+        url: "https://markdown.internal",
+        audience: "unidocs-doc:markdown",
+      },
+      docx: {
+        serviceId: "docx-primary",
+        url: "https://docx.internal",
+        accessKey: "docx-key",
+        audience: "unidocs-doc:docx",
+      },
+    }));
+
+    const markdown = await registry.resolve("markdown");
+    expect(markdown).toMatchObject({ audience: "unidocs-doc:markdown" });
+    expect(markdown).not.toHaveProperty("accessKey");
+    await expect(registry.resolve("docx")).resolves.toMatchObject({
+      accessKey: "docx-key",
+      audience: "unidocs-doc:docx",
+    });
   });
 });

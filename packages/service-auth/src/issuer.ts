@@ -119,6 +119,10 @@ export class CapabilityIssuer {
     };
   }
 
+  get keyId(): string {
+    return this.#config.signer.kid;
+  }
+
   async issue(input: IssueCapabilityInput): Promise<string> {
     requireNonEmpty(input.subject, "Capability subject");
     requireNonEmpty(input.audience, "Capability audience");

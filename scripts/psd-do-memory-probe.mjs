@@ -82,7 +82,7 @@ function sample(label) {
 }
 
 async function query(docId, payload) {
-  const res = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/query`, {
+  const res = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/${docId}/query`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -93,7 +93,7 @@ async function query(docId, payload) {
 
 let version = 0;
 async function applyOp(docId, op) {
-  const res = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/apply`, {
+  const res = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/${docId}/apply`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ operations: [op], description: `probe ${op.kind}`, baseVersion: version }),
@@ -113,7 +113,7 @@ try {
   const bytes = readFileSync(psdPath);
   const fd = new FormData();
   fd.append("file", new Blob([bytes]), "probe.psd");
-  const created = await fetch(`${GW}/users/${USER}/docs/${TYPE}/`, { method: "POST", body: fd });
+  const created = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/`, { method: "POST", body: fd });
   const createdBody = await created.json();
   if (!createdBody.success) throw new Error(`create failed: ${JSON.stringify(createdBody)}`);
   const docId = createdBody.docId;
@@ -121,7 +121,7 @@ try {
   sample("after import (load + store to CAS)");
 
   // Import already produced version 1; start the op loop from wherever we are.
-  const irRes = await fetch(`${GW}/users/${USER}/docs/${TYPE}/${docId}/ir`);
+  const irRes = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/${docId}/ir`);
   version = Number(irRes.headers.get("X-Doc-Version") ?? "0");
   await irRes.arrayBuffer();
 

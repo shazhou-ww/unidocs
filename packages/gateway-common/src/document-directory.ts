@@ -2,7 +2,6 @@ export type GatewayDocumentState = "creating" | "ready" | "failed";
 
 export interface GatewayDocumentRecord {
   readonly docId: string;
-  readonly userId: string;
   readonly tenantId: string;
   readonly docType: string;
   readonly serviceId: string;
@@ -18,7 +17,6 @@ export interface GatewayDocumentRecord {
 
 export interface ReserveGatewayDocumentInput {
   readonly docId: string;
-  readonly userId: string;
   readonly tenantId: string;
   readonly docType: string;
   readonly serviceId: string;
@@ -35,21 +33,21 @@ export interface GatewayDocumentReservation {
 
 export interface GatewayDocumentDirectory {
   reserve(input: ReserveGatewayDocumentInput): Promise<GatewayDocumentReservation>;
-  get(userId: string, docId: string): Promise<GatewayDocumentRecord | null>;
-  list(userId: string, docType: string): Promise<readonly GatewayDocumentRecord[]>;
+  get(tenantId: string, docId: string): Promise<GatewayDocumentRecord | null>;
+  list(tenantId: string, docType: string): Promise<readonly GatewayDocumentRecord[]>;
   markReady(
-    userId: string,
+    tenantId: string,
     docId: string,
     version: number,
     updatedAt: number,
   ): Promise<GatewayDocumentRecord>;
   markFailed(
-    userId: string,
+    tenantId: string,
     docId: string,
     error: string,
     updatedAt: number,
   ): Promise<GatewayDocumentRecord>;
-  touch(userId: string, docId: string, updatedAt: number): Promise<void>;
+  touch(tenantId: string, docId: string, updatedAt: number): Promise<void>;
 }
 
 export class GatewayDirectoryConflictError extends Error {
@@ -64,7 +62,7 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
   readonly #byIdempotencyKey = new Map<string, string>();
 
   async reserve(input: ReserveGatewayDocumentInput): Promise<GatewayDocumentReservation> {
-    const idempotencyKey = directoryKey(input.userId, input.idempotencyKey);
+    const idempotencyKey = directoryKey(input.tenantId, input.idempotencyKey);
     const existingDocumentKey = this.#byIdempotencyKey.get(idempotencyKey);
     if (existingDocumentKey) {
       const existing = this.#byDocument.get(existingDocumentKey)!;
@@ -72,7 +70,7 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
       return { record: existing, created: false };
     }
 
-    const documentKey = directoryKey(input.userId, input.docId);
+    const documentKey = directoryKey(input.tenantId, input.docId);
     const existing = this.#byDocument.get(documentKey);
     if (existing) {
       throw new GatewayDirectoryConflictError(`Document ${input.docId} already exists`);
@@ -80,7 +78,6 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
 
     const record: GatewayDocumentRecord = Object.freeze({
       docId: input.docId,
-      userId: input.userId,
       tenantId: input.tenantId,
       docType: input.docType,
       serviceId: input.serviceId,
@@ -98,20 +95,20 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
     return { record, created: true };
   }
 
-  async get(userId: string, docId: string): Promise<GatewayDocumentRecord | null> {
-    return this.#byDocument.get(directoryKey(userId, docId)) ?? null;
+  async get(tenantId: string, docId: string): Promise<GatewayDocumentRecord | null> {
+    return this.#byDocument.get(directoryKey(tenantId, docId)) ?? null;
   }
 
-  async list(userId: string, docType: string): Promise<readonly GatewayDocumentRecord[]> {
+  async list(tenantId: string, docType: string): Promise<readonly GatewayDocumentRecord[]> {
     return [...this.#byDocument.values()]
-      .filter(record => record.userId === userId
+      .filter(record => record.tenantId === tenantId
         && record.docType === docType
         && record.state === "ready")
       .sort((left, right) => right.updatedAt - left.updatedAt);
   }
 
   async markReady(
-    userId: string,
+    tenantId: string,
     docId: string,
     version: number,
     updatedAt: number,
@@ -119,7 +116,7 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
     if (!Number.isSafeInteger(version) || version < 1) {
       throw new TypeError("version must be a positive safe integer");
     }
-    const record = this.#require(userId, docId);
+    const record = this.#require(tenantId, docId);
     if (record.state === "failed") {
       throw new GatewayDirectoryConflictError(`Document ${docId} is failed`);
     }
@@ -132,12 +129,12 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
   }
 
   async markFailed(
-    userId: string,
+    tenantId: string,
     docId: string,
     error: string,
     updatedAt: number,
   ): Promise<GatewayDocumentRecord> {
-    const record = this.#require(userId, docId);
+    const record = this.#require(tenantId, docId);
     if (record.state === "ready") {
       throw new GatewayDirectoryConflictError(`Document ${docId} is ready`);
     }
@@ -148,16 +145,16 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
     });
   }
 
-  async touch(userId: string, docId: string, updatedAt: number): Promise<void> {
-    const record = this.#require(userId, docId);
+  async touch(tenantId: string, docId: string, updatedAt: number): Promise<void> {
+    const record = this.#require(tenantId, docId);
     if (record.state !== "ready") {
       throw new GatewayDirectoryConflictError(`Document ${docId} is not ready`);
     }
     this.#replace(record, { updatedAt });
   }
 
-  #require(userId: string, docId: string): GatewayDocumentRecord {
-    const record = this.#byDocument.get(directoryKey(userId, docId));
+  #require(tenantId: string, docId: string): GatewayDocumentRecord {
+    const record = this.#byDocument.get(directoryKey(tenantId, docId));
     if (!record) throw new GatewayDirectoryConflictError(`Unknown document ${docId}`);
     return record;
   }
@@ -167,13 +164,13 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
     changes: Partial<GatewayDocumentRecord>,
   ): GatewayDocumentRecord {
     const updated = Object.freeze({ ...record, ...changes });
-    this.#byDocument.set(directoryKey(record.userId, record.docId), updated);
+    this.#byDocument.set(directoryKey(record.tenantId, record.docId), updated);
     return updated;
   }
 }
 
-function directoryKey(userId: string, value: string): string {
-  return `${userId}\u0000${value}`;
+function directoryKey(tenantId: string, value: string): string {
+  return `${tenantId}\u0000${value}`;
 }
 
 function assertSameReservation(

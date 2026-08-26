@@ -133,7 +133,7 @@ const opts = (extra: Partial<{
   fetchImpl: typeof fetch;
   genId: () => string;
 }>) => ({
-  apiBaseUrl: "/gw/users/u1",
+  apiBaseUrl: "/gw/tenants/u1",
   type: "psd",
   docId: "d1",
   doc: docWithLayers(["l1"]),
@@ -158,7 +158,7 @@ describe("DocSession.applyLocal", () => {
     await vi.waitFor(() => expect(session.version).toBe(6));
     expect(calls).toHaveLength(1);
     expect(calls[0]!.method).toBe("POST");
-    expect(calls[0]!.url).toBe("/gw/users/u1/docs/psd/d1/apply");
+    expect(calls[0]!.url).toBe("/gw/tenants/u1/docs/psd/d1/apply");
     expect(calls[0]!.body).toEqual({
       operations: [setOp("l1", 0.5)],
       description: "Apply set_props",

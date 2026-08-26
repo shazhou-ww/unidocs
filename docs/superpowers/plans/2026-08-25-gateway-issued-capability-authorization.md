@@ -1,9 +1,9 @@
 # Gateway-Issued Internal Capability Authorization Implementation Plan
 
 > **Status:** In progress. The P0 boundary prerequisite completed in
-> `cdce042`, and this branch was fast-forwarded to post-P0 commit `012957b` on
-> 2026-08-26. Task 0 is re-auditing the final ownership surfaces before any
-> further implementation work.
+> `cdce042`. Tasks 0-3 are complete. The implementation was rebased onto
+> `origin/main` commit `d01afd0` on 2026-08-26 after the cloud stack directory
+> reorganization; Task 4 is next.
 >
 > **For agentic workers:** Use an executing-plans workflow and complete one
 > task at a time. Keep the checkboxes current. Do not combine this migration
@@ -1148,37 +1148,37 @@ Implementation record (2026-08-26):
 
 ### Task 3: Make current Gateway routes tenant-aware and issue token pairs
 
-- [ ] Replace `/users/{userId}` with `/tenants/{tenantId}` in the current public
+- [x] Replace `/users/{userId}` with `/tenants/{tenantId}` in the current public
       document and CAS route set. Preserve every current method, suffix, query,
       body, response, and allowlist decision.
-- [ ] Key directory lookups by `{ tenantId, docId }`; persist immutable
+- [x] Key directory lookups by `{ tenantId, docId }`; persist immutable
       `{ tenantId, docId, docType, sessionId }` records. Replace `ownerId` as a
       storage/routing identity; user authorization remains Gateway-only.
-- [ ] For the current create and `init_from_hash` flows, preallocate/resolve the
+- [x] For the current create and `init_from_hash` flows, preallocate/resolve the
       private `sessionId`, call the same Doc operation with the existing method
       and body, and preserve the current public `docId` response/route behavior.
-- [ ] Add a route policy that maps each matched Gateway operation to one Doc
+- [x] Add a route policy that maps each matched Gateway operation to one Doc
       permission and the minimum delegated CAS permissions from the fixed
       matrix.
-- [ ] Resolve `tenantId`, `docType`, and `sessionId` only from authenticated
+- [x] Resolve `tenantId`, `docType`, and `sessionId` only from authenticated
       identity plus the Gateway-owned directory. Never accept these values from
       public internal-style headers.
-- [ ] Sign a Doc-only token for the configured target service audience.
-- [ ] When the operation may call CAS, sign a separate CAS-only delegated
+- [x] Sign a Doc-only token for the configured target service audience.
+- [x] When the operation may call CAS, sign a separate CAS-only delegated
       capability with `sub: doc:{docType}` and matching tenant/session claims.
-- [ ] For `status`, `history`, `ir`, and `reset`, omit the CAS capability and never mint
+- [x] For `status`, `history`, `ir`, and `reset`, omit the CAS capability and never mint
       unused downstream authority.
-- [ ] For direct Gateway -> CAS operations, sign a CAS-only token with
+- [x] For direct Gateway -> CAS operations, sign a CAS-only token with
       `sub: gateway` and no Doc permissions.
-- [ ] Replace the legacy five-route CAS proxy allowlist with the target six
+- [x] Replace the legacy five-route CAS proxy allowlist with the target six
       tenant routes, adding GC only behind tenant-admin authorization, and
       replace legacy internal credentials with a CAS capability.
-- [ ] Build Doc/CAS URLs with the owning protocol package and construct outbound
+- [x] Build Doc/CAS URLs with the owning protocol package and construct outbound
       requests from per-operation header allowlists. Replace user
       `Authorization`; never append internal credentials to copied headers.
-- [ ] Import/cache signing key objects at startup rather than reparsing private
+- [x] Import/cache signing key objects at startup rather than reparsing private
       key material per request. Signing remains per authorized operation.
-- [ ] Add structured audit events containing only decision metadata such as
+- [x] Add structured audit events containing only decision metadata such as
       `kid`, `jti`, audience, permission, and resource IDs; never log token
       strings or signatures.
 
@@ -1190,6 +1190,33 @@ Doc, binds create to one preallocated session, and strips hostile public
 auth/internal headers.
 
 **Focused validation:** Gateway common and both runtime adapter suites.
+
+Implementation record (2026-08-26):
+
+- Rebased the capability foundation commit onto the latest `origin/main`
+      (`d01afd0`) after the stack layout moved under `stacks/{azure,cloudflare}`;
+      restored the in-progress Task 3 work without conflicts.
+- Migrated the in-memory, D1, and Postgres Gateway directories from user keys
+      to `(tenantId, docId)` and tenant-scoped idempotency. Added collision-safe D1
+      and Postgres migrations plus a persistent local D1 migration ledger for
+      Miniflare restarts.
+- Switched the public Gateway edge and CAS client to `/tenants/{tenantId}`;
+      old `/users/*` Gateway routes fail before identity resolution. Gateway keeps
+      authenticated `userId` only inside its identity boundary and persists no user
+      routing key.
+- Added table-driven Doc/CAS capability policy, request deadlines, separated
+      Doc/delegated-CAS/direct-CAS issuance, tenant-aware protocol route builders,
+      hostile-header stripping, and metadata-only audit events.
+- Added explicit `legacy`/`dual`/`capability` Gateway modes with no implicit
+      fallback. Cloudflare caches one imported PKCS8 issuer promise per process;
+      Azure imports once at startup. Current local and deployment stacks explicitly
+      remain in `legacy` mode until Task 4/5 validators and Task 7 rollout are ready,
+      while Doc registrations already carry target audiences.
+- Focused results: `service-auth` 59 passed, `gateway-common` 44 passed,
+      `cloudflare-gateway` 4 passed, CAS client 18 passed, shared Doc 64 passed.
+      Root `pnpm typecheck` and `pnpm build` pass; `pnpm test:local` passed 285 with
+      2 conditional skips; `pnpm test:azure` passed 15/15 with Postgres/Azurite
+      cleanup.
 
 ### Task 4: Make every current Doc type tenant-aware and contract-identical
 

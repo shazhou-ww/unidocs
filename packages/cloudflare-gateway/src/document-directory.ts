@@ -9,7 +9,6 @@ import {
 
 interface GatewayDocumentRow {
   doc_id: string;
-  owner_id: string;
   tenant_id: string;
   doc_type: string;
   service_id: string;
@@ -34,13 +33,12 @@ export class D1GatewayDocumentDirectory implements GatewayDocumentDirectory {
     const [result] = await this.#db.batch([
       this.#db.prepare(
         `INSERT OR IGNORE INTO gateway_documents
-        (owner_id, doc_id, tenant_id, doc_type, service_id, session_id,
+        (tenant_id, doc_id, doc_type, service_id, session_id,
          idempotency_key, state, version, error, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'creating', NULL, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'creating', NULL, NULL, ?, ?)`,
       ).bind(
-        input.userId,
-        input.docId,
         input.tenantId,
+        input.docId,
         input.docType,
         input.serviceId,
         input.sessionId,
@@ -50,24 +48,24 @@ export class D1GatewayDocumentDirectory implements GatewayDocumentDirectory {
       ),
       this.#db.prepare(
         `INSERT OR IGNORE INTO gateway_document_requests
-          (owner_id, idempotency_key, requested_doc_id)
+          (tenant_id, idempotency_key, requested_doc_id)
          SELECT ?, ?, ?
          WHERE EXISTS (
            SELECT 1 FROM gateway_documents
-           WHERE owner_id = ? AND idempotency_key = ?
+           WHERE tenant_id = ? AND idempotency_key = ?
          )`,
       ).bind(
-        input.userId,
+        input.tenantId,
         input.idempotencyKey,
         input.requestedDocId,
-        input.userId,
+        input.tenantId,
         input.idempotencyKey,
       ),
     ]);
 
-    const record = await this.#findByIdempotencyKey(input.userId, input.idempotencyKey);
+    const record = await this.#findByIdempotencyKey(input.tenantId, input.idempotencyKey);
     if (!record) {
-      if (await this.get(input.userId, input.docId)) {
+      if (await this.get(input.tenantId, input.docId)) {
         throw new GatewayDirectoryConflictError(`Document ${input.docId} already exists`);
       }
       throw new Error("Gateway document reservation was not persisted");
@@ -76,24 +74,24 @@ export class D1GatewayDocumentDirectory implements GatewayDocumentDirectory {
     return { record, created: (result.meta.changes ?? 0) > 0 };
   }
 
-  async get(userId: string, docId: string): Promise<GatewayDocumentRecord | null> {
+  async get(tenantId: string, docId: string): Promise<GatewayDocumentRecord | null> {
     const row = await this.#db.prepare(
-      "SELECT * FROM gateway_documents WHERE owner_id = ? AND doc_id = ?",
-    ).bind(userId, docId).first<GatewayDocumentRow>();
+      "SELECT * FROM gateway_documents WHERE tenant_id = ? AND doc_id = ?",
+    ).bind(tenantId, docId).first<GatewayDocumentRow>();
     return row ? fromRow(row) : null;
   }
 
-  async list(userId: string, docType: string): Promise<readonly GatewayDocumentRecord[]> {
+  async list(tenantId: string, docType: string): Promise<readonly GatewayDocumentRecord[]> {
     const result = await this.#db.prepare(
       `SELECT * FROM gateway_documents
-       WHERE owner_id = ? AND doc_type = ? AND state = 'ready'
+      WHERE tenant_id = ? AND doc_type = ? AND state = 'ready'
        ORDER BY updated_at DESC`,
-    ).bind(userId, docType).all<GatewayDocumentRow>();
+    ).bind(tenantId, docType).all<GatewayDocumentRow>();
     return (result.results ?? []).map(fromRow);
   }
 
   async markReady(
-    userId: string,
+    tenantId: string,
     docId: string,
     version: number,
     updatedAt: number,
@@ -104,16 +102,16 @@ export class D1GatewayDocumentDirectory implements GatewayDocumentDirectory {
     const result = await this.#db.prepare(
       `UPDATE gateway_documents
        SET state = 'ready', version = ?, error = NULL, updated_at = ?
-       WHERE owner_id = ? AND doc_id = ? AND state IN ('creating', 'ready')`,
-    ).bind(version, updatedAt, userId, docId).run();
+       WHERE tenant_id = ? AND doc_id = ? AND state IN ('creating', 'ready')`,
+     ).bind(version, updatedAt, tenantId, docId).run();
     if ((result.meta.changes ?? 0) !== 1) {
       throw new GatewayDirectoryConflictError(`Document ${docId} cannot become ready`);
     }
-    return (await this.get(userId, docId))!;
+    return (await this.get(tenantId, docId))!;
   }
 
   async markFailed(
-    userId: string,
+    tenantId: string,
     docId: string,
     error: string,
     updatedAt: number,
@@ -121,34 +119,34 @@ export class D1GatewayDocumentDirectory implements GatewayDocumentDirectory {
     const result = await this.#db.prepare(
       `UPDATE gateway_documents
        SET state = 'failed', error = ?, updated_at = ?
-       WHERE owner_id = ? AND doc_id = ? AND state IN ('creating', 'failed')`,
-    ).bind(error, updatedAt, userId, docId).run();
+       WHERE tenant_id = ? AND doc_id = ? AND state IN ('creating', 'failed')`,
+     ).bind(error, updatedAt, tenantId, docId).run();
     if ((result.meta.changes ?? 0) !== 1) {
       throw new GatewayDirectoryConflictError(`Document ${docId} cannot become failed`);
     }
-    return (await this.get(userId, docId))!;
+    return (await this.get(tenantId, docId))!;
   }
 
-  async touch(userId: string, docId: string, updatedAt: number): Promise<void> {
+  async touch(tenantId: string, docId: string, updatedAt: number): Promise<void> {
     const result = await this.#db.prepare(
-      "UPDATE gateway_documents SET updated_at = ? WHERE owner_id = ? AND doc_id = ? AND state = 'ready'",
-    ).bind(updatedAt, userId, docId).run();
+      "UPDATE gateway_documents SET updated_at = ? WHERE tenant_id = ? AND doc_id = ? AND state = 'ready'",
+    ).bind(updatedAt, tenantId, docId).run();
     if ((result.meta.changes ?? 0) !== 1) {
       throw new GatewayDirectoryConflictError(`Document ${docId} is not ready`);
     }
   }
 
   async #findByIdempotencyKey(
-    userId: string,
+    tenantId: string,
     idempotencyKey: string,
   ): Promise<GatewayDocumentRecord | null> {
     const row = await this.#db.prepare(
       `SELECT documents.*, requests.requested_doc_id
        FROM gateway_documents AS documents
        LEFT JOIN gateway_document_requests AS requests
-         USING (owner_id, idempotency_key)
-       WHERE documents.owner_id = ? AND documents.idempotency_key = ?`,
-    ).bind(userId, idempotencyKey).first<GatewayDocumentRow>();
+         USING (tenant_id, idempotency_key)
+       WHERE documents.tenant_id = ? AND documents.idempotency_key = ?`,
+    ).bind(tenantId, idempotencyKey).first<GatewayDocumentRow>();
     return row ? fromRow(row) : null;
   }
 
@@ -157,7 +155,6 @@ export class D1GatewayDocumentDirectory implements GatewayDocumentDirectory {
 function fromRow(row: GatewayDocumentRow): GatewayDocumentRecord {
   return {
     docId: row.doc_id,
-    userId: row.owner_id,
     tenantId: row.tenant_id,
     docType: row.doc_type,
     serviceId: row.service_id,

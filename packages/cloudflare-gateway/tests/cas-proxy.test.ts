@@ -8,6 +8,7 @@ function env(fetchImpl?: (request: Request) => Promise<Response>) {
   return {
     GATEWAY_DB: {},
     DOC_SERVICES_JSON: "{}",
+    INTERNAL_AUTH_MODE: "legacy",
     CAS_ACCESS_KEY: "cas-key",
     INSECURE_PATH_IDENTITY: "true",
     CAS_SERVICE: { fetch: casFetch },
@@ -19,7 +20,7 @@ describe("Gateway CAS proxy", () => {
   it("forwards allowlisted public CAS routes with internal headers", async () => {
     const bindings = env();
     const res = await worker.fetch(
-      new Request(`https://gw/users/alice/cas/nodes/${hash}`, { method: "POST" }),
+      new Request(`https://gw/tenants/alice/cas/nodes/${hash}`, { method: "POST" }),
       bindings as never,
     );
     expect(res.ok).toBe(true);
@@ -34,10 +35,21 @@ describe("Gateway CAS proxy", () => {
   it("does not proxy root-refs", async () => {
     const bindings = env();
     const res = await worker.fetch(
-      new Request("https://gw/users/alice/cas/root-refs", { method: "POST" }),
+      new Request("https://gw/tenants/alice/cas/root-refs", { method: "POST" }),
       bindings as never,
     );
     expect(res.status).toBe(404);
     expect(bindings.casFetch).not.toHaveBeenCalled();
+  });
+
+  it("proxies tenant GC for an authorized tenant administrator", async () => {
+    const bindings = env();
+    const res = await worker.fetch(
+      new Request("https://gw/tenants/alice/cas/gc", { method: "POST" }),
+      bindings as never,
+    );
+    expect(res.ok).toBe(true);
+    const forwarded = bindings.casFetch.mock.calls[0][0] as Request;
+    expect(new URL(forwarded.url).pathname).toBe("/tenants/alice/cas/gc");
   });
 });

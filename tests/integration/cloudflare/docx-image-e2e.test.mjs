@@ -45,9 +45,9 @@ afterAll(async () => {
 });
 
 test("markdown apply without Blob refs still succeeds", async () => {
-  const create = await closeFetch(`${GW()}/users/alice/docs/markdown/`, { method: "POST" });
+  const create = await closeFetch(`${GW()}/tenants/alice/docs/markdown/`, { method: "POST" });
   const { docId } = await create.json();
-  const apply = await closeFetch(`${GW()}/users/alice/docs/markdown/${docId}/apply`, {
+  const apply = await closeFetch(`${GW()}/tenants/alice/docs/markdown/${docId}/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -61,14 +61,14 @@ test("markdown apply without Blob refs still succeeds", async () => {
 });
 
 test("Gateway does not proxy /cas/root-refs", async () => {
-  const res = await closeFetch(`${GW()}/users/alice/cas/root-refs`, {
+  const res = await closeFetch(`${GW()}/tenants/alice/cas/root-refs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ requestId: "x", changes: {} }),
   });
   expect(res.status).toBe(404);
 
-  const assignments = await closeFetch(`${GW()}/users/alice/cas/root-assignments`, {
+  const assignments = await closeFetch(`${GW()}/tenants/alice/cas/root-assignments`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ requestId: "x", assignments: [] }),
@@ -81,7 +81,7 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
   const digest = await computeNodeDigest(header, "image/png", [], PNG_1x1);
   const hash = hashToHex(digest);
 
-  const lease = await closeFetch(`${GW()}/users/alice/cas/nodes/${hash}`, {
+  const lease = await closeFetch(`${GW()}/tenants/alice/cas/nodes/${hash}`, {
     method: "POST",
     headers: {
       "Content-Type": "image/png",
@@ -94,13 +94,13 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
 
   const context = createSBlobContext(new CasClient({
     baseUrl: GW(),
-    userId: "alice",
+    tenantId: "alice",
   }));
   const blob = await context.makeSBlob(hash, async () => {
     throw new Error("existing image should not invoke the lazy loader");
   });
 
-  const create = await closeFetch(`${GW()}/users/alice/docs/docx/`, { method: "POST" });
+  const create = await closeFetch(`${GW()}/tenants/alice/docs/docx/`, { method: "POST" });
   const { docId } = await create.json();
 
   const applyBody = encodeSValue({
@@ -108,7 +108,7 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
     description: "Insert image",
     operations: [{ kind: "insertImage", payload: { blob, widthPx: 16, altText: "dot" } }],
   });
-  const apply = await closeFetch(`${GW()}/users/alice/docs/docx/${docId}/apply`, {
+  const apply = await closeFetch(`${GW()}/tenants/alice/docs/docx/${docId}/apply`, {
     method: "POST",
     headers: { "Content-Type": SValueContentType },
     body: applyBody.buffer,
@@ -117,7 +117,7 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
   expect(apply.ok, JSON.stringify(applied)).toBe(true);
   expect(applied).toMatchObject({ success: true, version: 2 });
 
-  const query = await closeFetch(`${GW()}/users/alice/docs/docx/${docId}/query`, {
+  const query = await closeFetch(`${GW()}/tenants/alice/docs/docx/${docId}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind: "getImages" }),
@@ -133,7 +133,7 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
     }),
   ]);
 
-  const history = await closeFetch(`${GW()}/users/alice/docs/docx/${docId}/history`, {
+  const history = await closeFetch(`${GW()}/tenants/alice/docs/docx/${docId}/history`, {
     headers: { Accept: SValueContentType },
   });
   expect(history.ok).toBe(true);
@@ -142,7 +142,7 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
   expect(isSBlob(operationBlob)).toBe(true);
   expect(operationBlob.hash).toBe(hash);
 
-  const toolApply = await closeFetch(`${GW()}/users/alice/docs/docx/${docId}/apply`, {
+  const toolApply = await closeFetch(`${GW()}/tenants/alice/docs/docx/${docId}/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -158,7 +158,7 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
   expect(toolApply.status).toBe(400);
   expect(toolApplied).toMatchObject({ success: false, version: 2 });
 
-  const afterToolQuery = await closeFetch(`${GW()}/users/alice/docs/docx/${docId}/query`, {
+  const afterToolQuery = await closeFetch(`${GW()}/tenants/alice/docs/docx/${docId}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind: "getImages" }),
@@ -166,17 +166,17 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
   const afterTool = await afterToolQuery.json();
   expect(afterTool.data).toHaveLength(1);
 
-  const afterDelta = await closeFetch(`${GW()}/users/alice/cas/nodes/${hash}/metadata`);
+  const afterDelta = await closeFetch(`${GW()}/tenants/alice/cas/nodes/${hash}/metadata`);
   const afterDeltaMetadata = await afterDelta.json();
   expect(afterDeltaMetadata.state.childRefCount).toBeGreaterThanOrEqual(1);
 
-  const snapshot = await closeFetch(`${GW()}/users/alice/docs/docx/${docId}/snapshot`);
+  const snapshot = await closeFetch(`${GW()}/tenants/alice/docs/docx/${docId}/snapshot`);
   const snapshotBody = await snapshot.json();
   expect(snapshot.ok, JSON.stringify(snapshotBody)).toBe(true);
   expect(snapshotBody).toMatchObject({ success: true, version: 2 });
   expect(snapshotBody.hash).toMatch(/^[0-9a-f]{64}$/);
 
-  const afterSnapshot = await closeFetch(`${GW()}/users/alice/cas/nodes/${hash}/metadata`);
+  const afterSnapshot = await closeFetch(`${GW()}/tenants/alice/cas/nodes/${hash}/metadata`);
   const afterSnapshotMetadata = await afterSnapshot.json();
   expect(afterSnapshotMetadata.state.childRefCount)
     .toBeGreaterThan(afterDeltaMetadata.state.childRefCount);

@@ -21,7 +21,10 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/cas-client": "workspace:*"
+    "@unidocs/cas-client": "workspace:*",
+    "@unidocs/protocol-cas": "workspace:*",
+    "@unidocs/protocol-doc": "workspace:*",
+    "@unidocs/service-auth": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

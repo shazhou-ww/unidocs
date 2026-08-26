@@ -20,7 +20,7 @@ const stateFetch = (opts: { version?: number; ok?: boolean; status?: number; byt
 describe("loadDoc", () => {
   it("fetches canonical PsdStoredDoc bytes and materializes a lazy doc", async () => {
     const store = memStore();
-    const { doc, version, snapshot } = await loadDoc({ apiBaseUrl: "/gw/users/u1", type: "psd", docId: "d1", store, fetchImpl: stateFetch({ version: 3 }) });
+    const { doc, version, snapshot } = await loadDoc({ apiBaseUrl: "/gw/tenants/u1", type: "psd", docId: "d1", store, fetchImpl: stateFetch({ version: 3 }) });
     expect(version).toBe(3);
     expect(doc.canvas.width).toBe(2);
     expect(doc.layers).toEqual([]);
@@ -30,7 +30,7 @@ describe("loadDoc", () => {
   it("throws a clear error when the /ir fetch fails", async () => {
     const store = memStore();
     await expect(
-      loadDoc({ apiBaseUrl: "/gw/users/u1", type: "psd", docId: "d1", store, fetchImpl: stateFetch({ ok: false, status: 404 }) })
+      loadDoc({ apiBaseUrl: "/gw/tenants/u1", type: "psd", docId: "d1", store, fetchImpl: stateFetch({ ok: false, status: 404 }) })
     ).rejects.toThrow(/GET current state failed with status 404/);
   });
 });

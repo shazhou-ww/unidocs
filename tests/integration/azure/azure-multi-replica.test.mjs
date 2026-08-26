@@ -36,7 +36,7 @@ test("the runtime really gave us at least two replicas", () => {
 });
 
 async function createDoc(userId) {
-  const res = await closeFetch(`${runtime.urls.gateway}/users/${userId}/docs/markdown/`, {
+  const res = await closeFetch(`${runtime.urls.gateway}/tenants/${userId}/docs/markdown/`, {
     method: "POST",
   });
   const body = await res.json();
@@ -128,7 +128,7 @@ test("alternating replicas advance the version with no holes", async () => {
   }
 
   const history = await closeFetch(
-    `${runtime.urls.gateway}/users/${userId}/docs/markdown/${identity.docId}/history`,
+    `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/${identity.docId}/history`,
   );
   const body = await history.json();
   expect(body.success).toBe(true);

@@ -144,6 +144,7 @@ export function docServicesJson(docTypes, host, ports) {
     serviceId: name,
     url: `http://${host}:${ports[name]}`,
     accessKey: docServiceAccessKey(name),
+    audience: `unidocs-doc:${name}`,
   }])));
 }
 
@@ -162,6 +163,7 @@ export function buildWorkers({ docTypes, host, ports, bundleDir, casFault = fals
       bindings: {
         CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: docServicesJson(docTypes, host, ports),
+        INTERNAL_AUTH_MODE: "legacy",
         INSECURE_PATH_IDENTITY: "true",
       },
       d1Databases: { GATEWAY_DB },

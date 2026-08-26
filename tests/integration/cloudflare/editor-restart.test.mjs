@@ -27,7 +27,7 @@ test("优雅重启后从持久化存储恢复,版本与内容保持不变", asyn
     let docId;
     try {
       const create = await closeFetch(
-        `${runtime.urls.gateway}/users/${userId}/docs/markdown/`,
+        `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/`,
         { method: "POST" },
       );
       ({ docId } = await create.json());
@@ -37,7 +37,7 @@ test("优雅重启后从持久化存储恢复,版本与内容保持不变", asyn
       // 这个测试验证的是持久化状态的完整性:优雅重启后版本与内容原样恢复。
       for (let baseVersion = 1; baseVersion <= 21; baseVersion += 1) {
         const res = await closeFetch(
-          `${runtime.urls.gateway}/users/${userId}/docs/markdown/${docId}/apply`,
+          `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/${docId}/apply`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -64,7 +64,7 @@ test("优雅重启后从持久化存储恢复,版本与内容保持不变", asyn
 
     try {
       const query = await closeFetch(
-        `${runtime.urls.gateway}/users/${userId}/docs/markdown/${docId}/query`,
+        `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/${docId}/query`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -92,7 +92,7 @@ test("rollback 到阈值快照之后的版本:从 R2 快照加载并 replay 其�
 
   try {
     const create = await closeFetch(
-      `${runtime.urls.gateway}/users/${userId}/docs/markdown/`,
+      `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/`,
       { method: "POST" },
     );
     const { docId } = await create.json();
@@ -100,7 +100,7 @@ test("rollback 到阈值快照之后的版本:从 R2 快照加载并 replay 其�
     // apply 22 次,版本推进到 23;R2/D1 的阈值快照落在 version 21。
     for (let baseVersion = 1; baseVersion <= 22; baseVersion += 1) {
       const res = await closeFetch(
-        `${runtime.urls.gateway}/users/${userId}/docs/markdown/${docId}/apply`,
+        `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/${docId}/apply`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -122,7 +122,7 @@ test("rollback 到阈值快照之后的版本:从 R2 快照加载并 replay 其�
 
     // 回滚到 22:最近的快照是 21,因此必须加载它并 replay version 22 这一条 delta
     const rollback = await closeFetch(
-      `${runtime.urls.gateway}/users/${userId}/docs/markdown/${docId}/rollback`,
+      `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/${docId}/rollback`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -135,7 +135,7 @@ test("rollback 到阈值快照之后的版本:从 R2 快照加载并 replay 其�
     });
 
     const query = await closeFetch(
-      `${runtime.urls.gateway}/users/${userId}/docs/markdown/${docId}/query`,
+      `${runtime.urls.gateway}/tenants/${userId}/docs/markdown/${docId}/query`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

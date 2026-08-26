@@ -748,6 +748,7 @@ export async function startAzureRuntime({
         serviceId: name,
         url: urls[name],
         accessKey: docServiceAccessKey(name),
+        audience: `unidocs-doc:${name}`,
       };
     }
 
@@ -758,6 +759,7 @@ export async function startAzureRuntime({
         DATABASE_URL: GATEWAY_DATABASE_URL,
         CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: JSON.stringify(docServices),
+        INTERNAL_AUTH_MODE: "legacy",
         INSECURE_PATH_IDENTITY: "true",
         PORT: String(layout.gateway),
         ...(casBaseUrl ? { CAS_BASE_URL: casBaseUrl } : {}),

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * 对已部署的公网网关跑设计 §10 第 5 条的验收断言。
  *
@@ -22,9 +21,9 @@
  * `scripts/azure-deploy.mjs` 在 `--cas-base-url` 为空时,第 7 步会自动带上
  * 它(从自己的部署配置派生,不是从命令行透传)。它对任何 `--gateway`(本地
  * 或非本地)都允许,但**不是无条件信任**:发出任何真正的断言之前,先对
- * `${gateway}/users/{随机 userId}/cas/nodes/{占位 hash}` 探测一次 —— 未配
+ * 对随机 tenant 的 CAS node 路径探测一次 —— 未配
  * CAS 的网关上 `isPublicCasRoute` 恒为 `false`,这条请求必然 404
- * (`packages/cas/src/public-route.ts`);任何其它状态码都说明这个网关其实
+ * (`packages/protocol-cas/src/routes.ts`);任何其它状态码都说明这个网关其实
  * 配置了 CAS,`--no-cas` 用错了地方,脚本在跑任何断言之前就直接中止 ——
  * 这条探测让开关无法被用来伪造绿色,即使有人手工对着一个配了 CAS 的网关
  * 传 `--no-cas`。跑完后收尾文案是 `smoke passed (no-CAS deployment — ...)`,
@@ -126,7 +125,7 @@ export function isLocalHost(gateway) {
 /**
  * `--no-cas` 的核心保护:不信任调用者说的"这次部署没配 CAS",自己对着
  * 真实网关发一次请求确认。未配 CAS 时 `isPublicCasRoute` 恒为 `false`
- * (`packages/cas/src/public-route.ts`),`POST /users/{u}/cas/nodes/{hash}`
+ * (`packages/protocol-cas/src/routes.ts`),即 tenant CAS node POST
  * 必然拿到 `{error:"Unknown CAS endpoint"}` 的 404 —— 这条路由本身不校验
  * hash 格式,占位符即可命中。任何其它状态码(包括这个网关把请求转发给了
  * 真实 CAS worker 之后对方返回的 4xx/5xx)都证明 CAS 其实配置了,直接中止,
@@ -134,28 +133,28 @@ export function isLocalHost(gateway) {
  */
 export async function assertCasNotConfigured(gateway) {
   const probeUser = `smoke-no-cas-probe-${RUN}`;
-  const res = await fetch(`${gateway}/users/${probeUser}/cas/nodes/${"0".repeat(64)}`, {
+  const res = await fetch(`${gateway}/tenants/${probeUser}/cas/nodes/${"0".repeat(64)}`, {
     method: "POST",
   });
   if (res.status !== 404) {
     throw new Error(
       `--no-cas was passed but the gateway at ${gateway} answered the CAS probe with HTTP ${res.status} ` +
-      "(expected 404, which is what an unconfigured gateway always returns for /users/{u}/cas/* — see " +
-      "packages/cas/src/public-route.ts). This gateway appears to have CAS configured, so group 3 (docx " +
+      "(expected 404, which is what an unconfigured gateway always returns for tenant CAS routes — see " +
+      "packages/protocol-cas/src/routes.ts). This gateway appears to have CAS configured, so group 3 (docx " +
       "image path through Cloudflare CAS) must run. Re-run without --no-cas.",
     );
   }
 }
 
 async function createDoc(gateway, docType, docId) {
-  return fetch(`${gateway}/users/${USER}/docs/${docType}/`, {
+  return fetch(`${gateway}/tenants/${USER}/docs/${docType}/`, {
     method: "POST",
     headers: { "X-Doc-Id": docId },
   });
 }
 
 async function apply(gateway, docType, docId, baseVersion, description, operations) {
-  const res = await fetch(`${gateway}/users/${USER}/docs/${docType}/${docId}/apply`, {
+  const res = await fetch(`${gateway}/tenants/${USER}/docs/${docType}/${docId}/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ baseVersion, description, operations }),
@@ -165,7 +164,7 @@ async function apply(gateway, docType, docId, baseVersion, description, operatio
 }
 
 async function query(gateway, docType, docId, kind, payload) {
-  const res = await fetch(`${gateway}/users/${USER}/docs/${docType}/${docId}/query`, {
+  const res = await fetch(`${gateway}/tenants/${USER}/docs/${docType}/${docId}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload ? { kind, payload } : { kind }),
@@ -175,7 +174,7 @@ async function query(gateway, docType, docId, kind, payload) {
 }
 
 async function exportDoc(gateway, docType, docId) {
-  const res = await fetch(`${gateway}/users/${USER}/docs/${docType}/${docId}/export`);
+  const res = await fetch(`${gateway}/tenants/${USER}/docs/${docType}/${docId}/export`);
   const bytes = new Uint8Array(await res.arrayBuffer());
   return { res, bytes };
 }
@@ -253,7 +252,7 @@ async function docxImageFlow(gateway, docId) {
   const digest = await computeNodeDigest(header, "image/png", [], imageBytes);
   const hash = hashToHex(digest);
 
-  const uploadRes = await fetch(`${gateway}/users/${USER}/cas/nodes/${hash}`, {
+  const uploadRes = await fetch(`${gateway}/tenants/${USER}/cas/nodes/${hash}`, {
     method: "POST",
     headers: {
       "Content-Type": "image/png",

@@ -7,7 +7,6 @@ import {
 function reservation(overrides: Partial<Parameters<MemoryGatewayDocumentDirectory["reserve"]>[0]> = {}) {
   return {
     docId: "doc-1",
-    userId: "user-1",
     tenantId: "tenant-1",
     docType: "markdown",
     serviceId: "markdown",
@@ -63,12 +62,30 @@ describe("MemoryGatewayDocumentDirectory", () => {
       idempotencyKey: "create-2",
       now: 110,
     }));
-    await directory.markReady("user-1", "doc-1", 1, 120);
-    await directory.markReady("user-1", "doc-2", 2, 130);
+    await directory.markReady("tenant-1", "doc-1", 1, 120);
+    await directory.markReady("tenant-1", "doc-2", 2, 130);
 
-    await expect(directory.list("user-1", "markdown")).resolves.toEqual([
+    await expect(directory.list("tenant-1", "markdown")).resolves.toEqual([
       expect.objectContaining({ docId: "doc-2", version: 2 }),
       expect.objectContaining({ docId: "doc-1", version: 1 }),
     ]);
+  });
+
+  it("isolates equal document and idempotency IDs across tenants", async () => {
+    const directory = new MemoryGatewayDocumentDirectory();
+    await directory.reserve(reservation());
+    await directory.reserve(reservation({
+      tenantId: "tenant-2",
+      sessionId: "session-2",
+    }));
+
+    await expect(directory.get("tenant-1", "doc-1")).resolves.toMatchObject({
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+    });
+    await expect(directory.get("tenant-2", "doc-1")).resolves.toMatchObject({
+      tenantId: "tenant-2",
+      sessionId: "session-2",
+    });
   });
 });

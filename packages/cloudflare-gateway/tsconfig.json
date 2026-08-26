@@ -16,7 +16,10 @@
       "path": "../gateway-common"
     },
     {
-      "path": "../protocol-gateway"
+      "path": "../protocol-cas"
+    },
+    {
+      "path": "../service-auth"
     }
   ]
 }
