@@ -54,8 +54,25 @@ pnpm test:local           # 默认门禁,不含任何 Azure 集成测试
 pnpm test:azure           # Azure 集成测试(tests/integration/azure/),需要 Docker
 pnpm azure:up             # docker compose -f packages/azure-sdk/docker-compose.yml up -d
 pnpm azure:down           # docker compose -f packages/azure-sdk/docker-compose.yml down
-node stacks/azure/deploy/deploy.mjs --cas-base-url ... --internal-token ...   # 真实云部署(全量)
+node stacks/azure/deploy/deploy.mjs --cas-base-url ... --internal-auth-mode dual --capability-key-id ...
 ```
+
+Capability rollout also accepts `--capability-issuer`; `dual` and `capability`
+modes require an active key ID. Private PKCS8 and trusted JWKS values are read
+from pre-provisioned Key Vault secrets and are never accepted as CLI arguments
+or printed in deployment output. `--cas-access-key` is rollout-only while a
+legacy CAS dependency remains mounted; it is not the target authentication
+model.
+
+Deploy validator JWKS to Doc/CAS revisions before switching Gateway to the
+matching private key. Gateway alone receives `CAPABILITY_PRIVATE_KEY_PKCS8`;
+validators receive public-only `CAPABILITY_TRUSTED_JWKS`; issuer, audience, and
+lifetime policy are non-secret environment values. Run capability-authenticated
+create/read/write and CAS smoke probes after each revision change. During the
+bounded rollout window rollback is a forward deployment of the retained `dual`
+artifact with an explicitly controlled legacy secret. After secret destruction,
+recover with a capability-aware release and key rotation rather than restoring a
+permanent bypass. See `docs/capability-key-operations.md`.
 
 ## `deploy.mjs` 的选择器
 

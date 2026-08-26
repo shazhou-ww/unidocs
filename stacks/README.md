@@ -39,3 +39,19 @@ stacks/
 
 判断依据:**只有一朵云用到的运行时/部署逻辑,放 `stacks/<cloud>/`;
 两朵云都用到的、或者跟云无关的,放 `scripts/`。**
+
+## Cross-cloud capability contract
+
+- Gateway is the only holder of the private signing key.
+- Doc and CAS receive public-only trusted JWKS; each Doc and CAS use distinct,
+  exact audiences.
+- Trust is immutable deployment configuration, not runtime discovery. Key or
+  JWKS changes require a Worker deployment or new/restarted Container App
+  revision.
+- Gateway-to-Doc, Gateway-to-CAS, and Doc-to-CAS use separate short-lived
+  capabilities. User credentials and identity headers never cross the Gateway
+  boundary.
+
+See [Azure deployment](azure/README.md),
+[Cloudflare deployment](cloudflare/deploy/README.md), and
+[capability key operations](../docs/capability-key-operations.md).

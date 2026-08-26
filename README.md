@@ -89,45 +89,47 @@ packages/
 
 ## API
 
-All end-user endpoints go through Gateway. The current compatibility API lives
-under `/users/{userId}/...`; a Gateway identity resolver must bind authenticated
-identity to that path. Gateway never forwards `userId` downstream: Doc calls use
-`sessionId`, and CAS calls use `tenantId`. The path-based development resolver is
-disabled unless `INSECURE_PATH_IDENTITY=true` is explicitly configured.
+All end-user endpoints go through Gateway under `/tenants/{tenantId}/...`.
+Gateway authenticates the user, authorizes tenant membership, and never forwards
+end-user credentials or `userId` downstream. Doc calls use a private `sessionId`;
+CAS calls use `tenantId`. The path-based development resolver is disabled unless
+`INSECURE_PATH_IDENTITY=true` is explicitly configured. Legacy `/users/*` routes
+are rejected.
 
 ### Document lifecycle
 
 ```
-POST   /users/{userId}/docs/{docType}/                              → create document (multipart/form-data)
-GET    /users/{userId}/docs/{docType}/                              → list documents
-GET    /users/{userId}/docs/{docType}/{docId}/export                → download document (binary)
-POST   /users/{userId}/docs/{docType}/{docId}/query                 → query document → { data, version }
-POST   /users/{userId}/docs/{docType}/{docId}/apply                 → apply delta → { version }
-GET    /users/{userId}/docs/{docType}/{docId}/history               → get delta history
-POST   /users/{userId}/docs/{docType}/{docId}/rollback              → rollback to version
-POST   /users/{userId}/docs/{docType}/{docId}/run                   → Operator ReAct loop
-POST   /users/{userId}/docs/{docType}/{docId}/reset                 → reset Operator session
+POST   /tenants/{tenantId}/docs/{docType}/                              → create document (multipart/form-data)
+GET    /tenants/{tenantId}/docs/{docType}/                              → list documents
+GET    /tenants/{tenantId}/docs/{docType}/{docId}/export                → download document (binary)
+POST   /tenants/{tenantId}/docs/{docType}/{docId}/query                 → query document → { data, version }
+POST   /tenants/{tenantId}/docs/{docType}/{docId}/apply                 → apply delta → { version }
+GET    /tenants/{tenantId}/docs/{docType}/{docId}/history               → get delta history
+POST   /tenants/{tenantId}/docs/{docType}/{docId}/rollback              → rollback to version
+POST   /tenants/{tenantId}/docs/{docType}/{docId}/run                   → Operator ReAct loop
+POST   /tenants/{tenantId}/docs/{docType}/{docId}/reset                 → reset Operator session
 ```
 
 ### CAS
 
 ```
-GET    /users/{userId}/cas/nodes/{hash}/content    → read node bytes
-GET    /users/{userId}/cas/nodes/{hash}/metadata   → read metadata + state
-POST   /users/{userId}/cas/nodes/{hash}            → lease with content
-POST   /users/{userId}/cas/nodes/{hash}/lease      → extend a ready node
-GET    /users/{userId}/cas/usage                   → storage usage
+GET    /tenants/{tenantId}/cas/nodes/{hash}/content    → read node bytes
+GET    /tenants/{tenantId}/cas/nodes/{hash}/metadata   → read metadata + state
+POST   /tenants/{tenantId}/cas/nodes/{hash}            → lease with content
+POST   /tenants/{tenantId}/cas/nodes/{hash}/lease      → extend a ready node
+GET    /tenants/{tenantId}/cas/usage                   → storage usage
+POST   /tenants/{tenantId}/cas/gc                      → tenant-admin GC
 ```
 
-CAS GC and root management are internal service operations. Usage requires
-tenant-administration authorization at Gateway.
+CAS root management is internal. Usage and GC require tenant-administration
+authorization at Gateway.
 
 See [CAS Architecture](docs/cas-architecture.md) for lease-with-content and lease-extend.
 
 ### Create document
 
 ```
-POST /users/{userId}/docs/{docType}/
+POST /tenants/{tenantId}/docs/{docType}/
 Content-Type: multipart/form-data
 
 Fields (mutually exclusive):
@@ -139,21 +141,21 @@ Response: { success: true, docId: string, version: 1 }
 ```
 
 Clone flow:
-1. Gateway resolves `sourceId` in the authenticated user's document directory
+1. Gateway resolves `sourceId` in the authenticated tenant's document directory
 2. Gateway verifies the source is ready, uses the same Doc service, and belongs
   to the resolved tenant
 3. Gateway obtains the source snapshot and reserves the target document/session
 4. Gateway calls the target session's internal `/init-from-hash` endpoint
 5. the destination retains the same snapshot DAG without copying content
 
-Snapshot hashes are never accepted as public clone capabilities. Cross-user or
-cross-tenant clone is rejected; cross-tenant content copy requires a future
+Snapshot hashes are never accepted as public clone capabilities. Cross-tenant
+clone is rejected; cross-tenant content copy requires a future
 authorized recursive DAG-copy operation.
 
 ### Query
 
 ```
-POST /users/{userId}/docs/{docType}/{docId}/query
+POST /tenants/{tenantId}/docs/{docType}/{docId}/query
 Content-Type: application/vnd.unidocs.svalue+cbor;version=1
 
 { "kind": "...", "payload": {...} }
@@ -168,7 +170,7 @@ JSON remains a compatibility transport for values that contain no SBlob.
 ### Apply (delta)
 
 ```
-POST /users/{userId}/docs/{docType}/{docId}/apply
+POST /tenants/{tenantId}/docs/{docType}/{docId}/apply
 Content-Type: application/vnd.unidocs.svalue+cbor;version=1
 
 {
@@ -192,7 +194,7 @@ performs this conversion.
 ### Rollback
 
 ```
-POST /users/{userId}/docs/{docType}/{docId}/rollback
+POST /tenants/{tenantId}/docs/{docType}/{docId}/rollback
 Content-Type: application/json
 
 { "version": 10 }
@@ -202,14 +204,14 @@ Response: { success: true, version: 43 }
 
 Rollback implementation:
 1. Find nearest snapshot ≤ target version (from sqlite snapshots table)
-2. Load the retained TDoc root from user CAS
+2. Load the retained TDoc root from tenant CAS
 3. Replay retained SValue delta roots to the target
 4. Insert a restore delta that references the reconstructed standalone TDoc root
 
 ### Operator (AI agent interface)
 
 ```
-POST /users/{userId}/docs/{docType}/{docId}/run
+POST /tenants/{tenantId}/docs/{docType}/{docId}/run
 Content-Type: application/json
 
 { "instruction": "natural language task description" }
@@ -226,7 +228,7 @@ Operator behavior:
 - Max 10 iterations per run (configurable)
 
 ```
-POST /users/{userId}/docs/{docType}/{docId}/reset
+POST /tenants/{tenantId}/docs/{docType}/{docId}/reset
 
 Response: { success: true }
 ```
@@ -300,7 +302,9 @@ binding = "CAS_SERVICE"
 service = "unidocs-cas"
 ```
 
-Set the Doc worker's own `SERVICE_ACCESS_KEY` and outbound `CAS_ACCESS_KEY`.
+Set the Doc worker's exact `DOC_CAPABILITY_AUDIENCE`, CAS audience, issuer, and
+public-only `CAPABILITY_TRUSTED_JWKS`. Only Gateway receives the matching private
+signing key.
 
 5. Add a deployment-time Gateway registration (secure
 `DOC_SERVICES_JSON`); do not add a runtime KV row or Gateway DO binding:
@@ -310,7 +314,7 @@ Set the Doc worker's own `SERVICE_ACCESS_KEY` and outbound `CAS_ACCESS_KEY`.
   "mytype": {
     "serviceId": "mytype",
     "url": "https://mytype.internal",
-    "accessKey": "..."
+    "audience": "unidocs-doc:mytype"
   }
 }
 ```
@@ -321,7 +325,7 @@ Set the Doc worker's own `SERVICE_ACCESS_KEY` and outbound `CAS_ACCESS_KEY`.
    - Add `"mytype"` to `SUPPORTED_DOC_TYPES` in `stacks/azure/local/runtime.mjs`.
    - Add `{ "path": "packages/azure-mytype" }` to the root `tsconfig.json`'s `references`.
    - Provision a service-owned database and migration job, then include its URL
-     and access key in Gateway's static registry.
+     and exact capability audience in Gateway's static registry.
 
 ## Development
 
@@ -332,12 +336,13 @@ pnpm dev docx markdown       # explicit Doc type selection
 ```
 
 The Miniflare runtime injects one static `DOC_SERVICES_JSON` containing only
-the selected Doc services. Gateway, each Doc service, and CAS receive distinct
-development access keys. Gateway alone binds `GATEWAY_DB`; Doc workers own only
-their Durable Objects and call CAS through `CAS_SERVICE`.
+the selected Doc services and generates an ephemeral ES256 fixture unless one
+is supplied. Gateway receives the private key; Doc and CAS receive only its
+public JWKS. Gateway alone binds `GATEWAY_DB`; Doc workers own only their Durable
+Objects and call CAS through `CAS_SERVICE` with request-local delegated tokens.
 
 ```text
-POST http://127.0.0.1:8787/users/{userId}/docs/markdown/
+POST http://127.0.0.1:8787/tenants/{tenantId}/docs/markdown/
 ```
 
 ### Local Azure stack
@@ -354,8 +359,8 @@ of one Doc service share only that service's database and Blob containers.
 
 Azure DOCX currently uses the Cloudflare CAS worker as a cross-cloud service.
 Start `pnpm dev docx` in another terminal first, or set `CAS_BASE_URL`. The
-probe authenticates with the dedicated CAS key and calls the tenant-scoped CAS
-service URL directly.
+Azure and Cloudflare local stacks share one ephemeral capability fixture so
+Azure Doc calls the tenant-scoped CAS URL with request-local delegated tokens.
 
 Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `stacks/azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side, which `docx` on Azure now requires. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `stacks/azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
 
@@ -415,9 +420,13 @@ Before deploying Cloudflare Gateway, apply its D1 migrations from
 wrangler d1 migrations apply unidocs-snapshots
 ```
 
-Configure Gateway's secure `DOC_SERVICES_JSON` and `CAS_ACCESS_KEY`. Configure
-each Doc worker's own `SERVICE_ACCESS_KEY` plus its outbound `CAS_ACCESS_KEY`.
-There is no KV registry or runtime registration step.
+Configure Gateway's secure `CAPABILITY_PRIVATE_KEY_PKCS8`, active
+`CAPABILITY_KEY_ID`, issuer, CAS audience, and static `DOC_SERVICES_JSON` with an
+exact audience per Doc service. Configure Doc/CAS validators with public-only
+`CAPABILITY_TRUSTED_JWKS`, issuer, exact audiences, and lifetime policy. Key or
+JWKS changes require deployment/restart; wait at least $300+30=330$ seconds
+before removing retired trust. There is no KV registry or runtime registration
+step. See [Capability Key Operations](docs/capability-key-operations.md).
 
 Azure deployment provisions and migrates separate Gateway, Markdown, and DOCX
 databases. Existing monolithic Azure data is left untouched; import it

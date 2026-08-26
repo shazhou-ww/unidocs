@@ -7,9 +7,9 @@ Status: canonical P0 architecture (2026-08-25)
 ```mermaid
 flowchart LR
   Client -->|user credentials + public docId| Gateway
-  Gateway -->|sessionId + Doc access key| Doc[Doc service]
-  Gateway -->|tenantId + CAS access key| CAS
-  Doc -->|tenantId + CAS access key| CAS
+  Gateway -->|Doc capability + optional delegated CAS capability| Doc[Doc service]
+  Gateway -->|tenant-scoped CAS capability| CAS
+  Doc -->|request-local delegated CAS capability| CAS
 
   Gateway --> GatewayDB[(Gateway directory)]
   Doc --> SessionStore[(session-local storage)]
@@ -43,7 +43,6 @@ Gateway maps each public document to at least:
 ```ts
 interface GatewayDocumentRecord {
   docId: string;
-  userId: string;
   tenantId: string;
   docType: string;
   serviceId: string;
@@ -59,9 +58,9 @@ Clients cannot choose a trusted tenant or session by sending internal headers.
 Gateway derives tenant context from authenticated identity or its directory,
 then constructs a minimal downstream request.
 
-The current `/users/{userId}/...` public route is a compatibility surface.
-Production identity resolvers must bind the authenticated user to that segment.
-The path-based development resolver is disabled unless
+The public route is `/tenants/{tenantId}/...`. Production identity resolvers
+bind the authenticated user to that tenant. Legacy `/users/*` routes are
+rejected. The path-based development resolver is disabled unless
 `INSECURE_PATH_IDENTITY=true` is explicitly configured.
 
 ## Gateway ownership
@@ -87,18 +86,18 @@ It has no user, owner, directory, or list concept.
 Its internal API is session-scoped:
 
 ```text
-PUT  /sessions/{sessionId}
-GET  /sessions/{sessionId}/status
-POST /sessions/{sessionId}/query
-POST /sessions/{sessionId}/apply
-GET  /sessions/{sessionId}/export
-GET  /sessions/{sessionId}/history
-POST /sessions/{sessionId}/rollback
-GET  /sessions/{sessionId}/snapshot
-GET  /sessions/{sessionId}/ir
-POST /sessions/{sessionId}/init-from-hash
-POST /sessions/{sessionId}/run
-POST /sessions/{sessionId}/reset
+PUT  /tenants/{tenantId}/sessions/{sessionId}
+GET  /tenants/{tenantId}/sessions/{sessionId}/status
+POST /tenants/{tenantId}/sessions/{sessionId}/query
+POST /tenants/{tenantId}/sessions/{sessionId}/apply
+GET  /tenants/{tenantId}/sessions/{sessionId}/export
+GET  /tenants/{tenantId}/sessions/{sessionId}/history
+POST /tenants/{tenantId}/sessions/{sessionId}/rollback
+GET  /tenants/{tenantId}/sessions/{sessionId}/snapshot
+GET  /tenants/{tenantId}/sessions/{sessionId}/ir
+POST /tenants/{tenantId}/sessions/{sessionId}/init-from-hash
+POST /tenants/{tenantId}/sessions/{sessionId}/run
+POST /tenants/{tenantId}/sessions/{sessionId}/reset
 ```
 
 Creation stores immutable `tenantId` session metadata so later CAS operations
@@ -141,23 +140,22 @@ then inject one static Gateway registry:
   "markdown": {
     "serviceId": "markdown",
     "url": "https://markdown.internal",
-    "accessKey": "..."
+    "audience": "unidocs-doc:markdown"
   },
   "docx": {
     "serviceId": "docx",
     "url": "https://docx.internal",
-    "accessKey": "..."
+    "audience": "unidocs-doc:docx"
   }
 }
 ```
 
-The deployment value is supplied as the secure `DOC_SERVICES_JSON` setting.
-Each Doc registration has its own access key. CAS has a separate
-`CAS_ACCESS_KEY`. A Doc process receives only its own `SERVICE_ACCESS_KEY` and
-the CAS key it needs for its outbound dependency.
+The deployment value is supplied as `DOC_SERVICES_JSON`. Each Doc registration
+has one exact capability audience. Gateway alone receives the private signing
+key; Doc and CAS receive public-only trusted JWKS plus their exact audiences.
 
 Configuration is validated as a whole. Unknown document types return 404;
-duplicate service IDs, empty keys, and non-HTTP(S) URLs reject configuration.
+duplicate service IDs, empty audiences, and non-HTTP(S) URLs reject configuration.
 
 ## Create lifecycle
 
@@ -166,8 +164,9 @@ duplicate service IDs, empty keys, and non-HTTP(S) URLs reject configuration.
 3. Gateway allocates distinct `docId` and `sessionId` values.
 4. Gateway atomically reserves a `creating` directory row under an idempotency
    key.
-5. Gateway calls `PUT /sessions/{sessionId}` with the Doc service key and tenant
-   context.
+5. Gateway calls `PUT /tenants/{tenantId}/sessions/{sessionId}` with a Doc
+  capability bound to that tenant/session and a separate delegated CAS
+  capability when required.
 6. A definitive success marks the directory row `ready`; a definitive client
    failure marks it `failed`.
 7. A timeout leaves the row `creating`. A repeated idempotency key probes the
@@ -184,14 +183,17 @@ same-tenant clone because CAS storage is tenant-partitioned.
 
 Azure deploys Doc Container Apps with internal ingress and Gateway with external
 ingress. Cloudflare Doc workers are reached through configured service URLs or
-service bindings and always fail closed on a missing key. A cross-cloud service
-endpoint may be network-routable, but it is service-facing, never an end-user
-API, and requires its own access key.
+service bindings and fail closed on missing or invalid capabilities. A
+cross-cloud endpoint may be network-routable, but it remains service-facing and
+requires the correct audience, issuer, permission, tenant, and session claims.
 
 Gateway strips end-user `Authorization`, cookies, user identity headers, and
-caller-supplied tenant/session headers before forwarding. Downstream requests
-contain only required content headers, service credentials, tracing added by a
-trusted adapter, `tenantId`, and `sessionId`.
+caller-supplied tenant/session headers before forwarding. Gateway-to-Doc uses a
+short-lived Doc Bearer plus optional `X-UniDocs-CAS-Capability`; Gateway-to-CAS
+and Doc-to-CAS use CAS-only Bearers. Doc never forwards its primary token. Doc
+and CAS verify locally from deployment-supplied JWKS and never call Gateway for
+verification. ES256 capabilities default to 120 seconds, may not exceed 300
+seconds, and allow at most 30 seconds of clock skew.
 
 ## Storage and migrations
 

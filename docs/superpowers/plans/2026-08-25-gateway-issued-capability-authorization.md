@@ -1595,6 +1595,17 @@ Task 8 implementation record (in progress, 2026-08-26):
       root-assignment request/response idempotency, complete usage fields, and GC
       body/results. Protocol CAS/Doc/Gateway route suites pass 13/28/31 and retain
       the complete method, operation, path-encoding, and wrong-method matrices.
+- Canonical root, microservice, CAS, Azure/Cloudflare deployment, and capability
+      operations documentation now describes tenant-aware routes, separated
+      Gateway/Doc/CAS capabilities, trust ownership, rotation, verification, and
+      incident response. The documentation checkbox remains open until production
+      gates close and this implementation plan can be marked complete.
+- Production inspection is currently blocked outside the repository: Azure CLI
+      is authenticated to `Edge-Data-Pipeline-Dev`, but the deployment script's
+      target subscription `24c9acbd-c2f5-4ef9-b9a2-486d90208b3e` is not visible;
+      package-level Wrangler reports that Cloudflare is not authenticated. No
+      active revision/secret inspection or deployed legacy-header probe is
+      claimed until those read permissions are available.
 
 Final validation:
 

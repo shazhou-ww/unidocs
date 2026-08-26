@@ -80,3 +80,32 @@ revocation store.
 
 Never copy a private key to Doc/CAS, source control, container images, queues,
 database rows, traces, crash reports, command output, or incident tickets.
+
+## Operational verification
+
+For every active Cloudflare worker and Azure revision:
+
+1. Confirm metadata-only diagnostics report the expected issuer, active or
+   trusted `kid`, and exact Doc/CAS audiences without printing JWKS bodies.
+2. Run Gateway create/read/write and direct CAS read/write/admin smoke probes.
+3. Probe Doc and CAS tenant routes with the retired legacy header and require
+   `401`; a capability-authenticated probe must still succeed.
+4. Monitor unknown-key, wrong-issuer, wrong-audience, expired-token, and
+   permission-denied events through the full observation window.
+5. Search logs and traces for token strings, signatures, private keys, and JWKS
+   bodies. Any match is an incident, not an observability feature.
+6. Inspect active revisions, environment variables, and secret references;
+   inactive or pre-capability revisions must not receive traffic.
+
+Production rollout is incomplete until the observation window, rollback
+window, active-revision inspection, legacy-header probes, and legacy-secret
+destruction gates all pass.
+
+## Incident decisions
+
+| Condition | Response |
+|---|---|
+| Active signing key unavailable | Switch Gateway to another already-trusted private key and deploy a capability-aware revision. |
+| Private key suspected compromised | Publish replacement trust, switch Gateway, observe for at least 330 seconds, then remove compromised public and private material. |
+| Validators reject new tokens | Verify issuer, `kid`, audience, JWKS deployment, and that every validator revision restarted. |
+| Authorization failures spike | Disable the affected route/revision or forward-deploy a retained capability-aware release; do not enable an undocumented permanent bypass. |

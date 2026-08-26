@@ -332,18 +332,21 @@ export interface CasGcResult {
 
 ## 11. Authenticated HTTP API
 
-Gateway's public compatibility CAS endpoints live under `/users/{userId}/cas/`.
-Gateway authenticates and authorizes that user, resolves `tenantId`, strips
-end-user credentials, and translates the request to the CAS service path
-`/tenants/{tenantId}/cas/`.
+Gateway's public CAS endpoints live under `/tenants/{tenantId}/cas/`. Gateway
+authenticates the user, authorizes membership or tenant administration, strips
+end-user credentials, and forwards only an allowlisted request with a
+tenant-scoped CAS capability.
 
 A dedicated CAS worker owns `CasDurableObject`, D1 `CAS_DB`, and R2 `CAS_R2`.
-Gateway allowlist-proxies only public node routes, injecting its CAS access key
-and trusted tenant context. Root management and GC are not proxied.
+Gateway allowlist-proxies public node routes and tenant-admin operations with
+short-lived CAS-only capabilities. Root management is never publicly proxied.
 
-CAS requires the CAS service access key on every request and never reads an
-end-user Bearer. Doc services call CAS directly rather than HTTP-hairpinning
-through Gateway.
+CAS accepts only Gateway-issued Bearer capabilities on tenant-aware routes and
+never reads an end-user Bearer. It verifies issuer, CAS audience, lifetime,
+exact permission, and the signed tenant against the URL before storage access.
+Doc services call CAS directly with a separate request-local delegated CAS
+capability rather than forwarding their Doc token or hairpinning through Gateway.
+`cas:admin` is Gateway-only and is never delegated to Doc.
 
 HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
 
@@ -351,7 +354,7 @@ HTTP upload is a lease that carries content. Extending a ready node uses a separ
 
 ```http
 GET /tenants/{tenantId}/cas/nodes/{sha256}/content
-X-Internal-Token: <CAS access key>
+Authorization: Bearer <CAS capability with cas:read>
 ```
 
 Responses:
@@ -363,7 +366,7 @@ Responses:
 
 ```http
 GET /tenants/{tenantId}/cas/nodes/{sha256}/metadata
-X-Internal-Token: <CAS access key>
+Authorization: Bearer <CAS capability with cas:read>
 ```
 
 Returns immutable metadata and mutable state. Unknown nodes return `404`.
@@ -372,7 +375,7 @@ Returns immutable metadata and mutable state. Unknown nodes return `404`.
 
 ```http
 POST /tenants/{tenantId}/cas/nodes/{sha256}
-X-Internal-Token: <CAS access key>
+Authorization: Bearer <CAS capability with cas:write>
 Content-Type: image/png
 Content-Length: 12345
 X-CAS-Refs: <hash>[,<hash>...]
@@ -398,7 +401,7 @@ If the node is already ready and immutable metadata matches, the service cancels
 
 ```http
 POST /tenants/{tenantId}/cas/nodes/{sha256}/lease
-X-Internal-Token: <CAS access key>
+Authorization: Bearer <CAS capability with cas:write>
 X-CAS-Lease-Duration: 900000
 ```
 
@@ -411,7 +414,7 @@ A successful response is the same lease result as 11.3.
 ```http
 GET  /tenants/{tenantId}/cas/usage
 POST /tenants/{tenantId}/cas/gc
-X-Internal-Token: <CAS access key>
+Authorization: Bearer <Gateway CAS capability with cas:admin>
 ```
 
 Gateway may expose usage only to tenant administrators. GC is internal-only and
@@ -423,9 +426,8 @@ in one call.
 Editors assign durable roots by stable owner, not by caller-computed count deltas:
 
 ```http
-POST /_internal/root-assignments
-X-Internal-Token: ...
-X-Tenant-Id: {tenantId}
+POST /tenants/{tenantId}/_internal/root-assignments
+Authorization: Bearer <delegated Doc CAS capability with cas:write>
 Content-Type: application/json
 
 {
@@ -437,13 +439,17 @@ Content-Type: application/json
 }
 ```
 
+The delegated capability must carry the calling Doc subject and the same signed
+`tenantId` and `sessionId`; every owner must begin with that session namespace.
 CAS stores `(tenant_id, owner, hash)`. In one idempotent D1 batch it reads prior
 assignments, derives aggregate count changes, updates `rootRefCount`, replaces
 owner rows, and records the request hash. Assigning `hash: null` releases an
 owner. Two owners of the same hash count independently.
 
-The legacy `/_internal/root-refs` route remains only for migration of old
-operation roots. Neither internal route is Gateway-proxied.
+The tenant-aware `/_internal/root-refs` suffix remains only for migration of old
+operation roots and requires the same delegated session capability. Neither
+internal route is Gateway-proxied. Tenant-less adapters exist only during the
+explicit rollout window and are not part of the target API.
 
 ### 11.7 Internal portable nodes
 
@@ -451,10 +457,9 @@ Document workers exchange the canonical full-node representation from
 [CAS Binary Format](./cas-binary-format.md):
 
 ```http
-GET  /_internal/nodes/{hash}
-POST /_internal/nodes/{hash}
-X-Internal-Token: ...
-X-Tenant-Id: {tenantId}
+GET  /tenants/{tenantId}/_internal/nodes/{hash}
+POST /tenants/{tenantId}/_internal/nodes/{hash}
+Authorization: Bearer <CAS capability with cas:read or cas:write>
 Content-Type: application/vnd.unidocs.cas-node
 ```
 
