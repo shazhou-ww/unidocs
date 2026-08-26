@@ -5,8 +5,13 @@ import { describe, expect, test } from "vitest";
 import worker, { CAS_SERVER_CLOUDFLARE_PACKAGE } from "../src/worker.js";
 import type { Env } from "../src/worker.js";
 
-/** The boundary tests never reach storage; a bare D1-shaped object suffices. */
-const STUB_ENV = { CAS_CONTROL_DB: {} } as unknown as Env;
+/** The boundary tests never reach storage; bare D1/R2-shaped stubs suffice. */
+const STUB_ENV = {
+  CAS_CONTROL_DB: {},
+  CAS_DB: { exec: async () => undefined },
+  CAS_R2: {},
+  CAS_DO: {},
+} as unknown as Env;
 
 describe("cas-server-cloudflare package boundary", () => {
   test("depends on protocol-cas, the authority repository, and service-auth only", () => {
@@ -19,6 +24,7 @@ describe("cas-server-cloudflare package boundary", () => {
     expect(pkg.name).toBe(CAS_SERVER_CLOUDFLARE_PACKAGE);
     expect(pkg.dependencies["@unidocs/protocol-cas"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/cas-control-plane"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unidocs/cas-server-common"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/service-auth"]).toBe("workspace:*");
     expect(pkg.dependencies["@unidocs/protocol-cas-legacy"]).toBeUndefined();
     expect(pkg.dependencies["@unidocs/cloudflare-cas"]).toBeUndefined();

@@ -340,6 +340,9 @@ importers:
       '@unidocs/cas-control-plane':
         specifier: workspace:*
         version: link:../cas-control-plane
+      '@unidocs/cas-server-common':
+        specifier: workspace:*
+        version: link:../cas-server-common
       '@unidocs/protocol-cas':
         specifier: workspace:*
         version: link:../protocol-cas

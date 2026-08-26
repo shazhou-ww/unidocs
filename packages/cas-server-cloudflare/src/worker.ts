@@ -21,6 +21,7 @@ import {
 } from "@unidocs/service-auth";
 import { StackCapabilityVerifier } from "./auth.js";
 import type { StackAuthEvent, StaticLegacyStackConfig } from "./auth.js";
+import { migrateStackTenantSchema } from "./schema.js";
 
 /** Marker that this package is the canonical stack-scoped CAS server. */
 export const CAS_SERVER_CLOUDFLARE_PACKAGE = "@unidocs/cas-server-cloudflare" as const;
@@ -28,6 +29,10 @@ export const CAS_SERVER_CLOUDFLARE_PACKAGE = "@unidocs/cas-server-cloudflare" as
 export interface Env {
   /** Read-only tenant authority registry (issuer → stack, keys, domains). */
   CAS_CONTROL_DB: D1Database;
+  /** Tenant-scoped node/audit storage; migrated by this worker at startup. */
+  CAS_DB: D1Database;
+  CAS_R2: R2Bucket;
+  CAS_DO: DurableObjectNamespace;
   /** Static legacy-stack bootstrap (migration window; registry wins). */
   LEGACY_STACK_ID?: string;
   LEGACY_STACK_ISSUER?: string;
@@ -39,6 +44,8 @@ export interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // Provision the stack-scoped tenant schema on first request (idempotent).
+    await migrateStackTenantSchema(env.CAS_DB);
     const url = new URL(request.url);
     const route = matchCasRoute(request.method, url.pathname);
     if (!route) {
@@ -51,7 +58,7 @@ export default {
     } catch (error) {
       return authErrorResponse(error);
     }
-    // Authorization is complete; storage/DO dispatch lands in Tasks 5-6.
+    // Authorization is complete; storage/DO dispatch lands in Task 6.
     return Response.json({
       error: "SERVICE_UNAVAILABLE",
       message: `CAS ${route.operation} is not implemented yet`,
@@ -121,3 +128,32 @@ function authErrorResponse(error: unknown): Response {
 
 export { StackCapabilityVerifier, permissionFor } from "./auth.js";
 export type { StackAuthEvent, StaticLegacyStackConfig, VerifiedStackCall } from "./auth.js";
+
+export {
+  migrateStackTenantSchema,
+  readCutoverState,
+  readLegacyStackId,
+  readSchemaMeta,
+  SCHEMA_VERSION,
+  writeCutoverState,
+  writeLegacyStackId,
+} from "./schema.js";
+export type { CutoverState } from "./schema.js";
+
+export { canonicalComposite, decodeComposite, stackNodeKey } from "./do-names.js";
+
+export { runLegacyBaseline, LEGACY_BASELINE_MAX_BATCH } from "./baseline.js";
+export type { LegacyBaselineResult, LegacyBaselineRow } from "./baseline.js";
+
+export {
+  deleteMigratedSources,
+  discoverR2Sources,
+  manifestStats,
+  parseHistoricalNodeKey,
+  runR2Migration,
+  verifyR2Digests,
+} from "./r2-migration.js";
+export type { R2ManifestStatus, R2MigrationOptions, R2MigrationStats } from "./r2-migration.js";
+
+export { CutoverController, canTransitionCutover, shouldUseStacklessFallback } from "./cutover.js";
+export type { CutoverContext } from "./cutover.js";

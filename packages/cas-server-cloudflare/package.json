@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@unidocs/cas-control-plane": "workspace:*",
+    "@unidocs/cas-server-common": "workspace:*",
     "@unidocs/protocol-cas": "workspace:*",
     "@unidocs/service-auth": "workspace:*"
   },

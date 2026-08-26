@@ -20,6 +20,9 @@
       "path": "../cas-control-plane"
     },
     {
+      "path": "../cas-server-common"
+    },
+    {
       "path": "../protocol-cas"
     },
     {

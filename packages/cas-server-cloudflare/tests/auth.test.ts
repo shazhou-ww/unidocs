@@ -353,7 +353,7 @@ describe("stack authorization (Task 4)", () => {
 
   test("worker end-to-end: authorized requests reach dispatch; failures are 401/403", async () => {
     const { db: controlDb, stacks } = await createSeededDb();
-    const env = { CAS_CONTROL_DB: controlDb } as Env;
+    const env = { CAS_CONTROL_DB: controlDb, CAS_DB: controlDb, CAS_R2: {}, CAS_DO: {} } as Env;
     const stack = stacks.a!;
     const tenant = "tenant-1";
 

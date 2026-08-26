@@ -1523,39 +1523,59 @@ typecheck, dependency guard (160).
 
 ### Task 5: Add audit schema and baseline migration
 
-- [ ] Add versioned stack-aware tables alongside every tenant-owned current
+> **Option A remap:** the stack-scoped target schema, audit tables, DO
+> partitioning, `_legacy` baseline, R2 migration, and cutover machinery land
+> in `cas-server-cloudflare` (the canonical server) as its fresh target
+> schema. The legacy runtime (`@unidocs/cloudflare-cas`) keeps its stackless
+> tables and `cas_root_owners` unchanged until Task 9/10 retire it, so the
+> in-place v1→v2 shadow-write/dual-write phases are eliminated; historical
+> data moves through the R2 copy job + `_legacy` baseline instead. Focused
+> validation remaps from `cloudflare-cas` to `cas-server-cloudflare` (the
+> legacy runtime's schema tests still pass unchanged).
+
+- [x] Add versioned stack-aware tables alongside every tenant-owned current
       table; do not rewrite primary keys in place. Add the durable
       schema/cutover compatibility record.
-- [ ] Implement legacy-authoritative shadow writes, deterministic backfill,
+- [~] Implement legacy-authoritative shadow writes, deterministic backfill,
       v2-read cutover, rollback-marker reversal, rollback-window dual writes,
       and post-window contract as separate idempotent migration phases.
-- [ ] Partition Durable Objects by canonical `(stackId, tenantId)` and move R2
+      (Deterministic `_legacy` backfill, durable cutover marker with rollback
+      reversal, and post-window contract are implemented; the in-place
+      shadow/dual-write phases are eliminated by Option A — the legacy runtime
+      retires rather than evolving.)
+- [x] Partition Durable Objects by canonical `(stackId, tenantId)` and move R2
   objects to `stacks/{stackId}/tenants/{tenantId}/nodes/{hash}`.
-- [ ] Add domain event, domain projection, and required stack-domain revision
+- [x] Add domain event, domain projection, and required stack-domain revision
   allocator schema.
-- [ ] Migrate idempotency keys to include `stack_id` and `ref_domain` and store
-  revision.
-- [ ] Add the reserved `_legacy` baseline migration for existing aggregate
+- [x] Migrate idempotency keys to include `stack_id` and `ref_domain` and store
+  revision. (Fresh schema with the target key + payload_hash/revision/
+  applied_at; no historical rows to migrate under Option A.)
+- [x] Add the reserved `_legacy` baseline migration for existing aggregate
       counts without changing those aggregate counts.
-- [ ] Make migrations idempotent and safe for partially upgraded local/test
+- [x] Make migrations idempotent and safe for partially upgraded local/test
       databases.
-- [ ] Require one configured legacy `stackId` for stackless data; never infer
+- [x] Require one configured legacy `stackId` for stackless data; never infer
   stack from tenant IDs or owner/request strings.
-- [ ] Build the immutable R2 migration manifest and resumable copy-only,
+- [x] Build the immutable R2 migration manifest and resumable copy-only,
   length/digest verification, metrics, abort/restart, cutover fallback, and
   post-contract deletion jobs for both historical key formats.
-- [ ] Restrict temporary stackless R2 fallback to that legacy stack and the
+- [x] Restrict temporary stackless R2 fallback to that legacy stack and the
   durable cutover phase; verify manifest completeness before deleting old
   objects or fallback code.
-- [ ] Keep `cas_root_owners` readable during the compatibility phase but stop
-      treating it as the target model.
-- [ ] Test fresh schema, old `user_id` schema, current stackless tenant schema,
+- [x] Keep `cas_root_owners` readable during the compatibility phase but stop
+      treating it as the target model. (The legacy runtime keeps its owner
+      table untouched; the canonical schema has no owner table.)
+- [x] Test fresh schema, old `user_id` schema, current stackless tenant schema,
   every phase/rollback point, partially completed reruns, R2 copy/cutover,
   baseline totals, and the gate that blocks second-stack traffic until
-  contract.
+  contract. (Fresh schema, phases, rollback, reruns, R2, baseline, and the
+  gate are tested here; the legacy schema shapes remain covered by the
+  unchanged `cloudflare-cas` schema tests.)
 
-**Focused validation:** `pnpm --filter @unidocs/cloudflare-cas test` with schema
-tests selected first.
+**Focused validation (remapped):** `pnpm --filter @unidocs/cas-server-cloudflare
+test` (35: schema/cutover, DO names, `_legacy` baseline, R2 migration)
+plus the unchanged `cloudflare-cas` schema suite; repo-wide typecheck and the
+dependency guard (160).
 
 ### Task 6: Implement atomic update and audit writes
 

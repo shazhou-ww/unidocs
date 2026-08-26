@@ -3,13 +3,27 @@ main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
 # Canonical stack-scoped CAS tenant server. Private backing Worker (reached
-# through cas-edge CAS_TENANT_SERVICE binding in Task 9). Handlers return 501
-# until Tasks 5-6 land storage/DO dispatch.
+# through cas-edge CAS_TENANT_SERVICE binding in Task 9). Storage/DO dispatch
+# lands in Task 6; the stack-scoped tenant schema is migrated at startup.
 
 [[d1_databases]]
 binding = "CAS_CONTROL_DB"
 database_name = "unidocs-cas-control"
 database_id = "REPLACE_WITH_CAS_CONTROL_D1_ID"
+
+[[d1_databases]]
+binding = "CAS_DB"
+database_name = "unidocs-cas-db"
+database_id = "REPLACE_WITH_CAS_D1_ID"
+
+[[r2_buckets]]
+binding = "CAS_R2"
+bucket_name = "unidocs-cas"
+preview_bucket_name = "unidocs-cas-preview"
+
+[[durable_objects.bindings]]
+name = "CAS_DO"
+class_name = "CasDurableObject"
 
 # Read-only tenant authority registry: issuer -> stack, keys, refDomains.
 # The tenant runtime never mutates control schema; the admin BFF migrates it.

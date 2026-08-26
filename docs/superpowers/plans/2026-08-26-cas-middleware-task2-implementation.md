@@ -174,6 +174,23 @@ fail-closed policy with telemetry, and a static legacy-stack bootstrap.
 Storage/DO dispatch is Task 5/6; the gateway's legacy `cas:admin` issuance
 and per-doc-type refDomain wiring migrate with stack onboarding (Task 9).
 
+## Task 5 execution notes
+
+The stack-scoped tenant storage lands in `cas-server-cloudflare` as its fresh
+target schema: `cas_nodes`/`cas_edges` keyed by `(stack_id, tenant_id, ...)`,
+domain-scoped idempotency `(stack_id, tenant_id, ref_domain, request_id)` with
+payload_hash/revision, the audit tables (`cas_root_domain_events`,
+`cas_root_domain_refs`, `cas_root_domain_revisions`), and the durable
+schema/cutover record (`cas_schema_meta`) + R2 manifest
+(`cas_r2_migration_manifest`). DO names use `canonicalComposite(stackId,
+component)` (unambiguous URL-encoded pairs); R2 keys use
+`stacks/{stackId}/tenants/{tenantId}/nodes/{hash}`. The reserved `_legacy`
+baseline importer writes deterministic events/balances without touching
+aggregates and reruns idempotently; the R2 migration job is manifest-driven,
+copy-only, resumable, size+digest verified, with post-contract deletion gated
+on a complete manifest; the stackless fallback is legacy-stack-only and
+non-contracted. The old runtime's schema/owner tables are untouched (Option A).
+
 ## Phase plan and status
 
 - [x] Protocol amendments (`INVALID_REQUEST`, drop `pending`).
