@@ -1,1 +1,1 @@
-{ "docType": "docx", "targetPort": 8789, "minReplicas": 2, "maxReplicas": 5 }
+{ "docType": "docx", "targetPort": 8789, "localPortBase": 41810, "minReplicas": 2, "maxReplicas": 5, "needsCas": true }
