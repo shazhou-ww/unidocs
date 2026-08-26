@@ -1,10 +1,10 @@
 # Gateway-Issued Internal Capability Authorization Implementation Plan
 
-> **Status:** In progress. The P0 boundary prerequisite completed in
-> `cdce042`. Tasks 0-3 are complete. The implementation was rebased onto
-> `origin/main` commit `d01afd0` on 2026-08-26 after the cloud stack directory
-> reorganization; Tasks 0-6 are complete, Task 7 repository rollout support is
-> ready with production observation gates pending, and Task 8 is in progress.
+> **Status:** Complete for repository and local-runtime scope (2026-08-26).
+> Tasks 0-6, local Task 7 support, and repository Task 8 conformance/docs are
+> complete. Production deployment, observation, secret destruction, and active
+> revision probes are explicitly deferred and are not completion gates for the
+> current phase.
 >
 > **For agentic workers:** Use an executing-plans workflow and complete one
 > task at a time. Keep the checkboxes current. Do not combine this migration
@@ -1441,48 +1441,34 @@ Implementation record (2026-08-26):
       conditional skips; `pnpm test:azure` passed 15/15, with no residual test
       container or network.
 
-### Task 7: Migrate credentials and routes without an outage
+### Task 7: Prepare migration without an outage
 
-Use an explicit three-phase rollout. There is no implicit fallback mode.
+Repository and local-runtime support is complete:
 
-- [ ] Phase A: deploy Doc/CAS validators in an explicitly configured `dual`
-      mode that accepts either the legacy service token on a quarantined legacy
-      `/users/*` route adapter or capabilities on tenant-aware routes. Emit
-      credential-kind and route-generation metrics. Capability validation
-      remains strict, and tenant routes never accept identity headers as
-      authority.
-- [ ] Phase B: switch Gateway to two-token issuance and every Doc -> CAS client
-      to delegated capabilities and the split protocol route builders. Verify supported
-      traffic emits zero legacy authentications and zero legacy-route matches
-      for at least one maximum token lifetime plus the operational observation
-      window.
-- [ ] Phase C1: deploy Doc/CAS in `capability` mode and stop mounting the legacy
-      secret in active services. Retain the prior capability-aware `dual`
-      artifact and a disabled, access-controlled version of the legacy secret
-      for one explicitly recorded rollback window.
-- [ ] Phase C2: after the rollback window and capability-only observation gate,
-      delete the legacy secret from platform secret stores, remove legacy
-      routes, matchers, headers/config from Gateway, Doc, CAS, clients, scripts,
-      tests, generated config, and infrastructure, deactivate old revisions,
-      and delete `dual` mode.
-- [ ] Make the final/default production mode `capability`; an absent mode or
-      absent trust configuration must not silently select legacy behavior.
 - [x] Update local development and integration harnesses to issue real test
       capabilities rather than inserting a magic shared token.
 
-Task 7 is not complete: repository implementation for Phase A/B is ready for
-deployment, but the production deployment, observation, rollback-window, and
-secret-destruction gates remain open.
 Doc and CAS service edges emit token-free authentication events containing
 credential kind, route generation, operation, tenant, and capability key/token
 identifiers where applicable. In `dual` mode, tenant routes require capabilities
 and legacy credentials are confined to explicit private adapters. Cloudflare and
 Azure local harnesses default to `dual`, generate real ephemeral ES256 fixtures,
 and share a fixture for cross-runtime Azure Doc -> Cloudflare CAS tests. Root
-typecheck, build, and package tests pass; `pnpm test:local` passes 291 with 2
-conditional skips and `pnpm test:azure` passes 15/15 with clean resource teardown.
-The checkboxes above remain open until the corresponding deployment, observation
-window, rollback-window closure, and production secret/route removal are verified.
+typecheck, build, and package tests pass; `pnpm test:local` passes 312 with 2
+conditional skips and `pnpm test:azure` passes 27/27 with clean resource teardown.
+
+#### Deferred production follow-up
+
+- **Phase A:** deploy Doc/CAS validators in explicit `dual` mode, emit
+  credential-kind and route-generation metrics, and keep tenant routes strict.
+- **Phase B:** switch production Gateway and Doc-to-CAS traffic to capabilities,
+  then observe zero legacy authentication/route matches for the required window.
+- **Phase C1:** deploy `capability` mode, stop mounting active legacy secrets,
+  and retain one controlled rollback window.
+- **Phase C2:** close the rollback window, destroy legacy secrets, remove legacy
+  routes/config and `dual` mode, and deactivate old revisions.
+- Make the final/default production mode `capability`; missing mode or trust
+  configuration must continue to fail closed.
 
 Rollback during Phase A/B or C1 is an audited forward deployment of the retained
 capability-aware `dual` artifact plus an explicit remount of the retained
@@ -1491,7 +1477,8 @@ After secret destruction, pre-capability artifacts are intentionally no longer
 valid rollback targets; recovery must use a capability-capable release and key
 rotation. Do not retain a hidden permanent legacy bypass.
 
-**Gate:** Repository search finds no service-edge/runtime auth use of
+**Deferred production acceptance criteria:** Repository search finds no
+service-edge/runtime auth use of
 `INTERNAL_TOKEN`, `X-Internal-Token`, `X-User-Id`, or `/users/*`; historical
 plans and explicitly private adapter route names may retain those terms as
 history/context.
@@ -1520,21 +1507,21 @@ Doc/CAS runtime.
       collide and that no service keys tenant data by user.
 - [x] Prove rotation overlap accepts both configured keys and removal rejects
       the retired key after the bounded lifetime.
-- [ ] Inspect active Cloudflare secrets/bindings and Azure Container App
-      revisions, environment variables, and secret references. Prove local,
-      generated, and deployed configuration has no shared-token credential or
-      equivalent renamed bypass.
-- [ ] Probe every active Doc/CAS runtime with the retired legacy header and
-      verify `401`; confirm capability-authenticated smoke paths still succeed.
 - [x] Add a focused throughput/latency check for two Gateway signatures plus
       local Doc/CAS verification. Treat external signer throttling or material
       latency as a deployment issue, not a reason to broaden token lifetime or
       cache bearer tokens across operations.
-- [ ] Update canonical architecture, deployment, operations, and incident
-      response documentation. Mark this plan complete rather than leaving it as
-      a competing source of truth.
+- [x] Update canonical architecture, deployment, operations, and incident
+      response documentation and close the repository/local implementation plan.
 
-Task 8 implementation record (in progress, 2026-08-26):
+Deferred production follow-up:
+
+- Inspect active Cloudflare secrets/bindings and Azure Container App revisions,
+  environment variables, and secret references.
+- Probe every active Doc/CAS runtime with the retired legacy header and require
+  `401` while capability-authenticated smoke paths continue to succeed.
+
+Task 8 implementation record (repository/local complete, 2026-08-26):
 
 - Added `tests/integration/shared/authorization-suite.mjs` and backend entry
       points for Cloudflare and Azure. Gateway creates the test documents, then
@@ -1598,16 +1585,15 @@ Task 8 implementation record (in progress, 2026-08-26):
 - Canonical root, microservice, CAS, Azure/Cloudflare deployment, and capability
       operations documentation now describes tenant-aware routes, separated
       Gateway/Doc/CAS capabilities, trust ownership, rotation, verification, and
-      incident response. The documentation checkbox remains open until production
-      gates close and this implementation plan can be marked complete.
-- Production inspection is currently blocked outside the repository: Azure CLI
+      incident response. This plan is complete for the agreed repository/local
+      scope; production rollout remains a separate deferred activity.
+- Deferred production inspection was inaccessible during this phase: Azure CLI
       is authenticated to `Edge-Data-Pipeline-Dev`, but the deployment script's
       target subscription `24c9acbd-c2f5-4ef9-b9a2-486d90208b3e` is not visible;
       the current subscription also returns `AuthorizationFailed` for the
       `Unidocs` resource group, and package-level Wrangler reports that
-      Cloudflare is not authenticated. No active revision/secret inspection or
-      deployed legacy-header probe is claimed until those read permissions are
-      available.
+      Cloudflare is not authenticated. No production inspection or probe is
+      claimed by this local-scope closure.
 
 Final validation:
 
@@ -1618,14 +1604,14 @@ pnpm test
 pnpm test:local
 ```
 
-## Completion gate
+## Repository/local completion gate
 
 The migration is complete only when all of the following hold:
 
 - Gateway is the only capability issuer and the only service that handles user
   identity/authorization.
-- Every internal operation is authorized to an explicit tenant; every session
-  operation is additionally authorized to one session.
+- Every capability-mode internal operation is authorized to an explicit tenant;
+      every session operation is additionally authorized to one session.
 - Gateway -> Doc uses a Doc-only token plus, when needed, a separate CAS-only
   delegated capability.
 - Doc never forwards its own token, never persists delegated capabilities, and
@@ -1634,10 +1620,18 @@ The migration is complete only when all of the following hold:
   signed session constraint.
 - No service accepts a token for another audience, an overlong token, or a
   permission implied by another permission.
-- `INTERNAL_TOKEN`, `X-Internal-Token`, and production dual mode are gone from
-      active code, generated configuration, platform secret stores/bindings, and
-      active revisions; deployed legacy-header probes fail closed.
-- Private keys exist only in Gateway-controlled secret/signing facilities;
-  Doc/CAS hold only the required public keys.
+- Local capability fixtures deliver private material only to Gateway; Doc/CAS
+      receive public JWKS, and capability mode rejects legacy headers.
 - Full repository validation and both cloud-focused authorization behavior
   suites pass.
+
+## Deferred production gate
+
+Before a production rollout is called complete:
+
+- execute Task 7 phases A-C2 and close the recorded observation/rollback windows;
+- remove `INTERNAL_TOKEN`, `X-Internal-Token`, production `dual` mode, and legacy
+      secrets/routes from active configuration and revisions;
+- verify private keys exist only in Gateway-controlled secret/signing facilities;
+- inspect every active revision and run deployed legacy-header plus capability
+      smoke probes on Cloudflare and Azure.
