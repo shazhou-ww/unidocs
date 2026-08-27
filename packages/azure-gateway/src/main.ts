@@ -42,6 +42,7 @@ import {
   parseCapabilityRuntimePolicy,
 } from "@unidocs/service-auth";
 import { PgGatewayDocumentDirectory } from "./document-directory.js";
+import { hasWebAssets, webAssetResponse } from "./web-assets.js";
 
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
@@ -121,8 +122,17 @@ async function main(): Promise<void> {
     casStackId: stackMode ? requireEnv("CAS_STACK_ID") : undefined,
   });
 
-  const { close } = await serve(handler, { port, host: "0.0.0.0" });
-  console.log(`azure-gateway listening on :${port}`);
+  // The built web-psd app is served from this same origin (see
+  // src/web-assets.ts). `/tenants/*` stays with the API handler; everything
+  // else falls through to the UI, so the SPA and its API live under one
+  // hostname and no CORS is involved.
+  const withUi = async (request: Request): Promise<Response> =>
+    webAssetResponse(request) ?? handler(request);
+
+  const { close } = await serve(withUi, { port, host: "0.0.0.0" });
+  console.log(
+    `azure-gateway listening on :${port}` + (hasWebAssets() ? " (web-psd UI bundled)" : " (no UI bundled)"),
+  );
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {

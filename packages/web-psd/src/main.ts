@@ -14,7 +14,12 @@
 
 import { CasBlobStore, DocSession, loadDoc, RenderClient, Viewport } from "@unidocs/psd-client";
 
-const GW = "/gw"; // Vite proxies this to the gateway (see vite.config.ts)
+// Dev: Vite proxies `/gw/*` to the gateway (see vite.config.ts), which keeps
+// the browser same-origin without CORS. Production: the built app is served
+// BY the gateway itself, so the API is already same-origin and the prefix
+// would be a path that does not exist there. `import.meta.env.DEV` is
+// substituted at build time, so the dev-only branch is not shipped.
+const GW = import.meta.env.DEV ? "/gw" : "";
 const USER = "u1";
 const API_BASE_URL = `${GW}/tenants/${USER}`;
 const TYPE = "psd";
