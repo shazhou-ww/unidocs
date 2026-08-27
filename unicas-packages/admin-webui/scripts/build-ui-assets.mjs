@@ -37,6 +37,23 @@ async function main() {
     console.error(`dist/ui not built (${err.message}); writing an empty assets map.`);
     files = [];
   }
+  // Inline the unicas-cli agent skill alongside the console so agents can
+  // fetch it from the deployed /admin/assets/skills/... URL without a
+  // repository checkout.
+  const SKILL_SOURCES = [
+    {
+      rel: "/assets/skills/unicas-cli/SKILL.md",
+      file: join(ROOT, "..", "..", ".agents", "skills", "unicas-cli", "SKILL.md"),
+    },
+  ];
+  for (const source of SKILL_SOURCES) {
+    try {
+      files.push({ rel: source.rel, content: await readFile(source.file, "utf8") });
+    } catch (err) {
+      console.error(`skill file missing (${err.message}); skipping ${source.rel}`);
+    }
+  }
+  files.sort((a, b) => a.rel.localeCompare(b.rel));
   await mkdir(dirname(OUT), { recursive: true });
   const body = files
     .map(({ rel, content }) => `  ${JSON.stringify(rel)}: ${JSON.stringify(content)},`)

@@ -326,10 +326,46 @@ body.modal-open {
   margin-top: 0.85rem;
 }
 
-.mcp-config-url,
+.mcp-cli-prompt-heading {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
 .mcp-config-prompt {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.mcp-url-bubble {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--foreground);
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.8rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.mcp-url-bubble:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.mcp-url-bubble:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(82, 82, 91, 0.16);
+}
+
+.mcp-url-bubble svg {
+  flex: none;
+  color: var(--muted-strong);
 }
 
 .mcp-auth-note {

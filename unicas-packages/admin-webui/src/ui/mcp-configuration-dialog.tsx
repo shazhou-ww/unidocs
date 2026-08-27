@@ -5,14 +5,25 @@ export function McpConfigurationDialog({ open, onClose }: {
   open: boolean;
   onClose: () => void;
 }) {
-  const [copied, setCopied] = useState<"url" | "prompt" | null>(null);
+  const [copied, setCopied] = useState<"url" | "prompt" | "cli" | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const copyTimerRef = useRef<number | null>(null);
   const serverUrl = `${window.location.origin}/mcp`;
+  const skillUrl = `${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`;
   const configurationPrompt = `Add a remote MCP server named "UniCAS" with this URL: ${serverUrl}
 Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API key is required.`;
+  const cliPrompt = `Install the UniCAS CLI and its agent skill, then operate the control plane with it:
+1. Install the CLI (from the UniCAS repository):
+   pnpm --filter @unicas/cli build && pnpm install --global ./unicas-packages/cli
+2. Log in once in a browser: unicas login
+3. Install the agent skill, which tells you when and how to use the CLI:
+   fetch ${skillUrl} and save it as ~/.agents/skills/unicas-cli/SKILL.md (DeepSeek Harness)
+   or ~/.claude/skills/unicas-cli/SKILL.md (Claude Code), then follow it
+4. Use the CLI (JSON on stdout) or connect over stdio MCP:
+   unicas whoami | unicas stacks list | unicas stacks get <stackId> | unicas stacks create "Operations" --idempotency-key ops-1
+   stdio MCP: command "unicas", args ["mcp"]`;
 
   useEffect(() => {
     if (!open) return;
@@ -52,7 +63,7 @@ Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
   }, []);
 
-  async function copy(value: string, target: "url" | "prompt") {
+  async function copy(value: string, target: "url" | "prompt" | "cli") {
     await navigator.clipboard.writeText(value);
     setCopied(target);
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
@@ -92,16 +103,20 @@ Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API
           </button>
         </div>
         <p id="mcp-dialog-description" className="mcp-dialog-description">
-          Use the server URL directly, or paste the prompt into an AI tool that can manage MCP connections.
+          Use the server URL directly, or paste a prompt into your AI tool — the MCP prompt for
+          tools that manage MCP connections, or the CLI prompt for tools that cannot handle
+          OAuth MCP.
         </p>
-        <div className="mcp-config-heading">
-          <code>MCP server URL</code>
-          <button type="button" className="copy-button" onClick={() => void copy(serverUrl, "url")}>
-            {copied === "url" ? <Check size={14} /> : <Copy size={14} />}
-            <span>{copied === "url" ? "URL copied" : "Copy URL"}</span>
-          </button>
-        </div>
-        <pre className="mcp-config mcp-config-url"><code>{serverUrl}</code></pre>
+        <button
+          type="button"
+          className="mcp-url-bubble"
+          aria-label="Copy MCP server URL"
+          title="Click to copy the MCP server URL"
+          onClick={() => void copy(serverUrl, "url")}
+        >
+          {serverUrl}
+          {copied === "url" ? <Check size={14} /> : <Copy size={14} />}
+        </button>
         <div className="mcp-config-heading mcp-prompt-heading">
           <code>Configuration prompt</code>
           <button type="button" className="copy-button" onClick={() => void copy(configurationPrompt, "prompt")}>
@@ -110,6 +125,14 @@ Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API
           </button>
         </div>
         <pre className="mcp-config mcp-config-prompt"><code>{configurationPrompt}</code></pre>
+        <div className="mcp-config-heading mcp-cli-prompt-heading">
+          <code>CLI prompt</code>
+          <button type="button" className="copy-button" onClick={() => void copy(cliPrompt, "cli")}>
+            {copied === "cli" ? <Check size={14} /> : <Copy size={14} />}
+            <span>{copied === "cli" ? "CLI prompt copied" : "Copy CLI prompt"}</span>
+          </button>
+        </div>
+        <pre className="mcp-config mcp-config-prompt"><code>{cliPrompt}</code></pre>
         <div className="mcp-auth-note">
           <strong>No API key required</strong>
           <p>On first use, your AI tool opens a browser and asks you to approve UniCAS access.</p>
