@@ -32,7 +32,7 @@ Within a stack, `tenantId` identifies data ownership and `refDomain`
 independently identifies Root Ref audit attribution. Stack administrators
 authenticate to the control plane through OIDC, initially Google, and manage
 equal-permission membership, one tenant JWT issuer with multiple public keys,
-registered domains, and audit data. Tenant APIs continue to use stack-issued JWT
+observed Root Ref domains, and audit data. Tenant APIs continue to use stack-issued JWT
 capabilities. The authoritative CAS lifecycle state remains the
 `(stackId, tenantId)`-scoped aggregate `root_ref_count`; domain tables are
 atomic audit projections and never authoritative lifecycle inputs.
@@ -127,7 +127,6 @@ operator identities
 stacks
 stack memberships
 one tenant JWT issuer definition per stack and multiple public keys/JWKS
-registered refDomains
 control-plane audit events
 Root Ref audit data
 ```
@@ -424,8 +423,9 @@ cas:gc:trigger   advisory tenant GC
 ```
 
 There is no tenant `cas:admin` permission. Root Refs requires `cas:write` plus
-a registered active `refDomain`. Exact audience and permission matching is
-required; unknown permissions do not grant access. The verified principal,
+a valid issuer-signed `refDomain`. CAS validates the domain claim and the first
+successful write records it in the audit revision catalog. Exact audience and
+permission matching is required; unknown permissions do not grant access. The verified principal,
 issuer/stack, tenant, permission, domain, request ID, and decision are available
 to security telemetry without logging the bearer token.
 
@@ -528,12 +528,11 @@ After selecting a stack, members manage it through formal top-level admin APIs:
 | Member invitation | `POST /admin/stacks/{stackId}/member-invitations`; `POST /admin/member-invitations/{token}/accept` |
 | Tenant issuer | `GET/PUT /admin/stacks/{stackId}/issuer` |
 | Issuer keys | `GET/POST/DELETE /admin/stacks/{stackId}/issuer/keys` |
-| Reference domains | `GET/POST/PATCH /admin/stacks/{stackId}/ref-domains` |
+| Reference domains | `GET /admin/stacks/{stackId}/ref-domains` (observed audit domains) |
 | Root Ref audit | `GET /admin/stacks/{stackId}/root-ref-domains/{refDomain}/...` |
 | Control audit | `GET /admin/stacks/{stackId}/audit-events` |
 
-Deleting a `refDomain` means retiring it for future writes, not deleting its
-history. Issuer key rotation supports overlap, proof of private-key possession,
+Issuer key rotation supports overlap, proof of private-key possession,
 and explicit `active`, `retiring`, and `revoked` states. (Task 2 amendment:
 `pending` is removed — the frozen contract has no pending-to-active transition
 endpoint, so possession proof on create is the activation gate and keys enter
@@ -569,10 +568,10 @@ know another Google account's immutable `sub`:
 
 Stack creation atomically creates the stack and caller membership. The issuer
 is a singleton resource with globally unique `iss`; keys are child resources
-with unique `kid` and explicit lifecycle state. Domains are child resources
-whose retirement preserves historical audit. Stable control-plane errors
+with unique `kid` and explicit lifecycle state. Ref domains are discovered from
+successful audit writes rather than created in the control plane. Stable control-plane errors
 include `ADMIN_AUTH_REQUIRED`, `STACK_MEMBERSHIP_REQUIRED`, `NOT_FOUND`,
-`LAST_MEMBER`, `ISSUER_CONFLICT`, `KEY_STATE_CONFLICT`, `DOMAIN_RETIRED`,
+`LAST_MEMBER`, `ISSUER_CONFLICT`, `KEY_STATE_CONFLICT`,
 `RATE_LIMITED`, `SERVICE_UNAVAILABLE`, and (Task 2 amendment) `INVALID_REQUEST`,
 mapped consistently to HTTP status.
 
@@ -948,7 +947,6 @@ cas_stack_issuer
   UNIQUE (issuer)
 
 cas_stack_issuer_keys
-cas_stack_ref_domains
 cas_control_audit_events
 ```
 
@@ -1329,10 +1327,10 @@ the deployment runbook and reviewed at go-live.
 | `packages/cloudflare-sdk/src/editor-do-svalue.ts` | Replace owner assignments with explicit acquire/release deltas |
 | `packages/doctype-server-common/src/` | Preserve exact root lifecycle and rollback behavior for shared Doc runtimes |
 | `packages/service-auth/src/claims.ts` | Add and validate tenant, permission, and Root Refs domain claims |
-| `packages/service-auth/src/issuer.ts` | Accept registered domains and issue generic stack-authority CAS capabilities |
+| `packages/service-auth/src/issuer.ts` | Validate domain claims and issue generic stack-authority CAS capabilities |
 | `packages/service-auth/src/verifier.ts` | Verify tenant JWT capabilities and preserve stack, tenant, and domain context |
 | `unicas-packages/admin-webui/src/server/` | Implement Google OIDC callback, secure session, CSRF, `/admin` BFF routes, and control-plane service calls |
-| `unicas-packages/admin-webui/src/ui/` | Implement stack list/detail, members, issuer keys, domains, Root Ref audit, control audit, and usage views |
+| `unicas-packages/admin-webui/src/ui/` | Implement stack list/detail, members, issuer keys, observed domains, Root Ref audit, control audit, and usage views |
 | `unicas-packages/admin-webui/wrangler.toml` | Provision `CAS_CONTROL_DB`, OIDC/session secrets, private audit-reader binding, and control-plane deployment settings |
 | `packages/gateway-common/src/capability-authority.ts` | Adapt the current central issuer to the generic stack-authority contract |
 | `packages/gateway-common/src/capability-policy.ts` | Define Root Refs write delegation and separate operator audit permission |
@@ -1724,9 +1722,9 @@ Tests assert both aggregate counts and emitted domain deltas.
   delivery integration, and analytics/logpush consumption.)
 - [~] Register stable `unidocs-cloudflare` and `unidocs-azure` stacks through
   the self-service control plane; configure equal administrator memberships,
-  one tenant issuer plus rotation keys, audiences, and registered domains.
+  one tenant issuer plus rotation keys and audiences.
   (Both stacks are registered in the PRODUCTION CAS_CONTROL_DB via the
-  bootstrap script — issuer, ES256 rotation key, and active refDomains
+  bootstrap script — issuer and ES256 rotation key
   verified with d1 execute; the deployed tenant worker authorizes the
   provisioned cloudflare stack's capabilities. Console-based possession-proof
   registration and memberships land with the admin onboarding round.)

@@ -37,8 +37,8 @@ accepted by `/mcp`.
 
 | Scope | Operations |
 | --- | --- |
-| `control:read` | Identity, stacks, membership, public issuer configuration, refDomains, and audit reads |
-| `control:write` | Stack/refDomain creation and stack/refDomain lifecycle updates |
+| `control:read` | Identity, stacks, membership, public issuer configuration, observed refDomains, and audit reads |
+| `control:write` | Stack creation and stack metadata updates |
 | `control:security` | Member invitation/removal and issuer/key lifecycle operations |
 
 Scopes do not imply each other. Current stack membership is checked during each
@@ -68,8 +68,6 @@ Ordinary write tools:
 
 - `create_stack`
 - `update_stack`
-- `create_ref_domain`
-- `transition_ref_domain`
 
 Security tools:
 
@@ -86,9 +84,13 @@ material is never a valid MCP input.
 
 Creation tools require an idempotency key. Existing-resource mutations require a
 current ETag. Member invitations are email-bound and require the email twice.
-Member removal and refDomain/key/issuer transitions require explicit target
-confirmation. Destructive annotations are advisory metadata; the server always
+Member removal and key/issuer transitions require explicit target confirmation.
+Destructive annotations are advisory metadata; the server always
 enforces scopes, membership, ETags, confirmations, and service invariants.
+
+`list_ref_domains` is an audit discovery tool. It lists domains observed in
+successful Root Ref writes; domains are not pre-registered or lifecycle-managed
+through MCP.
 
 ## Worker configuration
 

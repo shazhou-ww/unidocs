@@ -11,26 +11,20 @@ import {
   casReadPermission,
 } from "@unidocs/service-auth";
 import { StackCapabilityVerifier } from "../src/auth.js";
-import type {
-  RegisteredRefDomain,
-  ResolvedStackAuthority,
-} from "@unicas/control-plane";
+import type { ResolvedStackAuthority, StackAuthorityResolver } from "@unicas/control-plane";
 
 const ISSUER = "https://issuer.example";
 const STACK = "cas_stack_a";
 const AUDIENCE = "unidocs-cas";
 const TENANT = "tenant-1";
 
-class StubRepository {
+class StubRepository implements StackAuthorityResolver {
   #authority: ResolvedStackAuthority;
-  #domains: readonly RegisteredRefDomain[];
   #down = false;
   issuerLookups = 0;
-  domainLookups = 0;
 
-  constructor(authority: ResolvedStackAuthority, domains: readonly RegisteredRefDomain[] = []) {
+  constructor(authority: ResolvedStackAuthority) {
     this.#authority = authority;
-    this.#domains = domains;
   }
 
   setRegistryDown(down: boolean): void {
@@ -51,11 +45,6 @@ class StubRepository {
     return issuer === ISSUER ? this.#authority : null;
   }
 
-  async listRegisteredRefDomains(stackId: string): Promise<readonly RegisteredRefDomain[]> {
-    this.domainLookups += 1;
-    if (this.#down) throw new Error("registry unavailable");
-    return stackId === STACK ? this.#domains : [];
-  }
 }
 
 async function setup(): Promise<{
@@ -72,7 +61,7 @@ async function setup(): Promise<{
     status: "active",
     keys: [{ kid: "k1", algorithm: "ES256", publicJwk, state: "active" }],
   };
-  const repository = new StubRepository(authority, [{ refDomain: "doc", status: "active" }]);
+  const repository = new StubRepository(authority);
   // One injected clock drives both the issuer and the verifier so tokens are
   // not "from the future".
   const clock = { now: 1_000_000 };

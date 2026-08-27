@@ -3,10 +3,11 @@
  *
  * The tenant runtime (`cas-server-cloudflare`) receives this repository to
  * resolve a verified issuer to its stack authority (audience + keys) and to
- * read registered refDomains. It exposes ONLY lookup operations — the
- * registry is written exclusively by `cas-control-plane`'s
- * `ControlPlaneService`. Revocation/key-removal propagation is bounded by the
- * verifier's cache policy (30s cache / 60s hard stale bound, fail closed).
+ * resolve a verified issuer to its stack authority (audience + keys). It
+ * exposes ONLY lookup operations; the registry is written exclusively by
+ * `cas-control-plane`'s `ControlPlaneService`. Revocation/key-removal
+ * propagation is bounded by the verifier's cache policy (30s cache / 60s hard
+ * stale bound, fail closed).
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
@@ -27,11 +28,6 @@ export interface ResolvedStackAuthority {
   readonly keys: readonly RegisteredStackKey[];
 }
 
-export interface RegisteredRefDomain {
-  readonly refDomain: string;
-  readonly status: "active" | "write_disabled" | "retired";
-}
-
 export class AuthorityRepository {
   readonly #db: D1Database;
 
@@ -43,12 +39,16 @@ export class AuthorityRepository {
    *  unknown. The issuer value is unique across stacks (registry invariant). */
   async resolveIssuer(issuer: string): Promise<ResolvedStackAuthority | null> {
     const row = await this.#db
-      .prepare("SELECT stack_id, issuer, audience, status FROM cas_stack_issuer WHERE issuer = ?")
+      .prepare(
+        "SELECT stack_id, issuer, audience, status FROM cas_stack_issuer WHERE issuer = ?",
+      )
       .bind(issuer)
       .first<IssuerRow>();
     if (!row) return null;
     const keyRows = await this.#db
-      .prepare("SELECT kid, algorithm, public_jwk, state FROM cas_stack_issuer_keys WHERE stack_id = ? ORDER BY kid")
+      .prepare(
+        "SELECT kid, algorithm, public_jwk, state FROM cas_stack_issuer_keys WHERE stack_id = ? ORDER BY kid",
+      )
       .bind(row.stack_id)
       .all<KeyRow>();
     return {
@@ -63,18 +63,6 @@ export class AuthorityRepository {
         state: key.state as CasIssuerKeyState,
       })),
     };
-  }
-
-  /** Registered refDomains for a stack, including retired history names. */
-  async listRegisteredRefDomains(stackId: string): Promise<readonly RegisteredRefDomain[]> {
-    const rows = await this.#db
-      .prepare("SELECT ref_domain, status FROM cas_stack_ref_domains WHERE stack_id = ? ORDER BY ref_domain")
-      .bind(stackId)
-      .all<RefDomainRow>();
-    return (rows.results ?? []).map((row) => ({
-      refDomain: row.ref_domain,
-      status: row.status as RegisteredRefDomain["status"],
-    }));
   }
 }
 
@@ -91,8 +79,4 @@ interface KeyRow {
   readonly public_jwk: string;
   readonly state: string;
 }
-
-interface RefDomainRow {
-  readonly ref_domain: string;
-  readonly status: string;
-}
+export type StackAuthorityResolver = Pick<AuthorityRepository, "resolveIssuer">;

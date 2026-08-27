@@ -6,6 +6,7 @@ import { canonicalizeRootRefsUpdate, executeDomainUpdate } from "../src/root-ref
 import {
   listRootDomainEvents,
   listRootDomainRefs,
+  listRootDomains,
   AuditReadError,
 } from "../src/audit-reads.js";
 import { stackNodeKey } from "../src/do-names.js";
@@ -67,6 +68,25 @@ async function seedEvent(revision: number, tenantId: string, requestId: string, 
     "INSERT INTO cas_root_domain_events (stack_id, ref_domain, revision, tenant_id, request_id, payload_hash, changes_json, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind(STACK, DOMAIN, revision, tenantId, requestId, "p".repeat(64), JSON.stringify(changes), revision * 1000).run();
 }
+
+describe("listRootDomains", () => {
+  test("lists only domains observed for the requested stack", async () => {
+    await createStore();
+    await seedProjection(3, []);
+    await db!.prepare(
+      "INSERT INTO cas_root_domain_revisions (stack_id, ref_domain, revision) VALUES (?, ?, ?)",
+    ).bind(STACK, "asset", 2).run();
+    await db!.prepare(
+      "INSERT INTO cas_root_domain_revisions (stack_id, ref_domain, revision) VALUES (?, ?, ?)",
+    ).bind("cas_other", "other", 9).run();
+
+    expect(await listRootDomains({ db: db!, stackId: STACK })).toEqual([
+      { stackId: STACK, refDomain: "asset", revision: 2 },
+      { stackId: STACK, refDomain: DOMAIN, revision: 3 },
+    ]);
+    expect(await listRootDomains({ db: db!, stackId: "cas_empty" })).toEqual([]);
+  });
+});
 
 describe("listRootDomainRefs", () => {
   test("an empty domain returns revision zero and no rows", async () => {

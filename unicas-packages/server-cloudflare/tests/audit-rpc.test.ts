@@ -70,6 +70,18 @@ function rpcRequest(path: string, key = READER_KEY): Request {
 }
 
 describe("audit-reader RPC", () => {
+  test("domains RPC lists domains observed through successful writes", async () => {
+    const env = await createEnv();
+    const response = await worker.fetch(
+      rpcRequest(`/_internal/audit/domains?stackId=${STACK}`),
+      env,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      domains: [{ stackId: STACK, refDomain: DOMAIN, revision: 1 }],
+    });
+  });
+
   test("refs RPC returns the current-balance page with the reader key", async () => {
     const env = await createEnv();
     const response = await worker.fetch(

@@ -7,7 +7,7 @@
  * permissions, optional refDomain), then requires issuer-derived stack
  * equality and token-tenant equality with the request path BEFORE any storage
  * access. `sub` is an opaque audit identity — no Gateway/Doc subject-prefix
- * semantics. Registry records are cached 30s and never served past the 60s
+ * semantics. Issuer records are cached 30s and never served past the 60s
  * hard stale bound; an unavailable registry fails closed. A static legacy
  * stack bootstrap covers the migration window.
  */
@@ -21,9 +21,8 @@ import {
 import type { JSONWebKeySet } from "jose";
 import type { CasRoute } from "@unicas/protocol";
 import type {
-  AuthorityRepository,
-  RegisteredRefDomain,
   ResolvedStackAuthority,
+  StackAuthorityResolver,
 } from "@unicas/control-plane";
 import {
   CapabilityAlgorithm,
@@ -33,7 +32,7 @@ import {
   casReadPermission,
   casUsageReadPermission,
   casWritePermission,
-  isReservedRefDomain,
+  validateRefDomainClaim,
 } from "@unidocs/service-auth";
 
 export interface StackAuthEvent {
@@ -56,7 +55,7 @@ export interface StaticLegacyStackConfig {
 }
 
 export interface StackVerifierOptions {
-  readonly repository: AuthorityRepository;
+  readonly repository: StackAuthorityResolver;
   /** Allowed algorithms; default [ES256]. */
   readonly allowedAlgorithms?: readonly string[];
   /** Serve cached authority records for this long without a registry read. */
@@ -86,7 +85,7 @@ const DEFAULT_HARD_STALE_BOUND_MS = 60_000;
 const CLOCK_TOLERANCE_SECONDS = 30;
 
 export class StackCapabilityVerifier {
-  readonly #repository: AuthorityRepository;
+  readonly #repository: StackAuthorityResolver;
   readonly #algorithms: string[];
   readonly #cacheTtlMs: number;
   readonly #hardStaleBoundMs: number;
@@ -94,7 +93,6 @@ export class StackCapabilityVerifier {
   readonly #onEvent: (event: StackAuthEvent) => void;
   readonly #staticLegacyStack: StaticLegacyStackConfig | null;
   readonly #authorityCache = new Map<string, CachedAuthority>();
-  readonly #domainsCache = new Map<string, CachedDomains>();
 
   constructor(options: StackVerifierOptions) {
     this.#repository = options.repository;
@@ -217,7 +215,7 @@ export class StackCapabilityVerifier {
 
     let refDomain: string | undefined;
     if (route.operation === "updateRootRefs") {
-      refDomain = await this.#requireRegisteredActiveDomain(route, payload);
+      refDomain = this.#requireValidRefDomain(payload);
     }
 
     return { ...payload, stackId: authority.stackId, kid, refDomain };
@@ -284,68 +282,18 @@ export class StackCapabilityVerifier {
     return authority;
   }
 
-  async #requireRegisteredActiveDomain(
-    route: CasRoute & { operation: "updateRootRefs" },
+  #requireValidRefDomain(
     payload: Omit<VerifiedPayload, "stackId" | "kid">,
-  ): Promise<string> {
+  ): string {
     const claimed = payload.refDomain;
-    if (typeof claimed !== "string" || claimed.length === 0) {
+    if (claimed === undefined) {
       throw new CapabilityAuthorizationError("resource_scope_mismatch", "Root Refs write requires a refDomain claim");
     }
-    if (isReservedRefDomain(claimed)) {
-      throw new CapabilityAuthorizationError("resource_scope_mismatch", `refDomain '${claimed}' is reserved`);
-    }
-    const domains = await this.#resolveDomains(route.stackId);
-    const registered = domains.find((domain) => domain.refDomain === claimed);
-    if (!registered || registered.status !== "active") {
-      throw new CapabilityAuthorizationError("resource_scope_mismatch", `refDomain '${claimed}' is not registered and active`);
+    const error = validateRefDomainClaim(claimed);
+    if (error) {
+      throw new CapabilityAuthorizationError("resource_scope_mismatch", error);
     }
     return claimed;
-  }
-
-  async #resolveDomains(stackId: string): Promise<readonly RegisteredRefDomain[]> {
-    const now = this.#now();
-    const cached = this.#domainsCache.get(stackId);
-    if (cached) {
-      const age = now - cached.fetchedAt;
-      if (age < this.#cacheTtlMs) return cached.domains;
-      if (age >= this.#hardStaleBoundMs) {
-        // Hard bound: never serve cached domains past the revocation bound,
-        // but a REACHABLE registry serves a fresh list — failing closed
-        // unconditionally would 403 every root-refs write on low-traffic
-        // stacks after ~60s of silence.
-        try {
-          const fresh = await this.#repository.listRegisteredRefDomains(stackId);
-          this.#domainsCache.set(stackId, { domains: fresh, fetchedAt: now });
-          return fresh;
-        } catch {
-          this.#domainsCache.delete(stackId);
-          this.#onEvent({
-            kind: "fail_closed",
-            operation: "unknown",
-            stackId,
-            reason: "refDomain registry unreachable past the hard stale bound",
-          });
-          throw new CapabilityAuthorizationError("registry_unavailable", "CAS refDomain registry is unavailable");
-        }
-      }
-      try {
-        const fresh = await this.#repository.listRegisteredRefDomains(stackId);
-        this.#domainsCache.set(stackId, { domains: fresh, fetchedAt: now });
-        return fresh;
-      } catch {
-        this.#onEvent({
-          kind: "registry_stale",
-          operation: "unknown",
-          stackId,
-          reason: "refDomain registry unreachable; serving cached domains within the stale bound",
-        });
-        return cached.domains;
-      }
-    }
-    const domains = await this.#repository.listRegisteredRefDomains(stackId);
-    this.#domainsCache.set(stackId, { domains, fetchedAt: now });
-    return domains;
   }
 
   #staticLegacy(issuer: string): ResolvedStackAuthority | null {
@@ -396,11 +344,6 @@ interface VerifiedPayload {
 
 interface CachedAuthority {
   readonly authority: ResolvedStackAuthority;
-  readonly fetchedAt: number;
-}
-
-interface CachedDomains {
-  readonly domains: readonly RegisteredRefDomain[];
   readonly fetchedAt: number;
 }
 

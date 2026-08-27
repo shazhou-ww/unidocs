@@ -1,8 +1,8 @@
 /**
  * Stack authorization tests for the canonical CAS server.
  *
- * Seeds a CAS_CONTROL_DB (miniflare D1) directly with issuer/key/refDomain
- * rows, issues stack-authority capabilities with service-auth, and exercises
+ * Seeds a CAS_CONTROL_DB (miniflare D1) directly with issuer/key rows, issues
+ * stack-authority capabilities with service-auth, and exercises
  * `StackCapabilityVerifier` plus the worker end-to-end. The registry write
  * path (ControlPlaneService) is covered by cas-control-plane's own suite;
  * here we test the read-only authority behavior.
@@ -53,7 +53,6 @@ async function seedStack(
     readonly issuer: string;
     readonly audience: string;
     readonly kid: string;
-    readonly domains: readonly { refDomain: string; status: string }[];
   },
 ): Promise<StackFixture> {
   const { publicKey, privateKey } = await generateKeyPair("ES256", { extractable: true });
@@ -63,9 +62,6 @@ async function seedStack(
       .bind(stack.stackId, stack.issuer, stack.audience),
     db!.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, 'ES256', ?, 'active', 1)")
       .bind(stack.stackId, stack.kid, JSON.stringify(publicJwk)),
-    ...stack.domains.map((domain) =>
-      db!.prepare("INSERT INTO cas_stack_ref_domains (stack_id, ref_domain, status, revision) VALUES (?, ?, ?, 1)")
-        .bind(stack.stackId, domain.refDomain, domain.status)),
   ]);
   return {
     stackId: stack.stackId,
@@ -99,18 +95,12 @@ async function createSeededDb(): Promise<{ db: D1Database; stacks: Record<string
     issuer: "https://issuer-a.example",
     audience: "unidocs-cas-a",
     kid: "key-a",
-    domains: [
-      { refDomain: "doc", status: "active" },
-      { refDomain: "asset", status: "active" },
-      { refDomain: "legacy:doc", status: "retired" },
-    ],
   });
   const stackB = await seedStack({
     stackId: "cas_stack_b",
     issuer: "https://issuer-b.example",
     audience: "unidocs-cas-b",
     kid: "key-b",
-    domains: [{ refDomain: "doc", status: "active" }],
   });
   return { db, stacks: { a: stackA, b: stackB } };
 }
@@ -192,7 +182,7 @@ describe("stack authorization (Task 4)", () => {
     const gcToken = await issue(stack, { tenantId: tenant, permissions: [casGcTriggerPermission(tenant)] });
     await verify.verify(authRequest(gcToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), { operation: "gc", stackId: stack.stackId, tenantId: tenant });
 
-    // updateRootRefs -> cas:write + registered active refDomain
+    // updateRootRefs -> cas:write + a valid issuer-signed refDomain
     const refsToken = await issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)], refDomain: "doc" });
     await verify.verify(authRequest(refsToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant });
 
@@ -210,17 +200,17 @@ describe("stack authorization (Task 4)", () => {
 
     // Unknown issuer.
     const unknownIssuer = await issue({ ...stack, issuer: "https://unknown.example", issuer_: new CapabilityIssuer({ issuer: "https://unknown.example", signer: new JoseCapabilitySigner(stack.privateKey, stack.kid) }) }, { tenantId: tenant, permissions: [casReadPermission(tenant)] });
-    await expectRejected(verify.verify(authRequest(unknownIssuer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/h/content`), 401), 401);
+    await expectRejected(verify.verify(authRequest(unknownIssuer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/h/content`), { operation: "readContent", stackId: stack.stackId, tenantId: tenant, hash: "h" }), 401);
 
     // Wrong audience.
     const wrongAud = await issue({ ...stack, audience: "wrong-aud", issuer_: new CapabilityIssuer({ issuer: stack.issuer, signer: new JoseCapabilitySigner(stack.privateKey, stack.kid) }) }, { tenantId: tenant, permissions: [casReadPermission(tenant)] });
-    await expectRejected(verify.verify(authRequest(wrongAud, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/h/content`), 401), 401);
+    await expectRejected(verify.verify(authRequest(wrongAud, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/h/content`), { operation: "readContent", stackId: stack.stackId, tenantId: tenant, hash: "h" }), 401);
 
     // Token signed by a key the registry does not know (different kid/key).
     const rogue = await generateKeyPair("ES256");
     const rogueIssuer = new CapabilityIssuer({ issuer: stack.issuer, signer: new JoseCapabilitySigner(rogue.privateKey, "rogue-kid") });
     const rogueToken = await rogueIssuer.issue({ subject: "s", audience: stack.audience, tenantId: tenant, permissions: [casReadPermission(tenant)] });
-    await expectRejected(verify.verify(authRequest(rogueToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/h/content`), 401), 401);
+    await expectRejected(verify.verify(authRequest(rogueToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/h/content`), { operation: "readContent", stackId: stack.stackId, tenantId: tenant, hash: "h" }), 401);
   });
 
   test("path stack and tenant must equal the verified claims", async () => {
@@ -229,8 +219,8 @@ describe("stack authorization (Task 4)", () => {
     const tenant = "tenant-1";
     const tokenA = await issue(stacks.a!, { tenantId: tenant, permissions: [casReadPermission(tenant)] });
 
-    await expectRejected(verify.verify(authRequest(tokenA, `/stacks/${stacks.b!.stackId}/tenants/${tenant}/cas/nodes/h/content`), 403, "stack"), 403);
-    await expectRejected(verify.verify(authRequest(tokenA, `/stacks/${stacks.a!.stackId}/tenants/other-tenant/cas/nodes/h/content`), 403, "tenant"), 403);
+    await expectRejected(verify.verify(authRequest(tokenA, `/stacks/${stacks.b!.stackId}/tenants/${tenant}/cas/nodes/h/content`), { operation: "readContent", stackId: stacks.b!.stackId, tenantId: tenant, hash: "h" }), 403, "stack");
+    await expectRejected(verify.verify(authRequest(tokenA, `/stacks/${stacks.a!.stackId}/tenants/other-tenant/cas/nodes/h/content`), { operation: "readContent", stackId: stacks.a!.stackId, tenantId: "other-tenant", hash: "h" }), 403, "tenant");
   });
 
   test("two trusted stacks may use the same textual tenantId without cross-authorization", async () => {
@@ -245,8 +235,8 @@ describe("stack authorization (Task 4)", () => {
     const callB = await verify.verify(authRequest(tokenB, `/stacks/${stacks.b!.stackId}/tenants/${sharedTenant}/cas/nodes/h/content`), { operation: "readContent", stackId: stacks.b!.stackId, tenantId: sharedTenant, hash: "h" });
     expect(callB.stackId).toBe(stacks.b!.stackId);
     // Cross-stack paths are rejected even with the same tenantId.
-    await expectRejected(verify.verify(authRequest(tokenA, `/stacks/${stacks.b!.stackId}/tenants/${sharedTenant}/cas/nodes/h/content`), 403), 403);
-    await expectRejected(verify.verify(authRequest(tokenB, `/stacks/${stacks.a!.stackId}/tenants/${sharedTenant}/cas/nodes/h/content`), 403), 403);
+    await expectRejected(verify.verify(authRequest(tokenA, `/stacks/${stacks.b!.stackId}/tenants/${sharedTenant}/cas/nodes/h/content`), { operation: "readContent", stackId: stacks.b!.stackId, tenantId: sharedTenant, hash: "h" }), 403);
+    await expectRejected(verify.verify(authRequest(tokenB, `/stacks/${stacks.a!.stackId}/tenants/${sharedTenant}/cas/nodes/h/content`), { operation: "readContent", stackId: stacks.a!.stackId, tenantId: sharedTenant, hash: "h" }), 403);
   });
 
   test("confused deputy: write capabilities cannot read audit or attribute other domains", async () => {
@@ -255,7 +245,7 @@ describe("stack authorization (Task 4)", () => {
     const stack = stacks.a!;
     const tenant = "tenant-1";
 
-    // A Root Refs writer can write its own registered domain...
+    // A Root Refs writer can write its issuer-signed domain...
     const writer = await issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)], refDomain: "doc" });
     const call = await verify.verify(authRequest(writer, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant });
     expect(call.refDomain).toBe("doc");
@@ -273,20 +263,21 @@ describe("stack authorization (Task 4)", () => {
     const call2 = await verify.verify(forged, { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant });
     expect(call2.refDomain).toBe("doc"); // token wins; body is ignored
 
-    // The writer cannot attribute to a reserved or unregistered domain: a
-    // reserved domain is rejected at issuance, a retired domain at verify.
+    // Reserved domains are rejected at issuance, while any valid domain from
+    // the trusted stack issuer is accepted without prior registration.
     await expect(issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)], refDomain: "_legacy" }))
       .rejects.toThrow(/refDomain/);
-    const retiredToken = await issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)], refDomain: "legacy:doc" });
-    await expectRejected(verify.verify(authRequest(retiredToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), 403, "not registered"), 403);
+    const discoveredDomainToken = await issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)], refDomain: "new:doc" });
+    const discovered = await verify.verify(authRequest(discoveredDomainToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant });
+    expect(discovered.refDomain).toBe("new:doc");
 
     // A writer cannot read audit or usage: it lacks those permissions.
-    await expectRejected(verify.verify(authRequest(writer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/usage`), 403), 403);
-    await expectRejected(verify.verify(authRequest(writer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), 403), 403);
+    await expectRejected(verify.verify(authRequest(writer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/usage`), { operation: "usage", stackId: stack.stackId, tenantId: tenant }), 403);
+    await expectRejected(verify.verify(authRequest(writer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), { operation: "gc", stackId: stack.stackId, tenantId: tenant }), 403);
 
     // A usage capability cannot write root refs.
     const usageToken = await issue(stack, { tenantId: tenant, permissions: [casUsageReadPermission(tenant)] });
-    await expectRejected(verify.verify(authRequest(usageToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), 403), 403);
+    await expectRejected(verify.verify(authRequest(usageToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant }), 403);
   });
 
   test("sub is an opaque audit identity; no prefix semantics", async () => {
@@ -347,7 +338,7 @@ describe("stack authorization (Task 4)", () => {
     // The registry-only verifier (no static config) rejects the same token.
     await expectRejected(verify.verify(
       authRequest(token, "/stacks/cas_legacy_stack/tenants/legacy-tenant/cas/nodes/h/content"),
-      401,
+      { operation: "readContent", stackId: "cas_legacy_stack", tenantId: "legacy-tenant", hash: "h" },
     ), 401);
   });
 

@@ -103,13 +103,11 @@ describe("control-plane contract freezes", () => {
       "createIssuerKey",
       "deleteIssuerKey",
       "listRefDomains",
-      "createRefDomain",
-      "patchRefDomain",
       "listControlAuditEvents",
       "listRootDomainRefs",
       "listRootDomainEvents",
     ];
-    expect(keys).toHaveLength(20);
+    expect(keys).toHaveLength(18);
   });
 
   test("root-ref audit response shapes accept negative balances", () => {

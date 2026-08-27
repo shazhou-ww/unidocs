@@ -14,8 +14,6 @@ export type CasAdminRoute =
   | { operation: "createIssuerKey"; stackId: string }
   | { operation: "deleteIssuerKey"; stackId: string; kid: string }
   | { operation: "listRefDomains"; stackId: string }
-  | { operation: "createRefDomain"; stackId: string }
-  | { operation: "patchRefDomain"; stackId: string; refDomain: string }
   | { operation: "listControlAuditEvents"; stackId: string }
   | { operation: "listRootDomainRefs"; stackId: string; refDomain: string }
   | { operation: "listRootDomainEvents"; stackId: string; refDomain: string };
@@ -51,8 +49,6 @@ export const casAdminRoutes = {
     `/admin/stacks/${segment(stackId)}/issuer/keys/${segment(kid)}`,
   refDomains: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/ref-domains`,
-  refDomain: ({ stackId, refDomain }: { stackId: string; refDomain: string }) =>
-    `/admin/stacks/${segment(stackId)}/ref-domains/${segment(refDomain)}`,
   controlAuditEvents: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/audit-events`,
   rootDomainRefs: ({ stackId, refDomain }: { stackId: string; refDomain: string }) =>
@@ -132,16 +128,7 @@ export function matchCasAdminRoute(
   }
 
   if (parts.length === 4 && parts[3] === "ref-domains") {
-    if (method === "GET") return { operation: "listRefDomains", stackId };
-    if (method === "POST") return { operation: "createRefDomain", stackId };
-    return null;
-  }
-
-  if (parts.length === 5 && parts[3] === "ref-domains" && parts[4]) {
-    const refDomain = decodeSegment(parts[4]);
-    if (refDomain === null) return null;
-    if (method === "PATCH") return { operation: "patchRefDomain", stackId, refDomain };
-    return null;
+    return method === "GET" ? { operation: "listRefDomains", stackId } : null;
   }
 
   if (parts.length === 4 && parts[3] === "audit-events" && method === "GET") {

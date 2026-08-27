@@ -135,14 +135,16 @@ export function createControlPlaneMcpServer(
   server.registerTool(
     "list_ref_domains",
     {
-      description: "List registered refDomains and their lifecycle states.",
+      description: "List refDomains observed in successful Root Ref audit writes.",
       inputSchema: z.object({ stackId: z.string().min(1) }),
       annotations: { readOnlyHint: true, destructiveHint: false },
     },
     async ({ stackId }) => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).listRefDomains(serviceContext(grant, "list_ref_domains"), { path: { stackId } });
-      return toolResult(result);
+      const context = serviceContext(grant, "list_ref_domains");
+      const membership = await new ControlPlaneService(db).getStack(context, { path: { stackId } });
+      if ("error" in membership) return toolResult(membership);
+      return auditReaderResult(options, "/_internal/audit/domains", { stackId });
     },
   );
 
@@ -261,56 +263,6 @@ export function createControlPlaneMcpServer(
       const result = await new ControlPlaneService(db).patchStack(
         serviceContext(grant, "update_stack"),
         { path: { stackId }, body: { displayName } },
-        { ifMatch: etag },
-      );
-      return toolResult(withEtag(result));
-    },
-  );
-
-  server.registerTool(
-    "create_ref_domain",
-    {
-      description: "Create an active refDomain for a stack.",
-      inputSchema: z.object({
-        stackId: z.string().min(1),
-        refDomain: z.string().min(1).max(64),
-        idempotencyKey: z.string().min(1).max(128),
-      }),
-      annotations: { destructiveHint: false, idempotentHint: true },
-    },
-    async ({ stackId, refDomain, idempotencyKey }) => {
-      const grant = requireMutation("control:write", options);
-      const result = await new ControlPlaneService(db).createRefDomain(
-        serviceContext(grant, "create_ref_domain"),
-        { path: { stackId }, body: { refDomain } },
-        { idempotencyKey },
-      );
-      return toolResult(withEtag(result));
-    },
-  );
-
-  server.registerTool(
-    "transition_ref_domain",
-    {
-      description: "Disable writes to or permanently retire a refDomain.",
-      inputSchema: z.object({
-        stackId: z.string().min(1),
-        refDomain: z.string().min(1).max(64),
-        status: z.enum(["write_disabled", "retired"]),
-        etag: z.string().min(1),
-        confirmRefDomain: z.string().min(1),
-        confirmStatus: z.enum(["write_disabled", "retired"]),
-      }),
-      annotations: { destructiveHint: true, idempotentHint: false },
-    },
-    async ({ stackId, refDomain, status, etag, confirmRefDomain, confirmStatus }) => {
-      const grant = requireMutation("control:write", options);
-      if (confirmRefDomain !== refDomain || confirmStatus !== status) {
-        return confirmationError("confirmRefDomain and confirmStatus must exactly match the requested transition");
-      }
-      const result = await new ControlPlaneService(db).patchRefDomain(
-        serviceContext(grant, "transition_ref_domain"),
-        { path: { stackId, refDomain }, body: { status } },
         { ifMatch: etag },
       );
       return toolResult(withEtag(result));

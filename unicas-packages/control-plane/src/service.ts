@@ -2,9 +2,9 @@
  * Cloud-neutral CAS control-plane service.
  *
  * Owns every CAS_CONTROL_DB read/write for operator identity, stacks,
- * memberships, invitations, the singleton tenant issuer and its keys,
- * refDomains, control audit, and creation idempotency. `cas-admin-webui` is
- * the only deployable that wires a D1 binding into this library.
+ * memberships, invitations, the singleton tenant issuer and its keys, control
+ * audit, and creation idempotency. `cas-admin-webui` is the only deployable
+ * that wires a D1 binding into this library.
  *
  * Every resource mutation appends its control-audit event and bumps the
  * control-data snapshot revision in the same atomic D1 batch. Methods return
@@ -26,8 +26,6 @@ import type {
   CasAdminCreateIssuerKeyResponse,
   CasAdminCreateMemberInvitationRequest,
   CasAdminCreateMemberInvitationResponse,
-  CasAdminCreateRefDomainRequest,
-  CasAdminCreateRefDomainResponse,
   CasAdminCreateStackRequest,
   CasAdminCreateStackResponse,
   CasAdminDeleteIssuerKeyRequest,
@@ -45,13 +43,9 @@ import type {
   CasAdminListIssuerKeysResponse,
   CasAdminListMembersRequest,
   CasAdminListMembersResponse,
-  CasAdminListRefDomainsRequest,
-  CasAdminListRefDomainsResponse,
   CasAdminListStacksRequest,
   CasAdminListStacksResponse,
   CasAdminMeResponse,
-  CasAdminPatchRefDomainRequest,
-  CasAdminPatchRefDomainResponse,
   CasAdminPatchStackRequest,
   CasAdminPatchStackResponse,
   CasAdminPutIssuerRequest,
@@ -61,8 +55,6 @@ import type {
   CasMemberInvitation,
   CasOperatorIdentity,
   CasOperatorIdentityKey,
-  CasRefDomain,
-  CasRefDomainStatus,
   CasStack,
   CasStackIssuer,
   CasStackIssuerKey,
@@ -99,7 +91,6 @@ import {
   validateInvitationToken,
   validateIssuer,
   validateKid,
-  validateRefDomain,
 } from "./validation.js";
 import type { SupportedKeyAlgorithm } from "./validation.js";
 import { decodeControlListCursor, encodeControlListCursor } from "./cursor.js";
@@ -638,86 +629,6 @@ export class ControlPlaneService {
   }
 
   // ------------------------------------------------------------------
-  // Reference domains
-  // ------------------------------------------------------------------
-
-  listRefDomains(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminListRefDomainsRequest,
-  ): Promise<CasAdminListRefDomainsResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      const rows = await this.#db
-        .prepare("SELECT stack_id, ref_domain, status, revision FROM cas_stack_ref_domains WHERE stack_id = ? ORDER BY ref_domain")
-        .bind(request.path.stackId)
-        .all<RefDomainRow>();
-      return { domains: (rows.results ?? []).map(toCasRefDomain) };
-    });
-  }
-
-  createRefDomain(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminCreateRefDomainRequest, "headers">,
-    mutation: ServiceMutationInput = {},
-  ): Promise<CasAdminCreateRefDomainResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      const domainError = validateRefDomain(request.body.refDomain);
-      if (domainError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, domainError);
-      // Create-or-get: an identical non-retired domain is returned as-is.
-      const existing = await this.#db
-        .prepare("SELECT stack_id, ref_domain, status, revision FROM cas_stack_ref_domains WHERE stack_id = ? AND ref_domain = ?")
-        .bind(request.path.stackId, request.body.refDomain)
-        .first<RefDomainRow>();
-      if (existing) {
-        if (existing.status === "retired") {
-          throw new ControlPlaneError(CasAdminErrorCodes.DOMAIN_RETIRED, "refDomain is retired and cannot be re-created");
-        }
-        return toCasRefDomain(existing);
-      }
-      return this.#withCreateIdempotency(
-        ctx,
-        "POST",
-        `/admin/stacks/${request.path.stackId}/ref-domains`,
-        mutation.idempotencyKey,
-        canonicalJson({ refDomain: request.body.refDomain }),
-        (batch) => this.#buildCreateRefDomain(ctx, request, batch),
-      );
-    });
-  }
-
-  patchRefDomain(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminPatchRefDomainRequest, "headers">,
-    mutation: ServiceMutationInput,
-  ): Promise<CasAdminPatchRefDomainResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      const row = await this.#db
-        .prepare("SELECT stack_id, ref_domain, status, revision FROM cas_stack_ref_domains WHERE stack_id = ? AND ref_domain = ?")
-        .bind(request.path.stackId, request.path.refDomain)
-        .first<RefDomainRow>();
-      if (!row) throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "refDomain not found");
-      this.#requireIfMatch(mutation.ifMatch, row.revision);
-      const toStatus = request.body.status;
-      const fromStatus = row.status as CasRefDomainStatus;
-      if (!isRefDomainTransitionAllowed(fromStatus, toStatus)) {
-        if (fromStatus === "retired") {
-          throw new ControlPlaneError(CasAdminErrorCodes.DOMAIN_RETIRED, "a retired refDomain cannot be changed");
-        }
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, `cannot transition refDomain from ${row.status} to ${toStatus}`);
-      }
-      const batch = this.#newMutationBatch(ctx, request.path.stackId, ControlAuditActions.refDomainPatched, `${request.path.refDomain} -> ${toStatus}`);
-      batch.push(
-        this.#db.prepare("UPDATE cas_stack_ref_domains SET status = ?, revision = revision + 1 WHERE stack_id = ? AND ref_domain = ?")
-          .bind(toStatus, request.path.stackId, request.path.refDomain),
-      );
-      await this.#db.batch(batch);
-      return toCasRefDomain({ ...row, status: toStatus, revision: row.revision + 1 });
-    });
-  }
-
-  // ------------------------------------------------------------------
   // Control audit
   // ------------------------------------------------------------------
 
@@ -893,22 +804,6 @@ export class ControlPlaneService {
         revision: 1,
       };
     })();
-  }
-
-  #buildCreateRefDomain(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminCreateRefDomainRequest,
-    batch: D1PreparedStatement[],
-  ): CasRefDomain {
-    const domainError = validateRefDomain(request.body.refDomain);
-    if (domainError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, domainError);
-    const now = this.#now();
-    this.#appendMutationStatements(ctx, batch, request.path.stackId, ControlAuditActions.refDomainCreated, request.body.refDomain);
-    batch.push(
-      this.#db.prepare("INSERT INTO cas_stack_ref_domains (stack_id, ref_domain, status, revision) VALUES (?, ?, 'active', 1)")
-        .bind(request.path.stackId, request.body.refDomain),
-    );
-    return { stackId: request.path.stackId, refDomain: request.body.refDomain, status: "active", revision: 1 };
   }
 
   // ------------------------------------------------------------------
@@ -1222,13 +1117,6 @@ interface IssuerKeyRow {
   readonly revision: number;
 }
 
-interface RefDomainRow {
-  readonly stack_id: string;
-  readonly ref_domain: string;
-  readonly status: string;
-  readonly revision: number;
-}
-
 interface AuditEventRow {
   readonly event_id: string;
   readonly stack_id: string | null;
@@ -1298,15 +1186,6 @@ function toCasStackIssuerKey(row: IssuerKeyRow): CasStackIssuerKey {
   };
 }
 
-function toCasRefDomain(row: RefDomainRow): CasRefDomain {
-  return {
-    stackId: row.stack_id,
-    refDomain: row.ref_domain,
-    status: row.status as CasRefDomainStatus,
-    revision: row.revision,
-  };
-}
-
 function toCasControlAuditEvent(row: AuditEventRow): CasControlAuditEvent {
   return {
     eventId: row.event_id,
@@ -1338,22 +1217,6 @@ function isIssuerKeyTransitionAllowed(
     case "retiring":
       return to === "revoked";
     case "revoked":
-      return false;
-  }
-}
-
-function isRefDomainTransitionAllowed(
-  from: CasRefDomainStatus,
-  to: Extract<CasRefDomainStatus, "write_disabled" | "retired">,
-): boolean {
-  if (from === to) return false;
-  switch (from) {
-    case "active":
-      // `to` is necessarily write_disabled or retired here.
-      return true;
-    case "write_disabled":
-      return to === "retired";
-    case "retired":
       return false;
   }
 }

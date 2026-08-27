@@ -4,7 +4,7 @@
  * Task 4: full stack authorization — resolves the verified issuer to its
  * stack authority (read-only CAS_CONTROL_DB repository), enforces
  * issuer-derived stack equality, token tenant equality, the exact operation
- * permission matrix, and a registered active refDomain for Root Refs writes,
+ * permission matrix, and a valid issuer-signed refDomain for Root Refs writes,
  * with a 30s cache / 60s hard stale bound / fail-closed policy and a static
  * legacy-stack bootstrap. `sub` is an opaque audit identity.
  *
@@ -22,7 +22,7 @@ import {
 } from "@unidocs/service-auth";
 import { StackCapabilityVerifier } from "./auth.js";
 import type { StackAuthEvent, StaticLegacyStackConfig, VerifiedStackCall } from "./auth.js";
-import { AuditReadError, listRootDomainEvents, listRootDomainRefs } from "./audit-reads.js";
+import { AuditReadError, listRootDomainEvents, listRootDomainRefs, listRootDomains } from "./audit-reads.js";
 import { canonicalComposite } from "./do-names.js";
 import { migrateStackTenantSchema } from "./schema.js";
 
@@ -30,7 +30,7 @@ export { CasDurableObject } from "./tenant-do.js";
 export { RootRefDomainDurableObject } from "./domain-do.js";
 
 export interface Env {
-  /** Read-only tenant authority registry (issuer → stack, keys, domains). */
+  /** Read-only tenant authority registry (issuer → stack and keys). */
   CAS_CONTROL_DB: D1Database;
   /** Tenant-scoped node/audit storage; migrated by this worker at startup. */
   CAS_DB: D1Database;
@@ -62,7 +62,11 @@ export default {
     // Narrow private audit-reader RPC for the admin BFF (never an HTTP route;
     // cas-edge only dispatches /stacks and /admin, so this is unreachable
     // from the public front door).
-    if (url.pathname === "/_internal/audit/refs" || url.pathname === "/_internal/audit/events") {
+    if (
+      url.pathname === "/_internal/audit/domains"
+      || url.pathname === "/_internal/audit/refs"
+      || url.pathname === "/_internal/audit/events"
+    ) {
       return handleAuditRpc(request, env, url);
     }
     const route = matchCasRoute(request.method, url.pathname);
@@ -95,6 +99,10 @@ async function handleAuditRpc(request: Request, env: Env, url: URL): Promise<Res
   const stackId = url.searchParams.get("stackId") ?? "";
   const refDomain = url.searchParams.get("refDomain") ?? "";
   try {
+    if (url.pathname === "/_internal/audit/domains") {
+      const domains = await listRootDomains({ db: env.CAS_DB, stackId });
+      return Response.json({ domains }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (url.pathname === "/_internal/audit/refs") {
       const page = await listRootDomainRefs({
         db: env.CAS_DB,

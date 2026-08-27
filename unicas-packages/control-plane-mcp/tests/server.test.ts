@@ -54,8 +54,6 @@ describe("control-plane MCP server", () => {
       "list_root_domain_events",
       "create_stack",
       "update_stack",
-      "create_ref_domain",
-      "transition_ref_domain",
       "invite_member",
       "remove_member",
       "set_issuer",
@@ -97,6 +95,32 @@ describe("control-plane MCP server", () => {
     const body = await response.json() as { result: { isError?: boolean; content: Array<{ text: string }> } };
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0]?.text).toContain("control:read");
+  });
+
+  test("lists refDomains from the observed audit catalog", async () => {
+    const auditReader = {
+      fetch: async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        expect(url.pathname).toBe("/_internal/audit/domains");
+        return Response.json({
+          domains: [{ stackId: url.searchParams.get("stackId"), refDomain: "doc", revision: 2 }],
+        });
+      },
+    };
+    const handler = handlerFor(
+      grant(["control:read", "control:write"]),
+      { mutationsEnabled: true, auditReader },
+    );
+    const stack = await callTool(handler, "create_stack", {
+      displayName: "Audit domains",
+      idempotencyKey: "create-audit-domains-1",
+    });
+    const stackId = String(stack.structuredContent.stackId);
+
+    const result = await callTool(handler, "list_ref_domains", { stackId });
+    expect(result.structuredContent).toEqual({
+      domains: [{ stackId, refDomain: "doc", revision: 2 }],
+    });
   });
 
   test("keeps mutations disabled unless deployment policy explicitly enables them", async () => {
@@ -158,41 +182,13 @@ describe("control-plane MCP server", () => {
     expect(result.content[0]?.text).toContain("control:security");
   });
 
-  test("guards ordinary lifecycle writes with confirmations and current ETags", async () => {
+  test("guards ordinary lifecycle writes with current ETags", async () => {
     const handler = handlerFor(grant(["control:write"]), { mutationsEnabled: true });
     const stack = await callTool(handler, "create_stack", {
       displayName: "Lifecycle",
       idempotencyKey: "create-lifecycle-1",
     });
     const stackId = String(stack.structuredContent.stackId);
-    const domain = await callTool(handler, "create_ref_domain", {
-      stackId,
-      refDomain: "doc",
-      idempotencyKey: "create-doc-domain-1",
-    });
-
-    const unconfirmed = await callTool(handler, "transition_ref_domain", {
-      stackId,
-      refDomain: "doc",
-      status: "write_disabled",
-      etag: domain.structuredContent.etag,
-      confirmRefDomain: "other",
-      confirmStatus: "write_disabled",
-    });
-    expect(unconfirmed).toMatchObject({
-      isError: true,
-      structuredContent: { error: "CONFIRMATION_REQUIRED" },
-    });
-
-    const transitioned = await callTool(handler, "transition_ref_domain", {
-      stackId,
-      refDomain: "doc",
-      status: "write_disabled",
-      etag: domain.structuredContent.etag,
-      confirmRefDomain: "doc",
-      confirmStatus: "write_disabled",
-    });
-    expect(transitioned.structuredContent).toMatchObject({ status: "write_disabled", revision: 2, etag: '"2"' });
 
     const staleUpdate = await callTool(handler, "update_stack", {
       stackId,

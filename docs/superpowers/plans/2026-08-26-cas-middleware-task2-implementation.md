@@ -89,18 +89,13 @@ the same commit.
 
 ### refDomains
 
-- Format: lowercase `[a-z][a-z0-9]*(:[a-z0-9]+)*`, length ≤ 64. Creation
-  rejects the reserved `_`-prefix namespace (`_legacy` and anything starting
-  with `_`) with `INVALID_REQUEST`.
-- Duplicate create (same stack + same domain, non-retired) is **create-or-get**:
-  the existing domain is returned. A duplicate create of a `retired` domain
-  returns `DOMAIN_RETIRED` (409) — retirement is terminal.
-- Transitions via `PATCH`: the frozen body type only permits
-  `write_disabled` or `retired` targets, so the reachable transitions are
-  `active → write_disabled`, `active → retired`, `write_disabled → retired`;
-  any transition from `retired` returns `DOMAIN_RETIRED`. Re-activation
-  (`write_disabled → active`) is not expressible in the frozen contract and is
-  deferred.
+- Superseding amendment: refDomains are not pre-registered control-plane
+  resources. A trusted stack issuer selects the domain in the signed capability.
+- CAS validates lowercase `[a-z][a-z0-9]*(:[a-z0-9]+)*`, length ≤ 64, and
+  rejects the reserved `_` namespace before accepting a Root Ref write.
+- The first successful write creates the domain revision/audit projection.
+  `listRefDomains` is read-only and derives its results from those observed
+  revision rows; there is no create, disable, or retire transition.
 
 ### Members and invitations
 

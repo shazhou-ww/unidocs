@@ -22,9 +22,9 @@ export type { StoredSession } from "./sessions.js";
 
 export { AuthorityRepository } from "./authority.js";
 export type {
-  RegisteredRefDomain,
   RegisteredStackKey,
   ResolvedStackAuthority,
+  StackAuthorityResolver,
 } from "./authority.js";
 
 export { buildStackJwks } from "./jwks.js";
@@ -52,13 +52,11 @@ export {
   CONTROL_LIST_DEFAULT_LIMIT,
   CONTROL_LIST_MAX_LIMIT,
   INVITATION_TTL_MS,
-  isReservedRefDomain,
   isSupportedKeyAlgorithm,
   LEGACY_DOMAIN,
   normalizeEmailConstraint,
   parseControlListLimit,
   POSSESSION_CHALLENGE_TTL_MS,
-  REF_DOMAIN_PATTERN,
   sha256Hex,
   STACK_ID_PATTERN,
   validateAudience,
@@ -67,7 +65,6 @@ export {
   validateInvitationToken,
   validateIssuer,
   validateKid,
-  validateRefDomain,
 } from "./validation.js";
 export type { SupportedKeyAlgorithm } from "./validation.js";
 

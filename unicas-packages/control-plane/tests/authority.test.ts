@@ -30,8 +30,6 @@ async function createRepository(): Promise<AuthorityRepository> {
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES ('cas_s', 'k1', 'ES256', '{\"kty\":\"EC\"}', 'active', 1)"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES ('cas_s', 'k2', 'ES256', '{\"kty\":\"EC\"}', 'retiring', 1)"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES ('cas_s', 'k3', 'ES256', '{\"kty\":\"EC\"}', 'revoked', 1)"),
-    db.prepare("INSERT INTO cas_stack_ref_domains (stack_id, ref_domain, status, revision) VALUES ('cas_s', 'doc', 'active', 1)"),
-    db.prepare("INSERT INTO cas_stack_ref_domains (stack_id, ref_domain, status, revision) VALUES ('cas_s', 'legacy:doc', 'retired', 1)"),
   ]);
   return new AuthorityRepository(db);
 }
@@ -55,15 +53,5 @@ describe("AuthorityRepository (read-only)", () => {
     const repository = await createRepository();
     expect(await repository.resolveIssuer("https://unknown.example")).toBeNull();
     expect(await repository.resolveIssuer("")).toBeNull();
-  });
-
-  test("lists registered refDomains including retired history names", async () => {
-    const repository = await createRepository();
-    const domains = await repository.listRegisteredRefDomains("cas_s");
-    expect(domains).toEqual([
-      { refDomain: "doc", status: "active" },
-      { refDomain: "legacy:doc", status: "retired" },
-    ]);
-    expect(await repository.listRegisteredRefDomains("other")).toEqual([]);
   });
 });

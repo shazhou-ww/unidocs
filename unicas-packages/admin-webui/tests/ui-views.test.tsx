@@ -35,9 +35,11 @@ afterEach(() => {
 describe("MembersView", () => {
   test("lists members and creates an invitation with a copyable URL", async () => {
     fetchMock
-      .mockResolvedValueOnce(json({ items: [
-        { stackId: STACK, identityIssuer: "iss", subject: "alice", displayName: "Alice", emailForDisplay: "alice@example.com" },
-      ] }))
+      .mockResolvedValueOnce(json({
+        items: [
+          { stackId: STACK, identityIssuer: "iss", subject: "alice", displayName: "Alice", emailForDisplay: "alice@example.com" },
+        ]
+      }))
       .mockResolvedValueOnce(json({
         invitation: { invitationId: "inv_1", stackId: STACK, status: "pending", emailConstraint: null, expiresAt: 2000000000000, createdAt: 1, revision: 1 },
         acceptUrl: "https://cas.example/admin/invitations/token-xyz",
@@ -52,9 +54,11 @@ describe("MembersView", () => {
 
   test("removing a member sends the stack revision as If-Match", async () => {
     fetchMock
-      .mockResolvedValueOnce(json({ items: [
-        { stackId: STACK, identityIssuer: "iss", subject: "alice", displayName: null, emailForDisplay: null },
-      ] }))
+      .mockResolvedValueOnce(json({
+        items: [
+          { stackId: STACK, identityIssuer: "iss", subject: "alice", displayName: null, emailForDisplay: null },
+        ]
+      }))
       .mockResolvedValueOnce(json({ ok: true }))
       .mockResolvedValueOnce(json({ items: [] }));
     const user = userEvent.setup();
@@ -72,9 +76,11 @@ describe("IssuerView", () => {
   test("configures the issuer and lists keys", async () => {
     fetchMock
       .mockResolvedValueOnce(json({ stackId: STACK, issuer: "https://issuer.example", audience: "unidocs-cas", status: "active", revision: 1 }))
-      .mockResolvedValueOnce(json({ keys: [
-        { stackId: STACK, kid: "k1", algorithm: "ES256", publicJwk: { kty: "EC" }, state: "active", revision: 1 },
-      ] }));
+      .mockResolvedValueOnce(json({
+        keys: [
+          { stackId: STACK, kid: "k1", algorithm: "ES256", publicJwk: { kty: "EC" }, state: "active", revision: 1 },
+        ]
+      }));
     render(<IssuerView stackId={STACK} />);
     await waitFor(() => expect(screen.getByDisplayValue("https://issuer.example")).toBeInTheDocument());
     expect(screen.getByText("k1")).toBeInTheDocument();
@@ -106,33 +112,32 @@ describe("IssuerView", () => {
 });
 
 describe("RefDomainsView", () => {
-  test("registers a domain and retires it", async () => {
-    fetchMock
-      .mockResolvedValueOnce(json({ domains: [] }))
-      .mockResolvedValueOnce(json({ stackId: STACK, refDomain: "doc", status: "active", revision: 1 }))
-      .mockResolvedValueOnce(json({ domains: [{ stackId: STACK, refDomain: "doc", status: "active", revision: 1 }] }))
-      .mockResolvedValueOnce(json({ stackId: STACK, refDomain: "doc", status: "retired", revision: 2 }))
-      .mockResolvedValueOnce(json({ domains: [{ stackId: STACK, refDomain: "doc", status: "retired", revision: 2 }] }));
-    const user = userEvent.setup();
+  test("lists domains observed in Root Ref audit writes", async () => {
+    fetchMock.mockResolvedValueOnce(json({
+      domains: [
+        { stackId: STACK, refDomain: "doc:markdown", revision: 4 },
+      ],
+    }));
     render(<RefDomainsView stackId={STACK} />);
-    await waitFor(() => expect(screen.getByText(/No domains registered/)).toBeInTheDocument());
-    await user.type(screen.getByLabelText("refDomain"), "doc");
-    await user.click(screen.getByRole("button", { name: "Register" }));
-    await waitFor(() => expect(screen.getByText("active")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Retire" }));
-    await waitFor(() => expect(screen.getByText("retired")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("doc:markdown")).toBeInTheDocument());
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Register|Disable writes|Retire/ })).not.toBeInTheDocument();
   });
 });
 
 describe("ControlAuditView", () => {
   test("paginates audit events with load more", async () => {
     fetchMock
-      .mockResolvedValueOnce(json({ items: [
-        { eventId: "evt_1", stackId: STACK, actor: { identityIssuer: "iss", subject: "alice" }, action: "stack.created", target: STACK, requestId: "r1", traceId: null, createdAt: 1 },
-      ], nextCursor: "cursor-2" }))
-      .mockResolvedValueOnce(json({ items: [
-        { eventId: "evt_2", stackId: STACK, actor: { identityIssuer: "iss", subject: "bob" }, action: "member.invited", target: "inv_1", requestId: "r2", traceId: null, createdAt: 2 },
-      ], nextCursor: null }));
+      .mockResolvedValueOnce(json({
+        items: [
+          { eventId: "evt_1", stackId: STACK, actor: { identityIssuer: "iss", subject: "alice" }, action: "stack.created", target: STACK, requestId: "r1", traceId: null, createdAt: 1 },
+        ], nextCursor: "cursor-2"
+      }))
+      .mockResolvedValueOnce(json({
+        items: [
+          { eventId: "evt_2", stackId: STACK, actor: { identityIssuer: "iss", subject: "bob" }, action: "member.invited", target: "inv_1", requestId: "r2", traceId: null, createdAt: 2 },
+        ], nextCursor: null
+      }));
     const user = userEvent.setup();
     render(<ControlAuditView stackId={STACK} />);
     await waitFor(() => expect(screen.getByText("stack.created")).toBeInTheDocument());

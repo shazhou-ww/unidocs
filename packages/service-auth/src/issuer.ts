@@ -65,8 +65,8 @@ export interface IssueCapabilityInput {
   readonly lifetimeSeconds?: number;
   readonly jti?: string;
   /** Stable Root Refs domain; only stack-authority capabilities that write
-   *  root references carry it. Registration is the stack authority's job —
-   *  the issuer only validates the format so garbage never gets signed. */
+    *  root references carry it. The trusted issuer selects the domain and
+    *  validates its format before signing. */
   readonly refDomain?: string;
 }
 

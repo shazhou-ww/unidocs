@@ -29,9 +29,6 @@ const CONTROL_TABLE_MIGRATIONS = [
   // gate, so keys enter 'active' directly (pending removed by Task 2).
   "CREATE TABLE IF NOT EXISTS cas_stack_issuer_keys (stack_id TEXT NOT NULL, kid TEXT NOT NULL, algorithm TEXT NOT NULL, public_jwk TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('active','retiring','revoked')), revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (stack_id, kid))",
 
-  // Registered refDomains; retirement preserves historical audit data.
-  "CREATE TABLE IF NOT EXISTS cas_stack_ref_domains (stack_id TEXT NOT NULL, ref_domain TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','write_disabled','retired')), revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (stack_id, ref_domain))",
-
   // Append-only control audit; never updated or deleted by handlers.
   "CREATE TABLE IF NOT EXISTS cas_control_audit_events (event_id TEXT NOT NULL, stack_id TEXT, identity_issuer TEXT NOT NULL, subject TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, request_id TEXT, trace_id TEXT, caller_channel TEXT, oauth_client_handle TEXT, tool_name TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (event_id))",
 

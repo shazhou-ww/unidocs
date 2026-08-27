@@ -584,6 +584,32 @@ describe("cas-admin-webui BFF", () => {
     expect(rpcCalls[1]!.url.searchParams.get("after")).toBe("7");
   });
 
+  test("refDomain listing reads the observed audit catalog", async () => {
+    const provider = await createMockProvider();
+    const rpcCalls: URL[] = [];
+    const auditReader = {
+      fetch: async (input: RequestInfo | URL) => {
+        rpcCalls.push(new URL(String(input)));
+        return Response.json({
+          domains: [{ stackId: "cas_stack", refDomain: "doc", revision: 3 }],
+        });
+      },
+    };
+    const bff = await createBff(provider, auditReader);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Stack");
+
+    const response = await authRequest(bff, `/admin/stacks/${stackId}/ref-domains`, cookie);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      domains: [{ refDomain: "doc", revision: 3 }],
+    });
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]!.pathname).toBe("/_internal/audit/domains");
+    expect(rpcCalls[0]!.searchParams.get("stackId")).toBe(stackId);
+    expect(rpcCalls[0]!.searchParams.has("refDomain")).toBe(false);
+  });
+
   test("audit reads require stack membership before touching the reader", async () => {
     const provider = await createMockProvider();
     let readerCalls = 0;

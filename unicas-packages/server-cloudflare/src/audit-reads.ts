@@ -65,6 +65,30 @@ export interface RootDomainEventsPage {
   readonly nextAfter: number;
 }
 
+export interface RootDomainSummary {
+  readonly stackId: string;
+  readonly refDomain: string;
+  readonly revision: number;
+}
+
+/** Domains observed through successful Root Ref writes, ordered by name. */
+export async function listRootDomains(input: {
+  readonly db: D1Database;
+  readonly stackId: string;
+}): Promise<readonly RootDomainSummary[]> {
+  const rows = await input.db
+    .prepare(
+      "SELECT stack_id, ref_domain, revision FROM cas_root_domain_revisions WHERE stack_id = ? ORDER BY ref_domain",
+    )
+    .bind(input.stackId)
+    .all<{ stack_id: string; ref_domain: string; revision: number }>();
+  return (rows.results ?? []).map((row) => ({
+    stackId: row.stack_id,
+    refDomain: row.ref_domain,
+    revision: row.revision,
+  }));
+}
+
 /** Read-side refDomain validation; reserved migration domains are readable. */
 export function validateAuditRefDomain(value: string): string | null {
   if (value.length === 0) return "refDomain must not be empty";

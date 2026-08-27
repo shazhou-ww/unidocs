@@ -11,11 +11,7 @@ export const POSSESSION_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 
 export const STACK_ID_PATTERN = /^cas_[A-Za-z0-9_-]{8,64}$/;
 export const KID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-/** Lowercase segments joined by `:` (e.g. `doc`, `doc:markdown`). */
-export const REF_DOMAIN_PATTERN = /^[a-z][a-z0-9]*(?::[a-z0-9]+)*$/;
-export const REF_DOMAIN_MAX_LENGTH = 64;
-/** `_`-prefixed domains are reserved for platform/migration audit baselines. */
-export const RESERVED_DOMAIN_PREFIX = "_";
+/** Reserved domain used only for imported migration audit baselines. */
 export const LEGACY_DOMAIN = "_legacy";
 export const SUPPORTED_KEY_ALGORITHMS = ["ES256", "RS256", "EdDSA"] as const;
 export type SupportedKeyAlgorithm = (typeof SUPPORTED_KEY_ALGORITHMS)[number];
@@ -24,31 +20,12 @@ export function isSupportedKeyAlgorithm(value: string): value is SupportedKeyAlg
   return (SUPPORTED_KEY_ALGORITHMS as readonly string[]).includes(value);
 }
 
-export function isReservedRefDomain(domain: string): boolean {
-  return domain === LEGACY_DOMAIN || domain.startsWith(RESERVED_DOMAIN_PREFIX);
-}
-
 export function validateDisplayName(value: unknown): string | null {
   if (typeof value !== "string") return "displayName must be a string";
   const trimmed = value.trim();
   if (trimmed.length === 0) return "displayName must not be empty";
   if (trimmed.length > 120) return "displayName must be at most 120 characters";
   if (/[\u0000-\u001f\u007f]/.test(trimmed)) return "displayName contains control characters";
-  return null;
-}
-
-export function validateRefDomain(value: unknown): string | null {
-  if (typeof value !== "string") return "refDomain must be a string";
-  if (value.length === 0) return "refDomain must not be empty";
-  if (value.length > REF_DOMAIN_MAX_LENGTH) {
-    return `refDomain must be at most ${REF_DOMAIN_MAX_LENGTH} characters`;
-  }
-  if (!REF_DOMAIN_PATTERN.test(value)) {
-    return "refDomain must be lowercase segments of letters/digits joined by ':'";
-  }
-  if (isReservedRefDomain(value)) {
-    return `refDomain '${value}' is reserved`;
-  }
   return null;
 }
 

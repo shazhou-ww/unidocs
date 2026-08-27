@@ -256,7 +256,7 @@ Initial read tools (`control:read`):
 | `list_members` | `listMembers` |
 | `get_issuer` | `getIssuer` |
 | `list_issuer_keys` | `listIssuerKeys` |
-| `list_ref_domains` | `listRefDomains` |
+| `list_ref_domains` | private observed-domain audit-reader RPC after membership check |
 | `list_control_audit_events` | `listControlAuditEvents` |
 | `list_root_domain_refs` | private audit-reader RPC after membership check |
 | `list_root_domain_events` | private audit-reader RPC after membership check |
@@ -267,8 +267,6 @@ Initial ordinary writes (`control:write`):
 | --- | --- |
 | `create_stack` | `createStack` |
 | `update_stack` | `patchStack` |
-| `create_ref_domain` | `createRefDomain` |
-| `transition_ref_domain` | `patchRefDomain` state transition |
 
 Initial security writes (`control:security`):
 

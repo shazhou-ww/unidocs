@@ -329,52 +329,9 @@ describe("control-plane service", () => {
     expectError(back, CasAdminErrorCodes.KEY_STATE_CONFLICT);
   });
 
-  test("refDomains: create-or-get, reserved rejection, and retirement", async () => {
-    const { service } = await createService();
-    const stackId = await createStackFor(service, alice);
-    const reserved = await service.createRefDomain(ctx(alice), {
-      path: { stackId },
-      body: { refDomain: "_legacy" },
-    });
-    expectError(reserved, CasAdminErrorCodes.INVALID_REQUEST);
-    const bad = await service.createRefDomain(ctx(alice), {
-      path: { stackId },
-      body: { refDomain: "Doc" },
-    });
-    expectError(bad, CasAdminErrorCodes.INVALID_REQUEST);
-
-    const created = await service.createRefDomain(ctx(alice), {
-      path: { stackId },
-      body: { refDomain: "doc" },
-    });
-    expect(created).toMatchObject({ refDomain: "doc", status: "active", revision: 1 });
-    const duplicate = await service.createRefDomain(ctx(alice), {
-      path: { stackId },
-      body: { refDomain: "doc" },
-    });
-    expect(duplicate).toMatchObject({ refDomain: "doc", revision: 1 });
-
-    const retired = await service.patchRefDomain(ctx(alice), {
-      path: { stackId, refDomain: "doc" },
-      body: { status: "retired" },
-    }, { ifMatch: '"1"' });
-    expect(retired).toMatchObject({ status: "retired", revision: 2 });
-    const recreate = await service.createRefDomain(ctx(alice), {
-      path: { stackId },
-      body: { refDomain: "doc" },
-    });
-    expectError(recreate, CasAdminErrorCodes.DOMAIN_RETIRED);
-    const touchRetired = await service.patchRefDomain(ctx(alice), {
-      path: { stackId, refDomain: "doc" },
-      body: { status: "write_disabled" },
-    }, { ifMatch: '"2"' });
-    expectError(touchRetired, CasAdminErrorCodes.DOMAIN_RETIRED);
-  });
-
   test("control audit records every mutation with actor and target", async () => {
     const { service } = await createService();
     const stackId = await createStackFor(service, alice);
-    await service.createRefDomain(ctx(alice), { path: { stackId }, body: { refDomain: "doc" } });
     const events = await service.listControlAuditEvents(ctx(alice), {
       path: { stackId },
       query: { limit: 50 },
@@ -382,7 +339,6 @@ describe("control-plane service", () => {
     if (!("items" in events)) throw new Error("audit list failed");
     const actions = events.items.map((event) => event.action);
     expect(actions).toContain("stack.created");
-    expect(actions).toContain("refdomain.created");
     expect(events.items[0]).toMatchObject({
       stackId,
       actor: { identityIssuer: GOOGLE, subject: "alice-sub" },

@@ -21,8 +21,6 @@ describe("CAS admin routes", () => {
     ["POST", casAdminRoutes.issuerKeys({ stackId: "stack/a" }), "createIssuerKey"],
     ["DELETE", casAdminRoutes.issuerKey({ stackId: "stack/a", kid: "k/1" }), "deleteIssuerKey"],
     ["GET", casAdminRoutes.refDomains({ stackId: "stack/a" }), "listRefDomains"],
-    ["POST", casAdminRoutes.refDomains({ stackId: "stack/a" }), "createRefDomain"],
-    ["PATCH", casAdminRoutes.refDomain({ stackId: "stack/a", refDomain: "doc/x" }), "patchRefDomain"],
     ["GET", casAdminRoutes.controlAuditEvents({ stackId: "stack/a" }), "listControlAuditEvents"],
     ["GET", casAdminRoutes.rootDomainRefs({ stackId: "stack/a", refDomain: "doc" }), "listRootDomainRefs"],
     ["GET", casAdminRoutes.rootDomainEvents({ stackId: "stack/a", refDomain: "doc" }), "listRootDomainEvents"],
@@ -40,6 +38,7 @@ describe("CAS admin routes", () => {
     expect(matchCasAdminRoute("GET", "/stacks/s/tenants/t/usage")).toBeNull();
     expect(matchCasAdminRoute("GET", "/tenants/t/cas/usage")).toBeNull();
     expect(matchCasAdminRoute("POST", casAdminRoutes.me())).toBeNull();
+    expect(matchCasAdminRoute("POST", casAdminRoutes.refDomains({ stackId: "s" }))).toBeNull();
     expect(matchCasAdminRoute("GET", "/admin/%ZZ/stacks")).toBeNull();
   });
 

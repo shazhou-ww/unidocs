@@ -3,9 +3,7 @@ import {
   canonicalJson,
   decodeControlListCursor,
   encodeControlListCursor,
-  isReservedRefDomain,
   isSupportedKeyAlgorithm,
-  LEGACY_DOMAIN,
   normalizeEmailConstraint,
   parseControlListLimit,
   sha256Hex,
@@ -15,7 +13,6 @@ import {
   validateInvitationToken,
   validateIssuer,
   validateKid,
-  validateRefDomain,
 } from "../src/index.js";
 
 describe("control-plane validation", () => {
@@ -26,23 +23,6 @@ describe("control-plane validation", () => {
     expect(validateDisplayName("a".repeat(121))).not.toBeNull();
     expect(validateDisplayName("a\u0007b")).not.toBeNull();
     expect(validateDisplayName(42)).not.toBeNull();
-  });
-
-  test("refDomain format, bounds, and reserved namespace", () => {
-    expect(validateRefDomain("doc")).toBeNull();
-    expect(validateRefDomain("doc:markdown")).toBeNull();
-    expect(validateRefDomain("indexer")).toBeNull();
-    expect(validateRefDomain("Doc")).not.toBeNull();
-    expect(validateRefDomain("doc:")).not.toBeNull();
-    expect(validateRefDomain(":doc")).not.toBeNull();
-    expect(validateRefDomain("doc markdown")).not.toBeNull();
-    expect(validateRefDomain("a".repeat(65))).not.toBeNull();
-    expect(validateRefDomain(LEGACY_DOMAIN)).not.toBeNull();
-    expect(validateRefDomain("_legacy")).not.toBeNull();
-    expect(validateRefDomain("_reserved")).not.toBeNull();
-    expect(isReservedRefDomain(LEGACY_DOMAIN)).toBe(true);
-    expect(isReservedRefDomain("_anything")).toBe(true);
-    expect(isReservedRefDomain("doc")).toBe(false);
   });
 
   test("kid is bounded and URL-safe", () => {

@@ -4,7 +4,6 @@ import type {
   CasOperatorIdentity,
   CasOperatorIdentityKey,
   CasRefDomain,
-  CasRefDomainStatus,
   CasRootRefBalance,
   CasRootRefEvent,
   CasStack,
@@ -161,28 +160,6 @@ export type CasAdminListRefDomainsResponse =
   | { readonly domains: readonly CasRefDomain[] }
   | CasAdminErrorResponse;
 
-export interface CasAdminCreateRefDomainRequest {
-  readonly path: CasAdminStackPath;
-  readonly headers?: CasAdminCreateHeaders;
-  readonly body: { readonly refDomain: string };
-}
-
-export type CasAdminCreateRefDomainResponse =
-  | CasRefDomain
-  | CasAdminErrorResponse;
-
-export interface CasAdminPatchRefDomainRequest {
-  readonly path: CasAdminStackPath & { readonly refDomain: string };
-  readonly headers: CasAdminMutationPreconditions;
-  readonly body: {
-    readonly status: Extract<CasRefDomainStatus, "write_disabled" | "retired">;
-  };
-}
-
-export type CasAdminPatchRefDomainResponse =
-  | CasRefDomain
-  | CasAdminErrorResponse;
-
 export interface CasAdminListControlAuditEventsRequest {
   readonly path: CasAdminStackPath;
   readonly query?: CasAdminPageQuery & { readonly after?: string };
@@ -274,14 +251,6 @@ export interface CasAdminEndpointContracts {
   listRefDomains: {
     request: CasAdminListRefDomainsRequest;
     response: CasAdminListRefDomainsResponse;
-  };
-  createRefDomain: {
-    request: CasAdminCreateRefDomainRequest;
-    response: CasAdminCreateRefDomainResponse;
-  };
-  patchRefDomain: {
-    request: CasAdminPatchRefDomainRequest;
-    response: CasAdminPatchRefDomainResponse;
   };
   listControlAuditEvents: {
     request: CasAdminListControlAuditEventsRequest;

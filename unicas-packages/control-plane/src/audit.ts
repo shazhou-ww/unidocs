@@ -14,8 +14,6 @@ export const ControlAuditActions = {
   issuerPut: "issuer.put",
   issuerKeyCreated: "issuer.key.created",
   issuerKeyDeleted: "issuer.key.deleted",
-  refDomainCreated: "refdomain.created",
-  refDomainPatched: "refdomain.patched",
   sessionLogin: "session.login",
   sessionLoginFailed: "session.login_failed",
   sessionLogout: "session.logout",

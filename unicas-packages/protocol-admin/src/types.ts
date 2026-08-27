@@ -82,12 +82,10 @@ export interface CasStackIssuerKey {
   readonly revision: number;
 }
 
-export type CasRefDomainStatus = "active" | "write_disabled" | "retired";
-
+/** A refDomain observed in successful Root Ref audit writes. */
 export interface CasRefDomain {
   readonly stackId: CasStackId;
   readonly refDomain: string;
-  readonly status: CasRefDomainStatus;
   readonly revision: number;
 }
 

@@ -593,30 +593,6 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         }, mutation);
         return jsonWithEtag(result);
       }
-      case "listRefDomains": {
-        const result = await service.listRefDomains(ctx, { path: { stackId: route.stackId } });
-        return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
-      }
-      case "createRefDomain": {
-        const body = await readJsonBody<{ refDomain?: unknown }>(request);
-        if (!body) return invalidRequest("JSON body is required");
-        const result = await service.createRefDomain(ctx, {
-          path: { stackId: route.stackId },
-          body: { refDomain: String(body.refDomain ?? "") },
-        }, mutation);
-        return jsonWithEtag(result);
-      }
-      case "patchRefDomain": {
-        const body = await readJsonBody<{ status?: unknown }>(request);
-        if (!body || (body.status !== "write_disabled" && body.status !== "retired")) {
-          return invalidRequest("status must be write_disabled or retired");
-        }
-        const result = await service.patchRefDomain(ctx, {
-          path: { stackId: route.stackId, refDomain: route.refDomain },
-          body: { status: body.status },
-        }, mutation);
-        return jsonWithEtag(result);
-      }
       case "listControlAuditEvents": {
         const result = await service.listControlAuditEvents(ctx, {
           path: { stackId: route.stackId },
@@ -624,6 +600,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         });
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
+      case "listRefDomains":
       case "listRootDomainRefs":
       case "listRootDomainEvents": {
         return handleAuditRead(request, route, ctx, query);
@@ -634,7 +611,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   /** Root Ref audit reads: membership first, then the private reader RPC. */
   async function handleAuditRead(
     request: Request,
-    route: CasAdminRoute & { operation: "listRootDomainRefs" | "listRootDomainEvents" },
+    route: CasAdminRoute & { operation: "listRefDomains" | "listRootDomainRefs" | "listRootDomainEvents" },
     ctx: ControlPlaneCallContext,
     query: Record<string, string>,
   ): Promise<Response> {
@@ -642,17 +619,23 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     if ("error" in membership) {
       return json(membership, casAdminErrorHttpStatus[membership.error]);
     }
-    const domainError = validateAuditRefDomain(route.refDomain);
-    if (domainError) return adminErrorResponse(CasAdminErrorCodes.INVALID_REQUEST, domainError);
+    if (route.operation !== "listRefDomains") {
+      const domainError = validateAuditRefDomain(route.refDomain);
+      if (domainError) return adminErrorResponse(CasAdminErrorCodes.INVALID_REQUEST, domainError);
+    }
     if (!options.auditReader) {
       return adminErrorResponse(CasAdminErrorCodes.SERVICE_UNAVAILABLE, NOT_AVAILABLE_MESSAGE);
     }
-    const rpcPath = route.operation === "listRootDomainRefs"
-      ? "/_internal/audit/refs"
-      : "/_internal/audit/events";
+    const rpcPath = route.operation === "listRefDomains"
+      ? "/_internal/audit/domains"
+      : route.operation === "listRootDomainRefs"
+        ? "/_internal/audit/refs"
+        : "/_internal/audit/events";
     const rpcUrl = new URL(`https://cas-audit.internal${rpcPath}`);
     rpcUrl.searchParams.set("stackId", route.stackId);
-    rpcUrl.searchParams.set("refDomain", route.refDomain);
+    if (route.operation !== "listRefDomains") {
+      rpcUrl.searchParams.set("refDomain", route.refDomain);
+    }
     if (query.tenantId !== undefined) rpcUrl.searchParams.set("tenantId", query.tenantId);
     if (query.limit !== undefined) rpcUrl.searchParams.set("limit", query.limit);
     if (query.cursor !== undefined) rpcUrl.searchParams.set("cursor", query.cursor);

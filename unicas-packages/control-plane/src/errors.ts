@@ -45,9 +45,6 @@ export function toAdminError(error: unknown): CasAdminErrorResponse {
   if (isUniqueConstraintError(error, "cas_stack_issuer_keys")) {
     return adminError(CasAdminErrorCodes.KEY_STATE_CONFLICT, "issuer key already exists");
   }
-  if (isUniqueConstraintError(error, "cas_stack_ref_domains")) {
-    return adminError(CasAdminErrorCodes.KEY_STATE_CONFLICT, "refDomain already exists");
-  }
   // Unknown database or internal failure. 503 keeps clients from retrying a
   // request that may still have partially committed (D1 batches are atomic).
   return adminError(
