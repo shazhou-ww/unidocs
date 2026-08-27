@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { migrateControlSchema } from "@unicas/control-plane";
-import { createAdminBff, OidcClient } from "../src/server/index.js";
+import { ControlSessionStore, migrateControlSchema } from "@unicas/control-plane";
+import { createAdminBff, OidcClient, SessionCrypto } from "../src/server/index.js";
 import type { AdminBffConfig } from "../src/server/config.js";
 
 const PUBLIC_ORIGIN = "https://cas.example";
@@ -293,6 +293,37 @@ describe("cas-admin-webui BFF", () => {
       expect(callback.headers.get("Location")).toBe("/admin/#/login-error");
       expect(callback.headers.get("Set-Cookie")).toBeNull();
     }
+  });
+
+  test("email allowlist revokes a pre-existing session for an unlisted email", async () => {
+    const provider = await createMockProvider();
+    const sessionEncryptionKeys = { v1: randomKey() };
+    const bff = await createBff(provider, undefined, {
+      sessionEncryptionKeys,
+      emailAllowlist: ["alice@example.com"],
+    });
+    const db = await miniflare!.getD1Database("DB", "admin-bff-test");
+    const sessionStore = new ControlSessionStore(db);
+    const sessionId = "sess_preexisting_unlisted";
+    const encryptedPayload = await new SessionCrypto(sessionEncryptionKeys).encrypt({
+      v: 1,
+      authenticated: true,
+      identityIssuer: ISSUER,
+      subject: "google-user-before-allowlist",
+      displayName: "Mallory",
+      emailForDisplay: "mallory@example.com",
+      csrfToken: "old-csrf-token",
+    });
+    await sessionStore.create(sessionId, encryptedPayload, 8 * 60 * 60 * 1000);
+    const cookie = `cas_admin_session=${sessionId}`;
+
+    const shell = await authRequest(bff, "/admin/", cookie);
+    expect(shell.status).toBe(302);
+    expect(shell.headers.get("Location")).toContain("/admin/auth/login");
+    await expect(sessionStore.read(sessionId)).resolves.toBeNull();
+
+    const me = await authRequest(bff, "/admin/me", cookie);
+    expect(me.status).toBe(401);
   });
 
   test("configured test account bypasses OIDC and creates a normal admin session", async () => {
