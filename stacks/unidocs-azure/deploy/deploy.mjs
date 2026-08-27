@@ -195,8 +195,8 @@ export function readServiceParams(name) {
   if (params.docType !== name) {
     throw new Error(
       `--service ${name}: packages/azure-${name}/azure.service.json has docType=${JSON.stringify(params.docType)}, ` +
-        `expected ${JSON.stringify(name)}. (packages/azure-gateway/azure.service.json has no docType field — ` +
-        "it is not a --service target, use --gateway instead.)",
+      `expected ${JSON.stringify(name)}. (packages/azure-gateway/azure.service.json has no docType field — ` +
+      "it is not a --service target, use --gateway instead.)",
     );
   }
   return params;
@@ -365,9 +365,9 @@ function spawnAsync(cmd, args, opts = {}, label = cmd) {
 
     const timer = timeoutMs
       ? setTimeout(() => {
-          timedOut = true;
-          child.kill("SIGKILL");
-        }, timeoutMs)
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeoutMs)
       : null;
 
     function settle(fn) {
@@ -442,7 +442,7 @@ export async function mapWithConcurrency(items, concurrency, worker) {
   const results = new Array(items.length);
   let next = 0;
   async function lane() {
-    for (;;) {
+    for (; ;) {
       const i = next++;
       if (i >= items.length) return;
       results[i] = await worker(items[i], i);
@@ -462,7 +462,7 @@ export async function mapWithConcurrency(items, concurrency, worker) {
 export async function retryUntil(attempt, opts = {}) {
   const { timeoutMs, intervalMs, wait = sleep, log = console.log } = opts;
   const deadline = Date.now() + timeoutMs;
-  for (;;) {
+  for (; ;) {
     try {
       return await attempt();
     } catch (err) {
@@ -471,7 +471,7 @@ export async function retryUntil(attempt, opts = {}) {
       }
       log(
         `retryUntil: attempt failed (${err.message}); waiting ${intervalMs}ms before retrying ` +
-          `(deadline in ${Math.max(0, deadline - Date.now())}ms)...`,
+        `(deadline in ${Math.max(0, deadline - Date.now())}ms)...`,
       );
       await wait(intervalMs);
     }
@@ -1145,7 +1145,7 @@ async function runMigration(args, jobName) {
   }
 
   const deadline = Date.now() + MIGRATION_TIMEOUT_MS;
-  for (;;) {
+  for (; ;) {
     const status = capture("az", [
       "containerapp", "job", "execution", "show",
       "-g", args.resourceGroup,
@@ -1267,8 +1267,8 @@ async function smokeOnce(gatewayFqdn, casBaseUrl, only) {
       const tail = tailLines(`${err.stdout ?? ""}\n${err.stderr ?? ""}`, 3);
       throw new Error(
         `${label} [timeout]: ${err.message} — likely the gateway/revision is still not ready ` +
-          "(smoke.mjs's fetch() calls have no timeout of their own and can hang indefinitely). " +
-          `Last output before kill: ${tail || "(none)"}`,
+        "(smoke.mjs's fetch() calls have no timeout of their own and can hang indefinitely). " +
+        `Last output before kill: ${tail || "(none)"}`,
       );
     }
     const { kind, detail } = classifySmokeFailure(err.stdout, err.stderr);
