@@ -253,10 +253,11 @@ describe("cas-admin-webui BFF", () => {
       expect(body.get("code_verifier")).toBeTruthy();
     };
     const bff = await createBff(provider);
-    const { cookie } = await signIn(bff, provider);
+    const { cookie, csrf } = await signIn(bff, provider);
 
     const me = await authRequest(bff, "/admin/me", cookie);
     expect(me.status).toBe(200);
+    expect(me.headers.get("X-CSRF-Token")).toBe(csrf);
     const body = await me.json();
     expect(body.identity).toMatchObject({
       identityIssuer: ISSUER,

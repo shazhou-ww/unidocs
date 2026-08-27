@@ -24,8 +24,12 @@ export class SessionExpiredError extends Error {
   }
 }
 
+let sessionCsrfToken = "";
+
 export function readCsrfToken(): string {
-  return document.querySelector<HTMLMetaElement>('meta[name="x-csrf-token"]')?.content ?? "";
+  return sessionCsrfToken
+    || document.querySelector<HTMLMetaElement>('meta[name="x-csrf-token"]')?.content
+    || "";
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -42,6 +46,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch {
     throw new ApiError(0, "NETWORK_ERROR", "network request failed");
   }
+  const responseCsrfToken = response.headers.get("X-CSRF-Token");
+  if (responseCsrfToken) sessionCsrfToken = responseCsrfToken;
   if (response.status === 401) {
     // Session missing/expired: restart the OIDC flow from the current page.
     const returnTo = `${window.location.pathname}${window.location.hash}`;

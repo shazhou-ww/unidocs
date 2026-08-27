@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Boxes,
+  Cable,
   Database,
   Gauge,
   KeyRound,
@@ -33,7 +34,11 @@ const TABS = [
   { id: "usage", label: "Usage", icon: <Gauge size={15} /> },
 ] as const;
 
-export function StackView({ stackId, onLogout }: { stackId: string; onLogout: () => void }) {
+export function StackView({ stackId, onOpenMcpConfiguration, onLogout }: {
+  stackId: string;
+  onOpenMcpConfiguration: () => void;
+  onLogout: () => void;
+}) {
   const [stack, setStack] = useState<CasStack | null>(null);
   const [stacks, setStacks] = useState<CasStack[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -185,6 +190,17 @@ export function StackView({ stackId, onLogout }: { stackId: string; onLogout: ()
           </div>
           <Tabs tabs={TABS} active={tab} onChange={selectTab} orientation="vertical" />
           <div className="drawer-footer">
+            <button
+              type="button"
+              className="drawer-action"
+              onClick={() => {
+                closeMobileNavigation();
+                onOpenMcpConfiguration();
+              }}
+            >
+              <Cable size={15} />
+              <span>Connect AI tools</span>
+            </button>
             <button type="button" className="drawer-signout" onClick={onLogout}>
               <LogOut size={15} />
               <span>Sign out</span>

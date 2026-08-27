@@ -97,6 +97,162 @@ a {
   gap: 0.65rem;
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(24, 24, 27, 0.46);
+  animation: overlay-in 150ms ease-out both;
+}
+
+.mcp-dialog {
+  width: min(600px, 100%);
+  max-height: min(720px, calc(100vh - 2rem));
+  padding: 1.25rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 20px 56px rgba(24, 24, 27, 0.22);
+}
+
+.mcp-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.dialog-eyebrow {
+  margin: 0 0 0.22rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.mcp-dialog h2 {
+  margin: 0;
+  font-size: 1.18rem;
+  line-height: 1.3;
+}
+
+.dialog-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  color: var(--muted-strong);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.dialog-close:hover,
+.copy-button:hover {
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
+.dialog-close:focus-visible,
+.copy-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(82, 82, 91, 0.16);
+}
+
+.mcp-dialog-description {
+  margin: 0.85rem 0 1rem;
+  color: var(--muted-strong);
+}
+
+.mcp-config-heading {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.5rem 0 0.75rem;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+}
+
+.mcp-config-heading code,
+.mcp-config {
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
+.mcp-config-heading code {
+  color: var(--muted-strong);
+  font-size: 0.76rem;
+}
+
+.copy-button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  color: var(--muted-strong);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 550;
+}
+
+.mcp-config {
+  margin: 0;
+  padding: 1rem;
+  overflow-x: auto;
+  color: var(--foreground);
+  background: #fafafa;
+  border: 1px solid var(--border);
+  border-radius: 0 0 6px 6px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.mcp-prompt-heading {
+  margin-top: 0.85rem;
+}
+
+.mcp-config-url,
+.mcp-config-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mcp-auth-note {
+  margin-top: 1rem;
+  padding: 0.8rem 0.9rem;
+  background: var(--surface-subtle);
+  border-left: 3px solid var(--foreground);
+  border-radius: 0 6px 6px 0;
+}
+
+.mcp-auth-note strong {
+  font-size: 0.82rem;
+}
+
+.mcp-auth-note p {
+  margin: 0.18rem 0 0;
+  color: var(--muted-strong);
+  font-size: 0.8rem;
+}
+
 .app-main {
   width: min(1120px, 100%);
   margin: 1.5rem auto 3rem;
@@ -510,6 +666,7 @@ a:focus-visible,
 }
 
 .tab-vertical {
+  display: flex;
   width: 100%;
   align-items: center;
   justify-content: flex-start;
@@ -846,6 +1003,7 @@ a:focus-visible,
     border-top: 1px solid var(--border);
   }
 
+  .drawer-action,
   .drawer-signout {
     display: flex;
     width: 100%;
@@ -863,6 +1021,7 @@ a:focus-visible,
     font-weight: 550;
   }
 
+  .drawer-action:hover,
   .drawer-signout:hover {
     color: var(--foreground);
     background: var(--surface-hover);
@@ -880,6 +1039,25 @@ a:focus-visible,
 
   .app-header-right .muted {
     display: none;
+  }
+
+  .mcp-header-action {
+    display: none;
+  }
+
+  .modal-overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .mcp-dialog {
+    width: 100%;
+    max-height: calc(100vh - 1rem);
+    padding: 1rem;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 8px 8px 0 0;
   }
 
   .app-main {

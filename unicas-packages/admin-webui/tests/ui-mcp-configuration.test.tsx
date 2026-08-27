@@ -1,0 +1,53 @@
+// @vitest-environment jsdom
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, test, vi } from "vitest";
+import { App } from "../src/ui/index.js";
+
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+describe("AI tool connection", () => {
+  test("opens from the desktop header, copies connection details, and closes with Escape", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : new URL(input.url).pathname;
+      if (path === "/admin/me") {
+        return json({
+          identity: { displayName: "Admin User", emailForDisplay: "admin@example.com" },
+          memberships: [],
+        });
+      }
+      if (path === "/admin/stacks") return json({ items: [] });
+      return new Response(null, { status: 404 });
+    }));
+
+    render(<App />);
+
+    const trigger = await screen.findByRole("button", { name: "Connect AI tools" });
+    await user.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Connect an AI tool" });
+    expect(dialog).toHaveTextContent(`${window.location.origin}/mcp`);
+    expect(dialog).toHaveTextContent("Configuration prompt");
+    expect(dialog).toHaveTextContent("No API key required");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close AI tool connection" })).toHaveFocus());
+
+    await user.click(screen.getByRole("button", { name: "Copy URL" }));
+    expect(await navigator.clipboard.readText()).toBe(`${window.location.origin}/mcp`);
+    expect(screen.getByRole("button", { name: "URL copied" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy prompt" }));
+    expect(await navigator.clipboard.readText()).toContain('remote MCP server named "UniCAS"');
+    expect(screen.getByRole("button", { name: "Prompt copied" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Connect an AI tool" })).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+});

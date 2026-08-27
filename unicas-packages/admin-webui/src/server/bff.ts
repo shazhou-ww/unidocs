@@ -488,7 +488,9 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     switch (route.operation) {
       case "me": {
         const result = await service.me(ctx);
-        return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
+        const response = json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
+        if (!("error" in result)) response.headers.set("X-CSRF-Token", auth.payload.csrfToken);
+        return response;
       }
       case "listStacks": {
         const result = await service.listStacks(ctx, { query: pageQuery(query) });

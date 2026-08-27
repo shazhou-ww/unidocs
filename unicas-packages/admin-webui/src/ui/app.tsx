@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LogOut } from "lucide-react";
+import { Cable, LogOut } from "lucide-react";
 import { api } from "./api.js";
 import { matchRoute, navigate, useHashRoute } from "./router.js";
 import { MyStacksView } from "./views/my-stacks.js";
@@ -7,6 +7,7 @@ import { StackView } from "./views/stack.js";
 import { InvitationView } from "./views/invitations.js";
 import { LoginErrorView } from "./views/login-error.js";
 import { Button, ErrorState, LoadingState, Page } from "./components.js";
+import { McpConfigurationDialog } from "./mcp-configuration-dialog.js";
 import { formatErrorSafe } from "./views/view-helpers.js";
 
 interface MeResponse {
@@ -21,6 +22,7 @@ export function App() {
   const route = useHashRoute();
   const [me, setMe] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mcpConfigurationOpen, setMcpConfigurationOpen] = useState(false);
 
   useEffect(() => {
     void api<MeResponse>("/admin/me")
@@ -42,7 +44,13 @@ export function App() {
   if (route === "/login-error") {
     content = <LoginErrorView />;
   } else if (stackMatch) {
-    content = <StackView stackId={stackMatch.params.stackId!} onLogout={() => void logout()} />;
+    content = (
+      <StackView
+        stackId={stackMatch.params.stackId!}
+        onOpenMcpConfiguration={() => setMcpConfigurationOpen(true)}
+        onLogout={() => void logout()}
+      />
+    );
   } else if (inviteMatch) {
     content = <InvitationView token={inviteMatch.params.token!} />;
   } else {
@@ -65,6 +73,15 @@ export function App() {
           {me ? (
             <>
               <span className="muted">{me.identity.displayName ?? me.identity.emailForDisplay}</span>
+              <span className="mcp-header-action">
+                <Button
+                  variant="plain"
+                  icon={<Cable size={15} />}
+                  onClick={() => setMcpConfigurationOpen(true)}
+                >
+                  Connect AI tools
+                </Button>
+              </span>
               <Button variant="plain" icon={<LogOut size={15} />} onClick={() => void logout()}>Sign out</Button>
             </>
           ) : null}
@@ -72,6 +89,10 @@ export function App() {
       </header>
       {error ? <div className="app-error"><ErrorState message={error} /></div> : null}
       <main className="app-main">{content}</main>
+      <McpConfigurationDialog
+        open={mcpConfigurationOpen}
+        onClose={() => setMcpConfigurationOpen(false)}
+      />
     </div>
   );
 }
