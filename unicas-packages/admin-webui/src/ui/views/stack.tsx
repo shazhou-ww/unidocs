@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import type { CasStack } from "@unicas/protocol-admin";
 import { api } from "../api.js";
 import { ErrorState, LoadingState, Page, Tabs } from "../components.js";
@@ -47,7 +48,7 @@ export function StackView({ stackId }: { stackId: string }) {
   return (
     <Page
       title={stack.displayName}
-      actions={<a href="#/">← My Stacks</a>}
+      actions={<a className="back-link" href="#/"><ArrowLeft size={15} />My Stacks</a>}
     >
       <p className="muted">{stack.stackId} · status {stack.status} · revision {stack.revision}</p>
       <Tabs tabs={TABS} active={tab} onChange={setTab} />

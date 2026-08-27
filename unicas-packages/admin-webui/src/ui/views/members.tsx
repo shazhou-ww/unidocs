@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { UserMinus, UserPlus } from "lucide-react";
 import type { CasStackMember } from "@unicas/protocol-admin";
 import { api, ifMatch } from "../api.js";
 import { Button, Card, EmptyState, ErrorState, LoadingState, Table } from "../components.js";
@@ -83,7 +84,7 @@ export function MembersView({ stackId, stackRevision, onChanged }: {
             placeholder="email constraint (optional)"
             onChange={(event) => setEmail(event.target.value)}
           />
-          <Button variant="primary" onClick={() => void invite()} disabled={inviting}>
+          <Button icon={<UserPlus size={15} />} variant="primary" onClick={() => void invite()} disabled={inviting}>
             {inviting ? "Creating…" : "Create invitation"}
           </Button>
         </div>
@@ -112,6 +113,7 @@ export function MembersView({ stackId, stackRevision, onChanged }: {
               member.emailForDisplay ?? "—",
               <Button
                 key={`remove-${member.subject}`}
+                icon={<UserMinus size={15} />}
                 variant="danger"
                 disabled={removing === member.subject}
                 onClick={() => void removeMember(member.identityIssuer, member.subject)}

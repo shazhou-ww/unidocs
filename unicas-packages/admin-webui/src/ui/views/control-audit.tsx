@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ChevronsDown } from "lucide-react";
 import type { CasControlAuditEvent } from "@unicas/protocol-admin";
 import { api } from "../api.js";
 import { Button, Card, EmptyState, ErrorState, LoadingState, Table } from "../components.js";
@@ -61,7 +62,7 @@ export function ControlAuditView({ stackId }: { stackId: string }) {
             ])}
           />
           {cursor ? (
-            <Button onClick={() => void load(cursor, false)} disabled={loading}>
+            <Button icon={<ChevronsDown size={15} />} onClick={() => void load(cursor, false)} disabled={loading}>
               {loading ? "Loading…" : "Load more"}
             </Button>
           ) : null}

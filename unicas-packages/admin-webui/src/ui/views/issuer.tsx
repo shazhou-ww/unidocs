@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Archive, KeyRound, Plus, Save } from "lucide-react";
 import type {
   CasStackIssuer,
   CasStackIssuerKey,
@@ -146,7 +147,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
           <label htmlFor="issuer-audience">Audience</label>
           <input id="issuer-audience" value={issuerAudience} placeholder="unidocs-cas" onChange={(event) => setIssuerAudience(event.target.value)} />
         </div>
-        <Button variant="primary" onClick={() => void saveIssuer()} disabled={savingIssuer || issuerIssuer.trim().length === 0 || issuerAudience.trim().length === 0}>
+        <Button icon={<Save size={15} />} variant="primary" onClick={() => void saveIssuer()} disabled={savingIssuer || issuerIssuer.trim().length === 0 || issuerAudience.trim().length === 0}>
           {savingIssuer ? "Saving…" : issuer ? "Update issuer" : "Configure issuer"}
         </Button>
       </Card>
@@ -167,6 +168,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
               <span key={`actions-${key.kid}`}>
                 {key.state === "active" || key.state === "retiring" ? (
                   <Button
+                    icon={<Archive size={15} />}
                     variant="danger"
                     disabled={changingKey === key.kid}
                     onClick={() => void changeKeyState(key, key.state === "active" ? "retiring" : "revoked")}
@@ -197,7 +199,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
             <option value="EdDSA">EdDSA</option>
           </select>
         </div>
-        <Button onClick={() => void fetchChallenge()} disabled={kid.trim().length === 0}>
+        <Button icon={<KeyRound size={15} />} onClick={() => void fetchChallenge()} disabled={kid.trim().length === 0}>
           Request possession challenge
         </Button>
         {challenge ? (
@@ -215,6 +217,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
           <textarea id="key-proof" value={possessionProof} rows={3} onChange={(event) => setPossessionProof(event.target.value)} />
         </div>
         <Button
+          icon={<Plus size={15} />}
           variant="primary"
           disabled={addingKey || kid.trim().length === 0 || publicJwk.trim().length === 0 || possessionProof.trim().length === 0}
           onClick={() => void addKey()}

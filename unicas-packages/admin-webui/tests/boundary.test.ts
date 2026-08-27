@@ -17,6 +17,7 @@ describe("cas-admin-webui package boundary", () => {
     expect(pkg.dependencies["@unicas/control-plane"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/client"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/server-common"]).toBeUndefined();
+    expect(pkg.scripts.deploy).toBe("pnpm run build && wrangler deploy");
     expect(CAS_ADMIN_WEBUI_MOUNT).toBe("/admin");
   });
 });

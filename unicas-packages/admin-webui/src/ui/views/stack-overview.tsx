@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Save } from "lucide-react";
 import type { CasStack } from "@unicas/protocol-admin";
 import { api, ifMatch } from "../api.js";
 import { Button, Card, ErrorState } from "../components.js";
@@ -42,7 +43,7 @@ export function StackOverviewView({ stack, onChanged }: {
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
-        <Button variant="primary" onClick={() => void save()} disabled={saving || name.trim().length === 0 || name === stack.displayName}>
+        <Button icon={<Save size={15} />} variant="primary" onClick={() => void save()} disabled={saving || name.trim().length === 0 || name === stack.displayName}>
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>

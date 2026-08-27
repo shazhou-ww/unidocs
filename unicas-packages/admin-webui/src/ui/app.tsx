@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
+import { LogOut } from "lucide-react";
 import { api } from "./api.js";
 import { matchRoute, navigate, useHashRoute } from "./router.js";
 import { MyStacksView } from "./views/my-stacks.js";
 import { StackView } from "./views/stack.js";
 import { InvitationView } from "./views/invitations.js";
 import { LoginErrorView } from "./views/login-error.js";
-import { ErrorState, LoadingState, Page } from "./components.js";
+import { Button, ErrorState, LoadingState, Page } from "./components.js";
 import { formatErrorSafe } from "./views/view-helpers.js";
 
 interface MeResponse {
@@ -55,12 +56,16 @@ export function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <a className="brand" href="#/">CAS Admin</a>
+        <a className="brand" href="#/">
+          <span className="brand-mark">U</span>
+          <span>Unicas</span>
+          <span className="brand-section">Admin</span>
+        </a>
         <div className="app-header-right">
           {me ? (
             <>
               <span className="muted">{me.identity.displayName ?? me.identity.emailForDisplay}</span>
-              <button type="button" className="btn btn-plain" onClick={() => void logout()}>Sign out</button>
+              <Button variant="plain" icon={<LogOut size={15} />} onClick={() => void logout()}>Sign out</Button>
             </>
           ) : null}
         </div>

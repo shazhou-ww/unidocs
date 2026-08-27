@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Check } from "lucide-react";
 import type { CasStackMember } from "@unicas/protocol-admin";
 import { api } from "../api.js";
 import { Button, Card, ErrorState, Page } from "../components.js";
@@ -53,7 +54,7 @@ export function InvitationView({ token }: { token: string }) {
             Google identity to the stack with equal administrator authority.
           </p>
           {error ? <ErrorState message={error} /> : null}
-          <Button variant="primary" onClick={() => void accept()} disabled={accepting || accepted}>
+          <Button icon={<Check size={15} />} variant="primary" onClick={() => void accept()} disabled={accepting || accepted}>
             {accepting ? "Accepting…" : "Accept membership"}
           </Button>
         </Card>

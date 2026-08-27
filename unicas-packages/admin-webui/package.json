@@ -27,12 +27,13 @@
     "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
-    "deploy": "wrangler deploy"
+    "deploy": "pnpm run build && wrangler deploy"
   },
   "dependencies": {
     "@unicas/control-plane": "workspace:*",
     "@unicas/protocol-admin": "workspace:*",
     "jose": "^6.2.10",
+    "lucide-react": "^1.34.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

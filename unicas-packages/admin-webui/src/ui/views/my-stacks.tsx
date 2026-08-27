@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Plus } from "lucide-react";
 import type { CasStack } from "@unicas/protocol-admin";
 import { api } from "../api.js";
 import { formatErrorSafe } from "./view-helpers.js";
@@ -52,7 +53,7 @@ export function MyStacksView() {
             placeholder="e.g. unidocs-cloudflare"
             onChange={(event) => setName(event.target.value)}
           />
-          <Button variant="primary" onClick={() => void createStack()} disabled={creating || name.trim().length === 0}>
+          <Button icon={<Plus size={15} />} variant="primary" onClick={() => void createStack()} disabled={creating || name.trim().length === 0}>
             {creating ? "Creating…" : "Create stack"}
           </Button>
         </div>

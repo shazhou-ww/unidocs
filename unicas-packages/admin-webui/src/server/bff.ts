@@ -177,7 +177,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         ? "Google sign-in could not be completed. Please try again."
         : null;
     const testAccountLink = config.testAccount
-      ? `<p><a class="btn" href="/admin/auth/login?test-account=1${returnTo ? `&amp;returnTo=${encodeURIComponent(returnTo)}` : ""}">Use test account</a></p>`
+      ? `<a class="btn" href="/admin/auth/login?test-account=1${returnTo ? `&amp;returnTo=${encodeURIComponent(returnTo)}` : ""}">Use test account</a>`
       : "";
     const html = `<!doctype html>
 <html lang="en">
@@ -188,13 +188,17 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   <link rel="stylesheet" href="/admin/assets/index.css" />
 </head>
 <body>
-  <header class="app-header"><span class="brand">CAS Admin</span></header>
-  <main class="app-main">
-    <section class="page">
-      <header class="page-header"><h1>Sign in</h1></header>
-      <div class="card">
-        ${errorMessage ? `<div class="state error" role="alert">${errorMessage}</div>` : ""}
-        <p><a class="btn btn-primary" href="${oidcUrl.pathname}${oidcUrl.search}">Continue with Google</a></p>
+  <header class="app-header">
+    <span class="brand"><span class="brand-mark">U</span><span>Unicas</span><span class="brand-section">Admin</span></span>
+  </header>
+  <main class="login-shell">
+    <section class="login-panel">
+      <p class="login-eyebrow">Restricted console</p>
+      <h1>Sign in to Unicas</h1>
+      <p class="login-copy">Use an approved Google account to continue.</p>
+      ${errorMessage ? `<div class="state error" role="alert">${errorMessage}</div>` : ""}
+      <div class="login-actions">
+        <a class="btn btn-primary" href="${oidcUrl.pathname}${oidcUrl.search}">Continue with Google</a>
         ${testAccountLink}
       </div>
     </section>

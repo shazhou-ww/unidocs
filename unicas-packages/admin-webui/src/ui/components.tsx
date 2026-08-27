@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CircleAlert, CircleDashed, Inbox, LoaderCircle } from "lucide-react";
 
 export function Page({ title, actions, children }: {
   title: string;
@@ -26,28 +27,44 @@ export function Card({ title, children }: { title?: string; children: ReactNode 
 }
 
 export function LoadingState({ label = "Loading…" }: { label?: string }) {
-  return <div className="state loading" role="status">{label}</div>;
+  return (
+    <div className="state loading" role="status">
+      <LoaderCircle className="state-icon spin" size={18} />
+      <span>{label}</span>
+    </div>
+  );
 }
 
 export function EmptyState({ message }: { message: string }) {
-  return <div className="state empty">{message}</div>;
+  return (
+    <div className="state empty">
+      <Inbox className="state-icon" size={18} />
+      <span>{message}</span>
+    </div>
+  );
 }
 
 export function ErrorState({ message }: { message: string }) {
-  return <div className="state error" role="alert">{message}</div>;
+  return (
+    <div className="state error" role="alert">
+      <CircleAlert className="state-icon" size={18} />
+      <span>{message}</span>
+    </div>
+  );
 }
 
 export function NotAvailableState({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="state unavailable">
-      <strong>{title}</strong>
-      <p>{detail}</p>
+      <CircleDashed className="state-icon" size={18} />
+      <div><strong>{title}</strong><p>{detail}</p></div>
     </div>
   );
 }
 
-export function Button({ children, onClick, disabled, variant }: {
+export function Button({ children, icon, onClick, disabled, variant }: {
   children: ReactNode;
+  icon?: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
   variant?: "primary" | "danger" | "plain";
@@ -59,6 +76,7 @@ export function Button({ children, onClick, disabled, variant }: {
       onClick={onClick}
       disabled={disabled}
     >
+      {icon ? <span className="btn-icon" aria-hidden="true">{icon}</span> : null}
       {children}
     </button>
   );

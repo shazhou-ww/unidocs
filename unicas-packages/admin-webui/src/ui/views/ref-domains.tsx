@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Archive, Pause, Plus } from "lucide-react";
 import type { CasRefDomain } from "@unicas/protocol-admin";
 import { api, ifMatch } from "../api.js";
 import { Button, Card, EmptyState, ErrorState, LoadingState, Table } from "../components.js";
@@ -73,7 +74,7 @@ export function RefDomainsView({ stackId }: { stackId: string }) {
             placeholder="e.g. doc or doc:markdown"
             onChange={(event) => setName(event.target.value)}
           />
-          <Button variant="primary" onClick={() => void createDomain()} disabled={creating || name.trim().length === 0}>
+          <Button icon={<Plus size={15} />} variant="primary" onClick={() => void createDomain()} disabled={creating || name.trim().length === 0}>
             {creating ? "Creating…" : "Register"}
           </Button>
         </div>
@@ -100,6 +101,7 @@ export function RefDomainsView({ stackId }: { stackId: string }) {
                 {domain.status === "active" ? (
                   <>
                     <Button
+                      icon={<Pause size={15} />}
                       variant="plain"
                       disabled={transitioning === domain.refDomain}
                       onClick={() => void transition(domain, "write_disabled")}
@@ -107,6 +109,7 @@ export function RefDomainsView({ stackId }: { stackId: string }) {
                       Disable writes
                     </Button>{" "}
                     <Button
+                      icon={<Archive size={15} />}
                       variant="danger"
                       disabled={transitioning === domain.refDomain}
                       onClick={() => void transition(domain, "retired")}
@@ -116,6 +119,7 @@ export function RefDomainsView({ stackId }: { stackId: string }) {
                   </>
                 ) : domain.status === "write_disabled" ? (
                   <Button
+                    icon={<Archive size={15} />}
                     variant="danger"
                     disabled={transitioning === domain.refDomain}
                     onClick={() => void transition(domain, "retired")}
