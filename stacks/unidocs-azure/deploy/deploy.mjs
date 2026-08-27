@@ -1102,6 +1102,9 @@ function deployService(args, secrets, tag, docType) {
     `targetPort=${svc.targetPort}`,
     `minReplicas=${svc.minReplicas}`,
     `maxReplicas=${svc.maxReplicas}`,
+    ...(svc.cpu ? [`cpu=${svc.cpu}`] : []),
+    ...(svc.memory ? [`memory=${svc.memory}`] : []),
+    ...(svc.maxUploadBytes ? [`maxUploadBytes=${svc.maxUploadBytes}`] : []),
     `casBaseUrl=${args.casBaseUrl}`,
     `pgAdminPassword=${secrets.pgAdminPassword}`,
     `serviceAccessKey=${secrets.accessKeys[docType]}`,
@@ -1162,6 +1165,8 @@ function deployGateway(args, secrets, tag) {
     `targetPort=${gw.targetPort}`,
     `minReplicas=${gw.minReplicas}`,
     `maxReplicas=${gw.maxReplicas}`,
+    ...(gw.cpu ? [`cpu=${gw.cpu}`] : []),
+    ...(gw.memory ? [`memory=${gw.memory}`] : []),
     `pgAdminPassword=${secrets.pgAdminPassword}`,
     `casAccessKey=${secrets.casAccessKey}`,
     `docTypes=${JSON.stringify(Object.keys(readAzureDocTypes(ROOT)))}`,
@@ -1173,6 +1178,7 @@ function deployGateway(args, secrets, tag) {
     `casStackIssuer=${args.casStackIssuer}`,
     `casStackKeyId=${args.casStackKeyId}`,
     `casRefDomain=${args.casRefDomain}`,
+    ...(gw.maxUploadBytes ? [`maxUploadBytes=${gw.maxUploadBytes}`] : []),
     `casCapabilityAudience=${args.casCapabilityAudience}`,
     ...(secrets.capabilityPrivateKeyPkcs8
       ? [`capabilityPrivateKeyPkcs8=${secrets.capabilityPrivateKeyPkcs8}`]

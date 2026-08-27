@@ -12,6 +12,15 @@ param targetPort int
 param minReplicas int
 param maxReplicas int
 
+@description('容器 CPU 核数,来自 azure.service.json。')
+param cpu string = '0.5'
+
+@description('容器内存,来自 azure.service.json。')
+param memory string = '1Gi'
+
+@description('单次上传字节上限;超过返回 413 而不是把容器撑崩。0 表示不限。')
+param maxUploadBytes int = 0
+
 @description('Cloudflare CAS worker 自身的基地址（不是 gateway 的）。过渡形态，阶段 4 删除。只有 docType=docx 时非空。')
 param casBaseUrl string = ''
 
@@ -108,6 +117,10 @@ var authEnv = [
     value: casCapabilityAudience
   }
   {
+    name: 'MAX_UPLOAD_BYTES'
+    value: string(maxUploadBytes)
+  }
+  {
     name: 'CAS_STACK_ID'
     value: casStackId
   }
@@ -160,6 +173,8 @@ module app 'container-app.bicep' = {
     external: false
     minReplicas: minReplicas
     maxReplicas: maxReplicas
+    cpu: cpu
+    memory: memory
     databaseUrl: databaseUrl
     serviceAccessKey: serviceAccessKey
     capabilityTrustedJwks: capabilityTrustedJwks

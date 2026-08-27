@@ -60,6 +60,15 @@ param casRefDomain string = 'doc'
 @secure()
 param casStackPrivateKeyPkcs8 string = ''
 
+@description('单次上传字节上限；超过返回 413 而不是把网关进程撑崩。0 表示不限。')
+param maxUploadBytes int = 0
+
+@description('容器 CPU 核数，来自 packages/azure-gateway/azure.service.json。默认 0.5 扛不住大文档上传。')
+param cpu string = '0.5'
+
+@description('容器内存，同上。上传路径的峰值要按 maxUploadBytes 的数倍留。')
+param memory string = '1Gi'
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }
@@ -106,6 +115,8 @@ module app 'container-app.bicep' = {
     external: external
     minReplicas: minReplicas
     maxReplicas: maxReplicas
+    cpu: cpu
+    memory: memory
     databaseUrl: databaseUrl
     docServicesJson: docServicesJson
     capabilityPrivateKeyPkcs8: capabilityPrivateKeyPkcs8
@@ -149,6 +160,10 @@ module app 'container-app.bicep' = {
       {
         name: 'CAS_REF_DOMAIN'
         value: casRefDomain
+      }
+      {
+        name: 'MAX_UPLOAD_BYTES'
+        value: string(maxUploadBytes)
       }
       {
         name: 'CAPABILITY_ALGORITHM'

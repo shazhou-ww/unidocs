@@ -338,9 +338,21 @@ describe("readServiceParams", () => {
 // json 并显式传参。这里确认「读出来的值」与「gateway.bicep 里那四个 param
 // 的默认值」逐字一致——这是零行为变更重构的前提,不是巧合。
 describe("readGatewayParams", () => {
-  test("读 packages/azure-gateway/azure.service.json,值与 gateway.bicep 的默认值一致", () => {
-    const p = readGatewayParams();
-    expect(p).toEqual({ external: true, targetPort: 8787, minReplicas: 1, maxReplicas: 3 });
+  test("读 packages/azure-gateway/azure.service.json 的全部字段", () => {
+    // external/targetPort/minReplicas/maxReplicas 与 gateway.bicep 的默认值
+    // 逐字相同 —— 传等于默认值的值不改变行为,只是让这份配置文件真正被读取。
+    // cpu/memory/maxUploadBytes 则是**刻意偏离**默认值的覆盖:网关默认的
+    // 0.5CPU/1Gi 扛不住大文档上传(克隆探测会把整个 body 解析进内存,而且
+    // clone 意味着同时存在两份),所以这三个必须显式抬高。
+    expect(readGatewayParams()).toEqual({
+      external: true,
+      targetPort: 8787,
+      minReplicas: 1,
+      maxReplicas: 3,
+      cpu: "2.0",
+      memory: "4.0Gi",
+      maxUploadBytes: 268435456,
+    });
   });
 });
 

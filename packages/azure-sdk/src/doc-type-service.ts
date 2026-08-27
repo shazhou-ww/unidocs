@@ -57,6 +57,8 @@ export interface DocTypeServiceConfig {
    * 不给它配 CAS 是正确的默认）。
    */
   casBaseUrl?: string;
+  /** 单次上传字节上限;超过返回 413。undefined = 不限。 */
+  maxUploadBytes?: number;
   /**
    * 栈模式：注册的 azure 栈命名空间。设置后 CasClient 的 capability
    * 模式走规范路由 `/stacks/{stackId}/tenants/{tenantId}/...`，
@@ -179,7 +181,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
         return Response.json({ error: "Session identity mismatch" }, { status: 403 });
       }
       return null;
-    }),
+    }, config.maxUploadBytes),
     operator: createStubOperatorNamespace(),
   });
 
@@ -227,6 +229,11 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   const casBaseUrl = process.env.CAS_BASE_URL;
   const casAccessKey = process.env.CAS_ACCESS_KEY;
   const stackMode = auth.internalAuthMode === "stack";
+  // 0 / 缺省 = 不限,与这个开关存在之前的行为一致。
+  const declaredLimit = Number(process.env.MAX_UPLOAD_BYTES ?? 0);
+  const maxUploadBytes = Number.isSafeInteger(declaredLimit) && declaredLimit > 0
+    ? declaredLimit
+    : undefined;
   if (casBaseUrl && !casAccessKey && !stackMode) {
     throw new Error("CAS_ACCESS_KEY is required when CAS_BASE_URL is configured");
   }
@@ -244,6 +251,7 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
       casAccessKey,
       casBaseUrl,
       casStackId: process.env.CAS_STACK_ID,
+      ...(maxUploadBytes === undefined ? {} : { maxUploadBytes }),
     },
   });
   console.log(`azure-${docType} CAS: mode=${auth.internalAuthMode} baseUrl=${process.env.CAS_BASE_URL ?? "(none)"} stackId=${process.env.CAS_STACK_ID ?? "(none)"}`);

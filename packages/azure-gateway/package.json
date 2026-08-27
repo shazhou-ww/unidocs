@@ -16,7 +16,7 @@
     "migrations"
   ],
   "scripts": {
-    "build": "tsc && node scripts/bundle.mjs",
+    "build": "node scripts/build-web-assets.mjs && tsc && node scripts/bundle.mjs",
     "start": "node dist/main.js",
     "migrate": "node dist/migrate-cli.js",
     "test": "vitest run --passWithNoTests",

@@ -16,6 +16,12 @@ param external bool
 param minReplicas int
 param maxReplicas int
 
+@description('容器 CPU 核数。默认 0.5 —— 对导入大文档的 doc type 明显不够。')
+param cpu string = '0.5'
+
+@description('容器内存。默认 1Gi。导入路径把整个文件读进内存(formData 一份、arrayBuffer 再一份),再加文档类型自己的解压表示,所以这个值要按最大可接受上传体积的数倍留。')
+param memory string = '1Gi' 
+
 @description('明文环境变量，形如 [{ name: "BLOB_ACCOUNT_URL", value: "https://..." }]。PORT 由模块从 targetPort 自动派生，不要在这里再传一份。')
 param extraEnv array = []
 
@@ -171,8 +177,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: name
           image: image
           resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
+            cpu: json(cpu)
+            memory: memory
           }
           env: concat(
             [
