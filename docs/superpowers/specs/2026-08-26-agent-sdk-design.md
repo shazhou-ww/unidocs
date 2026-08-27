@@ -53,7 +53,7 @@ flowchart TB
 | 边界 | 接口 | 由谁实现 | 定义在 |
 |---|---|---|---|
 | 上（逻辑） | `DocumentAgent` = `AgentTool[]` + instructions，全是数据和纯函数 | 文档类型 | 5.1.2。由既有的 `DocumentAgent`（`protocol/src/types.ts:118`）改形状而来 |
-| 下（实现） | `AgentPlatform` —— `query` / `apply` / `readBlob`。**文档类型看不到它**，只有内核调 | 平台 sdk | 5.1.4。由既有的 `DocumentAgentContext`（`protocol/src/types.ts:105`）演变而来 |
+| 下（实现） | `AgentPlatform` —— `query` / `apply` / `readBlob` / `writeBlob`。**文档类型看不到它**，只有内核调 | 平台 sdk | 5.1.4。由既有的 `DocumentAgentContext`（`protocol/src/types.ts:105`）演变而来 |
 | 下（实现） | `LlmProvider` —— 模型访问 | 内核内置 Anthropic / OpenAI，可另加 | 5.4 |
 | 下（实现） | `AgentSessionStore` —— 会话历史落盘 | 平台 sdk | 6.3 |
 | 下（实现） | 事件字节流 → 平台响应对象 | 平台 sdk | 7.4 |
@@ -242,7 +242,9 @@ protocol/src/types.ts
 // 新增到 protocol
 export interface LlmProvider { complete(request): Promise<AgentCompletion> }
 export interface AgentSessionStore { load(options?); append(messages, meta, token); clear() }
-export type AgentMessage = ...    // 中立消息格式（5.4）
+export type AgentMessage = ...    // 持久态中立消息，所有 role 共用多模态 content（5.4）
+export type LlmMessage = ...      // 附件已物化成字节的模型输入（5.4）
+export type AgentWireContentPart = ... // HTTP / SSE 的可序列化内容表示（7.1）
 export type AgentEvent = ...      // 事件表（7.1）
 ```
 
@@ -432,6 +434,14 @@ export interface DocumentAgent<TQuery, TOp> {
 
 两个默认值保证行为与今天一致：`kind: "query"` 不给 `toResult` 时返回 `{ structuredContent: { data, version } }`；`kind: "op"` 固定返回 `{ structuredContent: { success: true, version } }`。这正是三个文档类型今天 `toolCall` 里那两段代码做的事。
 
+这里采用的是**统一默认转换 + 每个 query tool 可选的自定义转换**，不是一个会递归解释任意 `SValue` 的万能转换器。`SValue` 只表达数据形状，不表达业务语义：同一个 `SBlob` 可能是图片、普通附件、字体，或者只供后续 op 引用的二进制。内核不能仅凭看见 `SBlob` 就猜它该进入多模态上下文，也无法替文档类型决定 `mediaType`、`altText` 和应该暴露给模型的元数据。
+
+因此规则固定为：
+
+- 普通 query 不写 `toResult`，走内核的默认 `structuredContent` 包装。
+- 图片或文件类 query 必须由该 tool 的 `toResult` 显式产出 `image` / `file` content part。
+- 可以共享 `requireRecord` / `requireSBlob` 这类窄化 helper，也可以有只负责组装 content part 的小 helper；不能有“扫描任意 SValue 并自动寻找附件”的 helper。
+
 `toResult` 的 `data` 类型是 `SValue`——它是从编辑器返回、跨过一次序列化的数据，静态类型到这里就断了。文档类型需要自己窄化一次，**不要写 `as any`**：
 
 ```ts
@@ -525,7 +535,7 @@ classDiagram
     class AgentSession~TQuery, TOp~ {
         -history: AgentMessage[]
         -blobCache: ByteLru
-        +run(instruction, onEvent) Promise~AgentRunOutcome~
+      +run(content, onEvent) Promise~AgentRunOutcome~
         +reset() Promise
     }
 
@@ -539,6 +549,7 @@ classDiagram
         +query(q) Promise
         +apply(ops, description) Promise
         +readBlob(blob) Promise
+      +writeBlob(data) Promise
     }
 
     class AnthropicProvider
@@ -715,7 +726,7 @@ flowchart TB
     end
 ```
 
-**之后：** 循环内部用内核自己的中立格式，每个大模型适配层只单向翻译一次。图片是结构化字段，不需要搜索。
+**之后：** 循环内部用内核自己的中立格式，每个大模型适配层只单向翻译一次。所有 role 都使用同一种 content part 表达文本、图片和文件，图片是结构化字段，不需要搜索。
 
 ```mermaid
 flowchart TB
@@ -725,43 +736,104 @@ flowchart TB
     end
 
     subgraph afterimg["之后的图片路径"]
-        J1["psd queries.ts<br/>makeSBlob 返回 SBlob 引用<br/>不产生 base64"] --> J2["psd agent 返回<br/>content: type image, blob"]
-        J2 --> J3["AgentSession<br/>readBlob 取字节<br/>放进中立消息的 image 位置"]
+        J1["user / assistant / tool 消息<br/>图片统一保存为 SBlob 引用"] --> J2["AgentMessage<br/>content: type image, blob"]
+        J2 --> J3["AgentSession<br/>裁剪后 readBlob 取字节<br/>构造 LlmMessage"]
         J3 --> J4["AnthropicProvider<br/>直接读 image 字段"]
     end
 ```
 
-中立消息类型：
+#### 5.4.1 持久消息：所有 role 都是多模态的
+
+`AgentContentPart` 是持久消息的统一内容单位。文本也只用 `{ type: "text", text }` 表达，不再同时维护 `user.content: string`、`assistant.text` 和 tool result content 三套表示：
 
 ```ts
 export type AgentMessage =
-  | { readonly role: "user";      readonly content: string }
-  | { readonly role: "assistant"; readonly text?: string; readonly toolCalls?: readonly AgentToolCall[] }
-  | { readonly role: "tool";      readonly callId: string; readonly result: AgentToolResult };
+  | {
+      readonly role: "user";
+      readonly content: readonly AgentContentPart[];
+    }
+  | {
+      readonly role: "assistant";
+      readonly content: readonly AgentContentPart[];
+      readonly toolCalls?: readonly AgentToolCall[];
+    }
+  | {
+      readonly role: "tool";
+      readonly callId: string;
+      readonly content: readonly AgentContentPart[];
+      readonly structuredContent?: JsonValue;
+    };
 
 export interface AgentToolCall {
   readonly id: string;
   readonly name: string;
   readonly arguments: JsonValue;
 }
+```
+
+`AgentToolResult` 仍然是 DocumentAgent 与内核之间的工具返回契约。内核收到它后只做机械的规范化，不解释其中的业务数据：
+
+```ts
+const toolMessage: AgentMessage = {
+  role: "tool",
+  callId,
+  content: result.content ?? [],
+  ...(result.structuredContent === undefined
+    ? {}
+    : { structuredContent: result.structuredContent }),
+};
+```
+
+所以 `SValue → AgentToolResult` 的业务转换仍由 tool 的 `toResult` 决定；`AgentToolResult → AgentMessage` 则是内核统一完成的无损结构转换。
+
+#### 5.4.2 持久态与模型态是两种类型
+
+历史里的附件必须是 `SBlob`，这样消息很小、可由 SValue CBOR 编码，也能参与 CAS 引用计数。模型 API 需要的却是真实字节。不要让同一个类型同时假装表示这两种状态：
+
+```ts
+export type LlmContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly data: Uint8Array; readonly mediaType: string; readonly altText?: string }
+  | { readonly type: "file"; readonly data: Uint8Array; readonly mediaType: string; readonly filename?: string };
+
+export type LlmMessage =
+  | { readonly role: "user"; readonly content: readonly LlmContentPart[] }
+  | { readonly role: "assistant"; readonly content: readonly LlmContentPart[]; readonly toolCalls?: readonly AgentToolCall[] }
+  | { readonly role: "tool"; readonly callId: string; readonly content: readonly LlmContentPart[]; readonly structuredContent?: JsonValue };
 
 export interface LlmProvider {
   complete(request: {
     readonly system: string;
-    readonly messages: readonly AgentMessage[];
+    readonly messages: readonly LlmMessage[];
     readonly tools: readonly AgentToolDefinition[];
   }): Promise<AgentCompletion>;
 }
 
 export interface AgentCompletion {
-  readonly text?: string;
+  readonly content: readonly LlmContentPart[];
   readonly toolCalls?: readonly AgentToolCall[];
 }
 ```
 
-`role: "tool"` 那一支携带的是结构化的 `AgentToolResult`（`protocol/src/types.ts:100`），其中的 `content` 数组里图片是 `{ type:"image", blob, mediaType }`。适配层直接 `filter(p => p.type === "image")` 拿到它。
+每次调模型前，内核对裁剪后的全部消息扫描所有 role 的 content parts，把 `AgentContentPart` 物化为 `LlmContentPart`。模型返回的文字直接成为 assistant 的 text part；如果 provider 将来返回图片或文件字节，内核通过 `platform.writeBlob` 写入 CAS，再把得到的 `SBlob` 放进 assistant message。当前只返回文本的 provider 只是这个接口的一个子集，不会把历史类型锁死在纯文本上。
 
-**取字节这一步要缓存。** 每次调模型之前，内核都要把历史里的 image part 变成真正的字节交给适配层，走的是 `platform.readBlob`。PSD 一次 run 跑 25 圈，若每圈都重读，就是 50 次 `readBlob`——而裁剪保证了同时最多只有 `MAX_IMAGES` 张图（默认 2），也就是说其中 48 次读的是同样的两个 hash。
+#### 5.4.3 DB 与 CAS 的分工
+
+消息的小内容和结构存数据库，附件字节存 CAS：
+
+| 内容 | 存放位置 |
+|---|---|
+| role、text parts、toolCalls、structuredContent、mediaType、altText、filename | `agent_messages.payload`，SValue CBOR |
+| 图片、文件的实际字节 | CAS |
+| 两者之间的连接 | payload 中的 `SBlob` |
+
+不另建 `agent_attachments` 表。完整 payload 的 SValue 编码已经能枚举其中所有 `SBlob` 引用；再建一张附件表会引入没有查询需求支撑的双写和一致性成本。
+
+user 附件的入口是“先上传，后运行”：客户端先通过既有上传通道把字节写入 CAS，取得 hash 和 possession 证明；`/run` 外壳校验调用者对附件的访问权并重建 `SBlob`，之后才把多模态 user content 交给 `AgentSession`。内核不接收未验证的任意 hash，也不在一次 run 的 JSON 里内联大段 base64。
+
+#### 5.4.4 物化要缓存
+
+每次调模型之前，内核都要把裁剪后仍存在的 image / file part 变成真正的字节交给适配层，走的是 `platform.readBlob`。PSD 一次 run 跑 25 圈，若每圈都重读相同预览，就是大量重复 IO；裁剪保证一次模型请求中最多只有 `MAX_IMAGES` 张图片，但持久历史里可以有更多附件。
 
 `AgentSession` 内部按 hash 缓存字节，按总字节数封顶后淘汰最久未用的：
 
@@ -769,7 +841,7 @@ export interface AgentCompletion {
 #blobCache = new ByteLru(32 * 1024 * 1024);   // 上限与 sblob-context.ts:69 的默认一致
 ```
 
-放在内核而不是平台，因为「同一个 blob 会被反复要」是**循环的性质**，平台没有理由知道这件事。
+放在内核而不是平台，因为「同一个 blob 会被反复要」是**循环的性质**，平台没有理由知道这件事。缓存按 hash 去重，所以一次 session 生命周期内，同一附件正常只读取一次。
 
 **随之删除：** `anthropic.ts` 的 `findImage`、`previewMeta`，以及 `OperatorConfig.renderToolResult` 整个钩子（`operator-do-agent.ts:25`）。P5 和 P6 一并解决。
 
@@ -782,7 +854,7 @@ export class AgentSession<TQuery, TOp> {
     readonly sessionId: string;
     /** 上边界：文档类型的工具表 + 提示词，纯数据（5.1.2） */
     readonly agent: DocumentAgent<TQuery, TOp>;
-    /** 下边界：文档读写 + 取 blob 字节（5.1.4） */
+    /** 下边界：文档读写 + blob 字节读写（5.1.4） */
     readonly platform: AgentPlatform<TQuery, TOp>;
     /** 下边界：模型访问 */
     readonly provider: LlmProvider;
@@ -806,16 +878,28 @@ export class AgentSession<TQuery, TOp> {
    * 理由见 5.5.2。onEvent 同步返回，内核不等它，它抛错也被忽略。
    * lease 用完即释放，无论成功失败。
    */
-  run(lease: AgentRunLease, instruction: string, onEvent: (event: AgentEvent) => void): Promise<AgentRunOutcome>;
+  run(
+    lease: AgentRunLease,
+    content: readonly AgentContentPart[],
+    onEvent: (event: AgentEvent) => void,
+  ): Promise<AgentRunOutcome>;
 
   /** 清空这个会话：内存、存储、以及它持有的全部根引用。见 5.5.4 */
   reset(): Promise<void>;
 }
 
 export type AgentRunOutcome =
-  | { readonly ok: true;  readonly response: string; readonly iterations: number }
+  | {
+      readonly ok: true;
+      readonly content: readonly AgentContentPart[];
+      /** 兼容旧客户端：从 content 的 text parts 派生，不是权威字段。 */
+      readonly response: string;
+      readonly iterations: number;
+    }
   | { readonly ok: false; readonly error: string };
 ```
+
+调用方只有文本时传 `[{ type: "text", text: instruction }]`。旧 HTTP 请求体 `{ instruction: string }` 仍由平台外壳转换成这个形状；内核本身只维护一种消息表示。
 
 `agent` 是一个常量，没有工厂、没有注入——文档类型不接受任何句柄（5.1.1）。`platform` 只有内核自己拿着。
 
@@ -842,7 +926,7 @@ export type AgentRunOutcome =
 `AsyncIterable` 是**拉取式**的：没有人调 `next()`，生成器就停在 `yield` 上。而平台外壳会这样用它：
 
 ```ts
-void encodeSse(session.run(instruction)).pipeTo(writable);
+void encodeSse(session.run(content)).pipeTo(writable);
 ```
 
 客户端一断线，`writable` 报错，管道停止拉取，**整个循环就此冻住**。这与 7.3 写明的「服务端继续跑完，文档改动照常落到编辑器」直接冲突——两者同时只能成立一个。
@@ -855,7 +939,7 @@ const onEvent = (e: AgentEvent) => {
   if (broken) return;
   writer.write(encode(sseFrame(e))).catch(() => { broken = true; });
 };
-this.#ctx.waitUntil(session.run(instruction, onEvent).finally(() => writer.close().catch(() => {})));
+this.#ctx.waitUntil(session.run(content, onEvent).finally(() => writer.close().catch(() => {})));
 ```
 
 `waitUntil` 是另一半：它让 DO 在响应已经返回之后继续执行这个 Promise。Azure 侧对应的是不 `await` 这个 Promise 而让请求处理函数先返回。
@@ -923,8 +1007,8 @@ try {
   throw;
 }
 // 到这里才决定响应形状：流式还是一次性
-return wantsStream ? this.#runStreaming(lease, session, instruction)
-                   : this.#runBlocking(lease, session, instruction);
+return wantsStream ? this.#runStreaming(lease, session, content)
+                   : this.#runBlocking(lease, session, content);
 ```
 
 两条路径对「并发被拒」的对外表现因此完全一致：**都是 HTTP 409，都不产生任何事件**。
@@ -943,11 +1027,11 @@ return wantsStream ? this.#runStreaming(lease, session, instruction)
 
 | 消息 | 字段 | 可编码性 |
 |---|---|---|
-| `user` | `content: string` | SPrimitive |
-| `assistant` | `text?`、`toolCalls?: [{id, name, arguments: JsonValue}]` | 全部是 JSON 值 |
-| `tool` | `callId`、`result: AgentToolResult` | `structuredContent` 是 JsonValue；`content` 里图片的 `blob` 是 SBlob，本身就是 SPrimitive |
+| `user` | `content: AgentContentPart[]` | text 是字符串；image / file 中的 blob 是 SBlob |
+| `assistant` | `content: AgentContentPart[]`、`toolCalls?` | content 同上；toolCalls 全部是 JSON 值 |
+| `tool` | `callId`、`content: AgentContentPart[]`、`structuredContent?` | content 同上；structuredContent 是 JsonValue |
 
-推论很关键：**图片在历史里只是一个 CAS hash，不是字节**（SBlob 走 `SBlobTag = 65_536` 编码，`protocol/src/types.ts:174`）。所以一段 25 轮、含 10 张预览图的会话，落盘只有几十 KB，而不是几十 MB。
+推论很关键：**任何 role 的附件在历史里都只是一个 CAS hash，不是字节**（SBlob 走 `SBlobTag = 65_536` 编码，`protocol/src/types.ts:174`）。所以一段 25 轮、含 10 张预览图和用户上传图片的会话，数据库里仍只有文本、结构和引用，附件实际字节全部留在 CAS。
 
 #### 6.1.1 必须用 SValue 编码，不能用 JSON
 
@@ -972,8 +1056,8 @@ if (encoded.refs.length > 0) {
 | 关注点 | 结论 | 依据 |
 |---|---|---|
 | 用什么格式序列化 | SValue CBOR | 6.1.1 |
-| 编出来的字节存哪儿 | 直接写进表的字节列 | 6.3 |
-| 历史引用的图片怎么不被回收 | 单独提交根引用，与字节存哪儿无关 | 6.4 |
+| 编出来的消息字节存哪儿 | 直接写进表的字节列；附件字节不在其中 | 6.3 |
+| 历史引用的附件怎么不被回收 | 单独提交根引用，与消息字节存哪儿无关 | 6.4 |
 
 第二件和第三件是正交的：无论字节放在 SQLite、Postgres 还是别处，引用计数都得单独做；反过来，引用计数做好了也不会替你决定字节该放哪。
 
@@ -1021,7 +1105,7 @@ Anthropic 的 Messages API 要求每个 `tool_use` 块在紧随其后的消息�
 
 ```mermaid
 flowchart TB
-    IN["完整历史"] --> L1["第 1 级：图片降级<br/>只保留最近 N 张图片，默认 2<br/>更早的 image part 就地换成一行文字<br/>用该图自己的 altText"]
+    IN["完整历史"] --> L1["第 1 级：图片降级<br/>扫描所有 role 的 content<br/>只保留最近 N 张图片，默认 2<br/>更早的 image part 就地换成一行文字<br/>用该图自己的 altText"]
     L1 --> C1{"还超预算吗"}
     C1 -->|否| OUT["发给模型 + 替换 history"]
     C1 -->|是| L2["第 2 级：大结果降级<br/>structuredContent 超过 M 字节的<br/>只留最近一份，更早的换成<br/>结果过大已省略，需要时请重新查询"]
@@ -1033,7 +1117,7 @@ flowchart TB
 
 前两级是**就地替换**，不改变消息数量，因此不可能破坏 6.2.1 的配对；只有第 3 级会删消息，而它以「轮」为单位。
 
-**第 1 级怎么做到不懂文档类型：** 协议层的 image content part 本来就带一个 `altText` 字段（`protocol/src/types.ts:88-93`），docx 今天已经在设它（`doctype-docx/src/agent.ts:78-82`）。内核降级时只做一件事：
+**第 1 级怎么做到不懂文档类型：** 协议层的 image content part 本来就带一个 `altText` 字段（`protocol/src/types.ts:88-93`），docx 今天已经在设它（`doctype-docx/src/agent.ts:78-82`）。内核不区分图片来自 user、assistant 还是 tool，统一扫描 content，降级时只做一件事：
 
 ```ts
 // image part → text part
@@ -1062,7 +1146,7 @@ flowchart TB
 
 估算不准不会导致错误，只会裁多或裁少；真的超限时 provider 会报错，此时按错误再裁一次并重试一次，仍失败则以 `run-error` 结束。
 
-#### 6.2.5 三个数字先写死
+#### 6.2.5 四个数字先写死
 
 ```ts
 // doctype-server-common/src/agent/history.ts
@@ -1074,7 +1158,7 @@ const RESTORE_MESSAGE_LIMIT = 200;      // restore 时从存储读回多少条�
 
 **不做成可配置项，也不暴露成可替换的策略接口。** 理由：
 
-- 这三个数字合不合适，要跑起来才知道。现在就把它们做成参数，等于在没有依据的情况下先固化一套 API，而这套 API 会立刻被三个文档类型和两个平台引用。
+- 这四个数字合不合适，要跑起来才知道。现在就把它们做成参数，等于在没有依据的情况下先固化一套 API，而这套 API 会立刻被三个文档类型和两个平台引用。
 - 「让文档类型自己实现一套裁剪」这种扩展点更是如此——今天一个使用者都没有。如果将来默认策略覆盖不了某个文档类型，那**首先说明默认策略需要改进**，而不是每个文档类型各写一份。
 
 裁剪逻辑单独放在 `history.ts` 一个文件里，输入是 `AgentMessage[]`、输出也是 `AgentMessage[]`，没有其他依赖。真到了需要按文档类型调参、或者需要换整套策略的那天，把这个文件的入口函数改成接口是一次局部改动，不牵动调用方。
@@ -1098,6 +1182,7 @@ const RESTORE_MESSAGE_LIMIT = 200;      // restore 时从存储读回多少条�
 - `agent_messages` **只追加，写入后不再修改**。这与 `deltas` 是同一种表。
 - 图片降级、大结果省略、整轮丢弃，全部发生在读出来之后、发给模型之前，是内存里的一次纯函数变换。
 - 每次会话恢复时重新算一遍。降级是纯函数，重算的结果一致。
+- 裁剪不会释放附件的 CAS 根引用。只要原始消息仍在存储中、用户仍可翻阅，它引用的附件就必须可读；只有 reset 或将来的历史清理真正删除持久消息时，才提交对应的负引用。
 
 存储会随对话增长——这是正常的，一条消息就是一小段文字加几个 CAS 引用。真需要控制体量时，那是**独立的清理策略**（按 `updated_at` 清理长期不动的会话，或丢弃很老的轮次），与上下文裁剪无关，本次不做。
 
@@ -1118,9 +1203,9 @@ const RESTORE_MESSAGE_LIMIT = 200;      // restore 时从存储读回多少条�
 | | 对应现有的 | 装什么 |
 |---|---|---|
 | `agent_sessions` | `doc_sessions` | 一个会话一行：条件写凭据 `seq`、汇总元数据 |
-| `agent_messages` | `deltas` | 一条消息一行：`role` 等结构成列，消息本体是 SValue 字节 |
+| `agent_messages` | `deltas` | 一条消息一行：`role` 等结构成列，消息文本、结构和附件引用是 SValue 字节；附件实际字节在 CAS |
 
-结构成列、内容成字节，这条分界线的依据是 6.1.1：SBlob 的品牌是 Symbol，JSON 承载不了，所以消息本体只能是 SValue CBOR；但 `role` / `turn_no` 这些是纯标量，没有理由跟着埋进去。
+结构成列、小内容和引用成消息字节、附件大字节进 CAS，这条分界线的依据是 6.1.1：SBlob 的品牌是 Symbol，JSON 承载不了，所以消息本体只能是 SValue CBOR；但 `role` / `turn_no` 这些是纯标量，没有理由跟着埋进去。payload 中只保存 `SBlob`、`mediaType`、`altText` / `filename`，不内联图片或文件字节。
 
 #### 6.3.2 表结构
 
@@ -1155,7 +1240,7 @@ CREATE TABLE IF NOT EXISTS agent_messages (
 
 **Cloudflare（DO SQLite）** —— 同名同列，只有主键不同：`agent_sessions` 用 `singleton INTEGER PRIMARY KEY CHECK (singleton = 1)`（一个 OperatorDO 实例就是一个 session，表里永远一行，与 `editor-do-svalue.ts:123` 的 `svalue_pending` 同一写法）；`agent_messages` 用 `msg_no INTEGER PRIMARY KEY`。`doc_type` / `session_id` 两列仍然保留，不参与定位，只为排查问题时能一眼看出这个 DO 是谁。
 
-**关于 `text` 列：** 它是从 `payload` 里抽出来的可读文字——`user` 的指令原文、`assistant` 的回复文字、`tool` 结果的一句摘要。它是派生数据，**永远不是权威**，权威是 `payload`。留它是为了不解码就能看懂一段对话，以及将来做内容检索时有个落脚点。图片、工具参数这些没有文字表示的，这一列为空。
+**关于 `text` 列：** 它是从 `payload.content` 的所有 text parts 按顺序拼出来的可读文字。它是派生数据，**永远不是权威**，权威是 `payload`。留它是为了不解码就能看懂一段对话，以及将来做内容检索时有个落脚点。只有图片或文件、没有 text part 的消息，这一列为空。
 
 #### 6.3.3 身份用 `session_id`，不用 doc id
 
@@ -1288,11 +1373,11 @@ GROUP BY s.tenant_id;
 - `clear()` 之后 `load()` 返回 null
 - 两个并发 `save` 只有一个成功
 - `agent_sessions` 的 `turn_count` / `byte_size` / `updated_at` 与传入的 `meta` 一致
-- **`payload` 里含 SBlob 时，读回来解码后 `isSBlob()` 仍为 true**（这条对应 6.1.1：任何一天有人把实现改成 JSON，这个断言会失败）
+- user / assistant / tool 三种 `payload` 分别含 SBlob 时，读回来解码后 `isSBlob()` 都仍为 true（这条对应 6.1.1：任何一天有人把实现改成 JSON，任一 role 都会被测试抓住）
 
-### 6.4 引用保活：让历史里的图片不被回收
+### 6.4 引用保活：让历史里的附件不被回收
 
-这是与「字节存哪儿」正交的一件事。历史里的图片是 CAS hash；如果没有人声明持有它，CAS 会把它回收，历史就烂了。
+这是与「消息字节存哪儿」正交的一件事。所有 role 的 image / file part 都只保存 CAS hash；如果没有人声明持有它，CAS 会把附件回收，历史就烂了。
 
 仓库现有的做法是显式提交**根引用**（`session.ts:633-643`）：
 
@@ -1310,7 +1395,7 @@ await commitRootRefsOrRollback(
 会话历史照此办理，只是换一个 requestId 前缀：
 
 ```ts
-// 表是只追加的，所以增量永远只有加号，没有减号
+// 扫描本轮追加的所有 role；表只追加，所以正常写入只有加号
 const refs = new Map<string, number>();
 for (const m of appendedMessages) addRefs(refs, encodeSValueWithRefs(m).refs, +1);
 
@@ -1322,13 +1407,13 @@ await commitRootRefsOrRollback(
 );
 ```
 
-因为裁剪不再动存储（6.2.6），这里比先前的版本简单一档：**引用只增不减**，不需要算差集，也不需要跟踪哪条消息被覆盖或删除了。
+因为裁剪不再动存储（6.2.6），这里比先前的版本简单一档：正常追加路径的引用只增不减，不需要算差集，也不需要跟踪哪条消息被覆盖。user 上传图片、assistant 产生的附件、tool 返回的预览图都由同一段编码结果自动覆盖，不按 role 写特殊分支。
 
 释放引用是清理策略的事——将来真要丢弃很老的轮次时，那次操作提交对应的负数增量。那是独立的一件事，本次不做。
 
 顺序与 `session.ts` 的写入顺序同构：**先落消息，再提交引用，引用失败就回滚这次事务**。反过来会在崩溃的时间窗里留下「引用已加、消息没写」的孤立引用。
 
-一个值得留意的取舍：会话历史持有的引用与文档持有的引用是**独立的两套**（前缀 `agent:` 与 `apply:`）。所以一个图层被删掉之后，文档不再引用那张预览图，但对话历史仍然引用着它——用户往回翻聊天记录时那张图还看得见。代价是这些像素会多留一段时间，直到裁剪把那条消息降级成文字（6.2.3 第 1 级），引用随之释放。
+一个值得留意的取舍：会话历史持有的引用与文档持有的引用是**独立的两套**（前缀 `agent:` 与 `apply:`）。所以一个图层被删掉之后，文档不再引用那张预览图，但对话历史仍然引用着它——用户往回翻聊天记录时那张图还看得见。发送给模型时把旧图片降级成文字不会改变这件事；只要原始消息仍在数据库中，引用就继续存在。代价是附件会一直保留到消息被历史清理或整个会话被 reset。
 
 ### 6.5 写入时机
 
@@ -1351,11 +1436,11 @@ flowchart LR
     A["store.load({ limit: 200 })"] --> B["逐条 decodeSValue(payload)"] --> C["SBlob 引用由 CBOR tag 自动重建"] --> D["历史可用"]
 ```
 
-真正需要字节的是**把 image part 变成模型输入**的那一步（5.4 的物化），降级也应该在那里：
+真正需要字节的是**把任一 role 的 image / file part 变成模型输入**的那一步（5.4 的物化），降级也应该在那里：
 
 ```mermaid
 flowchart TB
-    T["裁剪后，即将发给模型的那份历史"] --> S["扫描其中的 image part"]
+    T["裁剪后，即将发给模型的那份历史"] --> S["扫描所有 role 的 image / file part"]
     S --> H{"字节缓存里有吗"}
     H -->|有| K["直接用"]
     H -->|没有| R{"readBlob 成功吗"}
@@ -1374,9 +1459,9 @@ flowchart TB
 
 一句话：**blob 丢失是发送时的降级问题，不是恢复时的解码问题。**
 
-降级用的文字与裁剪走同一条路——该图自己的 `altText`（6.2.3），内核不需要为此多认识任何文档类型概念。
+图片降级用的文字与裁剪走同一条路——该图自己的 `altText`（6.2.3）；文件使用 `filename ?? mediaType`。内核不需要为此多认识任何文档类型概念。
 
-裁剪保证了同时最多只有 `MAX_IMAGES` 张图还是 image part，所以需要保活的 hash 极少，失效的影响面也小。这是 6.2 和 6.4 互相支撑的地方。
+裁剪保证了**一次模型请求**中最多只有 `MAX_IMAGES` 张图仍需物化，所以发送路径的 blob IO 有界。但持久化历史必须保活所有尚未删除消息引用的附件，hash 数量会随会话增长；这是模型上下文预算与数据保留语义的有意分离。
 
 ### 6.7 与第 1 章两层边界的对应
 
@@ -1385,7 +1470,7 @@ flowchart TB
 | 历史裁剪（什么该留在上下文里） | 内核（逻辑） | 内核里的一个纯函数，参数写死，不可替换（6.2.5） |
 | `encodeSValue(每条消息)`（序列化格式） | 内核 | 内核 |
 | 从消息里抽出 `role` / `turnNo` / `text`（6.3.2） | 内核 | 内核——它知道消息结构，平台不知道 |
-| 根引用增量的计算（`diffRefs`） | 内核 | 内核 |
+| 从所有 role 的完整消息中计算根引用增量 | 内核 | 内核 |
 | `AgentSessionStore`（字节存哪儿） | 下边界（实现） | 平台 sdk |
 | `CasRootRefGateway`（引用提交到哪儿） | 下边界（实现） | 平台 sdk，已存在于 `cas-client` |
 
@@ -1400,14 +1485,21 @@ flowchart TB
 ```ts
 export type AgentEvent =
   | { readonly type: "run-start";      readonly runId: string }
-  | { readonly type: "assistant-text"; readonly text: string }
+  | { readonly type: "assistant-content"; readonly content: readonly AgentWireContentPart[] }
   | { readonly type: "tool-call";      readonly callId: string; readonly name: string; readonly arguments: JsonValue }
   | { readonly type: "tool-result";    readonly callId: string; readonly ok: boolean; readonly summary: string }
-  | { readonly type: "run-end";        readonly response: string; readonly iterations: number }
+  | { readonly type: "run-end";        readonly content: readonly AgentWireContentPart[]; readonly response: string; readonly iterations: number }
   | { readonly type: "run-error";      readonly error: string };
+
+export type AgentWireContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly hash: string; readonly mediaType: string; readonly altText?: string }
+  | { readonly type: "file"; readonly hash: string; readonly mediaType: string; readonly filename?: string };
 ```
 
 **这里只有 agent 自己的事件——它在想什么、调了什么工具、说了什么。没有「文档变了」。** 理由见 7.2.1。
+
+事件使用 `AgentWireContentPart` 而不是持久态的 `AgentContentPart`：SSE 是 JSON，不能保留 SBlob 的 Symbol 品牌。wire 形状显式发送 hash 和展示元数据；hash 只是内容标识，不是授权，客户端下载仍必须经过网关的会话鉴权。`/run` 输入使用对应的 `AgentInputContentPart`，附件另外携带 possession 证明；平台外壳在进入内核前校验证明并重建 SBlob，证明本身不写进消息历史。
 
 一个设计决定：**`tool-result` 只带一句摘要，不带完整数据。** 工具结果可能是一整棵图层树或一张预览图，客户端不需要它——需要的是模型，而模型在服务端已经拿到了。这样每个事件都很小，不需要分片。
 
@@ -1426,9 +1518,12 @@ sequenceDiagram
     B->>G: POST /run  Accept: text/event-stream
     G->>W: 转发，带身份头
 
-    W->>S: run(指令, onEvent)
-    Note over S: 以下三步都在 run 内部，外壳没有顺序义务（5.5.3）
+    W->>W: 校验已上传附件的 possession，构造 SBlob content
+    W->>S: acquire()
     S->>W: 抢 run 租约：UPDATE ... WHERE running_since IS NULL（5.5.5）
+    W-->>S: lease
+    W->>S: run(lease, content, onEvent)
+    Note over S: 恢复在 run 内部惰性执行，外壳没有 restore 顺序义务（5.5.3）
     S->>W: store.load({ limit: 200 })　仅首次
     W-->>S: 最近 200 条消息 + token
     Note over S: 逐条 decodeSValue，只重建 SBlob 引用；不读 blob（6.6）
@@ -1438,12 +1533,13 @@ sequenceDiagram
 
     loop 直到模型不再调工具，或达到 maxIterations
         S->>S: trimHistory(history)　只影响这次发送（6.2.6）
-        S->>W: readBlob 取图片字节　命中缓存则跳过；<br/>读不到就降级成 altText 文字（5.4、6.6）
-        S->>L: complete(裁剪后的历史 + 工具表)
-        L-->>S: 文字 / 工具调用 / 两者都有
+        S->>W: readBlob 取所有 role 的附件字节　命中缓存则跳过；<br/>读不到就降级成文字（5.4、6.6）
+        S->>L: complete(物化后的 LlmMessage[] + 工具表)
+        L-->>S: content / 工具调用 / 两者都有
 
-        opt 有文字
-            S-->>B: assistant-text
+        opt 有 content
+          Note over S: provider 返回的二进制先经 writeBlob 进入 CAS
+          S-->>B: assistant-content
         end
 
         opt 有工具调用，逐个执行
@@ -1519,7 +1615,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    S["AgentSession.run(指令, onEvent)<br/>每产生一个事件就调一次 onEvent"] --> E["内核的 sseFrame(event)<br/>纯函数：一个事件 → 一个 SSE 帧字符串<br/>平台无关"]
+    S["AgentSession.run(content, onEvent)<br/>每产生一个事件就调一次 onEvent"] --> E["内核的 sseFrame(event)<br/>纯函数：wire 事件 → 一个 SSE 帧字符串<br/>平台无关"]
     E --> P1["cloudflare-sdk<br/>onEvent 里写进 TransformStream，包成 Response"]
     E --> P2["azure-sdk<br/>onEvent 里写进 Node 响应流"]
     P1 --> W["doctype 服务<br/>doc-type-handler.ts:113"]
@@ -1554,24 +1650,30 @@ data: {"callId":"toolu_01","name":"query_getPreview","arguments":{}}
 
 | 请求头 | 行为 |
 |---|---|
-| `Accept: text/event-stream` | 返回 SSE 事件流 |
-| 其他 | 返回今天的一次性 JSON `{ success, data: { response, iterations } }` |
+| `Accept: text/event-stream` | 返回 SSE 事件流，assistant 内容走 `assistant-content` |
+| 其他 | 返回一次性 JSON `{ success, data: { content, response, iterations } }` |
+
+请求体也向后兼容：旧的 `{ instruction: string }` 由外壳转成单个 text part；新的 `{ content: AgentInputContentPart[] }` 可同时带文本和已上传附件引用。附件必须先走上传通道，`/run` 不接受内联 base64。
 
 非流式路径不需要攒事件——`run()` 本来就返回 `AgentRunOutcome`（5.5），直接映射即可：
 
 ```ts
-const outcome = await session.run(instruction, () => {});   // onEvent 空实现
+const outcome = await session.run(content, () => {});   // onEvent 空实现
 return outcome.ok
-  ? Response.json({ success: true, data: { response: outcome.response, iterations: outcome.iterations } })
+  ? Response.json({ success: true, data: {
+      content: toWireContent(outcome.content),
+      response: outcome.response,
+      iterations: outcome.iterations,
+    } })
   : Response.json({ success: false, error: outcome.error }, { status: statusFor(outcome) });
 ```
 
 | 结果 | HTTP |
 |---|---|
-| `ok: true` | 200，`{ success: true, data: { response, iterations } }` |
+| `ok: true` | 200，`{ success: true, data: { content, response, iterations } }`；`response` 是 text parts 的兼容投影 |
 | 其余失败 | 500，`{ success: false, error }` |
 
-与今天 `operator-do-agent.ts:105-124` 的返回完全一致。
+旧客户端仍能读取与今天 `operator-do-agent.ts:105-124` 相同的 `success`、`response`、`iterations` 字段；新增的 `content` 不改变这些字段的语义。
 
 **抢不到 run 租约不在这张表里**，因为那发生在决定响应形状之前（5.5.5）——两条路径都直接返回 HTTP 409，流式路径连 SSE 都不会建立。409 是新增状态码，今天没有并发拒绝这条路径，所以不存在兼容问题。这样 markdown / docx 的现有调用和现有测试（`cloudflare-sdk/tests/operator-do.test.ts`，230 行）不受影响，迁移可以逐个文档类型推进。
 
@@ -1600,13 +1702,13 @@ classDiagram
         -apiBaseUrl: string
         -type: string
         -docId: string
-        +run(instruction, handlers) AgentRunHandle
+      +run(input, handlers) AgentRunHandle
     }
 
     class AgentRunHandlers {
         <<interface>>
         +onEvent?(event) void
-        +onDone?(response, iterations) void
+      +onDone?(content, response, iterations) void
         +onError?(error) void
     }
 
@@ -1646,8 +1748,17 @@ export class AgentChannel {
     /** 超过这个时长没收到任何帧就判定断线，默认 30000 */
     idleTimeoutMs?: number;
   });
-  run(instruction: string, handlers: AgentRunHandlers): AgentRunHandle;
+  run(input: string | AgentRunInput, handlers: AgentRunHandlers): AgentRunHandle;
 }
+
+export interface AgentRunInput {
+  readonly content: readonly AgentInputContentPart[];
+}
+
+export type AgentInputContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly hash: string; readonly possession: string; readonly mediaType: string; readonly altText?: string }
+  | { readonly type: "file"; readonly hash: string; readonly possession: string; readonly mediaType: string; readonly filename?: string };
 
 export interface AgentRunHandle {
   /**
@@ -1677,6 +1788,8 @@ export class DocSession<TDoc, TOp> {
 }
 ```
 
+string 分支只生成一个 text part，保持今天的调用体验。图片和文件必须先通过上传 API 进入 CAS，再把返回的 hash 与 possession 证明放进 `AgentRunInput`；`AgentChannel` 不把原始附件字节或 base64 混进 run 请求。
+
 **为什么不用 `EventSource`：** `EventSource` 只能发 GET 请求，不能带请求体，也不能自定义请求头。所以用 `fetch` + `ReadableStream` 手工解析 SSE 帧，大约 80 行。
 
 **为什么不自动重连：** 因为不做重放，重连也拿不到断线期间的事件。自动重连只会制造"好像还连着"的假象。断线就如实告诉调用方。
@@ -1684,13 +1797,16 @@ export class DocSession<TDoc, TOp> {
 ### 8.4 两者配合
 
 ```ts
-channel.run(text, {
+channel.run({ content: [
+  { type: "text", text },
+  ...uploadedAttachments,
+] }, {
   onEvent: (e) => {
     if (e.type === "tool-call")     showStep(e.name);      // 实时看到 agent 在做什么
-    if (e.type === "assistant-text") addMsg("agent", e.text);
+    if (e.type === "assistant-content") addContent("agent", e.content);
   },
-  onDone: async (reply) => {
-    addMsg("agent", reply);
+  onDone: async (content) => {
+    addContent("agent", content);
     await session.reconcile();                             // 文档同步仍在 run 结束时做
   },
   onError: async (err) => {
@@ -1741,14 +1857,15 @@ channel.run(text, {
 |---|---|
 | `cloudflare-psd/src/anthropic.ts` | 移到 `doctype-server-common/src/agent/providers/anthropic.ts`，删掉 `findImage` / `previewMeta`，翻译改为单向 |
 | `cloudflare-psd/src/worker.ts` | 改为注入 `psdAgent` 常量 + Cloudflare 的 `AgentPlatform` 实现 |
-| `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 约 90 行，只剩 DurableObject 外壳、身份校验、把事件流包成 Response |
+| `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 薄 DurableObject 外壳：身份校验、附件 possession 校验、wire content 与 SBlob 的转换、把事件流包成 Response |
 | `doctype-server-common/src/operator.ts` | 删除（177 行死代码） |
 | `azure-sdk/src/local-editor.ts:103` | 删掉 501 占位，改为真实的 `AgentPlatform` 实现，`apply` 提交时自己读当前 head 作 baseVersion |
-| `protocol/src/types.ts:100-129` | `DocumentAgent` 改成 `AgentTool[]` + instructions（5.1.2）；`DocumentAgentFactory` 删除；`DocumentAgentContext` 改形状为 `AgentPlatform`（5.1.4） |
+| `protocol/src/types.ts:100-129` | `DocumentAgent` 改成 `AgentTool[]` + instructions（5.1.2）；`DocumentAgentFactory` 删除；`DocumentAgentContext` 改形状为带 `readBlob` / `writeBlob` 的 `AgentPlatform`；新增所有 role 共用 content parts 的 `AgentMessage`、字节态 `LlmMessage` 和 wire content 类型（5.4、7.1） |
 | `cloudflare-sdk/src/agent-store-do.ts` | 新增：`DoAgentSessionStore`，DO SQLite 两张表 + `seq` 条件写，写入走 `ctx.storage.transaction`（6.3.2、6.3.4） |
 | `azure-sdk/src/agent-store-pg.ts` | 新增：`PgAgentSessionStore`，Postgres 两张表 + `seq` 条件写，事务复用 `PgUnitOfWork`（`ports-pg.ts:270`），条件写照搬 `PgDeltaLog.append`（`:89-111`） |
 | `azure-sdk/migrations/0003_agent_sessions.sql` | 新增：`agent_sessions` 与 `agent_messages` 两张表（6.3.2） |
 | `azure-sdk/tests/migrate.test.ts:36` | 断言的表名列表加上 `agent_sessions`、`agent_messages` |
+| 两个平台的 `AgentPlatform` | `readBlob` 负责模型前物化；`writeBlob` 负责把 provider 产生的二进制先写入 CAS，再进入 assistant message |
 
 ### 9.3 客户端
 
@@ -1756,7 +1873,8 @@ channel.run(text, {
 |---|---|
 | `psd-client/src/doc-session.ts` | 移到 `client-sdk`，泛型化 |
 | `psd-client/src/index.ts` | 重新导出 `client-sdk` 的 `DocSession`，并绑定 PSD 的 `applyLocal` / `reload` |
-| `web-psd/src/main.ts:357-397` | 改用 `AgentChannel`，展示逐步进度 |
+| `client-sdk/src/agent-channel.ts` | `run(string)` 保持兼容；新增多模态 `AgentRunInput`，只接收已上传附件的 hash + possession，解析 `assistant-content` wire 事件 |
+| `web-psd/src/main.ts:357-397` | 改用 `AgentChannel`，展示逐步进度和 assistant content；附件先上传 CAS，再发 run |
 
 ---
 
@@ -1764,17 +1882,17 @@ channel.run(text, {
 
 ```mermaid
 flowchart TB
-    S1["1. 契约改形状<br/>AgentTool / DocumentAgent / AgentPlatform<br/>三个文档类型的工具表跟着重写,去掉前缀"] --> S2["2. 建 doctype-server-common/src/agent/<br/>循环 + 中立消息格式 + Anthropic 适配层"]
+    S1["1. 契约改形状<br/>AgentTool / DocumentAgent / AgentPlatform<br/>三个文档类型的工具表跟着重写,去掉前缀"] --> S2["2. 建 doctype-server-common/src/agent/<br/>循环 + 多模态持久消息 / 字节态模型消息<br/>+ Anthropic 适配层"]
     S2 --> S2b["3. cloudflare-sdk 改成薄外壳"]
     S2b --> S3["4. psd 的 getPreview 改走 SBlob<br/>toResult 返回 image content part"]
     S3 --> S4["5. 删掉 renderToolResult 钩子<br/>docx 的图片路径第一次跑通"]
     S4 --> S5["6. 删除 doctype-server-common/operator.ts"]
     S5 --> S6["7. 历史裁剪 history.ts<br/>图片降级 / 大结果降级 / 整轮丢弃"]
     S6 --> S7["8. AgentSessionStore 接口 + 契约测试<br/>CF 的 DO SQLite 实现"]
-    S7 --> S8["9. 根引用保活<br/>diffRefs + commitRootRefsOrRollback"]
+    S7 --> S8["9. 所有 role 的附件根引用保活<br/>encode refs + commitRootRefsOrRollback"]
     S8 --> S8b["10. run 租约<br/>agent_sessions.running_since，入口拒绝并发"]
-    S8b --> S9["11. 事件流 + sseFrame<br/>按 Accept 头分流，非流式用 run 的返回值"]
-    S9 --> S10["12. client-sdk：DocSession 泛型化 + AgentChannel"]
+    S8b --> S9["11. wire content + 事件流 + sseFrame<br/>按 Accept 头分流，非流式用 run 的返回值"]
+    S9 --> S10["12. client-sdk：DocSession 泛型化 + 多模态 AgentChannel"]
     S10 --> S11["13. web-psd 接上流式"]
     S11 --> S12["14. azure-sdk 实现 AgentPlatform + PgAgentSessionStore<br/>去掉 501"]
 ```
@@ -1806,16 +1924,20 @@ flowchart TB
 | V15 | 并发 run 在入口就被拒绝，两条路径表现一致 | 同一 sessionId 连发两个 run：第二个**无论带不带 `Accept: text/event-stream` 都返回 HTTP 409**，且响应体里没有任何 SSE 帧；同时断言**假 provider 的调用次数只增加了第一个 run 的量**——证明第二个一次模型都没调（5.5.5） |
 | V16 | `reset()` 清干净 | reset 之后：`load()` 返回 null，且该会话此前引用的 blob 引用计数归零（5.5.4） |
 | V17 | `AgentSessionStore` 在两个平台行为一致 | 共享契约测试 `agentSessionStoreContract`，CF 用 Miniflare、Azure 用 Postgres 各跑一遍（6.3.9） |
-| V18 | 会话历史存取不丢 SBlob | 契约测试最后一条：`payload` 含 SBlob 存进去，读回来解码后 `isSBlob()` 仍为 true。这条对应 6.1.1「不能改用 JSON」 |
+| V18 | 任一 role 的历史存取都不丢 SBlob | user / assistant / tool 三种 payload 分别放入 image 和 file part，存取后逐个断言 `isSBlob()` 仍为 true。这条对应 6.1.1「不能改用 JSON」 |
 | V19 | 消息的结构字段真的成了列，不用解码就能查 | 跑完一轮后直接查库：`SELECT role, count(*) FROM agent_messages GROUP BY role` 能分出 user / assistant / tool 三类，且条数与实际一致（6.3.8） |
 | V20 | 裁剪不会切出孤立的 `tool_result` | 属性测试：随机生成含多工具调用的历史，裁剪后断言每个 `toolCall.id` 都有配对的 tool 消息（6.2.1） |
-| V21 | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/history.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；降级文字只由 `altText` 和 `mediaType` 拼出（6.2.3） |
-| V22 | 发给模型的历史不超预算 | PSD 跑满 25 轮后，抓一次 provider 请求体：估算 token 低于 `BUDGET_TOKENS`，图片 part 不超过 `MAX_IMAGES` |
-| V23 | 裁剪不动存储 | 同一次运行结束后查库：`agent_messages` 里本轮所有消息一条不少，且早期那些含图片的消息 `payload` 与写入时逐字节相同——裁剪只发生在发送路径上（6.2.6） |
-| V24 | 图片字节不重复读取 | PSD 跑满 25 轮，统计 `platform.readBlob` 的调用次数应等于出现过的**不同** hash 数，而不是轮数乘图片数（5.4） |
-| V25 | 恢复历史不做 blob IO | 用一个会计数的 `AgentPlatform` 假实现：`restore` 走完之后 `readBlob` 调用次数为 0，即便历史里有几十条含图片的消息（6.6） |
+| V21 | 内核的裁剪代码不含任何文档类型词汇 | 搜索 `packages/doctype-server-common/src/agent/history.ts`：不应出现 `preview` / `region` / `layer` / `heading` 等任一文档类型的概念；图片降级只用 `altText ?? mediaType`，文件降级只用 `filename ?? mediaType`（6.2.3、6.6） |
+| V22 | 发给模型的历史不超预算 | 构造 user / assistant / tool 都含图片的 25 轮历史，抓 provider 请求体：估算 token 低于 `BUDGET_TOKENS`，所有 role 合计的图片 part 不超过 `MAX_IMAGES` |
+| V23 | 裁剪不动存储，也不释放附件 | 同一次运行结束后查库：所有 role 的原始 payload 与写入时逐字节相同；早期图片虽在模型输入中降级，其 CAS 根引用仍存在（6.2.6、6.4） |
+| V24 | 附件字节不重复读取 | 统计 `platform.readBlob`：对裁剪后实际物化的内容，同一 session 生命周期内每个不同 hash 最多读取一次，不随模型轮数增加（5.4） |
+| V25 | 恢复历史不做 blob IO | 用一个会计数的 `AgentPlatform` 假实现：恢复 user / assistant / tool 都含附件的历史后，`readBlob` 调用次数仍为 0（6.6） |
 | V26 | 重启后会话可续 | 端到端：跑一轮 → 销毁 OperatorDO / 重启 Azure 进程 → 再发一条指令，模型能引用上一轮的内容 |
-| V27 | 历史引用的图片不被回收 | 跑一轮产生预览图 → 删掉对应图层并 apply → 断言历史里那张图仍可 `readBlob`（6.4 的根引用生效） |
+| V27 | 历史引用的附件不被回收 | 分别写入 user 上传图、assistant 附件和 tool 预览图；即使文档不再引用它们且模型输入已裁剪，三者仍可 `readBlob`，直到消息删除或 reset（6.4） |
+| V28 | 多模态输入不能伪造附件权限 | `/run` 对不存在、无 possession 或不属于当前会话权限域的 hash 返回 4xx，且不写 user message、不调用 provider；合法的已上传附件会被重建为 SBlob |
+| V29 | DB 不保存附件实际字节 | 写入一张带独特字节序列的图片后，`agent_messages.payload` 解码只得到 SBlob 和元数据，payload 大小不随图片大小线性增长；实际字节只可从 CAS 读取（5.4.3） |
+| V30 | provider 只接收物化后的消息 | 类型与运行时测试共同断言 `LlmProvider.complete` 收到的是 `LlmMessage[]`：附件为 `Uint8Array`，不含 SBlob；持久化 payload 则相反，只含 SBlob、不含附件字节（5.4.2） |
+| V31 | assistant 二进制输出先进入 CAS | 假 provider 返回 image bytes，断言内核先调 `platform.writeBlob`，历史中的 assistant image part 保存返回的 SBlob，事件和一次性响应只发送 wire 引用（5.4.2、7.1） |
 
 V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。V17 是它在存储维度上的对应判据。
 
@@ -1858,21 +1980,24 @@ V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽
 | 下边界为何拆成四个接口 | 变化原因不同：换平台影响文档读写、会话存储和传输，换模型供应商只影响 `LlmProvider`（1.3） |
 | 本次范围 | A + B + C，B 里只推迟摘要压缩 |
 | 会话历史的序列化格式 | SValue CBOR，**不能用 JSON**——SBlob 的品牌是 Symbol，`JSON.stringify` 会丢。端口层现有的两个 `DeltaLog` 恰恰用了 JSON，所以承载不了含 SBlob 的值 |
-| 消息本体存哪儿 | 直接进表的字节列：CF 用 DO SQLite `BLOB`，Azure 用 Postgres `BYTEA`。不绕 CAS——每条消息只写一次、只读回一次，内容寻址去重收益接近零，还多一次往返（6.3.1） |
+| 消息和附件分别存哪儿 | 消息的结构、小文本、附件元数据和 SBlob 引用直接进表的字节列：CF 用 DO SQLite `BLOB`，Azure 用 Postgres `BYTEA`；图片和文件的实际字节只进 CAS。消息 payload 不绕 CAS，附件大字节不进 DB（5.4.3、6.3.1） |
 | 会话表怎么定位 | 用 `session_id`，不用 doc id。这是仓库刻意迁过去的约定——`migrations/0002_session_identity.sql` 把 `deltas` / `doc_snapshots` 的 `doc_id` 列改名成了 `session_id`，`doc_sessions` 负责映射到 `(tenant_id, doc_type)` |
 | 会话历史怎么存 | **一条消息一行**，两张表：`agent_sessions`（一行，条件写凭据 + 汇总元数据）配 `agent_messages`（一条消息一行，`role` / `turn_no` / `tool_call_id` / `text` 成列，消息本体是 SValue 字节）。形状照搬 `doc_sessions` 配 `deltas`。两端同名同列，只有主键不同——CF 用 `singleton`，Azure 用复合主键（6.3.1、6.3.2） |
 | 哪些东西成列、哪些成字节 | **结构成列，内容成字节。** `role` / `turn_no` / `tool_call_id` 是消息的结构，是纯标量，没有理由埋进 CBOR；消息本体含 SBlob，只能是 SValue 字节（6.1.1）。另存一列派生的 `text` 用于不解码就能看懂对话，它永远不是权威（6.3.2） |
 | 写入时机 | **每一轮结束写一次。** 一条消息一行之后，一轮只 INSERT 两三行，代价与整段重写完全不同，没有理由让崩溃丢掉整段对话（6.5） |
 | 裁剪要不要改存储 | **不要。** 裁剪服务的是「塞进模型窗口」，存储服务的是「用户能往回翻」，两个使用者要的不是一回事。让裁剪去删存储，等于为了前者把后者的数据毁掉——旧轮次一裁就再也翻不出来。表只追加，裁剪是读出来之后的一次内存变换（6.2.6） |
 | `load` 要不要带条件 | **要。** 两个调用方要的都不是全部：内核 `restore()` 只需最近若干条（写死 200），界面往回翻需要 `limit` + `before` 分页。控制体量的清理策略是第三件事，与前两者都无关，本次不做（6.3.5） |
-| 图片保活 | 与字节存哪儿正交，靠显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立 |
+| 附件保活 | 从 user / assistant / tool 的完整 payload 统一提取 refs，显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立。发送时裁剪不释放引用；只有持久消息删除或 reset 才释放 |
 | 文档类型要不要持有平台句柄 | **不要。** 一个工具无非是读或写，声明自己是哪一种再给一个纯函数就够了，不需要有人递给它 `query` / `apply`。`resolveBlob` 也不需要——租约由 `session.ts:608` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，剩下的 `createSBlob(hash)` 是同步纯函数（5.1.1） |
-| `DocumentAgentContext` 的去向 | 它原本是递给文档类型的句柄，现在文档类型不接受句柄，它就退化成纯粹的平台接口 `AgentPlatform`（`query` / `apply` / `readBlob`），只有内核调。`readBlob` 本来也没有任何文档类型在用——今天唯一的调用点 `operator-do-agent.ts:158` 正是要删的那条路（5.1.4） |
+| `DocumentAgentContext` 的去向 | 它原本是递给文档类型的句柄，现在文档类型不接受句柄，它就退化成纯粹的平台接口 `AgentPlatform`（`query` / `apply` / `readBlob` / `writeBlob`），只有内核调。read 用于模型前物化，write 用于把 provider 产生的附件字节先落 CAS（5.1.4、5.4.2） |
 | 裁剪要不要做成可替换的策略 | **不要。** 四个阈值直接写死在 `history.ts`，不做成参数，也不暴露策略接口。这些数字合不合适要跑起来才知道，现在固化成 API 等于在没有依据的情况下先定契约，而它会立刻被三个文档类型和两个平台引用。裁剪逻辑是一个输入输出都是 `AgentMessage[]` 的纯函数，将来真要可配置，改这一个文件即可（6.2.5） |
 | 摘要压缩要不要预留接口 | **不预留。** 前三级都是同步纯函数；为一个还没实测过的功能把入口改成异步、再引入 `LlmProvider` 依赖，是为想象中的需求付真实的复杂度（6.2.7） |
 | 裁剪归内核还是文档类型 | **机制在内核，内容知识在文档类型。** 需要裁剪的不只 PSD——markdown 的 getContent 返回全文、docx 的 getImage 返回图片，一样会让上下文超出上限；而 tool_use/tool_result 的配对约束只有持有历史的内核能守。文档类型通过**数据**影响裁剪（图片的 `altText`），不通过代码；阈值写死在内核（6.2.2、6.2.5） |
 | 「配对块」与「轮」是两个概念 | 配对块 = 一条 assistant + 它全部的 tool 消息，是 API 的硬性要求不能拆；轮（`turn_no`）= 一条 user 消息到下一条之前的全部内容，是丢弃和落盘的单位。丢弃以**轮**为单位，它更大、天然包含完整配对块；语义上也对——一条指令和它引发的往返是整体（6.2.1） |
-| 图片通道 | 协议层归一，统一走 SBlob content part；删除 `$image` 和 `renderToolResult` |
+| 多模态消息形状 | user / assistant / tool 全部使用 `AgentContentPart[]`，文本也统一为 text part；图片和文件在持久态中是 SBlob。`AgentToolResult` 进入历史时由内核机械规范化成同形状的 tool message |
+| 工具结果转换 | 普通 query 使用统一默认包装；有业务语义的 query 由各 tool 的 `toResult` 显式产出 content parts。共享窄化/组装 helper，但禁止递归扫描任意 SValue 猜测 SBlob 语义 |
+| 持久态、模型态与 wire 态 | `AgentMessage` 保存 SBlob，`LlmMessage` 保存物化后的 Uint8Array，`AgentWireContentPart` 保存 JSON 可传输的 hash + 元数据；三者不能混用（5.4、7.1） |
+| 图片通道 | 协议层归一，统一走 SBlob image content part；删除 `$image` 和 `renderToolResult` |
 | 事件流野心 | 单向进度流，不重放 |
 | 客户端范围 | agent 通道 + 泛型化的 DocSession |
 | 参数怎么转成 query / op | **归文档类型**，写在每个工具自己的 `toQuery` / `toOps` 里——docx 的 `insertImage` 要把 hash 包成 SBlob，psd 的可以直接透传，本来就该各写各的。内核只负责按名字找到工具、按 `kind` 决定调 query 还是 apply，不解析名字也不猜（5.1.5） |
@@ -1881,12 +2006,12 @@ V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽
 | `apply_xxx` 这类工具名 | 前缀是分发器的机器语言，不是给模型的名字，而这一版之后它彻底没有用处——工具是读是写由 `kind` 声明。改成领域动词并对齐提示词，与工具表重写是同一次改动，放进本次范围（5.3.1） |
 | 文档变更怎么通知客户端 | **不通过 agent 事件流。** agent 与浏览器前的人是对等的编辑者，两边都产生 op；「文档变了」属于文档通道，人和 agent 的改动都从那里出来。把它挂在 agent 通道上，等于给 agent 单开一条人的编辑没有的路径，将来支持多人编辑时要整个拆掉。本次不建那条通道，客户端沿用 run-end 后统一 reconcile（7.2.1） |
 | 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:625`），由平台的 `apply` 实现读当前 head 得到（5.2） |
-| `run` 是推送式而不是返回可迭代对象 | `run(instruction, onEvent): Promise<AgentRunOutcome>`。可迭代对象是拉取式的——客户端一断线就没人拉，循环冻在 `yield` 上，与 7.3 承诺的「服务端继续跑完」直接冲突。推送式下内核不等任何人；外壳把 `onEvent` 实现成「写 SSE，写失败就标记断开、后续丢弃」，并用 `waitUntil` 让响应返回后循环继续（5.5.2） |
+| `run` 是推送式而不是返回可迭代对象 | `run(content, onEvent): Promise<AgentRunOutcome>`，content 是已经校验并重建 SBlob 的多模态输入。可迭代对象是拉取式的——客户端一断线就没人拉，循环冻在 `yield` 上，与 7.3 承诺的「服务端继续跑完」直接冲突。推送式下内核不等任何人；外壳把 `onEvent` 实现成「写 SSE，写失败就标记断开、后续丢弃」，并用 `waitUntil` 让响应返回后循环继续（5.5.2） |
 | 恢复历史谁负责 | **内核自己**，`run()` 内部惰性执行，没有公开的 `restore()`。让外壳记住「必须先调 restore」是缺陷——两个平台各记一遍，迟早有一个忘，症状是模型莫名失忆（5.5.3） |
 | 并发 run 怎么拒绝 | 用**单独的 `acquire()`** 抢 `agent_sessions.running_since` 租约，外壳先调它、再决定响应形状。抢不到时两条路径都返回 **HTTP 409**，流式路径连 SSE 都不建——因为「run 根本没开始」和「run 开始后失败」是两件事，不该混成同一个 `run-error` 事件。租约带过期时间，两端同一份代码，CF 上恒成功（5.5.5） |
 | `reset()` 做哪些事 | 四步：读全量算引用 → `clear()` → 提交负增量释放引用 → 清内存。删除顺序与写入相反，但原则一致——任何时刻崩溃只能留下可回收的多余引用，不能留下悬空引用（5.5.4） |
-| 图片字节要缓存 | 每轮调模型前都要把 image part 变成字节，25 轮 2 张图会读 50 次而只有 2 个 hash。缓存放**内核**不放平台，因为「同一个 blob 被反复要」是循环的性质，平台没理由知道（5.4） |
-| blob 读不到时在哪降级 | **发送前，不在恢复时。** 恢复历史只需要 decode 出 SBlob 引用，零 blob IO；真正要字节的是物化 image part 那一步，降级也在那里。放恢复里会为一堆马上被裁掉的图片做 IO，而且一张图在恢复时可读、几轮后发送时被回收了也拦不住（6.6） |
+| 附件字节要缓存 | 每轮调模型前都要把所有 role 中裁剪后保留的 image / file part 变成字节。缓存放**内核**不放平台，因为「同一个 blob 被反复要」是循环的性质，平台没理由知道；按 hash 去重（5.4） |
+| blob 读不到时在哪降级 | **发送前，不在恢复时。** 恢复历史只需要 decode 出 SBlob 引用，零 blob IO；真正要字节的是物化任一 role 的附件 part 那一步，降级也在那里。放恢复里会为一堆马上被裁掉的附件做 IO，而且恢复时可读不代表发送时仍可读（6.6） |
 | SValue 窄化 helper 放哪 | **`svalue-codec`，不是 agent 内核。** 它们是运行时函数；放进内核会让文档类型对它产生运行时依赖，「仅类型依赖」的前提立刻不成立。而窄化 `SValue` 本来就与 agent 无关，`isSBlob` 早就住在那儿（5.1.2） |
 | 怎么验证服务端代码不进浏览器 | 断言**运行时代码隔离**本身，不拿 `package.json` 的字段名当代理指标：import 全是 `import type`、产物无 `src/agent/**` 模块、产物无服务端符号。要求「必须放 devDependencies」是错的——那只是 type-only 擦除的一个副作用，不是不变量（V5、4.3.2） |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |
