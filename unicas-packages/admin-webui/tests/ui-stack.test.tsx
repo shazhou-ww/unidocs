@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { StackView } from "../src/ui/index.js";
@@ -47,5 +47,30 @@ describe("StackView", () => {
 
     await user.selectOptions(switcher, "cas_two");
     expect(window.location.hash).toBe("#/stacks/cas_two");
+  });
+
+  test("opens and dismisses the mobile navigation drawer", async () => {
+    const user = userEvent.setup();
+    render(<StackView stackId="cas_one" />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Primary stack" })).toBeInTheDocument());
+    const trigger = screen.getByRole("button", { name: /Navigation/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const dialog = screen.getByRole("dialog", { name: "Stack management navigation" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Close navigation" })).toHaveFocus());
+
+    await user.click(screen.getByRole("tab", { name: "Usage" }));
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

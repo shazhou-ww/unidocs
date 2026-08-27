@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Boxes,
@@ -6,8 +6,10 @@ import {
   Gauge,
   KeyRound,
   LayoutDashboard,
+  Menu,
   ScrollText,
   Users,
+  X,
 } from "lucide-react";
 import type { CasStack } from "@unicas/protocol-admin";
 import { api } from "../api.js";
@@ -36,7 +38,11 @@ export function StackView({ stackId }: { stackId: string }) {
   const [stacks, setStacks] = useState<CasStack[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<string>("overview");
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const navigationButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationCloseRef = useRef<HTMLButtonElement>(null);
+  const navigationDrawerRef = useRef<HTMLElement>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -56,7 +62,54 @@ export function StackView({ stackId }: { stackId: string }) {
     void load();
   }, [load, reloadKey]);
 
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+    document.body.classList.add("drawer-open");
+    const focusTimer = window.setTimeout(() => navigationCloseRef.current?.focus(), 200);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMobileNavigation();
+        return;
+      }
+      if (event.key !== "Tab" || !navigationDrawerRef.current) return;
+      const focusable = Array.from(navigationDrawerRef.current.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
+      ));
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.classList.remove("drawer-open");
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileNavigationOpen]);
+
+  useEffect(() => {
+    setMobileNavigationOpen(false);
+  }, [stackId]);
+
   const reload = () => setReloadKey((key) => key + 1);
+  const activeTab = TABS.find((item) => item.id === tab) ?? TABS[0];
+
+  function closeMobileNavigation() {
+    setMobileNavigationOpen(false);
+    requestAnimationFrame(() => navigationButtonRef.current?.focus());
+  }
+
+  function selectTab(id: string) {
+    setTab(id);
+    if (mobileNavigationOpen) closeMobileNavigation();
+  }
 
   if (error) return <Page title="Stack"><ErrorState message={error} /></Page>;
   if (!stack || !stacks) return <Page title="Stack"><LoadingState /></Page>;
@@ -71,23 +124,64 @@ export function StackView({ stackId }: { stackId: string }) {
         <span className="status-badge">{stack.status}</span>
         <span>revision {stack.revision}</span>
       </div>
+      <button
+        ref={navigationButtonRef}
+        type="button"
+        className="mobile-nav-trigger"
+        aria-controls="stack-navigation"
+        aria-expanded={mobileNavigationOpen}
+        onClick={() => setMobileNavigationOpen(true)}
+      >
+        <Menu size={16} />
+        <span>Navigation</span>
+        <span className="mobile-nav-current">{activeTab.label}</span>
+      </button>
       <div className="stack-layout">
-        <aside className="stack-sidebar" aria-label="Stack management navigation">
+        {mobileNavigationOpen ? (
+          <div
+            className="drawer-overlay"
+            aria-hidden="true"
+            onClick={closeMobileNavigation}
+          />
+        ) : null}
+        <aside
+          ref={navigationDrawerRef}
+          id="stack-navigation"
+          className={`stack-sidebar${mobileNavigationOpen ? " stack-sidebar-open" : ""}`}
+          role={mobileNavigationOpen ? "dialog" : undefined}
+          aria-modal={mobileNavigationOpen ? true : undefined}
+          aria-label="Stack management navigation"
+        >
+          <div className="drawer-header">
+            <strong>Manage stack</strong>
+            <button
+              ref={navigationCloseRef}
+              type="button"
+              className="drawer-close"
+              aria-label="Close navigation"
+              onClick={closeMobileNavigation}
+            >
+              <X size={17} />
+            </button>
+          </div>
           <div className="stack-switcher">
             <label htmlFor="stack-switcher">Stack</label>
             <select
               id="stack-switcher"
               value={stackId}
-              onChange={(event) => navigate(`/stacks/${encodeURIComponent(event.target.value)}`)}
+              onChange={(event) => {
+                navigate(`/stacks/${encodeURIComponent(event.target.value)}`);
+                if (mobileNavigationOpen) closeMobileNavigation();
+              }}
             >
               {stacks.map((option) => (
                 <option key={option.stackId} value={option.stackId}>{option.displayName}</option>
               ))}
             </select>
           </div>
-          <Tabs tabs={TABS} active={tab} onChange={setTab} orientation="vertical" />
+          <Tabs tabs={TABS} active={tab} onChange={selectTab} orientation="vertical" />
         </aside>
-        <section className="stack-content">
+        <section className="stack-content" aria-hidden={mobileNavigationOpen ? true : undefined}>
           {tab === "overview" ? <StackOverviewView stack={stack} onChanged={reload} /> : null}
           {tab === "members" ? <MembersView stackId={stackId} stackRevision={stack.revision} onChanged={reload} /> : null}
           {tab === "issuer" ? <IssuerView stackId={stackId} /> : null}
