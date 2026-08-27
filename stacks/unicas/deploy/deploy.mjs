@@ -5,6 +5,7 @@ const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const UNITS = [
   { name: "tenant", package: "@unicas/server-cloudflare" },
   { name: "admin", package: "@unicas/admin-webui" },
+  { name: "mcp", package: "@unicas/control-plane-mcp" },
   { name: "edge", package: "@unicas/edge" },
 ];
 

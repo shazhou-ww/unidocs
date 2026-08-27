@@ -16,8 +16,7 @@ database_id = "dc8090eb-46bc-43e2-9524-f1554fb71c74"
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-# Replace before deployment; zero is valid for local/dry-run config parsing only.
-id = "00000000000000000000000000000000"
+id = "abb77c24fd0c4487a91c261d0cb58d6d"
 
 [[services]]
 binding = "CAS_TENANT_AUDIT_READER"

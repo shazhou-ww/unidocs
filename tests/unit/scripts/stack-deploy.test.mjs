@@ -15,6 +15,8 @@ describe("stack deployment plans", () => {
     expect(plan.findIndex((command) => command.includes("server-cloudflare exec wrangler deploy")))
       .toBeLessThan(plan.findIndex((command) => command.includes("admin-webui exec wrangler deploy")));
     expect(plan.findIndex((command) => command.includes("admin-webui exec wrangler deploy")))
+      .toBeLessThan(plan.findIndex((command) => command.includes("control-plane-mcp exec wrangler deploy")));
+    expect(plan.findIndex((command) => command.includes("control-plane-mcp exec wrangler deploy")))
       .toBeLessThan(plan.findIndex((command) => command.includes("@unicas/edge exec wrangler deploy")));
     expect(plan.at(-3)).toContain("@unicas/server-common build");
     expect(plan.at(-2)).toContain("@unidocs/service-auth build");
