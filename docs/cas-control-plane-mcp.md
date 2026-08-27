@@ -114,7 +114,7 @@ Variables:
 
 ```text
 PUBLIC_ORIGIN=https://unicas.shazhou.work
-MCP_MUTATIONS_ENABLED=false
+MCP_MUTATIONS_ENABLED=true
 MCP_ALLOWED_ORIGIN_HOSTNAMES=
 ADMIN_EMAIL_ALLOWLIST=...       optional, same policy as CAS Admin
 OIDC_ISSUER=...                 optional, defaults to Google
@@ -122,9 +122,10 @@ OIDC_DISCOVERY_URL=...          optional test/local override
 CAS_AUDIT_READER_KEY=...        required when the private reader enforces it
 ```
 
-`MCP_MUTATIONS_ENABLED` is the emergency and rollout kill switch. It defaults to
-`false`; read tools remain available while all write/security handlers fail
-closed. Enable it only after read-only production telemetry and cross-stack
+`MCP_MUTATIONS_ENABLED` is the emergency and rollout kill switch. An absent or
+non-`true` value fails closed; read tools remain available while all
+write/security handlers reject mutations. Production enables it explicitly
+after read-only telemetry and cross-stack
 isolation checks pass.
 
 Replace the zero placeholder `OAUTH_KV` ID in

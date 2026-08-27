@@ -267,28 +267,111 @@ async function importAesKey(value: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
-function renderConsent(pending: PendingConsent, consentId: string): string {
+export function renderConsent(pending: PendingConsent, consentId: string): string {
   const scopes = pending.oauthRequest.scope
-    .map((scope) => `<li><code>${escapeHtml(scope)}</code></li>`)
+    .map((scope) => {
+      const detail = scopeDetail(scope);
+      return `<li class="scope-row${detail.sensitive ? " scope-row-sensitive" : ""}">
+        <span class="scope-icon" aria-hidden="true">${detail.icon}</span>
+        <span class="scope-copy"><strong>${escapeHtml(detail.title)}</strong><span>${escapeHtml(detail.description)}</span></span>
+        <code>${escapeHtml(scope)}</code>
+      </li>`;
+    })
     .join("");
   return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Authorize Unicas</title></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Authorize ${escapeHtml(pending.clientName)} · UniCAS</title>
+  <style>
+    :root { color-scheme: light; font-family: "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif; color: #18181b; background: #f8f8f9; font-synthesis: none; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; background-color: #f8f8f9; background-image: linear-gradient(rgba(24,24,27,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(24,24,27,.022) 1px,transparent 1px); background-size: 28px 28px; font-size: 14px; line-height: 1.5; letter-spacing: 0; }
+    .topbar { display: flex; height: 52px; align-items: center; padding: 0 20px; background: rgba(255,255,255,.94); border-bottom: 1px solid #e1e1e4; }
+    .brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 650; }
+    .brand-mark { display: grid; width: 26px; height: 26px; place-items: center; color: #fafafa; background: #27272a; border-radius: 6px; font-size: 12px; font-weight: 750; }
+    main { display: grid; min-height: calc(100vh - 52px); place-items: center; padding: 32px 16px 12vh; }
+    .panel { width: min(480px,100%); padding: 24px; background: #fff; border: 1px solid #e1e1e4; border-radius: 7px; box-shadow: 0 8px 30px rgba(24,24,27,.06); animation: enter 180ms ease-out both; }
+    .eyebrow { margin: 0 0 6px; color: #71717a; font-size: 12px; font-weight: 650; text-transform: uppercase; }
+    h1 { margin: 0; font-size: 23px; line-height: 1.25; }
+    .intro { margin: 9px 0 20px; color: #52525b; }
+    .identity { display: flex; align-items: center; gap: 10px; padding: 11px 0 18px; border-bottom: 1px solid #e1e1e4; }
+    .avatar { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #3f3f46; background: #f4f4f5; border: 1px solid #e1e1e4; border-radius: 50%; font-weight: 700; }
+    .identity-copy { min-width: 0; }
+    .identity-copy span { display: block; color: #71717a; font-size: 12px; }
+    .identity-copy strong { display: block; overflow-wrap: anywhere; font-weight: 600; }
+    .section-title { margin: 18px 0 7px; font-size: 13px; font-weight: 650; }
+    .resource { margin: 0 0 8px; color: #71717a; font-size: 12px; overflow-wrap: anywhere; }
+    .scope-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid #e1e1e4; }
+    .scope-row { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 13px 0; border-bottom: 1px solid #e1e1e4; }
+    .scope-icon { display: grid; width: 28px; height: 28px; place-items: center; color: #52525b; background: #f4f4f5; border: 1px solid #e1e1e4; border-radius: 6px; font-weight: 750; }
+    .scope-row-sensitive .scope-icon { color: #b42318; background: #fff1f0; border-color: #ffd5d2; }
+    .scope-copy strong, .scope-copy span { display: block; }
+    .scope-copy strong { font-size: 13px; font-weight: 650; }
+    .scope-copy span { margin-top: 1px; color: #71717a; font-size: 12px; }
+    code { padding: 3px 6px; color: #52525b; background: #f4f4f5; border-radius: 4px; font: 11px/1.35 "Cascadia Code","SFMono-Regular",Consolas,monospace; white-space: nowrap; }
+    form { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 20px; }
+    button { min-height: 40px; padding: 0 15px; border: 1px solid #c9c9ce; border-radius: 6px; font: inherit; font-weight: 650; cursor: pointer; }
+    .deny { color: #27272a; background: #fff; }
+    .deny:hover { background: #f4f4f5; }
+    .approve { color: #fafafa; background: #27272a; border-color: #27272a; }
+    .approve:hover { background: #09090b; }
+    button:focus-visible { outline: 2px solid #52525b; outline-offset: 2px; }
+    .footnote { margin: 14px 0 0; color: #71717a; font-size: 11px; text-align: center; }
+    @keyframes enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 520px) { main { place-items: start center; padding-top: 22px; } .panel { padding: 20px; } .scope-row { grid-template-columns: 30px minmax(0,1fr); } code { grid-column: 2; justify-self: start; } }
+  </style>
+</head>
 <body>
+  <header class="topbar"><span class="brand"><span class="brand-mark">U</span>UniCAS</span></header>
   <main>
-    <h1>Authorize ${escapeHtml(pending.clientName)}</h1>
-    <p>Signed in as ${escapeHtml(pending.identity.emailForDisplay ?? pending.identity.subject)}</p>
-    <p>Requested access to ${escapeHtml(String(pending.oauthRequest.resource ?? "Unicas control plane"))}:</p>
-    <ul>${scopes}</ul>
-    <form method="post" action="/oauth/authorize">
-      <input type="hidden" name="consent_id" value="${escapeHtml(consentId)}">
-      <input type="hidden" name="csrf_token" value="${escapeHtml(pending.csrfToken)}">
-      <button type="submit" name="decision" value="deny">Deny</button>
-      <button type="submit" name="decision" value="approve">Authorize</button>
-    </form>
+    <section class="panel" aria-labelledby="consent-title">
+      <p class="eyebrow">Authorization request</p>
+      <h1 id="consent-title">Allow ${escapeHtml(pending.clientName)}?</h1>
+      <p class="intro">This application is requesting access to your UniCAS control plane.</p>
+      <div class="identity">
+        <span class="avatar" aria-hidden="true">${escapeHtml(identityInitial(pending))}</span>
+        <span class="identity-copy"><span>Signed in as</span><strong>${escapeHtml(pending.identity.emailForDisplay ?? pending.identity.subject)}</strong></span>
+      </div>
+      <p class="section-title">Requested permissions</p>
+      <p class="resource">${escapeHtml(String(pending.oauthRequest.resource ?? "UniCAS control plane"))}</p>
+      <ul class="scope-list">${scopes}</ul>
+      <form method="post" action="/oauth/authorize">
+        <input type="hidden" name="consent_id" value="${escapeHtml(consentId)}">
+        <input type="hidden" name="csrf_token" value="${escapeHtml(pending.csrfToken)}">
+        <button class="deny" type="submit" name="decision" value="deny">Deny</button>
+        <button class="approve" type="submit" name="decision" value="approve">Authorize</button>
+      </form>
+      <p class="footnote">You can revoke this access at any time.</p>
+    </section>
   </main>
 </body>
 </html>`;
+}
+
+function scopeDetail(scope: string): {
+  readonly title: string;
+  readonly description: string;
+  readonly icon: string;
+  readonly sensitive: boolean;
+} {
+  switch (scope) {
+    case "control:read":
+      return { title: "View control-plane data", description: "Read stacks, members, issuer configuration, and audit records.", icon: "R", sensitive: false };
+    case "control:write":
+      return { title: "Manage stack configuration", description: "Create stacks and update non-security settings.", icon: "W", sensitive: false };
+    case "control:security":
+      return { title: "Manage security settings", description: "Invite or remove members and rotate issuer keys.", icon: "!", sensitive: true };
+    default:
+      return { title: scope, description: "Access requested by this application.", icon: "·", sensitive: false };
+  }
+}
+
+function identityInitial(pending: PendingConsent): string {
+  const identity = pending.identity.emailForDisplay ?? pending.identity.displayName ?? pending.identity.subject;
+  return identity.trim().charAt(0).toUpperCase() || "U";
 }
 
 function authorizationError(error: unknown): Response {
@@ -339,6 +422,9 @@ function htmlWithCookie(html: string, name: string, value: string): Response {
       "Content-Type": "text/html; charset=utf-8",
       "Set-Cookie": cookieHeader(name, value),
       "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }

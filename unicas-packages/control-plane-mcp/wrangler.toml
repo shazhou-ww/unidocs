@@ -26,6 +26,6 @@ service = "unidocs-cas-server-cloudflare"
 PUBLIC_ORIGIN = "https://unicas.shazhou.work"
 GOOGLE_OIDC_CLIENT_ID = "152437813368-hrv07qv06756pg68c4p9f84i8cf4uk00.apps.googleusercontent.com"
 MCP_ALLOWED_ORIGIN_HOSTNAMES = ""
-MCP_MUTATIONS_ENABLED = "false"
+MCP_MUTATIONS_ENABLED = "true"
 # Optional: OIDC_ISSUER, OIDC_DISCOVERY_URL, ADMIN_EMAIL_ALLOWLIST,
 # CAS_AUDIT_READER_KEY

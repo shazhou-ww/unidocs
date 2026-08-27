@@ -97,7 +97,7 @@ export function createControlPlaneMcpWorker(config: ReturnType<typeof mcpConfigF
     resourceMetadata: {
       resource: config.resource,
       authorization_servers: [config.publicOrigin],
-      scopes_supported: ["control:read"],
+      scopes_supported: [...CONTROL_PLANE_MCP_SCOPES],
       bearer_methods_supported: ["header"],
       resource_name: "Unicas control plane",
     },

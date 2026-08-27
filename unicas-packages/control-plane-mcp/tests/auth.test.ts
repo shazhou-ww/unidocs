@@ -48,6 +48,11 @@ describe("control-plane MCP OAuth authorization", () => {
     const consentHtml = await callback.text();
     expect(consentHtml).toContain("GitHub Copilot");
     expect(consentHtml).toContain("control:security");
+    expect(consentHtml).toContain("Manage security settings");
+    expect(consentHtml).toContain("class=\"panel\"");
+    expect(consentHtml).toContain("@media (max-width: 520px)");
+    expect(callback.headers.get("Content-Security-Policy")).toContain("form-action 'self'");
+    expect(callback.headers.get("Referrer-Policy")).toBe("no-referrer");
     const consentId = hiddenValue(consentHtml, "consent_id");
     const csrfToken = hiddenValue(consentHtml, "csrf_token");
     const consentCookie = cookieFrom(callback);
