@@ -149,11 +149,13 @@ async function finishGoogleAuthentication(
     };
     await writeTransaction(env, consentId, pending);
     const publicOrigin = normalizePublicOrigin(requireEnv(env.PUBLIC_ORIGIN, "PUBLIC_ORIGIN"));
+    const clientRedirectOrigin = new URL(pending.oauthRequest.redirectUri).origin;
     return htmlWithCookie(
       renderConsent(pending, consentId, publicOrigin),
       CONSENT_COOKIE,
       consentId,
       publicOrigin,
+      clientRedirectOrigin,
     );
   } catch {
     return authFailure("Google authentication could not be completed");
@@ -443,13 +445,19 @@ function redirectWithCookie(location: string, name: string, value: string): Resp
   });
 }
 
-function htmlWithCookie(html: string, name: string, value: string, publicOrigin: string): Response {
+function htmlWithCookie(
+  html: string,
+  name: string,
+  value: string,
+  publicOrigin: string,
+  clientRedirectOrigin: string,
+): Response {
   return new Response(html, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Set-Cookie": cookieHeader(name, value),
       "Cache-Control": "no-store",
-      "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; form-action ${publicOrigin}; base-uri 'none'; frame-ancestors 'none'`,
+      "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; form-action ${publicOrigin} ${clientRedirectOrigin}; base-uri 'none'; frame-ancestors 'none'`,
       "Referrer-Policy": "no-referrer",
       "X-Content-Type-Options": "nosniff",
     },
