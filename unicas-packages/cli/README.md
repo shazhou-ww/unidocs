@@ -129,6 +129,13 @@ pnpm install --global ./unicas-packages/cli
 Alternatively run any command in-process:
 `pnpm --filter @unicas/cli unicas stacks list`.
 
+> Windows note: pnpm's global bin is a `.CMD` shim. A Node-based MCP client
+> spawning `unicas mcp` must either use `shell: true`, point at the shim path
+> (`%LOCALAPPDATA%\pnpm\bin\unicas.CMD`), or use
+> `command: "node"` with `args: ["<checkout>/unicas-packages/cli/dist/cli.js",
+> "mcp"]` — a plain `spawn("unicas", …)` fails with `ENOENT`/`EINVAL` because
+> Node does not resolve `.CMD` files.
+
 ## Environment
 
 | Variable | Default | Meaning |

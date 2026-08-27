@@ -44,6 +44,10 @@ then `pnpm install --global ./unicas-packages/cli` (pnpm 10+ removed
 `pnpm link --global`), or configure the client with `command: "node"` and
 `args: ["<checkout>/unicas-packages/cli/dist/cli.js", "mcp"]`.
 
+On Windows the global bin is a `.CMD` shim; a Node-based MCP client must spawn
+it with `shell: true`, reference the shim path directly, or use the `node` +
+`dist/cli.js` form above (a plain `spawn("unicas")` fails with `ENOENT`).
+
 Alternatively, skip MCP entirely and have DSH run plain shell commands
 (`unicas stacks list`, `unicas whoami`, …); the CLI prints JSON on stdout.
 
