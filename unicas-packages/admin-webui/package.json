@@ -30,6 +30,7 @@
     "deploy": "pnpm run build && wrangler deploy"
   },
   "dependencies": {
+    "@unicas/control-auth": "workspace:*",
     "@unicas/control-plane": "workspace:*",
     "@unicas/protocol-admin": "workspace:*",
     "jose": "^6.2.10",

@@ -731,6 +731,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       },
       requestId: request.headers.get("X-Request-Id") ?? generateRequestId(),
       traceId: generateRequestId(),
+      caller: { channel: "admin-webui" },
     };
   }
 

@@ -388,6 +388,7 @@ describe("control-plane service", () => {
       actor: { identityIssuer: GOOGLE, subject: "alice-sub" },
       requestId: "req-1",
       traceId: "trace-1",
+      caller: null,
     });
   });
 

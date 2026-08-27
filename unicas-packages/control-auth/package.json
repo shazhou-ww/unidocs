@@ -1,0 +1,31 @@
+{
+  "name": "@unicas/control-auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared server-only OIDC authentication for Unicas control-plane ingress",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc -b",
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
+  },
+  "dependencies": {
+    "jose": "^6.2.10"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

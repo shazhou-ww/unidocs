@@ -99,6 +99,11 @@ export interface CasControlAuditEvent {
   readonly target: string;
   readonly requestId: string | null;
   readonly traceId: string | null;
+  readonly caller: {
+    readonly channel: "admin-webui" | "mcp";
+    readonly oauthClientHandle: string | null;
+    readonly toolName: string | null;
+  } | null;
   readonly createdAt: number;
 }
 

@@ -7,6 +7,7 @@ Universal document editing framework for AI agents. Built on Cloudflare Workers 
 - [Microservice Architecture](docs/microservice-architecture.md) — service ownership, identity translation, static registration, and deployment boundaries
 - [CAS Architecture](docs/cas-architecture.md) — tenant-scoped storage, leases, reference counts, GC, APIs, and DocumentType integration
 - [CAS Binary Format](docs/cas-binary-format.md) — canonical SHA-256 Merkle DAG node encoding derived from CASFA
+- [CAS Control-Plane MCP](docs/cas-control-plane-mcp.md) — OAuth-protected GitHub Copilot operations tools and deployment
 
 ## Architecture
 
@@ -88,8 +89,10 @@ unicas-packages/           (the independently deployable CAS middleware; future 
 ├── protocol-admin/        @unicas/protocol-admin        — CAS admin-plane contracts
 ├── server-common/         @unicas/server-common         — CAS server kernel (binary/digest/validation)
 ├── control-plane/         @unicas/control-plane         — CAS control plane (issuers/stacks/members/sessions)
+├── control-auth/          @unicas/control-auth          — Shared server-only control-plane OIDC client
+├── control-plane-mcp/     @unicas/control-plane-mcp     — OAuth-protected remote MCP operations ingress
 ├── server-cloudflare/     @unicas/server-cloudflare     — Canonical stack-scoped tenant server (Cloudflare)
-├── edge/                  @unicas/edge                  — Public CAS edge (/stacks + /admin dispatch)
+├── edge/                  @unicas/edge                  — Public CAS edge (/stacks + /admin + MCP/OAuth dispatch)
 ├── admin-webui/           @unicas/admin-webui           — Stack administration WebUI + OIDC BFF
 └── client/                @unicas/client                — Cloud-neutral CAS HTTP client
 ```

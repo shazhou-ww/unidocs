@@ -2,8 +2,8 @@
  * CAS_CONTROL_DB schema. Operator/stack-administration state is deliberately
  * separate from tenant node data (tenant tables live in the canonical tenant
  * worker's stack-scoped store). Migrations are idempotent
- * (CREATE TABLE/INDEX IF NOT EXISTS) and are run by the deployable
- * `cas-admin-webui` at startup, mirroring the tenant schema pattern.
+ * (CREATE TABLE/INDEX IF NOT EXISTS plus guarded additive columns) and are run
+ * by deployable control-plane ingress adapters at startup.
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
@@ -33,7 +33,7 @@ const CONTROL_TABLE_MIGRATIONS = [
   "CREATE TABLE IF NOT EXISTS cas_stack_ref_domains (stack_id TEXT NOT NULL, ref_domain TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','write_disabled','retired')), revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (stack_id, ref_domain))",
 
   // Append-only control audit; never updated or deleted by handlers.
-  "CREATE TABLE IF NOT EXISTS cas_control_audit_events (event_id TEXT NOT NULL, stack_id TEXT, identity_issuer TEXT NOT NULL, subject TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, request_id TEXT, trace_id TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (event_id))",
+  "CREATE TABLE IF NOT EXISTS cas_control_audit_events (event_id TEXT NOT NULL, stack_id TEXT, identity_issuer TEXT NOT NULL, subject TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, request_id TEXT, trace_id TEXT, caller_channel TEXT, oauth_client_handle TEXT, tool_name TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (event_id))",
 
   // Creation idempotency: scoped to (identity, method, canonical route).
   "CREATE TABLE IF NOT EXISTS cas_control_idempotency (identity_issuer TEXT NOT NULL, subject TEXT NOT NULL, method TEXT NOT NULL, canonical_route TEXT NOT NULL, idempotency_key TEXT NOT NULL, payload_hash TEXT NOT NULL, response_json TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (identity_issuer, subject, method, canonical_route, idempotency_key))",
@@ -67,5 +67,27 @@ export const CONTROL_SCHEMA_MIGRATIONS = [
 export async function migrateControlSchema(db: D1Database): Promise<void> {
   for (const sql of CONTROL_SCHEMA_MIGRATIONS) {
     await db.exec(sql);
+  }
+  await ensureColumns(db, "cas_control_audit_events", [
+    ["caller_channel", "TEXT"],
+    ["oauth_client_handle", "TEXT"],
+    ["tool_name", "TEXT"],
+  ]);
+}
+
+async function ensureColumns(
+  db: D1Database,
+  table: string,
+  columns: ReadonlyArray<readonly [name: string, sqlType: string]>,
+): Promise<void> {
+  const result = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+  const existing = new Set((result.results ?? []).map((row) => row.name));
+  for (const [name, sqlType] of columns) {
+    if (existing.has(name)) continue;
+    try {
+      await db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${sqlType}`);
+    } catch (error) {
+      if (!(error instanceof Error) || !/duplicate column name/i.test(error.message)) throw error;
+    }
   }
 }
