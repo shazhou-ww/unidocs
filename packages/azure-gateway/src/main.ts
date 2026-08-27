@@ -81,6 +81,11 @@ async function main(): Promise<void> {
       });
     })();
   const port = Number(process.env.PORT ?? 8787);
+  // 0 / 缺省 = 不限,与这个开关存在之前的行为一致。
+  const declaredLimit = Number(process.env.MAX_UPLOAD_BYTES ?? 0);
+  const maxUploadBytes = Number.isSafeInteger(declaredLimit) && declaredLimit > 0
+    ? declaredLimit
+    : undefined;
 
   // Gateway never touches Blob Storage — `blobConnectionString` is unused by
   // `createPool`, so an empty string is fine (same idiom as
@@ -119,6 +124,7 @@ async function main(): Promise<void> {
     casFetcher,
     directory,
     isGatewayExposedCasRoute: casBaseUrl ? isGatewayExposedCasRoute : () => false,
+    ...(maxUploadBytes === undefined ? {} : { maxUploadBytes }),
     casStackId: stackMode ? requireEnv("CAS_STACK_ID") : undefined,
   });
 

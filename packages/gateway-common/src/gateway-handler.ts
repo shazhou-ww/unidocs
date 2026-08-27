@@ -52,6 +52,14 @@ export interface GatewayHandlerConfig {
   isGatewayExposedCasRoute(route: CasRoute): boolean;
   /** Stack namespace: forward public CAS routes to canonical /stacks paths. */
   casStackId?: string;
+  /**
+   * Reject document uploads larger than this with 413, before touching the
+   * body. Unset means unlimited — which is not "generous" but a crash: the
+   * clone-source probe below parses the whole multipart body (twice over,
+   * since it clones), so a large enough upload kills the Gateway process and
+   * takes every other in-flight request with it.
+   */
+  maxUploadBytes?: number;
   generateId?(): string;
   now?(): number;
 }
@@ -70,6 +78,14 @@ const EDITOR_METHODS = new Set([
 
 const OPERATOR_METHODS = new Set(["run", "reset"]);
 const MUTATING_METHODS = new Set(["apply", "rollback", "run", "reset"]);
+
+/**
+ * A clone request carries a single `sourceId` field and nothing else, so it
+ * cannot plausibly exceed this. Anything larger is a file upload, and probing
+ * it for `sourceId` would mean buffering the entire body to learn something
+ * its size already answers.
+ */
+const MAX_CLONE_REQUEST_BYTES = 64 * 1024;
 
 const CAS_FORWARDED_HEADERS = [
   "Content-Type",
@@ -171,7 +187,16 @@ export function createGatewayHandler(
 
     if (!docId) {
       if (request.method === "POST") {
-        const cloneSource = await readCloneSource(request);
+        const declaredLength = Number(request.headers.get("content-length"));
+        const hasLength = Number.isFinite(declaredLength) && declaredLength > 0;
+        if (cfg.maxUploadBytes !== undefined && hasLength && declaredLength > cfg.maxUploadBytes) {
+          return Response.json({
+            error: `Upload is ${declaredLength} bytes, over the ${cfg.maxUploadBytes}-byte limit`,
+          }, { status: 413 });
+        }
+        const cloneSource = hasLength && declaredLength > MAX_CLONE_REQUEST_BYTES
+          ? null
+          : await readCloneSource(request);
         if (cloneSource instanceof Response) return cloneSource;
         if (cloneSource) {
           return cloneDocument({

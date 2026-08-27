@@ -56,6 +56,9 @@ param casRefDomain string = 'doc'
 @secure()
 param casStackPrivateKeyPkcs8 string = ''
 
+@description('单次上传字节上限；超过返回 413 而不是把网关进程撑崩。0 表示不限。网关的内存要容纳它的两倍——克隆探测会 clone 一份 body。')
+param maxUploadBytes int = 0
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }
@@ -146,6 +149,10 @@ module app 'container-app.bicep' = {
       {
         name: 'CAS_REF_DOMAIN'
         value: casRefDomain
+      }
+      {
+        name: 'MAX_UPLOAD_BYTES'
+        value: string(maxUploadBytes)
       }
       {
         name: 'CAPABILITY_ALGORITHM'

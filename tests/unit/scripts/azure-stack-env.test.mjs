@@ -49,6 +49,9 @@ const GATEWAY_STACK_ENV = [
   "CAS_STACK_ISSUER",
   "CAS_STACK_KEY_ID",
   "CAS_STACK_PRIVATE_KEY_PKCS8",
+  // 缺它则上传上限失效 —— 网关的克隆探测会把整个 body 解析进内存(还 clone
+  // 一份),大文件直接撑崩网关进程,请求根本到不了 doc service。
+  "MAX_UPLOAD_BYTES",
 ];
 
 /**

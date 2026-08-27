@@ -1,1 +1,1 @@
-{ "external": true, "targetPort": 8787, "minReplicas": 1, "maxReplicas": 3 }
+{"external": true, "targetPort": 8787, "minReplicas": 1, "maxReplicas": 3, "cpu": "2.0", "memory": "4.0Gi", "maxUploadBytes": 268435456}
