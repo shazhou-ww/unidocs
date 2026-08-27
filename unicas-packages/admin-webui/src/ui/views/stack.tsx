@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft,
   Boxes,
   Database,
   Gauge,
@@ -117,24 +116,25 @@ export function StackView({ stackId }: { stackId: string }) {
   return (
     <Page
       title={stack.displayName}
-      actions={<a className="back-link" href="#/"><ArrowLeft size={15} />My Stacks</a>}
+      meta={(
+        <div className="stack-meta">
+          <code>{stack.stackId}</code>
+          <span className="status-badge">{stack.status}</span>
+          <span>revision {stack.revision}</span>
+        </div>
+      )}
     >
-      <div className="stack-meta">
-        <code>{stack.stackId}</code>
-        <span className="status-badge">{stack.status}</span>
-        <span>revision {stack.revision}</span>
-      </div>
       <button
         ref={navigationButtonRef}
         type="button"
         className="mobile-nav-trigger"
         aria-controls="stack-navigation"
         aria-expanded={mobileNavigationOpen}
+        aria-label={`Open navigation, current section ${activeTab.label}`}
         onClick={() => setMobileNavigationOpen(true)}
       >
         <Menu size={16} />
-        <span>Navigation</span>
-        <span className="mobile-nav-current">{activeTab.label}</span>
+        <span>Navigate</span>
       </button>
       <div className="stack-layout">
         {mobileNavigationOpen ? (

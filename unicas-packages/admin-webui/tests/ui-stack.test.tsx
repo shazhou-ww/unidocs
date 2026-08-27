@@ -44,6 +44,7 @@ describe("StackView", () => {
     expect(switcher).toHaveValue("cas_one");
     expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");
     expect(screen.getAllByRole("tab")).toHaveLength(7);
+    expect(screen.queryByRole("link", { name: "My Stacks" })).not.toBeInTheDocument();
 
     await user.selectOptions(switcher, "cas_two");
     expect(window.location.hash).toBe("#/stacks/cas_two");
@@ -54,7 +55,7 @@ describe("StackView", () => {
     render(<StackView stackId="cas_one" />);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Primary stack" })).toBeInTheDocument());
-    const trigger = screen.getByRole("button", { name: /Navigation/ });
+    const trigger = screen.getByRole("button", { name: /Open navigation/ });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
 
     await user.click(trigger);

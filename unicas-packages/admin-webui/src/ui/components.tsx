@@ -1,15 +1,19 @@
 import type { ReactNode } from "react";
 import { CircleAlert, CircleDashed, Inbox, LoaderCircle } from "lucide-react";
 
-export function Page({ title, actions, children }: {
+export function Page({ title, meta, actions, children }: {
   title: string;
+  meta?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="page">
       <header className="page-header">
-        <h1>{title}</h1>
+        <div className="page-heading">
+          <h1>{title}</h1>
+          {meta}
+        </div>
         {actions ? <div className="page-actions">{actions}</div> : null}
       </header>
       {children}
