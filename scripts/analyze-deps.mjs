@@ -4,20 +4,23 @@ import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const root = process.cwd();
-const packagesDir = join(root, "packages");
-
-const pkgDirs = readdirSync(packagesDir)
-  .filter((d) => statSync(join(packagesDir, d)).isDirectory())
-  .sort();
+const packageRoots = ["packages", "unicas-packages"];
 
 function readJson(p) {
   return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null;
 }
 
 const pkgs = new Map(); // name -> { dir, json }
-for (const dir of pkgDirs) {
-  const json = readJson(join(packagesDir, dir, "package.json"));
-  if (json) pkgs.set(json.name, { dir, json });
+for (const packageRoot of packageRoots) {
+  const packagesDir = join(root, packageRoot);
+  const pkgDirs = readdirSync(packagesDir)
+    .filter((dir) => statSync(join(packagesDir, dir)).isDirectory())
+    .sort();
+  for (const dir of pkgDirs) {
+    const packageDir = join(packagesDir, dir);
+    const json = readJson(join(packageDir, "package.json"));
+    if (json) pkgs.set(json.name, { dir: packageDir, json });
+  }
 }
 
 // Walk all source-ish files, skipping node_modules / dist / .wrangler / build output
@@ -33,7 +36,7 @@ function walk(dir, out = []) {
 }
 
 const importRe =
-  /(?:from\s*|import\s*\(\s*|require\(\s*)["'](@unidocs\/[^"']+)["']/g;
+  /(?:from\s*|import\s*\(\s*|require\(\s*)["'](@(?:unidocs|unicas)\/[^"']+)["']/g;
 
 // pkgName -> Set<imported pkg name>
 const actual = new Map();
@@ -41,7 +44,7 @@ const actual = new Map();
 const actualFiles = new Map();
 
 for (const [name, { dir }] of pkgs) {
-  const files = walk(join(packagesDir, dir));
+  const files = walk(dir);
   const found = new Set();
   const byTarget = new Map();
   for (const f of files) {
@@ -62,8 +65,9 @@ for (const [name, { dir }] of pkgs) {
 
 console.log("=== Declared vs actual cross-package dependencies ===\n");
 for (const [name, { json }] of [...pkgs].sort()) {
-  const declaredDeps = new Set(Object.keys(json.dependencies ?? {}).filter((d) => d.startsWith("@unidocs/")));
-  const declaredDev = new Set(Object.keys(json.devDependencies ?? {}).filter((d) => d.startsWith("@unidocs/")));
+  const isWorkspacePackage = (dependency) => dependency.startsWith("@unidocs/") || dependency.startsWith("@unicas/");
+  const declaredDeps = new Set(Object.keys(json.dependencies ?? {}).filter(isWorkspacePackage));
+  const declaredDev = new Set(Object.keys(json.devDependencies ?? {}).filter(isWorkspacePackage));
   const actualSet = actual.get(name) ?? new Set();
   const declaredAll = new Set([...declaredDeps, ...declaredDev]);
 
@@ -83,7 +87,7 @@ for (const [name, { json }] of [...pkgs].sort()) {
   console.log("");
 }
 
-console.log("=== Import detail (pkg -> files importing each @unidocs target) ===\n");
+console.log("=== Import detail (pkg -> files importing each workspace target) ===\n");
 for (const [name, byTarget] of [...actualFiles].sort()) {
   const lines = [];
   for (const [target, files] of [...byTarget].sort()) {

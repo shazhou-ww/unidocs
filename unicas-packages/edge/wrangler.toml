@@ -16,5 +16,10 @@ service = "unidocs-cas-server-cloudflare"
 binding = "CAS_ADMIN_SERVICE"
 service = "unidocs-cas-admin-webui"
 
+[[services]]
+binding = "CAS_MCP_SERVICE"
+service = "unidocs-cas-control-plane-mcp"
+
 [vars]
 CAS_EDGE_COMPAT_VERSION = "0"
+CAS_PUBLIC_ORIGIN = "https://unicas.shazhou.work"

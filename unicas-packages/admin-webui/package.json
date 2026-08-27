@@ -30,9 +30,9 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@unicas/control-auth": "workspace:*",
     "@unicas/control-plane": "workspace:*",
     "@unicas/protocol-admin": "workspace:*",
-    "jose": "^6.2.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

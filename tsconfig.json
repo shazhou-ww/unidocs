@@ -18,6 +18,12 @@
       "path": "unicas-packages/control-plane"
     },
     {
+      "path": "unicas-packages/control-auth"
+    },
+    {
+      "path": "unicas-packages/control-plane-mcp"
+    },
+    {
       "path": "unicas-packages/admin-webui"
     },
     {

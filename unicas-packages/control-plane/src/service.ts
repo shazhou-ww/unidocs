@@ -9,7 +9,8 @@
  * Every resource mutation appends its control-audit event and bumps the
  * control-data snapshot revision in the same atomic D1 batch. Methods return
  * the frozen `@unicas/protocol-admin` response unions; failures are
- * normalized to `CasAdminErrorResponse`.
+ * normalized to `CasAdminErrorResponse`. Deployable ingress adapters may bind
+ * CAS_CONTROL_DB only to construct this service; they do not issue direct SQL.
  */
 
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
@@ -113,6 +114,11 @@ export interface ControlPlaneCallContext {
   };
   readonly requestId?: string;
   readonly traceId?: string;
+  readonly caller?: {
+    readonly channel: "admin-webui" | "mcp";
+    readonly oauthClientHandle?: string;
+    readonly toolName?: string;
+  };
 }
 
 export interface ControlPlaneServiceOptions {
@@ -757,7 +763,7 @@ export class ControlPlaneService {
       const limit = parseControlListLimit(request.query?.limit) ?? this.#listDefaultLimit;
       const rows = await this.#db
         .prepare(
-          "SELECT event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, created_at FROM cas_control_audit_events WHERE stack_id = ? AND (created_at > ? OR (created_at = ? AND event_id > ?)) ORDER BY created_at, event_id LIMIT ?",
+          "SELECT event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, caller_channel, oauth_client_handle, tool_name, created_at FROM cas_control_audit_events WHERE stack_id = ? AND (created_at > ? OR (created_at = ? AND event_id > ?)) ORDER BY created_at, event_id LIMIT ?",
         )
         .bind(request.path.stackId, afterCreatedAt, afterCreatedAt, afterEventId, limit + 1)
         .all<AuditEventRow>();
@@ -1103,7 +1109,7 @@ export class ControlPlaneService {
       this.#db.prepare("INSERT OR IGNORE INTO cas_control_meta (key, value) VALUES (?, 0)").bind(SNAPSHOT_KEY),
       this.#db.prepare("UPDATE cas_control_meta SET value = value + 1 WHERE key = ?").bind(SNAPSHOT_KEY),
       this.#db.prepare(
-        "INSERT INTO cas_control_audit_events (event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO cas_control_audit_events (event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, caller_channel, oauth_client_handle, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ).bind(
         generateEventId(),
         stackId,
@@ -1113,6 +1119,9 @@ export class ControlPlaneService {
         target,
         ctx.requestId ?? null,
         ctx.traceId ?? null,
+        ctx.caller?.channel ?? null,
+        ctx.caller?.oauthClientHandle ?? null,
+        ctx.caller?.toolName ?? null,
         this.#now(),
       ),
     );
@@ -1137,7 +1146,7 @@ export class ControlPlaneService {
   ): Promise<void> {
     await this.#db
       .prepare(
-        "INSERT INTO cas_control_audit_events (event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO cas_control_audit_events (event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, caller_channel, oauth_client_handle, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         generateEventId(),
@@ -1148,6 +1157,9 @@ export class ControlPlaneService {
         target,
         ctx.requestId ?? null,
         ctx.traceId ?? null,
+        ctx.caller?.channel ?? null,
+        ctx.caller?.oauthClientHandle ?? null,
+        ctx.caller?.toolName ?? null,
         this.#now(),
       )
       .run();
@@ -1226,6 +1238,9 @@ interface AuditEventRow {
   readonly target: string;
   readonly request_id: string | null;
   readonly trace_id: string | null;
+  readonly caller_channel: string | null;
+  readonly oauth_client_handle: string | null;
+  readonly tool_name: string | null;
   readonly created_at: number;
 }
 
@@ -1301,6 +1316,13 @@ function toCasControlAuditEvent(row: AuditEventRow): CasControlAuditEvent {
     target: row.target,
     requestId: row.request_id,
     traceId: row.trace_id,
+    caller: row.caller_channel === "admin-webui" || row.caller_channel === "mcp"
+      ? {
+        channel: row.caller_channel,
+        oauthClientHandle: row.oauth_client_handle,
+        toolName: row.tool_name,
+      }
+      : null,
     createdAt: row.created_at,
   };
 }

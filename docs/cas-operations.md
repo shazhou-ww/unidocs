@@ -5,15 +5,18 @@ Runbooks, SLOs, and alerting for the independently deployed CAS middleware
 
 | Component | Worker / resource | Notes |
 |---|---|---|
-| Edge (public) | `unidocs-cas-edge` | `https://unicas.shazhou.work/*` classic route; dispatches `/stacks` + `/admin` |
+| Edge (public) | `unidocs-cas-edge` | `https://unicas.shazhou.work/*` classic route; exact `/stacks`, `/admin`, MCP, and OAuth dispatch |
 | Tenant (private) | `unidocs-cas-server-cloudflare` | canonical stack-scoped storage; behind edge |
 | Admin BFF + UI (private) | `unidocs-cas-admin-webui` | Google OIDC + sessions; behind edge |
+| Control-plane MCP (private) | `unidocs-cas-control-plane-mcp` | OAuth resource/authorization server and MCP tools; behind edge |
+| OAuth KV | dedicated `OAUTH_KV` namespace | OAuth clients, grants, token hashes, and encrypted authorization transactions |
 | Control D1 | `unidocs-cas-control` (`dc8090eb-…`) | issuers, stacks, members, control audit |
 | Tenant D1 | `unidocs-cas-db` (`66f8738b-…`) | stack-scoped nodes/edges/root-refs |
 | R2 | `unidocs-cas`, `unidocs-cas-preview` | node content |
 
 Secrets live only as Worker secrets (Google OIDC client id/secret,
-`SESSION_ENCRYPTION_KEYS`, `CAS_AUDIT_READER_KEY`, stack private keys) — never
+`SESSION_ENCRYPTION_KEYS`, `OAUTH_STATE_ENCRYPTION_KEY`,
+`CAS_AUDIT_READER_KEY`, stack private keys) — never
 in vars or source. Deployment credentials: `CLOUDFLARE_ACCOUNT_ID` /
 `CLOUDFLARE_API_TOKEN` from `cfg`.
 
@@ -67,7 +70,7 @@ edge request count + 5xx rate, tenant 401/403 rate by error code
 
 ### Deploy
 
-Order: **tenant → admin → edge** (backing workers first; edge last, matching
+Order: **tenant → admin → MCP → edge** (backing workers first; edge last, matching
 the original rollout). **Always rebuild first** — `wrangler deploy` uploads
 `dist/`, and stale `dist` silently deploys old code:
 
@@ -76,6 +79,8 @@ pnpm --filter @unicas/server-cloudflare exec tsc
 pnpm --filter @unicas/server-cloudflare exec wrangler deploy
 pnpm --filter @unicas/admin-webui build        # vite + assets + tsc
 pnpm --filter @unicas/admin-webui exec wrangler deploy
+pnpm --filter @unicas/control-plane-mcp build
+pnpm --filter @unicas/control-plane-mcp exec wrangler deploy
 pnpm --filter @unicas/edge exec wrangler deploy
 node scripts/cas-middleware-smoke.mjs           # repeatable now; run twice 70s apart
 ```
