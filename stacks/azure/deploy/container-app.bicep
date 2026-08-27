@@ -31,6 +31,12 @@ param docServicesJson string = ''
 param capabilityPrivateKeyPkcs8 string = ''
 @secure()
 param capabilityTrustedJwks string = ''
+// Stack 模式：网关用私钥签 CAS 能力票，doc service 只拿公钥 JWKS 验签。
+// 两者互斥地由 gateway.bicep / service.bicep 各传一个，另一个留空。
+@secure()
+param casStackPrivateKeyPkcs8 string = ''
+@secure()
+param casStackTrustedJwks string = ''
 
 // PORT 必须和 ingress.targetPort 是同一个值的两种表现形式，而不是
 // 调用方各自再写一份字符串字面量——否则 ingress 转发到一个端口、
@@ -67,6 +73,18 @@ var optionalSecrets = concat(
       name: 'capability-trusted-jwks'
       value: capabilityTrustedJwks
     }
+  ],
+  empty(casStackPrivateKeyPkcs8) ? [] : [
+    {
+      name: 'cas-stack-private-key-pkcs8'
+      value: casStackPrivateKeyPkcs8
+    }
+  ],
+  empty(casStackTrustedJwks) ? [] : [
+    {
+      name: 'cas-stack-trusted-jwks'
+      value: casStackTrustedJwks
+    }
   ]
 )
 var optionalSecretEnv = concat(
@@ -98,6 +116,18 @@ var optionalSecretEnv = concat(
     {
       name: 'CAPABILITY_TRUSTED_JWKS'
       secretRef: 'capability-trusted-jwks'
+    }
+  ],
+  empty(casStackPrivateKeyPkcs8) ? [] : [
+    {
+      name: 'CAS_STACK_PRIVATE_KEY_PKCS8'
+      secretRef: 'cas-stack-private-key-pkcs8'
+    }
+  ],
+  empty(casStackTrustedJwks) ? [] : [
+    {
+      name: 'CAS_STACK_TRUSTED_JWKS'
+      secretRef: 'cas-stack-trusted-jwks'
     }
   ]
 )

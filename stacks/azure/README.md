@@ -54,11 +54,43 @@ pnpm test:local           # 默认门禁,不含任何 Azure 集成测试
 pnpm test:azure           # Azure 集成测试(tests/integration/azure/),需要 Docker
 pnpm azure:up             # docker compose -f packages/azure-sdk/docker-compose.yml up -d
 pnpm azure:down           # docker compose -f packages/azure-sdk/docker-compose.yml down
-node stacks/azure/deploy/deploy.mjs --cas-base-url ... --internal-auth-mode dual --capability-key-id ...
+node stacks/azure/deploy/deploy.mjs \
+  --cas-base-url https://unicas.shazhou.work \
+  --cas-stack-id cas_XXXXXXXXXXXX \
+  --cas-stack-issuer https://unicas.shazhou.work/cas/issuer/azure \
+  --cas-stack-key-id az-rotate-1 \
+  --capability-key-id ...
 ```
 
-Capability rollout also accepts `--capability-issuer`; `dual` and `capability`
-modes require an active key ID. Private PKCS8 and trusted JWKS values are read
+### Stack 身份参数
+
+`--internal-auth-mode` 只接受 `stack`。部署 `gateway` 或 `services` 目标时,
+下面这组必填 —— 缺任何一个不是"降级运行",而是容器起不来
+(`azure-gateway/src/main.ts` 与 `resolveDocAuthConfig()` 都是 `requireEnv`),
+所以 `parseArgs()` 在第一时间就响亮失败,而不是让你等 15 分钟部署完再看崩溃日志。
+
+| 参数 | 目标 | 说明 |
+| --- | --- | --- |
+| `--cas-stack-id` | gateway + services | 控制面**生成**的不透明 id,形如 `cas_XXXXXXXX`。不可自选:CAS 校验器拿 issuer 反查注册表得到 stackId,再与请求路径里的 stackId 比对,对不上就是 `resource_scope_mismatch`。脚本按 `/^cas_[A-Za-z0-9_-]{8,64}$/` 校验格式,`unidocs-azure` 这类本地 fixture 名会被直接拒掉 |
+| `--cas-stack-issuer` | gateway + services | 该 stack 在控制面注册的 issuer |
+| `--cas-stack-key-id` | 仅 gateway | 该 stack 下 `active` 状态的签名密钥 kid。doc service 不签发,只验签,所以不需要 |
+| `--cas-ref-domain` | gateway | Root Refs 写入的业务域,默认 `doc`。必须已在该 stack 注册且 `active`,否则 `updateRootRefs` 被 CAS 拒 |
+
+两个 stack 密钥从 Key Vault 读既有值,**不由脚本生成**(私钥的另一半在控制面
+注册 issuer 密钥时就定下了),按非对称原则分发:
+
+| Key Vault secret | 发给谁 | 对应环境变量 |
+| --- | --- | --- |
+| `cas-stack-private-key-pkcs8` | 只有网关 | `CAS_STACK_PRIVATE_KEY_PKCS8` |
+| `cas-stack-trusted-jwks` | 只有 doc service | `CAS_STACK_TRUSTED_JWKS` |
+
+`tests/unit/scripts/azure-stack-env.test.mjs` 是这条边界的穷尽性守卫:入口点
+stack 模式下要的每个环境变量,bicep 模板都必须有注入点。这层网存在的原因是
+真踩过一次 —— 脚本强制 stack 模式,bicep 却一个 `CAS_STACK_*` 都没接,编译与
+what-if 全绿,只在容器起来时崩。
+
+Capability rollout also accepts `--capability-issuer`; stack mode requires an
+active key ID. Private PKCS8 and trusted JWKS values are read
 from pre-provisioned Key Vault secrets and are never accepted as CLI arguments
 or printed in deployment output. `--cas-access-key` is rollout-only while a
 legacy CAS dependency remains mounted; it is not the target authentication

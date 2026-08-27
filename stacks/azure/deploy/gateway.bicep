@@ -40,6 +40,22 @@ param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param capabilityKeyId string = ''
 param casCapabilityAudience string = 'unidocs-cas'
 
+@description('控制面生成的不透明 stack id（形如 cas_XXXX）。不可自选——CAS 校验器拿 issuer 反查注册表得到 stackId，再与路径里的 stackId 比对，对不上就是 resource_scope_mismatch。')
+param casStackId string
+
+@description('已在控制面注册的 stack issuer。CAS 只用它当查表键，JWKS 从注册表读，绝不信任令牌自带的。')
+param casStackIssuer string
+
+@description('该 stack 下处于 active 的签名密钥 kid。')
+param casStackKeyId string
+
+@description('Root Refs 写入的业务域，必须已在该 stack 注册且 active。')
+param casRefDomain string = 'doc'
+
+@description('与 casStackKeyId 配对的私钥（PKCS8）。只有网关持有——doc service 拿公钥 JWKS。')
+@secure()
+param casStackPrivateKeyPkcs8 string = ''
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }
@@ -90,6 +106,7 @@ module app 'container-app.bicep' = {
     casAccessKey: casAccessKey
     docServicesJson: docServicesJson
     capabilityPrivateKeyPkcs8: capabilityPrivateKeyPkcs8
+    casStackPrivateKeyPkcs8: casStackPrivateKeyPkcs8
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
     // docTypes 里的每个 doc type worker —— 不是容器端口，ingress 负责映射。
     // 路由目标在 DOC_SERVICES_JSON 里静态列出，见上面的注释。
@@ -113,6 +130,22 @@ module app 'container-app.bicep' = {
       {
         name: 'CAS_CAPABILITY_AUDIENCE'
         value: casCapabilityAudience
+      }
+      {
+        name: 'CAS_STACK_ID'
+        value: casStackId
+      }
+      {
+        name: 'CAS_STACK_ISSUER'
+        value: casStackIssuer
+      }
+      {
+        name: 'CAS_STACK_KEY_ID'
+        value: casStackKeyId
+      }
+      {
+        name: 'CAS_REF_DOMAIN'
+        value: casRefDomain
       }
       {
         name: 'CAPABILITY_ALGORITHM'

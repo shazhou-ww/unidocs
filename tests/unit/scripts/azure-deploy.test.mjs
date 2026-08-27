@@ -4,6 +4,7 @@
  */
 import { describe, expect, test, vi } from "vitest";
 import {
+  seedSecrets,
   azureImages,
   classifySmokeFailure,
   generateSecret,
@@ -103,23 +104,31 @@ describe("generateSecret", () => {
   });
 });
 
+/** stack 模式下 gateway/services 目标的必填组，逐个测必填性时再拆开。 */
+const STACK_ARGS = [
+  "--cas-stack-id", "cas_EM1_egj6I-ea",
+  "--cas-stack-issuer", "https://unicas.shazhou.work/cas/issuer/azure",
+  "--cas-stack-key-id", "az-rotate-1",
+  "--cas-capability-audience", "unidocs-cas-azure",
+];
+
 describe("parseArgs", () => {
   test("默认值指向设计里确定的订阅、资源组与位置", () => {
-    const args = parseArgs(["--capability-key-id", "test-key"]);
+    const args = parseArgs(["--capability-key-id", "test-key", ...STACK_ARGS]);
     expect(args.subscription).toBe("24c9acbd-c2f5-4ef9-b9a2-486d90208b3e");
     expect(args.resourceGroup).toBe("Unidocs");
     expect(args.location).toBe("southeastasia");
   });
 
   test("命令行参数覆盖默认值", () => {
-    const args = parseArgs(["--resource-group", "rg-other", "--location", "japaneast", "--capability-key-id", "test-key"]);
+    const args = parseArgs(["--resource-group", "rg-other", "--location", "japaneast", "--capability-key-id", "test-key", ...STACK_ARGS]);
     expect(args.resourceGroup).toBe("rg-other");
     expect(args.location).toBe("japaneast");
   });
 
   test("--cas-base-url 是可选的,不传也不报错", () => {
-    expect(() => parseArgs(["--capability-key-id", "test-key"])).not.toThrow();
-    expect(parseArgs(["--capability-key-id", "test-key"]).casBaseUrl).toBe("");
+    expect(() => parseArgs(["--capability-key-id", "test-key", ...STACK_ARGS])).not.toThrow();
+    expect(parseArgs(["--capability-key-id", "test-key", ...STACK_ARGS]).casBaseUrl).toBe("");
   });
 
   test("未知参数响亮失败,而不是被忽略", () => {
@@ -129,13 +138,13 @@ describe("parseArgs", () => {
   // CAS_ACCESS_KEY 不是本轮生成的密钥,而是必须与已部署的 Cloudflare CAS
   // worker 对齐的既有值 —— 所以它必须能从命令行传进来。
   test("--cas-access-key 被解析", () => {
-    expect(parseArgs(["--cas-access-key", "shared-with-cloudflare", "--capability-key-id", "test-key"]).casAccessKey).toBe(
+    expect(parseArgs(["--cas-access-key", "shared-with-cloudflare", "--capability-key-id", "test-key", ...STACK_ARGS]).casAccessKey).toBe(
       "shared-with-cloudflare",
     );
   });
 
   test("不传 --cas-access-key 时是空串(留给 Key Vault 里的既有值)", () => {
-    expect(parseArgs(["--capability-key-id", "test-key"]).casAccessKey).toBe("");
+    expect(parseArgs(["--capability-key-id", "test-key", ...STACK_ARGS]).casAccessKey).toBe("");
   });
 
   test("stack mode is the only internal auth mode; key values are not CLI inputs", () => {
@@ -144,17 +153,18 @@ describe("parseArgs", () => {
       "--internal-auth-mode", "stack",
       "--capability-issuer", "unidocs-gateway:staging",
       "--capability-key-id", "staging-key-2",
+      ...STACK_ARGS,
     ]);
     expect(args).toMatchObject({
       internalAuthMode: "stack",
       capabilityIssuer: "unidocs-gateway:staging",
       capabilityKeyId: "staging-key-2",
     });
-    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "capability"]))
+    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "capability", ...STACK_ARGS]))
       .toThrow(/stack/);
-    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "legacy"]))
+    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "legacy", ...STACK_ARGS]))
       .toThrow(/stack/);
-    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "dual"]))
+    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "dual", ...STACK_ARGS]))
       .toThrow(/stack/);
     expect(() => parseArgs(["--internal-auth-mode", "unknown"]))
       .toThrow(/internal-auth-mode/);
@@ -265,18 +275,18 @@ describe("retryOnForbidden", () => {
 
 describe("parseArgs 选择器", () => {
   test("无参数:全量部署", () => {
-    const a = parseArgs(["--capability-key-id", "test-key"]);
+    const a = parseArgs(["--capability-key-id", "test-key", ...STACK_ARGS]);
     expect(a.targets).toEqual(["bootstrap", "platform", "services", "gateway"]);
   });
 
   test("--service docx:只部一个", () => {
-    const a = parseArgs(["--service", "docx", "--capability-key-id", "test-key"]);
+    const a = parseArgs(["--service", "docx", "--capability-key-id", "test-key", ...STACK_ARGS]);
     expect(a.targets).toEqual(["services"]);
     expect(a.services).toEqual(["docx"]);
   });
 
   test("--service 多选用逗号分隔", () => {
-    expect(parseArgs(["--service", "docx,markdown", "--capability-key-id", "test-key"]).services).toEqual(["docx", "markdown"]);
+    expect(parseArgs(["--service", "docx,markdown", "--capability-key-id", "test-key", ...STACK_ARGS]).services).toEqual(["docx", "markdown"]);
   });
 
   test("--service 的取值必须存在对应的 azure.service.json", () => {
@@ -290,13 +300,13 @@ describe("parseArgs 选择器", () => {
   });
 
   test("--bootstrap / --platform / --gateway 可以组合,顺序与 argv 无关", () => {
-    expect(parseArgs(["--gateway", "--bootstrap", "--capability-key-id", "test-key"]).targets).toEqual(["bootstrap", "gateway"]);
-    expect(parseArgs(["--platform", "--capability-key-id", "test-key"]).targets).toEqual(["platform"]);
+    expect(parseArgs(["--gateway", "--bootstrap", "--capability-key-id", "test-key", ...STACK_ARGS]).targets).toEqual(["bootstrap", "gateway"]);
+    expect(parseArgs(["--platform", "--capability-key-id", "test-key", ...STACK_ARGS]).targets).toEqual(["platform"]);
   });
 
   test("--build-concurrency 默认 2,可覆盖", () => {
-    expect(parseArgs(["--capability-key-id", "test-key"]).buildConcurrency).toBe(2);
-    expect(parseArgs(["--build-concurrency", "1", "--capability-key-id", "test-key"]).buildConcurrency).toBe(1);
+    expect(parseArgs(["--capability-key-id", "test-key", ...STACK_ARGS]).buildConcurrency).toBe(2);
+    expect(parseArgs(["--build-concurrency", "1", "--capability-key-id", "test-key", ...STACK_ARGS]).buildConcurrency).toBe(1);
   });
 
   test("--build-concurrency 非正整数要响亮失败", () => {
@@ -462,5 +472,133 @@ describe("classifySmokeFailure", () => {
     const { kind, detail } = classifySmokeFailure("", "");
     expect(kind).toBe("unknown");
     expect(typeof detail).toBe("string");
+  });
+});
+
+describe("parseArgs: stack 身份参数", () => {
+  test("四个 stack 参数被解析,refDomain 默认 doc", () => {
+    const args = parseArgs([
+      "--gateway",
+      "--capability-key-id", "k1",
+      ...STACK_ARGS,
+    ]);
+    expect(args).toMatchObject({
+      casStackId: "cas_EM1_egj6I-ea",
+      casStackIssuer: "https://unicas.shazhou.work/cas/issuer/azure",
+      casStackKeyId: "az-rotate-1",
+      casRefDomain: "doc",
+    });
+  });
+
+  test("--cas-ref-domain 可覆盖默认值", () => {
+    const args = parseArgs([
+      "--gateway", "--capability-key-id", "k1", ...STACK_ARGS,
+      "--cas-ref-domain", "asset",
+    ]);
+    expect(args.casRefDomain).toBe("asset");
+  });
+
+  test.each([
+    ["--cas-stack-id", /cas-stack-id/],
+    ["--cas-stack-issuer", /cas-stack-issuer/],
+    ["--cas-stack-key-id", /cas-stack-key-id/],
+  ])("gateway 目标缺 %s 时响亮失败", (omitted, pattern) => {
+    const kept = [];
+    for (let i = 0; i < STACK_ARGS.length; i += 2) {
+      if (STACK_ARGS[i] !== omitted) kept.push(STACK_ARGS[i], STACK_ARGS[i + 1]);
+    }
+    expect(() => parseArgs(["--gateway", "--capability-key-id", "k1", ...kept]))
+      .toThrow(pattern);
+  });
+
+  test.each([
+    ["--cas-stack-id", /cas-stack-id/],
+    ["--cas-stack-issuer", /cas-stack-issuer/],
+  ])("services 目标缺 %s 时响亮失败", (omitted, pattern) => {
+    const kept = [];
+    for (let i = 0; i < STACK_ARGS.length; i += 2) {
+      if (STACK_ARGS[i] !== omitted) kept.push(STACK_ARGS[i], STACK_ARGS[i + 1]);
+    }
+    expect(() => parseArgs(["--service", "markdown", ...kept])).toThrow(pattern);
+  });
+
+  test("services 目标不需要 --cas-stack-key-id(doc service 不签发,只验签)", () => {
+    const args = parseArgs([
+      "--service", "markdown",
+      "--cas-stack-id", "cas_EM1_egj6I-ea",
+      "--cas-stack-issuer", "https://unicas.shazhou.work/cas/issuer/azure",
+      "--cas-capability-audience", "unidocs-cas-azure",
+    ]);
+    expect(args.casStackKeyId).toBe("");
+  });
+
+  test("只跑 --bootstrap 时不要求任何 stack 参数", () => {
+    expect(() => parseArgs(["--bootstrap"])).not.toThrow();
+  });
+});
+
+describe("parseArgs: CAS audience", () => {
+  test("--cas-capability-audience 被解析", () => {
+    const args = parseArgs(["--gateway", "--capability-key-id", "k1", ...STACK_ARGS]);
+    expect(args.casCapabilityAudience).toBe("unidocs-cas-azure");
+  });
+
+  test.each([["--gateway", ["--capability-key-id", "k1"]], ["--service", ["markdown"]]])(
+    // 没有默认值是刻意的:bicep 那边的 'unidocs-cas' 是个没有 stack 区分度的
+    // 占位值,一旦与控制面里注册的 audience 不一致,网关签的票会被 CAS 以
+    // aud 不匹配全量拒绝 —— 而且要等部署完才暴露。
+    "%s 目标缺 --cas-capability-audience 时响亮失败",
+    (selector, extra) => {
+      const kept = [];
+      for (let i = 0; i < STACK_ARGS.length; i += 2) {
+        if (STACK_ARGS[i] !== "--cas-capability-audience") {
+          kept.push(STACK_ARGS[i], STACK_ARGS[i + 1]);
+        }
+      }
+      expect(() => parseArgs([selector, ...extra, ...kept]))
+        .toThrow(/cas-capability-audience/);
+    },
+  );
+
+  test("只跑 --bootstrap 时不要求 audience", () => {
+    expect(() => parseArgs(["--bootstrap"])).not.toThrow();
+  });
+});
+
+describe("seedSecrets: legacy CAS 共享密钥", () => {
+  // stack 模式下 legacy 共享密钥已随 legacy 运行时退役:网关
+  // (azure-gateway/src/main.ts:51) 与 doc service
+  // (azure-sdk/src/doc-type-service.ts:230) 都显式跳过 CAS_ACCESS_KEY。
+  // 但 seedSecrets() 曾无条件调 resolveCasAccessKey(),它在 Key Vault 里
+  // 没有该密钥且未传 --cas-access-key 时硬失败 —— 真部署时卡在 [3/7],
+  // 要一个整条链路根本不会读的凭据。
+  test("stack 模式不索要 legacy 共享密钥", async () => {
+    const calls = [];
+    const secrets = await seedSecrets("kv-test", {
+      targets: ["services", "gateway"],
+      internalAuthMode: "stack",
+      casAccessKey: "",
+    }, {
+      seedSecret: async (_vault, name) => { calls.push(`seed:${name}`); return `generated-${name}`; },
+      requireExistingSecret: async (_vault, name) => { calls.push(`require:${name}`); return `existing-${name}`; },
+      resolveCasAccessKey: async () => { calls.push("resolveCasAccessKey"); throw new Error("must not be called in stack mode"); },
+    });
+    expect(calls).not.toContain("resolveCasAccessKey");
+    expect(secrets.casAccessKey).toBeNull();
+  });
+
+  test("stack 模式仍然读取两个 stack 身份密钥", async () => {
+    const calls = [];
+    await seedSecrets("kv-test", {
+      targets: ["services", "gateway"],
+      internalAuthMode: "stack",
+      casAccessKey: "",
+    }, {
+      seedSecret: async () => "x",
+      requireExistingSecret: async (_vault, name) => { calls.push(name); return "y"; },
+      resolveCasAccessKey: async () => { throw new Error("must not be called"); },
+    });
+    expect(calls).toContain("cas-stack-private-key-pkcs8");
+    expect(calls).toContain("cas-stack-trusted-jwks");
   });
 });

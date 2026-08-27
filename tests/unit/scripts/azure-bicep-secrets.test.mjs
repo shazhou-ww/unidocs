@@ -93,6 +93,11 @@ describe.skipIf(!AZ)("gateway.bicep 的密钥不落进外层模板", () => {
     expect(secureParamOffenders(arm, "pgAdminPassword")).toEqual([]);
   });
 
+  test("casStackPrivateKeyPkcs8 在外层模板里只以直接引用出现，不被拼接", () => {
+    const arm = compile("gateway.bicep");
+    expect(secureParamOffenders(arm, "casStackPrivateKeyPkcs8")).toEqual([]);
+  });
+
   test("嵌套部署用 inner scope，密钥参数声明为 securestring", () => {
     const arm = compile("gateway.bicep");
     const nested = nestedDeployments(arm);
@@ -100,9 +105,27 @@ describe.skipIf(!AZ)("gateway.bicep 的密钥不落进外层模板", () => {
     for (const dep of nested) {
       expect(dep.properties.expressionEvaluationOptions).toEqual({ scope: "inner" });
       const params = dep.properties.template.parameters;
-      for (const name of ["docServicesJson", "casAccessKey", "databaseUrl"]) {
+      for (const name of ["docServicesJson", "casAccessKey", "databaseUrl", "casStackPrivateKeyPkcs8"]) {
         expect(params[name]?.type, `${name} must be securestring`).toBe("securestring");
       }
+    }
+  });
+});
+
+describe.skipIf(!AZ)("service.bicep 的密钥不落进外层模板", () => {
+  test("casStackTrustedJwks 在外层模板里只以直接引用出现，不被拼接", () => {
+    const arm = compile("service.bicep");
+    expect(secureParamOffenders(arm, "casStackTrustedJwks")).toEqual([]);
+  });
+
+  test("嵌套部署用 inner scope，stack JWKS 声明为 securestring", () => {
+    const arm = compile("service.bicep");
+    const nested = nestedDeployments(arm);
+    expect(nested.length).toBeGreaterThan(0);
+    for (const dep of nested) {
+      expect(dep.properties.expressionEvaluationOptions).toEqual({ scope: "inner" });
+      expect(dep.properties.template.parameters.casStackTrustedJwks?.type)
+        .toBe("securestring");
     }
   });
 });
