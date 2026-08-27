@@ -30,7 +30,7 @@ const AZ = hasAz();
 function compile(template) {
   const stdout = execFileSync(
     "az",
-    ["bicep", "build", "--file", join(ROOT, "stacks/azure/deploy", template), "--stdout"],
+    ["bicep", "build", "--file", join(ROOT, "stacks/unidocs-azure/deploy", template), "--stdout"],
     { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
   );
   return JSON.parse(stdout);

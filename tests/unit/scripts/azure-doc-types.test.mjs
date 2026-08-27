@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { azureDocTypePortBases, readAzureDocTypes } from "../../../stacks/azure/doc-types.mjs";
+import { azureDocTypePortBases, readAzureDocTypes } from "../../../stacks/unidocs-azure/doc-types.mjs";
 
 /** 造一个只有 packages/azure-* 的假仓库根,用来测校验分支——真仓库里
  *  每份 json 都是合法的,构造不出缺字段的情形。 */

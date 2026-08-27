@@ -101,7 +101,7 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-// 迁移 Job 必须走模块边界，理由见 stacks/azure/deploy/migrate-job.bicep 顶部的注释：
+// 迁移 Job 必须走模块边界，理由见 stacks/unidocs-azure/deploy/migrate-job.bicep 顶部的注释：
 // databaseUrl 由 @secure() pgAdminPassword 拼出，直接写进外层模板的资源
 // 属性会让 what-if 把明文连接串打进终端与日志。
 //

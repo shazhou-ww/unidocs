@@ -2,13 +2,14 @@ import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "../stacks/cloudflare/local/doc-types.mjs";
-import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/azure/doc-types.mjs";
+import { DOC_TYPES, parseDocTypes } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
+import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/unidocs-azure/doc-types.mjs";
+import { loadRemoteCasConfig, parseDevArgs } from "./unidocs-dev-config.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const USAGE =
-  "Usage: pnpm dev [--azure] [docType ...]   e.g. pnpm dev docx markdown / pnpm dev --azure markdown";
+  "Usage: pnpm dev <unidocs-cloudflare|unidocs-azure> [docType ...] [--cas <remote|local>]";
 
 // 两套栈可以同时跑(docx/psd 的 CAS 过渡形态正需要这一点),那时两个 Vite
 // 都想要同一个端口。给 Azure 侧加一个固定偏移，与端口段本身的分离
@@ -17,8 +18,21 @@ const USAGE =
 const AZURE_WEB_PORT_OFFSET = 1000;
 
 const rawArgs = process.argv.slice(2);
-const useAzure = rawArgs.includes("--azure");
-const positional = rawArgs.filter((arg) => arg !== "--azure");
+const platform = process.env.UNIDOCS_LOCAL_PLATFORM;
+if (platform !== "cloudflare" && platform !== "azure") {
+  console.error("UNIDOCS_LOCAL_PLATFORM must be cloudflare or azure. Start this through `pnpm dev <stack>`. ");
+  process.exit(1);
+}
+const useAzure = platform === "azure";
+let devOptions;
+try {
+  devOptions = parseDevArgs(rawArgs);
+} catch (error) {
+  console.error(error.message);
+  console.error(USAGE);
+  process.exit(1);
+}
+const positional = devOptions.docTypes;
 
 let docTypes;
 try {
@@ -50,43 +64,33 @@ let azureDocTypeTable;
 // probe below); passed through to `startAzureRuntime()` so the gateway and
 // docx services get `CAS_BASE_URL` wired up the same way the e2e test does.
 let azureCasBaseUrl;
+let remoteCas;
+
+if (devOptions.casMode === "remote") {
+  try {
+    remoteCas = await loadRemoteCasConfig({ root });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+  const reachable = await fetch(`${remoteCas.origin}/health`, {
+    headers: { Connection: "close" },
+  }).then((response) => response.ok, () => false);
+  if (!reachable) {
+    console.error(`Remote UniCAS is not reachable at ${remoteCas.origin}; use --cas local only when local isolation is intentional.`);
+    process.exit(1);
+  }
+  azureCasBaseUrl = remoteCas.origin;
+}
 
 if (useAzure) {
   // 无参数意为「起全部 doc type」。取的必须是 **Azure 自己的**表:
-  // `DOC_TYPES` 是 Cloudflare 的(stacks/cloudflare/local/doc-types.mjs),
+  // `DOC_TYPES` 是 Cloudflare 的(stacks/unidocs-cloudflare/local/doc-types.mjs),
   // 两边的 doc type 集合可以不一样,拿 CF 的表当 Azure 的默认值会在 CF 先
-  // 支持某个类型时直接把 `pnpm dev --azure` 打挂。
+  // 支持某个类型时直接把 `pnpm dev unidocs-azure` 打挂。
   azureDocTypeTable = readAzureDocTypes(root);
   azureDocTypes = positional.length === 0 ? Object.keys(azureDocTypeTable) : docTypes;
 
-  // docx's image path needs tenant-scoped CAS. This round is transitional:
-  // CAS_BASE_URL points at the Miniflare stack's CAS worker (default
-  // http://127.0.0.1:8791). Probe it here, before starting anything, so
-  // "you forgot to run `pnpm dev docx` in another terminal" is clear at
-  // startup instead of surfacing as an ECONNREFUSED on the first apply that
-  // touches an image.
-  // 哪些 doc type 需要 CAS 由各包的 azure.service.json 声明(needsCas),
-  // 不在这里维护第二份名单。
-  if (azureDocTypes.some((name) => azureDocTypeTable[name]?.needsCas)) {
-    azureCasBaseUrl = process.env.CAS_BASE_URL ?? "http://127.0.0.1:8791";
-    const casBaseUrl = azureCasBaseUrl;
-    const reachable = await fetch(`${casBaseUrl}/tenants/_probe/cas/usage`, {
-      headers: { "X-Internal-Token": CAS_ACCESS_KEY, Connection: "close" },
-    }).then(response => response.ok, () => false);
-    if (!reachable) {
-      // Same `needsCas` filter as the probe trigger above, but scoped to
-      // *this run's* selection rather than the whole table — the message
-      // and the copy-pasteable remediation should only name doc types the
-      // user actually asked to start.
-      const casDocTypes = azureDocTypes.filter((name) => azureDocTypeTable[name]?.needsCas);
-      console.error(
-        `${casDocTypes.join(" / ")} on the Azure stack needs the transitional CAS worker at ${casBaseUrl}, which is not answering.\n` +
-          `Start the Miniflare stack in another terminal first:\n\n  pnpm dev ${casDocTypes.join(" ")}\n\n` +
-          `(This cross-stack dependency goes away in phase 4, when azure-cas lands.)`,
-      );
-      process.exit(1);
-    }
-  }
 }
 
 /** Matches `docker compose -f packages/azure-sdk/docker-compose.yml up -d` failing for the same reason, but with an actionable message instead of the raw compose error. */
@@ -95,7 +99,7 @@ function assertDockerRunning() {
     execFileSync("docker", ["info"], { stdio: "ignore" });
   } catch {
     console.error(
-      "Azure local stack requires Docker. Please start Docker Desktop, then retry `pnpm dev --azure`.",
+      "Azure local stack requires Docker. Please start Docker Desktop, then retry `pnpm dev unidocs-azure`.",
     );
     process.exit(1);
   }
@@ -108,7 +112,7 @@ function assertDockerRunning() {
 //
 // `describeConflict` lets callers give a port-specific hint about *why* the
 // port might be taken: for the Node services (41787/41788) it's almost
-// always a leftover process from a previous `pnpm dev --azure`, but for the
+// always a leftover process from a previous `pnpm dev unidocs-azure`, but for the
 // container ports (5433/10000) the far more common cause in practice is a
 // completely unrelated project's `docker compose` stack squatting on the
 // same host port — that's what actually happened during review of this
@@ -120,7 +124,7 @@ function assertPortFree(host, port, describeConflict) {
       if (err.code === "EADDRINUSE") {
         reject(
           new Error(
-            `Port ${port} is already in use${describeConflict ? ` (${describeConflict})` : ""}. Stop the leftover process occupying it, then retry \`pnpm dev --azure\`.`,
+            `Port ${port} is already in use${describeConflict ? ` (${describeConflict})` : ""}. Stop the leftover process occupying it, then retry \`pnpm dev unidocs-azure\`.`,
           ),
         );
         return;
@@ -134,7 +138,7 @@ function assertPortFree(host, port, describeConflict) {
       });
     });
     // Always probe 0.0.0.0, regardless of `host` — see
-    // `assertPortFree()`'s comment in stacks/azure/local/runtime.mjs (around line
+    // `assertPortFree()`'s comment in stacks/unidocs-azure/local/runtime.mjs (around line
     // 308-323) for why a probe bound to a specific address (127.0.0.1)
     // fails to detect a pre-existing wildcard bind on BSD/Darwin.
     server.listen(port, "0.0.0.0");
@@ -143,10 +147,10 @@ function assertPortFree(host, port, describeConflict) {
 
 // Kept deliberately apart from Miniflare's 8787/8788 band so both backends
 // can run at once. The Node-service ports themselves come from
-// `stacks/azure/local/ports.mjs`'s layout below, not a local copy — that module has no
+// `stacks/unidocs-azure/local/ports.mjs`'s layout below, not a local copy — that module has no
 // imports at all, so pulling it in here is cheap and keeps this file from
-// drifting out of sync with `stacks/azure/local/runtime.mjs`'s own port math.
-const AZURE_HOST = "127.0.0.1";
+// drifting out of sync with `stacks/unidocs-azure/local/runtime.mjs`'s own port math.
+const LOCAL_HOST = process.env.UNIDOCS_LOCAL_HOST ?? "127.0.0.1";
 
 // The host ports `packages/azure-sdk/docker-compose.yml` maps Postgres onto, and the port
 // the spawned `azurite-blob` process listens on (see that file and
@@ -163,7 +167,7 @@ const AZURE_CONTAINER_PORTS = {
   },
   azurite: {
     port: 10000,
-    hint: "needed by the local Azure stack's azurite-blob process — likely either a leftover `pnpm dev --azure` / test run from this repo, or an unrelated process bound to the same host port",
+    hint: "needed by the local Azure stack's azurite-blob process — likely either a leftover `pnpm dev unidocs-azure` / test run from this repo, or an unrelated process bound to the same host port",
   },
 };
 
@@ -173,11 +177,11 @@ let backend;
 if (useAzure) {
   assertDockerRunning();
 
-  // `stacks/azure/local/ports.mjs` has no imports at all, so this can go ahead of the
+  // `stacks/unidocs-azure/local/ports.mjs` has no imports at all, so this can go ahead of the
   // heavier imports further down (mirrors `doc-types.mjs`'s same
   // dependency-free convention) — argv validation has already happened
   // above, so this is just cheap port math before the port probe.
-  const { azurePortLayout, allAzurePorts, describeAzurePorts } = await import("../stacks/azure/local/ports.mjs");
+  const { azurePortLayout, allAzurePorts, describeAzurePorts } = await import("../stacks/unidocs-azure/local/ports.mjs");
   const layout = azurePortLayout({
     docTypes: azureDocTypes,
     portBases: azureDocTypePortBases(azureDocTypeTable),
@@ -185,9 +189,9 @@ if (useAzure) {
   });
   const described = describeAzurePorts(layout);
   await Promise.all([
-    ...allAzurePorts(layout).map((port) => assertPortFree(AZURE_HOST, port, described[port])),
-    assertPortFree(AZURE_HOST, 5433, AZURE_CONTAINER_PORTS.postgres.hint),
-    assertPortFree(AZURE_HOST, 10000, AZURE_CONTAINER_PORTS.azurite.hint),
+    ...allAzurePorts(layout).map((port) => assertPortFree(LOCAL_HOST, port, described[port])),
+    assertPortFree(LOCAL_HOST, 5433, AZURE_CONTAINER_PORTS.postgres.hint),
+    assertPortFree(LOCAL_HOST, 10000, AZURE_CONTAINER_PORTS.azurite.hint),
   ]);
 
   const {
@@ -196,14 +200,15 @@ if (useAzure) {
     docDatabaseUrl,
     BLOB_CONNECTION_STRING,
   } = await import(
-    "../stacks/azure/local/runtime.mjs"
+    "../stacks/unidocs-azure/local/runtime.mjs"
   );
 
   runtime = await startAzureRuntime({
-    host: AZURE_HOST,
+    host: LOCAL_HOST,
     docTypes: azureDocTypes,
     replicas: 2,
     ...(azureCasBaseUrl ? { casBaseUrl: azureCasBaseUrl } : {}),
+    ...(remoteCas ? { stackFixture: remoteCas.stackFixture } : {}),
   });
   backend = {
     name: "Azure (Postgres + Azurite)",
@@ -215,12 +220,17 @@ if (useAzure) {
   // Imported after argv validation so a typo fails fast instead of paying for
   // the esbuild + Miniflare import graph first.
   const { LogLevel } = await import("miniflare");
-  const { startLocalRuntime } = await import("../stacks/cloudflare/local/runtime.mjs");
+  const { startLocalRuntime } = await import("../stacks/unidocs-cloudflare/local/runtime.mjs");
 
   runtime = await startLocalRuntime({
+    host: LOCAL_HOST,
     docTypes,
     persistPath: join(root, ".wrangler", "miniflare"),
     logLevel: LogLevel.INFO,
+    ...(remoteCas ? {
+      casOrigin: remoteCas.origin,
+      stackFixture: remoteCas.stackFixture,
+    } : {}),
   });
   backend = { name: "Miniflare" };
 }
@@ -260,7 +270,7 @@ for (const name of docTypes) {
   const web = DOC_TYPES[name].web;
   if (!web) continue;
   const webPort = web.port + (useAzure ? AZURE_WEB_PORT_OFFSET : 0);
-  const child = spawn("npx", ["vite", "--port", String(webPort), "--strictPort"], {
+  const child = spawn("npx", ["vite", "--host", LOCAL_HOST, "--port", String(webPort), "--strictPort"], {
     cwd: join(root, web.dir),
     stdio: "inherit",
     env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
@@ -272,11 +282,11 @@ for (const name of docTypes) {
 
 // The CAS admin console ships with the Miniflare stack's admin worker; spawn
 // its Vite dev server too so `pnpm dev` runs the whole middleware + apps.
-if (!useAzure) {
-  const adminWeb = spawn("pnpm --filter @unicas/admin-webui dev:ui", {
+if (!useAzure && devOptions.casMode === "local") {
+  const adminWeb = spawn("pnpm", ["--filter", "@unicas/admin-webui", "dev:ui", "--", "--host", LOCAL_HOST], {
     cwd: root,
     stdio: "inherit",
-    shell: true,
+    shell: process.platform === "win32",
   });
   adminWeb.on("error", (err) => console.error("[cas-admin web] failed to start:", err.message));
   webChildren.push(adminWeb);

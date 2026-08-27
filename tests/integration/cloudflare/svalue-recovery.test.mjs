@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 
 let runtime;
 

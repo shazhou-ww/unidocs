@@ -19,9 +19,10 @@ import {
   MIDDLEWARE_WORKER,
   MOCK_OIDC_PORT,
   MOCK_OIDC_WORKER,
+  REMOTE_CAS_PROXY_WORKER,
   parseDocTypes,
   resolvePorts,
-} from "../../../stacks/cloudflare/local/doc-types.mjs";
+} from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
 
 /** Ports every buildWorkers call needs in these tests. */
 const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, edge: 8794 };
@@ -278,6 +279,24 @@ test("casFault 默认关闭时,不产生假 CAS worker", () => {
   expect(workers.map((w) => w.name)).not.toContain(CAS_FAULT_WORKER);
   const docx = workers.find((w) => w.name === "unidocs-docx");
   expect(docx.serviceBindings.CAS_SERVICE).toBe(MIDDLEWARE_WORKER);
+});
+
+test("remote CAS mode omits local middleware and binds gateway/docs through the proxy", () => {
+  const workers = buildWorkers({
+    ...stackArgs({ docTypes: ["docx"], ports: { docx: 8789 } }),
+    casOrigin: "https://unicas.example",
+  });
+  expect(workers.map((worker) => worker.name)).toEqual([
+    GATEWAY_WORKER,
+    REMOTE_CAS_PROXY_WORKER,
+    "unidocs-docx",
+  ]);
+  expect(workers.find((worker) => worker.name === GATEWAY_WORKER).serviceBindings.CAS_SERVICE)
+    .toBe(REMOTE_CAS_PROXY_WORKER);
+  expect(workers.find((worker) => worker.name === "unidocs-docx").serviceBindings.CAS_SERVICE)
+    .toBe(REMOTE_CAS_PROXY_WORKER);
+  expect(workers.find((worker) => worker.name === REMOTE_CAS_PROXY_WORKER).bindings.CAS_ORIGIN)
+    .toBe("https://unicas.example");
 });
 
 test("接线:edge 是唯一公网入口,tenant/admin 私有绑定,admin 持有审计读取绑定", () => {

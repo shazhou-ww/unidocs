@@ -1,57 +1,60 @@
-# stacks/
+# Stack registry
 
-每朵云一个子目录,每个子目录内部分 `deploy/`(真实云部署)与 `local/`
-(本机等价栈)。新增一朵云的支持时,照这个形状建目录即可。
+Each first-level directory is one independently runnable and deployable stack.
+The directory name is its CLI selector; provider is an implementation detail,
+not the first classification level.
 
-```
+```text
 stacks/
-  azure/
-    deploy/   Bicep 模板 + Dockerfile + deploy.mjs + smoke.mjs
-    local/    runtime.mjs / ports.mjs / replica-proxy.mjs
-  cloudflare/
-    deploy/   (见该目录 README:wrangler.toml 按 wrangler 的要求留在各包内)
-    local/    runtime.mjs / doc-types.mjs
+  unicas/
+  unidocs-cloudflare/
+  unidocs-azure/
 ```
 
-## 与 `packages/` 的分界
+Every stack exposes the same entries:
 
-`packages/{azure,cloudflare}-*` 是**代码** —— 被部署、被跑单测的东西。
-`stacks/` 是**运维与工具** —— 怎么把那些代码构建成镜像/bundle、部署上云、
-或者在本机起一套等价的栈。
+```text
+stacks/<stack>/local/dev.mjs
+stacks/<stack>/deploy/deploy.mjs
+stacks/<stack>/deploy/smoke.mjs
+```
 
-依赖是单向的:`stacks/` 依赖 `packages/`,反过来不成立。推论 ——
-**删掉整个 `stacks/azure/`,`pnpm build` / `typecheck` / `test` 依然全绿**,
-丢失的只是"怎么部署 Azure"和"怎么在本机跑 Azure 栈"这两项能力。
-(`stacks/cloudflare/local/` 不满足这条:`tests/integration/cloudflare/`
-的强制门禁直接 import 它。)
+The root dispatcher maps commands directly to those files:
 
-## 与 `scripts/` 的分界
+```text
+pnpm dev <stack> [...args]
+pnpm run deploy <stack> [...args]
+pnpm smoke <stack> [...args]
+```
 
-`scripts/` 只放**与云无关或两栈共享**的东西:
+`pnpm run deploy` must include `run`: bare `pnpm deploy` is a pnpm built-in
+command and does not invoke the repository script.
 
-| 文件 | 为什么在这 |
-|---|---|
-| `dev.mjs` | 两栈共享的入口,`--azure` 在这里分派 |
-| `workspace-aliases.mjs` | 两栈的 esbuild 打包共用同一份别名表(8 处 import) |
-| `cas-digest.mjs` | 命令行算 CAS 哈希,与云无关 |
-| `analyze-deps.mjs` | 依赖分析,与云无关 |
-| `psd-do-memory-probe.mjs` | 一次性诊断工具(跑 workerd 测 DO 内存) |
+## Local execution
 
-判断依据:**只有一朵云用到的运行时/部署逻辑,放 `stacks/<cloud>/`;
-两朵云都用到的、或者跟云无关的,放 `scripts/`。**
+`local/dev.mjs` is the stable interface. Its implementation may use Node,
+Miniflare, Docker Compose, or a combination. Cloudflare-based stacks accept
+`--docker` to run their complete local runtime in Compose:
 
-## Cross-cloud capability contract
+```text
+pnpm dev unicas --docker
+pnpm dev unidocs-cloudflare --docker
+```
 
-- Gateway is the only holder of the private signing key.
-- Doc and CAS receive public-only trusted JWKS; each Doc and CAS use distinct,
-  exact audiences.
-- Trust is immutable deployment configuration, not runtime discovery. Key or
-  JWKS changes require a Worker deployment or new/restarted Container App
-  revision.
-- Gateway-to-Doc, Gateway-to-CAS, and Doc-to-CAS use separate short-lived
-  capabilities. User credentials and identity headers never cross the Gateway
-  boundary.
+The Azure runtime already uses Docker Compose for Postgres and runs application
+processes on the host, so `pnpm dev unidocs-azure --docker` is equivalent to its
+normal local command.
 
-See [Azure deployment](azure/README.md),
-[Cloudflare deployment](cloudflare/deploy/README.md), and
-[capability key operations](../docs/capability-key-operations.md).
+Interactive UniDocs development defaults to remote UniCAS. Pass `--cas local`
+for an embedded, hermetic CAS; automated tests continue to use that local mode.
+
+## Code boundary
+
+`packages/` and `unicas-packages/` contain implementation code. `stacks/`
+contains orchestration, deployment assets, environment projection, and local
+composition. Dependencies point from `stacks/` to packages, never the reverse.
+
+See [UniCAS](unicas/README.md), [Azure UniDocs](unidocs-azure/README.md), and
+[Cloudflare UniDocs](unidocs-cloudflare/deploy/README.md). Deployment identity,
+runtime secrets, and local variables are documented in
+[Deployment and local configuration](../docs/deployment-and-local-configuration.md).

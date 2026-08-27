@@ -1,22 +1,22 @@
-# stacks/cloudflare/deploy/
+# stacks/unidocs-cloudflare/deploy/
 
 **Cloudflare 的部署配置不在这里,在各个包里** ——
-`packages/cloudflare-{gateway,markdown,docx,psd}/wrangler.toml` 与
-`unicas-packages/{server-cloudflare,edge,admin-webui}/wrangler.toml`。
+`packages/cloudflare-{gateway,markdown,docx,psd}/wrangler.toml`。
 
 这不是遗漏,是 wrangler 的硬性要求:`wrangler.toml` 里的 `main`
 (`dist/worker.js`)是**相对该文件自身**解析的,而 `wrangler deploy`
 从包目录运行。把 toml 搬到这里会让每一条相对路径失效。
 
-所以 Cloudflare 侧目前没有部署编排脚本 —— 部署就是在包目录里
-`wrangler deploy`,一个 worker 一条命令,天然互不耦合。
+`deploy.mjs` 负责 docs → gateway 的应用栈顺序，仍由各包自己的 Wrangler
+配置执行实际发布。Gateway 仍使用 insecure identity resolver 时，真实部署会在
+发布任何单元之前失败；`--dry-run` 可用于审查完整计划。
 
 ## Capability deployment contract
 
 1. Provision an ES256 signing key and environment-specific issuer.
-2. Store `CAPABILITY_TRUSTED_JWKS` as a secret on CAS and every Doc worker.
+2. Store `CAPABILITY_TRUSTED_JWKS` as a secret on every Doc worker.
   Set each Doc's exact audience and the CAS audience/lifetime policy as vars.
-3. Deploy/restart CAS and Doc validators first and confirm the new trusted
+3. Deploy/restart Doc validators first and confirm the new trusted
   `kid` from metadata-only startup diagnostics.
 4. Store `CAPABILITY_PRIVATE_KEY_PKCS8` only on Gateway, set its active `kid`,
   issuer, Doc registry audiences, and CAS audience, then deploy Gateway.
@@ -32,14 +32,5 @@ deployment because running isolates do not hot-reload trust. `CAS_ACCESS_KEY`
 and other shared-key bindings are rollout-era legacy dependencies and must be
 removed after the production observation and rollback windows close.
 
-这个目录存在是为了给将来真正属于"Cloudflare 部署编排"的东西留位置,
-比如:
-
-- CAS 中间件的一次性 provisioning(建 D1、填 `database_id`、
-  `wrangler secret put`)—— 目前 `unicas-packages/server-cloudflare/wrangler.toml`
-  与 `unicas-packages/admin-webui/wrangler.toml` 已部署(见
-  `docs/superpowers/plans/2026-08-26-cas-middleware.md` 的 Task 9 部署记录)
-- 多 worker 的顺序部署与冒烟,对应 `stacks/azure/deploy/deploy.mjs`
-
-在有真实编排需求之前,不要为了对称而往这里塞脚本；部署安全约束由本文件
-和 `docs/capability-key-operations.md` 共同定义。
+UniCAS 的 tenant/admin/edge 部署已经独立归属 `stacks/unicas/deploy/`。
+应用栈部署安全约束由本文件和 `docs/capability-key-operations.md` 共同定义。

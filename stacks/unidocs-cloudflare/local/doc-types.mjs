@@ -18,6 +18,7 @@ export const ADMIN_WORKER = "unidocs-cas-admin";
 export const MOCK_OIDC_WORKER = "unidocs-mock-oidc";
 /** 故障注入用的假 CAS,只在测试里启用。 */
 export const CAS_FAULT_WORKER = "unidocs-cas-fault";
+export const REMOTE_CAS_PROXY_WORKER = "unidocs-remote-cas-proxy";
 /** Canonical stack-scoped tenant CAS worker (private; behind cas-edge). */
 export const MIDDLEWARE_WORKER = "unidocs-cas-middleware";
 /** Public CAS front door worker (/stacks + /admin dispatch). */
@@ -138,7 +139,7 @@ export function resolvePorts(docTypes, overrides = {}) {
 }
 
 /** Entry point of every worker that needs bundling for the given selection. */
-export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = false } = {}) {
+export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = true } = {}) {
   const middlewareTargets = [
     { entry: "unicas-packages/server-cloudflare/src/worker.ts", outfile: "cas-middleware.js" },
     { entry: "unicas-packages/edge/src/worker.ts", outfile: "cas-edge.js" },
@@ -147,14 +148,16 @@ export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddlewa
     return [
       ...middlewareTargets,
       { entry: "unicas-packages/admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
-      { entry: "stacks/cloudflare/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
+      { entry: "stacks/unicas/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
     ];
   }
   return [
-    ...middlewareTargets,
+    ...(casMiddleware ? middlewareTargets : []),
     { entry: "packages/cloudflare-gateway/src/worker.ts", outfile: "gateway.js" },
-    { entry: "unicas-packages/admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
-    { entry: "stacks/cloudflare/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
+    ...(casMiddleware ? [
+      { entry: "unicas-packages/admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
+      { entry: "stacks/unicas/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
+    ] : []),
     ...docTypes.map((name) => ({
       entry: DOC_TYPES[name].entry,
       outfile: `${name}.js`,
@@ -183,7 +186,7 @@ export function docServicesJson(docTypes, host, ports) {
  * `casMiddlewareOnly` starts the CAS middleware by itself — the tenant CAS
  * worker, the admin BFF, and the mock OIDC provider — with no gateway and no
  * doc type workers, mirroring the middleware's independent deployment
- * boundary (see `scripts/dev-cas-admin.mjs`).
+ * boundary (see `stacks/unicas/local/dev.mjs`).
  */
 export function buildWorkers({
   docTypes,
@@ -201,6 +204,7 @@ export function buildWorkers({
   googleOidcIssuer,
   casMiddlewareOnly = false,
   casMiddleware = false,
+  casOrigin,
 }) {
   if (internalAuthMode !== "stack") {
     throw new Error("internalAuthMode must be stack (legacy/dual/capability retired with the legacy runtime)");
@@ -301,6 +305,10 @@ export function buildWorkers({
     ];
   }
 
+  const gatewayCasServiceTarget = casOrigin ? REMOTE_CAS_PROXY_WORKER : MIDDLEWARE_WORKER;
+  const docCasServiceTarget = casOrigin
+    ? REMOTE_CAS_PROXY_WORKER
+    : (casFault ? CAS_FAULT_WORKER : MIDDLEWARE_WORKER);
   const workers = [
     {
       name: GATEWAY_WORKER,
@@ -324,9 +332,27 @@ export function buildWorkers({
         INSECURE_PATH_IDENTITY: "true",
       },
       d1Databases: { GATEWAY_DB },
-      serviceBindings: { CAS_SERVICE: MIDDLEWARE_WORKER },
+      serviceBindings: { CAS_SERVICE: gatewayCasServiceTarget },
     },
   ];
+
+  if (casOrigin) {
+    workers.push({
+      name: REMOTE_CAS_PROXY_WORKER,
+      modules: true,
+      script: `export default {
+        async fetch(request, env) {
+          const source = new URL(request.url);
+          const target = new URL(env.CAS_ORIGIN);
+          target.pathname = source.pathname;
+          target.search = source.search;
+          return fetch(new Request(target, request));
+        }
+      };`,
+      compatibilityDate: COMPATIBILITY_DATE,
+      bindings: { CAS_ORIGIN: casOrigin },
+    });
+  }
 
   if (casFault) {
     workers.push({
@@ -338,18 +364,15 @@ export function buildWorkers({
     });
   }
 
-  workers.push(middlewareWorker, edgeWorker);
-
-  workers.push(adminWorker, mockOidcWorker);
+  if (!casOrigin) {
+    workers.push(middlewareWorker, edgeWorker, adminWorker, mockOidcWorker);
+  }
 
   const stackBindings = {
     CAS_STACK_ID: stackFixture.stackId,
     CAS_STACK_ISSUER: stackFixture.issuer,
     CAS_STACK_TRUSTED_JWKS: JSON.stringify(stackFixture.jwks),
   };
-  // Fault injection wraps the middleware; casFault wins over the default.
-  const casServiceTarget = casFault ? CAS_FAULT_WORKER : MIDDLEWARE_WORKER;
-
   for (const name of docTypes) {
     const spec = DOC_TYPES[name];
     workers.push({
@@ -372,7 +395,7 @@ export function buildWorkers({
         [spec.editor]: { className: spec.editorClass, useSQLite: true },
         [spec.operator]: { className: spec.operatorClass, useSQLite: true },
       },
-      serviceBindings: { CAS_SERVICE: casServiceTarget },
+      serviceBindings: { CAS_SERVICE: docCasServiceTarget },
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }

@@ -24,14 +24,16 @@ param pgAdminPassword string
 param serviceAccessKey string
 
 @secure()
-param casAccessKey string = ''
+param capabilityTrustedJwks string = ''
 
 @secure()
-param capabilityTrustedJwks string = ''
+param casStackTrustedJwks string = ''
 
 param internalAuthMode string = 'stack'
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
-param casCapabilityAudience string = 'unidocs-cas'
+param casStackId string = 'unidocs-azure'
+param casStackIssuer string = 'https://unicas.shazhou.work/cas/issuer/azure'
+param casCapabilityAudience string = 'unidocs-cas-azure'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
@@ -100,6 +102,14 @@ var authEnv = [
     value: capabilityIssuer
   }
   {
+    name: 'CAS_STACK_ID'
+    value: casStackId
+  }
+  {
+    name: 'CAS_STACK_ISSUER'
+    value: casStackIssuer
+  }
+  {
     name: 'CAPABILITY_ALGORITHM'
     value: 'ES256'
   }
@@ -134,8 +144,8 @@ module app 'container-app.bicep' = {
     maxReplicas: maxReplicas
     databaseUrl: databaseUrl
     serviceAccessKey: serviceAccessKey
-    casAccessKey: casAccessKey
     capabilityTrustedJwks: capabilityTrustedJwks
+    casStackTrustedJwks: casStackTrustedJwks
     extraEnv: extraEnv
   }
 }

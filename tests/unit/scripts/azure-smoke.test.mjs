@@ -18,7 +18,7 @@ import {
   isLocalHost,
   missingDocTypeFlows,
   parseArgs,
-} from "../../../stacks/azure/deploy/smoke.mjs";
+} from "../../../stacks/unidocs-azure/deploy/smoke.mjs";
 
 describe("parseArgs", () => {
   test("--gateway 是必填的", () => {
@@ -141,7 +141,7 @@ describe("assertCasNotConfigured", () => {
 // <docType>Flow 的成员（比如下一个任务要加的 psd）本该让冒烟响亮失败，
 // 而不是安静地只跑 markdown/docx 就打印 "all smoke assertions passed"。
 // 这里直接测这个比较本身，不需要真实网关或在磁盘上伪造
-// azure.service.json——见 stacks/azure/deploy/smoke.mjs 里 main() 对它的
+// azure.service.json——见 stacks/unidocs-azure/deploy/smoke.mjs 里 main() 对它的
 // 调用点与那条报错文案。
 describe("missingDocTypeFlows", () => {
   test("expected 与 ran 完全一致 -> 没有缺口", () => {

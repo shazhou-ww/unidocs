@@ -410,9 +410,9 @@ function assertPortFree(port, hint) {
         reject(
           new Error(
             `port ${port} is already in use (${hint}). This is most likely a process leaked by a ` +
-              `previous \`startAzureRuntime()\` run (a parent process killed with SIGKILL can't take its ` +
-              `spawned children down with it — see the comment on \`installChildProcessCleanup()\`) or an ` +
-              `unrelated stack bound to the same port. Find and stop it (e.g. \`lsof -i :${port}\`), then retry.`,
+            `previous \`startAzureRuntime()\` run (a parent process killed with SIGKILL can't take its ` +
+            `spawned children down with it — see the comment on \`installChildProcessCleanup()\`) or an ` +
+            `unrelated stack bound to the same port. Find and stop it (e.g. \`lsof -i :${port}\`), then retry.`,
           ),
         );
         return;
@@ -589,8 +589,8 @@ function assertDocTypesSupported(docTypes, table) {
   if (unsupported.length > 0) {
     throw new Error(
       `startAzureRuntime() supports ${known.join(", ")} (got ${unsupported.join(", ")}). ` +
-        `Add a packages/azure-${unsupported[0]}/ package with a src/main.ts entry point and an ` +
-        "azure.service.json declaring its docType — the table expands from those files.",
+      `Add a packages/azure-${unsupported[0]}/ package with a src/main.ts entry point and an ` +
+      "azure.service.json declaring its docType — the table expands from those files.",
     );
   }
 }
@@ -651,6 +651,7 @@ export async function startAzureRuntime({
   internalAuthMode = "stack",
   capabilityFixture,
   stackFixture,
+  casBaseUrl,
   middlewarePorts = {},
   middlewareLogLevel,
   postgres = "compose",
@@ -693,9 +694,9 @@ export async function startAzureRuntime({
   // of the fresh stack, making the behavior suite pass against stale state).
   await assertPortsFree(layout, { skipPostgresPort: externalPostgres });
 
-  // 嵌入本地 CAS 中间件（注册 unidocs-azure 栈）。azure 网关与服务进程的
-  // CAS_BASE_URL 指向它的 edge 端点；共享密钥的过渡形态已随 legacy 运行时退役。
-  const middleware = await startLocalMiddleware({
+  // Tests omit casBaseUrl and retain an embedded, hermetic UniCAS. Interactive
+  // development supplies the shared remote edge and skips the local middleware.
+  const middleware = casBaseUrl ? undefined : await startLocalMiddleware({
     stacks: [{
       stackId: resolvedStackFixture.stackId,
       issuer: resolvedStackFixture.issuer,
@@ -707,7 +708,7 @@ export async function startAzureRuntime({
     ports: resolvedMiddlewarePorts,
     logLevel: middlewareLogLevel,
   });
-  const resolvedCasBaseUrl = middleware.urls.edge;
+  const resolvedCasBaseUrl = casBaseUrl ?? middleware.urls.edge;
 
   if (externalPostgres) {
     // Nothing to pull, nothing to start — the caller's environment already
@@ -874,7 +875,7 @@ export async function startAzureRuntime({
         // exiting (that's the entire point of passing one), the same way
         // `postgres: "external"`'s data directory is never touched here.
         if (ownsAzuriteDataDir) {
-          await rm(resolvedAzuriteDataDir, { recursive: true, force: true }).catch(() => {});
+          await rm(resolvedAzuriteDataDir, { recursive: true, force: true }).catch(() => { });
         }
         // `postgres: "external"` never ran `docker compose up` above, so it
         // must not run `down -v` here either — this run doesn't own that
@@ -892,17 +893,17 @@ export async function startAzureRuntime({
     // ever cleaned up by the caller's `dispose()`, which never gets called.
     uninstallCleanup();
     await Promise.all(
-      Object.values(proxies).map((proxy) => proxy?.close().catch(() => {})),
+      Object.values(proxies).map((proxy) => proxy?.close().catch(() => { })),
     );
     await Promise.allSettled([
       stopProcess(gatewayProc),
       ...docTypes.flatMap((name) => docTypeProcs[name].map((proc) => stopProcess(proc))),
       stopProcess(azuriteProc),
     ]);
-    await probe?.dispose().catch(() => {});
-    await middleware?.dispose().catch(() => {});
+    await probe?.dispose().catch(() => { });
+    await middleware?.dispose().catch(() => { });
     if (resolvedAzuriteDataDir && ownsAzuriteDataDir) {
-      await rm(resolvedAzuriteDataDir, { recursive: true, force: true }).catch(() => {});
+      await rm(resolvedAzuriteDataDir, { recursive: true, force: true }).catch(() => { });
     }
     if (!externalPostgres) {
       try {

@@ -5,13 +5,13 @@
  * 固定 id 会在第二次运行时撞 DocExists。
  *
  * 用法:
- *   node stacks/azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io
- *   node stacks/azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --no-cas
- *   node stacks/azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
- *   node stacks/azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --only docx
+ *   node stacks/unidocs-azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io
+ *   node stacks/unidocs-azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --no-cas
+ *   node stacks/unidocs-azure/deploy/smoke.mjs --gateway http://127.0.0.1:41787 --skip-cas
+ *   node stacks/unidocs-azure/deploy/smoke.mjs --gateway https://unidocs-gateway.<region>.azurecontainerapps.io --only docx
  *
  * `--only <docType>`(`markdown`、`docx` 或 `psd`)把冒烟收窄到一个 doc type 的
- * 流程,不给时测全部。`stacks/azure/deploy/deploy.mjs` 在 `--service docx` 之后
+ * 流程,不给时测全部。`stacks/unidocs-azure/deploy/deploy.mjs` 在 `--service docx` 之后
  * 传 `--only docx`,这样一次只部一个服务不会因为另一个 doc type(这次根本
  * 没被触碰)恰好挂掉而报红。
  *
@@ -410,7 +410,7 @@ export async function main() {
   );
 
   // `--only <docType>` narrows the run to one doc type's flow — used by
-  // `stacks/azure/deploy/deploy.mjs` after `--service docx` so a stale/unrelated
+  // `stacks/unidocs-azure/deploy/deploy.mjs` after `--service docx` so a stale/unrelated
   // markdown deployment can't fail a docx-only smoke run. Not given (or
   // given the other doc type) skips the corresponding flow entirely.
   //
@@ -477,7 +477,7 @@ export async function main() {
     throw new Error(
       `smoke.mjs has no flow wired up for doc type(s): ${missing.join(", ")}. ` +
       "They are declared via packages/azure-<name>/azure.service.json " +
-      "(stacks/azure/doc-types.mjs's readAzureDocTypes(), which is where KNOWN_DOC_TYPES above " +
+      "(stacks/unidocs-azure/doc-types.mjs's readAzureDocTypes(), which is where KNOWN_DOC_TYPES above " +
       "comes from), but main() only dispatches to markdownFlow()/docxTextFlow() by name — there is " +
       "no generic per-doc-type flow to fall back to. Add a <docType>Flow() for it and wire it into " +
       "the `if` blocks above before deploying or smoke-testing this doc type; otherwise this would " +

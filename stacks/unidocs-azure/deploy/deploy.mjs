@@ -10,26 +10,23 @@
  *   gateway.bicep     网关 Container App
  *
  * 用法(不传任何选择器 = 冷启动全量,顺序 bootstrap -> platform -> services -> gateway):
- *   node stacks/azure/deploy/deploy.mjs \
- *     --cas-base-url https://unidocs-cas.<account>.workers.dev \
- *     --cas-access-key <与 Cloudflare CAS worker 相同的 CAS_ACCESS_KEY>
+ *   node stacks/unidocs-azure/deploy/deploy.mjs \
+ *     --cas-base-url https://unicas.shazhou.work
  *
  * 用法(只部一个 target —— 见 parseArgs()):
- *   node stacks/azure/deploy/deploy.mjs --bootstrap
- *   node stacks/azure/deploy/deploy.mjs --platform
- *   node stacks/azure/deploy/deploy.mjs --service docx
- *   node stacks/azure/deploy/deploy.mjs --service docx,markdown
- *   node stacks/azure/deploy/deploy.mjs --gateway
+ *   node stacks/unidocs-azure/deploy/deploy.mjs --bootstrap
+ *   node stacks/unidocs-azure/deploy/deploy.mjs --platform
+ *   node stacks/unidocs-azure/deploy/deploy.mjs --service docx
+ *   node stacks/unidocs-azure/deploy/deploy.mjs --service docx,markdown
+ *   node stacks/unidocs-azure/deploy/deploy.mjs --gateway
  *
  * `--cas-base-url` 是可选的:不给时需要跨云 CAS 的 doc type(见
  * `doc-types.mjs` 的 `needsCas`,目前只有 docx)图片路径返回 501,其余功能
  * (含这些 doc type 除图片外的操作)不受影响,见 `packages/azure-gateway/src/main.ts`
  * 与 `packages/azure-sdk/src/doc-type-service.ts` 顶部注释。
  *
- * `--cas-access-key` 只在 Key Vault 里还没有该 secret 时才可能需要:
- * 配了 `--cas-base-url` 时必须显式传(要与 Cloudflare CAS worker 的
- * CAS_ACCESS_KEY 对齐,本脚本绝不会替你生成一个注定对不上的值)。
- * 其余服务密钥(每个 doc type 自己的 access key)由本脚本生成并存进 Key Vault。
+ * 每个 doc type 自己的服务密钥由本脚本生成并存进 Key Vault。CAS 鉴权
+ * 使用注册 stack 的 capability,不配置跨云共享密钥。
  *
  * `--build-concurrency`(默认 2):ACR 镜像构建的有界并发数,见
  * `buildAndPushImages()` 顶部注释。
@@ -47,12 +44,18 @@ const DEFAULTS = {
   subscription: "24c9acbd-c2f5-4ef9-b9a2-486d90208b3e",
   resourceGroup: "Unidocs",
   location: "southeastasia",
+  casStackId: "unidocs-azure",
+  casStackIssuer: "https://unicas.shazhou.work/cas/issuer/azure",
+  casStackKeyId: "az-rotate-1",
+  casCapabilityAudience: "unidocs-cas-azure",
+  casRefDomain: "doc",
 };
 
 const PG_ADMIN_PASSWORD_SECRET = "pg-admin-password";
-const CAS_ACCESS_KEY_SECRET = "cas-access-key";
 const CAPABILITY_PRIVATE_KEY_SECRET = "capability-private-key-pkcs8";
 const CAPABILITY_TRUSTED_JWKS_SECRET = "capability-trusted-jwks";
+const CAS_STACK_PRIVATE_KEY_SECRET = "cas-stack-private-key-pkcs8";
+const CAS_STACK_TRUSTED_JWKS_SECRET = "cas-stack-trusted-jwks";
 
 /** Key Vault 里每个 Doc service 的 access key secret 名。 */
 const accessKeySecretName = (docType) => `${docType}-access-key`;
@@ -213,7 +216,6 @@ export function parseArgs(argv) {
   const args = {
     ...DEFAULTS,
     casBaseUrl: "",
-    casAccessKey: "",
     internalAuthMode: "stack",
     capabilityIssuer: "unidocs-gateway:azure-dev",
     capabilityKeyId: "",
@@ -233,7 +235,11 @@ export function parseArgs(argv) {
       case "--resource-group": args.resourceGroup = argv[++i]; break;
       case "--location": args.location = argv[++i]; break;
       case "--cas-base-url": args.casBaseUrl = argv[++i]; break;
-      case "--cas-access-key": args.casAccessKey = argv[++i]; break;
+      case "--cas-stack-id": args.casStackId = argv[++i]; break;
+      case "--cas-stack-issuer": args.casStackIssuer = argv[++i]; break;
+      case "--cas-stack-key-id": args.casStackKeyId = argv[++i]; break;
+      case "--cas-capability-audience": args.casCapabilityAudience = argv[++i]; break;
+      case "--cas-ref-domain": args.casRefDomain = argv[++i]; break;
       case "--internal-auth-mode": args.internalAuthMode = argv[++i]; break;
       case "--capability-issuer": args.capabilityIssuer = argv[++i]; break;
       case "--capability-key-id": args.capabilityKeyId = argv[++i]; break;
@@ -552,7 +558,7 @@ function checkRbac(args) {
       `preflight: the signed-in identity (${assignee}) has none of ${PRIVILEGED_ROLES.join(" / ")} ` +
       `on /subscriptions/${args.subscription} or resource group ${args.resourceGroup} ` +
       `(roles seen: ${[...found].join(", ") || "none"}).\n` +
-      "stacks/azure/deploy/bootstrap.bicep creates two role assignments (UAMI -> AcrPull on ACR, " +
+      "stacks/unidocs-azure/deploy/bootstrap.bicep creates two role assignments (UAMI -> AcrPull on ACR, " +
       "UAMI -> Storage Blob Data Contributor on the storage account). Contributor is NOT " +
       "enough: its notActions include Microsoft.Authorization/*/Write, so the bootstrap " +
       "deployment would fail halfway, after ACR / Storage / Key Vault / Log Analytics " +
@@ -565,7 +571,7 @@ function checkRbac(args) {
 }
 
 /**
- * `stacks/azure/deploy/smoke.mjs`(冒烟)从 `unicas-packages/server-common/dist/index.js` import CAS
+ * `stacks/unidocs-azure/deploy/smoke.mjs`(冒烟)从 `unicas-packages/server-common/dist/index.js` import CAS
  * 哈希算法(仓库既有惯例,`scripts/cas-digest.mjs` 同样如此),而本脚本全程
  * **不在宿主机跑 `pnpm build`** —— 它只构建镜像,那是容器内编译,`.dockerignore`
  * 还排除了 `**\/dist`。干净检出上不自检的话,会一路成功到冒烟那一步,在十几分钟
@@ -575,7 +581,7 @@ function checkHostBuild() {
   const casDist = join(ROOT, "unicas-packages/server-common/dist/index.js");
   if (!existsSync(casDist)) {
     throw new Error(
-      `preflight: ${casDist} is missing. stacks/azure/deploy/smoke.mjs imports the CAS ` +
+      `preflight: ${casDist} is missing. stacks/unidocs-azure/deploy/smoke.mjs imports the CAS ` +
       "hash algorithm from it, and this script never runs `pnpm build` on the host " +
       "(images compile inside the container). Run `pnpm build` first.",
     );
@@ -629,14 +635,14 @@ function deployBootstrap(args, deployerObjectId) {
   run("az", [
     "deployment", "group", "what-if",
     "-g", args.resourceGroup,
-    "-f", "stacks/azure/deploy/bootstrap.bicep",
+    "-f", "stacks/unidocs-azure/deploy/bootstrap.bicep",
     "--parameters", `deployerObjectId=${deployerObjectId}`,
   ]);
 
   const stdout = capture("az", [
     "deployment", "group", "create",
     "-g", args.resourceGroup,
-    "-f", "stacks/azure/deploy/bootstrap.bicep",
+    "-f", "stacks/unidocs-azure/deploy/bootstrap.bicep",
     "-n", DEPLOYMENT_NAMES.bootstrap,
     "--parameters", `deployerObjectId=${deployerObjectId}`,
     "-o", "json",
@@ -765,66 +771,19 @@ async function seedSecret(keyVaultName, secretName, byteLength) {
   return generated;
 }
 
-/**
- * 需要跨云 CAS 才能工作的 doc type 名单(`azure-{docType}` 形式),从表按
- * `needsCas` 算出来 —— 只用于把下面两条报错/提示文案里"谁的图片路径会 401"
- * 说清楚,不参与任何控制流。加一个 `needsCas` 的 doc type 时这两条文案自动
- * 跟着变,不用回头改这个文件。
- */
+
 function casDocTypeNames(table = readAzureDocTypes(ROOT)) {
   return Object.values(table)
     .filter((entry) => entry.needsCas)
     .map((entry) => `azure-${entry.docType}`)
     .join(" / ");
 }
-
 /**
- * `CAS_ACCESS_KEY` 与 Postgres 密码性质**不同**,不能一概共用 `seedSecret()`:
- * 它是栈模式迁移前的共享密钥遗留值。栈模式下鉴权走栈作用域 capability,
- * 但 gateway 与 doc 服务的 CasClient 仍携带该值作为兼容绑定。
- * 现场随机生成一个只会让所有跨云 CAS 请求 401 —— 所以这里 fail closed:
- * Key Vault 里没有、`--cas-access-key` 也没给,直接报错,绝不自动生成。
- *
- * (本地栈之所以看不出跨云不对齐的问题:`stacks/cloudflare/local/doc-types.mjs` 硬编码的
- * `CAS_ACCESS_KEY = "unidocs-dev-cas-key"` 被 Miniflare 与本地 Azure 栈共用。)
+ * 需要跨云 CAS 才能工作的 doc type 名单(`azure-{docType}` 形式),从表按
+ * `needsCas` 算出来 —— 只用于把下面两条报错/提示文案里"谁的图片路径会 401"
+ * 说清楚,不参与任何控制流。加一个 `needsCas` 的 doc type 时这两条文案自动
+ * 跟着变,不用回头改这个文件。
  */
-async function resolveCasAccessKey(keyVaultName, provided) {
-  const showLabel = `az keyvault secret show --vault-name ${keyVaultName} -n ${CAS_ACCESS_KEY_SECRET}`;
-  const existing = await runKeyVaultSecretOp(
-    showLabel,
-    ["keyvault", "secret", "show", "--vault-name", keyVaultName, "-n", CAS_ACCESS_KEY_SECRET, "--query", "value", "-o", "tsv"],
-    () => null,
-  );
-  if (existing) {
-    // 已有则读用 —— 幂等,且第二次部署不需要再传 --cas-access-key。
-    return existing;
-  }
-  if (!provided) {
-    const casDocTypes = casDocTypeNames();
-    throw new Error(
-      `Key Vault ${keyVaultName} has no "${CAS_ACCESS_KEY_SECRET}" secret and --cas-access-key was not given.\n` +
-      "This value is NOT generated by this deployment: it must equal the CAS_ACCESS_KEY used by the " +
-      "Cloudflare-side middleware tenant worker (unicas-packages/server-cloudflare). A mismatch makes " +
-      "every cross-cloud CAS request fail with 401 — the image path would break in production while " +
-      "every local test stays green.\n" +
-      "Confirm the Cloudflare-side secret exists with:\n" +
-      "  cd unicas-packages/server-cloudflare && npx wrangler secret list\n" +
-      "then rerun with --cas-access-key <that value>.",
-    );
-  }
-  // label 显式给出:args 里的 `--value <provided>` 绝不能进 Error.message。
-  const setLabel = `az keyvault secret set --vault-name ${keyVaultName} -n ${CAS_ACCESS_KEY_SECRET}`;
-  await runKeyVaultSecretOp(
-    setLabel,
-    ["keyvault", "secret", "set", "--vault-name", keyVaultName, "-n", CAS_ACCESS_KEY_SECRET, "--value", provided, "-o", "none"],
-    (result) => {
-      if (result.stderr) process.stderr.write(result.stderr);
-      throw new Error(`${setLabel} exited with code ${result.status}`);
-    },
-  );
-  return provided;
-}
-
 async function requireExistingSecret(keyVaultName, secretName) {
   const showLabel = `az keyvault secret show --vault-name ${keyVaultName} -n ${secretName}`;
   const existing = await runKeyVaultSecretOp(
@@ -844,8 +803,7 @@ async function requireExistingSecret(keyVaultName, secretName) {
 /**
  * 只播种被选中 target 实际需要的密钥:`platform`/`services`/`gateway` 都
  * 要 `pgAdminPassword`(拼进各自的 Postgres 连接串)。`services`/`gateway`
- * 要服务级 access key:`casAccessKey`(必须与 Cloudflare 对齐,见
- * `resolveCasAccessKey()`)、每个 doc type 一个 `SERVICE_ACCESS_KEY`,名字是
+ * 要每个 doc type 一个 `SERVICE_ACCESS_KEY`,名字是
  * `{docType}-access-key`,由本脚本生成。`--bootstrap` 单独跑时
  * (main() 根本不调用这个函数)不需要任何一个。
  */
@@ -854,9 +812,6 @@ async function seedSecrets(keyVaultName, args) {
   const needsPg = args.targets.some((t) => t === "platform" || t === "services" || t === "gateway");
   const needsServiceKeys = args.targets.some((t) => t === "services" || t === "gateway");
   const pgAdminPassword = needsPg ? await seedSecret(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48) : null;
-  const casAccessKey = needsServiceKeys
-    ? await resolveCasAccessKey(keyVaultName, args.casAccessKey)
-    : null;
   const table = readAzureDocTypes(ROOT);
   const accessKeys = {};
   if (needsServiceKeys) {
@@ -871,12 +826,19 @@ async function seedSecrets(keyVaultName, args) {
   const capabilityTrustedJwks = usesCapabilities && args.targets.includes("services")
     ? await requireExistingSecret(keyVaultName, CAPABILITY_TRUSTED_JWKS_SECRET)
     : null;
+  const casStackPrivateKeyPkcs8 = usesCapabilities && args.targets.includes("gateway")
+    ? await requireExistingSecret(keyVaultName, CAS_STACK_PRIVATE_KEY_SECRET)
+    : null;
+  const casStackTrustedJwks = usesCapabilities && args.targets.includes("services")
+    ? await requireExistingSecret(keyVaultName, CAS_STACK_TRUSTED_JWKS_SECRET)
+    : null;
   return {
     pgAdminPassword,
-    casAccessKey,
     accessKeys,
     capabilityPrivateKeyPkcs8,
     capabilityTrustedJwks,
+    casStackPrivateKeyPkcs8,
+    casStackTrustedJwks,
   };
 }
 
@@ -923,8 +885,8 @@ function imagesForTargets(args) {
  *
  * 它同时**取代**了 `az acr login` + `docker push`:构建产物直接落在 registry 里。
  * 构建上下文仍是仓库根(`.`),`.dockerignore` 继续生效;`--file` 指向
- * `stacks/azure/deploy/Dockerfile`,与上下文本就可以分离 —— 把上下文也搬进
- * `stacks/azure/deploy/` 会让它看不到 `packages/`。`Dockerfile` 本身不需要改,
+ * `stacks/unidocs-azure/deploy/Dockerfile`,与上下文本就可以分离 —— 把上下文也搬进
+ * `stacks/unidocs-azure/deploy/` 会让它看不到 `packages/`。`Dockerfile` 本身不需要改,
  * 它是平台无关的。
  *
  * **有界并发**,默认 2,可用 `--build-concurrency` 覆盖——不用无界
@@ -958,7 +920,7 @@ async function buildAndPushImages(args, bootstrap, tag) {
         "--image", imageRepoTag(item.name, tag),
         "--build-arg", `SERVICE=${item.service}`,
         "--build-arg", `ENTRY=${item.entry}`,
-        "--file", "stacks/azure/deploy/Dockerfile",
+        "--file", "stacks/unidocs-azure/deploy/Dockerfile",
         ".",
       ],
       {},
@@ -978,7 +940,7 @@ function deployPlatform(args, secrets, tag) {
   // 两条命令的 args 里都直接带着 pgAdminPassword 的明文(platform.bicep 的
   // @secure() 参数就是这么从 CLI 喂进去的),所以两处都必须显式传 label,
   // 绝不能落回默认的 `args.join(" ")`。
-  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/azure/deploy/platform.bicep -n ${DEPLOYMENT_NAMES.platform}`;
+  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/unidocs-azure/deploy/platform.bicep -n ${DEPLOYMENT_NAMES.platform}`;
   const docTypes = Object.keys(readAzureDocTypes(ROOT));
   const parameters = [
     `imageTag=${tag}`,
@@ -990,7 +952,7 @@ function deployPlatform(args, secrets, tag) {
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "stacks/azure/deploy/platform.bicep",
+      "-f", "stacks/unidocs-azure/deploy/platform.bicep",
       "--parameters", ...parameters,
     ],
     {},
@@ -1002,7 +964,7 @@ function deployPlatform(args, secrets, tag) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "stacks/azure/deploy/platform.bicep",
+      "-f", "stacks/unidocs-azure/deploy/platform.bicep",
       "-n", DEPLOYMENT_NAMES.platform,
       "-o", "json",
       "--parameters", ...parameters,
@@ -1028,7 +990,7 @@ function deployService(args, secrets, tag, docType) {
   const svc = readServiceParams(docType);
   const deploymentName = DEPLOYMENT_NAMES.service(docType);
   console.log(`[5/7] service.bicep (${docType}): what-if then create (deployment ${deploymentName})`);
-  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/azure/deploy/service.bicep -n ${deploymentName}`;
+  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/unidocs-azure/deploy/service.bicep -n ${deploymentName}`;
   const parameters = [
     `docType=${docType}`,
     `imageTag=${tag}`,
@@ -1038,11 +1000,16 @@ function deployService(args, secrets, tag, docType) {
     `casBaseUrl=${args.casBaseUrl}`,
     `pgAdminPassword=${secrets.pgAdminPassword}`,
     `serviceAccessKey=${secrets.accessKeys[docType]}`,
-    `casAccessKey=${secrets.casAccessKey}`,
     `internalAuthMode=${args.internalAuthMode}`,
     `capabilityIssuer=${args.capabilityIssuer}`,
+    `casStackId=${args.casStackId}`,
+    `casStackIssuer=${args.casStackIssuer}`,
+    `casCapabilityAudience=${args.casCapabilityAudience}`,
     ...(secrets.capabilityTrustedJwks
       ? [`capabilityTrustedJwks=${secrets.capabilityTrustedJwks}`]
+      : []),
+    ...(secrets.casStackTrustedJwks
+      ? [`casStackTrustedJwks=${secrets.casStackTrustedJwks}`]
       : []),
   ];
   run(
@@ -1050,7 +1017,7 @@ function deployService(args, secrets, tag, docType) {
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "stacks/azure/deploy/service.bicep",
+      "-f", "stacks/unidocs-azure/deploy/service.bicep",
       "--parameters", ...parameters,
     ],
     {},
@@ -1061,7 +1028,7 @@ function deployService(args, secrets, tag, docType) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "stacks/azure/deploy/service.bicep",
+      "-f", "stacks/unidocs-azure/deploy/service.bicep",
       "-n", deploymentName,
       "-o", "none",
       "--parameters", ...parameters,
@@ -1081,7 +1048,7 @@ function deployService(args, secrets, tag, docType) {
 function deployGateway(args, secrets, tag) {
   const gw = readGatewayParams();
   console.log(`[5/7] gateway.bicep: what-if then create (deployment ${DEPLOYMENT_NAMES.gateway})`);
-  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/azure/deploy/gateway.bicep -n ${DEPLOYMENT_NAMES.gateway}`;
+  const label = `az deployment group ... -g ${args.resourceGroup} -f stacks/unidocs-azure/deploy/gateway.bicep -n ${DEPLOYMENT_NAMES.gateway}`;
   const parameters = [
     `imageTag=${tag}`,
     `casBaseUrl=${args.casBaseUrl}`,
@@ -1090,14 +1057,21 @@ function deployGateway(args, secrets, tag) {
     `minReplicas=${gw.minReplicas}`,
     `maxReplicas=${gw.maxReplicas}`,
     `pgAdminPassword=${secrets.pgAdminPassword}`,
-    `casAccessKey=${secrets.casAccessKey}`,
     `docTypes=${JSON.stringify(Object.keys(readAzureDocTypes(ROOT)))}`,
     `docAccessKeysJson=${JSON.stringify(secrets.accessKeys)}`,
     `internalAuthMode=${args.internalAuthMode}`,
     `capabilityIssuer=${args.capabilityIssuer}`,
     `capabilityKeyId=${args.capabilityKeyId}`,
+    `casStackId=${args.casStackId}`,
+    `casStackIssuer=${args.casStackIssuer}`,
+    `casStackKeyId=${args.casStackKeyId}`,
+    `casCapabilityAudience=${args.casCapabilityAudience}`,
+    `casRefDomain=${args.casRefDomain}`,
     ...(secrets.capabilityPrivateKeyPkcs8
       ? [`capabilityPrivateKeyPkcs8=${secrets.capabilityPrivateKeyPkcs8}`]
+      : []),
+    ...(secrets.casStackPrivateKeyPkcs8
+      ? [`casStackPrivateKeyPkcs8=${secrets.casStackPrivateKeyPkcs8}`]
       : []),
   ];
   run(
@@ -1105,7 +1079,7 @@ function deployGateway(args, secrets, tag) {
     [
       "deployment", "group", "what-if",
       "-g", args.resourceGroup,
-      "-f", "stacks/azure/deploy/gateway.bicep",
+      "-f", "stacks/unidocs-azure/deploy/gateway.bicep",
       "--parameters", ...parameters,
     ],
     {},
@@ -1117,7 +1091,7 @@ function deployGateway(args, secrets, tag) {
     [
       "deployment", "group", "create",
       "-g", args.resourceGroup,
-      "-f", "stacks/azure/deploy/gateway.bicep",
+      "-f", "stacks/unidocs-azure/deploy/gateway.bicep",
       "-n", DEPLOYMENT_NAMES.gateway,
       "-o", "json",
       "--parameters", ...parameters,
@@ -1155,7 +1129,7 @@ function resolveExistingGatewayFqdn(args) {
  *
  * `jobName` 来自 `deployPlatform()` 的 `migrateJobNames` output,不
  * 在这里另起一个字面量常量 —— 那会造成两个真相来源(job 的真实名字只由
- * `stacks/azure/deploy/platform.bicep` 的 `migrateJob` 模块决定)。
+ * `stacks/unidocs-azure/deploy/platform.bicep` 的 `migrateJob` 模块决定)。
  */
 async function runMigration(args, jobName) {
   console.log("[6/7] starting migration job", jobName);
@@ -1273,14 +1247,14 @@ export function classifySmokeFailure(stdout, stderr) {
  * `[assertion]`。
  */
 async function smokeOnce(gatewayFqdn, casBaseUrl, only) {
-  const smokeArgs = ["stacks/azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
+  const smokeArgs = ["stacks/unidocs-azure/deploy/smoke.mjs", "--gateway", `https://${gatewayFqdn}`];
   if (!casBaseUrl) {
     smokeArgs.push("--no-cas");
   }
   if (only) {
     smokeArgs.push("--only", only);
   }
-  const label = `node stacks/azure/deploy/smoke.mjs (only=${only ?? "all"})`;
+  const label = `node stacks/unidocs-azure/deploy/smoke.mjs (only=${only ?? "all"})`;
   try {
     await spawnAsync(
       "node",
@@ -1346,10 +1320,11 @@ export async function main(argv = process.argv.slice(2)) {
     ? await seedSecrets(bootstrap.keyVaultName, args)
     : {
       pgAdminPassword: null,
-      casAccessKey: null,
       accessKeys: {},
       capabilityPrivateKeyPkcs8: null,
       capabilityTrustedJwks: null,
+      casStackPrivateKeyPkcs8: null,
+      casStackTrustedJwks: null,
     };
 
   const tag = capture("git", ["rev-parse", "--short", "HEAD"]);

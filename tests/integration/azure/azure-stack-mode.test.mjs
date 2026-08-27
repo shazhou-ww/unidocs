@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
+import { startAzureRuntime } from "../../../stacks/unidocs-azure/local/runtime.mjs";
 import { casReadPermission, createPkcs8CapabilityIssuer } from "../../../packages/service-auth/src/index.ts";
 
 let runtime;

@@ -3,7 +3,7 @@ import {
   allAzurePorts,
   azurePortLayout,
   describeAzurePorts,
-} from "../../../stacks/azure/local/ports.mjs";
+} from "../../../stacks/unidocs-azure/local/ports.mjs";
 
 // 这个模块刻意零依赖,所以测试里直接给字面量,不 import doc-types.mjs ——
 // 那会把 node:fs 拖进一个专门用来证明"不需要 node:fs"的测试里。

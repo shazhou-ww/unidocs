@@ -5,7 +5,7 @@
  * real Durable Object / D1 / R2 code paths inside workerd.
  *
  * This file is NEVER deployed and is deliberately absent from
- * `bundleTargets()` in `stacks/cloudflare/local/doc-types.mjs`. `tests/integration/cloudflare/cf-port-contract.test.mjs`
+ * `bundleTargets()` in `stacks/unidocs-cloudflare/local/doc-types.mjs`. `tests/integration/cloudflare/cf-port-contract.test.mjs`
  * bundles it in-memory with esbuild and hands the text to Miniflare as an
  * inline `script`, the same trick `CAS_FAULT_SCRIPT` uses.
  *

@@ -10,11 +10,11 @@ import { join } from "node:path";
  * run without a pre-build, because vite/vitest's resolver transpiles TS on
  * the fly. A bundler has no such resolver of its own, so anything that
  * bundles workspace source directly (Cloudflare Workers via
- * `stacks/cloudflare/local/runtime.mjs`, the Azure services' own `scripts/bundle.mjs`)
+ * `stacks/unidocs-cloudflare/local/runtime.mjs`, the Azure services' own `scripts/bundle.mjs`)
  * has to point esbuild's `alias` option at the real `.ts` entry file itself.
  *
  * Before this module existed, that table was hand-copied in three places
- * (`stacks/cloudflare/local/runtime.mjs`, `packages/azure-markdown/scripts/bundle.mjs`,
+ * (`stacks/unidocs-cloudflare/local/runtime.mjs`, `packages/azure-markdown/scripts/bundle.mjs`,
  * `packages/azure-gateway/scripts/bundle.mjs`). A missing entry there is NOT
  * a build failure — `packages: "external"` just leaves the unaliased
  * specifier as a bare import, esbuild has no way to know that's wrong, and
@@ -67,7 +67,7 @@ export function resolveWorkspaceAliases(repoRoot) {
  * `packages/azure-gateway/scripts/bundle.mjs`,
  * `packages/azure-sdk/scripts/bundle-migrate-cli.mjs`,
  * `packages/azure-docx/scripts/bundle.mjs`, and
- * `stacks/azure/local/runtime.mjs`'s `bundleService()`. They used to be split
+ * `stacks/unidocs-azure/local/runtime.mjs`'s `bundleService()`. They used to be split
  * between two strategies — `packages: "external"` for the first three,
  * this explicit list for the last two — and that split itself caused a
  * production bug: `azure-docx` used the explicit list but never declared

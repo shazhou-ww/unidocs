@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 
 const PORTS = { gateway: 31790, markdown: 31791, cas: 31793, admin: 31794, mockOidc: 31795 };
 

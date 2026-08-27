@@ -1,7 +1,7 @@
 /**
  * 本地 Azure 栈的端口布局。
  *
- * 无依赖(连 node: 内置模块都不需要)是刻意的,与 `stacks/cloudflare/local/doc-types.mjs`
+ * 无依赖(连 node: 内置模块都不需要)是刻意的,与 `stacks/unidocs-cloudflare/local/doc-types.mjs`
  * 同一条约定:`dev.mjs` 要在 import 任何重家伙(pg、@azure/storage-blob、
  * esbuild、Miniflare)之前就把端口算出来并探测占用,而纯逻辑也才能脱离
  * Docker 单测。
@@ -19,14 +19,14 @@ export const AZURE_PORT_STRIDE = 10;
 /**
  * `portBases` 是必填的:本模块刻意零依赖,读不了
  * packages/azure-<name>/azure.service.json。由调用方从
- * `stacks/azure/doc-types.mjs` 的 `azureDocTypePortBases()` 传进来。
+ * `stacks/unidocs-azure/doc-types.mjs` 的 `azureDocTypePortBases()` 传进来。
  * 这样"有哪些 doc type"只有一个来源,而端口算法仍然可以脱离文件系统单测。
  */
 export function azurePortLayout({ docTypes = ["markdown"], portBases, replicas = 2 } = {}) {
   if (!portBases || typeof portBases !== "object") {
     throw new Error(
       "azurePortLayout() requires portBases: pass azureDocTypePortBases(readAzureDocTypes()) " +
-        "from stacks/azure/doc-types.mjs. (This module stays dependency-free on purpose and " +
+        "from stacks/unidocs-azure/doc-types.mjs. (This module stays dependency-free on purpose and " +
         "cannot read packages/azure-*/azure.service.json itself.)",
     );
   }

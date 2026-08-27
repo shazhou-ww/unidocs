@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { startAzureRuntime } from "../../../stacks/azure/local/runtime.mjs";
+import { startAzureRuntime } from "../../../stacks/unidocs-azure/local/runtime.mjs";
 
 const TENANT = "psd-e2e-tenant";
 

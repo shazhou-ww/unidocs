@@ -12,7 +12,7 @@
 
 import { afterEach, expect, test } from "vitest";
 import { exportJWK, generateKeyPair } from "jose";
-import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
   CapabilityIssuer,
   JoseCapabilitySigner,

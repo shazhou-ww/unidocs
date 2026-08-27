@@ -331,7 +331,7 @@ signing key.
      `localPortBase` (at least `AZURE_PORT_STRIDE` past the last one), `minReplicas`,
      `maxReplicas` and `needsCas`. Everything else — local ports, the dev stack's
      supported list, the deploy script's images and secrets, and the Bicep templates —
-     expands from that one file, with one exception: `stacks/azure/deploy/smoke.mjs` still
+     expands from that one file, with one exception: `stacks/unidocs-azure/deploy/smoke.mjs` still
      needs a hand-written `<docType>Flow()` function for the new doc type. Forgetting it
      doesn't fail silently — `tests/unit/workspace/doc-type-coverage.test.mjs` asserts every
      Azure doc type has a matching `Flow()` in `smoke.mjs` and goes red if one is missing.
@@ -342,9 +342,11 @@ signing key.
 ## Development
 
 ```bash
-pnpm dev                     # Gateway + every Doc type, Miniflare backend
-pnpm dev docx                # Gateway + DOCX only
-pnpm dev docx markdown       # explicit Doc type selection
+pnpm dev unidocs-cloudflare                     # local Gateway/Docs + remote UniCAS
+pnpm dev unidocs-cloudflare docx                # DOCX only
+pnpm dev unidocs-cloudflare docx markdown       # explicit Doc type selection
+pnpm dev unidocs-cloudflare --cas local         # hermetic local UniCAS
+pnpm dev unidocs-cloudflare --docker            # run the local stack in Compose
 ```
 
 The Miniflare runtime injects one static `DOC_SERVICES_JSON` containing only
@@ -360,8 +362,9 @@ POST http://127.0.0.1:8787/tenants/{tenantId}/docs/markdown/
 ### Local Azure stack
 
 ```bash
-pnpm dev --azure              # Gateway :41787 + Markdown :41800 + DOCX :41810
-pnpm dev --azure markdown     # Markdown only
+pnpm dev unidocs-azure              # Gateway :41787 + Docs + remote UniCAS
+pnpm dev unidocs-azure markdown     # Markdown only
+pnpm dev unidocs-azure --cas local  # embedded local UniCAS
 ```
 
 Docker must be running for Postgres on `:5433`. Azurite runs as a Node child
@@ -369,12 +372,13 @@ process on `:10000`. Startup creates and migrates independent
 `unidocs_gateway`, `unidocs_markdown`, and `unidocs_docx` databases; replicas
 of one Doc service share only that service's database and Blob containers.
 
-Azure DOCX currently uses the Cloudflare CAS worker as a cross-cloud service.
-Start `pnpm dev docx` in another terminal first, or set `CAS_BASE_URL`. The
-Azure and Cloudflare local stacks share one ephemeral capability fixture so
-Azure Doc calls the tenant-scoped CAS URL with request-local delegated tokens.
+Interactive development defaults to the deployed UniCAS edge and reads the
+developer's registered stack credential from `.wrangler/unidocs/stack.json`.
+Set `UNIDOCS_CAS_ORIGIN` or `UNIDOCS_CAS_STACK_CREDENTIAL` to override those
+defaults. Tests and explicit `--cas local` runs use an embedded ephemeral
+UniCAS and remain independent of the network.
 
-Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `stacks/azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side, which `docx` on Azure now requires. `pnpm dev --azure`'s startup banner prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `stacks/azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
+Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `stacks/unidocs-azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side. `pnpm dev unidocs-azure` prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `stacks/unidocs-azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
 
 **First run only:** if `postgres:18-alpine` isn't cached locally yet, `docker compose up` pulls it (~100 MB) before anything else can start; every run after that is instant. There's no equivalent cost for Azurite — it installed with `pnpm install` like any other dependency.
 
@@ -387,9 +391,9 @@ Migrations run automatically as part of startup — no separate command needed. 
 | `pnpm test:azure` | `tests/integration/azure`（起本地 Azure 栈的 HTTP，需要 Docker） |
 | treespec | `tests/treespec/`（容器里从干净安装跑 YAML 树；镜像见同目录 `Dockerfile`） |
 
-`pnpm test:azure` (via `tests/integration/azure/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `packages/azure-sdk/docker-compose.yml` Postgres container (host port `:5433`, unnamed default compose project) and each spawn their own `azurite-blob` process on `:10000`. `pnpm dev --azure` starts the identical stack for interactive use.
+`pnpm test:azure` (via `tests/integration/azure/azure-behavior.test.mjs`) and `pnpm -r test` (via `packages/azure-sdk`'s Vitest `globalSetup`, `packages/azure-sdk/tests/containers.ts`) both bring up the same `packages/azure-sdk/docker-compose.yml` Postgres container (host port `:5433`, unnamed default compose project) and each spawn their own `azurite-blob` process on `:10000`. `pnpm dev unidocs-azure` starts the identical stack for interactive use.
 
-**Do not run `pnpm test:azure`, `pnpm -r test`, and `pnpm dev --azure` at the same time.** They still share the Postgres container: whichever one tears it down first (`docker compose ... down -v`) pulls the database out from under whichever else is still using it, mid-test or mid-session. They also all bind `:10000` for their own `azurite-blob` process, so a second one starting up simply fails to claim the port. Run them one at a time, or stop `pnpm dev --azure` before running either test command.
+**Do not run `pnpm test:azure`, `pnpm -r test`, and `pnpm dev unidocs-azure` at the same time.** They still share the Postgres container: whichever one tears it down first (`docker compose ... down -v`) pulls the database out from under whichever else is still using it, mid-test or mid-session. They also all bind `:10000` for their own `azurite-blob` process, so a second one starting up simply fails to claim the port. Run them one at a time, or stop `pnpm dev unidocs-azure` before running either test command.
 
 Docker must be running before invoking `pnpm test:azure` or `pnpm -r test` for the first time — both will start the Postgres container themselves and run migrations against it, but the Docker daemon itself has to already be up. The first-run Postgres image pull noted above applies here too, and both entry points print an explicit notice before it happens so a slow pull doesn't read as a hang. `pnpm test:local` needs no Docker at all — it no longer runs the Azure integration tests.
 ## Workspace package resolution

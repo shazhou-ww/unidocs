@@ -24,13 +24,15 @@ param databaseUrl string
 @secure()
 param serviceAccessKey string = ''
 @secure()
-param casAccessKey string = ''
-@secure()
 param docServicesJson string = ''
 @secure()
 param capabilityPrivateKeyPkcs8 string = ''
 @secure()
 param capabilityTrustedJwks string = ''
+@secure()
+param casStackPrivateKeyPkcs8 string = ''
+@secure()
+param casStackTrustedJwks string = ''
 
 // PORT 必须和 ingress.targetPort 是同一个值的两种表现形式，而不是
 // 调用方各自再写一份字符串字面量——否则 ingress 转发到一个端口、
@@ -42,12 +44,6 @@ var optionalSecrets = concat(
     {
       name: 'service-access-key'
       value: serviceAccessKey
-    }
-  ],
-  empty(casAccessKey) ? [] : [
-    {
-      name: 'cas-access-key'
-      value: casAccessKey
     }
   ],
   empty(docServicesJson) ? [] : [
@@ -67,6 +63,18 @@ var optionalSecrets = concat(
       name: 'capability-trusted-jwks'
       value: capabilityTrustedJwks
     }
+  ],
+  empty(casStackPrivateKeyPkcs8) ? [] : [
+    {
+      name: 'cas-stack-private-key-pkcs8'
+      value: casStackPrivateKeyPkcs8
+    }
+  ],
+  empty(casStackTrustedJwks) ? [] : [
+    {
+      name: 'cas-stack-trusted-jwks'
+      value: casStackTrustedJwks
+    }
   ]
 )
 var optionalSecretEnv = concat(
@@ -74,12 +82,6 @@ var optionalSecretEnv = concat(
     {
       name: 'SERVICE_ACCESS_KEY'
       secretRef: 'service-access-key'
-    }
-  ],
-  empty(casAccessKey) ? [] : [
-    {
-      name: 'CAS_ACCESS_KEY'
-      secretRef: 'cas-access-key'
     }
   ],
   empty(docServicesJson) ? [] : [
@@ -98,6 +100,18 @@ var optionalSecretEnv = concat(
     {
       name: 'CAPABILITY_TRUSTED_JWKS'
       secretRef: 'capability-trusted-jwks'
+    }
+  ],
+  empty(casStackPrivateKeyPkcs8) ? [] : [
+    {
+      name: 'CAS_STACK_PRIVATE_KEY_PKCS8'
+      secretRef: 'cas-stack-private-key-pkcs8'
+    }
+  ],
+  empty(casStackTrustedJwks) ? [] : [
+    {
+      name: 'CAS_STACK_TRUSTED_JWKS'
+      secretRef: 'cas-stack-trusted-jwks'
     }
   ]
 )

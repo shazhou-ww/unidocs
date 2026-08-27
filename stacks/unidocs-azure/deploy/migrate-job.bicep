@@ -17,7 +17,7 @@ param acrLoginServer string
 // 计划再把它 tee 进日志文件。作为模块参数传入时，编译产物是嵌套部署的
 // `expressionEvaluationOptions.scope: "inner"` + securestring 参数，
 // 明文不再出现在外层模板中。三个 Container App 早就是这个形状
-// （stacks/azure/deploy/container-app.bicep），这里补上 Job 的那一半。
+// （stacks/unidocs-azure/deploy/container-app.bicep），这里补上 Job 的那一半。
 @secure()
 param databaseUrl string
 

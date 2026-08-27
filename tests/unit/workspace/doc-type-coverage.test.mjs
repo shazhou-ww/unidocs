@@ -2,7 +2,7 @@
  * 穷尽性守卫:doc type 表里的每个成员，都必须有它全部的配套物。
  *
  * 为什么需要这条:一个 doc type 的"存在"分散在多个地方——包入口、服务声明、
- * tsconfig 引用、冒烟 flow。表是唯一事实来源(stacks/azure/doc-types.mjs)，
+ * tsconfig 引用、冒烟 flow。表是唯一事实来源(stacks/unidocs-azure/doc-types.mjs)，
  * 但表增长不会自动带出这些配套物，而缺失时的表现往往是**静默的**:Task 4
  * 的审查里就抓到过一次——smoke.mjs 的 `--only psd` 通过合法性校验、两个硬编码
  * 分发分支都不命中、`failures` 保持 0，于是一次零检查的冒烟打印
@@ -17,8 +17,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { readAzureDocTypes } from "../../../stacks/azure/doc-types.mjs";
-import { DOC_TYPES } from "../../../stacks/cloudflare/local/doc-types.mjs";
+import { readAzureDocTypes } from "../../../stacks/unidocs-azure/doc-types.mjs";
+import { DOC_TYPES } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const azureDocTypes = Object.keys(readAzureDocTypes(ROOT));
@@ -57,7 +57,7 @@ describe("Azure doc type 的配套物", () => {
   // 正则包含边界保护：docType 之后要么直接是 Flow，要么是大写字母开头的中缀
   // (如 docxTextFlow 中的 Text)，防止 doc 错误匹配 docxFlow。
   test.each(azureDocTypes)("%s 在 smoke.mjs 里有对应的 flow", (docType) => {
-    const smoke = readFileSync(join(ROOT, "stacks/azure/deploy/smoke.mjs"), "utf8");
+    const smoke = readFileSync(join(ROOT, "stacks/unidocs-azure/deploy/smoke.mjs"), "utf8");
     expect(smoke).toMatch(new RegExp(`function\\s+${docType}(?:[A-Z]\\w*)?Flow\\s*\\(`));
   });
 });

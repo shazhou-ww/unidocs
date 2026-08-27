@@ -1,7 +1,7 @@
 # Copy to .dev.vars and fill in your Anthropic key to enable the PSD Operator
 # (the chatbox agent). .dev.vars is gitignored; this .example is committed.
 #
-# The local dev runtime (pnpm dev psd) reads .dev.vars and injects these as
+# The local dev runtime (pnpm dev unidocs-cloudflare psd) reads .dev.vars and injects these as
 # bindings on the psd worker.
 
 LLM_API_KEY=sk-ant-...

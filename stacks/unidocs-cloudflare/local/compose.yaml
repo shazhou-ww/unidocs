@@ -1,0 +1,26 @@
+services:
+  unidocs-cloudflare:
+    build:
+      context: ../../..
+      dockerfile: stacks/unidocs-cloudflare/local/Dockerfile
+    init: true
+    environment:
+      UNIDOCS_LOCAL_ARGS_JSON: ${UNIDOCS_LOCAL_ARGS_JSON:-[]}
+      UNIDOCS_CAS_MODE: ${UNIDOCS_CAS_MODE:-remote}
+      UNIDOCS_CAS_ORIGIN: ${UNIDOCS_CAS_ORIGIN:-https://unicas.shazhou.work}
+      UNIDOCS_CAS_STACK_CREDENTIAL: ${UNIDOCS_CAS_STACK_CREDENTIAL:-.wrangler/unidocs/stack.json}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    ports:
+      - "4070:4070"
+      - "5173:5173"
+      - "8787:8787"
+      - "8788:8788"
+      - "8789:8789"
+      - "8790:8790"
+      - "8792:8792"
+      - "8793:8793"
+      - "8794:8794"
+    volumes:
+      - ../../../.wrangler:/workspace/.wrangler

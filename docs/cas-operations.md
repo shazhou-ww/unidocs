@@ -14,8 +14,9 @@ Runbooks, SLOs, and alerting for the independently deployed CAS middleware
 
 Secrets live only as Worker secrets (Google OIDC client id/secret,
 `SESSION_ENCRYPTION_KEYS`, `CAS_AUDIT_READER_KEY`, stack private keys) — never
-in vars or source. Deployment credentials: `CLOUDFLARE_ACCOUNT_ID` /
-`CLOUDFLARE_API_TOKEN` from `cfg`.
+in vars or source. Deployment credentials are supplied through
+`CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`; see
+[Deployment and local configuration](deployment-and-local-configuration.md).
 
 ## SLOs and error budgets
 

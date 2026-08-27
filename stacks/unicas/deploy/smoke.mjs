@@ -1,0 +1,1 @@
+await import("../../../scripts/cas-middleware-smoke.mjs");

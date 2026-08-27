@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   startLocalRuntime,
-} from "../../../stacks/cloudflare/local/runtime.mjs";
+} from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 
 let runtime;
 

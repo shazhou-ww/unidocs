@@ -2,6 +2,9 @@
  * 部署脚本里能被纯逻辑覆盖的部分。其余(az 调用、ACR 构建)由 Task 8
  * 的真实部署验收。
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test, vi } from "vitest";
 import {
   azureImages,
@@ -16,7 +19,9 @@ import {
   readServiceParams,
   retryOnForbidden,
   retryUntil,
-} from "../../../stacks/azure/deploy/deploy.mjs";
+} from "../../../stacks/unidocs-azure/deploy/deploy.mjs";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 describe("imageRef", () => {
   test("拼出完整的 ACR 镜像引用", () => {
@@ -39,7 +44,7 @@ describe("imageRef", () => {
 
 describe("azureImages", () => {
   // 迁移镜像是唯一一个「构建参数」与「镜像名」不同名的:构建参数是
-  // 工作区包名 azure-sdk,镜像名是 stacks/azure/deploy/platform.bicep(通过
+  // 工作区包名 azure-sdk,镜像名是 stacks/unidocs-azure/deploy/platform.bicep(通过
   // migrate-job.bicep 模块)引用的 azure-migrate。传错会让 platform
   // 部署时拉不到镜像,而那是个部署到一半才暴露的错误。
   test("迁移镜像的构建参数与镜像名刻意不同", () => {
@@ -126,16 +131,9 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--typo-flag", "x"])).toThrow(/--typo-flag/);
   });
 
-  // CAS_ACCESS_KEY 不是本轮生成的密钥,而是必须与已部署的 Cloudflare CAS
-  // worker 对齐的既有值 —— 所以它必须能从命令行传进来。
-  test("--cas-access-key 被解析", () => {
-    expect(parseArgs(["--cas-access-key", "shared-with-cloudflare", "--capability-key-id", "test-key"]).casAccessKey).toBe(
-      "shared-with-cloudflare",
-    );
-  });
-
-  test("不传 --cas-access-key 时是空串(留给 Key Vault 里的既有值)", () => {
-    expect(parseArgs(["--capability-key-id", "test-key"]).casAccessKey).toBe("");
+  test("retired --cas-access-key is rejected in stack mode", () => {
+    expect(() => parseArgs(["--cas-access-key", "retired", "--capability-key-id", "test-key"]))
+      .toThrow(/Unknown argument --cas-access-key/);
   });
 
   test("stack mode is the only internal auth mode; key values are not CLI inputs", () => {
@@ -334,6 +332,36 @@ describe("readGatewayParams", () => {
   });
 });
 
+describe("Azure UniCAS stack identity projection", () => {
+  const template = (name) => readFileSync(
+    join(ROOT, "stacks", "unidocs-azure", "deploy", name),
+    "utf8",
+  );
+
+  test("Gateway receives the stack private key and metadata", () => {
+    const gateway = template("gateway.bicep");
+    expect(gateway).toContain("param casStackPrivateKeyPkcs8 string");
+    for (const name of ["CAS_STACK_ID", "CAS_STACK_ISSUER", "CAS_STACK_KEY_ID", "CAS_REF_DOMAIN"]) {
+      expect(gateway).toContain(`name: '${name}'`);
+    }
+    expect(gateway).not.toContain("CAS_STACK_TRUSTED_JWKS");
+  });
+
+  test("Docs receive only the stack public JWKS and metadata", () => {
+    const service = template("service.bicep");
+    expect(service).toContain("param casStackTrustedJwks string");
+    expect(service).toContain("name: 'CAS_STACK_ID'");
+    expect(service).toContain("name: 'CAS_STACK_ISSUER'");
+    expect(service).not.toContain("CAS_STACK_PRIVATE_KEY_PKCS8");
+  });
+
+  test("shared CAS access key is absent from deployment templates", () => {
+    for (const name of ["container-app.bicep", "gateway.bicep", "service.bicep"]) {
+      expect(template(name)).not.toMatch(/CAS_ACCESS_KEY|casAccessKey/);
+    }
+  });
+});
+
 // mapWithConcurrency 是「有界并发,不是无界 Promise.all」这条要求的核心：
 // 用一个会记录同时在飞数量的 worker 直接断言峰值并发不超过 limit。
 describe("mapWithConcurrency", () => {
@@ -377,7 +405,7 @@ describe("mapWithConcurrency", () => {
   });
 });
 
-// retryUntil 是冒烟重试的核心循环——与注册表无关，见 stacks/azure/deploy/deploy.mjs
+// retryUntil 是冒烟重试的核心循环——与注册表无关，见 stacks/unidocs-azure/deploy/deploy.mjs
 // 里 runSmoke() 的注释。这里同样注入假的 wait/log，不真的等待。
 describe("retryUntil", () => {
   test("第一次就成功 -> 不重试、不等待", async () => {

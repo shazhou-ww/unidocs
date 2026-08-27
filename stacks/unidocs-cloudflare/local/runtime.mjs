@@ -82,7 +82,7 @@ export async function readDevVars(path) {
     const key = trimmed.slice(0, eq).trim();
     let value = trimmed.slice(eq + 1).trim();
     if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
+      (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
     if (key) out[key] = value;
@@ -197,7 +197,7 @@ function assertPortFree(host, port) {
  * Backend-neutral storage assertions (see `StorageProbe` in the task brief):
  * a global snapshot index lookup and a CAS blob existence check. Miniflare's
  * implementation is exactly the two `getD1Database`/`getR2Bucket` calls the
- * behavior tests used to make directly; `stacks/azure/local/runtime.mjs` provides
+ * behavior tests used to make directly; `stacks/unidocs-azure/local/runtime.mjs` provides
  * the Postgres/Azurite equivalent behind the same two methods so the test
  * bodies in `tests/integration/shared/behavior-suite.mjs` don't need to know which backend
  * they're running against.
@@ -320,18 +320,21 @@ export async function startLocalRuntime({
   casMiddlewareOnly = false,
   casMiddleware = false,
   middlewareStacks,
+  casOrigin,
 } = {}) {
   if (internalAuthMode !== "stack") {
     throw new Error("startLocalRuntime only supports stack mode (legacy/dual/capability retired with the legacy runtime)");
   }
   const resolvedStackFixture = stackFixture ?? await createEphemeralStackFixture();
   const ports = resolvePorts(docTypes, portOverrides);
-  ports.admin = portOverrides.admin ?? ADMIN_PORT;
-  ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
-  ports.edge = portOverrides.edge ?? EDGE_PORT;
+  if (!casOrigin) {
+    ports.admin = portOverrides.admin ?? ADMIN_PORT;
+    ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
+    ports.edge = portOverrides.edge ?? EDGE_PORT;
+  }
   if (casMiddlewareOnly) {
     // CAS middleware runs alone: no gateway, no doc type workers — the
-    // independent-deployment boundary, mirrored by scripts/dev-cas-admin.mjs.
+    // independent-deployment boundary, mirrored by stacks/unicas/local/dev.mjs.
     delete ports.gateway;
     for (const name of docTypes) delete ports[name];
   }
@@ -343,7 +346,7 @@ export async function startLocalRuntime({
   const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway ?? "cas-admin"));
 
   await Promise.all(
-    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || true }).map(({ entry, outfile }) =>
+    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || !casOrigin }).map(({ entry, outfile }) =>
       bundleWorker(join(ROOT, entry), join(bundleDir, outfile)),
     ),
   );
@@ -355,9 +358,17 @@ export async function startLocalRuntime({
   // Load per-doc-type secrets from .dev.vars into that worker's bindings.
   // Never log these — they are API keys.
   const extraBindings = {};
+  const processDocBindings = Object.fromEntries(
+    ["LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"]
+      .filter((name) => process.env[name] !== undefined)
+      .map((name) => [name, process.env[name]]),
+  );
   for (const name of docTypes) {
     const devVars = DOC_TYPES[name].devVars;
-    if (devVars) extraBindings[name] = await readDevVars(join(ROOT, devVars));
+    extraBindings[name] = {
+      ...(devVars ? await readDevVars(join(ROOT, devVars)) : {}),
+      ...processDocBindings,
+    };
   }
   const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 
@@ -387,7 +398,8 @@ export async function startLocalRuntime({
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
           casMiddlewareOnly,
-          casMiddleware: casMiddleware || true,
+          casMiddleware: casMiddleware || !casOrigin,
+          casOrigin,
         }),
       }),
     );
@@ -397,7 +409,7 @@ export async function startLocalRuntime({
     if (!casMiddlewareOnly) {
       await migrateSnapshotsDb(mf);
     }
-    {
+    if (!casOrigin) {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
       if (!middlewareStacks) {
         // Register the local unidocs-cloudflare stack (issuer/keys/refDomains

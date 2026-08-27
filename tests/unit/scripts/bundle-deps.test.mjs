@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { EXTERNAL_NPM_PACKAGES } from "../../../scripts/workspace-aliases.mjs";
-import { readAzureDocTypes } from "../../../stacks/azure/doc-types.mjs";
+import { readAzureDocTypes } from "../../../stacks/unidocs-azure/doc-types.mjs";
 
 const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..");
 

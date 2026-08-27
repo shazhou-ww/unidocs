@@ -17,7 +17,7 @@
  *
  * Fix: `esbuild` transpiles TS itself, so bundling resolves and inlines
  * every `@unidocs/*` import directly from its `.ts` source (`alias` below —
- * shared with `stacks/cloudflare/local/runtime.mjs` and
+ * shared with `stacks/unidocs-cloudflare/local/runtime.mjs` and
  * `packages/azure-gateway/scripts/bundle.mjs` via
  * `scripts/workspace-aliases.mjs`, see that module's doc for why).
  *
@@ -33,7 +33,7 @@
  * inlines everything else — `ag-psd` / `fast-png` included. See
  * `scripts/workspace-aliases.mjs`'s doc comment for the full
  * runtime-resolution reasoning and why this list has exactly one
- * definition, shared with `stacks/azure/local/runtime.mjs`'s
+ * definition, shared with `stacks/unidocs-azure/local/runtime.mjs`'s
  * `bundleService()`. `tests/unit/scripts/bundle-deps.test.mjs` enforces this
  * choice repo-wide: it fails any azure-* bundler that uses
  * `packages: "external"` instead of this explicit list.

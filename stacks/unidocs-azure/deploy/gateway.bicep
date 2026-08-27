@@ -30,15 +30,19 @@ param pgAdminUser string = 'unidocs'
 param pgAdminPassword string
 
 @secure()
-param casAccessKey string
+param capabilityPrivateKeyPkcs8 string = ''
 
 @secure()
-param capabilityPrivateKeyPkcs8 string = ''
+param casStackPrivateKeyPkcs8 string = ''
 
 param internalAuthMode string = 'stack'
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param capabilityKeyId string = ''
-param casCapabilityAudience string = 'unidocs-cas'
+param casStackId string = 'unidocs-azure'
+param casStackIssuer string = 'https://unicas.shazhou.work/cas/issuer/azure'
+param casStackKeyId string = 'az-rotate-1'
+param casRefDomain string = 'doc'
+param casCapabilityAudience string = 'unidocs-cas-azure'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
@@ -87,9 +91,9 @@ module app 'container-app.bicep' = {
     minReplicas: minReplicas
     maxReplicas: maxReplicas
     databaseUrl: databaseUrl
-    casAccessKey: casAccessKey
     docServicesJson: docServicesJson
     capabilityPrivateKeyPkcs8: capabilityPrivateKeyPkcs8
+    casStackPrivateKeyPkcs8: casStackPrivateKeyPkcs8
     // 网关不碰 Blob，所以没有 blobEnv。它经内部 ingress 的 443 访问
     // docTypes 里的每个 doc type worker —— 不是容器端口，ingress 负责映射。
     // 路由目标在 DOC_SERVICES_JSON 里静态列出，见上面的注释。
@@ -113,6 +117,22 @@ module app 'container-app.bicep' = {
       {
         name: 'CAS_CAPABILITY_AUDIENCE'
         value: casCapabilityAudience
+      }
+      {
+        name: 'CAS_STACK_ID'
+        value: casStackId
+      }
+      {
+        name: 'CAS_STACK_ISSUER'
+        value: casStackIssuer
+      }
+      {
+        name: 'CAS_STACK_KEY_ID'
+        value: casStackKeyId
+      }
+      {
+        name: 'CAS_REF_DOMAIN'
+        value: casRefDomain
       }
       {
         name: 'CAPABILITY_ALGORITHM'

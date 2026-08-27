@@ -11,7 +11,7 @@
  * (LLM_API_KEY / LLM_BASE_URL / LLM_MODEL, or the ANTHROPIC_* aliases): in
  * production from wrangler secrets, in local dev from
  * packages/cloudflare-psd/.dev.vars — `readDevVars` in
- * stacks/cloudflare/local/runtime.mjs parses it and `buildWorkers` merges it into this
+ * stacks/unidocs-cloudflare/local/runtime.mjs parses it and `buildWorkers` merges it into this
  * worker's Miniflare bindings.
  */
 
