@@ -619,7 +619,12 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     const stored = await sessionStore.read(sessionId);
     if (!stored) return null;
     try {
-      return await sessionCrypto.decrypt(stored.encryptedPayload);
+      const payload = await sessionCrypto.decrypt(stored.encryptedPayload);
+      if (payload.authenticated && !isEmailAllowed(payload.emailForDisplay, true)) {
+        await sessionStore.delete(sessionId);
+        return null;
+      }
+      return payload;
     } catch {
       await sessionStore.delete(sessionId);
       return null;
