@@ -75,6 +75,8 @@ export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
     identity: SessionIdentity,
     creating: boolean,
   ) => Promise<Response | null>,
+  /** Reject uploads over this size with 413; undefined means unlimited. */
+  maxUploadBytes?: number,
 ): LocalNamespace {
   return {
     idFromName: (name: string) => name,
@@ -92,6 +94,7 @@ export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
         const handle = createSessionHandler({
           session,
           identity,
+          ...(maxUploadBytes === undefined ? {} : { maxUploadBytes }),
         });
         return handle(request);
       },

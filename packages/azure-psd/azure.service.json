@@ -1,1 +1,1 @@
-{ "docType": "psd", "targetPort": 8790, "localPortBase": 41820, "minReplicas": 2, "maxReplicas": 5, "needsCas": true }
+{"docType": "psd", "targetPort": 8790, "localPortBase": 41820, "minReplicas": 2, "maxReplicas": 5, "needsCas": true, "cpu": "1.0", "memory": "4Gi", "maxUploadBytes": 268435456}

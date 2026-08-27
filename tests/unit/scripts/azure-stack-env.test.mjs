@@ -86,6 +86,10 @@ describe("Azure stack 模式的环境变量接线是穷尽的", () => {
     expect(missing).toEqual([]);
   });
 
+  test("MAX_UPLOAD_BYTES 注入 doc service：缺它上传上限就失效，大文件会撑崩容器", () => {
+    expect(envNames("service.bicep").has("MAX_UPLOAD_BYTES")).toBe(true);
+  });
+
   test("CAS_REF_DOMAIN 注入网关：缺它时 Root Refs 写入会被 CAS 拒", () => {
     // 委派给 doc DO 的能力票靠这个 claim 才能过 updateRootRefs 的
     // refDomain 注册检查（unicas server-cloudflare/src/auth.ts）。

@@ -51,6 +51,18 @@ const NOT_INITIALIZED = "Document not initialized. POST /{docType}/ to create.";
 export interface CreateSessionHandlerConfig<TDoc, TQuery, TOp> {
   session: DocumentSession<TDoc, TQuery, TOp>;
   identity: SessionIdentity;
+  /**
+   * Reject uploads larger than this with 413 instead of attempting them.
+   *
+   * Unset means unlimited, which is what every caller did before this
+   * existed — but an unlimited upload is not "generous", it is a crash: the
+   * import path holds the whole file in memory (formData, then a second copy
+   * in `file.arrayBuffer()`, then the doc type's own decompressed
+   * representation), so a large enough document kills the process. That takes
+   * down every other request sharing the replica, which is strictly worse
+   * than refusing the one request honestly.
+   */
+  maxUploadBytes?: number;
 }
 
 /**
@@ -96,6 +108,14 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
   cfg: CreateSessionHandlerConfig<TDoc, TQuery, TOp>,
 ): (request: Request) => Promise<Response> {
   const { session } = cfg;
+  const maxUploadBytes = cfg.maxUploadBytes;
+
+  function tooLarge(bytes: number): Response {
+    return Response.json({
+      success: false,
+      error: `Upload is ${bytes} bytes, over the ${maxUploadBytes}-byte limit for this document type`,
+    }, { status: 413 });
+  }
 
   return async function handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -106,6 +126,15 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
       // POST /_internal/create — create new document
       if (method === "POST" && endpoint === "/_internal/create") {
         const contentType = request.headers.get("content-type") || "";
+        // Checked BEFORE formData(): that call reads the entire body into
+        // memory, so refusing afterwards has already paid the cost the limit
+        // exists to avoid.
+        if (maxUploadBytes !== undefined) {
+          const declared = Number(request.headers.get("content-length"));
+          if (Number.isFinite(declared) && declared > maxUploadBytes) {
+            return tooLarge(declared);
+          }
+        }
         let file: File | null = null;
         let sourceId: string | null = null;
 
@@ -117,6 +146,13 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
 
         let bytes: Uint8Array | undefined;
         if (file) {
+          // Fallback for chunked uploads, which carry no Content-Length. The
+          // body is already buffered by this point, so this only prevents the
+          // second copy and the doc type's decompression — worth having, but
+          // it is not a substitute for the header check above.
+          if (maxUploadBytes !== undefined && file.size > maxUploadBytes) {
+            return tooLarge(file.size);
+          }
           bytes = new Uint8Array(await file.arrayBuffer());
         } else if (sourceId) {
           return Response.json(
