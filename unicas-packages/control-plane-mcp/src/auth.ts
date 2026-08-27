@@ -148,7 +148,13 @@ async function finishGoogleAuthentication(
       csrfToken,
     };
     await writeTransaction(env, consentId, pending);
-    return htmlWithCookie(renderConsent(pending, consentId), CONSENT_COOKIE, consentId);
+    const publicOrigin = normalizePublicOrigin(requireEnv(env.PUBLIC_ORIGIN, "PUBLIC_ORIGIN"));
+    return htmlWithCookie(
+      renderConsent(pending, consentId, publicOrigin),
+      CONSENT_COOKIE,
+      consentId,
+      publicOrigin,
+    );
   } catch {
     return authFailure("Google authentication could not be completed");
   }
@@ -288,7 +294,7 @@ async function importAesKey(value: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
-export function renderConsent(pending: PendingConsent, consentId: string): string {
+export function renderConsent(pending: PendingConsent, consentId: string, publicOrigin: string): string {
   const scopes = pending.oauthRequest.scope
     .map((scope) => {
       const detail = scopeDetail(scope);
@@ -359,7 +365,7 @@ export function renderConsent(pending: PendingConsent, consentId: string): strin
       <p class="section-title">Requested permissions</p>
       <p class="resource">${escapeHtml(String(pending.oauthRequest.resource ?? "UniCAS control plane"))}</p>
       <ul class="scope-list">${scopes}</ul>
-      <form method="post" action="/oauth/authorize">
+      <form method="post" action="${escapeHtml(publicOrigin)}/oauth/authorize">
         <input type="hidden" name="consent_id" value="${escapeHtml(consentId)}">
         <input type="hidden" name="csrf_token" value="${escapeHtml(pending.csrfToken)}">
         <button class="deny" type="submit" name="decision" value="deny">Deny</button>
@@ -437,13 +443,13 @@ function redirectWithCookie(location: string, name: string, value: string): Resp
   });
 }
 
-function htmlWithCookie(html: string, name: string, value: string): Response {
+function htmlWithCookie(html: string, name: string, value: string, publicOrigin: string): Response {
   return new Response(html, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Set-Cookie": cookieHeader(name, value),
       "Cache-Control": "no-store",
-      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; form-action ${publicOrigin}; base-uri 'none'; frame-ancestors 'none'`,
       "Referrer-Policy": "no-referrer",
       "X-Content-Type-Options": "nosniff",
     },
@@ -507,6 +513,14 @@ function escapeHtml(value: string): string {
 function requireEnv(value: string | undefined, name: string): string {
   if (!value) throw new Error(`${name} must be configured`);
   return value;
+}
+
+function normalizePublicOrigin(value: string): string {
+  const url = new URL(value);
+  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("PUBLIC_ORIGIN must contain only scheme, host, and optional port");
+  }
+  return url.origin;
 }
 
 function oauthProvider(env: OAuthAuthorizationEnv): OAuthHelpers {
