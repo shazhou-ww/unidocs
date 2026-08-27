@@ -5,7 +5,7 @@ export function McpConfigurationDialog({ open, onClose }: {
   open: boolean;
   onClose: () => void;
 }) {
-  const [copied, setCopied] = useState<"url" | "prompt" | "cli" | "cli-prompt" | null>(null);
+  const [copied, setCopied] = useState<"url" | "prompt" | "cli" | "cli-prompt" | "skill" | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -28,6 +28,14 @@ Install once from the UniCAS repository, then log in with a browser:
 Operate the control plane with shell commands (JSON output):
   unicas whoami | unicas stacks list | unicas stacks get <stackId> | unicas stacks create "Operations" --idempotency-key ops-1
 Or connect over stdio MCP: command "unicas", args ["mcp"].`;
+  const skillInstallPrompt = `The UniCAS repository ships an agent skill that teaches AI tools when and how to use the unicas CLI.
+If you are working inside the repository, it is already available; load it from:
+  .agents/skills/unicas-cli/SKILL.md   (DeepSeek Harness / DSH)
+  .claude/skills/unicas-cli/SKILL.md   (Claude Code / Copilot)
+If you work outside the repository, install it into your user skills directory first:
+  DSH:         Copy-Item -Recurse .agents\\skills\\unicas-cli $HOME\\.agents\\skills\\
+  Claude Code: Copy-Item -Recurse .claude\\skills\\unicas-cli $HOME\\.claude\\skills\\
+Then follow the skill: run "unicas login" once, then use "unicas whoami", "unicas stacks list", and the other control-plane commands.`;
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +75,7 @@ Or connect over stdio MCP: command "unicas", args ["mcp"].`;
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
   }, []);
 
-  async function copy(value: string, target: "url" | "prompt" | "cli" | "cli-prompt") {
+  async function copy(value: string, target: "url" | "prompt" | "cli" | "cli-prompt" | "skill") {
     await navigator.clipboard.writeText(value);
     setCopied(target);
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
@@ -143,10 +151,20 @@ Or connect over stdio MCP: command "unicas", args ["mcp"].`;
             </button>
           </div>
           <pre className="mcp-config mcp-config-prompt"><code>{cliPrompt}</code></pre>
+          <div className="mcp-config-heading mcp-cli-prompt-heading">
+            <code>Agent skill install</code>
+            <button type="button" className="copy-button" onClick={() => void copy(skillInstallPrompt, "skill")}>
+              {copied === "skill" ? <Check size={14} /> : <Copy size={14} />}
+              <span>{copied === "skill" ? "Skill prompt copied" : "Copy skill prompt"}</span>
+            </button>
+          </div>
+          <pre className="mcp-config mcp-config-prompt"><code>{skillInstallPrompt}</code></pre>
           <p className="mcp-cli-note">
             Best for AI tools that cannot complete OAuth in a browser (for example DeepSeek
             Harness): the CLI owns the OAuth session and refreshes tokens itself, and also
-            exposes the same tools over stdio MCP via <code>unicas mcp</code>.
+            exposes the same tools over stdio MCP via <code>unicas mcp</code>. The shipped
+            <code> unicas-cli </code> skill tells agents when and how to use the CLI; paste the
+            prompt above into tools that cannot read the repository.
           </p>
         </div>
         <div className="mcp-auth-note">

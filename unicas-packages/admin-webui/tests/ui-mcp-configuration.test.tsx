@@ -40,6 +40,8 @@ describe("AI tool connection", () => {
     expect(dialog).toHaveTextContent("unicas login");
     expect(dialog).toHaveTextContent("CLI prompt");
     expect(dialog).toHaveTextContent("unicas mcp");
+    expect(dialog).toHaveTextContent("Agent skill install");
+    expect(dialog).toHaveTextContent(".agents/skills/unicas-cli/SKILL.md");
     await waitFor(() => expect(screen.getByRole("button", { name: "Close AI tool connection" })).toHaveFocus());
 
     await user.click(screen.getByRole("button", { name: "Copy URL" }));
@@ -58,6 +60,11 @@ describe("AI tool connection", () => {
     expect(await navigator.clipboard.readText()).toContain("unicas login");
     expect(await navigator.clipboard.readText()).toContain('command "unicas", args ["mcp"]');
     expect(screen.getByRole("button", { name: "CLI prompt copied" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy skill prompt" }));
+    expect(await navigator.clipboard.readText()).toContain(".agents/skills/unicas-cli/SKILL.md");
+    expect(await navigator.clipboard.readText()).toContain("Copy-Item -Recurse");
+    expect(screen.getByRole("button", { name: "Skill prompt copied" })).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Connect an AI tool" })).not.toBeInTheDocument();
