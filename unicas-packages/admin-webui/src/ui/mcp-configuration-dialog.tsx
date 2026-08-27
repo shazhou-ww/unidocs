@@ -107,14 +107,16 @@ Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API
           tools that manage MCP connections, or the CLI prompt for tools that cannot handle
           OAuth MCP.
         </p>
-        <div className="mcp-config-heading">
-          <code>MCP server URL</code>
-          <button type="button" className="copy-button" onClick={() => void copy(serverUrl, "url")}>
-            {copied === "url" ? <Check size={14} /> : <Copy size={14} />}
-            <span>{copied === "url" ? "URL copied" : "Copy URL"}</span>
-          </button>
-        </div>
-        <p className="mcp-url">{serverUrl}</p>
+        <button
+          type="button"
+          className="mcp-url-bubble"
+          aria-label="Copy MCP server URL"
+          title="Click to copy the MCP server URL"
+          onClick={() => void copy(serverUrl, "url")}
+        >
+          {serverUrl}
+          {copied === "url" ? <Check size={14} /> : <Copy size={14} />}
+        </button>
         <div className="mcp-config-heading mcp-prompt-heading">
           <code>Configuration prompt</code>
           <button type="button" className="copy-button" onClick={() => void copy(configurationPrompt, "prompt")}>

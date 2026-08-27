@@ -44,9 +44,11 @@ describe("AI tool connection", () => {
     expect(dialog).toHaveTextContent(`${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`);
     await waitFor(() => expect(screen.getByRole("button", { name: "Close AI tool connection" })).toHaveFocus());
 
-    await user.click(screen.getByRole("button", { name: "Copy URL" }));
+    // The URL is a click-to-copy bubble (no separate label row or Copy URL button).
+    const urlBubble = screen.getByRole("button", { name: "Copy MCP server URL" });
+    await user.click(urlBubble);
     expect(await navigator.clipboard.readText()).toBe(`${window.location.origin}/mcp`);
-    expect(screen.getByRole("button", { name: "URL copied" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Copy prompt" }));
     expect(await navigator.clipboard.readText()).toContain('remote MCP server named "UniCAS"');
