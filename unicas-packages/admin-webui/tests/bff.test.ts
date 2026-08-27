@@ -147,7 +147,7 @@ function authRequest(
 
 async function signIn(bff: (request: Request) => Promise<Response>, provider: MockProvider): Promise<{ cookie: string; csrf: string }> {
   // 1. Start login.
-  const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login?returnTo=/admin/`));
+  const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/oidc?returnTo=/admin/`));
   expect(login.status).toBe(302);
   const preLoginCookie = cookieFrom(login)!;
   const location = new URL(login.headers.get("Location")!);
@@ -157,6 +157,7 @@ async function signIn(bff: (request: Request) => Promise<Response>, provider: Mo
   const codeChallenge = location.searchParams.get("code_challenge")!;
   expect(location.searchParams.get("client_id")).toBe(CLIENT_ID);
   expect(location.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(location.searchParams.get("prompt")).toBe("select_account");
   expect(location.searchParams.get("redirect_uri")).toBe(`${PUBLIC_ORIGIN}/admin/auth/callback`);
   expect(state).toBeTruthy();
   expect(nonce).toBeTruthy();
@@ -197,7 +198,7 @@ async function signInAs(
   provider: MockProvider,
   subject: string,
 ): Promise<{ cookie: string; csrf: string }> {
-  const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login?returnTo=/admin/`));
+  const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/oidc?returnTo=/admin/`));
   const preLoginCookie = cookieFrom(login)!;
   const location = new URL(login.headers.get("Location")!);
   const state = location.searchParams.get("state")!;
@@ -223,6 +224,24 @@ async function signInAs(
 }
 
 describe("cas-admin-webui BFF", () => {
+  test("unauthenticated visitors land on a login page before OIDC", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+
+    const shell = await bff(new Request(`${PUBLIC_ORIGIN}/admin/`));
+    expect(shell.status).toBe(302);
+    expect(shell.headers.get("Location")).toBe("/admin/auth/login?returnTo=%2Fadmin%2F");
+
+    const login = await bff(new Request(`${PUBLIC_ORIGIN}${shell.headers.get("Location")!}`));
+    expect(login.status).toBe(200);
+    expect(login.headers.get("Location")).toBeNull();
+    expect(login.headers.get("Set-Cookie")).toBeNull();
+    const html = await login.text();
+    expect(html).toContain("Sign in");
+    expect(html).toContain("/admin/auth/oidc?returnTo=%2Fadmin%2F");
+    expect(html).toContain("Continue with Google");
+  });
+
   test("full OIDC login flow reaches me() with the verified identity", async () => {
     const provider = await createMockProvider();
     provider.expectTokenBody = (body) => {
@@ -272,7 +291,7 @@ describe("cas-admin-webui BFF", () => {
       const bff = await createBff(provider, undefined, {
         emailAllowlist: ["alice@example.com"],
       });
-      const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login`));
+      const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/oidc`));
       const cookie = cookieFrom(login)!;
       const location = new URL(login.headers.get("Location")!);
       const state = location.searchParams.get("state")!;
@@ -290,8 +309,13 @@ describe("cas-admin-webui BFF", () => {
         { headers: { Cookie: cookie } },
       ));
       expect(callback.status).toBe(302);
-      expect(callback.headers.get("Location")).toBe("/admin/#/login-error");
+      expect(callback.headers.get("Location")).toBe("/admin/auth/login?error=not-allowed");
       expect(callback.headers.get("Set-Cookie")).toBeNull();
+
+      const errorPage = await bff(new Request(`${PUBLIC_ORIGIN}${callback.headers.get("Location")!}`));
+      expect(errorPage.status).toBe(200);
+      expect(errorPage.headers.get("Location")).toBeNull();
+      expect(await errorPage.text()).toContain("not allowed to access CAS Admin");
     }
   });
 
@@ -364,20 +388,20 @@ describe("cas-admin-webui BFF", () => {
   test("callback with a mismatched state is rejected", async () => {
     const provider = await createMockProvider();
     const bff = await createBff(provider);
-    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login`));
+    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/oidc`));
     const cookie = cookieFrom(login)!;
     const callback = await bff(new Request(
       `${PUBLIC_ORIGIN}/admin/auth/callback?code=code&state=wrong-state`,
       { headers: { Cookie: cookie } },
     ));
     expect(callback.status).toBe(302);
-    expect(callback.headers.get("Location")).toContain("login-error");
+    expect(callback.headers.get("Location")).toBe("/admin/auth/login?error=oidc-failed");
   });
 
   test("id_token with a wrong nonce is rejected", async () => {
     const provider = await createMockProvider();
     const bff = await createBff(provider);
-    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login`));
+    const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/oidc`));
     const cookie = cookieFrom(login)!;
     const location = new URL(login.headers.get("Location")!);
     const state = location.searchParams.get("state")!;
@@ -394,7 +418,7 @@ describe("cas-admin-webui BFF", () => {
       { headers: { Cookie: cookie } },
     ));
     expect(callback.status).toBe(302);
-    expect(callback.headers.get("Location")).toContain("login-error");
+    expect(callback.headers.get("Location")).toBe("/admin/auth/login?error=oidc-failed");
   });
 
   test("API routes require a session", async () => {

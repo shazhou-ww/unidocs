@@ -106,6 +106,7 @@ export class OidcClient {
     url.searchParams.set("redirect_uri", this.#redirectUri);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid email profile");
+    url.searchParams.set("prompt", "select_account");
     url.searchParams.set("state", input.state);
     url.searchParams.set("nonce", input.nonce);
     url.searchParams.set("code_challenge", input.codeChallenge);

@@ -115,7 +115,10 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     const method = request.method;
 
     if (pathname === "/admin/auth/login" && method === "GET") {
-      return handleLogin(request, url);
+      return handleLoginPage(request, url);
+    }
+    if (pathname === "/admin/auth/oidc" && method === "GET") {
+      return handleOidcLogin(url);
     }
     if (pathname === "/admin/auth/callback" && method === "GET") {
       return handleCallback(request, url);
@@ -152,11 +155,60 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   // OIDC flow
   // ------------------------------------------------------------------
 
-  async function handleLogin(request: Request, url: URL): Promise<Response> {
+  async function handleLoginPage(request: Request, url: URL): Promise<Response> {
     const returnTo = sanitizeReturnTo(url.searchParams.get("returnTo")) ?? undefined;
     if (url.searchParams.get("test-account") === "1") {
       return handleTestAccountLogin(request, returnTo);
     }
+    const sessionId = readSessionId(request);
+    const session = sessionId ? await readSession(sessionId) : null;
+    if (session?.authenticated) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: returnTo ?? "/admin/" },
+      });
+    }
+    const oidcUrl = new URL("/admin/auth/oidc", config.publicOrigin);
+    if (returnTo) oidcUrl.searchParams.set("returnTo", returnTo);
+    const error = url.searchParams.get("error");
+    const errorMessage = error === "not-allowed"
+      ? "This Google account is not allowed to access CAS Admin."
+      : error === "oidc-failed"
+        ? "Google sign-in could not be completed. Please try again."
+        : null;
+    const testAccountLink = config.testAccount
+      ? `<p><a class="btn" href="/admin/auth/login?test-account=1${returnTo ? `&amp;returnTo=${encodeURIComponent(returnTo)}` : ""}">Use test account</a></p>`
+      : "";
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in - CAS Admin</title>
+  <link rel="stylesheet" href="/admin/assets/index.css" />
+</head>
+<body>
+  <header class="app-header"><span class="brand">CAS Admin</span></header>
+  <main class="app-main">
+    <section class="page">
+      <header class="page-header"><h1>Sign in</h1></header>
+      <div class="card">
+        ${errorMessage ? `<div class="state error" role="alert">${errorMessage}</div>` : ""}
+        <p><a class="btn btn-primary" href="${oidcUrl.pathname}${oidcUrl.search}">Continue with Google</a></p>
+        ${testAccountLink}
+      </div>
+    </section>
+  </main>
+</body>
+</html>`;
+    return new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+
+  async function handleOidcLogin(url: URL): Promise<Response> {
+    const returnTo = sanitizeReturnTo(url.searchParams.get("returnTo")) ?? undefined;
     const oidcState = generateOidcState();
     const oidcNonce = generateOidcNonce();
     const codeVerifier = generatePkceVerifier();
@@ -239,7 +291,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       await auditLoginFailure(state ?? "");
       return new Response(null, {
         status: 302,
-        headers: { Location: "/admin/#/login-error" },
+        headers: { Location: "/admin/auth/login?error=oidc-failed" },
       });
     }
     let identity: VerifiedOidcIdentity;
@@ -257,7 +309,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       await auditLoginFailure(state);
       return new Response(null, {
         status: 302,
-        headers: { Location: "/admin/#/login-error" },
+        headers: { Location: "/admin/auth/login?error=oidc-failed" },
       });
     }
 
@@ -266,7 +318,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       await auditLoginFailure("email-not-allowed");
       return new Response(null, {
         status: 302,
-        headers: { Location: "/admin/#/login-error" },
+        headers: { Location: "/admin/auth/login?error=not-allowed" },
       });
     }
 
