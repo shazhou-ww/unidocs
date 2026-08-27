@@ -36,6 +36,24 @@ export function StackOverviewView({ stack, onChanged }: {
 
   return (
     <Card title="Stack metadata">
+      <dl className="stack-details">
+        <div>
+          <dt>Stack ID</dt>
+          <dd><code>{stack.stackId}</code></dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd><span className="status-badge">{stack.status}</span></dd>
+        </div>
+        <div>
+          <dt>Revision</dt>
+          <dd>{stack.revision}</dd>
+        </div>
+        <div>
+          <dt>Created</dt>
+          <dd>{new Date(stack.createdAt).toLocaleString()}</dd>
+        </div>
+      </dl>
       <div className="field-row">
         <label htmlFor="stack-display-name">Display name</label>
         <input

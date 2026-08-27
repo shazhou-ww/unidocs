@@ -197,16 +197,7 @@ export function StackView({ stackId, onStackChange, onOpenMcpConfiguration, onLo
   if (!stack || !stacks) return <Page title="Stack"><LoadingState /></Page>;
 
   return (
-    <Page
-      title={stack.displayName}
-      meta={(
-        <div className="stack-meta">
-          <code>{stack.stackId}</code>
-          <span className="status-badge">{stack.status}</span>
-          <span>revision {stack.revision}</span>
-        </div>
-      )}
-    >
+    <Page title={stack.displayName}>
       <button
         ref={navigationButtonRef}
         type="button"

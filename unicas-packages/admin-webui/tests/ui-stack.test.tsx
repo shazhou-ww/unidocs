@@ -54,6 +54,11 @@ describe("StackView", () => {
     expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");
     expect(screen.getAllByRole("tab")).toHaveLength(7);
     expect(screen.queryByRole("link", { name: "My Stacks" })).not.toBeInTheDocument();
+    const metadata = screen.getByRole("heading", { name: "Stack metadata" }).closest(".card");
+    expect(metadata).toHaveTextContent("Stack IDcas_one");
+    expect(metadata).toHaveTextContent("Statusactive");
+    expect(metadata).toHaveTextContent("Revision3");
+    expect(metadata).toHaveTextContent("Created");
 
     await user.selectOptions(switcher, "cas_two");
     expect(window.location.hash).toBe("#/stacks/cas_two");

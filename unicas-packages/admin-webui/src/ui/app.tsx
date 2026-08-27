@@ -75,11 +75,6 @@ export function App() {
         {stackMatch && activeStack?.stackId === stackMatch.params.stackId ? (
           <div className="desktop-stack-title">
             <strong>{activeStack.displayName}</strong>
-            <div className="stack-meta">
-              <code>{activeStack.stackId}</code>
-              <span className="status-badge">{activeStack.status}</span>
-              <span>revision {activeStack.revision}</span>
-            </div>
           </div>
         ) : null}
         <div className="app-header-right">
