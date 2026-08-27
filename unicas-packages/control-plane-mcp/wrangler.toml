@@ -6,8 +6,8 @@ workers_dev = false
 preview_urls = false
 
 # Private Worker: reached only through cas-edge's exact MCP/OAuth route allowlist.
-# Secrets: GOOGLE_OIDC_CLIENT_ID, GOOGLE_OIDC_CLIENT_SECRET,
-# OAUTH_STATE_ENCRYPTION_KEY (base64url-encoded 32-byte AES key).
+# Secrets: GOOGLE_OIDC_CLIENT_SECRET and OAUTH_STATE_ENCRYPTION_KEY
+# (base64url-encoded 32-byte AES key).
 
 [[d1_databases]]
 binding = "CAS_CONTROL_DB"
@@ -24,6 +24,7 @@ service = "unidocs-cas-server-cloudflare"
 
 [vars]
 PUBLIC_ORIGIN = "https://unicas.shazhou.work"
+GOOGLE_OIDC_CLIENT_ID = "152437813368-hrv07qv06756pg68c4p9f84i8cf4uk00.apps.googleusercontent.com"
 MCP_ALLOWED_ORIGIN_HOSTNAMES = ""
 MCP_MUTATIONS_ENABLED = "false"
 # Optional: OIDC_ISSUER, OIDC_DISCOVERY_URL, ADMIN_EMAIL_ALLOWLIST,
