@@ -248,18 +248,41 @@ function escapeHtml(value: string): string {
 
 /** Opens the system browser; resolves regardless of whether a browser exists. */
 export async function openBrowser(url: string): Promise<void> {
-  const command = process.platform === "win32"
-    ? { command: "cmd", args: ["/c", "start", "", url] }
-    : process.platform === "darwin"
-      ? { command: "open", args: [url] }
-      : { command: "xdg-open", args: [url] };
+  const command = buildOpenBrowserCommand(url);
   await new Promise<void>((resolve) => {
     const child = spawn(command.command, command.args, {
       stdio: "ignore",
       detached: true,
       windowsHide: true,
+      windowsVerbatimArguments: command.windowsVerbatimArguments,
     });
     child.on("error", () => resolve());
     child.on("exit", () => resolve());
   });
+}
+
+export interface OpenBrowserCommand {
+  readonly command: string;
+  readonly args: string[];
+  readonly windowsVerbatimArguments?: boolean;
+}
+
+/**
+ * Builds the browser-open command. On Windows the URL must be quoted when
+ * handed to `cmd /c start`: Node does not quote arguments without spaces, so
+ * an unquoted authorization URL is split at every `&` (cmd's command
+ * separator), truncating the query string and breaking the OAuth flow.
+ */
+export function buildOpenBrowserCommand(url: string, platform: NodeJS.Platform = process.platform): OpenBrowserCommand {
+  if (platform === "win32") {
+    return {
+      command: "cmd",
+      args: ["/c", "start", '""', "/b", `"${url}"`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  if (platform === "darwin") {
+    return { command: "open", args: [url] };
+  }
+  return { command: "xdg-open", args: [url] };
 }

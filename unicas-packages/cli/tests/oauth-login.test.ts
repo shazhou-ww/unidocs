@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { runLoginFlow } from "../src/oauth/login.js";
+import { buildOpenBrowserCommand, runLoginFlow } from "../src/oauth/login.js";
 import { PersistentOAuthClientProvider, NeedsLoginError } from "../src/oauth/provider.js";
 import { TokenStore } from "../src/store.js";
 import { FAKE_ORIGIN, FAKE_RESOURCE, FakeServer } from "./helpers/fake-server.js";
@@ -126,6 +126,26 @@ describe("runLoginFlow", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect((outcome.error as Error).message).toMatch(/state mismatch/i);
+  });
+});
+
+describe("buildOpenBrowserCommand", () => {
+  test("quotes the authorization URL on Windows so cmd does not split at '&'", () => {
+    const url = "https://unicas.test/oauth/authorize?response_type=code&client_id=abc&scope=control%3Aread";
+    const command = buildOpenBrowserCommand(url, "win32");
+    expect(command.command).toBe("cmd");
+    expect(command.windowsVerbatimArguments).toBe(true);
+    // The URL is a single quoted argument; cmd will not treat `&` as a
+    // command separator, and the full query string reaches the browser.
+    expect(command.args).toEqual(["/c", "start", '""', "/b", `"${url}"`]);
+    expect(command.args[4]).toBe(`"${url}"`);
+    expect(command.args[4]).toContain("&client_id=abc");
+  });
+
+  test("passes the URL unmodified on macOS and Linux", () => {
+    const url = "https://unicas.test/oauth/authorize?response_type=code&client_id=abc";
+    expect(buildOpenBrowserCommand(url, "darwin")).toEqual({ command: "open", args: [url] });
+    expect(buildOpenBrowserCommand(url, "linux")).toEqual({ command: "xdg-open", args: [url] });
   });
 });
 
