@@ -28,14 +28,14 @@ Install once from the UniCAS repository, then log in with a browser:
 Operate the control plane with shell commands (JSON output):
   unicas whoami | unicas stacks list | unicas stacks get <stackId> | unicas stacks create "Operations" --idempotency-key ops-1
 Or connect over stdio MCP: command "unicas", args ["mcp"].`;
-  const skillInstallPrompt = `The UniCAS repository ships an agent skill that teaches AI tools when and how to use the unicas CLI.
-If you are working inside the repository, it is already available; load it from:
-  .agents/skills/unicas-cli/SKILL.md   (DeepSeek Harness / DSH)
-  .claude/skills/unicas-cli/SKILL.md   (Claude Code / Copilot)
-If you work outside the repository, install it into your user skills directory first:
-  DSH:         Copy-Item -Recurse .agents\\skills\\unicas-cli $HOME\\.agents\\skills\\
-  Claude Code: Copy-Item -Recurse .claude\\skills\\unicas-cli $HOME\\.claude\\skills\\
-Then follow the skill: run "unicas login" once, then use "unicas whoami", "unicas stacks list", and the other control-plane commands.`;
+  const skillUrl = `${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`;
+  const skillInstallPrompt = `The UniCAS console deploys an agent skill that teaches AI tools when and how to use the unicas CLI.
+Fetch it from: ${skillUrl}
+Save it as your user skill and follow it:
+  DSH:         save as ~/.agents/skills/unicas-cli/SKILL.md
+  Claude Code: save as ~/.claude/skills/unicas-cli/SKILL.md
+If you are working inside the UniCAS repository, the same file also lives at .agents/skills/unicas-cli/SKILL.md.
+Then run "unicas login" once, then use "unicas whoami", "unicas stacks list", and the other control-plane commands.`;
 
   useEffect(() => {
     if (!open) return;
@@ -162,9 +162,9 @@ Then follow the skill: run "unicas login" once, then use "unicas whoami", "unica
           <p className="mcp-cli-note">
             Best for AI tools that cannot complete OAuth in a browser (for example DeepSeek
             Harness): the CLI owns the OAuth session and refreshes tokens itself, and also
-            exposes the same tools over stdio MCP via <code>unicas mcp</code>. The shipped
-            <code> unicas-cli </code> skill tells agents when and how to use the CLI; paste the
-            prompt above into tools that cannot read the repository.
+            exposes the same tools over stdio MCP via <code>unicas mcp</code>. The
+            <code> unicas-cli </code> skill is deployed with this console and teaches agents
+            when and how to use the CLI — agents can fetch it from the URL above.
           </p>
         </div>
         <div className="mcp-auth-note">
