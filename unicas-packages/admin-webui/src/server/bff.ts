@@ -189,12 +189,12 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
 </head>
 <body>
   <header class="app-header">
-    <span class="brand"><span class="brand-mark">U</span><span>Unicas</span><span class="brand-section">Admin</span></span>
+    <span class="brand"><span class="brand-mark">U</span><span>UniCAS</span><span class="brand-section">Admin</span></span>
   </header>
   <main class="login-shell">
     <section class="login-panel">
       <p class="login-eyebrow">Restricted console</p>
-      <h1>Sign in to Unicas</h1>
+      <h1>Sign in to UniCAS</h1>
       <p class="login-copy">Use an approved Google account to continue.</p>
       ${errorMessage ? `<div class="state error" role="alert">${errorMessage}</div>` : ""}
       <div class="login-actions">
@@ -257,7 +257,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       return new Response(null, {
         status: 401,
         headers: {
-          "WWW-Authenticate": 'Basic realm="Unicas test account", charset="UTF-8"',
+          "WWW-Authenticate": 'Basic realm="UniCAS test account", charset="UTF-8"',
           "Cache-Control": "no-store",
         },
       });

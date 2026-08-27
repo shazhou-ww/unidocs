@@ -106,22 +106,24 @@ export function Table({ columns, rows, empty }: {
   );
 }
 
-export function Tabs({ tabs, active, onChange }: {
-  tabs: readonly { id: string; label: string }[];
+export function Tabs({ tabs, active, onChange, orientation = "horizontal" }: {
+  tabs: readonly { id: string; label: string; icon?: ReactNode }[];
   active: string;
   onChange: (id: string) => void;
+  orientation?: "horizontal" | "vertical";
 }) {
   return (
-    <nav className="tabs" role="tablist">
+    <nav className={`tabs tabs-${orientation}`} role="tablist" aria-orientation={orientation}>
       {tabs.map((tab) => (
         <button
           key={tab.id}
           type="button"
           role="tab"
           aria-selected={tab.id === active}
-          className={`tab${tab.id === active ? " tab-active" : ""}`}
+          className={`tab tab-${orientation}${tab.id === active ? " tab-active" : ""}`}
           onClick={() => onChange(tab.id)}
         >
+          {tab.icon ? <span className="tab-icon" aria-hidden="true">{tab.icon}</span> : null}
           {tab.label}
         </button>
       ))}

@@ -58,7 +58,7 @@ export function App() {
       <header className="app-header">
         <a className="brand" href="#/">
           <span className="brand-mark">U</span>
-          <span>Unicas</span>
+          <span>UniCAS</span>
           <span className="brand-section">Admin</span>
         </a>
         <div className="app-header-right">
