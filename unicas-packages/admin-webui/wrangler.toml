@@ -16,10 +16,14 @@ database_id = "dc8090eb-46bc-43e2-9524-f1554fb71c74"
 #   GOOGLE_OIDC_CLIENT_ID
 #   GOOGLE_OIDC_CLIENT_SECRET
 #   SESSION_ENCRYPTION_KEYS   JSON map {"kid":"<base64url 32-byte AES key>"}
+#   ADMIN_TEST_ACCOUNT_PASSWORD (only when the test account is enabled)
 #
 # Optional vars:
 #   OIDC_ISSUER (default https://accounts.google.com)
 #   OIDC_DISCOVERY_URL (override for tests/local mock provider)
+#   ADMIN_EMAIL_ALLOWLIST (comma-separated exact emails; case-insensitive)
+#   ADMIN_TEST_ACCOUNT_EMAIL (must be paired with ADMIN_TEST_ACCOUNT_PASSWORD
+#     and included in ADMIN_EMAIL_ALLOWLIST when the allowlist is configured)
 #   SESSION_TTL_MS (default 28800000 = 8h, sliding)
 #   SESSION_COOKIE_NAME (default cas_admin_session)
 #   SESSION_COOKIE_SECURE (default true; set false for local http dev)
@@ -31,6 +35,9 @@ database_id = "dc8090eb-46bc-43e2-9524-f1554fb71c74"
 #   prod:  https://unicas.shazhou.work/admin/auth/callback
 #   local: http://localhost:4070/admin/auth/callback
 # The BFF builds the redirect URI as PUBLIC_ORIGIN + /admin/auth/callback.
+# The test account uses browser HTTP Basic only at:
+#   /admin/auth/login?test-account=1
+# Successful login rotates into the same encrypted session + CSRF flow as OIDC.
 #
 # Root Ref audit reads: CAS_TENANT_AUDIT_READER service binding to the tenant
 # worker's private /_internal/audit/* RPC (never exposed by cas-edge).

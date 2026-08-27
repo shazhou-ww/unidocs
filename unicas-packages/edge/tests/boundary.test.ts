@@ -92,7 +92,7 @@ describe("cas-edge package boundary", () => {
     expect(forwarded.headers.get("X-Cas-Audit-Reader-Key")).toBeNull();
   });
 
-  test("forwards /admin to the admin service, stripping tenant Authorization", async () => {
+  test("forwards /admin to the admin service, stripping tenant Bearer Authorization", async () => {
     const { env, tenantFetch, adminFetch } = stubEnv();
     const res = await worker.fetch(
       new Request("https://cas.example/admin/me", {
@@ -112,5 +112,33 @@ describe("cas-edge package boundary", () => {
     expect(forwarded.headers.get("Cookie")).toBe("admin_session=secret");
     expect(forwarded.headers.get("Authorization")).toBeNull();
     expect(forwarded.headers.get("X-Cas-Audit-Reader-Key")).toBeNull();
+  });
+
+  test("forwards Basic credentials for the configured admin test account", async () => {
+    const { env, adminFetch } = stubEnv();
+    await worker.fetch(
+      new Request("https://cas.example/admin/auth/login?test-account=1", {
+        headers: { Authorization: "Basic dGVzdGVyQGV4YW1wbGUuY29tOnBhc3N3b3Jk" },
+      }),
+      env,
+    );
+
+    const forwarded = adminFetch.mock.calls[0][0] as Request;
+    expect(forwarded.headers.get("Authorization")).toBe(
+      "Basic dGVzdGVyQGV4YW1wbGUuY29tOnBhc3N3b3Jk",
+    );
+  });
+
+  test("strips non-Basic authorization schemes from admin requests", async () => {
+    const { env, adminFetch } = stubEnv();
+    await worker.fetch(
+      new Request("https://cas.example/admin/auth/login", {
+        headers: { Authorization: "Digest credentials" },
+      }),
+      env,
+    );
+
+    const forwarded = adminFetch.mock.calls[0][0] as Request;
+    expect(forwarded.headers.get("Authorization")).toBeNull();
   });
 });

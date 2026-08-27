@@ -92,6 +92,35 @@ describe("configFromEnv", () => {
     expect(config.sessionCookieSecure).toBe(false);
     expect(config.oidcIssuer).toBe("https://accounts.google.com");
   });
+
+  test("parses and cross-validates test account and email allowlist", () => {
+    const baseEnv = {
+      SESSION_ENCRYPTION_KEYS: JSON.stringify({ v1: randomKey() }),
+      PUBLIC_ORIGIN: "https://cas.example",
+    };
+    expect(() => configFromEnv({
+      ...baseEnv,
+      ADMIN_TEST_ACCOUNT_EMAIL: "tester@example.com",
+    })).toThrow(/configured together/);
+    expect(() => configFromEnv({
+      ...baseEnv,
+      ADMIN_TEST_ACCOUNT_EMAIL: "tester@example.com",
+      ADMIN_TEST_ACCOUNT_PASSWORD: "password",
+      ADMIN_EMAIL_ALLOWLIST: "alice@example.com",
+    })).toThrow(/must be included/);
+
+    const config = configFromEnv({
+      ...baseEnv,
+      ADMIN_TEST_ACCOUNT_EMAIL: " Tester@Example.com ",
+      ADMIN_TEST_ACCOUNT_PASSWORD: "password",
+      ADMIN_EMAIL_ALLOWLIST: "alice@example.com, TESTER@example.com,alice@example.com",
+    });
+    expect(config.testAccount).toEqual({
+      email: "tester@example.com",
+      password: "password",
+    });
+    expect(config.emailAllowlist).toEqual(["alice@example.com", "tester@example.com"]);
+  });
 });
 
 describe("csrf helpers", () => {

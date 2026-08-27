@@ -21,6 +21,7 @@ export interface OidcDiscovery {
 export interface VerifiedOidcIdentity {
   readonly sub: string;
   readonly email: string | null;
+  readonly emailVerified: boolean;
   readonly name: string | null;
 }
 
@@ -171,6 +172,7 @@ export class OidcClient {
     return {
       sub: payload.sub,
       email: typeof payload.email === "string" && payload.email.length > 0 ? payload.email : null,
+      emailVerified: payload.email_verified === true,
       name: typeof payload.name === "string" && payload.name.length > 0 ? payload.name : null,
     };
   }

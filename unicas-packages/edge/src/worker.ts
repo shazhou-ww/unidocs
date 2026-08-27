@@ -3,8 +3,9 @@
  *
  * `/stacks/...` -> CAS_TENANT_SERVICE (strip admin-session cookies and shared
  * secrets; tenant Authorization passes through)
- * `/admin/...`  -> CAS_ADMIN_SERVICE  (strip tenant Authorization; the opaque
- *                  admin session cookie passes through)
+ * `/admin/...`  -> CAS_ADMIN_SERVICE  (strip tenant Bearer Authorization;
+ *                  Basic test-account credentials and the opaque admin
+ *                  session cookie pass through)
  * `/health`     -> edge readiness (never forwarded)
  * other         -> 404
  *
@@ -26,7 +27,6 @@ const TENANT_STRIPPED_HEADERS = [
 
 /** Headers that never cross from the public door to the admin service. */
 const ADMIN_STRIPPED_HEADERS = [
-  "authorization",
   "x-internal-token",
   "x-cas-audit-reader-key",
 ] as const;
@@ -48,7 +48,7 @@ export default {
       return env.CAS_TENANT_SERVICE.fetch(stripHeaders(request, TENANT_STRIPPED_HEADERS));
     }
     if (isPrefixed(pathname, CAS_EDGE_DISPATCH.adminPrefix)) {
-      return env.CAS_ADMIN_SERVICE.fetch(stripHeaders(request, ADMIN_STRIPPED_HEADERS));
+      return env.CAS_ADMIN_SERVICE.fetch(stripAdminHeaders(request));
     }
     return new Response("Not Found", { status: 404 });
   },
@@ -63,4 +63,14 @@ function stripHeaders(request: Request, names: readonly string[]): Request {
   const headers = new Headers(request.headers);
   for (const name of names) headers.delete(name);
   return new Request(request, { headers });
+}
+
+function stripAdminHeaders(request: Request): Request {
+  const sanitized = stripHeaders(request, ADMIN_STRIPPED_HEADERS);
+  const headers = new Headers(sanitized.headers);
+  const authorization = headers.get("Authorization");
+  if (!authorization || !/^Basic\s+/i.test(authorization)) {
+    headers.delete("Authorization");
+  }
+  return new Request(sanitized, { headers });
 }
