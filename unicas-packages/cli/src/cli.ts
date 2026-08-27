@@ -7,7 +7,8 @@
  * there.
  */
 
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { auditCommand } from "./commands/audit.js";
 import { createContext } from "./commands/common.js";
 import { issuerCommand } from "./commands/issuer.js";
@@ -131,7 +132,20 @@ export async function main(argv: readonly string[]): Promise<void> {
 }
 
 // Guard: only run when invoked as a binary (not when imported by tests).
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Realpath comparison keeps the guard working when the script is reached
+// through a symlink (e.g. `pnpm install --global ./unicas-packages/cli`),
+// because `import.meta.url` resolves to the real path while `process.argv[1]`
+// keeps the symlink path.
+function invokedAsBinary(): boolean {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+
+if (invokedAsBinary()) {
   main(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     printError(message);

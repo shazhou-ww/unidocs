@@ -40,9 +40,9 @@ Configure DeepSeek Harness's mcp-client with a stdio server:
 plane and forwards calls over the authenticated connection, so DSH can read and
 operate the control plane without any OAuth implementation of its own. To put
 `unicas` on PATH from the checkout, run `pnpm --filter @unicas/cli build` and
-then `pnpm --filter @unicas/cli link --global`, or configure the client with
-`command: "node"` and `args: ["<checkout>/unicas-packages/cli/dist/cli.js",
-"mcp"]`.
+then `pnpm install --global ./unicas-packages/cli` (pnpm 10+ removed
+`pnpm link --global`), or configure the client with `command: "node"` and
+`args: ["<checkout>/unicas-packages/cli/dist/cli.js", "mcp"]`.
 
 Alternatively, skip MCP entirely and have DSH run plain shell commands
 (`unicas stacks list`, `unicas whoami`, …); the CLI prints JSON on stdout.

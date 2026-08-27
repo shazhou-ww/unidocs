@@ -120,7 +120,8 @@ To expose the `unicas` command on PATH from this checkout:
 
 ```powershell
 pnpm --filter @unicas/cli build
-# either: pnpm --filter @unicas/cli link --global
+# pnpm 10+ removed `pnpm link --global`; install the local package globally instead:
+pnpm install --global ./unicas-packages/cli
 # or point the MCP client directly at the built script:
 #   node D:\Code\unidocs-cli\unicas-packages\cli\dist\cli.js mcp
 ```
