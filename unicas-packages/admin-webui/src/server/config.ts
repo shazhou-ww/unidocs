@@ -34,6 +34,13 @@ export interface AdminBffConfig {
   readonly csrfEnforced?: boolean;
   /** Shared secret for the private tenant audit-reader RPC. */
   readonly auditReaderKey?: string;
+  /** Optional production test account that can bypass OIDC with HTTP Basic. */
+  readonly testAccount?: {
+    readonly email: string;
+    readonly password: string;
+  };
+  /** Exact, case-insensitive emails allowed to create an admin session. */
+  readonly emailAllowlist?: readonly string[];
   /** Clock for tests. */
   readonly now?: () => number;
 }
@@ -58,6 +65,9 @@ export interface AdminBffEnv {
   SESSION_COOKIE_SAME_SITE?: string;
   CSRF_ENFORCE?: string;
   CAS_AUDIT_READER_KEY?: string;
+  ADMIN_TEST_ACCOUNT_EMAIL?: string;
+  ADMIN_TEST_ACCOUNT_PASSWORD?: string;
+  ADMIN_EMAIL_ALLOWLIST?: string;
 }
 
 /** Parse Worker bindings into a validated BFF config; throws on misconfig. */
@@ -91,6 +101,28 @@ export function configFromEnv(env: AdminBffEnv): AdminBffConfig {
     throw new Error("PUBLIC_ORIGIN must be configured");
   }
   new URL(publicOrigin); // throws on malformed origin
+  const testAccountEmail = env.ADMIN_TEST_ACCOUNT_EMAIL?.trim().toLowerCase() ?? "";
+  const testAccountPassword = env.ADMIN_TEST_ACCOUNT_PASSWORD ?? "";
+  if ((testAccountEmail.length === 0) !== (testAccountPassword.length === 0)) {
+    throw new Error("ADMIN_TEST_ACCOUNT_EMAIL and ADMIN_TEST_ACCOUNT_PASSWORD must be configured together");
+  }
+  if (testAccountEmail.length > 0) validateEmail(testAccountEmail, "ADMIN_TEST_ACCOUNT_EMAIL");
+
+  let emailAllowlist: readonly string[] | undefined;
+  if (env.ADMIN_EMAIL_ALLOWLIST !== undefined) {
+    emailAllowlist = [...new Set(
+      env.ADMIN_EMAIL_ALLOWLIST.split(",")
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => email.length > 0),
+    )];
+    if (emailAllowlist.length === 0) {
+      throw new Error("ADMIN_EMAIL_ALLOWLIST must contain at least one email");
+    }
+    for (const email of emailAllowlist) validateEmail(email, "ADMIN_EMAIL_ALLOWLIST");
+    if (testAccountEmail.length > 0 && !emailAllowlist.includes(testAccountEmail)) {
+      throw new Error("ADMIN_TEST_ACCOUNT_EMAIL must be included in ADMIN_EMAIL_ALLOWLIST");
+    }
+  }
   return {
     googleClientId,
     googleClientSecret,
@@ -104,5 +136,15 @@ export function configFromEnv(env: AdminBffEnv): AdminBffConfig {
     sessionCookieSameSite: (env.SESSION_COOKIE_SAME_SITE as "Lax" | "Strict" | "None") ?? "Lax",
     csrfEnforced: env.CSRF_ENFORCE !== "false",
     auditReaderKey: env.CAS_AUDIT_READER_KEY,
+    testAccount: testAccountEmail.length > 0
+      ? { email: testAccountEmail, password: testAccountPassword }
+      : undefined,
+    emailAllowlist,
   };
+}
+
+function validateEmail(email: string, variable: string): void {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error(`${variable} contains an invalid email`);
+  }
 }

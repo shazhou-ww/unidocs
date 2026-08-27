@@ -61,6 +61,7 @@ export interface CreateAdminBffOptions {
 }
 
 const NOT_AVAILABLE_MESSAGE = "Root Ref audit reads are not yet available from the admin plane";
+const TEST_ACCOUNT_ISSUER = "urn:unicas:admin:test-account";
 
 /** Read-side refDomain validation; reserved migration domains are readable. */
 function validateAuditRefDomain(value: string): string | null {
@@ -94,6 +95,9 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     maxAgeSeconds: Math.ceil(sessionTtlMs / 1000),
   };
   const absolutize = (path: string): string => `${config.publicOrigin}${path}`;
+  const emailAllowlist = config.emailAllowlist
+    ? new Set(config.emailAllowlist.map((email) => email.toLowerCase()))
+    : null;
 
   return async function adminFetch(request: Request): Promise<Response> {
     try {
@@ -150,6 +154,9 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
 
   async function handleLogin(request: Request, url: URL): Promise<Response> {
     const returnTo = sanitizeReturnTo(url.searchParams.get("returnTo")) ?? undefined;
+    if (url.searchParams.get("test-account") === "1") {
+      return handleTestAccountLogin(request, returnTo);
+    }
     const oidcState = generateOidcState();
     const oidcNonce = generateOidcNonce();
     const codeVerifier = generatePkceVerifier();
@@ -177,6 +184,47 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         "Set-Cookie": sessionCookieHeader(cookieOptions, sessionId),
       },
     });
+  }
+
+  async function handleTestAccountLogin(request: Request, returnTo?: string): Promise<Response> {
+    const account = config.testAccount;
+    if (!account) return new Response("Not Found", { status: 404 });
+    const credentials = readBasicCredentials(request);
+    const emailMatches = credentials
+      ? await secureEqual(credentials.email.toLowerCase(), account.email.toLowerCase())
+      : false;
+    const passwordMatches = credentials
+      ? await secureEqual(credentials.password, account.password)
+      : false;
+    if (!emailMatches || !passwordMatches) {
+      await auditLoginFailure("test-account");
+      return new Response(null, {
+        status: 401,
+        headers: {
+          "WWW-Authenticate": 'Basic realm="Unicas test account", charset="UTF-8"',
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+    if (!isEmailAllowed(account.email, true)) {
+      await auditLoginFailure("test-account-email-not-allowed");
+      return new Response(null, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
+    const authenticatedPayload: AdminSessionPayload = {
+      v: 1,
+      authenticated: true,
+      identityIssuer: TEST_ACCOUNT_ISSUER,
+      subject: account.email.toLowerCase(),
+      displayName: account.email,
+      emailForDisplay: account.email,
+      csrfToken: generateCsrfToken(),
+    };
+    return createAuthenticatedSession(
+      request,
+      authenticatedPayload,
+      returnTo ?? "/admin/",
+      readSessionId(request),
+    );
   }
 
   async function handleCallback(request: Request, callbackUrl: URL): Promise<Response> {
@@ -213,8 +261,16 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       });
     }
 
+    if (!isEmailAllowed(identity.email, identity.emailVerified)) {
+      if (sessionId) await sessionStore.delete(sessionId);
+      await auditLoginFailure("email-not-allowed");
+      return new Response(null, {
+        status: 302,
+        headers: { Location: "/admin/#/login-error" },
+      });
+    }
+
     // Session rotation on privilege change: new id + fresh CSRF token.
-    const authenticatedId = generateSessionId();
     const authenticatedPayload: AdminSessionPayload = {
       v: 1,
       authenticated: true,
@@ -224,15 +280,29 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       emailForDisplay: identity.email,
       csrfToken: generateCsrfToken(),
     };
+    return createAuthenticatedSession(
+      request,
+      authenticatedPayload,
+      preLogin.returnTo ?? "/admin/",
+      sessionId,
+    );
+  }
+
+  async function createAuthenticatedSession(
+    request: Request,
+    authenticatedPayload: AdminSessionPayload,
+    target: string,
+    previousSessionId: string | null,
+  ): Promise<Response> {
+    const authenticatedId = generateSessionId();
     await sessionStore.create(authenticatedId, await sessionCrypto.encrypt(authenticatedPayload), sessionTtlMs);
-    if (sessionId) await sessionStore.delete(sessionId);
+    if (previousSessionId) await sessionStore.delete(previousSessionId);
     await service.recordSessionAudit(
       serviceContext(authenticatedPayload, request),
       "session.login",
       `${authenticatedPayload.identityIssuer}:${authenticatedPayload.subject}`,
       null,
     );
-    const target = preLogin.returnTo ?? "/admin/";
     return new Response(null, {
       status: 302,
       headers: {
@@ -613,6 +683,11 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     }
   }
 
+  function isEmailAllowed(email: string | null, emailVerified: boolean): boolean {
+    if (!emailAllowlist) return true;
+    return emailVerified && email !== null && emailAllowlist.has(email.toLowerCase());
+  }
+
   function sanitizeReturnTo(value: string | null): string | null {
     if (!value) return null;
     if (!value.startsWith("/admin")) return null;
@@ -714,4 +789,36 @@ function generateRequestId(): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function readBasicCredentials(request: Request): { email: string; password: string } | null {
+  const authorization = request.headers.get("Authorization");
+  const match = authorization ? /^Basic\s+([^\s]+)$/i.exec(authorization) : null;
+  if (!match) return null;
+  try {
+    const binary = atob(match[1]!);
+    const decoded = new TextDecoder().decode(
+      Uint8Array.from(binary, (character) => character.charCodeAt(0)),
+    );
+    const separator = decoded.indexOf(":");
+    if (separator < 1) return null;
+    return { email: decoded.slice(0, separator), password: decoded.slice(separator + 1) };
+  } catch {
+    return null;
+  }
+}
+
+async function secureEqual(left: string, right: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [leftHash, rightHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(left)),
+    crypto.subtle.digest("SHA-256", encoder.encode(right)),
+  ]);
+  const leftBytes = new Uint8Array(leftHash);
+  const rightBytes = new Uint8Array(rightHash);
+  let difference = 0;
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    difference |= leftBytes[index]! ^ rightBytes[index]!;
+  }
+  return difference === 0;
 }

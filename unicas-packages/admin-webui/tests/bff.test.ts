@@ -66,6 +66,7 @@ async function createMockProvider(): Promise<MockProvider> {
 async function createBff(
   provider: MockProvider,
   auditReader?: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> },
+  configOverrides: Partial<AdminBffConfig> = {},
 ): Promise<(request: Request) => Promise<Response>> {
   miniflare = new Miniflare(convertV4MiniflareOptions({
     workers: [{
@@ -111,6 +112,7 @@ async function createBff(
     publicOrigin: PUBLIC_ORIGIN,
     sessionCookieSecure: false,
     auditReaderKey: "audit-reader-secret",
+    ...configOverrides,
   };
   const oidc = new OidcClient(
     {
@@ -167,6 +169,7 @@ async function signIn(bff: (request: Request) => Promise<Response>, provider: Mo
     aud: CLIENT_ID,
     nonce,
     email: "alice@example.com",
+    email_verified: true,
     name: "Alice",
   };
 
@@ -205,6 +208,7 @@ async function signInAs(
     aud: CLIENT_ID,
     nonce,
     email: `${subject}@example.com`,
+    email_verified: true,
     name: subject,
   };
   const callback = await bff(new Request(
@@ -242,6 +246,88 @@ describe("cas-admin-webui BFF", () => {
       emailForDisplay: "alice@example.com",
     });
     expect(body.memberships).toEqual([]);
+  });
+
+  test("email allowlist accepts verified emails case-insensitively", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider, undefined, {
+      emailAllowlist: ["ALICE@EXAMPLE.COM"],
+    });
+    const { cookie } = await signIn(bff, provider);
+
+    const me = await authRequest(bff, "/admin/me", cookie);
+    expect(me.status).toBe(200);
+    expect(await me.json()).toMatchObject({
+      identity: { emailForDisplay: "alice@example.com" },
+    });
+  });
+
+  test("email allowlist rejects absent, unverified, or unlisted OIDC emails", async () => {
+    for (const claims of [
+      { email: null, email_verified: false },
+      { email: "alice@example.com", email_verified: false },
+      { email: "mallory@example.com", email_verified: true },
+    ]) {
+      const provider = await createMockProvider();
+      const bff = await createBff(provider, undefined, {
+        emailAllowlist: ["alice@example.com"],
+      });
+      const login = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/login`));
+      const cookie = cookieFrom(login)!;
+      const location = new URL(login.headers.get("Location")!);
+      const state = location.searchParams.get("state")!;
+      provider.pendingClaims = {
+        iss: ISSUER,
+        sub: "google-user-123",
+        aud: CLIENT_ID,
+        nonce: location.searchParams.get("nonce")!,
+        name: "Alice",
+        ...claims,
+      };
+
+      const callback = await bff(new Request(
+        `${PUBLIC_ORIGIN}/admin/auth/callback?code=mock-code&state=${encodeURIComponent(state)}`,
+        { headers: { Cookie: cookie } },
+      ));
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("Location")).toBe("/admin/#/login-error");
+      expect(callback.headers.get("Set-Cookie")).toBeNull();
+    }
+  });
+
+  test("configured test account bypasses OIDC and creates a normal admin session", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider, undefined, {
+      testAccount: { email: "tester@example.com", password: "test-password" },
+      emailAllowlist: ["tester@example.com"],
+    });
+    const loginUrl = `${PUBLIC_ORIGIN}/admin/auth/login?test-account=1&returnTo=/admin/`;
+
+    const challenge = await bff(new Request(loginUrl));
+    expect(challenge.status).toBe(401);
+    expect(challenge.headers.get("WWW-Authenticate")).toContain("Basic");
+
+    const rejected = await bff(new Request(loginUrl, {
+      headers: { Authorization: `Basic ${btoa("tester@example.com:wrong")}` },
+    }));
+    expect(rejected.status).toBe(401);
+
+    const login = await bff(new Request(loginUrl, {
+      headers: { Authorization: `Basic ${btoa("TESTER@example.com:test-password")}` },
+    }));
+    expect(login.status).toBe(302);
+    expect(login.headers.get("Location")).toBe("/admin/");
+    const cookie = cookieFrom(login)!;
+
+    const me = await authRequest(bff, "/admin/me", cookie);
+    expect(me.status).toBe(200);
+    expect(await me.json()).toMatchObject({
+      identity: {
+        identityIssuer: "urn:unicas:admin:test-account",
+        subject: "tester@example.com",
+        emailForDisplay: "tester@example.com",
+      },
+    });
   });
 
   test("callback with a mismatched state is rejected", async () => {
