@@ -315,7 +315,11 @@ describe("cas-admin-webui BFF", () => {
       const errorPage = await bff(new Request(`${PUBLIC_ORIGIN}${callback.headers.get("Location")!}`));
       expect(errorPage.status).toBe(200);
       expect(errorPage.headers.get("Location")).toBeNull();
-      expect(await errorPage.text()).toContain("not allowed to access CAS Admin");
+      const errorHtml = await errorPage.text();
+      expect(errorHtml).toContain("Access restricted");
+      expect(errorHtml).toContain("not approved for this console");
+      expect(errorHtml).toContain("Choose another Google account");
+      expect(errorHtml).not.toContain("Continue with Google");
     }
   });
 

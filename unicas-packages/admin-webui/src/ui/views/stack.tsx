@@ -5,6 +5,7 @@ import {
   Gauge,
   KeyRound,
   LayoutDashboard,
+  LogOut,
   Menu,
   ScrollText,
   Users,
@@ -32,7 +33,7 @@ const TABS = [
   { id: "usage", label: "Usage", icon: <Gauge size={15} /> },
 ] as const;
 
-export function StackView({ stackId }: { stackId: string }) {
+export function StackView({ stackId, onLogout }: { stackId: string; onLogout: () => void }) {
   const [stack, setStack] = useState<CasStack | null>(null);
   const [stacks, setStacks] = useState<CasStack[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -131,10 +132,10 @@ export function StackView({ stackId }: { stackId: string }) {
         aria-controls="stack-navigation"
         aria-expanded={mobileNavigationOpen}
         aria-label={`Open navigation, current section ${activeTab.label}`}
+        title={`Navigation: ${activeTab.label}`}
         onClick={() => setMobileNavigationOpen(true)}
       >
-        <Menu size={16} />
-        <span>Navigate</span>
+        <Menu size={19} />
       </button>
       <div className="stack-layout">
         {mobileNavigationOpen ? (
@@ -153,7 +154,10 @@ export function StackView({ stackId }: { stackId: string }) {
           aria-label="Stack management navigation"
         >
           <div className="drawer-header">
-            <strong>Manage stack</strong>
+            <a className="drawer-brand" href="#/">
+              <span className="brand-mark">U</span>
+              <span>UniCAS Admin</span>
+            </a>
             <button
               ref={navigationCloseRef}
               type="button"
@@ -180,6 +184,12 @@ export function StackView({ stackId }: { stackId: string }) {
             </select>
           </div>
           <Tabs tabs={TABS} active={tab} onChange={selectTab} orientation="vertical" />
+          <div className="drawer-footer">
+            <button type="button" className="drawer-signout" onClick={onLogout}>
+              <LogOut size={15} />
+              <span>Sign out</span>
+            </button>
+          </div>
         </aside>
         <section className="stack-content" aria-hidden={mobileNavigationOpen ? true : undefined}>
           {tab === "overview" ? <StackOverviewView stack={stack} onChanged={reload} /> : null}

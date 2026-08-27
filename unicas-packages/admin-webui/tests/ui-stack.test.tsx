@@ -37,7 +37,7 @@ beforeEach(() => {
 describe("StackView", () => {
   test("renders a stack switcher above vertical management navigation", async () => {
     const user = userEvent.setup();
-    render(<StackView stackId="cas_one" />);
+    render(<StackView stackId="cas_one" onLogout={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Primary stack" })).toBeInTheDocument());
     const switcher = screen.getByRole("combobox", { name: "Stack" });
@@ -52,7 +52,8 @@ describe("StackView", () => {
 
   test("opens and dismisses the mobile navigation drawer", async () => {
     const user = userEvent.setup();
-    render(<StackView stackId="cas_one" />);
+    const onLogout = vi.fn();
+    render(<StackView stackId="cas_one" onLogout={onLogout} />);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Primary stack" })).toBeInTheDocument());
     const trigger = screen.getByRole("button", { name: /Open navigation/ });
@@ -63,6 +64,9 @@ describe("StackView", () => {
     const dialog = screen.getByRole("dialog", { name: "Stack management navigation" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Close navigation" })).toHaveFocus());
+    expect(within(dialog).getByRole("link", { name: /UniCAS Admin/ })).toHaveAttribute("href", "#/");
+    await user.click(within(dialog).getByRole("button", { name: "Sign out" }));
+    expect(onLogout).toHaveBeenCalledOnce();
 
     await user.click(screen.getByRole("tab", { name: "Usage" }));
     expect(trigger).toHaveAttribute("aria-expanded", "false");

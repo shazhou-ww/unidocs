@@ -42,7 +42,7 @@ export function App() {
   if (route === "/login-error") {
     content = <LoginErrorView />;
   } else if (stackMatch) {
-    content = <StackView stackId={stackMatch.params.stackId!} />;
+    content = <StackView stackId={stackMatch.params.stackId!} onLogout={() => void logout()} />;
   } else if (inviteMatch) {
     content = <InvitationView token={inviteMatch.params.token!} />;
   } else {
@@ -54,7 +54,7 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app${stackMatch ? " app-stack" : ""}`}>
       <header className="app-header">
         <a className="brand" href="#/">
           <span className="brand-mark">U</span>

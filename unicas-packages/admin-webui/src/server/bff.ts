@@ -171,11 +171,10 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     const oidcUrl = new URL("/admin/auth/oidc", config.publicOrigin);
     if (returnTo) oidcUrl.searchParams.set("returnTo", returnTo);
     const error = url.searchParams.get("error");
-    const errorMessage = error === "not-allowed"
-      ? "This Google account is not allowed to access CAS Admin."
-      : error === "oidc-failed"
-        ? "Google sign-in could not be completed. Please try again."
-        : null;
+    const accessRestricted = error === "not-allowed";
+    const errorMessage = error === "oidc-failed"
+      ? "Google sign-in could not be completed. Please try again."
+      : null;
     const testAccountLink = config.testAccount
       ? `<a class="btn" href="/admin/auth/login?test-account=1${returnTo ? `&amp;returnTo=${encodeURIComponent(returnTo)}` : ""}">Use test account</a>`
       : "";
@@ -192,15 +191,26 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     <span class="brand"><span class="brand-mark">U</span><span>UniCAS</span><span class="brand-section">Admin</span></span>
   </header>
   <main class="login-shell">
-    <section class="login-panel">
-      <p class="login-eyebrow">Restricted console</p>
-      <h1>Sign in to UniCAS</h1>
-      <p class="login-copy">Use an approved Google account to continue.</p>
-      ${errorMessage ? `<div class="state error" role="alert">${errorMessage}</div>` : ""}
-      <div class="login-actions">
-        <a class="btn btn-primary" href="${oidcUrl.pathname}${oidcUrl.search}">Continue with Google</a>
-        ${testAccountLink}
-      </div>
+    <section class="login-panel${accessRestricted ? " login-panel-restricted" : ""}">
+      ${accessRestricted ? `
+        <div class="login-status-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <p class="login-eyebrow">UniCAS Admin</p>
+        <h1>Access restricted</h1>
+        <p class="login-copy" role="alert">This Google account is not approved for this console. Choose another account or contact the UniCAS team.</p>
+        <div class="login-actions">
+          <a class="btn" href="${oidcUrl.pathname}${oidcUrl.search}">Choose another Google account</a>
+          ${testAccountLink}
+        </div>` : `
+        <p class="login-eyebrow">Restricted console</p>
+        <h1>Sign in to UniCAS</h1>
+        <p class="login-copy">Use an approved Google account to continue.</p>
+        ${errorMessage ? `<div class="state error" role="alert">${errorMessage}</div>` : ""}
+        <div class="login-actions">
+          <a class="btn btn-primary" href="${oidcUrl.pathname}${oidcUrl.search}">Continue with Google</a>
+          ${testAccountLink}
+        </div>`}
     </section>
   </main>
 </body>
