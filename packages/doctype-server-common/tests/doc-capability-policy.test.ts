@@ -9,7 +9,7 @@ describe("Doc edge capability requirements", () => {
     ["query", "tenants:t:sessions:s:read", ["tenants:t:cas:read"]],
     ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"]],
     ["history", "tenants:t:sessions:s:read", []],
-    ["ir", "tenants:t:sessions:s:read", []],
+    ["ir", "tenants:t:sessions:s:read", ["tenants:t:cas:read"]],
     ["snapshot", "tenants:t:sessions:s:read", ["tenants:t:cas:write"]],
     ["apply", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"]],
     ["rollback", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"]],
