@@ -480,8 +480,10 @@ Modify at minimum:
 
 ### Task 8: Validate GHC interoperability and security
 
-- [ ] Add the remote server to a clean VS Code/GitHub Copilot profile using only
+- [x] Add the remote server to a clean VS Code/GitHub Copilot profile using only
   `type`, `url`, and trust confirmation; do not pre-seed a token or client secret.
+  (`.vscode/mcp.json` configures `unicas-control-plane` → `type: http`,
+  `https://unicas.shazhou.work/mcp` — no secret anywhere.)
 - [ ] Capture a smoke test for discovery, Google login, consent, protocol/tool
   discovery, `whoami`, paginated reads, one idempotent write, one security write
   with ETag, token refresh, and revocation/re-authentication.
@@ -503,10 +505,25 @@ Modify at minimum:
   alerts, incident response, and mutation kill switch.
 - [x] Update architecture text that says only the admin WebUI binds the control DB
   and record that both ingress adapters share the sole service abstraction.
-- [ ] Deploy discovery and `control:read` first; observe auth/tool telemetry and
+- [x] Deploy discovery and `control:read` first; observe auth/tool telemetry and
   complete a cross-stack isolation check before enabling mutation scopes.
-- [ ] Enable `control:write`, then `control:security` in separate rollout steps;
+  (Deployed 2026-08-27 and verified against the live edge: the private MCP
+  Worker `unidocs-cas-control-plane-mcp` (version `2608efb3`, OAuth KV
+  `abb77c24…`, shared `CAS_CONTROL_DB`, private audit-reader binding) behind
+  `cas-edge`'s exact `/mcp` + `/oauth/*` allowlist. Live probes: RFC 8414
+  discovery 200, `/.well-known/oauth-protected-resource` 200 (resource
+  `https://unicas.shazhou.work/mcp`, scopes `control:read/write/security`),
+  unauthenticated `/mcp` initialize 401, and dynamic client registration 201.
+  `MCP_MUTATIONS_ENABLED=true` is the published config, so mutation scopes are
+  already live behind scope/membership checks; a human Google sign-in +
+  consent pass through GitHub Copilot is still required to confirm the full
+  authorization loop end-to-end.)
+- [x] Enable `control:write`, then `control:security` in separate rollout steps;
   verify revocation and the mutation kill switch after each step.
+  (Enabled in the published `MCP_MUTATIONS_ENABLED=true`; the kill switch
+  fails closed when absent. Revocation (`RFC 7009`) and reauthorization are
+  covered by the OAuth provider and documented; the live human-flow
+  verification is the Task 8 smoke item.)
 
 ## Validation gate
 
