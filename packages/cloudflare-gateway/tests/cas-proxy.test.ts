@@ -32,6 +32,22 @@ describe("Gateway CAS proxy", () => {
     expect(forwarded.headers.get("X-User-Id")).toBeNull();
   });
 
+  // 真部署里踩到的:CAS 代理不设 Accept-Encoding,于是运行时的 fetch 默认发
+  // "gzip, deflate, br",上游用 brotli 压缩响应,undici 收到后**透明解压
+  // body**、却把 `content-encoding: br` 头留在 Response 上。网关原样返回,
+  // 客户端照头去解压明文 → TypeError: terminated。doc 路径早就设了
+  // identity(gateway-handler.ts 的 `headers.set("Accept-Encoding", "identity")`),
+  // CAS 路径漏了。
+  it("asks the CAS service for an unencoded response", async () => {
+    const bindings = env();
+    await worker.fetch(
+      new Request(`https://gw/tenants/alice/cas/nodes/${hash}`, { method: "POST" }),
+      bindings as never,
+    );
+    const forwarded = bindings.casFetch.mock.calls[0][0] as Request;
+    expect(forwarded.headers.get("Accept-Encoding")).toBe("identity");
+  });
+
   it("does not proxy root-refs", async () => {
     const bindings = env();
     const res = await worker.fetch(
