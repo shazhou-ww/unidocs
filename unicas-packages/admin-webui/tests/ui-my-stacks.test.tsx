@@ -29,6 +29,8 @@ describe("MyStacksView", () => {
     ] }));
     render(<MyStacksView />);
     expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "CAS stacks" })).toBeInTheDocument();
+    expect(screen.getByText(/top-level UniCAS trust and storage boundary/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Cloudflare")).toBeInTheDocument());
     expect(screen.getByText("cas_one")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/admin/stacks", expect.any(Object));

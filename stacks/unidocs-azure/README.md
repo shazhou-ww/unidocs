@@ -90,12 +90,14 @@ stack 模式下要的每个环境变量,bicep 模板都必须有注入点。这�
 真踩过一次 —— 脚本强制 stack 模式,bicep 却一个 `CAS_STACK_*` 都没接,编译与
 what-if 全绿,只在容器起来时崩。
 
+<!-- cas-contract-docs: migration-start -->
 Capability rollout also accepts `--capability-issuer`; stack mode requires an
 active key ID. Private PKCS8 and trusted JWKS values are read
 from pre-provisioned Key Vault secrets and are never accepted as CLI arguments
 or printed in deployment output. `--cas-access-key` is rollout-only while a
 legacy CAS dependency remains mounted; it is not the target authentication
 model.
+<!-- cas-contract-docs: migration-end -->
 
 Deploy validator JWKS to Doc/CAS revisions before switching Gateway to the
 matching private key. Gateway alone receives `CAPABILITY_PRIVATE_KEY_PKCS8`;

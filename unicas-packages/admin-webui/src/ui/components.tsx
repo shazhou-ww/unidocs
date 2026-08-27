@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CircleAlert, CircleDashed, Inbox, LoaderCircle } from "lucide-react";
+import { BookOpenText, CircleAlert, CircleDashed, Inbox, LoaderCircle } from "lucide-react";
 
 export function Page({ title, meta, actions, children }: {
   title: string;
@@ -27,6 +27,31 @@ export function Card({ title, children }: { title?: string; children: ReactNode 
       {title ? <h2 className="card-title">{title}</h2> : null}
       {children}
     </div>
+  );
+}
+
+export function ConceptGuide({ title, summary, concepts }: {
+  title: string;
+  summary: string;
+  concepts: readonly { term: string; detail: string }[];
+}) {
+  return (
+    <aside className="concept-guide" aria-labelledby={`concept-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
+      <BookOpenText className="concept-guide-icon" size={18} aria-hidden="true" />
+      <div className="concept-guide-content">
+        <p className="concept-guide-label">About this page</p>
+        <h2 id={`concept-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>{title}</h2>
+        <p className="concept-guide-summary">{summary}</p>
+        <dl className="concept-list">
+          {concepts.map((concept) => (
+            <div key={concept.term}>
+              <dt>{concept.term}</dt>
+              <dd>{concept.detail}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </aside>
   );
 }
 

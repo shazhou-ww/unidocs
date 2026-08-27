@@ -26,11 +26,13 @@
 6. During rotation retain both public JWKs for at least $300+30=330$ seconds
   after switching Gateway before removing old trust.
 
+<!-- cas-contract-docs: migration-start -->
 Use `wrangler secret put` only for private key/JWKS material; vars contain only
 non-secret policy and audience values. Key/JWKS changes require Worker
 deployment because running isolates do not hot-reload trust. `CAS_ACCESS_KEY`
 and other shared-key bindings are rollout-era legacy dependencies and must be
 removed after the production observation and rollback windows close.
+<!-- cas-contract-docs: migration-end -->
 
 UniCAS 的 tenant/admin/edge 部署已经独立归属 `stacks/unicas/deploy/`。
 应用栈部署安全约束由本文件和 `docs/capability-key-operations.md` 共同定义。

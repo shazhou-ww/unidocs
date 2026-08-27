@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import type { CasStack } from "@unicas/protocol-admin";
 import { api } from "../api.js";
 import { formatErrorSafe } from "./view-helpers.js";
-import { Button, Card, EmptyState, ErrorState, LoadingState, Page } from "../components.js";
+import { Button, Card, ConceptGuide, EmptyState, ErrorState, LoadingState, Page } from "../components.js";
 
 export function MyStacksView() {
   const [stacks, setStacks] = useState<CasStack[] | null>(null);
@@ -45,6 +45,15 @@ export function MyStacksView() {
 
   return (
     <Page title="My Stacks">
+      <ConceptGuide
+        title="CAS stacks"
+        summary="A stack is the top-level UniCAS trust and storage boundary for one independently administered application deployment."
+        concepts={[
+          { term: "Isolation", detail: "Each stack has independent issuer trust, tenants, Root Ref audit history, and stored objects." },
+          { term: "Stable identity", detail: "UniCAS generates an opaque stack ID. The display name is only an operator-facing label." },
+          { term: "First membership", detail: "Registering a stack makes your current OIDC identity its first administrator." },
+        ]}
+      />
       <Card title="Register a stack">
         <div className="inline-form">
           <input

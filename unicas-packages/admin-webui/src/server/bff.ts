@@ -188,7 +188,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
 </head>
 <body>
   <header class="app-header">
-    <span class="brand"><span class="brand-mark">U</span><span>UniCAS</span><span class="brand-section">Admin</span></span>
+    <span class="brand"><span class="brand-mark">U</span><span>UniCAS</span></span>
   </header>
   <main class="login-shell">
     <section class="login-panel${accessRestricted ? " login-panel-restricted" : ""}">

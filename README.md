@@ -122,6 +122,8 @@ POST   /tenants/{tenantId}/docs/{docType}/{docId}/reset                 → rese
 
 ### CAS
 
+The public Gateway ingress currently exposes this allowlisted subset:
+
 ```
 GET    /tenants/{tenantId}/cas/nodes/{hash}/content    → read node bytes
 GET    /tenants/{tenantId}/cas/nodes/{hash}/metadata   → read metadata + state
@@ -131,8 +133,11 @@ GET    /tenants/{tenantId}/cas/usage                   → storage usage
 POST   /tenants/{tenantId}/cas/gc                      → tenant-admin GC
 ```
 
-CAS root management is internal. Usage and GC require tenant-administration
-authorization at Gateway.
+These are ingress paths, not the native middleware contract. Native CAS routes
+include `/stacks/{stackId}/tenants/{tenantId}/...`; the registered issuer and
+signed tenant claim must match that path. Root Ref writes are a native CAS
+service operation but are absent from the Gateway allowlist. Usage and GC
+require tenant-administration authorization at Gateway.
 
 See [CAS Architecture](docs/cas-architecture.md) for lease-with-content and lease-extend.
 

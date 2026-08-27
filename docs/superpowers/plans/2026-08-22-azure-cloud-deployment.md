@@ -1,5 +1,11 @@
 # Azure 真实云部署 Implementation Plan
 
+> **Superseded CAS contract (2026-08-26):** This is a historical implementation
+> record. Owner assignments, portable-node HTTP, shared keys, tenantless routes,
+> and tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](./2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 gateway / markdown / docx 三个服务部署到 Azure Container Apps,用 PostgreSQL Flexible Server 与 Blob Storage 承载数据,通过公网网关跑通两种文档类型的完整读写导出链路。

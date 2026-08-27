@@ -1,5 +1,11 @@
 # Azure psd 支持与 doc type 声明收敛 实施计划
 
+> **Superseded CAS contract (2026-08-26):** This is a historical implementation
+> record. Owner assignments, portable-node HTTP, shared keys, tenantless routes,
+> and tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](./2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把散在 6 处的 doc type 硬编码收敛到各包的 `azure.service.json`,然后新建 `packages/azure-psd`,使 psd 在本地 Azure 栈可运行、在云上可部署。

@@ -1,5 +1,11 @@
 # 阶段 0:表征测试安全网 实施计划
 
+> **Superseded CAS contract (2026-08-26):** This is a historical implementation
+> record. Owner assignments, portable-node HTTP, shared keys, tenantless routes,
+> and tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](./2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在重构 `editor-do.ts` 之前,用可重复运行的自动化测试锁住它当前的全部行为,使阶段 1 的重构有一个客观的"没改坏"判据。

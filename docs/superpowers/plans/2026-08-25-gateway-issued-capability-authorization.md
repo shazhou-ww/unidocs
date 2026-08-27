@@ -1,5 +1,11 @@
 # Gateway-Issued Internal Capability Authorization Implementation Plan
 
+> **Superseded CAS contract (2026-08-26):** This is a historical implementation
+> record. Owner assignments, portable-node HTTP, shared keys, tenantless routes,
+> and tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](./2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 > **Status:** Complete for repository and local-runtime scope (2026-08-26).
 > Tasks 0-6, local Task 7 support, and repository Task 8 conformance/docs are
 > complete. Production deployment, observation, secret destruction, and active

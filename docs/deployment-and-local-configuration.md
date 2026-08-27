@@ -119,10 +119,12 @@ cas-stack-private-key-pkcs8    Registered Azure stack private key, Gateway only
 cas-stack-trusted-jwks         Registered Azure stack public JWKS, Docs only
 ```
 
+<!-- cas-contract-docs: migration-start -->
 Use `az keyvault secret set --vault-name unidocs-kv --name <name>` through an
 approved secret-input process. Values are intentionally not accepted as deploy
 arguments or printed. `cas-access-key` / `--cas-access-key` remain optional for
 a bounded legacy rollout only; stack mode neither requires nor reads them.
+<!-- cas-contract-docs: migration-end -->
 
 Non-secret deployment selection is passed as arguments, for example:
 

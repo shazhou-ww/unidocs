@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { StackView } from "../src/ui/index.js";
 
-function json(body: unknown): Response {
+function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -29,9 +29,17 @@ const OTHER_STACK = {
 
 beforeEach(() => {
   window.location.hash = "#/stacks/cas_one";
-  vi.stubGlobal("fetch", vi.fn()
-    .mockResolvedValueOnce(json(CURRENT_STACK))
-    .mockResolvedValueOnce(json({ items: [CURRENT_STACK, OTHER_STACK] })));
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const pathname = new URL(String(input), "http://localhost").pathname;
+    if (pathname === "/admin/stacks/cas_one") return json(CURRENT_STACK);
+    if (pathname === "/admin/stacks") return json({ items: [CURRENT_STACK, OTHER_STACK] });
+    if (pathname.endsWith("/members")) return json({ items: [] });
+    if (pathname.endsWith("/issuer/keys")) return json({ keys: [] });
+    if (pathname.endsWith("/issuer")) return json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404);
+    if (pathname.endsWith("/ref-domains")) return json({ domains: [] });
+    if (pathname.endsWith("/audit-events")) return json({ items: [], nextCursor: null });
+    throw new Error(`Unexpected request: ${pathname}`);
+  }));
 });
 
 describe("StackView", () => {
@@ -40,6 +48,7 @@ describe("StackView", () => {
     render(<StackView stackId="cas_one" onOpenMcpConfiguration={vi.fn()} onLogout={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Primary stack" })).toBeInTheDocument());
+    expect(document.title).toBe("UniCAS | Primary stack");
     const switcher = screen.getByRole("combobox", { name: "Stack" });
     expect(switcher).toHaveValue("cas_one");
     expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");
@@ -48,6 +57,27 @@ describe("StackView", () => {
 
     await user.selectOptions(switcher, "cas_two");
     expect(window.location.hash).toBe("#/stacks/cas_two");
+  });
+
+  test("documents the concepts behind every management section", async () => {
+    const user = userEvent.setup();
+    render(<StackView stackId="cas_one" onOpenMcpConfiguration={vi.fn()} onLogout={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByRole("complementary", { name: "Stack identity" })).toBeInTheDocument());
+    const guides = [
+      ["Members", "Stack administrators"],
+      ["Issuer & keys", "Tenant capability trust"],
+      ["Ref domains", "Reference domains"],
+      ["Control audit", "Control-plane audit"],
+      ["Root Ref audit", "Root Ref audit"],
+      ["Usage", "Tenant storage usage"],
+    ] as const;
+
+    for (const [tab, guide] of guides) {
+      await user.click(screen.getByRole("tab", { name: tab }));
+      expect(screen.getByRole("complementary", { name: guide })).toBeInTheDocument();
+      expect(screen.getByText("About this page")).toBeInTheDocument();
+    }
   });
 
   test("opens and dismisses the mobile navigation drawer", async () => {

@@ -1,5 +1,10 @@
 # CAS Middleware Task 2 — Implementation Notes
 
+> **Historical implementation record:** The frozen decisions and current
+> contracts are maintained in [CAS Middleware](./2026-08-26-cas-middleware.md)
+> and [CAS Architecture](../../cas-architecture.md). Compatibility references
+> below do not define live APIs.
+
 > **Status:** In progress. Companion to `2026-08-26-cas-middleware.md` Task 2.
 > Records the concrete interpretations and phasing decisions agreed with the
 > operator before and during implementation. Supersedes nothing in the frozen

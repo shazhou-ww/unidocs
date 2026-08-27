@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Cable, LogOut } from "lucide-react";
+import { Cable } from "lucide-react";
+import type { CasStack } from "@unicas/protocol-admin";
 import { api } from "./api.js";
 import { matchRoute, navigate, useHashRoute } from "./router.js";
 import { MyStacksView } from "./views/my-stacks.js";
@@ -8,6 +9,7 @@ import { InvitationView } from "./views/invitations.js";
 import { LoginErrorView } from "./views/login-error.js";
 import { Button, ErrorState, LoadingState, Page } from "./components.js";
 import { McpConfigurationDialog } from "./mcp-configuration-dialog.js";
+import { UserMenu } from "./user-menu.js";
 import { formatErrorSafe } from "./views/view-helpers.js";
 
 interface MeResponse {
@@ -23,6 +25,7 @@ export function App() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mcpConfigurationOpen, setMcpConfigurationOpen] = useState(false);
+  const [activeStack, setActiveStack] = useState<CasStack | null>(null);
 
   useEffect(() => {
     void api<MeResponse>("/admin/me")
@@ -47,6 +50,7 @@ export function App() {
     content = (
       <StackView
         stackId={stackMatch.params.stackId!}
+        onStackChange={setActiveStack}
         onOpenMcpConfiguration={() => setMcpConfigurationOpen(true)}
         onLogout={() => void logout()}
       />
@@ -67,12 +71,20 @@ export function App() {
         <a className="brand" href="#/">
           <span className="brand-mark">U</span>
           <span>UniCAS</span>
-          <span className="brand-section">Admin</span>
         </a>
+        {stackMatch && activeStack?.stackId === stackMatch.params.stackId ? (
+          <div className="desktop-stack-title">
+            <strong>{activeStack.displayName}</strong>
+            <div className="stack-meta">
+              <code>{activeStack.stackId}</code>
+              <span className="status-badge">{activeStack.status}</span>
+              <span>revision {activeStack.revision}</span>
+            </div>
+          </div>
+        ) : null}
         <div className="app-header-right">
           {me ? (
             <>
-              <span className="muted">{me.identity.displayName ?? me.identity.emailForDisplay}</span>
               <span className="mcp-header-action">
                 <Button
                   variant="plain"
@@ -82,7 +94,10 @@ export function App() {
                   Connect AI tools
                 </Button>
               </span>
-              <Button variant="plain" icon={<LogOut size={15} />} onClick={() => void logout()}>Sign out</Button>
+              <UserMenu
+                name={me.identity.displayName ?? me.identity.emailForDisplay ?? "Account"}
+                onLogout={() => void logout()}
+              />
             </>
           ) : null}
         </div>

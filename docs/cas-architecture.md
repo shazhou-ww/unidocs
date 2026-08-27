@@ -311,6 +311,25 @@ required for timeout and retry safety. It does not introduce owner entities;
 aggregate root counts remain scoped only by stack, tenant, and hash. Business
 domains own logical-reference lifecycle; CAS stores counts and audit facts.
 
+### 9.3 Reconciliation
+
+Reconciliation is an operator-assisted comparison, not an automatic repair:
+
+1. The business system exports its intended balances for one stable
+  `(stackId, refDomain)` and records the source watermark.
+2. An administrator reads the CAS domain balance and ordered events through a
+  consistent audit revision, optionally filtering one tenant at a time.
+3. The operator compares intended and CAS-recorded counts by tenant and hash,
+  then uses event request IDs and business records to explain differences.
+4. A confirmed business bookkeeping error is repaired through a new normal
+  signed-delta operation with its own deterministic request ID.
+5. The operator reads a new audit revision and verifies the intended result.
+
+Do not update audit projections directly, derive aggregate lifecycle state from
+domain balances, or silently force the aggregate to match business claims. A
+legacy migration may seed the reserved `_legacy` audit domain, but normal
+capabilities cannot write that domain.
+
 ## 10. Service-side TypeScript API
 
 ```ts
@@ -367,10 +386,10 @@ unprefixed `/stacks` routes to the private canonical tenant Worker
 `cas-admin-webui` Worker through separate service bindings; each path strips
 the other plane's credentials. Admin audit reads use a narrow private tenant
 audit-reader RPC that the edge never exposes, keeping the service call graph
-acyclic. Because the routes are served by CAS, they do not repeat a `/cas`
-mount segment. A Gateway or other shared ingress may expose selected tenant
-operations beneath its own `/cas` mount, but that mapping and allowlist are
-not part of the CAS protocol.
+acyclic. Node, usage, and GC routes retain the canonical `/cas` resource-family
+segment; Root Refs is a sibling tenant operation. A Gateway or other shared
+ingress may map selected tenant operations to another path, but that mapping
+and allowlist are not part of the CAS protocol.
 
 Tenant service routes accept JWT capabilities from configured stack issuers.
 Each stack registers one stable issuer with multiple rotation keys selected by
@@ -398,7 +417,7 @@ HTTP upload is a lease that carries content. Extending a ready node uses a separ
 ### 11.1 Read content
 
 ```http
-GET /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}/content
+GET /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}/content
 Authorization: Bearer <CAS capability>
 ```
 
@@ -410,7 +429,7 @@ Responses:
 ### 11.2 Read metadata
 
 ```http
-GET /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}/metadata
+GET /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}/metadata
 Authorization: Bearer <CAS capability>
 ```
 
@@ -419,7 +438,7 @@ Returns immutable metadata and mutable state. Unknown nodes return `404`.
 ### 11.3 Lease with content
 
 ```http
-POST /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}
+POST /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}
 Authorization: Bearer <CAS capability>
 Content-Type: image/png
 Content-Length: 12345
@@ -445,7 +464,7 @@ If the node is already ready and immutable metadata matches, the service cancels
 ### 11.4 Extend an existing lease
 
 ```http
-POST /stacks/{stackId}/tenants/{tenantId}/nodes/{sha256}/lease
+POST /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}/lease
 Authorization: Bearer <CAS capability>
 X-CAS-Lease-Duration: 900000
 ```
@@ -457,8 +476,8 @@ A successful response is the same lease result as 11.3.
 ### 11.5 Tenant usage and GC
 
 ```http
-GET  /stacks/{stackId}/tenants/{tenantId}/usage
-POST /stacks/{stackId}/tenants/{tenantId}/gc
+GET  /stacks/{stackId}/tenants/{tenantId}/cas/usage
+POST /stacks/{stackId}/tenants/{tenantId}/cas/gc
 Authorization: Bearer <CAS capability>
 ```
 
@@ -490,10 +509,14 @@ affected tenant, updates the domain balance projection, and stores the
 idempotency result. Aggregate counts cannot become negative; audit domain
 balances may.
 
-Owner assignments and `cas_root_owners` are removed. A temporary
-`/_internal/root-refs` compatibility route may exist during cutover only; it is
-bound to trusted server-configured legacy stack/domain identity and is then
-disabled.
+Logical owner assignment is not part of the CAS contract. The aggregate count
+and signed-delta API are the only live root lifecycle model.
+
+<!-- cas-contract-docs: migration-start -->
+A temporary `/_internal/root-refs` compatibility route may exist during cutover
+only; it is bound to trusted server-configured legacy stack/domain identity and
+is then disabled.
+<!-- cas-contract-docs: migration-end -->
 
 ### 11.7 Stack admin audit API
 

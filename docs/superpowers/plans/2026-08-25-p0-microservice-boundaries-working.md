@@ -1,5 +1,11 @@
 # P0 Microservice Boundaries Working Plan
 
+> **Superseded CAS contract (2026-08-26):** This is a historical implementation
+> record. Owner assignments, portable-node HTTP, shared keys, tenantless routes,
+> and tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](./2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 Status: temporary execution record; in progress (2026-08-25)
 
 This file records the agreed architecture and the execution checkpoints for the

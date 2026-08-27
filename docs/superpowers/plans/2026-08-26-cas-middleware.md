@@ -1,10 +1,9 @@
 # CAS Middleware Implementation Plan
 
-> **Status:** COMPLETE as of 2026-08-26. Tasks 1–10 are done; Task 11
-> (documentation) is largely delivered — `docs/cas-architecture.md`,
-> `docs/capability-key-operations.md`, `docs/cas-operations.md` (SLOs,
-> alerts, runbooks), README — with only ongoing doc-maintenance items and
-> the `check-cas-contract-docs.mjs` CI script left open. Two [~] items
+> **Status:** COMPLETE as of 2026-08-27. Tasks 1–11 are done, including the
+> canonical architecture/operations docs, historical supersession notices,
+> Admin WebUI concept guides, and the `check-cas-contract-docs.mjs` CI guard.
+> Two [~] items
 > remain by design: console-based possession-proof stack registration
 > (admin onboarding round) and the remaining ops-gate delivery (scheduled
 > backups, destructive restore drill, alert delivery, analytics — tracked in
@@ -1839,33 +1838,34 @@ test suites.
 
 ### Task 11: Documentation and full validation
 
-> Documentation delivered so far: `docs/cas-architecture.md` (canonical
+> Documentation delivered: `docs/cas-architecture.md` (canonical
 > topology + stack dispatch), `docs/capability-key-operations.md` (stack-mode
 > capability keys), `docs/cas-operations.md` (SLOs, alerts, runbooks), and
-> the README package tree (`unicas-packages/` + `@unicas` org). The remaining
-> items below are ongoing documentation maintenance (historical-plan
-> amendments are intentionally left untouched as records) and the
-> contract-docs CI script.
+> the README package tree (`unicas-packages/` + `@unicas` org), explicit
+> supersession notices on historical plans, and contextual concept guides in
+> the Admin WebUI. Historical bodies remain unchanged as implementation records.
 
-- [ ] Update `docs/cas-architecture.md` with the authoritative-vs-audit boundary,
+- [x] Update `docs/cas-architecture.md` with the authoritative-vs-audit boundary,
   exact HTTP contracts, CAS-versus-Gateway API ownership, idempotency, and
   reconciliation flow.
-- [ ] Document stack as the top-level namespace, issuer-to-stack mapping,
+- [x] Document stack as the top-level namespace, issuer-to-stack mapping,
       tenant/refDomain orthogonality, native CAS versus ingress paths, shared
       storage keys, and stack migration.
-- [ ] Amend plans that currently call owner assignments canonical so they point
+- [x] Amend plans that currently call owner assignments canonical so they point
       to this superseding decision rather than leaving contradictory guidance.
-- [ ] Update `docs/microservice-architecture.md`,
+- [x] Update `docs/microservice-architecture.md`,
   `docs/capability-key-operations.md`, deployment docs, integration plans,
   and historical plans; mark retained historical behavior explicitly as
   superseded/migration-only.
-- [ ] Remove architecture and authorization-plan guidance that presents
+- [x] Remove architecture and authorization-plan guidance that presents
   portable-node HTTP transport as a supported or planned API.
-- [ ] Document that audit balances are CAS-recorded history, not guaranteed
+- [x] Document that audit balances are CAS-recorded history, not guaranteed
       business truth.
-- [ ] Add `scripts/check-cas-contract-docs.mjs` to CI so retired owner,
+- [x] Add `scripts/check-cas-contract-docs.mjs` to CI so retired owner,
   portable-route, shared-key, tenantless, and stale admin-route guidance is
   rejected outside marked historical/migration sections.
+  - [x] Add contextual concept guides to the Admin WebUI stack list and every
+      stack-management page; keep unavailable audit/usage views explicit.
 - [x] Run package typechecks and unit tests, then local integration tests.
       (2026-08-26: `pnpm typecheck`, `pnpm test` (workspace), `pnpm test:local`
       (368: unit + Cloudflare integration + shared), `pnpm test:azure` (17),

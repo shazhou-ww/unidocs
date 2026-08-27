@@ -1,5 +1,11 @@
 # CAS Worker Split and DOCX insertImage Implementation Plan
 
+> **Superseded CAS contract (2026-08-26):** This is a historical implementation
+> record. Owner assignments, portable-node HTTP, shared keys, tenantless routes,
+> and tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](./2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move user-scoped CAS into `packages/cloudflare-cas`, connect Gateway and document workers via `CAS_SERVICE`, wire Editor apply to architecture §13, and add DOCX `insertImage` / `getImages`.

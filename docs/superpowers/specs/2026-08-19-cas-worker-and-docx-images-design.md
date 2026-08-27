@@ -1,5 +1,11 @@
 # CAS worker split and DOCX insertImage
 
+> **Superseded CAS contract (2026-08-26):** This is a historical design record.
+> Owner assignments, portable-node HTTP, shared keys, tenantless routes, and
+> tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](../plans/2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 Status: accepted design (2026-08-19)
 
 Extracts user-scoped CAS from the Gateway into its own Worker so document Editors can call CAS without hairpinning through the public Gateway. Wires `EditorDO` apply to architecture §13. Adds the first CAS-backed DOCX operation: `insertImage` plus `getImages`. Updates [CAS Architecture](../../cas-architecture.md) sections 11–13 and 16.

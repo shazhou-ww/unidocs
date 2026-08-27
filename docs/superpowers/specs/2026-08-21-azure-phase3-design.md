@@ -1,5 +1,11 @@
 # UniDocs Azure 阶段 3 设计
 
+> **Superseded CAS contract (2026-08-26):** This is a historical design record.
+> Owner assignments, portable-node HTTP, shared keys, tenantless routes, and
+> tenant-only CAS namespaces are not current guidance. See
+> [CAS Middleware](../plans/2026-08-26-cas-middleware.md) and
+> [CAS Architecture](../../cas-architecture.md).
+
 日期:2026-08-21
 状态:已确认,待实施
 

@@ -30,6 +30,9 @@ describe("AI tool connection", () => {
     render(<App />);
 
     const trigger = await screen.findByRole("button", { name: "Connect AI tools" });
+    const userMenu = screen.getByRole("button", { name: "Admin User" });
+    expect(trigger.compareDocumentPosition(userMenu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     await user.click(trigger);
 
     const dialog = screen.getByRole("dialog", { name: "Connect an AI tool" });
