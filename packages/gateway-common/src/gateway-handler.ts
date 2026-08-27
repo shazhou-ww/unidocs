@@ -119,6 +119,13 @@ export function createGatewayHandler(
         const value = request.headers.get(name);
         if (value) headers.set(name, value);
       }
+      // Same reason as the doc path below: without this the runtime's fetch
+      // defaults to "gzip, deflate, br", the CAS service compresses, and the
+      // client transparently DECOMPRESSES the body while leaving
+      // `content-encoding: br` on the Response we hand back untouched. The
+      // caller then tries to decode already-plain bytes and the stream dies
+      // with `TypeError: terminated`.
+      headers.set("Accept-Encoding", "identity");
       if (usesLegacyAuth(cfg.internalAuthMode)) {
         headers.set("X-Internal-Token", cfg.casAccessKey!);
         headers.set("X-Tenant-Id", tenantId);

@@ -27,8 +27,12 @@ export function docEdgeCapabilityRequirements(
     case "export":
       return requirements(sessionReadPermission(tenantId, sessionId), [casReadPermission(tenantId)]);
     case "history":
-    case "ir":
       return requirements(sessionReadPermission(tenantId, sessionId), []);
+    case "ir":
+      return requirements(
+        sessionReadPermission(tenantId, sessionId),
+        [casReadPermission(tenantId)],
+      );
     case "snapshot":
       return requirements(sessionReadPermission(tenantId, sessionId), [casWritePermission(tenantId)]);
     case "apply":
