@@ -225,40 +225,27 @@ body.modal-open {
   line-height: 1.6;
 }
 
-.mcp-prompt-heading,
-.mcp-cli-prompt-heading {
+.mcp-prompt-heading {
   margin-top: 0.85rem;
 }
 
-.mcp-config-url,
-.mcp-config-prompt,
-.mcp-config-cli {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.mcp-cli-section {
+.mcp-cli-prompt-heading {
   margin-top: 1rem;
   padding-top: 1rem;
   border-top: 1px solid var(--border);
 }
 
-.mcp-cli-note {
-  margin: 0.75rem 0 0;
-  padding: 0.8rem 0.9rem;
-  background: var(--surface-subtle);
-  border-left: 3px solid var(--muted-strong);
-  border-radius: 0 6px 6px 0;
-  color: var(--muted-strong);
-  font-size: 0.8rem;
+.mcp-config-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.mcp-cli-note code {
-  padding: 2px 5px;
-  background: var(--surface-hover);
-  border-radius: 4px;
-  font: 11px/1.35 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  white-space: nowrap;
+.mcp-url {
+  margin: 0;
+  color: var(--foreground);
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 
 .mcp-auth-note {

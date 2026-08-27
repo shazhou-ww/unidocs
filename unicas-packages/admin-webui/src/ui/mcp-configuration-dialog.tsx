@@ -5,37 +5,25 @@ export function McpConfigurationDialog({ open, onClose }: {
   open: boolean;
   onClose: () => void;
 }) {
-  const [copied, setCopied] = useState<"url" | "prompt" | "cli" | "cli-prompt" | "skill" | null>(null);
+  const [copied, setCopied] = useState<"url" | "prompt" | "cli" | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const copyTimerRef = useRef<number | null>(null);
   const serverUrl = `${window.location.origin}/mcp`;
+  const skillUrl = `${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`;
   const configurationPrompt = `Add a remote MCP server named "UniCAS" with this URL: ${serverUrl}
 Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API key is required.`;
-  const cliSetup = `# once per machine, from the UniCAS repository checkout
-pnpm --filter @unicas/cli build
-pnpm install --global ./unicas-packages/cli
-unicas login
-
-# everyday control-plane operations (JSON on stdout)
-unicas whoami
-unicas stacks list
-unicas stacks create "Operations" --idempotency-key ops-1`;
-  const cliPrompt = `For AI tools that cannot manage OAuth-protected MCP connections, use the UniCAS CLI instead.
-Install once from the UniCAS repository, then log in with a browser:
-  pnpm --filter @unicas/cli build && pnpm install --global ./unicas-packages/cli && unicas login
-Operate the control plane with shell commands (JSON output):
-  unicas whoami | unicas stacks list | unicas stacks get <stackId> | unicas stacks create "Operations" --idempotency-key ops-1
-Or connect over stdio MCP: command "unicas", args ["mcp"].`;
-  const skillUrl = `${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`;
-  const skillInstallPrompt = `The UniCAS console deploys an agent skill that teaches AI tools when and how to use the unicas CLI.
-Fetch it from: ${skillUrl}
-Save it as your user skill and follow it:
-  DSH:         save as ~/.agents/skills/unicas-cli/SKILL.md
-  Claude Code: save as ~/.claude/skills/unicas-cli/SKILL.md
-If you are working inside the UniCAS repository, the same file also lives at .agents/skills/unicas-cli/SKILL.md.
-Then run "unicas login" once, then use "unicas whoami", "unicas stacks list", and the other control-plane commands.`;
+  const cliPrompt = `Install the UniCAS CLI and its agent skill, then operate the control plane with it:
+1. Install the CLI (from the UniCAS repository):
+   pnpm --filter @unicas/cli build && pnpm install --global ./unicas-packages/cli
+2. Log in once in a browser: unicas login
+3. Install the agent skill, which tells you when and how to use the CLI:
+   fetch ${skillUrl} and save it as ~/.agents/skills/unicas-cli/SKILL.md (DeepSeek Harness)
+   or ~/.claude/skills/unicas-cli/SKILL.md (Claude Code), then follow it
+4. Use the CLI (JSON on stdout) or connect over stdio MCP:
+   unicas whoami | unicas stacks list | unicas stacks get <stackId> | unicas stacks create "Operations" --idempotency-key ops-1
+   stdio MCP: command "unicas", args ["mcp"]`;
 
   useEffect(() => {
     if (!open) return;
@@ -75,7 +63,7 @@ Then run "unicas login" once, then use "unicas whoami", "unicas stacks list", an
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
   }, []);
 
-  async function copy(value: string, target: "url" | "prompt" | "cli" | "cli-prompt" | "skill") {
+  async function copy(value: string, target: "url" | "prompt" | "cli") {
     await navigator.clipboard.writeText(value);
     setCopied(target);
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
@@ -115,8 +103,9 @@ Then run "unicas login" once, then use "unicas whoami", "unicas stacks list", an
           </button>
         </div>
         <p id="mcp-dialog-description" className="mcp-dialog-description">
-          Use the server URL directly, paste the prompt into an AI tool that can manage MCP
-          connections, or use the CLI alternative for tools that cannot handle OAuth MCP.
+          Use the server URL directly, or paste a prompt into your AI tool — the MCP prompt for
+          tools that manage MCP connections, or the CLI prompt for tools that cannot handle
+          OAuth MCP.
         </p>
         <div className="mcp-config-heading">
           <code>MCP server URL</code>
@@ -125,7 +114,7 @@ Then run "unicas login" once, then use "unicas whoami", "unicas stacks list", an
             <span>{copied === "url" ? "URL copied" : "Copy URL"}</span>
           </button>
         </div>
-        <pre className="mcp-config mcp-config-url"><code>{serverUrl}</code></pre>
+        <p className="mcp-url">{serverUrl}</p>
         <div className="mcp-config-heading mcp-prompt-heading">
           <code>Configuration prompt</code>
           <button type="button" className="copy-button" onClick={() => void copy(configurationPrompt, "prompt")}>
@@ -134,39 +123,14 @@ Then run "unicas login" once, then use "unicas whoami", "unicas stacks list", an
           </button>
         </div>
         <pre className="mcp-config mcp-config-prompt"><code>{configurationPrompt}</code></pre>
-        <div className="mcp-cli-section">
-          <div className="mcp-config-heading mcp-cli-heading">
-            <code>CLI setup &amp; usage</code>
-            <button type="button" className="copy-button" onClick={() => void copy(cliSetup, "cli")}>
-              {copied === "cli" ? <Check size={14} /> : <Copy size={14} />}
-              <span>{copied === "cli" ? "Setup copied" : "Copy setup"}</span>
-            </button>
-          </div>
-          <pre className="mcp-config mcp-config-cli"><code>{cliSetup}</code></pre>
-          <div className="mcp-config-heading mcp-cli-prompt-heading">
-            <code>CLI prompt</code>
-            <button type="button" className="copy-button" onClick={() => void copy(cliPrompt, "cli-prompt")}>
-              {copied === "cli-prompt" ? <Check size={14} /> : <Copy size={14} />}
-              <span>{copied === "cli-prompt" ? "CLI prompt copied" : "Copy CLI prompt"}</span>
-            </button>
-          </div>
-          <pre className="mcp-config mcp-config-prompt"><code>{cliPrompt}</code></pre>
-          <div className="mcp-config-heading mcp-cli-prompt-heading">
-            <code>Agent skill install</code>
-            <button type="button" className="copy-button" onClick={() => void copy(skillInstallPrompt, "skill")}>
-              {copied === "skill" ? <Check size={14} /> : <Copy size={14} />}
-              <span>{copied === "skill" ? "Skill prompt copied" : "Copy skill prompt"}</span>
-            </button>
-          </div>
-          <pre className="mcp-config mcp-config-prompt"><code>{skillInstallPrompt}</code></pre>
-          <p className="mcp-cli-note">
-            Best for AI tools that cannot complete OAuth in a browser (for example DeepSeek
-            Harness): the CLI owns the OAuth session and refreshes tokens itself, and also
-            exposes the same tools over stdio MCP via <code>unicas mcp</code>. The
-            <code> unicas-cli </code> skill is deployed with this console and teaches agents
-            when and how to use the CLI — agents can fetch it from the URL above.
-          </p>
+        <div className="mcp-config-heading mcp-cli-prompt-heading">
+          <code>CLI prompt</code>
+          <button type="button" className="copy-button" onClick={() => void copy(cliPrompt, "cli")}>
+            {copied === "cli" ? <Check size={14} /> : <Copy size={14} />}
+            <span>{copied === "cli" ? "CLI prompt copied" : "Copy CLI prompt"}</span>
+          </button>
         </div>
+        <pre className="mcp-config mcp-config-prompt"><code>{cliPrompt}</code></pre>
         <div className="mcp-auth-note">
           <strong>No API key required</strong>
           <p>On first use, your AI tool opens a browser and asks you to approve UniCAS access.</p>

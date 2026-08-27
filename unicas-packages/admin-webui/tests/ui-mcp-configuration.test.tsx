@@ -36,11 +36,11 @@ describe("AI tool connection", () => {
     expect(dialog).toHaveTextContent(`${window.location.origin}/mcp`);
     expect(dialog).toHaveTextContent("Configuration prompt");
     expect(dialog).toHaveTextContent("No API key required");
-    expect(dialog).toHaveTextContent("CLI setup & usage");
-    expect(dialog).toHaveTextContent("unicas login");
     expect(dialog).toHaveTextContent("CLI prompt");
-    expect(dialog).toHaveTextContent("unicas mcp");
-    expect(dialog).toHaveTextContent("Agent skill install");
+    expect(dialog).toHaveTextContent("unicas login");
+    // The CLI prompt is the single merged prompt: install + skill + usage.
+    expect(dialog).not.toHaveTextContent("CLI setup & usage");
+    expect(dialog).not.toHaveTextContent("Agent skill install");
     expect(dialog).toHaveTextContent(`${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`);
     await waitFor(() => expect(screen.getByRole("button", { name: "Close AI tool connection" })).toHaveFocus());
 
@@ -52,19 +52,14 @@ describe("AI tool connection", () => {
     expect(await navigator.clipboard.readText()).toContain('remote MCP server named "UniCAS"');
     expect(screen.getByRole("button", { name: "Prompt copied" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Copy setup" }));
-    expect(await navigator.clipboard.readText()).toContain("pnpm install --global ./unicas-packages/cli");
-    expect(screen.getByRole("button", { name: "Setup copied" })).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "Copy CLI prompt" }));
-    expect(await navigator.clipboard.readText()).toContain("unicas login");
-    expect(await navigator.clipboard.readText()).toContain('command "unicas", args ["mcp"]');
+    const cliPrompt = await navigator.clipboard.readText();
+    expect(cliPrompt).toContain("pnpm install --global ./unicas-packages/cli");
+    expect(cliPrompt).toContain("unicas login");
+    expect(cliPrompt).toContain(`${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`);
+    expect(cliPrompt).toContain("~/.agents/skills/unicas-cli/SKILL.md");
+    expect(cliPrompt).toContain('command "unicas", args ["mcp"]');
     expect(screen.getByRole("button", { name: "CLI prompt copied" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Copy skill prompt" }));
-    expect(await navigator.clipboard.readText()).toContain(`${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`);
-    expect(await navigator.clipboard.readText()).toContain("~/.agents/skills/unicas-cli/SKILL.md");
-    expect(screen.getByRole("button", { name: "Skill prompt copied" })).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Connect an AI tool" })).not.toBeInTheDocument();
