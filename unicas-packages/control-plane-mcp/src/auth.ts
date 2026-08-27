@@ -205,10 +205,14 @@ async function finishConsent(request: Request, env: OAuthAuthorizationEnv): Prom
 function isSameOriginConsent(request: Request, publicOrigin: string): boolean {
   const expected = new URL(publicOrigin).origin;
   const origin = request.headers.get("Origin");
-  if (origin) return parseOrigin(origin) === expected;
+  if (origin && origin !== "null") return parseOrigin(origin) === expected;
   const referer = request.headers.get("Referer");
   if (referer) return parseOrigin(referer) === expected;
-  return request.headers.get("Sec-Fetch-Site") === "same-origin";
+  const fetchSite = request.headers.get("Sec-Fetch-Site");
+  if (fetchSite) return fetchSite === "same-origin";
+  // Legacy and privacy-focused clients may omit all optional origin metadata.
+  // The one-time CSRF token and SameSite consent cookie remain mandatory.
+  return true;
 }
 
 function parseOrigin(value: string): string | null {

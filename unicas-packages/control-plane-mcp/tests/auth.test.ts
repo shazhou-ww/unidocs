@@ -124,7 +124,9 @@ describe("control-plane MCP OAuth authorization", () => {
     ["same-origin fetch metadata", { "Sec-Fetch-Site": "same-origin" }, 302],
     ["same-origin referer", { Referer: "https://cas.example/oauth/authorize" }, 302],
     ["cross-origin request", { Origin: "https://attacker.example" }, 403],
-    ["missing browser origin evidence", {}, 403],
+    ["cross-site fetch metadata", { "Sec-Fetch-Site": "cross-site" }, 403],
+    ["opaque cross-site origin", { Origin: "null", "Sec-Fetch-Site": "cross-site" }, 403],
+    ["client without optional origin metadata", {}, 302],
   ])("handles consent origin evidence: %s", async (_name, originHeaders, expectedStatus) => {
     const fixture = createFixture();
     const handler = createOAuthAuthorizationHandler({ oidcFactory: () => fixture.oidc });
