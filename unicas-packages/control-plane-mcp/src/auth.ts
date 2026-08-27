@@ -156,7 +156,7 @@ async function finishGoogleAuthentication(
 
 async function finishConsent(request: Request, env: OAuthAuthorizationEnv): Promise<Response> {
   const publicOrigin = requireEnv(env.PUBLIC_ORIGIN, "PUBLIC_ORIGIN");
-  if (request.headers.get("Origin") !== publicOrigin) {
+  if (!isSameOriginConsent(request, publicOrigin)) {
     return authFailure("Consent must be submitted from the authorization server origin", 403);
   }
   const form = await request.formData().catch(() => null);
@@ -200,6 +200,23 @@ async function finishConsent(request: Request, env: OAuthAuthorizationEnv): Prom
     props,
   });
   return clearCookieRedirect(redirectTo, CONSENT_COOKIE);
+}
+
+function isSameOriginConsent(request: Request, publicOrigin: string): boolean {
+  const expected = new URL(publicOrigin).origin;
+  const origin = request.headers.get("Origin");
+  if (origin) return parseOrigin(origin) === expected;
+  const referer = request.headers.get("Referer");
+  if (referer) return parseOrigin(referer) === expected;
+  return request.headers.get("Sec-Fetch-Site") === "same-origin";
+}
+
+function parseOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
 }
 
 function oidcClient(env: OAuthAuthorizationEnv, options: OAuthAuthorizationHandlerOptions): OidcClient {

@@ -119,6 +119,39 @@ describe("control-plane MCP OAuth authorization", () => {
     expect(location.searchParams.get("error")).toBe("invalid_scope");
     expect(fixture.kv.size).toBe(0);
   });
+
+  test.each([
+    ["same-origin fetch metadata", { "Sec-Fetch-Site": "same-origin" }, 302],
+    ["same-origin referer", { Referer: "https://cas.example/oauth/authorize" }, 302],
+    ["cross-origin request", { Origin: "https://attacker.example" }, 403],
+    ["missing browser origin evidence", {}, 403],
+  ])("handles consent origin evidence: %s", async (_name, originHeaders, expectedStatus) => {
+    const fixture = createFixture();
+    const handler = createOAuthAuthorizationHandler({ oidcFactory: () => fixture.oidc });
+    const started = await handler.fetch(new Request("https://cas.example/oauth/authorize"), fixture.env);
+    const transactionId = new URL(started.headers.get("Location")!).searchParams.get("state")!;
+    const callback = await handler.fetch(new Request(
+      `https://cas.example/oauth/google/callback?code=google-code&state=${transactionId}`,
+      { headers: { Cookie: cookieFrom(started) } },
+    ), fixture.env);
+    const consentHtml = await callback.text();
+    const headers = new Headers({
+      Cookie: cookieFrom(callback),
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...originHeaders,
+    });
+    const response = await handler.fetch(new Request("https://cas.example/oauth/authorize", {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({
+        consent_id: hiddenValue(consentHtml, "consent_id"),
+        csrf_token: hiddenValue(consentHtml, "csrf_token"),
+        decision: "approve",
+      }),
+    }), fixture.env);
+
+    expect(response.status).toBe(expectedStatus);
+  });
 });
 
 function createFixture(options: { allowlist?: string; request?: AuthRequest } = {}) {
