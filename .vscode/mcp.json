@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "unicas-control-plane": {
+      "type": "http",
+      "url": "https://unicas.shazhou.work/mcp"
+    }
+  }
+}
