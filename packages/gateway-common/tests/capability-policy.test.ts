@@ -13,7 +13,7 @@ describe("Gateway capability policy", () => {
     ["query", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60],
     ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60],
     ["history", "tenants:t:sessions:s:read", [], 30],
-    ["ir", "tenants:t:sessions:s:read", [], 30],
+    ["ir", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 30],
     ["snapshot", "tenants:t:sessions:s:read", ["tenants:t:cas:write"], 60],
     ["apply", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],
     ["rollback", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],

@@ -44,6 +44,22 @@ param casStackKeyId string = 'az-rotate-1'
 param casRefDomain string = 'doc'
 param casCapabilityAudience string = 'unidocs-cas-azure'
 
+@description('控制面生成的不透明 stack id（形如 cas_XXXX）。不可自选——CAS 校验器拿 issuer 反查注册表得到 stackId，再与路径里的 stackId 比对，对不上就是 resource_scope_mismatch。')
+param casStackId string
+
+@description('已在控制面注册的 stack issuer。CAS 只用它当查表键，JWKS 从注册表读，绝不信任令牌自带的。')
+param casStackIssuer string
+
+@description('该 stack 下处于 active 的签名密钥 kid。')
+param casStackKeyId string
+
+@description('Root Refs 写入的业务域，必须已在该 stack 注册且 active。')
+param casRefDomain string = 'doc'
+
+@description('与 casStackKeyId 配对的私钥（PKCS8）。只有网关持有——doc service 拿公钥 JWKS。')
+@secure()
+param casStackPrivateKeyPkcs8 string = ''
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }

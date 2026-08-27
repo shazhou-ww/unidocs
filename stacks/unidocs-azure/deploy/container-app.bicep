@@ -24,11 +24,15 @@ param databaseUrl string
 @secure()
 param serviceAccessKey string = ''
 @secure()
+param casAccessKey string = ''
+@secure()
 param docServicesJson string = ''
 @secure()
 param capabilityPrivateKeyPkcs8 string = ''
 @secure()
 param capabilityTrustedJwks string = ''
+// Stack 模式：网关用私钥签 CAS 能力票，doc service 只拿公钥 JWKS 验签。
+// 两者互斥地由 gateway.bicep / service.bicep 各传一个，另一个留空。
 @secure()
 param casStackPrivateKeyPkcs8 string = ''
 @secure()
@@ -44,6 +48,12 @@ var optionalSecrets = concat(
     {
       name: 'service-access-key'
       value: serviceAccessKey
+    }
+  ],
+  empty(casAccessKey) ? [] : [
+    {
+      name: 'cas-access-key'
+      value: casAccessKey
     }
   ],
   empty(docServicesJson) ? [] : [
@@ -82,6 +92,12 @@ var optionalSecretEnv = concat(
     {
       name: 'SERVICE_ACCESS_KEY'
       secretRef: 'service-access-key'
+    }
+  ],
+  empty(casAccessKey) ? [] : [
+    {
+      name: 'CAS_ACCESS_KEY'
+      secretRef: 'cas-access-key'
     }
   ],
   empty(docServicesJson) ? [] : [

@@ -11,7 +11,8 @@
  *
  * 用法(不传任何选择器 = 冷启动全量,顺序 bootstrap -> platform -> services -> gateway):
  *   node stacks/unidocs-azure/deploy/deploy.mjs \
- *     --cas-base-url https://unicas.shazhou.work
+ *     --cas-base-url https://unidocs-cas.<account>.workers.dev \
+ *     --cas-access-key <与 Cloudflare CAS worker 相同的 CAS_ACCESS_KEY>
  *
  * 用法(只部一个 target —— 见 parseArgs()):
  *   node stacks/unidocs-azure/deploy/deploy.mjs --bootstrap
@@ -25,8 +26,10 @@
  * (含这些 doc type 除图片外的操作)不受影响,见 `packages/azure-gateway/src/main.ts`
  * 与 `packages/azure-sdk/src/doc-type-service.ts` 顶部注释。
  *
- * 每个 doc type 自己的服务密钥由本脚本生成并存进 Key Vault。CAS 鉴权
- * 使用注册 stack 的 capability,不配置跨云共享密钥。
+ * `--cas-access-key` 只在 Key Vault 里还没有该 secret 时才可能需要:
+ * 配了 `--cas-base-url` 时必须显式传(要与 Cloudflare CAS worker 的
+ * CAS_ACCESS_KEY 对齐,本脚本绝不会替你生成一个注定对不上的值)。
+ * 其余服务密钥(每个 doc type 自己的 access key)由本脚本生成并存进 Key Vault。
  *
  * `--build-concurrency`(默认 2):ACR 镜像构建的有界并发数,见
  * `buildAndPushImages()` 顶部注释。
@@ -44,16 +47,16 @@ const DEFAULTS = {
   subscription: "24c9acbd-c2f5-4ef9-b9a2-486d90208b3e",
   resourceGroup: "Unidocs",
   location: "southeastasia",
-  casStackId: "unidocs-azure",
-  casStackIssuer: "https://unicas.shazhou.work/cas/issuer/azure",
-  casStackKeyId: "az-rotate-1",
-  casCapabilityAudience: "unidocs-cas-azure",
-  casRefDomain: "doc",
 };
 
+/** 与 unicas-packages/control-plane/src/validation.ts 的 STACK_ID_PATTERN 一致。 */
+const STACK_ID_PATTERN = /^cas_[A-Za-z0-9_-]{8,64}$/;
+
 const PG_ADMIN_PASSWORD_SECRET = "pg-admin-password";
+const CAS_ACCESS_KEY_SECRET = "cas-access-key";
 const CAPABILITY_PRIVATE_KEY_SECRET = "capability-private-key-pkcs8";
 const CAPABILITY_TRUSTED_JWKS_SECRET = "capability-trusted-jwks";
+/** Stack 身份密钥：网关持私钥签 CAS 能力票，doc service 只拿公钥 JWKS 验签。 */
 const CAS_STACK_PRIVATE_KEY_SECRET = "cas-stack-private-key-pkcs8";
 const CAS_STACK_TRUSTED_JWKS_SECRET = "cas-stack-trusted-jwks";
 
@@ -216,9 +219,15 @@ export function parseArgs(argv) {
   const args = {
     ...DEFAULTS,
     casBaseUrl: "",
+    casAccessKey: "",
     internalAuthMode: "stack",
     capabilityIssuer: "unidocs-gateway:azure-dev",
     capabilityKeyId: "",
+    casStackId: "",
+    casStackIssuer: "",
+    casStackKeyId: "",
+    casRefDomain: "doc",
+    casCapabilityAudience: "",
     skipBuild: false,
     buildConcurrency: DEFAULT_BUILD_CONCURRENCY,
   };
@@ -235,14 +244,15 @@ export function parseArgs(argv) {
       case "--resource-group": args.resourceGroup = argv[++i]; break;
       case "--location": args.location = argv[++i]; break;
       case "--cas-base-url": args.casBaseUrl = argv[++i]; break;
-      case "--cas-stack-id": args.casStackId = argv[++i]; break;
-      case "--cas-stack-issuer": args.casStackIssuer = argv[++i]; break;
-      case "--cas-stack-key-id": args.casStackKeyId = argv[++i]; break;
-      case "--cas-capability-audience": args.casCapabilityAudience = argv[++i]; break;
-      case "--cas-ref-domain": args.casRefDomain = argv[++i]; break;
+      case "--cas-access-key": args.casAccessKey = argv[++i]; break;
       case "--internal-auth-mode": args.internalAuthMode = argv[++i]; break;
       case "--capability-issuer": args.capabilityIssuer = argv[++i]; break;
       case "--capability-key-id": args.capabilityKeyId = argv[++i]; break;
+      case "--cas-stack-id": args.casStackId = argv[++i]; break;
+      case "--cas-stack-issuer": args.casStackIssuer = argv[++i]; break;
+      case "--cas-stack-key-id": args.casStackKeyId = argv[++i]; break;
+      case "--cas-ref-domain": args.casRefDomain = argv[++i]; break;
+      case "--cas-capability-audience": args.casCapabilityAudience = argv[++i]; break;
       case "--skip-build": args.skipBuild = true; break;
       case "--bootstrap": bootstrapFlag = true; break;
       case "--platform": platformFlag = true; break;
@@ -273,14 +283,6 @@ export function parseArgs(argv) {
   } else {
     targets.push("bootstrap", "platform", "services", "gateway");
   }
-  if (args.internalAuthMode !== "stack") {
-    throw new Error("--internal-auth-mode must be stack (legacy/dual/capability retired with the legacy runtime)");
-  }
-  if (targets.includes("gateway") && !args.capabilityKeyId) {
-    throw new Error("--capability-key-id is required for stack deployments (gateway identity kid)");
-  }
-  args.targets = targets;
-
   if (serviceNames !== null) {
     // 校验放在 parseArgs 里,不是等到真的要部署那个 target 才发现——拼错
     // docType 应该在第一时间响亮失败,见 readServiceParams()。
@@ -291,6 +293,43 @@ export function parseArgs(argv) {
   } else {
     args.services = null;
   }
+
+  if (args.internalAuthMode !== "stack") {
+    throw new Error("--internal-auth-mode must be stack (legacy/dual/capability retired with the legacy runtime)");
+  }
+  if (targets.includes("gateway") && !args.capabilityKeyId) {
+    throw new Error("--capability-key-id is required for stack deployments (gateway identity kid)");
+  }
+  // Stack 身份。缺任何一个都不是"降级运行"——网关会在
+  // createPkcs8CapabilityIssuer 抛错、doc service 会在 resolveDocAuthConfig
+  // 抛错，容器起不来。所以在这里就响亮失败，而不是等 15 分钟部署完看崩溃日志。
+  //
+  // stackId 与 issuer 两个目标都要：网关用来签票并拼规范路由，doc service
+  // 用来验签并拼自己的 CAS 调用路径。keyId 只有网关要——doc service 不签发。
+  const needsStackIdentity = targets.includes("gateway") || targets.includes("services");
+  if (needsStackIdentity && !args.casStackId) {
+    throw new Error("--cas-stack-id is required (opaque control-plane stack id, e.g. cas_XXXXXXXX)");
+  }
+  if (needsStackIdentity && !args.casStackIssuer) {
+    throw new Error("--cas-stack-issuer is required (the issuer registered for that stack)");
+  }
+  // 刻意没有默认值。bicep 那边 casCapabilityAudience 的默认值 'unidocs-cas'
+  // 是个没有 stack 区分度的占位值:一旦与控制面里注册的 audience 不一致,
+  // 网关签的票会被 CAS 以 aud 不匹配全量拒绝,而这要等部署完才暴露。
+  if (needsStackIdentity && !args.casCapabilityAudience) {
+    throw new Error("--cas-capability-audience is required (must equal the audience registered for that stack)");
+  }
+  if (targets.includes("gateway") && !args.casStackKeyId) {
+    throw new Error("--cas-stack-key-id is required for the gateway (active signing key kid for that stack)");
+  }
+  if (!STACK_ID_PATTERN.test(args.casStackId) && needsStackIdentity) {
+    throw new Error(
+      `--cas-stack-id must be a control-plane stack id matching ${STACK_ID_PATTERN} `
+      + "— names like 'unidocs-azure' are local fixture values and will fail CAS "
+      + "authorization with resource_scope_mismatch",
+    );
+  }
+  args.targets = targets;
 
   return args;
 }
@@ -771,19 +810,66 @@ async function seedSecret(keyVaultName, secretName, byteLength) {
   return generated;
 }
 
-
-function casDocTypeNames(table = readAzureDocTypes(ROOT)) {
-  return Object.values(table)
-    .filter((entry) => entry.needsCas)
-    .map((entry) => `azure-${entry.docType}`)
-    .join(" / ");
-}
 /**
  * 需要跨云 CAS 才能工作的 doc type 名单(`azure-{docType}` 形式),从表按
  * `needsCas` 算出来 —— 只用于把下面两条报错/提示文案里"谁的图片路径会 401"
  * 说清楚,不参与任何控制流。加一个 `needsCas` 的 doc type 时这两条文案自动
  * 跟着变,不用回头改这个文件。
  */
+function casDocTypeNames(table = readAzureDocTypes(ROOT)) {
+  return Object.values(table)
+    .filter((entry) => entry.needsCas)
+    .map((entry) => `azure-${entry.docType}`)
+    .join(" / ");
+}
+
+/**
+ * `CAS_ACCESS_KEY` 与 Postgres 密码性质**不同**,不能一概共用 `seedSecret()`:
+ * 它是栈模式迁移前的共享密钥遗留值。栈模式下鉴权走栈作用域 capability,
+ * 但 gateway 与 doc 服务的 CasClient 仍携带该值作为兼容绑定。
+ * 现场随机生成一个只会让所有跨云 CAS 请求 401 —— 所以这里 fail closed:
+ * Key Vault 里没有、`--cas-access-key` 也没给,直接报错,绝不自动生成。
+ *
+ * (本地栈之所以看不出跨云不对齐的问题:`stacks/cloudflare/local/doc-types.mjs` 硬编码的
+ * `CAS_ACCESS_KEY = "unidocs-dev-cas-key"` 被 Miniflare 与本地 Azure 栈共用。)
+ */
+async function resolveCasAccessKey(keyVaultName, provided) {
+  const showLabel = `az keyvault secret show --vault-name ${keyVaultName} -n ${CAS_ACCESS_KEY_SECRET}`;
+  const existing = await runKeyVaultSecretOp(
+    showLabel,
+    ["keyvault", "secret", "show", "--vault-name", keyVaultName, "-n", CAS_ACCESS_KEY_SECRET, "--query", "value", "-o", "tsv"],
+    () => null,
+  );
+  if (existing) {
+    // 已有则读用 —— 幂等,且第二次部署不需要再传 --cas-access-key。
+    return existing;
+  }
+  if (!provided) {
+    const casDocTypes = casDocTypeNames();
+    throw new Error(
+      `Key Vault ${keyVaultName} has no "${CAS_ACCESS_KEY_SECRET}" secret and --cas-access-key was not given.\n` +
+      "This value is NOT generated by this deployment: it must equal the CAS_ACCESS_KEY used by the " +
+      "Cloudflare-side middleware tenant worker (unicas-packages/server-cloudflare). A mismatch makes " +
+      "every cross-cloud CAS request fail with 401 — the image path would break in production while " +
+      "every local test stays green.\n" +
+      "Confirm the Cloudflare-side secret exists with:\n" +
+      "  cd unicas-packages/server-cloudflare && npx wrangler secret list\n" +
+      "then rerun with --cas-access-key <that value>.",
+    );
+  }
+  // label 显式给出:args 里的 `--value <provided>` 绝不能进 Error.message。
+  const setLabel = `az keyvault secret set --vault-name ${keyVaultName} -n ${CAS_ACCESS_KEY_SECRET}`;
+  await runKeyVaultSecretOp(
+    setLabel,
+    ["keyvault", "secret", "set", "--vault-name", keyVaultName, "-n", CAS_ACCESS_KEY_SECRET, "--value", provided, "-o", "none"],
+    (result) => {
+      if (result.stderr) process.stderr.write(result.stderr);
+      throw new Error(`${setLabel} exited with code ${result.status}`);
+    },
+  );
+  return provided;
+}
+
 async function requireExistingSecret(keyVaultName, secretName) {
   const showLabel = `az keyvault secret show --vault-name ${keyVaultName} -n ${secretName}`;
   const existing = await runKeyVaultSecretOp(
@@ -803,37 +889,56 @@ async function requireExistingSecret(keyVaultName, secretName) {
 /**
  * 只播种被选中 target 实际需要的密钥:`platform`/`services`/`gateway` 都
  * 要 `pgAdminPassword`(拼进各自的 Postgres 连接串)。`services`/`gateway`
- * 要每个 doc type 一个 `SERVICE_ACCESS_KEY`,名字是
+ * 要服务级 access key:`casAccessKey`(必须与 Cloudflare 对齐,见
+ * `resolveCasAccessKey()`)、每个 doc type 一个 `SERVICE_ACCESS_KEY`,名字是
  * `{docType}-access-key`,由本脚本生成。`--bootstrap` 单独跑时
  * (main() 根本不调用这个函数)不需要任何一个。
  */
-async function seedSecrets(keyVaultName, args) {
+export async function seedSecrets(keyVaultName, args, io = {}) {
+  // IO 注入,不是为了"可测"这个抽象目标:这个函数的分支决定了真部署会不会
+  // 在 [3/7] 索要一个整条链路根本不读的凭据,而那条分支只有 mock 掉子进程
+  // 才测得到。
+  const seed = io.seedSecret ?? seedSecret;
+  const requireExisting = io.requireExistingSecret ?? requireExistingSecret;
+  const resolveCasKey = io.resolveCasAccessKey ?? resolveCasAccessKey;
   console.log("[3/7] seeding/reading secrets from Key Vault (values withheld from logs)");
   const needsPg = args.targets.some((t) => t === "platform" || t === "services" || t === "gateway");
   const needsServiceKeys = args.targets.some((t) => t === "services" || t === "gateway");
-  const pgAdminPassword = needsPg ? await seedSecret(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48) : null;
+  const stackMode = args.internalAuthMode === "stack";
+  const pgAdminPassword = needsPg ? await seed(keyVaultName, PG_ADMIN_PASSWORD_SECRET, 48) : null;
+  // Legacy 共享密钥随 legacy 运行时一起退役了。stack 模式下网关
+  // (azure-gateway/src/main.ts) 与 doc service (azure-sdk/src/doc-type-service.ts)
+  // 都显式跳过 CAS_ACCESS_KEY,所以这里也不能再索要它 —— 否则部署会卡在
+  // 一个谁都不会读的凭据上。
+  const casAccessKey = needsServiceKeys && !stackMode
+    ? await resolveCasKey(keyVaultName, args.casAccessKey)
+    : null;
   const table = readAzureDocTypes(ROOT);
   const accessKeys = {};
   if (needsServiceKeys) {
     for (const docType of Object.keys(table)) {
-      accessKeys[docType] = await seedSecret(keyVaultName, accessKeySecretName(docType), 48);
+      accessKeys[docType] = await seed(keyVaultName, accessKeySecretName(docType), 48);
     }
   }
   const usesCapabilities = args.internalAuthMode !== "legacy";
   const capabilityPrivateKeyPkcs8 = usesCapabilities && args.targets.includes("gateway")
-    ? await requireExistingSecret(keyVaultName, CAPABILITY_PRIVATE_KEY_SECRET)
+    ? await requireExisting(keyVaultName, CAPABILITY_PRIVATE_KEY_SECRET)
     : null;
   const capabilityTrustedJwks = usesCapabilities && args.targets.includes("services")
-    ? await requireExistingSecret(keyVaultName, CAPABILITY_TRUSTED_JWKS_SECRET)
+    ? await requireExisting(keyVaultName, CAPABILITY_TRUSTED_JWKS_SECRET)
     : null;
-  const casStackPrivateKeyPkcs8 = usesCapabilities && args.targets.includes("gateway")
-    ? await requireExistingSecret(keyVaultName, CAS_STACK_PRIVATE_KEY_SECRET)
+  // Stack 身份密钥。非对称地分发：只有网关拿私钥（它是唯一签发方），
+  // doc service 拿公钥 JWKS（它只验签）。两者都从 Key Vault 里读既有值，
+  // 不由本脚本生成——私钥的另一半在控制面注册时就已经定下了。
+  const casStackPrivateKeyPkcs8 = stackMode && args.targets.includes("gateway")
+    ? await requireExisting(keyVaultName, CAS_STACK_PRIVATE_KEY_SECRET)
     : null;
-  const casStackTrustedJwks = usesCapabilities && args.targets.includes("services")
-    ? await requireExistingSecret(keyVaultName, CAS_STACK_TRUSTED_JWKS_SECRET)
+  const casStackTrustedJwks = stackMode && args.targets.includes("services")
+    ? await requireExisting(keyVaultName, CAS_STACK_TRUSTED_JWKS_SECRET)
     : null;
   return {
     pgAdminPassword,
+    casAccessKey,
     accessKeys,
     capabilityPrivateKeyPkcs8,
     capabilityTrustedJwks,
@@ -1000,6 +1105,7 @@ function deployService(args, secrets, tag, docType) {
     `casBaseUrl=${args.casBaseUrl}`,
     `pgAdminPassword=${secrets.pgAdminPassword}`,
     `serviceAccessKey=${secrets.accessKeys[docType]}`,
+    `casAccessKey=${secrets.casAccessKey}`,
     `internalAuthMode=${args.internalAuthMode}`,
     `capabilityIssuer=${args.capabilityIssuer}`,
     `casStackId=${args.casStackId}`,
@@ -1057,6 +1163,7 @@ function deployGateway(args, secrets, tag) {
     `minReplicas=${gw.minReplicas}`,
     `maxReplicas=${gw.maxReplicas}`,
     `pgAdminPassword=${secrets.pgAdminPassword}`,
+    `casAccessKey=${secrets.casAccessKey}`,
     `docTypes=${JSON.stringify(Object.keys(readAzureDocTypes(ROOT)))}`,
     `docAccessKeysJson=${JSON.stringify(secrets.accessKeys)}`,
     `internalAuthMode=${args.internalAuthMode}`,
@@ -1065,8 +1172,8 @@ function deployGateway(args, secrets, tag) {
     `casStackId=${args.casStackId}`,
     `casStackIssuer=${args.casStackIssuer}`,
     `casStackKeyId=${args.casStackKeyId}`,
-    `casCapabilityAudience=${args.casCapabilityAudience}`,
     `casRefDomain=${args.casRefDomain}`,
+    `casCapabilityAudience=${args.casCapabilityAudience}`,
     ...(secrets.capabilityPrivateKeyPkcs8
       ? [`capabilityPrivateKeyPkcs8=${secrets.capabilityPrivateKeyPkcs8}`]
       : []),
@@ -1320,6 +1427,7 @@ export async function main(argv = process.argv.slice(2)) {
     ? await seedSecrets(bootstrap.keyVaultName, args)
     : {
       pgAdminPassword: null,
+      casAccessKey: null,
       accessKeys: {},
       capabilityPrivateKeyPkcs8: null,
       capabilityTrustedJwks: null,

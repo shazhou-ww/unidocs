@@ -29,6 +29,16 @@ param capabilityTrustedJwks string = ''
 @secure()
 param casStackTrustedJwks string = ''
 
+@description('控制面生成的不透明 stack id（形如 cas_XXXX）。CasClient 靠它拼规范路由 /stacks/{stackId}/tenants/...；缺了会拼成 legacy 路由，打到规范中间件一律 404。')
+param casStackId string
+
+@description('已注册的 stack issuer。委派 CAS 能力票由它签发，doc service 用它做验签的 issuer 断言。')
+param casStackIssuer string
+
+@description('该 stack 的公钥 JWKS（只含公钥）。doc service 只验签、不签发，所以拿不到私钥。')
+@secure()
+param casStackTrustedJwks string = ''
+
 param internalAuthMode string = 'stack'
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param casStackId string = 'unidocs-azure'
@@ -96,6 +106,14 @@ var authEnv = [
   {
     name: 'CAS_CAPABILITY_AUDIENCE'
     value: casCapabilityAudience
+  }
+  {
+    name: 'CAS_STACK_ID'
+    value: casStackId
+  }
+  {
+    name: 'CAS_STACK_ISSUER'
+    value: casStackIssuer
   }
   {
     name: 'CAPABILITY_ISSUER'

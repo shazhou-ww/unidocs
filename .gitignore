@@ -14,3 +14,6 @@ dist/
 .wrangler/
 .azure-runtime/
 .pnpm-store/
+
+# 本地生成的部署私钥,永不入库
+.secrets/

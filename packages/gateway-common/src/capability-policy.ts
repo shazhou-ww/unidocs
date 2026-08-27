@@ -45,8 +45,16 @@ export function docCapabilityPolicy(
         60,
       );
     case "history":
-    case "ir":
       return policy(sessionReadPermission(tenantId, sessionId), [], 30);
+    // `ir` returns canonical bytes whose SBlob refs the client then reads from
+    // CAS, so the editor verifies those refs are live before encoding — that
+    // check is a CAS read, not a free operation like `history`.
+    case "ir":
+      return policy(
+        sessionReadPermission(tenantId, sessionId),
+        [casReadPermission(tenantId)],
+        30,
+      );
     case "snapshot":
       return policy(
         sessionReadPermission(tenantId, sessionId),

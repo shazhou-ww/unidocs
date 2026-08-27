@@ -826,7 +826,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     }
 
     #isReadOnlyOperation(): boolean {
-      return this.#requestOperation === "query" || this.#requestOperation === "export";
+      return this.#requestOperation === "query"
+        || this.#requestOperation === "export"
+        || this.#requestOperation === "ir";
     }
 
     #checkExistingRef(hash: string): Promise<unknown> {
