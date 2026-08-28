@@ -5,6 +5,16 @@ const docUrl = (docId: string, method: string): string =>
   `${API_BASE_URL}/docs/${TYPE}/${docId}/${method}`;
 
 async function readJson<T>(res: Response): Promise<T> {
+  // A transport-level failure must never be mistaken for a payload. Without
+  // this gate a 404/500 that happens to carry any JSON body flowed straight
+  // through: `fetchHistory` turned it into `[]` — indistinguishable from "this
+  // session changed nothing" — and a failed `/rollback` looked exactly like a
+  // successful one that changed nothing. Read the body as TEXT here, since an
+  // error response is just as likely to be an HTML error page or empty.
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 200).trim();
+    throw new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ""}`);
+  }
   const body = await res.json() as { success?: boolean; error?: string } & T;
   if (body.success === false) throw new Error(body.error ?? "request failed");
   return body;

@@ -81,6 +81,22 @@ export function resetState(): void {
   for (const fn of [...listeners]) fn();
 }
 
+/**
+ * Surfaces a failed request in both places the user is already looking: the
+ * top bar's status line and the chat transcript.
+ *
+ * Three of the four network call sites are fired as `void fn()` from an
+ * onClick, where a rejection is an unhandled promise rejection and NOTHING on
+ * screen changes — a failed rollback or history load is silent. `send` grows
+ * its own error message out of the pending bubble it already owns; everything
+ * else routes through here.
+ */
+export function reportError(what: string, e: unknown): void {
+  const message = e instanceof Error ? e.message : String(e);
+  const text = `${what}：${message}`;
+  setState({ status: text, chat: [...getState().chat, { role: "err", text }] });
+}
+
 export function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };

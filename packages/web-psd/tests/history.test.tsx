@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { OpsList } from "../src/ui/panels/ops-list.js";
 import { HistoryDrawer } from "../src/ui/panels/history-drawer.js";
 import { setState, getState } from "../src/ui/store.js";
@@ -31,6 +31,19 @@ describe("OpsList", () => {
     render(<OpsList entries={[entry(12), entry(13)]} />);
     fireEvent.click(screen.getByText("回退这 2 步"));
     expect(rollback).toHaveBeenCalledWith("abc", 11);
+  });
+
+  it("surfaces a failed rollback and re-enables the button", async () => {
+    // The click fires `void undo()`; without a catch a rejection here is an
+    // unhandled promise rejection and the user sees nothing at all.
+    rollback.mockRejectedValueOnce(new Error("HTTP 409: version conflict"));
+    render(<OpsList entries={[entry(12), entry(13)]} />);
+    const btn = screen.getByText("回退这 2 步");
+    fireEvent.click(btn);
+    await waitFor(() => expect(getState().status).toBe("回退失败：HTTP 409: version conflict"));
+    expect(getState().chat.at(-1)).toEqual({ role: "err", text: "回退失败：HTTP 409: version conflict" });
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(btn).not.toBeDisabled();
   });
 });
 

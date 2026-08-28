@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { rollback } from "../api.js";
 import { getController } from "../controller.js";
-import { getState, setState, type HistoryEntry } from "../store.js";
+import { getState, reportError, type HistoryEntry } from "../store.js";
 
 /**
  * The design nests this inside an agent message. It also backs the history
@@ -28,6 +28,8 @@ export function OpsList({ entries, defaultOpen = false }: { entries: HistoryEntr
     try {
       await rollback(docId, target);
       await getController()?.reconcile();
+    } catch (e) {
+      reportError("回退失败", e);
     } finally {
       setBusy(false);
     }

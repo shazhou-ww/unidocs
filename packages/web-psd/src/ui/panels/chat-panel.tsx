@@ -1,6 +1,6 @@
 import { fetchHistory, resetAgent, runAgent } from "../api.js";
 import { getController } from "../controller.js";
-import { getState, opsSinceSession, setState, useUiState, type ChatMessage } from "../store.js";
+import { getState, opsSinceSession, reportError, setState, useUiState, type ChatMessage } from "../store.js";
 import { Composer } from "./composer.js";
 import { HistoryDrawer } from "./history-drawer.js";
 import { OpsList } from "./ops-list.js";
@@ -13,13 +13,25 @@ export function ChatPanel() {
     const docId = getState().docId;
     if (!docId) return;
     setState({ historyOpen: true });
-    setState({ history: await fetchHistory(docId) });
+    try {
+      setState({ history: await fetchHistory(docId) });
+    } catch (e) {
+      reportError("加载历史失败", e);
+    }
   };
 
   const newSession = async (): Promise<void> => {
     const docId = getState().docId;
-    setState({ chat: [] });
-    if (docId) await resetAgent(docId);
+    // "会话" means one thing in this panel: the transcript AND the op counter
+    // above it must start over together. Clearing only `chat` left the header
+    // reading "N ops · 本次会话" over an empty transcript.
+    setState({ chat: [], sessionBaseVersion: getState().version });
+    if (!docId) return;
+    try {
+      await resetAgent(docId);
+    } catch (e) {
+      reportError("重置会话失败", e);
+    }
   };
 
   const send = async (text: string): Promise<void> => {

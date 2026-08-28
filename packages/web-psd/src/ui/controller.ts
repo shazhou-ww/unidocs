@@ -58,12 +58,20 @@ async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   const before = controller.docId;
   await controller.createFrom(bytes, label);
   // `DocController.createFrom` never rejects — it reports failure only via
-  // `onStatus` — and on failure it leaves `docId` exactly as it found it: on
-  // the very first (never-yet-successful) call that's `null`; on a LATER
-  // failed call it's the previous document's id, unchanged (`docIdField` is
-  // only ever assigned on success — see doc-controller.ts's createFrom).
-  // Comparing to `before` catches both: a failed create must not adopt the
-  // new label onto a docId that didn't actually change.
+  // `onStatus`. Comparing to `before` is what keeps a failed create from
+  // adopting the new label: on the very first (never-yet-successful) call
+  // `docId` is still `null`; when the POST itself fails it is still the
+  // previous document's id, unchanged.
+  //
+  // The gate is deliberately coarse, and cannot be tightened from here.
+  // `createFrom` assigns `docIdField` BEFORE awaiting `initRender()` (see
+  // doc-controller.ts), so a create whose POST succeeded but whose render
+  // then threw leaves the new docId in place and is indistinguishable, from
+  // out here, from a fully successful one — the store adopts the new
+  // docId/label while the canvas shows nothing, with `onStatus` carrying the
+  // only account of what went wrong. That is the correct trade: the document
+  // does exist server-side, so pretending the previous one is still open
+  // would be the bigger lie.
   if (controller.docId && controller.docId !== before) {
     setState({ docId: controller.docId, docName: label, history: [], chat: [] });
   }

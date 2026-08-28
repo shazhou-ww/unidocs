@@ -55,6 +55,41 @@ describe("ChatPanel", () => {
     expect(resetAgent).toHaveBeenCalledWith("abc");
   });
 
+  it("moves the session boundary to the current version on 新会话", async () => {
+    // Two meanings of "会话" in one panel otherwise: the header kept counting
+    // ops from the OLD boundary ("N ops · 本次会话") above an empty transcript.
+    setState({
+      version: 14, sessionBaseVersion: 11, chat: [{ role: "user", text: "hi" }],
+      history: [
+        { version: 12, timestamp: "t", description: "d", operations: [] },
+        { version: 13, timestamp: "t", description: "d", operations: [] },
+        { version: 14, timestamp: "t", description: "d", operations: [] },
+      ],
+    });
+    render(<ChatPanel />);
+    expect(screen.getByText(/3 ops · 本次会话/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("新会话"));
+    await waitFor(() => expect(getState().sessionBaseVersion).toBe(14));
+    expect(screen.getByText(/0 ops · 本次会话/)).toBeInTheDocument();
+  });
+
+  it("surfaces a failed history load instead of rejecting into the void", async () => {
+    fetchHistory.mockRejectedValueOnce(new Error("HTTP 500: boom"));
+    render(<ChatPanel />);
+    fireEvent.click(screen.getByText(/0 ops · 本次会话/));
+    await waitFor(() => expect(screen.getByText("加载历史失败：HTTP 500: boom")).toBeInTheDocument());
+    expect(getState().status).toBe("加载历史失败：HTTP 500: boom");
+  });
+
+  it("surfaces a failed session reset instead of rejecting into the void", async () => {
+    resetAgent.mockRejectedValueOnce(new Error("HTTP 404: no such doc"));
+    render(<ChatPanel />);
+    fireEvent.click(screen.getByText("新会话"));
+    await waitFor(() => expect(screen.getByText("重置会话失败：HTTP 404: no such doc")).toBeInTheDocument());
+    expect(getState().status).toBe("重置会话失败：HTTP 404: no such doc");
+  });
+
   it("opens the history drawer from the ops counter", async () => {
     setState({ history: [{ version: 12, timestamp: "t", description: "op#12", operations: [] }] });
     render(<ChatPanel />);
