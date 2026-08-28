@@ -1,5 +1,8 @@
 import { readPsd, type Layer as AgLayer } from "ag-psd";
-import type { PsdDoc, Layer, BlendMode, Mask } from "../model/types.js";
+import type {
+  PsdDoc, Layer, BlendMode, Mask,
+  Degradation, LayerText, LayerTextStyle, LayerVector, LayerSmartObject,
+} from "../model/types.js";
 import { installCanvasShim } from "./canvas-shim.js";
 
 /**
@@ -36,6 +39,145 @@ function mapAdjustType(t: string | undefined): string {
   }
 }
 
+const isNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
+/** ag-psd's `Color` is a union (RGB/HSB/CMYK/…); we only carry the RGB shape. */
+function rgbOf(c: unknown): { r: number; g: number; b: number } | undefined {
+  const v = c as { r?: unknown; g?: unknown; b?: unknown } | undefined;
+  return v && isNum(v.r) && isNum(v.g) && isNum(v.b) ? { r: v.r, g: v.g, b: v.b } : undefined;
+}
+
+function mapText(t: AgLayer["text"]): { text: LayerText; degraded: Degradation } | undefined {
+  if (!t || typeof t.text !== "string") return undefined;
+  const s = t.style;
+  // ag-psd's text-engine colour encoding round-trips with float drift
+  // (e.g. 28 -> 27.999); model/types.ts promises 0..255 integers, so round
+  // here rather than let every downstream consumer see near-integer floats.
+  const rawColor = rgbOf(s?.fillColor);
+  const color = rawColor
+    ? { r: Math.round(rawColor.r), g: Math.round(rawColor.g), b: Math.round(rawColor.b) }
+    : undefined;
+  const style: LayerTextStyle = {
+    ...(s?.font?.name ? { font: s.font.name } : {}),
+    ...(isNum(s?.fontSize) ? { size: s!.fontSize } : {}),
+    ...(color ? { color } : {}),
+    ...(isNum(s?.tracking) ? { tracking: s!.tracking } : {}),
+    ...(isNum(s?.leading) ? { leading: s!.leading } : {}),
+  };
+  return {
+    text: {
+      content: t.text,
+      ...(Object.keys(style).length ? { style } : {}),
+      ...(Array.isArray(t.transform) ? { transform: [...t.transform] } : {}),
+      ...(t.shapeType ? { shapeType: t.shapeType } : {}),
+    },
+    degraded: {
+      reason: "文字层已栅格化",
+      detail: "渲染与导出使用 PSD 烘焙像素；本期不支持编辑文字内容与排版",
+    },
+  };
+}
+
+function mapVector(a: AgLayer): { vector: LayerVector; degraded: Degradation } | undefined {
+  const paths = a.vectorMask?.paths ?? [];
+  if (!paths.length && !a.vectorFill && !a.vectorStroke) return undefined;
+  return {
+    vector: {
+      ...(a.vectorFill ? { fill: a.vectorFill } : {}),
+      ...(a.vectorStroke ? { stroke: a.vectorStroke } : {}),
+      ...(paths.length
+        ? {
+            pathSummary: {
+              subpaths: paths.length,
+              knots: paths.reduce((n, p) => n + (p.knots?.length ?? 0), 0),
+            },
+          }
+        : {}),
+    },
+    degraded: {
+      reason: "矢量形状已栅格化",
+      // Deliberately precise about how little survives: `fill`/`stroke` are
+      // carried verbatim and DO round-trip through save(), but the paths
+      // themselves are reduced to counts (`pathSummary`) and save() writes no
+      // vectorMask at all — re-importing an exported file yields a shape layer
+      // with zero paths. Pinned by save-roundtrip-ir.test.ts.
+      detail: "填充与描边样式保留为元数据；路径仅汇总为子路径与锚点数量，不会写回矢量蒙版；渲染与导出使用烘焙像素",
+    },
+  };
+}
+
+function mapSmartObject(a: AgLayer): { smartObject?: LayerSmartObject; degraded: Degradation } | undefined {
+  const p = a.placedLayer;
+  if (!p) return undefined;
+  // `placedId` is what ties the layer to its embedded source, so a placed
+  // layer without an `id` cannot be modelled as a smart object and keeps the
+  // plain raster verdict. The fidelity loss is real all the same — this used
+  // to return `undefined`, i.e. the flattest possible smart object recorded
+  // NOTHING in the ledger, which defeats the ledger's whole purpose.
+  if (!p.id) return { degraded: { reason: "智能对象已展平", detail: "源文档未内嵌" } };
+  return {
+    smartObject: {
+      placedId: p.id,
+      ...(Array.isArray(p.transform) ? { transform: [...p.transform] } : {}),
+      ...(p.placed ? { sourceName: p.placed } : {}),
+    },
+    degraded: {
+      reason: "智能对象已展平",
+      detail: p.placed ? `源：${p.placed}` : "源文档未内嵌",
+    },
+  };
+}
+
+/** ag-psd's per-effect keys, in the names the design doc uses. */
+const EFFECT_LABELS: Record<string, string> = {
+  dropShadow: "投影", innerShadow: "内阴影", outerGlow: "外发光", innerGlow: "内发光",
+  bevel: "斜面和浮雕", satin: "光泽", solidFill: "颜色叠加", stroke: "描边",
+  gradientOverlay: "渐变叠加", patternOverlay: "图案叠加",
+};
+/** Not effects: the effect-block toggle and the global effect scale. */
+const NON_EFFECT_KEYS = new Set(["disabled", "scale"]);
+
+/**
+ * One degradation per layer effect present on the layer that this loader does
+ * NOT carry into the model — spec §5.2's third degradation kind.
+ *
+ * The model understands exactly three effects (solidFill → colorOverlay,
+ * stroke, dropShadow), and even those only in their solid-colour, enabled
+ * form. Everything else — inner shadow, glows, bevel, satin, gradient/pattern
+ * overlay, and a gradient/pattern or disabled stroke — was previously dropped
+ * on the floor with no entry at all, so a document could lose half its
+ * appearance and report perfect fidelity.
+ *
+ * A DISABLED effect is reported too, with its own wording: Photoshop is not
+ * rendering it either, so nothing changes on screen, but the loader still
+ * discards the data and an export can never bring it back.
+ */
+function unsupportedEffects(
+  fx: Record<string, unknown> | undefined,
+  mapped: { solidFill: boolean; stroke: boolean; dropShadow: boolean },
+): Degradation[] {
+  if (!fx) return [];
+  const out: Degradation[] = [];
+  for (const [key, value] of Object.entries(fx)) {
+    if (NON_EFFECT_KEYS.has(key) || !value) continue;
+    const entries = Array.isArray(value) ? value : [value];
+    if (entries.length === 0) continue;
+    // Skip the three we actually mapped. (If one key holds several entries and
+    // only some were mapped, we stay silent rather than risk a false alarm.)
+    if (key === "solidFill" && mapped.solidFill) continue;
+    if (key === "stroke" && mapped.stroke) continue;
+    if (key === "dropShadow" && mapped.dropShadow) continue;
+    const anyEnabled = entries.some((e) => (e as { enabled?: boolean } | null)?.enabled !== false);
+    out.push({
+      reason: `不支持的图层效果：${EFFECT_LABELS[key] ?? key}`,
+      detail: anyEnabled
+        ? "导入时未保留，渲染与导出均不包含该效果"
+        : "源文件中已停用，导入时未保留，导出后无法恢复",
+    });
+  }
+  return out;
+}
+
 /**
  * Crop a layer's pixel buffer (and bounds) to the canvas rect, dropping any
  * pixels that fall outside [0,0,cw,ch]. A no-op if the layer is already
@@ -66,10 +208,25 @@ export function cropPixelsToCanvas(
   return { pixels: { width: nw, height: nh, data }, bounds: [nt, nl, nb, nr] };
 }
 
-function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
+export function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
   const isGroup = Array.isArray(a.children);
   const adj = (a as { adjustment?: { type?: string } & Record<string, unknown> }).adjustment;
-  const type: Layer["type"] = isGroup ? "group" : adj ? "adjustment" : "raster";
+  // Metadata is captured regardless of the type verdict — a vector-masked
+  // adjustment keeps its path summary AND stays an adjustment.
+  const textInfo = isGroup ? undefined : mapText(a.text);
+  const smartInfo = isGroup ? undefined : mapSmartObject(a);
+  const vectorInfo = isGroup ? undefined : mapVector(a);
+  // Order matters: adjustments and smart objects commonly carry a vector mask,
+  // so they must be decided BEFORE the vector check or they'd read as "fill".
+  const type: Layer["type"] =
+    isGroup ? "group"
+    : adj ? "adjustment"
+    : textInfo ? "text"
+    // A placed layer with no `id` yields a degradation but no `smartObject`,
+    // and stays a raster (or a fill, if it also carries a vector mask).
+    : smartInfo?.smartObject ? "smartObject"
+    : vectorInfo ? "fill"
+    : "raster";
   let bounds: [number, number, number, number] = [a.top ?? 0, a.left ?? 0, a.bottom ?? 0, a.right ?? 0];
   let px = a.imageData
     ? { width: a.imageData.width, height: a.imageData.height, data: a.imageData.data as Uint8ClampedArray }
@@ -112,6 +269,14 @@ function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
         choke: Math.max(0, Math.round(ds.choke?.value ?? 0)),
       }
     : undefined;
+  // Assembled here, not next to the type verdict, because it needs the effect
+  // mapping above to know which effects were actually carried over.
+  const degraded: Degradation[] = [
+    textInfo?.degraded, smartInfo?.degraded, vectorInfo?.degraded,
+  ].filter((d): d is Degradation => !!d)
+    .concat(unsupportedEffects(fx as Record<string, unknown> | undefined, {
+      solidFill: !!colorOverlay, stroke: !!stroke, dropShadow: !!dropShadow,
+    }));
   let adjType: string | undefined;
   let adjParams: Record<string, unknown> | undefined;
   if (adj) {
@@ -149,6 +314,10 @@ function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
     ...(dropShadow ? { dropShadow } : {}),
     ...(adjType ? { adjustType: adjType, params: adjParams } : {}),
     ...(mask ? { mask } : {}),
+    ...(textInfo ? { text: textInfo.text } : {}),
+    ...(smartInfo?.smartObject ? { smartObject: smartInfo.smartObject } : {}),
+    ...(vectorInfo ? { vector: vectorInfo.vector } : {}),
+    ...(degraded.length ? { degraded } : {}),
     ...(isGroup ? { children: (a.children ?? []).map((c, ci) => mapLayer(c, ci, cw, ch)) } : {}),
   };
 }

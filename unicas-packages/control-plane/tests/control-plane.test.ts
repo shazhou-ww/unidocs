@@ -117,6 +117,7 @@ describe("control-plane service", () => {
     expect("items" in list && list.items[0]).toMatchObject({
       stackId,
       displayName: "Alice Stack",
+      description: "",
       status: "active",
       revision: 1,
     });
@@ -145,6 +146,16 @@ describe("control-plane service", () => {
     expect(ok).toMatchObject({ displayName: "Renamed", revision: 2 });
     const get = await service.getStack(ctx(alice), { path: { stackId } });
     expect(get).toMatchObject({ displayName: "Renamed", revision: 2 });
+
+    const described = await service.patchStack(ctx(alice), {
+      path: { stackId },
+      body: { description: "Primary production stack" },
+    }, { ifMatch: '"2"' });
+    expect(described).toMatchObject({
+      displayName: "Renamed",
+      description: "Primary production stack",
+      revision: 3,
+    });
   });
 
   test("non-members cannot read stack resources", async () => {

@@ -281,22 +281,29 @@ export class ControlPlaneService {
       const row = await this.#stackRow(request.path.stackId);
       this.#requireIfMatch(mutation.ifMatch, row.revision);
       const rawName = request.body.displayName;
-      if (rawName === undefined) {
+      const rawDescription = request.body.description;
+      if (rawName === undefined && rawDescription === undefined) {
         throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "no change requested");
       }
-      const nameError = validateDisplayName(rawName);
-      if (nameError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, nameError);
-      const newName = rawName.trim();
-      if (newName === row.display_name) {
+      if (rawName !== undefined) {
+        const nameError = validateDisplayName(rawName);
+        if (nameError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, nameError);
+      }
+      if (rawDescription !== undefined && (typeof rawDescription !== "string" || rawDescription.length > 2_000)) {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "description must be a string of at most 2000 characters");
+      }
+      const newName = rawName?.trim() ?? row.display_name;
+      const newDescription = rawDescription?.trim() ?? row.description;
+      if (newName === row.display_name && newDescription === row.description) {
         throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "no change requested");
       }
       const batch = this.#newMutationBatch(ctx, request.path.stackId, ControlAuditActions.stackPatched, request.path.stackId);
       batch.push(
-        this.#db.prepare("UPDATE cas_stacks SET display_name = ?, revision = revision + 1 WHERE stack_id = ?")
-          .bind(newName, request.path.stackId),
+        this.#db.prepare("UPDATE cas_stacks SET display_name = ?, description = ?, revision = revision + 1 WHERE stack_id = ?")
+          .bind(newName, newDescription, request.path.stackId),
       );
       await this.#db.batch(batch);
-      return toCasStack({ ...row, display_name: newName, revision: row.revision + 1 });
+      return toCasStack({ ...row, display_name: newName, description: newDescription, revision: row.revision + 1 });
     });
   }
 
@@ -715,14 +722,14 @@ export class ControlPlaneService {
     const displayName = request.body.displayName.trim();
     this.#appendMutationStatements(ctx, batch, stackId, ControlAuditActions.stackCreated, stackId);
     batch.push(
-      this.#db.prepare("INSERT INTO cas_stacks (stack_id, display_name, status, created_at, revision) VALUES (?, ?, 'active', ?, 1)")
+      this.#db.prepare("INSERT INTO cas_stacks (stack_id, display_name, description, status, created_at, revision) VALUES (?, ?, '', 'active', ?, 1)")
         .bind(stackId, displayName, now),
     );
     batch.push(
       this.#db.prepare("INSERT INTO cas_stack_members (stack_id, identity_issuer, subject, joined_at) VALUES (?, ?, ?, ?)")
         .bind(stackId, ctx.identity.identityIssuer, ctx.identity.subject, now),
     );
-    return { stackId, displayName, status: "active", createdAt: now, revision: 1 };
+    return { stackId, displayName, description: "", status: "active", createdAt: now, revision: 1 };
   }
 
   #buildCreateInvitation(
@@ -908,7 +915,7 @@ export class ControlPlaneService {
 
   async #stackRow(stackId: string): Promise<StackRow> {
     const row = await this.#db
-      .prepare("SELECT stack_id, display_name, status, created_at, revision FROM cas_stacks WHERE stack_id = ?")
+      .prepare("SELECT stack_id, display_name, description, status, created_at, revision FROM cas_stacks WHERE stack_id = ?")
       .bind(stackId)
       .first<StackRow>();
     if (!row) throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "stack not found");
@@ -970,7 +977,7 @@ export class ControlPlaneService {
   ): Promise<StackRow[]> {
     const rows = await this.#db
       .prepare(
-        "SELECT s.stack_id, s.display_name, s.status, s.created_at, s.revision FROM cas_stacks s JOIN cas_stack_members m ON m.stack_id = s.stack_id WHERE m.identity_issuer = ? AND m.subject = ? AND s.stack_id > ? ORDER BY s.stack_id LIMIT ?",
+        "SELECT s.stack_id, s.display_name, s.description, s.status, s.created_at, s.revision FROM cas_stacks s JOIN cas_stack_members m ON m.stack_id = s.stack_id WHERE m.identity_issuer = ? AND m.subject = ? AND s.stack_id > ? ORDER BY s.stack_id LIMIT ?",
       )
       .bind(identity.identityIssuer, identity.subject, afterStackId ?? "", limit)
       .all<StackRow>();
@@ -1079,6 +1086,7 @@ export class ControlPlaneService {
 interface StackRow {
   readonly stack_id: string;
   readonly display_name: string;
+  readonly description: string;
   readonly status: string;
   readonly created_at: number;
   readonly revision: number;
@@ -1149,6 +1157,7 @@ function toCasStack(row: StackRow): CasStack {
   return {
     stackId: row.stack_id,
     displayName: row.display_name,
+    description: row.description,
     status: row.status === "suspended" ? "suspended" : "active",
     createdAt: row.created_at,
     revision: row.revision,

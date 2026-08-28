@@ -55,6 +55,10 @@ describe("tool catalog", () => {
     expect(createStack?.inputSchema.safeParse({ displayName: "Ops", idempotencyKey: "k1" }).success).toBe(true);
     expect(createStack?.inputSchema.safeParse({ displayName: "", idempotencyKey: "k1" }).success).toBe(false);
 
+    const updateStack = getToolDefinition("update_stack");
+    expect(updateStack?.inputSchema.safeParse({ stackId: "s", description: "Production", etag: '"1"' }).success).toBe(true);
+    expect(updateStack?.inputSchema.safeParse({ stackId: "s", description: "x".repeat(2_001), etag: '"1"' }).success).toBe(false);
+
     const challenge = getToolDefinition("create_issuer_key_challenge");
     expect(challenge?.inputSchema.safeParse({ stackId: "s", kid: "k", algorithm: "EdDSA" }).success).toBe(true);
     expect(challenge?.inputSchema.safeParse({ stackId: "s", kid: "k", algorithm: "HS256" }).success).toBe(false);

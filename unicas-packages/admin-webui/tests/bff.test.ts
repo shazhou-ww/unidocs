@@ -465,6 +465,7 @@ describe("cas-admin-webui BFF", () => {
     expect(ok.status).toBe(200);
     const created = await ok.json();
     expect(created.displayName).toBe("Stack");
+    expect(created.description).toBe("");
     expect(created.stackId).toMatch(/^cas_/);
     expect(ok.headers.get("ETag")).toBe('"1"');
   });
@@ -510,10 +511,27 @@ describe("cas-admin-webui BFF", () => {
     expect(patch.status).toBe(200);
     expect((await patch.json()).displayName).toBe("Renamed");
 
+    const describe = await authRequest(bff, `/admin/stacks/${stackId}`, cookie, {
+      method: "PATCH",
+      headers: {
+        "X-CSRF-Token": csrf,
+        "Content-Type": "application/json",
+        "If-Match": '"2"',
+      },
+      body: JSON.stringify({ description: "Production documents" }),
+    });
+    expect(describe.status).toBe(200);
+    expect(await describe.json()).toMatchObject({
+      displayName: "Renamed",
+      description: "Production documents",
+      revision: 3,
+    });
+
     const list = await authRequest(bff, "/admin/stacks", cookie);
     const listed = await list.json();
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0].displayName).toBe("Renamed");
+    expect(listed.items[0].description).toBe("Production documents");
   });
 
   test("invitation page redirects unauthenticated visitors to login, then to the hash route", async () => {

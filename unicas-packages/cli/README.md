@@ -63,7 +63,7 @@ By default all three scopes are requested:
 | `unicas stacks list [--limit N] [--cursor C]` | `list_stacks` |
 | `unicas stacks get <stackId>` | `get_stack` |
 | `unicas stacks create <displayName> [--idempotency-key K]` | `create_stack` |
-| `unicas stacks update <stackId> <displayName> [--etag E]` | `update_stack` |
+| `unicas stacks update <stackId> [displayName] [--description D] [--etag E]` | `update_stack` |
 | `unicas members list <stackId> [--limit N] [--cursor C]` | `list_members` |
 | `unicas members invite <stackId> <email> [--idempotency-key K]` | `invite_member` |
 | `unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]` | `remove_member` |

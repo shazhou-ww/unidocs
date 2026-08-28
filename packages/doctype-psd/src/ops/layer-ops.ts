@@ -7,11 +7,64 @@ const BLEND_MODES: BlendMode[] = [
   "difference","exclusion","subtract","divide","hue","saturation","color","luminosity","pass-through",
 ];
 
-export const SETTABLE_PROPS = ["name","opacity","blendMode","visible","locked","clipping"] as const;
+export const SETTABLE_PROPS = [
+  "name", "opacity", "blendMode", "visible", "locked", "clipping",
+  "fillOpacity", "stroke", "colorOverlay", "dropShadow",
+] as const;
+
+/** Effects that accept `null` to mean "remove this effect". */
+const EFFECT_PROPS = new Set(["stroke", "colorOverlay", "dropShadow"]);
+const STROKE_POSITIONS = ["inside", "outside", "center"];
 
 const LAYER_TYPES = ["raster","adjustment","fill","text","smartObject","group"];
 
 const isFiniteNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
+const isUnit = (n: unknown): n is number => isFiniteNum(n) && n >= 0 && n <= 1;
+const isByte = (n: unknown): n is number => isFiniteNum(n) && n >= 0 && n <= 255;
+const isRgb = (v: unknown): boolean => {
+  const c = v as { r?: unknown; g?: unknown; b?: unknown } | null;
+  return !!c && typeof c === "object" && isByte(c.r) && isByte(c.g) && isByte(c.b);
+};
+
+function validateStroke(v: unknown): void {
+  const s = v as Record<string, unknown> | null;
+  if (!s || typeof s !== "object") throw new Error("stroke must be an object or null");
+  if (!isRgb(s.color)) throw new Error("stroke.color must be {r,g,b} in 0..255");
+  if (!isUnit(s.opacity)) throw new Error(`stroke.opacity out of range 0..1: ${String(s.opacity)}`);
+  if (!isFiniteNum(s.size) || s.size < 0) throw new Error(`stroke.size must be >= 0: ${String(s.size)}`);
+  if (!STROKE_POSITIONS.includes(s.position as string)) {
+    throw new Error(`invalid stroke.position: ${String(s.position)} (inside|outside|center)`);
+  }
+  if (!BLEND_MODES.includes(s.blendMode as BlendMode)) {
+    throw new Error(`invalid stroke.blendMode: ${String(s.blendMode)}`);
+  }
+}
+
+function validateColorOverlay(v: unknown): void {
+  const c = v as Record<string, unknown> | null;
+  if (!c || typeof c !== "object") throw new Error("colorOverlay must be an object or null");
+  if (!isRgb(c)) throw new Error("colorOverlay must carry {r,g,b} in 0..255");
+  // 0..1 blend factor — see render/composite.ts, which computes
+  // `sr * (1 - oa) + (color.r / 255) * oa`.
+  if (!isUnit(c.opacity)) throw new Error(`colorOverlay.opacity out of range 0..1: ${String(c.opacity)}`);
+}
+
+function validateDropShadow(v: unknown): void {
+  const d = v as Record<string, unknown> | null;
+  if (!d || typeof d !== "object") throw new Error("dropShadow must be an object or null");
+  if (!isRgb(d.color)) throw new Error("dropShadow.color must be {r,g,b} in 0..255");
+  if (!isUnit(d.opacity)) throw new Error(`dropShadow.opacity out of range 0..1: ${String(d.opacity)}`);
+  if (!BLEND_MODES.includes(d.blendMode as BlendMode)) {
+    throw new Error(`invalid dropShadow.blendMode: ${String(d.blendMode)}`);
+  }
+  for (const k of ["angle", "distance", "size", "choke"] as const) {
+    if (!isFiniteNum(d[k])) throw new Error(`dropShadow.${k} must be a finite number`);
+  }
+  if ((d.size as number) < 0 || (d.choke as number) < 0) {
+    throw new Error("dropShadow.size and dropShadow.choke must be >= 0");
+  }
+}
 
 /**
  * Reject structurally invalid layers so a bad add_layer fails cleanly in
@@ -94,8 +147,19 @@ export function setProps(
   if (!layer) throw new Error(`layer not found: ${p.layerId}`);
   for (const [k, v] of Object.entries(p.props)) {
     if (!SETTABLE_PROPS.includes(k as any)) throw new Error(`immutable or unknown prop: ${k}`);
-    if (k === "opacity" && (typeof v !== "number" || v < 0 || v > 1)) throw new Error(`opacity out of range: ${String(v)}`);
+    // Effects are removable: null/undefined deletes the key entirely, so a
+    // layer with no stroke is `stroke === undefined` (what the renderer and
+    // layerInfluenceBounds both test for), never `stroke === null`.
+    if (EFFECT_PROPS.has(k) && (v === null || v === undefined)) {
+      delete (layer as any)[k];
+      continue;
+    }
+    if (k === "opacity" && !isUnit(v)) throw new Error(`opacity out of range: ${String(v)}`);
+    if (k === "fillOpacity" && !isUnit(v)) throw new Error(`fillOpacity out of range: ${String(v)}`);
     if (k === "blendMode" && !BLEND_MODES.includes(v as BlendMode)) throw new Error(`invalid blendMode: ${String(v)}`);
+    if (k === "stroke") validateStroke(v);
+    if (k === "colorOverlay") validateColorOverlay(v);
+    if (k === "dropShadow") validateDropShadow(v);
     (layer as any)[k] = v;
   }
 }

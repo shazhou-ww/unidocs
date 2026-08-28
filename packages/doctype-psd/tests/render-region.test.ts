@@ -39,3 +39,52 @@ describe("downscale", () => {
     expect(downscale(px, 768)).toBe(px);
   });
 });
+
+// Regression: renderLayer used to whitelist the isolatable types as
+// `raster || group`. When import started retyping layers that carry text /
+// vector / placed metadata as "text" / "fill" / "smartObject", those layers
+// silently stopped being isolatable and `query_layer_image` began returning
+// the COMPOSITED BACKDROP cropped to the layer's bounds instead of the layer
+// on a transparent backdrop. Only `adjustment` genuinely has no standalone
+// pixels; every other type goes through applyLayer's type-agnostic
+// `layer.pixels` branch.
+describe("renderLayer isolation across layer types", () => {
+  // Opaque red underneath, half-transparent blue on top. Isolated, the top
+  // layer must read as its own [0,0,255,128]; composited over red it would
+  // read as the flattened [127,0,128,255].
+  const bg: Layer = { id: "bg", type: "raster", name: "bg", bounds: [0, 0, 1, 1], opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false, pixels: { width: 1, height: 1, data: fill(1, 1, [255, 0, 0, 255]) } };
+  const topOf = (type: Layer["type"]): Layer => ({
+    id: "top", type, name: "top", bounds: [0, 0, 1, 1], opacity: 1, blendMode: "normal",
+    visible: true, locked: false, clipping: false,
+    pixels: { width: 1, height: 1, data: fill(1, 1, [0, 0, 255, 128]) },
+  });
+  const stack = (type: Layer["type"]): PsdDoc => ({
+    canvas: { width: 1, height: 1, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
+    layers: [bg, topOf(type)],
+  });
+
+  for (const type of ["raster", "fill", "text", "smartObject"] as const) {
+    it(`renders a "${type}" layer in isolation, not composited over the backdrop`, async () => {
+      const out = await renderLayer(stack(type), "top");
+      expect([...out.data]).toEqual([0, 0, 255, 128]);
+    });
+  }
+
+  it("still falls back to the composite for an adjustment layer, which has no standalone pixels", async () => {
+    const adj: Layer = {
+      id: "adj", type: "adjustment", name: "adj", bounds: [0, 0, 1, 1], opacity: 1,
+      blendMode: "normal", visible: true, locked: false, clipping: false,
+      adjustType: "brit", params: { brightness: 0, contrast: 0 },
+    };
+    const out = await renderLayer({
+      canvas: { width: 1, height: 1, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
+      layers: [bg, adj],
+    }, "adj");
+    expect([...out.data]).toEqual([255, 0, 0, 255]);
+  });
+
+  it("honours context:true by compositing even an isolatable layer over its backdrop", async () => {
+    const out = await renderLayer(stack("fill"), "top", { context: true });
+    expect([...out.data]).toEqual([127, 0, 128, 255]);
+  });
+});

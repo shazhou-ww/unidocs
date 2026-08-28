@@ -78,14 +78,24 @@ async function stacksCreate(ctx: CliContext, argv: string[]): Promise<void> {
 async function stacksUpdate(ctx: CliContext, argv: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { etag: { type: "string" } },
+    options: {
+      description: { type: "string" },
+      etag: { type: "string" },
+    },
     allowPositionals: true,
   });
   const [stackId, displayName] = positionals;
-  if (!stackId || !displayName) throw new Error("usage: unicas stacks update <stackId> <displayName> [--etag E]");
+  if (!stackId || (!displayName && values.description === undefined)) {
+    throw new Error("usage: unicas stacks update <stackId> [displayName] [--description D] [--etag E]");
+  }
   await withRemote(ctx, async (remote) => {
     const etag = values.etag ?? (await resolveStackEtag(remote, stackId));
-    const result = await remote.callTool("update_stack", { stackId, displayName, etag });
+    const result = await remote.callTool("update_stack", {
+      stackId,
+      ...(displayName !== undefined ? { displayName } : {}),
+      ...(values.description !== undefined ? { description: values.description } : {}),
+      etag,
+    });
     requireToolSuccess(result, "update_stack");
     printJson(result.structuredContent);
   });

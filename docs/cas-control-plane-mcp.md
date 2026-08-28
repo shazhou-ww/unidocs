@@ -90,7 +90,8 @@ enforces scopes, membership, ETags, confirmations, and service invariants.
 
 `list_ref_domains` is an audit discovery tool. It lists domains observed in
 successful Root Ref writes; domains are not pre-registered or lifecycle-managed
-through MCP.
+through MCP. A ref domain is an event field used to filter and aggregate Root
+Ref audit data, not a separately managed stack resource.
 
 ## Worker configuration
 

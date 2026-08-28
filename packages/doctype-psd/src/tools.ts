@@ -10,6 +10,17 @@ const BLEND_MODES = [
   "difference", "exclusion", "subtract", "divide",
   "hue", "saturation", "color", "luminosity", "pass-through",
 ];
+
+const RGB = {
+  type: "object",
+  properties: {
+    r: { type: "number", minimum: 0, maximum: 255 },
+    g: { type: "number", minimum: 0, maximum: 255 },
+    b: { type: "number", minimum: 0, maximum: 255 },
+  },
+  required: ["r", "g", "b"],
+} as const;
+
 const LAYER_TYPES = ["raster", "adjustment", "fill", "text", "smartObject", "group"];
 const ADJUST_TYPES = ["brit", "blwh", "hue2", "levl", "curv"];
 
@@ -133,7 +144,9 @@ export const tools: readonly AgentTool<PsdQuery, PsdOp>[] = [
   {
     kind: "op",
     name: "setProps",
-    description: "WRITE. Change name/opacity/blendMode/visible/locked/clipping of a layer.",
+    description:
+      "WRITE. Change name/opacity/fillOpacity/blendMode/visible/locked/clipping of a layer, "
+      + "or set its stroke / colorOverlay / dropShadow effect. Pass null for an effect to remove it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -143,10 +156,45 @@ export const tools: readonly AgentTool<PsdQuery, PsdOp>[] = [
           properties: {
             name: { type: "string" },
             opacity: { type: "number", minimum: 0, maximum: 1 },
+            fillOpacity: { type: "number", minimum: 0, maximum: 1 },
             blendMode: { enum: BLEND_MODES },
             visible: { type: "boolean" },
             locked: { type: "boolean" },
             clipping: { type: "boolean" },
+            stroke: {
+              type: ["object", "null"],
+              properties: {
+                color: RGB,
+                opacity: { type: "number", minimum: 0, maximum: 1 },
+                size: { type: "number", minimum: 0 },
+                position: { enum: ["inside", "outside", "center"] },
+                blendMode: { enum: BLEND_MODES },
+              },
+              required: ["color", "opacity", "size", "position", "blendMode"],
+            },
+            colorOverlay: {
+              type: ["object", "null"],
+              properties: {
+                r: { type: "number", minimum: 0, maximum: 255 },
+                g: { type: "number", minimum: 0, maximum: 255 },
+                b: { type: "number", minimum: 0, maximum: 255 },
+                opacity: { type: "number", minimum: 0, maximum: 1 },
+              },
+              required: ["r", "g", "b", "opacity"],
+            },
+            dropShadow: {
+              type: ["object", "null"],
+              properties: {
+                color: RGB,
+                opacity: { type: "number", minimum: 0, maximum: 1 },
+                blendMode: { enum: BLEND_MODES },
+                angle: { type: "number" },
+                distance: { type: "number" },
+                size: { type: "number", minimum: 0 },
+                choke: { type: "number", minimum: 0 },
+              },
+              required: ["color", "opacity", "blendMode", "angle", "distance", "size", "choke"],
+            },
           },
         },
       },

@@ -28,6 +28,7 @@ const stackId = z.string().min(1);
 const cursor = z.string().min(1);
 const boundedLimit = z.number().int().min(1).max(200);
 const displayName = z.string().min(1).max(100);
+const description = z.string().max(2_000);
 const idempotencyKey = z.string().min(1).max(128);
 const etag = z.string().min(1);
 const email = z.string().email();
@@ -142,8 +143,13 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
   },
   {
     name: "update_stack",
-    description: "Update a stack display name using its current ETag.",
-    inputSchema: z.object({ stackId, displayName, etag }),
+    description: "Update stack metadata using its current ETag.",
+    inputSchema: z.object({
+      stackId,
+      displayName: displayName.optional(),
+      description: description.optional(),
+      etag,
+    }),
     annotations: { destructiveHint: false, idempotentHint: false },
     requiredScope: "control:write",
   },

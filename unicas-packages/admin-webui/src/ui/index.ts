@@ -12,7 +12,6 @@ export { InvitationView } from "./views/invitations.js";
 export { LoginErrorView } from "./views/login-error.js";
 export { MembersView } from "./views/members.js";
 export { IssuerView } from "./views/issuer.js";
-export { RefDomainsView } from "./views/ref-domains.js";
 export { ControlAuditView } from "./views/control-audit.js";
 export { RootRefAuditView, UsageView } from "./views/placeholder-views.js";
 export { api, ApiError, SessionExpiredError, readCsrfToken, ifMatch } from "./api.js";

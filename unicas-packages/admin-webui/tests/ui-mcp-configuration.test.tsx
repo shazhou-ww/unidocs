@@ -62,7 +62,9 @@ describe("AI tool connection", () => {
     expect(cliPrompt).toContain("pnpm install --global ./unicas-packages/cli");
     expect(cliPrompt).toContain("unicas login");
     expect(cliPrompt).toContain(`${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`);
-    expect(cliPrompt).toContain("~/.agents/skills/unicas-cli/SKILL.md");
+    expect(cliPrompt).toContain("standard agent-skills location");
+    expect(cliPrompt).not.toContain("DeepSeek Harness");
+    expect(cliPrompt).not.toContain("Claude Code");
     expect(cliPrompt).toContain('command "unicas", args ["mcp"]');
     expect(screen.getByRole("button", { name: "CLI prompt copied" })).toBeInTheDocument();
 

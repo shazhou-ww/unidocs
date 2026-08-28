@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Boxes,
   Cable,
   Database,
   Gauge,
@@ -20,7 +19,6 @@ import { formatErrorSafe } from "./view-helpers.js";
 import { StackOverviewView } from "./stack-overview.js";
 import { MembersView } from "./members.js";
 import { IssuerView } from "./issuer.js";
-import { RefDomainsView } from "./ref-domains.js";
 import { ControlAuditView } from "./control-audit.js";
 import { RootRefAuditView, UsageView } from "./placeholder-views.js";
 
@@ -28,7 +26,6 @@ const TABS = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={15} /> },
   { id: "members", label: "Members", icon: <Users size={15} /> },
   { id: "issuer", label: "Issuer & keys", icon: <KeyRound size={15} /> },
-  { id: "domains", label: "Ref domains", icon: <Boxes size={15} /> },
   { id: "audit", label: "Control audit", icon: <ScrollText size={15} /> },
   { id: "root-refs", label: "Root Ref audit", icon: <Database size={15} /> },
   { id: "usage", label: "Usage", icon: <Gauge size={15} /> },
@@ -62,15 +59,6 @@ const TAB_GUIDES = {
       { term: "Key states", detail: "Active keys verify current traffic; retiring keys support overlap; revoked keys are rejected after cache propagation." },
     ],
   },
-  domains: {
-    title: "Reference domains",
-    summary: "A ref domain identifies the stable business system responsible for Root Ref changes, such as doc, asset, or indexer.",
-    concepts: [
-      { term: "Signed attribution", detail: "Writers receive refDomain in their capability; request paths, headers, and bodies cannot override it." },
-      { term: "Orthogonal to tenant", detail: "One domain can write for many tenants in this stack, while each event still records its tenant." },
-      { term: "Revision", detail: "A monotonic watermark shared by all tenants writing through this stack and domain." },
-    ],
-  },
   audit: {
     title: "Control-plane audit",
     summary: "This append-only log records administrative mutations to stack configuration and membership.",
@@ -85,7 +73,7 @@ const TAB_GUIDES = {
     summary: "Root Ref events and domain balances explain which signed deltas CAS recorded. They support investigation and reconciliation, but do not prove business-system truth.",
     concepts: [
       { term: "Authoritative count", detail: "The aggregate node root count alone controls lifecycle and garbage collection." },
-      { term: "Audit balance", detail: "A per-domain projection may be negative and is never used to rewrite the aggregate automatically." },
+      { term: "Ref domain", detail: "A signed event field used to filter and aggregate changes by their responsible business system." },
       { term: "Reconciliation", detail: "Compare CAS history with business intent, then make an explicit repair decision outside this view." },
     ],
   },
@@ -280,7 +268,6 @@ export function StackView({ stackId, onStackChange, onOpenMcpConfiguration, onLo
           {tab === "overview" ? <StackOverviewView stack={stack} onChanged={reload} /> : null}
           {tab === "members" ? <MembersView stackId={stackId} stackRevision={stack.revision} onChanged={reload} /> : null}
           {tab === "issuer" ? <IssuerView stackId={stackId} /> : null}
-          {tab === "domains" ? <RefDomainsView stackId={stackId} /> : null}
           {tab === "audit" ? <ControlAuditView stackId={stackId} /> : null}
           {tab === "root-refs" ? <RootRefAuditView stackId={stackId} /> : null}
           {tab === "usage" ? <UsageView stackId={stackId} /> : null}

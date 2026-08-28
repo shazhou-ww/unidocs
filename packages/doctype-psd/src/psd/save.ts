@@ -23,7 +23,7 @@ function mapMask(m: Mask): AgLayer["mask"] {
   return out as AgLayer["mask"];
 }
 
-function mapLayer(l: Layer): AgLayer {
+export function mapLayer(l: Layer): AgLayer {
   // Defensive: tolerate a layer with missing bounds so a previously-corrupted
   // document can still be serialized (and thus recovered) instead of throwing.
   const [top, left, bottom, right] = l.bounds ?? [0, 0, 0, 0];
@@ -37,6 +37,44 @@ function mapLayer(l: Layer): AgLayer {
     left, top, right, bottom,
   };
   if (l.fillOpacity !== undefined && l.fillOpacity !== 1) out.fillOpacity = l.fillOpacity;
+  // Write back the metadata load.ts preserved, so import → export → import is
+  // lossless for layer STRUCTURE. `degraded` is deliberately NOT written: it
+  // describes what the importer lost, not what the document contains, and
+  // load() re-derives it on the next import.
+  if (l.text) {
+    out.text = {
+      text: l.text.content,
+      ...(l.text.transform ? { transform: l.text.transform } : {}),
+      ...(l.text.shapeType ? { shapeType: l.text.shapeType } : {}),
+      ...(l.text.style
+        ? {
+            style: {
+              ...(l.text.style.font ? { font: { name: l.text.style.font } } : {}),
+              ...(l.text.style.size !== undefined ? { fontSize: l.text.style.size } : {}),
+              ...(l.text.style.color ? { fillColor: l.text.style.color } : {}),
+              ...(l.text.style.tracking !== undefined ? { tracking: l.text.style.tracking } : {}),
+              ...(l.text.style.leading !== undefined ? { leading: l.text.style.leading } : {}),
+            },
+          }
+        : {}),
+    } as any;
+  }
+  if (l.vector?.fill) out.vectorFill = l.vector.fill as any;
+  if (l.vector?.stroke) out.vectorStroke = l.vector.stroke as any;
+  if (l.smartObject) {
+    // ag-psd's writer requires width/height (or a warp) on placedLayer, or it
+    // throws "You must provide width and height of the linked image in
+    // placedLayer". We don't carry the linked image's own dimensions, but
+    // both Pixels and PixelRef expose width/height, so the layer's own baked
+    // raster dimensions stand in.
+    out.placedLayer = {
+      id: l.smartObject.placedId,
+      type: "raster",
+      ...(l.pixels ? { width: l.pixels.width, height: l.pixels.height } : {}),
+      ...(l.smartObject.transform ? { transform: l.smartObject.transform } : {}),
+      ...(l.smartObject.sourceName ? { placed: l.smartObject.sourceName } : {}),
+    } as any;
+  }
   if (l.mask) out.mask = mapMask(l.mask);
   if (l.type === "adjustment" && l.adjustType) {
     out.adjustment = { type: agAdjustType(l.adjustType), ...(l.params ?? {}) } as any;

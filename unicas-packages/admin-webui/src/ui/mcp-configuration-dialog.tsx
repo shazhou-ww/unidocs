@@ -18,9 +18,8 @@ Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API
 1. Install the CLI (from the UniCAS repository):
    pnpm --filter @unicas/cli build && pnpm install --global ./unicas-packages/cli
 2. Log in once in a browser: unicas login
-3. Install the agent skill, which tells you when and how to use the CLI:
-   fetch ${skillUrl} and save it as ~/.agents/skills/unicas-cli/SKILL.md (DeepSeek Harness)
-   or ~/.claude/skills/unicas-cli/SKILL.md (Claude Code), then follow it
+3. Fetch ${skillUrl}, install it in this tool's standard agent-skills location, and follow it.
+  Determine the correct location from the tool's own conventions.
 4. Use the CLI (JSON on stdout) or connect over stdio MCP:
    unicas whoami | unicas stacks list | unicas stacks get <stackId> | unicas stacks create "Operations" --idempotency-key ops-1
    stdio MCP: command "unicas", args ["mcp"]`;
@@ -117,22 +116,28 @@ Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API
           {serverUrl}
           {copied === "url" ? <Check size={14} /> : <Copy size={14} />}
         </button>
-        <div className="mcp-config-heading mcp-prompt-heading">
-          <code>Configuration prompt</code>
-          <button type="button" className="copy-button" onClick={() => void copy(configurationPrompt, "prompt")}>
-            {copied === "prompt" ? <Check size={14} /> : <Copy size={14} />}
-            <span>{copied === "prompt" ? "Prompt copied" : "Copy prompt"}</span>
-          </button>
+        <div className="mcp-prompt-grid">
+          <section className="mcp-prompt-section">
+            <div className="mcp-config-heading">
+              <code>Configuration prompt</code>
+              <button type="button" className="copy-button" onClick={() => void copy(configurationPrompt, "prompt")}>
+                {copied === "prompt" ? <Check size={14} /> : <Copy size={14} />}
+                <span>{copied === "prompt" ? "Prompt copied" : "Copy prompt"}</span>
+              </button>
+            </div>
+            <pre className="mcp-config mcp-config-prompt"><code>{configurationPrompt}</code></pre>
+          </section>
+          <section className="mcp-prompt-section">
+            <div className="mcp-config-heading">
+              <code>CLI prompt</code>
+              <button type="button" className="copy-button" onClick={() => void copy(cliPrompt, "cli")}>
+                {copied === "cli" ? <Check size={14} /> : <Copy size={14} />}
+                <span>{copied === "cli" ? "CLI prompt copied" : "Copy CLI prompt"}</span>
+              </button>
+            </div>
+            <pre className="mcp-config mcp-config-prompt"><code>{cliPrompt}</code></pre>
+          </section>
         </div>
-        <pre className="mcp-config mcp-config-prompt"><code>{configurationPrompt}</code></pre>
-        <div className="mcp-config-heading mcp-cli-prompt-heading">
-          <code>CLI prompt</code>
-          <button type="button" className="copy-button" onClick={() => void copy(cliPrompt, "cli")}>
-            {copied === "cli" ? <Check size={14} /> : <Copy size={14} />}
-            <span>{copied === "cli" ? "CLI prompt copied" : "Copy CLI prompt"}</span>
-          </button>
-        </div>
-        <pre className="mcp-config mcp-config-prompt"><code>{cliPrompt}</code></pre>
         <div className="mcp-auth-note">
           <strong>No API key required</strong>
           <p>On first use, your AI tool opens a browser and asks you to approve UniCAS access.</p>
