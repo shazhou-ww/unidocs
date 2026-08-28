@@ -33,22 +33,17 @@ function stripLayer(l: Layer): any {
 }
 
 /**
- * Byte budget for the base64 image string in a preview result.
+ * Byte budget for the encoded PNG in a preview result.
  *
- * The result travels back as an SValue and the image rides in an ordinary
- * string, which the codec caps at 1 MiB (`maxStringBytes`). Overshooting does
- * not degrade — the whole query 500s with `string exceeds 1048576 UTF-8
- * bytes`, so the agent's most-used tool used to fail on exactly the documents
- * it is most needed for (a real 3556x2000 file: 110% of the cap at the
- * full-canvas default, 437% at the rect default).
- *
- * A DIMENSION cap cannot fix this, because size depends on content, not pixel
- * count: PNG cannot beat raw RGBA on detailed imagery, so the only universally
- * safe dimension is `sqrt(1 MiB * 3/4 / 4)` — about 440px square, far too
- * small to be worth showing an agent. So we cap the ENCODED BYTES instead and
- * let the resolution fall out of the content.
- *
- * 64 KiB of headroom is left under the hard limit for the rest of the SValue.
+ * The PNG itself now travels as a CAS-backed SBlob, not an inline base64
+ * string, so it no longer risks the codec's 1 MiB `maxStringBytes` cap. The
+ * budget stays for a different reason: this PNG also gets handed to the
+ * model as an image content part, and a multi-megabyte image is wasted
+ * context — expensive to transfer, expensive to look at, and no more
+ * informative past a certain resolution. Capping the ENCODED BYTES (rather
+ * than a fixed dimension) is still the right lever, because size depends on
+ * content, not pixel count: PNG cannot beat raw RGBA on detailed imagery, so
+ * a dimension cap alone would force an unreasonably small universal ceiling.
  */
 const PREVIEW_BASE64_BUDGET = 960 * 1024;
 /** Never shrink a preview below this; past here it stops being informative. */
@@ -91,14 +86,21 @@ function fitToBudget(source: Px, maxSize: number): { px: Px; png: Uint8Array } {
   return { px, png };
 }
 
-/** PNG-encode pixels and wrap as a base64 image the operator can show the
- *  agent, shrinking as needed so the result is always encodable. */
-function toImageResult(source: Px, region: [number, number, number, number], maxSize: number): QueryValue {
+function requireCtx(ctx: DocumentTypeContext | undefined): DocumentTypeContext {
+  if (!ctx) throw new Error("getPreview needs a DocumentTypeContext to store the rendered PNG");
+  return ctx;
+}
+
+/** PNG-encode and hand out an SBlob reference; no more base64 (spec 5.3, 2.4). */
+async function toImageResult(
+  source: Px,
+  region: [number, number, number, number],
+  maxSize: number,
+  ctx: DocumentTypeContext,
+): Promise<QueryValue> {
   const { px, png } = fitToBudget(source, maxSize);
-  let bin = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < png.length; i += chunk) bin += String.fromCharCode(...png.subarray(i, i + chunk));
-  return { $image: { base64: btoa(bin), mediaType: "image/png" }, width: px.width, height: px.height, region };
+  const image = await ctx.makeSBlob({ data: png, contentType: "image/png" });
+  return { image, width: px.width, height: px.height, region } as unknown as QueryValue;
 }
 
 export async function runQuery(
@@ -160,7 +162,7 @@ export async function runQuery(
         px = render ? await render.composite(doc) : await renderCached(doc, rc);
         region = [0, 0, doc.canvas.height, doc.canvas.width];
       }
-      return toImageResult(px, region, maxSize);
+      return toImageResult(px, region, maxSize, requireCtx(ctx));
     }
   }
 }

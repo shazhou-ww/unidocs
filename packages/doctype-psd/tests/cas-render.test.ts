@@ -1,42 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { createHash } from "node:crypto";
-import { createSBlob } from "@unidocs/svalue-codec";
-import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/protocol";
+import { isSBlob } from "@unidocs/svalue-codec";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { serialize, deserialize } from "../src/psd/ir.js";
 import { casBlobStore } from "../src/psd/cas-blobstore.js";
 import { isRef } from "../src/render/pixel-source.js";
 import { runQuery } from "../src/queries.js";
 import { apply } from "../src/ops/index.js";
+import { memCas } from "./helpers/mem-cas.js";
 
 /**
  * Wires the render (getPreview) and the flip op to fault lazy PixelRef
  * pixels in from the CAS via `ctx.makeSBlob` / `ctx.readSBlob`.
  */
-
-function memCas(): { ctx: DocumentTypeContext; nodes: Map<string, Uint8Array> } {
-  const nodes = new Map<string, Uint8Array>();
-  const ctx: DocumentTypeContext = {
-    async makeSBlob(dataOrHash: SBlobData | string, loadData?: () => Promise<SBlobData>): Promise<SBlob> {
-      if (typeof dataOrHash === "string") {
-        if (nodes.has(dataOrHash)) return createSBlob(dataOrHash);
-        if (!loadData) throw new Error(`CAS node ${dataOrHash} not found`);
-        const loaded = await loadData();
-        nodes.set(dataOrHash, loaded.data);
-        return createSBlob(dataOrHash);
-      }
-      const hash = createHash("sha256").update(dataOrHash.data).digest("hex");
-      if (!nodes.has(hash)) nodes.set(hash, dataOrHash.data);
-      return createSBlob(hash);
-    },
-    async readSBlob(blob: SBlob): Promise<SBlobData> {
-      const data = nodes.get(blob.hash);
-      if (!data) throw new Error(`CAS node ${blob.hash} not found`);
-      return { data, contentType: "image/png" };
-    },
-  };
-  return { ctx, nodes };
-}
 
 function fill(w: number, h: number, [r, g, b, a]: number[]): Uint8ClampedArray {
   const d = new Uint8ClampedArray(w * h * 4);
@@ -102,11 +77,14 @@ describe("CAS-backed lazy render + flip fault-in", () => {
     for (const l of lazyDoc.layers) expect(isRef(l.pixels!)).toBe(true);
 
     const lazyResult = (await runQuery({ kind: "getPreview" }, lazyDoc, ctx)) as any;
-    const residentResult = (await runQuery({ kind: "getPreview" }, residentDoc())) as any;
+    const residentResult = (await runQuery({ kind: "getPreview" }, residentDoc(), ctx)) as any;
 
     expect(lazyResult.width).toBe(residentResult.width);
     expect(lazyResult.height).toBe(residentResult.height);
-    expect(lazyResult.$image.base64).toBe(residentResult.$image.base64);
+    expect(isSBlob(lazyResult.image)).toBe(true);
+    expect(isSBlob(residentResult.image)).toBe(true);
+    // Same ctx (same CAS) + identical rendered pixels → identical PNG hash.
+    expect(lazyResult.image.hash).toBe(residentResult.image.hash);
   });
 
   it("getPreview on a lazy doc with NO ctx.cas throws (can't fault a PixelRef)", async () => {

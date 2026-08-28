@@ -1,4 +1,7 @@
-import type { AgentToolDefinition } from "@unidocs/protocol";
+import type { AgentTool, JsonValue, SValueType } from "@unidocs/protocol";
+import { requireNumber, requireRecord, requireSBlob } from "@unidocs/svalue-codec";
+import type { PsdOp } from "./ops/index.js";
+import type { PsdQuery } from "./queries.js";
 
 const BLEND_MODES = [
   "normal", "dissolve", "darken", "multiply", "color-burn", "linear-burn",
@@ -33,19 +36,37 @@ const LAYER_SCHEMA = {
   required: ["id", "type", "bounds"],
 };
 
-export const tools: Record<string, AgentToolDefinition> = {
-  getLayers: {
-    name: "query_getLayers",
+/**
+ * `toQuery` for the three read tools: {} never masks a default, so an
+ * argument-less call comes out as `{kind}` rather than `{kind, payload:{}}`.
+ */
+const psdQuery = (kind: string) =>
+  (args: Readonly<Record<string, JsonValue>>) =>
+    (Object.keys(args).length === 0 ? { kind } : { kind, payload: args }) as unknown as SValueType<PsdQuery>;
+
+/** `toOps` for the nine write tools: the model's arguments become the op payload verbatim. */
+const psdOp = (kind: string) =>
+  (args: Readonly<Record<string, JsonValue>>) =>
+    [{ kind, payload: args }] as unknown as readonly SValueType<PsdOp>[];
+
+export const tools: readonly AgentTool<PsdQuery, PsdOp>[] = [
+  {
+    kind: "query",
+    name: "getLayers",
     description: "READ. List the layer tree (id, type, name, opacity, blendMode, visible, bounds, children).",
     inputSchema: { type: "object", properties: {} },
+    toQuery: psdQuery("getLayers"),
   },
-  getDoc: {
-    name: "query_getDoc",
+  {
+    kind: "query",
+    name: "getDoc",
     description: "READ. Full structure of the document (or one layer via layerId): exact bounds, masks, adjustments, effects. Pixel data is omitted.",
     inputSchema: { type: "object", properties: { layerId: { type: "string" } } },
+    toQuery: psdQuery("getDoc"),
   },
-  getPreview: {
-    name: "query_getPreview",
+  {
+    kind: "query",
+    name: "getPreview",
     description: "READ (see the image). {} = whole canvas; {rect:[top,left,bottom,right]} = zoom into an area; {layerId} = one layer. Look here after edits to verify. Downscaled to maxSize (default 768, rect up to 1536), and shrunk further when needed to keep the image transferable — on a detailed document the whole canvas comes back smaller than you asked, so use rect to actually inspect detail. The returned width/height are what you got.",
     inputSchema: {
       type: "object",
@@ -55,32 +76,61 @@ export const tools: Record<string, AgentToolDefinition> = {
         maxSize: { type: "number" },
       },
     },
+    toQuery: psdQuery("getPreview"),
+    toResult: (data, version) => {
+      const d = requireRecord(data, "getPreview 结果");
+      // The image is the field a bad result is most likely to be missing
+      // (an SBlob that never got made), so check it before width/height —
+      // that's the failure worth surfacing loudly, not a generic NaN.
+      const blob = requireSBlob(d.image, "getPreview image");
+      const width = requireNumber(d.width, "width");
+      const height = requireNumber(d.height, "height");
+      const region = d.region;
+      return {
+        content: [{
+          type: "image",
+          blob,
+          mediaType: "image/png",
+          // 裁剪降级时模型看到的就是这句（spec 6.2.3 第 1 级）。
+          // 这点知识一直属于 PSD，此前却写在大模型适配层的 previewMeta 里。
+          altText: `preview ${width}x${height} region=${JSON.stringify(region)} v${version}`,
+        }],
+        structuredContent: { width, height, region, version } as JsonValue,
+      };
+    },
   },
-  add_layer: {
-    name: "apply_add_layer",
+  {
+    kind: "op",
+    name: "addLayer",
     description: "WRITE. Add a layer. Caller assigns the id; raster layers must include pixels.",
     inputSchema: {
       type: "object",
       properties: { layer: LAYER_SCHEMA, parentId: { type: ["string", "null"] }, index: { type: "number" } },
       required: ["layer", "parentId"],
     },
+    toOps: psdOp("add_layer"),
   },
-  remove_layer: {
-    name: "apply_remove_layer",
+  {
+    kind: "op",
+    name: "removeLayer",
     description: "WRITE. Delete a layer by id.",
     inputSchema: { type: "object", properties: { layerId: { type: "string" } }, required: ["layerId"] },
+    toOps: psdOp("remove_layer"),
   },
-  reorder: {
-    name: "apply_reorder",
+  {
+    kind: "op",
+    name: "reorder",
     description: "WRITE. Move a layer to a new parent/index.",
     inputSchema: {
       type: "object",
       properties: { layerId: { type: "string" }, parentId: { type: ["string", "null"] }, index: { type: "number" } },
       required: ["layerId", "parentId"],
     },
+    toOps: psdOp("reorder"),
   },
-  set_props: {
-    name: "apply_set_props",
+  {
+    kind: "op",
+    name: "setProps",
     description: "WRITE. Change name/opacity/blendMode/visible/locked/clipping of a layer.",
     inputSchema: {
       type: "object",
@@ -100,14 +150,18 @@ export const tools: Record<string, AgentToolDefinition> = {
       },
       required: ["layerId", "props"],
     },
+    toOps: psdOp("set_props"),
   },
-  crop: {
-    name: "apply_crop",
+  {
+    kind: "op",
+    name: "crop",
     description: "WRITE. Crop the canvas to [top,left,bottom,right].",
     inputSchema: { type: "object", properties: { rect: BOUNDS }, required: ["rect"] },
+    toOps: psdOp("crop"),
   },
-  transform: {
-    name: "apply_transform",
+  {
+    kind: "op",
+    name: "transform",
     description: "WRITE. Translate or flip a layer. Only translate/flip are supported (no scale/rotate).",
     inputSchema: {
       type: "object",
@@ -123,35 +177,42 @@ export const tools: Record<string, AgentToolDefinition> = {
       },
       required: ["layerId", "op"],
     },
+    toOps: psdOp("transform"),
   },
-  adjust: {
-    name: "apply_adjust",
+  {
+    kind: "op",
+    name: "setAdjustment",
     description: "WRITE. Change params of an existing adjustment layer.",
     inputSchema: {
       type: "object",
       properties: { layerId: { type: "string" }, params: { type: "object" } },
       required: ["layerId", "params"],
     },
+    toOps: psdOp("adjust"),
   },
-  mask_edit: {
-    name: "apply_mask_edit",
+  {
+    kind: "op",
+    name: "editMask",
     description: "WRITE. Set, replace, or remove (null) a layer mask.",
     inputSchema: {
       type: "object",
       properties: { layerId: { type: "string" }, mask: { type: ["object", "null"] } },
       required: ["layerId", "mask"],
     },
+    toOps: psdOp("mask_edit"),
   },
-  generative_fill: {
-    name: "apply_generative_fill",
+  {
+    kind: "op",
+    name: "generativeFill",
     description: "WRITE. Insert a pre-generated raster layer with provenance (pixels supplied by the tool step).",
     inputSchema: {
       type: "object",
       properties: { layer: LAYER_SCHEMA, parentId: { type: ["string", "null"] }, index: { type: "number" }, provenance: { type: "object" } },
       required: ["layer", "parentId", "provenance"],
     },
+    toOps: psdOp("generative_fill"),
   },
-};
+];
 
 export const instructions = `You are a PSD image editor operator. You edit a layer tree by calling tools.
 
@@ -166,7 +227,7 @@ READING (do this before and after edits)
 - getPreview: RENDER you can SEE. Call with {} for the whole canvas, {rect:[t,l,b,r]} to zoom into an area, or {layerId} to see one layer. ALWAYS look with getPreview after an edit to verify it did what you intended, and adjust if not.
 
 EDITING
-- transformLayer supports translate ({op:{translate:[dx,dy]}}) and flip only — no scale or rotate.
+- transform supports translate ({op:{translate:[dx,dy]}}) and flip only — no scale or rotate.
 - Clipping: a layer with clipping:true is confined to the alpha of the layer directly BELOW it (its base). To move a clipped image, move its base layer by the same delta too, or they will separate.
 - Masks: a mask is grayscale coverage (black hides, white shows). Use editMask to set/replace/remove.
 - New layers need a caller-assigned unique id. Raster layers must include pixel data; generate images (generativeFill) in your own tool step first, then insert the resulting layer.

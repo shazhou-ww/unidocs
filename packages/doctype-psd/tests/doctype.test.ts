@@ -62,12 +62,13 @@ describe("createPsdDocumentType", () => {
     expect(layers.map((layer: { name: string }) => layer.name)).toContain("red-box");
   });
 
-  it("exposes prefixed tool names for name-prefix routing + contentType", () => {
+  it("exposes the un-prefixed tool table + contentType", () => {
     expect(dt.contentType).toBe("image/vnd.adobe.photoshop");
-    expect(dt.tools.add_layer.name).toBe("apply_add_layer");
-    expect((dt.tools.add_layer as any).op).toBeUndefined();
-    expect(dt.tools.getLayers.name).toBe("query_getLayers");
-    expect((dt.tools.getLayers as any).op).toBeUndefined();
+    const toolList = dt.tools as unknown as readonly { name: string; kind: string }[];
+    const names = toolList.map(t => t.name);
+    expect(names).toContain("addLayer");
+    expect(names).toContain("getLayers");
+    expect(names.some(n => n.startsWith("query_") || n.startsWith("apply_"))).toBe(false);
   });
 
   it("has no resolve, serialize/deserialize, or refsFrom* hooks", () => {

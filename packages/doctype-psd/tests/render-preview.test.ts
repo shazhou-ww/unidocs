@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { decode } from "fast-png";
+import { isSBlob } from "@unidocs/svalue-codec";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { runQuery } from "../src/queries.js";
+import { memCas } from "./helpers/mem-cas.js";
 
 const solid = (id: string, w: number, h: number, rgba: number[]): Layer => {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -10,16 +12,13 @@ const solid = (id: string, w: number, h: number, rgba: number[]): Layer => {
 };
 const doc: PsdDoc = { canvas: { width: 2, height: 2, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [solid("a", 2, 2, [10, 20, 30, 255])] };
 
-function b64ToBytes(b64: string): Uint8Array {
-  const bin = Buffer.from(b64, "base64");
-  return new Uint8Array(bin);
-}
-
 describe("getPreview", () => {
-  it("returns a base64 PNG of the rendered canvas", async () => {
-    const out = await runQuery({ kind: "getPreview" }, doc) as any;
-    expect(out.$image.mediaType).toBe("image/png");
-    const bytes = b64ToBytes(out.$image.base64);
+  it("returns an SBlob PNG of the rendered canvas", async () => {
+    const { ctx } = memCas();
+    const out = await runQuery({ kind: "getPreview" }, doc, ctx) as any;
+    expect(isSBlob(out.image)).toBe(true);
+    const { data: bytes, contentType } = await ctx.readSBlob(out.image);
+    expect(contentType).toBe("image/png");
     // PNG signature
     expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
     const img = decode(bytes);

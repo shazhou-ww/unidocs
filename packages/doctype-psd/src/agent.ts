@@ -1,74 +1,51 @@
 /**
- * PSD DocumentAgent — the chatbox/Operator side of the PSD document type.
+ * PSD DocumentAgent — a plain data table of tools plus a system prompt.
  *
- * Mirrors the markdown/docx agents: tool names carry a `query_` / `apply_`
- * prefix and the suffix is the query/op `kind`, so dispatch is mechanical.
- *
- * Images: `query_getPreview` returns `{ $image: { base64, mediaType }, width,
- * height, region }` inside the query data. It travels as ordinary
- * structuredContent — the Operator's default renderer JSON-stringifies it and
- * the Anthropic provider (packages/cloudflare-psd/src/anthropic.ts) spots the
- * `$image` payload and re-emits it as a real Claude image block. So no
- * multimodal `content` part (and therefore no provider-specific
- * `renderToolResult`) is needed here; docx's SBlob-based image path is the
- * other convention and does not apply to a freshly rendered PNG.
+ * Accepts no handle at all: each tool declares whether it reads or writes,
+ * and the kernel (AgentSession) is the only thing that ever calls the
+ * platform (spec 5.1). PSD doesn't know what an LLM provider or a CAS
+ * looks like — it only produces queries/ops from arguments and, for
+ * getPreview, turns a query result into an image content part.
  */
-
+import type { DocumentAgent } from "@unidocs/doctype-server-common/agent";
+import type { JsonValue, LegacyDocumentAgentFactory } from "@unidocs/protocol";
 import { toJsonValue } from "@unidocs/svalue-codec";
-import type { LegacyDocumentAgentFactory, JsonValue, SValueType } from "@unidocs/protocol";
 import { instructions, tools } from "./tools.js";
 import type { PsdOp } from "./ops/index.js";
 import type { PsdQuery } from "./queries.js";
 
+export const psdAgent: DocumentAgent<PsdQuery, PsdOp> = { tools, instructions };
+
 export type PsdDocumentAgentFactory = LegacyDocumentAgentFactory<PsdQuery, PsdOp>;
 
-const toolsByName = new Set(Object.values(tools).map(tool => tool.name));
-
+/**
+ * @deprecated 只为让 cloudflare-psd 的旧 OperatorDO 撑到内核切换那一步，
+ * 下一个任务连同旧 OperatorDO 一起删。新代码用 psdAgent。
+ *
+ * 薄适配器：按工具的 kind 分发到它的 toQuery/toOps，再调旧上下边界的
+ * context.query/apply。不复用 tools 表以外的任何东西 —— 新旧两套只有
+ * "工具叫什么、是读是写、参数怎么变成 query/op" 这一份数据源。
+ */
 export const createPsdDocumentAgent: PsdDocumentAgentFactory = context => ({
-  tools,
+  tools: Object.fromEntries(tools.map(t => [t.name, { name: t.name, description: t.description, inputSchema: t.inputSchema }])),
   instructions,
 
   async toolCall(name, parameters) {
-    if (!toolsByName.has(name)) throw new Error(`Unknown PSD agent tool: ${name}`);
+    const tool = tools.find(t => t.name === name);
+    if (!tool) throw new Error(`Unknown PSD agent tool: ${name}`);
     const args = requireJsonObject(parameters);
 
-    if (name.startsWith("query_")) {
-      const kind = name.slice("query_".length);
-      // Every PSD query has an optional payload; omit it entirely when the
-      // model passed no arguments so `{}` never masks a default.
-      const query = Object.keys(args).length === 0
-        ? { kind }
-        : { kind, payload: args };
-      const result = await context.query(query as unknown as PsdQuery);
-      return {
-        structuredContent: toJsonValue({
-          data: result.data,
-          version: result.version,
-        }),
-      };
+    if (tool.kind === "query") {
+      const result = await context.query(tool.toQuery(args));
+      if (tool.toResult) return tool.toResult(result.data, result.version);
+      // Same shape as the kernel's defaultQueryToolResult (session.ts) —
+      // duplicated here rather than imported because this file may only
+      // `import type` from doctype-server-common.
+      return { structuredContent: toJsonValue({ data: result.data, version: result.version }) };
     }
 
-    if (name.startsWith("apply_")) {
-      const operation = {
-        kind: name.slice("apply_".length),
-        payload: args,
-      };
-      // PsdOp.payload is Record<string, unknown>, so SValueType<PsdOp>
-      // collapses to `never`; doctype.ts widens the same way for its
-      // DocumentType. The value here really is a JSON object.
-      const result = await context.apply(
-        [operation] as unknown as readonly SValueType<PsdOp>[],
-        `Agent: ${name}`,
-      );
-      return {
-        structuredContent: {
-          success: true,
-          version: result.version,
-        },
-      };
-    }
-
-    throw new Error(`Unsupported PSD agent tool: ${name}`);
+    const result = await context.apply(tool.toOps(args), `Agent: ${name}`);
+    return { structuredContent: { success: true, version: result.version } };
   },
 });
 

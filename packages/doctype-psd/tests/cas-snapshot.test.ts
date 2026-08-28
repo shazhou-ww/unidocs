@@ -1,40 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createHash } from "node:crypto";
-import { collectSBlobRefs, createSBlob } from "@unidocs/svalue-codec";
-import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/protocol";
+import { collectSBlobRefs } from "@unidocs/svalue-codec";
+import type { DocumentTypeContext } from "@unidocs/protocol";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { isRef, resolvePixels, PixelCache } from "../src/render/pixel-source.js";
 import { render } from "../src/render/index.js";
 import { casBlobStore } from "../src/psd/cas-blobstore.js";
 import { saveSnapshot, loadSnapshot, refsFromSnapshot } from "../src/psd/snapshot.js";
-
-/**
- * Minimal content-addressed CAS matching DocumentTypeContext's editor surface:
- * `makeSBlob` hashes the bytes and keeps them; `readSBlob` returns them verbatim.
- */
-function memCas(): { ctx: DocumentTypeContext; nodes: Map<string, Uint8Array> } {
-  const nodes = new Map<string, Uint8Array>();
-  const ctx: DocumentTypeContext = {
-    async makeSBlob(dataOrHash: SBlobData | string, loadData?: () => Promise<SBlobData>): Promise<SBlob> {
-      if (typeof dataOrHash === "string") {
-        if (nodes.has(dataOrHash)) return createSBlob(dataOrHash);
-        if (!loadData) throw new Error(`CAS node ${dataOrHash} not found`);
-        const loaded = await loadData();
-        nodes.set(dataOrHash, loaded.data);
-        return createSBlob(dataOrHash);
-      }
-      const hash = createHash("sha256").update(dataOrHash.data).digest("hex");
-      if (!nodes.has(hash)) nodes.set(hash, dataOrHash.data);
-      return createSBlob(hash);
-    },
-    async readSBlob(blob: SBlob): Promise<SBlobData> {
-      const data = nodes.get(blob.hash);
-      if (!data) throw new Error(`CAS node ${blob.hash} not found`);
-      return { data, contentType: "image/png" };
-    },
-  };
-  return { ctx, nodes };
-}
+import { memCas } from "./helpers/mem-cas.js";
 
 /** A read-only context (no usable makeSBlob) — save must fall back to full PSD. */
 function readOnlyCtx(_nodes: Map<string, Uint8Array>): DocumentTypeContext {

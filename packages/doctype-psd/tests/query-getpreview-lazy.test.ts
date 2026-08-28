@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
+import { isSBlob } from "@unidocs/svalue-codec";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import type { BlobStore } from "../src/render/pixel-source.js";
 import { serialize, deserialize } from "../src/psd/ir.js";
 import { runQuery } from "../src/queries.js";
+import { memCas } from "./helpers/mem-cas.js";
 
 function memStore(): BlobStore & { blobs: Map<string, Uint8Array> } {
   const blobs = new Map<string, Uint8Array>();
@@ -76,10 +78,13 @@ describe("runQuery getPreview on a lazy (PixelRef) doc", () => {
   // covered end-to-end in tests/cas-render.test.ts, which builds a real
   // CAS-backed ctx and asserts byte-identical output vs the resident render.
 
-  it("existing no-ctx resident-doc path is unaffected (back-compat)", async () => {
+  it("resident-doc path still works when a ctx is supplied (back-compat)", async () => {
+    const { ctx } = memCas();
     const resident = buildDoc();
-    const out = (await runQuery({ kind: "getPreview" }, resident)) as any;
-    expect(out.$image.mediaType).toBe("image/png");
+    const out = (await runQuery({ kind: "getPreview" }, resident, ctx)) as any;
+    expect(isSBlob(out.image)).toBe(true);
+    const { contentType } = await ctx.readSBlob(out.image);
+    expect(contentType).toBe("image/png");
     expect(out.width).toBe(4);
     expect(out.height).toBe(4);
   });

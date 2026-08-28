@@ -22,7 +22,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { decode as decodePng } from "fast-png";
-import { collectSBlobRefs, createSBlob, decodeSValue } from "@unidocs/svalue-codec";
+import { collectSBlobRefs, createSBlob, decodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/protocol";
 import type { SessionDeps } from "@unidocs/doctype-server-common";
 import { DocumentSession } from "@unidocs/doctype-server-common";
@@ -37,13 +37,16 @@ const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url))
 // Helpers
 // --------------------------------------------------------------------------
 
-/** Pull the `$image` PNG out of a getPreview query result and decode it to
- *  raw RGBA pixels, so two previews can be compared byte-for-byte. */
-function decodePreviewImage(data: SValue): { width: number; height: number; data: Uint8ClampedArray } {
-  const $image = (data as { $image?: { base64: string; mediaType: string } }).$image;
-  expect($image).toBeDefined();
-  expect($image!.mediaType).toBe("image/png");
-  const bytes = new Uint8Array(Buffer.from($image!.base64, "base64"));
+/** Pull the SBlob PNG out of a getPreview query result and decode it to raw
+ *  RGBA pixels, so two previews can be compared byte-for-byte. */
+async function decodePreviewImage(
+  data: SValue,
+  ctx: DocumentTypeContext,
+): Promise<{ width: number; height: number; data: Uint8ClampedArray }> {
+  const image = (data as { image?: unknown }).image;
+  expect(isSBlob(image)).toBe(true);
+  const { data: bytes, contentType } = await ctx.readSBlob(image as SBlob);
+  expect(contentType).toBe("image/png");
   const decoded = decodePng(bytes);
   const arr =
     decoded.data instanceof Uint8ClampedArray
@@ -161,7 +164,7 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     // Sanity: the session's own preview of the freshly-imported doc already
     // matches the independent raw-PSD render (state materialization is lossless).
     const previewAfterImport = await session.query({ kind: "getPreview" });
-    const imgAfterImport = decodePreviewImage(previewAfterImport.data);
+    const imgAfterImport = await decodePreviewImage(previewAfterImport.data, ctx);
     expect(imgAfterImport.width).toBe(rawRender.width);
     expect(imgAfterImport.height).toBe(rawRender.height);
     expect(compareBytes(imgAfterImport.data, rawRender.data)).toBe(0);
@@ -191,10 +194,13 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     expect(casSizeAfterEdit).toBe(casSizeBeforeEdit);
 
     // Baseline for the cold-reload comparison below: the resident session's
-    // own preview of the current (post-edit) state.
+    // own preview of the current (post-edit) state. getPreview now stores its
+    // PNG as a CAS blob (spec 5.3/2.4), so this call itself grows the CAS by
+    // one node — that's the baseline the cold reload below must not exceed.
     const residentPreview = await session.query({ kind: "getPreview" });
     expect(residentPreview.version).toBe(2);
-    const residentImg = decodePreviewImage(residentPreview.data);
+    const residentImg = await decodePreviewImage(residentPreview.data, ctx);
+    const casSizeAfterResidentPreview = cas.size;
 
     // ----------------------------------------------------------------
     // 3. Cold reload -> lazy render, byte-identical
@@ -207,15 +213,16 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     const session2 = new DocumentSession(config, deps);
     const coldPreview = await session2.query({ kind: "getPreview" });
     expect(coldPreview.version).toBe(2);
-    expect((coldPreview.data as { $image?: unknown }).$image).toBeDefined();
+    expect(isSBlob((coldPreview.data as { image?: unknown }).image)).toBe(true);
 
-    const coldImg = decodePreviewImage(coldPreview.data);
+    const coldImg = await decodePreviewImage(coldPreview.data, ctx);
     expect(coldImg.width).toBe(residentImg.width);
     expect(coldImg.height).toBe(residentImg.height);
     expect(compareBytes(coldImg.data, residentImg.data)).toBe(0);
 
-    // Cold reload must not have grown the CAS either — it only reads.
-    expect(cas.size).toBe(casSizeAfterEdit);
+    // Cold reload renders the identical composite, so its PNG hashes to the
+    // same CAS node as the resident preview above — no further growth.
+    expect(cas.size).toBe(casSizeAfterResidentPreview);
 
     // ----------------------------------------------------------------
     // 4. exportBytes() still returns a real PSD, never snapshot bytes

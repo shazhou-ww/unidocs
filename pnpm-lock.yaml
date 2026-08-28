@@ -389,6 +389,9 @@ importers:
 
   packages/doctype-psd:
     dependencies:
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -402,9 +405,6 @@ importers:
         specifier: ^8.0.0
         version: 8.0.0
     devDependencies:
-      '@unidocs/doctype-server-common':
-        specifier: workspace:*
-        version: link:../doctype-server-common
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
