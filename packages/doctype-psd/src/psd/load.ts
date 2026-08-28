@@ -50,7 +50,13 @@ function rgbOf(c: unknown): { r: number; g: number; b: number } | undefined {
 function mapText(t: AgLayer["text"]): { text: LayerText; degraded: Degradation } | undefined {
   if (!t || typeof t.text !== "string") return undefined;
   const s = t.style;
-  const color = rgbOf(s?.fillColor);
+  // ag-psd's text-engine colour encoding round-trips with float drift
+  // (e.g. 28 -> 27.999); model/types.ts promises 0..255 integers, so round
+  // here rather than let every downstream consumer see near-integer floats.
+  const rawColor = rgbOf(s?.fillColor);
+  const color = rawColor
+    ? { r: Math.round(rawColor.r), g: Math.round(rawColor.g), b: Math.round(rawColor.b) }
+    : undefined;
   const style: LayerTextStyle = {
     ...(s?.font?.name ? { font: s.font.name } : {}),
     ...(isNum(s?.fontSize) ? { size: s!.fontSize } : {}),

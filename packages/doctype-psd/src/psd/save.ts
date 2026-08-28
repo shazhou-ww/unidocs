@@ -23,7 +23,7 @@ function mapMask(m: Mask): AgLayer["mask"] {
   return out as AgLayer["mask"];
 }
 
-function mapLayer(l: Layer): AgLayer {
+export function mapLayer(l: Layer): AgLayer {
   // Defensive: tolerate a layer with missing bounds so a previously-corrupted
   // document can still be serialized (and thus recovered) instead of throwing.
   const [top, left, bottom, right] = l.bounds ?? [0, 0, 0, 0];
@@ -62,9 +62,15 @@ function mapLayer(l: Layer): AgLayer {
   if (l.vector?.fill) out.vectorFill = l.vector.fill as any;
   if (l.vector?.stroke) out.vectorStroke = l.vector.stroke as any;
   if (l.smartObject) {
+    // ag-psd's writer requires width/height (or a warp) on placedLayer, or it
+    // throws "You must provide width and height of the linked image in
+    // placedLayer". We don't carry the linked image's own dimensions, but
+    // both Pixels and PixelRef expose width/height, so the layer's own baked
+    // raster dimensions stand in.
     out.placedLayer = {
       id: l.smartObject.placedId,
       type: "raster",
+      ...(l.pixels ? { width: l.pixels.width, height: l.pixels.height } : {}),
       ...(l.smartObject.transform ? { transform: l.smartObject.transform } : {}),
       ...(l.smartObject.sourceName ? { placed: l.smartObject.sourceName } : {}),
     } as any;
