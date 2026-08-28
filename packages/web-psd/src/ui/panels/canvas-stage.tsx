@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
-import { getController, initController } from "../controller.js";
+import { dispatch, getController, initController } from "../controller.js";
 import { getState, setState } from "../store.js";
 import type { Rect } from "../../doc-model.js";
+import { translateOps, type DragState } from "../drag.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 
 /**
@@ -28,6 +29,9 @@ export function CanvasStage() {
   // Marquee drag origin, in document pixels. A ref, not state: it changes on
   // every pointermove and must not re-render the tree mid-drag.
   const anchor = useRef<{ x: number; y: number } | null>(null);
+  // Move-tool drag state. Also a ref: it advances every pointermove and must
+  // not re-render the tree mid-drag.
+  const drag = useRef<DragState | null>(null);
 
   useEffect(() => {
     if (stageRef.current && viewRef.current) initController(viewRef.current, stageRef.current);
@@ -41,6 +45,12 @@ export function CanvasStage() {
       setState({ pickedColor: c.pickColor(e.clientX, e.clientY) });
       return;
     }
+    if (s.tool === "move" && s.selection.length > 0) {
+      const at = c.toCanvas(e.clientX, e.clientY);
+      drag.current = { layerIds: [...s.selection], from: at, last: at };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
     if (s.tool === "marquee") {
       anchor.current = c.toCanvas(e.clientX, e.clientY);
       setState({ marquee: null });
@@ -50,12 +60,25 @@ export function CanvasStage() {
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const c = getController();
-    if (!c || !anchor.current) return;
+    if (!c) return;
+    if (drag.current) {
+      const to = c.toCanvas(e.clientX, e.clientY);
+      const ops = translateOps(drag.current, to);
+      for (const op of ops) void dispatch(op);
+      // Advance `last` by the WHOLE PIXELS actually dispatched, not to `to`:
+      // otherwise the sub-pixel remainder translateOps discarded would be lost
+      // on every frame and the layer would drift behind the cursor.
+      const [dx, dy] = (ops[0]?.payload.op as { translate: [number, number] } | undefined)?.translate ?? [0, 0];
+      drag.current = { ...drag.current, last: { x: drag.current.last.x + dx, y: drag.current.last.y + dy } };
+      return;
+    }
+    if (!anchor.current) return;
     setState({ marquee: normalise(anchor.current, c.toCanvas(e.clientX, e.clientY)) });
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!anchor.current) return;
+    if (!drag.current && !anchor.current) return;
+    drag.current = null;
     anchor.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
