@@ -143,3 +143,47 @@ a:hover { color: var(--accent); }
   box-shadow: 0 2px 24px #0000001a;
   image-rendering: pixelated;
 }
+
+.topbar {
+  height: var(--topbar-h);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-mark {
+  width: 22px; height: 22px; border-radius: 6px;
+  background: var(--accent); color: #fff;
+  display: grid; place-items: center; font-size: 11px;
+}
+.brand-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+.divider { width: 1px; height: 22px; background: var(--border); }
+.doc-name { font-size: 12px; }
+.status { font-size: 10.5px; color: var(--fg-3); }
+
+.zoom {
+  display: flex; align-items: center; gap: 2px; padding: 2px;
+  background: #f0eee9; border: 1px solid var(--border); border-radius: 7px;
+}
+.zoom button {
+  width: 24px; height: 22px; display: grid; place-items: center;
+  border: 0; background: transparent; border-radius: var(--radius);
+  color: #6e6f68; font-family: var(--mono); font-size: 13px; cursor: pointer;
+}
+.zoom button:hover { background: #e6e3dd; }
+.zoom-label { width: 46px; text-align: center; font-size: 11.5px; color: #4a4b45; }
+
+.btn {
+  height: 30px; padding: 0 13px; display: inline-flex; align-items: center;
+  border: 1px solid var(--border-strong); border-radius: 7px;
+  background: #fff; color: var(--fg); font: inherit; cursor: pointer;
+}
+.btn:hover { background: #f6f4f0; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-ink); }
+.btn.is-disabled { opacity: .5; pointer-events: none; }

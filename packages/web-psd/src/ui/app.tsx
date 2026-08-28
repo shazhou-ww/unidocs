@@ -1,3 +1,4 @@
+import { TopBar } from "./panels/top-bar.js";
 import { CanvasStage } from "./panels/canvas-stage.js";
 
 /**
@@ -8,9 +9,7 @@ import { CanvasStage } from "./panels/canvas-stage.js";
 export function App() {
   return (
     <div className="app">
-      <header className="topbar">
-        <strong>Aperture</strong>
-      </header>
+      <TopBar />
       <div className="app-body">
         <section className="col-chat">
           <div className="col-head"><strong>Chat</strong></div>
