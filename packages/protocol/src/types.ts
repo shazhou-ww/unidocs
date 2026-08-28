@@ -248,6 +248,13 @@ export type LlmMessage =
 export interface AgentCompletion {
   readonly content: readonly LlmContentPart[];
   readonly toolCalls?: readonly AgentToolCall[];
+  /**
+   * 模型为什么停下。Anthropic 的取值是 end_turn / max_tokens /
+   * stop_sequence / tool_use / pause_turn / refusal，这里不收窄成联合类型：
+   * 它只用于诊断（"既没 text 也没 tool_use"时告诉用户是哪种情况），服务端
+   * 将来多一个取值不该让翻译层把它吞成 undefined。provider 没报就是 undefined。
+   */
+  readonly stopReason?: string;
 }
 
 export interface LlmProvider {

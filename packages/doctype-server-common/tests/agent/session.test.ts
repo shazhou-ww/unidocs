@@ -170,6 +170,36 @@ describe("AgentSession 循环", () => {
     });
   });
 
+  it("既没 text 也没 tool_use 时以失败结束，空 assistant 消息不进历史", async () => {
+    const provider = scriptedProvider([
+      { content: [], toolCalls: undefined, stopReason: "max_tokens" },
+      { content: [{ type: "text", text: "这次说话了" }] },
+    ]);
+    const s = new AgentSession({ agent, platform: fakePlatform(), provider });
+
+    const first = await s.run([{ type: "text", text: "第一句" }]);
+    expect(first).toEqual({ ok: false, error: "模型没有返回可用内容（stop_reason: max_tokens）" });
+
+    // 关键断言：同一个 session 再跑一次。那条空 assistant 一旦留在历史里，
+    // 此后每次 run 都会把 {role:"assistant", content:[]} 发出去，Anthropic
+    // 拒收空 content —— 会话从此只能靠 reset 救活。
+    const second = await s.run([{ type: "text", text: "第二句" }]);
+    expect(second.ok).toBe(true);
+    const sent = provider.seen[1];
+    expect(sent.filter(m => m.role === "assistant")).toEqual([]);
+    expect(sent).toEqual([
+      { role: "user", content: [{ type: "text", text: "第一句" }] },
+      { role: "user", content: [{ type: "text", text: "第二句" }] },
+    ]);
+  });
+
+  it("provider 没报 stop_reason 时错误里写「未知」，不写 undefined", async () => {
+    const provider = scriptedProvider([{ content: [] }]);
+    const s = new AgentSession({ agent, platform: fakePlatform(), provider });
+    const out = await s.run([{ type: "text", text: "x" }]);
+    expect(out).toEqual({ ok: false, error: "模型没有返回可用内容（stop_reason: 未知）" });
+  });
+
   it("reset 之后模型看不到上一轮", async () => {
     const provider = scriptedProvider([
       { content: [{ type: "text", text: "a" }] },

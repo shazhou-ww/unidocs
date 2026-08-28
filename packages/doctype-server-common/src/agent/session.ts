@@ -66,13 +66,24 @@ export class AgentSession<TQuery, TOp> {
       const assistantContent = completion.content
         .filter((p): p is { type: "text"; text: string } => p.type === "text")
         .map(p => ({ type: "text" as const, text: p.text }));
+      const toolCalls = completion.toolCalls ?? [];
+
+      // 既没有可说的话也没有要调的工具 —— 思考阶段用光 max_tokens、refusal、
+      // pause_turn 都会这样。这条**不能进历史**：空 content 的 assistant 消息
+      // 一旦留下，此后每次 run 都会把它发给模型，而 Anthropic 拒收空 content，
+      // 这个会话就只能靠 reset 救活了。直接以失败结束，把原因说出来。
+      if (toolCalls.length === 0 && assistantContent.length === 0) {
+        const why = completion.stopReason ?? "未知";
+        return { ok: false, error: `模型没有返回可用内容（stop_reason: ${why}）` };
+      }
+
       this.#history.push({
         role: "assistant",
         content: assistantContent,
-        ...(completion.toolCalls?.length ? { toolCalls: completion.toolCalls } : {}),
+        ...(toolCalls.length ? { toolCalls } : {}),
       });
 
-      if (!completion.toolCalls?.length) {
+      if (toolCalls.length === 0) {
         return {
           ok: true,
           content: assistantContent,
@@ -81,7 +92,7 @@ export class AgentSession<TQuery, TOp> {
         };
       }
 
-      for (const call of completion.toolCalls) {
+      for (const call of toolCalls) {
         const result = await this.#dispatch(call.name, call.arguments);
         this.#history.push(toolResultToMessage(call.id, result));
       }

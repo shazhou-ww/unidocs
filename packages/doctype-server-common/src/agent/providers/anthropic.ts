@@ -9,7 +9,7 @@
  * Config comes from env (populate via packages/cloudflare-psd/.dev.vars):
  *   LLM_BASE_URL  default https://api.anthropic.com
  *   LLM_API_KEY   required
- *   LLM_MODEL     default claude-3-5-sonnet-latest
+ *   LLM_MODEL     default claude-opus-5
  */
 import type {
   AgentCompletion, AgentToolCall, AgentToolDefinition, JsonValue,
@@ -111,6 +111,7 @@ export function toAnthropicMessages(messages: readonly LlmMessage[]): AnthropicM
 
 interface AnthropicResponse {
   content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
+  stop_reason?: string | null;
 }
 
 function toCompletion(data: AnthropicResponse): AgentCompletion {
@@ -127,7 +128,15 @@ function toCompletion(data: AnthropicResponse): AgentCompletion {
       });
     }
   }
-  return { content, ...(toolCalls.length ? { toolCalls } : {}) };
+  // thinking / redacted_thinking 之类的块这里不翻译，于是一次"只思考没说话"
+  // 的响应会得到空 content 和空 toolCalls。stop_reason 是唯一能说清那是
+  // 为什么的信号（max_tokens 在思考阶段耗尽 / refusal / pause_turn），
+  // 循环靠它给出可读的失败原因。
+  return {
+    content,
+    ...(toolCalls.length ? { toolCalls } : {}),
+    ...(data.stop_reason ? { stopReason: data.stop_reason } : {}),
+  };
 }
 
 export function createAnthropicProvider(
@@ -136,7 +145,7 @@ export function createAnthropicProvider(
 ): LlmProvider {
   const endpoint = resolveEndpoint(env.LLM_BASE_URL || env.ANTHROPIC_API_BASE || "https://api.anthropic.com");
   const apiKey = env.LLM_API_KEY || env.ANTHROPIC_API_KEY;
-  const model = env.LLM_MODEL || env.ANTHROPIC_MODELS?.split(",")[0]?.trim() || "claude-3-5-sonnet-latest";
+  const model = env.LLM_MODEL || env.ANTHROPIC_MODELS?.split(",")[0]?.trim() || "claude-opus-5";
 
   return {
     async complete({ system, messages, tools }) {
@@ -157,7 +166,9 @@ export function createAnthropicProvider(
         },
         body: JSON.stringify({
           model,
-          max_tokens: 4096,
+          // 非流式请求的常规上限。4096 偏低：默认模型开着思考，思考先花掉
+          // 预算就会返回一条既没 text 也没 tool_use 的响应。
+          max_tokens: 16000,
           ...(system ? { system } : {}),
           messages: toAnthropicMessages(messages),
           ...(anthTools.length ? { tools: anthTools } : {}),

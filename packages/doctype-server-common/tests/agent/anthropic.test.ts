@@ -67,6 +67,30 @@ describe("Anthropic 响应 → AgentCompletion", () => {
     expect(completion.toolCalls).toEqual([{ id: "c1", name: "getLayers", arguments: { a: 1 } }]);
   });
 
+  it("stop_reason 原样带回 completion —— 只思考没说话时它是唯一的线索", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      content: [],
+      stop_reason: "max_tokens",
+    }), { status: 200 }));
+    const provider = createAnthropicProvider({ LLM_API_KEY: "k" }, fetchImpl as never);
+    const completion = await provider.complete({ system: "", messages: [], tools: [] });
+    expect(completion.content).toEqual([]);
+    expect(completion.toolCalls).toBeUndefined();
+    expect(completion.stopReason).toBe("max_tokens");
+  });
+
+  it("默认模型和 max_tokens 是当前在用的那一对", async () => {
+    let body: any;
+    const fetchImpl = vi.fn(async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ content: [] }), { status: 200 });
+    });
+    const provider = createAnthropicProvider({ LLM_API_KEY: "k" }, fetchImpl as never);
+    await provider.complete({ system: "", messages: [], tools: [] });
+    expect(body.model).toBe("claude-opus-5");
+    expect(body.max_tokens).toBe(16000);
+  });
+
   it("system 走顶层字段", async () => {
     let body: any;
     const fetchImpl = vi.fn(async (_u: string, init: RequestInit) => {
