@@ -1,6 +1,21 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { App } from "../src/ui/app.js";
+
+vi.mock("../src/doc-controller.js", () => ({
+  DocController: class {
+    docId = null;
+    createFrom = vi.fn(async () => {});
+    setZoom = vi.fn();
+    toScreen = () => ({ x: 0, y: 0 });
+    toCanvas = () => ({ x: 0, y: 0 });
+    pickColor = () => null;
+    reconcile = vi.fn(async () => {});
+  },
+  GW: "", USER: "u1", TYPE: "psd", API_BASE_URL: "/tenants/u1",
+}));
+
+vi.stubGlobal("fetch", vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })));
 
 describe("App shell", () => {
   it("renders the three columns", () => {

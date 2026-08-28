@@ -121,3 +121,25 @@ a:hover { color: var(--accent); }
 .col-head strong { font-weight: 600; }
 .mono { font-family: var(--mono); }
 .spacer { flex: 1; }
+
+/* `overflow: auto` + `margin: auto` on the canvas (rather than the design's
+   `place-items: center`) is load-bearing, inherited from the pre-redesign
+   stage: Viewport.visibleTiles reads this element's scroll offsets, and a
+   document larger than the viewport must stay reachable from its top-left
+   instead of being clipped by flex centring. */
+.stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: auto;
+  display: flex;
+  background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.view {
+  margin: auto;
+  background: #fff;
+  box-shadow: 0 2px 24px #0000001a;
+  image-rendering: pixelated;
+}
