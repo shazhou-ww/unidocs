@@ -204,3 +204,52 @@ a:hover { color: var(--accent); }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { background: var(--accent-ink); }
 .btn.is-disabled { opacity: .5; pointer-events: none; }
+
+.pane-tabs { padding: 0 8px; gap: 2px; }
+.pane-tabs button {
+  height: 100%; padding: 0 13px; border: 0; background: transparent;
+  font: inherit; color: var(--fg-3); font-weight: 500; cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.pane-tabs button[data-on] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+.pane-meta { font-size: 10.5px; color: var(--fg-3); }
+
+.tree { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
+.tree-empty { padding: 14px; color: var(--fg-3); }
+
+.tree-row {
+  display: flex; align-items: center; gap: 6px;
+  height: var(--row-h); padding-right: 10px; cursor: pointer;
+}
+.tree-row:hover { background: var(--row-hover); }
+.tree-row[data-selected] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tree-row[data-hidden] { color: var(--fg-dim); }
+
+.tree-eye {
+  width: 16px; flex: none; border: 0; background: transparent; cursor: pointer;
+  display: grid; place-items: center; color: var(--fg-5); font-size: 11px;
+}
+.tree-caret {
+  width: 12px; flex: none; border: 0; background: transparent; cursor: pointer;
+  text-align: center; color: var(--fg-dim); font-size: 9px;
+}
+.tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.kind {
+  flex: none; font-size: 9px; border-radius: 3px; padding: 1px 4px;
+  color: var(--kind-grp); background: var(--chip-bg);
+}
+.kind[data-kind="text"] { color: var(--kind-text); background: color-mix(in srgb, var(--kind-text) 8%, transparent); }
+.kind[data-kind="img"]  { color: var(--kind-img);  background: color-mix(in srgb, var(--kind-img) 8%, transparent); }
+.kind[data-kind="shp"]  { color: var(--kind-shp);  background: color-mix(in srgb, var(--kind-shp) 8%, transparent); }
+.kind[data-kind="adj"]  { color: var(--kind-adj);  background: color-mix(in srgb, var(--kind-adj) 8%, transparent); }
+
+.tag-warn {
+  flex: none; font-size: 9.5px; padding: 1px 5px; border-radius: 3px;
+  color: var(--warn-ink);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+}

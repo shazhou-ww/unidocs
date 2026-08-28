@@ -1,5 +1,6 @@
 import { TopBar } from "./panels/top-bar.js";
 import { CanvasStage } from "./panels/canvas-stage.js";
+import { SidePanel } from "./panels/side-panel.js";
 
 /**
  * Three-column shell. Column ORDER comes from styles.css (`order: 1|2|3`),
@@ -17,12 +18,7 @@ export function App() {
         <section className="col-canvas">
           <CanvasStage />
         </section>
-        <aside className="col-panel">
-          <div className="col-head">
-            <span>图层</span>
-            <span>属性</span>
-          </div>
-        </aside>
+        <SidePanel />
       </div>
     </div>
   );
