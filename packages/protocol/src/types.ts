@@ -37,10 +37,39 @@ export interface SBlob {
   readonly hash: string;
 }
 
-export type SBlobData = {
+export interface ByteStream extends AsyncIterable<Uint8Array> { }
+
+export interface SBlobReadRange {
+  readonly offset: number;
+  readonly length?: number;
+}
+
+export interface SBlobHandler {
+  readonly size: number;
+  readonly contentType: string;
+
+  /** Open a new sequential read for the whole blob or a logical byte range. */
+  read(range?: SBlobReadRange): ByteStream;
+
+  /** Materialize one explicitly bounded logical byte range. */
+  readBytes(range: { readonly offset: number; readonly length: number }): Promise<Uint8Array>;
+}
+
+export type SBlobBytes = {
   readonly data: Uint8Array;
   readonly contentType: string;
 };
+
+/** @deprecated Use SBlobHandler for reads or SBlobBytes for bounded materialization. */
+export type SBlobData = SBlobBytes;
+
+export type SBlobSource =
+  | SBlobBytes
+  | {
+    readonly body: ByteStream;
+    readonly size?: number;
+    readonly contentType: string;
+  };
 
 /** Read-only CAS access for document types. */
 export interface CasReadContext {
@@ -70,13 +99,16 @@ export type SValueShape<T> =
 export type SValueType<T> = T extends SValueShape<T> ? T : never;
 
 export interface MakeSBlob {
-  (hash: string, loadData: () => Promise<SBlobData>): Promise<SBlob>;
-  (data: SBlobData): Promise<SBlob>;
+  (hash: string, loadData: () => Promise<SBlobSource>): Promise<SBlob>;
+  (data: SBlobSource): Promise<SBlob>;
 }
 
 export interface DocumentTypeContext {
   readonly makeSBlob: MakeSBlob;
-  readonly readSBlob: (blob: SBlob) => Promise<SBlobData>;
+  /** Open a reusable, range-capable file handle. */
+  readonly openSBlob?: (blob: SBlob) => Promise<SBlobHandler>;
+  /** @deprecated Migrate to openSBlob().read() or bounded readBytes(). */
+  readonly readSBlob: (blob: SBlob) => Promise<SBlobBytes>;
 }
 
 export type AgentContentPart =
