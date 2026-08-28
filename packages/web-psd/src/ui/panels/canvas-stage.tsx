@@ -12,6 +12,15 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * Panning needs no code: `.stage` is `overflow: auto`, and Viewport.visibleTiles
  * reads its scroll offsets, so native scrolling IS the pan gesture (the same
  * arrangement as before the redesign).
+ *
+ * `.stage-inner` wraps the canvas and `<SelectionOverlay />` together and is
+ * the thing that shrink-wraps + centres (`margin: auto`) inside `.stage`'s
+ * flex row. That makes `.stage-inner` — not `.stage` — the nearest positioned
+ * ancestor for the overlay's `position: absolute`, so the overlay's
+ * containing block IS the canvas's box by construction, correct even when
+ * `.stage` is larger than the canvas and centres it. Computing a JS offset
+ * between `.stage` and the canvas instead would go stale on scroll/resize;
+ * a shared containing block does not.
  */
 export function CanvasStage() {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -60,8 +69,10 @@ export function CanvasStage() {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <canvas className="view" ref={viewRef} aria-label="rendered preview" />
-      <SelectionOverlay />
+      <div className="stage-inner">
+        <canvas className="view" ref={viewRef} aria-label="rendered preview" />
+        <SelectionOverlay />
+      </div>
     </div>
   );
 }

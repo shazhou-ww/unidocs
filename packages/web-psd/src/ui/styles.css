@@ -154,8 +154,13 @@ a:hover { color: var(--accent); }
   background-size: 22px 22px;
 }
 
-.view {
+.stage-inner {
   margin: auto;
+  position: relative;
+  line-height: 0;
+}
+
+.view {
   background: #fff;
   box-shadow: 0 2px 24px #0000001a;
   image-rendering: pixelated;
