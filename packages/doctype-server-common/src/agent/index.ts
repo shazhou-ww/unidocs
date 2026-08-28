@@ -12,3 +12,7 @@ export type {
 export {
   defaultOpToolResult, defaultQueryToolResult, toolResultToMessage,
 } from "./tool-result.js";
+
+export {
+  BlobUnavailableError, ByteLru, materializeMessages,
+} from "./messages.js";
