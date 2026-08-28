@@ -476,3 +476,34 @@ function hexToBytes(hash: string): Uint8Array {
   }
   return bytes;
 }
+
+/**
+ * 把跨过一次序列化的 SValue 窄化成具体形状。
+ *
+ * 这几个是从 doctype-docx/src/agent.ts 提上来的 —— 三个文档类型的
+ * toResult 都要做同一件事，没有理由各写一份。窄化失败时抛错，被内核
+ * 接住变成一条给模型的错误消息（spec 5.1.5）。
+ */
+export function requireRecord(v: SValue, what: string): Readonly<Record<string, SValue>> {
+  if (typeof v !== "object" || v === null || Array.isArray(v) || isSBlob(v)) {
+    throw new TypeError(`${what} must be an object`);
+  }
+  return v as Readonly<Record<string, SValue>>;
+}
+
+export function requireNumber(v: SValue | undefined, what: string): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) {
+    throw new TypeError(`${what} must be a finite number`);
+  }
+  return v;
+}
+
+export function requireString(v: SValue | undefined, what: string): string {
+  if (typeof v !== "string") throw new TypeError(`${what} must be a string`);
+  return v;
+}
+
+export function requireSBlob(v: SValue | undefined, what: string): SBlob {
+  if (!isSBlob(v)) throw new TypeError(`${what} must be an SBlob`);
+  return v;
+}
