@@ -1,0 +1,14 @@
+/**
+ * `@unidocs/doctype-server-common/agent` —— 文档类型和平台 sdk 共同对着
+ * 写代码的那一层。契约类型定义在 protocol，这里再导出一次，于是作者只
+ * 需要记住一个 import 来源（spec 4.3.1）。
+ */
+export type {
+  AgentCompletion, AgentContentPart, AgentMessage, AgentPlatform,
+  AgentTool, AgentToolCall, AgentToolDefinition, AgentToolResult,
+  DocumentAgent, LlmContentPart, LlmMessage, LlmProvider,
+} from "@unidocs/protocol";
+
+export {
+  defaultOpToolResult, defaultQueryToolResult, toolResultToMessage,
+} from "./tool-result.js";
