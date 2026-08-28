@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { decode as decodePng } from "fast-png";
 import { collectSBlobRefs, createSBlob, decodeSValue, isSBlob } from "@unidocs/svalue-codec";
-import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/protocol";
+import type { DocumentTypeContext, SBlob, SBlobSource, SValue } from "@unidocs/protocol";
 import type { SessionDeps } from "@unidocs/doctype-server-common";
 import { DocumentSession } from "@unidocs/doctype-server-common";
 import { createMemoryPorts, MemoryCas } from "@unidocs/doctype-server-common/memory-ports";
@@ -74,7 +74,7 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     const ports = createMemoryPorts();
     const cas: MemoryCas = ports.cas;
     const ctx: DocumentTypeContext = {
-      async makeSBlob(dataOrHash: SBlobData | string, loadData?: () => Promise<SBlobData>): Promise<SBlob> {
+      async makeSBlob(dataOrHash: SBlobSource | string, loadData?: () => Promise<SBlobSource>): Promise<SBlob> {
         if (typeof dataOrHash === "string") {
           try {
             await cas.read({ kind: "cas", hash: dataOrHash });
@@ -82,19 +82,28 @@ describe("PSD SValue snapshots through DocumentSession", () => {
           } catch {
             if (!loadData) throw new Error(`CAS node ${dataOrHash} not found`);
             const loaded = await loadData();
-            await cas.store(loaded.data, loaded.contentType);
+            await cas.store(await sourceBytes(loaded), loaded.contentType);
             return createSBlob(dataOrHash);
           }
         }
-        const hash = await cas.store(dataOrHash.data, dataOrHash.contentType);
+        const hash = await cas.store(await sourceBytes(dataOrHash), dataOrHash.contentType);
         return createSBlob(hash);
       },
-      async readSBlob(blob: SBlob): Promise<SBlobData> {
-        const [data, meta] = await Promise.all([
-          cas.read({ kind: "cas", hash: blob.hash }),
-          cas.metadata({ kind: "cas", hash: blob.hash }),
-        ]);
-        return { data, contentType: meta.contentType };
+      async openSBlob(blob: SBlob) {
+        const data = await cas.read({ kind: "cas", hash: blob.hash });
+        return {
+          size: data.length,
+          contentType: "image/png",
+          read: (range?: { offset: number; length?: number }) => ({
+            async *[Symbol.asyncIterator]() {
+              const start = range?.offset ?? 0;
+              const end = range?.length === undefined ? data.length : start + range.length;
+              yield data.slice(start, end);
+            },
+          }),
+          readBytes: async (range: { offset: number; length: number }) =>
+            data.slice(range.offset, range.offset + range.length),
+        };
       },
     };
     const config = createPsdDocumentType(ctx);
@@ -142,7 +151,7 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     // eslint-disable-next-line no-console
     console.log(
       `[cas-e2e] input PSD=${psdBytes.length}B, durable SValue snapshot=${durableSnapshot!.length}B ` +
-        `(${((durableSnapshot!.length / psdBytes.length) * 100).toFixed(1)}% of input)`,
+      `(${((durableSnapshot!.length / psdBytes.length) * 100).toFixed(1)}% of input)`,
     );
 
     // Every SBlob reachable from TDoc is actually readable from the CAS.
@@ -255,3 +264,20 @@ describe("PSD SValue snapshots through DocumentSession", () => {
     expect(roundTripped.canvas.height).toBe(rawDoc.canvas.height);
   });
 });
+
+async function sourceBytes(source: SBlobSource): Promise<Uint8Array> {
+  if ("data" in source) return source.data;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of source.body) {
+    chunks.push(chunk);
+    size += chunk.length;
+  }
+  const result = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}

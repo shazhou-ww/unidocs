@@ -6,7 +6,7 @@ import type { BlobStore } from "../render/pixel-source.js";
  * Bridges the doctype-local content-addressed `BlobStore` (`put`/`get` by hash)
  * onto the runtime `DocumentTypeContext` (SValue protocol). `put` uploads PNG
  * bytes through `ctx.makeSBlob` (which stores to CAS and returns an SBlob with
- * the content hash); `get` reads a blob by hash via `ctx.readSBlob`.
+ * the content hash); `get` opens a range-capable blob handle by hash.
  *
  * Only build this when a write-capable context is available — `put` requires
  * `ctx.makeSBlob` to be functional.
@@ -20,6 +20,7 @@ import type { BlobStore } from "../render/pixel-source.js";
  * re-leasing them on read bought nothing and cost the whole read path.
  */
 export function casBlobStore(ctx: DocumentTypeContext): BlobStore {
+  const maxEncodedPngBytes = 64 * 1024 * 1024;
   return {
     async put(bytes: Uint8Array): Promise<string> {
       const blob = await ctx.makeSBlob({ data: bytes, contentType: "image/png" });
@@ -27,8 +28,19 @@ export function casBlobStore(ctx: DocumentTypeContext): BlobStore {
     },
     async get(hash: string): Promise<Uint8Array | null> {
       try {
-        const data = await ctx.readSBlob(createSBlob(hash));
-        return data.data;
+        const handler = await ctx.openSBlob(createSBlob(hash));
+        if (handler.size > maxEncodedPngBytes) {
+          throw new RangeError(`PNG blob exceeds ${maxEncodedPngBytes}-byte limit`);
+        }
+        const bytes = new Uint8Array(handler.size);
+        let offset = 0;
+        for await (const chunk of handler.read()) {
+          if (offset + chunk.length > bytes.length) throw new Error("PNG blob exceeds declared size");
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        if (offset !== bytes.length) throw new Error(`PNG blob returned ${offset} bytes, expected ${bytes.length}`);
+        return bytes;
       } catch (err) {
         // 只有"确实不存在"才是 null。其余错误——鉴权被拒、网络不通、
         // 内容摘要不匹配——必须冒泡:此前这里是个裸 catch，把 401 伪装成

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unicas/server-common";
 import { SValueContentType } from "@unidocs/protocol";
+import type { SBlobReadRange, SBlobSource } from "@unidocs/protocol";
 import { encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { CasClientError } from "@unicas/client";
 import {
@@ -32,11 +33,46 @@ class FakeCas {
     if (!node) throw new CasClientError(404, "Not Found", "metadata");
     return { hash, size: node.data.length, contentType: node.contentType, refs: node.refs };
   });
-  readonly read = vi.fn(async (hash: string) => {
-    const node = this.nodes.get(hash);
-    if (!node) throw new CasClientError(404, "Not Found", "read");
-    return node.data.slice();
+  readonly storeBlob = vi.fn(async (source: SBlobSource) => {
+    const data = "data" in source ? source.data : await collect(source.body);
+    const node = { data: data.slice(), contentType: source.contentType, refs: [] };
+    const hash = await nodeHash(node);
+    this.nodes.set(hash, node);
+    return { hash };
   });
+  readonly statBlob = vi.fn(async (hash: string) => {
+    const node = this.nodes.get(hash);
+    if (!node) throw new CasClientError(404, "Not Found", "statBlob");
+    return { hash, size: node.data.length, contentType: node.contentType };
+  });
+  readonly openBlob = vi.fn(async (hash: string, range?: SBlobReadRange) => {
+    const node = this.nodes.get(hash);
+    if (!node) throw new CasClientError(404, "Not Found", "openBlob");
+    const start = range?.offset ?? 0;
+    const end = range?.length === undefined ? node.data.length : start + range.length;
+    const data = node.data.slice(start, end);
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield data;
+      },
+    };
+  });
+}
+
+async function collect(source: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of source) {
+    chunks.push(chunk);
+    size += chunk.length;
+  }
+  const result = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
 }
 
 async function nodeHash(node: Node): Promise<string> {
@@ -61,7 +97,7 @@ describe("SBlob context", () => {
 
     expect(leased.hash).toBe(stored.hash);
     expect(loadData).not.toHaveBeenCalled();
-    expect(cas.ensureNode).toHaveBeenCalledTimes(1);
+    expect(cas.storeBlob).toHaveBeenCalledTimes(1);
   });
 
   it("calls a missing-node loader once and validates its expected hash", async () => {
@@ -93,14 +129,13 @@ describe("SBlob context", () => {
 
     await context.makeSBlob({ data: encoded.data, contentType: SValueContentType });
 
-    expect(cas.leaseExisting).toHaveBeenCalledTimes(2);
-    expect(cas.leaseExisting).toHaveBeenNthCalledWith(1, expect.any(String));
-    expect(cas.leaseExisting).toHaveBeenNthCalledWith(2, child.hash);
+    expect(cas.leaseExisting).toHaveBeenCalledTimes(1);
+    expect(cas.leaseExisting).toHaveBeenCalledWith(child.hash);
     const parent = [...cas.nodes.values()].find(node => node.contentType === SValueContentType);
     expect(parent?.refs).toEqual([child.hash, child.hash]);
   });
 
-  it("verifies reads, coalesces them, and returns defensive byte copies", async () => {
+  it("opens reusable handlers and reads exact logical ranges", async () => {
     const cas = new FakeCas();
     const writer = createSBlobContext(cas);
     const blob = await writer.makeSBlob({
@@ -109,65 +144,56 @@ describe("SBlob context", () => {
     });
     const reader = createSBlobContext(cas);
 
-    const [first, concurrent] = await Promise.all([
-      reader.readSBlob(blob),
-      reader.readSBlob(blob),
-    ]);
-    first.data[0] = 99;
-    const second = await reader.readSBlob(blob);
+    const handler = await reader.openSBlob(blob);
+    const first = await handler.readBytes({ offset: 0, length: 3 });
+    first[0] = 99;
+    const second = await handler.readBytes({ offset: 1, length: 2 });
 
-    expect(concurrent.data).toEqual(new Uint8Array([1, 2, 3]));
-    expect(second.data).toEqual(new Uint8Array([1, 2, 3]));
-    expect(cas.read).toHaveBeenCalledTimes(1);
-    expect(cas.metadata).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(new Uint8Array([2, 3]));
+    expect(await collect(handler.read())).toEqual(new Uint8Array([1, 2, 3]));
+    expect(cas.openBlob).toHaveBeenCalledTimes(3);
+    expect(cas.statBlob).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects corrupted content and SValue metadata", async () => {
+  it("rejects mismatched metadata identity", async () => {
     const cas = new FakeCas();
     const context = createSBlobContext(cas);
     const blob = await context.makeSBlob({
       data: new TextEncoder().encode("intact"),
       contentType: "text/plain",
     });
-    cas.nodes.get(blob.hash)!.data[0] ^= 0xff;
+    cas.statBlob.mockResolvedValueOnce({
+      hash: "f".repeat(64),
+      size: 6,
+      contentType: "text/plain",
+    });
 
-    await expect(createSBlobContext(cas).readSBlob(blob))
+    await expect(createSBlobContext(cas).openSBlob(blob))
       .rejects.toBeInstanceOf(SBlobIntegrityError);
   });
 
-  it("evicts least-recently-used entries at the configured bound", async () => {
+  it("rejects unbounded materialization beyond the configured limit", async () => {
     const cas = new FakeCas();
     const writer = createSBlobContext(cas);
-    const first = await writer.makeSBlob({
-      data: new Uint8Array([1]),
+    const blob = await writer.makeSBlob({
+      data: new Uint8Array([1, 2, 3]),
       contentType: "application/octet-stream",
     });
-    const second = await writer.makeSBlob({
-      data: new Uint8Array([2]),
-      contentType: "application/octet-stream",
-    });
-    cas.read.mockClear();
-    const reader = createSBlobContext(cas, { maxCacheEntries: 1 });
+    const handler = await createSBlobContext(cas, { maxReadBytes: 2 }).openSBlob(blob);
 
-    await reader.readSBlob(first);
-    await reader.readSBlob(second);
-    await reader.readSBlob(first);
-
-    expect(cas.read).toHaveBeenCalledTimes(3);
+    await expect(handler.readBytes({ offset: 0, length: 3 })).rejects.toThrow("materialization limit");
   });
 
-  it("does not share authorized cache entries between contexts", async () => {
+  it("validates requested ranges before opening CAS", async () => {
     const cas = new FakeCas();
     const writer = createSBlobContext(cas);
     const blob = await writer.makeSBlob({
       data: new Uint8Array([7]),
       contentType: "application/octet-stream",
     });
-    cas.read.mockClear();
+    const handler = await createSBlobContext(cas).openSBlob(blob);
 
-    await createSBlobContext(cas).readSBlob(blob);
-    await createSBlobContext(cas).readSBlob(blob);
-
-    expect(cas.read).toHaveBeenCalledTimes(2);
+    expect(() => handler.read({ offset: 2, length: 1 })).toThrow("outside the blob");
+    expect(cas.openBlob).not.toHaveBeenCalled();
   });
 });

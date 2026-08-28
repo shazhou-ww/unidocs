@@ -6,12 +6,13 @@ import { casBlobStore } from "../src/psd/cas-blobstore.js";
 import { isRef } from "../src/render/pixel-source.js";
 import { runQuery } from "../src/queries.js";
 import { apply } from "../src/ops/index.js";
-import { memCas } from "./helpers/mem-cas.js";
+import { createMemorySBlobContext } from "./sblob-test-context.js";
 
 /**
  * Wires the render (getPreview) and the flip op to fault lazy PixelRef
- * pixels in from the CAS via `ctx.makeSBlob` / `ctx.readSBlob`.
+ * pixels in from the CAS via `ctx.makeSBlob` / `ctx.openSBlob`.
  */
+const memCas = createMemorySBlobContext;
 
 function fill(w: number, h: number, [r, g, b, a]: number[]): Uint8ClampedArray {
   const d = new Uint8ClampedArray(w * h * 4);

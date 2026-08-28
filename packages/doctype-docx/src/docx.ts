@@ -2,7 +2,7 @@
 
 import { Document } from "@ariadng/office/docx";
 import { isSBlob } from "@unidocs/svalue-codec";
-import type { DocumentTypeFactory, SBlob } from "@unidocs/protocol";
+import type { DocumentTypeFactory, SBlob, SBlobHandler } from "@unidocs/protocol";
 import {
   insertImage,
   deleteImage,
@@ -16,6 +16,8 @@ import { addBulletList, addNumberedList } from "./ops/list-ops.js";
 import { setFooter, setHeader } from "./ops/section-ops.js";
 import {
   extractOpenXmlPackage,
+  DEFAULT_OPEN_XML_PACKAGE_BYTES,
+  DEFAULT_OPEN_XML_PART_BYTES,
   materializeDocxPackage,
   openDocxPackage,
 } from "./package-adapter.js";
@@ -43,13 +45,26 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
     const loaded = await mapConcurrent(
       Object.entries(doc.files),
       PART_IO_CONCURRENCY,
-      async ([path, blob]) => [path, await context.readSBlob(blob)] as const,
+      async ([path, blob]) => [path, await context.openSBlob(blob)] as const,
     );
+    let packageBytes = 0;
+    for (const [path, handler] of loaded) {
+      if (handler.size > DEFAULT_OPEN_XML_PART_BYTES) {
+        throw new Error(`OpenXML part ${path} exceeds ${DEFAULT_OPEN_XML_PART_BYTES} bytes`);
+      }
+      packageBytes += handler.size;
+      if (!Number.isSafeInteger(packageBytes) || packageBytes > DEFAULT_OPEN_XML_PACKAGE_BYTES) {
+        throw new Error(`OpenXML package exceeds ${DEFAULT_OPEN_XML_PACKAGE_BYTES} uncompressed bytes`);
+      }
+    }
     const files = Object.create(null) as Record<string, PackageFileData>;
-    for (const [path, stored] of loaded) {
+    for (const [path, handler] of loaded) {
       Object.defineProperty(files, path, {
         enumerable: true,
-        value: Object.freeze({ data: stored.data, contentType: stored.contentType }),
+        value: Object.freeze({
+          data: await materializeHandler(handler, DEFAULT_OPEN_XML_PART_BYTES),
+          contentType: handler.contentType,
+        }),
       });
     }
     const document = await materializeDocxPackage(files);
@@ -166,7 +181,7 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
             setFooter(working, operation.payload.text, operation.payload.type);
             break;
           case "insertImage":
-            await insertImage(working, operation.payload, context.readSBlob);
+            await insertImage(working, operation.payload, readBlobBytes);
             break;
           case "deleteImage":
             deleteImage(working, operation.payload.index);
@@ -176,7 +191,7 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
               working,
               operation.payload.index,
               operation.payload.blob,
-              context.readSBlob,
+              readBlobBytes,
             );
             break;
           case "setImageSize":
@@ -211,7 +226,24 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
 
     contentType: DOCX_CONTENT_TYPE,
   };
+
+  async function readBlobBytes(blob: SBlob): Promise<Uint8Array> {
+    return materializeHandler(await context.openSBlob(blob), DEFAULT_OPEN_XML_PART_BYTES);
+  }
 };
+
+async function materializeHandler(handler: SBlobHandler, maxBytes: number): Promise<Uint8Array> {
+  if (handler.size > maxBytes) throw new Error(`SBlob exceeds ${maxBytes} bytes`);
+  const bytes = new Uint8Array(handler.size);
+  let offset = 0;
+  for await (const chunk of handler.read()) {
+    if (offset + chunk.length > bytes.length) throw new Error("SBlob returned more bytes than declared");
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  if (offset !== bytes.length) throw new Error(`SBlob returned ${offset} bytes, expected ${bytes.length}`);
+  return bytes;
+}
 
 async function mapConcurrent<T, TResult>(
   values: readonly T[],

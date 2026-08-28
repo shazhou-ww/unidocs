@@ -6,7 +6,7 @@
  */
 
 import type { Document } from "@ariadng/office/docx";
-import type { SBlob, SBlobData } from "@unidocs/protocol";
+import type { SBlob } from "@unidocs/protocol";
 import type { XmlElement } from "@ariadng/office/xml";
 
 // ─── OOXML namespace URIs (standard constants) ──────────────────────
@@ -78,10 +78,9 @@ function collectImageContainers(
 export async function insertImage(
   document: Document,
   payload: { blob: SBlob; widthPx?: number; altText?: string },
-  readSBlob: (blob: SBlob) => Promise<SBlobData>,
+  readBlobBytes: (blob: SBlob) => Promise<Uint8Array>,
 ): Promise<void> {
-  const stored = await readSBlob(payload.blob);
-  document.addImage(stored.data, {
+  document.addImage(await readBlobBytes(payload.blob), {
     widthPx: payload.widthPx,
     altText: payload.altText,
   });
@@ -114,7 +113,7 @@ export async function replaceImage(
   document: Document,
   index: number,
   blob: SBlob,
-  readSBlob: (blob: SBlob) => Promise<SBlobData>,
+  readBlobBytes: (blob: SBlob) => Promise<Uint8Array>,
 ): Promise<void> {
   const di = document._internal();
   const images = document.images();
@@ -124,7 +123,7 @@ export async function replaceImage(
   }
 
   // Read new bytes from CAS
-  const newBytes = (await readSBlob(blob)).data;
+  const newBytes = await readBlobBytes(blob);
 
   // Get the media part and overwrite
   const part = di.office.package.getPart(images[index].partName);

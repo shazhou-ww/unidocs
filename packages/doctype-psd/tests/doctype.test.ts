@@ -1,39 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { collectSBlobRefs, createSBlob, decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
-import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/protocol";
+import { collectSBlobRefs, decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
+import type { DocumentTypeContext, SValue } from "@unidocs/protocol";
 import { createPsdDocumentType, type PsdStoredDoc } from "../src/doctype.js";
 import { psdAgent } from "../src/agent.js";
+import { createMemorySBlobContext } from "./sblob-test-context.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));
 
 function createMemoryContext(): DocumentTypeContext {
-  const blobs = new Map<string, SBlobData>();
-  return {
-    async makeSBlob(
-      dataOrHash: SBlobData | string,
-      loadData?: () => Promise<SBlobData>,
-    ): Promise<SBlob> {
-      if (typeof dataOrHash === "string") {
-        if (!blobs.has(dataOrHash)) {
-          if (loadData === undefined) throw new Error(`SBlob ${dataOrHash} not found`);
-          const loaded = await loadData();
-          blobs.set(dataOrHash, loaded);
-        }
-        return createSBlob(dataOrHash);
-      }
-      const hash = createHash("sha256").update(dataOrHash.data).digest("hex");
-      blobs.set(hash, dataOrHash);
-      return createSBlob(hash);
-    },
-    async readSBlob(blob: SBlob): Promise<SBlobData> {
-      const data = blobs.get(blob.hash);
-      if (data === undefined) throw new Error(`SBlob ${blob.hash} not found`);
-      return data;
-    },
-  };
+  return createMemorySBlobContext().ctx;
 }
 
 describe("createPsdDocumentType", () => {

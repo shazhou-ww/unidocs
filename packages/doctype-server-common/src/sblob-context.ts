@@ -7,12 +7,14 @@ import {
   validateContentType,
   validateHash,
 } from "@unicas/server-common";
-import type { CasNodeMetadata } from "@unicas/protocol";
 import type {
+  ByteStream,
   DocumentTypeContext,
   MakeSBlob,
   SBlob,
-  SBlobData,
+  SBlobHandler,
+  SBlobReadRange,
+  SBlobSource,
 } from "@unidocs/protocol";
 import { SValueContentType } from "@unidocs/protocol";
 import { isSBlob } from "@unidocs/svalue-codec";
@@ -26,27 +28,61 @@ export interface SBlobCasAdapter {
     refs?: readonly string[],
   ): Promise<unknown>;
   leaseExisting(hash: string): Promise<unknown>;
-  metadata(hash: string): Promise<CasNodeMetadata>;
-  read(hash: string): Promise<Uint8Array>;
-  readNode?(hash: string): Promise<{
-    readonly metadata: CasNodeMetadata;
-    readonly content: Uint8Array;
+  storeBlob(source: SBlobSource): Promise<{ readonly hash: string }>;
+  statBlob(hash: string): Promise<{
+    readonly hash: string;
+    readonly size: number;
+    readonly contentType: string;
   }>;
+  openBlob(hash: string, range?: SBlobReadRange): Promise<ByteStream>;
 }
 
 export interface SBlobContextOptions {
-  readonly maxCacheBytes?: number;
-  readonly maxCacheEntries?: number;
+  readonly maxReadBytes?: number;
 }
 
-interface PreparedBlob extends SBlobData {
-  readonly hash: string;
-  readonly refs: readonly string[];
+export function readableStreamFromSBlobSource(source: SBlobSource): ReadableStream<Uint8Array> {
+  if ("data" in source) {
+    const data = Uint8Array.from(source.data);
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(data);
+        controller.close();
+      },
+    });
+  }
+  return readableStreamFromByteStream(source.body);
 }
 
-interface CacheEntry {
-  readonly promise: Promise<SBlobData>;
-  size: number;
+export function readableStreamFromByteStream(source: ByteStream): ReadableStream<Uint8Array> {
+  const iterator = source[Symbol.asyncIterator]();
+  return new ReadableStream({
+    async pull(controller) {
+      const next = await iterator.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    async cancel() {
+      await iterator.return?.();
+    },
+  });
+}
+
+export function byteStreamFromReadableStream(source: ReadableStream<Uint8Array>): ByteStream {
+  return {
+    async *[Symbol.asyncIterator]() {
+      const reader = source.getReader();
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (next.done) return;
+          yield next.value;
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+    },
+  };
 }
 
 export class SBlobIntegrityError extends Error {
@@ -58,57 +94,63 @@ export class SBlobIntegrityError extends Error {
 
 class SBlobRuntime {
   readonly #cas: SBlobCasAdapter;
-  readonly #maxCacheBytes: number;
-  readonly #maxCacheEntries: number;
+  readonly #maxReadBytes: number;
   readonly #pendingMakes = new Map<string, Promise<SBlob>>();
-  readonly #readCache = new Map<string, CacheEntry>();
-  #cacheBytes = 0;
 
   constructor(cas: SBlobCasAdapter, options: SBlobContextOptions) {
     this.#cas = cas;
-    this.#maxCacheBytes = validLimit(options.maxCacheBytes, 32 * 1024 * 1024, "maxCacheBytes");
-    this.#maxCacheEntries = validLimit(options.maxCacheEntries, 256, "maxCacheEntries");
+    this.#maxReadBytes = validLimit(options.maxReadBytes, 8 * 1024 * 1024, "maxReadBytes");
   }
 
-  makeExpected(hash: string, loadData: () => Promise<SBlobData>): Promise<SBlob> {
+  makeExpected(hash: string, loadSource: () => Promise<SBlobSource>): Promise<SBlob> {
     validateHash(hash);
-    return this.#coalesceMake(hash, async () => this.#prepare(await loadData()));
+    return this.#coalesceMake(hash, async () => {
+      const actual = await this.#store(await loadSource());
+      if (actual !== hash) {
+        throw new SBlobIntegrityError(`SBlob digest mismatch: expected ${hash}, got ${actual}`);
+      }
+    });
   }
 
-  async makeData(data: SBlobData): Promise<SBlob> {
-    const prepared = await this.#prepare(data);
-    return this.#coalesceMake(prepared.hash, async () => prepared);
+  async makeSource(source: SBlobSource): Promise<SBlob> {
+    return createSBlob(await this.#store(source));
   }
 
-  async read(blob: SBlob): Promise<SBlobData> {
-    if (!isSBlob(blob)) throw new TypeError("readSBlob requires a branded SBlob");
-    let entry = this.#readCache.get(blob.hash);
-    if (entry) {
-      this.#readCache.delete(blob.hash);
-      this.#readCache.set(blob.hash, entry);
-    } else {
-      entry = { promise: this.#loadVerified(blob.hash), size: 0 };
-      this.#readCache.set(blob.hash, entry);
-      void entry.promise.then(
-        data => {
-          entry!.size = data.data.length;
-          this.#cacheBytes += entry!.size;
-          this.#evict();
-        },
-        () => {
-          if (this.#readCache.get(blob.hash) === entry) this.#readCache.delete(blob.hash);
-        },
-      );
+  async open(blob: SBlob): Promise<SBlobHandler> {
+    if (!isSBlob(blob)) throw new TypeError("openSBlob requires a branded SBlob");
+    validateHash(blob.hash);
+    const metadata = await this.#cas.statBlob(blob.hash);
+    if (metadata.hash !== blob.hash) {
+      throw new SBlobIntegrityError(`CAS metadata hash mismatch for ${blob.hash}`);
     }
-    const data = await entry.promise;
-    return Object.freeze({ data: data.data.slice(), contentType: data.contentType });
+    const openRange = (range?: SBlobReadRange): ByteStream => {
+      validateRange(range, metadata.size);
+      const cas = this.#cas;
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield* await cas.openBlob(blob.hash, range);
+        },
+      };
+    };
+    return Object.freeze({
+      size: metadata.size,
+      contentType: metadata.contentType,
+      read: openRange,
+      readBytes: async (range: { readonly offset: number; readonly length: number }) => {
+        validateRange(range, metadata.size);
+        if (range.length > this.#maxReadBytes) {
+          throw new RangeError(`SBlob read exceeds ${this.#maxReadBytes}-byte materialization limit`);
+        }
+        return collectExactly(openRange(range), range.length);
+      },
+    });
   }
 
-  #coalesceMake(hash: string, loadPrepared: () => Promise<PreparedBlob>): Promise<SBlob> {
+  #coalesceMake(hash: string, store: () => Promise<void>): Promise<SBlob> {
     const pending = this.#pendingMakes.get(hash);
     if (pending) return pending;
 
-    const created = this.#ensure(hash, loadPrepared);
+    const created = this.#ensure(hash, store);
     this.#pendingMakes.set(hash, created);
     void created.finally(() => {
       if (this.#pendingMakes.get(hash) === created) this.#pendingMakes.delete(hash);
@@ -116,7 +158,7 @@ class SBlobRuntime {
     return created;
   }
 
-  async #ensure(hash: string, loadPrepared: () => Promise<PreparedBlob>): Promise<SBlob> {
+  async #ensure(hash: string, store: () => Promise<void>): Promise<SBlob> {
     try {
       await this.#cas.leaseExisting(hash);
       return createSBlob(hash);
@@ -126,86 +168,21 @@ class SBlobRuntime {
       }
     }
 
-    const prepared = await loadPrepared();
-    if (prepared.hash !== hash) {
-      throw new SBlobIntegrityError(`SBlob digest mismatch: expected ${hash}, got ${prepared.hash}`);
-    }
-    await Promise.all([...new Set(prepared.refs)].map(ref => this.#cas.leaseExisting(ref)));
-    await this.#cas.ensureNode(hash, prepared.data, prepared.contentType, prepared.refs);
-    this.#cacheResolved(hash, prepared);
+    await store();
     return createSBlob(hash);
   }
 
-  async #prepare(source: SBlobData): Promise<PreparedBlob> {
-    if (!source || typeof source !== "object" || !(source.data instanceof Uint8Array)) {
-      throw new TypeError("SBlobData.data must be a Uint8Array");
-    }
+  async #store(source: SBlobSource): Promise<string> {
     validateContentType(source.contentType);
-    const data = Uint8Array.from(source.data);
-    const refs = source.contentType === SValueContentType
-      ? decodeSValueWithRefs(data).refs
-      : [];
-    const hash = await computeHash(data, source.contentType, refs);
-    return Object.freeze({ data, contentType: source.contentType, hash, refs });
-  }
-
-  async #loadVerified(hash: string): Promise<SBlobData> {
-    validateHash(hash);
-    const node = this.#cas.readNode
-      ? await this.#cas.readNode(hash)
-      : {
-        metadata: await this.#cas.metadata(hash),
-        content: await this.#cas.read(hash),
-      };
-    const metadata = node.metadata;
-    const bytes = node.content;
-    if (metadata.hash !== hash) {
-      throw new SBlobIntegrityError(`CAS metadata hash mismatch for ${hash}`);
+    if ("data" in source && source.contentType === SValueContentType) {
+      const data = Uint8Array.from(source.data);
+      const refs = decodeSValueWithRefs(data).refs;
+      const hash = await computeHash(data, source.contentType, refs);
+      await Promise.all([...new Set(refs)].map(ref => this.#cas.leaseExisting(ref)));
+      await this.#cas.ensureNode(hash, data, source.contentType, refs);
+      return hash;
     }
-    if (metadata.size !== bytes.length) {
-      throw new SBlobIntegrityError(
-        `CAS content length mismatch for ${hash}: expected ${metadata.size}, got ${bytes.length}`,
-      );
-    }
-    if (metadata.contentType === SValueContentType) {
-      const refs = decodeSValueWithRefs(bytes).refs;
-      if (!sameRefs(metadata.refs, refs)) {
-        throw new SBlobIntegrityError(`CAS SValue refs mismatch for ${hash}`);
-      }
-    }
-    const actualHash = await computeHash(bytes, metadata.contentType, metadata.refs);
-    if (actualHash !== hash) {
-      throw new SBlobIntegrityError(`CAS content digest mismatch for ${hash}: got ${actualHash}`);
-    }
-    return Object.freeze({ data: bytes.slice(), contentType: metadata.contentType });
-  }
-
-  #cacheResolved(hash: string, data: SBlobData): void {
-    const existing = this.#readCache.get(hash);
-    if (existing) {
-      this.#cacheBytes -= existing.size;
-      this.#readCache.delete(hash);
-    }
-    const stored = Object.freeze({
-      data: Uint8Array.from(data.data),
-      contentType: data.contentType,
-    });
-    const entry: CacheEntry = { promise: Promise.resolve(stored), size: stored.data.length };
-    this.#readCache.set(hash, entry);
-    this.#cacheBytes += entry.size;
-    this.#evict();
-  }
-
-  #evict(): void {
-    while (
-      this.#readCache.size > this.#maxCacheEntries
-      || this.#cacheBytes > this.#maxCacheBytes
-    ) {
-      const oldest = this.#readCache.entries().next().value as [string, CacheEntry] | undefined;
-      if (!oldest) break;
-      this.#readCache.delete(oldest[0]);
-      this.#cacheBytes -= oldest[1].size;
-    }
+    return (await this.#cas.storeBlob(source)).hash;
   }
 }
 
@@ -215,24 +192,24 @@ export function createSBlobContext(
 ): DocumentTypeContext {
   const runtime = new SBlobRuntime(cas, options);
   const makeSBlob = ((
-    input: string | SBlobData,
-    loadData?: () => Promise<SBlobData>,
+    input: string | SBlobSource,
+    loadSource?: () => Promise<SBlobSource>,
   ): Promise<SBlob> => {
     if (typeof input === "string") {
-      if (typeof loadData !== "function") {
-        throw new TypeError("hash-first makeSBlob requires a loadData callback");
+      if (typeof loadSource !== "function") {
+        throw new TypeError("hash-first makeSBlob requires a source callback");
       }
-      return runtime.makeExpected(input, loadData);
+      return runtime.makeExpected(input, loadSource);
     }
-    if (loadData !== undefined) {
-      throw new TypeError("data-first makeSBlob does not accept a callback");
+    if (loadSource !== undefined) {
+      throw new TypeError("source-first makeSBlob does not accept a callback");
     }
-    return runtime.makeData(input);
+    return runtime.makeSource(input);
   }) as MakeSBlob;
 
   return Object.freeze({
     makeSBlob,
-    readSBlob: (blob: SBlob) => runtime.read(blob),
+    openSBlob: (blob: SBlob) => runtime.open(blob),
   });
 }
 
@@ -246,8 +223,32 @@ async function computeHash(
   return hashToHex(await computeNodeDigest(header, contentType, childHashes, data));
 }
 
-function sameRefs(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((hash, index) => hash === right[index]);
+function validateRange(range: SBlobReadRange | undefined, size: number): void {
+  if (range === undefined) return;
+  if (!Number.isSafeInteger(range.offset) || range.offset < 0 || range.offset > size) {
+    throw new RangeError("SBlob range offset is outside the blob");
+  }
+  if (range.length !== undefined) {
+    if (!Number.isSafeInteger(range.length) || range.length < 0 || range.offset + range.length > size) {
+      throw new RangeError("SBlob range length is outside the blob");
+    }
+  }
+}
+
+async function collectExactly(source: ByteStream, expectedLength: number): Promise<Uint8Array> {
+  const result = new Uint8Array(expectedLength);
+  let offset = 0;
+  for await (const chunk of source) {
+    if (offset + chunk.length > expectedLength) {
+      throw new SBlobIntegrityError("SBlob range returned more bytes than requested");
+    }
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  if (offset !== expectedLength) {
+    throw new SBlobIntegrityError(`SBlob range returned ${offset} bytes, expected ${expectedLength}`);
+  }
+  return result;
 }
 
 function validLimit(value: number | undefined, fallback: number, name: string): number {

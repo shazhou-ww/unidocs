@@ -4,7 +4,7 @@
  * Stack 模式:psd 的像素路径重度依赖 SBlob,经 azure doc 服务的 CasClient
  * (capability + stackId) 打到本地嵌入的中间件(unidocs-azure 栈)。
  *
- * 这条测试的重心是 `getPreview`:它走的正是 makeSBlob/readSBlob → CAS 的
+ * 这条测试的重心是 `getPreview`:它走的正是 makeSBlob/openSBlob → CAS 的
  * 那条路径。只 create + getLayers 不足以证明 psd 在 Azure 上可用——那两步
  * 不碰 CAS。
  */

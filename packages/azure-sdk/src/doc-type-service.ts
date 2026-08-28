@@ -11,7 +11,7 @@
  * 直接原因是 `local-editor.ts` 携带的多副本不变量（每请求新建 session）——
  * 复制那条规则等于制造一条「只改一边就能悄悄产生数据损坏」的路径。
  */
-import type { DocumentTypeFactory } from "@unidocs/protocol";
+import type { DocumentTypeFactory, SBlobReadRange, SBlobSource } from "@unidocs/protocol";
 import {
   CasClient,
   type HttpFetcher,
@@ -26,6 +26,8 @@ import {
   createDocTypeHandler,
   createSBlobContext,
   DocAuthConfigCache,
+  byteStreamFromReadableStream,
+  readableStreamFromSBlobSource,
 } from "@unidocs/doctype-server-common";
 import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";
 import {
@@ -47,7 +49,7 @@ export interface DocTypeServiceConfig {
   serviceAccessKey?: string;
   docCapabilityVerifier?: DocCapabilityVerifier;
   casCapabilityVerifier?: DocCapabilityVerifier;
-    casAccessKey?: string; // Make CAS access key optional for CAS-less local services
+  casAccessKey?: string; // Make CAS access key optional for CAS-less local services
   /**
    * 过渡形态（阶段 4 删除）：指向 Cloudflare CAS worker 的基地址。
    * 注意它必须指向 CAS worker 本身，不能指向 gateway —— `CasClient`
@@ -146,20 +148,33 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       ensureNode: (hash, content, contentType, refs) =>
         cas.ensureNode(hash, content, contentType, refs ? [...refs] : undefined),
       leaseExisting: (hash) => cas.leaseExisting(hash),
-      metadata: (hash) => cas.metadata({ kind: "cas", hash }),
-      read: (hash) => cas.read({ kind: "cas", hash }),
+      storeBlob: (source: SBlobSource) => cas.storeBlob(
+        readableStreamFromSBlobSource(source),
+        {
+          contentType: source.contentType,
+          ...("data" in source
+            ? { size: source.data.length }
+            : source.size === undefined ? {} : { size: source.size }),
+        },
+      ),
+      statBlob: (hash) => cas.statBlob(hash),
+      openBlob: async (hash, range?: SBlobReadRange) => byteStreamFromReadableStream(
+        range === undefined
+          ? await cas.openBlob(hash)
+          : await cas.openBlobRange(hash, range),
+      ),
     });
 
     return {
       documentType: documentTypeFactory(context),
       deps: {
-      deltas: new PgDeltaLog(pool, identity),
-      snapshots: new BlobSnapshotCache(blobService, identity, `unidocs-${docType}-snapshots`),
-      blobs: new BlobCasStore(blobService, `unidocs-${docType}-roots`),
-      unitOfWork: new PgUnitOfWork(pool, identity),
-      cas,
-      identity,
-      now: () => Date.now(),
+        deltas: new PgDeltaLog(pool, identity),
+        snapshots: new BlobSnapshotCache(blobService, identity, `unidocs-${docType}-snapshots`),
+        blobs: new BlobCasStore(blobService, `unidocs-${docType}-roots`),
+        unitOfWork: new PgUnitOfWork(pool, identity),
+        cas,
+        identity,
+        now: () => Date.now(),
       },
     };
   }
@@ -204,6 +219,10 @@ function unavailableCasGateway(): CasClient {
     read: unavailable,
     metadata: unavailable,
     store: unavailable,
+    storeBlob: unavailable,
+    statBlob: unavailable,
+    openBlob: unavailable,
+    openBlobRange: unavailable,
     ensureNode: unavailable,
     leaseExisting: unavailable,
     updateRootRefs: unavailable,

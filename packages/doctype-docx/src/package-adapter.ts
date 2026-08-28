@@ -27,10 +27,13 @@ export interface OpenedDocxPackage {
   readonly files: Readonly<Record<string, PackageFileData>>;
 }
 
+export const DEFAULT_OPEN_XML_PACKAGE_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_OPEN_XML_PART_BYTES = 64 * 1024 * 1024;
+
 const DEFAULT_LIMITS: OpenXmlPackageLimits = Object.freeze({
   maxEntries: 10_000,
-  maxPackageBytes: 256 * 1024 * 1024,
-  maxPartBytes: 64 * 1024 * 1024,
+  maxPackageBytes: DEFAULT_OPEN_XML_PACKAGE_BYTES,
+  maxPartBytes: DEFAULT_OPEN_XML_PART_BYTES,
   maxPathBytes: 1_024,
   maxCompressionRatio: 1_200,
 });

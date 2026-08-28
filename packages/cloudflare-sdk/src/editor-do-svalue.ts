@@ -3,7 +3,12 @@ import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { CasClient, CasClientError } from "@unicas/client";
-import { DELTA_THRESHOLD } from "@unidocs/doctype-server-common";
+import {
+  byteStreamFromReadableStream,
+  DELTA_THRESHOLD,
+  readableStreamFromByteStream,
+  readableStreamFromSBlobSource,
+} from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
 import { createRequestCasClient } from "./request-cas-client.js";
@@ -15,6 +20,7 @@ const KEY_TENANT_ID = "tenantId";
 const LEGACY_OWNER_KEY = "userId";
 const LEGACY_DOCUMENT_KEY = "docId";
 const RECENT_OP_LIMIT = 1024;
+const MAX_SVALUE_ROOT_BYTES = 16 * 1024 * 1024;
 
 interface ApplyDelta<TOp> {
   readonly kind: "apply";
@@ -159,10 +165,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         leaseExisting: (hash: string) => this.#isReadOnlyOperation()
           ? this.#requireCas().metadata({ kind: "cas", hash })
           : this.#requireCas().leaseExisting(hash),
-        metadata: (hash: string) => this.#requireCas().metadata({ kind: "cas", hash }),
-        read: (hash: string) => this.#requireCas().read({ kind: "cas", hash }),
+        storeBlob: (source: import("@unidocs/protocol").SBlobSource) => this.#requireCas().storeBlob(
+          readableStreamFromSBlobSource(source),
+          {
+            contentType: source.contentType,
+            ...("data" in source
+              ? { size: source.data.length }
+              : source.size === undefined ? {} : { size: source.size }),
+          },
+        ),
+        statBlob: (hash: string) => this.#requireCas().statBlob(hash),
+        openBlob: async (hash: string, range?: import("@unidocs/protocol").SBlobReadRange) =>
+          byteStreamFromReadableStream(range === undefined
+            ? await this.#requireCas().openBlob(hash)
+            : await this.#requireCas().openBlobRange(hash, range)),
       };
-      const context = createSBlobContext(casAdapter);
+      const context = createSBlobContext(casAdapter, { maxReadBytes: MAX_SVALUE_ROOT_BYTES });
       this.#context = context;
       this.#config = factory(context);
     }
@@ -439,11 +457,14 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       bytes?: ArrayBuffer | Uint8Array | null,
     ): Promise<SValue> {
       if (bytes) return decodeSValue(toBytes(bytes));
-      const stored = await this.#requireContext().readSBlob(blob);
-      if (stored.contentType !== SValueContentType) {
+      const handler = await this.#requireContext().openSBlob(blob);
+      if (handler.contentType !== SValueContentType) {
         throw new Error(`Root ${blob.hash} is not an SValue node`);
       }
-      return decodeSValue(stored.data);
+      if (handler.size > MAX_SVALUE_ROOT_BYTES) {
+        throw new Error(`SValue root exceeds ${MAX_SVALUE_ROOT_BYTES}-byte limit`);
+      }
+      return decodeSValue(await handler.readBytes({ offset: 0, length: handler.size }));
     }
 
     async #refreshCurrentRefs(): Promise<void> {
@@ -564,10 +585,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           if (!isRecord(value) || !isSBlob(value.blob)) {
             return Response.json({ success: false, error: "Invalid blob read request" }, { status: 400 });
           }
-          const stored = await this.#requireContext().readSBlob(value.blob);
-          return new Response(Uint8Array.from(stored.data).buffer, {
+          const rangeValue = value.range;
+          const range = rangeValue === undefined
+            ? undefined
+            : isRecord(rangeValue)
+              && typeof rangeValue.offset === "number"
+              && (rangeValue.length === undefined || typeof rangeValue.length === "number")
+              ? { offset: rangeValue.offset, ...(rangeValue.length === undefined ? {} : { length: rangeValue.length }) }
+              : null;
+          if (range === null) {
+            return Response.json({ success: false, error: "Invalid blob read range" }, { status: 400 });
+          }
+          const handler = await this.#requireContext().openSBlob(value.blob);
+          return new Response(readableStreamFromByteStream(handler.read(range)), {
             headers: {
-              "Content-Type": stored.contentType,
+              "Content-Type": handler.contentType,
+              "X-UniDocs-SBlob-Size": String(handler.size),
               "X-UniDocs-SBlob-Hash": value.blob.hash,
             },
           });

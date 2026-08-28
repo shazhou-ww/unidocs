@@ -6,17 +6,16 @@ import { isRef, resolvePixels, PixelCache } from "../src/render/pixel-source.js"
 import { render } from "../src/render/index.js";
 import { casBlobStore } from "../src/psd/cas-blobstore.js";
 import { saveSnapshot, loadSnapshot, refsFromSnapshot } from "../src/psd/snapshot.js";
-import { memCas } from "./helpers/mem-cas.js";
+import { createMemorySBlobContext, createReadOnlySBlobContext } from "./sblob-test-context.js";
+
+/**
+ * Minimal content-addressed CAS matching DocumentTypeContext's editor surface:
+ * `makeSBlob` hashes the bytes and keeps them; `openSBlob` returns a handler.
+ */
+const memCas = createMemorySBlobContext;
 
 /** A read-only context (no usable makeSBlob) — save must fall back to full PSD. */
-function readOnlyCtx(_nodes: Map<string, Uint8Array>): DocumentTypeContext {
-  return {
-    makeSBlob: undefined as unknown as DocumentTypeContext["makeSBlob"],
-    async readSBlob() {
-      throw new Error("read-only");
-    },
-  };
-}
+const readOnlyCtx = (_nodes: Map<string, Uint8Array>) => createReadOnlySBlobContext();
 
 function fill(w: number, h: number, [r, g, b, a]: number[]): Uint8ClampedArray {
   const d = new Uint8ClampedArray(w * h * 4);

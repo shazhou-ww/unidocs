@@ -181,13 +181,16 @@ export type DocResolveBlobResponse =
   | DocErrorResponse;
 
 export interface DocReadBlobRequest {
-  body: DocStructuredRequestBody<{ blob: SBlob }>;
+  body: DocStructuredRequestBody<{
+    blob: SBlob;
+    range?: { offset: number; length?: number };
+  }>;
 }
 
 export type DocReadBlobResponse =
   | {
-    body: Uint8Array;
-    headers: { contentType: string; sblobHash: string };
+    body: ReadableStream<Uint8Array>;
+    headers: { contentType: string; sblobHash: string; sblobSize: number };
   }
   | DocErrorResponse;
 
