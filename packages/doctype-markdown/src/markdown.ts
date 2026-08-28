@@ -2,8 +2,7 @@
  * Markdown DocumentType implementation.
  */
 
-import type { AgentToolDefinition, DocumentTypeFactory } from "@unidocs/protocol";
-import { instructions, tools } from "./agent.js";
+import type { DocumentTypeFactory } from "@unidocs/protocol";
 import type { MDoc, MQuery, MOp } from "./types.js";
 
 export type MarkdownDocumentTypeFactory = DocumentTypeFactory<MDoc, MQuery, MOp>;
@@ -107,15 +106,4 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_context
   defaultFormat: "markdown",
 
   contentType: "text/markdown; charset=utf-8",
-
-  // `DocumentType.tools` is still typed as `Record<string, AgentToolDefinition>`
-  // (spec's old shape); `tools` here is the new `AgentTool[]` table from
-  // `agent.ts` (Task 8). The field is dead — nothing reads `DocumentType.tools`
-  // any more, `markdownAgent` is the only consumer — and Task 10 deletes it
-  // outright (same situation as
-  // doctype-docx's `docx.ts`, which carries the identical narrow cast so as
-  // not to lose contextual parameter typing on `query`/`apply` above).
-  tools: tools as unknown as Record<string, AgentToolDefinition>,
-
-  instructions,
 });

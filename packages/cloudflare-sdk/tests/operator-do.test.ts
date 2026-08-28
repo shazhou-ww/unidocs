@@ -362,6 +362,62 @@ describe("agent Operator DO", () => {
     expect(messageCounts).toEqual([1, 1]);
   });
 
+  // `CloudflarePlatformDeps.requestHeaders` is a getter, not a value captured
+  // once at platform construction (agent-platform-do.ts). The platform is
+  // built lazily on the *first* /run and then lives for the whole DO
+  // lifetime, but `#requestHeaders` on the DO is reassigned on every request
+  // (`#captureIdentity` and the `#handleRequest` `finally`). If the platform
+  // ever captured a fixed `Headers` value instead of a function, a second
+  // /run would forward the first run's now-stale capability token.
+  it("re-reads the capability token fresh on every /run, not just the first", async () => {
+    const seenCapabilities: (string | null)[] = [];
+    const editorFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      seenCapabilities.push(headers.get("X-UniDocs-CAS-Capability"));
+      const path = new URL(String(input)).pathname;
+      if (path === "/_internal/query") {
+        return svalueResponse({ success: true, data: "current", version: 1 });
+      }
+      throw new Error(`Unexpected Editor path ${path}`);
+    });
+
+    const agent: DocumentAgent<TestQuery, TestOperation> = {
+      instructions: "test agent",
+      tools: [{
+        kind: "query",
+        name: "read",
+        description: "read",
+        inputSchema: {},
+        toQuery: () => ({ kind: "read" }),
+      }],
+    };
+
+    const provider = scriptedProvider([
+      callTurn("read-call-1", "read", {}),
+      textTurn("first done"),
+      callTurn("read-call-2", "read", {}),
+      textTurn("second done"),
+    ]);
+
+    const Operator = createOperatorDO({
+      agent,
+      provider: () => provider,
+      getEditorStub: () => ({ fetch: editorFetch }) as unknown as DurableObjectStub,
+    });
+    const operator = new Operator(operatorState(), {});
+
+    await operator.fetch(runRequest("first instruction", {
+      "X-UniDocs-CAS-Capability": "token-one",
+    }));
+    await operator.fetch(runRequest("second instruction", {
+      "X-UniDocs-CAS-Capability": "token-two",
+    }));
+
+    // Both requests reached the editor exactly once (one query call per run),
+    // and the second carried the second request's token — not the first's.
+    expect(seenCapabilities).toEqual(["token-one", "token-two"]);
+  });
+
   it("rejects a request whose identity does not match the one it captured", async () => {
     const agent: DocumentAgent<TestQuery, TestOperation> = {
       instructions: "test agent",

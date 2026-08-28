@@ -202,9 +202,10 @@ Response: { success: true, version: 43 }
 **Transactional**: all operations in a delta succeed or fail together. If any operation throws, the entire delta is rejected.
 
 Blob-taking domain operations carry SBlob, not a magic JSON property. Agent
-tools may accept explicit uploaded hashes; the doctype's JSON `toolCall` handler
-resolves them to SBlob before typed apply and persistence. Direct `/apply` never
-performs this conversion.
+tools may accept explicit uploaded hashes; the tool's `toOps` turns a hash into
+an SBlob synchronously (`createSBlob`, see
+`packages/doctype-docx/tests/agent.test.ts`) as it builds the op, before typed
+apply and persistence. Direct `/apply` never performs this conversion.
 
 ### Rollback
 
@@ -237,7 +238,7 @@ Response: { success: true, data: { response: string, iterations: number } }
 Operator behavior:
 - Maintains conversation history
 - Dispatches `(tool name, JSON parameters)` to the doctype's DocumentAgent
-- Agent query updates the optimistic-lock version; agent apply uses it
+- Agent apply reads the current head version itself (`GET /_internal/status`) as its baseVersion; the agent does not track a version
 - Structured results are JSON; optional media content is rendered by the model-provider adapter
 - On `409` conflict, error includes `currentVersion` and retry hint
 - Max 10 iterations per run (configurable)
@@ -248,7 +249,7 @@ POST /tenants/{tenantId}/docs/{docType}/{docId}/reset
 Response: { success: true }
 ```
 
-Clears conversation history and version tracking.
+Clears conversation history.
 
 ## Adding a document type
 

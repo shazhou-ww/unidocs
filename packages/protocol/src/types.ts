@@ -131,12 +131,6 @@ export interface DocumentType<TDoc, TQuery, TOp> {
 
   /** MIME type for document export. */
   contentType: string;
-
-  /** Agent tool definitions for the operator loop. */
-  tools: Record<string, AgentToolDefinition>;
-
-  /** Document-type-specific operator instructions. */
-  instructions: string;
 }
 
 /** Factory for a configured cloud-neutral document type. */
