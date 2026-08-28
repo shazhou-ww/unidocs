@@ -35,6 +35,21 @@ export function PropsPane() {
     for (const layerId of ids) void dispatch({ kind: "set_props", payload: { layerId, props } });
   };
 
+  // Effects (stroke / colorOverlay / dropShadow) are out of scope to CREATE —
+  // only to change or remove an existing one (see the task brief). Under
+  // multi-select, `write` above would happily install a brand-new effect on
+  // a layer that never had one, since it fans the same props out to every
+  // selected id. `writeEffect` guards against that: it only dispatches to a
+  // selected layer that already carries a truthy value for that effect key,
+  // silently skipping the rest — including on removal (`null`), where
+  // sending it to a layer without the effect would just be a no-op delta.
+  const writeEffect = (key: "stroke" | "colorOverlay" | "dropShadow", value: unknown): void => {
+    for (const layer of sel) {
+      if (layer[key] == null) continue;
+      void dispatch({ kind: "set_props", payload: { layerId: layer.id, props: { [key]: value } } });
+    }
+  };
+
   const [top, left, bottom, right] = l.bounds ?? [0, 0, 0, 0];
   const stroke = l.stroke as Stroke | undefined;
   const overlay = l.colorOverlay as Overlay | undefined;
@@ -96,16 +111,16 @@ export function PropsPane() {
               <label className="prop-row">
                 <span>描边宽度</span>
                 <input aria-label="描边宽度" type="number" min={0} value={stroke.size}
-                       onChange={(e) => write({ stroke: { ...stroke, size: Number(e.target.value) } })} />
+                       onChange={(e) => writeEffect("stroke", { ...stroke, size: Number(e.target.value) })} />
               </label>
               <label className="prop-row">
                 <span>描边颜色</span>
                 <input aria-label="描边颜色" type="color" value={hex(stroke.color)}
-                       onChange={(e) => write({ stroke: { ...stroke, color: unhex(e.target.value) } })} />
+                       onChange={(e) => writeEffect("stroke", { ...stroke, color: unhex(e.target.value) })} />
               </label>
               <Row k="描边位置" v={stroke.position} />
               <button type="button" className="btn-link" aria-label="移除描边"
-                      onClick={() => write({ stroke: null })}>移除描边</button>
+                      onClick={() => writeEffect("stroke", null)}>移除描边</button>
             </>
           ) : null}
           {overlay ? (
@@ -113,17 +128,17 @@ export function PropsPane() {
               <label className="prop-row">
                 <span>颜色叠加</span>
                 <input aria-label="颜色叠加" type="color" value={hex(overlay)}
-                       onChange={(e) => write({ colorOverlay: { ...unhex(e.target.value), opacity: overlay.opacity } })} />
+                       onChange={(e) => writeEffect("colorOverlay", { ...unhex(e.target.value), opacity: overlay.opacity })} />
               </label>
               <button type="button" className="btn-link" aria-label="移除颜色叠加"
-                      onClick={() => write({ colorOverlay: null })}>移除颜色叠加</button>
+                      onClick={() => writeEffect("colorOverlay", null)}>移除颜色叠加</button>
             </>
           ) : null}
           {shadow ? (
             <>
               <Row k="投影" v={`${shadow.distance}px @ ${shadow.angle}° · 模糊 ${shadow.size}`} />
               <button type="button" className="btn-link" aria-label="移除投影"
-                      onClick={() => write({ dropShadow: null })}>移除投影</button>
+                      onClick={() => writeEffect("dropShadow", null)}>移除投影</button>
             </>
           ) : null}
         </section>

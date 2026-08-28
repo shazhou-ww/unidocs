@@ -67,11 +67,36 @@ describe("PropsPane", () => {
 
   it("shows an IR snippet without pixels or children", () => {
     setState({ doc: { canvas: { width: 800, height: 600 },
-      layers: [{ ...layer(), children: [layer({ id: "kid" })] } as LocalLayer] } });
+      layers: [{
+        ...layer(),
+        pixels: { width: 180, height: 122 },
+        mask: { pixels: { width: 180, height: 122 } },
+        children: [layer({ id: "kid" })],
+      } as LocalLayer] } });
     render(<PropsPane />);
     const snippet = screen.getByLabelText("IR 片段").textContent!;
     expect(snippet).toContain('"id": "badge"');
     expect(snippet).not.toContain("children");
     expect(snippet).not.toContain("pixels");
+    expect(snippet).not.toContain("mask");
+  });
+
+  it("only writes an effect to selected layers that already have it", () => {
+    setState({
+      selection: ["badge", "plain"],
+      doc: {
+        canvas: { width: 800, height: 600 },
+        layers: [layer({ stroke: STROKE }), layer({ id: "plain", name: "无描边" })],
+      },
+    });
+    render(<PropsPane />);
+    fireEvent.change(screen.getByLabelText("描边宽度"), { target: { value: "8" } });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({
+      kind: "set_props", payload: { layerId: "badge", props: { stroke: { ...STROKE, size: 8 } } },
+    });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ layerId: "plain" }) }),
+    );
   });
 });
