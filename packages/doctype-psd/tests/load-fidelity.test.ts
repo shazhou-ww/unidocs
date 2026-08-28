@@ -100,6 +100,86 @@ describe("mapLayer — IR 保真", () => {
     expect(l.degraded).toBeUndefined();
   });
 
+  // 降级台账的意义在于「有损失就一定有记录」。以下两条是原先静默丢失的路径。
+  it("没有 id 的置入图层：保持 raster 判定，但必须记下降级", () => {
+    const ag = {
+      name: "hero", ...box, imageData: px(100, 40),
+      // 真实文件里出现过：placedLayer 只带变换、不带 id（源文档未内嵌）。
+      placedLayer: { placed: undefined, transform: [20, 10, 120, 10, 120, 50, 20, 50] },
+    } as unknown as AgLayer;
+    const l = mapLayer(ag, 0, 256, 256);
+    expect(l.type).toBe("raster");
+    expect(l.smartObject).toBeUndefined();
+    expect(l.degraded).toEqual([{ reason: "智能对象已展平", detail: "源文档未内嵌" }]);
+  });
+
+  it("不支持的图层效果逐项入账", () => {
+    const ag = {
+      name: "card", ...box, imageData: px(100, 40),
+      effects: {
+        innerShadow: [{ enabled: true, color: { r: 0, g: 0, b: 0 } }],
+        outerGlow: { enabled: true, color: { r: 255, g: 255, b: 255 } },
+        bevel: { enabled: true },
+        satin: { enabled: true },
+        gradientOverlay: [{ enabled: true }],
+        patternOverlay: { enabled: true },
+        innerGlow: { enabled: true },
+        // 这两个键不是效果，不能入账。
+        disabled: false,
+        scale: 1,
+      },
+    } as unknown as AgLayer;
+    const l = mapLayer(ag, 1, 256, 256);
+    expect(l.degraded?.map((d) => d.reason)).toEqual([
+      "不支持的图层效果：内阴影",
+      "不支持的图层效果：外发光",
+      "不支持的图层效果：斜面和浮雕",
+      "不支持的图层效果：光泽",
+      "不支持的图层效果：渐变叠加",
+      "不支持的图层效果：图案叠加",
+      "不支持的图层效果：内发光",
+    ]);
+    expect(l.degraded?.[0].detail).toBe("导入时未保留，渲染与导出均不包含该效果");
+  });
+
+  it("被停用的效果也入账，但措辞区分开", () => {
+    const ag = {
+      name: "card", ...box, imageData: px(100, 40),
+      effects: { stroke: [{ enabled: false, fillType: "color", color: { r: 1, g: 2, b: 3 }, size: { value: 4 } }] },
+    } as unknown as AgLayer;
+    const l = mapLayer(ag, 2, 256, 256);
+    expect(l.stroke).toBeUndefined(); // 停用的描边不参与渲染
+    expect(l.degraded).toEqual([
+      { reason: "不支持的图层效果：描边", detail: "源文件中已停用，导入时未保留，导出后无法恢复" },
+    ]);
+  });
+
+  it("渐变/图案描边落不进模型，因此入账", () => {
+    const ag = {
+      name: "card", ...box, imageData: px(100, 40),
+      effects: { stroke: [{ enabled: true, fillType: "gradient", size: { value: 4 } }] },
+    } as unknown as AgLayer;
+    const l = mapLayer(ag, 3, 256, 256);
+    expect(l.stroke).toBeUndefined();
+    expect(l.degraded?.map((d) => d.reason)).toEqual(["不支持的图层效果：描边"]);
+  });
+
+  it("已支持并已映射的三种效果不产生降级项", () => {
+    const ag = {
+      name: "card", ...box, imageData: px(100, 40),
+      effects: {
+        solidFill: [{ enabled: true, color: { r: 10, g: 20, b: 30 }, opacity: 1 }],
+        stroke: [{ enabled: true, fillType: "color", color: { r: 1, g: 2, b: 3 }, size: { value: 4 }, position: "outside" }],
+        dropShadow: [{ enabled: true, color: { r: 0, g: 0, b: 0 }, distance: { value: 3 }, size: { value: 2 } }],
+      },
+    } as unknown as AgLayer;
+    const l = mapLayer(ag, 4, 256, 256);
+    expect(l.colorOverlay).toBeDefined();
+    expect(l.stroke).toBeDefined();
+    expect(l.dropShadow).toBeDefined();
+    expect(l.degraded).toBeUndefined();
+  });
+
   it("分组仍是分组", () => {
     const ag = {
       name: "grp", ...box,

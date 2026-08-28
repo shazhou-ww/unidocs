@@ -93,3 +93,56 @@ describe("智能对象层：save() 经真实 ag-psd 写入器往返", () => {
     expect(logo.smartObject?.sourceName).toBe("logo.png");
   });
 });
+
+describe("矢量形状层：save() → load() 的往返是有损的，这里把损失钉死", () => {
+  const vectorDoc = (): PsdDoc => ({
+    canvas: { width: 256, height: 256, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
+    layers: [
+      {
+        id: "b", type: "fill", name: "badge", bounds: [10, 20, 50, 120], ...base,
+        pixels: px(100, 40),
+        vector: {
+          fill: { type: "color", color: { r: 245, g: 239, b: 227 } },
+          // ag-psd 的 vectorStroke：lineWidth 是带单位的量，不是裸数字。
+          stroke: { strokeEnabled: true, fillEnabled: true, lineWidth: { units: "Pixels", value: 2 } },
+          pathSummary: { subpaths: 1, knots: 4 },
+        },
+        degraded: [{ reason: "矢量形状已栅格化" }],
+      } as PsdDoc["layers"][number],
+    ],
+  });
+
+  // 这是本期的既定边界，不是待修的缺陷：save.ts 写 vectorFill / vectorStroke，
+  // 但不写 vectorMask，所以路径本身出不去。把它写成断言，是为了让「路径没保住」
+  // 成为文档化的事实，而不是靠读代码才能发现的假设 —— 一旦二期补上矢量蒙版写入，
+  // 这条会红，正好提醒把 load.ts 的降级措辞一起改回来。
+  it("填充与描边样式能往返，但 pathSummary 出不去：重新导入得到零路径的形状层", async () => {
+    const before = vectorDoc().layers[0];
+    expect(before.vector?.pathSummary).toEqual({ subpaths: 1, knots: 4 });
+
+    const bytes = await save(vectorDoc());
+    const back = await load(bytes);
+    const badge = back.layers.find((l) => l.name === "badge")!;
+
+    expect(badge.type).toBe("fill");
+    expect(badge.vector?.fill).toEqual({ type: "color", color: { r: 245, g: 239, b: 227 } });
+    // 描边样式确实回来了（ag-psd 会把缺省项补全，所以只断言写出去的那几项）。
+    expect(badge.vector?.stroke).toMatchObject({
+      strokeEnabled: true, fillEnabled: true, lineWidth: { units: "Pixels", value: 2 },
+    });
+    // 有损的那一半：save.ts 不写 vectorMask，路径出不去。
+    expect(badge.vector?.pathSummary).toBeUndefined();
+  });
+
+  it("降级 detail 如实描述这一点：路径只是被汇总，并没有被保留", async () => {
+    const bytes = await save(vectorDoc());
+    const back = await load(bytes);
+    const badge = back.layers.find((l) => l.name === "badge")!;
+    const vectorDegradation = badge.degraded?.find((d) => d.reason === "矢量形状已栅格化");
+    expect(vectorDegradation?.detail).toBe(
+      "填充与描边样式保留为元数据；路径仅汇总为子路径与锚点数量，不会写回矢量蒙版；渲染与导出使用烘焙像素",
+    );
+    // 措辞不得再声称「路径已保留」。
+    expect(vectorDegradation?.detail).not.toContain("路径与填充已保留");
+  });
+});

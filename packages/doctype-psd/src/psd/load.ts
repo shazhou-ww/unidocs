@@ -96,14 +96,25 @@ function mapVector(a: AgLayer): { vector: LayerVector; degraded: Degradation } |
     },
     degraded: {
       reason: "矢量形状已栅格化",
-      detail: "路径与填充已保留为元数据，渲染与导出使用烘焙像素",
+      // Deliberately precise about how little survives: `fill`/`stroke` are
+      // carried verbatim and DO round-trip through save(), but the paths
+      // themselves are reduced to counts (`pathSummary`) and save() writes no
+      // vectorMask at all — re-importing an exported file yields a shape layer
+      // with zero paths. Pinned by save-roundtrip-ir.test.ts.
+      detail: "填充与描边样式保留为元数据；路径仅汇总为子路径与锚点数量，不会写回矢量蒙版；渲染与导出使用烘焙像素",
     },
   };
 }
 
-function mapSmartObject(a: AgLayer): { smartObject: LayerSmartObject; degraded: Degradation } | undefined {
+function mapSmartObject(a: AgLayer): { smartObject?: LayerSmartObject; degraded: Degradation } | undefined {
   const p = a.placedLayer;
-  if (!p?.id) return undefined;
+  if (!p) return undefined;
+  // `placedId` is what ties the layer to its embedded source, so a placed
+  // layer without an `id` cannot be modelled as a smart object and keeps the
+  // plain raster verdict. The fidelity loss is real all the same — this used
+  // to return `undefined`, i.e. the flattest possible smart object recorded
+  // NOTHING in the ledger, which defeats the ledger's whole purpose.
+  if (!p.id) return { degraded: { reason: "智能对象已展平", detail: "源文档未内嵌" } };
   return {
     smartObject: {
       placedId: p.id,
@@ -115,6 +126,56 @@ function mapSmartObject(a: AgLayer): { smartObject: LayerSmartObject; degraded: 
       detail: p.placed ? `源：${p.placed}` : "源文档未内嵌",
     },
   };
+}
+
+/** ag-psd's per-effect keys, in the names the design doc uses. */
+const EFFECT_LABELS: Record<string, string> = {
+  dropShadow: "投影", innerShadow: "内阴影", outerGlow: "外发光", innerGlow: "内发光",
+  bevel: "斜面和浮雕", satin: "光泽", solidFill: "颜色叠加", stroke: "描边",
+  gradientOverlay: "渐变叠加", patternOverlay: "图案叠加",
+};
+/** Not effects: the effect-block toggle and the global effect scale. */
+const NON_EFFECT_KEYS = new Set(["disabled", "scale"]);
+
+/**
+ * One degradation per layer effect present on the layer that this loader does
+ * NOT carry into the model — spec §5.2's third degradation kind.
+ *
+ * The model understands exactly three effects (solidFill → colorOverlay,
+ * stroke, dropShadow), and even those only in their solid-colour, enabled
+ * form. Everything else — inner shadow, glows, bevel, satin, gradient/pattern
+ * overlay, and a gradient/pattern or disabled stroke — was previously dropped
+ * on the floor with no entry at all, so a document could lose half its
+ * appearance and report perfect fidelity.
+ *
+ * A DISABLED effect is reported too, with its own wording: Photoshop is not
+ * rendering it either, so nothing changes on screen, but the loader still
+ * discards the data and an export can never bring it back.
+ */
+function unsupportedEffects(
+  fx: Record<string, unknown> | undefined,
+  mapped: { solidFill: boolean; stroke: boolean; dropShadow: boolean },
+): Degradation[] {
+  if (!fx) return [];
+  const out: Degradation[] = [];
+  for (const [key, value] of Object.entries(fx)) {
+    if (NON_EFFECT_KEYS.has(key) || !value) continue;
+    const entries = Array.isArray(value) ? value : [value];
+    if (entries.length === 0) continue;
+    // Skip the three we actually mapped. (If one key holds several entries and
+    // only some were mapped, we stay silent rather than risk a false alarm.)
+    if (key === "solidFill" && mapped.solidFill) continue;
+    if (key === "stroke" && mapped.stroke) continue;
+    if (key === "dropShadow" && mapped.dropShadow) continue;
+    const anyEnabled = entries.some((e) => (e as { enabled?: boolean } | null)?.enabled !== false);
+    out.push({
+      reason: `不支持的图层效果：${EFFECT_LABELS[key] ?? key}`,
+      detail: anyEnabled
+        ? "导入时未保留，渲染与导出均不包含该效果"
+        : "源文件中已停用，导入时未保留，导出后无法恢复",
+    });
+  }
+  return out;
 }
 
 /**
@@ -161,11 +222,11 @@ export function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
     isGroup ? "group"
     : adj ? "adjustment"
     : textInfo ? "text"
-    : smartInfo ? "smartObject"
+    // A placed layer with no `id` yields a degradation but no `smartObject`,
+    // and stays a raster (or a fill, if it also carries a vector mask).
+    : smartInfo?.smartObject ? "smartObject"
     : vectorInfo ? "fill"
     : "raster";
-  const degraded = [textInfo?.degraded, smartInfo?.degraded, vectorInfo?.degraded]
-    .filter((d): d is Degradation => !!d);
   let bounds: [number, number, number, number] = [a.top ?? 0, a.left ?? 0, a.bottom ?? 0, a.right ?? 0];
   let px = a.imageData
     ? { width: a.imageData.width, height: a.imageData.height, data: a.imageData.data as Uint8ClampedArray }
@@ -208,6 +269,14 @@ export function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
         choke: Math.max(0, Math.round(ds.choke?.value ?? 0)),
       }
     : undefined;
+  // Assembled here, not next to the type verdict, because it needs the effect
+  // mapping above to know which effects were actually carried over.
+  const degraded: Degradation[] = [
+    textInfo?.degraded, smartInfo?.degraded, vectorInfo?.degraded,
+  ].filter((d): d is Degradation => !!d)
+    .concat(unsupportedEffects(fx as Record<string, unknown> | undefined, {
+      solidFill: !!colorOverlay, stroke: !!stroke, dropShadow: !!dropShadow,
+    }));
   let adjType: string | undefined;
   let adjParams: Record<string, unknown> | undefined;
   if (adj) {
@@ -246,7 +315,7 @@ export function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
     ...(adjType ? { adjustType: adjType, params: adjParams } : {}),
     ...(mask ? { mask } : {}),
     ...(textInfo ? { text: textInfo.text } : {}),
-    ...(smartInfo ? { smartObject: smartInfo.smartObject } : {}),
+    ...(smartInfo?.smartObject ? { smartObject: smartInfo.smartObject } : {}),
     ...(vectorInfo ? { vector: vectorInfo.vector } : {}),
     ...(degraded.length ? { degraded } : {}),
     ...(isGroup ? { children: (a.children ?? []).map((c, ci) => mapLayer(c, ci, cw, ch)) } : {}),
