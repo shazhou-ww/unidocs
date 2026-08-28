@@ -60,20 +60,22 @@ export interface CasGcResult {
 
 export interface CasNode {
   readonly metadata: CasNodeMetadata;
-  readonly content: Uint8Array;
+  readonly content: ReadableStream<Uint8Array>;
 }
 
 export interface TenantCasService {
-  read(hash: CasHash): Promise<Uint8Array>;
+  read(
+    hash: CasHash,
+    range?: { readonly offset: number; readonly length: number },
+  ): Promise<ReadableStream<Uint8Array>>;
   metadata(hash: CasHash): Promise<CasNodeMetadata>;
   lease(
-    descriptor: CasNodeDescriptor,
-    requestedDurationMs: number,
-    provideContent: () => Promise<Uint8Array>,
-  ): Promise<CasLeaseResult>;
-  leaseExisting(
     hash: CasHash,
     requestedDurationMs: number,
+    canonicalNode?: {
+      readonly contentLength: number;
+      readonly body: ReadableStream<Uint8Array>;
+    },
   ): Promise<CasLeaseResult>;
   updateRootRefs(request: CasUpdateRootRefsRequest): Promise<CasUpdateRootRefsResponse>;
   usage(): Promise<CasUsage>;

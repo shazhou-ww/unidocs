@@ -62,7 +62,7 @@ export interface CasLeaseNodeRequest {
     refs?: CasHash[];
     leaseDurationMs?: number;
   };
-  readonly body: Uint8Array;
+  readonly body: ReadableStream<Uint8Array>;
 }
 
 export type CasLeaseNodeResponse = CasLeaseResult | CasErrorResponse;
