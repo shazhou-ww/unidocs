@@ -1,0 +1,123 @@
+@import "./fonts.css";
+
+/* Design tokens lifted value-for-value from the redesign source
+   ("Agent Image Editor" Claude Design canvas). Change --accent alone to
+   restyle the whole app; every accent-tinted surface derives from it. */
+:root {
+  --bg: #eeece7;
+  --panel: #fbfaf8;
+  --border: #e2e0da;
+  --border-strong: #dcd8d0;
+  --fg: #1c1d1a;
+  --fg-2: #7c7d75;
+  --fg-3: #8a8b82;
+  --fg-dim: #b6b7ae;
+  --accent: #00a38a;
+  --accent-ink: #00806d;
+  --warn: #d9a441;
+  --warn-ink: #99711a;
+  --kind-text: #5b4bd9;
+  --kind-img: #00806d;
+  --kind-grp: #7c7d75;
+  --kind-shp: #b4622f;
+  --kind-adj: #99711a;   /* not in the design — adjustment layers need a badge too */
+  --canvas-bg: #e6e3dd;
+  --canvas-dot: #d3cfc7;
+  --font: Barlow, Helvetica, sans-serif;
+  --mono: "Roboto Mono", monospace;
+  --fs: 13px;
+  --row-h: 26px;
+  --topbar-h: 48px;
+  --radius: 5px;
+  --col-chat: 396px;
+  --col-panel: 296px;
+  --canvas-min: 700px;
+  /* Phase 1 ships light only — same choice as unicas-packages/admin-webui. */
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+}
+
+body {
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: var(--fs);
+}
+
+a { color: var(--accent-ink); text-decoration: none; }
+a:hover { color: var(--accent); }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #d5d2ca; border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Marching-ants selection border; used by selection-overlay.tsx. */
+@keyframes ants { to { background-position: 16px 0, -16px 100%, 0 -16px, 100% 16px; } }
+@keyframes blip { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow-x: auto;
+}
+
+/* Column order is set here, NOT by DOM order: the design puts Chat on the
+   left (order 1), the canvas in the middle, and layers/props on the right. */
+.col-chat {
+  order: 1;
+  width: var(--col-chat);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.col-canvas {
+  order: 2;
+  flex: 1;
+  min-width: var(--canvas-min);
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas-bg);
+}
+
+.col-panel {
+  order: 3;
+  width: var(--col-panel);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+
+/* Section header shared by all three columns (40px tall in the design). */
+.col-head {
+  height: 40px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.col-head strong { font-weight: 600; }
+.mono { font-family: var(--mono); }
+.spacer { flex: 1; }
