@@ -2410,6 +2410,33 @@ export function TopBar() {
 
 追加到 `styles.css`：
 
+First, add the missing surface/ink tokens to the `:root` block near the top of
+`styles.css` (after the existing `--kind-*` lines). Every colour below is a real value
+from the design that Task 7's palette did not cover; naming them here is what keeps
+phase 2's dark mode a single override block instead of a file-wide hunt:
+
+```css
+  /* Surfaces and inks not covered by Task 7's semantic palette. */
+  --surface: #fff;            /* raised: buttons, cards, chat bubbles, popovers */
+  --surface-sunken: #f0eee9;  /* inset controls: the zoom pill, secondary buttons */
+  --surface-hover: #f6f4f0;   /* hover state on a raised surface */
+  --surface-code: #f7f5f1;    /* code / IR blocks */
+  --on-accent: #fff;          /* text and glyphs on an accent fill */
+  --ink-strong: #4a4b45;      /* zoom label, code text */
+  --fg-4: #6e6f68;            /* control glyphs — dimmer than --fg-3 */
+  --fg-5: #9a9b93;            /* dimmest: the layer-row eye */
+  --row-hover: #00000008;     /* subtle row hover wash */
+  --chip-bg: #0000000a;       /* neutral chip fill */
+  --shadow-pop: #00000014;    /* popover shadow */
+  --msg-user-bg: #eef0ec;     /* user chat bubble */
+  --msg-user-border: #e2e4de;
+  --err-bg: #fdf1f0;
+  --err-border: #e9c6c2;
+  --err-ink: #96322a;
+```
+
+Then the top bar's own rules:
+
 ```css
 .topbar {
   height: var(--topbar-h);
@@ -2425,7 +2452,7 @@ export function TopBar() {
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand-mark {
   width: 22px; height: 22px; border-radius: 6px;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--on-accent);
   display: grid; place-items: center; font-size: 11px;
 }
 .brand-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
@@ -2435,23 +2462,23 @@ export function TopBar() {
 
 .zoom {
   display: flex; align-items: center; gap: 2px; padding: 2px;
-  background: #f0eee9; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 7px;
 }
 .zoom button {
   width: 24px; height: 22px; display: grid; place-items: center;
   border: 0; background: transparent; border-radius: var(--radius);
-  color: #6e6f68; font-family: var(--mono); font-size: 13px; cursor: pointer;
+  color: var(--fg-4); font-family: var(--mono); font-size: 13px; cursor: pointer;
 }
-.zoom button:hover { background: #e6e3dd; }
-.zoom-label { width: 46px; text-align: center; font-size: 11.5px; color: #4a4b45; }
+.zoom button:hover { background: var(--canvas-bg); }
+.zoom-label { width: 46px; text-align: center; font-size: 11.5px; color: var(--ink-strong); }
 
 .btn {
   height: 30px; padding: 0 13px; display: inline-flex; align-items: center;
   border: 1px solid var(--border-strong); border-radius: 7px;
-  background: #fff; color: var(--fg); font: inherit; cursor: pointer;
+  background: var(--surface); color: var(--fg); font: inherit; cursor: pointer;
 }
-.btn:hover { background: #f6f4f0; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:hover { background: var(--surface-hover); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { background: var(--accent-ink); }
 .btn.is-disabled { opacity: .5; pointer-events: none; }
 ```
@@ -2677,7 +2704,7 @@ export function SidePanel() {
   display: flex; align-items: center; gap: 6px;
   height: var(--row-h); padding-right: 10px; cursor: pointer;
 }
-.tree-row:hover { background: #00000008; }
+.tree-row:hover { background: var(--row-hover); }
 .tree-row[data-selected] {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: inset 2px 0 0 var(--accent);
@@ -2686,7 +2713,7 @@ export function SidePanel() {
 
 .tree-eye {
   width: 16px; flex: none; border: 0; background: transparent; cursor: pointer;
-  display: grid; place-items: center; color: #9a9b93; font-size: 11px;
+  display: grid; place-items: center; color: var(--fg-5); font-size: 11px;
 }
 .tree-caret {
   width: 12px; flex: none; border: 0; background: transparent; cursor: pointer;
@@ -2696,7 +2723,7 @@ export function SidePanel() {
 
 .kind {
   flex: none; font-size: 9px; border-radius: 3px; padding: 1px 4px;
-  color: var(--kind-grp); background: #0000000a;
+  color: var(--kind-grp); background: var(--chip-bg);
 }
 .kind[data-kind="text"] { color: var(--kind-text); background: color-mix(in srgb, var(--kind-text) 8%, transparent); }
 .kind[data-kind="img"]  { color: var(--kind-img);  background: color-mix(in srgb, var(--kind-img) 8%, transparent); }
@@ -3012,7 +3039,7 @@ function Row({ k, v }: { k: string; v: string }) {
 }
 .ir {
   margin: 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 6px;
-  background: #f7f5f1; color: #4a4b45; font-size: 11px; line-height: 1.65;
+  background: var(--surface-code); color: var(--ink-strong); font-size: 11px; line-height: 1.65;
   white-space: pre; overflow-x: auto;
 }
 ```
@@ -3318,7 +3345,7 @@ function normalise(a: { x: number; y: number }, b: { x: number; y: number }): Re
 .tools { flex: none; display: flex; gap: 5px; }
 .tools button {
   height: 24px; padding: 0 10px; white-space: nowrap; border-radius: var(--radius);
-  border: 1px solid var(--border); background: #fff; color: var(--fg-2);
+  border: 1px solid var(--border); background: var(--surface); color: var(--fg-2);
   font: inherit; font-size: 12px; cursor: pointer;
 }
 .tools button[data-on] {
@@ -3339,7 +3366,7 @@ function normalise(a: { x: number; y: number }, b: { x: number; y: number }): Re
   background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
   animation: ants .8s linear infinite;
 }
-.marquee .h { position: absolute; width: 6px; height: 6px; background: #fff; border: 1.5px solid var(--accent); }
+.marquee .h { position: absolute; width: 6px; height: 6px; background: var(--surface); border: 1.5px solid var(--accent); }
 .marquee .tl { left: -3px; top: -3px; }
 .marquee .tr { right: -3px; top: -3px; }
 .marquee .bl { left: -3px; bottom: -3px; }
@@ -3814,15 +3841,15 @@ export function HistoryDrawer() {
 - [ ] **Step 5: 加样式**
 
 ```css
-.ops { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: #fff; }
+.ops { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface); }
 .ops-head {
   width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 11px;
   border: 0; background: transparent; font: inherit; cursor: pointer; text-align: left;
 }
-.ops-head .caret { font-size: 10px; color: #6e6f68; }
+.ops-head .caret { font-size: 10px; color: var(--fg-4); }
 .ops-toggle { font-size: 11px; color: var(--fg-3); }
 .ops-actions { display: flex; gap: 6px; padding: 0 11px 10px; }
-.ops-actions .btn { height: 26px; padding: 0 11px; border-radius: 6px; background: #f0eee9; }
+.ops-actions .btn { height: 26px; padding: 0 11px; border-radius: 6px; background: var(--surface-sunken); }
 .tag-ok {
   font-size: 10px; padding: 1px 5px; border-radius: 3px; color: var(--accent-ink);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -3833,7 +3860,7 @@ export function HistoryDrawer() {
   background: var(--panel);
 }
 .drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.drawer-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: #fff; }
+.drawer-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
 .drawer-row[data-head] { border-color: var(--accent); }
 .col-chat { position: relative; }  /* the drawer anchors to this column */
 ```
@@ -4085,17 +4112,17 @@ export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: strin
 .chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 14px 4px;
   display: flex; flex-direction: column; gap: 14px; }
 .msg { max-width: 90%; padding: 9px 11px; line-height: 1.55; border-radius: 10px; }
-.msg-user { align-self: flex-end; background: #eef0ec; border: 1px solid #e2e4de; border-radius: 10px 10px 3px 10px; }
-.msg-agent { align-self: flex-start; background: #fff; border: 1px solid var(--border); border-radius: 10px 10px 10px 3px; }
-.msg-err { align-self: flex-start; background: #fdf1f0; border: 1px solid #e9c6c2; color: #96322a; }
+.msg-user { align-self: flex-end; background: var(--msg-user-bg); border: 1px solid var(--msg-user-border); border-radius: 10px 10px 3px 10px; }
+.msg-agent { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px 10px 10px 3px; }
+.msg-err { align-self: flex-start; background: var(--err-bg); border: 1px solid var(--err-border); color: var(--err-ink); }
 .msg-pending { opacity: .6; font-style: italic; }
 .agent-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
 .agent-mark {
   width: 18px; height: 18px; border-radius: var(--radius); background: var(--accent);
-  color: #fff; display: grid; place-items: center; font-size: 9px;
+  color: var(--on-accent); display: grid; place-items: center; font-size: 9px;
 }
 .composer { flex: none; border-top: 1px solid var(--border); padding: 10px 12px 12px; }
-.composer-box { border: 1px solid var(--border-strong); border-radius: 9px; background: #fff; padding: 8px 9px; }
+.composer-box { border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); padding: 8px 9px; }
 .composer textarea {
   width: 100%; min-height: 40px; border: 0; outline: none; resize: none;
   font: inherit; color: inherit; background: transparent;
@@ -4251,15 +4278,15 @@ Expected: FAIL，找不到 `v7 · 3 图层`
 .degrade-pop {
   position: absolute; top: 26px; left: 0; z-index: 5; width: 320px;
   display: flex; flex-direction: column;
-  background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--warn);
-  border-radius: 8px; box-shadow: 0 4px 14px #00000014; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warn);
+  border-radius: 8px; box-shadow: 0 4px 14px var(--shadow-pop); padding: 4px;
 }
 .degrade-row {
   display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
   padding: 7px 8px; border: 0; border-radius: 6px; background: transparent;
   font: inherit; text-align: left; cursor: pointer;
 }
-.degrade-row:hover { background: #f6f4f0; }
+.degrade-row:hover { background: var(--surface-hover); }
 .degrade-row span { color: var(--warn-ink); font-size: 11.5px; }
 .degrade-row em { color: var(--fg-3); font-size: 11px; font-style: normal; }
 ```
