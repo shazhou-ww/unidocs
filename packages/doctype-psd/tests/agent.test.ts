@@ -62,7 +62,11 @@ describe("PSD 工具表", () => {
       type: "image", blob, mediaType: "image/png",
       altText: "preview 8x6 region=[0,0,6,8] v7",
     }]);
-    expect(result.structuredContent).toEqual({ width: 8, height: 6, region: [0, 0, 6, 8], version: 7 });
+    // 信封与 defaultQueryToolResult / docx 的 getImage 同形：{data, version}。
+    expect(result.structuredContent).toEqual({
+      data: { width: 8, height: 6, region: [0, 0, 6, 8] },
+      version: 7,
+    });
     expect(JSON.stringify(result)).not.toContain("$image");
   });
 
@@ -70,5 +74,15 @@ describe("PSD 工具表", () => {
     const t = tool("getPreview");
     if (t.kind !== "query" || !t.toResult) throw new Error("kind");
     expect(() => t.toResult!({ width: 8 } as never, 1)).toThrow(/SBlob/);
+  });
+
+  it("getPreview 的 region 也过窄化，形状不对就抛错", () => {
+    const t = tool("getPreview");
+    if (t.kind !== "query" || !t.toResult) throw new Error("kind");
+    const blob = createSBlob("a".repeat(64));
+    expect(() => t.toResult!(
+      { image: blob, width: 8, height: 6, region: [0, 0, 6] } as never,
+      1,
+    )).toThrow("getPreview region must be an array of 4 finite numbers");
   });
 });

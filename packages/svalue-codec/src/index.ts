@@ -13,6 +13,7 @@ export {
 	isSBlob,
 	refsFromSValue,
 	requireNumber,
+	requireNumberArray,
 	requireRecord,
 	requireSBlob,
 	requireString,

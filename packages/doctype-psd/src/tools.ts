@@ -1,5 +1,5 @@
 import type { AgentTool, JsonValue, SValueType } from "@unidocs/protocol";
-import { requireNumber, requireRecord, requireSBlob } from "@unidocs/svalue-codec";
+import { requireNumber, requireNumberArray, requireRecord, requireSBlob } from "@unidocs/svalue-codec";
 import type { PsdOp } from "./ops/index.js";
 import type { PsdQuery } from "./queries.js";
 
@@ -85,7 +85,7 @@ export const tools: readonly AgentTool<PsdQuery, PsdOp>[] = [
       const blob = requireSBlob(d.image, "getPreview image");
       const width = requireNumber(d.width, "width");
       const height = requireNumber(d.height, "height");
-      const region = d.region;
+      const region = requireNumberArray(d.region, "getPreview region", 4);
       return {
         content: [{
           type: "image",
@@ -95,7 +95,9 @@ export const tools: readonly AgentTool<PsdQuery, PsdOp>[] = [
           // 这点知识一直属于 PSD，此前却写在大模型适配层的 previewMeta 里。
           altText: `preview ${width}x${height} region=${JSON.stringify(region)} v${version}`,
         }],
-        structuredContent: { width, height, region, version } as JsonValue,
+        // 信封与 defaultQueryToolResult / docx 的 getImage 一致：查询结果放
+        // data，版本号在外面。同一次会话里模型只该见到一种形状。
+        structuredContent: { data: { width, height, region }, version } as JsonValue,
       };
     },
   },

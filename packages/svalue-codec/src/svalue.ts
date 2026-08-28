@@ -507,3 +507,25 @@ export function requireSBlob(v: SValue | undefined, what: string): SBlob {
   if (!isSBlob(v)) throw new TypeError(`${what} must be an SBlob`);
   return v;
 }
+
+/**
+ * 数字数组，可选地要求固定长度（矩形 [top,left,bottom,right] 这类）。
+ * 长度不对和元素不是有限数字报同一句话 —— 调用方要的就是"这个值不能用"。
+ */
+export function requireNumberArray(
+  v: SValue | undefined,
+  what: string,
+  length?: number,
+): readonly number[] {
+  const wanted = length === undefined ? "finite numbers" : `${length} finite numbers`;
+  const message = `${what} must be an array of ${wanted}`;
+  if (!Array.isArray(v) || (length !== undefined && v.length !== length)) {
+    throw new TypeError(message);
+  }
+  const out: number[] = [];
+  for (const item of v) {
+    if (typeof item !== "number" || !Number.isFinite(item)) throw new TypeError(message);
+    out.push(item);
+  }
+  return out;
+}
