@@ -19,6 +19,9 @@
     },
     {
       "path": "../protocol"
+    },
+    {
+      "path": "../doctype-server-common"
     }
   ]
 }

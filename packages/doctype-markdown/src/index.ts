@@ -3,6 +3,7 @@ export {
 } from "./markdown.js";
 export {
   createMarkdownDocumentAgent,
+  markdownAgent,
 } from "./agent.js";
 export type { MarkdownDocumentTypeFactory } from "./markdown.js";
 export type { MarkdownDocumentAgentFactory } from "./agent.js";

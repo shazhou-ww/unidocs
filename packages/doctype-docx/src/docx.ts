@@ -2,7 +2,7 @@
 
 import { Document } from "@ariadng/office/docx";
 import { isSBlob } from "@unidocs/svalue-codec";
-import type { DocumentTypeFactory, SBlob } from "@unidocs/protocol";
+import type { AgentToolDefinition, DocumentTypeFactory, SBlob } from "@unidocs/protocol";
 import { tools, instructions } from "./tools.js";
 import {
   insertImage,
@@ -212,7 +212,15 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
 
     contentType: DOCX_CONTENT_TYPE,
 
-    tools,
+    // `DocumentType.tools` is still typed as `Record<string, AgentToolDefinition>`
+    // (spec's old shape); `tools` here is the new `AgentTool[]` table (this
+    // task). The field is dead — nothing reads `DocumentType.tools` any more,
+    // `createDocxDocumentAgent`/`docxAgent` are the only consumers — and
+    // Task 10 deletes it outright (same situation doctype-psd's `doctype.ts`
+    // papers over with a whole-object cast; this narrower per-property cast
+    // avoids losing contextual parameter typing on `query`/`apply`/`formats`
+    // above, which rely on inference from `DocumentType`'s shape).
+    tools: tools as unknown as Record<string, AgentToolDefinition>,
     instructions,
   };
 };
