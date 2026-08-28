@@ -2,7 +2,8 @@
  * Markdown DocumentType implementation.
  */
 
-import type { DocumentTypeFactory } from "@unidocs/protocol";
+import type { AgentToolDefinition, DocumentTypeFactory } from "@unidocs/protocol";
+import { instructions, tools } from "./agent.js";
 import type { MDoc, MQuery, MOp } from "./types.js";
 
 export type MarkdownDocumentTypeFactory = DocumentTypeFactory<MDoc, MQuery, MOp>;
@@ -107,78 +108,14 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_context
 
   contentType: "text/markdown; charset=utf-8",
 
-  tools: {
-    getContent: {
-      name: "query_getContent",
-      description: "Get the full markdown content",
-      inputSchema: {},
-    },
-    getSection: {
-      name: "query_getSection",
-      description: "Get a specific section by heading",
-      inputSchema: {
-        type: "object",
-        properties: { heading: { type: "string" } },
-        required: ["heading"],
-      },
-    },
-    getHeadings: {
-      name: "query_getHeadings",
-      description: "List all headings in the document",
-      inputSchema: {},
-    },
-    setContent: {
-      name: "apply_setContent",
-      description: "Replace the entire document content",
-      inputSchema: {
-        type: "object",
-        properties: { content: { type: "string" } },
-        required: ["content"],
-      },
-    },
-    appendSection: {
-      name: "apply_appendSection",
-      description: "Append a new section with heading and content",
-      inputSchema: {
-        type: "object",
-        properties: {
-          heading: { type: "string" },
-          content: { type: "string" },
-        },
-        required: ["heading", "content"],
-      },
-    },
-    replaceSection: {
-      name: "apply_replaceSection",
-      description: "Replace the content of an existing section",
-      inputSchema: {
-        type: "object",
-        properties: {
-          heading: { type: "string" },
-          content: { type: "string" },
-        },
-        required: ["heading", "content"],
-      },
-    },
-    deleteSection: {
-      name: "apply_deleteSection",
-      description: "Delete a section by heading",
-      inputSchema: {
-        type: "object",
-        properties: { heading: { type: "string" } },
-        required: ["heading"],
-      },
-    },
-  },
+  // `DocumentType.tools` is still typed as `Record<string, AgentToolDefinition>`
+  // (spec's old shape); `tools` here is the new `AgentTool[]` table from
+  // `agent.ts` (Task 8). The field is dead — nothing reads `DocumentType.tools`
+  // any more, `createMarkdownDocumentAgent`/`markdownAgent` are the only
+  // consumers — and Task 10 deletes it outright (same situation as
+  // doctype-docx's `docx.ts`, which carries the identical narrow cast so as
+  // not to lose contextual parameter typing on `query`/`apply` above).
+  tools: tools as unknown as Record<string, AgentToolDefinition>,
 
-  instructions: `You are a Markdown document operator. You have tools to query and edit markdown documents.
-
-When editing:
-- Use getContent to see the full document
-- Use getHeadings to understand structure
-- Use getSection to read a specific section
-- Use setContent to replace the entire document
-- Use appendSection to add new sections
-- Use replaceSection to modify existing sections
-- Use deleteSection to remove sections`,
+  instructions,
 });
