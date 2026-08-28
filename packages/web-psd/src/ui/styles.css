@@ -23,6 +23,23 @@
   --kind-adj: #99711a;   /* not in the design — adjustment layers need a badge too */
   --canvas-bg: #e6e3dd;
   --canvas-dot: #d3cfc7;
+  /* Surfaces and inks not covered by Task 7's semantic palette. */
+  --surface: #fff;            /* raised: buttons, cards, chat bubbles, popovers */
+  --surface-sunken: #f0eee9;  /* inset controls: the zoom pill, secondary buttons */
+  --surface-hover: #f6f4f0;   /* hover state on a raised surface */
+  --surface-code: #f7f5f1;    /* code / IR blocks */
+  --on-accent: #fff;          /* text and glyphs on an accent fill */
+  --ink-strong: #4a4b45;      /* zoom label, code text */
+  --fg-4: #6e6f68;            /* control glyphs — dimmer than --fg-3 */
+  --fg-5: #9a9b93;            /* dimmest: the layer-row eye */
+  --row-hover: #00000008;     /* subtle row hover wash */
+  --chip-bg: #0000000a;       /* neutral chip fill */
+  --shadow-pop: #00000014;    /* popover shadow */
+  --msg-user-bg: #eef0ec;     /* user chat bubble */
+  --msg-user-border: #e2e4de;
+  --err-bg: #fdf1f0;
+  --err-border: #e9c6c2;
+  --err-ink: #96322a;
   --font: Barlow, Helvetica, sans-serif;
   --mono: "Roboto Mono", monospace;
   --fs: 13px;
@@ -158,7 +175,7 @@ a:hover { color: var(--accent); }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand-mark {
   width: 22px; height: 22px; border-radius: 6px;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--on-accent);
   display: grid; place-items: center; font-size: 11px;
 }
 .brand-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
@@ -168,22 +185,22 @@ a:hover { color: var(--accent); }
 
 .zoom {
   display: flex; align-items: center; gap: 2px; padding: 2px;
-  background: #f0eee9; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface-sunken); border: 1px solid var(--border); border-radius: 7px;
 }
 .zoom button {
   width: 24px; height: 22px; display: grid; place-items: center;
   border: 0; background: transparent; border-radius: var(--radius);
-  color: #6e6f68; font-family: var(--mono); font-size: 13px; cursor: pointer;
+  color: var(--fg-4); font-family: var(--mono); font-size: 13px; cursor: pointer;
 }
-.zoom button:hover { background: #e6e3dd; }
-.zoom-label { width: 46px; text-align: center; font-size: 11.5px; color: #4a4b45; }
+.zoom button:hover { background: var(--canvas-bg); }
+.zoom-label { width: 46px; text-align: center; font-size: 11.5px; color: var(--ink-strong); }
 
 .btn {
   height: 30px; padding: 0 13px; display: inline-flex; align-items: center;
   border: 1px solid var(--border-strong); border-radius: 7px;
-  background: #fff; color: var(--fg); font: inherit; cursor: pointer;
+  background: var(--surface); color: var(--fg); font: inherit; cursor: pointer;
 }
-.btn:hover { background: #f6f4f0; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:hover { background: var(--surface-hover); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { background: var(--accent-ink); }
 .btn.is-disabled { opacity: .5; pointer-events: none; }
