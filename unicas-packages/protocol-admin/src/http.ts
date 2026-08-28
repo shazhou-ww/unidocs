@@ -93,10 +93,10 @@ export interface CasAdminCreateMemberInvitationRequest {
 
 export type CasAdminCreateMemberInvitationResponse =
   | {
-      readonly invitation: CasMemberInvitation;
-      /** Returned once; CAS stores only the token hash. */
-      readonly acceptUrl: string;
-    }
+    readonly invitation: CasMemberInvitation;
+    /** Returned once; CAS stores only the token hash. */
+    readonly acceptUrl: string;
+  }
   | CasAdminErrorResponse;
 
 export interface CasAdminAcceptMemberInvitationRequest {
@@ -183,10 +183,10 @@ export interface CasAdminListRootDomainRefsRequest {
 
 export type CasAdminListRootDomainRefsResponse =
   | {
-      readonly revision: number;
-      readonly refs: readonly CasRootRefBalance[];
-      readonly nextCursor: string | null;
-    }
+    readonly revision: number;
+    readonly refs: readonly CasRootRefBalance[];
+    readonly nextCursor: string | null;
+  }
   | CasAdminErrorResponse;
 
 export interface CasAdminListRootDomainEventsRequest {
@@ -200,10 +200,10 @@ export interface CasAdminListRootDomainEventsRequest {
 
 export type CasAdminListRootDomainEventsResponse =
   | {
-      readonly events: readonly CasRootRefEvent[];
-      readonly latestRevision: number;
-      readonly nextAfter: number;
-    }
+    readonly events: readonly CasRootRefEvent[];
+    readonly latestRevision: number;
+    readonly nextAfter: number;
+  }
   | CasAdminErrorResponse;
 
 export interface CasAdminEndpointContracts {
