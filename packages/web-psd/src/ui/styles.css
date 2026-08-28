@@ -323,3 +323,29 @@ a:hover { color: var(--accent); }
 .marquee .tr { right: -3px; top: -3px; }
 .marquee .bl { left: -3px; bottom: -3px; }
 .marquee .br { right: -3px; bottom: -3px; }
+
+.drawer-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+
+.ops { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface); }
+.ops-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+  border: 0; background: transparent; font: inherit; cursor: pointer; text-align: left;
+}
+.ops-head .caret { font-size: 10px; color: var(--fg-4); }
+.ops-toggle { font-size: 11px; color: var(--fg-3); }
+.ops-actions { display: flex; gap: 6px; padding: 0 11px 10px; }
+.ops-actions .btn { height: 26px; padding: 0 11px; border-radius: 6px; background: var(--surface-sunken); }
+.tag-ok {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px; color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.drawer {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+  background: var(--panel);
+}
+.drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.drawer-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
+.drawer-row[data-head] { border-color: var(--accent); }
+.col-chat { position: relative; }  /* the drawer anchors to this column */
+.ir + .ir { margin-top: 6px; }
