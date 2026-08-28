@@ -1,6 +1,7 @@
 import { countLayers } from "../../doc-model.js";
 import { setState, useUiState } from "../store.js";
 import { LayerTree } from "./layer-tree.js";
+import { PropsPane } from "./props-pane.js";
 
 export function SidePanel() {
   const s = useUiState();
@@ -17,7 +18,7 @@ export function SidePanel() {
           {s.pane === "layers" ? `${total} 图层` : `${s.selection.length} 已选`}
         </span>
       </div>
-      {s.pane === "layers" ? <LayerTree /> : null}
+      {s.pane === "layers" ? <LayerTree /> : <PropsPane />}
     </aside>
   );
 }
