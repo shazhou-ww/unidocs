@@ -12,6 +12,28 @@ export const STACK_ACTION_ENTRIES = Object.freeze({
   smoke: ["deploy", "smoke.mjs"],
 });
 
+/**
+ * `pnpm dev` 省略栈名时用它。本地开发绝大多数时候就是这个栈，让最常见的
+ * 那条命令不必每次重复它。
+ */
+export const DEFAULT_DEV_STACK = "unidocs-cloudflare";
+
+/**
+ * 把 `<action> [stack] [...args]` 里的栈名和其余参数分开。
+ *
+ * 第一个 token 是已知栈名就用它，否则它属于下游（doc type、`--cas` 之类），
+ * 整串原样转发：`pnpm dev psd` 等价于 `pnpm dev unidocs-cloudflare psd`。
+ *
+ * 只有 `dev` 会这样兜底。`deploy` / `smoke` 缺栈名就是缺栈名 —— 往一个猜出来
+ * 的栈上静默部署是不能接受的。
+ */
+export function resolveInvocation(action, rest, availableStacks) {
+  const [first, ...tail] = rest;
+  if (availableStacks.includes(first)) return { stack: first, args: tail };
+  if (action !== "dev") return { stack: undefined, args: rest };
+  return { stack: DEFAULT_DEV_STACK, args: rest };
+}
+
 export function resolveStackEntry(stacksRoot, action, stack) {
   const parts = STACK_ACTION_ENTRIES[action];
   if (!parts) {
@@ -33,12 +55,17 @@ export async function listStacks(stacksRoot = STACKS_ROOT) {
 }
 
 async function main() {
-  const [action, stack, ...args] = process.argv.slice(2);
+  const [action, ...rest] = process.argv.slice(2);
+  const available = await listStacks();
+  const { stack, args } = STACK_ACTION_ENTRIES[action]
+    ? resolveInvocation(action, rest, available)
+    : { stack: undefined, args: rest };
   if (!STACK_ACTION_ENTRIES[action] || !stack) {
-    const available = await listStacks();
     console.error(
-      "Usage: pnpm <dev|deploy|smoke> <stack> [...args]\n\n" +
-      `Available stacks: ${available.join(", ") || "none"}`,
+      "Usage: pnpm dev [stack] [docType ...] [--cas <local|remote>]\n" +
+      "       pnpm <deploy|smoke> <stack> [...args]\n\n" +
+      `Available stacks: ${available.join(", ") || "none"}\n` +
+      `dev defaults to: ${DEFAULT_DEV_STACK}`,
     );
     process.exitCode = 1;
     return;

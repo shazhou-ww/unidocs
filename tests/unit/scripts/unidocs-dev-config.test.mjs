@@ -7,9 +7,16 @@ import { loadRemoteCasConfig, parseDevArgs } from "../../../scripts/unidocs-dev-
 
 describe("UniDocs local CAS configuration", () => {
   it("defaults interactive development to remote CAS", () => {
-    expect(parseDevArgs(["docx"], {})).toEqual({ casMode: "remote", docTypes: ["docx"] });
+    // 本地启动默认走 local CAS：不带凭据也能起来才是能用的默认值。
+    expect(parseDevArgs(["docx"], {})).toEqual({ casMode: "local", docTypes: ["docx"] });
+    expect(parseDevArgs([], {})).toEqual({ casMode: "local", docTypes: [] });
+    expect(parseDevArgs(["--cas", "remote", "markdown"], {}))
+      .toEqual({ casMode: "remote", docTypes: ["markdown"] });
     expect(parseDevArgs(["--cas", "local", "markdown"], {}))
       .toEqual({ casMode: "local", docTypes: ["markdown"] });
+    // 环境变量仍然优先于默认值。
+    expect(parseDevArgs(["docx"], { UNIDOCS_CAS_MODE: "remote" }))
+      .toEqual({ casMode: "remote", docTypes: ["docx"] });
   });
 
   it("loads a persistent developer stack fixture", async () => {

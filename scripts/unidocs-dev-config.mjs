@@ -3,7 +3,11 @@ import { resolve } from "node:path";
 
 export function parseDevArgs(argv, env = process.env) {
   const options = {
-    casMode: env.UNIDOCS_CAS_MODE ?? "remote",
+    // 本地启动默认 local：远端 CAS 需要一份注册好的开发者栈凭据
+    // (`.wrangler/unidocs/stack.json`)，新克隆的仓库没有它，`pnpm dev` 会
+    // 直接失败。默认值应该是「不配任何东西也能起来」的那个。
+    // 需要远端时显式 `--cas remote`，或设 UNIDOCS_CAS_MODE=remote。
+    casMode: env.UNIDOCS_CAS_MODE ?? "local",
     docTypes: [],
   };
   for (let index = 0; index < argv.length; index++) {

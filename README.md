@@ -369,12 +369,17 @@ signing key.
 ## Development
 
 ```bash
-pnpm dev unidocs-cloudflare                     # local Gateway/Docs + remote UniCAS
-pnpm dev unidocs-cloudflare docx                # DOCX only
-pnpm dev unidocs-cloudflare docx markdown       # explicit Doc type selection
-pnpm dev unidocs-cloudflare --cas local         # hermetic local UniCAS
+pnpm dev                                        # local Gateway/Docs + local UniCAS
+pnpm dev docx                                   # DOCX only
+pnpm dev docx markdown                          # explicit Doc type selection
+pnpm dev --cas remote                           # deployed UniCAS edge instead
 pnpm dev unidocs-cloudflare --docker            # run the local stack in Compose
 ```
+
+The stack name may be omitted: `pnpm dev` alone means
+`pnpm dev unidocs-cloudflare`. A first positional argument that is not a known
+stack (`docx`, `--cas`, …) belongs to the stack, so it is forwarded unchanged.
+`deploy` and `smoke` never guess — they still require an explicit stack.
 
 The Miniflare runtime injects one static `DOC_SERVICES_JSON` containing only
 the selected Doc services and generates an ephemeral ES256 fixture unless one
@@ -389,9 +394,9 @@ POST http://127.0.0.1:8787/tenants/{tenantId}/docs/markdown/
 ### Local Azure stack
 
 ```bash
-pnpm dev unidocs-azure              # Gateway :41787 + Docs + remote UniCAS
+pnpm dev unidocs-azure              # Gateway :41787 + Docs + local UniCAS
 pnpm dev unidocs-azure markdown     # Markdown only
-pnpm dev unidocs-azure --cas local  # embedded local UniCAS
+pnpm dev unidocs-azure --cas remote # deployed UniCAS edge instead
 ```
 
 Docker must be running for Postgres on `:5433`. Azurite runs as a Node child
@@ -399,11 +404,13 @@ process on `:10000`. Startup creates and migrates independent
 `unidocs_gateway`, `unidocs_markdown`, and `unidocs_docx` databases; replicas
 of one Doc service share only that service's database and Blob containers.
 
-Interactive development defaults to the deployed UniCAS edge and reads the
-developer's registered stack credential from `.wrangler/unidocs/stack.json`.
-Set `UNIDOCS_CAS_ORIGIN` or `UNIDOCS_CAS_STACK_CREDENTIAL` to override those
-defaults. Tests and explicit `--cas local` runs use an embedded ephemeral
-UniCAS and remain independent of the network.
+Interactive development defaults to an embedded ephemeral UniCAS, so a fresh
+clone starts with nothing configured. `--cas remote` switches to a UniCAS edge
+and requires a registered stack credential at `.wrangler/unidocs/stack.json`;
+`UNIDOCS_CAS_ORIGIN` and `UNIDOCS_CAS_STACK_CREDENTIAL` override where those
+come from — pointing `UNIDOCS_CAS_ORIGIN` at a locally running `pnpm dev
+unicas` exercises the same registered-stack path without the network. Tests
+always use the embedded UniCAS.
 
 Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `stacks/unidocs-azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side. `pnpm dev unidocs-azure` prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `stacks/unidocs-azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
 

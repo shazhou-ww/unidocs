@@ -146,16 +146,22 @@ it is not the human-readable `unidocs-azure` stack selector.
 
 ## Local UniDocs configuration
 
-Interactive development defaults to remote UniCAS:
+Interactive development defaults to an embedded ephemeral UniCAS, so a fresh
+clone needs no configuration at all:
 
 ```text
-pnpm dev unidocs-cloudflare
+pnpm dev                      # = pnpm dev unidocs-cloudflare
 pnpm dev unidocs-azure
 ```
 
-It reads a developer stack credential from the gitignored
-`.wrangler/unidocs/stack.json`. Obtain the stack registration and private key
-through the UniCAS admin/possession-proof flow, then write this shape locally:
+The stack name is optional for `dev` only, and only when the first argument is
+not itself a stack name; `deploy` and `smoke` always require one, because
+silently deploying to a guessed stack is not acceptable.
+
+`--cas remote` switches to a UniCAS edge and reads a developer stack credential
+from the gitignored `.wrangler/unidocs/stack.json`. Obtain the stack
+registration and private key through the UniCAS admin/possession-proof flow,
+then write this shape locally:
 
 ```json
 {
@@ -176,20 +182,21 @@ Optional process variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `UNIDOCS_CAS_MODE` | `remote` | `remote` or `local` |
-| `UNIDOCS_CAS_ORIGIN` | `https://unicas.shazhou.work` | Remote UniCAS origin |
+| `UNIDOCS_CAS_MODE` | `local` | `remote` or `local` |
+| `UNIDOCS_CAS_ORIGIN` | `https://unicas.shazhou.work` | UniCAS edge origin used by `--cas remote`; may point at a locally running `pnpm dev unicas` |
 | `UNIDOCS_CAS_STACK_CREDENTIAL` | `.wrangler/unidocs/stack.json` | Credential path |
 | `UNIDOCS_LOCAL_HOST` | `127.0.0.1` | Local bind host |
 | `LLM_API_KEY` | unset | PSD Operator credential |
 | `LLM_BASE_URL` | provider default | PSD provider endpoint |
 | `LLM_MODEL` | provider default | PSD model |
 
-Command-line `--cas local` overrides the default and creates an ephemeral local
-UniCAS. It does not silently fall back when remote configuration is missing:
+Command-line `--cas remote` overrides the default. It does not silently fall
+back to local when the credential is missing or the edge is unreachable — it
+fails and says which:
 
 ```text
-pnpm dev unidocs-cloudflare --cas local
-pnpm dev unidocs-azure --cas local
+pnpm dev --cas remote
+pnpm dev unidocs-azure --cas remote
 ```
 
 For host execution, PSD settings may instead be placed in the gitignored
