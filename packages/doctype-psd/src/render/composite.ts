@@ -253,15 +253,24 @@ export async function renderRegion(doc: PsdDoc, rect: [number, number, number, n
 }
 
 /**
- * Render a single layer cropped to its bounds. Raster/group layers are rendered
- * in isolation (transparent backdrop); adjustment/clip layers — which have no
- * standalone pixels — or `context:true` fall back to the composite cropped to
- * the layer's bounds.
+ * Render a single layer cropped to its bounds. Every layer that owns pixels of
+ * its own — raster, group, and the metadata-bearing types that still render
+ * from baked pixels (text / fill / smartObject) — is rendered in isolation
+ * (transparent backdrop). Only `adjustment` layers, which have no standalone
+ * pixels at all (they transform whatever backdrop they are given), and
+ * `context:true` fall back to the composite cropped to the layer's bounds.
+ *
+ * The type test is deliberately a single negative: `applyLayer`'s pixel branch
+ * is type-agnostic, so listing the isolatable types positively silently
+ * regresses every layer type added later. Retyping raster layers as
+ * "text"/"fill"/"smartObject" on import did exactly that once already —
+ * `query_layer_image` started returning the composited backdrop cropped to the
+ * layer's bounds instead of the isolated layer.
  */
 export async function renderLayer(doc: PsdDoc, layerId: string, opts: { context?: boolean } = {}, ctx?: RenderCtx): Promise<Pixels> {
   const layer = findLayer(doc.layers, layerId);
   if (!layer) throw new Error(`layer not found: ${layerId}`);
-  const isolatable = (layer.type === "raster" || layer.type === "group") && !opts.context;
+  const isolatable = layer.type !== "adjustment" && !opts.context;
   const source: PsdDoc = isolatable ? { canvas: doc.canvas, layers: [layer] } : doc;
   return renderRegion(source, layer.bounds, ctx);
 }
