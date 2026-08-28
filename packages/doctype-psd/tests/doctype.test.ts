@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { collectSBlobRefs, createSBlob, decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
 import type { DocumentTypeContext, SBlob, SBlobData, SValue } from "@unidocs/protocol";
 import { createPsdDocumentType, type PsdStoredDoc } from "../src/doctype.js";
+import { psdAgent } from "../src/agent.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));
 
@@ -62,12 +63,15 @@ describe("createPsdDocumentType", () => {
     expect(layers.map((layer: { name: string }) => layer.name)).toContain("red-box");
   });
 
-  it("exposes prefixed tool names for name-prefix routing + contentType", () => {
+  it("exposes the un-prefixed tool table + contentType", () => {
     expect(dt.contentType).toBe("image/vnd.adobe.photoshop");
-    expect(dt.tools.add_layer.name).toBe("apply_add_layer");
-    expect((dt.tools.add_layer as any).op).toBeUndefined();
-    expect(dt.tools.getLayers.name).toBe("query_getLayers");
-    expect((dt.tools.getLayers as any).op).toBeUndefined();
+    // 工具表挂在 DocumentAgent 上，不在 DocumentType 上 —— DocumentType.tools
+    // 是有意删掉的旧契约。这条守的还是原来那三件事：两个代表性工具名在，
+    // 且没有任何 query_ / apply_ 前缀。
+    const names = psdAgent.tools.map(t => t.name);
+    expect(names).toContain("addLayer");
+    expect(names).toContain("getLayers");
+    expect(names.some(n => n.startsWith("query_") || n.startsWith("apply_"))).toBe(false);
   });
 
   it("has no resolve, serialize/deserialize, or refsFrom* hooks", () => {

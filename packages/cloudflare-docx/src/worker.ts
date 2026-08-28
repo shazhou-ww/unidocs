@@ -15,8 +15,8 @@ import {
   type EditorEnv,
 } from "@unidocs/cloudflare-sdk";
 import {
-  createDocxDocumentAgent,
   createDocxDocumentType,
+  docxAgent,
 } from "@unidocs/doctype-docx";
 import {
   createDocTypeHandler,
@@ -30,10 +30,14 @@ const authConfig = new DocAuthConfigCache("docx");
 // Generate Editor and Operator Durable Objects from the docx DocumentType
 export const DocxEditor = createEditorDO(docxFactory);
 export const DocxOperator = createOperatorDO({
-  agentFactory: createDocxDocumentAgent,
-  llmProvider: async () => {
-    throw new Error("LLM provider not configured. Set env.LLM_PROVIDER_URL and env.LLM_API_KEY.");
-  },
+  agent: docxAgent,
+  // Placeholder, unchanged in meaning: this worker has no model configured,
+  // so the first /run fails with a clear message instead of at boot.
+  provider: () => ({
+    complete: async () => {
+      throw new Error("LLM provider not configured. Set LLM_API_KEY in this worker's env.");
+    },
+  }),
   getEditorStub: (env: Env, sessionId) => {
     const id = env.DOCX_EDITOR.idFromName(sessionId);
     return env.DOCX_EDITOR.get(id);

@@ -1,47 +1,70 @@
 /**
  * Tool definitions and operator instructions for the DOCX document type.
+ *
+ * Same shape as doctype-psd (see ../doctype-psd/src/tools.ts): a plain data
+ * array of `AgentTool`s. `dQuery`/`dOp` cover the 25 tools whose arguments
+ * pass straight through as the query/op payload; `getImage`, `insertImage`,
+ * and `replaceImage` need custom logic (image content parts, SBlob refs)
+ * and are written out by hand.
  */
+import type { AgentTool, JsonValue, SValueType } from "@unidocs/protocol";
+import { createSBlob, requireNumber, requireRecord, requireSBlob, requireString, toJsonValue } from "@unidocs/svalue-codec";
+import type { DocxOperation, DocxQuery } from "./types.js";
 
-type ToolDef = {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-};
+/**
+ * `toQuery` for the plain-passthrough read tools: {} never masks a default,
+ * so an argument-less call comes out as `{kind}` rather than `{kind, payload:{}}`.
+ */
+const dQuery = (kind: string) =>
+  (args: Readonly<Record<string, JsonValue>>) =>
+    (Object.keys(args).length === 0 ? { kind } : { kind, payload: args }) as unknown as SValueType<DocxQuery>;
 
-type ToolsMap = Record<string, ToolDef>;
+/** `toOps` for the plain-passthrough write tools: arguments become the op payload verbatim. */
+const dOp = (kind: string) =>
+  (args: Readonly<Record<string, JsonValue>>) =>
+    [{ kind, payload: args }] as unknown as readonly SValueType<DocxOperation>[];
 
-export const tools: ToolsMap = {
+export const tools: readonly AgentTool<DocxQuery, DocxOperation>[] = [
   // ─── Queries ─────────────────────────────────────────────────────
-  getText: {
-    name: "query_getText",
+  {
+    kind: "query",
+    name: "getText",
     description: "Get the document's plain text content",
-    inputSchema: {},
+    inputSchema: { type: "object", properties: {} },
+    toQuery: dQuery("getText"),
   },
-  getParagraphs: {
-    name: "query_getParagraphs",
+  {
+    kind: "query",
+    name: "getParagraphs",
     description: "List all paragraphs with styles and text runs",
-    inputSchema: {},
+    inputSchema: { type: "object", properties: {} },
+    toQuery: dQuery("getParagraphs"),
   },
-  getParagraph: {
-    name: "query_getParagraph",
+  {
+    kind: "query",
+    name: "getParagraph",
     description: "Get one paragraph by its zero-based index",
     inputSchema: {
       type: "object",
       properties: { index: { type: "integer", minimum: 0 } },
       required: ["index"],
     },
+    toQuery: dQuery("getParagraph"),
   },
-  getParagraphFormat: {
-    name: "query_getParagraphFormat",
+  {
+    kind: "query",
+    name: "getParagraphFormat",
     description: "Get the effective formatting Word renders for one paragraph",
     inputSchema: {
       type: "object",
       properties: { paragraphIndex: { type: "integer", minimum: 0 } },
       required: ["paragraphIndex"],
     },
+    toQuery: dQuery("getParagraphFormat"),
   },
-  getRunFormat: {
-    name: "query_getRunFormat",
+  {
+    kind: "query",
+    name: "getRunFormat",
     description: "Get the effective formatting Word renders for one text run",
     inputSchema: {
       type: "object",
@@ -51,67 +74,111 @@ export const tools: ToolsMap = {
       },
       required: ["paragraphIndex", "runIndex"],
     },
+    toQuery: dQuery("getRunFormat"),
   },
-  getParagraphList: {
-    name: "query_getParagraphList",
+  {
+    kind: "query",
+    name: "getParagraphList",
     description: "Get resolved list metadata for one paragraph, or null if it is not a list item",
     inputSchema: {
       type: "object",
       properties: { paragraphIndex: { type: "integer", minimum: 0 } },
       required: ["paragraphIndex"],
     },
+    toQuery: dQuery("getParagraphList"),
   },
-  getTables: {
-    name: "query_getTables",
+  {
+    kind: "query",
+    name: "getTables",
     description: "List all tables with dimensions (rows, cols) and style",
-    inputSchema: {},
+    inputSchema: { type: "object", properties: {} },
+    toQuery: dQuery("getTables"),
   },
-  getTable: {
-    name: "query_getTable",
+  {
+    kind: "query",
+    name: "getTable",
     description: "Get one table by index, including all rows and cell text",
     inputSchema: {
       type: "object",
       properties: { index: { type: "integer", minimum: 0 } },
       required: ["index"],
     },
+    toQuery: dQuery("getTable"),
   },
-  getHeaders: {
-    name: "query_getHeaders",
+  {
+    kind: "query",
+    name: "getHeaders",
     description: "List document headers with type and text",
-    inputSchema: {},
+    inputSchema: { type: "object", properties: {} },
+    toQuery: dQuery("getHeaders"),
   },
-  getFooters: {
-    name: "query_getFooters",
+  {
+    kind: "query",
+    name: "getFooters",
     description: "List document footers with type and text",
-    inputSchema: {},
+    inputSchema: { type: "object", properties: {} },
+    toQuery: dQuery("getFooters"),
   },
-  getImages: {
-    name: "query_getImages",
+  {
+    kind: "query",
+    name: "getImages",
     description: "List inline and anchored images (index, format, partName, size). Does not return CAS hashes.",
-    inputSchema: {},
+    inputSchema: { type: "object", properties: {} },
+    toQuery: dQuery("getImages"),
   },
-  getImage: {
-    name: "query_getImage",
+  {
+    kind: "query",
+    name: "getImage",
     description: "Get one image by its zero-based index",
     inputSchema: {
       type: "object",
       properties: { index: { type: "integer", minimum: 0 } },
       required: ["index"],
     },
+    // The platform query for image *content* is "getImageContent" — it
+    // merges the metadata (index/partName/format/...) with the manifest
+    // SBlob (docx.ts's top-level query handler). The tool the model calls
+    // is still named "getImage".
+    toQuery: (args) => ({ kind: "getImageContent", payload: args }) as unknown as SValueType<DocxQuery>,
+    toResult: (data, version) => {
+      const record = requireRecord(data, "getImage 结果");
+      const blob = requireSBlob(record.blob, "getImage blob");
+      const format = record.format;
+      const mediaType = format === "png"
+        ? "image/png"
+        : format === "jpeg"
+          ? "image/jpeg"
+          : null;
+      if (mediaType === null) throw new Error(`Unsupported agent image format: ${String(format)}`);
+      const altText = typeof record.altText === "string" ? record.altText : undefined;
+      const { blob: _blob, ...metadata } = record;
+      return {
+        structuredContent: toJsonValue({ data: metadata, version }),
+        content: [{
+          type: "image",
+          blob,
+          mediaType,
+          ...(altText !== undefined ? { altText } : {}),
+        }],
+      };
+    },
   },
-  getImageByPartName: {
-    name: "query_getImageByPartName",
+  {
+    kind: "query",
+    name: "getImageByPartName",
     description: "Find an image by its part name (e.g. '/word/media/image1.png')",
     inputSchema: {
       type: "object",
       properties: { partName: { type: "string" } },
       required: ["partName"],
     },
+    toQuery: dQuery("getImageByPartName"),
   },
 
   // ─── Paragraph operations ────────────────────────────────────────
-  appendParagraph: {
-    name: "apply_appendParagraph",
+  {
+    kind: "op",
+    name: "appendParagraph",
     description: "Append a paragraph to the document",
     inputSchema: {
       type: "object",
@@ -128,9 +195,11 @@ export const tools: ToolsMap = {
       },
       required: ["text"],
     },
+    toOps: dOp("appendParagraph"),
   },
-  setRunText: {
-    name: "apply_setRunText",
+  {
+    kind: "op",
+    name: "setRunText",
     description: "Replace the text of one run in a paragraph, preserving its formatting",
     inputSchema: {
       type: "object",
@@ -141,11 +210,13 @@ export const tools: ToolsMap = {
       },
       required: ["paragraphIndex", "runIndex", "text"],
     },
+    toOps: dOp("setRunText"),
   },
 
   // ─── Table operations ────────────────────────────────────────────
-  addTable: {
-    name: "apply_addTable",
+  {
+    kind: "op",
+    name: "addTable",
     description: "Add a table with the given number of rows and columns",
     inputSchema: {
       type: "object",
@@ -161,9 +232,11 @@ export const tools: ToolsMap = {
       },
       required: ["rows", "cols"],
     },
+    toOps: dOp("addTable"),
   },
-  setCellText: {
-    name: "apply_setCellText",
+  {
+    kind: "op",
+    name: "setCellText",
     description: "Set the text of a specific table cell",
     inputSchema: {
       type: "object",
@@ -175,9 +248,11 @@ export const tools: ToolsMap = {
       },
       required: ["tableIndex", "row", "col", "text"],
     },
+    toOps: dOp("setCellText"),
   },
-  addTableRow: {
-    name: "apply_addTableRow",
+  {
+    kind: "op",
+    name: "addTableRow",
     description: "Add a row to a table, copying cell formatting from the last row",
     inputSchema: {
       type: "object",
@@ -186,11 +261,13 @@ export const tools: ToolsMap = {
       },
       required: ["tableIndex"],
     },
+    toOps: dOp("addTableRow"),
   },
 
   // ─── List operations ─────────────────────────────────────────────
-  addBulletList: {
-    name: "apply_addBulletList",
+  {
+    kind: "op",
+    name: "addBulletList",
     description: "Add a bullet list. Items are level-0 unless given as { text, level }.",
     inputSchema: {
       type: "object",
@@ -214,9 +291,11 @@ export const tools: ToolsMap = {
       },
       required: ["items"],
     },
+    toOps: dOp("addBulletList"),
   },
-  addNumberedList: {
-    name: "apply_addNumberedList",
+  {
+    kind: "op",
+    name: "addNumberedList",
     description: "Add a numbered list. Format options: decimal, lowerLetter, upperLetter, lowerRoman, upperRoman.",
     inputSchema: {
       type: "object",
@@ -244,11 +323,13 @@ export const tools: ToolsMap = {
       },
       required: ["items"],
     },
+    toOps: dOp("addNumberedList"),
   },
 
   // ─── Section operations ──────────────────────────────────────────
-  setHeader: {
-    name: "apply_setHeader",
+  {
+    kind: "op",
+    name: "setHeader",
     description: "Set the document header. Type: 'default' (all pages), 'first', or 'even'.",
     inputSchema: {
       type: "object",
@@ -258,9 +339,11 @@ export const tools: ToolsMap = {
       },
       required: ["text"],
     },
+    toOps: dOp("setHeader"),
   },
-  setFooter: {
-    name: "apply_setFooter",
+  {
+    kind: "op",
+    name: "setFooter",
     description: "Set the document footer. Type: 'default' (all pages), 'first', or 'even'.",
     inputSchema: {
       type: "object",
@@ -270,11 +353,13 @@ export const tools: ToolsMap = {
       },
       required: ["text"],
     },
+    toOps: dOp("setFooter"),
   },
 
   // ─── Image operations ────────────────────────────────────────────
-  insertImage: {
-    name: "apply_insertImage",
+  {
+    kind: "op",
+    name: "insertImage",
     description:
       "Append an inline image. The hash must already be uploaded through the authenticated Gateway CAS API (PNG or JPEG).",
     inputSchema: {
@@ -286,18 +371,32 @@ export const tools: ToolsMap = {
       },
       required: ["hash"],
     },
+    toOps: (args) => {
+      const hash = requireString(args.hash, "hash");
+      return [{
+        kind: "insertImage",
+        payload: {
+          blob: createSBlob(hash),
+          ...(typeof args.widthPx === "number" ? { widthPx: args.widthPx } : {}),
+          ...(typeof args.altText === "string" ? { altText: args.altText } : {}),
+        },
+      }] as unknown as readonly SValueType<DocxOperation>[];
+    },
   },
-  deleteImage: {
-    name: "apply_deleteImage",
+  {
+    kind: "op",
+    name: "deleteImage",
     description: "Delete an image by its zero-based index",
     inputSchema: {
       type: "object",
       properties: { index: { type: "integer", minimum: 0 } },
       required: ["index"],
     },
+    toOps: dOp("deleteImage"),
   },
-  replaceImage: {
-    name: "apply_replaceImage",
+  {
+    kind: "op",
+    name: "replaceImage",
     description: "Replace an image's bytes with new content from CAS. The hash must already be uploaded.",
     inputSchema: {
       type: "object",
@@ -307,9 +406,18 @@ export const tools: ToolsMap = {
       },
       required: ["index", "hash"],
     },
+    toOps: (args) => {
+      const index = requireNumber(args.index, "index");
+      const hash = requireString(args.hash, "hash");
+      return [{
+        kind: "replaceImage",
+        payload: { index, blob: createSBlob(hash) },
+      }] as unknown as readonly SValueType<DocxOperation>[];
+    },
   },
-  setImageSize: {
-    name: "apply_setImageSize",
+  {
+    kind: "op",
+    name: "setImageSize",
     description: "Set the display size of an image (in EMU: 914400 EMU = 1 inch)",
     inputSchema: {
       type: "object",
@@ -320,9 +428,11 @@ export const tools: ToolsMap = {
       },
       required: ["index"],
     },
+    toOps: dOp("setImageSize"),
   },
-  setImageAltText: {
-    name: "apply_setImageAltText",
+  {
+    kind: "op",
+    name: "setImageAltText",
     description: "Set the alt text (description) of an image",
     inputSchema: {
       type: "object",
@@ -332,8 +442,9 @@ export const tools: ToolsMap = {
       },
       required: ["index", "altText"],
     },
+    toOps: dOp("setImageAltText"),
   },
-};
+];
 
 export const instructions = `You are a DOCX document operator. Use query tools before editing so indexes are current.
 

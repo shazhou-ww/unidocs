@@ -1,7 +1,6 @@
 export { createDocxDocumentType } from "./docx.js";
-export { createDocxDocumentAgent } from "./agent.js";
+export { docxAgent } from "./agent.js";
 export type { DocxDocumentTypeFactory } from "./docx.js";
-export type { DocxDocumentAgentFactory } from "./agent.js";
 export type {
   DocxDoc,
   DocxHeaderFooterType,

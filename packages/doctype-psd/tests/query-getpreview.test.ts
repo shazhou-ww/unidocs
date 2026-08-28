@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { isSBlob } from "@unidocs/svalue-codec";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import { runQuery } from "../src/queries.js";
+import { memCas } from "./helpers/mem-cas.js";
 
 function fill(w: number, h: number, [r, g, b, a]: number[]): Uint8ClampedArray {
   const d = new Uint8ClampedArray(w * h * 4);
@@ -11,27 +13,32 @@ const layer: Layer = { id: "a", type: "raster", name: "a", bounds: [0, 0, 4, 6],
 const doc: PsdDoc = { canvas: { width: 6, height: 4, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [layer] };
 
 describe("getPreview", () => {
-  it("whole canvas → a base64 PNG at canvas size", async () => {
-    const out = await runQuery({ kind: "getPreview" }, doc) as any;
-    expect(out.$image.mediaType).toBe("image/png");
-    expect(out.$image.base64.length).toBeGreaterThan(0);
+  it("whole canvas → an SBlob PNG at canvas size", async () => {
+    const { ctx } = memCas();
+    const out = await runQuery({ kind: "getPreview" }, doc, ctx) as any;
+    expect(isSBlob(out.image)).toBe(true);
+    const { contentType } = await ctx.readSBlob(out.image);
+    expect(contentType).toBe("image/png");
     expect(out.width).toBe(6); expect(out.height).toBe(4);
     expect(out.region).toEqual([0, 0, 4, 6]);
   });
 
   it("rect → cropped region size", async () => {
-    const out = await runQuery({ kind: "getPreview", payload: { rect: [0, 0, 2, 3] } }, doc) as any;
+    const { ctx } = memCas();
+    const out = await runQuery({ kind: "getPreview", payload: { rect: [0, 0, 2, 3] } }, doc, ctx) as any;
     expect(out.width).toBe(3); expect(out.height).toBe(2);
     expect(out.region).toEqual([0, 0, 2, 3]);
   });
 
   it("layerId → that layer's bounds size", async () => {
-    const out = await runQuery({ kind: "getPreview", payload: { layerId: "a" } }, doc) as any;
+    const { ctx } = memCas();
+    const out = await runQuery({ kind: "getPreview", payload: { layerId: "a" } }, doc, ctx) as any;
     expect(out.width).toBe(6); expect(out.height).toBe(4);
   });
 
   it("maxSize downscales", async () => {
-    const out = await runQuery({ kind: "getPreview", payload: { maxSize: 3 } }, doc) as any;
+    const { ctx } = memCas();
+    const out = await runQuery({ kind: "getPreview", payload: { maxSize: 3 } }, doc, ctx) as any;
     expect(Math.max(out.width, out.height)).toBeLessThanOrEqual(3);
   });
 });

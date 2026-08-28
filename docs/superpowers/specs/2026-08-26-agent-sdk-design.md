@@ -1,8 +1,16 @@
 # 通用 Agent SDK 设计
 
 日期：2026-08-26
-分支：`feat/agent-sdk`
+修订：2026-08-28（对齐 `main` 577f402）
+实现分支：`feat/agent-sdk-impl`
 状态：待 review
+
+> **2026-08-28 修订说明。** 设计写完之后主干走了 177 个提交（capability 授权、P0 微服务边界拆包、`@unicas` 改名与目录重组）。agent 相关代码一行未动，所以第 2 章的问题清单和整体形状全部仍然成立；这次修订只做四类改动：
+>
+> 1. **新增 5.6**：一次 run 的时间上限来自 capability 凭据，不是循环。这是主干新长出来的硬约束，改变了 5.5 和第 7 章的边界条件。选定把窗口开到 1800 秒，为此要抬高全局天花板——**这是权宜之计，代价记在 5.6.5**。
+> 2. **改写 4.3.2 / 4.4 / V3-V5**：仓库已经有 `tests/unit/workspace/package-deps.test.mjs` 在管依赖分层，验收标准要落在它上面，不另起炉灶。
+> 3. **改写 6.6**：`readBlob` 失败不能一律降级——`63f997b` 刚因为这个把 401 伪装成「blob 不存在」而被修掉。
+> 4. **迁移编号与路径行号的机械订正**：`0003` 已被占用改为 `0004`；`gateway-handler.ts` 搬到了 `gateway-common`；包名 `cas-client` / `cas-server-common` / `http-protocol` 全部改过；一批行号偏移。
 
 ---
 
@@ -32,7 +40,7 @@ flowchart TB
 
 **逻辑抽象**回答的是「一个文档 agent 对外长什么样」——一组工具、一段提示词、一个「给我工具名和参数，我还你一个结果」的调用入口。内核不知道 PSD 有图层、docx 有段落，只知道调用一个工具会返回一个 `AgentToolResult`。
 
-**工具调用如何翻译成 `query` / `apply`，属于上边界的实现方，不属于内核。** 这一点值得写明，因为它容易被当成可以共用的样板：docx 的 `apply_insertImage` 收到 `hash` 字符串，必须先 `resolveBlob` 换成 SBlob 才能构造操作（`doctype-docx/src/agent.ts:86-113`），而 psd 的操作参数可以原样透传。它们今天看起来像，明天就不像——把它抽进内核，只会换来一堆为了让抽象成立而额外增加的特殊处理。
+**工具调用如何翻译成 `query` / `apply`，属于上边界的实现方，不属于内核。** 这一点值得写明，因为它容易被当成可以共用的样板：docx 的 `apply_insertImage` 收到 `hash` 字符串，必须先 `resolveBlob` 换成 SBlob 才能构造操作（`doctype-docx/src/agent.ts:83-115`），而 psd 的操作参数可以原样透传。它们今天看起来像，明天就不像——把它抽进内核，只会换来一堆为了让抽象成立而额外增加的特殊处理。
 
 **实现抽象**回答的是「这些动作靠什么完成」——文档读写通过什么通道、模型通过什么协议、结果字节怎么送到调用方。它对所有平台是同一套，DurableObject 和 Node 进程在这一层是同构的。
 
@@ -98,10 +106,11 @@ B 里唯一推迟的是**摘要压缩**（把最早若干轮交给模型总结�
 | 链路 | 状态 | 卡在哪 |
 |---|---|---|
 | cloudflare-psd | 能跑 | 唯一配置了真实大模型接入的，`cloudflare-psd/src/anthropic.ts` |
-| cloudflare-markdown | 不能 | `llmProvider` 是抛异常的占位，`cloudflare-markdown/src/worker.ts:29` |
-| cloudflare-docx | 不能 | 同上；且图片路径还会撞 P6 |
-| azure-markdown / azure-docx | 不能 | operator 接口一律返回 501，`azure-sdk/src/local-editor.ts:103` |
-| azure-psd | 不存在 | Azure 栈里没有 psd |
+| cloudflare-markdown | 不能 | `llmProvider` 是抛异常的占位，`cloudflare-markdown/src/worker.ts:34` |
+| cloudflare-docx | 不能 | 同上（`cloudflare-docx/src/worker.ts:34`）；且图片路径还会撞 P6 |
+| azure-markdown / azure-docx / azure-psd | 不能 | operator 接口一律返回 501，`azure-sdk/src/local-editor.ts:124` |
+
+> **2026-08-28 订正：** `azure-psd` 现在存在了（`packages/azure-psd/src/main.ts`，默认端口 41820，`2026-08-26-azure-psd-and-doc-type-convergence` 那一轮加的）。它和 azure-markdown / azure-docx 同形，卡在同一处 501 上——那个文件自己的注释也写明「接真 Operator 会同时影响 markdown/docx/psd 三家，是独立一轮的事」，正是本设计第 10 章的第 14 步。对第 11 章的 V10 是好消息：服务入口已经现成，只差把 `AgentPlatform` 接上。
 
 要让**第二条**链路跑起来，会撞上两件事，都在下边界：
 
@@ -112,7 +121,7 @@ B 里唯一推迟的是**摘要压缩**（把最早若干轮交给模型总结�
 
 上边界不在这个清单里：新文档类型写自己的工具表本来就是它该做的事，不是重复劳动。
 
-需要说明的是，Azure 至今没有 agent，直接原因是那一期把它划在范围外（`azure-sdk/src/local-editor.ts:97-101` 注明是 future work），并不是被 Cloudflare 的实现挡住了。下边界缺失影响的是**现在补做时的成本**，不是它当初没做的原因。
+需要说明的是，Azure 至今没有 agent，直接原因是那一期把它划在范围外（`azure-sdk/src/local-editor.ts:117-123` 注明是 future work），并不是被 Cloudflare 的实现挡住了。下边界缺失影响的是**现在补做时的成本**，不是它当初没做的原因。
 
 ### 2.2 代码分布
 
@@ -129,16 +138,16 @@ flowchart TB
     end
 
     subgraph cf["cloudflare 层 —— 真正在跑的实现，但与平台绑死"]
-        ODA["cloudflare-sdk/src/operator-do-agent.ts<br/>296 行：循环 + 编辑器调用 + 身份透传 + 结果渲染<br/>依赖 DurableObjectStub / Request / Response"]
+        ODA["cloudflare-sdk/src/operator-do-agent.ts<br/>326 行：循环 + 编辑器调用 + 身份透传 + 结果渲染<br/>依赖 DurableObjectStub / Request / Response"]
         ANT["cloudflare-psd/src/anthropic.ts<br/>209 行：只有 psd 用得到"]
     end
 
     subgraph dsc["doctype-server-common —— 死代码"]
-        OP["operator.ts 177 行<br/>循环的第二份实现<br/>全仓库无人 import，且已落后"]
+        OP["operator.ts 177 行<br/>循环的第二份实现<br/>无人 import，但被 index.ts:8 再导出<br/>且已落后"]
     end
 
     subgraph az["azure 层 —— 缺失"]
-        STUB["azure-sdk/src/local-editor.ts:103<br/>createStubOperatorNamespace<br/>所有 operator 接口返回 501"]
+        STUB["azure-sdk/src/local-editor.ts:124<br/>createStubOperatorNamespace<br/>所有 operator 接口返回 501"]
     end
 
     dt --> proto
@@ -151,12 +160,13 @@ flowchart TB
 | # | 问题 | 位置 |
 |---|---|---|
 | P2 | 唯一可用的循环实现依赖 Cloudflare 类型，Azure 无法复用 | `cloudflare-sdk/src/operator-do-agent.ts` |
-| P3 | 存在第二份无人使用且已落后的循环实现 | `doctype-server-common/src/operator.ts` |
+| P3 | 存在第二份无人使用且已落后的循环实现，且被包的公开入口再导出 | `doctype-server-common/src/operator.ts`，`src/index.ts:8` |
 | P4 | 大模型适配层放在最外层的叶子包里，其他文档类型用不到 | `cloudflare-psd/src/anthropic.ts` |
 | P5 | 同一仓库存在两套互相冲突的图片约定 | 见 2.4 |
-| P6 | `renderToolResult` 钩子全仓库无人设置，docx 的图片路径一跑就抛异常 | `operator-do-agent.ts:25` 声明、`:112` 调用、`:263` 抛出 |
-| P7 | `/run` 是一次阻塞请求，PSD 最多 25 轮循环期间零反馈，断线即全部丢失 | `web-psd/src/main.ts:374-383` |
-| P8 | 会话历史无上限增长，且只在内存中，进程重启即丢 | `operator-do-agent.ts:55` |
+| P6 | `renderToolResult` 钩子全仓库无人设置，docx 的图片路径一跑就抛异常 | `operator-do-agent.ts:26` 声明、`:123` 调用、`:293` 抛出 |
+| P7 | `/run` 是一次阻塞请求，PSD 最多 25 轮循环期间零反馈，断线即全部丢失 | `web-psd/src/main.ts:375-387` |
+| P8 | 会话历史无上限增长，且只在内存中，进程重启即丢 | `operator-do-agent.ts:57` |
+| P9 | 一次 run 的时长被 capability 凭据的有效期封顶，超时后编辑器写入失去授权 | 见 5.6 |
 
 ### 2.4 两套冲突的图片约定
 
@@ -165,7 +175,7 @@ flowchart TB
 | docx | 返回协议层的 `content: [{ type:"image", blob }]` | `doctype-docx/src/agent.ts:75` |
 | psd | 把 base64 塞进普通数据字段 `{ $image: { base64 } }`，再由大模型适配层递归搜索捞出 | `doctype-psd/src/queries.ts:101` + `cloudflare-psd/src/anthropic.ts:72` |
 
-docx 那条路从未真正跑通过：它会撞上 `renderDefaultAgentToolResult` 的抛异常分支（P6），只是因为 docx 的 `llmProvider` 本身就是个抛异常的占位实现（`cloudflare-docx/src/worker.ts:29`），所以一直没暴露。
+docx 那条路从未真正跑通过：它会撞上 `renderDefaultAgentToolResult` 的抛异常分支（P6），只是因为 docx 的 `llmProvider` 本身就是个抛异常的占位实现（`cloudflare-docx/src/worker.ts:34`），所以一直没暴露。
 
 PSD 那条路的副作用：base64 让数据膨胀三分之一，并且撞过 SValue 的字符串长度上限（提交 `da9028d` 就是修这个）。
 
@@ -255,15 +265,22 @@ export type AgentEvent = ...      // 事件表（7.1）
 不新建包。理由是依赖边：三方里已经有两方（`cloudflare-sdk`、`azure-sdk`）依赖着 `doctype-server-common`——
 
 ```
-cloudflare-sdk 的 deps: cas-client, cas-server-common, doctype-server-common, http-protocol, protocol, svalue-codec
-azure-sdk 的 deps:      @azure/*, cas-client, doctype-server-common, http-protocol, protocol, svalue-codec, pg
+cloudflare-sdk 的 deps: @unicas/client, @unicas/server-common, @unidocs/doctype-server-common,
+                        @unidocs/protocol, @unidocs/protocol-doc, @unidocs/svalue-codec
+azure-sdk 的 deps:      @azure/identity, @azure/storage-blob, pg, @unicas/client,
+                        @unidocs/doctype-server-common, @unidocs/protocol,
+                        @unidocs/protocol-doc, @unidocs/svalue-codec
 ```
+
+> **2026-08-28 订正：** 这两行原本写的是 `cas-client` / `cas-server-common` / `http-protocol`。三个包都改名或搬家了：CAS 那两个变成 `@unicas/client` / `@unicas/server-common` 并移到仓库根的 `unicas-packages/` 目录（`a1779ea`）；`http-protocol` 拆成了 `@unidocs/protocol-doc` / `protocol-cas` / `protocol-gateway`。`doctype-server-common` 自己现在还多依赖 `@unicas/protocol` 和 `@unidocs/service-auth`。**结论不变**：两个平台 sdk 仍然都依赖 `doctype-server-common`，内核放进去仍然是平台侧零新增依赖边。
 
 放进去，平台侧新增零条依赖边，只有文档类型侧要加一条（4.3.1）。新建一个包则三方都要加边，还要多一套 `package.json` / `tsconfig` / 构建脚本 / 测试配置，换来的只是包名更好听。
 
 ```
 packages/doctype-server-common/src/agent/
   ├── session.ts          AgentSession —— 工具调用循环、会话历史
+  ├── tool-result.ts      默认的 SValue → AgentToolResult 转换（5.1.2）
+  │                       以及 AgentToolResult → AgentMessage 的规范化（5.4.1）
   ├── history.ts          三级裁剪，纯函数，参数写死（6.2）
   ├── store.ts            AgentSessionStore 的契约测试（6.3.9）
   ├── sse.ts              AgentEvent 序列 → SSE 字节流（7.4）
@@ -356,27 +373,40 @@ import type {
 
 真正要守的只有**运行时代码隔离**这一条，拆成三个可断言的事实：对 `doctype-server-common` 的 import 全是 `import type`；浏览器产物里不出现 `src/agent/**` 的模块；产物里不出现服务端符号。
 
-顺带说明现状：`doctype-psd` 今天已经把它放在 `devDependencies`，而 `doctype-docx` / `doctype-markdown` 还完全没有这个依赖——它们本次才会加上。三者之后是不是都落在同一个字段里，取决于各自 import 了什么，不该由一条验收标准反过来规定。
+##### 现状与既有 CI 规则（2026-08-28 改写）
+
+仓库现在已经有一份在管这件事的测试：`tests/unit/workspace/package-deps.test.mjs`。它对每个包扫源码里的 `@unidocs/*` / `@unicas/*` import 并断言四条规则，其中两条直接落在本节上：
+
+| 既有规则 | 对本次的影响 |
+|---|---|
+| **src 里的 workspace import 必须声明在 `dependencies`**（不能只放 devDependencies） | 它的 import 正则**不区分 `import type`**。所以三个文档类型一旦在 `src/**` 写下 `import type ... from "@unidocs/doctype-server-common/agent"`，CI 就要求它进 `dependencies` |
+| **composite 包的 tsconfig `references` 必须恰好覆盖 `dependencies`** | 三个文档类型的 `tsconfig.json` 也要同步加上对 `doctype-server-common` 的 project reference，否则这条会红 |
+
+这与上面那段的论证**方向一致**：字段名本来就不该是判据，`dependencies` 才是这条 type-only 边的正确落点。要订正的只有一处措辞——原文说「`doctype-psd` 今天已经把它放在 `devDependencies`」，那是因为它今天只在 `tests/` 里用到；本次在 `src/` 里加了类型导入之后，它会（也应该）移进 `dependencies`。`doctype-docx` 今天只有 `@unicas/server-common` 的 devDependency，`doctype-markdown` 两者都没有，本次一并加上。
+
+三者落在同一个字段里这件事，是「src 里用到了」这个事实的结果，不是一条验收标准反过来规定的——V5 断言的仍然只有「全部是 `import type`」和「产物里没有服务端代码」。
 
 如果将来觉得名字别扭，可以把包改名为 `@unidocs/doctype-sdk`——但那是纯改名，不属于本次范围。
 
 ### 4.4 三条边界规则怎么守
 
-仓库没有 eslint / biome，只有 `tsc` + `vitest`。
+仓库没有 eslint / biome，只有 `tsc` + `vitest`。既有的分层检查住在 `tests/unit/workspace/`（`.mjs`，由 `pnpm test:local` 收），新增的检查跟着放在那儿，不另起目录。
 
-**规则 1（内核不知道平台）** —— 新增 `tests/unit/agent-kernel-purity.test.ts`：扫描 `packages/doctype-server-common/src/agent/**` 的所有 import 与全局标识符，断言不出现 `Request` / `Response` / `DurableObject*` / `@cloudflare/*` / `@azure/*`。
+**规则 1（内核不知道平台）** —— 新增 `tests/unit/workspace/agent-kernel-purity.test.mjs`：扫描 `packages/doctype-server-common/src/agent/**` 的所有 import 与全局标识符，断言不出现 `Request` / `Response` / `DurableObject*` / `@cloudflare/*` / `@azure/*`。
 
 按目录扫而不是按包扫，是因为同包的 `doc-type-handler.ts` 和 `session-handler.ts` 本来就要用 `Request` / `Response`——它们是 HTTP 外壳，不在 agent 内核里。这也是不新建包所付的唯一代价：拿不到「整包 tsconfig 禁用平台类型」那道更硬的保险，只能靠目录级的扫描。不过目录扫描本来就是主要手段，tsconfig 那道只是额外的一层。
 
-**规则 3（两侧互不依赖）** —— 同一测试文件里的 `package.json` 断言：
+**规则 3（两侧互不依赖）** —— 扩充既有的 `tests/unit/workspace/package-deps.test.mjs`，而不是在新文件里重写一套 `package.json` 解析：
 
-```ts
+```js
 // packages/{cloudflare,azure}-sdk：dependencies 里不得出现任何 @unidocs/doctype-*
 //                                （doctype-server-common 除外）
 // packages/doctype-*：dependencies 里不得出现 @unidocs/cloudflare-sdk /
 //                     @unidocs/azure-sdk
 //                     （@unidocs/doctype-server-common 是预期的，见 4.3.1）
 ```
+
+那个文件已经把每个包的 `dependencies` / `devDependencies` / src import / test import 都解析好了（`loadPackage`），这两条断言是在现成数据上再加一个 `test.each`。它的规则 3「声明的依赖必须真的被 import 过」还顺带守住了另一件事：本次给三个文档类型加的那条边，如果最后其实没用上，CI 会直接报出来。
 
 **规则 2（平台不知道循环内部）** —— 没有等价的机器检查，平台 sdk 本来就允许 import 内核。靠两件事守：
 
@@ -399,7 +429,7 @@ import type {
 |---|---|
 | `query(q)` | 工具声明 `kind: "query"` 并给出 `toQuery(args)`，由内核拿去执行 |
 | `apply(ops, desc)` | 工具声明 `kind: "op"` 并给出 `toOps(args)`，由内核拿去执行 |
-| `resolveBlob(hash)` | 它做两件事：向 CAS 租约，然后把 hash 包成一个带标记的 `SBlob`。**租约是多余的**——`session.ts:608` 的 `leaseOpRefs(ops, cas)` 在 apply 第 1 步就把 op 里提到的所有引用租好了；剩下的 `createSBlob(hash)`（`svalue-codec/src/svalue.ts:144`）是同步纯函数，谁都能直接调 |
+| `resolveBlob(hash)` | 它做两件事：向 CAS 租约，然后把 hash 包成一个带标记的 `SBlob`。**租约是多余的**——`session.ts:611` 的 `leaseOpRefs(ops, cas)` 在 apply 第 1 步就把 op 里提到的所有引用租好了；剩下的 `createSBlob(hash)`（`svalue-codec/src/svalue.ts:144`）是同步纯函数，谁都能直接调 |
 
 于是 `DocumentAgent` 里的 `toolCall` 也没有存在的理由了，`DocumentAgentFactory` 更没有——它唯一的作用就是把那个句柄注进来。
 
@@ -414,7 +444,8 @@ export type AgentTool<TQuery, TOp> =
       readonly inputSchema: Record<string, unknown>;
       /** 纯函数：模型给的参数 → 一个 query */
       readonly toQuery: (args: Readonly<Record<string, JsonValue>>) => SValueType<TQuery>;
-      /** 纯函数：query 结果 → 交给模型的东西。不给则用默认（见下） */
+      /** 纯函数：query 结果 → 交给模型的东西。
+        * 不给则用 defaultQueryToolResult（签名与本字段完全一致，见下）。 */
       readonly toResult?: (data: SValue, version: number) => AgentToolResult;
     }
   | {
@@ -432,15 +463,36 @@ export interface DocumentAgent<TQuery, TOp> {
 }
 ```
 
-两个默认值保证行为与今天一致：`kind: "query"` 不给 `toResult` 时返回 `{ structuredContent: { data, version } }`；`kind: "op"` 固定返回 `{ structuredContent: { success: true, version } }`。这正是三个文档类型今天 `toolCall` 里那两段代码做的事。
-
 这里采用的是**统一默认转换 + 每个 query tool 可选的自定义转换**，不是一个会递归解释任意 `SValue` 的万能转换器。`SValue` 只表达数据形状，不表达业务语义：同一个 `SBlob` 可能是图片、普通附件、字体，或者只供后续 op 引用的二进制。内核不能仅凭看见 `SBlob` 就猜它该进入多模态上下文，也无法替文档类型决定 `mediaType`、`altText` 和应该暴露给模型的元数据。
 
 因此规则固定为：
 
-- 普通 query 不写 `toResult`，走内核的默认 `structuredContent` 包装。
+- 普通 query 不写 `toResult`，走内核的默认包装。
 - 图片或文件类 query 必须由该 tool 的 `toResult` 显式产出 `image` / `file` content part。
-- 可以共享 `requireRecord` / `requireSBlob` 这类窄化 helper，也可以有只负责组装 content part 的小 helper；不能有“扫描任意 SValue 并自动寻找附件”的 helper。
+- 可以共享 `requireRecord` / `requireSBlob` 这类窄化 helper，也可以有只负责组装 content part 的小 helper；不能有"扫描任意 SValue 并自动寻找附件"的 helper。
+
+##### 默认转换是两个具名函数，不是一段内联逻辑（2026-08-28 补）
+
+先前这里只用一句散文描述默认行为。写成具名导出的函数有三个实际好处：契约测试可以直接对它断言（V6b）；`toResult` 的签名与它一致，读代码的人一眼看出「不写 `toResult` 就等于用了这个」；将来要改默认行为只有一处。
+
+```ts
+// doctype-server-common/src/agent/tool-result.ts
+/** kind:"query" 未提供 toResult 时的默认转换。签名与 toResult 完全一致。 */
+export function defaultQueryToolResult(data: SValue, version: number): AgentToolResult {
+  return { structuredContent: toJsonValue({ data, version }) };
+}
+
+/** kind:"op" 的固定转换。op 工具没有 toResult，这条不可覆盖。 */
+export function defaultOpToolResult(version: number): AgentToolResult {
+  return { structuredContent: { success: true, version } };
+}
+```
+
+两者保证行为与今天一致——这正是三个文档类型今天 `toolCall` 里那两段代码做的事。
+
+**放内核，不放 `svalue-codec`。** 这与窄化 helper 的归属（下面那段）判断相反，因为调用方不同：`requireRecord` 这类是**文档类型**在 `toResult` 里调的，所以必须放在文档类型已经运行时依赖的 `svalue-codec`；而这两个默认函数**只有内核调**——一个工具但凡写了 `toResult`，就说明默认满足不了它，不存在「先调默认再往上加」的用法（psd 的 `getPreview`、docx 的 `getImage` 都是完全自定义的 `structuredContent`，不是默认值加一个 image part）。所以它们留在内核，文档类型一次都不 import，4.3.2 的「仅类型依赖」前提不受影响。
+
+**`kind: "op"` 没有 `toResult`，因此 op 工具产不出附件。** 这是有意的：op 的语义是「改文档」，模型想看结果应当接着调一次 query（PSD 的提示词本来就要求「改完 getPreview 确认」）。真出现「op 顺带返回一张预览图」的需求时，那是给 `AgentTool` 加第三个 kind 的理由，不是给 op 补 `toResult` 的理由——否则「op 只产生 op」这条就破了。
 
 `toResult` 的 `data` 类型是 `SValue`——它是从编辑器返回、跨过一次序列化的数据，静态类型到这里就断了。文档类型需要自己窄化一次，**不要写 `as any`**：
 
@@ -461,7 +513,7 @@ toResult: (data, version) => {
 }
 ```
 
-这三个函数不是新发明——docx 今天就有一模一样的（`doctype-docx/src/agent.ts:120-137` 的 `requireSValueRecord` / `requireNumber` / `requireString`）。本次把它们提到共享位置，三个文档类型不用各写一份。
+这三个函数不是新发明——docx 今天就有一模一样的（`doctype-docx/src/agent.ts:118-137` 的 `requireSValueRecord` / `requireNumber` / `requireString`）。本次把它们提到共享位置，三个文档类型不用各写一份。
 
 **放 `svalue-codec` 而不是 agent 内核**，这一点是有讲究的：它们是**运行时函数**，不是类型。放进 `doctype-server-common/agent` 会让三个文档类型对它产生**运行时**依赖，「仅类型依赖」这个前提（4.3.2、V5）立刻不成立。而它们做的事——把 `SValue` 窄化成具体形状——本来就与 agent 无关，`isSBlob` 也早就住在 `svalue-codec` 里，三个文档类型也已经运行时依赖它。放那儿是它们本来的位置。
 
@@ -624,13 +676,13 @@ flowchart TB
 
 #### 5.2.1 版本号并没有消失，只是不归 agent 算
 
-`baseVersion` 是编辑器写入路径的**必需参数**，不是可选校验：`session.ts:625` 的 `nextVersion = baseVersion + 1` 是 delta 日志保持无空洞序列的机制，`editor-do-svalue.ts:534` 缺了它直接报错。
+`baseVersion` 是编辑器写入路径的**必需参数**，不是可选校验：`session.ts:628` 的 `nextVersion = baseVersion + 1` 是 delta 日志保持无空洞序列的机制，`editor-do-svalue.ts:576-584` 缺了它直接报错。
 
 所以问题不是「要不要版本号」，而是「agent 发起的 apply，`baseVersion` 由谁算」。选定：**由平台的 `AgentPlatform.apply` 实现自己读当前 head**。
 
 | | 今天 | 本次 |
 |---|---|---|
-| 谁记 `lastKnownVersion` | agent 循环，`operator-do-agent.ts:56` | 没人记 |
+| 谁记 `lastKnownVersion` | agent 循环，`operator-do-agent.ts:58` | 没人记 |
 | `apply` 用什么 `baseVersion` | 上次 `query` 看到的版本，`:208` | 平台读当前 head |
 | 「必须先 query」 | 循环强制拒绝，`:202-204` | 删掉。提示词里已经写了「先查询再编辑」，而真正的兜底是 apply 自己会拒绝非法 op |
 | op 不成立时 | 版本冲突 → 提示重新查询 → 重试 | apply 的错误原文回给模型 → 重新生成 |
@@ -645,7 +697,7 @@ flowchart TB
 
 - 这类竞争要求「用户一边手工编辑一边让 agent 跑」，而客户端今天已经在避免（`web-psd/src/main.ts` 的 `chatBusy`）。
 - 就算发生，结果是一次编辑位置不对，用户看得见也能撤销；而版本检查的代价是每次并发都多花一轮。
-- 模型的工作流本来就是「改完看预览确认」（`doctype-psd/src/tools.ts:166` 的提示词明确要求），位置错了它自己会发现并纠正。
+- 模型的工作流本来就是「改完看预览确认」（`doctype-psd/src/tools.ts:167` 的提示词明确要求），位置错了它自己会发现并纠正。
 
 ### 5.3 文档类型侧的改动量
 
@@ -654,11 +706,11 @@ flowchart TB
 | 今天 | 之后 |
 |---|---|
 | `tools.ts` 里 `Record<string, AgentToolDefinition>`，`name` 带 `query_` / `apply_` 前缀 | 同一张表改成 `AgentTool[]`，每项加 `kind` 和 `toQuery` / `toOps` |
-| `agent.ts` 里的 `createXxxDocumentAgent`（psd 73 行、markdown 129 行、docx 137 行） | 一个常量导出 |
+| `agent.ts` 里的 `createXxxDocumentAgent`（psd 80 行、markdown 129 行、docx 137 行） | 一个常量导出 |
 | `toolCall` 里判前缀、拆 `kind`、拼 `payload` 的那段 | 挪进各工具的 `toQuery` / `toOps`，逐个工具一行 |
 | `requireJsonObject` 参数校验 | 内核统一做，三份重复代码消失 |
-| docx 的 `makeOperation`（`agent.ts:86-113`） | 拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，`await resolveBlob` 变成同步的 `createSBlob` |
-| docx 的 `queryImageContent`（`agent.ts:53-84`） | 变成 `getImage` 工具的 `toResult` |
+| docx 的 `makeOperation`（`agent.ts:83-115`） | 拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，`await resolveBlob` 变成同步的 `createSBlob` |
+| docx 的 `queryImageContent`（`agent.ts:51-81`） | 变成 `getImage` 工具的 `toResult` |
 
 另有一处协议层的要求，与工具形状无关：
 
@@ -676,7 +728,7 @@ docx 已经这么做了（`agent.ts:75`）。psd 需要改（2.4）：
 
 #### 5.3.1 工具改名：顺带修掉一个已有的缺陷
 
-`doctype-psd/src/tools.ts:156-176` 的提示词里有五个工具名，在工具表里**根本不存在**：
+`doctype-psd/src/tools.ts:157-176` 的提示词里有五个工具名，在工具表里**根本不存在**：
 
 | 提示词让模型调 | 工具表里实际是 |
 |---|---|
@@ -710,7 +762,7 @@ apply_generative_fill  → generativeFill
 
 这是本次唯一一处**重写而非搬家**的改动。
 
-**今天：** 循环内部用 OpenAI 的消息格式（`operator-do-agent.ts:98` 读 `response.choices[0].message`），于是 Anthropic 适配层必须双向翻译两次。而图片因为被压成了 JSON 字符串，只能靠递归搜索捞回来。
+**今天：** 循环内部用 OpenAI 的消息格式（`operator-do-agent.ts:109` 读 `response.choices[0].message`），于是 Anthropic 适配层必须双向翻译两次。而图片因为被压成了 JSON 字符串，只能靠递归搜索捞回来。
 
 ```mermaid
 flowchart TB
@@ -784,7 +836,14 @@ const toolMessage: AgentMessage = {
 };
 ```
 
-所以 `SValue → AgentToolResult` 的业务转换仍由 tool 的 `toResult` 决定；`AgentToolResult → AgentMessage` 则是内核统一完成的无损结构转换。
+所以 `SValue → AgentToolResult` 的业务转换仍由 tool 的 `toResult` 决定（默认实现是 `defaultQueryToolResult`，5.1.2）；`AgentToolResult → AgentMessage` 则是内核统一完成的无损结构转换。
+
+**由此 `AgentToolResult` 是一个中转类型，不是存储类型**（2026-08-28 写明）。它只活在「工具返回」到「内核规范化」这一小段里，进不了历史、进不了数据库、也进不了事件流——落盘的一律是 `AgentMessage`。这一点值得写死，因为 `AgentToolResult` 定义在 `protocol` 且与 `AgentMessage` 的 tool 分支长得很像，容易被误当成可以直接存的东西。两者的分工是：
+
+| | 谁产出 | 活多久 |
+|---|---|---|
+| `AgentToolResult` | 文档类型的 `toResult`，或内核的默认转换 | 一次工具调用之内 |
+| `AgentMessage` | 内核 | 会话的一生，落盘、裁剪、算引用都用它 |
 
 #### 5.4.2 持久态与模型态是两种类型
 
@@ -843,7 +902,7 @@ user 附件的入口是“先上传，后运行”：客户端先通过既有上
 
 放在内核而不是平台，因为「同一个 blob 会被反复要」是**循环的性质**，平台没有理由知道这件事。缓存按 hash 去重，所以一次 session 生命周期内，同一附件正常只读取一次。
 
-**随之删除：** `anthropic.ts` 的 `findImage`、`previewMeta`，以及 `OperatorConfig.renderToolResult` 整个钩子（`operator-do-agent.ts:25`）。P5 和 P6 一并解决。
+**随之删除：** `anthropic.ts` 的 `findImage`、`previewMeta`，以及 `OperatorConfig.renderToolResult` 整个钩子（`operator-do-agent.ts:26`）。P5 和 P6 一并解决。
 
 ### 5.5 AgentSession 的接口与生命周期
 
@@ -903,13 +962,13 @@ export type AgentRunOutcome =
 
 `agent` 是一个常量，没有工厂、没有注入——文档类型不接受任何句柄（5.1.1）。`platform` 只有内核自己拿着。
 
-`maxIterations` 从 `OperatorConfig`（`operator-do-agent.ts:32`）移到这里——它是循环参数，属于内核，不属于平台配置。PSD 需要 25 的理由不变：一次编辑要「找图层 → 看预览 → 变换 → 再看预览确认」，默认的 10 会把真实指令切在半路。
+`maxIterations` 从 `OperatorConfig`（`operator-do-agent.ts:33`）移到这里——它是循环参数，属于内核，不属于平台配置。PSD 需要 25 的理由不变：一次编辑要「找图层 → 看预览 → 变换 → 再看预览确认」，默认的 10 会把真实指令切在半路。
 
 没有 `restore()` 这个公开方法，理由见 5.5.3。
 
 #### 5.5.1 构造时机：第一个请求到达之后，不是 DO 构造时
 
-`sessionId` 是构造参数，但**平台外壳不能在自己的构造函数里创建 `AgentSession`**：sessionId 来自请求头 `X-Session-Id`（`operator-do-agent.ts:167-185` 今天就是这么读的），而 DO 实例在第一个请求到达之前就已经存在了。
+`sessionId` 是构造参数，但**平台外壳不能在自己的构造函数里创建 `AgentSession`**：sessionId 来自请求头 `X-Session-Id`（`operator-do-agent.ts:182-208` 今天就是这么读的），而 DO 实例在第一个请求到达之前就已经存在了。
 
 所以外壳惰性创建，创建之后随实例一直活着：
 
@@ -919,7 +978,7 @@ export type AgentRunOutcome =
 }
 ```
 
-今天那套「后续请求的身份必须与首次一致，否则 403」的校验（`operator-do-agent.ts:173-176`）原样保留，正好守住这个惰性创建。
+今天那套「后续请求的身份必须与首次一致，否则 403」的校验（`operator-do-agent.ts:188-191`）原样保留，正好守住这个惰性创建。
 
 #### 5.5.2 为什么是推送式而不是返回 `AsyncIterable`
 
@@ -1013,9 +1072,103 @@ return wantsStream ? this.#runStreaming(lease, session, content)
 
 两条路径对「并发被拒」的对外表现因此完全一致：**都是 HTTP 409，都不产生任何事件**。
 
-`RUN_LEASE_MS` 取一个略大于最坏情况的值（PSD 25 轮，给 10 分钟），避免进程崩溃后会话被永久锁住。
+`RUN_LEASE_MS` 取一个略大于**凭据窗口**的值。凭据窗口是 5.6 定下的 1800 秒，所以这里取 1860 秒——比它大一分钟，保证「租约还没过期但 run 已经因凭据过期而必然失败」这个区间足够短。（先前写的是 10 分钟，那是在还没有 5.6 那条上限时估的。）
+
+租约变长意味着**崩溃后会话被锁的时间也变长**，所以 `reset()` 无条件清掉 `running_since` 这条更重要了——它是用户手上唯一不用等 31 分钟的自救路径（R6）。
 
 **这条在 Cloudflare 上恒成立**——DO 单线程，不可能有并发的 `run`。所以它是一条两端共用的代码，在 CF 上退化成一次必然成功的写，不需要平台分支。
+
+### 5.6 一次 run 的时长上限来自授权凭据，不是循环（2026-08-28 新增）
+
+`maxIterations = 25` 是循环的上限，但它不是**时间**上限。真正给一次 run 封顶的是网关签发的 capability 凭据，这是设计写完之后主干长出来的约束（`4ae50bd`…`87ddfbd` 那一轮），必须写进来。
+
+#### 5.6.1 两个时钟卡在哪
+
+```mermaid
+flowchart TB
+    B["浏览器 POST /run"] --> G["网关 gateway-handler.ts:275-343<br/>forwardToWorker"]
+    G -->|"① AbortSignal.timeout(deadlineSeconds)<br/>掐断这条转发连接"| D["doctype 服务<br/>doc-type-handler.ts:100-118"]
+    G -.->|"签发 Authorization（doc）<br/>+ X-UniDocs-CAS-Capability（delegated-cas）<br/>两者都 exp = iat + lifetimeSeconds"| D
+    D --> O["OperatorDO<br/>run 循环"]
+    O -->|"每次 query / apply 都原样带上<br/>启动时捕获的那张 CAS 凭据<br/>operator-do-agent.ts:195-206"| E["EditorDO"]
+    E -->|"② request-cas-client.ts:20<br/>用这张凭据建 CasClient"| C["CAS"]
+    C -.->|"凭据过期 → 401<br/>leaseOpRefs 失败 → apply 失败"| E
+```
+
+| 时钟 | 今天的值 | 定义在 | 到点会发生什么 |
+|---|---|---|---|
+| ① 网关转发超时 `deadlineSeconds` | `run` = 90 秒 | `gateway-common/src/capability-policy.ts:66-71`，用在 `gateway-handler.ts:306-311` | 转发连接被 abort。流式路径下 SSE 在 90 秒处断掉 |
+| ② 凭据有效期 `lifetimeSeconds` | 所有 doc 操作一律 120 秒 | 同文件 `:17`、`:120` | operator 后续的 `apply` / `query` 带着过期凭据打到 CAS，401。用户看到的是「跑了两分钟然后开始报错」 |
+
+②比①更要命：①只是断了看的人，服务端按 7.3 本来就该继续跑完；②让服务端**跑不完**——文档改动从两分钟处开始全部失败。
+
+而且这不是流式引入的问题。今天的阻塞式 `/run` 面对同样两个时钟，只是 PSD 还没有人真的跑满 25 轮，没暴露而已。它是本设计要修的 P9。
+
+#### 5.6.2 天花板今天是 300 秒，本次抬到 1800
+
+`lifetimeSeconds` 不能想调多大调多大，链路上有三道闸：
+
+| 闸 | 位置 | 今天的值 |
+|---|---|---|
+| 常量上限 | `service-auth/src/claims.ts:8` `MaximumCapabilityLifetimeSeconds` | 300 |
+| 签发时校验 | `service-auth/src/issuer.ts:144-150`，超过配置的 `maximumLifetimeSeconds` 直接抛 | 由 `CAPABILITY_MAX_LIFETIME_SECONDS` 配置，各处都是 `"300"` |
+| 校验时复查 | `service-auth/src/verifier.ts:187`，`exp - iat` 超限则拒收 | 同上 |
+
+三道闸是串起来的：`parseCapabilityRuntimePolicy`（`runtime.ts:40-45`）拿 `MaximumCapabilityLifetimeSeconds` 当解析 `CAPABILITY_MAX_LIFETIME_SECONDS` 的上界，所以**常量必须先抬，配置才抬得动**。
+
+**CAS 侧不是第四道闸。** unicas 的 `StackCapabilityVerifier`（`unicas-packages/server-cloudflare/src/auth.ts:186-192`）调 `jwtVerify` 时只给了 `clockTolerance` 和 `requiredClaims`，**没有 `maxTokenAge`**，它只校验 `exp` 本身。所以一张 1800 秒的 delegated-cas 凭据在 CAS 那边不会被额外拒绝，需要改的全部在 `@unidocs/service-auth` 这一侧。
+
+#### 5.6.3 选定：全局天花板 300 → 1800，`run` 单独一档吃满
+
+300 秒（5 分钟）对 PSD 跑满 25 轮、每轮渲染预览来说不够用。**选定 1800 秒（30 分钟）**，并且明确记为**权宜之计**：它把窗口开大到不再是日常瓶颈，代价是全局校验上界跟着松了一档（5.6.5），真正的解法是循环中途续签（第 12 章）。
+
+```
+MaximumCapabilityLifetimeSeconds       300 → 1800
+CAPABILITY_MAX_LIFETIME_SECONDS        "300" → "1800"（全部 9 处）
+docCapabilityPolicy("run")             deadlineSeconds 90 → 1800，lifetimeSeconds 120 → 1800
+其余所有操作                            一律不动，仍是各自的 15/30/60/90 + 120
+```
+
+具体改动（本次范围内，9.2 有完整清单）：
+
+| 类别 | 文件 |
+|---|---|
+| 全局常量 | `service-auth/src/claims.ts:8` |
+| 策略 | `gateway-common/src/capability-policy.ts`：`deadlineSeconds` 联合类型加 `1800`，`lifetimeSeconds` 从字面量 `120` 放宽成 `120 \| 1800`；`policy()` 多收一个 lifetime 参数（默认 120）；`run` 从 `apply` / `rollback` 那个 case **拆出来单独一条**，注明理由 |
+| 策略的类型出口 | `gateway-common/src/capability-authority.ts:53` |
+| 部署配置（签发侧） | `packages/cloudflare-gateway/wrangler.toml:12`、`stacks/unidocs-azure/deploy/gateway.bicep:177-178` |
+| 部署配置（校验侧） | `packages/cloudflare-{psd,markdown,docx}/wrangler.toml:16`、`stacks/unidocs-azure/deploy/service.bicep:152-153` |
+| 本地栈 | `stacks/unidocs-cloudflare/local/doc-types.mjs:221`、`stacks/unidocs-azure/local/runtime.mjs:775,823` |
+| 会跟着红的测试 | `gateway-common/tests/capability-policy.test.ts:20,30`、`tests/unit/scripts/dev-vars.test.mjs:123`、`tests/unit/scripts/doc-types.test.mjs:229` |
+
+`CAPABILITY_TTL_SECONDS`（默认签发寿命）**保持 120 不动**——它是「没指定 lifetime 时用多久」的兜底，跟 `run` 的显式 1800 无关，一起抬只会让所有没写明的调用都拿到长凭据。
+
+`apply` 和 `rollback` 留在 90/120 不动——它们是一次确定性的写入，没有理由陪着 agent 一起放宽。这正是把 `run` 拆出来单列的意义：**签发**的宽窗口只给真正需要它的那一个操作。
+
+#### 5.6.4 剩下的代价，说清楚
+
+**一次 run 因此被硬性封顶在 30 分钟。** 跑到 1800 秒还没结束，凭据过期，后续 `apply` 开始 401。30 分钟远大于 PSD 25 轮的实际耗时，所以日常不该撞到；但它仍然是一条上限，不是「没有上限」。
+
+三条现在就要做的应对：
+
+1. **内核必须把凭据过期表达成一个清楚的失败**，而不是让 401 混在普通的 apply 错误里被喂回模型让它「重试」——模型重试一百次也不会拿到新凭据，只会把剩下的迭代全部烧光。平台的 `AgentPlatform.apply` 遇到授权类错误时应当中断整个 run，以 `run-error` 结束，错误文本明确写「会话授权已过期，请重新发起」。这与 6.6 对 `readBlob` 的要求是同一条原则（授权失败不降级、不伪装成别的东西）。
+2. **`RUN_LEASE_MS` 跟着这个窗口取值**，见 5.5.5。
+3. **记录每次 run 的实际耗时**。1800 是拍出来的，不是测出来的。有了分布才知道真正的解法该按什么量级设计——也才知道 30 分钟是过宽还是仍然不够。
+
+#### 5.6.5 这是权宜之计，代价记在这里
+
+抬高**全局**天花板与只调 `run` 的策略不是一回事，差别必须写清楚：
+
+| | 变化 | 影响面 |
+|---|---|---|
+| `docCapabilityPolicy("run")` 提到 1800 | **签发**侧，逐操作 | 只有 `run` 会被签出长凭据。其余操作签出来的仍是 120 秒 |
+| `MaximumCapabilityLifetimeSeconds` / `CAPABILITY_MAX_LIFETIME_SECONDS` 提到 1800 | **校验**侧，全局 | 各服务从此**接受**任何有效期 ≤ 1800 秒的凭据，包括 `apply` 的 |
+
+第二行是真实的削弱。今天「校验侧也复查 `exp - iat`」是一层纵深防御：即便签发侧出了 bug 或者被误用，长凭据也进不了门。抬到 1800 之后这层网眼变大了——签发策略仍然是唯一有效的约束，校验侧不再兜底。
+
+**接受它的理由**：签发密钥本来就是唯一的信任根，能拿它签 1800 秒凭据的人，也能签 300 秒的凭据然后连着签六次；这层复查挡的是失误，不是攻击者。而 30 分钟的窗口是把 agent 跑通所必需的。
+
+**彻底解决的方向**（第 12 章，本次不做）：让校验侧的上界按操作区分，或者干脆不靠拉长有效期——operator 在循环中途向网关续签，凭据回到 120 秒。后者是正解，因为它同时消掉了「run 有时长上限」这件事本身。等 5.6.4 第 3 条的耗时数据攒出来再动手。
 
 ---
 
@@ -1031,13 +1184,13 @@ return wantsStream ? this.#runStreaming(lease, session, content)
 | `assistant` | `content: AgentContentPart[]`、`toolCalls?` | content 同上；toolCalls 全部是 JSON 值 |
 | `tool` | `callId`、`content: AgentContentPart[]`、`structuredContent?` | content 同上；structuredContent 是 JsonValue |
 
-推论很关键：**任何 role 的附件在历史里都只是一个 CAS hash，不是字节**（SBlob 走 `SBlobTag = 65_536` 编码，`protocol/src/types.ts:174`）。所以一段 25 轮、含 10 张预览图和用户上传图片的会话，数据库里仍只有文本、结构和引用，附件实际字节全部留在 CAS。
+推论很关键：**任何 role 的附件在历史里都只是一个 CAS hash，不是字节**（SBlob 走 `SBlobTag = 65_536` 编码，`protocol/src/types.ts:175`）。所以一段 25 轮、含 10 张预览图和用户上传图片的会话，数据库里仍只有文本、结构和引用，附件实际字节全部留在 CAS。
 
 #### 6.1.1 必须用 SValue 编码，不能用 JSON
 
 这不是偏好，是硬性的：SBlob 的品牌是一个 Symbol（`protocol/src/types.ts:32` 的 `sBlobSignature`），而 `JSON.stringify` **丢弃 Symbol 键**。JSON 往返之后 `isSBlob()` 返回 false，图片引用变成一个普通的 `{hash}` 对象，再也认不出来。
 
-仓库对此的立场是明写在代码里的（`editor-do-svalue.ts:843`）：
+仓库对此的立场是明写在代码里的（`editor-do-svalue.ts:909`）：
 
 ```ts
 if (encoded.refs.length > 0) {
@@ -1047,7 +1200,7 @@ if (encoded.refs.length > 0) {
 
 含 SBlob 引用的值请求 JSON 输出，直接 406。
 
-值得注意的是，端口层现有的两个 `DeltaLog` 实现恰恰用的是 JSON——`ports-cf.ts:81` 的 `JSON.stringify(d.operations)` 和 `ports-pg.ts:104` 的同一句。**所以那两条路承载不了含 SBlob 的操作**，它们服务的是不带二进制引用的文档类型。真正跑 PSD 的 `editor-do-svalue.ts:305` 走的是 `encodeSValue`。会话历史含图片，必须跟后者。
+值得注意的是，端口层现有的两个 `DeltaLog` 实现恰恰用的是 JSON——`ports-cf.ts:81` 的 `JSON.stringify(d.operations)` 和 `ports-pg.ts:106` 的同一句。**所以那两条路承载不了含 SBlob 的操作**，它们服务的是不带二进制引用的文档类型。真正跑 PSD 的 `editor-do-svalue.ts:340` 走的是 `encodeSValue`。会话历史含图片，必须跟后者。
 
 #### 6.1.2 三件互相独立的事
 
@@ -1117,7 +1270,7 @@ flowchart TB
 
 前两级是**就地替换**，不改变消息数量，因此不可能破坏 6.2.1 的配对；只有第 3 级会删消息，而它以「轮」为单位。
 
-**第 1 级怎么做到不懂文档类型：** 协议层的 image content part 本来就带一个 `altText` 字段（`protocol/src/types.ts:88-93`），docx 今天已经在设它（`doctype-docx/src/agent.ts:78-82`）。内核不区分图片来自 user、assistant 还是 tool，统一扫描 content，降级时只做一件事：
+**第 1 级怎么做到不懂文档类型：** 协议层的 image content part 本来就带一个 `altText` 字段（`protocol/src/types.ts:87-92`），docx 今天已经在设它（`doctype-docx/src/agent.ts:68,78`）。内核不区分图片来自 user、assistant 还是 tool，统一扫描 content，降级时只做一件事：
 
 ```ts
 // image part → text part
@@ -1209,7 +1362,7 @@ const RESTORE_MESSAGE_LIMIT = 200;      // restore 时从存储读回多少条�
 
 #### 6.3.2 表结构
 
-**Azure（Postgres）** —— 作为 `migrations/0003_agent_sessions.sql`：
+**Azure（Postgres）** —— 作为 `migrations/0004_agent_sessions.sql`（2026-08-28 订正：原文写的 `0003` 已被 `0003_tenant_doc_session_keys.sql` 占用）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -1238,13 +1391,13 @@ CREATE TABLE IF NOT EXISTS agent_messages (
 );
 ```
 
-**Cloudflare（DO SQLite）** —— 同名同列，只有主键不同：`agent_sessions` 用 `singleton INTEGER PRIMARY KEY CHECK (singleton = 1)`（一个 OperatorDO 实例就是一个 session，表里永远一行，与 `editor-do-svalue.ts:123` 的 `svalue_pending` 同一写法）；`agent_messages` 用 `msg_no INTEGER PRIMARY KEY`。`doc_type` / `session_id` 两列仍然保留，不参与定位，只为排查问题时能一眼看出这个 DO 是谁。
+**Cloudflare（DO SQLite）** —— 同名同列，只有主键不同：`agent_sessions` 用 `singleton INTEGER PRIMARY KEY CHECK (singleton = 1)`（一个 OperatorDO 实例就是一个 session，表里永远一行，与 `editor-do-svalue.ts:132` 的 `svalue_pending` 同一写法）；`agent_messages` 用 `msg_no INTEGER PRIMARY KEY`。`doc_type` / `session_id` 两列仍然保留，不参与定位，只为排查问题时能一眼看出这个 DO 是谁。
 
 **关于 `text` 列：** 它是从 `payload.content` 的所有 text parts 按顺序拼出来的可读文字。它是派生数据，**永远不是权威**，权威是 `payload`。留它是为了不解码就能看懂一段对话，以及将来做内容检索时有个落脚点。只有图片或文件、没有 text part 的消息，这一列为空。
 
 #### 6.3.3 身份用 `session_id`，不用 doc id
 
-这是仓库刻意迁过去的约定：`migrations/0002_session_identity.sql:15,24` 把 `deltas` 和 `doc_snapshots` 的 `doc_id` 列改名成了 `session_id`。一个文档对应一个 session（网关按 `(userId, docId)` 查出 `record.sessionId` 再转发，`gateway-handler.ts:195`），`doc_sessions` 表负责 `session_id → (tenant_id, doc_type)` 的映射。agent 会话跟着走，不另立身份。
+这是仓库刻意迁过去的约定：`migrations/0002_session_identity.sql:15,24` 把 `deltas` 和 `doc_snapshots` 的 `doc_id` 列改名成了 `session_id`。一个文档对应一个 session（网关按 `(userId, docId)` 查出 `record.sessionId` 再转发，`gateway-common/src/gateway-handler.ts:260`），`doc_sessions` 表负责 `session_id → (tenant_id, doc_type)` 的映射。agent 会话跟着走，不另立身份。
 
 #### 6.3.4 接口
 
@@ -1291,7 +1444,7 @@ export interface AgentSessionStore {
 
 `save` 改成了 `append`，而且不再有 `upsert` 和 `dropTurnsBefore`——因为裁剪不再动存储（6.2.6），消息写进去就不会被改写或删除。这与 `deltas` 是同一种表。
 
-两处写入在一个事务里：`agent_messages` 的 INSERT，和 `agent_sessions` 的 `seq` 条件更新。Azure 用现成的 `PgUnitOfWork`（`ports-pg.ts:270`），CF 用 `ctx.storage.transaction`。
+两处写入在一个事务里：`agent_messages` 的 INSERT，和 `agent_sessions` 的 `seq` 条件更新。Azure 用现成的 `PgUnitOfWork`（`ports-pg.ts:288`），CF 用 `ctx.storage.transaction`。
 
 #### 6.3.5 `load` 的两个调用方
 
@@ -1321,7 +1474,7 @@ UPDATE agent_sessions SET seq = ?, turn_count = ?, byte_size = ?, updated_at = ?
 WHERE <定位条件> AND seq = ?;      -- 最后一个 ? 是 expectedToken
 ```
 
-受影响行数为 0 即冲突，整个事务回滚并抛 `SessionStoreConflictError`。首次写入用 `INSERT ... ON CONFLICT DO NOTHING`（Azure）/ `INSERT OR IGNORE`（CF），同样看受影响行数。这与 `PgDeltaLog.append`（`ports-pg.ts:89-111`）是同一套写法。
+受影响行数为 0 即冲突，整个事务回滚并抛 `SessionStoreConflictError`。首次写入用 `INSERT ... ON CONFLICT DO NOTHING`（Azure）/ `INSERT OR IGNORE`（CF），同样看受影响行数。这与 `PgDeltaLog.append`（`ports-pg.ts:90-112`）是同一套写法。
 
 为什么需要条件写，见 6.3.7：两个平台的并发模型不同。
 
@@ -1333,7 +1486,7 @@ WHERE <定位条件> AND seq = ?;      -- 最后一个 ? 是 expectedToken
 | 并发 | DO 单线程，天然串行 | 两个并发 run 可能落在不同副本上 |
 | 条件写 | 恒成立，`token` 只是形式 | 真正起作用 |
 
-`ports.ts:44-63` 已经为 `DeltaLog.remove` 点明过这个差异："Cloudflare has one (the Durable Object's `#requestTail`), Azure's stateless replicas do not"。会话历史面对的是完全相同的问题。
+`ports.ts:43-65` 已经为 `DeltaLog.remove` 点明过这个差异："Cloudflare has one (the Durable Object's `#requestTail`), Azure's stateless replicas do not"。会话历史面对的是完全相同的问题。
 
 除条件写外还需要一条约束：**同一会话同时只允许一个 run**。CF 上由 DO 天然保证；Azure 上靠条件写检测冲突后拒绝第二个 run，返回明确错误，而不是让两段对话互相覆盖。今天客户端其实已经在做这件事（`web-psd/src/main.ts` 的 `chatBusy` 标志），但那是建议而非保证。
 
@@ -1379,7 +1532,7 @@ GROUP BY s.tenant_id;
 
 这是与「消息字节存哪儿」正交的一件事。所有 role 的 image / file part 都只保存 CAS hash；如果没有人声明持有它，CAS 会把附件回收，历史就烂了。
 
-仓库现有的做法是显式提交**根引用**（`session.ts:633-643`）：
+仓库现有的做法是显式提交**根引用**（`session.ts:639-645`）：
 
 ```ts
 await commitRootRefsOrRollback(
@@ -1425,9 +1578,29 @@ PSD 一次 run 可能跑几分钟。中途崩溃时：文档改动本来就独�
 
 ### 6.6 blob 读不到时降级 —— 发生在发送前，不在恢复时
 
-6.4 的根引用**应当**保证历史里的图片一直在。但引用计数系统总有失灵的可能——迁移脚本、手工清理、跨区域复制延迟。`readBlob` 一旦失败，**必须降级，不能抛异常**：否则单个 blob 丢失会让整个会话永久打不开，而它本可以只是少一张图。
+6.4 的根引用**应当**保证历史里的图片一直在。但引用计数系统总有失灵的可能——迁移脚本、手工清理、跨区域复制延迟。**这一类失败必须降级，不能抛异常**：否则单个 blob 丢失会让整个会话永久打不开，而它本可以只是少一张图。
 
-关键是这件事发生在**哪一步**。
+关键是这件事发生在**哪一步**，以及**哪些失败才算这一类**。
+
+#### 6.6.0 只有「确实没了」才降级，授权和传输失败必须抛（2026-08-28 改写）
+
+先前这一节写的是「`readBlob` 一旦失败，必须降级，不能抛异常」。那句话按字面实现是错的，而且这个仓库刚刚为它付过一次代价。
+
+提交 `63f997b`（2026-08-26）修的正是这个形状：PSD 的 blob store 里有一个裸 `catch { return null }`，把任何错误都变成「没找到」。结果 capability 授权那一轮上线后，CAS 返回的 401 表现成 `PixelSource: no blob found in store`，把排查整个引向了数据问题。那个提交的信息里写得很直白——「停止把所有 CAS 错误伪装成"blob 不存在"」。
+
+内核的物化路径如果照抄「一律降级」，会把同一个坑原样搬进来，而且更隐蔽：5.6 说了 `run` 的凭据 1800 秒过期，过期之后 `readBlob` 返回的就是 401。一律降级的后果是——一次跑长了的 run，从某一刻起每张图片静默变成 `[image: ...]` 一行文字，模型开始基于看不见的画面瞎猜，日志里一个错误都没有。
+
+所以规则改成按错误类型分流：
+
+| `readBlob` 的失败 | 处理 | 理由 |
+|---|---|---|
+| blob 确实不存在（CAS 404 / 引用已被回收） | **降级成文字**，run 继续 | 这是 6.4 失灵的正常表现，代价只是少一张图 |
+| 授权失败（401 / 403，含 5.6 的凭据过期） | **抛出，以 `run-error` 结束整个 run** | 不是数据问题。降级会让它无声无息，而且后面每一次 IO 都会同样失败 |
+| 传输失败（超时、5xx、网络中断） | **抛出**，同上 | 可能是暂时的，但不该由内核伪装成「图没了」自行消化 |
+
+落地要求：`AgentPlatform.readBlob` 的失败必须是**可区分的**，不能只抛一个 `Error`。`@unicas/client` 已经有 `CasClientError` 并且携带状态码（`session.ts:609-612` 就是靠它区分「CAS 的锅」和「delta 非法」的），两个平台的实现照此办理，内核只判断这个分类，不解析错误文本。
+
+这条与 5.6.4 的第 1 点是同一条原则的两个落点：**授权失败要响，不要降级。**
 
 恢复历史不需要读 blob。6.1 已经讲清了前提：历史里存的是 SBlob **引用**，不是图片字节。所以恢复只做三件事，全程零 blob IO：
 
@@ -1443,9 +1616,10 @@ flowchart TB
     T["裁剪后，即将发给模型的那份历史"] --> S["扫描所有 role 的 image / file part"]
     S --> H{"字节缓存里有吗"}
     H -->|有| K["直接用"]
-    H -->|没有| R{"readBlob 成功吗"}
+    H -->|没有| R{"readBlob 的结果"}
     R -->|成功| K2["用它，并写进缓存"]
-    R -->|失败| G["就地降级成文字<br/>用该图的 altText，同 6.2.3 第 1 级"]
+    R -->|"blob 不存在"| G["就地降级成文字<br/>用该图的 altText，同 6.2.3 第 1 级"]
+    R -->|"授权 / 传输失败"| X["抛出 → run-error<br/>不降级，见 6.6.0"]
     K --> OUT["交给大模型适配层"]
     K2 --> OUT
     G --> OUT
@@ -1457,7 +1631,7 @@ flowchart TB
 - 恢复的职责会变成「读回历史，顺带探测图片可读性」——两件事绑在一起，而且和 `load({ limit })` 的参数选择产生了不该有的耦合。
 - 一张图在恢复那一刻可读、在几轮之后发送时被回收了，放在恢复里检查也拦不住。**降级本来就该发生在真正要用它的时刻。**
 
-一句话：**blob 丢失是发送时的降级问题，不是恢复时的解码问题。**
+一句话：**blob 丢失是发送时的降级问题，不是恢复时的解码问题；而「读不到」不等于「丢失」（6.6.0）。**
 
 图片降级用的文字与裁剪走同一条路——该图自己的 `altText`（6.2.3）；文件使用 `filename ?? mediaType`。内核不需要为此多认识任何文档类型概念。
 
@@ -1472,7 +1646,7 @@ flowchart TB
 | 从消息里抽出 `role` / `turnNo` / `text`（6.3.2） | 内核 | 内核——它知道消息结构，平台不知道 |
 | 从所有 role 的完整消息中计算根引用增量 | 内核 | 内核 |
 | `AgentSessionStore`（字节存哪儿） | 下边界（实现） | 平台 sdk |
-| `CasRootRefGateway`（引用提交到哪儿） | 下边界（实现） | 平台 sdk，已存在于 `cas-client` |
+| `CasRootRefGateway`（引用提交到哪儿） | 下边界（实现） | 平台 sdk，已存在于 `@unicas/client` |
 
 分界线是 `StoredMessage` 和 `CasReferences`：**什么该留在上下文里、编成什么格式、每条消息的结构字段是什么、引用增量是多少**都是与平台无关的判断，属于内核；**这些行和引用最终落到哪个存储、用什么语法条件写**是与平台强相关的做法，属于下边界。
 
@@ -1618,18 +1792,20 @@ flowchart LR
     S["AgentSession.run(content, onEvent)<br/>每产生一个事件就调一次 onEvent"] --> E["内核的 sseFrame(event)<br/>纯函数：wire 事件 → 一个 SSE 帧字符串<br/>平台无关"]
     E --> P1["cloudflare-sdk<br/>onEvent 里写进 TransformStream，包成 Response"]
     E --> P2["azure-sdk<br/>onEvent 里写进 Node 响应流"]
-    P1 --> W["doctype 服务<br/>doc-type-handler.ts:113"]
+    P1 --> W["doctype 服务<br/>doc-type-handler.ts:111"]
     P2 --> W
-    W --> G["网关<br/>gateway-handler.ts:188"]
+    W --> G["网关<br/>gateway-common/src/gateway-handler.ts:330"]
     G --> B["浏览器"]
 ```
 
-**好消息：链路已经是流式透明的，网关不需要改。**
+**好消息：链路的 body 是流式透明的。**
 
-- `gateway-handler.ts:188-202`：拿到上游 Response 直接 return，不读 body。`Accept` 头在转发白名单里，`Accept-Encoding: identity` 也已经设了，对 SSE 正合适。
-- `doc-type-handler.ts:113-125`：转发给 operator，同样直接 return。
+- `gateway-common/src/gateway-handler.ts:292,329-336`：拿到上游 Response 直接 return，不读 body。`Accept` 头在转发白名单里（`:292`），`Accept-Encoding: identity` 也已经设了（`:329`），对 SSE 正合适。
+- `doc-type-handler.ts:108-118`：转发给 operator，同样直接 return。
 
-（此前担心的 body 缓冲在 `gateway-handler.ts:473`，那是建文档那条路，与 `/run` 无关。）
+（此前担心的 body 缓冲在 `gateway-common/src/gateway-handler.ts:567`，那是建文档那条路，与 `/run` 无关。）
+
+**但「网关不需要改」这句话不成立**（2026-08-28 订正）。body 是透明的，**连接寿命不是**：`gateway-handler.ts:306-311` 给这次转发挂了 `AbortSignal.timeout(deadlineSeconds * 1000)`，`run` 今天是 90 秒。所以一条 SSE 在 90 秒处会被网关自己掐断，与下游写不写得动无关。这正是 5.6 要改的东西（`run` 的 `deadlineSeconds` 提到 1800），也是第 10 章把它排成第 0 步的原因——不先改它，7.3 承诺的「服务端继续跑完、浏览器如实收到断线」在 90 秒之后就变成了「每次都断线」。
 
 内核这一侧只导出一个纯函数 `sseFrame(event: AgentEvent): string`——它不碰流、不碰响应对象，所以留在内核不违反 4.4 的规则 1。把帧写进哪种流、怎么包成响应，是平台的事。
 
@@ -1673,9 +1849,9 @@ return outcome.ok
 | `ok: true` | 200，`{ success: true, data: { content, response, iterations } }`；`response` 是 text parts 的兼容投影 |
 | 其余失败 | 500，`{ success: false, error }` |
 
-旧客户端仍能读取与今天 `operator-do-agent.ts:105-124` 相同的 `success`、`response`、`iterations` 字段；新增的 `content` 不改变这些字段的语义。
+旧客户端仍能读取与今天 `operator-do-agent.ts:116-135` 相同的 `success`、`response`、`iterations` 字段；新增的 `content` 不改变这些字段的语义。
 
-**抢不到 run 租约不在这张表里**，因为那发生在决定响应形状之前（5.5.5）——两条路径都直接返回 HTTP 409，流式路径连 SSE 都不会建立。409 是新增状态码，今天没有并发拒绝这条路径，所以不存在兼容问题。这样 markdown / docx 的现有调用和现有测试（`cloudflare-sdk/tests/operator-do.test.ts`，230 行）不受影响，迁移可以逐个文档类型推进。
+**抢不到 run 租约不在这张表里**，因为那发生在决定响应形状之前（5.5.5）——两条路径都直接返回 HTTP 409，流式路径连 SSE 都不会建立。409 是新增状态码，今天没有并发拒绝这条路径，所以不存在兼容问题。这样 markdown / docx 的现有调用和现有测试（`cloudflare-sdk/tests/operator-do.test.ts`，236 行）不受影响，迁移可以逐个文档类型推进。
 
 ---
 
@@ -1823,7 +1999,7 @@ channel.run({ content: [
 | `AgentChannel` | agent 在想什么、调了什么工具、说了什么 | 实时 |
 | `DocSession` | 文档内容 | run 结束后 `reconcile()` 一次 |
 
-对比今天（`web-psd/src/main.ts:374-390`）：中途界面上只有一个不动的「thinking…」，用户不知道 agent 在干什么、跑到哪一步了、是不是卡死了。本次改进的是**这一半**。
+对比今天（`web-psd/src/main.ts:375-399`）：中途界面上只有一个不动的「thinking…」，用户不知道 agent 在干什么、跑到哪一步了、是不是卡死了。本次改进的是**这一半**。
 
 画布的逐步更新要等文档变更通道（7.2.1），那时 `DocSession` 订阅它即可，`AgentChannel` 一行都不用改——这正是把两件事分开的好处。
 
@@ -1839,17 +2015,37 @@ channel.run({ content: [
 |---|---|
 | `doctype-psd/src/tools.ts` | `Record<string, AgentToolDefinition>` → `AgentTool[]`，每项加 `kind` 和 `toQuery` / `toOps`；工具名去掉 `query_` / `apply_` 前缀并与提示词对齐（5.3.1）；`getPreview` 加 `toResult` 返回 image content part |
 | `doctype-psd/src/queries.ts:101` | `getPreview` 从 `btoa` 产出 base64 改为 `makeSBlob` 返回 SBlob 引用 |
-| `doctype-psd/src/agent.ts` | 73 行 → 一个常量导出（5.1.2） |
+| `doctype-psd/src/agent.ts` | 80 行 → 一个常量导出（5.1.2） |
 | `doctype-psd/tests/agent.test.ts:61-76` | 断言反转：从「`$image` 透传且 `content` 为 undefined」改为「返回 image content part」；其余用例从「调 `toolCall`」改为「调 `toQuery` / `toOps` 并断言返回值」 |
-| `doctype-markdown/src/tools.ts` | 同样改成 `AgentTool[]`，工具名去前缀 |
-| `doctype-markdown/src/agent.ts` | 129 行 → 一个常量导出。原 `toolCall` 里的前缀判断、`kind` 拆分、`payload` 拼装，逐个工具化进 `toQuery` / `toOps`，每个一行 |
+| `doctype-markdown/src/agent.ts` | 129 行 → 一个常量导出。**markdown 没有 `tools.ts`**（2026-08-28 订正，原文列了一个不存在的文件）：它的工具表就在 `agent.ts:7` 的 `markdownTools`，提示词在 `:71` 的 `markdownInstructions`。所以这一格同时包含建表和改 `toolCall`——原 `toolCall` 里的前缀判断、`kind` 拆分、`payload` 拼装，逐个工具化进 `toQuery` / `toOps` |
+| `doctype-markdown/src/markdown.ts:110,174` | **删掉这里重复的第二份 `tools` 和 `instructions`**，理由见下面的 9.1.1 |
 | `doctype-markdown/tests/agent.test.ts` | 同 psd，改为直接测各工具的纯函数 |
 | `doctype-docx/src/tools.ts` | 同样改成 `AgentTool[]`，工具名去前缀 |
-| `doctype-docx/src/agent.ts` | 137 行 → 一个常量导出。`makeOperation`（`:86-113`）拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，其中 `await resolveBlob(hash)` 改为同步的 `createSBlob(hash)`（5.1.1）；`queryImageContent`（`:53-84`）变成 `getImage` 工具的 `toResult` |
-| `doctype-docx/src/agent.ts:120-137` | `requireSValueRecord` / `requireNumber` / `requireString` 提到 **`svalue-codec`**（不是 agent 内核，理由见 5.1.2），三个文档类型共用 |
+| `doctype-docx/src/agent.ts` | 137 行 → 一个常量导出。`makeOperation`（`:83-115`）拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，其中 `await resolveBlob(hash)` 改为同步的 `createSBlob(hash)`（5.1.1）；`queryImageContent`（`:51-81`）变成 `getImage` 工具的 `toResult` |
+| `doctype-docx/src/agent.ts:118-137` | `requireSValueRecord` / `requireNumber` / `requireString` 提到 **`svalue-codec`**（不是 agent 内核，理由见 5.1.2），三个文档类型共用 |
 | `doctype-docx/tests/agent.test.ts` | 同上改造。docx 的图片路径此前从未真正跑通（P6），改造后补一条端到端 |
 
-**语义不变**这一点值得确认：改造前 docx 的 `apply_insertImage` 做的是「取 hash → 换成 SBlob → 构造 op → 调 apply」，改造后是「`toOps` 里取 hash → `createSBlob` → 返回 op」，由内核去调 apply。中间少了一次 CAS 租约往返，因为那件事 `session.ts:608` 已经在做（5.1.1）。
+**语义不变**这一点值得确认：改造前 docx 的 `apply_insertImage` 做的是「取 hash → 换成 SBlob → 构造 op → 调 apply」，改造后是「`toOps` 里取 hash → `createSBlob` → 返回 op」，由内核去调 apply。中间少了一次 CAS 租约往返，因为那件事 `session.ts:611` 已经在做（5.1.1）。
+
+#### 9.1.1 顺带清掉 `DocumentType.tools`（2026-08-28 新增）
+
+复审时发现三个文档类型的工具表并不同构：
+
+| | 工具表在哪 | `DocumentType.tools` / `.instructions` |
+|---|---|---|
+| psd | `src/tools.ts` 的 `tools` / `instructions`，`agent.ts` 和 `doctype.ts:94-95` 用的是同一份 | 指向那同一份，没有第二份 |
+| docx | `src/tools.ts`，`agent.ts` 和 `docx.ts:215-216` 同上 | 同上 |
+| **markdown** | `src/agent.ts:7` 的 `markdownTools`，**没有 `tools.ts`** | `markdown.ts:110,174` **另写了一份**，与 agent 那份各改各的 |
+
+而 `DocumentType.tools` 这个字段**全仓库没有任何读取方**：`operator-do-agent.ts:109` 读的是 `DocumentAgent.tools`，唯一读 `DocumentType.tools` 的是 `doctype-server-common/src/operator.ts:78`——正是第 10 章第 6 步要删的那份死代码。
+
+所以第 6 步删完之后：
+
+- `protocol/src/types.ts:161-165` 的 `tools` / `instructions` 两个必填字段可以从 `DocumentType` 上摘掉；
+- psd / docx 的 `doctype.ts:94-95`、`docx.ts:215-216` 跟着删两行（`tools.ts` 本身不动，`agent.ts` 仍然从它导入）；
+- markdown `markdown.ts:110,174` 那份重复内容整段删掉，它从来没被读过，却在过去一年里跟 `agent.ts` 那份漂移出了差异。
+
+这件事顺带解决了 4.3.1 提到的「`DocumentType.tools` 造成的环」——那个环正是因为 `DocumentType` 要引用 `AgentToolDefinition`。环消失之后，契约类型要不要从 `protocol` 搬进 `doctype-server-common` 就变成一个可以单独讨论的问题；**但本次不搬**，4.3.1 的结论不变，这里只是记下环的成因已经可以移除。
 
 ### 9.2 内核与平台
 
@@ -1857,14 +2053,24 @@ channel.run({ content: [
 |---|---|
 | `cloudflare-psd/src/anthropic.ts` | 移到 `doctype-server-common/src/agent/providers/anthropic.ts`，删掉 `findImage` / `previewMeta`，翻译改为单向 |
 | `cloudflare-psd/src/worker.ts` | 改为注入 `psdAgent` 常量 + Cloudflare 的 `AgentPlatform` 实现 |
-| `cloudflare-sdk/src/operator-do-agent.ts` | 296 行 → 薄 DurableObject 外壳：身份校验、附件 possession 校验、wire content 与 SBlob 的转换、把事件流包成 Response |
-| `doctype-server-common/src/operator.ts` | 删除（177 行死代码） |
-| `azure-sdk/src/local-editor.ts:103` | 删掉 501 占位，改为真实的 `AgentPlatform` 实现，`apply` 提交时自己读当前 head 作 baseVersion |
+| `cloudflare-sdk/src/operator-do-agent.ts` | 326 行 → 薄 DurableObject 外壳：身份校验、附件 possession 校验、wire content 与 SBlob 的转换、把事件流包成 Response |
+| `doctype-server-common/src/operator.ts` + `src/index.ts:8` | 删除（177 行死代码）。**不只是删文件**：`index.ts:8` 有一句 `export * from "./operator.js"`，所以 `OperatorSession` / `OperatorRunOutcome` 等是这个包的公开导出，要一并摘掉。仓库里没有任何 import 点，P3 的判断不变 |
+| `azure-sdk/src/local-editor.ts:124` | 删掉 501 占位，改为真实的 `AgentPlatform` 实现，`apply` 提交时自己读当前 head 作 baseVersion |
 | `protocol/src/types.ts:100-129` | `DocumentAgent` 改成 `AgentTool[]` + instructions（5.1.2）；`DocumentAgentFactory` 删除；`DocumentAgentContext` 改形状为带 `readBlob` / `writeBlob` 的 `AgentPlatform`；新增所有 role 共用 content parts 的 `AgentMessage`、字节态 `LlmMessage` 和 wire content 类型（5.4、7.1） |
 | `cloudflare-sdk/src/agent-store-do.ts` | 新增：`DoAgentSessionStore`，DO SQLite 两张表 + `seq` 条件写，写入走 `ctx.storage.transaction`（6.3.2、6.3.4） |
-| `azure-sdk/src/agent-store-pg.ts` | 新增：`PgAgentSessionStore`，Postgres 两张表 + `seq` 条件写，事务复用 `PgUnitOfWork`（`ports-pg.ts:270`），条件写照搬 `PgDeltaLog.append`（`:89-111`） |
-| `azure-sdk/migrations/0003_agent_sessions.sql` | 新增：`agent_sessions` 与 `agent_messages` 两张表（6.3.2） |
-| `azure-sdk/tests/migrate.test.ts:36` | 断言的表名列表加上 `agent_sessions`、`agent_messages` |
+| `azure-sdk/src/agent-store-pg.ts` | 新增：`PgAgentSessionStore`，Postgres 两张表 + `seq` 条件写，事务复用 `PgUnitOfWork`（`ports-pg.ts:288`），条件写照搬 `PgDeltaLog.append`（`:90-112`） |
+| `azure-sdk/migrations/0004_agent_sessions.sql` | 新增：`agent_sessions` 与 `agent_messages` 两张表（6.3.2）。编号是 `0004` 不是 `0003`——`0003_tenant_doc_session_keys.sql` 已经在了 |
+| `azure-sdk/tests/migrate.test.ts:24,34-36` | 那条用例叫「is idempotent and produces **only** the session storage tables」，新增两张表要同时改用例名的口径和 `:34-36` 的表名断言；`:50` 的 `DROP TABLE` 清理列表也要带上它们 |
+| `service-auth/src/claims.ts:8` | `MaximumCapabilityLifetimeSeconds` 300 → 1800。必须先改这里，`runtime.ts:40-45` 拿它当解析 `CAPABILITY_MAX_LIFETIME_SECONDS` 的上界（5.6.2） |
+| `gateway-common/src/capability-policy.ts` | `run` 从 `apply` / `rollback` 的 case 拆出单列：`deadlineSeconds` 90 → 1800，`lifetimeSeconds` 120 → 1800；两个联合类型跟着放宽（5.6.3） |
+| `gateway-common/src/capability-authority.ts:53` | `DocOperationCredentials.deadlineSeconds` 的联合类型加 `1800` |
+| `cloudflare-gateway/wrangler.toml:12`<br/>`stacks/unidocs-azure/deploy/gateway.bicep:177-178` | 签发侧的 `CAPABILITY_MAX_LIFETIME_SECONDS` → `"1800"` |
+| `cloudflare-{psd,markdown,docx}/wrangler.toml:16`<br/>`stacks/unidocs-azure/deploy/service.bicep:152-153` | 校验侧的同一个变量 → `"1800"`。漏掉任何一个，那个文档类型就会拒收 `run` 凭据 |
+| `stacks/unidocs-cloudflare/local/doc-types.mjs:221`<br/>`stacks/unidocs-azure/local/runtime.mjs:775,823` | 本地栈的同一个变量 → `"1800"` |
+| `gateway-common/tests/capability-policy.test.ts:20,30` | 逐操作断言表里 `run` 那行改成 `1800`，并把 lifetime 从写死的 `120` 改成按行取 |
+| `tests/unit/scripts/dev-vars.test.mjs:123`<br/>`tests/unit/scripts/doc-types.test.mjs:229` | 这两处断言的是生成出的完整 env map，改了本地栈就会红，跟着改成 `"1800"` |
+
+> `CAPABILITY_TTL_SECONDS` 全部保持 `"120"`——它是默认签发寿命的兜底，与 `run` 的显式 1800 无关（5.6.3）。`service-auth/tests/runtime.test.ts` 和 `doctype-server-common/tests/doc-auth-config.test.ts` 里的 `"300"` 是自带的输入夹具，不是对全局常量的断言，抬高常量之后仍然通过，不用改。
 | 两个平台的 `AgentPlatform` | `readBlob` 负责模型前物化；`writeBlob` 负责把 provider 产生的二进制先写入 CAS，再进入 assistant message |
 
 ### 9.3 客户端
@@ -1874,7 +2080,7 @@ channel.run({ content: [
 | `psd-client/src/doc-session.ts` | 移到 `client-sdk`，泛型化 |
 | `psd-client/src/index.ts` | 重新导出 `client-sdk` 的 `DocSession`，并绑定 PSD 的 `applyLocal` / `reload` |
 | `client-sdk/src/agent-channel.ts` | `run(string)` 保持兼容；新增多模态 `AgentRunInput`，只接收已上传附件的 hash + possession，解析 `assistant-content` wire 事件 |
-| `web-psd/src/main.ts:357-397` | 改用 `AgentChannel`，展示逐步进度和 assistant content；附件先上传 CAS，再发 run |
+| `web-psd/src/main.ts:360-399` | 改用 `AgentChannel`，展示逐步进度和 assistant content；附件先上传 CAS，再发 run |
 
 ---
 
@@ -1882,11 +2088,12 @@ channel.run({ content: [
 
 ```mermaid
 flowchart TB
+    S0["0. run 的授权窗口<br/>全局天花板 300→1800<br/>capability-policy 里 run 单列<br/>deadline 90→1800, lifetime 120→1800<br/>9 处部署配置跟着改"] --> S1
     S1["1. 契约改形状<br/>AgentTool / DocumentAgent / AgentPlatform<br/>三个文档类型的工具表跟着重写,去掉前缀"] --> S2["2. 建 doctype-server-common/src/agent/<br/>循环 + 多模态持久消息 / 字节态模型消息<br/>+ Anthropic 适配层"]
     S2 --> S2b["3. cloudflare-sdk 改成薄外壳"]
     S2b --> S3["4. psd 的 getPreview 改走 SBlob<br/>toResult 返回 image content part"]
     S3 --> S4["5. 删掉 renderToolResult 钩子<br/>docx 的图片路径第一次跑通"]
-    S4 --> S5["6. 删除 doctype-server-common/operator.ts"]
+    S4 --> S5["6. 删除 doctype-server-common/operator.ts<br/>顺带摘掉无人读取的 DocumentType.tools"]
     S5 --> S6["7. 历史裁剪 history.ts<br/>图片降级 / 大结果降级 / 整轮丢弃"]
     S6 --> S7["8. AgentSessionStore 接口 + 契约测试<br/>CF 的 DO SQLite 实现"]
     S7 --> S8["9. 所有 role 的附件根引用保活<br/>encode refs + commitRootRefsOrRollback"]
@@ -1896,6 +2103,8 @@ flowchart TB
     S10 --> S11["13. web-psd 接上流式"]
     S11 --> S12["14. azure-sdk 实现 AgentPlatform + PgAgentSessionStore<br/>去掉 501"]
 ```
+
+第 0 步单独排在最前面（2026-08-28 新增）：它只动 `gateway-common` 的三个文件，与 agent 内核完全无关，改完全仓库测试就能验证，先落地能让后面每一步的端到端验证都不再撞 90 秒那道墙。放在最后做的话，第 13 步的手工端到端（V13）会在 90 秒处莫名断流，白白浪费一轮排查。
 
 第 1-6 步是 A 块（两层边界），第 7-10 步是 B 块（裁剪、持久化、并发），第 11-13 步是 C 块（流式），第 14 步是「平台无关」这个目标的真正证明——它同时验证下边界的两个接口（`AgentPlatform` 和 `AgentSessionStore`）都确实可换。
 
@@ -1909,10 +2118,13 @@ flowchart TB
 |---|---|---|
 | V1 | 文档类型不再持有任何平台句柄 | 搜索 `packages/doctype-*/src/`：不应出现 `context.query` / `context.apply` / `resolveBlob`；`agent.ts` 只导出一个常量，没有 factory |
 | V2 | 内核不按名字猜工具语义 | 全仓库搜索 `startsWith("query_")` / `startsWith("apply_")` 应无任何命中——前缀彻底消失（5.3.1） |
-| V3 | 内核不 import 任何云相关模块，也不用 `Request` / `Response` | `tests/unit/agent-kernel-purity.test.ts` 按目录扫 `src/agent/**`（4.4） |
-| V4 | 平台 sdk 不依赖任何文档类型，反之亦然 | 同一测试文件断言 `package.json`：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk（4.4） |
-| V5 | **运行时代码隔离**：服务端 agent 代码进不了浏览器 | 三条断言，都不看体积、也不看 `package.json` 的字段名：① `doctype-*/src/**` 里对 `@unidocs/doctype-server-common` 的 import **全部是 `import type`**；② 打包 `psd-client`，产物中不出现 `src/agent/**` 的任何模块；③ 产物中不出现 `AgentSession` / provider / store 等服务端符号（4.3.2） |
+| V3 | 内核不 import 任何云相关模块，也不用 `Request` / `Response` | 新增 `tests/unit/workspace/agent-kernel-purity.test.mjs`，按目录扫 `src/agent/**`（4.4） |
+| V4 | 平台 sdk 不依赖任何文档类型，反之亦然 | **扩充既有的 `tests/unit/workspace/package-deps.test.mjs`**，不新写一套 `package.json` 解析：`{cloudflare,azure}-sdk` 的 dependencies 无 `@unidocs/doctype-*`（`doctype-server-common` 除外）；`doctype-*` 的 dependencies 无任何平台 sdk（4.4） |
+| V5 | **运行时代码隔离**：服务端 agent 代码进不了浏览器 | 三条断言，都不看体积、也不看 `package.json` 的字段名：① `doctype-*/src/**` 里对 `@unidocs/doctype-server-common` 的 import **全部是 `import type`**；② 打包 `psd-client`，产物中不出现 `src/agent/**` 的任何模块；③ 产物中不出现 `AgentSession` / provider / store 等服务端符号（4.3.2）。**注意这条不断言依赖落在哪个字段**——既有的 `package-deps.test.mjs` 规则 1 会把它压进 `dependencies`，那是对的，不构成 V5 的反例 |
+| V5b | 三个文档类型的 tsconfig 跟上了新依赖 | 既有 `package-deps.test.mjs` 的规则 4（composite 包的 `references` 恰好覆盖 `dependencies`）自动覆盖，不用新写断言——只要记得改 tsconfig，忘了它就会红（4.3.2） |
 | V6 | 循环行为不退化 | 新增契约测试：内存版 `AgentPlatform` + 假 provider，跑完整循环，覆盖工具调用往返、apply 失败后模型重试、达到迭代上限、未知工具名 |
+| V6b | 默认转换与今天逐字节一致 | 直接对 `defaultQueryToolResult` / `defaultOpToolResult` 断言，输出与改造前 `toolCall` 那两段代码的产物深相等；再断言一个不写 `toResult` 的 query 工具经过内核之后拿到的正是前者的返回值（5.1.2） |
+| V6c | 内核对 `AgentToolResult` 的规范化是无损的 | 给定任意 `AgentToolResult`，转成 `role:"tool"` 的 `AgentMessage` 之后 `content` 与 `structuredContent` 逐字段相等，`callId` 是内核补的；空 `content` 归一成 `[]` 而不是 undefined（5.4.1） |
 | V7 | `toQuery` / `toOps` 确实是纯函数 | 契约测试：同一组参数连调两次，结果深相等；调用期间不发生任何 IO（用假的全局 fetch 断言未被调用）（5.1.2） |
 | V8 | 内核不持有任何版本状态 | 代码检视 + 搜索：`packages/doctype-server-common/src/agent/` 里不应出现 `version` 相关字段；契约测试：apply 失败时错误原文出现在下一轮的 tool 消息里，且循环继续而不是中止（5.2） |
 | V9 | PSD 送给模型的图片字节与改造前完全一致 | 抓一次 provider 请求体，与改造前对比 |
@@ -1938,8 +2150,12 @@ flowchart TB
 | V29 | DB 不保存附件实际字节 | 写入一张带独特字节序列的图片后，`agent_messages.payload` 解码只得到 SBlob 和元数据，payload 大小不随图片大小线性增长；实际字节只可从 CAS 读取（5.4.3） |
 | V30 | provider 只接收物化后的消息 | 类型与运行时测试共同断言 `LlmProvider.complete` 收到的是 `LlmMessage[]`：附件为 `Uint8Array`，不含 SBlob；持久化 payload 则相反，只含 SBlob、不含附件字节（5.4.2） |
 | V31 | assistant 二进制输出先进入 CAS | 假 provider 返回 image bytes，断言内核先调 `platform.writeBlob`，历史中的 assistant image part 保存返回的 SBlob，事件和一次性响应只发送 wire 引用（5.4.2、7.1） |
+| V32 | `run` 的授权窗口真的放宽了，而且**只有 `run`** | `capability-policy.test.ts` 的逐操作表：`run` 是 `deadlineSeconds: 1800` / `lifetimeSeconds: 1800`，其余每一个操作的两个值都与改动前逐字节相同。再加一条：签发出的 `run` 凭据 `exp - iat === 1800` 且能通过 verifier；`apply` 凭据仍是 `120`（5.6.3） |
+| V32b | 每一个校验侧都认这张长凭据 | 三个 doctype 的 `wrangler.toml` 与 azure 的 `service.bicep` 里 `CAPABILITY_MAX_LIFETIME_SECONDS` 全是 `"1800"`——用一条遍历断言，不逐个手写。漏一个的症状是「psd 能跑、markdown 报 401」这种只在跑到某个文档类型时才暴露的问题（5.6.3） |
+| V33 | 一次长 run 在窗口内不会因授权而失败，超窗口失败得清楚 | 不去真的跑 30 分钟——把注入的窗口调成几秒，断言两件事：窗口内每一次 `apply` 都成功；越过窗口后 run 以 `run-error` 结束且错误文本点明「授权已过期」，而不是被当成普通 apply 失败喂回模型继续重试（5.6.4） |
+| V34 | `readBlob` 失败按类型分流，授权失败不被伪装成「图没了」 | 假 `AgentPlatform` 分别抛「不存在」和「401」：前者降级成 `altText` 文字且 run 继续；后者让 run 以 `run-error` 结束，且**历史里不出现任何降级文字**——降级过的历史会让后续轮次以为图本来就没有（6.6.0） |
 
-V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。V17 是它在存储维度上的对应判据。
+V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽象层没做到平台无关。V17 是它在存储维度上的对应判据。V32-V34 守的是 5.6 那条新约束：授权窗口放宽了多少、超出之后怎么失败、失败时不许静默。
 
 ---
 
@@ -1955,6 +2171,8 @@ V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽
 | 中途打断 / 追加指令 | 需要额外的控制通道，且「已经 apply 的操作要不要回滚」语义需要单独设计 |
 | 聊天记录翻页的 HTTP 端点 | 存储侧已经支持（`load({ limit, before })`，6.3.5），缺的只是一个对外端点和界面。放在文档变更通道那一块一起做更合适——两者都是「界面要看到 agent 之外的东西」 |
 | 数据分片 | 单向进度流下每个事件都很小，SSE 帧天然分帧，不需要 |
+| **循环中途重新申请 capability 凭据（正解）** | 本次靠把窗口拉到 1800 秒绕过去，这是权宜之计（5.6.5）。正解是让 operator 在循环中途向网关续签，凭据回到 120 秒——它同时消掉「run 有时长上限」和「全局上界被迫放宽」两个问题。要做需要一条 operator → 网关的反向通道，加上「谁有资格替这个会话续签、续多久、怎么防止无限续」这一整套规则，是授权设计的一块，不是 agent SDK 的一块。等 5.6.4 第 3 条的耗时数据攒出来再动手（R8、R10） |
+| **让校验侧的有效期上界按操作区分** | 本次为了拿到 30 分钟窗口，把全局上界一并抬到了 1800，代价是校验侧不再为 `apply` 之类的短操作兜底（5.6.5、R10）。让上界跟着操作走能恢复这层防御，但要先想清楚校验侧从哪里得知「这是一张给 run 用的凭据」而不被伪造。与下面那条是同一块工作 |
 
 ---
 
@@ -1963,12 +2181,16 @@ V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽
 | # | 风险 | 应对 |
 |---|---|---|
 | R1 | 一次 run 可能持续数分钟，期间 DurableObject 靠 `waitUntil` 保持活跃、无法休眠 | 今天的阻塞请求是同样的代价，不算新增开销。真正新增的是「客户端已断线但 run 还在跑」这段——但那正是 5.5.2 要的行为，代价是自愿付的 |
-| R2 | Miniflare 本地栈是否透传流式响应、`waitUntil` 在其中是否如实生效，都未验证 | 第 11 步一开始就先验证这两点，失败则本地栈退回一次性 JSON，云上走流式 |
+| R2 | Miniflare 本地栈是否透传流式响应、`waitUntil` 在其中是否如实生效，都未验证 | 第 11 步一开始就先验证这两点，失败则本地栈退回一次性 JSON，云上走流式。与 R11 一起验证——两者问的是同一件事的两半：能不能流，以及能流多久 |
 | R3 | 图片改走 SBlob 后送给模型的内容若有变化，模型行为会变 | V9 用请求体比对锁死 |
 | R4 | 消息格式重写会改掉 `anthropic.ts` 大半 | V6 的循环契约测试 + V12 重写后的 `operator-do.test.ts` 双重兜底；这部分单独成一个提交，便于回退 |
 | R5 | `toQuery` / `toOps` 声明是纯函数，但 TypeScript 拦不住有人在里面发网络请求或读全局状态。真这么写，内核的重试和裁剪都会出意外行为 | V7 的契约测试对同一组参数调两次断言结果深相等，并断言期间无 IO；代码检视时重点看这两个函数 |
-| R6 | `RUN_LEASE_MS` 不好定：短了会误杀正常的长 run（PSD 25 轮可能几分钟），长了则进程崩溃后会话被锁很久 | 取一个明显大于最坏情况的值（10 分钟），并让 `reset()` 无条件清掉 `running_since`——用户手上永远有一条自救路径，不用等租约过期 |
+| R6 | `RUN_LEASE_MS` 不好定：短了会误杀正常的长 run，长了则进程崩溃后会话被锁很久 | 5.6 之后这个参数有了锚点：run 的凭据窗口是 1800 秒，租约取比它大一分钟的 1860 秒。**代价是崩溃后会话最长被锁 31 分钟**，所以 `reset()` 无条件清掉 `running_since` 这条从「体验优化」升级成了必需——它是唯一不用干等的自救路径（5.5.5） |
 | R7 | 一条消息一行之后，读一次历史是 N 行而不是 1 行；`restore` 时 200 行的读取在 Azure 上是一次跨网络查询 | 每个会话每次唤醒只发生一次，且有主键索引。真成为问题时，退路是在 `agent_sessions` 里缓存最近一段的合并快照，与今天 `SnapshotCache` 对文档做的事同构 |
+| R8 | 1800 秒是拍出来的，不是测出来的：可能过宽（白白放大凭据窗口），也可能仍然不够 | 撞上限不会损坏数据——文档改动是逐个 op 落盘的，前面成功的仍然有效，只是这一次 run 提前以 `run-error` 结束（5.6.4）。所以先按 1800 跑，同时**记录每次 run 的实际耗时**（5.6.4 第 3 条）。有了分布再决定是收窄，还是直接上「循环中途续签」那个正解 |
+| R10 | 抬高全局 `MaximumCapabilityLifetimeSeconds` 削弱了校验侧的纵深防御：各服务从此接受任何 ≤1800 秒的凭据，签发策略成为唯一约束 | 这是 5.6.5 明确记下的权宜代价，不是疏漏。缓解有两条：签发侧仍然逐操作卡死，只有 `run` 拿得到 1800；`CAPABILITY_TTL_SECONDS` 保持 120，没写明 lifetime 的调用一律拿短凭据。正解是让校验上界按操作区分，或改用续签，都在第 12 章 |
+| R11 | 一条 SSE 在 Cloudflare 上能不能真的挂住 30 分钟，未验证——Workers / DO 对长连接和 `waitUntil` 的实际时长限制需要实测 | 与 R2 合并验证：第 0 步改完策略之后立刻拿一条人造长 run 试一次。若平台本身挂不住 30 分钟，那么真实的窗口由平台决定而不是由凭据决定，5.6 的取值要跟着回调，并把结论写回本节 |
+| R9 | 只给 `run` 放宽授权窗口，等于承认「一次 agent 运行」比一次普通写入拿着更久的授权 | 这是有意的，也是把 `run` 从 `apply` / `rollback` 那个 case 里拆出来单列的原因（5.6.3）：放宽只作用于确实需要它的那一个操作，`apply` / `rollback` 的窗口一点没动。权限集合本身没有变宽——`run` 拿的仍然是 `sessionWrite` + `cas:read` + `cas:write`，和 `apply` 完全一样。变宽的只有时间，不是权限 |
 
 ---
 
@@ -1988,7 +2210,7 @@ V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽
 | 裁剪要不要改存储 | **不要。** 裁剪服务的是「塞进模型窗口」，存储服务的是「用户能往回翻」，两个使用者要的不是一回事。让裁剪去删存储，等于为了前者把后者的数据毁掉——旧轮次一裁就再也翻不出来。表只追加，裁剪是读出来之后的一次内存变换（6.2.6） |
 | `load` 要不要带条件 | **要。** 两个调用方要的都不是全部：内核 `restore()` 只需最近若干条（写死 200），界面往回翻需要 `limit` + `before` 分页。控制体量的清理策略是第三件事，与前两者都无关，本次不做（6.3.5） |
 | 附件保活 | 从 user / assistant / tool 的完整 payload 统一提取 refs，显式提交根引用 `agent:<sessionId>:<seq>`，与文档的 `apply:` 引用各自独立。发送时裁剪不释放引用；只有持久消息删除或 reset 才释放 |
-| 文档类型要不要持有平台句柄 | **不要。** 一个工具无非是读或写，声明自己是哪一种再给一个纯函数就够了，不需要有人递给它 `query` / `apply`。`resolveBlob` 也不需要——租约由 `session.ts:608` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，剩下的 `createSBlob(hash)` 是同步纯函数（5.1.1） |
+| 文档类型要不要持有平台句柄 | **不要。** 一个工具无非是读或写，声明自己是哪一种再给一个纯函数就够了，不需要有人递给它 `query` / `apply`。`resolveBlob` 也不需要——租约由 `session.ts:611` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，剩下的 `createSBlob(hash)` 是同步纯函数（5.1.1） |
 | `DocumentAgentContext` 的去向 | 它原本是递给文档类型的句柄，现在文档类型不接受句柄，它就退化成纯粹的平台接口 `AgentPlatform`（`query` / `apply` / `readBlob` / `writeBlob`），只有内核调。read 用于模型前物化，write 用于把 provider 产生的附件字节先落 CAS（5.1.4、5.4.2） |
 | 裁剪要不要做成可替换的策略 | **不要。** 四个阈值直接写死在 `history.ts`，不做成参数，也不暴露策略接口。这些数字合不合适要跑起来才知道，现在固化成 API 等于在没有依据的情况下先定契约，而它会立刻被三个文档类型和两个平台引用。裁剪逻辑是一个输入输出都是 `AgentMessage[]` 的纯函数，将来真要可配置，改这一个文件即可（6.2.5） |
 | 摘要压缩要不要预留接口 | **不预留。** 前三级都是同步纯函数；为一个还没实测过的功能把入口改成异步、再引入 `LlmProvider` 依赖，是为想象中的需求付真实的复杂度（6.2.7） |
@@ -2005,13 +2227,18 @@ V10 是整个设计成立与否的判据：如果 Azure 跑不起来，说明抽
 | agent 与人的关系 | **对等的编辑者。** 两边都产生 op，op 提交后云端生成版本，编辑器眼里是同一件事。不给 agent 开任何特殊写入路径 |
 | `apply_xxx` 这类工具名 | 前缀是分发器的机器语言，不是给模型的名字，而这一版之后它彻底没有用处——工具是读是写由 `kind` 声明。改成领域动词并对齐提示词，与工具表重写是同一次改动，放进本次范围（5.3.1） |
 | 文档变更怎么通知客户端 | **不通过 agent 事件流。** agent 与浏览器前的人是对等的编辑者，两边都产生 op；「文档变了」属于文档通道，人和 agent 的改动都从那里出来。把它挂在 agent 通道上，等于给 agent 单开一条人的编辑没有的路径，将来支持多人编辑时要整个拆掉。本次不建那条通道，客户端沿用 run-end 后统一 reconcile（7.2.1） |
-| 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:625`），由平台的 `apply` 实现读当前 head 得到（5.2） |
+| 版本与乐观锁归谁 | **不归 agent。** agent 的职责到「生成 op」为止；`apply` 是确定性算法，它自己就是校验器，能 apply 即合法，不能则错误回给模型重新生成。内核不持有 `lastKnownVersion`，不强制「先 query 再 apply」。`baseVersion` 仍是编辑器写入路径的必需参数（`session.ts:628`），由平台的 `apply` 实现读当前 head 得到（5.2） |
 | `run` 是推送式而不是返回可迭代对象 | `run(content, onEvent): Promise<AgentRunOutcome>`，content 是已经校验并重建 SBlob 的多模态输入。可迭代对象是拉取式的——客户端一断线就没人拉，循环冻在 `yield` 上，与 7.3 承诺的「服务端继续跑完」直接冲突。推送式下内核不等任何人；外壳把 `onEvent` 实现成「写 SSE，写失败就标记断开、后续丢弃」，并用 `waitUntil` 让响应返回后循环继续（5.5.2） |
 | 恢复历史谁负责 | **内核自己**，`run()` 内部惰性执行，没有公开的 `restore()`。让外壳记住「必须先调 restore」是缺陷——两个平台各记一遍，迟早有一个忘，症状是模型莫名失忆（5.5.3） |
 | 并发 run 怎么拒绝 | 用**单独的 `acquire()`** 抢 `agent_sessions.running_since` 租约，外壳先调它、再决定响应形状。抢不到时两条路径都返回 **HTTP 409**，流式路径连 SSE 都不建——因为「run 根本没开始」和「run 开始后失败」是两件事，不该混成同一个 `run-error` 事件。租约带过期时间，两端同一份代码，CF 上恒成功（5.5.5） |
 | `reset()` 做哪些事 | 四步：读全量算引用 → `clear()` → 提交负增量释放引用 → 清内存。删除顺序与写入相反，但原则一致——任何时刻崩溃只能留下可回收的多余引用，不能留下悬空引用（5.5.4） |
 | 附件字节要缓存 | 每轮调模型前都要把所有 role 中裁剪后保留的 image / file part 变成字节。缓存放**内核**不放平台，因为「同一个 blob 被反复要」是循环的性质，平台没理由知道；按 hash 去重（5.4） |
 | blob 读不到时在哪降级 | **发送前，不在恢复时。** 恢复历史只需要 decode 出 SBlob 引用，零 blob IO；真正要字节的是物化任一 role 的附件 part 那一步，降级也在那里。放恢复里会为一堆马上被裁掉的附件做 IO，而且恢复时可读不代表发送时仍可读（6.6） |
+| **哪些 `readBlob` 失败才降级** | **只有「blob 确实不存在」。** 授权失败（401/403，含 5.6 的凭据过期）和传输失败一律抛出，以 `run-error` 结束。原文的「一律降级」是错的——`63f997b` 刚因为同一个形状把 401 伪装成「blob 不存在」而被修掉，照抄进内核只会让一次跑长了的 run 静默瞎跑（6.6.0） |
+| **一次 run 的时长上限** | **1800 秒（30 分钟），由 capability 凭据决定，不是由 `maxIterations` 决定。** `run` 的 `deadlineSeconds` 90 → 1800、`lifetimeSeconds` 120 → 1800，同时把全局 `MaximumCapabilityLifetimeSeconds` 从 300 抬到 1800（否则签不出来）。**签发**侧只放宽 `run`，`apply` / `rollback` 一点不动。超出窗口不是慢，是编辑器写入失去授权，所以必须表达成明确的 `run-error`（5.6） |
+| 抬高全局天花板值不值 | **这一轮值，但明确是权宜之计。** 代价是校验侧不再为短操作兜底（5.6.5、R10）；换来的是 agent 能真正跑通，而 30 分钟远大于 PSD 的实际耗时。正解是循环中途续签，它同时消掉时长上限和全局放宽两件事，等实测耗时数据出来再做（第 12 章） |
+| 要不要在循环中途续签凭据 | **本次不做，但它是正解。** 那需要一条 operator → 网关的反向通道和一套「谁有资格替这个会话续签」的规则。先用 1800 秒的窗口跑一段时间并记录实际耗时，有了数据再动手（5.6.4、5.6.5、R8） |
+| 边界规则的检查落在哪 | **扩充既有的 `tests/unit/workspace/package-deps.test.mjs`**，不新起一套 `package.json` 解析。它已经在管四条依赖规则，其中「src import 必须在 dependencies」和「tsconfig references 覆盖 dependencies」两条会直接作用于本次新增的那条边（4.4、V4、V5b） |
 | SValue 窄化 helper 放哪 | **`svalue-codec`，不是 agent 内核。** 它们是运行时函数；放进内核会让文档类型对它产生运行时依赖，「仅类型依赖」的前提立刻不成立。而窄化 `SValue` 本来就与 agent 无关，`isSBlob` 早就住在那儿（5.1.2） |
 | 怎么验证服务端代码不进浏览器 | 断言**运行时代码隔离**本身，不拿 `package.json` 的字段名当代理指标：import 全是 `import type`、产物无 `src/agent/**` 模块、产物无服务端符号。要求「必须放 devDependencies」是错的——那只是 type-only 擦除的一个副作用，不是不变量（V5、4.3.2） |
 | 平台隔离位置 | 只在 `cloudflare-sdk` / `azure-sdk`，文档类型不感知 |

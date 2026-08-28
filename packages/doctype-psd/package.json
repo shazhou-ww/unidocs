@@ -25,13 +25,13 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
+    "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/protocol": "workspace:*",
     "ag-psd": "^31.0.0",
     "fast-png": "^8.0.0"
   },
   "devDependencies": {
-    "@unidocs/doctype-server-common": "workspace:*",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },

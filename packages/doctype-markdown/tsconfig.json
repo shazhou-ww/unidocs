@@ -15,10 +15,10 @@
   ],
   "references": [
     {
-      "path": "../svalue-codec"
+      "path": "../protocol"
     },
     {
-      "path": "../protocol"
+      "path": "../doctype-server-common"
     }
   ]
 }

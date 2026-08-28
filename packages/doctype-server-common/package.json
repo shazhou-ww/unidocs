@@ -14,6 +14,10 @@
       "types": "./src/testing/port-contract.ts",
       "import": "./src/testing/port-contract.ts"
     },
+    "./agent": {
+      "types": "./src/agent/index.ts",
+      "import": "./src/agent/index.ts"
+    },
     "./memory-ports": {
       "types": "./src/memory-ports.ts",
       "import": "./src/memory-ports.ts"
@@ -61,6 +65,10 @@
       "./port-contract": {
         "types": "./dist/testing/port-contract.d.ts",
         "import": "./dist/testing/port-contract.js"
+      },
+      "./agent": {
+        "types": "./dist/agent/index.d.ts",
+        "import": "./dist/agent/index.js"
       },
       "./memory-ports": {
         "types": "./dist/memory-ports.d.ts",

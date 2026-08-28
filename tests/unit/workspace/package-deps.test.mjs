@@ -140,4 +140,39 @@ describe("包依赖声明与源码 import 一致", () => {
     expect(missingRef, `声明了 dependencies 但 tsconfig 没引用：${missingRef.join(", ")}`).toEqual([]);
     expect(staleRef, `tsconfig 引用了但未声明（dep 或 devDep 都没有）：${staleRef.join(", ")}`).toEqual([]);
   });
+
+  const PLATFORM_SDKS = new Set(["@unidocs/cloudflare-sdk", "@unidocs/azure-sdk"]);
+
+  test.each(packages.filter(p => PLATFORM_SDKS.has(p.name)).map(p => [p.name, p]))(
+    "%s: 平台 sdk 不依赖任何文档类型", (_name, p) => {
+      const bad = [...p.deps].filter(d =>
+        d.startsWith("@unidocs/doctype-") && d !== "@unidocs/doctype-server-common").sort();
+      expect(bad, `平台 sdk 依赖了文档类型：${bad.join(", ")}`).toEqual([]);
+    },
+  );
+
+  test.each(packages.filter(p => p.name.startsWith("@unidocs/doctype-")
+    && p.name !== "@unidocs/doctype-server-common").map(p => [p.name, p]))(
+    "%s: 文档类型不依赖任何平台 sdk", (_name, p) => {
+      const bad = [...p.deps, ...p.devDeps].filter(d => PLATFORM_SDKS.has(d)).sort();
+      expect(bad, `文档类型依赖了平台 sdk：${bad.join(", ")}`).toEqual([]);
+    },
+  );
+
+  test.each(packages.filter(p => p.name.startsWith("@unidocs/doctype-")
+    && p.name !== "@unidocs/doctype-server-common").map(p => [p.name, p]))(
+    "%s: 对 doctype-server-common 的 src import 全是 import type", (_name, p) => {
+      const dir = join(p.pkgRoot.dir, p.dirName);
+      const offenders = [];
+      for (const f of walk(dir)) {
+        const rel = f.slice(dir.length + 1).replace(/\\/g, "/");
+        if (rel.startsWith("tests/") || /\.(test|spec)\./.test(rel)) continue;
+        for (const line of readFileSync(f, "utf8").split("\n")) {
+          if (!line.includes("@unidocs/doctype-server-common")) continue;
+          if (!/^\s*import\s+type\b/.test(line)) offenders.push(`${rel}: ${line.trim()}`);
+        }
+      }
+      expect(offenders, `必须是 import type，否则服务端代码会进浏览器产物：\n${offenders.join("\n")}`).toEqual([]);
+    },
+  );
 });

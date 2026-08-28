@@ -45,8 +45,9 @@ The Azure runtime already uses Docker Compose for Postgres and runs application
 processes on the host, so `pnpm dev unidocs-azure --docker` is equivalent to its
 normal local command.
 
-Interactive UniDocs development defaults to remote UniCAS. Pass `--cas local`
-for an embedded, hermetic CAS; automated tests continue to use that local mode.
+Interactive UniDocs development defaults to an embedded, hermetic UniCAS — the
+same mode automated tests use. Pass `--cas remote` for a UniCAS edge, which
+needs a registered stack credential.
 
 ## Code boundary
 

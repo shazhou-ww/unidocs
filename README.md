@@ -210,9 +210,10 @@ Response: { success: true, version: 43 }
 **Transactional**: all operations in a delta succeed or fail together. If any operation throws, the entire delta is rejected.
 
 Blob-taking domain operations carry SBlob, not a magic JSON property. Agent
-tools may accept explicit uploaded hashes; the doctype's JSON `toolCall` handler
-resolves them to SBlob before typed apply and persistence. Direct `/apply` never
-performs this conversion.
+tools may accept explicit uploaded hashes; the tool's `toOps` turns a hash into
+an SBlob synchronously (`createSBlob`, see
+`packages/doctype-docx/tests/agent.test.ts`) as it builds the op, before typed
+apply and persistence. Direct `/apply` never performs this conversion.
 
 ### Rollback
 
@@ -245,7 +246,7 @@ Response: { success: true, data: { response: string, iterations: number } }
 Operator behavior:
 - Maintains conversation history
 - Dispatches `(tool name, JSON parameters)` to the doctype's DocumentAgent
-- Agent query updates the optimistic-lock version; agent apply uses it
+- Agent apply reads the current head version itself (`GET /_internal/status`) as its baseVersion; the agent does not track a version
 - Structured results are JSON; optional media content is rendered by the model-provider adapter
 - On `409` conflict, error includes `currentVersion` and retry hint
 - Max 10 iterations per run (configurable)
@@ -256,7 +257,7 @@ POST /tenants/{tenantId}/docs/{docType}/{docId}/reset
 Response: { success: true }
 ```
 
-Clears conversation history and version tracking.
+Clears conversation history.
 
 ## Adding a document type
 
@@ -266,7 +267,7 @@ Clears conversation history and version tracking.
   the core factory generic:
 
 ```typescript
-import type { DocumentTypeFactory } from "@unidocs/protocol";
+import type { DocumentAgent, DocumentTypeFactory } from "@unidocs/protocol";
 
 export const createMytypeDocumentType:
   DocumentTypeFactory<MyDocument, MyQuery, MyOperation> =
@@ -280,29 +281,47 @@ export const createMytypeDocumentType:
     defaultFormat: "myformat",
   });
 
-export const createMytypeDocumentAgent:
-  DocumentAgentFactory<MyQuery, MyOperation> =
-  context => ({
-    tools: ...,
-    instructions: ...,
-    async toolCall(name, parameters) {
-      // parameters and structuredContent are JSON-only. Internally the handler
-      // can call context.query/apply/resolveBlob/readBlob.
-      return { structuredContent: ... };
+// The agent is a constant, not a factory: a plain table of tools plus the
+// system prompt. Each tool says whether it reads or writes and turns the
+// model's arguments into a query or a batch of operations with a pure
+// function. The document type never touches the editor, an LLM, or a CAS —
+// the kernel (AgentSession) is the only caller of the platform.
+export const mytypeAgent: DocumentAgent<MyQuery, MyOperation> = {
+  instructions: ...,
+  tools: [
+    {
+      kind: "query",
+      name: "getSomething",
+      description: ...,
+      inputSchema: { type: "object", properties: { ... } },
+      toQuery: args => ({ kind: "getSomething", payload: args }),
+      // Optional. Omit it and the kernel wraps {data, version} as JSON.
+      // A tool that returns a picture or a file must supply it and emit an
+      // image/file content part.
+      toResult: (data, version) => ({ structuredContent: ... }),
     },
-  });
+    {
+      kind: "op",
+      name: "doSomething",
+      description: ...,
+      inputSchema: { type: "object", properties: { ... } },
+      toOps: args => [{ kind: "doSomething", payload: args }],
+    },
+  ],
+};
 ```
 
 3. Create a separate Cloudflare adapter package and use the runtime factories:
 
 ```typescript
 import { createEditorDO, createOperatorDO } from "@unidocs/cloudflare-sdk";
-import { createMytypeDocumentType } from "@unidocs/doctype-mytype";
+import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
+import { createMytypeDocumentType, mytypeAgent } from "@unidocs/doctype-mytype";
 
 export const MytypeEditor = createEditorDO(createMytypeDocumentType);
 export const MytypeOperator = createOperatorDO({
-  agentFactory: createMytypeDocumentAgent,
-  llmProvider: ...,
+  agent: mytypeAgent,
+  provider: (env: Env) => createAnthropicProvider(env),
   getEditorStub: ...,
 });
 ```
@@ -358,12 +377,17 @@ signing key.
 ## Development
 
 ```bash
-pnpm dev unidocs-cloudflare                     # local Gateway/Docs + remote UniCAS
-pnpm dev unidocs-cloudflare docx                # DOCX only
-pnpm dev unidocs-cloudflare docx markdown       # explicit Doc type selection
-pnpm dev unidocs-cloudflare --cas local         # hermetic local UniCAS
+pnpm dev                                        # local Gateway/Docs + local UniCAS
+pnpm dev docx                                   # DOCX only
+pnpm dev docx markdown                          # explicit Doc type selection
+pnpm dev --cas remote                           # deployed UniCAS edge instead
 pnpm dev unidocs-cloudflare --docker            # run the local stack in Compose
 ```
+
+The stack name may be omitted: `pnpm dev` alone means
+`pnpm dev unidocs-cloudflare`. A first positional argument that is not a known
+stack (`docx`, `--cas`, …) belongs to the stack, so it is forwarded unchanged.
+`deploy` and `smoke` never guess — they still require an explicit stack.
 
 The Miniflare runtime injects one static `DOC_SERVICES_JSON` containing only
 the selected Doc services and generates an ephemeral ES256 fixture unless one
@@ -378,9 +402,9 @@ POST http://127.0.0.1:8787/tenants/{tenantId}/docs/markdown/
 ### Local Azure stack
 
 ```bash
-pnpm dev unidocs-azure              # Gateway :41787 + Docs + remote UniCAS
+pnpm dev unidocs-azure              # Gateway :41787 + Docs + local UniCAS
 pnpm dev unidocs-azure markdown     # Markdown only
-pnpm dev unidocs-azure --cas local  # embedded local UniCAS
+pnpm dev unidocs-azure --cas remote # deployed UniCAS edge instead
 ```
 
 Docker must be running for Postgres on `:5433`. Azurite runs as a Node child
@@ -388,11 +412,13 @@ process on `:10000`. Startup creates and migrates independent
 `unidocs_gateway`, `unidocs_markdown`, and `unidocs_docx` databases; replicas
 of one Doc service share only that service's database and Blob containers.
 
-Interactive development defaults to the deployed UniCAS edge and reads the
-developer's registered stack credential from `.wrangler/unidocs/stack.json`.
-Set `UNIDOCS_CAS_ORIGIN` or `UNIDOCS_CAS_STACK_CREDENTIAL` to override those
-defaults. Tests and explicit `--cas local` runs use an embedded ephemeral
-UniCAS and remain independent of the network.
+Interactive development defaults to an embedded ephemeral UniCAS, so a fresh
+clone starts with nothing configured. `--cas remote` switches to a UniCAS edge
+and requires a registered stack credential at `.wrangler/unidocs/stack.json`;
+`UNIDOCS_CAS_ORIGIN` and `UNIDOCS_CAS_STACK_CREDENTIAL` override where those
+come from — pointing `UNIDOCS_CAS_ORIGIN` at a locally running `pnpm dev
+unicas` exercises the same registered-stack path without the network. Tests
+always use the embedded UniCAS.
 
 Migrations run automatically as part of startup — no separate command needed. The Azure ports (gateway `41787`, markdown `41800`s band, docx `41810`s band — see `stacks/unidocs-azure/local/ports.mjs`) are deliberately offset from Miniflare's (`8787`/`8788`/`8789`) so both backends can run side by side. `pnpm dev unidocs-azure` prints a ready-to-use `psql` connection string for Postgres and the Azurite blob endpoint, for poking at storage directly. `Ctrl+C` stops the gateway/doc-type/azurite-blob processes; it does **not** tear down the docker compose Postgres container (the signal handler that would await that teardown loses the race with `stacks/unidocs-azure/local/runtime.mjs`'s own `process.exit()` on the same signal). Run `pnpm azure:down` afterwards to stop and remove it.
 

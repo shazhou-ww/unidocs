@@ -8,11 +8,11 @@
 export type {
 	AgentContentPart,
 	AgentToolResult,
+	AgentPlatform,
+	AgentTool,
+	DocumentAgent,
 	DocumentType,
 	AgentToolDefinition,
-	DocumentAgent,
-	DocumentAgentContext,
-	DocumentAgentFactory,
 	DocumentFormat,
 	DocumentTypeFactory,
 	DocumentTypeContext,
@@ -39,9 +39,8 @@ export type { OperatorDOClass, OperatorDOInstance } from "./operator-do.js";
 export { createEditorDO, type Env as EditorEnv } from "./editor-do.js";
 export {
 	createOperatorDO,
-	renderDefaultAgentToolResult,
-	type AgentToolResultRenderer,
-	type AgentToolResultRendererContext,
+	createCloudflareAgentPlatform,
+	type CloudflarePlatformDeps,
 	type OperatorConfig,
 } from "./operator-do.js";
 export {

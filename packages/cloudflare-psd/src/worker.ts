@@ -7,7 +7,8 @@
  * docx worker for the URL contract.
  *
  * The operator (chatbox agent) runs the PSD tool set from @unidocs/doctype-psd
- * against Claude via ./anthropic.ts. Credentials come from env
+ * against Claude via the Anthropic provider in
+ * @unidocs/doctype-server-common/agent. Credentials come from env
  * (LLM_API_KEY / LLM_BASE_URL / LLM_MODEL, or the ANTHROPIC_* aliases): in
  * production from wrangler secrets, in local dev from
  * packages/cloudflare-psd/.dev.vars — `readDevVars` in
@@ -16,24 +17,23 @@
  */
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
-import { createPsdDocumentAgent, createPsdDocumentType } from "@unidocs/doctype-psd";
+import { createPsdDocumentType, psdAgent } from "@unidocs/doctype-psd";
 import {
   createDocTypeHandler,
   DocAuthConfigCache,
   type DocAuthBindings,
 } from "@unidocs/doctype-server-common";
-import { createAnthropicLlmProvider } from "./anthropic.js";
+import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
 
 const psdFactory = createPsdDocumentType;
 const authConfig = new DocAuthConfigCache("psd");
 
 export const PsdEditor = createEditorDO(psdFactory);
 export const PsdOperator = createOperatorDO({
-  agentFactory: createPsdDocumentAgent,
-  // The provider is bound per call: a DO instance outlives a config change,
+  agent: psdAgent,
+  // The provider is built from env: a DO instance outlives a config change,
   // and `env` is only handed to us here.
-  llmProvider: (messages, tools, env: Env) =>
-    createAnthropicLlmProvider(env)(messages, tools),
+  provider: (env: Env) => createAnthropicProvider(env),
   getEditorStub: (env: Env, sessionId) => {
     const id = env.PSD_EDITOR.idFromName(sessionId);
     return env.PSD_EDITOR.get(id);
@@ -47,7 +47,8 @@ export const PsdOperator = createOperatorDO({
 interface Env extends EditorEnv, DocAuthBindings {
   PSD_EDITOR: DurableObjectNamespace;
   PSD_OPERATOR: DurableObjectNamespace;
-  // Operator LLM config — see ./anthropic.ts and .dev.vars.example.
+  // Operator LLM config — see the Anthropic provider in
+  // @unidocs/doctype-server-common/agent and .dev.vars.example.
   // Absent in deployments that never run the chatbox; the provider throws a
   // clear error on the first /run instead of at construction time.
   LLM_BASE_URL?: string;

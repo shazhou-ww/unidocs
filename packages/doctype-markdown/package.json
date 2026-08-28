@@ -21,7 +21,7 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/svalue-codec": "workspace:*",
+    "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*"
   },
   "devDependencies": {

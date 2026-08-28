@@ -218,7 +218,7 @@ export function buildWorkers({
   const policyBindings = {
     CAPABILITY_ALGORITHM: "ES256",
     CAPABILITY_TTL_SECONDS: "120",
-    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "1800",
     CAPABILITY_CLOCK_SKEW_SECONDS: "30",
   };
   const validatorBindings = {

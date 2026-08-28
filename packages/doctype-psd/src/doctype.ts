@@ -12,7 +12,6 @@ import {
   storePsdDoc,
   type PsdStoredDoc,
 } from "./state.js";
-import { tools, instructions } from "./tools.js";
 
 export type { PsdDoc, PsdStoredDoc, PsdQuery, PsdOp };
 
@@ -91,8 +90,6 @@ export function createPsdDocumentType(
 
     contentType: "image/vnd.adobe.photoshop",
 
-    tools,
-    instructions,
   // PsdStoredLayer.children is recursive; this assertion only stops
   // SValueType from exceeding TypeScript's instantiation-depth limit.
   } as unknown as DocumentType<PsdStoredDoc, PsdQuery, PsdOp>;

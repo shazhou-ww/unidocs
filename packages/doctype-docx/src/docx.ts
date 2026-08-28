@@ -3,7 +3,6 @@
 import { Document } from "@ariadng/office/docx";
 import { isSBlob } from "@unidocs/svalue-codec";
 import type { DocumentTypeFactory, SBlob } from "@unidocs/protocol";
-import { tools, instructions } from "./tools.js";
 import {
   insertImage,
   deleteImage,
@@ -211,9 +210,6 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
     defaultFormat: "docx",
 
     contentType: DOCX_CONTENT_TYPE,
-
-    tools,
-    instructions,
   };
 };
 

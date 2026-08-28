@@ -175,7 +175,7 @@ module app 'container-app.bicep' = {
       }
       {
         name: 'CAPABILITY_MAX_LIFETIME_SECONDS'
-        value: '300'
+        value: '1800'
       }
       {
         name: 'CAPABILITY_CLOCK_SKEW_SECONDS'

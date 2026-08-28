@@ -102,32 +102,6 @@ export interface AgentToolResult {
   readonly content?: readonly AgentContentPart[];
 }
 
-export interface DocumentAgentContext<TQuery, TOp> {
-  readonly query: (query: SValueType<TQuery>) => Promise<{
-    readonly data: SValue;
-    readonly version: number;
-  }>;
-  readonly apply: (
-    operations: readonly SValueType<TOp>[],
-    description: string,
-  ) => Promise<{ readonly version: number }>;
-  readonly resolveBlob: (hash: string) => Promise<SBlob>;
-  readonly readBlob: (blob: SBlob) => Promise<SBlobData>;
-}
-
-export interface DocumentAgent {
-  readonly tools: Readonly<Record<string, AgentToolDefinition>>;
-  readonly instructions: string;
-  readonly toolCall: (
-    name: string,
-    parameters: JsonValue,
-  ) => Promise<AgentToolResult>;
-}
-
-export type DocumentAgentFactory<TQuery, TOp> = (
-  context: DocumentAgentContext<TQuery, TOp>,
-) => DocumentAgent;
-
 export interface DocumentFormat<TDoc> {
   readonly mediaTypes: readonly string[];
   readonly extensions: readonly string[];
@@ -157,12 +131,6 @@ export interface DocumentType<TDoc, TQuery, TOp> {
 
   /** MIME type for document export. */
   contentType: string;
-
-  /** Agent tool definitions for the operator loop. */
-  tools: Record<string, AgentToolDefinition>;
-
-  /** Document-type-specific operator instructions. */
-  instructions: string;
 }
 
 /** Factory for a configured cloud-neutral document type. */
@@ -197,4 +165,119 @@ export interface EncodedSValue {
 export interface DecodedSValue {
   readonly value: SValue;
   readonly refs: readonly string[];
+}
+
+export type AgentTool<TQuery, TOp> =
+  | {
+    readonly kind: "query";
+    readonly name: string;
+    readonly description: string;
+    readonly inputSchema: Record<string, unknown>;
+    /** 纯函数：模型给的参数 → 一个 query。不得有 IO、不得读全局状态。 */
+    readonly toQuery: (args: Readonly<Record<string, JsonValue>>) => SValueType<TQuery>;
+    /**
+     * 纯函数：query 结果 → 交给模型的东西。
+     * 不给则用 defaultQueryToolResult（签名与本字段完全一致）。
+     * 要返回图片/文件的工具**必须**给，且必须产出 image/file content part。
+     */
+    readonly toResult?: (data: SValue, version: number) => AgentToolResult;
+  }
+  | {
+    readonly kind: "op";
+    readonly name: string;
+    readonly description: string;
+    readonly inputSchema: Record<string, unknown>;
+    /** 纯函数：模型给的参数 → 一批 op。 */
+    readonly toOps: (args: Readonly<Record<string, JsonValue>>) => readonly SValueType<TOp>[];
+  };
+
+export interface DocumentAgent<TQuery, TOp> {
+  readonly tools: readonly AgentTool<TQuery, TOp>[];
+  readonly instructions: string;
+}
+
+/**
+ * 平台提供的"怎么做到"。**文档类型看不到它**，只有内核调。
+ * apply 的 baseVersion 由实现自己读当前 head —— agent 不管版本（spec 5.2）。
+ */
+export interface AgentPlatform<TQuery, TOp> {
+  readonly query: (query: SValueType<TQuery>) => Promise<{
+    readonly data: SValue;
+    readonly version: number;
+  }>;
+  readonly apply: (
+    operations: readonly SValueType<TOp>[],
+    description: string,
+  ) => Promise<{ readonly version: number }>;
+  readonly readBlob: (blob: SBlob) => Promise<SBlobData>;
+  readonly writeBlob: (data: SBlobData) => Promise<SBlob>;
+}
+
+/**
+ * `AgentPlatform.readBlob` 的错误分类契约，所以它和 AgentPlatform 放一起 ——
+ * 平台实现者只看这一个文件就够了。平台用它表示"这个 blob 确实不存在"：
+ * CAS 404，或者引用已被回收。
+ *
+ * 只有这一种失败会被内核降级成文字。授权失败（401/403）和传输失败一律往上抛，
+ * 因为把它们伪装成"图没了"正是提交 63f997b 修掉的坑：一次跑长了的 run 会
+ * 从某一刻起每张图静默变成一行文字，模型基于看不见的画面瞎猜，日志里一个
+ * 错误都没有（spec 6.6.0）。
+ */
+export class BlobUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BlobUnavailableError";
+  }
+}
+
+export interface AgentToolCall {
+  readonly id: string;
+  readonly name: string;
+  readonly arguments: JsonValue;
+}
+
+/** 落盘、裁剪、算引用都用它。附件是 SBlob 引用，不是字节。 */
+export type AgentMessage =
+  | { readonly role: "user"; readonly content: readonly AgentContentPart[] }
+  | {
+    readonly role: "assistant";
+    readonly content: readonly AgentContentPart[];
+    readonly toolCalls?: readonly AgentToolCall[];
+  }
+  | {
+    readonly role: "tool";
+    readonly callId: string;
+    readonly content: readonly AgentContentPart[];
+    readonly structuredContent?: JsonValue;
+  };
+
+/** 附件已物化成字节。只在"即将发给 provider"这一刻存在，不落盘。 */
+export type LlmContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly data: Uint8Array; readonly mediaType: string; readonly altText?: string }
+  | { readonly type: "file"; readonly data: Uint8Array; readonly mediaType: string; readonly filename?: string };
+
+export type LlmMessage =
+  | { readonly role: "user"; readonly content: readonly LlmContentPart[] }
+  | { readonly role: "assistant"; readonly content: readonly LlmContentPart[]; readonly toolCalls?: readonly AgentToolCall[] }
+  | { readonly role: "tool"; readonly callId: string; readonly content: readonly LlmContentPart[]; readonly structuredContent?: JsonValue };
+
+export interface AgentCompletion {
+  readonly content: readonly LlmContentPart[];
+  readonly toolCalls?: readonly AgentToolCall[];
+  /**
+   * 模型为什么停下。Anthropic 的取值是 end_turn / max_tokens /
+   * stop_sequence / tool_use / pause_turn / refusal，这里不收窄成联合类型：
+   * 它只用于诊断（"既没 text 也没 tool_use"时告诉用户是哪种情况），服务端
+   * 将来多一个取值不该让翻译层把它吞成 undefined。provider 没报就是 undefined。
+   */
+  readonly stopReason?: string;
+}
+
+export interface LlmProvider {
+  complete(request: {
+    readonly system: string;
+    readonly messages: readonly LlmMessage[];
+    readonly tools: readonly AgentToolDefinition[];
+  }): Promise<AgentCompletion>;
 }

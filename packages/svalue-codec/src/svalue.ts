@@ -476,3 +476,56 @@ function hexToBytes(hash: string): Uint8Array {
   }
   return bytes;
 }
+
+/**
+ * 把跨过一次序列化的 SValue 窄化成具体形状。
+ *
+ * 这几个是从 doctype-docx/src/agent.ts 提上来的 —— 三个文档类型的
+ * toResult 都要做同一件事，没有理由各写一份。窄化失败时抛错，被内核
+ * 接住变成一条给模型的错误消息（spec 5.1.5）。
+ */
+export function requireRecord(v: SValue, what: string): Readonly<Record<string, SValue>> {
+  if (typeof v !== "object" || v === null || Array.isArray(v) || isSBlob(v)) {
+    throw new TypeError(`${what} must be an object`);
+  }
+  return v as Readonly<Record<string, SValue>>;
+}
+
+export function requireNumber(v: SValue | undefined, what: string): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) {
+    throw new TypeError(`${what} must be a finite number`);
+  }
+  return v;
+}
+
+export function requireString(v: SValue | undefined, what: string): string {
+  if (typeof v !== "string") throw new TypeError(`${what} must be a string`);
+  return v;
+}
+
+export function requireSBlob(v: SValue | undefined, what: string): SBlob {
+  if (!isSBlob(v)) throw new TypeError(`${what} must be an SBlob`);
+  return v;
+}
+
+/**
+ * 数字数组，可选地要求固定长度（矩形 [top,left,bottom,right] 这类）。
+ * 长度不对和元素不是有限数字报同一句话 —— 调用方要的就是"这个值不能用"。
+ */
+export function requireNumberArray(
+  v: SValue | undefined,
+  what: string,
+  length?: number,
+): readonly number[] {
+  const wanted = length === undefined ? "finite numbers" : `${length} finite numbers`;
+  const message = `${what} must be an array of ${wanted}`;
+  if (!Array.isArray(v) || (length !== undefined && v.length !== length)) {
+    throw new TypeError(message);
+  }
+  const out: number[] = [];
+  for (const item of v) {
+    if (typeof item !== "number" || !Number.isFinite(item)) throw new TypeError(message);
+    out.push(item);
+  }
+  return out;
+}

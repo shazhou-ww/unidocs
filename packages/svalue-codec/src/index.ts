@@ -12,4 +12,9 @@ export {
 	encodeSValue,
 	isSBlob,
 	refsFromSValue,
+	requireNumber,
+	requireNumberArray,
+	requireRecord,
+	requireSBlob,
+	requireString,
 } from "./svalue.js";

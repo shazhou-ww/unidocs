@@ -49,8 +49,8 @@ packages/azure-sdk/docker-compose.yml up -d` 起同一个 Postgres 容器,复用
 ## 相关命令
 
 ```bash
-pnpm dev unidocs-azure    # 本地 Azure 栈(stacks/unidocs-azure/local/runtime.mjs)
-pnpm dev unidocs-azure --cas local
+pnpm dev unidocs-azure    # 本地 Azure 栈(stacks/unidocs-azure/local/runtime.mjs),自带本地 CAS
+pnpm dev unidocs-azure --cas remote
 pnpm test:local           # 默认门禁,不含任何 Azure 集成测试
 pnpm test:azure           # Azure 集成测试(tests/integration/azure/),需要 Docker
 pnpm azure:up             # docker compose -f packages/azure-sdk/docker-compose.yml up -d
