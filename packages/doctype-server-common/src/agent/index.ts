@@ -21,3 +21,8 @@ export {
   AgentSession, DEFAULT_MAX_ITERATIONS,
 } from "./session.js";
 export type { AgentRunOutcome, AgentSessionDeps } from "./session.js";
+
+export {
+  createAnthropicProvider, toAnthropicMessages,
+} from "./providers/anthropic.js";
+export type { AnthropicMessage } from "./providers/anthropic.js";

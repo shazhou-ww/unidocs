@@ -13,9 +13,13 @@ import { describe, expect, test } from "vitest";
 const KERNEL = join(import.meta.dirname, "..", "..", "..",
   "packages", "doctype-server-common", "src", "agent");
 
+// spec 4.4 原文只禁 `Request` / `Response` / `DurableObject*` / `@cloudflare/*` /
+// `@azure/*` 五项;而 spec 4.2 的内核文件树把 `providers/` 放在内核里,LLM
+// provider 本质就是 HTTP 客户端,必须能发请求。`fetch` 是 Workers / Node /
+// Deno 都有的 Web 标准,不是平台标记。
 const FORBIDDEN = [
   /\bDurableObject\w*/, /\bRequest\b/, /\bResponse\b/,
-  /@cloudflare\//, /@azure\//, /\bWebSocket\w*/, /\bfetch\s*\(/,
+  /@cloudflare\//, /@azure\//, /\bWebSocket\w*/,
 ];
 
 const SOURCE_EXTENSIONS = [".ts", ".mts", ".tsx"];
