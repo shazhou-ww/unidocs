@@ -5,7 +5,20 @@ import { setState, getState } from "../src/ui/store.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
 const dispatch = vi.fn();
-vi.mock("../src/ui/controller.js", () => ({ dispatch: (op: unknown) => dispatch(op) }));
+// Opt-in round trip: when enabled, the mock APPLIES the op to `store.doc` the
+// way DocController.dispatch does, so the tree re-renders off the new document.
+const roundTrip = { value: false };
+vi.mock("../src/ui/controller.js", () => ({
+  dispatch: (op: unknown) => {
+    dispatch(op);
+    if (!roundTrip.value) return;
+    const { layerId, props } = (op as { payload: { layerId: string; props: Partial<LocalLayer> } }).payload;
+    const doc = getState().doc!;
+    const walk = (list: LocalLayer[]): LocalLayer[] =>
+      list.map((l) => (l.id === layerId ? { ...l, ...props } : l.children ? { ...l, children: walk(l.children) } : l));
+    setState({ doc: { ...doc, layers: walk(doc.layers) } });
+  },
+}));
 
 const leaf = (id: string, over: Partial<LocalLayer> = {}): LocalLayer => ({
   id, type: "raster", name: id, opacity: 1, blendMode: "normal", visible: true, ...over,
@@ -13,6 +26,7 @@ const leaf = (id: string, over: Partial<LocalLayer> = {}): LocalLayer => ({
 
 beforeEach(() => {
   dispatch.mockClear();
+  roundTrip.value = false;
   setState({
     selection: [], expanded: new Set(),
     doc: { canvas: { width: 4, height: 4 }, layers: [
@@ -59,5 +73,26 @@ describe("LayerTree", () => {
       kind: "set_props", payload: { layerId: "t", props: { visible: false } },
     });
     expect(getState().selection).toEqual([]);
+  });
+
+  // The eye is a TOGGLE, so it is only correct if the row re-reads the layer
+  // after the op landed. `roundTrip` stands in for the real pipeline
+  // (DocController.dispatch -> session.applyLocal -> onDoc -> store), which is
+  // covered end to end in local-op-refresh.test.tsx; here it pins the panel's
+  // half of the contract: a store update must flip both the glyph and the next
+  // op's payload. A dispatch mock that only recorded the op would pass even
+  // with the store frozen.
+  it("un-hides on the second click once the op round-trips through the store", () => {
+    roundTrip.value = true;
+    render(<LayerTree />);
+    fireEvent.click(screen.getByLabelText("隐藏 headline"));
+    expect(getState().doc!.layers[1].visible).toBe(false);
+    expect(screen.getByLabelText("显示 headline")).toHaveTextContent("○");
+
+    fireEvent.click(screen.getByLabelText("显示 headline"));
+    expect(dispatch).toHaveBeenLastCalledWith({
+      kind: "set_props", payload: { layerId: "t", props: { visible: true } },
+    });
+    expect(getState().doc!.layers[1].visible).toBe(true);
   });
 });

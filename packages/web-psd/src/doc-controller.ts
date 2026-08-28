@@ -243,6 +243,17 @@ export class DocController {
       const applyStart = performance.now();
       rect = await this.session.applyLocal(op);
       applyOpMs = performance.now() - applyStart;
+      // `applyLocal` REPLACES `session.doc` with a fresh object, so every
+      // component that reads the doc out of the store — the layer tree's
+      // visibility glyph, the properties pane's effect spreads — is holding a
+      // stale copy until this fires. Without it a local edit repaints the
+      // canvas correctly while the whole right column silently keeps showing
+      // (and writing from) pre-edit values: the eye could hide a layer but
+      // never un-hide it, and a props write spread a stale effect object back
+      // over the server's newer one. `session.version` deliberately does NOT
+      // advance until the background drain acks, so the version badge lags by
+      // design; the DOCUMENT must not.
+      this.events.onDoc(this.session.doc, this.session.version);
       if (this.renderClient && this.viewport) {
         const visible = this.viewport.visibleTiles(this.tileSize);
         visibleCount = visible.length;
