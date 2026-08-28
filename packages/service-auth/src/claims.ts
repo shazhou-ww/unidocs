@@ -5,7 +5,16 @@ export const CapabilityVersion = 1 as const;
 export const CapabilityAlgorithm = "ES256" as const;
 export const CapabilityTokenType = "unidocs-cap+jwt" as const;
 export const DefaultCapabilityLifetimeSeconds = 120;
-export const MaximumCapabilityLifetimeSeconds = 300;
+/**
+ * 一张 capability 最长能签多久。签发（issuer.ts）和校验（verifier.ts）两端
+ * 都强制，也是 CAPABILITY_MAX_LIFETIME_SECONDS 的解析上界（runtime.ts:40-45）。
+ *
+ * 2026-08 从 300 抬到 1800：agent 的 /run 是一次可能跑几十分钟的循环，
+ * operator 全程带着启动时那张 delegated-cas 凭据调编辑器，凭据一过期
+ * 后续写入就 401（spec 5.6）。这是权宜之计 —— 代价是校验侧不再为
+ * apply 这类短操作兜底，正解是循环中途续签（spec 5.6.5、第 12 章）。
+ */
+export const MaximumCapabilityLifetimeSeconds = 1800;
 export const MaximumCapabilityClockSkewSeconds = 30;
 
 export interface CapabilityProtectedHeader extends JWTHeaderParameters {

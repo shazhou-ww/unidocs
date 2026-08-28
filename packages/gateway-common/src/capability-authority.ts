@@ -50,7 +50,7 @@ export interface GatewayCapabilityAuthorityConfig {
 export interface DocOperationCredentials {
   readonly authorization: string;
   readonly delegatedCasCapability?: string;
-  readonly deadlineSeconds: 15 | 30 | 60 | 90;
+  readonly deadlineSeconds: 15 | 30 | 60 | 90 | 1800;
 }
 
 /** Stack-mode permission mapping: usage/gc use the stack-scoped names. */

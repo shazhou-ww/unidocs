@@ -8,26 +8,27 @@ import {
 
 describe("Gateway capability policy", () => {
   test.each([
-    ["create", "tenants:t:sessions:create", ["tenants:t:cas:write"], 90],
-    ["status", "tenants:t:sessions:create", [], 15],
-    ["query", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60],
-    ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60],
-    ["history", "tenants:t:sessions:s:read", [], 30],
-    ["ir", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 30],
-    ["snapshot", "tenants:t:sessions:s:read", ["tenants:t:cas:write"], 60],
-    ["apply", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],
-    ["rollback", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],
-    ["run", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90],
-    ["initFromHash", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 60],
-    ["reset", "tenants:t:sessions:s:write", [], 30],
-  ] satisfies Array<[DocOperation, string, string[], number]>) (
+    ["create", "tenants:t:sessions:create", ["tenants:t:cas:write"], 90, 120],
+    ["status", "tenants:t:sessions:create", [], 15, 120],
+    ["query", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],
+    ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],
+    ["history", "tenants:t:sessions:s:read", [], 30, 120],
+    ["ir", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 30, 120],
+    ["snapshot", "tenants:t:sessions:s:read", ["tenants:t:cas:write"], 60, 120],
+    ["apply", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90, 120],
+    ["rollback", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90, 120],
+    // 只有 run 拿长窗口：agent 循环要跑到 30 分钟（spec 5.6）
+    ["run", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 1800, 1800],
+    ["initFromHash", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 60, 120],
+    ["reset", "tenants:t:sessions:s:write", [], 30, 120],
+  ] satisfies Array<[DocOperation, string, string[], number, number]>) (
     "%s uses minimum downstream authority",
-    (operation, docPermission, delegatedCasPermissions, deadlineSeconds) => {
+    (operation, docPermission, delegatedCasPermissions, deadlineSeconds, lifetimeSeconds) => {
       expect(docCapabilityPolicy(operation, "t", "s")).toEqual({
         docPermission,
         delegatedCasPermissions,
         deadlineSeconds,
-        lifetimeSeconds: 120,
+        lifetimeSeconds,
       });
     },
   );
