@@ -44,6 +44,7 @@ export type {
 } from "./types.js";
 
 export {
+  BlobUnavailableError,
   sBlobSignature,
   SBlobTag,
   SValueContentType,

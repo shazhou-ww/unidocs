@@ -1,22 +1,15 @@
 import { isSBlob } from "@unidocs/svalue-codec";
+import { BlobUnavailableError } from "@unidocs/protocol";
 import type {
   AgentContentPart, AgentMessage, LlmContentPart, LlmMessage, SBlob, SBlobData,
 } from "@unidocs/protocol";
 
 /**
- * 平台用它表示"这个 blob 确实不存在"——CAS 404，或者引用已被回收。
- *
- * 只有这一种失败会被降级成文字。授权失败（401/403）和传输失败一律往上抛，
- * 因为把它们伪装成"图没了"正是提交 63f997b 修掉的坑：一次跑长了的 run 会
- * 从某一刻起每张图静默变成一行文字，模型基于看不见的画面瞎猜，日志里一个
- * 错误都没有（spec 6.6.0）。
+ * 它是 AgentPlatform.readBlob 的错误分类契约，所以定义在 protocol 里挨着
+ * AgentPlatform（平台实现者要 import 它才能履行契约）。这里再导出一次，
+ * 让既有的 import 路径继续可用。
  */
-export class BlobUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "BlobUnavailableError";
-  }
-}
+export { BlobUnavailableError };
 
 /** 按总字节数封顶的 hash → 字节缓存，淘汰最久未用的。 */
 export class ByteLru {

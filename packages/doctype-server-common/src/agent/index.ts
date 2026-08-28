@@ -9,12 +9,15 @@ export type {
   DocumentAgent, LlmContentPart, LlmMessage, LlmProvider,
 } from "@unidocs/protocol";
 
+/** readBlob 的错误分类契约，和 AgentPlatform 同源。 */
+export { BlobUnavailableError } from "@unidocs/protocol";
+
 export {
   defaultOpToolResult, defaultQueryToolResult, toolResultToMessage,
 } from "./tool-result.js";
 
 export {
-  BlobUnavailableError, ByteLru, materializeMessages,
+  ByteLru, materializeMessages,
 } from "./messages.js";
 
 export {

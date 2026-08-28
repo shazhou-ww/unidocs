@@ -437,12 +437,16 @@ describe("agent Operator DO", () => {
       "X-Session-Id": "another-session",
     }));
     expect(mismatched.status).toBe(403);
-    await expect(mismatched.json()).resolves.toEqual({ error: "Operator session mismatch" });
+    await expect(mismatched.json()).resolves
+      .toEqual({ success: false, error: "Operator session mismatch" });
 
     const anonymous = await operator.fetch(new Request("http://operator/_internal/run", {
       method: "POST",
       body: JSON.stringify({ instruction: "no identity" }),
     }));
     expect(anonymous.status).toBe(401);
+    // 外壳每条响应都是同一个信封，401/403 也不例外。
+    await expect(anonymous.json()).resolves
+      .toEqual({ success: false, error: "Missing tenant or session identity" });
   });
 });

@@ -5,9 +5,10 @@
  * （身份 + capability）原样带过去。它不认识工具、不认识循环，也不记版本。
  */
 import { decodeSValue, encodeSValue, isSBlob, toJsonValue } from "@unidocs/svalue-codec";
-import { SValueContentType } from "@unidocs/protocol";
+// BlobUnavailableError 和 AgentPlatform 定义在同一处 —— 它是 readBlob 的
+// 错误分类契约，履行契约要用到它。
+import { BlobUnavailableError, SValueContentType } from "@unidocs/protocol";
 import type { AgentPlatform, SBlob, SBlobData, SValue, SValueType } from "@unidocs/protocol";
-import { BlobUnavailableError } from "@unidocs/doctype-server-common/agent";
 
 export interface CloudflarePlatformDeps<TEnv> {
   readonly env: TEnv;

@@ -143,11 +143,11 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
       const tenantId = request.headers.get("X-Tenant-Id");
       const sessionId = request.headers.get("X-Session-Id");
       if (!tenantId || !sessionId) {
-        return Response.json({ error: "Missing tenant or session identity" }, { status: 401 });
+        return Response.json({ success: false, error: "Missing tenant or session identity" }, { status: 401 });
       }
       if ((this.#tenantId !== null && this.#tenantId !== tenantId)
         || (this.#sessionId !== null && this.#sessionId !== sessionId)) {
-        return Response.json({ error: "Operator session mismatch" }, { status: 403 });
+        return Response.json({ success: false, error: "Operator session mismatch" }, { status: 403 });
       }
       this.#sessionId = sessionId;
       this.#tenantId = tenantId;

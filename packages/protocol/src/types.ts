@@ -213,6 +213,23 @@ export interface AgentPlatform<TQuery, TOp> {
   readonly writeBlob: (data: SBlobData) => Promise<SBlob>;
 }
 
+/**
+ * `AgentPlatform.readBlob` 的错误分类契约，所以它和 AgentPlatform 放一起 ——
+ * 平台实现者只看这一个文件就够了。平台用它表示"这个 blob 确实不存在"：
+ * CAS 404，或者引用已被回收。
+ *
+ * 只有这一种失败会被内核降级成文字。授权失败（401/403）和传输失败一律往上抛，
+ * 因为把它们伪装成"图没了"正是提交 63f997b 修掉的坑：一次跑长了的 run 会
+ * 从某一刻起每张图静默变成一行文字，模型基于看不见的画面瞎猜，日志里一个
+ * 错误都没有（spec 6.6.0）。
+ */
+export class BlobUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BlobUnavailableError";
+  }
+}
+
 export interface AgentToolCall {
   readonly id: string;
   readonly name: string;
