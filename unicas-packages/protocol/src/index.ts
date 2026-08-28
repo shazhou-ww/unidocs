@@ -24,6 +24,8 @@ export type {
   CasGcResponse,
   CasLeaseExistingRequest,
   CasLeaseExistingResponse,
+  CasLeaseRequest,
+  CasLeaseResponse,
   CasLeaseNodeRequest,
   CasLeaseNodeResponse,
   CasNodePath,
@@ -41,3 +43,14 @@ export type {
 
 export { casRoutes, matchCasRoute } from "./routes.js";
 export type { CasRoute } from "./routes.js";
+
+export {
+  BlobChunkBytes,
+  BlobChunkContentType,
+  BlobIndexContentType,
+  BlobIndexFanout,
+  decodeBlobIndex,
+  encodeBlobIndex,
+  validateBlobIndex,
+} from "./blob.js";
+export type { CasBlobIndexV1 } from "./blob.js";

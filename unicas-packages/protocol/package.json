@@ -33,5 +33,8 @@
         "import": "./dist/index.js"
       }
     }
+  },
+  "dependencies": {
+    "cborg": "^6.1.1"
   }
 }

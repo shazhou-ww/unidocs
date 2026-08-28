@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { CasClient, CasClientError, leaseOpRefs, commitRootRefsOrRollback } from "../src/index.js";
+import { CanonicalNodeContentType, hashToHex, parseNodeBytes, sha256 } from "@unicas/server-common";
+import { BlobChunkBytes, BlobIndexContentType } from "@unicas/protocol";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -199,6 +201,29 @@ describe("CasClient", () => {
         client.ensureNode("m".repeat(64), content, "text/plain")
       ).rejects.toThrow("CAS lease failed: 409 Conflict");
     });
+
+    it("uploads complete canonical bytes through the unified lease in stack mode", async () => {
+      const hash = "d".repeat(64);
+      const content = new TextEncoder().encode("canonical");
+      const stackClient = new CasClient({
+        baseUrl: "http://localhost:8787",
+        stackId: "stack-a",
+        tenantId: "tenant1",
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 }),
+      });
+
+      await stackClient.ensureNode(hash, content, "text/plain");
+
+      const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`http://localhost:8787/stacks/stack-a/tenants/tenant1/cas/nodes/${hash}/lease`);
+      expect(new Headers(init.headers).get("Content-Type")).toBe(CanonicalNodeContentType);
+      const parsed = parseNodeBytes(new Uint8Array(init.body as ArrayBuffer));
+      expect(parsed.contentType).toBe("text/plain");
+      expect(parsed.content).toEqual(content);
+    });
   });
 
   describe("auth token", () => {
@@ -373,7 +398,7 @@ describe("CasClient", () => {
         json: async () => ({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 }),
       });
       await client.ensureNode(hash, new TextEncoder().encode("x"), "text/plain");
-      expect(mockFetch).toHaveBeenCalledWith(`${prefix}/cas/nodes/${hash}`, expect.any(Object));
+      expect(mockFetch).toHaveBeenCalledWith(`${prefix}/cas/nodes/${hash}/lease`, expect.any(Object));
     });
 
     it("posts updateRootRefs to the canonical root-refs route with a typed revision response", async () => {
@@ -426,6 +451,118 @@ describe("CasClient", () => {
         expect.any(Object),
       );
     });
+  });
+});
+
+describe("CasClient blob streams", () => {
+  function streamOf(bytes: Uint8Array, fragmentSize: number): ReadableStream<Uint8Array> {
+    let offset = 0;
+    return new ReadableStream({
+      pull(controller) {
+        if (offset === bytes.length) {
+          controller.close();
+          return;
+        }
+        const end = Math.min(offset + fragmentSize, bytes.length);
+        controller.enqueue(bytes.slice(offset, end));
+        offset = end;
+      },
+    });
+  }
+
+  function installMemoryCas(): Map<string, ReturnType<typeof parseNodeBytes>> {
+    const nodes = new Map<string, ReturnType<typeof parseNodeBytes>>();
+    mockFetch.mockImplementation(async (urlValue: string, init?: RequestInit) => {
+      const url = new URL(urlValue);
+      const hash = url.pathname.split("/").at(-2) === "nodes"
+        ? url.pathname.split("/").at(-1)!
+        : url.pathname.split("/").at(-2)!;
+      if (init?.method === "POST" && url.pathname.endsWith("/lease")) {
+        if (init.body !== undefined) {
+          const canonical = new Uint8Array(init.body as ArrayBuffer);
+          expect(hashToHex(await sha256(canonical))).toBe(hash);
+          nodes.set(hash, parseNodeBytes(canonical));
+        }
+        return new Response(JSON.stringify({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 }));
+      }
+      const node = nodes.get(hash);
+      if (!node) return new Response(null, { status: 404, statusText: "Not Found" });
+      if (url.pathname.endsWith("/metadata")) {
+        return Response.json({
+          metadata: {
+            hash,
+            size: node.content.length,
+            contentType: node.contentType,
+            refs: node.childHashes.map(hashToHex),
+          },
+        });
+      }
+      if (url.pathname.endsWith("/content")) {
+        const range = new Headers(init?.headers).get("Range");
+        if (range !== null) {
+          const match = /^bytes=(\d+)-(\d+)$/.exec(range)!;
+          return new Response(node.content.slice(Number(match[1]), Number(match[2]) + 1), { status: 206 });
+        }
+        return new Response(node.content);
+      }
+      return new Response(null, { status: 404 });
+    });
+    return nodes;
+  }
+
+  function withStageTimeout<T>(promise: Promise<T>, stage: string): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error(`${stage} timed out`)), 5_000);
+      }),
+    ]);
+  }
+
+  it("keeps a small streamed blob as one leaf node", async () => {
+    const nodes = installMemoryCas();
+    const client = new CasClient({ baseUrl: "http://cas", stackId: "s", tenantId: "t" });
+    const bytes = new TextEncoder().encode("small streamed blob");
+    const ref = await client.storeBlob(streamOf(bytes, 3), { contentType: "text/plain", size: bytes.length });
+
+    expect(nodes.size).toBe(1);
+    expect(ref).toMatchObject({ size: bytes.length, contentType: "text/plain" });
+    expect(new Uint8Array(await new Response(await client.openBlob(ref)).arrayBuffer())).toEqual(bytes);
+  });
+
+  it("chunks and transparently reassembles a blob larger than one chunk", async () => {
+    const nodes = installMemoryCas();
+    const client = new CasClient({ baseUrl: "http://cas", stackId: "s", tenantId: "t" });
+    const bytes = new Uint8Array(BlobChunkBytes + 3);
+    bytes.fill(0x61, 0, BlobChunkBytes);
+    bytes.set([0x62, 0x63, 0x64], BlobChunkBytes);
+    const ref = await withStageTimeout(client.storeBlob(streamOf(bytes, 1024 * 1024 + 1), {
+      contentType: "application/octet-stream",
+      size: bytes.length,
+    }), "storeBlob");
+
+    expect(nodes.size).toBe(3);
+    expect(nodes.get(ref.hash)?.contentType).toBe(BlobIndexContentType);
+    const opened = await withStageTimeout(client.openBlob(ref), "openBlob");
+    const reassembled = await withStageTimeout(new Response(opened).arrayBuffer(), "consume openBlob");
+    const reassembledBytes = new Uint8Array(reassembled);
+    expect(reassembledBytes.length).toBe(bytes.length);
+    expect(hashToHex(await sha256(reassembledBytes))).toBe(hashToHex(await sha256(bytes)));
+
+    const ranged = await client.openBlobRange(ref, { offset: BlobChunkBytes - 2, length: 4 });
+    expect(new Uint8Array(await new Response(ranged).arrayBuffer())).toEqual(
+      Uint8Array.from([0x61, 0x61, 0x62, 0x63]),
+    );
+  }, 20_000);
+
+  it("rejects an asserted source size mismatch", async () => {
+    installMemoryCas();
+    const client = new CasClient({ baseUrl: "http://cas", stackId: "s", tenantId: "t" });
+    const bytes = new TextEncoder().encode("size");
+    await expect(client.storeBlob(streamOf(bytes, 2), {
+      contentType: "text/plain",
+      size: bytes.length + 1,
+    })).rejects.toThrow("Blob size mismatch");
   });
 });
 

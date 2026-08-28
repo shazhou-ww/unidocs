@@ -198,6 +198,8 @@ async function dispatchNodeOperation(
     case "readContent":
       doPath = "/read";
       headers["X-CAS-Hash"] = route.hash;
+      const range = request.headers.get("Range");
+      if (range) headers.Range = range;
       break;
     case "readMetadata":
       doPath = "/metadata";
@@ -213,14 +215,21 @@ async function dispatchNodeOperation(
       if (refs) headers[CasRefsHeader] = refs;
       const leaseDuration = request.headers.get(CasLeaseDurationHeader);
       if (leaseDuration) headers[CasLeaseDurationHeader] = leaseDuration;
+      const legacyLength = request.headers.get("Content-Length");
+      if (legacyLength) headers["Content-Length"] = legacyLength;
       body = request.body;
       break;
     case "leaseExisting":
-      doPath = "/leaseExisting";
+      doPath = "/lease";
       method = "POST";
       headers["X-CAS-Hash"] = route.hash;
       const existingDuration = request.headers.get(CasLeaseDurationHeader);
       if (existingDuration) headers[CasLeaseDurationHeader] = existingDuration;
+      const canonicalType = request.headers.get("Content-Type");
+      if (canonicalType) headers["Content-Type"] = canonicalType;
+      const canonicalLength = request.headers.get("Content-Length");
+      if (canonicalLength) headers["Content-Length"] = canonicalLength;
+      body = request.body;
       break;
     case "usage":
       doPath = "/usage";
@@ -313,7 +322,7 @@ export {
 } from "./schema.js";
 export type { CutoverState } from "./schema.js";
 
-export { canonicalComposite, decodeComposite, stackNodeKey } from "./do-names.js";
+export { canonicalComposite, decodeComposite, stackCanonicalNodeKey, stackNodeKey } from "./do-names.js";
 
 export { runLegacyBaseline } from "./baseline.js";
 export type { LegacyBaselineResult, LegacyBaselineRow } from "./baseline.js";

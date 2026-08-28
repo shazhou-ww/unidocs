@@ -10,6 +10,7 @@
  * never race a GC deletion decision.
  */
 
+import { CanonicalNodeContentType } from "@unicas/server-common";
 import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/workers-types";
 import { canonicalComposite } from "./do-names.js";
 import {
@@ -17,6 +18,7 @@ import {
   NodeOpError,
   NodeOpErrorCodes,
   leaseExisting,
+  leaseCanonicalNode,
   leaseNode,
   parseLeaseDuration,
   parseRefsHeader,
@@ -60,14 +62,14 @@ export class CasDurableObject {
       if (url.pathname === "/leaseNode" && request.method === "POST") {
         return jsonResponse(await this.#handleLeaseNode(request, store));
       }
-      if (url.pathname === "/leaseExisting" && request.method === "POST") {
-        return jsonResponse(await this.#handleLeaseExisting(request, store));
+      if ((url.pathname === "/lease" || url.pathname === "/leaseExisting") && request.method === "POST") {
+        return jsonResponse(await this.#handleLease(request, store));
       }
       if (url.pathname === "/read" && request.method === "GET") {
-        return this.#handleRead(request, store);
+        return await this.#handleRead(request, store);
       }
       if (url.pathname === "/metadata" && request.method === "GET") {
-        return this.#handleMetadata(request, store);
+        return await this.#handleMetadata(request, store);
       }
       if (url.pathname === "/usage" && request.method === "GET") {
         return jsonResponse(await usage(store));
@@ -81,7 +83,10 @@ export class CasDurableObject {
       );
     } catch (error) {
       if (error instanceof NodeOpError) {
-        return Response.json({ error: error.code, message: error.message }, { status: error.status });
+        return Response.json(
+          { error: error.code, message: error.message },
+          { status: error.status, headers: error.headers },
+        );
       }
       return Response.json(
         { error: RootRefsErrorCodes.INVALID_REQUEST, message: "tenant CAS operation failed" },
@@ -106,22 +111,50 @@ export class CasDurableObject {
     });
   }
 
-  async #handleLeaseExisting(request: Request, store: Parameters<typeof leaseExisting>[0]): Promise<unknown> {
+  async #handleLease(request: Request, store: Parameters<typeof leaseExisting>[0]): Promise<unknown> {
     const hash = requireHeader(request, "X-CAS-Hash");
+    const leaseDurationMs = parseLeaseDuration(request.headers.get("X-CAS-Lease-Duration"));
+    if (request.body !== null) {
+      if (request.headers.get("Content-Type") !== CanonicalNodeContentType) {
+        throw new NodeOpError(415, NodeOpErrorCodes.INVALID_REQUEST, `Content-Type must be ${CanonicalNodeContentType}`);
+      }
+      const lengthHeader = request.headers.get("Content-Length");
+      const declaredLength = lengthHeader === null ? undefined : Number(lengthHeader);
+      if (declaredLength !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength < 0)) {
+        throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "Invalid Content-Length");
+      }
+      return leaseCanonicalNode(store, {
+        hash,
+        leaseDurationMs,
+        body: request.body,
+        declaredLength,
+      });
+    }
     return leaseExisting(store, {
       hash,
-      leaseDurationMs: parseLeaseDuration(request.headers.get("X-CAS-Lease-Duration")),
+      leaseDurationMs,
     });
   }
 
   async #handleRead(request: Request, store: Parameters<typeof readContent>[0]): Promise<Response> {
     const hash = requireHeader(request, "X-CAS-Hash");
-    const content = await readContent(store, hash);
+    const content = await readContent(store, hash, request.headers.get("Range"));
     if (content === null) {
       return Response.json({ error: NodeOpErrorCodes.NOT_FOUND, message: `Node ${hash} not found or not ready` }, { status: 404 });
     }
-    return new Response(content as unknown as BodyInit, {
-      headers: { "Content-Type": "application/octet-stream" },
+    const headers = new Headers({
+      "Accept-Ranges": "bytes",
+      "Content-Length": String(content.range === undefined
+        ? content.contentSize
+        : content.range.end - content.range.start + 1),
+      "Content-Type": content.contentType,
+    });
+    if (content.range !== undefined) {
+      headers.set("Content-Range", `bytes ${content.range.start}-${content.range.end}/${content.contentSize}`);
+    }
+    return new Response(content.body, {
+      status: content.range === undefined ? 200 : 206,
+      headers,
     });
   }
 

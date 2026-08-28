@@ -5,6 +5,7 @@
  */
 
 import {
+  HEADER_SIZE,
   HASH_HEX_LENGTH,
   HASH_SIZE,
   MAX_CONTENT_TYPE_LENGTH,
@@ -15,6 +16,39 @@ import {
 
 const HASH_HEX_RE = /^[0-9a-f]{64}$/;
 const CONTENT_TYPE_RE = /^[\x20-\x7e]+$/;
+
+export const MAX_CANONICAL_NODE_BYTES = 64 * 1024 * 1024;
+export const MAX_NODE_REFS = 128;
+
+/** Return the canonical byte length after enforcing version-1 resource limits. */
+export function validateCanonicalNodeSize(
+  contentSize: number,
+  contentTypeLength: number,
+  refCount: number,
+): number {
+  if (!Number.isSafeInteger(contentSize) || contentSize < 0) {
+    throw new Error(`Invalid content size: ${contentSize}`);
+  }
+  if (
+    !Number.isSafeInteger(contentTypeLength)
+    || contentTypeLength < MIN_CONTENT_TYPE_LENGTH
+    || contentTypeLength > MAX_CONTENT_TYPE_LENGTH
+  ) {
+    throw new Error(`Content type length out of range: ${contentTypeLength}`);
+  }
+  if (!Number.isSafeInteger(refCount) || refCount < 0 || refCount > MAX_NODE_REFS) {
+    throw new Error(`Child ref count out of range: ${refCount}`);
+  }
+
+  const totalLength = HEADER_SIZE + contentTypeLength + refCount * HASH_SIZE + contentSize;
+  if (!Number.isSafeInteger(totalLength)) {
+    throw new Error("Total node length overflows safe integer range");
+  }
+  if (totalLength > MAX_CANONICAL_NODE_BYTES) {
+    throw new Error(`Canonical node too large: ${totalLength} > ${MAX_CANONICAL_NODE_BYTES}`);
+  }
+  return totalLength;
+}
 
 /** Validate a CAS hash string (64 lowercase hex chars). */
 export function validateHash(hash: string): void {
@@ -78,30 +112,11 @@ export function validateDecodedHeader(decoded: ReturnType<typeof decodeHeader>):
     throw new Error(`Reserved must be zero, got ${decoded.reserved}`);
   }
 
-  // Content size must be a safe integer
-  if (!Number.isSafeInteger(decoded.contentSize) || decoded.contentSize < 0) {
-    throw new Error(`Invalid content size: ${decoded.contentSize}`);
-  }
-
-  // Content type length within limits
-  if (
-    decoded.contentTypeLength < MIN_CONTENT_TYPE_LENGTH ||
-    decoded.contentTypeLength > MAX_CONTENT_TYPE_LENGTH
-  ) {
-    throw new Error(
-      `Content type length out of range: ${decoded.contentTypeLength}`,
-    );
-  }
-
-  // Total length overflow check
-  const totalLength =
-    24 +
-    decoded.contentTypeLength +
-    decoded.refCount * 32 +
-    decoded.contentSize;
-  if (!Number.isSafeInteger(totalLength)) {
-    throw new Error(`Total node length overflows safe integer range`);
-  }
+  validateCanonicalNodeSize(
+    decoded.contentSize,
+    decoded.contentTypeLength,
+    decoded.refCount,
+  );
 }
 
 /**

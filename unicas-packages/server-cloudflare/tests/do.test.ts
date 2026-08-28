@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
-import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unicas/server-common";
+import {
+  CanonicalNodeContentType,
+  computeNodeDigest,
+  concatenateNodeBytes,
+  encodeHeader,
+  hashToHex,
+  hexToHash,
+} from "@unicas/server-common";
 import { createSBlob, encodeSValue } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { SValue } from "@unidocs/protocol";
 import { migrateStackTenantSchema } from "../src/schema.js";
-import { canonicalComposite, stackNodeKey } from "../src/do-names.js";
+import { canonicalComposite, stackCanonicalNodeKey, stackNodeKey } from "../src/do-names.js";
 import { RootRefDomainDurableObject } from "../src/domain-do.js";
 import type { RootRefDomainDoEnv } from "../src/domain-do.js";
 import { CasDurableObject } from "../src/tenant-do.js";
@@ -31,7 +38,19 @@ async function createStore(): Promise<void> {
     workers: [{
       name: "do-test",
       modules: true,
-      script: "export default { fetch() { return new Response('ok'); } };",
+      script: `export default {
+        async fetch(request, env) {
+          if (new URL(request.url).pathname !== "/r2-stream-probe") return new Response("ok");
+          try {
+            await env.BUCKET.put("stream-probe", request.body, {
+              sha256: request.headers.get("X-Expected-Hash"),
+            });
+            return new Response("ok");
+          } catch (error) {
+            return new Response(error instanceof Error ? error.message : String(error), { status: 400 });
+          }
+        }
+      };`,
       compatibilityDate: "2025-08-17",
       d1Databases: { DB: "do-test-db" },
       r2Buckets: { BUCKET: "do-test-bucket" },
@@ -181,11 +200,33 @@ async function digestOf(content: string, contentType = "text/plain", refs: reado
   return hashToHex(digest);
 }
 
-function tenantDo(): CasDurableObject {
+function tenantDo(bucketOverride: R2Bucket = bucket!): CasDurableObject {
   return new CasDurableObject(
     {} as DurableObjectState,
-    { CAS_DB: db!, CAS_R2: bucket!, CAS_DOMAIN_DO: {} as TenantCasDoEnv["CAS_DOMAIN_DO"] },
+    { CAS_DB: db!, CAS_R2: bucketOverride, CAS_DOMAIN_DO: {} as TenantCasDoEnv["CAS_DOMAIN_DO"] },
   );
+}
+
+function nodeHostedStreamBucket(): R2Bucket {
+  const target = bucket!;
+  return new Proxy(target, {
+    get(_target, property) {
+      if (property === "put") {
+        return async (key: string, value: unknown, options?: R2PutOptions) => {
+          const stored = value instanceof ReadableStream
+            ? await new Response(value).arrayBuffer()
+            : value;
+          return target.put(
+            key,
+            stored as Parameters<R2Bucket["put"]>[1],
+            options,
+          );
+        };
+      }
+      const member = Reflect.get(target, property);
+      return typeof member === "function" ? member.bind(target) : member;
+    },
+  });
 }
 
 function store(): NodeStore {
@@ -201,6 +242,142 @@ function tenantRequest(path: string, method: string, headers: Record<string, str
 }
 
 describe("CasDurableObject (tenant DO) — node storage operations", () => {
+  test("workerd streams a known-length request body to R2 with SHA-256 verification", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("workerd stream");
+    const hash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", content)));
+    const response = await miniflare!.dispatchFetch("http://probe/r2-stream-probe", {
+      method: "POST",
+      headers: {
+        "Content-Length": String(content.length),
+        "X-Expected-Hash": hash,
+      },
+      body: content,
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(new Uint8Array(await (await bucket!.get("stream-probe"))!.arrayBuffer())).toEqual(content);
+  });
+
+  test("unified lease streams a complete canonical node to R2 and reads only own content", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("canonical payload");
+    const contentType = "application/octet-stream";
+    const header = encodeHeader(content.length, contentType, 0);
+    const canonical = concatenateNodeBytes(header, new TextEncoder().encode(contentType), [], content);
+    const hash = hashToHex(await crypto.subtle.digest("SHA-256", canonical).then(value => new Uint8Array(value)));
+    const doInstance = tenantDo(nodeHostedStreamBucket());
+
+    const lease = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonical.length),
+    }, canonical));
+    const leaseText = await lease.text();
+    expect(lease.status, leaseText).toBe(200);
+    expect(JSON.parse(leaseText)).toMatchObject({ hash, ready: true });
+
+    const stored = await bucket!.get(stackCanonicalNodeKey(STACK, TENANT, hash));
+    expect(new Uint8Array(await stored!.arrayBuffer())).toEqual(canonical);
+    const row = await db!.prepare(
+      "SELECT object_format FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first<{ object_format: number }>();
+    expect(row?.object_format).toBe(2);
+
+    const read = await doInstance.fetch(tenantRequest("/read", "GET", { "X-CAS-Hash": hash }));
+    expect(new Uint8Array(await read.arrayBuffer())).toEqual(content);
+
+    const renewed = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Lease-Duration": "180000",
+    }));
+    expect(renewed.status).toBe(200);
+  });
+
+  test("canonical node reads apply HTTP ranges to own content", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("0123456789");
+    const contentType = "text/plain";
+    const header = encodeHeader(content.length, contentType, 0);
+    const canonical = concatenateNodeBytes(header, new TextEncoder().encode(contentType), [], content);
+    const hash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", canonical)));
+    const doInstance = tenantDo(nodeHostedStreamBucket());
+    const lease = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonical.length),
+    }, canonical));
+    expect(lease.status).toBe(200);
+
+    const middle = await doInstance.fetch(tenantRequest("/read", "GET", {
+      "X-CAS-Hash": hash,
+      Range: "bytes=2-5",
+    }));
+    expect(middle.status).toBe(206);
+    expect(middle.headers.get("Content-Range")).toBe("bytes 2-5/10");
+    expect(await middle.text()).toBe("2345");
+
+    const suffix = await doInstance.fetch(tenantRequest("/read", "GET", {
+      "X-CAS-Hash": hash,
+      Range: "bytes=-3",
+    }));
+    expect(suffix.status).toBe(206);
+    expect(await suffix.text()).toBe("789");
+
+    const unsatisfiable = await doInstance.fetch(tenantRequest("/read", "GET", {
+      "X-CAS-Hash": hash,
+      Range: "bytes=10-",
+    }));
+    expect(unsatisfiable.status).toBe(416);
+    expect(unsatisfiable.headers.get("Content-Range")).toBe("bytes */10");
+  });
+
+  test("unified lease digest failures leave no object or reservation", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("wrong hash");
+    const contentType = "text/plain";
+    const canonical = concatenateNodeBytes(
+      encodeHeader(content.length, contentType, 0),
+      new TextEncoder().encode(contentType),
+      [],
+      content,
+    );
+    const doInstance = tenantDo(nodeHostedStreamBucket());
+    const response = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": H1,
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonical.length),
+    }, canonical));
+    expect(response.status).toBe(400);
+    expect(await bucket!.head(stackCanonicalNodeKey(STACK, TENANT, H1))).toBeNull();
+    const reservation = await db!.prepare(
+      "SELECT COUNT(*) AS count FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, H1).first<{ count: number }>();
+    expect(reservation?.count).toBe(0);
+  });
+
+  test("no-body lease adopts a verified canonical R2 orphan", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("orphan");
+    const contentType = "text/plain";
+    const canonical = concatenateNodeBytes(
+      encodeHeader(content.length, contentType, 0),
+      new TextEncoder().encode(contentType),
+      [],
+      content,
+    );
+    const hash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", canonical)));
+    await bucket!.put(stackCanonicalNodeKey(STACK, TENANT, hash), canonical, { sha256: hash });
+
+    const response = await tenantDo().fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+    }));
+    expect(response.status).toBe(200);
+    const row = await db!.prepare(
+      "SELECT object_format, content_size FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first<{ object_format: number; content_size: number }>();
+    expect(row).toEqual({ object_format: 2, content_size: content.length });
+  });
+
   test("leaseNode stores content and records edges; read/metadata/usage round-trip", async () => {
     await createStore();
     const childContent = "child";
@@ -247,6 +424,9 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
     expect(usageBody).toMatchObject({
       nodeCount: 2,
       readyContentBytes: parentContent.length + childContent.length,
+      readyStoredBytes: parentContent.length + childContent.length,
+      migrationDuplicateBytes: 0,
+      reservedBytes: 0,
       notReadyNodeCount: 0,
       leasedNodeCount: 2,
     });

@@ -43,7 +43,7 @@ export interface CasReadContentRequest {
 }
 
 export type CasReadContentResponse =
-  | { body: Uint8Array; headers: { contentType: string } }
+  | { body: ReadableStream<Uint8Array>; headers: { contentType: string; contentLength: number } }
   | CasErrorResponse;
 
 export interface CasReadMetadataRequest {
@@ -67,12 +67,22 @@ export interface CasLeaseNodeRequest {
 
 export type CasLeaseNodeResponse = CasLeaseResult | CasErrorResponse;
 
-export interface CasLeaseExistingRequest {
+export interface CasLeaseRequest {
   readonly path: CasNodePath;
-  readonly headers: { leaseDurationMs?: number };
+  readonly headers: {
+    leaseDurationMs?: number;
+    contentType?: "application/vnd.unidocs.cas-node.v1";
+    contentLength?: number;
+  };
+  readonly body?: ReadableStream<Uint8Array>;
 }
 
-export type CasLeaseExistingResponse = CasLeaseResult | CasErrorResponse;
+export type CasLeaseResponse = CasLeaseResult | CasErrorResponse;
+
+/** @deprecated Use CasLeaseRequest. */
+export type CasLeaseExistingRequest = CasLeaseRequest;
+/** @deprecated Use CasLeaseResponse. */
+export type CasLeaseExistingResponse = CasLeaseResponse;
 
 export interface CasUsageRequest {
   readonly path: CasTenantPath;
@@ -102,7 +112,7 @@ export interface CasEndpointContracts {
   readContent: { request: CasReadContentRequest; response: CasReadContentResponse };
   readMetadata: { request: CasReadMetadataRequest; response: CasReadMetadataResponse };
   leaseNode: { request: CasLeaseNodeRequest; response: CasLeaseNodeResponse };
-  leaseExisting: { request: CasLeaseExistingRequest; response: CasLeaseExistingResponse };
+  leaseExisting: { request: CasLeaseRequest; response: CasLeaseResponse };
   usage: { request: CasUsageRequest; response: CasUsageResponse };
   gc: { request: CasGcRequest; response: CasGcResponse };
   updateRootRefs: {

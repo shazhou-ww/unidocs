@@ -28,8 +28,18 @@ export {
   hexToHash,
 } from "./digest.js";
 
+// Streaming canonical node codec
+export {
+  CanonicalNodeContentType,
+  parseCanonicalNodeStream,
+} from "./canonical-stream.js";
+export type { ParsedCanonicalNodeStream } from "./canonical-stream.js";
+
 // Validation
 export {
+  MAX_CANONICAL_NODE_BYTES,
+  MAX_NODE_REFS,
+  validateCanonicalNodeSize,
   validateHash,
   validateRawHash,
   validateContentType,

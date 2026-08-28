@@ -11,7 +11,7 @@ import {
   RootRefsRetryableError,
   RootRefsValidationError,
 } from "../src/root-refs.js";
-import { stackNodeKey } from "../src/do-names.js";
+import { stackCanonicalNodeKey, stackNodeKey } from "../src/do-names.js";
 
 let miniflare: Miniflare | undefined;
 let db: D1Database | undefined;
@@ -48,12 +48,15 @@ const H1 = "a".repeat(64);
 const H2 = "b".repeat(64);
 const H3 = "c".repeat(64);
 
-async function seedNode(hash: string, rootRefCount = 0, ready = true): Promise<void> {
+async function seedNode(hash: string, rootRefCount = 0, ready = true, objectFormat = 1): Promise<void> {
   await db!.prepare(
-    "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
-  ).bind(STACK, TENANT, hash, 10, "text/plain", ready ? 1 : 0, ready ? 1 : 0, rootRefCount).run();
+    "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count, object_format) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+  ).bind(STACK, TENANT, hash, 10, "text/plain", ready ? 1 : 0, ready ? 1 : 0, rootRefCount, objectFormat).run();
   if (ready) {
-    await bucket!.put(stackNodeKey(STACK, TENANT, hash), new TextEncoder().encode("content"));
+    const key = objectFormat === 2
+      ? stackCanonicalNodeKey(STACK, TENANT, hash)
+      : stackNodeKey(STACK, TENANT, hash);
+    await bucket!.put(key, new TextEncoder().encode("content"));
   }
 }
 
@@ -183,6 +186,14 @@ describe("atomic Root Refs update", () => {
     const notReady = await runUpdate({ requestId: "r1", changes: { [H1]: 1 } });
     expect(notReady.status).toBe(409);
     expect(notReady.body.error).toBe(RootRefsErrorCodes.NODE_NOT_READY);
+  });
+
+  test("positive root refs accept canonical-v1 nodes", async () => {
+    await createStore();
+    await seedNode(H1, 0, true, 2);
+    const result = await runUpdate({ requestId: "canonical", changes: { [H1]: 1 } });
+    expect(result.status).toBe(200);
+    expect(await aggregate(H1)).toBe(1);
   });
 
   test("negative domain balances are allowed while the aggregate stays valid", async () => {

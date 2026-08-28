@@ -54,6 +54,8 @@ describe("CAS routes (canonical stack-scoped)", () => {
       .toBe("/stacks/stack%2Fa/tenants/tenant%2Fa/root-refs");
     expect(CasRefsHeader).toBe("X-CAS-Refs");
     expect(CasLeaseDurationHeader).toBe("X-CAS-Lease-Duration");
+    expect(casRoutes.lease({ stackId: STACK, tenantId: TENANT, hash: "abc" }))
+      .toBe(casRoutes.leaseExisting({ stackId: STACK, tenantId: TENANT, hash: "abc" }));
   });
 
   test("rejects unknown methods and malformed escapes", () => {

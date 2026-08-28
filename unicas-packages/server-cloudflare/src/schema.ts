@@ -18,7 +18,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 
 const TABLE_MIGRATIONS = [
   // Authoritative node rows: (stackId, tenantId, hash).
-  "CREATE TABLE IF NOT EXISTS cas_nodes (stack_id TEXT NOT NULL, tenant_id TEXT NOT NULL, hash TEXT NOT NULL, content_size INTEGER NOT NULL, content_type TEXT NOT NULL, lease_started_at INTEGER NOT NULL DEFAULT 0, lease_expires_at INTEGER NOT NULL DEFAULT 0, child_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (child_ref_count >= 0), root_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (root_ref_count >= 0), PRIMARY KEY (stack_id, tenant_id, hash))",
+  "CREATE TABLE IF NOT EXISTS cas_nodes (stack_id TEXT NOT NULL, tenant_id TEXT NOT NULL, hash TEXT NOT NULL, content_size INTEGER NOT NULL, content_type TEXT NOT NULL, lease_started_at INTEGER NOT NULL DEFAULT 0, lease_expires_at INTEGER NOT NULL DEFAULT 0, child_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (child_ref_count >= 0), root_ref_count INTEGER NOT NULL DEFAULT 0 CHECK (root_ref_count >= 0), object_format INTEGER NOT NULL DEFAULT 1 CHECK (object_format IN (1, 2)), PRIMARY KEY (stack_id, tenant_id, hash))",
 
   // Edges: parent -> children with ordinal.
   "CREATE TABLE IF NOT EXISTS cas_edges (stack_id TEXT NOT NULL, tenant_id TEXT NOT NULL, parent_hash TEXT NOT NULL, ordinal INTEGER NOT NULL, child_hash TEXT NOT NULL, PRIMARY KEY (stack_id, tenant_id, parent_hash, ordinal))",
@@ -40,6 +40,9 @@ const TABLE_MIGRATIONS = [
 
   // Immutable R2 migration manifest rows.
   "CREATE TABLE IF NOT EXISTS cas_r2_migration_manifest (source_key TEXT NOT NULL, destination_key TEXT NOT NULL, stack_id TEXT NOT NULL, tenant_id TEXT NOT NULL, hash TEXT NOT NULL, expected_size INTEGER, expected_etag TEXT, expected_digest TEXT, status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, verified_at INTEGER, PRIMARY KEY (source_key))",
+
+  // Internal quota reservation for the R2-before-D1 node commit window.
+  "CREATE TABLE IF NOT EXISTS cas_upload_reservations (stack_id TEXT NOT NULL, tenant_id TEXT NOT NULL, hash TEXT NOT NULL, stored_bytes INTEGER NOT NULL CHECK (stored_bytes > 0), created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (stack_id, tenant_id, hash))",
 ];
 
 const INDEX_MIGRATIONS = [
@@ -58,6 +61,16 @@ export const STACK_TENANT_SCHEMA_MIGRATIONS = [
 export async function migrateStackTenantSchema(db: D1Database): Promise<void> {
   for (const sql of STACK_TENANT_SCHEMA_MIGRATIONS) {
     await db.exec(sql);
+  }
+  const columns = await db.prepare("PRAGMA table_info(cas_nodes)").all<{ name: string }>();
+  if (!columns.results.some(column => column.name === "object_format")) {
+    try {
+      await db.exec("ALTER TABLE cas_nodes ADD COLUMN object_format INTEGER NOT NULL DEFAULT 1 CHECK (object_format IN (1, 2))");
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.toLowerCase().includes("duplicate column")) {
+        throw error;
+      }
+    }
   }
 }
 

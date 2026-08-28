@@ -34,3 +34,8 @@ export function decodeComposite(name: string): { stackId: string; component: str
 export function stackNodeKey(stackId: string, tenantId: string, hash: string): string {
   return `stacks/${stackId}/tenants/${tenantId}/nodes/${hash}`;
 }
+
+/** R2 object key for a complete canonical version-1 node. */
+export function stackCanonicalNodeKey(stackId: string, tenantId: string, hash: string): string {
+  return `stacks/${stackId}/tenants/${tenantId}/nodes-v2/${hash}`;
+}

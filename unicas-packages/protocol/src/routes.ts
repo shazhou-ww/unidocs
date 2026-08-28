@@ -37,6 +37,8 @@ export const casRoutes = {
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}`,
   leaseExisting: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/lease`,
+  lease: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
+    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/lease`,
   usage: ({ stackId, tenantId }: { stackId: string; tenantId: string }) =>
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/usage`,
   gc: ({ stackId, tenantId }: { stackId: string; tenantId: string }) =>

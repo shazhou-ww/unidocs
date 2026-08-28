@@ -8,7 +8,9 @@ import { describe, expect, it } from "vitest";
 import {
   HEADER_SIZE,
   HASH_SIZE,
+  MAX_CANONICAL_NODE_BYTES,
   MAX_CONTENT_TYPE_LENGTH,
+  MAX_NODE_REFS,
   encodeHeader,
   decodeHeader,
   concatenateNodeBytes,
@@ -22,9 +24,26 @@ import {
   validateDecodedHeader,
   validateChildRefs,
   validateContentLength,
+  validateCanonicalNodeSize,
+  parseCanonicalNodeStream,
 } from "../src/index.js";
 
 const textEncoder = new TextEncoder();
+
+function fragmentedStream(bytes: Uint8Array, chunkSize: number): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (offset === bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + chunkSize, bytes.length);
+      controller.enqueue(bytes.slice(offset, end));
+      offset = end;
+    },
+  });
+}
 
 /** Helper: build a complete node and compute its digest. */
 async function buildNode(
@@ -250,6 +269,24 @@ describe("digest utilities", () => {
 // ─── Validation ───
 
 describe("validation", () => {
+  describe("validateCanonicalNodeSize", () => {
+    it("accepts a canonical node exactly at the byte limit", () => {
+      const contentSize = MAX_CANONICAL_NODE_BYTES - HEADER_SIZE - 1;
+      expect(validateCanonicalNodeSize(contentSize, 1, 0)).toBe(MAX_CANONICAL_NODE_BYTES);
+    });
+
+    it("rejects a canonical node one byte over the limit", () => {
+      const contentSize = MAX_CANONICAL_NODE_BYTES - HEADER_SIZE;
+      expect(() => validateCanonicalNodeSize(contentSize, 1, 0)).toThrow("Canonical node too large");
+    });
+
+    it("rejects child reference counts above the protocol limit", () => {
+      expect(() => validateCanonicalNodeSize(0, 1, MAX_NODE_REFS + 1)).toThrow(
+        "Child ref count out of range",
+      );
+    });
+  });
+
   describe("validateHash", () => {
     it("accepts valid hash", () => {
       expect(() => validateHash("a".repeat(64))).not.toThrow();
@@ -328,6 +365,40 @@ describe("validation", () => {
     it("rejects mismatch", () => {
       expect(() => validateContentLength(99, 100)).toThrow("mismatch");
     });
+  });
+});
+
+describe("canonical node streams", () => {
+  it("parses a fragmented prefix and replays every canonical byte", async () => {
+    const child = await buildNode("text/plain", textEncoder.encode("child"));
+    const node = await buildNode("application/octet-stream", textEncoder.encode("payload"), [child.digest]);
+    const parsed = await parseCanonicalNodeStream(fragmentedStream(node.nodeBytes, 3), node.nodeBytes.length);
+
+    expect(parsed).toMatchObject({
+      contentSize: 7,
+      contentType: "application/octet-stream",
+      refs: [child.hex],
+      canonicalSize: node.nodeBytes.length,
+    });
+    expect(new Uint8Array(await new Response(parsed.body).arrayBuffer())).toEqual(node.nodeBytes);
+  });
+
+  it("rejects trailing bytes while the replay stream is consumed", async () => {
+    const node = await buildNode("text/plain", textEncoder.encode("payload"));
+    const withTrailing = new Uint8Array(node.nodeBytes.length + 1);
+    withTrailing.set(node.nodeBytes);
+    await expect(async () => {
+      const parsed = await parseCanonicalNodeStream(fragmentedStream(withTrailing, 5));
+      await new Response(parsed.body).arrayBuffer();
+    }).rejects.toThrow("exceeds declared");
+  });
+
+  it("rejects a Content-Length that disagrees with the canonical header", async () => {
+    const node = await buildNode("text/plain", textEncoder.encode("payload"));
+    await expect(parseCanonicalNodeStream(
+      fragmentedStream(node.nodeBytes, 7),
+      node.nodeBytes.length + 1,
+    )).rejects.toThrow("Content-Length says");
   });
 });
 

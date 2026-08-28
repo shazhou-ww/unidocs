@@ -57,6 +57,7 @@ describe("stack-scoped tenant schema", () => {
       "cas_root_domain_revisions",
       "cas_schema_meta",
       "cas_r2_migration_manifest",
+      "cas_upload_reservations",
     ]) {
       expect(names.has(expected), `missing table ${expected}`).toBe(true);
     }
@@ -66,9 +67,10 @@ describe("stack-scoped tenant schema", () => {
 
   test("nodes are keyed by (stack_id, tenant_id, hash)", async () => {
     const database = await createDb();
-    const columns = await database.prepare("PRAGMA table_info(cas_nodes)").all<{ name: string; pk: number }>();
+    const columns = await database.prepare("PRAGMA table_info(cas_nodes)").all<{ name: string; pk: number; dflt_value: string | null }>();
     const pk = columns.results!.filter((column) => column.pk > 0).map((column) => column.name);
     expect(pk).toEqual(["stack_id", "tenant_id", "hash"]);
+    expect(columns.results!.find((column) => column.name === "object_format")?.dflt_value).toBe("1");
   });
 
   test("schema meta round-trips cutover state and the legacy stack id", async () => {

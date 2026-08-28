@@ -8,7 +8,10 @@ import type { Env } from "../src/worker.js";
 /** The boundary tests never reach storage; bare D1/R2-shaped stubs suffice. */
 const STUB_ENV = {
   CAS_CONTROL_DB: {},
-  CAS_DB: { exec: async () => undefined },
+  CAS_DB: {
+    exec: async () => undefined,
+    prepare: () => ({ all: async () => ({ results: [{ name: "object_format" }] }) }),
+  },
   CAS_R2: {},
   CAS_DO: {},
 } as unknown as Env;
