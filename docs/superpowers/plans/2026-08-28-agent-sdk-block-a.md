@@ -1842,6 +1842,20 @@ describe("PSD 工具表", () => {
 
 `packages/doctype-psd/tests/` 下如有断言 `$image` 的其他用例（`git grep -n '\$image' packages/doctype-psd`），一并改成断言 SBlob。
 
+**另外六个 preview 测试文件也会红**（预检发现，必做）：`getPreview` 现在需要 `ctx` 才能存 PNG，而这些用例今天都用 `runQuery({kind:"getPreview"}, doc)` 不传 ctx——
+
+```
+tests/render-preview.test.ts:20
+tests/query-getpreview.test.ts:15,23,29,34
+tests/query-getpreview-lazy.test.ts:72,81
+tests/preview-payload-cap.test.ts:58,66,74,82,87,96,106
+tests/cas-render.test.ts:105,119
+```
+
+现成的内存 CAS 已经存在，但被**抄了三份**（`cas-snapshot.test.ts:15`、`cas-render.test.ts:17`、`cas-e2e.test.ts:73` 的 `memCas()`）。把它提到 `packages/doctype-psd/tests/helpers/mem-cas.ts` 导出一份，三处原有的删掉改成 import，然后给上面那些调用点补上 `memCas().ctx`。
+
+断言也跟着变：这些用例原本断言 `out.$image.base64` 之类，现在改成断言 `isSBlob(out.image)` 加 `out.width` / `out.height` / `out.region`。`preview-payload-cap.test.ts` 断言的是编码后的字节数，改成从 `memCas()` 的 `nodes` map 里按 hash 取出 PNG 再量长度——预算逻辑本身没变，只是产物从内联字符串变成了 CAS 里的一个节点。
+
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `pnpm --filter @unidocs/doctype-psd test`
@@ -2010,14 +2024,92 @@ git commit -m "feat(psd): 工具表改成 AgentTool[],图片改走 SBlob
     PSD 自己的 altText 里 —— 它一直属于 PSD,此前却写在适配层。
 
 createPsdDocumentAgent 暂时保留成基于新工具表的适配器,让旧 OperatorDO
-撑到下一个任务切换内核为止。
+撑到 Task 9 切换内核为止。
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 8: cloudflare-sdk —— 薄外壳，PSD 切到内核
+## Task 8: markdown 与 docx 的工具表改形状
+
+**Files:**
+- Modify: `packages/doctype-markdown/src/agent.ts`（工具表就在这个文件里，markdown **没有** `tools.ts`）
+- Modify: `packages/doctype-{markdown,docx}/package.json` / `tsconfig.json`
+- Modify: `packages/doctype-docx/src/tools.ts`、`src/agent.ts`
+- Modify: `packages/cloudflare-{markdown,docx}/src/worker.ts`
+- Modify: 两个包的 `package.json` / `tsconfig.json`
+- Test: `packages/doctype-markdown/tests/agent.test.ts`、`packages/doctype-docx/tests/agent.test.ts`
+
+**Interfaces:**
+- Consumes: Task 1 契约、Task 2 helper、Task 5/6 内核
+- Produces: `export const markdownAgent: DocumentAgent<MQuery, MOp>`、`export const docxAgent: DocumentAgent<DocxQuery, DocxOperation>`
+
+- [ ] **Step 1: markdown —— 改测试**
+
+按 Task 7 的形状重写 `packages/doctype-markdown/tests/agent.test.ts`：断言工具名去前缀、`toQuery` / `toOps` 的产物、纯函数性。
+
+- [ ] **Step 2: markdown —— 实现**
+
+`markdownTools` 从 `Record<string, AgentToolDefinition>` 改成 `AgentTool[]`，名字去前缀（`getContent` / `getSection` / `getHeadings` / `setContent` / `appendSection` / `replaceSection` / `deleteSection`），导出 `markdownAgent` 常量。
+
+**`createMarkdownDocumentAgent` 先不删**，和 Task 7 对 psd 做的一样：改写成基于新工具表的薄适配器，让 `cloudflare-markdown/src/worker.ts` 撑到 Task 9 一起切。docx 同理保留 `createDocxDocumentAgent`。这两个适配器由 Task 9 删除。
+
+- [ ] **Step 3: docx —— 改测试**
+
+同上，另加一条端到端（spec V11）：`getImage` 的 `toResult` 产出 image content part，且它能被 Task 6 的 `toAnthropicMessages` 翻成图片块**而不抛异常**——这条路今天从未真正跑通过（P6）。
+
+- [ ] **Step 4: docx —— 实现**
+
+`tools.ts` 换形状、去前缀。`agent.ts`：
+- `queryImageContent`（`:51-81`）→ `getImage` 工具的 `toResult`，用 Task 2 的 `requireRecord` / `requireSBlob` 替掉本地那三个 helper；
+- `makeOperation`（`:83-115`）→ 拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，`await resolveBlob(hash)` 变成同步的 `createSBlob(hash)`（租约由 `session.ts:611` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，spec 5.1.1）；
+- 删掉本地的 `requireString` / `requireNumber` / `requireSValueRecord`（已提到 svalue-codec）。
+
+- [ ] **Step 5: 切两个 worker**
+
+`cloudflare-markdown` / `cloudflare-docx` 的 `worker.ts` 改成注入常量 + 内核 provider。两者的 `llmProvider` 今天是抛异常的占位——**保持占位语义**（本区块不给它们配模型），但换成 `LlmProvider` 形状：
+
+```ts
+  provider: () => ({
+    complete: async () => {
+      throw new Error("LLM provider not configured. Set LLM_API_KEY in this worker's env.");
+    },
+  }),
+```
+
+- [ ] **Step 6: 依赖与 tsconfig**
+
+两个包加 `@unidocs/doctype-server-common` 到 `dependencies` + tsconfig `references`。docx 还要确认 `@unidocs/svalue-codec` 已在 `dependencies`（它已经是）。
+
+- [ ] **Step 7: 测试 + 提交**
+
+```bash
+pnpm test:local
+git add -A
+git commit -m "feat(doctype): markdown 与 docx 也切到内核
+
+两个文档类型的工具表改成 AgentTool[],名字去前缀,agent.ts 各自变成一个
+常量。docx 的 makeOperation 拆进 insertImage / replaceImage 的 toOps,
+其中 await resolveBlob(hash) 变成同步的 createSBlob(hash) —— 租约本来就
+由 session.ts:611 的 leaseOpRefs 在 apply 第 1 步做掉了,那次往返是多余的
+(spec 5.1.1)。queryImageContent 变成 getImage 的 toResult。
+
+docx 本地那三个 require* helper 删掉,改用 svalue-codec 里的共享版本。
+
+docx 的图片路径这是第一次真正跑通:此前它必然撞上 renderDefaultAgentTool
+Result 的抛异常分支,只是因为 llmProvider 本身就是个抛异常的占位所以一直
+没暴露(P6)。补了一条端到端断言它能被 Anthropic 适配层翻成图片块。
+
+两个 worker 的 provider 仍是占位 —— 本区块不给它们配模型,只是换成
+LlmProvider 的形状。
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+## Task 9: cloudflare-sdk —— 薄外壳，三个 worker 一起切到内核
 
 这是**切换点**：旧循环退场，PSD 端到端跑在新内核上。
 
@@ -2025,9 +2117,10 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - Create: `packages/cloudflare-sdk/src/agent-platform-do.ts`
 - Modify: `packages/cloudflare-sdk/src/operator-do-agent.ts`（326 行 → 薄外壳）
 - Modify: `packages/cloudflare-sdk/src/operator-do.ts`、`src/index.ts`
-- Modify: `packages/cloudflare-psd/src/worker.ts`
+- Modify: `packages/cloudflare-{psd,markdown,docx}/src/worker.ts`（**三个一起改** —— `createOperatorDO` 的 config 形状变了，只改一个会让另外两个编译不过）
 - Delete: `packages/cloudflare-psd/src/anthropic.ts`
-- Modify: `packages/doctype-psd/src/agent.ts`（删掉 Task 7 的临时适配器）
+- Delete: `packages/cloudflare-psd/tests/anthropic-image.test.ts`
+- Modify: `packages/doctype-{psd,markdown,docx}/src/agent.ts`（删掉 Task 7 / Task 8 留下的三个临时适配器）
 - Test: `packages/cloudflare-sdk/tests/operator-do.test.ts`（按新形状重写）
 
 **Interfaces:**
@@ -2153,7 +2246,9 @@ export function createCloudflareAgentPlatform<TQuery, TOp, TEnv>(
 
 `config` 从 `agentFactory` 改成 `agent`（常量），`llmProvider` 从"函数签名"改成 `(env) => LlmProvider`。
 
-- [ ] **Step 5: 切 cloudflare-psd**
+- [ ] **Step 5: 三个 worker 一起切**
+
+`createOperatorDO` 的 config 形状变了（`agentFactory` → `agent`，`llmProvider` → `provider`），而三个 worker 都在调它，所以必须同一步改完——只改 psd 会让 markdown / docx 编译不过，违反"每个任务结束时全仓库绿"。
 
 `packages/cloudflare-psd/src/worker.ts`：
 
@@ -2169,7 +2264,23 @@ export const PsdOperator = createOperatorDO({
 });
 ```
 
-删除 `packages/cloudflare-psd/src/anthropic.ts`。删掉 `doctype-psd/src/agent.ts` 里 Task 7 的临时适配器。
+`cloudflare-markdown` / `cloudflare-docx` 的 worker 换成各自的常量。两者**保持今天的占位语义**（本区块不给它们配模型），只是换成 `LlmProvider` 的形状：
+
+```ts
+export const MarkdownOperator = createOperatorDO({
+  agent: markdownAgent,
+  provider: () => ({
+    complete: async () => {
+      throw new Error("LLM provider not configured. Set LLM_API_KEY in this worker's env.");
+    },
+  }),
+  getEditorStub: (env: Env, sessionId) => env.MARKDOWN_EDITOR.get(env.MARKDOWN_EDITOR.idFromName(sessionId)),
+});
+```
+
+删除 `packages/cloudflare-psd/src/anthropic.ts`，以及测它的 `packages/cloudflare-psd/tests/anthropic-image.test.ts`——那两个用例断言的是 `$image` → image block 的转换，两端都已不存在；替代覆盖是 Task 6 的 `toAnthropicMessages` 测试（image part → Anthropic 图片块）加 Task 7 的 `getPreview` `toResult` 测试。
+
+删掉三个文档类型 `agent.ts` 里 Task 7 / Task 8 留下的临时适配器。
 
 - [ ] **Step 6: 跑测试确认通过**
 
@@ -2212,81 +2323,6 @@ operator-do.test.ts 的三个用例逐条改写:前两个改测新形状,第三�
 AgentPlatform.writeBlob 本轮实现成显式抛错,不是漏了:编辑器今天没有
 \"给我字节、返回 SBlob\"那条内部路由,而本轮也没有调用方(provider 只
 产出文字)。第一个调用方出现时再给编辑器加 /_internal/write_blob。
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
-```
-
----
-
-## Task 9: markdown 与 docx 切到内核
-
-**Files:**
-- Modify: `packages/doctype-markdown/src/agent.ts`（工具表就在这个文件里，markdown **没有** `tools.ts`）
-- Modify: `packages/doctype-docx/src/tools.ts`、`src/agent.ts`
-- Modify: `packages/cloudflare-{markdown,docx}/src/worker.ts`
-- Modify: 两个包的 `package.json` / `tsconfig.json`
-- Test: `packages/doctype-markdown/tests/agent.test.ts`、`packages/doctype-docx/tests/agent.test.ts`
-
-**Interfaces:**
-- Consumes: Task 1 契约、Task 2 helper、Task 5/6 内核
-- Produces: `export const markdownAgent: DocumentAgent<MQuery, MOp>`、`export const docxAgent: DocumentAgent<DocxQuery, DocxOperation>`
-
-- [ ] **Step 1: markdown —— 改测试**
-
-按 Task 7 的形状重写 `packages/doctype-markdown/tests/agent.test.ts`：断言工具名去前缀、`toQuery` / `toOps` 的产物、纯函数性。
-
-- [ ] **Step 2: markdown —— 实现**
-
-`markdownTools` 从 `Record<string, AgentToolDefinition>` 改成 `AgentTool[]`，名字去前缀（`getContent` / `getSection` / `getHeadings` / `setContent` / `appendSection` / `replaceSection` / `deleteSection`），导出 `markdownAgent` 常量，删掉 `createMarkdownDocumentAgent` 和 `requireJsonObject`。
-
-- [ ] **Step 3: docx —— 改测试**
-
-同上，另加一条端到端（spec V11）：`getImage` 的 `toResult` 产出 image content part，且它能被 Task 6 的 `toAnthropicMessages` 翻成图片块**而不抛异常**——这条路今天从未真正跑通过（P6）。
-
-- [ ] **Step 4: docx —— 实现**
-
-`tools.ts` 换形状、去前缀。`agent.ts`：
-- `queryImageContent`（`:51-81`）→ `getImage` 工具的 `toResult`，用 Task 2 的 `requireRecord` / `requireSBlob` 替掉本地那三个 helper；
-- `makeOperation`（`:83-115`）→ 拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，`await resolveBlob(hash)` 变成同步的 `createSBlob(hash)`（租约由 `session.ts:611` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，spec 5.1.1）；
-- 删掉本地的 `requireString` / `requireNumber` / `requireSValueRecord`（已提到 svalue-codec）。
-
-- [ ] **Step 5: 切两个 worker**
-
-`cloudflare-markdown` / `cloudflare-docx` 的 `worker.ts` 改成注入常量 + 内核 provider。两者的 `llmProvider` 今天是抛异常的占位——**保持占位语义**（本区块不给它们配模型），但换成 `LlmProvider` 形状：
-
-```ts
-  provider: () => ({
-    complete: async () => {
-      throw new Error("LLM provider not configured. Set LLM_API_KEY in this worker's env.");
-    },
-  }),
-```
-
-- [ ] **Step 6: 依赖与 tsconfig**
-
-两个包加 `@unidocs/doctype-server-common` 到 `dependencies` + tsconfig `references`。docx 还要确认 `@unidocs/svalue-codec` 已在 `dependencies`（它已经是）。
-
-- [ ] **Step 7: 测试 + 提交**
-
-```bash
-pnpm test:local
-git add -A
-git commit -m "feat(doctype): markdown 与 docx 也切到内核
-
-两个文档类型的工具表改成 AgentTool[],名字去前缀,agent.ts 各自变成一个
-常量。docx 的 makeOperation 拆进 insertImage / replaceImage 的 toOps,
-其中 await resolveBlob(hash) 变成同步的 createSBlob(hash) —— 租约本来就
-由 session.ts:611 的 leaseOpRefs 在 apply 第 1 步做掉了,那次往返是多余的
-(spec 5.1.1)。queryImageContent 变成 getImage 的 toResult。
-
-docx 本地那三个 require* helper 删掉,改用 svalue-codec 里的共享版本。
-
-docx 的图片路径这是第一次真正跑通:此前它必然撞上 renderDefaultAgentTool
-Result 的抛异常分支,只是因为 llmProvider 本身就是个抛异常的占位所以一直
-没暴露(P6)。补了一条端到端断言它能被 Anthropic 适配层翻成图片块。
-
-两个 worker 的 provider 仍是占位 —— 本区块不给它们配模型,只是换成
-LlmProvider 的形状。
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
