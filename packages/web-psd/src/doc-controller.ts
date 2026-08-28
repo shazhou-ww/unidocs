@@ -200,6 +200,17 @@ export class DocController {
     this.requestVisibleTiles();
   }
 
+  /** Client (viewport) coords → document pixels. */
+  toCanvas(clientX: number, clientY: number): { x: number; y: number } {
+    const r = this.view.getBoundingClientRect();
+    return this.viewport?.screenToCanvas(clientX - r.left, clientY - r.top) ?? { x: 0, y: 0 };
+  }
+
+  /** Document pixels → coords relative to the canvas element's top-left. */
+  toScreen(cx: number, cy: number): { x: number; y: number } {
+    return this.viewport?.canvasToScreen(cx, cy) ?? { x: 0, y: 0 };
+  }
+
   /** Reads one pixel from the composited canvas. Used by the eyedropper tool.
    *  Returns null when the point is outside the canvas or the 2D context is
    *  unavailable. */

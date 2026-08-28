@@ -1,5 +1,6 @@
 import { TopBar } from "./panels/top-bar.js";
 import { CanvasStage } from "./panels/canvas-stage.js";
+import { ContextBar } from "./panels/context-bar.js";
 import { SidePanel } from "./panels/side-panel.js";
 
 /**
@@ -17,6 +18,7 @@ export function App() {
         </section>
         <section className="col-canvas">
           <CanvasStage />
+          <ContextBar />
         </section>
         <SidePanel />
       </div>
