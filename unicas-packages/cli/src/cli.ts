@@ -35,7 +35,7 @@ Usage:
   unicas stacks list [--limit N] [--cursor C]
   unicas stacks get <stackId>
   unicas stacks create <displayName> [--idempotency-key K]
-  unicas stacks update <stackId> <displayName> [--etag E]
+  unicas stacks update <stackId> [displayName] [--description D] [--etag E]
 
   unicas members list <stackId> [--limit N] [--cursor C]
   unicas members invite <stackId> <email> [--idempotency-key K]

@@ -250,19 +250,20 @@ export function createControlPlaneMcpServer(
   server.registerTool(
     "update_stack",
     {
-      description: "Update a stack display name using its current ETag.",
+      description: "Update stack metadata using its current ETag.",
       inputSchema: z.object({
         stackId: z.string().min(1),
-        displayName: z.string().min(1).max(100),
+        displayName: z.string().min(1).max(100).optional(),
+        description: z.string().max(2_000).optional(),
         etag: z.string().min(1),
       }),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ stackId, displayName, etag }) => {
+    async ({ stackId, displayName, description, etag }) => {
       const grant = requireMutation("control:write", options);
       const result = await new ControlPlaneService(db).patchStack(
         serviceContext(grant, "update_stack"),
-        { path: { stackId }, body: { displayName } },
+        { path: { stackId }, body: { displayName, description } },
         { ifMatch: etag },
       );
       return toolResult(withEtag(result));

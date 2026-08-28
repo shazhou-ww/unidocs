@@ -58,7 +58,10 @@ export type CasAdminGetStackResponse = CasStack | CasAdminErrorResponse;
 export interface CasAdminPatchStackRequest {
   readonly path: CasAdminStackPath;
   readonly headers: CasAdminMutationPreconditions;
-  readonly body: { readonly displayName?: string };
+  readonly body: {
+    readonly displayName?: string;
+    readonly description?: string;
+  };
 }
 
 export type CasAdminPatchStackResponse = CasStack | CasAdminErrorResponse;

@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   MembersView,
   IssuerView,
-  RefDomainsView,
   ControlAuditView,
   RootRefAuditView,
   UsageView,
@@ -108,20 +107,6 @@ describe("IssuerView", () => {
     const addCall = fetchMock.mock.calls.find((call) => call[0]?.includes("/issuer/keys") && call[1]?.method === "POST");
     expect(addCall).toBeDefined();
     expect(JSON.parse(addCall![1]!.body as string)).toMatchObject({ kid: "k1", algorithm: "ES256" });
-  });
-});
-
-describe("RefDomainsView", () => {
-  test("lists domains observed in Root Ref audit writes", async () => {
-    fetchMock.mockResolvedValueOnce(json({
-      domains: [
-        { stackId: STACK, refDomain: "doc:markdown", revision: 4 },
-      ],
-    }));
-    render(<RefDomainsView stackId={STACK} />);
-    await waitFor(() => expect(screen.getByText("doc:markdown")).toBeInTheDocument());
-    expect(screen.getByText("4")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Register|Disable writes|Retire/ })).not.toBeInTheDocument();
   });
 });
 

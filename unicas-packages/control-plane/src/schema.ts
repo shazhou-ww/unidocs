@@ -65,6 +65,9 @@ export async function migrateControlSchema(db: D1Database): Promise<void> {
   for (const sql of CONTROL_SCHEMA_MIGRATIONS) {
     await db.exec(sql);
   }
+  await ensureColumns(db, "cas_stacks", [
+    ["description", "TEXT NOT NULL DEFAULT ''"],
+  ]);
   await ensureColumns(db, "cas_control_audit_events", [
     ["caller_channel", "TEXT"],
     ["oauth_client_handle", "TEXT"],

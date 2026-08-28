@@ -507,11 +507,14 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         return jsonWithEtag(result);
       }
       case "patchStack": {
-        const body = await readJsonBody<{ displayName?: unknown }>(request);
+        const body = await readJsonBody<{ displayName?: unknown; description?: unknown }>(request);
         if (!body) return invalidRequest("JSON body is required");
         const result = await service.patchStack(ctx, {
           path: { stackId: route.stackId },
-          body: { displayName: body.displayName === undefined ? undefined : String(body.displayName) },
+          body: {
+            displayName: body.displayName === undefined ? undefined : String(body.displayName),
+            description: body.description === undefined ? undefined : String(body.description),
+          },
         }, mutation);
         return jsonWithEtag(result);
       }

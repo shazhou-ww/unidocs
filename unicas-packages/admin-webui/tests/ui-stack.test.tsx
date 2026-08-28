@@ -14,6 +14,7 @@ function json(body: unknown, status = 200): Response {
 const CURRENT_STACK = {
   stackId: "cas_one",
   displayName: "Primary stack",
+  description: "Primary production stack",
   status: "active",
   createdAt: 1,
   revision: 3,
@@ -22,6 +23,7 @@ const CURRENT_STACK = {
 const OTHER_STACK = {
   stackId: "cas_two",
   displayName: "Secondary stack",
+  description: "",
   status: "active",
   createdAt: 2,
   revision: 1,
@@ -52,7 +54,8 @@ describe("StackView", () => {
     const switcher = screen.getByRole("combobox", { name: "Stack" });
     expect(switcher).toHaveValue("cas_one");
     expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");
-    expect(screen.getAllByRole("tab")).toHaveLength(7);
+    expect(screen.getAllByRole("tab")).toHaveLength(6);
+    expect(screen.queryByRole("tab", { name: "Ref domains" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "My Stacks" })).not.toBeInTheDocument();
     const metadata = screen.getByRole("heading", { name: "Stack metadata" }).closest(".card");
     expect(metadata).toHaveTextContent("Stack IDcas_one");
@@ -72,7 +75,6 @@ describe("StackView", () => {
     const guides = [
       ["Members", "Stack administrators"],
       ["Issuer & keys", "Tenant capability trust"],
-      ["Ref domains", "Reference domains"],
       ["Control audit", "Control-plane audit"],
       ["Root Ref audit", "Root Ref audit"],
       ["Usage", "Tenant storage usage"],
@@ -83,6 +85,37 @@ describe("StackView", () => {
       expect(screen.getByRole("complementary", { name: guide })).toBeInTheDocument();
       expect(screen.getByText("About this page")).toBeInTheDocument();
     }
+
+    await user.click(screen.getByRole("tab", { name: "Root Ref audit" }));
+    expect(screen.getByText("Ref domain")).toBeInTheDocument();
+  });
+
+  test("updates the stack description with the current revision", async () => {
+    const user = userEvent.setup();
+    let currentStack = CURRENT_STACK;
+    let patchBody: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const pathname = new URL(String(input), "http://localhost").pathname;
+      if (pathname === "/admin/stacks/cas_one" && init?.method === "PATCH") {
+        patchBody = JSON.parse(String(init.body));
+        currentStack = { ...currentStack, description: String(patchBody.description), revision: 4 };
+        return json(currentStack);
+      }
+      if (pathname === "/admin/stacks/cas_one") return json(currentStack);
+      if (pathname === "/admin/stacks") return json({ items: [currentStack, OTHER_STACK] });
+      throw new Error(`Unexpected request: ${pathname}`);
+    }));
+
+    render(<StackView stackId="cas_one" onOpenMcpConfiguration={vi.fn()} onLogout={vi.fn()} />);
+    const description = await screen.findByLabelText("Description");
+    await user.clear(description);
+    await user.type(description, "Updated production stack");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(patchBody).toMatchObject({
+      displayName: "Primary stack",
+      description: "Updated production stack",
+    }));
   });
 
   test("opens and dismisses the mobile navigation drawer", async () => {

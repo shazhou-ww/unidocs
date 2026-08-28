@@ -192,12 +192,24 @@ describe("control-plane MCP server", () => {
 
     const staleUpdate = await callTool(handler, "update_stack", {
       stackId,
-      displayName: "Changed",
+      description: "Production documents",
       etag: '"0"',
     });
     expect(staleUpdate).toMatchObject({
       isError: true,
       structuredContent: { error: "REVISION_MISMATCH" },
+    });
+
+    const update = await callTool(handler, "update_stack", {
+      stackId,
+      description: "Production documents",
+      etag: '"1"',
+    });
+    expect(update.structuredContent).toMatchObject({
+      displayName: "Lifecycle",
+      description: "Production documents",
+      revision: 2,
+      etag: '"2"',
     });
   });
 });

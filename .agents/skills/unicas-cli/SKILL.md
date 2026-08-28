@@ -77,7 +77,7 @@ Write (`control:write`):
 
 ```text
 unicas stacks create <displayName> [--idempotency-key K]
-unicas stacks update <stackId> <displayName> [--etag E]
+unicas stacks update <stackId> [displayName] [--description D] [--etag E]
 ```
 
 Security (`control:security`):

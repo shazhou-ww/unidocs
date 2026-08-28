@@ -133,6 +133,27 @@ describe("command layer", () => {
     expect(args.etag).toBe('"2"');
   });
 
+  test("stacks update can change only the description", async () => {
+    await seedLoggedIn(ctx.store);
+    const server = new FakeServer({
+      toolResults: {
+        get_stack: { structuredContent: { stackId: "cas_stack", revision: 2, etag: '"2"' } },
+        update_stack: { structuredContent: { stackId: "cas_stack", displayName: "Ops", description: "Production", revision: 3, etag: '"3"' } },
+      },
+    });
+    ctx = createContext(
+      { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
+      server.fetch,
+    );
+    await stacksCommand(ctx, "update", ["cas_stack", "--description", "Production"]);
+    const updateCall = server.requests.find(
+      (request) => (request.body as { params?: { name?: string } })?.params?.name === "update_stack",
+    );
+    const args = ((updateCall?.body as { params?: { arguments?: Record<string, unknown> } })?.params?.arguments) ?? {};
+    expect(args).toMatchObject({ stackId: "cas_stack", description: "Production", etag: '"2"' });
+    expect(args).not.toHaveProperty("displayName");
+  });
+
   test("logout revokes the refresh token and clears the store", async () => {
     await seedLoggedIn(ctx.store);
     const server = new FakeServer();

@@ -27,6 +27,7 @@ export type CasStackStatus = "active" | "suspended";
 export interface CasStack {
   readonly stackId: CasStackId;
   readonly displayName: string;
+  readonly description: string;
   readonly status: CasStackStatus;
   readonly createdAt: number;
   readonly revision: number;

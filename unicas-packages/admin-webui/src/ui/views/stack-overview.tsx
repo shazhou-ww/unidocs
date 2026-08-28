@@ -10,6 +10,7 @@ export function StackOverviewView({ stack, onChanged }: {
   onChanged: () => void;
 }) {
   const [name, setName] = useState(stack.displayName);
+  const [description, setDescription] = useState(stack.description);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -22,7 +23,10 @@ export function StackOverviewView({ stack, onChanged }: {
       await api<CasStack>(`/admin/stacks/${encodeURIComponent(stack.stackId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...ifMatch(stack.revision) },
-        body: JSON.stringify({ displayName: name.trim() }),
+        body: JSON.stringify({
+          displayName: name.trim(),
+          description: description.trim(),
+        }),
       });
       onChanged();
     } catch (caught) {
@@ -61,7 +65,26 @@ export function StackOverviewView({ stack, onChanged }: {
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
-        <Button icon={<Save size={15} />} variant="primary" onClick={() => void save()} disabled={saving || name.trim().length === 0 || name === stack.displayName}>
+      </div>
+      <div className="field-row">
+        <label htmlFor="stack-description">Description</label>
+        <textarea
+          id="stack-description"
+          value={description}
+          maxLength={2_000}
+          rows={4}
+          onChange={(event) => setDescription(event.target.value)}
+        />
+        <Button
+          icon={<Save size={15} />}
+          variant="primary"
+          onClick={() => void save()}
+          disabled={
+            saving
+            || name.trim().length === 0
+            || (name.trim() === stack.displayName && description.trim() === stack.description)
+          }
+        >
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>
