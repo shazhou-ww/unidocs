@@ -167,7 +167,7 @@ export class MemoryCas implements CasGateway {
     return { hash: ref.hash, size: node.bytes.length, contentType: node.contentType, refs: node.refs };
   }
 
-  async leaseExisting(hash: string): Promise<unknown> {
+  async leaseNode(hash: string): Promise<unknown> {
     return { hash, ready: true };
   }
 

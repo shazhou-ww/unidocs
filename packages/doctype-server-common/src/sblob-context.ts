@@ -27,7 +27,7 @@ export interface SBlobCasAdapter {
     contentType: string,
     refs?: readonly string[],
   ): Promise<unknown>;
-  leaseExisting(hash: string): Promise<unknown>;
+  leaseNode(hash: string): Promise<unknown>;
   storeBlob(source: SBlobSource): Promise<{ readonly hash: string }>;
   statBlob(hash: string): Promise<{
     readonly hash: string;
@@ -160,7 +160,7 @@ class SBlobRuntime {
 
   async #ensure(hash: string, store: () => Promise<void>): Promise<SBlob> {
     try {
-      await this.#cas.leaseExisting(hash);
+      await this.#cas.leaseNode(hash);
       return createSBlob(hash);
     } catch (err) {
       if (!(err instanceof CasClientError) || (err.status !== 404 && err.status !== 409)) {
@@ -178,7 +178,7 @@ class SBlobRuntime {
       const data = Uint8Array.from(source.data);
       const refs = decodeSValueWithRefs(data).refs;
       const hash = await computeHash(data, source.contentType, refs);
-      await Promise.all([...new Set(refs)].map(ref => this.#cas.leaseExisting(ref)));
+      await Promise.all([...new Set(refs)].map(ref => this.#cas.leaseNode(ref)));
       await this.#cas.ensureNode(hash, data, source.contentType, refs);
       return hash;
     }

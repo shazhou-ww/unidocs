@@ -85,7 +85,7 @@ export interface CasGateway {
   read(ref: { kind: "cas"; hash: string }): Promise<Uint8Array>;
   metadata(ref: { kind: "cas"; hash: string }): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }>;
   store?(bytes: Uint8Array, contentType: string): Promise<string>;
-  leaseExisting(hash: string): Promise<unknown>;
+  leaseNode(hash: string): Promise<unknown>;
   updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<{
     success: boolean;
     idempotent?: boolean;
@@ -320,7 +320,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
           this.#deps.cas,
           `snapshot:${sessionId}:${this.#version}`,
           refs,
-          async () => {},
+          async () => { },
         );
       } catch (err) {
         throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
@@ -373,7 +373,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
           this.#deps.cas,
           `snapshot:${sessionId}:1`,
           refs,
-          async () => {},
+          async () => { },
         );
       } catch (err) {
         throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);
@@ -474,7 +474,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
           this.#deps.cas,
           `snapshot:${sessionId}:1`,
           cloneRefs,
-          async () => {},
+          async () => { },
         );
       } catch (err) {
         throw new RootRefsError(`CAS snapshot root-refs failed: ${err}`);

@@ -162,7 +162,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const casAdapter = {
         ensureNode: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
           this.#requireCas().ensureNode(hash, content, contentType, refs as string[] | undefined),
-        leaseExisting: (hash: string) => this.#isReadOnlyOperation()
+        leaseNode: (hash: string) => this.#isReadOnlyOperation()
           ? this.#requireCas().metadata({ kind: "cas", hash })
           : this.#requireCas().leaseExisting(hash),
         storeBlob: (source: import("@unidocs/protocol").SBlobSource) => this.#requireCas().storeBlob(

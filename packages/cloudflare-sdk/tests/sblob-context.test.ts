@@ -25,8 +25,8 @@ class FakeCas {
   ) => {
     this.nodes.set(hash, { data: data.slice(), contentType, refs: [...refs] });
   });
-  readonly leaseExisting = vi.fn(async (hash: string) => {
-    if (!this.nodes.has(hash)) throw new CasClientError(404, "Not Found", "leaseExisting");
+  readonly leaseNode = vi.fn(async (hash: string) => {
+    if (!this.nodes.has(hash)) throw new CasClientError(404, "Not Found", "lease");
   });
   readonly metadata = vi.fn(async (hash: string) => {
     const node = this.nodes.get(hash);
@@ -124,13 +124,13 @@ describe("SBlob context", () => {
       data: new TextEncoder().encode("child"),
       contentType: "text/plain",
     });
-    cas.leaseExisting.mockClear();
+    cas.leaseNode.mockClear();
     const encoded = encodeSValueWithRefs([child, child]);
 
     await context.makeSBlob({ data: encoded.data, contentType: SValueContentType });
 
-    expect(cas.leaseExisting).toHaveBeenCalledTimes(1);
-    expect(cas.leaseExisting).toHaveBeenCalledWith(child.hash);
+    expect(cas.leaseNode).toHaveBeenCalledTimes(1);
+    expect(cas.leaseNode).toHaveBeenCalledWith(child.hash);
     const parent = [...cas.nodes.values()].find(node => node.contentType === SValueContentType);
     expect(parent?.refs).toEqual([child.hash, child.hash]);
   });

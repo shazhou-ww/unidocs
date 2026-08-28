@@ -1,11 +1,97 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { CasClient, CasClientError, leaseOpRefs, commitRootRefsOrRollback } from "../src/index.js";
+import {
+  CasClient,
+  CasClientError,
+  commitRootRefsOrRollback,
+  createTenantCasClient,
+  leaseOpRefs,
+} from "../src/index.js";
 import { CanonicalNodeContentType, hashToHex, parseNodeBytes, sha256 } from "@unicas/server-common";
 import { BlobChunkBytes, BlobIndexContentType } from "@unicas/protocol";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
+
+describe("createTenantCasClient", () => {
+  const hash = "a".repeat(64);
+  const prefix = "https://cas.example/stacks/stack-1/tenants/tenant-1";
+
+  function create(fetch: ReturnType<typeof vi.fn>, getToken = vi.fn(async () => "token")) {
+    return {
+      client: createTenantCasClient({
+        baseUrl: "https://cas.example/",
+        stackId: "stack-1",
+        tenantId: "tenant-1",
+        getToken,
+        fetcher: { fetch },
+      }),
+      getToken,
+    };
+  }
+
+  it("creates a lazy node reader with metadata and ranged content access", async () => {
+    const metadata = { hash, size: 10, contentType: "text/plain", refs: [] };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ metadata }))
+      .mockResolvedValueOnce(new Response("2345", { status: 206 }));
+    const { client, getToken } = create(fetch);
+
+    const node = client.node(hash);
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(node.metadata()).resolves.toEqual(metadata);
+    await expect(new Response(await node.read({ offset: 2, length: 4 })).text()).resolves.toBe("2345");
+
+    expect(fetch.mock.calls[0][0]).toBe(`${prefix}/cas/nodes/${hash}/metadata`);
+    expect(fetch.mock.calls[1][0]).toBe(`${prefix}/cas/nodes/${hash}/content`);
+    expect(new Headers(fetch.mock.calls[1][1].headers).get("Range")).toBe("bytes=2-5");
+    expect(new Headers(fetch.mock.calls[1][1].headers).get("Authorization")).toBe("Bearer token");
+    expect(getToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses one lease operation with and without canonical node content", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 }))
+      .mockResolvedValueOnce(Response.json({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 3 }));
+    const { client } = create(fetch);
+
+    await client.leaseNode(hash, undefined, { durationMs: 1_000 });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2, 3]));
+        controller.close();
+      },
+    });
+    await client.leaseNode(hash, { contentLength: 3, body });
+
+    expect(fetch.mock.calls[0][0]).toBe(`${prefix}/cas/nodes/${hash}/lease`);
+    expect(fetch.mock.calls[0][1].body).toBeUndefined();
+    expect(new Headers(fetch.mock.calls[0][1].headers).get("X-CAS-Lease-Duration")).toBe("1000");
+    expect(fetch.mock.calls[1][0]).toBe(`${prefix}/cas/nodes/${hash}/lease`);
+    expect(fetch.mock.calls[1][1].body).toBe(body);
+    expect(fetch.mock.calls[1][1].duplex).toBe("half");
+    expect(new Headers(fetch.mock.calls[1][1].headers).get("Content-Type")).toBe(CanonicalNodeContentType);
+  });
+
+  it("exposes root refs, tenant usage, and tenant GC", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ success: true, idempotent: false, revision: 4 }))
+      .mockResolvedValueOnce(Response.json({ nodeCount: 1 }))
+      .mockResolvedValueOnce(Response.json({ examined: 1, deleted: 1, reclaimedContentBytes: 10 }));
+    const { client } = create(fetch);
+
+    await client.updateRootRefs({ requestId: "r1", changes: { [hash]: 1 } });
+    await client.usage();
+    await client.gc({ maxNodes: 25 });
+
+    expect(fetch.mock.calls.map(call => call[0])).toEqual([
+      `${prefix}/root-refs`,
+      `${prefix}/cas/usage`,
+      `${prefix}/cas/gc`,
+    ]);
+    expect(JSON.parse(fetch.mock.calls[2][1].body as string)).toEqual({ maxNodes: 25 });
+  });
+});
 
 describe("CasClient", () => {
   let client: CasClient;
@@ -569,25 +655,25 @@ describe("CasClient blob streams", () => {
 describe("leaseOpRefs", () => {
   it("leases each aggregated hash and skips empty maps", async () => {
     const { createSBlob } = await import("@unidocs/svalue-codec");
-    const leaseExisting = vi.fn(async () => ({ ready: true }));
+    const leaseNode = vi.fn(async () => ({ ready: true }));
     const hash = "d".repeat(64);
     const refs = await leaseOpRefs(
       [{ kind: "insertImage", blob: createSBlob(hash) }, { kind: "appendParagraph" }],
-      { leaseExisting },
+      { leaseNode },
     );
     expect(refs).toEqual({ [hash]: 1 });
-    expect(leaseExisting).toHaveBeenCalledTimes(1);
-    expect(leaseExisting).toHaveBeenCalledWith(hash);
+    expect(leaseNode).toHaveBeenCalledTimes(1);
+    expect(leaseNode).toHaveBeenCalledWith(hash);
   });
 
   it("maps missing nodes as CasClientError 404", async () => {
     const { createSBlob } = await import("@unidocs/svalue-codec");
-    const leaseExisting = vi.fn(async () => {
-      throw new CasClientError(404, "Not Found", "leaseExisting");
+    const leaseNode = vi.fn(async () => {
+      throw new CasClientError(404, "Not Found", "lease");
     });
     await expect(leaseOpRefs(
       [{ blob: createSBlob("e".repeat(64)) }],
-      { leaseExisting },
+      { leaseNode },
     )).rejects.toMatchObject({ status: 404 });
   });
 });

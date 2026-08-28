@@ -147,7 +147,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
     const context = createSBlobContext({
       ensureNode: (hash, content, contentType, refs) =>
         cas.ensureNode(hash, content, contentType, refs ? [...refs] : undefined),
-      leaseExisting: (hash) => cas.leaseExisting(hash),
+      leaseNode: (hash) => cas.leaseExisting(hash),
       storeBlob: (source: SBlobSource) => cas.storeBlob(
         readableStreamFromSBlobSource(source),
         {
@@ -172,7 +172,13 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
         snapshots: new BlobSnapshotCache(blobService, identity, `unidocs-${docType}-snapshots`),
         blobs: new BlobCasStore(blobService, `unidocs-${docType}-roots`),
         unitOfWork: new PgUnitOfWork(pool, identity),
-        cas,
+        cas: {
+          read: ref => cas.read(ref),
+          metadata: ref => cas.metadata(ref),
+          store: (bytes, contentType) => cas.store(bytes, contentType),
+          leaseNode: hash => cas.leaseExisting(hash),
+          updateRootRefs: update => cas.updateRootRefs(update),
+        },
         identity,
         now: () => Date.now(),
       },

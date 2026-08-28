@@ -144,7 +144,7 @@ class FakeCas implements CasGateway {
     return { hash: "", size: 0, contentType: "", refs: [] as readonly string[] };
   }
 
-  async leaseExisting(hash: string): Promise<unknown> {
+  async leaseNode(hash: string): Promise<unknown> {
     if (this.failLease) throw this.failLease;
     this.leased.push(hash);
     return { hash, ready: true };

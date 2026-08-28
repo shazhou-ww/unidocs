@@ -8,6 +8,26 @@
  * `Fetcher` type import). CAS wire types live in @unicas/protocol-legacy.
  */
 
+export type {
+  CasGcOptions,
+  CasHttpFetcher,
+  CasLeaseOptions,
+  CasNodeCache,
+  CasNodeCacheKey,
+  CasNodeRange,
+  CasNodeReader,
+  CasNodeSource,
+  CasRootRefsResult,
+  HttpFetcher,
+  TenantCasClient,
+  TenantCasClientConfig,
+} from "./types.js";
+export { createTenantCasClient } from "./client.js";
+export { CasClientError } from "./errors.js";
+
+import { CasClientError } from "./errors.js";
+import type { CasRootRefsResult, HttpFetcher } from "./types.js";
+
 import {
   CanonicalNodeContentType,
   computeNodeDigest,
@@ -29,11 +49,6 @@ import {
 } from "@unicas/protocol";
 import { casRoutes as legacyCasRoutes } from "@unicas/protocol-legacy";
 import type { CasLeaseResult, CasRootRefUpdate } from "@unicas/protocol-legacy";
-
-/** Structural interface for a fetch-capable service binding. */
-export interface HttpFetcher {
-  fetch(input: string | Request, init?: RequestInit): Promise<Response>;
-}
 
 export type CasClientConfig =
   | { baseUrl: string; tenantId: string; authToken?: string }
@@ -89,23 +104,6 @@ function tenantRoutesFor(config: CasClientConfig): {
   };
 }
 
-export class CasClientError extends Error {
-  readonly status: number;
-
-  constructor(status: number, statusText: string, operation: string) {
-    super(`CAS ${operation} failed: ${status} ${statusText}`);
-    this.name = "CasClientError";
-    this.status = status;
-  }
-}
-
-/** Typed result of a Root Refs write; canonical responses carry `revision`. */
-export interface CasRootRefsResult {
-  readonly success: boolean;
-  readonly idempotent?: boolean;
-  readonly revision?: number;
-}
-
 export interface CasBlobRef {
   readonly hash: string;
   readonly size: number;
@@ -142,6 +140,8 @@ function isCapabilityConfig(
 
 /**
  * CAS HTTP client implementing CasReadContext + upload operations.
+ *
+ * @deprecated Use `createTenantCasClient` for the canonical tenant API.
  */
 export class CasClient implements CasReadContext {
   private config: CasClientConfig;
@@ -623,7 +623,7 @@ export function aggregateRefs(operations: readonly SValue[]): CasReferences {
  * Satisfied by `CasClient`, and by any cloud-neutral gateway.
  */
 export interface CasLeaseGateway {
-  leaseExisting(hash: string): Promise<unknown>;
+  leaseNode(hash: string): Promise<unknown>;
 }
 
 /**
@@ -641,7 +641,7 @@ export async function leaseOpRefs(
 ): Promise<CasReferences> {
   const refs = aggregateRefs(operations);
   for (const hash of Object.keys(refs)) {
-    await cas.leaseExisting(hash);
+    await cas.leaseNode(hash);
   }
   return refs;
 }
