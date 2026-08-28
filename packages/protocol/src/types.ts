@@ -106,9 +106,9 @@ export interface MakeSBlob {
 export interface DocumentTypeContext {
   readonly makeSBlob: MakeSBlob;
   /** Open a reusable, range-capable file handle. */
-  readonly openSBlob?: (blob: SBlob) => Promise<SBlobHandler>;
+  readonly openSBlob: (blob: SBlob) => Promise<SBlobHandler>;
   /** @deprecated Migrate to openSBlob().read() or bounded readBytes(). */
-  readonly readSBlob: (blob: SBlob) => Promise<SBlobBytes>;
+  readonly readSBlob?: (blob: SBlob) => Promise<SBlobBytes>;
 }
 
 export type AgentContentPart =

@@ -24,6 +24,7 @@ export type {
   QueryPrimitive,
   QueryValue,
   SBlob,
+  SBlobData,
   SBlobBytes,
   SBlobHandler,
   SBlobReadRange,

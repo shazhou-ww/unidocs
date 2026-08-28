@@ -210,6 +210,13 @@ export function createSBlobContext(
   return Object.freeze({
     makeSBlob,
     openSBlob: (blob: SBlob) => runtime.open(blob),
+    readSBlob: async (blob: SBlob) => {
+      const handler = await runtime.open(blob);
+      return {
+        data: await handler.readBytes({ offset: 0, length: handler.size }),
+        contentType: handler.contentType,
+      };
+    },
   });
 }
 
