@@ -32,6 +32,25 @@ describe("ContextBar", () => {
     expect(screen.queryByText("裁到选区")).not.toBeInTheDocument();
   });
 
+  it("offers no crop for a zero-area selection, which would commit a 0x0 canvas", () => {
+    // One `pointerdown` with no movement is enough to produce this rect, and
+    // doctype-psd's `crop` does `doc.canvas.width = right - left` unvalidated.
+    setState({ marquee: [30, 30, 30, 30] });
+    render(<ContextBar />);
+    expect(screen.getByText("选区 0 × 0")).toBeInTheDocument();
+    expect(screen.queryByText("裁到选区")).not.toBeInTheDocument();
+    // Clearing it must still be reachable, or the user is stuck with a
+    // selection they cannot dismiss.
+    fireEvent.click(screen.getByText("清除选区"));
+    expect(getState().marquee).toBeNull();
+  });
+
+  it("offers no crop for a selection that is only a line (one axis collapsed)", () => {
+    setState({ marquee: [30, 20, 30, 90] });
+    render(<ContextBar />);
+    expect(screen.queryByText("裁到选区")).not.toBeInTheDocument();
+  });
+
   it("reports the marquee size and crops to it", () => {
     setState({ marquee: [10, 20, 132, 200] });
     render(<ContextBar />);

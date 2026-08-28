@@ -73,7 +73,7 @@ export function CanvasStage() {
       return;
     }
     if (!anchor.current) return;
-    setState({ marquee: normalise(anchor.current, c.toCanvas(e.clientX, e.clientY)) });
+    setState({ marquee: normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null) });
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -100,11 +100,33 @@ export function CanvasStage() {
   );
 }
 
-/** Two document-space points → an integer [top,left,bottom,right] rect, in the
- *  engine's convention, regardless of which way the drag went. */
-function normalise(a: { x: number; y: number }, b: { x: number; y: number }): Rect {
+/**
+ * Two document-space points → an integer [top,left,bottom,right] rect, in the
+ * engine's convention, regardless of which way the drag went.
+ *
+ * Clamped to the document rect. The pointer handlers live on `.stage`, which
+ * is `overflow: auto` and larger than the canvas whenever the doc is smaller
+ * than the viewport, so a drag that starts (or ends) in the grey surround
+ * produces out-of-document coordinates — and `crop` would happily ENLARGE the
+ * canvas past its content, or place the selection partly outside it. Clamping
+ * here rather than at the pointer boundary keeps the anchor honest even when
+ * the drag re-enters the canvas. `canvas` is null before a document has
+ * loaded, in which case there is nothing to clamp against.
+ */
+export function normalise(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  canvas: { width: number; height: number } | null,
+): Rect {
+  const clamp = (v: number, hi: number): number => Math.max(0, Math.min(hi, Math.round(v)));
+  if (!canvas) {
+    return [
+      Math.round(Math.min(a.y, b.y)), Math.round(Math.min(a.x, b.x)),
+      Math.round(Math.max(a.y, b.y)), Math.round(Math.max(a.x, b.x)),
+    ];
+  }
   return [
-    Math.round(Math.min(a.y, b.y)), Math.round(Math.min(a.x, b.x)),
-    Math.round(Math.max(a.y, b.y)), Math.round(Math.max(a.x, b.x)),
+    clamp(Math.min(a.y, b.y), canvas.height), clamp(Math.min(a.x, b.x), canvas.width),
+    clamp(Math.max(a.y, b.y), canvas.height), clamp(Math.max(a.x, b.x), canvas.width),
   ];
 }
