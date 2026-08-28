@@ -2066,17 +2066,13 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - `makeOperation`（`:83-115`）→ 拆进 `insertImage` / `replaceImage` 两个工具的 `toOps`，`await resolveBlob(hash)` 变成同步的 `createSBlob(hash)`（租约由 `session.ts:611` 的 `leaseOpRefs` 在 apply 第 1 步做掉了，spec 5.1.1）；
 - 删掉本地的 `requireString` / `requireNumber` / `requireSValueRecord`（已提到 svalue-codec）。
 
-- [ ] **Step 5: 切两个 worker**
+- [x] **Step 5：不在本任务做——两个 worker 留给 Task 9**
 
-`cloudflare-markdown` / `cloudflare-docx` 的 `worker.ts` 改成注入常量 + 内核 provider。两者的 `llmProvider` 今天是抛异常的占位——**保持占位语义**（本区块不给它们配模型），但换成 `LlmProvider` 形状：
-
-```ts
-  provider: () => ({
-    complete: async () => {
-      throw new Error("LLM provider not configured. Set LLM_API_KEY in this worker's env.");
-    },
-  }),
-```
+> **2026-08-28 订正（换序遗留）。** 这一步原本属于旧编号下的同一个任务；
+> 预检把 Task 8 与 Task 9 对调（Ruling C）之后，切 worker 归 Task 9，因为
+> `createOperatorDO` 的 config 形状要到那时才变，而三个 worker 都调它——
+> 在这里改会编译不过。本节上文"撑到 Task 9 一起切"才是对的口径。
+> markdown / docx 的 worker 改法见 Task 9 Step 5。
 
 - [ ] **Step 6: 依赖与 tsconfig**
 
@@ -2101,8 +2097,8 @@ docx 的图片路径这是第一次真正跑通:此前它必然撞上 renderDefa
 Result 的抛异常分支,只是因为 llmProvider 本身就是个抛异常的占位所以一直
 没暴露(P6)。补了一条端到端断言它能被 Anthropic 适配层翻成图片块。
 
-两个 worker 的 provider 仍是占位 —— 本区块不给它们配模型,只是换成
-LlmProvider 的形状。
+两个 worker 本任务不动 —— createOperatorDO 的 config 形状要到 Task 9 才变,
+三个 worker 一起切。
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
