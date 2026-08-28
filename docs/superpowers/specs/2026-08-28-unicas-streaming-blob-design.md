@@ -670,6 +670,10 @@ export interface CasBlobClient {
 }
 ```
 
+`createCasBlobClient(cas, { chunkBytes })` allows tests and constrained
+runtimes to choose a smaller positive chunk size. Production defaults to
+`BlobChunkBytes`; configured values may not exceed that bound.
+
 Node.js adapter可以另接受 `AsyncIterable<Uint8Array>`，但跨运行时核心接口使用 Web
 Streams。`Uint8Array` 只表示 stream 中的一块数据，不表示完整 blob。
 

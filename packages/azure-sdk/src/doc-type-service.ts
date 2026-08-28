@@ -13,9 +13,13 @@
  */
 import type { DocumentTypeFactory, SBlobReadRange, SBlobSource } from "@unidocs/protocol";
 import {
-  CasClient,
+  createCasBlobClient,
+  createLegacyTenantCasClient,
+  createTenantCasClient,
+  leaseNodeContent,
   type HttpFetcher,
 } from "@unicas/client";
+import type { CasBlobClient, TenantCasClient } from "@unicas/client";
 import type {
   DocCapabilityVerifier,
   DocInternalAuthMode,
@@ -52,7 +56,7 @@ export interface DocTypeServiceConfig {
   casAccessKey?: string; // Make CAS access key optional for CAS-less local services
   /**
    * 过渡形态（阶段 4 删除）：指向 Cloudflare CAS worker 的基地址。
-   * 注意它必须指向 CAS worker 本身，不能指向 gateway —— `CasClient`
+  * 注意它必须指向 CAS worker 本身，不能指向 gateway —— CAS client
    * 的 `updateRootRefs` 打的是 `${origin}/_internal/root-refs`，
   * gateway 不代理 `/_internal/*`。
    * 未给时 CAS 调用一律 501（markdown 的 TDoc/ops 不含 SBlob，
@@ -62,7 +66,7 @@ export interface DocTypeServiceConfig {
   /** 单次上传字节上限;超过返回 413。undefined = 不限。 */
   maxUploadBytes?: number;
   /**
-   * 栈模式：注册的 azure 栈命名空间。设置后 CasClient 的 capability
+  * 栈模式：注册的 azure 栈命名空间。设置后 capability client
    * 模式走规范路由 `/stacks/{stackId}/tenants/{tenantId}/...`，
    * `casBaseUrl` 指向本地/线上中间件端点而非 legacy CAS worker。
    */
@@ -83,10 +87,10 @@ export interface DocTypeServiceHandle {
 }
 
 /**
- * 过渡形态（阶段 4 删除）：把 CasClient 在 fetcher 模式下生成的假源
+ * 过渡形态（阶段 4 删除）：把 CAS fetcher 使用的假源
  * (`https://cas.internal`)重写到真实的 CAS worker 基地址，其余原样转发。
  *
- * 之所以走 fetcher 而不是 CasClient 的 baseUrl 模式：baseUrl 模式发的是
+ * 之所以走 fetcher 而不是 canonical baseUrl 模式：后者发的是
  * `Authorization: Bearer`，而 CAS worker 的内部路由认的是 `X-Internal-Token`
  * 与 `X-Tenant-Id` —— 那两个头只有 fetcher 模式会发。之前这里用的是
  * 旧实现错误地选择了 baseUrl 分支：
@@ -129,25 +133,32 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
     documentType: ReturnType<DocumentTypeFactory<TDoc, TQuery, TOp>>;
     deps: SessionDeps;
   } {
-    const cas = requestContext.authKind === "capability"
+    const nodeCas = requestContext.authKind === "capability"
       ? requestContext.delegatedCasCapability
-        ? new CasClient({
-          fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
-          tenantId: identity.tenantId,
-          sessionId: identity.sessionId,
-          capability: requestContext.delegatedCasCapability,
-          ...(config.casStackId === undefined ? {} : { stackId: config.casStackId }),
-        })
+        ? config.casStackId === undefined
+          ? createLegacyTenantCasClient({
+            fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+            tenantId: identity.tenantId,
+            getToken: async () => requestContext.delegatedCasCapability!,
+          })
+          : createTenantCasClient({
+            baseUrl: "https://cas.internal",
+            fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+            stackId: config.casStackId,
+            tenantId: identity.tenantId,
+            getToken: async () => requestContext.delegatedCasCapability!,
+          })
         : unavailableCasGateway()
-      : new CasClient({
+      : createLegacyTenantCasClient({
         fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
         tenantId: identity.tenantId,
         accessKey: config.casAccessKey ?? "",
       });
+    const cas = Object.freeze({ ...nodeCas, ...createCasBlobClient(nodeCas) });
     const context = createSBlobContext({
-      ensureNode: (hash, content, contentType, refs) =>
-        cas.ensureNode(hash, content, contentType, refs ? [...refs] : undefined),
-      leaseNode: (hash) => cas.leaseExisting(hash),
+      leaseNodeContent: (hash, content, contentType, refs) =>
+        leaseNodeContent(cas, hash, content, contentType, refs),
+      leaseNode: (hash) => cas.leaseNode(hash),
       storeBlob: (source: SBlobSource) => cas.storeBlob(
         readableStreamFromSBlobSource(source),
         {
@@ -173,10 +184,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
         blobs: new BlobCasStore(blobService, `unidocs-${docType}-roots`),
         unitOfWork: new PgUnitOfWork(pool, identity),
         cas: {
-          read: ref => cas.read(ref),
-          metadata: ref => cas.metadata(ref),
-          store: (bytes, contentType) => cas.store(bytes, contentType),
-          leaseNode: hash => cas.leaseExisting(hash),
+          leaseNode: hash => cas.leaseNode(hash),
           updateRootRefs: update => cas.updateRootRefs(update),
         },
         identity,
@@ -217,22 +225,21 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
   };
 }
 
-function unavailableCasGateway(): CasClient {
+function unavailableCasGateway(): TenantCasClient & CasBlobClient {
   const unavailable = async (): Promise<never> => {
     throw new Error("This Doc operation has no delegated CAS authority");
   };
   return {
-    read: unavailable,
-    metadata: unavailable,
-    store: unavailable,
+    node: () => ({ metadata: unavailable, read: unavailable }),
+    leaseNode: unavailable,
+    updateRootRefs: unavailable,
+    usage: unavailable,
+    gc: unavailable,
     storeBlob: unavailable,
     statBlob: unavailable,
     openBlob: unavailable,
     openBlobRange: unavailable,
-    ensureNode: unavailable,
-    leaseExisting: unavailable,
-    updateRootRefs: unavailable,
-  } as unknown as CasClient;
+  };
 }
 
 /**

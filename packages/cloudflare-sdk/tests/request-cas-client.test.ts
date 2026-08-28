@@ -9,6 +9,7 @@ import {
   sessionReadPermission,
 } from "../../service-auth/src/index.js";
 import { createRequestCasClient } from "../src/request-cas-client.js";
+import { storeNodeContent } from "@unicas/client";
 
 describe("createRequestCasClient", () => {
   test("uses only the delegated CAS Bearer on tenant-prefixed routes", async () => {
@@ -48,11 +49,13 @@ describe("createRequestCasClient", () => {
         "X-Forwarded-For": "203.0.113.1",
       }),
     );
-    await client!.read({ kind: "cas", hash: "a".repeat(64) });
+    await new Response(await client!.node("a".repeat(64)).read()).arrayBuffer();
 
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe(`https://cas.internal/tenants/tenant-1/cas/nodes/${"a".repeat(64)}/content`);
-    expect(init?.headers).toEqual({ Authorization: `Bearer ${delegatedToken}` });
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Authorization")).toBe(`Bearer ${delegatedToken}`);
+    expect([...headers]).toHaveLength(1);
     expect(JSON.stringify(init)).not.toContain(primaryDocToken);
     expect(JSON.stringify(init)).not.toContain("hostile-cookie");
     expect(JSON.stringify(init)).not.toContain("hostile-user");
@@ -90,11 +93,30 @@ describe("createRequestCasClient", () => {
       { CAS_SERVICE: { fetch }, CAS_ACCESS_KEY: "legacy-key" },
       privateRequest({ "X-UniDocs-Auth-Context": "legacy" }),
     );
-    await client!.read({ kind: "cas", hash: "b".repeat(64) });
-    expect(fetch.mock.calls[0][1]?.headers).toMatchObject({
-      "X-Internal-Token": "legacy-key",
-      "X-Tenant-Id": "tenant-1",
+    await new Response(await client!.node("b".repeat(64)).read()).arrayBuffer();
+    const headers = new Headers(fetch.mock.calls[0][1]?.headers);
+    expect(headers.get("X-Internal-Token")).toBe("legacy-key");
+    expect(headers.get("X-Tenant-Id")).toBe("tenant-1");
+  });
+
+  test("translates canonical node content to the legacy upload route", async () => {
+    const fetch = vi.fn(async (input: string | Request) => {
+      const hash = new URL(typeof input === "string" ? input : input.url).pathname.split("/").at(-1);
+      return Response.json({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 });
     });
+    const client = createRequestCasClient(
+      { CAS_SERVICE: { fetch }, CAS_ACCESS_KEY: "legacy-key" },
+      privateRequest({ "X-UniDocs-Auth-Context": "legacy" }),
+    )!;
+    const content = new TextEncoder().encode("legacy upload");
+
+    const hash = await storeNodeContent(client, content, "text/plain");
+
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe(`https://cas.internal/tenants/tenant-1/cas/nodes/${hash}`);
+    const headers = new Headers(init?.headers);
+    expect(headers.get("Content-Type")).toBe("text/plain");
+    expect(new Uint8Array(init?.body as ArrayBufferView)).toEqual(content);
   });
 });
 

@@ -703,12 +703,6 @@ importers:
       '@unicas/server-common':
         specifier: workspace:*
         version: link:../server-common
-      '@unidocs/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@unidocs/svalue-codec':
-        specifier: workspace:*
-        version: link:../../packages/svalue-codec
     devDependencies:
       typescript:
         specifier: ^5.9.0

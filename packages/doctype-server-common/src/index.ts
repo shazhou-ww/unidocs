@@ -1,5 +1,6 @@
 export * from "./ports.js";
 export * from "./hash.js";
+export * from "./cas-operations.js";
 export * from "./session.js";
 export * from "./session-handler.js";
 export * from "./doc-type-handler.js";

@@ -330,29 +330,24 @@ domain balances, or silently force the aggregate to match business claims. A
 legacy migration may seed the reserved `_legacy` audit domain, but normal
 capabilities cannot write that domain.
 
-## 10. Service-side TypeScript API
+## 10. Tenant client TypeScript API
 
 ```ts
-export interface TenantCasService {
-  read(hash: CasHash): Promise<Uint8Array>;
-  metadata(hash: CasHash): Promise<CasNodeMetadata>;
-
-  lease(
-    descriptor: CasNodeDescriptor,
-    requestedDurationMs: number,
-    provideContent: () => Promise<Uint8Array>,
-  ): Promise<CasLeaseResult>;
-
-  /** Extend a known node's lease; rejects unless it is ready. */
-  leaseExisting(
+export interface TenantCasClient {
+  node(hash: CasHash): CasNodeReader;
+  leaseNode(
     hash: CasHash,
-    requestedDurationMs: number,
+    source?: CasNodeSource,
+    options?: CasLeaseOptions,
   ): Promise<CasLeaseResult>;
-
-  updateRootRefs(update: CasRootRefUpdate): Promise<void>;
-
+  updateRootRefs(update: CasRootRefUpdate): Promise<CasRootRefsResult>;
   usage(): Promise<CasUsage>;
-  triggerGc(options?: { maxNodes?: number }): Promise<CasGcResult>;
+  gc(options?: CasGcOptions): Promise<CasGcResult>;
+}
+
+export interface CasNodeReader {
+  metadata(): Promise<CasNodeMetadata>;
+  read(range?: { offset: number; length?: number }): Promise<ReadableStream<Uint8Array>>;
 }
 
 export interface CasUsage {
@@ -369,13 +364,13 @@ export interface CasGcResult {
 }
 ```
 
-A `TenantCasService` instance is bound to one verified `(stackId, tenantId)`
-authorization context. Individual methods cannot select another stack or
-tenant.
+A `TenantCasClient` is created with one `(stackId, tenantId)`, an asynchronous
+token provider, and an optional immutable-node cache strategy. Individual
+methods cannot select another stack or tenant.
 
-`lease()` calls `provideContent()` only when the node is not ready. This avoids retransmitting content that already exists.
-
-`leaseExisting()` is used by document apply flows. It has no descriptor or content callback: the node must already have matching D1 metadata and canonical R2 content. A not-ready node is rejected so the client can complete a lease-with-content request first.
+`leaseNode()` is the only lease operation. With a canonical node source it
+ensures the node is ready and leases it; without a source it leases an already
+ready node. The latter rejects missing or not-ready nodes.
 
 ## 11. Authenticated HTTP API
 

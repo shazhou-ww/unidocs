@@ -148,11 +148,11 @@ test("create → apply → query round-trips through the service", async () => {
  *
  * This version reaches the stub for real: `createCasProbeDocumentType()`'s
  * `refsFromOp` returns a non-empty ref, so `apply()`'s `leaseOpRefs` call
- * actually invokes `deps.cas.leaseExisting("deadbeef")`, which goes through
- * `CasClient` to the 501 stub fetcher `doc-type-service.ts` wires up when
+ * actually invokes `deps.cas.leaseNode("deadbeef")`, which goes through
+ * the tenant CAS client to the 501 stub fetcher `doc-type-service.ts` wires up when
  * `casBaseUrl` is absent. The stub's 501 becomes a `CasClientError(501, ...)`
  * that `DocumentSession.apply()` lets propagate unchanged (session.ts step
- * 1's comment: "A CasClientError propagates verbatim"), and
+ * 1's comment: "A CAS client error propagates verbatim"), and
  * `session-handler.ts`'s `errorResponse()` maps any `CasClientError` whose
  * status isn't 409 or 404 to HTTP 502 — so 502 is the status the code under
  * test actually produces, not a guess.

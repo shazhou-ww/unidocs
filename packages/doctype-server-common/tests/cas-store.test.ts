@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { computeNodeDigest, encodeHeader, hashToHex } from "@unicas/server-common";
-import { CasClient } from "@unicas/client";
+import { computeNodeDigest, encodeHeader, hashToHex, parseNodeBytes } from "@unicas/server-common";
+import { createTenantCasClient, storeNodeContent } from "@unicas/client";
 import { MemoryCas } from "../src/memory-ports";
 
 /** The CAS service's canonical leaf-node digest (no children). */
@@ -13,14 +13,16 @@ async function casHash(bytes: Uint8Array, contentType: string): Promise<string> 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-describe("CasClient.store", () => {
-  let client: CasClient;
+describe("storeNodeContent", () => {
+  let client: ReturnType<typeof createTenantCasClient>;
 
   beforeEach(() => {
     mockFetch.mockReset();
-    client = new CasClient({
+    client = createTenantCasClient({
       baseUrl: "http://localhost:8787",
+      stackId: "stack1",
       tenantId: "tenant1",
+      getToken: async () => "token",
     });
   });
 
@@ -38,19 +40,14 @@ describe("CasClient.store", () => {
       }),
     });
 
-    const hash = await client.store(bytes, "image/png");
+    const hash = await storeNodeContent(client, bytes, "image/png");
 
     expect(hash).toBe(expected);
-    // store() = canonical CAS node digest + ensureNode (POST /nodes/{hash}).
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch).toHaveBeenCalledWith(
-      `http://localhost:8787/tenants/tenant1/cas/nodes/${expected}`,
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ "Content-Type": "image/png" }),
-        body: bytes,
-      }),
-    );
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`http://localhost:8787/stacks/stack1/tenants/tenant1/cas/nodes/${expected}/lease`);
+    const canonical = new Uint8Array(await new Response(init.body).arrayBuffer());
+    expect(parseNodeBytes(canonical)).toMatchObject({ contentType: "image/png", content: bytes });
   });
 
   it("is content-addressed: identical bytes → identical hash", async () => {
@@ -58,8 +55,8 @@ describe("CasClient.store", () => {
     const b = new Uint8Array([1, 2, 3]);
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ready: true }) });
 
-    const h1 = await client.store(a, "application/octet-stream");
-    const h2 = await client.store(b, "application/octet-stream");
+    const h1 = await storeNodeContent(client, a, "application/octet-stream");
+    const h2 = await storeNodeContent(client, b, "application/octet-stream");
 
     expect(h1).toBe(h2);
   });

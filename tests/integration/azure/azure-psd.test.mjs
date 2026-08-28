@@ -1,7 +1,7 @@
 /**
  * psd 在本地 Azure 栈上的端到端 —— 本轮的验收之一。
  *
- * Stack 模式:psd 的像素路径重度依赖 SBlob,经 azure doc 服务的 CasClient
+ * Stack 模式：PSD 的像素路径重度依赖 SBlob，经 Azure Doc 服务的 tenant CAS client
  * (capability + stackId) 打到本地嵌入的中间件(unidocs-azure 栈)。
  *
  * 这条测试的重心是 `getPreview`:它走的正是 makeSBlob/openSBlob → CAS 的
@@ -18,7 +18,7 @@ const TENANT = "psd-e2e-tenant";
 let azure;
 
 beforeAll(async () => {
-  // Stack 模式：psd 的像素路径（SBlob）经 azure doc 服务的 CasClient
+  // Stack 模式：psd 的像素路径（SBlob）经 azure doc 服务的 tenant CAS client
   // (capability + stackId) 打到本地嵌入的中间件（unidocs-azure 栈），
   // 不再依赖 cf legacy CAS worker。
   azure = await startAzureRuntime({

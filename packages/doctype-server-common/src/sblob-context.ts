@@ -21,7 +21,7 @@ import { isSBlob } from "@unidocs/svalue-codec";
 import { createSBlob, decodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 
 export interface SBlobCasAdapter {
-  ensureNode(
+  leaseNodeContent(
     hash: string,
     content: Uint8Array,
     contentType: string,
@@ -179,7 +179,7 @@ class SBlobRuntime {
       const refs = decodeSValueWithRefs(data).refs;
       const hash = await computeHash(data, source.contentType, refs);
       await Promise.all([...new Set(refs)].map(ref => this.#cas.leaseNode(ref)));
-      await this.#cas.ensureNode(hash, data, source.contentType, refs);
+      await this.#cas.leaseNodeContent(hash, data, source.contentType, refs);
       return hash;
     }
     return (await this.#cas.storeBlob(source)).hash;

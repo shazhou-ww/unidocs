@@ -69,7 +69,7 @@ const SERVICE_STACK_ENV = [
   "CAPABILITY_TRUSTED_JWKS",
   "DOC_CAPABILITY_AUDIENCE",
   "CAS_CAPABILITY_AUDIENCE",
-  // CAS_STACK_ID 不是 requireEnv，但缺了 CasClient 会拼 legacy 路由，
+  // CAS_STACK_ID 不是 requireEnv，但缺了 client 会拼 legacy 路由，
   // 打到规范中间件上一律 404 —— 功能上同样是必需的。
   "CAS_STACK_ID",
   "CAS_STACK_ISSUER",

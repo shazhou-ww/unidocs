@@ -4,7 +4,7 @@
  * The editor retains the current delta plus, when a snapshot exists, the
  * current snapshot. Given the previously retained roots and the roots being
  * settled, this computes a `changes` map of +1/−1 refcount adjustments
- * suitable for `CasClient.updateRootRefs`.
+ * suitable for `TenantCasClient.updateRootRefs`.
  *
  * Zero-sum entries are dropped: re-settling a hash that is already retained
  * (response-loss retry, byte-identical re-commit) cancels out to nothing, and

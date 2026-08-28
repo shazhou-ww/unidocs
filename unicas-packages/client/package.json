@@ -22,10 +22,8 @@
   },
   "dependencies": {
     "@unicas/server-common": "workspace:*",
-    "@unidocs/protocol": "workspace:*",
     "@unicas/protocol": "workspace:*",
-    "@unicas/protocol-legacy": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*"
+    "@unicas/protocol-legacy": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

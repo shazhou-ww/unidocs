@@ -17,7 +17,7 @@ interface Node {
 
 class FakeCas {
   readonly nodes = new Map<string, Node>();
-  readonly ensureNode = vi.fn(async (
+  readonly leaseNodeContent = vi.fn(async (
     hash: string,
     data: Uint8Array,
     contentType: string,

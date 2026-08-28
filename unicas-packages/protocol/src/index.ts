@@ -10,7 +10,6 @@ export type {
   CasReferences,
   CasRootRefUpdate,
   CasUsage,
-  TenantCasService,
 } from "./types.js";
 
 export {

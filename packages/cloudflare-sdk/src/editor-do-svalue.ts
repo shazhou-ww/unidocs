@@ -2,7 +2,7 @@ import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { CasClient, CasClientError } from "@unicas/client";
+import { CasClientError, leaseNodeContent } from "@unicas/client";
 import {
   byteStreamFromReadableStream,
   DELTA_THRESHOLD,
@@ -12,6 +12,7 @@ import {
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
 import { createRequestCasClient } from "./request-cas-client.js";
+import type { RequestCasClient } from "./request-cas-client.js";
 import { rootTransitionChanges } from "./root-transition.js";
 
 const KEY_DOC_TYPE = "docType";
@@ -87,7 +88,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     #doc: SValueType<TDoc> | null = null;
     #config: DocumentType<TDoc, TQuery, TOp> | null = null;
     #context: DocumentTypeContext | null = null;
-    #requestCas: CasClient | null = null;
+    #requestCas: RequestCasClient | null = null;
     #requestOperation: string | null = null;
     #tenantId: string | null = null;
     #sessionId: string | null = null;
@@ -160,11 +161,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     #initializeRuntime(): void {
       if (this.#context) return;
       const casAdapter = {
-        ensureNode: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
-          this.#requireCas().ensureNode(hash, content, contentType, refs as string[] | undefined),
+        leaseNodeContent: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
+          leaseNodeContent(this.#requireCas(), hash, content, contentType, refs),
         leaseNode: (hash: string) => this.#isReadOnlyOperation()
-          ? this.#requireCas().metadata({ kind: "cas", hash })
-          : this.#requireCas().leaseExisting(hash),
+          ? this.#requireCas().node(hash).metadata()
+          : this.#requireCas().leaseNode(hash),
         storeBlob: (source: import("@unidocs/protocol").SBlobSource) => this.#requireCas().storeBlob(
           readableStreamFromSBlobSource(source),
           {
@@ -851,7 +852,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       return this.#context;
     }
 
-    #requireCas(): CasClient {
+    #requireCas(): RequestCasClient {
       if (!this.#requestCas) {
         throw new Error("This Doc operation has no delegated CAS authority");
       }
@@ -866,8 +867,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
     #checkExistingRef(hash: string): Promise<unknown> {
       return this.#isReadOnlyOperation()
-        ? this.#requireCas().metadata({ kind: "cas", hash })
-        : this.#requireCas().leaseExisting(hash);
+        ? this.#requireCas().node(hash).metadata()
+        : this.#requireCas().leaseNode(hash);
     }
 
     #requireDoc(): SValueType<TDoc> {

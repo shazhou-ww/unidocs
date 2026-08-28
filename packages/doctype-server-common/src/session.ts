@@ -61,7 +61,7 @@
 
 import type { DocumentType, CasReferences, SValueType, SValue } from "@unidocs/protocol";
 import { decodeSValue, encodeSValue, refsFromSValue } from "@unidocs/svalue-codec";
-import { CasClientError, commitRootRefsOrRollback, leaseOpRefs } from "@unicas/client";
+import { CasClientError } from "@unicas/client";
 import {
   DeltaRejectedError,
   DocExistsError,
@@ -72,6 +72,7 @@ import {
   type HistoryEntry,
 } from "@unidocs/protocol-doc";
 import { computeHash } from "./hash.js";
+import { commitRootRefsOrRollback, leaseOpRefs } from "./cas-operations.js";
 import type {
   BlobCas,
   DeltaLog,
@@ -82,9 +83,6 @@ import type {
 
 /** Everything the session needs from the CAS service. */
 export interface CasGateway {
-  read(ref: { kind: "cas"; hash: string }): Promise<Uint8Array>;
-  metadata(ref: { kind: "cas"; hash: string }): Promise<{ hash: string; size: number; contentType: string; refs: readonly string[] }>;
-  store?(bytes: Uint8Array, contentType: string): Promise<string>;
   leaseNode(hash: string): Promise<unknown>;
   updateRootRefs(update: { requestId: string; changes: CasReferences }): Promise<{
     success: boolean;

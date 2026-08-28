@@ -128,8 +128,8 @@ class MemoryBlobCas implements BlobCas {
 
 /**
  * In-memory CAS gateway for tests. Content-addressed: `store` computes the
- * same canonical CAS node digest as `CasClient` and keeps the bytes so `read`
- * returns them verbatim. Faithful to `CasClient`'s editor-mode surface.
+ * canonical CAS node digest and keeps the bytes so `read` returns them
+ * verbatim.
  */
 export class MemoryCas implements CasGateway {
   #nodes = new Map<string, { bytes: Uint8Array; contentType: string; refs: string[] }>();

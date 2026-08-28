@@ -1,8 +1,3 @@
-import type {
-  CasUpdateRootRefsRequest,
-  CasUpdateRootRefsResponse,
-} from "./http.js";
-
 /** 64 lowercase hexadecimal SHA-256 characters. */
 export type CasHash = string;
 
@@ -61,23 +56,4 @@ export interface CasGcResult {
 export interface CasNode {
   readonly metadata: CasNodeMetadata;
   readonly content: ReadableStream<Uint8Array>;
-}
-
-export interface TenantCasService {
-  read(
-    hash: CasHash,
-    range?: { readonly offset: number; readonly length: number },
-  ): Promise<ReadableStream<Uint8Array>>;
-  metadata(hash: CasHash): Promise<CasNodeMetadata>;
-  lease(
-    hash: CasHash,
-    requestedDurationMs: number,
-    canonicalNode?: {
-      readonly contentLength: number;
-      readonly body: ReadableStream<Uint8Array>;
-    },
-  ): Promise<CasLeaseResult>;
-  updateRootRefs(request: CasUpdateRootRefsRequest): Promise<CasUpdateRootRefsResponse>;
-  usage(): Promise<CasUsage>;
-  triggerGc(options?: { maxNodes?: number }): Promise<CasGcResult>;
 }

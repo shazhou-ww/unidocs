@@ -6,13 +6,15 @@ import {
   hashToHex,
 } from "../../../unicas-packages/server-common/src/index.ts";
 import {
-  CasClient,
   createSBlobContext,
   decodeSValue,
   encodeSValue,
   isSBlob,
   SValueContentType,
 } from "../../../packages/cloudflare-sdk/src/index.ts";
+import {
+  createLegacyTenantCasClient,
+} from "../../../unicas-packages/client/src/index.ts";
 
 const PNG_1x1 = Uint8Array.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
@@ -92,10 +94,13 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
   });
   expect(lease.ok).toBe(true);
 
-  const context = createSBlobContext(new CasClient({
+  const cas = createLegacyTenantCasClient({
     baseUrl: GW(),
     tenantId: "alice",
-  }));
+  });
+  const context = createSBlobContext({
+    leaseNode: hash => cas.leaseNode(hash),
+  });
   const blob = await context.makeSBlob(hash, async () => {
     throw new Error("existing image should not invoke the lazy loader");
   });

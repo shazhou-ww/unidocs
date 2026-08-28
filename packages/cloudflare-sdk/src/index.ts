@@ -53,9 +53,7 @@ export {
 	DirectUnitOfWork,
 } from "./ports-cf.js";
 export {
-	CasClient,
 	CasClientError,
-	type CasClientConfig,
 } from "@unicas/client";
 export {
 	createSBlobContext,

@@ -12,7 +12,7 @@ import type { BlobStore } from "../render/pixel-source.js";
  * `ctx.makeSBlob` to be functional.
  *
  * `get` reads and only reads. It used to go through `ctx.makeSBlob(hash, …)`
- * first, whose `#ensure` path calls `leaseExisting()` — and a lease is a
+ * first, whose `#ensure` path calls `leaseNode()` without content — and a lease is a
  * **write**-class CAS operation (it moves the node's expiry forward). Under
  * Gateway-issued capabilities a `query`/`export` operation is delegated
  * `cas:read` only, so that lease was rejected on every preview render. The

@@ -3,8 +3,8 @@
  * CAS 走本地嵌入的中间件（注册 unidocs-azure 栈）：
  *  - 图片上传经 azure gateway 的公开 CAS 路由，stack 模式下转发到规范
  *    /stacks/unidocs-azure/tenants/{tenant}/cas/nodes/{hash} 打到中间件；
- *  - apply 的 leaseOpRefs/commitRootRefsOrRollback 经 azure doc 服务的
- *    CasClient（capability + stackId）打到中间件；
+ *  - apply 的 lease/root-ref helpers 经 azure doc 服务的
+ *    tenant CAS client（capability + stackId）打到中间件；
  *  - 中间件的 tenant 存储里留下该图片节点的 root 引用。
  * 过渡形态（cf legacy CAS worker + 共享密钥）在此不再参与。
  */
