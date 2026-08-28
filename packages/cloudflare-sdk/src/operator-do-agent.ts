@@ -1,6 +1,6 @@
 import { decodeSValue, encodeSValue, isSBlob, toJsonValue } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
-import type { AgentToolResult, DocumentAgent, DocumentAgentContext, DocumentAgentFactory, SBlob, SBlobData, SValue, SValueType } from "@unidocs/protocol";
+import type { AgentToolResult, LegacyDocumentAgent, LegacyDocumentAgentContext, LegacyDocumentAgentFactory, SBlob, SBlobData, SValue, SValueType } from "@unidocs/protocol";
 import { docSessionObjectName } from "@unidocs/doctype-server-common";
 
 export interface AgentToolResultRendererContext {
@@ -13,7 +13,7 @@ export type AgentToolResultRenderer = (
 ) => Promise<unknown> | unknown;
 
 export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
-  readonly agentFactory: DocumentAgentFactory<TQuery, TOp>;
+  readonly agentFactory: LegacyDocumentAgentFactory<TQuery, TOp>;
   readonly llmProvider: (
     messages: unknown[],
     tools: unknown[],
@@ -51,8 +51,8 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
   return class OperatorDO implements OperatorDOInstance {
     readonly #ctx: DurableObjectState;
     readonly #env: TEnv;
-    readonly #agent: DocumentAgent;
-    readonly #agentContext: DocumentAgentContext<TQuery, TOp>;
+    readonly #agent: LegacyDocumentAgent;
+    readonly #agentContext: LegacyDocumentAgentContext<TQuery, TOp>;
     #requestTail: Promise<void> = Promise.resolve();
     #session: unknown[];
     #lastKnownVersion: number | null = null;

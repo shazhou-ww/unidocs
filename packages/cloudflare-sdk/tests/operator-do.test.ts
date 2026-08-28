@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
-import type { DocumentAgentFactory, JsonValue, SBlob, SValue } from "@unidocs/protocol";
+import type { LegacyDocumentAgentFactory, JsonValue, SBlob, SValue } from "@unidocs/protocol";
 import { createSBlob } from "@unidocs/svalue-codec/internal";
 import {
   createOperatorDO,
@@ -50,7 +50,7 @@ describe("agent Operator DO", () => {
       }
       throw new Error(`Unexpected Editor path ${path}`);
     });
-    const agentFactory: DocumentAgentFactory<TestQuery, TestOperation> = context => ({
+    const agentFactory: LegacyDocumentAgentFactory<TestQuery, TestOperation> = context => ({
       tools: {
         read: { name: "read", description: "read", inputSchema: {} },
         insert: { name: "insert", description: "insert", inputSchema: {} },
@@ -145,7 +145,7 @@ describe("agent Operator DO", () => {
       }
       throw new Error(`Unexpected Editor path ${path}`);
     });
-    const agentFactory: DocumentAgentFactory<TestQuery, TestOperation> = () => ({
+    const agentFactory: LegacyDocumentAgentFactory<TestQuery, TestOperation> = () => ({
       tools: { image: { name: "image", description: "image", inputSchema: {} } },
       instructions: "multimodal agent",
       async toolCall() {

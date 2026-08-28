@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DocumentAgentContext } from "@unidocs/protocol";
+import type { LegacyDocumentAgentContext } from "@unidocs/protocol";
 import { createSBlob } from "@unidocs/svalue-codec/internal";
 import { createDocxDocumentAgent } from "../src/index.js";
 import type { DocxOperation, DocxQuery } from "../src/types.js";
 
-function agentContext(overrides: Partial<DocumentAgentContext<DocxQuery, DocxOperation>> = {}) {
+function agentContext(overrides: Partial<LegacyDocumentAgentContext<DocxQuery, DocxOperation>> = {}) {
   return {
     query: vi.fn(async () => ({ data: "text", version: 4 })),
     apply: vi.fn(async () => ({ version: 5 })),
@@ -14,7 +14,7 @@ function agentContext(overrides: Partial<DocumentAgentContext<DocxQuery, DocxOpe
       contentType: "application/octet-stream",
     })),
     ...overrides,
-  } satisfies DocumentAgentContext<DocxQuery, DocxOperation>;
+  } satisfies LegacyDocumentAgentContext<DocxQuery, DocxOperation>;
 }
 
 describe("DOCX document agent", () => {

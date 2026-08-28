@@ -1,9 +1,9 @@
 import { isSBlob, toJsonValue } from "@unidocs/svalue-codec";
-import type { DocumentAgentFactory, JsonValue, SValue } from "@unidocs/protocol";
+import type { LegacyDocumentAgentFactory, JsonValue, SValue } from "@unidocs/protocol";
 import { instructions, tools } from "./tools.js";
 import type { DocxOperation, DocxQuery } from "./types.js";
 
-export type DocxDocumentAgentFactory = DocumentAgentFactory<DocxQuery, DocxOperation>;
+export type DocxDocumentAgentFactory = LegacyDocumentAgentFactory<DocxQuery, DocxOperation>;
 
 const toolsByName = new Map(Object.values(tools).map(tool => [tool.name, tool]));
 

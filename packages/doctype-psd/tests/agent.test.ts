@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DocumentAgentContext } from "@unidocs/protocol";
+import type { LegacyDocumentAgentContext } from "@unidocs/protocol";
 import { createSBlob } from "@unidocs/svalue-codec/internal";
 import { createPsdDocumentAgent } from "../src/index.js";
 import type { PsdOp, PsdQuery } from "../src/index.js";
@@ -13,7 +13,7 @@ const PREVIEW = {
 
 function agentContext(
   data: unknown = [{ id: "L1", type: "raster" }],
-): DocumentAgentContext<PsdQuery, PsdOp> {
+): LegacyDocumentAgentContext<PsdQuery, PsdOp> {
   return {
     query: vi.fn(async () => ({ data: data as never, version: 7 })),
     apply: vi.fn(async () => ({ version: 8 })),

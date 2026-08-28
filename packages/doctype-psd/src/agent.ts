@@ -15,12 +15,12 @@
  */
 
 import { toJsonValue } from "@unidocs/svalue-codec";
-import type { DocumentAgentFactory, JsonValue, SValueType } from "@unidocs/protocol";
+import type { LegacyDocumentAgentFactory, JsonValue, SValueType } from "@unidocs/protocol";
 import { instructions, tools } from "./tools.js";
 import type { PsdOp } from "./ops/index.js";
 import type { PsdQuery } from "./queries.js";
 
-export type PsdDocumentAgentFactory = DocumentAgentFactory<PsdQuery, PsdOp>;
+export type PsdDocumentAgentFactory = LegacyDocumentAgentFactory<PsdQuery, PsdOp>;
 
 const toolsByName = new Set(Object.values(tools).map(tool => tool.name));
 

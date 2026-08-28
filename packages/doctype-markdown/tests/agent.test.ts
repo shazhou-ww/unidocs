@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DocumentAgentContext } from "@unidocs/protocol";
+import type { LegacyDocumentAgentContext } from "@unidocs/protocol";
 import { createSBlob } from "@unidocs/svalue-codec/internal";
 import { createMarkdownDocumentAgent } from "../src/index.js";
 import type { MOp, MQuery } from "../src/types.js";
 
-function agentContext(): DocumentAgentContext<MQuery, MOp> {
+function agentContext(): LegacyDocumentAgentContext<MQuery, MOp> {
   return {
     query: vi.fn(async () => ({ data: ["One", "Two"], version: 3 })),
     apply: vi.fn(async () => ({ version: 4 })),
