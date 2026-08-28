@@ -33,10 +33,9 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unicas/client": "workspace:*",
+    "@unicas/tenant-client": "workspace:*",
     "@unicas/server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*",
-    "@unicas/protocol": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
     "@unidocs/svalue-codec": "workspace:*"

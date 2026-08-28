@@ -1,6 +1,6 @@
 # Unicas Control-Plane CLI
 
-`@unicas/cli` (bin `unicas`) is the operator-facing command line for the Unicas
+`@unicas/admin-cli` (bin `unicas`) is the operator-facing command line for UniCAS
 control plane. It exists because DeepSeek Harness's MCP client only supports
 static headers and therefore cannot complete the OAuth authorization-code flow
 that protects `https://unicas.shazhou.work/mcp`. The CLI performs that flow
@@ -10,17 +10,17 @@ session in `~/.unicas/token.json` (0600). Every other command then talks to the
 remote MCP endpoint with the stored bearer token, refreshing automatically on
 `401`.
 
-See `unicas-packages/cli/README.md` for the full command reference.
+See `unicas-packages/admin-cli/README.md` for the full command reference.
 
 ## Quick start
 
 ```powershell
-pnpm --filter @unicas/cli build
-pnpm --filter @unicas/cli unicas login        # browser: Google sign-in + consent
-pnpm --filter @unicas/cli unicas whoami
-pnpm --filter @unicas/cli unicas stacks list
-pnpm --filter @unicas/cli unicas stacks create "Operations" --idempotency-key create-ops-1
-pnpm --filter @unicas/cli unicas logout       # RFC 7009 revoke + clear session
+pnpm --filter @unicas/admin-cli build
+pnpm --filter @unicas/admin-cli unicas login        # browser: Google sign-in + consent
+pnpm --filter @unicas/admin-cli unicas whoami
+pnpm --filter @unicas/admin-cli unicas stacks list
+pnpm --filter @unicas/admin-cli unicas stacks create "Operations" --idempotency-key create-ops-1
+pnpm --filter @unicas/admin-cli unicas logout       # RFC 7009 revoke + clear session
 ```
 
 ## DSH integration (stdio MCP)
@@ -39,10 +39,10 @@ Configure DeepSeek Harness's mcp-client with a stdio server:
 `unicas mcp` advertises the identical 18-tool contract as the remote control
 plane and forwards calls over the authenticated connection, so DSH can read and
 operate the control plane without any OAuth implementation of its own. To put
-`unicas` on PATH from the checkout, run `pnpm --filter @unicas/cli build` and
-then `pnpm install --global ./unicas-packages/cli` (pnpm 10+ removed
+`unicas` on PATH from the checkout, run `pnpm --filter @unicas/admin-cli build` and
+then `pnpm install --global ./unicas-packages/admin-cli` (pnpm 10+ removed
 `pnpm link --global`), or configure the client with `command: "node"` and
-`args: ["<checkout>/unicas-packages/cli/dist/cli.js", "mcp"]`.
+`args: ["<checkout>/unicas-packages/admin-cli/dist/cli.js", "mcp"]`.
 
 On Windows the global bin is a `.CMD` shim; a Node-based MCP client must spawn
 it with `shell: true`, reference the shim path directly, or use the `node` +
@@ -68,8 +68,8 @@ private key material is never a valid input.
 ## Testing
 
 ```powershell
-pnpm --filter @unicas/cli test
-pnpm --filter @unicas/cli typecheck
+pnpm --filter @unicas/admin-cli test
+pnpm --filter @unicas/admin-cli typecheck
 pnpm exec vitest run tests/unit/workspace/package-deps.test.mjs
 ```
 

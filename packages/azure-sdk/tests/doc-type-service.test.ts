@@ -8,13 +8,21 @@ import { afterEach, expect, test } from "vitest";
 import { createSBlob } from "@unidocs/svalue-codec";
 import type { DocumentType, SBlob } from "@unidocs/protocol";
 import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
+import {
+  CapabilityAlgorithm,
+  CapabilityTokenType,
+  casReadPermission,
+  casWritePermission,
+  sessionCreatePermission,
+  sessionReadPermission,
+  sessionWritePermission,
+} from "../../service-auth/src/index.js";
+import type { CapabilityPermission, VerifiedCapability } from "../../service-auth/src/index.js";
 import { startDocTypeService } from "../src/doc-type-service.js";
 import { runMigrations } from "../src/migrate.js";
 import { createPool } from "../src/pool.js";
 import { BLOB_CONNECTION_STRING, DATABASE_URL } from "./containers.js";
 
-const SERVICE_ACCESS_KEY = "doc-key";
-const CAS_ACCESS_KEY = "cas-key";
 let handle: { url: string; close(): Promise<void> } | undefined;
 
 afterEach(async () => {
@@ -62,51 +70,89 @@ async function start(
   port: number,
   overrides: { docType?: string; documentType?: DocumentType<any, any, any> } = {},
 ) {
+  const docType = overrides.docType ?? "markdown";
   const pool = createPool({ databaseUrl: DATABASE_URL, blobConnectionString: "" });
   await runMigrations(pool);
   await pool.end();
   return startDocTypeService({
-    docType: overrides.docType ?? "markdown",
+    docType,
     documentTypeFactory: overrides.documentType
       ? () => overrides.documentType!
       : createMarkdownDocumentType,
     port,
     host: "127.0.0.1",
     config: {
-      internalAuthMode: "legacy",
       databaseUrl: DATABASE_URL,
       blobConnectionString: BLOB_CONNECTION_STRING,
-      serviceAccessKey: SERVICE_ACCESS_KEY,
-      casAccessKey: CAS_ACCESS_KEY,
+      casStackId: "test-stack",
+      docCapabilityVerifier: { verify: async token => verifyTestToken(token, "doc", docType) },
+      casCapabilityVerifier: { verify: async token => verifyTestToken(token, "cas", docType) },
     },
   });
 }
 
-function internal(url: string, path: string, init: RequestInit = {}) {
-  return fetch(`${url}${path}`, {
+function internal(
+  url: string,
+  tenantId: string,
+  sessionId: string,
+  operation: "create" | "apply" | "query",
+  init: RequestInit = {},
+) {
+  const suffix = operation === "create" ? "" : `/${operation}`;
+  return fetch(`${url}/tenants/${tenantId}/sessions/${sessionId}${suffix}`, {
     ...init,
     headers: {
       Connection: "close",
-      "X-Internal-Token": SERVICE_ACCESS_KEY,
-      "X-Tenant-Id": "tenant-1",
-      "X-Session-Id": "session-1",
-      "X-Doc-Type": "markdown",
+      Authorization: `Bearer doc|${tenantId}|${sessionId}|${operation}`,
+      "X-UniDocs-CAS-Capability": `cas|${tenantId}|${sessionId}|${operation}`,
       ...(init.headers ?? {}),
     },
   });
+}
+
+function verifyTestToken(token: string, expectedKind: "doc" | "cas", docType: string): VerifiedCapability {
+  const [kind, tenantId, sessionId, operation] = token.split("|");
+  if (kind !== expectedKind || !tenantId || !sessionId || !operation) throw new Error("invalid test token");
+  const permissions: readonly CapabilityPermission[] = kind === "doc"
+    ? operation === "create"
+      ? [sessionCreatePermission(tenantId)]
+      : operation === "query"
+        ? [sessionReadPermission(tenantId, sessionId)]
+        : [sessionWritePermission(tenantId, sessionId)]
+    : operation === "create"
+      ? [casWritePermission(tenantId)]
+      : operation === "query"
+        ? [casReadPermission(tenantId)]
+        : [casReadPermission(tenantId), casWritePermission(tenantId)];
+  return {
+    protectedHeader: { alg: CapabilityAlgorithm, kid: "test-key", typ: CapabilityTokenType },
+    claims: {
+      ver: 1,
+      iss: kind === "doc" ? "gateway" : "stack",
+      sub: kind === "doc" ? "gateway" : `doc:${docType}`,
+      aud: kind === "doc" ? `unidocs-doc:${docType}` : "unidocs-cas",
+      iat: 1000,
+      nbf: 995,
+      exp: 1120,
+      jti: `${kind}-jti`,
+      tenantId,
+      sessionId,
+      permissions,
+    },
+  };
 }
 
 test("create → apply → query round-trips through the service", async () => {
   handle = await start(41999);
   const sessionId = `svc-${Date.now()}`;
 
-  const created = await internal(handle.url, `/sessions/${sessionId}`, {
+  const created = await internal(handle.url, "tenant-1", sessionId, "create", {
     method: "PUT",
-    headers: { "X-Session-Id": sessionId },
   });
-  expect((await created.json()).success).toBe(true);
+  const createdBody = await created.json();
+  expect(createdBody, JSON.stringify(createdBody)).toMatchObject({ success: true });
 
-  const applied = await internal(handle.url, `/sessions/${sessionId}/apply`, {
+  const applied = await internal(handle.url, "tenant-1", sessionId, "apply", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -117,19 +163,17 @@ test("create → apply → query round-trips through the service", async () => {
   });
   expect(await applied.json()).toMatchObject({ success: true, version: 2 });
 
-  const queried = await internal(handle.url, `/sessions/${sessionId}/query`, {
+  const queried = await internal(handle.url, "tenant-1", sessionId, "query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind: "getContent" }),
   });
   expect(await queried.json()).toMatchObject({ success: true, version: 2, data: "# hi" });
 
-  const wrongTenant = await internal(handle.url, `/sessions/${sessionId}/query`, {
+  const wrongTenant = await internal(handle.url, "another-tenant", sessionId, "query", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Session-Id": sessionId,
-      "X-Tenant-Id": "another-tenant",
     },
     body: JSON.stringify({ kind: "getContent" }),
   });
@@ -157,20 +201,19 @@ test("create → apply → query round-trips through the service", async () => {
  * status isn't 409 or 404 to HTTP 502 — so 502 is the status the code under
  * test actually produces, not a guess.
  */
-test("without casBaseUrl, create() pinning TDoc SBlobs hits the 501 stub and surfaces as 502", async () => {
+test("without a CAS base URL, create() pinning TDoc SBlobs surfaces the 501 stub as 502", async () => {
   handle = await start(41998, {
     docType: "cas-probe",
     documentType: createCasProbeDocumentType(),
   });
   const sessionId = `cas-probe-${Date.now()}`;
 
-  const created = await internal(handle.url, `/sessions/${sessionId}`, {
+  const created = await internal(handle.url, "tenant-1", sessionId, "create", {
     method: "PUT",
-    headers: { "X-Session-Id": sessionId },
   });
 
-  expect(created.status).toBe(502);
   const body = await created.json();
+  expect(created.status, JSON.stringify(body)).toBe(502);
   expect(body.success).toBe(false);
   expect(body.error).toMatch(/updateRootRefs/);
   expect(body.error).toMatch(/501/);

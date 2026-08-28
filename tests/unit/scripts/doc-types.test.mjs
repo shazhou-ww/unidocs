@@ -6,13 +6,11 @@ import {
   buildWorkers,
   bundleTargets,
   CAS_FAULT_WORKER,
-  CAS_ACCESS_KEY,
   CAS_AUDIT_READER_KEY,
   CAS_MIDDLEWARE_BUCKET,
   CAS_MIDDLEWARE_DB,
   CONTROL_DB,
   DOC_TYPES,
-  docServiceAccessKey,
   docServicesJson,
   EDGE_WORKER,
   GATEWAY_WORKER,
@@ -193,7 +191,7 @@ test("gateway proxies CAS to the middleware and the middleware owns the stores",
   expect(middleware.r2Buckets).toEqual({ CAS_R2: CAS_MIDDLEWARE_BUCKET });
 });
 
-test("docServicesJson contains only selected types with their own keys", () => {
+test("docServicesJson contains only selected types with capability audiences", () => {
   expect(JSON.parse(docServicesJson(["docx"], "h", {
     gateway: 8787,
     docx: 8789,
@@ -201,18 +199,15 @@ test("docServicesJson contains only selected types with their own keys", () => {
     docx: {
       serviceId: "docx",
       url: "http://h:8789",
-      accessKey: docServiceAccessKey("docx"),
       audience: "unidocs-doc:docx",
     },
   });
 });
 
-test("buildWorkers separates Gateway, Doc, and CAS credentials (stack mode)", () => {
+test("buildWorkers separates Gateway, Doc, and CAS capabilities", () => {
   const workers = buildWorkers(stackArgs({ docTypes: ["docx"], ports: { docx: 8789 } }));
   const gateway = workers.find((w) => w.name === GATEWAY_WORKER);
   const docx = workers.find((w) => w.name === "unidocs-docx");
-  expect(gateway.bindings.CAS_ACCESS_KEY).toBe(CAS_ACCESS_KEY);
-  expect(gateway.bindings.INTERNAL_AUTH_MODE).toBe("stack");
   expect(gateway.bindings.CAS_STACK_ID).toBe(STACK_FIXTURE.stackId);
   expect(gateway.bindings.CAS_STACK_ISSUER).toBe(STACK_FIXTURE.issuer);
   expect(gateway.bindings.CAS_STACK_KEY_ID).toBe(STACK_FIXTURE.kid);
@@ -220,8 +215,6 @@ test("buildWorkers separates Gateway, Doc, and CAS credentials (stack mode)", ()
   expect(gateway.bindings.CAS_CAPABILITY_AUDIENCE).toBe(STACK_FIXTURE.audience);
   expect(gateway.bindings.CAPABILITY_ISSUER).toBe(CAPABILITY_FIXTURE.issuer);
   expect(docx.bindings).toEqual({
-    CAS_ACCESS_KEY,
-    INTERNAL_AUTH_MODE: "stack",
     DOC_CAPABILITY_AUDIENCE: "unidocs-doc:docx",
     CAS_CAPABILITY_AUDIENCE: STACK_FIXTURE.audience,
     CAPABILITY_ALGORITHM: "ES256",
@@ -233,9 +226,7 @@ test("buildWorkers separates Gateway, Doc, and CAS credentials (stack mode)", ()
     CAS_STACK_ID: STACK_FIXTURE.stackId,
     CAS_STACK_ISSUER: STACK_FIXTURE.issuer,
     CAS_STACK_TRUSTED_JWKS: JSON.stringify(STACK_FIXTURE.jwks),
-    SERVICE_ACCESS_KEY: docServiceAccessKey("docx"),
   });
-  expect(docx.bindings.SERVICE_ACCESS_KEY).not.toBe(CAS_ACCESS_KEY);
 });
 
 test("stack buildWorkers requires both the stack and capability fixtures", () => {
@@ -243,13 +234,6 @@ test("stack buildWorkers requires both the stack and capability fixtures", () =>
     .toThrow(/stackFixture/);
   expect(() => buildWorkers({ ...stackArgs(), capabilityFixture: undefined }))
     .toThrow(/capabilityFixture/);
-});
-
-test("buildWorkers rejects non-stack internal auth modes (legacy runtime retired)", () => {
-  for (const mode of ["legacy", "dual", "capability"]) {
-    expect(() => buildWorkers({ ...stackArgs(), internalAuthMode: mode }))
-      .toThrow(/stack/);
-  }
 });
 
 test("casFault 为 true 时,doc-type worker 指向假 CAS,gateway 仍指向中间件", () => {

@@ -31,11 +31,10 @@ function union(...sets) {
   return new Set(sets.flatMap((s) => [...s]));
 }
 
-/** `packages/azure-gateway/src/main.ts` 在 internalAuthMode === "stack" 时要的。 */
+/** `packages/azure-gateway/src/main.ts` 所需的 capability 环境。 */
 const GATEWAY_STACK_ENV = [
   "DATABASE_URL",
   "DOC_SERVICES_JSON",
-  "INTERNAL_AUTH_MODE",
   "CAPABILITY_ALGORITHM",
   "CAPABILITY_TTL_SECONDS",
   "CAPABILITY_MAX_LIFETIME_SECONDS",
@@ -60,7 +59,6 @@ const GATEWAY_STACK_ENV = [
  */
 const SERVICE_STACK_ENV = [
   "DATABASE_URL",
-  "INTERNAL_AUTH_MODE",
   "CAPABILITY_ALGORITHM",
   "CAPABILITY_TTL_SECONDS",
   "CAPABILITY_MAX_LIFETIME_SECONDS",

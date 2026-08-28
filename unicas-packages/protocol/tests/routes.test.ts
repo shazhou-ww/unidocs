@@ -18,8 +18,7 @@ describe("CAS routes (canonical stack-scoped)", () => {
   test.each([
     ["GET", casRoutes.readContent({ stackId: STACK, tenantId: TENANT, hash: "abc" }), "readContent"],
     ["GET", casRoutes.readMetadata({ stackId: STACK, tenantId: TENANT, hash: "abc" }), "readMetadata"],
-    ["POST", casRoutes.leaseNode({ stackId: STACK, tenantId: TENANT, hash: "abc" }), "leaseNode"],
-    ["POST", casRoutes.leaseExisting({ stackId: STACK, tenantId: TENANT, hash: "abc" }), "leaseExisting"],
+    ["POST", casRoutes.lease({ stackId: STACK, tenantId: TENANT, hash: "abc" }), "lease"],
     ["GET", casRoutes.usage({ stackId: STACK, tenantId: TENANT }), "usage"],
     ["POST", casRoutes.gc({ stackId: STACK, tenantId: TENANT }), "gc"],
     ["POST", casRoutes.updateRootRefs({ stackId: STACK, tenantId: TENANT }), "updateRootRefs"],
@@ -35,8 +34,7 @@ describe("CAS routes (canonical stack-scoped)", () => {
     const routes: readonly CasRoute[] = [
       { operation: "readContent", stackId: STACK, tenantId: TENANT, hash: "a".repeat(64) },
       { operation: "readMetadata", stackId: STACK, tenantId: TENANT, hash: "a".repeat(64) },
-      { operation: "leaseNode", stackId: STACK, tenantId: TENANT, hash: "a".repeat(64) },
-      { operation: "leaseExisting", stackId: STACK, tenantId: TENANT, hash: "a".repeat(64) },
+      { operation: "lease", stackId: STACK, tenantId: TENANT, hash: "a".repeat(64) },
       { operation: "usage", stackId: STACK, tenantId: TENANT },
       { operation: "gc", stackId: STACK, tenantId: TENANT },
       { operation: "updateRootRefs", stackId: STACK, tenantId: TENANT },
@@ -55,11 +53,11 @@ describe("CAS routes (canonical stack-scoped)", () => {
     expect(CasRefsHeader).toBe("X-CAS-Refs");
     expect(CasLeaseDurationHeader).toBe("X-CAS-Lease-Duration");
     expect(casRoutes.lease({ stackId: STACK, tenantId: TENANT, hash: "abc" }))
-      .toBe(casRoutes.leaseExisting({ stackId: STACK, tenantId: TENANT, hash: "abc" }));
+      .toBe(`/stacks/${STACK}/tenants/tenant%2Fa/cas/nodes/abc/lease`);
   });
 
   test("rejects unknown methods and malformed escapes", () => {
-    expect(matchCasRoute("PUT", casRoutes.leaseNode({ stackId: STACK, tenantId: "t", hash: "h" }))).toBeNull();
+    expect(matchCasRoute("PUT", casRoutes.lease({ stackId: STACK, tenantId: "t", hash: "h" }))).toBeNull();
     expect(matchCasRoute("GET", "/stacks/%ZZ/tenants/t/cas/usage")).toBeNull();
   });
 

@@ -133,7 +133,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 
 // Guard: only run when invoked as a binary (not when imported by tests).
 // Realpath comparison keeps the guard working when the script is reached
-// through a symlink (e.g. `pnpm install --global ./unicas-packages/cli`),
+// through a symlink (e.g. `pnpm install --global ./unicas-packages/admin-cli`),
 // because `import.meta.url` resolves to the real path while `process.argv[1]`
 // keeps the symlink path.
 function invokedAsBinary(): boolean {

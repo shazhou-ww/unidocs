@@ -10,8 +10,7 @@
 export type CasRoute =
   | { operation: "readContent"; stackId: string; tenantId: string; hash: string }
   | { operation: "readMetadata"; stackId: string; tenantId: string; hash: string }
-  | { operation: "leaseNode"; stackId: string; tenantId: string; hash: string }
-  | { operation: "leaseExisting"; stackId: string; tenantId: string; hash: string }
+  | { operation: "lease"; stackId: string; tenantId: string; hash: string }
   | { operation: "usage"; stackId: string; tenantId: string }
   | { operation: "gc"; stackId: string; tenantId: string }
   | { operation: "updateRootRefs"; stackId: string; tenantId: string };
@@ -33,10 +32,6 @@ export const casRoutes = {
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/content`,
   readMetadata: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/metadata`,
-  leaseNode: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
-    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}`,
-  leaseExisting: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
-    `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/lease`,
   lease: ({ stackId, tenantId, hash }: { stackId: string; tenantId: string; hash: string }) =>
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/lease`,
   usage: ({ stackId, tenantId }: { stackId: string; tenantId: string }) =>
@@ -73,9 +68,6 @@ export function matchCasRoute(method: string, pathname: string): CasRoute | null
 
   const hash = decodeSegment(parts[6]);
   if (hash === null) return null;
-  if (parts.length === 7 && method === "POST") {
-    return { operation: "leaseNode", stackId, tenantId, hash };
-  }
   if (parts.length !== 8) return null;
   if (parts[7] === "content" && method === "GET") {
     return { operation: "readContent", stackId, tenantId, hash };
@@ -84,7 +76,7 @@ export function matchCasRoute(method: string, pathname: string): CasRoute | null
     return { operation: "readMetadata", stackId, tenantId, hash };
   }
   if (parts[7] === "lease" && method === "POST") {
-    return { operation: "leaseExisting", stackId, tenantId, hash };
+    return { operation: "lease", stackId, tenantId, hash };
   }
   return null;
 }

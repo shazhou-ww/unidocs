@@ -25,7 +25,9 @@ test("two signatures plus local Doc and CAS verification stay within the latency
   });
   const authority = new GatewayCapabilityAuthority({
     issuer,
+    casIssuer: issuer,
     casAudience: "unidocs-cas",
+    casStackId: "stack-1",
   });
   const jwks = {
     keys: [{ ...publicJwk, kid: "latency-key", alg: CapabilityAlgorithm }],

@@ -1,4 +1,4 @@
-# @unicas/cli
+# @unicas/admin-cli
 
 Unicas control-plane management CLI. Authenticates against the OAuth-protected
 control-plane MCP endpoint with a real browser flow (RFC 9728 discovery, RFC
@@ -27,7 +27,7 @@ unicas CLI  <- does the OAuth dance itself, persists ~/.unicas/token.json
 
 ```powershell
 pnpm install
-pnpm --filter @unicas/cli build
+pnpm --filter @unicas/admin-cli build
 ```
 
 This produces `dist/cli.js` (the `unicas` bin target).
@@ -35,7 +35,7 @@ This produces `dist/cli.js` (the `unicas` bin target).
 ## Log in
 
 ```powershell
-pnpm --filter @unicas/cli unicas login
+pnpm --filter @unicas/admin-cli unicas login
 ```
 
 `login` runs the full OAuth authorization-code flow with S256 PKCE:
@@ -119,20 +119,20 @@ HTTP connection. Only MCP protocol frames go to stdout.
 To expose the `unicas` command on PATH from this checkout:
 
 ```powershell
-pnpm --filter @unicas/cli build
+pnpm --filter @unicas/admin-cli build
 # pnpm 10+ removed `pnpm link --global`; install the local package globally instead:
-pnpm install --global ./unicas-packages/cli
+pnpm install --global ./unicas-packages/admin-cli
 # or point the MCP client directly at the built script:
 #   node D:\Code\unidocs-cli\unicas-packages\cli\dist\cli.js mcp
 ```
 
 Alternatively run any command in-process:
-`pnpm --filter @unicas/cli unicas stacks list`.
+`pnpm --filter @unicas/admin-cli unicas stacks list`.
 
 > Windows note: pnpm's global bin is a `.CMD` shim. A Node-based MCP client
 > spawning `unicas mcp` must either use `shell: true`, point at the shim path
 > (`%LOCALAPPDATA%\pnpm\bin\unicas.CMD`), or use
-> `command: "node"` with `args: ["<checkout>/unicas-packages/cli/dist/cli.js",
+> `command: "node"` with `args: ["<checkout>/unicas-packages/admin-cli/dist/cli.js",
 > "mcp"]` — a plain `spawn("unicas", …)` fails with `ENOENT`/`EINVAL` because
 > Node does not resolve `.CMD` files.
 
@@ -157,8 +157,8 @@ Alternatively run any command in-process:
 ## Tests
 
 ```powershell
-pnpm --filter @unicas/cli test
-pnpm --filter @unicas/cli typecheck
+pnpm --filter @unicas/admin-cli test
+pnpm --filter @unicas/admin-cli typecheck
 ```
 
 Tests run against an in-memory fake of the control-plane edge (discovery, DCR,

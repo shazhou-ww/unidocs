@@ -49,8 +49,10 @@ export interface CasBlobWriteOptions {
 }
 
 export interface CasBlobClientOptions {
-  /** Node content bytes per blob chunk. Defaults to the protocol maximum. */
+  /** Node content bytes per blob chunk. Defaults to the protocol value. */
   readonly chunkBytes?: number;
+  /** Children per index node. Defaults to the protocol value. */
+  readonly indexFanout?: number;
 }
 
 export interface CasBlobClient {

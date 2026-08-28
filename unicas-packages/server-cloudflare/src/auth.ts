@@ -28,9 +28,8 @@ import {
   CapabilityAlgorithm,
   CapabilityAuthenticationError,
   CapabilityAuthorizationError,
-  casGcTriggerPermission,
+  casAdminPermission,
   casReadPermission,
-  casUsageReadPermission,
   casWritePermission,
   validateRefDomainClaim,
 } from "@unidocs/service-auth";
@@ -46,14 +45,6 @@ export interface StackAuthEvent {
   readonly reason?: string;
 }
 
-export interface StaticLegacyStackConfig {
-  readonly stackId: string;
-  readonly issuer: string;
-  readonly audience: string;
-  readonly algorithm: string;
-  readonly jwks: JSONWebKeySet;
-}
-
 export interface StackVerifierOptions {
   readonly repository: StackAuthorityResolver;
   /** Allowed algorithms; default [ES256]. */
@@ -64,8 +55,6 @@ export interface StackVerifierOptions {
   readonly hardStaleBoundMs?: number;
   readonly now?: () => number;
   readonly onEvent?: (event: StackAuthEvent) => void;
-  /** Bootstrap for one operator-selected legacy stack during migration. */
-  readonly staticLegacyStack?: StaticLegacyStackConfig;
 }
 
 export interface VerifiedStackCall {
@@ -91,7 +80,6 @@ export class StackCapabilityVerifier {
   readonly #hardStaleBoundMs: number;
   readonly #now: () => number;
   readonly #onEvent: (event: StackAuthEvent) => void;
-  readonly #staticLegacyStack: StaticLegacyStackConfig | null;
   readonly #authorityCache = new Map<string, CachedAuthority>();
 
   constructor(options: StackVerifierOptions) {
@@ -104,7 +92,6 @@ export class StackCapabilityVerifier {
     }
     this.#now = options.now ?? (() => Date.now());
     this.#onEvent = options.onEvent ?? (() => undefined);
-    this.#staticLegacyStack = options.staticLegacyStack ?? null;
   }
 
   async verify(request: Request, route: CasRoute): Promise<VerifiedStackCall> {
@@ -275,8 +262,7 @@ export class StackCapabilityVerifier {
         return cached.authority;
       }
     }
-    const authority = (await this.#repository.resolveIssuer(issuer).catch(() => null))
-      ?? this.#staticLegacy(issuer);
+    const authority = await this.#repository.resolveIssuer(issuer).catch(() => null);
     if (!authority) return null;
     this.#authorityCache.set(issuer, { authority, fetchedAt: now });
     return authority;
@@ -296,22 +282,6 @@ export class StackCapabilityVerifier {
     return claimed;
   }
 
-  #staticLegacy(issuer: string): ResolvedStackAuthority | null {
-    const staticConfig = this.#staticLegacyStack;
-    if (!staticConfig || staticConfig.issuer !== issuer) return null;
-    return {
-      stackId: staticConfig.stackId,
-      issuer: staticConfig.issuer,
-      audience: staticConfig.audience,
-      status: "active",
-      keys: staticConfig.jwks.keys.map((key) => ({
-        kid: typeof key.kid === "string" ? key.kid : "",
-        algorithm: staticConfig.algorithm,
-        publicJwk: key as Record<string, unknown>,
-        state: "active" as const,
-      })),
-    };
-  }
 }
 
 /** Exact operation → permission matrix. */
@@ -320,14 +290,12 @@ export function permissionFor(route: CasRoute): string {
     case "readContent":
     case "readMetadata":
       return casReadPermission(route.tenantId);
-    case "leaseNode":
-    case "leaseExisting":
+    case "lease":
     case "updateRootRefs":
       return casWritePermission(route.tenantId);
     case "usage":
-      return casUsageReadPermission(route.tenantId);
     case "gc":
-      return casGcTriggerPermission(route.tenantId);
+      return casAdminPermission(route.tenantId);
   }
 }
 

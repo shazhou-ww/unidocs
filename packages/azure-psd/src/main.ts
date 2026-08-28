@@ -18,14 +18,12 @@
  * Anthropic,maxIterations 25),Azure 侧没有。这不是 psd 特有的缺口,接真
  * Operator 会同时影响 markdown/docx/psd 三家,是独立一轮的事——不是这里漏掉了。
  *
- * Env vars: DATABASE_URL, SERVICE_ACCESS_KEY, CAS_ACCESS_KEY, PORT,加上一组
+ * Env vars: DATABASE_URL, CAS_STACK_ID, PORT,加上一组
  * 二选一的 Blob 配置:云上是 BLOB_ACCOUNT_URL + AZURE_CLIENT_ID(用户分配
  * 托管标识;漏掉后者容器能起来、能过健康检查,第一次 Blob 操作才炸,所以
  * resolveBlobConfig() 把它作为启动期硬性要求),本地/Azurite 是
- * BLOB_CONNECTION_STRING。CAS_BASE_URL 可选(过渡形态)。
- *
- * CAS_ACCESS_KEY 必须与 Cloudflare CAS worker 的一致:那个 worker 对每个
- * X-Internal-Token 不匹配的请求都返回 401。
+ * BLOB_CONNECTION_STRING。CAS_BASE_URL 可选(过渡形态)，CAS 使用请求级
+ * delegated capability，不再配置共享 CAS key。
  */
 import { runDocTypeService } from "@unidocs/azure-sdk";
 import { createPsdDocumentType } from "@unidocs/doctype-psd";

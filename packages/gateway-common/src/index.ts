@@ -4,11 +4,10 @@
  * (Cloudflare worker, Azure/Node service) have in common.
  */
 
-export { createGatewayHandler, parseGatewayInternalAuthMode } from "./gateway-handler.js";
+export { createGatewayHandler } from "./gateway-handler.js";
 export type {
 	DocServiceRegistration,
 	GatewayHandlerConfig,
-	GatewayInternalAuthMode,
 } from "./gateway-handler.js";
 export {
 	GatewayDirectoryConflictError,

@@ -47,3 +47,4 @@ export {
   validateChildRefs,
   validateContentLength,
 } from "./validation.js";
+export type { CanonicalNodeLimits } from "./validation.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CasClientError } from "@unicas/client";
+import { CasClientError } from "@unicas/tenant-client";
 import { createSBlob } from "@unidocs/svalue-codec";
 import { commitRootRefsOrRollback, leaseOpRefs } from "../src/cas-operations.js";
 

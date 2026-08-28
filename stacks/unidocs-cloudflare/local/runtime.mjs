@@ -29,7 +29,7 @@ import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs"
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
 import { migrateControlSchema } from "../../../unicas-packages/control-plane/src/schema.ts";
 
-export { CAS_ACCESS_KEY, DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
+export { DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
 export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
@@ -257,7 +257,7 @@ function createStorageProbe(mf, { stackId } = {}) {
       // Stack mode stores node content in the MIDDLEWARE bucket under
       // stack-scoped keys.
       const bucket = await mf.getR2Bucket("CAS_R2", MIDDLEWARE_WORKER);
-      const object = await bucket.get(`stacks/${stackId}/tenants/${tenantId}/nodes/${hash}`);
+      const object = await bucket.get(`stacks/${stackId}/tenants/${tenantId}/nodes-v2/${hash}`);
       return object !== null;
     },
     /**
@@ -312,7 +312,6 @@ export async function startLocalRuntime({
   ports: portOverrides = {},
   persistPath,
   casFault = false,
-  internalAuthMode = "stack",
   capabilityFixture,
   stackFixture,
   logLevel = LogLevel.WARN,
@@ -322,9 +321,6 @@ export async function startLocalRuntime({
   middlewareStacks,
   casOrigin,
 } = {}) {
-  if (internalAuthMode !== "stack") {
-    throw new Error("startLocalRuntime only supports stack mode (legacy/dual/capability retired with the legacy runtime)");
-  }
   const resolvedStackFixture = stackFixture ?? await createEphemeralStackFixture();
   const ports = resolvePorts(docTypes, portOverrides);
   if (!casOrigin) {
@@ -388,7 +384,6 @@ export async function startLocalRuntime({
           bundleDir,
           casFault,
           extraBindings,
-          internalAuthMode,
           capabilityFixture: resolvedCapabilityFixture,
           stackFixture: resolvedStackFixture,
           casAdminPublicOrigin: casAdminPublicOrigin
@@ -525,10 +520,6 @@ export async function seedMiddlewareStacks(
       db.prepare(
         "INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, ?, ?, 'active', 1) ON CONFLICT(stack_id, kid) DO UPDATE SET public_jwk = excluded.public_jwk, state = 'active'",
       ).bind(stack.stackId, stack.kid, stack.algorithm ?? "ES256", JSON.stringify(stack.publicJwk)),
-      ...(stack.refDomains ?? []).map(({ refDomain, status }) =>
-        db.prepare(
-          "INSERT INTO cas_stack_ref_domains (stack_id, ref_domain, status, revision) VALUES (?, ?, ?, 1) ON CONFLICT(stack_id, ref_domain) DO UPDATE SET status = excluded.status",
-        ).bind(stack.stackId, refDomain, status ?? "active")),
     ]);
   }
 }

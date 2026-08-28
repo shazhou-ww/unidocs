@@ -135,39 +135,17 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--typo-flag", "x"])).toThrow(/--typo-flag/);
   });
 
-  // CAS_ACCESS_KEY 不是本轮生成的密钥,而是必须与已部署的 Cloudflare CAS
-  // worker 对齐的既有值 —— 所以它必须能从命令行传进来。
-  test("--cas-access-key 被解析", () => {
-    expect(parseArgs(["--cas-access-key", "shared-with-cloudflare", "--capability-key-id", "test-key", ...STACK_ARGS]).casAccessKey).toBe(
-      "shared-with-cloudflare",
-    );
-  });
-
-  test("不传 --cas-access-key 时是空串(留给 Key Vault 里的既有值)", () => {
-    expect(parseArgs(["--capability-key-id", "test-key", ...STACK_ARGS]).casAccessKey).toBe("");
-  });
-
-  test("stack mode is the only internal auth mode; key values are not CLI inputs", () => {
+  test("capability identity values are parsed", () => {
     const args = parseArgs([
       "--gateway",
-      "--internal-auth-mode", "stack",
       "--capability-issuer", "unidocs-gateway:staging",
       "--capability-key-id", "staging-key-2",
       ...STACK_ARGS,
     ]);
     expect(args).toMatchObject({
-      internalAuthMode: "stack",
       capabilityIssuer: "unidocs-gateway:staging",
       capabilityKeyId: "staging-key-2",
     });
-    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "capability", ...STACK_ARGS]))
-      .toThrow(/stack/);
-    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "legacy", ...STACK_ARGS]))
-      .toThrow(/stack/);
-    expect(() => parseArgs(["--gateway", "--internal-auth-mode", "dual", ...STACK_ARGS]))
-      .toThrow(/stack/);
-    expect(() => parseArgs(["--internal-auth-mode", "unknown"]))
-      .toThrow(/internal-auth-mode/);
     expect(() => parseArgs(["--capability-private-key", "secret"]))
       .toThrow(/Unknown argument/);
   });
@@ -577,38 +555,14 @@ describe("parseArgs: CAS audience", () => {
   });
 });
 
-describe("seedSecrets: legacy CAS 共享密钥", () => {
-  // stack 模式下 legacy 共享密钥已随 legacy 运行时退役:网关
-  // (azure-gateway/src/main.ts:51) 与 doc service
-  // (azure-sdk/src/doc-type-service.ts:230) 都显式跳过 CAS_ACCESS_KEY。
-  // 但 seedSecrets() 曾无条件调 resolveCasAccessKey(),它在 Key Vault 里
-  // 没有该密钥且未传 --cas-access-key 时硬失败 —— 真部署时卡在 [3/7],
-  // 要一个整条链路根本不会读的凭据。
-  test("stack 模式不索要 legacy 共享密钥", async () => {
-    const calls = [];
-    const secrets = await seedSecrets("kv-test", {
-      targets: ["services", "gateway"],
-      internalAuthMode: "stack",
-      casAccessKey: "",
-    }, {
-      seedSecret: async (_vault, name) => { calls.push(`seed:${name}`); return `generated-${name}`; },
-      requireExistingSecret: async (_vault, name) => { calls.push(`require:${name}`); return `existing-${name}`; },
-      resolveCasAccessKey: async () => { calls.push("resolveCasAccessKey"); throw new Error("must not be called in stack mode"); },
-    });
-    expect(calls).not.toContain("resolveCasAccessKey");
-    expect(secrets.casAccessKey).toBeNull();
-  });
-
-  test("stack 模式仍然读取两个 stack 身份密钥", async () => {
+describe("seedSecrets: capability keys", () => {
+  test("reads both stack identity keys", async () => {
     const calls = [];
     await seedSecrets("kv-test", {
       targets: ["services", "gateway"],
-      internalAuthMode: "stack",
-      casAccessKey: "",
     }, {
       seedSecret: async () => "x",
       requireExistingSecret: async (_vault, name) => { calls.push(name); return "y"; },
-      resolveCasAccessKey: async () => { throw new Error("must not be called"); },
     });
     expect(calls).toContain("cas-stack-private-key-pkcs8");
     expect(calls).toContain("cas-stack-trusted-jwks");

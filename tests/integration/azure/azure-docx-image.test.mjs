@@ -13,7 +13,13 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { startAzureRuntime } from "../../../stacks/unidocs-azure/local/runtime.mjs";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../../../unicas-packages/server-common/src/index.ts";
+import {
+  CanonicalNodeContentType,
+  computeNodeDigest,
+  concatenateNodeBytes,
+  encodeHeader,
+  hashToHex,
+} from "../../../unicas-packages/server-common/src/index.ts";
 import { createSBlob, encodeSValue } from "../../../packages/svalue-codec/src/index.ts";
 import { SValueContentType } from "../../../packages/protocol/src/index.ts";
 
@@ -23,7 +29,6 @@ const USER = "docx-img-user";
 beforeAll(async () => {
   azure = await startAzureRuntime({
     docTypes: ["docx"],
-    internalAuthMode: "stack",
   });
 }, 240_000);
 
@@ -43,16 +48,17 @@ test("insertImage round-trips on the Azure stack through the middleware", async 
   const header = encodeHeader(bytes.length, "image/png", 0);
   const digest = await computeNodeDigest(header, "image/png", [], bytes);
   const hash = hashToHex(digest);
+  const canonical = concatenateNodeBytes(header, new TextEncoder().encode("image/png"), [], bytes);
 
   // 上传经 Azure gateway —— stack 模式下转发到规范路由，打到中间件。
-  const upload = await closeFetch(`${azure.urls.gateway}/tenants/${USER}/cas/nodes/${hash}`, {
+  const upload = await closeFetch(`${azure.urls.gateway}/tenants/${USER}/cas/nodes/${hash}/lease`, {
     method: "POST",
     headers: {
-      "Content-Type": "image/png",
-      "Content-Length": String(bytes.length),
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonical.length),
       "X-CAS-Lease-Duration": "900000",
     },
-    body: bytes,
+    body: canonical,
   });
   expect(upload.ok, JSON.stringify(await upload.clone().text())).toBe(true);
   expect(await upload.json()).toMatchObject({ ready: true });

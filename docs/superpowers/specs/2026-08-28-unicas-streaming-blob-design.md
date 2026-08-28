@@ -6,21 +6,19 @@
 
 当前已落地：
 
-- canonical node 64 MiB / 128 refs 限制和 bounded stream prefix parser；
-- `object_format` bridge schema、`nodes-v2` 完整 canonical object 和 reservation 表；
+- canonical node 64 MiB / 256 refs 限制和 bounded stream prefix parser；
+- `nodes-v2` 完整 canonical object 和 reservation 表；
 - `/nodes/{hash}/lease` 有/无 body 统一语义；
 - known-length request body 到 R2 的 streaming SHA-256 验证；
-- split-v1/canonical-v1 双读、own-content Range read、root-ref/GC/usage 兼容；
+- own-content Range read、root-ref/GC/usage；
 - verified orphan adoption；
-- deterministic blob-index CBOR、8 MiB chunk、32-way tree；
+- deterministic blob-index CBOR、默认 32 MiB chunk、256-way tree；
 - client `storeBlob`、`openBlob`、`openBlobRange` stream API。
 
 尚待后续 rollout：
 
-- split-v1 到 canonical-v1 的生产 backfill/contract 工具和执行；
 - hard tenant quota 配置、reservation reconciliation 和 orphan scanner；
 - SBlob/DocumentType consumers 从 eager bytes 迁移到 stream facade；
-- legacy `POST .../nodes/{hash}` buffered alias 移除；
 - 线上灰度、指标和 production R2 failure drill。
 
 取代：
@@ -145,7 +143,7 @@ SValue、普通 leaf、未来其他 DAG 类型，而不是退化成文件服务�
 ```ts
 export const MAX_CANONICAL_NODE_BYTES = 64 * 1024 * 1024;
 export const MAX_NODE_CONTENT_TYPE_BYTES = 1024;
-export const MAX_NODE_REFS = 128;
+export const MAX_NODE_REFS = 256;
 ```
 
 canonical node 长度为：
@@ -189,7 +187,7 @@ tenant Worker 在转发到 DO 前验证原始 `Content-Length` 的数字语法�
 把已验证值放入受信内部 header；或者显式转发原 header。DO 不能假设当前重建 Request
 会自动保留它。最终实际字节计数始终是权威值。
 
-128 refs 意味着当前逐 child readiness check 加 edge/count 写入仍能落在付费 Worker 的
+256 refs 意味着当前逐 child readiness check 加 edge/count 写入必须落在付费 Worker 的
 请求预算内。实现前必须用真实 D1/R2 binding 验证一次 parent lease 的 subrequest、D1
 statement 和 batch 上限；验证不过就必须在发布前进一步降低这个协议上限，不能依靠
 运行时偶发宽限。
@@ -214,8 +212,7 @@ SHA256(R2 object body) = nodeHash
 stacks/{stackId}/tenants/{tenantId}/nodes-v2/{hash}
 ```
 
-使用 `nodes-v2` 而不是原地覆盖旧 `nodes`，使 expand/migrate/contract 和回滚窗口
-可控。旧路径在迁移期仍表示 split-v1 的 `ownContent`。
+`nodes-v2` 是唯一物理 node 路径，object body 始终是完整 canonical bytes。
 
 ### 5.2 D1 仍是查询和生命周期索引
 
@@ -226,21 +223,6 @@ D1 继续保存：
 - ordered refs/edges；
 - lease；
 - child/root ref counts。
-
-新增 `object_format`：
-
-```sql
-object_format INTEGER NOT NULL DEFAULT 1
-```
-
-值域：
-
-| 值 | 含义 |
-|---:|---|
-| `1` | split-v1，旧 `nodes/{hash}` 只存 ownContent |
-| `2` | canonical-v1，`nodes-v2/{hash}` 存完整 canonical bytes |
-
-这不是 node identity version。两种物理格式对应同一个 canonical version-1 hash。
 
 ### 5.3 计费和 usage
 
@@ -506,15 +488,20 @@ canonical-v1 的完整性根；定期 scrubber 可以重新读取和复核，但
 ### 8.1 固定参数
 
 ```ts
-export const BLOB_CHUNK_BYTES = 8 * 1024 * 1024;
-export const BLOB_INDEX_FANOUT = 32;
+export const BLOB_CHUNK_BYTES = 32 * 1024 * 1024;
+export const BLOB_INDEX_FANOUT = 256;
 ```
 
-`64 MiB` 是 node 硬上限，不是 blob chunk 默认值。8 MiB 让浏览器、Node 和编辑器
-在有限并发下保持可控内存，并降低失败重传成本。
+`64 MiB` 是 node 硬上限，不是 blob chunk 默认值。32 MiB 默认值让绝大多数实际
+blob 保持单层 index，同时给 canonical header 和 refs 留出充足空间。
 
-这些参数属于 blob format version，业务方不能逐次覆盖。否则相同 blob 会因为调用方
-配置不同得到不同 root hash，削弱稳定 identity 和跨 SDK 互操作。
+这些值是协议推荐默认值与互操作上限。client 实现可以在构造时配置不超过上限的
+`chunkBytes` 和 `indexFanout`，测试可以用很小的值构造多层 tree；使用不同参数会得到
+不同但均有效的 root hash。
+
+参数不随 lease request 发送，也不授信。CAS 从 canonical node body 自行验证实际字节
+长度、ref count 和 hash，只拒绝超过服务实例限制的节点。服务实例限制可以在协议上限
+内下调以便测试或部署约束，不能通过配置突破协议安全上限。
 
 ### 8.2 Chunk node
 
@@ -523,11 +510,11 @@ chunk node：
 ```text
 contentType = application/vnd.unicas.blob-chunk
 refs        = []
-ownContent  = 最多 8 MiB 原始 blob bytes
+ownContent  = 默认最多 32 MiB 原始 blob bytes
 ```
 
 固定技术 content type 允许不同业务 media type 之间复用相同 chunk。最后一个 chunk
-可以短于 8 MiB。空 blob 不生成 chunk tree。
+可以短于配置的 chunk size。空 blob 不生成 chunk tree。
 
 ### 8.3 Index node
 
@@ -556,7 +543,7 @@ export interface CasBlobIndexV1 {
 规则：
 
 - `children.length == refs.length`；
-- `1 <= children.length <= 32`；
+- `1 <= children.length <= 256`；
 - 每个 child size 是正安全整数；
 - `size == sum(children[].size)`；
 - `level == 0` 时 children 必须是 chunk nodes；
@@ -570,16 +557,15 @@ CAS 通用内核不解释这些规则；SDK 在读取时验证。服务端可以
 
 ### 8.4 Tree 容量
 
-8 MiB chunk、fan-out 32 时：
+默认 32 MiB chunk、fan-out 256 时：
 
 | root level | 最大 blob 大小 |
 |---:|---:|
-| leaf node | 8 MiB |
-| index level 0 | 256 MiB |
-| index level 1 | 8 GiB |
-| index level 2 | 256 GiB |
-| index level 3 | 8 TiB |
-| index level 4 | 256 TiB |
+| leaf node | 32 MiB |
+| index level 0 | 8 GiB |
+| index level 1 | 2 TiB |
+| index level 2 | 512 TiB |
+| index level 3 | 128 PiB |
 
 因此不需要让单个 manifest 带数十万个 refs，也不会触碰 HTTP header 或 node metadata
 上限。
@@ -587,31 +573,30 @@ CAS 通用内核不解释这些规则；SDK 在读取时验证。服务端可以
 ### 8.5 唯一的在线建树算法
 
 并发上传可以乱序完成，但 builder 必须按 source chunk ordinal 提交结果。对每一层维护
-一个最多 32 项的 ordered pending group：
+一个最多 256 项的 ordered pending group：
 
 1. chunk descriptor 进入 level 0；
-2. 某层达到 32 项时，立即生成该层 index，清空该 group，并把生成的 index descriptor
+2. 某层达到 256 项时，立即生成该层 index，清空该 group，并把生成的 index descriptor
   追加到下一层；
 3. EOF 后从最低非空层向上 flush partial group；partial group 即使只有一项也生成
   index，除非它已经是全树唯一剩余的 index；
 4. 当所有层只剩一个 index descriptor 时，它就是 root；
 5. 只有一个 chunk 且没有 index 时，直接返回 leaf root。
 
-例如 33 个 chunks：前 32 个生成一个 level-0 index；最后一个 chunk 在 EOF 时生成一个
-singleton level-0 index；二者生成 level-1 root。恰好 32 个 chunks 则已生成的唯一
+例如 257 个 chunks：前 256 个生成一个 level-0 index；最后一个 chunk 在 EOF 时生成一个
+singleton level-0 index；二者生成 level-1 root。恰好 256 个 chunks 则已生成的唯一
 level-0 index 直接是 root，不再增加 unary level。
 
 每个 index 都携带同一个 `mediaType`，所以一个提前生成的 index 后来成为 root 时不需要
-重写。规范 test vectors 必须覆盖 `31/32/33` 和 `32^2-1/32^2/32^2+1` chunks。
+重写。规范 test vectors 必须覆盖 `255/256/257` 和 `256^2-1/256^2/256^2+1` chunks。
 
 ### 8.6 小 blob 与空 blob
 
-- `size <= 8 MiB`：直接保存一个普通 leaf node，content type 是业务 media type；
-- `size > 8 MiB`：chunk tree root；
+- `size <= chunkBytes`：直接保存一个普通 leaf node，content type 是业务 media type；
+- `size > chunkBytes`：chunk tree root；
 - 空 blob：普通零长度 leaf node，不创建空 manifest。
 
-默认切分规则是协议的一部分，所以同一字节序列和 media type 经规范 SDK 写入时产生
-稳定 root hash。
+同一 chunk size 下，相同字节序列和 media type 产生稳定 root hash。
 
 ---
 
@@ -670,9 +655,10 @@ export interface CasBlobClient {
 }
 ```
 
-`createCasBlobClient(cas, { chunkBytes })` allows tests and constrained
-runtimes to choose a smaller positive chunk size. Production defaults to
-`BlobChunkBytes`; configured values may not exceed that bound.
+`createCasBlobClient(cas, { chunkBytes, indexFanout })` allows tests and
+constrained runtimes to choose smaller positive values. Production defaults to
+`BlobChunkBytes` and `BlobIndexFanout`; configured values may not exceed those
+bounds.
 
 Node.js adapter可以另接受 `AsyncIterable<Uint8Array>`，但跨运行时核心接口使用 Web
 Streams。`Uint8Array` 只表示 stream 中的一块数据，不表示完整 blob。
@@ -705,12 +691,12 @@ API，并加严格上限。新业务代码和文档协议不得依赖它们。
 
 `storeBlob()` 单次读取 source：
 
-1. 累积最多 8 MiB 数据；
+1. 累积最多 `chunkBytes` 数据，默认 32 MiB；
 2. 构造一个完整 canonical chunk node；
 3. 在 SDK 本地计算 node hash；
 4. 带 canonical body 调统一 lease；
 5. 最多并发上传一个小的固定数量，例如 3；
-6. 每收集 1024 个 ready child，生成并 lease 一个 index node；
+6. 每收集 256 个 ready child，生成并 lease 一个 index node；
 7. 逐层在线折叠，避免把所有 chunk hashes 留在内存；
 8. source 结束后完成剩余层，生成唯一 root；
 9. 如果调用方提供 `size`，要求它与累计 source bytes 完全相同；
@@ -723,7 +709,7 @@ SDK 必须先知道 node hash 才能调用 hash 路径，因此至少需要保�
 BLOB_CHUNK_BYTES * uploadConcurrency + bounded index metadata
 ```
 
-默认约 `8 MiB * 3`，不随 blob 总大小增长。
+按并发 3 计算，默认约 `32 MiB * 3`，不随 blob 总大小增长。
 
 ### 9.4 Lease 与失败回收
 
@@ -854,9 +840,8 @@ AND leaseExpiresAt <= now
 chunk tree 不需要特殊递归删除。删除一个 index node 时，普通 edge 事务减少直接
 children 的 `childRefCount`；后续 GC pass 逐层回收新近归零的 descendants。
 
-迁移期 GC 根据 `object_format` 删除主对象，并防御性删除另一个格式路径上的同 hash
-对象，避免 backfill/事务失败产生物理泄漏。无 D1 row 的 orphan 由单独、低频、带安全
-窗口的 R2 scanner 发现；scanner 只提交候选，实际删除按 6.6 经 tenant DO 串行复核。
+无 D1 row 的 orphan 由单独、低频、带安全窗口的 R2 scanner 发现；scanner 只提交
+候选，实际删除按 6.6 经 tenant DO 串行复核。
 
 ---
 
@@ -878,72 +863,12 @@ readiness、quota 或受管格式语义验证。
 
 ---
 
-## 14. 迁移与发布顺序
-
-这是物理格式迁移，不改变 hash。必须 expand/deploy/migrate/contract，不能原地同时让
-新旧 reader 对同一个 R2 key 作不同解释。
-
-### 14.1 Phase A：协议与 schema expand
-
-- 通过 versioned migration 执行幂等
-  `ALTER TABLE cas_nodes ADD COLUMN object_format INTEGER NOT NULL DEFAULT 1`；
-- 创建 `cas_upload_reservations`，并把完成版本写入 schema meta；
-- 所有 metadata/usage/GC 查询显式读取或维护新列；
-- 新 reader 支持 split-v1 和 canonical-v1；
-- 新 GC 能清理两种路径；
-- 暂时仍只写 split-v1；
-- 增加新统一 lease route，但旧 client route 仍可用。
-
-所有线上实例进入 bridge 版本后，才允许下一阶段。回滚目标从此是 bridge 版本，不再是
-完全不认识 canonical-v1 的旧版本。
-
-### 14.2 Phase B：切换新写入
-
-- 新上传只写 `nodes-v2/{hash}` 完整 canonical node；
-- D1 row 写 `object_format = 2`；
-- 旧 split-v1 数据继续读取；
-- client SDK 开始发送完整 canonical body；
-- legacy upload route 由 adapter 转换或仅服务旧 client。
-
-旧 client 发送 `ownContent + metadata headers` 时，兼容 adapter 可以流式构造
-canonical prefix 后写 canonical-v1；不得重新退回整包缓冲。
-
-### 14.3 Phase C：后台 backfill
-
-对每个 split-v1 row：
-
-1. 从 D1 构造 canonical prefix；
-2. 把 prefix 和旧 R2 ownContent stream 拼接；
-3. 写 `nodes-v2/{hash}`，传 `sha256 = hash`；
-4. 核对返回 size/checksum；
-5. 原子把 D1 `object_format` 改为 `2`；
-6. 保留旧 object 到 rollback window 结束。
-
-任务可按 `(stackId, tenantId, hash)` 幂等恢复。摘要不匹配的数据标记为 corruption，
-停止该 tenant 的 destructive cleanup，不用错误内容覆盖新格式。
-
-rollback window 中一个 node 可能同时占用 split-v1 和 canonical-v1 两份物理空间。
-`readyStoredBytes` 表示 active format；另行统计 `migrationDuplicateBytes`，hard quota 和
-容量告警使用二者加 reservations 的总和。迁移任务是受控维护写入，但不能把 duplicate
-bytes 报告成已释放。GC 的 reclaimed 指标按实际删除的每个 R2 object size 计数。
-
-### 14.4 Phase D：blob SDK rollout
+## 14. 发布顺序
 
 - 先发布能读 leaf 和 chunk tree 的 SDK；
 - 再启用自动 chunk 写入；
 - document services、Gateway 和浏览器客户端逐步切换 stream API；
 - root-ref 协议不变，只引用返回的 root hash。
-
-### 14.5 Phase E：contract
-
-满足以下条件后：
-
-- 所有 D1 row 都是 `object_format = 2`；
-- migration manifest 无 pending/failed；
-- active client 都支持统一 lease 和 blob index；
-- rollback drill、restore drill 和 integrity sample 通过；
-
-才能删除 split-v1 objects、移除旧 upload route/headers，并最终去掉 dual-read 代码。
 
 ---
 
@@ -953,7 +878,7 @@ bytes 报告成已释放。GC 的 reclaimed 指标按实际删除的每个 R2 ob
 |---|---|
 | canonical header/codec/limits | `@unicas/server-common`，后续可抽纯 protocol codec |
 | node/blob wire types 和 manifest schema | `@unicas/protocol` |
-| stream-first node/blob client | `@unicas/client` |
+| stream-first node/blob client | `@unicas/tenant-client` |
 | Cloudflare streaming lease/R2 adapter | `@unicas/server-cloudflare` |
 | capability 和路由映射 | `gateway-common` / `protocol-gateway` |
 | SBlob stream facade | `doctype-server-common`，平台 SDK 复用 |
@@ -1026,8 +951,8 @@ allocation、峰值 isolate memory 稳定、R2 checksum mismatch 不发布 objec
 
 ### 17.4 Blob 行为
 
-- `0`、`1`、`8 MiB`、`8 MiB + 1`、多层 tree 边界；
-- `31/32/33` 和 `32^2-1/32^2/32^2+1` chunks 的 root golden vectors；
+- `0`、`1`、`32 MiB`、`32 MiB + 1`、多层 tree 边界；
+- `255/256/257` 和 `256^2-1/256^2/256^2+1` chunks 的 root golden vectors；
 - 重复 chunks 产生相同 child hash；
 - 顺序不同产生不同 root；
 - 整体 read 与原 source byte-for-byte 相同；
@@ -1038,27 +963,22 @@ allocation、峰值 isolate memory 稳定、R2 checksum mismatch 不发布 objec
 
 ### 17.5 迁移
 
-- split-v1 和 canonical-v1 双读一致；
-- backfill 输出 hash 与旧 node key 一致；
-- backfill 每一步中断后幂等恢复；
-- checksum mismatch 标记 corruption 且不 contract；
-- rollback 到 bridge 版本仍能读取新写 canonical-v1；
-- contract 前后 usage/GC/root refs 语义一致。
+- canonical object checksum 与 node hash 一致；
+- usage/GC/root refs 对唯一物理格式语义一致。
 
 ---
 
 ## 18. 实施顺序
 
 1. 固化 constants、stream codec 和边界测试；
-2. 增加 `nodes-v2`、`object_format` 和 dual-read bridge；
+2. 增加唯一的 `nodes-v2` canonical object 存储；
 3. 实现统一 lease route 和 R2 checksum streaming put；
 4. 将 Gateway、edge、DO 全链路改为 stream，并删除上传路径的 `arrayBuffer()`；
 5. 实现 own-content range read；
-6. 发布 backfill 工具并完成演练；
-7. 在 protocol 中固化 blob-index vectors；
-8. 在 client 中实现 stream-first node API；
-9. 实现在线 chunk/index tree builder 和 streaming reader/range reader；
-10. 将 SBlob 与 document consumers 迁到 stream facade；
+6. 在 protocol 中固化 blob-index vectors；
+7. 在 client 中实现 stream-first node API；
+8. 实现在线 chunk/index tree builder 和 streaming reader/range reader；
+9. 将 SBlob 与 document consumers 迁到 stream facade；
 11. 线上灰度自动 chunk 写入；
 12. 完成 backfill、rollback/restore 验证后 contract legacy surface。
 

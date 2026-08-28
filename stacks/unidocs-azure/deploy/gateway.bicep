@@ -20,10 +20,6 @@ param maxReplicas int = 3
 @description('网关要路由到的 doc type 列表，由部署脚本从各包的 azure.service.json 展开。')
 param docTypes array
 
-@description('doc type -> 该服务的 SERVICE_ACCESS_KEY，JSON 字符串。整体作为一个 @secure() 参数传，而不是每个 doc type 一个参数——后者需要按 doc type 动态生成参数名，Bicep 做不到。')
-@secure()
-param docAccessKeysJson string
-
 param pgAdminUser string = 'unidocs'
 
 @secure()
@@ -35,7 +31,6 @@ param capabilityPrivateKeyPkcs8 string = ''
 @secure()
 param casStackPrivateKeyPkcs8 string = ''
 
-param internalAuthMode string = 'stack'
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param capabilityKeyId string = ''
 param casStackId string = 'unidocs-azure'
@@ -98,7 +93,6 @@ var databaseUrl = 'postgres://${pgAdminUser}:${pgAdminPassword}@${pg.properties.
 var docServicesJson = string(toObject(docTypes, dt => dt, dt => {
   serviceId: dt
   url: 'https://unidocs-${dt}.internal.${containerEnv.properties.defaultDomain}'
-  accessKey: json(docAccessKeysJson)[dt]
   audience: 'unidocs-doc:${dt}'
 }))
 
@@ -128,10 +122,6 @@ module app 'container-app.bicep' = {
       {
         name: 'CAS_BASE_URL'
         value: casBaseUrl
-      }
-      {
-        name: 'INTERNAL_AUTH_MODE'
-        value: internalAuthMode
       }
       {
         name: 'CAPABILITY_ISSUER'

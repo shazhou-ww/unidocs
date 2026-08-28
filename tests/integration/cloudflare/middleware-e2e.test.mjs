@@ -16,13 +16,14 @@ import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runt
 import {
   CapabilityIssuer,
   JoseCapabilitySigner,
-  casGcTriggerPermission,
+  casAdminPermission,
   casReadPermission,
-  casUsageReadPermission,
   casWritePermission,
 } from "../../../packages/service-auth/src/index.ts";
 import {
+  CanonicalNodeContentType,
   computeNodeDigest,
+  concatenateNodeBytes,
   encodeHeader,
   hashToHex,
   hexToHash,
@@ -46,8 +47,13 @@ const TENANT = "shared-tenant-id";
 async function digestOf(content, contentType = "text/plain", refs = []) {
   const bytes = new TextEncoder().encode(content);
   const header = encodeHeader(bytes.length, contentType, refs.length);
-  const digest = await computeNodeDigest(header, contentType, refs.map(hexToHash), bytes);
-  return { hash: hashToHex(digest), bytes };
+  const children = refs.map(hexToHash);
+  const digest = await computeNodeDigest(header, contentType, children, bytes);
+  return {
+    hash: hashToHex(digest),
+    bytes,
+    canonical: concatenateNodeBytes(header, new TextEncoder().encode(contentType), children, bytes),
+  };
 }
 
 function edgeFetch(path, init = {}) {
@@ -123,37 +129,38 @@ test("middleware serves the full canonical tenant flow through cas-edge", async 
   });
   const usageReader = await issue(stackA, {
     tenantId: TENANT,
-    permissions: [casUsageReadPermission(TENANT)],
+    permissions: [casAdminPermission(TENANT)],
   });
   const gcTrigger = await issue(stackA, {
     tenantId: TENANT,
-    permissions: [casGcTriggerPermission(TENANT)],
+    permissions: [casAdminPermission(TENANT)],
   });
   const prefix = `/stacks/${stackId}/tenants/${TENANT}`;
 
   // Lease a content-addressed node with a child.
   const child = await digestOf("child-content");
-  const leaseChild = await edgeFetch(`${prefix}/cas/nodes/${child.hash}`, {
+  const leaseChild = await edgeFetch(`${prefix}/cas/nodes/${child.hash}/lease`, {
     method: "POST",
     headers: {
       ...authHeaders(writer),
-      "Content-Type": "text/plain",
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(child.canonical.length),
       "X-CAS-Lease-Duration": "600000",
     },
-    body: child.bytes,
+    body: child.canonical,
   });
   expect(leaseChild.status, await leaseChild.clone().text()).toBe(200);
 
   const parent = await digestOf("parent-content", "text/plain", [child.hash]);
-  const lease = await edgeFetch(`${prefix}/cas/nodes/${parent.hash}`, {
+  const lease = await edgeFetch(`${prefix}/cas/nodes/${parent.hash}/lease`, {
     method: "POST",
     headers: {
       ...authHeaders(writer),
-      "Content-Type": "text/plain",
-      "X-CAS-Refs": child.hash,
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(parent.canonical.length),
       "X-CAS-Lease-Duration": "600000",
     },
-    body: parent.bytes,
+    body: parent.canonical,
   });
   expect(lease.status, await lease.clone().text()).toBe(200);
   await expect(lease.json()).resolves.toMatchObject({ hash: parent.hash, ready: true });
@@ -262,7 +269,7 @@ test("identical tenant ids across the two stacks share nothing", async () => {
   });
   const usageB = await issue(stackB, {
     tenantId: TENANT,
-    permissions: [casUsageReadPermission(TENANT)],
+    permissions: [casAdminPermission(TENANT)],
   });
 
   // Each stack leases its own node under the SAME tenant id.
@@ -271,10 +278,14 @@ test("identical tenant ids across the two stacks share nothing", async () => {
   const nodeA = await digestOf(contentA);
   const nodeB = await digestOf(contentB);
 
-  const leaseA = await edgeFetch(`/stacks/${stackA.stackId}/tenants/${TENANT}/cas/nodes/${nodeA.hash}`, {
+  const leaseA = await edgeFetch(`/stacks/${stackA.stackId}/tenants/${TENANT}/cas/nodes/${nodeA.hash}/lease`, {
     method: "POST",
-    headers: { ...authHeaders(writerA), "Content-Type": "text/plain" },
-    body: nodeA.bytes,
+    headers: {
+      ...authHeaders(writerA),
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(nodeA.canonical.length),
+    },
+    body: nodeA.canonical,
   });
   expect(leaseA.status, await leaseA.clone().text()).toBe(200);
 
@@ -304,10 +315,14 @@ test("identical tenant ids across the two stacks share nothing", async () => {
     permissions: [casWritePermission(TENANT)],
     refDomain: "doc",
   });
-  const leaseB = await edgeFetch(`/stacks/${stackB.stackId}/tenants/${TENANT}/cas/nodes/${nodeB.hash}`, {
+  const leaseB = await edgeFetch(`/stacks/${stackB.stackId}/tenants/${TENANT}/cas/nodes/${nodeB.hash}/lease`, {
     method: "POST",
-    headers: { ...authHeaders(writerB), "Content-Type": "text/plain" },
-    body: nodeB.bytes,
+    headers: {
+      ...authHeaders(writerB),
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(nodeB.canonical.length),
+    },
+    body: nodeB.canonical,
   });
   expect(leaseB.status, await leaseB.clone().text()).toBe(200);
 

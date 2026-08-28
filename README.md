@@ -85,7 +85,6 @@ packages/
 
 unicas-packages/           (the independently deployable CAS middleware; future standalone monorepo)
 ├── protocol/              @unicas/protocol              — CAS protocol: stack-scoped routes, wire contracts, domain types
-├── protocol-legacy/       @unicas/protocol-legacy       — Migration-only frozen pre-stack CAS protocol
 ├── protocol-admin/        @unicas/protocol-admin        — CAS admin-plane contracts
 ├── server-common/         @unicas/server-common         — CAS server kernel (binary/digest/validation)
 ├── control-plane/         @unicas/control-plane         — CAS control plane (issuers/stacks/members/sessions)
@@ -94,7 +93,7 @@ unicas-packages/           (the independently deployable CAS middleware; future 
 ├── server-cloudflare/     @unicas/server-cloudflare     — Canonical stack-scoped tenant server (Cloudflare)
 ├── edge/                  @unicas/edge                  — Public CAS edge (/stacks + /admin + MCP/OAuth dispatch)
 ├── admin-webui/           @unicas/admin-webui           — Stack administration WebUI + OIDC BFF
-└── client/                @unicas/client                — Cloud-neutral CAS HTTP client
+└── tenant-client/         @unicas/tenant-client         — Cloud-neutral tenant CAS HTTP client
 ```
 
 ## API

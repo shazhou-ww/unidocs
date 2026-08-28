@@ -30,9 +30,6 @@ param pgAdminUser string = 'unidocs'
 param pgAdminPassword string
 
 @secure()
-param serviceAccessKey string
-
-@secure()
 param capabilityTrustedJwks string = ''
 
 @secure()
@@ -48,7 +45,6 @@ param casStackIssuer string
 @secure()
 param casStackTrustedJwks string = ''
 
-param internalAuthMode string = 'stack'
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param casStackId string = 'unidocs-azure'
 param casStackIssuer string = 'https://unicas.shazhou.work/cas/issuer/azure'
@@ -104,10 +100,6 @@ var casEnv = casBaseUrl != '' ? [
 ] : []
 
 var authEnv = [
-  {
-    name: 'INTERNAL_AUTH_MODE'
-    value: internalAuthMode
-  }
   {
     name: 'DOC_CAPABILITY_AUDIENCE'
     value: 'unidocs-doc:${docType}'
@@ -176,7 +168,6 @@ module app 'container-app.bicep' = {
     cpu: cpu
     memory: memory
     databaseUrl: databaseUrl
-    serviceAccessKey: serviceAccessKey
     capabilityTrustedJwks: capabilityTrustedJwks
     casStackTrustedJwks: casStackTrustedJwks
     extraEnv: extraEnv

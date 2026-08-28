@@ -92,6 +92,10 @@ export function createCasBlobClient(
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0 || chunkBytes > BlobChunkBytes) {
     throw new RangeError(`Blob chunk size must be an integer between 1 and ${BlobChunkBytes}`);
   }
+  const indexFanout = options.indexFanout ?? BlobIndexFanout;
+  if (!Number.isSafeInteger(indexFanout) || indexFanout < 2 || indexFanout > BlobIndexFanout) {
+    throw new RangeError(`Blob index fanout must be an integer between 2 and ${BlobIndexFanout}`);
+  }
   const storeNode = async (
     content: Uint8Array,
     contentType: string,
@@ -131,7 +135,7 @@ export function createCasBlobClient(
     const groupIndex = node.level + 1;
     const group = groups[groupIndex] ??= [];
     group.push(node);
-    if (group.length === BlobIndexFanout) {
+    if (group.length === indexFanout) {
       groups[groupIndex] = [];
       await appendTreeNode(groups, await storeIndex(group, mediaType), mediaType);
     }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeSValue } from "../../../packages/svalue-codec/src/index.ts";
 import { SValueContentType } from "../../../packages/protocol/src/index.ts";
-import { startLocalRuntime } from "../../../stacks/cloudflare/local/runtime.mjs";
+import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 
 let runtime;
 

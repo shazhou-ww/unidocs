@@ -9,7 +9,6 @@ import {
   sessionReadPermission,
 } from "../../service-auth/src/index.js";
 import { createRequestCasClient } from "../src/request-cas-client.js";
-import { storeNodeContent } from "@unicas/client";
 
 describe("createRequestCasClient", () => {
   test("uses only the delegated CAS Bearer on tenant-prefixed routes", async () => {
@@ -38,7 +37,7 @@ describe("createRequestCasClient", () => {
     });
     const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2])));
     const client = createRequestCasClient(
-      { CAS_SERVICE: { fetch } },
+      { CAS_SERVICE: { fetch }, CAS_STACK_ID: "stack-1" },
       privateRequest({
         "X-UniDocs-Auth-Context": "capability",
         "X-UniDocs-CAS-Capability": delegatedToken,
@@ -52,7 +51,7 @@ describe("createRequestCasClient", () => {
     await new Response(await client!.node("a".repeat(64)).read()).arrayBuffer();
 
     const [url, init] = fetch.mock.calls[0];
-    expect(url).toBe(`https://cas.internal/tenants/tenant-1/cas/nodes/${"a".repeat(64)}/content`);
+    expect(url).toBe(`https://cas.internal/stacks/stack-1/tenants/tenant-1/cas/nodes/${"a".repeat(64)}/content`);
     const headers = new Headers(init?.headers);
     expect(headers.get("Authorization")).toBe(`Bearer ${delegatedToken}`);
     expect([...headers]).toHaveLength(1);
@@ -82,41 +81,26 @@ describe("createRequestCasClient", () => {
 
   test("does not construct a CAS client without delegated authority", () => {
     expect(createRequestCasClient(
-      { CAS_SERVICE: { fetch: vi.fn() } },
+      { CAS_SERVICE: { fetch: vi.fn() }, CAS_STACK_ID: "stack-1" },
       privateRequest({ "X-UniDocs-Auth-Context": "capability" }),
     )).toBeNull();
   });
 
-  test("keeps legacy shared headers on the quarantined legacy path", async () => {
-    const fetch = vi.fn(async () => new Response(new Uint8Array()));
-    const client = createRequestCasClient(
-      { CAS_SERVICE: { fetch }, CAS_ACCESS_KEY: "legacy-key" },
+  test("does not grant CAS authority to legacy Doc requests", () => {
+    expect(createRequestCasClient(
+      { CAS_SERVICE: { fetch: vi.fn() }, CAS_STACK_ID: "stack-1" },
       privateRequest({ "X-UniDocs-Auth-Context": "legacy" }),
-    );
-    await new Response(await client!.node("b".repeat(64)).read()).arrayBuffer();
-    const headers = new Headers(fetch.mock.calls[0][1]?.headers);
-    expect(headers.get("X-Internal-Token")).toBe("legacy-key");
-    expect(headers.get("X-Tenant-Id")).toBe("tenant-1");
+    )).toBeNull();
   });
 
-  test("translates canonical node content to the legacy upload route", async () => {
-    const fetch = vi.fn(async (input: string | Request) => {
-      const hash = new URL(typeof input === "string" ? input : input.url).pathname.split("/").at(-1);
-      return Response.json({ hash, ready: true, leaseStartedAt: 1, leaseExpiresAt: 2 });
-    });
-    const client = createRequestCasClient(
-      { CAS_SERVICE: { fetch }, CAS_ACCESS_KEY: "legacy-key" },
-      privateRequest({ "X-UniDocs-Auth-Context": "legacy" }),
-    )!;
-    const content = new TextEncoder().encode("legacy upload");
-
-    const hash = await storeNodeContent(client, content, "text/plain");
-
-    const [url, init] = fetch.mock.calls[0];
-    expect(url).toBe(`https://cas.internal/tenants/tenant-1/cas/nodes/${hash}`);
-    const headers = new Headers(init?.headers);
-    expect(headers.get("Content-Type")).toBe("text/plain");
-    expect(new Uint8Array(init?.body as ArrayBufferView)).toEqual(content);
+  test("rejects delegated CAS access without a stack namespace", () => {
+    expect(() => createRequestCasClient(
+      { CAS_SERVICE: { fetch: vi.fn() }, CAS_STACK_ID: "" },
+      privateRequest({
+        "X-UniDocs-Auth-Context": "capability",
+        "X-UniDocs-CAS-Capability": "token",
+      }),
+    )).toThrow("CAS_STACK_ID");
   });
 });
 

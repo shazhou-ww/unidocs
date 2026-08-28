@@ -2,7 +2,7 @@ import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { CasClientError, leaseNodeContent } from "@unicas/client";
+import { CasClientError, createCasBlobClient, leaseNodeContent } from "@unicas/tenant-client";
 import {
   byteStreamFromReadableStream,
   DELTA_THRESHOLD,
@@ -62,9 +62,7 @@ interface SnapshotRow {
 
 export interface Env {
   readonly CAS_SERVICE: Fetcher;
-  readonly CAS_ACCESS_KEY?: string;
-  /** Stack namespace for canonical /stacks routes (stack mode). */
-  readonly CAS_STACK_ID?: string;
+  readonly CAS_STACK_ID: string;
 }
 
 export interface EditorDOInstance {
@@ -162,19 +160,30 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       if (this.#context) return;
       const casAdapter = {
         leaseNodeContent: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
-          leaseNodeContent(this.#requireCas(), hash, content, contentType, refs),
+          this.#isReadOnlyOperation()
+            ? this.#requireCas().node(hash).metadata()
+            : leaseNodeContent(this.#requireCas(), hash, content, contentType, refs),
         leaseNode: (hash: string) => this.#isReadOnlyOperation()
           ? this.#requireCas().node(hash).metadata()
           : this.#requireCas().leaseNode(hash),
-        storeBlob: (source: import("@unidocs/protocol").SBlobSource) => this.#requireCas().storeBlob(
-          readableStreamFromSBlobSource(source),
-          {
+        storeBlob: (source: import("@unidocs/protocol").SBlobSource) => {
+          const cas = this.#requireCas();
+          const blobs = this.#isReadOnlyOperation()
+            ? createCasBlobClient({
+              node: hash => cas.node(hash),
+              leaseNode: async hash => {
+                await cas.node(hash).metadata();
+                return { hash, ready: true, leaseStartedAt: 0, leaseExpiresAt: 0 };
+              },
+            })
+            : cas;
+          return blobs.storeBlob(readableStreamFromSBlobSource(source), {
             contentType: source.contentType,
             ...("data" in source
               ? { size: source.data.length }
               : source.size === undefined ? {} : { size: source.size }),
-          },
-        ),
+          });
+        },
         statBlob: (hash: string) => this.#requireCas().statBlob(hash),
         openBlob: async (hash: string, range?: import("@unidocs/protocol").SBlobReadRange) =>
           byteStreamFromReadableStream(range === undefined
@@ -515,7 +524,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       try {
         const url = new URL(request.url);
         await this.#ensureLoaded();
-        if (this.#requestCas) {
+        if (this.#requestCas && !this.#isReadOnlyOperation()) {
           await this.#recoverPending();
         }
         if (request.method === "POST" && url.pathname === "/_internal/create") {

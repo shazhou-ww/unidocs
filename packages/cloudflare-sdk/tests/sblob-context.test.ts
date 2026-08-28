@@ -3,7 +3,7 @@ import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unicas/s
 import { SValueContentType } from "@unidocs/protocol";
 import type { SBlobReadRange, SBlobSource } from "@unidocs/protocol";
 import { encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { CasClientError } from "@unicas/client";
+import { CasClientError } from "@unicas/tenant-client";
 import {
   createSBlobContext,
   SBlobIntegrityError,

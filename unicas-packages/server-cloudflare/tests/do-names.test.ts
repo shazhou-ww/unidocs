@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { canonicalComposite, decodeComposite, stackNodeKey } from "../src/do-names.js";
+import { canonicalComposite, decodeComposite, stackCanonicalNodeKey } from "../src/do-names.js";
 
 describe("canonical DO name partitioning", () => {
   test("round-trips stack + tenant and stack + refDomain", () => {
@@ -33,7 +33,7 @@ describe("canonical DO name partitioning", () => {
   });
 
   test("R2 stack node keys are unambiguous", () => {
-    expect(stackNodeKey("cas_s", "tenant-1", "a".repeat(64)))
-      .toBe(`stacks/cas_s/tenants/tenant-1/nodes/${"a".repeat(64)}`);
+    expect(stackCanonicalNodeKey("cas_s", "tenant-1", "a".repeat(64)))
+      .toBe(`stacks/cas_s/tenants/tenant-1/nodes-v2/${"a".repeat(64)}`);
   });
 });

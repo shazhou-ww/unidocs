@@ -11,6 +11,7 @@
  */
 
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
+import type { CanonicalNodeLimits } from "@unicas/server-common";
 import {
   HASH_SIZE,
   HEADER_SIZE,
@@ -35,7 +36,7 @@ import type {
 } from "@unicas/protocol";
 import { decodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { SValueContentType } from "@unidocs/protocol";
-import { stackCanonicalNodeKey, stackNodeKey } from "./do-names.js";
+import { stackCanonicalNodeKey } from "./do-names.js";
 
 /** Default lease duration when the header is absent. */
 export const DEFAULT_LEASE_MS = 15 * 60 * 1000;
@@ -77,15 +78,7 @@ export interface NodeStore {
   readonly bucket: R2Bucket;
   readonly stackId: string;
   readonly tenantId: string;
-}
-
-export interface LeaseNodeInput {
-  readonly hash: string;
-  readonly contentType: string;
-  readonly contentLength: number;
-  readonly refs: readonly string[];
-  readonly leaseDurationMs: number;
-  readonly content: Uint8Array;
+  readonly limits?: CanonicalNodeLimits;
 }
 
 export interface LeaseCanonicalNodeInput {
@@ -100,19 +93,12 @@ interface StoredNodeRow {
   readonly content_type: string;
   readonly lease_started_at: number;
   readonly lease_expires_at: number;
-  readonly object_format: number;
-}
-
-function objectKey(store: NodeStore, hash: string, objectFormat: number): string {
-  return objectFormat === 2
-    ? stackCanonicalNodeKey(store.stackId, store.tenantId, hash)
-    : stackNodeKey(store.stackId, store.tenantId, hash);
 }
 
 async function existingNode(store: NodeStore, hash: string): Promise<StoredNodeRow | null> {
   return store.db
     .prepare(
-      "SELECT content_size, content_type, lease_started_at, lease_expires_at, object_format FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+      "SELECT content_size, content_type, lease_started_at, lease_expires_at FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
     )
     .bind(store.stackId, store.tenantId, hash)
     .first<StoredNodeRow>();
@@ -130,7 +116,8 @@ async function orderedRefs(store: NodeStore, hash: string): Promise<string[]> {
 
 async function isReady(store: NodeStore, hash: string): Promise<boolean> {
   const node = await existingNode(store, hash);
-  return node !== null && await store.bucket.head(objectKey(store, hash, node.object_format)) !== null;
+  return node !== null
+    && await store.bucket.head(stackCanonicalNodeKey(store.stackId, store.tenantId, hash)) !== null;
 }
 
 function nextLease(
@@ -158,7 +145,9 @@ async function inspectCanonicalObject(
   key: string,
   canonicalSize: number,
 ): Promise<Awaited<ReturnType<typeof parseCanonicalNodeStream>>> {
-  const prefixLimit = HEADER_SIZE + MAX_CONTENT_TYPE_LENGTH + MAX_NODE_REFS * HASH_SIZE;
+  const prefixLimit = HEADER_SIZE
+    + MAX_CONTENT_TYPE_LENGTH
+    + (store.limits?.maxNodeRefs ?? MAX_NODE_REFS) * HASH_SIZE;
   const object = await store.bucket.get(key, {
     range: { offset: 0, length: Math.min(canonicalSize, prefixLimit) },
   });
@@ -168,6 +157,7 @@ async function inspectCanonicalObject(
   const parsed = await parseCanonicalNodeStream(
     object.body as unknown as ReadableStream<Uint8Array>,
     canonicalSize,
+    store.limits,
   );
   await parsed.body.cancel("Canonical prefix inspection complete");
   return parsed;
@@ -206,110 +196,6 @@ export function parseRefsHeader(header: string | null): string[] {
   return refs;
 }
 
-/**
- * Lease a node with content: validate, store the content-addressed bytes, and
- * record the node row plus child edges. Content addressing is authoritative —
- * a mismatched digest, content type, or SValue ref list is rejected before
- * anything is written.
- */
-export async function leaseNode(store: NodeStore, input: LeaseNodeInput): Promise<CasLeaseResult> {
-  const { db, bucket, stackId, tenantId } = store;
-  const { hash, contentType, contentLength, refs, leaseDurationMs, content } = input;
-  const now = Date.now();
-
-  try {
-    validateHash(hash);
-    validateContentType(contentType);
-    validateContentLength(content.length, contentLength);
-  } catch (err) {
-    throw new NodeOpError(
-      400,
-      NodeOpErrorCodes.INVALID_REQUEST,
-      err instanceof Error ? err.message : "Invalid node descriptor",
-    );
-  }
-
-  if (contentType === SValueContentType) {
-    let derivedRefs: readonly string[];
-    try {
-      derivedRefs = decodeSValueWithRefs(content).refs;
-    } catch (err) {
-      throw new NodeOpError(
-        400,
-        NodeOpErrorCodes.INVALID_REQUEST,
-        `Invalid SValue content: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    if (!sameRefs(refs, derivedRefs)) {
-      throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "SValue child refs do not match encoded content");
-    }
-  }
-
-  const existing = await db
-    .prepare(
-      "SELECT content_size, content_type, lease_started_at, lease_expires_at FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-    )
-    .bind(stackId, tenantId, hash)
-    .first<{ content_size: number; content_type: string; lease_started_at: number; lease_expires_at: number }>();
-
-  // Immutability is checked BEFORE the digest: re-leasing a ready node with
-  // different metadata is a 409 CONFLICT (same as the legacy runtime), not a
-  // 400 digest error.
-  if (existing && !metadataMatches(existing, refs, input)) {
-    throw new NodeOpError(409, NodeOpErrorCodes.CONFLICT, "Immutable metadata mismatch");
-  }
-
-  const childHashes = refs.map(hexToHash);
-  const header = encodeHeader(content.length, contentType, childHashes.length);
-  const digest = await computeNodeDigest(header, contentType, childHashes, content);
-  const computedHex = hashToHex(digest);
-  if (computedHex !== hash) {
-    throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, `Digest mismatch: expected ${hash}, got ${computedHex}`);
-  }
-
-  for (const childHash of refs) {
-    if (!await isReady(store, childHash)) {
-      throw new NodeOpError(409, NodeOpErrorCodes.NOT_READY, `Child node ${childHash} is not ready`);
-    }
-  }
-
-  await bucket.put(stackNodeKey(stackId, tenantId, hash), content);
-
-  const leaseStartedAt = existing && existing.lease_expires_at > now ? existing.lease_started_at : now;
-  const leaseExpiresAt = now + leaseDurationMs;
-
-  if (existing) {
-    await db
-      .prepare(
-        "UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-      )
-      .bind(leaseStartedAt, leaseExpiresAt, stackId, tenantId, hash)
-      .run();
-  } else {
-    const batch: D1PreparedStatement[] = [
-      db.prepare(
-        `INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(stackId, tenantId, hash, content.length, contentType, leaseStartedAt, leaseExpiresAt),
-    ];
-    for (let i = 0; i < refs.length; i++) {
-      batch.push(
-        db.prepare(
-          "INSERT INTO cas_edges (stack_id, tenant_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, ?, ?)",
-        ).bind(stackId, tenantId, hash, i, refs[i]),
-      );
-      batch.push(
-        db.prepare(
-          "UPDATE cas_nodes SET child_ref_count = child_ref_count + 1 WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-        ).bind(stackId, tenantId, refs[i]),
-      );
-    }
-    await db.batch(batch);
-  }
-
-  return { hash, ready: true, leaseStartedAt, leaseExpiresAt };
-}
-
 /** Store a complete canonical node stream and establish its lease. */
 export async function leaseCanonicalNode(
   store: NodeStore,
@@ -326,7 +212,7 @@ export async function leaseCanonicalNode(
   }
 
   const existing = await existingNode(store, input.hash);
-  if (existing && await store.bucket.head(objectKey(store, input.hash, existing.object_format)) !== null) {
+  if (existing && await store.bucket.head(stackCanonicalNodeKey(store.stackId, store.tenantId, input.hash)) !== null) {
     await input.body.cancel("Node is already ready");
     const lease = nextLease(existing, input.leaseDurationMs, Date.now());
     await store.db.prepare(
@@ -339,7 +225,7 @@ export async function leaseCanonicalNode(
     await input.body.cancel("Content-Length is required");
     throw new NodeOpError(411, NodeOpErrorCodes.INVALID_REQUEST, "Content-Length is required");
   }
-  if (input.declaredLength > MAX_CANONICAL_NODE_BYTES) {
+  if (input.declaredLength > (store.limits?.maxCanonicalNodeBytes ?? MAX_CANONICAL_NODE_BYTES)) {
     await input.body.cancel("Canonical node is too large");
     throw new NodeOpError(413, NodeOpErrorCodes.INVALID_REQUEST, "Canonical node is too large");
   }
@@ -422,7 +308,9 @@ export async function leaseCanonicalNode(
       throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "SValue node content is missing");
     }
     try {
-      const content = new Uint8Array(await object.arrayBuffer());
+      const content = new Uint8Array(await new Response(
+        object.body as unknown as ReadableStream<Uint8Array>,
+      ).arrayBuffer());
       if (!sameRefs(parsed.refs, decodeSValueWithRefs(content).refs)) {
         throw new Error("SValue child refs do not match encoded content");
       }
@@ -440,7 +328,7 @@ export async function leaseCanonicalNode(
   if (existing) {
     await store.db.batch([
       store.db.prepare(
-        "UPDATE cas_nodes SET object_format = 2, lease_started_at = ?, lease_expires_at = ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+        "UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
       ).bind(lease.leaseStartedAt, lease.leaseExpiresAt, store.stackId, store.tenantId, input.hash),
       store.db.prepare(
         "DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
@@ -449,8 +337,8 @@ export async function leaseCanonicalNode(
   } else {
     const batch: D1PreparedStatement[] = [
       store.db.prepare(
-        `INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, object_format)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 2)`,
+        `INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         store.stackId,
         store.tenantId,
@@ -481,7 +369,7 @@ export async function leaseCanonicalNode(
 }
 
 /** Extend the lease on an existing, ready node. */
-export async function leaseExisting(
+export async function leaseReadyNode(
   store: NodeStore,
   input: { hash: string; leaseDurationMs: number },
 ): Promise<CasLeaseResult> {
@@ -502,7 +390,7 @@ export async function leaseExisting(
     if (adopted !== null) return adopted;
     throw new NodeOpError(404, NodeOpErrorCodes.NOT_FOUND, `Node ${input.hash} not found`);
   }
-  const r2Key = objectKey(store, input.hash, existing.object_format);
+  const r2Key = stackCanonicalNodeKey(stackId, tenantId, input.hash);
   if ((await bucket.head(r2Key)) === null) {
     throw new NodeOpError(409, NodeOpErrorCodes.NOT_READY, `Node ${input.hash} is not ready`);
   }
@@ -523,7 +411,11 @@ async function adoptCanonicalOrphan(
 ): Promise<CasLeaseResult | null> {
   const key = stackCanonicalNodeKey(store.stackId, store.tenantId, hash);
   const object = await store.bucket.head(key);
-  if (object === null || object.size > MAX_CANONICAL_NODE_BYTES || object.checksums.sha256 === undefined) {
+  if (
+    object === null
+    || object.size > (store.limits?.maxCanonicalNodeBytes ?? MAX_CANONICAL_NODE_BYTES)
+    || object.checksums.sha256 === undefined
+  ) {
     return null;
   }
   if (hashToHex(new Uint8Array(object.checksums.sha256)) !== hash) return null;
@@ -553,8 +445,8 @@ async function adoptCanonicalOrphan(
        ON CONFLICT(stack_id, tenant_id, hash) DO UPDATE SET stored_bytes = excluded.stored_bytes`,
     ).bind(store.stackId, store.tenantId, hash, object.size, now, now + MAX_LEASE_MS),
     store.db.prepare(
-      `INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, object_format)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 2)`,
+      `INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       store.stackId,
       store.tenantId,
@@ -633,13 +525,13 @@ export async function readContent(
 ): Promise<NodeContentStream | null> {
   const node = await existingNode(store, hash);
   if (node === null) return null;
-  const key = objectKey(store, hash, node.object_format);
+  const key = stackCanonicalNodeKey(store.stackId, store.tenantId, hash);
   const requestedRange = parseContentRange(rangeHeader, node.content_size);
   const logicalOffset = requestedRange?.offset ?? 0;
   const logicalLength = requestedRange?.length ?? node.content_size;
-  const physicalOffset = node.object_format === 2
-    ? 24 + new TextEncoder().encode(node.content_type).length + (await orderedRefs(store, hash)).length * 32
-    : 0;
+  const physicalOffset = 24
+    + new TextEncoder().encode(node.content_type).length
+    + (await orderedRefs(store, hash)).length * 32;
   const object = await store.bucket.get(key, {
     range: { offset: physicalOffset + logicalOffset, length: logicalLength },
   });
@@ -710,24 +602,18 @@ export async function usage(store: NodeStore): Promise<CasUsage> {
     .bind(stackId, tenantId)
     .first<{ nodeCount: number; readyContentBytes: number; leasedNodeCount: number }>();
   const allNodes = await db
-    .prepare("SELECT hash, object_format FROM cas_nodes WHERE stack_id = ? AND tenant_id = ?")
+    .prepare("SELECT hash FROM cas_nodes WHERE stack_id = ? AND tenant_id = ?")
     .bind(stackId, tenantId)
-    .all<{ hash: string; object_format: number }>();
+    .all<{ hash: string }>();
   let notReadyCount = 0;
   let readyStoredBytes = 0;
-  let migrationDuplicateBytes = 0;
   for (const node of allNodes.results) {
-    const active = await store.bucket.head(objectKey(store, node.hash, node.object_format));
+    const active = await store.bucket.head(stackCanonicalNodeKey(stackId, tenantId, node.hash));
     if (active === null) {
       notReadyCount++;
     } else {
       readyStoredBytes += active.size;
     }
-    const duplicateKey = node.object_format === 2
-      ? stackNodeKey(stackId, tenantId, node.hash)
-      : stackCanonicalNodeKey(stackId, tenantId, node.hash);
-    const duplicate = await store.bucket.head(duplicateKey);
-    if (duplicate !== null) migrationDuplicateBytes += duplicate.size;
   }
   const reservations = await db.prepare(
     "SELECT COALESCE(SUM(stored_bytes), 0) AS reserved_bytes FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ?",
@@ -736,7 +622,6 @@ export async function usage(store: NodeStore): Promise<CasUsage> {
     nodeCount: stats?.nodeCount ?? 0,
     readyContentBytes: stats?.readyContentBytes ?? 0,
     readyStoredBytes,
-    migrationDuplicateBytes,
     reservedBytes: reservations?.reserved_bytes ?? 0,
     notReadyNodeCount: notReadyCount,
     leasedNodeCount: stats?.leasedNodeCount ?? 0,
@@ -754,7 +639,7 @@ export async function triggerGc(store: NodeStore, maxNodes = DEFAULT_GC_MAX_NODE
   const now = Date.now();
   const eligible = await db
     .prepare(
-      `SELECT hash, content_size, object_format FROM cas_nodes
+      `SELECT hash, content_size FROM cas_nodes
        WHERE stack_id = ? AND tenant_id = ?
          AND child_ref_count = 0
          AND root_ref_count = 0
@@ -762,7 +647,7 @@ export async function triggerGc(store: NodeStore, maxNodes = DEFAULT_GC_MAX_NODE
        LIMIT ?`,
     )
     .bind(stackId, tenantId, now, maxNodes)
-    .all<{ hash: string; content_size: number; object_format: number }>();
+    .all<{ hash: string; content_size: number }>();
 
   let deleted = 0;
   let reclaimedBytes = 0;
@@ -784,12 +669,7 @@ export async function triggerGc(store: NodeStore, maxNodes = DEFAULT_GC_MAX_NODE
       .bind(stackId, tenantId, node.hash)
       .all<{ child_hash: string; cnt: number }>();
 
-    await bucket.delete([
-      objectKey(store, node.hash, node.object_format),
-      node.object_format === 2
-        ? stackNodeKey(stackId, tenantId, node.hash)
-        : stackCanonicalNodeKey(stackId, tenantId, node.hash),
-    ]);
+    await bucket.delete(stackCanonicalNodeKey(stackId, tenantId, node.hash));
     const batch: D1PreparedStatement[] = [
       db.prepare("DELETE FROM cas_edges WHERE stack_id = ? AND tenant_id = ? AND parent_hash = ?")
         .bind(stackId, tenantId, node.hash),
@@ -815,13 +695,3 @@ function sameRefs(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((hash, index) => hash === right[index]);
 }
 
-function metadataMatches(
-  existing: { content_size: number; content_type: string },
-  existingRefs: readonly string[],
-  input: LeaseNodeInput,
-): boolean {
-  return existing.content_size === input.content.length
-    && existing.content_type === input.contentType
-    && existingRefs.length === input.refs.length
-    && existingRefs.every((ref, index) => ref === input.refs[index]);
-}

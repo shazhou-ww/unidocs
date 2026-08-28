@@ -30,7 +30,7 @@ export class MockCasService implements HttpFetcher {
         return this.#readContent(route.hash, request.headers.get("Range"));
       case "readMetadata":
         return this.#readMetadata(route.hash);
-      case "leaseExisting":
+      case "lease":
         return this.#lease(route.hash, request);
       case "updateRootRefs": {
         this.rootRefUpdates.push(await request.json() as CasRootRefUpdate);
@@ -41,7 +41,6 @@ export class MockCasService implements HttpFetcher {
           nodeCount: this.nodes.size,
           readyContentBytes: [...this.nodes.values()].reduce((total, node) => total + node.content.length, 0),
           readyStoredBytes: [...this.nodes.values()].reduce((total, node) => total + node.canonical.length, 0),
-          migrationDuplicateBytes: 0,
           reservedBytes: 0,
           notReadyNodeCount: 0,
           leasedNodeCount: this.nodes.size,

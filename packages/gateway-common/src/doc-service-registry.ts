@@ -26,7 +26,6 @@ export class StaticDocServiceRegistry {
       const candidate = value as Record<string, unknown>;
       const serviceId = candidate.serviceId;
       const url = candidate.url;
-      const accessKey = candidate.accessKey;
       const audience = candidate.audience;
       if (typeof serviceId !== "string" || serviceId.length === 0) {
         throw new TypeError(`Registration ${docType} has no serviceId`);
@@ -41,21 +40,14 @@ export class StaticDocServiceRegistry {
       if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
         throw new TypeError(`Registration ${docType} URL must use HTTP(S)`);
       }
-      if (accessKey !== undefined && (typeof accessKey !== "string" || accessKey.length === 0)) {
-        throw new TypeError(`Registration ${docType} has an invalid accessKey`);
-      }
-      if (audience !== undefined && (typeof audience !== "string" || audience.length === 0)) {
-        throw new TypeError(`Registration ${docType} has an invalid audience`);
-      }
-      if (accessKey === undefined && audience === undefined) {
-        throw new TypeError(`Registration ${docType} has no accessKey or audience`);
+      if (typeof audience !== "string" || audience.length === 0) {
+        throw new TypeError(`Registration ${docType} has no audience`);
       }
       serviceIds.add(serviceId);
       byDocType.set(docType, Object.freeze({
         serviceId,
         url: parsedUrl.toString().replace(/\/$/, ""),
-        ...(accessKey === undefined ? {} : { accessKey }),
-        ...(audience === undefined ? {} : { audience }),
+        audience,
       }));
     }
     this.#byDocType = byDocType;

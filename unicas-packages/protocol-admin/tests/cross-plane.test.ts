@@ -20,7 +20,7 @@ function readPkg(name: string): {
 }
 
 const TENANT_IMPL_PACKAGES = [
-  "@unicas/client",
+  "@unicas/tenant-client",
   "@unicas/server-common",
 ] as const;
 
@@ -111,11 +111,9 @@ describe("package dependency boundaries", () => {
     expect(control.dependencies?.["@unicas/admin-webui"]).toBeUndefined();
   });
 
-  test("cas-client stays on the tenant protocol only", () => {
-    const client = readPkg("client");
-    // cas-client consumes the migration-only legacy tenant surface until the
-    // caller migration (Task 8) moves it onto the canonical stack protocol.
-    expect(client.dependencies?.["@unicas/protocol-legacy"]).toBe("workspace:*");
+  test("tenant-client stays on the tenant protocol only", () => {
+    const client = readPkg("tenant-client");
+    expect(client.dependencies?.["@unicas/protocol-legacy"]).toBeUndefined();
     expect(client.dependencies?.["@unicas/protocol-admin"]).toBeUndefined();
   });
 });

@@ -15,13 +15,13 @@
   ],
   "references": [
     {
-      "path": "../../unicas-packages/client"
+      "path": "../../unicas-packages/tenant-client"
     },
     {
       "path": "../../unicas-packages/protocol"
     },
     {
-      "path": "../../unicas-packages/protocol-legacy"
+      "path": "../protocol-gateway"
     },
     {
       "path": "../protocol-doc"

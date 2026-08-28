@@ -1,20 +1,10 @@
 import type { SValue } from "@unidocs/protocol";
-import { isPublicCasRoute, matchCasRoute } from "@unicas/protocol-legacy";
 import type {
-  CasGcRequest,
-  CasGcResponse,
-  CasLeaseExistingRequest,
-  CasLeaseExistingResponse,
-  CasLeaseNodeRequest,
-  CasLeaseNodeResponse,
-  CasReadContentRequest,
-  CasReadContentResponse,
-  CasReadMetadataRequest,
-  CasReadMetadataResponse,
-  CasRoute,
-  CasUsageRequest,
-  CasUsageResponse,
-} from "@unicas/protocol-legacy";
+  CasGcResult,
+  CasLeaseResult,
+  CasNodeMetadata,
+  CasUsage,
+} from "@unicas/protocol";
 import type {
   DocApplyRequest,
   DocApplyResponse,
@@ -181,18 +171,22 @@ export type GatewayRunOperatorResponse = DocRunOperatorResponse;
 export interface GatewayResetOperatorRequest { path: GatewayDocumentPath }
 export type GatewayResetOperatorResponse = DocResetOperatorResponse;
 
-export type GatewayCasReadContentRequest = CasReadContentRequest;
-export type GatewayCasReadContentResponse = CasReadContentResponse;
-export type GatewayCasReadMetadataRequest = CasReadMetadataRequest;
-export type GatewayCasReadMetadataResponse = CasReadMetadataResponse;
-export type GatewayCasLeaseNodeRequest = CasLeaseNodeRequest;
-export type GatewayCasLeaseNodeResponse = CasLeaseNodeResponse;
-export type GatewayCasLeaseExistingRequest = CasLeaseExistingRequest;
-export type GatewayCasLeaseExistingResponse = CasLeaseExistingResponse;
-export type GatewayCasUsageRequest = CasUsageRequest;
-export type GatewayCasUsageResponse = CasUsageResponse;
-export type GatewayCasGcRequest = CasGcRequest;
-export type GatewayCasGcResponse = CasGcResponse;
+export interface GatewayCasTenantPath { readonly tenantId: string }
+export interface GatewayCasNodePath extends GatewayCasTenantPath { readonly hash: string }
+export interface GatewayCasReadContentRequest { readonly path: GatewayCasNodePath }
+export type GatewayCasReadContentResponse =
+  | { body: ReadableStream<Uint8Array>; headers: { contentType: string; contentLength: number } }
+  | GatewayErrorResponse;
+export interface GatewayCasReadMetadataRequest { readonly path: GatewayCasNodePath }
+export type GatewayCasReadMetadataResponse =
+  | { metadata: CasNodeMetadata }
+  | GatewayErrorResponse;
+export interface GatewayCasLeaseRequest { readonly path: GatewayCasNodePath }
+export type GatewayCasLeaseResponse = CasLeaseResult | GatewayErrorResponse;
+export interface GatewayCasUsageRequest { readonly path: GatewayCasTenantPath }
+export type GatewayCasUsageResponse = CasUsage | GatewayErrorResponse;
+export interface GatewayCasGcRequest { readonly path: GatewayCasTenantPath }
+export type GatewayCasGcResponse = CasGcResult | GatewayErrorResponse;
 
 export interface GatewayEndpointContracts {
   listDocuments: {
@@ -255,13 +249,9 @@ export interface GatewayEndpointContracts {
     request: GatewayCasReadMetadataRequest;
     response: GatewayCasReadMetadataResponse;
   };
-  casLeaseNode: {
-    request: GatewayCasLeaseNodeRequest;
-    response: GatewayCasLeaseNodeResponse;
-  };
-  casLeaseExisting: {
-    request: GatewayCasLeaseExistingRequest;
-    response: GatewayCasLeaseExistingResponse;
+  casLease: {
+    request: GatewayCasLeaseRequest;
+    response: GatewayCasLeaseResponse;
   };
   casUsage: { request: GatewayCasUsageRequest; response: GatewayCasUsageResponse };
   casGc: { request: GatewayCasGcRequest; response: GatewayCasGcResponse };
@@ -292,7 +282,14 @@ export type GatewayDocumentRoute = {
 
 export type GatewayRoute =
   | GatewayDocumentRoute
-  | { kind: "cas"; route: CasRoute };
+  | { kind: "cas"; route: GatewayCasRoute };
+
+export type GatewayCasRoute =
+  | { operation: "readContent"; tenantId: string; hash: string }
+  | { operation: "readMetadata"; tenantId: string; hash: string }
+  | { operation: "lease"; tenantId: string; hash: string }
+  | { operation: "usage"; tenantId: string }
+  | { operation: "gc"; tenantId: string };
 
 const documentOperations = {
   query: { method: "POST", operation: "queryDocument" },
@@ -343,17 +340,31 @@ export const gatewayRoutes = {
   resetOperator: (path: GatewayDocumentPath) => `${documentPath(path)}/reset`,
 } as const;
 
-export function isLegacyPublicCasRoute(method: string, pathname: string): boolean {
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length < 3 || parts[0] !== "users" || parts[2] !== "cas") return false;
+export const gatewayCasRoutes = {
+  readContent: ({ tenantId, hash }: GatewayCasNodePath) =>
+    `/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/content`,
+  readMetadata: ({ tenantId, hash }: GatewayCasNodePath) =>
+    `/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/metadata`,
+  lease: ({ tenantId, hash }: GatewayCasNodePath) =>
+    `/tenants/${segment(tenantId)}/cas/nodes/${segment(hash)}/lease`,
+  usage: ({ tenantId }: GatewayCasTenantPath) => `/tenants/${segment(tenantId)}/cas/usage`,
+  gc: ({ tenantId }: GatewayCasTenantPath) => `/tenants/${segment(tenantId)}/cas/gc`,
+} as const;
 
-  if (parts.length === 4 && parts[3] === "usage") return method === "GET";
-  if (parts.length === 5 && parts[3] === "nodes") return method === "POST";
-  if (parts.length === 6 && parts[3] === "nodes") {
-    if (parts[5] === "content" || parts[5] === "metadata") return method === "GET";
-    if (parts[5] === "lease") return method === "POST";
-  }
-  return false;
+function matchGatewayCasRoute(method: string, pathname: string): GatewayCasRoute | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] !== "tenants" || !parts[1] || parts[2] !== "cas") return null;
+  const tenantId = decodeSegment(parts[1]);
+  if (tenantId === null) return null;
+  if (parts.length === 4 && parts[3] === "usage" && method === "GET") return { operation: "usage", tenantId };
+  if (parts.length === 4 && parts[3] === "gc" && method === "POST") return { operation: "gc", tenantId };
+  if (parts.length !== 6 || parts[3] !== "nodes" || !parts[4]) return null;
+  const hash = decodeSegment(parts[4]);
+  if (hash === null) return null;
+  if (parts[5] === "content" && method === "GET") return { operation: "readContent", tenantId, hash };
+  if (parts[5] === "metadata" && method === "GET") return { operation: "readMetadata", tenantId, hash };
+  if (parts[5] === "lease" && method === "POST") return { operation: "lease", tenantId, hash };
+  return null;
 }
 
 /**
@@ -364,25 +375,13 @@ export function isLegacyPublicCasRoute(method: string, pathname: string): boolea
  * excluded: `updateRootRefs`/`rootRefs` are private service operations, and
  * audit routes live under `/admin` which the tenant matcher never recognizes.
  */
-export function isGatewayExposedCasRoute(route: CasRoute): boolean {
-  switch (route.operation) {
-    case "readContent":
-    case "readMetadata":
-    case "leaseNode":
-    case "leaseExisting":
-    case "usage":
-    case "gc":
-      return true;
-    default:
-      return false;
-  }
+export function isGatewayExposedCasRoute(_route: GatewayCasRoute): boolean {
+  return true;
 }
 
 export function matchGatewayRoute(method: string, pathname: string): GatewayRoute | null {
-  if (isPublicCasRoute(method, pathname)) {
-    const route = matchCasRoute(method, pathname);
-    return route ? { kind: "cas", route } : null;
-  }
+  const casRoute = matchGatewayCasRoute(method, pathname);
+  if (casRoute !== null) return { kind: "cas", route: casRoute };
 
   const parts = pathname.split("/").filter(Boolean);
   if (parts.length < 4 || parts[0] !== "tenants" || parts[2] !== "docs") return null;

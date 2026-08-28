@@ -47,8 +47,8 @@ deployment itself.
 ## First run (once per machine)
 
 ```powershell
-pnpm --filter @unicas/cli build
-pnpm install --global ./unicas-packages/cli   # pnpm 10+: pnpm link --global is removed
+pnpm --filter @unicas/admin-cli build
+pnpm install --global ./unicas-packages/admin-cli   # pnpm 10+: pnpm link --global is removed
 unicas login                                  # browser OAuth + consent
 ```
 
@@ -153,7 +153,7 @@ forwarding calls over the authenticated connection:
 
 On Windows the global bin is a `.CMD` shim; a Node-based client must spawn with
 `shell: true`, use the shim path (`%LOCALAPPDATA%\pnpm\bin\unicas.CMD`), or
-invoke `node <checkout>/unicas-packages/cli/dist/cli.js mcp` directly.
+invoke `node <checkout>/unicas-packages/admin-cli/dist/cli.js mcp` directly.
 
 ## Troubleshooting
 
@@ -168,6 +168,6 @@ invoke `node <checkout>/unicas-packages/cli/dist/cli.js mcp` directly.
 ## Sources of truth
 
 - `docs/cas-control-plane-cli.md` — CLI overview and DSH integration.
-- `unicas-packages/cli/README.md` — full command reference and guardrails.
-- `unicas-packages/cli/src/mcp/catalog.ts` — the exact 18-tool contract
+- `unicas-packages/admin-cli/README.md` — full command reference and guardrails.
+- `unicas-packages/admin-cli/src/mcp/catalog.ts` — the exact 18-tool contract
   mirrored from the remote control plane.

@@ -66,14 +66,14 @@ test("gateway creates a docx doc via a separate registered workerUrl", async () 
   expect(listed.data.map((row) => row.doc_id)).toContain(created.docId);
 });
 
-test("a directly reached Doc service rejects requests without its service credential", async () => {
+test("a directly reached Doc service does not expose legacy session routes", async () => {
   const res = await fetch(`${runtime.urls.markdown}/sessions/untrusted-session/status`, {
     headers: {
       "X-Tenant-Id": "alice",
       "X-Session-Id": "untrusted-session",
     },
   });
-  expect(res.status).toBe(401);
+  expect(res.status).toBe(404);
 });
 
 test("static registration works with a persist directory", async () => {

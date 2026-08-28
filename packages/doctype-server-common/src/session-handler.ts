@@ -33,7 +33,7 @@
 
 import { SValueContentType, type SValue } from "@unidocs/protocol";
 import { decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
-import { CasClientError } from "@unicas/client";
+import { CasClientError } from "@unicas/tenant-client";
 import {
   DeltaRejectedError,
   DocExistsError,
@@ -223,7 +223,7 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         };
 
         const applied = await session.apply(
-    body.operations as never,
+          body.operations as never,
           body.description,
           body.baseVersion,
           body.opId,

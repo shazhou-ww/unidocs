@@ -7,6 +7,12 @@ import {
 } from "../src/index.js";
 
 describe("blob index protocol", () => {
+  test("uses 32 MiB chunks and 256-way indexes for 8 GiB single-level blobs", () => {
+    expect(BlobChunkBytes).toBe(32 * 1024 * 1024);
+    expect(BlobIndexFanout).toBe(256);
+    expect(BlobChunkBytes * BlobIndexFanout).toBe(8 * 1024 * 1024 * 1024);
+  });
+
   test("round-trips deterministic version-1 metadata", () => {
     const value = {
       version: 1 as const,

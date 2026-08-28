@@ -22,8 +22,8 @@ describe("Gateway capability HTTP forwarding", () => {
       return Response.json({ success: true, sessionId: "session-1", version: 1 });
     };
     const handler = createGatewayHandler({
-      internalAuthMode: "capability",
       capabilityAuthority: authority,
+      casStackId: "stack-1",
       identityResolver: tenantIdentity,
       resolveDocService: async () => ({
         serviceId: "docx-primary",
@@ -97,8 +97,8 @@ describe("Gateway capability HTTP forwarding", () => {
       return Response.json({ success: true, data: [], version: 1 });
     };
     const handler = createGatewayHandler({
-      internalAuthMode: "capability",
       capabilityAuthority: authorityFor(issued, ["doc-jti"]),
+      casStackId: "stack-1",
       identityResolver: tenantIdentity,
       resolveDocService: async () => ({
         serviceId: "markdown-primary",
@@ -126,8 +126,8 @@ describe("Gateway capability HTTP forwarding", () => {
     const issued: IssueCapabilityInput[] = [];
     let forwarded: Request | undefined;
     const handler = createGatewayHandler({
-      internalAuthMode: "capability",
       capabilityAuthority: authorityFor(issued, ["cas-jti"]),
+      casStackId: "stack-1",
       identityResolver: tenantIdentity,
       resolveDocService: async () => null,
       casFetcher: {
@@ -159,9 +159,9 @@ describe("Gateway capability HTTP forwarding", () => {
     expect(issued[0].sessionId).toBeUndefined();
   });
 
-  test("fails startup when capability mode has no authority", () => {
+  test("fails startup with no authority", () => {
     expect(() => createGatewayHandler({
-      internalAuthMode: "capability",
+      casStackId: "stack-1",
       identityResolver: tenantIdentity,
       resolveDocService: async () => null,
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
@@ -191,7 +191,15 @@ function authorityFor(
         return `token-${input.jti}`;
       },
     },
+    casIssuer: {
+      keyId: "cas-key-1",
+      issue: async (input) => {
+        issued.push(input);
+        return `token-${input.jti}`;
+      },
+    },
     casAudience: "unidocs-cas",
+    casStackId: "stack-1",
     generateJti: () => jtis.shift()!,
   });
 }

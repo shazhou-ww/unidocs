@@ -23,7 +23,6 @@ beforeAll(async () => {
   // 不再依赖 cf legacy CAS worker。
   azure = await startAzureRuntime({
     docTypes: ["psd"],
-    internalAuthMode: "stack",
   });
 }, 300_000);
 

@@ -15,7 +15,7 @@
   ],
   "references": [
     {
-      "path": "../../unicas-packages/client"
+      "path": "../../unicas-packages/tenant-client"
     },
     {
       "path": "../svalue-codec"

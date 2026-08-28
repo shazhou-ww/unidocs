@@ -14,7 +14,7 @@ describe("cas-control-plane package boundary", () => {
     );
     expect(pkg.name).toBe(CAS_CONTROL_PLANE_PACKAGE);
     expect(pkg.dependencies["@unicas/protocol-admin"]).toBe("workspace:*");
-    expect(pkg.dependencies["@unicas/client"]).toBeUndefined();
+    expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/admin-webui"]).toBeUndefined();
   });
 });

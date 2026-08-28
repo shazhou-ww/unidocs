@@ -28,10 +28,6 @@ param extraEnv array = []
 @secure()
 param databaseUrl string
 @secure()
-param serviceAccessKey string = ''
-@secure()
-param casAccessKey string = ''
-@secure()
 param docServicesJson string = ''
 @secure()
 param capabilityPrivateKeyPkcs8 string = ''
@@ -50,18 +46,6 @@ param casStackTrustedJwks string = ''
 // az bicep build / what-if 都不会报错。
 var port = string(targetPort)
 var optionalSecrets = concat(
-  empty(serviceAccessKey) ? [] : [
-    {
-      name: 'service-access-key'
-      value: serviceAccessKey
-    }
-  ],
-  empty(casAccessKey) ? [] : [
-    {
-      name: 'cas-access-key'
-      value: casAccessKey
-    }
-  ],
   empty(docServicesJson) ? [] : [
     {
       name: 'doc-services-json'
@@ -94,18 +78,6 @@ var optionalSecrets = concat(
   ]
 )
 var optionalSecretEnv = concat(
-  empty(serviceAccessKey) ? [] : [
-    {
-      name: 'SERVICE_ACCESS_KEY'
-      secretRef: 'service-access-key'
-    }
-  ],
-  empty(casAccessKey) ? [] : [
-    {
-      name: 'CAS_ACCESS_KEY'
-      secretRef: 'cas-access-key'
-    }
-  ],
   empty(docServicesJson) ? [] : [
     {
       name: 'DOC_SERVICES_JSON'

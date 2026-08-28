@@ -7,11 +7,6 @@ export type CapabilityPermission = string & {
 export type CapabilityPermissionKind =
   | "cas:read"
   | "cas:write"
-  | "cas:usage:read"
-  | "cas:gc:trigger"
-  /** Legacy tenant administration permission; retired with the legacy
-   *  runtime (Task 10). Kept only for the remaining legacy-compatible
-   *  callers until they move to the stack-scoped names below. */
   | "cas:admin"
   | "sessions:create"
   | "sessions:read"
@@ -39,16 +34,6 @@ export function casWritePermission(tenantId: string): CapabilityPermission {
   return tenantPermission(tenantId, "cas:write");
 }
 
-export function casUsageReadPermission(tenantId: string): CapabilityPermission {
-  // Wire format is `cas:<action>`; the parsed kind carries the full semantic.
-  return `tenants:${canonicalPermissionSegment(tenantId)}:cas:usage` as CapabilityPermission;
-}
-
-export function casGcTriggerPermission(tenantId: string): CapabilityPermission {
-  return `tenants:${canonicalPermissionSegment(tenantId)}:cas:gc` as CapabilityPermission;
-}
-
-/** @deprecated Legacy tenant CAS administration; retired with the legacy runtime (Task 10). */
 export function casAdminPermission(tenantId: string): CapabilityPermission {
   return tenantPermission(tenantId, "cas:admin");
 }
@@ -83,12 +68,6 @@ export function parseCapabilityPermission(
     const action = parts[3];
     if (action === "read" || action === "write") {
       return { kind: `cas:${action}`, tenantId };
-    }
-    if (action === "usage") {
-      return { kind: "cas:usage:read", tenantId };
-    }
-    if (action === "gc") {
-      return { kind: "cas:gc:trigger", tenantId };
     }
     if (action === "admin") {
       return { kind: "cas:admin", tenantId };

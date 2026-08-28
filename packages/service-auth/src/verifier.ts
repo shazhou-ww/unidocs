@@ -214,15 +214,6 @@ export class CapabilityVerifier {
           "Session capabilities cannot contain CAS administration permission",
         );
       }
-      if (
-        (parsed.kind === "cas:usage:read" || parsed.kind === "cas:gc:trigger")
-        && sessionId !== undefined
-      ) {
-        throw new CapabilityAuthorizationError(
-          "insufficient_permission",
-          "Session capabilities cannot contain tenant CAS usage or GC permissions",
-        );
-      }
       if (!this.#allowedPermissionKinds.has(parsed.kind)) {
         throw new CapabilityAuthorizationError(
           "insufficient_permission",

@@ -3,13 +3,30 @@ import worker from "../src/worker";
 
 const hash = "a".repeat(64);
 
-function env(fetchImpl?: (request: Request) => Promise<Response>) {
+async function env(fetchImpl?: (request: Request) => Promise<Response>) {
   const casFetch = vi.fn(fetchImpl ?? (async () => new Response("ok")));
+  const pair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const privateKey = pem(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
   return {
     GATEWAY_DB: {},
     DOC_SERVICES_JSON: "{}",
-    INTERNAL_AUTH_MODE: "legacy",
-    CAS_ACCESS_KEY: "cas-key",
+    CAPABILITY_PRIVATE_KEY_PKCS8: privateKey,
+    CAPABILITY_KEY_ID: "doc-key",
+    CAPABILITY_ISSUER: "https://gateway.test",
+    CAPABILITY_ALGORITHM: "ES256",
+    CAPABILITY_TTL_SECONDS: "120",
+    CAPABILITY_MAX_LIFETIME_SECONDS: "300",
+    CAPABILITY_CLOCK_SKEW_SECONDS: "30",
+    CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
+    CAS_STACK_ID: "stack-1",
+    CAS_STACK_ISSUER: "https://stack.test",
+    CAS_STACK_KEY_ID: "cas-key",
+    CAS_STACK_PRIVATE_KEY_PKCS8: privateKey,
+    CAS_REF_DOMAIN: "doc",
     INSECURE_PATH_IDENTITY: "true",
     CAS_SERVICE: { fetch: casFetch },
     casFetch,
@@ -17,18 +34,19 @@ function env(fetchImpl?: (request: Request) => Promise<Response>) {
 }
 
 describe("Gateway CAS proxy", () => {
-  it("forwards allowlisted public CAS routes with internal headers", async () => {
-    const bindings = env();
+  it("forwards allowlisted public CAS routes with a capability", async () => {
+    const bindings = await env();
     const res = await worker.fetch(
-      new Request(`https://gw/tenants/alice/cas/nodes/${hash}`, { method: "POST" }),
+      new Request(`https://gw/tenants/alice/cas/nodes/${hash}/content`),
       bindings as never,
     );
     expect(res.ok).toBe(true);
     expect(bindings.casFetch).toHaveBeenCalledTimes(1);
     const forwarded = bindings.casFetch.mock.calls[0][0] as Request;
-    expect(new URL(forwarded.url).pathname).toBe(`/tenants/alice/cas/nodes/${hash}`);
-    expect(forwarded.headers.get("X-Internal-Token")).toBe("cas-key");
-    expect(forwarded.headers.get("X-Tenant-Id")).toBe("alice");
+    expect(new URL(forwarded.url).pathname).toBe(`/stacks/stack-1/tenants/alice/cas/nodes/${hash}/content`);
+    expect(forwarded.headers.get("Authorization")).toMatch(/^Bearer /);
+    expect(forwarded.headers.get("X-Internal-Token")).toBeNull();
+    expect(forwarded.headers.get("X-Tenant-Id")).toBeNull();
     expect(forwarded.headers.get("X-User-Id")).toBeNull();
   });
 
@@ -39,9 +57,9 @@ describe("Gateway CAS proxy", () => {
   // identity(gateway-handler.ts 的 `headers.set("Accept-Encoding", "identity")`),
   // CAS 路径漏了。
   it("asks the CAS service for an unencoded response", async () => {
-    const bindings = env();
+    const bindings = await env();
     await worker.fetch(
-      new Request(`https://gw/tenants/alice/cas/nodes/${hash}`, { method: "POST" }),
+      new Request(`https://gw/tenants/alice/cas/nodes/${hash}/content`),
       bindings as never,
     );
     const forwarded = bindings.casFetch.mock.calls[0][0] as Request;
@@ -49,7 +67,7 @@ describe("Gateway CAS proxy", () => {
   });
 
   it("does not proxy root-refs", async () => {
-    const bindings = env();
+    const bindings = await env();
     const res = await worker.fetch(
       new Request("https://gw/tenants/alice/cas/root-refs", { method: "POST" }),
       bindings as never,
@@ -59,13 +77,18 @@ describe("Gateway CAS proxy", () => {
   });
 
   it("proxies tenant GC for an authorized tenant administrator", async () => {
-    const bindings = env();
+    const bindings = await env();
     const res = await worker.fetch(
       new Request("https://gw/tenants/alice/cas/gc", { method: "POST" }),
       bindings as never,
     );
     expect(res.ok).toBe(true);
     const forwarded = bindings.casFetch.mock.calls[0][0] as Request;
-    expect(new URL(forwarded.url).pathname).toBe("/tenants/alice/cas/gc");
+    expect(new URL(forwarded.url).pathname).toBe("/stacks/stack-1/tenants/alice/cas/gc");
   });
 });
+
+function pem(bytes: ArrayBuffer): string {
+  const base64 = Buffer.from(bytes).toString("base64").match(/.{1,64}/g)?.join("\n") ?? "";
+  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
+}

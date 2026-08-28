@@ -1,12 +1,8 @@
-import type { CasRoute } from "@unicas/protocol-legacy";
+import type { GatewayCasRoute } from "@unidocs/protocol-gateway";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import type {
   CapabilityPermission,
   IssueCapabilityInput,
-} from "@unidocs/service-auth";
-import {
-  casGcTriggerPermission,
-  casUsageReadPermission,
 } from "@unidocs/service-auth";
 import {
   casCapabilityPolicy,
@@ -33,15 +29,11 @@ export interface GatewayCapabilityAuditEvent {
 export interface GatewayCapabilityAuthorityConfig {
   /** Doc-service identity: signs the doc capabilities (audience unidocs-doc:*). */
   readonly issuer: GatewayCapabilityIssuer;
-  /**
-   * Stack CAS identity: signs delegated-cas and gateway-cas capabilities in
-   * stack mode. When absent, `issuer` is used (legacy/dual/capability modes).
-   */
-  readonly casIssuer?: GatewayCapabilityIssuer;
+  /** Stack CAS identity: signs delegated-cas and gateway-cas capabilities. */
+  readonly casIssuer: GatewayCapabilityIssuer;
   readonly casAudience: string;
-  /** Stack namespace for the canonical CAS route prefix (stack mode only). */
-  readonly casStackId?: string;
-  /** refDomain claim carried by CAS capabilities (stack mode only). */
+  readonly casStackId: string;
+  /** refDomain claim carried by CAS capabilities. */
   readonly casRefDomain?: string;
   readonly generateJti?: () => string;
   readonly audit?: (event: GatewayCapabilityAuditEvent) => void;
@@ -53,32 +45,22 @@ export interface DocOperationCredentials {
   readonly deadlineSeconds: 15 | 30 | 60 | 90 | 1800;
 }
 
-/** Stack-mode permission mapping: usage/gc use the stack-scoped names. */
-function stackPermissionFor(route: CasRoute, fallback: CapabilityPermission): CapabilityPermission {
-  switch (route.operation) {
-    case "usage":
-      return casUsageReadPermission(route.tenantId);
-    case "gc":
-      return casGcTriggerPermission(route.tenantId);
-    default:
-      return fallback;
-  }
-}
-
 export class GatewayCapabilityAuthority {
   readonly #issuer: GatewayCapabilityIssuer;
   readonly #casIssuer: GatewayCapabilityIssuer;
   readonly #casAudience: string;
-  readonly #casStackId?: string;
+  readonly #casStackId: string;
   readonly #casRefDomain?: string;
   readonly #generateJti: () => string;
   readonly #audit: (event: GatewayCapabilityAuditEvent) => void;
 
   constructor(config: GatewayCapabilityAuthorityConfig) {
     if (config.issuer.keyId.length === 0) throw new TypeError("Capability key ID is required");
+    if (config.casIssuer.keyId.length === 0) throw new TypeError("CAS capability key ID is required");
     if (config.casAudience.length === 0) throw new TypeError("CAS capability audience is required");
+    if (config.casStackId.length === 0) throw new TypeError("CAS stack ID is required");
     this.#issuer = config.issuer;
-    this.#casIssuer = config.casIssuer ?? config.issuer;
+    this.#casIssuer = config.casIssuer;
     this.#casAudience = config.casAudience;
     this.#casStackId = config.casStackId;
     this.#casRefDomain = config.casRefDomain;
@@ -86,8 +68,7 @@ export class GatewayCapabilityAuthority {
     this.#audit = config.audit ?? (() => undefined);
   }
 
-  /** Stack namespace when stack mode is configured; undefined in legacy modes. */
-  get stackId(): string | undefined {
+  get stackId(): string {
     return this.#casStackId;
   }
 
@@ -134,21 +115,15 @@ export class GatewayCapabilityAuthority {
     });
   }
 
-  async issueCasOperation(route: CasRoute): Promise<string> {
+  async issueCasOperation(route: GatewayCasRoute): Promise<string> {
     const policy = casCapabilityPolicy(route);
-    // Stack mode talks to the canonical middleware, which requires the
-    // stack-scoped permission names (cas:usage / cas:gc) rather than the
-    // retired cas:admin.
-    const permission = this.#casStackId !== undefined
-      ? stackPermissionFor(route, policy.permission)
-      : policy.permission;
     const token = await this.#issue(this.#casIssuer, {
       kind: "gateway-cas",
       subject: "gateway",
       audience: this.#casAudience,
       tenantId: route.tenantId,
       refDomain: this.#casRefDomain,
-      permissions: [permission],
+      permissions: [policy.permission],
       lifetimeSeconds: policy.lifetimeSeconds,
     });
     return `Bearer ${token}`;

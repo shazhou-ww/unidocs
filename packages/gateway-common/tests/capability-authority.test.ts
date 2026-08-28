@@ -18,7 +18,15 @@ describe("GatewayCapabilityAuthority", () => {
           return `token-${input.jti}`;
         },
       },
+      casIssuer: {
+        keyId: "key-1",
+        issue: async (input) => {
+          issued.push(input);
+          return `token-${input.jti}`;
+        },
+      },
       casAudience: "unidocs-cas",
+      casStackId: "stack-1",
       generateJti: () => ids.shift()!,
       audit: event => audits.push(event),
     });
@@ -72,7 +80,9 @@ describe("GatewayCapabilityAuthority", () => {
           return "doc-token";
         },
       },
+      casIssuer: { keyId: "cas-key-1", issue: async () => "unused" },
       casAudience: "unidocs-cas",
+      casStackId: "stack-1",
       generateJti: () => "doc-jti",
     });
 
@@ -100,7 +110,15 @@ describe("GatewayCapabilityAuthority", () => {
           return "cas-token";
         },
       },
+      casIssuer: {
+        keyId: "key-1",
+        issue: async (input) => {
+          issued.push(input);
+          return "cas-token";
+        },
+      },
       casAudience: "unidocs-cas",
+      casStackId: "stack-1",
       generateJti: () => "cas-jti",
     });
 

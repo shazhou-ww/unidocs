@@ -1,4 +1,4 @@
-import { CasClientError } from "@unicas/client";
+import { CasClientError } from "@unicas/tenant-client";
 import {
   computeNodeDigest,
   encodeHeader,

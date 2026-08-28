@@ -68,8 +68,12 @@ describe("functional tenant CAS client", () => {
   it("stores and reads deterministic chunk-tree blobs", async () => {
     const cas = createClient();
     const chunkBytes = 4;
-    const blobs = createCasBlobClient(cas, { chunkBytes });
-    const bytes = Uint8Array.from([0x61, 0x61, 0x61, 0x61, 0x62, 0x63, 0x64]);
+    const blobs = createCasBlobClient(cas, { chunkBytes, indexFanout: 2 });
+    const bytes = Uint8Array.from([
+      0x61, 0x61, 0x61, 0x61,
+      0x62, 0x62, 0x62, 0x62,
+      0x63, 0x64, 0x65,
+    ]);
     const progress = vi.fn();
 
     const ref = await blobs.storeBlob(streamOf(bytes, 1024 * 1024 + 1), {
@@ -84,7 +88,7 @@ describe("functional tenant CAS client", () => {
       offset: chunkBytes - 2,
       length: 4,
     })).arrayBuffer());
-    expect(ranged).toEqual(Uint8Array.from([0x61, 0x61, 0x62, 0x63]));
+    expect(ranged).toEqual(Uint8Array.from([0x61, 0x61, 0x62, 0x62]));
     expect(progress).toHaveBeenLastCalledWith(bytes.length);
   }, 20_000);
 

@@ -45,5 +45,3 @@ storage = "sqlite"
 #                          /_internal/audit/* RPC (fail closed when absent)
 
 # Static legacy-stack bootstrap (migration window, registry wins; secrets):
-#   LEGACY_STACK_ID, LEGACY_STACK_ISSUER, LEGACY_STACK_AUDIENCE,
-#   LEGACY_STACK_ALGORITHM, LEGACY_STACK_JWKS (JSON JWKS)

@@ -16,7 +16,6 @@ let runtime;
 beforeAll(async () => {
   runtime = await startAzureRuntime({
     docTypes: ["markdown"],
-    internalAuthMode: "stack",
   });
 }, 240_000);
 

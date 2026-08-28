@@ -165,7 +165,6 @@ describe("Doc capability edge", () => {
     const editor = trackingNamespace(async () => Response.json({ success: true }));
     const handler = createDocTypeHandler({
       docType: "markdown",
-      internalAuthMode: "capability",
       docCapabilityVerifier: verifier(async () => {
         throw new CapabilityAuthenticationError("invalid_token", "Capability token is invalid");
       }),
@@ -242,7 +241,6 @@ function capabilityHandler(
 ) {
   return createDocTypeHandler({
     docType: "markdown",
-    internalAuthMode: "capability",
     docCapabilityVerifier: verifier(async token => {
       expect(token).toBe("doc-token");
       return primary;

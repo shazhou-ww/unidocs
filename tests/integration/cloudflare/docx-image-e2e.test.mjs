@@ -1,20 +1,19 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
+  CanonicalNodeContentType,
+  concatenateNodeBytes,
   encodeHeader,
   computeNodeDigest,
   hashToHex,
 } from "../../../unicas-packages/server-common/src/index.ts";
 import {
-  createSBlobContext,
   decodeSValue,
   encodeSValue,
   isSBlob,
   SValueContentType,
 } from "../../../packages/cloudflare-sdk/src/index.ts";
-import {
-  createLegacyTenantCasClient,
-} from "../../../unicas-packages/client/src/index.ts";
+import { createSBlob } from "../../../packages/svalue-codec/src/index.ts";
 
 const PNG_1x1 = Uint8Array.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
@@ -82,28 +81,20 @@ test("DOCX insertImage reads CAS via the editor service binding", async () => {
   const header = encodeHeader(PNG_1x1.length, "image/png", 0);
   const digest = await computeNodeDigest(header, "image/png", [], PNG_1x1);
   const hash = hashToHex(digest);
+  const canonical = concatenateNodeBytes(header, new TextEncoder().encode("image/png"), [], PNG_1x1);
 
-  const lease = await closeFetch(`${GW()}/tenants/alice/cas/nodes/${hash}`, {
+  const lease = await closeFetch(`${GW()}/tenants/alice/cas/nodes/${hash}/lease`, {
     method: "POST",
     headers: {
-      "Content-Type": "image/png",
-      "Content-Length": String(PNG_1x1.length),
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonical.length),
       "X-CAS-Lease-Duration": "900000",
     },
-    body: PNG_1x1,
+    body: canonical,
   });
   expect(lease.ok).toBe(true);
 
-  const cas = createLegacyTenantCasClient({
-    baseUrl: GW(),
-    tenantId: "alice",
-  });
-  const context = createSBlobContext({
-    leaseNode: hash => cas.leaseNode(hash),
-  });
-  const blob = await context.makeSBlob(hash, async () => {
-    throw new Error("existing image should not invoke the lazy loader");
-  });
+  const blob = createSBlob(hash);
 
   const create = await closeFetch(`${GW()}/tenants/alice/docs/docx/`, { method: "POST" });
   const { docId } = await create.json();

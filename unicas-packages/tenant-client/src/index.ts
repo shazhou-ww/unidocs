@@ -25,9 +25,7 @@ export type {
   TenantCasClient,
   TenantCasClientConfig,
 } from "./types.js";
-export type { LegacyTenantCasClientConfig } from "./legacy-types.js";
 
 export { createCasBlobClient, leaseNodeContent, storeNodeContent } from "./blob.js";
 export { createTenantCasClient } from "./client.js";
-export { createLegacyTenantCasClient } from "./legacy.js";
 export { CasClientError } from "./errors.js";

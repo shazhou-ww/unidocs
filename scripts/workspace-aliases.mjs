@@ -37,7 +37,7 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/svalue-codec/internal": "packages/svalue-codec/src/internal.ts",
   "@unidocs/gateway-common": "packages/gateway-common/src/index.ts",
   "@unicas/server-common": "unicas-packages/server-common/src/index.ts",
-  "@unicas/client": "unicas-packages/client/src/index.ts",
+  "@unicas/tenant-client": "unicas-packages/tenant-client/src/index.ts",
   "@unidocs/doctype-server-common": "packages/doctype-server-common/src/index.ts",
   "@unidocs/doctype-server-common/agent": "packages/doctype-server-common/src/agent/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",

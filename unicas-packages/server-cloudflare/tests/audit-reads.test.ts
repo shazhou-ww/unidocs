@@ -9,7 +9,7 @@ import {
   listRootDomains,
   AuditReadError,
 } from "../src/audit-reads.js";
-import { stackNodeKey } from "../src/do-names.js";
+import { stackCanonicalNodeKey } from "../src/do-names.js";
 
 let miniflare: Miniflare | undefined;
 let db: D1Database | undefined;
@@ -206,7 +206,7 @@ describe("listRootDomainEvents", () => {
     await db!.prepare(
       "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count) VALUES (?, ?, ?, 10, 'text/plain', 1, 1, 0, 0)",
     ).bind(STACK, "tenant-a", H1).run();
-    await bucket!.put(stackNodeKey(STACK, "tenant-a", H1), new TextEncoder().encode("content"));
+    await bucket!.put(stackCanonicalNodeKey(STACK, "tenant-a", H1), new TextEncoder().encode("content"));
     const canonical = await canonicalizeRootRefsUpdate({ requestId: "dup", changes: { [H1]: 1 }, refDomain: DOMAIN });
     for (let i = 0; i < 2; i += 1) {
       await executeDomainUpdate({

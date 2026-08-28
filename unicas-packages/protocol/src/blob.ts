@@ -2,8 +2,8 @@ import { decode, encode, rfc8949EncodeOptions } from "cborg";
 
 export const BlobChunkContentType = "application/vnd.unicas.blob-chunk";
 export const BlobIndexContentType = "application/vnd.unicas.blob-index+cbor;version=1";
-export const BlobChunkBytes = 8 * 1024 * 1024;
-export const BlobIndexFanout = 32;
+export const BlobChunkBytes = 32 * 1024 * 1024;
+export const BlobIndexFanout = 256;
 
 export interface CasBlobIndexV1 {
   readonly version: 1;

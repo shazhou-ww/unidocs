@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { CasRoute } from "@unicas/protocol-legacy";
+import type { GatewayCasRoute } from "@unidocs/protocol-gateway";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {
   casCapabilityPolicy,
@@ -36,21 +36,15 @@ describe("Gateway capability policy", () => {
   test.each([
     ["readContent", "cas:read", false],
     ["readMetadata", "cas:read", false],
-    ["leaseNode", "cas:write", false],
-    ["leaseExisting", "cas:write", false],
+    ["lease", "cas:write", false],
     ["usage", "cas:admin", true],
     ["gc", "cas:admin", true],
   ])("maps public CAS %s", (operation, suffix, requiresTenantAdmin) => {
-    const route = { operation, tenantId: "t", hash: "h" } as CasRoute;
+    const route = { operation, tenantId: "t", hash: "h" } as GatewayCasRoute;
     expect(casCapabilityPolicy(route)).toEqual({
       permission: `tenants:t:${suffix}`,
       requiresTenantAdmin,
       lifetimeSeconds: 120,
     });
-  });
-
-  test("rejects private CAS operations", () => {
-    expect(() => casCapabilityPolicy({ operation: "rootRefs", tenantId: "t" }))
-      .toThrow("is not public");
   });
 });

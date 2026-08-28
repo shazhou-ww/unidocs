@@ -24,7 +24,7 @@
       "path": "unicas-packages/control-plane-mcp"
     },
     {
-      "path": "unicas-packages/cli"
+      "path": "unicas-packages/admin-cli"
     },
     {
       "path": "unicas-packages/admin-webui"
@@ -51,7 +51,7 @@
       "path": "unicas-packages/server-common"
     },
     {
-      "path": "unicas-packages/client"
+      "path": "unicas-packages/tenant-client"
     },
     {
       "path": "packages/doctype-server-common"

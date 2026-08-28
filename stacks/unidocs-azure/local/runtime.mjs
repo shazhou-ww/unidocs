@@ -43,10 +43,6 @@ import {
   exportPKCS8,
   generateKeyPair,
 } from "jose";
-import {
-  CAS_ACCESS_KEY,
-  docServiceAccessKey,
-} from "../../cloudflare/local/doc-types.mjs";
 import { startLocalMiddleware } from "../../cloudflare/local/runtime.mjs";
 import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./ports.mjs";
@@ -648,7 +644,6 @@ export async function startAzureRuntime({
   host = "127.0.0.1",
   docTypes = ["markdown"],
   replicas = 2,
-  internalAuthMode = "stack",
   capabilityFixture,
   stackFixture,
   casBaseUrl,
@@ -657,9 +652,6 @@ export async function startAzureRuntime({
   postgres = "compose",
   azuriteDataDir,
 } = {}) {
-  if (internalAuthMode !== "stack") {
-    throw new Error("startAzureRuntime() only supports stack mode (legacy/dual/capability retired with the legacy runtime)");
-  }
   const resolvedStackFixture = stackFixture ?? await createEphemeralAzureStackFixture();
   // 嵌入中间件的独立端口：避开 cf dev（`pnpm dev`）占用的 8791-8793/8794。
   const resolvedMiddlewarePorts = {
@@ -767,7 +759,6 @@ export async function startAzureRuntime({
           {
             DATABASE_URL: docDatabaseUrl(name),
             BLOB_CONNECTION_STRING,
-            INTERNAL_AUTH_MODE: internalAuthMode,
             DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
             CAS_CAPABILITY_AUDIENCE: resolvedStackFixture.audience,
             CAPABILITY_ALGORITHM: "ES256",
@@ -779,10 +770,8 @@ export async function startAzureRuntime({
             CAS_STACK_ID: resolvedStackFixture.stackId,
             CAS_STACK_ISSUER: resolvedStackFixture.issuer,
             CAS_STACK_TRUSTED_JWKS: JSON.stringify(resolvedStackFixture.jwks),
-            SERVICE_ACCESS_KEY: docServiceAccessKey(name),
             PORT: String(port),
             CAS_BASE_URL: resolvedCasBaseUrl,
-            CAS_ACCESS_KEY,
           },
           `azure-${name}-${i + 1}`,
         );
@@ -804,7 +793,6 @@ export async function startAzureRuntime({
       docServices[name] = {
         serviceId: name,
         url: urls[name],
-        accessKey: docServiceAccessKey(name),
         audience: `unidocs-doc:${name}`,
       };
     }
@@ -814,9 +802,7 @@ export async function startAzureRuntime({
       [],
       {
         DATABASE_URL: GATEWAY_DATABASE_URL,
-        CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: JSON.stringify(docServices),
-        INTERNAL_AUTH_MODE: internalAuthMode,
         CAS_CAPABILITY_AUDIENCE: resolvedStackFixture.audience,
         CAPABILITY_ALGORITHM: "ES256",
         CAPABILITY_TTL_SECONDS: "120",

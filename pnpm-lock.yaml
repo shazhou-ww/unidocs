@@ -180,9 +180,9 @@ importers:
       '@azure/storage-blob':
         specifier: ^12.33.0
         version: 12.33.0(supports-color@10.2.2)
-      '@unicas/client':
+      '@unicas/tenant-client':
         specifier: workspace:*
-        version: link:../../unicas-packages/client
+        version: link:../../unicas-packages/tenant-client
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
@@ -320,12 +320,12 @@ importers:
 
   packages/cloudflare-sdk:
     dependencies:
-      '@unicas/client':
-        specifier: workspace:*
-        version: link:../../unicas-packages/client
       '@unicas/server-common':
         specifier: workspace:*
         version: link:../../unicas-packages/server-common
+      '@unicas/tenant-client':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-client
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
@@ -417,15 +417,12 @@ importers:
 
   packages/doctype-server-common:
     dependencies:
-      '@unicas/client':
-        specifier: workspace:*
-        version: link:../../unicas-packages/client
-      '@unicas/protocol':
-        specifier: workspace:*
-        version: link:../../unicas-packages/protocol
       '@unicas/server-common':
         specifier: workspace:*
         version: link:../../unicas-packages/server-common
+      '@unicas/tenant-client':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-client
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -451,18 +448,18 @@ importers:
 
   packages/gateway-common:
     dependencies:
-      '@unicas/client':
-        specifier: workspace:*
-        version: link:../../unicas-packages/client
       '@unicas/protocol':
         specifier: workspace:*
         version: link:../../unicas-packages/protocol
-      '@unicas/protocol-legacy':
+      '@unicas/tenant-client':
         specifier: workspace:*
-        version: link:../../unicas-packages/protocol-legacy
+        version: link:../../unicas-packages/tenant-client
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
+      '@unidocs/protocol-gateway':
+        specifier: workspace:*
+        version: link:../protocol-gateway
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
@@ -501,9 +498,9 @@ importers:
 
   packages/protocol-gateway:
     dependencies:
-      '@unicas/protocol-legacy':
+      '@unicas/protocol':
         specifier: workspace:*
-        version: link:../../unicas-packages/protocol-legacy
+        version: link:../../unicas-packages/protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -609,6 +606,25 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
+  unicas-packages/admin-cli:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3)
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
   unicas-packages/admin-webui:
     dependencies:
       '@unicas/control-auth':
@@ -672,44 +688,6 @@ importers:
       wrangler:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
-
-  unicas-packages/cli:
-    dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: 1.30.0
-        version: 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3)
-      zod:
-        specifier: ^4.0.0
-        version: 4.4.3
-    devDependencies:
-      '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.3
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  unicas-packages/client:
-    dependencies:
-      '@unicas/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@unicas/protocol-legacy':
-        specifier: workspace:*
-        version: link:../protocol-legacy
-      '@unicas/server-common':
-        specifier: workspace:*
-        version: link:../server-common
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
   unicas-packages/control-auth:
     dependencies:
@@ -826,15 +804,6 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
-  unicas-packages/protocol-legacy:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
   unicas-packages/server-cloudflare:
     dependencies:
       '@unicas/control-plane':
@@ -873,6 +842,22 @@ importers:
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
   unicas-packages/server-common:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
+  unicas-packages/tenant-client:
+    dependencies:
+      '@unicas/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unicas/server-common':
+        specifier: workspace:*
+        version: link:../server-common
     devDependencies:
       typescript:
         specifier: ^5.9.0

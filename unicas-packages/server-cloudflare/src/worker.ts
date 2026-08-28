@@ -10,18 +10,18 @@
  *
  * Storage/DO dispatch lands in Tasks 5-6; authorized handlers return 501
  * until then. The legacy tenant-scoped runtime has been retired (its frozen
- * protocol lives on in `@unicas/protocol-legacy`).
+ * pre-stack protocol has been removed.
  */
 
 import { AuthorityRepository } from "@unicas/control-plane";
 import { matchCasRoute } from "@unicas/protocol";
-import { CasLeaseDurationHeader, CasRefsHeader } from "@unicas/protocol";
+import { CasLeaseDurationHeader } from "@unicas/protocol";
 import type { CasRoute } from "@unicas/protocol";
 import {
   CapabilityError,
 } from "@unidocs/service-auth";
 import { StackCapabilityVerifier } from "./auth.js";
-import type { StackAuthEvent, StaticLegacyStackConfig, VerifiedStackCall } from "./auth.js";
+import type { StackAuthEvent, VerifiedStackCall } from "./auth.js";
 import { AuditReadError, listRootDomainEvents, listRootDomainRefs, listRootDomains } from "./audit-reads.js";
 import { canonicalComposite } from "./do-names.js";
 import { migrateStackTenantSchema } from "./schema.js";
@@ -32,7 +32,7 @@ export { RootRefDomainDurableObject } from "./domain-do.js";
 export interface Env {
   /** Read-only tenant authority registry (issuer → stack and keys). */
   CAS_CONTROL_DB: D1Database;
-  /** Tenant-scoped node/audit storage; migrated by this worker at startup. */
+  /** Tenant-scoped node/audit storage. */
   CAS_DB: D1Database;
   CAS_R2: R2Bucket;
   CAS_DO: DurableObjectNamespace;
@@ -40,13 +40,6 @@ export interface Env {
   CAS_DOMAIN_DO: DurableObjectNamespace;
   /** Shared secret for the private audit-reader RPC (admin BFF ↔ this worker). */
   CAS_AUDIT_READER_KEY?: string;
-  /** Static legacy-stack bootstrap (migration window; registry wins). */
-  LEGACY_STACK_ID?: string;
-  LEGACY_STACK_ISSUER?: string;
-  LEGACY_STACK_AUDIENCE?: string;
-  LEGACY_STACK_ALGORITHM?: string;
-  /** JSON JWKS for the static legacy stack. */
-  LEGACY_STACK_JWKS?: string;
 }
 
 export default {
@@ -205,21 +198,7 @@ async function dispatchNodeOperation(
       doPath = "/metadata";
       headers["X-CAS-Hash"] = route.hash;
       break;
-    case "leaseNode":
-      doPath = "/leaseNode";
-      method = "POST";
-      headers["X-CAS-Hash"] = route.hash;
-      const contentType = request.headers.get("Content-Type");
-      if (contentType) headers["Content-Type"] = contentType;
-      const refs = request.headers.get(CasRefsHeader);
-      if (refs) headers[CasRefsHeader] = refs;
-      const leaseDuration = request.headers.get(CasLeaseDurationHeader);
-      if (leaseDuration) headers[CasLeaseDurationHeader] = leaseDuration;
-      const legacyLength = request.headers.get("Content-Length");
-      if (legacyLength) headers["Content-Length"] = legacyLength;
-      body = request.body;
-      break;
-    case "leaseExisting":
+    case "lease":
       doPath = "/lease";
       method = "POST";
       headers["X-CAS-Hash"] = route.hash;
@@ -260,7 +239,6 @@ function verifierFor(env: Env): StackCapabilityVerifier {
   if (!verifier) {
     verifier = new StackCapabilityVerifier({
       repository: new AuthorityRepository(env.CAS_CONTROL_DB),
-      ...staticLegacyConfig(env),
       onEvent: (event: StackAuthEvent) => {
         console.log(JSON.stringify({ event: "cas_stack_authorization", ...event }));
       },
@@ -268,35 +246,6 @@ function verifierFor(env: Env): StackCapabilityVerifier {
     verifiers.set(key, verifier);
   }
   return verifier;
-}
-
-function staticLegacyConfig(env: Env): { staticLegacyStack?: StaticLegacyStackConfig } {
-  const { LEGACY_STACK_ID, LEGACY_STACK_ISSUER, LEGACY_STACK_AUDIENCE, LEGACY_STACK_ALGORITHM, LEGACY_STACK_JWKS } = env;
-  if (!LEGACY_STACK_ID || !LEGACY_STACK_ISSUER || !LEGACY_STACK_AUDIENCE || !LEGACY_STACK_ALGORITHM || !LEGACY_STACK_JWKS) {
-    return {};
-  }
-  let jwks: unknown;
-  try {
-    jwks = JSON.parse(LEGACY_STACK_JWKS);
-  } catch {
-    throw new TypeError("LEGACY_STACK_JWKS must be valid JSON");
-  }
-  if (
-    typeof jwks !== "object" || jwks === null
-    || !Array.isArray((jwks as { keys?: unknown }).keys)
-    || (jwks as { keys: unknown[] }).keys.length === 0
-  ) {
-    throw new TypeError("LEGACY_STACK_JWKS must be a JWKS object with keys");
-  }
-  return {
-    staticLegacyStack: {
-      stackId: LEGACY_STACK_ID,
-      issuer: LEGACY_STACK_ISSUER,
-      audience: LEGACY_STACK_AUDIENCE,
-      algorithm: LEGACY_STACK_ALGORITHM,
-      jwks: jwks as StaticLegacyStackConfig["jwks"],
-    },
-  };
 }
 
 function authErrorResponse(error: unknown): Response {
@@ -310,35 +259,13 @@ function authErrorResponse(error: unknown): Response {
 }
 
 export { StackCapabilityVerifier, permissionFor } from "./auth.js";
-export type { StackAuthEvent, StaticLegacyStackConfig, VerifiedStackCall } from "./auth.js";
+export type { StackAuthEvent, VerifiedStackCall } from "./auth.js";
 
 export {
   migrateStackTenantSchema,
-  readCutoverState,
-  readLegacyStackId,
-  readSchemaMeta,
-  writeCutoverState,
-  writeLegacyStackId,
 } from "./schema.js";
-export type { CutoverState } from "./schema.js";
 
-export { canonicalComposite, decodeComposite, stackCanonicalNodeKey, stackNodeKey } from "./do-names.js";
-
-export { runLegacyBaseline } from "./baseline.js";
-export type { LegacyBaselineResult, LegacyBaselineRow } from "./baseline.js";
-
-export {
-  deleteMigratedSources,
-  discoverR2Sources,
-  manifestStats,
-  parseHistoricalNodeKey,
-  runR2Migration,
-  verifyR2Digests,
-} from "./r2-migration.js";
-export type { R2ManifestStatus, R2MigrationOptions, R2MigrationStats } from "./r2-migration.js";
-
-export { CutoverController, canTransitionCutover, shouldUseStacklessFallback } from "./cutover.js";
-export type { CutoverContext } from "./cutover.js";
+export { canonicalComposite, decodeComposite, stackCanonicalNodeKey } from "./do-names.js";
 
 export type {
   CanonicalRootRefsUpdate,

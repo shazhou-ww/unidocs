@@ -5,7 +5,7 @@ import { migrateStackTenantSchema } from "../src/schema.js";
 import { canonicalizeRootRefsUpdate, executeDomainUpdate } from "../src/root-refs.js";
 import worker from "../src/worker.js";
 import type { Env } from "../src/worker.js";
-import { stackNodeKey } from "../src/do-names.js";
+import { stackCanonicalNodeKey } from "../src/do-names.js";
 
 let miniflare: Miniflare | undefined;
 let db: D1Database | undefined;
@@ -42,7 +42,7 @@ async function createEnv(): Promise<Env> {
   await db.prepare(
     "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count) VALUES (?, 'tenant-a', ?, 10, 'text/plain', 1, 1, 0, 0)",
   ).bind(STACK, H1).run();
-  await bucket.put(stackNodeKey(STACK, "tenant-a", H1), new TextEncoder().encode("content"));
+  await bucket.put(stackCanonicalNodeKey(STACK, "tenant-a", H1), new TextEncoder().encode("content"));
   const canonical = await canonicalizeRootRefsUpdate({ requestId: "r1", changes: { [H1]: 1 }, refDomain: DOMAIN });
   await executeDomainUpdate({
     db,

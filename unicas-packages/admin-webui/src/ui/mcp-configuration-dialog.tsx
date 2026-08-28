@@ -16,7 +16,7 @@ export function McpConfigurationDialog({ open, onClose }: {
 Use Streamable HTTP. Authentication is handled with OAuth in the browser; no API key is required.`;
   const cliPrompt = `Install the UniCAS CLI and its agent skill, then operate the control plane with it:
 1. Install the CLI (from the UniCAS repository):
-   pnpm --filter @unicas/cli build && pnpm install --global ./unicas-packages/cli
+  pnpm --filter @unicas/admin-cli build && pnpm install --global ./unicas-packages/admin-cli
 2. Log in once in a browser: unicas login
 3. Fetch ${skillUrl}, install it in this tool's standard agent-skills location, and follow it.
   Determine the correct location from the tool's own conventions.

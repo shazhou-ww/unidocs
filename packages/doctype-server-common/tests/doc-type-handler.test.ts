@@ -1,27 +1,15 @@
-/**
- * `createDocTypeHandler` forwards every request by constructing a fresh
- * `Request` from the incoming one's body stream (`new Request(forwardUrl, {
- * ..., body: request.body })`), at three call sites: the bare `POST
- * `/sessions/{sessionId}` create path, editor endpoints, and operator endpoints.
- *
- * That shape needs `duplex: "half"` set explicitly once the body is a real
- * `ReadableStream` — Node's `Request` (undici) throws synchronously
- * otherwise ("RequestInit: duplex option is required when sending a body"),
- * while a body that's already fully buffered (a plain string, as most
- * in-process tests would use) never exercises the check at all. So every
- * test here builds the incoming request with a genuine streaming body, to
- * actually exercise the code path that broke under Node before `duplex:
- * "half"` was added to all three forwarding sites (see task-7 review
- * finding 1) — a passing suite here is what keeps that omission from
- * regressing.
- *
- * These are Node-runtime tests (this package's tests run under `vitest` on
- * Node); Cloudflare-side coverage that `duplex: "half"` doesn't break
- * anything there lives in the e2e/treespec suites (`pnpm test:local`,
- * `tests/treespec`), not here.
- */
 import { describe, expect, it } from "vitest";
+import {
+  CapabilityAlgorithm,
+  CapabilityTokenType,
+  casReadPermission,
+  casWritePermission,
+  sessionCreatePermission,
+  sessionWritePermission,
+} from "@unidocs/service-auth";
+import type { CapabilityPermission, VerifiedCapability } from "@unidocs/service-auth";
 import { createDocTypeHandler } from "../src/doc-type-handler.js";
+import type { DocCapabilityVerifier } from "../src/doc-type-handler.js";
 
 interface StubNamespace {
   idFromName(name: string): unknown;
@@ -30,12 +18,11 @@ interface StubNamespace {
 
 function stubNamespace(onFetch: (req: Request) => Promise<Response>): StubNamespace {
   return {
-    idFromName: (name: string) => name,
+    idFromName: name => name,
     get: () => ({ fetch: onFetch }),
   };
 }
 
-/** A body that is a genuine `ReadableStream`, not an already-buffered string. */
 function streamBody(text: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);
   return new ReadableStream({
@@ -46,109 +33,108 @@ function streamBody(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-const INTERNAL_TOKEN = "test-token";
-
-describe("createDocTypeHandler — streaming body forwarding", () => {
-  it("fails startup when the configured legacy credential is empty", () => {
-    expect(() => createDocTypeHandler({
-      docType: "markdown",
-      internalAuthMode: "legacy",
-      accessKey: "",
-      editor: stubNamespace(async () => Response.json({ success: true })),
-      operator: stubNamespace(async () => Response.json({ success: true })),
-    })).toThrow("Legacy Doc auth requires an access key");
+function handler(
+  operation: "create" | "apply" | "run",
+  onFetch: (request: Request) => Promise<Response>,
+  audit?: (event: unknown) => void,
+) {
+  const docPermission = operation === "create"
+    ? sessionCreatePermission("tenant-1")
+    : sessionWritePermission("tenant-1", "session-1");
+  const casPermissions = operation === "create"
+    ? [casWritePermission("tenant-1")]
+    : [casReadPermission("tenant-1"), casWritePermission("tenant-1")];
+  return createDocTypeHandler({
+    docType: "markdown",
+    docCapabilityVerifier: verifier(capability("gateway", [docPermission])),
+    casCapabilityVerifier: verifier(capability("doc:markdown", casPermissions)),
+    audit,
+    editor: stubNamespace(onFetch),
+    operator: stubNamespace(onFetch),
   });
+}
 
-  it("forwards PUT /sessions/{sessionId} body intact", async () => {
-    let received: string | undefined;
-    const audits: unknown[] = [];
-    const editor = stubNamespace(async (req) => {
-      received = await req.text();
-      return Response.json({ success: true, sessionId: "session-1", version: 1 });
-    });
+function verifier(result: VerifiedCapability): DocCapabilityVerifier {
+  return { verify: async () => result };
+}
 
-    const handler = createDocTypeHandler({
-      docType: "markdown",
-      internalAuthMode: "legacy",
-      accessKey: INTERNAL_TOKEN,
-      audit: event => audits.push(event),
-      editor,
-      operator: stubNamespace(async () => Response.json({}, { status: 501 })),
-    });
-
-    const incoming = new Request("http://gw.local/sessions/session-1", {
-      method: "PUT",
-      headers: { "X-Internal-Token": INTERNAL_TOKEN, "X-Tenant-Id": "tenant-1", "content-type": "text/markdown" },
-      body: streamBody("# hello"),
-      duplex: "half",
-    } as RequestInit);
-
-    const res = await handler(incoming);
-    expect(res.status).toBe(200);
-    expect(received).toBe("# hello");
-    expect(audits).toEqual([{
-      credentialKind: "legacy",
-      routeGeneration: "legacy",
-      operation: "create",
+function capability(sub: string, permissions: readonly CapabilityPermission[]): VerifiedCapability {
+  return {
+    protectedHeader: { alg: CapabilityAlgorithm, kid: "key-1", typ: CapabilityTokenType },
+    claims: {
+      ver: 1,
+      iss: "issuer",
+      sub,
+      aud: "audience",
+      iat: 1000,
+      nbf: 995,
+      exp: 1120,
+      jti: `${sub}-jti`,
       tenantId: "tenant-1",
       sessionId: "session-1",
-    }]);
-    expect(JSON.stringify(audits)).not.toContain(INTERNAL_TOKEN);
-  });
+      permissions,
+    },
+  };
+}
 
-  it("forwards an editor endpoint (apply) body intact", async () => {
+function request(path: string, method: string, body: string): Request {
+  return new Request(`http://gw.local${path}`, {
+    method,
+    headers: {
+      Authorization: "Bearer doc-token",
+      "X-UniDocs-CAS-Capability": "cas-token",
+      "Content-Type": "application/json",
+    },
+    body: streamBody(body),
+    duplex: "half",
+  } as RequestInit);
+}
+
+describe("createDocTypeHandler streaming forwarding", () => {
+  it("forwards create body on the tenant-scoped route", async () => {
     let received: string | undefined;
-    const editor = stubNamespace(async (req) => {
+    const audits: unknown[] = [];
+    const handle = handler("create", async req => {
       received = await req.text();
-      return Response.json({ success: true, version: 2 });
-    });
+      return Response.json({ success: true });
+    }, event => audits.push(event));
 
-    const handler = createDocTypeHandler({
-      docType: "markdown",
-      internalAuthMode: "legacy",
-      accessKey: INTERNAL_TOKEN,
-      editor,
-      operator: stubNamespace(async () => Response.json({}, { status: 501 })),
-    });
+    const response = await handle(request("/tenants/tenant-1/sessions/session-1", "PUT", "create"));
 
-    const payload = JSON.stringify({ operations: [], description: "x", baseVersion: 1 });
-    const incoming = new Request("http://gw.local/sessions/session-1/apply", {
-      method: "POST",
-      headers: { "X-Internal-Token": INTERNAL_TOKEN, "X-Tenant-Id": "tenant-1", "content-type": "application/json" },
-      body: streamBody(payload),
-      duplex: "half",
-    } as RequestInit);
-
-    const res = await handler(incoming);
-    expect(res.status).toBe(200);
-    expect(received).toBe(payload);
+    expect(response.status).toBe(200);
+    expect(received).toBe("create");
+    expect(audits).toEqual([expect.objectContaining({
+      credentialKind: "capability",
+      routeGeneration: "tenant",
+      operation: "create",
+    })]);
   });
 
-  it("forwards an operator endpoint (run) body intact", async () => {
+  it("forwards apply body intact", async () => {
     let received: string | undefined;
-    const operator = stubNamespace(async (req) => {
+    const handle = handler("apply", async req => {
       received = await req.text();
       return Response.json({ success: true });
     });
+    const payload = JSON.stringify({ operations: [], baseVersion: 1 });
 
-    const handler = createDocTypeHandler({
-      docType: "markdown",
-      internalAuthMode: "legacy",
-      accessKey: INTERNAL_TOKEN,
-      editor: stubNamespace(async () => Response.json({}, { status: 501 })),
-      operator,
+    const response = await handle(request("/tenants/tenant-1/sessions/session-1/apply", "POST", payload));
+
+    expect(response.status).toBe(200);
+    expect(received).toBe(payload);
+  });
+
+  it("forwards operator body intact", async () => {
+    let received: string | undefined;
+    const handle = handler("run", async req => {
+      received = await req.text();
+      return Response.json({ success: true });
     });
+    const payload = JSON.stringify({ prompt: "do it" });
 
-    const payload = JSON.stringify({ prompt: "do the thing" });
-    const incoming = new Request("http://gw.local/sessions/session-1/run", {
-      method: "POST",
-      headers: { "X-Internal-Token": INTERNAL_TOKEN, "X-Tenant-Id": "tenant-1", "content-type": "application/json" },
-      body: streamBody(payload),
-      duplex: "half",
-    } as RequestInit);
+    const response = await handle(request("/tenants/tenant-1/sessions/session-1/run", "POST", payload));
 
-    const res = await handler(incoming);
-    expect(res.status).toBe(200);
+    expect(response.status).toBe(200);
     expect(received).toBe(payload);
   });
 });

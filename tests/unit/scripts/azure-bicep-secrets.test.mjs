@@ -78,16 +78,6 @@ function secureParamOffenders(arm, paramName) {
 }
 
 describe.skipIf(!AZ)("gateway.bicep 的密钥不落进外层模板", () => {
-  test("docAccessKeysJson 在外层模板里只以直接引用出现，不被拼接", () => {
-    const arm = compile("gateway.bicep");
-    expect(secureParamOffenders(arm, "docAccessKeysJson")).toEqual([]);
-  });
-
-  test("casAccessKey 在外层模板里只以直接引用出现，不被拼接", () => {
-    const arm = compile("gateway.bicep");
-    expect(secureParamOffenders(arm, "casAccessKey")).toEqual([]);
-  });
-
   test("pgAdminPassword 在外层模板里只以直接引用出现，不被拼接", () => {
     const arm = compile("gateway.bicep");
     expect(secureParamOffenders(arm, "pgAdminPassword")).toEqual([]);
@@ -105,7 +95,7 @@ describe.skipIf(!AZ)("gateway.bicep 的密钥不落进外层模板", () => {
     for (const dep of nested) {
       expect(dep.properties.expressionEvaluationOptions).toEqual({ scope: "inner" });
       const params = dep.properties.template.parameters;
-      for (const name of ["docServicesJson", "casAccessKey", "databaseUrl", "casStackPrivateKeyPkcs8"]) {
+      for (const name of ["docServicesJson", "databaseUrl", "casStackPrivateKeyPkcs8"]) {
         expect(params[name]?.type, `${name} must be securestring`).toBe("securestring");
       }
     }

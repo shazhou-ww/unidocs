@@ -13,16 +13,15 @@
  */
 import type { DocumentTypeFactory, SBlobReadRange, SBlobSource } from "@unidocs/protocol";
 import {
+  CasClientError,
   createCasBlobClient,
-  createLegacyTenantCasClient,
   createTenantCasClient,
   leaseNodeContent,
   type HttpFetcher,
-} from "@unicas/client";
-import type { CasBlobClient, TenantCasClient } from "@unicas/client";
+} from "@unicas/tenant-client";
+import type { CasBlobClient, TenantCasClient } from "@unicas/tenant-client";
 import type {
   DocCapabilityVerifier,
-  DocInternalAuthMode,
   SessionDeps,
   SessionIdentity,
 } from "@unidocs/doctype-server-common";
@@ -49,11 +48,8 @@ export interface DocTypeServiceConfig {
   blobConnectionString?: string;
   /** 云上模式：Blob 账户端点 URL，与 `blobConnectionString` 互斥。 */
   blobAccountUrl?: string;
-  internalAuthMode: DocInternalAuthMode;
-  serviceAccessKey?: string;
-  docCapabilityVerifier?: DocCapabilityVerifier;
-  casCapabilityVerifier?: DocCapabilityVerifier;
-  casAccessKey?: string; // Make CAS access key optional for CAS-less local services
+  docCapabilityVerifier: DocCapabilityVerifier;
+  casCapabilityVerifier: DocCapabilityVerifier;
   /**
    * 过渡形态（阶段 4 删除）：指向 Cloudflare CAS worker 的基地址。
   * 注意它必须指向 CAS worker 本身，不能指向 gateway —— CAS client
@@ -90,13 +86,8 @@ export interface DocTypeServiceHandle {
  * 过渡形态（阶段 4 删除）：把 CAS fetcher 使用的假源
  * (`https://cas.internal`)重写到真实的 CAS worker 基地址，其余原样转发。
  *
- * 之所以走 fetcher 而不是 canonical baseUrl 模式：后者发的是
- * `Authorization: Bearer`，而 CAS worker 的内部路由认的是 `X-Internal-Token`
- * 与 `X-Tenant-Id` —— 那两个头只有 fetcher 模式会发。之前这里用的是
- * 旧实现错误地选择了 baseUrl 分支：
- * CAS access key 在那个分支上没有对应字段，`authToken` 又没给，结果是
- * 一个鉴权头都不发，TypeScript 因为联合类型的另一个成员里存在
- * 旧联合类型因字段重叠而没有报错。
+ * fetcher 把 client 生成的 canonical URL 重写到实际 CAS endpoint，同时
+ * 保留请求级 Bearer capability。
  */
 function httpCasFetcher(baseUrl: string): HttpFetcher {
   const origin = baseUrl.replace(/\/$/, "");
@@ -133,26 +124,17 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
     documentType: ReturnType<DocumentTypeFactory<TDoc, TQuery, TOp>>;
     deps: SessionDeps;
   } {
-    const nodeCas = requestContext.authKind === "capability"
+    const delegatedCapability = requestContext.authKind === "capability"
       ? requestContext.delegatedCasCapability
-        ? config.casStackId === undefined
-          ? createLegacyTenantCasClient({
-            fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
-            tenantId: identity.tenantId,
-            getToken: async () => requestContext.delegatedCasCapability!,
-          })
-          : createTenantCasClient({
-            baseUrl: "https://cas.internal",
-            fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
-            stackId: config.casStackId,
-            tenantId: identity.tenantId,
-            getToken: async () => requestContext.delegatedCasCapability!,
-          })
-        : unavailableCasGateway()
-      : createLegacyTenantCasClient({
+      : undefined;
+    const nodeCas = delegatedCapability === undefined
+      ? unavailableCasGateway()
+      : createTenantCasClient({
+        baseUrl: "https://cas.internal",
         fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+        stackId: requireCasStackId(config.casStackId),
         tenantId: identity.tenantId,
-        accessKey: config.casAccessKey ?? "",
+        getToken: async () => delegatedCapability,
       });
     const cas = Object.freeze({ ...nodeCas, ...createCasBlobClient(nodeCas) });
     const context = createSBlobContext({
@@ -195,8 +177,6 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
 
   const handler = createDocTypeHandler({
     docType,
-    internalAuthMode: config.internalAuthMode,
-    accessKey: config.serviceAccessKey,
     docCapabilityVerifier: config.docCapabilityVerifier,
     casCapabilityVerifier: config.casCapabilityVerifier,
     audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType, ...event })),
@@ -227,7 +207,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
 
 function unavailableCasGateway(): TenantCasClient & CasBlobClient {
   const unavailable = async (): Promise<never> => {
-    throw new Error("This Doc operation has no delegated CAS authority");
+    throw new CasClientError(501, "Not Implemented", "delegated authority");
   };
   return {
     node: () => ({ metadata: unavailable, read: unavailable }),
@@ -240,6 +220,13 @@ function unavailableCasGateway(): TenantCasClient & CasBlobClient {
     openBlob: unavailable,
     openBlobRange: unavailable,
   };
+}
+
+function requireCasStackId(stackId: string | undefined): string {
+  if (stackId === undefined || stackId.length === 0) {
+    throw new Error("CAS_STACK_ID is required for delegated CAS access");
+  }
+  return stackId;
 }
 
 /**
@@ -259,16 +246,11 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   const { docType, documentTypeFactory, defaultPort } = options;
   const auth = new DocAuthConfigCache(docType).get(process.env);
   const casBaseUrl = process.env.CAS_BASE_URL;
-  const casAccessKey = process.env.CAS_ACCESS_KEY;
-  const stackMode = auth.internalAuthMode === "stack";
   // 0 / 缺省 = 不限,与这个开关存在之前的行为一致。
   const declaredLimit = Number(process.env.MAX_UPLOAD_BYTES ?? 0);
   const maxUploadBytes = Number.isSafeInteger(declaredLimit) && declaredLimit > 0
     ? declaredLimit
     : undefined;
-  if (casBaseUrl && !casAccessKey && !stackMode) {
-    throw new Error("CAS_ACCESS_KEY is required when CAS_BASE_URL is configured");
-  }
   const handle = await startDocTypeService({
     docType,
     documentTypeFactory,
@@ -276,17 +258,14 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
     config: {
       databaseUrl: requireEnv("DATABASE_URL"),
       ...resolveBlobConfig(),
-      internalAuthMode: auth.internalAuthMode,
-      serviceAccessKey: auth.accessKey,
       docCapabilityVerifier: auth.docCapabilityVerifier,
       casCapabilityVerifier: auth.casCapabilityVerifier,
-      casAccessKey,
       casBaseUrl,
       casStackId: process.env.CAS_STACK_ID,
       ...(maxUploadBytes === undefined ? {} : { maxUploadBytes }),
     },
   });
-  console.log(`azure-${docType} CAS: mode=${auth.internalAuthMode} baseUrl=${process.env.CAS_BASE_URL ?? "(none)"} stackId=${process.env.CAS_STACK_ID ?? "(none)"}`);
+  console.log(`azure-${docType} CAS: baseUrl=${process.env.CAS_BASE_URL ?? "(none)"} stackId=${process.env.CAS_STACK_ID ?? "(none)"}`);
   console.log(`azure-${docType} listening on ${handle.url}`);
 
   await new Promise<void>((resolve) => {

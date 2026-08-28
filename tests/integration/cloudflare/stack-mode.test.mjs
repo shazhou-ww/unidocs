@@ -37,7 +37,6 @@ function gwFetch(path, init = {}) {
 test("stack mode: markdown doc flow runs through the middleware", async () => {
   runtime = await startLocalRuntime({
     docTypes: ["markdown"],
-    internalAuthMode: "stack",
     ports: PORTS,
   });
   const stackId = runtime.stackFixture.stackId;
@@ -96,7 +95,6 @@ test("stack mode: markdown doc flow runs through the middleware", async () => {
 test("stack mode: docx apply/query also runs through the middleware", async () => {
   runtime = await startLocalRuntime({
     docTypes: ["docx"],
-    internalAuthMode: "stack",
     ports: { ...PORTS, markdown: 36789, docx: 36788 },
   });
   const stackId = runtime.stackFixture.stackId;

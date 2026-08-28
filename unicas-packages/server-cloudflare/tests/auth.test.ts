@@ -18,9 +18,8 @@ import { AuthorityRepository } from "@unicas/control-plane";
 import {
   CapabilityIssuer,
   JoseCapabilitySigner,
-  casGcTriggerPermission,
+  casAdminPermission,
   casReadPermission,
-  casUsageReadPermission,
   casWritePermission,
 } from "@unidocs/service-auth";
 import type { CapabilityPermission } from "@unidocs/service-auth";
@@ -173,13 +172,12 @@ describe("stack authorization (Task 4)", () => {
 
     // lease -> cas:write
     const writeToken = await issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)] });
-    await verify.verify(authRequest(writeToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${"a".repeat(64)}`, "POST"), { operation: "leaseNode", stackId: stack.stackId, tenantId: tenant, hash: "a".repeat(64) });
-    await verify.verify(authRequest(writeToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${"a".repeat(64)}/lease`, "POST"), { operation: "leaseExisting", stackId: stack.stackId, tenantId: tenant, hash: "a".repeat(64) });
+    await verify.verify(authRequest(writeToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${"a".repeat(64)}/lease`, "POST"), { operation: "lease", stackId: stack.stackId, tenantId: tenant, hash: "a".repeat(64) });
 
     // usage / gc -> the tenant-only permissions
-    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casUsageReadPermission(tenant)] });
+    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casAdminPermission(tenant)] });
     await verify.verify(authRequest(usageToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/usage`), { operation: "usage", stackId: stack.stackId, tenantId: tenant });
-    const gcToken = await issue(stack, { tenantId: tenant, permissions: [casGcTriggerPermission(tenant)] });
+    const gcToken = await issue(stack, { tenantId: tenant, permissions: [casAdminPermission(tenant)] });
     await verify.verify(authRequest(gcToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), { operation: "gc", stackId: stack.stackId, tenantId: tenant });
 
     // updateRootRefs -> cas:write + a valid issuer-signed refDomain
@@ -276,7 +274,7 @@ describe("stack authorization (Task 4)", () => {
     await expectRejected(verify.verify(authRequest(writer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), { operation: "gc", stackId: stack.stackId, tenantId: tenant }), 403);
 
     // A usage capability cannot write root refs.
-    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casUsageReadPermission(tenant)] });
+    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casAdminPermission(tenant)] });
     await expectRejected(verify.verify(authRequest(usageToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant }), 403);
   });
 
@@ -300,46 +298,6 @@ describe("stack authorization (Task 4)", () => {
       headers: { Cookie: "cas_admin_session=abc", Origin: "https://cas.example" },
     });
     await expectRejected(verify.verify(request, { operation: "usage", stackId: stack.stackId, tenantId: "t" }), 401, "token");
-  });
-
-  test("static legacy stack bootstrap verifies when the registry lacks the issuer", async () => {
-    const { db: seededDb } = await createSeededDb();
-    const { publicKey, privateKey } = await generateKeyPair("ES256", { extractable: true });
-    const jwk = (await exportJWK(publicKey)) as Record<string, unknown>;
-    const verify = verifier({
-      repository: new AuthorityRepository(seededDb),
-      now: () => Date.now(),
-    });
-    const staticVerifier = new StackCapabilityVerifier({
-      repository: new AuthorityRepository(seededDb),
-      staticLegacyStack: {
-        stackId: "cas_legacy_stack",
-        issuer: "https://legacy-issuer.example",
-        audience: "unidocs-cas",
-        algorithm: "ES256",
-        jwks: { keys: [{ ...jwk, kid: "legacy-kid", alg: "ES256", use: "sig" }] },
-      },
-    });
-    const legacyIssuer = new CapabilityIssuer({
-      issuer: "https://legacy-issuer.example",
-      signer: new JoseCapabilitySigner(privateKey, "legacy-kid"),
-    });
-    const token = await legacyIssuer.issue({
-      subject: "legacy-service",
-      audience: "unidocs-cas",
-      tenantId: "legacy-tenant",
-      permissions: [casReadPermission("legacy-tenant")],
-    });
-    const call = await staticVerifier.verify(
-      authRequest(token, "/stacks/cas_legacy_stack/tenants/legacy-tenant/cas/nodes/h/content"),
-      { operation: "readContent", stackId: "cas_legacy_stack", tenantId: "legacy-tenant", hash: "h" },
-    );
-    expect(call.stackId).toBe("cas_legacy_stack");
-    // The registry-only verifier (no static config) rejects the same token.
-    await expectRejected(verify.verify(
-      authRequest(token, "/stacks/cas_legacy_stack/tenants/legacy-tenant/cas/nodes/h/content"),
-      { operation: "readContent", stackId: "cas_legacy_stack", tenantId: "legacy-tenant", hash: "h" },
-    ), 401);
   });
 
   test("worker end-to-end: authorized node ops reach the tenant DO; failures are 401/403", async () => {
@@ -407,7 +365,7 @@ describe("stack authorization (Task 4)", () => {
     expect(admin.status).toBe(404);
   });
 
-  test("worker forwards leaseNode with content metadata and the raw body, never forged identity", async () => {
+  test("worker forwards canonical lease body, never forged identity", async () => {
     const { db: controlDb, stacks } = await createSeededDb();
     let forwarded: { path: string; headers: Headers; body: string } | undefined;
     const tenantDoStub = {
@@ -436,12 +394,12 @@ describe("stack authorization (Task 4)", () => {
     const writer = await issue(stack, { tenantId: tenant, permissions: [casWritePermission(tenant)] });
 
     const response = await worker.fetch(
-      new Request(`https://cas.example/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${hash}`, {
+      new Request(`https://cas.example/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${hash}/lease`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${writer}`,
-          "Content-Type": "text/plain",
-          "X-CAS-Refs": "b".repeat(64),
+          "Content-Type": "application/vnd.unidocs.cas-node.v1",
+          "Content-Length": "12",
           "X-CAS-Lease-Duration": "120000",
           "X-CAS-Stack-Id": "forged-stack",
           "X-CAS-Tenant-Id": "forged-tenant",
@@ -453,12 +411,11 @@ describe("stack authorization (Task 4)", () => {
     );
     expect(response.status).toBe(200);
     expect(forwarded).toBeDefined();
-    expect(forwarded!.path).toBe("/leaseNode");
+    expect(forwarded!.path).toBe("/lease");
     expect(forwarded!.headers.get("X-CAS-Stack-Id")).toBe(stack.stackId);
     expect(forwarded!.headers.get("X-CAS-Tenant-Id")).toBe(tenant);
     expect(forwarded!.headers.get("X-CAS-Hash")).toBe(hash);
-    expect(forwarded!.headers.get("Content-Type")).toBe("text/plain");
-    expect(forwarded!.headers.get("X-CAS-Refs")).toBe("b".repeat(64));
+    expect(forwarded!.headers.get("Content-Type")).toBe("application/vnd.unidocs.cas-node.v1");
     expect(forwarded!.headers.get("X-CAS-Lease-Duration")).toBe("120000");
     expect(forwarded!.headers.get("X-CAS-Ref-Domain")).toBeNull();
     expect(forwarded!.body).toBe("node-content");

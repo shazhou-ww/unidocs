@@ -5,6 +5,7 @@ import {
 } from "./binary.js";
 import { hashToHex } from "./digest.js";
 import {
+  type CanonicalNodeLimits,
   validateCanonicalNodeSize,
   validateContentType,
   validateDecodedHeader,
@@ -96,6 +97,7 @@ class StreamCursor {
 export async function parseCanonicalNodeStream(
   source: ReadableStream<Uint8Array>,
   declaredLength?: number,
+  limits?: CanonicalNodeLimits,
 ): Promise<ParsedCanonicalNodeStream> {
   const cursor = new StreamCursor(source);
   const header = await cursor.readExactly(HEADER_SIZE);
@@ -105,6 +107,7 @@ export async function parseCanonicalNodeStream(
     decoded.contentSize,
     decoded.contentTypeLength,
     decoded.refCount,
+    limits,
   );
   if (declaredLength !== undefined && declaredLength !== canonicalSize) {
     throw new Error(

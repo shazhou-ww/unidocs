@@ -52,7 +52,6 @@ async function main() {
   const stackRows = [];
   const issuerRows = [];
   const keyRows = [];
-  const domainRows = [];
   const keyPaths = [];
 
   for (const stack of stacks) {
@@ -72,11 +71,6 @@ async function main() {
     keyRows.push(
       `INSERT OR IGNORE INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES ('${stack.stackId}', '${stack.kid}', 'ES256', '${JSON.stringify(publicJwk)}', 'active', 1);`,
     );
-    for (const refDomain of stack.refDomains) {
-      domainRows.push(
-        `INSERT OR IGNORE INTO cas_stack_ref_domains (stack_id, ref_domain, status, revision) VALUES ('${stack.stackId}', '${refDomain}', 'active', 1);`,
-      );
-    }
     console.log(`stack ${stack.stackId}: issuer=${stack.issuer} audience=${stack.audience} kid=${stack.kid}`);
   }
 
@@ -85,7 +79,6 @@ async function main() {
     ...stackRows,
     ...issuerRows,
     ...keyRows,
-    ...domainRows,
   ].join("\n");
   await writeFile(join(OUT_DIR, "cas-control-seed.sql"), controlSql);
 

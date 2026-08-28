@@ -21,9 +21,9 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unicas/client": "workspace:*",
+    "@unicas/tenant-client": "workspace:*",
     "@unicas/protocol": "workspace:*",
-    "@unicas/protocol-legacy": "workspace:*",
+    "@unidocs/protocol-gateway": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
     "@unidocs/service-auth": "workspace:*"
   },

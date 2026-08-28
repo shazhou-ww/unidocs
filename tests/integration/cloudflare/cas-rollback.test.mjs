@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
+  CanonicalNodeContentType,
+  concatenateNodeBytes,
   encodeHeader,
   computeNodeDigest,
   hashToHex,
@@ -46,15 +48,16 @@ test("updateRootRefs 短暂失败时:apply 返回 502,pending 在下次请求恢
   const header = encodeHeader(PNG_1x1.length, "image/png", 0);
   const digest = await computeNodeDigest(header, "image/png", [], PNG_1x1);
   const hash = hashToHex(digest);
+  const canonical = concatenateNodeBytes(header, new TextEncoder().encode("image/png"), [], PNG_1x1);
 
-  const lease = await closeFetch(`${GW()}/tenants/${userId}/cas/nodes/${hash}`, {
+  const lease = await closeFetch(`${GW()}/tenants/${userId}/cas/nodes/${hash}/lease`, {
     method: "POST",
     headers: {
-      "Content-Type": "image/png",
-      "Content-Length": String(PNG_1x1.length),
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonical.length),
       "X-CAS-Lease-Duration": "900000",
     },
-    body: PNG_1x1,
+    body: canonical,
   });
   expect(lease.ok, await lease.text()).toBe(true);
 

@@ -6,7 +6,6 @@ compatibility_date = "2025-08-17"
 # registered unidocs-cloudflare stack key and talks to the canonical middleware
 # (unidocs-cas-server-cloudflare) instead of the legacy shared-key worker.
 [vars]
-INTERNAL_AUTH_MODE = "stack"
 CAPABILITY_ALGORITHM = "ES256"
 CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "1800"

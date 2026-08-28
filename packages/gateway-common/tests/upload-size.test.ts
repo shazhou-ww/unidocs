@@ -16,7 +16,16 @@
  */
 import { describe, expect, it } from "vitest";
 import { createGatewayHandler } from "../src/gateway-handler.js";
+import { GatewayCapabilityAuthority } from "../src/capability-authority.js";
 import { MemoryGatewayDocumentDirectory } from "../src/document-directory.js";
+
+const issuer = { keyId: "test-key", issue: async () => "test-token" };
+const capabilityAuthority = new GatewayCapabilityAuthority({
+  issuer,
+  casIssuer: issuer,
+  casAudience: "unidocs-cas",
+  casStackId: "test-stack",
+});
 
 const tenantIdentity = {
   resolve: async (_r: Request, tenantId: string) => ({
@@ -31,13 +40,13 @@ function handler(maxUploadBytes?: number) {
   return {
     forwarded,
     handle: createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: "k",
+      capabilityAuthority,
+      casStackId: "test-stack",
       identityResolver: tenantIdentity,
       resolveDocService: async () => ({
         serviceId: "psd",
         url: "http://doc.invalid",
-        accessKey: "svc-key",
+        audience: "unidocs-doc:psd",
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 501 }) },
       directory: new MemoryGatewayDocumentDirectory(),

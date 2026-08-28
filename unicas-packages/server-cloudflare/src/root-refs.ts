@@ -14,7 +14,7 @@
 import type { D1Database, D1PreparedStatement, R2Bucket } from "@cloudflare/workers-types";
 import { validateHash } from "@unicas/server-common";
 import { canonicalJson, sha256Hex } from "@unicas/control-plane";
-import { stackCanonicalNodeKey, stackNodeKey } from "./do-names.js";
+import { stackCanonicalNodeKey } from "./do-names.js";
 
 export const CAS_MAX_ROOT_REF_CHANGES = 1000;
 export const CAS_MAX_ROOT_REF_DELTA = 1_000_000;
@@ -167,12 +167,12 @@ export async function executeDomainUpdate(input: {
   }
 
   // Validation reads: authoritative aggregate state only (never audit data).
-  const nodeRows = new Map<string, { root_ref_count: number; object_format: number }>();
+  const nodeRows = new Map<string, { root_ref_count: number }>();
   for (const [hash, delta] of entries) {
     const node = await db
-      .prepare("SELECT root_ref_count, object_format FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
+      .prepare("SELECT root_ref_count FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
       .bind(stackId, tenantId, hash)
-      .first<{ root_ref_count: number; object_format: number }>();
+      .first<{ root_ref_count: number }>();
     if (!node) {
       throw new RootRefsValidationError(404, RootRefsErrorCodes.NODE_NOT_FOUND, `node ${hash} not found`);
     }
@@ -188,10 +188,7 @@ export async function executeDomainUpdate(input: {
   // Positive targets must be ready (content materialized in R2).
   for (const [hash, delta] of entries) {
     if (delta > 0) {
-      const objectFormat = nodeRows.get(hash)!.object_format;
-      const key = objectFormat === 2
-        ? stackCanonicalNodeKey(stackId, tenantId, hash)
-        : stackNodeKey(stackId, tenantId, hash);
+      const key = stackCanonicalNodeKey(stackId, tenantId, hash);
       const object = await bucket.head(key);
       if (!object) {
         throw new RootRefsValidationError(409, RootRefsErrorCodes.NODE_NOT_READY, `node ${hash} is not ready`);

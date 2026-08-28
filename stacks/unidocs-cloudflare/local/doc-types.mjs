@@ -9,7 +9,6 @@
 
 import { join } from "node:path";
 
-export const CAS_ACCESS_KEY = "unidocs-dev-cas-key";
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
 /** CAS admin BFF Worker (private; reached via the edge or directly in dev). */
@@ -51,7 +50,6 @@ let failedVersionTwo = false;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    // 同时识别 legacy(/_internal/root-refs)与规范(/stacks/.../root-refs)路由。
     const isRootRefs = url.pathname.endsWith("/root-refs");
     if (isRootRefs) {
       const body = await request.clone().json().catch(() => null);
@@ -165,15 +163,10 @@ export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddlewa
   ];
 }
 
-export function docServiceAccessKey(docType) {
-  return `unidocs-dev-${docType}-key`;
-}
-
 export function docServicesJson(docTypes, host, ports) {
   return JSON.stringify(Object.fromEntries(docTypes.map((name) => [name, {
     serviceId: name,
     url: `http://${host}:${ports[name]}`,
-    accessKey: docServiceAccessKey(name),
     audience: `unidocs-doc:${name}`,
   }])));
 }
@@ -195,7 +188,6 @@ export function buildWorkers({
   bundleDir,
   casFault = false,
   extraBindings = {},
-  internalAuthMode = "stack",
   capabilityFixture,
   stackFixture,
   casAdminPublicOrigin = `http://localhost:4070`,
@@ -206,9 +198,6 @@ export function buildWorkers({
   casMiddleware = false,
   casOrigin,
 }) {
-  if (internalAuthMode !== "stack") {
-    throw new Error("internalAuthMode must be stack (legacy/dual/capability retired with the legacy runtime)");
-  }
   if (!stackFixture) {
     throw new Error("stackFixture is required for the stack local runtime");
   }
@@ -316,9 +305,7 @@ export function buildWorkers({
       scriptPath: join(bundleDir, "gateway.js"),
       compatibilityDate: COMPATIBILITY_DATE,
       bindings: {
-        CAS_ACCESS_KEY,
         DOC_SERVICES_JSON: docServicesJson(docTypes, host, ports),
-        INTERNAL_AUTH_MODE: internalAuthMode,
         ...policyBindings,
         CAPABILITY_ISSUER: capabilityFixture.issuer,
         CAPABILITY_KEY_ID: capabilityFixture.kid,
@@ -381,14 +368,11 @@ export function buildWorkers({
       scriptPath: join(bundleDir, `${name}.js`),
       compatibilityDate: COMPATIBILITY_DATE,
       bindings: {
-        CAS_ACCESS_KEY,
-        INTERNAL_AUTH_MODE: internalAuthMode,
         DOC_CAPABILITY_AUDIENCE: `unidocs-doc:${name}`,
         CAS_CAPABILITY_AUDIENCE: stackFixture.audience,
         ...policyBindings,
         ...validatorBindings,
         ...stackBindings,
-        SERVICE_ACCESS_KEY: docServiceAccessKey(name),
         ...(extraBindings[name] ?? {}),
       },
       durableObjects: {

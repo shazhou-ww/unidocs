@@ -6,7 +6,7 @@
  *
  * Internal URL pattern: /sessions/{sessionId}/*.
  *
- * Auth: verifies X-Internal-Token from Gateway.
+ * Auth: verifies request-local capabilities from Gateway.
  */
 
 import {

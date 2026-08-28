@@ -372,6 +372,11 @@ methods cannot select another stack or tenant.
 ensures the node is ready and leases it; without a source it leases an already
 ready node. The latter rejects missing or not-ready nodes.
 
+Blob chunk size and index fanout are local client implementation choices,
+bounded by protocol defaults. They are not sent as trusted lease parameters;
+CAS validates the canonical body against its configured node byte and ref
+limits.
+
 ## 11. Authenticated HTTP API
 
 CAS owns its native service and admin route contracts. A lightweight

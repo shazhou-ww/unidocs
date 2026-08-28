@@ -41,7 +41,6 @@ export interface CasUsage {
   readonly nodeCount: number;
   readonly readyContentBytes: number;
   readonly readyStoredBytes: number;
-  readonly migrationDuplicateBytes: number;
   readonly reservedBytes: number;
   readonly notReadyNodeCount: number;
   readonly leasedNodeCount: number;

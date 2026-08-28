@@ -17,11 +17,9 @@ import {
   DEFAULT_GC_MAX_NODES,
   NodeOpError,
   NodeOpErrorCodes,
-  leaseExisting,
+  leaseReadyNode,
   leaseCanonicalNode,
-  leaseNode,
   parseLeaseDuration,
-  parseRefsHeader,
   readContent,
   readMetadata,
   triggerGc,
@@ -59,10 +57,7 @@ export class CasDurableObject {
       if (url.pathname === "/updateRootRefs" && request.method === "POST") {
         return await this.#forwardRootRefs(request, stackId, tenantId);
       }
-      if (url.pathname === "/leaseNode" && request.method === "POST") {
-        return jsonResponse(await this.#handleLeaseNode(request, store));
-      }
-      if ((url.pathname === "/lease" || url.pathname === "/leaseExisting") && request.method === "POST") {
+      if (url.pathname === "/lease" && request.method === "POST") {
         return jsonResponse(await this.#handleLease(request, store));
       }
       if (url.pathname === "/read" && request.method === "GET") {
@@ -97,25 +92,12 @@ export class CasDurableObject {
 
   // ─── Node storage operations ──────────────────────────────
 
-  async #handleLeaseNode(request: Request, store: Parameters<typeof leaseNode>[0]): Promise<unknown> {
-    const hash = requireHeader(request, "X-CAS-Hash");
-    const contentType = request.headers.get("Content-Type") ?? "";
-    const content = new Uint8Array(await request.arrayBuffer());
-    return leaseNode(store, {
-      hash,
-      contentType,
-      contentLength: content.length,
-      refs: parseRefsHeader(request.headers.get("X-CAS-Refs")),
-      leaseDurationMs: parseLeaseDuration(request.headers.get("X-CAS-Lease-Duration")),
-      content,
-    });
-  }
-
-  async #handleLease(request: Request, store: Parameters<typeof leaseExisting>[0]): Promise<unknown> {
+  async #handleLease(request: Request, store: Parameters<typeof leaseReadyNode>[0]): Promise<unknown> {
     const hash = requireHeader(request, "X-CAS-Hash");
     const leaseDurationMs = parseLeaseDuration(request.headers.get("X-CAS-Lease-Duration"));
-    if (request.body !== null) {
-      if (request.headers.get("Content-Type") !== CanonicalNodeContentType) {
+    const contentType = request.headers.get("Content-Type");
+    if (contentType !== null) {
+      if (contentType !== CanonicalNodeContentType || request.body === null) {
         throw new NodeOpError(415, NodeOpErrorCodes.INVALID_REQUEST, `Content-Type must be ${CanonicalNodeContentType}`);
       }
       const lengthHeader = request.headers.get("Content-Length");
@@ -123,14 +105,32 @@ export class CasDurableObject {
       if (declaredLength !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength < 0)) {
         throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "Invalid Content-Length");
       }
-      return leaseCanonicalNode(store, {
-        hash,
-        leaseDurationMs,
-        body: request.body,
-        declaredLength,
-      });
+      if (declaredLength === undefined) {
+        throw new NodeOpError(411, NodeOpErrorCodes.INVALID_REQUEST, "Content-Length is required");
+      }
+      if (typeof FixedLengthStream === "undefined") {
+        return leaseCanonicalNode(store, {
+          hash,
+          leaseDurationMs,
+          body: request.body,
+          declaredLength,
+        });
+      }
+      const fixed = new FixedLengthStream(declaredLength);
+      const pumping = request.body.pipeTo(fixed.writable).catch(() => undefined);
+      try {
+        return await leaseCanonicalNode(store, {
+          hash,
+          leaseDurationMs,
+          body: fixed.readable,
+          declaredLength,
+        });
+      } finally {
+        await pumping;
+      }
     }
-    return leaseExisting(store, {
+    await request.body?.cancel("Bodyless lease");
+    return leaseReadyNode(store, {
       hash,
       leaseDurationMs,
     });

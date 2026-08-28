@@ -18,14 +18,26 @@ const HASH_HEX_RE = /^[0-9a-f]{64}$/;
 const CONTENT_TYPE_RE = /^[\x20-\x7e]+$/;
 
 export const MAX_CANONICAL_NODE_BYTES = 64 * 1024 * 1024;
-export const MAX_NODE_REFS = 128;
+export const MAX_NODE_REFS = 256;
+
+export interface CanonicalNodeLimits {
+  readonly maxCanonicalNodeBytes?: number;
+  readonly maxNodeRefs?: number;
+}
 
 /** Return the canonical byte length after enforcing version-1 resource limits. */
 export function validateCanonicalNodeSize(
   contentSize: number,
   contentTypeLength: number,
   refCount: number,
+  limits: CanonicalNodeLimits = {},
 ): number {
+  const maxCanonicalNodeBytes = resolveLimit(
+    limits.maxCanonicalNodeBytes,
+    MAX_CANONICAL_NODE_BYTES,
+    "Canonical node byte limit",
+  );
+  const maxNodeRefs = resolveLimit(limits.maxNodeRefs, MAX_NODE_REFS, "Child ref limit", true);
   if (!Number.isSafeInteger(contentSize) || contentSize < 0) {
     throw new Error(`Invalid content size: ${contentSize}`);
   }
@@ -36,7 +48,7 @@ export function validateCanonicalNodeSize(
   ) {
     throw new Error(`Content type length out of range: ${contentTypeLength}`);
   }
-  if (!Number.isSafeInteger(refCount) || refCount < 0 || refCount > MAX_NODE_REFS) {
+  if (!Number.isSafeInteger(refCount) || refCount < 0 || refCount > maxNodeRefs) {
     throw new Error(`Child ref count out of range: ${refCount}`);
   }
 
@@ -44,10 +56,19 @@ export function validateCanonicalNodeSize(
   if (!Number.isSafeInteger(totalLength)) {
     throw new Error("Total node length overflows safe integer range");
   }
-  if (totalLength > MAX_CANONICAL_NODE_BYTES) {
-    throw new Error(`Canonical node too large: ${totalLength} > ${MAX_CANONICAL_NODE_BYTES}`);
+  if (totalLength > maxCanonicalNodeBytes) {
+    throw new Error(`Canonical node too large: ${totalLength} > ${maxCanonicalNodeBytes}`);
   }
   return totalLength;
+}
+
+function resolveLimit(value: number | undefined, maximum: number, name: string, allowZero = false): number {
+  if (value === undefined) return maximum;
+  const minimum = allowZero ? 0 : 1;
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new RangeError(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
 }
 
 /** Validate a CAS hash string (64 lowercase hex chars). */

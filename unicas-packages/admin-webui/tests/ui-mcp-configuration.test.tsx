@@ -59,7 +59,7 @@ describe("AI tool connection", () => {
 
     await user.click(screen.getByRole("button", { name: "Copy CLI prompt" }));
     const cliPrompt = await navigator.clipboard.readText();
-    expect(cliPrompt).toContain("pnpm install --global ./unicas-packages/cli");
+    expect(cliPrompt).toContain("pnpm install --global ./unicas-packages/admin-cli");
     expect(cliPrompt).toContain("unicas login");
     expect(cliPrompt).toContain(`${window.location.origin}/admin/assets/skills/unicas-cli/SKILL.md`);
     expect(cliPrompt).toContain("standard agent-skills location");

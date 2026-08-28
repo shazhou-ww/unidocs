@@ -15,7 +15,8 @@
  */
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { createGatewayHandler } from "../src/gateway-handler.js";
+import { createGatewayHandler as createCanonicalGatewayHandler } from "../src/gateway-handler.js";
+import { GatewayCapabilityAuthority } from "../src/capability-authority.js";
 import { MemoryGatewayDocumentDirectory } from "../src/document-directory.js";
 
 /** A body that is a genuine `ReadableStream`, not an already-buffered string. */
@@ -71,27 +72,31 @@ function startUpstream(): Promise<number> {
   });
 }
 
-const CAS_ACCESS_KEY = "cas-key";
-const DOC_ACCESS_KEY = "markdown-key";
+const testIssuer = {
+  keyId: "test-key",
+  issue: async () => "test-token",
+};
+const capabilityAuthority = new GatewayCapabilityAuthority({
+  issuer: testIssuer,
+  casIssuer: testIssuer,
+  casAudience: "unidocs-cas",
+  casStackId: "test-stack",
+  generateJti: () => crypto.randomUUID(),
+});
+
+function createGatewayHandler(config: Record<string, unknown>) {
+  return createCanonicalGatewayHandler({
+    ...config,
+    capabilityAuthority,
+    casStackId: "test-stack",
+  } as Parameters<typeof createCanonicalGatewayHandler>[0]);
+}
 
 describe("createGatewayHandler — forwardToWorker streaming body", () => {
-  it("fails startup when the internal auth mode is absent", () => {
-    expect(() => createGatewayHandler({
-      casAccessKey: CAS_ACCESS_KEY,
-      identityResolver: { resolve: async () => null },
-      resolveDocService: async () => null,
-      casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
-      directory: new MemoryGatewayDocumentDirectory(),
-      isGatewayExposedCasRoute: () => false,
-    } as never)).toThrow("Gateway internal auth mode must be explicit");
-  });
-
   it("forwards a POST body intact through a bare fetch() to the resolved worker URL", async () => {
     const port = await startUpstream();
 
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async (_request, requestedTenantId) => ({
           userId: "authenticated-user",
@@ -102,7 +107,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       resolveDocService: async (docType) => docType === "markdown" ? {
         serviceId: "markdown-primary",
         url: `http://127.0.0.1:${port}`,
-        accessKey: DOC_ACCESS_KEY,
+        audience: "unidocs-doc:markdown",
       } : null,
       casFetcher: { fetch: async () => new Response(null, { status: 501 }) },
       directory: new MemoryGatewayDocumentDirectory(),
@@ -137,20 +142,18 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
     });
     expect(body.sessionId).toBeUndefined();
     expect(upstreamBody).toBe(payload);
-    expect(upstreamPath).toBe("/sessions/internal-session");
-    expect(upstreamHeaders?.["x-session-id"]).toBe("internal-session");
-    expect(upstreamHeaders?.["x-tenant-id"]).toBe("tenant-1");
-    expect(upstreamHeaders?.["x-internal-token"]).toBe(DOC_ACCESS_KEY);
+    expect(upstreamPath).toBe("/tenants/tenant-1/sessions/internal-session");
+    expect(upstreamHeaders?.["x-session-id"]).toBeUndefined();
+    expect(upstreamHeaders?.["x-tenant-id"]).toBeUndefined();
+    expect(upstreamHeaders?.["x-internal-token"]).toBeUndefined();
     expect(upstreamHeaders?.["x-user-id"]).toBeUndefined();
-    expect(upstreamHeaders?.authorization).toBeUndefined();
+    expect(upstreamHeaders?.authorization).toBe("Bearer test-token");
     expect(upstreamHeaders?.cookie).toBeUndefined();
   });
 
   it("forwards a public tenant CAS request with minimal headers", async () => {
     let forwarded: Request | undefined;
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async (_request, requestedTenantId) => requestedTenantId === "tenant-42" ? {
           userId: "authenticated-user",
@@ -178,11 +181,11 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
     }));
 
     expect(res.status).toBe(204);
-    expect(new URL(forwarded!.url).pathname).toBe("/tenants/tenant-42/cas/usage");
-    expect(forwarded!.headers.get("X-Internal-Token")).toBe(CAS_ACCESS_KEY);
-    expect(forwarded!.headers.get("X-Tenant-Id")).toBe("tenant-42");
+    expect(new URL(forwarded!.url).pathname).toBe("/stacks/test-stack/tenants/tenant-42/cas/usage");
+    expect(forwarded!.headers.get("X-Internal-Token")).toBeNull();
+    expect(forwarded!.headers.get("X-Tenant-Id")).toBeNull();
     expect(forwarded!.headers.get("X-User-Id")).toBeNull();
-    expect(forwarded!.headers.get("Authorization")).toBeNull();
+    expect(forwarded!.headers.get("Authorization")).toBe("Bearer test-token");
     expect(forwarded!.headers.get("Cookie")).toBeNull();
   });
 
@@ -190,8 +193,6 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
     const directory = new MemoryGatewayDocumentDirectory();
     let upstreamCalls = 0;
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async (_request, requestedTenantId) => ({
           userId: "authenticated-user",
@@ -202,7 +203,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       resolveDocService: async () => ({
         serviceId: "markdown-primary",
         url: "http://doc.invalid",
-        accessKey: DOC_ACCESS_KEY,
+        audience: "unidocs-doc:markdown",
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 501 }) },
       directory,
@@ -253,13 +254,11 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
 
   it("fails closed when no Gateway identity can be resolved", async () => {
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: { resolve: async () => null },
       resolveDocService: async () => ({
         serviceId: "markdown-primary",
         url: "http://doc.invalid",
-        accessKey: DOC_ACCESS_KEY,
+        audience: "unidocs-doc:markdown",
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
@@ -272,8 +271,6 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
 
   it("rejects an authenticated identity bound to another path tenant", async () => {
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async () => ({
           userId: "authenticated-user",
@@ -284,7 +281,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       resolveDocService: async () => ({
         serviceId: "markdown-primary",
         url: "http://doc.invalid",
-        accessKey: DOC_ACCESS_KEY,
+        audience: "unidocs-doc:markdown",
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory: new MemoryGatewayDocumentDirectory(),
@@ -298,8 +295,6 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
   it("rejects legacy user routes before identity resolution", async () => {
     let resolved = false;
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async () => {
           resolved = true;
@@ -320,8 +315,6 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
   it("requires tenant administration for CAS usage", async () => {
     let forwarded = false;
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async (_request, requestedTenantId) => ({
           userId: "authenticated-user",
@@ -360,8 +353,6 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
     await directory.markReady("tenant-1", "source-doc", 7, 2);
 
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async (_request, requestedTenantId) => ({
           userId: "authenticated-user",
@@ -372,7 +363,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       resolveDocService: async () => ({
         serviceId: "markdown-primary",
         url: "http://doc.internal",
-        accessKey: DOC_ACCESS_KEY,
+        audience: "unidocs-doc:markdown",
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory,
@@ -386,10 +377,10 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
     globalThis.fetch = async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input.url);
       paths.push(url.pathname);
-      if (url.pathname === "/sessions/source-session/snapshot") {
+      if (url.pathname === "/tenants/tenant-1/sessions/source-session/snapshot") {
         return Response.json({ success: true, hash: "a".repeat(64), version: 7 });
       }
-      expect(url.pathname).toBe("/sessions/target-session/init-from-hash");
+      expect(url.pathname).toBe("/tenants/tenant-1/sessions/target-session/init-from-hash");
       await expect(new Response(init?.body).json()).resolves.toEqual({
         hash: "a".repeat(64),
         sourceVersion: 7,
@@ -412,8 +403,8 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
         version: 1,
       });
       expect(paths).toEqual([
-        "/sessions/source-session/snapshot",
-        "/sessions/target-session/init-from-hash",
+        "/tenants/tenant-1/sessions/source-session/snapshot",
+        "/tenants/tenant-1/sessions/target-session/init-from-hash",
       ]);
 
       const crossTenant = await handler(new Request("http://gw/tenants/tenant-2/docs/markdown/", {
@@ -453,8 +444,6 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
     });
     await directory.markReady("tenant-1", "doc-1", 1, 2);
     const handler = createGatewayHandler({
-      internalAuthMode: "legacy",
-      casAccessKey: CAS_ACCESS_KEY,
       identityResolver: {
         resolve: async (_request, requestedTenantId) => ({
           userId: "authenticated-user",
@@ -465,7 +454,7 @@ describe("createGatewayHandler — forwardToWorker streaming body", () => {
       resolveDocService: async () => ({
         serviceId: "markdown-primary",
         url: "http://doc.internal",
-        accessKey: DOC_ACCESS_KEY,
+        audience: "unidocs-doc:markdown",
       }),
       casFetcher: { fetch: async () => new Response(null, { status: 500 }) },
       directory,

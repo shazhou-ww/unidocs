@@ -21,22 +21,18 @@ export interface DocCapabilityVerifier {
   verify(token: string): Promise<VerifiedCapability>;
 }
 
-export type DocInternalAuthMode = "legacy" | "dual" | "capability" | "stack";
-
 export interface DocTypeHandlerConfig {
   docType: string;
-  internalAuthMode: DocInternalAuthMode;
-  accessKey?: string;
-  docCapabilityVerifier?: DocCapabilityVerifier;
-  casCapabilityVerifier?: DocCapabilityVerifier;
+  docCapabilityVerifier: DocCapabilityVerifier;
+  casCapabilityVerifier: DocCapabilityVerifier;
   audit?: (event: DocAuthenticationAuditEvent) => void;
   editor: DoNamespaceLike;
   operator: DoNamespaceLike;
 }
 
 export interface DocAuthenticationAuditEvent {
-  readonly credentialKind: "legacy" | "capability";
-  readonly routeGeneration: "legacy" | "tenant";
+  readonly credentialKind: "capability";
+  readonly routeGeneration: "tenant";
   readonly operation: DocOperation;
   readonly tenantId: string;
   readonly sessionId: string;
@@ -44,29 +40,11 @@ export interface DocAuthenticationAuditEvent {
   readonly jti?: string;
 }
 
-type MatchedDocEdgeRoute = DocRoute & {
-  readonly generation: "legacy" | "capability";
-};
-
-type AuthenticatedDocEdgeRoute = MatchedDocEdgeRoute & {
+type AuthenticatedDocEdgeRoute = DocRoute & {
   readonly delegatedCasCapability?: string;
   readonly kid?: string;
   readonly jti?: string;
 };
-
-const legacyOperations = {
-  query: { method: "POST", operation: "query" },
-  apply: { method: "POST", operation: "apply" },
-  export: { method: "GET", operation: "export" },
-  history: { method: "GET", operation: "history" },
-  rollback: { method: "POST", operation: "rollback" },
-  snapshot: { method: "GET", operation: "snapshot" },
-  status: { method: "GET", operation: "status" },
-  ir: { method: "GET", operation: "ir" },
-  "init-from-hash": { method: "POST", operation: "initFromHash" },
-  run: { method: "POST", operation: "run" },
-  reset: { method: "POST", operation: "reset" },
-} as const satisfies Record<string, { method: string; operation: DocOperation }>;
 
 export function createDocTypeHandler(
   cfg: DocTypeHandlerConfig,
@@ -74,22 +52,20 @@ export function createDocTypeHandler(
   validateConfig(cfg);
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    const route = matchEdgeRoute(cfg.internalAuthMode, request.method, url.pathname);
+    const route = matchDocRoute(request.method, url.pathname);
     if (!route) {
       return Response.json({ error: "Unknown Doc endpoint" }, { status: 404 });
     }
 
     let authenticated: AuthenticatedDocEdgeRoute;
     try {
-      authenticated = route.generation === "capability"
-        ? await authenticateCapabilityRoute(cfg, request, route)
-        : authenticateLegacyRoute(cfg, request, route);
+      authenticated = await authenticateCapabilityRoute(cfg, request, route);
     } catch (error) {
       return authenticationErrorResponse(error);
     }
     cfg.audit?.(Object.freeze({
-      credentialKind: authenticated.generation,
-      routeGeneration: authenticated.generation === "capability" ? "tenant" : "legacy",
+      credentialKind: "capability",
+      routeGeneration: "tenant",
       operation: authenticated.operation,
       tenantId: authenticated.tenantId,
       sessionId: authenticated.sessionId,
@@ -101,9 +77,7 @@ export function createDocTypeHandler(
         || authenticated.operation === "reset"
       ? cfg.operator
       : cfg.editor;
-    const objectName = authenticated.generation === "capability"
-      ? docSessionObjectName(authenticated.tenantId, authenticated.sessionId)
-      : authenticated.sessionId;
+    const objectName = docSessionObjectName(authenticated.tenantId, authenticated.sessionId);
     const id = namespace.idFromName(objectName);
     const stub = namespace.get(id);
     const forwardUrl = new URL(request.url);
@@ -118,57 +92,10 @@ export function createDocTypeHandler(
   };
 }
 
-function matchEdgeRoute(
-  mode: DocInternalAuthMode,
-  method: string,
-  pathname: string,
-): MatchedDocEdgeRoute | null {
-  const capabilityRoute = matchDocRoute(method, pathname);
-  if (capabilityRoute) {
-    return mode === "legacy"
-      ? null
-      : { ...capabilityRoute, generation: "capability" };
-  }
-  const legacyRoute = matchLegacyDocRoute(method, pathname);
-  if (!legacyRoute || mode === "capability") return null;
-  return { ...legacyRoute, generation: "legacy" };
-}
-
-function matchLegacyDocRoute(method: string, pathname: string): DocRoute | null {
-  const parts = pathname.split("/").filter(Boolean);
-  if (parts.length < 2 || parts[0] !== "sessions") return null;
-  const sessionId = decodeSegment(parts[1]);
-  if (sessionId === null) return null;
-  if (parts.length === 2 && method === "PUT") {
-    return { operation: "create", tenantId: "", sessionId };
-  }
-  if (parts.length !== 3) return null;
-  const operation = legacyOperations[parts[2] as keyof typeof legacyOperations];
-  return operation?.method === method
-    ? { operation: operation.operation, tenantId: "", sessionId }
-    : null;
-}
-
-function authenticateLegacyRoute(
-  cfg: DocTypeHandlerConfig,
-  request: Request,
-  route: MatchedDocEdgeRoute,
-): AuthenticatedDocEdgeRoute {
-  const token = request.headers.get("X-Internal-Token");
-  if (!cfg.accessKey || token !== cfg.accessKey) {
-    throw new CapabilityAuthenticationError("invalid_token", "Legacy service credential is invalid");
-  }
-  const tenantId = request.headers.get("X-Tenant-Id");
-  if (!tenantId) {
-    throw new CapabilityAuthenticationError("missing_token", "Legacy tenant context is required");
-  }
-  return { ...route, tenantId };
-}
-
 async function authenticateCapabilityRoute(
   cfg: DocTypeHandlerConfig,
   request: Request,
-  route: MatchedDocEdgeRoute,
+  route: DocRoute,
 ): Promise<AuthenticatedDocEdgeRoute> {
   const token = extractBearerCapability(request.headers.get("Authorization"));
   const primary = await cfg.docCapabilityVerifier!.verify(token);
@@ -248,13 +175,10 @@ function internalHeaders(
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  if (route.generation === "legacy") {
-    headers.set("X-Internal-Token", cfg.accessKey!);
-  }
   headers.set("X-Tenant-Id", route.tenantId);
   headers.set("X-Doc-Type", cfg.docType);
   headers.set("X-Session-Id", route.sessionId);
-  headers.set("X-UniDocs-Auth-Context", route.generation);
+  headers.set("X-UniDocs-Auth-Context", "capability");
   headers.set("X-UniDocs-Doc-Operation", route.operation);
   if (route.delegatedCasCapability) {
     headers.set("X-UniDocs-CAS-Capability", route.delegatedCasCapability);
@@ -270,26 +194,7 @@ function authenticationErrorResponse(error: unknown): Response {
 }
 
 function validateConfig(cfg: DocTypeHandlerConfig): void {
-  if (cfg.internalAuthMode !== "legacy"
-    && cfg.internalAuthMode !== "dual"
-    && cfg.internalAuthMode !== "capability"
-    && cfg.internalAuthMode !== "stack") {
-    throw new TypeError("Doc internal auth mode must be explicit");
-  }
-  if ((cfg.internalAuthMode === "legacy" || cfg.internalAuthMode === "dual")
-    && !cfg.accessKey) {
-    throw new TypeError("Legacy Doc auth requires an access key");
-  }
-  if ((cfg.internalAuthMode === "capability" || cfg.internalAuthMode === "dual" || cfg.internalAuthMode === "stack")
-    && (!cfg.docCapabilityVerifier || !cfg.casCapabilityVerifier)) {
+  if (!cfg.docCapabilityVerifier || !cfg.casCapabilityVerifier) {
     throw new TypeError("Capability Doc auth requires Doc and CAS verifiers");
-  }
-}
-
-function decodeSegment(value: string): string | null {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return null;
   }
 }

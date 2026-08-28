@@ -54,7 +54,7 @@ export {
 } from "./ports-cf.js";
 export {
 	CasClientError,
-} from "@unicas/client";
+} from "@unicas/tenant-client";
 export {
 	createSBlobContext,
 	SBlobIntegrityError,

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const DEPLOY_DIR = join(ROOT, "stacks/azure/deploy");
+const DEPLOY_DIR = join(ROOT, "stacks/unidocs-azure/deploy");
 const DEPLOY_SOURCE = readFileSync(join(DEPLOY_DIR, "deploy.mjs"), "utf8");
 
 /** `param foo string` / `param foo int = 0` 的声明名。 */

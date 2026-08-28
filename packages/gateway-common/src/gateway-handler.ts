@@ -9,15 +9,13 @@
  *   Public tenantId comes from the URL path.
  *   The identity resolver authenticates the user and authorizes that tenant.
  *
- * Internal auth:
- *   Gateway → doc worker / CAS worker: X-Internal-Token
- *   Gateway → CAS worker: X-Tenant-Id resolved by Gateway
+ * Internal auth uses short-lived capabilities for Doc and CAS services.
  */
 
-import type { HttpFetcher } from "@unicas/client";
-import { casRoutes, matchCasRoute } from "@unicas/protocol-legacy";
-import type { CasRoute } from "@unicas/protocol-legacy";
+import type { HttpFetcher } from "@unicas/tenant-client";
 import { casRoutes as canonicalCasRoutes } from "@unicas/protocol";
+import { matchGatewayRoute } from "@unidocs/protocol-gateway";
+import type { GatewayCasRoute } from "@unidocs/protocol-gateway";
 import { docRoutes } from "@unidocs/protocol-doc";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {
@@ -29,29 +27,15 @@ import type { GatewayIdentityResolver } from "./identity.js";
 import { casCapabilityPolicy, docCapabilityPolicy } from "./capability-policy.js";
 import type { GatewayCapabilityAuthority } from "./capability-authority.js";
 
-export type GatewayInternalAuthMode = "legacy" | "dual" | "capability" | "stack";
-
-export function parseGatewayInternalAuthMode(
-  value: string | undefined,
-): GatewayInternalAuthMode {
-  if (value === "legacy" || value === "dual" || value === "capability" || value === "stack") {
-    return value;
-  }
-  throw new TypeError("Gateway internal auth mode must be explicit");
-}
-
 export interface GatewayHandlerConfig {
-  internalAuthMode: GatewayInternalAuthMode;
-  casAccessKey?: string;
-  capabilityAuthority?: GatewayCapabilityAuthority;
+  capabilityAuthority: GatewayCapabilityAuthority;
   identityResolver: GatewayIdentityResolver;
   resolveDocService(docType: string): Promise<DocServiceRegistration | null>;
   casFetcher: HttpFetcher;
   directory: GatewayDocumentDirectory;
   /** Gateway-owned CAS exposure policy, applied after route matching. */
-  isGatewayExposedCasRoute(route: CasRoute): boolean;
-  /** Stack namespace: forward public CAS routes to canonical /stacks paths. */
-  casStackId?: string;
+  isGatewayExposedCasRoute(route: GatewayCasRoute): boolean;
+  casStackId: string;
   /**
    * Reject document uploads larger than this with 413, before touching the
    * body. Unset means unlimited — which is not "generous" but a crash: the
@@ -67,8 +51,7 @@ export interface GatewayHandlerConfig {
 export interface DocServiceRegistration {
   readonly serviceId: string;
   readonly url: string;
-  readonly accessKey?: string;
-  readonly audience?: string;
+  readonly audience: string;
 }
 
 const EDITOR_METHODS = new Set([
@@ -122,8 +105,9 @@ export function createGatewayHandler(
     }
 
     if (namespace === "cas") {
-      const casRoute = matchCasRoute(request.method, url.pathname);
-      if (!casRoute || !cfg.isGatewayExposedCasRoute(casRoute)) {
+      const matched = matchGatewayRoute(request.method, url.pathname);
+      const casRoute = matched?.kind === "cas" ? matched.route : null;
+      if (casRoute === null || !cfg.isGatewayExposedCasRoute(casRoute)) {
         return Response.json({ error: "Unknown CAS endpoint" }, { status: 404 });
       }
       const policy = casCapabilityPolicy(casRoute);
@@ -142,16 +126,7 @@ export function createGatewayHandler(
       // caller then tries to decode already-plain bytes and the stream dies
       // with `TypeError: terminated`.
       headers.set("Accept-Encoding", "identity");
-      if (usesLegacyAuth(cfg.internalAuthMode)) {
-        headers.set("X-Internal-Token", cfg.casAccessKey!);
-        headers.set("X-Tenant-Id", tenantId);
-      }
-      if (usesCapabilityAuth(cfg.internalAuthMode)) {
-        headers.set(
-          "Authorization",
-          await cfg.capabilityAuthority!.issueCasOperation(casRoute),
-        );
-      }
+      headers.set("Authorization", await cfg.capabilityAuthority.issueCasOperation(casRoute));
       const targetUrl = new URL(request.url);
       targetUrl.pathname = casTargetPath(casRoute, cfg.casStackId);
       return cfg.casFetcher.fetch(new Request(targetUrl, {
@@ -283,9 +258,7 @@ async function forwardToWorker(
   operation: DocOperation,
 ): Promise<Response> {
   const originalUrl = new URL(request.url);
-  const targetPath = usesCapabilityAuth(cfg.internalAuthMode)
-    ? docRoutes[operation]({ tenantId, sessionId })
-    : legacyDocPath(sessionId, operation);
+  const targetPath = docRoutes[operation]({ tenantId, sessionId });
   const targetUrl = `${workerUrl}${targetPath}${originalUrl.search}`;
 
   const headers = new Headers();
@@ -293,38 +266,22 @@ async function forwardToWorker(
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  if (usesLegacyAuth(cfg.internalAuthMode)) {
-    if (!docService.accessKey) {
-      return Response.json({ error: "Document service legacy credential is unavailable" }, { status: 503 });
-    }
-    headers.set("X-Internal-Token", docService.accessKey);
-    headers.set("X-Tenant-Id", tenantId);
-    headers.set("X-Doc-Type", docType);
-    headers.set("X-Session-Id", sessionId);
-  }
-  const operationSignal = usesCapabilityAuth(cfg.internalAuthMode)
-    ? AbortSignal.any([
-      request.signal,
-      AbortSignal.timeout(
-        docCapabilityPolicy(operation, tenantId, sessionId).deadlineSeconds * 1000,
-      ),
-    ])
-    : request.signal;
-  if (usesCapabilityAuth(cfg.internalAuthMode)) {
-    if (!docService.audience) {
-      return Response.json({ error: "Document service capability audience is unavailable" }, { status: 503 });
-    }
-    const credentials = await cfg.capabilityAuthority!.issueDocOperation({
-      operation,
-      docType,
-      docAudience: docService.audience,
-      tenantId,
-      sessionId,
-    });
-    headers.set("Authorization", credentials.authorization);
-    if (credentials.delegatedCasCapability) {
-      headers.set("X-UniDocs-CAS-Capability", credentials.delegatedCasCapability);
-    }
+  const operationSignal = AbortSignal.any([
+    request.signal,
+    AbortSignal.timeout(
+      docCapabilityPolicy(operation, tenantId, sessionId).deadlineSeconds * 1000,
+    ),
+  ]);
+  const credentials = await cfg.capabilityAuthority.issueDocOperation({
+    operation,
+    docType,
+    docAudience: docService.audience,
+    tenantId,
+    sessionId,
+  });
+  headers.set("Authorization", credentials.authorization);
+  if (credentials.delegatedCasCapability) {
+    headers.set("X-UniDocs-CAS-Capability", credentials.delegatedCasCapability);
   }
   headers.set("Accept-Encoding", "identity");
 
@@ -662,71 +619,22 @@ function docOperation(method: string): DocOperation {
   throw new TypeError(`Unsupported Doc operation: ${method}`);
 }
 
-function legacyDocPath(sessionId: string, operation: DocOperation): string {
-  if (operation === "create") return `/sessions/${encodeURIComponent(sessionId)}`;
-  const segment = operation === "initFromHash" ? "init-from-hash" : operation;
-  return `/sessions/${encodeURIComponent(sessionId)}/${segment}`;
-}
-
-function usesLegacyAuth(mode: GatewayInternalAuthMode): boolean {
-  return mode === "legacy" || mode === "dual";
-}
-
-function usesCapabilityAuth(mode: GatewayInternalAuthMode): boolean {
-  return mode === "capability" || mode === "dual" || mode === "stack";
-}
-
 function validateInternalAuthConfig(cfg: GatewayHandlerConfig): void {
-  parseGatewayInternalAuthMode(cfg.internalAuthMode);
-  if (usesLegacyAuth(cfg.internalAuthMode) && !cfg.casAccessKey) {
-    throw new TypeError("Legacy Gateway auth requires a CAS access key");
-  }
-  if (usesCapabilityAuth(cfg.internalAuthMode) && !cfg.capabilityAuthority) {
-    throw new TypeError("Capability Gateway auth requires a capability authority");
-  }
-  if (cfg.internalAuthMode === "stack" && !cfg.casStackId) {
-    throw new TypeError("Stack Gateway auth requires a CAS stack id");
-  }
+  if (!cfg.capabilityAuthority) throw new TypeError("Gateway requires a capability authority");
+  if (!cfg.casStackId) throw new TypeError("Gateway requires a CAS stack id");
 }
 
-/** Public CAS route → internal target path (canonical /stacks in stack mode). */
-function casTargetPath(route: CasRoute, stackId: string | undefined): string {
-  if (stackId !== undefined) {
-    switch (route.operation) {
-      case "readContent":
-        return canonicalCasRoutes.readContent({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
-      case "readMetadata":
-        return canonicalCasRoutes.readMetadata({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
-      case "leaseNode":
-        return canonicalCasRoutes.leaseNode({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
-      case "leaseExisting":
-        return canonicalCasRoutes.leaseExisting({ stackId, tenantId: route.tenantId, hash: (route as { hash: string }).hash });
-      case "usage":
-        return canonicalCasRoutes.usage({ stackId, tenantId: route.tenantId });
-      case "gc":
-        return canonicalCasRoutes.gc({ stackId, tenantId: route.tenantId });
-      default:
-        throw new TypeError(`CAS operation ${route.operation} is not public`);
-    }
-  }
-  return publicCasPath(route);
-}
-
-function publicCasPath(route: CasRoute): string {
+function casTargetPath(route: GatewayCasRoute, stackId: string): string {
   switch (route.operation) {
     case "readContent":
-      return casRoutes.readContent(route);
+      return canonicalCasRoutes.readContent({ stackId, tenantId: route.tenantId, hash: route.hash });
     case "readMetadata":
-      return casRoutes.readMetadata(route);
-    case "leaseNode":
-      return casRoutes.leaseNode(route);
-    case "leaseExisting":
-      return casRoutes.leaseExisting(route);
+      return canonicalCasRoutes.readMetadata({ stackId, tenantId: route.tenantId, hash: route.hash });
+    case "lease":
+      return canonicalCasRoutes.lease({ stackId, tenantId: route.tenantId, hash: route.hash });
     case "usage":
-      return casRoutes.usage(route);
+      return canonicalCasRoutes.usage({ stackId, tenantId: route.tenantId });
     case "gc":
-      return casRoutes.gc(route);
-    default:
-      throw new TypeError(`CAS operation ${route.operation} is not public`);
+      return canonicalCasRoutes.gc({ stackId, tenantId: route.tenantId });
   }
 }

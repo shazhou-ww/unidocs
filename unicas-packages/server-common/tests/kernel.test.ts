@@ -285,6 +285,15 @@ describe("validation", () => {
         "Child ref count out of range",
       );
     });
+
+    it("accepts stricter implementation limits for tests", () => {
+      expect(() => validateCanonicalNodeSize(8, 1, 2, { maxNodeRefs: 1 })).toThrow(
+        "Child ref count out of range",
+      );
+      expect(() => validateCanonicalNodeSize(8, 1, 0, { maxCanonicalNodeBytes: 32 })).toThrow(
+        "Canonical node too large",
+      );
+    });
   });
 
   describe("validateHash", () => {

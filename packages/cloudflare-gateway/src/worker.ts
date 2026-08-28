@@ -9,19 +9,15 @@
  * Identity:
  *   Public tenantId comes from the URL path and is authorized by Gateway.
  *
- * Internal auth:
- *   Gateway → doc worker / CAS worker: X-Internal-Token
- *   Gateway → CAS worker: X-Tenant-Id resolved by Gateway
+ * Internal service calls use short-lived Doc and stack CAS capabilities.
  */
 
 import {
   createGatewayHandler,
   createInsecureTenantIdentityResolver,
   GatewayCapabilityAuthority,
-  parseGatewayInternalAuthMode,
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
-import type { GatewayInternalAuthMode } from "@unidocs/gateway-common";
 import { isGatewayExposedCasRoute } from "@unidocs/protocol-gateway";
 import {
   createPkcs8CapabilityIssuer,
@@ -33,8 +29,6 @@ import { D1GatewayDocumentDirectory } from "./document-directory.js";
 interface Env extends CapabilityRuntimePolicyBindings {
   GATEWAY_DB: D1Database;
   DOC_SERVICES_JSON: string;
-  INTERNAL_AUTH_MODE?: string;
-  CAS_ACCESS_KEY?: string;
   CAPABILITY_PRIVATE_KEY_PKCS8?: string;
   CAPABILITY_KEY_ID?: string;
   CAPABILITY_ISSUER?: string;
@@ -67,11 +61,9 @@ function registry(env: Env): StaticDocServiceRegistry {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const internalAuthMode = parseGatewayInternalAuthMode(env.INTERNAL_AUTH_MODE);
+    const casStackId = requireBinding(env.CAS_STACK_ID, "CAS_STACK_ID");
     const handle = createGatewayHandler({
-      internalAuthMode,
-      casAccessKey: env.CAS_ACCESS_KEY,
-      capabilityAuthority: await capabilityAuthority(env, internalAuthMode),
+      capabilityAuthority: await capabilityAuthority(env),
       identityResolver: createInsecureTenantIdentityResolver(
         env.INSECURE_PATH_IDENTITY === "true",
       ),
@@ -79,7 +71,7 @@ export default {
       casFetcher: env.CAS_SERVICE,
       directory: new D1GatewayDocumentDirectory(env.GATEWAY_DB),
       isGatewayExposedCasRoute,
-      casStackId: env.CAS_STACK_ID,
+      casStackId,
     });
     return handle(request);
   },
@@ -87,9 +79,7 @@ export default {
 
 function capabilityAuthority(
   env: Env,
-  mode: GatewayInternalAuthMode,
-): Promise<GatewayCapabilityAuthority> | undefined {
-  if (mode === "legacy") return undefined;
+): Promise<GatewayCapabilityAuthority> {
   let cached = capabilityAuthorityCache.get(env);
   if (!cached) {
     cached = createCapabilityAuthority(env);
@@ -110,19 +100,17 @@ async function createCapabilityAuthority(env: Env): Promise<GatewayCapabilityAut
     defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
     maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
   });
-  const stackId = env.CAS_STACK_ID;
-  const casIssuer = stackId === undefined
-    ? undefined
-    : await createPkcs8CapabilityIssuer({
-      issuer: requireBinding(env.CAS_STACK_ISSUER, "CAS_STACK_ISSUER"),
-      kid: requireBinding(env.CAS_STACK_KEY_ID, "CAS_STACK_KEY_ID"),
-      privateKeyPkcs8: requireBinding(
-        env.CAS_STACK_PRIVATE_KEY_PKCS8,
-        "CAS_STACK_PRIVATE_KEY_PKCS8",
-      ),
-      defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
-      maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
-    });
+  const stackId = requireBinding(env.CAS_STACK_ID, "CAS_STACK_ID");
+  const casIssuer = await createPkcs8CapabilityIssuer({
+    issuer: requireBinding(env.CAS_STACK_ISSUER, "CAS_STACK_ISSUER"),
+    kid: requireBinding(env.CAS_STACK_KEY_ID, "CAS_STACK_KEY_ID"),
+    privateKeyPkcs8: requireBinding(
+      env.CAS_STACK_PRIVATE_KEY_PKCS8,
+      "CAS_STACK_PRIVATE_KEY_PKCS8",
+    ),
+    defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
+    maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+  });
   return new GatewayCapabilityAuthority({
     issuer,
     casIssuer,

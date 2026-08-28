@@ -1,5 +1,5 @@
 {
-  "name": "@unicas/cli",
+  "name": "@unicas/admin-cli",
   "version": "0.1.0",
   "description": "Unicas control-plane management CLI with local OAuth login and stdio MCP mode",
   "type": "module",

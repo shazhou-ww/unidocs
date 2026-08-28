@@ -18,7 +18,7 @@ import {
   StorageCorruptError,
   VersionConflictError,
 } from "@unidocs/protocol-doc";
-import { CasClientError } from "@unicas/client";
+import { CasClientError } from "@unicas/tenant-client";
 import { DocumentSession, type CasGateway, type SessionDeps } from "../src/session.js";
 
 // --------------------------------------------------------------------------
@@ -398,7 +398,7 @@ describe("DocumentSession.apply — failure paths", () => {
     const { session, deps, cas } = makeHarness();
     await session.create();
 
-    const failure = new CasClientError(409, "Conflict", "leaseExisting");
+    const failure = new CasClientError(409, "Conflict", "lease");
     cas.failLease = failure;
 
     const before = await deltaCount(deps);

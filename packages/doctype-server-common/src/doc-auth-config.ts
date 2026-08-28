@@ -7,11 +7,9 @@ import type {
   CapabilityRuntimePolicyBindings,
   CapabilityVerifierConfig,
 } from "@unidocs/service-auth";
-import type { DocCapabilityVerifier, DocInternalAuthMode } from "./doc-type-handler.js";
+import type { DocCapabilityVerifier } from "./doc-type-handler.js";
 
 export interface DocAuthBindings extends CapabilityRuntimePolicyBindings {
-  readonly INTERNAL_AUTH_MODE?: string;
-  readonly SERVICE_ACCESS_KEY?: string;
   readonly CAPABILITY_TRUSTED_JWKS?: string;
   readonly CAPABILITY_ISSUER?: string;
   readonly DOC_CAPABILITY_AUDIENCE?: string;
@@ -22,10 +20,8 @@ export interface DocAuthBindings extends CapabilityRuntimePolicyBindings {
 }
 
 export interface ResolvedDocAuthConfig {
-  readonly internalAuthMode: DocInternalAuthMode;
-  readonly accessKey?: string;
-  readonly docCapabilityVerifier?: DocCapabilityVerifier;
-  readonly casCapabilityVerifier?: DocCapabilityVerifier;
+  readonly docCapabilityVerifier: DocCapabilityVerifier;
+  readonly casCapabilityVerifier: DocCapabilityVerifier;
 }
 
 export class DocAuthConfigCache {
@@ -47,15 +43,6 @@ export function resolveDocAuthConfig(
   docType: string,
   bindings: DocAuthBindings,
 ): ResolvedDocAuthConfig {
-  const internalAuthMode = parseDocInternalAuthMode(bindings.INTERNAL_AUTH_MODE);
-  const usesLegacy = internalAuthMode === "legacy" || internalAuthMode === "dual";
-  const usesCapability = internalAuthMode === "capability" || internalAuthMode === "dual" || internalAuthMode === "stack";
-  const stackMode = internalAuthMode === "stack";
-  const accessKey = usesLegacy
-    ? requireBinding(bindings.SERVICE_ACCESS_KEY, "SERVICE_ACCESS_KEY")
-    : undefined;
-  if (!usesCapability) return Object.freeze({ internalAuthMode, accessKey });
-
   const issuer = requireBinding(bindings.CAPABILITY_ISSUER, "CAPABILITY_ISSUER");
   const policy = parseCapabilityRuntimePolicy(bindings);
   const docAudience = requireBinding(bindings.DOC_CAPABILITY_AUDIENCE, "DOC_CAPABILITY_AUDIENCE");
@@ -63,17 +50,9 @@ export function resolveDocAuthConfig(
   const jwks = parseJwks(
     requireBinding(bindings.CAPABILITY_TRUSTED_JWKS, "CAPABILITY_TRUSTED_JWKS"),
   );
-  // Stack mode: the delegated CAS capability is signed by the REGISTERED stack
-  // issuer (stack CAS identity), not the doc-service issuer.
-  const casIssuer = stackMode
-    ? requireBinding(bindings.CAS_STACK_ISSUER, "CAS_STACK_ISSUER")
-    : issuer;
-  const casJwks = stackMode
-    ? parseJwks(requireBinding(bindings.CAS_STACK_TRUSTED_JWKS, "CAS_STACK_TRUSTED_JWKS"))
-    : jwks;
+  const casIssuer = requireBinding(bindings.CAS_STACK_ISSUER, "CAS_STACK_ISSUER");
+  const casJwks = parseJwks(requireBinding(bindings.CAS_STACK_TRUSTED_JWKS, "CAS_STACK_TRUSTED_JWKS"));
   return Object.freeze({
-    internalAuthMode,
-    ...(accessKey === undefined ? {} : { accessKey }),
     docCapabilityVerifier: new CapabilityVerifier({
       issuer,
       audience: docAudience,
@@ -95,13 +74,6 @@ export function resolveDocAuthConfig(
       clockSkewSeconds: policy.clockSkewSeconds,
     }),
   });
-}
-
-function parseDocInternalAuthMode(value: string | undefined): DocInternalAuthMode {
-  if (value === "legacy" || value === "dual" || value === "capability" || value === "stack") {
-    return value;
-  }
-  throw new TypeError("Doc internal auth mode must be explicit");
 }
 
 function parseJwks(value: string): CapabilityVerifierConfig["jwks"] {

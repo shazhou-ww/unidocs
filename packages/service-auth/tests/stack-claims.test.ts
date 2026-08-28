@@ -8,13 +8,11 @@ import {
   CapabilityIssuer,
   CapabilityVerifier,
   JoseCapabilitySigner,
-  casGcTriggerPermission,
+  casAdminPermission,
   casReadPermission,
-  casUsageReadPermission,
   casWritePermission,
   isReservedRefDomain,
   parseCapabilityPermission,
-  sessionReadPermission,
   validateRefDomainClaim,
 } from "../src/index.js";
 
@@ -49,8 +47,7 @@ function verifier(): CapabilityVerifier {
     allowedPermissionKinds: [
       "cas:read",
       "cas:write",
-      "cas:usage:read",
-      "cas:gc:trigger",
+      "cas:admin",
     ],
     now: () => NOW,
   });
@@ -122,56 +119,23 @@ describe("stack-authority CAS claims (Task 4)", () => {
     await expect(verifier().verify(await forge(42))).rejects.toThrow();
   });
 
-  test("cas:usage:read and cas:gc:trigger parse and are tenant-only", async () => {
-    expect(parseCapabilityPermission(casUsageReadPermission(TENANT))).toEqual({
-      kind: "cas:usage:read",
+  test("cas:admin is tenant-only and does not grant read or write", async () => {
+    expect(parseCapabilityPermission(casAdminPermission(TENANT))).toEqual({
+      kind: "cas:admin",
       tenantId: TENANT,
     });
-    expect(parseCapabilityPermission(casGcTriggerPermission(TENANT))).toEqual({
-      kind: "cas:gc:trigger",
-      tenantId: TENANT,
-    });
-    // Session-scoped capabilities cannot carry tenant usage/GC permissions.
-    const token = await issuer().issue({
+    await expect(issuer().issue({
       subject: "doc:docx",
       audience: AUDIENCE,
       tenantId: TENANT,
       sessionId: "s1",
-      permissions: [sessionReadPermission(TENANT, "s1"), casUsageReadPermission(TENANT)],
-    });
-    await expect(verifier().verify(token)).rejects.toBeInstanceOf(
-      CapabilityAuthorizationError,
-    );
-    const gcToken = await issuer().issue({
-      subject: "doc:docx",
-      audience: AUDIENCE,
-      tenantId: TENANT,
-      sessionId: "s1",
-      permissions: [sessionReadPermission(TENANT, "s1"), casGcTriggerPermission(TENANT)],
-    });
-    await expect(verifier().verify(gcToken)).rejects.toBeInstanceOf(
-      CapabilityAuthorizationError,
-    );
-  });
-
-  test("usage/GC capabilities verify without a session when issued to a service", async () => {
+      permissions: [casAdminPermission(TENANT)],
+    })).rejects.toThrow("Session-scoped capabilities cannot contain cas:admin");
     const token = await issuer().issue({
       subject: "gateway",
       audience: AUDIENCE,
       tenantId: TENANT,
-      permissions: [casUsageReadPermission(TENANT), casGcTriggerPermission(TENANT)],
-    });
-    const capability = await verifier().verify(token);
-    expect(capability.claims.permissions).toContain(casUsageReadPermission(TENANT));
-    expect(capability.claims.permissions).toContain(casGcTriggerPermission(TENANT));
-  });
-
-  test("read/write capabilities are not granted by usage or GC permissions", async () => {
-    const token = await issuer().issue({
-      subject: "gateway",
-      audience: AUDIENCE,
-      tenantId: TENANT,
-      permissions: [casUsageReadPermission(TENANT)],
+      permissions: [casAdminPermission(TENANT)],
     });
     const capability = await verifier().verify(token);
     const { requireCapabilityPermission } = await import("../src/index.js");

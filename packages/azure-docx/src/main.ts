@@ -13,15 +13,13 @@
  * CAS_BASE_URL points at the Cloudflare CAS worker (replaced by azure-cas
  * in phase 4).
  *
- * Env vars: DATABASE_URL, SERVICE_ACCESS_KEY, CAS_ACCESS_KEY, PORT, plus one of two blob configs:
+ * Env vars: DATABASE_URL, CAS_STACK_ID, PORT, plus one of two blob configs:
  * in the cloud BLOB_ACCOUNT_URL + AZURE_CLIENT_ID (user-assigned managed
  * identity; without the latter the container starts and passes health checks,
  * then fails on the first blob operation — which is why resolveBlobConfig()
  * makes it a startup-time requirement), locally/Azurite BLOB_CONNECTION_STRING.
- * CAS_BASE_URL is optional (transitional, see doc-type-service.ts).
- *
- * CAS_ACCESS_KEY must match the Cloudflare CAS worker's: that
- * worker 401s every request whose X-Internal-Token differs.
+ * CAS_BASE_URL is optional (transitional, see doc-type-service.ts). CAS access
+ * uses the request-local delegated capability; this service has no shared CAS key.
  */
 import { runDocTypeService } from "@unidocs/azure-sdk";
 import { createDocxDocumentType } from "@unidocs/doctype-docx";

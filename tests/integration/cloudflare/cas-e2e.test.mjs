@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
+  CanonicalNodeContentType,
+  concatenateNodeBytes,
   encodeHeader,
   computeNodeDigest,
   hashToHex,
@@ -27,24 +29,27 @@ async function computeCasHash(contentType, content, refs = []) {
   const childHashes = refs.map(hexToHash);
   const header = encodeHeader(contentBytes.length, contentType, childHashes.length);
   const digest = await computeNodeDigest(header, contentType, childHashes, contentBytes);
-  return { hash: hashToHex(digest), content: contentBytes, header };
+  return {
+    hash: hashToHex(digest),
+    content: contentBytes,
+    canonical: concatenateNodeBytes(header, new TextEncoder().encode(contentType), childHashes, contentBytes),
+  };
 }
 
 /** Lease a node, uploading content in the same request. */
 async function casUpload(userId, contentType, content, refs = []) {
-  const { hash, content: contentBytes } = await computeCasHash(contentType, content, refs);
+  const { hash, canonical } = await computeCasHash(contentType, content, refs);
 
   const headers = {
-    "Content-Type": contentType,
-    "Content-Length": String(contentBytes.length),
+    "Content-Type": CanonicalNodeContentType,
+    "Content-Length": String(canonical.length),
     "X-CAS-Lease-Duration": "900000",
   };
-  if (refs.length > 0) headers["X-CAS-Refs"] = refs.join(",");
 
-  const leaseRes = await casFetch(casUrl(userId, `/nodes/${hash}`), {
+  const leaseRes = await casFetch(casUrl(userId, `/nodes/${hash}/lease`), {
     method: "POST",
     headers,
-    body: contentBytes,
+    body: canonical,
   });
   if (!leaseRes.ok) {
     const errorBody = await leaseRes.text();
@@ -159,28 +164,30 @@ test("CAS: usage endpoint returns stats", async () => {
 });
 
 test("CAS: digest mismatch is 400", async () => {
-  const res = await casFetch(casUrl("alice", `/nodes/${"a".repeat(64)}`), {
+  const node = await computeCasHash("text/plain", "nope");
+  const res = await casFetch(casUrl("alice", `/nodes/${"a".repeat(64)}/lease`), {
     method: "POST",
     headers: {
-      "Content-Type": "text/plain",
-      "Content-Length": "4",
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(node.canonical.length),
     },
-    body: "nope",
+    body: node.canonical,
   });
   expect(res.status).toBe(400);
 });
 
-test("CAS: metadata mismatch on a ready node is 409", async () => {
+test("CAS: a ready hash is idempotent even when the caller offers content again", async () => {
   const { hash } = await casUpload("alice", "text/plain", "same bytes");
-  const res = await casFetch(casUrl("alice", `/nodes/${hash}`), {
+  const other = await computeCasHash("application/json", "different bytes");
+  const res = await casFetch(casUrl("alice", `/nodes/${hash}/lease`), {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "Content-Length": String("same bytes".length),
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(other.canonical.length),
     },
-    body: "same bytes",
+    body: other.canonical,
   });
-  expect(res.status).toBe(409);
+  expect(res.status).toBe(200);
 });
 
 test("CAS: parent node with ready child ref", async () => {
@@ -195,15 +202,14 @@ test("CAS: parent node with ready child ref", async () => {
 });
 
 test("CAS: parent with unknown child is 409", async () => {
-  const { hash } = await computeCasHash("text/plain", "orphan parent", ["b".repeat(64)]);
-  const res = await casFetch(casUrl("alice", `/nodes/${hash}`), {
+  const node = await computeCasHash("text/plain", "orphan parent", ["b".repeat(64)]);
+  const res = await casFetch(casUrl("alice", `/nodes/${node.hash}/lease`), {
     method: "POST",
     headers: {
-      "Content-Type": "text/plain",
-      "Content-Length": String("orphan parent".length),
-      "X-CAS-Refs": "b".repeat(64),
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(node.canonical.length),
     },
-    body: "orphan parent",
+    body: node.canonical,
   });
   expect(res.status).toBe(409);
 });

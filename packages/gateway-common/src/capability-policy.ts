@@ -1,4 +1,4 @@
-import type { CasRoute } from "@unicas/protocol-legacy";
+import type { GatewayCasRoute } from "@unidocs/protocol-gateway";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {
   casAdminPermission,
@@ -89,7 +89,7 @@ export function docCapabilityPolicy(
   }
 }
 
-export function casCapabilityPolicy(route: CasRoute): CasCapabilityPolicy {
+export function casCapabilityPolicy(route: GatewayCasRoute): CasCapabilityPolicy {
   switch (route.operation) {
     case "readContent":
     case "readMetadata":
@@ -98,8 +98,7 @@ export function casCapabilityPolicy(route: CasRoute): CasCapabilityPolicy {
         requiresTenantAdmin: false,
         lifetimeSeconds: 120,
       };
-    case "leaseNode":
-    case "leaseExisting":
+    case "lease":
       return {
         permission: casWritePermission(route.tenantId),
         requiresTenantAdmin: false,
@@ -112,8 +111,6 @@ export function casCapabilityPolicy(route: CasRoute): CasCapabilityPolicy {
         requiresTenantAdmin: true,
         lifetimeSeconds: 120,
       };
-    default:
-      throw new TypeError(`CAS operation ${route.operation} is not public`);
   }
 }
 

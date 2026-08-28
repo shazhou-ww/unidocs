@@ -4,9 +4,7 @@
  * Every tenant service route carries `stackId + tenantId`; the tenant
  * matcher never recognizes `/admin` (that plane belongs to
  * `@unicas/protocol-admin`). The retired owner-assignment and
- * portable-node HTTP contracts are removed; the legacy surface is
- * quarantined in `@unicas/protocol-legacy` until the rollback window
- * closes.
+ * portable-node and pre-stack HTTP contracts are removed.
  */
 
 import type {
@@ -54,19 +52,6 @@ export type CasReadMetadataResponse =
   | { metadata: CasNodeMetadata; state: CasNodeState }
   | CasErrorResponse;
 
-export interface CasLeaseNodeRequest {
-  readonly path: CasNodePath;
-  readonly headers: {
-    contentType: string;
-    contentLength: number;
-    refs?: CasHash[];
-    leaseDurationMs?: number;
-  };
-  readonly body: ReadableStream<Uint8Array>;
-}
-
-export type CasLeaseNodeResponse = CasLeaseResult | CasErrorResponse;
-
 export interface CasLeaseRequest {
   readonly path: CasNodePath;
   readonly headers: {
@@ -78,11 +63,6 @@ export interface CasLeaseRequest {
 }
 
 export type CasLeaseResponse = CasLeaseResult | CasErrorResponse;
-
-/** @deprecated Use CasLeaseRequest. */
-export type CasLeaseExistingRequest = CasLeaseRequest;
-/** @deprecated Use CasLeaseResponse. */
-export type CasLeaseExistingResponse = CasLeaseResponse;
 
 export interface CasUsageRequest {
   readonly path: CasTenantPath;
@@ -111,8 +91,7 @@ export type CasUpdateRootRefsResponse =
 export interface CasEndpointContracts {
   readContent: { request: CasReadContentRequest; response: CasReadContentResponse };
   readMetadata: { request: CasReadMetadataRequest; response: CasReadMetadataResponse };
-  leaseNode: { request: CasLeaseNodeRequest; response: CasLeaseNodeResponse };
-  leaseExisting: { request: CasLeaseRequest; response: CasLeaseResponse };
+  lease: { request: CasLeaseRequest; response: CasLeaseResponse };
   usage: { request: CasUsageRequest; response: CasUsageResponse };
   gc: { request: CasGcRequest; response: CasGcResponse };
   updateRootRefs: {

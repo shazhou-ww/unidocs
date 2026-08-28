@@ -1,5 +1,5 @@
 /**
- * @unicas/cli — Unicas control-plane management CLI.
+ * @unicas/admin-cli — UniCAS control-plane management CLI.
  *
  * Programmatic surface: interactive OAuth login, token persistence, remote MCP
  * client, the tool catalog, and the stdio MCP server. The `unicas` binary in

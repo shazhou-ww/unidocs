@@ -18,9 +18,6 @@
       "path": "../server-common"
     },
     {
-      "path": "../protocol-legacy"
-    },
-    {
       "path": "../protocol"
     }
   ]
