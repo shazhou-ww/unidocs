@@ -106,16 +106,23 @@ CAS calls use `tenantId`. The path-based development resolver is disabled unless
 `INSECURE_PATH_IDENTITY=true` is explicitly configured. Legacy `/users/*` routes
 are rejected.
 
+See [Doc Service HTTP Protocol](docs/doc-service-http-protocol.md) for the full
+Gateway, Doc edge, adapter-internal, capability, SValue, and error contracts.
+
 ### Document lifecycle
 
 ```
 POST   /tenants/{tenantId}/docs/{docType}/                              → create document (multipart/form-data)
 GET    /tenants/{tenantId}/docs/{docType}/                              → list documents
+GET    /tenants/{tenantId}/docs/{docType}/{docId}                       → get create/status state
 GET    /tenants/{tenantId}/docs/{docType}/{docId}/export                → download document (binary)
 POST   /tenants/{tenantId}/docs/{docType}/{docId}/query                 → query document → { data, version }
 POST   /tenants/{tenantId}/docs/{docType}/{docId}/apply                 → apply delta → { version }
 GET    /tenants/{tenantId}/docs/{docType}/{docId}/history               → get delta history
 POST   /tenants/{tenantId}/docs/{docType}/{docId}/rollback              → rollback to version
+GET    /tenants/{tenantId}/docs/{docType}/{docId}/snapshot              → get retained snapshot root
+GET    /tenants/{tenantId}/docs/{docType}/{docId}/ir                    → get canonical SValue document IR
+POST   /tenants/{tenantId}/docs/{docType}/{docId}/init_from_hash        → initialize clone target
 POST   /tenants/{tenantId}/docs/{docType}/{docId}/run                   → Operator ReAct loop
 POST   /tenants/{tenantId}/docs/{docType}/{docId}/reset                 → reset Operator session
 ```
@@ -152,7 +159,8 @@ Fields (mutually exclusive):
 - sourceId: existing document ID to clone from
 - (empty): create empty document
 
-Response: { success: true, docId: string, version: 1 }
+Ready response: { success: true, docId: string, state: "ready", version: 1 }
+Uncertain in-progress response (HTTP 202): { success: true, docId: string, state: "creating" }
 ```
 
 Clone flow:
