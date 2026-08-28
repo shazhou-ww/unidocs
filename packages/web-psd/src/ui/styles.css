@@ -376,3 +376,20 @@ a:hover { color: var(--accent); }
 }
 .ops-counter { border: 0; background: transparent; font: inherit; font-family: var(--mono);
   font-size: 10.5px; color: var(--fg-3); cursor: pointer; }
+
+.degrade { position: relative; }
+.degrade > button { cursor: pointer; }
+.degrade-pop {
+  position: absolute; top: 26px; left: 0; z-index: 5; width: 320px;
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warn);
+  border-radius: 8px; box-shadow: 0 4px 14px var(--shadow-pop); padding: 4px;
+}
+.degrade-row {
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  padding: 7px 8px; border: 0; border-radius: 6px; background: transparent;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.degrade-row:hover { background: var(--surface-hover); }
+.degrade-row span { color: var(--warn-ink); font-size: 11.5px; }
+.degrade-row em { color: var(--fg-3); font-size: 11px; font-style: normal; }

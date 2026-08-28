@@ -50,13 +50,15 @@ export interface UiState {
   pickedColor: string | null;
 }
 
-let state: UiState = {
+const INITIAL: UiState = {
   docId: null, docName: null, version: 0, doc: null, status: "loading…",
   selection: [], expanded: new Set(), pane: "layers", tool: "move",
   marquee: null, zoom: 1, history: [], historyOpen: false,
   sessionBaseVersion: 0, chat: [], chatBusy: false, degradeOpen: false,
   pickedColor: null,
 };
+
+let state: UiState = INITIAL;
 
 const listeners = new Set<() => void>();
 
@@ -66,6 +68,16 @@ export function getState(): UiState {
 
 export function setState(patch: Partial<UiState>): void {
   state = { ...state, ...patch };
+  for (const fn of [...listeners]) fn();
+}
+
+/** Restores the module-singleton state to its initial values. `state` lives
+ *  at module scope, and vitest isolates test *files*, not individual `it()`
+ *  blocks, so without this every test in a file shares one mutable store —
+ *  a later test can silently inherit a field a prior test left mutated
+ *  (e.g. `degradeOpen`). Call from a global `afterEach` in tests. */
+export function resetState(): void {
+  state = INITIAL;
   for (const fn of [...listeners]) fn();
 }
 
