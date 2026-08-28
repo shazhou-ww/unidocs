@@ -1,26 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
-import type { LegacyDocumentAgentContext } from "@unidocs/protocol";
-import { createSBlob } from "@unidocs/svalue-codec/internal";
-import { createMarkdownDocumentAgent, markdownAgent } from "../src/index.js";
-import type { MOp, MQuery } from "../src/types.js";
+import { describe, expect, it } from "vitest";
+import { markdownAgent } from "../src/index.js";
 
 const tool = (name: string) => {
   const t = markdownAgent.tools.find(x => x.name === name);
   if (!t) throw new Error(`no tool ${name}`);
   return t;
 };
-
-function agentContext(): LegacyDocumentAgentContext<MQuery, MOp> {
-  return {
-    query: vi.fn(async () => ({ data: ["One", "Two"], version: 3 })),
-    apply: vi.fn(async () => ({ version: 4 })),
-    resolveBlob: vi.fn(async (hash: string) => createSBlob(hash)),
-    readBlob: vi.fn(async () => ({
-      data: new Uint8Array(),
-      contentType: "application/octet-stream",
-    })),
-  };
-}
 
 describe("Markdown 工具表", () => {
   it("工具名不带 query_ / apply_ 前缀", () => {
@@ -71,41 +56,3 @@ describe("Markdown 工具表", () => {
   });
 });
 
-describe("createMarkdownDocumentAgent（临时适配器，Task 9 删）", () => {
-  it("dispatches query tool calls to context.query", async () => {
-    const context = agentContext();
-    const agent = createMarkdownDocumentAgent(context);
-
-    const result = await agent.toolCall("getSection", { heading: "Intro" });
-
-    expect(context.query).toHaveBeenCalledWith({
-      kind: "getSection",
-      payload: { heading: "Intro" },
-    });
-    expect(result.structuredContent).toEqual({ data: ["One", "Two"], version: 3 });
-  });
-
-  it("dispatches op tool calls to context.apply", async () => {
-    const context = agentContext();
-    const agent = createMarkdownDocumentAgent(context);
-
-    const result = await agent.toolCall("setContent", { content: "# New" });
-
-    expect(context.apply).toHaveBeenCalledWith([
-      { kind: "setContent", payload: { content: "# New" } },
-    ], "Agent: setContent");
-    expect(result.structuredContent).toEqual({ success: true, version: 4 });
-  });
-
-  it("owns tools and instructions independently of DocumentType", () => {
-    const agent = createMarkdownDocumentAgent(agentContext());
-    expect(agent.tools.getContent).toBeDefined();
-    expect(agent.instructions).toContain("Markdown document operator");
-  });
-
-  it("rejects unknown tools and non-object parameters", async () => {
-    const agent = createMarkdownDocumentAgent(agentContext());
-    await expect(agent.toolCall("unknown", {})).rejects.toThrow(/Unknown/);
-    await expect(agent.toolCall("getContent", "bad")).rejects.toThrow(/JSON object/);
-  });
-});

@@ -14,7 +14,7 @@
  *
  * **Operator 在 Azure 上不可用。** `azure-sdk` 的
  * `createStubOperatorNamespace()` 让所有 doc type 的 `/run` 与 `/reset` 一律
- * 501。Cloudflare 侧 psd 挂了真 Operator(`createPsdDocumentAgent` +
+ * 501。Cloudflare 侧 psd 挂了真 Operator(`psdAgent` +
  * Anthropic,maxIterations 25),Azure 侧没有。这不是 psd 特有的缺口,接真
  * Operator 会同时影响 markdown/docx/psd 三家,是独立一轮的事——不是这里漏掉了。
  *

@@ -22,7 +22,6 @@
   },
   "dependencies": {
     "@unidocs/doctype-server-common": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/protocol": "workspace:*"
   },
   "devDependencies": {

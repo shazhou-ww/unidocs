@@ -382,9 +382,6 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@unidocs/svalue-codec':
-        specifier: workspace:*
-        version: link:../svalue-codec
     devDependencies:
       typescript:
         specifier: ^5.9.0

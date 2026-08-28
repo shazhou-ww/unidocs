@@ -15,8 +15,8 @@ import {
   type EditorEnv,
 } from "@unidocs/cloudflare-sdk";
 import {
-  createMarkdownDocumentAgent,
   createMarkdownDocumentType,
+  markdownAgent,
 } from "@unidocs/doctype-markdown";
 import {
   createDocTypeHandler,
@@ -30,10 +30,14 @@ const authConfig = new DocAuthConfigCache("markdown");
 // Generate Editor and Operator Durable Objects from the markdown DocumentType
 export const MarkdownEditor = createEditorDO(markdownFactory);
 export const MarkdownOperator = createOperatorDO({
-  agentFactory: createMarkdownDocumentAgent,
-  llmProvider: async () => {
-    throw new Error("LLM provider not configured. Set env.LLM_PROVIDER_URL and env.LLM_API_KEY.");
-  },
+  agent: markdownAgent,
+  // Placeholder, unchanged in meaning: this worker has no model configured,
+  // so the first /run fails with a clear message instead of at boot.
+  provider: () => ({
+    complete: async () => {
+      throw new Error("LLM provider not configured. Set LLM_API_KEY in this worker's env.");
+    },
+  }),
   getEditorStub: (env: Env, sessionId) => {
     const id = env.MARKDOWN_EDITOR.idFromName(sessionId);
     return env.MARKDOWN_EDITOR.get(id);

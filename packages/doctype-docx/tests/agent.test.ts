@@ -1,30 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LegacyDocumentAgentContext } from "@unidocs/protocol";
 import { createSBlob } from "@unidocs/svalue-codec/internal";
 import {
   ByteLru, materializeMessages, toAnthropicMessages, toolResultToMessage,
 } from "@unidocs/doctype-server-common/agent";
-import { createDocxDocumentAgent, docxAgent } from "../src/index.js";
-import type { DocxOperation, DocxQuery } from "../src/types.js";
+import { docxAgent } from "../src/index.js";
 
 const tool = (name: string) => {
   const t = docxAgent.tools.find(x => x.name === name);
   if (!t) throw new Error(`no tool ${name}`);
   return t;
 };
-
-function agentContext(overrides: Partial<LegacyDocumentAgentContext<DocxQuery, DocxOperation>> = {}) {
-  return {
-    query: vi.fn(async () => ({ data: "text", version: 4 })),
-    apply: vi.fn(async () => ({ version: 5 })),
-    resolveBlob: vi.fn(async (hash: string) => createSBlob(hash)),
-    readBlob: vi.fn(async () => ({
-      data: new Uint8Array(),
-      contentType: "application/octet-stream",
-    })),
-    ...overrides,
-  } satisfies LegacyDocumentAgentContext<DocxQuery, DocxOperation>;
-}
 
 describe("DOCX 工具表", () => {
   it("工具名不带 query_ / apply_ 前缀", () => {
@@ -156,9 +141,10 @@ describe("getImage 的 toResult 能被内核翻成 Anthropic 图片块而不抛�
     expect(readBlob).toHaveBeenCalledWith(blob);
 
     // 4. Anthropic 适配层翻译成图片块 —— 这条路此前从未真正跑通过（P6）：
-    //    旧 createDocxDocumentAgent 从没配过 toResult，getImage 的结果只会
-    //    撞上 renderDefaultAgentToolResult 的 "Multimodal tool result
-    //    requires a provider-specific renderer" 抛异常分支。
+    //    旧 OperatorDO 会把带图片的工具结果交给 renderDefaultAgentToolResult，
+    //    而它对任何非文字内容都直接抛 "Multimodal tool result requires a
+    //    provider-specific renderer"，全仓库又没人配过替代的渲染钩子。
+    //    Task 9 连同旧循环一起删掉了那个钩子。
     let anthropicMessages: ReturnType<typeof toAnthropicMessages> | undefined;
     expect(() => {
       anthropicMessages = toAnthropicMessages(materialized);
@@ -175,94 +161,3 @@ describe("getImage 的 toResult 能被内核翻成 Anthropic 图片块而不抛�
   });
 });
 
-describe("createDocxDocumentAgent（临时适配器，Task 9 删）", () => {
-  it("exposes static tool metadata and instructions", () => {
-    const agent = createDocxDocumentAgent(agentContext());
-    expect(agent.tools.getText).toBeDefined();
-    expect(agent.tools.insertImage).toBeDefined();
-    expect(agent.instructions.length).toBeGreaterThan(100);
-  });
-
-  it("turns a JSON image hash into an SBlob operation synchronously (no resolveBlob round trip)", async () => {
-    const context = agentContext();
-    const agent = createDocxDocumentAgent(context);
-    const hash = "a".repeat(64);
-
-    const result = await agent.toolCall("insertImage", {
-      hash,
-      widthPx: 16,
-      altText: "dot",
-    });
-
-    expect(context.resolveBlob).not.toHaveBeenCalled();
-    expect(context.apply).toHaveBeenCalledWith([
-      {
-        kind: "insertImage",
-        payload: {
-          blob: createSBlob(hash),
-          widthPx: 16,
-          altText: "dot",
-        },
-      },
-    ], "Agent: insertImage");
-    expect(result.structuredContent).toEqual({ success: true, version: 5 });
-  });
-
-  it("returns query data as JSON structured content", async () => {
-    const context = agentContext();
-    const agent = createDocxDocumentAgent(context);
-
-    const result = await agent.toolCall("getParagraph", { index: 2 });
-
-    expect(context.query).toHaveBeenCalledWith({
-      kind: "getParagraph",
-      payload: { index: 2 },
-    });
-    expect(result.structuredContent).toEqual({ data: "text", version: 4 });
-  });
-
-  it("returns image metadata as JSON and image bytes as SBlob content", async () => {
-    const blob = createSBlob("b".repeat(64));
-    const context = agentContext({
-      query: vi.fn(async () => ({
-        data: {
-          index: 0,
-          partName: "/word/media/image1.png",
-          format: "png",
-          altText: "dot",
-          blob,
-        },
-        version: 6,
-      })),
-    });
-    const agent = createDocxDocumentAgent(context);
-
-    const result = await agent.toolCall("getImage", { index: 0 });
-
-    expect(context.query).toHaveBeenCalledWith({
-      kind: "getImageContent",
-      payload: { index: 0 },
-    });
-    expect(result.structuredContent).toEqual({
-      data: {
-        index: 0,
-        partName: "/word/media/image1.png",
-        format: "png",
-        altText: "dot",
-      },
-      version: 6,
-    });
-    expect(result.content).toEqual([{
-      type: "image",
-      blob,
-      mediaType: "image/png",
-      altText: "dot",
-    }]);
-  });
-
-  it("rejects unknown tools and non-object parameters", async () => {
-    const agent = createDocxDocumentAgent(agentContext());
-    await expect(agent.toolCall("unknown", {})).rejects.toThrow(/Unknown/);
-    await expect(agent.toolCall("getText", "bad")).rejects.toThrow(/JSON object/);
-  });
-});

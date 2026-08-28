@@ -351,8 +351,8 @@ apply:等价于把这张 raster 结果层 `add_layer` 插入(非破坏,盖在源
 - **`doctype-psd`**(`@unidocs/doctype-psd`,cloud-neutral):文档模型 + ops + **render**(`src/render/`)+ ag-psd load/save,组装 `createPsdDocumentType(options)`。**webui 和 DO 都依赖它**。工厂 `options` 可注入 blob 能力(§3.5)、模型 provider。
 - **`cloudflare-psd`**(薄适配,仅 `src/worker.ts`):
   ```ts
-  export const PsdEditor   = createEditorDO(psd);
-  export const PsdOperator = createOperatorDO({ ...psd, llmProvider, getEditorStub });
+  export const PsdEditor   = createEditorDO(createPsdDocumentType);
+  export const PsdOperator = createOperatorDO({ agent: psdAgent, provider, getEditorStub });
   ```
   配 `wrangler.toml`(DO 类 `PsdEditor`/`PsdOperator` + 共享 D1/R2)+ 在 Gateway 注册绑定。
 

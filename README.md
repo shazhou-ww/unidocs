@@ -258,7 +258,7 @@ Clears conversation history and version tracking.
   the core factory generic:
 
 ```typescript
-import type { DocumentTypeFactory } from "@unidocs/protocol";
+import type { DocumentAgent, DocumentTypeFactory } from "@unidocs/protocol";
 
 export const createMytypeDocumentType:
   DocumentTypeFactory<MyDocument, MyQuery, MyOperation> =
@@ -272,29 +272,47 @@ export const createMytypeDocumentType:
     defaultFormat: "myformat",
   });
 
-export const createMytypeDocumentAgent:
-  DocumentAgentFactory<MyQuery, MyOperation> =
-  context => ({
-    tools: ...,
-    instructions: ...,
-    async toolCall(name, parameters) {
-      // parameters and structuredContent are JSON-only. Internally the handler
-      // can call context.query/apply/resolveBlob/readBlob.
-      return { structuredContent: ... };
+// The agent is a constant, not a factory: a plain table of tools plus the
+// system prompt. Each tool says whether it reads or writes and turns the
+// model's arguments into a query or a batch of operations with a pure
+// function. The document type never touches the editor, an LLM, or a CAS —
+// the kernel (AgentSession) is the only caller of the platform.
+export const mytypeAgent: DocumentAgent<MyQuery, MyOperation> = {
+  instructions: ...,
+  tools: [
+    {
+      kind: "query",
+      name: "getSomething",
+      description: ...,
+      inputSchema: { type: "object", properties: { ... } },
+      toQuery: args => ({ kind: "getSomething", payload: args }),
+      // Optional. Omit it and the kernel wraps {data, version} as JSON.
+      // A tool that returns a picture or a file must supply it and emit an
+      // image/file content part.
+      toResult: (data, version) => ({ structuredContent: ... }),
     },
-  });
+    {
+      kind: "op",
+      name: "doSomething",
+      description: ...,
+      inputSchema: { type: "object", properties: { ... } },
+      toOps: args => [{ kind: "doSomething", payload: args }],
+    },
+  ],
+};
 ```
 
 3. Create a separate Cloudflare adapter package and use the runtime factories:
 
 ```typescript
 import { createEditorDO, createOperatorDO } from "@unidocs/cloudflare-sdk";
-import { createMytypeDocumentType } from "@unidocs/doctype-mytype";
+import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
+import { createMytypeDocumentType, mytypeAgent } from "@unidocs/doctype-mytype";
 
 export const MytypeEditor = createEditorDO(createMytypeDocumentType);
 export const MytypeOperator = createOperatorDO({
-  agentFactory: createMytypeDocumentAgent,
-  llmProvider: ...,
+  agent: mytypeAgent,
+  provider: (env: Env) => createAnthropicProvider(env),
   getEditorStub: ...,
 });
 ```

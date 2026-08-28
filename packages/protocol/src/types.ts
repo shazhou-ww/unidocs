@@ -102,35 +102,6 @@ export interface AgentToolResult {
   readonly content?: readonly AgentContentPart[];
 }
 
-/** @deprecated 旧的上下边界形状，Task 9 删。新代码用 AgentPlatform / DocumentAgent。 */
-export interface LegacyDocumentAgentContext<TQuery, TOp> {
-  readonly query: (query: SValueType<TQuery>) => Promise<{
-    readonly data: SValue;
-    readonly version: number;
-  }>;
-  readonly apply: (
-    operations: readonly SValueType<TOp>[],
-    description: string,
-  ) => Promise<{ readonly version: number }>;
-  readonly resolveBlob: (hash: string) => Promise<SBlob>;
-  readonly readBlob: (blob: SBlob) => Promise<SBlobData>;
-}
-
-/** @deprecated 同上 */
-export interface LegacyDocumentAgent {
-  readonly tools: Readonly<Record<string, AgentToolDefinition>>;
-  readonly instructions: string;
-  readonly toolCall: (
-    name: string,
-    parameters: JsonValue,
-  ) => Promise<AgentToolResult>;
-}
-
-/** @deprecated 同上 */
-export type LegacyDocumentAgentFactory<TQuery, TOp> = (
-  context: LegacyDocumentAgentContext<TQuery, TOp>,
-) => LegacyDocumentAgent;
-
 export interface DocumentFormat<TDoc> {
   readonly mediaTypes: readonly string[];
   readonly extensions: readonly string[];

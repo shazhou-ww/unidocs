@@ -111,8 +111,8 @@ export const createMarkdownDocumentType: MarkdownDocumentTypeFactory = (_context
   // `DocumentType.tools` is still typed as `Record<string, AgentToolDefinition>`
   // (spec's old shape); `tools` here is the new `AgentTool[]` table from
   // `agent.ts` (Task 8). The field is dead — nothing reads `DocumentType.tools`
-  // any more, `createMarkdownDocumentAgent`/`markdownAgent` are the only
-  // consumers — and Task 10 deletes it outright (same situation as
+  // any more, `markdownAgent` is the only consumer — and Task 10 deletes it
+  // outright (same situation as
   // doctype-docx's `docx.ts`, which carries the identical narrow cast so as
   // not to lose contextual parameter typing on `query`/`apply` above).
   tools: tools as unknown as Record<string, AgentToolDefinition>,

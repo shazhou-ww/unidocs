@@ -215,7 +215,7 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
     // `DocumentType.tools` is still typed as `Record<string, AgentToolDefinition>`
     // (spec's old shape); `tools` here is the new `AgentTool[]` table (this
     // task). The field is dead — nothing reads `DocumentType.tools` any more,
-    // `createDocxDocumentAgent`/`docxAgent` are the only consumers — and
+    // `docxAgent` is the only consumer — and
     // Task 10 deletes it outright (same situation doctype-psd's `doctype.ts`
     // papers over with a whole-object cast; this narrower per-property cast
     // avoids losing contextual parameter typing on `query`/`apply`/`formats`

@@ -1,12 +1,10 @@
-export {
-  createOperatorDO,
-  renderDefaultAgentToolResult,
-} from "./operator-do-agent.js";
+export { createOperatorDO } from "./operator-do-agent.js";
 
 export type {
-  AgentToolResultRenderer,
-  AgentToolResultRendererContext,
   OperatorConfig,
   OperatorDOClass,
   OperatorDOInstance,
 } from "./operator-do-agent.js";
+
+export { createCloudflareAgentPlatform } from "./agent-platform-do.js";
+export type { CloudflarePlatformDeps } from "./agent-platform-do.js";
