@@ -35,6 +35,15 @@ export type {
   EncodedSValue,
   SValueCodecLimits,
   SValueCodecOptions,
+  AgentTool,
+  DocumentAgent,
+  AgentPlatform,
+  AgentToolCall,
+  AgentMessage,
+  LlmContentPart,
+  LlmMessage,
+  AgentCompletion,
+  LlmProvider,
 } from "./types.js";
 
 export {
