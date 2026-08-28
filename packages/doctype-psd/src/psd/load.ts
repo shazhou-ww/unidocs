@@ -1,5 +1,8 @@
 import { readPsd, type Layer as AgLayer } from "ag-psd";
-import type { PsdDoc, Layer, BlendMode, Mask } from "../model/types.js";
+import type {
+  PsdDoc, Layer, BlendMode, Mask,
+  Degradation, LayerText, LayerTextStyle, LayerVector, LayerSmartObject,
+} from "../model/types.js";
 import { installCanvasShim } from "./canvas-shim.js";
 
 /**
@@ -36,6 +39,78 @@ function mapAdjustType(t: string | undefined): string {
   }
 }
 
+const isNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
+/** ag-psd's `Color` is a union (RGB/HSB/CMYK/…); we only carry the RGB shape. */
+function rgbOf(c: unknown): { r: number; g: number; b: number } | undefined {
+  const v = c as { r?: unknown; g?: unknown; b?: unknown } | undefined;
+  return v && isNum(v.r) && isNum(v.g) && isNum(v.b) ? { r: v.r, g: v.g, b: v.b } : undefined;
+}
+
+function mapText(t: AgLayer["text"]): { text: LayerText; degraded: Degradation } | undefined {
+  if (!t || typeof t.text !== "string") return undefined;
+  const s = t.style;
+  const color = rgbOf(s?.fillColor);
+  const style: LayerTextStyle = {
+    ...(s?.font?.name ? { font: s.font.name } : {}),
+    ...(isNum(s?.fontSize) ? { size: s!.fontSize } : {}),
+    ...(color ? { color } : {}),
+    ...(isNum(s?.tracking) ? { tracking: s!.tracking } : {}),
+    ...(isNum(s?.leading) ? { leading: s!.leading } : {}),
+  };
+  return {
+    text: {
+      content: t.text,
+      ...(Object.keys(style).length ? { style } : {}),
+      ...(Array.isArray(t.transform) ? { transform: [...t.transform] } : {}),
+      ...(t.shapeType ? { shapeType: t.shapeType } : {}),
+    },
+    degraded: {
+      reason: "文字层已栅格化",
+      detail: "渲染与导出使用 PSD 烘焙像素；本期不支持编辑文字内容与排版",
+    },
+  };
+}
+
+function mapVector(a: AgLayer): { vector: LayerVector; degraded: Degradation } | undefined {
+  const paths = a.vectorMask?.paths ?? [];
+  if (!paths.length && !a.vectorFill && !a.vectorStroke) return undefined;
+  return {
+    vector: {
+      ...(a.vectorFill ? { fill: a.vectorFill } : {}),
+      ...(a.vectorStroke ? { stroke: a.vectorStroke } : {}),
+      ...(paths.length
+        ? {
+            pathSummary: {
+              subpaths: paths.length,
+              knots: paths.reduce((n, p) => n + (p.knots?.length ?? 0), 0),
+            },
+          }
+        : {}),
+    },
+    degraded: {
+      reason: "矢量形状已栅格化",
+      detail: "路径与填充已保留为元数据，渲染与导出使用烘焙像素",
+    },
+  };
+}
+
+function mapSmartObject(a: AgLayer): { smartObject: LayerSmartObject; degraded: Degradation } | undefined {
+  const p = a.placedLayer;
+  if (!p?.id) return undefined;
+  return {
+    smartObject: {
+      placedId: p.id,
+      ...(Array.isArray(p.transform) ? { transform: [...p.transform] } : {}),
+      ...(p.placed ? { sourceName: p.placed } : {}),
+    },
+    degraded: {
+      reason: "智能对象已展平",
+      detail: p.placed ? `源：${p.placed}` : "源文档未内嵌",
+    },
+  };
+}
+
 /**
  * Crop a layer's pixel buffer (and bounds) to the canvas rect, dropping any
  * pixels that fall outside [0,0,cw,ch]. A no-op if the layer is already
@@ -66,10 +141,25 @@ export function cropPixelsToCanvas(
   return { pixels: { width: nw, height: nh, data }, bounds: [nt, nl, nb, nr] };
 }
 
-function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
+export function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
   const isGroup = Array.isArray(a.children);
   const adj = (a as { adjustment?: { type?: string } & Record<string, unknown> }).adjustment;
-  const type: Layer["type"] = isGroup ? "group" : adj ? "adjustment" : "raster";
+  // Metadata is captured regardless of the type verdict — a vector-masked
+  // adjustment keeps its path summary AND stays an adjustment.
+  const textInfo = isGroup ? undefined : mapText(a.text);
+  const smartInfo = isGroup ? undefined : mapSmartObject(a);
+  const vectorInfo = isGroup ? undefined : mapVector(a);
+  // Order matters: adjustments and smart objects commonly carry a vector mask,
+  // so they must be decided BEFORE the vector check or they'd read as "fill".
+  const type: Layer["type"] =
+    isGroup ? "group"
+    : adj ? "adjustment"
+    : textInfo ? "text"
+    : smartInfo ? "smartObject"
+    : vectorInfo ? "fill"
+    : "raster";
+  const degraded = [textInfo?.degraded, smartInfo?.degraded, vectorInfo?.degraded]
+    .filter((d): d is Degradation => !!d);
   let bounds: [number, number, number, number] = [a.top ?? 0, a.left ?? 0, a.bottom ?? 0, a.right ?? 0];
   let px = a.imageData
     ? { width: a.imageData.width, height: a.imageData.height, data: a.imageData.data as Uint8ClampedArray }
@@ -149,6 +239,10 @@ function mapLayer(a: AgLayer, i: number, cw: number, ch: number): Layer {
     ...(dropShadow ? { dropShadow } : {}),
     ...(adjType ? { adjustType: adjType, params: adjParams } : {}),
     ...(mask ? { mask } : {}),
+    ...(textInfo ? { text: textInfo.text } : {}),
+    ...(smartInfo ? { smartObject: smartInfo.smartObject } : {}),
+    ...(vectorInfo ? { vector: vectorInfo.vector } : {}),
+    ...(degraded.length ? { degraded } : {}),
     ...(isGroup ? { children: (a.children ?? []).map((c, ci) => mapLayer(c, ci, cw, ch)) } : {}),
   };
 }

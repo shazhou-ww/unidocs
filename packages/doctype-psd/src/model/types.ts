@@ -44,6 +44,41 @@ export interface DropShadow {
   choke: number;                               // px the shape is expanded before blur
 }
 
+/** A capability the loader could not represent, recorded so the UI can show
+ *  what fidelity was lost instead of silently pretending the import was exact. */
+export interface Degradation { reason: string; detail?: string }
+
+export interface LayerTextStyle {
+  font?: string;
+  size?: number;
+  color?: { r: number; g: number; b: number }; // 0..255
+  tracking?: number;
+  leading?: number;
+}
+
+/** Text-layer metadata preserved from the PSD. The layer still RENDERS from
+ *  its baked `pixels`; this is structure for the UI and the agent to read. */
+export interface LayerText {
+  content: string;
+  style?: LayerTextStyle;
+  transform?: number[];          // ag-psd's affine matrix, kept verbatim
+  shapeType?: "point" | "box";
+}
+
+/** Vector/shape metadata preserved from the PSD. `fill`/`stroke` are ag-psd's
+ *  own `VectorContent` shapes, kept verbatim rather than re-modelled. */
+export interface LayerVector {
+  fill?: unknown;
+  stroke?: unknown;
+  pathSummary?: { subpaths: number; knots: number };
+}
+
+export interface LayerSmartObject {
+  placedId: string;
+  transform?: number[];
+  sourceName?: string;
+}
+
 export interface Layer {
   id: string;
   type: LayerType;
@@ -63,6 +98,10 @@ export interface Layer {
   stroke?: Stroke;                       // Stroke effect (a border along the layer's shape edge)
   dropShadow?: DropShadow;               // Drop Shadow effect (a coloured, offset, optionally blurred copy behind the layer)
   provenance?: { model: string; seed: number; prompt: string };
+  text?: LayerText;                      // type === "text"
+  vector?: LayerVector;                  // shape layers (and vector-masked others)
+  smartObject?: LayerSmartObject;        // type === "smartObject"
+  degraded?: Degradation[];              // fidelity lost on import — see psd/load.ts
   children?: Layer[];                    // group
 }
 
