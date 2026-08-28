@@ -66,6 +66,10 @@
         "types": "./dist/testing/port-contract.d.ts",
         "import": "./dist/testing/port-contract.js"
       },
+      "./agent": {
+        "types": "./dist/agent/index.d.ts",
+        "import": "./dist/agent/index.js"
+      },
       "./memory-ports": {
         "types": "./dist/memory-ports.d.ts",
         "import": "./dist/memory-ports.js"
