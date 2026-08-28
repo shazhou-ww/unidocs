@@ -16,3 +16,8 @@ export {
 export {
   BlobUnavailableError, ByteLru, materializeMessages,
 } from "./messages.js";
+
+export {
+  AgentSession, DEFAULT_MAX_ITERATIONS,
+} from "./session.js";
+export type { AgentRunOutcome, AgentSessionDeps } from "./session.js";
