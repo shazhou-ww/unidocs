@@ -15,7 +15,7 @@ const entry = (version: number, ops: unknown[] = [{ kind: "transform" }]) =>
 beforeEach(() => {
   rollback.mockClear(); reconcile.mockClear();
   setState({ docId: "abc", version: 14, sessionBaseVersion: 11, historyOpen: true,
-             history: [entry(12), entry(13), entry(14)] });
+             history: [entry(10), entry(12), entry(13), entry(14)] });
 });
 
 describe("OpsList", () => {
@@ -39,6 +39,7 @@ describe("HistoryDrawer", () => {
     render(<HistoryDrawer />);
     expect(screen.getByText("op#12")).toBeInTheDocument();
     expect(screen.getByText("op#14")).toBeInTheDocument();
+    expect(screen.queryByText("op#10")).not.toBeInTheDocument();
     expect(screen.getByLabelText("当前版本")).toHaveTextContent("op#14");
   });
 
