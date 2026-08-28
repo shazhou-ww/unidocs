@@ -103,7 +103,11 @@ let chatBusy = false;
  *  canvas size (in case the agent cropped/resized) before repainting. */
 async function sendChat(text: string): Promise<void> {
   const docId = controller.docId;
-  if (!docId || chatBusy) return;
+  // `controller.doc` is null exactly when the private `session` is null (see
+  // DocController.doc's getter) — this restores the original guard's
+  // "session isn't ready yet" check (e.g. mid-`initRender`, or `initRender`
+  // threw after `docId` was already set) without exposing `session` itself.
+  if (!docId || chatBusy || !controller.doc) return;
   chatBusy = true;
   chatSend.disabled = true;
   addMsg("user", text);
