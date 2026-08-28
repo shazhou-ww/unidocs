@@ -3,6 +3,13 @@ import { getState, setState } from "./store.js";
 
 let controller: DocController | null = null;
 
+/** The docId that last fixed `sessionBaseVersion`. Lets `onDoc` tell "a new
+ *  document was just loaded" (reset the session boundary) apart from "the
+ *  same document changed under us" — a 409 rebase, an agent run, another tab
+ *  — which must NOT move the boundary. `getState().doc === null` cannot make
+ *  that distinction past the very first document of the page's lifetime. */
+let sessionDocId: string | null = null;
+
 export function getController(): DocController | null {
   return controller;
 }
@@ -17,9 +24,14 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
   controller = new DocController(view, stage, {
     onStatus: (status) => setState({ status }),
     onDoc: (doc, version) => {
-      // The FIRST doc we ever see fixes "this session"'s baseline: everything
-      // above it is what the user did in this tab (see opsSinceSession).
-      const fresh = getState().doc === null;
+      // A doc whose id differs from the one that last fixed the boundary is
+      // a NEWLY OPENED document (cold start, or a later `openFile`) — reset
+      // "this session" to start here. DocController sets its own `docId`
+      // field before this callback ever fires (see doc-controller.ts's
+      // createFrom -> initRender), so it is already current by this point.
+      const docId = controller?.docId ?? null;
+      const fresh = docId !== sessionDocId;
+      sessionDocId = docId;
       setState({
         doc: doc as never,
         version,
@@ -43,8 +55,18 @@ async function bootstrap(): Promise<void> {
 
 async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   if (!controller) return;
+  const before = controller.docId;
   await controller.createFrom(bytes, label);
-  setState({ docId: controller.docId, docName: label, history: [], chat: [] });
+  // `DocController.createFrom` never rejects — it reports failure only via
+  // `onStatus` — and on failure it leaves `docId` exactly as it found it: on
+  // the very first (never-yet-successful) call that's `null`; on a LATER
+  // failed call it's the previous document's id, unchanged (`docIdField` is
+  // only ever assigned on success — see doc-controller.ts's createFrom).
+  // Comparing to `before` catches both: a failed create must not adopt the
+  // new label onto a docId that didn't actually change.
+  if (controller.docId && controller.docId !== before) {
+    setState({ docId: controller.docId, docName: label, history: [], chat: [] });
+  }
 }
 
 export async function openFile(file: File): Promise<void> {

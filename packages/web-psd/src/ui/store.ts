@@ -37,8 +37,11 @@ export interface UiState {
   zoom: number;
   history: HistoryEntry[];
   historyOpen: boolean;
-  /** The version the page opened at. "This session" is everything above it —
-   *  the server has no session concept, so the boundary lives here. */
+  /** The version at which the CURRENTLY OPEN document was loaded — reset
+   *  every time a new document is opened (cold start, or a later
+   *  `openFile`), not fixed once for the page's whole lifetime. "This
+   *  session" is everything the user did since then — the server has no
+   *  session concept, so the boundary lives here. */
   sessionBaseVersion: number;
   chat: ChatMessage[];
   chatBusy: boolean;
