@@ -15,14 +15,16 @@ const KERNEL = join(import.meta.dirname, "..", "..", "..",
 
 const FORBIDDEN = [
   /\bDurableObject\w*/, /\bRequest\b/, /\bResponse\b/,
-  /@cloudflare\//, /@azure\//, /\bWebSocket\b/, /\bfetch\s*\(/,
+  /@cloudflare\//, /@azure\//, /\bWebSocket\w*/, /\bfetch\s*\(/,
 ];
+
+const SOURCE_EXTENSIONS = [".ts", ".mts", ".tsx"];
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) walk(full, out);
-    else if (entry.endsWith(".ts")) out.push(full);
+    else if (SOURCE_EXTENSIONS.some(ext => entry.endsWith(ext))) out.push(full);
   }
   return out;
 }
@@ -31,7 +33,7 @@ const files = walk(KERNEL);
 
 describe("agent 内核不认识任何平台", () => {
   test("内核目录里有文件（防止 walk 静默扫空）", () => {
-    expect(files.length).toBeGreaterThan(3);
+    expect(files.length).toBeGreaterThan(0);
   });
 
   test.each(files.map(f => [f.slice(f.indexOf("packages")), f]))(

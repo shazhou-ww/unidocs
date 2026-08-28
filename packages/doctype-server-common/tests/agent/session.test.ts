@@ -143,6 +143,33 @@ describe("AgentSession 循环", () => {
     expect(platform.query).not.toHaveBeenCalled();
   });
 
+  it("一次 completion 里的多个 toolCall 各自生成一条独立的 tool 消息，顺序与 toolCalls 一致", async () => {
+    const platform = fakePlatform();
+    const provider = scriptedProvider([
+      {
+        content: [],
+        toolCalls: [
+          { id: "c1", name: "getLayers", arguments: {} },
+          { id: "c2", name: "transform", arguments: { layerId: "L1" } },
+        ],
+      },
+      { content: [{ type: "text", text: "都做完了" }] },
+    ]);
+    const s = new AgentSession({ agent, platform, provider });
+    await s.run([{ type: "text", text: "先看再改" }]);
+    const historySent = provider.seen[1];
+    const toolMessages = historySent.filter(m => m.role === "tool");
+    expect(toolMessages).toHaveLength(2);
+    expect(toolMessages[0]).toEqual({
+      role: "tool", callId: "c1", content: [],
+      structuredContent: { data: { layers: [] }, version: 3 },
+    });
+    expect(toolMessages[1]).toEqual({
+      role: "tool", callId: "c2", content: [],
+      structuredContent: { success: true, version: 4 },
+    });
+  });
+
   it("reset 之后模型看不到上一轮", async () => {
     const provider = scriptedProvider([
       { content: [{ type: "text", text: "a" }] },

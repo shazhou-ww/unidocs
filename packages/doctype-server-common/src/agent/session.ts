@@ -1,6 +1,6 @@
 import type {
   AgentContentPart, AgentMessage, AgentPlatform, AgentTool, AgentToolDefinition,
-  AgentToolResult, DocumentAgent, JsonValue, LlmProvider, SValue,
+  AgentToolResult, DocumentAgent, JsonValue, LlmProvider,
 } from "@unidocs/protocol";
 import { ByteLru, materializeMessages } from "./messages.js";
 import { defaultOpToolResult, defaultQueryToolResult, toolResultToMessage } from "./tool-result.js";
@@ -108,7 +108,7 @@ export class AgentSession<TQuery, TOp> {
       const parameters = requireJsonObject(args);
       if (tool.kind === "query") {
         const { data, version } = await this.#deps.platform.query(tool.toQuery(parameters));
-        return (tool.toResult ?? defaultQueryToolResult)(data as SValue, version);
+        return (tool.toResult ?? defaultQueryToolResult)(data, version);
       }
       const { version } = await this.#deps.platform.apply(tool.toOps(parameters), `Agent: ${name}`);
       return defaultOpToolResult(version);
