@@ -33,7 +33,13 @@ function stripLayer(l: Layer): any {
 }
 
 /**
- * Byte budget for the encoded PNG in a preview result.
+ * Budget for the encoded PNG, expressed in BASE64-EQUIVALENT bytes — despite
+ * the "byte budget" framing, `fitToBudget` below compares against
+ * `b64Length(png.length)` (what the PNG's size would be if base64-encoded),
+ * not `png.length` itself. That formula predates the move to SBlob and is
+ * left as-is rather than reworked, so the real ceiling on PNG bytes is
+ * tighter than this constant reads: roughly `PREVIEW_BASE64_BUDGET * 3/4` ≈
+ * 720 KiB, not 960 KiB.
  *
  * The PNG itself now travels as a CAS-backed SBlob, not an inline base64
  * string, so it no longer risks the codec's 1 MiB `maxStringBytes` cap. The

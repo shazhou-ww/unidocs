@@ -65,7 +65,10 @@ function expectEncodable(out: any, nodes: Map<string, Uint8Array>, label: string
     base64EquivalentBytes,
     `${label}: base64-equivalent is ${(base64EquivalentBytes / 1024).toFixed(0)} KiB`,
   ).toBeLessThanOrEqual(SVALUE_MAX_STRING_BYTES);
-  // Belt and braces — run it through the real codec, which is what 500s today.
+  // `out.image` is now just an SBlob reference (a hash string), so this can
+  // no longer hit the old base64-overflow 500 — that risk is gone by
+  // construction. What's still worth pinning: the result value itself
+  // (SBlob ref + width/height/region) round-trips through the real codec.
   expect(() => encodeSValue(out), `${label}: encodeSValue`).not.toThrow();
 }
 

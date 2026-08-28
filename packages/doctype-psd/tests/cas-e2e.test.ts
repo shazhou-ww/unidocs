@@ -90,8 +90,11 @@ describe("PSD SValue snapshots through DocumentSession", () => {
         return createSBlob(hash);
       },
       async readSBlob(blob: SBlob): Promise<SBlobData> {
-        const data = await cas.read({ kind: "cas", hash: blob.hash });
-        return { data, contentType: "image/png" };
+        const [data, meta] = await Promise.all([
+          cas.read({ kind: "cas", hash: blob.hash }),
+          cas.metadata({ kind: "cas", hash: blob.hash }),
+        ]);
+        return { data, contentType: meta.contentType };
       },
     };
     const config = createPsdDocumentType(ctx);
