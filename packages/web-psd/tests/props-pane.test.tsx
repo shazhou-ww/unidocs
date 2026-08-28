@@ -1,11 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { PropsPane } from "../src/ui/panels/props-pane.js";
-import { setState } from "../src/ui/store.js";
+import { getState, setState } from "../src/ui/store.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
 const dispatch = vi.fn();
-vi.mock("../src/ui/controller.js", () => ({ dispatch: (op: unknown) => dispatch(op) }));
+// Opt-in round trip: applies the op to `store.doc` the way
+// DocController.dispatch does, so the pane re-renders off the new document.
+const roundTrip = { value: false };
+vi.mock("../src/ui/controller.js", () => ({
+  dispatch: (op: unknown) => {
+    dispatch(op);
+    if (!roundTrip.value) return;
+    const { layerId, props } = (op as { payload: { layerId: string; props: Partial<LocalLayer> } }).payload;
+    const doc = getState().doc!;
+    setState({ doc: { ...doc, layers: doc.layers.map((l) => (l.id === layerId ? { ...l, ...props } : l)) } });
+  },
+}));
 
 const STROKE = { color: { r: 255, g: 0, b: 0 }, opacity: 1, size: 3, position: "outside", blendMode: "normal" };
 
@@ -17,6 +28,7 @@ const layer = (over: Partial<LocalLayer> = {}): LocalLayer => ({
 
 beforeEach(() => {
   dispatch.mockClear();
+  roundTrip.value = false;
   setState({ selection: ["badge"], doc: { canvas: { width: 800, height: 600 }, layers: [layer({ stroke: STROKE })] } });
 });
 
@@ -54,6 +66,28 @@ describe("PropsPane", () => {
     fireEvent.change(screen.getByLabelText("描边宽度"), { target: { value: "8" } });
     expect(dispatch).toHaveBeenCalledWith({
       kind: "set_props", payload: { layerId: "badge", props: { stroke: { ...STROKE, size: 8 } } },
+    });
+  });
+
+  // The C-1 consequence that cost data: `writeEffect` SPREADS the current
+  // stroke (`{ ...stroke, size }`). If the pane keeps reading a store copy
+  // that a local op never refreshed, the second write carries the stale
+  // colour and silently reverts the first. Covered end to end (through the
+  // real DocController) in local-op-refresh.test.tsx; this pins the pane's
+  // half: given a store that DOES refresh, consecutive effect edits compose.
+  it("composes consecutive effect edits instead of reverting the earlier one", () => {
+    roundTrip.value = true;
+    render(<PropsPane />);
+    fireEvent.change(screen.getByLabelText("描边颜色"), { target: { value: "#00ff00" } });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      kind: "set_props",
+      payload: { layerId: "badge", props: { stroke: { ...STROKE, color: { r: 0, g: 255, b: 0 } } } },
+    });
+
+    fireEvent.change(screen.getByLabelText("描边宽度"), { target: { value: "8" } });
+    expect(dispatch).toHaveBeenLastCalledWith({
+      kind: "set_props",
+      payload: { layerId: "badge", props: { stroke: { ...STROKE, color: { r: 0, g: 255, b: 0 }, size: 8 } } },
     });
   });
 
