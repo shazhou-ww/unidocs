@@ -39,11 +39,13 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unicas/server-common": "unicas-packages/server-common/src/index.ts",
   "@unicas/client": "unicas-packages/client/src/index.ts",
   "@unidocs/doctype-server-common": "packages/doctype-server-common/src/index.ts",
+  "@unidocs/doctype-server-common/agent": "packages/doctype-server-common/src/agent/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",
   "@unidocs/cloudflare-sdk": "packages/cloudflare-sdk/src/index.ts",
   "@unidocs/doctype-markdown": "packages/doctype-markdown/src/index.ts",
   "@unidocs/doctype-docx": "packages/doctype-docx/src/index.ts",
   "@unidocs/doctype-psd": "packages/doctype-psd/src/index.ts",
+  "@unidocs/doctype-psd/engine": "packages/doctype-psd/src/engine.ts",
 };
 
 /**
