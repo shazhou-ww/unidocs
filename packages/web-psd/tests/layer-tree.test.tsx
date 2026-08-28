@@ -29,6 +29,8 @@ describe("LayerTree", () => {
     fireEvent.click(screen.getByLabelText("展开 角标组"));
     expect(getState().expanded.has("g")).toBe(true);
     expect(screen.getByText("促销角标")).toBeInTheDocument();
+    // Toggling the caret must not move the selection, same guarantee as the eye.
+    expect(getState().selection).toEqual([]);
   });
 
   it("shows a kind badge per layer type", () => {
