@@ -140,8 +140,7 @@ Alternatively run any command in-process:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `UNICAS_ADMIN_URL` | `https://unicas.shazhou.work` | `/admin` API origin |
-| `UNICAS_GOOGLE_CLIENT_ID` | — | Google OAuth client id for `unicas login` |
-| `UNICAS_GOOGLE_CLIENT_SECRET` | — | Optional confidential client secret |
+| `UNICAS_GOOGLE_CLIENT_ID` | built-in Desktop client | Google OAuth client id for `unicas login` (public, no secret) |
 | `UNICAS_CONFIG_DIR` | `~/.unicas` | Directory holding `session.json` |
 
 ## Security notes

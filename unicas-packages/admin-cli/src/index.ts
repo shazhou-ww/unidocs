@@ -7,7 +7,7 @@
  * together.
  */
 
-export { loadConfig, DEFAULT_ADMIN_ORIGIN, DEFAULT_GOOGLE_ISSUER } from "./config.js";
+export { loadConfig, DEFAULT_ADMIN_ORIGIN, DEFAULT_GOOGLE_ISSUER, DEFAULT_GOOGLE_CLIENT_ID } from "./config.js";
 export type { CliConfig } from "./config.js";
 export { TokenStore } from "./store.js";
 export type { PersistedSession, TokenStoreOptions } from "./store.js";

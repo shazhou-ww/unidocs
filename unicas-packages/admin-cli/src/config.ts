@@ -11,6 +11,8 @@ import { join } from "node:path";
 
 export const DEFAULT_ADMIN_ORIGIN = "https://unicas.shazhou.work";
 export const DEFAULT_GOOGLE_ISSUER = "https://accounts.google.com";
+/** Google Desktop (installed app) OAuth client for the CLI. Public id — not a secret. */
+export const DEFAULT_GOOGLE_CLIENT_ID = "152437813368-5e621mj27so25a22vp9167ql6gcm2lfj.apps.googleusercontent.com";
 
 export interface CliConfig {
   /** Origin of the control-plane `/admin` API. */
@@ -32,7 +34,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CliConfig {
     || env.UNICAS_SERVER_URL?.trim().replace(/\/+$/, "").replace(/\/mcp$/, "")
     || DEFAULT_ADMIN_ORIGIN;
   const configDir = env.UNICAS_CONFIG_DIR?.trim() || join(homedir(), ".unicas");
-  const googleClientId = env.UNICAS_GOOGLE_CLIENT_ID?.trim() || "";
+  const googleClientId = env.UNICAS_GOOGLE_CLIENT_ID?.trim() || DEFAULT_GOOGLE_CLIENT_ID;
   return {
     adminOrigin,
     configDir,

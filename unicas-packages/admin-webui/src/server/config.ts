@@ -78,7 +78,8 @@ export interface AdminBffEnv {
 export function configFromEnv(env: AdminBffEnv): AdminBffConfig {
   const googleClientId = env.GOOGLE_OIDC_CLIENT_ID ?? "";
   const googleClientSecret = env.GOOGLE_OIDC_CLIENT_SECRET ?? "";
-  const exchangeClientId = env.ADMIN_EXCHANGE_CLIENT_ID?.trim() || undefined;
+  const exchangeClientId = env.ADMIN_EXCHANGE_CLIENT_ID?.trim()
+    || "152437813368-5e621mj27so25a22vp9167ql6gcm2lfj.apps.googleusercontent.com"; // the public admin-CLI Google Desktop client id (not a secret)
   const keysRaw = env.SESSION_ENCRYPTION_KEYS ?? "";
   let sessionEncryptionKeys: Readonly<Record<string, string>>;
   try {

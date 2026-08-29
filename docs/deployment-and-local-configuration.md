@@ -39,19 +39,15 @@ pnpm --filter @unicas/server-cloudflare exec wrangler secret put CAS_AUDIT_READE
 pnpm --filter @unicas/admin-webui exec wrangler secret put CAS_AUDIT_READER_KEY
 pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_ID
 pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_SECRET
-pnpm --filter @unicas/admin-webui exec wrangler secret put ADMIN_EXCHANGE_CLIENT_ID
 pnpm --filter @unicas/admin-webui exec wrangler secret put SESSION_ENCRYPTION_KEYS
 ```
 
-`ADMIN_EXCHANGE_CLIENT_ID` is the Google OAuth client id of the **admin CLI**
-(an "Desktop app" client, separate from the browser-login
-`GOOGLE_OIDC_CLIENT_ID`). It enables `POST /admin/auth/exchange`, which
-`unicas login` uses to turn its own Google id_token into a `/admin` BFF
-session. Create it in Google Cloud Console as a Desktop application client
-(loopback redirect, public client, PKCE) and register the same id in the
-CLI's environment as `UNICAS_GOOGLE_CLIENT_ID`. When `ADMIN_EXCHANGE_CLIENT_ID`
-is unset, `/admin/auth/exchange` responds 501 and `unicas login` cannot
-complete.
+The admin CLI logs in through its own Google **Desktop app** OAuth client
+(public client, no secret, PKCE, loopback redirect). Its client id is built
+into `@unicas/admin-cli` (`DEFAULT_GOOGLE_CLIENT_ID`) and into the admin BFF's
+`/admin/auth/exchange` audience default, so no secret or environment value is
+required for the default deployment. Set `ADMIN_EXCHANGE_CLIENT_ID` (BFF) or
+`UNICAS_GOOGLE_CLIENT_ID` (CLI) only to override with a different client.
 
 Use the same random `CAS_AUDIT_READER_KEY` on tenant and admin. Session keys are
 a JSON map such as `{"2026-08":"<base64url-32-byte-key>"}`. The edge Worker

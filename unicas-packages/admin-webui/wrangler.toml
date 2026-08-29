@@ -15,8 +15,8 @@ database_id = "dc8090eb-46bc-43e2-9524-f1554fb71c74"
 # Set via wrangler secret / deploy config (never in this file):
 #   GOOGLE_OIDC_CLIENT_ID
 #   GOOGLE_OIDC_CLIENT_SECRET
-#   ADMIN_EXCHANGE_CLIENT_ID (Google OAuth client id of the admin CLI; enables
-#     POST /admin/auth/exchange for 'unicas login')
+#   ADMIN_EXCHANGE_CLIENT_ID (optional override; the admin-CLI Google Desktop
+#     client id is the built-in default for POST /admin/auth/exchange)
 #   SESSION_ENCRYPTION_KEYS   JSON map {"kid":"<base64url 32-byte AES key>"}
 #   ADMIN_TEST_ACCOUNT_PASSWORD (only when the test account is enabled)
 #
