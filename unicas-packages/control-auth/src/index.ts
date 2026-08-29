@@ -137,7 +137,12 @@ export class OidcClient {
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) {
-      throw new OidcError("token_exchange_failed", `OIDC token exchange failed with ${response.status}`);
+      const error = typeof payload.error === "string" ? payload.error : "";
+      const description = typeof payload.error_description === "string" ? payload.error_description : "";
+      throw new OidcError(
+        "token_exchange_failed",
+        `OIDC token exchange failed with ${response.status}${error ? ` (${error}` : ""}${description ? `: ${description}` : ""}${error ? ")" : ""}`,
+      );
     }
     const idToken = payload.id_token;
     if (typeof idToken !== "string" || idToken.length === 0) {
