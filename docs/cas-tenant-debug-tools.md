@@ -128,11 +128,15 @@ so the later WebUI reuses the same store:
 | --- | --- |
 | Session | `login <stack> [--issuer URL]`, `logout <stack> <tenant>\|--all`, `list`, `status`, `use <stack> <tenant>` |
 | Read | `node get <hash> [--range N[:L]] [--out file]`, `node meta <hash>`, `walk <hash> [--depth N]` |
-| Admin | `usage`, `gc [--dry-run] [--max-nodes N] [--confirm]`, `root-refs update <refDomain> <hash> <delta> [--confirm]`, `lease <hash> [--source file] [--duration-ms N]` |
+| Admin | `usage`, `gc [--max-nodes N] [-y\|--yes]`, `root-refs update <refDomain> <hash> <delta> [-y\|--yes]`, `lease <hash> [--source file] [--duration-ms N]` |
 
 Conventions aligned with the admin CLI: JSON on stdout, diagnostics on stderr,
-exit codes 0/1/2, idempotency keys where applicable, explicit `--confirm` for
-destructive operations, CAS base URL from `UNICAS_SERVER_URL`.
+exit codes 0/1/2, idempotency keys where applicable, CAS base URL from
+`UNICAS_SERVER_URL`. Destructive operations (`gc`, `root-refs update`) confirm
+interactively on a TTY, are skipped without a TTY, and `-y/--yes` skips the
+prompt. No default dry-run for `gc`. `node get` never prints binary content to
+stdout by default: it prints a JSON summary, `--out <file>` writes content,
+`--out -` writes raw bytes.
 
 ## Platform deliverables and scope
 
@@ -174,3 +178,4 @@ destructive operations, CAS base URL from `UNICAS_SERVER_URL`.
 | 10 | Store: folder per (stack, tenant) — `session.json` + a per-tenant node cache (`cas/`, hash-prefix sharded, metadata sidecars) | 2026-08 |
 | 11 | Cache at node granularity (`CasNodeCache`): full reads populate, partial reads serve-or-bypass, metadata cached for offline walk; blob layer benefits automatically; `leaseNode` write-through deferred | 2026-08 |
 | 12 | No tenant selector parameter: `tenantId` is decided by the stack-side OAuth from the authenticated identity; multi-tenant access via separate accounts (logout → re-authorize) | 2026-08 |
+| 13 | Destructive ops confirm interactively (TTY), refuse without TTY, `-y/--yes` skips; no default dry-run for `gc`; `node get` never prints binary by default | 2026-08 |
