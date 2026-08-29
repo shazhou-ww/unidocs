@@ -9,6 +9,9 @@
       "path": "packages/protocol"
     },
     {
+      "path": "unicas-packages/codec"
+    },
+    {
       "path": "unicas-packages/tenant-protocol"
     },
     {

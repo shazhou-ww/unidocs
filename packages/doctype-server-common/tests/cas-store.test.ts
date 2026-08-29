@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { computeNodeDigest, encodeHeader, hashToHex, parseNodeBytes } from "@unicas/tenant-protocol";
+import { computeNodeDigest, encodeHeader, hashToHex, parseNodeBytes } from "@unicas/codec";
 import { createTenantCasClient, storeNodeContent } from "@unicas/tenant-client";
 import { MemoryCas } from "../src/memory-ports";
 

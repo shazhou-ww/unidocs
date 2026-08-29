@@ -8,7 +8,7 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "@unicas/tenant-protocol";
+} from "@unicas/codec";
 import { migrateStackTenantSchema } from "../src/schema.js";
 import { canonicalComposite, stackCanonicalNodeKey } from "../src/do-names.js";
 import { RootRefDomainDurableObject } from "../src/domain-do.js";

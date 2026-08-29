@@ -50,7 +50,7 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../../../unicas-packages/tenant-protocol/dist/index.js";
+import { computeNodeDigest, encodeHeader, hashToHex } from "../../../unicas-packages/codec/dist/index.js";
 import { readAzureDocTypes } from "../doc-types.mjs";
 
 const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..");

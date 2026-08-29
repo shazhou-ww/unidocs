@@ -22,11 +22,11 @@
   },
   "dependencies": {
     "@unicas/tenant-client": "workspace:*",
-    "@unicas/tenant-protocol": "workspace:*",
     "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/protocol": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*"
+    "@unidocs/svalue-codec": "workspace:*",
+    "@unicas/codec": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

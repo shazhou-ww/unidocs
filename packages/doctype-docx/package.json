@@ -27,9 +27,9 @@
     "@ariadng/office": "0.3.0"
   },
   "devDependencies": {
-    "@unicas/tenant-protocol": "workspace:*",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^3.2.0",
+    "@unicas/codec": "workspace:*"
   },
   "publishConfig": {
     "main": "./dist/index.js",

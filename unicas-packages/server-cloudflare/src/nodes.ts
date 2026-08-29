@@ -11,7 +11,7 @@
  */
 
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
-import type { CanonicalNodeLimits } from "@unicas/tenant-protocol";
+import type { CanonicalNodeLimits } from "@unicas/codec";
 import {
   HASH_SIZE,
   HEADER_SIZE,
@@ -26,7 +26,7 @@ import {
   validateContentLength,
   validateContentType,
   validateHash,
-} from "@unicas/tenant-protocol";
+} from "@unicas/codec";
 import type {
   CasGcResult,
   CasLeaseResult,

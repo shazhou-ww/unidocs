@@ -18,7 +18,7 @@
       "path": "../../unicas-packages/tenant-client"
     },
     {
-      "path": "../../unicas-packages/tenant-protocol"
+      "path": "../../unicas-packages/codec"
     },
     {
       "path": "../svalue-codec"

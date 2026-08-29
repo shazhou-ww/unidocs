@@ -85,8 +85,9 @@ packages/
 
 unicas-packages/           (the independently deployable CAS middleware; future standalone monorepo)
                            boundary/naming rules in unicas-packages/README.md
-├── tenant-protocol/       @unicas/tenant-protocol       — Tenant data-plane CAS contracts: HTTP types/routes, canonical node codec, validation limits, capability claims
-├── tenant-client/         @unicas/tenant-client         — Cloud-neutral tenant CAS HTTP client
+├── codec/                 @unicas/codec                 — CAS wire encodings: canonical node binary format, digest, streaming parse, validation limits, blob index CBOR
+├── tenant-protocol/       @unicas/tenant-protocol       — Tenant data-plane CAS HTTP contracts: types/routes + capability claims
+├── tenant-client/         @unicas/tenant-client         — Cloud-neutral tenant CAS HTTP client (protocol + codec)
 ├── server-cloudflare/     @unicas/server-cloudflare     — Canonical stack-scoped tenant server (Cloudflare)
 ├── admin-protocol/        @unicas/admin-protocol        — CAS control-plane contracts
 ├── control-plane/         @unicas/control-plane         — CAS control plane service (issuers/stacks/members/sessions)

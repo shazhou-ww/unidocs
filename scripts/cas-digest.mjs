@@ -12,7 +12,7 @@ import {
   computeNodeDigest,
   hashToHex,
   hexToHash,
-} from "../unicas-packages/tenant-protocol/dist/index.js";
+} from "../unicas-packages/codec/dist/index.js";
 
 const contentType = process.argv[2];
 if (!contentType) {

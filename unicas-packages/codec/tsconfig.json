@@ -12,19 +12,5 @@
   },
   "include": [
     "src"
-  ],
-  "references": [
-    {
-      "path": "../../unicas-packages/codec"
-    },
-    {
-      "path": "../svalue-codec"
-    },
-    {
-      "path": "../protocol"
-    },
-    {
-      "path": "../doctype-server-common"
-    }
   ]
 }

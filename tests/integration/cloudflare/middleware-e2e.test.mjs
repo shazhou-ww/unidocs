@@ -27,7 +27,7 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "../../../unicas-packages/tenant-protocol/src/index.ts";
+} from "../../../unicas-packages/codec/src/index.ts";
 
 let runtime;
 

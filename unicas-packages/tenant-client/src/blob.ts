@@ -1,18 +1,16 @@
 import {
-  computeNodeDigest,
-  concatenateNodeBytes,
-  encodeHeader,
-  hashToHex,
-  hexToHash,
-} from "@unicas/tenant-protocol";
-import {
   BlobChunkBytes,
   BlobChunkContentType,
   BlobIndexContentType,
   BlobIndexFanout,
+  computeNodeDigest,
+  concatenateNodeBytes,
   decodeBlobIndex,
   encodeBlobIndex,
-} from "@unicas/tenant-protocol";
+  encodeHeader,
+  hashToHex,
+  hexToHash,
+} from "@unicas/codec";
 import type {
   CasBlobClient,
   CasBlobClientOptions,

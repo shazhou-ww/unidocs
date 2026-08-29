@@ -22,6 +22,7 @@ function readPkg(name: string): {
 const TENANT_IMPL_PACKAGES = [
   "@unicas/tenant-client",
   "@unicas/tenant-protocol",
+  "@unicas/codec",
 ] as const;
 
 describe("cross-plane separation", () => {

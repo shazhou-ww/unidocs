@@ -12,7 +12,7 @@
  */
 
 import type { D1Database, D1PreparedStatement, R2Bucket } from "@cloudflare/workers-types";
-import { validateHash } from "@unicas/tenant-protocol";
+import { validateHash } from "@unicas/codec";
 import { canonicalJson, sha256Hex } from "@unicas/control-plane";
 import { stackCanonicalNodeKey } from "./do-names.js";
 

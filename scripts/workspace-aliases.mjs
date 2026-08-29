@@ -29,6 +29,7 @@ import { join } from "node:path";
  */
 const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/protocol": "packages/protocol/src/index.ts",
+  "@unicas/codec": "unicas-packages/codec/src/index.ts",
   "@unicas/tenant-protocol": "unicas-packages/tenant-protocol/src/index.ts",
   "@unidocs/protocol-doc": "packages/protocol-doc/src/index.ts",
   "@unidocs/protocol-gateway": "packages/protocol-gateway/src/index.ts",

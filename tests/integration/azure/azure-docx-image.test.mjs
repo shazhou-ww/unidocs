@@ -19,7 +19,7 @@ import {
   concatenateNodeBytes,
   encodeHeader,
   hashToHex,
-} from "../../../unicas-packages/tenant-protocol/src/index.ts";
+} from "../../../unicas-packages/codec/src/index.ts";
 import { createSBlob, encodeSValue } from "../../../packages/svalue-codec/src/index.ts";
 import { SValueContentType } from "../../../packages/protocol/src/index.ts";
 

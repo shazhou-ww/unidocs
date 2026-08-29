@@ -1,4 +1,4 @@
-import { hashToHex, parseNodeBytes, sha256 } from "@unicas/tenant-protocol";
+import { hashToHex, parseNodeBytes, sha256 } from "@unicas/codec";
 import { matchCasRoute } from "@unicas/tenant-protocol";
 import type { CasRootRefUpdate } from "@unicas/tenant-protocol";
 import type { HttpFetcher } from "../src/index.js";

@@ -1,4 +1,4 @@
-import { CanonicalNodeContentType } from "@unicas/tenant-protocol";
+import { CanonicalNodeContentType } from "@unicas/codec";
 import { casRoutes } from "@unicas/tenant-protocol";
 import type {
   CasGcResult,

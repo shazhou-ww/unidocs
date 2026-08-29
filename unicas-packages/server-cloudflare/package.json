@@ -24,7 +24,8 @@
   },
   "dependencies": {
     "@unicas/control-plane": "workspace:*",
-    "@unicas/tenant-protocol": "workspace:*"
+    "@unicas/tenant-protocol": "workspace:*",
+    "@unicas/codec": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

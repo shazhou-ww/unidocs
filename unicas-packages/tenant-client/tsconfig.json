@@ -16,6 +16,9 @@
   "references": [
     {
       "path": "../tenant-protocol"
+    },
+    {
+      "path": "../codec"
     }
   ]
 }
