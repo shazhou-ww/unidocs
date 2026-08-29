@@ -71,6 +71,8 @@ export class OidcClient {
     }
     const response = await this.#fetch(this.#discoveryUrl, {
       headers: { Accept: "application/json" },
+    }).catch((error: unknown) => {
+      throw networkFailure(this.#discoveryUrl, error);
     });
     if (!response.ok) {
       throw new OidcError("discovery_failed", `OIDC discovery failed with ${response.status}`);
@@ -130,6 +132,8 @@ export class OidcClient {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
+    }).catch((error: unknown) => {
+      throw networkFailure(doc.token_endpoint, error);
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) {
@@ -181,7 +185,10 @@ export class OidcClient {
     if (this.#jwks && now - this.#jwks.fetchedAt < this.#jwksTtlMs) {
       return this.#jwks.value;
     }
-    const response = await this.#fetch(jwksUri, { headers: { Accept: "application/json" } });
+    const response = await this.#fetch(jwksUri, { headers: { Accept: "application/json" } })
+      .catch((error: unknown) => {
+        throw networkFailure(jwksUri, error);
+      });
     if (!response.ok) {
       throw new OidcError("jwks_failed", `OIDC JWKS fetch failed with ${response.status}`);
     }
@@ -192,6 +199,13 @@ export class OidcClient {
     this.#jwks = { fetchedAt: now, value };
     return value;
   }
+}
+
+/** Rewrites opaque fetch failures (undici hides the cause) with the failing URL. */
+function networkFailure(url: string, error: unknown): OidcError {
+  const cause = error instanceof Error && (error as { cause?: unknown }).cause;
+  const causeMessage = cause instanceof Error ? cause.message : cause === undefined ? "" : ` (${String(cause)})`;
+  return new OidcError("network_failed", `fetch ${url} failed: ${causeMessage || String(error instanceof Error ? error.message : error)}`);
 }
 
 export class OidcError extends Error {
