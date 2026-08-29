@@ -165,6 +165,7 @@ export class StackCapabilityVerifier {
     }
     const keySet = createLocalJWKSet(stackJwks(authority));
     let payload: Omit<VerifiedPayload, "stackId" | "kid">;
+    let lifetimeSeconds = 0;
     try {
       const result = await jwtVerify(token, keySet, {
         algorithms: this.#algorithms,
@@ -175,12 +176,19 @@ export class StackCapabilityVerifier {
         requiredClaims: ["sub", "iat", "nbf", "exp", "jti", "tenantId", "permissions"],
       });
       payload = normalizePayload(result.payload);
+      lifetimeSeconds = Number(result.payload.exp) - Number(result.payload.iat);
     } catch (error) {
       if (error instanceof CapabilityAuthenticationError
         || error instanceof CapabilityAuthorizationError) {
         throw error;
       }
       throw new CapabilityAuthenticationError("invalid_token", "CAS capability token verification failed");
+    }
+
+    // Per-stack lifetime cap from the authority registry: tokens must not
+    // outlive the stack's configured maximum (default 8h, up to 7d).
+    if (lifetimeSeconds > authority.capabilityMaxLifetimeSeconds) {
+      throw new CapabilityAuthenticationError("invalid_token", "CAS capability lifetime exceeds the stack's configured maximum");
     }
 
     // Issuer-derived stack must equal the path stack; token tenant the path tenant.

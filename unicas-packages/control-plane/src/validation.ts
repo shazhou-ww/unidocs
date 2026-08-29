@@ -62,6 +62,23 @@ export function validateAudience(value: unknown): string | null {
   return null;
 }
 
+/** Default per-stack capability signing cap (8 hours). */
+export const DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS = 8 * 60 * 60;
+/** Hard bounds for the per-stack cap; mirrors MaximumCapabilityLifetimeSeconds. */
+export const CAPABILITY_MAX_LIFETIME_SECONDS_MIN = 60;
+export const CAPABILITY_MAX_LIFETIME_SECONDS_MAX = 7 * 24 * 60 * 60;
+
+export function validateCapabilityMaxLifetimeSeconds(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    return "capabilityMaxLifetimeSeconds must be an integer";
+  }
+  if (value < CAPABILITY_MAX_LIFETIME_SECONDS_MIN || value > CAPABILITY_MAX_LIFETIME_SECONDS_MAX) {
+    return `capabilityMaxLifetimeSeconds must be between ${CAPABILITY_MAX_LIFETIME_SECONDS_MIN} and ${CAPABILITY_MAX_LIFETIME_SECONDS_MAX}`;
+  }
+  return null;
+}
+
 /** Email is display metadata; used only for invitation display constraints. */
 export function validateEmailConstraint(value: unknown): string | null {
   if (value === undefined || value === null) return null;

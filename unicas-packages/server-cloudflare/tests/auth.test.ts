@@ -54,13 +54,14 @@ async function seedStack(
     readonly issuer: string;
     readonly audience: string;
     readonly kid: string;
+    readonly capabilityMaxLifetimeSeconds?: number;
   },
 ): Promise<StackFixture> {
   const { publicKey, privateKey } = await generateKeyPair("ES256", { extractable: true });
   const publicJwk = (await exportJWK(publicKey)) as Record<string, unknown>;
   await db!.batch([
-    db!.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, revision) VALUES (?, ?, ?, 1)")
-      .bind(stack.stackId, stack.issuer, stack.audience),
+    db!.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, 1)")
+      .bind(stack.stackId, stack.issuer, stack.audience, stack.capabilityMaxLifetimeSeconds ?? 28800),
     db!.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, 'ES256', ?, 'active', 1)")
       .bind(stack.stackId, stack.kid, JSON.stringify(publicJwk)),
   ]);
@@ -113,6 +114,7 @@ async function issue(
     permissions: readonly CapabilityPermission[];
     refDomain?: string;
     subject?: string;
+    lifetimeSeconds?: number;
   },
 ): Promise<string> {
   return stack.issuer_.issue({
@@ -121,6 +123,7 @@ async function issue(
     tenantId: input.tenantId,
     permissions: input.permissions,
     ...(input.refDomain === undefined ? {} : { refDomain: input.refDomain }),
+    ...(input.lifetimeSeconds === undefined ? {} : { lifetimeSeconds: input.lifetimeSeconds }),
   });
 }
 
@@ -190,6 +193,27 @@ describe("stack authorization (Task 4)", () => {
     await expectRejected(verify.verify(authRequest(readToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), { operation: "gc", stackId: stack.stackId, tenantId: tenant }), 403, "requires");
     await expectRejected(verify.verify(authRequest(usageToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${"a".repeat(64)}/content`), { operation: "readContent", stackId: stack.stackId, tenantId: tenant, hash: "a".repeat(64) }), 403);
     await expectRejected(verify.verify(authRequest(writeToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant }), 403, "refDomain");
+  });
+
+  test("per-stack capability lifetime cap is enforced", async () => {
+    const { stacks } = await createSeededDb();
+    const verify = verifier();
+    const strict = await seedStack({
+      stackId: "cas_stack_strict",
+      issuer: "https://issuer-strict.example",
+      audience: "unidocs-cas-strict",
+      kid: "key-strict",
+      capabilityMaxLifetimeSeconds: 60,
+    });
+    const tenant = "tenant-1";
+    const path = `/stacks/${strict.stackId}/tenants/${tenant}/cas/usage`;
+    const route = { operation: "usage" as const, stackId: strict.stackId, tenantId: tenant };
+
+    const overCap = await issue(strict, { tenantId: tenant, permissions: [casManagePermission(tenant)], lifetimeSeconds: 120 });
+    await expectRejected(verify.verify(authRequest(overCap, path), route), 401, "exceeds the stack's configured maximum");
+
+    const withinCap = await issue(strict, { tenantId: tenant, permissions: [casManagePermission(tenant)], lifetimeSeconds: 60 });
+    await verify.verify(authRequest(withinCap, path), route);
   });
 
   test("unknown issuer, wrong audience, and wrong key fail closed", async () => {

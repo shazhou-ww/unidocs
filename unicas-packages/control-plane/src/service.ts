@@ -83,9 +83,11 @@ import {
   isSupportedKeyAlgorithm,
   normalizeEmailConstraint,
   parseControlListLimit,
+  DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS,
   POSSESSION_CHALLENGE_TTL_MS,
   sha256Hex,
   validateAudience,
+  validateCapabilityMaxLifetimeSeconds,
   validateDisplayName,
   validateEmailConstraint,
   validateInvitationToken,
@@ -478,8 +480,10 @@ export class ControlPlaneService {
       if (issuerError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, issuerError);
       const audienceError = validateAudience(request.body.audience);
       if (audienceError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, audienceError);
+      const lifetimeError = validateCapabilityMaxLifetimeSeconds(request.body.capabilityMaxLifetimeSeconds);
+      if (lifetimeError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, lifetimeError);
       const existing = await this.#db
-        .prepare("SELECT stack_id, issuer, audience, revision FROM cas_stack_issuer WHERE stack_id = ?")
+        .prepare("SELECT stack_id, issuer, audience, capability_max_lifetime_seconds, revision FROM cas_stack_issuer WHERE stack_id = ?")
         .bind(request.path.stackId)
         .first<IssuerRow>();
       if (existing) {
@@ -487,25 +491,40 @@ export class ControlPlaneService {
         if (existing.issuer !== request.body.issuer) {
           throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "issuer value is immutable once configured; create a new stack to change it");
         }
+        const nextLifetime = request.body.capabilityMaxLifetimeSeconds
+          ?? existing.capability_max_lifetime_seconds;
         const batch = this.#newMutationBatch(ctx, request.path.stackId, ControlAuditActions.issuerPut, request.path.stackId);
         batch.push(
-          this.#db.prepare("UPDATE cas_stack_issuer SET audience = ?, revision = revision + 1 WHERE stack_id = ?")
-            .bind(request.body.audience, request.path.stackId),
+          this.#db.prepare("UPDATE cas_stack_issuer SET audience = ?, capability_max_lifetime_seconds = ?, revision = revision + 1 WHERE stack_id = ?")
+            .bind(request.body.audience, nextLifetime, request.path.stackId),
         );
         await this.#db.batch(batch);
-        return toCasStackIssuer({ ...existing, audience: request.body.audience, revision: existing.revision + 1 });
+        return toCasStackIssuer({
+          ...existing,
+          audience: request.body.audience,
+          capability_max_lifetime_seconds: nextLifetime,
+          revision: existing.revision + 1,
+        });
       }
       if (mutation.ifMatch !== undefined && mutation.ifMatch.trim() !== "*") {
         throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "issuer does not exist");
       }
       await this.#requireIssuerGloballyUnique(request.body.issuer, request.path.stackId);
+      const lifetime = request.body.capabilityMaxLifetimeSeconds
+        ?? DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS;
       const batch = this.#newMutationBatch(ctx, request.path.stackId, ControlAuditActions.issuerPut, request.path.stackId);
       batch.push(
-        this.#db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, revision) VALUES (?, ?, ?, 1)")
-          .bind(request.path.stackId, request.body.issuer, request.body.audience),
+        this.#db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, 1)")
+          .bind(request.path.stackId, request.body.issuer, request.body.audience, lifetime),
       );
       await this.#db.batch(batch);
-      return { stackId: request.path.stackId, issuer: request.body.issuer, audience: request.body.audience, revision: 1 };
+      return {
+        stackId: request.path.stackId,
+        issuer: request.body.issuer,
+        audience: request.body.audience,
+        capabilityMaxLifetimeSeconds: lifetime,
+        revision: 1,
+      };
     });
   }
 
@@ -924,7 +943,7 @@ export class ControlPlaneService {
 
   async #issuerRow(stackId: string): Promise<IssuerRow> {
     const row = await this.#db
-      .prepare("SELECT stack_id, issuer, audience, revision FROM cas_stack_issuer WHERE stack_id = ?")
+      .prepare("SELECT stack_id, issuer, audience, capability_max_lifetime_seconds, revision FROM cas_stack_issuer WHERE stack_id = ?")
       .bind(stackId)
       .first<IssuerRow>();
     if (!row) throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "issuer is not configured");
@@ -1112,6 +1131,7 @@ interface IssuerRow {
   readonly stack_id: string;
   readonly issuer: string;
   readonly audience: string;
+  readonly capability_max_lifetime_seconds: number;
   readonly revision: number;
 }
 
@@ -1178,6 +1198,7 @@ function toCasStackIssuer(row: IssuerRow): CasStackIssuer {
     stackId: row.stack_id,
     issuer: row.issuer,
     audience: row.audience,
+    capabilityMaxLifetimeSeconds: row.capability_max_lifetime_seconds,
     revision: row.revision,
   };
 }

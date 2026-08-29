@@ -116,7 +116,11 @@ export type CasAdminGetIssuerResponse = CasStackIssuer | CasAdminErrorResponse;
 export interface CasAdminPutIssuerRequest {
   readonly path: CasAdminStackPath;
   readonly headers: CasAdminMutationPreconditions;
-  readonly body: { readonly issuer: string; readonly audience: string };
+  readonly body: {
+    readonly issuer: string;
+    readonly audience: string;
+    readonly capabilityMaxLifetimeSeconds?: number;
+  };
 }
 
 export type CasAdminPutIssuerResponse = CasStackIssuer | CasAdminErrorResponse;

@@ -268,6 +268,26 @@ describe("control-plane service", () => {
     expectError(noMatch, CasAdminErrorCodes.PRECONDITION_REQUIRED);
   });
 
+  test("issuer capability lifetime cap defaults to 8h and is configurable", async () => {
+    const { service } = await createService();
+    const stackId = await createStackFor(service, alice);
+    const created = await service.putIssuer(ctx(alice), {
+      path: { stackId },
+      body: { issuer: "https://issuer.example/a", audience: "unidocs-cas" },
+    }, {});
+    expect(created).toMatchObject({ capabilityMaxLifetimeSeconds: 28800, revision: 1 });
+    const updated = await service.putIssuer(ctx(alice), {
+      path: { stackId },
+      body: { issuer: "https://issuer.example/a", audience: "unidocs-cas", capabilityMaxLifetimeSeconds: 3600 },
+    }, { ifMatch: '"1"' });
+    expect(updated).toMatchObject({ capabilityMaxLifetimeSeconds: 3600, revision: 2 });
+    const invalid = await service.putIssuer(ctx(alice), {
+      path: { stackId },
+      body: { issuer: "https://issuer.example/a", audience: "unidocs-cas", capabilityMaxLifetimeSeconds: 5 },
+    }, { ifMatch: '"2"' });
+    expectError(invalid, CasAdminErrorCodes.INVALID_REQUEST);
+  });
+
   test("issuer keys require a valid possession proof and rotate safely", async () => {
     const { service } = await createService();
     const stackId = await createStackFor(service, alice);

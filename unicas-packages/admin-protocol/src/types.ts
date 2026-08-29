@@ -61,6 +61,8 @@ export interface CasStackIssuer {
   readonly stackId: CasStackId;
   readonly issuer: string;
   readonly audience: string;
+  /** Per-stack capability signing cap in seconds (default 28800, max 604800). */
+  readonly capabilityMaxLifetimeSeconds: number;
   readonly revision: number;
 }
 

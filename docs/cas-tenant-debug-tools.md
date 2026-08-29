@@ -62,11 +62,13 @@ partitions); the user supplies `tenantId` from their own application or admin.
 ## Capability and security
 
 - **Lifetime**: default **8 hours**; per-stack configurable cap up to **7
-  days** via the control-plane issuer configuration. The verifier cap
-  (`MaximumCapabilityLifetimeSeconds`, currently 1800s) is raised to the 7-day
-  hard maximum; the per-stack cap is enforced by the CAS verifier from the
-  authority registry. The provider contract tells stack issuers that signing
-  beyond the configured cap is rejected.
+  days** via the control-plane issuer configuration (`issuer set
+  ... --capability-max-lifetime-seconds N`; field
+  `capabilityMaxLifetimeSeconds`, default 28800, bounds 60..604800). The
+  verifier cap (`MaximumCapabilityLifetimeSeconds`, raised from 1800s to
+  604800s) is the hard maximum; the per-stack cap is enforced by the CAS
+  verifier from the authority registry. The provider contract tells stack
+  issuers that signing beyond the configured cap is rejected.
 - **Refresh**: when the stack OIDC issues a refresh token, the tool caches it
   and auto-refreshes (automation-friendly). Refresh-token lifetime/rotation
   policy is part of the provider contract.
@@ -160,7 +162,6 @@ stdout by default: it prints a JSON summary, `--out <file>` writes content,
 - Exact discovery endpoint contract (response shape, caching, error semantics,
   edge routing).
 - CLI UX details (active-entry selection, flag/env precedence).
-- Verifier / issuer / control-plane changes for the lifetime caps.
 - Error taxonomy for login and data-plane failures.
 
 ## Decision log
@@ -181,3 +182,4 @@ stdout by default: it prints a JSON summary, `--out <file>` writes content,
 | 12 | No tenant selector parameter: `tenantId` is decided by the stack-side OAuth from the authenticated identity; multi-tenant access via separate accounts (logout → re-authorize) | 2026-08 |
 | 13 | Destructive ops confirm interactively (TTY), refuse without TTY, `-y/--yes` skips; no default dry-run for `gc`; `node get` never prints binary by default | 2026-08 |
 | 14 | Provider contract: scope vocabulary `cas:read`/`cas:write`/`cas:manage` (tool requests `cas:manage`, provider may downgrade); refresh token one-time rotation, ≤ 7d default; `jwks_uri` = control-plane registered keys | 2026-08 |
+| 15 | Lifetime caps implemented: `MaximumCapabilityLifetimeSeconds` → 7d; per-stack `capabilityMaxLifetimeSeconds` (default 28800) in `issuer set`, webui, cli; CAS verifier enforces the per-stack cap from the registry | 2026-08 |
