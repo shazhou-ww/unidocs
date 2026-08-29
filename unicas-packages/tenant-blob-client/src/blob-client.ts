@@ -28,10 +28,14 @@ import type {
 import type {
   CasGcOptions,
   CasGcResult,
+  CasNodeMetadata,
   CasNodeRange,
+  CasRootRefUpdate,
+  CasRootRefsResult,
   CasUsage,
   TenantCasClient,
 } from "@unicas/tenant-client";
+import type { CasLeaseOptions, CasLeaseResult } from "@unicas/tenant-client";
 
 interface BlobTreeNode {
   readonly hash: string;
@@ -39,7 +43,7 @@ interface BlobTreeNode {
   readonly level: number;
 }
 
-type BlobCas = Pick<TenantCasClient, "node" | "leaseNode" | "usage" | "gc">;
+type BlobCas = TenantCasClient;
 
 export function createCasBlobClient(
   cas: BlobCas,
@@ -112,13 +116,12 @@ export function createCasBlobClient(
   };
 
   const statBlob = async (hash: string): Promise<CasBlobRef> => {
-    const node = cas.node(hash);
-    const metadata = await node.metadata();
+    const metadata = await cas.readMetadata(hash);
     if (metadata.contentType !== BlobIndexContentType) {
       if (metadata.refs.length !== 0) throw new Error(`CAS node ${hash} is not a blob root`);
       return { hash, size: metadata.size, contentType: metadata.contentType };
     }
-    const index = decodeBlobIndex(await collectStream(await node.read()));
+    const index = decodeBlobIndex(await collectStream(await cas.readContent(hash)));
     if (index.children.length !== metadata.refs.length) {
       throw new Error(`Blob index ${hash} child metadata does not match its CAS refs`);
     }
@@ -132,14 +135,13 @@ export function createCasBlobClient(
     signal?: AbortSignal,
   ): AsyncGenerator<Uint8Array> {
     signal?.throwIfAborted();
-    const node = cas.node(hash);
-    const metadata = await node.metadata();
+    const metadata = await cas.readMetadata(hash);
     if (metadata.contentType !== BlobIndexContentType) {
       validateLeaf(hash, metadata.refs, metadata.contentType, expectedLevel);
-      yield* readStream(await node.read(), signal);
+      yield* readStream(await cas.readContent(hash), signal);
       return;
     }
-    const index = decodeBlobIndex(await collectStream(await node.read()));
+    const index = decodeBlobIndex(await collectStream(await cas.readContent(hash)));
     validateIndex(hash, index.mediaType, index.level, index.children.length, metadata.refs.length, expectedLevel, expectedMediaType);
     for (let child = 0; child < metadata.refs.length; child++) {
       yield* readNode(metadata.refs[child], index.level - 1, expectedMediaType, signal);
@@ -155,14 +157,13 @@ export function createCasBlobClient(
     signal?: AbortSignal,
   ): AsyncGenerator<Uint8Array> {
     signal?.throwIfAborted();
-    const node = cas.node(hash);
-    const metadata = await node.metadata();
+    const metadata = await cas.readMetadata(hash);
     if (metadata.contentType !== BlobIndexContentType) {
       validateLeaf(hash, metadata.refs, metadata.contentType, expectedLevel);
-      yield* readStream(await node.read({ offset, length }), signal);
+      yield* readStream(await cas.readContent(hash, { offset, length }), signal);
       return;
     }
-    const index = decodeBlobIndex(await collectStream(await node.read()));
+    const index = decodeBlobIndex(await collectStream(await cas.readContent(hash)));
     validateIndex(hash, index.mediaType, index.level, index.children.length, metadata.refs.length, expectedLevel, expectedMediaType);
     const end = offset + length;
     let childStart = 0;
@@ -252,6 +253,15 @@ export function createCasBlobClient(
     openBlob: openHandle,
 
     statBlob,
+
+    readMetadata: (hash: string, options?: { readonly signal?: AbortSignal }): Promise<CasNodeMetadata> =>
+      cas.readMetadata(hash, options),
+
+    leaseNode: (hash: string, source?: import("@unicas/tenant-client").CasNodeSource, options?: CasLeaseOptions): Promise<CasLeaseResult> =>
+      cas.leaseNode(hash, source, options),
+
+    updateRootRefs: (update: CasRootRefUpdate): Promise<CasRootRefsResult> =>
+      cas.updateRootRefs(update),
 
     usage: (signal?: AbortSignal): Promise<CasUsage> => cas.usage(signal),
 

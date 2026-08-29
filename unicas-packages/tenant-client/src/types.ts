@@ -58,13 +58,13 @@ export interface CasNodeCache {
   ): Promise<ReadableStream<Uint8Array>>;
 }
 
-export interface CasNodeReader {
-  metadata(): Promise<CasNodeMetadata>;
-  read(range?: CasNodeRange): Promise<ReadableStream<Uint8Array>>;
-}
-
 export interface TenantCasClient {
-  node(hash: CasHash): CasNodeReader;
+  readMetadata(hash: CasHash, options?: { readonly signal?: AbortSignal }): Promise<CasNodeMetadata>;
+  readContent(
+    hash: CasHash,
+    range?: CasNodeRange,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<ReadableStream<Uint8Array>>;
   leaseNode(
     hash: CasHash,
     source?: CasNodeSource,

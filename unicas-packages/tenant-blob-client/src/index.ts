@@ -17,6 +17,8 @@ export {
   storeNodeContent,
 } from "./node-content.js";
 
+export { CasClientError } from "@unicas/tenant-client";
+
 export type {
   CasBlobClient,
   CasBlobClientOptions,

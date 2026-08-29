@@ -10,7 +10,6 @@ export type {
   CasNodeCache,
   CasNodeCacheKey,
   CasNodeRange,
-  CasNodeReader,
   CasNodeSource,
   CasNodeMetadata,
   CasRootRefUpdate,

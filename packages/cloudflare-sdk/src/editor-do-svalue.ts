@@ -2,7 +2,7 @@ import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { CasClientError } from "@unicas/tenant-client";
+import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
 import {
   byteStreamFromReadableStream,
@@ -162,19 +162,18 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const casAdapter = {
         leaseNodeContent: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
           this.#isReadOnlyOperation()
-            ? this.#requireCas().node(hash).metadata()
+            ? this.#requireCas().readMetadata(hash)
             : leaseNodeContent(this.#requireCas(), hash, content, contentType, refs),
         leaseNode: (hash: string) => this.#isReadOnlyOperation()
-          ? this.#requireCas().node(hash).metadata()
+          ? this.#requireCas().readMetadata(hash)
           : this.#requireCas().leaseNode(hash),
         storeBlob: (source: import("@unidocs/protocol").SBlobSource) => {
           const cas = this.#requireCas();
           const blobs = this.#isReadOnlyOperation()
             ? createCasBlobClient({
               ...cas,
-              node: hash => cas.node(hash),
               leaseNode: async hash => {
-                await cas.node(hash).metadata();
+                await cas.readMetadata(hash);
                 return { hash, ready: true, leaseStartedAt: 0, leaseExpiresAt: 0 };
               },
             })
@@ -878,7 +877,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
     #checkExistingRef(hash: string): Promise<unknown> {
       return this.#isReadOnlyOperation()
-        ? this.#requireCas().node(hash).metadata()
+        ? this.#requireCas().readMetadata(hash)
         : this.#requireCas().leaseNode(hash);
     }
 

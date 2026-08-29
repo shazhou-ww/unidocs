@@ -33,12 +33,12 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unicas/tenant-client": "workspace:*",
     "@unidocs/protocol": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
     "@unidocs/svalue-codec": "workspace:*",
-    "@unicas/codec": "workspace:*"
+    "@unicas/codec": "workspace:*",
+    "@unicas/tenant-blob-client": "workspace:*"
   },
   "peerDependencies": {
     "vitest": "^3.2.0"
@@ -52,7 +52,7 @@
     "jose": "^6.2.10",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
-    "@unicas/tenant-blob-client": "workspace:*"
+    "@unicas/tenant-client": "workspace:*"
   },
   "publishConfig": {
     "main": "./dist/index.js",

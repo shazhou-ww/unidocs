@@ -54,19 +54,22 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
   };
 
   const client: TenantCasClient = {
-    node(hash) {
+    readMetadata(hash, options: { readonly signal?: AbortSignal } = {}) {
       const key = { ...path, hash };
-
       const loadMetadata = async (): Promise<CasNodeMetadata> => {
         const response = await requireOk(
-          await request(casRoutes.readMetadata({ ...path, hash })),
+          await request(casRoutes.readMetadata({ ...path, hash }), { signal: options.signal }),
           "metadata",
         );
         const body = await response.json() as { metadata: CasNodeMetadata };
         return body.metadata;
       };
+      return config.cache?.metadata(key, loadMetadata) ?? loadMetadata();
+    },
 
-      const loadContent = async (range?: CasNodeRange): Promise<ReadableStream<Uint8Array>> => {
+    readContent(hash, range?: CasNodeRange, options: { readonly signal?: AbortSignal } = {}) {
+      const key = { ...path, hash };
+      const loadContent = async (): Promise<ReadableStream<Uint8Array>> => {
         if (range !== undefined) validateRange(range);
         if (range?.length === 0) {
           return new ReadableStream({ start: controller => controller.close() });
@@ -75,7 +78,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
           ? undefined
           : { Range: `bytes=${range.offset}-${range.length === undefined ? "" : range.offset + range.length - 1}` };
         const response = await requireOk(
-          await request(casRoutes.readContent({ ...path, hash }), { headers }),
+          await request(casRoutes.readContent({ ...path, hash }), { headers, signal: options.signal }),
           "read",
         );
         if (response.body === null) {
@@ -83,11 +86,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
         }
         return response.body;
       };
-
-      return Object.freeze({
-        metadata: () => config.cache?.metadata(key, loadMetadata) ?? loadMetadata(),
-        read: (range?: CasNodeRange) => config.cache?.read(key, range, () => loadContent(range)) ?? loadContent(range),
-      });
+      return config.cache?.read(key, range, loadContent) ?? loadContent();
     },
 
     async leaseNode(hash, source?: CasNodeSource, options: CasLeaseOptions = {}) {

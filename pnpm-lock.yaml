@@ -426,9 +426,9 @@ importers:
       '@unicas/codec':
         specifier: workspace:*
         version: link:../../unicas-packages/codec
-      '@unicas/tenant-client':
+      '@unicas/tenant-blob-client':
         specifier: workspace:*
-        version: link:../../unicas-packages/tenant-client
+        version: link:../../unicas-packages/tenant-blob-client
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -442,9 +442,9 @@ importers:
         specifier: workspace:*
         version: link:../svalue-codec
     devDependencies:
-      '@unicas/tenant-blob-client':
+      '@unicas/tenant-client':
         specifier: workspace:*
-        version: link:../../unicas-packages/tenant-blob-client
+        version: link:../../unicas-packages/tenant-client
       jose:
         specifier: ^6.2.10
         version: 6.2.10

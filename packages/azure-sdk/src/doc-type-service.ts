@@ -12,11 +12,8 @@
  * 复制那条规则等于制造一条「只改一边就能悄悄产生数据损坏」的路径。
  */
 import type { DocumentTypeFactory, SBlobReadRange, SBlobSource } from "@unidocs/protocol";
-import {
-  CasClientError,
-  createTenantCasClient,
-  type HttpFetcher,
-} from "@unicas/tenant-client";
+import { createTenantCasClient, type HttpFetcher } from "@unicas/tenant-client";
+import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
 import type { TenantCasClient } from "@unicas/tenant-client";
 import type { CasBlobClient } from "@unicas/tenant-blob-client";
@@ -208,7 +205,8 @@ function unavailableCasGateway(): TenantCasClient & CasBlobClient {
     throw new CasClientError(501, "Not Implemented", "delegated authority");
   };
   return {
-    node: () => ({ metadata: unavailable, read: unavailable }),
+    readMetadata: unavailable,
+    readContent: unavailable,
     leaseNode: unavailable,
     updateRootRefs: unavailable,
     usage: unavailable,

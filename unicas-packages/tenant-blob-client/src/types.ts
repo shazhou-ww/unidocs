@@ -43,7 +43,7 @@ export interface CasBlobHandle {
   ): Promise<Uint8Array>;
 }
 
-/** Complete tenant data-plane blob interface: write / read / admin. */
+/** Complete tenant data-plane CAS client surface for business users. */
 export interface CasBlobClient {
   /** Write a blob, chunking it into CAS nodes behind a blob-index tree. */
   storeBlob(source: CasBlobSource, options: CasBlobWriteOptions): Promise<CasBlobRef>;
@@ -51,6 +51,16 @@ export interface CasBlobClient {
   openBlob(hash: CasHash, signal?: AbortSignal): Promise<CasBlobHandle>;
   /** Blob metadata (size/contentType) without reading content. */
   statBlob(hash: CasHash): Promise<CasBlobRef>;
+  /** Node metadata (transport passthrough). */
+  readMetadata(hash: CasHash, options?: { readonly signal?: AbortSignal }): Promise<import("@unicas/tenant-client").CasNodeMetadata>;
+  /** Extend a node lease (transport passthrough). */
+  leaseNode(
+    hash: CasHash,
+    source?: import("@unicas/tenant-client").CasNodeSource,
+    options?: import("@unicas/tenant-client").CasLeaseOptions,
+  ): Promise<import("@unicas/tenant-client").CasLeaseResult>;
+  /** Update root references for retention (transport passthrough). */
+  updateRootRefs(update: import("@unicas/tenant-client").CasRootRefUpdate): Promise<import("@unicas/tenant-client").CasRootRefsResult>;
   /** Tenant storage usage. */
   usage(signal?: AbortSignal): Promise<import("@unicas/tenant-client").CasUsage>;
   /** Advisory tenant garbage collection. */

@@ -59,11 +59,14 @@ unicas-packages/                    @unicas org
 │         src/ui（管理界面）+ src/server（OIDC BFF）
 │
 └── ■ client 层
-    ├── tenant-client/     @unicas/tenant-client       tenant 组 · 节点级
-    │     与 HTTP 路由一一对应的薄传输层（createTenantCasClient），无编码
-    ├── tenant-blob-client/@unicas/tenant-blob-client  tenant 组 · blob 加层
-    │     业务方完整接口：storeBlob / openBlob(句柄式随机读) / statBlob /
-    │     usage / gc + 节点写辅助（storeNodeContent/leaseNodeContent）
+    ├── tenant-client/     @unicas/tenant-client       tenant 组 · 传输层
+    │     纯 HTTP 封装，每个路由一个函数（readMetadata/readContent/
+    │     leaseNode/updateRootRefs/usage/gc），factory 绑定 tenantId/JWT；
+    │     无编码、无业务封装，仅组装层使用
+    ├── tenant-blob-client/@unicas/tenant-blob-client  tenant 组 · 业务面
+    │     业务方唯一入口：storeBlob / openBlob(句柄式随机读) / statBlob /
+    │     readMetadata / leaseNode / updateRootRefs / usage / gc
+    │     + 节点写辅助（storeNodeContent/leaseNodeContent）
     │     + blob index CBOR（client 侧 manifest，服务端不解析）
     ├── admin-cli/         @unicas/admin-cli           admin 组
     │     CLI + stdio MCP（bin `unicas`），走 MCP over HTTP 通道，
@@ -79,16 +82,19 @@ unicas-packages/                    @unicas org
   ← 契约层(tenant-protocol, admin-protocol)
     ← 内核层(control-plane, control-auth)
       ← 部署层(server-cloudflare, edge, control-plane-mcp, admin-webui)
-契约层 + 编码层 ← tenant-client（节点级薄传输）
-                    ← tenant-blob-client（blob 加层，业务方唯一入口）
+契约层 + 编码层 ← tenant-client（纯函数传输层，仅组装）
+                    ← tenant-blob-client（业务方唯一入口）
 契约层 ← admin-cli（类型层）
 ```
 
 - **codec 是最底层**：无 workspace 依赖，仅外部 `cborg`；`tenant-protocol`
   不 re-export codec 符号（强制迁移，2026-08-29 决策）。
-- **tenant-client 与 HTTP 一一对应**：纯传输层，不含任何编码/业务封装；
-  `tenant-blob-client` 在其上提供完整 blob 接口（写/随机读/admin），业务方
-  只依赖它，不再触碰底层 client。
+- **tenant-client 是纯函数传输层**：与 HTTP 路由一一对应，factory 只绑定
+  tenantId/JWT 等公共参数，无编码、无业务封装、无对象模式（`node()` 已移除）。
+- **业务方只用 tenant-blob-client**：其接口覆盖完整数据面
+  （blob 写/随机读 + 节点元数据/续租/root-refs + usage/gc），应用栈不再直接
+  依赖 tenant-client；`createTenantCasClient` 只在组装点喂给
+  `createCasBlobClient`。
 - 契约层：`tenant-protocol` 仅外部 `jose`；`admin-protocol` 零依赖。
 - 内核层只依赖契约层（`control-plane` → `admin-protocol`）。
 - 部署层只依赖内核层 + 契约层 +（数据面所需）编码层，**部署层之间零依赖**
@@ -148,6 +154,7 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | **codec 拆分（强制迁移）** | `binary/digest/canonical-stream/validation` 从 `tenant-protocol` 抽为 `@unicas/codec`；`tenant-protocol` 不再 re-export 编码符号；纯编码消费者直接依赖 codec |
 | **blob 分层（tenant-blob-client）** | `blob index` 从 codec 迁入新包 `@unicas/tenant-blob-client`；tenant-client 收窄为与 HTTP 一一对应的薄传输；blob 层提供完整接口（句柄式随机读对标 SBlobHandler、usage/gc 透传），业务方不再触碰底层 client |
 | **权限改名** | tenant 数据面 `cas:admin` → `cas:manage`（消除与「admin 面/控制面」的术语撞车） |
+| **tenant-client 下沉纯函数** | 移除 `node()` 对象模式，改 `readMetadata`/`readContent` 直接函数；业务面全部收敛到 `tenant-blob-client`（补 `readMetadata`/`leaseNode`/`updateRootRefs` 透传），应用栈不再直接依赖传输层 |
 
 ## 待办（README 定方向）
 

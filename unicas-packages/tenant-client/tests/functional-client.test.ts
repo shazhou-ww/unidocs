@@ -34,10 +34,9 @@ describe("functional tenant CAS client", () => {
     const content = new TextEncoder().encode("0123456789");
     const hash = await storeNodeContent(client, content, "text/plain");
 
-    const reader = client.node(hash);
     expect(service.tokens).toHaveLength(1);
-    await expect(reader.metadata()).resolves.toMatchObject({ hash, size: 10, contentType: "text/plain", refs: [] });
-    await expect(new Response(await reader.read({ offset: 3, length: 4 })).text()).resolves.toBe("3456");
+    await expect(client.readMetadata(hash)).resolves.toMatchObject({ hash, size: 10, contentType: "text/plain", refs: [] });
+    await expect(new Response(await client.readContent(hash, { offset: 3, length: 4 })).text()).resolves.toBe("3456");
     expect(service.tokens).toEqual(["Bearer token-1", "Bearer token-2", "Bearer token-3"]);
   });
 
@@ -98,7 +97,7 @@ describe("functional tenant CAS client", () => {
   }, 20_000);
 
   it("preserves HTTP status on client errors", async () => {
-    const error = await createClient().node("0".repeat(64)).metadata().catch(value => value);
+    const error = await createClient().readMetadata("0".repeat(64)).catch(value => value);
     expect(error).toBeInstanceOf(CasClientError);
     expect(error).toMatchObject({ status: 404 });
   });

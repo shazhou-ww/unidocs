@@ -31,6 +31,9 @@
     },
     {
       "path": "../protocol"
+    },
+    {
+      "path": "../../unicas-packages/tenant-blob-client"
     }
   ]
 }

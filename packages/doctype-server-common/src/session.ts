@@ -61,7 +61,7 @@
 
 import type { DocumentType, CasReferences, SValueType, SValue } from "@unidocs/protocol";
 import { decodeSValue, encodeSValue, refsFromSValue } from "@unidocs/svalue-codec";
-import { CasClientError } from "@unicas/tenant-client";
+import { CasClientError } from "@unicas/tenant-blob-client";
 import {
   DeltaRejectedError,
   DocExistsError,
