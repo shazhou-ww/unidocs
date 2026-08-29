@@ -118,9 +118,14 @@ export class OidcClient {
       code: input.code,
       redirect_uri: this.#redirectUri,
       client_id: this.#clientId,
-      client_secret: this.#clientSecret,
       code_verifier: input.codeVerifier,
     });
+    // Public clients (native/desktop apps) must not send a client secret
+    // (RFC 6749 §2.3.1); PKCE is the authenticator. Send it only when a
+    // confidential client is configured.
+    if (this.#clientSecret.length > 0) {
+      body.set("client_secret", this.#clientSecret);
+    }
     const response = await this.#fetch(doc.token_endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
