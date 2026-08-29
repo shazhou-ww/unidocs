@@ -43,10 +43,12 @@ pnpm --filter @unicas/admin-webui exec wrangler secret put SESSION_ENCRYPTION_KE
 ```
 
 The admin CLI logs in through its own Google **Desktop app** OAuth client
-(public client, no secret, PKCE, loopback redirect). Its client id is built
-into `@unicas/admin-cli` (`DEFAULT_GOOGLE_CLIENT_ID`) and into the admin BFF's
-`/admin/auth/exchange` audience default, so no secret or environment value is
-required for the default deployment. Set `ADMIN_EXCHANGE_CLIENT_ID` (BFF) or
+(PKCE, loopback redirect). Its client id is built into `@unicas/admin-cli`
+(`DEFAULT_GOOGLE_CLIENT_ID`) and into the admin BFF's `/admin/auth/exchange`
+audience default. Google issues a client secret even for Desktop clients and
+**requires it in the token exchange**, so set it on the CLI side:
+`UNICAS_GOOGLE_CLIENT_SECRET=<secret>`. The BFF never sees it (it only
+verifies the id_token). Set `ADMIN_EXCHANGE_CLIENT_ID` (BFF) or
 `UNICAS_GOOGLE_CLIENT_ID` (CLI) only to override with a different client.
 
 Use the same random `CAS_AUDIT_READER_KEY` on tenant and admin. Session keys are
