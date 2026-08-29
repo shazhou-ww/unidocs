@@ -2,7 +2,8 @@ import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
 import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { CasClientError, createCasBlobClient, leaseNodeContent } from "@unicas/tenant-client";
+import { CasClientError } from "@unicas/tenant-client";
+import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
 import {
   byteStreamFromReadableStream,
   DELTA_THRESHOLD,
@@ -170,6 +171,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           const cas = this.#requireCas();
           const blobs = this.#isReadOnlyOperation()
             ? createCasBlobClient({
+              ...cas,
               node: hash => cas.node(hash),
               leaseNode: async hash => {
                 await cas.node(hash).metadata();
@@ -186,9 +188,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         },
         statBlob: (hash: string) => this.#requireCas().statBlob(hash),
         openBlob: async (hash: string, range?: import("@unidocs/protocol").SBlobReadRange) =>
-          byteStreamFromReadableStream(range === undefined
-            ? await this.#requireCas().openBlob(hash)
-            : await this.#requireCas().openBlobRange(hash, range)),
+          byteStreamFromReadableStream(
+            (await this.#requireCas().openBlob(hash)).read(range),
+          ),
       };
       const context = createSBlobContext(casAdapter, { maxReadBytes: MAX_SVALUE_ROOT_BYTES });
       this.#context = context;

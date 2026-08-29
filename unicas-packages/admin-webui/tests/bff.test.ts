@@ -383,7 +383,7 @@ describe("cas-admin-webui BFF", () => {
     expect(me.status).toBe(200);
     expect(await me.json()).toMatchObject({
       identity: {
-        identityIssuer: "urn:unicas:admin:test-account",
+        identityIssuer: "urn:unicas:manage:test-account",
         subject: "tester@example.com",
         emailForDisplay: "tester@example.com",
       },

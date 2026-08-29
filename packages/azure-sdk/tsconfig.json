@@ -28,6 +28,9 @@
     },
     {
       "path": "../doctype-server-common"
+    },
+    {
+      "path": "../../unicas-packages/tenant-blob-client"
     }
   ]
 }

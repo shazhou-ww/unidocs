@@ -8,7 +8,7 @@ import {
   CapabilityIssuer,
   CapabilityVerifier,
   JoseCapabilitySigner,
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
   isReservedRefDomain,
@@ -47,7 +47,7 @@ function verifier(): CapabilityVerifier {
     allowedPermissionKinds: [
       "cas:read",
       "cas:write",
-      "cas:admin",
+      "cas:manage",
     ],
     now: () => NOW,
   });
@@ -119,9 +119,9 @@ describe("stack-authority CAS claims (Task 4)", () => {
     await expect(verifier().verify(await forge(42))).rejects.toThrow();
   });
 
-  test("cas:admin is tenant-only and does not grant read or write", async () => {
-    expect(parseCapabilityPermission(casAdminPermission(TENANT))).toEqual({
-      kind: "cas:admin",
+  test("cas:manage is tenant-only and does not grant read or write", async () => {
+    expect(parseCapabilityPermission(casManagePermission(TENANT))).toEqual({
+      kind: "cas:manage",
       tenantId: TENANT,
     });
     await expect(issuer().issue({
@@ -129,13 +129,13 @@ describe("stack-authority CAS claims (Task 4)", () => {
       audience: AUDIENCE,
       tenantId: TENANT,
       sessionId: "s1",
-      permissions: [casAdminPermission(TENANT)],
-    })).rejects.toThrow("Session-scoped capabilities cannot contain cas:admin");
+      permissions: [casManagePermission(TENANT)],
+    })).rejects.toThrow("Session-scoped capabilities cannot contain cas:manage");
     const token = await issuer().issue({
       subject: "gateway",
       audience: AUDIENCE,
       tenantId: TENANT,
-      permissions: [casAdminPermission(TENANT)],
+      permissions: [casManagePermission(TENANT)],
     });
     const capability = await verifier().verify(token);
     const { requireCapabilityPermission } = await import("../src/index.js");

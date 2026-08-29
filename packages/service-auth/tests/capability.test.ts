@@ -17,7 +17,7 @@ import {
   CapabilityTokenType,
   CapabilityVerifier,
   JoseCapabilitySigner,
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
   extractBearerCapability,
@@ -106,9 +106,9 @@ describe("capability issuance and verification", () => {
       subject: "gateway",
       audience: CAS_AUDIENCE,
       tenantId: "tenant-1",
-      permissions: [casAdminPermission("tenant-1")],
+      permissions: [casManagePermission("tenant-1")],
     });
-    const capability = await casVerifier(["cas:admin"]).verify(token);
+    const capability = await casVerifier(["cas:manage"]).verify(token);
     expect(capability.claims.sessionId).toBeUndefined();
   });
 
@@ -261,9 +261,9 @@ describe("capability authorization", () => {
       subject: "gateway",
       audience: CAS_AUDIENCE,
       tenantId: "tenant-1",
-      permissions: [casAdminPermission("tenant-1")],
+      permissions: [casManagePermission("tenant-1")],
     });
-    const capability = await casVerifier(["cas:admin"]).verify(token);
+    const capability = await casVerifier(["cas:manage"]).verify(token);
     expect(() => requireCapabilityPermission(capability, casReadPermission("tenant-1")))
       .toThrow(CapabilityAuthorizationError);
     expect(() => requireCapabilityPermission(capability, casWritePermission("tenant-1")))
@@ -310,8 +310,8 @@ describe("capability configuration and issuance guards", () => {
   test("issuer rejects session-scoped CAS administration", async () => {
     await expect(issuer(privateKeyA, "key-a").issue(docInput({
       audience: CAS_AUDIENCE,
-      permissions: [casAdminPermission("tenant-1")],
-    }))).rejects.toThrow("cannot contain cas:admin");
+      permissions: [casManagePermission("tenant-1")],
+    }))).rejects.toThrow("cannot contain cas:manage");
   });
 
   test("issuer rejects a custom signer without a key ID", () => {

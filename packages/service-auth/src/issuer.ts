@@ -200,8 +200,8 @@ function validatePermissionSet(
     if (parsed.kind.startsWith("sessions:") && sessionId === undefined) {
       throw new TypeError("Session permissions require a session-scoped capability");
     }
-    if (parsed.kind === "cas:admin" && sessionId !== undefined) {
-      throw new TypeError("Session-scoped capabilities cannot contain cas:admin");
+    if (parsed.kind === "cas:manage" && sessionId !== undefined) {
+      throw new TypeError("Session-scoped capabilities cannot contain cas:manage");
     }
     if (unique.has(permission)) {
       throw new TypeError("Capability permissions must not contain duplicates");

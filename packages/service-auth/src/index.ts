@@ -11,7 +11,7 @@
 
 export {
   canonicalPermissionSegment,
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
   hasCapabilityPermission,

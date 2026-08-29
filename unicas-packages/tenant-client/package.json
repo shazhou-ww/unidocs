@@ -26,7 +26,8 @@
   },
   "devDependencies": {
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^3.2.0",
+    "@unicas/tenant-blob-client": "workspace:*"
   },
   "publishConfig": {
     "main": "./dist/index.js",

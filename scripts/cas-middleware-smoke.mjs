@@ -14,7 +14,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "../unicas-packages/codec/dist/index.js";
-import { casAdminPermission, casReadPermission, casWritePermission, createPkcs8CapabilityIssuer } from "../packages/service-auth/dist/index.js";
+import { casManagePermission, casReadPermission, casWritePermission, createPkcs8CapabilityIssuer } from "../packages/service-auth/dist/index.js";
 
 const BASE = process.argv[2] ?? "https://unicas.shazhou.work";
 // Unique per run so the smoke is repeatable: a fixed tenant/requestId would
@@ -74,8 +74,8 @@ async function main() {
   const az = stacks[1];
   const writer = await issue(cf, [casWritePermission(TENANT)], "doc");
   const reader = await issue(cf, [casReadPermission(TENANT)]);
-  const usageReader = await issue(cf, [casAdminPermission(TENANT)]);
-  const gcTrigger = await issue(cf, [casAdminPermission(TENANT)]);
+  const usageReader = await issue(cf, [casManagePermission(TENANT)]);
+  const gcTrigger = await issue(cf, [casManagePermission(TENANT)]);
   const azReader = await issue(az, [casReadPermission(TENANT)]);
   const prefix = `/stacks/${cf.stackId}/tenants/${TENANT}`;
 
@@ -158,7 +158,7 @@ async function main() {
 
   // Azure's own stack sees nothing under the same tenant id.
   res = await fetch(`${BASE}/stacks/${az.stackId}/tenants/${TENANT}/cas/usage`, {
-    headers: { Authorization: `Bearer ${await issue(az, [casAdminPermission(TENANT)])}` },
+    headers: { Authorization: `Bearer ${await issue(az, [casManagePermission(TENANT)])}` },
   });
   const azUsage = await res.json();
   assert(azUsage.nodeCount === 0, `azure usage nodeCount -> ${azUsage.nodeCount}`);

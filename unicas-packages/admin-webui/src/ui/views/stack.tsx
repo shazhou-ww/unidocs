@@ -82,7 +82,7 @@ const TAB_GUIDES = {
     summary: "CAS accounting is isolated by stack and tenant. The admin session does not itself carry a tenant data-plane capability.",
     concepts: [
       { term: "Partition", detail: "Equal hashes in different stack-and-tenant partitions have independent objects, leases, references, and GC." },
-      { term: "Permission", detail: "A usage read requires a tenant capability with cas:admin for the selected tenant." },
+      { term: "Permission", detail: "A usage read requires a tenant capability with cas:manage for the selected tenant." },
     ],
   },
 } as const;

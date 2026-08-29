@@ -50,7 +50,7 @@ export type { CasRoute } from "./routes.js";
 // CAS-neutral tenant capability claim vocabulary
 export {
   canonicalPermissionSegment,
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
   hasCapabilityPermission,

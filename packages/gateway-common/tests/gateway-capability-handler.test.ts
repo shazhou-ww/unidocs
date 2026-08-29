@@ -154,7 +154,7 @@ describe("Gateway capability HTTP forwarding", () => {
       subject: "gateway",
       audience: "unidocs-cas",
       tenantId: "tenant-1",
-      permissions: ["tenants:tenant-1:cas:admin"],
+      permissions: ["tenants:tenant-1:cas:manage"],
     });
     expect(issued[0].sessionId).toBeUndefined();
   });

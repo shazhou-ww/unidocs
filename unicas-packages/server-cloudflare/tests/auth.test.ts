@@ -20,7 +20,7 @@ import {
   JoseCapabilitySigner,
 } from "@unidocs/service-auth";
 import {
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
 } from "@unicas/tenant-protocol";
@@ -177,9 +177,9 @@ describe("stack authorization (Task 4)", () => {
     await verify.verify(authRequest(writeToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/nodes/${"a".repeat(64)}/lease`, "POST"), { operation: "lease", stackId: stack.stackId, tenantId: tenant, hash: "a".repeat(64) });
 
     // usage / gc -> the tenant-only permissions
-    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casAdminPermission(tenant)] });
+    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casManagePermission(tenant)] });
     await verify.verify(authRequest(usageToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/usage`), { operation: "usage", stackId: stack.stackId, tenantId: tenant });
-    const gcToken = await issue(stack, { tenantId: tenant, permissions: [casAdminPermission(tenant)] });
+    const gcToken = await issue(stack, { tenantId: tenant, permissions: [casManagePermission(tenant)] });
     await verify.verify(authRequest(gcToken, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), { operation: "gc", stackId: stack.stackId, tenantId: tenant });
 
     // updateRootRefs -> cas:write + a valid issuer-signed refDomain
@@ -276,7 +276,7 @@ describe("stack authorization (Task 4)", () => {
     await expectRejected(verify.verify(authRequest(writer, `/stacks/${stack.stackId}/tenants/${tenant}/cas/gc`, "POST"), { operation: "gc", stackId: stack.stackId, tenantId: tenant }), 403);
 
     // A usage capability cannot write root refs.
-    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casAdminPermission(tenant)] });
+    const usageToken = await issue(stack, { tenantId: tenant, permissions: [casManagePermission(tenant)] });
     await expectRejected(verify.verify(authRequest(usageToken, `/stacks/${stack.stackId}/tenants/${tenant}/root-refs`, "POST"), { operation: "updateRootRefs", stackId: stack.stackId, tenantId: tenant }), 403);
   });
 

@@ -61,7 +61,7 @@ export interface CreateAdminBffOptions {
 }
 
 const NOT_AVAILABLE_MESSAGE = "Root Ref audit reads are not yet available from the admin plane";
-const TEST_ACCOUNT_ISSUER = "urn:unicas:admin:test-account";
+const TEST_ACCOUNT_ISSUER = "urn:unicas:manage:test-account";
 
 /** Read-side refDomain validation; reserved migration domains are readable. */
 function validateAuditRefDomain(value: string): string | null {

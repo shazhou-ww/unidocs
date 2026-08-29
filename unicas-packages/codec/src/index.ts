@@ -52,15 +52,3 @@ export {
   validateContentLength,
 } from "./validation.js";
 export type { CanonicalNodeLimits } from "./validation.js";
-
-// Blob index CBOR codec
-export {
-  BlobChunkBytes,
-  BlobChunkContentType,
-  BlobIndexContentType,
-  BlobIndexFanout,
-  decodeBlobIndex,
-  encodeBlobIndex,
-  validateBlobIndex,
-} from "./blob.js";
-export type { CasBlobIndexV1 } from "./blob.js";

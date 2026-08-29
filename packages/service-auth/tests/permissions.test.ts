@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   canonicalPermissionSegment,
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
   hasCapabilityPermission,
@@ -16,7 +16,7 @@ describe("capability permissions", () => {
     const permissions = [
       casReadPermission("tenant-1"),
       casWritePermission("tenant-1"),
-      casAdminPermission("tenant-1"),
+      casManagePermission("tenant-1"),
       sessionCreatePermission("tenant-1"),
       sessionReadPermission("tenant-1", "session-1"),
       sessionWritePermission("tenant-1", "session-1"),
@@ -25,7 +25,7 @@ describe("capability permissions", () => {
     expect(permissions).toEqual([
       "tenants:tenant-1:cas:read",
       "tenants:tenant-1:cas:write",
-      "tenants:tenant-1:cas:admin",
+      "tenants:tenant-1:cas:manage",
       "tenants:tenant-1:sessions:create",
       "tenants:tenant-1:sessions:session-1:read",
       "tenants:tenant-1:sessions:session-1:write",
@@ -33,7 +33,7 @@ describe("capability permissions", () => {
     expect(permissions.map(parseCapabilityPermission)).toEqual([
       { kind: "cas:read", tenantId: "tenant-1" },
       { kind: "cas:write", tenantId: "tenant-1" },
-      { kind: "cas:admin", tenantId: "tenant-1" },
+      { kind: "cas:manage", tenantId: "tenant-1" },
       { kind: "sessions:create", tenantId: "tenant-1" },
       { kind: "sessions:read", tenantId: "tenant-1", sessionId: "session-1" },
       { kind: "sessions:write", tenantId: "tenant-1", sessionId: "session-1" },
@@ -71,8 +71,8 @@ describe("capability permissions", () => {
   });
 
   test("matches permissions exactly without implication", () => {
-    const permissions = [casAdminPermission("tenant-a"), sessionReadPermission("tenant-a", "s1")];
-    expect(hasCapabilityPermission(permissions, casAdminPermission("tenant-a"))).toBe(true);
+    const permissions = [casManagePermission("tenant-a"), sessionReadPermission("tenant-a", "s1")];
+    expect(hasCapabilityPermission(permissions, casManagePermission("tenant-a"))).toBe(true);
     expect(hasCapabilityPermission(permissions, casReadPermission("tenant-a"))).toBe(false);
     expect(hasCapabilityPermission(permissions, sessionReadPermission("tenant-a", "s2"))).toBe(false);
     expect(hasCapabilityPermission(permissions, sessionWritePermission("tenant-a", "s1"))).toBe(false);

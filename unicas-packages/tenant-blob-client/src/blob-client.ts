@@ -1,27 +1,37 @@
+/**
+ * `createCasBlobClient` — the blob layer above the node-level tenant client.
+ *
+ * Large content is chunked into fixed-size chunk nodes plus a bounded
+ * fan-out blob-index tree; the index is a client-side representation (the
+ * CAS server never parses it). Read side is handle-shaped (SBlobHandler
+ * style): `openBlob(hash)` returns a handle with `ref` metadata plus
+ * random-access `read(range)` / bounded `readBytes`.
+ */
+
 import {
   BlobChunkBytes,
   BlobChunkContentType,
   BlobIndexContentType,
   BlobIndexFanout,
-  computeNodeDigest,
-  concatenateNodeBytes,
   decodeBlobIndex,
   encodeBlobIndex,
-  encodeHeader,
-  hashToHex,
-  hexToHash,
-} from "@unicas/codec";
+} from "./blob-index.js";
+import { storeNodeContent } from "./node-content.js";
 import type {
   CasBlobClient,
   CasBlobClientOptions,
+  CasBlobHandle,
   CasBlobRef,
   CasBlobSource,
   CasBlobWriteOptions,
-  CasLeaseOptions,
-  CasLeaseResult,
-  CasNodeRange,
-  TenantCasClient,
 } from "./types.js";
+import type {
+  CasGcOptions,
+  CasGcResult,
+  CasNodeRange,
+  CasUsage,
+  TenantCasClient,
+} from "@unicas/tenant-client";
 
 interface BlobTreeNode {
   readonly hash: string;
@@ -29,58 +39,7 @@ interface BlobTreeNode {
   readonly level: number;
 }
 
-type BlobCas = Pick<TenantCasClient, "node" | "leaseNode">;
-
-async function encodeCanonicalNode(
-  content: Uint8Array,
-  contentType: string,
-  refs: readonly string[],
-): Promise<{ readonly hash: string; readonly bytes: Uint8Array }> {
-  const childHashes = refs.map(hexToHash);
-  const header = encodeHeader(content.length, contentType, childHashes.length);
-  return {
-    hash: hashToHex(await computeNodeDigest(header, contentType, childHashes, content)),
-    bytes: concatenateNodeBytes(
-      header,
-      new TextEncoder().encode(contentType),
-      childHashes,
-      content,
-    ),
-  };
-}
-
-export async function leaseNodeContent(
-  cas: Pick<TenantCasClient, "leaseNode">,
-  hash: string,
-  content: Uint8Array,
-  contentType: string,
-  refs: readonly string[] = [],
-  options?: CasLeaseOptions,
-): Promise<CasLeaseResult> {
-  const canonical = await encodeCanonicalNode(content, contentType, refs);
-  if (canonical.hash !== hash) {
-    throw new Error(`CAS node digest mismatch: expected ${hash}, got ${canonical.hash}`);
-  }
-  return cas.leaseNode(hash, {
-    contentLength: canonical.bytes.length,
-    body: streamBytes(canonical.bytes),
-  }, options);
-}
-
-export async function storeNodeContent(
-  cas: Pick<TenantCasClient, "leaseNode">,
-  content: Uint8Array,
-  contentType: string,
-  refs: readonly string[] = [],
-  options?: CasLeaseOptions,
-): Promise<string> {
-  const canonical = await encodeCanonicalNode(content, contentType, refs);
-  await cas.leaseNode(canonical.hash, {
-    contentLength: canonical.bytes.length,
-    body: streamBytes(canonical.bytes),
-  }, options);
-  return canonical.hash;
-}
+type BlobCas = Pick<TenantCasClient, "node" | "leaseNode" | "usage" | "gc">;
 
 export function createCasBlobClient(
   cas: BlobCas,
@@ -166,14 +125,6 @@ export function createCasBlobClient(
     return { hash, size: index.size, contentType: index.mediaType };
   };
 
-  const resolveBlob = async (ref: CasBlobRef | string): Promise<CasBlobRef> => {
-    const resolved = await statBlob(typeof ref === "string" ? ref : ref.hash);
-    if (typeof ref !== "string" && (ref.size !== resolved.size || ref.contentType !== resolved.contentType)) {
-      throw new Error(`Blob ref metadata mismatch for ${ref.hash}`);
-    }
-    return resolved;
-  };
-
   const readNode = async function* (
     hash: string,
     expectedLevel: number | undefined,
@@ -234,6 +185,32 @@ export function createCasBlobClient(
     }
   };
 
+  const openHandle = async (hash: string, signal?: AbortSignal): Promise<CasBlobHandle> => {
+    const ref = await statBlob(hash);
+    const full = () => streamGenerator(readNode(ref.hash, undefined, ref.contentType, signal));
+    const ranged = (range: CasNodeRange) => {
+      validateRange(range);
+      if (range.offset > ref.size) throw new RangeError("Blob range offset exceeds blob size");
+      const length = Math.min(range.length ?? ref.size - range.offset, ref.size - range.offset);
+      if (length === 0) return streamBytes(new Uint8Array(0));
+      return streamGenerator(readRangeNode(
+        ref.hash,
+        range.offset,
+        length,
+        undefined,
+        ref.contentType,
+        signal,
+      ));
+    };
+    return Object.freeze({
+      ref,
+      read: (range?: CasNodeRange) => range === undefined ? full() : ranged(range),
+      async readBytes(range: { readonly offset: number; readonly length: number }, rangeSignal?: AbortSignal) {
+        return collectStream(ranged(range));
+      },
+    });
+  };
+
   return Object.freeze({
     async storeBlob(source: CasBlobSource, options: CasBlobWriteOptions): Promise<CasBlobRef> {
       const chunks = chunkSource(
@@ -272,32 +249,13 @@ export function createCasBlobClient(
       return { hash: root.hash, size: measuredSize, contentType: options.contentType };
     },
 
+    openBlob: openHandle,
+
     statBlob,
 
-    async openBlob(ref: CasBlobRef | string, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
-      const resolved = await resolveBlob(ref);
-      return streamGenerator(readNode(resolved.hash, undefined, resolved.contentType, signal));
-    },
+    usage: (signal?: AbortSignal): Promise<CasUsage> => cas.usage(signal),
 
-    async openBlobRange(
-      ref: CasBlobRef | string,
-      range: CasNodeRange,
-      signal?: AbortSignal,
-    ): Promise<ReadableStream<Uint8Array>> {
-      validateRange(range);
-      const resolved = await resolveBlob(ref);
-      if (range.offset > resolved.size) throw new RangeError("Blob range offset exceeds blob size");
-      const length = Math.min(range.length ?? resolved.size - range.offset, resolved.size - range.offset);
-      if (length === 0) return streamBytes(new Uint8Array(0));
-      return streamGenerator(readRangeNode(
-        resolved.hash,
-        range.offset,
-        length,
-        undefined,
-        resolved.contentType,
-        signal,
-      ));
-    },
+    gc: (gcOptions?: CasGcOptions): Promise<CasGcResult> => cas.gc(gcOptions),
   });
 }
 

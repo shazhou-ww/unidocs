@@ -31,7 +31,8 @@
     "@unidocs/svalue-codec": "workspace:*",
     "@azure/identity": "^4.13.2",
     "@azure/storage-blob": "^12.33.0",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "@unicas/tenant-blob-client": "workspace:*"
   },
   "devDependencies": {
     "@unidocs/doctype-markdown": "workspace:*",

@@ -67,7 +67,7 @@ describe("createRequestCasClient", () => {
       audience: "unidocs-cas",
       algorithm: CapabilityAlgorithm,
       jwks: { keys: [{ ...publicJwk, kid: "test-key", alg: CapabilityAlgorithm }] },
-      allowedPermissionKinds: ["cas:read", "cas:write", "cas:admin"],
+      allowedPermissionKinds: ["cas:read", "cas:write", "cas:manage"],
     });
     const outbound = await verifier.verify(delegatedToken);
     expect(outbound.claims).toMatchObject({

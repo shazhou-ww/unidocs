@@ -33,39 +33,6 @@ export interface CasGcOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface CasBlobRef {
-  readonly hash: CasHash;
-  readonly size: number;
-  readonly contentType: string;
-}
-
-export type CasBlobSource = ReadableStream<Uint8Array> | Blob;
-
-export interface CasBlobWriteOptions {
-  readonly contentType: string;
-  readonly size?: number;
-  readonly signal?: AbortSignal;
-  readonly onProgress?: (uploadedBytes: number) => void;
-}
-
-export interface CasBlobClientOptions {
-  /** Node content bytes per blob chunk. Defaults to the protocol value. */
-  readonly chunkBytes?: number;
-  /** Children per index node. Defaults to the protocol value. */
-  readonly indexFanout?: number;
-}
-
-export interface CasBlobClient {
-  storeBlob(source: CasBlobSource, options: CasBlobWriteOptions): Promise<CasBlobRef>;
-  statBlob(hash: CasHash): Promise<CasBlobRef>;
-  openBlob(ref: CasBlobRef | CasHash, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>>;
-  openBlobRange(
-    ref: CasBlobRef | CasHash,
-    range: CasNodeRange,
-    signal?: AbortSignal,
-  ): Promise<ReadableStream<Uint8Array>>;
-}
-
 export interface CasRootRefsResult {
   readonly success: boolean;
   readonly idempotent?: boolean;

@@ -128,7 +128,7 @@ describe("GatewayCapabilityAuthority", () => {
       subject: "gateway",
       audience: "unidocs-cas",
       tenantId: "tenant-1",
-      permissions: ["tenants:tenant-1:cas:admin"],
+      permissions: ["tenants:tenant-1:cas:manage"],
       lifetimeSeconds: 120,
       jti: "cas-jti",
     }]);

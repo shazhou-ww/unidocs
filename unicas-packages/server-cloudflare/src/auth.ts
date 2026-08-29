@@ -28,7 +28,7 @@ import {
   CapabilityAlgorithm,
   CapabilityAuthenticationError,
   CapabilityAuthorizationError,
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
   validateRefDomainClaim,
@@ -295,7 +295,7 @@ export function permissionFor(route: CasRoute): string {
       return casWritePermission(route.tenantId);
     case "usage":
     case "gc":
-      return casAdminPermission(route.tenantId);
+      return casManagePermission(route.tenantId);
   }
 }
 

@@ -1,8 +1,7 @@
-import {
-  createCasBlobClient,
-  createTenantCasClient,
-} from "@unicas/tenant-client";
-import type { CasBlobClient, HttpFetcher, TenantCasClient } from "@unicas/tenant-client";
+import { createTenantCasClient } from "@unicas/tenant-client";
+import { createCasBlobClient } from "@unicas/tenant-blob-client";
+import type { HttpFetcher, TenantCasClient } from "@unicas/tenant-client";
+import type { CasBlobClient } from "@unicas/tenant-blob-client";
 
 export type RequestCasClient = TenantCasClient & CasBlobClient;
 

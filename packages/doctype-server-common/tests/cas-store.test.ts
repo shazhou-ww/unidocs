@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { computeNodeDigest, encodeHeader, hashToHex, parseNodeBytes } from "@unicas/codec";
-import { createTenantCasClient, storeNodeContent } from "@unicas/tenant-client";
+import { createTenantCasClient } from "@unicas/tenant-client";
+import { storeNodeContent } from "@unicas/tenant-blob-client";
 import { MemoryCas } from "../src/memory-ports";
 
 /** The CAS service's canonical leaf-node digest (no children). */

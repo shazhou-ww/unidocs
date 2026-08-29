@@ -1,7 +1,7 @@
 import type { GatewayCasRoute } from "@unidocs/protocol-gateway";
 import type { DocOperation } from "@unidocs/protocol-doc";
 import {
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
   sessionCreatePermission,
@@ -107,7 +107,7 @@ export function casCapabilityPolicy(route: GatewayCasRoute): CasCapabilityPolicy
     case "usage":
     case "gc":
       return {
-        permission: casAdminPermission(route.tenantId),
+        permission: casManagePermission(route.tenantId),
         requiresTenantAdmin: true,
         lifetimeSeconds: 120,
       };

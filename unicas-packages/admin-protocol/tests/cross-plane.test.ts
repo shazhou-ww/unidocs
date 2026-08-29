@@ -21,6 +21,7 @@ function readPkg(name: string): {
 
 const TENANT_IMPL_PACKAGES = [
   "@unicas/tenant-client",
+  "@unicas/tenant-blob-client",
   "@unicas/tenant-protocol",
   "@unicas/codec",
 ] as const;

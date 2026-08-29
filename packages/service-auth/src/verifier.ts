@@ -202,7 +202,7 @@ export class CapabilityVerifier {
       if (parsed.kind.startsWith("sessions:") && sessionId === undefined) {
         invalidToken("Session permission requires a session claim");
       }
-      if (parsed.kind === "cas:admin" && sessionId !== undefined) {
+      if (parsed.kind === "cas:manage" && sessionId !== undefined) {
         throw new CapabilityAuthorizationError(
           "insufficient_permission",
           "Session capabilities cannot contain CAS administration permission",

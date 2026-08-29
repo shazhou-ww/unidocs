@@ -28,7 +28,7 @@ export type CapabilityPermission = string & {
 export type CapabilityPermissionKind =
   | "cas:read"
   | "cas:write"
-  | "cas:admin"
+  | "cas:manage"
   | "sessions:create"
   | "sessions:read"
   | "sessions:write";
@@ -55,8 +55,8 @@ export function casWritePermission(tenantId: string): CapabilityPermission {
   return tenantPermission(tenantId, "cas:write");
 }
 
-export function casAdminPermission(tenantId: string): CapabilityPermission {
-  return tenantPermission(tenantId, "cas:admin");
+export function casManagePermission(tenantId: string): CapabilityPermission {
+  return tenantPermission(tenantId, "cas:manage");
 }
 
 export function sessionCreatePermission(tenantId: string): CapabilityPermission {
@@ -90,8 +90,8 @@ export function parseCapabilityPermission(
     if (action === "read" || action === "write") {
       return { kind: `cas:${action}`, tenantId };
     }
-    if (action === "admin") {
-      return { kind: "cas:admin", tenantId };
+    if (action === "manage") {
+      return { kind: "cas:manage", tenantId };
     }
     return null;
   }
@@ -123,7 +123,7 @@ function tenantPermission(
   suffix:
     | "cas:read"
     | "cas:write"
-    | "cas:admin"
+    | "cas:manage"
     | "sessions:create",
 ): CapabilityPermission {
   return `tenants:${canonicalPermissionSegment(tenantId)}:${suffix}` as CapabilityPermission;

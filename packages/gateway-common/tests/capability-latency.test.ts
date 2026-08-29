@@ -45,7 +45,7 @@ test("two signatures plus local Doc and CAS verification stay within the latency
     audience: "unidocs-cas",
     algorithm: CapabilityAlgorithm,
     jwks,
-    allowedPermissionKinds: ["cas:read", "cas:write", "cas:admin"],
+    allowedPermissionKinds: ["cas:read", "cas:write", "cas:manage"],
     allowedSubjects: ["doc:docx"],
   });
 

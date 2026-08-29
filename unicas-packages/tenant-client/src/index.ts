@@ -1,11 +1,6 @@
 /** Functional, tenant-bound CAS client. */
 
 export type {
-  CasBlobClient,
-  CasBlobClientOptions,
-  CasBlobRef,
-  CasBlobSource,
-  CasBlobWriteOptions,
   CasGcOptions,
   CasGcResult,
   CasHash,
@@ -26,6 +21,5 @@ export type {
   TenantCasClientConfig,
 } from "./types.js";
 
-export { createCasBlobClient, leaseNodeContent, storeNodeContent } from "./blob.js";
 export { createTenantCasClient } from "./client.js";
 export { CasClientError } from "./errors.js";

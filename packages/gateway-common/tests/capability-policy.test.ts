@@ -37,8 +37,8 @@ describe("Gateway capability policy", () => {
     ["readContent", "cas:read", false],
     ["readMetadata", "cas:read", false],
     ["lease", "cas:write", false],
-    ["usage", "cas:admin", true],
-    ["gc", "cas:admin", true],
+    ["usage", "cas:manage", true],
+    ["gc", "cas:manage", true],
   ])("maps public CAS %s", (operation, suffix, requiresTenantAdmin) => {
     const route = { operation, tenantId: "t", hash: "h" } as GatewayCasRoute;
     expect(casCapabilityPolicy(route)).toEqual({

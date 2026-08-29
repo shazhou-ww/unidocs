@@ -16,7 +16,7 @@ import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runt
 import {
   CapabilityIssuer,
   JoseCapabilitySigner,
-  casAdminPermission,
+  casManagePermission,
   casReadPermission,
   casWritePermission,
 } from "../../../packages/service-auth/src/index.ts";
@@ -129,11 +129,11 @@ test("middleware serves the full canonical tenant flow through cas-edge", async 
   });
   const usageReader = await issue(stackA, {
     tenantId: TENANT,
-    permissions: [casAdminPermission(TENANT)],
+    permissions: [casManagePermission(TENANT)],
   });
   const gcTrigger = await issue(stackA, {
     tenantId: TENANT,
-    permissions: [casAdminPermission(TENANT)],
+    permissions: [casManagePermission(TENANT)],
   });
   const prefix = `/stacks/${stackId}/tenants/${TENANT}`;
 
@@ -269,7 +269,7 @@ test("identical tenant ids across the two stacks share nothing", async () => {
   });
   const usageB = await issue(stackB, {
     tenantId: TENANT,
-    permissions: [casAdminPermission(TENANT)],
+    permissions: [casManagePermission(TENANT)],
   });
 
   // Each stack leases its own node under the SAME tenant id.

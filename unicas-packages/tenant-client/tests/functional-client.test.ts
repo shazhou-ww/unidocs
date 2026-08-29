@@ -2,10 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hashToHex, sha256 } from "@unicas/codec";
 import {
   CasClientError,
-  createCasBlobClient,
   createTenantCasClient,
-  storeNodeContent,
 } from "../src/index.js";
+import { createCasBlobClient, storeNodeContent } from "@unicas/tenant-blob-client";
 import { MockCasService } from "./mock-cas-service.js";
 
 const STACK = "stack-1";
@@ -81,14 +80,20 @@ describe("functional tenant CAS client", () => {
       size: bytes.length,
       onProgress: progress,
     });
-    const opened = new Uint8Array(await new Response(await blobs.openBlob(ref)).arrayBuffer());
+    const handle = await blobs.openBlob(ref.hash);
+    expect(handle.ref).toEqual(ref);
+    const opened = new Uint8Array(await new Response(handle.read()).arrayBuffer());
     expect(opened.length).toBe(bytes.length);
     expect(hashToHex(await sha256(opened))).toBe(hashToHex(await sha256(bytes)));
-    const ranged = new Uint8Array(await new Response(await blobs.openBlobRange(ref, {
+    const ranged = new Uint8Array(await new Response(handle.read({
       offset: chunkBytes - 2,
       length: 4,
     })).arrayBuffer());
     expect(ranged).toEqual(Uint8Array.from([0x61, 0x61, 0x62, 0x62]));
+    const bounded = await handle.readBytes({ offset: chunkBytes - 2, length: 4 });
+    expect(bounded).toEqual(ranged);
+    await expect(blobs.usage()).resolves.toBeDefined();
+    await expect(blobs.gc({ maxNodes: 25 })).resolves.toBeDefined();
     expect(progress).toHaveBeenLastCalledWith(bytes.length);
   }, 20_000);
 

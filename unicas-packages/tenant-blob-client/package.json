@@ -1,7 +1,7 @@
 {
-  "name": "@unidocs/cloudflare-sdk",
+  "name": "@unicas/tenant-blob-client",
   "version": "0.1.0",
-  "description": "Cloudflare runtime for UniDocs document editor/operator pairs",
+  "description": "Blob layer above @unicas/tenant-client: large-content chunking into CAS nodes, blob index CBOR, stream/random reads, and tenant usage/gc",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -16,26 +16,13 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
-  "dependencies": {
-    "@unicas/tenant-client": "workspace:*",
-    "@unidocs/doctype-server-common": "workspace:*",
-    "@unidocs/protocol": "workspace:*",
-    "@unidocs/protocol-doc": "workspace:*",
-    "@unidocs/svalue-codec": "workspace:*",
-    "@unicas/codec": "workspace:*",
-    "@unicas/tenant-blob-client": "workspace:*"
-  },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250817.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
-  },
-  "peerDependencies": {
-    "@cloudflare/workers-types": ">=4"
   },
   "publishConfig": {
     "main": "./dist/index.js",
@@ -46,5 +33,10 @@
         "import": "./dist/index.js"
       }
     }
+  },
+  "dependencies": {
+    "@unicas/codec": "workspace:*",
+    "@unicas/tenant-client": "workspace:*",
+    "cborg": "^6.1.1"
   }
 }

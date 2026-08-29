@@ -23,7 +23,7 @@ Unicas 是 UniDocs 的独立可部署 CAS 中间件（content-addressed storage 
    `control-plane-mcp`）；`server-*` = 数据面服务端部署
    （`server-cloudflare`）；`edge` = 公共入口（不属任何 actor 组）。
 
-## 包清单（11 包）
+## 包清单（12 包）
 
 ```
 unicas-packages/                    @unicas org
@@ -31,7 +31,7 @@ unicas-packages/                    @unicas org
 ├── ■ 编码层（cloud-neutral、无 IO、独立发布独立测试）
 │   └── codec/             @unicas/codec              数据面 wire 编码
 │         规范节点二进制格式（binary）、SHA-256 摘要（digest）、流式节点解析
-│         （canonical-stream）、限额/校验（validation）、blob index CBOR（blob）
+│         （canonical-stream）、限额/校验（validation）——不含 blob 分片
 │
 ├── ■ 契约层（cloud-neutral、无 IO、冻结契约）
 │   ├── tenant-protocol/   @unicas/tenant-protocol    tenant 组 · 数据面
@@ -58,12 +58,18 @@ unicas-packages/                    @unicas org
 │   └── admin-webui/       @unicas/admin-webui         admin 组 · 双角色
 │         src/ui（管理界面）+ src/server（OIDC BFF）
 │
-└── ■ 界面层（client）
+└── ■ client 层
+    ├── tenant-client/     @unicas/tenant-client       tenant 组 · 节点级
+    │     与 HTTP 路由一一对应的薄传输层（createTenantCasClient），无编码
+    ├── tenant-blob-client/@unicas/tenant-blob-client  tenant 组 · blob 加层
+    │     业务方完整接口：storeBlob / openBlob(句柄式随机读) / statBlob /
+    │     usage / gc + 节点写辅助（storeNodeContent/leaseNodeContent）
+    │     + blob index CBOR（client 侧 manifest，服务端不解析）
     ├── admin-cli/         @unicas/admin-cli           admin 组
     │     CLI + stdio MCP（bin `unicas`），走 MCP over HTTP 通道，
     │     工具结果类型对齐 @unicas/admin-protocol 冻结契约
-    └── tenant-client/     @unicas/tenant-client       tenant 组
-          数据面 HTTP client，依赖 tenant-protocol（类型/路由）+ codec（编码）
+    └── admin-webui/       @unicas/admin-webui         admin 组 · 双角色（部署层）
+          src/ui（管理界面）+ src/server（OIDC BFF）
 ```
 
 ## 依赖规则（分层单向，guard + boundary 测试强制）
@@ -73,12 +79,16 @@ unicas-packages/                    @unicas org
   ← 契约层(tenant-protocol, admin-protocol)
     ← 内核层(control-plane, control-auth)
       ← 部署层(server-cloudflare, edge, control-plane-mcp, admin-webui)
-契约层 + 编码层 ← 界面层(tenant-client, admin-cli)
+契约层 + 编码层 ← tenant-client（节点级薄传输）
+                    ← tenant-blob-client（blob 加层，业务方唯一入口）
+契约层 ← admin-cli（类型层）
 ```
 
 - **codec 是最底层**：无 workspace 依赖，仅外部 `cborg`；`tenant-protocol`
-  不 re-export codec 符号（强制迁移，2026-08-29 决策）——需要编码的消费者
-  直接依赖 `@unicas/codec`，只依赖协议类型的消费者不背编码包袱。
+  不 re-export codec 符号（强制迁移，2026-08-29 决策）。
+- **tenant-client 与 HTTP 一一对应**：纯传输层，不含任何编码/业务封装；
+  `tenant-blob-client` 在其上提供完整 blob 接口（写/随机读/admin），业务方
+  只依赖它，不再触碰底层 client。
 - 契约层：`tenant-protocol` 仅外部 `jose`；`admin-protocol` 零依赖。
 - 内核层只依赖契约层（`control-plane` → `admin-protocol`）。
 - 部署层只依赖内核层 + 契约层 +（数据面所需）编码层，**部署层之间零依赖**
@@ -113,6 +123,10 @@ SValue 是 unidocs（应用栈）的文档内容模型，**unicas 不感知**。
 SValue/SBlob 类型族与 codec 全部留在 `@unidocs/protocol` + `@unidocs/svalue-codec`。
 refs 一致性若需兜底，由应用栈侧在写入前自检（`refsFromSValue`），不污染 unicas。
 
+**大 blob 分片也是 client 侧概念**：`blob-index` manifest 的编码/解码归属
+`tenant-blob-client`（CAS 服务端只把它当不透明 contentType，从不解析——与
+2026-08-28 流式 blob 设计一致：「CAS 服务端无需理解 blob-index 的内容语义」）。
+
 ## 能力（capability）词汇归属
 
 CAS 中立租户能力契约（claims / permissions / errors —— `iss, aud, sub, iat,
@@ -131,7 +145,9 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | capability 词汇迁入 | 从 `@unidocs/service-auth` 迁入 `tenant-protocol`，service-auth 变 re-export 薄壳 |
 | SValue 专属逻辑移除 | `server-cloudflare` 不再解析 SValue；`@unidocs` 生产依赖清零 |
 | `admin-cli` → 依赖 `admin-protocol` | 工具结果用冻结契约类型标注，防 schema 漂移 |
-| **codec 拆分（强制迁移）** | `binary/digest/canonical-stream/validation/blob` 从 `tenant-protocol` 抽为 `@unicas/codec`；`tenant-protocol` 不再 re-export 编码符号；纯编码消费者（应用栈、脚本、集成测试）直接依赖 codec，混合消费者（tenant-client、server-cloudflare）拆分为 codec + protocol 两组 import |
+| **codec 拆分（强制迁移）** | `binary/digest/canonical-stream/validation` 从 `tenant-protocol` 抽为 `@unicas/codec`；`tenant-protocol` 不再 re-export 编码符号；纯编码消费者直接依赖 codec |
+| **blob 分层（tenant-blob-client）** | `blob index` 从 codec 迁入新包 `@unicas/tenant-blob-client`；tenant-client 收窄为与 HTTP 一一对应的薄传输；blob 层提供完整接口（句柄式随机读对标 SBlobHandler、usage/gc 透传），业务方不再触碰底层 client |
+| **权限改名** | tenant 数据面 `cas:admin` → `cas:manage`（消除与「admin 面/控制面」的术语撞车） |
 
 ## 待办（README 定方向）
 

@@ -14,12 +14,12 @@
 import type { DocumentTypeFactory, SBlobReadRange, SBlobSource } from "@unidocs/protocol";
 import {
   CasClientError,
-  createCasBlobClient,
   createTenantCasClient,
-  leaseNodeContent,
   type HttpFetcher,
 } from "@unicas/tenant-client";
-import type { CasBlobClient, TenantCasClient } from "@unicas/tenant-client";
+import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
+import type { TenantCasClient } from "@unicas/tenant-client";
+import type { CasBlobClient } from "@unicas/tenant-blob-client";
 import type {
   DocCapabilityVerifier,
   SessionDeps,
@@ -152,9 +152,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       ),
       statBlob: (hash) => cas.statBlob(hash),
       openBlob: async (hash, range?: SBlobReadRange) => byteStreamFromReadableStream(
-        range === undefined
-          ? await cas.openBlob(hash)
-          : await cas.openBlobRange(hash, range),
+        (await cas.openBlob(hash)).read(range),
       ),
     });
 
@@ -217,8 +215,9 @@ function unavailableCasGateway(): TenantCasClient & CasBlobClient {
     gc: unavailable,
     storeBlob: unavailable,
     statBlob: unavailable,
-    openBlob: unavailable,
-    openBlobRange: unavailable,
+    openBlob: async () => {
+      throw new CasClientError(501, "Not Implemented", "delegated authority");
+    },
   };
 }
 
