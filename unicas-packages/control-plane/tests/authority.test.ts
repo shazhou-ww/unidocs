@@ -26,7 +26,7 @@ async function createRepository(): Promise<AuthorityRepository> {
   db = await miniflare.getD1Database("DB", "authority-test");
   await migrateControlSchema(db);
   await db.batch([
-    db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, status, revision) VALUES ('cas_s', 'https://issuer.example', 'unidocs-cas', 'active', 1)"),
+    db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, revision) VALUES ('cas_s', 'https://issuer.example', 'unidocs-cas', 1)"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES ('cas_s', 'k1', 'ES256', '{\"kty\":\"EC\"}', 'active', 1)"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES ('cas_s', 'k2', 'ES256', '{\"kty\":\"EC\"}', 'retiring', 1)"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES ('cas_s', 'k3', 'ES256', '{\"kty\":\"EC\"}', 'revoked', 1)"),
@@ -42,7 +42,6 @@ describe("AuthorityRepository (read-only)", () => {
       stackId: "cas_s",
       issuer: "https://issuer.example",
       audience: "unidocs-cas",
-      status: "active",
     });
     expect(authority!.keys.map((key) => key.kid)).toEqual(["k1", "k2", "k3"]);
     expect(authority!.keys[0]).toMatchObject({ kid: "k1", algorithm: "ES256", state: "active" });

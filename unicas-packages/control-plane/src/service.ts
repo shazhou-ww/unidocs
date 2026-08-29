@@ -479,7 +479,7 @@ export class ControlPlaneService {
       const audienceError = validateAudience(request.body.audience);
       if (audienceError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, audienceError);
       const existing = await this.#db
-        .prepare("SELECT stack_id, issuer, audience, status, revision FROM cas_stack_issuer WHERE stack_id = ?")
+        .prepare("SELECT stack_id, issuer, audience, revision FROM cas_stack_issuer WHERE stack_id = ?")
         .bind(request.path.stackId)
         .first<IssuerRow>();
       if (existing) {
@@ -501,11 +501,11 @@ export class ControlPlaneService {
       await this.#requireIssuerGloballyUnique(request.body.issuer, request.path.stackId);
       const batch = this.#newMutationBatch(ctx, request.path.stackId, ControlAuditActions.issuerPut, request.path.stackId);
       batch.push(
-        this.#db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, status, revision) VALUES (?, ?, ?, 'active', 1)")
+        this.#db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, revision) VALUES (?, ?, ?, 1)")
           .bind(request.path.stackId, request.body.issuer, request.body.audience),
       );
       await this.#db.batch(batch);
-      return { stackId: request.path.stackId, issuer: request.body.issuer, audience: request.body.audience, status: "active", revision: 1 };
+      return { stackId: request.path.stackId, issuer: request.body.issuer, audience: request.body.audience, revision: 1 };
     });
   }
 
@@ -924,7 +924,7 @@ export class ControlPlaneService {
 
   async #issuerRow(stackId: string): Promise<IssuerRow> {
     const row = await this.#db
-      .prepare("SELECT stack_id, issuer, audience, status, revision FROM cas_stack_issuer WHERE stack_id = ?")
+      .prepare("SELECT stack_id, issuer, audience, revision FROM cas_stack_issuer WHERE stack_id = ?")
       .bind(stackId)
       .first<IssuerRow>();
     if (!row) throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "issuer is not configured");
@@ -1112,7 +1112,6 @@ interface IssuerRow {
   readonly stack_id: string;
   readonly issuer: string;
   readonly audience: string;
-  readonly status: string;
   readonly revision: number;
 }
 
@@ -1179,7 +1178,6 @@ function toCasStackIssuer(row: IssuerRow): CasStackIssuer {
     stackId: row.stack_id,
     issuer: row.issuer,
     audience: row.audience,
-    status: row.status === "disabled" ? "disabled" : "active",
     revision: row.revision,
   };
 }

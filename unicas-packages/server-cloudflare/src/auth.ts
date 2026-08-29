@@ -163,10 +163,6 @@ export class StackCapabilityVerifier {
     if (!authority) {
       throw new CapabilityAuthenticationError("unknown_issuer", "CAS capability issuer is not registered");
     }
-    if (authority.status !== "active") {
-      throw new CapabilityAuthenticationError("issuer_disabled", "CAS capability issuer is disabled");
-    }
-
     const keySet = createLocalJWKSet(stackJwks(authority));
     let payload: Omit<VerifiedPayload, "stackId" | "kid">;
     try {

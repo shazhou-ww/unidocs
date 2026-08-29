@@ -2,7 +2,6 @@ export type {
   CasControlAuditEvent,
   CasHash,
   CasIssuerKeyState,
-  CasIssuerStatus,
   CasMemberInvitation,
   CasMemberInvitationStatus,
   CasOperatorIdentity,

@@ -243,7 +243,6 @@ export type CapabilityErrorCode =
   | "insufficient_permission"
   | "resource_scope_mismatch"
   | "unknown_issuer"
-  | "issuer_disabled"
   | "registry_unavailable"
   | "unsupported_algorithm";
 
@@ -265,7 +264,6 @@ export class CapabilityAuthenticationError extends CapabilityError {
       | "invalid_token"
       | "missing_token"
       | "unknown_issuer"
-      | "issuer_disabled"
       | "registry_unavailable",
     message: string,
   ) {

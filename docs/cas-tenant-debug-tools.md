@@ -118,3 +118,4 @@ destructive operations, CAS base URL from `UNICAS_SERVER_URL`.
 | 6 | Lifetime: default 8h, per-stack cap up to 7d, optional refresh token | 2026-08 |
 | 7 | Full-permission login (`cas:manage` in one login) | 2026-08 |
 | 8 | v1: no MCP | 2026-08 |
+| 9 | Remove `cas_stack_issuer.status` — dead over-design (no write path existed; verifier `issuer_disabled` fail-closed was unreachable) | 2026-08 |

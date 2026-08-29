@@ -23,7 +23,7 @@ const CONTROL_TABLE_MIGRATIONS = [
   "CREATE TABLE IF NOT EXISTS cas_stack_member_invitations (invitation_id TEXT NOT NULL, stack_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','expired','revoked')), email_constraint TEXT, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (invitation_id))",
 
   // Singleton tenant issuer per stack; issuer value is globally unique.
-  "CREATE TABLE IF NOT EXISTS cas_stack_issuer (stack_id TEXT NOT NULL, issuer TEXT NOT NULL, audience TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')), revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (stack_id))",
+  "CREATE TABLE IF NOT EXISTS cas_stack_issuer (stack_id TEXT NOT NULL, issuer TEXT NOT NULL, audience TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (stack_id))",
 
   // Issuer keys with explicit lifecycle; possession proof is the activation
   // gate, so keys enter 'active' directly (pending removed by Task 2).

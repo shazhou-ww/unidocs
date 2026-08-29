@@ -57,13 +57,10 @@ export interface CasMemberInvitation {
   readonly revision: number;
 }
 
-export type CasIssuerStatus = "active" | "disabled";
-
 export interface CasStackIssuer {
   readonly stackId: CasStackId;
   readonly issuer: string;
   readonly audience: string;
-  readonly status: CasIssuerStatus;
   readonly revision: number;
 }
 

@@ -59,7 +59,7 @@ async function seedStack(
   const { publicKey, privateKey } = await generateKeyPair("ES256", { extractable: true });
   const publicJwk = (await exportJWK(publicKey)) as Record<string, unknown>;
   await db!.batch([
-    db!.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, status, revision) VALUES (?, ?, ?, 'active', 1)")
+    db!.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, revision) VALUES (?, ?, ?, 1)")
       .bind(stack.stackId, stack.issuer, stack.audience),
     db!.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, 'ES256', ?, 'active', 1)")
       .bind(stack.stackId, stack.kid, JSON.stringify(publicJwk)),
