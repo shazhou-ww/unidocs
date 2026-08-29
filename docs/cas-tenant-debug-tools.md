@@ -21,7 +21,8 @@ session store follows later. It is deliberately **not** an end-user product.
   `client_secret`.
 - Login unit is the **(stackId, tenantId) pair**; each entry is logged in and
   cached independently; several entries can coexist and the active one is
-  switchable.
+  switchable. `tenantId` is **not user input**: it is determined by the
+  stack-side OAuth decision from the authenticated identity (see login flow).
 - Login flow per entry:
   1. Resolve the stack's issuer (see below).
   2. RFC 8414 discovery at the issuer.
@@ -29,9 +30,16 @@ session store follows later. It is deliberately **not** an end-user product.
      `token_endpoint_auth_method=none`, PKCE, `response_type=code`.
   4. Browser authorization on the stack's own login page.
   5. Code exchange for a capability JWT (claims carry `tenantId` +
-     `permissions`).
-  6. Cache the JWT under `~/.unicas` (0600), aligned with the admin-cli layout
+     `permissions`); the `tenantId` claim is authoritative — the provider
+     derives it from the user's identity, never from a client-supplied
+     parameter.
+  6. Create/refresh the store entry keyed by `(stackId, claims.tenantId)`;
+     cache the JWT under `~/.unicas` (0600), aligned with the admin-cli layout
      so the later WebUI can reuse the store.
+- There is **no tenant selector parameter** in v1. A user's account maps to
+  the tenant the stack's OAuth decides; accessing a different tenant of the
+  same stack means logging in with a different account (logout first, then
+  re-authorize).
 - The stack's OIDC must accept **arbitrary dynamically registered clients**.
   The tenant WebUI/CLI is an ordinary client: no first-party whitelist, no
   pre-registered client credentials.
@@ -118,7 +126,7 @@ so the later WebUI reuses the same store:
 
 | Group | Commands |
 | --- | --- |
-| Session | `login <stack> <tenant>`, `logout <stack> <tenant>\|--all`, `list`, `status`, `use <stack> <tenant>` |
+| Session | `login <stack> [--issuer URL]`, `logout <stack> <tenant>\|--all`, `list`, `status`, `use <stack> <tenant>` |
 | Read | `node get <hash> [--range N[:L]] [--out file]`, `node meta <hash>`, `walk <hash> [--depth N]` |
 | Admin | `usage`, `gc [--dry-run] [--max-nodes N] [--confirm]`, `root-refs update <refDomain> <hash> <delta> [--confirm]`, `lease <hash> [--source file] [--duration-ms N]` |
 
@@ -165,3 +173,4 @@ destructive operations, CAS base URL from `UNICAS_SERVER_URL`.
 | 9 | Remove `cas_stack_issuer.status` — dead over-design (no write path existed; verifier `issuer_disabled` fail-closed was unreachable) | 2026-08 |
 | 10 | Store: folder per (stack, tenant) — `session.json` + a per-tenant node cache (`cas/`, hash-prefix sharded, metadata sidecars) | 2026-08 |
 | 11 | Cache at node granularity (`CasNodeCache`): full reads populate, partial reads serve-or-bypass, metadata cached for offline walk; blob layer benefits automatically; `leaseNode` write-through deferred | 2026-08 |
+| 12 | No tenant selector parameter: `tenantId` is decided by the stack-side OAuth from the authenticated identity; multi-tenant access via separate accounts (logout → re-authorize) | 2026-08 |
