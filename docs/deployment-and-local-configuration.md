@@ -39,8 +39,19 @@ pnpm --filter @unicas/server-cloudflare exec wrangler secret put CAS_AUDIT_READE
 pnpm --filter @unicas/admin-webui exec wrangler secret put CAS_AUDIT_READER_KEY
 pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_ID
 pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_SECRET
+pnpm --filter @unicas/admin-webui exec wrangler secret put ADMIN_EXCHANGE_CLIENT_ID
 pnpm --filter @unicas/admin-webui exec wrangler secret put SESSION_ENCRYPTION_KEYS
 ```
+
+`ADMIN_EXCHANGE_CLIENT_ID` is the Google OAuth client id of the **admin CLI**
+(an "Desktop app" client, separate from the browser-login
+`GOOGLE_OIDC_CLIENT_ID`). It enables `POST /admin/auth/exchange`, which
+`unicas login` uses to turn its own Google id_token into a `/admin` BFF
+session. Create it in Google Cloud Console as a Desktop application client
+(loopback redirect, public client, PKCE) and register the same id in the
+CLI's environment as `UNICAS_GOOGLE_CLIENT_ID`. When `ADMIN_EXCHANGE_CLIENT_ID`
+is unset, `/admin/auth/exchange` responds 501 and `unicas login` cannot
+complete.
 
 Use the same random `CAS_AUDIT_READER_KEY` on tenant and admin. Session keys are
 a JSON map such as `{"2026-08":"<base64url-32-byte-key>"}`. The edge Worker
