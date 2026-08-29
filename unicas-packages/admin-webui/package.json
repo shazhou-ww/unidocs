@@ -9,7 +9,9 @@
   "exports": {
     ".": {
       "types": "./src/server/index.ts",
-      "import": "./src/server/index.ts"
+      "development": "./src/server/index.ts",
+      "import": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
     },
     "./ui": {
       "types": "./src/ui/index.ts",

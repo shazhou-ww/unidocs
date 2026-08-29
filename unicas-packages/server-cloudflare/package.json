@@ -9,7 +9,9 @@
   "exports": {
     ".": {
       "types": "./src/worker.ts",
-      "import": "./src/worker.ts"
+      "development": "./src/worker.ts",
+      "import": "./dist/worker.js",
+      "default": "./dist/worker.js"
     }
   },
   "files": [
