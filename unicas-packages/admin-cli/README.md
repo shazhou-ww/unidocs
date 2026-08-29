@@ -143,6 +143,23 @@ Alternatively run any command in-process:
 | `UNICAS_GOOGLE_CLIENT_ID` | built-in Desktop client | Google OAuth client id for `unicas login` (public, no secret) |
 | `UNICAS_CONFIG_DIR` | `~/.unicas` | Directory holding `session.json` |
 
+## Network / proxy
+
+`unicas login` must reach `accounts.google.com` from Node. Node's built-in
+`fetch` does **not** use the system proxy by default (Node 24+): behind a
+proxy/VPN (e.g. where Google is otherwise unreachable), set
+
+```powershell
+set HTTPS_PROXY=http://127.0.0.1:7890    # your proxy's local port
+set NODE_USE_ENV_PROXY=1
+pnpm --filter @unicas/admin-cli unicas login
+```
+
+The browser you open for Google sign-in uses its own proxy settings; only the
+CLI's own discovery/token requests need the Node-side env above. A
+`Connect Timeout Error` against Google IPs means the proxy is not configured
+for Node, not a CLI bug.
+
 ## Security notes
 
 - The session cookie is stored locally with `0600` permissions; the directory

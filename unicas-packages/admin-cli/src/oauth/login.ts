@@ -74,7 +74,12 @@ export async function runLoginFlow(options: LoginFlowOptions): Promise<LoginFlow
   const nonce = generateOidcNonce();
   const codeVerifier = generatePkceVerifier();
   const codeChallenge = await s256Challenge(codeVerifier);
-  const authorizeUrl = await oidc.authorizationUrl({ state, nonce, codeChallenge });
+  let authorizeUrl: string;
+  try {
+    authorizeUrl = await oidc.authorizationUrl({ state, nonce, codeChallenge });
+  } catch (error) {
+    throw networkError("Google OIDC discovery", options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER, error);
+  }
   callback.captureState(state);
   options.onAuthorizeUrl?.(new URL(authorizeUrl));
   log("");
@@ -90,7 +95,12 @@ export async function runLoginFlow(options: LoginFlowOptions): Promise<LoginFlow
   const code = await callback.waitForCode();
   await callback.close();
 
-  const exchanged = await oidc.exchangeCode({ code, codeVerifier });
+  let exchanged: Awaited<ReturnType<typeof oidc.exchangeCode>>;
+  try {
+    exchanged = await oidc.exchangeCode({ code, codeVerifier });
+  } catch (error) {
+    throw networkError("Google token exchange", options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER, error);
+  }
   const identity = await oidc.verifyIdToken({ idToken: exchanged.idToken, nonce });
 
   const session = await exchangeForSession(options, exchanged.idToken, nonce, identity);
@@ -105,11 +115,16 @@ async function exchangeForSession(
   identity: VerifiedOidcIdentity,
 ): Promise<PersistedSession> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const response = await fetchImpl(`${options.adminOrigin}/admin/auth/exchange`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken, nonce }),
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl(`${options.adminOrigin}/admin/auth/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken, nonce }),
+    });
+  } catch (error) {
+    throw networkError("/admin/auth/exchange", options.adminOrigin, error);
+  }
   if (!response.ok) {
     throw new Error(`admin session exchange failed with HTTP ${response.status}`);
   }
@@ -264,6 +279,22 @@ function escapeHtml(value: string): string {
     '"': "&quot;",
     "'": "&#39;",
   })[char] ?? char);
+}
+
+/** Rewrites opaque fetch failures (undici hides the cause) into a diagnosable message. */
+function networkError(step: string, url: string, error: unknown): Error {
+  const cause = error instanceof Error && (error as { cause?: unknown }).cause;
+  const causeMessage = cause instanceof Error ? cause.message : cause === undefined ? undefined : String(cause);
+  const detail = causeMessage === undefined ? "" : ` (${causeMessage})`;
+  let hint = "— check network/proxy access";
+  // Node's fetch ignores system proxies unless NODE_USE_ENV_PROXY=1; a proxy
+  // env var set without it is the most common "connect timeout" cause.
+  const hasProxyEnv = typeof process.env.HTTPS_PROXY === "string" && process.env.HTTPS_PROXY.length > 0
+    || typeof process.env.HTTP_PROXY === "string" && process.env.HTTP_PROXY.length > 0;
+  if (hasProxyEnv && process.env.NODE_USE_ENV_PROXY !== "1") {
+    hint += " — HTTPS_PROXY/HTTP_PROXY is set but NODE_USE_ENV_PROXY is not; run with NODE_USE_ENV_PROXY=1 to route fetch through your proxy";
+  }
+  return new Error(`failed to reach ${step} at ${url}${detail} ${hint}`, { cause: error });
 }
 
 /** Opens the system browser; resolves regardless of whether a browser exists. */
