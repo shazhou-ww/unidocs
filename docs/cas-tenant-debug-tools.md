@@ -69,6 +69,51 @@ partitions); the user supplies `tenantId` from their own application or admin.
   (dry-run, `--confirm`). `sessions:*` permissions are app-layer and out of
   scope.
 
+## Local session store and cache
+
+Folder per (stack, tenant) under `~/.unicas`, aligned with the admin-cli layout
+so the later WebUI reuses the same store:
+
+```text
+~/.unicas/
+├── token.json                    # admin-cli session (unchanged)
+└── tenants/
+    ├── active.json               # global active entry {stackId, tenantId}
+    └── <stackId encoded>/
+        └── <tenantId encoded>/
+            ├── session.json      # login state (0600)
+            └── cas/              # node cache (0700), hash-prefix sharded
+                ├── ab/           # first two hex chars of the hash
+                │   ├── cdef…            # node content (binary)
+                │   └── cdef….meta.json  # metadata sidecar: size/contentType/refs
+                └── …
+```
+
+- **Per-entry `session.json`**: `{ stackId, tenantId, issuer, audience,
+  clientId, token, expiresAt, refreshToken?, permissions[], subject,
+  loggedInAt }`. Refresh tokens rotate in place with an atomic tmp+rename
+  write. A failed refresh marks the entry `expired` (kept for inspection,
+  never auto-cleared).
+- **Cache semantics**: content-addressed, so the hash IS the content check —
+  no staleness/invalidation problem. A cached node is trusted as-is; the only
+  remote change is GC deleting the origin (the local copy is kept, which is
+  what a debug tool wants). No eviction in v1; `cache status` / `cache clear`.
+- **Cache policy — node granularity** (the disk cache implements
+  `CasNodeCache` from `@unicas/tenant-client`): full node reads
+  (`range === undefined`) populate the cache on miss; partial reads (`--range`)
+  serve from a cached full copy or pass through without populating; metadata
+  (incl. `refs`) is cached so subgraphs can be walked offline. `leaseNode`
+  write-through is deferred.
+- **Range contract**: the `CasNodeCache.read(key, range, load)` interface
+  comment in tenant-client is updated to state that `range === undefined`
+  means a full read (populate) and a present range means a partial read (serve
+  or bypass); the policy lives in the cache implementation.
+- **Blob layer**: `createCasBlobClient(cas, options)` is cache-agnostic and
+  takes the tenant client as injected; its normal path reads child nodes in
+  full, so blob reads populate the node cache automatically.
+- **Permissions**: tenant directories 0700, `session.json` 0600; cached
+  content may be sensitive and inherits the current user's permissions.
+
 ## Data-plane surface (CLI command draft)
 
 | Group | Commands |
@@ -101,7 +146,6 @@ destructive operations, CAS base URL from `UNICAS_SERVER_URL`.
 
 - Exact discovery endpoint contract (response shape, caching, error semantics,
   edge routing).
-- Session store layout (entries, keys, refresh-token handling).
 - CLI UX details (active-entry selection, flag/env precedence).
 - Verifier / issuer / control-plane changes for the lifetime caps.
 - Error taxonomy for login and data-plane failures.
@@ -119,3 +163,5 @@ destructive operations, CAS base URL from `UNICAS_SERVER_URL`.
 | 7 | Full-permission login (`cas:manage` in one login) | 2026-08 |
 | 8 | v1: no MCP | 2026-08 |
 | 9 | Remove `cas_stack_issuer.status` — dead over-design (no write path existed; verifier `issuer_disabled` fail-closed was unreachable) | 2026-08 |
+| 10 | Store: folder per (stack, tenant) — `session.json` + a per-tenant node cache (`cas/`, hash-prefix sharded, metadata sidecars) | 2026-08 |
+| 11 | Cache at node granularity (`CasNodeCache`): full reads populate, partial reads serve-or-bypass, metadata cached for offline walk; blob layer benefits automatically; `leaseNode` write-through deferred | 2026-08 |
