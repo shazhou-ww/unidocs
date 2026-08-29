@@ -11,6 +11,7 @@ import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   OidcClient,
+  OidcError,
   generateOidcNonce,
   generateOidcState,
   generatePkceVerifier,
@@ -99,7 +100,16 @@ export async function runLoginFlow(options: LoginFlowOptions): Promise<LoginFlow
   try {
     exchanged = await oidc.exchangeCode({ code, codeVerifier });
   } catch (error) {
-    throw networkError("Google token exchange", options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER, error);
+    // Retry once on transport-level failures: a connect failure happens before
+    // any bytes are sent, so retrying the same code is safe. A code already
+    // consumed server-side surfaces as invalid_grant (an HTTP response), which
+    // is not retried here.
+    if (error instanceof OidcError && error.code === "network_failed") {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      exchanged = await oidc.exchangeCode({ code, codeVerifier });
+    } else {
+      throw networkError("Google token exchange", options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER, error);
+    }
   }
   const identity = await oidc.verifyIdToken({ idToken: exchanged.idToken, nonce });
 
@@ -285,7 +295,9 @@ function escapeHtml(value: string): string {
 function networkError(step: string, url: string, error: unknown): Error {
   const cause = error instanceof Error && (error as { cause?: unknown }).cause;
   const causeMessage = cause instanceof Error ? cause.message : cause === undefined ? undefined : String(cause);
-  const detail = causeMessage === undefined ? "" : ` (${causeMessage})`;
+  const ownMessage = error instanceof Error ? error.message : undefined;
+  const detail = causeMessage !== undefined ? ` (${causeMessage})`
+    : ownMessage !== undefined ? ` (${ownMessage})` : "";
   let hint = "— check network/proxy access";
   // Node's fetch ignores system proxies unless NODE_USE_ENV_PROXY=1; a proxy
   // env var set without it is the most common "connect timeout" cause.

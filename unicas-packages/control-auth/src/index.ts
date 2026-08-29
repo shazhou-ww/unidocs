@@ -205,14 +205,18 @@ export class OidcClient {
 function networkFailure(url: string, error: unknown): OidcError {
   const cause = error instanceof Error && (error as { cause?: unknown }).cause;
   const causeMessage = cause instanceof Error ? cause.message : cause === undefined ? "" : ` (${String(cause)})`;
-  return new OidcError("network_failed", `fetch ${url} failed: ${causeMessage || String(error instanceof Error ? error.message : error)}`);
+  return new OidcError(
+    "network_failed",
+    `fetch ${url} failed: ${causeMessage || String(error instanceof Error ? error.message : error)}`,
+    { cause: error },
+  );
 }
 
 export class OidcError extends Error {
   readonly code: string;
 
-  constructor(code: string, message: string) {
-    super(message);
+  constructor(code: string, message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = "OidcError";
     this.code = code;
   }
