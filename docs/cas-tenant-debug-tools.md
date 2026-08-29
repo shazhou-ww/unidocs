@@ -145,8 +145,9 @@ stdout by default: it prints a JSON summary, `--out <file>` writes content,
 - Public stack discovery endpoint on the edge (contract above).
 - **Provider contract documentation**: discovery-document shape,
   authorize/token semantics, scopes, capability claims, error codes,
-  refresh-token policy. Stack applications implement their own OIDC provider;
-  the platform ships the contract only (no reference provider in v1).
+  refresh-token policy — see `docs/cas-tenant-oidc-provider-contract.md`.
+  Stack applications implement their own OIDC provider; the platform ships the
+  contract only (no reference provider in v1).
 
 ## Explicitly out of v1
 
@@ -179,3 +180,4 @@ stdout by default: it prints a JSON summary, `--out <file>` writes content,
 | 11 | Cache at node granularity (`CasNodeCache`): full reads populate, partial reads serve-or-bypass, metadata cached for offline walk; blob layer benefits automatically; `leaseNode` write-through deferred | 2026-08 |
 | 12 | No tenant selector parameter: `tenantId` is decided by the stack-side OAuth from the authenticated identity; multi-tenant access via separate accounts (logout → re-authorize) | 2026-08 |
 | 13 | Destructive ops confirm interactively (TTY), refuse without TTY, `-y/--yes` skips; no default dry-run for `gc`; `node get` never prints binary by default | 2026-08 |
+| 14 | Provider contract: scope vocabulary `cas:read`/`cas:write`/`cas:manage` (tool requests `cas:manage`, provider may downgrade); refresh token one-time rotation, ≤ 7d default; `jwks_uri` = control-plane registered keys | 2026-08 |
