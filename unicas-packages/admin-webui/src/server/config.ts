@@ -9,6 +9,8 @@ export interface AdminBffConfig {
   readonly googleClientId: string;
   /** Google OIDC client secret (secret). */
   readonly googleClientSecret: string;
+  /** Google OAuth client id the admin CLI uses for its own OIDC dance; enables /admin/auth/exchange. */
+  readonly exchangeClientId?: string;
   /**
    * Versioned session encryption keys: key id -> base64url 32-byte AES key.
    * New sessions use the newest key; older keys decrypt until retired.

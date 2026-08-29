@@ -23,7 +23,7 @@ Unicas 是 UniDocs 的独立可部署 CAS 中间件（content-addressed storage 
    `control-plane-mcp`）；`server-*` = 数据面服务端部署
    （`server-cloudflare`）；`edge` = 公共入口（不属任何 actor 组）。
 
-## 包清单（12 包）
+## 包清单（13 包）
 
 ```
 unicas-packages/                    @unicas org
@@ -68,9 +68,13 @@ unicas-packages/                    @unicas org
     │     readMetadata / leaseNode / updateRootRefs / usage / gc
     │     + 节点写辅助（storeNodeContent/leaseNodeContent）
     │     + blob index CBOR（client 侧 manifest，服务端不解析）
+    ├── admin-client/      @unicas/admin-client        admin 组 · 控制面 HTTP client
+    │     纯函数传输层（对标 tenant-client）：每操作一函数，类型直接来自
+    │     @unicas/admin-protocol；session cookie + CSRF 由 session provider 提供
     ├── admin-cli/         @unicas/admin-cli           admin 组
-    │     CLI + stdio MCP（bin `unicas`），走 MCP over HTTP 通道，
-    │     工具结果类型对齐 @unicas/admin-protocol 冻结契约
+    │     CLI + stdio MCP（bin `unicas`），走 /admin HTTP API（admin-client）；
+    │     登录 = 自行 Google OIDC → BFF /admin/auth/exchange 换 session；
+    │     `unicas mcp` 是 admin-client 之上的薄 MCP 呈现层（无 MCP 转 MCP）
     └── admin-webui/       @unicas/admin-webui         admin 组 · 双角色（部署层）
           src/ui（管理界面）+ src/server（OIDC BFF）
 ```
@@ -84,7 +88,8 @@ unicas-packages/                    @unicas org
       ← 部署层(server-cloudflare, edge, control-plane-mcp, admin-webui)
 契约层 + 编码层 ← tenant-client（纯函数传输层，仅组装）
                     ← tenant-blob-client（业务方唯一入口）
-契约层 ← admin-cli（类型层）
+契约层 ← admin-client（控制面 HTTP 传输，仅组装/CLI 用）
+        ← admin-cli（走 admin-client + control-auth 登录）
 ```
 
 - **codec 是最底层**：无 workspace 依赖，仅外部 `cborg`；`tenant-protocol`
@@ -155,6 +160,7 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | **blob 分层（tenant-blob-client）** | `blob index` 从 codec 迁入新包 `@unicas/tenant-blob-client`；tenant-client 收窄为与 HTTP 一一对应的薄传输；blob 层提供完整接口（句柄式随机读对标 SBlobHandler、usage/gc 透传），业务方不再触碰底层 client |
 | **权限改名** | tenant 数据面 `cas:admin` → `cas:manage`（消除与「admin 面/控制面」的术语撞车） |
 | **tenant-client 下沉纯函数** | 移除 `node()` 对象模式，改 `readMetadata`/`readContent` 直接函数；业务面全部收敛到 `tenant-blob-client`（补 `readMetadata`/`leaseNode`/`updateRootRefs` 透传），应用栈不再直接依赖传输层 |
+| **admin-client + CLI 改通道** | 新建 `@unicas/admin-client`（/admin HTTP 纯函数 client，类型直接来自 admin-protocol，消除 MCP 工具 schema 双份手写）；admin-cli 从 MCP 通道改为走 /admin HTTP：登录 = 自行 Google OIDC → BFF 新端点 `/admin/auth/exchange`（id_token 换 session cookie + CSRF）|
 
 ## 待办（README 定方向）
 

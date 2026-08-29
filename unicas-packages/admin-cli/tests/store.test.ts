@@ -17,19 +17,21 @@ afterEach(async () => {
 
 describe("TokenStore", () => {
   test("round-trips a session and writes a 0600 file", async () => {
-    const path = join(dir, "token.json");
+    const path = join(dir, "session.json");
     const store = new TokenStore({ path });
     const session: PersistedSession = {
-      serverUrl: "https://unicas.test/mcp",
-      clientInformation: { client_id: "c1", token_endpoint_auth_method: "none" },
-      tokens: { access_token: "at", refresh_token: "rt", token_type: "Bearer", expires_in: 900 },
+      adminOrigin: "https://unicas.test",
+      cookie: "cas_admin_session=s1",
+      csrfToken: "csrf-1",
+      identity: { identityIssuer: "https://accounts.google.com", subject: "sub-1", displayName: "Alice", emailForDisplay: "alice@example.com" },
     };
     await store.save(session);
 
     const loaded = await store.load();
-    expect(loaded.serverUrl).toBe("https://unicas.test/mcp");
-    expect(loaded.clientInformation).toEqual({ client_id: "c1", token_endpoint_auth_method: "none" });
-    expect(loaded.tokens).toMatchObject({ access_token: "at", refresh_token: "rt" });
+    expect(loaded.adminOrigin).toBe("https://unicas.test");
+    expect(loaded.cookie).toBe("cas_admin_session=s1");
+    expect(loaded.csrfToken).toBe("csrf-1");
+    expect(loaded.identity?.subject).toBe("sub-1");
     expect(typeof loaded.savedAt).toBe("number");
 
     if (process.platform !== "win32") {
@@ -40,36 +42,34 @@ describe("TokenStore", () => {
 
   test("loads an empty session when the file is missing", async () => {
     const store = new TokenStore({ path: join(dir, "missing.json") });
-    expect(await store.load()).toEqual({ serverUrl: "" });
+    expect(await store.load()).toEqual({ adminOrigin: "", cookie: "", csrfToken: "" });
   });
 
   test("loads an empty session when the file is corrupt", async () => {
-    const path = join(dir, "token.json");
+    const path = join(dir, "session.json");
     await writeFile(path, "{ not json", "utf8");
     const store = new TokenStore({ path });
-    expect(await store.load()).toEqual({ serverUrl: "" });
-    // The corrupt file is preserved for manual recovery.
+    expect(await store.load()).toEqual({ adminOrigin: "", cookie: "", csrfToken: "" });
     expect(await readFile(path, "utf8")).toBe("{ not json");
   });
 
   test("overwrites atomically and keeps savedAt fresh", async () => {
-    const path = join(dir, "token.json");
+    const path = join(dir, "session.json");
     const store = new TokenStore({ path });
-    await store.save({ serverUrl: "https://a.test/mcp", tokens: { access_token: "old", token_type: "Bearer" } });
+    await store.save({ adminOrigin: "https://a.test", cookie: "c1", csrfToken: "t1" });
     const first = await store.load();
     await new Promise((resolve) => setTimeout(resolve, 5));
-    await store.save({ serverUrl: "https://a.test/mcp", tokens: { access_token: "new", token_type: "Bearer" } });
+    await store.save({ adminOrigin: "https://a.test", cookie: "c2", csrfToken: "t2" });
     const second = await store.load();
-    expect(second.tokens?.access_token).toBe("new");
+    expect(second.cookie).toBe("c2");
     expect((second.savedAt ?? 0) > (first.savedAt ?? 0)).toBe(true);
-    expect(first.savedAt !== second.savedAt).toBe(true);
   });
 
   test("clear removes the file", async () => {
-    const path = join(dir, "token.json");
+    const path = join(dir, "session.json");
     const store = new TokenStore({ path });
-    await store.save({ serverUrl: "https://a.test/mcp" });
+    await store.save({ adminOrigin: "https://a.test", cookie: "c1", csrfToken: "t1" });
     await store.clear();
-    await expect(store.load()).resolves.toEqual({ serverUrl: "" });
+    await expect(store.load()).resolves.toEqual({ adminOrigin: "", cookie: "", csrfToken: "" });
   });
 });

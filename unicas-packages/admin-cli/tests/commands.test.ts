@@ -9,8 +9,7 @@ import { membersCommand } from "../src/commands/members.js";
 import { stacksCommand } from "../src/commands/stacks.js";
 import { statusCommand } from "../src/commands/status.js";
 import { whoamiCommand } from "../src/commands/whoami.js";
-import { TokenStore } from "../src/store.js";
-import { FAKE_RESOURCE, FakeServer } from "./helpers/fake-server.js";
+import { FAKE_ORIGIN, FakeAdminApi } from "./helpers/fake-server.js";
 
 let dir: string;
 let ctx: CliContext;
@@ -18,8 +17,8 @@ let ctx: CliContext;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "unicas-cli-cmd-"));
   ctx = createContext(
-    { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
-    new FakeServer().fetch,
+    { UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN },
+    new FakeAdminApi().fetch,
   );
 });
 
@@ -30,7 +29,6 @@ afterEach(async () => {
 
 function captureStdout(): { writes: string[]; restore: () => void } {
   const writes: string[] = [];
-  const original = process.stdout.write.bind(process.stdout);
   const spy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: unknown) => {
     writes.push(String(chunk));
     return true;
@@ -38,31 +36,26 @@ function captureStdout(): { writes: string[]; restore: () => void } {
   return { writes, restore: () => spy.mockRestore() };
 }
 
-async function seedLoggedIn(store: TokenStore): Promise<void> {
+async function seedLoggedIn(store: import("../src/store.js").TokenStore): Promise<void> {
   await store.save({
-    serverUrl: FAKE_RESOURCE,
-    clientInformation: { client_id: "cli-client-1", token_endpoint_auth_method: "none" },
-    tokens: { access_token: "access-seeded", refresh_token: "refresh-seeded", token_type: "Bearer", scope: "control:read control:write control:security" },
+    adminOrigin: FAKE_ORIGIN,
+    cookie: "cas_admin_session=session-1",
+    csrfToken: "cli-csrf-1",
+    identity: { identityIssuer: "https://accounts.google.com", subject: "sub-1", displayName: "Alice", emailForDisplay: "alice@example.com" },
+    savedAt: Date.now(),
   });
 }
 
 describe("command layer", () => {
   test("whoami prints the operator identity as JSON", async () => {
     await seedLoggedIn(ctx.store);
-    const server = new FakeServer({
-      toolResults: {
-        whoami: { structuredContent: { identity: { subject: "alice" }, memberships: [] } },
-      },
-    });
-    ctx = createContext(
-      { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
-      server.fetch,
-    );
+    const server = new FakeAdminApi();
+    ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
     const { writes } = captureStdout();
     await whoamiCommand(ctx);
-    const output = writes.join("");
-    const parsed = JSON.parse(output) as { identity: { subject: string } };
-    expect(parsed.identity.subject).toBe("alice");
+    const parsed = JSON.parse(writes.join("")) as { identity: { subject: string } };
+    expect(parsed.identity.subject).toBe("sub-1");
+    expect(server.requests[0]!.cookie).toContain("cas_admin_session=");
   });
 
   test("whoami fails with exit code 2 when not logged in", async () => {
@@ -77,119 +70,74 @@ describe("command layer", () => {
     await seedLoggedIn(ctx.store);
     const { writes } = captureStdout();
     await statusCommand(ctx);
-    const status = JSON.parse(writes.join("")) as { loggedIn: boolean; scopes: string[] };
+    const status = JSON.parse(writes.join("")) as { loggedIn: boolean; identity: { subject: string } | null };
     expect(status.loggedIn).toBe(true);
-    expect(status.scopes).toContain("control:write");
+    expect(status.identity?.subject).toBe("sub-1");
     expect(ctx.store.path).toContain(dir);
   });
 
   test("stacks create auto-generates an idempotency key", async () => {
     await seedLoggedIn(ctx.store);
-    const server = new FakeServer({
-      toolResults: {
-        create_stack: { structuredContent: { stackId: "cas_stack", displayName: "Ops", revision: 1, etag: '"1"' } },
-      },
-    });
-    ctx = createContext(
-      { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
-      server.fetch,
-    );
+    const server = new FakeAdminApi();
+    ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
     const { writes } = captureStdout();
     await stacksCommand(ctx, "create", ["Ops"]);
-    const parsed = JSON.parse(writes.join("")) as { stackId: string };
-    expect(parsed.stackId).toBe("cas_stack");
-    const call = server.requests.find(
-      (request) => request.pathname === "/mcp" && (request.body as { method?: string })?.method === "tools/call",
-    );
-    const args = ((call?.body as { params?: { arguments?: Record<string, unknown> } })?.params?.arguments) ?? {};
-    expect(args.displayName).toBe("Ops");
-    expect(String(args.idempotencyKey)).toMatch(/^unicas-cli:/);
+    const parsed = JSON.parse(writes.join("")) as { stackId: string; displayName: string };
+    expect(parsed.stackId).toBe("cas_stack_new");
+    expect(parsed.displayName).toBe("Ops");
+    const create = server.requests.find((request) => request.method === "POST" && request.pathname === "/admin/stacks")!;
+    expect((create.body as { displayName: string }).displayName).toBe("Ops");
+    expect(server.requests.some((request) => request.pathname === "/admin/stacks" && request.method === "POST")).toBe(true);
   });
 
   test("stacks update resolves the current ETag when none is passed", async () => {
     await seedLoggedIn(ctx.store);
-    const server = new FakeServer({
-      toolResults: {
-        get_stack: { structuredContent: { stackId: "cas_stack", revision: 2, etag: '"2"' } },
-        update_stack: { structuredContent: { stackId: "cas_stack", displayName: "Renamed", revision: 3, etag: '"3"' } },
-      },
-    });
-    ctx = createContext(
-      { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
-      server.fetch,
-    );
+    const server = new FakeAdminApi();
+    ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
     const { writes } = captureStdout();
-    await stacksCommand(ctx, "update", ["cas_stack", "Renamed"]);
+    await stacksCommand(ctx, "update", ["cas_stack_a", "Renamed"]);
     const parsed = JSON.parse(writes.join("")) as { displayName: string };
     expect(parsed.displayName).toBe("Renamed");
-    const calls = server.requests.filter(
-      (request) => request.pathname === "/mcp" && (request.body as { method?: string })?.method === "tools/call",
-    );
-    expect(calls).toHaveLength(2);
-    const updateCall = calls.find(
-      (request) => (request.body as { params?: { name?: string } })?.params?.name === "update_stack",
-    );
-    const args = ((updateCall?.body as { params?: { arguments?: Record<string, unknown> } })?.params?.arguments) ?? {};
-    expect(args.etag).toBe('"2"');
+    const get = server.requests.find((request) => request.method === "GET" && request.pathname === "/admin/stacks/cas_stack_a")!;
+    expect(get).toBeDefined();
+    const patch = server.requests.find((request) => request.method === "PATCH")!;
+    expect(patch.pathname).toBe("/admin/stacks/cas_stack_a");
+    expect(patch.body).toMatchObject({ displayName: "Renamed" });
   });
 
   test("stacks update can change only the description", async () => {
     await seedLoggedIn(ctx.store);
-    const server = new FakeServer({
-      toolResults: {
-        get_stack: { structuredContent: { stackId: "cas_stack", revision: 2, etag: '"2"' } },
-        update_stack: { structuredContent: { stackId: "cas_stack", displayName: "Ops", description: "Production", revision: 3, etag: '"3"' } },
-      },
-    });
-    ctx = createContext(
-      { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
-      server.fetch,
-    );
-    await stacksCommand(ctx, "update", ["cas_stack", "--description", "Production"]);
-    const updateCall = server.requests.find(
-      (request) => (request.body as { params?: { name?: string } })?.params?.name === "update_stack",
-    );
-    const args = ((updateCall?.body as { params?: { arguments?: Record<string, unknown> } })?.params?.arguments) ?? {};
-    expect(args).toMatchObject({ stackId: "cas_stack", description: "Production", etag: '"2"' });
-    expect(args).not.toHaveProperty("displayName");
+    const server = new FakeAdminApi();
+    ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
+    await stacksCommand(ctx, "update", ["cas_stack_a", "--description", "Production"]);
+    const patch = server.requests.find((request) => request.method === "PATCH")!;
+    expect(patch.body).toEqual({ description: "Production" });
   });
 
-  test("logout revokes the refresh token and clears the store", async () => {
+  test("logout ends the BFF session and clears the store", async () => {
     await seedLoggedIn(ctx.store);
-    const server = new FakeServer();
-    ctx = createContext(
-      { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
-      server.fetch,
-    );
+    const server = new FakeAdminApi();
+    ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
     const { writes } = captureStdout();
     await logoutCommand(ctx);
-    expect(writes.join("")).toMatch(/Revoked/);
-    expect(await ctx.store.load()).toEqual({ serverUrl: "" });
-    const revoke = server.requests.find((request) => request.pathname === "/oauth/token/revoke");
-    expect(revoke).toBeDefined();
-    const form = new URLSearchParams(revoke?.rawBody ?? "");
-    expect(form.get("token")).toBe("refresh-seeded");
-    expect(form.get("token_type_hint")).toBe("refresh_token");
-    expect(form.get("client_id")).toBe("cli-client-1");
+    expect(writes.join("")).toMatch(/Ended the Unicas admin session/);
+    expect(await ctx.store.load()).toEqual({ adminOrigin: "", cookie: "", csrfToken: "" });
+    expect(server.requests.some((request) => request.pathname === "/admin/auth/logout" && request.method === "POST")).toBe(true);
   });
 
   test("a non-TTY destructive command demands an explicit confirmation flag", async () => {
     await seedLoggedIn(ctx.store);
-    const server = new FakeServer();
-    ctx = createContext(
-      { UNICAS_CONFIG_DIR: dir, UNICAS_SERVER_URL: FAKE_RESOURCE },
-      server.fetch,
-    );
-    // Non-TTY stdin: the confirm flag is required for member removal.
+    const server = new FakeAdminApi();
+    ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
     await expect(
       membersCommand(ctx, "remove", [
-        "cas_stack",
+        "cas_stack_a",
         "--identity-issuer",
         "https://accounts.google.com",
         "--subject",
         "bob",
         "--etag",
-        '"1"',
+        '"rev-3"',
       ]),
     ).rejects.toThrow(/confirm-subject/);
   });

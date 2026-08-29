@@ -1,27 +1,33 @@
 /**
- * Interactive `unicas login`: RFC 9728/8414 discovery, RFC 7591 dynamic client
- * registration, S256 PKCE authorization with a local `127.0.0.1` callback
- * server, and token persistence.
- *
- * The SDK's `auth()` orchestrator performs discovery, dynamic client
- * registration, PKCE challenge generation, and token exchange; this module
- * supplies the local redirect server, browser opening, and state validation.
+ * Interactive `unicas login`: the CLI performs its own Google OIDC
+ * authorization-code flow (S256 PKCE) with a local `127.0.0.1` callback
+ * server, then exchanges the verified id_token with the `/admin` BFF for a
+ * session cookie + CSRF token. The session is persisted for later commands.
  */
 
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { auth } from "@modelcontextprotocol/sdk/client/auth.js";
+import {
+  OidcClient,
+  generateOidcNonce,
+  generateOidcState,
+  generatePkceVerifier,
+  s256Challenge,
+} from "@unicas/control-auth";
+import type { VerifiedOidcIdentity } from "@unicas/control-auth";
 import type { PersistedSession, TokenStore } from "../store.js";
-import { PersistentOAuthClientProvider } from "./provider.js";
+import { DEFAULT_GOOGLE_ISSUER } from "../config.js";
 
 export interface LoginFlowOptions {
-  readonly serverUrl: string;
+  /** Origin of the `/admin` API. */
+  readonly adminOrigin: string;
+  /** Google OAuth client id registered for this CLI. */
+  readonly googleClientId: string;
+  readonly googleClientSecret?: string;
+  readonly googleIssuer?: string;
   readonly store: TokenStore;
-  /** Requested scopes; defaults to all `control:*` scopes. */
-  readonly scopes?: readonly string[];
   /** Explicit loopback port; `0` (default) picks a free ephemeral port. */
   readonly port?: number;
   /** Open the system browser automatically (default true). */
@@ -41,75 +47,89 @@ export interface LoginFlowOptions {
 export interface LoginFlowResult {
   readonly session: PersistedSession;
   readonly authorizationUrl: string;
-  readonly clientId: string;
+  readonly identity: VerifiedOidcIdentity;
 }
 
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
 
 export async function runLoginFlow(options: LoginFlowOptions): Promise<LoginFlowResult> {
   const log = options.log ?? ((message: string) => process.stderr.write(`${message}\n`));
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const callback = new LocalCallbackServer(options.signal);
   await callback.start(options.port ?? 0);
   options.onCallbackServerStarted?.(callback.port);
   const redirectUrl = `http://127.0.0.1:${callback.port}/callback`;
 
-  const clientMetadata: OAuthClientMetadata = {
-    client_name: "Unicas CLI",
-    redirect_uris: [redirectUrl],
-    token_endpoint_auth_method: "none",
-    grant_types: ["authorization_code", "refresh_token"],
-    response_types: ["code"],
-    scope: options.scopes?.join(" ") ?? undefined,
-  };
-
-  const session: PersistedSession = { serverUrl: options.serverUrl };
-  const provider = new PersistentOAuthClientProvider({
-    session,
-    onSave: (next) => options.store.save(next),
-    redirectUrl,
-    clientMetadata,
-    onRedirect: async (url) => {
-      callback.captureAuthorizeUrl(url.toString());
-      callback.captureState(url.searchParams.get("state") ?? undefined);
-      options.onAuthorizeUrl?.(url);
-      log("");
-      log("Open this URL in your browser to authorize the Unicas CLI:");
-      log(`  ${url.toString()}`);
-      log("");
-      if (options.openBrowser !== false) {
-        await openBrowser(url.toString()).catch(() => {
-          log("Could not open a browser automatically; copy the URL above.");
-        });
-      }
+  const oidc = new OidcClient(
+    {
+      issuer: options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER,
+      clientId: options.googleClientId,
+      clientSecret: options.googleClientSecret ?? "",
+      redirectUri: redirectUrl,
     },
-  });
+    { fetchImpl },
+  );
 
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
-  const first = await auth(provider, {
-    serverUrl: options.serverUrl,
-    scope: options.scopes?.join(" "),
-    fetchFn: fetchImpl,
-  });
-  if (first !== "REDIRECT") {
-    throw new Error("Unexpected OAuth state: authorization did not require a redirect");
+  const state = generateOidcState();
+  const nonce = generateOidcNonce();
+  const codeVerifier = generatePkceVerifier();
+  const codeChallenge = await s256Challenge(codeVerifier);
+  const authorizeUrl = await oidc.authorizationUrl({ state, nonce, codeChallenge });
+  callback.captureState(state);
+  options.onAuthorizeUrl?.(new URL(authorizeUrl));
+  log("");
+  log("Open this URL in your browser to authorize the Unicas CLI:");
+  log(`  ${authorizeUrl}`);
+  log("");
+  if (options.openBrowser !== false) {
+    await openBrowser(authorizeUrl).catch(() => {
+      log("Could not open a browser automatically; copy the URL above.");
+    });
   }
 
   const code = await callback.waitForCode();
   await callback.close();
 
-  const second = await auth(provider, {
-    serverUrl: options.serverUrl,
-    authorizationCode: code,
-    scope: options.scopes?.join(" "),
-    fetchFn: fetchImpl,
-  });
-  if (second !== "AUTHORIZED") {
-    throw new Error("OAuth authorization did not complete");
-  }
-  await options.store.save(session);
+  const exchanged = await oidc.exchangeCode({ code, codeVerifier });
+  const identity = await oidc.verifyIdToken({ idToken: exchanged.idToken, nonce });
 
-  const clientId = session.clientInformation?.client_id ?? "";
-  return { session, authorizationUrl: callback.authorizationUrl, clientId };
+  const session = await exchangeForSession(options, exchanged.idToken, nonce, identity);
+  await options.store.save(session);
+  return { session, authorizationUrl: callback.authorizationUrl, identity };
+}
+
+async function exchangeForSession(
+  options: LoginFlowOptions,
+  idToken: string,
+  nonce: string,
+  identity: VerifiedOidcIdentity,
+): Promise<PersistedSession> {
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const response = await fetchImpl(`${options.adminOrigin}/admin/auth/exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, nonce }),
+  });
+  if (!response.ok) {
+    throw new Error(`admin session exchange failed with HTTP ${response.status}`);
+  }
+  const setCookie = response.headers.get("Set-Cookie");
+  const body = await response.json() as { csrfToken?: unknown };
+  if (setCookie === null || typeof body.csrfToken !== "string" || body.csrfToken.length === 0) {
+    throw new Error("admin session exchange returned no session");
+  }
+  return {
+    adminOrigin: options.adminOrigin,
+    cookie: setCookie.split(";")[0]!,
+    csrfToken: body.csrfToken,
+    identity: {
+      identityIssuer: options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER,
+      subject: identity.sub,
+      displayName: identity.name,
+      emailForDisplay: identity.email,
+    },
+    savedAt: Date.now(),
+  };
 }
 
 class LocalCallbackServer {

@@ -95,7 +95,8 @@ unicas-packages/           (the independently deployable CAS middleware; future 
 ├── control-auth/          @unicas/control-auth          — Shared server-only control-plane OIDC client
 ├── control-plane-mcp/     @unicas/control-plane-mcp     — OAuth-protected remote MCP operations ingress
 ├── admin-webui/           @unicas/admin-webui           — Stack administration WebUI + OIDC BFF
-├── admin-cli/             @unicas/admin-cli             — Stack administration CLI + stdio MCP (bin `unicas`)
+├── admin-client/          @unicas/admin-client          — Typed HTTP client for the /admin control-plane API
+├── admin-cli/             @unicas/admin-cli             — Stack administration CLI + stdio MCP (bin `unicas`, /admin HTTP channel)
 └── edge/                  @unicas/edge                  — Public CAS edge (/stacks + /admin + MCP/OAuth dispatch)
 ```
 

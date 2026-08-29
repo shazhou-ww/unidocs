@@ -49,6 +49,11 @@ export interface CreateAdminBffOptions {
   readonly db: D1Database;
   /** Inject a client for tests; defaults to a real Google client. */
   readonly oidc?: OidcClient;
+  /**
+   * Inject the id_token-exchange verifier for tests; defaults to a real
+   * Google client configured with `config.exchangeClientId`.
+   */
+  readonly exchangeOidc?: OidcClient;
   /** SPA static asset fetcher (Phase C wires the built console). */
   readonly assets?: (pathname: string) => Promise<Response | null>;
   /**
@@ -85,6 +90,17 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       clientSecret: config.googleClientSecret,
       redirectUri: `${config.publicOrigin}/admin/auth/callback`,
     });
+  const exchangeOidc = options.exchangeOidc
+    ?? (config.exchangeClientId === undefined
+      ? null
+      : new OidcClient({
+        issuer: config.oidcIssuer ?? "https://accounts.google.com",
+        discoveryUrl: config.oidcDiscoveryUrl,
+        clientId: config.exchangeClientId,
+        // Verification-only: the CLI holds its own client secret / uses a public client.
+        clientSecret: "",
+        redirectUri: "",
+      }));
   const assets = options.assets ?? (async () => null);
   const sessionTtlMs = config.sessionTtlMs ?? 8 * 60 * 60 * 1000;
   const cookieName = config.sessionCookieName ?? "cas_admin_session";
@@ -125,6 +141,9 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     }
     if (pathname === "/admin/auth/logout" && method === "POST") {
       return handleLogout(request);
+    }
+    if (pathname === "/admin/auth/exchange" && method === "POST") {
+      return handleExchange(request);
     }
 
     const inviteMatch = /^\/admin\/invitations\/([^/]+)$/.exec(pathname);
@@ -467,6 +486,54 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   // ------------------------------------------------------------------
   // Frozen admin API
   // ------------------------------------------------------------------
+
+  async function handleExchange(request: Request): Promise<Response> {
+    if (exchangeOidc === null) {
+      return json({ error: "INVALID_REQUEST", message: "admin auth exchange is not configured" }, 501);
+    }
+    const body = await readJsonBody<{ idToken?: unknown; nonce?: unknown }>(request);
+    if (!body || typeof body.idToken !== "string" || typeof body.nonce !== "string") {
+      return json({ error: "INVALID_REQUEST", message: "idToken and nonce are required" }, 400);
+    }
+    let identity: VerifiedOidcIdentity;
+    try {
+      identity = await exchangeOidc.verifyIdToken({ idToken: body.idToken, nonce: body.nonce });
+    } catch {
+      await auditLoginFailure("exchange-verify-failed");
+      return json({ error: "ADMIN_AUTH_REQUIRED", message: "id_token verification failed" }, 401);
+    }
+    if (!isEmailAllowed(identity.email, identity.emailVerified)) {
+      await auditLoginFailure("email-not-allowed");
+      return json({ error: "ADMIN_AUTH_REQUIRED", message: "identity is not allowed" }, 403);
+    }
+    const authenticatedPayload: AdminSessionPayload = {
+      v: 1,
+      authenticated: true,
+      identityIssuer: config.oidcIssuer ?? "https://accounts.google.com",
+      subject: identity.sub,
+      displayName: identity.name,
+      emailForDisplay: identity.email,
+      csrfToken: generateCsrfToken(),
+    };
+    const sessionId = generateSessionId();
+    await sessionStore.create(sessionId, await sessionCrypto.encrypt(authenticatedPayload), sessionTtlMs);
+    await service.recordSessionAudit(
+      serviceContext(authenticatedPayload, request),
+      "session.login",
+      `${authenticatedPayload.identityIssuer}:${authenticatedPayload.subject}`,
+      null,
+    );
+    return Response.json(
+      { csrfToken: authenticatedPayload.csrfToken },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store",
+          "Set-Cookie": sessionCookieHeader(cookieOptions, sessionId),
+        },
+      },
+    );
+  }
 
   async function handleAdminApi(
     request: Request,

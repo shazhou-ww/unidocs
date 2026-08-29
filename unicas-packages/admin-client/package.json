@@ -1,7 +1,7 @@
 {
-  "name": "@unicas/admin-cli",
+  "name": "@unicas/admin-client",
   "version": "0.1.0",
-  "description": "Unicas control-plane management CLI with local OAuth login and stdio MCP mode",
+  "description": "Typed HTTP client for the CAS stack control plane (/admin API), one function per operation over the @unicas/admin-protocol contract",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -11,9 +11,6 @@
       "import": "./src/index.ts"
     }
   },
-  "bin": {
-    "unicas": "./dist/cli.js"
-  },
   "files": [
     "dist"
   ],
@@ -21,21 +18,9 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
-    "unicas": "node dist/cli.js"
-  },
-  "engines": {
-    "node": ">=24"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "@unicas/admin-protocol": "workspace:*",
-    "zod": "^4.0.0",
-    "@unicas/admin-client": "workspace:*",
-    "@unicas/control-auth": "workspace:*"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
@@ -48,5 +33,8 @@
         "import": "./dist/index.js"
       }
     }
+  },
+  "dependencies": {
+    "@unicas/admin-protocol": "workspace:*"
   }
 }

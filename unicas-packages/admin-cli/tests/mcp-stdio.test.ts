@@ -7,7 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { runMcpStdioServer } from "../src/mcp/stdio-server.js";
 import { TokenStore } from "../src/store.js";
-import { FAKE_RESOURCE, FakeServer } from "./helpers/fake-server.js";
+import { FAKE_ORIGIN, FakeAdminApi } from "./helpers/fake-server.js";
 
 interface LineReader {
   next(timeoutMs?: number): Promise<Record<string, unknown>>;
@@ -26,11 +26,11 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-async function seedTokens(): Promise<void> {
+async function seedSession(): Promise<void> {
   await store.save({
-    serverUrl: FAKE_RESOURCE,
-    clientInformation: { client_id: "cli-client-1", token_endpoint_auth_method: "none" },
-    tokens: { access_token: "access-seeded", refresh_token: "refresh-seeded", token_type: "Bearer" },
+    adminOrigin: FAKE_ORIGIN,
+    cookie: "cas_admin_session=session-1",
+    csrfToken: "cli-csrf-1",
   });
 }
 
@@ -38,7 +38,7 @@ async function startStdioServer(fetchImpl: typeof fetch): Promise<{ stdin: PassT
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const transport = new StdioServerTransport(stdin as unknown as Readable, stdout as unknown as Writable);
-  const serverPromise = runMcpStdioServer({ serverUrl: FAKE_RESOURCE, store, fetchImpl, transport, log: () => undefined });
+  const serverPromise = runMcpStdioServer({ adminOrigin: FAKE_ORIGIN, store, fetchImpl, transport, log: () => undefined });
   const lines: string[] = [];
   const waiters: Array<(line: Record<string, unknown>) => void> = [];
   stdout.on("data", (chunk: Buffer) => {
@@ -67,18 +67,9 @@ async function startStdioServer(fetchImpl: typeof fetch): Promise<{ stdin: PassT
 }
 
 describe("unicas mcp (stdio server)", () => {
-  test("answers initialize, lists the 18 tools, and forwards tools/call to the remote", async () => {
-    await seedTokens();
-    const server = new FakeServer({
-      toolResults: {
-        whoami: {
-          structuredContent: {
-            identity: { identityIssuer: "https://accounts.google.com", subject: "alice" },
-            memberships: [],
-          },
-        },
-      },
-    });
+  test("answers initialize, lists the 18 tools, and serves tools/call from the admin client", async () => {
+    await seedSession();
+    const server = new FakeAdminApi();
     const { stdin, reader, done } = await startStdioServer(server.fetch);
 
     stdin.write(`${JSON.stringify({
@@ -123,22 +114,20 @@ describe("unicas mcp (stdio server)", () => {
     };
     expect(callResult.isError).toBe(false);
     expect(callResult.structuredContent).toMatchObject({
-      identity: { subject: "alice" },
-      memberships: [],
+      identity: { subject: "sub-1" },
     });
+    expect(callResult.structuredContent.memberships).toHaveLength(1);
 
     stdin.end();
     await done;
 
-    const forwarded = server.requests.find(
-      (request) => request.pathname === "/mcp" && (request.body as { method?: string })?.method === "tools/call",
-    );
-    expect(forwarded).toBeDefined();
-    expect(forwarded?.authorization).toBe("Bearer access-seeded");
+    const me = server.requests.find((request) => request.pathname === "/admin/me");
+    expect(me).toBeDefined();
+    expect(me?.cookie).toContain("cas_admin_session=");
   });
 
   test("returns a tool error result when not logged in", async () => {
-    const server = new FakeServer({ authChallengeCount: 1 });
+    const server = new FakeAdminApi();
     const { stdin, reader, done } = await startStdioServer(server.fetch);
 
     stdin.write(`${JSON.stringify({

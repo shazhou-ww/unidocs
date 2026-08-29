@@ -27,8 +27,8 @@ import { printError, printText } from "./output.js";
 const HELP = `Unicas control-plane management CLI
 
 Usage:
-  unicas login [--scopes S,S,S] [--port N] [--no-browser]   Authorize this CLI (OAuth + PKCE, local callback)
-  unicas logout                                             Revoke tokens (RFC 7009) and clear the session
+  unicas login [--port N] [--no-browser]                   Google OIDC login, then exchange for an admin session
+  unicas logout                                            End the admin session and clear it locally
   unicas status                                             Show local session state
   unicas whoami                                             Current operator identity and memberships
 
@@ -58,8 +58,10 @@ Usage:
   unicas help                                                 Show this help
 
 Environment:
-  UNICAS_SERVER_URL   MCP resource URL (default https://unicas.shazhou.work/mcp)
-  UNICAS_CONFIG_DIR   session directory (default ~/.unicas)
+  UNICAS_ADMIN_URL          /admin API origin (default https://unicas.shazhou.work)
+  UNICAS_GOOGLE_CLIENT_ID   Google OAuth client id for login (required)
+  UNICAS_GOOGLE_CLIENT_SECRET  optional confidential client secret
+  UNICAS_CONFIG_DIR         session directory (default ~/.unicas)
 
 Where a mutation needs a current ETag and none is passed, the CLI reads it
 first. Destructive operations require their explicit --confirm-* flag when run
@@ -113,7 +115,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     }
     case "mcp":
       await runMcpStdioServer({
-        serverUrl: ctx.config.serverUrl,
+        adminOrigin: ctx.config.adminOrigin,
         store: ctx.store,
         fetchImpl: ctx.fetchImpl,
       });

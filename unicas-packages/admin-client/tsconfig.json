@@ -8,9 +8,7 @@
       "ES2024",
       "DOM"
     ],
-    "types": [
-      "node"
-    ]
+    "types": []
   },
   "include": [
     "src"
@@ -18,12 +16,6 @@
   "references": [
     {
       "path": "../admin-protocol"
-    },
-    {
-      "path": "../admin-client"
-    },
-    {
-      "path": "../control-auth"
     }
   ]
 }

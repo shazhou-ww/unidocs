@@ -1,47 +1,75 @@
 /**
- * In-memory fake of the Unicas control-plane edge: RFC 9728/8414 discovery,
- * RFC 7591 DCR, RFC 7009 revocation, the token endpoint, and a minimal
- * stateless MCP Streamable HTTP server. Lets every CLI test run without the
- * network or a real OAuth provider.
+ * In-memory fake of the Unicas `/admin` BFF API: the id_token-exchange
+ * endpoint, session enforcement, and the control-plane operations the CLI
+ * exercises. Lets every CLI test run without the network or a real OIDC
+ * provider.
  */
 
-export interface FakeToolResult {
-  readonly structuredContent: Record<string, unknown>;
-  readonly isError?: boolean;
-}
+import { casAdminRoutes } from "@unicas/admin-protocol";
 
-export interface FakeServerOptions {
-  /** Number of initial MCP POSTs to reject with 401 (triggers OAuth refresh). */
-  readonly authChallengeCount?: number;
-  /** scopes_supported advertised in protected-resource metadata. */
-  readonly scopesSupported?: readonly string[];
-  /** Per-tool results returned by tools/call. */
-  readonly toolResults?: Record<string, FakeToolResult>;
-  /** Called for every recorded request. */
+export interface FakeAdminOptions {
+  /** When set, the exchange endpoint requires exactly this id_token. */
+  readonly expectedIdToken?: string;
   readonly onRequest?: (request: RecordedRequest) => void;
 }
 
 export interface RecordedRequest {
   readonly method: string;
-  readonly url: string;
   readonly pathname: string;
   readonly body: unknown;
-  /** Raw request body string (form-encoded token requests are not JSON). */
-  readonly rawBody: string;
-  readonly authorization: string | null;
+  readonly cookie: string | null;
+  readonly csrf: string | null;
 }
 
 export const FAKE_ORIGIN = "https://unicas.test";
-export const FAKE_RESOURCE = `${FAKE_ORIGIN}/mcp`;
 
-export class FakeServer {
+interface FakeStack {
+  stackId: string;
+  displayName: string;
+  description: string;
+  status: "active" | "suspended";
+  createdAt: number;
+  revision: number;
+}
+
+interface FakeKey {
+  stackId: string;
+  kid: string;
+  algorithm: string;
+  publicJwk: Record<string, unknown>;
+  state: "active" | "retiring" | "revoked";
+  revision: number;
+}
+
+export class FakeAdminApi {
   readonly requests: RecordedRequest[] = [];
-  readonly #options: FakeServerOptions;
-  #authChallengesRemaining: number;
+  readonly #options: FakeAdminOptions;
+  readonly stacks = new Map<string, FakeStack>();
+  readonly members = new Map<string, { identityIssuer: string; subject: string }[]>();
+  readonly keys = new Map<string, FakeKey[]>();
+  issuer = new Map<string, { issuer: string; audience: string; revision: number }>();
+  readonly sessions = new Set<string>();
 
-  constructor(options: FakeServerOptions = {}) {
+  constructor(options: FakeAdminOptions = {}) {
     this.#options = options;
-    this.#authChallengesRemaining = options.authChallengeCount ?? 0;
+    this.sessions.add("session-1");
+    this.#seed();
+  }
+
+  #seed(): void {
+    const stack: FakeStack = {
+      stackId: "cas_stack_a",
+      displayName: "Ops",
+      description: "",
+      status: "active",
+      createdAt: 1,
+      revision: 3,
+    };
+    this.stacks.set(stack.stackId, stack);
+    this.members.set(stack.stackId, [
+      { identityIssuer: "https://accounts.google.com", subject: "sub-1" },
+      { identityIssuer: "https://accounts.google.com", subject: "sub-2" },
+    ]);
   }
 
   get fetch(): typeof fetch {
@@ -51,156 +79,165 @@ export class FakeServer {
   async #handle(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = new URL(String(input));
     const method = (init?.method ?? "GET").toUpperCase();
-    const rawBody = init?.body instanceof URLSearchParams
-      ? init.body.toString()
-      : typeof init?.body === "string" ? init.body : "";
-    const body = rawBody.length > 0 ? parseJson(rawBody) : undefined;
-    const authorization = extractHeader(init?.headers, "authorization");
-    this.requests.push({
-      method,
-      url: url.toString(),
-      pathname: url.pathname,
-      body,
-      rawBody,
-      authorization,
-    });
+    const headers = new Headers(init?.headers);
+    const cookie = headers.get("Cookie");
+    const csrf = headers.get("X-CSRF-Token");
+    const rawBody = typeof init?.body === "string" ? init.body : "";
+    const body = rawBody.length > 0 ? JSON.parse(rawBody) as Record<string, unknown> : undefined;
+    this.requests.push({ method, pathname: url.pathname, body, cookie, csrf });
     this.#options.onRequest?.(this.requests[this.requests.length - 1]);
 
-    if (url.pathname === "/mcp" && method === "GET") {
-      return new Response(null, { status: 405, headers: { Allow: "POST" } });
-    }
-    if (url.pathname === "/mcp" && method === "POST") {
-      return this.#handleMcp(body);
-    }
-    if (url.pathname === "/.well-known/oauth-protected-resource") {
-      return json(200, {
-        resource: FAKE_RESOURCE,
-        authorization_servers: [FAKE_ORIGIN],
-        scopes_supported: [...(this.#options.scopesSupported ?? ["control:read", "control:write", "control:security"])],
-        bearer_methods_supported: ["header"],
-        resource_name: "Unicas control plane",
-      });
-    }
-    if (url.pathname === "/.well-known/oauth-authorization-server") {
-      return json(200, {
-        issuer: FAKE_ORIGIN,
-        authorization_endpoint: `${FAKE_ORIGIN}/oauth/authorize`,
-        token_endpoint: `${FAKE_ORIGIN}/oauth/token`,
-        registration_endpoint: `${FAKE_ORIGIN}/oauth/register`,
-        revocation_endpoint: `${FAKE_ORIGIN}/oauth/token/revoke`,
-        scopes_supported: ["control:read", "control:write", "control:security"],
-        response_types_supported: ["code"],
-        grant_types_supported: ["authorization_code", "refresh_token"],
-        token_endpoint_auth_methods_supported: ["none"],
-        code_challenge_methods_supported: ["S256"],
-      });
-    }
-    if (url.pathname === "/oauth/register" && method === "POST") {
-      const metadata = (body ?? {}) as Record<string, unknown>;
-      return json(201, {
-        client_id: "cli-client-1",
-        client_id_issued_at: 1_700_000_000,
-        client_secret_expires_at: 0,
-        token_endpoint_auth_method: "none",
-        redirect_uris: metadata.redirect_uris ?? [],
-        grant_types: metadata.grant_types ?? [],
-        response_types: metadata.response_types ?? [],
-        client_name: metadata.client_name ?? "Unicas CLI",
-      });
-    }
-    if (url.pathname === "/oauth/token" && method === "POST") {
-      const form = new URLSearchParams(String(init?.body ?? ""));
-      const grantType = form.get("grant_type");
-      return json(200, {
-        access_token: `access-${Date.now()}-${grantType}`,
-        token_type: "Bearer",
-        expires_in: 900,
-        refresh_token: `refresh-${Date.now()}`,
-        scope: form.get("scope") ?? "control:read control:write control:security",
-      });
-    }
-    if (url.pathname === "/oauth/token/revoke" && method === "POST") {
-      return new Response(null, { status: 200 });
-    }
-    // Path-aware discovery probe: /mcp/.well-known/... does not exist.
-    if (url.pathname.endsWith("/.well-known/oauth-protected-resource")
-      || url.pathname.endsWith("/.well-known/oauth-authorization-server")) {
-      return new Response(null, { status: 404 });
-    }
-    return new Response("not found", { status: 404 });
-  }
-
-  #handleMcp(body: unknown): Response {
-    if (this.#authChallengesRemaining > 0) {
-      this.#authChallengesRemaining -= 1;
-      return new Response(JSON.stringify({ error: "invalid_token" }), {
-        status: 401,
-        headers: {
-          "WWW-Authenticate": `Bearer resource_metadata="${FAKE_ORIGIN}/.well-known/oauth-protected-resource", error="invalid_token"`,
+    if (url.pathname === "/admin/auth/exchange" && method === "POST") {
+      if (this.#options.expectedIdToken !== undefined && body?.idToken !== this.#options.expectedIdToken) {
+        return json({ error: "ADMIN_AUTH_REQUIRED", message: "id_token verification failed" }, 401);
+      }
+      this.sessions.add("cli-session-1");
+      return Response.json(
+        { csrfToken: "cli-csrf-1" },
+        {
+          status: 200,
+          headers: {
+            "Cache-Control": "no-store",
+            "Set-Cookie": "cas_admin_session=cli-session-1; Path=/; HttpOnly",
+          },
         },
+      );
+    }
+    if (url.pathname === "/admin/auth/logout" && method === "POST") {
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === "/admin/issuer/possession-challenge" && method === "POST") {
+      return json({ nonce: "challenge-nonce-1", expiresAt: 1_800_000_000 });
+    }
+
+    if (cookie === null || !this.sessions.has(cookie.replace("cas_admin_session=", ""))) {
+      return json({ error: "ADMIN_AUTH_REQUIRED", message: "session required" }, 401);
+    }
+    const mutating = method !== "GET" && method !== "HEAD";
+    if (mutating && csrf !== "cli-csrf-1") {
+      return json({ error: "CSRF_REJECTED" }, 403);
+    }
+
+    // me
+    if (url.pathname === casAdminRoutes.me()) {
+      return json({
+        identity: { identityIssuer: "https://accounts.google.com", subject: "sub-1", displayName: "Alice", emailForDisplay: "alice@example.com" },
+        memberships: [{ stackId: "cas_stack_a", identityIssuer: "https://accounts.google.com", subject: "sub-1", displayName: "Alice", emailForDisplay: "alice@example.com" }],
       });
     }
-    const message = (body ?? {}) as Record<string, unknown>;
-    if (message.method === "initialize") {
-      const params = (message.params ?? {}) as { protocolVersion?: string };
-      // A compliant server negotiates to a version the client supports; the
-      // real agents-based server does the same for older SDK clients.
-      const protocolVersion = params.protocolVersion ?? "2025-11-25";
-      return jsonRpc(message, {
-        protocolVersion,
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "fake-control-plane", version: "1.0.0" },
-      });
+    // stacks
+    if (url.pathname === casAdminRoutes.stacks() && method === "GET") {
+      return json({ items: [...this.stacks.values()], nextCursor: null });
     }
-    if (message.method === "tools/list") {
-      return jsonRpc(message, {
-        tools: [
-          { name: "whoami", description: "Current Unicas operator", inputSchema: { type: "object", properties: {} } },
-          { name: "list_stacks", description: "List Unicas stacks", inputSchema: { type: "object", properties: {} } },
-        ],
-      });
-    }
-    if (message.method === "tools/call") {
-      const params = (message.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
-      const name = params.name ?? "";
-      const toolResult = this.#options.toolResults?.[name] ?? {
-        structuredContent: { ok: true, name, arguments: params.arguments ?? {} },
+    if (url.pathname === casAdminRoutes.stacks() && method === "POST") {
+      const stack: FakeStack = {
+        stackId: "cas_stack_new",
+        displayName: String(body?.displayName ?? ""),
+        description: "",
+        status: "active",
+        createdAt: 2,
+        revision: 1,
       };
-      return jsonRpc(message, {
-        content: [{ type: "text", text: JSON.stringify(toolResult.structuredContent) }],
-        structuredContent: toolResult.structuredContent,
-        isError: toolResult.isError === true,
+      this.stacks.set(stack.stackId, stack);
+      return jsonWithEtag(stack);
+    }
+    const stackMatch = /^\/admin\/stacks\/([^/]+)$/.exec(url.pathname);
+    if (stackMatch) {
+      const stackId = decodeURIComponent(stackMatch[1]!);
+      const stack = this.stacks.get(stackId);
+      if (method === "GET") {
+        return stack === undefined ? json({ error: "NOT_FOUND" }, 404) : jsonWithEtag(stack);
+      }
+      if (method === "PATCH" && stack !== undefined) {
+        if (headers.get("If-Match") !== `"rev-${stack.revision}"`) return json({ error: "REVISION_MISMATCH" }, 412);
+        stack.revision += 1;
+        if (body?.displayName !== undefined) stack.displayName = String(body.displayName);
+        if (body?.description !== undefined) stack.description = String(body.description);
+        return jsonWithEtag(stack);
+      }
+      return json({ error: "NOT_FOUND" }, 404);
+    }
+    // members
+    if (url.pathname === casAdminRoutes.members({ stackId: "cas_stack_a" }) && method === "GET") {
+      const rows = this.members.get("cas_stack_a") ?? [];
+      return json({ items: rows.map((row) => ({ stackId: "cas_stack_a", ...row, displayName: null, emailForDisplay: null })), nextCursor: null });
+    }
+    if (url.pathname === casAdminRoutes.members({ stackId: "cas_stack_a" }) && method === "DELETE") {
+      return json({ ok: true });
+    }
+    if (url.pathname === casAdminRoutes.memberInvitations({ stackId: "cas_stack_a" }) && method === "POST") {
+      return json({
+        invitation: { invitationId: "inv-1", stackId: "cas_stack_a", status: "pending", emailConstraint: body?.emailConstraint ?? null, expiresAt: 1_800_000_000, createdAt: 1, revision: 1 },
+        acceptUrl: `${FAKE_ORIGIN}/admin/invitations/inv-1/accept`,
       });
     }
-    return jsonRpc(message, {});
+    // issuer
+    if (url.pathname === casAdminRoutes.issuer({ stackId: "cas_stack_a" }) && method === "GET") {
+      const record = this.issuer.get("cas_stack_a");
+      return record === undefined
+        ? json({ error: "NOT_FOUND" }, 404)
+        : jsonWithEtag({ stackId: "cas_stack_a", ...record });
+    }
+    if (url.pathname === casAdminRoutes.issuer({ stackId: "cas_stack_a" }) && method === "PUT") {
+      const record = { issuer: String(body?.issuer ?? ""), audience: String(body?.audience ?? ""), revision: 1 };
+      this.issuer.set("cas_stack_a", record);
+      return jsonWithEtag({ stackId: "cas_stack_a", ...record });
+    }
+    // keys
+    if (url.pathname === casAdminRoutes.issuerKeys({ stackId: "cas_stack_a" }) && method === "GET") {
+      return json({ keys: this.keys.get("cas_stack_a") ?? [] });
+    }
+    if (url.pathname === casAdminRoutes.issuerKeys({ stackId: "cas_stack_a" }) && method === "POST") {
+      const key: FakeKey = {
+        stackId: "cas_stack_a",
+        kid: String(body?.kid ?? ""),
+        algorithm: String(body?.algorithm ?? ""),
+        publicJwk: (body?.publicJwk ?? {}) as Record<string, unknown>,
+        state: "active",
+        revision: 1,
+      };
+      (this.keys.get("cas_stack_a") ?? this.keys.set("cas_stack_a", []).get("cas_stack_a")!).push(key);
+      return jsonWithEtag(key);
+    }
+    const keyMatch = /^\/admin\/stacks\/cas_stack_a\/issuer\/keys\/([^/]+)$/.exec(url.pathname);
+    if (keyMatch && method === "DELETE") {
+      const kid = decodeURIComponent(keyMatch[1]!);
+      const rows = this.keys.get("cas_stack_a") ?? [];
+      const key = rows.find((entry) => entry.kid === kid);
+      if (!key) return json({ error: "NOT_FOUND" }, 404);
+      key.state = body?.toState === "revoked" ? "revoked" : "retiring";
+      key.revision += 1;
+      return jsonWithEtag(key);
+    }
+    // ref-domains + audit
+    if (url.pathname === casAdminRoutes.refDomains({ stackId: "cas_stack_a" })) {
+      return json({ domains: [{ stackId: "cas_stack_a", refDomain: "doc", revision: 1 }] });
+    }
+    if (url.pathname === casAdminRoutes.controlAuditEvents({ stackId: "cas_stack_a" })) {
+      return json({ items: [], nextCursor: null });
+    }
+    if (url.pathname === casAdminRoutes.rootDomainRefs({ stackId: "cas_stack_a", refDomain: "doc" })) {
+      return json({ revision: 1, refs: [], nextCursor: null });
+    }
+    if (url.pathname === casAdminRoutes.rootDomainEvents({ stackId: "cas_stack_a", refDomain: "doc" })) {
+      return json({ events: [], latestRevision: 1, nextAfter: 1 });
+    }
+    return json({ error: "NOT_FOUND" }, 404);
   }
 }
 
-function jsonRpc(request: Record<string, unknown>, result: unknown): Response {
-  return json(200, {
-    jsonrpc: "2.0",
-    id: request.id ?? null,
-    result,
-  });
+export function sessionCookie(): string {
+  return "cas_admin_session=session-1";
 }
 
-function json(status: number, value: unknown): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+function json(value: unknown, status: number): Response {
+  return Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return undefined;
+function jsonWithEtag(value: unknown): Response {
+  const headers: Record<string, string> = { "Cache-Control": "no-store" };
+  if (typeof value === "object" && value !== null && "revision" in value) {
+    headers["ETag"] = `"rev-${(value as { revision: unknown }).revision}"`;
   }
-}
-
-function extractHeader(headers: HeadersInit | undefined, name: string): string | null {
-  if (!headers) return null;
-  const normalized = new Headers(headers);
-  return normalized.get(name);
+  return Response.json(value, { status: 200, headers });
 }

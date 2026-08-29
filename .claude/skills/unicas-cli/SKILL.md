@@ -34,11 +34,10 @@ deployment itself.
 
 ## How the CLI works
 
-- One-time interactive login: `unicas login` opens a browser (Google sign-in +
-  UniCAS consent), performs RFC 9728/8414 discovery, dynamic client
-  registration, and PKCE, then persists the session to `~/.unicas/token.json`
-  (0600). Access tokens live 15 minutes; refresh tokens rotate and are renewed
-  automatically on `401`.
+- One-time interactive login: `unicas login` opens a browser (Google sign-in),
+  performs its own Google OIDC dance (S256 PKCE), then exchanges the verified
+  id_token with the control-plane BFF (`/admin/auth/exchange`) for a session
+  cookie + CSRF token, persisted to `~/.unicas/session.json` (0600).
 - Every command and `unicas mcp` reuse the persisted session. No API keys.
 - All commands print JSON on stdout; diagnostics go to stderr.
 - Exit codes: `0` success, `1` error (including remote tool errors), `2` not
@@ -49,10 +48,10 @@ deployment itself.
 ```powershell
 pnpm --filter @unicas/admin-cli build
 pnpm install --global ./unicas-packages/admin-cli   # pnpm 10+: pnpm link --global is removed
-unicas login                                  # browser OAuth + consent
+unicas login                                  # browser Google sign-in + session exchange
 ```
 
-Check state without network: `unicas status` (logged in? scopes? expiry?).
+Check state without network: `unicas status` (logged in? identity?).
 If a command reports "Not logged in. Run `unicas login` first", run
 `unicas login` before retrying.
 
@@ -91,7 +90,7 @@ unicas keys add <stackId> <kid> <ES256|RS256|EdDSA> --public-jwk <json> --posses
 unicas keys transition <stackId> <kid> <retiring|revoked> [--etag E] [--confirm-kid K] [--confirm-state S]
 ```
 
-Session: `unicas login`, `unicas logout` (RFC 7009 revocation), `unicas status`.
+Session: `unicas login`, `unicas logout` (ends the BFF session), `unicas status`.
 MCP: `unicas mcp` (stdio server).
 
 ## Guardrails an agent must respect

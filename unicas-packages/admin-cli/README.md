@@ -1,18 +1,19 @@
 # @unicas/admin-cli
 
-Unicas control-plane management CLI. Authenticates against the OAuth-protected
-control-plane MCP endpoint with a real browser flow (RFC 9728 discovery, RFC
-7591 dynamic client registration, RFC 7636 PKCE, rotating refresh tokens, RFC
-7009 revocation), persists the session locally, and exposes the same 18-tool
-contract as `@unicas/control-plane-mcp` as plain shell commands **and** as a
-stdio MCP server for clients whose MCP support cannot do OAuth (for example
-DeepSeek Harness).
+Unicas control-plane management CLI. Logs in by performing its own Google OIDC
+authorization-code flow (S256 PKCE) with a local callback, then exchanges the
+verified id_token with the control-plane BFF (`/admin/auth/exchange`) for a
+session cookie + CSRF token, persisted locally. Commands call the typed
+`@unicas/admin-client` over the `/admin` HTTP API; `unicas mcp` exposes the
+same 18-tool contract as `@unicas/control-plane-mcp` as a stdio MCP server
+backed by that client (for clients whose MCP support cannot do OAuth, for
+example DeepSeek Harness).
 
 ```
-https://unicas.shazhou.work/mcp   <- control-plane MCP (OAuth protected)
+https://unicas.shazhou.work/admin  <- /admin control-plane API (BFF session)
         ^
-        | Streamable HTTP + Unicas bearer token (refreshed automatically)
-unicas CLI  <- does the OAuth dance itself, persists ~/.unicas/token.json
+        | session cookie + CSRF (via @unicas/admin-client)
+unicas CLI  <- Google OIDC dance -> /admin/auth/exchange, persists ~/.unicas/session.json
         |
         +-- plain commands:   unicas whoami / unicas stacks list ...
         `-- stdio MCP server: unicas mcp   (DSH: command "unicas", args ["mcp"])
@@ -38,22 +39,20 @@ This produces `dist/cli.js` (the `unicas` bin target).
 pnpm --filter @unicas/admin-cli unicas login
 ```
 
-`login` runs the full OAuth authorization-code flow with S256 PKCE:
+`login` performs a Google OIDC authorization-code flow with S256 PKCE, then
+exchanges the verified id_token for a `/admin` BFF session:
 
-1. RFC 9728 protected-resource discovery + RFC 8414 authorization-server
-   discovery against `https://unicas.shazhou.work/mcp`.
-2. Dynamic client registration (public client, `token_endpoint_auth_method:
-   none`); every login registers a fresh client bound to the ephemeral
-   `127.0.0.1` callback port.
-3. Opens the browser at the Unicas authorize endpoint (Google sign-in +
-   consent page), receives the callback on the local loopback server, validates
-   `state`, and exchanges the code.
-4. Persists client registration, tokens, and discovery state to
-   `~/.unicas/token.json` (created `0600`, atomic writes).
-
-By default all three scopes are requested:
-`control:read control:write control:security`. Narrow with
-`--scopes control:read,control:write`.
+1. Google OIDC discovery against the configured issuer (default
+   `accounts.google.com`) with the CLI's registered Google OAuth client
+   (`UNICAS_GOOGLE_CLIENT_ID`).
+2. Opens the browser at Google's authorize endpoint, receives the callback on
+   the local `127.0.0.1` loopback server, validates `state`, and exchanges the
+   code for an id_token (nonce verified).
+3. POSTs `{ idToken, nonce }` to `${UNICAS_ADMIN_URL}/admin/auth/exchange`;
+   the BFF verifies the token + email allowlist and returns a session cookie
+   and CSRF token.
+4. Persists the session to `~/.unicas/session.json` (created `0600`, atomic
+   writes).
 
 ## Commands
 
@@ -140,19 +139,21 @@ Alternatively run any command in-process:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `UNICAS_SERVER_URL` | `https://unicas.shazhou.work/mcp` | MCP resource URL |
-| `UNICAS_CONFIG_DIR` | `~/.unicas` | Directory holding `token.json` |
+| `UNICAS_ADMIN_URL` | `https://unicas.shazhou.work` | `/admin` API origin |
+| `UNICAS_GOOGLE_CLIENT_ID` | — | Google OAuth client id for `unicas login` |
+| `UNICAS_GOOGLE_CLIENT_SECRET` | — | Optional confidential client secret |
+| `UNICAS_CONFIG_DIR` | `~/.unicas` | Directory holding `session.json` |
 
 ## Security notes
 
-- Refresh tokens are stored locally with `0600` permissions; the directory is
-  created on demand.
-- Access tokens live 15 minutes and rotate refresh tokens live 8 hours; the CLI
-  refreshes automatically on `401`.
-- `unicas logout` revokes the refresh token at the discovered
-  `revocation_endpoint` (RFC 7009) and always clears the local session.
-- Token refresh and revocation use the stored dynamic client registration; a
-  revoked grant or expired registration fails closed with a re-login prompt.
+- The session cookie is stored locally with `0600` permissions; the directory
+  is created on demand.
+- No long-lived bearer tokens are stored: the CLI holds only the BFF session
+  cookie (server-side session, TTL enforced by the BFF) plus the CSRF token.
+- `unicas logout` ends the BFF session server-side (`POST /admin/auth/logout`)
+  and always clears the local session.
+- The id_token is exchanged once and never persisted; the session fails closed
+  with a re-login prompt when the BFF rejects the cookie.
 
 ## Tests
 
@@ -161,8 +162,7 @@ pnpm --filter @unicas/admin-cli test
 pnpm --filter @unicas/admin-cli typecheck
 ```
 
-Tests run against an in-memory fake of the control-plane edge (discovery, DCR,
-token endpoint, revocation, stateless MCP server) — no network, no real OAuth.
-A live `unicas login` + `unicas whoami` against production is a manual
-verification step because it requires a real browser Google sign-in and Unicas
-consent.
+Tests run against an in-memory fake of the `/admin` BFF API plus a mock
+Google OIDC provider — no network, no real OAuth. A live `unicas login` +
+`unicas whoami` against production is a manual verification step because it
+requires a real browser Google sign-in.

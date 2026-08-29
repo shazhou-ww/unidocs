@@ -124,7 +124,19 @@ async function createBff(
     },
     { fetchImpl: providerFetch },
   );
-  return createAdminBff({ config, db, oidc, auditReader });
+  const exchangeOidc = config.exchangeClientId === undefined
+    ? undefined
+    : new OidcClient(
+      {
+        issuer: ISSUER,
+        discoveryUrl: DISCOVERY_URL,
+        clientId: config.exchangeClientId,
+        clientSecret: "",
+        redirectUri: "",
+      },
+      { fetchImpl: providerFetch },
+    );
+  return createAdminBff({ config, db, oidc, exchangeOidc, auditReader });
 }
 
 function cookieFrom(response: Response): string | null {
@@ -240,6 +252,51 @@ describe("cas-admin-webui BFF", () => {
     expect(html).toContain("Sign in");
     expect(html).toContain("/admin/auth/oidc?returnTo=%2Fadmin%2F");
     expect(html).toContain("Continue with Google");
+  });
+
+  test("auth exchange issues a session from a verified id_token", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider, undefined, { exchangeClientId: "exchange-client" });
+
+    const nonce = "cli-nonce-1";
+    provider.pendingClaims = {
+      iss: ISSUER,
+      sub: "cli-user-123",
+      aud: "exchange-client",
+      nonce,
+      email: "alice@example.com",
+      email_verified: true,
+      name: "Alice",
+    };
+    const idToken = await provider.issueIdToken(provider.pendingClaims);
+
+    const exchange = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken, nonce }),
+    }));
+    expect(exchange.status).toBe(200);
+    const cookie = cookieFrom(exchange)!;
+    expect(cookie).toContain("cas_admin_session=");
+    const body = await exchange.json() as { csrfToken?: string };
+    expect(body.csrfToken).toBeTruthy();
+
+    // The issued session works for API reads and carries the verified identity.
+    const me = await authRequest(bff, "/admin/me", cookie);
+    expect(me.status).toBe(200);
+    const meBody = await me.json() as { identity?: { subject?: string } };
+    expect(meBody.identity?.subject).toBe("cli-user-123");
+  });
+
+  test("auth exchange rejects an unverifiable id_token", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider, undefined, { exchangeClientId: "exchange-client" });
+    const response = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken: "garbage", nonce: "n" }),
+    }));
+    expect(response.status).toBe(401);
   });
 
   test("full OIDC login flow reaches me() with the verified identity", async () => {

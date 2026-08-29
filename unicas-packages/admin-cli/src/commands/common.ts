@@ -1,16 +1,16 @@
 /**
- * Shared command plumbing: context, remote-client lifecycle, ETag resolution,
+ * Shared command plumbing: context, admin-client lifecycle, ETag resolution,
  * idempotency keys, and confirmation handling.
  */
 
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
+import { createAdminClient } from "@unicas/admin-client";
+import type { AdminClient } from "@unicas/admin-client";
 import { loadConfig } from "../config.js";
 import type { CliConfig } from "../config.js";
 import { CliError } from "../errors.js";
 import { generateIdempotencyKey } from "../mcp/catalog.js";
-import { UnicasRemoteClient } from "../remote/client.js";
-import type { ToolCallResult } from "../remote/client.js";
 import { TokenStore } from "../store.js";
 import type { PersistedSession } from "../store.js";
 
@@ -22,7 +22,7 @@ export interface CliContext {
 
 export function createContext(env: NodeJS.ProcessEnv = process.env, fetchImpl?: typeof fetch): CliContext {
   const config = loadConfig(env);
-  return { config, store: new TokenStore({ path: config.tokenPath }), fetchImpl };
+  return { config, store: new TokenStore({ path: config.sessionPath }), fetchImpl };
 }
 
 export async function loadSession(ctx: CliContext): Promise<PersistedSession> {
@@ -41,77 +41,59 @@ export function requireSubcommand(
 }
 
 export function requireLoggedIn(session: PersistedSession): void {
-  if (!session.tokens?.access_token) {
+  if (session.cookie.length === 0 || session.csrfToken.length === 0) {
     throw new CliError("Not logged in. Run `unicas login` first.", 2);
   }
 }
 
-export async function withRemote<T>(
+/**
+ * Builds the admin client from the persisted session and runs `fn` with it.
+ * The client re-fetches the session lazily, so a 401 mid-command surfaces as
+ * `AdminClientError` and the caller decides whether to prompt for login.
+ */
+export async function withAdminClient<T>(
   ctx: CliContext,
-  fn: (remote: UnicasRemoteClient) => Promise<T>,
+  fn: (admin: AdminClient) => Promise<T>,
 ): Promise<T> {
-  const remote = new UnicasRemoteClient({
-    serverUrl: ctx.config.serverUrl,
-    store: ctx.store,
-    fetchImpl: ctx.fetchImpl,
+  const session = await ctx.store.load();
+  requireLoggedIn(session);
+  const admin = createAdminClient({
+    baseUrl: ctx.config.adminOrigin,
+    getSession: async () => ({ cookie: session.cookie, csrfToken: session.csrfToken }),
+    fetcher: ctx.fetchImpl,
   });
-  try {
-    return await fn(remote);
-  } finally {
-    await remote.close();
-  }
-}
-
-export function isToolError(result: ToolCallResult): boolean {
-  return result.isError;
-}
-
-/** Throws with the remote tool error text when the tool reported an error. */
-export function requireToolSuccess(result: ToolCallResult, operation: string): void {
-  if (!result.isError) return;
-  const text = result.text ?? JSON.stringify(result.structuredContent);
-  throw new CliError(`${operation} failed: ${text}`, 1);
+  return fn(admin);
 }
 
 // ---------------------------------------------------------------------------
 // ETag resolution
 // ---------------------------------------------------------------------------
 
-export async function resolveStackEtag(remote: UnicasRemoteClient, stackId: string): Promise<string> {
-  const result = await remote.callTool("get_stack", { stackId });
-  requireToolSuccess(result, "get_stack");
-  return requireEtag(result, `stack '${stackId}'`);
+export async function resolveStackEtag(admin: AdminClient, stackId: string): Promise<string> {
+  const { etag } = await admin.getStack({ stackId });
+  if (etag.length === 0) {
+    throw new CliError(`could not resolve the current ETag for stack '${stackId}'`, 1);
+  }
+  return etag;
 }
 
-export async function resolveIssuerEtag(remote: UnicasRemoteClient, stackId: string): Promise<string> {
-  const result = await remote.callTool("get_issuer", { stackId });
-  requireToolSuccess(result, "get_issuer");
-  return requireEtag(result, `issuer of stack '${stackId}'`);
+export async function resolveIssuerEtag(admin: AdminClient, stackId: string): Promise<string> {
+  const { etag } = await admin.getIssuer({ stackId });
+  if (etag.length === 0) {
+    throw new CliError(`could not resolve the current ETag for issuer of stack '${stackId}'`, 1);
+  }
+  return etag;
 }
 
 export async function resolveIssuerKeyEtag(
-  remote: UnicasRemoteClient,
+  admin: AdminClient,
   stackId: string,
   kid: string,
 ): Promise<string> {
-  const result = await remote.callTool("list_issuer_keys", { stackId });
-  requireToolSuccess(result, "list_issuer_keys");
-  const keys = Array.isArray(result.structuredContent.keys) ? result.structuredContent.keys : [];
-  const key = keys.find((entry) => typeof entry === "object" && entry !== null
-    && (entry as Record<string, unknown>).kid === kid) as Record<string, unknown> | undefined;
+  const { keys } = await admin.listIssuerKeys({ stackId });
+  const key = keys.find((entry) => entry.kid === kid);
   if (!key) throw new CliError(`issuer key '${kid}' not found on stack '${stackId}'`, 1);
-  if (typeof key.revision !== "number") {
-    throw new CliError(`could not resolve a revision for issuer key '${kid}'`, 1);
-  }
   return `"${key.revision}"`;
-}
-
-function requireEtag(result: ToolCallResult, resource: string): string {
-  const etag = result.structuredContent.etag;
-  if (typeof etag !== "string" || etag.length === 0) {
-    throw new CliError(`could not resolve the current ETag for ${resource}`, 1);
-  }
-  return etag;
 }
 
 // ---------------------------------------------------------------------------

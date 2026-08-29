@@ -1,25 +1,24 @@
-/** `unicas logout` — RFC 7009 revocation plus local session deletion. */
+/** `unicas logout` — end the BFF session server-side and clear the local session. */
 
 import { revokeAndClearSession } from "../oauth/logout.js";
 import type { CliContext } from "./common.js";
 
 export async function logoutCommand(ctx: CliContext): Promise<void> {
   const session = await ctx.store.load();
+  if (session.cookie.length === 0) {
+    process.stdout.write("Not logged in; nothing to clear.\n");
+    return;
+  }
   const result = await revokeAndClearSession({
-    serverUrl: ctx.config.serverUrl,
+    adminOrigin: ctx.config.adminOrigin,
     store: ctx.store,
     session,
     fetchImpl: ctx.fetchImpl,
   });
-
-  if (!result.hadTokens && !result.hadClientInformation) {
-    process.stdout.write("Not logged in; nothing to revoke.\n");
-    return;
-  }
   if (result.revoked) {
-    process.stdout.write("Revoked Unicas OAuth tokens and cleared the local session.\n");
+    process.stdout.write("Ended the Unicas admin session and cleared the local session.\n");
   } else if (result.revocationError) {
-    process.stderr.write(`warning: revocation failed (${result.revocationError}); local session cleared.\n`);
+    process.stderr.write(`warning: server-side logout failed (${result.revocationError}); local session cleared.\n`);
     process.stdout.write("Cleared the local session.\n");
   } else {
     process.stdout.write("Cleared the local session.\n");

@@ -5,22 +5,17 @@ import type { CliContext } from "./common.js";
 import {
   confirmOrPrompt,
   idempotencyKeyFromFlag,
-  requireLoggedIn,
   requireSubcommand,
-  requireToolSuccess,
   resolveIssuerKeyEtag,
-  withRemote,
+  withAdminClient,
 } from "./common.js";
 import { printJson } from "../output.js";
-import type { CasStackIssuerKey } from "@unicas/admin-protocol";
 
 const KEY_ALGORITHMS = ["ES256", "RS256", "EdDSA"] as const;
 const KEY_STATES = ["retiring", "revoked"] as const;
 
 export async function keysCommand(ctx: CliContext, subcommand: string | undefined, argv: string[]): Promise<void> {
   requireSubcommand(subcommand, "usage: unicas keys list|challenge|add|transition", ["list", "challenge", "add", "transition"]);
-  const session = await ctx.store.load();
-  requireLoggedIn(session);
   switch (subcommand) {
     case "list":
       return keysList(ctx, argv);
@@ -39,10 +34,8 @@ async function keysList(ctx: CliContext, argv: string[]): Promise<void> {
   const { positionals } = parseArgs({ args: argv, options: {}, allowPositionals: true });
   const stackId = positionals[0];
   if (!stackId) throw new Error("usage: unicas keys list <stackId>");
-  await withRemote(ctx, async (remote) => {
-    const result = await remote.callTool("list_issuer_keys", { stackId });
-    requireToolSuccess(result, "list_issuer_keys");
-    printJson(result.structuredContent as unknown as { keys: readonly CasStackIssuerKey[] });
+  await withAdminClient(ctx, async (admin) => {
+    printJson(await admin.listIssuerKeys({ stackId }));
   });
 }
 
@@ -52,10 +45,8 @@ async function keysChallenge(ctx: CliContext, argv: string[]): Promise<void> {
   if (!stackId || !kid || !isAlgorithm(algorithm)) {
     throw new Error(`usage: unicas keys challenge <stackId> <kid> <${KEY_ALGORITHMS.join("|")}>`);
   }
-  await withRemote(ctx, async (remote) => {
-    const result = await remote.callTool("create_issuer_key_challenge", { stackId, kid, algorithm });
-    requireToolSuccess(result, "create_issuer_key_challenge");
-    printJson(result.structuredContent as unknown as { kid: string; challenge: string });
+  await withAdminClient(ctx, async (admin) => {
+    printJson(await admin.createIssuerKeyChallenge({ stackId, kid, algorithm }));
   });
 }
 
@@ -75,17 +66,13 @@ async function keysAdd(ctx: CliContext, argv: string[]): Promise<void> {
   if (!stackId || !kid || !isAlgorithm(algorithm) || !publicJwk || !possessionProof) {
     throw new Error("usage: unicas keys add <stackId> <kid> <ES256|RS256|EdDSA> --public-jwk <json> --possession-proof <jws> [--idempotency-key K]");
   }
-  await withRemote(ctx, async (remote) => {
-    const result = await remote.callTool("add_issuer_key", {
-      stackId,
-      kid,
-      algorithm,
-      publicJwk,
-      possessionProof,
-      idempotencyKey: idempotencyKeyFromFlag(values["idempotency-key"]),
-    });
-    requireToolSuccess(result, "add_issuer_key");
-    printJson(result.structuredContent as unknown as CasStackIssuerKey);
+  await withAdminClient(ctx, async (admin) => {
+    const { value } = await admin.createIssuerKey(
+      { stackId },
+      { kid, algorithm, publicJwk, possessionProof },
+      { idempotencyKey: idempotencyKeyFromFlag(values["idempotency-key"]) },
+    );
+    printJson(value);
   });
 }
 
@@ -105,18 +92,10 @@ async function keysTransition(ctx: CliContext, argv: string[]): Promise<void> {
   }
   const confirmKid = await confirmOrPrompt({ flag: values["confirm-kid"], expected: kid, label: "confirm-kid" });
   const confirmState = await confirmOrPrompt({ flag: values["confirm-state"], expected: state, label: "confirm-state" });
-  await withRemote(ctx, async (remote) => {
-    const etag = values.etag ?? (await resolveIssuerKeyEtag(remote, stackId, kid));
-    const result = await remote.callTool("transition_issuer_key", {
-      stackId,
-      kid,
-      state,
-      etag,
-      confirmKid,
-      confirmState,
-    });
-    requireToolSuccess(result, "transition_issuer_key");
-    printJson(result.structuredContent as unknown as CasStackIssuerKey);
+  await withAdminClient(ctx, async (admin) => {
+    const etag = values.etag ?? (await resolveIssuerKeyEtag(admin, stackId, kid));
+    const { value } = await admin.deleteIssuerKey({ stackId, kid }, state, etag);
+    printJson({ ...value, confirmKid, confirmState });
   });
 }
 
@@ -133,10 +112,10 @@ function parseJsonArg(value: string | undefined, flag: string): Record<string, u
   try {
     const parsed = JSON.parse(value) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      throw new Error("not a JSON object");
+      throw new Error(`${flag} must be a JSON object`);
     }
     return parsed as Record<string, unknown>;
-  } catch {
-    throw new Error(`${flag} must be a JSON object`);
+  } catch (error) {
+    throw new Error(`${flag} must be a JSON object: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

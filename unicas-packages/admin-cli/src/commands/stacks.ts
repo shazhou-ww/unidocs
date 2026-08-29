@@ -4,19 +4,14 @@ import { parseArgs } from "node:util";
 import type { CliContext } from "./common.js";
 import {
   idempotencyKeyFromFlag,
-  requireLoggedIn,
   requireSubcommand,
-  requireToolSuccess,
   resolveStackEtag,
-  withRemote,
+  withAdminClient,
 } from "./common.js";
 import { printJson } from "../output.js";
-import type { CasAdminPage, CasStack } from "@unicas/admin-protocol";
 
 export async function stacksCommand(ctx: CliContext, subcommand: string | undefined, argv: string[]): Promise<void> {
   requireSubcommand(subcommand, "usage: unicas stacks list|get|create|update", ["list", "get", "create", "update"]);
-  const session = await ctx.store.load();
-  requireLoggedIn(session);
   switch (subcommand) {
     case "list":
       return stacksList(ctx, argv);
@@ -37,13 +32,12 @@ async function stacksList(ctx: CliContext, argv: string[]): Promise<void> {
     options: { limit: { type: "string" }, cursor: { type: "string" } },
     allowPositionals: false,
   });
-  await withRemote(ctx, async (remote) => {
-    const result = await remote.callTool("list_stacks", {
+  await withAdminClient(ctx, async (admin) => {
+    const page = await admin.listStacks({
       ...(values.limit !== undefined ? { limit: parseBoundedLimit(values.limit) } : {}),
       ...(values.cursor !== undefined ? { cursor: values.cursor } : {}),
     });
-    requireToolSuccess(result, "list_stacks");
-    printJson(result.structuredContent as unknown as CasAdminPage<CasStack>);
+    printJson(page);
   });
 }
 
@@ -51,10 +45,8 @@ async function stacksGet(ctx: CliContext, argv: string[]): Promise<void> {
   const { positionals } = parseArgs({ args: argv, options: {}, allowPositionals: true });
   const stackId = positionals[0];
   if (!stackId) throw new Error("usage: unicas stacks get <stackId>");
-  await withRemote(ctx, async (remote) => {
-    const result = await remote.callTool("get_stack", { stackId });
-    requireToolSuccess(result, "get_stack");
-    printJson(result.structuredContent as unknown as CasStack);
+  await withAdminClient(ctx, async (admin) => {
+    printJson((await admin.getStack({ stackId })).value);
   });
 }
 
@@ -66,13 +58,12 @@ async function stacksCreate(ctx: CliContext, argv: string[]): Promise<void> {
   });
   const displayName = positionals[0];
   if (!displayName) throw new Error("usage: unicas stacks create <displayName> [--idempotency-key K]");
-  await withRemote(ctx, async (remote) => {
-    const result = await remote.callTool("create_stack", {
-      displayName,
-      idempotencyKey: idempotencyKeyFromFlag(values["idempotency-key"]),
-    });
-    requireToolSuccess(result, "create_stack");
-    printJson(result.structuredContent as unknown as CasStack);
+  await withAdminClient(ctx, async (admin) => {
+    const stack = await admin.createStack(
+      { displayName },
+      { idempotencyKey: idempotencyKeyFromFlag(values["idempotency-key"]) },
+    );
+    printJson(stack);
   });
 }
 
@@ -89,16 +80,17 @@ async function stacksUpdate(ctx: CliContext, argv: string[]): Promise<void> {
   if (!stackId || (!displayName && values.description === undefined)) {
     throw new Error("usage: unicas stacks update <stackId> [displayName] [--description D] [--etag E]");
   }
-  await withRemote(ctx, async (remote) => {
-    const etag = values.etag ?? (await resolveStackEtag(remote, stackId));
-    const result = await remote.callTool("update_stack", {
-      stackId,
-      ...(displayName !== undefined ? { displayName } : {}),
-      ...(values.description !== undefined ? { description: values.description } : {}),
+  await withAdminClient(ctx, async (admin) => {
+    const etag = values.etag ?? (await resolveStackEtag(admin, stackId));
+    const { value } = await admin.patchStack(
+      { stackId },
+      {
+        ...(displayName !== undefined ? { displayName } : {}),
+        ...(values.description !== undefined ? { description: values.description } : {}),
+      },
       etag,
-    });
-    requireToolSuccess(result, "update_stack");
-    printJson(result.structuredContent as unknown as CasStack);
+    );
+    printJson(value);
   });
 }
 
