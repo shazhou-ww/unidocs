@@ -10,7 +10,7 @@
  * never race a GC deletion decision.
  */
 
-import { CanonicalNodeContentType } from "@unicas/server-common";
+import { CanonicalNodeContentType } from "@unicas/tenant-protocol";
 import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/workers-types";
 import { canonicalComposite } from "./do-names.js";
 import {

@@ -21,7 +21,7 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unicas/protocol-admin": "workspace:*",
+    "@unicas/admin-protocol": "workspace:*",
     "jose": "^6.2.10"
   },
   "devDependencies": {

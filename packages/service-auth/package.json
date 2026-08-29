@@ -35,6 +35,7 @@
     }
   },
   "dependencies": {
-    "jose": "^6.2.10"
+    "jose": "^6.2.10",
+    "@unicas/tenant-protocol": "workspace:*"
   }
 }

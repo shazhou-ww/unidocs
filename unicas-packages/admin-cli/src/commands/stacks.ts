@@ -11,6 +11,7 @@ import {
   withRemote,
 } from "./common.js";
 import { printJson } from "../output.js";
+import type { CasAdminPage, CasStack } from "@unicas/admin-protocol";
 
 export async function stacksCommand(ctx: CliContext, subcommand: string | undefined, argv: string[]): Promise<void> {
   requireSubcommand(subcommand, "usage: unicas stacks list|get|create|update", ["list", "get", "create", "update"]);
@@ -42,7 +43,7 @@ async function stacksList(ctx: CliContext, argv: string[]): Promise<void> {
       ...(values.cursor !== undefined ? { cursor: values.cursor } : {}),
     });
     requireToolSuccess(result, "list_stacks");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasAdminPage<CasStack>);
   });
 }
 
@@ -53,7 +54,7 @@ async function stacksGet(ctx: CliContext, argv: string[]): Promise<void> {
   await withRemote(ctx, async (remote) => {
     const result = await remote.callTool("get_stack", { stackId });
     requireToolSuccess(result, "get_stack");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasStack);
   });
 }
 
@@ -71,7 +72,7 @@ async function stacksCreate(ctx: CliContext, argv: string[]): Promise<void> {
       idempotencyKey: idempotencyKeyFromFlag(values["idempotency-key"]),
     });
     requireToolSuccess(result, "create_stack");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasStack);
   });
 }
 
@@ -97,7 +98,7 @@ async function stacksUpdate(ctx: CliContext, argv: string[]): Promise<void> {
       etag,
     });
     requireToolSuccess(result, "update_stack");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasStack);
   });
 }
 

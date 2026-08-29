@@ -3,7 +3,7 @@ import { Archive, KeyRound, Plus, Save } from "lucide-react";
 import type {
   CasStackIssuer,
   CasStackIssuerKey,
-} from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
 import { api, ifMatch } from "../api.js";
 import { Button, Card, EmptyState, ErrorState, LoadingState, Table } from "../components.js";
 import { formatErrorSafe } from "./view-helpers.js";

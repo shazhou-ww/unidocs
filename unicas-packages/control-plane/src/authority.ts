@@ -11,7 +11,7 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
-import type { CasIssuerKeyState } from "@unicas/protocol-admin";
+import type { CasIssuerKeyState } from "@unicas/admin-protocol";
 
 export interface RegisteredStackKey {
   readonly kid: string;

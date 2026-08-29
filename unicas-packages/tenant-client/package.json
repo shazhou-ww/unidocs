@@ -21,8 +21,8 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unicas/server-common": "workspace:*",
-    "@unicas/protocol": "workspace:*"
+    "@unicas/tenant-protocol": "workspace:*",
+    "@unicas/tenant-protocol": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

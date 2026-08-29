@@ -32,7 +32,7 @@ export function deploymentPlan({ env, skipSmoke } = {}) {
     commands.push(["pnpm", "--filter", unit.package, "exec", "wrangler", "deploy", ...envArgs]);
   }
   if (!skipSmoke) {
-    commands.push(["pnpm", "--filter", "@unicas/server-common", "build"]);
+    commands.push(["pnpm", "--filter", "@unicas/tenant-protocol", "build"]);
     commands.push(["pnpm", "--filter", "@unidocs/service-auth", "build"]);
     commands.push(["node", "stacks/unicas/deploy/smoke.mjs"]);
   }

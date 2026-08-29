@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@unicas/admin-protocol": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {

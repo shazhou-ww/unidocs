@@ -8,10 +8,7 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "@unicas/server-common";
-import { createSBlob, encodeSValue } from "@unidocs/svalue-codec";
-import { SValueContentType } from "@unidocs/protocol";
-import type { SValue } from "@unidocs/protocol";
+} from "@unicas/tenant-protocol";
 import { migrateStackTenantSchema } from "../src/schema.js";
 import { canonicalComposite, stackCanonicalNodeKey } from "../src/do-names.js";
 import { RootRefDomainDurableObject } from "../src/domain-do.js";
@@ -520,51 +517,6 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
       { ...store(), limits: { maxNodeRefs: 0 } },
       { hash: parentHash, leaseDurationMs: 60_000, body, declaredLength: canonical.length },
     )).rejects.toMatchObject({ status: 400, code: NodeOpErrorCodes.INVALID_REQUEST });
-  });
-
-  test("canonical lease validates SValue refs against encoded content", async () => {
-    await createStore();
-    const blobContent = "blob";
-    const blobHash = await digestOf(blobContent, "application/octet-stream");
-    await leaseNode(store(), {
-      hash: blobHash,
-      contentType: "application/octet-stream",
-      refs: [],
-      leaseDurationMs: 60_000,
-      content: new TextEncoder().encode(blobContent),
-    });
-    const value = { ops: [{ kind: "insertImage", blob: createSBlob(blobHash) }] };
-    const bytes = encodeSValue(value as SValue);
-    const header = encodeHeader(bytes.length, SValueContentType, 1);
-    const digest = await computeNodeDigest(header, SValueContentType, [hexToHash(blobHash)], bytes);
-    const hash = hashToHex(digest);
-    await expect(leaseNode(store(), {
-      hash,
-      contentType: SValueContentType,
-      refs: [blobHash],
-      leaseDurationMs: 60_000,
-      content: bytes,
-    })).resolves.toMatchObject({ hash, ready: true });
-
-    const otherContent = new TextEncoder().encode("other");
-    const otherHash = await digestOf("other", "application/octet-stream");
-    await leaseNode(store(), {
-      hash: otherHash,
-      contentType: "application/octet-stream",
-      refs: [],
-      leaseDurationMs: 60_000,
-      content: otherContent,
-    });
-    const wrongChildren = [hexToHash(otherHash)];
-    const wrongHeader = encodeHeader(bytes.length, SValueContentType, 1);
-    const mismatchedHash = hashToHex(await computeNodeDigest(wrongHeader, SValueContentType, wrongChildren, bytes));
-    await expect(leaseNode(store(), {
-      hash: mismatchedHash,
-      contentType: SValueContentType,
-      refs: [otherHash],
-      leaseDurationMs: 60_000,
-      content: bytes,
-    })).rejects.toMatchObject({ status: 400, code: NodeOpErrorCodes.INVALID_REQUEST });
   });
 
   test("bodyless lease extends a ready lease and 404s missing nodes", async () => {

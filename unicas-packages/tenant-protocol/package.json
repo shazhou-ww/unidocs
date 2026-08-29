@@ -1,7 +1,7 @@
 {
-  "name": "@unicas/server-common",
+  "name": "@unicas/tenant-protocol",
   "version": "0.1.0",
-  "description": "Cloud-neutral content-addressed storage kernel for UniDocs",
+  "description": "Tenant data-plane CAS contracts: HTTP types/routes, canonical node codec, validation limits, and the CAS capability claim vocabulary",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -33,5 +33,9 @@
         "import": "./dist/index.js"
       }
     }
+  },
+  "dependencies": {
+    "cborg": "^6.1.1",
+    "jose": "^6.2.10"
   }
 }

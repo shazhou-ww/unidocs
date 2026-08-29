@@ -19,7 +19,7 @@ import {
   jwtVerify,
 } from "jose";
 import type { JSONWebKeySet } from "jose";
-import type { CasRoute } from "@unicas/protocol";
+import type { CasRoute } from "@unicas/tenant-protocol";
 import type {
   ResolvedStackAuthority,
   StackAuthorityResolver,
@@ -32,7 +32,7 @@ import {
   casReadPermission,
   casWritePermission,
   validateRefDomainClaim,
-} from "@unidocs/service-auth";
+} from "@unicas/tenant-protocol";
 
 export interface StackAuthEvent {
   readonly kind: "authorized" | "rejected" | "registry_stale" | "fail_closed";

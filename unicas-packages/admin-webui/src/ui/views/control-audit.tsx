@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronsDown } from "lucide-react";
-import type { CasControlAuditEvent } from "@unicas/protocol-admin";
+import type { CasControlAuditEvent } from "@unicas/admin-protocol";
 import { api } from "../api.js";
 import { Button, Card, EmptyState, ErrorState, LoadingState, Table } from "../components.js";
 import { formatErrorSafe } from "./view-helpers.js";

@@ -88,10 +88,9 @@ async function bundleProbeWorker() {
     conditions: ["workerd", "worker", "browser"],
     alias: {
       "@unidocs/protocol": join(ROOT, "packages/protocol/src/index.ts"),
-      "@unicas/protocol": join(ROOT, "unicas-packages/protocol/src/index.ts"),
+      "@unicas/tenant-protocol": join(ROOT, "unicas-packages/tenant-protocol/src/index.ts"),
       "@unidocs/protocol-doc": join(ROOT, "packages/protocol-doc/src/index.ts"),
       "@unidocs/svalue-codec": join(ROOT, "packages/svalue-codec/src/index.ts"),
-      "@unicas/server-common": join(ROOT, "unicas-packages/server-common/src/index.ts"),
       "@unidocs/doctype-server-common": join(ROOT, "packages/doctype-server-common/src/index.ts"),
     },
     logOverride: { "empty-import-meta": "silent" },

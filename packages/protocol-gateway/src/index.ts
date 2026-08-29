@@ -4,7 +4,7 @@ import type {
   CasLeaseResult,
   CasNodeMetadata,
   CasUsage,
-} from "@unicas/protocol";
+} from "@unicas/tenant-protocol";
 import type {
   DocApplyRequest,
   DocApplyResponse,
@@ -370,7 +370,7 @@ function matchGatewayCasRoute(method: string, pathname: string): GatewayCasRoute
 /**
  * Gateway-owned CAS exposure allowlist. Operates on a matched tenant route —
  * the Gateway decides which CAS operations it exposes, and that decision is
- * not a CAS route property (the canonical `@unicas/protocol` matcher has
+ * not a CAS route property (the canonical `@unicas/tenant-protocol` matcher has
  * no exposure concept). Root Refs writes and all CAS audit operations are
  * excluded: `updateRootRefs`/`rootRefs` are private service operations, and
  * audit routes live under `/admin` which the tenant matcher never recognizes.

@@ -23,7 +23,7 @@
  * 或非本地)都允许,但**不是无条件信任**:发出任何真正的断言之前,先对
  * 对随机 tenant 的 CAS node 路径探测一次 —— 未配
  * CAS 的网关上 `isPublicCasRoute` 恒为 `false`,这条请求必然 404
- * (`unicas-packages/protocol/src/routes.ts`);任何其它状态码都说明这个网关其实
+ * (`unicas-packages/tenant-protocol/src/routes.ts`);任何其它状态码都说明这个网关其实
  * 配置了 CAS,`--no-cas` 用错了地方,脚本在跑任何断言之前就直接中止 ——
  * 这条探测让开关无法被用来伪造绿色,即使有人手工对着一个配了 CAS 的网关
  * 传 `--no-cas`。跑完后收尾文案是 `smoke passed (no-CAS deployment — ...)`,
@@ -50,7 +50,7 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../../../unicas-packages/server-common/dist/index.js";
+import { computeNodeDigest, encodeHeader, hashToHex } from "../../../unicas-packages/tenant-protocol/dist/index.js";
 import { readAzureDocTypes } from "../doc-types.mjs";
 
 const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..");
@@ -139,7 +139,7 @@ export function isLocalHost(gateway) {
 /**
  * `--no-cas` 的核心保护:不信任调用者说的"这次部署没配 CAS",自己对着
  * 真实网关发一次请求确认。未配 CAS 时 `isPublicCasRoute` 恒为 `false`
- * (`unicas-packages/protocol/src/routes.ts`),即 tenant CAS node POST
+ * (`unicas-packages/tenant-protocol/src/routes.ts`),即 tenant CAS node POST
  * 必然拿到 `{error:"Unknown CAS endpoint"}` 的 404 —— 这条路由本身不校验
  * hash 格式,占位符即可命中。任何其它状态码(包括这个网关把请求转发给了
  * 真实 CAS worker 之后对方返回的 4xx/5xx)都证明 CAS 其实配置了,直接中止,
@@ -154,7 +154,7 @@ export async function assertCasNotConfigured(gateway) {
     throw new Error(
       `--no-cas was passed but the gateway at ${gateway} answered the CAS probe with HTTP ${res.status} ` +
       "(expected 404, which is what an unconfigured gateway always returns for tenant CAS routes — see " +
-      "unicas-packages/protocol/src/routes.ts). This gateway appears to have CAS configured, so group 3 (docx " +
+      "unicas-packages/tenant-protocol/src/routes.ts). This gateway appears to have CAS configured, so group 3 (docx " +
       "image path through Cloudflare CAS) must run. Re-run without --no-cas.",
     );
   }

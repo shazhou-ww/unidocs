@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@unicas/tenant-client": "workspace:*",
-    "@unicas/protocol": "workspace:*",
+    "@unicas/tenant-protocol": "workspace:*",
     "@unidocs/protocol-gateway": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
     "@unidocs/service-auth": "workspace:*"

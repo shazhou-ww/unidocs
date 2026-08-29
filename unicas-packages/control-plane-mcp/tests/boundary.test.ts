@@ -13,7 +13,7 @@ describe("control-plane MCP package boundary", () => {
 
     expect(pkg.private).toBe(true);
     expect(CONTROL_PLANE_MCP_PATH).toBe("/mcp");
-    expect(pkg.dependencies).not.toHaveProperty("@unicas/server-common");
+    expect(pkg.dependencies).not.toHaveProperty("@unicas/tenant-protocol");
 
     const sourceDir = join(dirname(fileURLToPath(import.meta.url)), "../src");
     for (const file of ["auth.ts", "config.ts", "server.ts", "worker.ts"]) {

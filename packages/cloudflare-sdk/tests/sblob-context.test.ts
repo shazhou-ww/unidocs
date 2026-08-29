@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unicas/server-common";
+import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "@unicas/tenant-protocol";
 import { SValueContentType } from "@unidocs/protocol";
 import type { SBlobReadRange, SBlobSource } from "@unidocs/protocol";
 import { encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";

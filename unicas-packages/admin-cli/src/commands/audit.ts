@@ -5,6 +5,7 @@ import type { CliContext } from "./common.js";
 import { requireLoggedIn, requireSubcommand, requireToolSuccess, withRemote } from "./common.js";
 import { printJson } from "../output.js";
 import { parseBoundedLimit } from "./stacks.js";
+import type { CasAdminPage, CasControlAuditEvent, CasRootRefBalance, CasRootRefEvent } from "@unicas/admin-protocol";
 
 export async function auditCommand(ctx: CliContext, subcommand: string | undefined, argv: string[]): Promise<void> {
   requireSubcommand(
@@ -42,7 +43,7 @@ async function auditControl(ctx: CliContext, argv: string[]): Promise<void> {
       ...(values.after !== undefined ? { after: values.after } : {}),
     });
     requireToolSuccess(result, "list_control_audit_events");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasAdminPage<CasControlAuditEvent>);
   });
 }
 
@@ -65,7 +66,7 @@ async function auditRootDomainRefs(ctx: CliContext, argv: string[]): Promise<voi
       ...(values.cursor !== undefined ? { cursor: values.cursor } : {}),
     });
     requireToolSuccess(result, "list_root_domain_refs");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as { revision: number; refs: readonly CasRootRefBalance[]; nextCursor: string | null });
   });
 }
 
@@ -89,7 +90,7 @@ async function auditRootDomainEvents(ctx: CliContext, argv: string[]): Promise<v
       ...(values.limit !== undefined ? { limit: parseBoundedLimit(values.limit) } : {}),
     });
     requireToolSuccess(result, "list_root_domain_events");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as { events: readonly CasRootRefEvent[]; latestRevision: number; nextAfter: number });
   });
 }
 

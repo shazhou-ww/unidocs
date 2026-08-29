@@ -4,7 +4,7 @@ import {
   DefaultCapabilityLifetimeSeconds,
   MaximumCapabilityClockSkewSeconds,
   MaximumCapabilityLifetimeSeconds,
-} from "./claims.js";
+} from "@unicas/tenant-protocol";
 import {
   CapabilityIssuer,
   JoseCapabilitySigner,

@@ -37,7 +37,7 @@ describe("cas-edge package boundary", () => {
       ),
     );
     expect(pkg.private).toBe(true);
-    expect(pkg.dependencies ?? {}).not.toHaveProperty("@unicas/server-common");
+    expect(pkg.dependencies ?? {}).not.toHaveProperty("@unicas/tenant-protocol");
     expect(CAS_EDGE_DISPATCH).toEqual({
       tenantPrefix: "/stacks",
       adminPrefix: "/admin",

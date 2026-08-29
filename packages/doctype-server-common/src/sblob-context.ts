@@ -6,7 +6,7 @@ import {
   hexToHash,
   validateContentType,
   validateHash,
-} from "@unicas/server-common";
+} from "@unicas/tenant-protocol";
 import type {
   ByteStream,
   DocumentTypeContext,

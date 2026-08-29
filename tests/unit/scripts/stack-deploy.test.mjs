@@ -18,7 +18,7 @@ describe("stack deployment plans", () => {
       .toBeLessThan(plan.findIndex((command) => command.includes("control-plane-mcp exec wrangler deploy")));
     expect(plan.findIndex((command) => command.includes("control-plane-mcp exec wrangler deploy")))
       .toBeLessThan(plan.findIndex((command) => command.includes("@unicas/edge exec wrangler deploy")));
-    expect(plan.at(-3)).toContain("@unicas/server-common build");
+    expect(plan.at(-3)).toContain("@unicas/tenant-protocol build");
     expect(plan.at(-2)).toContain("@unidocs/service-auth build");
     expect(plan.at(-1)).toBe("node stacks/unicas/deploy/smoke.mjs");
   });

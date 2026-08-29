@@ -11,7 +11,7 @@
  */
 
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
-import type { CanonicalNodeLimits } from "@unicas/server-common";
+import type { CanonicalNodeLimits } from "@unicas/tenant-protocol";
 import {
   HASH_SIZE,
   HEADER_SIZE,
@@ -26,16 +26,14 @@ import {
   validateContentLength,
   validateContentType,
   validateHash,
-} from "@unicas/server-common";
+} from "@unicas/tenant-protocol";
 import type {
   CasGcResult,
   CasLeaseResult,
   CasNodeMetadata,
   CasNodeState,
   CasUsage,
-} from "@unicas/protocol";
-import { decodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
-import { SValueContentType } from "@unidocs/protocol";
+} from "@unicas/tenant-protocol";
 import { stackCanonicalNodeKey } from "./do-names.js";
 
 /** Default lease duration when the header is absent. */
@@ -46,7 +44,6 @@ export const MIN_LEASE_MS = 60 * 1000;
 export const MAX_LEASE_MS = 24 * 60 * 60 * 1000;
 /** Default GC batch bound. */
 export const DEFAULT_GC_MAX_NODES = 100;
-const MAX_SVALUE_CONTENT_BYTES = 16 * 1024 * 1024;
 
 /** Stable storage error carrying an HTTP status and a wire error code. */
 export class NodeOpError extends Error {
@@ -291,36 +288,6 @@ export async function leaseCanonicalNode(
     if (!await isReady(store, childHash)) {
       await discardCanonicalUpload(store, input.hash);
       throw new NodeOpError(409, NodeOpErrorCodes.NOT_READY, `Child node ${childHash} is not ready`);
-    }
-  }
-
-  if (parsed.contentType === SValueContentType) {
-    if (parsed.contentSize > MAX_SVALUE_CONTENT_BYTES) {
-      await discardCanonicalUpload(store, input.hash);
-      throw new NodeOpError(413, NodeOpErrorCodes.INVALID_REQUEST, "SValue node content is too large");
-    }
-    const contentOffset = parsed.canonicalSize - parsed.contentSize;
-    const object = await store.bucket.get(canonicalKey, {
-      range: { offset: contentOffset, length: parsed.contentSize },
-    });
-    if (object === null || object.body === undefined) {
-      await discardCanonicalUpload(store, input.hash);
-      throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "SValue node content is missing");
-    }
-    try {
-      const content = new Uint8Array(await new Response(
-        object.body as unknown as ReadableStream<Uint8Array>,
-      ).arrayBuffer());
-      if (!sameRefs(parsed.refs, decodeSValueWithRefs(content).refs)) {
-        throw new Error("SValue child refs do not match encoded content");
-      }
-    } catch (error) {
-      await discardCanonicalUpload(store, input.hash);
-      throw new NodeOpError(
-        400,
-        NodeOpErrorCodes.INVALID_REQUEST,
-        error instanceof Error ? error.message : "Invalid SValue content",
-      );
     }
   }
 

@@ -14,12 +14,10 @@
  */
 
 import { AuthorityRepository } from "@unicas/control-plane";
-import { matchCasRoute } from "@unicas/protocol";
-import { CasLeaseDurationHeader } from "@unicas/protocol";
-import type { CasRoute } from "@unicas/protocol";
-import {
-  CapabilityError,
-} from "@unidocs/service-auth";
+import { matchCasRoute } from "@unicas/tenant-protocol";
+import { CasLeaseDurationHeader } from "@unicas/tenant-protocol";
+import type { CasRoute } from "@unicas/tenant-protocol";
+import { CapabilityError } from "@unicas/tenant-protocol";
 import { StackCapabilityVerifier } from "./auth.js";
 import type { StackAuthEvent, VerifiedStackCall } from "./auth.js";
 import { AuditReadError, listRootDomainEvents, listRootDomainRefs, listRootDomains } from "./audit-reads.js";

@@ -13,11 +13,11 @@ import {
   casAdminErrorHttpStatus,
   formatCasAdminETag,
   matchCasAdminRoute,
-} from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
 import type {
   CasAdminErrorResponse,
   CasAdminRoute,
-} from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
 import {
   ControlPlaneService,
   ControlSessionStore,

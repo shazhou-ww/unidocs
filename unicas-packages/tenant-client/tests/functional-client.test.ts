@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { hashToHex, sha256 } from "@unicas/server-common";
+import { hashToHex, sha256 } from "@unicas/tenant-protocol";
 import {
   CasClientError,
   createCasBlobClient,

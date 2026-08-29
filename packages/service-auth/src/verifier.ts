@@ -7,25 +7,19 @@ import {
   MaximumCapabilityClockSkewSeconds,
   MaximumCapabilityLifetimeSeconds,
   validateRefDomainClaim,
-} from "./claims.js";
+  CapabilityAuthenticationError,
+  CapabilityAuthorizationError,
+  CapabilityError,
+  hasCapabilityPermission,
+  parseCapabilityPermission,
+} from "@unicas/tenant-protocol";
 import type {
   CapabilityClaims,
   CapabilityProtectedHeader,
   VerifiedCapability,
-} from "./claims.js";
-import {
-  CapabilityAuthenticationError,
-  CapabilityAuthorizationError,
-  CapabilityError,
-} from "./errors.js";
-import type {
   CapabilityPermission,
   CapabilityPermissionKind,
-} from "./permissions.js";
-import {
-  hasCapabilityPermission,
-  parseCapabilityPermission,
-} from "./permissions.js";
+} from "@unicas/tenant-protocol";
 
 const AllowedClaimNames = new Set([
   "ver",

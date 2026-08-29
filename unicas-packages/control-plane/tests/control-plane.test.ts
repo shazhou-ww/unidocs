@@ -11,8 +11,8 @@ import type { ControlPlaneCallContext } from "../src/index.js";
 import type {
   CasAdminErrorResponse,
   CasOperatorIdentityKey,
-} from "@unicas/protocol-admin";
-import { CasAdminErrorCodes } from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
+import { CasAdminErrorCodes } from "@unicas/admin-protocol";
 
 let miniflare: Miniflare | undefined;
 

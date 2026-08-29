@@ -3,7 +3,7 @@
  *
  * Every tenant service route carries `stackId + tenantId`; the tenant
  * matcher never recognizes `/admin` (that plane belongs to
- * `@unicas/protocol-admin`). The retired owner-assignment and
+ * `@unicas/admin-protocol`). The retired owner-assignment and
  * portable-node and pre-stack HTTP contracts are removed.
  */
 

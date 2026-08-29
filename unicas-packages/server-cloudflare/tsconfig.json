@@ -20,19 +20,7 @@
       "path": "../control-plane"
     },
     {
-      "path": "../server-common"
-    },
-    {
-      "path": "../protocol"
-    },
-    {
-      "path": "../../packages/protocol"
-    },
-    {
-      "path": "../../packages/service-auth"
-    },
-    {
-      "path": "../../packages/svalue-codec"
+      "path": "../tenant-protocol"
     }
   ]
 }

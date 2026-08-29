@@ -9,10 +9,10 @@
       "path": "packages/protocol"
     },
     {
-      "path": "unicas-packages/protocol"
+      "path": "unicas-packages/tenant-protocol"
     },
     {
-      "path": "unicas-packages/protocol-admin"
+      "path": "unicas-packages/admin-protocol"
     },
     {
       "path": "unicas-packages/control-plane"
@@ -46,9 +46,6 @@
     },
     {
       "path": "packages/gateway-common"
-    },
-    {
-      "path": "unicas-packages/server-common"
     },
     {
       "path": "unicas-packages/tenant-client"

@@ -13,6 +13,7 @@ import {
 } from "./common.js";
 import { printJson } from "../output.js";
 import { parseBoundedLimit } from "./stacks.js";
+import type { CasAdminDeleteMemberResponse, CasAdminPage, CasMemberInvitation, CasStackMember } from "@unicas/admin-protocol";
 
 export async function membersCommand(ctx: CliContext, subcommand: string | undefined, argv: string[]): Promise<void> {
   requireSubcommand(subcommand, "usage: unicas members list|invite|remove", ["list", "invite", "remove"]);
@@ -45,7 +46,7 @@ async function membersList(ctx: CliContext, argv: string[]): Promise<void> {
       ...(values.cursor !== undefined ? { cursor: values.cursor } : {}),
     });
     requireToolSuccess(result, "list_members");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasAdminPage<CasStackMember>);
   });
 }
 
@@ -65,7 +66,7 @@ async function membersInvite(ctx: CliContext, argv: string[]): Promise<void> {
       idempotencyKey: idempotencyKeyFromFlag(values["idempotency-key"]),
     });
     requireToolSuccess(result, "invite_member");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasMemberInvitation);
   });
 }
 
@@ -101,6 +102,6 @@ async function membersRemove(ctx: CliContext, argv: string[]): Promise<void> {
       confirmSubject,
     });
     requireToolSuccess(result, "remove_member");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasAdminDeleteMemberResponse);
   });
 }

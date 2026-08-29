@@ -21,7 +21,7 @@ function readPkg(name: string): {
 
 const TENANT_IMPL_PACKAGES = [
   "@unicas/tenant-client",
-  "@unicas/server-common",
+  "@unicas/tenant-protocol",
 ] as const;
 
 describe("cross-plane separation", () => {
@@ -73,28 +73,28 @@ describe("cross-plane separation", () => {
 
 describe("package dependency boundaries", () => {
   test("four middleware packages exist with required dependency direction", () => {
-    const protocol = readPkg("protocol-admin");
+    const protocol = readPkg("admin-protocol");
     const control = readPkg("control-plane");
     const webui = readPkg("admin-webui");
     const edge = readPkg("edge");
 
-    expect(protocol.name).toBe("@unicas/protocol-admin");
+    expect(protocol.name).toBe("@unicas/admin-protocol");
     expect(control.name).toBe("@unicas/control-plane");
     expect(webui.name).toBe("@unicas/admin-webui");
     expect(edge.name).toBe("@unicas/edge");
     expect(webui.private).toBe(true);
     expect(edge.private).toBe(true);
 
-    expect(control.dependencies?.["@unicas/protocol-admin"]).toBe("workspace:*");
-    expect(webui.dependencies?.["@unicas/protocol-admin"]).toBe("workspace:*");
+    expect(control.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
+    expect(webui.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/control-plane"]).toBe("workspace:*");
 
     // Admin protocol stays independent of the tenant protocol package
     // (canonical and migration-only legacy surface alike).
-    expect(protocol.dependencies?.["@unicas/protocol"]).toBeUndefined();
-    expect(protocol.devDependencies?.["@unicas/protocol"]).toBeUndefined();
-    expect(protocol.dependencies?.["@unicas/protocol-legacy"]).toBeUndefined();
-    expect(protocol.devDependencies?.["@unicas/protocol-legacy"]).toBeUndefined();
+    expect(protocol.dependencies?.["@unicas/tenant-protocol"]).toBeUndefined();
+    expect(protocol.devDependencies?.["@unicas/tenant-protocol"]).toBeUndefined();
+    expect(protocol.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
+    expect(protocol.devDependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
 
     for (const pkg of [protocol, control, webui, edge]) {
       const deps = {
@@ -113,7 +113,7 @@ describe("package dependency boundaries", () => {
 
   test("tenant-client stays on the tenant protocol only", () => {
     const client = readPkg("tenant-client");
-    expect(client.dependencies?.["@unicas/protocol-legacy"]).toBeUndefined();
-    expect(client.dependencies?.["@unicas/protocol-admin"]).toBeUndefined();
+    expect(client.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
+    expect(client.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
   });
 });

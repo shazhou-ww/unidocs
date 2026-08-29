@@ -8,7 +8,7 @@
  *
  * Every resource mutation appends its control-audit event and bumps the
  * control-data snapshot revision in the same atomic D1 batch. Methods return
- * the frozen `@unicas/protocol-admin` response unions; failures are
+ * the frozen `@unicas/admin-protocol` response unions; failures are
  * normalized to `CasAdminErrorResponse`. Deployable ingress adapters may bind
  * CAS_CONTROL_DB only to construct this service; they do not issue direct SQL.
  */
@@ -18,7 +18,7 @@ import {
   CasAdminErrorCodes,
   CAS_ADMIN_IDEMPOTENCY_RETENTION_MS,
   parseCasAdminETag,
-} from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
 import type {
   CasAdminAcceptMemberInvitationRequest,
   CasAdminAcceptMemberInvitationResponse,
@@ -60,7 +60,7 @@ import type {
   CasStackIssuerKey,
   CasStackMember,
   CasAdminListCursor,
-} from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
 import { ControlPlaneError, toAdminError } from "./errors.js";
 import { ControlAuditActions } from "./audit.js";
 import type { ControlAuditAction } from "./audit.js";

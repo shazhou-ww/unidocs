@@ -12,6 +12,7 @@ import {
   withRemote,
 } from "./common.js";
 import { printJson } from "../output.js";
+import type { CasStackIssuerKey } from "@unicas/admin-protocol";
 
 const KEY_ALGORITHMS = ["ES256", "RS256", "EdDSA"] as const;
 const KEY_STATES = ["retiring", "revoked"] as const;
@@ -41,7 +42,7 @@ async function keysList(ctx: CliContext, argv: string[]): Promise<void> {
   await withRemote(ctx, async (remote) => {
     const result = await remote.callTool("list_issuer_keys", { stackId });
     requireToolSuccess(result, "list_issuer_keys");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as { keys: readonly CasStackIssuerKey[] });
   });
 }
 
@@ -54,7 +55,7 @@ async function keysChallenge(ctx: CliContext, argv: string[]): Promise<void> {
   await withRemote(ctx, async (remote) => {
     const result = await remote.callTool("create_issuer_key_challenge", { stackId, kid, algorithm });
     requireToolSuccess(result, "create_issuer_key_challenge");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as { kid: string; challenge: string });
   });
 }
 
@@ -84,7 +85,7 @@ async function keysAdd(ctx: CliContext, argv: string[]): Promise<void> {
       idempotencyKey: idempotencyKeyFromFlag(values["idempotency-key"]),
     });
     requireToolSuccess(result, "add_issuer_key");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasStackIssuerKey);
   });
 }
 
@@ -115,7 +116,7 @@ async function keysTransition(ctx: CliContext, argv: string[]): Promise<void> {
       confirmState,
     });
     requireToolSuccess(result, "transition_issuer_key");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasStackIssuerKey);
   });
 }
 

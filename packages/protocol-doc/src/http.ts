@@ -1,6 +1,6 @@
 import { SValueContentType } from "@unidocs/protocol";
 import type { SBlob, SValue } from "@unidocs/protocol";
-import type { CasHash } from "@unicas/protocol";
+import type { CasHash } from "@unicas/tenant-protocol";
 
 export { SValueContentType };
 

@@ -20,7 +20,7 @@
       "path": "../control-auth"
     },
     {
-      "path": "../protocol-admin"
+      "path": "../admin-protocol"
     },
     {
       "path": "../control-plane"

@@ -10,6 +10,7 @@ import {
   withRemote,
 } from "./common.js";
 import { printJson } from "../output.js";
+import type { CasStackIssuer } from "@unicas/admin-protocol";
 
 export async function issuerCommand(ctx: CliContext, subcommand: string | undefined, argv: string[]): Promise<void> {
   requireSubcommand(subcommand, "usage: unicas issuer get|set", ["get", "set"]);
@@ -32,7 +33,7 @@ async function issuerGet(ctx: CliContext, argv: string[]): Promise<void> {
   await withRemote(ctx, async (remote) => {
     const result = await remote.callTool("get_issuer", { stackId });
     requireToolSuccess(result, "get_issuer");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasStackIssuer);
   });
 }
 
@@ -62,6 +63,6 @@ async function issuerSet(ctx: CliContext, argv: string[]): Promise<void> {
     }
     const result = await remote.callTool("set_issuer", { stackId, issuer, audience, etag, confirmIssuer });
     requireToolSuccess(result, "set_issuer");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasStackIssuer);
   });
 }

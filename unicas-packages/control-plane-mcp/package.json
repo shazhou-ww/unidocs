@@ -28,7 +28,7 @@
     "@modelcontextprotocol/server": "2.0.0",
     "@unicas/control-auth": "workspace:*",
     "@unicas/control-plane": "workspace:*",
-    "@unicas/protocol-admin": "workspace:*",
+    "@unicas/admin-protocol": "workspace:*",
     "agents": "0.21.0",
     "zod": "^4.0.0"
   },

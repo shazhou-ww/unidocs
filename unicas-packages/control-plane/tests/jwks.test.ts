@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildStackJwks } from "../src/index.js";
-import type { CasStackIssuerKey } from "@unicas/protocol-admin";
+import type { CasStackIssuerKey } from "@unicas/admin-protocol";
 
 const STACK = "cas_stack_a";
 

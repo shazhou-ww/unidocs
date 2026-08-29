@@ -5,7 +5,7 @@ import type {
   CasNodeMetadata,
   CasRootRefUpdate,
   CasUsage,
-} from "@unicas/protocol";
+} from "@unicas/tenant-protocol";
 
 export interface HttpFetcher {
   fetch(input: string | Request, init?: RequestInit): Promise<Response>;

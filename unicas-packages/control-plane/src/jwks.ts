@@ -10,7 +10,7 @@
  */
 
 import type { JSONWebKeySet } from "jose";
-import type { CasStackIssuerKey } from "@unicas/protocol-admin";
+import type { CasStackIssuerKey } from "@unicas/admin-protocol";
 
 /** Private JWK material must never reach a served JWKS. */
 const PRIVATE_JWK_FIELDS = ["d", "p", "q", "dp", "dq", "qi", "k", "oth"] as const;

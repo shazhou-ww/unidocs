@@ -4,7 +4,7 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
-} from "@unicas/server-common";
+} from "@unicas/tenant-protocol";
 import {
   BlobChunkBytes,
   BlobChunkContentType,
@@ -12,7 +12,7 @@ import {
   BlobIndexFanout,
   decodeBlobIndex,
   encodeBlobIndex,
-} from "@unicas/protocol";
+} from "@unicas/tenant-protocol";
 import type {
   CasBlobClient,
   CasBlobClientOptions,

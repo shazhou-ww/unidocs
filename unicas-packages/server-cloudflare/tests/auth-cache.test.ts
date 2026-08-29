@@ -8,8 +8,8 @@ import { describe, expect, test } from "vitest";
 import {
   CapabilityIssuer,
   JoseCapabilitySigner,
-  casReadPermission,
 } from "@unidocs/service-auth";
+import { casReadPermission } from "@unicas/tenant-protocol";
 import { StackCapabilityVerifier } from "../src/auth.js";
 import type { ResolvedStackAuthority, StackAuthorityResolver } from "@unicas/control-plane";
 

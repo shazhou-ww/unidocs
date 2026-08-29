@@ -84,16 +84,17 @@ packages/
 └── web-psd/               @unidocs/web-psd               — PSD dev frontend (Vite)
 
 unicas-packages/           (the independently deployable CAS middleware; future standalone monorepo)
-├── protocol/              @unicas/protocol              — CAS protocol: stack-scoped routes, wire contracts, domain types
-├── protocol-admin/        @unicas/protocol-admin        — CAS admin-plane contracts
-├── server-common/         @unicas/server-common         — CAS server kernel (binary/digest/validation)
-├── control-plane/         @unicas/control-plane         — CAS control plane (issuers/stacks/members/sessions)
+                           boundary/naming rules in unicas-packages/README.md
+├── tenant-protocol/       @unicas/tenant-protocol       — Tenant data-plane CAS contracts: HTTP types/routes, canonical node codec, validation limits, capability claims
+├── tenant-client/         @unicas/tenant-client         — Cloud-neutral tenant CAS HTTP client
+├── server-cloudflare/     @unicas/server-cloudflare     — Canonical stack-scoped tenant server (Cloudflare)
+├── admin-protocol/        @unicas/admin-protocol        — CAS control-plane contracts
+├── control-plane/         @unicas/control-plane         — CAS control plane service (issuers/stacks/members/sessions)
 ├── control-auth/          @unicas/control-auth          — Shared server-only control-plane OIDC client
 ├── control-plane-mcp/     @unicas/control-plane-mcp     — OAuth-protected remote MCP operations ingress
-├── server-cloudflare/     @unicas/server-cloudflare     — Canonical stack-scoped tenant server (Cloudflare)
-├── edge/                  @unicas/edge                  — Public CAS edge (/stacks + /admin + MCP/OAuth dispatch)
 ├── admin-webui/           @unicas/admin-webui           — Stack administration WebUI + OIDC BFF
-└── tenant-client/         @unicas/tenant-client         — Cloud-neutral tenant CAS HTTP client
+├── admin-cli/             @unicas/admin-cli             — Stack administration CLI + stdio MCP (bin `unicas`)
+└── edge/                  @unicas/edge                  — Public CAS edge (/stacks + /admin + MCP/OAuth dispatch)
 ```
 
 ## API
@@ -455,7 +456,7 @@ Library packages point `main` / `types` / `exports` at **`src/*.ts`**, and carry
 
 Why: with `dist`-only exports, `pnpm -r test` and `pnpm --filter <pkg> test` fail on a
 fresh clone — vitest resolves a sibling workspace package before anything has built it
-(`Failed to resolve entry for package "@unicas/server-common"`). Pointing the workspace-facing
+(`Failed to resolve entry for package "@unicas/tenant-protocol"`). Pointing the workspace-facing
 entry at source removes the ordering dependency; `publishConfig` keeps packaged
 consumers on the built artifacts (`pnpm pack` rewrites the fields and drops the block).
 

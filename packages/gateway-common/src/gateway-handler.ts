@@ -13,7 +13,7 @@
  */
 
 import type { HttpFetcher } from "@unicas/tenant-client";
-import { casRoutes as canonicalCasRoutes } from "@unicas/protocol";
+import { casRoutes as canonicalCasRoutes } from "@unicas/tenant-protocol";
 import { matchGatewayRoute } from "@unidocs/protocol-gateway";
 import type { GatewayCasRoute } from "@unidocs/protocol-gateway";
 import { docRoutes } from "@unidocs/protocol-doc";

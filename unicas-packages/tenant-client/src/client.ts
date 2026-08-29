@@ -1,11 +1,11 @@
-import { CanonicalNodeContentType } from "@unicas/server-common";
-import { casRoutes } from "@unicas/protocol";
+import { CanonicalNodeContentType } from "@unicas/tenant-protocol";
+import { casRoutes } from "@unicas/tenant-protocol";
 import type {
   CasGcResult,
   CasNodeMetadata,
   CasRootRefUpdate,
   CasUsage,
-} from "@unicas/protocol";
+} from "@unicas/tenant-protocol";
 import { CasClientError } from "./errors.js";
 import type {
   CasGcOptions,

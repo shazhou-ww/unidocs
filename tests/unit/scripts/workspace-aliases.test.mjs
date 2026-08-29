@@ -63,7 +63,7 @@ for (const pkgRoot of PKG_DIRS) {
 /**
  * 只有「基础包已经在表里」的子路径才危险。
  *
- * 表里没有的包（`@unicas/protocol-legacy` 等）走 esbuild 自己的 node 解析、
+ * 表里没有的包（`@unicas/tenant-protocol-legacy` 等）走 esbuild 自己的 node 解析、
  * 读 package.json 的 `exports`，子路径正常工作 —— 那条路不经过前缀重写。
  * 而基础包一旦登记，它指向的是一个 **.ts 文件**，esbuild 的 alias 又是
  * 前缀匹配，于是 `<base>/<subpath>` 被重写成 `<file>.ts/<subpath>`。

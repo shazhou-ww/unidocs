@@ -66,18 +66,18 @@ describe("cas-admin-webui browser boundary", () => {
   });
 
   test("protocol types are only imported as type-only in browser code", () => {
-    // Runtime imports of @unicas/protocol-admin would drag the whole
+    // Runtime imports of @unicas/admin-protocol would drag the whole
     // package into the browser bundle; only erased type imports are allowed.
     const files = listFiles(UI_DIR);
     for (const file of files) {
       const source = readFileSync(file, "utf8");
       for (const line of source.split("\n")) {
-        const match = /import\s+\{([^}]+)\}\s+from\s+["']@unicas\/protocol-admin["']/.exec(line);
+        const match = /import\s+\{([^}]+)\}\s+from\s+["']@unicas\/admin-protocol["']/.exec(line);
         if (match) {
           const specifiers = match[1]!.split(",").map((part) => part.trim()).filter(Boolean);
           for (const specifier of specifiers) {
             const isTypeOnly = specifier.startsWith("type ");
-            expect(isTypeOnly, `${file} must use type-only imports for protocol-admin: ${specifier}`).toBe(true);
+            expect(isTypeOnly, `${file} must use type-only imports for admin-protocol: ${specifier}`).toBe(true);
           }
         }
       }

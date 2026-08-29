@@ -15,10 +15,7 @@
   ],
   "references": [
     {
-      "path": "../server-common"
-    },
-    {
-      "path": "../protocol"
+      "path": "../tenant-protocol"
     }
   ]
 }

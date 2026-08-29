@@ -8,13 +8,13 @@ import {
   CapabilityTokenType,
   CapabilityVersion,
   validateRefDomainClaim,
-} from "./claims.js";
+  parseCapabilityPermission,
+} from "@unicas/tenant-protocol";
 import type {
   CapabilityClaims,
   CapabilityProtectedHeader,
-} from "./claims.js";
-import type { CapabilityPermission } from "./permissions.js";
-import { parseCapabilityPermission } from "./permissions.js";
+  CapabilityPermission,
+} from "@unicas/tenant-protocol";
 
 export interface CapabilitySigner {
   readonly algorithm: typeof CapabilityAlgorithm;

@@ -7,11 +7,11 @@
 import {
   CasAdminErrorCodes,
   casAdminErrorHttpStatus,
-} from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
 import type {
   CasAdminErrorCode,
   CasAdminErrorResponse,
-} from "@unicas/protocol-admin";
+} from "@unicas/admin-protocol";
 
 export class ControlPlaneError extends Error {
   readonly code: CasAdminErrorCode;

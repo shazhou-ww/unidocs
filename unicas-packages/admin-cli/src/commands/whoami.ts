@@ -3,6 +3,7 @@
 import { printJson } from "../output.js";
 import type { CliContext } from "./common.js";
 import { requireLoggedIn, requireToolSuccess, withRemote } from "./common.js";
+import type { CasAdminMeResponse } from "@unicas/admin-protocol";
 
 export async function whoamiCommand(ctx: CliContext): Promise<void> {
   const session = await ctx.store.load();
@@ -10,6 +11,6 @@ export async function whoamiCommand(ctx: CliContext): Promise<void> {
   await withRemote(ctx, async (remote) => {
     const result = await remote.callTool("whoami", {});
     requireToolSuccess(result, "whoami");
-    printJson(result.structuredContent);
+    printJson(result.structuredContent as unknown as CasAdminMeResponse);
   });
 }

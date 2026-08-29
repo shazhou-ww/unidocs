@@ -1,3 +1,14 @@
+/**
+ * @unidocs/service-auth — Cloud-neutral internal capability issuance and
+ * verification for UniDocs.
+ *
+ * The CAS-neutral capability contract (permissions, claims, errors) is owned
+ * by `@unicas/tenant-protocol` and re-exported here unchanged, so the
+ * application-stack gateway and the independently deployable CAS middleware
+ * share one vocabulary. This package keeps the issuance/verification
+ * machinery (`CapabilityIssuer`, `CapabilityVerifier`, runtime helpers).
+ */
+
 export {
   canonicalPermissionSegment,
   casAdminPermission,
@@ -8,14 +19,6 @@ export {
   sessionCreatePermission,
   sessionReadPermission,
   sessionWritePermission,
-} from "./permissions.js";
-export type {
-  CapabilityPermission,
-  CapabilityPermissionKind,
-  ParsedCapabilityPermission,
-} from "./permissions.js";
-
-export {
   CapabilityAlgorithm,
   CapabilityTokenType,
   CapabilityVersion,
@@ -26,21 +29,22 @@ export {
   REF_DOMAIN_MAX_LENGTH,
   REF_DOMAIN_PATTERN,
   validateRefDomainClaim,
-} from "./claims.js";
-export type {
-  CapabilityClaims,
-  CapabilityClaimsBase,
-  CapabilityProtectedHeader,
-  SessionCapabilityClaims,
-  TenantCapabilityClaims,
-  VerifiedCapability,
-} from "./claims.js";
-export {
   CapabilityAuthenticationError,
   CapabilityAuthorizationError,
   CapabilityError,
-} from "./errors.js";
-export type { CapabilityErrorCode } from "./errors.js";
+} from "@unicas/tenant-protocol";
+export type {
+  CapabilityClaims,
+  CapabilityClaimsBase,
+  CapabilityErrorCode,
+  CapabilityPermission,
+  CapabilityPermissionKind,
+  CapabilityProtectedHeader,
+  ParsedCapabilityPermission,
+  SessionCapabilityClaims,
+  TenantCapabilityClaims,
+  VerifiedCapability,
+} from "@unicas/tenant-protocol";
 export {
   CapabilityIssuer,
   JoseCapabilitySigner,

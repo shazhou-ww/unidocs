@@ -320,12 +320,12 @@ importers:
 
   packages/cloudflare-sdk:
     dependencies:
-      '@unicas/server-common':
-        specifier: workspace:*
-        version: link:../../unicas-packages/server-common
       '@unicas/tenant-client':
         specifier: workspace:*
         version: link:../../unicas-packages/tenant-client
+      '@unicas/tenant-protocol':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-protocol
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
@@ -364,9 +364,9 @@ importers:
         specifier: workspace:*
         version: link:../svalue-codec
     devDependencies:
-      '@unicas/server-common':
+      '@unicas/tenant-protocol':
         specifier: workspace:*
-        version: link:../../unicas-packages/server-common
+        version: link:../../unicas-packages/tenant-protocol
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -417,12 +417,12 @@ importers:
 
   packages/doctype-server-common:
     dependencies:
-      '@unicas/server-common':
-        specifier: workspace:*
-        version: link:../../unicas-packages/server-common
       '@unicas/tenant-client':
         specifier: workspace:*
         version: link:../../unicas-packages/tenant-client
+      '@unicas/tenant-protocol':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -448,12 +448,12 @@ importers:
 
   packages/gateway-common:
     dependencies:
-      '@unicas/protocol':
-        specifier: workspace:*
-        version: link:../../unicas-packages/protocol
       '@unicas/tenant-client':
         specifier: workspace:*
         version: link:../../unicas-packages/tenant-client
+      '@unicas/tenant-protocol':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-protocol
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
@@ -482,9 +482,9 @@ importers:
 
   packages/protocol-doc:
     dependencies:
-      '@unicas/protocol':
+      '@unicas/tenant-protocol':
         specifier: workspace:*
-        version: link:../../unicas-packages/protocol
+        version: link:../../unicas-packages/tenant-protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -498,9 +498,9 @@ importers:
 
   packages/protocol-gateway:
     dependencies:
-      '@unicas/protocol':
+      '@unicas/tenant-protocol':
         specifier: workspace:*
-        version: link:../../unicas-packages/protocol
+        version: link:../../unicas-packages/tenant-protocol
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -539,6 +539,9 @@ importers:
 
   packages/service-auth:
     dependencies:
+      '@unicas/tenant-protocol':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-protocol
       jose:
         specifier: ^6.2.10
         version: 6.2.10
@@ -611,6 +614,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.30.0
         version: 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3)
+      '@unicas/admin-protocol':
+        specifier: workspace:*
+        version: link:../admin-protocol
       zod:
         specifier: ^4.0.0
         version: 4.4.3
@@ -625,17 +631,26 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
+  unicas-packages/admin-protocol:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
   unicas-packages/admin-webui:
     dependencies:
+      '@unicas/admin-protocol':
+        specifier: workspace:*
+        version: link:../admin-protocol
       '@unicas/control-auth':
         specifier: workspace:*
         version: link:../control-auth
       '@unicas/control-plane':
         specifier: workspace:*
         version: link:../control-plane
-      '@unicas/protocol-admin':
-        specifier: workspace:*
-        version: link:../protocol-admin
       jose:
         specifier: ^6.2.10
         version: 6.2.10
@@ -704,9 +719,9 @@ importers:
 
   unicas-packages/control-plane:
     dependencies:
-      '@unicas/protocol-admin':
+      '@unicas/admin-protocol':
         specifier: workspace:*
-        version: link:../protocol-admin
+        version: link:../admin-protocol
       jose:
         specifier: ^6.2.10
         version: 6.2.10
@@ -735,15 +750,15 @@ importers:
       '@modelcontextprotocol/server':
         specifier: 2.0.0
         version: 2.0.0
+      '@unicas/admin-protocol':
+        specifier: workspace:*
+        version: link:../admin-protocol
       '@unicas/control-auth':
         specifier: workspace:*
         version: link:../control-auth
       '@unicas/control-plane':
         specifier: workspace:*
         version: link:../control-plane
-      '@unicas/protocol-admin':
-        specifier: workspace:*
-        version: link:../protocol-admin
       agents:
         specifier: 0.21.0
         version: 0.21.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(react@19.2.8)(rolldown@1.2.5)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))(zod@4.4.3)
@@ -782,52 +797,21 @@ importers:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
-  unicas-packages/protocol:
-    dependencies:
-      cborg:
-        specifier: ^6.1.1
-        version: 6.1.1
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  unicas-packages/protocol-admin:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
   unicas-packages/server-cloudflare:
     dependencies:
       '@unicas/control-plane':
         specifier: workspace:*
         version: link:../control-plane
-      '@unicas/protocol':
+      '@unicas/tenant-protocol':
         specifier: workspace:*
-        version: link:../protocol
-      '@unicas/server-common':
-        specifier: workspace:*
-        version: link:../server-common
-      '@unidocs/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@unidocs/service-auth':
-        specifier: workspace:*
-        version: link:../../packages/service-auth
-      '@unidocs/svalue-codec':
-        specifier: workspace:*
-        version: link:../../packages/svalue-codec
+        version: link:../tenant-protocol
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
         version: 4.20260702.1
+      '@unidocs/service-auth':
+        specifier: workspace:*
+        version: link:../../packages/service-auth
       miniflare:
         specifier: 5.20260811.1-alpha
         version: 5.20260811.1-alpha
@@ -841,7 +825,11 @@ importers:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
-  unicas-packages/server-common:
+  unicas-packages/tenant-client:
+    dependencies:
+      '@unicas/tenant-protocol':
+        specifier: workspace:*
+        version: link:../tenant-protocol
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -850,14 +838,14 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
-  unicas-packages/tenant-client:
+  unicas-packages/tenant-protocol:
     dependencies:
-      '@unicas/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-      '@unicas/server-common':
-        specifier: workspace:*
-        version: link:../server-common
+      cborg:
+        specifier: ^6.1.1
+        version: 6.1.1
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -1742,6 +1730,9 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@jridgewell/sourcemap-codec@1.6.0':
+    resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
@@ -2969,7 +2960,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Glob versions prior to v9 are no longer supported
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
@@ -5014,7 +5005,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.12':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/gen-mapping@0.3.5':
@@ -5034,10 +5025,12 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
+  '@jridgewell/sourcemap-codec@1.6.0': {}
+
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   '@jridgewell/trace-mapping@0.3.9':
     dependencies:

@@ -18,11 +18,13 @@ import { AuthorityRepository } from "@unicas/control-plane";
 import {
   CapabilityIssuer,
   JoseCapabilitySigner,
+} from "@unidocs/service-auth";
+import {
   casAdminPermission,
   casReadPermission,
   casWritePermission,
-} from "@unidocs/service-auth";
-import type { CapabilityPermission } from "@unidocs/service-auth";
+} from "@unicas/tenant-protocol";
+import type { CapabilityPermission } from "@unicas/tenant-protocol";
 import { StackCapabilityVerifier } from "../src/auth.js";
 import type { StackAuthEvent, VerifiedStackCall } from "../src/auth.js";
 import worker from "../src/worker.js";

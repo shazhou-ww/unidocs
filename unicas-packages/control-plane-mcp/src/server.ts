@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { ControlPlaneService } from "@unicas/control-plane";
 import type { ControlPlaneCallContext } from "@unicas/control-plane";
-import { CasAdminErrorCodes, formatCasAdminETag } from "@unicas/protocol-admin";
+import { CasAdminErrorCodes, formatCasAdminETag } from "@unicas/admin-protocol";
 import { getMcpAuthContext } from "agents/mcp/server";
 import { z } from "zod";
 

@@ -18,7 +18,7 @@
       "path": "../../unicas-packages/tenant-client"
     },
     {
-      "path": "../../unicas-packages/protocol"
+      "path": "../../unicas-packages/tenant-protocol"
     },
     {
       "path": "../protocol-gateway"

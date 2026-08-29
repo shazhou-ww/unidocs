@@ -17,7 +17,7 @@ const STUB_ENV = {
 } as unknown as Env;
 
 describe("cas-server-cloudflare package boundary", () => {
-  test("depends on protocol-cas, the authority repository, and service-auth only", () => {
+  test("depends on the tenant protocol and the authority repository only — no application-stack (@unidocs) packages", () => {
     const pkg = JSON.parse(
       readFileSync(
         join(dirname(fileURLToPath(import.meta.url)), "../package.json"),
@@ -25,16 +25,14 @@ describe("cas-server-cloudflare package boundary", () => {
       ),
     );
     expect(pkg.name).toBe("@unicas/server-cloudflare");
-    expect(pkg.dependencies["@unicas/protocol"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unicas/tenant-protocol"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/control-plane"]).toBe("workspace:*");
-    expect(pkg.dependencies["@unicas/server-common"]).toBe("workspace:*");
-    expect(pkg.dependencies["@unidocs/protocol"]).toBe("workspace:*");
-    expect(pkg.dependencies["@unidocs/svalue-codec"]).toBe("workspace:*");
-    expect(pkg.dependencies["@unidocs/service-auth"]).toBe("workspace:*");
-    expect(pkg.dependencies["@unicas/protocol-legacy"]).toBeUndefined();
+    const unidocsDeps = Object.keys(pkg.dependencies).filter((d) => d.startsWith("@unidocs/"));
+    expect(unidocsDeps).toEqual([]);
     expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();
     expect(pkg.dependencies["@unidocs/gateway-common"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/admin-webui"]).toBeUndefined();
+    expect(pkg.dependencies["@unicas/admin-protocol"]).toBeUndefined();
   });
 
   test("tenant routes require a capability; /admin and legacy paths never match", async () => {

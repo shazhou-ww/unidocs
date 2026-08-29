@@ -6,7 +6,7 @@ import {
   encodeHeader,
   computeNodeDigest,
   hashToHex,
-} from "../../../unicas-packages/server-common/src/index.ts";
+} from "../../../unicas-packages/tenant-protocol/src/index.ts";
 import {
   decodeSValue,
   encodeSValue,

@@ -13,10 +13,10 @@ describe("cas-admin-webui package boundary", () => {
       ),
     );
     expect(pkg.private).toBe(true);
-    expect(pkg.dependencies["@unicas/protocol-admin"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/control-plane"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();
-    expect(pkg.dependencies["@unicas/server-common"]).toBeUndefined();
+    expect(pkg.dependencies["@unicas/tenant-protocol"]).toBeUndefined();
     expect(pkg.scripts.deploy).toBe("pnpm run build && wrangler deploy");
     expect(CAS_ADMIN_WEBUI_MOUNT).toBe("/admin");
   });
