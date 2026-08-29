@@ -9,8 +9,6 @@ export interface AdminBffConfig {
   readonly googleClientId: string;
   /** Google OIDC client secret (secret). */
   readonly googleClientSecret: string;
-  /** Google OAuth client id the admin CLI uses for its own OIDC dance; enables /admin/auth/exchange. */
-  readonly exchangeClientId?: string;
   /**
    * Versioned session encryption keys: key id -> base64url 32-byte AES key.
    * New sessions use the newest key; older keys decrypt until retired.
@@ -57,8 +55,6 @@ export const CAS_ADMIN_WEBUI_MOUNT = "/admin" as const;
 export interface AdminBffEnv {
   GOOGLE_OIDC_CLIENT_ID?: string;
   GOOGLE_OIDC_CLIENT_SECRET?: string;
-  /** Google OAuth client id the admin CLI uses; enables /admin/auth/exchange. */
-  ADMIN_EXCHANGE_CLIENT_ID?: string;
   SESSION_ENCRYPTION_KEYS?: string;
   OIDC_ISSUER?: string;
   OIDC_DISCOVERY_URL?: string;
@@ -78,8 +74,6 @@ export interface AdminBffEnv {
 export function configFromEnv(env: AdminBffEnv): AdminBffConfig {
   const googleClientId = env.GOOGLE_OIDC_CLIENT_ID ?? "";
   const googleClientSecret = env.GOOGLE_OIDC_CLIENT_SECRET ?? "";
-  const exchangeClientId = env.ADMIN_EXCHANGE_CLIENT_ID?.trim()
-    || "152437813368-5e621mj27so25a22vp9167ql6gcm2lfj.apps.googleusercontent.com"; // the public admin-CLI Google Desktop client id (not a secret)
   const keysRaw = env.SESSION_ENCRYPTION_KEYS ?? "";
   let sessionEncryptionKeys: Readonly<Record<string, string>>;
   try {
@@ -132,7 +126,6 @@ export function configFromEnv(env: AdminBffEnv): AdminBffConfig {
   return {
     googleClientId,
     googleClientSecret,
-    exchangeClientId,
     sessionEncryptionKeys,
     oidcIssuer: env.OIDC_ISSUER ?? DEFAULT_OIDC_ISSUER,
     oidcDiscoveryUrl: env.OIDC_DISCOVERY_URL,

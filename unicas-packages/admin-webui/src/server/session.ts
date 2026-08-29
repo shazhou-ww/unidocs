@@ -24,6 +24,28 @@ export interface AdminSessionPayload {
   readonly oidcNonce?: string;
   readonly codeVerifier?: string;
   readonly returnTo?: string;
+  /** CLI login transaction: set when this pre-login was started by the admin CLI. */
+  readonly cliClientId?: string;
+  readonly cliState?: string;
+  readonly cliCodeChallenge?: string;
+  readonly cliRedirectUri?: string;
+}
+
+/**
+ * One-time authorization code handed to the admin CLI after the browser
+ * completes Google sign-in through the BFF. Binds the verified identity to
+ * the CLI's PKCE challenge; the CLI exchanges it at `/admin/auth/cli/exchange`.
+ */
+export interface CliOneTimeCodePayload {
+  readonly v: 1;
+  readonly kind: "cli-code";
+  readonly identityIssuer: string;
+  readonly subject: string;
+  readonly displayName: string | null;
+  readonly emailForDisplay: string | null;
+  readonly codeChallenge: string;
+  readonly cliState: string;
+  readonly cliRedirectUri: string;
 }
 
 export class SessionCryptoError extends Error {
@@ -59,7 +81,7 @@ export class SessionCrypto {
     this.#newestKid = entries[entries.length - 1]![0];
   }
 
-  async encrypt(payload: AdminSessionPayload): Promise<string> {
+  async encrypt(payload: AdminSessionPayload | CliOneTimeCodePayload): Promise<string> {
     const key = this.#keys.get(this.#newestKid)!;
     return new EncryptJWT({ ...payload })
       .setProtectedHeader({ alg: "dir", enc: "A256GCM", kid: this.#newestKid })

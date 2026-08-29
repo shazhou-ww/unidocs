@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { s256Challenge } from "@unicas/control-auth";
 import { ControlSessionStore, migrateControlSchema } from "@unicas/control-plane";
 import { createAdminBff, OidcClient, SessionCrypto } from "../src/server/index.js";
 import type { AdminBffConfig } from "../src/server/config.js";
@@ -124,19 +125,7 @@ async function createBff(
     },
     { fetchImpl: providerFetch },
   );
-  const exchangeOidc = config.exchangeClientId === undefined
-    ? undefined
-    : new OidcClient(
-      {
-        issuer: ISSUER,
-        discoveryUrl: DISCOVERY_URL,
-        clientId: config.exchangeClientId,
-        clientSecret: "",
-        redirectUri: "",
-      },
-      { fetchImpl: providerFetch },
-    );
-  return createAdminBff({ config, db, oidc, exchangeOidc, auditReader });
+  return createAdminBff({ config, db, oidc, auditReader });
 }
 
 function cookieFrom(response: Response): string | null {
@@ -254,49 +243,105 @@ describe("cas-admin-webui BFF", () => {
     expect(html).toContain("Continue with Google");
   });
 
-  test("auth exchange issues a session from a verified id_token", async () => {
+  test("CLI login: authorize redirects to Google, callback hands a one-time code, exchange issues a session", async () => {
     const provider = await createMockProvider();
-    const bff = await createBff(provider, undefined, { exchangeClientId: "exchange-client" });
+    const bff = await createBff(provider);
 
-    const nonce = "cli-nonce-1";
+    // 1. CLI authorize: fixed public client id + loopback redirect + PKCE.
+    const authorize = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli&redirect_uri=${encodeURIComponent("http://127.0.0.1:9999/callback")}&state=cli-state-1&code_challenge=${await s256Challenge("cli-verifier-1")}&code_challenge_method=S256`,
+    ));
+    expect(authorize.status).toBe(302);
+    const preLoginCookie = cookieFrom(authorize)!;
+    const googleUrl = new URL(authorize.headers.get("Location")!);
+    expect(googleUrl.origin).toBe(ISSUER);
+    const oidcState = googleUrl.searchParams.get("state")!;
+    const nonce = googleUrl.searchParams.get("nonce")!;
+
+    // 2. Google redirects back to the BFF callback.
     provider.pendingClaims = {
       iss: ISSUER,
-      sub: "cli-user-123",
-      aud: "exchange-client",
+      sub: "cli-user-1",
+      aud: CLIENT_ID,
       nonce,
       email: "alice@example.com",
       email_verified: true,
       name: "Alice",
     };
-    const idToken = await provider.issueIdToken(provider.pendingClaims);
+    const callback = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/callback?code=mock-code&state=${encodeURIComponent(oidcState)}`,
+      { headers: { Cookie: preLoginCookie } },
+    ));
+    expect(callback.status).toBe(302);
+    // The browser is redirected to the CLI's loopback with the one-time code.
+    const redirect = new URL(callback.headers.get("Location")!);
+    expect(redirect.origin + redirect.pathname).toBe("http://127.0.0.1:9999/callback");
+    const oneTimeCode = redirect.searchParams.get("code")!;
+    expect(redirect.searchParams.get("state")).toBe("cli-state-1");
 
-    const exchange = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/exchange`, {
+    // 3. The CLI exchanges the code (PKCE) for a session.
+    const challenge = await s256Challenge("cli-verifier-1");
+    const exchange = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/cli/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken, nonce }),
+      body: JSON.stringify({ code: oneTimeCode, codeVerifier: "cli-verifier-1" }),
     }));
     expect(exchange.status).toBe(200);
     const cookie = cookieFrom(exchange)!;
-    expect(cookie).toContain("cas_admin_session=");
-    const body = await exchange.json() as { csrfToken?: string };
+    const body = await exchange.json() as { csrfToken?: string; identity?: { subject?: string } };
     expect(body.csrfToken).toBeTruthy();
+    expect(body.identity?.subject).toBe("cli-user-1");
 
-    // The issued session works for API reads and carries the verified identity.
+    // 4. The issued session works for API reads.
     const me = await authRequest(bff, "/admin/me", cookie);
     expect(me.status).toBe(200);
-    const meBody = await me.json() as { identity?: { subject?: string } };
-    expect(meBody.identity?.subject).toBe("cli-user-123");
   });
 
-  test("auth exchange rejects an unverifiable id_token", async () => {
+  test("CLI exchange rejects a wrong PKCE verifier", async () => {
     const provider = await createMockProvider();
-    const bff = await createBff(provider, undefined, { exchangeClientId: "exchange-client" });
-    const response = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/exchange`, {
+    const bff = await createBff(provider);
+    const authorize = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli&redirect_uri=${encodeURIComponent("http://127.0.0.1:9999/callback")}&state=s&code_challenge=${await s256Challenge("real-verifier")}&code_challenge_method=S256`,
+    ));
+    const preLoginCookie = cookieFrom(authorize)!;
+    const googleUrl = new URL(authorize.headers.get("Location")!);
+    const nonce = googleUrl.searchParams.get("nonce")!;
+    provider.pendingClaims = { iss: ISSUER, sub: "cli-user-1", aud: CLIENT_ID, nonce, email: "alice@example.com", email_verified: true };
+    const callback = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/callback?code=mock-code&state=${encodeURIComponent(googleUrl.searchParams.get("state")!)}`,
+      { headers: { Cookie: preLoginCookie } },
+    ));
+    const oneTimeCode = new URL(callback.headers.get("Location")!).searchParams.get("code")!;
+    const exchange = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/cli/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken: "garbage", nonce: "n" }),
+      body: JSON.stringify({ code: oneTimeCode, codeVerifier: "wrong-verifier" }),
     }));
-    expect(response.status).toBe(401);
+    expect(exchange.status).toBe(401);
+  });
+
+  test("CLI exchange rejects an unknown one-time code", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+    const exchange = await bff(new Request(`${PUBLIC_ORIGIN}/admin/auth/cli/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: "unknown-code", codeVerifier: "whatever" }),
+    }));
+    expect(exchange.status).toBe(401);
+  });
+
+  test("CLI authorize rejects a non-loopback redirect or unknown client", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+    const badRedirect = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli&redirect_uri=${encodeURIComponent("https://evil.example/callback")}&state=s&code_challenge=c&code_challenge_method=S256`,
+    ));
+    expect(badRedirect.status).toBe(400);
+    const badClient = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=other&redirect_uri=${encodeURIComponent("http://127.0.0.1:9999/callback")}&state=s&code_challenge=c&code_challenge_method=S256`,
+    ));
+    expect(badClient.status).toBe(400);
   });
 
   test("full OIDC login flow reaches me() with the verified identity", async () => {

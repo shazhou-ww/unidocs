@@ -6,6 +6,7 @@
  */
 
 import { casAdminRoutes } from "@unicas/admin-protocol";
+import { s256Challenge } from "@unicas/control-auth";
 
 export interface FakeAdminOptions {
   /** When set, the exchange endpoint requires exactly this id_token. */
@@ -49,6 +50,8 @@ export class FakeAdminApi {
   readonly keys = new Map<string, FakeKey[]>();
   issuer = new Map<string, { issuer: string; audience: string; revision: number }>();
   readonly sessions = new Set<string>();
+  /** PKCE challenge the cli/exchange endpoint expects (registered by tests). */
+  cliCodeChallenge: string | null = null;
 
   constructor(options: FakeAdminOptions = {}) {
     this.#options = options;
@@ -100,6 +103,26 @@ export class FakeAdminApi {
             "Cache-Control": "no-store",
             "Set-Cookie": "cas_admin_session=cli-session-1; Path=/; HttpOnly",
           },
+        },
+      );
+    }
+    if (url.pathname === "/admin/auth/cli/exchange" && method === "POST") {
+      const codeVerifier = typeof body?.codeVerifier === "string" ? body.codeVerifier : "";
+      if (this.cliCodeChallenge !== null) {
+        const challenge = await s256Challenge(codeVerifier);
+        if (challenge !== this.cliCodeChallenge) {
+          return json({ error: "ADMIN_AUTH_REQUIRED", message: "PKCE code verifier mismatch" }, 401);
+        }
+      }
+      this.sessions.add("cli-session-1");
+      return Response.json(
+        {
+          csrfToken: "cli-csrf-1",
+          identity: { identityIssuer: "https://accounts.google.com", subject: "google-user-123", displayName: "Alice", emailForDisplay: "alice@example.com" },
+        },
+        {
+          status: 200,
+          headers: { "Cache-Control": "no-store", "Set-Cookie": "cas_admin_session=cli-session-1; Path=/; HttpOnly" },
         },
       );
     }

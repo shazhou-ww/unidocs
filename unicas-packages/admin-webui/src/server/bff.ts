@@ -40,7 +40,7 @@ import {
   SessionCrypto,
   sessionCookieHeader,
 } from "./session.js";
-import type { AdminSessionPayload } from "./session.js";
+import type { AdminSessionPayload, CliOneTimeCodePayload } from "./session.js";
 import { checkCsrfToken, checkSameOrigin } from "./csrf.js";
 
 export interface CreateAdminBffOptions {
@@ -49,11 +49,6 @@ export interface CreateAdminBffOptions {
   readonly db: D1Database;
   /** Inject a client for tests; defaults to a real Google client. */
   readonly oidc?: OidcClient;
-  /**
-   * Inject the id_token-exchange verifier for tests; defaults to a real
-   * Google client configured with `config.exchangeClientId`.
-   */
-  readonly exchangeOidc?: OidcClient;
   /** SPA static asset fetcher (Phase C wires the built console). */
   readonly assets?: (pathname: string) => Promise<Response | null>;
   /**
@@ -66,6 +61,21 @@ export interface CreateAdminBffOptions {
 }
 
 const NOT_AVAILABLE_MESSAGE = "Root Ref audit reads are not yet available from the admin plane";
+/** Fixed public client id the admin CLI uses against the BFF login endpoints. */
+const CLI_CLIENT_ID = "unicas-cli";
+/** Lifetime of the one-time code handed to the CLI after Google sign-in. */
+const CLI_CODE_TTL_MS = 2 * 60 * 1000;
+
+function isLoopbackRedirect(value: string | null): value is string {
+  if (value === null) return false;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:") return false;
+    return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
 const TEST_ACCOUNT_ISSUER = "urn:unicas:manage:test-account";
 
 /** Read-side refDomain validation; reserved migration domains are readable. */
@@ -90,17 +100,6 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       clientSecret: config.googleClientSecret,
       redirectUri: `${config.publicOrigin}/admin/auth/callback`,
     });
-  const exchangeOidc = options.exchangeOidc
-    ?? (config.exchangeClientId === undefined
-      ? null
-      : new OidcClient({
-        issuer: config.oidcIssuer ?? "https://accounts.google.com",
-        discoveryUrl: config.oidcDiscoveryUrl,
-        clientId: config.exchangeClientId,
-        // Verification-only: the CLI holds its own client secret / uses a public client.
-        clientSecret: "",
-        redirectUri: "",
-      }));
   const assets = options.assets ?? (async () => null);
   const sessionTtlMs = config.sessionTtlMs ?? 8 * 60 * 60 * 1000;
   const cookieName = config.sessionCookieName ?? "cas_admin_session";
@@ -142,8 +141,11 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     if (pathname === "/admin/auth/logout" && method === "POST") {
       return handleLogout(request);
     }
-    if (pathname === "/admin/auth/exchange" && method === "POST") {
-      return handleExchange(request);
+    if (pathname === "/admin/auth/cli/authorize" && method === "GET") {
+      return handleCliAuthorize(url);
+    }
+    if (pathname === "/admin/auth/cli/exchange" && method === "POST") {
+      return handleCliExchange(request);
     }
 
     const inviteMatch = /^\/admin\/invitations\/([^/]+)$/.exec(pathname);
@@ -355,6 +357,33 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       });
     }
 
+    if (preLogin.cliClientId !== undefined) {
+      // CLI login: hand the verified identity to the CLI as a short-lived
+      // one-time code bound to its PKCE challenge; the browser is redirected
+      // to the CLI's loopback with the code.
+      const oneTimeCode = generateSessionId();
+      const cliPayload: CliOneTimeCodePayload = {
+        v: 1,
+        kind: "cli-code",
+        identityIssuer: config.oidcIssuer ?? "https://accounts.google.com",
+        subject: identity.sub,
+        displayName: identity.name,
+        emailForDisplay: identity.email,
+        codeChallenge: preLogin.cliCodeChallenge!,
+        cliState: preLogin.cliState!,
+        cliRedirectUri: preLogin.cliRedirectUri!,
+      };
+      await sessionStore.create(oneTimeCode, await sessionCrypto.encrypt(cliPayload), CLI_CODE_TTL_MS);
+      if (sessionId) await sessionStore.delete(sessionId);
+      const redirect = new URL(cliPayload.cliRedirectUri);
+      redirect.searchParams.set("code", oneTimeCode);
+      redirect.searchParams.set("state", cliPayload.cliState);
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirect.toString() },
+      });
+    }
+
     // Session rotation on privilege change: new id + fresh CSRF token.
     const authenticatedPayload: AdminSessionPayload = {
       v: 1,
@@ -487,32 +516,81 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   // Frozen admin API
   // ------------------------------------------------------------------
 
-  async function handleExchange(request: Request): Promise<Response> {
-    if (exchangeOidc === null) {
-      return json({ error: "INVALID_REQUEST", message: "admin auth exchange is not configured" }, 501);
+  async function handleCliAuthorize(url: URL): Promise<Response> {
+    const clientId = url.searchParams.get("client_id");
+    const state = url.searchParams.get("state");
+    const codeChallenge = url.searchParams.get("code_challenge");
+    const codeChallengeMethod = url.searchParams.get("code_challenge_method");
+    const redirectUri = url.searchParams.get("redirect_uri");
+    if (clientId !== CLI_CLIENT_ID) {
+      return new Response("Unauthorized client", { status: 400 });
     }
-    const body = await readJsonBody<{ idToken?: unknown; nonce?: unknown }>(request);
-    if (!body || typeof body.idToken !== "string" || typeof body.nonce !== "string") {
-      return json({ error: "INVALID_REQUEST", message: "idToken and nonce are required" }, 400);
+    if (!state || !codeChallenge || codeChallengeMethod !== "S256" || !isLoopbackRedirect(redirectUri)) {
+      return new Response("Invalid CLI authorization request", { status: 400 });
     }
-    let identity: VerifiedOidcIdentity;
+    const oidcState = generateOidcState();
+    const oidcNonce = generateOidcNonce();
+    const codeVerifier = generatePkceVerifier();
+    const sessionId = generateSessionId();
+    const payload: AdminSessionPayload = {
+      v: 1,
+      authenticated: false,
+      identityIssuer: "",
+      subject: "",
+      displayName: null,
+      emailForDisplay: null,
+      csrfToken: "",
+      oidcState,
+      oidcNonce,
+      codeVerifier,
+      cliClientId: clientId,
+      cliState: state,
+      cliCodeChallenge: codeChallenge,
+      cliRedirectUri: redirectUri,
+    };
+    await sessionStore.create(sessionId, await sessionCrypto.encrypt(payload), sessionTtlMs);
+    const authorizationUrl = await oidc.authorizationUrl({ state: oidcState, nonce: oidcNonce, codeChallenge });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: authorizationUrl,
+        "Set-Cookie": sessionCookieHeader(cookieOptions, sessionId),
+      },
+    });
+  }
+
+  async function handleCliExchange(request: Request): Promise<Response> {
+    const body = await readJsonBody<{ code?: unknown; codeVerifier?: unknown }>(request);
+    if (!body || typeof body.code !== "string" || typeof body.codeVerifier !== "string") {
+      return json({ error: "INVALID_REQUEST", message: "code and codeVerifier are required" }, 400);
+    }
+    const stored = await sessionStore.read(body.code);
+    if (stored === null) {
+      return json({ error: "ADMIN_AUTH_REQUIRED", message: "invalid or expired authorization code" }, 401);
+    }
+    let payload: CliOneTimeCodePayload;
     try {
-      identity = await exchangeOidc.verifyIdToken({ idToken: body.idToken, nonce: body.nonce });
+      const decrypted = await sessionCrypto.decrypt(stored.encryptedPayload) as AdminSessionPayload | CliOneTimeCodePayload;
+      if (!("kind" in decrypted) || decrypted.kind !== "cli-code") {
+        return json({ error: "ADMIN_AUTH_REQUIRED", message: "invalid authorization code" }, 401);
+      }
+      payload = decrypted as CliOneTimeCodePayload;
     } catch {
-      await auditLoginFailure("exchange-verify-failed");
-      return json({ error: "ADMIN_AUTH_REQUIRED", message: "id_token verification failed" }, 401);
+      return json({ error: "ADMIN_AUTH_REQUIRED", message: "invalid authorization code" }, 401);
     }
-    if (!isEmailAllowed(identity.email, identity.emailVerified)) {
-      await auditLoginFailure("email-not-allowed");
-      return json({ error: "ADMIN_AUTH_REQUIRED", message: "identity is not allowed" }, 403);
+    const challenge = await s256Challenge(body.codeVerifier);
+    if (challenge !== payload.codeChallenge) {
+      await sessionStore.delete(body.code);
+      return json({ error: "ADMIN_AUTH_REQUIRED", message: "PKCE code verifier mismatch" }, 401);
     }
+    await sessionStore.delete(body.code);
     const authenticatedPayload: AdminSessionPayload = {
       v: 1,
       authenticated: true,
-      identityIssuer: config.oidcIssuer ?? "https://accounts.google.com",
-      subject: identity.sub,
-      displayName: identity.name,
-      emailForDisplay: identity.email,
+      identityIssuer: payload.identityIssuer,
+      subject: payload.subject,
+      displayName: payload.displayName,
+      emailForDisplay: payload.emailForDisplay,
       csrfToken: generateCsrfToken(),
     };
     const sessionId = generateSessionId();
@@ -524,7 +602,15 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       null,
     );
     return Response.json(
-      { csrfToken: authenticatedPayload.csrfToken },
+      {
+        csrfToken: authenticatedPayload.csrfToken,
+        identity: {
+          identityIssuer: authenticatedPayload.identityIssuer,
+          subject: authenticatedPayload.subject,
+          displayName: authenticatedPayload.displayName,
+          emailForDisplay: authenticatedPayload.emailForDisplay,
+        },
+      },
       {
         status: 200,
         headers: {

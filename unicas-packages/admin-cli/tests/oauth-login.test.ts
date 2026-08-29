@@ -2,73 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { s256Challenge } from "@unicas/control-auth";
 import { buildOpenBrowserCommand, runLoginFlow } from "../src/oauth/login.js";
 import { TokenStore } from "../src/store.js";
 import { FAKE_ORIGIN, FakeAdminApi } from "./helpers/fake-server.js";
-
-const ISSUER = "https://mock-provider.example";
-const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
-const TOKEN_URL = `${ISSUER}/token`;
-const JWKS_URL = `${ISSUER}/jwks`;
-const CLIENT_ID = "cli-google-client";
-const EMAIL = "alice@example.com";
-
-interface MockGoogle {
-  readonly privateKey: CryptoKey;
-  readonly publicJwk: Record<string, unknown>;
-  issueIdToken: (claims: Record<string, unknown>) => Promise<string>;
-}
-
-async function createMockGoogle(): Promise<MockGoogle> {
-  const { publicKey, privateKey } = await generateKeyPair("RS256");
-  const publicJwk = (await exportJWK(publicKey)) as Record<string, unknown>;
-  return {
-    privateKey,
-    publicJwk,
-    issueIdToken: (claims) =>
-      new SignJWT(claims)
-        .setProtectedHeader({ alg: "RS256", kid: "mock-kid" })
-        .setIssuedAt()
-        .setExpirationTime(Math.floor(Date.now() / 1000) + 3600)
-        .sign(privateKey),
-  };
-}
-
-interface OidcHolder {
-  nonce: string | null;
-}
-
-/** Composes Google OIDC endpoints with the fake /admin API behind one fetch. */
-function composeFetch(google: MockGoogle, admin: FakeAdminApi, holder: OidcHolder): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input));
-    if (url.toString() === DISCOVERY_URL) {
-      return Response.json({
-        issuer: ISSUER,
-        authorization_endpoint: `${ISSUER}/authorize`,
-        token_endpoint: TOKEN_URL,
-        jwks_uri: JWKS_URL,
-      });
-    }
-    if (url.toString() === JWKS_URL) {
-      return Response.json({ keys: [{ ...google.publicJwk, kid: "mock-kid", alg: "RS256", use: "sig" }] });
-    }
-    if (url.toString() === TOKEN_URL) {
-      const idToken = await google.issueIdToken({
-        iss: ISSUER,
-        sub: "google-user-123",
-        aud: CLIENT_ID,
-        nonce: holder.nonce ?? "any",
-        email: EMAIL,
-        email_verified: true,
-        name: "Alice",
-      });
-      return Response.json({ id_token: idToken, access_token: "google-access" });
-    }
-    return admin.fetch(url, init);
-  }) as typeof fetch;
-}
 
 let dir: string;
 let store: TokenStore;
@@ -83,11 +20,8 @@ afterEach(async () => {
 });
 
 describe("runLoginFlow", () => {
-  test("performs the Google OIDC dance and exchanges for a BFF session", async () => {
-    const google = await createMockGoogle();
+  test("authorizes through the BFF and exchanges the one-time code for a session", async () => {
     const admin = new FakeAdminApi();
-    const holder: OidcHolder = { nonce: null };
-    const fetchImpl = composeFetch(google, admin, holder);
     let resolveAuthorize: (url: URL) => void = () => undefined;
     const authorizeUrlPromise = new Promise<URL>((resolve) => {
       resolveAuthorize = resolve;
@@ -96,11 +30,9 @@ describe("runLoginFlow", () => {
 
     const flow = runLoginFlow({
       adminOrigin: FAKE_ORIGIN,
-      googleClientId: CLIENT_ID,
-      googleIssuer: ISSUER,
       store,
       openBrowser: false,
-      fetchImpl,
+      fetchImpl: admin.fetch,
       log: () => undefined,
       onCallbackServerStarted: (port) => {
         callbackPort = port;
@@ -114,27 +46,27 @@ describe("runLoginFlow", () => {
 
     const authorizeUrl = await authorizeUrlPromise;
     expect(callbackPort).toBeGreaterThan(0);
-    expect(authorizeUrl.origin).toBe(ISSUER);
-    expect(authorizeUrl.pathname).toBe("/authorize");
-    expect(authorizeUrl.searchParams.get("response_type")).toBe("code");
+    expect(authorizeUrl.origin).toBe(FAKE_ORIGIN);
+    expect(authorizeUrl.pathname).toBe("/admin/auth/cli/authorize");
+    expect(authorizeUrl.searchParams.get("client_id")).toBe("unicas-cli");
     expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
     expect(authorizeUrl.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43,}$/);
     expect(authorizeUrl.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(authorizeUrl.searchParams.get("client_id")).toBe(CLIENT_ID);
     expect(authorizeUrl.searchParams.get("redirect_uri")).toContain(`127.0.0.1:${callbackPort}/callback`);
+    expect(authorizeUrl.host).toBe(FAKE_ORIGIN.replace("https://", ""));
 
+    // The BFF redirects the browser back to the loopback with a one-time code.
     const state = authorizeUrl.searchParams.get("state") ?? "";
-    // The provider echoes the authorize request's nonce into the id_token.
-    holder.nonce = authorizeUrl.searchParams.get("nonce") ?? null;
+    admin.cliCodeChallenge = authorizeUrl.searchParams.get("code_challenge") ?? null;
     const callbackResponse = await fetch(
-      `http://127.0.0.1:${callbackPort}/callback?code=auth-code-1&state=${state}`,
+      `http://127.0.0.1:${callbackPort}/callback?code=one-time-code-1&state=${state}`,
     );
     expect(callbackResponse.status).toBe(200);
 
     const outcome = await flowResult;
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    expect(outcome.result.identity.email).toBe(EMAIL);
+    expect(outcome.result.identity?.emailForDisplay).toBe("alice@example.com");
 
     const session = await store.load();
     expect(session.adminOrigin).toBe(FAKE_ORIGIN);
@@ -143,17 +75,14 @@ describe("runLoginFlow", () => {
     expect(session.identity?.subject).toBe("google-user-123");
 
     const exchange = admin.requests.find(
-      (request) => request.pathname === "/admin/auth/exchange" && request.method === "POST",
+      (request) => request.pathname === "/admin/auth/cli/exchange" && request.method === "POST",
     );
     expect(exchange).toBeDefined();
-    expect(exchange?.body).toMatchObject({ nonce: expect.any(String) });
-    expect((exchange?.body as { idToken?: string }).idToken).toBeTruthy();
+    expect(exchange?.body).toMatchObject({ code: "one-time-code-1", codeVerifier: expect.any(String) });
   });
 
   test("rejects the callback when the state does not match", async () => {
-    const google = await createMockGoogle();
     const admin = new FakeAdminApi();
-    const holder: OidcHolder = { nonce: null };
     let callbackPort = 0;
     let resolveAuthorize: (url: URL) => void = () => undefined;
     const authorizeUrlPromise = new Promise<URL>((resolve) => {
@@ -162,11 +91,9 @@ describe("runLoginFlow", () => {
 
     const flow = runLoginFlow({
       adminOrigin: FAKE_ORIGIN,
-      googleClientId: CLIENT_ID,
-      googleIssuer: ISSUER,
       store,
       openBrowser: false,
-      fetchImpl: composeFetch(google, admin, holder),
+      fetchImpl: admin.fetch,
       log: () => undefined,
       onCallbackServerStarted: (port) => {
         callbackPort = port;
@@ -192,17 +119,22 @@ describe("runLoginFlow", () => {
 
 describe("buildOpenBrowserCommand", () => {
   test("quotes the authorization URL on Windows so cmd does not split at '&'", () => {
-    const url = `${ISSUER}/authorize?response_type=code&client_id=abc&scope=openid`;
+    const url = `${FAKE_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli&code_challenge=abc`;
     const command = buildOpenBrowserCommand(url, "win32");
     expect(command.command).toBe("cmd");
     expect(command.windowsVerbatimArguments).toBe(true);
     expect(command.args).toEqual(["/c", "start", '""', "/b", `"${url}"`]);
-    expect(command.args[4]).toContain("&client_id=abc");
+    expect(command.args[4]).toContain("&code_challenge=abc");
   });
 
   test("passes the URL unmodified on macOS and Linux", () => {
-    const url = `${ISSUER}/authorize?response_type=code&client_id=abc`;
+    const url = `${FAKE_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli`;
     expect(buildOpenBrowserCommand(url, "darwin")).toEqual({ command: "open", args: [url] });
     expect(buildOpenBrowserCommand(url, "linux")).toEqual({ command: "xdg-open", args: [url] });
   });
+});
+
+test("s256Challenge produces a standards-compliant PKCE challenge", async () => {
+  const challenge = await s256Challenge("test-verifier");
+  expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
 });

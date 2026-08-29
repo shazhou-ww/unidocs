@@ -194,7 +194,6 @@ export function buildWorkers({
   googleOidcClientId,
   googleOidcClientSecret,
   googleOidcIssuer,
-  adminExchangeClientId,
   casMiddlewareOnly = false,
   casMiddleware = false,
   casOrigin,
@@ -229,9 +228,6 @@ export function buildWorkers({
     PUBLIC_ORIGIN: casAdminPublicOrigin,
     SESSION_COOKIE_SECURE: "false",
   };
-  if (adminExchangeClientId) {
-    adminBindings.ADMIN_EXCHANGE_CLIENT_ID = adminExchangeClientId;
-  }
   if (useRealGoogle) {
     adminBindings.OIDC_ISSUER = googleOidcIssuer ?? "https://accounts.google.com";
   } else {

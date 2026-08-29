@@ -1,8 +1,9 @@
 /**
- * Interactive `unicas login`: the CLI performs its own Google OIDC
- * authorization-code flow (S256 PKCE) with a local `127.0.0.1` callback
- * server, then exchanges the verified id_token with the `/admin` BFF for a
- * session cookie + CSRF token. The session is persisted for later commands.
+ * Interactive `unicas login`: the CLI never talks to Google directly. It opens
+ * the browser at the BFF's `/admin/auth/cli/authorize` endpoint, which runs
+ * its own Google OIDC (client secret held server-side), then redirects the
+ * browser back to the CLI's loopback with a one-time code. The CLI exchanges
+ * the code (PKCE) for a BFF session cookie + CSRF token and persists it.
  */
 
 import { spawn } from "node:child_process";
@@ -10,24 +11,15 @@ import { createServer } from "node:http";
 import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  OidcClient,
-  OidcError,
-  generateOidcNonce,
   generateOidcState,
   generatePkceVerifier,
   s256Challenge,
 } from "@unicas/control-auth";
-import type { VerifiedOidcIdentity } from "@unicas/control-auth";
 import type { PersistedSession, TokenStore } from "../store.js";
-import { DEFAULT_GOOGLE_ISSUER } from "../config.js";
 
 export interface LoginFlowOptions {
   /** Origin of the `/admin` API. */
   readonly adminOrigin: string;
-  /** Google OAuth client id registered for this CLI. */
-  readonly googleClientId: string;
-  readonly googleClientSecret?: string;
-  readonly googleIssuer?: string;
   readonly store: TokenStore;
   /** Explicit loopback port; `0` (default) picks a free ephemeral port. */
   readonly port?: number;
@@ -41,14 +33,19 @@ export interface LoginFlowOptions {
   readonly log?: (message: string) => void;
   /** Test hook: invoked with the loopback port once the callback server listens. */
   readonly onCallbackServerStarted?: (port: number) => void;
-  /** Test hook: invoked with the authorization URL right before the browser opens. */
+  /** Test hook: invoked with the BFF authorize URL right before the browser opens. */
   readonly onAuthorizeUrl?: (url: URL) => void;
 }
 
 export interface LoginFlowResult {
   readonly session: PersistedSession;
   readonly authorizationUrl: string;
-  readonly identity: VerifiedOidcIdentity;
+  readonly identity: {
+    readonly identityIssuer: string;
+    readonly subject: string;
+    readonly displayName: string | null;
+    readonly emailForDisplay: string | null;
+  } | null;
 }
 
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -59,36 +56,25 @@ export async function runLoginFlow(options: LoginFlowOptions): Promise<LoginFlow
   const callback = new LocalCallbackServer(options.signal);
   await callback.start(options.port ?? 0);
   options.onCallbackServerStarted?.(callback.port);
-  const redirectUrl = `http://127.0.0.1:${callback.port}/callback`;
-
-  const oidc = new OidcClient(
-    {
-      issuer: options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER,
-      clientId: options.googleClientId,
-      clientSecret: options.googleClientSecret ?? "",
-      redirectUri: redirectUrl,
-    },
-    { fetchImpl },
-  );
+  const redirectUri = `http://127.0.0.1:${callback.port}/callback`;
 
   const state = generateOidcState();
-  const nonce = generateOidcNonce();
   const codeVerifier = generatePkceVerifier();
   const codeChallenge = await s256Challenge(codeVerifier);
-  let authorizeUrl: string;
-  try {
-    authorizeUrl = await oidc.authorizationUrl({ state, nonce, codeChallenge });
-  } catch (error) {
-    throw networkError("Google OIDC discovery", options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER, error);
-  }
+  const authorizeUrl = new URL(`${options.adminOrigin}/admin/auth/cli/authorize`);
+  authorizeUrl.searchParams.set("client_id", "unicas-cli");
+  authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+  authorizeUrl.searchParams.set("state", state);
+  authorizeUrl.searchParams.set("code_challenge", codeChallenge);
+  authorizeUrl.searchParams.set("code_challenge_method", "S256");
   callback.captureState(state);
-  options.onAuthorizeUrl?.(new URL(authorizeUrl));
+  options.onAuthorizeUrl?.(authorizeUrl);
   log("");
   log("Open this URL in your browser to authorize the Unicas CLI:");
-  log(`  ${authorizeUrl}`);
+  log(`  ${authorizeUrl.toString()}`);
   log("");
   if (options.openBrowser !== false) {
-    await openBrowser(authorizeUrl).catch(() => {
+    await openBrowser(authorizeUrl.toString()).catch(() => {
       log("Could not open a browser automatically; copy the URL above.");
     });
   }
@@ -96,65 +82,41 @@ export async function runLoginFlow(options: LoginFlowOptions): Promise<LoginFlow
   const code = await callback.waitForCode();
   await callback.close();
 
-  let exchanged: Awaited<ReturnType<typeof oidc.exchangeCode>>;
-  try {
-    exchanged = await oidc.exchangeCode({ code, codeVerifier });
-  } catch (error) {
-    // Retry once on transport-level failures: a connect failure happens before
-    // any bytes are sent, so retrying the same code is safe. A code already
-    // consumed server-side surfaces as invalid_grant (an HTTP response), which
-    // is not retried here.
-    if (error instanceof OidcError && error.code === "network_failed") {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      exchanged = await oidc.exchangeCode({ code, codeVerifier });
-    } else {
-      throw networkError("Google token exchange", options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER, error);
-    }
-  }
-  const identity = await oidc.verifyIdToken({ idToken: exchanged.idToken, nonce });
-
-  const session = await exchangeForSession(options, exchanged.idToken, nonce, identity);
-  await options.store.save(session);
-  return { session, authorizationUrl: callback.authorizationUrl, identity };
-}
-
-async function exchangeForSession(
-  options: LoginFlowOptions,
-  idToken: string,
-  nonce: string,
-  identity: VerifiedOidcIdentity,
-): Promise<PersistedSession> {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   let response: Response;
   try {
-    response = await fetchImpl(`${options.adminOrigin}/admin/auth/exchange`, {
+    response = await fetchImpl(`${options.adminOrigin}/admin/auth/cli/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken, nonce }),
+      body: JSON.stringify({ code, codeVerifier }),
     });
   } catch (error) {
-    throw networkError("/admin/auth/exchange", options.adminOrigin, error);
+    throw new Error(
+      `failed to reach /admin/auth/cli/exchange at ${options.adminOrigin} — check network/proxy access`,
+      { cause: error },
+    );
   }
   if (!response.ok) {
-    throw new Error(`admin session exchange failed with HTTP ${response.status}`);
+    const body = await response.json().catch(() => ({})) as { error?: unknown; message?: unknown };
+    const detail = typeof body.message === "string" ? `: ${body.message}` : "";
+    throw new Error(`admin session exchange failed with HTTP ${response.status}${detail}`);
   }
   const setCookie = response.headers.get("Set-Cookie");
-  const body = await response.json() as { csrfToken?: unknown };
+  const body = await response.json() as { csrfToken?: unknown; identity?: unknown };
   if (setCookie === null || typeof body.csrfToken !== "string" || body.csrfToken.length === 0) {
     throw new Error("admin session exchange returned no session");
   }
-  return {
+  const identity = typeof body.identity === "object" && body.identity !== null
+    ? body.identity as LoginFlowResult["identity"]
+    : null;
+  const session: PersistedSession = {
     adminOrigin: options.adminOrigin,
     cookie: setCookie.split(";")[0]!,
     csrfToken: body.csrfToken,
-    identity: {
-      identityIssuer: options.googleIssuer ?? DEFAULT_GOOGLE_ISSUER,
-      subject: identity.sub,
-      displayName: identity.name,
-      emailForDisplay: identity.email,
-    },
+    identity: identity ?? undefined,
     savedAt: Date.now(),
   };
+  await options.store.save(session);
+  return { session, authorizationUrl: authorizeUrl.toString(), identity };
 }
 
 class LocalCallbackServer {
@@ -236,17 +198,17 @@ class LocalCallbackServer {
     if (error) {
       const description = url.searchParams.get("error_description") ?? "";
       respondHtml(response, 400, `<h1>Authorization failed</h1><p>${escapeHtml(error)}${description ? `: ${escapeHtml(description)}` : ""}</p>`);
-      this.#failAll(new Error(`OAuth authorization error: ${error}${description ? ` (${description})` : ""}`));
+      this.#failAll(new Error(`authorization error: ${error}${description ? ` (${description})` : ""}`));
       return;
     }
     if (!code) {
       respondHtml(response, 400, "<h1>Authorization failed</h1><p>No authorization code returned.</p>");
-      this.#failAll(new Error("OAuth callback did not include an authorization code"));
+      this.#failAll(new Error("authorization callback did not include a code"));
       return;
     }
     if (this.#state !== undefined && state !== this.#state) {
       respondHtml(response, 400, "<h1>Authorization failed</h1><p>State mismatch; aborting.</p>");
-      this.#failAll(new Error("OAuth callback state mismatch"));
+      this.#failAll(new Error("authorization callback state mismatch"));
       return;
     }
     respondHtml(response, 200, "<h1>Authorization complete</h1><p>You can close this window and return to the terminal.</p>");
@@ -289,24 +251,6 @@ function escapeHtml(value: string): string {
     '"': "&quot;",
     "'": "&#39;",
   })[char] ?? char);
-}
-
-/** Rewrites opaque fetch failures (undici hides the cause) into a diagnosable message. */
-function networkError(step: string, url: string, error: unknown): Error {
-  const cause = error instanceof Error && (error as { cause?: unknown }).cause;
-  const causeMessage = cause instanceof Error ? cause.message : cause === undefined ? undefined : String(cause);
-  const ownMessage = error instanceof Error ? error.message : undefined;
-  const detail = causeMessage !== undefined ? ` (${causeMessage})`
-    : ownMessage !== undefined ? ` (${ownMessage})` : "";
-  let hint = "— check network/proxy access";
-  // Node's fetch ignores system proxies unless NODE_USE_ENV_PROXY=1; a proxy
-  // env var set without it is the most common "connect timeout" cause.
-  const hasProxyEnv = typeof process.env.HTTPS_PROXY === "string" && process.env.HTTPS_PROXY.length > 0
-    || typeof process.env.HTTP_PROXY === "string" && process.env.HTTP_PROXY.length > 0;
-  if (hasProxyEnv && process.env.NODE_USE_ENV_PROXY !== "1") {
-    hint += " — HTTPS_PROXY/HTTP_PROXY is set but NODE_USE_ENV_PROXY is not; run with NODE_USE_ENV_PROXY=1 to route fetch through your proxy";
-  }
-  return new Error(`failed to reach ${step} at ${url}${detail} ${hint}`, { cause: error });
 }
 
 /** Opens the system browser; resolves regardless of whether a browser exists. */

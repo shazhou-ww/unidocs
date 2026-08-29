@@ -42,14 +42,14 @@ pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_SE
 pnpm --filter @unicas/admin-webui exec wrangler secret put SESSION_ENCRYPTION_KEYS
 ```
 
-The admin CLI logs in through its own Google **Desktop app** OAuth client
-(PKCE, loopback redirect). Its client id is built into `@unicas/admin-cli`
-(`DEFAULT_GOOGLE_CLIENT_ID`) and into the admin BFF's `/admin/auth/exchange`
-audience default. Google issues a client secret even for Desktop clients and
-**requires it in the token exchange**, so set it on the CLI side:
-`UNICAS_GOOGLE_CLIENT_SECRET=<secret>`. The BFF never sees it (it only
-verifies the id_token). Set `ADMIN_EXCHANGE_CLIENT_ID` (BFF) or
-`UNICAS_GOOGLE_CLIENT_ID` (CLI) only to override with a different client.
+The admin CLI logs in through the BFF (`/admin/auth/cli/authorize`): the BFF
+runs the Google OIDC flow with its own confidential client (secret held
+server-side in `GOOGLE_OIDC_CLIENT_ID`/`GOOGLE_OIDC_CLIENT_SECRET`) and the
+existing email allowlist, then redirects the browser to the CLI's loopback
+with a one-time code that the CLI exchanges for a BFF session
+(`/admin/auth/cli/exchange`). The CLI never talks to Google and needs no
+client id, secret, or environment value; only `UNICAS_ADMIN_URL` (defaults to
+the production origin).
 
 Use the same random `CAS_AUDIT_READER_KEY` on tenant and admin. Session keys are
 a JSON map such as `{"2026-08":"<base64url-32-byte-key>"}`. The edge Worker

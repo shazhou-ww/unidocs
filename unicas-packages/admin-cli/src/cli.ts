@@ -59,8 +59,6 @@ Usage:
 
 Environment:
   UNICAS_ADMIN_URL          /admin API origin (default https://unicas.shazhou.work)
-  UNICAS_GOOGLE_CLIENT_ID   Google OAuth client id for login (required)
-  UNICAS_GOOGLE_CLIENT_SECRET  optional confidential client secret
   UNICAS_CONFIG_DIR         session directory (default ~/.unicas)
 
 Where a mutation needs a current ETag and none is passed, the CLI reads it

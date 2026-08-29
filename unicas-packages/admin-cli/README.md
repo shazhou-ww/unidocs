@@ -1,23 +1,26 @@
 # @unicas/admin-cli
 
-Unicas control-plane management CLI. Logs in by performing its own Google OIDC
-authorization-code flow (S256 PKCE) with a local callback, then exchanges the
-verified id_token with the control-plane BFF (`/admin/auth/exchange`) for a
-session cookie + CSRF token, persisted locally. Commands call the typed
-`@unicas/admin-client` over the `/admin` HTTP API; `unicas mcp` exposes the
-same 18-tool contract as `@unicas/control-plane-mcp` as a stdio MCP server
-backed by that client (for clients whose MCP support cannot do OAuth, for
-example DeepSeek Harness).
+Unicas control-plane management CLI. Logs in through the control-plane BFF:
+the browser opens the BFF's `/admin/auth/cli/authorize`, the BFF runs the
+Google OIDC flow (client secret held server-side) and the email allowlist,
+then redirects the browser back to the CLI's loopback with a one-time code
+that the CLI exchanges (PKCE) for a session cookie + CSRF token, persisted
+locally. The CLI never talks to Google and needs no client id or secret.
+Commands call the typed `@unicas/admin-client` over the `/admin` HTTP API;
+`unicas mcp` exposes the same 18-tool contract as `@unicas/control-plane-mcp`
+as a stdio MCP server backed by that client (for clients whose MCP support
+cannot do OAuth, for example DeepSeek Harness).
 
 ```
 https://unicas.shazhou.work/admin  <- /admin control-plane API (BFF session)
         ^
         | session cookie + CSRF (via @unicas/admin-client)
-unicas CLI  <- Google OIDC dance -> /admin/auth/exchange, persists ~/.unicas/session.json
+unicas CLI  <- /admin/auth/cli/authorize (BFF does Google OIDC) -> cli/exchange
+        |     persists ~/.unicas/session.json
         |
         +-- plain commands:   unicas whoami / unicas stacks list ...
         `-- stdio MCP server: unicas mcp   (DSH: command "unicas", args ["mcp"])
-```
+``````
 
 ## Requirements
 
@@ -39,22 +42,21 @@ This produces `dist/cli.js` (the `unicas` bin target).
 pnpm --filter @unicas/admin-cli unicas login
 ```
 
-`login` performs a Google OIDC authorization-code flow with S256 PKCE, then
-exchanges the verified id_token for a `/admin` BFF session:
+`login` authorizes through the control-plane BFF:
 
-1. Google OIDC discovery against the configured issuer (default
-   `accounts.google.com`) with the CLI's registered Google OAuth client
-   (`UNICAS_GOOGLE_CLIENT_ID`).
-2. Opens the browser at Google's authorize endpoint, receives the callback on
-   the local `127.0.0.1` loopback server, validates `state`, and exchanges the
-   code for an id_token (nonce verified).
-3. POSTs `{ idToken, nonce }` to `${UNICAS_ADMIN_URL}/admin/auth/exchange`;
-   the BFF verifies the token + email allowlist and returns a session cookie
-   and CSRF token.
+1. Starts a local `127.0.0.1` callback server and opens the browser at
+   `${UNICAS_ADMIN_URL}/admin/auth/cli/authorize` (fixed public client id
+   `unicas-cli`, S256 PKCE, loopback redirect).
+2. The BFF redirects to Google (its own confidential client + secret,
+   server-side), the operator signs in and consents, and the BFF enforces the
+   email allowlist.
+3. The BFF redirects the browser back to the CLI's loopback with a one-time
+   code; the CLI validates `state`, then POSTs `{ code, codeVerifier }` to
+   `/admin/auth/cli/exchange` and receives the session cookie + CSRF token.
 4. Persists the session to `~/.unicas/session.json` (created `0600`, atomic
    writes).
 
-## Commands
+## Commands## Commands
 
 | Command | MCP tool |
 | --- | --- |
@@ -140,27 +142,16 @@ Alternatively run any command in-process:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `UNICAS_ADMIN_URL` | `https://unicas.shazhou.work` | `/admin` API origin |
-| `UNICAS_GOOGLE_CLIENT_ID` | built-in Desktop client | Google OAuth client id for `unicas login` (public, no secret) |
 | `UNICAS_CONFIG_DIR` | `~/.unicas` | Directory holding `session.json` |
 
 ## Network / proxy
 
-`unicas login` must reach `accounts.google.com` from Node. Node's built-in
-`fetch` does **not** use the system proxy by default (Node 24+): behind a
-proxy/VPN (e.g. where Google is otherwise unreachable), set
+The CLI itself never calls Google: only the control-plane BFF talks to
+`accounts.google.com`. `unicas login` only reaches the BFF origin
+(`UNICAS_ADMIN_URL`), so no proxy configuration is needed on the CLI side
+beyond whatever your network requires to reach the control plane.
 
-```powershell
-set HTTPS_PROXY=http://127.0.0.1:7890    # your proxy's local port
-set NODE_USE_ENV_PROXY=1
-pnpm --filter @unicas/admin-cli unicas login
-```
-
-The browser you open for Google sign-in uses its own proxy settings; only the
-CLI's own discovery/token requests need the Node-side env above. A
-`Connect Timeout Error` against Google IPs means the proxy is not configured
-for Node, not a CLI bug.
-
-## Security notes
+## Security notes## Security notes
 
 - The session cookie is stored locally with `0600` permissions; the directory
   is created on demand.
@@ -168,8 +159,8 @@ for Node, not a CLI bug.
   cookie (server-side session, TTL enforced by the BFF) plus the CSRF token.
 - `unicas logout` ends the BFF session server-side (`POST /admin/auth/logout`)
   and always clears the local session.
-- The id_token is exchanged once and never persisted; the session fails closed
-  with a re-login prompt when the BFF rejects the cookie.
+- The one-time authorization code is exchanged once and never persisted; the
+  session fails closed with a re-login prompt when the BFF rejects the cookie.
 
 ## Tests
 
@@ -178,7 +169,6 @@ pnpm --filter @unicas/admin-cli test
 pnpm --filter @unicas/admin-cli typecheck
 ```
 
-Tests run against an in-memory fake of the `/admin` BFF API plus a mock
-Google OIDC provider — no network, no real OAuth. A live `unicas login` +
-`unicas whoami` against production is a manual verification step because it
-requires a real browser Google sign-in.
+Tests run against an in-memory fake of the `/admin` BFF API — no network, no
+real OAuth. A live `unicas login` + `unicas whoami` against production is a
+manual verification step because it requires a real browser Google sign-in.

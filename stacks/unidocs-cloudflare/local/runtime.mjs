@@ -392,7 +392,6 @@ export async function startLocalRuntime({
           googleOidcClientId: process.env.GOOGLE_OIDC_CLIENT_ID,
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
-          adminExchangeClientId: process.env.ADMIN_EXCHANGE_CLIENT_ID,
           casMiddlewareOnly,
           casMiddleware: casMiddleware || !casOrigin,
           casOrigin,

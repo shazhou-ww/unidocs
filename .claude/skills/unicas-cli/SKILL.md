@@ -34,10 +34,12 @@ deployment itself.
 
 ## How the CLI works
 
-- One-time interactive login: `unicas login` opens a browser (Google sign-in),
-  performs its own Google OIDC dance (S256 PKCE), then exchanges the verified
-  id_token with the control-plane BFF (`/admin/auth/exchange`) for a session
-  cookie + CSRF token, persisted to `~/.unicas/session.json` (0600).
+- One-time interactive login: `unicas login` opens a browser at the
+  control-plane BFF's `/admin/auth/cli/authorize`; the BFF runs Google sign-in
+  (client secret server-side) and the email allowlist, then redirects the
+  browser to the CLI with a one-time code that the CLI exchanges (PKCE) for a
+  session cookie + CSRF token, persisted to `~/.unicas/session.json` (0600).
+  The CLI never talks to Google directly.
 - Every command and `unicas mcp` reuse the persisted session. No API keys.
 - All commands print JSON on stdout; diagnostics go to stderr.
 - Exit codes: `0` success, `1` error (including remote tool errors), `2` not

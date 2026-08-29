@@ -1,7 +1,6 @@
 /** `unicas login` — Google OIDC dance with a local callback, then BFF session exchange. */
 
 import { parseArgs } from "node:util";
-import { CliError } from "../errors.js";
 import type { CliContext } from "./common.js";
 import { runLoginFlow } from "../oauth/login.js";
 
@@ -21,16 +20,10 @@ export async function loginCommand(ctx: CliContext, argv: string[]): Promise<voi
     );
     return;
   }
-  if (ctx.config.googleClientId.length === 0) {
-    throw new CliError("UNICAS_GOOGLE_CLIENT_ID is required to log in", 1);
-  }
   const port = values.port === undefined ? 0 : parsePort(values.port);
 
   const result = await runLoginFlow({
     adminOrigin: ctx.config.adminOrigin,
-    googleClientId: ctx.config.googleClientId,
-    googleClientSecret: ctx.config.googleClientSecret,
-    googleIssuer: ctx.config.googleIssuer,
     store: ctx.store,
     port,
     openBrowser: values["no-browser"] !== true,
@@ -38,7 +31,7 @@ export async function loginCommand(ctx: CliContext, argv: string[]): Promise<voi
   });
 
   process.stdout.write(`Logged in to ${ctx.config.adminOrigin}\n`);
-  process.stdout.write(`  identity: ${result.identity.email ?? result.identity.sub}\n`);
+  process.stdout.write(`  identity: ${result.identity?.emailForDisplay ?? result.identity?.subject ?? "(unknown)"}\n`);
   process.stdout.write(`  session:  ${ctx.store.path}\n`);
 }
 
