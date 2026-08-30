@@ -47,6 +47,14 @@ export const casAdminRoutes = {
     `/admin/stacks/${segment(stackId)}/issuer/keys`,
   issuerKey: ({ stackId, kid }: { stackId: string; kid: string }) =>
     `/admin/stacks/${segment(stackId)}/issuer/keys/${segment(kid)}`,
+  /**
+   * BFF helper route: mints a one-time possession challenge for a new issuer
+   * key. It is NOT a generic control-plane resource route and is deliberately
+   * absent from `matchCasAdminRoute` — the BFF handles it before the generic
+   * matcher (it needs its own session/CSRF enforcement with the stack id in
+   * the body, not the path).
+   */
+  possessionChallenge: () => "/admin/issuer/possession-challenge",
   refDomains: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/ref-domains`,
   controlAuditEvents: ({ stackId }: { stackId: string }) =>

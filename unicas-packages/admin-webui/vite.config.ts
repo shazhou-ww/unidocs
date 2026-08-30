@@ -1,4 +1,5 @@
 import react from "@vitejs/plugin-react";
+import { casAdminRoutes } from "@unicas/admin-protocol";
 import { defineConfig } from "vitest/config";
 
 /**
@@ -27,7 +28,7 @@ export default defineConfig({
             || path.startsWith("/admin/stacks")
             || path.startsWith("/admin/member-invitations")
             || path.startsWith("/admin/auth/")
-            || path === "/admin/issuer/possession-challenge"
+            || path === casAdminRoutes.possessionChallenge()
             || path.startsWith("/admin/invitations/");
           if (isBffRoute) return undefined; // forward to the BFF worker
           return path; // serve from Vite

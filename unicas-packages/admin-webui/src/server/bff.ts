@@ -11,6 +11,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import {
   CasAdminErrorCodes,
   casAdminErrorHttpStatus,
+  casAdminRoutes,
   formatCasAdminETag,
   matchCasAdminRoute,
 } from "@unicas/admin-protocol";
@@ -153,7 +154,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       return handleInvitationPage(request, inviteMatch[1]!);
     }
 
-    if (pathname === "/admin/issuer/possession-challenge" && method === "POST") {
+    if (pathname === casAdminRoutes.possessionChallenge() && method === "POST") {
       return handlePossessionChallenge(request);
     }
 

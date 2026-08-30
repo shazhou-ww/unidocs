@@ -284,7 +284,7 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
 
     async createIssuerKeyChallenge(input) {
       const response = await requireOk(
-        await request("/admin/issuer/possession-challenge", {
+        await request(casAdminRoutes.possessionChallenge(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),

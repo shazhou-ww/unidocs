@@ -129,7 +129,7 @@ export class FakeAdminApi {
     if (url.pathname === "/admin/auth/logout" && method === "POST") {
       return new Response(null, { status: 204 });
     }
-    if (url.pathname === "/admin/issuer/possession-challenge" && method === "POST") {
+    if (url.pathname === casAdminRoutes.possessionChallenge() && method === "POST") {
       return json({ nonce: "challenge-nonce-1", expiresAt: 1_800_000_000 });
     }
 

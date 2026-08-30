@@ -81,6 +81,9 @@ export function IssuerView({ stackId }: { stackId: string }) {
     setError(null);
     setChallenge(null);
     try {
+      // Browser code cannot runtime-import @unicas/admin-protocol (UI
+      // boundary test), so the path stays a literal here — same as the other
+      // /admin API calls in this view.
       const result = await api<{ nonce: string }>("/admin/issuer/possession-challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
