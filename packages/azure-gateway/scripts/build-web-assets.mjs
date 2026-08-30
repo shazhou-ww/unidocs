@@ -43,10 +43,13 @@ async function walk(dir, base, files) {
 }
 
 function buildWebPsd() {
+  // Windows exposes pnpm as a .CMD shim, so we must go through a shell
+  // (spawnSync "pnpm" ENOENT otherwise). The command is a fixed literal — no
+  // user input — and passing it as a single string rather than an args array
+  // avoids Node 24's shell+args DeprecationWarning.
   const result = spawnSync(
-    "pnpm",
-    ["--filter", "@unidocs/web-psd", "build"],
-    { cwd: join(PKG_ROOT, "..", ".."), stdio: "inherit" },
+    ["pnpm", "--filter", "@unidocs/web-psd", "build"].join(" "),
+    { cwd: join(PKG_ROOT, "..", ".."), stdio: "inherit", shell: true },
   );
   if (result.error) throw result.error;
   if (result.status !== 0) {
