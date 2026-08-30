@@ -23,7 +23,9 @@ const CONTROL_TABLE_MIGRATIONS = [
   "CREATE TABLE IF NOT EXISTS cas_stack_member_invitations (invitation_id TEXT NOT NULL, stack_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','expired','revoked')), email_constraint TEXT, token_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (invitation_id))",
 
   // Singleton tenant issuer per stack; issuer value is globally unique.
-  "CREATE TABLE IF NOT EXISTS cas_stack_issuer (stack_id TEXT NOT NULL, issuer TEXT NOT NULL, audience TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')), revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (stack_id))",
+  // capability_max_lifetime_seconds is the per-stack signing cap enforced by
+  // the CAS verifier (default 8h, hard max 7d).
+  "CREATE TABLE IF NOT EXISTS cas_stack_issuer (stack_id TEXT NOT NULL, issuer TEXT NOT NULL, audience TEXT NOT NULL, capability_max_lifetime_seconds INTEGER NOT NULL DEFAULT 28800 CHECK (capability_max_lifetime_seconds BETWEEN 60 AND 604800), revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (stack_id))",
 
   // Issuer keys with explicit lifecycle; possession proof is the activation
   // gate, so keys enter 'active' directly (pending removed by Task 2).
@@ -72,6 +74,9 @@ export async function migrateControlSchema(db: D1Database): Promise<void> {
     ["caller_channel", "TEXT"],
     ["oauth_client_handle", "TEXT"],
     ["tool_name", "TEXT"],
+  ]);
+  await ensureColumns(db, "cas_stack_issuer", [
+    ["capability_max_lifetime_seconds", "INTEGER NOT NULL DEFAULT 28800"],
   ]);
 }
 

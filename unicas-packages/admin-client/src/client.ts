@@ -74,7 +74,11 @@ export interface AdminClient {
   getIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackIssuer>>;
   putIssuer(
     path: { readonly stackId: CasStackId },
-    body: { readonly issuer: string; readonly audience: string },
+    body: {
+      readonly issuer: string;
+      readonly audience: string;
+      readonly capabilityMaxLifetimeSeconds?: number;
+    },
     ifMatch: string,
   ): Promise<AdminClientRead<CasStackIssuer>>;
   listIssuerKeys(path: { readonly stackId: CasStackId }): Promise<{ readonly keys: readonly CasStackIssuerKey[] }>;

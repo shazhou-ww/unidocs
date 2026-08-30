@@ -705,11 +705,23 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         return jsonWithEtag(result);
       }
       case "putIssuer": {
-        const body = await readJsonBody<{ issuer?: unknown; audience?: unknown }>(request);
+        const body = await readJsonBody<{
+          issuer?: unknown;
+          audience?: unknown;
+          capabilityMaxLifetimeSeconds?: unknown;
+        }>(request);
         if (!body) return invalidRequest("JSON body is required");
+        const nextBody: {
+          issuer: string;
+          audience: string;
+          capabilityMaxLifetimeSeconds?: number;
+        } = { issuer: String(body.issuer ?? ""), audience: String(body.audience ?? "") };
+        if (body.capabilityMaxLifetimeSeconds !== undefined) {
+          nextBody.capabilityMaxLifetimeSeconds = Number(body.capabilityMaxLifetimeSeconds);
+        }
         const result = await service.putIssuer(ctx, {
           path: { stackId: route.stackId },
-          body: { issuer: String(body.issuer ?? ""), audience: String(body.audience ?? "") },
+          body: nextBody,
         }, mutation);
         return jsonWithEtag(result);
       }

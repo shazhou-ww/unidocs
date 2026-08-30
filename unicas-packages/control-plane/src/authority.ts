@@ -24,7 +24,7 @@ export interface ResolvedStackAuthority {
   readonly stackId: string;
   readonly issuer: string;
   readonly audience: string;
-  readonly status: "active" | "disabled";
+  readonly capabilityMaxLifetimeSeconds: number;
   readonly keys: readonly RegisteredStackKey[];
 }
 
@@ -40,7 +40,7 @@ export class AuthorityRepository {
   async resolveIssuer(issuer: string): Promise<ResolvedStackAuthority | null> {
     const row = await this.#db
       .prepare(
-        "SELECT stack_id, issuer, audience, status FROM cas_stack_issuer WHERE issuer = ?",
+        "SELECT stack_id, issuer, audience, capability_max_lifetime_seconds FROM cas_stack_issuer WHERE issuer = ?",
       )
       .bind(issuer)
       .first<IssuerRow>();
@@ -55,7 +55,7 @@ export class AuthorityRepository {
       stackId: row.stack_id,
       issuer: row.issuer,
       audience: row.audience,
-      status: row.status === "disabled" ? "disabled" : "active",
+      capabilityMaxLifetimeSeconds: row.capability_max_lifetime_seconds,
       keys: (keyRows.results ?? []).map((key) => ({
         kid: key.kid,
         algorithm: key.algorithm,
@@ -70,7 +70,7 @@ interface IssuerRow {
   readonly stack_id: string;
   readonly issuer: string;
   readonly audience: string;
-  readonly status: string;
+  readonly capability_max_lifetime_seconds: number;
 }
 
 interface KeyRow {

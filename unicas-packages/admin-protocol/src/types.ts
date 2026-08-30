@@ -57,13 +57,12 @@ export interface CasMemberInvitation {
   readonly revision: number;
 }
 
-export type CasIssuerStatus = "active" | "disabled";
-
 export interface CasStackIssuer {
   readonly stackId: CasStackId;
   readonly issuer: string;
   readonly audience: string;
-  readonly status: CasIssuerStatus;
+  /** Per-stack capability signing cap in seconds (default 28800, max 604800). */
+  readonly capabilityMaxLifetimeSeconds: number;
   readonly revision: number;
 }
 

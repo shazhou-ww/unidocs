@@ -165,8 +165,13 @@ export const DefaultCapabilityLifetimeSeconds = 120;
  * operator 全程带着启动时那张 delegated-cas 凭据调编辑器，凭据一过期
  * 后续写入就 401。这是权宜之计 —— 代价是校验侧不再为 apply 这类短操作
  * 兜底，正解是循环中途续签。
+ *
+ * 2026-08 再从 1800 抬到 604800（7 天）：tenant debug 工具（unicas-tenant）
+ * 按 stack 登录后缓存 capability，默认 8 小时、per-stack 可配上限 7 天
+ * （控制面 issuer 配置的 capabilityMaxLifetimeSeconds）。全局上界保持
+ * 7 天；per-stack 上限由 CAS verifier 按 authority registry 强制。
  */
-export const MaximumCapabilityLifetimeSeconds = 1800;
+export const MaximumCapabilityLifetimeSeconds = 7 * 24 * 60 * 60;
 export const MaximumCapabilityClockSkewSeconds = 30;
 
 export interface CapabilityProtectedHeader extends JWTHeaderParameters {
@@ -243,7 +248,6 @@ export type CapabilityErrorCode =
   | "insufficient_permission"
   | "resource_scope_mismatch"
   | "unknown_issuer"
-  | "issuer_disabled"
   | "registry_unavailable"
   | "unsupported_algorithm";
 
@@ -265,7 +269,6 @@ export class CapabilityAuthenticationError extends CapabilityError {
       | "invalid_token"
       | "missing_token"
       | "unknown_issuer"
-      | "issuer_disabled"
       | "registry_unavailable",
     message: string,
   ) {

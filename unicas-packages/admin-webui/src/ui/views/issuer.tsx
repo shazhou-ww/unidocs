@@ -14,6 +14,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [issuerIssuer, setIssuerIssuer] = useState("");
   const [issuerAudience, setIssuerAudience] = useState("");
+  const [maxLifetime, setMaxLifetime] = useState("");
   const [savingIssuer, setSavingIssuer] = useState(false);
   const [kid, setKid] = useState("");
   const [algorithm, setAlgorithm] = useState("ES256");
@@ -35,6 +36,9 @@ export function IssuerView({ stackId }: { stackId: string }) {
       if (issuerResult) {
         setIssuerIssuer(issuerResult.issuer);
         setIssuerAudience(issuerResult.audience);
+        setMaxLifetime(issuerResult.capabilityMaxLifetimeSeconds
+          ? String(issuerResult.capabilityMaxLifetimeSeconds)
+          : "");
       }
       const keyResult = await api<{ keys: CasStackIssuerKey[] }>(`/admin/stacks/${encodeURIComponent(stackId)}/issuer/keys`);
       setKeys(keyResult.keys);
@@ -51,7 +55,12 @@ export function IssuerView({ stackId }: { stackId: string }) {
     setSavingIssuer(true);
     setError(null);
     try {
-      const body = { issuer: issuerIssuer.trim(), audience: issuerAudience.trim() };
+      const body: {
+        issuer: string;
+        audience: string;
+        capabilityMaxLifetimeSeconds?: number;
+      } = { issuer: issuerIssuer.trim(), audience: issuerAudience.trim() };
+      if (maxLifetime.trim().length > 0) body.capabilityMaxLifetimeSeconds = Number(maxLifetime);
       const currentIssuer = typeof issuer === "object" && issuer !== null ? issuer : null;
       await api<CasStackIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/issuer`, {
         method: "PUT",
@@ -146,6 +155,10 @@ export function IssuerView({ stackId }: { stackId: string }) {
         <div className="field-row">
           <label htmlFor="issuer-audience">Audience</label>
           <input id="issuer-audience" value={issuerAudience} placeholder="unidocs-cas" onChange={(event) => setIssuerAudience(event.target.value)} />
+        </div>
+        <div className="field-row">
+          <label htmlFor="issuer-max-lifetime">Max capability lifetime (s)</label>
+          <input id="issuer-max-lifetime" value={maxLifetime} placeholder="28800 (default 8h; max 604800)" onChange={(event) => setMaxLifetime(event.target.value)} />
         </div>
         <Button icon={<Save size={15} />} variant="primary" onClick={() => void saveIssuer()} disabled={savingIssuer || issuerIssuer.trim().length === 0 || issuerAudience.trim().length === 0}>
           {savingIssuer ? "Saving…" : issuer ? "Update issuer" : "Configure issuer"}
