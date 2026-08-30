@@ -111,8 +111,10 @@ unicas-packages/                    @unicas org
 - **零 `@unidocs/*` 依赖**：unicas-packages 是独立中间件。`server-cloudflare`
   唯一允许的应用栈 devDependency 是测试用的 `@unidocs/service-auth`
   （签发器），生产代码不引用。
-- `admin-cli` 零运行时 workspace 依赖：它通过 MCP 通道访问控制面，只在
-  类型层依赖 `admin-protocol`，保持独立可发布。
+- `admin-cli` 走 `/admin` HTTP API（经 `@unicas/admin-client`），运行时依赖
+  `admin-protocol`（契约类型）+ `admin-client`（传输）+ `control-auth`
+  （PKCE/state 辅助）；`unicas mcp` 是同一 `admin-client` 之上的 stdio MCP
+  呈现层，不引入 MCP 转 MCP。
 
 ## 存储编码边界（2026-08-29 决策）
 
@@ -171,7 +173,14 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 
 - 依赖 guard：`tests/unit/workspace/package-deps.test.mjs`（目录名=包名、声明与
   import 一致、composite tsconfig references 恰好覆盖 dependencies）。
-- 边界测试：每个包的 `tests/boundary.test.ts` 断言允许的依赖集与跨组禁止项。
+- 边界测试：**部署层包**（`admin-webui`、`control-plane`、
+  `control-plane-mcp`、`edge`、`server-cloudflare`）各自有
+  `tests/boundary.test.ts`，断言允许的依赖集与跨组禁止项；**client 层与
+  契约/编码层包**（`tenant-client`、`tenant-blob-client`、`admin-client`、
+  `admin-protocol`、`tenant-protocol`、`codec`、`control-auth`）的依赖边界
+  由 package-deps guard（声明与 import 一致）加
+  `admin-protocol/tests/cross-plane.test.ts`（admin 侧不得依赖 tenant 侧
+  实现包）兜底。
 - 改名流程：`git mv` 目录 → 同步 `package.json` `name` → 更新所有 import /
   tsconfig references / workspace aliases / 当前文档 → guard 与 boundary 测试兜底。
 - 历史 plan/spec 文档（`docs/superpowers/`）是决策记录，**不改名**。
