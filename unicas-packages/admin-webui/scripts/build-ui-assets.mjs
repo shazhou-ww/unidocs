@@ -17,6 +17,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const UI_DIR = join(ROOT, "dist", "ui");
 const OUT = join(ROOT, "src", "server", "ui-assets.generated.ts");
 
+/** Read a text asset with LF line endings so the generated module is
+ * byte-identical across platforms (Windows checkouts carry CRLF in files). */
+async function readTextAsset(file) {
+  return (await readFile(file, "utf8")).replace(/\r\n/g, "\n");
+}
+
 async function walk(dir, base, files) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
@@ -24,7 +30,7 @@ async function walk(dir, base, files) {
       await walk(full, base, files);
     } else {
       const rel = `/${relative(base, full).replace(/\\/g, "/")}`;
-      files.push({ rel, content: await readFile(full, "utf8") });
+      files.push({ rel, content: await readTextAsset(full) });
     }
   }
 }
@@ -48,7 +54,7 @@ async function main() {
   ];
   for (const source of SKILL_SOURCES) {
     try {
-      files.push({ rel: source.rel, content: await readFile(source.file, "utf8") });
+      files.push({ rel: source.rel, content: await readTextAsset(source.file) });
     } catch (err) {
       console.error(`skill file missing (${err.message}); skipping ${source.rel}`);
     }
