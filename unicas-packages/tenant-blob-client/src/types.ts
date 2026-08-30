@@ -5,8 +5,19 @@
  * `@unicas/tenant-client` and is the only layer a business user needs.
  */
 
-import type { CasHash } from "@unicas/tenant-client";
-import type { CasNodeRange } from "@unicas/tenant-client";
+import type {
+  CasGcOptions,
+  CasGcResult,
+  CasHash,
+  CasLeaseOptions,
+  CasLeaseResult,
+  CasNodeMetadata,
+  CasNodeRange,
+  CasNodeSource,
+  CasRootRefUpdate,
+  CasRootRefsResult,
+  CasUsage,
+} from "@unicas/tenant-client";
 
 /** Blob identity + resolved metadata. */
 export interface CasBlobRef {
@@ -52,17 +63,17 @@ export interface CasBlobClient {
   /** Blob metadata (size/contentType) without reading content. */
   statBlob(hash: CasHash): Promise<CasBlobRef>;
   /** Node metadata (transport passthrough). */
-  readMetadata(hash: CasHash, options?: { readonly signal?: AbortSignal }): Promise<import("@unicas/tenant-client").CasNodeMetadata>;
+  readMetadata(hash: CasHash, options?: { readonly signal?: AbortSignal }): Promise<CasNodeMetadata>;
   /** Extend a node lease (transport passthrough). */
   leaseNode(
     hash: CasHash,
-    source?: import("@unicas/tenant-client").CasNodeSource,
-    options?: import("@unicas/tenant-client").CasLeaseOptions,
-  ): Promise<import("@unicas/tenant-client").CasLeaseResult>;
+    source?: CasNodeSource,
+    options?: CasLeaseOptions,
+  ): Promise<CasLeaseResult>;
   /** Update root references for retention (transport passthrough). */
-  updateRootRefs(update: import("@unicas/tenant-client").CasRootRefUpdate): Promise<import("@unicas/tenant-client").CasRootRefsResult>;
+  updateRootRefs(update: CasRootRefUpdate): Promise<CasRootRefsResult>;
   /** Tenant storage usage. */
-  usage(signal?: AbortSignal): Promise<import("@unicas/tenant-client").CasUsage>;
+  usage(signal?: AbortSignal): Promise<CasUsage>;
   /** Advisory tenant garbage collection. */
-  gc(options?: import("@unicas/tenant-client").CasGcOptions): Promise<import("@unicas/tenant-client").CasGcResult>;
+  gc(options?: CasGcOptions): Promise<CasGcResult>;
 }

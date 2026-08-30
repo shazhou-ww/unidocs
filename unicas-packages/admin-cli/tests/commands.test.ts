@@ -9,6 +9,7 @@ import { membersCommand } from "../src/commands/members.js";
 import { stacksCommand } from "../src/commands/stacks.js";
 import { statusCommand } from "../src/commands/status.js";
 import { whoamiCommand } from "../src/commands/whoami.js";
+import type { TokenStore } from "../src/store.js";
 import { FAKE_ORIGIN, FakeAdminApi } from "./helpers/fake-server.js";
 
 let dir: string;
@@ -36,7 +37,7 @@ function captureStdout(): { writes: string[]; restore: () => void } {
   return { writes, restore: () => spy.mockRestore() };
 }
 
-async function seedLoggedIn(store: import("../src/store.js").TokenStore): Promise<void> {
+async function seedLoggedIn(store: TokenStore): Promise<void> {
   await store.save({
     adminOrigin: FAKE_ORIGIN,
     cookie: "cas_admin_session=session-1",

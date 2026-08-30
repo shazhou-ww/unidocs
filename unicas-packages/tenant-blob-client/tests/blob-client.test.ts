@@ -18,6 +18,7 @@ import type {
   CasLeaseResult,
   CasNodeMetadata,
   CasNodeRange,
+  CasNodeSource,
   CasRootRefUpdate,
   CasRootRefsResult,
   CasUsage,
@@ -32,7 +33,7 @@ class MemoryCas implements TenantCasClient {
 
   async leaseNode(
     hash: string,
-    source?: import("@unicas/tenant-client").CasNodeSource,
+    source?: CasNodeSource,
     _options?: CasLeaseOptions,
   ): Promise<CasLeaseResult> {
     if (source === undefined) {

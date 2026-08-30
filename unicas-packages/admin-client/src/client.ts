@@ -26,6 +26,7 @@ import type {
   CasControlAuditEvent,
   CasIssuerKeyState,
   CasMemberInvitation,
+  CasOperatorIdentity,
   CasOperatorIdentityKey,
   CasRefDomain,
   CasRootRefBalance,
@@ -45,7 +46,7 @@ import type {
 } from "./types.js";
 
 export interface AdminClient {
-  me(): Promise<{ readonly identity: import("@unicas/admin-protocol").CasOperatorIdentity; readonly memberships: readonly CasStackMember[] }>;
+  me(): Promise<{ readonly identity: CasOperatorIdentity; readonly memberships: readonly CasStackMember[] }>;
   listStacks(query?: CasAdminPageQuery): Promise<CasAdminPage<CasStack>>;
   createStack(
     body: { readonly displayName: string },

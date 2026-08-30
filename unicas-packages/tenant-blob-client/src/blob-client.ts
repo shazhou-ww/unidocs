@@ -28,14 +28,16 @@ import type {
 import type {
   CasGcOptions,
   CasGcResult,
+  CasLeaseOptions,
+  CasLeaseResult,
   CasNodeMetadata,
   CasNodeRange,
+  CasNodeSource,
   CasRootRefUpdate,
   CasRootRefsResult,
   CasUsage,
   TenantCasClient,
 } from "@unicas/tenant-client";
-import type { CasLeaseOptions, CasLeaseResult } from "@unicas/tenant-client";
 
 interface BlobTreeNode {
   readonly hash: string;
@@ -257,7 +259,7 @@ export function createCasBlobClient(
     readMetadata: (hash: string, options?: { readonly signal?: AbortSignal }): Promise<CasNodeMetadata> =>
       cas.readMetadata(hash, options),
 
-    leaseNode: (hash: string, source?: import("@unicas/tenant-client").CasNodeSource, options?: CasLeaseOptions): Promise<CasLeaseResult> =>
+    leaseNode: (hash: string, source?: CasNodeSource, options?: CasLeaseOptions): Promise<CasLeaseResult> =>
       cas.leaseNode(hash, source, options),
 
     updateRootRefs: (update: CasRootRefUpdate): Promise<CasRootRefsResult> =>
