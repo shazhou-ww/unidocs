@@ -897,9 +897,6 @@ importers:
         specifier: workspace:*
         version: link:../tenant-protocol
     devDependencies:
-      '@unicas/tenant-blob-client':
-        specifier: workspace:*
-        version: link:../tenant-blob-client
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

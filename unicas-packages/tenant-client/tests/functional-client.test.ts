@@ -1,10 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { hashToHex, sha256 } from "@unicas/codec";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  concatenateNodeBytes,
+  computeNodeDigest,
+  encodeHeader,
+  hashToHex,
+  hexToHash,
+} from "@unicas/codec";
 import {
   CasClientError,
   createTenantCasClient,
 } from "../src/index.js";
-import { createCasBlobClient, storeNodeContent } from "@unicas/tenant-blob-client";
+import type { TenantCasClient } from "../src/index.js";
 import { MockCasService } from "./mock-cas-service.js";
 
 const STACK = "stack-1";
@@ -29,10 +35,27 @@ describe("functional tenant CAS client", () => {
     });
   }
 
+  async function storeNode(
+    client: TenantCasClient,
+    content: Uint8Array,
+    contentType: string,
+    refs: readonly string[] = [],
+  ): Promise<string> {
+    const childHashes = refs.map(hexToHash);
+    const header = encodeHeader(content.length, contentType, childHashes.length);
+    const hash = hashToHex(await computeNodeDigest(header, contentType, childHashes, content));
+    const bytes = concatenateNodeBytes(header, new TextEncoder().encode(contentType), childHashes, content);
+    await client.leaseNode(hash, {
+      contentLength: bytes.length,
+      body: streamBytes(bytes),
+    });
+    return hash;
+  }
+
   it("creates lazy node readers with metadata and random content access", async () => {
     const client = createClient();
     const content = new TextEncoder().encode("0123456789");
-    const hash = await storeNodeContent(client, content, "text/plain");
+    const hash = await storeNode(client, content, "text/plain");
 
     expect(service.tokens).toHaveLength(1);
     await expect(client.readMetadata(hash)).resolves.toMatchObject({ hash, size: 10, contentType: "text/plain", refs: [] });
@@ -42,7 +65,7 @@ describe("functional tenant CAS client", () => {
 
   it("uses one lease operation for content upload and existing nodes", async () => {
     const client = createClient();
-    const hash = await storeNodeContent(client, Uint8Array.from([1, 2, 3]), "application/octet-stream");
+    const hash = await storeNode(client, Uint8Array.from([1, 2, 3]), "application/octet-stream");
 
     await expect(client.leaseNode(hash)).resolves.toMatchObject({ hash, ready: true });
     await expect(client.leaseNode("f".repeat(64))).rejects.toMatchObject({
@@ -53,7 +76,7 @@ describe("functional tenant CAS client", () => {
 
   it("updates roots and exposes tenant administration operations", async () => {
     const client = createClient();
-    const hash = await storeNodeContent(client, Uint8Array.from([1]), "application/octet-stream");
+    const hash = await storeNode(client, Uint8Array.from([1]), "application/octet-stream");
 
     await expect(client.updateRootRefs({ requestId: "r1", changes: { [hash]: 1 } }))
       .resolves.toMatchObject({ success: true, revision: 1 });
@@ -63,39 +86,6 @@ describe("functional tenant CAS client", () => {
     expect(service.gcCalls).toEqual([{ maxNodes: 25 }]);
   });
 
-  it("stores and reads deterministic chunk-tree blobs", async () => {
-    const cas = createClient();
-    const chunkBytes = 4;
-    const blobs = createCasBlobClient(cas, { chunkBytes, indexFanout: 2 });
-    const bytes = Uint8Array.from([
-      0x61, 0x61, 0x61, 0x61,
-      0x62, 0x62, 0x62, 0x62,
-      0x63, 0x64, 0x65,
-    ]);
-    const progress = vi.fn();
-
-    const ref = await blobs.storeBlob(streamOf(bytes, 1024 * 1024 + 1), {
-      contentType: "application/octet-stream",
-      size: bytes.length,
-      onProgress: progress,
-    });
-    const handle = await blobs.openBlob(ref.hash);
-    expect(handle.ref).toEqual(ref);
-    const opened = new Uint8Array(await new Response(handle.read()).arrayBuffer());
-    expect(opened.length).toBe(bytes.length);
-    expect(hashToHex(await sha256(opened))).toBe(hashToHex(await sha256(bytes)));
-    const ranged = new Uint8Array(await new Response(handle.read({
-      offset: chunkBytes - 2,
-      length: 4,
-    })).arrayBuffer());
-    expect(ranged).toEqual(Uint8Array.from([0x61, 0x61, 0x62, 0x62]));
-    const bounded = await handle.readBytes({ offset: chunkBytes - 2, length: 4 });
-    expect(bounded).toEqual(ranged);
-    await expect(blobs.usage()).resolves.toBeDefined();
-    await expect(blobs.gc({ maxNodes: 25 })).resolves.toBeDefined();
-    expect(progress).toHaveBeenLastCalledWith(bytes.length);
-  }, 20_000);
-
   it("preserves HTTP status on client errors", async () => {
     const error = await createClient().readMetadata("0".repeat(64)).catch(value => value);
     expect(error).toBeInstanceOf(CasClientError);
@@ -103,17 +93,11 @@ describe("functional tenant CAS client", () => {
   });
 });
 
-function streamOf(bytes: Uint8Array, fragmentSize: number): ReadableStream<Uint8Array> {
-  let offset = 0;
+function streamBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({
-    pull(controller) {
-      if (offset === bytes.length) {
-        controller.close();
-        return;
-      }
-      const end = Math.min(offset + fragmentSize, bytes.length);
-      controller.enqueue(bytes.slice(offset, end));
-      offset = end;
+    start(controller) {
+      if (bytes.length > 0) controller.enqueue(bytes);
+      controller.close();
     },
   });
 }

@@ -1,0 +1,178 @@
+/**
+ * Functional blob-layer tests: `createCasBlobClient` over an in-memory
+ * `TenantCasClient` (no HTTP, no transport). Covers deterministic chunk-tree
+ * store, handle-shaped reads (whole / ranged / bounded), and tenant admin
+ * passthroughs (usage/gc).
+ */
+
+import { describe, expect, it, vi } from "vitest";
+import {
+  hashToHex,
+  parseNodeBytes,
+  sha256,
+} from "@unicas/codec";
+import type {
+  CasGcOptions,
+  CasGcResult,
+  CasLeaseOptions,
+  CasLeaseResult,
+  CasNodeMetadata,
+  CasNodeRange,
+  CasRootRefUpdate,
+  CasRootRefsResult,
+  CasUsage,
+  TenantCasClient,
+} from "@unicas/tenant-client";
+import { createCasBlobClient, storeNodeContent } from "../src/index.js";
+
+class MemoryCas implements TenantCasClient {
+  readonly nodes = new Map<string, { content: Uint8Array; contentType: string; refs: string[] }>();
+  readonly rootRefUpdates: CasRootRefUpdate[] = [];
+  gcCalls: { maxNodes?: number }[] = [];
+
+  async leaseNode(
+    hash: string,
+    source?: import("@unicas/tenant-client").CasNodeSource,
+    _options?: CasLeaseOptions,
+  ): Promise<CasLeaseResult> {
+    if (source === undefined) {
+      if (!this.nodes.has(hash)) throw new Error(`node not found: ${hash}`);
+      return { hash, ready: true, leaseStartedAt: 0, leaseExpiresAt: Date.now() + 60_000 };
+    }
+    const canonical = new Uint8Array(await new Response(source.body).arrayBuffer());
+    const parsed = parseNodeBytes(canonical);
+    this.nodes.set(hash, {
+      content: parsed.content,
+      contentType: parsed.contentType,
+      refs: parsed.childHashes.map(hashToHex),
+    });
+    return { hash, ready: true, leaseStartedAt: 0, leaseExpiresAt: Date.now() + 60_000 };
+  }
+
+  async readMetadata(hash: string): Promise<CasNodeMetadata> {
+    const node = this.nodes.get(hash);
+    if (node === undefined) throw new Error(`node not found: ${hash}`);
+    return { hash, size: node.content.length, contentType: node.contentType, refs: node.refs };
+  }
+
+  async readContent(
+    hash: string,
+    range?: CasNodeRange,
+    _options?: { readonly signal?: AbortSignal },
+  ): Promise<ReadableStream<Uint8Array>> {
+    const node = this.nodes.get(hash);
+    if (node === undefined) throw new Error(`node not found: ${hash}`);
+    const content = range === undefined
+      ? node.content
+      : node.content.slice(range.offset, range.length === undefined ? undefined : range.offset + range.length);
+    return streamBytes(content);
+  }
+
+  async updateRootRefs(update: CasRootRefUpdate): Promise<CasRootRefsResult> {
+    this.rootRefUpdates.push(update);
+    return { success: true, revision: this.rootRefUpdates.length };
+  }
+
+  async usage(): Promise<CasUsage> {
+    return {
+      nodeCount: this.nodes.size,
+      readyContentBytes: [...this.nodes.values()].reduce((total, node) => total + node.content.length, 0),
+      readyStoredBytes: 0,
+      reservedBytes: 0,
+      notReadyNodeCount: 0,
+      leasedNodeCount: this.nodes.size,
+    };
+  }
+
+  async gc(options?: CasGcOptions): Promise<CasGcResult> {
+    this.gcCalls.push(options ?? {});
+    return { examined: this.nodes.size, deleted: 0, reclaimedContentBytes: 0 };
+  }
+}
+
+describe("functional blob client", () => {
+  it("stores and reads deterministic chunk-tree blobs", async () => {
+    const cas = new MemoryCas();
+    const chunkBytes = 4;
+    const blobs = createCasBlobClient(cas, { chunkBytes, indexFanout: 2 });
+    const bytes = Uint8Array.from([
+      0x61, 0x61, 0x61, 0x61,
+      0x62, 0x62, 0x62, 0x62,
+      0x63, 0x64, 0x65,
+    ]);
+    const progress = vi.fn();
+
+    const ref = await blobs.storeBlob(streamOf(bytes, 1024 * 1024 + 1), {
+      contentType: "application/octet-stream",
+      size: bytes.length,
+      onProgress: progress,
+    });
+    const handle = await blobs.openBlob(ref.hash);
+    expect(handle.ref).toEqual(ref);
+    const opened = new Uint8Array(await new Response(handle.read()).arrayBuffer());
+    expect(opened.length).toBe(bytes.length);
+    expect(hashToHex(await sha256(opened))).toBe(hashToHex(await sha256(bytes)));
+    const ranged = new Uint8Array(await new Response(handle.read({
+      offset: chunkBytes - 2,
+      length: 4,
+    })).arrayBuffer());
+    expect(ranged).toEqual(Uint8Array.from([0x61, 0x61, 0x62, 0x62]));
+    const bounded = await handle.readBytes({ offset: chunkBytes - 2, length: 4 });
+    expect(bounded).toEqual(ranged);
+    await expect(blobs.usage()).resolves.toBeDefined();
+    await expect(blobs.gc({ maxNodes: 25 })).resolves.toBeDefined();
+    expect(progress).toHaveBeenLastCalledWith(bytes.length);
+  }, 20_000);
+
+  it("stats single-node blobs without an index tree", async () => {
+    const cas = new MemoryCas();
+    const blobs = createCasBlobClient(cas, { chunkBytes: 1024, indexFanout: 2 });
+    const bytes = new TextEncoder().encode("small");
+    const ref = await blobs.storeBlob(streamOf(bytes, 3), {
+      contentType: "text/plain",
+      size: bytes.length,
+    });
+    expect(ref.size).toBe(bytes.length);
+    expect(ref.contentType).toBe("text/plain");
+    const stat = await blobs.statBlob(ref.hash);
+    expect(stat).toEqual(ref);
+  });
+
+  it("passes lease, root-ref updates, and gc through to the CAS client", async () => {
+    const cas = new MemoryCas();
+    const blobs = createCasBlobClient(cas);
+    const bytes = new TextEncoder().encode("abc");
+    const hash = await storeNodeContent(cas, bytes, "text/plain");
+
+    await expect(blobs.leaseNode(hash)).resolves.toMatchObject({ hash, ready: true });
+    await expect(blobs.updateRootRefs({ requestId: "r1", changes: { [hash]: 1 } }))
+      .resolves.toMatchObject({ success: true, revision: 1 });
+    await expect(blobs.gc({ maxNodes: 25 })).resolves.toBeDefined();
+    expect(cas.rootRefUpdates).toEqual([{ requestId: "r1", changes: { [hash]: 1 } }]);
+    expect(cas.gcCalls).toEqual([{ maxNodes: 25 }]);
+  });
+});
+
+function streamOf(bytes: Uint8Array, fragmentSize: number): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (offset === bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + fragmentSize, bytes.length);
+      controller.enqueue(bytes.slice(offset, end));
+      offset = end;
+    },
+  });
+}
+
+function streamBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      if (bytes.length > 0) controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
