@@ -4,7 +4,7 @@ import { stackCanonicalNodeKey } from "./do-names.js";
 
 /** D1/R2 adapter for the cloud-neutral node GC kernel. */
 export class CloudflareNodeGcRepository implements NodeGcRepository {
-  constructor(readonly db: D1Database, readonly bucket: R2Bucket) {}
+  constructor(readonly db: D1Database, readonly bucket: R2Bucket) { }
 
   async findExpiredUnreferenced(scope: NodeGcScope, expiresAtOrBefore: number, maxNodes: number): Promise<readonly NodeGcCandidate[]> {
     const eligible = await this.db.prepare(

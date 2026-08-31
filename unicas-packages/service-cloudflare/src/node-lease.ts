@@ -14,7 +14,7 @@ import { stackCanonicalNodeKey } from "./do-names.js";
 
 /** D1/R2 adapter for node renewal, upload, and canonical orphan adoption. */
 export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseRepository {
-  constructor(readonly db: D1Database, readonly bucket: R2Bucket) {}
+  constructor(readonly db: D1Database, readonly bucket: R2Bucket) { }
 
   async readNodeLease(scope: NodeLeaseScope, hash: string): Promise<NodeLeaseRecord | null> {
     const row = await this.db.prepare(
