@@ -5,7 +5,7 @@ import { setState, getState } from "../src/ui/store.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
 vi.mock("../src/ui/controller.js", () => ({
-  getController: () => ({ requestVisibleTiles: vi.fn() }), openFile: vi.fn(), exportUrl: () => null,
+  getController: () => ({ requestVisibleTiles: vi.fn() }), openFile: vi.fn(), exportDoc: vi.fn(),
 }));
 
 const layer = (id: string, over: Partial<LocalLayer> = {}): LocalLayer => ({

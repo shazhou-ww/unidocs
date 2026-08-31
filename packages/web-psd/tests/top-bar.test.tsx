@@ -4,6 +4,10 @@ import { TopBar } from "../src/ui/panels/top-bar.js";
 import { setState, getState } from "../src/ui/store.js";
 
 const requestVisibleTiles = vi.fn();
+// `vi.hoisted` because the mock factory below is hoisted above this file's
+// top-level bindings and references `exportDoc` eagerly (unlike
+// `requestVisibleTiles`, which is only read inside a lazy getter).
+const { exportDoc } = vi.hoisted(() => ({ exportDoc: vi.fn(async () => {}) }));
 // A stage big enough for "fit" to be meaningful, and a canvas box that
 // reports the document at 1:1 so `toCanvas`/`toScreen` behave like the real
 // measured mapping does at zoom 1.
@@ -17,11 +21,12 @@ vi.mock("../src/ui/controller.js", () => ({
     toScreen: (x: number, y: number) => ({ x, y }),
   }),
   openFile: vi.fn(),
-  exportUrl: () => "/tenants/u1/docs/psd/abc/export",
+  exportDoc,
 }));
 
 beforeEach(() => {
   requestVisibleTiles.mockClear();
+  exportDoc.mockClear();
   setState({ docName: "summer-sale-kv.psd", zoom: 1, version: 3, docId: "abcdef0123456789" });
 });
 
@@ -82,9 +87,29 @@ describe("TopBar", () => {
     expect(screen.getByText("22%")).toBeInTheDocument();
   });
 
-  it("links export at the document's export endpoint", () => {
+  // Export is a BUTTON, not an <a href> — it has to flush the pending-op
+  // queue to the server before reading the document back from it, and a plain
+  // link navigates without running a line of JS.
+  it("runs the export through exportDoc rather than navigating to a URL", () => {
     render(<TopBar />);
-    expect(screen.getByText("导出").closest("a")).toHaveAttribute(
-      "href", "/tenants/u1/docs/psd/abc/export");
+    const button = screen.getByRole("button", { name: "导出" });
+    expect(button.closest("a")).toBeNull();
+    fireEvent.click(button);
+    expect(exportDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes busy while exporting so a second click cannot fire a second export", () => {
+    render(<TopBar />);
+    act(() => { setState({ exporting: true }); });
+    const button = screen.getByRole("button", { name: "导出中…" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(exportDoc).not.toHaveBeenCalled();
+  });
+
+  it("offers no export at all until a document is open", () => {
+    render(<TopBar />);
+    act(() => { setState({ docId: null }); });
+    expect(screen.getByRole("button", { name: "导出" })).toBeDisabled();
   });
 });

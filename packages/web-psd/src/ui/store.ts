@@ -43,6 +43,9 @@ export interface UiState {
   sessionBaseVersion: number;
   chat: ChatMessage[];
   chatBusy: boolean;
+  /** An export is in flight — it flushes the pending-op queue to the server
+   *  first, so it is not instantaneous and must not be startable twice. */
+  exporting: boolean;
   degradeOpen: boolean;
   /** Last colour sampled by the eyedropper, shown in the context bar. */
   pickedColor: string | null;
@@ -52,7 +55,7 @@ const INITIAL: UiState = {
   docId: null, docName: null, version: 0, doc: null, status: "loading…",
   selection: [], expanded: new Set(), tool: "move",
   marquee: null, zoom: 1, history: [], historyOpen: false,
-  sessionBaseVersion: 0, chat: [], chatBusy: false, degradeOpen: false,
+  sessionBaseVersion: 0, chat: [], chatBusy: false, exporting: false, degradeOpen: false,
   pickedColor: null,
 };
 

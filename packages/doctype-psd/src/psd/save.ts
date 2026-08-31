@@ -1,6 +1,7 @@
 import { writePsd, type Psd, type Layer as AgLayer } from "ag-psd";
 import type { PsdDoc, Layer, Mask } from "../model/types.js";
 import { isRef } from "../render/pixel-source.js";
+import { render } from "../render/composite.js";
 import { installCanvasShim } from "./canvas-shim.js";
 
 function agAdjustType(k: string): string {
@@ -93,11 +94,18 @@ export function mapLayer(l: Layer): AgLayer {
 
 export async function save(doc: PsdDoc): Promise<Uint8Array> {
   installCanvasShim();
-  const composite = {
-    width: doc.canvas.width,
-    height: doc.canvas.height,
-    data: new Uint8ClampedArray(doc.canvas.width * doc.canvas.height * 4),
-  };
+  // A PSD carries the layer stack AND a flattened composite (the "image data
+  // section"). Photoshop is about the only reader that composes the layers
+  // itself; Finder/Preview, browsers, thumbnailers and most other editors draw
+  // the composite. This used to be a zero-filled buffer, so an export with
+  // perfectly intact layers opened as a blank white image everywhere else —
+  // composite it for real.
+  //
+  // `doc` reaches here already resolved (doctype.ts runs `resolveDoc` first),
+  // so the compositor's default context never needs a BlobStore; a lazy
+  // PixelRef that slipped through would throw here just as `mapLayer` below
+  // throws for it.
+  const composite = await render(doc);
   const psd: Psd = {
     width: doc.canvas.width,
     height: doc.canvas.height,
