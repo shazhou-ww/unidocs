@@ -18,11 +18,16 @@ vi.mock("../src/ui/controller.js", () => ({
 
 // See canvas-stage-drag.test.tsx: jsdom 25 has no PointerEvent constructor, so
 // a MouseEvent named "pointer*" is what carries clientX/Y to React's handlers.
-const pointer = (type: string, clientX: number, clientY: number): MouseEvent =>
-  new MouseEvent(type, { clientX, clientY, bubbles: true, cancelable: true });
+// The optional `init` lets a caller add modifier keys (metaKey, shiftKey, …)
+// without every existing call site having to pass one.
+const pointer = (type: string, clientX: number, clientY: number, init: MouseEventInit = {}): MouseEvent =>
+  new MouseEvent(type, { clientX, clientY, bubbles: true, cancelable: true, ...init });
 
 const leaf = (id: string): LocalLayer =>
   ({ id, type: "raster", name: id, opacity: 1, blendMode: "normal", visible: true, bounds: [0, 0, 100, 100] });
+
+const group = (id: string, children: LocalLayer[]): LocalLayer =>
+  ({ id, type: "group", name: id, opacity: 1, blendMode: "normal", visible: true, children });
 
 /** Hands back a hit only when `settle()` is called, so the test can drive the
  *  exact interleaving a 20–30ms worker round trip produces. */
@@ -113,5 +118,85 @@ describe("async hit + press-to-drag", () => {
     fireEvent(stage, pointer("pointermove", 15, 10));
     expect(hitTest).not.toHaveBeenCalled();
     expect(totalDx()).toBe(5);
+  });
+
+  // Regression for review finding 1: the synchronous "keep dragging the
+  // current selection" branch used to leave a still-in-flight `pending` from
+  // an EARLIER, since-released gesture untouched. When that stale hit landed
+  // later, `settleHit`'s "a newer gesture superseded this one" guard read the
+  // stale pointer as still current and overwrote the selection mid-drag.
+  it("a stale hit does not clobber the selection established by a newer synchronous drag", async () => {
+    setState({
+      selection: ["a"],
+      doc: {
+        canvas: { width: 100, height: 100 },
+        layers: [{ ...leaf("a"), bounds: [0, 0, 10, 10] }, { ...leaf("b"), bounds: [20, 20, 100, 100] }],
+      },
+    });
+    const settleFirst = deferredHit([{ layerId: "b", path: ["b"] }]);
+    const { container } = render(<CanvasStage />);
+    const stage = container.querySelector("div.stage")!;
+
+    // 1. Press OUTSIDE "a"'s box: selection is non-empty but this point isn't
+    //    inside it, so this takes the async path — `pending` is now in flight.
+    fireEvent(stage, pointer("pointerdown", 50, 50));
+    // 2. Released before that hit test answers.
+    fireEvent(stage, pointer("pointerup", 50, 50));
+    // 3. A whole new press, this time INSIDE "a"'s box — the synchronous
+    //    "continue dragging the current selection" branch.
+    fireEvent(stage, pointer("pointerdown", 5, 5));
+    fireEvent(stage, pointer("pointermove", 8, 5));
+    expect(totalDx()).toBe(3);
+
+    // 4. The FIRST press's hit test finally lands, resolving to "b". It must
+    //    be discarded — the second, synchronous gesture already superseded it.
+    await settleFirst();
+    expect(getState().selection).toEqual(["a"]);
+  });
+
+  // Regression for review finding 2: `RenderClient.hitTest` really does
+  // reject on a Worker-side error. Without a `.catch`, `pending` was never
+  // cleared on that path (plus an unhandled rejection), which otherwise has
+  // no test coverage since every other case here resolves.
+  it("a rejected hit test clears `pending` instead of wedging the gesture", async () => {
+    let reject: (e: unknown) => void = () => {};
+    hitTest.mockImplementation(() => new Promise((_resolve, rej) => { reject = rej; }));
+    const { container } = render(<CanvasStage />);
+    const stage = container.querySelector("div.stage")!;
+    fireEvent(stage, pointer("pointerdown", 10, 10));
+    reject(new Error("worker hit-test failed"));
+    // Flushes the `.catch` microtask. If it is missing, this `it` itself
+    // fails with an unhandled rejection rather than the assertion below.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A fresh gesture afterwards must behave normally — nothing left over
+    // from the dead hit test blocks it.
+    setState({ selection: ["a"] });
+    fireEvent(stage, pointer("pointerdown", 10, 10));
+    fireEvent(stage, pointer("pointermove", 15, 10));
+    expect(totalDx()).toBe(5);
+  });
+
+  // Regression for review finding 3: the hit branch of `settleHit` used to
+  // write the selection with a raw `setState`, skipping `selectLayer`'s
+  // ancestor expansion (spec §9) — a canvas click on a layer nested inside
+  // collapsed groups left the tree showing none of them.
+  it("expands the tree's ancestor groups when a canvas hit selects a nested layer", async () => {
+    setState({
+      selection: [], expanded: new Set(),
+      doc: { canvas: { width: 100, height: 100 }, layers: [group("g1", [group("g2", [leaf("leaf1")])])] },
+    });
+    // ⌘/Ctrl-click drills to the leaf (`p.leaf`), which is nested two groups
+    // deep — the only way to actually exercise ancestor expansion, since a
+    // plain click selects the top-level group, which has no ancestors.
+    const settle = deferredHit([{ layerId: "leaf1", path: ["g1", "g2", "leaf1"] }]);
+    const { container } = render(<CanvasStage />);
+    const stage = container.querySelector("div.stage")!;
+    fireEvent(stage, pointer("pointerdown", 10, 10, { metaKey: true }));
+    await settle();
+    expect(getState().selection).toEqual(["leaf1"]);
+    expect(getState().expanded.has("g1")).toBe(true);
+    expect(getState().expanded.has("g2")).toBe(true);
   });
 });

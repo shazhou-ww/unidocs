@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { dispatch, getController, initController } from "../controller.js";
-import { getState, setState, setRegion, setSelection, nextSelection, useUiState } from "../store.js";
+import { getState, setState, setRegion, setSelection, selectLayer, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
 import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
@@ -116,6 +116,12 @@ export function CanvasStage() {
       // (Today's code drags on `selection.length > 0` with no position test at
       // all, so this is strictly narrower.)
       if (s.selection.length > 0 && insideSelection(s, at)) {
+        // A new gesture supersedes any hit still in flight from a previous
+        // one, whichever path it takes — otherwise a late-arriving hit from
+        // an earlier click (released before it landed) can still pass
+        // `settleHit`'s `pending.current !== p` guard and overwrite the
+        // selection this drag is using, mid-drag.
+        pending.current = null;
         drag.current = { layerIds: [...s.selection], from: at, last: at };
         return;
       }
@@ -124,7 +130,14 @@ export function CanvasStage() {
         additive: e.shiftKey, leaf: e.metaKey || e.ctrlKey,
       };
       pending.current = p;
-      void c.hitTest(e.clientX, e.clientY).then((hits) => settleHit(p, hits));
+      void c.hitTest(e.clientX, e.clientY)
+        .then((hits) => settleHit(p, hits))
+        // A Worker-side error rejects the hit test (see RenderClient.hitTest).
+        // Without this, `pending.current` would never clear on that gesture,
+        // and every subsequent pointermove would fall into the "hit still in
+        // flight" branch and dispatch nothing until a fresh pointerdown
+        // overwrites it — plus an unhandled rejection.
+        .catch(() => { if (pending.current === p) pending.current = null; });
       return;
     }
     if (s.tool === "marquee") {
@@ -173,7 +186,6 @@ export function CanvasStage() {
   const settleHit = (p: PendingHit, hits: Hit[]): void => {
     if (pending.current !== p) return;   // a newer gesture already superseded this one
     pending.current = null;
-    const s = getState();
     const hit = hits[0] ?? null;
     if (!hit) {
       // Clearing the LAYER axis only. The region survives: the two axes are
@@ -182,8 +194,12 @@ export function CanvasStage() {
       return;
     }
     const id = p.leaf ? hit.path[hit.path.length - 1] : hit.path[0];
-    const selection = nextSelection({ ...s, selection: p.additive ? s.selection : [] }, id, p.additive);
-    setState({ selection });
+    // Routed through `selectLayer`, not a raw `setState`, so a canvas click
+    // gets the same ancestor-expansion `selectLayer` already gives a tree
+    // click (spec §9) — otherwise picking a nested layer on the canvas would
+    // leave the tree collapsed on it.
+    selectLayer(id, { additive: p.additive });
+    const selection = getState().selection;
     if (!p.alive) return;                // it was a click, not a drag
     const c = getController();
     if (!c) return;
