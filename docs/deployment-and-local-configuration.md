@@ -31,7 +31,7 @@ that environment and its isolated D1/R2/Worker names have been declared.
 
 ### UniCAS Worker secrets
 
-Set secrets before `pnpm run deploy unicas`. `wrangler secret put` prompts for
+Set secrets before `pnpm stack:deploy unicas`. `wrangler secret put` prompts for
 the value, so it does not need to appear in the command line:
 
 ```powershell
@@ -93,7 +93,7 @@ The application deploy remains blocked until Gateway has a production user
 identity resolver. Dry-run is available now:
 
 ```text
-pnpm run deploy unidocs-cloudflare --dry-run
+pnpm stack:deploy unidocs-cloudflare --dry-run
 ```
 
 ## Azure deployment identity and secrets
@@ -138,7 +138,7 @@ a bounded legacy rollout only; stack mode neither requires nor reads them.
 Non-secret deployment selection is passed as arguments, for example:
 
 ```text
-pnpm run deploy unidocs-azure --subscription <id> --resource-group <name> \
+pnpm stack:deploy unidocs-azure --subscription <id> --resource-group <name> \
   --location <region> --cas-base-url https://unicas.shazhou.work \
   --capability-key-id <gateway-kid> \
   --cas-stack-id cas_<control-plane-generated-id> \

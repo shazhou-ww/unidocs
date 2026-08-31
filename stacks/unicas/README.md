@@ -7,8 +7,8 @@ Cloudflare deployment order.
 ```text
 pnpm dev unicas
 pnpm dev unicas --docker
-pnpm run deploy unicas --dry-run
-pnpm run deploy unicas
+pnpm stack:deploy unicas --dry-run
+pnpm stack:deploy unicas
 pnpm smoke unicas [baseUrl]
 ```
 
