@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { findLayer, type Hit } from "../hit-test.js";
-import { setSelection, useUiState } from "../store.js";
+import { selectLayer, useUiState } from "../store.js";
 
 /**
  * The candidate list for a right-click.
@@ -50,9 +50,14 @@ export function HitMenu({ at, hits, onClose }: {
   if (!at || hits.length === 0) return null;
   return (
     <div className="hit-menu" style={{ left: at.x, top: at.y }} onPointerDown={(e) => e.stopPropagation()}>
+      {/* `selectLayer`, not `setSelection`: this is a selection made on the
+          canvas, so spec §9's tree expansion applies. It matters most here of
+          all — the menu exists to reach a layer buried under others, and that
+          is precisely the layer whose ancestor groups the tree is least
+          likely to have open already. */}
       {hits.map((h) => (
         <button key={h.layerId} type="button"
-                onClick={() => { setSelection([h.layerId]); onClose(); }}>
+                onClick={() => { selectLayer(h.layerId); onClose(); }}>
           {findLayer(s.doc?.layers ?? [], h.layerId)?.name ?? h.layerId}
         </button>
       ))}

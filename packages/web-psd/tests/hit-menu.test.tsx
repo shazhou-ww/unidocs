@@ -40,6 +40,12 @@ const flush = async (): Promise<void> => {
 
 const stageOf = (container: HTMLElement): Element => container.querySelector("div.stage")!;
 
+// See canvas-stage-drag.test.tsx: jsdom 25 has no PointerEvent constructor, so
+// a MouseEvent named "pointer*" is what carries clientX/Y — and `button` — to
+// React's handlers.
+const pointer = (type: string, clientX: number, clientY: number, init: MouseEventInit = {}): MouseEvent =>
+  new MouseEvent(type, { clientX, clientY, bubbles: true, cancelable: true, ...init });
+
 beforeEach(() => {
   dispatch.mockClear();
   hitTest.mockReset();
@@ -164,5 +170,49 @@ describe("HitMenu", () => {
     resolvers[0](stack);
     await flush();
     expect(container.querySelector(".hit-menu")).not.toBeNull();
+  });
+
+  // Spec §9 applies to every canvas selection, and a menu pick is one — the
+  // whole point of the menu is reaching a layer buried under others, which is
+  // exactly the layer the tree is least likely to be showing already.
+  it("expands the picked layer's ancestor groups", async () => {
+    hitTest.mockResolvedValue(stack);
+    const { container } = render(<CanvasStage />);
+    fireEvent.contextMenu(stageOf(container), { clientX: 15, clientY: 15 });
+    await flush();
+    fireEvent.click(container.querySelectorAll(".hit-menu button")[0]);
+    expect(getState().selection).toEqual(["top"]);
+    expect(getState().expanded.has("g")).toBe(true);
+  });
+
+  // A browser sends `pointerdown` BEFORE `contextmenu` for a secondary click.
+  // Every test above fires `contextMenu` alone and so never saw that the press
+  // took pointer capture, fired its own hit test and selected `clickTarget`'s
+  // guess — the menu then opened over a selection it had already disturbed,
+  // and dismissing it with Escape left a selection nobody asked for. (On macOS
+  // ⌃-click is the secondary click AND sets `ctrlKey`, so it also took the
+  // ⌘/⌃-click "drill to the leaf" branch.)
+  it("changes no selection when the secondary click's own pointerdown fires first", async () => {
+    hitTest.mockResolvedValue(stack);
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+    fireEvent(stage, pointer("pointerdown", 15, 15, { button: 2 }));
+    fireEvent.contextMenu(stage, { clientX: 15, clientY: 15 });
+    await flush();
+    expect(getState().selection).toEqual([]);
+    expect([...container.querySelectorAll(".hit-menu button")].map((b) => b.textContent)).toEqual(["top", "bg"]);
+  });
+
+  // `RenderClient.hitTest` really does reject. With no `.catch` here that was
+  // an unhandled rejection plus a right-click that silently did nothing.
+  it("reports a rejected hit test instead of silently doing nothing", async () => {
+    let reject: (e: unknown) => void = () => {};
+    hitTest.mockImplementation(() => new Promise((_resolve, rej) => { reject = rej; }));
+    const { container } = render(<CanvasStage />);
+    fireEvent.contextMenu(stageOf(container), { clientX: 15, clientY: 15 });
+    reject(new Error("worker hit-test failed"));
+    await flush();
+    expect(container.querySelector(".hit-menu")).toBeNull();
+    expect(getState().status).toContain("worker hit-test failed");
   });
 });

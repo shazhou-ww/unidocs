@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { dispatch, getController, initController } from "../controller.js";
-import { getState, setState, setRegion, setSelection, selectLayer, useUiState } from "../store.js";
+import { getState, setState, setRegion, setSelection, selectLayer, reportError, useUiState } from "../store.js";
 import { setHoverId } from "../overlay-store.js";
 import { zoomBy } from "../zoom-controller.js";
 import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
@@ -53,6 +53,30 @@ export function CanvasStage() {
   // The gesture that is waiting on an async hit test. A ref, not state, for
   // the same reason `drag` is: it changes mid-gesture and must not re-render.
   const pending = useRef<PendingHit | null>(null);
+  // The one supersession token, shared by every gesture that can issue an
+  // async hit test: press-drag, double click, alt-cycle and right-click. Each
+  // bumps it on the way in, captures the new value, and every `.then` bails if
+  // it has moved since.
+  //
+  // One counter rather than a rule per handler BECAUSE the handlers cannot be
+  // reasoned about one at a time. Four gestures now issue hit tests against
+  // the same two-axis target, each 20–30ms in flight (longer behind a tile
+  // batch), and they interleave in whatever order the user produces — a double
+  // click's descent still travelling while a press starts a drag, an alt-click
+  // landing after a right-click opened the menu. With a token per handler
+  // ("`pending` is still mine", "the `docId` has not moved", and for the
+  // double click nothing at all) each pair had to be checked separately, and
+  // the double-click/press-drag pair was in fact broken: the descent landed
+  // after the drag had already captured the previous selection, so the tree
+  // jumped to one layer while the canvas went on moving another. A monotonic
+  // counter makes "a newer gesture wins" true by construction for every pair,
+  // including pairs added later.
+  //
+  // It deliberately does NOT subsume the right-click's `docId` check: a
+  // document swap replaces the layers under an in-flight hit without any new
+  // gesture, which a gesture counter cannot see. The two guards answer
+  // different questions and both stay.
+  const gesture = useRef(0);
   // Where the last alt-click landed and how deep into that point's candidate
   // stack it had got. Keyed by the rounded document coordinate so moving away
   // and coming back starts over rather than resuming somewhere arbitrary.
@@ -65,6 +89,12 @@ export function CanvasStage() {
   // The right-click candidate menu. Local state, not the main store: it
   // belongs to this component alone.
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; hits: Hit[] } | null>(null);
+  // Stable across renders because <HitMenu /> lists it in the deps of the
+  // effect that registers its capture-phase Escape listener. A fresh closure
+  // every render tears that listener down and re-registers it on every single
+  // CanvasStage render for as long as the menu is open — and the store
+  // notifies every subscriber on every change, so those renders are frequent.
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   useEffect(() => {
     if (stageRef.current && viewRef.current) initController(viewRef.current, stageRef.current);
@@ -129,8 +159,44 @@ export function CanvasStage() {
     };
   }, []);
 
+  /**
+   * The single failure path for every gesture's hit test.
+   *
+   * `RenderClient.hitTest` genuinely rejects — the render Worker posts
+   * `{type:"error"}` for any throw inside `core.hitTest`, and a CAS blob fetch
+   * failing inside `residentFor` is an ordinary route there, not an
+   * emergency. Clearing the gesture state matters as much as the message:
+   * leaving `pending` set means every later `pointermove` falls into the "hit
+   * still in flight" branch and dispatches nothing until a fresh press.
+   *
+   * Returns whether this gesture is still the current one, so a caller with
+   * extra state of its own (the menu) can clean up without repeating the
+   * check.
+   */
+  const hitFailed = (g: number, err: unknown, p: PendingHit | null = null): boolean => {
+    // Hand the slot back FIRST, superseded or not: this gesture is the one
+    // that took it, and `onPointerMove` reads a non-null `pending` as "a hit
+    // is still coming". See `settleHit` for the case that makes this matter.
+    if (p && pending.current === p) pending.current = null;
+    if (gesture.current !== g) return false;  // a newer gesture owns the report now
+    pending.current = null;
+    reportError("命中测试失败", err);
+    return true;
+  };
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (menu) setMenu(null);
+    // A secondary click fires `pointerdown` too, and the browser sends it
+    // BEFORE `contextmenu`. Without this, right-clicking to say "I don't know
+    // which of these you meant" first took pointer capture, fired a hit test
+    // and selected `clickTarget`'s guess — so the menu opened over a selection
+    // it had already disturbed, and dismissing it with Escape left behind a
+    // selection the user never asked for, which is the whole point of the
+    // feature undone. On macOS it compounds: ⌃-click IS the secondary click
+    // and also sets `e.ctrlKey`, so it took the `p.leaf` "drill to the leaf"
+    // branch as well.
+    if (e.button !== 0) return;
+    const g = ++gesture.current;
     const c = getController();
     if (!c) return;
     const s = getState();
@@ -152,28 +218,29 @@ export function CanvasStage() {
       // selected is sitting right there, so this fast path must not swallow
       // the click into a drag instead.
       if (!e.altKey && s.selection.length > 0 && insideSelection(s, at)) {
-        // A new gesture supersedes any hit still in flight from a previous
-        // one, whichever path it takes — otherwise a late-arriving hit from
-        // an earlier click (released before it landed) can still pass
-        // `settleHit`'s `pending.current !== p` guard and overwrite the
-        // selection this drag is using, mid-drag.
+        // Bumping `gesture` above already superseded anything in flight —
+        // including a double click's descent, which this branch used to run
+        // straight past. `pending` is cleared too so `onPointerMove` does not
+        // sit in its "hit still in flight" branch for the rest of the drag.
         pending.current = null;
         drag.current = { layerIds: [...s.selection], from: at, last: at };
         return;
       }
       const p: PendingHit = {
-        anchor: at, latest: at, pointerId: e.pointerId, alive: true,
+        anchor: at, latest: at, alive: true,
         additive: e.shiftKey, leaf: e.metaKey || e.ctrlKey, cycle: e.altKey,
       };
       pending.current = p;
-      void c.hitTest(e.clientX, e.clientY)
-        .then((hits) => settleHit(p, hits))
-        // A Worker-side error rejects the hit test (see RenderClient.hitTest).
-        // Without this, `pending.current` would never clear on that gesture,
-        // and every subsequent pointermove would fall into the "hit still in
-        // flight" branch and dispatch nothing until a fresh pointerdown
-        // overwrites it — plus an unhandled rejection.
-        .catch(() => { if (pending.current === p) pending.current = null; });
+      // A two-argument `then`, not `.then(...).catch(...)`: a rejection
+      // handler chained AFTER the fulfillment handler cannot tell a genuine
+      // Worker failure from a bug thrown inside `settleHit`, and the previous
+      // single `.catch` reported neither. This way only the hit test's own
+      // rejection reaches `hitFailed`; a `settleHit` throw stays a real,
+      // visible error rather than being reported as a failed hit test.
+      void c.hitTest(e.clientX, e.clientY).then(
+        (hits) => settleHit(g, p, hits),
+        (err) => hitFailed(g, err, p),
+      );
       return;
     }
     if (s.tool === "marquee") {
@@ -208,7 +275,17 @@ export function CanvasStage() {
       const { clientX, clientY } = e;
       hoverFrame.current = requestAnimationFrame(() => {
         hoverFrame.current = 0;
-        void c.hitTest(clientX, clientY, { hover: true }).then((hits) => setHoverId(hits[0]?.layerId ?? null));
+        void c.hitTest(clientX, clientY, { hover: true }).then(
+          (hits) => setHoverId(hits[0]?.layerId ?? null),
+          // Deliberately silent, and the ONE async hit site that is. This runs
+          // once per animation frame, and a hover failure repeats for as long
+          // as the cursor keeps moving — `reportError` appends to the chat
+          // transcript, so reporting here would bury every real message under
+          // hundreds of identical lines. The outline is cosmetic; drop it and
+          // say nothing. Still a handler and not an omission, because an
+          // unhandled rejection per frame is its own noise.
+          () => setHoverId(null),
+        );
       });
     }
     if (!anchor.current) return;
@@ -226,9 +303,15 @@ export function CanvasStage() {
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  const settleHit = (p: PendingHit, hits: Hit[]): void => {
-    if (pending.current !== p) return;   // a newer gesture already superseded this one
-    pending.current = null;
+  const settleHit = (g: number, p: PendingHit, hits: Hit[]): void => {
+    // The slot goes back BEFORE the supersession check, and only if this
+    // gesture still owns it. Not every superseding gesture installs a
+    // `pending` of its own — a right-click bumps the token and installs
+    // nothing — so leaving it set on the superseded path would park
+    // `onPointerMove` in its "a hit is still coming" branch permanently: no
+    // hover, no marquee, until the next press happened to overwrite it.
+    if (pending.current === p) pending.current = null;
+    if (gesture.current !== g) return;   // a newer gesture already superseded this one
     const hit = hits[0] ?? null;
     if (!hit) {
       // Clearing the LAYER axis only. The region survives: the two axes are
@@ -240,7 +323,11 @@ export function CanvasStage() {
       const key = `${Math.round(p.anchor.x)},${Math.round(p.anchor.y)}`;
       const index = cycle.current?.key === key ? (cycle.current.index + 1) % hits.length : 0;
       cycle.current = { key, index };
-      setSelection([hits[index].layerId]);
+      // `selectLayer`, not `setSelection`: this is a selection made ON THE
+      // CANVAS, so spec §9's tree expansion applies exactly as it does to the
+      // ordinary click below. Alt-cycling reaches layers buried under others,
+      // which are the ones the tree is least likely to be showing already.
+      selectLayer(hits[index].layerId);
       return;
     }
     const s2 = getState();
@@ -275,17 +362,33 @@ export function CanvasStage() {
     const c = getController();
     if (!c || getState().tool !== "move") return;
     // The second `pointerdown` of the double click already started its own
-    // async settle (`p2`) before this handler runs. Superseding it here, the
-    // same way a fresh gesture supersedes an in-flight one elsewhere, stops
-    // that settle from landing after the descent below and flashing the
-    // single-click target — otherwise the two hit tests race and only a
-    // strictly-FIFO queue happens to save the descent.
+    // async settle (`p2`) before this handler runs. Bumping the token
+    // supersedes it, stopping it from landing after the descent below and
+    // flashing the single-click target — otherwise the two hit tests race and
+    // only a strictly-FIFO queue happens to save the descent. `pending` is
+    // cleared as well so `onPointerMove` does not sit in its "hit still in
+    // flight" branch afterwards.
+    const g = ++gesture.current;
     pending.current = null;
-    void c.hitTest(e.clientX, e.clientY).then((hits) => {
-      const hit = hits[0];
-      if (!hit) return;
-      setSelection([descendPath(hit.path, getState().selection[0] ?? "")]);
-    });
+    void c.hitTest(e.clientX, e.clientY).then(
+      (hits) => {
+        if (gesture.current !== g) return;  // a newer gesture already superseded this one
+        const hit = hits[0];
+        // A miss clears the layer axis, exactly as a single click's miss does
+        // (`settleHit` above) — and the region survives, as always. Returning
+        // early here instead meant a double click on blank canvas cleared
+        // NOTHING: both pointerdown settles bail (superseded, and `pending`
+        // nulled above), so nobody was left to act on the miss.
+        if (!hit) { setSelection([]); return; }
+        // `selectLayer`, not `setSelection`: the descent is the worst of the
+        // three canvas paths that skipped spec §9's expansion, because it
+        // selects a child that is BY CONSTRUCTION behind a collapsed group —
+        // `expandAncestors` opens the ancestor chain, so having selected the
+        // group never opened that group itself.
+        selectLayer(descendPath(hit.path, getState().selection[0] ?? ""));
+      },
+      (err) => hitFailed(g, err),
+    );
   };
 
   // Right-click lists every candidate under the cursor instead of guessing
@@ -295,6 +398,7 @@ export function CanvasStage() {
     const c = getController();
     if (!c || getState().tool !== "move") return;
     e.preventDefault();
+    const g = ++gesture.current;
     const box = e.currentTarget.getBoundingClientRect();
     const at = { x: e.clientX - box.left + e.currentTarget.scrollLeft, y: e.clientY - box.top + e.currentTarget.scrollTop };
     // `CanvasStage` is never re-keyed on a new document (app.tsx renders it
@@ -312,11 +416,19 @@ export function CanvasStage() {
     // for a document that never actually changed. `docId` only moves on a
     // real `openFile` (controller.ts's `createFrom` success path) — the same
     // distinction `sessionDocId` exists to draw, for the same reason.
+    //
+    // KEPT ALONGSIDE the gesture token rather than replaced by it: a document
+    // swap needs no new gesture, so the counter cannot see one. The two
+    // guards answer different questions and both earn their place.
     const docId = getState().docId;
-    void c.hitTest(e.clientX, e.clientY).then((hits) => {
-      if (getState().docId !== docId) return;  // a different document was opened while this was in flight
-      setMenu(hits.length ? { at, hits } : null);
-    });
+    void c.hitTest(e.clientX, e.clientY).then(
+      (hits) => {
+        if (gesture.current !== g) return;       // a newer gesture superseded this one
+        if (getState().docId !== docId) return;  // a different document was opened while this was in flight
+        setMenu(hits.length ? { at, hits } : null);
+      },
+      (err) => { if (hitFailed(g, err)) setMenu(null); },
+    );
   };
 
   const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
@@ -371,7 +483,7 @@ export function CanvasStage() {
         <SelectionOverlay />
         <SelectionBox />
       </div>
-      <HitMenu at={menu?.at ?? null} hits={menu?.hits ?? []} onClose={() => setMenu(null)} />
+      <HitMenu at={menu?.at ?? null} hits={menu?.hits ?? []} onClose={closeMenu} />
     </div>
   );
 }
@@ -443,7 +555,6 @@ export function canvasBoxStyle(
 interface PendingHit {
   anchor: { x: number; y: number };
   latest: { x: number; y: number };
-  pointerId: number;
   /** False once the pointer has been released — the late hit then resolves as
    *  a click rather than starting a drag. */
   alive: boolean;
