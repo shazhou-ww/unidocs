@@ -154,9 +154,14 @@ a:hover { color: var(--accent); }
   background-size: 22px 22px;
 }
 
+/* Taken out of flow deliberately. `.stage` is a flex row and `.stage-inner`
+   centres itself with `margin: auto`; a second in-flow child with auto margins
+   makes the two of them share the free space between four auto margins, and
+   NEITHER ends up centred. Absolute + `place-items: center` centres the hint
+   against the stage regardless of what else is in there. */
 .stage-empty {
-  margin: auto;
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  position: absolute; inset: 0; margin: 0; pointer-events: none;
+  display: grid; place-items: center; align-content: center; gap: 6px;
   color: var(--fg-3); font-size: 13px; line-height: 1.5; text-align: center;
 }
 .stage-empty span { font-size: 12px; color: var(--fg-4); }

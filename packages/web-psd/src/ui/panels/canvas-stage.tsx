@@ -163,10 +163,14 @@ export function CanvasStage() {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
+      {/* Deliberately names no file format. PSD is the only one that loads
+          today, but PNG/JPEG are planned, and the file picker's `accept`
+          already states what is actually supported — so this copy does not
+          have to be revisited when that changes. */}
       {s.doc ? null : (
         <p className="stage-empty">
           还没有打开文档
-          <span>用右上角的「打开」选择一个 PSD 文件</span>
+          <span>用右上角的「打开」选择一个文件</span>
         </p>
       )}
       <div className="stage-inner">
