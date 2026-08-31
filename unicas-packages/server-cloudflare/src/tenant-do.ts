@@ -12,9 +12,12 @@
 
 import { CanonicalNodeContentType } from "@unicas/codec";
 import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/workers-types";
+import {
+  collectExpiredUnreferencedNodes,
+  DEFAULT_GC_MAX_NODES,
+} from "@unicas/service";
 import { canonicalComposite } from "./do-names.js";
 import {
-  DEFAULT_GC_MAX_NODES,
   NodeOpError,
   NodeOpErrorCodes,
   leaseReadyNode,
@@ -22,9 +25,9 @@ import {
   parseLeaseDuration,
   readContent,
   readMetadata,
-  triggerGc,
   usage,
 } from "./nodes.js";
+import { CloudflareNodeGcRepository } from "./node-gc.js";
 import { canonicalizeRootRefsUpdate, parseRootRefsBody } from "./root-refs.js";
 import { RootRefsErrorCodes, RootRefsValidationError } from "./root-refs.js";
 
@@ -167,13 +170,17 @@ export class CasDurableObject {
     return jsonResponse(result);
   }
 
-  async #handleGc(request: Request, store: Parameters<typeof triggerGc>[0]): Promise<unknown> {
+  async #handleGc(request: Request, store: Parameters<typeof usage>[0]): Promise<unknown> {
     const body = await request.json().catch(() => null) as { maxNodes?: number } | null;
     const maxNodes = body?.maxNodes ?? DEFAULT_GC_MAX_NODES;
     if (!Number.isSafeInteger(maxNodes) || maxNodes <= 0) {
       throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "maxNodes must be a positive integer");
     }
-    return triggerGc(store, maxNodes);
+    return collectExpiredUnreferencedNodes({
+      repository: new CloudflareNodeGcRepository(store.db, store.bucket),
+      scope: { stackId: store.stackId, tenantId: store.tenantId },
+      maxNodes,
+    });
   }
 
   /** Canonicalize the caller update and forward one command to the domain DO. */

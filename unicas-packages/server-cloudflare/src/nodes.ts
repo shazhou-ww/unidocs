@@ -28,7 +28,6 @@ import {
   validateHash,
 } from "@unicas/codec";
 import type {
-  CasGcResult,
   CasLeaseResult,
   CasNodeMetadata,
   CasNodeState,
@@ -42,8 +41,6 @@ export const DEFAULT_LEASE_MS = 15 * 60 * 1000;
 export const MIN_LEASE_MS = 60 * 1000;
 /** Maximum accepted lease duration. */
 export const MAX_LEASE_MS = 24 * 60 * 60 * 1000;
-/** Default GC batch bound. */
-export const DEFAULT_GC_MAX_NODES = 100;
 
 /** Stable storage error carrying an HTTP status and a wire error code. */
 export class NodeOpError extends Error {
@@ -593,69 +590,6 @@ export async function usage(store: NodeStore): Promise<CasUsage> {
     notReadyNodeCount: notReadyCount,
     leasedNodeCount: stats?.leasedNodeCount ?? 0,
   };
-}
-
-/**
- * Garbage-collect nodes with no child/root references and an expired lease.
- * Examines at most `maxNodes` candidates, re-verifies eligibility inside the
- * tenant DO's serialized context, then deletes the R2 object and the node +
- * edge rows, decrementing children's `child_ref_count`.
- */
-export async function triggerGc(store: NodeStore, maxNodes = DEFAULT_GC_MAX_NODES): Promise<CasGcResult> {
-  const { db, bucket, stackId, tenantId } = store;
-  const now = Date.now();
-  const eligible = await db
-    .prepare(
-      `SELECT hash, content_size FROM cas_nodes
-       WHERE stack_id = ? AND tenant_id = ?
-         AND child_ref_count = 0
-         AND root_ref_count = 0
-         AND lease_expires_at <= ?
-       LIMIT ?`,
-    )
-    .bind(stackId, tenantId, now, maxNodes)
-    .all<{ hash: string; content_size: number }>();
-
-  let deleted = 0;
-  let reclaimedBytes = 0;
-  for (const node of eligible.results) {
-    const fresh = await db
-      .prepare(
-        "SELECT child_ref_count, root_ref_count, lease_expires_at FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-      )
-      .bind(stackId, tenantId, node.hash)
-      .first<{ child_ref_count: number; root_ref_count: number; lease_expires_at: number }>();
-    if (!fresh || fresh.child_ref_count > 0 || fresh.root_ref_count > 0 || fresh.lease_expires_at > now) {
-      continue;
-    }
-
-    const edges = await db
-      .prepare(
-        "SELECT child_hash, COUNT(*) as cnt FROM cas_edges WHERE stack_id = ? AND tenant_id = ? AND parent_hash = ? GROUP BY child_hash",
-      )
-      .bind(stackId, tenantId, node.hash)
-      .all<{ child_hash: string; cnt: number }>();
-
-    await bucket.delete(stackCanonicalNodeKey(stackId, tenantId, node.hash));
-    const batch: D1PreparedStatement[] = [
-      db.prepare("DELETE FROM cas_edges WHERE stack_id = ? AND tenant_id = ? AND parent_hash = ?")
-        .bind(stackId, tenantId, node.hash),
-      db.prepare("DELETE FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
-        .bind(stackId, tenantId, node.hash),
-    ];
-    for (const edge of edges.results) {
-      batch.push(
-        db.prepare(
-          "UPDATE cas_nodes SET child_ref_count = child_ref_count - ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-        ).bind(edge.cnt, stackId, tenantId, edge.child_hash),
-      );
-    }
-    await db.batch(batch);
-    deleted++;
-    reclaimedBytes += node.content_size;
-  }
-
-  return { examined: eligible.results.length, deleted, reclaimedContentBytes: reclaimedBytes };
 }
 
 function sameRefs(left: readonly string[], right: readonly string[]): boolean {

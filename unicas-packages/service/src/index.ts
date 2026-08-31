@@ -57,3 +57,14 @@ export type {
   RootRefRequestRecord,
   RootRefScope,
 } from "./root-refs.js";
+export {
+  collectExpiredUnreferencedNodes,
+  DEFAULT_GC_MAX_NODES,
+} from "./gc.js";
+export type {
+  NodeGcCandidate,
+  NodeGcChildReference,
+  NodeGcDeletion,
+  NodeGcRepository,
+  NodeGcScope,
+} from "./gc.js";

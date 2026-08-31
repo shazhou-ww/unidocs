@@ -577,6 +577,51 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
     }
   });
 
+  test("GC decrements repeated child edges by their exact multiplicity", async () => {
+    await createStore();
+    const parent = "d".repeat(64);
+    const child = "e".repeat(64);
+    for (const [hash, childRefCount] of [[parent, 0], [child, 2]] as const) {
+      await db!.prepare(
+        "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count) VALUES (?, ?, ?, 5, 'text/plain', 1, 1, ?, 0)",
+      ).bind(STACK, TENANT, hash, childRefCount).run();
+      await bucket!.put(
+        stackCanonicalNodeKey(STACK, TENANT, hash),
+        new TextEncoder().encode("node!"),
+      );
+    }
+    await db!.batch([
+      db!.prepare(
+        "INSERT INTO cas_edges (stack_id, tenant_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, 0, ?)",
+      ).bind(STACK, TENANT, parent, child),
+      db!.prepare(
+        "INSERT INTO cas_edges (stack_id, tenant_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, 1, ?)",
+      ).bind(STACK, TENANT, parent, child),
+    ]);
+
+    const doInstance = tenantDo(nodeHostedStreamBucket());
+    const first = await doInstance.fetch(tenantRequest(
+      "/gc",
+      "POST",
+      {},
+      new TextEncoder().encode('{"maxNodes":1}'),
+    ));
+    await expect(first.json()).resolves.toMatchObject({ examined: 1, deleted: 1 });
+    const childRow = await db!.prepare(
+      "SELECT child_ref_count FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, child).first<{ child_ref_count: number }>();
+    expect(childRow?.child_ref_count).toBe(0);
+
+    const second = await doInstance.fetch(tenantRequest(
+      "/gc",
+      "POST",
+      {},
+      new TextEncoder().encode('{"maxNodes":1}'),
+    ));
+    await expect(second.json()).resolves.toMatchObject({ examined: 1, deleted: 1 });
+    expect(await bucket!.get(stackCanonicalNodeKey(STACK, TENANT, child))).toBeNull();
+  });
+
   test("nodes, leases, usage, and GC are isolated per stack for the same tenant id", async () => {
     await createStore();
     const otherStack = "cas_stack_b";
