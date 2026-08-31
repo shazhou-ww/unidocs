@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
-import type { LocalLayer, Rect } from "../doc-model.js";
+import type { LocalLayer } from "../doc-model.js";
+import type { Region } from "./region.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
 export type PaneId = "layers" | "props";
@@ -33,7 +34,10 @@ export interface UiState {
   expanded: ReadonlySet<string>;
   pane: PaneId;
   tool: ToolId;
-  marquee: Rect | null;
+  /** The region axis of the current target. Never cleared by a layer-axis
+   *  write — the two axes are written by different tools and never compete
+   *  (spec §3.3). */
+  region: Region | null;
   zoom: number;
   history: HistoryEntry[];
   historyOpen: boolean;
@@ -53,7 +57,7 @@ export interface UiState {
 const INITIAL: UiState = {
   docId: null, docName: null, version: 0, doc: null, status: "loading…",
   selection: [], expanded: new Set(), pane: "layers", tool: "move",
-  marquee: null, zoom: 1, history: [], historyOpen: false,
+  region: null, zoom: 1, history: [], historyOpen: false,
   sessionBaseVersion: 0, chat: [], chatBusy: false, degradeOpen: false,
   pickedColor: null,
 };
@@ -140,4 +144,14 @@ export function selectedLayers(s: UiState): LocalLayer[] {
   };
   walk(s.doc.layers);
   return s.selection.map((id) => byId.get(id)).filter((l): l is LocalLayer => !!l);
+}
+
+/**
+ * The one write point for the region axis. A plain `setState({ region })`
+ * works today, but every region carries a mask handle, and the bytes behind
+ * discarded handles have to be released somewhere — routing every writer
+ * through here means that is one edit later, not a hunt for call sites.
+ */
+export function setRegion(region: Region | null): void {
+  setState({ region });
 }

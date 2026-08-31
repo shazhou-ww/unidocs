@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { dispatch, getController, initController } from "../controller.js";
-import { getState, setState, useUiState } from "../store.js";
+import { getState, setState, setRegion, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
 import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
 import { translateOps, type DragState } from "../drag.js";
+import { rectRegion } from "../region.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 
 /**
@@ -108,7 +109,7 @@ export function CanvasStage() {
     }
     if (s.tool === "marquee") {
       anchor.current = c.toCanvas(e.clientX, e.clientY);
-      setState({ marquee: null });
+      setRegion(null);
       e.currentTarget.setPointerCapture(e.pointerId);
     }
   };
@@ -128,7 +129,7 @@ export function CanvasStage() {
       return;
     }
     if (!anchor.current) return;
-    setState({ marquee: normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null) });
+    setRegion(rectRegion(normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null)));
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {

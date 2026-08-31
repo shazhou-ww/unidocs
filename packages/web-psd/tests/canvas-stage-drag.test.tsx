@@ -45,7 +45,7 @@ beforeEach(() => {
   // throwing.
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.releasePointerCapture = vi.fn();
-  setState({ tool: "move", marquee: null, selection: ["a"], pickedColor: null });
+  setState({ tool: "move", region: null, selection: ["a"], pickedColor: null });
 });
 
 describe("CanvasStage move-tool drag", () => {

@@ -38,8 +38,8 @@ export function SelectionOverlay() {
   // Without the document's dimensions there is no fraction to express the
   // selection as. Unreachable in practice — a marquee is dragged onto a
   // document — but percentages have no meaningful fallback.
-  if (!s.marquee || !canvas) return null;
-  const [top, left, bottom, right] = s.marquee;
+  if (!s.region || !canvas) return null;
+  const [top, left, bottom, right] = s.region.bounds;
   return (
     <div className="marquee" style={rectStyle([top, left, bottom, right], canvas)}>
       <i className="h tl" /><i className="h tr" /><i className="h bl" /><i className="h br" />

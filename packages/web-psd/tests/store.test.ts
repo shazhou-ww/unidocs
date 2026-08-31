@@ -20,7 +20,7 @@ beforeEach(() => {
   setState({
     docId: null, docName: null, version: 0, doc: null, status: "",
     selection: [], expanded: new Set(), pane: "layers", tool: "move",
-    marquee: null, zoom: 1, history: [], historyOpen: false,
+    region: null, zoom: 1, history: [], historyOpen: false,
     sessionBaseVersion: 0, chat: [], chatBusy: false, degradeOpen: false,
     pickedColor: null,
   });

@@ -1,0 +1,47 @@
+import type { Rect } from "../doc-model.js";
+
+/**
+ * The region axis of a selection target (spec §3.1): a patch of canvas the
+ * user pointed at, which may or may not be a rectangle.
+ *
+ * A rectangle is the DEGENERATE case, not the basic one — when a person means
+ * "this object" they draw a lasso or a smear. `maskId` is therefore present
+ * from the first version even though only rectangles can be produced today:
+ * widening `Rect` to `Region` later would touch crop, the context bar, the
+ * composer, the overlay and seven test files all over again.
+ *
+ * The mask BYTES never live here. A full-canvas mask is a 12MB
+ * Uint8ClampedArray, and this object goes into the global store, which
+ * notifies every subscriber on every change (store.ts) and is snapshotted
+ * whole by tests. The handle points into the module-level table in this same
+ * file (added when its first producer lands — see doc-controller's
+ * layerAlphaRegion).
+ */
+export interface Region {
+  /** Enclosing rect, `[top,left,bottom,right]`, document pixels. Always set. */
+  bounds: Rect;
+  /** The gesture that produced it: decides how the UI describes it and
+   *  whether it can be edited back. */
+  source: "rect" | "lasso" | "wand" | "layerAlpha";
+  /** Handle for per-pixel coverage; null for a plain rectangle. */
+  maskId: string | null;
+}
+
+export function rectRegion(bounds: Rect): Region {
+  return { bounds, source: "rect", maskId: null };
+}
+
+/**
+ * The current target as one sentence, for the context bar.
+ *
+ * Every combination is meaningful (spec §3.2) — an empty axis is a default,
+ * not a missing input. In particular "no layer + a region" is exactly what a
+ * generative edit wants, so it must not read as an error.
+ */
+export function describeTarget(layerNames: string[], region: Region | null): string {
+  if (layerNames.length > 0) {
+    const names = layerNames.join(" + ");
+    return region ? `${names} · 限定在选区内` : names;
+  }
+  return region ? "选区内的所有图层" : "整个文档";
+}
