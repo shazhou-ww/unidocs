@@ -190,13 +190,11 @@ export class DocController {
     if (tiles.length > 0) void this.renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
   }
 
-  setZoom(zoom: number): void {
-    this.viewport?.setZoom(zoom);
-    this.requestVisibleTiles();
-  }
-
-  panBy(dx: number, dy: number): void {
-    this.viewport?.panBy(dx, dy);
+  /** Zoom changes only ever reach the canvas as a CSS box size, which the
+   *  Viewport measures rather than being told (see `Ratio` in viewport.ts).
+   *  So there is nothing to set here — only newly-exposed tiles to fetch,
+   *  since zooming out widens the visible document area. */
+  setZoom(): void {
     this.requestVisibleTiles();
   }
 
@@ -213,13 +211,18 @@ export class DocController {
 
   /** Reads one pixel from the composited canvas. Used by the eyedropper tool.
    *  Returns null when the point is outside the canvas or the 2D context is
-   *  unavailable. */
+   *  unavailable.
+   *
+   *  Goes through `toCanvas` rather than doing its own client-rect math: the
+   *  eyedropper, the marquee and the layer drag must agree on which document
+   *  pixel the cursor is over at every zoom, and the only way to guarantee
+   *  that is for them to share one mapping. */
   pickColor(clientX: number, clientY: number): string | null {
     const ctx = this.view.getContext("2d");
     if (!ctx) return null;
-    const r = this.view.getBoundingClientRect();
-    const x = Math.floor(((clientX - r.left) / r.width) * this.view.width);
-    const y = Math.floor(((clientY - r.top) / r.height) * this.view.height);
+    const { x: fx, y: fy } = this.toCanvas(clientX, clientY);
+    const x = Math.floor(fx);
+    const y = Math.floor(fy);
     if (x < 0 || y < 0 || x >= this.view.width || y >= this.view.height) return null;
     const [rr, gg, bb] = ctx.getImageData(x, y, 1, 1).data;
     return "#" + [rr, gg, bb].map((c) => c.toString(16).padStart(2, "0")).join("");

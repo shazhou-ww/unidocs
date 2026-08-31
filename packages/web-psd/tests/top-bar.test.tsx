@@ -26,7 +26,9 @@ describe("TopBar", () => {
     expect(screen.getByText("100%")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("放大"));
     expect(getState().zoom).toBeCloseTo(1.25);
-    expect(setZoom).toHaveBeenCalledWith(1.25);
+    // The zoom VALUE lives in the store; the controller is only nudged to
+    // re-fetch tiles, so it is called with no arguments.
+    expect(setZoom).toHaveBeenCalledWith();
     // Wrap external store mutation in act() so React re-renders TopBar with the new zoom
     // before the click handler fires. Without act(), the handler closes over the previous
     // zoom value and computes the wrong result.

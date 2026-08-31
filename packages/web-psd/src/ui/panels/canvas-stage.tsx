@@ -14,6 +14,14 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * reads its scroll offsets, so native scrolling IS the pan gesture (the same
  * arrangement as before the redesign).
  *
+ * Zoom is likewise not this component's business: the canvas bitmap is always
+ * the document at 1:1 and zoom is only ever the canvas element's CSS box size,
+ * which Viewport measures rather than being told. Every pointer coordinate
+ * below therefore goes through `controller.toCanvas()` and comes back in
+ * document pixels, correct at any zoom — the marquee, the layer drag and the
+ * eyedropper all share that one mapping, so they cannot disagree about which
+ * pixel the cursor is over.
+ *
  * `.stage-inner` wraps the canvas and `<SelectionOverlay />` together and is
  * the thing that shrink-wraps + centres (`margin: auto`) inside `.stage`'s
  * flex row. That makes `.stage-inner` — not `.stage` — the nearest positioned
