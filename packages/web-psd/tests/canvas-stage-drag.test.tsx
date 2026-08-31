@@ -45,7 +45,13 @@ beforeEach(() => {
   // throwing.
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.releasePointerCapture = vi.fn();
-  setState({ tool: "move", region: null, selection: ["a"], pickedColor: null });
+  setState({
+    tool: "move", region: null, selection: ["a"], pickedColor: null,
+    doc: {
+      canvas: { width: 100, height: 100 },
+      layers: [{ id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal", visible: true, bounds: [0, 0, 100, 100] }],
+    },
+  });
 });
 
 describe("CanvasStage move-tool drag", () => {

@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { dispatch, getController, initController } from "../controller.js";
-import { getState, setState, setRegion, useUiState } from "../store.js";
+import { getState, setState, setRegion, setSelection, nextSelection, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
 import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
 import { translateOps, type DragState } from "../drag.js";
 import { rectRegion } from "../region.js";
+import { findLayer, layerBox, type Hit } from "../hit-test.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 import { SelectionBox } from "./selection-box.js";
 
@@ -47,6 +48,9 @@ export function CanvasStage() {
   // Move-tool drag state. Also a ref: it advances every pointermove and must
   // not re-render the tree mid-drag.
   const drag = useRef<DragState | null>(null);
+  // The gesture that is waiting on an async hit test. A ref, not state, for
+  // the same reason `drag` is: it changes mid-gesture and must not re-render.
+  const pending = useRef<PendingHit | null>(null);
 
   useEffect(() => {
     if (stageRef.current && viewRef.current) initController(viewRef.current, stageRef.current);
@@ -102,10 +106,25 @@ export function CanvasStage() {
       setState({ pickedColor: c.pickColor(e.clientX, e.clientY) });
       return;
     }
-    if (s.tool === "move" && s.selection.length > 0) {
+    if (s.tool === "move") {
       const at = c.toCanvas(e.clientX, e.clientY);
-      drag.current = { layerIds: [...s.selection], from: at, last: at };
       e.currentTarget.setPointerCapture(e.pointerId);
+      // Pressing inside the existing selection continues to drag it, with no
+      // round trip — the gesture the user is most likely to repeat stays
+      // instant. A box test is enough here BECAUSE it cannot select anything:
+      // it only decides whether to keep dragging what is already selected.
+      // (Today's code drags on `selection.length > 0` with no position test at
+      // all, so this is strictly narrower.)
+      if (s.selection.length > 0 && insideSelection(s, at)) {
+        drag.current = { layerIds: [...s.selection], from: at, last: at };
+        return;
+      }
+      const p: PendingHit = {
+        anchor: at, latest: at, pointerId: e.pointerId, alive: true,
+        additive: e.shiftKey, leaf: e.metaKey || e.ctrlKey,
+      };
+      pending.current = p;
+      void c.hitTest(e.clientX, e.clientY).then((hits) => settleHit(p, hits));
       return;
     }
     if (s.tool === "marquee") {
@@ -129,15 +148,53 @@ export function CanvasStage() {
       drag.current = { ...drag.current, last: { x: drag.current.last.x + dx, y: drag.current.last.y + dy } };
       return;
     }
+    // The hit test has not come back yet: record where the finger is and
+    // dispatch NOTHING. Moving from the hit's own coordinate later would drop
+    // everything travelled during the round trip.
+    if (pending.current) {
+      pending.current.latest = c.toCanvas(e.clientX, e.clientY);
+      return;
+    }
     if (!anchor.current) return;
     setRegion(rectRegion(normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null)));
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!drag.current && !anchor.current) return;
+    // Released before the hit landed: keep the object so the late result can
+    // finish it off as a CLICK. Dropping it here instead would leave the
+    // layer following the cursor after the button was let go.
+    if (pending.current) pending.current.alive = false;
+    if (!drag.current && !anchor.current && !pending.current) return;
     drag.current = null;
     anchor.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  const settleHit = (p: PendingHit, hits: Hit[]): void => {
+    if (pending.current !== p) return;   // a newer gesture already superseded this one
+    pending.current = null;
+    const s = getState();
+    const hit = hits[0] ?? null;
+    if (!hit) {
+      // Clearing the LAYER axis only. The region survives: the two axes are
+      // written by different tools and never clear each other (spec §3.3).
+      setSelection([]);
+      return;
+    }
+    const id = p.leaf ? hit.path[hit.path.length - 1] : hit.path[0];
+    const selection = nextSelection({ ...s, selection: p.additive ? s.selection : [] }, id, p.additive);
+    setState({ selection });
+    if (!p.alive) return;                // it was a click, not a drag
+    const c = getController();
+    if (!c) return;
+    // `drag.from` is where the finger went DOWN, and the whole distance
+    // travelled since is applied in one go — so the layer's total movement
+    // always equals the finger's, however long the round trip took.
+    const started: DragState = { layerIds: selection, from: p.anchor, last: p.anchor };
+    const ops = translateOps(started, p.latest);
+    for (const op of ops) void dispatch(op);
+    const [dx, dy] = (ops[0]?.payload.op as { translate: [number, number] } | undefined)?.translate ?? [0, 0];
+    drag.current = { ...started, last: { x: p.anchor.x + dx, y: p.anchor.y + dy } };
   };
 
   const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
@@ -250,4 +307,31 @@ export function canvasBoxStyle(
     height: Math.round(canvas.height * zoom),
     imageRendering: zoom >= 1 ? "pixelated" : "auto",
   };
+}
+
+/** A gesture whose hit test has not answered yet. */
+interface PendingHit {
+  anchor: { x: number; y: number };
+  latest: { x: number; y: number };
+  pointerId: number;
+  /** False once the pointer has been released — the late hit then resolves as
+   *  a click rather than starting a drag. */
+  alive: boolean;
+  additive: boolean;
+  leaf: boolean;
+}
+
+/** Whether a press lands within the boxes of the current selection. Used only
+ *  to decide "keep dragging what is already selected", never to select
+ *  anything — box-level hit testing is exactly what §5.1 rules out as a way
+ *  to pick a layer, because a full-canvas mostly-transparent layer is the
+ *  norm in a PSD. */
+function insideSelection(s: ReturnType<typeof getState>, at: { x: number; y: number }): boolean {
+  if (!s.doc) return false;
+  for (const id of s.selection) {
+    const layer = findLayer(s.doc.layers, id);
+    const box = layer ? layerBox(layer) : null;
+    if (box && at.y >= box[0] && at.x >= box[1] && at.y < box[2] && at.x < box[3]) return true;
+  }
+  return false;
 }
