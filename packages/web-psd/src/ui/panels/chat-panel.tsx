@@ -1,4 +1,4 @@
-import { fetchHistory, resetAgent, runAgent } from "../api.js";
+import { fetchHistory, resetAgent, runAgent, type AgentTarget } from "../api.js";
 import { getController } from "../controller.js";
 import { getState, opsSinceSession, reportError, setState, useUiState, type ChatMessage } from "../store.js";
 import { Composer } from "./composer.js";
@@ -34,13 +34,13 @@ export function ChatPanel() {
     }
   };
 
-  const send = async (text: string): Promise<void> => {
+  const send = async (text: string, target: AgentTarget | null): Promise<void> => {
     const { docId, chatBusy, version } = getState();
     if (!docId || chatBusy) return;
     const pending: ChatMessage = { role: "agent", text: "thinking…", pending: true };
     setState({ chatBusy: true, chat: [...getState().chat, { role: "user", text }, pending] });
     try {
-      const reply = await runAgent(docId, text);
+      const reply = await runAgent(docId, text, target);
       // The agent mutated the document server-side, out from under this tab:
       // reconcile rebases the local copy and warm-resets the render.
       await getController()?.reconcile();
@@ -87,7 +87,7 @@ export function ChatPanel() {
         ))}
       </div>
 
-      <Composer busy={s.chatBusy} onSend={(t) => void send(t)} />
+      <Composer busy={s.chatBusy} onSend={(t, target) => void send(t, target)} />
       {s.historyOpen ? <HistoryDrawer /> : null}
     </section>
   );

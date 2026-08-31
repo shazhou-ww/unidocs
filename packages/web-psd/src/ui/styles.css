@@ -411,3 +411,5 @@ a:hover { color: var(--accent); }
 .degrade-row:hover { background: var(--surface-hover); }
 .degrade-row span { color: var(--warn-ink); font-size: 11.5px; }
 .degrade-row em { color: var(--fg-3); font-size: 11px; font-style: normal; }
+
+.chip-on { border-color: var(--accent); color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 8%, transparent); }
