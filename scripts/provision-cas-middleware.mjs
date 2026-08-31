@@ -21,7 +21,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { exportJWK, exportPKCS8, generateKeyPair } from "jose";
 import { CONTROL_SCHEMA_MIGRATIONS } from "../unicas-packages/control-plane/dist/schema.js";
-import { STACK_TENANT_SCHEMA_MIGRATIONS } from "../unicas-packages/server-cloudflare/dist/schema.js";
+import { STACK_TENANT_SCHEMA_MIGRATIONS } from "../unicas-packages/service-cloudflare/dist/schema.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_DIR = join(ROOT, ".wrangler", "cas-deploy");

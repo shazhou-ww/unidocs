@@ -823,40 +823,6 @@ importers:
         specifier: ^4.20.0
         version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
-  unicas-packages/server-cloudflare:
-    dependencies:
-      '@unicas/codec':
-        specifier: workspace:*
-        version: link:../codec
-      '@unicas/control-plane':
-        specifier: workspace:*
-        version: link:../control-plane
-      '@unicas/service':
-        specifier: workspace:*
-        version: link:../service
-      '@unicas/tenant-protocol':
-        specifier: workspace:*
-        version: link:../tenant-protocol
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      '@unidocs/service-auth':
-        specifier: workspace:*
-        version: link:../../packages/service-auth
-      miniflare:
-        specifier: 5.20260811.1-alpha
-        version: 5.20260811.1-alpha
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-      wrangler:
-        specifier: ^4.20.0
-        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
-
   unicas-packages/service:
     dependencies:
       '@unicas/admin-protocol':

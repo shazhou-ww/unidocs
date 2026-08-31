@@ -22,8 +22,8 @@ Unicas 是 UniDocs 的独立可部署 CAS 中间件（content-addressed storage 
    `admin-cli`（管理 CLI + stdio MCP）、`tenant-client`（数据面 HTTP client）。
 6. **服务端按平台分层，不按 actor 拆部署**：`service` 是 cloud-neutral 的
   tenant + admin HTTP actor 与平台端口；`service-cloudflare` 是唯一 Cloudflare
-  Worker 和公网入口。`control-plane`、`server-cloudflare`、
-  `control-plane-mcp` 现为迁移期内部实现包，不再独立部署。
+  Worker 和公网入口。`control-plane`、`control-plane-mcp` 现为迁移期内部
+  实现包，不再独立部署。
 
 ## 客户端访问面固定结构
 
@@ -44,7 +44,7 @@ tenant: [tenant-cli, tenant-webui] -> tenant-client -> tenant-protocol
 - 上图是固定的角色与依赖模型；某个 CLI/WebUI 产品尚未实现时不创建空包。
   WebUI 的服务端 BFF 属于服务端梳理范围，不改变浏览器侧的依赖方向。
 
-## 包清单（14 包）
+## 包清单（13 包）
 
 ```
 unicas-packages/                    @unicas org
@@ -79,7 +79,6 @@ unicas-packages/                    @unicas org
 ├── ■ Cloudflare 适配与迁移实现
 │   ├── service-cloudflare/@unicas/service-cloudflare  唯一 Worker 部署单元
 │   │     D1/R2/KV/DO bindings、统一公网路由、credential 隔离、BFF/UI、MCP
-│   ├── server-cloudflare/ @unicas/server-cloudflare   迁移期 tenant 存储/审计 adapter
 │   ├── control-plane-mcp/ @unicas/control-plane-mcp   迁移期 MCP/OAuth ingress
 │   └── admin-webui/       @unicas/admin-webui         WebUI + 迁移期 BFF
 │
@@ -100,8 +99,7 @@ unicas-packages/                    @unicas org
     │     CLI + stdio MCP（bin `unicas`），走 /admin HTTP API（admin-client）；
     │     登录 = 自行 Google OIDC → BFF /admin/auth/exchange 换 session；
     │     `unicas mcp` 是 admin-client 之上的薄 MCP 呈现层（无 MCP 转 MCP）
-    └── admin-webui/       @unicas/admin-webui         admin 组 · 双角色（部署层）
-          src/ui（管理界面）+ src/server（OIDC BFF）
+    └── admin-webui 浏览器侧依赖 admin-client；物理包见上方迁移实现层
 ```
 
 ## 依赖规则（分层单向，guard + boundary 测试强制）
@@ -132,18 +130,16 @@ unicas-packages/                    @unicas org
   注入，D1 `AuthorityRepository` 仍由 Cloudflare adapter 构造。
 - `service-cloudflare` 是唯一部署包，持有 D1/R2/KV/DO 和公网 route；生产及
   本地 Miniflare 均不再通过 tenant/admin/MCP service bindings 拆分 UniCAS。
-- `server-cloudflare`、`admin-webui` server 和 `control-plane-mcp` 暂由
-  `service-cloudflare` 作为内部策略组合，迁移完成后其服务端实现将归入
-  `service` 或 `service-cloudflare`，对应旧部署包删除。`server-cloudflare`
-  已不再拥有 capability verifier、Root Ref、node usage、node read 或 node lease
-  业务规则，只保留迁移中的 D1/R2 repository、DO 生命周期与 audit RPC。
+- tenant D1/R2 repositories、DO 生命周期与 audit RPC 已并入
+  `service-cloudflare`，原 `server-cloudflare` 迁移包已删除。`admin-webui`
+  server 和 `control-plane-mcp` 暂由 `service-cloudflare` 作为内部策略组合，
+  迁移完成后其服务端实现将归入 `service` 或 `service-cloudflare`。
 - 数据面不得依赖 admin 组包；admin 实现包不得依赖 tenant 实现包。
   唯一协议级单向例外是 `admin-protocol -> tenant-protocol`，用于复用两面
   公共协议类型，反向禁止（由 `admin-protocol/tests/cross-plane.test.ts` 与
   各包 `tests/boundary.test.ts` 断言）。
-- **零 `@unidocs/*` 依赖**：unicas-packages 是独立中间件。`server-cloudflare`
-  唯一允许的应用栈 devDependency 是测试用的 `@unidocs/service-auth`
-  （签发器），生产代码不引用。
+- **零 `@unidocs/*` 依赖**：unicas-packages 是独立中间件，生产与测试均不
+  依赖应用栈包。
 - `admin-cli` 走 `/admin` HTTP API（经 `@unicas/admin-client`），运行时依赖
   `admin-protocol`（契约类型）+ `admin-client`（传输）+ `control-auth`
   （PKCE/state 辅助）；`unicas mcp` 是同一 `admin-client` 之上的 stdio MCP
@@ -189,7 +185,7 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | `protocol-admin` → `admin-protocol` | 改名对齐 actor 前缀 |
 | `server-common` 删除 | binary/digest/canonical-stream/validation 先并入 `tenant-protocol` |
 | capability 词汇迁入 | 从 `@unidocs/service-auth` 迁入 `tenant-protocol`，service-auth 变 re-export 薄壳 |
-| SValue 专属逻辑移除 | `server-cloudflare` 不再解析 SValue；`@unidocs` 生产依赖清零 |
+| SValue 专属逻辑移除 | CAS 服务端不再解析 SValue；`@unidocs` 生产依赖清零 |
 | `admin-cli` → 依赖 `admin-protocol` | 工具结果用冻结契约类型标注，防 schema 漂移 |
 | **codec 拆分（强制迁移）** | `binary/digest/canonical-stream/validation` 从 `tenant-protocol` 抽为 `@unicas/codec`；`tenant-protocol` 不再 re-export 编码符号；纯编码消费者直接依赖 codec |
 | **blob 分层（tenant-blob-client）** | `blob index` 从 codec 迁入新包 `@unicas/tenant-blob-client`；tenant-client 收窄为与 HTTP 一一对应的薄传输；blob 层提供完整接口（句柄式随机读对标 SBlobHandler、usage/gc 透传），业务方不再触碰底层 client |
@@ -203,6 +199,7 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | **node read 内核下沉 service** | own-content HTTP range 解析、canonical payload offset 与 metadata/state shaping 迁入 `@unicas/service`；D1/R2 adapter 只读 node row、ordered edges 与 object range |
 | **bodyless lease 内核下沉 service** | lease duration policy、续租窗口、ready 检查与 verified canonical orphan adoption 迁入 `@unicas/service`；D1/R2 adapter 只负责 object head/prefix、lease update 与 adoption batch |
 | **streaming lease 内核下沉 service** | reservation/upload/inspect/immutability/child-readiness/commit/cleanup 编排迁入 `@unicas/service`，请求 body 仍直通平台 object store；Cloudflare adapter 只负责 R2 SHA-256 写入与 D1 batch |
+| **tenant Cloudflare 包收口** | D1/R2 repositories、tenant/domain DO、schema 与 audit RPC 迁入 `@unicas/service-cloudflare`，删除 `@unicas/server-cloudflare` |
 
 ## 待办（README 定方向）
 
@@ -213,7 +210,7 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
   迁入 `service` 的平台无关 handlers，使其只通过语义化 store/blob/keyed-actor
   端口工作；D1 SQL、R2 与 DO wrapper 留在 `service-cloudflare`。
 3. **入口收尾**：把 `admin-webui/src/server` 与 `control-plane-mcp` 的
-  Cloudflare ingress 并入 `service-cloudflare` 后删除三个迁移实现包；
+  Cloudflare ingress 并入 `service-cloudflare` 后删除两个迁移实现包；
   `admin-webui` 最终只保留浏览器 UI，并恢复 `webui -> client -> protocol`。
 
 ## 维护约定
@@ -221,7 +218,7 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 - 依赖 guard：`tests/unit/workspace/package-deps.test.mjs`（目录名=包名、声明与
   import 一致、composite tsconfig references 恰好覆盖 dependencies）。
 - 边界测试：`service`、`service-cloudflare` 以及迁移实现包（`admin-webui`、
-  `control-plane`、`control-plane-mcp`、`server-cloudflare`）各自有
+  `control-plane`、`control-plane-mcp`）各自有
   `tests/boundary.test.ts`，断言允许的依赖集与跨组禁止项；**client 层与
   契约/编码层包**（`tenant-client`、`tenant-blob-client`、`admin-client`、
   `admin-protocol`、`tenant-protocol`、`codec`、`control-auth`）的依赖边界

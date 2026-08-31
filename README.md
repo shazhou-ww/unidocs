@@ -92,7 +92,6 @@ unicas-packages/           (the independently deployable CAS middleware; future 
 ├── admin-protocol/        @unicas/admin-protocol        — CAS control-plane contracts
 ├── service/               @unicas/service               — Cloud-neutral tenant + admin HTTP actor and platform ports
 ├── service-cloudflare/    @unicas/service-cloudflare    — Unified Cloudflare Worker deployment
-├── server-cloudflare/     @unicas/server-cloudflare     — Transitional Cloudflare tenant strategy implementation
 ├── control-plane/         @unicas/control-plane         — CAS control plane service (issuers/stacks/members/sessions)
 ├── control-auth/          @unicas/control-auth          — Shared server-only control-plane OIDC client
 ├── control-plane-mcp/     @unicas/control-plane-mcp     — OAuth-protected remote MCP operations ingress

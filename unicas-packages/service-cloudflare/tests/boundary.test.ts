@@ -20,7 +20,7 @@ describe("service-cloudflare package boundary", () => {
     expect(wrangler).toContain('binding = "CAS_R2"');
     expect(wrangler).toContain('binding = "OAUTH_KV"');
 
-    for (const packageName of ["admin-webui", "control-plane-mcp", "server-cloudflare"]) {
+    for (const packageName of ["admin-webui", "control-plane-mcp"]) {
       const legacyPackage = JSON.parse(readFileSync(
         join(root, "..", packageName, "package.json"),
         "utf8",

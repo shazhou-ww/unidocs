@@ -1,8 +1,8 @@
 /**
  * Read-only tenant authority repository.
  *
- * The tenant runtime (`cas-server-cloudflare`) receives this repository to
- * resolve a verified issuer to its stack authority (audience + keys) and to
+ * The Cloudflare service adapter receives this repository to resolve a
+ * verified issuer to its stack authority (audience + keys) and to
  * resolve a verified issuer to its stack authority (audience + keys). It
  * exposes ONLY lookup operations; the registry is written exclusively by
  * `cas-control-plane`'s `ControlPlaneService`. Revocation/key-removal

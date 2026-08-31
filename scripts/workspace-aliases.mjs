@@ -33,7 +33,7 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unicas/tenant-protocol": "unicas-packages/tenant-protocol/src/index.ts",
   "@unicas/admin-protocol": "unicas-packages/admin-protocol/src/index.ts",
   "@unicas/service": "unicas-packages/service/src/index.ts",
-  "@unicas/server-cloudflare": "unicas-packages/server-cloudflare/src/worker.ts",
+  "@unicas/service-cloudflare": "unicas-packages/service-cloudflare/src/worker.ts",
   "@unicas/control-plane": "unicas-packages/control-plane/src/index.ts",
   "@unicas/control-auth": "unicas-packages/control-auth/src/index.ts",
   "@unicas/control-plane-mcp": "unicas-packages/control-plane-mcp/src/worker.ts",
