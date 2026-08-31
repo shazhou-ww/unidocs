@@ -21,7 +21,6 @@ import {
   parseCanonicalNodeStream,
   computeNodeDigest,
   encodeHeader,
-  hashToHex,
   hexToHash,
   validateContentLength,
   validateContentType,
@@ -32,15 +31,23 @@ import type {
 } from "@unicas/tenant-protocol";
 export { NodeOpError, NodeOpErrorCodes } from "@unicas/service";
 export type { NodeOpErrorCode } from "@unicas/service";
-import { NodeOpError, NodeOpErrorCodes } from "@unicas/service";
+export {
+  clampLeaseDuration,
+  DEFAULT_LEASE_MS,
+  MAX_LEASE_MS,
+  MIN_LEASE_MS,
+  parseLeaseDuration,
+} from "@unicas/service";
+import {
+  leaseReadyNode as leaseReadyNodeKernel,
+  MAX_LEASE_MS,
+  nextNodeLease,
+  NodeOpError,
+  NodeOpErrorCodes,
+} from "@unicas/service";
 import { stackCanonicalNodeKey } from "./do-names.js";
+import { CloudflareNodeLeaseRepository } from "./node-lease.js";
 
-/** Default lease duration when the header is absent. */
-export const DEFAULT_LEASE_MS = 15 * 60 * 1000;
-/** Minimum accepted lease duration. */
-export const MIN_LEASE_MS = 60 * 1000;
-/** Maximum accepted lease duration. */
-export const MAX_LEASE_MS = 24 * 60 * 60 * 1000;
 
 /** The stack-scoped stores a tenant DO mutates. */
 export interface NodeStore {
@@ -95,10 +102,10 @@ function nextLease(
   durationMs: number,
   now: number,
 ): { leaseStartedAt: number; leaseExpiresAt: number } {
-  return {
-    leaseStartedAt: existing && existing.lease_expires_at > now ? existing.lease_started_at : now,
-    leaseExpiresAt: Math.max(existing?.lease_expires_at ?? 0, now + durationMs),
-  };
+  return nextNodeLease(existing === null ? null : {
+    leaseStartedAt: existing.lease_started_at,
+    leaseExpiresAt: existing.lease_expires_at,
+  }, durationMs, now);
 }
 
 async function discardCanonicalUpload(store: NodeStore, hash: string): Promise<void> {
@@ -131,21 +138,6 @@ async function inspectCanonicalObject(
   );
   await parsed.body.cancel("Canonical prefix inspection complete");
   return parsed;
-}
-
-/** Clamp a requested duration into the accepted window. */
-export function clampLeaseDuration(value: number): number {
-  return Math.min(Math.max(value, MIN_LEASE_MS), MAX_LEASE_MS);
-}
-
-/** Parse the X-CAS-Lease-Duration header; defaults when absent or invalid. */
-export function parseLeaseDuration(header: string | null): number {
-  if (header == null || header === "") return DEFAULT_LEASE_MS;
-  const n = Number(header);
-  if (!Number.isFinite(n)) {
-    throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "Invalid lease duration");
-  }
-  return clampLeaseDuration(n);
 }
 
 /** Parse and validate the comma-separated X-CAS-Refs header. */
@@ -313,105 +305,13 @@ export async function leaseReadyNode(
   store: NodeStore,
   input: { hash: string; leaseDurationMs: number },
 ): Promise<CasLeaseResult> {
-  const { db, bucket, stackId, tenantId } = store;
-  try {
-    validateHash(input.hash);
-  } catch (err) {
-    throw new NodeOpError(
-      400,
-      NodeOpErrorCodes.INVALID_REQUEST,
-      err instanceof Error ? err.message : "Invalid hash",
-    );
-  }
-  const now = Date.now();
-  const existing = await existingNode(store, input.hash);
-  if (!existing) {
-    const adopted = await adoptCanonicalOrphan(store, input.hash, input.leaseDurationMs);
-    if (adopted !== null) return adopted;
-    throw new NodeOpError(404, NodeOpErrorCodes.NOT_FOUND, `Node ${input.hash} not found`);
-  }
-  const r2Key = stackCanonicalNodeKey(stackId, tenantId, input.hash);
-  if ((await bucket.head(r2Key)) === null) {
-    throw new NodeOpError(409, NodeOpErrorCodes.NOT_READY, `Node ${input.hash} is not ready`);
-  }
-  const { leaseStartedAt, leaseExpiresAt } = nextLease(existing, input.leaseDurationMs, now);
-  await db
-    .prepare(
-      "UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-    )
-    .bind(leaseStartedAt, leaseExpiresAt, stackId, tenantId, input.hash)
-    .run();
-  return { hash: input.hash, ready: true, leaseStartedAt, leaseExpiresAt };
-}
-
-async function adoptCanonicalOrphan(
-  store: NodeStore,
-  hash: string,
-  leaseDurationMs: number,
-): Promise<CasLeaseResult | null> {
-  const key = stackCanonicalNodeKey(store.stackId, store.tenantId, hash);
-  const object = await store.bucket.head(key);
-  if (
-    object === null
-    || object.size > (store.limits?.maxCanonicalNodeBytes ?? MAX_CANONICAL_NODE_BYTES)
-    || object.checksums.sha256 === undefined
-  ) {
-    return null;
-  }
-  if (hashToHex(new Uint8Array(object.checksums.sha256)) !== hash) return null;
-
-  let parsed;
-  try {
-    parsed = await inspectCanonicalObject(store, key, object.size);
-  } catch (error) {
-    throw new NodeOpError(
-      409,
-      NodeOpErrorCodes.CONFLICT,
-      error instanceof Error ? error.message : "Canonical orphan is invalid",
-    );
-  }
-  for (const childHash of parsed.refs) {
-    if (!await isReady(store, childHash)) {
-      throw new NodeOpError(409, NodeOpErrorCodes.NOT_READY, `Child node ${childHash} is not ready`);
-    }
-  }
-
-  const now = Date.now();
-  const lease = nextLease(null, leaseDurationMs, now);
-  const batch: D1PreparedStatement[] = [
-    store.db.prepare(
-      `INSERT INTO cas_upload_reservations (stack_id, tenant_id, hash, stored_bytes, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(stack_id, tenant_id, hash) DO UPDATE SET stored_bytes = excluded.stored_bytes`,
-    ).bind(store.stackId, store.tenantId, hash, object.size, now, now + MAX_LEASE_MS),
-    store.db.prepare(
-      `INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      store.stackId,
-      store.tenantId,
-      hash,
-      parsed.contentSize,
-      parsed.contentType,
-      lease.leaseStartedAt,
-      lease.leaseExpiresAt,
-    ),
-  ];
-  for (let index = 0; index < parsed.refs.length; index++) {
-    batch.push(
-      store.db.prepare(
-        "INSERT INTO cas_edges (stack_id, tenant_id, parent_hash, ordinal, child_hash) VALUES (?, ?, ?, ?, ?)",
-      ).bind(store.stackId, store.tenantId, hash, index, parsed.refs[index]),
-      store.db.prepare(
-        "UPDATE cas_nodes SET child_ref_count = child_ref_count + 1 WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-      ).bind(store.stackId, store.tenantId, parsed.refs[index]),
-    );
-  }
-  batch.push(store.db.prepare(
-    "DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-  ).bind(store.stackId, store.tenantId, hash));
-  await store.db.batch(batch);
-  return { hash, ready: true, ...lease };
+  return leaseReadyNodeKernel({
+    repository: new CloudflareNodeLeaseRepository(store.db, store.bucket),
+    scope: { stackId: store.stackId, tenantId: store.tenantId },
+    hash: input.hash,
+    leaseDurationMs: input.leaseDurationMs,
+    limits: store.limits,
+  });
 }
 
 function sameRefs(left: readonly string[], right: readonly string[]): boolean {

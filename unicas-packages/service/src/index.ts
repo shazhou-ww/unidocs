@@ -87,3 +87,19 @@ export type {
   NodeReadRepository,
   NodeReadScope,
 } from "./node-read.js";
+export {
+  clampLeaseDuration,
+  DEFAULT_LEASE_MS,
+  leaseReadyNode,
+  MAX_LEASE_MS,
+  MIN_LEASE_MS,
+  nextNodeLease,
+  parseLeaseDuration,
+} from "./node-lease.js";
+export type {
+  AdoptedCanonicalNodePlan,
+  CanonicalOrphanObject,
+  NodeLeaseRecord,
+  NodeLeaseRepository,
+  NodeLeaseScope,
+} from "./node-lease.js";
