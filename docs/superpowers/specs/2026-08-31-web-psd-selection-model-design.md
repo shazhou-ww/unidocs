@@ -4,6 +4,11 @@
 分支：`feat/web-psd-selection`
 依赖：画布缩放 Phase 0（PR #38）与 Phase 1（PR #39），**均已并入 main**。
 　　　对应设计：`2026-08-31-web-psd-zoom-design.md`，其 §7 是写给本设计的契约。
+状态：**0 / A / B / C 期已实现**（计划见 `docs/superpowers/plans/2026-08-31-web-psd-selection-model.md`，
+　　　14 个任务，`3609310..393f518`）。**D 期（套索 / 魔棒 / mask 经 CAS 的协议扩展）仍待单独设计**，
+　　　理由见 §4.3。落地过程中对本文的两处偏离已记在 §6.1 与 §4.3 的脚注意义上：
+　　　`layerAlphaRegion` 不做剪贴限制（与 Photoshop 的 ⌘ 点缩略图一致，§6.1 原文也只说「× mask × opacity」）；
+　　　`withTarget` 在图层集为空时按 §3.2 送「与区域相交的图层」，非空时送选中图层名。
 
 > 修订记录：
 > - 第一版题为「图层选中设计」，把「选图层」和「选区域」当成两件平行无关的事。那个框架错了，
