@@ -71,7 +71,18 @@ function validateDropShadow(v: unknown): void {
  * apply() (delta never commits) instead of corrupting the document and
  * bricking every later save/render/query. Also fills soft defaults.
  */
-export function validateAndNormalizeLayer(layer: Layer): void {
+/**
+ * Validates `layer` and returns a NORMALIZED COPY with the omitted
+ * model-required fields filled in.
+ *
+ * The defaults deliberately land on a copy rather than on `layer` itself: on
+ * the server the op payload comes out of the SValue decoder, which freezes
+ * every decoded object (`svalue-codec/src/svalue.ts:386`), so writing them in
+ * place threw `Cannot add property opacity, object is not extensible` and made
+ * every single `add_layer` fail. Unit tests never caught it because they build
+ * plain object literals — see tests/apply.test.ts.
+ */
+export function validateAndNormalizeLayer(layer: Layer): Layer {
   if (!layer || typeof layer !== "object") throw new Error("layer must be an object");
   if (typeof layer.id !== "string" || !layer.id) throw new Error("layer.id must be a non-empty string");
   if (!LAYER_TYPES.includes(layer.type)) {
@@ -82,30 +93,34 @@ export function validateAndNormalizeLayer(layer: Layer): void {
     throw new Error(`layer.bounds must be [top,left,bottom,right] numbers (got ${JSON.stringify(b)})`);
   }
   // Soft defaults for model-required fields the caller may omit.
-  layer.opacity ??= 1;
-  layer.visible ??= true;
-  layer.blendMode ??= "normal";
-  if (!isFiniteNum(layer.opacity) || layer.opacity < 0 || layer.opacity > 1) {
-    throw new Error(`layer.opacity must be a number 0..1 (got ${String(layer.opacity)})`);
+  const out: Layer = {
+    ...layer,
+    opacity: layer.opacity ?? 1,
+    visible: layer.visible ?? true,
+    blendMode: layer.blendMode ?? "normal",
+  };
+  if (!isFiniteNum(out.opacity) || out.opacity < 0 || out.opacity > 1) {
+    throw new Error(`layer.opacity must be a number 0..1 (got ${String(out.opacity)})`);
   }
-  if (typeof layer.visible !== "boolean") throw new Error("layer.visible must be a boolean");
-  if (!BLEND_MODES.includes(layer.blendMode)) throw new Error(`invalid blendMode: ${String(layer.blendMode)}`);
+  if (typeof out.visible !== "boolean") throw new Error("layer.visible must be a boolean");
+  if (!BLEND_MODES.includes(out.blendMode)) throw new Error(`invalid blendMode: ${String(out.blendMode)}`);
 
-  if (layer.type === "raster" && !layer.pixels) {
+  if (out.type === "raster" && !out.pixels) {
     throw new Error("raster layer requires pixels (a solid-color fill must be supplied as raster pixels)");
   }
-  if (layer.type === "adjustment" && (typeof layer.adjustType !== "string" || !layer.adjustType)) {
+  if (out.type === "adjustment" && (typeof out.adjustType !== "string" || !out.adjustType)) {
     throw new Error("adjustment layer requires an adjustType string (e.g. 'brit'); note the field is adjustType, not adjustmentType");
   }
-  if (layer.pixels) {
-    const p = layer.pixels as { width?: unknown; height?: unknown; data?: unknown };
+  if (out.pixels) {
+    const p = out.pixels as { width?: unknown; height?: unknown; data?: unknown };
     if (!isFiniteNum(p.width) || !isFiniteNum(p.height) || !p.data || typeof (p.data as { length?: unknown }).length !== "number") {
       throw new Error("layer.pixels must have numeric width/height and a data buffer");
     }
   }
-  if (layer.type === "group" && layer.children) {
-    for (const c of layer.children) validateAndNormalizeLayer(c);
+  if (out.type === "group" && out.children) {
+    out.children = out.children.map(validateAndNormalizeLayer);
   }
+  return out;
 }
 
 function targetList(doc: PsdDoc, parentId: string | null): Layer[] {
@@ -118,9 +133,9 @@ function targetList(doc: PsdDoc, parentId: string | null): Layer[] {
 }
 
 export function addLayer(doc: PsdDoc, p: { layer: Layer; parentId: string | null; index?: number }): void {
-  validateAndNormalizeLayer(p.layer);
-  if (findLayer(doc.layers, p.layer.id)) throw new Error(`layer id already exists: ${p.layer.id}`);
-  insertAt(targetList(doc, p.parentId), p.layer, p.index);
+  const layer = validateAndNormalizeLayer(p.layer);
+  if (findLayer(doc.layers, layer.id)) throw new Error(`layer id already exists: ${layer.id}`);
+  insertAt(targetList(doc, p.parentId), layer, p.index);
 }
 
 export function removeLayer(doc: PsdDoc, p: { layerId: string }): void {

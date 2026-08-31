@@ -24,6 +24,42 @@ describe("apply", () => {
     expect(r1.layers.find(l => l.id === "b")!.opacity).toBe(0.3);
   });
 
+  // 服务端拿到的 op payload 一定是冻结的:svalue-codec 的解码路径对每个解出来
+  // 的对象都 Object.freeze(svalue.ts:386)。单测里构造的是普通对象,所以这条
+  // 路径此前从未被覆盖 —— 线上 psd 的每一次 add_layer 都以
+  // "Cannot add property opacity, object is not extensible" 失败。
+  it("add_layer accepts a frozen payload and fills in the omitted defaults", () => {
+    const bare = Object.freeze({
+      id: "b", type: "raster", name: "b", bounds: Object.freeze([0, 0, 1, 1]),
+      pixels: Object.freeze({ width: 1, height: 1, data: new Uint8ClampedArray(4) }),
+    }) as unknown as Layer;
+
+    const d2 = applyOne(doc(), { kind: "add_layer", payload: { layer: bare, parentId: null } });
+
+    const added = d2.layers.find(l => l.id === "b")!;
+    expect(added.opacity).toBe(1);
+    expect(added.visible).toBe(true);
+    expect(added.blendMode).toBe("normal");
+    // 归一化必须落在副本上,调用方传进来的对象不许被改
+    expect((bare as Partial<Layer>).opacity).toBeUndefined();
+  });
+
+  it("add_layer normalizes frozen group children too", () => {
+    const group = Object.freeze({
+      id: "g", type: "group", name: "g", bounds: Object.freeze([0, 0, 1, 1]),
+      children: Object.freeze([Object.freeze({
+        id: "c", type: "raster", name: "c", bounds: Object.freeze([0, 0, 1, 1]),
+        pixels: Object.freeze({ width: 1, height: 1, data: new Uint8ClampedArray(4) }),
+      })]),
+    }) as unknown as Layer;
+
+    const d2 = applyOne(doc(), { kind: "add_layer", payload: { layer: group, parentId: null } });
+    const child = d2.layers.find(l => l.id === "g")!.children![0]!;
+    expect(child.opacity).toBe(1);
+    expect(child.visible).toBe(true);
+    expect(child.blendMode).toBe("normal");
+  });
+
   it("unknown kind throws", () => {
     expect(() => applyOne(doc(), { kind: "nope", payload: {} })).toThrow(/unknown op/);
   });
