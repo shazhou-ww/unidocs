@@ -38,12 +38,30 @@ vi.mock("../src/doc-controller.js", () => ({
 
 beforeEach(() => {
   vi.resetModules();
-  // Cold start's own fetch (`bootstrap`) must fail harmlessly and never
-  // touch `docsQueue` — these tests drive document loads explicitly via
-  // `openFile` instead.
+  // Startup opens nothing, so nothing here should reach the network at all —
+  // a stub that throws turns any regression that reintroduces a cold-start
+  // fetch into a visible failure rather than a silent request.
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("no network in test"); }));
   capturedEvents = undefined;
   docsQueue = [];
+});
+
+describe("controller: startup", () => {
+  it("opens no document, leaving the editor in its empty state", async () => {
+    // Auto-loading a bundled sample meant the editor was never seen empty and
+    // the first document a user opened was always a replacement of something.
+    docsQueue = [{ docId: "doc-a", version: 3 }];
+    const { initController } = await import("../src/ui/controller.js");
+    const { getState } = await import("../src/ui/store.js");
+
+    initController(document.createElement("canvas"), document.createElement("div"));
+    await Promise.resolve();
+
+    expect(getState().docId).toBeNull();
+    expect(getState().doc).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(docsQueue).toHaveLength(1); // untouched
+  });
 });
 
 describe("controller: sessionBaseVersion boundary", () => {

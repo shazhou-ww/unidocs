@@ -57,18 +57,12 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
       }
     },
   });
-  void bootstrap();
-}
-
-/** Uploads the bundled sample and opens it — same cold start as before the
- *  redesign (creation is server-side; rendering is local from then on). */
-async function bootstrap(): Promise<void> {
-  try {
-    const r = await fetch(`${import.meta.env.BASE_URL}sample.psd`);
-    await createFrom(new Uint8Array(await r.arrayBuffer()), "sample.psd");
-  } catch (e) {
-    setState({ status: `no sample: ${(e as Error).message}` });
-  }
+  // No document is opened on startup. Auto-loading a bundled sample meant the
+  // editor was never in its own empty state, and the first real document the
+  // user opened was always a REPLACEMENT of something — which is both a
+  // needless upload on every page load and the only way to see one document
+  // hand over to another.
+  setState({ status: "打开一个 PSD 文件开始" });
 }
 
 async function createFrom(bytes: Uint8Array, label: string): Promise<void> {

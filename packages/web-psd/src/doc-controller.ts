@@ -98,6 +98,23 @@ export class DocController {
       store,
     });
 
+    // Hand the new document over BEFORE any rendering starts.
+    //
+    // The canvas bitmap is owned here; its CSS box is owned by React, which
+    // sizes it from the store's `doc`. Resizing the bitmap without telling the
+    // store first leaves a window where the incoming document is painted into
+    // a bitmap of its own size but displayed inside the OUTGOING document's
+    // box — two documents' dimensions on screen at once, which reads as the
+    // old one showing through the new. Sizing the canvas and publishing the
+    // doc here closes that window: by the time a single tile is painted, both
+    // halves already agree.
+    //
+    // Assigning width/height also clears the bitmap, so no pixel of the
+    // previous document can survive into the new one even transiently.
+    this.view.width = doc.canvas.width;
+    this.view.height = doc.canvas.height;
+    this.events.onDoc(doc, version);
+
     // Tear down any previous doc's worker before starting a new one.
     this.currentWorker?.terminate();
     const worker = new Worker(new URL("../../psd-client/src/render-worker.ts", import.meta.url), { type: "module" });
@@ -115,8 +132,13 @@ export class DocController {
     const workerInitMs = performance.now() - workerInitStart;
     this.tileSize = init.tileSize;
 
-    this.view.width = init.canvas.width;
-    this.view.height = init.canvas.height;
+    // Already sized from `doc.canvas` above; the worker's `init` is the
+    // authority, so re-assert it only if they somehow disagree — assigning
+    // width unconditionally would clear the canvas a second time for nothing.
+    if (this.view.width !== init.canvas.width || this.view.height !== init.canvas.height) {
+      this.view.width = init.canvas.width;
+      this.view.height = init.canvas.height;
+    }
 
     this.viewport = new Viewport(this.view);
     this.viewport.setDoc(init.canvas);

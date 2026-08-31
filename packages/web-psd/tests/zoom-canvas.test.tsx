@@ -61,9 +61,11 @@ describe("canvasBoxStyle", () => {
     expect(canvasBoxStyle({ width: 100, height: 100 }, 4)?.imageRendering).toBe("pixelated");
   });
 
-  it("has no style at all before a document is open", () => {
-    expect(canvasBoxStyle(null, 1)).toBeUndefined();
-    expect(canvasBoxStyle({ width: 0, height: 0 }, 1)).toBeUndefined();
+  it("hides the canvas before a document is open", () => {
+    // Left visible it shows at its intrinsic 300x150 with `.view`'s white fill
+    // and shadow — a blank card mid-stage that reads as a failed load.
+    expect(canvasBoxStyle(null, 1)).toEqual({ display: "none" });
+    expect(canvasBoxStyle({ width: 0, height: 0 }, 1)).toEqual({ display: "none" });
   });
 });
 

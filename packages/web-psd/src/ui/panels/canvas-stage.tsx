@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { dispatch, getController, initController } from "../controller.js";
 import { getState, setState, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
@@ -163,6 +163,12 @@ export function CanvasStage() {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
+      {s.doc ? null : (
+        <p className="stage-empty">
+          还没有打开文档
+          <span>用右上角的「打开」选择一个 PSD 文件</span>
+        </p>
+      )}
       <div className="stage-inner">
         <canvas
           className="view"
@@ -225,8 +231,13 @@ export function normalise(
 export function canvasBoxStyle(
   canvas: { width: number; height: number } | null,
   zoom: number,
-): { width: number; height: number; imageRendering: "pixelated" | "auto" } | undefined {
-  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return undefined;
+): CSSProperties {
+  // With no document open the canvas would otherwise show at its intrinsic
+  // 300x150 with `.view`'s white fill and shadow — a small blank card floating
+  // mid-stage that reads as a failed load. It cannot be unmounted (the
+  // controller holds it by ref for the lifetime of the page), so hide it and
+  // let the empty-state message stand alone.
+  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return { display: "none" };
   return {
     width: Math.round(canvas.width * zoom),
     height: Math.round(canvas.height * zoom),
