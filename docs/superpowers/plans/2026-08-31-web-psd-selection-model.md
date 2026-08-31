@@ -16,7 +16,7 @@
 - Node >= 24，pnpm 11。**不新增任何依赖**——没有状态管理库、没有 CSS 框架、没有 marching-squares 库（D 期才需要）。
 - 颜色一律走 `packages/web-psd/src/ui/styles.css` 里 `:root` 上的 CSS 变量；新样式**只往文件末尾追加** `.sel-*` 段。
 - **`selection-overlay.tsx` 的 `rectStyle` 逻辑与契约注释不得改写**，只能整体搬到 `ui/overlay-geometry.ts`（Task 6），且注释必须一起搬。任何画布覆盖层都 import 它，**渲染阶段一律不调 `toScreen()` / `getBoundingClientRect()`**。
-- **`canvas-stage.tsx` 只许改三个指针函数体 + JSX 加覆盖层组件**。不动文件头注释、两个 `useEffect`、`useLayoutEffect`（取 tile）、`normalise()`、`canvasBoxStyle()`。
+- **`canvas-stage.tsx` 只许改三个指针函数体、加 `onDoubleClick`（Task 12）与 `onContextMenu`（Task 13）、JSX 加两个覆盖层组件**。不动文件头注释、两个 `useEffect`、`useLayoutEffect`（取 tile）、`normalise()`、`canvasBoxStyle()`——这份「不许动」的清单才是约束的本体。（原规则写的是「只改三个指针函数体 + 一行 JSX」，那是为了躲开并发中的缩放改动；缩放 Phase 1 已并入 main，spec §2 明写「并发冲突的风险已经过去」，所以这里放宽到点名的五处接线。）
 - **新模块保持单向依赖**：`doc-model.ts` ← `region.ts` / `hit-test.ts` ← `store.ts` ← 其余。`tests/no-import-cycles.test.ts` 覆盖 `src/` 全量，环会让它变红。
 - 矩形一律 `Rect = [top, left, bottom, right]`，文档像素。`layers[0]` 是**最底层**，数组末尾是最上层（`render/composite.ts:178`）。
 - `ToolId` 里的 `"marquee"` **不改名**——工具名描述手势，状态名描述产物（spec §4.1 末尾）。
@@ -3217,6 +3217,11 @@ import { rectRegion } from "../src/ui/region.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
 const { dispatch, hitTest } = vi.hoisted(() => ({ dispatch: vi.fn(), hitTest: vi.fn() }));
+// `vi.mock` replaces the WHOLE module, so every export any rendered component
+// imports has to be here — the Escape tests below render <App />, and
+// `top-bar.tsx:3` imports `exportUrl` and `openFile`. Leaving them out gives
+// an undefined-is-not-a-function throw from a component that has nothing to
+// do with selection.
 vi.mock("../src/ui/controller.js", () => ({
   initController: vi.fn(),
   getController: () => ({
@@ -3226,6 +3231,8 @@ vi.mock("../src/ui/controller.js", () => ({
     hitTest,
   }),
   dispatch,
+  exportUrl: () => null,
+  openFile: vi.fn(),
 }));
 
 // See canvas-stage-drag.test.tsx: jsdom 25 has no PointerEvent constructor, so
@@ -3766,7 +3773,6 @@ describe("mask table", () => {
 
 ```tsx
   it("turns the selected layer into a region carrying its alpha", async () => {
-    layerAlphaRegion.mockResolvedValue({ bounds: [10, 10, 12, 12], data: new Uint8ClampedArray([1, 2, 3, 4]) });
     setState({ selection: ["a"], doc: { canvas: { width: 100, height: 100 }, layers: [
       { id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal", visible: true, bounds: [10, 10, 12, 12] },
     ] } });
@@ -3777,12 +3783,26 @@ describe("mask table", () => {
     expect(region.bounds).toEqual([10, 10, 12, 12]);
     expect(region.source).toBe("layerAlpha");
     expect(getMask(region.maskId)).toEqual(new Uint8ClampedArray([1, 2, 3, 4]));
-    // The layer axis is untouched — the two conversions add an axis, they do
-    // not swap one for the other.
+    // The layer axis is untouched — the two conversions ADD an axis, they do
+    // not swap one for the other (spec §3.3).
     expect(getState().selection).toEqual(["a"]);
   });
 ```
-mock 里补 `layerAlphaRegion`。
+
+`selection.test.tsx` 顶部的 mock 补一个 **`loadLayerAsRegion`**（注意：context-bar 调的是 `ui/controller.js` 的这个转发函数，不是 `DocController.layerAlphaRegion`——后者低一层，这个文件的 `vi.mock` 够不着）。它自己写 store，所以 mock 要给一个真实现的替身而不是空 spy：
+
+```ts
+vi.mock("../src/ui/controller.js", () => ({
+  dispatch: (op: unknown) => dispatch(op),
+  getController: () => ({ pickColor, toCanvas: (x: number, y: number) => ({ x, y }) }),
+  loadLayerAsRegion: async (): Promise<void> => {
+    const { setRegion } = await import("../src/ui/store.js");
+    const { putMask } = await import("../src/ui/region.js");
+    setRegion({ bounds: [10, 10, 12, 12], source: "layerAlpha", maskId: putMask(new Uint8ClampedArray([1, 2, 3, 4])) });
+  },
+}));
+```
+顶部 import 补 `getMask`（`../src/ui/region.js`）。
 
 - [ ] **Step 2: 跑测试确认变红**
 
