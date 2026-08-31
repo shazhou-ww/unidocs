@@ -4,8 +4,8 @@ import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
 import { migrateStackTenantSchema } from "../src/schema.js";
 import { canonicalizeRootRefsUpdate, executeDomainUpdate } from "../src/root-refs.js";
 
-vi.mock("@unicas/control-plane", () => ({
-  AuthorityRepository: class { },
+vi.mock("../src/control-authority.js", () => ({
+  AuthorityRepository: class {},
 }));
 vi.mock("@unicas/admin-webui", () => ({
   default: {

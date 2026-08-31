@@ -853,9 +853,6 @@ importers:
       '@unicas/codec':
         specifier: workspace:*
         version: link:../codec
-      '@unicas/control-plane':
-        specifier: workspace:*
-        version: link:../control-plane
       '@unicas/control-plane-mcp':
         specifier: workspace:*
         version: link:../control-plane-mcp

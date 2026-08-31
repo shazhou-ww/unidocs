@@ -1,5 +1,4 @@
 import adminWorker, { type Env as AdminEnv } from "@unicas/admin-webui";
-import { AuthorityRepository } from "@unicas/control-plane";
 import mcpWorker, { type Env as McpEnv } from "@unicas/control-plane-mcp";
 import {
   createUniCasService,
@@ -16,6 +15,7 @@ import {
   listRootDomainRefs,
   listRootDomains,
 } from "./audit-reads.js";
+import { AuthorityRepository } from "./control-authority.js";
 import {
   RootRefDomainDurableObject,
   type RootRefDomainDoEnv,

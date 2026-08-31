@@ -33,8 +33,8 @@ vi.mock("@unicas/service", async (importOriginal) => {
     },
   };
 });
-vi.mock("@unicas/control-plane", () => ({
-  AuthorityRepository: class { },
+vi.mock("../src/control-authority.js", () => ({
+  AuthorityRepository: class {},
 }));
 vi.mock("@unicas/admin-webui", () => ({
   default: { fetch: handlers.admin },
