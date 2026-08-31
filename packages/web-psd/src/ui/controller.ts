@@ -1,5 +1,6 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
 import { getState, setState } from "./store.js";
+import { initialZoom } from "./zoom.js";
 
 let controller: DocController | null = null;
 
@@ -37,20 +38,31 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
         version,
         ...(fresh ? { sessionBaseVersion: version } : {}),
       });
+      // A newly opened document picks its own zoom (1:1, or shrunk if it
+      // overflows the stage). Deliberately only on `fresh`: a rebase or an
+      // agent edit must NOT yank the zoom out from under the user, and a
+      // crop that changes the canvas size is still the same document.
+      //
+      // Computed here from the pure helper rather than delegated to
+      // zoom-controller: that module imports THIS one for `getController`,
+      // and importing it back would close a cycle. Circular ES modules
+      // resolve, but they are a known way to get an `undefined` binding out
+      // of a hot update — the module keeps running in a half-initialised
+      // state until a full reload. There is nothing to gain from the round
+      // trip anyway, since the controller is right here.
+      const stage = controller?.stage;
+      if (fresh && stage) {
+        const zoom = initialZoom(doc.canvas, { width: stage.clientWidth, height: stage.clientHeight });
+        if (zoom !== getState().zoom) setState({ zoom });
+      }
     },
   });
-  void bootstrap();
-}
-
-/** Uploads the bundled sample and opens it — same cold start as before the
- *  redesign (creation is server-side; rendering is local from then on). */
-async function bootstrap(): Promise<void> {
-  try {
-    const r = await fetch(`${import.meta.env.BASE_URL}sample.psd`);
-    await createFrom(new Uint8Array(await r.arrayBuffer()), "sample.psd");
-  } catch (e) {
-    setState({ status: `no sample: ${(e as Error).message}` });
-  }
+  // No document is opened on startup. Auto-loading a bundled sample meant the
+  // editor was never in its own empty state, and the first real document the
+  // user opened was always a REPLACEMENT of something — which is both a
+  // needless upload on every page load and the only way to see one document
+  // hand over to another.
+  setState({ status: "打开一个 PSD 文件开始" });
 }
 
 async function createFrom(bytes: Uint8Array, label: string): Promise<void> {

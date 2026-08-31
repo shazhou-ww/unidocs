@@ -1,11 +1,6 @@
 import type { Pixels, Tile } from "@unidocs/doctype-psd/engine";
 import { tilesForRect } from "@unidocs/doctype-psd/engine";
 
-export interface View {
-  pan: { x: number; y: number };
-  zoom: number;
-}
-
 export interface Point {
   x: number;
   y: number;
@@ -16,48 +11,102 @@ export interface Size {
   height: number;
 }
 
-/** Pure affine map between screen space (CSS px inside the viewport element)
- *  and canvas space (document pixels): `canvas = (screen - pan) / zoom`.
- *  Everything canvas-independent about pan/zoom lives here so it can be unit
- *  tested without a DOM. */
-export function viewTransform(view: View): {
-  toCanvas(sx: number, sy: number): Point;
-  toScreen(cx: number, cy: number): Point;
-} {
-  const { pan, zoom } = view;
+/** The subset of `DOMRect` this module reads. Declared structurally so the
+ *  pure functions below can be exercised without a DOM. */
+export interface BoxRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+type Rect = [number, number, number, number]; // [top,left,bottom,right]
+
+/**
+ * Bitmap pixels per CSS pixel, one factor per axis.
+ *
+ * This is THE zoom factor, and it is deliberately *measured* rather than
+ * carried as state: the canvas bitmap is always the document at 1:1, so
+ * whatever CSS size the browser actually laid the element out at IS the
+ * zoom. Reading it back means the mapping cannot drift from what the user
+ * sees — no rounding of a fractional zoom, no stale value after a resize,
+ * no accumulating error toward the far corner of a large document. Anything
+ * that scales the canvas box (a zoom control, a `max-width`, a print
+ * stylesheet) is picked up for free, because nothing has to be told.
+ */
+export interface Ratio {
+  x: number;
+  y: number;
+}
+
+/**
+ * `bitmap` is the canvas's intrinsic pixel size, `box` its laid-out CSS size.
+ *
+ * A zero-sized box means the element is not laid out (detached, `display:
+ * none`, or a jsdom test where `getBoundingClientRect` returns zeros). There
+ * is no meaningful ratio then, so fall back to 1:1 rather than producing
+ * `Infinity` and poisoning every coordinate downstream.
+ */
+export function measuredRatio(bitmap: Size, box: Size): Ratio {
   return {
-    toCanvas: (sx, sy) => ({ x: (sx - pan.x) / zoom, y: (sy - pan.y) / zoom }),
-    toScreen: (cx, cy) => ({ x: cx * zoom + pan.x, y: cy * zoom + pan.y }),
+    x: box.width > 0 ? bitmap.width / box.width : 1,
+    y: box.height > 0 ? bitmap.height / box.height : 1,
   };
 }
 
-export function screenToCanvas(view: View, sx: number, sy: number): Point {
-  return viewTransform(view).toCanvas(sx, sy);
+/** CSS px relative to the canvas's top-left → document pixels. */
+export function screenToCanvas(ratio: Ratio, sx: number, sy: number): Point {
+  return { x: sx * ratio.x, y: sy * ratio.y };
 }
 
-export function canvasToScreen(view: View, cx: number, cy: number): Point {
-  return viewTransform(view).toScreen(cx, cy);
+/** Document pixels → CSS px relative to the canvas's top-left. */
+export function canvasToScreen(ratio: Ratio, cx: number, cy: number): Point {
+  return { x: cx / ratio.x, y: cy / ratio.y };
 }
 
-/** Tiles (from the engine's tile grid) currently visible given the view's
- *  pan/zoom and the on-screen size of the viewport element. */
-export function visibleTiles(view: View, canvasSize: Size, tileSize: number, viewportPx: Size): Tile[] {
-  const t = viewTransform(view);
-  const topLeft = t.toCanvas(0, 0);
-  const bottomRight = t.toCanvas(viewportPx.width, viewportPx.height);
-  const rect: [number, number, number, number] = [topLeft.y, topLeft.x, bottomRight.y, bottomRight.x];
-  return tilesForRect(canvasSize, tileSize, rect);
+/**
+ * The document-space rect of the canvas currently visible through a scrolling
+ * container, or null when the canvas is scrolled entirely out of view.
+ *
+ * Both rects are viewport-relative (`getBoundingClientRect`), so their
+ * intersection is taken in CSS space and only then mapped into document
+ * pixels through the measured ratio — which is what makes this correct at
+ * any zoom without being told the zoom.
+ */
+export function visibleBitmapRect(canvas: BoxRect, container: BoxRect, bitmap: Size): Rect | null {
+  const ratio = measuredRatio(bitmap, canvas);
+  const left = Math.max(0, (Math.max(canvas.left, container.left) - canvas.left) * ratio.x);
+  const top = Math.max(0, (Math.max(canvas.top, container.top) - canvas.top) * ratio.y);
+  const right = Math.min(bitmap.width, (Math.min(canvas.right, container.right) - canvas.left) * ratio.x);
+  const bottom = Math.min(bitmap.height, (Math.min(canvas.bottom, container.bottom) - canvas.top) * ratio.y);
+  if (right <= left || bottom <= top) return null;
+  return [Math.floor(top), Math.floor(left), Math.ceil(bottom), Math.ceil(right)];
 }
 
-/** Thin DOM glue over a `<canvas>`: pan/zoom state + painting decoded tiles.
- *  Not unit-tested (needs a real canvas 2d context) — verified by running
- *  the app (Task 5). All the coordinate math it delegates to is pure and
- *  tested above. */
+/**
+ * Thin DOM glue over a `<canvas>` whose bitmap is ALWAYS the document at 1:1.
+ *
+ * Two invariants hold this together, and both are load-bearing:
+ *
+ * 1. **The bitmap is document space.** Tile (tx,ty) is painted at exactly
+ *    `(tx*tileSize, ty*tileSize)` — no transform, ever. Zoom is applied by
+ *    the browser when it scales the element's CSS box, which costs nothing
+ *    and keeps the compositor's tile pipeline (fixed to document pixels, no
+ *    scale parameter anywhere in the engine) untouched.
+ * 2. **Screen↔document mapping is measured, never stored.** See `Ratio`.
+ *    Every consumer — marquee, layer drag, eyedropper, selection overlay —
+ *    goes through `screenToCanvas`/`canvasToScreen` so they cannot drift
+ *    apart from each other or from what is on screen.
+ *
+ * Panning is the container's native scrolling; this class deliberately holds
+ * no pan state.
+ */
 export class Viewport {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private docSize: Size = { width: 0, height: 0 };
-  private view: View = { pan: { x: 0, y: 0 }, zoom: 1 };
   private container: HTMLElement | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -67,100 +116,56 @@ export class Viewport {
     this.ctx = ctx;
   }
 
-  /** Registers the scrolling container the canvas sits inside (e.g. `#stage`,
+  /** Registers the scrolling container the canvas sits inside (e.g. `.stage`,
    *  which has `overflow:auto` and is usually much smaller on-screen than a
-   *  large document rendered at native resolution). Once set, `visibleTiles`
-   *  culls to the on-screen intersection of the canvas and this element
-   *  instead of the whole canvas — see the module doc on `visibleTiles`
-   *  above for why that distinction matters. */
+   *  large document). Once set, `visibleTiles` culls to the on-screen
+   *  intersection of the canvas and this element instead of the whole
+   *  canvas. */
   setViewportEl(el: HTMLElement): void {
     this.container = el;
   }
 
-  /** Records the document's pixel dimensions, used to clip `visibleTiles`
-   *  to the document bounds. The canvas element's own bitmap size is the
-   *  on-screen viewport (independent of doc size, since pan/zoom means the
-   *  visible window is usually smaller than the full document) — sizing it
-   *  is the caller's responsibility (CSS/container layout). */
+  /** Records the document's pixel dimensions. Equal to the canvas bitmap size
+   *  by invariant (1) above; sizing the bitmap is the caller's job. */
   setDoc(size: Size): void {
     this.docSize = size;
   }
 
-  getView(): View {
-    return { pan: { ...this.view.pan }, zoom: this.view.zoom };
-  }
-
-  setPan(x: number, y: number): void {
-    this.view = { ...this.view, pan: { x, y } };
-  }
-
-  panBy(dx: number, dy: number): void {
-    this.view = { ...this.view, pan: { x: this.view.pan.x + dx, y: this.view.pan.y + dy } };
-  }
-
-  setZoom(zoom: number): void {
-    this.view = { ...this.view, zoom };
+  /** The live bitmap-per-CSS-pixel ratio of the canvas element. */
+  ratio(): Ratio {
+    return measuredRatio(
+      { width: this.canvas.width, height: this.canvas.height },
+      this.canvas.getBoundingClientRect(),
+    );
   }
 
   screenToCanvas(sx: number, sy: number): Point {
-    return screenToCanvas(this.view, sx, sy);
+    return screenToCanvas(this.ratio(), sx, sy);
   }
 
   canvasToScreen(cx: number, cy: number): Point {
-    return canvasToScreen(this.view, cx, cy);
+    return canvasToScreen(this.ratio(), cx, cy);
   }
 
-  /** Tiles currently visible on-screen. When the canvas is rendered at
-   *  native document resolution inside a scrolling container (e.g. `#stage`,
-   *  `overflow:auto`), `canvas.clientWidth/Height` equal the FULL bitmap
-   *  size — not what's actually on-screen — so falling back to that (no
-   *  `setViewportEl` call) returns every tile of the whole canvas. With a
-   *  container registered, we instead intersect the canvas's and
-   *  container's on-screen rects (`getBoundingClientRect`) and map that
-   *  intersection into bitmap-pixel coordinates, so only the tiles actually
-   *  visible through the scroll viewport are requested. */
+  /** Tiles currently visible on-screen. Without a registered container the
+   *  canvas's own bitmap is assumed fully visible, which for a document
+   *  larger than the screen means every tile — hence `setViewportEl`. */
   visibleTiles(tileSize: number): Tile[] {
-    if (!this.container) {
-      return visibleTiles(this.view, this.docSize, tileSize, {
-        width: this.canvas.clientWidth || this.canvas.width,
-        height: this.canvas.clientHeight || this.canvas.height,
-      });
-    }
-    const cr = this.canvas.getBoundingClientRect();
-    const vr = this.container.getBoundingClientRect();
-    // displayed->bitmap ratio (==1 at native size; robust if CSS ever scales
-    // the canvas element itself, independent of the Viewport's own zoom).
-    const rx = this.canvas.width / (cr.width || this.canvas.width);
-    const ry = this.canvas.height / (cr.height || this.canvas.height);
-    const left = Math.max(0, (Math.max(cr.left, vr.left) - cr.left) * rx);
-    const top = Math.max(0, (Math.max(cr.top, vr.top) - cr.top) * ry);
-    const right = Math.min(this.canvas.width, (Math.min(cr.right, vr.right) - cr.left) * rx);
-    const bottom = Math.min(this.canvas.height, (Math.min(cr.bottom, vr.bottom) - cr.top) * ry);
-    if (right <= left || bottom <= top) return [];
-    return tilesForRect(this.docSize, tileSize, [Math.floor(top), Math.floor(left), Math.ceil(bottom), Math.ceil(right)]);
+    const bitmap = { width: this.canvas.width, height: this.canvas.height };
+    if (!this.container) return tilesForRect(this.docSize, tileSize, [0, 0, bitmap.height, bitmap.width]);
+    const rect = visibleBitmapRect(this.canvas.getBoundingClientRect(), this.container.getBoundingClientRect(), bitmap);
+    if (!rect) return [];
+    return tilesForRect(this.docSize, tileSize, rect);
   }
 
-  /** Paints one decoded tile at (tx,ty) onto the canvas at its pan/zoom-mapped
-   *  position. `putImageData` can't scale, so at zoom !== 1 we stage the tile
-   *  through an offscreen canvas and `drawImage` it at the zoomed size. */
+  /** Paints one decoded tile at its document-space position. Straight
+   *  `putImageData` — see invariant (1): the bitmap is document space, so
+   *  there is nothing to transform. */
   draw(tx: number, ty: number, px: Pixels, tileSize: number): void {
-    const { x: sx, y: sy } = this.canvasToScreen(tx * tileSize, ty * tileSize);
     // Uint8ClampedArray is generic over its backing buffer in newer lib.dom
     // typings; `ImageData` wants one backed by a plain `ArrayBuffer`, so copy
     // to be safe regardless of what buffer `px.data` happens to carry.
     const imageData = new ImageData(new Uint8ClampedArray(px.data), px.width, px.height);
-
-    if (this.view.zoom === 1) {
-      this.ctx.putImageData(imageData, Math.round(sx), Math.round(sy));
-      return;
-    }
-
-    const staging = document.createElement("canvas");
-    staging.width = px.width;
-    staging.height = px.height;
-    const stagingCtx = staging.getContext("2d");
-    if (!stagingCtx) return;
-    stagingCtx.putImageData(imageData, 0, 0);
-    this.ctx.drawImage(staging, sx, sy, px.width * this.view.zoom, px.height * this.view.zoom);
+    this.ctx.putImageData(imageData, tx * tileSize, ty * tileSize);
   }
 }

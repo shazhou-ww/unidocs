@@ -98,6 +98,23 @@ export class DocController {
       store,
     });
 
+    // Hand the new document over BEFORE any rendering starts.
+    //
+    // The canvas bitmap is owned here; its CSS box is owned by React, which
+    // sizes it from the store's `doc`. Resizing the bitmap without telling the
+    // store first leaves a window where the incoming document is painted into
+    // a bitmap of its own size but displayed inside the OUTGOING document's
+    // box — two documents' dimensions on screen at once, which reads as the
+    // old one showing through the new. Sizing the canvas and publishing the
+    // doc here closes that window: by the time a single tile is painted, both
+    // halves already agree.
+    //
+    // Assigning width/height also clears the bitmap, so no pixel of the
+    // previous document can survive into the new one even transiently.
+    this.view.width = doc.canvas.width;
+    this.view.height = doc.canvas.height;
+    this.events.onDoc(doc, version);
+
     // Tear down any previous doc's worker before starting a new one.
     this.currentWorker?.terminate();
     const worker = new Worker(new URL("../../psd-client/src/render-worker.ts", import.meta.url), { type: "module" });
@@ -115,8 +132,13 @@ export class DocController {
     const workerInitMs = performance.now() - workerInitStart;
     this.tileSize = init.tileSize;
 
-    this.view.width = init.canvas.width;
-    this.view.height = init.canvas.height;
+    // Already sized from `doc.canvas` above; the worker's `init` is the
+    // authority, so re-assert it only if they somehow disagree — assigning
+    // width unconditionally would clear the canvas a second time for nothing.
+    if (this.view.width !== init.canvas.width || this.view.height !== init.canvas.height) {
+      this.view.width = init.canvas.width;
+      this.view.height = init.canvas.height;
+    }
 
     this.viewport = new Viewport(this.view);
     this.viewport.setDoc(init.canvas);
@@ -190,14 +212,17 @@ export class DocController {
     if (tiles.length > 0) void this.renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
   }
 
-  setZoom(zoom: number): void {
-    this.viewport?.setZoom(zoom);
-    this.requestVisibleTiles();
+  /** The canvas element's laid-out box. Zoom compensation measures against
+   *  this AFTER a resize, so it must be read fresh every time — a cached rect
+   *  goes stale on the very layout change it is needed for. */
+  canvasRect(): DOMRect {
+    return this.view.getBoundingClientRect();
   }
 
-  panBy(dx: number, dy: number): void {
-    this.viewport?.panBy(dx, dy);
-    this.requestVisibleTiles();
+  /** The scrolling container the canvas sits in. Panning is its native
+   *  scrolling, so holding a point still across a zoom means scrolling it. */
+  get stage(): HTMLElement {
+    return this.stageEl;
   }
 
   /** Client (viewport) coords → document pixels. */
@@ -213,13 +238,18 @@ export class DocController {
 
   /** Reads one pixel from the composited canvas. Used by the eyedropper tool.
    *  Returns null when the point is outside the canvas or the 2D context is
-   *  unavailable. */
+   *  unavailable.
+   *
+   *  Goes through `toCanvas` rather than doing its own client-rect math: the
+   *  eyedropper, the marquee and the layer drag must agree on which document
+   *  pixel the cursor is over at every zoom, and the only way to guarantee
+   *  that is for them to share one mapping. */
   pickColor(clientX: number, clientY: number): string | null {
     const ctx = this.view.getContext("2d");
     if (!ctx) return null;
-    const r = this.view.getBoundingClientRect();
-    const x = Math.floor(((clientX - r.left) / r.width) * this.view.width);
-    const y = Math.floor(((clientY - r.top) / r.height) * this.view.height);
+    const { x: fx, y: fy } = this.toCanvas(clientX, clientY);
+    const x = Math.floor(fx);
+    const y = Math.floor(fy);
     if (x < 0 || y < 0 || x >= this.view.width || y >= this.view.height) return null;
     const [rr, gg, bb] = ctx.getImageData(x, y, 1, 1).data;
     return "#" + [rr, gg, bb].map((c) => c.toString(16).padStart(2, "0")).join("");

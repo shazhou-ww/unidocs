@@ -1,23 +1,13 @@
 import { useRef } from "react";
 import { setState, useUiState } from "../store.js";
-import { exportUrl, getController, openFile } from "../controller.js";
+import { exportUrl, openFile } from "../controller.js";
 import { collectDegradations, countLayers } from "../../doc-model.js";
-
-const ZOOM_STEP = 0.25;
-const ZOOM_MIN = 0.25;
-const ZOOM_MAX = 4;
+import { zoomActual, zoomFit, zoomStep } from "../zoom-controller.js";
 
 export function TopBar() {
   const s = useUiState();
   const fileRef = useRef<HTMLInputElement>(null);
   const degradations = s.doc ? collectDegradations(s.doc.layers) : [];
-
-  const stepZoom = (delta: number): void => {
-    const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s.zoom + delta));
-    if (zoom === s.zoom) return;
-    setState({ zoom });
-    getController()?.setZoom(zoom);
-  };
 
   const href = exportUrl();
 
@@ -53,9 +43,19 @@ export function TopBar() {
       <span className="spacer" />
       <span className="mono status">{s.status}</span>
       <div className="zoom">
-        <button type="button" aria-label="缩小" onClick={() => stepZoom(-ZOOM_STEP)}>−</button>
-        <span className="mono zoom-label">{Math.round(s.zoom * 100)}%</span>
-        <button type="button" aria-label="放大" onClick={() => stepZoom(ZOOM_STEP)}>+</button>
+        <button type="button" aria-label="缩小" onClick={() => zoomStep(-1)}>−</button>
+        {/* The readout is the control: click to toggle between fitting the
+            document and 1:1, the two zooms worth reaching in one gesture. */}
+        <button
+          type="button"
+          className="mono zoom-label"
+          title={s.zoom === 1 ? "适应窗口" : "实际大小 (100%)"}
+          aria-label={s.zoom === 1 ? "适应窗口" : "实际大小"}
+          onClick={() => (s.zoom === 1 ? zoomFit() : zoomActual())}
+        >
+          {formatZoom(s.zoom)}
+        </button>
+        <button type="button" aria-label="放大" onClick={() => zoomStep(1)}>+</button>
       </div>
       <button type="button" className="btn" onClick={() => fileRef.current?.click()}>打开</button>
       <input
@@ -67,4 +67,12 @@ export function TopBar() {
         : <span className="btn btn-primary is-disabled">导出</span>}
     </header>
   );
+}
+
+/** Zoom as a percentage. Sub-10% zooms (a very large document fitted to the
+ *  window) need a decimal to not all read "0%" or "5%"; everything else is a
+ *  whole number, which is what the ladder produces anyway. */
+export function formatZoom(zoom: number): string {
+  const pct = zoom * 100;
+  return `${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%`;
 }

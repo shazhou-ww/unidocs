@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { CanvasStage } from "../src/ui/panels/canvas-stage.js";
 import { setState } from "../src/ui/store.js";
 
@@ -20,13 +20,17 @@ import { setState } from "../src/ui/store.js";
 vi.mock("../src/ui/controller.js", () => ({
   initController: vi.fn(),
   getController: () => ({
+    requestVisibleTiles: vi.fn(),
     toCanvas: (x: number, y: number) => ({ x, y }),
     toScreen: (x: number, y: number) => ({ x, y }),
   }),
 }));
 
 beforeEach(() => {
-  setState({ tool: "move", marquee: null, selection: [], pickedColor: null });
+  setState({
+    tool: "move", marquee: null, selection: [], pickedColor: null, zoom: 1,
+    doc: { canvas: { width: 400, height: 200 }, layers: [] } as never,
+  });
 });
 
 describe("CanvasStage + SelectionOverlay structure", () => {
@@ -39,5 +43,38 @@ describe("CanvasStage + SelectionOverlay structure", () => {
     expect(marquee).toBeInTheDocument();
     expect(canvas?.parentElement).toBe(marquee?.parentElement);
     expect(canvas?.parentElement?.className).toBe("stage-inner");
+  });
+
+  /**
+   * The overlay must position itself as a fraction of the canvas box, not in
+   * measured pixels. jsdom does no layout, so a pixel-positioned overlay is
+   * untestable here — but percentages live in the inline style, where they
+   * ARE readable, and their independence from zoom is the whole property.
+   */
+  it("positions the marquee as a percentage of the document, unchanged by zoom", () => {
+    setState({ marquee: [20, 40, 120, 240] }); // doc is 400x200
+    const { container, rerender } = render(<CanvasStage />);
+    const marquee = () => container.querySelector(".marquee") as HTMLElement;
+
+    expect(marquee().style.left).toBe("10%");   // 40/400
+    expect(marquee().style.top).toBe("10%");    // 20/200
+    expect(marquee().style.width).toBe("50%");  // (240-40)/400
+    expect(marquee().style.height).toBe("50%"); // (120-20)/200
+
+    // Zooming resizes the canvas box; the overlay's own style must not move,
+    // because the browser re-resolves the same percentages against the new
+    // box during layout. A version that measured the box during render would
+    // have to change these numbers — and would compute them from the box as
+    // it was BEFORE the new canvas size was committed.
+    act(() => { setState({ zoom: 4 }); });
+    rerender(<CanvasStage />);
+    expect(marquee().style.left).toBe("10%");
+    expect(marquee().style.width).toBe("50%");
+  });
+
+  it("renders nothing when there is no document to be a fraction of", () => {
+    setState({ marquee: [10, 20, 30, 40], doc: null as never });
+    const { container } = render(<CanvasStage />);
+    expect(container.querySelector(".marquee")).not.toBeInTheDocument();
   });
 });
