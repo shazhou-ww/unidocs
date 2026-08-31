@@ -17,19 +17,16 @@
   ],
   "references": [
     {
+      "path": "../admin-protocol"
+    },
+    {
       "path": "../codec"
     },
     {
+      "path": "../control-auth"
+    },
+    {
       "path": "../service"
-    },
-    {
-      "path": "../admin-webui"
-    },
-    {
-      "path": "../control-plane"
-    },
-    {
-      "path": "../control-plane-mcp"
     },
     {
       "path": "../tenant-protocol"

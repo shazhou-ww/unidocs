@@ -8,7 +8,7 @@ import type { OidcClient } from "@unicas/control-auth";
 import {
   createOAuthAuthorizationHandler,
   type OAuthAuthorizationEnv,
-} from "../src/auth.js";
+} from "../src/mcp/auth.js";
 
 const oauthRequest: AuthRequest = {
   responseType: "code",

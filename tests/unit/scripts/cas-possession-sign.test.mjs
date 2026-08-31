@@ -17,7 +17,7 @@ import { describe, expect, test } from "vitest";
 import {
   validatePublicJwk,
   verifyPossessionProof,
-} from "../../../unicas-packages/control-plane/src/possession.ts";
+} from "../../../unicas-packages/service/src/control-possession.ts";
 import {
   signPossessionChallenge,
 } from "../../../scripts/cas-possession-sign.mjs";

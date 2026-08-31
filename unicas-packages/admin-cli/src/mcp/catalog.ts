@@ -2,9 +2,10 @@
  * Tool catalog for `unicas mcp` and the CLI commands.
  *
  * Names, descriptions, input schemas, and annotations mirror the remote
- * `@unicas/control-plane-mcp` server (`src/server.ts`); the CLI must never
- * drift from that contract. Required scopes document what the remote enforces;
- * the CLI does not re-issue scope decisions.
+ * MCP ingress hosted by `@unicas/service-cloudflare`
+ * (`src/mcp/server.ts`); the CLI must never drift from that contract.
+ * Required scopes document what the remote enforces; the CLI does not
+ * re-issue scope decisions.
  */
 
 import { z } from "zod";

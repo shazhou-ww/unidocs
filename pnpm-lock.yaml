@@ -670,18 +670,9 @@ importers:
 
   unicas-packages/admin-webui:
     dependencies:
-      '@unicas/admin-protocol':
+      '@unicas/admin-client':
         specifier: workspace:*
-        version: link:../admin-protocol
-      '@unicas/control-auth':
-        specifier: workspace:*
-        version: link:../control-auth
-      '@unicas/service':
-        specifier: workspace:*
-        version: link:../service
-      jose:
-        specifier: ^6.2.10
-        version: 6.2.10
+        version: link:../admin-client
       lucide-react:
         specifier: ^1.34.0
         version: 1.34.0(react@19.2.8)
@@ -722,9 +713,6 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-      wrangler:
-        specifier: ^4.20.0
-        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
 
   unicas-packages/codec:
     dependencies:
@@ -752,65 +740,6 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
 
-  unicas-packages/control-plane:
-    dependencies:
-      '@unicas/admin-protocol':
-        specifier: workspace:*
-        version: link:../admin-protocol
-      '@unicas/service':
-        specifier: workspace:*
-        version: link:../service
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-
-  unicas-packages/control-plane-mcp:
-    dependencies:
-      '@cloudflare/workers-oauth-provider':
-        specifier: 0.10.3
-        version: 0.10.3
-      '@modelcontextprotocol/sdk':
-        specifier: 1.30.0
-        version: 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3)
-      '@modelcontextprotocol/server':
-        specifier: 2.0.0
-        version: 2.0.0
-      '@unicas/admin-protocol':
-        specifier: workspace:*
-        version: link:../admin-protocol
-      '@unicas/control-auth':
-        specifier: workspace:*
-        version: link:../control-auth
-      '@unicas/service':
-        specifier: workspace:*
-        version: link:../service
-      agents:
-        specifier: 0.21.0
-        version: 0.21.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(react@19.2.8)(rolldown@1.2.5)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))(zod@4.4.3)
-      zod:
-        specifier: ^4.0.0
-        version: 4.4.3
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
-      wrangler:
-        specifier: ^4.20.0
-        version: 4.123.0(@cloudflare/workers-types@4.20260702.1)
-
   unicas-packages/service:
     dependencies:
       '@unicas/admin-protocol':
@@ -835,40 +764,40 @@ importers:
 
   unicas-packages/service-cloudflare:
     dependencies:
-      '@unicas/admin-webui':
-        specifier: workspace:*
-        version: link:../admin-webui
-      '@unicas/codec':
-        specifier: workspace:*
-        version: link:../codec
-      '@unicas/control-plane':
-        specifier: workspace:*
-        version: link:../control-plane
-      '@unicas/control-plane-mcp':
-        specifier: workspace:*
-        version: link:../control-plane-mcp
-      '@unicas/service':
-        specifier: workspace:*
-        version: link:../service
-      '@unicas/tenant-protocol':
-        specifier: workspace:*
-        version: link:../tenant-protocol
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
+      '@cloudflare/workers-oauth-provider':
+        specifier: 0.10.3
+        version: 0.10.3
       '@modelcontextprotocol/server':
         specifier: 2.0.0
         version: 2.0.0
       '@unicas/admin-protocol':
         specifier: workspace:*
         version: link:../admin-protocol
+      '@unicas/codec':
+        specifier: workspace:*
+        version: link:../codec
+      '@unicas/control-auth':
+        specifier: workspace:*
+        version: link:../control-auth
+      '@unicas/service':
+        specifier: workspace:*
+        version: link:../service
+      '@unicas/tenant-protocol':
+        specifier: workspace:*
+        version: link:../tenant-protocol
       agents:
         specifier: 0.21.0
         version: 0.21.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(react@19.2.8)(rolldown@1.2.5)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))(zod@4.4.3)
       jose:
         specifier: ^6.2.10
         version: 6.2.10
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250817.0
+        version: 4.20260702.1
       miniflare:
         specifier: 5.20260811.1-alpha
         version: 5.20260811.1-alpha
@@ -3036,7 +2965,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Glob versions prior to v9 are no longer supported
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}

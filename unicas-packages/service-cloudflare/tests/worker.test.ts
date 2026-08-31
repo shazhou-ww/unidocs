@@ -43,18 +43,15 @@ vi.mock("@unicas/service", async (importOriginal) => {
 vi.mock("../src/control-authority.js", () => ({
   AuthorityRepository: class { },
 }));
-vi.mock("@unicas/admin-webui", () => ({
+vi.mock("../src/admin-bff/index.js", () => ({
   configFromEnv: vi.fn(() => ({})),
   createAdminBff: vi.fn(() => handlers.admin),
   uiAssets: vi.fn(),
 }));
-vi.mock("@unicas/control-plane", () => ({
-  ControlPlaneService: class { },
-}));
 vi.mock("../src/control-operations.js", () => ({
   createControlPlaneOperations: vi.fn(() => ({})),
 }));
-vi.mock("@unicas/control-plane-mcp", () => ({
+vi.mock("../src/mcp/worker.js", () => ({
   mcpConfigFromEnv: vi.fn(() => ({
     resource: "https://cas.example/mcp",
     publicOrigin: "https://cas.example",

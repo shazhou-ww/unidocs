@@ -1,11 +1,10 @@
-import { ControlPlaneService } from "@unicas/control-plane";
 import {
   ControlPlaneAdminService,
   type ControlPlaneOperations,
 } from "@unicas/service";
 import { D1ControlPlaneAdminRepository } from "./control-admin-repository.js";
 
-/** Compose extracted cloud-neutral semantics with the explicitly retained legacy slice. */
+/** Compose the cloud-neutral control semantics over the D1 storage adapter. */
 export function createControlPlaneOperations(
   db: D1Database,
   options: { readonly now?: () => number } = {},
@@ -14,7 +13,6 @@ export function createControlPlaneOperations(
     new D1ControlPlaneAdminRepository(db),
     options,
   );
-  const legacy = new ControlPlaneService(db, options);
 
   return {
     me: admin.me.bind(admin),
@@ -26,13 +24,13 @@ export function createControlPlaneOperations(
     deleteMember: admin.deleteMember.bind(admin),
     createMemberInvitation: admin.createMemberInvitation.bind(admin),
     acceptMemberInvitation: admin.acceptMemberInvitation.bind(admin),
-    getIssuer: legacy.getIssuer.bind(legacy),
-    putIssuer: legacy.putIssuer.bind(legacy),
-    createPossessionChallenge: legacy.createPossessionChallenge.bind(legacy),
-    listIssuerKeys: legacy.listIssuerKeys.bind(legacy),
-    createIssuerKey: legacy.createIssuerKey.bind(legacy),
-    deleteIssuerKey: legacy.deleteIssuerKey.bind(legacy),
-    listControlAuditEvents: legacy.listControlAuditEvents.bind(legacy),
+    getIssuer: admin.getIssuer.bind(admin),
+    putIssuer: admin.putIssuer.bind(admin),
+    createPossessionChallenge: admin.createPossessionChallenge.bind(admin),
+    listIssuerKeys: admin.listIssuerKeys.bind(admin),
+    createIssuerKey: admin.createIssuerKey.bind(admin),
+    deleteIssuerKey: admin.deleteIssuerKey.bind(admin),
+    listControlAuditEvents: admin.listControlAuditEvents.bind(admin),
     recordSessionAudit: admin.recordSessionAudit.bind(admin),
   };
 }

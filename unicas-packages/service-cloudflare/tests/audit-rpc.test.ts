@@ -13,7 +13,7 @@ vi.mock("../src/control-schema.js", () => ({
 vi.mock("../src/control-sessions.js", () => ({
   ControlSessionStore: class { },
 }));
-vi.mock("@unicas/admin-webui", () => ({
+vi.mock("../src/admin-bff/index.js", () => ({
   configFromEnv: () => ({}),
   createAdminBff(options: { auditReader: Fetcher }) {
     return (request: Request) => {
@@ -29,13 +29,10 @@ vi.mock("@unicas/admin-webui", () => ({
   },
   uiAssets: () => null,
 }));
-vi.mock("@unicas/control-plane", () => ({
-  ControlPlaneService: class { },
-}));
 vi.mock("../src/control-operations.js", () => ({
   createControlPlaneOperations: () => ({}),
 }));
-vi.mock("@unicas/control-plane-mcp", () => ({
+vi.mock("../src/mcp/worker.js", () => ({
   mcpConfigFromEnv: () => ({
     resource: "https://cas.example/mcp",
     publicOrigin: "https://cas.example",

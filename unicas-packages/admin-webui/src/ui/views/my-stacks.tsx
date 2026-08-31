@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus } from "lucide-react";
-import type { CasStack } from "@unicas/admin-protocol";
+import type { CasStack } from "@unicas/admin-client";
 import { api } from "../api.js";
 import { formatErrorSafe } from "./view-helpers.js";
 import { Button, Card, ConceptGuide, EmptyState, ErrorState, LoadingState, Page } from "../components.js";

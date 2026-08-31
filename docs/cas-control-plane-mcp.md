@@ -138,12 +138,11 @@ grant invalidates its tokens.
 
 ```text
 pnpm --filter @unicas/control-auth test
-pnpm --filter @unicas/control-plane-mcp test
 pnpm --filter @unicas/service test
 pnpm --filter @unicas/service-cloudflare typecheck
+pnpm --filter @unicas/service-cloudflare test
 pnpm --filter @unicas/service-cloudflare build
 pnpm --filter @unicas/service-cloudflare exec wrangler deploy --dry-run
-pnpm --filter @unicas/control-plane test
 pnpm --filter @unicas/admin-webui test
 ```
 

@@ -3,8 +3,8 @@ import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import { CLIENT_CAPABILITIES_META_KEY, CLIENT_INFO_META_KEY, PROTOCOL_VERSION_META_KEY } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
-import { createControlPlaneMcpServer } from "../../control-plane-mcp/src/server.js";
-import type { ControlPlaneMcpGrantProps } from "../../control-plane-mcp/src/server.js";
+import { createControlPlaneMcpServer } from "../src/mcp/server.js";
+import type { ControlPlaneMcpGrantProps } from "../src/mcp/server.js";
 import { migrateControlSchema } from "../src/control-schema.js";
 import { createControlPlaneOperations } from "../src/control-operations.js";
 

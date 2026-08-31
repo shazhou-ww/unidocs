@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { configFromEnv, SessionCrypto } from "../src/server/index.js";
-import { checkCsrfToken, checkSameOrigin, isMutatingMethod } from "../src/server/csrf.js";
-import type { AdminSessionPayload } from "../src/server/session.js";
+import { configFromEnv, SessionCrypto } from "../src/admin-bff/index.js";
+import { checkCsrfToken, checkSameOrigin, isMutatingMethod } from "../src/admin-bff/csrf.js";
+import type { AdminSessionPayload } from "../src/admin-bff/session.js";
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";

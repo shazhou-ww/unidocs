@@ -68,20 +68,21 @@ unicas-packages/                    @unicas org
 │   │     cache，以及 Root Ref 校验/幂等/投影/revision/retry 业务内核；不依赖
 │   │     Cloudflare 类型或 control-plane 实现；node GC 的候选复核、删除顺序与
 │   │     回收统计、tenant node usage、node content range/metadata read，以及
-│   │     streaming/bodyless node lease 语义，同样通过 semantic repository port 执行
-│   ├── control-plane/     @unicas/control-plane      admin 组
-│   │     控制面服务库：ControlPlaneService（CAS_CONTROL_DB 唯一写入路径）、
-│   │     AuthorityRepository、sessions、jwks、possession、audit、cursor、ids
+│   │     streaming/bodyless node lease 语义，同样通过 semantic repository port 执行；
+│   │     控制面业务内核（stack/member/invitation/issuer/key/audit 语义）经
+│   │     ControlPlaneAdminService 与 semantic repository port 执行
 │   └── control-auth/      @unicas/control-auth       admin 组
-│         OIDC 认证库：discovery、PKCE、id_token 校验（admin-webui 与
-│         control-plane-mcp 共用）
+│         OIDC 认证库：discovery、PKCE、id_token 校验（admin BFF 与
+│         MCP/OAuth ingress 共用）
 │
-├── ■ Cloudflare 适配与迁移实现
-│   ├── service-cloudflare/@unicas/service-cloudflare  唯一 Worker 部署单元
-│   │     D1/R2/KV/DO bindings、统一公网路由、credential 隔离、BFF/UI、MCP
-│   ├── control-plane-mcp/ @unicas/control-plane-mcp   迁移期 MCP/OAuth ingress
-│   └── admin-webui/       @unicas/admin-webui         WebUI + 迁移期 BFF
+├── ■ Cloudflare 适配（唯一部署单元）
+│   └── service-cloudflare/@unicas/service-cloudflare  唯一 Worker 部署单元
+│         D1/R2/KV/DO bindings、统一公网路由、credential 隔离、admin BFF/OIDC、
+│         MCP/OAuth ingress、control schema 与 D1 repository 适配
 │
+└── ■ client 层
+    ├── admin-webui/       @unicas/admin-webui         admin 组 · 浏览器 UI（纯前端）
+    │     经 @unicas/admin-client 取 admin-protocol 类型；不含任何服务端代码
 └── ■ client 层
     ├── tenant-client/     @unicas/tenant-client       tenant 组 · 传输层
     │     纯 HTTP 封装，每个路由一个函数（readMetadata/readContent/

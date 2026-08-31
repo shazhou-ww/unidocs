@@ -1,14 +1,14 @@
 import {
-  configFromEnv,
   createAdminBff,
-  type AdminBffEnv,
+  configFromEnv,
   uiAssets,
-} from "@unicas/admin-webui";
+  type AdminBffEnv,
+} from "./admin-bff/index.js";
 import {
   createControlPlaneMcpWorker,
   mcpConfigFromEnv,
   type Env as McpEnv,
-} from "@unicas/control-plane-mcp";
+} from "./mcp/worker.js";
 import {
   createUniCasService,
   matchUniCasServiceRoute,

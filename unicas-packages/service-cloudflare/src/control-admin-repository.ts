@@ -4,20 +4,29 @@ import type {
   ControlAcceptMemberInvitationCommitResult,
   ControlAcceptMemberInvitationPlan,
   ControlAuditRecord,
+  ControlCreateIssuerKeyCommitResult,
+  ControlCreateIssuerKeyPlan,
   ControlCreateMemberInvitationCommitResult,
   ControlCreateMemberInvitationPlan,
   ControlCreateStackCommitResult,
   ControlCreateStackPlan,
+  ControlDeleteIssuerKeyCommitResult,
+  ControlDeleteIssuerKeyPlan,
   ControlDeleteMemberCommitResult,
   ControlDeleteMemberPlan,
   ControlIdempotencyRecord,
   ControlIdentityPlan,
   ControlIdentityRecord,
+  ControlIssuerKeyRecord,
+  ControlIssuerRecord,
   ControlMembershipRecord,
   ControlMemberInvitationRecord,
   ControlPatchStackCommitResult,
   ControlPatchStackPlan,
   ControlPlaneAdminRepository,
+  ControlPossessionChallengeRecord,
+  ControlPutIssuerCommitResult,
+  ControlPutIssuerPlan,
   ControlStackRecord,
 } from "@unicas/service";
 
@@ -284,6 +293,189 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
     await this.#auditStatement(record).run();
   }
 
+  async getIssuer(stackId: string): Promise<ControlIssuerRecord | null> {
+    const row = await this.#db
+      .prepare(
+        "SELECT stack_id, issuer, audience, capability_max_lifetime_seconds, revision FROM cas_stack_issuer WHERE stack_id = ?",
+      )
+      .bind(stackId)
+      .first<IssuerRow>();
+    return row ? toIssuer(row) : null;
+  }
+
+  async hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
+    const row = await this.#db
+      .prepare("SELECT 1 AS ok FROM cas_stack_issuer WHERE issuer = ? AND stack_id != ?")
+      .bind(issuer, stackId)
+      .first<{ ok: number }>();
+    return row !== null;
+  }
+
+  async commitPutIssuer(plan: ControlPutIssuerPlan): Promise<ControlPutIssuerCommitResult> {
+    if (plan.kind === "insert") {
+      const statements = [
+        ...this.#mutationStatements(plan.audit),
+        this.#db.prepare(
+          "INSERT INTO cas_stack_issuer (stack_id, issuer, audience, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, 1)",
+        ).bind(plan.stackId, plan.issuer, plan.audience, plan.capabilityMaxLifetimeSeconds),
+      ];
+      try {
+        await this.#db.batch(statements);
+        return { kind: "created" };
+      } catch (error) {
+        if (isIssuerConflict(error)) return { kind: "issuer-conflict" };
+        throw error;
+      }
+    }
+    const update = this.#db.prepare(
+      "UPDATE cas_stack_issuer SET audience = ?, capability_max_lifetime_seconds = ?, revision = revision + 1 WHERE stack_id = ? AND revision = ?",
+    ).bind(plan.audience, plan.capabilityMaxLifetimeSeconds, plan.stackId, plan.expectedRevision);
+    const requireUpdated = this.#db.prepare(
+      "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('invalid', '$') END AS updated",
+    );
+    try {
+      await this.#db.batch([update, requireUpdated, ...this.#mutationStatements(plan.audit)]);
+      return { kind: "updated" };
+    } catch (error) {
+      if (!isJsonFailure(error)) throw error;
+      const current = await this.getIssuer(plan.stackId);
+      return current ? { kind: "revision-mismatch" } : { kind: "not-found" };
+    }
+  }
+
+  async createPossessionChallenge(record: ControlPossessionChallengeRecord): Promise<void> {
+    await this.#db
+      .prepare(
+        "INSERT INTO cas_possession_challenges (nonce, stack_id, kid, algorithm, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .bind(record.nonce, record.stackId, record.kid, record.algorithm, record.createdAt, record.expiresAt)
+      .run();
+  }
+
+  async getUsablePossessionChallenge(nonce: string): Promise<ControlPossessionChallengeRecord | null> {
+    const row = await this.#db
+      .prepare(
+        "SELECT nonce, stack_id, kid, algorithm, created_at, expires_at FROM cas_possession_challenges WHERE nonce = ? AND used_at IS NULL",
+      )
+      .bind(nonce)
+      .first<PossessionChallengeRow>();
+    return row ? toPossessionChallenge(row) : null;
+  }
+
+  async listIssuerKeys(stackId: string): Promise<readonly ControlIssuerKeyRecord[]> {
+    const rows = await this.#db
+      .prepare(
+        "SELECT stack_id, kid, algorithm, public_jwk, state, revision FROM cas_stack_issuer_keys WHERE stack_id = ? ORDER BY kid",
+      )
+      .bind(stackId)
+      .all<IssuerKeyRow>();
+    return (rows.results ?? []).map(toIssuerKey);
+  }
+
+  async getIssuerKey(stackId: string, kid: string): Promise<ControlIssuerKeyRecord | null> {
+    const row = await this.#db
+      .prepare(
+        "SELECT stack_id, kid, algorithm, public_jwk, state, revision FROM cas_stack_issuer_keys WHERE stack_id = ? AND kid = ?",
+      )
+      .bind(stackId, kid)
+      .first<IssuerKeyRow>();
+    return row ? toIssuerKey(row) : null;
+  }
+
+  async hasIssuerKey(stackId: string, kid: string): Promise<boolean> {
+    const row = await this.#db
+      .prepare("SELECT 1 AS ok FROM cas_stack_issuer_keys WHERE stack_id = ? AND kid = ?")
+      .bind(stackId, kid)
+      .first<{ ok: number }>();
+    return row !== null;
+  }
+
+  async commitCreateIssuerKey(plan: ControlCreateIssuerKeyPlan): Promise<ControlCreateIssuerKeyCommitResult> {
+    const statements = [
+      ...this.#mutationStatements(plan.audit),
+      this.#db.prepare(
+        "INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, ?, ?, 'active', 1)",
+      ).bind(plan.key.stackId, plan.key.kid, plan.key.algorithm, JSON.stringify(plan.key.publicJwk)),
+      // Atomically consume the one-time challenge; a zero-row update fails the
+      // batch so a nonce can never back two keys.
+      this.#db.prepare("UPDATE cas_possession_challenges SET used_at = ? WHERE nonce = ? AND used_at IS NULL")
+        .bind(plan.consumedAt, plan.challengeNonce),
+      this.#db.prepare(
+        "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('invalid', '$') END AS consumed",
+      ),
+    ];
+    if (plan.idempotency) statements.push(this.#idempotencyStatement(plan.idempotency));
+    try {
+      await this.#db.batch(statements);
+      return { kind: "created" };
+    } catch (error) {
+      if (plan.idempotency && isUniqueViolation(error, "cas_control_idempotency")) {
+        const record = await this.getIdempotency<ControlIssuerKeyRecord>({
+          identity: plan.idempotency,
+          method: plan.idempotency.method,
+          canonicalRoute: plan.idempotency.canonicalRoute,
+          key: plan.idempotency.key,
+          now: plan.idempotency.createdAt,
+        });
+        if (record) return { kind: "idempotency-race", record };
+      }
+      if (isUniqueViolation(error, "cas_stack_issuer_keys")) return { kind: "key-exists" };
+      if (isJsonFailure(error)) return { kind: "challenge-unavailable" };
+      throw error;
+    }
+  }
+
+  async commitDeleteIssuerKey(plan: ControlDeleteIssuerKeyPlan): Promise<ControlDeleteIssuerKeyCommitResult> {
+    const requirePreconditions = this.#db.prepare(
+      plan.enforceLastActive
+        ? "SELECT CASE WHEN EXISTS (SELECT 1 FROM cas_stack_issuer_keys WHERE stack_id = ? AND kid = ? AND revision = ?) AND (SELECT COUNT(*) FROM cas_stack_issuer_keys WHERE stack_id = ? AND state = 'active') > 1 THEN 1 ELSE json_extract('invalid', '$') END AS allowed"
+        : "SELECT CASE WHEN EXISTS (SELECT 1 FROM cas_stack_issuer_keys WHERE stack_id = ? AND kid = ? AND revision = ?) THEN 1 ELSE json_extract('invalid', '$') END AS allowed",
+    ).bind(plan.stackId, plan.kid, plan.expectedRevision, plan.stackId);
+    const update = this.#db.prepare(
+      "UPDATE cas_stack_issuer_keys SET state = ?, revision = revision + 1 WHERE stack_id = ? AND kid = ? AND revision = ?",
+    ).bind(plan.toState, plan.stackId, plan.kid, plan.expectedRevision);
+    try {
+      await this.#db.batch([requirePreconditions, update, ...this.#mutationStatements(plan.audit)]);
+      return { kind: "deleted" };
+    } catch (error) {
+      if (!isJsonFailure(error)) throw error;
+      const current = await this.getIssuerKey(plan.stackId, plan.kid);
+      if (!current) return { kind: "not-found" };
+      if (current.revision !== plan.expectedRevision) return { kind: "revision-mismatch" };
+      if (plan.enforceLastActive) {
+        const row = await this.#db.prepare(
+          "SELECT COUNT(*) AS count FROM cas_stack_issuer_keys WHERE stack_id = ? AND state = 'active'",
+        ).bind(plan.stackId).first<{ count: number }>();
+        if ((row?.count ?? 0) <= 1) return { kind: "last-active" };
+      }
+      // Unreachable: the precondition would have passed for this state.
+      return { kind: "revision-mismatch" };
+    }
+  }
+
+  async getAuditEventCreatedAt(stackId: string, eventId: string): Promise<number | null> {
+    const row = await this.#db
+      .prepare("SELECT created_at FROM cas_control_audit_events WHERE event_id = ? AND stack_id = ?")
+      .bind(eventId, stackId)
+      .first<{ created_at: number }>();
+    return row?.created_at ?? null;
+  }
+
+  async listAuditEvents(input: {
+    readonly stackId: string;
+    readonly afterCreatedAt: number;
+    readonly afterEventId: string;
+    readonly limit: number;
+  }): Promise<readonly ControlAuditRecord[]> {
+    const rows = await this.#db
+      .prepare(
+        "SELECT event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, caller_channel, oauth_client_handle, tool_name, created_at FROM cas_control_audit_events WHERE stack_id = ? AND (created_at > ? OR (created_at = ? AND event_id > ?)) ORDER BY created_at, event_id LIMIT ?",
+      )
+      .bind(input.stackId, input.afterCreatedAt, input.afterCreatedAt, input.afterEventId, input.limit)
+      .all<AuditEventRow>();
+    return (rows.results ?? []).map(toAuditRecord);
+  }
+
   #mutationStatements(audit: ControlAuditRecord): D1PreparedStatement[] {
     return [
       this.#db.prepare("INSERT OR IGNORE INTO cas_control_meta (key, value) VALUES (?, 0)").bind(SNAPSHOT_KEY),
@@ -366,6 +558,47 @@ interface IdempotencyRow {
   readonly expires_at: number;
 }
 
+interface IssuerRow {
+  readonly stack_id: string;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly capability_max_lifetime_seconds: number;
+  readonly revision: number;
+}
+
+interface IssuerKeyRow {
+  readonly stack_id: string;
+  readonly kid: string;
+  readonly algorithm: string;
+  readonly public_jwk: string;
+  readonly state: string;
+  readonly revision: number;
+}
+
+interface PossessionChallengeRow {
+  readonly nonce: string;
+  readonly stack_id: string;
+  readonly kid: string;
+  readonly algorithm: string;
+  readonly created_at: number;
+  readonly expires_at: number;
+}
+
+interface AuditEventRow {
+  readonly event_id: string;
+  readonly stack_id: string | null;
+  readonly identity_issuer: string;
+  readonly subject: string;
+  readonly action: string;
+  readonly target: string;
+  readonly request_id: string | null;
+  readonly trace_id: string | null;
+  readonly caller_channel: string | null;
+  readonly oauth_client_handle: string | null;
+  readonly tool_name: string | null;
+  readonly created_at: number;
+}
+
 interface InvitationRow {
   readonly invitation_id: string;
   readonly stack_id: string;
@@ -395,6 +628,57 @@ function toStack(row: StackRow): ControlStackRecord {
     status: row.status === "suspended" ? "suspended" : "active",
     createdAt: row.created_at,
     revision: row.revision,
+  };
+}
+
+function toIssuer(row: IssuerRow): ControlIssuerRecord {
+  return {
+    stackId: row.stack_id,
+    issuer: row.issuer,
+    audience: row.audience,
+    capabilityMaxLifetimeSeconds: row.capability_max_lifetime_seconds,
+    revision: row.revision,
+  };
+}
+
+function toIssuerKey(row: IssuerKeyRow): ControlIssuerKeyRecord {
+  return {
+    stackId: row.stack_id,
+    kid: row.kid,
+    algorithm: row.algorithm,
+    publicJwk: JSON.parse(row.public_jwk) as Record<string, unknown>,
+    state: row.state as ControlIssuerKeyRecord["state"],
+    revision: row.revision,
+  };
+}
+
+function toPossessionChallenge(row: PossessionChallengeRow): ControlPossessionChallengeRecord {
+  return {
+    nonce: row.nonce,
+    stackId: row.stack_id,
+    kid: row.kid,
+    algorithm: row.algorithm,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+  };
+}
+
+function toAuditRecord(row: AuditEventRow): ControlAuditRecord {
+  return {
+    eventId: row.event_id,
+    stackId: row.stack_id,
+    identityIssuer: row.identity_issuer,
+    subject: row.subject,
+    action: row.action as ControlAuditRecord["action"],
+    target: row.target,
+    requestId: row.request_id,
+    traceId: row.trace_id,
+    callerChannel: row.caller_channel === "admin-webui" || row.caller_channel === "mcp"
+      ? row.caller_channel
+      : null,
+    oauthClientHandle: row.oauth_client_handle,
+    toolName: row.tool_name,
+    createdAt: row.created_at,
   };
 }
 
@@ -440,6 +724,13 @@ function isUniqueViolation(error: unknown, table: string): boolean {
   return error instanceof Error
     && error.message.includes("UNIQUE constraint failed")
     && error.message.includes(table);
+}
+
+/** Global issuer uniqueness race (UNIQUE index `cas_issuer_by_issuer`). */
+function isIssuerConflict(error: unknown): boolean {
+  return error instanceof Error
+    && error.message.includes("UNIQUE constraint failed")
+    && (error.message.includes("cas_issuer_by_issuer") || error.message.includes("cas_stack_issuer"));
 }
 
 function isJsonFailure(error: unknown): boolean {

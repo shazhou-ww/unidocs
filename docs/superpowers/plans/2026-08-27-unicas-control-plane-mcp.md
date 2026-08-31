@@ -1,6 +1,13 @@
 # Unicas Control-Plane MCP Implementation Plan
 
-> **Status:** IN PROGRESS as of 2026-08-27.
+> **Status:** SUPERSEDED as of 2026-08-31.
+>
+> The MCP/OAuth ingress described here was consolidated into
+> `@unicas/service-cloudflare` (`src/mcp`) and the `@unicas/control-plane-mcp`
+> package was deleted during the service-architecture migration. See
+> `docs/superpowers/plans/2026-08-31-unicas-service-architecture-migration.md`
+> for the final architecture; this plan is retained as a dated historical
+> record of the original ingress design.
 >
 > **For agentic workers:** Implement one task at a time and keep the checkboxes
 > current. Do not expose a generic control-plane HTTP proxy as an MCP tool. Keep

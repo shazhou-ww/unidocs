@@ -79,6 +79,24 @@ export async function verifyPossessionProof(input: {
   }
 }
 
+/** Decode the payload of a compact JWS (three dot-separated base64url parts). */
+export function extractJwsPayload(jws: string): string | null {
+  const parts = jws.split(".");
+  if (parts.length !== 3 || parts[0]!.length === 0 || parts[1]!.length === 0 || parts[2]!.length === 0) {
+    return null;
+  }
+  try {
+    const base64 = parts[1]!.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 /** Private JWK material that must never be accepted as a public key. */
 const PRIVATE_JWK_FIELDS = ["d", "p", "q", "dp", "dq", "qi", "k", "oth"] as const;
 

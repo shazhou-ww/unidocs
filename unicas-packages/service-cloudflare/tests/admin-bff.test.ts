@@ -7,8 +7,8 @@ import type {
   ControlSessionRepository,
   StoredSession,
 } from "@unicas/service";
-import { createAdminBff, OidcClient, SessionCrypto } from "../src/server/index.js";
-import type { AdminBffConfig } from "../src/server/config.js";
+import { createAdminBff, OidcClient, SessionCrypto } from "../src/admin-bff/index.js";
+import type { AdminBffConfig } from "../src/admin-bff/config.js";
 
 const PUBLIC_ORIGIN = "https://cas.example";
 const CLIENT_ID = "test-client";

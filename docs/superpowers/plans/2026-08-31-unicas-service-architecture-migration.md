@@ -1,6 +1,6 @@
 # UniCAS Service Architecture Migration Plan
 
-> **Status:** IN PROGRESS as of 2026-08-31.
+> **Status:** COMPLETE as of 2026-08-31.
 >
 > **Source of truth for current migration progress.** Update this document after
 > each completed slice. Historical plans under this directory remain unchanged.
@@ -20,10 +20,10 @@ Remove the transitional server packages after their behavior and test coverage
 have moved:
 
 - `@unicas/server-cloudflare` — removed.
-- `@unicas/control-plane` — partially migrated; removal pending.
-- `@unicas/control-plane-mcp` — ingress migration pending.
+- `@unicas/control-plane` — removed.
+- `@unicas/control-plane-mcp` — removed.
 
-The final client dependency directions remain:
+The final client dependency directions are:
 
 ```text
 [admin-cli, admin-webui] -> admin-client -> admin-protocol
@@ -46,8 +46,8 @@ Public HTTP
   |-- Worker routing and credential stripping
   |-- D1 / R2 / KV adapters and schema migration
   |-- Durable Object wrappers and keyed single-writer dispatch
-  |-- Admin BFF / OIDC and static assets
-  |-- MCP / OAuth ingress
+  |-- Admin BFF / OIDC and static assets (src/admin-bff)
+  |-- MCP / OAuth ingress (src/mcp)
   |
   v
 @unicas/service
@@ -55,7 +55,7 @@ Public HTTP
   |-- Root Ref semantics
   |-- node lease / read / usage / GC semantics
   |-- admin stack / member / invitation semantics
-  `-- remaining issuer / key / audit semantics (pending)
+  `-- issuer / key / possession / audit semantics
 ```
 
 Cloud-neutral service code must not contain SQL, D1/R2/Worker types, HTTP
@@ -129,9 +129,7 @@ Relevant commits:
 - `e8bd45d` — control/session ports injected into admin BFF
 - `36dbc65` — control schema and session adapters moved
 
-### Phase 4 — Admin business-kernel extraction: in progress
-
-Completed:
+### Phase 4 — Admin business-kernel extraction: complete
 
 - [x] Move `me`, `listStacks`, `createStack`, `getStack`, `patchStack`, and
   `recordSessionAudit` into cloud-neutral `ControlPlaneAdminService`.
@@ -145,97 +143,58 @@ Completed:
   accepted-member display metadata.
 - [x] Preserve admin BFF, CLI, and MCP operation signatures through
   `ControlPlaneOperations`.
+- [x] Move `getIssuer` and `putIssuer` policy into `ControlPlaneAdminService`
+  with a semantic issuer repository and atomic commit plans.
+- [x] Move `createPossessionChallenge`, `listIssuerKeys`, `createIssuerKey`,
+  and `deleteIssuerKey` policy into `ControlPlaneAdminService`, keeping
+  possession proof construction/verification, algorithm/JWK policy, key state
+  transitions, active-key safety, ETag behavior, expiry, and audit selection
+  cloud-neutral; one-time challenge consumption is atomic in the adapter.
+- [x] Move `listControlAuditEvents` cursor, authorization, limit, snapshot,
+  and response-shaping semantics into `ControlPlaneAdminService`; D1 query
+  syntax and row mapping stay in the Cloudflare repository.
+- [x] `createControlPlaneOperations()` binds every operation to the extracted
+  service; no operation remains on the legacy composition path.
 
 Relevant commits:
 
 - `e3452a5` — stack administration moved into service
 - `3d5cfc3` — membership and invitation administration moved into service
+- (working tree) — issuer configuration moved into service
+- (working tree) — issuer keys and possession challenges moved into service
+- (working tree) — control audit listing moved into service
 
-Remaining legacy methods in `@unicas/control-plane`:
+### Phase 5 — Transitional package removal: complete
 
-- `getIssuer`
-- `putIssuer`
-- `createPossessionChallenge`
-- `listIssuerKeys`
-- `createIssuerKey`
-- `deleteIssuerKey`
-- `listControlAuditEvents`
-
-## Current task sequence
-
-### Task 1 — Extract issuer configuration
-
-- [ ] Add cloud-neutral issuer records, plans, results, and semantic repository
-  methods to the control admin service boundary.
-- [ ] Move `getIssuer` and `putIssuer` policy into `@unicas/service`.
-- [ ] Keep membership authorization, issuer/audience validation, global issuer
-  uniqueness, capability lifetime policy, ETag checks, revisions, and audit
-  action selection in the service kernel.
-- [ ] Implement D1 reads and atomic issuer mutation in
-  `@unicas/service-cloudflare`.
-- [ ] Bind these operations to the extracted service in
-  `createControlPlaneOperations()`.
-- [ ] Add pure service tests and D1 integration/MCP tests.
-
-### Task 2 — Extract issuer keys and possession challenges
-
-- [ ] Move `createPossessionChallenge`, `listIssuerKeys`, `createIssuerKey`, and
-  `deleteIssuerKey` policy into `@unicas/service`.
-- [ ] Keep possession proof construction/verification, algorithm/JWK policy,
-  key state transitions, active-key safety, ETag behavior, expiry, and audit
-  selection cloud-neutral.
-- [ ] Add semantic repository plans for challenge creation/consumption and
-  atomic key creation/transition.
-- [ ] Implement D1 storage in `@unicas/service-cloudflare`.
-- [ ] Preserve exact wire error codes and MCP security-scope behavior.
-
-### Task 3 — Extract control audit listing
-
-- [ ] Move `listControlAuditEvents` cursor, authorization, limit, snapshot, and
-  response-shaping semantics into `@unicas/service`.
-- [ ] Keep D1 query syntax and row mapping in `@unicas/service-cloudflare`.
-- [ ] Cover filtered paging, cursor binding, MCP attribution, and empty pages.
-
-### Task 4 — Delete `@unicas/control-plane`
-
-Prerequisite: all seven remaining methods above are served by
-`ControlPlaneAdminService` and its Cloudflare repository.
-
-- [ ] Remove the legacy `ControlPlaneService` composition path.
-- [ ] Remove duplicated authority and compatibility facade modules.
-- [ ] Update `service-cloudflare`, MCP, scripts, aliases, package references,
+- [x] Remove the legacy `ControlPlaneService` composition path.
+- [x] Remove duplicated authority and compatibility facade modules.
+- [x] Update `service-cloudflare`, MCP, scripts, aliases, package references,
   lockfile, root TypeScript references, boundary tests, and current docs.
-- [ ] Delete `unicas-packages/control-plane`.
-- [ ] Confirm no live source imports `@unicas/control-plane`.
-
-### Task 5 — Consolidate MCP/OAuth ingress
-
-- [ ] Move Cloudflare MCP/OAuth Worker ingress into
-  `@unicas/service-cloudflare`.
-- [ ] Keep generic MCP tool presentation separate from control business
+- [x] Delete `unicas-packages/control-plane`.
+- [x] Confirm no live source imports `@unicas/control-plane`.
+- [x] Move the Cloudflare MCP/OAuth Worker ingress into
+  `@unicas/service-cloudflare` (`src/mcp`).
+- [x] Keep generic MCP tool presentation separate from control business
   semantics and inject `ControlPlaneOperations`.
-- [ ] Preserve OAuth discovery, PKCE, consent, scope, token, origin, and audit
+- [x] Preserve OAuth discovery, PKCE, consent, scope, token, origin, and audit
   behavior.
-- [ ] Migrate tests, then delete `@unicas/control-plane-mcp`.
-
-### Task 6 — Finish admin BFF consolidation
-
-- [ ] Move remaining Cloudflare-facing OIDC/session/BFF server composition into
-  `@unicas/service-cloudflare`.
-- [ ] Keep `@unicas/admin-webui` as browser UI only.
-- [ ] Restore the final client direction
+- [x] Migrate tests, then delete `@unicas/control-plane-mcp`.
+- [x] Move remaining Cloudflare-facing OIDC/session/BFF server composition into
+  `@unicas/service-cloudflare` (`src/admin-bff`).
+- [x] Keep `@unicas/admin-webui` as browser UI only.
+- [x] Restore the final client direction
   `admin-webui -> admin-client -> admin-protocol`.
-- [ ] Update package boundaries, build flow, asset generation, and tests.
+- [x] Update package boundaries, build flow, asset generation, and tests.
 
-### Task 7 — Documentation and deployment closeout
+### Phase 6 — Documentation and deployment closeout: complete
 
-- [ ] Update the active architecture and operations documents to the final
+- [x] Update the active architecture and operations documents to the final
   two-package server boundary.
-- [ ] Keep dated historical plans/specifications unchanged except for explicit
+- [x] Keep dated historical plans/specifications unchanged except for explicit
   completion annotations where useful.
-- [ ] Verify local and production Wrangler bindings retain existing Durable
+- [x] Verify local and production Wrangler bindings retain existing Durable
   Object class names, D1/R2/KV bindings, routes, and migration compatibility.
-- [ ] Verify provisioning scripts import schema from the final adapter package.
+- [x] Verify provisioning scripts import schema from the final adapter package.
 
 ## Validation gates
 
@@ -246,10 +205,6 @@ pnpm --filter @unicas/service typecheck
 pnpm --filter @unicas/service test
 pnpm --filter @unicas/service-cloudflare typecheck
 pnpm --filter @unicas/service-cloudflare test
-pnpm --filter @unicas/control-plane typecheck
-pnpm --filter @unicas/control-plane test
-pnpm --filter @unicas/control-plane-mcp typecheck
-pnpm --filter @unicas/control-plane-mcp test
 pnpm --filter @unicas/admin-webui typecheck
 pnpm --filter @unicas/admin-webui test
 node scripts/analyze-deps.mjs
@@ -271,15 +226,22 @@ tests/unit/workspace/package-deps.test.mjs
 tests/unit/scripts/doc-types.test.mjs
 tests/unit/scripts/stack-deploy.test.mjs
 tests/unit/scripts/azure-stack-env.test.mjs
+tests/unit/scripts/cas-possession-sign.test.mjs
+tests/unit/scripts/workspace-aliases.test.mjs
 ```
 
-Most recent verified migration results before this plan update:
+Final verified migration results:
 
-- tenant package consolidation: full workspace typecheck and test passed;
-- workspace/deployment guards: 215 tests passed;
-- control/session dependency inversion: 38 test files, 233 tests passed;
-- member/invitation extraction validation: 40 test files, 218 tests passed;
-- editor diagnostics and dependency analysis: no migration-related errors.
+- issuer/key/audit extraction: full workspace typecheck and build passed;
+  `@unicas/service` 78 tests and `@unicas/service-cloudflare` 121 tests passed;
+  workspace/deployment guards: 240 tests passed.
+- transitional package removal: `pnpm typecheck`, `pnpm build` passed; no live
+  source imports of `@unicas/control-plane`, `@unicas/control-plane-mcp`, or
+  `@unicas/admin-webui` remain outside docs/boundary assertions.
+- BFF/MCP consolidation: `@unicas/service-cloudflare` 121 tests passed
+  (migrated BFF, session, MCP, OAuth, and routing coverage included);
+  `@unicas/admin-webui` 22 tests passed; editor diagnostics and dependency
+  analysis showed no migration-related errors.
 
 ## Invariants and migration rules
 
@@ -306,9 +268,13 @@ Most recent verified migration results before this plan update:
 
 At the time of this update:
 
-- branch: `main`, 13 commits ahead of `origin/main`;
-- latest migration commit: `3d5cfc3` (`move membership administration into service`);
-- `@unicas/server-cloudflare` is absent;
-- `@unicas/control-plane` remains only for issuer/key/possession/audit-list
-  behavior and temporary composition;
+- branch: `main`;
+- `@unicas/server-cloudflare`, `@unicas/control-plane`, and
+  `@unicas/control-plane-mcp` are absent;
+- `@unicas/service-cloudflare` is the single deployable Worker hosting the
+  admin BFF (`src/admin-bff`) and the MCP/OAuth ingress (`src/mcp`) over
+  `ControlPlaneOperations` and `ControlPlaneAdminService` from
+  `@unicas/service`;
+- `@unicas/admin-webui` is browser UI only and consumes admin types through
+  `@unicas/admin-client`;
 - unrelated working-tree edits remain intentionally unstaged.

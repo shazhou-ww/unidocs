@@ -91,11 +91,9 @@ unicas-packages/           (the independently deployable CAS middleware; future 
 ├── tenant-blob-client/    @unicas/tenant-blob-client    — Business-facing CAS client: blob handles + retain/release; raw client nested
 ├── admin-protocol/        @unicas/admin-protocol        — CAS control-plane contracts
 ├── service/               @unicas/service               — Cloud-neutral tenant + admin HTTP actor and platform ports
-├── service-cloudflare/    @unicas/service-cloudflare    — Unified Cloudflare Worker deployment
-├── control-plane/         @unicas/control-plane         — CAS control plane service (issuers/stacks/members/sessions)
+├── service-cloudflare/    @unicas/service-cloudflare    — Unified Cloudflare Worker deployment (D1/R2/KV/DO, admin BFF/OIDC, MCP/OAuth ingress)
 ├── control-auth/          @unicas/control-auth          — Shared server-only control-plane OIDC client
-├── control-plane-mcp/     @unicas/control-plane-mcp     — OAuth-protected remote MCP operations ingress
-├── admin-webui/           @unicas/admin-webui           — Stack administration WebUI + OIDC BFF
+├── admin-webui/           @unicas/admin-webui           — Stack administration WebUI (browser only)
 ├── admin-client/          @unicas/admin-client          — Typed HTTP client for the /admin control-plane API
 └── admin-cli/             @unicas/admin-cli             — Stack administration CLI + stdio MCP (bin `unicas`, /admin HTTP channel)
 ```

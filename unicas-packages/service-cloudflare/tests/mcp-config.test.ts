@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { mcpConfigFromEnv } from "../src/config.js";
+import { mcpConfigFromEnv } from "../src/mcp/config.js";
 
 describe("control-plane MCP config", () => {
   test("derives the canonical MCP resource from the public origin", () => {

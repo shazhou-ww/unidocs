@@ -7,9 +7,9 @@ then redirects the browser back to the CLI's loopback with a one-time code
 that the CLI exchanges (PKCE) for a session cookie + CSRF token, persisted
 locally. The CLI never talks to Google and needs no client id or secret.
 Commands call the typed `@unicas/admin-client` over the `/admin` HTTP API;
-`unicas mcp` exposes the same 18-tool contract as `@unicas/control-plane-mcp`
-as a stdio MCP server backed by that client (for clients whose MCP support
-cannot do OAuth, for example DeepSeek Harness).
+`unicas mcp` exposes the same 18-tool contract as the MCP ingress hosted by
+`@unicas/service-cloudflare` as a stdio MCP server backed by that client (for
+clients whose MCP support cannot do OAuth, for example DeepSeek Harness).
 
 ```
 https://unicas.shazhou.work/admin  <- /admin control-plane API (BFF session)

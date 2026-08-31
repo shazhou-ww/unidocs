@@ -10,7 +10,8 @@ Doc services receive `CAPABILITY_TRUSTED_JWKS` (public keys only) for
 session-capability verification. The CAS middleware does **not** verify
 Gateway's identity: it verifies stack-issued delegated capabilities against
 the registered stack's `CAS_STACK_TRUSTED_JWKS` (managed via the control
-plane, `@unicas/control-plane`). A deployment must also set:
+plane in `@unicas/service-cloudflare`, with business semantics in
+`@unicas/service`). A deployment must also set:
 
 - `INTERNAL_AUTH_MODE`: `stack` (legacy/dual/capability retired with the
   legacy runtime);

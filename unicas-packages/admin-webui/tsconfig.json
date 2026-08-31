@@ -16,13 +16,7 @@
   ],
   "references": [
     {
-      "path": "../control-auth"
-    },
-    {
-      "path": "../admin-protocol"
-    },
-    {
-      "path": "../service"
+      "path": "../admin-client"
     }
   ]
 }
