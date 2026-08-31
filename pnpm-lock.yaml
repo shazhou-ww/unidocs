@@ -763,9 +763,9 @@ importers:
       '@unicas/admin-protocol':
         specifier: workspace:*
         version: link:../admin-protocol
-      jose:
-        specifier: ^6.2.10
-        version: 6.2.10
+      '@unicas/service':
+        specifier: workspace:*
+        version: link:../service
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0

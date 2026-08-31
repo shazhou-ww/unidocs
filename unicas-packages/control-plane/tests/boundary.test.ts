@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { CAS_CONTROL_PLANE_PACKAGE } from "../src/index.js";
 
 describe("cas-control-plane package boundary", () => {
-  test("depends on protocol-cas-admin only among CAS packages", () => {
+  test("depends only on the admin protocol and cloud-neutral service", () => {
     const pkg = JSON.parse(
       readFileSync(
         join(dirname(fileURLToPath(import.meta.url)), "../package.json"),
@@ -14,6 +14,7 @@ describe("cas-control-plane package boundary", () => {
     );
     expect(pkg.name).toBe(CAS_CONTROL_PLANE_PACKAGE);
     expect(pkg.dependencies["@unicas/admin-protocol"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unicas/service"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/admin-webui"]).toBeUndefined();
   });

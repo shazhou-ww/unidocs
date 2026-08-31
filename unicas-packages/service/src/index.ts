@@ -108,3 +108,60 @@ export type {
   NodeLeaseScope,
   UploadedCanonicalNodeCommit,
 } from "./node-lease.js";
+
+export { ControlAuditActions } from "./control-audit.js";
+export type { ControlAuditAction } from "./control-audit.js";
+export {
+  decodeControlListCursor,
+  encodeControlListCursor,
+} from "./control-cursor.js";
+export type { ControlListCursor } from "./control-cursor.js";
+export {
+  adminError,
+  ControlPlaneError,
+  httpStatusForCode,
+  toAdminError,
+} from "./control-errors.js";
+export {
+  generateEventId,
+  generateInvitationId,
+  generateInvitationToken,
+  generateNonce,
+  generateSessionId,
+  generateStackId,
+} from "./control-ids.js";
+export { buildStackJwks } from "./control-jwks.js";
+export {
+  buildPossessionChallenge,
+  parsePossessionChallenge,
+  POSSESSION_CHALLENGE_VERSION,
+  validatePublicJwk,
+  verifyPossessionProof,
+} from "./control-possession.js";
+export type { PossessionChallengeInput } from "./control-possession.js";
+export {
+  canonicalJson,
+  CAPABILITY_MAX_LIFETIME_SECONDS_MAX,
+  CAPABILITY_MAX_LIFETIME_SECONDS_MIN,
+  CONTROL_LIST_DEFAULT_LIMIT,
+  CONTROL_LIST_MAX_LIMIT,
+  DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS,
+  INVITATION_TTL_MS,
+  isSupportedKeyAlgorithm,
+  KID_PATTERN,
+  LEGACY_DOMAIN,
+  normalizeEmailConstraint,
+  parseControlListLimit,
+  POSSESSION_CHALLENGE_TTL_MS,
+  sha256Hex,
+  STACK_ID_PATTERN,
+  SUPPORTED_KEY_ALGORITHMS,
+  validateAudience,
+  validateCapabilityMaxLifetimeSeconds,
+  validateDisplayName,
+  validateEmailConstraint,
+  validateInvitationToken,
+  validateIssuer,
+  validateKid,
+} from "./control-validation.js";
+export type { SupportedKeyAlgorithm } from "./control-validation.js";

@@ -27,25 +27,25 @@ export type {
   StackAuthorityResolver,
 } from "./authority.js";
 
-export { buildStackJwks } from "./jwks.js";
+export { buildStackJwks } from "@unicas/service";
 
 export {
   CONTROL_SCHEMA_MIGRATIONS,
   migrateControlSchema,
 } from "./schema.js";
 
-export { ControlPlaneError, adminError, toAdminError } from "./errors.js";
+export { ControlPlaneError, adminError, toAdminError } from "@unicas/service";
 
-export { ControlAuditActions } from "./audit.js";
-export type { ControlAuditAction } from "./audit.js";
+export { ControlAuditActions } from "@unicas/service";
+export type { ControlAuditAction } from "@unicas/service";
 
 export {
   buildPossessionChallenge,
   parsePossessionChallenge,
   validatePublicJwk,
   verifyPossessionProof,
-} from "./possession.js";
-export type { PossessionChallengeInput } from "./possession.js";
+} from "@unicas/service";
+export type { PossessionChallengeInput } from "@unicas/service";
 
 export {
   canonicalJson,
@@ -65,8 +65,8 @@ export {
   validateInvitationToken,
   validateIssuer,
   validateKid,
-} from "./validation.js";
-export type { SupportedKeyAlgorithm } from "./validation.js";
+} from "@unicas/service";
+export type { SupportedKeyAlgorithm } from "@unicas/service";
 
 export {
   generateEventId,
@@ -75,7 +75,7 @@ export {
   generateNonce,
   generateSessionId,
   generateStackId,
-} from "./ids.js";
+} from "@unicas/service";
 
-export { encodeControlListCursor, decodeControlListCursor } from "./cursor.js";
-export type { ControlListCursor } from "./cursor.js";
+export { encodeControlListCursor, decodeControlListCursor } from "@unicas/service";
+export type { ControlListCursor } from "@unicas/service";

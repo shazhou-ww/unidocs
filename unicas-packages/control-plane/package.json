@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@unicas/admin-protocol": "workspace:*",
-    "jose": "^6.2.10"
+    "@unicas/service": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

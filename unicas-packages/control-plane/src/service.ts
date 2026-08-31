@@ -61,31 +61,27 @@ import type {
   CasStackMember,
   CasAdminListCursor,
 } from "@unicas/admin-protocol";
-import { ControlPlaneError, toAdminError } from "./errors.js";
-import { ControlAuditActions } from "./audit.js";
-import type { ControlAuditAction } from "./audit.js";
 import {
+  buildPossessionChallenge,
+  canonicalJson,
+  ControlAuditActions,
+  ControlPlaneError,
+  decodeControlListCursor,
+  DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS,
+  encodeControlListCursor,
   generateEventId,
   generateInvitationId,
   generateInvitationToken,
   generateNonce,
   generateStackId,
-} from "./ids.js";
-import {
-  buildPossessionChallenge,
-  parsePossessionChallenge,
-  validatePublicJwk,
-  verifyPossessionProof,
-} from "./possession.js";
-import {
-  canonicalJson,
   INVITATION_TTL_MS,
   isSupportedKeyAlgorithm,
   normalizeEmailConstraint,
+  parsePossessionChallenge,
   parseControlListLimit,
-  DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS,
   POSSESSION_CHALLENGE_TTL_MS,
   sha256Hex,
+  toAdminError,
   validateAudience,
   validateCapabilityMaxLifetimeSeconds,
   validateDisplayName,
@@ -93,9 +89,13 @@ import {
   validateInvitationToken,
   validateIssuer,
   validateKid,
-} from "./validation.js";
-import type { SupportedKeyAlgorithm } from "./validation.js";
-import { decodeControlListCursor, encodeControlListCursor } from "./cursor.js";
+  validatePublicJwk,
+  verifyPossessionProof,
+} from "@unicas/service";
+import type {
+  ControlAuditAction,
+  SupportedKeyAlgorithm,
+} from "@unicas/service";
 
 /** Authenticated caller context supplied by the BFF after OIDC session check. */
 export interface ControlPlaneCallContext {

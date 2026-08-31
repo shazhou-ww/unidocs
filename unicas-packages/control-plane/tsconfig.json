@@ -18,6 +18,9 @@
   "references": [
     {
       "path": "../admin-protocol"
+    },
+    {
+      "path": "../service"
     }
   ]
 }
