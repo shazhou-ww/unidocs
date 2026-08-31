@@ -5,8 +5,8 @@ import { setState } from "../src/ui/store.js";
 import { rectRegion } from "../src/ui/region.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
-const leaf = (id: string, name: string): LocalLayer =>
-  ({ id, type: "raster", name, opacity: 1, blendMode: "normal", visible: true });
+const leaf = (id: string, name: string, bounds?: [number, number, number, number]): LocalLayer =>
+  ({ id, type: "raster", name, opacity: 1, blendMode: "normal", visible: true, bounds });
 
 beforeEach(() => {
   setState({
@@ -36,6 +36,24 @@ describe("Composer", () => {
     expect(screen.getByText("已附带选区 200 × 100")).toBeInTheDocument();
     send("换成晚霞");
     expect(onSend).toHaveBeenCalledWith("换成晚霞", { bounds: [20, 40, 120, 240], layerNames: ["天空"] });
+  });
+
+  // Spec §4.3's fourth field is「与区域相交的图层清单」— who is on top of this
+  // area — not "who is selected". The flagship case ("regenerate the part I
+  // boxed in") has a region and NO layer selection, and used to send bounds
+  // with no layer list at all; spec §3.2 defines exactly that combination as
+  // "all the layers in this region".
+  it("attaches the layers the region intersects when nothing is selected", () => {
+    setState({
+      region: rectRegion([0, 0, 50, 50]), selection: [],
+      doc: { canvas: { width: 400, height: 200 }, layers: [
+        leaf("a", "天空", [0, 0, 40, 40]), leaf("b", "远山", [100, 100, 150, 150]),
+      ] },
+    });
+    const onSend = vi.fn();
+    render(<Composer busy={false} onSend={onSend} />);
+    send("换成晚霞");
+    expect(onSend).toHaveBeenCalledWith("换成晚霞", { bounds: [0, 0, 50, 50], layerNames: ["天空"] });
   });
 
   // Attaching on every turn is required (by turn three, "a bit more to the

@@ -447,3 +447,11 @@ a:hover { color: var(--accent); }
   padding: 5px 8px; border-radius: 5px; cursor: pointer; color: var(--fg);
 }
 .hit-menu button:hover { background: var(--surface-sunken); }
+
+/* The 载入为选区 progress notice (context-bar.tsx). The scan behind that
+   button is one `alphaAt` per pixel of the layer's box — tens of millions of
+   iterations for a full-canvas layer — and the render Worker's queue only
+   discards hover hit tests, so tiles and edits wait behind it. Quieter than
+   `.ctx-size`'s warning ink: this is progress, not a problem. */
+.ctx-busy { font-size: 10.5px; color: var(--fg-3); }
+.btn-link:disabled { color: var(--fg-dim); cursor: default; }

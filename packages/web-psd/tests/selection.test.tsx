@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ToolStrip } from "../src/ui/panels/tool-strip.js";
 import { ContextBar } from "../src/ui/panels/context-bar.js";
 import { setState, getState, setRegion } from "../src/ui/store.js";
@@ -16,16 +16,27 @@ const pickColor = vi.fn(() => "#f5efe3");
 // vite-node's module loader and needs far more than the two microtask ticks
 // this file's `flush` convention budgets, see canvas-stage-select.test.tsx),
 // it resolves within the same tick the click handler runs in.
+// A `vi.fn` rather than a bare async function so an individual test can swap
+// in a deferred implementation and drive the in-flight window; its default is
+// the immediate stand-in every other test here expects.
+const loadLayerAsRegion = vi.fn(async (_layerId: string): Promise<void> => {
+  setRegion({ bounds: [10, 10, 12, 12], source: "layerAlpha", maskId: putMask(new Uint8ClampedArray([1, 2, 3, 4])) });
+});
 vi.mock("../src/ui/controller.js", () => ({
   dispatch: (op: unknown) => dispatch(op),
   getController: () => ({ pickColor, toCanvas: (x: number, y: number) => ({ x, y }) }),
-  loadLayerAsRegion: async (): Promise<void> => {
-    setRegion({ bounds: [10, 10, 12, 12], source: "layerAlpha", maskId: putMask(new Uint8ClampedArray([1, 2, 3, 4])) });
-  },
+  loadLayerAsRegion: (id: string) => loadLayerAsRegion(id),
 }));
+
+const oneLayerSelected = (): void => {
+  setState({ selection: ["a"], doc: { canvas: { width: 100, height: 100 }, layers: [
+    { id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal", visible: true, bounds: [10, 10, 12, 12] },
+  ] } });
+};
 
 beforeEach(() => {
   dispatch.mockClear();
+  loadLayerAsRegion.mockClear();
   setState({ tool: "move", region: null, selection: [], pickedColor: null });
 });
 
@@ -43,6 +54,16 @@ describe("ContextBar", () => {
   it("stays quiet with no marquee", () => {
     render(<ContextBar />);
     expect(screen.queryByText("裁到选区")).not.toBeInTheDocument();
+  });
+
+  // `describeTarget([], null)` is right for "a document with nothing
+  // selected", but the bar renders unconditionally — with no document open at
+  // all it claimed the target was the whole document.
+  it("does not claim 「整个文档」 on the empty first screen", () => {
+    setState({ doc: null });
+    render(<ContextBar />);
+    expect(screen.queryByText("整个文档")).not.toBeInTheDocument();
+    expect(screen.getByText("未选中图层")).toBeInTheDocument();
   });
 
   it("offers no crop for a zero-area selection, which would commit a 0x0 canvas", () => {
@@ -131,10 +152,30 @@ describe("ContextBar", () => {
     expect(getState().region).not.toBeNull();
   });
 
+  // `layerAlphaRegion` loops `alphaAt` once per pixel of the layer's box — for
+  // a full-canvas layer in a real PSD that is tens of millions of iterations,
+  // and the Worker queue only discards `hitTest && hover`, so tiles and
+  // `applyOp` block behind it. Nothing dedupes the request either, so every
+  // extra click used to queue another whole scan.
+  it("disables 载入为选区 and shows progress while the scan is in flight", async () => {
+    let finish = (): void => {};
+    loadLayerAsRegion.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    oneLayerSelected();
+    render(<ContextBar />);
+    fireEvent.click(screen.getByText("载入为选区"));
+    expect(screen.getByText("载入为选区")).toBeDisabled();
+    expect(screen.getByText("正在载入选区…")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("载入为选区"));
+    expect(loadLayerAsRegion).toHaveBeenCalledTimes(1);
+
+    await act(async () => { finish(); });
+    expect(screen.getByText("载入为选区")).not.toBeDisabled();
+    expect(screen.queryByText("正在载入选区…")).not.toBeInTheDocument();
+  });
+
   it("turns the selected layer into a region carrying its alpha", async () => {
-    setState({ selection: ["a"], doc: { canvas: { width: 100, height: 100 }, layers: [
-      { id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal", visible: true, bounds: [10, 10, 12, 12] },
-    ] } });
+    oneLayerSelected();
     render(<ContextBar />);
     fireEvent.click(screen.getByText("载入为选区"));
     await Promise.resolve(); await Promise.resolve();

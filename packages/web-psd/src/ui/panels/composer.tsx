@@ -1,7 +1,31 @@
 import { useState } from "react";
-import { selectedLayers, useUiState } from "../store.js";
+import { selectedLayers, useUiState, type UiState } from "../store.js";
+import { findLayer, layersIntersecting } from "../hit-test.js";
 import type { AgentTarget } from "../api.js";
 import type { Region } from "../region.js";
+
+/**
+ * The layer list that travels with a region.
+ *
+ * Spec §4.3's fourth field is「与区域相交的图层清单」— who is on top of this
+ * area — not "who is selected". The two coincide whenever layers ARE selected,
+ * which is why sending the selection looked right; but the flagship case is a
+ * region with nothing selected ("regenerate the part I boxed in"), and that
+ * sent bounds and no layer list at all. Spec §3.2 defines exactly that
+ * combination as "all the layers in this region", so deriving the names from
+ * the region makes the message match the model the rest of the UI already
+ * uses (the context bar's 选中区域内的图层 button reads the same function).
+ *
+ * NAMES only, never ids — see `AgentTarget`.
+ */
+function targetLayerNames(s: UiState, region: Region): string[] {
+  const selected = selectedLayers(s);
+  if (selected.length > 0) return selected.map((l) => l.name);
+  const layers = s.doc?.layers ?? [];
+  return layersIntersecting(layers, region.bounds)
+    .map((id) => findLayer(layers, id)?.name)
+    .filter((name): name is string => !!name);
+}
 
 export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: string, target: AgentTarget | null) => void }) {
   const s = useUiState();
@@ -14,7 +38,7 @@ export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: strin
 
   const attached = s.region && s.region !== dropped ? s.region : null;
   const target: AgentTarget | null = attached
-    ? { bounds: attached.bounds, layerNames: selectedLayers(s).map((l) => l.name) }
+    ? { bounds: attached.bounds, layerNames: targetLayerNames(s, attached) }
     : null;
 
   const submit = (): void => {

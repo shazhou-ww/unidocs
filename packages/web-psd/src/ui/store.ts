@@ -175,12 +175,24 @@ export function setRegion(region: Region | null): void {
 }
 
 /**
- * The one write point for the layer axis.
+ * The write point for every layer-axis SELECTION.
  *
  * Everything a selection has to drag along with it lives here rather than at
  * each call site: normalization (see hit-test.ts) and opening the tree far
- * enough that the newly selected row is actually rendered. The canvas, the
- * degradation badge and the tree itself all go through it.
+ * enough that the newly selected row is actually rendered. The canvas — click,
+ * ⌘-click, alt-cycle, double-click descent and the right-click menu alike —
+ * the degradation badge and the tree itself all go through it, or through
+ * `setSelection` below where a whole list replaces the axis at once.
+ *
+ * Two INVALIDATION paths deliberately bypass both, and are not bugs to route:
+ * `controller.ts`'s `createFrom` writes `selection: []` raw after adopting a
+ * new docId, and its `onDoc` spreads `invalidateTarget`'s `selection` into the
+ * same `setState` as `doc`/`version`. Both write an already-normalized list
+ * (empty, or a filter of the previous one) against a document that has just
+ * changed under the selection, and neither wants expansion or a scroll —
+ * expanding the tree around a layer the user did not select would be wrong.
+ * Contrast `setRegion`, whose invariant IS absolute because a raw write there
+ * leaks mask bytes.
  */
 export function selectLayer(id: string, opts: { additive?: boolean } = {}): void {
   const s = getState();
@@ -191,8 +203,12 @@ export function selectLayer(id: string, opts: { additive?: boolean } = {}): void
   });
 }
 
-/** Replaces the layer axis outright (region → layers, Esc, click on empty
- *  canvas). Normalized for the same reason `selectLayer` is. */
+/** Replaces the layer axis outright (region → layers, Esc, a click or double
+ *  click landing on empty canvas). Normalized for the same reason
+ *  `selectLayer` is — but deliberately WITHOUT the expansion, because none of
+ *  these callers selects a nested layer: they either clear the axis or write a
+ *  list of top-level ids. A canvas gesture that picks one layer belongs in
+ *  `selectLayer`. */
 export function setSelection(ids: string[]): void {
   const s = getState();
   setState({ selection: s.doc ? normalizeSelection(s.doc.layers, ids) : ids });

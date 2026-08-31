@@ -1,4 +1,5 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
+import type { Rect } from "../doc-model.js";
 import { invalidateTarget } from "./invalidate.js";
 import { getState, setState, setRegion, reportError } from "./store.js";
 import { putMask } from "./region.js";
@@ -132,11 +133,26 @@ export async function dispatch(op: Op): Promise<void> {
  *  for those ahead of time, so a silent no-op here would look like the click
  *  did nothing; report it the same way the other action sites do. */
 export async function loadLayerAsRegion(layerId: string): Promise<void> {
-  const r = await controller?.layerAlphaRegion(layerId);
+  // Reports rather than rejects, so the one caller (the context bar's
+  // 载入为选区 button) can clear its in-flight flag with a plain `.finally`
+  // and never leave an unhandled rejection behind. A Worker-side throw comes
+  // back as a rejection here exactly the way `hitTest`'s does.
+  let r: { bounds: Rect; data: Uint8ClampedArray } | null | undefined;
+  try {
+    r = await controller?.layerAlphaRegion(layerId);
+  } catch (e) {
+    reportError("载入选区失败", e);
+    return;
+  }
   if (!r) {
     reportError("载入选区失败", "该图层没有可用于选区的像素（例如调整图层）");
     return;
   }
+  // The mask BYTES have no production consumer yet: nothing outside the tests
+  // calls `getMask`. They are produced now because the lasso/wand phase is
+  // what reads them, and because `sweepMasks` has to have something to sweep
+  // for its lifecycle to be exercised at all. Do not assume this buffer is
+  // load-bearing on any current path.
   setRegion({ bounds: r.bounds, source: "layerAlpha", maskId: putMask(r.data) });
 }
 
