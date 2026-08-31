@@ -1,5 +1,11 @@
-import type { BlobStore, Pixels, PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
-import { DEFAULT_CACHE_BYTES, IncrementalCompositor, PixelCache } from "@unidocs/doctype-psd/engine";
+import type { BlobStore, Layer, Pixels, PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
+import {
+  DEFAULT_CACHE_BYTES, IncrementalCompositor, PixelCache, findLayer, isRef, resolvePixels,
+} from "@unidocs/doctype-psd/engine";
+import {
+  HIT_ALPHA_THRESHOLD, alphaAt, hitInList, layerBoxOf,
+  type HitCandidate, type Rect, type ResidentPixels,
+} from "./layer-alpha.js";
 
 /** Worker-agnostic render core: holds ONE persistent `IncrementalCompositor`
  *  (and its `PixelCache`) over a `BlobStore`. Built once per document; after
@@ -9,11 +15,25 @@ import { DEFAULT_CACHE_BYTES, IncrementalCompositor, PixelCache } from "@unidocs
  *  per request), so RenderCore exists to make it hold in the browser. */
 export class RenderCore {
   private readonly compositor: IncrementalCompositor;
+  // Kept as fields rather than only being handed to the compositor: the hit
+  // test reads single pixels out of the same warm cache, and inlining these
+  // into the constructor call threw the references away.
+  private readonly store: BlobStore;
+  private readonly cache: PixelCache;
+  // Decoded pixels, keyed by layer id, valid for exactly one document object.
+  // Every edit REPLACES the doc (applyOne structuredClones it), so object
+  // identity is the version key — the compositor uses the same trick for its
+  // framebuffer slot. Without this, a hover hit test at 60fps would re-walk
+  // and re-resolve the whole tree every frame.
+  private resident = new Map<string, Pixels>();
+  private residentFor: PsdDoc | null = null;
 
   constructor(doc: PsdDoc, store: BlobStore, opts: { tileSize?: number; cacheBytes?: number } = {}) {
+    this.store = store;
+    this.cache = new PixelCache(opts.cacheBytes ?? DEFAULT_CACHE_BYTES);
     this.compositor = new IncrementalCompositor(doc, {
       tileSize: opts.tileSize,
-      ctx: { store, cache: new PixelCache(opts.cacheBytes ?? DEFAULT_CACHE_BYTES) },
+      ctx: { store, cache: this.cache },
     });
   }
 
@@ -54,5 +74,70 @@ export class RenderCore {
 
   get tileSize(): number {
     return this.compositor.tileSize;
+  }
+
+  /** Faults every layer's pixels to resident once per document version, then
+   *  hands `layer-alpha`'s synchronous rules a plain lookup. Cache hits after
+   *  `prefetch()`, so this is table reads, not network. */
+  private async residentPixels(): Promise<ResidentPixels> {
+    if (this.residentFor !== this.doc) {
+      const map = new Map<string, Pixels>();
+      const walk = async (layers: Layer[]): Promise<void> => {
+        for (const l of layers) {
+          if (l.pixels) map.set(l.id, isRef(l.pixels) ? await resolvePixels(l.pixels, this.store, this.cache) : l.pixels);
+          if (l.children) await walk(l.children);
+        }
+      };
+      await walk(this.doc.layers);
+      this.resident = map;
+      this.residentFor = this.doc;
+    }
+    const map = this.resident;
+    return (layer: Layer) => map.get(layer.id) ?? null;
+  }
+
+  /**
+   * Every layer under the point, topmost first — [] on a miss.
+   *
+   * `radius` is the click tolerance IN DOCUMENT PIXELS; the caller converts it
+   * from a CSS-pixel constant, because at the 5% zoom floor three CSS pixels
+   * span sixty document pixels and a fixed document-space tolerance would make
+   * small things unclickable when zoomed out.
+   *
+   * Nothing is composited here and `IncrementalCompositor` is untouched.
+   */
+  async hitTest(x: number, y: number, opts: { threshold?: number; radius?: number } = {}): Promise<HitCandidate[]> {
+    const resident = await this.residentPixels();
+    const r = Math.max(0, Math.round(opts.radius ?? 0));
+    const points: Array<[number, number]> = r > 0
+      ? [[x, y], [x - r, y], [x + r, y], [x, y - r], [x, y + r]]
+      : [[x, y]];
+    return hitInList(this.doc.layers, points, opts.threshold ?? HIT_ALPHA_THRESHOLD, resident);
+  }
+
+  /**
+   * A layer's alpha as a single-channel coverage buffer over its own box —
+   * "load layer as selection" (spec §6.1), the conversion that lets someone
+   * point at a THING and get back an AREA.
+   *
+   * Same read path as `hitTest`; the only difference is copying the whole
+   * block out instead of sampling one point.
+   */
+  async layerAlphaRegion(layerId: string): Promise<{ bounds: Rect; data: Uint8ClampedArray } | null> {
+    const layer = findLayer(this.doc.layers, layerId);
+    if (!layer) return null;
+    const bounds = layerBoxOf(layer);
+    if (!bounds) return null;
+    const resident = await this.residentPixels();
+    const [top, left, bottom, right] = bounds;
+    const w = Math.max(0, right - left);
+    const h = Math.max(0, bottom - top);
+    const data = new Uint8ClampedArray(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        data[y * w + x] = Math.round(255 * alphaAt(layer, left + x, top + y, resident, false));
+      }
+    }
+    return { bounds, data };
   }
 }
