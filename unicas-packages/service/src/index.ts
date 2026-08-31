@@ -90,6 +90,7 @@ export type {
 export {
   clampLeaseDuration,
   DEFAULT_LEASE_MS,
+  leaseCanonicalNode,
   leaseReadyNode,
   MAX_LEASE_MS,
   MIN_LEASE_MS,
@@ -98,8 +99,12 @@ export {
 } from "./node-lease.js";
 export type {
   AdoptedCanonicalNodePlan,
+  CanonicalNodeLeaseRecord,
+  CanonicalNodeLeaseRepository,
   CanonicalOrphanObject,
+  CanonicalUploadReservation,
   NodeLeaseRecord,
   NodeLeaseRepository,
   NodeLeaseScope,
+  UploadedCanonicalNodeCommit,
 } from "./node-lease.js";

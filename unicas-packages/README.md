@@ -67,8 +67,8 @@ unicas-packages/                    @unicas org
 │   │     actor 等平台端口；内置 stack capability 校验、权限矩阵与有界 authority
 │   │     cache，以及 Root Ref 校验/幂等/投影/revision/retry 业务内核；不依赖
 │   │     Cloudflare 类型或 control-plane 实现；node GC 的候选复核、删除顺序与
-│   │     回收统计、tenant node usage、node content range/metadata read，及
-│   │     bodyless lease/orphan adoption 语义，同样通过 semantic repository port 执行
+│   │     回收统计、tenant node usage、node content range/metadata read，以及
+│   │     streaming/bodyless node lease 语义，同样通过 semantic repository port 执行
 │   ├── control-plane/     @unicas/control-plane      admin 组
 │   │     控制面服务库：ControlPlaneService（CAS_CONTROL_DB 唯一写入路径）、
 │   │     AuthorityRepository、sessions、jwks、possession、audit、cursor、ids
@@ -135,9 +135,8 @@ unicas-packages/                    @unicas org
 - `server-cloudflare`、`admin-webui` server 和 `control-plane-mcp` 暂由
   `service-cloudflare` 作为内部策略组合，迁移完成后其服务端实现将归入
   `service` 或 `service-cloudflare`，对应旧部署包删除。`server-cloudflare`
-  已不再拥有 capability verifier、Root Ref、node usage、node read 或 bodyless
-  lease 业务规则，只保留迁移中的 D1/R2 repository、DO 生命周期、streaming
-  node lease 存储实现与 audit RPC。
+  已不再拥有 capability verifier、Root Ref、node usage、node read 或 node lease
+  业务规则，只保留迁移中的 D1/R2 repository、DO 生命周期与 audit RPC。
 - 数据面不得依赖 admin 组包；admin 实现包不得依赖 tenant 实现包。
   唯一协议级单向例外是 `admin-protocol -> tenant-protocol`，用于复用两面
   公共协议类型，反向禁止（由 `admin-protocol/tests/cross-plane.test.ts` 与
@@ -203,17 +202,16 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | **node usage 内核下沉 service** | logical/physical/reservation/readiness/lease 统计语义迁入 `@unicas/service`；D1/R2 adapter 只列 node、读取 canonical object 大小与 reservation 总量 |
 | **node read 内核下沉 service** | own-content HTTP range 解析、canonical payload offset 与 metadata/state shaping 迁入 `@unicas/service`；D1/R2 adapter 只读 node row、ordered edges 与 object range |
 | **bodyless lease 内核下沉 service** | lease duration policy、续租窗口、ready 检查与 verified canonical orphan adoption 迁入 `@unicas/service`；D1/R2 adapter 只负责 object head/prefix、lease update 与 adoption batch |
+| **streaming lease 内核下沉 service** | reservation/upload/inspect/immutability/child-readiness/commit/cleanup 编排迁入 `@unicas/service`，请求 body 仍直通平台 object store；Cloudflare adapter 只负责 R2 SHA-256 写入与 D1 batch |
 
 ## 待办（README 定方向）
 
 1. **capability 归属复查**：如未来出现第二个消费方，可独立成包或并入
    `codec` 包（目前它是 JWT claim 词汇，留在 `tenant-protocol` 合理）。
-2. **服务实现下沉**：tenant authorization、Root Ref command、node GC、
-  node usage、node read/metadata 与 bodyless lease 内核已迁入 `service`；下一步把
-  `server-cloudflare` 的 streaming node lease 规则与
-  `control-plane` 的业务逻辑迁入 `service` 的平台无关 handlers，使其只通过语义化
-  store/blob/keyed-actor 端口工作；D1 SQL、R2 与 DO wrapper 留在
-  `service-cloudflare`。
+2. **服务实现下沉**：tenant authorization、Root Ref command 与全部 node
+  lease/read/usage/GC 内核已迁入 `service`；下一步把 `control-plane` 的业务逻辑
+  迁入 `service` 的平台无关 handlers，使其只通过语义化 store/blob/keyed-actor
+  端口工作；D1 SQL、R2 与 DO wrapper 留在 `service-cloudflare`。
 3. **入口收尾**：把 `admin-webui/src/server` 与 `control-plane-mcp` 的
   Cloudflare ingress 并入 `service-cloudflare` 后删除三个迁移实现包；
   `admin-webui` 最终只保留浏览器 UI，并恢复 `webui -> client -> protocol`。
