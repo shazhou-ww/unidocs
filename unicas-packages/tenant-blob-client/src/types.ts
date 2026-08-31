@@ -6,17 +6,10 @@
  */
 
 import type {
-  CasGcOptions,
-  CasGcResult,
   CasHash,
-  CasLeaseOptions,
-  CasLeaseResult,
-  CasNodeMetadata,
   CasNodeRange,
-  CasNodeSource,
-  CasRootRefUpdate,
   CasRootRefsResult,
-  CasUsage,
+  TenantCasClient,
 } from "@unicas/tenant-client";
 
 /** Blob identity + resolved metadata. */
@@ -31,6 +24,8 @@ export type CasBlobSource = ReadableStream<Uint8Array> | Blob;
 export interface CasBlobWriteOptions {
   readonly contentType: string;
   readonly size?: number;
+  /** Lease duration applied to every chunk and index node. Defaults to the server policy. */
+  readonly leaseDurationMs?: number;
   readonly signal?: AbortSignal;
   readonly onProgress?: (uploadedBytes: number) => void;
 }
@@ -40,6 +35,12 @@ export interface CasBlobClientOptions {
   readonly chunkBytes?: number;
   /** Children per index node. Defaults to the protocol value. */
   readonly indexFanout?: number;
+}
+
+/** Positive blob reference counts to retain or release as one business batch. */
+export interface CasBlobRetentionUpdate {
+  readonly requestId: string;
+  readonly references: Readonly<Record<CasHash, number>>;
 }
 
 /** Open read handle for one blob (SBlobHandler-shaped). */
@@ -56,24 +57,18 @@ export interface CasBlobHandle {
 
 /** Complete tenant data-plane CAS client surface for business users. */
 export interface CasBlobClient {
-  /** Write a blob, chunking it into CAS nodes behind a blob-index tree. */
+  /** Escape hatch for node-level transport operations and tenant administration. */
+  readonly unicasClient: TenantCasClient;
+  /**
+   * Write a blob, chunking it into CAS nodes behind a blob-index tree.
+   * Every written node is automatically leased. Call `retain` after the
+   * surrounding business transaction commits to preserve the blob root.
+   */
   storeBlob(source: CasBlobSource, options: CasBlobWriteOptions): Promise<CasBlobRef>;
-  /** Open a blob by hash for random-access reads. */
+  /** Open a blob by hash, resolving its metadata and random-access read handle. */
   openBlob(hash: CasHash, signal?: AbortSignal): Promise<CasBlobHandle>;
-  /** Blob metadata (size/contentType) without reading content. */
-  statBlob(hash: CasHash): Promise<CasBlobRef>;
-  /** Node metadata (transport passthrough). */
-  readMetadata(hash: CasHash, options?: { readonly signal?: AbortSignal }): Promise<CasNodeMetadata>;
-  /** Extend a node lease (transport passthrough). */
-  leaseNode(
-    hash: CasHash,
-    source?: CasNodeSource,
-    options?: CasLeaseOptions,
-  ): Promise<CasLeaseResult>;
-  /** Update root references for retention (transport passthrough). */
-  updateRootRefs(update: CasRootRefUpdate): Promise<CasRootRefsResult>;
-  /** Tenant storage usage. */
-  usage(signal?: AbortSignal): Promise<CasUsage>;
-  /** Advisory tenant garbage collection. */
-  gc(options?: CasGcOptions): Promise<CasGcResult>;
+  /** Retain one or more blob roots. Every reference count must be positive. */
+  retain(update: CasBlobRetentionUpdate): Promise<CasRootRefsResult>;
+  /** Release one or more blob roots. Every reference count must be positive. */
+  release(update: CasBlobRetentionUpdate): Promise<CasRootRefsResult>;
 }

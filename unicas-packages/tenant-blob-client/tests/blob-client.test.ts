@@ -1,8 +1,8 @@
 /**
  * Functional blob-layer tests: `createCasBlobClient` over an in-memory
  * `TenantCasClient` (no HTTP, no transport). Covers deterministic chunk-tree
- * store, handle-shaped reads (whole / ranged / bounded), and tenant admin
- * passthroughs (usage/gc).
+ * store, handle-shaped reads (whole / ranged / bounded), retention operations,
+ * and access to the underlying tenant client.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -94,6 +94,7 @@ class MemoryCas implements TenantCasClient {
 describe("functional blob client", () => {
   it("stores and reads deterministic chunk-tree blobs", async () => {
     const cas = new MemoryCas();
+    const leaseNode = vi.spyOn(cas, "leaseNode");
     const chunkBytes = 4;
     const blobs = createCasBlobClient(cas, { chunkBytes, indexFanout: 2 });
     const bytes = Uint8Array.from([
@@ -106,8 +107,16 @@ describe("functional blob client", () => {
     const ref = await blobs.storeBlob(streamOf(bytes, 1024 * 1024 + 1), {
       contentType: "application/octet-stream",
       size: bytes.length,
+      leaseDurationMs: 30 * 60 * 1000,
       onProgress: progress,
     });
+    expect(leaseNode).toHaveBeenCalledTimes(cas.nodes.size);
+    expect(leaseNode).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ body: expect.any(ReadableStream) }),
+      { durationMs: 30 * 60 * 1000, signal: undefined },
+    );
+    expect(leaseNode.mock.calls.every(call => call[2]?.durationMs === 30 * 60 * 1000)).toBe(true);
     const handle = await blobs.openBlob(ref.hash);
     expect(handle.ref).toEqual(ref);
     const opened = new Uint8Array(await new Response(handle.read()).arrayBuffer());
@@ -120,12 +129,13 @@ describe("functional blob client", () => {
     expect(ranged).toEqual(Uint8Array.from([0x61, 0x61, 0x62, 0x62]));
     const bounded = await handle.readBytes({ offset: chunkBytes - 2, length: 4 });
     expect(bounded).toEqual(ranged);
-    await expect(blobs.usage()).resolves.toBeDefined();
-    await expect(blobs.gc({ maxNodes: 25 })).resolves.toBeDefined();
+    expect(blobs.unicasClient).toBe(cas);
+    await expect(blobs.unicasClient.usage()).resolves.toBeDefined();
+    await expect(blobs.unicasClient.gc({ maxNodes: 25 })).resolves.toBeDefined();
     expect(progress).toHaveBeenLastCalledWith(bytes.length);
   }, 20_000);
 
-  it("stats single-node blobs without an index tree", async () => {
+  it("resolves single-node metadata when opening a blob", async () => {
     const cas = new MemoryCas();
     const blobs = createCasBlobClient(cas, { chunkBytes: 1024, indexFanout: 2 });
     const bytes = new TextEncoder().encode("small");
@@ -135,22 +145,35 @@ describe("functional blob client", () => {
     });
     expect(ref.size).toBe(bytes.length);
     expect(ref.contentType).toBe("text/plain");
-    const stat = await blobs.statBlob(ref.hash);
-    expect(stat).toEqual(ref);
+    expect((await blobs.openBlob(ref.hash)).ref).toEqual(ref);
   });
 
-  it("passes lease, root-ref updates, and gc through to the CAS client", async () => {
+  it("separates batch retain and release while exposing the tenant client", async () => {
     const cas = new MemoryCas();
     const blobs = createCasBlobClient(cas);
     const bytes = new TextEncoder().encode("abc");
     const hash = await storeNodeContent(cas, bytes, "text/plain");
 
-    await expect(blobs.leaseNode(hash)).resolves.toMatchObject({ hash, ready: true });
-    await expect(blobs.updateRootRefs({ requestId: "r1", changes: { [hash]: 1 } }))
+    await expect(blobs.unicasClient.leaseNode(hash)).resolves.toMatchObject({ hash, ready: true });
+    await expect(blobs.retain({ requestId: "retain-1", references: { [hash]: 2 } }))
       .resolves.toMatchObject({ success: true, revision: 1 });
-    await expect(blobs.gc({ maxNodes: 25 })).resolves.toBeDefined();
-    expect(cas.rootRefUpdates).toEqual([{ requestId: "r1", changes: { [hash]: 1 } }]);
+    await expect(blobs.release({ requestId: "release-1", references: { [hash]: 1 } }))
+      .resolves.toMatchObject({ success: true, revision: 2 });
+    await expect(blobs.unicasClient.gc({ maxNodes: 25 })).resolves.toBeDefined();
+    expect(cas.rootRefUpdates).toEqual([
+      { requestId: "retain-1", changes: { [hash]: 2 } },
+      { requestId: "release-1", changes: { [hash]: -1 } },
+    ]);
     expect(cas.gcCalls).toEqual([{ maxNodes: 25 }]);
+  });
+
+  it("rejects non-positive retention counts before calling the tenant client", async () => {
+    const cas = new MemoryCas();
+    const blobs = createCasBlobClient(cas);
+
+    await expect(blobs.retain({ requestId: "invalid", references: { bad: 0 } }))
+      .rejects.toThrow("positive safe integer");
+    expect(cas.rootRefUpdates).toEqual([]);
   });
 });
 

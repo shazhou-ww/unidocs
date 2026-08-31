@@ -2,10 +2,11 @@
  * `createCasBlobClient` — the blob layer above the node-level tenant client.
  *
  * Large content is chunked into fixed-size chunk nodes plus a bounded
- * fan-out blob-index tree; the index is a client-side representation (the
- * CAS server never parses it). Read side is handle-shaped (SBlobHandler
- * style): `openBlob(hash)` returns a handle with `ref` metadata plus
- * random-access `read(range)` / bounded `readBytes`.
+ * fan-out blob-index tree; every stored node is automatically leased and the
+ * index is a client-side representation (the CAS server never parses it).
+ * Read side is handle-shaped (SBlobHandler style): `openBlob(hash)` returns a
+ * handle with `ref` metadata plus random-access `read(range)` / bounded
+ * `readBytes`.
  */
 
 import {
@@ -26,18 +27,12 @@ import type {
   CasBlobWriteOptions,
 } from "./types.js";
 import type {
-  CasGcOptions,
-  CasGcResult,
   CasLeaseOptions,
-  CasLeaseResult,
-  CasNodeMetadata,
   CasNodeRange,
-  CasNodeSource,
-  CasRootRefUpdate,
   CasRootRefsResult,
-  CasUsage,
   TenantCasClient,
 } from "@unicas/tenant-client";
+import type { CasBlobRetentionUpdate } from "./types.js";
 
 interface BlobTreeNode {
   readonly hash: string;
@@ -63,13 +58,15 @@ export function createCasBlobClient(
     content: Uint8Array,
     contentType: string,
     refs: readonly string[] = [],
+    leaseOptions?: CasLeaseOptions,
   ): Promise<string> => {
-    return storeNodeContent(cas, content, contentType, refs);
+    return storeNodeContent(cas, content, contentType, refs, leaseOptions);
   };
 
   const storeIndex = async (
     children: readonly BlobTreeNode[],
     mediaType: string,
+    leaseOptions?: CasLeaseOptions,
   ): Promise<BlobTreeNode> => {
     const level = children[0].level + 1;
     if (children.some(child => child.level !== level - 1)) {
@@ -84,7 +81,12 @@ export function createCasBlobClient(
       children: children.map(child => ({ size: child.size })),
     });
     return {
-      hash: await storeNode(content, BlobIndexContentType, children.map(child => child.hash)),
+      hash: await storeNode(
+        content,
+        BlobIndexContentType,
+        children.map(child => child.hash),
+        leaseOptions,
+      ),
       size,
       level,
     };
@@ -94,17 +96,27 @@ export function createCasBlobClient(
     groups: BlobTreeNode[][],
     node: BlobTreeNode,
     mediaType: string,
+    leaseOptions?: CasLeaseOptions,
   ): Promise<void> => {
     const groupIndex = node.level + 1;
     const group = groups[groupIndex] ??= [];
     group.push(node);
     if (group.length === indexFanout) {
       groups[groupIndex] = [];
-      await appendTreeNode(groups, await storeIndex(group, mediaType), mediaType);
+      await appendTreeNode(
+        groups,
+        await storeIndex(group, mediaType, leaseOptions),
+        mediaType,
+        leaseOptions,
+      );
     }
   };
 
-  const finishTree = async (groups: BlobTreeNode[][], mediaType: string): Promise<BlobTreeNode> => {
+  const finishTree = async (
+    groups: BlobTreeNode[][],
+    mediaType: string,
+    leaseOptions?: CasLeaseOptions,
+  ): Promise<BlobTreeNode> => {
     while (true) {
       const populated = groups
         .map((group, index) => ({ group, index }))
@@ -113,11 +125,16 @@ export function createCasBlobClient(
       if (count === 1) return populated[0].group[0];
       const lowest = populated[0];
       groups[lowest.index] = [];
-      await appendTreeNode(groups, await storeIndex(lowest.group, mediaType), mediaType);
+      await appendTreeNode(
+        groups,
+        await storeIndex(lowest.group, mediaType, leaseOptions),
+        mediaType,
+        leaseOptions,
+      );
     }
   };
 
-  const statBlob = async (hash: string): Promise<CasBlobRef> => {
+  const resolveBlobRef = async (hash: string): Promise<CasBlobRef> => {
     const metadata = await cas.readMetadata(hash);
     if (metadata.contentType !== BlobIndexContentType) {
       if (metadata.refs.length !== 0) throw new Error(`CAS node ${hash} is not a blob root`);
@@ -189,7 +206,7 @@ export function createCasBlobClient(
   };
 
   const openHandle = async (hash: string, signal?: AbortSignal): Promise<CasBlobHandle> => {
-    const ref = await statBlob(hash);
+    const ref = await resolveBlobRef(hash);
     const full = () => streamGenerator(readNode(ref.hash, undefined, ref.contentType, signal));
     const ranged = (range: CasNodeRange) => {
       validateRange(range);
@@ -215,7 +232,13 @@ export function createCasBlobClient(
   };
 
   return Object.freeze({
+    unicasClient: cas,
+
     async storeBlob(source: CasBlobSource, options: CasBlobWriteOptions): Promise<CasBlobRef> {
+      const leaseOptions: CasLeaseOptions = {
+        durationMs: options.leaseDurationMs,
+        signal: options.signal,
+      };
       const chunks = chunkSource(
         source instanceof Blob ? source.stream() : source,
         chunkBytes,
@@ -223,13 +246,23 @@ export function createCasBlobClient(
       );
       const first = await chunks.next();
       if (first.done) {
-        const hash = await storeNode(new Uint8Array(0), options.contentType);
+        const hash = await storeNode(
+          new Uint8Array(0),
+          options.contentType,
+          [],
+          leaseOptions,
+        );
         assertExpectedSize(options.size, 0);
         return { hash, size: 0, contentType: options.contentType };
       }
       const second = await chunks.next();
       if (second.done) {
-        const hash = await storeNode(first.value, options.contentType);
+        const hash = await storeNode(
+          first.value,
+          options.contentType,
+          [],
+          leaseOptions,
+        );
         assertExpectedSize(options.size, first.value.length);
         options.onProgress?.(first.value.length);
         return { hash, size: first.value.length, contentType: options.contentType };
@@ -238,37 +271,51 @@ export function createCasBlobClient(
       const groups: BlobTreeNode[][] = [];
       let measuredSize = 0;
       const addChunk = async (bytes: Uint8Array): Promise<void> => {
-        const hash = await storeNode(bytes, BlobChunkContentType);
+        const hash = await storeNode(
+          bytes,
+          BlobChunkContentType,
+          [],
+          leaseOptions,
+        );
         measuredSize += bytes.length;
         options.onProgress?.(measuredSize);
-        await appendTreeNode(groups, { hash, size: bytes.length, level: -1 }, options.contentType);
+        await appendTreeNode(
+          groups,
+          { hash, size: bytes.length, level: -1 },
+          options.contentType,
+          leaseOptions,
+        );
       };
       await addChunk(first.value);
       await addChunk(second.value);
       for await (const bytes of chunks) await addChunk(bytes);
 
-      const root = await finishTree(groups, options.contentType);
+      const root = await finishTree(groups, options.contentType, leaseOptions);
       assertExpectedSize(options.size, measuredSize);
       return { hash: root.hash, size: measuredSize, contentType: options.contentType };
     },
 
     openBlob: openHandle,
 
-    statBlob,
+    retain: (update: CasBlobRetentionUpdate) => updateRetention(cas, update, 1),
 
-    readMetadata: (hash: string, options?: { readonly signal?: AbortSignal }): Promise<CasNodeMetadata> =>
-      cas.readMetadata(hash, options),
-
-    leaseNode: (hash: string, source?: CasNodeSource, options?: CasLeaseOptions): Promise<CasLeaseResult> =>
-      cas.leaseNode(hash, source, options),
-
-    updateRootRefs: (update: CasRootRefUpdate): Promise<CasRootRefsResult> =>
-      cas.updateRootRefs(update),
-
-    usage: (signal?: AbortSignal): Promise<CasUsage> => cas.usage(signal),
-
-    gc: (gcOptions?: CasGcOptions): Promise<CasGcResult> => cas.gc(gcOptions),
+    release: (update: CasBlobRetentionUpdate) => updateRetention(cas, update, -1),
   });
+}
+
+async function updateRetention(
+  cas: TenantCasClient,
+  update: CasBlobRetentionUpdate,
+  direction: 1 | -1,
+): Promise<CasRootRefsResult> {
+  const changes: Record<string, number> = {};
+  for (const [hash, count] of Object.entries(update.references)) {
+    if (!Number.isSafeInteger(count) || count <= 0) {
+      throw new TypeError(`Blob reference count for ${hash} must be a positive safe integer`);
+    }
+    changes[hash] = direction * count;
+  }
+  return await cas.updateRootRefs({ requestId: update.requestId, changes });
 }
 
 function validateLeaf(
