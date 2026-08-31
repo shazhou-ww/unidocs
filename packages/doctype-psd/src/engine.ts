@@ -24,3 +24,10 @@ export { IncrementalCompositor } from "./render/incremental.js";
 export { allTiles, tilesForRect, tileKey } from "./render/tile-grid.js";
 export type { Tile } from "./render/tile-grid.js";
 export { opDirtyRect, opActiveIndex } from "./render/dirty-rect.js";
+
+// Point-sampling helpers the browser hit test needs. Exported rather than
+// re-implemented in psd-client: a second copy of the mask rules (defaultColor
+// outside the rect, `inverted`) would drift from the compositor's, and then
+// clicking would disagree with what is on screen.
+export { maskCoverageAt } from "./render/composite.js";
+export { findLayer } from "./model/tree.js";
