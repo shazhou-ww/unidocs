@@ -18,10 +18,34 @@ export function HitMenu({ at, hits, onClose }: {
 }) {
   const s = useUiState();
   useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    if (!at) return; // closed: no listener at all, so the app's own Escape shortcut works normally
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      e.stopImmediatePropagation();
+      onClose();
+    };
+    // `app.tsx`'s `useSelectionShortcuts` binds its own bubble-phase Escape
+    // listener on `window`, unconditionally, once, at mount — long before
+    // this menu ever opens. Two listeners on the SAME node in the SAME phase
+    // fire in REGISTRATION order, and `stopImmediatePropagation` only blocks
+    // listeners still to come — it cannot retroactively stop one that
+    // already ran. So a bubble-phase listener here, however it is gated,
+    // always loses the race to App's earlier one; verified by dispatching an
+    // Escape as App's own tests do and observing the selection get cleared
+    // anyway. Capture phase fixes this structurally rather than by timing:
+    // in one dispatch, `window`'s capture-phase listeners ALWAYS run before
+    // ANY of its bubble-phase listeners, regardless of when each was added —
+    // capture is a full pass down before the bubble pass back up ever
+    // starts. (This only matters when the event actually bubbles up through
+    // window, i.e. targets a real focused element, as a real keypress does —
+    // not when a test dispatches directly on `window` itself, which has no
+    // separate capture/bubble timeline and would still resolve by
+    // registration order; the plain-Escape tests in
+    // canvas-stage-select.test.tsx do exactly that, and are unaffected
+    // because they never have a menu open in the first place.)
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [at, onClose]);
 
   if (!at || hits.length === 0) return null;
   return (

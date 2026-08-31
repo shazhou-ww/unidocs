@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
 import { CanvasStage } from "../src/ui/panels/canvas-stage.js";
+import { App } from "../src/ui/app.js";
 import { getState, setState } from "../src/ui/store.js";
+import { rectRegion } from "../src/ui/region.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
 const { dispatch, hitTest } = vi.hoisted(() => ({ dispatch: vi.fn(), hitTest: vi.fn() }));
@@ -95,6 +97,44 @@ describe("HitMenu", () => {
     hitTest.mockResolvedValue([]);
     const { container } = render(<CanvasStage />);
     fireEvent.contextMenu(stageOf(container), { clientX: 90, clientY: 90 });
+    await flush();
+    expect(container.querySelector(".hit-menu")).toBeNull();
+  });
+
+  // `app.tsx`'s `useSelectionShortcuts` binds its own Escape listener on
+  // `window`, unconditionally, at mount — before the menu ever opens. A
+  // bubble-phase listener registered later here would always lose that race
+  // (same node, same phase, registration order — `stopImmediatePropagation`
+  // can't retroactively stop a listener that already ran), so this needs
+  // `<App />` mounted (not `<CanvasStage />` alone) to actually exercise the
+  // conflict, and the Escape needs to originate from a real focused node —
+  // dispatching directly on `window` collapses capture/bubble into a single
+  // phase and would not distinguish a correct fix from a broken one.
+  it("closing the menu via Escape does not also fire the app-level Escape shortcut", async () => {
+    setState({ selection: ["bg"], region: rectRegion([0, 0, 10, 10]) });
+    hitTest.mockResolvedValue(stack);
+    const { container } = render(<App />);
+    fireEvent.contextMenu(stageOf(container), { clientX: 15, clientY: 15 });
+    await flush();
+    expect(container.querySelector(".hit-menu")).not.toBeNull();
+    fireEvent.keyDown(document.body, { key: "Escape", bubbles: true });
+    expect(container.querySelector(".hit-menu")).toBeNull();
+    expect(getState().selection).toEqual(["bg"]);
+    expect(getState().region).not.toBeNull();
+  });
+
+  // `CanvasStage` is never re-keyed on a new document (app.tsx renders it
+  // unconditionally), so this component and its in-flight hit test survive a
+  // document swap. Without a staleness check, a right-click followed by
+  // loading a different document before the hit resolves would show the OLD
+  // document's layers, positioned in the old canvas's coordinates.
+  it("shows no menu if the document changes before the hit test resolves", async () => {
+    const resolvers: Array<(hits: typeof stack) => void> = [];
+    hitTest.mockImplementation(() => new Promise<typeof stack>((resolve) => { resolvers.push(resolve); }));
+    const { container } = render(<CanvasStage />);
+    fireEvent.contextMenu(stageOf(container), { clientX: 15, clientY: 15 });
+    setState({ doc: { canvas: { width: 50, height: 50 }, layers: [leaf("new", [0, 0, 50, 50])] } });
+    resolvers[0](stack);
     await flush();
     expect(container.querySelector(".hit-menu")).toBeNull();
   });

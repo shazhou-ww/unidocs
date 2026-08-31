@@ -257,4 +257,55 @@ describe("disambiguation and hover", () => {
     rerender(<CanvasStage />);
     expect(getHoverId()).toBeNull();
   });
+
+  // Nothing else clears the hover when the pointer leaves `.stage` without
+  // the tool changing — without this, the last hovered layer's `.sel-hover`
+  // outline is stuck on screen indefinitely.
+  //
+  // Uses `fireEvent.pointerLeave` rather than the `pointer()` MouseEvent
+  // helper the other cases in this file use: `pointerleave` does not bubble,
+  // so React synthesizes `onPointerLeave` from a native, bubbling
+  // `pointerout`, not from an event literally typed `pointerleave` — a
+  // MouseEvent constructed with that type does not reach the handler.
+  // `fireEvent.pointerLeave` produces the right shape; no clientX/Y needed
+  // here since the handler takes no coordinates.
+  it("clears the hover when the pointer leaves the canvas", async () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { cb(0); return 1; });
+    hitTest.mockResolvedValue([{ layerId: "a", path: ["a"] }]);
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+    fireEvent(stage, pointer("pointermove", 15, 15));
+    await flush();
+    expect(getHoverId()).toBe("a");
+    fireEvent.pointerLeave(stage);
+    expect(getHoverId()).toBeNull();
+  });
+
+  // The tool-change effect's cleanup runs on every `s.tool` change, not just
+  // unmount — cancelling an in-flight hover frame without also resetting
+  // `hoverFrame.current` to 0 would leave the `pointermove` throttle gate
+  // permanently closed, since the cancelled rAF callback (the only other
+  // place that zeroes it) will never run.
+  it("keeps producing hover results after a tool change interrupts an in-flight frame", async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frames.push(cb); return frames.length; });
+    hitTest.mockResolvedValue([{ layerId: "a", path: ["a"] }]);
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+
+    fireEvent(stage, pointer("pointermove", 15, 15));
+    expect(frames).toHaveLength(1); // frame requested, callback not yet run
+
+    act(() => setState({ tool: "marquee" }));
+    act(() => setState({ tool: "move" }));
+
+    fireEvent(stage, pointer("pointermove", 15, 15));
+    // Without resetting the ref in the cleanup, this gate stays closed
+    // forever and no second frame is ever requested.
+    expect(frames).toHaveLength(2);
+
+    frames[1](0);
+    await flush();
+    expect(getHoverId()).toBe("a");
+  });
 });

@@ -72,7 +72,19 @@ export function CanvasStage() {
 
   useEffect(() => {
     if (s.tool !== "move") setHoverId(null);
-    return () => { if (hoverFrame.current !== 0) cancelAnimationFrame(hoverFrame.current); };
+    // This cleanup runs on every `s.tool` change, not only unmount. If a
+    // hover frame is in flight when the tool changes, cancelling it without
+    // also resetting the ref would leave `hoverFrame.current` stuck on a dead
+    // id forever — the rAF callback is the only other place that zeroes it,
+    // and it will never run now. `onPointerMove`'s `hoverFrame.current === 0`
+    // gate would then stay closed for the rest of the component's life, even
+    // after switching back to the move tool.
+    return () => {
+      if (hoverFrame.current !== 0) {
+        cancelAnimationFrame(hoverFrame.current);
+        hoverFrame.current = 0;
+      }
+    };
   }, [s.tool]);
 
   // Registered by hand rather than as an `onWheel` prop because the handler
@@ -285,7 +297,17 @@ export function CanvasStage() {
     e.preventDefault();
     const box = e.currentTarget.getBoundingClientRect();
     const at = { x: e.clientX - box.left + e.currentTarget.scrollLeft, y: e.clientY - box.top + e.currentTarget.scrollTop };
-    void c.hitTest(e.clientX, e.clientY).then((hits) => setMenu(hits.length ? { at, hits } : null));
+    // `CanvasStage` is never re-keyed on a new document (app.tsx renders it
+    // unconditionally), so this component — and this in-flight promise —
+    // survive a document swap. Without capturing which doc the click was
+    // against, a right-click followed by loading a different PSD before the
+    // hit resolves would show the OLD document's layers, positioned in the
+    // old canvas's coordinates.
+    const doc = getState().doc;
+    void c.hitTest(e.clientX, e.clientY).then((hits) => {
+      if (getState().doc !== doc) return;  // a different document loaded while this was in flight
+      setMenu(hits.length ? { at, hits } : null);
+    });
   };
 
   const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
@@ -314,6 +336,11 @@ export function CanvasStage() {
       onPointerCancel={onPointerUp}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      // The hover hit test only fires on `pointermove` inside `.stage`, so
+      // nothing else clears it when the pointer leaves without the tool
+      // changing — without this, the last hovered layer's `.sel-hover`
+      // outline stays stuck on screen indefinitely.
+      onPointerLeave={() => setHoverId(null)}
     >
       {/* Deliberately names no file format. PSD is the only one that loads
           today, but PNG/JPEG are planned, and the file picker's `accept`
