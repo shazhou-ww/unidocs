@@ -190,14 +190,6 @@ export class DocController {
     if (tiles.length > 0) void this.renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
   }
 
-  /** Zoom changes only ever reach the canvas as a CSS box size, which the
-   *  Viewport measures rather than being told (see `Ratio` in viewport.ts).
-   *  So there is nothing to set here — only newly-exposed tiles to fetch,
-   *  since zooming out widens the visible document area. */
-  setZoom(): void {
-    this.requestVisibleTiles();
-  }
-
   /** The canvas element's laid-out box. Zoom compensation measures against
    *  this AFTER a resize, so it must be read fresh every time — a cached rect
    *  goes stale on the very layout change it is needed for. */

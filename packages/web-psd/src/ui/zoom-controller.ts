@@ -56,8 +56,10 @@ export function zoomTo(target: number, anchor?: { clientX: number; clientY: numb
   const now = controller.toScreen(held.x, held.y);
   stage.scrollLeft += anchorScroll(at.clientX, canvasRect.left + now.x);
   stage.scrollTop += anchorScroll(at.clientY, canvasRect.top + now.y);
-
-  controller.setZoom();
+  // Newly-exposed tiles are NOT fetched here. CanvasStage does it from a
+  // layout effect keyed on the zoom, which runs after the browser has
+  // re-laid-out the canvas — fetching from here would measure the box as it
+  // was before the resize and ask for the tiles that were already visible.
 }
 
 /** One ladder step in `dir`, anchored on the stage centre. */
@@ -92,5 +94,4 @@ export function zoomActual(): void {
 export function zoomForNewDoc(canvas: { width: number; height: number }): void {
   const zoom = initialZoom(canvas, stageSize());
   if (zoom !== getState().zoom) setState({ zoom });
-  getController()?.setZoom();
 }

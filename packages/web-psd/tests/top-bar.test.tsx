@@ -3,13 +3,13 @@ import { act, render, screen, fireEvent } from "@testing-library/react";
 import { TopBar } from "../src/ui/panels/top-bar.js";
 import { setState, getState } from "../src/ui/store.js";
 
-const setZoom = vi.fn();
+const requestVisibleTiles = vi.fn();
 // A stage big enough for "fit" to be meaningful, and a canvas box that
 // reports the document at 1:1 so `toCanvas`/`toScreen` behave like the real
 // measured mapping does at zoom 1.
 vi.mock("../src/ui/controller.js", () => ({
   getController: () => ({
-    setZoom,
+    requestVisibleTiles,
     stage: { clientWidth: 1000, clientHeight: 800, scrollLeft: 0, scrollTop: 0,
              getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800 }) },
     canvasRect: () => ({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300 }),
@@ -21,7 +21,7 @@ vi.mock("../src/ui/controller.js", () => ({
 }));
 
 beforeEach(() => {
-  setZoom.mockClear();
+  requestVisibleTiles.mockClear();
   setState({ docName: "summer-sale-kv.psd", zoom: 1, version: 3, docId: "abcdef0123456789" });
 });
 
@@ -36,9 +36,6 @@ describe("TopBar", () => {
     expect(screen.getByText("100%")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("放大"));
     expect(getState().zoom).toBeCloseTo(1.5);
-    // The zoom VALUE lives in the store; the controller is only nudged to
-    // re-fetch tiles, so it is called with no arguments.
-    expect(setZoom).toHaveBeenCalledWith();
     // Wrap external store mutation in act() so React re-renders TopBar with the new zoom
     // before the click handler fires. Without act(), the handler closes over the previous
     // zoom value and computes the wrong result.

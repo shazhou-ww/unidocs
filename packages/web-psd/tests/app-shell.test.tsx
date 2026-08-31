@@ -6,7 +6,7 @@ vi.mock("../src/doc-controller.js", () => ({
   DocController: class {
     docId = null;
     createFrom = vi.fn(async () => {});
-    setZoom = vi.fn();
+    requestVisibleTiles = vi.fn();
     toScreen = () => ({ x: 0, y: 0 });
     toCanvas = () => ({ x: 0, y: 0 });
     pickColor = () => null;

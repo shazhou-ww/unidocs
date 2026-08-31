@@ -12,6 +12,7 @@ import { getState, setState } from "../src/ui/store.js";
 vi.mock("../src/ui/controller.js", () => ({
   initController: vi.fn(),
   getController: () => ({
+    requestVisibleTiles: vi.fn(),
     toCanvas: (x: number, y: number) => ({ x, y }),
     toScreen: (x: number, y: number) => ({ x, y }),
   }),

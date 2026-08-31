@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { dispatch, getController, initController } from "../controller.js";
 import { getState, setState, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
@@ -143,6 +143,20 @@ export function CanvasStage() {
   };
 
   const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
+
+  // Anything that changes the canvas's laid-out box exposes a different slice
+  // of the document, and the newly-exposed tiles have to be fetched. This is
+  // the ONE place that happens, for the same reason the overlay uses
+  // percentages: a caller that fetches right after setting the zoom measures
+  // the box before React has committed the new size and re-requests exactly
+  // the tiles it already had. `useLayoutEffect` runs after the DOM mutation
+  // and layout, before paint, so the measurement is correct by construction —
+  // and it covers cold start (where the first paint is requested at 1:1
+  // before the fit-to-window zoom is applied) and a doc resize from an agent
+  // crop, not just the zoom controls.
+  useLayoutEffect(() => {
+    getController()?.requestVisibleTiles();
+  }, [s.zoom, s.doc?.canvas.width, s.doc?.canvas.height]);
 
   return (
     <div

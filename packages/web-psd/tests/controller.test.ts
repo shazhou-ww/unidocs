@@ -24,7 +24,7 @@ vi.mock("../src/doc-controller.js", () => ({
       capturedEvents = events;
     }
     // Zoom reads the stage box and nudges the controller to refetch tiles.
-    setZoom = vi.fn();
+    requestVisibleTiles = vi.fn();
     stage = { clientWidth: 1000, clientHeight: 800 } as unknown as HTMLElement;
     createFrom = vi.fn(async function (this: { docId: string | null }) {
       const next = docsQueue.shift();

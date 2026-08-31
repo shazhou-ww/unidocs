@@ -101,6 +101,14 @@ hit-testing 依赖 `toCanvas`、选区视觉依赖 `toScreen`。
 canvas 在滚动区里的偏移会自行漂移，建模它等于重新实现 flexbox。`flushSync` 在这里是承重的：让状态更新
 走批处理会测到**旧**布局、滚一个过期的距离，于是每步都漂一点。
 
+**"取 tile" 也不能在调用点做。** `initRender` 先按当前盒子请求首屏 tile，**之后**才触发 `onDoc` →
+适应窗口缩放；而 `zoomForNewDoc` 里 `setState` 之后立刻取 tile，量到的还是 React 未提交的旧盒子。
+两处叠加的结果是：打开大图缩到适应窗口后，新露出的区域从没被请求过，要等一次无关的滚动或 resize 才补上。
+`repaintAfterDocChange`（agent 裁剪）同理。修法是把"重取可见 tile"收进 `CanvasStage` 的一个
+`useLayoutEffect`，依赖 `[zoom, doc.width, doc.height]`——它在 DOM 提交和布局之后、绘制之前运行，
+测量按定义正确，且一处覆盖冷启动、缩放、文档尺寸变化三条路径。`DocController.setZoom` 随之删除：
+它既不 set 也不接收 zoom，`requestVisibleTiles` 已经诚实地说明了它做什么。
+
 **overlay 用百分比定位，不在渲染阶段测量。** `SelectionOverlay` 原本在**渲染阶段**调 `toScreen()` →
 `getBoundingClientRect()`，此时 React 还没把新的 canvas 尺寸提交进 DOM，量到的是**旧盒子**；缩放后
 选中框会停在旧位置且不会自行恢复。修法不是加 ResizeObserver 去通知它，而是让它**不需要测量**：

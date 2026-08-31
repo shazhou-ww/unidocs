@@ -5,13 +5,13 @@ import { setState, getState } from "../src/ui/store.js";
 
 const stage = { clientWidth: 1000, clientHeight: 800, scrollLeft: 0, scrollTop: 0,
                 getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800 }) };
-const setZoom = vi.fn();
+const requestVisibleTiles = vi.fn();
 
 vi.mock("../src/ui/controller.js", () => ({
   initController: vi.fn(),
   dispatch: vi.fn(),
   getController: () => ({
-    setZoom,
+    requestVisibleTiles,
     stage,
     canvasRect: () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }),
     toCanvas: (x: number, y: number) => ({ x: x / getState().zoom, y: y / getState().zoom }),
@@ -25,7 +25,7 @@ vi.mock("../src/ui/controller.js", () => ({
 let frames: Array<() => void> = [];
 beforeEach(() => {
   frames = [];
-  setZoom.mockClear();
+  requestVisibleTiles.mockClear();
   stage.scrollLeft = 0;
   stage.scrollTop = 0;
   vi.stubGlobal("requestAnimationFrame", (cb: () => void) => { frames.push(cb); return frames.length; });
@@ -67,13 +67,14 @@ describe("ctrl/⌘ + wheel zoom", () => {
     }
     // Nothing applied yet: the frame has not run.
     expect(getState().zoom).toBe(1);
-    expect(setZoom).not.toHaveBeenCalled();
 
+    const before = requestVisibleTiles.mock.calls.length;
     runFrame();
     // One application, and the deltas summed rather than the last one winning:
     // 5 x -20 is exp(1.0), not exp(0.2).
-    expect(setZoom).toHaveBeenCalledTimes(1);
     expect(getState().zoom).toBeCloseTo(Math.E, 5);
+    // And one tile refetch for the burst, not five.
+    expect(requestVisibleTiles.mock.calls.length - before).toBe(1);
   });
 
   it("keeps zooming across successive frames", () => {

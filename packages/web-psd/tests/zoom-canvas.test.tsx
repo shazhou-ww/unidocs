@@ -14,9 +14,12 @@ const stage = { clientWidth: 1000, clientHeight: 800, scrollLeft: 0, scrollTop: 
 let canvasLeft = 0;
 let canvasTop = 0;
 
+const requestVisibleTiles = vi.fn();
 vi.mock("../src/ui/controller.js", () => ({
+  initController: vi.fn(),
+  dispatch: vi.fn(),
   getController: () => ({
-    setZoom: vi.fn(),
+    requestVisibleTiles,
     stage,
     canvasRect: () => ({ left: canvasLeft, top: canvasTop, width: 0, height: 0, right: 0, bottom: 0 }),
     toCanvas: (cx: number, cy: number) => ({ x: (cx - canvasLeft) / getState().zoom, y: (cy - canvasTop) / getState().zoom }),
@@ -29,6 +32,7 @@ vi.mock("../src/ui/controller.js", () => ({
 const { zoomTo } = await import("../src/ui/zoom-controller.js");
 
 beforeEach(() => {
+  requestVisibleTiles.mockClear();
   stage.scrollLeft = 0;
   stage.scrollTop = 0;
   canvasLeft = 0;
@@ -106,5 +110,32 @@ describe("zoom anchoring", () => {
   it("clamps out-of-range targets before anchoring on them", () => {
     zoomTo(99, { clientX: 300, clientY: 200 });
     expect(getState().zoom).toBe(4);
+  });
+});
+
+describe("refetching tiles after the box changes", () => {
+  it("refetches once the new canvas size is committed, not before", async () => {
+    // The bug this pins: cold start requests the first tiles at 1:1, THEN
+    // fits the document to the stage. A refetch issued from the zoom call
+    // site would measure the canvas as it was before the resize and ask for
+    // exactly the tiles it already had, leaving the newly-exposed area of a
+    // large document blank until an unrelated scroll or resize.
+    const { CanvasStage } = await import("../src/ui/panels/canvas-stage.js");
+    const { render } = await import("@testing-library/react");
+    const { act } = await import("@testing-library/react");
+
+    render(<CanvasStage />);
+    requestVisibleTiles.mockClear();
+
+    act(() => { setState({ zoom: 0.25 }); });
+    expect(requestVisibleTiles).toHaveBeenCalledTimes(1);
+
+    // A document resize (e.g. an agent crop) exposes a different slice too.
+    act(() => { setState({ doc: { canvas: { width: 800, height: 400 }, layers: [] } as never }); });
+    expect(requestVisibleTiles).toHaveBeenCalledTimes(2);
+
+    // An unrelated store change must NOT trigger a refetch — the box did not move.
+    act(() => { setState({ tool: "eyedrop" }); });
+    expect(requestVisibleTiles).toHaveBeenCalledTimes(2);
   });
 });
