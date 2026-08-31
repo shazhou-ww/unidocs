@@ -23,7 +23,7 @@
       "path": "../admin-protocol"
     },
     {
-      "path": "../control-plane"
+      "path": "../service"
     }
   ]
 }

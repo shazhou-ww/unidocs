@@ -4,9 +4,13 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { CompactSign, exportJWK, generateKeyPair } from "jose";
 import { CasAdminErrorCodes } from "@unicas/admin-protocol";
 import type { CasAdminErrorResponse, CasOperatorIdentityKey } from "@unicas/admin-protocol";
-import { ControlPlaneService } from "@unicas/control-plane";
-import type { ControlPlaneCallContext } from "@unicas/control-plane";
+import {
+  ControlAuditActions,
+  type ControlPlaneCallContext,
+  type ControlPlaneOperations,
+} from "@unicas/service";
 import { migrateControlSchema } from "../src/control-schema.js";
+import { createControlPlaneOperations } from "../src/control-operations.js";
 import { ControlSessionStore } from "../src/control-sessions.js";
 
 let miniflare: Miniflare | undefined;
@@ -15,18 +19,20 @@ afterEach(async () => {
   miniflare = undefined;
 });
 
-async function createService(now?: () => number): Promise<{ db: D1Database; service: ControlPlaneService }> {
-  miniflare = new Miniflare(convertV4MiniflareOptions({ workers: [{
-    name: "control-plane-service-test",
-    modules: true,
-    script: "export default { fetch() { return new Response('ok'); } };",
-    compatibilityDate: "2025-08-17",
-    d1Databases: { DB: "control-plane-service-test-db" },
-  }] }));
+async function createService(now?: () => number): Promise<{ db: D1Database; service: ControlPlaneOperations }> {
+  miniflare = new Miniflare(convertV4MiniflareOptions({
+    workers: [{
+      name: "control-plane-service-test",
+      modules: true,
+      script: "export default { fetch() { return new Response('ok'); } };",
+      compatibilityDate: "2025-08-17",
+      d1Databases: { DB: "control-plane-service-test-db" },
+    }]
+  }));
   await miniflare.ready;
   const db = await miniflare.getD1Database("DB", "control-plane-service-test");
   await migrateControlSchema(db);
-  return { db, service: new ControlPlaneService(db, now ? { now } : {}) };
+  return { db, service: createControlPlaneOperations(db, now ? { now } : {}) };
 }
 
 const ISSUER = "https://accounts.google.com";
@@ -38,7 +44,7 @@ function ctx(identity: CasOperatorIdentityKey, email = `${identity.subject}@exam
 function expectError(value: unknown, error: CasAdminErrorResponse["error"]): void {
   expect(value).toMatchObject({ error });
 }
-async function createStack(service: ControlPlaneService, identity = alice, displayName = "Stack"): Promise<string> {
+async function createStack(service: ControlPlaneOperations, identity = alice, displayName = "Stack"): Promise<string> {
   const response = await service.createStack(ctx(identity), { body: { displayName } });
   if ("error" in response) throw new Error(response.error);
   return response.stackId;
@@ -134,6 +140,25 @@ describe("D1-backed control-plane service", () => {
     await createStack(service, bob, "Concurrent");
     expectError(await service.listStacks(ctx(alice), { query: { limit: 2, cursor: page.nextCursor } }), CasAdminErrorCodes.INVALID_CURSOR);
     expectError(await service.listStacks(ctx(alice), { query: { cursor: "!!!" } }), CasAdminErrorCodes.INVALID_CURSOR);
+  });
+
+  test("records session audit without advancing the control snapshot", async () => {
+    const { db, service } = await createService(() => 123_456);
+    await service.recordSessionAudit(
+      ctx(alice),
+      ControlAuditActions.sessionLogin,
+      `${alice.identityIssuer}:${alice.subject}`,
+    );
+    expect(await db.prepare(
+      "SELECT action, target, request_id, trace_id, created_at FROM cas_control_audit_events",
+    ).first()).toEqual({
+      action: "session.login",
+      target: `${alice.identityIssuer}:${alice.subject}`,
+      request_id: "req-1",
+      trace_id: "trace-1",
+      created_at: 123_456,
+    });
+    expect(await db.prepare("SELECT value FROM cas_control_meta WHERE key = 'snapshot'").first()).toBeNull();
   });
 
   test("stores, touches, expires, deletes, and prunes encrypted sessions", async () => {

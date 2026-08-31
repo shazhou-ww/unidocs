@@ -2,6 +2,7 @@
 
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
+import type { ControlPlaneOperations } from "@unicas/service";
 import { createOAuthAuthorizationHandler } from "./auth.js";
 import {
   CONTROL_PLANE_MCP_PATH,
@@ -13,43 +14,20 @@ import type { ControlPlaneMcpEnvConfig } from "./config.js";
 import { createControlPlaneMcpServer } from "./server.js";
 import type { ControlPlaneMcpGrantProps } from "./server.js";
 
+export { mcpConfigFromEnv } from "./config.js";
+
 export interface Env extends ControlPlaneMcpEnvConfig {
-  CAS_CONTROL_DB: D1Database;
   OAUTH_KV: KVNamespace;
   CAS_TENANT_AUDIT_READER?: Fetcher;
 }
+
+export type ControlPlaneOperationsFactory = (env: Env) => ControlPlaneOperations;
 
 type ExecutionContextWithProps = ExecutionContext & {
   props?: ControlPlaneMcpGrantProps;
 };
 
 const VERIFIED_OAUTH_CONTEXT = Symbol.for("cloudflare.workers-oauth-provider.verified-context.v1");
-
-const mcpApiHandler = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const config = mcpConfigFromEnv(env);
-    const props = (ctx as ExecutionContextWithProps).props;
-    if (!props) return Response.json({ error: "MCP_AUTH_CONTEXT_MISSING" }, { status: 500 });
-    if (!emailAllowed(props.emailForDisplay, env.ADMIN_EMAIL_ALLOWLIST)) {
-      return Response.json({ error: "MCP_ACCESS_NOT_ALLOWED" }, { status: 403 });
-    }
-    attachVerifiedOAuthContext(request, ctx, props, config.resource);
-    const handler = createMcpHandler(
-      () => createControlPlaneMcpServer(env.CAS_CONTROL_DB, {
-        auditReader: env.CAS_TENANT_AUDIT_READER,
-        auditReaderKey: env.CAS_AUDIT_READER_KEY,
-        publicOrigin: config.publicOrigin,
-        mutationsEnabled: env.MCP_MUTATIONS_ENABLED === "true",
-      }),
-      {
-        route: CONTROL_PLANE_MCP_PATH,
-        allowedOriginHostnames: [...config.allowedOriginHostnames],
-        authContext: { props },
-      },
-    );
-    return handler(request, env, ctx);
-  },
-};
 
 function attachVerifiedOAuthContext(
   request: Request,
@@ -72,7 +50,36 @@ function attachVerifiedOAuthContext(
   };
 }
 
-export function createControlPlaneMcpWorker(config: ReturnType<typeof mcpConfigFromEnv>) {
+export function createControlPlaneMcpWorker(
+  config: ReturnType<typeof mcpConfigFromEnv>,
+  operationsForEnv: ControlPlaneOperationsFactory,
+) {
+  const mcpApiHandler = {
+    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+      const requestConfig = mcpConfigFromEnv(env);
+      const props = (ctx as ExecutionContextWithProps).props;
+      if (!props) return Response.json({ error: "MCP_AUTH_CONTEXT_MISSING" }, { status: 500 });
+      if (!emailAllowed(props.emailForDisplay, env.ADMIN_EMAIL_ALLOWLIST)) {
+        return Response.json({ error: "MCP_ACCESS_NOT_ALLOWED" }, { status: 403 });
+      }
+      attachVerifiedOAuthContext(request, ctx, props, requestConfig.resource);
+      const handler = createMcpHandler(
+        () => createControlPlaneMcpServer(operationsForEnv(env), {
+          auditReader: env.CAS_TENANT_AUDIT_READER,
+          auditReaderKey: env.CAS_AUDIT_READER_KEY,
+          publicOrigin: requestConfig.publicOrigin,
+          mutationsEnabled: env.MCP_MUTATIONS_ENABLED === "true",
+        }),
+        {
+          route: CONTROL_PLANE_MCP_PATH,
+          allowedOriginHostnames: [...requestConfig.allowedOriginHostnames],
+          authContext: { props },
+        },
+      );
+      return handler(request, env, ctx);
+    },
+  };
+
   return new OAuthProvider<Env>({
     apiRoute: CONTROL_PLANE_MCP_PATH,
     apiHandler: mcpApiHandler,
@@ -101,10 +108,3 @@ export function createControlPlaneMcpWorker(config: ReturnType<typeof mcpConfigF
     },
   });
 }
-
-export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const worker = createControlPlaneMcpWorker(mcpConfigFromEnv(env));
-    return worker.fetch(request, env, ctx);
-  },
-} satisfies ExportedHandler<Env>;

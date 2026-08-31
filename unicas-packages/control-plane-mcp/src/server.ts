@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import { ControlPlaneService } from "@unicas/control-plane";
-import type { ControlPlaneCallContext } from "@unicas/control-plane";
+import type {
+  ControlPlaneCallContext,
+  ControlPlaneOperations,
+} from "@unicas/service";
 import { CasAdminErrorCodes, formatCasAdminETag } from "@unicas/admin-protocol";
 import { getMcpAuthContext } from "agents/mcp/server";
 import { z } from "zod";
@@ -23,7 +25,7 @@ export interface ControlPlaneMcpServerOptions {
 }
 
 export function createControlPlaneMcpServer(
-  db: D1Database,
+  controlPlane: ControlPlaneOperations,
   options: ControlPlaneMcpServerOptions = {},
 ): McpServer {
   const server = new McpServer({
@@ -41,7 +43,7 @@ export function createControlPlaneMcpServer(
     },
     async () => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).me(serviceContext(grant, "whoami"));
+      const result = await controlPlane.me(serviceContext(grant, "whoami"));
       return toolResult(result);
     },
   );
@@ -59,7 +61,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ limit, cursor }) => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).listStacks(serviceContext(grant, "list_stacks"), {
+      const result = await controlPlane.listStacks(serviceContext(grant, "list_stacks"), {
         query: {
           limit,
           cursor,
@@ -78,7 +80,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId }) => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).getStack(serviceContext(grant, "get_stack"), { path: { stackId } });
+      const result = await controlPlane.getStack(serviceContext(grant, "get_stack"), { path: { stackId } });
       return toolResult(withEtag(result));
     },
   );
@@ -96,7 +98,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId, limit, cursor }) => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).listMembers(serviceContext(grant, "list_members"), {
+      const result = await controlPlane.listMembers(serviceContext(grant, "list_members"), {
         path: { stackId },
         query: { limit, cursor },
       });
@@ -113,7 +115,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId }) => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).getIssuer(serviceContext(grant, "get_issuer"), { path: { stackId } });
+      const result = await controlPlane.getIssuer(serviceContext(grant, "get_issuer"), { path: { stackId } });
       return toolResult(withEtag(result));
     },
   );
@@ -127,7 +129,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId }) => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).listIssuerKeys(serviceContext(grant, "list_issuer_keys"), { path: { stackId } });
+      const result = await controlPlane.listIssuerKeys(serviceContext(grant, "list_issuer_keys"), { path: { stackId } });
       return toolResult(result);
     },
   );
@@ -142,7 +144,7 @@ export function createControlPlaneMcpServer(
     async ({ stackId }) => {
       const grant = requireGrantScope("control:read");
       const context = serviceContext(grant, "list_ref_domains");
-      const membership = await new ControlPlaneService(db).getStack(context, { path: { stackId } });
+      const membership = await controlPlane.getStack(context, { path: { stackId } });
       if ("error" in membership) return toolResult(membership);
       return auditReaderResult(options, "/_internal/audit/domains", { stackId });
     },
@@ -162,7 +164,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId, limit, cursor, after }) => {
       const grant = requireGrantScope("control:read");
-      const result = await new ControlPlaneService(db).listControlAuditEvents(serviceContext(grant, "list_control_audit_events"), {
+      const result = await controlPlane.listControlAuditEvents(serviceContext(grant, "list_control_audit_events"), {
         path: { stackId },
         query: { limit, cursor, after },
       });
@@ -186,7 +188,7 @@ export function createControlPlaneMcpServer(
     async ({ stackId, refDomain, tenantId, limit, cursor }) => {
       const grant = requireGrantScope("control:read");
       const context = serviceContext(grant, "list_root_domain_refs");
-      const membership = await new ControlPlaneService(db).getStack(context, { path: { stackId } });
+      const membership = await controlPlane.getStack(context, { path: { stackId } });
       if ("error" in membership) return toolResult(membership);
       return auditReaderResult(options, "/_internal/audit/refs", {
         stackId,
@@ -214,7 +216,7 @@ export function createControlPlaneMcpServer(
     async ({ stackId, refDomain, tenantId, after, limit }) => {
       const grant = requireGrantScope("control:read");
       const context = serviceContext(grant, "list_root_domain_events");
-      const membership = await new ControlPlaneService(db).getStack(context, { path: { stackId } });
+      const membership = await controlPlane.getStack(context, { path: { stackId } });
       if ("error" in membership) return toolResult(membership);
       return auditReaderResult(options, "/_internal/audit/events", {
         stackId,
@@ -238,7 +240,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ displayName, idempotencyKey }) => {
       const grant = requireMutation("control:write", options);
-      const result = await new ControlPlaneService(db).createStack(
+      const result = await controlPlane.createStack(
         serviceContext(grant, "create_stack"),
         { body: { displayName } },
         { idempotencyKey },
@@ -261,7 +263,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId, displayName, description, etag }) => {
       const grant = requireMutation("control:write", options);
-      const result = await new ControlPlaneService(db).patchStack(
+      const result = await controlPlane.patchStack(
         serviceContext(grant, "update_stack"),
         { path: { stackId }, body: { displayName, description } },
         { ifMatch: etag },
@@ -287,7 +289,7 @@ export function createControlPlaneMcpServer(
       if (email.trim().toLowerCase() !== confirmEmail.trim().toLowerCase()) {
         return confirmationError("confirmEmail must exactly match the invited email");
       }
-      const result = await new ControlPlaneService(db).createMemberInvitation(
+      const result = await controlPlane.createMemberInvitation(
         serviceContext(grant, "invite_member"),
         { path: { stackId }, body: { emailConstraint: email } },
         { idempotencyKey },
@@ -316,7 +318,7 @@ export function createControlPlaneMcpServer(
     async ({ stackId, identityIssuer, subject, etag, confirmSubject }) => {
       const grant = requireMutation("control:security", options);
       if (confirmSubject !== subject) return confirmationError("confirmSubject must exactly match subject");
-      const result = await new ControlPlaneService(db).deleteMember(
+      const result = await controlPlane.deleteMember(
         serviceContext(grant, "remove_member"),
         { path: { stackId }, query: { identityIssuer, subject } },
         { ifMatch: etag },
@@ -341,7 +343,7 @@ export function createControlPlaneMcpServer(
     async ({ stackId, issuer, audience, etag, confirmIssuer }) => {
       const grant = requireMutation("control:security", options);
       if (confirmIssuer !== issuer) return confirmationError("confirmIssuer must exactly match issuer");
-      const result = await new ControlPlaneService(db).putIssuer(
+      const result = await controlPlane.putIssuer(
         serviceContext(grant, "set_issuer"),
         { path: { stackId }, body: { issuer, audience } },
         { ifMatch: etag },
@@ -363,7 +365,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId, kid, algorithm }) => {
       const grant = requireMutation("control:security", options);
-      const result = await new ControlPlaneService(db).createPossessionChallenge(
+      const result = await controlPlane.createPossessionChallenge(
         serviceContext(grant, "create_issuer_key_challenge"),
         { stackId, kid, algorithm },
       );
@@ -387,7 +389,7 @@ export function createControlPlaneMcpServer(
     },
     async ({ stackId, kid, algorithm, publicJwk, possessionProof, idempotencyKey }) => {
       const grant = requireMutation("control:security", options);
-      const result = await new ControlPlaneService(db).createIssuerKey(
+      const result = await controlPlane.createIssuerKey(
         serviceContext(grant, "add_issuer_key"),
         { path: { stackId }, body: { kid, algorithm, publicJwk, possessionProof } },
         { idempotencyKey },
@@ -415,7 +417,7 @@ export function createControlPlaneMcpServer(
       if (confirmKid !== kid || confirmState !== state) {
         return confirmationError("confirmKid and confirmState must exactly match the requested transition");
       }
-      const result = await new ControlPlaneService(db).deleteIssuerKey(
+      const result = await controlPlane.deleteIssuerKey(
         serviceContext(grant, "transition_issuer_key"),
         { path: { stackId, kid }, body: { toState: state } },
         { ifMatch: etag },

@@ -17,5 +17,18 @@ describe("cas-control-plane package boundary", () => {
     expect(pkg.dependencies["@unicas/service"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/admin-webui"]).toBeUndefined();
+
+    const serviceSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../src/service.ts"),
+      "utf8",
+    );
+    for (const sql of [
+      "INSERT INTO cas_operator_identities",
+      "SELECT s.stack_id, s.display_name",
+      "INSERT INTO cas_stacks",
+      "UPDATE cas_stacks SET display_name",
+    ]) {
+      expect(serviceSource).not.toContain(sql);
+    }
   });
 });

@@ -28,8 +28,8 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@modelcontextprotocol/server": "2.0.0",
     "@unicas/control-auth": "workspace:*",
-    "@unicas/control-plane": "workspace:*",
     "@unicas/admin-protocol": "workspace:*",
+    "@unicas/service": "workspace:*",
     "agents": "0.21.0",
     "zod": "^4.0.0"
   },

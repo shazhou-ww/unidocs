@@ -13,6 +13,8 @@ describe("control-plane MCP package boundary", () => {
 
     expect(pkg.private).toBe(true);
     expect(CONTROL_PLANE_MCP_PATH).toBe("/mcp");
+    expect(pkg.dependencies).toHaveProperty("@unicas/service", "workspace:*");
+    expect(pkg.dependencies).not.toHaveProperty("@unicas/control-plane");
     expect(pkg.dependencies).not.toHaveProperty("@unicas/tenant-protocol");
 
     const sourceDir = join(dirname(fileURLToPath(import.meta.url)), "../src");

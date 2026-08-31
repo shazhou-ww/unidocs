@@ -26,8 +26,6 @@ import type {
   CasAdminCreateIssuerKeyResponse,
   CasAdminCreateMemberInvitationRequest,
   CasAdminCreateMemberInvitationResponse,
-  CasAdminCreateStackRequest,
-  CasAdminCreateStackResponse,
   CasAdminDeleteIssuerKeyRequest,
   CasAdminDeleteIssuerKeyResponse,
   CasAdminDeleteMemberRequest,
@@ -35,27 +33,18 @@ import type {
   CasAdminErrorResponse,
   CasAdminGetIssuerRequest,
   CasAdminGetIssuerResponse,
-  CasAdminGetStackRequest,
-  CasAdminGetStackResponse,
   CasAdminListControlAuditEventsRequest,
   CasAdminListControlAuditEventsResponse,
   CasAdminListIssuerKeysRequest,
   CasAdminListIssuerKeysResponse,
   CasAdminListMembersRequest,
   CasAdminListMembersResponse,
-  CasAdminListStacksRequest,
-  CasAdminListStacksResponse,
-  CasAdminMeResponse,
-  CasAdminPatchStackRequest,
-  CasAdminPatchStackResponse,
   CasAdminPutIssuerRequest,
   CasAdminPutIssuerResponse,
   CasControlAuditEvent,
   CasIssuerKeyState,
   CasMemberInvitation,
-  CasOperatorIdentity,
   CasOperatorIdentityKey,
-  CasStack,
   CasStackIssuer,
   CasStackIssuerKey,
   CasStackMember,
@@ -73,7 +62,6 @@ import {
   generateInvitationId,
   generateInvitationToken,
   generateNonce,
-  generateStackId,
   INVITATION_TTL_MS,
   isSupportedKeyAlgorithm,
   normalizeEmailConstraint,
@@ -84,7 +72,6 @@ import {
   toAdminError,
   validateAudience,
   validateCapabilityMaxLifetimeSeconds,
-  validateDisplayName,
   validateEmailConstraint,
   validateInvitationToken,
   validateIssuer,
@@ -95,7 +82,6 @@ import {
 import type {
   ControlAuditAction,
   ControlPlaneCallContext,
-  ControlPlaneOperations,
   ServiceMutationInput,
   SupportedKeyAlgorithm,
 } from "@unicas/service";
@@ -110,7 +96,7 @@ export interface ControlPlaneServiceOptions {
 
 const SNAPSHOT_KEY = "snapshot";
 
-export class ControlPlaneService implements ControlPlaneOperations {
+export class ControlPlaneService {
   readonly #db: D1Database;
   readonly #now: () => number;
   readonly #invitationTtlMs: number;
@@ -126,165 +112,6 @@ export class ControlPlaneService implements ControlPlaneOperations {
       options.possessionChallengeTtlMs ?? POSSESSION_CHALLENGE_TTL_MS;
     this.#listDefaultLimit = options.listDefaultLimit ?? 50;
     this.#listMaxLimit = options.listMaxLimit ?? 200;
-  }
-
-  // ------------------------------------------------------------------
-  // Operator identity
-  // ------------------------------------------------------------------
-
-  me(
-    ctx: ControlPlaneCallContext,
-  ): Promise<CasAdminMeResponse | CasAdminErrorResponse> {
-    return this.#guard(async () => {
-      const now = this.#now();
-      const profile = ctx.profile ?? { displayName: null, emailForDisplay: null };
-      const existing = await this.#db
-        .prepare(
-          "SELECT display_name, email_for_display FROM cas_operator_identities WHERE identity_issuer = ? AND subject = ?",
-        )
-        .bind(ctx.identity.identityIssuer, ctx.identity.subject)
-        .first<{ display_name: string | null; email_for_display: string | null }>();
-      if (!existing) {
-        try {
-          await this.#db
-            .prepare(
-              "INSERT INTO cas_operator_identities (identity_issuer, subject, display_name, email_for_display, created_at) VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(
-              ctx.identity.identityIssuer,
-              ctx.identity.subject,
-              profile.displayName,
-              profile.emailForDisplay,
-              now,
-            )
-            .run();
-        } catch (error) {
-          if (!isUniqueViolation(error)) throw error;
-        }
-        await this.#recordSessionAudit(
-          ctx,
-          ControlAuditActions.identityCreated,
-          `${ctx.identity.identityIssuer}:${ctx.identity.subject}`,
-          null,
-        );
-      } else if (
-        existing.display_name !== profile.displayName
-        || existing.email_for_display !== profile.emailForDisplay
-      ) {
-        await this.#db
-          .prepare(
-            "UPDATE cas_operator_identities SET display_name = ?, email_for_display = ? WHERE identity_issuer = ? AND subject = ?",
-          )
-          .bind(profile.displayName, profile.emailForDisplay, ctx.identity.identityIssuer, ctx.identity.subject)
-          .run();
-        await this.#recordSessionAudit(
-          ctx,
-          ControlAuditActions.identityUpdated,
-          `${ctx.identity.identityIssuer}:${ctx.identity.subject}`,
-          null,
-        );
-      }
-      const identity: CasOperatorIdentity = {
-        identityIssuer: ctx.identity.identityIssuer,
-        subject: ctx.identity.subject,
-        displayName: profile.displayName,
-        emailForDisplay: profile.emailForDisplay,
-      };
-      const memberships = await this.#listMemberships(ctx.identity);
-      return { identity, memberships };
-    });
-  }
-
-  // ------------------------------------------------------------------
-  // Stacks
-  // ------------------------------------------------------------------
-
-  listStacks(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminListStacksRequest,
-  ): Promise<CasAdminListStacksResponse> {
-    return this.#guard(async () => {
-      if (!this.#validListLimit(request.query?.limit)) {
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "invalid list limit");
-      }
-      const cursor = this.#requireCursor(request.query?.cursor);
-      const snapshot = await this.#readSnapshot();
-      if (cursor && cursor.snapshot !== snapshot) {
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_CURSOR, "cursor is bound to an outdated control snapshot");
-      }
-      const limit = parseControlListLimit(request.query?.limit) ?? this.#listDefaultLimit;
-      const rows = await this.#listStackRows(ctx.identity, cursor?.last, limit + 1);
-      await this.#requireStableSnapshot(snapshot);
-      const items = rows.slice(0, limit).map(toCasStack);
-      const nextCursor: CasAdminListCursor | null =
-        rows.length > limit
-          ? encodeControlListCursor({ version: 1, snapshot, last: items[items.length - 1]!.stackId })
-          : null;
-      return { items, nextCursor };
-    });
-  }
-
-  createStack(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminCreateStackRequest, "headers">,
-    mutation: ServiceMutationInput = {},
-  ): Promise<CasAdminCreateStackResponse> {
-    return this.#guard(() =>
-      this.#withCreateIdempotency(
-        ctx,
-        "POST",
-        "/admin/stacks",
-        mutation.idempotencyKey,
-        canonicalJson({ displayName: request.body.displayName }),
-        (batch) => this.#buildCreateStack(ctx, request, batch),
-      ));
-  }
-
-  getStack(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminGetStackRequest,
-  ): Promise<CasAdminGetStackResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      const row = await this.#stackRow(request.path.stackId);
-      return toCasStack(row);
-    });
-  }
-
-  patchStack(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminPatchStackRequest, "headers">,
-    mutation: ServiceMutationInput,
-  ): Promise<CasAdminPatchStackResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      const row = await this.#stackRow(request.path.stackId);
-      this.#requireIfMatch(mutation.ifMatch, row.revision);
-      const rawName = request.body.displayName;
-      const rawDescription = request.body.description;
-      if (rawName === undefined && rawDescription === undefined) {
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "no change requested");
-      }
-      if (rawName !== undefined) {
-        const nameError = validateDisplayName(rawName);
-        if (nameError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, nameError);
-      }
-      if (rawDescription !== undefined && (typeof rawDescription !== "string" || rawDescription.length > 2_000)) {
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "description must be a string of at most 2000 characters");
-      }
-      const newName = rawName?.trim() ?? row.display_name;
-      const newDescription = rawDescription?.trim() ?? row.description;
-      if (newName === row.display_name && newDescription === row.description) {
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "no change requested");
-      }
-      const batch = this.#newMutationBatch(ctx, request.path.stackId, ControlAuditActions.stackPatched, request.path.stackId);
-      batch.push(
-        this.#db.prepare("UPDATE cas_stacks SET display_name = ?, description = ?, revision = revision + 1 WHERE stack_id = ?")
-          .bind(newName, newDescription, request.path.stackId),
-      );
-      await this.#db.batch(batch);
-      return toCasStack({ ...row, display_name: newName, description: newDescription, revision: row.revision + 1 });
-    });
   }
 
   // ------------------------------------------------------------------
@@ -693,41 +520,9 @@ export class ControlPlaneService implements ControlPlaneOperations {
     });
   }
 
-  /** Record a non-mutation control event (session login/logout). */
-  async recordSessionAudit(
-    ctx: ControlPlaneCallContext,
-    action: ControlAuditAction,
-    target: string,
-    stackId: string | null = null,
-  ): Promise<void> {
-    await this.#recordSessionAudit(ctx, action, target, stackId);
-  }
-
   // ------------------------------------------------------------------
   // Creation builders (append statements; executed atomically by caller)
   // ------------------------------------------------------------------
-
-  #buildCreateStack(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminCreateStackRequest,
-    batch: D1PreparedStatement[],
-  ): CasStack {
-    const nameError = validateDisplayName(request.body.displayName);
-    if (nameError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, nameError);
-    const stackId = generateStackId();
-    const now = this.#now();
-    const displayName = request.body.displayName.trim();
-    this.#appendMutationStatements(ctx, batch, stackId, ControlAuditActions.stackCreated, stackId);
-    batch.push(
-      this.#db.prepare("INSERT INTO cas_stacks (stack_id, display_name, description, status, created_at, revision) VALUES (?, ?, '', 'active', ?, 1)")
-        .bind(stackId, displayName, now),
-    );
-    batch.push(
-      this.#db.prepare("INSERT INTO cas_stack_members (stack_id, identity_issuer, subject, joined_at) VALUES (?, ?, ?, ?)")
-        .bind(stackId, ctx.identity.identityIssuer, ctx.identity.subject, now),
-    );
-    return { stackId, displayName, description: "", status: "active", createdAt: now, revision: 1 };
-  }
 
   #buildCreateInvitation(
     ctx: ControlPlaneCallContext,
@@ -957,30 +752,6 @@ export class ControlPlaneService implements ControlPlaneOperations {
     return row?.count ?? 0;
   }
 
-  async #listMemberships(identity: CasOperatorIdentityKey): Promise<CasStackMember[]> {
-    const rows = await this.#db
-      .prepare(
-        "SELECT m.stack_id, m.identity_issuer, m.subject, i.display_name, i.email_for_display FROM cas_stack_members m LEFT JOIN cas_operator_identities i ON i.identity_issuer = m.identity_issuer AND i.subject = m.subject WHERE m.identity_issuer = ? AND m.subject = ? ORDER BY m.stack_id",
-      )
-      .bind(identity.identityIssuer, identity.subject)
-      .all<MemberRow>();
-    return (rows.results ?? []).map(toCasStackMember);
-  }
-
-  async #listStackRows(
-    identity: CasOperatorIdentityKey,
-    afterStackId: string | undefined,
-    limit: number,
-  ): Promise<StackRow[]> {
-    const rows = await this.#db
-      .prepare(
-        "SELECT s.stack_id, s.display_name, s.description, s.status, s.created_at, s.revision FROM cas_stacks s JOIN cas_stack_members m ON m.stack_id = s.stack_id WHERE m.identity_issuer = ? AND m.subject = ? AND s.stack_id > ? ORDER BY s.stack_id LIMIT ?",
-      )
-      .bind(identity.identityIssuer, identity.subject, afterStackId ?? "", limit)
-      .all<StackRow>();
-    return rows.results ?? [];
-  }
-
   async #readSnapshot(): Promise<number> {
     const row = await this.#db
       .prepare("SELECT value FROM cas_control_meta WHERE key = ?")
@@ -1035,33 +806,6 @@ export class ControlPlaneService implements ControlPlaneOperations {
     const batch: D1PreparedStatement[] = [];
     this.#appendMutationStatements(ctx, batch, stackId, action, target);
     return batch;
-  }
-
-  async #recordSessionAudit(
-    ctx: ControlPlaneCallContext,
-    action: ControlAuditAction,
-    target: string,
-    stackId: string | null,
-  ): Promise<void> {
-    await this.#db
-      .prepare(
-        "INSERT INTO cas_control_audit_events (event_id, stack_id, identity_issuer, subject, action, target, request_id, trace_id, caller_channel, oauth_client_handle, tool_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .bind(
-        generateEventId(),
-        stackId,
-        ctx.identity.identityIssuer,
-        ctx.identity.subject,
-        action,
-        target,
-        ctx.requestId ?? null,
-        ctx.traceId ?? null,
-        ctx.caller?.channel ?? null,
-        ctx.caller?.oauthClientHandle ?? null,
-        ctx.caller?.toolName ?? null,
-        this.#now(),
-      )
-      .run();
   }
 
   #validListLimit(value: number | undefined): boolean {
@@ -1148,17 +892,6 @@ interface PossessionChallengeRow {
   readonly kid: string;
   readonly algorithm: string;
   readonly expires_at: number;
-}
-
-function toCasStack(row: StackRow): CasStack {
-  return {
-    stackId: row.stack_id,
-    displayName: row.display_name,
-    description: row.description,
-    status: row.status === "suspended" ? "suspended" : "active",
-    createdAt: row.created_at,
-    revision: row.revision,
-  };
 }
 
 function toCasStackMember(row: MemberRow): CasStackMember {

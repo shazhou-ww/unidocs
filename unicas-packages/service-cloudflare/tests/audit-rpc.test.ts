@@ -32,8 +32,16 @@ vi.mock("@unicas/admin-webui", () => ({
 vi.mock("@unicas/control-plane", () => ({
   ControlPlaneService: class { },
 }));
+vi.mock("../src/control-operations.js", () => ({
+  createControlPlaneOperations: () => ({}),
+}));
 vi.mock("@unicas/control-plane-mcp", () => ({
-  default: { fetch: () => new Response("mcp") },
+  mcpConfigFromEnv: () => ({
+    resource: "https://cas.example/mcp",
+    publicOrigin: "https://cas.example",
+    allowedOriginHostnames: ["cas.example"],
+  }),
+  createControlPlaneMcpWorker: () => ({ fetch: () => new Response("mcp") }),
 }));
 
 import worker from "../src/worker.js";

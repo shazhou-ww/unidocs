@@ -4,14 +4,18 @@ import {
   type AdminBffEnv,
   uiAssets,
 } from "@unicas/admin-webui";
-import { ControlPlaneService } from "@unicas/control-plane";
-import mcpWorker, { type Env as McpEnv } from "@unicas/control-plane-mcp";
+import {
+  createControlPlaneMcpWorker,
+  mcpConfigFromEnv,
+  type Env as McpEnv,
+} from "@unicas/control-plane-mcp";
 import {
   createUniCasService,
   matchUniCasServiceRoute,
   StackCapabilityVerifier,
   type BlobStore,
   type KeyedActorPort,
+  type ControlPlaneOperations,
   type ServicePlatform,
   type SqlDatabase,
 } from "@unicas/service";
@@ -23,6 +27,7 @@ import {
 } from "./audit-reads.js";
 import { AuthorityRepository } from "./control-authority.js";
 import { migrateControlSchema } from "./control-schema.js";
+import { createControlPlaneOperations } from "./control-operations.js";
 import { ControlSessionStore } from "./control-sessions.js";
 import {
   RootRefDomainDurableObject,
@@ -171,7 +176,7 @@ function adminHandlerFor(env: Env): Promise<(request: Request) => Promise<Respon
       const now = config.now ?? (() => Date.now());
       return createAdminBff({
         config,
-        controlPlane: new ControlPlaneService(env.CAS_CONTROL_DB, { now }),
+        controlPlane: controlPlaneFor(env, now),
         sessionStore: new ControlSessionStore(env.CAS_CONTROL_DB, now),
         auditReader: localAuditReader(env),
         assets: uiAssets,
@@ -181,6 +186,10 @@ function adminHandlerFor(env: Env): Promise<(request: Request) => Promise<Respon
     void handler.catch(() => adminHandlers.delete(key));
   }
   return handler;
+}
+
+function controlPlaneFor(env: Env, now?: () => number): ControlPlaneOperations {
+  return createControlPlaneOperations(env.CAS_CONTROL_DB, { now });
 }
 
 function verifierFor(env: Env): StackCapabilityVerifier {
@@ -292,7 +301,11 @@ async function fetchMcp(
   ctx: ExecutionContext,
 ): Promise<Response> {
   await ensureControlSchema(env);
-  return mcpWorker.fetch(request, {
+  const worker = createControlPlaneMcpWorker(
+    mcpConfigFromEnv(env),
+    () => controlPlaneFor(env),
+  );
+  return worker.fetch(request, {
     ...env,
     CAS_TENANT_AUDIT_READER: auditReader,
   }, ctx);

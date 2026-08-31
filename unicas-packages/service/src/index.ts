@@ -172,3 +172,18 @@ export type {
   ServiceMutationInput,
   StoredSession,
 } from "./control-plane.js";
+export { ControlPlaneAdminService } from "./control-admin.js";
+export type {
+  ControlAuditRecord,
+  ControlCreateStackCommitResult,
+  ControlCreateStackPlan,
+  ControlIdempotencyRecord,
+  ControlIdentityPlan,
+  ControlIdentityRecord,
+  ControlMembershipRecord,
+  ControlPatchStackCommitResult,
+  ControlPatchStackPlan,
+  ControlPlaneAdminRepository,
+  ControlPlaneAdminServiceOptions,
+  ControlStackRecord,
+} from "./control-admin.js";

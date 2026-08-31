@@ -13,6 +13,10 @@ describe("service-cloudflare package boundary", () => {
     expect(pkg.private).toBe(true);
     expect(pkg.dependencies["@unicas/service"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/control-plane"]).toBe("workspace:*");
+    expect(readFileSync(join(root, "src/control-admin-repository.ts"), "utf8"))
+      .toContain("implements ControlPlaneAdminRepository");
+    expect(readFileSync(join(root, "src/control-operations.ts"), "utf8"))
+      .toContain("createControlPlaneOperations");
     expect(wrangler).toContain('name = "unidocs-cas"');
     expect(wrangler).toContain('pattern = "unicas.shazhou.work/*"');
     expect(wrangler).not.toContain("[[services]]");

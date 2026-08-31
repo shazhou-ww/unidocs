@@ -6,18 +6,21 @@ import { createMcpHandler } from "agents/mcp/server";
 import { createControlPlaneMcpServer } from "../../control-plane-mcp/src/server.js";
 import type { ControlPlaneMcpGrantProps } from "../../control-plane-mcp/src/server.js";
 import { migrateControlSchema } from "../src/control-schema.js";
+import { createControlPlaneOperations } from "../src/control-operations.js";
 
 let miniflare: Miniflare;
 let db: D1Database;
 
 beforeEach(async () => {
-  miniflare = new Miniflare(convertV4MiniflareOptions({ workers: [{
-    name: "control-plane-mcp-server-test",
-    modules: true,
-    script: "export default { fetch() { return new Response('ok'); } };",
-    compatibilityDate: "2025-08-17",
-    d1Databases: { DB: "control-plane-mcp-server-test-db" },
-  }] }));
+  miniflare = new Miniflare(convertV4MiniflareOptions({
+    workers: [{
+      name: "control-plane-mcp-server-test",
+      modules: true,
+      script: "export default { fetch() { return new Response('ok'); } };",
+      compatibilityDate: "2025-08-17",
+      d1Databases: { DB: "control-plane-mcp-server-test-db" },
+    }]
+  }));
   await miniflare.ready;
   db = await miniflare.getD1Database("DB", "control-plane-mcp-server-test");
   await migrateControlSchema(db);
@@ -65,17 +68,21 @@ describe("adapter-hosted control-plane MCP server", () => {
     expect(updated.structuredContent).toMatchObject({ description: "Production", revision: 2, etag: '"2"' });
     const audit = await callTool(handler, "list_control_audit_events", { stackId: first.structuredContent.stackId, limit: 10 });
     const items = audit.structuredContent.items as Array<Record<string, unknown>>;
-    expect(items.find((item) => item.action === "stack.created")).toMatchObject({ caller: {
-      channel: "mcp", oauthClientHandle: "a".repeat(64), toolName: "create_stack",
-    } });
+    expect(items.find((item) => item.action === "stack.created")).toMatchObject({
+      caller: {
+        channel: "mcp", oauthClientHandle: "a".repeat(64), toolName: "create_stack",
+      }
+    });
   });
 
   test("reads adapter-provided root-domain audit data", async () => {
-    const auditReader = { fetch: async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      expect(url.pathname).toBe("/_internal/audit/domains");
-      return Response.json({ domains: [{ stackId: url.searchParams.get("stackId"), refDomain: "doc", revision: 2 }] });
-    } };
+    const auditReader = {
+      fetch: async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        expect(url.pathname).toBe("/_internal/audit/domains");
+        return Response.json({ domains: [{ stackId: url.searchParams.get("stackId"), refDomain: "doc", revision: 2 }] });
+      }
+    };
     const handler = handlerFor(grant(["control:read", "control:write"]), { mutationsEnabled: true, auditReader });
     const stack = await callTool(handler, "create_stack", { displayName: "Audit", idempotencyKey: "create-audit-1" });
     expect((await callTool(handler, "list_ref_domains", { stackId: stack.structuredContent.stackId })).structuredContent)
@@ -90,7 +97,10 @@ function grant(scopes: readonly string[]): ControlPlaneMcpGrantProps {
   };
 }
 function handlerFor(props: ControlPlaneMcpGrantProps, options: Parameters<typeof createControlPlaneMcpServer>[1] = {}) {
-  return createMcpHandler(() => createControlPlaneMcpServer(db, options), { route: "/mcp", authContext: { props } });
+  return createMcpHandler(
+    () => createControlPlaneMcpServer(createControlPlaneOperations(db), options),
+    { route: "/mcp", authContext: { props } },
+  );
 }
 function mcpRequest(handler: ReturnType<typeof createMcpHandler>, method: string, params: Record<string, unknown>): Promise<Response> {
   const headers = new Headers({
@@ -99,11 +109,15 @@ function mcpRequest(handler: ReturnType<typeof createMcpHandler>, method: string
   });
   if (method === "tools/call" && typeof params.name === "string") headers.set("Mcp-Name", params.name);
   return handler.fetch(new Request("https://localhost/mcp", {
-    method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method, params: { ...params, _meta: {
-      [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
-      [CLIENT_INFO_META_KEY]: { name: "control-plane-mcp-test", version: "1.0.0" },
-      [CLIENT_CAPABILITIES_META_KEY]: {},
-    } } }),
+    method: "POST", headers, body: JSON.stringify({
+      jsonrpc: "2.0", id: crypto.randomUUID(), method, params: {
+        ...params, _meta: {
+          [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
+          [CLIENT_INFO_META_KEY]: { name: "control-plane-mcp-test", version: "1.0.0" },
+          [CLIENT_CAPABILITIES_META_KEY]: {},
+        }
+      }
+    }),
   }));
 }
 async function callTool(handler: ReturnType<typeof createMcpHandler>, name: string, argumentsValue: Record<string, unknown>): Promise<{
