@@ -1,5 +1,6 @@
 import type { LocalLayer } from "../doc-model.js";
 import type { UiState } from "./store.js";
+import { normalizeSelection } from "./hit-test.js";
 
 /**
  * What survives of the selection target when the document changes underneath
@@ -40,12 +41,7 @@ export function invalidateTarget(
   // dead ids rather than dropping the whole selection — losing four
   // selections because the agent deleted a fifth layer is its own bug.
   if (prev.selection.length > 0) {
-    const alive = new Set<string>();
-    const walk = (list: LocalLayer[]): void => {
-      for (const l of list) { alive.add(l.id); if (l.children) walk(l.children); }
-    };
-    walk(next.layers);
-    const kept = prev.selection.filter((id) => alive.has(id));
+    const kept = normalizeSelection(next.layers, prev.selection);
     if (kept.length !== prev.selection.length) patch.selection = kept;
   }
 

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { LocalLayer } from "../doc-model.js";
 import type { Region } from "./region.js";
+import { normalizeSelection } from "./hit-test.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
 export type PaneId = "layers" | "props";
@@ -124,9 +125,17 @@ export function toggleExpanded(s: UiState, id: string): ReadonlySet<string> {
   return next;
 }
 
+/**
+ * Normalizes at the WRITE side — see hit-test.ts's normalizeSelection for why
+ * a group plus its own child is a real bug and not a tidiness question.
+ * Without a document there is no tree to normalize against, which is the
+ * empty first screen, so the raw list stands.
+ */
 export function nextSelection(s: UiState, id: string, additive: boolean): string[] {
-  if (!additive) return [id];
-  return s.selection.includes(id) ? s.selection.filter((x) => x !== id) : [...s.selection, id];
+  const raw = !additive
+    ? [id]
+    : s.selection.includes(id) ? s.selection.filter((x) => x !== id) : [...s.selection, id];
+  return s.doc ? normalizeSelection(s.doc.layers, raw) : raw;
 }
 
 export function opsSinceSession(s: UiState): HistoryEntry[] {
