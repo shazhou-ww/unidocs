@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   getState, setState, subscribe,
-  toggleExpanded, nextSelection, opsSinceSession, selectedLayers,
+  toggleExpanded, nextSelection, opsSinceSession, selectedLayers, setRegion,
   type UiState,
 } from "../src/ui/store.js";
+import { getMask, putMask } from "../src/ui/region.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
 const leaf = (id: string, children?: LocalLayer[]): LocalLayer => ({
@@ -76,5 +77,30 @@ describe("selectedLayers", () => {
   it("resolves ids through nested groups, skipping unknown ids", () => {
     const s = { ...withDoc(), selection: ["b", "nope", "a"] };
     expect(selectedLayers(s).map((l) => l.id)).toEqual(["b", "a"]);
+  });
+});
+
+// setRegion is the one write point for the region axis specifically because
+// it also owns the mask sweep (region.ts's module-level table). Exercised
+// here through the real function, not by calling sweepMasks directly — a
+// regression that re-inlined `setState({ region })` somewhere would still
+// leave these green if the mask assertions weren't tied to setRegion itself.
+describe("setRegion", () => {
+  it("frees the previous mask's bytes when a new region replaces it", () => {
+    setRegion({ bounds: [0, 0, 2, 2], source: "layerAlpha", maskId: putMask(new Uint8ClampedArray([1, 2])) });
+    const first = getState().region!.maskId;
+    expect(getMask(first)).not.toBeNull();
+
+    setRegion({ bounds: [0, 0, 3, 3], source: "layerAlpha", maskId: putMask(new Uint8ClampedArray([3, 4])) });
+    expect(getMask(first)).toBeNull();
+    expect(getMask(getState().region!.maskId)).toEqual(new Uint8ClampedArray([3, 4]));
+  });
+
+  it("frees the mask when the region is cleared to null", () => {
+    setRegion({ bounds: [0, 0, 2, 2], source: "layerAlpha", maskId: putMask(new Uint8ClampedArray([9])) });
+    const id = getState().region!.maskId;
+    setRegion(null);
+    expect(getState().region).toBeNull();
+    expect(getMask(id)).toBeNull();
   });
 });

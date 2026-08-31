@@ -161,6 +161,13 @@ export function selectedLayers(s: UiState): LocalLayer[] {
  * works today, but every region carries a mask handle, and the bytes behind
  * discarded handles have to be released somewhere — routing every writer
  * through here means that is one edit later, not a hunt for call sites.
+ *
+ * This is a real invariant, not an aspiration: `region: null` must never be
+ * written via a raw `setState` (controller.ts learned this the hard way —
+ * its document-open and canvas-resize paths both used to bypass this and
+ * leak a full-canvas mask). If you're about to write `region` outside this
+ * function, route it through here instead, even if that means splitting an
+ * otherwise-combined `setState` into two calls.
  */
 export function setRegion(region: Region | null): void {
   setState({ region });

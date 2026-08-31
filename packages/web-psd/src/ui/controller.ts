@@ -1,6 +1,6 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
 import { invalidateTarget } from "./invalidate.js";
-import { getState, setState, setRegion } from "./store.js";
+import { getState, setState, setRegion, reportError } from "./store.js";
 import { putMask } from "./region.js";
 import { initialZoom } from "./zoom.js";
 
@@ -39,12 +39,21 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
       // under them — see invalidate.ts. Computed from the PREVIOUS state, so
       // it has to be read before `setState` replaces it.
       const invalidation = invalidateTarget(getState(), doc as never, fresh);
+      // `invalidateTarget` only ever WRITES `region: null` into this patch
+      // (never a real region), so its region half is routed through
+      // `setRegion` — the mask sweep lives there, and a raw `setState` would
+      // silently skip it (see setRegion's docstring). The rest of the patch
+      // still lands in one `setState` alongside `doc`/`version`; splitting
+      // costs one extra store notification on a fresh open or a resize, not
+      // on every edit.
+      const { region: clearedRegion, ...restInvalidation } = invalidation;
       setState({
         doc: doc as never,
         version,
         ...(fresh ? { sessionBaseVersion: version } : {}),
-        ...invalidation,
+        ...restInvalidation,
       });
+      if ("region" in invalidation) setRegion(clearedRegion ?? null);
       // A newly opened document picks its own zoom (1:1, or shrunk if it
       // overflows the stage). Deliberately only on `fresh`: a rebase or an
       // agent edit must NOT yank the zoom out from under the user, and a
@@ -97,7 +106,12 @@ async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
     // BEFORE reaching that callback: the new docId is adopted (see the
     // comment above) while the previous document's target is still in the
     // store, pointing at layer ids that are not in any open document.
-    setState({ docId: controller.docId, docName: label, history: [], chat: [], selection: [], region: null });
+    //
+    // `region` is cleared through `setRegion`, not folded into the `setState`
+    // below, so its mask sweep still runs — a raw `setState({ region: null })`
+    // would leave the stale mask's bytes in the module-level table forever.
+    setState({ docId: controller.docId, docName: label, history: [], chat: [], selection: [] });
+    setRegion(null);
   }
 }
 
@@ -110,10 +124,19 @@ export async function dispatch(op: Op): Promise<void> {
 }
 
 /** The layer → region conversion, wired into the context bar (spec §6.1).
- *  ADDS the region axis — the layer selection is left untouched (spec §3.3). */
+ *  ADDS the region axis — the layer selection is left untouched (spec §3.3).
+ *
+ *  `layerAlphaRegion` returns `null` for a layer with no extent — an
+ *  adjustment layer, most notably, cannot be pointed at (spec's own framing
+ *  for why this task exists in the first place). The button is not disabled
+ *  for those ahead of time, so a silent no-op here would look like the click
+ *  did nothing; report it the same way the other action sites do. */
 export async function loadLayerAsRegion(layerId: string): Promise<void> {
   const r = await controller?.layerAlphaRegion(layerId);
-  if (!r) return;
+  if (!r) {
+    reportError("载入选区失败", "该图层没有可用于选区的像素（例如调整图层）");
+    return;
+  }
   setRegion({ bounds: r.bounds, source: "layerAlpha", maskId: putMask(r.data) });
 }
 
