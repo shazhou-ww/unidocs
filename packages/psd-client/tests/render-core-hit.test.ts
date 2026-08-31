@@ -18,6 +18,22 @@ function store(blobs: Record<string, Uint8Array>): BlobStore {
   };
 }
 
+/** A `store` that also counts `get` calls per hash, so a test can assert a
+ *  given layer's blob was never faulted in. */
+function countingStore(blobs: Record<string, Uint8Array>): { store: BlobStore; calls: (hash: string) => number } {
+  const counts: Record<string, number> = {};
+  return {
+    store: {
+      async put(): Promise<string> { throw new Error("not implemented"); },
+      async get(hash: string): Promise<Uint8Array | null> {
+        counts[hash] = (counts[hash] ?? 0) + 1;
+        return blobs[hash] ?? null;
+      },
+    },
+    calls: (hash: string) => counts[hash] ?? 0,
+  };
+}
+
 const base = { type: "raster" as const, opacity: 1, blendMode: "normal" as const, visible: true, locked: false, clipping: false };
 
 /** Two lazy layers: a full-canvas backdrop and a small opaque square on top. */
@@ -30,6 +46,18 @@ function lazyDoc(): PsdDoc {
 }
 
 const blobs = { "h-bg": pngBytes(64, 64, 255), "h-sq": pngBytes(20, 20, 255) };
+
+/** Same backdrop and square, plus a third layer far from both, so a test can
+ *  assert it is never faulted in when the sample/target never reaches it. */
+function lazyDocWithFar(): PsdDoc {
+  const doc = lazyDoc();
+  doc.layers.splice(1, 0, {
+    ...base, id: "far", name: "far", bounds: [40, 40, 60, 60], pixels: { width: 20, height: 20, hash: "h-far" },
+  });
+  return doc;
+}
+
+const blobsWithFar = { ...blobs, "h-far": pngBytes(20, 20, 255) };
 
 describe("RenderCore.hitTest", () => {
   it("faults lazy pixels in and reports the top layer first", async () => {
@@ -58,6 +86,18 @@ describe("RenderCore.hitTest", () => {
     core.reset(next);
     expect((await core.hitTest(15, 15)).map((h) => h.layerId)).toEqual(["bg"]);
   });
+
+  // A whole-document resident map would pin every decoded layer's Pixels for
+  // as long as the doc keeps its identity, defeating the engine's PixelCache
+  // eviction under memory pressure on large PSDs. The fault-in must be scoped
+  // to what the sample points can actually land on.
+  it("never resolves a layer whose bounds miss every sample point", async () => {
+    const { store: s, calls } = countingStore(blobsWithFar);
+    const core = new RenderCore(lazyDocWithFar(), s);
+    await core.hitTest(15, 15);
+    expect(calls("h-sq")).toBeGreaterThan(0);
+    expect(calls("h-far")).toBe(0);
+  });
 });
 
 describe("RenderCore.layerAlphaRegion", () => {
@@ -80,5 +120,14 @@ describe("RenderCore.layerAlphaRegion", () => {
   it("returns null for a layer that is not in the document", async () => {
     const core = new RenderCore(lazyDoc(), store(blobs));
     expect(await core.layerAlphaRegion("ghost")).toBeNull();
+  });
+
+  it("does not fault layers outside the target layer's own box", async () => {
+    const { store: s, calls } = countingStore(blobsWithFar);
+    const core = new RenderCore(lazyDocWithFar(), s);
+    await core.layerAlphaRegion("sq");
+    expect(calls("h-sq")).toBeGreaterThan(0);
+    expect(calls("h-bg")).toBe(0);
+    expect(calls("h-far")).toBe(0);
   });
 });

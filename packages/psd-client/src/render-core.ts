@@ -20,13 +20,6 @@ export class RenderCore {
   // into the constructor call threw the references away.
   private readonly store: BlobStore;
   private readonly cache: PixelCache;
-  // Decoded pixels, keyed by layer id, valid for exactly one document object.
-  // Every edit REPLACES the doc (applyOne structuredClones it), so object
-  // identity is the version key — the compositor uses the same trick for its
-  // framebuffer slot. Without this, a hover hit test at 60fps would re-walk
-  // and re-resolve the whole tree every frame.
-  private resident = new Map<string, Pixels>();
-  private residentFor: PsdDoc | null = null;
 
   constructor(doc: PsdDoc, store: BlobStore, opts: { tileSize?: number; cacheBytes?: number } = {}) {
     this.store = store;
@@ -76,23 +69,24 @@ export class RenderCore {
     return this.compositor.tileSize;
   }
 
-  /** Faults every layer's pixels to resident once per document version, then
-   *  hands `layer-alpha`'s synchronous rules a plain lookup. Cache hits after
-   *  `prefetch()`, so this is table reads, not network. */
-  private async residentPixels(): Promise<ResidentPixels> {
-    if (this.residentFor !== this.doc) {
-      const map = new Map<string, Pixels>();
-      const walk = async (layers: Layer[]): Promise<void> => {
-        for (const l of layers) {
-          if (l.pixels) map.set(l.id, isRef(l.pixels) ? await resolvePixels(l.pixels, this.store, this.cache) : l.pixels);
-          if (l.children) await walk(l.children);
-        }
-      };
-      await walk(this.doc.layers);
-      this.resident = map;
-      this.residentFor = this.doc;
-    }
-    const map = this.resident;
+  /** Faults in exactly the leaf layers `alphaAt` can actually read: it checks
+   *  `layer.bounds` and returns 0 before ever consulting the lookup (see
+   *  layer-alpha.ts), so a layer whose bounds fail `contains` cannot
+   *  influence the caller's result. Keeping the table call-scoped (nothing
+   *  persisted on `this`) means the engine's own `PixelCache` stays free to
+   *  evict — a whole-document resident map would pin every decoded layer for
+   *  as long as the doc keeps its identity, defeating eviction under memory
+   *  pressure on large PSDs. */
+  private async residentFor(layers: Layer[], contains: (b: Rect) => boolean): Promise<ResidentPixels> {
+    const map = new Map<string, Pixels>();
+    const walk = async (list: Layer[]): Promise<void> => {
+      for (const l of list) {
+        if (l.children) { await walk(l.children); continue; }
+        if (!l.pixels || !contains(l.bounds as Rect)) continue;
+        map.set(l.id, isRef(l.pixels) ? await resolvePixels(l.pixels, this.store, this.cache) : l.pixels);
+      }
+    };
+    await walk(layers);
     return (layer: Layer) => map.get(layer.id) ?? null;
   }
 
@@ -107,11 +101,17 @@ export class RenderCore {
    * Nothing is composited here and `IncrementalCompositor` is untouched.
    */
   async hitTest(x: number, y: number, opts: { threshold?: number; radius?: number } = {}): Promise<HitCandidate[]> {
-    const resident = await this.residentPixels();
     const r = Math.max(0, Math.round(opts.radius ?? 0));
     const points: Array<[number, number]> = r > 0
       ? [[x, y], [x - r, y], [x + r, y], [x, y - r], [x, y + r]]
       : [[x, y]];
+    const containsAnyPoint = (b: Rect): boolean =>
+      points.some(([px, py]) => {
+        const cx = Math.floor(px);
+        const cy = Math.floor(py);
+        return cx >= b[1] && cx < b[3] && cy >= b[0] && cy < b[2];
+      });
+    const resident = await this.residentFor(this.doc.layers, containsAnyPoint);
     return hitInList(this.doc.layers, points, opts.threshold ?? HIT_ALPHA_THRESHOLD, resident);
   }
 
@@ -121,15 +121,17 @@ export class RenderCore {
    * point at a THING and get back an AREA.
    *
    * Same read path as `hitTest`; the only difference is copying the whole
-   * block out instead of sampling one point.
+   * block out instead of sampling one point, and the fault-in is scoped to
+   * the target layer's own subtree rather than the whole document.
    */
   async layerAlphaRegion(layerId: string): Promise<{ bounds: Rect; data: Uint8ClampedArray } | null> {
     const layer = findLayer(this.doc.layers, layerId);
     if (!layer) return null;
     const bounds = layerBoxOf(layer);
     if (!bounds) return null;
-    const resident = await this.residentPixels();
     const [top, left, bottom, right] = bounds;
+    const intersectsBox = (b: Rect): boolean => b[1] < right && b[3] > left && b[0] < bottom && b[2] > top;
+    const resident = await this.residentFor([layer], intersectsBox);
     const w = Math.max(0, right - left);
     const h = Math.max(0, bottom - top);
     const data = new Uint8ClampedArray(w * h);
