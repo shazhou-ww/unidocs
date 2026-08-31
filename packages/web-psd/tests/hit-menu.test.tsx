@@ -47,6 +47,7 @@ beforeEach(() => {
   HTMLElement.prototype.releasePointerCapture = vi.fn();
   setState({
     tool: "move", region: null, selection: [], pickedColor: null, expanded: new Set(),
+    docId: "doc-1",
     doc: { canvas: { width: 100, height: 100 }, layers: [
       { id: "g", type: "group", name: "g", opacity: 1, blendMode: "normal", visible: true,
         bounds: [0, 0, 0, 0], children: [leaf("top", [10, 10, 30, 30])] },
@@ -126,16 +127,42 @@ describe("HitMenu", () => {
   // `CanvasStage` is never re-keyed on a new document (app.tsx renders it
   // unconditionally), so this component and its in-flight hit test survive a
   // document swap. Without a staleness check, a right-click followed by
-  // loading a different document before the hit resolves would show the OLD
+  // opening a different document before the hit resolves would show the OLD
   // document's layers, positioned in the old canvas's coordinates.
+  //
+  // Keyed to `docId`, not `doc` — see controller.ts's `sessionDocId` for the
+  // same distinction drawn for the same reason. This test represents a
+  // genuine open: a NEW `docId` alongside the new `doc` object.
   it("shows no menu if the document changes before the hit test resolves", async () => {
     const resolvers: Array<(hits: typeof stack) => void> = [];
     hitTest.mockImplementation(() => new Promise<typeof stack>((resolve) => { resolvers.push(resolve); }));
     const { container } = render(<CanvasStage />);
     fireEvent.contextMenu(stageOf(container), { clientX: 15, clientY: 15 });
-    setState({ doc: { canvas: { width: 50, height: 50 }, layers: [leaf("new", [0, 0, 50, 50])] } });
+    setState({ docId: "doc-2", doc: { canvas: { width: 50, height: 50 }, layers: [leaf("new", [0, 0, 50, 50])] } });
     resolvers[0](stack);
     await flush();
     expect(container.querySelector(".hit-menu")).toBeNull();
+  });
+
+  // `onDoc` (controller.ts) replaces `doc` with a fresh object on every
+  // dispatched op, every rebase, and every agent reconcile — not only on a
+  // genuine open (doc-controller.ts's `applyLocal`/`repaintAfterDocChange`/
+  // `reconcile`). An identity check on `doc` itself would trip on any of
+  // those landing while a right-click's hit test is in flight, silently
+  // swallowing the menu for a document that never actually changed — the
+  // same silent-wrong-result failure this whole plan has been closing. This
+  // is the case the wholesale-swap test above cannot see: same `docId`, a
+  // brand new `doc` object (an unrelated edit), and the menu must still show.
+  it("still shows the menu if an unrelated edit replaces the doc object while the hit test is in flight", async () => {
+    const resolvers: Array<(hits: typeof stack) => void> = [];
+    hitTest.mockImplementation(() => new Promise<typeof stack>((resolve) => { resolvers.push(resolve); }));
+    const { container } = render(<CanvasStage />);
+    fireEvent.contextMenu(stageOf(container), { clientX: 15, clientY: 15 });
+    // Same `docId` — this is what an edit's `onDoc` callback does, not what
+    // opening a different document does.
+    setState({ doc: { canvas: { width: 100, height: 100 }, layers: [leaf("bg", [0, 0, 100, 100])] } });
+    resolvers[0](stack);
+    await flush();
+    expect(container.querySelector(".hit-menu")).not.toBeNull();
   });
 });

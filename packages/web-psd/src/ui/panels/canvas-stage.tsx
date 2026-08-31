@@ -303,9 +303,18 @@ export function CanvasStage() {
     // against, a right-click followed by loading a different PSD before the
     // hit resolves would show the OLD document's layers, positioned in the
     // old canvas's coordinates.
-    const doc = getState().doc;
+    //
+    // Compared by `docId`, not the `doc` object's identity: `onDoc`
+    // (controller.ts) replaces `doc` with a fresh object on every dispatched
+    // op, every rebase, and every agent reconcile — not only on a genuine
+    // open. Comparing object identity would trip on any unrelated edit that
+    // lands while the hit test is in flight, silently swallowing the menu
+    // for a document that never actually changed. `docId` only moves on a
+    // real `openFile` (controller.ts's `createFrom` success path) — the same
+    // distinction `sessionDocId` exists to draw, for the same reason.
+    const docId = getState().docId;
     void c.hitTest(e.clientX, e.clientY).then((hits) => {
-      if (getState().doc !== doc) return;  // a different document loaded while this was in flight
+      if (getState().docId !== docId) return;  // a different document was opened while this was in flight
       setMenu(hits.length ? { at, hits } : null);
     });
   };
