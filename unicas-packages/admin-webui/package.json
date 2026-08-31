@@ -31,16 +31,15 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unicas/control-auth": "workspace:*",
-    "@unicas/control-plane": "workspace:*",
     "@unicas/admin-protocol": "workspace:*",
+    "@unicas/control-auth": "workspace:*",
+    "@unicas/service": "workspace:*",
     "jose": "^6.2.10",
     "lucide-react": "^1.34.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250817.0",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.0",
@@ -48,7 +47,6 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "jsdom": "^25.0.0",
-    "miniflare": "5.20260811.1-alpha",
     "typescript": "^5.9.0",
     "vite": "^7.3.0",
     "vitest": "^3.2.0",

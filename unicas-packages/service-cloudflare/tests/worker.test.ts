@@ -9,6 +9,7 @@ const handlers = vi.hoisted(() => ({
   admin: vi.fn(async () => new Response("admin")),
   mcp: vi.fn(async () => new Response("mcp")),
   migrate: vi.fn(async () => undefined),
+  migrateControl: vi.fn(async () => undefined),
   tenantIdFromName: vi.fn((name: string) => `do:${name}`),
   tenantGet: vi.fn((_id: string) => ({ fetch: undefined as unknown })),
   verify: vi.fn(async (_request: Request, route: { stackId: string; tenantId: string }) => ({
@@ -34,10 +35,17 @@ vi.mock("@unicas/service", async (importOriginal) => {
   };
 });
 vi.mock("../src/control-authority.js", () => ({
-  AuthorityRepository: class {},
+  AuthorityRepository: class { },
 }));
 vi.mock("@unicas/admin-webui", () => ({
-  default: { fetch: handlers.admin },
+  configFromEnv: vi.fn(() => ({})),
+  createAdminBff: vi.fn(() => handlers.admin),
+  uiAssets: vi.fn(),
+}));
+vi.mock("@unicas/control-plane", () => ({
+  ControlPlaneService: class { },
+  ControlSessionStore: class { },
+  migrateControlSchema: handlers.migrateControl,
 }));
 vi.mock("@unicas/control-plane-mcp", () => ({
   default: { fetch: handlers.mcp },
@@ -223,6 +231,9 @@ describe("service-cloudflare public routing", () => {
       expect(request.headers.get("Cookie")).toBe("cas_admin_session=secret");
       expect(request.headers.get("X-Cas-Audit-Reader-Key")).toBeNull();
     }
+    expect(handlers.migrateControl).toHaveBeenCalledTimes(1);
+    expect(handlers.migrateControl.mock.invocationCallOrder[0])
+      .toBeLessThan(handlers.admin.mock.invocationCallOrder[0]!);
   });
 
   test("enforces MCP browser origin and strips cookies", async () => {

@@ -676,9 +676,9 @@ importers:
       '@unicas/control-auth':
         specifier: workspace:*
         version: link:../control-auth
-      '@unicas/control-plane':
+      '@unicas/service':
         specifier: workspace:*
-        version: link:../control-plane
+        version: link:../service
       jose:
         specifier: ^6.2.10
         version: 6.2.10
@@ -692,9 +692,6 @@ importers:
         specifier: ^19.0.0
         version: 19.2.8(react@19.2.8)
     devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250817.0
-        version: 4.20260702.1
       '@testing-library/jest-dom':
         specifier: ^6.6.0
         version: 6.10.0(@testing-library/dom@10.4.1)
@@ -716,9 +713,6 @@ importers:
       jsdom:
         specifier: ^25.0.0
         version: 25.0.0(supports-color@10.2.2)
-      miniflare:
-        specifier: 5.20260811.1-alpha
-        version: 5.20260811.1-alpha
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -853,6 +847,9 @@ importers:
       '@unicas/codec':
         specifier: workspace:*
         version: link:../codec
+      '@unicas/control-plane':
+        specifier: workspace:*
+        version: link:../control-plane
       '@unicas/control-plane-mcp':
         specifier: workspace:*
         version: link:../control-plane-mcp

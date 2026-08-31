@@ -6,16 +6,9 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
+import type { ControlSessionRepository, StoredSession } from "@unicas/service";
 
-export interface StoredSession {
-  readonly sessionId: string;
-  readonly encryptedPayload: string;
-  readonly expiresAt: number;
-  readonly createdAt: number;
-  readonly lastSeenAt: number;
-}
-
-export class ControlSessionStore {
+export class ControlSessionStore implements ControlSessionRepository {
   readonly #db: D1Database;
   readonly #now: () => number;
 

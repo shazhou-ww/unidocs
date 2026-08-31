@@ -27,6 +27,7 @@
   "dependencies": {
     "@unicas/admin-webui": "workspace:*",
     "@unicas/codec": "workspace:*",
+    "@unicas/control-plane": "workspace:*",
     "@unicas/control-plane-mcp": "workspace:*",
     "@unicas/service": "workspace:*",
     "@unicas/tenant-protocol": "workspace:*"

@@ -26,6 +26,9 @@
       "path": "../admin-webui"
     },
     {
+      "path": "../control-plane"
+    },
+    {
       "path": "../control-plane-mcp"
     },
     {

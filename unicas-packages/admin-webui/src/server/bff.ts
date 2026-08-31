@@ -4,10 +4,9 @@
  * Owns: Google OIDC login/callback/logout, encrypted session cookies, CSRF
  * and origin checks, the frozen control-plane API routes, the invitation
  * accept page redirect, the possession-challenge helper route, and SPA shell
- * serving. All CAS_CONTROL_DB access goes through `cas-control-plane`.
+ * serving. Persistence and control operations are injected by the deployment.
  */
 
-import type { D1Database } from "@cloudflare/workers-types";
 import {
   CasAdminErrorCodes,
   casAdminErrorHttpStatus,
@@ -19,11 +18,11 @@ import type {
   CasAdminErrorResponse,
   CasAdminRoute,
 } from "@unicas/admin-protocol";
-import {
-  ControlPlaneService,
-  ControlSessionStore,
-} from "@unicas/control-plane";
-import type { ControlPlaneCallContext } from "@unicas/control-plane";
+import type {
+  ControlPlaneCallContext,
+  ControlPlaneOperations,
+  ControlSessionRepository,
+} from "@unicas/service";
 import type { AdminBffConfig } from "./config.js";
 import {
   generateOidcNonce,
@@ -46,8 +45,8 @@ import { checkCsrfToken, checkSameOrigin } from "./csrf.js";
 
 export interface CreateAdminBffOptions {
   readonly config: AdminBffConfig;
-  /** CAS_CONTROL_DB binding. */
-  readonly db: D1Database;
+  readonly controlPlane: ControlPlaneOperations;
+  readonly sessionStore: ControlSessionRepository;
   /** Inject a client for tests; defaults to a real Google client. */
   readonly oidc?: OidcClient;
   /** SPA static asset fetcher (Phase C wires the built console). */
@@ -90,8 +89,8 @@ function validateAuditRefDomain(value: string): string | null {
 export function createAdminBff(options: CreateAdminBffOptions): (request: Request) => Promise<Response> {
   const { config } = options;
   const now = config.now ?? (() => Date.now());
-  const service = new ControlPlaneService(options.db, { now });
-  const sessionStore = new ControlSessionStore(options.db, now);
+  const controlPlane = options.controlPlane;
+  const sessionStore = options.sessionStore;
   const sessionCrypto = new SessionCrypto(config.sessionEncryptionKeys);
   const oidc = options.oidc
     ?? new OidcClient({
@@ -412,7 +411,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     const authenticatedId = generateSessionId();
     await sessionStore.create(authenticatedId, await sessionCrypto.encrypt(authenticatedPayload), sessionTtlMs);
     if (previousSessionId) await sessionStore.delete(previousSessionId);
-    await service.recordSessionAudit(
+    await controlPlane.recordSessionAudit(
       serviceContext(authenticatedPayload, request),
       "session.login",
       `${authenticatedPayload.identityIssuer}:${authenticatedPayload.subject}`,
@@ -432,7 +431,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     if (sessionId) {
       const payload = await readSession(sessionId);
       if (payload) {
-        await service.recordSessionAudit(
+        await controlPlane.recordSessionAudit(
           serviceContext(payload, request),
           "session.logout",
           `${payload.identityIssuer}:${payload.subject}`,
@@ -473,7 +472,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     if (!body || typeof body.stackId !== "string" || typeof body.kid !== "string" || typeof body.algorithm !== "string") {
       return adminErrorResponse(CasAdminErrorCodes.INVALID_REQUEST, "stackId, kid, and algorithm are required");
     }
-    const result = await service.createPossessionChallenge(serviceContext(auth.payload, request), {
+    const result = await controlPlane.createPossessionChallenge(serviceContext(auth.payload, request), {
       stackId: body.stackId,
       kid: body.kid,
       algorithm: body.algorithm,
@@ -596,7 +595,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     };
     const sessionId = generateSessionId();
     await sessionStore.create(sessionId, await sessionCrypto.encrypt(authenticatedPayload), sessionTtlMs);
-    await service.recordSessionAudit(
+    await controlPlane.recordSessionAudit(
       serviceContext(authenticatedPayload, request),
       "session.login",
       `${authenticatedPayload.identityIssuer}:${authenticatedPayload.subject}`,
@@ -641,29 +640,29 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
 
     switch (route.operation) {
       case "me": {
-        const result = await service.me(ctx);
+        const result = await controlPlane.me(ctx);
         const response = json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
         if (!("error" in result)) response.headers.set("X-CSRF-Token", auth.payload.csrfToken);
         return response;
       }
       case "listStacks": {
-        const result = await service.listStacks(ctx, { query: pageQuery(query) });
+        const result = await controlPlane.listStacks(ctx, { query: pageQuery(query) });
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
       case "createStack": {
         const body = await readJsonBody<{ displayName?: unknown }>(request);
         if (!body) return invalidRequest("JSON body is required");
-        const result = await service.createStack(ctx, { body: { displayName: String(body.displayName ?? "") } }, mutation);
+        const result = await controlPlane.createStack(ctx, { body: { displayName: String(body.displayName ?? "") } }, mutation);
         return jsonWithEtag(result);
       }
       case "getStack": {
-        const result = await service.getStack(ctx, { path: { stackId: route.stackId } });
+        const result = await controlPlane.getStack(ctx, { path: { stackId: route.stackId } });
         return jsonWithEtag(result);
       }
       case "patchStack": {
         const body = await readJsonBody<{ displayName?: unknown; description?: unknown }>(request);
         if (!body) return invalidRequest("JSON body is required");
-        const result = await service.patchStack(ctx, {
+        const result = await controlPlane.patchStack(ctx, {
           path: { stackId: route.stackId },
           body: {
             displayName: body.displayName === undefined ? undefined : String(body.displayName),
@@ -673,11 +672,11 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         return jsonWithEtag(result);
       }
       case "listMembers": {
-        const result = await service.listMembers(ctx, { path: { stackId: route.stackId }, query: pageQuery(query) });
+        const result = await controlPlane.listMembers(ctx, { path: { stackId: route.stackId }, query: pageQuery(query) });
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
       case "deleteMember": {
-        const result = await service.deleteMember(ctx, {
+        const result = await controlPlane.deleteMember(ctx, {
           path: { stackId: route.stackId },
           query: {
             identityIssuer: query.identityIssuer ?? "",
@@ -688,7 +687,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       }
       case "createMemberInvitation": {
         const body = await readJsonBody<{ emailConstraint?: unknown }>(request);
-        const result = await service.createMemberInvitation(ctx, {
+        const result = await controlPlane.createMemberInvitation(ctx, {
           path: { stackId: route.stackId },
           body: body === null || body.emailConstraint === undefined
             ? undefined
@@ -698,11 +697,11 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         return json({ ...result, acceptUrl: absolutize(result.acceptUrl) }, 200);
       }
       case "acceptMemberInvitation": {
-        const result = await service.acceptMemberInvitation(ctx, { path: { token: route.token } });
+        const result = await controlPlane.acceptMemberInvitation(ctx, { path: { token: route.token } });
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
       case "getIssuer": {
-        const result = await service.getIssuer(ctx, { path: { stackId: route.stackId } });
+        const result = await controlPlane.getIssuer(ctx, { path: { stackId: route.stackId } });
         return jsonWithEtag(result);
       }
       case "putIssuer": {
@@ -720,14 +719,14 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         if (body.capabilityMaxLifetimeSeconds !== undefined) {
           nextBody.capabilityMaxLifetimeSeconds = Number(body.capabilityMaxLifetimeSeconds);
         }
-        const result = await service.putIssuer(ctx, {
+        const result = await controlPlane.putIssuer(ctx, {
           path: { stackId: route.stackId },
           body: nextBody,
         }, mutation);
         return jsonWithEtag(result);
       }
       case "listIssuerKeys": {
-        const result = await service.listIssuerKeys(ctx, { path: { stackId: route.stackId } });
+        const result = await controlPlane.listIssuerKeys(ctx, { path: { stackId: route.stackId } });
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
       case "createIssuerKey": {
@@ -740,7 +739,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         if (!body || typeof body.publicJwk !== "object" || body.publicJwk === null || Array.isArray(body.publicJwk)) {
           return invalidRequest("kid, algorithm, publicJwk, and possessionProof are required");
         }
-        const result = await service.createIssuerKey(ctx, {
+        const result = await controlPlane.createIssuerKey(ctx, {
           path: { stackId: route.stackId },
           body: {
             kid: String(body.kid ?? ""),
@@ -758,14 +757,14 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
           : body && body.toState === "retiring"
             ? "retiring" as const
             : undefined;
-        const result = await service.deleteIssuerKey(ctx, {
+        const result = await controlPlane.deleteIssuerKey(ctx, {
           path: { stackId: route.stackId, kid: route.kid },
           body: toState ? { toState } : undefined,
         }, mutation);
         return jsonWithEtag(result);
       }
       case "listControlAuditEvents": {
-        const result = await service.listControlAuditEvents(ctx, {
+        const result = await controlPlane.listControlAuditEvents(ctx, {
           path: { stackId: route.stackId },
           query: pageQuery(query),
         });
@@ -786,7 +785,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     ctx: ControlPlaneCallContext,
     query: Record<string, string>,
   ): Promise<Response> {
-    const membership = await service.getStack(ctx, { path: { stackId: route.stackId } });
+    const membership = await controlPlane.getStack(ctx, { path: { stackId: route.stackId } });
     if ("error" in membership) {
       return json(membership, casAdminErrorHttpStatus[membership.error]);
     }
@@ -891,7 +890,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
 
   async function auditLoginFailure(state: string): Promise<void> {
     try {
-      await service.recordSessionAudit(
+      await controlPlane.recordSessionAudit(
         {
           identity: {
             identityIssuer: config.oidcIssuer ?? "https://accounts.google.com",

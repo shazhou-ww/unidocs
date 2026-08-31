@@ -94,11 +94,13 @@ describe("package dependency boundaries", () => {
 
     expect(control.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
-    expect(webui.dependencies?.["@unicas/control-plane"]).toBe("workspace:*");
+    expect(webui.dependencies?.["@unicas/service"]).toBe("workspace:*");
+    expect(webui.dependencies?.["@unicas/control-plane"]).toBeUndefined();
     expect(service.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(service.dependencies?.["@unicas/tenant-protocol"]).toBe("workspace:*");
     expect(service.dependencies?.["@unicas/codec"]).toBe("workspace:*");
     expect(cloudflareService.dependencies?.["@unicas/service"]).toBe("workspace:*");
+    expect(cloudflareService.dependencies?.["@unicas/control-plane"]).toBe("workspace:*");
 
     // Shared cross-plane contracts may flow tenant-protocol -> admin-protocol,
     // but the retired legacy package must never return.

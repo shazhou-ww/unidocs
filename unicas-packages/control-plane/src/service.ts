@@ -94,25 +94,11 @@ import {
 } from "@unicas/service";
 import type {
   ControlAuditAction,
+  ControlPlaneCallContext,
+  ControlPlaneOperations,
+  ServiceMutationInput,
   SupportedKeyAlgorithm,
 } from "@unicas/service";
-
-/** Authenticated caller context supplied by the BFF after OIDC session check. */
-export interface ControlPlaneCallContext {
-  readonly identity: CasOperatorIdentityKey;
-  /** Display metadata from the verified OIDC profile (email is display-only). */
-  readonly profile?: {
-    readonly displayName: string | null;
-    readonly emailForDisplay: string | null;
-  };
-  readonly requestId?: string;
-  readonly traceId?: string;
-  readonly caller?: {
-    readonly channel: "admin-webui" | "mcp";
-    readonly oauthClientHandle?: string;
-    readonly toolName?: string;
-  };
-}
 
 export interface ControlPlaneServiceOptions {
   readonly now?: () => number;
@@ -122,17 +108,9 @@ export interface ControlPlaneServiceOptions {
   readonly listMaxLimit?: number;
 }
 
-/** Service-level mutation input: raw precondition headers, parsed by the service. */
-export interface ServiceMutationInput {
-  /** Raw `If-Match` header value; absent means "no precondition". */
-  readonly ifMatch?: string;
-  /** Raw `Idempotency-Key` header value for creation endpoints. */
-  readonly idempotencyKey?: string;
-}
-
 const SNAPSHOT_KEY = "snapshot";
 
-export class ControlPlaneService {
+export class ControlPlaneService implements ControlPlaneOperations {
   readonly #db: D1Database;
   readonly #now: () => number;
   readonly #invitationTtlMs: number;

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import type { D1Database } from "@cloudflare/workers-types";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { s256Challenge } from "@unicas/control-auth";
-import { ControlSessionStore, migrateControlSchema } from "@unicas/control-plane";
+import type {
+  ControlPlaneCallContext,
+  ControlPlaneOperations,
+  ControlSessionRepository,
+  StoredSession,
+} from "@unicas/service";
 import { createAdminBff, OidcClient, SessionCrypto } from "../src/server/index.js";
 import type { AdminBffConfig } from "../src/server/config.js";
 
@@ -16,12 +19,156 @@ const AUTHORIZE_URL = `${ISSUER}/authorize`;
 const TOKEN_URL = `${ISSUER}/token`;
 const JWKS_URL = `${ISSUER}/jwks`;
 
-let miniflare: Miniflare | undefined;
+interface FakeStack {
+  stackId: string;
+  displayName: string;
+  description: string;
+  status: "active";
+  createdAt: number;
+  revision: number;
+  members: Map<string, ControlPlaneCallContext>;
+}
 
-afterEach(async () => {
-  await miniflare?.dispose();
-  miniflare = undefined;
+const fakeStacks = new Map<string, FakeStack>();
+const fakeSessions = new Map<string, StoredSession>();
+let nextStackId = 1;
+
+afterEach(() => {
+  fakeStacks.clear();
+  fakeSessions.clear();
+  nextStackId = 1;
 });
+
+function identityKey(ctx: ControlPlaneCallContext): string {
+  return `${ctx.identity.identityIssuer}\n${ctx.identity.subject}`;
+}
+
+class MemorySessionRepository implements ControlSessionRepository {
+  readonly #now: () => number;
+
+  constructor(now: () => number = () => Date.now()) {
+    this.#now = now;
+  }
+
+  async create(sessionId: string, encryptedPayload: string, ttlMs: number): Promise<void> {
+    const now = this.#now();
+    fakeSessions.set(sessionId, { sessionId, encryptedPayload, expiresAt: now + ttlMs, createdAt: now, lastSeenAt: now });
+  }
+
+  async read(sessionId: string): Promise<StoredSession | null> {
+    const session = fakeSessions.get(sessionId) ?? null;
+    if (session && session.expiresAt <= this.#now()) {
+      fakeSessions.delete(sessionId);
+      return null;
+    }
+    return session;
+  }
+
+  async touch(sessionId: string, ttlMs: number): Promise<void> {
+    const session = fakeSessions.get(sessionId);
+    if (!session) return;
+    const now = this.#now();
+    fakeSessions.set(sessionId, { ...session, expiresAt: now + ttlMs, lastSeenAt: now });
+  }
+
+  async delete(sessionId: string): Promise<void> {
+    fakeSessions.delete(sessionId);
+  }
+
+  async pruneExpired(): Promise<number> {
+    const expired = [...fakeSessions.values()].filter((session) => session.expiresAt <= this.#now());
+    for (const session of expired) fakeSessions.delete(session.sessionId);
+    return expired.length;
+  }
+}
+
+function fakeControlPlane(): ControlPlaneOperations {
+  const error = async () => ({ error: "NOT_FOUND" as const, message: "not implemented by this BFF fake" });
+  const requireStack = (ctx: ControlPlaneCallContext, stackId: string): FakeStack | null => {
+    const stack = fakeStacks.get(stackId) ?? null;
+    return stack?.members.has(identityKey(ctx)) ? stack : null;
+  };
+  return {
+    me: async (ctx) => ({
+      identity: {
+        ...ctx.identity,
+        displayName: ctx.profile?.displayName ?? null,
+        emailForDisplay: ctx.profile?.emailForDisplay ?? null,
+      },
+      memberships: [...fakeStacks.values()]
+        .filter((stack) => stack.members.has(identityKey(ctx)))
+        .map((stack) => ({
+          stackId: stack.stackId,
+          ...ctx.identity,
+          displayName: ctx.profile?.displayName ?? null,
+          emailForDisplay: ctx.profile?.emailForDisplay ?? null,
+        })),
+    }),
+    listStacks: async (ctx) => ({
+      items: [...fakeStacks.values()]
+        .filter((stack) => stack.members.has(identityKey(ctx)))
+        .map(({ members: _members, ...stack }) => stack),
+      nextCursor: null,
+    }),
+    createStack: async (ctx, request) => {
+      const stack: FakeStack = {
+        stackId: `cas_fake_${nextStackId++}`,
+        displayName: request.body.displayName,
+        description: "",
+        status: "active",
+        createdAt: Date.now(),
+        revision: 1,
+        members: new Map([[identityKey(ctx), ctx]]),
+      };
+      fakeStacks.set(stack.stackId, stack);
+      const { members: _members, ...response } = stack;
+      return response;
+    },
+    getStack: async (ctx, request) => {
+      const stack = requireStack(ctx, request.path.stackId);
+      if (!stack) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
+      const { members: _members, ...response } = stack;
+      return response;
+    },
+    patchStack: async (ctx, request, mutation) => {
+      const stack = requireStack(ctx, request.path.stackId);
+      if (!stack) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
+      if (mutation.ifMatch !== `"${stack.revision}"`) {
+        return { error: "REVISION_MISMATCH", message: "revision mismatch" };
+      }
+      stack.displayName = request.body.displayName ?? stack.displayName;
+      stack.description = request.body.description ?? stack.description;
+      stack.revision += 1;
+      const { members: _members, ...response } = stack;
+      return response;
+    },
+    listMembers: error as ControlPlaneOperations["listMembers"],
+    deleteMember: error as ControlPlaneOperations["deleteMember"],
+    createMemberInvitation: error as ControlPlaneOperations["createMemberInvitation"],
+    acceptMemberInvitation: error as ControlPlaneOperations["acceptMemberInvitation"],
+    getIssuer: error as ControlPlaneOperations["getIssuer"],
+    putIssuer: async (ctx, request) => {
+      if (!requireStack(ctx, request.path.stackId)) {
+        return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
+      }
+      return {
+        stackId: request.path.stackId,
+        issuer: request.body.issuer,
+        audience: request.body.audience,
+        capabilityMaxLifetimeSeconds: request.body.capabilityMaxLifetimeSeconds ?? 28_800,
+        revision: 1,
+      };
+    },
+    createPossessionChallenge: async (ctx, request) => requireStack(ctx, request.stackId)
+      ? { nonce: "fake-possession-nonce", expiresAt: Date.now() + 60_000 }
+      : { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" },
+    listIssuerKeys: error as ControlPlaneOperations["listIssuerKeys"],
+    createIssuerKey: error as ControlPlaneOperations["createIssuerKey"],
+    deleteIssuerKey: error as ControlPlaneOperations["deleteIssuerKey"],
+    listControlAuditEvents: error as ControlPlaneOperations["listControlAuditEvents"],
+    recordSessionAudit: async () => undefined,
+  };
+}
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
@@ -69,19 +216,6 @@ async function createBff(
   auditReader?: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> },
   configOverrides: Partial<AdminBffConfig> = {},
 ): Promise<(request: Request) => Promise<Response>> {
-  miniflare = new Miniflare(convertV4MiniflareOptions({
-    workers: [{
-      name: "admin-bff-test",
-      modules: true,
-      script: "export default { fetch() { return new Response('ok'); } };",
-      compatibilityDate: "2025-08-17",
-      d1Databases: { DB: "admin-bff-test-db" },
-    }],
-  }));
-  await miniflare.ready;
-  const db = await miniflare.getD1Database("DB", "admin-bff-test");
-  await migrateControlSchema(db);
-
   const providerFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? new URL(input) : input instanceof URL ? input : new URL(input.url);
     if (url.toString() === DISCOVERY_URL) {
@@ -125,7 +259,13 @@ async function createBff(
     },
     { fetchImpl: providerFetch },
   );
-  return createAdminBff({ config, db, oidc, auditReader });
+  return createAdminBff({
+    config,
+    controlPlane: fakeControlPlane(),
+    sessionStore: new MemorySessionRepository(config.now),
+    oidc,
+    auditReader,
+  });
 }
 
 function cookieFrom(response: Response): string | null {
@@ -433,8 +573,7 @@ describe("cas-admin-webui BFF", () => {
       sessionEncryptionKeys,
       emailAllowlist: ["alice@example.com"],
     });
-    const db = await miniflare!.getD1Database("DB", "admin-bff-test");
-    const sessionStore = new ControlSessionStore(db);
+    const sessionStore = new MemorySessionRepository();
     const sessionId = "sess_preexisting_unlisted";
     const encryptedPayload = await new SessionCrypto(sessionEncryptionKeys).encrypt({
       v: 1,

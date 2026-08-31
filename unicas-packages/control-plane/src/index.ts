@@ -12,13 +12,17 @@ export {
   ControlPlaneService,
 } from "./service.js";
 export type {
-  ControlPlaneCallContext,
   ControlPlaneServiceOptions,
-  ServiceMutationInput,
 } from "./service.js";
+export type {
+  ControlPlaneCallContext,
+  ControlPlaneOperations,
+  ControlSessionRepository,
+  ServiceMutationInput,
+  StoredSession,
+} from "@unicas/service";
 
 export { ControlSessionStore } from "./sessions.js";
-export type { StoredSession } from "./sessions.js";
 
 export { AuthorityRepository } from "./authority.js";
 export type {

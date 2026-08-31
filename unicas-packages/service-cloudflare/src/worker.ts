@@ -1,4 +1,14 @@
-import adminWorker, { type Env as AdminEnv } from "@unicas/admin-webui";
+import {
+  configFromEnv,
+  createAdminBff,
+  type AdminBffEnv,
+  uiAssets,
+} from "@unicas/admin-webui";
+import {
+  ControlPlaneService,
+  ControlSessionStore,
+  migrateControlSchema,
+} from "@unicas/control-plane";
 import mcpWorker, { type Env as McpEnv } from "@unicas/control-plane-mcp";
 import {
   createUniCasService,
@@ -31,7 +41,7 @@ export interface TenantEnv extends TenantCasDoEnv, RootRefDomainDoEnv {
   CAS_AUDIT_READER_KEY?: string;
 }
 
-export type Env = TenantEnv & AdminEnv & McpEnv & {
+export type Env = TenantEnv & AdminBffEnv & McpEnv & {
   CAS_PUBLIC_ORIGIN?: string;
 };
 
@@ -98,11 +108,8 @@ export default {
           throw error;
         }
       },
-      handleAdminRequest: ({ request: adminRequest }) =>
-        adminWorker.fetch(stripAdminHeaders(adminRequest), {
-          ...env,
-          CAS_TENANT_AUDIT_READER: auditReader,
-        }),
+      handleAdminRequest: async ({ request: adminRequest }) =>
+        (await adminHandlerFor(env))(stripAdminHeaders(adminRequest)),
     });
 
     const serviceRoute = matchUniCasServiceRoute(request);
@@ -117,10 +124,7 @@ export default {
     }
 
     if (isPrefixed(pathname, "/admin")) {
-      return adminWorker.fetch(stripAdminHeaders(request), {
-        ...env,
-        CAS_TENANT_AUDIT_READER: auditReader,
-      });
+      return (await adminHandlerFor(env))(stripAdminHeaders(request));
     }
 
     if (pathname === "/mcp") {
@@ -145,6 +149,29 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 const verifiers = new WeakMap<object, StackCapabilityVerifier>();
+const adminHandlers = new WeakMap<object, Promise<(request: Request) => Promise<Response>>>();
+
+function adminHandlerFor(env: Env): Promise<(request: Request) => Promise<Response>> {
+  const key = env as object;
+  let handler = adminHandlers.get(key);
+  if (!handler) {
+    handler = (async () => {
+      await migrateControlSchema(env.CAS_CONTROL_DB);
+      const config = configFromEnv(env);
+      const now = config.now ?? (() => Date.now());
+      return createAdminBff({
+        config,
+        controlPlane: new ControlPlaneService(env.CAS_CONTROL_DB, { now }),
+        sessionStore: new ControlSessionStore(env.CAS_CONTROL_DB, now),
+        auditReader: localAuditReader(env),
+        assets: uiAssets,
+      });
+    })();
+    adminHandlers.set(key, handler);
+    void handler.catch(() => adminHandlers.delete(key));
+  }
+  return handler;
+}
 
 function verifierFor(env: Env): StackCapabilityVerifier {
   const key = env as object;

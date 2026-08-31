@@ -5,21 +5,28 @@ import { migrateStackTenantSchema } from "../src/schema.js";
 import { canonicalizeRootRefsUpdate, executeDomainUpdate } from "../src/root-refs.js";
 
 vi.mock("../src/control-authority.js", () => ({
-  AuthorityRepository: class {},
+  AuthorityRepository: class { },
 }));
 vi.mock("@unicas/admin-webui", () => ({
-  default: {
-    fetch(request: Request, env: { CAS_TENANT_AUDIT_READER: Fetcher }) {
+  configFromEnv: () => ({}),
+  createAdminBff(options: { auditReader: Fetcher }) {
+    return (request: Request) => {
       const target = request.headers.get("X-Test-Audit-Target")!;
       const headers = new Headers();
       const key = request.headers.get("X-Test-Audit-Reader-Key");
       if (key !== null) headers.set("X-CAS-Audit-Reader-Key", key);
-      return env.CAS_TENANT_AUDIT_READER.fetch(new Request(target, {
+      return options.auditReader.fetch(new Request(target, {
         method: request.method,
         headers,
       }));
-    },
+    };
   },
+  uiAssets: () => null,
+}));
+vi.mock("@unicas/control-plane", () => ({
+  ControlPlaneService: class { },
+  ControlSessionStore: class { },
+  migrateControlSchema: async () => undefined,
 }));
 vi.mock("@unicas/control-plane-mcp", () => ({
   default: { fetch: () => new Response("mcp") },

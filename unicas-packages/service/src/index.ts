@@ -165,3 +165,10 @@ export {
   validateKid,
 } from "./control-validation.js";
 export type { SupportedKeyAlgorithm } from "./control-validation.js";
+export type {
+  ControlPlaneCallContext,
+  ControlPlaneOperations,
+  ControlSessionRepository,
+  ServiceMutationInput,
+  StoredSession,
+} from "./control-plane.js";
