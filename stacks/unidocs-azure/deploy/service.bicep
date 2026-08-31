@@ -32,9 +32,6 @@ param pgAdminPassword string
 @secure()
 param capabilityTrustedJwks string = ''
 
-@secure()
-param casStackTrustedJwks string = ''
-
 @description('控制面生成的不透明 stack id（形如 cas_XXXX）。CasClient 靠它拼规范路由 /stacks/{stackId}/tenants/...；缺了会拼成 legacy 路由，打到规范中间件一律 404。')
 param casStackId string
 
@@ -46,8 +43,6 @@ param casStackIssuer string
 param casStackTrustedJwks string = ''
 
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
-param casStackId string = 'unidocs-azure'
-param casStackIssuer string = 'https://unicas.shazhou.work/cas/issuer/azure'
 param casCapabilityAudience string = 'unidocs-cas-azure'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {

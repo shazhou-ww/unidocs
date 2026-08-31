@@ -6,7 +6,7 @@
     "dev:cf": "node scripts/run-stack.mjs dev unidocs-cloudflare",
     "dev:azure": "node scripts/run-stack.mjs dev unidocs-azure",
     "dev:unicas": "node scripts/run-stack.mjs dev unicas",
-    "deploy": "node scripts/run-stack.mjs deploy",
+    "stack:deploy": "node scripts/run-stack.mjs deploy",
     "smoke": "node scripts/run-stack.mjs smoke",
     "build": "pnpm -r build",
     "check:cas-contract-docs": "node scripts/check-cas-contract-docs.mjs",

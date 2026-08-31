@@ -63,7 +63,7 @@ async function main() {
   if (!STACK_ACTION_ENTRIES[action] || !stack) {
     console.error(
       "Usage: pnpm dev [stack] [docType ...] [--cas <local|remote>]\n" +
-      "       pnpm <deploy|smoke> <stack> [...args]\n\n" +
+      "       pnpm <stack:deploy|smoke> <stack> [...args]\n\n" +
       `Available stacks: ${available.join(", ") || "none"}\n` +
       `dev defaults to: ${DEFAULT_DEV_STACK}`,
     );
