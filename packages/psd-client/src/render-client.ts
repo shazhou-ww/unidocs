@@ -1,7 +1,10 @@
 import type { PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
 import type { WorkerRequest, WorkerResponse } from "./render-worker.js";
+import type { HitCandidate, Rect as AlphaRect } from "./layer-alpha.js";
 
 type Rect = [number, number, number, number];
+
+export interface LayerAlphaResult { bounds: AlphaRect; width: number; height: number; data: Uint8ClampedArray }
 
 export interface TileMessage {
   tx: number;
@@ -25,7 +28,9 @@ type PendingEntry =
   | { kind: "init"; resolve: (v: InitResult) => void; reject: (e: unknown) => void }
   | { kind: "applyOp"; resolve: (rect: Rect) => void; reject: (e: unknown) => void }
   | { kind: "tiles"; resolve: () => void; reject: (e: unknown) => void }
-  | { kind: "reset"; resolve: () => void; reject: (e: unknown) => void };
+  | { kind: "reset"; resolve: () => void; reject: (e: unknown) => void }
+  | { kind: "hitTest"; resolve: (hits: HitCandidate[]) => void; reject: (e: unknown) => void }
+  | { kind: "layerAlpha"; resolve: (v: LayerAlphaResult | null) => void; reject: (e: unknown) => void };
 
 /** Main-thread handle on the render Worker: serializes/deserializes the
  *  {@link WorkerRequest}/{@link WorkerResponse} protocol. Thin message
@@ -87,6 +92,20 @@ export class RenderClient {
         // per-tile error and already rejected, then later emits
         // `tilesDone`), this is a no-op — `pending.get` returns undefined.
         this.pending.get(msg.id)?.reject(new Error(msg.message));
+        this.pending.delete(msg.id);
+        break;
+      }
+      case "hit": {
+        const entry = this.pending.get(msg.id);
+        if (entry?.kind === "hitTest") entry.resolve(msg.hits);
+        this.pending.delete(msg.id);
+        break;
+      }
+      case "layerAlpha": {
+        const entry = this.pending.get(msg.id);
+        if (entry?.kind === "layerAlpha") {
+          entry.resolve(msg.bounds ? { bounds: msg.bounds, width: msg.width, height: msg.height, data: msg.data } : null);
+        }
         this.pending.delete(msg.id);
         break;
       }
@@ -158,5 +177,30 @@ export class RenderClient {
 
   onDirty(cb: (rect: Rect) => void): void {
     this.dirtyHandlers.push(cb);
+  }
+
+  /** Every layer under the point, topmost first. `radius` is the click
+   *  tolerance in DOCUMENT pixels — the caller converts it from CSS pixels,
+   *  which is zoom-dependent. `hover: true` marks the request DISCARDABLE:
+   *  the Worker replaces a waiting one and skips it while real work is in
+   *  flight, resolving the skipped one with `[]`. */
+  hitTest(x: number, y: number, opts: { radius: number; threshold?: number; hover?: boolean }): Promise<HitCandidate[]> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { kind: "hitTest", resolve, reject });
+      const req: WorkerRequest = { type: "hitTest", id, x, y, radius: opts.radius, threshold: opts.threshold, hover: opts.hover };
+      this.worker.postMessage(req);
+    });
+  }
+
+  /** One layer's alpha as a single-channel coverage buffer over its own box;
+   *  null when the layer is gone or has no extent. */
+  layerAlpha(layerId: string): Promise<LayerAlphaResult | null> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { kind: "layerAlpha", resolve, reject });
+      const req: WorkerRequest = { type: "layerAlpha", id, layerId };
+      this.worker.postMessage(req);
+    });
   }
 }
