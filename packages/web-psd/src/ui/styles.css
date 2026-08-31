@@ -432,3 +432,18 @@ a:hover { color: var(--accent); }
 .sel-union .bl { left: -3px; bottom: -3px; }
 .sel-union .bc { left: calc(50% - 3px); bottom: -3px; }
 .sel-union .br { right: -3px; bottom: -3px; }
+
+/* The right-click candidate list (hit-menu.tsx). Positioned in measured CSS
+   pixels, not percentages — it is chrome pinned to the cursor, not canvas
+   geometry that should drift with zoom. */
+.hit-menu {
+  position: absolute; z-index: 3; min-width: 120px; padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 20px var(--shadow-pop);
+}
+.hit-menu button {
+  border: 0; background: transparent; font: inherit; text-align: left;
+  padding: 5px 8px; border-radius: 5px; cursor: pointer; color: var(--fg);
+}
+.hit-menu button:hover { background: var(--surface-sunken); }

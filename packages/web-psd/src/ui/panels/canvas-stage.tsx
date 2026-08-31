@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { dispatch, getController, initController } from "../controller.js";
 import { getState, setState, setRegion, setSelection, selectLayer, useUiState } from "../store.js";
+import { setHoverId } from "../overlay-store.js";
 import { zoomBy } from "../zoom-controller.js";
 import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
@@ -9,6 +10,7 @@ import { rectRegion } from "../region.js";
 import { findLayer, layerBox, clickTarget, descendPath, draggableIds, type Hit } from "../hit-test.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 import { SelectionBox } from "./selection-box.js";
+import { HitMenu } from "./hit-menu.js";
 
 /**
  * The <canvas> is mounted by ref and then owned entirely by DocController /
@@ -51,10 +53,27 @@ export function CanvasStage() {
   // The gesture that is waiting on an async hit test. A ref, not state, for
   // the same reason `drag` is: it changes mid-gesture and must not re-render.
   const pending = useRef<PendingHit | null>(null);
+  // Where the last alt-click landed and how deep into that point's candidate
+  // stack it had got. Keyed by the rounded document coordinate so moving away
+  // and coming back starts over rather than resuming somewhere arbitrary.
+  const cycle = useRef<{ key: string; index: number } | null>(null);
+  // Hover hit tests are throttled to one per frame and only run under the move
+  // tool. The result goes to overlay-store, NOT the main store: the main store
+  // notifies every subscriber, so a per-frame hover would re-render the whole
+  // layer tree (store.ts:106).
+  const hoverFrame = useRef(0);
+  // The right-click candidate menu. Local state, not the main store: it
+  // belongs to this component alone.
+  const [menu, setMenu] = useState<{ at: { x: number; y: number }; hits: Hit[] } | null>(null);
 
   useEffect(() => {
     if (stageRef.current && viewRef.current) initController(viewRef.current, stageRef.current);
   }, []);
+
+  useEffect(() => {
+    if (s.tool !== "move") setHoverId(null);
+    return () => { if (hoverFrame.current !== 0) cancelAnimationFrame(hoverFrame.current); };
+  }, [s.tool]);
 
   // Registered by hand rather than as an `onWheel` prop because the handler
   // must call `preventDefault` to stop the browser zooming the whole page,
@@ -99,6 +118,7 @@ export function CanvasStage() {
   }, []);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (menu) setMenu(null);
     const c = getController();
     if (!c) return;
     const s = getState();
@@ -115,7 +135,11 @@ export function CanvasStage() {
       // it only decides whether to keep dragging what is already selected.
       // (Today's code drags on `selection.length > 0` with no position test at
       // all, so this is strictly narrower.)
-      if (s.selection.length > 0 && insideSelection(s, at)) {
+      // Alt held is excluded: the whole point of alt-cycling is to re-probe
+      // the stack under the cursor even though the previous candidate it
+      // selected is sitting right there, so this fast path must not swallow
+      // the click into a drag instead.
+      if (!e.altKey && s.selection.length > 0 && insideSelection(s, at)) {
         // A new gesture supersedes any hit still in flight from a previous
         // one, whichever path it takes — otherwise a late-arriving hit from
         // an earlier click (released before it landed) can still pass
@@ -127,7 +151,7 @@ export function CanvasStage() {
       }
       const p: PendingHit = {
         anchor: at, latest: at, pointerId: e.pointerId, alive: true,
-        additive: e.shiftKey, leaf: e.metaKey || e.ctrlKey,
+        additive: e.shiftKey, leaf: e.metaKey || e.ctrlKey, cycle: e.altKey,
       };
       pending.current = p;
       void c.hitTest(e.clientX, e.clientY)
@@ -168,6 +192,13 @@ export function CanvasStage() {
       pending.current.latest = c.toCanvas(e.clientX, e.clientY);
       return;
     }
+    if (getState().tool === "move" && !anchor.current && hoverFrame.current === 0) {
+      const { clientX, clientY } = e;
+      hoverFrame.current = requestAnimationFrame(() => {
+        hoverFrame.current = 0;
+        void c.hitTest(clientX, clientY, { hover: true }).then((hits) => setHoverId(hits[0]?.layerId ?? null));
+      });
+    }
     if (!anchor.current) return;
     setRegion(rectRegion(normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null)));
   };
@@ -191,6 +222,13 @@ export function CanvasStage() {
       // Clearing the LAYER axis only. The region survives: the two axes are
       // written by different tools and never clear each other (spec §3.3).
       setSelection([]);
+      return;
+    }
+    if (p.cycle) {
+      const key = `${Math.round(p.anchor.x)},${Math.round(p.anchor.y)}`;
+      const index = cycle.current?.key === key ? (cycle.current.index + 1) % hits.length : 0;
+      cycle.current = { key, index };
+      setSelection([hits[index].layerId]);
       return;
     }
     const s2 = getState();
@@ -238,6 +276,18 @@ export function CanvasStage() {
     });
   };
 
+  // Right-click lists every candidate under the cursor instead of guessing
+  // which one was meant (spec §3.4) — the whole stack `hitTest` already
+  // returns, handed to <HitMenu /> for the user to pick from directly.
+  const onContextMenu = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const c = getController();
+    if (!c || getState().tool !== "move") return;
+    e.preventDefault();
+    const box = e.currentTarget.getBoundingClientRect();
+    const at = { x: e.clientX - box.left + e.currentTarget.scrollLeft, y: e.clientY - box.top + e.currentTarget.scrollTop };
+    void c.hitTest(e.clientX, e.clientY).then((hits) => setMenu(hits.length ? { at, hits } : null));
+  };
+
   const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
 
   // Anything that changes the canvas's laid-out box exposes a different slice
@@ -263,6 +313,7 @@ export function CanvasStage() {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
     >
       {/* Deliberately names no file format. PSD is the only one that loads
           today, but PNG/JPEG are planned, and the file picker's `accept`
@@ -284,6 +335,7 @@ export function CanvasStage() {
         <SelectionOverlay />
         <SelectionBox />
       </div>
+      <HitMenu at={menu?.at ?? null} hits={menu?.hits ?? []} onClose={() => setMenu(null)} />
     </div>
   );
 }
@@ -361,6 +413,9 @@ interface PendingHit {
   alive: boolean;
   additive: boolean;
   leaf: boolean;
+  /** Alt was held: cycle through the candidate stack instead of picking the
+   *  usual level. */
+  cycle: boolean;
 }
 
 /** Whether a press lands within the boxes of the current selection. Used only

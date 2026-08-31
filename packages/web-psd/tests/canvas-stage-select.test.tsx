@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { CanvasStage } from "../src/ui/panels/canvas-stage.js";
 import { App } from "../src/ui/app.js";
 import { getState, setState } from "../src/ui/store.js";
+import { getHoverId, setHoverId } from "../src/ui/overlay-store.js";
 import { rectRegion } from "../src/ui/region.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
@@ -180,5 +181,80 @@ describe("Escape", () => {
     const textarea = container.querySelector("textarea")!;
     fireEvent.keyDown(textarea, { key: "Escape" });
     expect(getState().selection).toEqual(["b"]);
+  });
+});
+
+describe("disambiguation and hover", () => {
+  const stack = [
+    { layerId: "a", path: ["a"] },
+    { layerId: "b", path: ["b"] },
+    { layerId: "c", path: ["c"] },
+  ];
+
+  // The outer beforeEach's doc only has "g" > "a" and "b" — no "c". `setState`
+  // won't validate `["b"]` in the Escape test above, but `setSelection` (which
+  // the alt-cycle path is routed through) normalizes against `doc.layers` and
+  // correctly drops ids the document doesn't have (hit-test.ts's
+  // normalizeSelection — a dead id being invisible yet dispatched as real is a
+  // genuine bug elsewhere). In real use every candidate `hitTest` returns
+  // already exists in the live doc, so this only needs a fixture wide enough
+  // to actually hold all three candidates the mock hands back.
+  beforeEach(() => {
+    setState({ doc: { canvas: { width: 100, height: 100 }, layers: [
+      leaf("a", [10, 10, 30, 30]), leaf("b", [60, 60, 70, 70]), leaf("c", [10, 60, 30, 70]),
+    ] } });
+  });
+
+  // Not "guess which layer they meant": being wrong there means selecting
+  // something invisible and then dragging it, which costs far more than one
+  // extra click.
+  it("cycles the candidate stack on repeated alt-clicks at the same point", async () => {
+    hitTest.mockResolvedValue(stack);
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+    for (const expected of [["a"], ["b"], ["c"], ["a"]]) {
+      fireEvent(stage, pointer("pointerdown", 15, 15, { altKey: true }));
+      fireEvent(stage, pointer("pointerup", 15, 15));
+      await flush();
+      expect(getState().selection).toEqual(expected);
+    }
+  });
+
+  it("restarts the cycle at a different point", async () => {
+    hitTest.mockResolvedValue(stack);
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+    fireEvent(stage, pointer("pointerdown", 15, 15, { altKey: true }));
+    fireEvent(stage, pointer("pointerup", 15, 15));
+    await flush();
+    fireEvent(stage, pointer("pointerdown", 15, 15, { altKey: true }));
+    fireEvent(stage, pointer("pointerup", 15, 15));
+    await flush();
+    expect(getState().selection).toEqual(["b"]);
+
+    fireEvent(stage, pointer("pointerdown", 65, 65, { altKey: true }));
+    fireEvent(stage, pointer("pointerup", 65, 65));
+    await flush();
+    expect(getState().selection).toEqual(["a"]);
+  });
+
+  // The main store notifies every subscriber, so a per-frame hover there would
+  // re-render the whole layer tree (store.ts:106).
+  it("writes the hovered id to the overlay store and leaves the main store alone", async () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { cb(0); return 1; });
+    hitTest.mockResolvedValue([{ layerId: "a", path: ["a"] }]);
+    const { container } = render(<CanvasStage />);
+    const before = getState();
+    fireEvent(stageOf(container), pointer("pointermove", 15, 15));
+    await flush();
+    expect(getHoverId()).toBe("a");
+    expect(getState()).toBe(before);
+  });
+
+  it("clears the hover when the tool changes away from move", async () => {
+    const { rerender } = render(<CanvasStage />);
+    act(() => { setHoverId("a"); setState({ tool: "marquee" }); });
+    rerender(<CanvasStage />);
+    expect(getHoverId()).toBeNull();
   });
 });
