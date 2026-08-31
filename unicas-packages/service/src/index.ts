@@ -68,3 +68,9 @@ export type {
   NodeGcRepository,
   NodeGcScope,
 } from "./gc.js";
+export { readNodeUsage } from "./node-usage.js";
+export type {
+  NodeUsageEntry,
+  NodeUsageRepository,
+  NodeUsageScope,
+} from "./node-usage.js";

@@ -31,7 +31,6 @@ import type {
   CasLeaseResult,
   CasNodeMetadata,
   CasNodeState,
-  CasUsage,
 } from "@unicas/tenant-protocol";
 import { stackCanonicalNodeKey } from "./do-names.js";
 
@@ -549,46 +548,6 @@ export async function readMetadata(
       childRefCount: node.child_ref_count,
       rootRefCount: node.root_ref_count,
     },
-  };
-}
-
-/** Aggregate storage usage for one (stackId, tenantId). */
-export async function usage(store: NodeStore): Promise<CasUsage> {
-  const { db, stackId, tenantId } = store;
-  const stats = await db
-    .prepare(
-      `SELECT
-        COUNT(*) as nodeCount,
-        COALESCE(SUM(content_size), 0) as readyContentBytes,
-        COUNT(CASE WHEN lease_expires_at > 0 THEN 1 END) as leasedNodeCount
-        FROM cas_nodes WHERE stack_id = ? AND tenant_id = ?`,
-    )
-    .bind(stackId, tenantId)
-    .first<{ nodeCount: number; readyContentBytes: number; leasedNodeCount: number }>();
-  const allNodes = await db
-    .prepare("SELECT hash FROM cas_nodes WHERE stack_id = ? AND tenant_id = ?")
-    .bind(stackId, tenantId)
-    .all<{ hash: string }>();
-  let notReadyCount = 0;
-  let readyStoredBytes = 0;
-  for (const node of allNodes.results) {
-    const active = await store.bucket.head(stackCanonicalNodeKey(stackId, tenantId, node.hash));
-    if (active === null) {
-      notReadyCount++;
-    } else {
-      readyStoredBytes += active.size;
-    }
-  }
-  const reservations = await db.prepare(
-    "SELECT COALESCE(SUM(stored_bytes), 0) AS reserved_bytes FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ?",
-  ).bind(stackId, tenantId).first<{ reserved_bytes: number }>();
-  return {
-    nodeCount: stats?.nodeCount ?? 0,
-    readyContentBytes: stats?.readyContentBytes ?? 0,
-    readyStoredBytes,
-    reservedBytes: reservations?.reserved_bytes ?? 0,
-    notReadyNodeCount: notReadyCount,
-    leasedNodeCount: stats?.leasedNodeCount ?? 0,
   };
 }
 

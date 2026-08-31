@@ -67,7 +67,8 @@ unicas-packages/                    @unicas org
 │   │     actor 等平台端口；内置 stack capability 校验、权限矩阵与有界 authority
 │   │     cache，以及 Root Ref 校验/幂等/投影/revision/retry 业务内核；不依赖
 │   │     Cloudflare 类型或 control-plane 实现；node GC 的候选复核、删除顺序与
-│   │     回收统计同样通过 semantic repository port 执行
+│   │     回收统计，以及 tenant node usage 聚合，同样通过 semantic repository
+│   │     port 执行
 │   ├── control-plane/     @unicas/control-plane      admin 组
 │   │     控制面服务库：ControlPlaneService（CAS_CONTROL_DB 唯一写入路径）、
 │   │     AuthorityRepository、sessions、jwks、possession、audit、cursor、ids
@@ -134,8 +135,8 @@ unicas-packages/                    @unicas org
 - `server-cloudflare`、`admin-webui` server 和 `control-plane-mcp` 暂由
   `service-cloudflare` 作为内部策略组合，迁移完成后其服务端实现将归入
   `service` 或 `service-cloudflare`，对应旧部署包删除。`server-cloudflare`
-  已不再拥有 capability verifier 或 Root Ref 业务规则，只保留迁移中的
-  D1/R2 repository、DO 生命周期、node lease/read/usage 存储实现与 audit RPC。
+  已不再拥有 capability verifier、Root Ref 或 node usage 业务规则，只保留
+  迁移中的 D1/R2 repository、DO 生命周期、node lease/read 存储实现与 audit RPC。
 - 数据面不得依赖 admin 组包；admin 实现包不得依赖 tenant 实现包。
   唯一协议级单向例外是 `admin-protocol -> tenant-protocol`，用于复用两面
   公共协议类型，反向禁止（由 `admin-protocol/tests/cross-plane.test.ts` 与
@@ -198,14 +199,15 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | **tenant auth 下沉 service** | stack capability verifier、操作权限矩阵、authority resolver port 与 30s/60s 有界缓存迁入 `@unicas/service`；Cloudflare 层只负责用 D1 repository 注入 authority 数据与记录事件 |
 | **Root Ref 内核下沉 service** | 请求 canonicalization、幂等、节点/aggregate 校验、domain projection、revision transition plan 与 bounded retry 迁入 `@unicas/service`；D1/R2 adapter 只负责语义化读取与原子提交 |
 | **node GC 内核下沉 service** | 过期无引用候选、删除前复核、content-before-metadata 顺序与回收统计迁入 `@unicas/service`；D1/R2 adapter 保留候选 SQL、对象删除和 multiplicity-aware edge cascade |
+| **node usage 内核下沉 service** | logical/physical/reservation/readiness/lease 统计语义迁入 `@unicas/service`；D1/R2 adapter 只列 node、读取 canonical object 大小与 reservation 总量 |
 
 ## 待办（README 定方向）
 
 1. **capability 归属复查**：如未来出现第二个消费方，可独立成包或并入
    `codec` 包（目前它是 JWT claim 词汇，留在 `tenant-protocol` 合理）。
-2. **服务实现下沉**：tenant authorization 与 Root Ref command 内核已迁入
-  `service`，node GC 也已下沉；下一步把 `server-cloudflare` 的 node
-  lease/read/usage 规则与
+2. **服务实现下沉**：tenant authorization、Root Ref command、node GC 与
+  node usage 内核已迁入 `service`；下一步把 `server-cloudflare` 的 node
+  lease/read 规则与
   `control-plane` 的业务逻辑迁入 `service` 的平台无关 handlers，使其只通过语义化
   store/blob/keyed-actor 端口工作；D1 SQL、R2 与 DO wrapper 留在
   `service-cloudflare`。

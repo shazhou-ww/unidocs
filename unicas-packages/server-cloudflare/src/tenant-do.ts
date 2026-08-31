@@ -15,6 +15,7 @@ import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/w
 import {
   collectExpiredUnreferencedNodes,
   DEFAULT_GC_MAX_NODES,
+  readNodeUsage,
 } from "@unicas/service";
 import { canonicalComposite } from "./do-names.js";
 import {
@@ -25,9 +26,9 @@ import {
   parseLeaseDuration,
   readContent,
   readMetadata,
-  usage,
 } from "./nodes.js";
 import { CloudflareNodeGcRepository } from "./node-gc.js";
+import { CloudflareNodeUsageRepository } from "./node-usage.js";
 import { canonicalizeRootRefsUpdate, parseRootRefsBody } from "./root-refs.js";
 import { RootRefsErrorCodes, RootRefsValidationError } from "./root-refs.js";
 
@@ -70,7 +71,10 @@ export class CasDurableObject {
         return await this.#handleMetadata(request, store);
       }
       if (url.pathname === "/usage" && request.method === "GET") {
-        return jsonResponse(await usage(store));
+        return jsonResponse(await readNodeUsage({
+          repository: new CloudflareNodeUsageRepository(store.db, store.bucket),
+          scope: { stackId: store.stackId, tenantId: store.tenantId },
+        }));
       }
       if (url.pathname === "/gc" && request.method === "POST") {
         return jsonResponse(await this.#handleGc(request, store));
@@ -170,7 +174,7 @@ export class CasDurableObject {
     return jsonResponse(result);
   }
 
-  async #handleGc(request: Request, store: Parameters<typeof usage>[0]): Promise<unknown> {
+  async #handleGc(request: Request, store: Parameters<typeof leaseReadyNode>[0]): Promise<unknown> {
     const body = await request.json().catch(() => null) as { maxNodes?: number } | null;
     const maxNodes = body?.maxNodes ?? DEFAULT_GC_MAX_NODES;
     if (!Number.isSafeInteger(maxNodes) || maxNodes <= 0) {
