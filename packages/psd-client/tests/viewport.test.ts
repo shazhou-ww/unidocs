@@ -1,69 +1,104 @@
 import { describe, it, expect } from "vitest";
-import { screenToCanvas, canvasToScreen, visibleTiles } from "../src/viewport.js";
+import { measuredRatio, screenToCanvas, canvasToScreen, visibleBitmapRect, type BoxRect } from "../src/viewport.js";
+
+/** A laid-out canvas box at (left,top) with the given CSS size. */
+const box = (left: number, top: number, width: number, height: number): BoxRect =>
+  ({ left, top, width, height, right: left + width, bottom: top + height });
+
+describe("measuredRatio", () => {
+  it("is 1:1 when the CSS box matches the bitmap", () => {
+    expect(measuredRatio({ width: 800, height: 600 }, box(0, 0, 800, 600))).toEqual({ x: 1, y: 1 });
+  });
+
+  it("reports bitmap-per-CSS-pixel when the box is scaled up (zoomed in)", () => {
+    // 800 doc px shown across 1600 CSS px = 200% zoom = 0.5 doc px per CSS px.
+    expect(measuredRatio({ width: 800, height: 600 }, box(0, 0, 1600, 1200))).toEqual({ x: 0.5, y: 0.5 });
+  });
+
+  it("reports bitmap-per-CSS-pixel when the box is scaled down (zoomed out)", () => {
+    expect(measuredRatio({ width: 800, height: 600 }, box(0, 0, 200, 150))).toEqual({ x: 4, y: 4 });
+  });
+
+  it("falls back to 1:1 for an unlaid-out box instead of dividing by zero", () => {
+    // jsdom, `display:none`, or a detached element: getBoundingClientRect is
+    // all zeros. Infinity here would poison every coordinate downstream.
+    expect(measuredRatio({ width: 800, height: 600 }, box(0, 0, 0, 0))).toEqual({ x: 1, y: 1 });
+  });
+});
 
 describe("screenToCanvas / canvasToScreen", () => {
-  it("round-trips screen -> canvas -> screen for an arbitrary pan/zoom", () => {
-    const view = { pan: { x: 40, y: -20 }, zoom: 2 };
+  it("is the identity at 1:1", () => {
+    const r = { x: 1, y: 1 };
+    expect(screenToCanvas(r, 42, 17)).toEqual({ x: 42, y: 17 });
+    expect(canvasToScreen(r, 42, 17)).toEqual({ x: 42, y: 17 });
+  });
+
+  it("round-trips in both directions at an arbitrary ratio", () => {
+    const r = { x: 0.5, y: 4 };
     for (const [sx, sy] of [[0, 0], [100, 50], [37.5, 12]] as const) {
-      const c = screenToCanvas(view, sx, sy);
-      const back = canvasToScreen(view, c.x, c.y);
+      const c = screenToCanvas(r, sx, sy);
+      const back = canvasToScreen(r, c.x, c.y);
       expect(back.x).toBeCloseTo(sx);
       expect(back.y).toBeCloseTo(sy);
     }
   });
 
-  it("round-trips canvas -> screen -> canvas too", () => {
-    const view = { pan: { x: 5, y: 5 }, zoom: 0.5 };
-    const s = canvasToScreen(view, 200, 300);
-    const back = screenToCanvas(view, s.x, s.y);
-    expect(back.x).toBeCloseTo(200);
-    expect(back.y).toBeCloseTo(300);
+  it("maps a zoomed-in cursor to sub-pixel document coordinates", () => {
+    // At 400% (ratio 0.25) one CSS px is a quarter of a document pixel, so
+    // the cursor can address inside a pixel — this is why zooming in makes
+    // the eyedropper and marquee MORE precise, not less.
+    expect(screenToCanvas({ x: 0.25, y: 0.25 }, 5, 9)).toEqual({ x: 1.25, y: 2.25 });
   });
 
-  it("is the identity when pan is zero and zoom is 1", () => {
-    const view = { pan: { x: 0, y: 0 }, zoom: 1 };
-    expect(screenToCanvas(view, 42, 17)).toEqual({ x: 42, y: 17 });
-    expect(canvasToScreen(view, 42, 17)).toEqual({ x: 42, y: 17 });
-  });
-
-  it("subtracts pan before dividing by zoom for screenToCanvas", () => {
-    const view = { pan: { x: 10, y: 20 }, zoom: 2 };
-    expect(screenToCanvas(view, 10, 20)).toEqual({ x: 0, y: 0 });
-    expect(screenToCanvas(view, 30, 40)).toEqual({ x: 10, y: 10 });
+  /**
+   * The property the whole measured-ratio design exists for. A fractional
+   * zoom lays the box out at a non-integer CSS size; deriving the mapping
+   * from a stored zoom would leave a residue that grows with distance from
+   * the origin, so the far corner of a large document would be off by
+   * several document pixels while the top-left looked fine.
+   */
+  it("lands exactly on the far corner at a fractional zoom", () => {
+    const bitmap = { width: 4001, height: 2999 };
+    const laidOut = box(0, 0, 1333.67, 999.67); // what the browser actually did
+    const r = measuredRatio(bitmap, laidOut);
+    const corner = canvasToScreen(r, bitmap.width, bitmap.height);
+    expect(corner.x).toBeCloseTo(laidOut.width);
+    expect(corner.y).toBeCloseTo(laidOut.height);
+    const back = screenToCanvas(r, corner.x, corner.y);
+    expect(back.x).toBeCloseTo(bitmap.width);
+    expect(back.y).toBeCloseTo(bitmap.height);
   });
 });
 
-describe("visibleTiles", () => {
-  it("returns the tiles overlapping the viewport rect at zoom=1, no pan", () => {
-    const view = { pan: { x: 0, y: 0 }, zoom: 1 };
-    const canvasSize = { width: 256, height: 256 };
-    const tiles = visibleTiles(view, canvasSize, 64, { width: 100, height: 100 });
-    const keys = tiles.map((t) => `${t.tx},${t.ty}`).sort();
-    expect(keys).toEqual(["0,0", "0,1", "1,0", "1,1"]);
+describe("visibleBitmapRect", () => {
+  const bitmap = { width: 256, height: 256 };
+
+  it("returns the whole canvas when it fits inside the container", () => {
+    expect(visibleBitmapRect(box(0, 0, 256, 256), box(0, 0, 400, 400), bitmap)).toEqual([0, 0, 256, 256]);
   });
 
-  it("shifts the visible tile set when panned", () => {
-    const view = { pan: { x: -128, y: 0 }, zoom: 1 };
-    const canvasSize = { width: 256, height: 256 };
-    const tiles = visibleTiles(view, canvasSize, 64, { width: 64, height: 64 });
-    const keys = tiles.map((t) => `${t.tx},${t.ty}`).sort();
-    expect(keys).toEqual(["2,0"]);
+  it("clips to the container when the canvas is scrolled under it", () => {
+    // Canvas scrolled up by 100 CSS px: its top 100 rows are above the container.
+    expect(visibleBitmapRect(box(0, -100, 256, 256), box(0, 0, 256, 100), bitmap)).toEqual([100, 0, 200, 256]);
   });
 
-  it("shrinks the visible canvas rect when zoomed in", () => {
-    const view = { pan: { x: 0, y: 0 }, zoom: 2 };
-    const canvasSize = { width: 256, height: 256 };
-    const tiles = visibleTiles(view, canvasSize, 64, { width: 128, height: 128 });
-    const keys = tiles.map((t) => `${t.tx},${t.ty}`).sort();
-    expect(keys).toEqual(["0,0"]);
+  it("returns null when the canvas is scrolled entirely out of view", () => {
+    expect(visibleBitmapRect(box(0, -400, 256, 256), box(0, 0, 256, 100), bitmap)).toBeNull();
   });
 
-  it("clips to the canvas bounds when the viewport hangs off the edge", () => {
-    const view = { pan: { x: -200, y: -200 }, zoom: 1 };
-    const canvasSize = { width: 256, height: 256 };
-    const tiles = visibleTiles(view, canvasSize, 64, { width: 300, height: 300 });
-    const keys = tiles.map((t) => `${t.tx},${t.ty}`).sort();
-    // viewport covers canvas [200,200]-[500,500], clipped to [200,200]-[256,256] -> tile (3,3)
-    expect(keys).toEqual(["3,3"]);
+  it("converts the visible slice into document pixels when zoomed out", () => {
+    // 256 doc px drawn across 128 CSS px (50%); the container shows the top
+    // 32 CSS px, which is the top 64 document rows.
+    expect(visibleBitmapRect(box(0, 0, 128, 128), box(0, 0, 128, 32), bitmap)).toEqual([0, 0, 64, 256]);
+  });
+
+  it("converts the visible slice into document pixels when zoomed in", () => {
+    // 256 doc px drawn across 512 CSS px (200%); 128 CSS px of container
+    // shows 64 document rows.
+    expect(visibleBitmapRect(box(0, 0, 512, 512), box(0, 0, 512, 128), bitmap)).toEqual([0, 0, 64, 256]);
+  });
+
+  it("never reports past the bitmap when the container is larger than the canvas", () => {
+    expect(visibleBitmapRect(box(50, 50, 256, 256), box(0, 0, 1000, 1000), bitmap)).toEqual([0, 0, 256, 256]);
   });
 });

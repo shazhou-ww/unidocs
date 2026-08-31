@@ -16,7 +16,10 @@ export function TopBar() {
     const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s.zoom + delta));
     if (zoom === s.zoom) return;
     setState({ zoom });
-    getController()?.setZoom(zoom);
+    // The controller is not told the zoom — it measures it off the canvas's
+    // laid-out box (see `Ratio` in psd-client/viewport.ts). This call only
+    // asks it to fetch tiles the new zoom may have brought into view.
+    getController()?.setZoom();
   };
 
   const href = exportUrl();
