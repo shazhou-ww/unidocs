@@ -97,14 +97,23 @@ function maxAlpha(layer: Layer, points: Array<[number, number]>, resident: Resid
   return best;
 }
 
-/** The nearest visible non-clipping layer below `i` — the base a run of
- *  clipping layers is confined to, same rule `renderList` applies. */
-function clipBaseBelow(layers: Layer[], i: number): Layer | null {
-  for (let j = i - 1; j >= 0; j--) {
-    if (!layers[j].visible) continue;
-    if (!layers[j].clipping) return layers[j];
+/**
+ * The layer whose shape confines `layers[i]`, or null when the compositor
+ * renders it UNCONFINED — which is not the same as invisible.
+ *
+ * Mirrors `renderList`'s clip-base state machine (composite.ts): a hidden
+ * non-clipping layer resets the base, an adjustment layer never becomes one,
+ * and a run of consecutive clipping layers shares the base below the run.
+ */
+function clipBaseFor(layers: Layer[], i: number): Layer | null {
+  let base: Layer | null = null;
+  for (let j = 0; j < i; j++) {
+    const l = layers[j];
+    if (!l.visible) { if (!l.clipping) base = null; continue; }
+    if (l.clipping && base) continue;            // confined; the base persists
+    base = l.type !== "adjustment" ? l : null;
   }
-  return null;
+  return base;
 }
 
 /**
@@ -139,9 +148,14 @@ export function hitInList(
     // select it where nothing of it is visible.
     let confine = 1;
     if (layer.clipping) {
-      const base = clipBaseBelow(layers, i);
-      confine = base ? maxAlpha(base, points, resident, true) : 0;
-      if (confine <= 0) continue;
+      const base = clipBaseFor(layers, i);
+      // No base means the compositor takes renderList's else branch and paints
+      // this layer unconfined — so leave `confine` at 1 rather than reading
+      // "nothing to clip to" as "nothing is visible".
+      if (base) {
+        confine = maxAlpha(base, points, resident, true);
+        if (confine <= 0) continue;
+      }
     }
 
     if (maxAlpha(layer, points, resident, false) * confine < threshold) continue;

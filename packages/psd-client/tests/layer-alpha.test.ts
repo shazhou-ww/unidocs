@@ -102,6 +102,37 @@ describe("hitInList", () => {
     expect(hitInList(layers, at(15, 15), HIT_ALPHA_THRESHOLD, residentOnly)).toEqual([]);
   });
 
+  // renderList's `baseCoverage` is null until some visible non-adjustment
+  // layer establishes it; a clipping layer processed while it is still null
+  // renders UNCONFINED, not invisible (composite.ts:178-198).
+  it("a lone clipping layer with nothing beneath it renders unconfined", () => {
+    const layers = [raster("lone", [0, 0, 10, 10], 255, { clipping: true })];
+    expect(hitInList(layers, at(5, 5), HIT_ALPHA_THRESHOLD, residentOnly).map((h) => h.layerId))
+      .toEqual(["lone"]);
+  });
+
+  it("a clipping layer above only an adjustment layer renders unconfined, since an adjustment never becomes a base", () => {
+    const layers: Layer[] = [
+      { ...base, id: "adj", name: "adj", type: "adjustment", bounds: [0, 0, 10, 10] },
+      raster("clip", [0, 0, 10, 10], 255, { clipping: true }),
+    ];
+    expect(hitInList(layers, at(5, 5), HIT_ALPHA_THRESHOLD, residentOnly).map((h) => h.layerId))
+      .toEqual(["clip"]);
+  });
+
+  it("a clipping layer above a hidden non-clipping layer is not confined to a still-deeper base", () => {
+    const layers = [
+      raster("deepBase", [0, 0, 10, 10], 255),
+      raster("hiddenMid", [0, 0, 10, 10], 255, { visible: false }),
+      raster("clip", [0, 0, 20, 20], 255, { clipping: true }),
+    ];
+    // (15,15) is outside `deepBase`'s bounds but inside `clip`'s own bounds.
+    // The hidden `hiddenMid` resets the clip base to null (composite.ts:182-184),
+    // so `clip` must render unconfined here, not confined to `deepBase`.
+    expect(hitInList(layers, at(15, 15), HIT_ALPHA_THRESHOLD, residentOnly).map((h) => h.layerId))
+      .toEqual(["clip"]);
+  });
+
   it("accepts several sample points and takes the most opaque, which is the click tolerance", () => {
     const layers = [raster("thin", [0, 0, 1, 10], 255)];
     expect(hitInList(layers, [[5, 3]], HIT_ALPHA_THRESHOLD, residentOnly)).toEqual([]);
