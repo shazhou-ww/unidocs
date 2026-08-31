@@ -1,4 +1,5 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
+import { invalidateTarget } from "./invalidate.js";
 import { getState, setState } from "./store.js";
 import { initialZoom } from "./zoom.js";
 
@@ -33,10 +34,15 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
       const docId = controller?.docId ?? null;
       const fresh = docId !== sessionDocId;
       sessionDocId = docId;
+      // Both selection axes are long-lived state and the document just moved
+      // under them — see invalidate.ts. Computed from the PREVIOUS state, so
+      // it has to be read before `setState` replaces it.
+      const invalidation = invalidateTarget(getState(), doc as never, fresh);
       setState({
         doc: doc as never,
         version,
         ...(fresh ? { sessionBaseVersion: version } : {}),
+        ...invalidation,
       });
       // A newly opened document picks its own zoom (1:1, or shrunk if it
       // overflows the stage). Deliberately only on `fresh`: a rebase or an
@@ -85,7 +91,12 @@ async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   // does exist server-side, so pretending the previous one is still open
   // would be the bigger lie.
   if (controller.docId && controller.docId !== before) {
-    setState({ docId: controller.docId, docName: label, history: [], chat: [] });
+    // `selection`/`region` are normally cleared by `onDoc`'s fresh branch.
+    // They are cleared again here for the path where `initRender` threw
+    // BEFORE reaching that callback: the new docId is adopted (see the
+    // comment above) while the previous document's target is still in the
+    // store, pointing at layer ids that are not in any open document.
+    setState({ docId: controller.docId, docName: label, history: [], chat: [], selection: [], region: null });
   }
 }
 
