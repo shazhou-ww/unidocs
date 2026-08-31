@@ -11,6 +11,7 @@ vi.mock("../src/doc-controller.js", () => ({
     constructor(...args: unknown[]) { ctor(...args); }
     docId = null;
     createFrom = vi.fn(async () => {});
+    requestVisibleTiles = vi.fn();
   },
   GW: "", USER: "u1", TYPE: "psd", API_BASE_URL: "/tenants/u1",
 }));

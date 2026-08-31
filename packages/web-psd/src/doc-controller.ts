@@ -98,6 +98,23 @@ export class DocController {
       store,
     });
 
+    // Hand the new document over BEFORE any rendering starts.
+    //
+    // The canvas bitmap is owned here; its CSS box is owned by React, which
+    // sizes it from the store's `doc`. Resizing the bitmap without telling the
+    // store first leaves a window where the incoming document is painted into
+    // a bitmap of its own size but displayed inside the OUTGOING document's
+    // box — two documents' dimensions on screen at once, which reads as the
+    // old one showing through the new. Sizing the canvas and publishing the
+    // doc here closes that window: by the time a single tile is painted, both
+    // halves already agree.
+    //
+    // Assigning width/height also clears the bitmap, so no pixel of the
+    // previous document can survive into the new one even transiently.
+    this.view.width = doc.canvas.width;
+    this.view.height = doc.canvas.height;
+    this.events.onDoc(doc, version);
+
     // Tear down any previous doc's worker before starting a new one.
     this.currentWorker?.terminate();
     const worker = new Worker(new URL("../../psd-client/src/render-worker.ts", import.meta.url), { type: "module" });
@@ -115,8 +132,13 @@ export class DocController {
     const workerInitMs = performance.now() - workerInitStart;
     this.tileSize = init.tileSize;
 
-    this.view.width = init.canvas.width;
-    this.view.height = init.canvas.height;
+    // Already sized from `doc.canvas` above; the worker's `init` is the
+    // authority, so re-assert it only if they somehow disagree — assigning
+    // width unconditionally would clear the canvas a second time for nothing.
+    if (this.view.width !== init.canvas.width || this.view.height !== init.canvas.height) {
+      this.view.width = init.canvas.width;
+      this.view.height = init.canvas.height;
+    }
 
     this.viewport = new Viewport(this.view);
     this.viewport.setDoc(init.canvas);
@@ -190,12 +212,17 @@ export class DocController {
     if (tiles.length > 0) void this.renderClient.requestTiles(tiles.map((t) => [t.tx, t.ty]));
   }
 
-  /** Zoom changes only ever reach the canvas as a CSS box size, which the
-   *  Viewport measures rather than being told (see `Ratio` in viewport.ts).
-   *  So there is nothing to set here — only newly-exposed tiles to fetch,
-   *  since zooming out widens the visible document area. */
-  setZoom(): void {
-    this.requestVisibleTiles();
+  /** The canvas element's laid-out box. Zoom compensation measures against
+   *  this AFTER a resize, so it must be read fresh every time — a cached rect
+   *  goes stale on the very layout change it is needed for. */
+  canvasRect(): DOMRect {
+    return this.view.getBoundingClientRect();
+  }
+
+  /** The scrolling container the canvas sits in. Panning is its native
+   *  scrolling, so holding a point still across a zoom means scrolling it. */
+  get stage(): HTMLElement {
+    return this.stageEl;
   }
 
   /** Client (viewport) coords → document pixels. */
