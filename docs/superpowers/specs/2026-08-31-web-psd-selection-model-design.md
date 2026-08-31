@@ -2,11 +2,14 @@
 
 日期：2026-08-31
 分支：`feat/web-psd-selection`
-依赖：`refactor(web-psd): 缩放 Phase 0 — 收口屏幕↔文档坐标映射`（PR #38，已并入 main）
-并行工作：缩放 Phase 1（另一个 agent），文件边界见 §2
+依赖：画布缩放 Phase 0（PR #38）与 Phase 1（PR #39），**均已并入 main**。
+　　　对应设计：`2026-08-31-web-psd-zoom-design.md`，其 §7 是写给本设计的契约。
 
-> 本文第一版题为「图层选中设计」，把「选图层」和「选区域」当成两件平行无关的事。
-> 那个框架是错的，见 §3.4。本版改为一个目标、两个轴。
+> 修订记录：
+> - 第一版题为「图层选中设计」，把「选图层」和「选区域」当成两件平行无关的事。那个框架错了，
+>   见 §3.4。第二版改为一个目标、两个轴。
+> - 第三版按缩放 Phase 1 的落地结果校验：覆盖层定位改用**百分比**（`rectStyle`），
+>   原来的 ResizeObserver 方案作废（§7.3），开放问题 2 已解决（§13）。
 
 ## 1. 背景与范围
 
@@ -25,6 +28,10 @@
 **所以「帮我把框中的这块重新生成」这句话今天字面上不可能工作**——agent 收不到「框中」是哪。
 这是本设计要补的最大的洞，也是第一版完全没有提到的。
 
+**冷启动不再自动打开文档。** 缩放 Phase 1 的 `f122eb7` 改成了空状态起步：`s.doc` 初始为 `null`，
+`canvasBoxStyle` 在无文档时返回 `display: none`（`canvas-stage.tsx:244`），画布区显示「还没有打开
+文档」。所以命中测试、覆盖层、context-bar 都必须处理无文档态——不是边缘情况，是**默认的首屏**。
+
 ### 1.2 本设计交付
 
 一个统一的选择模型（§3），以及它的两个轴：区域轴（§4）、图层轴（§5）、两轴之间的转换（§6），
@@ -38,44 +45,60 @@
 | 沿 alpha 边缘 / 矢量路径描出非矩形**图层**轮廓 | 客户端只有 `vector.pathSummary`（子路径数、节点数），没有路径数据。注意这与 §4 的**区域** mask 是两件事，区域的非矩形是要做的 |
 | 区域的羽化、扩展/收缩、布尔运算 | 等区域轴的基本通路跑通后再谈 |
 
-## 2. 与缩放 Phase 1 的文件边界
+## 2. 与缩放的文件边界
 
-缩放 Phase 1 尚未落地，预计要动 canvas 的 CSS 盒子尺寸。
+**缩放 Phase 1 已并入 main（PR #39），并发冲突的主要风险已经过去。** 本节从「预测」改为「已知」，
+记录的是本设计与已落地代码的接触面，以及缩放若有后续阶段时的复发面。
 
 ```
-                     本设计                缩放 Phase 1（预计）      交集
-composer.tsx           改（A 期）              —                    无
-api.ts                 改（A 期）              —                    无
-context-bar.tsx        改（A 期）              —                    无
-selection-box.tsx      新增（B 期）            —                    无
-hit-test.ts            新增（B 期）            —                    无
-overlay-store.ts       新增（B 期）            —                    无
-selection-overlay.tsx  不碰 ★                  可能碰                无
-canvas-stage.tsx       只改 3 个指针函数体      可能改结构/注释        有 ←
-styles.css             只新增 .sel-* 段        改 .view/.stage-inner  有 ←
-viewport.ts            不碰                    大改                  无
-top-bar.tsx            不碰                    可能改                无
-doc-controller.ts      C 期才碰（加 2 个方法）  可能碰                有（C 期）←
-layer-tree.tsx         改（B 期）              —                    无
-store.ts               改                      可能加字段            有 ←
+                     本设计                    缩放已落地的改动           现状
+composer.tsx           改（A 期）                  —                     干净
+api.ts                 改（A 期）                  —                     干净
+context-bar.tsx        改（A 期）                  —                     干净
+selection-box.tsx      新增（B 期）                —                     干净
+hit-test.ts            新增（B 期）                —                     干净
+overlay-store.ts       新增（B 期）                —                     干净
+selection-overlay.tsx  只 import rectStyle ★       改为百分比定位         需协调
+canvas-stage.tsx       只改 3 个指针函数体          +wheel +useLayoutEffect 需协调
+                                                  +canvasBoxStyle
+styles.css             只新增 .sel-* 段            加 .stage-empty、      干净
+                                                  改 .view / .zoom-label
+layer-tree.tsx         改（B 期）                  —                     干净
+store.ts               加 region 字段              未改                   干净
+doc-controller.ts      C 期加 hitTest              删 setZoom             需协调（C 期）
+viewport.ts            不碰                        大改                   —
+zoom.ts / zoom-controller.ts  不碰                 新增                   —
 ```
 
-★ `selection-overlay.tsx` 的文件头注释在 PR #38 里被写成了**定位契约**（覆盖层的几何量、层级位置、
-chrome 尺寸三条规则），是给本设计用的。本设计遵守它，但**不修改该文件**——改它冲突概率最高，
-而且没有必要：新的覆盖层走新文件。
+★ **`selection-overlay.tsx` 的角色变了。** 它现在导出 `rectStyle()`（`selection-overlay.tsx:47`），
+并且注释里明写「anything else drawn over the canvas (handles, transform boxes, hover outlines) must
+position itself the same way, and sharing this is how that stays true」——**它就是给本设计准备的**。
+所以规则从「不碰它」改为：
 
-规避办法：
+- **导入 `rectStyle`，不修改该文件的任何逻辑或注释**；
+- 唯一的例外是 A 期把 `marquee` 改名为 `region`（§4.1），要动它引用 `s.marquee` 的两行。
+  缩放已合入，这个改动现在是安全的。
 
-- **`canvas-stage.tsx`**：只改 `onPointerDown` / `onPointerMove` / `onPointerUp` 三个函数体，
-  以及 JSX 里加一行 `<SelectionBox />`。不动组件结构、不动文件头注释、不动 `normalise()`。
-- **`styles.css`**：新样式全部追加到文件末尾的独立段落，类名前缀 `.sel-`。不碰 `.stage`、
-  `.stage-inner`、`.view`、`.marquee` 已有的任何规则。
-- **`doc-controller.ts`**（仅 C 期）：只新增 `ratio()` 和 `hitTest()`，追加在 `pickColor` 之后。
-  不改 `toCanvas` / `toScreen` / `setZoom`。
-- **`store.ts`**：只新增派生纯函数与 `region` 字段；`hoverId` **不进这个 store**（§7.4）。
+其余规避办法：
 
-**排期**：A 期与缩放**零交集**，随时可开。B 期两处交集都是追加式改动，可并行。
-C 期建议等缩放 Phase 1 合入（要动 `doc-controller.ts`，且需在真实缩放下验一遍对齐）。
+- **`canvas-stage.tsx`**（现在 250 行，比第一版写这条时大了一倍）：只改 `onPointerDown` /
+  `onPointerMove` / `onPointerUp` 三个函数体，以及 JSX 里加一行 `<SelectionBox />`。
+  **不动**文件头注释、两个 `useEffect`（wheel 与 initController）、`useLayoutEffect`（取 tile）、
+  `normalise()`、`canvasBoxStyle()`。
+- **`styles.css`**：新样式全部追加到文件末尾，类名前缀 `.sel-`。不碰 `.stage`、`.stage-empty`、
+  `.stage-inner`、`.view`、`.marquee`。
+- **`doc-controller.ts`**（仅 C 期）：只新增 `hitTest()`（以及 §7.5 讨论后如果确实需要的 `ratio()`），
+  追加在 `pickColor` 之后。不改 `toCanvas` / `toScreen` / `requestVisibleTiles`。
+
+**新增的硬约束：`tests/no-import-cycles.test.ts`。** 缩放期间踩过一次
+（`controller.ts` ↔ `zoom-controller.ts` 互相 import，编译和类型检查都过，只在浏览器里表现为
+「功能存在但毫无反应」）。本设计新增的 `hit-test.ts` / `overlay-store.ts` / `selection-box.tsx`
+必须保持单向依赖：**纯函数模块不 import 组件，组件不 import 组件的反向**。
+`selection-box.tsx` → `selection-overlay.tsx` 这条边是允许的，只要后者永远不反向 import
+（见 §13 第 5 条）。
+
+**排期**：A 期与缩放已落地代码零冲突，随时可开。B 期只有 `canvas-stage.tsx` 一处接触，是追加式。
+C 期要动 `doc-controller.ts`，缩放已合入所以不再需要等。
 
 ## 3. 核心模型：一个目标，两个轴
 
@@ -291,8 +314,9 @@ export function layerBox(layer: LocalLayer): Rect | null;
 **阈值**：C 期的判定是 `图层 alpha × 蒙版 alpha × opacity × fillOpacity ≥ 阈值`，阈值取 `8/255`——
 不取 0 是为了不被几乎透明的辉光边缘选中。
 
-**容差**：点击判定的宽容度写成 CSS 像素常量（建议 3px），使用时乘 `ratio` 换成文档像素。
-缩到 25% 时那就是 12 个文档像素。**写死成文档像素的话缩小后就点不中细图层了。**
+**容差**：点击判定的宽容度写成 CSS 像素常量（建议 3px），使用时换成文档像素——缩放下限现在是 5%
+（缩放设计 §5），5% 时 3 CSS px 就是 60 个文档像素。**写死成文档像素的话缩小后完全点不中东西。**
+换算写法见 §7.5。
 
 ### 5.5 消歧：画布点击是便捷方式，不是唯一入口
 
@@ -367,12 +391,17 @@ Photoshop 里 Cmd 点图层缩略图。**用户指着一个「东西」，拿到
 
 ### 7.1 定位契约
 
-照抄 `selection-overlay.tsx:4-21` 已经写死的三条：
+缩放设计（`2026-08-31-web-psd-zoom-design.md` §7）写死了四条，`selection-overlay.tsx` 的文件头
+是同一份的代码侧副本。本设计**全部遵守**：
 
-1. 几何量存**文档像素**，渲染时用 `toScreen` 换算——这样覆盖层不需要知道缩放是多少就能跟住画布。
+1. 几何量存**文档像素**，用 `rectStyle()` 输出为 containing block 的**百分比**。
 2. 覆盖层是 canvas 的**兄弟节点**（在 `.stage-inner` 里），不是任何被 CSS 缩放的元素的子节点。
 3. **chrome 尺寸不随缩放变化**：边框粗细、手柄大小只能写 CSS 像素常量，且**不许给覆盖层套
    `transform: scale()`**——否则 25% 时手柄小到抓不住、400% 时糊成一坨。
+4. **命中测试用 `toCanvas()`**——它在**事件处理器**里调用，布局已经稳定，测量是安全的。
+
+第 1 条和第 4 条的分工是这份契约的要点：**渲染阶段不测量（用百分比），事件处理器里才测量
+（用 `toCanvas`）**。第一版设计把两者都放在测量一侧，那是错的，见 §7.3。
 
 ### 7.2 视觉区分
 
@@ -381,63 +410,91 @@ Photoshop 里 Cmd 点图层缩略图。**用户指着一个「东西」，拿到
 | | 画法 | 类名 |
 | --- | --- | --- |
 | 区域 · 矩形 | 蚂蚁线虚线 + 四角手柄（**保持现状，不动**） | `.marquee` |
-| 区域 · 带 mask（D 期） | 沿 mask 轮廓的蚂蚁线；轮廓由 mask 描边得出，画进一张覆盖 `bounds` 的 `<canvas>`，不是 div | `.sel-region` |
+| 区域 · 带 mask（D 期） | 沿 mask 轮廓的蚂蚁线，用 **SVG**（见下） | `.sel-region` |
 | 图层选中 | 实线 1px `--accent` + 8 个手柄（四角 + 四边中点） | `.sel-box` |
 | 悬停预选 | 实线 1px、更淡、无手柄 | `.sel-hover` |
 | 多选 | 每个图层一个细边框（无手柄）+ 一个并集外框（有手柄） | `.sel-box` / `.sel-union` |
 
-带 mask 的区域是唯一必须用 canvas 而不是 div 画的东西——但它仍然遵守 §7.1：这张 canvas 的**位图
-按 CSS 像素尺寸开**（不是文档像素），mask 采样时按 ratio 换算。这样蚂蚁线的粗细依然是 CSS 像素。
+**带 mask 的区域用 SVG，不用 canvas。** div 画不了非矩形轮廓，但 canvas 会把 §7.1 的三条全部
+打破：canvas 的位图尺寸必须按 CSS 像素开，也就是**必须测量**，于是又回到 §7.3 那个问题上。
+
+SVG 同时满足三条，而且是免费的：
+
+- `viewBox="0 0 docWidth docHeight"` —— 路径坐标直接用**文档像素**（第 1 条），不需要任何换算；
+- SVG 元素本身用 `rectStyle()` 定位到 `bounds` 的百分比，浏览器在布局阶段解析（第 1 条）；
+- `vector-effect: non-scaling-stroke` —— 描边粗细**不随 viewBox 缩放**，永远是 CSS 像素（第 3 条）。
+
+轮廓从 mask 提取（marching squares 之类），得到的是文档像素坐标的路径，正好是 `viewBox` 要的东西。
 
 手柄本期只有视觉，**不可拖**（拖手柄真的缩放图层依赖地基 5b）。不加 `cursor: nwse-resize`，
 不做可缩放的暗示。
 
-### 7.3 重新测量的触发（本设计的关键风险）
+### 7.3 覆盖层为什么不测量（已由缩放 Phase 1 解决）
 
-「缩放是量出来的，不是存的」这个不变量的代价是：**必须有人在 canvas 盒子变化之后通知覆盖层重新量，
-而这个通知机制现在不存在。**
+前两版把这里写成本设计的关键风险，并提议挂 `ResizeObserver`。**缩放 Phase 1 用更好的办法解决了，
+本设计不再需要任何通知机制。** 记在这里是因为理由仍然承重——写新覆盖层的人必须知道为什么不能测量。
 
-两类失效：
+**问题**（真实存在过，`66718eb` 的提交信息记录了它）：覆盖层在**渲染阶段**调
+`getBoundingClientRect()`，那时 React 还没把新的 canvas 尺寸提交进 DOM，量到的是**旧盒子**。
+缩放后选中框停在旧位置，而且不会自愈——要等下一次无关的状态变化才对齐。另有一类连渲染都不触发：
+窗口 resize、浏览器页面缩放、设备像素比变化、CSS 过渡的每一帧。
 
-- **量早一帧**。缩放 Phase 1 落地后，`s.zoom` 变化走一次 `setState`，React 在同一次渲染里既给 canvas
-  写新的 CSS 宽高、又渲染覆盖层；而覆盖层是在**渲染阶段**调 `getBoundingClientRect()` 的，那时新样式
-  还没提交进 DOM，量回来的是旧盒子。选中框会停在上一档缩放的位置，且不会自愈——要等下一次无关的
-  状态变化才对齐。`.marquee` 今天就有这个毛病，只是缩放还不生效所以看不出来。
-- **连渲染都不触发**。窗口 resize（一旦有「适应窗口」模式）、浏览器页面缩放、设备像素比变化、缩放做了
-  CSS 过渡动画的那几十帧——盒子变了但 store 没变，React 不重渲染，覆盖层整个脱节。
+**解法**（已落地）：让覆盖层**不需要测量**。`.marquee` 绝对定位，containing block 是 `.stage-inner`
+——无 padding、收缩包裹 canvas，其 padding box **就是** canvas 盒子。把矩形写成文档尺寸的百分比，
+算术交给浏览器在布局阶段解析，按定义发生在新尺寸生效**之后**。
 
-**解法**：给 canvas 挂 `ResizeObserver`，盒子一变就推一个版本号，覆盖层订阅它。它在布局之后触发，
-天然躲开「量早一帧」；不关心变化原因，四类失效全覆盖；不需要覆盖层知道缩放是多少，与
-「measured, never stored」完全一致。约 15 行。
+```ts
+// selection-overlay.tsx:47 —— 直接 import，不要重新实现
+export function rectStyle(rect: Rect, canvas: { width: number; height: number }):
+  { left: string; top: string; width: string; height: string }
+```
 
-不采纳：把覆盖层塞进被 `transform: scale()` 的容器里跟着缩（违反 §7.1 第 3 条）；让覆盖层直接读
-`s.zoom` 自己乘（等于把 zoom 又存一份，正是 PR #38 刚拆掉的东西）。
+比 ResizeObserver 好在三点：没有额外渲染；没有需要人记得去维护的通知路径；将来的常驻「适应窗口」
+模式和 CSS 过渡**自动**被覆盖，而不是靠有人想起来把它们接进观察者。
 
-归属待裁决，见 §13 第 2 条。
+**对本设计的直接后果**：
+
+- 选中框、悬停框、并集框、手柄容器，全部用 `rectStyle` 定位，**一律不在渲染阶段调 `toScreen`**；
+- `overlay-store.ts` 不再需要盒子版本号，只剩 `hoverId`（§7.4）；
+- `toScreen` 仍然是事件处理器里的正确工具（契约第 4 条），只是覆盖层用不到它了。
+
+顺带作废的另外两条：把覆盖层塞进被 `transform: scale()` 的容器里跟着缩（违反契约第 3 条）；
+让覆盖层直接读 `s.zoom` 自己乘（等于把 zoom 又存一份）。
 
 ### 7.4 悬停不走全局 store
 
 `store.ts:113` 明确说了订阅的是整个 state 对象，任何一次 `setState` 都会重渲染整棵树，包括几百行的
 图层树。悬停是每次 `pointermove` 都变的，走全局 store 会把整棵树按帧重渲染。
 
-`hoverId` 和 §7.3 的盒子版本号一起放进 `packages/web-psd/src/ui/overlay-store.ts`（新增），结构与现有
-store 同构（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只有覆盖层订阅它**。一次悬停变化
-的重渲染成本是一个 div。
+`hoverId` 放进 `packages/web-psd/src/ui/overlay-store.ts`（新增），结构与现有 store 同构
+（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只有覆盖层订阅它**。一次悬停变化的
+重渲染成本是一个 div。
+
+（§7.3 原本要放进这个 store 的盒子版本号已经不需要了，所以这个模块只有一个字段。它仍然值得单独
+存在——把 `hoverId` 放进主 store 就会按帧重渲染整棵图层树。）
 
 命中测试本身用 `requestAnimationFrame` 节流，且只在移动工具下跑。
 
 ### 7.5 换算次数
 
 `toCanvas` 每次调用读**两遍** `getBoundingClientRect`：`doc-controller.ts:203` 自己读一遍拿
-`left/top`，`viewport.ratio()` 里面又读一遍拿 `width/height`。`toScreen` 读一遍。
+`left/top`，`viewport.ratio()` 里面又读一遍拿 `width/height`。
 
-今天只有拖动时每个 `pointermove` 调一次。加上悬停命中和选中框（每次渲染 2N 次换算）之后，建议：
+§7.3 落地后，**覆盖层一次都不调**（改用百分比），所以第二版担心的「每次渲染 2N 次换算」不存在了。
+剩下的调用点只有事件处理器：拖动每个 `pointermove` 一次、悬停命中每帧一次。这个量级不需要优化。
 
-- `DocController` 加 `ratio(): Ratio` 透传（C 期一并加）；
-- 覆盖层每次渲染只读一次 ratio，然后用 `@unidocs/psd-client` 已导出的纯函数
-  `canvasToScreen(ratio, x, y)` 批量换算。
+唯一还需要 ratio 的地方是**命中容差**（§5.4：3 CSS px 要换成文档像素）。两种写法：
 
-不违反契约——契约要的是「共用同一套映射」，不是「每次都重新量」。
+```ts
+// 甲：不加任何 API，两次 toCanvas 相减
+const tol = c.toCanvas(clientX + 3, clientY).x - c.toCanvas(clientX, clientY).x;
+
+// 乙：DocController 加 ratio() 透传
+const tol = 3 * c.ratio().x;
+```
+
+甲是 4 次布局读、零新 API；乙是 1 次、多一个方法。**倾向甲**——容差每次手势只算一次，不在热路径上，
+不值得为它扩接口。若 C 期发现别处也要 ratio，再加乙。
 
 ## 8. 交互语义
 
@@ -483,14 +540,16 @@ store 同构（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只�
 | `web-psd/src/ui/api.ts` | `runAgent` 增加可选 region 参数，拼进 instruction（§4.3） |
 | `web-psd/src/ui/panels/composer.tsx` | 送出时带上当前目标 |
 | `web-psd/src/ui/panels/context-bar.tsx` | 把当前目标读成一句话；「选中区域内的图层」入口（§6.2） |
+| `web-psd/src/ui/panels/selection-overlay.tsx` | 仅改引用 `s.marquee` 的两行；**不动** `rectStyle` 与契约注释 |
+| `web-psd/src/ui/panels/canvas-stage.tsx` | 仅 `onPointerMove` 里那一处 `setState({ marquee })` |
 
 ### B 期 — 图层轴基础（两处交集均为追加式，可与缩放并行）
 
 | 文件 | 改动 |
 | --- | --- |
 | `web-psd/src/ui/hit-test.ts` | **新增**：`layerBox`、`unionRect`、`boundsHitTest`、`layersIntersecting`（纯函数，无 DOM） |
-| `web-psd/src/ui/overlay-store.ts` | **新增**：`hoverId` + 盒子版本号的独立小 store |
-| `web-psd/src/ui/panels/selection-box.tsx` | **新增**：选中框 + 悬停框 + 手柄 |
+| `web-psd/src/ui/overlay-store.ts` | **新增**：`hoverId` 的独立小 store |
+| `web-psd/src/ui/panels/selection-box.tsx` | **新增**：选中框 + 悬停框 + 手柄，用 `rectStyle` 定位 |
 | `web-psd/src/ui/panels/canvas-stage.tsx` | 改三个指针函数体；JSX 加一行 `<SelectionBox />` |
 | `web-psd/src/ui/panels/layer-tree.tsx` | 展开祖先 + 滚动到选中行 |
 | `web-psd/src/ui/styles.css` | 文件末尾追加 `.sel-*` 段 |
@@ -502,7 +561,7 @@ store 同构（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只�
 | `psd-client/src/render-core.ts` | 存 `store` / `cache` 字段；加 `hitTest`、`layerAlphaRegion` |
 | `psd-client/src/render-worker.ts` | 加 `hitTest` / `layerAlpha` 请求与响应 |
 | `psd-client/src/render-client.ts` | 对应方法 |
-| `web-psd/src/doc-controller.ts` | 加 `ratio()`、`hitTest()`，追加在 `pickColor` 之后 |
+| `web-psd/src/doc-controller.ts` | 加 `hitTest()`，追加在 `pickColor` 之后（`ratio()` 按 §7.5 暂不加） |
 | `web-psd/src/ui/hit-test.ts` | `boundsHitTest` 降级为兜底 |
 | `context-bar.tsx` | 「载入为选区」入口（§6.1） |
 
@@ -523,9 +582,12 @@ store 同构（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只�
   - `path` 从最外层组到叶子
   - 容差按 ratio 缩放
   - `layersIntersecting` 宁可多选不漏选
-- `selection-target.test.ts` — §3.2 四种空/非空组合各自解析成什么；单击空白只清图层集不清区域
-- `selection-box.test.tsx` — 选中 N 个图层出 N 个框 + 1 个并集框；`ratio ≠ 1` 时位置正确；
-  chrome 尺寸不随 ratio 变化
+- `selection-target.test.ts` — §3.2 四种空/非空组合各自解析成什么；单击空白只清图层集不清区域；
+  **无文档时不崩**（§1.1，空状态是首屏）
+- `selection-box.test.tsx` — 选中 N 个图层出 N 个框 + 1 个并集框。
+  **断言的是百分比字符串，不是像素**：jsdom 不做布局，像素定位在这里根本测不了，而百分比就写在
+  inline style 里，「缩放不改变它」这条恰恰是可以直接断言的（`canvas-stage-overlay.test.tsx` 已经
+  用这个办法测 `.marquee`，照抄即可）
 - `canvas-stage-select.test.tsx` — 按下即选并拖；Shift 加选；双击下探；Alt 循环
 - `composer.test.tsx` — 有区域时 instruction 带上 bounds，无区域时不带
 - `layer-tree.test.tsx`（已存在）补：画布选中后祖先组自动展开
@@ -539,8 +601,9 @@ store 同构（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只�
 
 | 风险 | 缓解 |
 | --- | --- |
-| 与缩放 Phase 1 改到同一个文件 | §2 的边界；A 期零交集；B 期两处交集都是追加式；C 期排在缩放之后 |
-| ResizeObserver 两边都没做，覆盖层在缩放后错位 | §13 第 2 条需在开工前裁决；本设计带兜底方案 |
+| 与缩放改到同一个文件 | 缩放 Phase 1 已合入，主要风险已过去；§2 记录了剩余接触面 |
+| 新覆盖层照第一版的写法在渲染阶段调 `toScreen`，缩放后错位 | §7.1 契约第 1/4 条 + §7.3 的理由；`selection-box.test.tsx` 断言百分比，写错了测试会红 |
+| 新增模块引入 import 环，编译通过但浏览器里静默失效 | `tests/no-import-cycles.test.ts` 已经在守；§2 给了单向依赖规则 |
 | A 期的文本拼接被当成终态，D 期的协议扩展一直不做 | 在 §4.3 和代码注释里都写明是权宜之计；A 期上线后收集 agent 实际需要哪些字段，用真实数据推动协议设计 |
 | B 期的包围盒命中让用户点空白选中透明图层，被当成 bug | B 期只是过渡；§5.5 的消歧手段能缓解；若 C 期排期不长可考虑跳过 B 期的命中部分 |
 | 手柄看起来可拖但拖不动 | 与 UI 重构第一期对选区手柄的取舍一致：只做视觉，不加 `cursor: nwse-resize` |
@@ -554,34 +617,17 @@ store 同构（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只�
    与 Photoshop 相反。不是本设计引入的，但和选中直接相关（用户点画布最上层的图层，树里高亮的却是
    列表最下面那行）。本期顺手改掉（`flattenTree` 里翻转），还是单独一条？
 
-2. **覆盖层重新测量（ResizeObserver）由谁做？** 展开说明如下。
+2. ~~**覆盖层重新测量（ResizeObserver）由谁做？**~~ **已解决，无需裁决。**
 
-   **问题**：PR #38 确立了「缩放是量出来的，不是存的」——覆盖层每次渲染调 `getBoundingClientRect()`
-   现算屏幕坐标。代价是**必须有人在 canvas 盒子变化之后通知覆盖层重新量，而这个通知机制现在不存在**。
-   两类失效（详见 §7.3）：
+   缩放 Phase 1（`66718eb`）没有采用两个候选中的任何一个，而是让覆盖层**不需要测量**：几何量写成
+   文档尺寸的百分比，算术交给浏览器在布局阶段解析。这比 ResizeObserver 好——没有额外渲染，没有需要
+   人记得维护的通知路径，将来的常驻「适应窗口」模式和 CSS 过渡自动被覆盖。
 
-   - *量早一帧*：缩放 Phase 1 落地后，`s.zoom` 变化走一次 `setState`，React 在同一次渲染里既给 canvas
-     写新的 CSS 宽高、又渲染覆盖层。覆盖层在**渲染阶段**读盒子，那时新样式还没提交进 DOM，量到的是
-     旧盒子。选中框会停在上一档缩放的位置，且不会自愈——要等下一次无关的状态变化才对齐。
-   - *连渲染都不触发*：窗口 resize（一旦有「适应窗口」模式）、浏览器页面缩放、设备像素比变化、
-     缩放若做了 CSS 过渡动画的那几十帧。盒子变了但 store 没变，React 不重渲染，覆盖层整个脱节。
+   本设计已按此改写：§7.1 契约、§7.3 全节、§7.4（`overlay-store.ts` 只剩 `hoverId`）、
+   §7.5（覆盖层零测量）、§11（测试断言百分比而非像素）。**新覆盖层一律 import
+   `selection-overlay.tsx` 的 `rectStyle`，不得在渲染阶段调 `toScreen`。**
 
-   **解法**（两边没有分歧）：给 canvas 挂 `ResizeObserver`，盒子一变推一个版本号，覆盖层订阅它。
-   它在布局之后触发，天然躲开「量早一帧」；不关心变化原因，四类失效全覆盖；不需要覆盖层知道缩放是
-   多少，与「measured, never stored」一致。约 15 行代码。
-
-   **待裁决的是归属，不是做法。** 两个候选：
-
-   | | 归缩放 Phase 1 | 归本设计（选择） |
-   | --- | --- | --- |
-   | 理由 | 问题是缩放引入的；`.marquee` 今天就有这个毛病（只是缩放不生效所以看不出来），修了它也一起受益 | 选中框和区域轮廓是第一批会被用户盯着看的覆盖层，错位最刺眼 |
-   | 落点 | 缩放 Phase 1 在改 canvas CSS 盒子的同一处 | `canvas-stage.tsx:36` 现有的 `useEffect`，版本号推进 `overlay-store.ts`（§7.4 新增的那个小 store） |
-   | 风险 | 若缩放 Phase 1 不带它，覆盖层直接错位 | 若缩放那边也做了，两个 ResizeObserver 挂在同一个元素上，重复渲染 |
-
-   **倾向**：归缩放 Phase 1。它是缩放的内在代价，且 `.marquee` 也需要。本设计带兜底方案，**但两边
-   必须先确认，不能各做各的**——都做会挂两个观察者，都不做会让覆盖层在缩放后错位且不自愈。
-
-   **需要 review 给出的结论**：归属方 + 若归缩放则本设计删掉 §7.3 的兜底段落。
+   留着这一条不删，是因为「为什么不能测量」这个理由仍然承重——它是新覆盖层最容易踩错的地方。
 
 3. **A 期把区域拼进 `instruction` 文本，是否可接受。** 已核实 agent 能理解
    `[top,left,bottom,right]`（`tools.ts:271`）并有 `getPreview{rect}` 去看，所以这条路今天就能跑通、
@@ -595,3 +641,10 @@ store 同构（`subscribe` / `getSnapshot` / `useSyncExternalStore`），**只�
 5. **`Region.mask` 用 `Uint8ClampedArray` 还是位图。** 前者简单、能表达羽化；后者省内存（1/8）但
    只能表达硬边。一个 4000×3000 的全画布 mask 用前者是 12MB，用后者 1.5MB。倾向前者——区域通常远
    小于画布，且羽化是迟早要的；但如果 D 期要支持「全选 + 羽化」这类场景，值得重新算一次。
+
+6. **`rectStyle` 要不要抽到共享模块。** 它现在住在 `selection-overlay.tsx` 里（一个组件模块），
+   本设计的 `selection-box.tsx` 要 import 它，D 期的 `.sel-region` SVG 也要。组件 import 组件是
+   合法的单向边，但一旦 `selection-overlay.tsx` 将来需要反过来用到 `selection-box.tsx` 的什么东西，
+   就是一个 import 环——而缩放期间刚为这种环加过一条测试（`no-import-cycles.test.ts`）。
+   现在就抽到 `ui/overlay-geometry.ts`（要动 `selection-overlay.tsx`），还是等到真有第三个消费方？
+   倾向 B 期开工时顺手抽——那时正好有两个消费方，理由充分，且缩放已合入、改动安全。
