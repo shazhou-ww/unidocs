@@ -74,3 +74,16 @@ export type {
   NodeUsageRepository,
   NodeUsageScope,
 } from "./node-usage.js";
+export { NodeOpError, NodeOpErrorCodes } from "./node-errors.js";
+export type { NodeOpErrorCode } from "./node-errors.js";
+export {
+  parseNodeContentRange,
+  readNodeContent,
+  readNodeMetadata,
+} from "./node-read.js";
+export type {
+  NodeContentStream,
+  NodeReadRecord,
+  NodeReadRepository,
+  NodeReadScope,
+} from "./node-read.js";

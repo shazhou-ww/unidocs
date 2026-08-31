@@ -15,19 +15,20 @@ import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/w
 import {
   collectExpiredUnreferencedNodes,
   DEFAULT_GC_MAX_NODES,
+  NodeOpError,
+  NodeOpErrorCodes,
+  readNodeContent,
+  readNodeMetadata,
   readNodeUsage,
 } from "@unicas/service";
 import { canonicalComposite } from "./do-names.js";
 import {
-  NodeOpError,
-  NodeOpErrorCodes,
   leaseReadyNode,
   leaseCanonicalNode,
   parseLeaseDuration,
-  readContent,
-  readMetadata,
 } from "./nodes.js";
 import { CloudflareNodeGcRepository } from "./node-gc.js";
+import { CloudflareNodeReadRepository } from "./node-read.js";
 import { CloudflareNodeUsageRepository } from "./node-usage.js";
 import { canonicalizeRootRefsUpdate, parseRootRefsBody } from "./root-refs.js";
 import { RootRefsErrorCodes, RootRefsValidationError } from "./root-refs.js";
@@ -143,9 +144,14 @@ export class CasDurableObject {
     });
   }
 
-  async #handleRead(request: Request, store: Parameters<typeof readContent>[0]): Promise<Response> {
+  async #handleRead(request: Request, store: Parameters<typeof leaseReadyNode>[0]): Promise<Response> {
     const hash = requireHeader(request, "X-CAS-Hash");
-    const content = await readContent(store, hash, request.headers.get("Range"));
+    const content = await readNodeContent({
+      repository: new CloudflareNodeReadRepository(store.db, store.bucket),
+      scope: { stackId: store.stackId, tenantId: store.tenantId },
+      hash,
+      rangeHeader: request.headers.get("Range"),
+    });
     if (content === null) {
       return Response.json({ error: NodeOpErrorCodes.NOT_FOUND, message: `Node ${hash} not found or not ready` }, { status: 404 });
     }
@@ -165,9 +171,13 @@ export class CasDurableObject {
     });
   }
 
-  async #handleMetadata(request: Request, store: Parameters<typeof readMetadata>[0]): Promise<Response> {
+  async #handleMetadata(request: Request, store: Parameters<typeof leaseReadyNode>[0]): Promise<Response> {
     const hash = requireHeader(request, "X-CAS-Hash");
-    const result = await readMetadata(store, hash);
+    const result = await readNodeMetadata({
+      repository: new CloudflareNodeReadRepository(store.db, store.bucket),
+      scope: { stackId: store.stackId, tenantId: store.tenantId },
+      hash,
+    });
     if (result === null) {
       return Response.json({ error: NodeOpErrorCodes.NOT_FOUND, message: `Node ${hash} not found` }, { status: 404 });
     }

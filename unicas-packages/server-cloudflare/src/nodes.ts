@@ -29,9 +29,10 @@ import {
 } from "@unicas/codec";
 import type {
   CasLeaseResult,
-  CasNodeMetadata,
-  CasNodeState,
 } from "@unicas/tenant-protocol";
+export { NodeOpError, NodeOpErrorCodes } from "@unicas/service";
+export type { NodeOpErrorCode } from "@unicas/service";
+import { NodeOpError, NodeOpErrorCodes } from "@unicas/service";
 import { stackCanonicalNodeKey } from "./do-names.js";
 
 /** Default lease duration when the header is absent. */
@@ -40,30 +41,6 @@ export const DEFAULT_LEASE_MS = 15 * 60 * 1000;
 export const MIN_LEASE_MS = 60 * 1000;
 /** Maximum accepted lease duration. */
 export const MAX_LEASE_MS = 24 * 60 * 60 * 1000;
-
-/** Stable storage error carrying an HTTP status and a wire error code. */
-export class NodeOpError extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly headers?: HeadersInit;
-
-  constructor(status: number, code: string, message: string, headers?: HeadersInit) {
-    super(message);
-    this.name = "NodeOpError";
-    this.status = status;
-    this.code = code;
-    this.headers = headers;
-  }
-}
-
-export const NodeOpErrorCodes = {
-  INVALID_REQUEST: "INVALID_REQUEST",
-  NOT_FOUND: "NODE_NOT_FOUND",
-  NOT_READY: "NODE_NOT_READY",
-  CONFLICT: "NODE_CONFLICT",
-  STORAGE: "STORAGE_ERROR",
-} as const;
-export type NodeOpErrorCode = (typeof NodeOpErrorCodes)[keyof typeof NodeOpErrorCodes];
 
 /** The stack-scoped stores a tenant DO mutates. */
 export interface NodeStore {
@@ -435,120 +412,6 @@ async function adoptCanonicalOrphan(
   ).bind(store.stackId, store.tenantId, hash));
   await store.db.batch(batch);
   return { hash, ready: true, ...lease };
-}
-
-export interface NodeContentStream {
-  readonly body: ReadableStream<Uint8Array>;
-  readonly contentType: string;
-  readonly contentSize: number;
-  readonly range?: { readonly start: number; readonly end: number };
-}
-
-function parseContentRange(header: string | null, size: number): { offset: number; length: number } | undefined {
-  if (header === null) return undefined;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(header);
-  if (!match || (match[1] === "" && match[2] === "") || size === 0) {
-    throw new NodeOpError(416, NodeOpErrorCodes.INVALID_REQUEST, "Range is not satisfiable", {
-      "Content-Range": `bytes */${size}`,
-    });
-  }
-  const first = match[1] === "" ? undefined : Number(match[1]);
-  const last = match[2] === "" ? undefined : Number(match[2]);
-  if (
-    (first !== undefined && (!Number.isSafeInteger(first) || first < 0))
-    || (last !== undefined && (!Number.isSafeInteger(last) || last < 0))
-  ) {
-    throw new NodeOpError(416, NodeOpErrorCodes.INVALID_REQUEST, "Range is not satisfiable", {
-      "Content-Range": `bytes */${size}`,
-    });
-  }
-  if (first === undefined) {
-    if (last === undefined || last === 0) {
-      throw new NodeOpError(416, NodeOpErrorCodes.INVALID_REQUEST, "Range is not satisfiable", {
-        "Content-Range": `bytes */${size}`,
-      });
-    }
-    const length = Math.min(last, size);
-    return { offset: size - length, length };
-  }
-  if (first >= size || (last !== undefined && last < first)) {
-    throw new NodeOpError(416, NodeOpErrorCodes.INVALID_REQUEST, "Range is not satisfiable", {
-      "Content-Range": `bytes */${size}`,
-    });
-  }
-  const end = last === undefined ? size - 1 : Math.min(last, size - 1);
-  return { offset: first, length: end - first + 1 };
-}
-
-/** Open node own-content as an R2 stream; null when the node is absent or not ready. */
-export async function readContent(
-  store: NodeStore,
-  hash: string,
-  rangeHeader: string | null = null,
-): Promise<NodeContentStream | null> {
-  const node = await existingNode(store, hash);
-  if (node === null) return null;
-  const key = stackCanonicalNodeKey(store.stackId, store.tenantId, hash);
-  const requestedRange = parseContentRange(rangeHeader, node.content_size);
-  const logicalOffset = requestedRange?.offset ?? 0;
-  const logicalLength = requestedRange?.length ?? node.content_size;
-  const physicalOffset = 24
-    + new TextEncoder().encode(node.content_type).length
-    + (await orderedRefs(store, hash)).length * 32;
-  const object = await store.bucket.get(key, {
-    range: { offset: physicalOffset + logicalOffset, length: logicalLength },
-  });
-  if (object === null || object.body === undefined) return null;
-  return {
-    body: object.body as unknown as ReadableStream<Uint8Array>,
-    contentType: node.content_type,
-    contentSize: node.content_size,
-    ...(requestedRange === undefined
-      ? {}
-      : { range: { start: logicalOffset, end: logicalOffset + logicalLength - 1 } }),
-  };
-}
-
-/** Read node metadata plus lifecycle state; null when the node is absent. */
-export async function readMetadata(
-  store: NodeStore,
-  hash: string,
-): Promise<{ metadata: CasNodeMetadata; state: CasNodeState } | null> {
-  const { db, stackId, tenantId } = store;
-  const node = await db
-    .prepare(
-      "SELECT content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-    )
-    .bind(stackId, tenantId, hash)
-    .first<{
-      content_size: number;
-      content_type: string;
-      lease_started_at: number;
-      lease_expires_at: number;
-      child_ref_count: number;
-      root_ref_count: number;
-    }>();
-  if (!node) return null;
-  const edges = await db
-    .prepare(
-      "SELECT child_hash FROM cas_edges WHERE stack_id = ? AND tenant_id = ? AND parent_hash = ? ORDER BY ordinal ASC",
-    )
-    .bind(stackId, tenantId, hash)
-    .all<{ child_hash: string }>();
-  return {
-    metadata: {
-      hash,
-      size: node.content_size,
-      contentType: node.content_type,
-      refs: edges.results.map((edge) => edge.child_hash),
-    },
-    state: {
-      leaseStartedAt: node.lease_started_at,
-      leaseExpiresAt: node.lease_expires_at,
-      childRefCount: node.child_ref_count,
-      rootRefCount: node.root_ref_count,
-    },
-  };
 }
 
 function sameRefs(left: readonly string[], right: readonly string[]): boolean {
