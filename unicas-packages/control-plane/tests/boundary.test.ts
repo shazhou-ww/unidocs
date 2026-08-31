@@ -27,6 +27,8 @@ describe("cas-control-plane package boundary", () => {
       "SELECT s.stack_id, s.display_name",
       "INSERT INTO cas_stacks",
       "UPDATE cas_stacks SET display_name",
+      "cas_stack_member_invitations",
+      "DELETE FROM cas_stack_members",
     ]) {
       expect(serviceSource).not.toContain(sql);
     }

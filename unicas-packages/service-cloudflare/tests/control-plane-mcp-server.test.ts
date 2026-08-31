@@ -75,6 +75,51 @@ describe("adapter-hosted control-plane MCP server", () => {
     });
   });
 
+  test("invites, lists, and removes members through the extracted admin service", async () => {
+    const handler = handlerFor(grant(["control:read", "control:write", "control:security"]), { mutationsEnabled: true });
+    const stack = await callTool(handler, "create_stack", { displayName: "Members", idempotencyKey: "members-stack-1" });
+    const stackId = String(stack.structuredContent.stackId);
+    const invitation = await callTool(handler, "invite_member", {
+      stackId,
+      email: "bob@example.com",
+      confirmEmail: "bob@example.com",
+      idempotencyKey: "invite-bob-1",
+    });
+    const replay = await callTool(handler, "invite_member", {
+      stackId,
+      email: "bob@example.com",
+      confirmEmail: "bob@example.com",
+      idempotencyKey: "invite-bob-1",
+    });
+    expect(replay.structuredContent).toEqual(invitation.structuredContent);
+    const acceptUrl = String(invitation.structuredContent.acceptUrl);
+    const token = acceptUrl.split("/").pop()!;
+    expect(await createControlPlaneOperations(db).acceptMemberInvitation({
+      identity: { identityIssuer: "https://accounts.google.com", subject: "bob-sub" },
+      profile: { displayName: "Bob", emailForDisplay: "bob@example.com" },
+    }, { path: { token } })).toMatchObject({ subject: "bob-sub", displayName: "Bob" });
+    const members = await callTool(handler, "list_members", { stackId, limit: 10 });
+    expect(members.structuredContent.items).toEqual([
+      expect.objectContaining({ subject: "alice-sub" }),
+      expect.objectContaining({ subject: "bob-sub", displayName: "Bob", emailForDisplay: "bob@example.com" }),
+    ]);
+    const stale = await callTool(handler, "remove_member", {
+      stackId,
+      identityIssuer: "https://accounts.google.com",
+      subject: "bob-sub",
+      confirmSubject: "bob-sub",
+      etag: '"0"',
+    });
+    expect(stale).toMatchObject({ isError: true, structuredContent: { error: "REVISION_MISMATCH" } });
+    expect((await callTool(handler, "remove_member", {
+      stackId,
+      identityIssuer: "https://accounts.google.com",
+      subject: "bob-sub",
+      confirmSubject: "bob-sub",
+      etag: '"1"',
+    })).structuredContent).toEqual({ ok: true });
+  });
+
   test("reads adapter-provided root-domain audit data", async () => {
     const auditReader = {
       fetch: async (input: RequestInfo | URL) => {

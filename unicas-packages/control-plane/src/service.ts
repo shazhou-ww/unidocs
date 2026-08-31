@@ -20,16 +20,10 @@ import {
   parseCasAdminETag,
 } from "@unicas/admin-protocol";
 import type {
-  CasAdminAcceptMemberInvitationRequest,
-  CasAdminAcceptMemberInvitationResponse,
   CasAdminCreateIssuerKeyRequest,
   CasAdminCreateIssuerKeyResponse,
-  CasAdminCreateMemberInvitationRequest,
-  CasAdminCreateMemberInvitationResponse,
   CasAdminDeleteIssuerKeyRequest,
   CasAdminDeleteIssuerKeyResponse,
-  CasAdminDeleteMemberRequest,
-  CasAdminDeleteMemberResponse,
   CasAdminErrorResponse,
   CasAdminGetIssuerRequest,
   CasAdminGetIssuerResponse,
@@ -37,17 +31,13 @@ import type {
   CasAdminListControlAuditEventsResponse,
   CasAdminListIssuerKeysRequest,
   CasAdminListIssuerKeysResponse,
-  CasAdminListMembersRequest,
-  CasAdminListMembersResponse,
   CasAdminPutIssuerRequest,
   CasAdminPutIssuerResponse,
   CasControlAuditEvent,
   CasIssuerKeyState,
-  CasMemberInvitation,
   CasOperatorIdentityKey,
   CasStackIssuer,
   CasStackIssuerKey,
-  CasStackMember,
   CasAdminListCursor,
 } from "@unicas/admin-protocol";
 import {
@@ -59,12 +49,8 @@ import {
   DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS,
   encodeControlListCursor,
   generateEventId,
-  generateInvitationId,
-  generateInvitationToken,
   generateNonce,
-  INVITATION_TTL_MS,
   isSupportedKeyAlgorithm,
-  normalizeEmailConstraint,
   parsePossessionChallenge,
   parseControlListLimit,
   POSSESSION_CHALLENGE_TTL_MS,
@@ -72,8 +58,6 @@ import {
   toAdminError,
   validateAudience,
   validateCapabilityMaxLifetimeSeconds,
-  validateEmailConstraint,
-  validateInvitationToken,
   validateIssuer,
   validateKid,
   validatePublicJwk,
@@ -88,7 +72,6 @@ import type {
 
 export interface ControlPlaneServiceOptions {
   readonly now?: () => number;
-  readonly invitationTtlMs?: number;
   readonly possessionChallengeTtlMs?: number;
   readonly listDefaultLimit?: number;
   readonly listMaxLimit?: number;
@@ -99,7 +82,6 @@ const SNAPSHOT_KEY = "snapshot";
 export class ControlPlaneService {
   readonly #db: D1Database;
   readonly #now: () => number;
-  readonly #invitationTtlMs: number;
   readonly #possessionChallengeTtlMs: number;
   readonly #listDefaultLimit: number;
   readonly #listMaxLimit: number;
@@ -107,156 +89,10 @@ export class ControlPlaneService {
   constructor(db: D1Database, options: ControlPlaneServiceOptions = {}) {
     this.#db = db;
     this.#now = options.now ?? (() => Date.now());
-    this.#invitationTtlMs = options.invitationTtlMs ?? INVITATION_TTL_MS;
     this.#possessionChallengeTtlMs =
       options.possessionChallengeTtlMs ?? POSSESSION_CHALLENGE_TTL_MS;
     this.#listDefaultLimit = options.listDefaultLimit ?? 50;
     this.#listMaxLimit = options.listMaxLimit ?? 200;
-  }
-
-  // ------------------------------------------------------------------
-  // Members
-  // ------------------------------------------------------------------
-
-  listMembers(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminListMembersRequest,
-  ): Promise<CasAdminListMembersResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      if (!this.#validListLimit(request.query?.limit)) {
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "invalid list limit");
-      }
-      const cursor = this.#requireCursor(request.query?.cursor);
-      const snapshot = await this.#readSnapshot();
-      if (cursor && cursor.snapshot !== snapshot) {
-        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_CURSOR, "cursor is bound to an outdated control snapshot");
-      }
-      const limit = parseControlListLimit(request.query?.limit) ?? this.#listDefaultLimit;
-      const rows = await this.#db
-        .prepare(
-          "SELECT m.stack_id, m.identity_issuer, m.subject, i.display_name, i.email_for_display FROM cas_stack_members m LEFT JOIN cas_operator_identities i ON i.identity_issuer = m.identity_issuer AND i.subject = m.subject WHERE m.stack_id = ? AND m.subject > ? ORDER BY m.subject LIMIT ?",
-        )
-        .bind(request.path.stackId, cursor?.last ?? "", limit + 1)
-        .all<MemberRow>();
-      await this.#requireStableSnapshot(snapshot);
-      const results = rows.results ?? [];
-      const items = results.slice(0, limit).map(toCasStackMember);
-      const nextCursor: CasAdminListCursor | null =
-        results.length > limit
-          ? encodeControlListCursor({ version: 1, snapshot, last: items[items.length - 1]!.subject })
-          : null;
-      return { items, nextCursor };
-    });
-  }
-
-  deleteMember(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminDeleteMemberRequest, "headers">,
-    mutation: ServiceMutationInput,
-  ): Promise<CasAdminDeleteMemberResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      const stack = await this.#stackRow(request.path.stackId);
-      this.#requireIfMatch(mutation.ifMatch, stack.revision);
-      const { identityIssuer, subject } = request.query;
-      const count = await this.#memberCount(request.path.stackId);
-      if (count <= 1) {
-        throw new ControlPlaneError(CasAdminErrorCodes.LAST_MEMBER, "a stack must retain at least one member");
-      }
-      const batch = this.#newMutationBatch(ctx, request.path.stackId, ControlAuditActions.memberRemoved, `${identityIssuer}:${subject}`);
-      batch.push(
-        this.#db.prepare("DELETE FROM cas_stack_members WHERE stack_id = ? AND identity_issuer = ? AND subject = ?")
-          .bind(request.path.stackId, identityIssuer, subject),
-      );
-      await this.#db.batch(batch);
-      return { ok: true };
-    });
-  }
-
-  // ------------------------------------------------------------------
-  // Member invitations
-  // ------------------------------------------------------------------
-
-  createMemberInvitation(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminCreateMemberInvitationRequest, "headers">,
-    mutation: ServiceMutationInput = {},
-  ): Promise<CasAdminCreateMemberInvitationResponse> {
-    return this.#guard(async () => {
-      await this.#requireMember(ctx.identity, request.path.stackId);
-      const constraintError = validateEmailConstraint(request.body?.emailConstraint);
-      if (constraintError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, constraintError);
-      const normalized = normalizeEmailConstraint(request.body?.emailConstraint);
-      const token = generateInvitationToken();
-      const tokenHash = await sha256Hex(token);
-      return this.#withCreateIdempotency(
-        ctx,
-        "POST",
-        `/admin/stacks/${request.path.stackId}/member-invitations`,
-        mutation.idempotencyKey,
-        canonicalJson({ emailConstraint: normalized }),
-        (batch) => this.#buildCreateInvitation(ctx, request, normalized, token, tokenHash, batch),
-      );
-    });
-  }
-
-  acceptMemberInvitation(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminAcceptMemberInvitationRequest,
-  ): Promise<CasAdminAcceptMemberInvitationResponse> {
-    return this.#guard(async () => {
-      const tokenError = validateInvitationToken(request.path.token);
-      if (tokenError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, tokenError);
-      const tokenHash = await sha256Hex(request.path.token);
-      const invitation = await this.#db
-        .prepare(
-          "SELECT invitation_id, stack_id, status, email_constraint, expires_at FROM cas_stack_member_invitations WHERE token_hash = ?",
-        )
-        .bind(tokenHash)
-        .first<InvitationRow>();
-      if (!invitation || invitation.status !== "pending") {
-        throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "invitation not found or already used");
-      }
-      if (invitation.expires_at <= this.#now()) {
-        await this.#db
-          .prepare("UPDATE cas_stack_member_invitations SET status = 'expired' WHERE invitation_id = ?")
-          .bind(invitation.invitation_id)
-          .run();
-        throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "invitation has expired");
-      }
-      if (invitation.email_constraint !== null) {
-        const email = ctx.profile?.emailForDisplay?.trim().toLowerCase() ?? null;
-        if (email !== invitation.email_constraint) {
-          throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "invitation is bound to another email");
-        }
-      }
-      const existingMember = await this.#db
-        .prepare(
-          "SELECT m.stack_id, m.identity_issuer, m.subject, i.display_name, i.email_for_display FROM cas_stack_members m LEFT JOIN cas_operator_identities i ON i.identity_issuer = m.identity_issuer AND i.subject = m.subject WHERE m.stack_id = ? AND m.identity_issuer = ? AND m.subject = ?",
-        )
-        .bind(invitation.stack_id, ctx.identity.identityIssuer, ctx.identity.subject)
-        .first<MemberRow>();
-      if (existingMember) return toCasStackMember(existingMember);
-      await this.#stackRow(invitation.stack_id);
-      const batch = this.#newMutationBatch(ctx, invitation.stack_id, ControlAuditActions.memberInvitationAccepted, invitation.stack_id);
-      batch.push(
-        this.#db.prepare("INSERT INTO cas_stack_members (stack_id, identity_issuer, subject, joined_at) VALUES (?, ?, ?, ?)")
-          .bind(invitation.stack_id, ctx.identity.identityIssuer, ctx.identity.subject, this.#now()),
-      );
-      batch.push(
-        this.#db.prepare("UPDATE cas_stack_member_invitations SET status = 'accepted' WHERE invitation_id = ?")
-          .bind(invitation.invitation_id),
-      );
-      await this.#db.batch(batch);
-      return {
-        stackId: invitation.stack_id,
-        identityIssuer: ctx.identity.identityIssuer,
-        subject: ctx.identity.subject,
-        displayName: ctx.profile?.displayName ?? null,
-        emailForDisplay: ctx.profile?.emailForDisplay ?? null,
-      };
-    });
   }
 
   // ------------------------------------------------------------------
@@ -524,34 +360,6 @@ export class ControlPlaneService {
   // Creation builders (append statements; executed atomically by caller)
   // ------------------------------------------------------------------
 
-  #buildCreateInvitation(
-    ctx: ControlPlaneCallContext,
-    request: CasAdminCreateMemberInvitationRequest,
-    emailConstraint: string | null,
-    token: string,
-    tokenHash: string,
-    batch: D1PreparedStatement[],
-  ): CasAdminCreateMemberInvitationResponse {
-    const invitationId = generateInvitationId();
-    const now = this.#now();
-    this.#appendMutationStatements(ctx, batch, request.path.stackId, ControlAuditActions.memberInvited, invitationId);
-    batch.push(
-      this.#db.prepare(
-        "INSERT INTO cas_stack_member_invitations (invitation_id, stack_id, status, email_constraint, token_hash, expires_at, created_at, revision) VALUES (?, ?, 'pending', ?, ?, ?, ?, 1)",
-      ).bind(invitationId, request.path.stackId, emailConstraint, tokenHash, now + this.#invitationTtlMs, now),
-    );
-    const invitation: CasMemberInvitation = {
-      invitationId,
-      stackId: request.path.stackId,
-      status: "pending",
-      emailConstraint,
-      expiresAt: now + this.#invitationTtlMs,
-      createdAt: now,
-      revision: 1,
-    };
-    return { invitation, acceptUrl: `/admin/invitations/${token}` };
-  }
-
   #buildCreateIssuerKey(
     ctx: ControlPlaneCallContext,
     request: CasAdminCreateIssuerKeyRequest,
@@ -705,15 +513,6 @@ export class ControlPlaneService {
       });
   }
 
-  async #stackRow(stackId: string): Promise<StackRow> {
-    const row = await this.#db
-      .prepare("SELECT stack_id, display_name, description, status, created_at, revision FROM cas_stacks WHERE stack_id = ?")
-      .bind(stackId)
-      .first<StackRow>();
-    if (!row) throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "stack not found");
-    return row;
-  }
-
   async #issuerRow(stackId: string): Promise<IssuerRow> {
     const row = await this.#db
       .prepare("SELECT stack_id, issuer, audience, capability_max_lifetime_seconds, revision FROM cas_stack_issuer WHERE stack_id = ?")
@@ -742,14 +541,6 @@ export class ControlPlaneService {
     if (expected !== currentRevision) {
       throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "resource revision has changed");
     }
-  }
-
-  async #memberCount(stackId: string): Promise<number> {
-    const row = await this.#db
-      .prepare("SELECT COUNT(*) AS count FROM cas_stack_members WHERE stack_id = ?")
-      .bind(stackId)
-      .first<{ count: number }>();
-    return row?.count ?? 0;
   }
 
   async #readSnapshot(): Promise<number> {
@@ -824,31 +615,6 @@ export class ControlPlaneService {
 // Row mappers and helpers
 // ----------------------------------------------------------------------
 
-interface StackRow {
-  readonly stack_id: string;
-  readonly display_name: string;
-  readonly description: string;
-  readonly status: string;
-  readonly created_at: number;
-  readonly revision: number;
-}
-
-interface MemberRow {
-  readonly stack_id: string;
-  readonly identity_issuer: string;
-  readonly subject: string;
-  readonly display_name: string | null;
-  readonly email_for_display: string | null;
-}
-
-interface InvitationRow {
-  readonly invitation_id: string;
-  readonly stack_id: string;
-  readonly status: string;
-  readonly email_constraint: string | null;
-  readonly expires_at: number;
-}
-
 interface IssuerRow {
   readonly stack_id: string;
   readonly issuer: string;
@@ -892,16 +658,6 @@ interface PossessionChallengeRow {
   readonly kid: string;
   readonly algorithm: string;
   readonly expires_at: number;
-}
-
-function toCasStackMember(row: MemberRow): CasStackMember {
-  return {
-    stackId: row.stack_id,
-    identityIssuer: row.identity_issuer,
-    subject: row.subject,
-    displayName: row.display_name,
-    emailForDisplay: row.email_for_display,
-  };
 }
 
 function toCasStackIssuer(row: IssuerRow): CasStackIssuer {

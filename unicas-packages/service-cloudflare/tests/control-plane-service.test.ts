@@ -79,18 +79,59 @@ describe("D1-backed control-plane service", () => {
     const { service } = await createService(() => clock);
     const stackId = await createStack(service);
     expectError(await service.deleteMember(ctx(alice), { path: { stackId }, query: alice }, { ifMatch: '"1"' }), CasAdminErrorCodes.LAST_MEMBER);
-    const invitation = await service.createMemberInvitation(ctx(alice), { path: { stackId }, body: { emailConstraint: "bob-sub@example.com" } });
+    const invitationRequest = { path: { stackId }, body: { emailConstraint: " BOB-SUB@example.com " } };
+    const invitation = await service.createMemberInvitation(ctx(alice), invitationRequest, { idempotencyKey: "invite-bob-1" });
+    expect(await service.createMemberInvitation(ctx(alice), invitationRequest, { idempotencyKey: "invite-bob-1" })).toEqual(invitation);
+    expectError(
+      await service.createMemberInvitation(ctx(alice), { path: { stackId }, body: { emailConstraint: "other@example.com" } }, { idempotencyKey: "invite-bob-1" }),
+      CasAdminErrorCodes.IDEMPOTENCY_CONFLICT,
+    );
     if (!("invitation" in invitation)) throw new Error("invite failed");
     const token = invitation.acceptUrl.split("/").pop()!;
     expectError(await service.acceptMemberInvitation(ctx(bob, "wrong@example.com"), { path: { token } }), CasAdminErrorCodes.NOT_FOUND);
     expect(await service.acceptMemberInvitation(ctx(bob), { path: { token } })).toMatchObject({ stackId, subject: "bob-sub" });
     expectError(await service.acceptMemberInvitation(ctx(bob), { path: { token } }), CasAdminErrorCodes.NOT_FOUND);
-    expect(await service.deleteMember(ctx(alice), { path: { stackId }, query: alice }, { ifMatch: '"1"' })).toEqual({ ok: true });
+    expect(await service.listMembers(ctx(alice), { path: { stackId }, query: { limit: 1 } })).toMatchObject({
+      items: [{ subject: "alice-sub", displayName: null, emailForDisplay: null }],
+      nextCursor: expect.any(String),
+    });
+    const members = await service.listMembers(ctx(alice), { path: { stackId }, query: { limit: 10 } });
+    expect(members).toMatchObject({
+      items: [
+        { subject: "alice-sub" },
+        { subject: "bob-sub", displayName: "bob-sub", emailForDisplay: "bob-sub@example.com" },
+      ],
+    });
+    await service.patchStack(ctx(alice), { path: { stackId }, body: { description: "revision two" } }, { ifMatch: '"1"' });
+    expectError(await service.deleteMember(ctx(alice), { path: { stackId }, query: alice }, { ifMatch: '"1"' }), CasAdminErrorCodes.REVISION_MISMATCH);
+    expect(await service.deleteMember(ctx(alice), { path: { stackId }, query: alice }, { ifMatch: '"2"' })).toEqual({ ok: true });
 
     const expiring = await service.createMemberInvitation(ctx(bob), { path: { stackId } });
     if (!("invitation" in expiring)) throw new Error("invite failed");
     clock += 25 * 60 * 60 * 1000;
     expectError(await service.acceptMemberInvitation(ctx(alice), { path: { token: expiring.acceptUrl.split("/").pop()! } }), CasAdminErrorCodes.NOT_FOUND);
+  });
+
+  test("atomically lets exactly one concurrent claimant consume a pending invitation", async () => {
+    const { db, service } = await createService(() => 5_000);
+    const stackId = await createStack(service);
+    const invitation = await service.createMemberInvitation(ctx(alice), { path: { stackId } });
+    if (!("acceptUrl" in invitation)) throw new Error("invite failed");
+    const token = invitation.acceptUrl.split("/").pop()!;
+    const [left, right] = await Promise.all([
+      service.acceptMemberInvitation(ctx(bob), { path: { token } }),
+      service.acceptMemberInvitation(ctx(bob), { path: { token } }),
+    ]);
+    expect([left, right].filter((result) => "stackId" in result)).toHaveLength(1);
+    expect([left, right].filter((result) => "error" in result)).toEqual([
+      expect.objectContaining({ error: CasAdminErrorCodes.NOT_FOUND }),
+    ]);
+    expect(await db.prepare(
+      "SELECT COUNT(*) AS count FROM cas_stack_members WHERE stack_id = ? AND identity_issuer = ? AND subject = ?",
+    ).bind(stackId, bob.identityIssuer, bob.subject).first()).toEqual({ count: 1 });
+    expect(await db.prepare(
+      "SELECT COUNT(*) AS count FROM cas_control_audit_events WHERE stack_id = ? AND action = 'member.invitation.accepted'",
+    ).bind(stackId).first()).toEqual({ count: 1 });
   });
 
   test("enforces issuer uniqueness, immutability, preconditions, and capability lifetime bounds", async () => {

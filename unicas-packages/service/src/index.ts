@@ -174,13 +174,21 @@ export type {
 } from "./control-plane.js";
 export { ControlPlaneAdminService } from "./control-admin.js";
 export type {
+  ControlAcceptMemberInvitationCommitResult,
+  ControlAcceptMemberInvitationPlan,
   ControlAuditRecord,
+  ControlCreateMemberInvitationCommitResult,
+  ControlCreateMemberInvitationPlan,
   ControlCreateStackCommitResult,
   ControlCreateStackPlan,
+  ControlDeleteMemberCommitResult,
+  ControlDeleteMemberPlan,
   ControlIdempotencyRecord,
   ControlIdentityPlan,
   ControlIdentityRecord,
   ControlMembershipRecord,
+  ControlMemberInvitationRecord,
+  ControlMemberInvitationResponse,
   ControlPatchStackCommitResult,
   ControlPatchStackPlan,
   ControlPlaneAdminRepository,

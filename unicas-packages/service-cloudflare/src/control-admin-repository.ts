@@ -1,13 +1,20 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import type { CasOperatorIdentityKey } from "@unicas/admin-protocol";
 import type {
+  ControlAcceptMemberInvitationCommitResult,
+  ControlAcceptMemberInvitationPlan,
   ControlAuditRecord,
+  ControlCreateMemberInvitationCommitResult,
+  ControlCreateMemberInvitationPlan,
   ControlCreateStackCommitResult,
   ControlCreateStackPlan,
+  ControlDeleteMemberCommitResult,
+  ControlDeleteMemberPlan,
   ControlIdempotencyRecord,
   ControlIdentityPlan,
   ControlIdentityRecord,
   ControlMembershipRecord,
+  ControlMemberInvitationRecord,
   ControlPatchStackCommitResult,
   ControlPatchStackPlan,
   ControlPlaneAdminRepository,
@@ -51,6 +58,20 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
     return (rows.results ?? []).map(toMembership);
   }
 
+  async listMembers(input: {
+    readonly stackId: string;
+    readonly afterSubject: string;
+    readonly limit: number;
+  }): Promise<readonly ControlMembershipRecord[]> {
+    const rows = await this.#db
+      .prepare(
+        "SELECT m.stack_id, m.identity_issuer, m.subject, m.joined_at, i.display_name, i.email_for_display FROM cas_stack_members m LEFT JOIN cas_operator_identities i ON i.identity_issuer = m.identity_issuer AND i.subject = m.subject WHERE m.stack_id = ? AND m.subject > ? ORDER BY m.subject LIMIT ?",
+      )
+      .bind(input.stackId, input.afterSubject, input.limit)
+      .all<MembershipRow>();
+    return (rows.results ?? []).map(toMembership);
+  }
+
   async readSnapshot(): Promise<number> {
     const row = await this.#db
       .prepare("SELECT value FROM cas_control_meta WHERE key = ?")
@@ -89,20 +110,30 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
     return row !== null;
   }
 
-  async getIdempotency(input: {
+  async getIdempotency<T = unknown>(input: {
     readonly identity: CasOperatorIdentityKey;
     readonly method: string;
     readonly canonicalRoute: string;
     readonly key: string;
     readonly now: number;
-  }): Promise<ControlIdempotencyRecord | null> {
+  }): Promise<ControlIdempotencyRecord<T> | null> {
     const row = await this.#db
       .prepare(
         "SELECT identity_issuer, subject, method, canonical_route, idempotency_key, payload_hash, response_json, created_at, expires_at FROM cas_control_idempotency WHERE identity_issuer = ? AND subject = ? AND method = ? AND canonical_route = ? AND idempotency_key = ? AND expires_at > ?",
       )
       .bind(input.identity.identityIssuer, input.identity.subject, input.method, input.canonicalRoute, input.key, input.now)
       .first<IdempotencyRow>();
-    return row ? toIdempotency(row) : null;
+    return row ? toIdempotency<T>(row) : null;
+  }
+
+  async getInvitationByTokenHash(tokenHash: string): Promise<ControlMemberInvitationRecord | null> {
+    const row = await this.#db
+      .prepare(
+        "SELECT invitation_id, stack_id, status, email_constraint, token_hash, expires_at, created_at, revision FROM cas_stack_member_invitations WHERE token_hash = ?",
+      )
+      .bind(tokenHash)
+      .first<InvitationRow>();
+    return row ? toInvitation(row) : null;
   }
 
   async commitCreateStack(plan: ControlCreateStackPlan): Promise<ControlCreateStackCommitResult> {
@@ -146,6 +177,106 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
       if (!isJsonFailure(error)) throw error;
       const current = await this.getStack(plan.stackId);
       return current ? { kind: "revision-mismatch" } : { kind: "not-found" };
+    }
+  }
+
+  async commitCreateMemberInvitation(
+    plan: ControlCreateMemberInvitationPlan,
+  ): Promise<ControlCreateMemberInvitationCommitResult> {
+    const statements = [
+      ...this.#mutationStatements(plan.audit),
+      this.#db.prepare(
+        "INSERT INTO cas_stack_member_invitations (invitation_id, stack_id, status, email_constraint, token_hash, expires_at, created_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).bind(
+        plan.invitation.invitationId,
+        plan.invitation.stackId,
+        plan.invitation.status,
+        plan.invitation.emailConstraint,
+        plan.invitation.tokenHash,
+        plan.invitation.expiresAt,
+        plan.invitation.createdAt,
+        plan.invitation.revision,
+      ),
+    ];
+    if (plan.idempotency) statements.push(this.#idempotencyStatement(plan.idempotency));
+    try {
+      await this.#db.batch(statements);
+      return { kind: "created" };
+    } catch (error) {
+      if (plan.idempotency && isUniqueViolation(error, "cas_control_idempotency")) {
+        const record = await this.getIdempotency<ControlCreateMemberInvitationPlan["response"]>({
+          identity: plan.idempotency,
+          method: plan.idempotency.method,
+          canonicalRoute: plan.idempotency.canonicalRoute,
+          key: plan.idempotency.key,
+          now: plan.idempotency.createdAt,
+        });
+        if (record) return { kind: "idempotency-race", record };
+      }
+      throw error;
+    }
+  }
+
+  async commitDeleteMember(plan: ControlDeleteMemberPlan): Promise<ControlDeleteMemberCommitResult> {
+    const requirePreconditions = this.#db.prepare(
+      "SELECT CASE WHEN EXISTS (SELECT 1 FROM cas_stacks WHERE stack_id = ? AND revision = ?) AND (SELECT COUNT(*) FROM cas_stack_members WHERE stack_id = ?) > 1 THEN 1 ELSE json_extract('invalid', '$') END AS allowed",
+    ).bind(plan.stackId, plan.expectedRevision, plan.stackId);
+    const remove = this.#db.prepare(
+      "DELETE FROM cas_stack_members WHERE stack_id = ? AND identity_issuer = ? AND subject = ?",
+    ).bind(plan.stackId, plan.identity.identityIssuer, plan.identity.subject);
+    try {
+      await this.#db.batch([requirePreconditions, remove, ...this.#mutationStatements(plan.audit)]);
+      return { kind: "deleted" };
+    } catch (error) {
+      if (!isJsonFailure(error)) throw error;
+      const stack = await this.getStack(plan.stackId);
+      if (!stack) return { kind: "stack-not-found" };
+      if (stack.revision !== plan.expectedRevision) return { kind: "revision-mismatch" };
+      const row = await this.#db.prepare(
+        "SELECT COUNT(*) AS count FROM cas_stack_members WHERE stack_id = ?",
+      ).bind(plan.stackId).first<{ count: number }>();
+      return (row?.count ?? 0) <= 1 ? { kind: "last-member" } : { kind: "not-member" };
+    }
+  }
+
+  async commitAcceptMemberInvitation(
+    plan: ControlAcceptMemberInvitationPlan,
+  ): Promise<ControlAcceptMemberInvitationCommitResult> {
+    const claim = this.#db.prepare(
+      "UPDATE cas_stack_member_invitations SET status = 'accepted' WHERE invitation_id = ? AND token_hash = ? AND status = 'pending' AND expires_at > ?",
+    ).bind(plan.invitationId, plan.tokenHash, plan.now);
+    const requireClaimed = this.#db.prepare(
+      "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('invalid', '$') END AS claimed",
+    );
+    const synchronizeIdentity = this.#db.prepare(
+      "INSERT INTO cas_operator_identities (identity_issuer, subject, display_name, email_for_display, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(identity_issuer, subject) DO UPDATE SET display_name = excluded.display_name, email_for_display = excluded.email_for_display",
+    ).bind(
+      plan.identity.identityIssuer,
+      plan.identity.subject,
+      plan.identity.displayName,
+      plan.identity.emailForDisplay,
+      plan.identity.createdAt,
+    );
+    const insertMember = this.#db.prepare(
+      "INSERT OR IGNORE INTO cas_stack_members (stack_id, identity_issuer, subject, joined_at) VALUES (?, ?, ?, ?)",
+    ).bind(
+      plan.membership.stackId,
+      plan.membership.identityIssuer,
+      plan.membership.subject,
+      plan.membership.joinedAt,
+    );
+    try {
+      await this.#db.batch([
+        claim,
+        requireClaimed,
+        synchronizeIdentity,
+        insertMember,
+        ...this.#mutationStatements(plan.audit),
+      ]);
+      return { kind: "accepted" };
+    } catch (error) {
+      if (isJsonFailure(error)) return { kind: "unavailable" };
+      throw error;
     }
   }
 
@@ -235,6 +366,17 @@ interface IdempotencyRow {
   readonly expires_at: number;
 }
 
+interface InvitationRow {
+  readonly invitation_id: string;
+  readonly stack_id: string;
+  readonly status: string;
+  readonly email_constraint: string | null;
+  readonly token_hash: string;
+  readonly expires_at: number;
+  readonly created_at: number;
+  readonly revision: number;
+}
+
 function toIdentity(row: IdentityRow): ControlIdentityRecord {
   return {
     identityIssuer: row.identity_issuer,
@@ -267,7 +409,7 @@ function toMembership(row: MembershipRow): ControlMembershipRecord {
   };
 }
 
-function toIdempotency(row: IdempotencyRow): ControlIdempotencyRecord {
+function toIdempotency<T>(row: IdempotencyRow): ControlIdempotencyRecord<T> {
   return {
     identityIssuer: row.identity_issuer,
     subject: row.subject,
@@ -275,9 +417,22 @@ function toIdempotency(row: IdempotencyRow): ControlIdempotencyRecord {
     canonicalRoute: row.canonical_route,
     key: row.idempotency_key,
     payloadHash: row.payload_hash,
-    response: JSON.parse(row.response_json) as ControlStackRecord,
+    response: JSON.parse(row.response_json) as T,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
+  };
+}
+
+function toInvitation(row: InvitationRow): ControlMemberInvitationRecord {
+  return {
+    invitationId: row.invitation_id,
+    stackId: row.stack_id,
+    status: row.status as ControlMemberInvitationRecord["status"],
+    emailConstraint: row.email_constraint,
+    tokenHash: row.token_hash,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    revision: row.revision,
   };
 }
 

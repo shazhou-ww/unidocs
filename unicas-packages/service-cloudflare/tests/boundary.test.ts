@@ -17,6 +17,11 @@ describe("service-cloudflare package boundary", () => {
       .toContain("implements ControlPlaneAdminRepository");
     expect(readFileSync(join(root, "src/control-operations.ts"), "utf8"))
       .toContain("createControlPlaneOperations");
+    const operations = readFileSync(join(root, "src/control-operations.ts"), "utf8");
+    for (const operation of ["listMembers", "deleteMember", "createMemberInvitation", "acceptMemberInvitation"]) {
+      expect(operations).toContain(`${operation}: admin.${operation}.bind(admin)`);
+      expect(operations).not.toContain(`${operation}: legacy.${operation}.bind(legacy)`);
+    }
     expect(wrangler).toContain('name = "unidocs-cas"');
     expect(wrangler).toContain('pattern = "unicas.shazhou.work/*"');
     expect(wrangler).not.toContain("[[services]]");

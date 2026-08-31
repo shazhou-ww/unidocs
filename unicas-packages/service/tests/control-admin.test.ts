@@ -3,13 +3,20 @@ import { CasAdminErrorCodes } from "@unicas/admin-protocol";
 import type { CasOperatorIdentityKey } from "@unicas/admin-protocol";
 import {
   ControlPlaneAdminService,
+  type ControlAcceptMemberInvitationCommitResult,
+  type ControlAcceptMemberInvitationPlan,
   type ControlAuditRecord,
+  type ControlCreateMemberInvitationCommitResult,
+  type ControlCreateMemberInvitationPlan,
+    type ControlDeleteMemberCommitResult,
+    type ControlDeleteMemberPlan,
   type ControlCreateStackCommitResult,
   type ControlCreateStackPlan,
   type ControlIdempotencyRecord,
   type ControlIdentityPlan,
   type ControlIdentityRecord,
   type ControlMembershipRecord,
+  type ControlMemberInvitationRecord,
   type ControlPatchStackCommitResult,
   type ControlPatchStackPlan,
   type ControlPlaneAdminRepository,
@@ -30,14 +37,16 @@ function context(identity = alice, displayName = "Alice"): ControlPlaneCallConte
   };
 }
 
-function fixture(options: { listDefaultLimit?: number; listMaxLimit?: number } = {}) {
+function fixture(options: { listDefaultLimit?: number; listMaxLimit?: number; now?: () => number } = {}) {
   const repository = new MemoryControlAdminRepository();
   let stackSequence = 0;
   let eventSequence = 0;
   const service = new ControlPlaneAdminService(repository, {
-    now: () => 1_000,
+    now: options.now ?? (() => 1_000),
     generateStackId: () => `cas_stack_${String(++stackSequence).padStart(2, "0")}`,
     generateEventId: () => `event-${++eventSequence}`,
+    generateInvitationId: () => `invitation-${eventSequence + 1}`,
+    generateInvitationToken: () => "t".repeat(32),
     ...options,
   });
   return { repository, service };
@@ -150,6 +159,77 @@ describe("ControlPlaneAdminService", () => {
     expect(repository.audits.at(-1)).toMatchObject({ action: "stack.patched", stackId: created.stackId });
   });
 
+  test("pages members on a stable snapshot and rejects stale cursors", async () => {
+    const { repository, service } = fixture({ listDefaultLimit: 2, listMaxLimit: 2 });
+    const stack = await service.createStack(context(), { body: { displayName: "Members" } });
+    if ("error" in stack) throw new Error(stack.error);
+    repository.memberships.push(
+      { stackId: stack.stackId, ...bob, displayName: "Bob", emailForDisplay: "bob@example.com" },
+      { stackId: stack.stackId, identityIssuer: alice.identityIssuer, subject: "carol", displayName: "Carol", emailForDisplay: null },
+    );
+    const first = await service.listMembers(context(), { path: { stackId: stack.stackId } });
+    if (!("items" in first) || !first.nextCursor) throw new Error("expected member cursor");
+    expect(first.items.map((member) => member.subject)).toEqual(["alice", "bob"]);
+    expect(await service.listMembers(context(), { path: { stackId: stack.stackId }, query: { cursor: first.nextCursor } }))
+      .toMatchObject({ items: [{ subject: "carol" }], nextCursor: null });
+    const stale = await service.listMembers(context(), { path: { stackId: stack.stackId }, query: { limit: 1 } });
+    if (!("items" in stale) || !stale.nextCursor) throw new Error("expected stale cursor");
+    repository.snapshot += 1;
+    expectError(
+      await service.listMembers(context(), { path: { stackId: stack.stackId }, query: { cursor: stale.nextCursor } }),
+      CasAdminErrorCodes.INVALID_CURSOR,
+    );
+  });
+
+  test("creates idempotent invitations and accepts one time with synchronized metadata", async () => {
+    let now = 1_000;
+    const { repository, service } = fixture({ now: () => now });
+    const stack = await service.createStack(context(), { body: { displayName: "Invite" } });
+    if ("error" in stack) throw new Error(stack.error);
+    const request = { path: { stackId: stack.stackId }, body: { emailConstraint: " BOB@example.com " } };
+    const first = await service.createMemberInvitation(context(), request, { idempotencyKey: "invite-1" });
+    expect(await service.createMemberInvitation(context(), request, { idempotencyKey: "invite-1" })).toEqual(first);
+    expect(repository.invitations.size).toBe(1);
+    expectError(
+      await service.createMemberInvitation(context(), { ...request, body: { emailConstraint: "other@example.com" } }, { idempotencyKey: "invite-1" }),
+      CasAdminErrorCodes.IDEMPOTENCY_CONFLICT,
+    );
+    if (!("acceptUrl" in first)) throw new Error("invite failed");
+    const token = first.acceptUrl.split("/").pop()!;
+    expectError(await service.acceptMemberInvitation({
+      ...context(bob, "Bob"),
+      profile: { displayName: "Bob", emailForDisplay: "wrong@example.com" },
+    }, { path: { token } }), CasAdminErrorCodes.NOT_FOUND);
+    expect(await service.acceptMemberInvitation(context(bob, "Bob"), { path: { token } })).toMatchObject({
+      stackId: stack.stackId,
+      subject: "bob",
+      displayName: "Bob",
+      emailForDisplay: "bob@example.com",
+    });
+    expect(repository.identities.get(identityKey(bob))).toMatchObject({ displayName: "Bob", emailForDisplay: "bob@example.com" });
+    expectError(await service.acceptMemberInvitation(context(bob, "Bob"), { path: { token } }), CasAdminErrorCodes.NOT_FOUND);
+
+    repository.invitations.clear();
+    const expiring = await service.createMemberInvitation(context(bob, "Bob"), { path: { stackId: stack.stackId } });
+    if (!("acceptUrl" in expiring)) throw new Error("invite failed");
+    now += 25 * 60 * 60 * 1_000;
+    expectError(
+      await service.acceptMemberInvitation(context({ ...bob, subject: "carol" }, "Carol"), { path: { token: expiring.acceptUrl.split("/").pop()! } }),
+      CasAdminErrorCodes.NOT_FOUND,
+    );
+  });
+
+  test("protects the last member and enforces the stack revision when deleting", async () => {
+    const { repository, service } = fixture();
+    const stack = await service.createStack(context(), { body: { displayName: "Delete" } });
+    if ("error" in stack) throw new Error(stack.error);
+    expectError(await service.deleteMember(context(), { path: { stackId: stack.stackId }, query: alice }, { ifMatch: '"1"' }), CasAdminErrorCodes.LAST_MEMBER);
+    repository.memberships.push({ stackId: stack.stackId, ...bob, displayName: "Bob", emailForDisplay: null });
+    expectError(await service.deleteMember(context(), { path: { stackId: stack.stackId }, query: bob }, { ifMatch: '"9"' }), CasAdminErrorCodes.REVISION_MISMATCH);
+    expect(await service.deleteMember(context(), { path: { stackId: stack.stackId }, query: bob }, { ifMatch: '"1"' })).toEqual({ ok: true });
+    expect(repository.memberships.some((member) => sameIdentity(member, bob))).toBe(false);
+  });
+
   test("records session audit with caller attribution without changing the list snapshot", async () => {
     const { repository, service } = fixture();
     await service.recordSessionAudit(context(), "session.login", "https://id.example:alice");
@@ -172,6 +252,7 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
   readonly stacks = new Map<string, ControlStackRecord>();
   readonly memberships: ControlMembershipRecord[] = [];
   readonly idempotency = new Map<string, ControlIdempotencyRecord>();
+  readonly invitations = new Map<string, ControlMemberInvitationRecord>();
   readonly audits: ControlAuditRecord[] = [];
   readonly identityPlans: ControlIdentityPlan[] = [];
   readonly patchPlans: ControlPatchStackPlan[] = [];
@@ -190,6 +271,13 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
 
   listMemberships(identity: CasOperatorIdentityKey): Promise<readonly ControlMembershipRecord[]> {
     return Promise.resolve(this.memberships.filter((member) => sameIdentity(member, identity)));
+  }
+
+  listMembers(input: { readonly stackId: string; readonly afterSubject: string; readonly limit: number }): Promise<readonly ControlMembershipRecord[]> {
+    return Promise.resolve(this.memberships
+      .filter((member) => member.stackId === input.stackId && member.subject > input.afterSubject)
+      .sort((left, right) => left.subject.localeCompare(right.subject))
+      .slice(0, input.limit));
   }
 
   readSnapshot(): Promise<number> {
@@ -218,15 +306,20 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
     return Promise.resolve(this.memberships.some((member) => member.stackId === stackId && sameIdentity(member, identity)));
   }
 
-  getIdempotency(input: {
+  getIdempotency<T = unknown>(input: {
     readonly identity: CasOperatorIdentityKey;
     readonly method: string;
     readonly canonicalRoute: string;
     readonly key: string;
     readonly now: number;
-  }): Promise<ControlIdempotencyRecord | null> {
+  }): Promise<ControlIdempotencyRecord<T> | null> {
     const record = this.idempotency.get(idempotencyKey(input));
-    return Promise.resolve(record && record.expiresAt > input.now ? record : null);
+    return Promise.resolve(record && record.expiresAt > input.now ? record as ControlIdempotencyRecord<T> : null);
+  }
+
+
+  getInvitationByTokenHash(tokenHash: string): Promise<ControlMemberInvitationRecord | null> {
+    return Promise.resolve([...this.invitations.values()].find((invitation) => invitation.tokenHash === tokenHash) ?? null);
   }
 
   commitCreateStack(plan: ControlCreateStackPlan): Promise<ControlCreateStackCommitResult> {
@@ -257,6 +350,51 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
     this.audits.push(plan.audit);
     this.snapshot += 1;
     return Promise.resolve({ kind: "updated" });
+  }
+
+  commitCreateMemberInvitation(plan: ControlCreateMemberInvitationPlan): Promise<ControlCreateMemberInvitationCommitResult> {
+    if (plan.idempotency) {
+      const key = idempotencyKey(plan.idempotency);
+      const existing = this.idempotency.get(key);
+      if (existing) return Promise.resolve({
+        kind: "idempotency-race",
+        record: existing as ControlIdempotencyRecord<ControlCreateMemberInvitationPlan["response"]>,
+      });
+      this.idempotency.set(key, plan.idempotency);
+    }
+    this.invitations.set(plan.invitation.invitationId, plan.invitation);
+    this.audits.push(plan.audit);
+    this.snapshot += 1;
+    return Promise.resolve({ kind: "created" });
+  }
+
+  commitDeleteMember(plan: ControlDeleteMemberPlan): Promise<ControlDeleteMemberCommitResult> {
+    const stack = this.stacks.get(plan.stackId);
+    if (!stack) return Promise.resolve({ kind: "stack-not-found" });
+    if (stack.revision !== plan.expectedRevision) return Promise.resolve({ kind: "revision-mismatch" });
+    if (this.memberships.filter((member) => member.stackId === plan.stackId).length <= 1) {
+      return Promise.resolve({ kind: "last-member" });
+    }
+    const index = this.memberships.findIndex((member) => member.stackId === plan.stackId && sameIdentity(member, plan.identity));
+    if (index >= 0) this.memberships.splice(index, 1);
+    this.audits.push(plan.audit);
+    this.snapshot += 1;
+    return Promise.resolve({ kind: index >= 0 ? "deleted" : "not-member" });
+  }
+
+  commitAcceptMemberInvitation(plan: ControlAcceptMemberInvitationPlan): Promise<ControlAcceptMemberInvitationCommitResult> {
+    const invitation = this.invitations.get(plan.invitationId);
+    if (!invitation || invitation.tokenHash !== plan.tokenHash || invitation.status !== "pending" || invitation.expiresAt <= plan.now) {
+      return Promise.resolve({ kind: "unavailable" });
+    }
+    this.invitations.set(plan.invitationId, { ...invitation, status: "accepted" });
+    this.identities.set(identityKey(plan.identity), plan.identity);
+    if (!this.memberships.some((member) => member.stackId === plan.stackId && sameIdentity(member, plan.identity))) {
+      this.memberships.push(plan.membership);
+    }
+    this.audits.push(plan.audit);
+    this.snapshot += 1;
+    return Promise.resolve({ kind: "accepted" });
   }
 
   appendAudit(record: ControlAuditRecord): Promise<void> {
