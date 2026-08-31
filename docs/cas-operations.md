@@ -11,7 +11,7 @@ Runbooks, SLOs, and alerting for the independently deployed CAS middleware
 | Tenant D1 | `unidocs-cas-db` (`66f8738b-…`) | stack-scoped nodes/edges/root-refs |
 | R2 | `unidocs-cas`, `unidocs-cas-preview` | node content |
 
-Secrets live only as Worker secrets (Google OIDC client id/secret,
+Secrets live only as Worker secrets (Google OIDC client secret,
 `SESSION_ENCRYPTION_KEYS`, `OAUTH_STATE_ENCRYPTION_KEY`,
 `CAS_AUDIT_READER_KEY`, stack private keys) — never
 in vars or source. Deployment credentials are supplied through
@@ -73,7 +73,7 @@ uploads `dist/` and stale output silently deploys old code:
 ```text
 pnpm --filter @unicas/service-cloudflare build
 pnpm --filter @unicas/service-cloudflare exec wrangler deploy
-node scripts/cas-middleware-smoke.mjs           # repeatable now; run twice 70s apart
+node scripts/cas-middleware-smoke.mjs           # needs .wrangler/cas-deploy/*.pkcs8.pem stack keys; run twice 70s apart
 ```
 
 The smoke script is repeatable (per-run tenant/requestId). Running it twice

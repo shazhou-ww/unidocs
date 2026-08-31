@@ -409,11 +409,12 @@ Top-level `/admin` routes use a Google OIDC-backed BFF session and stack
 membership. MVP members have equal administrator authority. Tenant JWTs are
 never accepted by admin routes even if they contain admin-looking scopes, and
 OIDC admin sessions are never accepted by tenant routes. The
-`cas-admin-webui` package owns the OIDC callback, secure session, CSRF boundary,
-admin BFF routes, and management UI; browser code never receives tenant JWTs,
+`@unicas/service-cloudflare` worker owns the admin BFF (src/admin-bff): OIDC
+callback, secure session, CSRF boundary, and admin BFF routes; the
+`@unicas/admin-webui` package is the browser UI only. Browser code never receives tenant JWTs,
 OIDC client secrets, or storage bindings.
 
-HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
+HTTP upload is a lease that carries content. The same /lease route without a body extends a ready node (bodyless lease).
 
 ### 11.1 Read content
 
@@ -539,7 +540,7 @@ every row/event. Revisions are monotonic per `(stackId, refDomain)`. All stack
 members can use the MVP admin surface; finer-grained control-plane roles are
 deferred.
 
-`cas-admin-webui` exposes the admin BFF and UI. The ordinary tenant `CasClient`
+The admin BFF and UI are served by `@unicas/service-cloudflare` (src/admin-bff + admin-webui assets). The ordinary tenant `CasClient`
 cannot accept OIDC sessions or call admin routes.
 
 ### 11.8 Canonical binary codec

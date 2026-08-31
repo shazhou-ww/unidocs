@@ -36,10 +36,10 @@ the value, so it does not need to appear in the command line:
 
 ```powershell
 pnpm --filter @unicas/service-cloudflare exec wrangler secret put CAS_AUDIT_READER_KEY
-pnpm --filter @unicas/service-cloudflare exec wrangler secret put GOOGLE_OIDC_CLIENT_ID
 pnpm --filter @unicas/service-cloudflare exec wrangler secret put GOOGLE_OIDC_CLIENT_SECRET
 pnpm --filter @unicas/service-cloudflare exec wrangler secret put SESSION_ENCRYPTION_KEYS
 pnpm --filter @unicas/service-cloudflare exec wrangler secret put OAUTH_STATE_ENCRYPTION_KEY
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put ADMIN_EMAIL_ALLOWLIST
 ```
 
 The admin CLI logs in through the BFF (`/admin/auth/cli/authorize`): the BFF
@@ -85,8 +85,8 @@ CAPABILITY_TRUSTED_JWKS
 CAS_STACK_TRUSTED_JWKS
 ```
 
-`SERVICE_ACCESS_KEY` is retired compatibility configuration and is not needed
-in `INTERNAL_AUTH_MODE=stack`. PSD chat additionally accepts `LLM_API_KEY`,
+`SERVICE_ACCESS_KEY` / `INTERNAL_AUTH_MODE` belonged to the retired legacy runtime
+and are gone from the codebase. PSD chat additionally accepts `LLM_API_KEY`,
 `LLM_BASE_URL`, and `LLM_MODEL`; store the API key as a Worker secret.
 
 The application deploy remains blocked until Gateway has a production user

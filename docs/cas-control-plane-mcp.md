@@ -105,21 +105,20 @@ OAUTH_KV                   dedicated OAuth clients/grants/token hashes
 Required secrets:
 
 ```text
-GOOGLE_OIDC_CLIENT_ID
 GOOGLE_OIDC_CLIENT_SECRET
 OAUTH_STATE_ENCRYPTION_KEY   base64url-encoded 32-byte AES key
+ADMIN_EMAIL_ALLOWLIST        comma-separated emails allowed to log in
+CAS_AUDIT_READER_KEY        shared key for the private audit-reader RPC
 ```
 
-Variables:
+Variables (non-secret; `GOOGLE_OIDC_CLIENT_ID` is a var, not a secret):
 
 ```text
 PUBLIC_ORIGIN=https://unicas.shazhou.work
 MCP_MUTATIONS_ENABLED=true
 MCP_ALLOWED_ORIGIN_HOSTNAMES=
-ADMIN_EMAIL_ALLOWLIST=...       optional, same policy as CAS Admin
 OIDC_ISSUER=...                 optional, defaults to Google
 OIDC_DISCOVERY_URL=...          optional test/local override
-CAS_AUDIT_READER_KEY=...        required when the private reader enforces it
 ```
 
 `MCP_MUTATIONS_ENABLED` is the emergency and rollout kill switch. An absent or

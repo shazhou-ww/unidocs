@@ -18,7 +18,7 @@ Unicas 是 UniDocs 的独立可部署 CAS 中间件（content-addressed storage 
    `admin-protocol`（控制面契约）。只放类型、路由、校验、常量——无 IO、
   无平台绑定、**不含任何编码**。两面共用的协议类型归 `tenant-protocol`；
   `admin-protocol` 可依赖 `tenant-protocol`，反向禁止。
-5. **界面/入口**：`admin-webui`（管理 WebUI + OIDC BFF，迁移期双角色包）、
+5. **界面/入口**：`admin-webui`（管理 WebUI，纯浏览器包）、
    `admin-cli`（管理 CLI + stdio MCP）、`tenant-client`（数据面 HTTP client）。
 6. **服务端按平台分层，不按 actor 拆部署**：`service` 是 cloud-neutral 的
   tenant + admin HTTP actor 与平台端口；`service-cloudflare` 是唯一 Cloudflare
@@ -44,7 +44,7 @@ tenant: [tenant-cli, tenant-webui] -> tenant-client -> tenant-protocol
 - 上图是固定的角色与依赖模型；某个 CLI/WebUI 产品尚未实现时不创建空包。
   WebUI 的服务端 BFF 属于服务端梳理范围，不改变浏览器侧的依赖方向。
 
-## 包清单（13 包）
+## 包清单（11 包）
 
 ```
 unicas-packages/                    @unicas org
@@ -83,7 +83,6 @@ unicas-packages/                    @unicas org
 └── ■ client 层
     ├── admin-webui/       @unicas/admin-webui         admin 组 · 浏览器 UI（纯前端）
     │     经 @unicas/admin-client 取 admin-protocol 类型；不含任何服务端代码
-└── ■ client 层
     ├── tenant-client/     @unicas/tenant-client       tenant 组 · 传输层
     │     纯 HTTP 封装，每个路由一个函数（readMetadata/readContent/
     │     leaseNode/updateRootRefs/usage/gc），factory 绑定 tenantId/JWT；
@@ -98,9 +97,9 @@ unicas-packages/                    @unicas org
     │     @unicas/admin-protocol；session cookie + CSRF 由 session provider 提供
     ├── admin-cli/         @unicas/admin-cli           admin 组
     │     CLI + stdio MCP（bin `unicas`），走 /admin HTTP API（admin-client）；
-    │     登录 = 自行 Google OIDC → BFF /admin/auth/exchange 换 session；
+    │     登录 = BFF /admin/auth/cli/authorize（服务端跑 Google OIDC）→
+    │     /admin/auth/cli/exchange 换 session cookie + CSRF；
     │     `unicas mcp` 是 admin-client 之上的薄 MCP 呈现层（无 MCP 转 MCP）
-    └── admin-webui 浏览器侧依赖 admin-client；物理包见上方迁移实现层
 ```
 
 ## 依赖规则（分层单向，guard + boundary 测试强制）
@@ -132,9 +131,9 @@ unicas-packages/                    @unicas org
 - `service-cloudflare` 是唯一部署包，持有 D1/R2/KV/DO 和公网 route；生产及
   本地 Miniflare 均不再通过 tenant/admin/MCP service bindings 拆分 UniCAS。
 - tenant D1/R2 repositories、DO 生命周期与 audit RPC 已并入
-  `service-cloudflare`，原 `server-cloudflare` 迁移包已删除。`admin-webui`
-  server 和 `control-plane-mcp` 暂由 `service-cloudflare` 作为内部策略组合，
-  迁移完成后其服务端实现将归入 `service` 或 `service-cloudflare`。
+  `service-cloudflare`，原 `server-cloudflare`、`control-plane`、`control-plane-mcp`
+  迁移包已删除；admin BFF/OIDC（src/admin-bff）与 MCP/OAuth ingress（src/mcp）
+  也已并入 `service-cloudflare`，`admin-webui` 只剩浏览器 UI。
 - 数据面不得依赖 admin 组包；admin 实现包不得依赖 tenant 实现包。
   唯一协议级单向例外是 `admin-protocol -> tenant-protocol`，用于复用两面
   公共协议类型，反向禁止（由 `admin-protocol/tests/cross-plane.test.ts` 与
@@ -192,7 +191,7 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 | **blob 分层（tenant-blob-client）** | `blob index` 从 codec 迁入新包 `@unicas/tenant-blob-client`；tenant-client 收窄为与 HTTP 一一对应的薄传输；blob 层提供完整接口（句柄式随机读对标 SBlobHandler、usage/gc 透传），业务方不再触碰底层 client |
 | **权限改名** | tenant 数据面 `cas:admin` → `cas:manage`（消除与「admin 面/控制面」的术语撞车） |
 | **tenant-client 下沉纯函数** | 移除 `node()` 对象模式，改 `readMetadata`/`readContent` 直接函数；业务面全部收敛到 `tenant-blob-client`（补 `readMetadata`/`leaseNode`/`updateRootRefs` 透传），应用栈不再直接依赖传输层 |
-| **admin-client + CLI 改通道** | 新建 `@unicas/admin-client`（/admin HTTP 纯函数 client，类型直接来自 admin-protocol，消除 MCP 工具 schema 双份手写）；admin-cli 从 MCP 通道改为走 /admin HTTP：登录 = 自行 Google OIDC → BFF 新端点 `/admin/auth/exchange`（id_token 换 session cookie + CSRF）|
+| **admin-client + CLI 改通道** | 新建 `@unicas/admin-client`（/admin HTTP 纯函数 client，类型直接来自 admin-protocol，消除 MCP 工具 schema 双份手写）；admin-cli 从 MCP 通道改为走 /admin HTTP：登录 = 打开 BFF `/admin/auth/cli/authorize`（服务端跑 Google OIDC）→ `/admin/auth/cli/exchange` 换 session cookie + CSRF |
 | **tenant auth 下沉 service** | stack capability verifier、操作权限矩阵、authority resolver port 与 30s/60s 有界缓存迁入 `@unicas/service`；Cloudflare 层只负责用 D1 repository 注入 authority 数据与记录事件 |
 | **Root Ref 内核下沉 service** | 请求 canonicalization、幂等、节点/aggregate 校验、domain projection、revision transition plan 与 bounded retry 迁入 `@unicas/service`；D1/R2 adapter 只负责语义化读取与原子提交 |
 | **node GC 内核下沉 service** | 过期无引用候选、删除前复核、content-before-metadata 顺序与回收统计迁入 `@unicas/service`；D1/R2 adapter 保留候选 SQL、对象删除和 multiplicity-aware edge cascade |
@@ -206,20 +205,18 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 
 1. **capability 归属复查**：如未来出现第二个消费方，可独立成包或并入
    `codec` 包（目前它是 JWT claim 词汇，留在 `tenant-protocol` 合理）。
-2. **服务实现下沉**：tenant authorization、Root Ref command 与全部 node
-  lease/read/usage/GC 内核已迁入 `service`；下一步把 `control-plane` 的业务逻辑
-  迁入 `service` 的平台无关 handlers，使其只通过语义化 store/blob/keyed-actor
-  端口工作；D1 SQL、R2 与 DO wrapper 留在 `service-cloudflare`。
-3. **入口收尾**：把 `admin-webui/src/server` 与 `control-plane-mcp` 的
-  Cloudflare ingress 并入 `service-cloudflare` 后删除两个迁移实现包；
-  `admin-webui` 最终只保留浏览器 UI，并恢复 `webui -> client -> protocol`。
+- [x] **服务实现下沉（已完成）**：控制面业务语义（stack/member/invitation/issuer/key/audit）
+  已全部迁入 `service` 的 `ControlPlaneAdminService`，经语义化 repository port 执行；
+  D1 SQL 与事务留在 `service-cloudflare` 的 repository 适配。
+- [x] **入口收尾（已完成）**：`admin-webui/src/server` 与 `control-plane-mcp` 的
+  ingress 已并入 `service-cloudflare`（src/admin-bff、src/mcp），两个迁移实现包已删除；
+  `admin-webui` 只剩浏览器 UI，依赖方向为 `admin-webui -> admin-client -> admin-protocol`。
 
 ## 维护约定
 
 - 依赖 guard：`tests/unit/workspace/package-deps.test.mjs`（目录名=包名、声明与
   import 一致、composite tsconfig references 恰好覆盖 dependencies）。
-- 边界测试：`service`、`service-cloudflare` 以及迁移实现包（`admin-webui`、
-  `control-plane`、`control-plane-mcp`）各自有
+- 边界测试：`service`、`service-cloudflare`、`admin-webui` 各自有
   `tests/boundary.test.ts`，断言允许的依赖集与跨组禁止项；**client 层与
   契约/编码层包**（`tenant-client`、`tenant-blob-client`、`admin-client`、
   `admin-protocol`、`tenant-protocol`、`codec`、`control-auth`）的依赖边界

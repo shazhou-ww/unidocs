@@ -42,7 +42,7 @@ SHA256(header || contentTypeUtf8 || childHashes || ownContent)
 Where:
 
 - `header` is the 24-byte canonical header defined below;
-- `contentTypeUtf8` is the exact validated UTF-8 byte sequence;
+- `contentTypeUtf8` is the exact validated content-type byte sequence (printable ASCII 0x20-0x7e, at most 1024 bytes);
 - `childHashes` is the ordered concatenation of 32-byte raw SHA-256 digests;
 - `ownContent` is the exact R2 object body.
 

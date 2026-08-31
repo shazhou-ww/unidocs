@@ -86,7 +86,7 @@ so the later WebUI reuses the same store:
 
 ```text
 ~/.unicas/
-├── token.json                    # admin-cli session (unchanged)
+├── session.json                  # admin-cli session (cookie + CSRF)
 └── tenants/
     ├── active.json               # global active entry {stackId, tenantId}
     └── <stackId encoded>/

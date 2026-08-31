@@ -13,11 +13,9 @@ the registered stack's `CAS_STACK_TRUSTED_JWKS` (managed via the control
 plane in `@unicas/service-cloudflare`, with business semantics in
 `@unicas/service`). A deployment must also set:
 
-- `INTERNAL_AUTH_MODE`: `stack` (legacy/dual/capability retired with the
-  legacy runtime);
 - `CAPABILITY_ALGORITHM`: `ES256`;
 - `CAPABILITY_TTL_SECONDS`: `120`;
-- `CAPABILITY_MAX_LIFETIME_SECONDS`: `300`;
+- `CAPABILITY_MAX_LIFETIME_SECONDS`: `1800` (production; protocol hard maximum is 604800s / 7 days, per-stack control-plane cap is 60..604800 with default 28800);
 - `CAPABILITY_CLOCK_SKEW_SECONDS`: `30`;
 - one environment-specific `CAPABILITY_ISSUER`;
 - Gateway `CAPABILITY_KEY_ID` and `CAS_CAPABILITY_AUDIENCE`;
@@ -59,7 +57,7 @@ Git. The command prints only the output path, issuer, and `kid`.
    Monitor unknown-key, wrong-issuer, and wrong-audience failures.
 6. Wait at least maximum token lifetime plus clock skew:
 
-   $$300\text{ seconds} + 30\text{ seconds} = 330\text{ seconds}.$$
+   (configured `CAPABILITY_MAX_LIFETIME_SECONDS` plus clock skew, e.g. 1800 + 30 = 1830 seconds in production; up to 604800 + 30 at the protocol maximum).
 
 7. Remove the old public JWK from every validator and deploy/restart them.
 8. Remove or disable the old private key after all active revisions trust only
@@ -71,15 +69,14 @@ the same instant.
 
 ## Rollback and recovery
 
-During rollout phases A, B, and C1, rollback is a forward deployment of the
-retained `dual` artifact with an explicitly remounted legacy credential. It is
-audited and time-bounded. After phase C2 destroys the legacy secret, releases
-that require it are not valid rollback targets.
+*(Historical note: the A/B/C1/C2 `dual`-artifact rollout phases and the legacy
+credential remount belong to the retired legacy runtime; current deployments
+are capability-only and rollback is a Wrangler/Azure revision rollback.)*
 
 If the active signing key is unavailable, deploy a capability-aware Gateway
 revision with another already-trusted private key. If a private key may be
 compromised, add a replacement public key to validators, switch Gateway,
-observe for at least 330 seconds, and then remove the compromised public and
+observe for at least the configured maximum lifetime plus clock skew, then remove the compromised public and
 private keys. Short-lived tokens bound the exposure; there is no online token
 revocation store.
 
@@ -111,6 +108,6 @@ destruction gates all pass.
 | Condition | Response |
 |---|---|
 | Active signing key unavailable | Switch Gateway to another already-trusted private key and deploy a capability-aware revision. |
-| Private key suspected compromised | Publish replacement trust, switch Gateway, observe for at least 330 seconds, then remove compromised public and private material. |
+| Private key suspected compromised | Publish replacement trust, switch Gateway, observe for at least the configured maximum lifetime plus clock skew, then remove compromised public and private material. |
 | Validators reject new tokens | Verify issuer, `kid`, audience, JWKS deployment, and that every validator revision restarted. |
 | Authorization failures spike | Disable the affected route/revision or forward-deploy a retained capability-aware release; do not enable an undocumented permanent bypass. |
