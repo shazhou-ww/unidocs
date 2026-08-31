@@ -155,13 +155,11 @@ a:hover { color: var(--accent); }
 }
 
 /* The cursor is the tool's only promise about what a press will do, so it is
-   driven straight off `data-tool` (and, under the move tool, the
-   `data-over-layer`/`data-panning` flags canvas-stage.tsx writes on hover and
-   during a drag). Move = grab the view and pan it, except over a layer the
-   press would actually move. Order matters: `data-panning` comes last so a
-   drag in progress always wins. */
+   driven straight off `data-tool` (plus `data-panning`, which
+   canvas-stage.tsx sets for the length of a pan drag). Move = grab the view
+   and pan it, unconditionally — it never moves a layer, so it never needs a
+   second cursor. */
 .stage[data-tool="move"] { cursor: grab; }
-.stage[data-tool="move"][data-over-layer] { cursor: move; }
 .stage[data-tool="move"][data-panning] { cursor: grabbing; }
 .stage[data-tool="marquee"] { cursor: crosshair; }
 .stage[data-tool="eyedrop"] { cursor: crosshair; }

@@ -4,12 +4,11 @@ import { CanvasStage } from "../src/ui/panels/canvas-stage.js";
 import { setState } from "../src/ui/store.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
-// The move tool used to do nothing at all unless a layer had already been
-// selected in the tree — a press on the canvas produced no cursor change and
-// no movement, so the tool read as broken. It now pans the view (the hand
-// gesture) whenever the press does NOT land on a selected layer, and still
-// drags the layer when it does. These tests pin both halves of that fork and
-// the cursor flags that advertise it.
+// Dragging the canvas pans it, always. The move tool used to translate the
+// selected layers instead — and did nothing whatsoever when nothing was
+// selected, which is the state the app starts in, so the tool read as broken.
+// The tests that matter are therefore the ones proving the fork is GONE: no
+// selection, and no press position, changes what a drag does.
 const { dispatch } = vi.hoisted(() => ({ dispatch: vi.fn() }));
 vi.mock("../src/ui/controller.js", () => ({
   initController: vi.fn(),
@@ -21,9 +20,9 @@ vi.mock("../src/ui/controller.js", () => ({
   dispatch,
 }));
 
-// See canvas-stage-drag.test.tsx: jsdom 25 has no PointerEvent constructor,
-// so a MouseEvent typed with a "pointer*" name is what carries clientX/Y
-// through to React's pointer handlers.
+// See canvas-stage-marquee.test.tsx: jsdom 25 has no PointerEvent
+// constructor, so a MouseEvent typed with a "pointer*" name is what carries
+// clientX/Y through to React's pointer handlers.
 function pointer(type: "pointerdown" | "pointermove" | "pointerup", clientX: number, clientY: number): MouseEvent {
   return new MouseEvent(type, { clientX, clientY, bubbles: true, cancelable: true });
 }
@@ -89,22 +88,23 @@ describe("CanvasStage move-tool pan", () => {
     expect(stage.scrollLeft).toBe(0);
   });
 
-  it("dispatches no ops while panning, even with a layer selected off the press point", () => {
-    setState({ selection: ["a"] }); // bounds [0,0,50,50]; the press is at 120,120
+  it("pans, not moves, when the press lands right on the selected layer", () => {
+    setState({ selection: ["a"] }); // bounds [0,0,50,50] — the press is inside it
     const stage = mount();
-    fireEvent(stage, pointer("pointerdown", 120, 120));
-    fireEvent(stage, pointer("pointermove", 140, 120));
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(stage.scrollLeft).toBe(-20);
+    fireEvent(stage, pointer("pointerdown", 20, 20));
+    fireEvent(stage, pointer("pointermove", 30, 25));
+    expect(stage.scrollLeft).toBe(-10);
+    expect(stage.scrollTop).toBe(-5);
   });
 
-  it("drags the layer instead of panning when the press lands inside its bounds", () => {
+  it("never dispatches an op from a canvas drag, selected layer or not", () => {
     setState({ selection: ["a"] });
     const stage = mount();
     fireEvent(stage, pointer("pointerdown", 20, 20));
     fireEvent(stage, pointer("pointermove", 30, 20));
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(stage.scrollLeft).toBe(0);
+    fireEvent(stage, pointer("pointermove", 41, 20));
+    fireEvent(stage, pointer("pointerup", 41, 20));
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });
 
@@ -112,8 +112,8 @@ describe("CanvasStage cursor flags", () => {
   it("names the active tool on the stage so CSS can pick the cursor", () => {
     const stage = mount();
     expect(stage.getAttribute("data-tool")).toBe("move");
-    // Through `act` because the attribute is React-rendered, unlike the two
-    // flags below which the pointer handlers write straight to the DOM.
+    // Through `act` because the attribute is React-rendered, unlike
+    // `data-panning` below which the pointer handlers write to the DOM.
     act(() => { setState({ tool: "marquee" }); });
     expect(stage.getAttribute("data-tool")).toBe("marquee");
   });
@@ -125,20 +125,5 @@ describe("CanvasStage cursor flags", () => {
     expect(stage.hasAttribute("data-panning")).toBe(true);
     fireEvent(stage, pointer("pointerup", 60, 60));
     expect(stage.hasAttribute("data-panning")).toBe(false);
-  });
-
-  it("flags a hover over a selected layer, so it reads as movable rather than pannable", () => {
-    setState({ selection: ["a"] });
-    const stage = mount();
-    fireEvent(stage, pointer("pointermove", 20, 20));
-    expect(stage.hasAttribute("data-over-layer")).toBe(true);
-    fireEvent(stage, pointer("pointermove", 120, 120));
-    expect(stage.hasAttribute("data-over-layer")).toBe(false);
-  });
-
-  it("never flags a hover when nothing is selected — there is no layer to move", () => {
-    const stage = mount();
-    fireEvent(stage, pointer("pointermove", 20, 20));
-    expect(stage.hasAttribute("data-over-layer")).toBe(false);
   });
 });

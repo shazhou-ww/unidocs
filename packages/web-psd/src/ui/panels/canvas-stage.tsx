@@ -1,10 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
-import { dispatch, getController, initController } from "../controller.js";
-import { getState, selectedLayers, setState, useUiState } from "../store.js";
+import { getController, initController } from "../controller.js";
+import { getState, setState, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
 import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
-import { translateOps, withinBounds, type DragState } from "../drag.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 
 /**
@@ -24,9 +23,9 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * zoom's effect on rendering: no tile is re-composited, no transform is
  * applied, the browser scales the already-painted bitmap. Every pointer coordinate
  * below therefore goes through `controller.toCanvas()` and comes back in
- * document pixels, correct at any zoom — the marquee, the layer drag and the
- * eyedropper all share that one mapping, so they cannot disagree about which
- * pixel the cursor is over.
+ * document pixels, correct at any zoom — the marquee and the eyedropper share
+ * that one mapping, so they cannot disagree about which pixel the cursor is
+ * over.
  *
  * `.stage-inner` wraps the canvas and `<SelectionOverlay />` together and is
  * the thing that shrink-wraps + centres (`margin: auto`) inside `.stage`'s
@@ -44,9 +43,6 @@ export function CanvasStage() {
   // Marquee drag origin, in document pixels. A ref, not state: it changes on
   // every pointermove and must not re-render the tree mid-drag.
   const anchor = useRef<{ x: number; y: number } | null>(null);
-  // Move-tool drag state. Also a ref: it advances every pointermove and must
-  // not re-render the tree mid-drag.
-  const drag = useRef<DragState | null>(null);
   // Pan drag state: the pointer position and the stage's scroll offsets as
   // they were when the press landed, so every frame can be computed from the
   // ORIGINAL press rather than accumulating per-frame deltas (which would
@@ -108,25 +104,21 @@ export function CanvasStage() {
       setState({ pickedColor: c.pickColor(e.clientX, e.clientY) });
       return;
     }
-    // The move tool means two things, told apart by WHERE the press lands.
-    // On a selected layer it drags that layer; anywhere else it pans the
-    // view — the hand gesture, which is what a press on empty canvas reads
-    // as and what the `grab`/`grabbing` cursor has just promised. Before
-    // this, a press off a selection did nothing at all, so the tool looked
-    // dead until you had been to the layer tree first.
+    // Dragging the canvas ALWAYS pans, whatever is selected — the move tool
+    // is the hand. It used to translate the selected layers instead, which
+    // meant the same gesture did two different things depending on state you
+    // could not see from the canvas, and that the one gesture the empty grey
+    // surround obviously affords (grab it and move it) was the one it did
+    // not do. Layer position is not editable by dragging at all now.
+    //
+    // Panning is `.stage`'s native scrolling (see the note at the top of
+    // this file), so there is nothing to move but its scroll offsets — and
+    // DocController already listens for `scroll` on it, which is what fetches
+    // the tiles the pan exposes.
     if (s.tool === "move") {
-      const at = c.toCanvas(e.clientX, e.clientY);
       const stage = e.currentTarget;
-      if (s.selection.length > 0 && withinBounds(selectedLayers(s), at)) {
-        drag.current = { layerIds: [...s.selection], from: at, last: at };
-      } else {
-        // Panning is `.stage`'s native scrolling (see the note at the top of
-        // this file), so there is nothing to move but its scroll offsets —
-        // and DocController already listens for `scroll` on it, which is what
-        // fetches the tiles the pan exposes.
-        pan.current = { clientX: e.clientX, clientY: e.clientY, left: stage.scrollLeft, top: stage.scrollTop };
-        stage.setAttribute("data-panning", "");
-      }
+      pan.current = { clientX: e.clientX, clientY: e.clientY, left: stage.scrollLeft, top: stage.scrollTop };
+      stage.setAttribute("data-panning", "");
       stage.setPointerCapture(e.pointerId);
       return;
     }
@@ -147,38 +139,12 @@ export function CanvasStage() {
       e.currentTarget.scrollTop = pan.current.top - (e.clientY - pan.current.clientY);
       return;
     }
-    if (drag.current) {
-      const to = c.toCanvas(e.clientX, e.clientY);
-      const ops = translateOps(drag.current, to);
-      for (const op of ops) void dispatch(op);
-      // Advance `last` by the WHOLE PIXELS actually dispatched, not to `to`:
-      // otherwise the sub-pixel remainder translateOps discarded would be lost
-      // on every frame and the layer would drift behind the cursor.
-      const [dx, dy] = (ops[0]?.payload.op as { translate: [number, number] } | undefined)?.translate ?? [0, 0];
-      drag.current = { ...drag.current, last: { x: drag.current.last.x + dx, y: drag.current.last.y + dy } };
-      return;
-    }
-    if (anchor.current) {
-      setState({ marquee: normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null) });
-      return;
-    }
-    // Idle hover under the move tool: flag whether the cursor is over a
-    // layer it would drag, so the cursor can say `move` there and `grab`
-    // (pan) everywhere else. Written as a DOM attribute rather than store
-    // state deliberately — this changes on nearly every pointermove, and
-    // routing it through the store would re-render the whole tree at the
-    // pointer's sample rate for a cursor change.
-    const s = getState();
-    e.currentTarget.toggleAttribute(
-      "data-over-layer",
-      s.tool === "move" && s.selection.length > 0
-        && withinBounds(selectedLayers(s), c.toCanvas(e.clientX, e.clientY)),
-    );
+    if (!anchor.current) return;
+    setState({ marquee: normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null) });
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!drag.current && !anchor.current && !pan.current) return;
-    drag.current = null;
+    if (!anchor.current && !pan.current) return;
     anchor.current = null;
     pan.current = null;
     e.currentTarget.removeAttribute("data-panning");
