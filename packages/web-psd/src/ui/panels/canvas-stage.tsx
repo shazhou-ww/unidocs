@@ -224,6 +224,13 @@ export function CanvasStage() {
   const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>): void => {
     const c = getController();
     if (!c || getState().tool !== "move") return;
+    // The second `pointerdown` of the double click already started its own
+    // async settle (`p2`) before this handler runs. Superseding it here, the
+    // same way a fresh gesture supersedes an in-flight one elsewhere, stops
+    // that settle from landing after the descent below and flashing the
+    // single-click target — otherwise the two hit tests race and only a
+    // strictly-FIFO queue happens to save the descent.
+    pending.current = null;
     void c.hitTest(e.clientX, e.clientY).then((hits) => {
       const hit = hits[0];
       if (!hit) return;

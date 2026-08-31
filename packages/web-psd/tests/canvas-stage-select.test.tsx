@@ -33,6 +33,9 @@ const pointer = (type: string, clientX: number, clientY: number, init: MouseEven
 const leaf = (id: string, bounds: [number, number, number, number], over: Partial<LocalLayer> = {}): LocalLayer =>
   ({ id, type: "raster", name: id, opacity: 1, blendMode: "normal", visible: true, bounds, ...over });
 
+const group = (id: string, children: LocalLayer[], over: Partial<LocalLayer> = {}): LocalLayer =>
+  ({ id, type: "group", name: id, opacity: 1, blendMode: "normal", visible: true, bounds: [0, 0, 0, 0], children, ...over });
+
 /** Lets the awaited hit settle before assertions: the handler chains two
  *  microtasks (the hitTest promise, then `.then`). */
 const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
@@ -101,6 +104,50 @@ describe("click semantics", () => {
     fireEvent.doubleClick(stageOf(container), { clientX: 15, clientY: 15 });
     await flush();
     expect(getState().selection).toEqual(["a"]);
+  });
+
+  // A real double click fires two full pointerdown/pointerup pairs BEFORE the
+  // `dblclick` event: the second pointerdown starts its own async settle
+  // (`p2`), independent of `onDoubleClick`'s own hit test. Today's request
+  // queue happens to resolve them in FIFO order so the descent wins anyway —
+  // but nothing enforces that ordering, so this pins the outcome directly by
+  // resolving `p2`'s hit test AFTER the double click's, and asserting the
+  // stale single-click settle is superseded rather than overwriting the
+  // descent it raced.
+  it("keeps the descent even when the raced single-click settle resolves later", async () => {
+    setState({ selection: [], doc: { canvas: { width: 100, height: 100 }, layers: [
+      group("root", [leaf("bg", [0, 0, 100, 100]), group("mid", [leaf("deep", [10, 10, 30, 30])])]),
+    ] } });
+    const hit = { layerId: "deep", path: ["root", "mid", "deep"] };
+    const resolvers: Array<(hits: typeof hit[]) => void> = [];
+    hitTest.mockImplementation(() => new Promise<(typeof hit)[]>((resolve) => { resolvers.push(resolve); }));
+
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+    fireEvent(stage, pointer("pointerdown", 15, 15));   // p1 — resolvers[0]
+    fireEvent(stage, pointer("pointerup", 15, 15));
+    fireEvent(stage, pointer("pointerdown", 15, 15));   // p2 — resolvers[1]
+    fireEvent(stage, pointer("pointerup", 15, 15));
+    fireEvent.doubleClick(stage, { clientX: 15, clientY: 15 }); // onDoubleClick — resolvers[2]
+
+    // The double click's own hit test resolves first: "root" covers the whole
+    // canvas, so `clickTarget` would skip it on a plain click, but nothing is
+    // selected yet, so `descendPath` starts at the outermost level.
+    resolvers[2]([hit]);
+    await flush();
+    expect(getState().selection).toEqual(["root"]);
+
+    // The second pointerdown's stale settle lands after. Unsuperseded, it
+    // would call `clickTarget` (which descends past "root") and overwrite the
+    // selection with "mid".
+    resolvers[1]([hit]);
+    await flush();
+    expect(getState().selection).toEqual(["root"]);
+
+    // The first pointerdown's settle, later still, must be inert too.
+    resolvers[0]([hit]);
+    await flush();
+    expect(getState().selection).toEqual(["root"]);
   });
 
   // No op in the engine checks `locked` — it is only a writable property — so

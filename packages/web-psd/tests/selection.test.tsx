@@ -60,6 +60,49 @@ describe("ContextBar", () => {
     expect(dispatch).toHaveBeenCalledWith({ kind: "crop", payload: { rect: [10, 20, 132, 200] } });
   });
 
+  // draggableIds (hit-test.ts) silently drops locked members of a mixed
+  // selection from a drag — the context bar must say so, and say something
+  // DIFFERENT for "all locked" vs "some locked", or a partial drag looks like
+  // nothing happened at all.
+  it("shows no lock hint when nothing in the selection is locked", () => {
+    setState({
+      selection: ["a"],
+      doc: { canvas: { width: 100, height: 100 }, layers: [
+        { id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal", visible: true, bounds: [0, 0, 5, 5] },
+      ] },
+    });
+    render(<ContextBar />);
+    expect(screen.queryByText("已锁定")).not.toBeInTheDocument();
+    expect(screen.queryByText("部分已锁定")).not.toBeInTheDocument();
+  });
+
+  it("shows 部分已锁定 for a mixed selection", () => {
+    setState({
+      selection: ["free", "pinned"],
+      doc: { canvas: { width: 100, height: 100 }, layers: [
+        { id: "free", type: "raster", name: "free", opacity: 1, blendMode: "normal", visible: true, bounds: [0, 0, 5, 5] },
+        { id: "pinned", type: "raster", name: "pinned", opacity: 1, blendMode: "normal", visible: true,
+          bounds: [0, 0, 5, 5], locked: true },
+      ] },
+    });
+    render(<ContextBar />);
+    expect(screen.getByText("部分已锁定")).toBeInTheDocument();
+    expect(screen.queryByText("已锁定")).not.toBeInTheDocument();
+  });
+
+  it("shows 已锁定 when every selected layer is locked", () => {
+    setState({
+      selection: ["pinned"],
+      doc: { canvas: { width: 100, height: 100 }, layers: [
+        { id: "pinned", type: "raster", name: "pinned", opacity: 1, blendMode: "normal", visible: true,
+          bounds: [0, 0, 5, 5], locked: true },
+      ] },
+    });
+    render(<ContextBar />);
+    expect(screen.getByText("已锁定")).toBeInTheDocument();
+    expect(screen.queryByText("部分已锁定")).not.toBeInTheDocument();
+  });
+
   it("turns a region into the layers under it", () => {
     setState({
       region: rectRegion([0, 0, 30, 30]),
