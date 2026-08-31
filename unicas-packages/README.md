@@ -155,7 +155,7 @@ CAS 感知的编码 = 只有 1 种：规范 CAS 节点格式（codec/binary.ts�
 
 CAS 对 content 的立场：
   ✗ 不解析任何内容格式（SValue / SBlob / JSON / 任意未来格式）
-  ✓ refs 由调用方在 lease/upload 时声明（CasRefsHeader），CAS 只做通用校验：
+  ✓ refs 由调用方编码在 canonical node body 的 refs 段（无 header），CAS 只做通用校验：
       规范节点结构合法、摘要/尺寸一致（re-lease 不可变性）、refs 有界、
       child 就绪、通用大小上限（MAX_CANONICAL_NODE_BYTES）
   ✗ 不校验「声明的 refs 与内容内部引用一致」——所有格式一视同仁

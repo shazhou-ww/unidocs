@@ -107,7 +107,7 @@ async function main() {
   const parent = await nodeOf("smoke-parent", [child.hash]);
   res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/lease`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${writer}`, "Content-Type": NODE_CONTENT_TYPE, "X-CAS-Refs": child.hash },
+    headers: { Authorization: `Bearer ${writer}`, "Content-Type": NODE_CONTENT_TYPE },
     body: parent.body,
   });
   assert(res.status === 200, `lease parent -> ${res.status}`);

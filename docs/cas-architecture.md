@@ -439,19 +439,24 @@ Returns immutable metadata and mutable state. Unknown nodes return `404`.
 ### 11.3 Lease with content
 
 ```http
-POST /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}
+POST /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}/lease
 Authorization: Bearer <CAS capability>
-Content-Type: image/png
-Content-Length: 12345
-X-CAS-Refs: <hash>[,<hash>...]
+Content-Type: application/vnd.unidocs.cas-node.v1
+Content-Length: <canonical node length>
 X-CAS-Lease-Duration: 900000
 
-<raw bytes>
+<canonical node bytes>
 ```
 
-`X-CAS-Refs` may be omitted for a leaf node. `X-CAS-Lease-Duration` may be omitted (default 15 minutes, clamped to 1 minute … 24 hours).
+The request body is the canonical node: the 24-byte header (content size,
+content-type length, ref count), the UTF-8 content type, the ordered raw
+child hashes, then the node's own content. The `{sha256}` in the path is the
+content address: `SHA-256(header ‖ content-type ‖ child hashes ‖ content)`,
+and the server verifies it against the body checksum. Child refs are carried
+in the body only — there is no refs header. `X-CAS-Lease-Duration` may be
+omitted (default 15 minutes, clamped to 1 minute … 24 hours).
 
-If the node is already ready and immutable metadata matches, the service cancels the body, extends the lease, and returns success. Otherwise it reads the body, verifies the digest, writes R2, then commits the D1 row.
+If the node is already ready and immutable metadata matches, the service cancels the body, extends the lease, and returns success. Otherwise it streams the body to R2, parses the canonical prefix, verifies the digest, then commits the D1 row.
 
 ```json
 {

@@ -22,7 +22,6 @@ export type {
 
 export {
   CasLeaseDurationHeader,
-  CasRefsHeader,
 } from "./http.js";
 export type {
   CasEndpointContracts,

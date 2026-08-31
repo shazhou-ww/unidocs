@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
   CasLeaseDurationHeader,
-  CasRefsHeader,
   casRoutes,
   matchCasRoute,
 } from "../src/index.js";
@@ -50,7 +49,6 @@ describe("CAS routes (canonical stack-scoped)", () => {
       .toBe("/stacks/stack%2Fa/tenants/tenant%2Fa/cas/nodes/hash%20value/content");
     expect(casRoutes.updateRootRefs({ stackId: "stack/a", tenantId: "tenant/a" }))
       .toBe("/stacks/stack%2Fa/tenants/tenant%2Fa/root-refs");
-    expect(CasRefsHeader).toBe("X-CAS-Refs");
     expect(CasLeaseDurationHeader).toBe("X-CAS-Lease-Duration");
     expect(casRoutes.lease({ stackId: STACK, tenantId: TENANT, hash: "abc" }))
       .toBe(`/stacks/${STACK}/tenants/tenant%2Fa/cas/nodes/abc/lease`);

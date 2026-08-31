@@ -17,7 +17,6 @@ import type {
   CasUsage,
 } from "./types.js";
 
-export const CasRefsHeader = "X-CAS-Refs";
 export const CasLeaseDurationHeader = "X-CAS-Lease-Duration";
 
 export interface CasStackPath {
