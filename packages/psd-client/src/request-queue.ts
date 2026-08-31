@@ -42,12 +42,26 @@ export function createRequestQueue<Req>(hooks: QueueHooks<Req>): { submit(req: R
     // depends on that timing, but it keeps "submit" meaning "starts now
     // unless something is in the way," which is what discardability is
     // reasoning about.
-    Promise.resolve(hooks.run(req))
-      // `run` already reports every request-scoped failure to its own
-      // caller, so this is a backstop for anything escaping it. Without it a
-      // rejection would propagate past this point and the pending/waiting
-      // requests behind it would never start — one bad message wedging the
-      // Worker for the rest of the session.
+    //
+    // The try/catch matters: `hooks.run(req)` is called directly here (not
+    // as the body of a `.then()` callback), so a SYNCHRONOUS throw from it
+    // would otherwise propagate straight out of `start()` past the `.catch`
+    // below, leaving `active` stuck at `true` forever — every later request,
+    // `applyOp` included, would pile into `pending` and never run again.
+    // Converting it into a rejected promise here puts it on the exact same
+    // path as an async rejection.
+    let result: Promise<void>;
+    try {
+      result = hooks.run(req);
+    } catch (err) {
+      result = Promise.reject(err);
+    }
+    Promise.resolve(result)
+      // A backstop for any request-scoped failure — synchronous throw or
+      // async rejection alike — that escapes `run`. Without it, the failure
+      // would propagate past this point and the pending/waiting requests
+      // behind it would never start — one bad message wedging the Worker
+      // for the rest of the session.
       .catch((err) => { console.error("request-queue: unhandled error draining queue", err); })
       .then(() => {
         active = false;
