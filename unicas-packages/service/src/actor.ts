@@ -160,8 +160,8 @@ async function dispatchTenantRequest(
     {
       method,
       headers,
-      ...(body === null || body === undefined ? {} : { body }),
-    },
+      ...(body === null || body === undefined ? {} : { body, duplex: "half" }),
+    } as RequestInit & { duplex?: "half" },
   ));
 }
 
