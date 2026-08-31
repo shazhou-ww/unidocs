@@ -282,6 +282,16 @@ export class DocController {
     return this.renderClient.hitTest(at.x, at.y, { radius: Math.abs(wide.x - at.x), hover: opts.hover });
   }
 
+  /** One layer's alpha as a coverage buffer over its own box — the layer →
+   *  region conversion (spec §6.1). Same read path in the Worker as the hit
+   *  test; the only difference is copying the block out rather than sampling
+   *  a point. */
+  async layerAlphaRegion(layerId: string): Promise<{ bounds: Rect; data: Uint8ClampedArray } | null> {
+    if (!this.renderClient) return null;
+    const r = await this.renderClient.layerAlpha(layerId);
+    return r ? { bounds: r.bounds as Rect, data: r.data } : null;
+  }
+
   /** Applies an op LOCALLY first via `DocSession` (instant repaint of just the
    *  dirty tiles — the whole point of this task): `session.applyLocal`
    *  advances the session's own doc copy, paints it through `renderClient`,

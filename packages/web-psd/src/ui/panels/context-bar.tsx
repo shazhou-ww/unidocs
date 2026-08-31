@@ -1,4 +1,4 @@
-import { dispatch } from "../controller.js";
+import { dispatch, loadLayerAsRegion } from "../controller.js";
 import type { Rect } from "../../doc-model.js";
 import { describeTarget } from "../region.js";
 import { layersIntersecting } from "../hit-test.js";
@@ -24,6 +24,10 @@ export function ContextBar() {
       {sel.length > 0 && sel.some((l) => l.locked)
         ? <span className="mono ctx-size">{sel.every((l) => l.locked) ? "已锁定" : "部分已锁定"}</span>
         : null}
+      {sel.length === 1 ? (
+        <button type="button" className="btn-link"
+                onClick={() => void loadLayerAsRegion(sel[0].id)}>载入为选区</button>
+      ) : null}
       {m ? <span className="mono ctx-size">{`选区 ${m[3] - m[1]} × ${m[2] - m[0]}`}</span> : null}
       {cropable ? (
         <button type="button" className="btn-link"

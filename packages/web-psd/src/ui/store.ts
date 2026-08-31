@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { LocalLayer } from "../doc-model.js";
 import type { Region } from "./region.js";
+import { sweepMasks } from "./region.js";
 import { expandAncestors, normalizeSelection } from "./hit-test.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
@@ -163,6 +164,7 @@ export function selectedLayers(s: UiState): LocalLayer[] {
  */
 export function setRegion(region: Region | null): void {
   setState({ region });
+  sweepMasks(region?.maskId ?? null);
 }
 
 /**

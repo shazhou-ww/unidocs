@@ -1,6 +1,7 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
 import { invalidateTarget } from "./invalidate.js";
-import { getState, setState } from "./store.js";
+import { getState, setState, setRegion } from "./store.js";
+import { putMask } from "./region.js";
 import { initialZoom } from "./zoom.js";
 
 let controller: DocController | null = null;
@@ -106,6 +107,14 @@ export async function openFile(file: File): Promise<void> {
 
 export async function dispatch(op: Op): Promise<void> {
   await controller?.dispatch(op);
+}
+
+/** The layer → region conversion, wired into the context bar (spec §6.1).
+ *  ADDS the region axis — the layer selection is left untouched (spec §3.3). */
+export async function loadLayerAsRegion(layerId: string): Promise<void> {
+  const r = await controller?.layerAlphaRegion(layerId);
+  if (!r) return;
+  setRegion({ bounds: r.bounds, source: "layerAlpha", maskId: putMask(r.data) });
 }
 
 export function exportUrl(): string | null {

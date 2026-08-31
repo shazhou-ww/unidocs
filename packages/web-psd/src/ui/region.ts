@@ -32,6 +32,37 @@ export function rectRegion(bounds: Rect): Region {
 }
 
 /**
+ * Per-pixel coverage for regions that are not rectangles, keyed by the handle
+ * their `Region` carries.
+ *
+ * Module scope, deliberately NOT part of `UiState`. The store notifies every
+ * subscriber on every change and is snapshotted whole by tests; a full-canvas
+ * mask is a 12MB Uint8ClampedArray, and putting it in there would mean
+ * `resetState`, every test's hand-written INITIAL and any future state
+ * serialization all having to route around it.
+ *
+ * Buffer layout: `bounds`-sized, one byte per pixel, 0..255, row-major.
+ */
+const maskBytes = new Map<string, Uint8ClampedArray>();
+let nextMaskId = 1;
+
+export function putMask(bytes: Uint8ClampedArray): string {
+  const id = `m${nextMaskId++}`;
+  maskBytes.set(id, bytes);
+  return id;
+}
+
+export function getMask(id: string | null): Uint8ClampedArray | null {
+  return id ? maskBytes.get(id) ?? null : null;
+}
+
+/** Exactly one region exists at a time, so exactly one mask is reachable.
+ *  Called from `setRegion`, which is the only place a region is written. */
+export function sweepMasks(keep: string | null): void {
+  for (const id of [...maskBytes.keys()]) if (id !== keep) maskBytes.delete(id);
+}
+
+/**
  * The current target as one sentence, for the context bar.
  *
  * Every combination is meaningful (spec §3.2) — an empty axis is a default,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rectRegion, describeTarget } from "../src/ui/region.js";
+import { rectRegion, describeTarget, putMask, getMask, sweepMasks } from "../src/ui/region.js";
 
 describe("rectRegion", () => {
   it("carries the mask handle slot from day one, empty for a rectangle", () => {
@@ -25,5 +25,24 @@ describe("describeTarget", () => {
   });
   it("means the whole document when neither axis is set", () => {
     expect(describeTarget([], null)).toBe("整个文档");
+  });
+});
+
+describe("mask table", () => {
+  it("hands back a handle and the bytes behind it", () => {
+    const id = putMask(new Uint8ClampedArray([1, 2, 3]));
+    expect(getMask(id)).toEqual(new Uint8ClampedArray([1, 2, 3]));
+    expect(getMask(null)).toBeNull();
+  });
+
+  // Only one region exists at a time, so only one mask can be reachable. The
+  // bytes are megabytes each; leaving the old one behind is a leak that grows
+  // by a full canvas on every load.
+  it("drops every mask except the one still in use", () => {
+    const stale = putMask(new Uint8ClampedArray([1]));
+    const live = putMask(new Uint8ClampedArray([2]));
+    sweepMasks(live);
+    expect(getMask(stale)).toBeNull();
+    expect(getMask(live)).not.toBeNull();
   });
 });

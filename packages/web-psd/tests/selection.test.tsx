@@ -2,14 +2,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ToolStrip } from "../src/ui/panels/tool-strip.js";
 import { ContextBar } from "../src/ui/panels/context-bar.js";
-import { setState, getState } from "../src/ui/store.js";
-import { rectRegion } from "../src/ui/region.js";
+import { setState, getState, setRegion } from "../src/ui/store.js";
+import { rectRegion, getMask, putMask } from "../src/ui/region.js";
 
 const dispatch = vi.fn();
 const pickColor = vi.fn(() => "#f5efe3");
+// `loadLayerAsRegion` writes the store itself, so the mock needs a working
+// stand-in rather than an empty spy. It references `setRegion`/`putMask`
+// directly (not a dynamic `import()`) the same way `dispatch`/`pickColor`
+// above are referenced: the factory only runs when `controller.js` is first
+// imported, well after these top-level `const`s exist, so the plain
+// reference is safe — and unlike a dynamic `import()` (which routes through
+// vite-node's module loader and needs far more than the two microtask ticks
+// this file's `flush` convention budgets, see canvas-stage-select.test.tsx),
+// it resolves within the same tick the click handler runs in.
 vi.mock("../src/ui/controller.js", () => ({
   dispatch: (op: unknown) => dispatch(op),
   getController: () => ({ pickColor, toCanvas: (x: number, y: number) => ({ x, y }) }),
+  loadLayerAsRegion: async (): Promise<void> => {
+    setRegion({ bounds: [10, 10, 12, 12], source: "layerAlpha", maskId: putMask(new Uint8ClampedArray([1, 2, 3, 4])) });
+  },
 }));
 
 beforeEach(() => {
@@ -117,5 +129,21 @@ describe("ContextBar", () => {
     // The two axes never clear each other (spec §3.3) — the region must survive
     // being read.
     expect(getState().region).not.toBeNull();
+  });
+
+  it("turns the selected layer into a region carrying its alpha", async () => {
+    setState({ selection: ["a"], doc: { canvas: { width: 100, height: 100 }, layers: [
+      { id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal", visible: true, bounds: [10, 10, 12, 12] },
+    ] } });
+    render(<ContextBar />);
+    fireEvent.click(screen.getByText("载入为选区"));
+    await Promise.resolve(); await Promise.resolve();
+    const region = getState().region!;
+    expect(region.bounds).toEqual([10, 10, 12, 12]);
+    expect(region.source).toBe("layerAlpha");
+    expect(getMask(region.maskId)).toEqual(new Uint8ClampedArray([1, 2, 3, 4]));
+    // The layer axis is untouched — the two conversions ADD an axis, they do
+    // not swap one for the other (spec §3.3).
+    expect(getState().selection).toEqual(["a"]);
   });
 });
