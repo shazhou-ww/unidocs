@@ -34,6 +34,11 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * between `.stage` and the canvas instead would go stale on scroll/resize;
  * a shared containing block does not.
  */
+/** Wheel delta → zoom factor exponent. Exponential so a given scroll distance
+ *  is the same RATIO of zoom wherever you are on the scale: a linear step
+ *  crawls when zoomed out and lurches when zoomed in. */
+const WHEEL_ZOOM_RATE = 0.01;
+
 export function CanvasStage() {
   const s = useUiState();
   const stageRef = useRef<HTMLDivElement>(null);
@@ -57,16 +62,38 @@ export function CanvasStage() {
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
+
+    // Coalesced to one zoom per animation frame. A trackpad pinch emits wheel
+    // events far faster than the screen refreshes, and each `zoomTo` forces a
+    // synchronous render, a layout read and a tile request — running that a
+    // hundred times a second is jank, and every extra step is discarded by
+    // the next one anyway. Deltas accumulate so no scroll distance is lost;
+    // the anchor is the LATEST cursor position, which is where the pinch
+    // actually is by the time the frame runs.
+    let pendingDelta = 0;
+    let anchor = { clientX: 0, clientY: 0 };
+    let frame = 0;
+
+    const apply = (): void => {
+      frame = 0;
+      const delta = pendingDelta;
+      pendingDelta = 0;
+      if (delta !== 0) zoomBy(Math.exp(-delta * WHEEL_ZOOM_RATE), anchor);
+    };
+
     const onWheel = (e: WheelEvent): void => {
       if (!e.ctrlKey && !e.metaKey) return; // plain wheel stays a scroll (= pan)
       e.preventDefault();
-      // Exponential so a given scroll distance is the same RATIO of zoom
-      // wherever you are on the scale — linear steps crawl when zoomed out
-      // and lurch when zoomed in.
-      zoomBy(Math.exp(-e.deltaY * 0.01), { clientX: e.clientX, clientY: e.clientY });
+      pendingDelta += e.deltaY;
+      anchor = { clientX: e.clientX, clientY: e.clientY };
+      if (frame === 0) frame = requestAnimationFrame(apply);
     };
+
     stage.addEventListener("wheel", onWheel, { passive: false });
-    return () => stage.removeEventListener("wheel", onWheel);
+    return () => {
+      stage.removeEventListener("wheel", onWheel);
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
   }, []);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
