@@ -19,10 +19,9 @@ function readPkg(name: string): {
   return JSON.parse(readFileSync(join(packagesDir, name, "package.json"), "utf8"));
 }
 
-const TENANT_IMPL_PACKAGES = [
+const TENANT_IMPLEMENTATION_PACKAGES = [
   "@unicas/tenant-client",
   "@unicas/tenant-blob-client",
-  "@unicas/tenant-protocol",
   "@unicas/codec",
 ] as const;
 
@@ -91,10 +90,8 @@ describe("package dependency boundaries", () => {
     expect(webui.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/control-plane"]).toBe("workspace:*");
 
-    // Admin protocol stays independent of the tenant protocol package
-    // (canonical and migration-only legacy surface alike).
-    expect(protocol.dependencies?.["@unicas/tenant-protocol"]).toBeUndefined();
-    expect(protocol.devDependencies?.["@unicas/tenant-protocol"]).toBeUndefined();
+    // Shared cross-plane contracts may flow tenant-protocol -> admin-protocol,
+    // but the retired legacy package must never return.
     expect(protocol.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
     expect(protocol.devDependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
 
@@ -103,9 +100,17 @@ describe("package dependency boundaries", () => {
         ...pkg.dependencies,
         ...pkg.devDependencies,
       };
-      for (const forbidden of TENANT_IMPL_PACKAGES) {
+      for (const forbidden of TENANT_IMPLEMENTATION_PACKAGES) {
         expect(deps[forbidden], `${pkg.name} must not depend on ${forbidden}`).toBeUndefined();
       }
+    }
+
+    for (const pkg of [control, webui, edge]) {
+      const deps = {
+        ...pkg.dependencies,
+        ...pkg.devDependencies,
+      };
+      expect(deps["@unicas/tenant-protocol"]).toBeUndefined();
     }
 
     expect(protocol.dependencies?.["@unicas/control-plane"]).toBeUndefined();
@@ -117,5 +122,11 @@ describe("package dependency boundaries", () => {
     const client = readPkg("tenant-client");
     expect(client.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
     expect(client.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
+  });
+
+  test("tenant protocol never depends on the admin protocol", () => {
+    const protocol = readPkg("tenant-protocol");
+    expect(protocol.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
+    expect(protocol.devDependencies?.["@unicas/admin-protocol"]).toBeUndefined();
   });
 });

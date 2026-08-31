@@ -16,12 +16,32 @@ Unicas 是 UniDocs 的独立可部署 CAS 中间件（content-addressed storage 
 3. **编码层**：`codec` —— wire 编码，独立发布、独立测试，无 workspace 依赖。
 4. **契约包**：`tenant-protocol`（数据面 HTTP 契约 + capability）/
    `admin-protocol`（控制面契约）。只放类型、路由、校验、常量——无 IO、
-   无平台绑定、**不含任何编码**。
+  无平台绑定、**不含任何编码**。两面共用的协议类型归 `tenant-protocol`；
+  `admin-protocol` 可依赖 `tenant-protocol`，反向禁止。
 5. **界面/入口**：`admin-webui`（管理 WebUI + OIDC BFF，双角色包）、
    `admin-cli`（管理 CLI + stdio MCP）、`tenant-client`（数据面 HTTP client）。
 6. **服务标记**：`control-*` = 控制面服务（`control-plane`、`control-auth`、
    `control-plane-mcp`）；`server-*` = 数据面服务端部署
    （`server-cloudflare`）；`edge` = 公共入口（不属任何 actor 组）。
+
+## 客户端访问面固定结构
+
+admin 与 tenant 两类参与者的访问面保持分离，客户端包采用同一套角色：
+
+```
+admin:  [admin-cli, admin-webui] -> admin-client -> admin-protocol
+tenant: [tenant-cli, tenant-webui] -> tenant-client -> tenant-protocol
+```
+
+- `protocol` 定义该访问面的 HTTP 接口、接口依赖的 request/response 类型，
+  以及配合这些类型使用的简单纯函数（如构造函数、类型判定函数）。
+- 两个访问面共用的协议类型放在 `tenant-protocol`；只允许
+  `admin-protocol -> tenant-protocol`，不允许反向依赖。
+- `client` 对每个 HTTP API 提供简单的 `Request -> Promise<Response>` 封装；
+  client 对象只收纳 base URL、credential 等公共传输参数，不承载业务抽象。
+- 更高层抽象另建包装包；`tenant-blob-client -> tenant-client` 是基准模式。
+- 上图是固定的角色与依赖模型；某个 CLI/WebUI 产品尚未实现时不创建空包。
+  WebUI 的服务端 BFF 属于服务端梳理范围，不改变浏览器侧的依赖方向。
 
 ## 包清单（13 包）
 
@@ -100,14 +120,16 @@ unicas-packages/                    @unicas org
   （blob 写/随机读 + 节点元数据/续租/root-refs + usage/gc），应用栈不再直接
   依赖 tenant-client；`createTenantCasClient` 只在组装点喂给
   `createCasBlobClient`。
-- 契约层：`tenant-protocol` 仅外部 `jose`；`admin-protocol` 零依赖。
+- 契约层：`tenant-protocol` 仅外部 `jose`；`admin-protocol` 当前无依赖，
+  未来只可为复用两面共用协议类型而依赖 `tenant-protocol`。
 - 内核层只依赖契约层（`control-plane` → `admin-protocol`）。
 - 部署层只依赖内核层 + 契约层 +（数据面所需）编码层，**部署层之间零依赖**
   （`admin-webui` 与 `control-plane-mcp` 各自独立绑定 D1，业务写入全部收敛到
   `ControlPlaneService`）。
-- 数据面 / 控制面**跨组 import 禁止**：tenant 组包不得依赖 admin 组包，
-  反之亦然（`admin-protocol/tests/cross-plane.test.ts` 把 `codec` 也列入
-  tenant 实现包，admin 侧不得依赖；各包 `tests/boundary.test.ts` 断言）。
+- 数据面不得依赖 admin 组包；admin 实现包不得依赖 tenant 实现包。
+  唯一协议级单向例外是 `admin-protocol -> tenant-protocol`，用于复用两面
+  公共协议类型，反向禁止（由 `admin-protocol/tests/cross-plane.test.ts` 与
+  各包 `tests/boundary.test.ts` 断言）。
 - **零 `@unidocs/*` 依赖**：unicas-packages 是独立中间件。`server-cloudflare`
   唯一允许的应用栈 devDependency 是测试用的 `@unidocs/service-auth`
   （签发器），生产代码不引用。
@@ -168,6 +190,13 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
 
 1. **capability 归属复查**：如未来出现第二个消费方，可独立成包或并入
    `codec` 包（目前它是 JWT claim 词汇，留在 `tenant-protocol` 合理）。
+2. **服务端包边界**：`server-cloudflare` 当前只为只读 authority repository
+  和 `canonicalJson`/`sha256Hex` 两个纯函数依赖整个 `control-plane`，导致
+  tenant 数据面服务间接获得 admin 服务与协议语义。下一轮应先拆出窄的
+  authority read model，并把两面共用的协议辅助函数归到
+  `tenant-protocol`，从而移除 `server-cloudflare -> control-plane`；保持现有
+  Worker 路由与部署入口不变。随后再处理 `admin-webui` 中浏览器 UI 与 BFF
+  同包、`control-plane-mcp` 的部署适配器命名问题。
 
 ## 维护约定
 
@@ -179,8 +208,8 @@ capability 是 JWT claim 词汇而非编码，故不进 `codec` 包。
   契约/编码层包**（`tenant-client`、`tenant-blob-client`、`admin-client`、
   `admin-protocol`、`tenant-protocol`、`codec`、`control-auth`）的依赖边界
   由 package-deps guard（声明与 import 一致）加
-  `admin-protocol/tests/cross-plane.test.ts`（admin 侧不得依赖 tenant 侧
-  实现包）兜底。
+  `admin-protocol/tests/cross-plane.test.ts`（只放行
+  `admin-protocol -> tenant-protocol`，其余跨面实现依赖禁止）兜底。
 - 改名流程：`git mv` 目录 → 同步 `package.json` `name` → 更新所有 import /
   tsconfig references / workspace aliases / 当前文档 → guard 与 boundary 测试兜底。
 - 历史 plan/spec 文档（`docs/superpowers/`）是决策记录，**不改名**。
