@@ -126,6 +126,61 @@ export function normalizeSelection(layers: LocalLayer[], ids: string[]): string[
   });
 }
 
+/**
+ * Which level of a hit path a plain click should select.
+ *
+ * The default is the OUTERMOST group (Figma's semantics), because PSD group
+ * nesting is usually deep and landing on a leaf four levels in is rarely what
+ * someone means by clicking a picture.
+ *
+ * With one caveat: a PSD where everything sits in a single root group is
+ * common, and selecting that group selects the whole document — a box flush
+ * with the canvas edge carrying no information, that translates the entire
+ * file when dragged. So a level covering more than `maxFraction` of the
+ * canvas is skipped, repeatedly, down to the leaf if need be. The test is
+ * AREA rather than "is it the only top-level group", because a background
+ * group filling the canvas is the same experience for the user.
+ */
+export function clickTarget(
+  layers: LocalLayer[],
+  path: string[],
+  canvas: { width: number; height: number },
+  maxFraction = 0.8,
+): string {
+  const area = canvas.width * canvas.height;
+  for (let i = 0; i < path.length - 1; i++) {
+    const layer = findLayer(layers, path[i]);
+    const box = layer ? layerBox(layer) : null;
+    if (!box) continue;
+    const covered = Math.max(0, box[2] - box[0]) * Math.max(0, box[3] - box[1]);
+    if (area <= 0 || covered / area <= maxFraction) return path[i];
+  }
+  return path[path.length - 1];
+}
+
+/** One level deeper along `path` than whatever is selected now — the
+ *  double-click gesture. Stays put at the leaf, and starts from the outermost
+ *  level if the current selection is not on this path at all. */
+export function descendPath(path: string[], current: string): string {
+  const i = path.indexOf(current);
+  if (i < 0) return path[0];
+  return path[Math.min(i + 1, path.length - 1)];
+}
+
+/**
+ * The subset of `ids` that may actually be edited.
+ *
+ * Locked layers stay selectable — that is Photoshop's behaviour, and skipping
+ * them would mean clicking a plainly visible layer and selecting the thing
+ * behind it, which is more confusing than not being able to move it. But NO
+ * op in the engine checks `locked` (it is only a writable property in
+ * `layer-ops.ts`'s SETTABLE_PROPS; nothing reads it to refuse an edit), so
+ * "does not move" has to be enforced here — the server will not do it.
+ */
+export function draggableIds(layers: LocalLayer[], ids: string[]): string[] {
+  return ids.filter((id) => !findLayer(layers, id)?.locked);
+}
+
 /** Every ancestor group of `id`, added to `expanded` — `flattenTree` only
  *  emits a group's children when the group is in that set, so a canvas
  *  selection would otherwise land on a row the tree is not rendering.

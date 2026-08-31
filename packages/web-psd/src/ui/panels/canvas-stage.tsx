@@ -6,7 +6,7 @@ import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
 import { translateOps, type DragState } from "../drag.js";
 import { rectRegion } from "../region.js";
-import { findLayer, layerBox, type Hit } from "../hit-test.js";
+import { findLayer, layerBox, clickTarget, descendPath, draggableIds, type Hit } from "../hit-test.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 import { SelectionBox } from "./selection-box.js";
 
@@ -193,7 +193,10 @@ export function CanvasStage() {
       setSelection([]);
       return;
     }
-    const id = p.leaf ? hit.path[hit.path.length - 1] : hit.path[0];
+    const s2 = getState();
+    const id = p.leaf
+      ? hit.path[hit.path.length - 1]
+      : clickTarget(s2.doc?.layers ?? [], hit.path, s2.doc?.canvas ?? { width: 0, height: 0 });
     // Routed through `selectLayer`, not a raw `setState`, so a canvas click
     // gets the same ancestor-expansion `selectLayer` already gives a tree
     // click (spec §9) — otherwise picking a nested layer on the canvas would
@@ -203,14 +206,29 @@ export function CanvasStage() {
     if (!p.alive) return;                // it was a click, not a drag
     const c = getController();
     if (!c) return;
+    const movable = draggableIds(s2.doc?.layers ?? [], selection);
+    if (movable.length === 0) return;    // locked: selected, but nothing to move (the engine will not refuse it for us)
     // `drag.from` is where the finger went DOWN, and the whole distance
     // travelled since is applied in one go — so the layer's total movement
     // always equals the finger's, however long the round trip took.
-    const started: DragState = { layerIds: selection, from: p.anchor, last: p.anchor };
+    const started: DragState = { layerIds: movable, from: p.anchor, last: p.anchor };
     const ops = translateOps(started, p.latest);
     for (const op of ops) void dispatch(op);
     const [dx, dy] = (ops[0]?.payload.op as { translate: [number, number] } | undefined)?.translate ?? [0, 0];
     drag.current = { ...started, last: { x: p.anchor.x + dx, y: p.anchor.y + dy } };
+  };
+
+  // Descends one level into the group the last click selected. Uses the same
+  // candidate stack as the click, so the two can never disagree about which
+  // path the cursor is on.
+  const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const c = getController();
+    if (!c || getState().tool !== "move") return;
+    void c.hitTest(e.clientX, e.clientY).then((hits) => {
+      const hit = hits[0];
+      if (!hit) return;
+      setSelection([descendPath(hit.path, getState().selection[0] ?? "")]);
+    });
   };
 
   const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
@@ -237,6 +255,7 @@ export function CanvasStage() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onDoubleClick={onDoubleClick}
     >
       {/* Deliberately names no file format. PSD is the only one that loads
           today, but PNG/JPEG are planned, and the file picker's `accept`

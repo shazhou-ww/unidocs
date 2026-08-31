@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   findLayer, unionRect, layerBox, layersIntersecting, normalizeSelection, expandAncestors,
+  clickTarget, descendPath, draggableIds,
 } from "../src/ui/hit-test.js";
 import type { LocalLayer, Rect } from "../src/doc-model.js";
 
@@ -104,5 +105,56 @@ describe("findLayer / expandAncestors", () => {
   it("returns the same set object when nothing needs opening", () => {
     const before = new Set(["x"]);
     expect(expandAncestors(layers, "a", before)).toBe(before);
+  });
+});
+
+describe("clickTarget", () => {
+  const canvas = { width: 100, height: 100 };
+  const tree = [group("root", [group("mid", [leaf("deep", [10, 10, 20, 20])])])];
+
+  it("selects the outermost group, the Figma semantics", () => {
+    const shallow = [group("g", [leaf("a", [10, 10, 20, 20])]), leaf("b", [0, 0, 5, 5])];
+    expect(clickTarget(shallow, ["g", "a"], canvas)).toBe("g");
+  });
+
+  // "Everything in one root group" is common in a PSD. Selecting it puts the
+  // box flush against the canvas edge — no information at all — and dragging
+  // translates the entire document.
+  it("descends past a group that covers most of the canvas", () => {
+    const wide = [group("root", [leaf("bg", [0, 0, 100, 100]), leaf("a", [10, 10, 20, 20])])];
+    expect(clickTarget(wide, ["root", "a"], canvas)).toBe("a");
+  });
+
+  it("keeps descending while each level is still too big, stopping at the leaf", () => {
+    const nested = [group("root", [group("mid", [leaf("full", [0, 0, 100, 100])])])];
+    expect(clickTarget(nested, ["root", "mid", "full"], canvas)).toBe("full");
+  });
+
+  it("returns the leaf when the path has no groups in it", () => {
+    expect(clickTarget(tree, ["deep"], canvas)).toBe("deep");
+  });
+});
+
+describe("descendPath", () => {
+  it("moves one level deeper on each call and stops at the leaf", () => {
+    expect(descendPath(["a", "b", "c"], "a")).toBe("b");
+    expect(descendPath(["a", "b", "c"], "b")).toBe("c");
+    expect(descendPath(["a", "b", "c"], "c")).toBe("c");
+  });
+
+  it("starts at the outermost level when the current id is not on the path", () => {
+    expect(descendPath(["a", "b", "c"], "elsewhere")).toBe("a");
+  });
+});
+
+describe("draggableIds", () => {
+  it("drops locked layers, which nothing in the engine refuses on its own", () => {
+    const layers = [leaf("free", [0, 0, 5, 5]), leaf("pinned", [0, 0, 5, 5], { locked: true })];
+    expect(draggableIds(layers, ["free", "pinned"])).toEqual(["free"]);
+  });
+
+  it("treats a group as locked when the group itself is", () => {
+    const layers = [group("g", [leaf("a", [0, 0, 5, 5])], { locked: true })];
+    expect(draggableIds(layers, ["g"])).toEqual([]);
   });
 });

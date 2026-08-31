@@ -17,6 +17,7 @@ export function ContextBar() {
   return (
     <div className="context-bar">
       <span className="mono ctx-path">{describeTarget(sel.map((l) => l.name), s.region)}</span>
+      {sel.length > 0 && sel.every((l) => l.locked) ? <span className="mono ctx-size">已锁定</span> : null}
       {m ? <span className="mono ctx-size">{`选区 ${m[3] - m[1]} × ${m[2] - m[0]}`}</span> : null}
       {cropable ? (
         <button type="button" className="btn-link"
