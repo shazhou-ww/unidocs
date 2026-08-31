@@ -154,6 +154,16 @@ a:hover { color: var(--accent); }
   background-size: 22px 22px;
 }
 
+/* The cursor is the tool's only promise about what a press will do, so it is
+   driven straight off `data-tool` (plus `data-panning`, which
+   canvas-stage.tsx sets for the length of a pan drag). Move = grab the view
+   and pan it, unconditionally — it never moves a layer, so it never needs a
+   second cursor. */
+.stage[data-tool="move"] { cursor: grab; }
+.stage[data-tool="move"][data-panning] { cursor: grabbing; }
+.stage[data-tool="marquee"] { cursor: crosshair; }
+.stage[data-tool="eyedrop"] { cursor: crosshair; }
+
 /* Taken out of flow deliberately. `.stage` is a flex row and `.stage-inner`
    centres itself with `margin: auto`; a second in-flow child with auto margins
    makes the two of them share the free space between four auto margins, and
@@ -228,13 +238,14 @@ a:hover { color: var(--accent); }
 .btn-primary:hover { background: var(--accent-ink); }
 .btn.is-disabled { opacity: .5; pointer-events: none; }
 
-.pane-tabs { padding: 0 8px; gap: 2px; }
-.pane-tabs button {
-  height: 100%; padding: 0 13px; border: 0; background: transparent;
-  font: inherit; color: var(--fg-3); font-weight: 500; cursor: pointer;
-  border-bottom: 2px solid transparent;
-}
-.pane-tabs button[data-on] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+/* The right column's two halves (see side-panel.tsx): stacked so a click in
+   the tree and the properties it changes are visible at the same time. Both
+   are `min-height: 0` so their own `overflow-y: auto` bodies actually scroll
+   instead of the flex items growing to fit their content. The basis split is
+   biased towards properties, which is the taller of the two. */
+.pane { display: flex; flex-direction: column; min-height: 0; }
+.pane-layers { flex: 1 1 38%; }
+.pane-props { flex: 1 1 62%; border-top: 1px solid var(--border); }
 .pane-meta { font-size: 10.5px; color: var(--fg-3); }
 
 .tree { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
