@@ -26,7 +26,7 @@ vi.mock("../src/ui/controller.js", () => ({
     toScreen: (dx: number, dy: number) => ({ x: dx * getState().zoom, y: dy * getState().zoom }),
   }),
   openFile: vi.fn(),
-  exportUrl: () => null,
+  exportDoc: vi.fn(),
 }));
 
 const { zoomTo } = await import("../src/ui/zoom-controller.js");

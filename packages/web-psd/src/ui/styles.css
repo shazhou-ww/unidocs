@@ -236,7 +236,7 @@ a:hover { color: var(--accent); }
 .btn:hover { background: var(--surface-hover); }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { background: var(--accent-ink); }
-.btn.is-disabled { opacity: .5; pointer-events: none; }
+.btn.is-disabled, .btn:disabled { opacity: .5; pointer-events: none; }
 
 /* The right column's two halves (see side-panel.tsx): stacked so a click in
    the tree and the properties it changes are visible at the same time. Both

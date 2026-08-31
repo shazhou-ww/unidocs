@@ -130,6 +130,31 @@ export class DocSession {
     return this.#version;
   }
 
+  /** How many locally-applied ops the server has not acknowledged yet. Zero
+   *  means the server's document matches this session's. */
+  get pendingCount(): number {
+    return this.#pending.length;
+  }
+
+  /** Resolves once the server has accepted every op applied locally so far —
+   *  i.e. once the server's copy of the document has caught up with this
+   *  one's.
+   *
+   *  Anything that reads the document back FROM the server (export is the
+   *  one today) has to await this first: `applyLocal` deliberately returns
+   *  before the network, so without it a read issued right after an edit
+   *  races the background drain and returns a document missing that edit.
+   *
+   *  Loops rather than awaiting one drain: a rebase mid-drain can replace
+   *  `#pending` with replayed entries, and an `applyLocal` racing the loop's
+   *  exit can queue a new one — either way the queue must be observed empty,
+   *  not merely observed to have been drained once. Rejects (leaving the ops
+   *  queued for a later retry) if a submission fails, so a caller cannot
+   *  mistake a failed sync for a completed one. */
+  async flush(): Promise<void> {
+    while (this.#pending.length > 0) await this.#drain();
+  }
+
   /** Advances the local doc and paints the op immediately, then queues it
    *  for background submission. Does NOT await the server — the returned
    *  rect reflects only the local `applyOne` + render, so callers get an

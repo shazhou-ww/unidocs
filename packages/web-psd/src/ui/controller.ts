@@ -1,5 +1,5 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
-import { getState, setState } from "./store.js";
+import { getState, reportError, setState } from "./store.js";
 import { initialZoom } from "./zoom.js";
 
 let controller: DocController | null = null;
@@ -97,7 +97,53 @@ export async function dispatch(op: Op): Promise<void> {
   await controller?.dispatch(op);
 }
 
-export function exportUrl(): string | null {
-  const id = controller?.docId;
-  return id ? `${GW}/tenants/${USER}/docs/${TYPE}/${id}/export` : null;
+/** The download's filename. The server sends `Content-Disposition:
+ *  attachment; filename="document"`, which is both extension-less and the
+ *  same for every document — name the file after the one on screen. */
+export function exportFileName(docName: string | null): string {
+  if (!docName) return "export.psd";
+  return /\.psd$/i.test(docName) ? docName : `${docName.replace(/\.[^.]+$/, "")}.psd`;
+}
+
+/**
+ * Downloads the document as a PSD.
+ *
+ * Deliberately NOT an `<a href>` pointing at `/export`, which is what this
+ * used to be. Export is served from the SERVER's copy of the document, while
+ * edits are applied locally first and submitted by a background drain
+ * (`DocSession`) — so at any moment the browser's document is "the server's
+ * version plus a queue of ops it hasn't accepted yet". A plain link navigates
+ * without running a line of JS, giving the app no chance to close that gap:
+ * clicking 导出 right after an edit downloaded a file missing it.
+ *
+ * So: flush the queue first, then fetch the bytes and hand them to a
+ * synthesized download. A failed flush aborts the export outright — a file
+ * silently missing the edit that just failed to submit is worse than no file.
+ */
+export async function exportDoc(): Promise<void> {
+  const c = controller;
+  const id = c?.docId;
+  if (!c || !id) return;
+  setState({ exporting: true });
+  try {
+    await c.flush();
+    const res = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/${id}/export`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportFileName(getState().docName);
+    // Firefox only acts on `click()` for an anchor that is in the document.
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoked a task later, not synchronously: `click()` only QUEUES the
+    // navigation to the blob URL, so revoking on this tick can cancel the
+    // download it just started.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  } catch (e) {
+    reportError("导出失败", e);
+  } finally {
+    setState({ exporting: false });
+  }
 }
