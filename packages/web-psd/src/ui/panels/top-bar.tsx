@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { setState, useUiState } from "../store.js";
+import { selectLayer, setState, useUiState } from "../store.js";
 import { exportUrl, openFile } from "../controller.js";
 import { collectDegradations, countLayers } from "../../doc-model.js";
 import { zoomActual, zoomFit, zoomStep } from "../zoom-controller.js";
@@ -30,7 +30,7 @@ export function TopBar() {
             <div className="degrade-pop">
               {degradations.map((d, i) => (
                 <button key={`${d.layerId}-${i}`} type="button" className="degrade-row"
-                        onClick={() => setState({ selection: [d.layerId], pane: "props", degradeOpen: false })}>
+                        onClick={() => { selectLayer(d.layerId); setState({ pane: "props", degradeOpen: false }); }}>
                   <strong>{d.layerName}</strong>
                   <span>{d.reason}</span>
                   {d.detail ? <em>{d.detail}</em> : null}

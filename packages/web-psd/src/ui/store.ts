@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { LocalLayer } from "../doc-model.js";
 import type { Region } from "./region.js";
-import { normalizeSelection } from "./hit-test.js";
+import { expandAncestors, normalizeSelection } from "./hit-test.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
 export type PaneId = "layers" | "props";
@@ -163,4 +163,28 @@ export function selectedLayers(s: UiState): LocalLayer[] {
  */
 export function setRegion(region: Region | null): void {
   setState({ region });
+}
+
+/**
+ * The one write point for the layer axis.
+ *
+ * Everything a selection has to drag along with it lives here rather than at
+ * each call site: normalization (see hit-test.ts) and opening the tree far
+ * enough that the newly selected row is actually rendered. The canvas, the
+ * degradation badge and the tree itself all go through it.
+ */
+export function selectLayer(id: string, opts: { additive?: boolean } = {}): void {
+  const s = getState();
+  const selection = nextSelection(s, id, !!opts.additive);
+  setState({
+    selection,
+    ...(s.doc ? { expanded: expandAncestors(s.doc.layers, id, s.expanded) } : {}),
+  });
+}
+
+/** Replaces the layer axis outright (region → layers, Esc, click on empty
+ *  canvas). Normalized for the same reason `selectLayer` is. */
+export function setSelection(ids: string[]): void {
+  const s = getState();
+  setState({ selection: s.doc ? normalizeSelection(s.doc.layers, ids) : ids });
 }

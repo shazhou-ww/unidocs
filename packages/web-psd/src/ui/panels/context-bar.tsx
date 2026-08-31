@@ -1,7 +1,8 @@
 import { dispatch } from "../controller.js";
 import type { Rect } from "../../doc-model.js";
 import { describeTarget } from "../region.js";
-import { selectedLayers, setRegion, useUiState } from "../store.js";
+import { layersIntersecting } from "../hit-test.js";
+import { selectedLayers, setRegion, setSelection, useUiState } from "../store.js";
 import { ToolStrip } from "./tool-strip.js";
 
 export function ContextBar() {
@@ -20,6 +21,10 @@ export function ContextBar() {
       {cropable ? (
         <button type="button" className="btn-link"
                 onClick={() => void dispatch({ kind: "crop", payload: { rect: m as Rect } })}>裁到选区</button>
+      ) : null}
+      {m ? (
+        <button type="button" className="btn-link"
+                onClick={() => setSelection(layersIntersecting(s.doc?.layers ?? [], m))}>选中区域内的图层</button>
       ) : null}
       {m ? (
         <button type="button" className="btn-link"

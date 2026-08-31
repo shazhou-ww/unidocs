@@ -59,4 +59,20 @@ describe("ContextBar", () => {
     fireEvent.click(screen.getByText("裁到选区"));
     expect(dispatch).toHaveBeenCalledWith({ kind: "crop", payload: { rect: [10, 20, 132, 200] } });
   });
+
+  it("turns a region into the layers under it", () => {
+    setState({
+      region: rectRegion([0, 0, 30, 30]),
+      doc: { canvas: { width: 100, height: 100 }, layers: [
+        { id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal", visible: true, bounds: [0, 0, 20, 20] },
+        { id: "far", type: "raster", name: "far", opacity: 1, blendMode: "normal", visible: true, bounds: [80, 80, 99, 99] },
+      ] },
+    });
+    render(<ContextBar />);
+    fireEvent.click(screen.getByText("选中区域内的图层"));
+    expect(getState().selection).toEqual(["a"]);
+    // The two axes never clear each other (spec §3.3) — the region must survive
+    // being read.
+    expect(getState().region).not.toBeNull();
+  });
 });
