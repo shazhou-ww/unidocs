@@ -23,9 +23,6 @@
       "path": "../service"
     },
     {
-      "path": "../server-cloudflare"
-    },
-    {
       "path": "../admin-webui"
     },
     {

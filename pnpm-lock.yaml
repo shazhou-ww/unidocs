@@ -893,9 +893,6 @@ importers:
       '@unicas/control-plane-mcp':
         specifier: workspace:*
         version: link:../control-plane-mcp
-      '@unicas/server-cloudflare':
-        specifier: workspace:*
-        version: link:../server-cloudflare
       '@unicas/service':
         specifier: workspace:*
         version: link:../service
@@ -906,6 +903,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
         version: 4.20260702.1
+      miniflare:
+        specifier: 5.20260811.1-alpha
+        version: 5.20260811.1-alpha
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

@@ -15,10 +15,7 @@ const handlers = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("@unicas/server-cloudflare", () => ({
-  default: { fetch: handlers.tenant },
-  CasDurableObject: class {},
-  RootRefDomainDurableObject: class {},
+vi.mock("../src/schema.js", () => ({
   migrateStackTenantSchema: handlers.migrate,
 }));
 vi.mock("@unicas/service", async (importOriginal) => {
@@ -31,7 +28,7 @@ vi.mock("@unicas/service", async (importOriginal) => {
   };
 });
 vi.mock("@unicas/control-plane", () => ({
-  AuthorityRepository: class {},
+  AuthorityRepository: class { },
 }));
 vi.mock("@unicas/admin-webui", () => ({
   default: { fetch: handlers.admin },

@@ -29,12 +29,12 @@
     "@unicas/codec": "workspace:*",
     "@unicas/control-plane": "workspace:*",
     "@unicas/control-plane-mcp": "workspace:*",
-    "@unicas/server-cloudflare": "workspace:*",
     "@unicas/service": "workspace:*",
     "@unicas/tenant-protocol": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",
+    "miniflare": "5.20260811.1-alpha",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
     "wrangler": "^4.20.0"

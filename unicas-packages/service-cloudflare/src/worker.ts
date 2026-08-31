@@ -1,12 +1,6 @@
 import adminWorker, { type Env as AdminEnv } from "@unicas/admin-webui";
 import { AuthorityRepository } from "@unicas/control-plane";
 import mcpWorker, { type Env as McpEnv } from "@unicas/control-plane-mcp";
-import tenantWorker, {
-  CasDurableObject,
-  RootRefDomainDurableObject,
-  migrateStackTenantSchema,
-  type Env as TenantEnv,
-} from "@unicas/server-cloudflare";
 import {
   createUniCasService,
   matchUniCasServiceRoute,
@@ -16,8 +10,26 @@ import {
   type ServicePlatform,
   type SqlDatabase,
 } from "@unicas/service";
+import {
+  AuditReadError,
+  listRootDomainEvents,
+  listRootDomainRefs,
+  listRootDomains,
+} from "./audit-reads.js";
+import {
+  RootRefDomainDurableObject,
+  type RootRefDomainDoEnv,
+} from "./domain-do.js";
+import { migrateStackTenantSchema } from "./schema.js";
+import { CasDurableObject, type TenantCasDoEnv } from "./tenant-do.js";
 
 export { CasDurableObject, RootRefDomainDurableObject };
+
+export interface TenantEnv extends TenantCasDoEnv, RootRefDomainDoEnv {
+  CAS_CONTROL_DB: D1Database;
+  CAS_DO: DurableObjectNamespace;
+  CAS_AUDIT_READER_KEY?: string;
+}
 
 export type Env = TenantEnv & AdminEnv & McpEnv & {
   CAS_PUBLIC_ORIGIN?: string;
@@ -155,7 +167,7 @@ function platformFromEnv(env: Env): ServicePlatform {
     tenantDatabase: env.CAS_DB as unknown as SqlDatabase,
     blobs: env.CAS_R2 as unknown as BlobStore,
     tenantActors: keyedActorPort(env.CAS_DO),
-    refDomainActors: keyedActorPort(env.CAS_DOMAIN_DO),
+    refDomainActors: keyedActorPort(env.CAS_DOMAIN_DO as unknown as DurableObjectNamespace),
   };
 }
 
@@ -169,16 +181,71 @@ function keyedActorPort(namespace: DurableObjectNamespace): KeyedActorPort {
 
 function localAuditReader(env: Env): Fetcher {
   return {
-    fetch(request) {
+    async fetch(request) {
       const normalized = request instanceof Request
         ? request
         : new Request(request.toString());
-      return tenantWorker.fetch(normalized, env);
+      await migrateStackTenantSchema(env.CAS_DB);
+      return handleAuditRpc(normalized, env, new URL(normalized.url));
     },
     connect() {
       throw new Error("UniCAS local audit reader does not support sockets");
     },
   };
+}
+
+/** Private audit-reader RPC. Requires the shared reader key; fail closed. */
+async function handleAuditRpc(request: Request, env: Env, url: URL): Promise<Response> {
+  const expectedKey = env.CAS_AUDIT_READER_KEY;
+  if (!expectedKey || request.headers.get("X-CAS-Audit-Reader-Key") !== expectedKey) {
+    return Response.json({ error: "Unknown CAS endpoint" }, { status: 404 });
+  }
+  if (request.method !== "GET") {
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
+  }
+  const stackId = url.searchParams.get("stackId") ?? "";
+  const refDomain = url.searchParams.get("refDomain") ?? "";
+  try {
+    if (url.pathname === "/_internal/audit/domains") {
+      const domains = await listRootDomains({ db: env.CAS_DB, stackId });
+      return Response.json({ domains }, { headers: { "Cache-Control": "no-store" } });
+    }
+    if (url.pathname === "/_internal/audit/refs") {
+      const page = await listRootDomainRefs({
+        db: env.CAS_DB,
+        stackId,
+        refDomain,
+        tenantId: url.searchParams.get("tenantId") ?? undefined,
+        limit: optionalNumber(url.searchParams.get("limit")),
+        cursor: url.searchParams.get("cursor") ?? undefined,
+      });
+      return Response.json({ revision: page.revision, refs: page.refs, nextCursor: page.nextCursor }, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+    const page = await listRootDomainEvents({
+      db: env.CAS_DB,
+      stackId,
+      refDomain,
+      tenantId: url.searchParams.get("tenantId") ?? undefined,
+      after: optionalNumber(url.searchParams.get("after")),
+      limit: optionalNumber(url.searchParams.get("limit")),
+    });
+    return Response.json({ events: page.events, latestRevision: page.latestRevision, nextAfter: page.nextAfter }, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof AuditReadError) {
+      return Response.json({ error: error.code, message: error.message }, { status: error.status });
+    }
+    return Response.json({ error: "SERVICE_UNAVAILABLE", message: "audit read failed" }, { status: 503 });
+  }
+}
+
+function optionalNumber(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 function fetchMcp(
@@ -239,3 +306,26 @@ function stripMcpBrowserHeaders(request: Request): Request {
   else headers.delete("Cookie");
   return new Request(request, { headers });
 }
+
+export { StackCapabilityVerifier, permissionFor } from "@unicas/service";
+export type { StackAuthEvent, VerifiedStackCall } from "@unicas/service";
+
+export { migrateStackTenantSchema } from "./schema.js";
+
+export { canonicalComposite, decodeComposite, stackCanonicalNodeKey } from "./do-names.js";
+
+export type {
+  CanonicalRootRefsUpdate,
+  DomainUpdateResult,
+  DomainRetryOptions,
+  RootRefsErrorCode,
+} from "./root-refs.js";
+export { RootRefsRetryableError, RootRefsValidationError } from "./root-refs.js";
+
+export type {
+  RootDomainBalanceRow,
+  RootDomainEventRow,
+  RootDomainEventsPage,
+  RootDomainRefsPage,
+} from "./audit-reads.js";
+export { AuditReadError } from "./audit-reads.js";
