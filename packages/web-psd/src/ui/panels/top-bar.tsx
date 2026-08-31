@@ -30,7 +30,7 @@ export function TopBar() {
             <div className="degrade-pop">
               {degradations.map((d, i) => (
                 <button key={`${d.layerId}-${i}`} type="button" className="degrade-row"
-                        onClick={() => setState({ selection: [d.layerId], pane: "props", degradeOpen: false })}>
+                        onClick={() => setState({ selection: [d.layerId], degradeOpen: false })}>
                   <strong>{d.layerName}</strong>
                   <span>{d.reason}</span>
                   {d.detail ? <em>{d.detail}</em> : null}

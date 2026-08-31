@@ -2,7 +2,6 @@ import { useSyncExternalStore } from "react";
 import type { LocalLayer, Rect } from "../doc-model.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
-export type PaneId = "layers" | "props";
 
 export interface ChatMessage {
   role: "user" | "agent" | "err";
@@ -31,7 +30,6 @@ export interface UiState {
   status: string;
   selection: string[];
   expanded: ReadonlySet<string>;
-  pane: PaneId;
   tool: ToolId;
   marquee: Rect | null;
   zoom: number;
@@ -52,7 +50,7 @@ export interface UiState {
 
 const INITIAL: UiState = {
   docId: null, docName: null, version: 0, doc: null, status: "loading…",
-  selection: [], expanded: new Set(), pane: "layers", tool: "move",
+  selection: [], expanded: new Set(), tool: "move",
   marquee: null, zoom: 1, history: [], historyOpen: false,
   sessionBaseVersion: 0, chat: [], chatBusy: false, degradeOpen: false,
   pickedColor: null,

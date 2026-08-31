@@ -45,7 +45,17 @@ beforeEach(() => {
   // throwing.
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.releasePointerCapture = vi.fn();
-  setState({ tool: "move", marquee: null, selection: ["a"], pickedColor: null });
+  // The move tool now pans unless the press lands on a SELECTED layer's
+  // bounds, so the drag under test needs a real document: layer "a" covers
+  // the whole 100x100 canvas, which is where the synthetic pointer presses.
+  setState({
+    tool: "move", marquee: null, selection: ["a"], pickedColor: null,
+    doc: {
+      canvas: { width: 100, height: 100 },
+      layers: [{ id: "a", type: "raster", name: "a", opacity: 1, blendMode: "normal",
+                 visible: true, bounds: [0, 0, 100, 100] }],
+    },
+  });
 });
 
 describe("CanvasStage move-tool drag", () => {

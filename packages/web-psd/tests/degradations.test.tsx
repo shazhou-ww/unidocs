@@ -13,7 +13,7 @@ const layer = (id: string, over: Partial<LocalLayer> = {}): LocalLayer => ({
 });
 
 beforeEach(() => {
-  setState({ docName: "a.psd", zoom: 1, version: 7, pane: "layers", selection: [],
+  setState({ docName: "a.psd", zoom: 1, version: 7, selection: [],
     doc: { canvas: { width: 4, height: 4 }, layers: [
       layer("g", { type: "group", children: [layer("b")] }),
       layer("t", { type: "text", name: "headline",
@@ -34,12 +34,14 @@ describe("top bar badges", () => {
     expect(screen.getByText("本期不支持编辑文字")).toBeInTheDocument();
   });
 
+  // Selecting is now the whole jump: the right column stacks the tree and
+  // the properties instead of tabbing between them (see side-panel.tsx), so
+  // there is no pane left to switch to.
   it("jumps to the offending layer's properties", () => {
     render(<TopBar />);
     fireEvent.click(screen.getByText("1 项降级 ›"));
     fireEvent.click(screen.getByText("headline"));
     expect(getState().selection).toEqual(["t"]);
-    expect(getState().pane).toBe("props");
   });
 
   it("hides the badge when nothing was degraded", () => {

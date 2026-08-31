@@ -1,3 +1,5 @@
+import type { LocalLayer } from "../doc-model.js";
+
 export interface DragState {
   layerIds: string[];
   from: { x: number; y: number };
@@ -23,4 +25,27 @@ export function translateOps(drag: DragState, to: { x: number; y: number }): Tra
     kind: "transform",
     payload: { layerId, op: { translate: [dx, dy] } },
   }));
+}
+
+/**
+ * Is a document-space point inside any of these layers' bounding boxes?
+ *
+ * This is the move tool's disambiguator, not a real hit test: it decides
+ * whether a press means "drag this selected layer" or "pan the view", and it
+ * only ever runs over the ALREADY-SELECTED layers, so a bounding box is
+ * precise enough — the user has already said which layer they mean. Proper
+ * per-pixel hit testing (clicking the canvas to CHANGE the selection) is a
+ * different problem and belongs off the main thread; see the selection-model
+ * design doc.
+ *
+ * `bounds` is `[top,left,bottom,right]` in the engine's convention, with the
+ * right/bottom edges exclusive — matching how the marquee rect is read.
+ * A layer with no bounds (never laid out) can never be hit.
+ */
+export function withinBounds(layers: LocalLayer[], at: { x: number; y: number }): boolean {
+  return layers.some((l) => {
+    if (!l.bounds) return false;
+    const [top, left, bottom, right] = l.bounds;
+    return at.x >= left && at.x < right && at.y >= top && at.y < bottom;
+  });
 }
