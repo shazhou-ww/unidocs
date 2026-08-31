@@ -884,6 +884,9 @@ importers:
       '@unicas/admin-webui':
         specifier: workspace:*
         version: link:../admin-webui
+      '@unicas/codec':
+        specifier: workspace:*
+        version: link:../codec
       '@unicas/control-plane':
         specifier: workspace:*
         version: link:../control-plane
@@ -896,6 +899,9 @@ importers:
       '@unicas/service':
         specifier: workspace:*
         version: link:../service
+      '@unicas/tenant-protocol':
+        specifier: workspace:*
+        version: link:../tenant-protocol
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
