@@ -28,15 +28,8 @@ param pgAdminPassword string
 @secure()
 param capabilityPrivateKeyPkcs8 string = ''
 
-@secure()
-param casStackPrivateKeyPkcs8 string = ''
-
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param capabilityKeyId string = ''
-param casStackId string = 'unidocs-azure'
-param casStackIssuer string = 'https://unicas.shazhou.work/cas/issuer/azure'
-param casStackKeyId string = 'az-rotate-1'
-param casRefDomain string = 'doc'
 param casCapabilityAudience string = 'unidocs-cas-azure'
 
 @description('控制面生成的不透明 stack id（形如 cas_XXXX）。不可自选——CAS 校验器拿 issuer 反查注册表得到 stackId，再与路径里的 stackId 比对，对不上就是 resource_scope_mismatch。')

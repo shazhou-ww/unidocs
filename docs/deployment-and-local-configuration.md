@@ -142,7 +142,7 @@ pnpm stack:deploy unidocs-azure --subscription <id> --resource-group <name> \
   --location <region> --cas-base-url https://unicas.shazhou.work \
   --capability-key-id <gateway-kid> \
   --cas-stack-id cas_<control-plane-generated-id> \
-  --cas-stack-issuer https://unicas.shazhou.work/cas/issuer/azure \
+  --cas-stack-issuer https://unicas.shazhou.work/issuer/azure \
   --cas-stack-key-id <registered-stack-kid> \
   --cas-capability-audience unidocs-cas-azure \
   --cas-ref-domain doc

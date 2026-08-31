@@ -58,8 +58,8 @@ pnpm azure:down           # docker compose -f packages/azure-sdk/docker-compose.
 pnpm stack:deploy unidocs-azure \
   --cas-base-url https://unicas.shazhou.work \
   --cas-stack-id cas_XXXXXXXXXXXX \
-  --cas-stack-issuer https://unicas.shazhou.work/cas/issuer/azure \
-  --cas-stack-key-id az-rotate-1 \
+  --cas-stack-issuer https://unicas.shazhou.work/issuer/azure \
+  --cas-stack-key-id key-azure-cas-dev \
   --capability-key-id ...
 ```
 
