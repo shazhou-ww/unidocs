@@ -455,3 +455,85 @@ describe("DocSession.reconcile", () => {
     expect(calls.filter((c) => c.url.endsWith("/apply"))).toHaveLength(0);
   });
 });
+
+/** An `/apply` mock whose responses are released one at a time by the test,
+ *  so `flush()` can be caught still-pending between two acks — a mock that
+ *  resolves immediately cannot tell "flush waited" apart from "flush returned
+ *  a resolved promise and the queue happened to drain on its own". */
+function gatedApply(scripted: Scripted[]): { fn: typeof fetch; arrivals: Array<() => void> } {
+  const arrivals: Array<() => void> = [];
+  let n = 0;
+  const fn = (async (url: unknown) => {
+    const res = scripted[n++];
+    if (!res) throw new Error(`gatedApply: no scripted response left for ${String(url)}`);
+    await new Promise<void>((resolve) => { arrivals.push(resolve); });
+    return {
+      status: res.status,
+      ok: res.status >= 200 && res.status < 300,
+      json: async () => res.body,
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+  return { fn, arrivals };
+}
+
+describe("DocSession.flush", () => {
+  it("resolves only once EVERY queued op has been accepted by the server", async () => {
+    // Export is served from the server's copy of the document, so anything
+    // that reads it (the export button) has to be able to wait for the local
+    // queue to land first.
+    const { fn, arrivals } = gatedApply([
+      { status: 200, body: { success: true, version: 6 } },
+      { status: 200, body: { success: true, version: 7 } },
+      { status: 200, body: { success: true, version: 8 } },
+    ]);
+    let n = 0;
+    const session = new DocSession(opts({ version: 5, fetchImpl: fn, genId: () => `op-${++n}` }));
+
+    await Promise.all([
+      session.applyLocal(setOp("l1", 0.1)),
+      session.applyLocal(setOp("l1", 0.2)),
+      session.applyLocal(setOp("l1", 0.3)),
+    ]);
+    expect(session.pendingCount).toBe(3);
+
+    let settled = false;
+    const flushed = session.flush().then(() => { settled = true; });
+
+    // First op in flight, two still queued: flush must not be resolved.
+    await vi.waitFor(() => expect(arrivals).toHaveLength(1));
+    arrivals[0]!();
+    await vi.waitFor(() => expect(session.version).toBe(6));
+    expect(settled).toBe(false);
+    expect(session.pendingCount).toBe(2);
+
+    await vi.waitFor(() => expect(arrivals).toHaveLength(2));
+    arrivals[1]!();
+    await vi.waitFor(() => expect(arrivals).toHaveLength(3));
+    expect(settled).toBe(false);
+    arrivals[2]!();
+
+    await flushed;
+    expect(settled).toBe(true);
+    expect(session.pendingCount).toBe(0);
+    expect(session.version).toBe(8);
+  });
+
+  it("resolves immediately when nothing is queued", async () => {
+    const { fn, calls } = mockFetch({});
+    const session = new DocSession(opts({ version: 5, fetchImpl: fn }));
+    await session.flush();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects when a queued op cannot be submitted, and keeps it queued", async () => {
+    // A caller that exports on the strength of a silently-failed flush would
+    // hand the user a file missing the very edit it just failed to submit.
+    const { fn } = mockFetch({ apply: [{ status: 500 }, { status: 500 }] });
+    const session = new DocSession(opts({ version: 5, fetchImpl: fn }));
+
+    await session.applyLocal(setOp("l1", 0.5));
+    await expect(session.flush()).rejects.toThrow(/500/);
+    expect(session.pendingCount).toBe(1);
+    expect(session.version).toBe(5);
+  });
+});

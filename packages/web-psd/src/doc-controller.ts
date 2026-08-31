@@ -325,6 +325,14 @@ export class DocController {
     }
   }
 
+  /** Resolves once the server has accepted every op applied locally — see
+   *  `DocSession.flush`. Anything that reads the document back FROM the
+   *  server (export) has to await this, since `dispatch` deliberately
+   *  returns before the network. */
+  async flush(): Promise<void> {
+    await this.session?.flush();
+  }
+
   async reconcile(): Promise<void> {
     if (!this.session) return;
     await this.session.reconcile();
