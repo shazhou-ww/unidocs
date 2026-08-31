@@ -55,11 +55,11 @@ pnpm test:local           # 默认门禁,不含任何 Azure 集成测试
 pnpm test:azure           # Azure 集成测试(tests/integration/azure/),需要 Docker
 pnpm azure:up             # docker compose -f packages/azure-sdk/docker-compose.yml up -d
 pnpm azure:down           # docker compose -f packages/azure-sdk/docker-compose.yml down
-pnpm run deploy unidocs-azure \
+pnpm stack:deploy unidocs-azure \
   --cas-base-url https://unicas.shazhou.work \
   --cas-stack-id cas_XXXXXXXXXXXX \
-  --cas-stack-issuer https://unicas.shazhou.work/cas/issuer/azure \
-  --cas-stack-key-id az-rotate-1 \
+  --cas-stack-issuer https://unicas.shazhou.work/issuer/azure \
+  --cas-stack-key-id key-azure-cas-dev \
   --capability-key-id ...
 ```
 
@@ -119,13 +119,13 @@ Vault / 存储 / 身份 / Log Analytics)、`platform.bicep`(Postgres / ACA
 只跑被选中的那些:
 
 ```bash
-pnpm run deploy unidocs-azure                          # 冷启动全量
-pnpm run deploy unidocs-azure --bootstrap               # 只 bootstrap
-pnpm run deploy unidocs-azure --platform                # 只 Postgres / ACA 环境 / 迁移
-pnpm run deploy unidocs-azure --service docx             # 只构建 docx 镜像 + 只部它
-pnpm run deploy unidocs-azure --service docx,markdown    # 多选,逗号分隔,镜像并发构建
-pnpm run deploy unidocs-azure --gateway                  # 只网关
-pnpm run deploy unidocs-azure --service docx --build-concurrency 1   # 覆盖镜像构建并发(默认 2)
+pnpm stack:deploy unidocs-azure                          # 冷启动全量
+pnpm stack:deploy unidocs-azure --bootstrap               # 只 bootstrap
+pnpm stack:deploy unidocs-azure --platform                # 只 Postgres / ACA 环境 / 迁移
+pnpm stack:deploy unidocs-azure --service docx             # 只构建 docx 镜像 + 只部它
+pnpm stack:deploy unidocs-azure --service docx,markdown    # 多选,逗号分隔,镜像并发构建
+pnpm stack:deploy unidocs-azure --gateway                  # 只网关
+pnpm stack:deploy unidocs-azure --service docx --build-concurrency 1   # 覆盖镜像构建并发(默认 2)
 ```
 
 `--service docx` 的冒烟只测 docx(`smoke.mjs --only docx`),不碰 markdown;
@@ -141,7 +141,7 @@ App(`unidocs-{docType}`)、各自独立的数据库(`unidocs_{docType}`)——�
 ACR 的引用都是只读的 `existing` 声明。
 
 ```bash
-pnpm run deploy unidocs-azure --service docx &
-pnpm run deploy unidocs-azure --service markdown &
+pnpm stack:deploy unidocs-azure --service docx &
+pnpm stack:deploy unidocs-azure --service markdown &
 wait
 ```
