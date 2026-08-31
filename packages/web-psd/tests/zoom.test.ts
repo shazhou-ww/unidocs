@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { ZOOM_MIN, ZOOM_MAX, clampZoom, nextStop, fitZoom, initialZoom, anchorScroll } from "../src/ui/zoom.js";
+import {
+  ZOOM_MIN, ZOOM_MAX, clampZoom, nextStop, fitZoom, initialZoom, anchorScroll,
+  normalizeWheelDelta, wheelZoomFactor, WHEEL_MAX_DELTA,
+} from "../src/ui/zoom.js";
 
 describe("clampZoom", () => {
   it("holds the range", () => {
@@ -110,5 +113,47 @@ describe("fitZoom on an unmeasured stage", () => {
 
   it("also refuses a stage smaller than the margin it would subtract", () => {
     expect(fitZoom({ width: 6000, height: 4000 }, { width: 20, height: 900 })).toBe(1);
+  });
+});
+
+describe("wheel delta handling", () => {
+  it("treats one mouse notch as one comfortable step, not a leap", () => {
+    // The bug this replaces: a 120px notch was raised to exp(1.2) and jumped
+    // 120% straight to the 400% ceiling in a single click of the wheel.
+    expect(wheelZoomFactor(-120)).toBeCloseTo(1.2, 6);
+    expect(wheelZoomFactor(120)).toBeCloseTo(1 / 1.2, 6);
+    // ~8 notches to cross 100% -> 400%.
+    expect(Math.log(4) / Math.log(1.2)).toBeGreaterThan(7);
+    expect(Math.log(4) / Math.log(1.2)).toBeLessThan(8.5);
+  });
+
+  it("is exponential, so accumulated small deltas equal one large one", () => {
+    // Why a trackpad pinch needs no device detection: a frame's worth of tiny
+    // deltas composes to the same factor as a single delta of their sum.
+    const asOne = wheelZoomFactor(-60);
+    const asMany = [-20, -20, -20].reduce((z, d) => z * wheelZoomFactor(d), 1);
+    expect(asMany).toBeCloseTo(asOne, 10);
+  });
+
+  it("caps a single frame so inertia cannot cross the whole range at once", () => {
+    expect(wheelZoomFactor(-100000)).toBeCloseTo(wheelZoomFactor(-WHEEL_MAX_DELTA), 10);
+    expect(wheelZoomFactor(-WHEEL_MAX_DELTA)).toBeCloseTo(1.44, 6); // two notches
+  });
+
+  it("does nothing on a zero delta", () => {
+    expect(wheelZoomFactor(0)).toBe(1);
+  });
+});
+
+describe("normalizeWheelDelta", () => {
+  it("passes pixel deltas through", () => {
+    expect(normalizeWheelDelta(120, 0)).toBe(120);
+  });
+
+  it("scales line and page deltas into pixels", () => {
+    // Firefox reports lines on several platforms: one notch is a deltaY of
+    // about 3, which as raw pixels would barely move the zoom at all.
+    expect(normalizeWheelDelta(3, 1)).toBe(48);
+    expect(normalizeWheelDelta(1, 2)).toBe(400);
   });
 });

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { CanvasStage } from "../src/ui/panels/canvas-stage.js";
 import { setState, getState } from "../src/ui/store.js";
+import { wheelZoomFactor } from "../src/ui/zoom.js";
 
 const stage = { clientWidth: 1000, clientHeight: 800, scrollLeft: 0, scrollTop: 0,
                 getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800 }) };
@@ -71,8 +72,9 @@ describe("ctrl/⌘ + wheel zoom", () => {
     const before = requestVisibleTiles.mock.calls.length;
     runFrame();
     // One application, and the deltas summed rather than the last one winning:
-    // 5 x -20 is exp(1.0), not exp(0.2).
-    expect(getState().zoom).toBeCloseTo(Math.E, 5);
+    // 5 x -20 is one notch's worth (-100), not -20.
+    expect(getState().zoom).toBeCloseTo(wheelZoomFactor(-100), 8);
+    expect(getState().zoom).not.toBeCloseTo(wheelZoomFactor(-20), 4);
     // And one tile refetch for the burst, not five.
     expect(requestVisibleTiles.mock.calls.length - before).toBe(1);
   });
@@ -91,12 +93,15 @@ describe("ctrl/⌘ + wheel zoom", () => {
   it("anchors on the cursor, not the stage centre", () => {
     const { container } = render(<CanvasStage />);
     const el = container.querySelector(".stage")!;
-    // Zoom to exactly 2 via a delta whose exponent is ln 2.
-    fireEvent.wheel(el, { deltaY: -Math.LN2 / 0.01, ctrlKey: true, clientX: 300, clientY: 200 });
+    fireEvent.wheel(el, { deltaY: -240, ctrlKey: true, clientX: 300, clientY: 200 });
     runFrame();
-    expect(getState().zoom).toBeCloseTo(2, 6);
-    // Document point 300 lands at 600 after the zoom: 300 right of the cursor.
-    expect(stage.scrollLeft).toBeCloseTo(300, 4);
-    expect(stage.scrollTop).toBeCloseTo(200, 4);
+    const z = getState().zoom;
+    expect(z).toBeGreaterThan(1);
+    // The document point under the cursor was at 300/1 = 300; after the zoom
+    // it sits at 300*z, so the stage must scroll by the difference to put it
+    // back under the cursor. Derived from the zoom actually reached rather
+    // than a hard-coded factor, so the assertion survives a rate change.
+    expect(stage.scrollLeft).toBeCloseTo(300 * (z - 1), 4);
+    expect(stage.scrollTop).toBeCloseTo(200 * (z - 1), 4);
   });
 });

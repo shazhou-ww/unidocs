@@ -81,3 +81,48 @@ export function initialZoom(doc: Size, stage: Size, margin = 32): number {
 export function anchorScroll(anchorClient: number, anchorNowClient: number): number {
   return anchorNowClient - anchorClient;
 }
+
+/**
+ * Wheel deltas are not comparable across devices, so they are normalised to
+ * CSS pixels before being turned into a zoom factor.
+ *
+ * `deltaMode` says what unit the browser used: pixels (0), lines (1) or pages
+ * (2). Firefox reports lines on several platforms, where one notch is a
+ * `deltaY` of about 3 — treating that as pixels makes the wheel do nothing at
+ * all, the mirror image of treating a 120px notch as if it were fine-grained
+ * trackpad movement.
+ */
+const LINE_PX = 16;
+const PAGE_PX = 400;
+
+export function normalizeWheelDelta(deltaY: number, deltaMode: number): number {
+  if (deltaMode === 1) return deltaY * LINE_PX;
+  if (deltaMode === 2) return deltaY * PAGE_PX;
+  return deltaY;
+}
+
+/**
+ * One mouse-wheel notch — 120 normalised px on most platforms — should be one
+ * comfortable step, not a leap. At 1.2x per notch it takes about eight notches
+ * to cross 100%→400%, which is brisk without being uncontrollable.
+ *
+ * The same rate serves a trackpad pinch, whose events are far smaller but far
+ * more frequent: because the factor is exponential in the delta, accumulating
+ * a frame's worth of small deltas gives the same result as one large one, so
+ * the gesture stays proportional to finger movement without a device check.
+ */
+const NOTCH_PX = 120;
+const NOTCH_FACTOR = 1.2;
+export const WHEEL_ZOOM_RATE = Math.log(NOTCH_FACTOR) / NOTCH_PX;
+
+/** Ceiling on how much ONE frame may zoom. Inertial scrolling and a
+ *  fast-spinning wheel can pile up an arbitrarily large delta before the next
+ *  frame; without a cap a single flick crosses the entire zoom range. */
+export const WHEEL_MAX_DELTA = 2 * NOTCH_PX;
+
+/** Normalised wheel delta → multiplicative zoom factor. Negative delta
+ *  (scrolling up / pinching out) zooms in. */
+export function wheelZoomFactor(delta: number): number {
+  const capped = Math.max(-WHEEL_MAX_DELTA, Math.min(WHEEL_MAX_DELTA, delta));
+  return Math.exp(-capped * WHEEL_ZOOM_RATE);
+}

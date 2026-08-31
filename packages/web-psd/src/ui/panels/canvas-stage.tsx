@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { dispatch, getController, initController } from "../controller.js";
 import { getState, setState, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
+import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
 import { translateOps, type DragState } from "../drag.js";
 import { SelectionOverlay } from "./selection-overlay.js";
@@ -34,11 +35,6 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * between `.stage` and the canvas instead would go stale on scroll/resize;
  * a shared containing block does not.
  */
-/** Wheel delta → zoom factor exponent. Exponential so a given scroll distance
- *  is the same RATIO of zoom wherever you are on the scale: a linear step
- *  crawls when zoomed out and lurches when zoomed in. */
-const WHEEL_ZOOM_RATE = 0.01;
-
 export function CanvasStage() {
   const s = useUiState();
   const stageRef = useRef<HTMLDivElement>(null);
@@ -78,13 +74,13 @@ export function CanvasStage() {
       frame = 0;
       const delta = pendingDelta;
       pendingDelta = 0;
-      if (delta !== 0) zoomBy(Math.exp(-delta * WHEEL_ZOOM_RATE), anchor);
+      if (delta !== 0) zoomBy(wheelZoomFactor(delta), anchor);
     };
 
     const onWheel = (e: WheelEvent): void => {
       if (!e.ctrlKey && !e.metaKey) return; // plain wheel stays a scroll (= pan)
       e.preventDefault();
-      pendingDelta += e.deltaY;
+      pendingDelta += normalizeWheelDelta(e.deltaY, e.deltaMode);
       anchor = { clientX: e.clientX, clientY: e.clientY };
       if (frame === 0) frame = requestAnimationFrame(apply);
     };
