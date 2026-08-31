@@ -17,3 +17,6 @@ dist/
 
 # 本地生成的部署私钥,永不入库
 .secrets/
+
+# local dev server logs (never commit — they contain issued capability tokens)
+.dev-*.log
