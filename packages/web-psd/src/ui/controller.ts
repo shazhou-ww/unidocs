@@ -1,6 +1,6 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
 import { getState, setState } from "./store.js";
-import { zoomForNewDoc } from "./zoom-controller.js";
+import { initialZoom } from "./zoom.js";
 
 let controller: DocController | null = null;
 
@@ -42,7 +42,19 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
       // overflows the stage). Deliberately only on `fresh`: a rebase or an
       // agent edit must NOT yank the zoom out from under the user, and a
       // crop that changes the canvas size is still the same document.
-      if (fresh) zoomForNewDoc(doc.canvas);
+      //
+      // Computed here from the pure helper rather than delegated to
+      // zoom-controller: that module imports THIS one for `getController`,
+      // and importing it back would close a cycle. Circular ES modules
+      // resolve, but they are a known way to get an `undefined` binding out
+      // of a hot update — the module keeps running in a half-initialised
+      // state until a full reload. There is nothing to gain from the round
+      // trip anyway, since the controller is right here.
+      const stage = controller?.stage;
+      if (fresh && stage) {
+        const zoom = initialZoom(doc.canvas, { width: stage.clientWidth, height: stage.clientHeight });
+        if (zoom !== getState().zoom) setState({ zoom });
+      }
     },
   });
   void bootstrap();

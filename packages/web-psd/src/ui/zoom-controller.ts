@@ -1,7 +1,7 @@
 import { flushSync } from "react-dom";
 import { getController } from "./controller.js";
 import { getState, setState } from "./store.js";
-import { anchorScroll, clampZoom, fitZoom, initialZoom, nextStop } from "./zoom.js";
+import { anchorScroll, clampZoom, fitZoom, nextStop } from "./zoom.js";
 
 /**
  * The DOM half of zooming: hold a point still while the canvas resizes under
@@ -82,16 +82,4 @@ export function zoomFit(): void {
 
 export function zoomActual(): void {
   zoomTo(1);
-}
-
-/**
- * The zoom a freshly opened document should get: 1:1 unless it overflows.
- *
- * Applied without the anchor machinery — there is no point to hold still on a
- * document that was not on screen a moment ago, and `zoomTo` would be a no-op
- * anyway when the new zoom equals the old one.
- */
-export function zoomForNewDoc(canvas: { width: number; height: number }): void {
-  const zoom = initialZoom(canvas, stageSize());
-  if (zoom !== getState().zoom) setState({ zoom });
 }
