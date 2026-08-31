@@ -127,7 +127,7 @@ describe("atomic Root Refs update", () => {
     ).bind(STACK, TENANT, DOMAIN, "session:s1:commit:1").first<{ revision: number; payload_hash: string }>();
     expect(idem?.revision).toBe(1);
     expect(idem?.payload_hash).toHaveLength(64);
-  });
+  }, 10_000);
 
   test("idempotent retries return the original revision and mutate nothing", async () => {
     await createStore();

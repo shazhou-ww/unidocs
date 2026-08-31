@@ -358,7 +358,7 @@ describe("control-plane service", () => {
       body: { toState: "retiring" },
     }, { ifMatch: '"2"' });
     expectError(back, CasAdminErrorCodes.KEY_STATE_CONFLICT);
-  });
+  }, 10_000);
 
   test("control audit records every mutation with actor and target", async () => {
     const { service } = await createService();

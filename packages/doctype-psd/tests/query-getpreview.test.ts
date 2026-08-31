@@ -17,8 +17,8 @@ describe("getPreview", () => {
     const { ctx } = memCas();
     const out = await runQuery({ kind: "getPreview" }, doc, ctx) as any;
     expect(isSBlob(out.image)).toBe(true);
-    const { contentType } = await ctx.readSBlob(out.image);
-    expect(contentType).toBe("image/png");
+    const handle = await ctx.openSBlob(out.image);
+    expect(handle.contentType).toBe("image/png");
     expect(out.width).toBe(6); expect(out.height).toBe(4);
     expect(out.region).toEqual([0, 0, 4, 6]);
   });

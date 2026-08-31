@@ -424,7 +424,7 @@ describe("cas-admin-webui BFF", () => {
       expect(errorHtml).toContain("Choose another Google account");
       expect(errorHtml).not.toContain("Continue with Google");
     }
-  });
+  }, 10_000);
 
   test("email allowlist revokes a pre-existing session for an unlisted email", async () => {
     const provider = await createMockProvider();

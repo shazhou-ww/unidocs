@@ -5,7 +5,7 @@ import type { DocumentTypeContext, SBlob, SBlobData } from "@unidocs/protocol";
 /**
  * Minimal content-addressed CAS matching DocumentTypeContext's editor surface:
  * `makeSBlob` hashes the bytes and keeps them (data AND the contentType they
- * were stored with); `readSBlob` returns exactly what was stored — it must
+ * were stored with); `openSBlob` returns exactly what was stored — it must
  * not hardcode a contentType, or every test asserting on it would really be
  * testing this stub, not the code under test. Shared by every test that
  * needs a `ctx` but doesn't care where the bytes end up — extracted because
@@ -32,11 +32,23 @@ export function memCas(): { ctx: DocumentTypeContext; nodes: Map<string, Uint8Ar
       }
       return createSBlob(hash);
     },
-    async readSBlob(blob: SBlob): Promise<SBlobData> {
+    async openSBlob(blob: SBlob) {
       const data = nodes.get(blob.hash);
       const contentType = contentTypes.get(blob.hash);
       if (!data || contentType === undefined) throw new Error(`CAS node ${blob.hash} not found`);
-      return { data, contentType };
+      return {
+        size: data.length,
+        contentType,
+        read: (range?: { offset: number; length?: number }) => ({
+          async *[Symbol.asyncIterator]() {
+            const start = range?.offset ?? 0;
+            const end = range?.length === undefined ? data.length : start + range.length;
+            yield data.slice(start, end);
+          },
+        }),
+        readBytes: async (range: { offset: number; length: number }) =>
+          data.slice(range.offset, range.offset + range.length),
+      };
     },
   };
   return { ctx, nodes };

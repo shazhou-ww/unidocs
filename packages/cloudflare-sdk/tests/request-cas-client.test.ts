@@ -48,7 +48,7 @@ describe("createRequestCasClient", () => {
         "X-Forwarded-For": "203.0.113.1",
       }),
     );
-    await new Response(await client!.readContent("a".repeat(64))).arrayBuffer();
+    await new Response(await client!.unicasClient.readContent("a".repeat(64))).arrayBuffer();
 
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe(`https://cas.internal/stacks/stack-1/tenants/tenant-1/cas/nodes/${"a".repeat(64)}/content`);

@@ -19,9 +19,13 @@ function readPkg(name: string): {
   return JSON.parse(readFileSync(join(packagesDir, name, "package.json"), "utf8"));
 }
 
-const TENANT_IMPLEMENTATION_PACKAGES = [
+const TENANT_CLIENT_PACKAGES = [
   "@unicas/tenant-client",
   "@unicas/tenant-blob-client",
+] as const;
+
+const TENANT_ONLY_PACKAGES = [
+  ...TENANT_CLIENT_PACKAGES,
   "@unicas/codec",
 ] as const;
 
@@ -93,6 +97,7 @@ describe("package dependency boundaries", () => {
     expect(webui.dependencies?.["@unicas/control-plane"]).toBe("workspace:*");
     expect(service.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(service.dependencies?.["@unicas/tenant-protocol"]).toBe("workspace:*");
+    expect(service.dependencies?.["@unicas/codec"]).toBe("workspace:*");
     expect(cloudflareService.dependencies?.["@unicas/service"]).toBe("workspace:*");
 
     // Shared cross-plane contracts may flow tenant-protocol -> admin-protocol,
@@ -100,14 +105,22 @@ describe("package dependency boundaries", () => {
     expect(protocol.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
     expect(protocol.devDependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
 
-    for (const pkg of [protocol, control, webui, service]) {
+    for (const pkg of [protocol, control, webui]) {
       const deps = {
         ...pkg.dependencies,
         ...pkg.devDependencies,
       };
-      for (const forbidden of TENANT_IMPLEMENTATION_PACKAGES) {
+      for (const forbidden of TENANT_ONLY_PACKAGES) {
         expect(deps[forbidden], `${pkg.name} must not depend on ${forbidden}`).toBeUndefined();
       }
+    }
+
+    const serviceDeps = {
+      ...service.dependencies,
+      ...service.devDependencies,
+    };
+    for (const forbidden of TENANT_CLIENT_PACKAGES) {
+      expect(serviceDeps[forbidden], `${service.name} must not depend on ${forbidden}`).toBeUndefined();
     }
 
     for (const pkg of [control, webui]) {

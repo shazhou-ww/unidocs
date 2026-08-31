@@ -45,8 +45,9 @@ async function decodePreviewImage(
 ): Promise<{ width: number; height: number; data: Uint8ClampedArray }> {
   const image = (data as { image?: unknown }).image;
   expect(isSBlob(image)).toBe(true);
-  const { data: bytes, contentType } = await ctx.readSBlob(image as SBlob);
-  expect(contentType).toBe("image/png");
+  const handle = await ctx.openSBlob(image as SBlob);
+  const bytes = await handle.readBytes({ offset: 0, length: handle.size });
+  expect(handle.contentType).toBe("image/png");
   const decoded = decodePng(bytes);
   const arr =
     decoded.data instanceof Uint8ClampedArray

@@ -17,8 +17,9 @@ describe("getPreview", () => {
     const { ctx } = memCas();
     const out = await runQuery({ kind: "getPreview" }, doc, ctx) as any;
     expect(isSBlob(out.image)).toBe(true);
-    const { data: bytes, contentType } = await ctx.readSBlob(out.image);
-    expect(contentType).toBe("image/png");
+    const handle = await ctx.openSBlob(out.image);
+    const bytes = await handle.readBytes({ offset: 0, length: handle.size });
+    expect(handle.contentType).toBe("image/png");
     // PNG signature
     expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
     const img = decode(bytes);
