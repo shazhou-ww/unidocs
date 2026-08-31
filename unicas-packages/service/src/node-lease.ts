@@ -182,7 +182,9 @@ export async function leaseCanonicalNode(input: {
     throw new NodeOpError(
       400,
       NodeOpErrorCodes.INVALID_REQUEST,
-      error instanceof Error ? error.message : "Canonical node upload failed",
+      isChecksumMismatch(error)
+        ? "Canonical node checksum does not match its hash"
+        : "Canonical node upload failed",
     );
   }
 
@@ -355,4 +357,12 @@ function validateLeaseHash(hash: string): void {
 
 function sameRefs(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((hash, index) => hash === right[index]);
+}
+
+/** R2 reports checksum mismatches when the uploaded bytes do not hash to the
+ *  requested sha256. Recognize it without leaking platform error text. */
+function isChecksumMismatch(error: unknown): boolean {
+  return error instanceof Error
+    && /checksum/i.test(error.message)
+    && /did not match|mismatch/i.test(error.message);
 }

@@ -81,11 +81,19 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
   }
 
   async putCanonicalObject(scope: NodeLeaseScope, hash: string, body: ReadableStream<Uint8Array>): Promise<void> {
-    await this.bucket.put(
-      stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash),
-      body as unknown as Parameters<R2Bucket["put"]>[1],
-      { sha256: hash },
-    );
+    const key = stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash);
+    try {
+      await this.bucket.put(
+        key,
+        body as unknown as Parameters<R2Bucket["put"]>[1],
+        { sha256: hash },
+      );
+    } catch (error) {
+      // The cloud-neutral kernel sanitizes this into a stable client error;
+      // keep the platform detail (e.g. R2 checksum failure) in the logs only.
+      console.error(`R2 canonical upload failed for ${scope.stackId}/${scope.tenantId}/${hash}`, error);
+      throw error;
+    }
   }
 
   async discardCanonicalUpload(scope: NodeLeaseScope, hash: string): Promise<void> {

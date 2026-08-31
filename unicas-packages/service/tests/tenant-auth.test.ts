@@ -83,10 +83,13 @@ async function issue(
     subject?: string;
     lifetimeSeconds?: number;
     refDomain?: string;
+    ver?: number;
+    omitVer?: boolean;
   } = {},
 ): Promise<string> {
   const nowSeconds = Math.floor(now / 1000);
   return new SignJWT({
+    ...(options.omitVer ? {} : { ver: options.ver ?? 1 }),
     tenantId: options.tenantId ?? TENANT,
     permissions: options.permissions ?? [casReadPermission(TENANT)],
     ...(options.refDomain === undefined ? {} : { refDomain: options.refDomain }),
@@ -189,6 +192,17 @@ describe("StackCapabilityVerifier", () => {
     const rogue = await generateKeyPair("ES256");
     const unknownKey = await issue(rogue.privateKey, clock.now, { kid: "rogue-key" });
     await expect(verifier.verify(request(unknownKey), ROUTE)).rejects.toMatchObject({ status: 401 });
+  });
+
+  test("rejects unsupported or missing capability versions", async () => {
+    const { clock, privateKey, resolver } = await fixture();
+    const verifier = new StackCapabilityVerifier({ repository: resolver, now: () => clock.now });
+    await expect(verifier.verify(request(await issue(privateKey, clock.now, { ver: 2 })), ROUTE))
+      .rejects.toMatchObject({ status: 401 });
+    await expect(verifier.verify(request(await issue(privateKey, clock.now, { omitVer: true })), ROUTE))
+      .rejects.toMatchObject({ status: 401 });
+    await expect(verifier.verify(request(await issue(privateKey, clock.now, { ver: 1 })), ROUTE))
+      .resolves.toBeDefined();
   });
 
   test("takes Root Ref domain and opaque subject only from verified claims", async () => {

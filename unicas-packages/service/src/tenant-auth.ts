@@ -9,6 +9,7 @@ import {
   CapabilityAlgorithm,
   CapabilityAuthenticationError,
   CapabilityAuthorizationError,
+  CapabilityVersion,
   casManagePermission,
   casReadPermission,
   casWritePermission,
@@ -179,7 +180,7 @@ export class StackCapabilityVerifier {
         audience: authority.audience,
         clockTolerance: CLOCK_TOLERANCE_SECONDS,
         currentDate: new Date(this.#now()),
-        requiredClaims: ["sub", "iat", "nbf", "exp", "jti", "tenantId", "permissions"],
+        requiredClaims: ["ver", "sub", "iat", "nbf", "exp", "jti", "tenantId", "permissions"],
       });
       payload = normalizePayload(result.payload);
       lifetimeSeconds = Number(result.payload.exp) - Number(result.payload.iat);
@@ -323,6 +324,7 @@ function stackJwks(authority: ResolvedStackAuthority): JSONWebKeySet {
 }
 
 function normalizePayload(payload: {
+  ver?: unknown;
   sub?: unknown;
   jti?: unknown;
   tenantId?: unknown;
@@ -330,6 +332,9 @@ function normalizePayload(payload: {
   iss?: unknown;
   refDomain?: unknown;
 }): Omit<VerifiedPayload, "stackId" | "kid"> {
+  if (payload.ver !== CapabilityVersion) {
+    throw new CapabilityAuthenticationError("invalid_token", `CAS capability version is invalid (expected ${CapabilityVersion})`);
+  }
   if (
     typeof payload.sub !== "string" || payload.sub.length === 0
     || typeof payload.jti !== "string" || payload.jti.length === 0
