@@ -7,6 +7,12 @@ import { canonicalizeRootRefsUpdate, executeDomainUpdate } from "../src/root-ref
 vi.mock("../src/control-authority.js", () => ({
   AuthorityRepository: class { },
 }));
+vi.mock("../src/control-schema.js", () => ({
+  migrateControlSchema: async () => undefined,
+}));
+vi.mock("../src/control-sessions.js", () => ({
+  ControlSessionStore: class { },
+}));
 vi.mock("@unicas/admin-webui", () => ({
   configFromEnv: () => ({}),
   createAdminBff(options: { auditReader: Fetcher }) {
@@ -25,8 +31,6 @@ vi.mock("@unicas/admin-webui", () => ({
 }));
 vi.mock("@unicas/control-plane", () => ({
   ControlPlaneService: class { },
-  ControlSessionStore: class { },
-  migrateControlSchema: async () => undefined,
 }));
 vi.mock("@unicas/control-plane-mcp", () => ({
   default: { fetch: () => new Response("mcp") },

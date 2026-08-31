@@ -22,8 +22,6 @@ export type {
   StoredSession,
 } from "@unicas/service";
 
-export { ControlSessionStore } from "./sessions.js";
-
 export { AuthorityRepository } from "./authority.js";
 export type {
   RegisteredStackKey,
@@ -32,11 +30,6 @@ export type {
 } from "./authority.js";
 
 export { buildStackJwks } from "@unicas/service";
-
-export {
-  CONTROL_SCHEMA_MIGRATIONS,
-  migrateControlSchema,
-} from "./schema.js";
 
 export { ControlPlaneError, adminError, toAdminError } from "@unicas/service";
 

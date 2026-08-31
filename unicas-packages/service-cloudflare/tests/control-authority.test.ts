@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import { AuthorityRepository } from "../src/control-authority.js";
+import { migrateControlSchema } from "../src/control-schema.js";
 
 let miniflare: Miniflare | undefined;
 let db: D1Database | undefined;
@@ -24,24 +25,9 @@ async function createRepository(): Promise<AuthorityRepository> {
   }));
   await miniflare.ready;
   db = await miniflare.getD1Database("DB", "control-authority-test");
+  await migrateControlSchema(db);
   await db.batch([
-    db.prepare(`CREATE TABLE cas_stack_issuer (
-      stack_id TEXT PRIMARY KEY,
-      issuer TEXT NOT NULL UNIQUE,
-      audience TEXT NOT NULL,
-      capability_max_lifetime_seconds INTEGER NOT NULL DEFAULT 300
-    )`),
-    db.prepare(`CREATE TABLE cas_stack_issuer_keys (
-      stack_id TEXT NOT NULL,
-      kid TEXT NOT NULL,
-      algorithm TEXT NOT NULL,
-      public_jwk TEXT NOT NULL,
-      state TEXT NOT NULL,
-      PRIMARY KEY (stack_id, kid)
-    )`),
-  ]);
-  await db.batch([
-    db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience) VALUES ('cas_s', 'https://issuer.example', 'unidocs-cas')"),
+    db.prepare("INSERT INTO cas_stack_issuer (stack_id, issuer, audience, capability_max_lifetime_seconds) VALUES ('cas_s', 'https://issuer.example', 'unidocs-cas', 300)"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state) VALUES ('cas_s', 'k1', 'ES256', '{\"kty\":\"EC\"}', 'active')"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state) VALUES ('cas_s', 'k2', 'ES256', '{\"kty\":\"EC\"}', 'retiring')"),
     db.prepare("INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state) VALUES ('cas_s', 'k3', 'ES256', '{\"kty\":\"EC\"}', 'revoked')"),

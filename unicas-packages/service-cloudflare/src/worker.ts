@@ -4,11 +4,7 @@ import {
   type AdminBffEnv,
   uiAssets,
 } from "@unicas/admin-webui";
-import {
-  ControlPlaneService,
-  ControlSessionStore,
-  migrateControlSchema,
-} from "@unicas/control-plane";
+import { ControlPlaneService } from "@unicas/control-plane";
 import mcpWorker, { type Env as McpEnv } from "@unicas/control-plane-mcp";
 import {
   createUniCasService,
@@ -26,6 +22,8 @@ import {
   listRootDomains,
 } from "./audit-reads.js";
 import { AuthorityRepository } from "./control-authority.js";
+import { migrateControlSchema } from "./control-schema.js";
+import { ControlSessionStore } from "./control-sessions.js";
 import {
   RootRefDomainDurableObject,
   type RootRefDomainDoEnv,
@@ -149,14 +147,26 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 const verifiers = new WeakMap<object, StackCapabilityVerifier>();
+const controlSchemaInitializations = new WeakMap<object, Promise<void>>();
 const adminHandlers = new WeakMap<object, Promise<(request: Request) => Promise<Response>>>();
+
+function ensureControlSchema(env: Env): Promise<void> {
+  const key = env as object;
+  let initialization = controlSchemaInitializations.get(key);
+  if (!initialization) {
+    initialization = migrateControlSchema(env.CAS_CONTROL_DB);
+    controlSchemaInitializations.set(key, initialization);
+    void initialization.catch(() => controlSchemaInitializations.delete(key));
+  }
+  return initialization;
+}
 
 function adminHandlerFor(env: Env): Promise<(request: Request) => Promise<Response>> {
   const key = env as object;
   let handler = adminHandlers.get(key);
   if (!handler) {
     handler = (async () => {
-      await migrateControlSchema(env.CAS_CONTROL_DB);
+      await ensureControlSchema(env);
       const config = configFromEnv(env);
       const now = config.now ?? (() => Date.now());
       return createAdminBff({
@@ -275,12 +285,13 @@ function optionalNumber(value: string | null): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
-function fetchMcp(
+async function fetchMcp(
   request: Request,
   env: Env,
   auditReader: Fetcher,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  await ensureControlSchema(env);
   return mcpWorker.fetch(request, {
     ...env,
     CAS_TENANT_AUDIT_READER: auditReader,

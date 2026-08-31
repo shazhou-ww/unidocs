@@ -1,7 +1,6 @@
 /** OAuth-protected remote MCP ingress for the Unicas control plane. */
 
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
-import { migrateControlSchema } from "@unicas/control-plane";
 import { createMcpHandler } from "agents/mcp/server";
 import { createOAuthAuthorizationHandler } from "./auth.js";
 import {
@@ -35,7 +34,6 @@ const mcpApiHandler = {
       return Response.json({ error: "MCP_ACCESS_NOT_ALLOWED" }, { status: 403 });
     }
     attachVerifiedOAuthContext(request, ctx, props, config.resource);
-    await migrateControlSchema(env.CAS_CONTROL_DB);
     const handler = createMcpHandler(
       () => createControlPlaneMcpServer(env.CAS_CONTROL_DB, {
         auditReader: env.CAS_TENANT_AUDIT_READER,

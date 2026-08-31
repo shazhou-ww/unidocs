@@ -764,9 +764,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
         version: 4.20260702.1
-      miniflare:
-        specifier: 5.20260811.1-alpha
-        version: 5.20260811.1-alpha
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -804,9 +801,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
         version: 4.20260702.1
-      miniflare:
-        specifier: 5.20260811.1-alpha
-        version: 5.20260811.1-alpha
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -863,6 +857,18 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
         version: 4.20260702.1
+      '@modelcontextprotocol/server':
+        specifier: 2.0.0
+        version: 2.0.0
+      '@unicas/admin-protocol':
+        specifier: workspace:*
+        version: link:../admin-protocol
+      agents:
+        specifier: 0.21.0
+        version: 0.21.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(react@19.2.8)(rolldown@1.2.5)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))(zod@4.4.3)
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
       miniflare:
         specifier: 5.20260811.1-alpha
         version: 5.20260811.1-alpha

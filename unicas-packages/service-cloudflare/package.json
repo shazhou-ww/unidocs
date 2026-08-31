@@ -34,6 +34,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "@unicas/admin-protocol": "workspace:*",
+    "agents": "0.21.0",
+    "jose": "^6.2.10",
     "miniflare": "5.20260811.1-alpha",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",

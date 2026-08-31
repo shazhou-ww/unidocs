@@ -25,6 +25,12 @@ const handlers = vi.hoisted(() => ({
 vi.mock("../src/schema.js", () => ({
   migrateStackTenantSchema: handlers.migrate,
 }));
+vi.mock("../src/control-schema.js", () => ({
+  migrateControlSchema: handlers.migrateControl,
+}));
+vi.mock("../src/control-sessions.js", () => ({
+  ControlSessionStore: class { },
+}));
 vi.mock("@unicas/service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@unicas/service")>();
   return {
@@ -44,8 +50,6 @@ vi.mock("@unicas/admin-webui", () => ({
 }));
 vi.mock("@unicas/control-plane", () => ({
   ControlPlaneService: class { },
-  ControlSessionStore: class { },
-  migrateControlSchema: handlers.migrateControl,
 }));
 vi.mock("@unicas/control-plane-mcp", () => ({
   default: { fetch: handlers.mcp },
@@ -236,6 +240,25 @@ describe("service-cloudflare public routing", () => {
       .toBeLessThan(handlers.admin.mock.invocationCallOrder[0]!);
   });
 
+  test("retries control schema initialization after a failed admin dispatch", async () => {
+    const retryEnv = { ...env } as Env;
+    handlers.migrateControl.mockRejectedValueOnce(new Error("migration unavailable"));
+
+    await expect(worker.fetch(
+      new Request("https://cas.example/admin/me"),
+      retryEnv,
+      ctx,
+    )).rejects.toThrow("migration unavailable");
+    await expect(worker.fetch(
+      new Request("https://cas.example/admin/me"),
+      retryEnv,
+      ctx,
+    )).resolves.toBeInstanceOf(Response);
+
+    expect(handlers.migrateControl).toHaveBeenCalledTimes(2);
+    expect(handlers.admin).toHaveBeenCalledTimes(1);
+  });
+
   test("enforces MCP browser origin and strips cookies", async () => {
     const rejected = await worker.fetch(new Request("https://cas.example/mcp", {
       headers: { Origin: "https://attacker.example" },
@@ -243,15 +266,25 @@ describe("service-cloudflare public routing", () => {
     expect(rejected.status).toBe(403);
     expect(handlers.mcp).not.toHaveBeenCalled();
 
+    const mcpEnv = { ...env } as Env;
     await worker.fetch(new Request("https://cas.example/mcp", {
       headers: {
         Origin: "https://cas.example",
         Authorization: "Bearer mcp-token",
         Cookie: "cas_admin_session=secret",
       },
-    }), env, ctx);
+    }), mcpEnv, ctx);
+    await worker.fetch(
+      new Request("https://cas.example/.well-known/oauth-protected-resource"),
+      mcpEnv,
+      ctx,
+    );
     const request = handlers.mcp.mock.calls[0]![0] as Request;
     expect(request.headers.get("Authorization")).toBe("Bearer mcp-token");
     expect(request.headers.get("Cookie")).toBeNull();
+    expect(handlers.migrateControl).toHaveBeenCalledTimes(1);
+    expect(handlers.migrateControl.mock.invocationCallOrder[0])
+      .toBeLessThan(handlers.mcp.mock.invocationCallOrder[0]!);
+    expect(handlers.mcp).toHaveBeenCalledTimes(2);
   });
 });

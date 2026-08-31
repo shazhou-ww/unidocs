@@ -27,7 +27,7 @@ import {
 } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
-import { migrateControlSchema } from "../../../unicas-packages/control-plane/src/schema.ts";
+import { migrateControlSchema } from "../../../unicas-packages/service-cloudflare/src/control-schema.ts";
 
 export { DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
@@ -427,8 +427,8 @@ export async function startLocalRuntime({
         await seedMiddlewareStacks(controlDb, middlewareStacks);
       }
     }
-    // CAS_CONTROL_DB schema is migrated idempotently by the admin worker on
-    // its first request (migrateControlSchema in cas-admin-webui index.ts).
+    // CAS_CONTROL_DB schema is migrated idempotently by the service adapter
+    // before its first admin or MCP dispatch.
 
     return {
       mf,
