@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { dispatch, getController, initController } from "../controller.js";
-import { getState, setState } from "../store.js";
+import { getState, setState, useUiState } from "../store.js";
+import { zoomBy } from "../zoom-controller.js";
 import type { Rect } from "../../doc-model.js";
 import { translateOps, type DragState } from "../drag.js";
 import { SelectionOverlay } from "./selection-overlay.js";
@@ -14,9 +15,11 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * reads its scroll offsets, so native scrolling IS the pan gesture (the same
  * arrangement as before the redesign).
  *
- * Zoom is likewise not this component's business: the canvas bitmap is always
- * the document at 1:1 and zoom is only ever the canvas element's CSS box size,
- * which Viewport measures rather than being told. Every pointer coordinate
+ * Zoom is applied HERE and only here, as a CSS width/height on the canvas —
+ * the bitmap is always the document at 1:1, and Viewport measures the ratio
+ * back off the laid-out box rather than being told it. That is the whole of
+ * zoom's effect on rendering: no tile is re-composited, no transform is
+ * applied, the browser scales the already-painted bitmap. Every pointer coordinate
  * below therefore goes through `controller.toCanvas()` and comes back in
  * document pixels, correct at any zoom — the marquee, the layer drag and the
  * eyedropper all share that one mapping, so they cannot disagree about which
@@ -32,6 +35,7 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * a shared containing block does not.
  */
 export function CanvasStage() {
+  const s = useUiState();
   const stageRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<HTMLCanvasElement>(null);
   // Marquee drag origin, in document pixels. A ref, not state: it changes on
@@ -43,6 +47,26 @@ export function CanvasStage() {
 
   useEffect(() => {
     if (stageRef.current && viewRef.current) initController(viewRef.current, stageRef.current);
+  }, []);
+
+  // Registered by hand rather than as an `onWheel` prop because the handler
+  // must call `preventDefault` to stop the browser zooming the whole page,
+  // and React attaches wheel listeners passively — where preventDefault is a
+  // no-op and logs a console error. Trackpad pinch arrives here too: browsers
+  // report it as a wheel event with `ctrlKey` set, so it is handled for free.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey && !e.metaKey) return; // plain wheel stays a scroll (= pan)
+      e.preventDefault();
+      // Exponential so a given scroll distance is the same RATIO of zoom
+      // wherever you are on the scale — linear steps crawl when zoomed out
+      // and lurch when zoomed in.
+      zoomBy(Math.exp(-e.deltaY * 0.01), { clientX: e.clientX, clientY: e.clientY });
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
   }, []);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -91,6 +115,8 @@ export function CanvasStage() {
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
+  const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
+
   return (
     <div
       className="stage"
@@ -101,7 +127,12 @@ export function CanvasStage() {
       onPointerCancel={onPointerUp}
     >
       <div className="stage-inner">
-        <canvas className="view" ref={viewRef} aria-label="rendered preview" />
+        <canvas
+          className="view"
+          ref={viewRef}
+          aria-label="rendered preview"
+          style={canvasStyle}
+        />
         <SelectionOverlay />
       </div>
     </div>
@@ -137,4 +168,31 @@ export function normalise(
     clamp(Math.min(a.y, b.y), canvas.height), clamp(Math.min(a.x, b.x), canvas.width),
     clamp(Math.max(a.y, b.y), canvas.height), clamp(Math.max(a.x, b.x), canvas.width),
   ];
+}
+
+/**
+ * The canvas element's CSS box: the document size scaled by zoom. This is the
+ * ONLY place zoom becomes visible — everything else measures it back off this
+ * box.
+ *
+ * Rounded to whole CSS pixels so the box edge lands on a device pixel; the
+ * measured ratio then reflects the rounded size, so the mapping stays exact
+ * rather than being a hair off from the requested zoom.
+ *
+ * `imageRendering` switches on the direction of the scale. Magnifying wants
+ * `pixelated` — at 400% you are inspecting pixels and smoothing them is the
+ * opposite of useful. Minifying wants the browser's smoothing: nearest
+ * neighbour when shrinking drops whole rows and columns, which turns fine
+ * detail into aliased noise.
+ */
+export function canvasBoxStyle(
+  canvas: { width: number; height: number } | null,
+  zoom: number,
+): { width: number; height: number; imageRendering: "pixelated" | "auto" } | undefined {
+  if (!canvas || canvas.width <= 0 || canvas.height <= 0) return undefined;
+  return {
+    width: Math.round(canvas.width * zoom),
+    height: Math.round(canvas.height * zoom),
+    imageRendering: zoom >= 1 ? "pixelated" : "auto",
+  };
 }

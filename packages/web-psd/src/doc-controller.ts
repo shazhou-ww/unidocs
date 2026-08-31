@@ -198,6 +198,19 @@ export class DocController {
     this.requestVisibleTiles();
   }
 
+  /** The canvas element's laid-out box. Zoom compensation measures against
+   *  this AFTER a resize, so it must be read fresh every time — a cached rect
+   *  goes stale on the very layout change it is needed for. */
+  canvasRect(): DOMRect {
+    return this.view.getBoundingClientRect();
+  }
+
+  /** The scrolling container the canvas sits in. Panning is its native
+   *  scrolling, so holding a point still across a zoom means scrolling it. */
+  get stage(): HTMLElement {
+    return this.stageEl;
+  }
+
   /** Client (viewport) coords → document pixels. */
   toCanvas(clientX: number, clientY: number): { x: number; y: number } {
     const r = this.view.getBoundingClientRect();

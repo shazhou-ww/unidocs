@@ -163,7 +163,8 @@ a:hover { color: var(--accent); }
 .view {
   background: #fff;
   box-shadow: 0 2px 24px #0000001a;
-  image-rendering: pixelated;
+  /* Size and image-rendering are set inline from the zoom — see
+     canvasBoxStyle in canvas-stage.tsx. Deliberately not duplicated here. */
 }
 
 .topbar {
@@ -198,7 +199,12 @@ a:hover { color: var(--accent); }
   color: var(--fg-4); font-family: var(--mono); font-size: 13px; cursor: pointer;
 }
 .zoom button:hover { background: var(--canvas-bg); }
-.zoom-label { width: 46px; text-align: center; font-size: 11.5px; color: var(--ink-strong); }
+.zoom-label {
+  min-width: 46px; padding: 0 2px; text-align: center; font-size: 11.5px;
+  color: var(--ink-strong); border: 0; background: transparent;
+  font-family: var(--mono); cursor: pointer; border-radius: var(--radius);
+}
+.zoom-label:hover { background: var(--canvas-bg); }
 
 .btn {
   height: 30px; padding: 0 13px; display: inline-flex; align-items: center;

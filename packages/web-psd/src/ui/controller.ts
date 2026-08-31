@@ -1,5 +1,6 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
 import { getState, setState } from "./store.js";
+import { zoomForNewDoc } from "./zoom-controller.js";
 
 let controller: DocController | null = null;
 
@@ -37,6 +38,11 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
         version,
         ...(fresh ? { sessionBaseVersion: version } : {}),
       });
+      // A newly opened document picks its own zoom (1:1, or shrunk if it
+      // overflows the stage). Deliberately only on `fresh`: a rebase or an
+      // agent edit must NOT yank the zoom out from under the user, and a
+      // crop that changes the canvas size is still the same document.
+      if (fresh) zoomForNewDoc(doc.canvas);
     },
   });
   void bootstrap();
