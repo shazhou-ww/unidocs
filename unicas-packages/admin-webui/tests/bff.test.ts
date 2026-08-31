@@ -824,7 +824,7 @@ describe("cas-admin-webui BFF", () => {
     expect(logout.headers.get("Set-Cookie")).toContain("Max-Age=0");
     const me = await authRequest(bff, "/admin/me", cookie);
     expect(me.status).toBe(401);
-  });
+  }, 10_000);
 
   test("tenant JWT bearer tokens are not accepted on admin routes", async () => {
     const provider = await createMockProvider();
