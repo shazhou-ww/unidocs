@@ -7,6 +7,7 @@ import type { Rect } from "../../doc-model.js";
 import { translateOps, type DragState } from "../drag.js";
 import { rectRegion } from "../region.js";
 import { SelectionOverlay } from "./selection-overlay.js";
+import { SelectionBox } from "./selection-box.js";
 
 /**
  * The <canvas> is mounted by ref and then owned entirely by DocController /
@@ -182,6 +183,7 @@ export function CanvasStage() {
           style={canvasStyle}
         />
         <SelectionOverlay />
+        <SelectionBox />
       </div>
     </div>
   );

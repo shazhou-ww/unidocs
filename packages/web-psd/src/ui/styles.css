@@ -413,3 +413,22 @@ a:hover { color: var(--accent); }
 .degrade-row em { color: var(--fg-3); font-size: 11px; font-style: normal; }
 
 .chip-on { border-color: var(--accent); color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Layer-axis selection chrome. Geometry comes from ui/overlay-geometry.ts as
+   percentages of the document; everything here is in CSS pixels and must stay
+   that way, so it looks the same at 5% and at 400% zoom. `outline` rather than
+   `border` on purpose: the boxes are sized in percentages, and a border would
+   be added to that width and push the box off the layer it is tracing. */
+.sel-box, .sel-union, .sel-hover { position: absolute; pointer-events: none; }
+.sel-box   { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.sel-union { outline: 1px solid var(--accent); }
+.sel-hover { outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.sel-union .h { position: absolute; width: 6px; height: 6px; background: var(--surface); border: 1.5px solid var(--accent); }
+.sel-union .tl { left: -3px; top: -3px; }
+.sel-union .tc { left: calc(50% - 3px); top: -3px; }
+.sel-union .tr { right: -3px; top: -3px; }
+.sel-union .ml { left: -3px; top: calc(50% - 3px); }
+.sel-union .mr { right: -3px; top: calc(50% - 3px); }
+.sel-union .bl { left: -3px; bottom: -3px; }
+.sel-union .bc { left: calc(50% - 3px); bottom: -3px; }
+.sel-union .br { right: -3px; bottom: -3px; }
