@@ -36,7 +36,10 @@
       "path": "unicas-packages/admin-webui"
     },
     {
-      "path": "unicas-packages/edge"
+      "path": "unicas-packages/service"
+    },
+    {
+      "path": "unicas-packages/service-cloudflare"
     },
     {
       "path": "packages/protocol-doc"

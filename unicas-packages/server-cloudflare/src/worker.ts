@@ -14,12 +14,12 @@
  */
 
 import { AuthorityRepository } from "@unicas/control-plane";
+import { StackCapabilityVerifier } from "@unicas/service";
+import type { StackAuthEvent, VerifiedStackCall } from "@unicas/service";
 import { matchCasRoute } from "@unicas/tenant-protocol";
 import { CasLeaseDurationHeader } from "@unicas/tenant-protocol";
 import type { CasRoute } from "@unicas/tenant-protocol";
 import { CapabilityError } from "@unicas/tenant-protocol";
-import { StackCapabilityVerifier } from "./auth.js";
-import type { StackAuthEvent, VerifiedStackCall } from "./auth.js";
 import { AuditReadError, listRootDomainEvents, listRootDomainRefs, listRootDomains } from "./audit-reads.js";
 import { canonicalComposite } from "./do-names.js";
 import { migrateStackTenantSchema } from "./schema.js";
@@ -256,8 +256,8 @@ function authErrorResponse(error: unknown): Response {
   return Response.json({ error: "CAS capability validation failed" }, { status: 401 });
 }
 
-export { StackCapabilityVerifier, permissionFor } from "./auth.js";
-export type { StackAuthEvent, VerifiedStackCall } from "./auth.js";
+export { StackCapabilityVerifier, permissionFor } from "@unicas/service";
+export type { StackAuthEvent, VerifiedStackCall } from "@unicas/service";
 
 export {
   migrateStackTenantSchema,

@@ -3,8 +3,8 @@
  *
  * Owns every CAS_CONTROL_DB read/write for operator identity, stacks,
  * memberships, invitations, the singleton tenant issuer and its keys, control
- * audit, and creation idempotency. `cas-admin-webui` is the only deployable
- * that wires a D1 binding into this library.
+ * audit, and creation idempotency. `@unicas/service-cloudflare` is the only
+ * deployable that wires a D1 binding into this library.
  *
  * Every resource mutation appends its control-audit event and bumps the
  * control-data snapshot revision in the same atomic D1 batch. Methods return

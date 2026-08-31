@@ -379,17 +379,18 @@ limits.
 
 ## 11. Authenticated HTTP API
 
-CAS owns its native service and admin route contracts. A lightweight
-`cas-edge` Worker is the only public Worker on the CAS hostname. It dispatches
-unprefixed `/stacks` routes to the private canonical tenant Worker
-(`@unicas/server-cloudflare`) and top-level `/admin` to the private
-`cas-admin-webui` Worker through separate service bindings; each path strips
-the other plane's credentials. Admin audit reads use a narrow private tenant
-audit-reader RPC that the edge never exposes, keeping the service call graph
-acyclic. Node, usage, and GC routes retain the canonical `/cas` resource-family
-segment; Root Refs is a sibling tenant operation. A Gateway or other shared
-ingress may map selected tenant operations to another path, but that mapping
-and allowlist are not part of the CAS protocol.
+CAS owns its native tenant and admin route contracts. `@unicas/service`
+provides one cloud-neutral HTTP actor that matches both protocols and receives
+storage/concurrency strategies through explicit platform ports.
+`@unicas/service-cloudflare` wraps that actor as the only production Worker and
+public endpoint. The same Worker serves `/stacks`, `/admin`, MCP/OAuth, and the
+admin UI while preserving credential isolation between route classes. D1, R2,
+KV, and Durable Object bindings are Cloudflare adapter concerns; keyed actor
+ports preserve the single-writer semantics required by tenant and ref-domain
+operations. Node, usage, and GC routes retain the canonical `/cas`
+resource-family segment; Root Refs is a sibling tenant operation. A Gateway or
+other shared ingress may map selected tenant operations to another path, but
+that mapping and allowlist are not part of the CAS protocol.
 
 Tenant service routes accept JWT capabilities from configured stack issuers.
 Each stack registers one stable issuer with multiple rotation keys selected by

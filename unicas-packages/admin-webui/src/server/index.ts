@@ -55,8 +55,7 @@ function contentTypeFor(pathname: string): string {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    // Private readiness probe (unreachable through cas-edge: not under
-    // /stacks or /admin).
+    // Internal readiness probe used when testing this transitional adapter.
     if (request.method === "GET" && url.pathname === "/_internal/health") {
       return Response.json({ ok: true, service: "unidocs-cas-admin" });
     }

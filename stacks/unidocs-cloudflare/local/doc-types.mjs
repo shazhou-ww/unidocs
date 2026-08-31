@@ -11,17 +11,13 @@ import { join } from "node:path";
 
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
-/** CAS admin BFF Worker (private; reached via the edge or directly in dev). */
-export const ADMIN_WORKER = "unidocs-cas-admin";
 /** Local mock Google OIDC provider (dev only). */
 export const MOCK_OIDC_WORKER = "unidocs-mock-oidc";
 /** 故障注入用的假 CAS,只在测试里启用。 */
 export const CAS_FAULT_WORKER = "unidocs-cas-fault";
 export const REMOTE_CAS_PROXY_WORKER = "unidocs-remote-cas-proxy";
-/** Canonical stack-scoped tenant CAS worker (private; behind cas-edge). */
-export const MIDDLEWARE_WORKER = "unidocs-cas-middleware";
-/** Public CAS front door worker (/stacks + /admin dispatch). */
-export const EDGE_WORKER = "unidocs-cas-edge";
+/** Unified UniCAS service: tenant/admin APIs, BFF/UI, MCP, and public routing. */
+export const SERVICE_WORKER = "unidocs-cas-service";
 /** Middleware tenant D1 + R2 (stack-scoped schema; separate from legacy CAS_DB). */
 export const CAS_MIDDLEWARE_DB = "unidocs-cas-middleware-db";
 export const CAS_MIDDLEWARE_BUCKET = "unidocs-cas-middleware";
@@ -138,22 +134,19 @@ export function resolvePorts(docTypes, overrides = {}) {
 
 /** Entry point of every worker that needs bundling for the given selection. */
 export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = true } = {}) {
-  const middlewareTargets = [
-    { entry: "unicas-packages/server-cloudflare/src/worker.ts", outfile: "cas-middleware.js" },
-    { entry: "unicas-packages/edge/src/worker.ts", outfile: "cas-edge.js" },
+  const serviceTargets = [
+    { entry: "unicas-packages/service-cloudflare/src/worker.ts", outfile: "cas-service.js" },
   ];
   if (casMiddlewareOnly) {
     return [
-      ...middlewareTargets,
-      { entry: "unicas-packages/admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
+      ...serviceTargets,
       { entry: "stacks/unicas/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
     ];
   }
   return [
-    ...(casMiddleware ? middlewareTargets : []),
+    ...(casMiddleware ? serviceTargets : []),
     { entry: "packages/cloudflare-gateway/src/worker.ts", outfile: "gateway.js" },
     ...(casMiddleware ? [
-      { entry: "unicas-packages/admin-webui/src/server/index.ts", outfile: "cas-admin.js" },
       { entry: "stacks/unicas/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
     ] : []),
     ...docTypes.map((name) => ({
@@ -176,10 +169,8 @@ export function docServicesJson(docTypes, host, ports) {
  * `extraBindings` maps a doc type name to additional bindings (e.g. secrets
  * loaded from its .dev.vars) merged into that worker only.
  *
- * `casMiddlewareOnly` starts the CAS middleware by itself — the tenant CAS
- * worker, the admin BFF, and the mock OIDC provider — with no gateway and no
- * doc type workers, mirroring the middleware's independent deployment
- * boundary (see `stacks/unicas/local/dev.mjs`).
+ * `casMiddlewareOnly` starts the unified UniCAS service and mock OIDC provider
+ * with no UniDocs gateway or document type workers.
  */
 export function buildWorkers({
   docTypes,
@@ -215,11 +206,8 @@ export function buildWorkers({
     CAPABILITY_TRUSTED_JWKS: JSON.stringify(capabilityFixture.jwks),
   };
 
-  // CAS admin BFF + local mock OIDC provider. The admin worker is private in
-  // production (reached only through cas-edge); locally it binds a direct
-  // socket so Vite dev (port 4070) and scripts can reach it. When real Google
-  // OIDC credentials are provided (env GOOGLE_OIDC_CLIENT_ID/SECRET), the
-  // admin worker talks to Google; otherwise it uses the local mock provider.
+  // Admin BFF configuration for the unified service. It binds both the public
+  // CAS port and the direct admin port used by the Vite development proxy.
   const useRealGoogle = Boolean(googleOidcClientId) || Boolean(googleOidcClientSecret);
   const adminBindings = {
     GOOGLE_OIDC_CLIENT_ID: googleOidcClientId ?? "unidocs-local-admin",
@@ -234,35 +222,20 @@ export function buildWorkers({
     adminBindings.OIDC_ISSUER = `http://${host}:${ports.mockOidc}`;
     adminBindings.OIDC_DISCOVERY_URL = `http://${host}:${ports.mockOidc}/.well-known/openid-configuration`;
   }
-  const adminWorker = {
-    name: ADMIN_WORKER,
+  const serviceWorker = {
+    name: SERVICE_WORKER,
     modules: true,
-    scriptPath: join(bundleDir, "cas-admin.js"),
+    scriptPath: join(bundleDir, "cas-service.js"),
     compatibilityDate: COMPATIBILITY_DATE,
-    bindings: adminBindings,
-    d1Databases: { CAS_CONTROL_DB: CONTROL_DB },
-    unsafeDirectSockets: [{ host, port: ports.admin }],
-    // Private audit-reader binding: admin BFF -> canonical tenant worker
-    // (acyclic: edge -> admin -> tenant; the tenant worker never calls back).
-    serviceBindings: { CAS_TENANT_AUDIT_READER: MIDDLEWARE_WORKER },
-  };
-  const mockOidcWorker = {
-    name: MOCK_OIDC_WORKER,
-    modules: true,
-    scriptPath: join(bundleDir, "mock-oidc.js"),
-    compatibilityDate: COMPATIBILITY_DATE,
-    unsafeDirectSockets: [{ host, port: ports.mockOidc }],
-  };
-
-  // Canonical stack-scoped tenant CAS worker (private in production) plus the
-  // public cas-edge front door. Enabled with `casMiddleware`; the middleware
-  // uses its own stack-scoped D1/R2 so it never touches legacy tenant data.
-  const middlewareWorker = {
-    name: MIDDLEWARE_WORKER,
-    modules: true,
-    scriptPath: join(bundleDir, "cas-middleware.js"),
-    compatibilityDate: COMPATIBILITY_DATE,
-    bindings: { CAS_AUDIT_READER_KEY },
+    compatibilityFlags: ["global_fetch_strictly_public", "nodejs_compat"],
+    bindings: {
+      ...adminBindings,
+      CAS_AUDIT_READER_KEY,
+      CAS_PUBLIC_ORIGIN: `http://${host}:${ports.edge}`,
+      MCP_ALLOWED_ORIGIN_HOSTNAMES: "",
+      MCP_MUTATIONS_ENABLED: "true",
+      OAUTH_STATE_ENCRYPTION_KEY: CAS_ADMIN_SESSION_KEY,
+    },
     durableObjects: {
       CAS_DO: { className: "CasDurableObject" },
       CAS_DOMAIN_DO: { className: "RootRefDomainDurableObject" },
@@ -272,32 +245,31 @@ export function buildWorkers({
       CAS_DB: CAS_MIDDLEWARE_DB,
     },
     r2Buckets: { CAS_R2: CAS_MIDDLEWARE_BUCKET },
+    kvNamespaces: ["OAUTH_KV"],
+    unsafeDirectSockets: [
+      { host, port: ports.admin },
+      { host, port: ports.edge },
+    ],
   };
-  const edgeWorker = {
-    name: EDGE_WORKER,
+  const mockOidcWorker = {
+    name: MOCK_OIDC_WORKER,
     modules: true,
-    scriptPath: join(bundleDir, "cas-edge.js"),
+    scriptPath: join(bundleDir, "mock-oidc.js"),
     compatibilityDate: COMPATIBILITY_DATE,
-    serviceBindings: {
-      CAS_TENANT_SERVICE: MIDDLEWARE_WORKER,
-      CAS_ADMIN_SERVICE: ADMIN_WORKER,
-    },
-    unsafeDirectSockets: [{ host, port: ports.edge }],
+    unsafeDirectSockets: [{ host, port: ports.mockOidc }],
   };
 
   if (casMiddlewareOnly) {
     return [
-      middlewareWorker,
-      edgeWorker,
-      adminWorker,
+      serviceWorker,
       mockOidcWorker,
     ];
   }
 
-  const gatewayCasServiceTarget = casOrigin ? REMOTE_CAS_PROXY_WORKER : MIDDLEWARE_WORKER;
+  const gatewayCasServiceTarget = casOrigin ? REMOTE_CAS_PROXY_WORKER : SERVICE_WORKER;
   const docCasServiceTarget = casOrigin
     ? REMOTE_CAS_PROXY_WORKER
-    : (casFault ? CAS_FAULT_WORKER : MIDDLEWARE_WORKER);
+    : (casFault ? CAS_FAULT_WORKER : SERVICE_WORKER);
   const workers = [
     {
       name: GATEWAY_WORKER,
@@ -347,12 +319,12 @@ export function buildWorkers({
       modules: true,
       script: CAS_FAULT_SCRIPT,
       compatibilityDate: COMPATIBILITY_DATE,
-      serviceBindings: { CAS_UPSTREAM: MIDDLEWARE_WORKER },
+      serviceBindings: { CAS_UPSTREAM: SERVICE_WORKER },
     });
   }
 
   if (!casOrigin) {
-    workers.push(middlewareWorker, edgeWorker, adminWorker, mockOidcWorker);
+    workers.push(serviceWorker, mockOidcWorker);
   }
 
   const stackBindings = {

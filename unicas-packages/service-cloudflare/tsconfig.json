@@ -14,5 +14,22 @@
   },
   "include": [
     "src"
+  ],
+  "references": [
+    {
+      "path": "../service"
+    },
+    {
+      "path": "../server-cloudflare"
+    },
+    {
+      "path": "../admin-webui"
+    },
+    {
+      "path": "../control-plane"
+    },
+    {
+      "path": "../control-plane-mcp"
+    }
   ]
 }

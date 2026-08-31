@@ -25,8 +25,8 @@ import {
   casWritePermission,
 } from "@unicas/tenant-protocol";
 import type { CapabilityPermission } from "@unicas/tenant-protocol";
-import { StackCapabilityVerifier } from "../src/auth.js";
-import type { StackAuthEvent, VerifiedStackCall } from "../src/auth.js";
+import { StackCapabilityVerifier } from "@unicas/service";
+import type { StackAuthEvent, VerifiedStackCall } from "@unicas/service";
 import worker from "../src/worker.js";
 import type { Env } from "../src/worker.js";
 

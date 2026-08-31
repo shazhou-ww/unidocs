@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { CAS_ADMIN_WEBUI_MOUNT } from "../src/server/config.js";
 
 describe("cas-admin-webui package boundary", () => {
-  test("depends on protocol-cas-admin and cas-control-plane only", () => {
+  test("depends on admin contracts and is not independently deployable", () => {
     const pkg = JSON.parse(
       readFileSync(
         join(dirname(fileURLToPath(import.meta.url)), "../package.json"),
@@ -17,7 +17,7 @@ describe("cas-admin-webui package boundary", () => {
     expect(pkg.dependencies["@unicas/control-plane"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/tenant-protocol"]).toBeUndefined();
-    expect(pkg.scripts.deploy).toBe("pnpm run build && wrangler deploy");
+    expect(pkg.scripts.deploy).toBeUndefined();
     expect(CAS_ADMIN_WEBUI_MOUNT).toBe("/admin");
   });
 });

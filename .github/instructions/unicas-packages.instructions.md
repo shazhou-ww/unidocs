@@ -17,4 +17,10 @@ UniCAS is an independently deployable middleware. Keep `unicas-packages/` movabl
 - A client package is a thin HTTP API wrapper. Represent each endpoint as a simple `Request -> Promise<Response>` operation, and keep shared transport parameters such as base URL and credentials on the client object.
 - Higher-level packages may wrap a client to reduce caller complexity. Keep that business abstraction separate from the transport client; `@unicas/tenant-blob-client` wrapping `@unicas/tenant-client` is the reference pattern.
 
-When restructuring server packages, preserve these protocol and client boundaries. Server implementations and deployment adapters must not become dependencies of protocol or client packages.
+## Server packages
+
+- Deploy UniCAS as one service; tenant and admin are HTTP access planes, not separate server deployment units.
+- Separate server packages by portability. `@unicas/service` is the cloud-neutral service actor and platform-port contract; `@unicas/service-cloudflare` is the Cloudflare Worker and platform adapter.
+- The cloud-neutral service actor implements both tenant and admin protocol routes. Keep browser BFF/OIDC, static assets, MCP/OAuth ingress, schema migration, and Worker lifecycle in the platform adapter or presentation packages.
+- Model storage and concurrency requirements as explicit platform ports. In particular, preserve the keyed single-writer semantics currently supplied by Durable Objects; generic database and blob interfaces alone are insufficient.
+- Server implementations and deployment adapters must not become dependencies of protocol or client packages.

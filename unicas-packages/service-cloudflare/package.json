@@ -1,8 +1,8 @@
 {
-  "name": "@unicas/edge",
+  "name": "@unicas/service-cloudflare",
   "version": "0.1.0",
   "private": true,
-  "description": "Public CAS hostname edge Worker dispatching /stacks and /admin",
+  "description": "Unified UniCAS service deployment for Cloudflare Workers",
   "type": "module",
   "main": "./src/worker.ts",
   "types": "./src/worker.ts",
@@ -18,11 +18,18 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "pnpm --filter @unicas/admin-webui build:ui && tsc -b",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
     "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@unicas/admin-webui": "workspace:*",
+    "@unicas/control-plane": "workspace:*",
+    "@unicas/control-plane-mcp": "workspace:*",
+    "@unicas/server-cloudflare": "workspace:*",
+    "@unicas/service": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

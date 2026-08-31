@@ -10,8 +10,8 @@ import {
   JoseCapabilitySigner,
 } from "@unidocs/service-auth";
 import { casReadPermission } from "@unicas/tenant-protocol";
-import { StackCapabilityVerifier } from "../src/auth.js";
-import type { ResolvedStackAuthority, StackAuthorityResolver } from "@unicas/control-plane";
+import { StackCapabilityVerifier } from "@unicas/service";
+import type { ResolvedStackAuthority, StackAuthorityResolver } from "@unicas/service";
 
 const ISSUER = "https://issuer.example";
 const STACK = "cas_stack_a";
@@ -58,7 +58,7 @@ async function setup(): Promise<{
     stackId: STACK,
     issuer: ISSUER,
     audience: AUDIENCE,
-    status: "active",
+    capabilityMaxLifetimeSeconds: 28_800,
     keys: [{ kid: "k1", algorithm: "ES256", publicJwk, state: "active" }],
   };
   const repository = new StubRepository(authority);

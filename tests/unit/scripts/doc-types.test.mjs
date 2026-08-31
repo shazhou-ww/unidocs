@@ -2,7 +2,6 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
   ADMIN_PORT,
-  ADMIN_WORKER,
   buildWorkers,
   bundleTargets,
   CAS_FAULT_WORKER,
@@ -12,9 +11,8 @@ import {
   CONTROL_DB,
   DOC_TYPES,
   docServicesJson,
-  EDGE_WORKER,
   GATEWAY_WORKER,
-  MIDDLEWARE_WORKER,
+  SERVICE_WORKER,
   MOCK_OIDC_PORT,
   MOCK_OIDC_WORKER,
   REMOTE_CAS_PROXY_WORKER,
@@ -124,33 +122,29 @@ test("resolvePorts lets a caller override individual ports", () => {
     .toEqual({ gateway: 18787, markdown: 18788 });
 });
 
-test("bundleTargets builds the middleware, edge, gateway, admin, mock-oidc, plus only the selected types", () => {
+test("bundleTargets builds the UniCAS service, gateway, mock-oidc, and selected types", () => {
   expect(bundleTargets(["docx"]).map((t) => t.outfile))
-    .toEqual(["cas-middleware.js", "cas-edge.js", "gateway.js", "cas-admin.js", "mock-oidc.js", "docx.js"]);
+    .toEqual(["cas-service.js", "gateway.js", "mock-oidc.js", "docx.js"]);
 });
 
 test("bundleTargets casMiddlewareOnly skips gateway and doc types", () => {
   expect(bundleTargets(["docx"], { casMiddlewareOnly: true }).map((t) => t.outfile))
-    .toEqual(["cas-middleware.js", "cas-edge.js", "cas-admin.js", "mock-oidc.js"]);
+    .toEqual(["cas-service.js", "mock-oidc.js"]);
 });
 
-test("buildWorkers always includes the gateway, middleware, edge, admin BFF, and mock OIDC", () => {
+test("buildWorkers includes one UniCAS service and the mock OIDC provider", () => {
   const workers = buildWorkers(stackArgs());
   expect(workers.map((w) => w.name)).toEqual([
     GATEWAY_WORKER,
-    MIDDLEWARE_WORKER,
-    EDGE_WORKER,
-    ADMIN_WORKER,
+    SERVICE_WORKER,
     MOCK_OIDC_WORKER,
   ]);
 });
 
-test("casMiddlewareOnly starts the middleware without the gateway", () => {
+test("casMiddlewareOnly starts the unified service without the gateway", () => {
   const workers = buildWorkers(stackArgs({ casMiddlewareOnly: true }));
   expect(workers.map((w) => w.name)).toEqual([
-    MIDDLEWARE_WORKER,
-    EDGE_WORKER,
-    ADMIN_WORKER,
+    SERVICE_WORKER,
     MOCK_OIDC_WORKER,
   ]);
 });
@@ -159,9 +153,7 @@ test("buildWorkers omits doc types that were not selected", () => {
   const workers = buildWorkers(stackArgs({ docTypes: ["docx"], ports: { docx: 8789 } }));
   expect(workers.map((w) => w.name)).toEqual([
     GATEWAY_WORKER,
-    MIDDLEWARE_WORKER,
-    EDGE_WORKER,
-    ADMIN_WORKER,
+    SERVICE_WORKER,
     MOCK_OIDC_WORKER,
     "unidocs-docx",
   ]);
@@ -176,19 +168,19 @@ test("buildWorkers binds each selected type's own DO classes and socket", () => 
   });
   expect(docx.unsafeDirectSockets).toEqual([{ host: "127.0.0.1", port: 8789 }]);
   expect(docx.scriptPath).toBe(join("/b", "docx.js"));
-  expect(docx.serviceBindings).toEqual({ CAS_SERVICE: MIDDLEWARE_WORKER });
+  expect(docx.serviceBindings).toEqual({ CAS_SERVICE: SERVICE_WORKER });
 });
 
-test("gateway proxies CAS to the middleware and the middleware owns the stores", () => {
-  const [gateway, middleware] = buildWorkers(stackArgs());
-  expect(gateway.serviceBindings).toEqual({ CAS_SERVICE: MIDDLEWARE_WORKER });
+test("gateway proxies CAS to the unified service and the service owns the stores", () => {
+  const [gateway, service] = buildWorkers(stackArgs());
+  expect(gateway.serviceBindings).toEqual({ CAS_SERVICE: SERVICE_WORKER });
   expect(gateway.durableObjects).toBeUndefined();
-  expect(middleware.durableObjects).toEqual({
+  expect(service.durableObjects).toEqual({
     CAS_DO: { className: "CasDurableObject" },
     CAS_DOMAIN_DO: { className: "RootRefDomainDurableObject" },
   });
-  expect(middleware.d1Databases).toEqual({ CAS_CONTROL_DB: CONTROL_DB, CAS_DB: CAS_MIDDLEWARE_DB });
-  expect(middleware.r2Buckets).toEqual({ CAS_R2: CAS_MIDDLEWARE_BUCKET });
+  expect(service.d1Databases).toEqual({ CAS_CONTROL_DB: CONTROL_DB, CAS_DB: CAS_MIDDLEWARE_DB });
+  expect(service.r2Buckets).toEqual({ CAS_R2: CAS_MIDDLEWARE_BUCKET });
 });
 
 test("docServicesJson contains only selected types with capability audiences", () => {
@@ -245,16 +237,16 @@ test("casFault 为 true 时,doc-type worker 指向假 CAS,gateway 仍指向中�
 
   const names = workers.map((w) => w.name);
   expect(names).toContain(CAS_FAULT_WORKER);
-  expect(names).toContain(MIDDLEWARE_WORKER);
+  expect(names).toContain(SERVICE_WORKER);
 
   const gateway = workers.find((w) => w.name === GATEWAY_WORKER);
-  expect(gateway.serviceBindings.CAS_SERVICE).toBe(MIDDLEWARE_WORKER);
+  expect(gateway.serviceBindings.CAS_SERVICE).toBe(SERVICE_WORKER);
 
   const docx = workers.find((w) => w.name === "unidocs-docx");
   expect(docx.serviceBindings.CAS_SERVICE).toBe(CAS_FAULT_WORKER);
 
   const fault = workers.find((w) => w.name === CAS_FAULT_WORKER);
-  expect(fault.serviceBindings.CAS_UPSTREAM).toBe(MIDDLEWARE_WORKER);
+  expect(fault.serviceBindings.CAS_UPSTREAM).toBe(SERVICE_WORKER);
   expect(fault.script).toContain("root-refs");
 });
 
@@ -262,7 +254,7 @@ test("casFault 默认关闭时,不产生假 CAS worker", () => {
   const workers = buildWorkers(stackArgs({ docTypes: ["docx"], ports: { docx: 8789 } }));
   expect(workers.map((w) => w.name)).not.toContain(CAS_FAULT_WORKER);
   const docx = workers.find((w) => w.name === "unidocs-docx");
-  expect(docx.serviceBindings.CAS_SERVICE).toBe(MIDDLEWARE_WORKER);
+  expect(docx.serviceBindings.CAS_SERVICE).toBe(SERVICE_WORKER);
 });
 
 test("remote CAS mode omits local middleware and binds gateway/docs through the proxy", () => {
@@ -283,26 +275,22 @@ test("remote CAS mode omits local middleware and binds gateway/docs through the 
     .toBe("https://unicas.example");
 });
 
-test("接线:edge 是唯一公网入口,tenant/admin 私有绑定,admin 持有审计读取绑定", () => {
+test("接线:统一服务是公网入口并持有全部 CAS 存储绑定", () => {
   const workers = buildWorkers(stackArgs());
   const names = workers.map((w) => w.name);
-  expect(names).toContain(MIDDLEWARE_WORKER);
-  expect(names).toContain(EDGE_WORKER);
+  expect(names).toContain(SERVICE_WORKER);
 
-  const edge = workers.find((w) => w.name === EDGE_WORKER);
-  expect(edge.serviceBindings.CAS_TENANT_SERVICE).toBe(MIDDLEWARE_WORKER);
-  expect(edge.serviceBindings.CAS_ADMIN_SERVICE).toBe(ADMIN_WORKER);
-  expect(edge.unsafeDirectSockets[0].port).toBe(8794);
-
-  const middleware = workers.find((w) => w.name === MIDDLEWARE_WORKER);
-  expect(middleware.bindings.CAS_AUDIT_READER_KEY).toBe(CAS_AUDIT_READER_KEY);
-  expect(middleware.d1Databases.CAS_CONTROL_DB).toBe(CONTROL_DB);
-  expect(middleware.d1Databases.CAS_DB).toBe(CAS_MIDDLEWARE_DB);
-  expect(middleware.r2Buckets.CAS_R2).toBe(CAS_MIDDLEWARE_BUCKET);
-  expect(middleware.durableObjects.CAS_DO.className).toBe("CasDurableObject");
-  expect(middleware.durableObjects.CAS_DOMAIN_DO.className).toBe("RootRefDomainDurableObject");
-  expect(middleware.unsafeDirectSockets).toBeUndefined(); // private; behind cas-edge
-
-  const admin = workers.find((w) => w.name === ADMIN_WORKER);
-  expect(admin.serviceBindings.CAS_TENANT_AUDIT_READER).toBe(MIDDLEWARE_WORKER);
+  const service = workers.find((w) => w.name === SERVICE_WORKER);
+  expect(service.bindings.CAS_AUDIT_READER_KEY).toBe(CAS_AUDIT_READER_KEY);
+  expect(service.d1Databases.CAS_CONTROL_DB).toBe(CONTROL_DB);
+  expect(service.d1Databases.CAS_DB).toBe(CAS_MIDDLEWARE_DB);
+  expect(service.r2Buckets.CAS_R2).toBe(CAS_MIDDLEWARE_BUCKET);
+  expect(service.durableObjects.CAS_DO.className).toBe("CasDurableObject");
+  expect(service.durableObjects.CAS_DOMAIN_DO.className).toBe("RootRefDomainDurableObject");
+  expect(service.kvNamespaces).toEqual(["OAUTH_KV"]);
+  expect(service.serviceBindings).toBeUndefined();
+  expect(service.unsafeDirectSockets).toEqual([
+    { host: "127.0.0.1", port: ADMIN_PORT },
+    { host: "127.0.0.1", port: 8794 },
+  ]);
 });

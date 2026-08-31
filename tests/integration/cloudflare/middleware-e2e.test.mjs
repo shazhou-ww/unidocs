@@ -1,5 +1,5 @@
 /**
- * Middleware end-to-end through the public cas-edge front door.
+ * Middleware end-to-end through the public unified UniCAS service.
  *
  * Seeds CAS_CONTROL_DB with two locally registered stacks
  * (`unidocs-cloudflare`, `unidocs-azure`), issues stack capabilities with
@@ -93,7 +93,7 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${token}` };
 }
 
-test("middleware serves the full canonical tenant flow through cas-edge", async () => {
+test("unified service serves the full canonical tenant flow", async () => {
   const stackA = await stackFixture(
     "unidocs-cloudflare",
     "https://issuer-cloudflare.local",
@@ -228,7 +228,7 @@ test("middleware serves the full canonical tenant flow through cas-edge", async 
   // Edge readiness and admin-path forwarding.
   const health = await edgeFetch("/health");
   expect(health.status).toBe(200);
-  await expect(health.json()).resolves.toMatchObject({ ok: true, service: "cas-edge" });
+  await expect(health.json()).resolves.toMatchObject({ ok: true, service: "unicas" });
   const adminProbe = await edgeFetch("/admin/me");
   expect(adminProbe.status).not.toBe(404); // forwarded to the admin BFF (401 without session)
   expect(adminProbe.status).not.toBe(501);

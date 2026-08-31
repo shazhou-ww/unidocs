@@ -17,7 +17,7 @@ const STUB_ENV = {
 } as unknown as Env;
 
 describe("cas-server-cloudflare package boundary", () => {
-  test("depends on the tenant protocol, the codec, and the authority repository only — no application-stack (@unidocs) packages", () => {
+  test("depends on the cloud-neutral service, tenant protocol, codec, and authority repository only — no application-stack (@unidocs) packages", () => {
     const pkg = JSON.parse(
       readFileSync(
         join(dirname(fileURLToPath(import.meta.url)), "../package.json"),
@@ -28,6 +28,7 @@ describe("cas-server-cloudflare package boundary", () => {
     expect(pkg.dependencies["@unicas/tenant-protocol"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/codec"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/control-plane"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unicas/service"]).toBe("workspace:*");
     const unidocsDeps = Object.keys(pkg.dependencies).filter((d) => d.startsWith("@unidocs/"));
     expect(unidocsDeps).toEqual([]);
     expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();

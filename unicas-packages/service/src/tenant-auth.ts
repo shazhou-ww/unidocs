@@ -1,17 +1,3 @@
-/**
- * Stack-scoped tenant authorization for the canonical CAS server.
- *
- * Resolves a verified issuer to its stack authority through the read-only
- * `AuthorityRepository` (never a token-supplied JWKS URL), verifies the
- * capability (algorithm, exact issuer, stack audience, lifetime, tenant,
- * permissions, optional refDomain), then requires issuer-derived stack
- * equality and token-tenant equality with the request path BEFORE any storage
- * access. `sub` is an opaque audit identity — no Gateway/Doc subject-prefix
- * semantics. Issuer records are cached 30s and never served past the 60s
- * hard stale bound; an unavailable registry fails closed. A static legacy
- * stack bootstrap covers the migration window.
- */
-
 import {
   createLocalJWKSet,
   decodeJwt,
@@ -19,11 +5,6 @@ import {
   jwtVerify,
 } from "jose";
 import type { JSONWebKeySet } from "jose";
-import type { CasRoute } from "@unicas/tenant-protocol";
-import type {
-  ResolvedStackAuthority,
-  StackAuthorityResolver,
-} from "@unicas/control-plane";
 import {
   CapabilityAlgorithm,
   CapabilityAuthenticationError,
@@ -32,7 +13,29 @@ import {
   casReadPermission,
   casWritePermission,
   validateRefDomainClaim,
+  type CasRoute,
 } from "@unicas/tenant-protocol";
+
+export interface RegisteredStackKey {
+  readonly kid: string;
+  readonly algorithm: string;
+  readonly publicJwk: Record<string, unknown>;
+  readonly state: "active" | "retiring" | "revoked";
+}
+
+/** Cloud-neutral authority data required to verify a tenant capability. */
+export interface ResolvedStackAuthority {
+  readonly stackId: string;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly capabilityMaxLifetimeSeconds: number;
+  readonly keys: readonly RegisteredStackKey[];
+}
+
+/** Read-only authority lookup port. Platform adapters own its persistence. */
+export interface StackAuthorityResolver {
+  resolveIssuer(issuer: string): Promise<ResolvedStackAuthority | null>;
+}
 
 export interface StackAuthEvent {
   readonly kind: "authorized" | "rejected" | "registry_stale" | "fail_closed";
@@ -73,6 +76,11 @@ const DEFAULT_CACHE_TTL_MS = 30_000;
 const DEFAULT_HARD_STALE_BOUND_MS = 60_000;
 const CLOCK_TOLERANCE_SECONDS = 30;
 
+/**
+ * Verifies stack-scoped tenant capabilities without depending on a platform
+ * database or runtime. Issuer records are cached for 30 seconds and are never
+ * served past the 60-second hard stale bound when the registry is unavailable.
+ */
 export class StackCapabilityVerifier {
   readonly #repository: StackAuthorityResolver;
   readonly #algorithms: string[];
@@ -139,8 +147,6 @@ export class StackCapabilityVerifier {
     }
     const token = match[1]!;
 
-    // Parse unverified iss/kid only as lookup keys; never trust anything else
-    // from the token before verification.
     let unverifiedIss: unknown;
     let kid: string | undefined;
     let alg: string | undefined;
@@ -185,13 +191,9 @@ export class StackCapabilityVerifier {
       throw new CapabilityAuthenticationError("invalid_token", "CAS capability token verification failed");
     }
 
-    // Per-stack lifetime cap from the authority registry: tokens must not
-    // outlive the stack's configured maximum (default 8h, up to 7d).
     if (lifetimeSeconds > authority.capabilityMaxLifetimeSeconds) {
       throw new CapabilityAuthenticationError("invalid_token", "CAS capability lifetime exceeds the stack's configured maximum");
     }
-
-    // Issuer-derived stack must equal the path stack; token tenant the path tenant.
     if (authority.stackId !== route.stackId) {
       throw new CapabilityAuthorizationError("resource_scope_mismatch", "CAS capability stack does not match the requested path");
     }
@@ -208,7 +210,6 @@ export class StackCapabilityVerifier {
     if (route.operation === "updateRootRefs") {
       refDomain = this.#requireValidRefDomain(payload);
     }
-
     return { ...payload, stackId: authority.stackId, kid, refDomain };
   }
 
@@ -219,17 +220,12 @@ export class StackCapabilityVerifier {
       const age = now - cached.fetchedAt;
       if (age < this.#cacheTtlMs) return cached.authority;
       if (age >= this.#hardStaleBoundMs) {
-        // Hard bound: never serve the cached record past the revocation
-        // bound, but a REACHABLE registry should serve a fresh record —
-        // failing closed unconditionally would 401 healthy low-traffic
-        // stacks on every request after ~60s of silence.
         try {
           const fresh = await this.#repository.resolveIssuer(issuer);
           if (fresh) {
             this.#authorityCache.set(issuer, { authority: fresh, fetchedAt: now });
             return fresh;
           }
-          // Registry answered: the issuer is gone (revoked/removed) → fail closed.
           this.#authorityCache.delete(issuer);
           throw new CapabilityAuthenticationError("unknown_issuer", "CAS capability issuer is not registered");
         } catch (error) {
@@ -244,15 +240,12 @@ export class StackCapabilityVerifier {
           throw new CapabilityAuthenticationError("registry_unavailable", "CAS authority registry is unavailable");
         }
       }
-      // Within the stale window: try to refresh; serve the cached record only
-      // if the registry is unreachable.
       try {
         const fresh = await this.#repository.resolveIssuer(issuer);
         if (fresh) {
           this.#authorityCache.set(issuer, { authority: fresh, fetchedAt: now });
           return fresh;
         }
-        // Registry answered: the issuer is gone (revoked/removed) → fail closed.
         this.#authorityCache.delete(issuer);
         throw new CapabilityAuthenticationError("unknown_issuer", "CAS capability issuer is not registered");
       } catch (error) {
@@ -272,9 +265,7 @@ export class StackCapabilityVerifier {
     return authority;
   }
 
-  #requireValidRefDomain(
-    payload: Omit<VerifiedPayload, "stackId" | "kid">,
-  ): string {
+  #requireValidRefDomain(payload: Omit<VerifiedPayload, "stackId" | "kid">): string {
     const claimed = payload.refDomain;
     if (claimed === undefined) {
       throw new CapabilityAuthorizationError("resource_scope_mismatch", "Root Refs write requires a refDomain claim");
@@ -285,10 +276,9 @@ export class StackCapabilityVerifier {
     }
     return claimed;
   }
-
 }
 
-/** Exact operation → permission matrix. */
+/** Exact operation-to-permission matrix. */
 export function permissionFor(route: CasRoute): string {
   switch (route.operation) {
     case "readContent":

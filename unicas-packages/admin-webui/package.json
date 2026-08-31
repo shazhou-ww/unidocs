@@ -28,8 +28,7 @@
     "dev:ui": "vite",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
-    "deploy": "pnpm run build && wrangler deploy"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
     "@unicas/control-auth": "workspace:*",

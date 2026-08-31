@@ -35,11 +35,11 @@ Set secrets before `pnpm run deploy unicas`. `wrangler secret put` prompts for
 the value, so it does not need to appear in the command line:
 
 ```powershell
-pnpm --filter @unicas/server-cloudflare exec wrangler secret put CAS_AUDIT_READER_KEY
-pnpm --filter @unicas/admin-webui exec wrangler secret put CAS_AUDIT_READER_KEY
-pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_ID
-pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_SECRET
-pnpm --filter @unicas/admin-webui exec wrangler secret put SESSION_ENCRYPTION_KEYS
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put CAS_AUDIT_READER_KEY
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put GOOGLE_OIDC_CLIENT_ID
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put GOOGLE_OIDC_CLIENT_SECRET
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put SESSION_ENCRYPTION_KEYS
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put OAUTH_STATE_ENCRYPTION_KEY
 ```
 
 The admin CLI logs in through the BFF (`/admin/auth/cli/authorize`): the BFF
@@ -51,10 +51,10 @@ with a one-time code that the CLI exchanges for a BFF session
 client id, secret, or environment value; only `UNICAS_ADMIN_URL` (defaults to
 the production origin).
 
-Use the same random `CAS_AUDIT_READER_KEY` on tenant and admin. Session keys are
-a JSON map such as `{"2026-08":"<base64url-32-byte-key>"}`. The edge Worker
-has no runtime secret. Non-secret hostnames, routes, D1/R2 bindings, and policy
-values remain in each package's `wrangler.toml`.
+Session keys are a JSON map such as
+`{"2026-08":"<base64url-32-byte-key>"}`. Non-secret hostnames, routes,
+D1/R2/KV/DO bindings, and policy values remain in
+`unicas-packages/service-cloudflare/wrangler.toml`.
 
 ### Cloudflare UniDocs secrets
 

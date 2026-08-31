@@ -21,11 +21,11 @@
     "build": "tsc -b",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
-    "deploy": "wrangler deploy"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
     "@unicas/control-plane": "workspace:*",
+    "@unicas/service": "workspace:*",
     "@unicas/tenant-protocol": "workspace:*",
     "@unicas/codec": "workspace:*"
   },

@@ -73,29 +73,34 @@ describe("cross-plane separation", () => {
 });
 
 describe("package dependency boundaries", () => {
-  test("four middleware packages exist with required dependency direction", () => {
+  test("unified service packages have the required dependency direction", () => {
     const protocol = readPkg("admin-protocol");
     const control = readPkg("control-plane");
     const webui = readPkg("admin-webui");
-    const edge = readPkg("edge");
+    const service = readPkg("service");
+    const cloudflareService = readPkg("service-cloudflare");
 
     expect(protocol.name).toBe("@unicas/admin-protocol");
     expect(control.name).toBe("@unicas/control-plane");
     expect(webui.name).toBe("@unicas/admin-webui");
-    expect(edge.name).toBe("@unicas/edge");
+    expect(service.name).toBe("@unicas/service");
+    expect(cloudflareService.name).toBe("@unicas/service-cloudflare");
     expect(webui.private).toBe(true);
-    expect(edge.private).toBe(true);
+    expect(cloudflareService.private).toBe(true);
 
     expect(control.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/control-plane"]).toBe("workspace:*");
+    expect(service.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
+    expect(service.dependencies?.["@unicas/tenant-protocol"]).toBe("workspace:*");
+    expect(cloudflareService.dependencies?.["@unicas/service"]).toBe("workspace:*");
 
     // Shared cross-plane contracts may flow tenant-protocol -> admin-protocol,
     // but the retired legacy package must never return.
     expect(protocol.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
     expect(protocol.devDependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
 
-    for (const pkg of [protocol, control, webui, edge]) {
+    for (const pkg of [protocol, control, webui, service]) {
       const deps = {
         ...pkg.dependencies,
         ...pkg.devDependencies,
@@ -105,7 +110,7 @@ describe("package dependency boundaries", () => {
       }
     }
 
-    for (const pkg of [control, webui, edge]) {
+    for (const pkg of [control, webui]) {
       const deps = {
         ...pkg.dependencies,
         ...pkg.devDependencies,

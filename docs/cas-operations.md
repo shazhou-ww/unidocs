@@ -5,10 +5,7 @@ Runbooks, SLOs, and alerting for the independently deployed CAS middleware
 
 | Component | Worker / resource | Notes |
 |---|---|---|
-| Edge (public) | `unidocs-cas-edge` | `https://unicas.shazhou.work/*` classic route; exact `/stacks`, `/admin`, MCP, and OAuth dispatch |
-| Tenant (private) | `unidocs-cas-server-cloudflare` | canonical stack-scoped storage; behind edge |
-| Admin BFF + UI (private) | `unidocs-cas-admin-webui` | Google OIDC + sessions; behind edge |
-| Control-plane MCP (private) | `unidocs-cas-control-plane-mcp` | OAuth resource/authorization server and MCP tools; behind edge |
+| UniCAS service (public) | `unidocs-cas` | Single `@unicas/service-cloudflare` Worker for `/stacks`, `/admin`, MCP/OAuth, and admin UI |
 | OAuth KV | dedicated `OAUTH_KV` namespace | OAuth clients, grants, token hashes, and encrypted authorization transactions |
 | Control D1 | `unidocs-cas-control` (`dc8090eb-…`) | issuers, stacks, members, control audit |
 | Tenant D1 | `unidocs-cas-db` (`66f8738b-…`) | stack-scoped nodes/edges/root-refs |
@@ -25,18 +22,17 @@ in vars or source. Deployment credentials are supplied through
 
 | SLO | Target | Measurement | Error budget (30d) |
 |---|---|---|---|
-| Edge availability | 99.9% | edge /health + routed request success | 43.8 min |
-| Tenant + admin availability (via edge) | 99.9% | routed `/stacks` + `/admin` success | 43.8 min |
-| Edge p95 latency (live) | < 500 ms | edge request duration | — |
+| Service availability | 99.9% | `/health` + tenant/admin request success | 43.8 min |
+| Tenant + admin availability | 99.9% | `/stacks` + `/admin` success | 43.8 min |
+| Service p95 latency (live) | < 500 ms | Worker request duration | — |
 | Tenant node read p95 (cached/DB) | < 200 ms | node metadata/content reads | — |
 | Key rotation effectiveness | new key ≤ 60 s, revoked key ≤ 60 s | JWKS cache bounds (30 s TTL / 60 s hard stale) | — |
 | Backup freshness | RPO ≤ 24 h | last successful D1 export timestamp | — |
 | Restore | RTO ≤ 30 min | restore drill from exported SQL | — |
 
 Error-budget burn: alert at 5% of monthly budget consumed per rolling 24 h,
-page at 15%. Availability is measured from the edge (`/health` plus a routed
-probe like the live smoke's lease+read); the tenant/admin workers are private
-and measured through the edge.
+page at 15%. Availability is measured from the unified service (`/health` plus
+a routed probe like the live smoke's lease+read).
 
 ## Metrics and events
 
@@ -51,7 +47,7 @@ Cloudflare dashboard / logpush):
 - `doc_authentication` — doc-service session auth decisions.
 
 Roll-up per 5-min window (via CF Analytics API or a logpush consumer):
-edge request count + 5xx rate, tenant 401/403 rate by error code
+service request count + 5xx rate, tenant 401/403 rate by error code
 (`invalid_token`, `unknown_issuer`, `registry_unavailable`,
 `resource_scope_mismatch`), admin OIDC failures, D1 export success/failure.
 
@@ -59,7 +55,7 @@ edge request count + 5xx rate, tenant 401/403 rate by error code
 
 | Alert | Condition | Severity | Response |
 |---|---|---|---|
-| Edge 5xx rate | > 1% of requests over 5 min | P1 | Check `wrangler deployments list` on edge/tenant/admin; rollback if a recent deploy regressed |
+| Service 5xx rate | > 1% of requests over 5 min | P1 | Check `wrangler deployments list` for `unidocs-cas`; rollback if a recent deploy regressed |
 | `fail_closed` burst | `cas_stack_authorization` kind=`fail_closed` ≥ 3 in 5 min | P1 | D1 reachability from the tenant worker; registry row integrity |
 | `registry_unavailable` 401/403 rate | > 0.5% of tenant requests over 5 min | P1 | Same as above |
 | Unknown-issuer spike | `unknown_issuer` > threshold after a rotation | P2 | Issuer/keys registered? rotation SQL applied to the right stack? |
@@ -71,18 +67,12 @@ edge request count + 5xx rate, tenant 401/403 rate by error code
 
 ### Deploy
 
-Order: **tenant → admin → MCP → edge** (backing workers first; edge last, matching
-the original rollout). **Always rebuild first** — `wrangler deploy` uploads
-`dist/`, and stale `dist` silently deploys old code:
+UniCAS has one deployment unit. **Always rebuild first** because Wrangler
+uploads `dist/` and stale output silently deploys old code:
 
 ```text
-pnpm --filter @unicas/server-cloudflare exec tsc
-pnpm --filter @unicas/server-cloudflare exec wrangler deploy
-pnpm --filter @unicas/admin-webui build        # vite + assets + tsc
-pnpm --filter @unicas/admin-webui exec wrangler deploy
-pnpm --filter @unicas/control-plane-mcp build
-pnpm --filter @unicas/control-plane-mcp exec wrangler deploy
-pnpm --filter @unicas/edge exec wrangler deploy
+pnpm --filter @unicas/service-cloudflare build
+pnpm --filter @unicas/service-cloudflare exec wrangler deploy
 node scripts/cas-middleware-smoke.mjs           # repeatable now; run twice 70s apart
 ```
 
@@ -96,15 +86,12 @@ hard-stale fix).
 deployed middleware (admin drill 2026-08-26):
 
 ```text
-cd unicas-packages/<pkg>
+cd unicas-packages/service-cloudflare
 wrangler deployments list
 wrangler rollback            # move traffic to the retained prior version
-# verify through the edge, then redeploy the current version if needed
+# verify the public service, then redeploy the current version if needed
 wrangler deploy
 ```
-
-Edge rollback reverts to the prior route/version — check the classic route
-(`unicas.shazhou.work/*`) still matches after rolling back the edge.
 
 ### Backup and restore
 
@@ -141,7 +128,7 @@ allows only `active` / `retiring` / `revoked` (no `retired`).
 1. Generate a fresh ES256 pair; register the **public JWK** (kty/x/y/crv —
    the middleware adds kid/alg/use itself) in `cas_stack_issuer_keys` with
    state `active`, `ON CONFLICT(stack_id, kid) DO UPDATE` (idempotent).
-2. Sign a capability with the NEW private key; it must verify at the edge
+2. Sign a capability with the NEW private key; it must verify at the service
    after the 30 s cache window (expect 404 `NODE_NOT_FOUND` for an absent
    node, i.e. authentication passed). The OLD key keeps working throughout
    (coexistence window).
@@ -166,12 +153,12 @@ succeeds first — and a refresh that no longer lists the key fails closed).
 
 ### Incident checklist
 
-1. Confirm edge `/health`; confirm routed `/stacks` + `/admin` probes.
-2. `wrangler deployments list` on all three workers — recent deploy?
+1. Confirm service `/health`; confirm `/stacks` + `/admin` probes.
+2. `wrangler deployments list` for `unidocs-cas` — recent deploy?
    Rollback first, diagnose later.
 3. Grep `cas_stack_authorization` for `fail_closed` / `unknown_issuer` —
    registry reachability vs key/issuer config.
-4. Check the tenant worker's D1 bindings (`CAS_CONTROL_DB`,
+4. Check the service Worker's D1 bindings (`CAS_CONTROL_DB`,
    `unidocs-cas-control`) and `wrangler d1 execute ... SELECT` reachability.
 5. After resolution, run the smoke twice (70 s apart) to confirm both the
    happy path and the cache-refresh path.
