@@ -15,7 +15,8 @@ let docsQueue: Array<{ docId: string; version: number }> = [];
 let layerAlphaResult: { bounds: [number, number, number, number]; data: Uint8ClampedArray } | null = null;
 
 // jsdom's `File` has no working `arrayBuffer()`; `openFile` only reads
-// `.name` and `.arrayBuffer()`, so a minimal fake stands in for a real File.
+// `.name`, `.size` and `.arrayBuffer()`, so a minimal fake stands in for a
+// real File. `.size` is what seeds the overlay before the read starts.
 function fakeFile(name: string): File {
   return { name, size: 0, arrayBuffer: async () => new ArrayBuffer(0) } as unknown as File;
 }
