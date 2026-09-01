@@ -169,7 +169,13 @@ class SBlobRuntime {
       const data = Uint8Array.from(source.data);
       const refs = decodeSValueWithRefs(data).refs;
       const hash = await computeHash(data, source.contentType, refs);
-      await Promise.all([...new Set(refs)].map(ref => this.#cas.leaseNode(ref)));
+      // Sequential, not Promise.all: each CAS subrequest from a Durable Object
+      // holds a large in-flight buffer in the calling isolate, so a concurrent
+      // burst (e.g. a docx snapshot referencing ~7 parts) pushes the DO past
+      // its memory limit. Sequential keeps the peak at one subrequest.
+      for (const ref of new Set(refs)) {
+        await this.#cas.leaseNode(ref);
+      }
       await this.#cas.leaseNodeContent(hash, data, source.contentType, refs);
       return hash;
     }

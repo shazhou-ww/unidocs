@@ -33,7 +33,10 @@ export type DocxDocumentTypeFactory = DocumentTypeFactory<
 
 const DOCX_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const PART_IO_CONCURRENCY = 8;
+// Low on purpose: each CAS subrequest from a Durable Object holds a large
+// in-flight buffer in the calling isolate, so a concurrent upload burst can
+// push the DO past its memory limit (see sblob-context.ts).
+const PART_IO_CONCURRENCY = 2;
 
 export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
   const modelCache = new WeakMap<DocxDoc, Document>();
