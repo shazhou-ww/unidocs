@@ -62,3 +62,15 @@ export type {
   DocOperation,
   DocRoute,
 } from "./routes.js";
+export {
+  consoleObserver,
+  httpCallEvent,
+  httpCallFailure,
+  noopObserver,
+  ObservedBodyCap,
+  ObservedHeaderAllowlist,
+  pickObservedHeaders,
+  readObservedBody,
+  truncateObservedBody,
+} from "./observe.js";
+export type { HttpCallEvent, HttpCallInput, ObserveFn } from "./observe.js";

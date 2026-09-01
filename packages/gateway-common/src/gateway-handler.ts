@@ -16,8 +16,15 @@ import type { HttpFetcher } from "@unicas/tenant-client";
 import { casRoutes as canonicalCasRoutes } from "@unicas/tenant-protocol";
 import { matchGatewayRoute } from "@unidocs/protocol-gateway";
 import type { GatewayCasRoute } from "@unidocs/protocol-gateway";
-import { docRoutes } from "@unidocs/protocol-doc";
-import type { DocOperation } from "@unidocs/protocol-doc";
+import {
+  docRoutes,
+  httpCallEvent,
+  httpCallFailure,
+  noopObserver,
+  pickObservedHeaders,
+  readObservedBody,
+} from "@unidocs/protocol-doc";
+import type { DocOperation, HttpCallInput, ObserveFn } from "@unidocs/protocol-doc";
 import {
   GatewayDirectoryConflictError,
   type GatewayDocumentDirectory,
@@ -46,6 +53,11 @@ export interface GatewayHandlerConfig {
   maxUploadBytes?: number;
   generateId?(): string;
   now?(): number;
+  /**
+   * 每次 HTTP 调用一条事件:入站(我们提供的接口)与出站(CAS / doc worker)都记。
+   * 默认 noop —— 现有调用方与单测行为不变;适配器注入 `consoleObserver`。
+   */
+  observe?: ObserveFn;
 }
 
 export interface DocServiceRegistration {
@@ -83,7 +95,9 @@ export function createGatewayHandler(
   const generateId = cfg.generateId ?? (() => crypto.randomUUID());
   const now = cfg.now ?? (() => Date.now());
 
-  return async function handle(request: Request): Promise<Response> {
+  const observe = cfg.observe ?? noopObserver;
+
+  const handleInner = async function (request: Request): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
 
@@ -128,12 +142,36 @@ export function createGatewayHandler(
       headers.set("Authorization", await cfg.capabilityAuthority.issueCasOperation(casRoute));
       const targetUrl = new URL(request.url);
       targetUrl.pathname = casTargetPath(casRoute, cfg.casStackId);
-      return cfg.casFetcher.fetch(new Request(targetUrl, {
+      // 出站:网关 -> CAS。第三方调用里最关键的一条,CAS 一慢或一错,用户看到的
+      // 就是文档打不开。
+      const casInput: HttpCallInput = {
+        dir: "out",
+        target: "cas",
+        op: casRoute.operation,
         method: request.method,
-        headers,
-        body: request.body,
-        duplex: "half",
-      } as RequestInit));
+        durationMs: 0,
+        tenantId,
+        url: targetUrl.toString(),
+        requestHeaders: pickObservedHeaders(headers),
+      };
+      const casStarted = Date.now();
+      try {
+        const casResponse = await cfg.casFetcher.fetch(new Request(targetUrl, {
+          method: request.method,
+          headers,
+          body: request.body,
+          duplex: "half",
+        } as RequestInit));
+        const finished = { ...casInput, durationMs: Date.now() - casStarted };
+        const detail = casResponse.status >= 400
+          ? await readObservedBody(casResponse.clone())
+          : undefined;
+        observe(httpCallEvent(finished, casResponse.status, detail));
+        return casResponse;
+      } catch (err) {
+        observe(httpCallFailure({ ...casInput, durationMs: Date.now() - casStarted }, err));
+        throw err;
+      }
     }
 
     if (namespace !== "docs") {
@@ -244,6 +282,44 @@ export function createGatewayHandler(
       error: `Unknown endpoint: ${method}`,
     }, { status: 404 });
   };
+
+  // 入站计时。这是唯一的外部入口,所以"我们对外提供的每个接口"都从这里过一遍。
+  //
+  // 时长用 Date.now() 而不是 cfg.now:后者是目录时间戳的来源,测试里常被替换成
+  // 固定时钟,拿它算耗时会恒为 0。
+  return async function handle(request: Request): Promise<Response> {
+    const started = Date.now();
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const matched = matchGatewayRoute(request.method, url.pathname);
+    const input: HttpCallInput = {
+      dir: "in",
+      target: "gateway",
+      ...(matched
+        ? { op: matched.kind === "cas" ? `cas:${matched.route.operation}` : matched.operation }
+        : {}),
+      method: request.method,
+      durationMs: 0,
+      ...(parts[0] === "tenants" && parts[1] ? { tenantId: parts[1] } : {}),
+      ...(parts[2] === "docs" && parts[3] ? { docType: parts[3] } : {}),
+      url: url.toString(),
+      requestHeaders: pickObservedHeaders(request.headers),
+    };
+    try {
+      const response = await handleInner(request);
+      const finished = { ...input, durationMs: Date.now() - started };
+      // 只有失败响应才读体:成功响应可能是几十 MB 的文档,而且原响应要原样交给
+      // 调用方,所以必须读克隆而不是它本身。
+      const detail = response.status >= 400
+        ? await readObservedBody(response.clone())
+        : undefined;
+      observe(httpCallEvent(finished, response.status, detail));
+      return response;
+    } catch (err) {
+      observe(httpCallFailure({ ...input, durationMs: Date.now() - started }, err));
+      throw err;
+    }
+  };
 }
 
 async function forwardToWorker(
@@ -284,15 +360,38 @@ async function forwardToWorker(
   }
   headers.set("Accept-Encoding", "identity");
 
+  // 出站:网关 -> doc worker。
+  const observe = cfg.observe ?? noopObserver;
+  const callInput: HttpCallInput = {
+    dir: "out",
+    target: `doc:${docType}`,
+    op: operation,
+    method: operation === "create" ? "PUT" : request.method,
+    durationMs: 0,
+    tenantId,
+    docType,
+    url: targetUrl,
+    requestHeaders: pickObservedHeaders(headers),
+  };
+  const started = Date.now();
   try {
-    return await fetch(targetUrl, {
+    const response = await fetch(targetUrl, {
       method: operation === "create" ? "PUT" : request.method,
       headers,
       body: request.body,
       duplex: "half",
       signal: operationSignal,
     } as RequestInit);
+    const finished = { ...callInput, durationMs: Date.now() - started };
+    const detail = response.status >= 400
+      ? await readObservedBody(response.clone())
+      : undefined;
+    observe(httpCallEvent(finished, response.status, detail));
+    return response;
   } catch (err) {
+    // 连不上 / 超时:这里是真正的"没拿到响应",记 status 0。返回给调用方的 502
+    // 是我们合成的,如果只按响应码记,这条会被误记成一次正常的 502 响应。
+    observe(httpCallFailure({ ...callInput, durationMs: Date.now() - started }, err));
     return Response.json({
       error: `Document worker unreachable: ${err}`,
     }, { status: 502 });

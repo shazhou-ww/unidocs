@@ -31,6 +31,7 @@ import {
 } from "@unidocs/azure-sdk";
 import { isGatewayExposedCasRoute } from "@unidocs/protocol-gateway";
 import {
+  consoleObserver,
   createGatewayHandler,
   createInsecureTenantIdentityResolver,
   GatewayCapabilityAuthority,
@@ -112,6 +113,7 @@ async function main(): Promise<void> {
     isGatewayExposedCasRoute: casBaseUrl ? isGatewayExposedCasRoute : () => false,
     ...(maxUploadBytes === undefined ? {} : { maxUploadBytes }),
     casStackId,
+    observe: consoleObserver,
   });
 
   // The built web-psd app is served from this same origin (see
