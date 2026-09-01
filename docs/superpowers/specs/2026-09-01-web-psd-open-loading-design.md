@@ -18,7 +18,7 @@ TopBar 的「打开」→ <input type="file"> → controller.ts openFile(file)
           view.width/height = doc.canvas；onDoc(doc, version)
           new Worker(render-worker) + renderClient.init()   解码
           requestTiles(首屏)                                 首绘
-                                    onStatus("v1 · a1b2c3d4")
+                                    onStatus("v1 · a1b2c3d4 · summer-sale.psd")
 ```
 
 全程唯一的对外反馈是 `top-bar.tsx:42` 那个 `<span className="mono status">`——右上角

@@ -380,7 +380,7 @@ export class DocController {
       if (!body.docId) throw new Error("服务端没有返回 docId");
       this.docIdField = body.docId;
       await this.initRender();
-      this.events.onStatus(`v${this.session?.version} · ${this.docIdField?.slice(0, 8)}`);
+      this.events.onStatus(`v${this.session?.version} · ${this.docIdField?.slice(0, 8)} · ${label}`);
     } catch (e) {
       // No `onStatus` write here: `onOpenFailed` below always overwrites
       // `status` (see `reportError` in ui/store.ts), so a write here would
