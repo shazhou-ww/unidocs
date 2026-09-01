@@ -24,9 +24,12 @@ export function runImageEditorContract(
   const source: Pixels = (() => {
     const width = 64, height = 48;
     const data = new Uint8ClampedArray(width * height * 4);
+    const ALPHAS = [0, 128, 255];
     for (let i = 0; i < width * height; i++) {
-      // 半透明渐变：alpha 不是常量，这样"alpha 被吃掉"会被下面的断言抓到。
-      data.set([(i * 7) % 256, (i * 13) % 256, (i * 29) % 256, i % 2 ? 255 : 128], i * 4);
+      // alpha 不是常量，且**含全透明像素** —— 下面的断言就靠这些像素判断
+      // 哨兵回收是否真的跑过。半透明的 128 留着是有意的：它记录了这个端口
+      // 不承诺保住部分透明（recoverAlpha 只吐 0 或 255）。
+      data.set([(i * 7) % 256, (i * 13) % 256, (i * 29) % 256, ALPHAS[i % 3]], i * 4);
     }
     return { width, height, data };
   })();
@@ -49,14 +52,17 @@ export function runImageEditorContract(
       expect(r.pixels.data.length).toBe(source.width * source.height * 4);
     });
 
-    it("alpha 没有被整片抹成不透明 —— 半透明像素必须活下来", async () => {
+    it("透明区没有被整片压成不透明 —— 哨兵回收确实跑过", async () => {
       const e = await factory();
       const r = await e.edit({ source, instruction: "保持原样" }, AbortSignal.timeout(120_000));
       if (!r.ok) throw new Error(`期望成功，实际 ${r.reason}: ${r.detail}`);
-      // 源里一半像素 alpha=128。允许生成区域内 alpha 变化，但不允许全图 255。
-      let translucent = 0;
-      for (let i = 3; i < r.pixels.data.length; i += 4) if (r.pixels.data[i] < 250) translucent++;
-      expect(translucent).toBeGreaterThan(0);
+      // 断言的是**全透明像素**的数量，不是"半透明像素活下来" —— 后者这个
+      // 端口不承诺：recoverAlpha 只写 0 或 255，源里的 128 一律被推到两端。
+      // 旧断言写的是 `alpha < 250`，alpha===0 的像素顺手滑过去，于是它读起来
+      // 像在守"部分透明被保住"，实际只守住了"不是全图 255"。
+      let transparent = 0;
+      for (let i = 3; i < r.pixels.data.length; i += 4) if (r.pixels.data[i] === 0) transparent++;
+      expect(transparent).toBeGreaterThan(0);
     });
 
     it("changed 要么是 null，要么与源同尺寸的单通道覆盖度", async () => {

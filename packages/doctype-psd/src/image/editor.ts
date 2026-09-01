@@ -29,7 +29,14 @@ export interface EditRequest {
 export type EditResult =
   | {
     readonly ok: true;
-    /** 后置条件：与 `source` **严格同尺寸**，alpha 已还原。适配器必须自己断言。 */
+    /**
+     * 后置条件：与 `source` **严格同尺寸**，alpha 已还原。适配器必须自己断言。
+     *
+     * "已还原"只到**二值**为止：透明区是 0，其余是 255。指令式模型吃 RGB
+     * 吐 RGB，alpha 是靠哨兵底色临时编码进色彩通道再判回来的（guards.ts 的
+     * compositeOnSentinel / recoverAlpha），这条路只能区分"是不是哨兵色"，
+     * 区分不出深浅。源里的部分透明不被保留。
+     */
     readonly pixels: Pixels;
     /**
      * 前后差异反推的蒙版，与 `source` 同尺寸。

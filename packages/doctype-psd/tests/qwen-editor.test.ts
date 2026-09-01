@@ -157,6 +157,44 @@ describe("qwen-image-edit-plus 适配器", () => {
     const r = await editorWith(f).edit({ source, instruction: "x" }, AbortSignal.timeout(5000));
     expect(r).toMatchObject({ ok: false, reason: "provider_error" });
   });
+
+  it("半透明源 + 恒等编辑 ⇒ 改动比例约为 0（差异必须在同一个色彩空间里比）", async () => {
+    // 这是曾经的 bug：diffMask(source, pixels) 拿调用方的 RGBA 去比
+    // recoverAlpha(back)。source 的透明区 RGB 是 PSD 里的原值（通常 0,0,0），
+    // 而 pixels 的透明区带着适配器自己刷上去的哨兵品红 —— diffMask 跨四个
+    // 通道取最大值，于是每一个透明像素都差 255，全被判成"改过"。
+    // 后果：透明比例高的抠图层，蒙版覆盖度逼近 1，超过 MAX_CHANGED_FRACTION
+    // 就退化成整层无遮挡替换 —— 正是蒙版本该拦住的色偏失败。
+    const width = 64, height = 48;
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      // 左上 1/4 不透明，其余全透明（透明处 RGB 留 0,0,0，和真实 PSD 一样）。
+      const opaque = (i % width) < width / 2 && Math.floor(i / width) < height / 2;
+      data.set(opaque ? [180, 90, 40, 255] : [0, 0, 0, 0], i * 4);
+    }
+    const cutout = { width, height, data };
+
+    // 恒等 provider：把请求里那张图原样还回来。模型什么都没改，
+    // 所以正确的 changed 应该几乎全黑。
+    const echo = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("multimodal-generation")) {
+        const body = JSON.parse(String(init!.body));
+        const dataUrl: string = body.input.messages[0].content[0].image;
+        sentPng = Uint8Array.from(atob(dataUrl.split(",")[1]), c => c.charCodeAt(0));
+        return Response.json(fixture("qwen-edit-response.json"));
+      }
+      return new Response(sentPng!.buffer as ArrayBuffer);
+    }) as unknown as typeof fetch;
+    let sentPng: Uint8Array | undefined;
+
+    const r = await editorWith(echo).edit({ source: cutout, instruction: "保持原样" }, AbortSignal.timeout(5000));
+    if (!r.ok) throw new Error(r.detail);
+    if (r.changed === null) throw new Error("恒等编辑不该把蒙版判成不可信");
+    let changed = 0;
+    for (const v of r.changed.data) if (v > 0) changed++;
+    expect(changed / (width * height)).toBeLessThan(0.01);
+  });
 });
 
 // 录制回放下的契约：形状对不对，与真不真打网络无关。

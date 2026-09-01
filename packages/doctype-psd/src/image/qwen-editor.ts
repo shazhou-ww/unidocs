@@ -168,7 +168,14 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
         return {
           ok: true,
           pixels,
-          changed: CAPABILITIES.watermarked ? null : diffMask(source, pixels),
+          // 差异必须在**同一个色彩空间**里比。`source` 的透明区带的是 PSD
+          // 里的原 RGB（通常 0,0,0），而 recoverAlpha 之后的 `pixels` 透明区
+          // 带的是适配器自己刷上去的哨兵品红 —— diffMask 跨四通道取最大值，
+          // 拿这两者相比，每个透明像素都差 255，全被判成"改过"。透明比例
+          // 高的抠图层因此会越过 MAX_CHANGED_FRACTION 退化成整层替换，正是
+          // 蒙版本该拦住的色偏失败。`flattened` 与 `back` 都是哨兵空间、
+          // alpha 全 255、源尺寸，比它们才问得出"模型到底动了哪里"。
+          changed: CAPABILITIES.watermarked ? null : diffMask(flattened, back),
           provenance: { model, seed, prompt: instruction },
         };
       } catch (err) {
