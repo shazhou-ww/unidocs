@@ -222,17 +222,32 @@ Tab——键盘不管上面盖没盖东西都能走到下面的按钮。`ToolStr
 
 ### 3.6 失败路径
 
-`opening` 的生命周期由 `controller.ts` 的 `createFrom` wrapper 拥有：
+`opening` 的生命周期由 `controller.ts` 的 **`openFile`** 拥有——不是里层的
+`createFrom` wrapper：
 
 ```ts
-setState({ opening: { phase: "upload", name: label, bytes: bytes.length } });
-try {
-  await controller.createFrom(bytes, label);
-  // …现有的 before/docId 比较逻辑，一行不动
-} finally {
-  setState({ opening: null });
+export async function openFile(file: File): Promise<void> {
+  setState({ opening: { phase: "upload", name: file.name, bytes: file.size } });
+  try {
+    await createFrom(new Uint8Array(await file.arrayBuffer()), file.name);
+  } finally {
+    setState({ opening: null });
+  }
 }
 ```
+
+**为什么是 `openFile` 而不是 `createFrom`。** 种在 `createFrom` 里的话，种下去之前还得先
+`await file.arrayBuffer()`——对这个功能存在的理由（几十 MB 的 PSD）那是秒级的分配加拷贝，
+期间没有遮罩、没有状态变化，「打开」按钮也还亮着，能在第一次打开跑到一半时再点开第二次。
+从 `File` 本身取 `name`/`size`（`file.size === bytes.length`，遮罩内容不变）就能在读之前
+种下去。`try/finally` 跟着一起上移，于是任何路径都清得干净，包括 `controller` 是 `null`、
+`createFrom` 整个是空操作的那条。
+
+**失败时不要把自己的错误气泡擦掉。** `createFrom` 里采纳新文档那一步会清空聊天记录
+（新文档，新会话），但 POST 成功而 `initRender` 随后抛错时，`reportError` 刚往 `chat` 追加的
+那条 err 气泡也在被清的范围内——于是最需要解释的那条失败路径反而只剩右上角一行小字。
+清空要写成 `chat: getState().chat.slice(chatBefore)`，`chatBefore` 是调用前记下的长度：
+既保留「新文档、新会话」的语义，又让这次打开自己写的东西活下来。
 
 `onOpenFailed` 只负责报错，在 `initController` 里落成
 `(err) => reportError("打开文件失败", err)`，走 `store.ts` 里已有的那条约定（status 行 + 聊天里一条 err 气泡），失败不再只是右上角一行
