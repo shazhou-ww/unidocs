@@ -91,48 +91,67 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
 async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   if (!controller) return;
   const before = controller.docId;
-  // `opening` 的生死归这里,不归 DocController:文件名和字节数只有这一层有,
-  // 而放进 finally 意味着任何路径都收得干净——包括 DocController 被替身顶掉、
-  // 一个事件都不发的情况。少一个事件就把遮罩永久留在屏幕上,而那是用户完全
-  // 无法自救的状态。
-  setState({ opening: { phase: "upload", name: label, bytes: bytes.length } });
-  try {
-    await controller.createFrom(bytes, label);
-    // `DocController.createFrom` never rejects — it reports failure only via
-    // `onStatus`. Comparing to `before` is what keeps a failed create from
-    // adopting the new label: on the very first (never-yet-successful) call
-    // `docId` is still `null`; when the POST itself fails it is still the
-    // previous document's id, unchanged.
+  // How many chat bubbles existed before this open. The open itself may have
+  // already appended one — see the `chat` line below.
+  const chatBefore = getState().chat.length;
+  // `opening` 的生死归 `openFile`,不归这里、也不归 DocController:两者都在
+  // `openFile` 里一并解释。
+  await controller.createFrom(bytes, label);
+  // `DocController.createFrom` never rejects — it reports failure via
+  // `onOpenFailed` (wired to `reportError` in `initController` below), which
+  // appends a `{role:"err"}` bubble to `chat` before control ever returns
+  // here. Comparing to `before` is what keeps a failed create from adopting
+  // the new label: on the very first (never-yet-successful) call `docId` is
+  // still `null`; when the POST itself fails it is still the previous
+  // document's id, unchanged.
+  //
+  // The gate is deliberately coarse, and cannot be tightened from here.
+  // `createFrom` assigns `docIdField` BEFORE awaiting `initRender()` (see
+  // doc-controller.ts), so a create whose POST succeeded but whose render
+  // then threw leaves the new docId in place and is indistinguishable, from
+  // out here, from a fully successful one — the store adopts the new
+  // docId/label while the canvas shows nothing, with `onOpenFailed` carrying
+  // the only account of what went wrong. That is the correct trade: the
+  // document does exist server-side, so pretending the previous one is still
+  // open would be the bigger lie.
+  if (controller.docId && controller.docId !== before) {
+    // `selection`/`region` are normally cleared by `onDoc`'s fresh branch.
+    // They are cleared again here for the path where `initRender` threw
+    // BEFORE reaching that callback: the new docId is adopted (see the
+    // comment above) while the previous document's target is still in the
+    // store, pointing at layer ids that are not in any open document.
     //
-    // The gate is deliberately coarse, and cannot be tightened from here.
-    // `createFrom` assigns `docIdField` BEFORE awaiting `initRender()` (see
-    // doc-controller.ts), so a create whose POST succeeded but whose render
-    // then threw leaves the new docId in place and is indistinguishable, from
-    // out here, from a fully successful one — the store adopts the new
-    // docId/label while the canvas shows nothing, with `onStatus` carrying the
-    // only account of what went wrong. That is the correct trade: the document
-    // does exist server-side, so pretending the previous one is still open
-    // would be the bigger lie.
-    if (controller.docId && controller.docId !== before) {
-      // `selection`/`region` are normally cleared by `onDoc`'s fresh branch.
-      // They are cleared again here for the path where `initRender` threw
-      // BEFORE reaching that callback: the new docId is adopted (see the
-      // comment above) while the previous document's target is still in the
-      // store, pointing at layer ids that are not in any open document.
-      //
-      // `region` is cleared through `setRegion`, not folded into the `setState`
-      // below, so its mask sweep still runs — a raw `setState({ region: null })`
-      // would leave the stale mask's bytes in the module-level table forever.
-      setState({ docId: controller.docId, docName: label, history: [], chat: [], selection: [] });
-      setRegion(null);
-    }
-  } finally {
-    setState({ opening: null });
+    // `region` is cleared through `setRegion`, not folded into the `setState`
+    // below, so its mask sweep still runs — a raw `setState({ region: null })`
+    // would leave the stale mask's bytes in the module-level table forever.
+    //
+    // `chat` is sliced from `chatBefore`, NOT reset to `[]`: if the render
+    // threw (the paragraph above), `onOpenFailed` already appended THIS
+    // open's own error bubble before we got here, and a plain wipe would
+    // erase it microseconds after it was written — leaving the user with
+    // only the top-bar status line, the surface this project has explicitly
+    // deprecated for error reporting. Slicing keeps "new document, fresh
+    // transcript" for everything that predates this open while keeping
+    // whatever this open itself just appended.
+    setState({ docId: controller.docId, docName: label, history: [], chat: getState().chat.slice(chatBefore), selection: [] });
+    setRegion(null);
   }
 }
 
 export async function openFile(file: File): Promise<void> {
-  await createFrom(new Uint8Array(await file.arrayBuffer()), file.name);
+  // `opening` 的生死归这里,不归 `createFrom`:如果种在 `createFrom` 里,种
+  // 下去之前还要先 `await file.arrayBuffer()` —— 对这个功能存在的理由(大
+  // PSD)那是秒级的分配 + 拷贝,期间没有遮罩、没有状态变化,「打开」按钮
+  // 也还亮着,能在第一次打开跑到一半时再点开第二次。改成从 `File` 本身取
+  // name/size(`file.size === bytes.length`,遮罩内容不变),在读之前就把
+  // `opening` 种下去,再把 try/finally 一起搬上来,让它在任何路径下都清得
+  // 干净——包括 `controller` 是 `null`、`createFrom` 整个是空操作的情况。
+  setState({ opening: { phase: "upload", name: file.name, bytes: file.size } });
+  try {
+    await createFrom(new Uint8Array(await file.arrayBuffer()), file.name);
+  } finally {
+    setState({ opening: null });
+  }
 }
 
 export async function dispatch(op: Op): Promise<void> {

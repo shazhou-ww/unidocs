@@ -17,7 +17,7 @@ let layerAlphaResult: { bounds: [number, number, number, number]; data: Uint8Cla
 // jsdom's `File` has no working `arrayBuffer()`; `openFile` only reads
 // `.name` and `.arrayBuffer()`, so a minimal fake stands in for a real File.
 function fakeFile(name: string): File {
-  return { name, arrayBuffer: async () => new ArrayBuffer(0) } as unknown as File;
+  return { name, size: 0, arrayBuffer: async () => new ArrayBuffer(0) } as unknown as File;
 }
 
 vi.mock("../src/doc-controller.js", () => ({

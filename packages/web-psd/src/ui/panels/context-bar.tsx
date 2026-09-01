@@ -24,7 +24,12 @@ export function ContextBar() {
   // commit a 0x0 canvas. Only a selection with real area can be cropped to.
   const cropable = !!m && m[2] > m[0] && m[3] > m[1];
   return (
-    <div className="context-bar">
+    // `inert` 挂在整条 bar 上,而不只是内嵌的 `<ToolStrip />`:遮罩挡得住指针,
+    // 但挡不住 Tab——键盘不管上面盖没盖东西,一样能走到「裁到选区」按钮,对
+    // 正在被替换的 OUTGOING `DocSession` 发一个 `crop` op。挂在根上就一次盖
+    // 住这条 bar 自己的按钮(载入为选区 / 裁到选区 / 选中区域内的图层 / 清除
+    // 选区)和 `ToolStrip`,不用在两处各管一半。
+    <div className={`context-bar${s.opening ? " is-locked" : ""}`} inert={!!s.opening}>
       {/* Guarded on `s.doc`: `describeTarget([], null)` is「整个文档」, which
           is right for a document with nothing selected — but this bar renders
           unconditionally, so on the empty first screen it claimed the target

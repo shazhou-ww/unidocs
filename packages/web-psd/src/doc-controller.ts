@@ -372,11 +372,19 @@ export class DocController {
         () => this.events.onOpenPhase("parse"),
       );
       if (!body.success) throw new Error(body.error ?? "create failed");
-      this.docIdField = body.docId ?? null;
+      // A `{success:true}` body with no `docId` would otherwise end the open
+      // silently: `docIdField` becomes `null`, `initRender` no-ops on it (see
+      // its own `if (!docId) return` guard), and the status line is left
+      // reading `vundefined · undefined` with no error anywhere. Throw so
+      // this reaches the catch below like every other failure mode.
+      if (!body.docId) throw new Error("服务端没有返回 docId");
+      this.docIdField = body.docId;
       await this.initRender();
       this.events.onStatus(`v${this.session?.version} · ${this.docIdField?.slice(0, 8)}`);
     } catch (e) {
-      this.events.onStatus(`failed: ${(e as Error).message}`);
+      // No `onStatus` write here: `onOpenFailed` below always overwrites
+      // `status` (see `reportError` in ui/store.ts), so a write here would
+      // be dead on every path.
       this.events.onOpenFailed(e as Error);
     }
   }

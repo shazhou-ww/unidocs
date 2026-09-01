@@ -29,8 +29,11 @@ vi.mock("../src/doc-controller.js", () => ({
   GW: "", USER: "u1", TYPE: "psd", API_BASE_URL: "/tenants/u1",
 }));
 
+// `size` matters now, not just `arrayBuffer()`'s length: #4's fix seeds
+// `opening` from the `File` itself (name + size) BEFORE reading it, so a
+// fake missing `size` would silently seed `bytes: undefined`.
 const fakeFile = (name: string): File =>
-  ({ name, arrayBuffer: async () => new ArrayBuffer(2048) }) as unknown as File;
+  ({ name, size: 2048, arrayBuffer: async () => new ArrayBuffer(2048) }) as unknown as File;
 
 beforeEach(() => {
   vi.resetModules();
@@ -111,6 +114,50 @@ describe("open flow: opening state", () => {
 
     await openFile(fakeFile("a.psd"));
 
+    expect(getState().opening).toBeNull();
+  });
+
+  // #1: POST 成功、`initRender` 才炸——`before` !== 新 docId 时,wrapper 采纳
+  // 新 docId/label 并清空 chat,但这条 open 自己刚通过 onOpenFailed 写进去的
+  // err 气泡不能被这次清空一并抹掉,否则用户只剩右上角那行已经被这个项目
+  // 明确弃用的小字。
+  it("keeps the open's own error bubble when the POST succeeds but rendering then throws (#1)", async () => {
+    const { openFile, getState } = await booted();
+    createFromImpl = async (self) => {
+      // 模拟 doc-controller.ts 的真实时序:docIdField 在 initRender 之前就
+      // 已经赋值(见 createFrom -> initRender),render 炸了以后走
+      // onOpenFailed,而不是 reject。
+      self.docId = "doc-new";
+      capturedEvents!.onOpenFailed(new Error("渲染失败:画布初始化异常"));
+    };
+
+    await openFile(fakeFile("big.psd"));
+
+    // docId/label 仍然被采纳——服务端确实建好了新文档。
+    expect(getState().docId).toBe("doc-new");
+    expect(getState().docName).toBe("big.psd");
+    // 但错误气泡必须活下来,而不是被「新文档,清空会话」的逻辑一并冲掉。
+    expect(getState().chat).toHaveLength(1);
+    expect(getState().chat[0]).toMatchObject({ role: "err" });
+    expect(getState().chat[0].text).toContain("渲染失败");
+  });
+
+  // #4: 大文件读进内存本身要好几秒,这段时间也要有遮罩、也要挡住第二次
+  // 「打开」。种子必须在 `await file.arrayBuffer()` resolve 之前就落地,而
+  // 不是等它读完、拿到字节数组以后才种。
+  it("seeds `opening` before file.arrayBuffer() resolves (#4)", async () => {
+    const { openFile, getState } = await booted();
+    let resolveBuf!: (buf: ArrayBuffer) => void;
+    const pending = new Promise<ArrayBuffer>((resolve) => { resolveBuf = resolve; });
+    const slowFile = { name: "huge.psd", size: 123_456_789, arrayBuffer: () => pending } as unknown as File;
+
+    const openPromise = openFile(slowFile);
+    // `openFile` 到第一个 `await` 为止是同步执行的(见 JS 语义),所以这里
+    // 不需要等一个微任务——调用一返回,种子应该已经在 store 里了。
+    expect(getState().opening).toEqual({ phase: "upload", name: "huge.psd", bytes: 123_456_789 });
+
+    resolveBuf(new ArrayBuffer(123_456_789));
+    await openPromise;
     expect(getState().opening).toBeNull();
   });
 });

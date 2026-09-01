@@ -193,15 +193,15 @@ function postForm(
 未到的步 `--fg-dim`、文件名 `--fg`、阶段文案 `--fg-3`。当前步的脉冲直接复用 styles.css
 里已有的 `@keyframes blip`（目前定义了但无人使用）。`.col-canvas` 补 `position: relative`。
 
-### 3.5 四处禁用
+### 3.5 六处禁用
 
 | 位置 | 文件 | 做法 |
 | --- | --- | --- |
 | 「打开」按钮 + file input | `top-bar.tsx` | 按钮 `disabled={!!s.opening}`；`onChange` 里 `e.target.value = ""` |
 | 「导出」按钮 | `top-bar.tsx` | 并进现有条件：`!s.docId \|\| s.exporting \|\| !!s.opening` |
 | 图层树 / 属性面板 | `side-panel.tsx` | 根元素 `inert={!!s.opening}` + `.is-locked` |
-| 工具条 | `tool-strip.tsx` | 同上 |
-| 聊天发送 | `chat-panel.tsx` | `<Composer busy={s.chatBusy \|\| !!s.opening} />` |
+| 上下文栏(含工具条) | `context-bar.tsx` | 根元素 `inert={!!s.opening}` + `.is-locked` |
+| 聊天列 | `chat-panel.tsx` | 根元素 `inert={!!s.opening}` + `.is-locked`；`<Composer busy={s.chatBusy \|\| !!s.opening} />` 照旧保留 |
 
 用 `inert` 而不是逐个控件加 `disabled`：React 19 原生支持这个属性，一次盖住指针、键盘焦点
 和 a11y 树，而逐个 `disabled` 既要改十几处、又漏掉面板里那些非 `<button>` 的可点行。
@@ -209,6 +209,16 @@ function postForm(
 
 `e.target.value = ""` 放在 `onChange` 里而不是打开完成后：`openFile` 是 async 的，等它
 回来才清，中间这段时间同一文件仍然选不动。
+
+`inert` 一律挂在每个区域自己的根元素上，不挂在某个子组件上：遮罩挡得住指针，挡不住
+Tab——键盘不管上面盖没盖东西都能走到下面的按钮。`ToolStrip` 渲染在 `ContextBar` 内部，
+`inert` 因此落在 `context-bar.tsx` 的根上而不是 `tool-strip.tsx` 自己，否则上下文栏自己
+那几个按钮(载入为选区 / 裁到选区 / 选中区域内的图层 / 清除选区)仍然可以被 Tab 到，
+对正在被替换的 OUTGOING `DocSession` 发一个 `crop` 之类的 op。同理，聊天列的
+「新会话」「N ops · 本次会话」和历史面板里「回退这 N 步」都是真正的服务端写(`resetAgent`
+/ `rollback` + `reconcile()`)，只锁 `Composer` 挡不住它们，所以 `inert` 落在
+`chat-panel.tsx` 的 `<section className="col-chat">` 根上，聊天历史本身在加载期间也随之
+不可点——这是拿到项目 owner 认可的取舍。
 
 ### 3.6 失败路径
 

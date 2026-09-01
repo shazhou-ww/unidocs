@@ -35,7 +35,12 @@ export function OpenOverlay() {
           ))}
         </ol>
         <p className="open-file mono">{`${opening.name} · ${formatBytes(opening.bytes)}`}</p>
-        <p className="open-phase">{PHASES[at].running}</p>
+        {/* `at` is -1 only if `opening.phase` is not one of PHASES' four ids —
+            unreachable through any typed caller today, but a throw here would
+            land inside a React render and blank the WHOLE app during exactly
+            the operation this overlay exists to reassure the user about. Fall
+            back to the first phase rather than let that happen. */}
+        <p className="open-phase">{(PHASES[at] ?? PHASES[0]).running}</p>
       </div>
     </div>
   );
