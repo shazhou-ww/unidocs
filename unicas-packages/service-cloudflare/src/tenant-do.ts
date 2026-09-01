@@ -1,18 +1,18 @@
 /**
- * Tenant CAS Durable Object — per-`(stackId, tenantId)` command queue.
+ * Tenant CAS Durable Object — per-`(stackId, tenantId)` mutation coordinator.
  *
- * All commands for one tenant are serialized here (single-threaded DO): a
- * Root Ref command, GC, or lease for the same tenant cannot race an in-flight
- * update. Root Refs commands are canonicalized and forwarded ONE way to the
- * `(stackId, refDomain)` domain DO; the domain DO never calls back, so lock
- * ordering cannot cycle. Node storage operations (lease, read, metadata,
- * usage, GC) run here against the stack-scoped stores, so a lease claim can
- * never race a GC deletion decision.
+ * Short begin/finalize, Root Ref, and GC mutations use an explicit in-instance
+ * gate. Canonical request bodies stream to R2 outside that gate, so unrelated
+ * uploads and reads do not queue behind a slow body. An upload reservation is
+ * the durable GC fence across that unlocked interval. Root Ref commands flow
+ * ONE way to the `(stackId, refDomain)` domain DO, so lock ordering cannot
+ * cycle.
  */
 
 import { CanonicalNodeContentType } from "@unicas/codec";
 import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/workers-types";
 import {
+  type CanonicalNodeUploadPlan,
   collectExpiredUnreferencedNodes,
   DEFAULT_GC_MAX_NODES,
   NodeOpError,
@@ -23,9 +23,11 @@ import {
 } from "@unicas/service";
 import { canonicalComposite } from "./do-names.js";
 import {
+  beginCanonicalNodeLease,
+  finalizeCanonicalNodeLease,
   leaseReadyNode,
-  leaseCanonicalNode,
   parseLeaseDuration,
+  uploadCanonicalNode,
 } from "./nodes.js";
 import { CloudflareNodeGcRepository } from "./node-gc.js";
 import { CloudflareNodeReadRepository } from "./node-read.js";
@@ -41,8 +43,19 @@ export interface TenantCasDoEnv {
   CAS_DOMAIN_DO: DurableObjectNamespace;
 }
 
+type UploadOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: unknown };
+
+interface ActiveUpload {
+  readonly completion: Promise<UploadOutcome>;
+  readonly settle: (outcome: UploadOutcome) => void;
+}
+
 export class CasDurableObject {
   readonly #env: TenantCasDoEnv;
+  #mutationTail: Promise<void> = Promise.resolve();
+  readonly #activeUploads = new Map<string, ActiveUpload>();
 
   constructor(_state: DurableObjectState, env: TenantCasDoEnv) {
     this.#env = env;
@@ -65,7 +78,7 @@ export class CasDurableObject {
     try {
       let response: Response;
       if (url.pathname === "/updateRootRefs" && request.method === "POST") {
-        response = await this.#forwardRootRefs(request, stackId, tenantId);
+        response = await this.#withMutation(() => this.#forwardRootRefs(request, stackId, tenantId));
       } else if (url.pathname === "/lease" && request.method === "POST") {
         response = jsonResponse(await this.#handleLease(request, store));
       } else if (url.pathname === "/read" && request.method === "GET") {
@@ -95,9 +108,10 @@ export class CasDurableObject {
           { status: error.status, headers: error.headers },
         ));
       }
+      console.error("Unexpected tenant CAS operation failure", error);
       return timing.decorate(Response.json(
-        { error: RootRefsErrorCodes.INVALID_REQUEST, message: "tenant CAS operation failed" },
-        { status: 400 },
+        { error: NodeOpErrorCodes.STORAGE, message: "tenant CAS operation failed" },
+        { status: 503 },
       ));
     }
   }
@@ -120,32 +134,88 @@ export class CasDurableObject {
       if (declaredLength === undefined) {
         throw new NodeOpError(411, NodeOpErrorCodes.INVALID_REQUEST, "Content-Length is required");
       }
-      if (typeof FixedLengthStream === "undefined") {
-        return leaseCanonicalNode(store, {
-          hash,
-          leaseDurationMs,
-          body: request.body,
-          declaredLength,
-        });
-      }
-      const fixed = new FixedLengthStream(declaredLength);
-      const pumping = request.body.pipeTo(fixed.writable).catch(() => undefined);
+      const uploadKey = `${store.stackId}\0${store.tenantId}\0${hash}`;
+      let admission:
+        | { readonly kind: "ready"; readonly result: unknown }
+        | { readonly kind: "join"; readonly active: ActiveUpload }
+        | {
+          readonly kind: "upload";
+          readonly plan: CanonicalNodeUploadPlan;
+          readonly active: ActiveUpload;
+        };
       try {
-        return await leaseCanonicalNode(store, {
-          hash,
-          leaseDurationMs,
-          body: fixed.readable,
-          declaredLength,
+        admission = await this.#withMutation(async () => {
+          const active = this.#activeUploads.get(uploadKey);
+          if (active !== undefined) return { kind: "join", active };
+          const begin = await beginCanonicalNodeLease(store, {
+            hash,
+            leaseDurationMs,
+            declaredLength,
+          });
+          if (begin.kind === "ready") return begin;
+          const newActive = deferredUpload();
+          this.#activeUploads.set(uploadKey, newActive);
+          return { kind: "upload", plan: begin.plan, active: newActive };
         });
+      } catch (error) {
+        cancelBody(request.body, "Canonical upload rejected");
+        throw error;
+      }
+
+      if (admission.kind === "ready") {
+        cancelBody(request.body, "Node is already ready");
+        return admission.result;
+      }
+      if (admission.kind === "join") {
+        cancelBody(request.body, "Identical node upload is already in progress");
+        const outcome = await admission.active.completion;
+        if (!outcome.ok) throw outcome.error;
+        return this.#withMutation(() => leaseReadyNode(store, { hash, leaseDurationMs }));
+      }
+
+      try {
+        await this.#streamCanonicalUpload(store, admission.plan, request.body, declaredLength);
+        const result = await this.#withMutation(() => finalizeCanonicalNodeLease(store, admission.plan));
+        admission.active.settle({ ok: true });
+        return result;
+      } catch (error) {
+        admission.active.settle({ ok: false, error });
+        throw error;
       } finally {
-        await pumping;
+        if (this.#activeUploads.get(uploadKey) === admission.active) {
+          this.#activeUploads.delete(uploadKey);
+        }
       }
     }
     await request.body?.cancel("Bodyless lease");
-    return leaseReadyNode(store, {
+    return this.#withMutation(() => leaseReadyNode(store, {
       hash,
       leaseDurationMs,
-    });
+    }));
+  }
+
+  async #streamCanonicalUpload(
+    store: Parameters<typeof leaseReadyNode>[0],
+    plan: CanonicalNodeUploadPlan,
+    body: ReadableStream<Uint8Array>,
+    declaredLength: number,
+  ): Promise<void> {
+    if (typeof FixedLengthStream === "undefined") {
+      await uploadCanonicalNode(store, plan, body);
+      return;
+    }
+    const fixed = new FixedLengthStream(declaredLength);
+    const abort = new AbortController();
+    const pumping = body.pipeTo(fixed.writable, { signal: abort.signal });
+    const uploading = uploadCanonicalNode(store, plan, fixed.readable);
+    try {
+      await uploading;
+      await pumping;
+    } catch (error) {
+      abort.abort(error);
+      await Promise.allSettled([uploading, pumping]);
+      throw error;
+    }
   }
 
   async #handleRead(request: Request, store: Parameters<typeof leaseReadyNode>[0]): Promise<Response> {
@@ -194,11 +264,25 @@ export class CasDurableObject {
     if (!Number.isSafeInteger(maxNodes) || maxNodes <= 0) {
       throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "maxNodes must be a positive integer");
     }
-    return collectExpiredUnreferencedNodes({
+    return this.#withMutation(() => collectExpiredUnreferencedNodes({
       repository: new CloudflareNodeGcRepository(store.db, store.bucket),
       scope: { stackId: store.stackId, tenantId: store.tenantId },
       maxNodes,
+    }));
+  }
+
+  async #withMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.#mutationTail;
+    let release!: () => void;
+    this.#mutationTail = new Promise<void>((resolve) => {
+      release = resolve;
     });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   /** Canonicalize the caller update and forward one command to the domain DO. */
@@ -241,6 +325,18 @@ export class CasDurableObject {
     // Response types disagree structurally; the runtime value is the same.
     return response as unknown as Response;
   }
+}
+
+function deferredUpload(): ActiveUpload {
+  let settle!: (outcome: UploadOutcome) => void;
+  const completion = new Promise<UploadOutcome>((resolve) => {
+    settle = resolve;
+  });
+  return { completion, settle };
+}
+
+function cancelBody(body: ReadableStream<Uint8Array>, reason: string): void {
+  void body.cancel(reason).catch(() => undefined);
 }
 
 function jsonResponse(value: unknown): Response {

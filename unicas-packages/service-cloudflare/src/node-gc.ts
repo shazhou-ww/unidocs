@@ -10,15 +10,31 @@ export class CloudflareNodeGcRepository implements NodeGcRepository {
     const eligible = await this.db.prepare(
       `SELECT hash FROM cas_nodes
        WHERE stack_id = ? AND tenant_id = ? AND child_ref_count = 0
-         AND root_ref_count = 0 AND lease_expires_at <= ? LIMIT ?`,
-    ).bind(scope.stackId, scope.tenantId, expiresAtOrBefore, maxNodes).all<{ hash: string }>();
+         AND root_ref_count = 0 AND lease_expires_at <= ?
+         AND NOT EXISTS (
+           SELECT 1 FROM cas_upload_reservations AS reservation
+           WHERE reservation.stack_id = cas_nodes.stack_id
+             AND reservation.tenant_id = cas_nodes.tenant_id
+             AND reservation.hash = cas_nodes.hash
+             AND reservation.expires_at > ?
+         )
+       LIMIT ?`,
+    ).bind(scope.stackId, scope.tenantId, expiresAtOrBefore, expiresAtOrBefore, maxNodes).all<{ hash: string }>();
     return eligible.results.map(({ hash }) => ({ hash }));
   }
 
   async readStillExpiredUnreferenced(scope: NodeGcScope, hash: string, expiresAtOrBefore: number): Promise<NodeGcDeletion | null> {
     const fresh = await this.db.prepare(
-      "SELECT content_size, child_ref_count, root_ref_count, lease_expires_at FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-    ).bind(scope.stackId, scope.tenantId, hash).first<{
+      `SELECT content_size, child_ref_count, root_ref_count, lease_expires_at FROM cas_nodes
+       WHERE stack_id = ? AND tenant_id = ? AND hash = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM cas_upload_reservations AS reservation
+           WHERE reservation.stack_id = cas_nodes.stack_id
+             AND reservation.tenant_id = cas_nodes.tenant_id
+             AND reservation.hash = cas_nodes.hash
+             AND reservation.expires_at > ?
+         )`,
+    ).bind(scope.stackId, scope.tenantId, hash, expiresAtOrBefore).first<{
       content_size: number; child_ref_count: number; root_ref_count: number; lease_expires_at: number;
     }>();
     if (!fresh || fresh.child_ref_count > 0 || fresh.root_ref_count > 0 || fresh.lease_expires_at > expiresAtOrBefore) return null;

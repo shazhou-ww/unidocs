@@ -30,7 +30,7 @@ class MemoryNodeLeaseRepository implements NodeLeaseRepository, CanonicalNodeLea
   canonicalLease: CanonicalNodeLeaseRecord | null = null;
   reservation: CanonicalUploadReservation | undefined;
   uploaded = false;
-  discarded = false;
+  readyAfterUpload = false;
   uploadError: Error | undefined;
   committed: UploadedCanonicalNodeCommit | undefined;
 
@@ -77,17 +77,14 @@ class MemoryNodeLeaseRepository implements NodeLeaseRepository, CanonicalNodeLea
 
   async putCanonicalObject(
     _scope: NodeLeaseScope,
-    _hash: string,
+    hash: string,
     body: ReadableStream<Uint8Array>,
   ) {
     if (this.uploadError) throw this.uploadError;
     this.uploaded = true;
     const bytes = new Uint8Array(await new Response(body).arrayBuffer());
     this.canonical = bytes;
-  }
-
-  async discardCanonicalUpload(_scope: NodeLeaseScope, _hash: string) {
-    this.discarded = true;
+    if (this.readyAfterUpload) this.ready.add(hash);
   }
 
   async commitUploadedCanonicalNode(
@@ -253,6 +250,36 @@ describe("bodyless node lease service kernel", () => {
 });
 
 describe("streaming node lease service kernel", () => {
+  test("ready hits renew without consuming the upload body", async () => {
+    const repository = new MemoryNodeLeaseRepository();
+    const hash = "a".repeat(64);
+    repository.canonicalLease = {
+      contentSize: 1,
+      contentType: "text/plain",
+      leaseStartedAt: 50,
+      leaseExpiresAt: 200,
+    };
+    repository.ready.add(hash);
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expect(leaseCanonicalNode({
+      repository,
+      scope: SCOPE,
+      hash,
+      leaseDurationMs: DURATION,
+      body,
+      declaredLength: 100,
+      now: () => 100,
+    })).resolves.toMatchObject({ hash, ready: true, leaseExpiresAt: 60_100 });
+    expect(cancelled).toBe(true);
+    expect(repository.uploaded).toBe(false);
+  });
+
   test("requires a bounded canonical length before uploading", async () => {
     const repository = new MemoryNodeLeaseRepository();
     const body = streamOf(new Uint8Array([1]));
@@ -306,7 +333,7 @@ describe("streaming node lease service kernel", () => {
     });
   });
 
-  test("discards failed uploads and rejected immutable metadata", async () => {
+  test("keeps the shared reservation after failed uploads and rejected metadata", async () => {
     const repository = new MemoryNodeLeaseRepository();
     repository.uploadError = new Error("digest mismatch");
     await expect(leaseCanonicalNode({
@@ -317,7 +344,7 @@ describe("streaming node lease service kernel", () => {
       body: streamOf(new Uint8Array([1])),
       declaredLength: 1,
     })).rejects.toMatchObject({ status: 400, code: "INVALID_REQUEST" });
-    expect(repository.discarded).toBe(true);
+    expect(repository.reservation).toMatchObject({ hash: "a".repeat(64), storedBytes: 1 });
 
     const content = new TextEncoder().encode("payload");
     const contentType = "text/plain";
@@ -327,13 +354,13 @@ describe("streaming node lease service kernel", () => {
       content,
     );
     repository.uploadError = undefined;
-    repository.discarded = false;
     repository.canonicalLease = {
       contentSize: content.length + 1,
       contentType,
       leaseStartedAt: 1,
       leaseExpiresAt: 2,
     };
+    repository.readyAfterUpload = true;
     await expect(leaseCanonicalNode({
       repository,
       scope: SCOPE,
@@ -342,7 +369,10 @@ describe("streaming node lease service kernel", () => {
       body: streamOf(canonical),
       declaredLength: canonical.length,
     })).rejects.toMatchObject({ status: 409, code: "NODE_CONFLICT" });
-    expect(repository.discarded).toBe(true);
+    expect(repository.reservation).toMatchObject({
+      hash: "a".repeat(64),
+      storedBytes: canonical.length,
+    });
   });
 });
 

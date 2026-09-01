@@ -42,7 +42,7 @@ audit dimension.
   claims and path tenant must agree before storage access.
 
 A CAS Durable Object named from a canonical `(stackId, tenantId)` composite
-serializes mutable tenant operations:
+coordinates mutable tenant operations through a short explicit mutation gate:
 
 - lease claims and extensions;
 - upload completion;
@@ -50,9 +50,12 @@ serializes mutable tenant operations:
 - root-reference count updates;
 - garbage collection.
 
-D1 and R2 remain the durable stores. The Durable Object is the concurrency
-boundary that prevents a lease claim from racing a GC deletion decision. It
-does not replace stack-aware keys in the shared D1 and R2 bindings.
+D1 and R2 remain the durable stores. Canonical request bodies stream to R2
+outside the mutation gate; only lease begin/finalize, Root Ref updates, and GC
+mutations queue. Active upload reservations fence GC during that unlocked
+interval. Content, metadata, and usage reads do not enter the mutation gate.
+The Durable Object does not replace stack-aware keys in the shared D1 and R2
+bindings.
 
 ## 3. Node model
 
@@ -198,14 +201,15 @@ export interface CasNodeDescriptor {
 }
 ```
 
-Creation proceeds inside the tenant CAS queue:
+Creation uses two short tenant mutation sections around an unlocked upload:
 
 1. Validate descriptor syntax and canonical constraints from URL and headers. Do not read the body yet.
 2. If the D1 row exists and R2 content is present, require immutable metadata to match, cancel the body, extend the lease, and return ready.
-3. If inserting a row, verify every child is ready.
-4. Read the body. Verify content length and the complete canonical SHA-256 digest.
-5. Store validated content at the canonical R2 key (idempotent).
-6. In one D1 transaction:
+3. Upsert an expiring upload reservation, then release the mutation gate.
+4. Stream the body to R2 and verify content length and the complete canonical SHA-256 digest without holding the gate.
+5. Re-enter the mutation gate and re-read node readiness and immutable metadata.
+6. If inserting a row, verify every child is ready.
+7. In one D1 transaction:
    - insert immutable metadata and default mutable state, or update the lease on a not-ready row;
    - insert ordered child edges on first insert;
    - increment each child's `childRefCount` once per occurrence on first insert;
@@ -229,7 +233,7 @@ GC runs through the same tenant CAS queue as lease and reference operations.
 
 For each eligible node:
 
-1. Re-check eligibility while holding the per-tenant queue.
+1. Exclude nodes with an unexpired upload reservation and re-check eligibility while holding the per-tenant mutation gate.
 2. Delete the R2 object. R2 deletion is idempotent; missing content is allowed.
 3. In one D1 transaction:
    - re-check both reference counts and lease expiry;

@@ -47,6 +47,57 @@ function assert(condition, message) {
   console.log(`  ok: ${message}`);
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function pausedBody(bytes) {
+  const release = deferred();
+  const midpoint = Math.max(1, Math.floor(bytes.length / 2));
+  let sentPrefix = false;
+  return {
+    body: new ReadableStream({
+      async pull(controller) {
+        if (!sentPrefix) {
+          sentPrefix = true;
+          controller.enqueue(bytes.subarray(0, midpoint));
+          await release.promise;
+          controller.enqueue(bytes.subarray(midpoint));
+          controller.close();
+        }
+      },
+    }),
+    release: release.resolve,
+  };
+}
+
+async function waitFor(predicate, message, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for ${message}`);
+}
+
+async function withTimeout(promise, message, timeoutMs = 5_000) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${message}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Build the canonical node bytes and their CAS hash for upload. */
 async function nodeOf(content, refs = []) {
   const contentBytes = new TextEncoder().encode(content);
@@ -94,6 +145,53 @@ async function main() {
     const internal = await fetch(`${BASE}/_internal/health`);
     assert(internal.status === 404, "edge never forwards /_internal/health");
   }
+
+  // Hold one request body mid-stream. Its reservation proves lease begin has
+  // completed; usage and a different-hash lease must still finish before the
+  // first body is released.
+  const slow = await nodeOf("slow-upload-concurrency-probe");
+  const paused = pausedBody(slow.body);
+  const slowLease = fetch(`${BASE}${prefix}/cas/nodes/${slow.hash}/lease`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${writer}`,
+      "Content-Type": NODE_CONTENT_TYPE,
+      "Content-Length": String(slow.body.length),
+    },
+    body: paused.body,
+    duplex: "half",
+  });
+  await waitFor(async () => {
+    const response = await fetch(`${BASE}${prefix}/cas/usage`, {
+      headers: { Authorization: `Bearer ${usageReader}` },
+    });
+    if (!response.ok) return false;
+    const usage = await response.json();
+    return usage.reservedBytes >= slow.body.length;
+  }, "slow upload reservation");
+  assert(true, "usage bypasses an in-flight upload");
+
+  const concurrent = await nodeOf("concurrent-upload-probe");
+  let concurrentResult;
+  let concurrentError;
+  try {
+    concurrentResult = await withTimeout(fetch(
+      `${BASE}${prefix}/cas/nodes/${concurrent.hash}/lease`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${writer}`, "Content-Type": NODE_CONTENT_TYPE },
+        body: concurrent.body,
+      },
+    ), "concurrent lease while another body is paused");
+  } catch (error) {
+    concurrentError = error;
+  } finally {
+    paused.release();
+  }
+  const slowResult = await slowLease;
+  if (concurrentError) throw concurrentError;
+  assert(concurrentResult.status === 200, `concurrent lease -> ${concurrentResult.status}`);
+  assert(slowResult.status === 200, `paused lease -> ${slowResult.status}`);
 
   // Lease a parent with a child.
   const child = await nodeOf("smoke-child");
@@ -147,7 +245,7 @@ async function main() {
 
   res = await fetch(`${BASE}${prefix}/cas/usage`, { headers: { Authorization: `Bearer ${usageReader}` } });
   const usageBody = await res.json();
-  assert(res.status === 200 && usageBody.nodeCount === 2, `usage nodeCount -> ${usageBody.nodeCount}`);
+  assert(res.status === 200 && usageBody.nodeCount === 4, `usage nodeCount -> ${usageBody.nodeCount}`);
 
   res = await fetch(`${BASE}${prefix}/cas/gc`, {
     method: "POST",

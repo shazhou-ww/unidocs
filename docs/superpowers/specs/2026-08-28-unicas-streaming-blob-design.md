@@ -332,21 +332,21 @@ newExpiry = max(existingExpiry, now + grantedDuration)
 
 1. 完成认证和路由验证，不读取 body；
 2. 若 D1 + R2 已 ready，取消请求 body，按 6.3 续租并立即返回；
-3. 否则从流中读取恰好 24-byte header；
-4. 验证 signature、version、flags、reserved、长度字段和总长上限；
-5. 继续读取有界的 content-type 和 child-ref prefix；
-6. 在读取 ref 区前要求 `refCount <= MAX_NODE_REFS`，使用 checked arithmetic 计算总长；
-7. 对 content type raw bytes 验证 printable ASCII，或使用 fatal UTF-8 decoder；
-8. 验证每个 ref，并要求所有 child ready；
-9. 如果已有 not-ready D1 row，要求 prefix metadata 与现有 row/ordered edges 完全一致；
-10. 为 canonical physical size 创建或复用同 hash 的 quota reservation；
-11. 将已经消费的小前缀重新接到剩余 request stream 前面；
-12. 通过计数 stream 把完整 canonical bytes 写入 R2；
-13. 调用 `R2Bucket.put(key, stream, { sha256: expectedHashBytes })`；
-14. R2 成功后按 create/repair 两条互斥路径提交 D1；
+3. 在 tenant mutation gate 内为 canonical physical size 创建或刷新同 hash 的 quota reservation；
+4. 释放 gate，通过计数 stream 把完整 canonical bytes 写入 R2；
+5. 调用 `R2Bucket.put(key, stream, { sha256: expectedHashBytes })`；
+6. R2 成功后重新进入 gate，并重新读取 D1/R2 当前状态；
+7. 从 R2 读取恰好 24-byte header；
+8. 验证 signature、version、flags、reserved、长度字段和总长上限；
+9. 继续读取有界的 content-type 和 child-ref prefix；
+10. 在读取 ref 区前要求 `refCount <= MAX_NODE_REFS`，使用 checked arithmetic 计算总长；
+11. 对 content type raw bytes 验证 printable ASCII，或使用 fatal UTF-8 decoder；
+12. 验证每个 ref，并要求所有 child ready；
+13. 如果已有 not-ready D1 row，要求 prefix metadata 与现有 row/ordered edges 完全一致；
+14. 按 create/repair/ready-renew 互斥路径提交 D1 并清除 reservation；
 15. 返回统一 `CasLeaseResult`。
 
-步骤 11 只缓存以下有界数据：
+步骤 7–11 只读取以下有界数据：
 
 ```text
 24 + 1024 + 128 * 32 = 5,144 bytes
@@ -354,12 +354,13 @@ newExpiry = max(existingExpiry, now + grantedDuration)
 
 不存在 `request.arrayBuffer()`、完整 node 拼接或 Worker 自己的完整 SHA-256。
 
-步骤 14 的两条路径不得混用：
+步骤 14 的三条路径不得混用：
 
 - **absent-row create/adopt**：插入 node、ordered edges，按 occurrence 增加 child counts，
   建立 lease，并删除 reservation；
 - **existing-row repair**：R2 缺失但 D1 metadata/edges 已存在时，只恢复 R2 object、更新
   lease并删除 reservation；绝不重复插 edge，也绝不再次增加 child counts。
+- **ready renew**：另一个同 hash 请求已经完成提交时，只按新请求 duration 单调续租。
 
 如果 existing row 与上传 prefix 不一致，这是持久状态损坏，返回 integrity error 并保留
 原 row 供运维修复，不能当作一个新的 node 覆盖。
@@ -804,8 +805,9 @@ chunked blob。
 
 ### 11.1 相同 node 并发上传
 
-同一 `(stackId, tenantId)` 的 tenant DO 仍序列化状态改变。第一个请求完成 R2 + D1；
-后续请求进入 ready-hit，取消 body 并续租。
+同一 `(stackId, tenantId, hash)` 的在飞上传在 tenant DO 实例内合并。第一个请求在 gate
+外完成 R2 streaming、在 gate 内提交 D1；后续请求取消自己的 body，等待第一个请求，
+然后进入 ready-hit 并按自己的 duration 续租。不同 hash 的 R2 streaming 可以并发。
 
 R2 key 的不可变性来自 hash：任何写到同一 key 且通过预期 SHA-256 的 body 必然相同。
 因此 D1 失败重试时重复 `put` 是安全的。
@@ -813,7 +815,8 @@ R2 key 的不可变性来自 hash：任何写到同一 key 且通过预期 SHA-2
 ### 11.2 不同 node 并发上传
 
 SDK 可以并发发送 chunk，但不能无限并发。默认 3，允许平台实现降低，不允许业务提高到
-无界。tenant DO 不应把整个 blob 当成一项串行工作；每个 node lease 是独立请求。
+无界。tenant DO 不应把 request body 传输放进 mutation gate；每个不同 hash 的 node
+lease 是独立的并发 stream，只有 begin/finalize 状态改变短暂排队。
 
 ### 11.3 超时重试
 
@@ -835,6 +838,7 @@ GC eligibility 不变：
 childRefCount == 0
 AND rootRefCount == 0
 AND leaseExpiresAt <= now
+AND no unexpired upload reservation
 ```
 
 chunk tree 不需要特殊递归删除。删除一个 index node 时，普通 edge 事务减少直接
@@ -851,7 +855,7 @@ children 的 `childRefCount`；后续 GC pass 逐层回收新近归零的 descen
 - R2 bucket 保持 private，不签发 presigned URL；
 - hash 相同不跨 tenant 去重或授权；
 - 在读取可变长度 prefix 前验证每个长度和乘法不溢出；
-- child refs 在 R2 put 前必须 ready，避免持久化悬空 DAG；
+- child refs 在 D1 node/edge commit 前必须 ready；R2 中先发布的校验通过对象只作为可恢复 orphan，不构成 DAG；
 - 单 tenant 同时进行的 node uploads 有硬上限；
 - tenant physical-byte quota 在 R2 put 前预检，在 D1 commit 时复核；
 - 受管 manifest decoder 限制 tree depth、visited nodes 和累计 size；
@@ -943,6 +947,7 @@ allocation、峰值 isolate memory 稳定、R2 checksum mismatch 不发布 objec
 - R2 成功后注入 D1 失败，重试可采用 orphan；
 - existing-not-ready repair 不重复 edges 或 child counts；
 - reservation 覆盖 R2-before-D1 窗口，失败重试不能绕过 quota；
+- 活跃 reservation 阻止 GC 在 unlocked streaming interval 删除 repair 中的 node；
 - orphan scanner 与 adoption/commit 竞态时只能由 tenant DO 决定删除；
 - D1 成功响应丢失，重试走 ready-hit；
 - 两个相同 hash 并发上传只创建一组 edges/counts；

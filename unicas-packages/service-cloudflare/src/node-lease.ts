@@ -104,14 +104,6 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
     }
   }
 
-  async discardCanonicalUpload(scope: NodeLeaseScope, hash: string): Promise<void> {
-    await timeOperation(this.timing, "cas_discard", () => Promise.all([
-      this.bucket.delete(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash)),
-      this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
-        .bind(scope.stackId, scope.tenantId, hash).run(),
-    ]).then(() => undefined));
-  }
-
   async commitUploadedCanonicalNode(scope: NodeLeaseScope, plan: UploadedCanonicalNodeCommit): Promise<void> {
     if (plan.kind === "existing") {
       await timeOperation(this.timing, "cas_d1_commit", () => this.db.batch([

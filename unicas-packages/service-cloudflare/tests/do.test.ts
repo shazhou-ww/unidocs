@@ -210,6 +210,48 @@ describe("CasDurableObject (tenant DO)", () => {
     expect(response.status).toBe(400);
     expect(forwarded).toBe(false);
   });
+
+  test("read, metadata, and usage bypass a blocked mutation gate", async () => {
+    await createStore();
+    const forwarded = deferred<void>();
+    const release = deferred<void>();
+    const stubNamespace = {
+      idFromName: () => ({ name: "domain" }),
+      get: () => ({
+        fetch: async () => {
+          forwarded.resolve();
+          await release.promise;
+          return new Response(JSON.stringify({ success: true, idempotent: false, revision: 1 }));
+        },
+      }),
+    };
+    const doInstance = new CasDurableObject(
+      {} as DurableObjectState,
+      { CAS_DB: db!, CAS_R2: bucket!, CAS_DOMAIN_DO: stubNamespace as unknown as TenantCasDoEnv["CAS_DOMAIN_DO"] },
+    );
+    const mutation = doInstance.fetch(new Request("https://tenant.internal/updateRootRefs", {
+      method: "POST",
+      headers: {
+        "X-CAS-Stack-Id": STACK,
+        "X-CAS-Tenant-Id": TENANT,
+        "X-CAS-Ref-Domain": DOMAIN,
+      },
+      body: JSON.stringify({ requestId: "blocked", changes: { [H1]: 1 } }),
+    }));
+    await forwarded.promise;
+
+    const [read, metadata, usage] = await Promise.all([
+      doInstance.fetch(tenantRequest("/read", "GET", { "X-CAS-Hash": H1 })),
+      doInstance.fetch(tenantRequest("/metadata", "GET", { "X-CAS-Hash": H1 })),
+      doInstance.fetch(tenantRequest("/usage", "GET")),
+    ]);
+    expect(read.status).toBe(404);
+    expect(metadata.status).toBe(404);
+    expect(usage.status).toBe(200);
+
+    release.resolve();
+    expect((await mutation).status).toBe(200);
+  });
 });
 
 async function digestOf(content: string, contentType = "text/plain", refs: readonly string[] = []): Promise<string> {
@@ -246,6 +288,45 @@ function nodeHostedStreamBucket(): R2Bucket {
       return typeof member === "function" ? member.bind(target) : member;
     },
   });
+}
+
+function blockingUploadBucket(): {
+  bucket: R2Bucket;
+  putCount: () => number;
+  waitForPut: (ordinal: number) => Promise<void>;
+  release: () => void;
+} {
+  const target = nodeHostedStreamBucket();
+  const started = [deferred<void>(), deferred<void>()];
+  const released = deferred<void>();
+  let putCount = 0;
+  return {
+    bucket: new Proxy(target, {
+      get(_target, property) {
+        if (property === "put") {
+          return async (...args: Parameters<R2Bucket["put"]>) => {
+            putCount += 1;
+            started[putCount - 1]?.resolve();
+            await released.promise;
+            return target.put(...args);
+          };
+        }
+        const member = Reflect.get(target, property);
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    }),
+    putCount: () => putCount,
+    waitForPut: (ordinal) => started[ordinal - 1]!.promise,
+    release: () => released.resolve(),
+  };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function store(): NodeStore {
@@ -345,7 +426,7 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
     expect(unsatisfiable.headers.get("Content-Range")).toBe("bytes */10");
   });
 
-  test("unified lease digest failures leave no object or reservation", async () => {
+  test("unified lease digest failures leave no object but retain the recovery fence", async () => {
     await createStore();
     const content = new TextEncoder().encode("wrong hash");
     const contentType = "text/plain";
@@ -366,7 +447,80 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
     const reservation = await db!.prepare(
       "SELECT COUNT(*) AS count FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
     ).bind(STACK, TENANT, H1).first<{ count: number }>();
-    expect(reservation?.count).toBe(0);
+    expect(reservation?.count).toBe(1);
+  });
+
+  test("different canonical uploads stream concurrently outside the mutation gate", async () => {
+    await createStore();
+    const firstContent = new TextEncoder().encode("first concurrent node");
+    const secondContent = new TextEncoder().encode("second concurrent node");
+    const firstCanonical = concatenateNodeBytes(
+      encodeHeader(firstContent.length, "text/plain", 0),
+      new TextEncoder().encode("text/plain"),
+      [],
+      firstContent,
+    );
+    const secondCanonical = concatenateNodeBytes(
+      encodeHeader(secondContent.length, "text/plain", 0),
+      new TextEncoder().encode("text/plain"),
+      [],
+      secondContent,
+    );
+    const firstHash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", firstCanonical)));
+    const secondHash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", secondCanonical)));
+    const controlled = blockingUploadBucket();
+    const doInstance = tenantDo(controlled.bucket);
+
+    const first = doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": firstHash,
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(firstCanonical.length),
+    }, firstCanonical));
+    await controlled.waitForPut(1);
+    const second = doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": secondHash,
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(secondCanonical.length),
+    }, secondCanonical));
+    await controlled.waitForPut(2);
+    expect(controlled.putCount()).toBe(2);
+
+    controlled.release();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+  });
+
+  test("same-hash canonical uploads share one in-flight R2 write", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("deduplicated concurrent node");
+    const canonical = concatenateNodeBytes(
+      encodeHeader(content.length, "text/plain", 0),
+      new TextEncoder().encode("text/plain"),
+      [],
+      content,
+    );
+    const hash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", canonical)));
+    const controlled = blockingUploadBucket();
+    const doInstance = tenantDo(controlled.bucket);
+    const request = () => tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonical.length),
+    }, canonical);
+
+    const first = doInstance.fetch(request());
+    await controlled.waitForPut(1);
+    const second = doInstance.fetch(request());
+    await Promise.resolve();
+    expect(controlled.putCount()).toBe(1);
+
+    controlled.release();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+    const rows = await db!.prepare(
+      "SELECT COUNT(*) AS count FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first<{ count: number }>();
+    expect(rows?.count).toBe(1);
   });
 
   test("no-body lease adopts a verified canonical R2 orphan", async () => {
@@ -575,6 +729,31 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
       const hash = await digestOf(content);
       expect(await bucket!.get(stackCanonicalNodeKey(STACK, TENANT, hash))).not.toBeNull();
     }
+  });
+
+  test("GC skips expired nodes fenced by an active upload reservation", async () => {
+    await createStore();
+    const hash = "d".repeat(64);
+    await db!.batch([
+      db!.prepare(
+        "INSERT INTO cas_nodes (stack_id, tenant_id, hash, content_size, content_type, lease_started_at, lease_expires_at, child_ref_count, root_ref_count) VALUES (?, ?, ?, 5, 'text/plain', 1, 1, 0, 0)",
+      ).bind(STACK, TENANT, hash),
+      db!.prepare(
+        "INSERT INTO cas_upload_reservations (stack_id, tenant_id, hash, stored_bytes, created_at, expires_at) VALUES (?, ?, ?, 5, 1, ?)",
+      ).bind(STACK, TENANT, hash, Date.now() + 60_000),
+    ]);
+    await bucket!.put(stackCanonicalNodeKey(STACK, TENANT, hash), new TextEncoder().encode("node!"));
+    const doInstance = tenantDo(nodeHostedStreamBucket());
+
+    const fenced = await doInstance.fetch(tenantRequest("/gc", "POST", {}, new TextEncoder().encode("{}")));
+    await expect(fenced.json()).resolves.toEqual({ examined: 0, deleted: 0, reclaimedContentBytes: 0 });
+    expect(await bucket!.head(stackCanonicalNodeKey(STACK, TENANT, hash))).not.toBeNull();
+
+    await db!.prepare(
+      "UPDATE cas_upload_reservations SET expires_at = 1 WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).run();
+    const expired = await doInstance.fetch(tenantRequest("/gc", "POST", {}, new TextEncoder().encode("{}")));
+    await expect(expired.json()).resolves.toMatchObject({ examined: 1, deleted: 1 });
   });
 
   test("GC decrements repeated child edges by their exact multiplicity", async () => {
