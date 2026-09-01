@@ -87,8 +87,9 @@
   |
   +- 扩边：rect 按 PAD_RATIO 外扩，与图层 bounds 求交 -> sendRect
   +- ctx.query(getLayerPixels {layerId, rect: sendRect, maxPixels})
-  |     +- Editor: renderRegion(孤立单层文档, sendRect)
-  |        只渲染这一块，内存正比于矩形而非整层
+  |     +- Editor: renderLayer(doc, layerId, { rect: sendRect })
+  |        -> renderRegionDirect(孤立单层文档, sendRect)
+  |        只把落在区域里的东西合成进一个区域大小的缓冲，内存正比于矩形
   +- editor.edit(sendRect 的像素, instruction)      <- 适配器一行不改
   +- 在 sendRect 尺寸上 softenMask -> applyCoverageToAlpha
   +- 裁到 rect
@@ -96,8 +97,18 @@
   +- op: generative_fill { layer.bounds = rect, parentId, index+1 }
 ```
 
-`renderRegion` 不是新机制：`renderLayer` 本身就是
-`renderRegion(孤立单层文档, layer.bounds, ctx)`。
+**这里要用 `renderRegionDirect`（`render/region.ts:56`），不是 `renderRegion`。**
+两者逐字节相同，但 `renderRegion` 的第一行是 `renderCached(doc, ctx)` —— 它**先渲染
+整张画布再裁**，对 3556x2000 的画布就是 28 MB，区域再小也省不掉。
+`renderRegionDirect` 才是"只把落在区域里的东西合成进区域大小的缓冲、并跳过影响
+范围不相交的图层"的原语，它自己的注释就写着这是"省算力的原语"。
+
+（初稿在这里写的是 `renderRegion`，断言了一个没读过实现的机制。`DocRenderState.region`
+的非平铺分支用的也是 `renderRegionDirect`，可作旁证。）
+
+**实现方式**：给 `renderLayer` 加一个可选的 `rect`，而不是在 `queries.ts` 里重写
+孤立逻辑 —— "adjustment 图层不可孤立"这条规则只该有一处。给了 rect 就走
+`renderRegionDirect`，不给就保持今天的 `renderRegion` 路径逐字节不变。
 
 **关键性质**：新图层的 bounds 就是 rect，所以**矩形之外原层完全不被覆盖**。
 这是几何事实，不依赖任何阈值 —— 这正是"丝毫不差"能成立的地方。
