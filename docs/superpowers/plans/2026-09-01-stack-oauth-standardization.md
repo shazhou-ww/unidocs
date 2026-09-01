@@ -147,12 +147,12 @@ not the canonical protected-resource discovery endpoint.
 
 ### Registration and control proof
 
-The new registration request accepts only:
+The new registration request accepts only the canonical `issuer`.
 
-- canonical `issuer`;
-- expected `audience`/resource identifier;
-- capability maximum lifetime;
-- optional explicit metadata URL for documented non-standard providers.
+UniCAS derives the audience as `{CAS_PUBLIC_ORIGIN}/stacks/{stackId}` and fixes
+the maximum capability lifetime as service policy. Neither value is selected
+by the Stack administrator. Both remain visible in inspection and issuer
+responses and are bound into the signed activation challenge.
 
 It does not accept `jwks_uri` or JWK material.
 
@@ -160,7 +160,8 @@ Registration has two steps:
 
 1. **Inspect:** UniCAS fetches metadata and JWKS through a platform discovery
    port, validates compatibility, and returns a short-lived challenge bound to
-   `stackId`, canonical issuer, audience, metadata digest, nonce, and expiry.
+  `stackId`, canonical issuer, derived audience, fixed lifetime, metadata and
+  JWKS digests, nonce, and expiry.
 2. **Confirm:** the Stack operator signs the challenge with a private key whose
    public JWK is currently advertised by the discovered `jwks_uri`. UniCAS
    verifies that proof against the fetched JWKS and atomically activates the

@@ -25,24 +25,13 @@ async function oauthIssuerGet(ctx: CliContext, argv: string[]): Promise<void> {
 }
 
 async function oauthIssuerInspect(ctx: CliContext, argv: string[]): Promise<void> {
-  const { values, positionals } = parseArgs({
-    args: argv,
-    options: { "capability-max-lifetime-seconds": { type: "string" } },
-    allowPositionals: true,
-  });
-  const [stackId, issuer, audience] = positionals;
-  if (!stackId || !issuer || !audience) {
-    throw new Error("usage: unicas oauth-issuer inspect <stackId> <issuer> <audience> [--capability-max-lifetime-seconds N]");
-  }
-  const rawLifetime = values["capability-max-lifetime-seconds"];
-  if (rawLifetime !== undefined
-    && (!/^\d+$/.test(rawLifetime) || Number(rawLifetime) < 60 || Number(rawLifetime) > 604800)) {
-    throw new Error("--capability-max-lifetime-seconds must be an integer between 60 and 604800");
+  const { positionals } = parseArgs({ args: argv, options: {}, allowPositionals: true });
+  const [stackId, issuer] = positionals;
+  if (!stackId || !issuer || positionals.length !== 2) {
+    throw new Error("usage: unicas oauth-issuer inspect <stackId> <issuer>");
   }
   await withAdminClient(ctx, async (admin) => {
-    const body: { issuer: string; audience: string; capabilityMaxLifetimeSeconds?: number } = { issuer, audience };
-    if (rawLifetime !== undefined) body.capabilityMaxLifetimeSeconds = Number(rawLifetime);
-    const result = await admin.inspectOAuthIssuer({ stackId }, body);
+    const result = await admin.inspectOAuthIssuer({ stackId }, { issuer });
     printJson({ ...result.value, etag: result.etag });
   });
 }

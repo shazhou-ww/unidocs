@@ -64,6 +64,8 @@ export function validateAudience(value: unknown): string | null {
 
 /** Default per-stack capability signing cap (8 hours). */
 export const DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS = 8 * 60 * 60;
+/** Fixed cap for discovered Stack OAuth issuers; not administrator configurable. */
+export const OAUTH_CAPABILITY_MAX_LIFETIME_SECONDS = 30 * 60;
 /** Hard bounds for the per-stack cap; mirrors MaximumCapabilityLifetimeSeconds. */
 export const CAPABILITY_MAX_LIFETIME_SECONDS_MIN = 60;
 export const CAPABILITY_MAX_LIFETIME_SECONDS_MAX = 7 * 24 * 60 * 60;
@@ -77,6 +79,21 @@ export function validateCapabilityMaxLifetimeSeconds(value: unknown): string | n
     return `capabilityMaxLifetimeSeconds must be between ${CAPABILITY_MAX_LIFETIME_SECONDS_MIN} and ${CAPABILITY_MAX_LIFETIME_SECONDS_MAX}`;
   }
   return null;
+}
+
+/** Canonical OAuth resource/audience owned by this UniCAS deployment. */
+export function stackOAuthResource(publicOrigin: string, stackId: string): string {
+  let url: URL;
+  try {
+    url = new URL(publicOrigin);
+  } catch {
+    throw new TypeError("OAuth resource public origin must be an absolute URL");
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:")
+    || url.username || url.password || !url.hostname) {
+    throw new TypeError("OAuth resource public origin must be HTTP(S) without credentials");
+  }
+  return `${url.origin}/stacks/${encodeURIComponent(stackId)}`;
 }
 
 /** Email is display metadata; used only for invitation display constraints. */

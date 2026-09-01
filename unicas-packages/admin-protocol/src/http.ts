@@ -127,8 +127,6 @@ export interface CasAdminInspectOAuthIssuerRequest {
   readonly path: CasAdminStackPath;
   readonly body: {
     readonly issuer: string;
-    readonly audience: string;
-    readonly capabilityMaxLifetimeSeconds?: number;
   };
 }
 

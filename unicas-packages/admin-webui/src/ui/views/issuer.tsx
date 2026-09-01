@@ -14,7 +14,6 @@ export function IssuerView({ stackId }: { stackId: string }) {
   const [oauthIssuer, setOAuthIssuer] = useState<CasStackOAuthIssuer | null>(null);
   const [inspection, setInspection] = useState<CasOAuthIssuerInspection | null>(null);
   const [oauthIssuerUrl, setOAuthIssuerUrl] = useState("");
-  const [oauthAudience, setOAuthAudience] = useState("");
   const [activationProof, setActivationProof] = useState("");
   const [inspecting, setInspecting] = useState(false);
   const [activating, setActivating] = useState(false);
@@ -23,7 +22,6 @@ export function IssuerView({ stackId }: { stackId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [issuerIssuer, setIssuerIssuer] = useState("");
   const [issuerAudience, setIssuerAudience] = useState("");
-  const [maxLifetime, setMaxLifetime] = useState("");
   const [savingIssuer, setSavingIssuer] = useState(false);
   const [kid, setKid] = useState("");
   const [algorithm, setAlgorithm] = useState("ES256");
@@ -44,7 +42,6 @@ export function IssuerView({ stackId }: { stackId: string }) {
       setOAuthIssuer(oauthResult);
       if (oauthResult) {
         setOAuthIssuerUrl(oauthResult.issuer);
-        setOAuthAudience(oauthResult.audience);
       }
       const issuerResult = await api<CasStackIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/issuer`)
         .catch((caught) => {
@@ -55,9 +52,6 @@ export function IssuerView({ stackId }: { stackId: string }) {
       if (issuerResult) {
         setIssuerIssuer(issuerResult.issuer);
         setIssuerAudience(issuerResult.audience);
-        setMaxLifetime(issuerResult.capabilityMaxLifetimeSeconds
-          ? String(issuerResult.capabilityMaxLifetimeSeconds)
-          : "");
       }
       const keyResult = await api<{ keys: CasStackIssuerKey[] }>(`/admin/stacks/${encodeURIComponent(stackId)}/issuer/keys`);
       setKeys(keyResult.keys);
@@ -74,15 +68,10 @@ export function IssuerView({ stackId }: { stackId: string }) {
     setInspecting(true);
     setError(null);
     try {
-      const body: { issuer: string; audience: string; capabilityMaxLifetimeSeconds?: number } = {
-        issuer: oauthIssuerUrl.trim(),
-        audience: oauthAudience.trim(),
-      };
-      if (maxLifetime.trim().length > 0) body.capabilityMaxLifetimeSeconds = Number(maxLifetime);
       const result = await api<CasOAuthIssuerInspection>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer/inspections`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ issuer: oauthIssuerUrl.trim() }),
       });
       setInspection(result);
       setOAuthIssuer({ ...result, status: "pending", verifiedAt: null, lastRefreshAt: Date.now(), lastRefreshError: null });
@@ -120,9 +109,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
       const body: {
         issuer: string;
         audience: string;
-        capabilityMaxLifetimeSeconds?: number;
       } = { issuer: issuerIssuer.trim(), audience: issuerAudience.trim() };
-      if (maxLifetime.trim().length > 0) body.capabilityMaxLifetimeSeconds = Number(maxLifetime);
       const currentIssuer = typeof issuer === "object" && issuer !== null ? issuer : null;
       await api<CasStackIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/issuer`, {
         method: "PUT",
@@ -218,21 +205,16 @@ export function IssuerView({ stackId }: { stackId: string }) {
           UniCAS validates its metadata and JWKS, then requires a signed control challenge before activation.
         </p>
         {oauthIssuer ? (
-          <p className="hint">Status: <strong>{oauthIssuer.status}</strong> · Metadata: {oauthIssuer.metadataType} · Revision {oauthIssuer.revision}</p>
+          <p className="hint">
+            Status: <strong>{oauthIssuer.status}</strong> · Metadata: {oauthIssuer.metadataType} · Revision {oauthIssuer.revision}
+            <br />Resource audience: {oauthIssuer.audience} · Maximum capability lifetime: {oauthIssuer.capabilityMaxLifetimeSeconds}s
+          </p>
         ) : null}
         <div className="field-row">
           <label htmlFor="oauth-issuer-url">Issuer</label>
           <input id="oauth-issuer-url" value={oauthIssuerUrl} placeholder="https://authorization.example" onChange={(event) => setOAuthIssuerUrl(event.target.value)} />
         </div>
-        <div className="field-row">
-          <label htmlFor="oauth-issuer-audience">Audience</label>
-          <input id="oauth-issuer-audience" value={oauthAudience} placeholder="unicas-cas" onChange={(event) => setOAuthAudience(event.target.value)} />
-        </div>
-        <div className="field-row">
-          <label htmlFor="issuer-max-lifetime">Max capability lifetime (s)</label>
-          <input id="issuer-max-lifetime" value={maxLifetime} placeholder="28800 (default 8h; max 604800)" onChange={(event) => setMaxLifetime(event.target.value)} />
-        </div>
-        <Button icon={<Search size={15} />} variant="primary" onClick={() => void inspectOAuthIssuer()} disabled={inspecting || oauthIssuer?.status === "active" || oauthIssuerUrl.trim().length === 0 || oauthAudience.trim().length === 0}>
+        <Button icon={<Search size={15} />} variant="primary" onClick={() => void inspectOAuthIssuer()} disabled={inspecting || oauthIssuer?.status === "active" || oauthIssuerUrl.trim().length === 0}>
           {inspecting ? "Inspecting…" : "Inspect issuer"}
         </Button>
         {inspection ? (

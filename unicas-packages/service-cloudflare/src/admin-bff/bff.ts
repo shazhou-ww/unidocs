@@ -745,23 +745,15 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         return jsonWithEtag(result);
       }
       case "inspectOAuthIssuer": {
-        const body = await readJsonBody<{
-          issuer?: unknown;
-          audience?: unknown;
-          capabilityMaxLifetimeSeconds?: unknown;
-        }>(request);
-        if (!body) return invalidRequest("JSON body is required");
-        const nextBody: {
-          issuer: string;
-          audience: string;
-          capabilityMaxLifetimeSeconds?: number;
-        } = { issuer: String(body.issuer ?? ""), audience: String(body.audience ?? "") };
-        if (body.capabilityMaxLifetimeSeconds !== undefined) {
-          nextBody.capabilityMaxLifetimeSeconds = Number(body.capabilityMaxLifetimeSeconds);
+        const body = await readJsonBody<{ issuer?: unknown }>(request);
+        if (!body || Array.isArray(body)) return invalidRequest("JSON object body is required");
+        if (Object.keys(body).some((key) => key !== "issuer")) {
+          return invalidRequest("OAuth issuer inspection accepts only issuer");
         }
+        if (typeof body.issuer !== "string") return invalidRequest("issuer must be a string");
         const result = await controlPlane.inspectOAuthIssuer(ctx, {
           path: { stackId: route.stackId },
-          body: nextBody,
+          body: { issuer: body.issuer },
         });
         return jsonWithEtag(result);
       }

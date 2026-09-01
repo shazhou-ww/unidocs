@@ -7,8 +7,8 @@ import type { AdminHttpFetcher, AdminClientSession } from "../src/index.js";
 const STACK = "cas_stack_a";
 
 /** Minimal in-memory fake of the /admin BFF API. */
-class MockAdminService implements AdminHttpFetcher {
-  readonly requests: { path: string; method: string; cookie: string | null; csrf: string | null }[] = [];
+class MockAdminService {
+  readonly requests: { path: string; method: string; cookie: string | null; csrf: string | null; body?: string }[] = [];
   readonly stack = {
     stackId: STACK,
     displayName: "Ops",
@@ -19,12 +19,13 @@ class MockAdminService implements AdminHttpFetcher {
   };
   session = true;
 
-  async fetch(input: string | Request | URL, init?: RequestInit): Promise<Response> {
+  readonly fetch: AdminHttpFetcher = async (input, init): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
     const url = new URL(request.url);
     const cookie = request.headers.get("Cookie");
     const csrf = request.headers.get("X-CSRF-Token");
-    this.requests.push({ path: url.pathname, method: request.method, cookie, csrf });
+    const body = request.body ? await request.clone().text() : undefined;
+    this.requests.push({ path: url.pathname, method: request.method, cookie, csrf, body });
     if (!this.session) {
       return Response.json({ error: "ADMIN_AUTH_REQUIRED", message: "session required" }, { status: 401 });
     }
@@ -78,7 +79,7 @@ class MockAdminService implements AdminHttpFetcher {
         lastRefreshAt: 11,
         lastRefreshError: null,
         jwksDigest: "sha256:test",
-        capabilityMaxLifetimeSeconds: 28800,
+        capabilityMaxLifetimeSeconds: 1800,
         revision: 4,
       }, { headers: { ETag: `"rev-4"` } });
     }
@@ -86,11 +87,12 @@ class MockAdminService implements AdminHttpFetcher {
       return Response.json({ stackId: STACK, status: "active", revision: 2 }, { headers: { ETag: `"rev-2"` } });
     }
     if (path === casAdminRoutes.oauthIssuerInspections({ stackId: STACK }) && request.method === "POST") {
-      const body = await request.json() as { issuer: string; audience: string };
+      const body = await request.json() as { issuer: string };
       return Response.json({
         inspectionId: "oinsp_test",
         stackId: STACK,
         ...body,
+        audience: `https://cas.example/stacks/${STACK}`,
         metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
         metadataType: "oauth",
         authorizationEndpoint: "https://issuer.example/oauth/authorize",
@@ -101,7 +103,7 @@ class MockAdminService implements AdminHttpFetcher {
         codeChallengeMethodsSupported: ["S256"],
         metadataDigest: "metadata",
         jwksDigest: "jwks",
-        capabilityMaxLifetimeSeconds: 28800,
+        capabilityMaxLifetimeSeconds: 1800,
         challenge: "challenge",
         expiresAt: 1000,
         keys: [],
@@ -112,7 +114,7 @@ class MockAdminService implements AdminHttpFetcher {
       return Response.json({ keys: [] });
     }
     return Response.json({ error: "NOT_FOUND" }, { status: 404 });
-  }
+  };
 }
 
 function sessionOf(): Promise<AdminClientSession> {
@@ -154,11 +156,12 @@ describe("functional admin client", () => {
   it("posts OAuth issuer inspections with CSRF", async () => {
     const result = await client.inspectOAuthIssuer(
       { stackId: STACK },
-      { issuer: "https://issuer.example/oauth", audience: "cas" },
+      { issuer: "https://issuer.example/oauth" },
     );
     expect(result).toMatchObject({ value: { inspectionId: "oinsp_test" }, etag: '"rev-1"' });
     const request = service.requests.find((entry) => entry.path.endsWith("/oauth-issuer/inspections"))!;
     expect(request).toMatchObject({ method: "POST", csrf: "csrf-1" });
+    expect(JSON.parse(request.body!)).toEqual({ issuer: "https://issuer.example/oauth" });
   });
 
   it("activates an OAuth issuer with CSRF and If-Match", async () => {

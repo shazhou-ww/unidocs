@@ -376,16 +376,14 @@ export function createControlPlaneMcpServer(
       inputSchema: z.object({
         stackId: z.string().min(1),
         issuer: z.string().url(),
-        audience: z.string().min(1),
-        capabilityMaxLifetimeSeconds: z.number().int().min(60).max(604800).optional(),
-      }),
+      }).strict(),
       annotations: { destructiveHint: false, idempotentHint: false },
     },
-    async ({ stackId, issuer, audience, capabilityMaxLifetimeSeconds }) => {
+    async ({ stackId, issuer }) => {
       const grant = requireMutation("control:security", options);
       const result = await controlPlane.inspectOAuthIssuer(
         serviceContext(grant, "inspect_oauth_issuer"),
-        { path: { stackId }, body: { issuer, audience, capabilityMaxLifetimeSeconds } },
+        { path: { stackId }, body: { issuer } },
       );
       return toolResult(withEtag(result));
     },

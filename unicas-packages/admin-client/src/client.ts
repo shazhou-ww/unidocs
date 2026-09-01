@@ -80,8 +80,6 @@ export interface AdminClient {
     path: { readonly stackId: CasStackId },
     body: {
       readonly issuer: string;
-      readonly audience: string;
-      readonly capabilityMaxLifetimeSeconds?: number;
     },
   ): Promise<AdminClientRead<CasOAuthIssuerInspection>>;
   activateOAuthIssuer(

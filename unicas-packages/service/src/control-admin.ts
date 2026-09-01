@@ -89,12 +89,14 @@ import {
   CONTROL_LIST_DEFAULT_LIMIT,
   CONTROL_LIST_MAX_LIMIT,
   DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS,
+  OAUTH_CAPABILITY_MAX_LIFETIME_SECONDS,
   INVITATION_TTL_MS,
   isSupportedKeyAlgorithm,
   normalizeEmailConstraint,
   parseControlListLimit,
   POSSESSION_CHALLENGE_TTL_MS,
   sha256Hex,
+  stackOAuthResource,
   validateAudience,
   validateCapabilityMaxLifetimeSeconds,
   validateDisplayName,
@@ -455,6 +457,8 @@ export interface ControlPlaneAdminServiceOptions {
   readonly oauthDiscovery?: OAuthDiscoveryPort;
   readonly oauthInspectionTtlMs?: number;
   readonly generateOAuthInspectionId?: () => string;
+  /** Configured UniCAS public origin used to derive Stack OAuth resources. */
+  readonly oauthResourcePublicOrigin?: string;
 }
 
 /** Cloud-neutral business service for identity, stack administration, and session audit. */
@@ -473,6 +477,7 @@ export class ControlPlaneAdminService {
   readonly #oauthDiscovery: OAuthDiscoveryPort | null;
   readonly #oauthInspectionTtlMs: number;
   readonly #generateOAuthInspectionId: () => string;
+  readonly #oauthResourcePublicOrigin: string | null;
 
   constructor(repository: ControlPlaneAdminRepository, options: ControlPlaneAdminServiceOptions = {}) {
     this.#repository = repository;
@@ -489,6 +494,7 @@ export class ControlPlaneAdminService {
     this.#oauthDiscovery = options.oauthDiscovery ?? null;
     this.#oauthInspectionTtlMs = options.oauthInspectionTtlMs ?? OAUTH_ISSUER_INSPECTION_TTL_MS;
     this.#generateOAuthInspectionId = options.generateOAuthInspectionId ?? generateOAuthInspectionId;
+    this.#oauthResourcePublicOrigin = options.oauthResourcePublicOrigin ?? null;
   }
 
   me(ctx: ControlPlaneCallContext): Promise<CasAdminMeResponse | CasAdminErrorResponse> {
@@ -691,10 +697,11 @@ export class ControlPlaneAdminService {
           error instanceof Error ? error.message : "invalid issuer",
         );
       }
-      const audienceError = validateAudience(request.body.audience);
-      if (audienceError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, audienceError);
-      const lifetimeError = validateCapabilityMaxLifetimeSeconds(request.body.capabilityMaxLifetimeSeconds);
-      if (lifetimeError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, lifetimeError);
+      if (!this.#oauthResourcePublicOrigin) {
+        throw new ControlPlaneError(CasAdminErrorCodes.SERVICE_UNAVAILABLE, "OAuth resource policy is not configured");
+      }
+      const audience = stackOAuthResource(this.#oauthResourcePublicOrigin, request.path.stackId);
+      const lifetime = OAUTH_CAPABILITY_MAX_LIFETIME_SECONDS;
       if (await this.#repository.hasIssuerElsewhere(issuer, request.path.stackId)
         || await this.#repository.hasOAuthIssuerElsewhere(issuer, request.path.stackId)) {
         throw new ControlPlaneError(CasAdminErrorCodes.ISSUER_CONFLICT, "issuer is already registered to another stack");
@@ -717,14 +724,12 @@ export class ControlPlaneAdminService {
       const expiresAt = now + this.#oauthInspectionTtlMs;
       const inspectionId = this.#generateOAuthInspectionId();
       const nonce = this.#generateNonce();
-      const lifetime = request.body.capabilityMaxLifetimeSeconds
-        ?? DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS;
       const challenge = buildOAuthIssuerInspectionChallenge({
         nonce,
         inspectionId,
         stackId: request.path.stackId,
         issuer,
-        audience: request.body.audience,
+        audience,
         metadataDigest: discovered.metadataDigest,
         jwksDigest: discovered.jwksDigest,
         capabilityMaxLifetimeSeconds: lifetime,
@@ -734,7 +739,7 @@ export class ControlPlaneAdminService {
       const issuerRecord: ControlOAuthIssuerRecord = {
         stackId: request.path.stackId,
         ...discovered.metadata,
-        audience: request.body.audience,
+        audience,
         status: "pending",
         verifiedAt: null,
         lastRefreshAt: now,
@@ -747,7 +752,7 @@ export class ControlPlaneAdminService {
         inspectionId,
         stackId: request.path.stackId,
         ...discovered.metadata,
-        audience: request.body.audience,
+        audience,
         metadataDigest: discovered.metadataDigest,
         jwksDigest: discovered.jwksDigest,
         challengeHash: await sha256Hex(challenge),
@@ -773,7 +778,7 @@ export class ControlPlaneAdminService {
         inspectionId,
         stackId: request.path.stackId,
         ...discovered.metadata,
-        audience: request.body.audience,
+        audience,
         metadataDigest: discovered.metadataDigest,
         jwksDigest: discovered.jwksDigest,
         capabilityMaxLifetimeSeconds: lifetime,

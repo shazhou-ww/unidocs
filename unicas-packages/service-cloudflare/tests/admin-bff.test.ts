@@ -523,6 +523,33 @@ describe("cas-admin-webui BFF", () => {
     expect(badClient.status).toBe(400);
   });
 
+  test("OAuth issuer inspection rejects administrator-supplied resource policy", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Stack");
+    for (const obsolete of [
+      { audience: "caller-selected" },
+      { capabilityMaxLifetimeSeconds: 604800 },
+    ]) {
+      const response = await authRequest(
+        bff,
+        `/admin/stacks/${stackId}/oauth-issuer/inspections`,
+        cookie,
+        {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrf, "Content-Type": "application/json" },
+          body: JSON.stringify({ issuer: "https://issuer.example/oauth", ...obsolete }),
+        },
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: "INVALID_REQUEST",
+        message: "OAuth issuer inspection accepts only issuer",
+      });
+    }
+  });
+
   test("full OIDC login flow reaches me() with the verified identity", async () => {
     const provider = await createMockProvider();
     provider.expectTokenBody = (body) => {

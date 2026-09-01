@@ -208,7 +208,13 @@ export class FakeAdminApi {
       return jsonWithEtag({ stackId: "cas_stack_a", ...record });
     }
     if (url.pathname === casAdminRoutes.oauthIssuerInspections({ stackId: "cas_stack_a" }) && method === "POST") {
-      const record = { issuer: String(body?.issuer ?? ""), audience: String(body?.audience ?? ""), status: "pending" as const, revision: 1 };
+      const record = {
+        issuer: String(body?.issuer ?? ""),
+        audience: "https://cas.example/stacks/cas_stack_a",
+        capabilityMaxLifetimeSeconds: 1800,
+        status: "pending" as const,
+        revision: 1,
+      };
       this.oauthIssuer.set("cas_stack_a", record);
       return jsonWithEtag({
         inspectionId: "oinsp_test",

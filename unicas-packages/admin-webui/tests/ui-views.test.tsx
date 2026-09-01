@@ -118,12 +118,12 @@ describe("IssuerView", () => {
       .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
       .mockResolvedValueOnce(json({ keys: [] }))
       .mockResolvedValueOnce(json({
-        inspectionId: "oinsp_1", stackId: STACK, issuer: "https://auth.example", audience: "cas",
+        inspectionId: "oinsp_1", stackId: STACK, issuer: "https://auth.example", audience: `https://cas.example/stacks/${STACK}`,
         metadataUrl: "https://auth.example/.well-known/oauth-authorization-server", metadataType: "oauth",
         authorizationEndpoint: "https://auth.example/authorize", tokenEndpoint: "https://auth.example/token",
         jwksUri: "https://auth.example/jwks", registrationEndpoint: null, scopesSupported: ["cas:read"],
         codeChallengeMethodsSupported: ["S256"], metadataDigest: "m", jwksDigest: "j",
-        capabilityMaxLifetimeSeconds: 28800, challenge: "cas-oauth-issuer-inspection-v1\nchallenge",
+        capabilityMaxLifetimeSeconds: 1800, challenge: "cas-oauth-issuer-inspection-v1\nchallenge",
         expiresAt: 1000, keys: [{ kid: "key-1", algorithm: "ES256", publicJwk: {} }], revision: 1,
       }))
       .mockResolvedValueOnce(json({ status: "active", revision: 2 }))
@@ -133,12 +133,13 @@ describe("IssuerView", () => {
     const user = userEvent.setup();
     render(<IssuerView stackId={STACK} />);
     await user.type(await screen.findByLabelText("Issuer", { selector: "#oauth-issuer-url" }), "https://auth.example");
-    await user.type(screen.getByLabelText("Audience", { selector: "#oauth-issuer-audience" }), "cas");
     await user.click(screen.getByRole("button", { name: "Inspect issuer" }));
     await screen.findByText(/cas-oauth-issuer-inspection-v1/);
     await user.type(screen.getByLabelText("Activation proof (compact JWS)"), "proof");
     await user.click(screen.getByRole("button", { name: "Verify and activate" }));
     await waitFor(() => expect(screen.getByText(/Status:/)).toHaveTextContent("active"));
+    const inspectionCall = fetchMock.mock.calls.find((call) => String(call[0]).endsWith("/oauth-issuer/inspections"));
+    expect(JSON.parse(inspectionCall![1]!.body as string)).toEqual({ issuer: "https://auth.example" });
     expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PUT" && String(call[0]).endsWith("/oauth-issuer"))).toBe(true);
   });
 });

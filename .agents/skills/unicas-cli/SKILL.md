@@ -87,7 +87,7 @@ Security (`control:security`):
 ```text
 unicas members invite <stackId> <email> [--idempotency-key K]
 unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]
-unicas oauth-issuer inspect <stackId> <issuer> <audience> [--capability-max-lifetime-seconds N]
+unicas oauth-issuer inspect <stackId> <issuer>
 unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]
 unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]
 unicas keys challenge <stackId> <kid> <ES256|RS256|EdDSA>

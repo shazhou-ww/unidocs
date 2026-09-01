@@ -70,7 +70,7 @@ pnpm --filter @unicas/admin-cli unicas login
 | `unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]` | `remove_member` |
 | `unicas issuer get <stackId>` | `get_issuer` |
 | `unicas oauth-issuer get <stackId>` | `get_oauth_issuer` |
-| `unicas oauth-issuer inspect <stackId> <issuer> <audience> [--capability-max-lifetime-seconds N]` | `inspect_oauth_issuer` |
+| `unicas oauth-issuer inspect <stackId> <issuer>` | `inspect_oauth_issuer` |
 | `unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]` | `activate_oauth_issuer` |
 | `unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]` (deprecated) | `set_issuer` |
 | `unicas keys list <stackId>` | `list_issuer_keys` |

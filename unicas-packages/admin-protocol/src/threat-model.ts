@@ -20,6 +20,8 @@ export const casAdminThreatModel = {
     neverAcceptAdministratorSuppliedJwksUrl: true,
     discoveryIssuerMustExactlyMatchRegisteredIssuer: true,
     issuerControlProofUsesDiscoveredJwks: true,
+    oauthAudienceDerivedFromStackResource: true,
+    oauthMaximumLifetimeIsServerPolicy: true,
     issuerGloballyUnique: true,
     oneActiveIssuerPerStack: true,
   },

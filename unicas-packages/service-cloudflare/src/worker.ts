@@ -256,6 +256,7 @@ function controlPlaneFor(env: Env, now?: () => number): ControlPlaneOperations {
   const allowedOrigins = parseOriginAllowlist(env.CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS);
   return createControlPlaneOperations(env.CAS_CONTROL_DB, {
     now,
+    oauthResourcePublicOrigin: env.CAS_PUBLIC_ORIGIN ?? env.PUBLIC_ORIGIN,
     oauthDiscovery: allowedOrigins.length === 0
       ? undefined
       : new CloudflareOAuthDiscoveryPort({ allowedOrigins }),

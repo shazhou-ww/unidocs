@@ -11,11 +11,16 @@ export function createControlPlaneOperations(
   options: {
     readonly now?: () => number;
     readonly oauthDiscovery?: OAuthDiscoveryPort;
+    readonly oauthResourcePublicOrigin?: string;
   } = {},
 ): ControlPlaneOperations {
   const admin = new ControlPlaneAdminService(
     new D1ControlPlaneAdminRepository(db),
-    { now: options.now, oauthDiscovery: options.oauthDiscovery },
+    {
+      now: options.now,
+      oauthDiscovery: options.oauthDiscovery,
+      oauthResourcePublicOrigin: options.oauthResourcePublicOrigin,
+    },
   );
 
   return {

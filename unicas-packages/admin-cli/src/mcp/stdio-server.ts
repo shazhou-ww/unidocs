@@ -205,14 +205,10 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
   },
 
   async inspect_oauth_issuer(admin, args) {
-    const body: { issuer: string; audience: string; capabilityMaxLifetimeSeconds?: number } = {
-      issuer: str(args.issuer),
-      audience: str(args.audience),
-    };
-    if (typeof args.capabilityMaxLifetimeSeconds === "number") {
-      body.capabilityMaxLifetimeSeconds = args.capabilityMaxLifetimeSeconds;
-    }
-    const result = await admin.inspectOAuthIssuer({ stackId: str(args.stackId) }, body);
+    const result = await admin.inspectOAuthIssuer(
+      { stackId: str(args.stackId) },
+      { issuer: str(args.issuer) },
+    );
     return { ...result.value, etag: result.etag };
   },
 

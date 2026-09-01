@@ -65,6 +65,7 @@ function fixture(options: {
   let eventSequence = 0;
   const service = new ControlPlaneAdminService(repository, {
     now: options.now ?? (() => 1_000),
+    oauthResourcePublicOrigin: "https://cas.example",
     generateStackId: () => `cas_stack_${String(++stackSequence).padStart(2, "0")}`,
     generateEventId: () => `event-${++eventSequence}`,
     generateInvitationId: () => `invitation-${eventSequence + 1}`,
@@ -96,7 +97,7 @@ function oauthIssuerRecord(stackId: string): ControlOAuthIssuerRecord {
     lastRefreshAt: 950,
     lastRefreshError: null,
     jwksDigest: "sha256:test",
-    capabilityMaxLifetimeSeconds: 28800,
+    capabilityMaxLifetimeSeconds: 1800,
     revision: 1,
   };
 }
@@ -368,18 +369,20 @@ describe("ControlPlaneAdminService", () => {
     expectError(
       await service.inspectOAuthIssuer(context(bob, "Bob"), {
         path: { stackId: created.stackId },
-        body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+        body: { issuer: "https://issuer.example/oauth" },
       }),
       CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED,
     );
     const result = await service.inspectOAuthIssuer(context(), {
       path: { stackId: created.stackId },
-      body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+      body: { issuer: "https://issuer.example/oauth" },
     });
     if (!("challenge" in result)) throw new Error("inspection failed");
     expect(result).toMatchObject({
       inspectionId: "oinsp_test",
       stackId: created.stackId,
+      audience: `https://cas.example/stacks/${created.stackId}`,
+      capabilityMaxLifetimeSeconds: 1800,
       expiresAt: 601_000,
       revision: 1,
       keys: [{ kid: "key-1", algorithm: "ES256" }],

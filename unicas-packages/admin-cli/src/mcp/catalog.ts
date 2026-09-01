@@ -200,9 +200,7 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     inputSchema: z.object({
       stackId,
       issuer: url,
-      audience: z.string().min(1),
-      capabilityMaxLifetimeSeconds: z.number().int().min(60).max(604800).optional(),
-    }),
+    }).strict(),
     annotations: { destructiveHint: false, idempotentHint: false },
     requiredScope: "control:security",
   },

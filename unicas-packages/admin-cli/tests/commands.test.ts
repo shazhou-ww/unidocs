@@ -149,7 +149,7 @@ describe("command layer", () => {
     const server = new FakeAdminApi();
     ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
     const { writes } = captureStdout();
-    await oauthIssuerCommand(ctx, "inspect", ["cas_stack_a", "https://issuer.example", "cas"]);
+    await oauthIssuerCommand(ctx, "inspect", ["cas_stack_a", "https://issuer.example"]);
     expect(JSON.parse(writes.join(""))).toMatchObject({ inspectionId: "oinsp_test", status: "pending" });
     writes.length = 0;
     await oauthIssuerCommand(ctx, "activate", ["cas_stack_a", "oinsp_test", "--activation-proof", "proof"]);

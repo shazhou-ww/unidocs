@@ -46,7 +46,7 @@ Usage:
   unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]  Deprecated
 
   unicas oauth-issuer get <stackId>
-  unicas oauth-issuer inspect <stackId> <issuer> <audience> [--capability-max-lifetime-seconds N]
+  unicas oauth-issuer inspect <stackId> <issuer>
   unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]
 
   unicas keys list <stackId>                               Legacy compatibility

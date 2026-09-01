@@ -36,7 +36,14 @@ async function createService(
   await miniflare.ready;
   const db = await miniflare.getD1Database("DB", "control-plane-service-test");
   await migrateControlSchema(db);
-  return { db, service: createControlPlaneOperations(db, { now, oauthDiscovery }) };
+  return {
+    db,
+    service: createControlPlaneOperations(db, {
+      now,
+      oauthDiscovery,
+      oauthResourcePublicOrigin: "https://cas.example",
+    }),
+  };
 }
 
 const ISSUER = "https://accounts.google.com";
@@ -219,11 +226,13 @@ describe("D1-backed control-plane service", () => {
     const stackId = await createStack(service);
     const result = await service.inspectOAuthIssuer(ctx(alice), {
       path: { stackId },
-      body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+      body: { issuer: "https://issuer.example/oauth" },
     });
     if (!("challenge" in result)) throw new Error("inspection failed");
     expect(await service.getOAuthIssuer(ctx(alice), { path: { stackId } })).toMatchObject({
       status: "pending",
+      audience: `https://cas.example/stacks/${stackId}`,
+      capabilityMaxLifetimeSeconds: 1800,
       jwksDigest: "b".repeat(64),
       revision: 1,
     });
@@ -291,11 +300,11 @@ describe("D1-backed control-plane service", () => {
     }, {});
     expectError(await service.inspectOAuthIssuer(ctx(alice), {
       path: { stackId: oauthStack },
-      body: { issuer: "https://shared.example", audience: "cas" },
+      body: { issuer: "https://shared.example" },
     }), CasAdminErrorCodes.ISSUER_CONFLICT);
     await service.inspectOAuthIssuer(ctx(alice), {
       path: { stackId: oauthStack },
-      body: { issuer: "https://oauth.example", audience: "cas" },
+      body: { issuer: "https://oauth.example" },
     });
     const thirdStack = await createStack(service, alice, "Third");
     expectError(await service.putIssuer(ctx(alice), {
@@ -341,7 +350,7 @@ describe("D1-backed control-plane service", () => {
     const stackId = await createStack(service);
     const request = {
       path: { stackId },
-      body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+      body: { issuer: "https://issuer.example/oauth" },
     };
 
     const results = await Promise.all([
