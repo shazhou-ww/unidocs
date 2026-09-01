@@ -99,3 +99,10 @@ export type {
   GatewayOAuthAuthorizationServerHandlerConfig,
   GatewayOAuthConsentView,
 } from "./authorization-server-handler.js";
+export {
+  MemoryGatewayOAuthAuthorizationCodeStore,
+  MemoryGatewayOAuthAuthorizationTransactionStore,
+  MemoryGatewayOAuthClientStore,
+  MemoryGatewayOAuthRefreshTokenStore,
+  MemoryGatewayOAuthTenantMembershipStore,
+} from "./memory-adapters.js";
