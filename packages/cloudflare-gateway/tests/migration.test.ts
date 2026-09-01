@@ -47,6 +47,7 @@ describe("Gateway D1 migrations", () => {
     await db.exec(await readFile(migration("0003_drop_legacy_doc_index.sql"), "utf8"));
     await db.exec(await readFile(migration("0004_requested_doc_id.sql"), "utf8"));
     await db.exec(await readFile(migration("0005_tenant_directory.sql"), "utf8"));
+    await db.exec(await readFile(migration("0006_gateway_oauth.sql"), "utf8"));
     await expect(db.prepare(
       "SELECT * FROM gateway_documents WHERE tenant_id = ? AND doc_id = ?",
     ).bind("alice", "doc-1").first()).resolves.toMatchObject({
@@ -64,5 +65,14 @@ describe("Gateway D1 migrations", () => {
     expect(tables.results.map(table => table.name)).not.toContain("docs");
     expect(tables.results.map(table => table.name)).not.toContain("snapshots");
     expect(tables.results.map(table => table.name)).toContain("gateway_document_requests");
+    expect(tables.results.map(table => table.name)).toEqual(expect.arrayContaining([
+      "gateway_oauth_clients",
+      "gateway_oauth_authorization_transactions",
+      "gateway_oauth_authorization_codes",
+      "gateway_oauth_refresh_families",
+      "gateway_oauth_refresh_tokens",
+      "gateway_oauth_tenant_memberships",
+      "gateway_oauth_audit_events",
+    ]));
   }, 15_000);
 });
