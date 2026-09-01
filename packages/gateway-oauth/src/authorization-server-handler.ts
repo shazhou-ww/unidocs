@@ -83,7 +83,9 @@ export function createGatewayOAuthAuthorizationServerHandler(
           responseType: requiredQuery(url, "response_type"),
           clientId: requiredQuery(url, "client_id"),
           redirectUri: requiredQuery(url, "redirect_uri"),
-          tenantId: requiredQuery(url, "tenant_id"),
+          // Optional: when absent the gateway resolves the principal's
+          // default tenant membership (server-derived, never client authority).
+          ...(url.searchParams.has("tenant_id") ? { tenantId: url.searchParams.get("tenant_id")! } : {}),
           scope: requiredQuery(url, "scope"),
           codeChallenge: requiredQuery(url, "code_challenge"),
           codeChallengeMethod: requiredQuery(url, "code_challenge_method"),

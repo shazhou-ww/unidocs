@@ -23,7 +23,11 @@ export interface GatewayOAuthAuthorizationRequest {
   readonly responseType: string;
   readonly clientId: string;
   readonly redirectUri: string;
-  readonly tenantId: string;
+  /**
+   * Server-derived tenant. A client-supplied value is never authoritative:
+   * when absent, the authenticated principal's default membership decides.
+   */
+  readonly tenantId?: string;
   readonly scope: string;
   readonly state?: string;
   readonly codeChallenge: string;
@@ -68,13 +72,27 @@ export async function startGatewayOAuthAuthorization(
     throw protocolError("unsupported_response_type", "response_type must be code");
   }
   if (request.clientId.length === 0) throw protocolError("invalid_request", "client_id is required");
+  if (request.redirectUri.length === 0) throw protocolError("invalid_request", "redirect_uri is required");
   const client = await ports.clients.find(request.clientId);
   if (!client) throw protocolError("invalid_client", "client_id is not registered");
   validateGatewayOAuthRedirectUri(request.redirectUri);
   if (!client.redirectUris.some(uri => gatewayOAuthRedirectUriMatches(uri, request.redirectUri))) {
     throw protocolError("invalid_request", "redirect_uri is not registered for this client");
   }
-  if (request.tenantId.length === 0) throw protocolError("invalid_request", "tenant_id is required");
+  // The tenant is server-derived: an explicitly supplied tenant_id is only a
+  // hint; absent (or empty) it resolves to the principal's default
+  // membership. A raw client-supplied tenant is never authoritative.
+  let tenantId = request.tenantId?.trim() ?? "";
+  if (tenantId.length === 0) {
+    if (!request.authenticatedPrincipalId) {
+      throw protocolError("invalid_request", "tenant_id is required when no principal membership is available");
+    }
+    const membership = await ports.memberships.defaultForPrincipal(request.authenticatedPrincipalId);
+    if (!membership) {
+      throw new GatewayOAuthProtocolError("invalid_scope", 403, "user has no tenant membership");
+    }
+    tenantId = membership.tenantId;
+  }
   const scopes = parseGatewayOAuthScope(request.scope);
   if (request.codeChallengeMethod !== "S256") {
     throw protocolError("invalid_request", "code_challenge_method must be S256");
@@ -98,7 +116,7 @@ export async function startGatewayOAuthAuthorization(
       transactionId,
       clientId: request.clientId,
       redirectUri: request.redirectUri,
-      tenantId: request.tenantId,
+      tenantId,
       principalId: request.authenticatedPrincipalId ?? null,
       requestedScopes: scopes,
       state: request.state ?? null,
@@ -110,13 +128,13 @@ export async function startGatewayOAuthAuthorization(
       await ports.audit?.record({
         action: "authorization.started",
         clientId: request.clientId,
-        tenantId: request.tenantId,
+        tenantId,
         scopes,
       });
       return Object.freeze({
         transactionId,
         clientId: request.clientId,
-        tenantId: request.tenantId,
+        tenantId,
         scopes,
         expiresAt: transaction.expiresAt,
       });

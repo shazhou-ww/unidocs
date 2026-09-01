@@ -305,6 +305,20 @@ export class D1GatewayOAuthTenantMembershipStore implements GatewayOAuthTenantMe
       ...(row.ref_domain === null ? {} : { refDomain: row.ref_domain }),
     }) : null;
   }
+
+  async defaultForPrincipal(principalId: string): Promise<GatewayOAuthTenantMembership | null> {
+    const row = await this.db.prepare(
+      `SELECT tenant_id, scopes_json, ref_domain
+       FROM gateway_oauth_tenant_memberships
+       WHERE principal_id = ?
+       ORDER BY tenant_id LIMIT 1`,
+    ).bind(principalId).first<MembershipRow>();
+    return row ? Object.freeze({
+      tenantId: row.tenant_id,
+      scopes: scopeArray(row.scopes_json),
+      ...(row.ref_domain === null ? {} : { refDomain: row.ref_domain }),
+    }) : null;
+  }
 }
 
 export class D1GatewayOAuthAuditPort implements GatewayOAuthAuditPort {

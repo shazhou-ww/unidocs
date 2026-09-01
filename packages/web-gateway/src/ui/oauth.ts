@@ -2,6 +2,11 @@
  * OAuth client for the UniDocs Gateway (RFC 7591 dynamic registration +
  * Authorization Code + PKCE S256, refresh rotation). Pure logic over fetch
  * and browser storage so the flows are unit-testable.
+ *
+ * The tenant is server-derived: authorize is called without a tenant_id and
+ * the gateway resolves the authenticated Google account's default tenant
+ * membership. After login the tenant comes from the access token's
+ * `tenantId` claim.
  */
 
 import { CLIENT_NAME, OAUTH_BASE, REDIRECT_URI } from "./config.js";
@@ -16,6 +21,7 @@ export interface OAuthTokenSession {
   readonly refreshToken: string;
   readonly expiresAt: number; // epoch seconds
   readonly scope: string;
+  /** Server-derived tenant from the access token's tenantId claim. */
   readonly tenantId: string;
 }
 
@@ -61,14 +67,10 @@ export async function ensureClientId(redirectUri: string = REDIRECT_URI): Promis
 }
 
 /**
- * Redirects the browser to the gateway authorize endpoint. `tenantId` is
- * required by the gateway and must be a tenant the user has a membership in.
+ * Redirects the browser to the gateway authorize endpoint. No tenant is
+ * sent: the gateway derives it from the authenticated account's membership.
  */
-export async function startLogin(options: {
-  tenantId: string;
-  scope?: string;
-  redirectUri?: string;
-}): Promise<void> {
+export async function startLogin(options: { scope?: string; redirectUri?: string } = {}): Promise<void> {
   const redirectUri = options.redirectUri ?? REDIRECT_URI;
   const clientId = await ensureClientId(redirectUri);
   const verifier = generateVerifier();
@@ -80,7 +82,6 @@ export async function startLogin(options: {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("tenant_id", options.tenantId.trim());
   url.searchParams.set("scope", options.scope ?? "cas:read cas:write cas:manage");
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", challenge);
@@ -90,7 +91,7 @@ export async function startLogin(options: {
 
 /**
  * Completes the authorize redirect: exchanges the code for tokens and stores
- * the session. Returns the tenant the token was granted for.
+ * the session. The tenant is read from the access token's `tenantId` claim.
  */
 export async function completeLogin(url: URL): Promise<OAuthTokenSession> {
   const code = url.searchParams.get("code");
@@ -136,14 +137,12 @@ export async function exchangeCode(options: {
   if (!response.ok || typeof payload.access_token !== "string") {
     throw new OAuthError("token_exchange_failed", "token exchange failed");
   }
-  const expiresIn = Number(payload.expires_in ?? 120);
-  const tenantId = tenantFromIdToken(payload.id_token as string | undefined);
   const session: OAuthTokenSession = {
     accessToken: payload.access_token,
     refreshToken: typeof payload.refresh_token === "string" ? payload.refresh_token : "",
-    expiresAt: Math.floor(Date.now() / 1000) + expiresIn,
+    expiresAt: Math.floor(Date.now() / 1000) + Number(payload.expires_in ?? 120),
     scope: typeof payload.scope === "string" ? payload.scope : "",
-    tenantId,
+    tenantId: tenantFromAccessToken(payload.access_token),
   };
   saveSession(session);
   return session;
@@ -171,7 +170,7 @@ export async function refreshSession(session: OAuthTokenSession): Promise<OAuthT
     refreshToken: typeof payload.refresh_token === "string" ? payload.refresh_token : session.refreshToken,
     expiresAt: Math.floor(Date.now() / 1000) + Number(payload.expires_in ?? 120),
     scope: typeof payload.scope === "string" ? payload.scope : session.scope,
-    tenantId: session.tenantId,
+    tenantId: tenantFromAccessToken(payload.access_token) || session.tenantId,
   };
   saveSession(next);
   return next;
@@ -203,19 +202,22 @@ export function sessionIsExpired(session: OAuthTokenSession): boolean {
   return session.expiresAt - 30 < Math.floor(Date.now() / 1000);
 }
 
-/** Decodes the OAuth id_token payload without verifying it (display only). */
-function tenantFromIdToken(idToken: string | undefined): string {
-  if (!idToken) return "";
-  const segment = idToken.split(".")[1];
+/** Reads the tenantId claim from the access token payload (display/state only). */
+function tenantFromAccessToken(accessToken: string): string {
+  const segment = accessToken.split(".")[1];
   if (!segment) return "";
   try {
-    const payload = JSON.parse(atob(segment.replace(/-/g, "+").replace(/_/g, "/"))) as {
-      tenantId?: unknown;
-    };
+    const payload = JSON.parse(decodeBase64Url(segment)) as { tenantId?: unknown };
     return typeof payload.tenantId === "string" ? payload.tenantId : "";
   } catch {
     return "";
   }
+}
+
+function decodeBase64Url(value: string): string {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+  return atob(padded);
 }
 
 const PKCE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";

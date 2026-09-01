@@ -144,6 +144,13 @@ export class MemoryGatewayOAuthTenantMembershipStore
   async find(principalId: string, tenantId: string): Promise<GatewayOAuthTenantMembership | null> {
     return this.#memberships.get(key(principalId, tenantId)) ?? null;
   }
+
+  async defaultForPrincipal(principalId: string): Promise<GatewayOAuthTenantMembership | null> {
+    for (const [k, membership] of this.#memberships) {
+      if (k.startsWith(`${principalId.length}:${principalId}`)) return membership;
+    }
+    return null;
+  }
 }
 
 function key(principalId: string, tenantId: string): string {

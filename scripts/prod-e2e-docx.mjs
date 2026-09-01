@@ -62,11 +62,11 @@ async function main() {
     response_type: "code",
     client_id: clientId,
     redirect_uri: REDIRECT_URI,
-    tenant_id: TENANT,
     scope: "cas:read cas:write cas:manage",
     state: "prod-e2e-state",
     code_challenge: challenge,
     code_challenge_method: "S256",
+    // No tenant_id: the gateway resolves the account's default membership.
   })) authorizeUrl.searchParams.set(name, value);
 
   const consent = await fetch(authorizeUrl, {

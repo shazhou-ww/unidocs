@@ -31,6 +31,13 @@ export interface GatewayOAuthTenantMembership {
 
 export interface GatewayOAuthTenantMembershipPort {
   find(principalId: string, tenantId: string): Promise<GatewayOAuthTenantMembership | null>;
+  /**
+   * The principal's default tenant. Each Google account maps 1:1 to one
+   * tenant, so an authorize request without a client-supplied tenant_id is
+   * resolved server-side from this. Implementations must return a
+   * deterministic tenant when the principal has memberships.
+   */
+  defaultForPrincipal(principalId: string): Promise<GatewayOAuthTenantMembership | null>;
 }
 
 export interface GatewayOAuthAuthorizationTransaction {

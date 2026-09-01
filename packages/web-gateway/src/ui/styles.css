@@ -1,0 +1,245 @@
+/* UniDocs gateway webui — shadcn-style token design system, matching
+   @unicas/admin-webui (see its styles.css for the canonical tokens). */
+:root {
+  --background: #f8f8f9;
+  --surface: #ffffff;
+  --surface-subtle: #f4f4f5;
+  --surface-hover: #f1f1f2;
+  --border: #e1e1e4;
+  --border-strong: #c9c9ce;
+  --foreground: #18181b;
+  --muted: #71717a;
+  --muted-strong: #52525b;
+  --primary: #27272a;
+  --primary-hover: #09090b;
+  --primary-foreground: #fafafa;
+  --danger: #b42318;
+  --danger-hover: #912018;
+  --danger-subtle: #fff1f0;
+  --ring: #52525b;
+  --radius: 7px;
+  color-scheme: light;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--foreground);
+  background-color: var(--background);
+  background-image:
+    linear-gradient(rgba(24, 24, 27, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(24, 24, 27, 0.022) 1px, transparent 1px);
+  background-size: 28px 28px;
+  font-family: "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+a {
+  color: inherit;
+}
+
+.shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 4rem;
+}
+
+h1 {
+  font-size: 1.35rem;
+  margin: 0.25rem 0 0.35rem;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 1.25rem;
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  margin: -1.25rem -1.25rem 1.25rem;
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.btn {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  color: var(--foreground);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 1px 1px rgba(24, 24, 27, 0.04);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 550;
+  line-height: 1;
+  text-decoration: none;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.btn-primary {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.login-actions {
+  margin-top: 1rem;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.86rem;
+}
+
+.notice {
+  color: var(--muted-strong);
+  font-size: 0.86rem;
+}
+
+.app-error {
+  max-width: 980px;
+  margin: 1rem auto 0;
+  padding: 0 1.25rem;
+}
+
+.card {
+  margin-bottom: 0.85rem;
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgba(24, 24, 27, 0.035);
+}
+
+.doc-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.table-wrap {
+  margin: 0 -1.1rem -1rem;
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.table th {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.table code {
+  font-size: 0.8rem;
+}
+
+.state {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  color: var(--muted);
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

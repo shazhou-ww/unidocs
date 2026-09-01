@@ -1,12 +1,11 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
-// The gateway origin is injected by the dev runtime (scripts/dev.mjs) or set
-// as VITE_GATEWAY_URL at build time; the app is same-origin with the gateway
-// in production (served by the gateway worker under /ui/), so the default is
-// the current origin and the dev server proxies /gw/* to the local gateway.
-const gateway = process.env.GATEWAY_URL || "http://127.0.0.1:8787";
-
+/**
+ * The gateway webui is served under /ui/ (and at the bare domain root) by the
+ * gateway worker, which embeds the built assets. In dev, Vite serves the SPA
+ * and proxies /gw/* to the local gateway (see stacks/unidocs-cloudflare/local).
+ */
 export default defineConfig({
   base: "/ui/",
   plugins: [react()],
@@ -15,14 +14,27 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       "/gw": {
-        target: gateway,
+        target: process.env.GATEWAY_URL || "http://127.0.0.1:8787",
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/gw/, ""),
       },
     },
   },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    // Deterministic asset names (same convention as @unicas/admin-webui).
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name][extname]",
+      },
+    },
+  },
   test: {
     environment: "jsdom",
+    globals: true,
     setupFiles: ["./tests/setup.ts"],
   },
 });

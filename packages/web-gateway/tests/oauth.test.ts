@@ -5,16 +5,14 @@ import {
   generateVerifier,
   refreshSession,
   s256Challenge,
-} from "../src/oauth.js";
+} from "../src/ui/oauth.js";
 
 const OAUTH_BASE = "http://127.0.0.1:8787/oauth/unidocs-cloudflare";
 const REDIRECT_URI = "http://127.0.0.1:5174/ui/callback";
 
-vi.mock("../src/config.js", () => ({
+vi.mock("../src/ui/config.js", () => ({
   API_PREFIX: "",
   GATEWAY_ORIGIN: "http://127.0.0.1:8787",
-  OAUTH_ORIGIN: "http://127.0.0.1:8787",
-  DEFAULT_TENANT: "",
   DEFAULT_DOC_TYPES: ["docx"],
   CLIENT_NAME: "unidocs-gateway-webui",
   REDIRECT_PATH: "/ui/callback",
@@ -22,6 +20,13 @@ vi.mock("../src/config.js", () => ({
   OAUTH_BASE: "http://127.0.0.1:8787/oauth/unidocs-cloudflare",
   API_BASE: "http://127.0.0.1:8787",
 }));
+
+/** A capability-shaped access token with a tenantId claim. */
+function accessToken(tenantId: string): string {
+  const header = btoa(JSON.stringify({ alg: "ES256", typ: "unidocs-cap+jwt" }));
+  const payload = btoa(JSON.stringify({ ver: 1, iss: "issuer", sub: "user", aud: "aud", tenantId, permissions: [] }));
+  return `${header}.${payload}.signature`;
+}
 
 function mockStorage(): void {
   const values = new Map<string, string>();
@@ -60,13 +65,13 @@ describe("gateway webui OAuth client", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { ensureClientId } = await import("../src/oauth.js");
+    const { ensureClientId } = await import("../src/ui/oauth.js");
     expect(await ensureClientId(REDIRECT_URI)).toBe("client-1");
     expect(await ensureClientId(REDIRECT_URI)).toBe("client-1");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("exchanges an authorization code for a token session", async () => {
+  test("exchanges an authorization code for a token session with the tenant from the token", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === `${OAUTH_BASE}/register`) {
@@ -79,7 +84,7 @@ describe("gateway webui OAuth client", () => {
         expect(body.get("client_id")).toBe("client-1");
         expect(body.get("code_verifier")).toBeTruthy();
         return Response.json({
-          access_token: "at-1",
+          access_token: accessToken("alice"),
           refresh_token: "rt-1",
           token_type: "Bearer",
           expires_in: 120,
@@ -91,8 +96,9 @@ describe("gateway webui OAuth client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const session = await exchangeCode({ code: "code-1", verifier: "verifier-1", redirectUri: REDIRECT_URI });
-    expect(session.accessToken).toBe("at-1");
+    expect(session.accessToken).toBeTruthy();
     expect(session.refreshToken).toBe("rt-1");
+    expect(session.tenantId).toBe("alice");
     expect(session.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
   });
 
@@ -105,7 +111,7 @@ describe("gateway webui OAuth client", () => {
         expect(body.get("grant_type")).toBe("refresh_token");
         expect(body.get("refresh_token")).toBe("rt-1");
         return Response.json({
-          access_token: "at-2",
+          access_token: accessToken("alice"),
           refresh_token: "rt-2",
           expires_in: 120,
           scope: "cas:read",
@@ -122,7 +128,7 @@ describe("gateway webui OAuth client", () => {
       scope: "cas:read",
       tenantId: "alice",
     });
-    expect(session.accessToken).toBe("at-2");
+    expect(session.accessToken).toBeTruthy();
     expect(session.refreshToken).toBe("rt-2");
     expect(session.tenantId).toBe("alice");
   });
@@ -133,7 +139,7 @@ describe("gateway webui OAuth client", () => {
       if (url === `${OAUTH_BASE}/register`) return Response.json({ client_id: "client-1" });
       if (url === `${OAUTH_BASE}/token`) {
         return Response.json({
-          access_token: "at-1",
+          access_token: accessToken("alice"),
           refresh_token: "rt-1",
           expires_in: 120,
           scope: "cas:manage",
@@ -143,7 +149,6 @@ describe("gateway webui OAuth client", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    // Simulate the state + PKCE written by startLogin.
     sessionStorage.setItem("unidocs.oauth.state", "state-1");
     sessionStorage.setItem(
       "unidocs.oauth.pkce",
@@ -152,7 +157,7 @@ describe("gateway webui OAuth client", () => {
 
     const callback = new URL(`http://127.0.0.1:5174/ui/callback?code=code-1&state=state-1`);
     const session = await completeLogin(callback);
-    expect(session.accessToken).toBe("at-1");
+    expect(session.tenantId).toBe("alice");
   });
 
   test("rejects a callback with mismatched state", async () => {

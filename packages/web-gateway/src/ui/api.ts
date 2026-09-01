@@ -58,7 +58,6 @@ async function gatewayFetch(path: string, init: RequestInit = {}): Promise<Respo
   headers.set("Authorization", `Bearer ${session.accessToken}`);
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (response.status === 401) {
-    // One refresh-and-retry; a second 401 means the grant is gone.
     const refreshed = await refreshSession(session);
     const retryHeaders = new Headers(init.headers);
     retryHeaders.set("Authorization", `Bearer ${refreshed.accessToken}`);
@@ -109,10 +108,6 @@ export async function documentStatus(
       `/tenants/${encodeURIComponent(tenantId)}/docs/${encodeURIComponent(docType)}/${encodeURIComponent(docId)}`,
     ),
   );
-}
-
-export function exportUrl(tenantId: string, docType: string, docId: string): string {
-  return `${API_BASE}/tenants/${encodeURIComponent(tenantId)}/docs/${encodeURIComponent(docType)}/${encodeURIComponent(docId)}/export`;
 }
 
 /** Downloads an exported document through the authenticated API as a blob. */

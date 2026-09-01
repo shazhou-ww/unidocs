@@ -282,6 +282,20 @@ export class PgGatewayOAuthTenantMembershipStore implements GatewayOAuthTenantMe
       ...(row.ref_domain === null ? {} : { refDomain: row.ref_domain }),
     }) : null;
   }
+
+  async defaultForPrincipal(principalId: string): Promise<GatewayOAuthTenantMembership | null> {
+    const result = await this.db.query<MembershipRow>(
+      `SELECT tenant_id, scopes_json, ref_domain FROM gateway_oauth_tenant_memberships
+       WHERE principal_id = $1 ORDER BY tenant_id LIMIT 1`,
+      [principalId],
+    );
+    const row = result.rows[0];
+    return row ? Object.freeze({
+      tenantId: row.tenant_id,
+      scopes: scopeArray(row.scopes_json),
+      ...(row.ref_domain === null ? {} : { refDomain: row.ref_domain }),
+    }) : null;
+  }
 }
 
 export class PgGatewayOAuthAuditPort implements GatewayOAuthAuditPort {

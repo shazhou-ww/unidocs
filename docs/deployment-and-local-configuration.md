@@ -105,7 +105,10 @@ issuer claim in issued tokens keeps the registered identifier
 origin too. Tenant membership is seeded into the Gateway D1
 `gateway_oauth_tenant_memberships` table (one row per `(principal_id,
 tenant_id)` with `scopes_json` and optional `ref_domain`); the user's
-`principalId` is the upstream OIDC subject (`sub`).
+`principalId` is the upstream OIDC subject (`sub`). Each Google account maps
+1:1 to one tenant: an authorize request without a client-supplied `tenant_id`
+is resolved server-side from that membership, and the data-plane token carries
+the resolved `tenantId` (the webui never asks the user for a tenant).
 
 Set these on each of `@unidocs/cloudflare-markdown`,
 `@unidocs/cloudflare-docx`, and `@unidocs/cloudflare-psd`:

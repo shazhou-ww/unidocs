@@ -79,6 +79,9 @@ function handler() {
         find: async (principalId, tenantId) => principalId === "user-1" && tenantId === "tenant-1"
           ? { tenantId, scopes: ["cas:read"] }
           : null,
+        defaultForPrincipal: async (principalId) => principalId === "user-1"
+          ? { tenantId: "tenant-1", scopes: ["cas:read"] }
+          : null,
       },
       clock,
       random,
@@ -169,6 +172,36 @@ describe("Gateway OAuth authorization server HTTP handler", () => {
     ));
     expect(response?.status).toBe(401);
     expect(transactions).toHaveLength(0);
+  });
+
+  test("resolves the default tenant membership when tenant_id is absent", async () => {
+    const fetchOAuth = handler();
+    clients.set("client-1", {
+      clientId: "client-1",
+      redirectUris: ["https://app.example/callback"],
+      clientName: null,
+      createdAt: 1,
+    });
+
+    const challenge = await systemGatewayOAuthHash.sha256Base64Url("default-tenant-verifier-abcdefghijklmnopqrstuvwxyz-012345");
+    const authorizeUrl = new URL("https://gateway.example/oauth/authorize");
+    for (const [name, value] of Object.entries({
+      response_type: "code",
+      client_id: "client-1",
+      redirect_uri: "https://app.example/callback",
+      scope: "cas:read",
+      state: "state-default",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      // No tenant_id: the gateway derives the principal's default tenant.
+    })) authorizeUrl.searchParams.set(name, value);
+
+    const consent = await fetchOAuth(new Request(authorizeUrl, {
+      headers: { Authorization: "Session user-1" },
+    }));
+    expect(consent?.status).toBe(200);
+    const body = await consent?.json() as { authorization?: { tenantId?: string } };
+    expect(body.authorization?.tenantId).toBe("tenant-1");
   });
 
   test("rejects cross-origin and cross-user consent and consumes the transaction", async () => {
