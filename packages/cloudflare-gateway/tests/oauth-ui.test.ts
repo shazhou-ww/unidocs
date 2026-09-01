@@ -168,6 +168,8 @@ describe("Cloudflare Gateway OAuth identity and consent", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
     const html = await response.text();
+    expect(html).toContain("Authorize UniDocs access");
+    expect(html).toContain("View your documents");
     expect(html).toContain("Alice &amp; Bob");
     expect(html).toContain("&lt;client&gt;");
     expect(html).not.toContain("<client>");

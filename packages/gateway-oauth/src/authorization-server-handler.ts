@@ -102,12 +102,18 @@ export function createGatewayOAuthAuthorizationServerHandler(
 
       if (url.pathname === paths.decision) {
         if (request.method !== "POST") return methodNotAllowed("POST");
-        // The consent form posts back to the same host that served it. The
-        // issuer origin is also accepted so a gateway that hosts the OAuth
-        // surface on both its app domain and its registered issuer domain
-        // keeps both same-origin flows working.
+        // The consent form posts back to the host that served it; the issuer
+        // origin is also accepted for gateways hosting the OAuth surface on
+        // both the app domain and the registered issuer domain. A missing or
+        // literal "null" Origin (proxy chains and some browsers send it even
+        // for same-origin form POSTs) is accepted because the one-time random
+        // transaction_id is the actual CSRF protection.
         const origin = request.headers.get("Origin");
-        if (origin !== url.origin && origin !== issuerUrl.origin) {
+        const allowed = origin === null
+          || origin === "null"
+          || origin === url.origin
+          || origin === issuerUrl.origin;
+        if (!allowed) {
           throw new GatewayOAuthProtocolError("invalid_request", 403, "consent origin is not allowed");
         }
         const user = await config.identity.currentUser(request);

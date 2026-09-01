@@ -180,6 +180,37 @@ describe("Gateway OAuth authorization server HTTP handler", () => {
     expect(transactions).toHaveLength(0);
   });
 
+  test("accepts a consent decision with a literal null Origin (proxy chains)", async () => {
+    const fetchOAuth = handler();
+    clients.set("client-1", {
+      clientId: "client-1",
+      redirectUris: ["https://app.example/callback"],
+      clientName: null,
+      createdAt: 1,
+    });
+    transactions.set("transaction-1", {
+      transactionId: "transaction-1",
+      clientId: "client-1",
+      redirectUri: "https://app.example/callback",
+      tenantId: "tenant-1",
+      principalId: "user-1",
+      requestedScopes: ["cas:read"],
+      state: null,
+      codeChallenge: "A".repeat(43),
+      createdAt: 1,
+      expiresAt: 2_000,
+    });
+    // Some browsers/proxies send Origin: "null" even for same-origin form
+    // POSTs; the random transaction_id remains the CSRF protection.
+    const nullOrigin = await fetchOAuth(form("/oauth/authorize/decision", {
+      transaction_id: "transaction-1",
+      decision: "approve",
+    }, { Origin: "null", Authorization: "Session user-1" }));
+    expect(nullOrigin?.status).toBe(303);
+    expect(nullOrigin?.headers.get("Location"))
+      .toBe("https://app.example/callback?code=client-1");
+  });
+
   test("auto-provisions the account tenant from the email on first login", async () => {
     const clock = { now: () => 1_000 };
     const random = { opaque: () => "transaction-2" };

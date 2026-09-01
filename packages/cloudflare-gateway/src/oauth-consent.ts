@@ -1,9 +1,22 @@
 import type { GatewayOAuthConsentView } from "@unidocs/gateway-oauth";
 
+const SCOPE_LABELS: Record<string, string> = {
+  "cas:read": "View your documents",
+  "cas:write": "Edit your documents",
+  "cas:manage": "Manage your document storage",
+};
+
+/**
+ * UniDocs consent page. Branded for the unidocs application (not the UniCAS
+ * control plane) with human-readable scope descriptions.
+ */
 export function renderCloudflareGatewayOAuthConsent(view: GatewayOAuthConsentView): Response {
-  const title = "Authorize UniCAS access";
+  const title = "Authorize UniDocs access";
   const scopes = view.authorization.scopes
-    .map(scope => `<li><code>${escapeHtml(scope)}</code></li>`)
+    .map(scope => {
+      const label = SCOPE_LABELS[scope] ?? scope;
+      return `<li>${escapeHtml(label)}${label === scope ? "" : ` <code>${escapeHtml(scope)}</code>`}</li>`;
+    })
     .join("");
   const html = `<!doctype html>
 <html lang="en">
@@ -15,7 +28,7 @@ export function renderCloudflareGatewayOAuthConsent(view: GatewayOAuthConsentVie
 </head>
 <body><main>
 <h1>${title}</h1>
-<p><strong>${escapeHtml(view.user.displayName ?? view.user.principalId)}</strong> is authorizing client <code>${escapeHtml(view.authorization.clientId)}</code> for tenant <code>${escapeHtml(view.authorization.tenantId)}</code>.</p>
+<p><strong>${escapeHtml(view.user.displayName ?? view.user.principalId)}</strong> is signing in to UniDocs (client <code>${escapeHtml(view.authorization.clientId)}</code>) for tenant <code>${escapeHtml(view.authorization.tenantId)}</code>.</p>
 <ul>${scopes}</ul>
 <form method="post" action="${escapeHtml(view.decisionEndpoint)}">
 <input type="hidden" name="transaction_id" value="${escapeHtml(view.authorization.transactionId)}">
