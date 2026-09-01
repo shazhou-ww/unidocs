@@ -10,14 +10,11 @@ import {
 } from "../../../stacks/unidocs-cloudflare/deploy/deploy.mjs";
 
 describe("stack deployment plans", () => {
-  it("deploys UniCAS backing workers before edge and builds smoke dependencies", () => {
+  it("deploys UniCAS as one Cloudflare service and builds smoke dependencies", () => {
     const plan = unicasPlan(parseUnicasArgs([])).map((command) => command.join(" "));
-    expect(plan.findIndex((command) => command.includes("server-cloudflare exec wrangler deploy")))
-      .toBeLessThan(plan.findIndex((command) => command.includes("admin-webui exec wrangler deploy")));
-    expect(plan.findIndex((command) => command.includes("admin-webui exec wrangler deploy")))
-      .toBeLessThan(plan.findIndex((command) => command.includes("control-plane-mcp exec wrangler deploy")));
-    expect(plan.findIndex((command) => command.includes("control-plane-mcp exec wrangler deploy")))
-      .toBeLessThan(plan.findIndex((command) => command.includes("@unicas/edge exec wrangler deploy")));
+    expect(plan[0]).toContain("@unicas/service-cloudflare build");
+    expect(plan[1]).toContain("@unicas/service-cloudflare exec wrangler deploy");
+    expect(plan.filter((command) => command.includes("wrangler deploy"))).toHaveLength(1);
     expect(plan.at(-3)).toContain("@unicas/codec build");
     expect(plan.at(-2)).toContain("@unidocs/service-auth build");
     expect(plan.at(-1)).toBe("node stacks/unicas/deploy/smoke.mjs");

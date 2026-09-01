@@ -5,7 +5,7 @@ import { getState, setState } from "../src/ui/store.js";
 import { getHoverId, setHoverId } from "../src/ui/overlay-store.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
-const { dispatch, hitTest } = vi.hoisted(() => ({ dispatch: vi.fn(), hitTest: vi.fn() }));
+const { hitTest } = vi.hoisted(() => ({ hitTest: vi.fn() }));
 vi.mock("../src/ui/controller.js", () => ({
   initController: vi.fn(),
   getController: () => ({
@@ -14,7 +14,6 @@ vi.mock("../src/ui/controller.js", () => ({
     toScreen: (x: number, y: number) => ({ x, y }),
     hitTest,
   }),
-  dispatch,
 }));
 
 // See canvas-stage-drag.test.tsx: jsdom 25 has no PointerEvent constructor, so
@@ -50,8 +49,9 @@ function rejectingHit(): (e: unknown) => void {
  *  then its handler). */
 const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
 
+const stageOf = (container: HTMLElement): Element => container.querySelector("div.stage")!;
+
 beforeEach(() => {
-  dispatch.mockClear();
   hitTest.mockReset();
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.releasePointerCapture = vi.fn();
@@ -61,317 +61,128 @@ beforeEach(() => {
   });
 });
 
-const totalDx = (): number => dispatch.mock.calls
-  .map((args) => (args[0].payload.op as { translate: [number, number] }).translate[0])
-  .reduce((a: number, b: number) => a + b, 0);
 
-describe("async hit + press-to-drag", () => {
-  it("dispatches nothing while the hit test is still in flight", async () => {
-    const settle = deferredHit([{ layerId: "a", path: ["a"] }]);
+/** 点击 = 按下再松开,位移不超过 CLICK_SLOP_PX。命中在松开那一刻才发出。 */
+const click = (stage: Element, x: number, y: number, init: MouseEventInit = {}): void => {
+  fireEvent(stage, pointer("pointerdown", x, y, init));
+  fireEvent(stage, pointer("pointerup", x, y, init));
+};
+
+describe("命中测试发生在松手时,不是按下时", () => {
+  // 画布上的拖拽一律是平移(PR #41),所以命中不能在按下时发 —— 十次里八次
+  // 是想平移,那八次会白跑一趟 Worker,还占着串行队列挡住瓦片。
+  it("按下并拖动只平移,不发命中测试", () => {
+    hitTest.mockResolvedValue([{ layerId: "a", path: ["a"] }]);
     const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
+    const stage = stageOf(container);
     fireEvent(stage, pointer("pointerdown", 10, 10));
-    fireEvent(stage, pointer("pointermove", 22, 10));
-    expect(dispatch).not.toHaveBeenCalled();
-    await settle();
-    expect(getState().selection).toEqual(["a"]);
-  });
-
-  // Using the coordinate the hit came back AT would swallow the movement made
-  // during the round trip and the layer would visibly jump behind the cursor.
-  it("moves the layer by the FULL finger travel once the hit lands", async () => {
-    const settle = deferredHit([{ layerId: "a", path: ["a"] }]);
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-    fireEvent(stage, pointer("pointerdown", 10, 10));
-    fireEvent(stage, pointer("pointermove", 22, 10));
-    await settle();
-    expect(totalDx()).toBe(12);
-    fireEvent(stage, pointer("pointermove", 30, 10));
-    expect(totalDx()).toBe(20);
-  });
-
-  it("degrades to a plain click when the pointer is released before the hit lands", async () => {
-    const settle = deferredHit([{ layerId: "a", path: ["a"] }]);
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-    fireEvent(stage, pointer("pointerdown", 10, 10));
-    fireEvent(stage, pointer("pointermove", 22, 10));
-    fireEvent(stage, pointer("pointerup", 22, 10));
-    await settle();
-    expect(getState().selection).toEqual(["a"]);
-    expect(dispatch).not.toHaveBeenCalled();
-    fireEvent(stage, pointer("pointermove", 40, 10));
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it("clears the layer axis on a miss and leaves the region alone", async () => {
-    // The shared `leaf("a")` fixture covers the whole 100x100 canvas, which
-    // would make EVERY point read as "inside the current selection" and take
-    // the synchronous drag path (never reaching the async hit test this case
-    // means to exercise). Shrinking "a"'s bounds here keeps (90,90) genuinely
-    // outside it, so the press has to go through `hitTest` and can actually miss.
-    setState({
-      doc: { canvas: { width: 100, height: 100 }, layers: [{ ...leaf("a"), bounds: [0, 0, 10, 10] }] },
-      selection: ["a"], region: { bounds: [0, 0, 10, 10], source: "rect", maskId: null },
-    });
-    const settle = deferredHit([]);
-    const { container } = render(<CanvasStage />);
-    fireEvent(container.querySelector("div.stage")!, pointer("pointerdown", 90, 90));
-    await settle();
-    expect(getState().selection).toEqual([]);
-    expect(getState().region).toBeNull();
-  });
-
-  it("drags the existing selection with no round trip when the press is inside it", () => {
-    setState({ selection: ["a"] });
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-    fireEvent(stage, pointer("pointerdown", 10, 10));
-    fireEvent(stage, pointer("pointermove", 15, 10));
+    fireEvent(stage, pointer("pointermove", 60, 10));
+    fireEvent(stage, pointer("pointerup", 60, 10));
     expect(hitTest).not.toHaveBeenCalled();
-    expect(totalDx()).toBe(5);
-  });
-
-  // Regression for review finding 1: the synchronous "keep dragging the
-  // current selection" branch used to leave a still-in-flight `pending` from
-  // an EARLIER, since-released gesture untouched. When that stale hit landed
-  // later, `settleHit`'s "a newer gesture superseded this one" guard read the
-  // stale pointer as still current and overwrote the selection mid-drag.
-  it("a stale hit does not clobber the selection established by a newer synchronous drag", async () => {
-    setState({
-      selection: ["a"],
-      doc: {
-        canvas: { width: 100, height: 100 },
-        layers: [{ ...leaf("a"), bounds: [0, 0, 10, 10] }, { ...leaf("b"), bounds: [20, 20, 100, 100] }],
-      },
-    });
-    const settleFirst = deferredHit([{ layerId: "b", path: ["b"] }]);
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-
-    // 1. Press OUTSIDE "a"'s box: selection is non-empty but this point isn't
-    //    inside it, so this takes the async path — `pending` is now in flight.
-    fireEvent(stage, pointer("pointerdown", 50, 50));
-    // 2. Released before that hit test answers.
-    fireEvent(stage, pointer("pointerup", 50, 50));
-    // 3. A whole new press, this time INSIDE "a"'s box — the synchronous
-    //    "continue dragging the current selection" branch.
-    fireEvent(stage, pointer("pointerdown", 5, 5));
-    fireEvent(stage, pointer("pointermove", 8, 5));
-    expect(totalDx()).toBe(3);
-
-    // 4. The FIRST press's hit test finally lands, resolving to "b". It must
-    //    be discarded — the second, synchronous gesture already superseded it.
-    await settleFirst();
-    expect(getState().selection).toEqual(["a"]);
-  });
-
-  // Regression for review finding 2: `RenderClient.hitTest` really does
-  // reject on a Worker-side error. Without a `.catch`, `pending` was never
-  // cleared on that path (plus an unhandled rejection), which otherwise has
-  // no test coverage since every other case here resolves.
-  it("a rejected hit test clears `pending` instead of wedging the gesture", async () => {
-    let reject: (e: unknown) => void = () => {};
-    hitTest.mockImplementation(() => new Promise((_resolve, rej) => { reject = rej; }));
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-    fireEvent(stage, pointer("pointerdown", 10, 10));
-    reject(new Error("worker hit-test failed"));
-    // Flushes the `.catch` microtask. If it is missing, this `it` itself
-    // fails with an unhandled rejection rather than the assertion below.
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // A fresh gesture afterwards must behave normally — nothing left over
-    // from the dead hit test blocks it.
-    setState({ selection: ["a"] });
-    fireEvent(stage, pointer("pointerdown", 10, 10));
-    fireEvent(stage, pointer("pointermove", 15, 10));
-    expect(totalDx()).toBe(5);
-  });
-
-  // Regression for review finding 3: the hit branch of `settleHit` used to
-  // write the selection with a raw `setState`, skipping `selectLayer`'s
-  // ancestor expansion (spec §9) — a canvas click on a layer nested inside
-  // collapsed groups left the tree showing none of them.
-  it("expands the tree's ancestor groups when a canvas hit selects a nested layer", async () => {
-    setState({
-      selection: [], expanded: new Set(),
-      doc: { canvas: { width: 100, height: 100 }, layers: [group("g1", [group("g2", [leaf("leaf1")])])] },
-    });
-    // ⌘/Ctrl-click drills to the leaf (`p.leaf`), which is nested two groups
-    // deep — the only way to actually exercise ancestor expansion, since a
-    // plain click selects the top-level group, which has no ancestors.
-    const settle = deferredHit([{ layerId: "leaf1", path: ["g1", "g2", "leaf1"] }]);
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-    fireEvent(stage, pointer("pointerdown", 10, 10, { metaKey: true }));
-    await settle();
-    expect(getState().selection).toEqual(["leaf1"]);
-    expect(getState().expanded.has("g1")).toBe(true);
-    expect(getState().expanded.has("g2")).toBe(true);
-  });
-});
-
-// Four gestures now issue an async hit test — press-drag, double click,
-// alt-cycle and right-click — plus hover. Each grew its OWN staleness rule
-// (the `pending.current !== p` token, a captured `docId`, and for the double
-// click nothing at all), so they did not compose. One monotonic counter,
-// bumped by every gesture and checked in every `.then`, makes "a newer
-// gesture wins" true by construction instead of per handler.
-describe("one supersession token across every gesture", () => {
-  it("a descent still in flight does not rewrite the selection a newer press is dragging", async () => {
-    setState({
-      selection: ["g"], expanded: new Set(),
-      doc: { canvas: { width: 100, height: 100 }, layers: [group("g", [{ ...leaf("a"), bounds: [10, 10, 30, 30] }])] },
-    });
-    const settleDescent = deferredHit([{ layerId: "a", path: ["g", "a"] }]);
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-
-    // 1. Double click the group: the descent's hit test is now in flight, and
-    //    `onDoubleClick` has nulled `pending` so nothing else can settle it.
-    fireEvent.doubleClick(stage, { clientX: 15, clientY: 15 });
-    // 2. Immediately press inside the still-selected box and drag. That is the
-    //    synchronous "keep dragging what is already selected" branch, which
-    //    captures `["g"]` and consults nothing async.
-    fireEvent(stage, pointer("pointerdown", 15, 15));
-    fireEvent(stage, pointer("pointermove", 25, 15));
-    expect(totalDx()).toBe(10);
-
-    // 3. The descent lands last. It must be discarded — otherwise the overlay
-    //    and the layer tree jump to "a" while the drag goes on moving "g".
-    await settleDescent();
-    expect(getState().selection).toEqual(["g"]);
-  });
-
-  // Under a slow worker BOTH pointerdown settles bail (superseded, then
-  // `pending` nulled by the double click) and `onDoubleClick` returned early
-  // on the miss — so the layer axis silently survived a click on blank canvas.
-  it("a double click on empty canvas clears the layer axis", async () => {
-    setState({
-      selection: ["a"],
-      doc: { canvas: { width: 100, height: 100 }, layers: [{ ...leaf("a"), bounds: [0, 0, 10, 10] }] },
-    });
-    const settle = deferredHit([]);
-    const { container } = render(<CanvasStage />);
-    fireEvent.doubleClick(container.querySelector("div.stage")!, { clientX: 90, clientY: 90 });
-    await settle();
     expect(getState().selection).toEqual([]);
   });
 
-  // 互斥之后「点空白 = 取消」只剩一个轴可取消,所以拿只有区域的状态再走一遍
-  // 同一条路径:落空同样要把它清掉,否则区域会变成点不掉的残留。
-  it("a double click on empty canvas clears a region when that is the active axis", async () => {
+  it("按下后几乎没动就松开,判定为点击并选中", async () => {
+    hitTest.mockResolvedValue([{ layerId: "a", path: ["a"] }]);
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+    fireEvent(stage, pointer("pointerdown", 10, 10));
+    fireEvent(stage, pointer("pointermove", 12, 11));   // 2px,在阈值内
+    fireEvent(stage, pointer("pointerup", 12, 11));
+    await flush();
+    expect(getState().selection).toEqual(["a"]);
+  });
+
+  it("命中落空清空图层轴", async () => {
+    setState({ selection: ["a"] });
+    hitTest.mockResolvedValue([]);
+    const { container } = render(<CanvasStage />);
+    click(stageOf(container), 90, 90);
+    await flush();
+    expect(getState().selection).toEqual([]);
+  });
+
+  it("平移不清选中 —— 选中框跟着画布一起走", () => {
+    setState({ selection: ["a"] });
+    hitTest.mockResolvedValue([]);
+    const { container } = render(<CanvasStage />);
+    const stage = stageOf(container);
+    fireEvent(stage, pointer("pointerdown", 10, 10));
+    fireEvent(stage, pointer("pointermove", 60, 40));
+    fireEvent(stage, pointer("pointerup", 60, 40));
+    expect(getState().selection).toEqual(["a"]);
+  });
+
+  it("画布选中会展开树里的祖先组(spec §9)", async () => {
     setState({
       selection: [],
-      doc: { canvas: { width: 100, height: 100 }, layers: [{ ...leaf("a"), bounds: [0, 0, 10, 10] }] },
-      region: { bounds: [0, 0, 10, 10], source: "rect", maskId: null },
+      expanded: new Set(),
+      doc: { canvas: { width: 100, height: 100 }, layers: [group("g1", [group("g2", [leaf("deep")])])] },
     });
-    const settle = deferredHit([]);
+    hitTest.mockResolvedValue([{ layerId: "deep", path: ["g1", "g2", "deep"] }]);
     const { container } = render(<CanvasStage />);
-    fireEvent.doubleClick(container.querySelector("div.stage")!, { clientX: 90, clientY: 90 });
-    await settle();
-    expect(getState().region).toBeNull();
-  });
-
-  // Not every superseding gesture installs a `pending` of its own: a
-  // right-click bumps the token and installs nothing. So the superseded
-  // settle has to hand its own slot back, or `onPointerMove` parks in its "a
-  // hit is still coming" branch forever — no hover, no marquee — until some
-  // later press happens to overwrite it.
-  it("a superseded press hands back its pending slot instead of wedging pointermove", async () => {
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { cb(0); return 1; });
-    const resolvers: Array<(hits: unknown) => void> = [];
-    hitTest.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-
-    fireEvent(stage, pointer("pointerdown", 10, 10));   // in flight…
-    fireEvent(stage, pointer("pointerup", 10, 10));
-    fireEvent.contextMenu(stage, { clientX: 10, clientY: 10 });  // …and superseded
-    resolvers[0]([{ layerId: "a", path: ["a"] }]);
+    click(stageOf(container), 15, 15, { metaKey: true });
     await flush();
-
-    fireEvent(stage, pointer("pointermove", 15, 15));
-    expect(hitTest).toHaveBeenCalledTimes(3);           // the hover round trip happened
-    resolvers[2]([{ layerId: "a", path: ["a"] }]);
-    await flush();
-    expect(getHoverId()).toBe("a");
-  });
-});
-
-// `RenderClient.hitTest` genuinely rejects: the render Worker posts
-// `{type:"error"}` for any throw inside `core.hitTest`, and a CAS blob fetch
-// failing inside `residentFor` during hover is an ordinary route there.
-describe("a rejected hit test", () => {
-  it("reports a press's failure instead of wedging the gesture in silence", async () => {
-    const reject = rejectingHit();
-    const { container } = render(<CanvasStage />);
-    fireEvent(container.querySelector("div.stage")!, pointer("pointerdown", 10, 10));
-    reject(new Error("worker hit-test failed"));
-    await flush();
-    expect(getState().status).toContain("worker hit-test failed");
-    expect(getState().chat.at(-1)).toMatchObject({ role: "err" });
-  });
-
-  // Without a `.catch` this is an unhandled rejection AND a double click that
-  // silently does nothing.
-  it("reports a double click's failure", async () => {
-    const reject = rejectingHit();
-    const { container } = render(<CanvasStage />);
-    fireEvent.doubleClick(container.querySelector("div.stage")!, { clientX: 10, clientY: 10 });
-    reject(new Error("descent hit-test failed"));
-    await flush();
-    expect(getState().status).toContain("descent hit-test failed");
-  });
-
-  // Hover runs once per animation frame, so one report per failure would bury
-  // the transcript — worse than the disease. It stays silent, but it must not
-  // leave an unhandled rejection, and the stale outline has to come off.
-  it("clears the hover outline silently rather than reporting once per frame", async () => {
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { cb(0); return 1; });
-    setHoverId("a");
-    const reject = rejectingHit();
-    const { container } = render(<CanvasStage />);
-    fireEvent(container.querySelector("div.stage")!, pointer("pointermove", 15, 15));
-    reject(new Error("blob fetch failed"));
-    await flush();
-    expect(getHoverId()).toBeNull();
-    expect(getState().chat).toEqual([]);
-  });
-});
-
-// Spec §9: after selecting ON THE CANVAS the tree expands every ancestor group
-// and scrolls to the row. Three canvas paths used to write the selection with
-// `setSelection`, which normalizes but does not expand.
-describe("canvas selection expands the tree", () => {
-  const nested = { canvas: { width: 100, height: 100 }, layers: [group("g1", [group("g2", [leaf("deep")])])] };
-
-  it("expands ancestors when alt-cycling picks a nested layer", async () => {
-    setState({ selection: [], expanded: new Set(), doc: nested });
-    const settle = deferredHit([{ layerId: "deep", path: ["g1", "g2", "deep"] }]);
-    const { container } = render(<CanvasStage />);
-    const stage = container.querySelector("div.stage")!;
-    fireEvent(stage, pointer("pointerdown", 15, 15, { altKey: true }));
-    fireEvent(stage, pointer("pointerup", 15, 15));
-    await settle();
     expect(getState().selection).toEqual(["deep"]);
     expect(getState().expanded.has("g1")).toBe(true);
     expect(getState().expanded.has("g2")).toBe(true);
   });
+});
 
-  // The worst of the three: descending into a group selects a child that is BY
-  // CONSTRUCTION behind a collapsed group, because `expandAncestors` adds the
-  // ancestor chain — so selecting "g1" never expanded "g1" itself.
-  it("expands ancestors when a double click descends into a group", async () => {
-    setState({ selection: ["g1"], expanded: new Set(), doc: nested });
-    const settle = deferredHit([{ layerId: "deep", path: ["g1", "g2", "deep"] }]);
+describe("一个递增令牌管住所有手势", () => {
+  // 四种手势(点击/双击/Alt 循环/右键)都发异步命中,各自长一套作废规则就
+  // 会互相覆盖。统一成一个令牌之后,永远是新的赢。
+  it("在飞的双击下探不会被随后落地的单击结果覆盖", async () => {
+    // 先选中 g,双击才有得下探:descendPath(["g","a"], "g") -> "a",
+    // 而单击的 clickTarget 给的是最外层 "g"。两者必须不同,否则这条断言
+    // 在两种实现下都会过、什么也钉不住。
+    setState({
+      selection: ["g"],
+      doc: { canvas: { width: 100, height: 100 }, layers: [group("g", [leaf("a")])] },
+    });
+    const resolvers: Array<(v: unknown) => void> = [];
+    hitTest.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
     const { container } = render(<CanvasStage />);
-    fireEvent.doubleClick(container.querySelector("div.stage")!, { clientX: 15, clientY: 15 });
-    await settle();
-    expect(getState().selection).toEqual(["g2"]);
-    expect(getState().expanded.has("g1")).toBe(true);
+    const stage = stageOf(container);
+    click(stage, 15, 15);                                      // 单击 -> resolvers[0]
+    fireEvent.doubleClick(stage, { clientX: 15, clientY: 15 }); // 双击 -> resolvers[1]
+    const hits = [{ layerId: "a", path: ["g", "a"] }];
+    resolvers[1]?.(hits);   // 双击先回
+    await flush();
+    resolvers[0]?.(hits);   // 单击后回 —— 已被令牌作废,不该覆盖
+    await flush();
+    expect(getState().selection).toEqual(["a"]);
+  });
+
+  it("双击空白清空图层轴", async () => {
+    setState({ selection: ["a"] });
+    hitTest.mockResolvedValue([]);
+    const { container } = render(<CanvasStage />);
+    fireEvent.doubleClick(stageOf(container), { clientX: 90, clientY: 90 });
+    await flush();
+    expect(getState().selection).toEqual([]);
+  });
+});
+
+describe("命中测试失败", () => {
+  it("点击失败会上报,而不是静默无反应", async () => {
+    const reject = rejectingHit();
+    const { container } = render(<CanvasStage />);
+    click(stageOf(container), 15, 15);
+    reject(new Error("worker 挂了"));
+    await flush();
+    expect(getState().status).toContain("命中测试失败");
+  });
+
+  it("悬停失败只清掉高亮,不每帧上报", async () => {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { cb(0); return 1; });
+    setHoverId("a");
+    const reject = rejectingHit();
+    const { container } = render(<CanvasStage />);
+    fireEvent(stageOf(container), pointer("pointermove", 15, 15));
+    reject(new Error("worker 挂了"));
+    await flush();
+    expect(getHoverId()).toBeNull();
+    expect(getState().status).not.toContain("命中测试失败");
   });
 });

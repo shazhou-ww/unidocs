@@ -18,13 +18,7 @@
       "path": "unicas-packages/admin-protocol"
     },
     {
-      "path": "unicas-packages/control-plane"
-    },
-    {
       "path": "unicas-packages/control-auth"
-    },
-    {
-      "path": "unicas-packages/control-plane-mcp"
     },
     {
       "path": "unicas-packages/admin-client"
@@ -36,7 +30,10 @@
       "path": "unicas-packages/admin-webui"
     },
     {
-      "path": "unicas-packages/edge"
+      "path": "unicas-packages/service"
+    },
+    {
+      "path": "unicas-packages/service-cloudflare"
     },
     {
       "path": "packages/protocol-doc"

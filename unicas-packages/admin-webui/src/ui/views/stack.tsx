@@ -11,7 +11,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { CasStack } from "@unicas/admin-protocol";
+import type { CasStack } from "@unicas/admin-client";
 import { api } from "../api.js";
 import { ConceptGuide, ErrorState, LoadingState, Page, Tabs } from "../components.js";
 import { navigate } from "../router.js";

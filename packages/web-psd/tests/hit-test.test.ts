@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   findLayer, unionRect, layerBox, layersIntersecting, normalizeSelection, expandAncestors,
-  clickTarget, descendPath, draggableIds,
+  clickTarget, descendPath,
 } from "../src/ui/hit-test.js";
 import type { LocalLayer, Rect } from "../src/doc-model.js";
 
@@ -147,14 +147,3 @@ describe("descendPath", () => {
   });
 });
 
-describe("draggableIds", () => {
-  it("drops locked layers, which nothing in the engine refuses on its own", () => {
-    const layers = [leaf("free", [0, 0, 5, 5]), leaf("pinned", [0, 0, 5, 5], { locked: true })];
-    expect(draggableIds(layers, ["free", "pinned"])).toEqual(["free"]);
-  });
-
-  it("treats a group as locked when the group itself is", () => {
-    const layers = [group("g", [leaf("a", [0, 0, 5, 5])], { locked: true })];
-    expect(draggableIds(layers, ["g"])).toEqual([]);
-  });
-});

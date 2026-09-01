@@ -17,7 +17,7 @@ import {
   ADMIN_PORT,
   buildWorkers,
   DOC_TYPES,
-  MIDDLEWARE_WORKER,
+  SERVICE_WORKER,
   MOCK_OIDC_PORT,
 } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
 
@@ -109,7 +109,7 @@ test("buildWorkers merges extraBindings into that doc type's worker only", () =>
     extraBindings: { psd: { LLM_API_KEY: "test-value-not-a-secret" } },
   });
   const gateway = workers.find((w) => w.name === "unidocs-gateway");
-  const middleware = workers.find((w) => w.name === MIDDLEWARE_WORKER);
+  const service = workers.find((w) => w.name === SERVICE_WORKER);
   const psd = workers.find((w) => w.name === "unidocs-psd");
 
   expect(psd.bindings).toEqual({
@@ -127,7 +127,7 @@ test("buildWorkers merges extraBindings into that doc type's worker only", () =>
     LLM_API_KEY: "test-value-not-a-secret",
   });
   expect(gateway.bindings.LLM_API_KEY).toBeUndefined();
-  expect(middleware.bindings.LLM_API_KEY).toBeUndefined();
+  expect(service.bindings.LLM_API_KEY).toBeUndefined();
 });
 
 test("buildWorkers leaves bindings untouched when no extraBindings are given", () => {

@@ -1,0 +1,51 @@
+name = "unidocs-cas"
+main = "dist/worker.js"
+compatibility_date = "2025-08-17"
+compatibility_flags = ["global_fetch_strictly_public", "nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[[routes]]
+pattern = "unicas.shazhou.work/*"
+zone_name = "shazhou.work"
+
+[[d1_databases]]
+binding = "CAS_CONTROL_DB"
+database_name = "unidocs-cas-control"
+database_id = "dc8090eb-46bc-43e2-9524-f1554fb71c74"
+
+[[d1_databases]]
+binding = "CAS_DB"
+database_name = "unidocs-cas-db"
+database_id = "66f8738b-b1a9-4727-b468-0c2c73287d2c"
+
+[[r2_buckets]]
+binding = "CAS_R2"
+bucket_name = "unidocs-cas"
+preview_bucket_name = "unidocs-cas-preview"
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "abb77c24fd0c4487a91c261d0cb58d6d"
+
+[durable_objects]
+bindings = [
+  { name = "CAS_DO", class_name = "CasDurableObject" },
+  { name = "CAS_DOMAIN_DO", class_name = "RootRefDomainDurableObject" },
+]
+
+[exports.CasDurableObject]
+type = "durable-object"
+storage = "sqlite"
+
+[exports.RootRefDomainDurableObject]
+type = "durable-object"
+storage = "sqlite"
+
+[vars]
+CAS_ADMIN_MOUNT = "/admin"
+CAS_PUBLIC_ORIGIN = "https://unicas.shazhou.work"
+PUBLIC_ORIGIN = "https://unicas.shazhou.work"
+GOOGLE_OIDC_CLIENT_ID = "152437813368-hrv07qv06756pg68c4p9f84i8cf4uk00.apps.googleusercontent.com"
+MCP_ALLOWED_ORIGIN_HOSTNAMES = ""
+MCP_MUTATIONS_ENABLED = "true"

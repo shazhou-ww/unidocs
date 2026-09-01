@@ -63,6 +63,7 @@ describe("click semantics", () => {
     hitTest.mockResolvedValue([{ layerId: "a", path: ["g", "a"] }]);
     const { container } = render(<CanvasStage />);
     fireEvent(stageOf(container), pointer("pointerdown", 15, 15));
+    fireEvent(stageOf(container), pointer("pointerup", 15, 15));
     await flush();
     expect(getState().selection).toEqual(["g"]);
   });
@@ -71,6 +72,7 @@ describe("click semantics", () => {
     hitTest.mockResolvedValue([{ layerId: "a", path: ["g", "a"] }]);
     const { container } = render(<CanvasStage />);
     fireEvent(stageOf(container), pointer("pointerdown", 15, 15, { metaKey: true }));
+    fireEvent(stageOf(container), pointer("pointerup", 15, 15, { metaKey: true }));
     await flush();
     expect(getState().selection).toEqual(["a"]);
   });
@@ -80,6 +82,7 @@ describe("click semantics", () => {
     hitTest.mockResolvedValue([{ layerId: "a", path: ["g", "a"] }]);
     const { container } = render(<CanvasStage />);
     fireEvent(stageOf(container), pointer("pointerdown", 15, 15, { shiftKey: true }));
+    fireEvent(stageOf(container), pointer("pointerup", 15, 15, { shiftKey: true }));
     await flush();
     expect(getState().selection).toEqual(["b", "g"]);
   });
@@ -94,6 +97,7 @@ describe("click semantics", () => {
     hitTest.mockResolvedValue([{ layerId: "a", path: ["root", "a"] }]);
     const { container } = render(<CanvasStage />);
     fireEvent(stageOf(container), pointer("pointerdown", 15, 15));
+    fireEvent(stageOf(container), pointer("pointerup", 15, 15));
     await flush();
     expect(getState().selection).toEqual(["a"]);
   });
@@ -151,18 +155,18 @@ describe("click semantics", () => {
     expect(getState().selection).toEqual(["root"]);
   });
 
-  // No op in the engine checks `locked` — it is only a writable property — so
-  // if the front end does not refuse the drag, nothing will.
-  it("selects a locked layer but dispatches no op when dragging it", async () => {
+  // 锁定图层照样可选中 —— 这是 Photoshop 的行为,跳过它意味着点在一个明明
+  // 看得见的图层上却选中了它背后的东西。画布上本来就没有任何编辑手势了
+  // (拖 = 平移),所以「锁定」只影响属性面板能不能写。
+  it("selects a locked layer like any other", async () => {
     setState({ doc: { canvas: { width: 100, height: 100 }, layers: [leaf("p", [0, 0, 50, 50], { locked: true })] } });
     hitTest.mockResolvedValue([{ layerId: "p", path: ["p"] }]);
     const { container } = render(<CanvasStage />);
     const stage = stageOf(container);
     fireEvent(stage, pointer("pointerdown", 15, 15));
-    fireEvent(stage, pointer("pointermove", 40, 15));
+    fireEvent(stage, pointer("pointerup", 15, 15));
     await flush();
     expect(getState().selection).toEqual(["p"]);
-    expect(dispatch).not.toHaveBeenCalled();
   });
 });
 
@@ -214,7 +218,7 @@ describe("disambiguation and hover", () => {
     const stage = stageOf(container);
     for (const expected of [["a"], ["b"], ["c"], ["a"]]) {
       fireEvent(stage, pointer("pointerdown", 15, 15, { altKey: true }));
-      fireEvent(stage, pointer("pointerup", 15, 15));
+      fireEvent(stage, pointer("pointerup", 15, 15, { altKey: true }));
       await flush();
       expect(getState().selection).toEqual(expected);
     }
@@ -225,15 +229,15 @@ describe("disambiguation and hover", () => {
     const { container } = render(<CanvasStage />);
     const stage = stageOf(container);
     fireEvent(stage, pointer("pointerdown", 15, 15, { altKey: true }));
-    fireEvent(stage, pointer("pointerup", 15, 15));
+    fireEvent(stage, pointer("pointerup", 15, 15, { altKey: true }));
     await flush();
     fireEvent(stage, pointer("pointerdown", 15, 15, { altKey: true }));
-    fireEvent(stage, pointer("pointerup", 15, 15));
+    fireEvent(stage, pointer("pointerup", 15, 15, { altKey: true }));
     await flush();
     expect(getState().selection).toEqual(["b"]);
 
     fireEvent(stage, pointer("pointerdown", 65, 65, { altKey: true }));
-    fireEvent(stage, pointer("pointerup", 65, 65));
+    fireEvent(stage, pointer("pointerup", 65, 65, { altKey: true }));
     await flush();
     expect(getState().selection).toEqual(["a"]);
   });

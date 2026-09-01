@@ -1,7 +1,7 @@
 {
   "name": "@unicas/tenant-blob-client",
   "version": "0.1.0",
-  "description": "Blob layer above @unicas/tenant-client: large-content chunking into CAS nodes, blob index CBOR, stream/random reads, and tenant usage/gc",
+  "description": "Blob layer above @unicas/tenant-client: chunked storage, random-access handles, and root retention",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

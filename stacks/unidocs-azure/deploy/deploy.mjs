@@ -43,7 +43,7 @@ const DEFAULTS = {
   location: "southeastasia",
 };
 
-/** 与 unicas-packages/control-plane/src/validation.ts 的 STACK_ID_PATTERN 一致。 */
+/** 与 unicas-packages/service/src/control-validation.ts 的 STACK_ID_PATTERN 一致。 */
 const STACK_ID_PATTERN = /^cas_[A-Za-z0-9_-]{8,64}$/;
 
 const PG_ADMIN_PASSWORD_SECRET = "pg-admin-password";

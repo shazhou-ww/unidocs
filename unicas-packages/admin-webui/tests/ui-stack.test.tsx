@@ -50,7 +50,7 @@ describe("StackView", () => {
     render(<StackView stackId="cas_one" onOpenMcpConfiguration={vi.fn()} onLogout={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Primary stack" })).toBeInTheDocument());
-    expect(document.title).toBe("UniCAS | Primary stack");
+    await waitFor(() => expect(document.title).toBe("UniCAS | Primary stack"));
     const switcher = screen.getByRole("combobox", { name: "Stack" });
     expect(switcher).toHaveValue("cas_one");
     expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");

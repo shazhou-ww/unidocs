@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { selectLayer, setState, useUiState } from "../store.js";
-import { exportUrl, openFile } from "../controller.js";
+import { exportDoc, openFile } from "../controller.js";
 import { collectDegradations, countLayers } from "../../doc-model.js";
 import { zoomActual, zoomFit, zoomStep } from "../zoom-controller.js";
 
@@ -8,8 +8,6 @@ export function TopBar() {
   const s = useUiState();
   const fileRef = useRef<HTMLInputElement>(null);
   const degradations = s.doc ? collectDegradations(s.doc.layers) : [];
-
-  const href = exportUrl();
 
   return (
     <header className="topbar">
@@ -30,7 +28,7 @@ export function TopBar() {
             <div className="degrade-pop">
               {degradations.map((d, i) => (
                 <button key={`${d.layerId}-${i}`} type="button" className="degrade-row"
-                        onClick={() => { selectLayer(d.layerId); setState({ pane: "props", degradeOpen: false }); }}>
+                        onClick={() => { selectLayer(d.layerId); setState({ degradeOpen: false }); }}>
                   <strong>{d.layerName}</strong>
                   <span>{d.reason}</span>
                   {d.detail ? <em>{d.detail}</em> : null}
@@ -62,9 +60,16 @@ export function TopBar() {
         ref={fileRef} type="file" accept=".psd" hidden
         onChange={(e) => { const f = e.target.files?.[0]; if (f) void openFile(f); }}
       />
-      {href
-        ? <a className="btn btn-primary" href={href} download="export.psd">导出</a>
-        : <span className="btn btn-primary is-disabled">导出</span>}
+      {/* A button, not a link: the export has to flush the pending-op queue
+          to the server before reading the document back from it, and a plain
+          <a href> navigates without running any of our code. */}
+      <button
+        type="button" className="btn btn-primary"
+        disabled={!s.docId || s.exporting}
+        onClick={() => { void exportDoc(); }}
+      >
+        {s.exporting ? "导出中…" : "导出"}
+      </button>
     </header>
   );
 }

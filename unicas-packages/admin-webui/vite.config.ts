@@ -1,5 +1,4 @@
 import react from "@vitejs/plugin-react";
-import { casAdminRoutes } from "@unicas/admin-protocol";
 import { defineConfig } from "vitest/config";
 
 /**
@@ -7,6 +6,12 @@ import { defineConfig } from "vitest/config";
  * the BFF owns `/admin/me`, `/admin/stacks/...` and the OIDC routes. In dev,
  * Vite serves the SPA and proxies every other `/admin` path (API + OIDC) to
  * the local BFF Worker (see stacks/unidocs-cloudflare/local).
+ *
+ * The BFF-owned paths stay literal here (the possession-challenge route
+ * mirrors `casAdminRoutes.possessionChallenge()` in @unicas/admin-protocol)
+ * so this browser package keeps the final client direction
+ * admin-webui -> admin-client -> admin-protocol without a direct protocol
+ * dependency.
  */
 export default defineConfig({
   base: "/admin/",
@@ -28,7 +33,7 @@ export default defineConfig({
             || path.startsWith("/admin/stacks")
             || path.startsWith("/admin/member-invitations")
             || path.startsWith("/admin/auth/")
-            || path === casAdminRoutes.possessionChallenge()
+            || path === "/admin/issuer/possession-challenge"
             || path.startsWith("/admin/invitations/");
           if (isBffRoute) return undefined; // forward to the BFF worker
           return path; // serve from Vite

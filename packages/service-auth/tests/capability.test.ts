@@ -17,6 +17,7 @@ import {
   CapabilityTokenType,
   CapabilityVerifier,
   JoseCapabilitySigner,
+  MaximumCapabilityLifetimeSeconds,
   casManagePermission,
   casReadPermission,
   casWritePermission,
@@ -287,8 +288,9 @@ describe("capability configuration and issuance guards", () => {
   });
 
   test("rejects verifier lifetime and skew beyond fixed limits", () => {
-    expect(() => docVerifier(undefined, { maximumLifetimeSeconds: 1801 }))
-      .toThrow("1 to 1800");
+    expect(() => docVerifier(undefined, {
+      maximumLifetimeSeconds: MaximumCapabilityLifetimeSeconds + 1,
+    })).toThrow(`1 to ${MaximumCapabilityLifetimeSeconds}`);
     expect(() => docVerifier(undefined, { clockSkewSeconds: 31 }))
       .toThrow("0 to 30");
   });
@@ -301,8 +303,9 @@ describe("capability configuration and issuance guards", () => {
     await expect(capabilityIssuer.issue(docInput({
       permissions: [sessionReadPermission("tenant-2", "session-1")],
     }))).rejects.toThrow("tenant");
-    await expect(capabilityIssuer.issue(docInput({ lifetimeSeconds: 1801 })))
-      .rejects.toThrow("1 to 1800");
+    await expect(capabilityIssuer.issue(docInput({
+      lifetimeSeconds: MaximumCapabilityLifetimeSeconds + 1,
+    }))).rejects.toThrow(`1 to ${MaximumCapabilityLifetimeSeconds}`);
     await expect(capabilityIssuer.issue(docInput({ permissions: [] })))
       .rejects.toThrow("must not be empty");
   });

@@ -73,7 +73,6 @@ const MAX_CLONE_REQUEST_BYTES = 64 * 1024;
 const CAS_FORWARDED_HEADERS = [
   "Content-Type",
   "Content-Length",
-  "X-CAS-Refs",
   "X-CAS-Lease-Duration",
 ];
 

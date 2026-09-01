@@ -93,10 +93,9 @@ describe("ContextBar", () => {
     expect(dispatch).toHaveBeenCalledWith({ kind: "crop", payload: { rect: [10, 20, 132, 200] } });
   });
 
-  // draggableIds (hit-test.ts) silently drops locked members of a mixed
-  // selection from a drag — the context bar must say so, and say something
-  // DIFFERENT for "all locked" vs "some locked", or a partial drag looks like
-  // nothing happened at all.
+  // 锁定现在只影响属性面板能不能写(画布上已经没有任何编辑手势),所以这
+  // 三条钉的是「说清楚」而不是「拦住谁」:「全部锁定」和「部分锁定」要读
+  // 起来不一样,否则改不动的时候屏幕上没有任何解释。
   it("shows no lock hint when nothing in the selection is locked", () => {
     setState({
       selection: ["a"],

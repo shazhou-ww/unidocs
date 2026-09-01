@@ -1,4 +1,5 @@
 import { CasClientError } from "@unicas/tenant-blob-client";
+import type { CasBlobHandle } from "@unicas/tenant-blob-client";
 import {
   computeNodeDigest,
   encodeHeader,
@@ -29,12 +30,7 @@ export interface SBlobCasAdapter {
   ): Promise<unknown>;
   leaseNode(hash: string): Promise<unknown>;
   storeBlob(source: SBlobSource): Promise<{ readonly hash: string }>;
-  statBlob(hash: string): Promise<{
-    readonly hash: string;
-    readonly size: number;
-    readonly contentType: string;
-  }>;
-  openBlob(hash: string, range?: SBlobReadRange): Promise<ByteStream>;
+  openBlob(hash: string): Promise<CasBlobHandle>;
 }
 
 export interface SBlobContextOptions {
@@ -119,29 +115,24 @@ class SBlobRuntime {
   async open(blob: SBlob): Promise<SBlobHandler> {
     if (!isSBlob(blob)) throw new TypeError("openSBlob requires a branded SBlob");
     validateHash(blob.hash);
-    const metadata = await this.#cas.statBlob(blob.hash);
-    if (metadata.hash !== blob.hash) {
+    const blobHandle = await this.#cas.openBlob(blob.hash);
+    if (blobHandle.ref.hash !== blob.hash) {
       throw new SBlobIntegrityError(`CAS metadata hash mismatch for ${blob.hash}`);
     }
     const openRange = (range?: SBlobReadRange): ByteStream => {
-      validateRange(range, metadata.size);
-      const cas = this.#cas;
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield* await cas.openBlob(blob.hash, range);
-        },
-      };
+      validateRange(range, blobHandle.ref.size);
+      return byteStreamFromReadableStream(blobHandle.read(range));
     };
     return Object.freeze({
-      size: metadata.size,
-      contentType: metadata.contentType,
+      size: blobHandle.ref.size,
+      contentType: blobHandle.ref.contentType,
       read: openRange,
       readBytes: async (range: { readonly offset: number; readonly length: number }) => {
-        validateRange(range, metadata.size);
+        validateRange(range, blobHandle.ref.size);
         if (range.length > this.#maxReadBytes) {
           throw new RangeError(`SBlob read exceeds ${this.#maxReadBytes}-byte materialization limit`);
         }
-        return collectExactly(openRange(range), range.length);
+        return blobHandle.readBytes(range);
       },
     });
   }
@@ -240,22 +231,6 @@ function validateRange(range: SBlobReadRange | undefined, size: number): void {
       throw new RangeError("SBlob range length is outside the blob");
     }
   }
-}
-
-async function collectExactly(source: ByteStream, expectedLength: number): Promise<Uint8Array> {
-  const result = new Uint8Array(expectedLength);
-  let offset = 0;
-  for await (const chunk of source) {
-    if (offset + chunk.length > expectedLength) {
-      throw new SBlobIntegrityError("SBlob range returned more bytes than requested");
-    }
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  if (offset !== expectedLength) {
-    throw new SBlobIntegrityError(`SBlob range returned ${offset} bytes, expected ${expectedLength}`);
-  }
-  return result;
 }
 
 function validLimit(value: number | undefined, fallback: number, name: string): number {

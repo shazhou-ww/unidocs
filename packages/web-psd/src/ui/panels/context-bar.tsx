@@ -32,10 +32,11 @@ export function ContextBar() {
       <span className="mono ctx-path">
         {s.doc ? describeTarget(sel.map((l) => l.name), s.region) : "未选中图层"}
       </span>
-      {/* A mixed selection silently drops its locked members from a drag
-          (draggableIds, canvas-stage.tsx) — "已锁定" and "部分已锁定" have to
-          read differently, or that drop happens with no explanation on
-          screen at all. */}
+      {/* Nothing on the canvas edits a locked layer any more — position is
+          not draggable at all (PR #41) — so this is now purely informational:
+          it explains why the properties pane refuses writes. Still worth the
+          two states, because "some of what you picked is locked" and "all of
+          it is" lead to different next moves. */}
       {sel.length > 0 && sel.some((l) => l.locked)
         ? <span className="mono ctx-size">{sel.every((l) => l.locked) ? "已锁定" : "部分已锁定"}</span>
         : null}

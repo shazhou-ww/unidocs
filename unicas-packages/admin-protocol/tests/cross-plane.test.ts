@@ -19,10 +19,13 @@ function readPkg(name: string): {
   return JSON.parse(readFileSync(join(packagesDir, name, "package.json"), "utf8"));
 }
 
-const TENANT_IMPL_PACKAGES = [
+const TENANT_CLIENT_PACKAGES = [
   "@unicas/tenant-client",
   "@unicas/tenant-blob-client",
-  "@unicas/tenant-protocol",
+] as const;
+
+const TENANT_ONLY_PACKAGES = [
+  ...TENANT_CLIENT_PACKAGES,
   "@unicas/codec",
 ] as const;
 
@@ -74,48 +77,75 @@ describe("cross-plane separation", () => {
 });
 
 describe("package dependency boundaries", () => {
-  test("four middleware packages exist with required dependency direction", () => {
+  test("unified service packages have the required dependency direction", () => {
     const protocol = readPkg("admin-protocol");
-    const control = readPkg("control-plane");
     const webui = readPkg("admin-webui");
-    const edge = readPkg("edge");
+    const service = readPkg("service");
+    const cloudflareService = readPkg("service-cloudflare");
 
     expect(protocol.name).toBe("@unicas/admin-protocol");
-    expect(control.name).toBe("@unicas/control-plane");
     expect(webui.name).toBe("@unicas/admin-webui");
-    expect(edge.name).toBe("@unicas/edge");
+    expect(service.name).toBe("@unicas/service");
+    expect(cloudflareService.name).toBe("@unicas/service-cloudflare");
     expect(webui.private).toBe(true);
-    expect(edge.private).toBe(true);
+    expect(cloudflareService.private).toBe(true);
 
-    expect(control.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
-    expect(webui.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
-    expect(webui.dependencies?.["@unicas/control-plane"]).toBe("workspace:*");
+    // Final client direction: admin-webui -> admin-client -> admin-protocol.
+    expect(webui.dependencies?.["@unicas/admin-client"]).toBe("workspace:*");
+    expect(webui.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
+    expect(webui.dependencies?.["@unicas/service"]).toBeUndefined();
+    expect(webui.dependencies?.["@unicas/control-plane"]).toBeUndefined();
+    expect(service.dependencies?.["@unicas/admin-protocol"]).toBe("workspace:*");
+    expect(service.dependencies?.["@unicas/tenant-protocol"]).toBe("workspace:*");
+    expect(service.dependencies?.["@unicas/codec"]).toBe("workspace:*");
+    expect(cloudflareService.dependencies?.["@unicas/service"]).toBe("workspace:*");
+    expect(cloudflareService.dependencies?.["@unicas/control-plane"]).toBeUndefined();
+    expect(cloudflareService.dependencies?.["@unicas/admin-webui"]).toBeUndefined();
 
-    // Admin protocol stays independent of the tenant protocol package
-    // (canonical and migration-only legacy surface alike).
-    expect(protocol.dependencies?.["@unicas/tenant-protocol"]).toBeUndefined();
-    expect(protocol.devDependencies?.["@unicas/tenant-protocol"]).toBeUndefined();
-    expect(protocol.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
-    expect(protocol.devDependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
+    // The transitional control-plane package is gone; the Cloudflare adapter
+    // is the single deployable over the two service packages.
+    expect(protocol.dependencies?.["@unicas/control-plane"]).toBeUndefined();
+    expect(protocol.devDependencies?.["@unicas/control-plane"]).toBeUndefined();
 
-    for (const pkg of [protocol, control, webui, edge]) {
+    for (const pkg of [protocol, webui]) {
       const deps = {
         ...pkg.dependencies,
         ...pkg.devDependencies,
       };
-      for (const forbidden of TENANT_IMPL_PACKAGES) {
+      for (const forbidden of TENANT_ONLY_PACKAGES) {
         expect(deps[forbidden], `${pkg.name} must not depend on ${forbidden}`).toBeUndefined();
       }
     }
 
+    const serviceDeps = {
+      ...service.dependencies,
+      ...service.devDependencies,
+    };
+    for (const forbidden of TENANT_CLIENT_PACKAGES) {
+      expect(serviceDeps[forbidden], `${service.name} must not depend on ${forbidden}`).toBeUndefined();
+    }
+
+    for (const pkg of [webui]) {
+      const deps = {
+        ...pkg.dependencies,
+        ...pkg.devDependencies,
+      };
+      expect(deps["@unicas/tenant-protocol"]).toBeUndefined();
+    }
+
     expect(protocol.dependencies?.["@unicas/control-plane"]).toBeUndefined();
     expect(protocol.dependencies?.["@unicas/admin-webui"]).toBeUndefined();
-    expect(control.dependencies?.["@unicas/admin-webui"]).toBeUndefined();
   });
 
   test("tenant-client stays on the tenant protocol only", () => {
     const client = readPkg("tenant-client");
     expect(client.dependencies?.["@unicas/tenant-protocol-legacy"]).toBeUndefined();
     expect(client.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
+  });
+
+  test("tenant protocol never depends on the admin protocol", () => {
+    const protocol = readPkg("tenant-protocol");
+    expect(protocol.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
+    expect(protocol.devDependencies?.["@unicas/admin-protocol"]).toBeUndefined();
   });
 });

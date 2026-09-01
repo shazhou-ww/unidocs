@@ -23,7 +23,7 @@ const SUPPORTED_ALGORITHMS = ["ES256", "RS256", "EdDSA"];
 
 /**
  * Private JWK members, per RFC 7518. Mirrors `PRIVATE_JWK_FIELDS` in
- * `unicas-packages/control-plane/src/possession.ts` — the control plane
+ * `unicas-packages/service/src/control-possession.ts` — the control plane
  * rejects a JWK carrying any of them, and it is right to.
  */
 const PRIVATE_JWK_FIELDS = ["d", "p", "q", "dp", "dq", "qi", "k", "oth"];

@@ -26,7 +26,7 @@ storage = "sqlite"
 
 [[services]]
 binding = "CAS_SERVICE"
-service = "unidocs-cas-server-cloudflare"
+service = "unidocs-cas"
 
 # Deployment secrets (wrangler secret put, never in this file):
 #   CAPABILITY_ISSUER            doc-service identity issuer

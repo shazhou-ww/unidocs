@@ -164,8 +164,10 @@ The current capability route generation is:
 | `POST .../run` | `run` | `{ instruction }` | `{ success, data: { response, iterations } }` | Session write | `cas:read`, `cas:write` | 90 s |
 | `POST .../reset` | `reset` | None | `{ success: true }` | Session write | None | 30 s |
 
-Deadlines are Gateway request deadlines. Doc and delegated CAS capabilities
-currently have a 120-second maximum lifetime.
+Deadlines are Gateway request deadlines. The default capability lifetime is 120
+seconds (`CAPABILITY_TTL_SECONDS`); the configured maximum is 1800 seconds in
+production (`CAPABILITY_MAX_LIFETIME_SECONDS`), bounded by the protocol hard
+maximum of 604800 seconds (7 days).
 
 ### Capability authentication
 
@@ -196,7 +198,12 @@ it creates a request-local CAS client from only the delegated capability.
 
 ### Compatibility authentication modes
 
-The handler recognizes four explicit deployment modes:
+*(Historical note: the `legacy`/`dual`/`capability`/`stack` mode matrix and
+the `X-Internal-Token` static-token routes belonged to the retired legacy
+runtime and are no longer in the codebase; current deployments are
+capability-only.)*
+
+The retired handler recognized four explicit deployment modes:
 
 | Mode | Tenant routes and capabilities | Legacy routes and static token |
 | --- | --- | --- |

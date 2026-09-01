@@ -5,7 +5,6 @@ import { sweepMasks } from "./region.js";
 import { expandAncestors, normalizeSelection } from "./hit-test.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
-export type PaneId = "layers" | "props";
 
 export interface ChatMessage {
   role: "user" | "agent" | "err";
@@ -34,7 +33,6 @@ export interface UiState {
   status: string;
   selection: string[];
   expanded: ReadonlySet<string>;
-  pane: PaneId;
   tool: ToolId;
   /** The region axis of the current target. Never cleared by a layer-axis
    *  write — the two axes are written by different tools and never compete
@@ -51,6 +49,9 @@ export interface UiState {
   sessionBaseVersion: number;
   chat: ChatMessage[];
   chatBusy: boolean;
+  /** An export is in flight — it flushes the pending-op queue to the server
+   *  first, so it is not instantaneous and must not be startable twice. */
+  exporting: boolean;
   degradeOpen: boolean;
   /** Last colour sampled by the eyedropper, shown in the context bar. */
   pickedColor: string | null;
@@ -58,9 +59,9 @@ export interface UiState {
 
 const INITIAL: UiState = {
   docId: null, docName: null, version: 0, doc: null, status: "loading…",
-  selection: [], expanded: new Set(), pane: "layers", tool: "move",
+  selection: [], expanded: new Set(), tool: "move",
   region: null, zoom: 1, history: [], historyOpen: false,
-  sessionBaseVersion: 0, chat: [], chatBusy: false, degradeOpen: false,
+  sessionBaseVersion: 0, chat: [], chatBusy: false, exporting: false, degradeOpen: false,
   pickedColor: null,
 };
 

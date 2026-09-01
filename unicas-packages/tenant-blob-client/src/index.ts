@@ -1,11 +1,9 @@
 /**
  * @unicas/tenant-blob-client — Blob layer above `@unicas/tenant-client`.
  *
- * The complete tenant data-plane interface for business users: write blobs
- * (chunked into CAS nodes behind a blob-index tree), random-access reads
- * (SBlobHandler-shaped handles), and tenant admin (stat/usage/gc). The
- * underlying node-level HTTP client in `@unicas/tenant-client` is only used
- * to construct this layer.
+ * The tenant blob interface for business users: write blobs, open
+ * random-access handles, and retain/release blob roots. Node-level and tenant
+ * administration operations remain available through `unicasClient`.
  */
 
 export {
@@ -24,6 +22,7 @@ export type {
   CasBlobClientOptions,
   CasBlobHandle,
   CasBlobRef,
+  CasBlobRetentionUpdate,
   CasBlobSource,
   CasBlobWriteOptions,
 } from "./types.js";

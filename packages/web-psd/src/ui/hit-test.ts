@@ -103,15 +103,17 @@ function ancestorIndex(layers: LocalLayer[]): Map<string, string[]> {
  * drops ids the document no longer has.
  *
  * Both halves prevent the same class of bug — a selection that looks fine and
- * behaves wrongly. `ops/geometry-ops.ts`'s `shiftLayer` recurses into
- * children, while `drag.ts`'s `translateOps` emits one translate per selected
- * id, so a group selected alongside its own child moves that child TWICE. And
- * a dead id is invisible on screen (`selectedLayers` filters it out at read
- * time) yet still gets dispatched as if it were real.
+ * behaves wrongly. A group listed alongside its own child double-counts that
+ * child, and a dead id is invisible on screen (`selectedLayers` filters it
+ * out at read time) while still being reported as real everywhere else.
  *
- * Applied at the WRITE side rather than before a drag: the properties pane,
- * the context bar's count and the layer list sent to the agent would all
- * misreport a double-counted selection.
+ * The original motive was sharper: the canvas used to drag layers, and since
+ * `ops/geometry-ops.ts`'s `shiftLayer` recurses into children while the drag
+ * emitted one translate per selected id, a group plus its child moved that
+ * child TWICE. Dragging is gone (the canvas only pans now), so nothing
+ * mis-MOVES any more — but the properties pane, the context bar's count and
+ * the layer list sent to the agent all still read this list, and all three
+ * would misreport a double-counted selection. Hence still at the WRITE side.
  */
 export function normalizeSelection(layers: LocalLayer[], ids: string[]): string[] {
   const index = ancestorIndex(layers);
@@ -167,19 +169,6 @@ export function descendPath(path: string[], current: string): string {
   return path[Math.min(i + 1, path.length - 1)];
 }
 
-/**
- * The subset of `ids` that may actually be edited.
- *
- * Locked layers stay selectable — that is Photoshop's behaviour, and skipping
- * them would mean clicking a plainly visible layer and selecting the thing
- * behind it, which is more confusing than not being able to move it. But NO
- * op in the engine checks `locked` (it is only a writable property in
- * `layer-ops.ts`'s SETTABLE_PROPS; nothing reads it to refuse an edit), so
- * "does not move" has to be enforced here — the server will not do it.
- */
-export function draggableIds(layers: LocalLayer[], ids: string[]): string[] {
-  return ids.filter((id) => !findLayer(layers, id)?.locked);
-}
 
 /** Every ancestor group of `id`, added to `expanded` — `flattenTree` only
  *  emits a group's children when the group is in that set, so a canvas

@@ -6,7 +6,7 @@ import { memCas } from "./helpers/mem-cas.js";
 
 function fill(w: number, h: number, [r, g, b, a]: number[]): Uint8ClampedArray {
   const d = new Uint8ClampedArray(w * h * 4);
-  for (let i = 0; i < w * h; i++) { d[i*4]=r; d[i*4+1]=g; d[i*4+2]=b; d[i*4+3]=a; }
+  for (let i = 0; i < w * h; i++) { d[i * 4] = r; d[i * 4 + 1] = g; d[i * 4 + 2] = b; d[i * 4 + 3] = a; }
   return d;
 }
 const layer: Layer = { id: "a", type: "raster", name: "a", bounds: [0, 0, 4, 6], opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false, pixels: { width: 6, height: 4, data: fill(6, 4, [10, 20, 30, 255]) } };
@@ -17,8 +17,8 @@ describe("getPreview", () => {
     const { ctx } = memCas();
     const out = await runQuery({ kind: "getPreview" }, doc, ctx) as any;
     expect(isSBlob(out.image)).toBe(true);
-    const { contentType } = await ctx.readSBlob(out.image);
-    expect(contentType).toBe("image/png");
+    const handle = await ctx.openSBlob(out.image);
+    expect(handle.contentType).toBe("image/png");
     expect(out.width).toBe(6); expect(out.height).toBe(4);
     expect(out.region).toEqual([0, 0, 4, 6]);
   });

@@ -19,3 +19,13 @@ export type {
   AdminClientSession,
   AdminHttpFetcher,
 } from "./types.js";
+// The admin protocol contract is reachable only through this client facade:
+// consumers (CLI and WebUI) depend on @unicas/admin-client, never on
+// @unicas/admin-protocol directly.
+export type {
+  CasControlAuditEvent,
+  CasStack,
+  CasStackIssuer,
+  CasStackIssuerKey,
+  CasStackMember,
+} from "@unicas/admin-protocol";

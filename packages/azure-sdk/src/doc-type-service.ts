@@ -11,12 +11,11 @@
  * 直接原因是 `local-editor.ts` 携带的多副本不变量（每请求新建 session）——
  * 复制那条规则等于制造一条「只改一边就能悄悄产生数据损坏」的路径。
  */
-import type { DocumentTypeFactory, SBlobReadRange, SBlobSource } from "@unidocs/protocol";
+import type { DocumentTypeFactory, SBlobSource } from "@unidocs/protocol";
 import { createTenantCasClient, type HttpFetcher } from "@unicas/tenant-client";
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
 import type { TenantCasClient } from "@unicas/tenant-client";
-import type { CasBlobClient } from "@unicas/tenant-blob-client";
 import type {
   DocCapabilityVerifier,
   SessionDeps,
@@ -26,7 +25,6 @@ import {
   createDocTypeHandler,
   createSBlobContext,
   DocAuthConfigCache,
-  byteStreamFromReadableStream,
   readableStreamFromSBlobSource,
 } from "@unidocs/doctype-server-common";
 import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";
@@ -125,7 +123,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       ? requestContext.delegatedCasCapability
       : undefined;
     const nodeCas = delegatedCapability === undefined
-      ? unavailableCasGateway()
+      ? unavailableTenantCasClient()
       : createTenantCasClient({
         baseUrl: "https://cas.internal",
         fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
@@ -133,11 +131,11 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
         tenantId: identity.tenantId,
         getToken: async () => delegatedCapability,
       });
-    const cas = Object.freeze({ ...nodeCas, ...createCasBlobClient(nodeCas) });
+    const cas = createCasBlobClient(nodeCas);
     const context = createSBlobContext({
       leaseNodeContent: (hash, content, contentType, refs) =>
-        leaseNodeContent(cas, hash, content, contentType, refs),
-      leaseNode: (hash) => cas.leaseNode(hash),
+        leaseNodeContent(cas.unicasClient, hash, content, contentType, refs),
+      leaseNode: (hash) => cas.unicasClient.leaseNode(hash),
       storeBlob: (source: SBlobSource) => cas.storeBlob(
         readableStreamFromSBlobSource(source),
         {
@@ -147,10 +145,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
             : source.size === undefined ? {} : { size: source.size }),
         },
       ),
-      statBlob: (hash) => cas.statBlob(hash),
-      openBlob: async (hash, range?: SBlobReadRange) => byteStreamFromReadableStream(
-        (await cas.openBlob(hash)).read(range),
-      ),
+      openBlob: (hash) => cas.openBlob(hash),
     });
 
     return {
@@ -161,8 +156,8 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
         blobs: new BlobCasStore(blobService, `unidocs-${docType}-roots`),
         unitOfWork: new PgUnitOfWork(pool, identity),
         cas: {
-          leaseNode: hash => cas.leaseNode(hash),
-          updateRootRefs: update => cas.updateRootRefs(update),
+          leaseNode: hash => cas.unicasClient.leaseNode(hash),
+          updateRootRefs: update => cas.unicasClient.updateRootRefs(update),
         },
         identity,
         now: () => Date.now(),
@@ -200,7 +195,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
   };
 }
 
-function unavailableCasGateway(): TenantCasClient & CasBlobClient {
+function unavailableTenantCasClient(): TenantCasClient {
   const unavailable = async (): Promise<never> => {
     throw new CasClientError(501, "Not Implemented", "delegated authority");
   };
@@ -211,11 +206,6 @@ function unavailableCasGateway(): TenantCasClient & CasBlobClient {
     updateRootRefs: unavailable,
     usage: unavailable,
     gc: unavailable,
-    storeBlob: unavailable,
-    statBlob: unavailable,
-    openBlob: async () => {
-      throw new CasClientError(501, "Not Implemented", "delegated authority");
-    },
   };
 }
 

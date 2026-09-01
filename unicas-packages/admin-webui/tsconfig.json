@@ -8,9 +8,7 @@
       "ES2024",
       "DOM"
     ],
-    "types": [
-      "@cloudflare/workers-types"
-    ],
+    "types": [],
     "jsx": "react-jsx"
   },
   "include": [
@@ -18,13 +16,7 @@
   ],
   "references": [
     {
-      "path": "../control-auth"
-    },
-    {
-      "path": "../admin-protocol"
-    },
-    {
-      "path": "../control-plane"
+      "path": "../admin-client"
     }
   ]
 }

@@ -1,15 +1,15 @@
 # CAS Control-Plane MCP
 
-The private `@unicas/control-plane-mcp` Worker exposes the Unicas control plane
-to GitHub Copilot and other remote MCP clients at:
+The `@unicas/service-cloudflare` Worker exposes the UniCAS control plane to
+GitHub Copilot and other remote MCP clients at:
 
 ```text
 https://unicas.shazhou.work/mcp
 ```
 
-`cas-edge` is the only public Worker. It forwards an exact allowlist of `/mcp`,
-OAuth discovery, authorization, token, and registration paths to the private MCP
-Worker. It does not expose an arbitrary `/oauth/*` prefix. A present browser
+The unified Worker accepts an exact allowlist of `/mcp`, OAuth discovery,
+authorization, token, and registration paths. It does not expose an arbitrary
+`/oauth/*` prefix. A present browser
 `Origin` on `/mcp` must exactly match the configured `CAS_PUBLIC_ORIGIN`; requests
 without `Origin` remain valid for non-browser MCP clients.
 
@@ -100,27 +100,25 @@ Required bindings:
 ```text
 CAS_CONTROL_DB             shared Unicas control D1
 OAUTH_KV                   dedicated OAuth clients/grants/token hashes
-CAS_TENANT_AUDIT_READER    private Root Ref audit-reader service
 ```
 
 Required secrets:
 
 ```text
-GOOGLE_OIDC_CLIENT_ID
 GOOGLE_OIDC_CLIENT_SECRET
 OAUTH_STATE_ENCRYPTION_KEY   base64url-encoded 32-byte AES key
+ADMIN_EMAIL_ALLOWLIST        comma-separated emails allowed to log in
+CAS_AUDIT_READER_KEY        shared key for the private audit-reader RPC
 ```
 
-Variables:
+Variables (non-secret; `GOOGLE_OIDC_CLIENT_ID` is a var, not a secret):
 
 ```text
 PUBLIC_ORIGIN=https://unicas.shazhou.work
 MCP_MUTATIONS_ENABLED=true
 MCP_ALLOWED_ORIGIN_HOSTNAMES=
-ADMIN_EMAIL_ALLOWLIST=...       optional, same policy as CAS Admin
 OIDC_ISSUER=...                 optional, defaults to Google
 OIDC_DISCOVERY_URL=...          optional test/local override
-CAS_AUDIT_READER_KEY=...        required when the private reader enforces it
 ```
 
 `MCP_MUTATIONS_ENABLED` is the emergency and rollout kill switch. An absent or
@@ -129,8 +127,8 @@ write/security handlers reject mutations. Production enables it explicitly
 after read-only telemetry and cross-stack
 isolation checks pass.
 
-Replace the zero placeholder `OAUTH_KV` ID in
-`unicas-packages/control-plane-mcp/wrangler.toml` before deployment. OAuth KV is
+Configure the `OAUTH_KV` ID in
+`unicas-packages/service-cloudflare/wrangler.toml` before deployment. OAuth KV is
 not a control-data backup: business state remains in `CAS_CONTROL_DB`. KV stores
 client registrations, grants, and token hashes; deleting a client or revoking a
 grant invalidates its tokens.
@@ -139,12 +137,11 @@ grant invalidates its tokens.
 
 ```text
 pnpm --filter @unicas/control-auth test
-pnpm --filter @unicas/control-plane-mcp test
-pnpm --filter @unicas/control-plane-mcp typecheck
-pnpm --filter @unicas/control-plane-mcp build
-pnpm --filter @unicas/control-plane-mcp exec wrangler deploy --dry-run
-pnpm --filter @unicas/edge test
-pnpm --filter @unicas/control-plane test
+pnpm --filter @unicas/service test
+pnpm --filter @unicas/service-cloudflare typecheck
+pnpm --filter @unicas/service-cloudflare test
+pnpm --filter @unicas/service-cloudflare build
+pnpm --filter @unicas/service-cloudflare exec wrangler deploy --dry-run
 pnpm --filter @unicas/admin-webui test
 ```
 
@@ -157,12 +154,11 @@ replace that test.
 
 1. Create the dedicated production OAuth KV namespace and replace its binding ID.
 2. Register `https://unicas.shazhou.work/oauth/google/callback` with Google.
-3. Set Worker secrets and deploy the private MCP Worker.
-4. Deploy edge with `CAS_MCP_SERVICE`, leaving mutations disabled.
-5. Validate OAuth discovery and read tools from GitHub Copilot.
-6. Observe authorization failures, scope/member denials, D1/KV errors, and audit
+3. Set Worker secrets and deploy `@unicas/service-cloudflare` with mutations disabled.
+4. Validate OAuth discovery and read tools from GitHub Copilot.
+5. Observe authorization failures, scope/member denials, D1/KV errors, and audit
    attribution before enabling mutations.
-7. Enable ordinary and security operations in a controlled maintenance window.
+6. Enable ordinary and security operations in a controlled maintenance window.
 
 For suspected token theft, keep mutations disabled, revoke the affected grant or
 delete the OAuth client, and review `cas_control_audit_events` by client handle

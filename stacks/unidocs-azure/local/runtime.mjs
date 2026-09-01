@@ -43,7 +43,7 @@ import {
   exportPKCS8,
   generateKeyPair,
 } from "jose";
-import { startLocalMiddleware } from "../../cloudflare/local/runtime.mjs";
+import { startLocalMiddleware } from "../../unidocs-cloudflare/local/runtime.mjs";
 import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./ports.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../doc-types.mjs";

@@ -93,7 +93,7 @@ describe("Azure stack 模式的环境变量接线是穷尽的", () => {
 
   test("CAS_REF_DOMAIN 注入网关：缺它时 Root Refs 写入会被 CAS 拒", () => {
     // 委派给 doc DO 的能力票靠这个 claim 才能过 updateRootRefs 的
-    // refDomain 注册检查（unicas server-cloudflare/src/auth.ts）。
+    // refDomain 注册检查（unicas service/src/tenant-auth.ts）。
     expect(envNames("gateway.bicep").has("CAS_REF_DOMAIN")).toBe(true);
   });
 });

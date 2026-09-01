@@ -40,22 +40,21 @@ class FakeCas {
     this.nodes.set(hash, node);
     return { hash };
   });
-  readonly statBlob = vi.fn(async (hash: string) => {
-    const node = this.nodes.get(hash);
-    if (!node) throw new CasClientError(404, "Not Found", "statBlob");
-    return { hash, size: node.data.length, contentType: node.contentType };
-  });
-  readonly openBlob = vi.fn(async (hash: string, range?: SBlobReadRange) => {
+  readonly openBlob = vi.fn(async (hash: string) => {
     const node = this.nodes.get(hash);
     if (!node) throw new CasClientError(404, "Not Found", "openBlob");
-    const start = range?.offset ?? 0;
-    const end = range?.length === undefined ? node.data.length : start + range.length;
-    const data = node.data.slice(start, end);
-    return {
-      async *[Symbol.asyncIterator]() {
-        yield data;
-      },
+    const read = (range?: SBlobReadRange) => {
+      const start = range?.offset ?? 0;
+      const end = range?.length === undefined ? node.data.length : start + range.length;
+      return streamBytes(node.data.slice(start, end));
     };
+    return Object.freeze({
+      ref: { hash, size: node.data.length, contentType: node.contentType },
+      read,
+      async readBytes(range: { readonly offset: number; readonly length: number }) {
+        return node.data.slice(range.offset, range.offset + range.length);
+      },
+    });
   });
 }
 
@@ -151,8 +150,7 @@ describe("SBlob context", () => {
 
     expect(second).toEqual(new Uint8Array([2, 3]));
     expect(await collect(handler.read())).toEqual(new Uint8Array([1, 2, 3]));
-    expect(cas.openBlob).toHaveBeenCalledTimes(3);
-    expect(cas.statBlob).toHaveBeenCalledTimes(1);
+    expect(cas.openBlob).toHaveBeenCalledTimes(1);
   });
 
   it("rejects mismatched metadata identity", async () => {
@@ -162,11 +160,11 @@ describe("SBlob context", () => {
       data: new TextEncoder().encode("intact"),
       contentType: "text/plain",
     });
-    cas.statBlob.mockResolvedValueOnce({
-      hash: "f".repeat(64),
-      size: 6,
-      contentType: "text/plain",
-    });
+    cas.openBlob.mockResolvedValueOnce(Object.freeze({
+      ref: { hash: "f".repeat(64), size: 6, contentType: "text/plain" },
+      read: () => streamBytes(new Uint8Array(0)),
+      readBytes: async () => new Uint8Array(0),
+    }));
 
     await expect(createSBlobContext(cas).openSBlob(blob))
       .rejects.toBeInstanceOf(SBlobIntegrityError);
@@ -194,6 +192,15 @@ describe("SBlob context", () => {
     const handler = await createSBlobContext(cas).openSBlob(blob);
 
     expect(() => handler.read({ offset: 2, length: 1 })).toThrow("outside the blob");
-    expect(cas.openBlob).not.toHaveBeenCalled();
+    expect(cas.openBlob).toHaveBeenCalledTimes(1);
   });
 });
+
+function streamBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      if (bytes.length > 0) controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}

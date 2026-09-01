@@ -2,12 +2,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const UNITS = [
-  { name: "tenant", package: "@unicas/server-cloudflare" },
-  { name: "admin", package: "@unicas/admin-webui" },
-  { name: "mcp", package: "@unicas/control-plane-mcp" },
-  { name: "edge", package: "@unicas/edge" },
-];
+const SERVICE_PACKAGE = "@unicas/service-cloudflare";
 
 export function parseArgs(argv) {
   const options = { dryRun: false, skipSmoke: false, env: undefined };
@@ -26,11 +21,10 @@ export function parseArgs(argv) {
 
 export function deploymentPlan({ env, skipSmoke } = {}) {
   const envArgs = env ? ["--env", env] : [];
-  const commands = [];
-  for (const unit of UNITS) {
-    commands.push(["pnpm", "--filter", unit.package, "build"]);
-    commands.push(["pnpm", "--filter", unit.package, "exec", "wrangler", "deploy", ...envArgs]);
-  }
+  const commands = [
+    ["pnpm", "--filter", SERVICE_PACKAGE, "build"],
+    ["pnpm", "--filter", SERVICE_PACKAGE, "exec", "wrangler", "deploy", ...envArgs],
+  ];
   if (!skipSmoke) {
     commands.push(["pnpm", "--filter", "@unicas/codec", "build"]);
     commands.push(["pnpm", "--filter", "@unidocs/service-auth", "build"]);

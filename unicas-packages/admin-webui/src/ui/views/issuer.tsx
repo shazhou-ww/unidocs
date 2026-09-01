@@ -3,7 +3,7 @@ import { Archive, KeyRound, Plus, Save } from "lucide-react";
 import type {
   CasStackIssuer,
   CasStackIssuerKey,
-} from "@unicas/admin-protocol";
+} from "@unicas/admin-client";
 import { api, ifMatch } from "../api.js";
 import { Button, Card, EmptyState, ErrorState, LoadingState, Table } from "../components.js";
 import { formatErrorSafe } from "./view-helpers.js";
@@ -81,7 +81,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
     setError(null);
     setChallenge(null);
     try {
-      // Browser code cannot runtime-import @unicas/admin-protocol (UI
+      // Browser code cannot runtime-import @unicas/admin-client (UI
       // boundary test), so the path stays a literal here — same as the other
       // /admin API calls in this view.
       const result = await api<{ nonce: string }>("/admin/issuer/possession-challenge", {

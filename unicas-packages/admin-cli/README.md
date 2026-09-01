@@ -7,9 +7,9 @@ then redirects the browser back to the CLI's loopback with a one-time code
 that the CLI exchanges (PKCE) for a session cookie + CSRF token, persisted
 locally. The CLI never talks to Google and needs no client id or secret.
 Commands call the typed `@unicas/admin-client` over the `/admin` HTTP API;
-`unicas mcp` exposes the same 18-tool contract as `@unicas/control-plane-mcp`
-as a stdio MCP server backed by that client (for clients whose MCP support
-cannot do OAuth, for example DeepSeek Harness).
+`unicas mcp` exposes the same 18-tool contract as the MCP ingress hosted by
+`@unicas/service-cloudflare` as a stdio MCP server backed by that client (for
+clients whose MCP support cannot do OAuth, for example DeepSeek Harness).
 
 ```
 https://unicas.shazhou.work/admin  <- /admin control-plane API (BFF session)
@@ -56,7 +56,7 @@ pnpm --filter @unicas/admin-cli unicas login
 4. Persists the session to `~/.unicas/session.json` (created `0600`, atomic
    writes).
 
-## Commands## Commands
+## Commands
 
 | Command | MCP tool |
 | --- | --- |
@@ -124,7 +124,7 @@ pnpm --filter @unicas/admin-cli build
 # pnpm 10+ removed `pnpm link --global`; install the local package globally instead:
 pnpm install --global ./unicas-packages/admin-cli
 # or point the MCP client directly at the built script:
-#   node D:\Code\unidocs-cli\unicas-packages\cli\dist\cli.js mcp
+#   node D:\Code\unidocs\unicas-packages\admin-cli\dist\cli.js mcp
 ```
 
 Alternatively run any command in-process:
@@ -151,7 +151,7 @@ The CLI itself never calls Google: only the control-plane BFF talks to
 (`UNICAS_ADMIN_URL`), so no proxy configuration is needed on the CLI side
 beyond whatever your network requires to reach the control plane.
 
-## Security notes## Security notes
+## Security notes
 
 - The session cookie is stored locally with `0600` permissions; the directory
   is created on demand.

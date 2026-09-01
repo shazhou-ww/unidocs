@@ -15,6 +15,11 @@
 >   见 §3.4。第二版改为一个目标、两个轴。
 > - 第三版按缩放 Phase 1 的落地结果校验：覆盖层定位改用**百分比**（`rectStyle`），
 >   原来的 ResizeObserver 方案作废（§7.3），开放问题 2 已解决（§13）。
+> - **第六版（2026-09-01）：画布拖拽一律平移,点击才选中。** 本设计原先写的是「按下即选、
+>   同一手势直接拖」,但那是基于一个**先于 PR #41 的基点**写的——#41 已经裁定「拖画布一律是
+>   平移,图层不再能用拖拽移动」并合入 main。§8 的交互表、§5.3、§5.4 随之更新;`drag.ts` /
+>   `translateOps` / `draggableIds` 不复存在。命中测试改在 `pointerup` 发出:按下就发的话,
+>   十次里八次是平移,那八次会白跑一趟 Worker 并占住串行队列。
 > - **第五版（2026-09-01）：两个轴由「互不清除」改为「互斥」**，见 §3.3 的修订说明。
 >   产品裁决，起因是实际跑起来后两个选择框同时出现让人困惑。§3.1 / §3.2 / §6 / §8 一并更新。
 > - 第四版按 PR #40 的 review 意见修订：补三条状态生命周期（§3.6 失效策略、§5.4 选中集归一化、
@@ -188,7 +193,7 @@ DOM 里点击选元素之所以可靠，靠的是四个前提：元素是嵌套�
 
 **图层轴用「剔除」而不是「清空」**：agent 删掉一个图层不该让用户其余的选中一起没。
 `store.ts:142` 的 `selectedLayers` 今天已经静默过滤死 id，所以**画面上看不出问题，但
-`s.selection` 里的死 id 会一直留着**，然后在「按下即选并拖」时被 `translateOps` 当成真 id 发出去。
+`s.selection` 里的死 id 会一直留着**，然后被属性面板、context-bar 与送给 agent 的清单当成真的读出去。
 所以剔除必须发生在 `selection` 本身，不能只靠 `selectedLayers` 过滤。
 
 落点：`controller.ts` 的 `onDoc` 回调里，紧挨着现有的 `sessionBaseVersion` 判定——那里已经能区分
@@ -343,50 +348,43 @@ export type HitTester = (x: number, y: number) => Promise<Hit | null>;
 
 `path` 由调用方决定取哪一级（§8 的单击 / 双击 / Cmd+单击 三种语义），命中本身不做这个决定。
 
-### 5.3 异步命中与「按下即选、同一手势直接拖」的竞态
+### 5.3 异步命中的竞态
 
 Worker 往返 20–30ms，这期间用户已经移动了十几个像素，甚至可能已经松手。**光处理
 `setPointerCapture` 是不够的**，还要定死 await 期间到达的 `pointermove` / `pointerup` 怎么办。
 
-两种写错的方式：
-
-- 拿 hit **返回那一刻**的坐标当 `drag.from` → 图层会跳一下（跳过 await 期间累积的位移）；
-- `pointerup` 先于 hit 落地 → drag 状态在手势结束**之后**才建立，表现为「松手了图层还跟着鼠标走」。
-
-写死的顺序：
+命中改在 **`pointerup`** 发出之后，原来那套「await 期间累积位移」的麻烦整个消失了——手势已经
+结束才发请求，没有「结束之后才建立拖动」可言。剩下的竞态只有一种：**同一条路径上有多个手势
+先后发出请求，旧的可能后回**。
 
 ```
-pointerdown  同步：记 anchor（此刻的文档坐标）、pointerId、setPointerCapture
-             同步：pending = { anchor, pointerId, alive: true, latest: anchor }
-             异步：hitTest(anchor)
-
-pointermove  pending 还在 → 只更新 pending.latest，不派发任何 op
-             drag 已建立 → 走正常的 translateOps 路径
-
-pointerup    pending 还在 → pending.alive = false（保留对象，等 hit 回来收尾）
-             drag 已建立 → 正常结束
-
-hit 落地     !pending.alive → 整个丢弃：这是一次点击不是拖动，只更新 selection
-             命中为 null   → 清空图层集，releasePointerCapture
-             否则          → 以 pending.anchor（按下那一刻）为 drag.from 建立 drag，
-                            并立刻按 pending.latest 补上累积位移，一次性发出
+pointerdown  记 pan 起点(平移用),setPointerCapture
+pointermove  平移(scrollLeft/scrollTop),与命中无关
+pointerup    位移 > CLICK_SLOP_PX → 那是平移,什么都不做
+             位移 ≤ CLICK_SLOP_PX → 那是点击:++gesture,发 hitTest
+hit 落地     gesture 变了 → 丢弃(更新的手势已经接管)
+             命中为空     → 清空图层集
+             否则         → selectLayer(按 §8 的修饰键语义挑一级)
 ```
 
-关键是**用按下那一刻的 anchor 而不是 hit 返回时的坐标**，再一次性补齐位移——这样图层的总位移
-永远等于手指的总位移，不会因为 await 吃掉一段。
+**为什么不在 `pointerdown` 发。** 画布拖拽一律是平移,十次按下里八次是要平移的,按下就发意味着
+那八次白跑一趟 Worker,还占着串行队列挡在瓦片前面(§5.8)。松手时发,代价只是选中框晚 20-30ms
+出现——低于 100ms 在感知上就是即时。
 
-`canvas-stage.tsx` 现在的 `drag.current` 已经是 ref（不是 state，因为它每个 `pointermove` 都变且
-不能触发重渲染），这条路径正好能容纳 `pending`，不需要新的状态机制。
+**一个递增令牌管住全部四种手势**(点击、双击、Alt 循环、右键)。它们都发异步命中,各自长一套
+作废规则就会互相覆盖:曾经发生过在飞的双击下探被随后落地的单击结果盖掉。统一成一个计数器之后,
+「新的赢」是构造上成立的,不靠每个 handler 自觉。
+
+令牌是 ref 而不是 state：它每次手势都变，而它的变化本身不该触发任何重渲染。
 
 ### 5.4 选中集必须归一到互不为祖先的顶层集合
 
-**已核实**：`geometry-ops.ts:12` 的 `shiftLayer` **递归子层**（`if (l.children) for (const c of
-l.children) shiftLayer(c, dx, dy)`），而 `drag.ts:22` 的 `translateOps` 对选中集里**每个 id 各发一个
-translate**。所以只要一个组和它的子层同时在选中集里，**子层会吃到两次位移**。
+原本的理由是位移：`geometry-ops.ts:12` 的 `shiftLayer` **递归子层**，而当时画布拖动对选中集里
+每个 id 各发一个 translate，所以组和子层同时在集合里会让**子层吃到两次位移**。
 
-今天要先在树里 Shift 多选才构造得出来，属于既有 bug。但本设计把「单击选最外层组」+「Shift 加选」
-+「按在未选中图层上直接拖」凑齐之后，**这会从边角变成常规路径**——用户选中一个组，再 Shift 点组里
-的一个子层想「多选一个」，一拖就散架。
+**PR #41 之后画布不再移动图层，这条理由没有了**，但归一化仍然要做——属性面板、context-bar 的
+计数、送给 agent 的图层清单都读这个列表，重复计入会让它们三个一起说谎。所以它从「防止移错」
+变成了「防止说错」，落点不变，仍在写入侧。
 
 定死：**图层轴每次写入都归一化**，剔除任何祖先已在集合里的成员。
 
@@ -649,8 +647,8 @@ const tol = 3 * c.ratio().x;
 | Alt + 单击（重复） | 图层 | 循环光标下的图层栈（§5.7） |
 | 右键 | 图层 | 列出光标下所有命中图层供挑选（§5.7） |
 | Shift + 单击 | 图层 | 加选 / 减选（复用 `store.ts:123` 的 `nextSelection`） |
-| 按在未选中的图层上并拖 | 图层 | **先选中它，同一次手势直接进入拖动**（今天要求先在树里选中） |
-| 按在已选中的图层上并拖 | 图层 | 拖动当前整个选中集（现状） |
+| 在画布上点一下（位移 < 4 CSS px） | 图层 | 选中光标下的图层 |
+| 在画布上按住拖动 | 都不写 | **平移画布**——图层位置不可拖动（PR #41） |
 | 移动工具单击空白 | 两个 | 取消——互斥之下只有一个轴非空，所以「点空白」要能取消到它 |
 | 框选 / 套索工具拖 | 区域 | 写**区域**，并接管图层集（清空它） |
 | Esc | 两个 | 都清空 |
@@ -753,14 +751,13 @@ const tol = 3 * c.ratio().x;
   - agent 删图层之后 `s.selection` 里的死 id 被**剔除**（不只是 `selectedLayers` 过滤掉）
   - 打开第二个文档时两个轴都清空
   - 图层平移不影响任何一个轴
-- `drag-normalize.test.ts` — 组和子层同时在选中集里时，**子层只位移一次**（§5.4 的双重平移）
 - `hit-race.test.tsx` — §5.3 的手势状态机：await 期间的 `pointermove` 不丢；`pointerup` 先到时
   整个手势降级为一次点击；drag 建立后的总位移等于手指总位移
 - `selection-box.test.tsx` — 选中 N 个图层出 N 个框 + 1 个并集框。
   **断言的是百分比字符串，不是像素**：jsdom 不做布局，像素定位在这里根本测不了，而百分比就写在
   inline style 里，「缩放不改变它」这条恰恰是可以直接断言的（`canvas-stage-overlay.test.tsx` 已经
   用这个办法测 `.marquee`，照抄即可）
-- `canvas-stage-select.test.tsx` — 按下即选并拖；Shift 加选；双击下探；Alt 循环
+- `canvas-stage-select.test.tsx` — 点击选中；Shift 加选；双击下探；Alt 循环；右键菜单
 - `composer.test.tsx` — 有区域时 instruction 带上 bounds，无区域时不带
 - `layer-tree.test.tsx`（已存在）补：画布选中后祖先组自动展开
 

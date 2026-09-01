@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Cable } from "lucide-react";
-import type { CasStack } from "@unicas/admin-protocol";
+import type { CasStack } from "@unicas/admin-client";
 import { api } from "./api.js";
 import { matchRoute, navigate, useHashRoute } from "./router.js";
 import { MyStacksView } from "./views/my-stacks.js";

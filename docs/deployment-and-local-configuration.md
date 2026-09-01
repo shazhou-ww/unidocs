@@ -31,15 +31,15 @@ that environment and its isolated D1/R2/Worker names have been declared.
 
 ### UniCAS Worker secrets
 
-Set secrets before `pnpm run deploy unicas`. `wrangler secret put` prompts for
+Set secrets before `pnpm stack:deploy unicas`. `wrangler secret put` prompts for
 the value, so it does not need to appear in the command line:
 
 ```powershell
-pnpm --filter @unicas/server-cloudflare exec wrangler secret put CAS_AUDIT_READER_KEY
-pnpm --filter @unicas/admin-webui exec wrangler secret put CAS_AUDIT_READER_KEY
-pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_ID
-pnpm --filter @unicas/admin-webui exec wrangler secret put GOOGLE_OIDC_CLIENT_SECRET
-pnpm --filter @unicas/admin-webui exec wrangler secret put SESSION_ENCRYPTION_KEYS
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put CAS_AUDIT_READER_KEY
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put GOOGLE_OIDC_CLIENT_SECRET
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put SESSION_ENCRYPTION_KEYS
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put OAUTH_STATE_ENCRYPTION_KEY
+pnpm --filter @unicas/service-cloudflare exec wrangler secret put ADMIN_EMAIL_ALLOWLIST
 ```
 
 The admin CLI logs in through the BFF (`/admin/auth/cli/authorize`): the BFF
@@ -51,10 +51,10 @@ with a one-time code that the CLI exchanges for a BFF session
 client id, secret, or environment value; only `UNICAS_ADMIN_URL` (defaults to
 the production origin).
 
-Use the same random `CAS_AUDIT_READER_KEY` on tenant and admin. Session keys are
-a JSON map such as `{"2026-08":"<base64url-32-byte-key>"}`. The edge Worker
-has no runtime secret. Non-secret hostnames, routes, D1/R2 bindings, and policy
-values remain in each package's `wrangler.toml`.
+Session keys are a JSON map such as
+`{"2026-08":"<base64url-32-byte-key>"}`. Non-secret hostnames, routes,
+D1/R2/KV/DO bindings, and policy values remain in
+`unicas-packages/service-cloudflare/wrangler.toml`.
 
 ### Cloudflare UniDocs secrets
 
@@ -85,15 +85,15 @@ CAPABILITY_TRUSTED_JWKS
 CAS_STACK_TRUSTED_JWKS
 ```
 
-`SERVICE_ACCESS_KEY` is retired compatibility configuration and is not needed
-in `INTERNAL_AUTH_MODE=stack`. PSD chat additionally accepts `LLM_API_KEY`,
+`SERVICE_ACCESS_KEY` / `INTERNAL_AUTH_MODE` belonged to the retired legacy runtime
+and are gone from the codebase. PSD chat additionally accepts `LLM_API_KEY`,
 `LLM_BASE_URL`, and `LLM_MODEL`; store the API key as a Worker secret.
 
 The application deploy remains blocked until Gateway has a production user
 identity resolver. Dry-run is available now:
 
 ```text
-pnpm run deploy unidocs-cloudflare --dry-run
+pnpm stack:deploy unidocs-cloudflare --dry-run
 ```
 
 ## Azure deployment identity and secrets
@@ -138,11 +138,11 @@ a bounded legacy rollout only; stack mode neither requires nor reads them.
 Non-secret deployment selection is passed as arguments, for example:
 
 ```text
-pnpm run deploy unidocs-azure --subscription <id> --resource-group <name> \
+pnpm stack:deploy unidocs-azure --subscription <id> --resource-group <name> \
   --location <region> --cas-base-url https://unicas.shazhou.work \
   --capability-key-id <gateway-kid> \
   --cas-stack-id cas_<control-plane-generated-id> \
-  --cas-stack-issuer https://unicas.shazhou.work/cas/issuer/azure \
+  --cas-stack-issuer https://unicas.shazhou.work/issuer/azure \
   --cas-stack-key-id <registered-stack-kid> \
   --cas-capability-audience unidocs-cas-azure \
   --cas-ref-domain doc

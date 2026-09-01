@@ -9,7 +9,7 @@ steps:
     timeout: "600s"
   - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
-  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js /workspace/packages/cloudflare-docx/dist/worker.js /workspace/packages/cloudflare-gateway/dist/worker.js /workspace/unicas-packages/codec/dist/index.js /workspace/unicas-packages/server-cloudflare/dist/worker.js"
+  - command: "ls /workspace/packages/cloudflare-markdown/dist/worker.js /workspace/packages/cloudflare-docx/dist/worker.js /workspace/packages/cloudflare-gateway/dist/worker.js /workspace/unicas-packages/codec/dist/index.js /workspace/unicas-packages/service-cloudflare/dist/worker.js"
     assert:
       type: regex
       conditions:
@@ -17,7 +17,7 @@ steps:
         - { path: "stdout", regex: "cloudflare-docx/dist/worker.js" }
         - { path: "stdout", regex: "cloudflare-gateway/dist/worker.js" }
         - { path: "stdout", regex: "codec/dist/index.js" }
-        - { path: "stdout", regex: "server-cloudflare/dist/worker.js" }
+        - { path: "stdout", regex: "service-cloudflare/dist/worker.js" }
   # Postgres for the local Azure stack lives baked into tests/treespec/Dockerfile (this
   # container has no docker, so `docker compose` isn't an option) — start it
   # and create the role/database `startAzureRuntime({ postgres: "external" })`

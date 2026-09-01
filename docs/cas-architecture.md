@@ -379,17 +379,18 @@ limits.
 
 ## 11. Authenticated HTTP API
 
-CAS owns its native service and admin route contracts. A lightweight
-`cas-edge` Worker is the only public Worker on the CAS hostname. It dispatches
-unprefixed `/stacks` routes to the private canonical tenant Worker
-(`@unicas/server-cloudflare`) and top-level `/admin` to the private
-`cas-admin-webui` Worker through separate service bindings; each path strips
-the other plane's credentials. Admin audit reads use a narrow private tenant
-audit-reader RPC that the edge never exposes, keeping the service call graph
-acyclic. Node, usage, and GC routes retain the canonical `/cas` resource-family
-segment; Root Refs is a sibling tenant operation. A Gateway or other shared
-ingress may map selected tenant operations to another path, but that mapping
-and allowlist are not part of the CAS protocol.
+CAS owns its native tenant and admin route contracts. `@unicas/service`
+provides one cloud-neutral HTTP actor that matches both protocols and receives
+storage/concurrency strategies through explicit platform ports.
+`@unicas/service-cloudflare` wraps that actor as the only production Worker and
+public endpoint. The same Worker serves `/stacks`, `/admin`, MCP/OAuth, and the
+admin UI while preserving credential isolation between route classes. D1, R2,
+KV, and Durable Object bindings are Cloudflare adapter concerns; keyed actor
+ports preserve the single-writer semantics required by tenant and ref-domain
+operations. Node, usage, and GC routes retain the canonical `/cas`
+resource-family segment; Root Refs is a sibling tenant operation. A Gateway or
+other shared ingress may map selected tenant operations to another path, but
+that mapping and allowlist are not part of the CAS protocol.
 
 Tenant service routes accept JWT capabilities from configured stack issuers.
 Each stack registers one stable issuer with multiple rotation keys selected by
@@ -408,11 +409,12 @@ Top-level `/admin` routes use a Google OIDC-backed BFF session and stack
 membership. MVP members have equal administrator authority. Tenant JWTs are
 never accepted by admin routes even if they contain admin-looking scopes, and
 OIDC admin sessions are never accepted by tenant routes. The
-`cas-admin-webui` package owns the OIDC callback, secure session, CSRF boundary,
-admin BFF routes, and management UI; browser code never receives tenant JWTs,
+`@unicas/service-cloudflare` worker owns the admin BFF (src/admin-bff): OIDC
+callback, secure session, CSRF boundary, and admin BFF routes; the
+`@unicas/admin-webui` package is the browser UI only. Browser code never receives tenant JWTs,
 OIDC client secrets, or storage bindings.
 
-HTTP upload is a lease that carries content. Extending a ready node uses a separate path with no body.
+HTTP upload is a lease that carries content. The same /lease route without a body extends a ready node (bodyless lease).
 
 ### 11.1 Read content
 
@@ -438,19 +440,24 @@ Returns immutable metadata and mutable state. Unknown nodes return `404`.
 ### 11.3 Lease with content
 
 ```http
-POST /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}
+POST /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{sha256}/lease
 Authorization: Bearer <CAS capability>
-Content-Type: image/png
-Content-Length: 12345
-X-CAS-Refs: <hash>[,<hash>...]
+Content-Type: application/vnd.unidocs.cas-node.v1
+Content-Length: <canonical node length>
 X-CAS-Lease-Duration: 900000
 
-<raw bytes>
+<canonical node bytes>
 ```
 
-`X-CAS-Refs` may be omitted for a leaf node. `X-CAS-Lease-Duration` may be omitted (default 15 minutes, clamped to 1 minute … 24 hours).
+The request body is the canonical node: the 24-byte header (content size,
+content-type length, ref count), the UTF-8 content type, the ordered raw
+child hashes, then the node's own content. The `{sha256}` in the path is the
+content address: `SHA-256(header ‖ content-type ‖ child hashes ‖ content)`,
+and the server verifies it against the body checksum. Child refs are carried
+in the body only — there is no refs header. `X-CAS-Lease-Duration` may be
+omitted (default 15 minutes, clamped to 1 minute … 24 hours).
 
-If the node is already ready and immutable metadata matches, the service cancels the body, extends the lease, and returns success. Otherwise it reads the body, verifies the digest, writes R2, then commits the D1 row.
+If the node is already ready and immutable metadata matches, the service cancels the body, extends the lease, and returns success. Otherwise it streams the body to R2, parses the canonical prefix, verifies the digest, then commits the D1 row.
 
 ```json
 {
@@ -533,7 +540,7 @@ every row/event. Revisions are monotonic per `(stackId, refDomain)`. All stack
 members can use the MVP admin surface; finer-grained control-plane roles are
 deferred.
 
-`cas-admin-webui` exposes the admin BFF and UI. The ordinary tenant `CasClient`
+The admin BFF and UI are served by `@unicas/service-cloudflare` (src/admin-bff + admin-webui assets). The ordinary tenant `CasClient`
 cannot accept OIDC sessions or call admin routes.
 
 ### 11.8 Canonical binary codec

@@ -13,7 +13,7 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "../unicas-packages/codec/dist/index.js";
+import { concatenateNodeBytes, computeNodeDigest, encodeHeader, hashToHex, hexToHash } from "../unicas-packages/codec/dist/index.js";
 import { casManagePermission, casReadPermission, casWritePermission, createPkcs8CapabilityIssuer } from "../packages/service-auth/dist/index.js";
 
 const BASE = process.argv[2] ?? "https://unicas.shazhou.work";
@@ -39,16 +39,23 @@ const stacks = [
   },
 ];
 
+/** Canonical node wire content type (see @unicas/codec). */
+const NODE_CONTENT_TYPE = "application/vnd.unidocs.cas-node.v1";
+
 function assert(condition, message) {
   if (!condition) throw new Error(`ASSERT FAILED: ${message}`);
   console.log(`  ok: ${message}`);
 }
 
-async function digestOf(content, contentType = "text/plain", refs = []) {
-  const bytes = new TextEncoder().encode(content);
-  const header = encodeHeader(bytes.length, contentType, refs.length);
-  const digest = await computeNodeDigest(header, contentType, refs.map(hexToHash), bytes);
-  return { hash: hashToHex(digest), bytes };
+/** Build the canonical node bytes and their CAS hash for upload. */
+async function nodeOf(content, refs = []) {
+  const contentBytes = new TextEncoder().encode(content);
+  const contentTypeBytes = new TextEncoder().encode(NODE_CONTENT_TYPE);
+  const refHashes = refs.map(hexToHash);
+  const header = encodeHeader(contentBytes.length, NODE_CONTENT_TYPE, refHashes.length);
+  const hash = hashToHex(await computeNodeDigest(header, NODE_CONTENT_TYPE, refHashes, contentBytes));
+  const body = concatenateNodeBytes(header, contentTypeBytes, refHashes, contentBytes);
+  return { hash, body, contentBytes };
 }
 
 async function main() {
@@ -89,19 +96,19 @@ async function main() {
   }
 
   // Lease a parent with a child.
-  const child = await digestOf("smoke-child");
-  let res = await fetch(`${BASE}${prefix}/cas/nodes/${child.hash}`, {
+  const child = await nodeOf("smoke-child");
+  let res = await fetch(`${BASE}${prefix}/cas/nodes/${child.hash}/lease`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${writer}`, "Content-Type": "text/plain" },
-    body: child.bytes,
+    headers: { Authorization: `Bearer ${writer}`, "Content-Type": NODE_CONTENT_TYPE },
+    body: child.body,
   });
   assert(res.status === 200, `lease child -> ${res.status}`);
 
-  const parent = await digestOf("smoke-parent", "text/plain", [child.hash]);
-  res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}`, {
+  const parent = await nodeOf("smoke-parent", [child.hash]);
+  res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/lease`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${writer}`, "Content-Type": "text/plain", "X-CAS-Refs": child.hash },
-    body: parent.bytes,
+    headers: { Authorization: `Bearer ${writer}`, "Content-Type": NODE_CONTENT_TYPE },
+    body: parent.body,
   });
   assert(res.status === 200, `lease parent -> ${res.status}`);
 
@@ -110,7 +117,7 @@ async function main() {
   });
   assert(res.status === 200, `read -> ${res.status}`);
   const content = new Uint8Array(await res.arrayBuffer());
-  assert(content.join(",") === parent.bytes.join(","), "read content matches");
+  assert(content.join(",") === parent.contentBytes.join(","), "read content matches");
 
   res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/metadata`, {
     headers: { Authorization: `Bearer ${reader}` },

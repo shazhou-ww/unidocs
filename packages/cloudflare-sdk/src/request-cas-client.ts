@@ -1,9 +1,9 @@
 import { createTenantCasClient } from "@unicas/tenant-client";
 import { createCasBlobClient } from "@unicas/tenant-blob-client";
-import type { HttpFetcher, TenantCasClient } from "@unicas/tenant-client";
+import type { HttpFetcher } from "@unicas/tenant-client";
 import type { CasBlobClient } from "@unicas/tenant-blob-client";
 
-export type RequestCasClient = TenantCasClient & CasBlobClient;
+export type RequestCasClient = CasBlobClient;
 
 export interface RequestCasEnv {
   readonly CAS_SERVICE: HttpFetcher;
@@ -29,7 +29,7 @@ export function createRequestCasClient(
       tenantId,
       getToken: async () => capability,
     });
-    return Object.freeze({ ...cas, ...createCasBlobClient(cas) });
+    return createCasBlobClient(cas);
   }
   if (authKind === "legacy") return null;
   throw new Error("Missing private Doc auth context");

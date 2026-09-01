@@ -4,7 +4,7 @@ compatibility_date = "2025-08-17"
 
 # Stack mode: the gateway signs delegated/gateway CAS capabilities with the
 # registered unidocs-cloudflare stack key and talks to the canonical middleware
-# (unidocs-cas-server-cloudflare) instead of the legacy shared-key worker.
+# (unidocs-cas) instead of the legacy shared-key worker.
 [vars]
 CAPABILITY_ALGORITHM = "ES256"
 CAPABILITY_TTL_SECONDS = "120"
@@ -24,7 +24,7 @@ migrations_dir = "migrations"
 
 [[services]]
 binding = "CAS_SERVICE"
-service = "unidocs-cas-server-cloudflare"
+service = "unidocs-cas"
 
 # Deployment secrets (wrangler secret put, never in this file):
 #   DOC_SERVICES_JSON            { docType: { serviceId, url, accessKey?, audience } }

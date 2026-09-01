@@ -5,7 +5,6 @@ import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/interna
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
 import {
-  byteStreamFromReadableStream,
   DELTA_THRESHOLD,
   readableStreamFromByteStream,
   readableStreamFromSBlobSource,
@@ -162,18 +161,18 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const casAdapter = {
         leaseNodeContent: (hash: string, content: Uint8Array, contentType: string, refs?: readonly string[]) =>
           this.#isReadOnlyOperation()
-            ? this.#requireCas().readMetadata(hash)
-            : leaseNodeContent(this.#requireCas(), hash, content, contentType, refs),
+            ? this.#requireCas().unicasClient.readMetadata(hash)
+            : leaseNodeContent(this.#requireCas().unicasClient, hash, content, contentType, refs),
         leaseNode: (hash: string) => this.#isReadOnlyOperation()
-          ? this.#requireCas().readMetadata(hash)
-          : this.#requireCas().leaseNode(hash),
+          ? this.#requireCas().unicasClient.readMetadata(hash)
+          : this.#requireCas().unicasClient.leaseNode(hash),
         storeBlob: (source: import("@unidocs/protocol").SBlobSource) => {
           const cas = this.#requireCas();
           const blobs = this.#isReadOnlyOperation()
             ? createCasBlobClient({
-              ...cas,
+              ...cas.unicasClient,
               leaseNode: async hash => {
-                await cas.readMetadata(hash);
+                await cas.unicasClient.readMetadata(hash);
                 return { hash, ready: true, leaseStartedAt: 0, leaseExpiresAt: 0 };
               },
             })
@@ -185,11 +184,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
               : source.size === undefined ? {} : { size: source.size }),
           });
         },
-        statBlob: (hash: string) => this.#requireCas().statBlob(hash),
-        openBlob: async (hash: string, range?: import("@unidocs/protocol").SBlobReadRange) =>
-          byteStreamFromReadableStream(
-            (await this.#requireCas().openBlob(hash)).read(range),
-          ),
+        openBlob: (hash: string) => this.#requireCas().openBlob(hash),
       };
       const context = createSBlobContext(casAdapter, { maxReadBytes: MAX_SVALUE_ROOT_BYTES });
       this.#context = context;
@@ -292,7 +287,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         { delta: pending.delta_hash, snapshot: pending.snapshot_hash },
       );
       if (Object.keys(changes).length > 0) {
-        await cas.updateRootRefs({
+        await cas.unicasClient.updateRootRefs({
           requestId: `session:${sessionId}:version:${pending.version}:roots`,
           changes,
         });
@@ -503,9 +498,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         data: bytes,
         contentType: SValueContentType,
       });
-      await this.#requireCas().updateRootRefs({
+      await this.#requireCas().retain({
         requestId: `session:${this.#requireSessionId()}:snapshot:${this.#version}:ensure`,
-        changes: { [blob.hash]: 1 },
+        references: { [blob.hash]: 1 },
       });
       const timestamp = Date.now();
       this.#ctx.storage.sql.exec(
@@ -877,8 +872,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
     #checkExistingRef(hash: string): Promise<unknown> {
       return this.#isReadOnlyOperation()
-        ? this.#requireCas().readMetadata(hash)
-        : this.#requireCas().leaseNode(hash);
+        ? this.#requireCas().unicasClient.readMetadata(hash)
+        : this.#requireCas().unicasClient.leaseNode(hash);
     }
 
     #requireDoc(): SValueType<TDoc> {

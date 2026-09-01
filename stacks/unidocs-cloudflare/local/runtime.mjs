@@ -22,12 +22,12 @@ import {
   EDGE_PORT,
   DOC_TYPES,
   GATEWAY_WORKER,
-  MIDDLEWARE_WORKER,
+  SERVICE_WORKER,
   resolvePorts,
 } from "./doc-types.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
-import { migrateControlSchema } from "../../../unicas-packages/control-plane/src/schema.ts";
+import { migrateControlSchema } from "../../../unicas-packages/service-cloudflare/src/control-schema.ts";
 
 export { DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
 
@@ -51,6 +51,9 @@ async function bundleWorker(entry, outfile) {
     target: "es2024",
     conditions: ["workerd", "worker", "browser"],
     alias: WORKSPACE_ALIASES,
+    ...(entry.replaceAll("\\", "/").includes("unicas-packages/service-cloudflare/")
+      ? { external: ["cloudflare:workers", "node:*"] }
+      : {}),
     logOverride: { "empty-import-meta": "silent" },
   });
 }
@@ -256,7 +259,7 @@ function createStorageProbe(mf, { stackId } = {}) {
       if (!tenantId) return false;
       // Stack mode stores node content in the MIDDLEWARE bucket under
       // stack-scoped keys.
-      const bucket = await mf.getR2Bucket("CAS_R2", MIDDLEWARE_WORKER);
+      const bucket = await mf.getR2Bucket("CAS_R2", SERVICE_WORKER);
       const object = await bucket.get(`stacks/${stackId}/tenants/${tenantId}/nodes-v2/${hash}`);
       return object !== null;
     },
@@ -265,14 +268,14 @@ function createStorageProbe(mf, { stackId } = {}) {
      * on the canonical tenant worker). Tests seed registered stacks here.
      */
     async middlewareControlDb() {
-      return mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
+      return mf.getD1Database("CAS_CONTROL_DB", SERVICE_WORKER);
     },
     /**
      * Cloudflare-probe-only: retained roots in the MIDDLEWARE tenant store for
      * a (stackId, tenantId) — the canonical stack-scoped cas_nodes table.
      */
     async middlewareRetainedRoots(stackId, tenantId) {
-      const db = await mf.getD1Database("CAS_DB", MIDDLEWARE_WORKER);
+      const db = await mf.getD1Database("CAS_DB", SERVICE_WORKER);
       const rows = await db
         .prepare(
           "SELECT hash, root_ref_count FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND root_ref_count > 0 ORDER BY hash",
@@ -289,7 +292,7 @@ function createStorageProbe(mf, { stackId } = {}) {
      * idempotency table for a (stackId, tenantId).
      */
     async middlewareRootRefRequestIds(stackId, tenantId) {
-      const db = await mf.getD1Database("CAS_DB", MIDDLEWARE_WORKER);
+      const db = await mf.getD1Database("CAS_DB", SERVICE_WORKER);
       const rows = await db
         .prepare(
           "SELECT request_id FROM cas_root_ref_requests WHERE stack_id = ? AND tenant_id = ? ORDER BY applied_at, request_id",
@@ -405,7 +408,7 @@ export async function startLocalRuntime({
       await migrateSnapshotsDb(mf);
     }
     if (!casOrigin) {
-      const controlDb = await mf.getD1Database("CAS_CONTROL_DB", MIDDLEWARE_WORKER);
+      const controlDb = await mf.getD1Database("CAS_CONTROL_DB", SERVICE_WORKER);
       if (!middlewareStacks) {
         // Register the local unidocs-cloudflare stack (issuer/keys/refDomains
         // identical to what the gateway signs with). Skipped when the caller
@@ -424,8 +427,8 @@ export async function startLocalRuntime({
         await seedMiddlewareStacks(controlDb, middlewareStacks);
       }
     }
-    // CAS_CONTROL_DB schema is migrated idempotently by the admin worker on
-    // its first request (migrateControlSchema in cas-admin-webui index.ts).
+    // CAS_CONTROL_DB schema is migrated idempotently by the service adapter
+    // before its first admin or MCP dispatch.
 
     return {
       mf,
@@ -449,7 +452,7 @@ export async function startLocalRuntime({
 /**
  * Start the CAS middleware standalone (no gateway / doc type workers) with
  * the given stacks registered in its CAS_CONTROL_DB. Returns the runtime
- * with `urls.edge` as the public front door. Reused by the Cloudflare dev
+ * with `urls.edge` as the public service endpoint. Reused by the Cloudflare dev
  * command, integration tests, and the Azure local runtime.
  */
 export async function startLocalMiddleware({
@@ -515,7 +518,7 @@ export async function seedMiddlewareStacks(
   for (const stack of stacks) {
     await db.batch([
       db.prepare(
-        "INSERT INTO cas_stack_issuer (stack_id, issuer, audience, status, revision) VALUES (?, ?, ?, 'active', 1) ON CONFLICT(stack_id) DO UPDATE SET issuer = excluded.issuer, audience = excluded.audience, status = 'active'",
+        "INSERT INTO cas_stack_issuer (stack_id, issuer, audience, revision) VALUES (?, ?, ?, 1) ON CONFLICT(stack_id) DO UPDATE SET issuer = excluded.issuer, audience = excluded.audience",
       ).bind(stack.stackId, stack.issuer, stack.audience),
       db.prepare(
         "INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, ?, ?, 'active', 1) ON CONFLICT(stack_id, kid) DO UPDATE SET public_jwk = excluded.public_jwk, state = 'active'",

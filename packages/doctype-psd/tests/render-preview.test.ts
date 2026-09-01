@@ -7,8 +7,8 @@ import { memCas } from "./helpers/mem-cas.js";
 
 const solid = (id: string, w: number, h: number, rgba: number[]): Layer => {
   const data = new Uint8ClampedArray(w * h * 4);
-  for (let i = 0; i < w * h; i++) { data[i*4]=rgba[0]; data[i*4+1]=rgba[1]; data[i*4+2]=rgba[2]; data[i*4+3]=rgba[3]; }
-  return { id, type: "raster", name: id, bounds: [0,0,h,w], opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false, pixels: { width: w, height: h, data } };
+  for (let i = 0; i < w * h; i++) { data[i * 4] = rgba[0]; data[i * 4 + 1] = rgba[1]; data[i * 4 + 2] = rgba[2]; data[i * 4 + 3] = rgba[3]; }
+  return { id, type: "raster", name: id, bounds: [0, 0, h, w], opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false, pixels: { width: w, height: h, data } };
 };
 const doc: PsdDoc = { canvas: { width: 2, height: 2, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" }, layers: [solid("a", 2, 2, [10, 20, 30, 255])] };
 
@@ -17,8 +17,9 @@ describe("getPreview", () => {
     const { ctx } = memCas();
     const out = await runQuery({ kind: "getPreview" }, doc, ctx) as any;
     expect(isSBlob(out.image)).toBe(true);
-    const { data: bytes, contentType } = await ctx.readSBlob(out.image);
-    expect(contentType).toBe("image/png");
+    const handle = await ctx.openSBlob(out.image);
+    const bytes = await handle.readBytes({ offset: 0, length: handle.size });
+    expect(handle.contentType).toBe("image/png");
     // PNG signature
     expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
     const img = decode(bytes);

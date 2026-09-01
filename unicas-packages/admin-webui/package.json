@@ -2,46 +2,36 @@
   "name": "@unicas/admin-webui",
   "version": "0.1.0",
   "private": true,
-  "description": "CAS stack administration WebUI and OIDC BFF",
+  "description": "CAS stack administration WebUI (browser only)",
   "type": "module",
-  "main": "./src/server/index.ts",
-  "types": "./src/server/index.ts",
+  "main": "./src/ui/index.ts",
+  "types": "./src/ui/index.ts",
   "exports": {
     ".": {
-      "types": "./src/server/index.ts",
-      "development": "./src/server/index.ts",
-      "import": "./dist/server/index.js",
-      "default": "./dist/server/index.js"
-    },
-    "./ui": {
       "types": "./src/ui/index.ts",
-      "import": "./src/ui/index.ts"
+      "development": "./src/ui/index.ts",
+      "import": "./src/ui/index.ts",
+      "default": "./src/ui/index.ts"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "vite build && node scripts/build-ui-assets.mjs && tsc",
-    "build:server": "tsc",
-    "build:ui": "vite build && node scripts/build-ui-assets.mjs",
+    "build": "vite build",
+    "build:ui": "vite build",
     "dev:ui": "vite",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
-    "deploy": "pnpm run build && wrangler deploy"
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unicas/control-auth": "workspace:*",
-    "@unicas/control-plane": "workspace:*",
-    "@unicas/admin-protocol": "workspace:*",
-    "jose": "^6.2.10",
+    "@unicas/admin-client": "workspace:*",
     "lucide-react": "^1.34.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250817.0",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.0",
@@ -49,10 +39,8 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "jsdom": "^25.0.0",
-    "miniflare": "5.20260811.1-alpha",
     "typescript": "^5.9.0",
     "vite": "^7.3.0",
-    "vitest": "^3.2.0",
-    "wrangler": "^4.20.0"
+    "vitest": "^3.2.0"
   }
 }
