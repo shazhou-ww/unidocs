@@ -120,7 +120,7 @@ describe("async hit + press-to-drag", () => {
     fireEvent(container.querySelector("div.stage")!, pointer("pointerdown", 90, 90));
     await settle();
     expect(getState().selection).toEqual([]);
-    expect(getState().region).not.toBeNull();
+    expect(getState().region).toBeNull();
   });
 
   it("drags the existing selection with no round trip when the press is inside it", () => {
@@ -249,9 +249,23 @@ describe("one supersession token across every gesture", () => {
   // Under a slow worker BOTH pointerdown settles bail (superseded, then
   // `pending` nulled by the double click) and `onDoubleClick` returned early
   // on the miss — so the layer axis silently survived a click on blank canvas.
-  it("a double click on empty canvas clears the layer axis and leaves the region alone", async () => {
+  it("a double click on empty canvas clears the layer axis", async () => {
     setState({
       selection: ["a"],
+      doc: { canvas: { width: 100, height: 100 }, layers: [{ ...leaf("a"), bounds: [0, 0, 10, 10] }] },
+    });
+    const settle = deferredHit([]);
+    const { container } = render(<CanvasStage />);
+    fireEvent.doubleClick(container.querySelector("div.stage")!, { clientX: 90, clientY: 90 });
+    await settle();
+    expect(getState().selection).toEqual([]);
+  });
+
+  // 互斥之后「点空白 = 取消」只剩一个轴可取消,所以拿只有区域的状态再走一遍
+  // 同一条路径:落空同样要把它清掉,否则区域会变成点不掉的残留。
+  it("a double click on empty canvas clears a region when that is the active axis", async () => {
+    setState({
+      selection: [],
       doc: { canvas: { width: 100, height: 100 }, layers: [{ ...leaf("a"), bounds: [0, 0, 10, 10] }] },
       region: { bounds: [0, 0, 10, 10], source: "rect", maskId: null },
     });
@@ -259,8 +273,7 @@ describe("one supersession token across every gesture", () => {
     const { container } = render(<CanvasStage />);
     fireEvent.doubleClick(container.querySelector("div.stage")!, { clientX: 90, clientY: 90 });
     await settle();
-    expect(getState().selection).toEqual([]);
-    expect(getState().region).not.toBeNull();
+    expect(getState().region).toBeNull();
   });
 
   // Not every superseding gesture installs a `pending` of its own: a

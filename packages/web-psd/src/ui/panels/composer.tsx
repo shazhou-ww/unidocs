@@ -19,8 +19,11 @@ import type { Region } from "../region.js";
  * NAMES only, never ids — see `AgentTarget`.
  */
 function targetLayerNames(s: UiState, region: Region): string[] {
-  const selected = selectedLayers(s);
-  if (selected.length > 0) return selected.map((l) => l.name);
+  // Always the layers the region overlaps — spec §4.3 asks for 「与区域相交的
+  // 图层清单」, i.e. 「who is on top of this area」. Reading the SELECTED
+  // layers instead would now be dead code as well as wrong: a region and a
+  // layer selection cannot both be set (spec §3.3), so whenever there is a
+  // region to attach, the selection is empty by construction.
   const layers = s.doc?.layers ?? [];
   return layersIntersecting(layers, region.bounds)
     .map((id) => findLayer(layers, id)?.name)

@@ -147,9 +147,9 @@ describe("ContextBar", () => {
     render(<ContextBar />);
     fireEvent.click(screen.getByText("选中区域内的图层"));
     expect(getState().selection).toEqual(["a"]);
-    // The two axes never clear each other (spec §3.3) — the region must survive
-    // being read.
-    expect(getState().region).not.toBeNull();
+    // 互斥（spec §3.3）：把区域读成图层，是一次转换而不是叠加，
+    // 所以区域轴在转换之后就不该再留着。
+    expect(getState().region).toBeNull();
   });
 
   // `layerAlphaRegion` loops `alphaAt` once per pixel of the layer's box — for
@@ -183,8 +183,7 @@ describe("ContextBar", () => {
     expect(region.bounds).toEqual([10, 10, 12, 12]);
     expect(region.source).toBe("layerAlpha");
     expect(getMask(region.maskId)).toEqual(new Uint8ClampedArray([1, 2, 3, 4]));
-    // The layer axis is untouched — the two conversions ADD an axis, they do
-    // not swap one for the other (spec §3.3).
-    expect(getState().selection).toEqual(["a"]);
+    // 互斥（spec §3.3）：载入为选区是把图层轴换成区域轴，不是叠加。
+    expect(getState().selection).toEqual([]);
   });
 });

@@ -170,7 +170,11 @@ export function selectedLayers(s: UiState): LocalLayer[] {
  * otherwise-combined `setState` into two calls.
  */
 export function setRegion(region: Region | null): void {
-  setState({ region });
+  // Writing a region TAKES OVER from the layer axis (spec §3.3): the two are
+  // mutually exclusive, so at most one is ever non-empty. Clearing a region
+  // deliberately does not touch the selection — under exclusivity there is
+  // nothing there to touch, and 「清除选区」 must not read as 「清除一切」.
+  setState({ region, ...(region ? { selection: [] } : {}) });
   sweepMasks(region?.maskId ?? null);
 }
 
@@ -199,8 +203,10 @@ export function selectLayer(id: string, opts: { additive?: boolean } = {}): void
   const selection = nextSelection(s, id, !!opts.additive);
   setState({
     selection,
+    region: null,
     ...(s.doc ? { expanded: expandAncestors(s.doc.layers, id, s.expanded) } : {}),
   });
+  sweepMasks(null);
 }
 
 /** Replaces the layer axis outright (region → layers, Esc, a click or double
@@ -211,5 +217,11 @@ export function selectLayer(id: string, opts: { additive?: boolean } = {}): void
  *  `selectLayer`. */
 export function setSelection(ids: string[]): void {
   const s = getState();
-  setState({ selection: s.doc ? normalizeSelection(s.doc.layers, ids) : ids });
+  // Clears the region for the same reason `selectLayer` does. This is also
+  // the 「点空白 = 取消」 path (`setSelection([])`): with the axes exclusive
+  // there is only ever one thing to cancel, so cancelling has to reach it
+  // whichever axis it happens to be — otherwise a region drawn on empty
+  // canvas becomes impossible to dismiss by clicking.
+  setState({ selection: s.doc ? normalizeSelection(s.doc.layers, ids) : ids, region: null });
+  sweepMasks(null);
 }

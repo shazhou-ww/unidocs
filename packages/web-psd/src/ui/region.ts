@@ -70,9 +70,10 @@ export function sweepMasks(keep: string | null): void {
  * generative edit wants, so it must not read as an error.
  */
 export function describeTarget(layerNames: string[], region: Region | null): string {
-  if (layerNames.length > 0) {
-    const names = layerNames.join(" + ");
-    return region ? `${names} · 限定在选区内` : names;
-  }
+  // Three states, not four: the axes are mutually exclusive (spec §3.3), so
+  // 「both set」 cannot occur. The layer axis is still checked first so that
+  // if the invariant is ever broken the bar names something concrete rather
+  // than silently claiming the whole document.
+  if (layerNames.length > 0) return layerNames.join(" + ");
   return region ? "选区内的所有图层" : "整个文档";
 }

@@ -14,8 +14,10 @@ describe("rectRegion", () => {
 // select a layer first" for the one request that needs no layer at all.
 describe("describeTarget", () => {
   const region = rectRegion([0, 0, 10, 10]);
-  it("names both axes when both are set", () => {
-    expect(describeTarget(["天空"], region)).toBe("天空 · 限定在选区内");
+  // 两个轴互斥(spec §3.3),所以只有三种状态。这条钉住的是「万一不变量被
+  // 破坏,也要说出一个具体的东西」——而不是悄悄宣称目标是整个文档。
+  it("names the layers if both are somehow set, rather than claiming the document", () => {
+    expect(describeTarget(["天空"], region)).toBe("天空");
   });
   it("names the layers alone when there is no region", () => {
     expect(describeTarget(["天空", "云"], null)).toBe("天空 + 云");

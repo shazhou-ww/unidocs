@@ -11,7 +11,9 @@ const leaf = (id: string, name: string, bounds?: [number, number, number, number
 beforeEach(() => {
   setState({
     region: null, selection: [],
-    doc: { canvas: { width: 400, height: 200 }, layers: [leaf("a", "天空")] },
+    // 「天空」铺满画布 [top,left,bottom,right] = [0,0,200,400],所以任何
+    // 区域都与它相交 —— targetLayerNames 走的是相交而不是选中。
+    doc: { canvas: { width: 400, height: 200 }, layers: [leaf("a", "天空", [0, 0, 200, 400])] },
   });
 });
 
@@ -29,8 +31,10 @@ describe("Composer", () => {
     expect(onSend).toHaveBeenCalledWith("随便改改", null);
   });
 
-  it("shows a chip and attaches bounds plus selected layer names", () => {
-    setState({ region: rectRegion([20, 40, 120, 240]), selection: ["a"] });
+  // 附带的图层清单是「与区域相交的图层」(spec §4.3),不是选中的图层 ——
+  // 互斥之后有区域时选中集必然为空,「选中的图层」那条路根本走不到。
+  it("shows a chip and attaches bounds plus the layers the region overlaps", () => {
+    setState({ region: rectRegion([20, 40, 120, 240]), selection: [] });
     const onSend = vi.fn();
     render(<Composer busy={false} onSend={onSend} />);
     expect(screen.getByText("已附带选区 200 × 100")).toBeInTheDocument();

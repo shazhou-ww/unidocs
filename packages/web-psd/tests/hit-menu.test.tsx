@@ -118,7 +118,8 @@ describe("HitMenu", () => {
   // dispatching directly on `window` collapses capture/bubble into a single
   // phase and would not distinguish a correct fix from a broken one.
   it("closing the menu via Escape does not also fire the app-level Escape shortcut", async () => {
-    setState({ selection: ["bg"], region: rectRegion([0, 0, 10, 10]) });
+    // 只摆一个轴:互斥之后 selection 和 region 不可能同时非空(spec §3.3)。
+    setState({ selection: ["bg"] });
     hitTest.mockResolvedValue(stack);
     const { container } = render(<App />);
     fireEvent.contextMenu(stageOf(container), { clientX: 15, clientY: 15 });
@@ -126,8 +127,8 @@ describe("HitMenu", () => {
     expect(container.querySelector(".hit-menu")).not.toBeNull();
     fireEvent.keyDown(document.body, { key: "Escape", bubbles: true });
     expect(container.querySelector(".hit-menu")).toBeNull();
+    // 关菜单没有顺带触发应用级 Escape —— 那条会把选中集清空。
     expect(getState().selection).toEqual(["bg"]);
-    expect(getState().region).not.toBeNull();
   });
 
   // `CanvasStage` is never re-keyed on a new document (app.tsx renders it
