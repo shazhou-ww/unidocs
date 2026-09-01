@@ -51,6 +51,9 @@
       "path": "packages/gateway-common"
     },
     {
+      "path": "packages/gateway-oauth"
+    },
+    {
       "path": "unicas-packages/tenant-blob-client"
     },
     {
