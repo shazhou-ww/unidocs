@@ -22,9 +22,13 @@ const GENERATION_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
 
 /**
  * 内容审核拒绝的 code。这类失败改措辞可能有救，与限流/网络故障要分开。
- * "DataInspectionFailed" 是实测拿到的（用一个必然触发审核的指令换来的响应体）；
- * "ResponseTimeout.DataInspection" 只是文档里写的，从没在真实调用里见过 —— 两者
- * 都留着，但别把后者当成验证过的事实。
+ *
+ * 实测验证过的只有错误信封本身：`{code, message, request_id}` + HTTP 400 这个
+ * 形状，是用一个故意写错的 model 名换来的（返回 `InvalidParameter` /
+ * `Model not exist.`）。"DataInspectionFailed" 和 "ResponseTimeout.DataInspection"
+ * 这两个具体值都没有真实触发过 —— 没有人为了拿到内容审核拒绝而故意提交过
+ * 有问题的内容，这两个值纯粹来自文档。两者都留在集合里：就算文档写错了，
+ * 误判的代价也只是在一条本来就会失败的路径上给错 reason，不会更糟。
  */
 const REFUSAL_CODES = new Set(["DataInspectionFailed", "ResponseTimeout.DataInspection"]);
 

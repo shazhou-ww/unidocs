@@ -101,6 +101,10 @@ describe("qwen-image-edit-plus 适配器", () => {
 
   it("内容审核拒绝 → reason refused，不抛异常", async () => {
     const f = stubFetch({
+      // 这份 fixture 不是逐字捕获：信封形状 {code, message, request_id} + HTTP 400
+      // 是实测的（用故意写错的 model 名换来的）；但 "DataInspectionFailed" 这个具体
+      // code 值和它的 message 文案没有被真实触发过，是从文档里抄来嫁接上去的 ——
+      // 没有人为了拿到这个 fixture 故意提交过违规内容。
       generation: () => Response.json(fixture("qwen-refused-response.json"), { status: 400 }),
     });
     const r = await editorWith(f).edit({ source, instruction: "x" }, AbortSignal.timeout(5000));
