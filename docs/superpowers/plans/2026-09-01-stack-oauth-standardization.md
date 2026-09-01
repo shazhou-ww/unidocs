@@ -1,6 +1,6 @@
 # Stack OAuth Standardization Implementation Plan
 
-> **Status:** PROPOSED — 2026-09-01
+> **Status:** IN PROGRESS — 2026-09-01
 >
 > Implement this as an expand → migrate → contract rollout. Do not reinterpret or
 > remove the current issuer/key API in the first release. Keep the current
@@ -37,19 +37,48 @@ with a standards-based Stack OAuth trust relationship:
 
 ## Current state
 
-- A Stack is created without an issuer. An administrator later stores an
-  arbitrary HTTPS `issuer`, an `audience`, and public keys in control D1.
-- UniCAS verifies tenant capabilities against the D1 authority snapshot. It
-  does not perform OAuth/OIDC discovery or remote JWKS refresh.
-- Cloudflare and Azure Gateways already mint compatible capability JWTs through
-  `GatewayCapabilityAuthority`, but neither Gateway implements user OAuth.
-- Both Gateways still use the development-only path identity resolver; there is
-  no production user-to-tenant membership authority.
-- The tenant OAuth provider and debug-tool behavior is documented as a draft,
-  but its public discovery route and tenant CLI are not implemented.
+- UniCAS now supports discovered OAuth issuer inspection and signed activation,
+  persists immutable metadata/JWKS snapshots, prefers active OAuth authorities
+  during capability verification, and publishes RFC 9728 metadata per Stack.
+  Scheduled/unknown-`kid` JWKS refresh and hard-stale enforcement remain open.
+- The shared `@unidocs/gateway-oauth` core implements RFC 8414 metadata, JWKS,
+  public-client registration, Authorization Code + mandatory PKCE S256,
+  consent transactions, capability access tokens, rotating refresh tokens,
+  replay-family revocation, and cloud-neutral storage/identity ports.
+- Cloudflare and Azure Gateway adapters expose the same OAuth protocol surface
+  with D1 and PostgreSQL persistence respectively. Both OAuth authorization
+  paths fail closed outside explicit local/test identity mode until a real
+  Gateway-owned upstream identity/session adapter is selected and deployed.
+- The Cloudflare production issuer is active for Stack `cas_SZ6wfcfqS34J`
+  (`unidocs-cloudflare`) at
+  `https://unicas.shazhou.work/oauth/unidocs-cloudflare`. UniCAS discovery,
+  issuer-control proof, activation, metadata, JWKS, and RFC 9728 publication
+  have been verified against the deployed Workers. Interactive user grants are
+  intentionally unavailable until production identity and membership
+  administration are connected.
+- Azure has not yet been registered or exercised against the production UniCAS
+  control/data planes, and Key Vault-backed signing is still outstanding.
+- The tenant OAuth client/token provider and production consumer migration are
+  not implemented. Legacy issuer/key mutation APIs remain available with
+  deprecation messaging during the compatibility window.
 - The existing `/mcp` OAuth server is control-plane OAuth only. Its Cloudflare
   provider implementation is a useful behavioral reference, not a portable
   implementation for both Gateways.
+
+### Progress snapshot — 2026-09-01
+
+- UniCAS protocol, discovery validation, inspection/activation proof, verifier
+  switch, admin API/client, WebUI, CLI/MCP onboarding, and RFC 9728 are landed.
+- The portable Gateway OAuth core and in-memory conformance coverage are landed;
+  OAuth-issued capability claims have a golden compatibility test at the
+  UniCAS verifier boundary.
+- Cloudflare D1 storage, routes, cleanup, local discovery-to-data-plane E2E,
+  production Worker routing, and the `unidocs-cloudflare` issuer activation are
+  complete. Active JWKS digest:
+  `c04e8152428efbe0a0960fa4eb7691286b0ec4e00034e537835a8b909c1a3e4d`.
+- Azure PostgreSQL storage and route wiring are landed and locally validated;
+  production identity, Key Vault signing, deployment, registration, and shared
+  black-box E2E remain.
 
 ## Fixed architecture
 
@@ -301,7 +330,7 @@ active simultaneously.
 
 ### Phase 0 — lock decisions and conformance fixtures
 
-- [ ] Approve this architecture and the canonical resource/audience format.
+- [x] Approve this architecture and the canonical resource/audience format.
 - [ ] Select the upstream end-user identity provider configuration model for
       each Gateway. Recommended default: configurable OIDC upstream plus a
       Gateway-owned user-to-tenant membership table.
@@ -318,11 +347,11 @@ suite before production code is added.
 
 ### Phase 1 — expand UniCAS protocol and storage
 
-- [ ] Add OAuth issuer types, HTTP routes, route matching, errors, and threat
+- [x] Add OAuth issuer types, HTTP routes, route matching, errors, and threat
       model assertions in `@unicas/admin-protocol`.
-- [ ] Add methods to `@unicas/admin-client` and cloud-neutral control
+- [x] Add methods to `@unicas/admin-client` and cloud-neutral control
       operations.
-- [ ] Introduce an outbound `OAuthDiscoveryPort`; keep fetch/DNS/platform code
+- [x] Introduce an outbound `OAuthDiscoveryPort`; keep fetch/DNS/platform code
       in `@unicas/service-cloudflare`, not in protocol packages.
 - [ ] Add D1 tables for OAuth issuer bindings, inspection challenges,
       discovered metadata, discovered keys, refresh leases, and audit details.
@@ -331,38 +360,51 @@ suite before production code is added.
       invariants.
 - [ ] Add scheduled and unknown-`kid` refresh paths with single-flight and
       hard-stale behavior.
-- [ ] Add RFC 9728 protected-resource metadata for each Stack.
+- [x] Add RFC 9728 protected-resource metadata for each Stack.
+
+Current partials: issuer/inspection/metadata/key/audit persistence and
+inspect/get/activate semantics are complete. Refresh leases, an explicit
+refresh operation, scheduled/unknown-`kid` refresh, and hard-stale behavior are
+not complete.
 
 Exit: a test issuer can be safely inspected, proven, activated, refreshed, and
 used to verify existing capability JWTs, while all legacy tests remain green.
 
 ### Phase 2 — upgrade admin WebUI, CLI, and MCP
 
-- [ ] Implement the WebUI connection wizard and health display.
-- [ ] Implement new admin-client and CLI commands, JSON output, help, and
+- [x] Implement the WebUI connection wizard and health display.
+- [x] Implement new admin-client and CLI commands, JSON output, help, and
       deprecation warnings.
 - [ ] Add the four MCP tools to both remote and stdio catalogs and update exact
       catalog parity tests/documentation.
-- [ ] Regenerate `service-cloudflare` embedded admin assets from the WebUI
+- [x] Regenerate `service-cloudflare` embedded admin assets from the WebUI
       source.
 - [ ] Add integration tests proving API, WebUI BFF, CLI, remote MCP, and stdio
       MCP resolve the same resource and enforce the same proof/ETag rules.
+
+Current partials: get/inspect/activate are available through remote and stdio
+MCP and were used for the production Cloudflare activation. The fourth refresh
+tool and complete cross-surface integration matrix remain open.
 
 Exit: Stack administrators can complete registration and rotation observation
 without manually uploading a JWK.
 
 ### Phase 3 — portable Gateway OAuth core
 
-- [ ] Add the shared Gateway OAuth package and storage/identity/signing ports.
-- [ ] Implement RFC 8414 metadata, JWKS, RFC 7591 client registration,
+- [x] Add the shared Gateway OAuth package and storage/identity/signing ports.
+- [x] Implement RFC 8414 metadata, JWKS, RFC 7591 client registration,
       Authorization Code + PKCE, consent, token, refresh, and revocation.
-- [ ] Reuse the existing capability issuer for access-token claims; add golden
+- [x] Reuse the existing capability issuer for access-token claims; add golden
       tests showing old and OAuth-issued tokens are identical at the UniCAS
       verifier boundary.
 - [ ] Implement authoritative user-to-tenant membership and role-to-scope
       policy. Remove path identity from every production authorization path.
-- [ ] Separate end-user OAuth access tokens from internal Gateway-to-service
+- [x] Separate end-user OAuth access tokens from internal Gateway-to-service
       delegated capabilities even if they initially share signing machinery.
+
+Current partial: membership and identity are explicit ports with D1/PostgreSQL
+stores, scope escalation checks, and fail-closed production behavior. A real
+upstream identity/session adapter and membership administration workflow remain.
 
 Exit: the portable test suite passes against in-memory adapters and rejects
 redirect, PKCE, tenant-confusion, scope-escalation, replay, and key-confusion
@@ -370,14 +412,20 @@ attacks.
 
 ### Phase 4 — Cloudflare Gateway adapter
 
-- [ ] Route the issuer metadata/JWKS/authorize/token/register/revoke endpoints.
+- [x] Route the issuer metadata/JWKS/authorize/token/register/revoke endpoints.
 - [ ] Add D1/KV bindings and migrations for clients, authorization
       transactions, memberships, grants, refresh-token hashes, and audit.
-- [ ] Publish a stable path-bearing issuer under the Gateway's public origin.
+- [x] Publish a stable path-bearing issuer under the Gateway's public origin.
 - [ ] Add scheduled cleanup and signing-key rotation publication overlap.
-- [ ] Update Wrangler variables/secrets and local runtime provisioning.
-- [ ] Register the Cloudflare issuer through the new UniCAS flow and verify the
+- [x] Update Wrangler variables/secrets and local runtime provisioning.
+- [x] Register the Cloudflare issuer through the new UniCAS flow and verify the
       resulting JWKS digest before changing traffic.
+
+Current partials: D1 clients, transactions, authorization codes, memberships,
+refresh families/hashes, and audit are deployed; a separate durable grant model
+is not. Scheduled cleanup is deployed, while signing-key overlap/rotation
+publication remains. The issuer is active and discoverable, but the phase exit
+still requires production user identity and a real public-client grant.
 
 Exit: a real public client can discover from UniCAS, authorize through the
 Cloudflare Gateway, receive a capability token, and call the matching Stack and
@@ -385,8 +433,8 @@ Tenant in UniCAS.
 
 ### Phase 5 — Azure Gateway adapter
 
-- [ ] Route the same protocol surface in the Node Gateway.
-- [ ] Add PostgreSQL migrations and repositories implementing the shared OAuth
+- [x] Route the same protocol surface in the Node Gateway.
+- [x] Add PostgreSQL migrations and repositories implementing the shared OAuth
       ports and cleanup leases.
 - [ ] Integrate Key Vault-backed signing keys without exporting private keys to
       clients or UniCAS. Publish public JWKs with stable `kid` values.
@@ -394,6 +442,11 @@ Tenant in UniCAS.
       and rotation runbooks.
 - [ ] Register the Azure issuer and run the same discovery-to-data-plane E2E
       used by Cloudflare.
+
+Current partial: protocol routing, PostgreSQL stores, replay-safe rotation,
+fail-closed identity, and cleanup are implemented and locally tested. Key Vault,
+production identity, final deployment plumbing/runbooks, registration, and
+production E2E remain.
 
 Exit: Cloudflare and Azure pass one shared black-box OAuth conformance suite and
 produce capability tokens accepted by the same UniCAS verifier.
