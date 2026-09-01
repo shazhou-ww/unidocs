@@ -21,6 +21,8 @@ import type {
   CasAdminGetIssuerResponse,
   CasAdminGetOAuthIssuerRequest,
   CasAdminGetOAuthIssuerResponse,
+  CasAdminInspectOAuthIssuerRequest,
+  CasAdminInspectOAuthIssuerResponse,
   CasAdminGetStackRequest,
   CasAdminGetStackResponse,
   CasAdminListCursor,
@@ -38,6 +40,7 @@ import type {
   CasAdminPutIssuerRequest,
   CasAdminPutIssuerResponse,
   CasControlAuditEvent,
+  CasOAuthIssuerInspection,
   CasIssuerKeyState,
   CasOperatorIdentity,
   CasOperatorIdentityKey,
@@ -55,6 +58,7 @@ import {
   generateInvitationId,
   generateInvitationToken,
   generateNonce,
+  generateOAuthInspectionId,
   generateStackId,
 } from "./control-ids.js";
 import {
@@ -64,6 +68,13 @@ import {
   validatePublicJwk,
   verifyPossessionProof,
 } from "./control-possession.js";
+import {
+  buildOAuthIssuerInspectionChallenge,
+  canonicalizeOAuthIssuer,
+  OAUTH_ISSUER_INSPECTION_TTL_MS,
+  type DiscoveredOAuthJwk,
+  type OAuthDiscoveryPort,
+} from "./oauth-discovery.js";
 import type {
   ControlPlaneCallContext,
   ServiceMutationInput,
@@ -234,6 +245,40 @@ export interface ControlOAuthIssuerRecord {
   readonly revision: number;
 }
 
+export interface ControlOAuthIssuerInspectionRecord {
+  readonly inspectionId: string;
+  readonly stackId: string;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly metadataUrl: string;
+  readonly metadataType: CasStackOAuthIssuer["metadataType"];
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly jwksUri: string;
+  readonly registrationEndpoint: string | null;
+  readonly scopesSupported: readonly string[];
+  readonly codeChallengeMethodsSupported: readonly string[];
+  readonly metadataDigest: string;
+  readonly jwksDigest: string;
+  readonly challengeHash: string;
+  readonly capabilityMaxLifetimeSeconds: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly usedAt: number | null;
+  readonly revision: number;
+}
+
+export interface ControlInspectOAuthIssuerPlan {
+  readonly issuer: ControlOAuthIssuerRecord;
+  readonly inspection: ControlOAuthIssuerInspectionRecord;
+  readonly keys: readonly DiscoveredOAuthJwk[];
+  readonly audit: ControlAuditRecord;
+}
+
+export type ControlInspectOAuthIssuerCommitResult =
+  | { readonly kind: "created" }
+  | { readonly kind: "issuer-conflict" | "revision-mismatch" };
+
 export interface ControlPutIssuerPlan {
   readonly kind: "insert" | "update";
   readonly stackId: string;
@@ -350,6 +395,10 @@ export interface ControlPlaneAdminRepository {
   commitAcceptMemberInvitation(plan: ControlAcceptMemberInvitationPlan): Promise<ControlAcceptMemberInvitationCommitResult>;
   getIssuer(stackId: string): Promise<ControlIssuerRecord | null>;
   getOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null>;
+  hasOAuthIssuerElsewhere(issuer: string, stackId: string): Promise<boolean>;
+  commitInspectOAuthIssuer(
+    plan: ControlInspectOAuthIssuerPlan,
+  ): Promise<ControlInspectOAuthIssuerCommitResult>;
   hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean>;
   commitPutIssuer(plan: ControlPutIssuerPlan): Promise<ControlPutIssuerCommitResult>;
   createPossessionChallenge(record: ControlPossessionChallengeRecord): Promise<void>;
@@ -380,6 +429,9 @@ export interface ControlPlaneAdminServiceOptions {
   readonly generateNonce?: () => string;
   readonly invitationTtlMs?: number;
   readonly possessionChallengeTtlMs?: number;
+  readonly oauthDiscovery?: OAuthDiscoveryPort;
+  readonly oauthInspectionTtlMs?: number;
+  readonly generateOAuthInspectionId?: () => string;
 }
 
 /** Cloud-neutral business service for identity, stack administration, and session audit. */
@@ -395,6 +447,9 @@ export class ControlPlaneAdminService {
   readonly #generateNonce: () => string;
   readonly #invitationTtlMs: number;
   readonly #possessionChallengeTtlMs: number;
+  readonly #oauthDiscovery: OAuthDiscoveryPort | null;
+  readonly #oauthInspectionTtlMs: number;
+  readonly #generateOAuthInspectionId: () => string;
 
   constructor(repository: ControlPlaneAdminRepository, options: ControlPlaneAdminServiceOptions = {}) {
     this.#repository = repository;
@@ -408,6 +463,9 @@ export class ControlPlaneAdminService {
     this.#generateNonce = options.generateNonce ?? generateNonce;
     this.#invitationTtlMs = options.invitationTtlMs ?? INVITATION_TTL_MS;
     this.#possessionChallengeTtlMs = options.possessionChallengeTtlMs ?? POSSESSION_CHALLENGE_TTL_MS;
+    this.#oauthDiscovery = options.oauthDiscovery ?? null;
+    this.#oauthInspectionTtlMs = options.oauthInspectionTtlMs ?? OAUTH_ISSUER_INSPECTION_TTL_MS;
+    this.#generateOAuthInspectionId = options.generateOAuthInspectionId ?? generateOAuthInspectionId;
   }
 
   me(ctx: ControlPlaneCallContext): Promise<CasAdminMeResponse | CasAdminErrorResponse> {
@@ -589,6 +647,119 @@ export class ControlPlaneAdminService {
         throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "OAuth issuer is not configured");
       }
       return toCasStackOAuthIssuer(issuer);
+    });
+  }
+
+  inspectOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminInspectOAuthIssuerRequest,
+  ): Promise<CasAdminInspectOAuthIssuerResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      if (!this.#oauthDiscovery) {
+        throw new ControlPlaneError(CasAdminErrorCodes.SERVICE_UNAVAILABLE, "OAuth discovery is not configured");
+      }
+      let issuer: string;
+      try {
+        issuer = canonicalizeOAuthIssuer(request.body.issuer);
+      } catch (error) {
+        throw new ControlPlaneError(
+          CasAdminErrorCodes.INVALID_REQUEST,
+          error instanceof Error ? error.message : "invalid issuer",
+        );
+      }
+      const audienceError = validateAudience(request.body.audience);
+      if (audienceError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, audienceError);
+      const lifetimeError = validateCapabilityMaxLifetimeSeconds(request.body.capabilityMaxLifetimeSeconds);
+      if (lifetimeError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, lifetimeError);
+      if (await this.#repository.hasIssuerElsewhere(issuer, request.path.stackId)
+        || await this.#repository.hasOAuthIssuerElsewhere(issuer, request.path.stackId)) {
+        throw new ControlPlaneError(CasAdminErrorCodes.ISSUER_CONFLICT, "issuer is already registered to another stack");
+      }
+      const existing = await this.#repository.getOAuthIssuer(request.path.stackId);
+      if (existing?.status === "active") {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "active OAuth issuer must be refreshed, not reinspected");
+      }
+
+      let discovered: Awaited<ReturnType<OAuthDiscoveryPort["inspectIssuer"]>>;
+      try {
+        discovered = await this.#oauthDiscovery.inspectIssuer({ issuer });
+      } catch (error) {
+        throw new ControlPlaneError(
+          error instanceof TypeError ? CasAdminErrorCodes.INVALID_REQUEST : CasAdminErrorCodes.SERVICE_UNAVAILABLE,
+          error instanceof Error ? error.message : "OAuth discovery failed",
+        );
+      }
+      const now = this.#now();
+      const expiresAt = now + this.#oauthInspectionTtlMs;
+      const inspectionId = this.#generateOAuthInspectionId();
+      const nonce = this.#generateNonce();
+      const lifetime = request.body.capabilityMaxLifetimeSeconds
+        ?? DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS;
+      const challenge = buildOAuthIssuerInspectionChallenge({
+        nonce,
+        inspectionId,
+        stackId: request.path.stackId,
+        issuer,
+        audience: request.body.audience,
+        metadataDigest: discovered.metadataDigest,
+        jwksDigest: discovered.jwksDigest,
+        capabilityMaxLifetimeSeconds: lifetime,
+        expiresAt,
+      });
+      const revision = (existing?.revision ?? 0) + 1;
+      const issuerRecord: ControlOAuthIssuerRecord = {
+        stackId: request.path.stackId,
+        ...discovered.metadata,
+        audience: request.body.audience,
+        status: "pending",
+        verifiedAt: null,
+        lastRefreshAt: now,
+        lastRefreshError: null,
+        jwksDigest: discovered.jwksDigest,
+        capabilityMaxLifetimeSeconds: lifetime,
+        revision,
+      };
+      const inspection: ControlOAuthIssuerInspectionRecord = {
+        inspectionId,
+        stackId: request.path.stackId,
+        ...discovered.metadata,
+        audience: request.body.audience,
+        metadataDigest: discovered.metadataDigest,
+        jwksDigest: discovered.jwksDigest,
+        challengeHash: await sha256Hex(challenge),
+        capabilityMaxLifetimeSeconds: lifetime,
+        createdAt: now,
+        expiresAt,
+        usedAt: null,
+        revision: 1,
+      };
+      const result = await this.#repository.commitInspectOAuthIssuer({
+        issuer: issuerRecord,
+        inspection,
+        keys: discovered.keys,
+        audit: this.#audit(ctx, ControlAuditActions.oauthIssuerInspected, issuer, request.path.stackId),
+      });
+      if (result.kind === "issuer-conflict") {
+        throw new ControlPlaneError(CasAdminErrorCodes.ISSUER_CONFLICT, "issuer is already registered to another stack");
+      }
+      if (result.kind === "revision-mismatch") {
+        throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "OAuth issuer resource revision has changed");
+      }
+      const response: CasOAuthIssuerInspection = {
+        inspectionId,
+        stackId: request.path.stackId,
+        ...discovered.metadata,
+        audience: request.body.audience,
+        metadataDigest: discovered.metadataDigest,
+        jwksDigest: discovered.jwksDigest,
+        capabilityMaxLifetimeSeconds: lifetime,
+        challenge,
+        expiresAt,
+        keys: discovered.keys,
+        revision,
+      };
+      return response;
     });
   }
 

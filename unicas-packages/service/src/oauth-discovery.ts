@@ -4,6 +4,8 @@ import { isSupportedKeyAlgorithm, type SupportedKeyAlgorithm } from "./control-v
 export type OAuthMetadataType = "oauth" | "oidc";
 
 export const OAUTH_DISCOVERY_MAX_KEYS = 20;
+export const OAUTH_ISSUER_INSPECTION_CHALLENGE_VERSION = "cas-oauth-issuer-inspection-v1";
+export const OAUTH_ISSUER_INSPECTION_TTL_MS = 10 * 60 * 1000;
 
 export interface OAuthDiscoveryCandidate {
   readonly type: OAuthMetadataType;
@@ -38,6 +40,35 @@ export interface OAuthDiscoveryResult {
 /** Platform-owned network boundary. Implementations must apply SSRF controls. */
 export interface OAuthDiscoveryPort {
   inspectIssuer(input: { readonly issuer: string }): Promise<OAuthDiscoveryResult>;
+}
+
+export interface OAuthIssuerInspectionChallengeInput {
+  readonly nonce: string;
+  readonly inspectionId: string;
+  readonly stackId: string;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly metadataDigest: string;
+  readonly jwksDigest: string;
+  readonly capabilityMaxLifetimeSeconds: number;
+  readonly expiresAt: number;
+}
+
+export function buildOAuthIssuerInspectionChallenge(
+  input: OAuthIssuerInspectionChallengeInput,
+): string {
+  return [
+    OAUTH_ISSUER_INSPECTION_CHALLENGE_VERSION,
+    input.nonce,
+    input.inspectionId,
+    input.stackId,
+    input.issuer,
+    input.audience,
+    input.metadataDigest,
+    input.jwksDigest,
+    String(input.capabilityMaxLifetimeSeconds),
+    String(input.expiresAt),
+  ].join("\n");
 }
 
 /** Validate an issuer while preserving its identifier for exact metadata/token matching. */

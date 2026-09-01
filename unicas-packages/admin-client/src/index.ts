@@ -24,6 +24,7 @@ export type {
 // @unicas/admin-protocol directly.
 export type {
   CasControlAuditEvent,
+  CasOAuthIssuerInspection,
   CasStack,
   CasStackIssuer,
   CasStackIssuerKey,

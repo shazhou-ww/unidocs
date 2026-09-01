@@ -29,6 +29,7 @@ import { AuthorityRepository } from "./control-authority.js";
 import { migrateControlSchema } from "./control-schema.js";
 import { createControlPlaneOperations } from "./control-operations.js";
 import { ControlSessionStore } from "./control-sessions.js";
+import { CloudflareOAuthDiscoveryPort } from "./oauth-discovery.js";
 import {
   RootRefDomainDurableObject,
   type RootRefDomainDoEnv,
@@ -47,6 +48,7 @@ export interface TenantEnv extends TenantCasDoEnv, RootRefDomainDoEnv {
 
 export type Env = TenantEnv & AdminBffEnv & McpEnv & {
   CAS_PUBLIC_ORIGIN?: string;
+  CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS?: string;
 };
 
 const TENANT_STRIPPED_HEADERS = [
@@ -207,7 +209,18 @@ function adminHandlerFor(env: Env): Promise<(request: Request) => Promise<Respon
 }
 
 function controlPlaneFor(env: Env, now?: () => number): ControlPlaneOperations {
-  return createControlPlaneOperations(env.CAS_CONTROL_DB, { now });
+  const allowedOrigins = parseOriginAllowlist(env.CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS);
+  return createControlPlaneOperations(env.CAS_CONTROL_DB, {
+    now,
+    oauthDiscovery: allowedOrigins.length === 0
+      ? undefined
+      : new CloudflareOAuthDiscoveryPort({ allowedOrigins }),
+  });
+}
+
+function parseOriginAllowlist(value: string | undefined): readonly string[] {
+  if (value === undefined) return [];
+  return [...new Set(value.split(",").map((origin) => origin.trim()).filter(Boolean))];
 }
 
 function verifierFor(env: Env): StackCapabilityVerifier {

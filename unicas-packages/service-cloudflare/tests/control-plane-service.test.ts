@@ -8,6 +8,7 @@ import {
   ControlAuditActions,
   type ControlPlaneCallContext,
   type ControlPlaneOperations,
+  type OAuthDiscoveryPort,
 } from "@unicas/service";
 import { migrateControlSchema } from "../src/control-schema.js";
 import { createControlPlaneOperations } from "../src/control-operations.js";
@@ -19,7 +20,10 @@ afterEach(async () => {
   miniflare = undefined;
 });
 
-async function createService(now?: () => number): Promise<{ db: D1Database; service: ControlPlaneOperations }> {
+async function createService(
+  now?: () => number,
+  oauthDiscovery?: OAuthDiscoveryPort,
+): Promise<{ db: D1Database; service: ControlPlaneOperations }> {
   miniflare = new Miniflare(convertV4MiniflareOptions({
     workers: [{
       name: "control-plane-service-test",
@@ -32,7 +36,7 @@ async function createService(now?: () => number): Promise<{ db: D1Database; serv
   await miniflare.ready;
   const db = await miniflare.getD1Database("DB", "control-plane-service-test");
   await migrateControlSchema(db);
-  return { db, service: createControlPlaneOperations(db, now ? { now } : {}) };
+  return { db, service: createControlPlaneOperations(db, { now, oauthDiscovery }) };
 }
 
 const ISSUER = "https://accounts.google.com";
@@ -185,6 +189,108 @@ describe("D1-backed control-plane service", () => {
       revision: 3,
     });
   });
+
+  test("atomically persists an OAuth issuer inspection snapshot", async () => {
+    const oauthDiscovery: OAuthDiscoveryPort = {
+      inspectIssuer: async ({ issuer }) => ({
+        metadata: {
+          issuer,
+          metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
+          metadataType: "oauth",
+          authorizationEndpoint: "https://issuer.example/oauth/authorize",
+          tokenEndpoint: "https://issuer.example/oauth/token",
+          jwksUri: "https://issuer.example/oauth/jwks",
+          registrationEndpoint: null,
+          scopesSupported: ["cas:read"],
+          codeChallengeMethodsSupported: ["S256"],
+        },
+        metadataDigest: "a".repeat(64),
+        jwksDigest: "b".repeat(64),
+        keys: [{
+          kid: "key-1",
+          algorithm: "ES256",
+          publicJwk: { kid: "key-1", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y" },
+        }],
+      }),
+    };
+    const { db, service } = await createService(() => 1_000, oauthDiscovery);
+    const stackId = await createStack(service);
+    const result = await service.inspectOAuthIssuer(ctx(alice), {
+      path: { stackId },
+      body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+    });
+    if (!("challenge" in result)) throw new Error("inspection failed");
+    expect(await service.getOAuthIssuer(ctx(alice), { path: { stackId } })).toMatchObject({
+      status: "pending",
+      jwksDigest: "b".repeat(64),
+      revision: 1,
+    });
+    const inspection = await db.prepare(
+      "SELECT challenge_hash, expires_at, used_at FROM cas_oauth_issuer_inspections WHERE inspection_id = ?",
+    ).bind(result.inspectionId).first();
+    expect(inspection).toMatchObject({
+      challenge_hash: await import("@unicas/service").then(({ sha256Hex }) => sha256Hex(result.challenge)),
+      expires_at: 601_000,
+      used_at: null,
+    });
+    expect(await db.prepare(
+      "SELECT kid, algorithm FROM cas_oauth_issuer_inspection_keys WHERE inspection_id = ?",
+    ).bind(result.inspectionId).first()).toEqual({ kid: "key-1", algorithm: "ES256" });
+    expect(await db.prepare(
+      "SELECT action FROM cas_control_audit_events WHERE stack_id = ? AND action = 'oauth_issuer.inspection.created'",
+    ).bind(stackId).first()).toEqual({ action: "oauth_issuer.inspection.created" });
+  });
+
+  test("maps concurrent first OAuth issuer inspections to a revision mismatch", async () => {
+    let inspectionCount = 0;
+    let releaseInspections: (() => void) | undefined;
+    const inspectionsReady = new Promise<void>((resolve) => {
+      releaseInspections = resolve;
+    });
+    const oauthDiscovery: OAuthDiscoveryPort = {
+      inspectIssuer: async ({ issuer }) => {
+        inspectionCount += 1;
+        if (inspectionCount === 2) releaseInspections?.();
+        await inspectionsReady;
+        return {
+          metadata: {
+            issuer,
+            metadataUrl: `${issuer}/.well-known/oauth-authorization-server`,
+            metadataType: "oauth",
+            authorizationEndpoint: `${issuer}/authorize`,
+            tokenEndpoint: `${issuer}/token`,
+            jwksUri: `${issuer}/jwks`,
+            registrationEndpoint: null,
+            scopesSupported: ["cas:read"],
+            codeChallengeMethodsSupported: ["S256"],
+          },
+          metadataDigest: "a".repeat(64),
+          jwksDigest: "b".repeat(64),
+          keys: [{
+            kid: "key-1",
+            algorithm: "ES256",
+            publicJwk: { kid: "key-1", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y" },
+          }],
+        };
+      },
+    };
+    const { service } = await createService(() => 1_000, oauthDiscovery);
+    const stackId = await createStack(service);
+    const request = {
+      path: { stackId },
+      body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+    };
+
+    const results = await Promise.all([
+      service.inspectOAuthIssuer(ctx(alice), request),
+      service.inspectOAuthIssuer(ctx(alice), request),
+    ]);
+
+    expect(results.filter((result) => "challenge" in result)).toHaveLength(1);
+    expect(results.filter((result) => "error" in result)).toEqual([
+      expect.objectContaining({ error: CasAdminErrorCodes.REVISION_MISMATCH }),
+    ]);
+  }, 10_000);
 
   test("requires possession proof and safe issuer-key lifecycle transitions", async () => {
     const { service } = await createService();

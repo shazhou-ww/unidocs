@@ -12,6 +12,7 @@ export const ControlAuditActions = {
   memberInvitationAccepted: "member.invitation.accepted",
   memberRemoved: "member.removed",
   issuerPut: "issuer.put",
+  oauthIssuerInspected: "oauth_issuer.inspection.created",
   issuerKeyCreated: "issuer.key.created",
   issuerKeyDeleted: "issuer.key.deleted",
   sessionLogin: "session.login",

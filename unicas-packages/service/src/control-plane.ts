@@ -16,6 +16,8 @@ import type {
   CasAdminGetIssuerResponse,
   CasAdminGetOAuthIssuerRequest,
   CasAdminGetOAuthIssuerResponse,
+  CasAdminInspectOAuthIssuerRequest,
+  CasAdminInspectOAuthIssuerResponse,
   CasAdminGetStackRequest,
   CasAdminGetStackResponse,
   CasAdminListControlAuditEventsRequest,
@@ -95,6 +97,10 @@ export interface ControlPlaneOperations {
     ctx: ControlPlaneCallContext,
     request: CasAdminGetOAuthIssuerRequest,
   ): Promise<CasAdminGetOAuthIssuerResponse>;
+  inspectOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminInspectOAuthIssuerRequest,
+  ): Promise<CasAdminInspectOAuthIssuerResponse>;
   putIssuer(
     ctx: ControlPlaneCallContext,
     request: Omit<CasAdminPutIssuerRequest, "headers">,

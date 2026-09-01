@@ -98,6 +98,36 @@ export interface CasStackOAuthIssuer {
   readonly revision: number;
 }
 
+export interface CasOAuthIssuerInspectionKey {
+  readonly kid: string;
+  readonly algorithm: string;
+  readonly publicJwk: Readonly<Record<string, unknown>>;
+}
+
+export interface CasOAuthIssuerInspection {
+  readonly inspectionId: string;
+  readonly stackId: CasStackId;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly metadataUrl: string;
+  readonly metadataType: CasOAuthIssuerMetadataType;
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly jwksUri: string;
+  readonly registrationEndpoint: string | null;
+  readonly scopesSupported: readonly string[];
+  readonly codeChallengeMethodsSupported: readonly string[];
+  readonly metadataDigest: string;
+  readonly jwksDigest: string;
+  readonly capabilityMaxLifetimeSeconds: number;
+  /** Exact bytes to sign as the compact-JWS payload for activation. */
+  readonly challenge: string;
+  readonly expiresAt: number;
+  readonly keys: readonly CasOAuthIssuerInspectionKey[];
+  /** Revision of the pending OAuth issuer resource. */
+  readonly revision: number;
+}
+
 /**
  * Issuer key lifecycle. Task 2 amendment: `pending` is removed because the
  * frozen contract has no pending-to-active transition endpoint; possession

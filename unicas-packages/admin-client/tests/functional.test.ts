@@ -82,6 +82,29 @@ class MockAdminService implements AdminHttpFetcher {
         revision: 4,
       }, { headers: { ETag: `"rev-4"` } });
     }
+    if (path === casAdminRoutes.oauthIssuerInspections({ stackId: STACK }) && request.method === "POST") {
+      const body = await request.json() as { issuer: string; audience: string };
+      return Response.json({
+        inspectionId: "oinsp_test",
+        stackId: STACK,
+        ...body,
+        metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
+        metadataType: "oauth",
+        authorizationEndpoint: "https://issuer.example/oauth/authorize",
+        tokenEndpoint: "https://issuer.example/oauth/token",
+        jwksUri: "https://issuer.example/oauth/jwks",
+        registrationEndpoint: null,
+        scopesSupported: ["cas:read"],
+        codeChallengeMethodsSupported: ["S256"],
+        metadataDigest: "metadata",
+        jwksDigest: "jwks",
+        capabilityMaxLifetimeSeconds: 28800,
+        challenge: "challenge",
+        expiresAt: 1000,
+        keys: [],
+        revision: 1,
+      }, { headers: { ETag: `"rev-1"` } });
+    }
     if (path === casAdminRoutes.issuerKeys({ stackId: STACK }) && request.method === "GET") {
       return Response.json({ keys: [] });
     }
@@ -123,6 +146,16 @@ describe("functional admin client", () => {
     const { value, etag } = await client.getOAuthIssuer({ stackId: STACK });
     expect(value).toMatchObject({ metadataType: "oauth", status: "active", jwksUri: "https://issuer.example/oauth/jwks" });
     expect(etag).toBe('"rev-4"');
+  });
+
+  it("posts OAuth issuer inspections with CSRF", async () => {
+    const result = await client.inspectOAuthIssuer(
+      { stackId: STACK },
+      { issuer: "https://issuer.example/oauth", audience: "cas" },
+    );
+    expect(result).toMatchObject({ value: { inspectionId: "oinsp_test" }, etag: '"rev-1"' });
+    const request = service.requests.find((entry) => entry.path.endsWith("/oauth-issuer/inspections"))!;
+    expect(request).toMatchObject({ method: "POST", csrf: "csrf-1" });
   });
 
   it("attaches CSRF to mutations", async () => {

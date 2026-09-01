@@ -5,6 +5,7 @@ import type { CasOperatorIdentityKey } from "@unicas/admin-protocol";
 import {
   ControlPlaneAdminService,
   encodeControlListCursor,
+  sha256Hex,
   type ControlAcceptMemberInvitationCommitResult,
   type ControlAcceptMemberInvitationPlan,
   type ControlAuditRecord,
@@ -21,6 +22,8 @@ import {
   type ControlIdempotencyRecord,
   type ControlIdentityPlan,
   type ControlIdentityRecord,
+  type ControlInspectOAuthIssuerCommitResult,
+  type ControlInspectOAuthIssuerPlan,
   type ControlIssuerKeyRecord,
   type ControlIssuerRecord,
   type ControlOAuthIssuerRecord,
@@ -34,6 +37,7 @@ import {
   type ControlPutIssuerCommitResult,
   type ControlPutIssuerPlan,
   type ControlStackRecord,
+  type OAuthDiscoveryPort,
 } from "../src/index.js";
 
 const alice: CasOperatorIdentityKey = { identityIssuer: "https://id.example", subject: "alice" };
@@ -49,7 +53,13 @@ function context(identity = alice, displayName = "Alice"): ControlPlaneCallConte
   };
 }
 
-function fixture(options: { listDefaultLimit?: number; listMaxLimit?: number; now?: () => number } = {}) {
+function fixture(options: {
+  listDefaultLimit?: number;
+  listMaxLimit?: number;
+  now?: () => number;
+  oauthDiscovery?: OAuthDiscoveryPort;
+  generateOAuthInspectionId?: () => string;
+} = {}) {
   const repository = new MemoryControlAdminRepository();
   let stackSequence = 0;
   let eventSequence = 0;
@@ -325,6 +335,62 @@ describe("ControlPlaneAdminService", () => {
       .toEqual(oauthIssuerRecord(created.stackId));
   });
 
+  test("inspects OAuth metadata, stores only a challenge hash, and creates pending state", async () => {
+    const oauthDiscovery: OAuthDiscoveryPort = {
+      inspectIssuer: async ({ issuer }) => ({
+        metadata: {
+          issuer,
+          metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
+          metadataType: "oauth",
+          authorizationEndpoint: "https://issuer.example/oauth/authorize",
+          tokenEndpoint: "https://issuer.example/oauth/token",
+          jwksUri: "https://issuer.example/oauth/jwks",
+          registrationEndpoint: null,
+          scopesSupported: ["cas:read"],
+          codeChallengeMethodsSupported: ["S256"],
+        },
+        metadataDigest: "a".repeat(64),
+        jwksDigest: "b".repeat(64),
+        keys: [{
+          kid: "key-1",
+          algorithm: "ES256",
+          publicJwk: { kid: "key-1", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y" },
+        }],
+      }),
+    };
+    const { repository, service } = fixture({
+      now: () => 1_000,
+      oauthDiscovery,
+      generateOAuthInspectionId: () => "oinsp_test",
+    });
+    const created = await service.createStack(context(), { body: { displayName: "OAuth" } });
+    if ("error" in created) throw new Error(created.error);
+    expectError(
+      await service.inspectOAuthIssuer(context(bob, "Bob"), {
+        path: { stackId: created.stackId },
+        body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+      }),
+      CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED,
+    );
+    const result = await service.inspectOAuthIssuer(context(), {
+      path: { stackId: created.stackId },
+      body: { issuer: "https://issuer.example/oauth", audience: "cas" },
+    });
+    if (!("challenge" in result)) throw new Error("inspection failed");
+    expect(result).toMatchObject({
+      inspectionId: "oinsp_test",
+      stackId: created.stackId,
+      expiresAt: 601_000,
+      revision: 1,
+      keys: [{ kid: "key-1", algorithm: "ES256" }],
+    });
+    expect(repository.oauthIssuers.get(created.stackId)).toMatchObject({ status: "pending", revision: 1 });
+    expect(repository.inspections[0]).toMatchObject({ inspectionId: "oinsp_test", usedAt: null });
+    expect(repository.inspections[0]?.challengeHash).toBe(await sha256Hex(result.challenge));
+    expect(JSON.stringify(repository.inspections[0])).not.toContain(result.challenge);
+    expect(repository.audits.at(-1)?.action).toBe("oauth_issuer.inspection.created");
+  });
+
   test("creates an issuer with default lifetime and rejects global duplicates", async () => {
     const { repository, service } = fixture();
     const a = await service.createStack(context(), { body: { displayName: "A" } });
@@ -509,6 +575,7 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
   readonly stacks = new Map<string, ControlStackRecord>();
   readonly issuers = new Map<string, ControlIssuerRecord>();
   readonly oauthIssuers = new Map<string, ControlOAuthIssuerRecord>();
+  readonly inspections: ControlInspectOAuthIssuerPlan["inspection"][] = [];
   readonly issuerKeys = new Map<string, ControlIssuerKeyRecord>();
   readonly possessionChallenges = new Map<string, ControlPossessionChallengeRecord>();
   readonly memberships: ControlMembershipRecord[] = [];
@@ -565,6 +632,29 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
 
   getOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null> {
     return Promise.resolve(this.oauthIssuers.get(stackId) ?? null);
+  }
+
+  hasOAuthIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
+    return Promise.resolve([...this.oauthIssuers.values()]
+      .some((record) => record.issuer === issuer && record.stackId !== stackId));
+  }
+
+  commitInspectOAuthIssuer(
+    plan: ControlInspectOAuthIssuerPlan,
+  ): Promise<ControlInspectOAuthIssuerCommitResult> {
+    const existing = this.oauthIssuers.get(plan.issuer.stackId);
+    if (existing && existing.revision !== plan.issuer.revision - 1) {
+      return Promise.resolve({ kind: "revision-mismatch" });
+    }
+    if ([...this.oauthIssuers.values()].some((record) =>
+      record.issuer === plan.issuer.issuer && record.stackId !== plan.issuer.stackId)) {
+      return Promise.resolve({ kind: "issuer-conflict" });
+    }
+    this.oauthIssuers.set(plan.issuer.stackId, plan.issuer);
+    this.inspections.push(plan.inspection);
+    this.audits.push(plan.audit);
+    this.snapshot += 1;
+    return Promise.resolve({ kind: "created" });
   }
 
   hasMembership(identity: CasOperatorIdentityKey, stackId: string): Promise<boolean> {

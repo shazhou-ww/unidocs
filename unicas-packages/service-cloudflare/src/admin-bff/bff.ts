@@ -708,6 +708,27 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         const result = await controlPlane.getOAuthIssuer(ctx, { path: { stackId: route.stackId } });
         return jsonWithEtag(result);
       }
+      case "inspectOAuthIssuer": {
+        const body = await readJsonBody<{
+          issuer?: unknown;
+          audience?: unknown;
+          capabilityMaxLifetimeSeconds?: unknown;
+        }>(request);
+        if (!body) return invalidRequest("JSON body is required");
+        const nextBody: {
+          issuer: string;
+          audience: string;
+          capabilityMaxLifetimeSeconds?: number;
+        } = { issuer: String(body.issuer ?? ""), audience: String(body.audience ?? "") };
+        if (body.capabilityMaxLifetimeSeconds !== undefined) {
+          nextBody.capabilityMaxLifetimeSeconds = Number(body.capabilityMaxLifetimeSeconds);
+        }
+        const result = await controlPlane.inspectOAuthIssuer(ctx, {
+          path: { stackId: route.stackId },
+          body: nextBody,
+        });
+        return jsonWithEtag(result);
+      }
       case "putIssuer": {
         const body = await readJsonBody<{
           issuer?: unknown;

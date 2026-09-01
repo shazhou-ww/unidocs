@@ -1,5 +1,6 @@
 import type {
   CasControlAuditEvent,
+  CasOAuthIssuerInspection,
   CasMemberInvitation,
   CasOperatorIdentity,
   CasOperatorIdentityKey,
@@ -120,6 +121,19 @@ export interface CasAdminGetOAuthIssuerRequest {
 
 export type CasAdminGetOAuthIssuerResponse =
   | CasStackOAuthIssuer
+  | CasAdminErrorResponse;
+
+export interface CasAdminInspectOAuthIssuerRequest {
+  readonly path: CasAdminStackPath;
+  readonly body: {
+    readonly issuer: string;
+    readonly audience: string;
+    readonly capabilityMaxLifetimeSeconds?: number;
+  };
+}
+
+export type CasAdminInspectOAuthIssuerResponse =
+  | CasOAuthIssuerInspection
   | CasAdminErrorResponse;
 
 export interface CasAdminPutIssuerRequest {
@@ -254,6 +268,10 @@ export interface CasAdminEndpointContracts {
   getOAuthIssuer: {
     request: CasAdminGetOAuthIssuerRequest;
     response: CasAdminGetOAuthIssuerResponse;
+  };
+  inspectOAuthIssuer: {
+    request: CasAdminInspectOAuthIssuerRequest;
+    response: CasAdminInspectOAuthIssuerResponse;
   };
   putIssuer: { request: CasAdminPutIssuerRequest; response: CasAdminPutIssuerResponse };
   listIssuerKeys: {

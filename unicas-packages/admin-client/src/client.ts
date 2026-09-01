@@ -28,6 +28,7 @@ import type {
   CasMemberInvitation,
   CasOperatorIdentity,
   CasOperatorIdentityKey,
+  CasOAuthIssuerInspection,
   CasRefDomain,
   CasRootRefBalance,
   CasRootRefEvent,
@@ -75,6 +76,14 @@ export interface AdminClient {
   ): Promise<{ readonly invitation: CasMemberInvitation; readonly acceptUrl: string }>;
   getIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackIssuer>>;
   getOAuthIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackOAuthIssuer>>;
+  inspectOAuthIssuer(
+    path: { readonly stackId: CasStackId },
+    body: {
+      readonly issuer: string;
+      readonly audience: string;
+      readonly capabilityMaxLifetimeSeconds?: number;
+    },
+  ): Promise<AdminClientRead<CasOAuthIssuerInspection>>;
   putIssuer(
     path: { readonly stackId: CasStackId },
     body: {
@@ -272,6 +281,18 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
       const response = await requireOk(
         await request(casAdminRoutes.oauthIssuer(path)),
         "getOAuthIssuer",
+      );
+      return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async inspectOAuthIssuer(path, body) {
+      const response = await requireOk(
+        await request(casAdminRoutes.oauthIssuerInspections(path), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        "inspectOAuthIssuer",
       );
       return { value: await response.json(), etag: readEtag(response) };
     },

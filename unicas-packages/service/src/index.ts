@@ -127,6 +127,7 @@ export {
   generateInvitationId,
   generateInvitationToken,
   generateNonce,
+  generateOAuthInspectionId,
   generateSessionId,
   generateStackId,
 } from "./control-ids.js";
@@ -167,7 +168,11 @@ export {
 } from "./control-validation.js";
 export type { SupportedKeyAlgorithm } from "./control-validation.js";
 export {
+  buildOAuthIssuerInspectionChallenge,
   canonicalizeOAuthIssuer,
+  OAUTH_DISCOVERY_MAX_KEYS,
+  OAUTH_ISSUER_INSPECTION_CHALLENGE_VERSION,
+  OAUTH_ISSUER_INSPECTION_TTL_MS,
   oauthDiscoveryCandidates,
   parseOAuthJwks,
   parseOAuthMetadata,
@@ -178,9 +183,9 @@ export type {
   OAuthDiscoveryCandidate,
   OAuthDiscoveryPort,
   OAuthDiscoveryResult,
+  OAuthIssuerInspectionChallengeInput,
   OAuthMetadataType,
 } from "./oauth-discovery.js";
-export { OAUTH_DISCOVERY_MAX_KEYS } from "./oauth-discovery.js";
 export type {
   ControlPlaneCallContext,
   ControlPlaneOperations,
@@ -206,9 +211,12 @@ export type {
   ControlIdempotencyRecord,
   ControlIdentityPlan,
   ControlIdentityRecord,
+  ControlInspectOAuthIssuerCommitResult,
+  ControlInspectOAuthIssuerPlan,
   ControlIssuerKeyRecord,
   ControlIssuerRecord,
   ControlOAuthIssuerRecord,
+  ControlOAuthIssuerInspectionRecord,
   ControlMembershipRecord,
   ControlMemberInvitationRecord,
   ControlMemberInvitationResponse,

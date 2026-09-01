@@ -17,6 +17,8 @@ import type {
   ControlIdempotencyRecord,
   ControlIdentityPlan,
   ControlIdentityRecord,
+  ControlInspectOAuthIssuerCommitResult,
+  ControlInspectOAuthIssuerPlan,
   ControlIssuerKeyRecord,
   ControlIssuerRecord,
   ControlOAuthIssuerRecord,
@@ -312,6 +314,111 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
       .bind(stackId)
       .first<OAuthIssuerRow>();
     return row ? toOAuthIssuer(row) : null;
+  }
+
+  async hasOAuthIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
+    const row = await this.#db
+      .prepare("SELECT 1 AS ok FROM cas_stack_oauth_issuers WHERE issuer = ? AND stack_id != ?")
+      .bind(issuer, stackId)
+      .first<{ ok: number }>();
+    return row !== null;
+  }
+
+  async commitInspectOAuthIssuer(
+    plan: ControlInspectOAuthIssuerPlan,
+  ): Promise<ControlInspectOAuthIssuerCommitResult> {
+    const issuer = plan.issuer;
+    const inspection = plan.inspection;
+    const issuerStatement = issuer.revision === 1
+      ? this.#db.prepare(
+        "INSERT INTO cas_stack_oauth_issuers (stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, last_refresh_at, last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, ?, ?, 1)",
+      ).bind(
+        issuer.stackId,
+        issuer.issuer,
+        issuer.audience,
+        issuer.metadataUrl,
+        issuer.metadataType,
+        issuer.authorizationEndpoint,
+        issuer.tokenEndpoint,
+        issuer.jwksUri,
+        issuer.registrationEndpoint,
+        JSON.stringify(issuer.scopesSupported),
+        JSON.stringify(issuer.codeChallengeMethodsSupported),
+        issuer.lastRefreshAt,
+        issuer.jwksDigest,
+        issuer.capabilityMaxLifetimeSeconds,
+      )
+      : this.#db.prepare(
+        "UPDATE cas_stack_oauth_issuers SET issuer = ?, audience = ?, metadata_url = ?, metadata_type = ?, authorization_endpoint = ?, token_endpoint = ?, jwks_uri = ?, registration_endpoint = ?, scopes_supported = ?, code_challenge_methods_supported = ?, status = 'pending', verified_at = NULL, last_refresh_at = ?, last_refresh_error = NULL, jwks_digest = ?, capability_max_lifetime_seconds = ?, revision = revision + 1 WHERE stack_id = ? AND revision = ? AND status != 'active'",
+      ).bind(
+        issuer.issuer,
+        issuer.audience,
+        issuer.metadataUrl,
+        issuer.metadataType,
+        issuer.authorizationEndpoint,
+        issuer.tokenEndpoint,
+        issuer.jwksUri,
+        issuer.registrationEndpoint,
+        JSON.stringify(issuer.scopesSupported),
+        JSON.stringify(issuer.codeChallengeMethodsSupported),
+        issuer.lastRefreshAt,
+        issuer.jwksDigest,
+        issuer.capabilityMaxLifetimeSeconds,
+        issuer.stackId,
+        issuer.revision - 1,
+      );
+    const requireIssuer = issuer.revision === 1
+      ? []
+      : [this.#db.prepare(
+        "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('invalid', '$') END AS updated",
+      )];
+    const insertInspection = this.#db.prepare(
+      "INSERT INTO cas_oauth_issuer_inspections (inspection_id, stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, metadata_digest, jwks_digest, challenge_hash, capability_max_lifetime_seconds, created_at, expires_at, used_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)",
+    ).bind(
+      inspection.inspectionId,
+      inspection.stackId,
+      inspection.issuer,
+      inspection.audience,
+      inspection.metadataUrl,
+      inspection.metadataType,
+      inspection.authorizationEndpoint,
+      inspection.tokenEndpoint,
+      inspection.jwksUri,
+      inspection.registrationEndpoint,
+      JSON.stringify(inspection.scopesSupported),
+      JSON.stringify(inspection.codeChallengeMethodsSupported),
+      inspection.metadataDigest,
+      inspection.jwksDigest,
+      inspection.challengeHash,
+      inspection.capabilityMaxLifetimeSeconds,
+      inspection.createdAt,
+      inspection.expiresAt,
+    );
+    const keyStatements = plan.keys.map((key) => this.#db.prepare(
+      "INSERT INTO cas_oauth_issuer_inspection_keys (inspection_id, kid, algorithm, public_jwk) VALUES (?, ?, ?, ?)",
+    ).bind(inspection.inspectionId, key.kid, key.algorithm, JSON.stringify(key.publicJwk)));
+    try {
+      await this.#db.batch([
+        issuerStatement,
+        ...requireIssuer,
+        insertInspection,
+        ...keyStatements,
+        ...this.#mutationStatements(plan.audit),
+      ]);
+      return { kind: "created" };
+    } catch (error) {
+      if (isOAuthIssuerConflict(error)) {
+        const current = await this.getOAuthIssuer(issuer.stackId);
+        return current?.issuer === issuer.issuer
+          ? { kind: "revision-mismatch" }
+          : { kind: "issuer-conflict" };
+      }
+      if (isUniqueViolation(error, "cas_stack_oauth_issuers.stack_id")) {
+        return { kind: "revision-mismatch" };
+      }
+      if (isJsonFailure(error)) return { kind: "revision-mismatch" };
+      throw error;
+    }
   }
 
   async hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
@@ -786,6 +893,13 @@ function isIssuerConflict(error: unknown): boolean {
   return error instanceof Error
     && error.message.includes("UNIQUE constraint failed")
     && (error.message.includes("cas_issuer_by_issuer") || error.message.includes("cas_stack_issuer"));
+}
+
+function isOAuthIssuerConflict(error: unknown): boolean {
+  return error instanceof Error
+    && error.message.includes("UNIQUE constraint failed")
+    && (error.message.includes("cas_oauth_issuer_by_issuer")
+      || error.message.includes("cas_stack_oauth_issuers.issuer"));
 }
 
 function isJsonFailure(error: unknown): boolean {

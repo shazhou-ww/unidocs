@@ -1,17 +1,21 @@
 import {
   ControlPlaneAdminService,
   type ControlPlaneOperations,
+  type OAuthDiscoveryPort,
 } from "@unicas/service";
 import { D1ControlPlaneAdminRepository } from "./control-admin-repository.js";
 
 /** Compose the cloud-neutral control semantics over the D1 storage adapter. */
 export function createControlPlaneOperations(
   db: D1Database,
-  options: { readonly now?: () => number } = {},
+  options: {
+    readonly now?: () => number;
+    readonly oauthDiscovery?: OAuthDiscoveryPort;
+  } = {},
 ): ControlPlaneOperations {
   const admin = new ControlPlaneAdminService(
     new D1ControlPlaneAdminRepository(db),
-    options,
+    { now: options.now, oauthDiscovery: options.oauthDiscovery },
   );
 
   return {
@@ -26,6 +30,7 @@ export function createControlPlaneOperations(
     acceptMemberInvitation: admin.acceptMemberInvitation.bind(admin),
     getIssuer: admin.getIssuer.bind(admin),
     getOAuthIssuer: admin.getOAuthIssuer.bind(admin),
+    inspectOAuthIssuer: admin.inspectOAuthIssuer.bind(admin),
     putIssuer: admin.putIssuer.bind(admin),
     createPossessionChallenge: admin.createPossessionChallenge.bind(admin),
     listIssuerKeys: admin.listIssuerKeys.bind(admin),

@@ -29,6 +29,10 @@ export function generateEventId(): string {
   return `evt_${randomBase64Url(12)}`;
 }
 
+export function generateOAuthInspectionId(): string {
+  return `oinsp_${randomBase64Url(16)}`;
+}
+
 export function generateSessionId(): string {
   return `sess_${randomBase64Url(24)}`;
 }
