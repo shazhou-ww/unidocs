@@ -3,6 +3,7 @@ import {
   httpCallEvent,
   httpCallFailure,
   ObservedBodyCap,
+  ObservedStackCap,
   pickObservedHeaders,
   readObservedBody,
   truncateObservedBody,
@@ -85,7 +86,31 @@ describe("事件详略分级", () => {
   });
 
   it("非 Error 的抛出物也能记下来", () => {
-    expect(httpCallFailure(input, "boom").error).toBe("boom");
+    const event = httpCallFailure(input, "boom");
+    expect(event.error).toBe("boom");
+    expect(event.stack).toBeUndefined();
+  });
+
+  // 有栈就打栈:这一档没有上游响应可看,栈是唯一能说清卡在哪一步的东西。
+  it("拿不到响应时带完整异常栈", () => {
+    const event = httpCallFailure(input, new TypeError("fetch failed"));
+    expect(event.stack).toContain("TypeError: fetch failed");
+    expect(event.stack!.split("\n").length).toBeGreaterThan(1);
+  });
+
+  // undici 把真正的原因藏在 cause 里,只看外层那句 "fetch failed" 什么都看不出来。
+  it("展开 cause,外层与内层的栈都留下", () => {
+    const cause = new Error("connect ECONNREFUSED 127.0.0.1:9");
+    const event = httpCallFailure(input, new TypeError("fetch failed", { cause }));
+    expect(event.error).toContain("cause: Error: connect ECONNREFUSED");
+    expect(event.stack).toContain("caused by:");
+    expect(event.stack).toContain("ECONNREFUSED");
+  });
+
+  it("超长的栈被截断", () => {
+    const deep = new Error("deep");
+    deep.stack = "Error: deep\n" + "    at frame\n".repeat(2000);
+    expect(httpCallFailure(input, deep).stack!.length).toBeLessThanOrEqual(ObservedStackCap);
   });
 });
 

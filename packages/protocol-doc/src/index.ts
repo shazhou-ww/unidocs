@@ -68,6 +68,7 @@ export {
   httpCallFailure,
   noopObserver,
   ObservedBodyCap,
+  ObservedStackCap,
   ObservedHeaderAllowlist,
   pickObservedHeaders,
   readObservedBody,

@@ -16,9 +16,21 @@
  * 且可测 —— 测试注入一个收集器即可断言事件序列。
  */
 
-/** 响应体片段的字节上限。错误响应通常是小 JSON;截断是为了防某个上游吐一个
- *  巨大的 HTML 错误页把日志刷爆。 */
-export const ObservedBodyCap = 2048;
+/**
+ * 上游错误响应体的字节上限。
+ *
+ * 只在**出站**调用非 2xx 时记,而且刻意压得很小:错误响应通常是一行 JSON,
+ * 真正有价值的就是开头那句话(CAS 的 `… the same object. (10058)` 就是这么
+ * 被认出来的)。再多就是浪费 —— 上游的 HTML 错误页、堆栈、重复的样板,
+ * 对定位没有增量。
+ */
+export const ObservedBodyCap = 512;
+
+/**
+ * 异常栈的字符上限。栈是"拿不到响应"那一档唯一真正有信息量的东西,所以给得
+ * 比响应体宽松;但仍要有上限,否则一条深层 async 栈能顶掉整屏日志。
+ */
+export const ObservedStackCap = 4096;
 
 /**
  * 允许记录的请求头。**白名单而非黑名单** —— 黑名单迟早会漏掉一个新加的凭据头。
@@ -51,9 +63,17 @@ export interface HttpCallEvent {
   /** 以下仅在非 2xx 时出现。 */
   readonly url?: string;
   readonly requestHeaders?: Readonly<Record<string, string>>;
+  /** 仅出站非 2xx。入站不记 —— 那是我们自己合成的错误体,没有增量信息。 */
   readonly responseBody?: string;
   readonly truncated?: boolean;
+  /** 异常的 name + message。 */
   readonly error?: string;
+  /**
+   * 异常栈,仅在 `status: 0`(拿不到响应)时出现。这一档没有上游响应可看,
+   * 栈是唯一能说清"卡在我们代码哪一步"的东西 —— 超时是发在建连、写请求体
+   * 还是等响应,栈里看得出来。
+   */
+  readonly stack?: string;
 }
 
 export type ObserveFn = (event: HttpCallEvent) => void;
@@ -131,7 +151,7 @@ export interface HttpCallInput {
 export function httpCallEvent(
   input: HttpCallInput,
   status: number,
-  detail?: { responseBody?: string; truncated?: boolean; error?: string },
+  detail?: { responseBody?: string; truncated?: boolean; error?: string; stack?: string },
 ): HttpCallEvent {
   const ok = status >= 200 && status < 300;
   const base = {
@@ -154,12 +174,29 @@ export function httpCallEvent(
     ...(detail?.responseBody !== undefined ? { responseBody: detail.responseBody } : {}),
     ...(detail?.truncated ? { truncated: true } : {}),
     ...(detail?.error !== undefined ? { error: detail.error } : {}),
+    ...(detail?.stack !== undefined ? { stack: detail.stack } : {}),
   };
 }
 
-/** 没拿到响应时的事件:status 记 0,带上异常 message。 */
+/**
+ * 没拿到响应时的事件:status 记 0,带上异常与**完整栈**。
+ *
+ * 这一档是超时、连接被切、DNS 失败 —— 浏览器侧的 `Failed to fetch` 在服务端
+ * 的样子。没有上游响应体可看,栈就是全部线索,所以这里不吝啬。`cause` 也一并
+ * 展开:undici 把底层的 ECONNRESET / ETIMEDOUT 藏在 `TypeError: fetch failed`
+ * 的 cause 里,只看外层那句话什么都看不出来。
+ */
 export function httpCallFailure(input: HttpCallInput, error: unknown): HttpCallEvent {
+  if (!(error instanceof Error)) {
+    return httpCallEvent(input, 0, { error: String(error) });
+  }
+  const cause = error.cause;
+  const causeText = cause instanceof Error ? ` (cause: ${cause.name}: ${cause.message})` : "";
+  const stack = [error.stack, cause instanceof Error ? cause.stack : undefined]
+    .filter((s): s is string => typeof s === "string")
+    .join("\ncaused by: ");
   return httpCallEvent(input, 0, {
-    error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    error: `${error.name}: ${error.message}${causeText}`,
+    stack: stack.length > ObservedStackCap ? stack.slice(0, ObservedStackCap) : stack,
   });
 }

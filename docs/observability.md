@@ -21,14 +21,28 @@
   // 以下仅在非 2xx 时出现
   "url": "…",
   "requestHeaders": { "content-type": "…" },
-  "responseBody": "<前 2KB>",
+
+  // 仅出站非 2xx:上游给的错误信息,512 字节封顶
+  "responseBody": "{\"error\":\"… the same object. (10058)\"}",
   "truncated": true,
-  "error": "TypeError: fetch failed"
+
+  // 仅 status 0:异常与完整栈(含 cause)
+  "error": "TypeError: fetch failed (cause: Error: connect ECONNREFUSED …)",
+  "stack": "TypeError: fetch failed\n    at … \ncaused by: Error: connect ECONNREFUSED\n    at …"
 }
 ```
 
-**详略分级**:2xx 只记简报;4xx/5xx 额外带 url、请求头与响应体前 2KB;拿不到
-响应记 `status: 0` 加异常信息。
+**详略分级 —— 有栈的地方打栈,没栈的地方留关键信息:**
+
+| 情况 | 有没有异常 | 记什么 |
+|---|---|---|
+| 2xx | 无 | 只记简报 |
+| 出站 4xx/5xx | **无**(fetch 成功了,只是对方回了错误码) | 上游的错误信息(512 字节封顶)+ url + 请求头 |
+| 入站 4xx/5xx | 无 | 只记 url + 请求头。响应体是我们自己合成的,成因已由对应的出站事件记下,不重复 |
+| `status: 0` | **有** | 完整异常栈(4096 字符封顶),并展开 `cause` |
+
+`cause` 必须展开:undici 把真正的 `ECONNRESET` / `ETIMEDOUT` 藏在
+`TypeError: fetch failed` 的 cause 里,只看外层那句话什么都看不出来。
 
 `status: 0` 是排查的关键——浏览器侧的 `Failed to fetch` 在服务端就长这样。它和
 "拿到一个 502" 是两件事:网关在上游连不上时会**合成**一个 502 交给调用方,只看
@@ -36,8 +50,8 @@
 
 **安全**:请求头走白名单(content-type / content-length / accept /
 accept-encoding / user-agent),`Authorization`、`X-UniDocs-CAS-Capability`、
-`X-Internal-Token`、Cookie 永远不记。响应体只在 ≥400 时从 `response.clone()` 读,
-成功响应(可能是几十 MB 的文档)一个字节都不碰。
+`X-Internal-Token`、Cookie 永远不记。响应体只在出站且 ≥400 时从
+`response.clone()` 读,成功响应(可能是几十 MB 的文档)一个字节都不碰。
 
 ## 埋点位置
 
@@ -126,6 +140,16 @@ calls
 | where status == 0 and TimeGenerated > ago(24h)
 | summarize count() by target, op, err
 | order by count_ desc
+```
+
+**看某次失败的完整栈**
+
+```kusto
+calls
+| where status == 0 and TimeGenerated > ago(2h)
+| project TimeGenerated, target, op, durationMs, err, stack = tostring(e.stack)
+| order by TimeGenerated desc
+| take 10
 ```
 
 ## 成本

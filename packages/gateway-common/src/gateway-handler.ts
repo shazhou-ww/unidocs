@@ -308,12 +308,10 @@ export function createGatewayHandler(
     try {
       const response = await handleInner(request);
       const finished = { ...input, durationMs: Date.now() - started };
-      // 只有失败响应才读体:成功响应可能是几十 MB 的文档,而且原响应要原样交给
-      // 调用方,所以必须读克隆而不是它本身。
-      const detail = response.status >= 400
-        ? await readObservedBody(response.clone())
-        : undefined;
-      observe(httpCallEvent(finished, response.status, detail));
+      // 入站**不读响应体**:那是我们自己合成的错误体,而它的成因已经由对应的
+      // 出站事件(带上游响应体)或 status 0 事件(带异常栈)记下了。再记一遍
+      // 只是把同一件事写两次。
+      observe(httpCallEvent(finished, response.status));
       return response;
     } catch (err) {
       observe(httpCallFailure({ ...input, durationMs: Date.now() - started }, err));

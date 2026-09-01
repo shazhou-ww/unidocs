@@ -136,6 +136,11 @@ describe("网关调用可观测性", () => {
     expect(outbound.status).toBe(500);
     expect(outbound.url).toContain("127.0.0.1");
     expect(outbound.responseBody).toContain("boom");
+
+    // 入站不重复记响应体:它的成因已经由上面那条出站事件说清了。
+    const inbound = events.find(e => e.dir === "in")!;
+    expect(inbound.status).toBe(500);
+    expect(inbound.responseBody).toBeUndefined();
     expect(JSON.stringify(outbound)).not.toContain("test-token");
     expect(JSON.stringify(outbound)).not.toContain("end-user-token");
   });
@@ -154,6 +159,9 @@ describe("网关调用可观测性", () => {
     expect(outbound.status).toBe(0);
     expect(outbound.ok).toBe(false);
     expect(outbound.error).toBeTruthy();
+    // 没有上游响应可看,栈是唯一线索,必须在。
+    expect(outbound.stack).toBeTruthy();
+    expect(outbound.responseBody).toBeUndefined();
 
     const inbound = events.find(e => e.dir === "in")!;
     expect(inbound.status).toBe(502);
