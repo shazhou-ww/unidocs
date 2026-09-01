@@ -57,7 +57,29 @@ describe("哨兵底色", () => {
 describe("重采样", () => {
   it("尺寸不变时原样返回", () => {
     const src = px(3, 2, i => [i, i, i, 255]);
-    expect(Array.from(resample(src, 3, 2).data)).toEqual(Array.from(src.data));
+    const out = resample(src, 3, 2);
+    expect(Array.from(out.data)).toEqual(Array.from(src.data));
+    // 必须是真拷贝，不能是原缓冲区的别名 —— 否则调用方对返回值的后续修改会
+    // 悄悄污染源图层的像素。
+    expect(out.data.buffer).not.toBe(src.data.buffer);
+    out.data[0] = 200;
+    expect(src.data[0]).not.toBe(200);
+  });
+
+  it("水平方向双线性插值：非均匀源，逐值核对像素中心对齐与边缘钳位", () => {
+    // 2x1 源，红通道 [0, 255]，放大到 4x1。
+    // sx = 0.5；x=0..3 的 fx = (x+0.5)*0.5-0.5 依次是 -0.25(钳位到0), 0.25, 0.75, 1.25(钳位到1)
+    // 对应 wx = 0, 0.25, 0.75, 0 → 红通道 0, 63.75→64, 191.25→191, 255
+    const src = px(2, 1, i => (i === 0 ? [0, 0, 0, 255] : [255, 0, 0, 255]));
+    const out = resample(src, 4, 1);
+    expect([out.data[0], out.data[4], out.data[8], out.data[12]]).toEqual([0, 64, 191, 255]);
+  });
+
+  it("垂直方向双线性插值：同样的数值，防止坐标轴搞反", () => {
+    // 1x2 源，红通道 [0, 255]，放大到 1x4，与水平用例数值完全一致。
+    const src = px(1, 2, i => (i === 0 ? [0, 0, 0, 255] : [255, 0, 0, 255]));
+    const out = resample(src, 1, 4);
+    expect([out.data[0], out.data[4], out.data[8], out.data[12]]).toEqual([0, 64, 191, 255]);
   });
 
   it("放大再缩回，纯色图保持纯色", () => {
