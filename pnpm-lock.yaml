@@ -654,9 +654,15 @@ importers:
 
   packages/web-psd:
     dependencies:
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@unidocs/psd-client':
         specifier: workspace:*
         version: link:../psd-client
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
       react:
         specifier: ^19.0.0
         version: 19.2.8

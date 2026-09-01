@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createSBlob, encodeSValue } from "@unidocs/svalue-codec";
+import { SValueContentType } from "@unidocs/protocol";
 import { fetchHistory, rollback, runAgent, resetAgent, withTarget } from "../src/ui/api.js";
 
 const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+/** History speaks SValue, not JSON — a delta's ops can carry CAS blob refs. */
+const svalue = (body: unknown) => ({
+  ok: true, status: 200,
+  arrayBuffer: async () => Uint8Array.from(encodeSValue(body as never)).buffer,
+  json: async () => { throw new Error("fetchHistory must not read history as JSON"); },
+});
 /** A transport failure: HTTP status set, body is whatever the gateway emitted. */
 const httpError = (status: number, text: string) => ({
   ok: false, status,
@@ -16,11 +24,30 @@ beforeEach(() => {
 });
 
 describe("api", () => {
-  it("GETs history and returns its data array", async () => {
+  it("GETs history as SValue and returns its data array", async () => {
     const entries = [{ version: 7, timestamp: "t", description: "d", operations: [] }];
-    fetchMock.mockResolvedValue(json({ success: true, data: entries, version: 7 }));
+    fetchMock.mockResolvedValue(svalue({ success: true, data: entries, version: 7 }));
     expect(await fetchHistory("abc")).toEqual(entries);
     expect(fetchMock.mock.calls[0][0]).toContain("/docs/psd/abc/history");
+    // 必须显式要 SValue：带引用的响应对 Accept: */* 会被编辑器 406 掉。
+    expect(fetchMock.mock.calls[0][1].headers.accept).toBe(SValueContentType);
+  });
+
+  it("history 里带 CAS 引用的 op 能原样取回 —— 这正是 JSON 表达不了的东西", async () => {
+    // editPixels 产出的 generative_fill 会把结果层的像素以 SBlob 引用记进
+    // delta。引用没有 JSON 投影（svalue-codec 的 toJsonValue 直接抛），所以
+    // 这条路径以前对浏览器是 406。不能靠"UI 反正不读 operations"绕过去 ——
+    // 今天不读不代表以后不读。
+    const blob = createSBlob("a".repeat(64));
+    const entries = [{
+      version: 8, timestamp: "t", description: "editPixels(portrait)",
+      operations: [{ kind: "generative_fill", payload: { layer: { pixels: { width: 4, height: 4, hash: "a".repeat(64), blob } } } }],
+    }];
+    fetchMock.mockResolvedValue(svalue({ success: true, data: entries, version: 8 }));
+    const got = await fetchHistory("abc") as any[];
+    const pixels = got[0].operations[0].payload.layer.pixels;
+    expect(pixels.hash).toBe("a".repeat(64));
+    expect(pixels.blob.hash).toBe("a".repeat(64));
   });
 
   it("POSTs rollback with the target version and returns the new one", async () => {
@@ -54,7 +81,8 @@ describe("api", () => {
   });
 
   it("throws the server's error message", async () => {
-    fetchMock.mockResolvedValue(json({ success: false, error: "no such doc" }));
+    // history 走 SValue，所以 success:false 的信封也是 SValue 编码的
+    fetchMock.mockResolvedValue(svalue({ success: false, error: "no such doc" }));
     await expect(fetchHistory("abc")).rejects.toThrow("no such doc");
   });
 });
