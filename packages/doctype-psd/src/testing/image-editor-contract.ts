@@ -11,6 +11,10 @@ import type { Pixels } from "../model/types.js";
  *
  * `live: false` 用来跑桩实现和录制回放，CI 默认走这条。
  * `live: true` 才真打 provider，需要环境变量里有 key，本地手动跑。
+ * 这个标志目前只影响调用方怎么跑这个套件，不改变断言本身 —— 契约
+ * 没法强迫任意实现按需失败，"失败以 EditResult 返回、不抛异常" 这件事
+ * 留给各实现自己的测试去证（桩见 `tests/image-editor-stub.test.ts`，
+ * 真实 provider 见其错误映射的专门测试）。
  */
 export function runImageEditorContract(
   label: string,
@@ -82,13 +86,5 @@ export function runImageEditorContract(
       );
       expect(r.ok).toBe(false);
     });
-
-    if (!opts.live) {
-      it("失败以 EditResult 返回，不抛异常", async () => {
-        const e = await factory();
-        // 只有非 live 实现能被要求确定性地失败；live 的 provider 不保证。
-        expect(typeof e.edit).toBe("function");
-      });
-    }
   });
 }
