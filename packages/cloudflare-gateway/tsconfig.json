@@ -16,6 +16,9 @@
       "path": "../gateway-common"
     },
     {
+      "path": "../gateway-oauth"
+    },
+    {
       "path": "../protocol-gateway"
     },
     {

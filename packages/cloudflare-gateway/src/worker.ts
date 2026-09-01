@@ -18,9 +18,14 @@ import {
   GatewayCapabilityAuthority,
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
+import {
+  createGatewayOAuthDiscoveryHandler,
+  type GatewayOAuthDiscoveryHandler,
+} from "@unidocs/gateway-oauth";
 import { isGatewayExposedCasRoute } from "@unidocs/protocol-gateway";
 import {
   createPkcs8CapabilityIssuer,
+  derivePkcs8CapabilityPublicJwk,
   parseCapabilityRuntimePolicy,
   type CapabilityRuntimePolicyBindings,
 } from "@unidocs/service-auth";
@@ -38,6 +43,8 @@ interface Env extends CapabilityRuntimePolicyBindings {
   CAS_STACK_ISSUER?: string;
   CAS_STACK_KEY_ID?: string;
   CAS_STACK_PRIVATE_KEY_PKCS8?: string;
+  /** Standards-based OAuth issuer. During migration it must equal CAS_STACK_ISSUER. */
+  GATEWAY_OAUTH_ISSUER?: string;
   /** refDomain claim carried by CAS capabilities (stack mode). */
   CAS_REF_DOMAIN?: string;
   INSECURE_PATH_IDENTITY?: string;
@@ -50,6 +57,7 @@ let cachedRegistry: StaticDocServiceRegistry | undefined;
 // across sequential runtimes in one process; a bare module-level cache would
 // leak the PREVIOUS runtime's capability authority into the next one.
 const capabilityAuthorityCache = new WeakMap<object, Promise<GatewayCapabilityAuthority>>();
+const oauthDiscoveryCache = new WeakMap<object, Promise<GatewayOAuthDiscoveryHandler | null>>();
 
 function registry(env: Env): StaticDocServiceRegistry {
   if (!cachedRegistry || cachedRegistrySource !== env.DOC_SERVICES_JSON) {
@@ -61,6 +69,9 @@ function registry(env: Env): StaticDocServiceRegistry {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const oauthDiscovery = await oauthDiscoveryHandler(env);
+    const discoveryResponse = oauthDiscovery && await oauthDiscovery(request);
+    if (discoveryResponse) return discoveryResponse;
     const casStackId = requireBinding(env.CAS_STACK_ID, "CAS_STACK_ID");
     const handle = createGatewayHandler({
       capabilityAuthority: await capabilityAuthority(env),
@@ -76,6 +87,34 @@ export default {
     return handle(request);
   },
 };
+
+function oauthDiscoveryHandler(env: Env): Promise<GatewayOAuthDiscoveryHandler | null> {
+  let cached = oauthDiscoveryCache.get(env);
+  if (!cached) {
+    cached = createOAuthDiscoveryHandler(env);
+    oauthDiscoveryCache.set(env, cached);
+  }
+  return cached;
+}
+
+async function createOAuthDiscoveryHandler(env: Env): Promise<GatewayOAuthDiscoveryHandler | null> {
+  if (!env.GATEWAY_OAUTH_ISSUER) return null;
+  const casIssuer = requireBinding(env.CAS_STACK_ISSUER, "CAS_STACK_ISSUER");
+  if (env.GATEWAY_OAUTH_ISSUER !== casIssuer) {
+    throw new Error("GATEWAY_OAUTH_ISSUER must exactly equal CAS_STACK_ISSUER");
+  }
+  const kid = requireBinding(env.CAS_STACK_KEY_ID, "CAS_STACK_KEY_ID");
+  const publicJwk = await derivePkcs8CapabilityPublicJwk(requireBinding(
+    env.CAS_STACK_PRIVATE_KEY_PKCS8,
+    "CAS_STACK_PRIVATE_KEY_PKCS8",
+  ));
+  return createGatewayOAuthDiscoveryHandler({
+    metadata: { issuer: env.GATEWAY_OAUTH_ISSUER },
+    signingKeys: {
+      publicSigningKeys: async () => [{ algorithm: "ES256", kid, publicJwk }],
+    },
+  });
+}
 
 function capabilityAuthority(
   env: Env,

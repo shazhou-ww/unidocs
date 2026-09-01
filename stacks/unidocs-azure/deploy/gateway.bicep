@@ -38,6 +38,9 @@ param casStackId string
 @description('已在控制面注册的 stack issuer。CAS 只用它当查表键，JWKS 从注册表读，绝不信任令牌自带的。')
 param casStackIssuer string
 
+@description('标准 OAuth issuer；启用发现时必须与 casStackIssuer 完全相同。迁移前留空，避免把旧 issuer 冒充成 OAuth Authorization Server。')
+param gatewayOAuthIssuer string = ''
+
 @description('该 stack 下处于 active 的签名密钥 kid。')
 param casStackKeyId string
 
@@ -135,6 +138,10 @@ module app 'container-app.bicep' = {
       {
         name: 'CAS_STACK_ISSUER'
         value: casStackIssuer
+      }
+      {
+        name: 'GATEWAY_OAUTH_ISSUER'
+        value: gatewayOAuthIssuer
       }
       {
         name: 'CAS_STACK_KEY_ID'

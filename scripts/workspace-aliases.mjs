@@ -45,6 +45,7 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/svalue-codec": "packages/svalue-codec/src/index.ts",
   "@unidocs/svalue-codec/internal": "packages/svalue-codec/src/internal.ts",
   "@unidocs/gateway-common": "packages/gateway-common/src/index.ts",
+  "@unidocs/gateway-oauth": "packages/gateway-oauth/src/index.ts",
   "@unidocs/doctype-server-common": "packages/doctype-server-common/src/index.ts",
   "@unidocs/doctype-server-common/agent": "packages/doctype-server-common/src/agent/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",

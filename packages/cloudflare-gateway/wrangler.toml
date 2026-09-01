@@ -32,6 +32,9 @@ service = "unidocs-cas"
 #   CAPABILITY_KEY_ID            doc-service identity kid
 #   CAPABILITY_PRIVATE_KEY_PKCS8 doc-service identity private key
 #   CAS_STACK_PRIVATE_KEY_PKCS8  the registered unidocs-cloudflare stack key
+# Optional standards migration binding (plain var, not a secret):
+#   GATEWAY_OAUTH_ISSUER         canonical HTTPS Gateway issuer; must exactly
+#                                equal CAS_STACK_ISSUER when enabled
 #
 # Production identity prerequisite: the gateway's identity resolver is the
 # insecure path-identity one (INSECURE_PATH_IDENTITY). Until a real identity/

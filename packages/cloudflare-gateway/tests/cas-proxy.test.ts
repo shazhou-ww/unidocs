@@ -24,6 +24,7 @@ async function env(fetchImpl?: (request: Request) => Promise<Response>) {
     CAS_CAPABILITY_AUDIENCE: "unidocs-cas",
     CAS_STACK_ID: "stack-1",
     CAS_STACK_ISSUER: "https://stack.test",
+    GATEWAY_OAUTH_ISSUER: "https://stack.test",
     CAS_STACK_KEY_ID: "cas-key",
     CAS_STACK_PRIVATE_KEY_PKCS8: privateKey,
     CAS_REF_DOMAIN: "doc",
@@ -34,6 +35,35 @@ async function env(fetchImpl?: (request: Request) => Promise<Response>) {
 }
 
 describe("Gateway CAS proxy", () => {
+  it("publishes OAuth authorization-server metadata and the CAS public key", async () => {
+    const bindings = await env();
+    const metadata = await worker.fetch(
+      new Request("https://gw/.well-known/oauth-authorization-server"),
+      bindings as never,
+    );
+    expect(metadata.status).toBe(200);
+    await expect(metadata.json()).resolves.toMatchObject({
+      issuer: "https://stack.test",
+      authorization_endpoint: "https://stack.test/authorize",
+      token_endpoint: "https://stack.test/token",
+      jwks_uri: "https://stack.test/jwks",
+      code_challenge_methods_supported: ["S256"],
+    });
+
+    const jwks = await worker.fetch(new Request("https://gw/jwks"), bindings as never);
+    const body = await jwks.json() as { keys: Array<Record<string, unknown>> };
+    expect(body.keys).toHaveLength(1);
+    expect(body.keys[0]).toMatchObject({
+      kid: "cas-key",
+      alg: "ES256",
+      use: "sig",
+      kty: "EC",
+      crv: "P-256",
+    });
+    expect(body.keys[0]).not.toHaveProperty("d");
+    expect(bindings.casFetch).not.toHaveBeenCalled();
+  });
+
   it("forwards allowlisted public CAS routes with a capability", async () => {
     const bindings = await env();
     const res = await worker.fetch(

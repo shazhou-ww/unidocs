@@ -213,6 +213,7 @@ export function parseArgs(argv) {
     capabilityKeyId: "",
     casStackId: "",
     casStackIssuer: "",
+    gatewayOAuthIssuer: "",
     casStackKeyId: "",
     casRefDomain: "doc",
     casCapabilityAudience: "",
@@ -236,6 +237,7 @@ export function parseArgs(argv) {
       case "--capability-key-id": args.capabilityKeyId = argv[++i]; break;
       case "--cas-stack-id": args.casStackId = argv[++i]; break;
       case "--cas-stack-issuer": args.casStackIssuer = argv[++i]; break;
+      case "--gateway-oauth-issuer": args.gatewayOAuthIssuer = argv[++i]; break;
       case "--cas-stack-key-id": args.casStackKeyId = argv[++i]; break;
       case "--cas-ref-domain": args.casRefDomain = argv[++i]; break;
       case "--cas-capability-audience": args.casCapabilityAudience = argv[++i]; break;
@@ -295,6 +297,12 @@ export function parseArgs(argv) {
   }
   if (needsStackIdentity && !args.casStackIssuer) {
     throw new Error("--cas-stack-issuer is required (the issuer registered for that stack)");
+  }
+  if (args.gatewayOAuthIssuer && args.gatewayOAuthIssuer !== args.casStackIssuer) {
+    throw new Error("--gateway-oauth-issuer must exactly equal --cas-stack-issuer");
+  }
+  if (args.gatewayOAuthIssuer && !args.gatewayOAuthIssuer.startsWith("https://")) {
+    throw new Error("--gateway-oauth-issuer must be an HTTPS URL");
   }
   // 刻意没有默认值。bicep 那边 casCapabilityAudience 的默认值 'unidocs-cas'
   // 是个没有 stack 区分度的占位值:一旦与控制面里注册的 audience 不一致,
@@ -1083,6 +1091,7 @@ function deployGateway(args, secrets, tag) {
     `capabilityKeyId=${args.capabilityKeyId}`,
     `casStackId=${args.casStackId}`,
     `casStackIssuer=${args.casStackIssuer}`,
+    `gatewayOAuthIssuer=${args.gatewayOAuthIssuer}`,
     `casStackKeyId=${args.casStackKeyId}`,
     `casRefDomain=${args.casRefDomain}`,
     ...(gw.maxUploadBytes ? [`maxUploadBytes=${gw.maxUploadBytes}`] : []),

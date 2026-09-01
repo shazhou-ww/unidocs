@@ -64,6 +64,7 @@ export {
 export type { CapabilityVerifierConfig } from "./verifier.js";
 export {
   createPkcs8CapabilityIssuer,
+  derivePkcs8CapabilityPublicJwk,
   parseCapabilityRuntimePolicy,
 } from "./runtime.js";
 export type {

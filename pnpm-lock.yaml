@@ -87,6 +87,9 @@ importers:
       '@unidocs/gateway-common':
         specifier: workspace:*
         version: link:../gateway-common
+      '@unidocs/gateway-oauth':
+        specifier: workspace:*
+        version: link:../gateway-oauth
       '@unidocs/protocol-gateway':
         specifier: workspace:*
         version: link:../protocol-gateway
@@ -251,6 +254,9 @@ importers:
       '@unidocs/gateway-common':
         specifier: workspace:*
         version: link:../gateway-common
+      '@unidocs/gateway-oauth':
+        specifier: workspace:*
+        version: link:../gateway-oauth
       '@unidocs/protocol-gateway':
         specifier: workspace:*
         version: link:../protocol-gateway

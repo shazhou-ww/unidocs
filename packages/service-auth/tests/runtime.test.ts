@@ -9,6 +9,7 @@ import {
   CapabilityVerifier,
   casReadPermission,
   createPkcs8CapabilityIssuer,
+  derivePkcs8CapabilityPublicJwk,
   parseCapabilityRuntimePolicy,
 } from "../src/index.js";
 
@@ -50,6 +51,15 @@ describe("PKCS8 capability issuer", () => {
       kid: "key-1",
       privateKeyPkcs8: "",
     })).rejects.toThrow("private key is required");
+  });
+
+  test("derives only the public members of an ES256 capability key", async () => {
+    const pair = await generateKeyPair(CapabilityAlgorithm, { extractable: true });
+    const publicJwk = await derivePkcs8CapabilityPublicJwk(
+      await exportPKCS8(pair.privateKey),
+    );
+    expect(publicJwk).toEqual(await exportJWK(pair.publicKey));
+    expect(publicJwk).not.toHaveProperty("d");
   });
 
   test("requires the complete fixed runtime policy", () => {

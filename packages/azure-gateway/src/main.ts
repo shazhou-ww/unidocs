@@ -37,7 +37,12 @@ import {
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
 import {
+  createGatewayOAuthDiscoveryHandler,
+  type GatewayOAuthDiscoveryHandler,
+} from "@unidocs/gateway-oauth";
+import {
   createPkcs8CapabilityIssuer,
+  derivePkcs8CapabilityPublicJwk,
   parseCapabilityRuntimePolicy,
 } from "@unidocs/service-auth";
 import { PgGatewayDocumentDirectory } from "./document-directory.js";
@@ -48,6 +53,15 @@ async function main(): Promise<void> {
   const registry = new StaticDocServiceRegistry(requireEnv("DOC_SERVICES_JSON"));
   const policy = parseCapabilityRuntimePolicy(process.env);
   const casStackId = requireEnv("CAS_STACK_ID");
+  const casStackIssuer = requireEnv("CAS_STACK_ISSUER");
+  const casStackKeyId = requireEnv("CAS_STACK_KEY_ID");
+  const casStackPrivateKey = requireEnv("CAS_STACK_PRIVATE_KEY_PKCS8");
+  const oauthDiscovery = await createOAuthDiscovery(
+    process.env.GATEWAY_OAUTH_ISSUER,
+    casStackIssuer,
+    casStackKeyId,
+    casStackPrivateKey,
+  );
   const capabilityAuthority = new GatewayCapabilityAuthority({
     issuer: await createPkcs8CapabilityIssuer({
       issuer: requireEnv("CAPABILITY_ISSUER"),
@@ -57,9 +71,9 @@ async function main(): Promise<void> {
       maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
     }),
     casIssuer: await createPkcs8CapabilityIssuer({
-      issuer: requireEnv("CAS_STACK_ISSUER"),
-      kid: requireEnv("CAS_STACK_KEY_ID"),
-      privateKeyPkcs8: requireEnv("CAS_STACK_PRIVATE_KEY_PKCS8"),
+      issuer: casStackIssuer,
+      kid: casStackKeyId,
+      privateKeyPkcs8: casStackPrivateKey,
       defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
       maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
     }),
@@ -119,7 +133,7 @@ async function main(): Promise<void> {
   // else falls through to the UI, so the SPA and its API live under one
   // hostname and no CORS is involved.
   const withUi = async (request: Request): Promise<Response> =>
-    webAssetResponse(request) ?? handler(request);
+    await oauthDiscovery?.(request) ?? webAssetResponse(request) ?? handler(request);
 
   const { close } = await serve(withUi, { port, host: "0.0.0.0" });
   console.log(
@@ -137,6 +151,25 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+async function createOAuthDiscovery(
+  oauthIssuer: string | undefined,
+  casIssuer: string,
+  kid: string,
+  privateKeyPkcs8: string,
+): Promise<GatewayOAuthDiscoveryHandler | null> {
+  if (!oauthIssuer) return null;
+  if (oauthIssuer !== casIssuer) {
+    throw new Error("GATEWAY_OAUTH_ISSUER must exactly equal CAS_STACK_ISSUER");
+  }
+  const publicJwk = await derivePkcs8CapabilityPublicJwk(privateKeyPkcs8);
+  return createGatewayOAuthDiscoveryHandler({
+    metadata: { issuer: oauthIssuer },
+    signingKeys: {
+      publicSigningKeys: async () => [{ algorithm: "ES256", kid, publicJwk }],
+    },
+  });
 }
 
 main().catch((err) => {

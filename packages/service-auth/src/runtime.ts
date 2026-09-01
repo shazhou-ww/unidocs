@@ -1,4 +1,4 @@
-import { importPKCS8 } from "jose";
+import { exportJWK, importPKCS8 } from "jose";
 import {
   CapabilityAlgorithm,
   DefaultCapabilityLifetimeSeconds,
@@ -87,6 +87,20 @@ export async function createPkcs8CapabilityIssuer(
     ...(config.now === undefined ? {} : { now: config.now }),
     ...(config.generateJti === undefined ? {} : { generateJti: config.generateJti }),
   });
+}
+
+export async function derivePkcs8CapabilityPublicJwk(
+  privateKeyPkcs8: string,
+): Promise<Readonly<Record<string, unknown>>> {
+  if (privateKeyPkcs8.length === 0) {
+    throw new TypeError("Capability private key is required");
+  }
+  const key = await importPKCS8(privateKeyPkcs8, CapabilityAlgorithm, { extractable: true });
+  const jwk = await exportJWK(key);
+  if (jwk.kty !== "EC" || jwk.crv !== "P-256" || !jwk.x || !jwk.y) {
+    throw new TypeError("Capability private key must be an EC P-256 key");
+  }
+  return Object.freeze({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y });
 }
 
 function required(value: string | undefined, name: string): string {

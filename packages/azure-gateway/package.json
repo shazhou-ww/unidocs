@@ -28,6 +28,7 @@
     "@azure/storage-blob": "^12.33.0",
     "@unidocs/azure-sdk": "workspace:*",
     "@unidocs/gateway-common": "workspace:*",
+    "@unidocs/gateway-oauth": "workspace:*",
     "@unidocs/protocol-gateway": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
     "pg": "^8.23.0"
