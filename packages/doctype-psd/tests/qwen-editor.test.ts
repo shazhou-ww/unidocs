@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { encode } from "fast-png";
+import { decode, encode } from "fast-png";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createQwenImageEditor } from "../src/image/qwen-editor.js";
@@ -90,6 +90,51 @@ describe("qwen-image-edit-plus 适配器", () => {
     // 右半边（哨兵色）alpha 应为 0
     const right = (48 >> 1) * 64 + 60;
     expect(r.pixels.data[right * 4 + 3]).toBe(0);
+  });
+
+  it("高熵图像超出字节预算时会继续缩，直到编码后落进预算内", async () => {
+    // 这条用例存在的理由：此前所有 fixture 都是合成渐变，2048x2048 才压出
+    // 不到 1MB，永远走不到字节预算这条路 —— 于是线上真实照片撞上
+    // "Image file size (13.02MB) exceeds the maximum allowed size of 10MB"
+    // 才第一次暴露。PNG 大小取决于内容熵，像素数管不住它。
+    const noisy = (() => {
+      const width = 256, height = 256;
+      const data = new Uint8ClampedArray(width * height * 4);
+      let seed = 1;
+      for (let i = 0; i < width * height; i++) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff; // 确定性伪随机，不可压缩
+        data.set([seed & 255, (seed >> 8) & 255, (seed >> 16) & 255, 255], i * 4);
+      }
+      return { width, height, data };
+    })();
+
+    const budget = 50_000;
+    const f = stubFetch({ generation: () => Response.json(fixture("qwen-edit-response.json")) });
+    const editor = createQwenImageEditor({ apiKey: "test-key", fetch: f, maxImageBytes: budget });
+    const r = await editor.edit({ source: noisy, instruction: "x" }, AbortSignal.timeout(5000));
+    if (!r.ok) throw new Error(r.detail);
+
+    const init = (f as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    const dataUrl = JSON.parse(String(init.body)).input.messages[0].content[0].image as string;
+    const bytes = Uint8Array.from(atob(dataUrl.split(",")[1]), c => c.charCodeAt(0));
+    expect(bytes.length).toBeLessThanOrEqual(budget);
+    // 缩的是发出去的图；还回来的结果仍须与源同尺寸（端口后置条件）
+    expect([r.pixels.width, r.pixels.height]).toEqual([noisy.width, noisy.height]);
+  });
+
+  it("低熵图像在预算内时一个像素都不缩", async () => {
+    const flat = {
+      width: 256, height: 256,
+      data: new Uint8ClampedArray(256 * 256 * 4).fill(200),
+    };
+    const f = stubFetch({ generation: () => Response.json(fixture("qwen-edit-response.json")) });
+    const editor = createQwenImageEditor({ apiKey: "test-key", fetch: f, maxImageBytes: 50_000 });
+    await editor.edit({ source: flat, instruction: "x" }, AbortSignal.timeout(5000));
+    const init = (f as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    const dataUrl = JSON.parse(String(init.body)).input.messages[0].content[0].image as string;
+    const bytes = Uint8Array.from(atob(dataUrl.split(",")[1]), c => c.charCodeAt(0));
+    const png = decode(bytes);
+    expect([png.width, png.height]).toEqual([256, 256]);
   });
 
   it("provenance 记下真实模型名与 prompt", async () => {

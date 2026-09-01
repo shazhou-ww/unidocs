@@ -19,6 +19,14 @@ export interface QwenEditorOptions {
    * 对着一个不透明的 500 猜 —— 那正是这个字段存在的理由。
    */
   readonly observe?: ObserveFn;
+  /**
+   * 单张图片编码后的字节上限。默认 {@link DEFAULT_MAX_IMAGE_BYTES}，即
+   * DashScope 实测的 10MB 硬限制留 1MB 余量后的值。
+   *
+   * 可配是因为这是 provider 的**政策**而非物理常量：换 plan、换 provider、
+   * 或对方哪天调整了，都不该要改代码。
+   */
+  readonly maxImageBytes?: number;
 }
 
 const DEFAULT_MODEL = "qwen-image-edit-plus";
@@ -42,6 +50,53 @@ const GENERATION_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
  */
 const REFUSAL_CODES = new Set(["DataInspectionFailed", "ResponseTimeout.DataInspection"]);
 
+const encodePng = (px: Pixels): Uint8Array =>
+  encode({ width: px.width, height: px.height, data: px.data, channels: 4, depth: 8 });
+
+/** 已编码的 PNG 字节 → data URL。分成两步是因为字节预算那轮已经编过一次了，
+ *  再编一遍纯属浪费（几 MB 的图上这不是小钱）。 */
+const toDataUrl = (png: Uint8Array): string => {
+  let s = "";
+  for (const b of png) s += String.fromCharCode(b);
+  return `data:image/png;base64,${btoa(s)}`;
+};
+
+/**
+ * DashScope 对**图片文件字节数**的硬限制是 10MB（实测：13.02MB 的 PNG 被
+ * 400 拒绝，message 明写 "exceeds the maximum allowed size of 10MB"）。
+ *
+ * 注意这是字节预算，不是像素预算 —— PNG 的大小取决于内容熵。2048x2048 的
+ * 合成渐变压出来不到 1MB，同尺寸的真实照片能到 13MB。所以只卡 maxPixels
+ * 是拦不住的，必须编码后量真实字节再决定要不要继续缩。
+ *
+ * 这正是 queries.ts 的 PREVIEW_BASE64_BUDGET 早就写明的道理。留 1MB 余量。
+ */
+const DEFAULT_MAX_IMAGE_BYTES = 9 * 1000 * 1000;
+/** 重编次数。每轮都量真实字节，按 sqrt(预算/实际) 收敛，3 次足够。 */
+const MAX_ENCODE_ATTEMPTS = 3;
+
+/**
+ * 缩到编码后的 PNG 落进 `MAX_IMAGE_BYTES`。
+ *
+ * 为什么不换 JPEG（对照片小一个数量级）：哨兵底色和差异蒙版都依赖像素级
+ * 精确。JPEG 的有损块效应会把哨兵色糊掉，alpha 还原判错；也会让未编辑区
+ * 产生远超阈值 16 的噪声，差异蒙版直接失效。宁可缩小，不可有损。
+ */
+function fitEncodedBytes(px: Pixels, maxBytes: number): { px: Pixels; png: Uint8Array } {
+  let current = px;
+  let png = encodePng(current);
+  for (let i = 0; i < MAX_ENCODE_ATTEMPTS && png.length > maxBytes; i++) {
+    const scale = Math.sqrt(maxBytes / png.length) * 0.95;
+    const width = Math.max(1, Math.floor(current.width * scale));
+    const height = Math.max(1, Math.floor(current.height * scale));
+    if (width >= current.width && height >= current.height) break; // 不收敛就别空转
+    // 每轮都从**原图**缩，而不是从上一轮的结果再缩，避免重采样误差累积。
+    current = resample(px, width, height);
+    png = encodePng(current);
+  }
+  return { px: current, png };
+}
+
 const CAPABILITIES: EditorCapabilities = {
   // 指令式编辑，不吃蒙版。给了也没用，所以别为它算蒙版。
   mask: "unsupported",
@@ -55,13 +110,6 @@ const CAPABILITIES: EditorCapabilities = {
   // 实测 parameters.watermark=false 时未编辑区色偏 -1.94/-1.62/+0.52，
   // 远低于 diffMask 的阈值 16 —— 差异蒙版可信。
   watermarked: false,
-};
-
-const toDataUrl = (px: Pixels): string => {
-  const png = encode({ width: px.width, height: px.height, data: px.data, channels: 4, depth: 8 });
-  let s = "";
-  for (const b of png) s += String.fromCharCode(b);
-  return `data:image/png;base64,${btoa(s)}`;
 };
 
 const toPixels = (png: Uint8Array): Pixels => {
@@ -127,6 +175,7 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
   const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
   const doFetch = opts.fetch ?? fetch;
   const observe = opts.observe ?? noopObserver;
+  const maxImageBytes = opts.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES;
 
   return {
     id: model,
@@ -146,7 +195,10 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
           flattened.width, flattened.height,
           CAPABILITIES.minPixels, CAPABILITIES.maxPixels,
         );
-        const sent = resample(flattened, fit.width, fit.height);
+        const fitted = resample(flattened, fit.width, fit.height);
+        // 像素预算之后还要过一道**字节预算** —— provider 卡的是文件大小，
+        // 而 PNG 大小取决于内容熵，像素数管不住它（实测 13.02MB 被 400 拒）。
+        const { png: sentPng } = fitEncodedBytes(fitted, maxImageBytes);
 
         const generationUrl = `${baseUrl}${GENERATION_PATH}`;
         const response = await observedFetch(doFetch, observe, {
@@ -160,7 +212,7 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
           },
           body: JSON.stringify({
             model,
-            input: { messages: [{ role: "user", content: [{ image: toDataUrl(sent) }, { text: instruction }] }] },
+            input: { messages: [{ role: "user", content: [{ image: toDataUrl(sentPng) }, { text: instruction }] }] },
             parameters: { watermark: false },
           }),
         });
