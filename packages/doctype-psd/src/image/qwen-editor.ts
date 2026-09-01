@@ -20,13 +20,23 @@ const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com";
  */
 const GENERATION_PATH = "/api/v1/services/aigc/multimodal-generation/generation";
 
-/** 内容审核拒绝的 code。这类失败改措辞可能有救，与限流/网络故障要分开。 */
+/**
+ * 内容审核拒绝的 code。这类失败改措辞可能有救，与限流/网络故障要分开。
+ * "DataInspectionFailed" 是实测拿到的（用一个必然触发审核的指令换来的响应体）；
+ * "ResponseTimeout.DataInspection" 只是文档里写的，从没在真实调用里见过 —— 两者
+ * 都留着，但别把后者当成验证过的事实。
+ */
 const REFUSAL_CODES = new Set(["DataInspectionFailed", "ResponseTimeout.DataInspection"]);
 
 const CAPABILITIES: EditorCapabilities = {
   // 指令式编辑，不吃蒙版。给了也没用，所以别为它算蒙版。
   mask: "unsupported",
-  minPixels: 384 * 384,
+  // 没观测到任何下限：实测 64x48 = 3072px 被原样接受，没有触发放大。
+  // 设成 1 意味着 fitPixelBudget 的放大分支在本适配器里基本走不到 ——
+  // 这是诚实的结果，不是要绕开它；guards.ts 里那个分支是共享代码，自己有测试。
+  minPixels: 1,
+  // 没有实测过的上限，纯粹是保守估计；唯一效果是触发缩小（安全方向），
+  // 不是从任何一次真实调用里量出来的边界。
   maxPixels: 2048 * 2048,
   // 实测 parameters.watermark=false 时未编辑区色偏 -1.94/-1.62/+0.52，
   // 远低于 diffMask 的阈值 16 —— 差异蒙版可信。
@@ -110,7 +120,15 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
           }),
         });
 
-        const body = await response.json().catch(() => ({}));
+        // 只把"读体时真的解析失败"降级成 {}；如果是 signal 在读体过程中才触发的
+        // abort，必须让 AbortError 冒泡到外层 catch，否则会被误判成 provider_error。
+        let body: unknown;
+        try {
+          body = await response.json();
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") throw err;
+          body = {};
+        }
         if (!response.ok) {
           const code = String((body as { code?: unknown }).code ?? "");
           const detail = `${response.status} ${code}: ${String((body as { message?: unknown }).message ?? "")}`;

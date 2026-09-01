@@ -21,6 +21,20 @@ function fakeEdited(width: number, height: number): Uint8Array {
   return encode({ width, height, data, channels: 4, depth: 8 });
 }
 
+/**
+ * 和 fakeEdited 布局一样，但只编码 RGB 三通道 —— 这才是真实 provider 响应会
+ * 走的分支（模型吃 RGB 吐 RGB）。之前所有 fakeEdited 用的都是 4 通道，
+ * toPixels 里的三通道拓宽分支从未被真正测过。
+ */
+function fakeEditedRGB(width: number, height: number): Uint8Array {
+  const data = new Uint8ClampedArray(width * height * 3);
+  for (let i = 0; i < width * height; i++) {
+    const x = i % width;
+    data.set(x < width / 2 ? [255, 0, 0] : [SENTINEL.r, SENTINEL.g, SENTINEL.b], i * 3);
+  }
+  return encode({ width, height, data, channels: 3, depth: 8 });
+}
+
 function stubFetch(handlers: { generation: () => Response; image?: () => Response }) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input instanceof Request ? input.url : input);
@@ -87,10 +101,39 @@ describe("qwen-image-edit-plus 适配器", () => {
 
   it("内容审核拒绝 → reason refused，不抛异常", async () => {
     const f = stubFetch({
-      generation: () => Response.json({ code: "DataInspectionFailed", message: "input data may contain inappropriate content" }, { status: 400 }),
+      generation: () => Response.json(fixture("qwen-refused-response.json"), { status: 400 }),
     });
     const r = await editorWith(f).edit({ source, instruction: "x" }, AbortSignal.timeout(5000));
     expect(r).toMatchObject({ ok: false, reason: "refused" });
+  });
+
+  it("响应体在读取过程中才 abort → reason timeout，而不是被吞成 provider_error", async () => {
+    // response.ok 为 true、状态码正常，但 .json() 读流时才抛 AbortError ——
+    // 模拟 signal 在拿到响应头之后、读完体之前触发的场景。
+    const f = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new DOMException("aborted", "AbortError")),
+    })) as unknown as typeof fetch;
+    const r = await editorWith(f).edit({ source, instruction: "x" }, AbortSignal.timeout(5000));
+    expect(r).toMatchObject({ ok: false, reason: "timeout" });
+  });
+
+  it("模型回 RGB 三通道 PNG（真实响应会走的分支）也能正确拓宽成 RGBA", async () => {
+    const f = stubFetch({
+      generation: () => Response.json(fixture("qwen-edit-response.json")),
+      // 与 source 同尺寸（64x48），跳过重采样，让断言只测通道拓宽本身。
+      image: () => new Response(fakeEditedRGB(64, 48).buffer),
+    });
+    const r = await editorWith(f).edit({ source, instruction: "x" }, AbortSignal.timeout(5000));
+    if (!r.ok) throw new Error(r.detail);
+    // 左半边（红色，非哨兵）：RGB 落在正确偏移上，alpha 默认拓宽成 255 且未被判透明。
+    const left = 24 * 64 + 4;
+    expect([r.pixels.data[left * 4], r.pixels.data[left * 4 + 1], r.pixels.data[left * 4 + 2]]).toEqual([255, 0, 0]);
+    expect(r.pixels.data[left * 4 + 3]).toBe(255);
+    // 右半边（哨兵色）：拓宽后 alpha 先是 255，recoverAlpha 再判回透明 → 0。
+    const right = 24 * 64 + 60;
+    expect(r.pixels.data[right * 4 + 3]).toBe(0);
   });
 
   it("限流 / 5xx → reason provider_error", async () => {
