@@ -49,6 +49,7 @@ export class FakeAdminApi {
   readonly members = new Map<string, { identityIssuer: string; subject: string }[]>();
   readonly keys = new Map<string, FakeKey[]>();
   issuer = new Map<string, { issuer: string; audience: string; revision: number }>();
+  oauthIssuer = new Map<string, { issuer: string; audience: string; status: "pending" | "active"; revision: number }>();
   readonly sessions = new Set<string>();
   /** PKCE challenge the cli/exchange endpoint expects (registered by tests). */
   cliCodeChallenge: string | null = null;
@@ -204,6 +205,29 @@ export class FakeAdminApi {
     if (url.pathname === casAdminRoutes.issuer({ stackId: "cas_stack_a" }) && method === "PUT") {
       const record = { issuer: String(body?.issuer ?? ""), audience: String(body?.audience ?? ""), revision: 1 };
       this.issuer.set("cas_stack_a", record);
+      return jsonWithEtag({ stackId: "cas_stack_a", ...record });
+    }
+    if (url.pathname === casAdminRoutes.oauthIssuerInspections({ stackId: "cas_stack_a" }) && method === "POST") {
+      const record = { issuer: String(body?.issuer ?? ""), audience: String(body?.audience ?? ""), status: "pending" as const, revision: 1 };
+      this.oauthIssuer.set("cas_stack_a", record);
+      return jsonWithEtag({
+        inspectionId: "oinsp_test",
+        stackId: "cas_stack_a",
+        ...record,
+        challenge: "cas-oauth-issuer-inspection-v1\\nchallenge",
+        expiresAt: 1_800_000_000,
+        keys: [],
+      });
+    }
+    if (url.pathname === casAdminRoutes.oauthIssuer({ stackId: "cas_stack_a" }) && method === "GET") {
+      const record = this.oauthIssuer.get("cas_stack_a");
+      return record === undefined ? json({ error: "NOT_FOUND" }, 404) : jsonWithEtag({ stackId: "cas_stack_a", ...record });
+    }
+    if (url.pathname === casAdminRoutes.oauthIssuer({ stackId: "cas_stack_a" }) && method === "PUT") {
+      const current = this.oauthIssuer.get("cas_stack_a");
+      if (!current) return json({ error: "NOT_FOUND" }, 404);
+      const record = { ...current, status: "active" as const, revision: current.revision + 1 };
+      this.oauthIssuer.set("cas_stack_a", record);
       return jsonWithEtag({ stackId: "cas_stack_a", ...record });
     }
     // keys

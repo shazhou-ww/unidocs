@@ -58,6 +58,7 @@ Read tools:
 - `get_stack`
 - `list_members`
 - `get_issuer`
+- `get_oauth_issuer`
 - `list_issuer_keys`
 - `list_ref_domains`
 - `list_control_audit_events`
@@ -74,11 +75,18 @@ Security tools:
 - `invite_member`
 - `remove_member`
 - `set_issuer`
+- `inspect_oauth_issuer`
+- `activate_oauth_issuer`
 - `create_issuer_key_challenge`
 - `add_issuer_key`
 - `transition_issuer_key`
 
-The possession-challenge tool is required because `add_issuer_key` accepts only
+`set_issuer`, `create_issuer_key_challenge`, `add_issuer_key`, and
+`transition_issuer_key` are deprecated compatibility tools. New stacks use
+`inspect_oauth_issuer` followed by a compact-JWS control proof passed to
+`activate_oauth_issuer`.
+
+The possession-challenge tool is required because legacy `add_issuer_key` accepts only
 public JWK material and a compact-JWS proof made with the private key. Private key
 material is never a valid MCP input.
 

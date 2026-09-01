@@ -121,6 +121,23 @@ export function createControlPlaneMcpServer(
   );
 
   server.registerTool(
+    "get_oauth_issuer",
+    {
+      description: "Get discovered OAuth issuer metadata, status, and current mutation ETag for a stack.",
+      inputSchema: z.object({ stackId: z.string().min(1) }),
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    },
+    async ({ stackId }) => {
+      const grant = requireGrantScope("control:read");
+      const result = await controlPlane.getOAuthIssuer(
+        serviceContext(grant, "get_oauth_issuer"),
+        { path: { stackId } },
+      );
+      return toolResult(withEtag(result));
+    },
+  );
+
+  server.registerTool(
     "list_issuer_keys",
     {
       description: "List public issuer keys and their lifecycle states.",
@@ -330,7 +347,7 @@ export function createControlPlaneMcpServer(
   server.registerTool(
     "set_issuer",
     {
-      description: "Create or update a stack tenant JWT issuer. Use ETag '*' only for initial creation.",
+      description: "Deprecated: manually create or update a stack tenant JWT issuer. Prefer inspect_oauth_issuer and activate_oauth_issuer.",
       inputSchema: z.object({
         stackId: z.string().min(1),
         issuer: z.string().url(),
@@ -353,9 +370,64 @@ export function createControlPlaneMcpServer(
   );
 
   server.registerTool(
+    "inspect_oauth_issuer",
+    {
+      description: "Discover and persist a validated OAuth issuer metadata and JWKS snapshot, returning a control challenge.",
+      inputSchema: z.object({
+        stackId: z.string().min(1),
+        issuer: z.string().url(),
+        audience: z.string().min(1),
+        capabilityMaxLifetimeSeconds: z.number().int().min(60).max(604800).optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ stackId, issuer, audience, capabilityMaxLifetimeSeconds }) => {
+      const grant = requireMutation("control:security", options);
+      const result = await controlPlane.inspectOAuthIssuer(
+        serviceContext(grant, "inspect_oauth_issuer"),
+        { path: { stackId }, body: { issuer, audience, capabilityMaxLifetimeSeconds } },
+      );
+      return toolResult(withEtag(result));
+    },
+  );
+
+  server.registerTool(
+    "activate_oauth_issuer",
+    {
+      description: "Activate an inspected OAuth issuer using a compact-JWS control proof and current ETag.",
+      inputSchema: z.object({
+        stackId: z.string().min(1),
+        inspectionId: z.string().min(1),
+        activationProof: z.string().min(1),
+        etag: z.string().min(1).optional(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+    },
+    async ({ stackId, inspectionId, activationProof, etag }) => {
+      const grant = requireMutation("control:security", options);
+      let currentEtag = etag;
+      if (!currentEtag) {
+        const current = await controlPlane.getOAuthIssuer(
+          serviceContext(grant, "activate_oauth_issuer"),
+          { path: { stackId } },
+        );
+        if ("error" in current) return toolResult(current);
+        currentEtag = formatCasAdminETag(current.revision);
+      }
+      const result = await controlPlane.activateOAuthIssuer(
+        serviceContext(grant, "activate_oauth_issuer"),
+        { path: { stackId }, body: { inspectionId, activationProof } },
+        { ifMatch: currentEtag },
+      );
+      return toolResult(withEtag(result));
+    },
+  );
+
+  server.registerTool(
     "create_issuer_key_challenge",
     {
-      description: "Create the one-time challenge that must be signed before adding a public issuer key.",
+      description: "Deprecated: create the one-time challenge used by legacy manual issuer-key registration.",
+      title: "Deprecated legacy issuer-key challenge",
       inputSchema: z.object({
         stackId: z.string().min(1),
         kid: z.string().min(1),
@@ -376,7 +448,8 @@ export function createControlPlaneMcpServer(
   server.registerTool(
     "add_issuer_key",
     {
-      description: "Add a public issuer key with a compact-JWS possession proof.",
+      description: "Deprecated: manually add a public issuer key with a compact-JWS possession proof.",
+      title: "Deprecated manual issuer key",
       inputSchema: z.object({
         stackId: z.string().min(1),
         kid: z.string().min(1),
@@ -401,7 +474,8 @@ export function createControlPlaneMcpServer(
   server.registerTool(
     "transition_issuer_key",
     {
-      description: "Transition an issuer key to retiring or revoked.",
+      description: "Deprecated: transition a manually managed issuer key to retiring or revoked.",
+      title: "Deprecated manual issuer-key transition",
       inputSchema: z.object({
         stackId: z.string().min(1),
         kid: z.string().min(1),

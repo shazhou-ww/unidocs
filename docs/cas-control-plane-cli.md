@@ -40,7 +40,7 @@ Configure DeepSeek Harness's mcp-client with a stdio server:
 }
 ```
 
-`unicas mcp` advertises the identical 18-tool contract as the remote control
+`unicas mcp` advertises the identical 21-tool contract as the remote control
 plane and forwards calls over the authenticated connection, so DSH can read and
 operate the control plane without any OAuth implementation of its own. To put
 `unicas` on PATH from the checkout, run `pnpm --filter @unicas/admin-cli build` and
@@ -59,9 +59,9 @@ Alternatively, skip MCP entirely and have DSH run plain shell commands
 
 | Group | Commands |
 | --- | --- |
-| Read (`control:read`) | `whoami`, `stacks list/get`, `members list`, `issuer get`, `keys list`, `ref-domains list`, `audit control/root-domain-refs/root-domain-events` |
+| Read (`control:read`) | `whoami`, `stacks list/get`, `members list`, `oauth-issuer get`, legacy `issuer get`, `keys list`, `ref-domains list`, `audit control/root-domain-refs/root-domain-events` |
 | Write (`control:write`) | `stacks create` (idempotency key), `stacks update` (ETag) |
-| Security (`control:security`) | `members invite/remove`, `issuer set`, `keys challenge/add/transition` |
+| Security (`control:security`) | `members invite/remove`, `oauth-issuer inspect/activate`; legacy `issuer set`, `keys challenge/add/transition` are deprecated |
 
 Creation tools take or auto-generate an idempotency key; mutations on existing
 resources resolve the current ETag when none is passed; destructive operations

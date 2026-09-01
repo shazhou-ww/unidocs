@@ -1,6 +1,6 @@
 ---
 name: unicas-cli
-description: Use whenever a task involves operating the Unicas CAS control plane — listing or creating stacks, managing stack administrators (invite/remove), viewing or changing the tenant JWT issuer, adding or transitioning issuer keys, or reading refDomains and control-plane audit — and the agent should drive it through the `unicas` CLI or its stdio MCP mode (for example from DeepSeek Harness, which cannot complete OAuth MCP itself)
+description: Use whenever a task involves operating the UniCAS control plane — listing or creating stacks, managing administrators, discovering or activating an OAuth issuer, legacy issuer keys, or reading audit data — through the `unicas` CLI or stdio MCP mode.
 ---
 
 # Using the `unicas` CLI
@@ -8,7 +8,7 @@ description: Use whenever a task involves operating the Unicas CAS control plane
 This skill teaches an agent to operate the Unicas control plane with the
 `unicas` command-line tool. The CLI is the supported path for agents that
 cannot complete OAuth in a browser: it performs the OAuth dance itself, stores
-the session, and exposes the same 18 tools as the control-plane MCP endpoint
+the session, and exposes the same 21 tools as the control-plane MCP endpoint
 as plain shell commands and as a stdio MCP server.
 
 ## When to use this skill
@@ -19,7 +19,7 @@ Load and follow this skill when the task involves any of these:
   (`control:read` / `control:write`).
 - Member management: list a stack's administrators, invite a member, remove a
   member (`control:security`).
-- Issuer configuration: read or set a stack's tenant JWT issuer and audience
+- Issuer configuration: discover, inspect, prove control of, and activate a stack OAuth issuer
   (`control:read` / `control:security`).
 - Issuer key lifecycle: list keys, create a possession challenge, add a public
   key with a signed proof, transition a key to retiring/revoked
@@ -67,6 +67,7 @@ unicas stacks list [--limit N] [--cursor C]
 unicas stacks get <stackId>
 unicas members list <stackId> [--limit N] [--cursor C]
 unicas issuer get <stackId>
+unicas oauth-issuer get <stackId>
 unicas keys list <stackId>
 unicas ref-domains list <stackId>
 unicas audit control <stackId> [--limit N] [--cursor C] [--after ID]
@@ -86,6 +87,8 @@ Security (`control:security`):
 ```text
 unicas members invite <stackId> <email> [--idempotency-key K]
 unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]
+unicas oauth-issuer inspect <stackId> <issuer> <audience> [--capability-max-lifetime-seconds N]
+unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]
 unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]
 unicas keys challenge <stackId> <kid> <ES256|RS256|EdDSA>
 unicas keys add <stackId> <kid> <ES256|RS256|EdDSA> --public-jwk <json> --possession-proof <jws> [--idempotency-key K]
@@ -145,7 +148,7 @@ unicas audit control <stackId> --limit 20
 
 ## stdio MCP mode (DeepSeek Harness)
 
-`unicas mcp` spawns a stdio MCP server advertising the same 18 tools,
+`unicas mcp` spawns a stdio MCP server advertising the same 21 tools,
 forwarding calls over the authenticated connection:
 
 ```json
@@ -170,5 +173,5 @@ invoke `node <checkout>/unicas-packages/admin-cli/dist/cli.js mcp` directly.
 
 - `docs/cas-control-plane-cli.md` — CLI overview and DSH integration.
 - `unicas-packages/admin-cli/README.md` — full command reference and guardrails.
-- `unicas-packages/admin-cli/src/mcp/catalog.ts` — the exact 18-tool contract
+- `unicas-packages/admin-cli/src/mcp/catalog.ts` — the exact 21-tool contract
   mirrored from the remote control plane.

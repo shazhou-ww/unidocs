@@ -67,7 +67,7 @@ async function startStdioServer(fetchImpl: typeof fetch): Promise<{ stdin: PassT
 }
 
 describe("unicas mcp (stdio server)", () => {
-  test("answers initialize, lists the 18 tools, and serves tools/call from the admin client", async () => {
+  test("answers initialize, lists the 21 tools, and serves tools/call from the admin client", async () => {
     await seedSession();
     const server = new FakeAdminApi();
     const { stdin, reader, done } = await startStdioServer(server.fetch);
@@ -95,7 +95,7 @@ describe("unicas mcp (stdio server)", () => {
     const toolsList = await reader.next();
     expect(toolsList.id).toBe(2);
     const tools = (toolsList.result as { tools: Array<{ name: string }> }).tools;
-    expect(tools).toHaveLength(18);
+    expect(tools).toHaveLength(21);
     expect(tools[0]?.name).toBe("whoami");
     expect(tools.map((tool) => tool.name)).toContain("transition_issuer_key");
 
@@ -117,6 +117,28 @@ describe("unicas mcp (stdio server)", () => {
       identity: { subject: "sub-1" },
     });
     expect(callResult.structuredContent.memberships).toHaveLength(1);
+
+    stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "invite_member",
+        arguments: {
+          stackId: "cas_stack_a",
+          email: "alice@example.com",
+          confirmEmail: "mallory@example.com",
+          idempotencyKey: "invite-1",
+        },
+      },
+    })}\n`);
+    const rejected = await reader.next();
+    expect(rejected.id).toBe(4);
+    expect(rejected.result).toMatchObject({
+      isError: true,
+      structuredContent: { message: "confirmEmail must exactly match the invited email" },
+    });
+    expect(server.requests.some((request) => request.pathname.endsWith("/member-invitations"))).toBe(false);
 
     stdin.end();
     await done;

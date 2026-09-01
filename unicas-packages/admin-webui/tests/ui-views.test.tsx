@@ -74,6 +74,7 @@ describe("MembersView", () => {
 describe("IssuerView", () => {
   test("configures the issuer and lists keys", async () => {
     fetchMock
+      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
       .mockResolvedValueOnce(json({ stackId: STACK, issuer: "https://issuer.example", audience: "unidocs-cas", status: "active", revision: 1 }))
       .mockResolvedValueOnce(json({
         keys: [
@@ -88,10 +89,12 @@ describe("IssuerView", () => {
 
   test("requests a possession challenge and submits the signed proof", async () => {
     fetchMock
+      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
       .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
       .mockResolvedValueOnce(json({ keys: [] }))
       .mockResolvedValueOnce(json({ nonce: "nonce-123" }))
       .mockResolvedValueOnce(json({ stackId: STACK, kid: "k1", algorithm: "ES256", publicJwk: {}, state: "active", revision: 1 }))
+      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
       .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
       .mockResolvedValueOnce(json({ keys: [{ stackId: STACK, kid: "k1", algorithm: "ES256", publicJwk: {}, state: "active", revision: 1 }] }));
     const user = userEvent.setup();
@@ -107,6 +110,36 @@ describe("IssuerView", () => {
     const addCall = fetchMock.mock.calls.find((call) => call[0]?.includes("/issuer/keys") && call[1]?.method === "POST");
     expect(addCall).toBeDefined();
     expect(JSON.parse(addCall![1]!.body as string)).toMatchObject({ kid: "k1", algorithm: "ES256" });
+  });
+
+  test("inspects and activates a standards-based OAuth issuer", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
+      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
+      .mockResolvedValueOnce(json({ keys: [] }))
+      .mockResolvedValueOnce(json({
+        inspectionId: "oinsp_1", stackId: STACK, issuer: "https://auth.example", audience: "cas",
+        metadataUrl: "https://auth.example/.well-known/oauth-authorization-server", metadataType: "oauth",
+        authorizationEndpoint: "https://auth.example/authorize", tokenEndpoint: "https://auth.example/token",
+        jwksUri: "https://auth.example/jwks", registrationEndpoint: null, scopesSupported: ["cas:read"],
+        codeChallengeMethodsSupported: ["S256"], metadataDigest: "m", jwksDigest: "j",
+        capabilityMaxLifetimeSeconds: 28800, challenge: "cas-oauth-issuer-inspection-v1\nchallenge",
+        expiresAt: 1000, keys: [{ kid: "key-1", algorithm: "ES256", publicJwk: {} }], revision: 1,
+      }))
+      .mockResolvedValueOnce(json({ status: "active", revision: 2 }))
+      .mockResolvedValueOnce(json({ issuer: "https://auth.example", audience: "cas", status: "active", revision: 2 }))
+      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
+      .mockResolvedValueOnce(json({ keys: [] }));
+    const user = userEvent.setup();
+    render(<IssuerView stackId={STACK} />);
+    await user.type(await screen.findByLabelText("Issuer", { selector: "#oauth-issuer-url" }), "https://auth.example");
+    await user.type(screen.getByLabelText("Audience", { selector: "#oauth-issuer-audience" }), "cas");
+    await user.click(screen.getByRole("button", { name: "Inspect issuer" }));
+    await screen.findByText(/cas-oauth-issuer-inspection-v1/);
+    await user.type(screen.getByLabelText("Activation proof (compact JWS)"), "proof");
+    await user.click(screen.getByRole("button", { name: "Verify and activate" }));
+    await waitFor(() => expect(screen.getByText(/Status:/)).toHaveTextContent("active"));
+    expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PUT" && String(call[0]).endsWith("/oauth-issuer"))).toBe(true);
   });
 });
 

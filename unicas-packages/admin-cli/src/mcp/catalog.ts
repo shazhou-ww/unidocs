@@ -84,6 +84,13 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     requiredScope: "control:read",
   },
   {
+    name: "get_oauth_issuer",
+    description: "Get discovered OAuth issuer metadata, status, and current mutation ETag for a stack.",
+    inputSchema: z.object({ stackId }),
+    annotations: { readOnlyHint: true, destructiveHint: false },
+    requiredScope: "control:read",
+  },
+  {
     name: "list_issuer_keys",
     description: "List public issuer keys and their lifecycle states.",
     inputSchema: z.object({ stackId }),
@@ -176,7 +183,7 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
   },
   {
     name: "set_issuer",
-    description: "Create or update a stack tenant JWT issuer. Use ETag '*' only for initial creation.",
+    description: "Deprecated: manually create or update a stack tenant JWT issuer. Prefer inspect_oauth_issuer and activate_oauth_issuer.",
     inputSchema: z.object({
       stackId,
       issuer: url,
@@ -188,15 +195,39 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     requiredScope: "control:security",
   },
   {
+    name: "inspect_oauth_issuer",
+    description: "Discover and persist a validated OAuth issuer metadata and JWKS snapshot, returning a control challenge.",
+    inputSchema: z.object({
+      stackId,
+      issuer: url,
+      audience: z.string().min(1),
+      capabilityMaxLifetimeSeconds: z.number().int().min(60).max(604800).optional(),
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false },
+    requiredScope: "control:security",
+  },
+  {
+    name: "activate_oauth_issuer",
+    description: "Activate an inspected OAuth issuer using a compact-JWS control proof and current ETag.",
+    inputSchema: z.object({
+      stackId,
+      inspectionId: z.string().min(1),
+      activationProof: z.string().min(1),
+      etag: etag.optional(),
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false },
+    requiredScope: "control:security",
+  },
+  {
     name: "create_issuer_key_challenge",
-    description: "Create the one-time challenge that must be signed before adding a public issuer key.",
+    description: "Deprecated: create the one-time challenge used by legacy manual issuer-key registration.",
     inputSchema: z.object({ stackId, kid: z.string().min(1), algorithm: keyAlgorithm }),
     annotations: { destructiveHint: false, idempotentHint: false },
     requiredScope: "control:security",
   },
   {
     name: "add_issuer_key",
-    description: "Add a public issuer key with a compact-JWS possession proof.",
+    description: "Deprecated: manually add a public issuer key with a compact-JWS possession proof.",
     inputSchema: z.object({
       stackId,
       kid: z.string().min(1),
@@ -210,7 +241,7 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
   },
   {
     name: "transition_issuer_key",
-    description: "Transition an issuer key to retiring or revoked.",
+    description: "Deprecated: transition a manually managed issuer key to retiring or revoked.",
     inputSchema: z.object({
       stackId,
       kid: z.string().min(1),

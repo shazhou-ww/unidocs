@@ -166,6 +166,7 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
   },
 
   async invite_member(admin, args) {
+    requireMatch(args.confirmEmail, args.email, "confirmEmail must exactly match the invited email");
     return admin.createMemberInvitation(
       { stackId: str(args.stackId) },
       { emailConstraint: str(args.email) },
@@ -177,6 +178,7 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
     const stackId = str(args.stackId);
     const identityIssuer = str(args.identityIssuer);
     const subject = str(args.subject);
+    requireMatch(args.confirmSubject, subject, "confirmSubject must exactly match subject");
     const etag = await resolveEtag(admin, () => admin.getStack({ stackId }), "stack", args.etag);
     return admin.deleteMember({ stackId }, { identityIssuer, subject }, etag);
   },
@@ -185,8 +187,14 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
     return (await admin.getIssuer({ stackId: str(args.stackId) })).value;
   },
 
+  async get_oauth_issuer(admin, args) {
+    const result = await admin.getOAuthIssuer({ stackId: str(args.stackId) });
+    return { ...result.value, etag: result.etag };
+  },
+
   async set_issuer(admin, args) {
     const stackId = str(args.stackId);
+    requireMatch(args.confirmIssuer, args.issuer, "confirmIssuer must exactly match issuer");
     const etag = await resolveEtag(admin, () => admin.getIssuer({ stackId }), "issuer", args.etag);
     const { value } = await admin.putIssuer(
       { stackId },
@@ -194,6 +202,28 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
       etag,
     );
     return value;
+  },
+
+  async inspect_oauth_issuer(admin, args) {
+    const body: { issuer: string; audience: string; capabilityMaxLifetimeSeconds?: number } = {
+      issuer: str(args.issuer),
+      audience: str(args.audience),
+    };
+    if (typeof args.capabilityMaxLifetimeSeconds === "number") {
+      body.capabilityMaxLifetimeSeconds = args.capabilityMaxLifetimeSeconds;
+    }
+    const result = await admin.inspectOAuthIssuer({ stackId: str(args.stackId) }, body);
+    return { ...result.value, etag: result.etag };
+  },
+
+  async activate_oauth_issuer(admin, args) {
+    const stackId = str(args.stackId);
+    const etag = await resolveEtag(admin, () => admin.getOAuthIssuer({ stackId }), "OAuth issuer", args.etag);
+    const result = await admin.activateOAuthIssuer({ stackId }, {
+      inspectionId: str(args.inspectionId),
+      activationProof: str(args.activationProof),
+    }, etag);
+    return { ...result.value, etag: result.etag };
   },
 
   async list_issuer_keys(admin, args) {
@@ -226,6 +256,8 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
     const stackId = str(args.stackId);
     const kid = str(args.kid);
     const state = args.state === "revoked" ? "revoked" as const : "retiring" as const;
+    requireMatch(args.confirmKid, kid, "confirmKid must exactly match kid");
+    requireMatch(args.confirmState, state, "confirmState must exactly match state");
     const etag = await resolveEtag(
       admin,
       async () => {
@@ -269,6 +301,10 @@ function str(value: unknown): string {
     throw new Error(`expected a non-empty string, got ${JSON.stringify(value)}`);
   }
   return value;
+}
+
+function requireMatch(actual: unknown, expected: unknown, message: string): void {
+  if (actual !== expected) throw new Error(message);
 }
 
 function pick(args: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {

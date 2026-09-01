@@ -33,10 +33,10 @@ describe("adapter-hosted control-plane MCP server", () => {
     const listed = await mcpRequest(handler, "tools/list", {});
     const body = await listed.json() as { result: { tools: Array<{ name: string }> } };
     expect(body.result.tools.map((tool) => tool.name)).toEqual([
-      "whoami", "list_stacks", "get_stack", "list_members", "get_issuer",
+      "whoami", "list_stacks", "get_stack", "list_members", "get_issuer", "get_oauth_issuer",
       "list_issuer_keys", "list_ref_domains", "list_control_audit_events",
       "list_root_domain_refs", "list_root_domain_events", "create_stack",
-      "update_stack", "invite_member", "remove_member", "set_issuer",
+      "update_stack", "invite_member", "remove_member", "set_issuer", "inspect_oauth_issuer", "activate_oauth_issuer",
       "create_issuer_key_challenge", "add_issuer_key", "transition_issuer_key",
     ]);
     const whoami = await callTool(handler, "whoami", {});

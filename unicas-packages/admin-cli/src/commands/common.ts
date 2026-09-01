@@ -85,6 +85,14 @@ export async function resolveIssuerEtag(admin: AdminClient, stackId: string): Pr
   return etag;
 }
 
+export async function resolveOAuthIssuerEtag(admin: AdminClient, stackId: string): Promise<string> {
+  const { etag } = await admin.getOAuthIssuer({ stackId });
+  if (etag.length === 0) {
+    throw new CliError(`could not resolve the current ETag for OAuth issuer of stack '${stackId}'`, 1);
+  }
+  return etag;
+}
+
 export async function resolveIssuerKeyEtag(
   admin: AdminClient,
   stackId: string,

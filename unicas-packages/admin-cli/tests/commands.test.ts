@@ -6,6 +6,7 @@ import { createContext } from "../src/commands/common.js";
 import type { CliContext } from "../src/commands/common.js";
 import { logoutCommand } from "../src/commands/logout.js";
 import { membersCommand } from "../src/commands/members.js";
+import { oauthIssuerCommand } from "../src/commands/oauth-issuer.js";
 import { stacksCommand } from "../src/commands/stacks.js";
 import { statusCommand } from "../src/commands/status.js";
 import { whoamiCommand } from "../src/commands/whoami.js";
@@ -141,5 +142,19 @@ describe("command layer", () => {
         '"rev-3"',
       ]),
     ).rejects.toThrow(/confirm-subject/);
+  });
+
+  test("OAuth issuer inspect and activate use the standard discovery flow", async () => {
+    await seedLoggedIn(ctx.store);
+    const server = new FakeAdminApi();
+    ctx = createContext({ UNICAS_CONFIG_DIR: dir, UNICAS_ADMIN_URL: FAKE_ORIGIN }, server.fetch);
+    const { writes } = captureStdout();
+    await oauthIssuerCommand(ctx, "inspect", ["cas_stack_a", "https://issuer.example", "cas"]);
+    expect(JSON.parse(writes.join(""))).toMatchObject({ inspectionId: "oinsp_test", status: "pending" });
+    writes.length = 0;
+    await oauthIssuerCommand(ctx, "activate", ["cas_stack_a", "oinsp_test", "--activation-proof", "proof"]);
+    expect(JSON.parse(writes.join(""))).toMatchObject({ status: "active", revision: 2 });
+    expect(server.requests.some((request) => request.pathname.endsWith("/oauth-issuer") && request.method === "GET")).toBe(true);
+    expect(server.requests.some((request) => request.pathname.endsWith("/oauth-issuer") && request.method === "PUT")).toBe(true);
   });
 });

@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, KeyRound, Plus, Save } from "lucide-react";
+import { Archive, KeyRound, Plus, Save, Search, ShieldCheck } from "lucide-react";
 import type {
+  CasOAuthIssuerInspection,
   CasStackIssuer,
   CasStackIssuerKey,
+  CasStackOAuthIssuer,
 } from "@unicas/admin-client";
-import { api, ifMatch } from "../api.js";
+import { api, ApiError, ifMatch } from "../api.js";
 import { Button, Card, EmptyState, ErrorState, LoadingState, Table } from "../components.js";
 import { formatErrorSafe } from "./view-helpers.js";
 
 export function IssuerView({ stackId }: { stackId: string }) {
+  const [oauthIssuer, setOAuthIssuer] = useState<CasStackOAuthIssuer | null>(null);
+  const [inspection, setInspection] = useState<CasOAuthIssuerInspection | null>(null);
+  const [oauthIssuerUrl, setOAuthIssuerUrl] = useState("");
+  const [oauthAudience, setOAuthAudience] = useState("");
+  const [activationProof, setActivationProof] = useState("");
+  const [inspecting, setInspecting] = useState(false);
+  const [activating, setActivating] = useState(false);
   const [issuer, setIssuer] = useState<CasStackIssuer | null | "missing">(null);
   const [keys, setKeys] = useState<CasStackIssuerKey[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +36,16 @@ export function IssuerView({ stackId }: { stackId: string }) {
   const load = useCallback(async () => {
     setError(null);
     try {
+      const oauthResult = await api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer`)
+        .catch((caught) => {
+          if (caught instanceof ApiError && caught.status === 404) return null;
+          throw caught;
+        });
+      setOAuthIssuer(oauthResult);
+      if (oauthResult) {
+        setOAuthIssuerUrl(oauthResult.issuer);
+        setOAuthAudience(oauthResult.audience);
+      }
       const issuerResult = await api<CasStackIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/issuer`)
         .catch((caught) => {
           if (caught instanceof Error && caught.message === "issuer is not configured") return null;
@@ -50,6 +69,49 @@ export function IssuerView({ stackId }: { stackId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function inspectOAuthIssuer() {
+    setInspecting(true);
+    setError(null);
+    try {
+      const body: { issuer: string; audience: string; capabilityMaxLifetimeSeconds?: number } = {
+        issuer: oauthIssuerUrl.trim(),
+        audience: oauthAudience.trim(),
+      };
+      if (maxLifetime.trim().length > 0) body.capabilityMaxLifetimeSeconds = Number(maxLifetime);
+      const result = await api<CasOAuthIssuerInspection>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer/inspections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setInspection(result);
+      setOAuthIssuer({ ...result, status: "pending", verifiedAt: null, lastRefreshAt: Date.now(), lastRefreshError: null });
+    } catch (caught) {
+      setError(formatErrorSafe(caught));
+    } finally {
+      setInspecting(false);
+    }
+  }
+
+  async function activateOAuthIssuer() {
+    if (!inspection || !oauthIssuer) return;
+    setActivating(true);
+    setError(null);
+    try {
+      await api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...ifMatch(oauthIssuer.revision) },
+        body: JSON.stringify({ inspectionId: inspection.inspectionId, activationProof: activationProof.trim() }),
+      });
+      setInspection(null);
+      setActivationProof("");
+      await load();
+    } catch (caught) {
+      setError(formatErrorSafe(caught));
+    } finally {
+      setActivating(false);
+    }
+  }
 
   async function saveIssuer() {
     setSavingIssuer(true);
@@ -149,8 +211,46 @@ export function IssuerView({ stackId }: { stackId: string }) {
 
   return (
     <>
-      <Card title="Tenant issuer">
+      <Card title="OAuth authorization server">
         {error ? <ErrorState message={error} /> : null}
+        <p className="hint">
+          Connect a standards-based authorization server through RFC 8414 or OpenID discovery.
+          UniCAS validates its metadata and JWKS, then requires a signed control challenge before activation.
+        </p>
+        {oauthIssuer ? (
+          <p className="hint">Status: <strong>{oauthIssuer.status}</strong> · Metadata: {oauthIssuer.metadataType} · Revision {oauthIssuer.revision}</p>
+        ) : null}
+        <div className="field-row">
+          <label htmlFor="oauth-issuer-url">Issuer</label>
+          <input id="oauth-issuer-url" value={oauthIssuerUrl} placeholder="https://authorization.example" onChange={(event) => setOAuthIssuerUrl(event.target.value)} />
+        </div>
+        <div className="field-row">
+          <label htmlFor="oauth-issuer-audience">Audience</label>
+          <input id="oauth-issuer-audience" value={oauthAudience} placeholder="unicas-cas" onChange={(event) => setOAuthAudience(event.target.value)} />
+        </div>
+        <div className="field-row">
+          <label htmlFor="issuer-max-lifetime">Max capability lifetime (s)</label>
+          <input id="issuer-max-lifetime" value={maxLifetime} placeholder="28800 (default 8h; max 604800)" onChange={(event) => setMaxLifetime(event.target.value)} />
+        </div>
+        <Button icon={<Search size={15} />} variant="primary" onClick={() => void inspectOAuthIssuer()} disabled={inspecting || oauthIssuer?.status === "active" || oauthIssuerUrl.trim().length === 0 || oauthAudience.trim().length === 0}>
+          {inspecting ? "Inspecting…" : "Inspect issuer"}
+        </Button>
+        {inspection ? (
+          <div className="challenge-box">
+            <p>Discovered {inspection.keys.length} signing key(s). Sign exactly this challenge with one discovered private key:</p>
+            <code className="challenge">{inspection.challenge}</code>
+            <div className="field-row">
+              <label htmlFor="oauth-activation-proof">Activation proof (compact JWS)</label>
+              <textarea id="oauth-activation-proof" value={activationProof} rows={3} onChange={(event) => setActivationProof(event.target.value)} />
+            </div>
+            <Button icon={<ShieldCheck size={15} />} variant="primary" disabled={activating || activationProof.trim().length === 0} onClick={() => void activateOAuthIssuer()}>
+              {activating ? "Activating…" : "Verify and activate"}
+            </Button>
+          </div>
+        ) : null}
+      </Card>
+      <Card title="Legacy tenant issuer (deprecated)">
+        <p className="hint">Manual issuer and key management remains available for migration only. New stacks should use OAuth discovery above.</p>
         <div className="field-row">
           <label htmlFor="issuer-url">Issuer</label>
           <input id="issuer-url" value={issuerIssuer} placeholder="https://tenant-issuer.example" onChange={(event) => setIssuerIssuer(event.target.value)} />
@@ -159,15 +259,11 @@ export function IssuerView({ stackId }: { stackId: string }) {
           <label htmlFor="issuer-audience">Audience</label>
           <input id="issuer-audience" value={issuerAudience} placeholder="unidocs-cas" onChange={(event) => setIssuerAudience(event.target.value)} />
         </div>
-        <div className="field-row">
-          <label htmlFor="issuer-max-lifetime">Max capability lifetime (s)</label>
-          <input id="issuer-max-lifetime" value={maxLifetime} placeholder="28800 (default 8h; max 604800)" onChange={(event) => setMaxLifetime(event.target.value)} />
-        </div>
         <Button icon={<Save size={15} />} variant="primary" onClick={() => void saveIssuer()} disabled={savingIssuer || issuerIssuer.trim().length === 0 || issuerAudience.trim().length === 0}>
           {savingIssuer ? "Saving…" : issuer ? "Update issuer" : "Configure issuer"}
         </Button>
       </Card>
-      <Card title="Issuer keys">
+      <Card title="Legacy issuer keys (deprecated)">
         {keys === null ? <LoadingState /> : null}
         {keys !== null && keys.length === 0 ? (
           <EmptyState message="No keys yet. Create one below; possession of the private key is proven with a signed challenge." />
@@ -197,7 +293,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
           />
         ) : null}
       </Card>
-      <Card title="Add an issuer key">
+      <Card title="Add a legacy issuer key (deprecated)">
         <p className="hint">
           Generate a key pair and sign the challenge with the private key outside
           the browser (see <code>scripts/cas-possession-sign.mjs</code>), then paste

@@ -69,7 +69,10 @@ pnpm --filter @unicas/admin-cli unicas login
 | `unicas members invite <stackId> <email> [--idempotency-key K]` | `invite_member` |
 | `unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]` | `remove_member` |
 | `unicas issuer get <stackId>` | `get_issuer` |
-| `unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]` | `set_issuer` |
+| `unicas oauth-issuer get <stackId>` | `get_oauth_issuer` |
+| `unicas oauth-issuer inspect <stackId> <issuer> <audience> [--capability-max-lifetime-seconds N]` | `inspect_oauth_issuer` |
+| `unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]` | `activate_oauth_issuer` |
+| `unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]` (deprecated) | `set_issuer` |
 | `unicas keys list <stackId>` | `list_issuer_keys` |
 | `unicas keys challenge <stackId> <kid> <ES256\|RS256\|EdDSA>` | `create_issuer_key_challenge` |
 | `unicas keys add <stackId> <kid> <ES256\|RS256\|EdDSA> --public-jwk <json> --possession-proof <jws> [--idempotency-key K]` | `add_issuer_key` |
@@ -87,7 +90,7 @@ diagnostics go to stderr.
 
 ## Guardrails
 
-- **ETags.** `update_stack`, `remove_member`, `set_issuer`, and
+- **ETags.** `update_stack`, `remove_member`, `activate_oauth_issuer`, `set_issuer`, and
   `transition_issuer_key` need the current ETag. When `--etag` is omitted the
   CLI reads it first (`get_stack` / `get_issuer` / `list_issuer_keys`).
   `set_issuer` uses `*` only when no issuer exists yet.
@@ -102,7 +105,7 @@ diagnostics go to stderr.
 
 ## stdio MCP server (`unicas mcp`)
 
-Spawns a stdio MCP server that advertises the exact same 18 tools as the remote
+Spawns a stdio MCP server that advertises the exact same 21 tools as the remote
 control plane and forwards each `tools/call` over the authenticated Streamable
 HTTP connection. Only MCP protocol frames go to stdout.
 
