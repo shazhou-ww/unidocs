@@ -16,6 +16,11 @@ zone_name = "shazhou.work"
 # Data plane, webui, and the OAuth authorization surface all live on the app
 # domain unidocs.shazhou.work. The issuer claim in tokens stays the registered
 # unicas.shazhou.work identifier; only the endpoints are served here too.
+# The catch-all covers the bare root, which serves the webui.
+[[routes]]
+pattern = "unidocs.shazhou.work/*"
+zone_name = "shazhou.work"
+
 [[routes]]
 pattern = "unidocs.shazhou.work/tenants/*"
 zone_name = "shazhou.work"

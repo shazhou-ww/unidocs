@@ -36,11 +36,13 @@ function contentType(path: string): string {
 
 export function serveGatewayWebUi(request: Request): Response | null {
   const url = new URL(request.url);
-  if (url.pathname !== "/ui" && !url.pathname.startsWith(UI_MOUNT)) return null;
+  const isRoot = url.pathname === "/" || url.pathname === "/index.html";
+  if (!isRoot && url.pathname !== "/ui" && !url.pathname.startsWith(UI_MOUNT)) return null;
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
   }
-  const requested = url.pathname === "/ui" ? "/ui/index.html" : url.pathname;
+  // The bare domain root serves the webui (its assets resolve under /ui/*).
+  const requested = isRoot ? "/ui/index.html" : url.pathname === "/ui" ? "/ui/index.html" : url.pathname;
   const asset = UI_ASSETS[requested];
   if (asset === undefined) {
     // SPA fallback: any unknown /ui/* path (e.g. /ui/callback) serves the app.
