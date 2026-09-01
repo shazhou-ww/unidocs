@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render } from "@testing-library/react";
 import { CanvasStage } from "../src/ui/panels/canvas-stage.js";
 import { setState } from "../src/ui/store.js";
+import { rectRegion } from "../src/ui/region.js";
 
 // Regression guard for the mispositioned-marquee bug: SelectionOverlay's
 // `position: absolute` marquee must resolve against the SAME positioned
@@ -28,14 +29,14 @@ vi.mock("../src/ui/controller.js", () => ({
 
 beforeEach(() => {
   setState({
-    tool: "move", marquee: null, selection: [], pickedColor: null, zoom: 1,
+    tool: "move", region: null, selection: [], pickedColor: null, zoom: 1,
     doc: { canvas: { width: 400, height: 200 }, layers: [] } as never,
   });
 });
 
 describe("CanvasStage + SelectionOverlay structure", () => {
   it("mounts the canvas and the marquee overlay under the same positioned parent (.stage-inner)", () => {
-    setState({ marquee: [10, 20, 132, 200] });
+    setState({ region: rectRegion([10, 20, 132, 200]) });
     const { container } = render(<CanvasStage />);
     const canvas = container.querySelector("canvas.view");
     const marquee = container.querySelector(".marquee");
@@ -52,7 +53,7 @@ describe("CanvasStage + SelectionOverlay structure", () => {
    * ARE readable, and their independence from zoom is the whole property.
    */
   it("positions the marquee as a percentage of the document, unchanged by zoom", () => {
-    setState({ marquee: [20, 40, 120, 240] }); // doc is 400x200
+    setState({ region: rectRegion([20, 40, 120, 240]) }); // doc is 400x200
     const { container, rerender } = render(<CanvasStage />);
     const marquee = () => container.querySelector(".marquee") as HTMLElement;
 
@@ -73,7 +74,7 @@ describe("CanvasStage + SelectionOverlay structure", () => {
   });
 
   it("renders nothing when there is no document to be a fraction of", () => {
-    setState({ marquee: [10, 20, 30, 40], doc: null as never });
+    setState({ region: rectRegion([10, 20, 30, 40]), doc: null as never });
     const { container } = render(<CanvasStage />);
     expect(container.querySelector(".marquee")).not.toBeInTheDocument();
   });

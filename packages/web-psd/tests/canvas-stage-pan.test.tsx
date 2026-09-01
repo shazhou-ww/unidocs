@@ -48,7 +48,7 @@ beforeEach(() => {
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.releasePointerCapture = vi.fn();
   setState({
-    tool: "move", marquee: null, selection: [], pickedColor: null,
+    tool: "move", region: null, selection: [], pickedColor: null,
     doc: { canvas: { width: 200, height: 200 }, layers: [layer({ bounds: [0, 0, 50, 50] })] },
   });
 });

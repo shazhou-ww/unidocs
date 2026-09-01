@@ -30,7 +30,7 @@ beforeEach(() => {
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.releasePointerCapture = vi.fn();
   setState({
-    tool: "marquee", marquee: null, selection: [], pickedColor: null,
+    tool: "marquee", region: null, selection: [], pickedColor: null,
     doc: { canvas: { width: 100, height: 60 }, layers: [] },
   });
 });
@@ -70,7 +70,7 @@ describe("CanvasStage marquee", () => {
     fireEvent(stage, pointer("pointerdown", -40, -25));
     fireEvent(stage, pointer("pointermove", 500, 400));
 
-    expect(getState().marquee).toEqual([0, 0, 60, 100]);
+    expect(getState().region?.bounds).toEqual([0, 0, 60, 100]);
   });
 
   it("a click with no movement produces a zero-area marquee, which the context bar must refuse to crop", () => {
@@ -82,10 +82,10 @@ describe("CanvasStage marquee", () => {
     // a real click leaves a zero-area rect behind. ContextBar's own guard is
     // covered in selection.test.tsx.
     fireEvent(stage, pointer("pointerdown", 30, 30));
-    expect(getState().marquee).toBeNull();
+    expect(getState().region).toBeNull();
 
     fireEvent(stage, pointer("pointermove", 30, 30));
-    const m = getState().marquee!;
+    const m = getState().region!.bounds;
     expect(m).toEqual([30, 30, 30, 30]);
     expect(m[2] - m[0]).toBe(0);
   });

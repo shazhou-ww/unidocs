@@ -11,6 +11,14 @@
  * 直接原因是 `local-editor.ts` 携带的多副本不变量（每请求新建 session）——
  * 复制那条规则等于制造一条「只改一边就能悄悄产生数据损坏」的路径。
  */
+import {
+  consoleObserver,
+  httpCallEvent,
+  httpCallFailure,
+  pickObservedHeaders,
+  readObservedBody,
+} from "@unidocs/protocol-doc";
+import type { HttpCallInput } from "@unidocs/protocol-doc";
 import type { DocumentTypeFactory, SBlobSource } from "@unidocs/protocol";
 import { createTenantCasClient, type HttpFetcher } from "@unicas/tenant-client";
 import { CasClientError } from "@unicas/tenant-blob-client";
@@ -84,13 +92,40 @@ export interface DocTypeServiceHandle {
  * fetcher 把 client 生成的 canonical URL 重写到实际 CAS endpoint，同时
  * 保留请求级 Bearer capability。
  */
-function httpCasFetcher(baseUrl: string): HttpFetcher {
+function httpCasFetcher(baseUrl: string, docType: string): HttpFetcher {
   const origin = baseUrl.replace(/\/$/, "");
   return {
-    fetch: (input, init) => {
+    // doc service -> CAS 的唯一收口,所以计时埋在这里能盖住全部 CAS 调用。
+    // op 从规范路径里取(/stacks/{s}/tenants/{t}/cas/nodes/{hash}/lease -> "lease"),
+    // 这样按操作类型聚合耗时时,hash 不会把每一次调用打散成一个独立的桶。
+    fetch: async (input, init) => {
       const req = new Request(input, init);
       const url = new URL(req.url);
-      return fetch(`${origin}${url.pathname}${url.search}`, req);
+      const target = `${origin}${url.pathname}${url.search}`;
+      const segments = url.pathname.split("/").filter(Boolean);
+      const casInput: HttpCallInput = {
+        dir: "out",
+        target: "cas",
+        op: segments[segments.length - 1] ?? "unknown",
+        method: req.method,
+        durationMs: 0,
+        docType,
+        url: target,
+        requestHeaders: pickObservedHeaders(req.headers),
+      };
+      const started = Date.now();
+      try {
+        const response = await fetch(target, req);
+        const finished = { ...casInput, durationMs: Date.now() - started };
+        const detail = response.status >= 400
+          ? await readObservedBody(response.clone())
+          : undefined;
+        consoleObserver(httpCallEvent(finished, response.status, detail));
+        return response;
+      } catch (err) {
+        consoleObserver(httpCallFailure({ ...casInput, durationMs: Date.now() - started }, err));
+        throw err;
+      }
     },
   };
 }
@@ -126,7 +161,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       ? unavailableTenantCasClient()
       : createTenantCasClient({
         baseUrl: "https://cas.internal",
-        fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl) : casStubFetcher,
+        fetcher: config.casBaseUrl ? httpCasFetcher(config.casBaseUrl, docType) : casStubFetcher,
         stackId: requireCasStackId(config.casStackId),
         tenantId: identity.tenantId,
         getToken: async () => delegatedCapability,

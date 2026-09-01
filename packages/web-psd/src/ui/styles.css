@@ -422,3 +422,47 @@ a:hover { color: var(--accent); }
 .degrade-row:hover { background: var(--surface-hover); }
 .degrade-row span { color: var(--warn-ink); font-size: 11.5px; }
 .degrade-row em { color: var(--fg-3); font-size: 11px; font-style: normal; }
+
+.chip-on { border-color: var(--accent); color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* Layer-axis selection chrome. Geometry comes from ui/overlay-geometry.ts as
+   percentages of the document; everything here is in CSS pixels and must stay
+   that way, so it looks the same at 5% and at 400% zoom. `outline` rather than
+   `border` on purpose: the boxes are sized in percentages, and a border would
+   be added to that width and push the box off the layer it is tracing. */
+.sel-box, .sel-union, .sel-hover { position: absolute; pointer-events: none; }
+.sel-box   { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.sel-union { outline: 1px solid var(--accent); }
+.sel-hover { outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.sel-union .h { position: absolute; width: 6px; height: 6px; background: var(--surface); border: 1.5px solid var(--accent); }
+.sel-union .tl { left: -3px; top: -3px; }
+.sel-union .tc { left: calc(50% - 3px); top: -3px; }
+.sel-union .tr { right: -3px; top: -3px; }
+.sel-union .ml { left: -3px; top: calc(50% - 3px); }
+.sel-union .mr { right: -3px; top: calc(50% - 3px); }
+.sel-union .bl { left: -3px; bottom: -3px; }
+.sel-union .bc { left: calc(50% - 3px); bottom: -3px; }
+.sel-union .br { right: -3px; bottom: -3px; }
+
+/* The right-click candidate list (hit-menu.tsx). Positioned in measured CSS
+   pixels, not percentages — it is chrome pinned to the cursor, not canvas
+   geometry that should drift with zoom. */
+.hit-menu {
+  position: absolute; z-index: 3; min-width: 120px; padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 20px var(--shadow-pop);
+}
+.hit-menu button {
+  border: 0; background: transparent; font: inherit; text-align: left;
+  padding: 5px 8px; border-radius: 5px; cursor: pointer; color: var(--fg);
+}
+.hit-menu button:hover { background: var(--surface-sunken); }
+
+/* The 载入为选区 progress notice (context-bar.tsx). The scan behind that
+   button is one `alphaAt` per pixel of the layer's box — tens of millions of
+   iterations for a full-canvas layer — and the render Worker's queue only
+   discards hover hit tests, so tiles and edits wait behind it. Quieter than
+   `.ctx-size`'s warning ink: this is progress, not a problem. */
+.ctx-busy { font-size: 10.5px; color: var(--fg-3); }
+.btn-link:disabled { color: var(--fg-dim); cursor: default; }

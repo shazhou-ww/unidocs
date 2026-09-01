@@ -13,6 +13,7 @@
  */
 
 import {
+  consoleObserver,
   createGatewayHandler,
   createInsecureTenantIdentityResolver,
   GatewayCapabilityAuthority,
@@ -104,6 +105,7 @@ export default {
       directory: new D1GatewayDocumentDirectory(env.GATEWAY_DB),
       isGatewayExposedCasRoute,
       casStackId,
+      observe: consoleObserver,
     });
     return handle(request);
   },

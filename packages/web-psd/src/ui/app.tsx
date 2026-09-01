@@ -5,6 +5,7 @@ import { ContextBar } from "./panels/context-bar.js";
 import { SidePanel } from "./panels/side-panel.js";
 import { ChatPanel } from "./panels/chat-panel.js";
 import { zoomActual, zoomFit, zoomStep } from "./zoom-controller.js";
+import { setRegion, setSelection } from "./store.js";
 
 /**
  * Three-column shell. Column ORDER comes from styles.css (`order: 1|2|3`),
@@ -13,6 +14,7 @@ import { zoomActual, zoomFit, zoomStep } from "./zoom-controller.js";
  */
 export function App() {
   useZoomShortcuts();
+  useSelectionShortcuts();
   return (
     <div className="app">
       <TopBar />
@@ -53,6 +55,29 @@ function useZoomShortcuts(): void {
         case "-": e.preventDefault(); zoomStep(-1); break;
         default: break;
       }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
+
+/**
+ * Escape clears BOTH axes at once — the one gesture that does, because it is
+ * the "never mind" key and leaving half a target behind is exactly what it is
+ * for. Everything else leaves the other axis alone (spec §3.3).
+ *
+ * Bound on `window`, and ignored while typing: Escape in the chat composer is
+ * not a request to drop the selection.
+ */
+function useSelectionShortcuts(): void {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      setSelection([]);
+      setRegion(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

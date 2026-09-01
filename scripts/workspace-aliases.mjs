@@ -54,6 +54,7 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/doctype-docx": "packages/doctype-docx/src/index.ts",
   "@unidocs/doctype-psd": "packages/doctype-psd/src/index.ts",
   "@unidocs/doctype-psd/engine": "packages/doctype-psd/src/engine.ts",
+  "@unidocs/psd-client": "packages/psd-client/src/index.ts",
 };
 
 /**

@@ -32,3 +32,8 @@ export type {
 	GatewayCapabilityAuthorityConfig,
 	GatewayCapabilityIssuer,
 } from "./capability-authority.js";
+
+// 适配器只依赖 gateway-common,所以观测相关的类型与默认 sink 从这里转出,
+// 免得每个网关适配器都要单独声明一次 @unidocs/protocol-doc 依赖。
+export { consoleObserver, noopObserver } from "@unidocs/protocol-doc";
+export type { HttpCallEvent, ObserveFn } from "@unidocs/protocol-doc";

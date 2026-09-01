@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.stubGlobal("requestAnimationFrame", (cb: () => void) => { frames.push(cb); return frames.length; });
   vi.stubGlobal("cancelAnimationFrame", () => {});
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("no network in test"); }));
-  setState({ zoom: 1, tool: "marquee", marquee: null, selection: [], chat: [], history: [],
+  setState({ zoom: 1, tool: "marquee", region: null, selection: [], chat: [], history: [],
              doc: { canvas: { width: 2000, height: 1000 }, layers: [] } as never });
 });
 afterEach(() => { vi.unstubAllGlobals(); });

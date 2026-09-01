@@ -31,7 +31,7 @@ beforeEach(() => {
   stage.scrollTop = 0;
   vi.stubGlobal("requestAnimationFrame", (cb: () => void) => { frames.push(cb); return frames.length; });
   vi.stubGlobal("cancelAnimationFrame", () => {});
-  setState({ zoom: 1, tool: "marquee", marquee: null, selection: [],
+  setState({ zoom: 1, tool: "marquee", region: null, selection: [],
              doc: { canvas: { width: 2000, height: 1000 }, layers: [] } as never });
 });
 afterEach(() => { vi.unstubAllGlobals(); });

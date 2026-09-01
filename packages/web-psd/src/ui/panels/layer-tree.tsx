@@ -1,5 +1,6 @@
+import { useEffect, useRef } from "react";
 import { flattenTree, layerKind, type LocalLayer } from "../../doc-model.js";
-import { nextSelection, setState, toggleExpanded, useUiState } from "../store.js";
+import { selectLayer, setState, toggleExpanded, useUiState } from "../store.js";
 import { dispatch } from "../controller.js";
 
 export function LayerTree() {
@@ -21,14 +22,23 @@ function LayerRow({ layer, depth, hasChildren }: { layer: LocalLayer; depth: num
   const open = s.expanded.has(layer.id);
   const kind = layerKind(layer.type);
   const degraded = layer.degraded?.[0];
+  const row = useRef<HTMLDivElement>(null);
+  // A selection made on the canvas can land far outside the scrolled view.
+  // `block: "nearest"` is a no-op when the row is already visible, so this
+  // does not fight the user's own scrolling. Optional-called because jsdom
+  // does not implement scrollIntoView.
+  useEffect(() => {
+    if (selected) row.current?.scrollIntoView?.({ block: "nearest" });
+  }, [selected]);
 
   return (
     <div
       className="tree-row"
+      ref={row}
       data-selected={selected || undefined}
       data-hidden={!layer.visible || undefined}
       style={{ paddingLeft: 8 + depth * 13 }}
-      onClick={(e) => setState({ selection: nextSelection(s, layer.id, e.metaKey || e.ctrlKey) })}
+      onClick={(e) => selectLayer(layer.id, { additive: e.metaKey || e.ctrlKey })}
     >
       <button
         type="button"

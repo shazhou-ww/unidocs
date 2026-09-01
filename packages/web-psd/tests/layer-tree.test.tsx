@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { LayerTree } from "../src/ui/panels/layer-tree.js";
-import { setState, getState } from "../src/ui/store.js";
+import { setState, getState, selectLayer } from "../src/ui/store.js";
 import type { LocalLayer } from "../src/doc-model.js";
 
 const dispatch = vi.fn();
@@ -94,5 +94,25 @@ describe("LayerTree", () => {
       kind: "set_props", payload: { layerId: "t", props: { visible: true } },
     });
     expect(getState().doc!.layers[1].visible).toBe(true);
+  });
+
+  // flattenTree emits a group's children only when the group is expanded, so a
+  // selection made anywhere else — the canvas, the degradation badge — lands on
+  // a row that is not being rendered at all.
+  it("expands the ancestors of a layer selected from outside the tree", () => {
+    const { rerender } = render(<LayerTree />);
+    expect(screen.queryByText("促销角标")).not.toBeInTheDocument();
+    act(() => { selectLayer("badge"); });
+    rerender(<LayerTree />);
+    expect(getState().expanded.has("g")).toBe(true);
+    expect(screen.getByText("促销角标")).toBeInTheDocument();
+  });
+
+  it("scrolls the selected row into view", () => {
+    const into = vi.fn();
+    Element.prototype.scrollIntoView = into;
+    setState({ selection: ["t"] });
+    render(<LayerTree />);
+    expect(into).toHaveBeenCalledWith({ block: "nearest" });
   });
 });

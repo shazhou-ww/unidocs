@@ -1,5 +1,8 @@
 import { DocController, GW, TYPE, USER, type Op } from "../doc-controller.js";
-import { getState, reportError, setState } from "./store.js";
+import type { Rect } from "../doc-model.js";
+import { invalidateTarget } from "./invalidate.js";
+import { getState, reportError, setRegion, setState } from "./store.js";
+import { putMask } from "./region.js";
 import { initialZoom } from "./zoom.js";
 
 let controller: DocController | null = null;
@@ -33,11 +36,25 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
       const docId = controller?.docId ?? null;
       const fresh = docId !== sessionDocId;
       sessionDocId = docId;
+      // Both selection axes are long-lived state and the document just moved
+      // under them — see invalidate.ts. Computed from the PREVIOUS state, so
+      // it has to be read before `setState` replaces it.
+      const invalidation = invalidateTarget(getState(), doc as never, fresh);
+      // `invalidateTarget` only ever WRITES `region: null` into this patch
+      // (never a real region), so its region half is routed through
+      // `setRegion` — the mask sweep lives there, and a raw `setState` would
+      // silently skip it (see setRegion's docstring). The rest of the patch
+      // still lands in one `setState` alongside `doc`/`version`; splitting
+      // costs one extra store notification on a fresh open or a resize, not
+      // on every edit.
+      const { region: clearedRegion, ...restInvalidation } = invalidation;
       setState({
         doc: doc as never,
         version,
         ...(fresh ? { sessionBaseVersion: version } : {}),
+        ...restInvalidation,
       });
+      if ("region" in invalidation) setRegion(clearedRegion ?? null);
       // A newly opened document picks its own zoom (1:1, or shrunk if it
       // overflows the stage). Deliberately only on `fresh`: a rebase or an
       // agent edit must NOT yank the zoom out from under the user, and a
@@ -85,7 +102,17 @@ async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   // does exist server-side, so pretending the previous one is still open
   // would be the bigger lie.
   if (controller.docId && controller.docId !== before) {
-    setState({ docId: controller.docId, docName: label, history: [], chat: [] });
+    // `selection`/`region` are normally cleared by `onDoc`'s fresh branch.
+    // They are cleared again here for the path where `initRender` threw
+    // BEFORE reaching that callback: the new docId is adopted (see the
+    // comment above) while the previous document's target is still in the
+    // store, pointing at layer ids that are not in any open document.
+    //
+    // `region` is cleared through `setRegion`, not folded into the `setState`
+    // below, so its mask sweep still runs — a raw `setState({ region: null })`
+    // would leave the stale mask's bytes in the module-level table forever.
+    setState({ docId: controller.docId, docName: label, history: [], chat: [], selection: [] });
+    setRegion(null);
   }
 }
 
@@ -95,6 +122,39 @@ export async function openFile(file: File): Promise<void> {
 
 export async function dispatch(op: Op): Promise<void> {
   await controller?.dispatch(op);
+}
+
+/** The layer → region conversion, wired into the context bar (spec §6.1).
+ *  A true CONVERSION: the axes are mutually exclusive (spec §3.3), so
+ *  `setRegion` takes the layer selection down as it writes the region.
+ *
+ *  `layerAlphaRegion` returns `null` for a layer with no extent — an
+ *  adjustment layer, most notably, cannot be pointed at (spec's own framing
+ *  for why this task exists in the first place). The button is not disabled
+ *  for those ahead of time, so a silent no-op here would look like the click
+ *  did nothing; report it the same way the other action sites do. */
+export async function loadLayerAsRegion(layerId: string): Promise<void> {
+  // Reports rather than rejects, so the one caller (the context bar's
+  // 载入为选区 button) can clear its in-flight flag with a plain `.finally`
+  // and never leave an unhandled rejection behind. A Worker-side throw comes
+  // back as a rejection here exactly the way `hitTest`'s does.
+  let r: { bounds: Rect; data: Uint8ClampedArray } | null | undefined;
+  try {
+    r = await controller?.layerAlphaRegion(layerId);
+  } catch (e) {
+    reportError("载入选区失败", e);
+    return;
+  }
+  if (!r) {
+    reportError("载入选区失败", "该图层没有可用于选区的像素（例如调整图层）");
+    return;
+  }
+  // The mask BYTES have no production consumer yet: nothing outside the tests
+  // calls `getMask`. They are produced now because the lasso/wand phase is
+  // what reads them, and because `sweepMasks` has to have something to sweep
+  // for its lifecycle to be exercised at all. Do not assume this buffer is
+  // load-bearing on any current path.
+  setRegion({ bounds: r.bounds, source: "layerAlpha", maskId: putMask(r.data) });
 }
 
 /** The download's filename. The server sends `Content-Disposition:
