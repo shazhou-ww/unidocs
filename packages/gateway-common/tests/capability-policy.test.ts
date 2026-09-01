@@ -11,9 +11,7 @@ describe("Gateway capability policy", () => {
     ["create", "tenants:t:sessions:create", ["tenants:t:cas:write"], 90, 120],
     ["status", "tenants:t:sessions:create", [], 15, 120],
     ["query", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],
-    // 导出比 query 重一个数量级(拉实像素 + 全画布合成 + 写 PSD),单独一档;
-    // 票的有效期跟着一起放宽,否则会在第 120 秒变成"令牌过期"而不是超时。
-    ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 180, 180],
+    ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],
     ["history", "tenants:t:sessions:s:read", [], 30, 120],
     ["ir", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 30, 120],
     ["snapshot", "tenants:t:sessions:s:read", ["tenants:t:cas:write"], 60, 120],
