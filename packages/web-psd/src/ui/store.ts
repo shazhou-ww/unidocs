@@ -6,6 +6,15 @@ import { expandAncestors, normalizeSelection } from "./hit-test.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
 
+export type OpenPhase = "upload" | "parse" | "load" | "render";
+
+export interface OpenProgress {
+  phase: OpenPhase;
+  /** 文件名与字节数,只供遮罩显示。 */
+  name: string;
+  bytes: number;
+}
+
 export interface ChatMessage {
   role: "user" | "agent" | "err";
   text: string;
@@ -55,6 +64,10 @@ export interface UiState {
   degradeOpen: boolean;
   /** Last colour sampled by the eyedropper, shown in the context bar. */
   pickedColor: string | null;
+  /** 一次「打开文件」正在进行中,值是当前阶段;null = 没有。遮罩和加载期间
+   *  四处禁用读的都是这一个字段——它们要的是同一个 null 判断,拆成
+   *  「阶段」+「文件信息」两个字段就多出一种表达得出来却不该存在的状态。 */
+  opening: OpenProgress | null;
 }
 
 const INITIAL: UiState = {
@@ -63,6 +76,7 @@ const INITIAL: UiState = {
   region: null, zoom: 1, history: [], historyOpen: false,
   sessionBaseVersion: 0, chat: [], chatBusy: false, exporting: false, degradeOpen: false,
   pickedColor: null,
+  opening: null,
 };
 
 let state: UiState = INITIAL;
