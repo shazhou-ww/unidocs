@@ -121,10 +121,10 @@ opening: OpenProgress | null;
 
 ```ts
 onOpenPhase(phase: OpenPhase): void;
-/** 打开流程落地:成功 null,失败带 error。和 onOpenPhase 分开,是因为
- *  createFrom 按设计永不 reject(见 controller.ts 里 `before` 比较那段注释),
- *  失败只能作为事件报出来。 */
-onOpenSettled(error: Error | null): void;
+/** 打开失败。单独一个事件,是因为 createFrom 按设计永不 reject(见 controller.ts
+ *  里 `before` 比较那段注释),失败只能作为事件报出来。成功不需要对应事件——
+ *  `opening` 的生命周期由 controller.ts 的 try/finally 拥有(见 3.6)。 */
+onOpenFailed(error: Error): void;
 ```
 
 推进点全在 `DocController.createFrom` / `initRender` 这一条链上——`initRender` 是 private，
@@ -137,11 +137,13 @@ createFrom()          → onOpenPhase("upload")
   initRender()        → onOpenPhase("load")     ← loadDoc 之前
     loadDoc / onDoc / worker 起
                       → onOpenPhase("render")   ← renderClient.init 之前
-  finally             → onOpenSettled(err ?? null)
+  catch               → onOpenFailed(err)
 ```
 
-`createFrom` 现有的 try/catch 补一个 `finally`，保证任何路径都会落地一次
-`onOpenSettled`——否则一次抛错就把遮罩永久留在屏幕上。
+`opening` 的**写入和清除都在 `controller.ts` 的 wrapper 里**（3.6），不在
+DocController：文件名和字节数本来就只有 wrapper 手上有，而把清除放在它的 `finally`
+里，保证任何路径——包括 DocController 被测试替身顶掉、一个事件都不发的情况——都不会
+把遮罩永久留在屏幕上。DocController 只负责报告它自己知道的事：阶段变了、失败了。
 
 ### 3.3 XHR helper
 
@@ -185,9 +187,11 @@ function postForm(
 - 一行当前阶段文案：上传中 / 解析中 / 载入中 / 渲染中。
 - `s.opening` 为 null 时 `return null`。
 
-样式加进 `styles.css`，颜色只用现有 token：底色 `--canvas-bg` 配 `opacity: .92`（盖住那段
-白画布,又保留一点「底下确实有东西在换」的暗示）、当前步 `--accent`、未到的步 `--fg-dim`、文件名 `--fg`、阶段文案 `--fg-3`。
-`.col-canvas` 补 `position: relative`。
+样式加进 `styles.css`，颜色只用现有 token：底色
+`color-mix(in srgb, var(--canvas-bg) 92%, transparent)`——**背景色带 alpha，不是元素
+`opacity`**，后者会把卡片上的文字一起淡掉；当前步 `--accent`、已过的步 `--accent-ink`、
+未到的步 `--fg-dim`、文件名 `--fg`、阶段文案 `--fg-3`。当前步的脉冲直接复用 styles.css
+里已有的 `@keyframes blip`（目前定义了但无人使用）。`.col-canvas` 补 `position: relative`。
 
 ### 3.5 四处禁用
 
@@ -208,31 +212,37 @@ function postForm(
 
 ### 3.6 失败路径
 
-`onOpenSettled(err)` 在 `controller.ts` 的 `initController` 里落成：
+`opening` 的生命周期由 `controller.ts` 的 `createFrom` wrapper 拥有：
 
 ```ts
-onOpenSettled: (err) => {
+setState({ opening: { phase: "upload", name: label, bytes: bytes.length } });
+try {
+  await controller.createFrom(bytes, label);
+  // …现有的 before/docId 比较逻辑，一行不动
+} finally {
   setState({ opening: null });
-  if (err) reportError("打开文件失败", err);
-},
+}
 ```
 
-走 `store.ts` 里已有的那条约定（status 行 + 聊天里一条 err 气泡），失败不再只是右上角一行
+`onOpenFailed` 只负责报错，在 `initController` 里落成
+`(err) => reportError("打开文件失败", err)`，走 `store.ts` 里已有的那条约定（status 行 + 聊天里一条 err 气泡），失败不再只是右上角一行
 小字。`DocController.createFrom` 仍然不 reject，`controller.ts` 里那段靠 `before` 比较
 docId 来判断是否采纳新文件名的逻辑**一行不动**。
 
 ## 4. 测试
 
-新增 `packages/web-psd/tests/open-overlay.test.tsx`，沿用 `tests/` 里 testing-library
-的现有写法：
+新增三个测试文件，按各自需要的替身分开——沿用 `tests/` 里现有的写法：
 
-- 遮罩：`opening` 为 null 时不渲染；四个阶段各自的文案与步进条状态；文件名和大小的显示。
-- 禁用：「打开」按钮 disabled；「导出」按钮在 `docId` 存在且未导出时仍因 `opening` 而
-  disabled；side panel 与 tool strip 带 `inert`；composer disabled。
-- 落地：成功走完把 `opening` 清回 null；失败也清回 null，且聊天里多一条 `role: "err"`。
-- file input 的 `value` 在 `change` 之后是空串。
+- `tests/open-overlay.test.tsx`——纯渲染，不需要任何替身：`opening` 为 null 时不渲染；
+  四个阶段各自的文案与步进条 `data-state`；文件名和大小的显示。
+- `tests/open-flow.test.ts`——用 `controller.test.ts` 那套 `vi.mock("../src/doc-controller.js")`
+  替身，扩出 `onOpenPhase` / `onOpenFailed`：阶段被写进 store；成功走完 `opening` 清回
+  null；失败也清回 null 且聊天里多一条 `role: "err"`。
+- `tests/open-locks.test.tsx`——四处禁用各自的断言，外加 file input 的 `value` 在
+  `change` 之后是空串。
 
-`postForm` 的 XHR 打桩跟着 `tests/export.test.ts` 现有的网络打桩风格走。
+`postForm` 单独导出，在 `tests/post-form.test.ts` 里用一个假 `XMLHttpRequest` 覆盖
+`upload.onload` 的分界、以及 error / abort / 非 JSON 三条 reject 路径。
 
 `tests/no-import-cycles.test.ts` 已在仓库里，新组件不得引入环——`open-overlay.tsx` 只
 `import { useUiState } from "../store.js"`，不碰 `controller.ts`。
