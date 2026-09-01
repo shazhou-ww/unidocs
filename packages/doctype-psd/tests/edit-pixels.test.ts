@@ -166,6 +166,42 @@ describe("editPixels effect", () => {
     expect(maskedCorner).toBe(0);
   });
 
+  it("query 按预算缩过图时，结果层被缩回 bounds 的真实尺寸", async () => {
+    // getLayerPixels 返回一张 64x48 的图，但 bounds 说这层其实是 256x192。
+    // 结果层要盖在源层身上，所以落盘的像素必须正好铺满 bounds，否则合成器
+    // 会把一张小图错位地贴在大图层的位置上。
+    const ctx = fakeCtx({
+      queryResult: {
+        image: createSBlob("1".repeat(64)),
+        width: SRC_W, height: SRC_H,
+        bounds: [10, 20, 10 + SRC_H * 4, 20 + SRC_W * 4],
+        parentId: "g1", index: 2,
+      },
+    });
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+
+    const layer = (out.ops[0] as any).payload.layer;
+    expect([layer.pixels.width, layer.pixels.height]).toEqual([SRC_W * 4, SRC_H * 4]);
+    // 落进 CAS 的字节也真的是放大后的，不是"报了个大尺寸、写了张小图"
+    const png = decode(ctx.written[0].data);
+    expect([png.width, png.height]).toEqual([SRC_W * 4, SRC_H * 4]);
+    // bounds 原样透传
+    expect(layer.bounds).toEqual([10, 20, 10 + SRC_H * 4, 20 + SRC_W * 4]);
+  });
+
+  it("把下游能吃多少像素告诉 getLayerPixels —— 别让 Editor 编一张白编的大图", async () => {
+    const ctx = fakeCtx();
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+    expect(ctx.query).toHaveBeenCalledWith({
+      kind: "getLayerPixels",
+      payload: { layerId: "portrait", maxPixels: createStubEditor().capabilities.maxPixels },
+    });
+  });
+
   it("参数缺失时以 result 报错，不抛", async () => {
     const tool = createEditPixelsTool(createStubEditor());
     if (tool.kind !== "effect") throw new Error("kind");

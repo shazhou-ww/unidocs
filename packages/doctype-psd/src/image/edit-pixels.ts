@@ -6,7 +6,7 @@ import type { PsdOp } from "../ops/index.js";
 import type { PsdQuery } from "../queries.js";
 import { downscale } from "../render/index.js";
 import type { ImageEditor } from "./editor.js";
-import { applyCoverageToAlpha, softenMask } from "./guards.js";
+import { applyCoverageToAlpha, resample, softenMask } from "./guards.js";
 
 /** 回给模型看的 after 预览的长边上限。和 getPreview 的默认值一致。 */
 const AFTER_PREVIEW_MAX_SIZE = 768;
@@ -142,7 +142,13 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         return fail({ error: "editPixels: instruction must be a non-empty string" });
       }
 
-      const { data } = await ctx.query({ kind: "getLayerPixels", payload: { layerId } });
+      // 告诉 Editor 我们下游最多用得到多少像素：适配器拿到手第一件事就是把它
+      // 压进这个区间，所以让 Editor 编一张全分辨率 PNG 是纯浪费，而且那份
+      // 浪费落在一个 128 MiB 的 isolate 里。
+      const { data } = await ctx.query({
+        kind: "getLayerPixels",
+        payload: { layerId, maxPixels: editor.capabilities.maxPixels },
+      });
       const info = asLayerPixels(data);
       const sourceBytes = await ctx.readBlob(info.image);
       const source = pngToPixels(sourceBytes.data);
@@ -157,9 +163,19 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
       // 差异蒙版烘进结果层自己的 alpha：未改动的区域全透明，下面的原层
       // 原样露出来。这一步就是"把模型带来的全局色偏关在改动区里"的全部机制 ——
       // 没它，整层无遮挡地盖上去等于给全图蒙一层不可见的偏色。
-      const landed = result.changed
+      const masked = result.changed
         ? applyCoverageToAlpha(result.pixels, softenMask(result.changed, MASK_SOFTEN))
         : result.pixels;
+
+      // 结果层要盖在源层身上，所以它的像素必须正好铺满源层的 bounds。
+      // getLayerPixels 可能按 maxPixels 缩过（见那边的注释），这里缩回去。
+      // 这一步不损失信息：适配器内部本来就已经把图压进 maxPixels 再送模型，
+      // 返回时也是从那个尺寸放大回来的，缩放只是换了发生的位置。
+      const boundsWidth = info.bounds[3] - info.bounds[1];
+      const boundsHeight = info.bounds[2] - info.bounds[0];
+      const landed = masked.width === boundsWidth && masked.height === boundsHeight
+        ? masked
+        : resample(masked, boundsWidth, boundsHeight);
 
       const resultBlob = await ctx.writeBlob({
         data: pixelsToPng(landed),

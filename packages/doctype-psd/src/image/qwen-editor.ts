@@ -1,4 +1,6 @@
 import { decode, encode } from "fast-png";
+import { httpCallEvent, httpCallFailure, noopObserver, readObservedBody } from "@unidocs/protocol-doc";
+import type { HttpCallInput, ObserveFn } from "@unidocs/protocol-doc";
 import type { Pixels } from "../model/types.js";
 import type { EditRequest, EditResult, EditorCapabilities, ImageEditor } from "./editor.js";
 import { compositeOnSentinel, diffMask, fitPixelBudget, recoverAlpha, resample } from "./guards.js";
@@ -9,6 +11,14 @@ export interface QwenEditorOptions {
   readonly baseUrl?: string;
   /** 测试注入用。不给就用全局 fetch。 */
   readonly fetch?: typeof fetch;
+  /**
+   * 每次对 DashScope 的调用记一条结构化事件（耗时、状态、失败时的完整栈）。
+   *
+   * 默认 noop，所以单测和既有调用方行为不变；composition root 注入
+   * `consoleObserver`。这是系统里唯一的第三方调用，出问题时没有它就只能
+   * 对着一个不透明的 500 猜 —— 那正是这个字段存在的理由。
+   */
+  readonly observe?: ObserveFn;
 }
 
 const DEFAULT_MODEL = "qwen-image-edit-plus";
@@ -85,10 +95,38 @@ function parseImageUrl(body: unknown): string | null {
   return null;
 }
 
+/**
+ * 包一层计时与事件上报。沿用 gateway-common 的写法：2xx 只记简报，>=400 才
+ * 去读响应体，抛出来的（超时、连接被切）走 httpCallFailure，它会把 cause 和
+ * 完整栈一起展开。
+ *
+ * 请求头一概不上报 —— 这条路上的 Authorization 带着 API key。
+ */
+async function observedFetch(
+  doFetch: typeof fetch,
+  observe: ObserveFn,
+  input: Omit<HttpCallInput, "durationMs">,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const started = Date.now();
+  try {
+    const response = await doFetch(url, init);
+    const finished = { ...input, durationMs: Date.now() - started };
+    const detail = response.status >= 400 ? await readObservedBody(response.clone()) : undefined;
+    observe(httpCallEvent(finished, response.status, detail));
+    return response;
+  } catch (err) {
+    observe(httpCallFailure({ ...input, durationMs: Date.now() - started }, err));
+    throw err;
+  }
+}
+
 export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
   const model = opts.model ?? DEFAULT_MODEL;
   const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
   const doFetch = opts.fetch ?? fetch;
+  const observe = opts.observe ?? noopObserver;
 
   return {
     id: model,
@@ -110,7 +148,10 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
         );
         const sent = resample(flattened, fit.width, fit.height);
 
-        const response = await doFetch(`${baseUrl}${GENERATION_PATH}`, {
+        const generationUrl = `${baseUrl}${GENERATION_PATH}`;
+        const response = await observedFetch(doFetch, observe, {
+          dir: "out", target: "dashscope", op: "generation", method: "POST", url: generationUrl,
+        }, generationUrl, {
           method: "POST",
           signal,
           headers: {
@@ -147,7 +188,9 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
         }
 
         // OSS URL 约 24 小时后失效 —— 立刻下载，绝不存起来以后再取。
-        const imageResponse = await doFetch(url, { signal });
+        const imageResponse = await observedFetch(doFetch, observe, {
+          dir: "out", target: "dashscope", op: "result-download", method: "GET", url,
+        }, url, { signal });
         if (!imageResponse.ok) {
           return { ok: false, reason: "provider_error", detail: `result download failed: ${imageResponse.status}` };
         }

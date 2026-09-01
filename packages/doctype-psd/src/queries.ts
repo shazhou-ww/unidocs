@@ -6,12 +6,13 @@ import { PixelCache } from "./render/pixel-source.js";
 import type { DocRenderState } from "./render/doc-render-state.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
 import { findLayer, findParentList, findParentId } from "./model/tree.js";
+import { fitPixelBudget, resample } from "./image/guards.js";
 
 export type PsdQuery =
   | { kind: "getLayers"; payload?: Record<string, never> }
   | { kind: "getDoc"; payload?: { layerId?: string } }
   | { kind: "getPreview"; payload?: { rect?: [number, number, number, number]; layerId?: string; maxSize?: number } }
-  | { kind: "getLayerPixels"; payload: { layerId: string } };
+  | { kind: "getLayerPixels"; payload: { layerId: string; maxPixels?: number } };
 
 function summarize(l: Layer): any {
   return {
@@ -59,11 +60,19 @@ const MIN_PREVIEW_SIZE = 64;
 const MAX_FIT_ATTEMPTS = 3;
 
 /**
- * `getLayerPixels` 的像素数上限。4096x4096 解码后是 64 MiB RGBA，再加一份
- * PNG 编码缓冲 —— 一个 DO isolate 扛得住的天花板就在这附近。超过就拒绝，
- * 而不是让整个编辑器 OOM 掉。
+ * `getLayerPixels` 硬拒绝的像素数上限。
+ *
+ * 这个值原本是 16M（4096x4096），注释里写着"一个 DO isolate 扛得住的天花板
+ * 就在这附近" —— 那是推的，没测过。实际账目：Editor DO 常驻一个
+ * DEFAULT_CACHE_BYTES = 64 MiB 的像素缓存预算（composite.ts:56），而一个
+ * workerd isolate 上限 128 MiB。16M 像素光解码后的 RGBA 就是 64 MiB，再加
+ * 编码缓冲，必然把 isolate 挤爆 —— 而 isolate 被内存杀掉时不产生 JS 异常，
+ * 排查时只能看到一个不透明的 internal error。
+ *
+ * 8M 像素 = 32 MiB RGBA，给 64 MiB 缓存之外留出了余量。渲染本身很快
+ * （实测 16.8M 像素 render+encode 合计 792ms），瓶颈从来是内存不是 CPU。
  */
-const MAX_EDIT_SOURCE_PIXELS = 16 * 1024 * 1024;
+const MAX_EDIT_SOURCE_PIXELS = 8 * 1024 * 1024;
 
 type Px = { width: number; height: number; data: Uint8ClampedArray };
 
@@ -184,7 +193,7 @@ export async function runQuery(
       // 蒙版与图层效果已烘进去），区别只有一个：**不过 fitToBudget**。
       // 预览是给模型的眼睛看的，压到 768 正合适；编辑要的是原始像素，压了
       // 就再也还原不回去。
-      const { layerId } = q.payload;
+      const { layerId, maxPixels } = q.payload;
       const l = findLayer(doc.layers, layerId);
       if (!l) throw new Error(`layer not found: ${layerId}`);
       const w = l.bounds[3] - l.bounds[1];
@@ -196,7 +205,17 @@ export async function runQuery(
       const rc: RenderCtx | undefined = render
         ? render.ctx
         : { store: casBlobStore(c), cache: new PixelCache(DEFAULT_CACHE_BYTES) };
-      const px = await renderLayer(doc, layerId, {}, rc);
+      const rendered = await renderLayer(doc, layerId, {}, rc);
+      // 调用方（effect）会告诉我们它下游真正用得到多少像素。编一张它拿到手
+      // 第一件事就是缩小的全分辨率 PNG，只是白白抬高 Editor 的编码峰值和
+      // Operator 的解码峰值 —— 两边都在 128 MiB 的 isolate 里。
+      // `bounds` 仍然是图层的真实位置，调用方据此把结果缩回原尺寸。
+      const px = maxPixels && rendered.width * rendered.height > maxPixels
+        ? (() => {
+          const fit = fitPixelBudget(rendered.width, rendered.height, 1, maxPixels);
+          return resample(rendered, fit.width, fit.height);
+        })()
+        : rendered;
       const image = await c.makeSBlob({ data: pngOf(px), contentType: "image/png" });
       return {
         image,

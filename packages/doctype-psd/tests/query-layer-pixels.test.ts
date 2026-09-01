@@ -57,6 +57,32 @@ describe("getLayerPixels", () => {
     expect(r.index).toBe(0);
   });
 
+  it("给了 maxPixels 就按预算缩小编码，但 bounds 仍是图层的真实位置", async () => {
+    const ctx = memCas();
+    const budget = 200 * 200; // 远小于 1600x1200
+    const r = await runQuery(
+      { kind: "getLayerPixels", payload: { layerId: "portrait", maxPixels: budget } },
+      doc(), ctx.ctx,
+    ) as any;
+    // 返回的图被缩过
+    expect(r.width * r.height).toBeLessThanOrEqual(budget);
+    expect(r.width).toBeLessThan(1600);
+    // 真正落盘的 PNG 也确实是缩小后的，不是"报了个小尺寸、编了张大图"
+    const png = decode(ctx.nodes.get(r.image.hash)!);
+    expect([png.width, png.height]).toEqual([r.width, r.height]);
+    // bounds 不动 —— 调用方靠它把结果缩回原位
+    expect(r.bounds).toEqual([0, 0, 1200, 1600]);
+  });
+
+  it("图层本来就在预算内时一个像素都不缩", async () => {
+    const ctx = memCas();
+    const r = await runQuery(
+      { kind: "getLayerPixels", payload: { layerId: "portrait", maxPixels: 100_000_000 } },
+      doc(), ctx.ctx,
+    ) as any;
+    expect([r.width, r.height]).toEqual([1600, 1200]);
+  });
+
   it("图层不存在时报出图层 id", async () => {
     const { ctx } = memCas();
     await expect(runQuery({ kind: "getLayerPixels", payload: { layerId: "nope" } }, doc(), ctx))

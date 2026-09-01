@@ -24,6 +24,7 @@ import {
   type DocAuthBindings,
 } from "@unidocs/doctype-server-common";
 import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
+import { consoleObserver } from "@unidocs/protocol-doc";
 
 const psdFactory = createPsdDocumentType;
 const authConfig = new DocAuthConfigCache("psd");
@@ -38,6 +39,9 @@ export const PsdOperator = createOperatorDO({
       ? {
         editor: createQwenImageEditor({
           apiKey: env.IMAGE_EDIT_API_KEY,
+          // 系统里唯一的第三方调用。不接观测的话，它出问题时只留下一个
+          // 不透明的 500 —— 排查只能靠猜。
+          observe: consoleObserver,
           ...(env.IMAGE_EDIT_MODEL ? { model: env.IMAGE_EDIT_MODEL } : {}),
           ...(env.IMAGE_EDIT_BASE_URL ? { baseUrl: env.IMAGE_EDIT_BASE_URL } : {}),
         }),
