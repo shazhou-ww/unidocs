@@ -18,7 +18,7 @@ export interface GatewayOAuthAuthorizationServerMetadata {
   readonly registration_endpoint?: string;
   readonly revocation_endpoint?: string;
   readonly response_types_supported: readonly ["code"];
-  readonly grant_types_supported: readonly ["authorization_code", "refresh_token"];
+  readonly grant_types_supported: readonly ["authorization_code"];
   readonly code_challenge_methods_supported: readonly ["S256"];
   readonly token_endpoint_auth_methods_supported: readonly ["none"];
   readonly scopes_supported: readonly GatewayOAuthScope[];
@@ -68,7 +68,7 @@ export function renderGatewayOAuthMetadata(
     token_endpoint: requireIssuerEndpoint(config.tokenEndpoint ?? `${base}/token`, issuer, "token endpoint"),
     jwks_uri: requireIssuerEndpoint(config.jwksUri ?? `${base}/jwks`, issuer, "JWKS URI"),
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
+    grant_types_supported: ["authorization_code"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
     scopes_supported: Object.freeze([...scopes]),

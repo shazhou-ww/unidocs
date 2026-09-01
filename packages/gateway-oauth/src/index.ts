@@ -32,3 +32,58 @@ export type {
   GatewayOAuthDiscoveryHandler,
   GatewayOAuthDiscoveryHandlerConfig,
 } from "./discovery-handler.js";
+export {
+  gatewayOAuthRedirectUriMatches,
+  registerGatewayOAuthClient,
+  validateGatewayOAuthRedirectUri,
+} from "./client-registration.js";
+export type {
+  GatewayOAuthClientRegistrationPorts,
+  GatewayOAuthClientRegistrationRequest,
+  GatewayOAuthClientRegistrationResponse,
+} from "./client-registration.js";
+export {
+  completeGatewayOAuthAuthorization,
+  startGatewayOAuthAuthorization,
+} from "./authorization.js";
+export type {
+  GatewayOAuthAuthorizationPorts,
+  GatewayOAuthAuthorizationRequest,
+  GatewayOAuthAuthorizationResult,
+  GatewayOAuthPendingAuthorization,
+} from "./authorization.js";
+export {
+  exchangeGatewayOAuthAuthorizationCode,
+} from "./token.js";
+export type {
+  GatewayOAuthAuthorizationCodeTokenRequest,
+  GatewayOAuthTokenPorts,
+  GatewayOAuthTokenResponse,
+} from "./token.js";
+export {
+  validateGatewayOAuthPkceS256Challenge,
+  validateGatewayOAuthPkceVerifier,
+  verifyGatewayOAuthPkceS256,
+} from "./pkce.js";
+export {
+  systemGatewayOAuthHash,
+  systemGatewayOAuthRandom,
+} from "./crypto.js";
+export type {
+  GatewayOAuthAuditEvent,
+  GatewayOAuthAuditPort,
+  GatewayOAuthAuthenticatedUser,
+  GatewayOAuthAuthorizationCodeStorePort,
+  GatewayOAuthAuthorizationTransaction,
+  GatewayOAuthAuthorizationTransactionStorePort,
+  GatewayOAuthCapabilityIssuerPort,
+  GatewayOAuthClientStorePort,
+  GatewayOAuthClockPort,
+  GatewayOAuthHashPort,
+  GatewayOAuthIdentityPort,
+  GatewayOAuthRandomPort,
+  GatewayOAuthRegisteredClient,
+  GatewayOAuthStoredAuthorizationCode,
+  GatewayOAuthTenantMembership,
+  GatewayOAuthTenantMembershipPort,
+} from "./ports.js";

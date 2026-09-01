@@ -16,7 +16,7 @@ describe("Gateway OAuth metadata", () => {
       .toBe("/oauth/.well-known/openid-configuration");
   });
 
-  test("renders exact issuer metadata for code, refresh, and mandatory PKCE S256", () => {
+  test("renders exact issuer metadata for authorization code and mandatory PKCE S256", () => {
     expect(renderGatewayOAuthMetadata({ issuer: "https://gateway.example/oauth/" }))
       .toEqual({
         issuer: "https://gateway.example/oauth/",
@@ -24,7 +24,7 @@ describe("Gateway OAuth metadata", () => {
         token_endpoint: "https://gateway.example/oauth/token",
         jwks_uri: "https://gateway.example/oauth/jwks",
         response_types_supported: ["code"],
-        grant_types_supported: ["authorization_code", "refresh_token"],
+        grant_types_supported: ["authorization_code"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none"],
         scopes_supported: ["cas:read", "cas:write", "cas:manage"],

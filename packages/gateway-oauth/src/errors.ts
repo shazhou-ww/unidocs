@@ -1,5 +1,6 @@
 export type GatewayOAuthErrorCode =
   | "invalid_request"
+  | "invalid_client_metadata"
   | "invalid_client"
   | "invalid_grant"
   | "invalid_scope"
