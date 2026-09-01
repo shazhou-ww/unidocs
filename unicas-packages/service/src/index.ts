@@ -166,6 +166,16 @@ export {
   validateKid,
 } from "./control-validation.js";
 export type { SupportedKeyAlgorithm } from "./control-validation.js";
+export {
+  canonicalizeOAuthIssuer,
+  oauthDiscoveryCandidates,
+  parseOAuthMetadata,
+} from "./oauth-discovery.js";
+export type {
+  DiscoveredOAuthMetadata,
+  OAuthDiscoveryCandidate,
+  OAuthMetadataType,
+} from "./oauth-discovery.js";
 export type {
   ControlPlaneCallContext,
   ControlPlaneOperations,
