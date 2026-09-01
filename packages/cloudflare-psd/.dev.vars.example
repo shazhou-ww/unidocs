@@ -8,3 +8,10 @@ LLM_API_KEY=sk-ant-...
 # Optional — defaults shown:
 # LLM_BASE_URL=https://api.anthropic.com
 # LLM_MODEL=claude-3-5-sonnet-latest
+
+# 图像编辑模型（editPixels）。不配就没有 editPixels 工具，层内像素编辑不可用。
+# DashScope 控制台拿 key：https://bailian.console.aliyun.com/
+IMAGE_EDIT_API_KEY=sk-...
+# Optional — defaults shown:
+# IMAGE_EDIT_MODEL=qwen-image-edit-plus
+# IMAGE_EDIT_BASE_URL=https://dashscope.aliyuncs.com
