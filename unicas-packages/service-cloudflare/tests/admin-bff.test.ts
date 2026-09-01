@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { s256Challenge } from "@unicas/control-auth";
 import type {
@@ -458,6 +458,37 @@ describe("cas-admin-webui BFF", () => {
       body: JSON.stringify({ code: oneTimeCode, codeVerifier: "wrong-verifier" }),
     }));
     expect(exchange.status).toBe(401);
+  });
+
+  test("CLI login returns OIDC failures to the loopback callback immediately", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+    const authorize = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli&redirect_uri=${encodeURIComponent("http://127.0.0.1:9999/callback")}&state=cli-state-failure&code_challenge=${await s256Challenge("cli-verifier")}&code_challenge_method=S256`,
+    ));
+    const preLoginCookie = cookieFrom(authorize)!;
+    const googleUrl = new URL(authorize.headers.get("Location")!);
+    provider.pendingClaims = {
+      iss: ISSUER,
+      sub: "cli-user-1",
+      aud: CLIENT_ID,
+      nonce: "wrong-nonce",
+      email: "alice@example.com",
+      email_verified: true,
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const callback = await bff(new Request(
+      `${PUBLIC_ORIGIN}/admin/auth/callback?code=mock-code&state=${encodeURIComponent(googleUrl.searchParams.get("state")!)}`,
+      { headers: { Cookie: preLoginCookie } },
+    ));
+    logged.mockRestore();
+
+    expect(callback.status).toBe(302);
+    const redirect = new URL(callback.headers.get("Location")!);
+    expect(redirect.origin + redirect.pathname).toBe("http://127.0.0.1:9999/callback");
+    expect(redirect.searchParams.get("error")).toBe("oidc_failed");
+    expect(redirect.searchParams.get("error_description")).toContain("id_token_invalid");
+    expect(redirect.searchParams.get("state")).toBe("cli-state-failure");
   });
 
   test("CLI exchange rejects an unknown one-time code", async () => {

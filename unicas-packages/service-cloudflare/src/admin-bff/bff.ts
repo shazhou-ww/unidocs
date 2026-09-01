@@ -29,6 +29,7 @@ import {
   generateOidcState,
   generatePkceVerifier,
   OidcClient,
+  OidcError,
   s256Challenge,
 } from "./oidc.js";
 import type { VerifiedOidcIdentity } from "./oidc.js";
@@ -323,11 +324,18 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
 
     if (error || !code || !state || !preLogin || preLogin.oidcState !== state) {
       if (sessionId && preLogin) await sessionStore.delete(sessionId);
-      await auditLoginFailure(state ?? "");
-      return new Response(null, {
-        status: 302,
-        headers: { Location: "/admin/auth/login?error=oidc-failed" },
-      });
+      const reason = error
+        ? "provider_error"
+        : !code
+          ? "missing_code"
+          : !state
+            ? "missing_state"
+            : !preLogin
+              ? "missing_prelogin_session"
+              : "state_mismatch";
+      console.error(JSON.stringify({ event: "admin_oidc_callback_failed", reason }));
+      await auditLoginFailure(reason);
+      return oidcCallbackFailure(preLogin, reason);
     }
     let identity: VerifiedOidcIdentity;
     try {
@@ -339,13 +347,16 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         idToken: exchanged.idToken,
         nonce: preLogin.oidcNonce!,
       });
-    } catch {
+    } catch (caught) {
       if (sessionId) await sessionStore.delete(sessionId);
-      await auditLoginFailure(state);
-      return new Response(null, {
-        status: 302,
-        headers: { Location: "/admin/auth/login?error=oidc-failed" },
-      });
+      const reason = caught instanceof OidcError ? caught.code : "unexpected_oidc_error";
+      console.error(JSON.stringify({
+        event: "admin_oidc_callback_failed",
+        reason,
+        ...(caught instanceof Error ? { message: caught.message } : {}),
+      }));
+      await auditLoginFailure(reason);
+      return oidcCallbackFailure(preLogin, reason);
     }
 
     if (!isEmailAllowed(identity.email, identity.emailVerified)) {
@@ -400,6 +411,26 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       preLogin.returnTo ?? "/admin/",
       sessionId,
     );
+  }
+
+  function oidcCallbackFailure(
+    preLogin: AdminSessionPayload | null,
+    reason: string,
+  ): Response {
+    if (preLogin?.cliRedirectUri && preLogin.cliState) {
+      const redirect = new URL(preLogin.cliRedirectUri);
+      redirect.searchParams.set("error", "oidc_failed");
+      redirect.searchParams.set("error_description", `Google sign-in failed (${reason})`);
+      redirect.searchParams.set("state", preLogin.cliState);
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirect.href, "Cache-Control": "no-store" },
+      });
+    }
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "/admin/auth/login?error=oidc-failed", "Cache-Control": "no-store" },
+    });
   }
 
   async function createAuthenticatedSession(
