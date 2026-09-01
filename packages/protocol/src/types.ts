@@ -199,6 +199,32 @@ export interface DecodedSValue {
   readonly refs: readonly string[];
 }
 
+/**
+ * effect 能碰到的全部外部世界。就是 AgentPlatform 去掉 apply ——
+ * effect 跑在 Operator 里，它手上只有 AgentPlatform，没有
+ * DocumentTypeContext（那是 Editor 的东西）。
+ *
+ * 没有 apply：落库是内核的事，effect 只负责把 ops 交出来。
+ */
+export interface EffectContext<TQuery> {
+  readonly query: (query: SValueType<TQuery>) => Promise<{
+    readonly data: SValue;
+    readonly version: number;
+  }>;
+  readonly readBlob: (blob: SBlob) => Promise<SBlobBytes>;
+  readonly writeBlob: (data: SBlobBytes) => Promise<SBlob>;
+  readonly signal: AbortSignal;
+}
+
+export interface EffectOutcome<TOp> {
+  /** 空数组 = 什么都不改。此时内核不调 apply，不产生 delta、不 bump 版本。 */
+  readonly ops: readonly SValueType<TOp>[];
+  /** 交给模型的东西。失败也走这里，不要抛 —— 失败是一次普通的工具返回。 */
+  readonly result: AgentToolResult;
+  /** 落进 delta 的说明。不给则用 `Agent: <工具名>`。 */
+  readonly description?: string;
+}
+
 export type AgentTool<TQuery, TOp> =
   | {
     readonly kind: "query";
@@ -221,6 +247,24 @@ export type AgentTool<TQuery, TOp> =
     readonly inputSchema: Record<string, unknown>;
     /** 纯函数：模型给的参数 → 一批 op。 */
     readonly toOps: (args: Readonly<Record<string, JsonValue>>) => readonly SValueType<TOp>[];
+  }
+  | {
+    /**
+     * 第三种工具形态，也是**唯一**被允许做 IO 的那一种。
+     *
+     * 存在的理由：query/op 都是同步纯函数，于是没有任何一条路径能产出
+     * 模型自己造不出来的字节（像素）。effect 填的就是这个洞：它在 op 被
+     * 创建**之前**完成 IO，把结果落进 CAS，再产出携带引用的普通 op ——
+     * 所以 `apply` 仍然是纯函数，确定性重放不受影响（design.md:184）。
+     */
+    readonly kind: "effect";
+    readonly name: string;
+    readonly description: string;
+    readonly inputSchema: Record<string, unknown>;
+    readonly run: (
+      args: Readonly<Record<string, JsonValue>>,
+      ctx: EffectContext<TQuery>,
+    ) => Promise<EffectOutcome<TOp>>;
   };
 
 export interface DocumentAgent<TQuery, TOp> {

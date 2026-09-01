@@ -8,6 +8,9 @@ import { defaultOpToolResult, defaultQueryToolResult, toolResultToMessage } from
 /** 文档类型没设 maxIterations 时的循环上限。PSD 传 25。 */
 export const DEFAULT_MAX_ITERATIONS = 10;
 
+/** 一次 effect 的墙钟上限。图像模型同步返回约 6s，两分钟足够覆盖重试与慢响应。 */
+export const EFFECT_TIMEOUT_MS = 120_000;
+
 /** 与 sblob-context.ts:69 的默认一致。 */
 const BLOB_CACHE_BYTES = 32 * 1024 * 1024;
 
@@ -120,6 +123,21 @@ export class AgentSession<TQuery, TOp> {
       if (tool.kind === "query") {
         const { data, version } = await this.#deps.platform.query(tool.toQuery(parameters));
         return (tool.toResult ?? defaultQueryToolResult)(data, version);
+      }
+      if (tool.kind === "effect") {
+        const outcome = await tool.run(parameters, {
+          query: q => this.#deps.platform.query(q),
+          readBlob: b => this.#deps.platform.readBlob(b),
+          writeBlob: d => this.#deps.platform.writeBlob(d),
+          signal: AbortSignal.timeout(EFFECT_TIMEOUT_MS),
+        });
+        // 空 ops 不落库：一次被拒绝的生成不该在历史里留下一个空版本。
+        if (outcome.ops.length > 0) {
+          await this.#deps.platform.apply(outcome.ops, outcome.description ?? `Agent: ${name}`);
+        }
+        // 版本号不合并进去 —— effect 自己说清楚发生了什么就够了，
+        // 而且它通常还要附一张 after 预览图（spec 5.2.1：agent 不管版本）。
+        return outcome.result;
       }
       const { version } = await this.#deps.platform.apply(tool.toOps(parameters), `Agent: ${name}`);
       return defaultOpToolResult(version);
