@@ -386,15 +386,20 @@ describe("cas-admin-webui BFF", () => {
   test("CLI login: authorize redirects to Google, callback hands a one-time code, exchange issues a session", async () => {
     const provider = await createMockProvider();
     const bff = await createBff(provider);
+    const cliCodeChallenge = await s256Challenge("cli-verifier-1");
 
     // 1. CLI authorize: fixed public client id + loopback redirect + PKCE.
     const authorize = await bff(new Request(
-      `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli&redirect_uri=${encodeURIComponent("http://127.0.0.1:9999/callback")}&state=cli-state-1&code_challenge=${await s256Challenge("cli-verifier-1")}&code_challenge_method=S256`,
+      `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=unicas-cli&redirect_uri=${encodeURIComponent("http://127.0.0.1:9999/callback")}&state=cli-state-1&code_challenge=${cliCodeChallenge}&code_challenge_method=S256`,
     ));
     expect(authorize.status).toBe(302);
     const preLoginCookie = cookieFrom(authorize)!;
     const googleUrl = new URL(authorize.headers.get("Location")!);
     expect(googleUrl.origin).toBe(ISSUER);
+    // The BFF is a separate OAuth client of Google. Its PKCE transaction must
+    // not reuse the CLI's challenge because Google later receives the BFF's
+    // independently generated verifier.
+    expect(googleUrl.searchParams.get("code_challenge")).not.toBe(cliCodeChallenge);
     const oidcState = googleUrl.searchParams.get("state")!;
     const nonce = googleUrl.searchParams.get("nonce")!;
 

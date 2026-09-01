@@ -550,18 +550,19 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   async function handleCliAuthorize(url: URL): Promise<Response> {
     const clientId = url.searchParams.get("client_id");
     const state = url.searchParams.get("state");
-    const codeChallenge = url.searchParams.get("code_challenge");
+    const cliCodeChallenge = url.searchParams.get("code_challenge");
     const codeChallengeMethod = url.searchParams.get("code_challenge_method");
     const redirectUri = url.searchParams.get("redirect_uri");
     if (clientId !== CLI_CLIENT_ID) {
       return new Response("Unauthorized client", { status: 400 });
     }
-    if (!state || !codeChallenge || codeChallengeMethod !== "S256" || !isLoopbackRedirect(redirectUri)) {
+    if (!state || !cliCodeChallenge || codeChallengeMethod !== "S256" || !isLoopbackRedirect(redirectUri)) {
       return new Response("Invalid CLI authorization request", { status: 400 });
     }
     const oidcState = generateOidcState();
     const oidcNonce = generateOidcNonce();
     const codeVerifier = generatePkceVerifier();
+    const oidcCodeChallenge = await s256Challenge(codeVerifier);
     const sessionId = generateSessionId();
     const payload: AdminSessionPayload = {
       v: 1,
@@ -576,11 +577,15 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       codeVerifier,
       cliClientId: clientId,
       cliState: state,
-      cliCodeChallenge: codeChallenge,
+      cliCodeChallenge,
       cliRedirectUri: redirectUri,
     };
     await sessionStore.create(sessionId, await sessionCrypto.encrypt(payload), sessionTtlMs);
-    const authorizationUrl = await oidc.authorizationUrl({ state: oidcState, nonce: oidcNonce, codeChallenge });
+    const authorizationUrl = await oidc.authorizationUrl({
+      state: oidcState,
+      nonce: oidcNonce,
+      codeChallenge: oidcCodeChallenge,
+    });
     return new Response(null, {
       status: 302,
       headers: {
