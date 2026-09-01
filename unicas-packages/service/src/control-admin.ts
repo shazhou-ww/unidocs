@@ -6,6 +6,8 @@ import {
 import type {
   CasAdminAcceptMemberInvitationRequest,
   CasAdminAcceptMemberInvitationResponse,
+  CasAdminActivateOAuthIssuerRequest,
+  CasAdminActivateOAuthIssuerResponse,
   CasAdminCreateIssuerKeyRequest,
   CasAdminCreateIssuerKeyResponse,
   CasAdminCreateMemberInvitationRequest,
@@ -64,13 +66,16 @@ import {
 import {
   buildPossessionChallenge,
   extractJwsPayload,
+  extractJwsProtectedHeader,
   parsePossessionChallenge,
   validatePublicJwk,
+  verifyCompactJwsProof,
   verifyPossessionProof,
 } from "./control-possession.js";
 import {
   buildOAuthIssuerInspectionChallenge,
   canonicalizeOAuthIssuer,
+  parseOAuthIssuerInspectionChallenge,
   OAUTH_ISSUER_INSPECTION_TTL_MS,
   type DiscoveredOAuthJwk,
   type OAuthDiscoveryPort,
@@ -279,6 +284,19 @@ export type ControlInspectOAuthIssuerCommitResult =
   | { readonly kind: "created" }
   | { readonly kind: "issuer-conflict" | "revision-mismatch" };
 
+export interface ControlActivateOAuthIssuerPlan {
+  readonly stackId: string;
+  readonly inspectionId: string;
+  readonly expectedIssuerRevision: number;
+  readonly activatedAt: number;
+  readonly keys: readonly DiscoveredOAuthJwk[];
+  readonly audit: ControlAuditRecord;
+}
+
+export type ControlActivateOAuthIssuerCommitResult =
+  | { readonly kind: "activated" }
+  | { readonly kind: "unavailable" | "revision-mismatch" };
+
 export interface ControlPutIssuerPlan {
   readonly kind: "insert" | "update";
   readonly stackId: string;
@@ -399,6 +417,11 @@ export interface ControlPlaneAdminRepository {
   commitInspectOAuthIssuer(
     plan: ControlInspectOAuthIssuerPlan,
   ): Promise<ControlInspectOAuthIssuerCommitResult>;
+  getOAuthIssuerInspection(inspectionId: string): Promise<ControlOAuthIssuerInspectionRecord | null>;
+  listOAuthIssuerInspectionKeys(inspectionId: string): Promise<readonly DiscoveredOAuthJwk[]>;
+  commitActivateOAuthIssuer(
+    plan: ControlActivateOAuthIssuerPlan,
+  ): Promise<ControlActivateOAuthIssuerCommitResult>;
   hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean>;
   commitPutIssuer(plan: ControlPutIssuerPlan): Promise<ControlPutIssuerCommitResult>;
   createPossessionChallenge(record: ControlPossessionChallengeRecord): Promise<void>;
@@ -763,6 +786,85 @@ export class ControlPlaneAdminService {
     });
   }
 
+  activateOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminActivateOAuthIssuerRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminActivateOAuthIssuerResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      const current = await this.#repository.getOAuthIssuer(request.path.stackId);
+      if (!current || current.status !== "pending") {
+        throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "pending OAuth issuer is not configured");
+      }
+      this.#requireIfMatch(mutation.ifMatch, current.revision);
+      const inspection = await this.#repository.getOAuthIssuerInspection(request.body.inspectionId);
+      const now = this.#now();
+      if (!inspection || inspection.stackId !== request.path.stackId || inspection.usedAt !== null || inspection.expiresAt <= now) {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "OAuth issuer inspection is unavailable");
+      }
+      if (inspection.issuer !== current.issuer
+        || inspection.audience !== current.audience
+        || inspection.metadataUrl !== current.metadataUrl
+        || inspection.metadataType !== current.metadataType
+        || inspection.authorizationEndpoint !== current.authorizationEndpoint
+        || inspection.tokenEndpoint !== current.tokenEndpoint
+        || inspection.jwksUri !== current.jwksUri
+        || inspection.registrationEndpoint !== current.registrationEndpoint
+        || !sameStrings(inspection.scopesSupported, current.scopesSupported)
+        || !sameStrings(inspection.codeChallengeMethodsSupported, current.codeChallengeMethodsSupported)
+        || inspection.jwksDigest !== current.jwksDigest
+        || inspection.capabilityMaxLifetimeSeconds !== current.capabilityMaxLifetimeSeconds) {
+        throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "OAuth issuer inspection is no longer current");
+      }
+      const challenge = extractJwsPayload(request.body.activationProof);
+      const parsed = challenge === null ? null : parseOAuthIssuerInspectionChallenge(challenge);
+      if (!challenge || !parsed || await sha256Hex(challenge) !== inspection.challengeHash
+        || parsed.inspectionId !== inspection.inspectionId
+        || parsed.stackId !== inspection.stackId
+        || parsed.issuer !== inspection.issuer
+        || parsed.audience !== inspection.audience
+        || parsed.metadataDigest !== inspection.metadataDigest
+        || parsed.jwksDigest !== inspection.jwksDigest
+        || parsed.capabilityMaxLifetimeSeconds !== inspection.capabilityMaxLifetimeSeconds
+        || parsed.expiresAt !== inspection.expiresAt) {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "activation proof challenge is invalid");
+      }
+      const header = extractJwsProtectedHeader(request.body.activationProof);
+      const keys = await this.#repository.listOAuthIssuerInspectionKeys(inspection.inspectionId);
+      const key = header === null ? undefined : keys.find((candidate) => candidate.kid === header.kid);
+      if (!header || !key || header.alg !== key.algorithm
+        || !await verifyCompactJwsProof({
+          challenge,
+          algorithm: key.algorithm,
+          publicJwk: key.publicJwk as Record<string, unknown>,
+          proof: request.body.activationProof,
+        })) {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "activation proof signature is invalid");
+      }
+      const result = await this.#repository.commitActivateOAuthIssuer({
+        stackId: request.path.stackId,
+        inspectionId: inspection.inspectionId,
+        expectedIssuerRevision: current.revision,
+        activatedAt: now,
+        keys,
+        audit: this.#audit(ctx, ControlAuditActions.oauthIssuerActivated, current.issuer, request.path.stackId),
+      });
+      if (result.kind === "unavailable") {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "OAuth issuer inspection is unavailable");
+      }
+      if (result.kind === "revision-mismatch") {
+        throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "OAuth issuer resource revision has changed");
+      }
+      return toCasStackOAuthIssuer({
+        ...current,
+        status: "active",
+        verifiedAt: now,
+        revision: current.revision + 1,
+      });
+    });
+  }
+
   putIssuer(
     ctx: ControlPlaneCallContext,
     request: Omit<CasAdminPutIssuerRequest, "headers">,
@@ -776,6 +878,9 @@ export class ControlPlaneAdminService {
       if (audienceError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, audienceError);
       const lifetimeError = validateCapabilityMaxLifetimeSeconds(request.body.capabilityMaxLifetimeSeconds);
       if (lifetimeError) throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, lifetimeError);
+      if (await this.#repository.hasOAuthIssuerElsewhere(request.body.issuer, request.path.stackId)) {
+        throw new ControlPlaneError(CasAdminErrorCodes.ISSUER_CONFLICT, "issuer is already registered to another stack");
+      }
       const existing = await this.#repository.getIssuer(request.path.stackId);
       if (existing) {
         this.#requireIfMatch(mutation.ifMatch, existing.revision);
@@ -1348,6 +1453,10 @@ function toCasStack(record: ControlStackRecord): CasStack {
 
 function toCasStackIssuer(record: ControlIssuerRecord): CasStackIssuer {
   return { ...record };
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function toCasStackOAuthIssuer(record: ControlOAuthIssuerRecord): CasStackOAuthIssuer {

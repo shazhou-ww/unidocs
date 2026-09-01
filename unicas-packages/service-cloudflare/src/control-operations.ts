@@ -31,6 +31,7 @@ export function createControlPlaneOperations(
     getIssuer: admin.getIssuer.bind(admin),
     getOAuthIssuer: admin.getOAuthIssuer.bind(admin),
     inspectOAuthIssuer: admin.inspectOAuthIssuer.bind(admin),
+    activateOAuthIssuer: admin.activateOAuthIssuer.bind(admin),
     putIssuer: admin.putIssuer.bind(admin),
     createPossessionChallenge: admin.createPossessionChallenge.bind(admin),
     listIssuerKeys: admin.listIssuerKeys.bind(admin),

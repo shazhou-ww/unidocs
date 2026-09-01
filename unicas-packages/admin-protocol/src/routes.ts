@@ -11,6 +11,7 @@ export type CasAdminRoute =
   | { operation: "getIssuer"; stackId: string }
   | { operation: "getOAuthIssuer"; stackId: string }
   | { operation: "inspectOAuthIssuer"; stackId: string }
+  | { operation: "activateOAuthIssuer"; stackId: string }
   | { operation: "putIssuer"; stackId: string }
   | { operation: "listIssuerKeys"; stackId: string }
   | { operation: "createIssuerKey"; stackId: string }
@@ -129,7 +130,9 @@ export function matchCasAdminRoute(
   }
 
   if (parts.length === 4 && parts[3] === "oauth-issuer") {
-    return method === "GET" ? { operation: "getOAuthIssuer", stackId } : null;
+    if (method === "GET") return { operation: "getOAuthIssuer", stackId };
+    if (method === "PUT") return { operation: "activateOAuthIssuer", stackId };
+    return null;
   }
 
   if (

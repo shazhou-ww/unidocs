@@ -14,7 +14,7 @@
  * produce, matching `CompactSign` from jose.
  */
 
-import { compactVerify } from "jose";
+import { compactVerify, decodeProtectedHeader } from "jose";
 import type { JWK } from "jose";
 import { isSupportedKeyAlgorithm } from "./control-validation.js";
 import type { SupportedKeyAlgorithm } from "./control-validation.js";
@@ -79,6 +79,25 @@ export async function verifyPossessionProof(input: {
   }
 }
 
+export async function verifyCompactJwsProof(input: {
+  readonly challenge: string;
+  readonly algorithm: SupportedKeyAlgorithm;
+  readonly publicJwk: Record<string, unknown>;
+  readonly proof: string;
+}): Promise<boolean> {
+  try {
+    const { payload, protectedHeader } = await compactVerify(
+      input.proof,
+      input.publicJwk as JWK,
+      { algorithms: [input.algorithm] },
+    );
+    return protectedHeader.kid === input.publicJwk.kid
+      && new TextDecoder().decode(payload) === input.challenge;
+  } catch {
+    return false;
+  }
+}
+
 /** Decode the payload of a compact JWS (three dot-separated base64url parts). */
 export function extractJwsPayload(jws: string): string | null {
   const parts = jws.split(".");
@@ -92,6 +111,17 @@ export function extractJwsPayload(jws: string): string | null {
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+export function extractJwsProtectedHeader(jws: string): { readonly kid: string; readonly alg: string } | null {
+  try {
+    const header = decodeProtectedHeader(jws);
+    return typeof header.kid === "string" && header.kid.length > 0 && typeof header.alg === "string"
+      ? { kid: header.kid, alg: header.alg }
+      : null;
   } catch {
     return null;
   }

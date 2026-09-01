@@ -82,6 +82,9 @@ class MockAdminService implements AdminHttpFetcher {
         revision: 4,
       }, { headers: { ETag: `"rev-4"` } });
     }
+    if (path === casAdminRoutes.oauthIssuer({ stackId: STACK }) && request.method === "PUT") {
+      return Response.json({ stackId: STACK, status: "active", revision: 2 }, { headers: { ETag: `"rev-2"` } });
+    }
     if (path === casAdminRoutes.oauthIssuerInspections({ stackId: STACK }) && request.method === "POST") {
       const body = await request.json() as { issuer: string; audience: string };
       return Response.json({
@@ -156,6 +159,17 @@ describe("functional admin client", () => {
     expect(result).toMatchObject({ value: { inspectionId: "oinsp_test" }, etag: '"rev-1"' });
     const request = service.requests.find((entry) => entry.path.endsWith("/oauth-issuer/inspections"))!;
     expect(request).toMatchObject({ method: "POST", csrf: "csrf-1" });
+  });
+
+  it("activates an OAuth issuer with CSRF and If-Match", async () => {
+    const result = await client.activateOAuthIssuer(
+      { stackId: STACK },
+      { inspectionId: "oinsp_test", activationProof: "proof" },
+      '"rev-1"',
+    );
+    expect(result).toMatchObject({ value: { status: "active", revision: 2 }, etag: '"rev-2"' });
+    const request = service.requests.find((entry) => entry.path.endsWith("/oauth-issuer") && entry.method === "PUT")!;
+    expect(request).toMatchObject({ method: "PUT", csrf: "csrf-1" });
   });
 
   it("attaches CSRF to mutations", async () => {

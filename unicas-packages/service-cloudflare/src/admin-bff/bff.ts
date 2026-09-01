@@ -729,6 +729,18 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         });
         return jsonWithEtag(result);
       }
+      case "activateOAuthIssuer": {
+        const body = await readJsonBody<{ inspectionId?: unknown; activationProof?: unknown }>(request);
+        if (!body) return invalidRequest("JSON body is required");
+        const result = await controlPlane.activateOAuthIssuer(ctx, {
+          path: { stackId: route.stackId },
+          body: {
+            inspectionId: String(body.inspectionId ?? ""),
+            activationProof: String(body.activationProof ?? ""),
+          },
+        }, mutation);
+        return jsonWithEtag(result);
+      }
       case "putIssuer": {
         const body = await readJsonBody<{
           issuer?: unknown;

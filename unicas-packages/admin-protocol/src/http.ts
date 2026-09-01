@@ -136,6 +136,19 @@ export type CasAdminInspectOAuthIssuerResponse =
   | CasOAuthIssuerInspection
   | CasAdminErrorResponse;
 
+export interface CasAdminActivateOAuthIssuerRequest {
+  readonly path: CasAdminStackPath;
+  readonly headers: CasAdminMutationPreconditions;
+  readonly body: {
+    readonly inspectionId: string;
+    readonly activationProof: string;
+  };
+}
+
+export type CasAdminActivateOAuthIssuerResponse =
+  | CasStackOAuthIssuer
+  | CasAdminErrorResponse;
+
 export interface CasAdminPutIssuerRequest {
   readonly path: CasAdminStackPath;
   readonly headers: CasAdminMutationPreconditions;
@@ -272,6 +285,10 @@ export interface CasAdminEndpointContracts {
   inspectOAuthIssuer: {
     request: CasAdminInspectOAuthIssuerRequest;
     response: CasAdminInspectOAuthIssuerResponse;
+  };
+  activateOAuthIssuer: {
+    request: CasAdminActivateOAuthIssuerRequest;
+    response: CasAdminActivateOAuthIssuerResponse;
   };
   putIssuer: { request: CasAdminPutIssuerRequest; response: CasAdminPutIssuerResponse };
   listIssuerKeys: {

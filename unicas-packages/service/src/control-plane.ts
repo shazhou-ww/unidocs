@@ -1,6 +1,8 @@
 import type {
   CasAdminAcceptMemberInvitationRequest,
   CasAdminAcceptMemberInvitationResponse,
+  CasAdminActivateOAuthIssuerRequest,
+  CasAdminActivateOAuthIssuerResponse,
   CasAdminCreateIssuerKeyRequest,
   CasAdminCreateIssuerKeyResponse,
   CasAdminCreateMemberInvitationRequest,
@@ -101,6 +103,11 @@ export interface ControlPlaneOperations {
     ctx: ControlPlaneCallContext,
     request: CasAdminInspectOAuthIssuerRequest,
   ): Promise<CasAdminInspectOAuthIssuerResponse>;
+  activateOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminActivateOAuthIssuerRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminActivateOAuthIssuerResponse>;
   putIssuer(
     ctx: ControlPlaneCallContext,
     request: Omit<CasAdminPutIssuerRequest, "headers">,

@@ -71,6 +71,29 @@ export function buildOAuthIssuerInspectionChallenge(
   ].join("\n");
 }
 
+export function parseOAuthIssuerInspectionChallenge(
+  challenge: string,
+): OAuthIssuerInspectionChallengeInput | null {
+  const parts = challenge.split("\n");
+  if (parts.length !== 10 || parts[0] !== OAUTH_ISSUER_INSPECTION_CHALLENGE_VERSION) return null;
+  const [, nonce, inspectionId, stackId, issuer, audience, metadataDigest, jwksDigest, lifetimeText, expiresText] = parts;
+  const capabilityMaxLifetimeSeconds = Number(lifetimeText);
+  const expiresAt = Number(expiresText);
+  if (!nonce || !inspectionId || !stackId || !issuer || !audience || !metadataDigest || !jwksDigest
+    || !Number.isSafeInteger(capabilityMaxLifetimeSeconds) || !Number.isSafeInteger(expiresAt)) return null;
+  return {
+    nonce,
+    inspectionId,
+    stackId,
+    issuer,
+    audience,
+    metadataDigest,
+    jwksDigest,
+    capabilityMaxLifetimeSeconds,
+    expiresAt,
+  };
+}
+
 /** Validate an issuer while preserving its identifier for exact metadata/token matching. */
 export function canonicalizeOAuthIssuer(value: string): string {
   const trimmed = value.trim();

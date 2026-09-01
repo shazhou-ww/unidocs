@@ -17,11 +17,14 @@ import type {
   ControlIdempotencyRecord,
   ControlIdentityPlan,
   ControlIdentityRecord,
+  ControlActivateOAuthIssuerCommitResult,
+  ControlActivateOAuthIssuerPlan,
   ControlInspectOAuthIssuerCommitResult,
   ControlInspectOAuthIssuerPlan,
   ControlIssuerKeyRecord,
   ControlIssuerRecord,
   ControlOAuthIssuerRecord,
+  ControlOAuthIssuerInspectionRecord,
   ControlMembershipRecord,
   ControlMemberInvitationRecord,
   ControlPatchStackCommitResult,
@@ -31,6 +34,7 @@ import type {
   ControlPutIssuerCommitResult,
   ControlPutIssuerPlan,
   ControlStackRecord,
+  DiscoveredOAuthJwk,
 } from "@unicas/service";
 
 const SNAPSHOT_KEY = "snapshot";
@@ -421,6 +425,68 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
     }
   }
 
+  async getOAuthIssuerInspection(inspectionId: string): Promise<ControlOAuthIssuerInspectionRecord | null> {
+    const row = await this.#db.prepare(
+      "SELECT * FROM cas_oauth_issuer_inspections WHERE inspection_id = ?",
+    ).bind(inspectionId).first<OAuthIssuerInspectionRow>();
+    return row ? toOAuthIssuerInspection(row) : null;
+  }
+
+  async listOAuthIssuerInspectionKeys(inspectionId: string): Promise<readonly DiscoveredOAuthJwk[]> {
+    const rows = await this.#db.prepare(
+      "SELECT kid, algorithm, public_jwk FROM cas_oauth_issuer_inspection_keys WHERE inspection_id = ? ORDER BY kid",
+    ).bind(inspectionId).all<OAuthIssuerInspectionKeyRow>();
+    return (rows.results ?? []).map((row) => ({
+      kid: row.kid,
+      algorithm: row.algorithm as DiscoveredOAuthJwk["algorithm"],
+      publicJwk: JSON.parse(row.public_jwk) as Record<string, unknown>,
+    }));
+  }
+
+  async commitActivateOAuthIssuer(
+    plan: ControlActivateOAuthIssuerPlan,
+  ): Promise<ControlActivateOAuthIssuerCommitResult> {
+    const activateIssuer = this.#db.prepare(
+      "UPDATE cas_stack_oauth_issuers SET status = 'active', verified_at = ?, revision = revision + 1 WHERE stack_id = ? AND revision = ? AND status = 'pending'",
+    ).bind(plan.activatedAt, plan.stackId, plan.expectedIssuerRevision);
+    const requireIssuer = this.#db.prepare(
+      "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('invalid', '$') END AS updated",
+    );
+    const consumeInspection = this.#db.prepare(
+      "UPDATE cas_oauth_issuer_inspections SET used_at = ?, revision = revision + 1 WHERE inspection_id = ? AND stack_id = ? AND used_at IS NULL AND expires_at > ?",
+    ).bind(plan.activatedAt, plan.inspectionId, plan.stackId, plan.activatedAt);
+    const requireInspection = this.#db.prepare(
+      "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('unavailable', '$') END AS consumed",
+    );
+    const deleteKeys = this.#db.prepare(
+      "DELETE FROM cas_stack_oauth_issuer_keys WHERE stack_id = ?",
+    ).bind(plan.stackId);
+    const insertKeys = plan.keys.map((key) => this.#db.prepare(
+      "INSERT INTO cas_stack_oauth_issuer_keys (stack_id, kid, algorithm, public_jwk, jwks_digest, activated_at) SELECT ?, ?, ?, ?, jwks_digest, ? FROM cas_oauth_issuer_inspections WHERE inspection_id = ?",
+    ).bind(plan.stackId, key.kid, key.algorithm, JSON.stringify(key.publicJwk), plan.activatedAt, plan.inspectionId));
+    try {
+      await this.#db.batch([
+        activateIssuer,
+        requireIssuer,
+        consumeInspection,
+        requireInspection,
+        deleteKeys,
+        ...insertKeys,
+        ...this.#mutationStatements(plan.audit),
+      ]);
+      return { kind: "activated" };
+    } catch (error) {
+      if (isJsonFailure(error)) {
+        const inspection = await this.getOAuthIssuerInspection(plan.inspectionId);
+        if (!inspection || inspection.usedAt !== null || inspection.expiresAt <= plan.activatedAt) {
+          return { kind: "unavailable" };
+        }
+        return { kind: "revision-mismatch" };
+      }
+      throw error;
+    }
+  }
+
   async hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
     const row = await this.#db
       .prepare("SELECT 1 AS ok FROM cas_stack_issuer WHERE issuer = ? AND stack_id != ?")
@@ -705,6 +771,35 @@ interface OAuthIssuerRow {
   readonly revision: number;
 }
 
+interface OAuthIssuerInspectionRow {
+  readonly inspection_id: string;
+  readonly stack_id: string;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly metadata_url: string;
+  readonly metadata_type: string;
+  readonly authorization_endpoint: string;
+  readonly token_endpoint: string;
+  readonly jwks_uri: string;
+  readonly registration_endpoint: string | null;
+  readonly scopes_supported: string;
+  readonly code_challenge_methods_supported: string;
+  readonly metadata_digest: string;
+  readonly jwks_digest: string;
+  readonly challenge_hash: string;
+  readonly capability_max_lifetime_seconds: number;
+  readonly created_at: number;
+  readonly expires_at: number;
+  readonly used_at: number | null;
+  readonly revision: number;
+}
+
+interface OAuthIssuerInspectionKeyRow {
+  readonly kid: string;
+  readonly algorithm: string;
+  readonly public_jwk: string;
+}
+
 interface IssuerKeyRow {
   readonly stack_id: string;
   readonly kid: string;
@@ -803,6 +898,31 @@ function toOAuthIssuer(row: OAuthIssuerRow): ControlOAuthIssuerRecord {
   };
 }
 
+function toOAuthIssuerInspection(row: OAuthIssuerInspectionRow): ControlOAuthIssuerInspectionRecord {
+  return {
+    inspectionId: row.inspection_id,
+    stackId: row.stack_id,
+    issuer: row.issuer,
+    audience: row.audience,
+    metadataUrl: row.metadata_url,
+    metadataType: row.metadata_type as ControlOAuthIssuerInspectionRecord["metadataType"],
+    authorizationEndpoint: row.authorization_endpoint,
+    tokenEndpoint: row.token_endpoint,
+    jwksUri: row.jwks_uri,
+    registrationEndpoint: row.registration_endpoint,
+    scopesSupported: JSON.parse(row.scopes_supported) as string[],
+    codeChallengeMethodsSupported: JSON.parse(row.code_challenge_methods_supported) as string[],
+    metadataDigest: row.metadata_digest,
+    jwksDigest: row.jwks_digest,
+    challengeHash: row.challenge_hash,
+    capabilityMaxLifetimeSeconds: row.capability_max_lifetime_seconds,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+    revision: row.revision,
+  };
+}
+
 function toIssuerKey(row: IssuerKeyRow): ControlIssuerKeyRecord {
   return {
     stackId: row.stack_id,
@@ -888,20 +1008,23 @@ function isUniqueViolation(error: unknown, table: string): boolean {
     && error.message.includes(table);
 }
 
+function isJsonFailure(error: unknown): boolean {
+  return error instanceof Error && /malformed JSON/i.test(error.message);
+}
+
 /** Global issuer uniqueness race (UNIQUE index `cas_issuer_by_issuer`). */
 function isIssuerConflict(error: unknown): boolean {
   return error instanceof Error
-    && error.message.includes("UNIQUE constraint failed")
-    && (error.message.includes("cas_issuer_by_issuer") || error.message.includes("cas_stack_issuer"));
+    && ((error.message.includes("UNIQUE constraint failed")
+      && (error.message.includes("cas_issuer_by_issuer") || error.message.includes("cas_stack_issuer")))
+      || error.message.includes("issuer conflict"));
 }
 
 function isOAuthIssuerConflict(error: unknown): boolean {
   return error instanceof Error
-    && error.message.includes("UNIQUE constraint failed")
-    && (error.message.includes("cas_oauth_issuer_by_issuer")
-      || error.message.includes("cas_stack_oauth_issuers.issuer"));
+    && ((error.message.includes("UNIQUE constraint failed")
+      && (error.message.includes("cas_oauth_issuer_by_issuer")
+        || error.message.includes("cas_stack_oauth_issuers.issuer")))
+      || error.message.includes("issuer conflict"));
 }
 
-function isJsonFailure(error: unknown): boolean {
-  return error instanceof Error && /malformed JSON/i.test(error.message);
-}

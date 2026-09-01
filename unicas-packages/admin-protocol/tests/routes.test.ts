@@ -17,6 +17,7 @@ describe("CAS admin routes", () => {
     ["POST", casAdminRoutes.acceptMemberInvitation({ token: "tok/1" }), "acceptMemberInvitation"],
     ["GET", casAdminRoutes.issuer({ stackId: "stack/a" }), "getIssuer"],
     ["GET", casAdminRoutes.oauthIssuer({ stackId: "stack/a" }), "getOAuthIssuer"],
+    ["PUT", casAdminRoutes.oauthIssuer({ stackId: "stack/a" }), "activateOAuthIssuer"],
     ["POST", casAdminRoutes.oauthIssuerInspections({ stackId: "stack/a" }), "inspectOAuthIssuer"],
     ["PUT", casAdminRoutes.issuer({ stackId: "stack/a" }), "putIssuer"],
     ["GET", casAdminRoutes.issuerKeys({ stackId: "stack/a" }), "listIssuerKeys"],
@@ -41,7 +42,7 @@ describe("CAS admin routes", () => {
     expect(matchCasAdminRoute("GET", "/tenants/t/cas/usage")).toBeNull();
     expect(matchCasAdminRoute("POST", casAdminRoutes.me())).toBeNull();
     expect(matchCasAdminRoute("POST", casAdminRoutes.refDomains({ stackId: "s" }))).toBeNull();
-    expect(matchCasAdminRoute("PUT", casAdminRoutes.oauthIssuer({ stackId: "s" }))).toBeNull();
+    expect(matchCasAdminRoute("PATCH", casAdminRoutes.oauthIssuer({ stackId: "s" }))).toBeNull();
     expect(matchCasAdminRoute("GET", casAdminRoutes.oauthIssuerInspections({ stackId: "s" }))).toBeNull();
     expect(matchCasAdminRoute("GET", "/admin/%ZZ/stacks")).toBeNull();
   });

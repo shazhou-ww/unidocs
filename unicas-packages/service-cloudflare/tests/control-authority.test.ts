@@ -55,4 +55,28 @@ describe("AuthorityRepository (read-only)", () => {
     expect(await repository.resolveIssuer("https://unknown.example")).toBeNull();
     expect(await repository.resolveIssuer("")).toBeNull();
   });
+
+  test("prefers active OAuth issuer snapshots and fails closed without keys", async () => {
+    const repository = await createRepository();
+    await db!.batch([
+      db!.prepare("INSERT INTO cas_stack_oauth_issuers (stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, status, jwks_digest, capability_max_lifetime_seconds) VALUES ('cas_oauth', 'https://oauth.example', 'cas', 'https://oauth.example/.well-known/oauth-authorization-server', 'oauth', 'https://oauth.example/authorize', 'https://oauth.example/token', 'https://oauth.example/jwks', 'active', 'digest', 600)"),
+      db!.prepare("INSERT INTO cas_stack_oauth_issuer_keys (stack_id, kid, algorithm, public_jwk, jwks_digest, activated_at) VALUES ('cas_oauth', 'oauth-k1', 'ES256', '{\"kty\":\"EC\"}', 'digest', 1)"),
+      db!.prepare("INSERT INTO cas_stack_oauth_issuers (stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, status, jwks_digest, capability_max_lifetime_seconds) VALUES ('cas_empty', 'https://empty.example', 'cas', 'https://empty.example/.well-known/oauth-authorization-server', 'oauth', 'https://empty.example/authorize', 'https://empty.example/token', 'https://empty.example/jwks', 'active', 'digest', 600)"),
+    ]);
+    expect(await repository.resolveIssuer("https://oauth.example")).toMatchObject({
+      stackId: "cas_oauth",
+      keys: [{ kid: "oauth-k1", state: "active" }],
+    });
+    expect(await repository.resolveIssuer("https://empty.example")).toBeNull();
+  });
+
+  test("suppresses every legacy authority for a stack after OAuth activation", async () => {
+    const repository = await createRepository();
+    await db!.batch([
+      db!.prepare("INSERT INTO cas_stack_oauth_issuers (stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, status, jwks_digest, capability_max_lifetime_seconds) VALUES ('cas_s', 'https://oauth.example', 'cas', 'https://oauth.example/.well-known/oauth-authorization-server', 'oauth', 'https://oauth.example/authorize', 'https://oauth.example/token', 'https://oauth.example/jwks', 'active', 'digest', 600)"),
+      db!.prepare("INSERT INTO cas_stack_oauth_issuer_keys (stack_id, kid, algorithm, public_jwk, jwks_digest, activated_at) VALUES ('cas_s', 'oauth-k1', 'ES256', '{\"kty\":\"EC\"}', 'digest', 1)"),
+    ]);
+    expect(await repository.resolveIssuer("https://issuer.example")).toBeNull();
+    expect(await repository.resolveIssuer("https://oauth.example")).toMatchObject({ stackId: "cas_s" });
+  });
 });

@@ -135,9 +135,11 @@ export { buildStackJwks } from "./control-jwks.js";
 export {
   buildPossessionChallenge,
   extractJwsPayload,
+  extractJwsProtectedHeader,
   parsePossessionChallenge,
   POSSESSION_CHALLENGE_VERSION,
   validatePublicJwk,
+  verifyCompactJwsProof,
   verifyPossessionProof,
 } from "./control-possession.js";
 export type { PossessionChallengeInput } from "./control-possession.js";
@@ -174,6 +176,7 @@ export {
   OAUTH_ISSUER_INSPECTION_CHALLENGE_VERSION,
   OAUTH_ISSUER_INSPECTION_TTL_MS,
   oauthDiscoveryCandidates,
+  parseOAuthIssuerInspectionChallenge,
   parseOAuthJwks,
   parseOAuthMetadata,
 } from "./oauth-discovery.js";
@@ -195,6 +198,8 @@ export type {
 } from "./control-plane.js";
 export { ControlPlaneAdminService } from "./control-admin.js";
 export type {
+  ControlActivateOAuthIssuerCommitResult,
+  ControlActivateOAuthIssuerPlan,
   ControlAcceptMemberInvitationCommitResult,
   ControlAcceptMemberInvitationPlan,
   ControlAuditRecord,

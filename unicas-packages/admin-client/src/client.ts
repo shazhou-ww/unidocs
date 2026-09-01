@@ -84,6 +84,11 @@ export interface AdminClient {
       readonly capabilityMaxLifetimeSeconds?: number;
     },
   ): Promise<AdminClientRead<CasOAuthIssuerInspection>>;
+  activateOAuthIssuer(
+    path: { readonly stackId: CasStackId },
+    body: { readonly inspectionId: string; readonly activationProof: string },
+    ifMatch: string,
+  ): Promise<AdminClientRead<CasStackOAuthIssuer>>;
   putIssuer(
     path: { readonly stackId: CasStackId },
     body: {
@@ -293,6 +298,18 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
           body: JSON.stringify(body),
         }),
         "inspectOAuthIssuer",
+      );
+      return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async activateOAuthIssuer(path, body, ifMatch) {
+      const response = await requireOk(
+        await request(casAdminRoutes.oauthIssuer(path), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...ifMatchHeader(ifMatch) },
+          body: JSON.stringify(body),
+        }),
+        "activateOAuthIssuer",
       );
       return { value: await response.json(), etag: readEtag(response) };
     },

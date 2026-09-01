@@ -191,6 +191,8 @@ describe("D1-backed control-plane service", () => {
   });
 
   test("atomically persists an OAuth issuer inspection snapshot", async () => {
+    const pair = await generateKeyPair("ES256");
+    const publicJwk = { ...await exportJWK(pair.publicKey), kid: "key-1", alg: "ES256" };
     const oauthDiscovery: OAuthDiscoveryPort = {
       inspectIssuer: async ({ issuer }) => ({
         metadata: {
@@ -209,7 +211,7 @@ describe("D1-backed control-plane service", () => {
         keys: [{
           kid: "key-1",
           algorithm: "ES256",
-          publicJwk: { kid: "key-1", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y" },
+          publicJwk,
         }],
       }),
     };
@@ -239,6 +241,67 @@ describe("D1-backed control-plane service", () => {
     expect(await db.prepare(
       "SELECT action FROM cas_control_audit_events WHERE stack_id = ? AND action = 'oauth_issuer.inspection.created'",
     ).bind(stackId).first()).toEqual({ action: "oauth_issuer.inspection.created" });
+    const activationProof = await new CompactSign(new TextEncoder().encode(result.challenge))
+      .setProtectedHeader({ alg: "ES256", kid: "key-1" })
+      .sign(pair.privateKey);
+    expect(await service.activateOAuthIssuer(ctx(alice), {
+      path: { stackId },
+      body: { inspectionId: result.inspectionId, activationProof },
+    }, { ifMatch: '"1"' })).toMatchObject({ status: "active", revision: 2, verifiedAt: 1_000 });
+    expect(await db.prepare(
+      "SELECT used_at FROM cas_oauth_issuer_inspections WHERE inspection_id = ?",
+    ).bind(result.inspectionId).first()).toEqual({ used_at: 1_000 });
+    expect(await db.prepare(
+      "SELECT kid, algorithm FROM cas_stack_oauth_issuer_keys WHERE stack_id = ?",
+    ).bind(stackId).first()).toEqual({ kid: "key-1", algorithm: "ES256" });
+    expect(await db.prepare(
+      "SELECT action FROM cas_control_audit_events WHERE stack_id = ? AND action = 'oauth_issuer.activated'",
+    ).bind(stackId).first()).toEqual({ action: "oauth_issuer.activated" });
+    expectError(await service.activateOAuthIssuer(ctx(alice), {
+      path: { stackId },
+      body: { inspectionId: result.inspectionId, activationProof },
+    }, { ifMatch: '"2"' }), CasAdminErrorCodes.NOT_FOUND);
+  });
+
+  test("enforces issuer ownership across legacy and OAuth registries", async () => {
+    const oauthDiscovery: OAuthDiscoveryPort = {
+      inspectIssuer: async ({ issuer }) => ({
+        metadata: {
+          issuer,
+          metadataUrl: `${issuer}/.well-known/oauth-authorization-server`,
+          metadataType: "oauth",
+          authorizationEndpoint: `${issuer}/authorize`,
+          tokenEndpoint: `${issuer}/token`,
+          jwksUri: `${issuer}/jwks`,
+          registrationEndpoint: null,
+          scopesSupported: [],
+          codeChallengeMethodsSupported: ["S256"],
+        },
+        metadataDigest: "a".repeat(64),
+        jwksDigest: "b".repeat(64),
+        keys: [{ kid: "key-1", algorithm: "ES256", publicJwk: { kid: "key-1", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y" } }],
+      }),
+    };
+    const { service } = await createService(() => 1_000, oauthDiscovery);
+    const legacyStack = await createStack(service, alice, "Legacy");
+    const oauthStack = await createStack(service, alice, "OAuth");
+    await service.putIssuer(ctx(alice), {
+      path: { stackId: legacyStack },
+      body: { issuer: "https://shared.example", audience: "cas" },
+    }, {});
+    expectError(await service.inspectOAuthIssuer(ctx(alice), {
+      path: { stackId: oauthStack },
+      body: { issuer: "https://shared.example", audience: "cas" },
+    }), CasAdminErrorCodes.ISSUER_CONFLICT);
+    await service.inspectOAuthIssuer(ctx(alice), {
+      path: { stackId: oauthStack },
+      body: { issuer: "https://oauth.example", audience: "cas" },
+    });
+    const thirdStack = await createStack(service, alice, "Third");
+    expectError(await service.putIssuer(ctx(alice), {
+      path: { stackId: thirdStack },
+      body: { issuer: "https://oauth.example", audience: "cas" },
+    }, {}), CasAdminErrorCodes.ISSUER_CONFLICT);
   });
 
   test("maps concurrent first OAuth issuer inspections to a revision mismatch", async () => {

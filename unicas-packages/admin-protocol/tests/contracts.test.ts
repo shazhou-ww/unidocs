@@ -103,6 +103,7 @@ describe("control-plane contract freezes", () => {
       "getIssuer",
       "getOAuthIssuer",
       "inspectOAuthIssuer",
+      "activateOAuthIssuer",
       "putIssuer",
       "listIssuerKeys",
       "createIssuerKey",
@@ -112,7 +113,7 @@ describe("control-plane contract freezes", () => {
       "listRootDomainRefs",
       "listRootDomainEvents",
     ];
-    expect(keys).toHaveLength(20);
+    expect(keys).toHaveLength(21);
   });
 
   test("root-ref audit response shapes accept negative balances", () => {

@@ -59,6 +59,8 @@ export {
 export { casAdminThreatModel } from "./threat-model.js";
 
 export type {
+  CasAdminActivateOAuthIssuerRequest,
+  CasAdminActivateOAuthIssuerResponse,
   CasAdminAcceptMemberInvitationRequest,
   CasAdminAcceptMemberInvitationResponse,
   CasAdminCreateIssuerKeyRequest,
