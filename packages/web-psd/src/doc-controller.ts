@@ -15,6 +15,7 @@
 import { CasBlobStore, DocSession, loadDoc, RenderClient, Viewport } from "@unidocs/psd-client";
 import { cacheBytesFor, countLayers, rectsOverlap, type LocalLayer, type Rect, type SizedLayer } from "./doc-model.js";
 import type { Hit } from "./ui/hit-test.js";
+import type { OpenPhase } from "./ui/store.js";
 
 // Dev: Vite proxies `/gw/*` to the gateway (see vite.config.ts), which keeps
 // the browser same-origin without CORS. Production: the built app is served
@@ -33,6 +34,14 @@ export interface DocControllerEvents {
   /** Fires whenever the document or version changes: cold start, local op,
    *  rebase (409 / agent run / another tab), rollback. */
   onDoc(doc: DocSession["doc"], version: number): void;
+  /** 一次打开走到了新的阶段。只报告,不管 store 里那个 `opening` 字段的
+   *  生死——它的写入和清除归 ui/controller.ts 的 wrapper 所有(见那边的
+   *  createFrom)。 */
+  onOpenPhase(phase: OpenPhase): void;
+  /** 打开失败。单独一个事件,是因为 `createFrom` 按设计永不 reject(见
+   *  ui/controller.ts 里 `before` 比较那段注释),失败只能这样报出来。
+   *  成功没有对应事件:wrapper 的 finally 已经负责收尾。 */
+  onOpenFailed(error: Error): void;
 }
 
 export class DocController {
@@ -90,6 +99,7 @@ export class DocController {
     const docId = this.docIdField;
     if (!docId) return;
     this.events.onStatus(`loading ${docId.slice(0, 8)}…`);
+    this.events.onOpenPhase("load");
 
     const store = new CasBlobStore({ apiBaseUrl: API_BASE_URL });
     const { doc, version, snapshot } = await loadDoc({
@@ -128,6 +138,8 @@ export class DocController {
     // Size the browser cache to actually hold this doc's decoded layers (see
     // `decodedBytes` above), not the engine's small resident-doc default.
     const cacheBytes = cacheBytesFor(doc.layers as unknown as SizedLayer[]);
+    // 解码 + 首绘。这两段在 Worker 里是一段连续的忙,没有可拆的中间点。
+    this.events.onOpenPhase("render");
     const workerInitStart = performance.now();
     const init = await this.renderClient.init({ snapshot, apiBaseUrl: API_BASE_URL, cacheBytes });
     const workerInitMs = performance.now() - workerInitStart;
@@ -348,17 +360,32 @@ export class DocController {
 
   async createFrom(bytes: Uint8Array, label: string): Promise<void> {
     this.events.onStatus(`creating from ${label}…`);
+    this.events.onOpenPhase("upload");
     try {
       const fd = new FormData();
       fd.append("file", new Blob([bytes as BlobPart]), label);
-      const r = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/`, { method: "POST", body: fd });
-      const body = await r.json();
+      const body = await postForm(
+        `${GW}/tenants/${USER}/docs/${TYPE}/`,
+        fd,
+        // 最后一个字节走了,但服务器还要解析 PSD 并写 CAS。对一个大文件这
+        // 后半段一点也不短,合进「上传中」会让遮罩看起来卡住。
+        () => this.events.onOpenPhase("parse"),
+      );
       if (!body.success) throw new Error(body.error ?? "create failed");
+      // A `{success:true}` body with no `docId` would otherwise end the open
+      // silently: `docIdField` becomes `null`, `initRender` no-ops on it (see
+      // its own `if (!docId) return` guard), and the status line is left
+      // reading `vundefined · undefined` with no error anywhere. Throw so
+      // this reaches the catch below like every other failure mode.
+      if (!body.docId) throw new Error("服务端没有返回 docId");
       this.docIdField = body.docId;
       await this.initRender();
       this.events.onStatus(`v${this.session?.version} · ${this.docIdField?.slice(0, 8)} · ${label}`);
     } catch (e) {
-      this.events.onStatus(`failed: ${(e as Error).message}`);
+      // No `onStatus` write here: `onOpenFailed` below always overwrites
+      // `status` (see `reportError` in ui/store.ts), so a write here would
+      // be dead on every path.
+      this.events.onOpenFailed(e as Error);
     }
   }
 
@@ -389,4 +416,39 @@ function debounce(fn: () => void, ms: number): () => void {
     if (handle !== null) clearTimeout(handle);
     handle = setTimeout(fn, ms);
   };
+}
+
+/**
+ * POST 一个 FormData,resolve 解析后的 JSON body。
+ *
+ * 用 XHR 而不是 fetch 只为一件事:`upload.onload` 标出「最后一个字节离开浏览器」
+ * 的时刻,把「还在上传」和「服务器在解析」分开。fetch 下这两段是一个不透明的
+ * await,而对一个大 PSD 它们恰好是整个打开流程里最长、且时长差别最大的两段——
+ * 合成一段的话,遮罩会在第一步停几十秒,进度感等于没有。
+ *
+ * 只 resolve body,不判断 `body.success`:那是调用方的事,与换用 XHR 之前
+ * 一模一样。请求头一个都不设,原来的 fetch 也没设。
+ */
+export function postForm(
+  url: string,
+  fd: FormData,
+  onUploaded: () => void,
+): Promise<{ success?: boolean; docId?: string; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.upload.onload = () => onUploaded();
+    xhr.onload = () => {
+      try {
+        resolve(JSON.parse(xhr.responseText));
+      } catch {
+        // 网关 5xx 返回的是 HTML 错误页。把 JSON.parse 的语法错误换成状态码,
+        // 那才是这里唯一有用的信息。
+        reject(new Error(`HTTP ${xhr.status}: 响应不是 JSON`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("网络错误"));
+    xhr.onabort = () => reject(new Error("请求已中断"));
+    xhr.send(fd);
+  });
 }

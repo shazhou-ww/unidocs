@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { App } from "../src/ui/app.js";
+import { setState } from "../src/ui/store.js";
 
 vi.mock("../src/doc-controller.js", () => ({
   DocController: class {
@@ -38,5 +39,15 @@ describe("App shell", () => {
   it("declares the columns in the DOM", () => {
     const { container } = render(<App />);
     expect(container.querySelectorAll(".col-chat, .col-canvas, .col-panel")).toHaveLength(3);
+  });
+
+  it("mounts the open overlay inside the canvas column, not the stage", () => {
+    // .stage 会滚动,遮罩必须挂在不滚动的列上,否则换一个大文件时它会跟着
+    // 上一个文档的内容滚出视野。
+    setState({ opening: { phase: "upload", name: "a.psd", bytes: 1024 } });
+    const { container } = render(<App />);
+    const overlay = container.querySelector(".open-overlay");
+    expect(overlay).toBeInTheDocument();
+    expect(overlay!.parentElement).toHaveClass("col-canvas");
   });
 });
