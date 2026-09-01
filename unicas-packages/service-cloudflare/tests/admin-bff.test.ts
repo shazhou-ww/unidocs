@@ -147,6 +147,9 @@ function fakeControlPlane(): ControlPlaneOperations {
     createMemberInvitation: error as ControlPlaneOperations["createMemberInvitation"],
     acceptMemberInvitation: error as ControlPlaneOperations["acceptMemberInvitation"],
     getIssuer: error as ControlPlaneOperations["getIssuer"],
+    getOAuthIssuer: error as ControlPlaneOperations["getOAuthIssuer"],
+    inspectOAuthIssuer: error as ControlPlaneOperations["inspectOAuthIssuer"],
+    activateOAuthIssuer: error as ControlPlaneOperations["activateOAuthIssuer"],
     putIssuer: async (ctx, request) => {
       if (!requireStack(ctx, request.path.stackId)) {
         return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
