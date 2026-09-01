@@ -130,17 +130,17 @@ export function createGatewayOAuthAuthorizationServerHandler(
         const grantType = requiredForm(form, "grant_type");
         const response = grantType === "authorization_code"
           ? await exchangeGatewayOAuthAuthorizationCode({
-              grantType,
-              code: requiredForm(form, "code"),
-              clientId: requiredForm(form, "client_id"),
-              redirectUri: requiredForm(form, "redirect_uri"),
-              codeVerifier: requiredForm(form, "code_verifier"),
-            }, config.token)
+            grantType,
+            code: requiredForm(form, "code"),
+            clientId: requiredForm(form, "client_id"),
+            redirectUri: requiredForm(form, "redirect_uri"),
+            codeVerifier: requiredForm(form, "code_verifier"),
+          }, config.token)
           : await refreshGatewayOAuthAccessToken({
-              grantType,
-              refreshToken: requiredForm(form, "refresh_token"),
-              clientId: requiredForm(form, "client_id"),
-            }, config.token);
+            grantType,
+            refreshToken: requiredForm(form, "refresh_token"),
+            clientId: requiredForm(form, "client_id"),
+          }, config.token);
         return oauthJson(response, 200);
       }
 

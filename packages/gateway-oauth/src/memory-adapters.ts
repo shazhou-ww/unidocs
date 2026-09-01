@@ -28,7 +28,7 @@ export class MemoryGatewayOAuthClientStore implements GatewayOAuthClientStorePor
 }
 
 export class MemoryGatewayOAuthAuthorizationTransactionStore
-implements GatewayOAuthAuthorizationTransactionStorePort {
+  implements GatewayOAuthAuthorizationTransactionStorePort {
   readonly #transactions = new Map<string, GatewayOAuthAuthorizationTransaction>();
 
   async putIfAbsent(transaction: GatewayOAuthAuthorizationTransaction): Promise<boolean> {
@@ -45,7 +45,7 @@ implements GatewayOAuthAuthorizationTransactionStorePort {
 }
 
 export class MemoryGatewayOAuthAuthorizationCodeStore
-implements GatewayOAuthAuthorizationCodeStorePort {
+  implements GatewayOAuthAuthorizationCodeStorePort {
   readonly #codes = new Map<string, GatewayOAuthStoredAuthorizationCode>();
 
   async putIfAbsent(code: GatewayOAuthStoredAuthorizationCode): Promise<boolean> {
@@ -124,7 +124,7 @@ export class MemoryGatewayOAuthRefreshTokenStore implements GatewayOAuthRefreshT
 }
 
 export class MemoryGatewayOAuthTenantMembershipStore
-implements GatewayOAuthTenantMembershipPort {
+  implements GatewayOAuthTenantMembershipPort {
   readonly #memberships = new Map<string, GatewayOAuthTenantMembership>();
 
   constructor(entries: readonly {
