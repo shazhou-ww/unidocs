@@ -193,6 +193,7 @@ export type {
   ControlIdentityRecord,
   ControlIssuerKeyRecord,
   ControlIssuerRecord,
+  ControlOAuthIssuerRecord,
   ControlMembershipRecord,
   ControlMemberInvitationRecord,
   ControlMemberInvitationResponse,

@@ -147,6 +147,45 @@ describe("D1-backed control-plane service", () => {
     expectError(await service.putIssuer(ctx(alice), { path: { stackId: a }, body: { issuer: "https://issuer.example/a", audience: "cas", capabilityMaxLifetimeSeconds: 5 } }, { ifMatch: '"2"' }), CasAdminErrorCodes.INVALID_REQUEST);
   });
 
+  test("reads persisted OAuth issuer state only for Stack members", async () => {
+    const { db, service } = await createService();
+    const stackId = await createStack(service);
+    await db.prepare(
+      "INSERT INTO cas_stack_oauth_issuers (stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, last_refresh_at, last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(
+      stackId,
+      "https://issuer.example/oauth",
+      `https://cas.example/stacks/${stackId}`,
+      "https://issuer.example/.well-known/oauth-authorization-server/oauth",
+      "oauth",
+      "https://issuer.example/oauth/authorize",
+      "https://issuer.example/oauth/token",
+      "https://issuer.example/oauth/jwks",
+      "https://issuer.example/oauth/register",
+      JSON.stringify(["cas:read", "cas:write"]),
+      JSON.stringify(["S256"]),
+      "active",
+      100,
+      110,
+      null,
+      "sha256:test",
+      28800,
+      3,
+    ).run();
+    expectError(
+      await service.getOAuthIssuer(ctx(bob), { path: { stackId } }),
+      CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED,
+    );
+    expect(await service.getOAuthIssuer(ctx(alice), { path: { stackId } })).toMatchObject({
+      stackId,
+      metadataType: "oauth",
+      status: "active",
+      scopesSupported: ["cas:read", "cas:write"],
+      codeChallengeMethodsSupported: ["S256"],
+      revision: 3,
+    });
+  });
+
   test("requires possession proof and safe issuer-key lifecycle transitions", async () => {
     const { service } = await createService();
     const stackId = await createStack(service);

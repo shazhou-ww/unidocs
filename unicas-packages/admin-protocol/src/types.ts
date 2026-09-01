@@ -66,6 +66,38 @@ export interface CasStackIssuer {
   readonly revision: number;
 }
 
+export type CasOAuthIssuerMetadataType = "oauth" | "oidc";
+
+export type CasOAuthIssuerStatus =
+  | "pending"
+  | "active"
+  | "stale"
+  | "incompatible"
+  | "disabled";
+
+/** Discovered Stack OAuth authorization-server binding. */
+export interface CasStackOAuthIssuer {
+  readonly stackId: CasStackId;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly metadataUrl: string;
+  readonly metadataType: CasOAuthIssuerMetadataType;
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly jwksUri: string;
+  readonly registrationEndpoint: string | null;
+  readonly scopesSupported: readonly string[];
+  readonly codeChallengeMethodsSupported: readonly string[];
+  readonly status: CasOAuthIssuerStatus;
+  readonly verifiedAt: number | null;
+  readonly lastRefreshAt: number | null;
+  readonly lastRefreshError: string | null;
+  readonly jwksDigest: string;
+  /** Per-stack capability signing cap in seconds (default 28800, max 604800). */
+  readonly capabilityMaxLifetimeSeconds: number;
+  readonly revision: number;
+}
+
 /**
  * Issuer key lifecycle. Task 2 amendment: `pending` is removed because the
  * frozen contract has no pending-to-active transition endpoint; possession

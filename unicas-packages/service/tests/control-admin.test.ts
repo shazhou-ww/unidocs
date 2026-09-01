@@ -23,6 +23,7 @@ import {
   type ControlIdentityRecord,
   type ControlIssuerKeyRecord,
   type ControlIssuerRecord,
+  type ControlOAuthIssuerRecord,
   type ControlMembershipRecord,
   type ControlMemberInvitationRecord,
   type ControlPatchStackCommitResult,
@@ -65,6 +66,29 @@ function fixture(options: { listDefaultLimit?: number; listMaxLimit?: number; no
 
 function expectError(value: unknown, error: string): void {
   expect(value).toMatchObject({ error });
+}
+
+function oauthIssuerRecord(stackId: string): ControlOAuthIssuerRecord {
+  return {
+    stackId,
+    issuer: "https://issuer.example/oauth",
+    audience: `https://cas.example/stacks/${stackId}`,
+    metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
+    metadataType: "oauth",
+    authorizationEndpoint: "https://issuer.example/oauth/authorize",
+    tokenEndpoint: "https://issuer.example/oauth/token",
+    jwksUri: "https://issuer.example/oauth/jwks",
+    registrationEndpoint: "https://issuer.example/oauth/register",
+    scopesSupported: ["cas:read", "cas:write"],
+    codeChallengeMethodsSupported: ["S256"],
+    status: "active",
+    verifiedAt: 900,
+    lastRefreshAt: 950,
+    lastRefreshError: null,
+    jwksDigest: "sha256:test",
+    capabilityMaxLifetimeSeconds: 28800,
+    revision: 1,
+  };
 }
 
 async function proof(input: { nonce: string; stackId: string; kid: string }) {
@@ -284,6 +308,23 @@ describe("ControlPlaneAdminService", () => {
       .toEqual({ stackId: created.stackId, issuer: "https://issuer.example/a", audience: "cas", capabilityMaxLifetimeSeconds: 28800, revision: 1 });
   });
 
+  test("reads discovered OAuth issuer state only for stack members", async () => {
+    const { repository, service } = fixture();
+    const created = await service.createStack(context(), { body: { displayName: "OAuth" } });
+    if ("error" in created) throw new Error(created.error);
+    expectError(
+      await service.getOAuthIssuer(context(), { path: { stackId: created.stackId } }),
+      CasAdminErrorCodes.NOT_FOUND,
+    );
+    repository.oauthIssuers.set(created.stackId, oauthIssuerRecord(created.stackId));
+    expectError(
+      await service.getOAuthIssuer(context(bob, "Bob"), { path: { stackId: created.stackId } }),
+      CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED,
+    );
+    expect(await service.getOAuthIssuer(context(), { path: { stackId: created.stackId } }))
+      .toEqual(oauthIssuerRecord(created.stackId));
+  });
+
   test("creates an issuer with default lifetime and rejects global duplicates", async () => {
     const { repository, service } = fixture();
     const a = await service.createStack(context(), { body: { displayName: "A" } });
@@ -467,6 +508,7 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
   readonly identities = new Map<string, ControlIdentityRecord>();
   readonly stacks = new Map<string, ControlStackRecord>();
   readonly issuers = new Map<string, ControlIssuerRecord>();
+  readonly oauthIssuers = new Map<string, ControlOAuthIssuerRecord>();
   readonly issuerKeys = new Map<string, ControlIssuerKeyRecord>();
   readonly possessionChallenges = new Map<string, ControlPossessionChallengeRecord>();
   readonly memberships: ControlMembershipRecord[] = [];
@@ -519,6 +561,10 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
 
   getStack(stackId: string): Promise<ControlStackRecord | null> {
     return Promise.resolve(this.stacks.get(stackId) ?? null);
+  }
+
+  getOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null> {
+    return Promise.resolve(this.oauthIssuers.get(stackId) ?? null);
   }
 
   hasMembership(identity: CasOperatorIdentityKey, stackId: string): Promise<boolean> {

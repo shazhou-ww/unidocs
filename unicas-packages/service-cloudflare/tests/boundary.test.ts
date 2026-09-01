@@ -26,6 +26,7 @@ describe("service-cloudflare package boundary", () => {
       "createMemberInvitation",
       "acceptMemberInvitation",
       "getIssuer",
+      "getOAuthIssuer",
       "putIssuer",
       "createPossessionChallenge",
       "listIssuerKeys",

@@ -36,6 +36,7 @@ import type {
   CasStackIssuer,
   CasStackIssuerKey,
   CasStackMember,
+  CasStackOAuthIssuer,
 } from "@unicas/admin-protocol";
 import { AdminClientError } from "./errors.js";
 import type {
@@ -73,6 +74,7 @@ export interface AdminClient {
     headers?: CasAdminCreateHeaders,
   ): Promise<{ readonly invitation: CasMemberInvitation; readonly acceptUrl: string }>;
   getIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackIssuer>>;
+  getOAuthIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackOAuthIssuer>>;
   putIssuer(
     path: { readonly stackId: CasStackId },
     body: {
@@ -263,6 +265,14 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
 
     async getIssuer(path) {
       const response = await requireOk(await request(casAdminRoutes.issuer(path)), "getIssuer");
+      return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async getOAuthIssuer(path) {
+      const response = await requireOk(
+        await request(casAdminRoutes.oauthIssuer(path)),
+        "getOAuthIssuer",
+      );
       return { value: await response.json(), etag: readEtag(response) };
     },
 

@@ -60,6 +60,28 @@ class MockAdminService implements AdminHttpFetcher {
         revision: 2,
       }, { headers: { ETag: `"rev-2"` } });
     }
+    if (path === casAdminRoutes.oauthIssuer({ stackId: STACK }) && request.method === "GET") {
+      return Response.json({
+        stackId: STACK,
+        issuer: "https://issuer.example/oauth",
+        audience: "https://cas.example/stacks/cas_stack_a",
+        metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
+        metadataType: "oauth",
+        authorizationEndpoint: "https://issuer.example/oauth/authorize",
+        tokenEndpoint: "https://issuer.example/oauth/token",
+        jwksUri: "https://issuer.example/oauth/jwks",
+        registrationEndpoint: "https://issuer.example/oauth/register",
+        scopesSupported: ["cas:read"],
+        codeChallengeMethodsSupported: ["S256"],
+        status: "active",
+        verifiedAt: 10,
+        lastRefreshAt: 11,
+        lastRefreshError: null,
+        jwksDigest: "sha256:test",
+        capabilityMaxLifetimeSeconds: 28800,
+        revision: 4,
+      }, { headers: { ETag: `"rev-4"` } });
+    }
     if (path === casAdminRoutes.issuerKeys({ stackId: STACK }) && request.method === "GET") {
       return Response.json({ keys: [] });
     }
@@ -95,6 +117,12 @@ describe("functional admin client", () => {
     expect(value.revision).toBe(3);
     expect(etag).toBe('"rev-3"');
     expect(service.requests[0]!.cookie).toBe("cas_admin_session=abc");
+  });
+
+  it("reads discovered OAuth issuer state with its ETag", async () => {
+    const { value, etag } = await client.getOAuthIssuer({ stackId: STACK });
+    expect(value).toMatchObject({ metadataType: "oauth", status: "active", jwksUri: "https://issuer.example/oauth/jwks" });
+    expect(etag).toBe('"rev-4"');
   });
 
   it("attaches CSRF to mutations", async () => {

@@ -76,6 +76,9 @@ describe("control-plane contract freezes", () => {
     expect(casAdminThreatModel.oidcAccountLinking.banEmailAsOwnershipKey).toBe(true);
     expect(casAdminThreatModel.stackTakeover.lastMemberCannotBeDeleted).toBe(true);
     expect(casAdminThreatModel.issuerJwksSubstitution.neverFetchTokenSuppliedJwksUrl).toBe(true);
+    expect(casAdminThreatModel.issuerJwksSubstitution.neverAcceptAdministratorSuppliedJwksUrl).toBe(true);
+    expect(casAdminThreatModel.issuerJwksSubstitution.discoveryIssuerMustExactlyMatchRegisteredIssuer).toBe(true);
+    expect(casAdminThreatModel.issuerJwksSubstitution.issuerControlProofUsesDiscoveredJwks).toBe(true);
     expect(casAdminThreatModel.keyRotation.states).toEqual([
       "active",
       "retiring",
@@ -98,6 +101,7 @@ describe("control-plane contract freezes", () => {
       "createMemberInvitation",
       "acceptMemberInvitation",
       "getIssuer",
+      "getOAuthIssuer",
       "putIssuer",
       "listIssuerKeys",
       "createIssuerKey",
@@ -107,7 +111,7 @@ describe("control-plane contract freezes", () => {
       "listRootDomainRefs",
       "listRootDomainEvents",
     ];
-    expect(keys).toHaveLength(18);
+    expect(keys).toHaveLength(19);
   });
 
   test("root-ref audit response shapes accept negative balances", () => {

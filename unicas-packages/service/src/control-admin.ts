@@ -19,6 +19,8 @@ import type {
   CasAdminErrorResponse,
   CasAdminGetIssuerRequest,
   CasAdminGetIssuerResponse,
+  CasAdminGetOAuthIssuerRequest,
+  CasAdminGetOAuthIssuerResponse,
   CasAdminGetStackRequest,
   CasAdminGetStackResponse,
   CasAdminListCursor,
@@ -43,6 +45,7 @@ import type {
   CasStackIssuer,
   CasStackIssuerKey,
   CasStackMember,
+  CasStackOAuthIssuer,
 } from "@unicas/admin-protocol";
 import { ControlAuditActions, type ControlAuditAction } from "./control-audit.js";
 import { decodeControlListCursor, encodeControlListCursor } from "./control-cursor.js";
@@ -210,6 +213,27 @@ export interface ControlIssuerRecord {
   readonly revision: number;
 }
 
+export interface ControlOAuthIssuerRecord {
+  readonly stackId: string;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly metadataUrl: string;
+  readonly metadataType: CasStackOAuthIssuer["metadataType"];
+  readonly authorizationEndpoint: string;
+  readonly tokenEndpoint: string;
+  readonly jwksUri: string;
+  readonly registrationEndpoint: string | null;
+  readonly scopesSupported: readonly string[];
+  readonly codeChallengeMethodsSupported: readonly string[];
+  readonly status: CasStackOAuthIssuer["status"];
+  readonly verifiedAt: number | null;
+  readonly lastRefreshAt: number | null;
+  readonly lastRefreshError: string | null;
+  readonly jwksDigest: string;
+  readonly capabilityMaxLifetimeSeconds: number;
+  readonly revision: number;
+}
+
 export interface ControlPutIssuerPlan {
   readonly kind: "insert" | "update";
   readonly stackId: string;
@@ -325,6 +349,7 @@ export interface ControlPlaneAdminRepository {
   commitDeleteMember(plan: ControlDeleteMemberPlan): Promise<ControlDeleteMemberCommitResult>;
   commitAcceptMemberInvitation(plan: ControlAcceptMemberInvitationPlan): Promise<ControlAcceptMemberInvitationCommitResult>;
   getIssuer(stackId: string): Promise<ControlIssuerRecord | null>;
+  getOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null>;
   hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean>;
   commitPutIssuer(plan: ControlPutIssuerPlan): Promise<ControlPutIssuerCommitResult>;
   createPossessionChallenge(record: ControlPossessionChallengeRecord): Promise<void>;
@@ -550,6 +575,20 @@ export class ControlPlaneAdminService {
     return this.#guard(async () => {
       await this.#requireMember(ctx.identity, request.path.stackId);
       return toCasStackIssuer(await this.#requireIssuer(request.path.stackId));
+    });
+  }
+
+  getOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminGetOAuthIssuerRequest,
+  ): Promise<CasAdminGetOAuthIssuerResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      const issuer = await this.#repository.getOAuthIssuer(request.path.stackId);
+      if (!issuer) {
+        throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "OAuth issuer is not configured");
+      }
+      return toCasStackOAuthIssuer(issuer);
     });
   }
 
@@ -1137,6 +1176,10 @@ function toCasStack(record: ControlStackRecord): CasStack {
 }
 
 function toCasStackIssuer(record: ControlIssuerRecord): CasStackIssuer {
+  return { ...record };
+}
+
+function toCasStackOAuthIssuer(record: ControlOAuthIssuerRecord): CasStackOAuthIssuer {
   return { ...record };
 }
 

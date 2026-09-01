@@ -17,6 +17,9 @@ export const casAdminThreatModel = {
   issuerJwksSubstitution: {
     registryAuthoritativeInControlDb: true,
     neverFetchTokenSuppliedJwksUrl: true,
+    neverAcceptAdministratorSuppliedJwksUrl: true,
+    discoveryIssuerMustExactlyMatchRegisteredIssuer: true,
+    issuerControlProofUsesDiscoveredJwks: true,
     issuerGloballyUnique: true,
     oneActiveIssuerPerStack: true,
   },

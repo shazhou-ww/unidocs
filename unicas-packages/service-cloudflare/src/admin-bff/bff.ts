@@ -704,6 +704,10 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         const result = await controlPlane.getIssuer(ctx, { path: { stackId: route.stackId } });
         return jsonWithEtag(result);
       }
+      case "getOAuthIssuer": {
+        const result = await controlPlane.getOAuthIssuer(ctx, { path: { stackId: route.stackId } });
+        return jsonWithEtag(result);
+      }
       case "putIssuer": {
         const body = await readJsonBody<{
           issuer?: unknown;

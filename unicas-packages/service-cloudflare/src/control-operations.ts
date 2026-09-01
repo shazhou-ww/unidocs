@@ -25,6 +25,7 @@ export function createControlPlaneOperations(
     createMemberInvitation: admin.createMemberInvitation.bind(admin),
     acceptMemberInvitation: admin.acceptMemberInvitation.bind(admin),
     getIssuer: admin.getIssuer.bind(admin),
+    getOAuthIssuer: admin.getOAuthIssuer.bind(admin),
     putIssuer: admin.putIssuer.bind(admin),
     createPossessionChallenge: admin.createPossessionChallenge.bind(admin),
     listIssuerKeys: admin.listIssuerKeys.bind(admin),

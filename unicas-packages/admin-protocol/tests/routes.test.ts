@@ -16,6 +16,7 @@ describe("CAS admin routes", () => {
     ["POST", casAdminRoutes.memberInvitations({ stackId: "stack/a" }), "createMemberInvitation"],
     ["POST", casAdminRoutes.acceptMemberInvitation({ token: "tok/1" }), "acceptMemberInvitation"],
     ["GET", casAdminRoutes.issuer({ stackId: "stack/a" }), "getIssuer"],
+    ["GET", casAdminRoutes.oauthIssuer({ stackId: "stack/a" }), "getOAuthIssuer"],
     ["PUT", casAdminRoutes.issuer({ stackId: "stack/a" }), "putIssuer"],
     ["GET", casAdminRoutes.issuerKeys({ stackId: "stack/a" }), "listIssuerKeys"],
     ["POST", casAdminRoutes.issuerKeys({ stackId: "stack/a" }), "createIssuerKey"],
@@ -39,6 +40,7 @@ describe("CAS admin routes", () => {
     expect(matchCasAdminRoute("GET", "/tenants/t/cas/usage")).toBeNull();
     expect(matchCasAdminRoute("POST", casAdminRoutes.me())).toBeNull();
     expect(matchCasAdminRoute("POST", casAdminRoutes.refDomains({ stackId: "s" }))).toBeNull();
+    expect(matchCasAdminRoute("PUT", casAdminRoutes.oauthIssuer({ stackId: "s" }))).toBeNull();
     expect(matchCasAdminRoute("GET", "/admin/%ZZ/stacks")).toBeNull();
   });
 

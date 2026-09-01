@@ -11,6 +11,7 @@ import type {
   CasStackIssuer,
   CasStackIssuerKey,
   CasStackMember,
+  CasStackOAuthIssuer,
   CasIssuerKeyState,
 } from "./types.js";
 import type { CasAdminErrorResponse } from "./errors.js";
@@ -112,6 +113,14 @@ export interface CasAdminGetIssuerRequest {
 }
 
 export type CasAdminGetIssuerResponse = CasStackIssuer | CasAdminErrorResponse;
+
+export interface CasAdminGetOAuthIssuerRequest {
+  readonly path: CasAdminStackPath;
+}
+
+export type CasAdminGetOAuthIssuerResponse =
+  | CasStackOAuthIssuer
+  | CasAdminErrorResponse;
 
 export interface CasAdminPutIssuerRequest {
   readonly path: CasAdminStackPath;
@@ -242,6 +251,10 @@ export interface CasAdminEndpointContracts {
     response: CasAdminAcceptMemberInvitationResponse;
   };
   getIssuer: { request: CasAdminGetIssuerRequest; response: CasAdminGetIssuerResponse };
+  getOAuthIssuer: {
+    request: CasAdminGetOAuthIssuerRequest;
+    response: CasAdminGetOAuthIssuerResponse;
+  };
   putIssuer: { request: CasAdminPutIssuerRequest; response: CasAdminPutIssuerResponse };
   listIssuerKeys: {
     request: CasAdminListIssuerKeysRequest;

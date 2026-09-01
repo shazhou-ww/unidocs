@@ -17,7 +17,10 @@ export type {
   CasStackIssuer,
   CasStackIssuerKey,
   CasStackMember,
+  CasStackOAuthIssuer,
   CasStackStatus,
+  CasOAuthIssuerMetadataType,
+  CasOAuthIssuerStatus,
 } from "./types.js";
 export { CAS_STACK_MEMBER_AUTHORITY } from "./types.js";
 
@@ -69,6 +72,8 @@ export type {
   CasAdminEndpointContracts,
   CasAdminGetIssuerRequest,
   CasAdminGetIssuerResponse,
+  CasAdminGetOAuthIssuerRequest,
+  CasAdminGetOAuthIssuerResponse,
   CasAdminGetStackRequest,
   CasAdminGetStackResponse,
   CasAdminListControlAuditEventsRequest,

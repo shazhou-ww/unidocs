@@ -9,6 +9,7 @@ export type CasAdminRoute =
   | { operation: "createMemberInvitation"; stackId: string }
   | { operation: "acceptMemberInvitation"; token: string }
   | { operation: "getIssuer"; stackId: string }
+  | { operation: "getOAuthIssuer"; stackId: string }
   | { operation: "putIssuer"; stackId: string }
   | { operation: "listIssuerKeys"; stackId: string }
   | { operation: "createIssuerKey"; stackId: string }
@@ -43,6 +44,8 @@ export const casAdminRoutes = {
     `/admin/member-invitations/${segment(token)}/accept`,
   issuer: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/issuer`,
+  oauthIssuer: ({ stackId }: { stackId: string }) =>
+    `/admin/stacks/${segment(stackId)}/oauth-issuer`,
   issuerKeys: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/issuer/keys`,
   issuerKey: ({ stackId, kid }: { stackId: string; kid: string }) =>
@@ -120,6 +123,10 @@ export function matchCasAdminRoute(
     if (method === "GET") return { operation: "getIssuer", stackId };
     if (method === "PUT") return { operation: "putIssuer", stackId };
     return null;
+  }
+
+  if (parts.length === 4 && parts[3] === "oauth-issuer") {
+    return method === "GET" ? { operation: "getOAuthIssuer", stackId } : null;
   }
 
   if (parts.length === 5 && parts[3] === "issuer" && parts[4] === "keys") {

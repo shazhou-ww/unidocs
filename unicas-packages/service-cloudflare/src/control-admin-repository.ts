@@ -19,6 +19,7 @@ import type {
   ControlIdentityRecord,
   ControlIssuerKeyRecord,
   ControlIssuerRecord,
+  ControlOAuthIssuerRecord,
   ControlMembershipRecord,
   ControlMemberInvitationRecord,
   ControlPatchStackCommitResult,
@@ -303,6 +304,16 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
     return row ? toIssuer(row) : null;
   }
 
+  async getOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null> {
+    const row = await this.#db
+      .prepare(
+        "SELECT stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, last_refresh_at, last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision FROM cas_stack_oauth_issuers WHERE stack_id = ?",
+      )
+      .bind(stackId)
+      .first<OAuthIssuerRow>();
+    return row ? toOAuthIssuer(row) : null;
+  }
+
   async hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
     const row = await this.#db
       .prepare("SELECT 1 AS ok FROM cas_stack_issuer WHERE issuer = ? AND stack_id != ?")
@@ -566,6 +577,27 @@ interface IssuerRow {
   readonly revision: number;
 }
 
+interface OAuthIssuerRow {
+  readonly stack_id: string;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly metadata_url: string;
+  readonly metadata_type: string;
+  readonly authorization_endpoint: string;
+  readonly token_endpoint: string;
+  readonly jwks_uri: string;
+  readonly registration_endpoint: string | null;
+  readonly scopes_supported: string;
+  readonly code_challenge_methods_supported: string;
+  readonly status: string;
+  readonly verified_at: number | null;
+  readonly last_refresh_at: number | null;
+  readonly last_refresh_error: string | null;
+  readonly jwks_digest: string;
+  readonly capability_max_lifetime_seconds: number;
+  readonly revision: number;
+}
+
 interface IssuerKeyRow {
   readonly stack_id: string;
   readonly kid: string;
@@ -636,6 +668,29 @@ function toIssuer(row: IssuerRow): ControlIssuerRecord {
     stackId: row.stack_id,
     issuer: row.issuer,
     audience: row.audience,
+    capabilityMaxLifetimeSeconds: row.capability_max_lifetime_seconds,
+    revision: row.revision,
+  };
+}
+
+function toOAuthIssuer(row: OAuthIssuerRow): ControlOAuthIssuerRecord {
+  return {
+    stackId: row.stack_id,
+    issuer: row.issuer,
+    audience: row.audience,
+    metadataUrl: row.metadata_url,
+    metadataType: row.metadata_type as ControlOAuthIssuerRecord["metadataType"],
+    authorizationEndpoint: row.authorization_endpoint,
+    tokenEndpoint: row.token_endpoint,
+    jwksUri: row.jwks_uri,
+    registrationEndpoint: row.registration_endpoint,
+    scopesSupported: JSON.parse(row.scopes_supported) as string[],
+    codeChallengeMethodsSupported: JSON.parse(row.code_challenge_methods_supported) as string[],
+    status: row.status as ControlOAuthIssuerRecord["status"],
+    verifiedAt: row.verified_at,
+    lastRefreshAt: row.last_refresh_at,
+    lastRefreshError: row.last_refresh_error,
+    jwksDigest: row.jwks_digest,
     capabilityMaxLifetimeSeconds: row.capability_max_lifetime_seconds,
     revision: row.revision,
   };
