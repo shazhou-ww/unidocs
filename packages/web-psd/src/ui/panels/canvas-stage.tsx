@@ -1,10 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, type CSSProperties } from "react";
 import { getController, initController } from "../controller.js";
-import { getState, setState, useUiState } from "../store.js";
+import { getState, reportError, setSelection, selectLayer, setState, useUiState } from "../store.js";
 import { zoomBy } from "../zoom-controller.js";
 import { normalizeWheelDelta, wheelZoomFactor } from "../zoom.js";
 import type { Rect } from "../../doc-model.js";
+import { clickTarget, descendPath, type Hit } from "../hit-test.js";
+import { setHoverId } from "../overlay-store.js";
+import { setRegion } from "../store.js";
+import { rectRegion } from "../region.js";
 import { SelectionOverlay } from "./selection-overlay.js";
+import { SelectionBox } from "./selection-box.js";
+import { HitMenu } from "./hit-menu.js";
 
 /**
  * The <canvas> is mounted by ref and then owned entirely by DocController /
@@ -26,6 +32,15 @@ import { SelectionOverlay } from "./selection-overlay.js";
  * document pixels, correct at any zoom — the marquee and the eyedropper share
  * that one mapping, so they cannot disagree about which pixel the cursor is
  * over.
+ *
+ * The move tool's press does two things that never collide, because one is a
+ * CLICK and the other a DRAG: releasing without having moved more than
+ * `CLICK_SLOP_PX` selects the layer under the cursor, anything further is the
+ * pan above. Nothing is deferred to find that out — the pan runs from the
+ * first pixel, and the click is decided in hindsight at `pointerup`, so
+ * panning has none of the stickiness a "wait and see" threshold would add.
+ * Layer POSITION is still not editable by dragging (see the note above); the
+ * click only moves the selection.
  *
  * `.stage-inner` wraps the canvas and `<SelectionOverlay />` together and is
  * the thing that shrink-wraps + centres (`margin: auto`) inside `.stage`'s
@@ -49,6 +64,22 @@ export function CanvasStage() {
   // drift once a scroll hits the end of its range and clamps). A ref for the
   // same reason as the two above.
   const pan = useRef<{ clientX: number; clientY: number; left: number; top: number } | null>(null);
+  // One monotonic token for every gesture that fires an async hit test —
+  // click, double click and right click alike. Each captures it and bails if
+  // it moved, so a newer gesture always wins no matter which kind it is.
+  // Four gestures each growing their own staleness rule is what let a stale
+  // descent overwrite a newer selection before this existed.
+  const gesture = useRef(0);
+  // rAF throttle for hover. Zeroed inside the callback AND in the cleanup —
+  // the cleanup runs on every tool change, and leaving a dead id here would
+  // wedge the gate below permanently.
+  const hoverFrame = useRef(0);
+  // Where the last Alt-click landed and how deep into that point's candidate
+  // stack it has walked. Keyed by rounded document coordinate so moving away
+  // and coming back restarts rather than resuming somewhere arbitrary.
+  const cycle = useRef<{ key: string; index: number } | null>(null);
+  const [menu, setMenu] = useState<{ at: { x: number; y: number }; hits: Hit[] } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   useEffect(() => {
     if (stageRef.current && viewRef.current) initController(viewRef.current, stageRef.current);
@@ -96,9 +127,62 @@ export function CanvasStage() {
     };
   }, []);
 
+  // Hover only means anything under the move tool, which is the only one that
+  // selects. The ref is reset as well as cancelled: this cleanup runs on
+  // EVERY tool change, and a cancelled frame whose id stayed non-zero would
+  // close the gate in `onPointerMove` for the life of the component.
+  useEffect(() => {
+    if (s.tool !== "move") setHoverId(null);
+    return () => {
+      if (hoverFrame.current !== 0) cancelAnimationFrame(hoverFrame.current);
+      hoverFrame.current = 0;
+    };
+  }, [s.tool]);
+
+  /** Every async hit test funnels its rejection here. `RenderClient.hitTest`
+   *  really does reject — the Worker posts `{type:"error"}` for any throw
+   *  inside `core.hitTest`, and a CAS fetch failing mid-hover is an ordinary
+   *  way to get there. Returns whether this gesture is still the current one,
+   *  so callers can skip cleanup that a newer gesture already owns. */
+  const hitFailed = (g: number, err: unknown): boolean => {
+    if (gesture.current !== g) return false;
+    reportError("命中测试失败", err);
+    return true;
+  };
+
+  /** The layer-axis write for one canvas click. No drag is established: the
+   *  canvas cannot move layers at all (see the file header), so a click only
+   *  ever changes what is selected. */
+  const settleHit = (g: number, hits: Hit[], at: { x: number; y: number }, mods: { additive: boolean; leaf: boolean; cycle: boolean }): void => {
+    if (gesture.current !== g) return;
+    const hit = hits[0] ?? null;
+    if (!hit) { setSelection([]); return; }
+    if (mods.cycle) {
+      const key = `${Math.round(at.x)},${Math.round(at.y)}`;
+      const index = cycle.current?.key === key ? (cycle.current.index + 1) % hits.length : 0;
+      cycle.current = { key, index };
+      selectLayer(hits[index].layerId);
+      return;
+    }
+    const st = getState();
+    const id = mods.leaf
+      ? hit.path[hit.path.length - 1]
+      : clickTarget(st.doc?.layers ?? [], hit.path, st.doc?.canvas ?? { width: 0, height: 0 });
+    // `selectLayer`, not a raw `setState`: a canvas selection has to expand
+    // the tree's ancestor groups the same way a tree click does (spec §9),
+    // or picking a nested layer leaves the tree collapsed on it.
+    selectLayer(id, { additive: mods.additive });
+  };
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     const c = getController();
     if (!c) return;
+    if (menu) setMenu(null);
+    // A secondary press must not run the select/pan path at all: right-click
+    // exists to ASK which layer was meant, so disturbing the selection before
+    // the menu opens defeats it. (On macOS ⌃-click is the secondary click and
+    // also sets `ctrlKey`, which would additionally take the leaf branch.)
+    if (e.button !== 0) return;
     const s = getState();
     if (s.tool === "eyedrop") {
       setState({ pickedColor: c.pickColor(e.clientX, e.clientY) });
@@ -124,7 +208,7 @@ export function CanvasStage() {
     }
     if (s.tool === "marquee") {
       anchor.current = c.toCanvas(e.clientX, e.clientY);
-      setState({ marquee: null });
+      setRegion(null);
       e.currentTarget.setPointerCapture(e.pointerId);
     }
   };
@@ -139,16 +223,92 @@ export function CanvasStage() {
       e.currentTarget.scrollTop = pan.current.top - (e.clientY - pan.current.clientY);
       return;
     }
-    if (!anchor.current) return;
-    setState({ marquee: normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null) });
+    if (anchor.current) {
+      setRegion(rectRegion(normalise(anchor.current, c.toCanvas(e.clientX, e.clientY), getState().doc?.canvas ?? null)));
+      return;
+    }
+    // Hover highlight: one hit test per animation frame, move tool only, and
+    // marked `hover` so the Worker may drop it rather than let it queue ahead
+    // of a tile batch. The result goes to `overlay-store`, never the main
+    // store — a per-frame `setState` there would re-render the whole layer
+    // tree. Failures are silent by design: reporting one per frame would be
+    // worse than the missing outline.
+    if (getState().tool === "move" && hoverFrame.current === 0) {
+      const { clientX, clientY } = e;
+      hoverFrame.current = requestAnimationFrame(() => {
+        hoverFrame.current = 0;
+        void c.hitTest(clientX, clientY, { hover: true }).then(
+          (hits) => setHoverId(hits[0]?.layerId ?? null),
+          () => setHoverId(null),
+        );
+      });
+    }
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!anchor.current && !pan.current) return;
+    const panned = pan.current;
     anchor.current = null;
     pan.current = null;
     e.currentTarget.removeAttribute("data-panning");
     e.currentTarget.releasePointerCapture(e.pointerId);
+
+    // Decided in hindsight: a press that never travelled `CLICK_SLOP_PX` was
+    // a click, so it selects. The pan already ran for those few pixels and is
+    // simply invisible at that distance — which is why nothing had to be
+    // deferred on the way down.
+    const c = getController();
+    if (!c || !panned) return;
+    if (Math.abs(e.clientX - panned.clientX) > CLICK_SLOP_PX
+      || Math.abs(e.clientY - panned.clientY) > CLICK_SLOP_PX) return;
+    const g = ++gesture.current;
+    const at = c.toCanvas(e.clientX, e.clientY);
+    const mods = { additive: e.shiftKey, leaf: e.metaKey || e.ctrlKey, cycle: e.altKey };
+    void c.hitTest(e.clientX, e.clientY).then(
+      (hits) => settleHit(g, hits, at, mods),
+      (err) => hitFailed(g, err),
+    );
+  };
+
+  const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const c = getController();
+    if (!c || getState().tool !== "move") return;
+    // The two presses of the double click each already fired their own click
+    // settle at `pointerup`. Bumping the token supersedes them, so neither
+    // can land after the descent and flash the single-click target.
+    const g = ++gesture.current;
+    void c.hitTest(e.clientX, e.clientY).then(
+      (hits) => {
+        if (gesture.current !== g) return;
+        const hit = hits[0];
+        if (!hit) { setSelection([]); return; }
+        selectLayer(descendPath(hit.path, getState().selection[0] ?? ""));
+      },
+      (err) => hitFailed(g, err),
+    );
+  };
+
+  const onContextMenu = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const c = getController();
+    if (!c || getState().tool !== "move") return;
+    e.preventDefault();
+    const g = ++gesture.current;
+    const box = e.currentTarget.getBoundingClientRect();
+    const at = { x: e.clientX - box.left + e.currentTarget.scrollLeft, y: e.clientY - box.top + e.currentTarget.scrollTop };
+    // Compared by `docId`, not the `doc` object: `onDoc` replaces `doc` on
+    // every dispatched op and every rebase, so object identity would trip on
+    // any unrelated edit landing mid-flight and swallow the menu for a
+    // document that never changed. Kept ALONGSIDE the gesture token — a
+    // document swap needs no new gesture, so the counter cannot see one.
+    const docId = getState().docId;
+    void c.hitTest(e.clientX, e.clientY).then(
+      (hits) => {
+        if (gesture.current !== g) return;
+        if (getState().docId !== docId) return;
+        setMenu(hits.length ? { at, hits } : null);
+      },
+      (err) => { if (hitFailed(g, err)) setMenu(null); },
+    );
   };
 
   const canvasStyle = canvasBoxStyle(s.doc?.canvas ?? null, s.zoom);
@@ -179,6 +339,11 @@ export function CanvasStage() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      // Leaving the canvas ends the hover; nothing else would, so the last
+      // outline would otherwise sit there indefinitely.
+      onPointerLeave={() => setHoverId(null)}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
     >
       {/* Deliberately names no file format. PSD is the only one that loads
           today, but PNG/JPEG are planned, and the file picker's `accept`
@@ -198,10 +363,17 @@ export function CanvasStage() {
           style={canvasStyle}
         />
         <SelectionOverlay />
+        <SelectionBox />
       </div>
+      <HitMenu at={menu?.at ?? null} hits={menu?.hits ?? []} onClose={closeMenu} />
     </div>
   );
 }
+
+/** How far a press may travel and still count as a click rather than a pan,
+ *  in CSS pixels. A steady hand stays inside 1-2px when aiming; a pan clears
+ *  it on the first frame. */
+const CLICK_SLOP_PX = 4;
 
 /**
  * Two document-space points → an integer [top,left,bottom,right] rect, in the

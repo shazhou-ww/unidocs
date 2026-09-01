@@ -113,11 +113,19 @@ export function collectDegradations(layers: LocalLayer[]): DegradationRow[] {
 }
 
 /** Top-down flattening of the layer tree for rendering: a group's children are
- *  emitted only when the group id is in `expanded`. */
+ *  emitted only when the group id is in `expanded`.
+ *
+ *  Each sibling list is walked BACKWARDS. `layers[0]` is the bottom of the
+ *  document (see render/composite.ts's renderList, which composites the array
+ *  front-to-back), and a layers panel reads top-of-document first — so the
+ *  array's last element is the panel's first row. Reversing per level rather
+ *  than reversing the flattened result is what keeps a group's children
+ *  directly BELOW their group instead of above it. */
 export function flattenTree(layers: LocalLayer[], expanded: ReadonlySet<string>): TreeRow[] {
   const out: TreeRow[] = [];
   const walk = (list: LocalLayer[], depth: number): void => {
-    for (const layer of list) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const layer = list[i];
       const hasChildren = !!layer.children?.length;
       out.push({ layer, depth, hasChildren });
       if (hasChildren && expanded.has(layer.id)) walk(layer.children!, depth + 1);

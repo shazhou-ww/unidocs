@@ -72,14 +72,26 @@ describe("collectDegradations", () => {
 });
 
 describe("flattenTree", () => {
-  it("emits children only for expanded groups, in top-down order with depth", () => {
+  // `layers[0]` is the BOTTOM layer (render/composite.ts's renderList
+  // composites the array front-to-back), so the panel's FIRST row must be the
+  // array's LAST element — Photoshop's order. Reversing each level's list is
+  // what does that; reversing the flattened output instead would hoist a
+  // group's children above the group.
+  it("emits each level top-of-document first", () => {
     const layers = [
       leaf("g", { type: "group", children: [leaf("b"), leaf("c")] }),
       leaf("a"),
     ];
     expect(flattenTree(layers, new Set()).map((r) => [r.layer.id, r.depth, r.hasChildren]))
-      .toEqual([["g", 0, true], ["a", 0, false]]);
+      .toEqual([["a", 0, false], ["g", 0, true]]);
+  });
+
+  it("emits children only for expanded groups, in document order within the group", () => {
+    const layers = [
+      leaf("g", { type: "group", children: [leaf("b"), leaf("c")] }),
+      leaf("a"),
+    ];
     expect(flattenTree(layers, new Set(["g"])).map((r) => [r.layer.id, r.depth]))
-      .toEqual([["g", 0], ["b", 1], ["c", 1], ["a", 0]]);
+      .toEqual([["a", 0], ["g", 0], ["c", 1], ["b", 1]]);
   });
 });

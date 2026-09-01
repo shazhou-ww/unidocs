@@ -14,6 +14,7 @@
 
 import { CasBlobStore, DocSession, loadDoc, RenderClient, Viewport } from "@unidocs/psd-client";
 import { cacheBytesFor, countLayers, rectsOverlap, type LocalLayer, type Rect, type SizedLayer } from "./doc-model.js";
+import type { Hit } from "./ui/hit-test.js";
 
 // Dev: Vite proxies `/gw/*` to the gateway (see vite.config.ts), which keeps
 // the browser same-origin without CORS. Production: the built app is served
@@ -253,6 +254,42 @@ export class DocController {
     if (x < 0 || y < 0 || x >= this.view.width || y >= this.view.height) return null;
     const [rr, gg, bb] = ctx.getImageData(x, y, 1, 1).data;
     return "#" + [rr, gg, bb].map((c) => c.toString(16).padStart(2, "0")).join("");
+  }
+
+  /** Click leniency, in CSS pixels. Converted to document pixels per call
+   *  because the zoom floor is 5% (see the zoom design), where 3 CSS px is 60
+   *  document px — a tolerance written in document pixels would make small
+   *  things unclickable zoomed out and select the wrong thing zoomed in. */
+  private static readonly HIT_TOLERANCE_CSS_PX = 3;
+
+  /**
+   * Every layer under the cursor, topmost first — [] on a miss or before a
+   * document is open.
+   *
+   * The conversion is two `toCanvas` calls subtracted rather than a new
+   * `ratio()` accessor: it happens once per gesture, not in a hot loop, and
+   * `toCanvas` is already the one mapping the marquee, the drag and the
+   * eyedropper share, so nothing here can disagree with them about which
+   * pixel the cursor is over.
+   *
+   * `hover: true` marks the request discardable in the Worker's queue — a
+   * stale hover point is worthless and must not sit in front of a tile batch.
+   */
+  async hitTest(clientX: number, clientY: number, opts: { hover?: boolean } = {}): Promise<Hit[]> {
+    if (!this.renderClient) return [];
+    const at = this.toCanvas(clientX, clientY);
+    const wide = this.toCanvas(clientX + DocController.HIT_TOLERANCE_CSS_PX, clientY);
+    return this.renderClient.hitTest(at.x, at.y, { radius: Math.abs(wide.x - at.x), hover: opts.hover });
+  }
+
+  /** One layer's alpha as a coverage buffer over its own box — the layer →
+   *  region conversion (spec §6.1). Same read path in the Worker as the hit
+   *  test; the only difference is copying the block out rather than sampling
+   *  a point. */
+  async layerAlphaRegion(layerId: string): Promise<{ bounds: Rect; data: Uint8ClampedArray } | null> {
+    if (!this.renderClient) return null;
+    const r = await this.renderClient.layerAlpha(layerId);
+    return r ? { bounds: r.bounds as Rect, data: r.data } : null;
   }
 
   /** Applies an op LOCALLY first via `DocSession` (instant repaint of just the

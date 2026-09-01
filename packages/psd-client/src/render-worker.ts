@@ -4,6 +4,8 @@ import type { PsdDoc, PsdOp, PsdStoredDoc } from "@unidocs/doctype-psd/engine";
 import { materializePsdDocFromStore } from "@unidocs/doctype-psd/engine";
 import { CasBlobStore } from "./cas-blob-store.js";
 import { RenderCore } from "./render-core.js";
+import { createRequestQueue } from "./request-queue.js";
+import type { HitCandidate, Rect as AlphaRect } from "./layer-alpha.js";
 
 type Rect = [number, number, number, number];
 
@@ -18,7 +20,9 @@ export type WorkerRequest =
   | { type: "init"; id: number; snapshot: Uint8Array; apiBaseUrl: string; tileSize?: number; cacheBytes?: number }
   | { type: "applyOp"; id: number; op: PsdOp }
   | { type: "tiles"; id: number; tiles: Array<[number, number]> }
-  | { type: "reset"; id: number; doc: PsdDoc };
+  | { type: "reset"; id: number; doc: PsdDoc }
+  | { type: "hitTest"; id: number; x: number; y: number; radius: number; threshold?: number; hover?: boolean }
+  | { type: "layerAlpha"; id: number; layerId: string };
 
 export type WorkerResponse =
   | { type: "ready"; id: number; tileSize: number; canvas: { width: number; height: number } }
@@ -26,7 +30,9 @@ export type WorkerResponse =
   | { type: "tile"; id: number; tx: number; ty: number; width: number; height: number; data: Uint8ClampedArray }
   | { type: "tilesDone"; id: number }
   | { type: "resetDone"; id: number }
-  | { type: "error"; id: number; message: string };
+  | { type: "error"; id: number; message: string }
+  | { type: "hit"; id: number; hits: HitCandidate[] }
+  | { type: "layerAlpha"; id: number; bounds: AlphaRect | null; width: number; height: number; data: Uint8ClampedArray };
 
 // `self` is the DedicatedWorkerGlobalScope per the webworker lib reference
 // above. RenderCore is built once on "init" and reused across every
@@ -120,25 +126,48 @@ async function handle(req: WorkerRequest): Promise<void> {
       }
       break;
     }
+    case "hitTest": {
+      try {
+        if (!core) throw new Error("render-worker: received hitTest before init");
+        post({ type: "hit", id: req.id, hits: await core.hitTest(req.x, req.y, { radius: req.radius, threshold: req.threshold }) });
+      } catch (err) {
+        post({ type: "error", id: req.id, message: errorMessage(err) });
+      }
+      break;
+    }
+    case "layerAlpha": {
+      try {
+        if (!core) throw new Error("render-worker: received layerAlpha before init");
+        const region = await core.layerAlphaRegion(req.layerId);
+        if (!region) {
+          post({ type: "layerAlpha", id: req.id, bounds: null, width: 0, height: 0, data: new Uint8ClampedArray(0) });
+          break;
+        }
+        const [top, left, bottom, right] = region.bounds;
+        // A fresh buffer, because `region.data` may be a view over the
+        // persistent PixelCache's storage and transferring detaches it here —
+        // same reason the tiles branch copies.
+        const data = new Uint8ClampedArray(region.data);
+        post({ type: "layerAlpha", id: req.id, bounds: region.bounds, width: right - left, height: bottom - top, data }, [data.buffer]);
+      } catch (err) {
+        post({ type: "error", id: req.id, message: errorMessage(err) });
+      }
+      break;
+    }
   }
 }
 
-// Requests are processed strictly in arrival order via a chained promise
-// queue. Without this, an async handler's `await` points let the worker's
-// message dispatcher start the next handler before the previous one
-// finishes, which could interleave two mutations of the single resident
-// RenderCore (or race an applyOp against a tiles read mid-composite).
-let queue: Promise<void> = Promise.resolve();
+const queue = createRequestQueue<WorkerRequest>({
+  run: (req) => handle(req),
+  // A hover request that never runs still owes its caller an answer: the
+  // client keeps one pending entry per id, and an unanswered one is a leaked
+  // map entry and a promise that never settles.
+  drop: (req) => { if (req.type === "hitTest") post({ type: "hit", id: req.id, hits: [] }); },
+  // Only hover hit tests. `applyOp` is document state and a click is a user
+  // waiting for an answer — neither may be skipped.
+  discardable: (req) => req.type === "hitTest" && !!req.hover,
+});
 
 self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
-  // `handle()` already catches and reports every request-scoped failure as
-  // an `error` response, so this `.catch` is a last-resort backstop for
-  // anything that escapes it (e.g. a bug in `handle` itself throwing before
-  // its own try/catch). Without it, a rejection here would propagate into
-  // `queue` and every future `.then(() => handle(...))` chained onto it
-  // would be skipped — one bad message would permanently wedge the worker
-  // for the rest of the session.
-  queue = queue.then(() => handle(ev.data)).catch((err) => {
-    console.error("render-worker: unhandled error draining message queue", err);
-  });
+  queue.submit(ev.data);
 };

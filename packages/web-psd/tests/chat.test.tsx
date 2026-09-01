@@ -30,7 +30,7 @@ describe("ChatPanel", () => {
     fireEvent.change(screen.getByPlaceholderText(/说明要改什么/), { target: { value: "把角标挪到右下" } });
     fireEvent.click(screen.getByText("发送"));
     await waitFor(() => expect(screen.getByText("角标已移到右下")).toBeInTheDocument());
-    expect(runAgent).toHaveBeenCalledWith("abc", "把角标挪到右下");
+    expect(runAgent).toHaveBeenCalledWith("abc", "把角标挪到右下", null);
     expect(reconcile).toHaveBeenCalled();
     expect(fetchHistory).toHaveBeenCalledWith("abc");
     const reply = getState().chat.at(-1)!;

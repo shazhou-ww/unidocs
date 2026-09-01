@@ -36,11 +36,44 @@ export async function rollback(docId: string, version: number): Promise<number> 
   return body.version;
 }
 
-export async function runAgent(docId: string, instruction: string): Promise<string> {
+/** The selection target as the agent gets to see it. Layer NAMES, not ids:
+ *  names are what the agent can match against its own `getLayers` result;
+ *  ids mean nothing to it and only cost tokens. */
+export interface AgentTarget {
+  bounds: [number, number, number, number];
+  layerNames: string[];
+}
+
+/**
+ * Splices the current target into the instruction text.
+ *
+ * DELIBERATELY A STOPGAP (spec §4.3). The real fix widens
+ * `DocRunOperatorRequest.body` from `{ instruction }` to
+ * `{ instruction, region? }` and carries a mask through CAS — a cross-package
+ * change that needs its own design. This gets the main path working today,
+ * and real usage is what will show which fields the agent actually needs,
+ * which is more reliable than guessing the protocol first.
+ *
+ * Being a string convention rather than a typed contract, three things are
+ * pinned down: an unlikely-to-collide delimiter, emitted ONCE at the front
+ * (users type brackets, and the operator keeps conversation memory across
+ * turns — a marker in the middle would leave it with two bounds and no way to
+ * tell which is current); and layer names only.
+ */
+export function withTarget(instruction: string, target: AgentTarget | null): string {
+  if (!target) return instruction;
+  const [top, left, bottom, right] = target.bounds;
+  const layers = target.layerNames.length > 0
+    ? ` layers=[${target.layerNames.map((n) => JSON.stringify(n)).join(",")}]`
+    : "";
+  return `<<selection bounds=[${top},${left},${bottom},${right}]${layers}>>\n${instruction}`;
+}
+
+export async function runAgent(docId: string, instruction: string, target: AgentTarget | null = null): Promise<string> {
   const body = await readJson<{ data?: { response?: string } }>(await fetch(docUrl(docId, "run"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ instruction }),
+    body: JSON.stringify({ instruction: withTarget(instruction, target) }),
   }));
   const reply = body.data?.response;
   return typeof reply === "string" && reply.trim() ? reply : "(done)";

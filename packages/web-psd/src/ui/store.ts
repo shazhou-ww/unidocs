@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
-import type { LocalLayer, Rect } from "../doc-model.js";
+import type { LocalLayer } from "../doc-model.js";
+import type { Region } from "./region.js";
+import { sweepMasks } from "./region.js";
+import { expandAncestors, normalizeSelection } from "./hit-test.js";
 
 export type ToolId = "move" | "marquee" | "eyedrop";
 
@@ -31,7 +34,10 @@ export interface UiState {
   selection: string[];
   expanded: ReadonlySet<string>;
   tool: ToolId;
-  marquee: Rect | null;
+  /** The region axis of the current target. Never cleared by a layer-axis
+   *  write — the two axes are written by different tools and never compete
+   *  (spec §3.3). */
+  region: Region | null;
   zoom: number;
   history: HistoryEntry[];
   historyOpen: boolean;
@@ -54,7 +60,7 @@ export interface UiState {
 const INITIAL: UiState = {
   docId: null, docName: null, version: 0, doc: null, status: "loading…",
   selection: [], expanded: new Set(), tool: "move",
-  marquee: null, zoom: 1, history: [], historyOpen: false,
+  region: null, zoom: 1, history: [], historyOpen: false,
   sessionBaseVersion: 0, chat: [], chatBusy: false, exporting: false, degradeOpen: false,
   pickedColor: null,
 };
@@ -121,9 +127,17 @@ export function toggleExpanded(s: UiState, id: string): ReadonlySet<string> {
   return next;
 }
 
+/**
+ * Normalizes at the WRITE side — see hit-test.ts's normalizeSelection for why
+ * a group plus its own child is a real bug and not a tidiness question.
+ * Without a document there is no tree to normalize against, which is the
+ * empty first screen, so the raw list stands.
+ */
 export function nextSelection(s: UiState, id: string, additive: boolean): string[] {
-  if (!additive) return [id];
-  return s.selection.includes(id) ? s.selection.filter((x) => x !== id) : [...s.selection, id];
+  const raw = !additive
+    ? [id]
+    : s.selection.includes(id) ? s.selection.filter((x) => x !== id) : [...s.selection, id];
+  return s.doc ? normalizeSelection(s.doc.layers, raw) : raw;
 }
 
 export function opsSinceSession(s: UiState): HistoryEntry[] {
@@ -141,4 +155,74 @@ export function selectedLayers(s: UiState): LocalLayer[] {
   };
   walk(s.doc.layers);
   return s.selection.map((id) => byId.get(id)).filter((l): l is LocalLayer => !!l);
+}
+
+/**
+ * The one write point for the region axis. A plain `setState({ region })`
+ * works today, but every region carries a mask handle, and the bytes behind
+ * discarded handles have to be released somewhere — routing every writer
+ * through here means that is one edit later, not a hunt for call sites.
+ *
+ * This is a real invariant, not an aspiration: `region: null` must never be
+ * written via a raw `setState` (controller.ts learned this the hard way —
+ * its document-open and canvas-resize paths both used to bypass this and
+ * leak a full-canvas mask). If you're about to write `region` outside this
+ * function, route it through here instead, even if that means splitting an
+ * otherwise-combined `setState` into two calls.
+ */
+export function setRegion(region: Region | null): void {
+  // Writing a region TAKES OVER from the layer axis (spec §3.3): the two are
+  // mutually exclusive, so at most one is ever non-empty. Clearing a region
+  // deliberately does not touch the selection — under exclusivity there is
+  // nothing there to touch, and 「清除选区」 must not read as 「清除一切」.
+  setState({ region, ...(region ? { selection: [] } : {}) });
+  sweepMasks(region?.maskId ?? null);
+}
+
+/**
+ * The write point for every layer-axis SELECTION.
+ *
+ * Everything a selection has to drag along with it lives here rather than at
+ * each call site: normalization (see hit-test.ts) and opening the tree far
+ * enough that the newly selected row is actually rendered. The canvas — click,
+ * ⌘-click, alt-cycle, double-click descent and the right-click menu alike —
+ * the degradation badge and the tree itself all go through it, or through
+ * `setSelection` below where a whole list replaces the axis at once.
+ *
+ * Two INVALIDATION paths deliberately bypass both, and are not bugs to route:
+ * `controller.ts`'s `createFrom` writes `selection: []` raw after adopting a
+ * new docId, and its `onDoc` spreads `invalidateTarget`'s `selection` into the
+ * same `setState` as `doc`/`version`. Both write an already-normalized list
+ * (empty, or a filter of the previous one) against a document that has just
+ * changed under the selection, and neither wants expansion or a scroll —
+ * expanding the tree around a layer the user did not select would be wrong.
+ * Contrast `setRegion`, whose invariant IS absolute because a raw write there
+ * leaks mask bytes.
+ */
+export function selectLayer(id: string, opts: { additive?: boolean } = {}): void {
+  const s = getState();
+  const selection = nextSelection(s, id, !!opts.additive);
+  setState({
+    selection,
+    region: null,
+    ...(s.doc ? { expanded: expandAncestors(s.doc.layers, id, s.expanded) } : {}),
+  });
+  sweepMasks(null);
+}
+
+/** Replaces the layer axis outright (region → layers, Esc, a click or double
+ *  click landing on empty canvas). Normalized for the same reason
+ *  `selectLayer` is — but deliberately WITHOUT the expansion, because none of
+ *  these callers selects a nested layer: they either clear the axis or write a
+ *  list of top-level ids. A canvas gesture that picks one layer belongs in
+ *  `selectLayer`. */
+export function setSelection(ids: string[]): void {
+  const s = getState();
+  // Clears the region for the same reason `selectLayer` does. This is also
+  // the 「点空白 = 取消」 path (`setSelection([])`): with the axes exclusive
+  // there is only ever one thing to cancel, so cancelling has to reach it
+  // whichever axis it happens to be — otherwise a region drawn on empty
+  // canvas becomes impossible to dismiss by clicking.
+  setState({ selection: s.doc ? normalizeSelection(s.doc.layers, ids) : ids, region: null });
+  sweepMasks(null);
 }

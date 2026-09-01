@@ -73,6 +73,30 @@ const subpathsNeedingAlias = [...specifiers]
   .filter(([spec]) => spec.split("/").length > 2)
   .filter(([spec]) => Object.hasOwn(aliases, spec.split("/").slice(0, 2).join("/")));
 
+/**
+ * src 里 import 的每个**基础包**本身也必须在表里。
+ *
+ * 上面那条子路径规则原本假设「表里没有的包走 esbuild 自己的 node 解析、读
+ * package.json 的 `exports`，正常工作」。那个假设是错的，`pnpm dev psd`
+ * 炸在这上面：仓库里每个 workspace 包的 `exports` 都是
+ * `development -> src/index.ts` / `import -> dist/index.js`，而
+ * `stacks/unidocs-cloudflare/local/runtime.mjs` 的 esbuild 只传
+ * `conditions: ["workerd", "worker", "browser"]` —— 没有 `development`。
+ * 于是未登记的包一律落到 `dist/index.js`：
+ *
+ *   - `@unicas/admin-protocol` 从没 build 过，dist 不存在 → Could not resolve；
+ *   - `@unicas/control-plane` 的 dist 是 4c873f6 改名之前编的，里面还写着
+ *     早已不存在的 `@unicas/protocol-admin` → 同样 Could not resolve。
+ *
+ * 两者都不是源码问题，源码是对的 —— 是「没登记就会去读构建产物」这条隐式
+ * 回退路径的问题。登记到 src 之后既修好了当下，也让这类陈旧 dist 再不可能
+ * 被悄悄读进 bundle。
+ */
+const basePackages = [...specifiers].map(([spec, where]) => [
+  spec.split("/").slice(0, 2).join("/"),
+  where,
+]);
+
 describe("esbuild 的 workspace alias 表", () => {
   test("扫到了 import（防止 walk 静默扫空）", () => {
     expect(specifiers.size).toBeGreaterThan(5);
@@ -94,6 +118,20 @@ describe("esbuild 的 workspace alias 表", () => {
         + " bundle 时报 \"Cannot read directory ... not a directory\"。"
         + " 加一条指向该子路径真实入口文件的映射。",
       ).toContain(spec);
+    },
+  );
+
+  test.each(basePackages)(
+    "%s 在 alias 表里（未登记就会回退去读 dist 构建产物）",
+    (base, where) => {
+      expect(
+        Object.keys(aliases),
+        `${where} import 了 ${base}，但它不在 scripts/workspace-aliases.mjs 里。`
+        + " esbuild 只传 workerd/worker/browser 条件，命不中 `development`，"
+        + " 于是这个包会解析到 dist/index.js —— 要么根本没 build 过，要么是"
+        + " 改名前的陈旧产物。两种都在 bundle 期报 Could not resolve。"
+        + " 加一条指向它 src/index.ts 的映射。",
+      ).toContain(base);
     },
   );
 

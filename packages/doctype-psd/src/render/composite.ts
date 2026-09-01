@@ -67,7 +67,7 @@ export function defaultRenderCtx(): RenderCtx {
 
 /** Mask coverage at canvas pixel (cx,cy), 0..1. Value is channel 0 of the
  *  mask; outside the mask rect it is `defaultColor`. */
-function maskCoverageAt(mask: Mask, cx: number, cy: number): number {
+export function maskCoverageAt(mask: Mask, cx: number, cy: number): number {
   const [mt, ml, mb, mr] = mask.bounds;
   let v: number;
   if (mask.pixels.width > 0 && cx >= ml && cx < mr && cy >= mt && cy < mb) {
