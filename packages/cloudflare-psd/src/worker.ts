@@ -17,7 +17,7 @@
  */
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
-import { createPsdDocumentType, psdAgent } from "@unidocs/doctype-psd";
+import { createPsdDocumentType, createPsdAgent } from "@unidocs/doctype-psd";
 import {
   createDocTypeHandler,
   DocAuthConfigCache,
@@ -30,7 +30,7 @@ const authConfig = new DocAuthConfigCache("psd");
 
 export const PsdEditor = createEditorDO(psdFactory);
 export const PsdOperator = createOperatorDO({
-  agent: psdAgent,
+  agent: createPsdAgent({}),   // Task 8 换成按 env 注入 editor 的工厂
   // The provider is built from env: a DO instance outlives a config change,
   // and `env` is only handed to us here.
   provider: (env: Env) => createAnthropicProvider(env),

@@ -281,7 +281,9 @@ EDITING
 - Clipping: a layer with clipping:true is confined to the alpha of the layer directly BELOW it (its base). To move a clipped image, move its base layer by the same delta too, or they will separate.
 - Masks: a mask is grayscale coverage (black hides, white shows). Use editMask to set/replace/remove.
 - New layers need a caller-assigned unique id. Raster layers must include pixel data; generate images (generativeFill) in your own tool step first, then insert the resulting layer.
+- editPixels: change the pixels INSIDE a layer from a plain-language instruction — removing an object, replacing something, painting something in. This is the ONLY tool that can change pixels; every other write tool needs pixel data you cannot produce. Give it {layerId, instruction}. It lands the result as a new masked layer above the source and hands you back an after-preview, so you do NOT need a separate getPreview to check it.
+- If editPixels comes back with ok:false, read the reason: "refused" means rephrase the instruction; "needs_mask" means narrow the area with getPreview {rect} first; "timeout"/"provider_error" mean the attempt failed and nothing was changed — decide whether it is worth retrying.
 - Adjustment layers: create with addLayer (type "adjustment") using a PSD adjustType key (brit=brightness/contrast, blwh=black & white, hue2=hue/saturation); change params later with setAdjustment. The field is adjustType, not adjustmentType.
 
 WORKFLOW
-Query (getDoc/getLayers) → reason about coordinates → edit → getPreview to verify → correct if needed.`;
+Query (getDoc/getLayers) → reason about coordinates → edit (layer ops, or editPixels for pixels) → getPreview to verify (editPixels already returns one) → correct if needed.`;

@@ -1,0 +1,156 @@
+import { describe, expect, it, vi } from "vitest";
+import { encode, decode } from "fast-png";
+import { createSBlob } from "@unidocs/svalue-codec";
+import type { EffectContext, SBlob, SBlobBytes } from "@unidocs/protocol";
+import { createEditPixelsTool } from "../src/image/edit-pixels.js";
+import { createStubEditor } from "../src/testing/stub-editor.js";
+import type { PsdQuery } from "../src/queries.js";
+
+const SRC_W = 64, SRC_H = 48;
+
+function sourcePng(): Uint8Array {
+  const data = new Uint8ClampedArray(SRC_W * SRC_H * 4).fill(200);
+  return encode({ width: SRC_W, height: SRC_H, data, channels: 4, depth: 8 });
+}
+
+/** 假 EffectContext：query 回一份 getLayerPixels 结果，blob 存在 Map 里。 */
+function fakeCtx(over: { queryResult?: Record<string, unknown> } = {}) {
+  const blobs = new Map<string, SBlobBytes>();
+  const srcHash = "1".repeat(64);
+  blobs.set(srcHash, { data: sourcePng(), contentType: "image/png" });
+  let n = 0;
+  const written: SBlobBytes[] = [];
+  const ctx: EffectContext<PsdQuery> & { blobs: typeof blobs; written: typeof written } = {
+    blobs, written,
+    query: vi.fn(async () => ({
+      data: over.queryResult ?? {
+        image: createSBlob(srcHash),
+        width: SRC_W, height: SRC_H,
+        bounds: [10, 20, 10 + SRC_H, 20 + SRC_W],
+        parentId: "g1", index: 2,
+      },
+      version: 7,
+    })) as never,
+    readBlob: vi.fn(async (b: SBlob) => blobs.get(b.hash)!),
+    writeBlob: vi.fn(async (d: SBlobBytes): Promise<SBlob> => {
+      written.push(d);
+      const hash = String(n++).padStart(64, "f");
+      blobs.set(hash, d);
+      return createSBlob(hash);
+    }),
+    signal: AbortSignal.timeout(10_000),
+  };
+  return ctx;
+}
+
+describe("editPixels effect", () => {
+  it("产出一个 generative_fill op，结果层插在源层正上方（index+1）", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = fakeCtx();
+    const out = await tool.run({ layerId: "portrait", instruction: "删掉帽子" }, ctx);
+    expect(out.ops).toHaveLength(1);
+    const op = out.ops[0] as unknown as { kind: string; payload: Record<string, any> };
+    expect(op.kind).toBe("generative_fill");
+    expect(op.payload.parentId).toBe("g1");
+    // 图层数组是 bottom-to-top，所以"正上方"= 源层 index + 1
+    expect(op.payload.index).toBe(3);
+  });
+
+  it("结果层的 bounds 与源层完全一致 —— 非破坏叠加要对齐", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, fakeCtx());
+    const layer = (out.ops[0] as any).payload.layer;
+    expect(layer.bounds).toEqual([10, 20, 10 + SRC_H, 20 + SRC_W]);
+    expect(layer.type).toBe("raster");
+  });
+
+  it("像素以 PixelRef 落地，不把 RGBA 塞进 op —— 整层 RGBA 会撑爆 delta", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = fakeCtx();
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+    const layer = (out.ops[0] as any).payload.layer;
+    expect(layer.pixels).toMatchObject({ width: SRC_W, height: SRC_H });
+    expect(typeof layer.pixels.hash).toBe("string");
+    expect(layer.pixels.data).toBeUndefined();
+    // 写进 CAS 的第一份是结果 PNG，尺寸等于源尺寸
+    const png = decode(ctx.written[0].data);
+    expect([png.width, png.height]).toEqual([SRC_W, SRC_H]);
+  });
+
+  it("差异蒙版烘进结果层的 alpha —— 未改动区域全透明，原层照样露出来", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = fakeCtx();
+    await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+    // 桩 editor 只改左上 1/4，其余区域覆盖度为 0
+    const png = decode(ctx.written[0].data);
+    const rgba = png.data as ArrayLike<number>;
+    const ch = png.channels;
+    const idx = (x: number, y: number) => (y * SRC_W + x) * ch;
+    expect(rgba[idx(4, 4) + 3]).toBe(255);          // 改动区：不透明
+    expect(rgba[idx(SRC_W - 4, SRC_H - 4) + 3]).toBe(0); // 未改动区：透明
+  });
+
+  it("provenance 原样带进 op", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "删掉帽子" }, fakeCtx());
+    expect((out.ops[0] as any).payload.provenance).toMatchObject({
+      model: "stub-editor", prompt: "删掉帽子",
+    });
+  });
+
+  it("返回一张 after 预览图，省掉模型再调一次 getPreview", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, fakeCtx());
+    const image = out.result.content?.find(p => p.type === "image");
+    expect(image).toMatchObject({ type: "image", mediaType: "image/png" });
+  });
+
+  it("editor 拒绝时 ops 为空，原因回给模型 —— 不落 op、不 bump 版本", async () => {
+    const tool = createEditPixelsTool(
+      createStubEditor({ fail: { ok: false, reason: "refused", detail: "内容审核未通过" } }),
+    );
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = fakeCtx();
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+    expect(out.ops).toEqual([]);
+    expect(out.result.structuredContent).toMatchObject({
+      ok: false, reason: "refused", detail: "内容审核未通过",
+    });
+    expect(ctx.writeBlob).not.toHaveBeenCalled();
+  });
+
+  it("changed 为 null 时降级整层替换：alpha 不被裁剪，provenance 标 maskDerivation none", async () => {
+    const editor = createStubEditor();
+    const noMask = {
+      ...editor,
+      edit: async (req: any, sig: AbortSignal) => {
+        const r = await editor.edit(req, sig);
+        return r.ok ? { ...r, changed: null } : r;
+      },
+    };
+    const tool = createEditPixelsTool(noMask);
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = fakeCtx();
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+    const payload = (out.ops[0] as any).payload;
+    expect(payload.provenance.maskDerivation).toBe("none");
+    // 没有可信蒙版就整层盖上去：四角都不透明
+    const png = decode(ctx.written[0].data);
+    const ch = png.channels;
+    expect((png.data as ArrayLike<number>)[((SRC_H - 1) * SRC_W + SRC_W - 1) * ch + 3]).toBe(255);
+  });
+
+  it("参数缺失时以 result 报错，不抛", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ instruction: "x" }, fakeCtx());
+    expect(out.ops).toEqual([]);
+    expect(String((out.result.structuredContent as any).error)).toMatch(/layerId/);
+  });
+});

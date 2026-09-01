@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createSBlob } from "@unidocs/svalue-codec";
-import { psdAgent } from "../src/agent.js";
+import { createPsdAgent } from "../src/agent.js";
+import { createStubEditor } from "../src/testing/stub-editor.js";
+
+const psdAgent = createPsdAgent({});
 
 const tool = (name: string) => {
   const t = psdAgent.tools.find(x => x.name === name);
@@ -43,6 +46,10 @@ describe("PSD 工具表", () => {
 
   it("toQuery / toOps 是纯函数：同参调两次结果深相等（spec V7）", () => {
     for (const t of psdAgent.tools) {
+      // effect 分支既没有 toQuery 也没有 toOps —— 它的纯性不是靠"重复调用
+      // 结果相等"来保证的，而是靠它不产生 op 时不落库（EffectOutcome.ops
+      // 为空数组即可，参见 edit-pixels.test.ts 的失败用例）。
+      if (t.kind === "effect") continue;
       const args = { layerId: "L1" };
       const once = t.kind === "query" ? t.toQuery(args) : t.toOps(args);
       const twice = t.kind === "query" ? t.toQuery(args) : t.toOps(args);
@@ -84,5 +91,17 @@ describe("PSD 工具表", () => {
       { image: blob, width: 8, height: 6, region: [0, 0, 6] } as never,
       1,
     )).toThrow("getPreview region must be an array of 4 finite numbers");
+  });
+});
+
+describe("createPsdAgent", () => {
+  it("不注入 editor 就没有 editPixels —— 没有手就别宣称能画", () => {
+    expect(createPsdAgent({}).tools.map(t => t.name)).not.toContain("editPixels");
+  });
+
+  it("注入 editor 后 editPixels 出现在工具表里，且是 effect", () => {
+    const tools = createPsdAgent({ editor: createStubEditor() }).tools;
+    const t = tools.find(x => x.name === "editPixels")!;
+    expect(t.kind).toBe("effect");
   });
 });
