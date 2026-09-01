@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
+import type {
+  D1Database,
+  DurableObjectState,
+  R2Bucket,
+  R2PutOptions,
+} from "@cloudflare/workers-types";
 import {
   CanonicalNodeContentType,
   computeNodeDigest,
@@ -8,6 +13,7 @@ import {
   encodeHeader,
   hashToHex,
   hexToHash,
+  sha256,
 } from "@unicas/codec";
 import { migrateStackTenantSchema } from "../src/schema.js";
 import { canonicalComposite, stackCanonicalNodeKey } from "../src/do-names.js";
@@ -55,7 +61,7 @@ async function createStore(): Promise<void> {
   }));
   await miniflare.ready;
   db = await miniflare.getD1Database("DB", "do-test");
-  bucket = await miniflare.getR2Bucket("BUCKET", "do-test");
+  bucket = await miniflare.getR2Bucket("BUCKET", "do-test") as unknown as R2Bucket;
   await migrateStackTenantSchema(db);
 }
 
@@ -89,7 +95,7 @@ async function leaseNode(store: NodeStore, input: {
     hash: input.hash,
     leaseDurationMs: input.leaseDurationMs,
     declaredLength: canonical.length,
-    body: new Response(canonical).body!,
+    body: new Response(arrayBufferOf(canonical)).body!,
   });
 }
 
@@ -329,11 +335,20 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve };
 }
 
+function arrayBufferOf(bytes: Uint8Array): ArrayBuffer {
+  return Uint8Array.from(bytes).buffer;
+}
+
 function store(): NodeStore {
   return { db: db!, bucket: bucket!, stackId: STACK, tenantId: TENANT };
 }
 
-function tenantRequest(path: string, method: string, headers: Record<string, string>, body?: Uint8Array): Request {
+function tenantRequest(
+  path: string,
+  method: string,
+  headers: Record<string, string> = {},
+  body?: Uint8Array,
+): Request {
   return new Request(`https://tenant.internal${path}`, {
     method,
     headers: { "X-CAS-Stack-Id": STACK, "X-CAS-Tenant-Id": TENANT, ...headers },
@@ -364,7 +379,7 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
     const contentType = "application/octet-stream";
     const header = encodeHeader(content.length, contentType, 0);
     const canonical = concatenateNodeBytes(header, new TextEncoder().encode(contentType), [], content);
-    const hash = hashToHex(await crypto.subtle.digest("SHA-256", canonical).then(value => new Uint8Array(value)));
+    const hash = hashToHex(await sha256(canonical));
     const doInstance = tenantDo(nodeHostedStreamBucket());
 
     const lease = await doInstance.fetch(tenantRequest("/lease", "POST", {
@@ -394,7 +409,7 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
     const contentType = "text/plain";
     const header = encodeHeader(content.length, contentType, 0);
     const canonical = concatenateNodeBytes(header, new TextEncoder().encode(contentType), [], content);
-    const hash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", canonical)));
+    const hash = hashToHex(await sha256(canonical));
     const doInstance = tenantDo(nodeHostedStreamBucket());
     const lease = await doInstance.fetch(tenantRequest("/lease", "POST", {
       "X-CAS-Hash": hash,
@@ -466,8 +481,8 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
       [],
       secondContent,
     );
-    const firstHash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", firstCanonical)));
-    const secondHash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", secondCanonical)));
+    const firstHash = hashToHex(await sha256(firstCanonical));
+    const secondHash = hashToHex(await sha256(secondCanonical));
     const controlled = blockingUploadBucket();
     const doInstance = tenantDo(controlled.bucket);
 
@@ -499,7 +514,7 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
       [],
       content,
     );
-    const hash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", canonical)));
+    const hash = hashToHex(await sha256(canonical));
     const controlled = blockingUploadBucket();
     const doInstance = tenantDo(controlled.bucket);
     const request = () => tenantRequest("/lease", "POST", {
@@ -533,7 +548,7 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
       [],
       content,
     );
-    const hash = hashToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", canonical)));
+    const hash = hashToHex(await sha256(canonical));
     await bucket!.put(stackCanonicalNodeKey(STACK, TENANT, hash), canonical, { sha256: hash });
 
     const response = await tenantDo().fetch(tenantRequest("/lease", "POST", {
@@ -665,7 +680,7 @@ describe("CasDurableObject (tenant DO) — node storage operations", () => {
       children,
       parentContent,
     );
-    const body = new Response(canonical).body!;
+    const body = new Response(arrayBufferOf(canonical)).body!;
 
     await expect(leaseCanonicalNode(
       { ...store(), limits: { maxNodeRefs: 0 } },
