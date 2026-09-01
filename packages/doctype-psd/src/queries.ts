@@ -5,12 +5,13 @@ import { renderCached, renderRegion, renderLayer, downscale, DEFAULT_CACHE_BYTES
 import { PixelCache } from "./render/pixel-source.js";
 import type { DocRenderState } from "./render/doc-render-state.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
-import { findLayer } from "./model/tree.js";
+import { findLayer, findParentList, findParentId } from "./model/tree.js";
 
 export type PsdQuery =
   | { kind: "getLayers"; payload?: Record<string, never> }
   | { kind: "getDoc"; payload?: { layerId?: string } }
-  | { kind: "getPreview"; payload?: { rect?: [number, number, number, number]; layerId?: string; maxSize?: number } };
+  | { kind: "getPreview"; payload?: { rect?: [number, number, number, number]; layerId?: string; maxSize?: number } }
+  | { kind: "getLayerPixels"; payload: { layerId: string } };
 
 function summarize(l: Layer): any {
   return {
@@ -56,6 +57,13 @@ const PREVIEW_BASE64_BUDGET = 960 * 1024;
 const MIN_PREVIEW_SIZE = 64;
 /** Re-encode attempts. Each pass measures real bytes, so 3 is ample. */
 const MAX_FIT_ATTEMPTS = 3;
+
+/**
+ * `getLayerPixels` 的像素数上限。4096x4096 解码后是 64 MiB RGBA，再加一份
+ * PNG 编码缓冲 —— 一个 DO isolate 扛得住的天花板就在这附近。超过就拒绝，
+ * 而不是让整个编辑器 OOM 掉。
+ */
+const MAX_EDIT_SOURCE_PIXELS = 16 * 1024 * 1024;
 
 type Px = { width: number; height: number; data: Uint8ClampedArray };
 
@@ -169,6 +177,35 @@ export async function runQuery(
         region = [0, 0, doc.canvas.height, doc.canvas.width];
       }
       return toImageResult(px, region, maxSize, requireCtx(ctx));
+    }
+
+    case "getLayerPixels": {
+      // 和 getPreview{layerId} 渲的是同一张图（renderLayer：孤立的单层文档，
+      // 蒙版与图层效果已烘进去），区别只有一个：**不过 fitToBudget**。
+      // 预览是给模型的眼睛看的，压到 768 正合适；编辑要的是原始像素，压了
+      // 就再也还原不回去。
+      const { layerId } = q.payload;
+      const l = findLayer(doc.layers, layerId);
+      if (!l) throw new Error(`layer not found: ${layerId}`);
+      const w = l.bounds[3] - l.bounds[1];
+      const h = l.bounds[2] - l.bounds[0];
+      if (w * h > MAX_EDIT_SOURCE_PIXELS) {
+        throw new Error(`layer ${layerId} is too large to edit: ${w}x${h} > ${MAX_EDIT_SOURCE_PIXELS} px`);
+      }
+      const c = requireCtx(ctx);
+      const rc: RenderCtx | undefined = render
+        ? render.ctx
+        : { store: casBlobStore(c), cache: new PixelCache(DEFAULT_CACHE_BYTES) };
+      const px = await renderLayer(doc, layerId, {}, rc);
+      const image = await c.makeSBlob({ data: pngOf(px), contentType: "image/png" });
+      return {
+        image,
+        width: px.width,
+        height: px.height,
+        bounds: l.bounds,
+        parentId: findParentId(doc.layers, layerId),
+        index: findParentList(doc.layers, layerId)?.index ?? 0,
+      } as unknown as QueryValue;
     }
   }
 }
