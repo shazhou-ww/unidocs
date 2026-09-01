@@ -332,6 +332,53 @@ export class D1GatewayOAuthAuditPort implements GatewayOAuthAuditPort {
   }
 }
 
+export interface GatewayOAuthCleanupResult {
+  readonly transactions: number;
+  readonly codes: number;
+  readonly refreshTokens: number;
+  readonly refreshFamilies: number;
+  readonly auditEvents: number;
+}
+
+export async function cleanupGatewayOAuthD1(
+  db: D1Database,
+  now: number = epochSeconds(),
+  auditRetentionSeconds = 90 * 24 * 60 * 60,
+): Promise<GatewayOAuthCleanupResult> {
+  if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("OAuth cleanup time is invalid");
+  if (!Number.isSafeInteger(auditRetentionSeconds) || auditRetentionSeconds < 24 * 60 * 60) {
+    throw new TypeError("OAuth audit retention must be at least one day");
+  }
+  const [transactions, codes, refreshTokens, refreshFamilies, auditEvents] = await db.batch([
+    db.prepare(
+      "DELETE FROM gateway_oauth_authorization_transactions WHERE expires_at <= ?",
+    ).bind(now),
+    db.prepare(
+      "DELETE FROM gateway_oauth_authorization_codes WHERE expires_at <= ?",
+    ).bind(now),
+    db.prepare(
+      "DELETE FROM gateway_oauth_refresh_tokens WHERE expires_at <= ?",
+    ).bind(now),
+    db.prepare(
+      `DELETE FROM gateway_oauth_refresh_families
+       WHERE NOT EXISTS (
+         SELECT 1 FROM gateway_oauth_refresh_tokens AS tokens
+         WHERE tokens.family_id = gateway_oauth_refresh_families.family_id
+       )`,
+    ),
+    db.prepare(
+      "DELETE FROM gateway_oauth_audit_events WHERE created_at < ?",
+    ).bind(now - auditRetentionSeconds),
+  ]);
+  return Object.freeze({
+    transactions: changes(transactions),
+    codes: changes(codes),
+    refreshTokens: changes(refreshTokens),
+    refreshFamilies: changes(refreshFamilies),
+    auditEvents: changes(auditEvents),
+  });
+}
+
 function transactionFromRow(row: TransactionRow): GatewayOAuthAuthorizationTransaction {
   return Object.freeze({
     transactionId: row.transaction_id,
@@ -405,7 +452,11 @@ function stringArray(value: string, label: string): string[] {
 }
 
 function changed(result: D1Result): boolean {
-  return (result.meta.changes ?? 0) === 1;
+  return changes(result) === 1;
+}
+
+function changes(result: D1Result): number {
+  return result.meta.changes ?? 0;
 }
 
 function epochSeconds(): number {

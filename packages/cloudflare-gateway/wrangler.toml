@@ -26,6 +26,9 @@ migrations_dir = "migrations"
 binding = "CAS_SERVICE"
 service = "unidocs-cas"
 
+[triggers]
+crons = ["17 * * * *"]
+
 # Deployment secrets (wrangler secret put, never in this file):
 #   DOC_SERVICES_JSON            { docType: { serviceId, url, accessKey?, audience } }
 #   CAPABILITY_ISSUER            doc-service identity issuer

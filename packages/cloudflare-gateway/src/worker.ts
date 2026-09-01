@@ -34,6 +34,7 @@ import {
 import { D1GatewayDocumentDirectory } from "./document-directory.js";
 import { renderCloudflareGatewayOAuthConsent } from "./oauth-consent.js";
 import {
+  cleanupGatewayOAuthD1,
   D1GatewayOAuthAuditPort,
   D1GatewayOAuthAuthorizationCodeStore,
   D1GatewayOAuthAuthorizationTransactionStore,
@@ -105,6 +106,11 @@ export default {
       casStackId,
     });
     return handle(request);
+  },
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
+    ctx.waitUntil(cleanupGatewayOAuthD1(env.GATEWAY_DB).then(result => {
+      console.log(JSON.stringify({ event: "gateway_oauth_cleanup", ...result }));
+    }));
   },
 };
 

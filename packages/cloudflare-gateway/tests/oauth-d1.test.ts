@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import {
+  cleanupGatewayOAuthD1,
   D1GatewayOAuthAuditPort,
   D1GatewayOAuthAuthorizationCodeStore,
   D1GatewayOAuthAuthorizationTransactionStore,
@@ -188,5 +189,85 @@ describe("Cloudflare Gateway OAuth D1 adapters", () => {
     expect(columns.results.map(column => column.name)).not.toEqual(expect.arrayContaining([
       "access_token", "refresh_token", "authorization_code", "code_verifier",
     ]));
+  });
+
+  test("cleans expired ephemeral state without deleting live families or memberships", async () => {
+    const transactions = new D1GatewayOAuthAuthorizationTransactionStore(db);
+    await transactions.putIfAbsent({
+      transactionId: "expired-transaction",
+      clientId: "client-1",
+      redirectUri: "https://app.example/callback",
+      tenantId: "tenant-1",
+      principalId: "user-1",
+      requestedScopes: ["cas:read"],
+      state: null,
+      codeChallenge: "A".repeat(43),
+      createdAt: 100,
+      expiresAt: 200,
+    });
+    await transactions.putIfAbsent({
+      transactionId: "live-transaction",
+      clientId: "client-1",
+      redirectUri: "https://app.example/callback",
+      tenantId: "tenant-1",
+      principalId: "user-1",
+      requestedScopes: ["cas:read"],
+      state: null,
+      codeChallenge: "A".repeat(43),
+      createdAt: 99_900,
+      expiresAt: 100_100,
+    });
+    const refresh = new D1GatewayOAuthRefreshTokenStore(db);
+    await refresh.putInitial({
+      tokenHash: "expired-refresh",
+      familyId: "expired-family",
+      generation: 0,
+      clientId: "client-1",
+      principalId: "user-1",
+      tenantId: "tenant-1",
+      scopes: ["cas:read"],
+      permissions: ["tenants:tenant-1:cas:read" as never],
+      createdAt: 100,
+      expiresAt: 200,
+    });
+    await refresh.putInitial({
+      tokenHash: "live-refresh",
+      familyId: "live-family",
+      generation: 0,
+      clientId: "client-1",
+      principalId: "user-1",
+      tenantId: "tenant-1",
+      scopes: ["cas:read"],
+      permissions: ["tenants:tenant-1:cas:read" as never],
+      createdAt: 99_900,
+      expiresAt: 100_100,
+    });
+    await db.prepare(
+      `INSERT INTO gateway_oauth_tenant_memberships
+       (principal_id, tenant_id, scopes_json, ref_domain, created_at, updated_at)
+       VALUES ('user-1', 'tenant-1', '["cas:read"]', NULL, 100, 100)`,
+    ).run();
+    await db.prepare(
+      `INSERT INTO gateway_oauth_audit_events
+       (event_id, action, client_id, principal_id, tenant_id, scopes_json, reason, created_at)
+       VALUES ('old-event', 'token.issued', 'client-1', NULL, NULL, NULL, NULL, 100)`,
+    ).run();
+
+    await expect(cleanupGatewayOAuthD1(db, 100_000, 24 * 60 * 60)).resolves.toEqual({
+      transactions: 1,
+      codes: 0,
+      refreshTokens: 1,
+      refreshFamilies: 1,
+      auditEvents: 1,
+    });
+    await expect(db.prepare(
+      "SELECT transaction_id FROM gateway_oauth_authorization_transactions",
+    ).all()).resolves.toMatchObject({ results: [{ transaction_id: "live-transaction" }] });
+    await expect(db.prepare(
+      "SELECT family_id FROM gateway_oauth_refresh_families",
+    ).all()).resolves.toMatchObject({ results: [{ family_id: "live-family" }] });
+    await expect(db.prepare(
+      "SELECT tenant_id FROM gateway_oauth_tenant_memberships",
+    ).all()).resolves.toMatchObject({ results: [{ tenant_id: "tenant-1" }] });
   });
 });
