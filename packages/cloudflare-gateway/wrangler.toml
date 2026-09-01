@@ -5,11 +5,11 @@ workers_dev = false
 preview_urls = false
 
 [[routes]]
-pattern = "unicas.shazhou.work/.well-known/oauth-authorization-server/cas/issuer/cloudflare"
+pattern = "unicas.shazhou.work/.well-known/oauth-authorization-server/oauth/unidocs-cloudflare"
 zone_name = "shazhou.work"
 
 [[routes]]
-pattern = "unicas.shazhou.work/cas/issuer/cloudflare/*"
+pattern = "unicas.shazhou.work/oauth/unidocs-cloudflare/*"
 zone_name = "shazhou.work"
 
 # Stack mode: the gateway signs delegated/gateway CAS capabilities with the
@@ -21,11 +21,11 @@ CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "1800"
 CAPABILITY_CLOCK_SKEW_SECONDS = "30"
 CAS_STACK_ID = "cas_SZ6wfcfqS34J"
-CAS_STACK_ISSUER = "https://unicas.shazhou.work/cas/issuer/cloudflare"
+CAS_STACK_ISSUER = "https://unicas.shazhou.work/oauth/unidocs-cloudflare"
 CAS_STACK_KEY_ID = "cf-oauth-2026-09"
 CAS_REF_DOMAIN = "doc"
 CAS_CAPABILITY_AUDIENCE = "https://unicas.shazhou.work/stacks/cas_SZ6wfcfqS34J"
-GATEWAY_OAUTH_ISSUER = "https://unicas.shazhou.work/cas/issuer/cloudflare"
+GATEWAY_OAUTH_ISSUER = "https://unicas.shazhou.work/oauth/unidocs-cloudflare"
 
 [[d1_databases]]
 binding = "GATEWAY_DB"
