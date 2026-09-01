@@ -112,5 +112,25 @@ destruction gates all pass.
 |---|---|
 | Active signing key unavailable | Switch Gateway to another already-trusted private key and deploy a capability-aware revision. |
 | Private key suspected compromised | Publish replacement trust, switch Gateway, observe for at least the configured maximum lifetime plus clock skew, then remove compromised public and private material. |
+
+## Known platform constraint: Durable Object memory and concurrent CAS subrequests
+
+Production docx create once crashed with `Durable Object's isolate exceeded its
+memory limit and was reset` after the first ~7 OpenXML part uploads while
+markdown (fewer refs) stayed under the limit and the local Miniflare runtime
+did not reproduce it. Each concurrent in-flight CAS subrequest issued from a
+Durable Object holds a large buffer in the calling isolate, so concurrent
+bursts (the docx snapshot's `Promise.all` over its ref leases, plus
+high-concurrency part uploads) push a 128 MB DO past its limit.
+
+Keep CAS subrequests from Doc Durable Objects sequential or low-concurrency:
+
+- `doctype-server-common/src/sblob-context.ts` — SValue snapshot storage leases
+  its refs sequentially (not `Promise.all`).
+- `doctype-docx/src/docx.ts` — `PART_IO_CONCURRENCY` is 2, not 8.
+
+Do not raise the DO memory limit to mask this; serialize the subrequests
+instead. When adding a doc type that stores many blobs per commit, keep the
+same rule.
 | Validators reject new tokens | Verify issuer, `kid`, audience, JWKS deployment, and that every validator revision restarted. |
 | Authorization failures spike | Disable the affected route/revision or forward-deploy a retained capability-aware release; do not enable an undocumented permanent bypass. |
