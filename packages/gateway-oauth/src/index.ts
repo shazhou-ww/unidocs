@@ -93,3 +93,9 @@ export type {
   GatewayOAuthTenantMembership,
   GatewayOAuthTenantMembershipPort,
 } from "./ports.js";
+export { createGatewayOAuthAuthorizationServerHandler } from "./authorization-server-handler.js";
+export type {
+  GatewayOAuthAuthorizationServerHandler,
+  GatewayOAuthAuthorizationServerHandlerConfig,
+  GatewayOAuthConsentView,
+} from "./authorization-server-handler.js";

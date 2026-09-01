@@ -38,6 +38,7 @@ export interface GatewayOAuthAuthorizationTransaction {
   readonly clientId: string;
   readonly redirectUri: string;
   readonly tenantId: string;
+  readonly principalId: string | null;
   readonly requestedScopes: readonly GatewayOAuthScope[];
   readonly state: string | null;
   readonly codeChallenge: string;
@@ -124,39 +125,39 @@ export interface GatewayOAuthHashPort {
 
 export type GatewayOAuthAuditEvent =
   | {
-      readonly action: "client.registered";
-      readonly clientId: string;
-      readonly redirectUriCount: number;
-    }
+    readonly action: "client.registered";
+    readonly clientId: string;
+    readonly redirectUriCount: number;
+  }
   | {
-      readonly action: "authorization.started" | "authorization.denied";
-      readonly clientId: string;
-      readonly tenantId: string;
-      readonly scopes: readonly GatewayOAuthScope[];
-    }
+    readonly action: "authorization.started" | "authorization.denied";
+    readonly clientId: string;
+    readonly tenantId: string;
+    readonly scopes: readonly GatewayOAuthScope[];
+  }
   | {
-      readonly action: "authorization.approved";
-      readonly clientId: string;
-      readonly principalId: string;
-      readonly tenantId: string;
-      readonly scopes: readonly GatewayOAuthScope[];
-    }
+    readonly action: "authorization.approved";
+    readonly clientId: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+    readonly scopes: readonly GatewayOAuthScope[];
+  }
   | {
-      readonly action: "token.issued" | "token.rejected";
-      readonly clientId: string;
-      readonly principalId?: string;
-      readonly tenantId?: string;
-      readonly scopes?: readonly GatewayOAuthScope[];
-      readonly reason?: string;
-    }
+    readonly action: "token.issued" | "token.rejected";
+    readonly clientId: string;
+    readonly principalId?: string;
+    readonly tenantId?: string;
+    readonly scopes?: readonly GatewayOAuthScope[];
+    readonly reason?: string;
+  }
   | {
-      readonly action: "refresh.rotated" | "refresh.rejected" | "refresh.revoked";
-      readonly clientId: string;
-      readonly principalId?: string;
-      readonly tenantId?: string;
-      readonly scopes?: readonly GatewayOAuthScope[];
-      readonly reason?: string;
-    };
+    readonly action: "refresh.rotated" | "refresh.rejected" | "refresh.revoked";
+    readonly clientId: string;
+    readonly principalId?: string;
+    readonly tenantId?: string;
+    readonly scopes?: readonly GatewayOAuthScope[];
+    readonly reason?: string;
+  };
 
 export interface GatewayOAuthAuditPort {
   record(event: GatewayOAuthAuditEvent): void | Promise<void>;

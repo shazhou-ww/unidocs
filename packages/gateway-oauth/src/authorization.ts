@@ -28,6 +28,8 @@ export interface GatewayOAuthAuthorizationRequest {
   readonly state?: string;
   readonly codeChallenge: string;
   readonly codeChallengeMethod: string;
+  /** Server-derived browser identity; never populate this from OAuth query input. */
+  readonly authenticatedPrincipalId?: string;
 }
 
 export interface GatewayOAuthPendingAuthorization {
@@ -97,6 +99,7 @@ export async function startGatewayOAuthAuthorization(
       clientId: request.clientId,
       redirectUri: request.redirectUri,
       tenantId: request.tenantId,
+      principalId: request.authenticatedPrincipalId ?? null,
       requestedScopes: scopes,
       state: request.state ?? null,
       codeChallenge: request.codeChallenge,
@@ -149,6 +152,10 @@ export async function completeGatewayOAuthAuthorization(
   }
   if (decision.user.principalId.length === 0) {
     throw protocolError("invalid_request", "authenticated principal is invalid");
+  }
+  if (transaction.principalId !== null
+    && transaction.principalId !== decision.user.principalId) {
+    throw protocolError("invalid_request", "authorization transaction belongs to another user");
   }
   const membership = await ports.memberships.find(
     decision.user.principalId,
