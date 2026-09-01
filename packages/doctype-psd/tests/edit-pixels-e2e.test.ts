@@ -7,9 +7,13 @@
  * editPixels 都会在 apply() 里抛出 "layer.pixels must have numeric
  * width/height and a data buffer"）能一路活到评审。
  *
- * 所以这里不许用桩替代任何一环：真的 memCas、真的 storePsdDoc、真的
- * runQuery、真的 createPsdDocumentType().apply。唯一的桩是 ImageEditor
- * 本身 —— 它背后是一次网络调用，不是本仓库的代码。
+ * 所以这里尽量不用桩：真的 storePsdDoc、真的 runQuery、真的
+ * createPsdDocumentType().apply —— op 从产出到落库走的是生产那条路。
+ *
+ * 三处替身，说清楚免得读者高估这条用例：ImageEditor 是桩（它背后是一次网络
+ * 调用，不是本仓库的代码）；CAS 是内存实现 memCas；EffectContext 是这里手搓
+ * 的，不是内核 AgentSession 建的那个。所以本用例**不覆盖** op 的 SValue
+ * 编解码往返，也不覆盖 blob 的 root-ref 遍历。
  */
 import { describe, expect, it } from "vitest";
 import { decode } from "fast-png";

@@ -26,9 +26,9 @@ export function runImageEditorContract(
     const data = new Uint8ClampedArray(width * height * 4);
     const ALPHAS = [0, 128, 255];
     for (let i = 0; i < width * height; i++) {
-      // alpha 不是常量，且**含全透明像素** —— 下面的断言就靠这些像素判断
-      // 哨兵回收是否真的跑过。半透明的 128 留着是有意的：它记录了这个端口
-      // 不承诺保住部分透明（recoverAlpha 只吐 0 或 255）。
+      // alpha 不是常量，且含全透明像素 —— 下面那条断言要靠它们才有东西可数。
+      // 半透明的 128 留着是有意的：它记录了这个端口**不承诺**保住部分透明
+      // （哨兵式实现的 recoverAlpha 只吐 0 或 255）。
       data.set([(i * 7) % 256, (i * 13) % 256, (i * 29) % 256, ALPHAS[i % 3]], i * 4);
     }
     return { width, height, data };
@@ -52,14 +52,19 @@ export function runImageEditorContract(
       expect(r.pixels.data.length).toBe(source.width * source.height * 4);
     });
 
-    it("透明区没有被整片压成不透明 —— 哨兵回收确实跑过", async () => {
+    it("透明区没有被整片压成不透明", async () => {
       const e = await factory();
       const r = await e.edit({ source, instruction: "保持原样" }, AbortSignal.timeout(120_000));
       if (!r.ok) throw new Error(`期望成功，实际 ${r.reason}: ${r.detail}`);
       // 断言的是**全透明像素**的数量，不是"半透明像素活下来" —— 后者这个
-      // 端口不承诺：recoverAlpha 只写 0 或 255，源里的 128 一律被推到两端。
-      // 旧断言写的是 `alpha < 250`，alpha===0 的像素顺手滑过去，于是它读起来
-      // 像在守"部分透明被保住"，实际只守住了"不是全图 255"。
+      // 端口不承诺：哨兵式实现的 recoverAlpha 只写 0 或 255，源里的 128 一律
+      // 被推到两端。旧断言写的是 `alpha < 250`，alpha===0 的像素顺手滑过去，
+      // 于是它读起来像在守"部分透明被保住"，实际只守住了"不是全图 255"。
+      //
+      // 这条断言的强度随实现而变，别高估它：对哨兵式适配器，它确实在验哨兵
+      // 回收跑过了；对本来就不做哨兵编码的实现（比如 stub），源里的全透明
+      // 像素原样穿过就满足了它。它守住的下限是"没有哪个实现能把整层压成
+      // 不透明还蒙混过关"——而那正是这个端口真正在承诺的东西。
       let transparent = 0;
       for (let i = 3; i < r.pixels.data.length; i += 4) if (r.pixels.data[i] === 0) transparent++;
       expect(transparent).toBeGreaterThan(0);

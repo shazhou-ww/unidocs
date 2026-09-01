@@ -268,8 +268,14 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
           // 带的是适配器自己刷上去的哨兵品红 —— diffMask 跨四通道取最大值，
           // 拿这两者相比，每个透明像素都差 255，全被判成"改过"。透明比例
           // 高的抠图层因此会越过 MAX_CHANGED_FRACTION 退化成整层替换，正是
-          // 蒙版本该拦住的色偏失败。`flattened` 与 `back` 都是哨兵空间、
-          // alpha 全 255、源尺寸，比它们才问得出"模型到底动了哪里"。
+          // 蒙版本该拦住的色偏失败。`flattened` 与 `back` 都在哨兵空间、
+          // 都是源尺寸，比它们才问得出"模型到底动了哪里"。
+          //
+          // （`flattened` 的 alpha 一定是 255，那是 compositeOnSentinel 的
+          // 后置条件；`back` 的 alpha 则取决于 provider：本适配器面对的是
+          // 只回 RGB 的模型，toPixels 于是补 255，但那条 ch===4 的分支说明
+          // 这不是结构上的保证。真回了 alpha 的 provider 会让这里多算出一些
+          // 差异 —— 保守方向，不会漏判改动区。）
           changed: CAPABILITIES.watermarked ? null : diffMask(flattened, back),
           provenance: { model, seed, prompt: instruction },
         };

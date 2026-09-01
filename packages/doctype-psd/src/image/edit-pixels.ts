@@ -182,8 +182,9 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         contentType: "image/png",
       });
 
-      // id 的判别位来自"已有多少个同源结果层"，不来自内容 —— 见
-      // nextEditOrdinal。所以确定性 editor 连编两次也不会撞 id。
+      // id 的判别位来自现有同源结果层里**最大的那个序号**加一，不来自内容
+      // —— 见 nextEditOrdinal。取最大值而不是取数量：中间那层被删掉之后，
+      // 数量会退回去撞上还活着的编号。所以确定性 editor 连编两次也不撞 id。
       const { data: layerTree } = await ctx.query({ kind: "getLayers" });
       const idPrefix = `${layerId}-edit-`;
       const layer: Record<string, unknown> = {
