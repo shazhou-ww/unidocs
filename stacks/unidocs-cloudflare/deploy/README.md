@@ -8,8 +8,9 @@
 从包目录运行。把 toml 搬到这里会让每一条相对路径失效。
 
 `deploy.mjs` 负责 docs → gateway 的应用栈顺序，仍由各包自己的 Wrangler
-配置执行实际发布。Gateway 仍使用 insecure identity resolver 时，真实部署会在
-发布任何单元之前失败；`--dry-run` 可用于审查完整计划。
+配置执行实际发布。真实部署要求 gateway 的数据面已启用访问令牌身份
+（`createInsecureTenantIdentityResolver` 不再出现在 gateway 源码里，
+`INSECURE_PATH_IDENTITY=true` 仅限本地）；`--dry-run` 可用于审查完整计划。
 
 ## Capability deployment contract
 

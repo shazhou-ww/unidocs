@@ -398,14 +398,19 @@ without manually uploading a JWK.
 - [x] Reuse the existing capability issuer for access-token claims; add golden
       tests showing old and OAuth-issued tokens are identical at the UniCAS
       verifier boundary.
-- [ ] Implement authoritative user-to-tenant membership and role-to-scope
+- [x] Implement authoritative user-to-tenant membership and role-to-scope
       policy. Remove path identity from every production authorization path.
+      The Cloudflare data plane now validates the Gateway-issued OAuth access
+      token (issuer + stack JWKS) on every `/tenants/*` request; the path
+      resolver remains an explicit `INSECURE_PATH_IDENTITY=true` dev opt-in
+      only, and never applies to a request that presents a token.
 - [x] Separate end-user OAuth access tokens from internal Gateway-to-service
       delegated capabilities even if they initially share signing machinery.
 
-Current partial: membership and identity are explicit ports with D1/PostgreSQL
-stores, scope escalation checks, and fail-closed production behavior. A real
-upstream identity/session adapter and membership administration workflow remain.
+Current partial: upstream OIDC user authentication in the Gateway browser
+flow is implemented (`GATEWAY_OIDC_CLIENT_ID`/`GATEWAY_PUBLIC_ORIGIN` +
+encrypted session cookie); membership administration still happens by seeding
+the D1 `gateway_oauth_tenant_memberships` table.
 
 Exit: the portable test suite passes against in-memory adapters and rejects
 redirect, PKCE, tenant-confusion, scope-escalation, replay, and key-confusion
@@ -414,13 +419,17 @@ attacks.
 ### Phase 4 — Cloudflare Gateway adapter
 
 - [x] Route the issuer metadata/JWKS/authorize/token/register/revoke endpoints.
-- [ ] Add D1/KV bindings and migrations for clients, authorization
+- [x] Add D1/KV bindings and migrations for clients, authorization
       transactions, memberships, grants, refresh-token hashes, and audit.
 - [x] Publish a stable path-bearing issuer under the Gateway's public origin.
-- [ ] Add scheduled cleanup and signing-key rotation publication overlap.
+- [x] Add scheduled cleanup and signing-key rotation publication overlap.
 - [x] Update Wrangler variables/secrets and local runtime provisioning.
 - [x] Register the Cloudflare issuer through the new UniCAS flow and verify the
       resulting JWKS digest before changing traffic.
+- [x] Serve the Gateway webui (OAuth client + document list) under `/ui/*`.
+- [ ] Production user identity (upstream OIDC) and membership administration
+      go live with the deployed Gateway; `INSECURE_PATH_IDENTITY` is never set
+      in production.
 
 Current partials: D1 clients, transactions, authorization codes, memberships,
 refresh families/hashes, and audit are deployed; a separate durable grant model
@@ -457,12 +466,16 @@ produce capability tokens accepted by the same UniCAS verifier.
 - [ ] Add a tenant OAuth client/token provider for `@unicas/tenant-client` (or a
       separate tenant CLI package): RFC 9728 → RFC 8414/OIDC discovery → dynamic
       registration → browser authorization → code exchange → refresh.
-- [ ] Change UniDocs Gateway user-facing authorization to bearer-token
+- [x] Change UniDocs Gateway user-facing authorization to bearer-token
       validation and authoritative tenant claims; keep internal delegation
-      behind the Gateway.
-- [ ] Change document-service trusted-key configuration from manually copied
+      behind the Gateway. The Gateway webui (`packages/web-gateway`) acts as
+      the OAuth client; the data plane validates the issued access token
+      against the issuer + stack JWKS.
+- [x] Change document-service trusted-key configuration from manually copied
       JWKS to verified issuer discovery, or keep it on a Gateway-generated
-      pinned snapshot if those services must not make outbound calls.
+      pinned snapshot if those services must not make outbound calls. Doc
+      workers now support `CAS_STACK_JWKS_URI` (live jwks_uri or `"discover"`)
+      with the pinned snapshot retained as the non-discovery fallback.
 - [ ] Backfill existing Stack rows as `legacy_manual`; activate discovered mode
       only after its issuer, audience, and JWKS produce equivalent verification.
 - [ ] Canary Cloudflare, then Azure. Observe unknown issuer/`kid`, refresh,

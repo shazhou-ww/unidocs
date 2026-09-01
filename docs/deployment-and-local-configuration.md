@@ -64,7 +64,12 @@ There are two ES256 identities:
   `CAPABILITY_PRIVATE_KEY_PKCS8`; Docs get `CAPABILITY_TRUSTED_JWKS`.
 - The registered UniCAS stack key signs CAS capabilities. Gateway gets
   `CAS_STACK_PRIVATE_KEY_PKCS8`; its public JWK is registered in UniCAS and
-  projected to Docs as `CAS_STACK_TRUSTED_JWKS`.
+  served at the Gateway's OAuth `jwks_uri`. Doc workers verify the delegated
+  CAS capability against the stack issuer + **live discovered JWKS**: set
+  `CAS_STACK_JWKS_URI` to the stack issuer's `jwks_uri` (unknown-`kid`
+  refresh is automatic), or to `"discover"` to derive it via RFC 8414 from
+  `CAS_STACK_ISSUER`. Without it, docs fall back to the pinned
+  `CAS_STACK_TRUSTED_JWKS` snapshot (required for non-URL dev issuers).
 
 Set these Gateway secrets:
 
@@ -76,25 +81,48 @@ CAPABILITY_PRIVATE_KEY_PKCS8
 CAS_STACK_PRIVATE_KEY_PKCS8
 ```
 
+Production user identity for the data plane uses the Gateway's own OAuth
+access tokens: every `/tenants/*` request must present a Bearer token issued
+by the Gateway OAuth flow, validated against `GATEWAY_OAUTH_ISSUER` and the
+stack JWKS. Browser login runs through an upstream OIDC provider (Google by
+default). Set these Gateway secrets:
+
+```text
+GATEWAY_OIDC_CLIENT_ID           upstream OIDC client id
+GATEWAY_OIDC_CLIENT_SECRET       upstream OIDC client secret
+GATEWAY_SESSION_ENCRYPTION_KEY   base64 32-byte key sealing session cookies
+```
+
+`GATEWAY_PUBLIC_ORIGIN` (the issuer origin, e.g. `https://unicas.shazhou.work`),
+`GATEWAY_CORS_ORIGIN` (the webui origin, e.g. `https://unidocs.shazhou.work`),
+`GATEWAY_OIDC_ISSUER` (default `https://accounts.google.com`),
+`GATEWAY_OIDC_REDIRECT_PATH`, and `GATEWAY_OIDC_SESSION_TTL_SECONDS` are plain
+vars. The upstream OIDC client's redirect URI must include
+`{GATEWAY_PUBLIC_ORIGIN}{GATEWAY_OIDC_REDIRECT_PATH}`. Tenant membership is
+seeded into the Gateway D1 `gateway_oauth_tenant_memberships` table (one row
+per `(principal_id, tenant_id)` with `scopes_json` and optional `ref_domain`);
+the user's `principalId` is the upstream OIDC subject (`sub`).
+
 Set these on each of `@unidocs/cloudflare-markdown`,
 `@unidocs/cloudflare-docx`, and `@unidocs/cloudflare-psd`:
 
 ```text
 CAPABILITY_ISSUER
 CAPABILITY_TRUSTED_JWKS
-CAS_STACK_TRUSTED_JWKS
 ```
+
+with the non-secret vars `CAS_STACK_JWKS_URI` (the stack issuer's `jwks_uri`,
+or `"discover"`), `DOC_CAPABILITY_AUDIENCE`, `CAS_CAPABILITY_AUDIENCE`,
+`CAS_STACK_ID`, `CAS_STACK_ISSUER`, and the capability policy vars already in
+each package's `wrangler.toml`.
 
 `SERVICE_ACCESS_KEY` / `INTERNAL_AUTH_MODE` belonged to the retired legacy runtime
 and are gone from the codebase. PSD chat additionally accepts `LLM_API_KEY`,
 `LLM_BASE_URL`, and `LLM_MODEL`; store the API key as a Worker secret.
 
-The application deploy remains blocked until Gateway has a production user
-identity resolver. Dry-run is available now:
-
-```text
-pnpm stack:deploy unidocs-cloudflare --dry-run
-```
+`INSECURE_PATH_IDENTITY=true` remains a local-development-only opt-in; it is
+never set in production (production data-plane requests fail closed without a
+valid access token).
 
 ## Azure deployment identity and secrets
 

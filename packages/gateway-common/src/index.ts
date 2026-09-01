@@ -22,6 +22,14 @@ export type {
 } from "./document-directory.js";
 export { createInsecureTenantIdentityResolver } from "./identity.js";
 export type { GatewayIdentity, GatewayIdentityResolver } from "./identity.js";
+export {
+	createDataPlaneIdentityResolver,
+	createOAuthAccessTokenIdentityResolver,
+} from "./access-token-identity.js";
+export type {
+	DataPlaneIdentityOptions,
+	OAuthAccessTokenIdentityConfig,
+} from "./access-token-identity.js";
 export { StaticDocServiceRegistry } from "./doc-service-registry.js";
 export { casCapabilityPolicy, docCapabilityPolicy } from "./capability-policy.js";
 export type { CasCapabilityPolicy, DocCapabilityPolicy } from "./capability-policy.js";

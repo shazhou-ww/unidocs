@@ -72,3 +72,9 @@ export type {
   CapabilityRuntimePolicyBindings,
   Pkcs8CapabilityIssuerConfig,
 } from "./runtime.js";
+export {
+  deriveOAuthIssuerMetadataUrl,
+  discoverOAuthIssuerJwksUri,
+  isHttpsIssuerUrl,
+} from "./discovery.js";
+export type { DiscoveredOAuthIssuerMetadata } from "./discovery.js";

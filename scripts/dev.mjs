@@ -280,6 +280,17 @@ for (const name of docTypes) {
   console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${webPort}`);
 }
 
+// The gateway webui (OAuth client + document list) talks to the gateway over
+// the /gw dev proxy, so it needs GATEWAY_URL like the doc-type frontends.
+const gatewayWebChild = spawn("npx", ["vite", "--host", LOCAL_HOST, "--port", "5174", "--strictPort"], {
+  cwd: join(root, "packages", "web-gateway"),
+  stdio: "inherit",
+  env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
+});
+gatewayWebChild.on("error", (err) => console.error("[web-gateway] failed to start:", err.message));
+webChildren.push(gatewayWebChild);
+console.log(`  ${"web-gateway".padEnd(8)} http://127.0.0.1:5174/ui/`);
+
 // The CAS admin console ships with the Miniflare stack's admin worker; spawn
 // its Vite dev server too so `pnpm dev` runs the whole middleware + apps.
 if (!useAzure && devOptions.casMode === "local") {

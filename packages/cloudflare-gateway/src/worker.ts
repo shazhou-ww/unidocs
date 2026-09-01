@@ -14,10 +14,11 @@
 
 import {
   consoleObserver,
+  createDataPlaneIdentityResolver,
   createGatewayHandler,
-  createInsecureTenantIdentityResolver,
   GatewayCapabilityAuthority,
   StaticDocServiceRegistry,
+  type GatewayIdentityResolver,
 } from "@unidocs/gateway-common";
 import {
   createGatewayOAuthAuthorizationServerHandler,
@@ -27,6 +28,7 @@ import {
 } from "@unidocs/gateway-oauth";
 import { isGatewayExposedCasRoute } from "@unidocs/protocol-gateway";
 import {
+  CapabilityAlgorithm,
   createPkcs8CapabilityIssuer,
   derivePkcs8CapabilityPublicJwk,
   parseCapabilityRuntimePolicy,
@@ -45,8 +47,12 @@ import {
 } from "./oauth-d1.js";
 import {
   createCloudflareGatewayOAuthIdentity,
+  createFailClosedGatewayOAuthIdentity,
   type CloudflareGatewayOAuthIdentityBindings,
+  type CloudflareGatewayOAuthIdentityPorts,
 } from "./oauth-identity.js";
+import { serveGatewayWebUi } from "./static-assets.js";
+import { createCorsHandler } from "./cors.js";
 
 interface Env extends CapabilityRuntimePolicyBindings, CloudflareGatewayOAuthIdentityBindings {
   GATEWAY_DB: D1Database;
@@ -66,6 +72,8 @@ interface Env extends CapabilityRuntimePolicyBindings, CloudflareGatewayOAuthIde
   /** refDomain claim carried by CAS capabilities (stack mode). */
   CAS_REF_DOMAIN?: string;
   INSECURE_PATH_IDENTITY?: string;
+  /** Webui origin allowed to call the OAuth endpoints cross-origin. */
+  GATEWAY_CORS_ORIGIN?: string;
   CAS_SERVICE: Fetcher;
 }
 
@@ -77,6 +85,9 @@ let cachedRegistry: StaticDocServiceRegistry | undefined;
 const capabilityAuthorityCache = new WeakMap<object, Promise<GatewayCapabilityAuthority>>();
 const oauthDiscoveryCache = new WeakMap<object, Promise<GatewayOAuthDiscoveryHandler | null>>();
 const oauthServerCache = new WeakMap<object, Promise<GatewayOAuthAuthorizationServerHandler | null>>();
+const oauthIdentityCache = new WeakMap<object, CloudflareGatewayOAuthIdentityPorts>();
+const corsCache = new WeakMap<object, ReturnType<typeof createCorsHandler>>();
+const dataPlaneIdentityCache = new WeakMap<object, Promise<GatewayIdentityResolver>>();
 
 function registry(env: Env): StaticDocServiceRegistry {
   if (!cachedRegistry || cachedRegistrySource !== env.DOC_SERVICES_JSON) {
@@ -88,18 +99,24 @@ function registry(env: Env): StaticDocServiceRegistry {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const cors = corsHandler(env);
+    const preflight = cors.preflight(request);
+    if (preflight) return preflight;
+    const webUi = serveGatewayWebUi(request);
+    if (webUi) return cors.apply(request, webUi);
     const oauthDiscovery = await oauthDiscoveryHandler(env);
     const discoveryResponse = oauthDiscovery && await oauthDiscovery(request);
-    if (discoveryResponse) return discoveryResponse;
+    if (discoveryResponse) return cors.apply(request, discoveryResponse);
+    const oauthIdentity = gatewayOauthIdentity(env);
+    const loginResponse = await oauthIdentity.handleLogin(request);
+    if (loginResponse) return cors.apply(request, loginResponse);
     const oauthServer = await oauthAuthorizationServer(env);
     const oauthResponse = oauthServer && await oauthServer(request);
-    if (oauthResponse) return oauthResponse;
+    if (oauthResponse) return cors.apply(request, oauthResponse);
     const casStackId = requireBinding(env.CAS_STACK_ID, "CAS_STACK_ID");
     const handle = createGatewayHandler({
       capabilityAuthority: await capabilityAuthority(env),
-      identityResolver: createInsecureTenantIdentityResolver(
-        env.INSECURE_PATH_IDENTITY === "true",
-      ),
+      identityResolver: await dataPlaneIdentity(env),
       resolveDocService: (docType) => registry(env).resolve(docType),
       casFetcher: env.CAS_SERVICE,
       directory: new D1GatewayDocumentDirectory(env.GATEWAY_DB),
@@ -107,7 +124,7 @@ export default {
       casStackId,
       observe: consoleObserver,
     });
-    return handle(request);
+    return cors.apply(request, await handle(request));
   },
   scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(cleanupGatewayOAuthD1(env.GATEWAY_DB).then(result => {
@@ -160,6 +177,26 @@ function oauthAuthorizationServer(
   return cached;
 }
 
+function gatewayOauthIdentity(env: Env): CloudflareGatewayOAuthIdentityPorts {
+  let cached = oauthIdentityCache.get(env);
+  if (!cached) {
+    cached = env.GATEWAY_OAUTH_ISSUER
+      ? createCloudflareGatewayOAuthIdentity(env, env.GATEWAY_OAUTH_ISSUER)
+      : createFailClosedGatewayOAuthIdentity();
+    oauthIdentityCache.set(env, cached);
+  }
+  return cached;
+}
+
+function corsHandler(env: Env): ReturnType<typeof createCorsHandler> {
+  let cached = corsCache.get(env);
+  if (!cached) {
+    cached = createCorsHandler({ webuiOrigin: env.GATEWAY_CORS_ORIGIN ?? null });
+    corsCache.set(env, cached);
+  }
+  return cached;
+}
+
 async function createOAuthAuthorizationServer(
   env: Env,
 ): Promise<GatewayOAuthAuthorizationServerHandler | null> {
@@ -186,9 +223,11 @@ async function createOAuthAuthorizationServer(
   const refreshTokens = new D1GatewayOAuthRefreshTokenStore(env.GATEWAY_DB);
   const memberships = new D1GatewayOAuthTenantMembershipStore(env.GATEWAY_DB);
   const audit = new D1GatewayOAuthAuditPort(env.GATEWAY_DB, now);
+  const oauthIdentity = gatewayOauthIdentity(env);
   return createGatewayOAuthAuthorizationServerHandler({
     issuer: env.GATEWAY_OAUTH_ISSUER,
-    identity: createCloudflareGatewayOAuthIdentity(env),
+    identity: oauthIdentity.identity,
+    authenticationRequired: oauthIdentity.authenticationRequired,
     registration: { clients, clock: { now }, audit },
     authorization: {
       clients,
@@ -223,6 +262,50 @@ function capabilityAuthority(
     capabilityAuthorityCache.set(env, cached);
   }
   return cached;
+}
+
+function dataPlaneIdentity(env: Env): Promise<GatewayIdentityResolver> {
+  let cached = dataPlaneIdentityCache.get(env);
+  if (!cached) {
+    cached = createDataPlaneIdentity(env);
+    dataPlaneIdentityCache.set(env, cached);
+  }
+  return cached;
+}
+
+/**
+ * Production data-plane identity: validates the Gateway-issued OAuth access
+ * token (capability JWT) against the Gateway's own issuer and the JWKS it
+ * publishes at `jwks_uri`. The path-identity fallback remains an explicit
+ * local-development opt-in (`INSECURE_PATH_IDENTITY=true`) and never applies
+ * to a request that presents a token.
+ */
+async function createDataPlaneIdentity(env: Env): Promise<GatewayIdentityResolver> {
+  const issuer = env.GATEWAY_OAUTH_ISSUER;
+  if (!issuer) {
+    // No OAuth issuer configured: there is no trusted token authority, so
+    // requests fail closed unless the development path identity is enabled.
+    return createDataPlaneIdentityResolver({
+      accessToken: undefined,
+      allowPathIdentity: env.INSECURE_PATH_IDENTITY === "true",
+    });
+  }
+  const policy = parseCapabilityRuntimePolicy(env);
+  const kid = requireBinding(env.CAS_STACK_KEY_ID, "CAS_STACK_KEY_ID");
+  const publicJwk = await derivePkcs8CapabilityPublicJwk(requireBinding(
+    env.CAS_STACK_PRIVATE_KEY_PKCS8,
+    "CAS_STACK_PRIVATE_KEY_PKCS8",
+  ));
+  return createDataPlaneIdentityResolver({
+    accessToken: {
+      issuer,
+      audience: requireBinding(env.CAS_CAPABILITY_AUDIENCE, "CAS_CAPABILITY_AUDIENCE"),
+      jwks: { keys: [{ ...publicJwk, kid, alg: CapabilityAlgorithm, use: "sig" }] },
+      maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+      clockSkewSeconds: policy.clockSkewSeconds,
+    },
+    allowPathIdentity: env.INSECURE_PATH_IDENTITY === "true",
+  });
 }
 
 async function createCapabilityAuthority(env: Env): Promise<GatewayCapabilityAuthority> {

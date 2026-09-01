@@ -266,7 +266,7 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   defaultPort: number;
 }): Promise<void> {
   const { docType, documentTypeFactory, defaultPort } = options;
-  const auth = new DocAuthConfigCache(docType).get(process.env);
+  const auth = await new DocAuthConfigCache(docType).get(process.env);
   const casBaseUrl = process.env.CAS_BASE_URL;
   // 0 / 缺省 = 不限,与这个开关存在之前的行为一致。
   const declaredLimit = Number(process.env.MAX_UPLOAD_BYTES ?? 0);

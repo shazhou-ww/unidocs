@@ -4,6 +4,7 @@ compatibility_date = "2025-08-17"
 workers_dev = false
 preview_urls = false
 
+# OAuth issuer surface stays on the registered issuer origin (unicas.shazhou.work).
 [[routes]]
 pattern = "unicas.shazhou.work/.well-known/oauth-authorization-server/oauth/unidocs-cloudflare"
 zone_name = "shazhou.work"
@@ -12,9 +13,24 @@ zone_name = "shazhou.work"
 pattern = "unicas.shazhou.work/oauth/unidocs-cloudflare/*"
 zone_name = "shazhou.work"
 
+# Data plane and webui live on the app domain unidocs.shazhou.work.
+[[routes]]
+pattern = "unidocs.shazhou.work/tenants/*"
+zone_name = "shazhou.work"
+
+[[routes]]
+pattern = "unidocs.shazhou.work/ui/*"
+zone_name = "shazhou.work"
+
 # Stack mode: the gateway signs delegated/gateway CAS capabilities with the
 # registered unidocs-cloudflare stack key and talks to the canonical middleware
 # (unidocs-cas) instead of the legacy shared-key worker.
+#
+# Production data-plane identity: every /tenants/* request must present a
+# Bearer access token (the Gateway-issued OAuth capability JWT) validated
+# against GATEWAY_OAUTH_ISSUER and the stack JWKS. The browser OAuth flow
+# authenticates through the upstream OIDC provider below; membership rows in
+# gateway_oauth_tenant_memberships (D1) authorize tenant access.
 [vars]
 CAPABILITY_ALGORITHM = "ES256"
 CAPABILITY_TTL_SECONDS = "120"
@@ -26,6 +42,12 @@ CAS_STACK_KEY_ID = "cf-oauth-2026-09"
 CAS_REF_DOMAIN = "doc"
 CAS_CAPABILITY_AUDIENCE = "https://unicas.shazhou.work/stacks/cas_SZ6wfcfqS34J"
 GATEWAY_OAUTH_ISSUER = "https://unicas.shazhou.work/oauth/unidocs-cloudflare"
+GATEWAY_OIDC_ISSUER = "https://accounts.google.com"
+GATEWAY_OIDC_REDIRECT_PATH = "/oauth/unidocs-cloudflare/login/callback"
+GATEWAY_OIDC_SESSION_TTL_SECONDS = "28800"
+GATEWAY_PUBLIC_ORIGIN = "https://unicas.shazhou.work"
+# Webui origin allowed to call the OAuth endpoints cross-origin.
+GATEWAY_CORS_ORIGIN = "https://unidocs.shazhou.work"
 
 [[d1_databases]]
 binding = "GATEWAY_DB"
@@ -41,16 +63,14 @@ service = "unidocs-cas"
 crons = ["17 * * * *"]
 
 # Deployment secrets (wrangler secret put, never in this file):
-#   DOC_SERVICES_JSON            { docType: { serviceId, url, accessKey?, audience } }
+#   DOC_SERVICES_JSON            { docType: { serviceId, url, audience } }
 #   CAPABILITY_ISSUER            doc-service identity issuer
 #   CAPABILITY_KEY_ID            doc-service identity kid
 #   CAPABILITY_PRIVATE_KEY_PKCS8 doc-service identity private key
 #   CAS_STACK_PRIVATE_KEY_PKCS8  the registered unidocs-cloudflare stack key
-# Optional standards migration binding (plain var, not a secret):
-#   GATEWAY_OAUTH_ISSUER         canonical HTTPS Gateway issuer; must exactly
-#                                equal CAS_STACK_ISSUER when enabled
+#   GATEWAY_OIDC_CLIENT_ID       upstream OIDC (Google) client id
+#   GATEWAY_OIDC_CLIENT_SECRET   upstream OIDC client secret
+#   GATEWAY_SESSION_ENCRYPTION_KEY  base64 32-byte key sealing session cookies
 #
-# Production identity prerequisite: the gateway's identity resolver is the
-# insecure path-identity one (INSECURE_PATH_IDENTITY). Until a real identity/
-# auth mechanism is wired for the application stack, the deployed gateway
-# rejects every request (401) — do NOT deploy before that lands.
+# Local development only: INSECURE_PATH_IDENTITY=true accepts path identity
+# when a request carries no Bearer token. Never set in production.

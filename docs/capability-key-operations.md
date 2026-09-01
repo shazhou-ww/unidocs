@@ -63,7 +63,10 @@ Git. The command prints only the output path, issuer, and `kid`.
 8. Remove or disable the old private key after all active revisions trust only
    the new key.
 
-Validators never fetch keys from Gateway and never refresh JWKS per request.
+Validators never fetch keys from the Doc-service identity and never refresh
+JWKS per request. The delegated CAS capability verifier may use the stack
+issuer's live `jwks_uri` (`CAS_STACK_JWKS_URI`, with jose's cooldown caching
+and unknown-`kid` refresh); the Doc-service identity stays a pinned snapshot.
 Do not shorten the overlap by assuming a deployment completed everywhere at
 the same instant.
 

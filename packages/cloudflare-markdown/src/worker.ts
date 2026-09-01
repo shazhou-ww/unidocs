@@ -53,7 +53,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     return createDocTypeHandler({
       docType: "markdown",
-      ...authConfig.get(env),
+      ...(await authConfig.get(env)),
       audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType: "markdown", ...event })),
       editor: env.MARKDOWN_EDITOR,
       operator: env.MARKDOWN_OPERATOR,

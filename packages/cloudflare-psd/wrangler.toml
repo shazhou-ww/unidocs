@@ -2,14 +2,19 @@ name = "unidocs-psd"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
 
-# Stack mode: the editor DO routes canonical /stacks/unidocs-cloudflare/
-# tenants/{tenantId}/... to the middleware worker; the delegated CAS
-# capability is verified against the registered stack issuer/JWKS.
+# Stack mode: the editor DO routes canonical /stacks/{stackId}/tenants/...
+# to the middleware worker; the delegated CAS capability is verified against
+# the registered stack issuer — either by RFC 8414 discovery of the issuer's
+# jwks_uri (HTTPS issuer) or the pinned CAS_STACK_TRUSTED_JWKS snapshot
+# (non-URL dev issuers).
 [vars]
 DOC_CAPABILITY_AUDIENCE = "unidocs-doc:psd"
-CAS_CAPABILITY_AUDIENCE = "unidocs-cas-cloudflare"
-CAS_STACK_ID = "unidocs-cloudflare"
-CAS_STACK_ISSUER = "https://unicas.shazhou.work/cas/issuer/cloudflare"
+CAS_CAPABILITY_AUDIENCE = "https://unicas.shazhou.work/stacks/cas_SZ6wfcfqS34J"
+CAS_STACK_ID = "cas_SZ6wfcfqS34J"
+CAS_STACK_ISSUER = "https://unicas.shazhou.work/oauth/unidocs-cloudflare"
+# Issuer + JWKS discovery: the delegated CAS capability is verified against
+# the registered stack issuer's live jwks_uri (unknown-kid refresh automatic).
+CAS_STACK_JWKS_URI = "https://unicas.shazhou.work/oauth/unidocs-cloudflare/jwks"
 CAPABILITY_ALGORITHM = "ES256"
 CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "1800"
@@ -29,6 +34,7 @@ binding = "CAS_SERVICE"
 service = "unidocs-cas"
 
 # Deployment secrets (wrangler secret put, never in this file):
-#   CAPABILITY_ISSUER            doc-service identity issuer
-#   CAPABILITY_TRUSTED_JWKS      doc-service identity public JWKS
-#   CAS_STACK_TRUSTED_JWKS       the unidocs-cloudflare stack public JWKS
+#   CAPABILITY_ISSUER            doc-service identity issuer (== gateway's)
+#   CAPABILITY_TRUSTED_JWKS      doc-service identity public JWKS (pinned)
+#   CAS_STACK_TRUSTED_JWKS       only for non-URL dev issuers; production uses
+#                                RFC 8414 discovery from CAS_STACK_ISSUER

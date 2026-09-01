@@ -13,6 +13,9 @@
   ],
   "references": [
     {
+      "path": "../../unicas-packages/control-auth"
+    },
+    {
       "path": "../gateway-common"
     },
     {

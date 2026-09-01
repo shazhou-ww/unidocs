@@ -1,6 +1,7 @@
 import {
   CapabilityAlgorithm,
   CapabilityVerifier,
+  discoverOAuthIssuerJwksUri,
   parseCapabilityRuntimePolicy,
 } from "@unidocs/service-auth";
 import type {
@@ -10,12 +11,29 @@ import type {
 import type { DocCapabilityVerifier } from "./doc-type-handler.js";
 
 export interface DocAuthBindings extends CapabilityRuntimePolicyBindings {
+  /**
+   * Doc-service identity: the Gateway signs session capabilities with this
+   * issuer, and its public keys are provisioned here as a pinned snapshot
+   * (`CAPABILITY_TRUSTED_JWKS`). There is no published `jwks_uri` for this
+   * identity, so discovery does not apply.
+   */
   readonly CAPABILITY_TRUSTED_JWKS?: string;
   readonly CAPABILITY_ISSUER?: string;
   readonly DOC_CAPABILITY_AUDIENCE?: string;
   readonly CAS_CAPABILITY_AUDIENCE?: string;
   /** Stack mode: the registered stack CAS issuer the delegated capability is signed by. */
   readonly CAS_STACK_ISSUER?: string;
+  /**
+   * Stack issuer public keys, obtained one of three ways:
+   *
+   * - `CAS_STACK_JWKS_URI` set to a URL — verify against that `jwks_uri`
+   *   (jose remote key set with cooldown caching and unknown-`kid` refresh);
+   * - `CAS_STACK_JWKS_URI` set to `"discover"` — derive the RFC 8414
+   *   metadata URL from `CAS_STACK_ISSUER` and use its `jwks_uri`;
+   * - unset — the pinned `CAS_STACK_TRUSTED_JWKS` snapshot.
+   */
+  readonly CAS_STACK_JWKS_URI?: string;
+  /** Pinned snapshot of the stack issuer's public keys (non-discovery mode). */
   readonly CAS_STACK_TRUSTED_JWKS?: string;
 }
 
@@ -26,23 +44,23 @@ export interface ResolvedDocAuthConfig {
 
 export class DocAuthConfigCache {
   readonly #docType: string;
-  #resolved: ResolvedDocAuthConfig | undefined;
+  #resolved: Promise<ResolvedDocAuthConfig> | undefined;
 
   constructor(docType: string) {
     if (docType.length === 0) throw new TypeError("Configured Doc type is required");
     this.#docType = docType;
   }
 
-  get(bindings: DocAuthBindings): ResolvedDocAuthConfig {
+  get(bindings: DocAuthBindings): Promise<ResolvedDocAuthConfig> {
     this.#resolved ??= resolveDocAuthConfig(this.#docType, bindings);
     return this.#resolved;
   }
 }
 
-export function resolveDocAuthConfig(
+export async function resolveDocAuthConfig(
   docType: string,
   bindings: DocAuthBindings,
-): ResolvedDocAuthConfig {
+): Promise<ResolvedDocAuthConfig> {
   const issuer = requireBinding(bindings.CAPABILITY_ISSUER, "CAPABILITY_ISSUER");
   const policy = parseCapabilityRuntimePolicy(bindings);
   const docAudience = requireBinding(bindings.DOC_CAPABILITY_AUDIENCE, "DOC_CAPABILITY_AUDIENCE");
@@ -51,7 +69,7 @@ export function resolveDocAuthConfig(
     requireBinding(bindings.CAPABILITY_TRUSTED_JWKS, "CAPABILITY_TRUSTED_JWKS"),
   );
   const casIssuer = requireBinding(bindings.CAS_STACK_ISSUER, "CAS_STACK_ISSUER");
-  const casJwks = parseJwks(requireBinding(bindings.CAS_STACK_TRUSTED_JWKS, "CAS_STACK_TRUSTED_JWKS"));
+  const casJwks = await resolveCasJwks(bindings, casIssuer);
   return Object.freeze({
     docCapabilityVerifier: new CapabilityVerifier({
       issuer,
@@ -74,6 +92,22 @@ export function resolveDocAuthConfig(
       clockSkewSeconds: policy.clockSkewSeconds,
     }),
   });
+}
+
+async function resolveCasJwks(
+  bindings: DocAuthBindings,
+  casIssuer: string,
+): Promise<CapabilityVerifierConfig["jwks"]> {
+  const jwksUri = bindings.CAS_STACK_JWKS_URI?.trim();
+  if (jwksUri === "discover") {
+    return new URL(await discoverOAuthIssuerJwksUri(casIssuer));
+  }
+  if (jwksUri) {
+    return new URL(jwksUri);
+  }
+  return parseJwks(
+    requireBinding(bindings.CAS_STACK_TRUSTED_JWKS, "CAS_STACK_TRUSTED_JWKS"),
+  );
 }
 
 function parseJwks(value: string): CapabilityVerifierConfig["jwks"] {

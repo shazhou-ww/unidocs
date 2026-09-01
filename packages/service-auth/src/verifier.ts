@@ -1,4 +1,4 @@
-import { createLocalJWKSet, jwtVerify } from "jose";
+import { createLocalJWKSet, createRemoteJWKSet, jwtVerify } from "jose";
 import type { JSONWebKeySet, JWTPayload } from "jose";
 import {
   CapabilityAlgorithm,
@@ -40,7 +40,13 @@ export interface CapabilityVerifierConfig {
   readonly issuer: string;
   readonly audience: string;
   readonly algorithm: typeof CapabilityAlgorithm;
-  readonly jwks: JSONWebKeySet;
+  /**
+   * Static trusted keyset, or a `jwks_uri` URL for live issuer discovery.
+   * The remote variant is fetched lazily by jose (`createRemoteJWKSet`) with
+   * cooldown caching and an automatic refetch on an unknown `kid`; network
+   * failures fail closed unless the key is already cached.
+   */
+  readonly jwks: JSONWebKeySet | URL;
   readonly allowedPermissionKinds: readonly CapabilityPermissionKind[];
   readonly allowedSubjects?: readonly string[];
   readonly maximumLifetimeSeconds?: number;
@@ -56,7 +62,8 @@ export class CapabilityVerifier {
   readonly #maximumLifetimeSeconds: number;
   readonly #clockSkewSeconds: number;
   readonly #now: () => number;
-  readonly #keySet: ReturnType<typeof createLocalJWKSet>;
+  /** Either a local JWKS or a live remote `jwks_uri` key set. */
+  readonly #keySet: Parameters<typeof jwtVerify>[1];
 
   constructor(config: CapabilityVerifierConfig) {
     requireConfiguredString(config.issuer, "Capability issuer");
@@ -64,21 +71,28 @@ export class CapabilityVerifier {
     if (config.algorithm !== CapabilityAlgorithm) {
       throw new TypeError(`Capability verifier must use ${CapabilityAlgorithm}`);
     }
-    if (config.jwks.keys.length === 0) {
-      throw new TypeError("Capability JWKS must contain at least one public key");
-    }
-    const keyIds = new Set<string>();
-    const keys = config.jwks.keys.map((key) => {
-      if (typeof key.kid !== "string" || key.kid.length === 0) {
-        throw new TypeError("Every capability JWK must have a key ID");
-      }
-      if (keyIds.has(key.kid)) throw new TypeError("Capability JWK key IDs must be unique");
-      if ("d" in key) throw new TypeError("Capability verifier JWKS must not contain private keys");
-      keyIds.add(key.kid);
-      return { ...key };
-    });
     if (config.allowedPermissionKinds.length === 0) {
       throw new TypeError("Capability verifier must allow at least one permission kind");
+    }
+
+    if (config.jwks instanceof URL) {
+      requireConfiguredString(config.jwks.href, "Capability JWKS URI");
+      this.#keySet = createRemoteJWKSet(config.jwks);
+    } else {
+      if (config.jwks.keys.length === 0) {
+        throw new TypeError("Capability JWKS must contain at least one public key");
+      }
+      const keyIds = new Set<string>();
+      const keys = config.jwks.keys.map((key) => {
+        if (typeof key.kid !== "string" || key.kid.length === 0) {
+          throw new TypeError("Every capability JWK must have a key ID");
+        }
+        if (keyIds.has(key.kid)) throw new TypeError("Capability JWK key IDs must be unique");
+        if ("d" in key) throw new TypeError("Capability verifier JWKS must not contain private keys");
+        keyIds.add(key.kid);
+        return { ...key };
+      });
+      this.#keySet = createLocalJWKSet({ keys });
     }
 
     const maximumLifetimeSeconds = config.maximumLifetimeSeconds
@@ -107,7 +121,6 @@ export class CapabilityVerifier {
     this.#maximumLifetimeSeconds = maximumLifetimeSeconds;
     this.#clockSkewSeconds = clockSkewSeconds;
     this.#now = config.now ?? (() => Date.now() / 1000);
-    this.#keySet = createLocalJWKSet({ keys });
   }
 
   async verify(token: string): Promise<VerifiedCapability> {

@@ -60,7 +60,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     return createDocTypeHandler({
       docType: "psd",
-      ...authConfig.get(env),
+      ...(await authConfig.get(env)),
       audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType: "psd", ...event })),
       editor: env.PSD_EDITOR,
       operator: env.PSD_OPERATOR,

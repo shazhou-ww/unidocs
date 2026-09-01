@@ -251,6 +251,9 @@ importers:
 
   packages/cloudflare-gateway:
     dependencies:
+      '@unicas/control-auth':
+        specifier: workspace:*
+        version: link:../../unicas-packages/control-auth
       '@unidocs/gateway-common':
         specifier: workspace:*
         version: link:../gateway-common
@@ -596,6 +599,43 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
+
+  packages/web-gateway:
+    dependencies:
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@testing-library/jest-dom':
+        specifier: ^6.6.0
+        version: 6.10.0(@testing-library/dom@10.4.1)
+      '@testing-library/react':
+        specifier: ^16.1.0
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.5(@types/react@19.2.18)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.0
+        version: 4.3.0(supports-color@10.2.2)(vite@7.3.6(@types/node@24.13.3)(yaml@2.9.0))
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.0(supports-color@10.2.2)
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.0
+        version: 7.3.6(@types/node@24.13.3)(yaml@2.9.0)
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(yaml@2.9.0)
@@ -1740,19 +1780,11 @@ packages:
   '@jridgewell/gen-mapping@0.3.12':
     resolution: {integrity: sha512-OuLGC46TjB5BbN1dH8JULVVZY4WTdkF7tV9Ys6wLL1rubZnCMstOhNHueU5bLCrnRuDhKPDM4g6sw4Bel5Gzqg==}
 
-  '@jridgewell/gen-mapping@0.3.5':
-    resolution: {integrity: sha512-IzL8ZoEDIBRWEzlCcRhOaCupYyN5gdIK+Q6fbFdPDg6HqX6jpkItn7DFIpW9LQzXG6Df9sA7+OKnq0qlz/GaQg==}
-    engines: {node: '>=6.0.0'}
-
   '@jridgewell/remapping@2.3.5':
     resolution: {integrity: sha512-LI9u/+laYG4Ds1TDKSJW2YPrIlcVYOwi2fUC6xB43lueCjgxV4lffOCZCtYFiH6TNOX+tQKXx97T4IKHbhyHEQ==}
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
-    engines: {node: '>=6.0.0'}
-
-  '@jridgewell/set-array@1.2.1':
-    resolution: {integrity: sha512-R8gLRTZeyp03ymzP/6Lil/28tGeGEzhx1q2k703KGWRAI1VdvPIXdG70VJc2pAMw3NA6JKL5hhFu1sJX0Mnn/A==}
     engines: {node: '>=6.0.0'}
 
   '@jridgewell/sourcemap-codec@1.5.5':
@@ -5035,20 +5067,12 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
       '@jridgewell/trace-mapping': 0.3.31
 
-  '@jridgewell/gen-mapping@0.3.5':
-    dependencies:
-      '@jridgewell/set-array': 1.2.1
-      '@jridgewell/sourcemap-codec': 1.5.5
-      '@jridgewell/trace-mapping': 0.3.31
-
   '@jridgewell/remapping@2.3.5':
     dependencies:
-      '@jridgewell/gen-mapping': 0.3.5
+      '@jridgewell/gen-mapping': 0.3.12
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/resolve-uri@3.1.2': {}
-
-  '@jridgewell/set-array@1.2.1': {}
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
