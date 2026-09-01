@@ -188,6 +188,7 @@ export function buildWorkers({
   casMiddlewareOnly = false,
   casMiddleware = false,
   casOrigin,
+  gatewayOAuth,
 }) {
   if (!stackFixture) {
     throw new Error("stackFixture is required for the stack local runtime");
@@ -289,6 +290,14 @@ export function buildWorkers({
         CAS_STACK_PRIVATE_KEY_PKCS8: stackFixture.privateKeyPkcs8,
         CAS_REF_DOMAIN: "doc",
         INSECURE_PATH_IDENTITY: "true",
+        ...(gatewayOAuth ? {
+          GATEWAY_OAUTH_ISSUER: stackFixture.issuer,
+          GATEWAY_OAUTH_LOCAL_IDENTITY: "unsafe-development-only",
+          GATEWAY_OAUTH_LOCAL_PRINCIPAL: gatewayOAuth.principalId,
+          ...(gatewayOAuth.displayName
+            ? { GATEWAY_OAUTH_LOCAL_DISPLAY_NAME: gatewayOAuth.displayName }
+            : {}),
+        } : {}),
       },
       d1Databases: { GATEWAY_DB },
       serviceBindings: { CAS_SERVICE: gatewayCasServiceTarget },

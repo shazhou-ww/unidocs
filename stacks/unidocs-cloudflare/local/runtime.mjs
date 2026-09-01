@@ -323,8 +323,14 @@ export async function startLocalRuntime({
   casMiddleware = false,
   middlewareStacks,
   casOrigin,
+  gatewayOAuth,
 } = {}) {
-  const resolvedStackFixture = stackFixture ?? await createEphemeralStackFixture();
+  validateGatewayOAuthFixture(gatewayOAuth);
+  const resolvedStackFixture = stackFixture
+    ?? await createEphemeralStackFixture(gatewayOAuth?.issuer);
+  if (gatewayOAuth && gatewayOAuth.issuer !== resolvedStackFixture.issuer) {
+    throw new Error("gatewayOAuth.issuer must exactly equal stackFixture.issuer");
+  }
   const ports = resolvePorts(docTypes, portOverrides);
   if (!casOrigin) {
     ports.admin = portOverrides.admin ?? ADMIN_PORT;
@@ -398,6 +404,7 @@ export async function startLocalRuntime({
           casMiddlewareOnly,
           casMiddleware: casMiddleware || !casOrigin,
           casOrigin,
+          gatewayOAuth,
         }),
       }),
     );
@@ -406,6 +413,10 @@ export async function startLocalRuntime({
 
     if (!casMiddlewareOnly) {
       await migrateSnapshotsDb(mf);
+      if (gatewayOAuth) {
+        const gatewayDb = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
+        await seedGatewayOAuthMemberships(gatewayDb, gatewayOAuth);
+      }
     }
     if (!casOrigin) {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", SERVICE_WORKER);
@@ -472,13 +483,13 @@ export async function startLocalMiddleware({
   });
 }
 
-async function createEphemeralStackFixture() {
+async function createEphemeralStackFixture(issuer) {
   const pair = await generateKeyPair("ES256", { extractable: true });
   const kid = `stack-local-${crypto.randomUUID()}`;
   const publicJwk = await exportJWK(pair.publicKey);
   return {
     stackId: "unidocs-cloudflare",
-    issuer: `unidocs-stack:local:${crypto.randomUUID()}`,
+    issuer: issuer ?? `unidocs-stack:local:${crypto.randomUUID()}`,
     audience: `unidocs-cas-stack:${crypto.randomUUID()}`,
     kid,
     privateKeyPkcs8: await exportPKCS8(pair.privateKey),
@@ -490,6 +501,48 @@ async function createEphemeralStackFixture() {
       { refDomain: "asset", status: "active" },
     ],
   };
+}
+
+function validateGatewayOAuthFixture(fixture) {
+  if (fixture === undefined) return;
+  if (!fixture || typeof fixture !== "object") throw new TypeError("gatewayOAuth must be an object");
+  const issuer = new URL(fixture.issuer);
+  if (issuer.protocol !== "https:" || issuer.search || issuer.hash) {
+    throw new TypeError("gatewayOAuth.issuer must be an HTTPS URL without query or fragment");
+  }
+  if (typeof fixture.principalId !== "string" || !fixture.principalId.trim()) {
+    throw new TypeError("gatewayOAuth.principalId is required");
+  }
+  if (!Array.isArray(fixture.memberships) || fixture.memberships.length === 0) {
+    throw new TypeError("gatewayOAuth.memberships must not be empty");
+  }
+}
+
+async function seedGatewayOAuthMemberships(db, fixture) {
+  const now = Math.floor(Date.now() / 1000);
+  for (const membership of fixture.memberships) {
+    if (typeof membership.tenantId !== "string" || !membership.tenantId
+      || !Array.isArray(membership.scopes) || membership.scopes.length === 0
+      || !membership.scopes.every(scope => ["cas:read", "cas:write", "cas:manage"].includes(scope))) {
+      throw new TypeError("gatewayOAuth memberships require a tenantId and canonical CAS scopes");
+    }
+    await db.prepare(
+      `INSERT INTO gateway_oauth_tenant_memberships
+       (principal_id, tenant_id, scopes_json, ref_domain, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(principal_id, tenant_id) DO UPDATE SET
+         scopes_json = excluded.scopes_json,
+         ref_domain = excluded.ref_domain,
+         updated_at = excluded.updated_at`,
+    ).bind(
+      fixture.principalId,
+      membership.tenantId,
+      JSON.stringify(membership.scopes),
+      membership.refDomain ?? null,
+      now,
+      now,
+    ).run();
+  }
 }
 async function createEphemeralCapabilityFixture() {
   const pair = await generateKeyPair("ES256", { extractable: true });
