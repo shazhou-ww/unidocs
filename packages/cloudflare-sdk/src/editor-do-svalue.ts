@@ -612,6 +612,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           });
         }
 
+        if (request.method === "POST" && url.pathname === "/_internal/write_blob") {
+          // agent 侧的 effect 工具（图像模型返回的 PNG）是第一个调用方。
+          // 身份与 capability 已在上面的 #verifyIdentity 校验过；makeSBlob
+          // 是写类操作，靠转发过来的 CAS capability 授权。
+          const contentType = request.headers.get("Content-Type");
+          if (!contentType) {
+            return Response.json({ success: false, error: "write_blob needs a Content-Type" }, { status: 400 });
+          }
+          const data = new Uint8Array(await request.arrayBuffer());
+          if (data.length === 0) {
+            return Response.json({ success: false, error: "write_blob got an empty body" }, { status: 400 });
+          }
+          const blob = await this.#requireContext().makeSBlob({ data, contentType });
+          return valueResponse(request, { blob });
+        }
+
         if (request.method === "POST" && url.pathname === "/_internal/apply") {
           const value = await readRequestValue(request);
           if (!isRecord(value)

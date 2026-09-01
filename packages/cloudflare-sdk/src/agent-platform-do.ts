@@ -8,7 +8,7 @@ import { decodeSValue, encodeSValue, isSBlob, toJsonValue } from "@unidocs/svalu
 // BlobUnavailableError 和 AgentPlatform 定义在同一处 —— 它是 readBlob 的
 // 错误分类契约，履行契约要用到它。
 import { BlobUnavailableError, SValueContentType } from "@unidocs/protocol";
-import type { AgentPlatform, SBlob, SBlobData, SValue, SValueType } from "@unidocs/protocol";
+import type { AgentPlatform, SBlob, SBlobBytes, SBlobData, SValue, SValueType } from "@unidocs/protocol";
 
 export interface CloudflarePlatformDeps<TEnv> {
   readonly env: TEnv;
@@ -129,12 +129,27 @@ export function createCloudflareAgentPlatform<TQuery, TOp, TEnv>(
       };
     },
 
-    async writeBlob(): Promise<SBlob> {
-      // 第一个调用方要等到 provider 真的返回图片或文件字节（spec 5.4.2）。
-      // 那时给编辑器加一条 /_internal/write_blob，让它走 ctx.makeSBlob(data)
-      // ——今天 editor-do-svalue.ts 只有 resolve_blob（按 hash 造引用）和
-      // read_blob（读字节），没有"给我字节、返回 SBlob"那一条。
-      throw new Error("writeBlob is not wired yet: no provider returns binary content");
+    async writeBlob(data: SBlobBytes): Promise<SBlob> {
+      // 请求体是裸字节而不是 SValue 信封：这条路上的净荷就是一张 PNG，
+      // 再包一层 SValue 只会把它复制一遍（一个整层 PNG 可以是几 MB）。
+      // 响应仍走 SValue，因为回来的 SBlob 是个带签名的分支类型。
+      const { headers, stub } = editorTarget();
+      headers.set("Content-Type", data.contentType);
+      headers.set("Accept", SValueContentType);
+      const response = await stub.fetch("http://editor/_internal/write_blob", {
+        method: "POST",
+        headers,
+        body: Uint8Array.from(data.data).buffer,
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`Editor write blob failed ${response.status}: ${detail || response.statusText}`);
+      }
+      const value = await decodeValueResponse(response);
+      if (!isRecord(value) || !isSBlob(value.blob)) {
+        throw new Error("Editor write blob response has no blob");
+      }
+      return value.blob;
     },
   };
 }
