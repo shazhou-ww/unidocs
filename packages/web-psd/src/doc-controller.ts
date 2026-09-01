@@ -390,3 +390,38 @@ function debounce(fn: () => void, ms: number): () => void {
     handle = setTimeout(fn, ms);
   };
 }
+
+/**
+ * POST 一个 FormData,resolve 解析后的 JSON body。
+ *
+ * 用 XHR 而不是 fetch 只为一件事:`upload.onload` 标出「最后一个字节离开浏览器」
+ * 的时刻,把「还在上传」和「服务器在解析」分开。fetch 下这两段是一个不透明的
+ * await,而对一个大 PSD 它们恰好是整个打开流程里最长、且时长差别最大的两段——
+ * 合成一段的话,遮罩会在第一步停几十秒,进度感等于没有。
+ *
+ * 只 resolve body,不判断 `body.success`:那是调用方的事,与换用 XHR 之前
+ * 一模一样。请求头一个都不设,原来的 fetch 也没设。
+ */
+export function postForm(
+  url: string,
+  fd: FormData,
+  onUploaded: () => void,
+): Promise<{ success?: boolean; docId?: string; error?: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.upload.onload = () => onUploaded();
+    xhr.onload = () => {
+      try {
+        resolve(JSON.parse(xhr.responseText));
+      } catch {
+        // 网关 5xx 返回的是 HTML 错误页。把 JSON.parse 的语法错误换成状态码,
+        // 那才是这里唯一有用的信息。
+        reject(new Error(`HTTP ${xhr.status}: 响应不是 JSON`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("网络错误"));
+    xhr.onabort = () => reject(new Error("请求已中断"));
+    xhr.send(fd);
+  });
+}
