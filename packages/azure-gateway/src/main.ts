@@ -104,16 +104,16 @@ async function main(): Promise<void> {
   const casBaseUrl = process.env.CAS_BASE_URL;
   const casFetcher = casBaseUrl
     ? {
-        fetch: async (input: string | Request, init?: RequestInit): Promise<Response> => {
-          const req = new Request(input, init);
-          const url = new URL(req.url);
-          return fetch(`${casBaseUrl.replace(/\/$/, "")}${url.pathname}${url.search}`, req);
-        },
-      }
+      fetch: async (input: string | Request, init?: RequestInit): Promise<Response> => {
+        const req = new Request(input, init);
+        const url = new URL(req.url);
+        return fetch(`${casBaseUrl.replace(/\/$/, "")}${url.pathname}${url.search}`, req);
+      },
+    }
     : {
-        fetch: async () =>
-          Response.json({ error: "CAS is not implemented on Azure yet" }, { status: 501 }),
-      };
+      fetch: async () =>
+        Response.json({ error: "CAS is not implemented on Azure yet" }, { status: 501 }),
+    };
 
   const handler = createGatewayHandler({
     capabilityAuthority,

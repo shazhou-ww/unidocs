@@ -303,10 +303,10 @@ async function docxImageFlow(gateway, docId) {
   check(
     "query getImages → one png image with altText 'dot'",
     queryBody.success === true &&
-      Array.isArray(queryBody.data) &&
-      queryBody.data.length === 1 &&
-      queryBody.data[0].format === "png" &&
-      queryBody.data[0].altText === "dot",
+    Array.isArray(queryBody.data) &&
+    queryBody.data.length === 1 &&
+    queryBody.data[0].format === "png" &&
+    queryBody.data[0].altText === "dot",
     JSON.stringify(queryBody),
   );
 
@@ -351,10 +351,10 @@ async function psdFlow(gateway, docId) {
   check(
     "query getLayers → one group layer with the added id/name",
     queryBody.success === true &&
-      Array.isArray(queryBody.data) &&
-      queryBody.data.length === 1 &&
-      queryBody.data[0].id === layerId &&
-      queryBody.data[0].name === layerName,
+    Array.isArray(queryBody.data) &&
+    queryBody.data.length === 1 &&
+    queryBody.data[0].id === layerId &&
+    queryBody.data[0].name === layerName,
     JSON.stringify(queryBody),
   );
 
@@ -367,10 +367,10 @@ async function psdFlow(gateway, docId) {
   check(
     "export → PSD magic bytes (8BPS) and non-empty",
     exportBytes.length > 0 &&
-      exportBytes[0] === 0x38 &&
-      exportBytes[1] === 0x42 &&
-      exportBytes[2] === 0x50 &&
-      exportBytes[3] === 0x53,
+    exportBytes[0] === 0x38 &&
+    exportBytes[1] === 0x42 &&
+    exportBytes[2] === 0x50 &&
+    exportBytes[3] === 0x53,
     `status=${exportRes.status} length=${exportBytes.length} first4=${exportBytes[0]},${exportBytes[1]},${exportBytes[2]},${exportBytes[3]}`,
   );
 }
@@ -399,11 +399,11 @@ export function assertSkipCasAllowed(args, gateway) {
   if (args.skipCas && !args.noCas && !isLocalHost(gateway)) {
     throw new Error(
       `--skip-cas was passed with a non-local --gateway (${gateway}). ` +
-        "--skip-cas only exists for self-checking this script against the local Azure stack, " +
-        "which has no casBaseUrl by default. A real deployment's acceptance run must not skip " +
-        "group 3 (docx image path through Cloudflare CAS) — that group is the only proof the " +
-        "cross-cloud CAS wiring actually works. Re-run without --skip-cas, or use --no-cas if this " +
-        "deployment genuinely has no CAS configured (it will be verified, not just trusted).",
+      "--skip-cas only exists for self-checking this script against the local Azure stack, " +
+      "which has no casBaseUrl by default. A real deployment's acceptance run must not skip " +
+      "group 3 (docx image path through Cloudflare CAS) — that group is the only proof the " +
+      "cross-cloud CAS wiring actually works. Re-run without --skip-cas, or use --no-cas if this " +
+      "deployment genuinely has no CAS configured (it will be verified, not just trusted).",
     );
   }
 }
