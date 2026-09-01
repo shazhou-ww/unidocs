@@ -82,6 +82,12 @@ function handler() {
         defaultForPrincipal: async (principalId) => principalId === "user-1"
           ? { tenantId: "tenant-1", scopes: ["cas:read"] }
           : null,
+        provisionDefault: async (principalId, email) => {
+          const local = email?.split("@")[0]?.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+          return local
+            ? { tenantId: local, scopes: ["cas:read"] as const }
+            : null;
+        },
       },
       clock,
       random,
@@ -172,6 +178,101 @@ describe("Gateway OAuth authorization server HTTP handler", () => {
     ));
     expect(response?.status).toBe(401);
     expect(transactions).toHaveLength(0);
+  });
+
+  test("auto-provisions the account tenant from the email on first login", async () => {
+    const clock = { now: () => 1_000 };
+    const random = { opaque: () => "transaction-2" };
+    const challenge = await systemGatewayOAuthHash.sha256Base64Url(
+      "provision-verifier-abcdefghijklmnopqrstuvwxyz-0123456789",
+    );
+    const clients = new Map<string, GatewayOAuthRegisteredClient>();
+    clients.set("client-1", {
+      clientId: "client-1",
+      redirectUris: ["https://app.example/callback"],
+      clientName: null,
+      createdAt: 1,
+    });
+    const transactions = new Map<string, GatewayOAuthAuthorizationTransaction>();
+    const provisioned: Array<{ principalId: string; email?: string }> = [];
+    const provisionHandler = createGatewayOAuthAuthorizationServerHandler({
+      issuer: "https://gateway.example/oauth",
+      identity: {
+        currentUser: async () => ({
+          principalId: "user-2",
+          displayName: "Alice",
+          email: "alice@example.com",
+        }),
+      },
+      registration: {
+        clients: {
+          find: async id => clients.get(id) ?? null,
+          putIfAbsent: async () => true,
+        },
+        clock,
+        random,
+      },
+      authorization: {
+        clients: {
+          find: async id => clients.get(id) ?? null,
+          putIfAbsent: async () => true,
+        },
+        transactions: {
+          putIfAbsent: async transaction => {
+            transactions.set(transaction.transactionId, transaction);
+            return true;
+          },
+          take: async id => {
+            const value = transactions.get(id) ?? null;
+            transactions.delete(id);
+            return value;
+          },
+        },
+        codes: {
+          putIfAbsent: async () => true,
+          take: async () => null,
+        },
+        memberships: {
+          find: async () => null,
+          defaultForPrincipal: async () => null,
+          provisionDefault: async (principalId, email) => {
+            provisioned.push({ principalId, email });
+            return { tenantId: "alice", scopes: ["cas:read"] as const };
+          },
+        },
+        clock,
+        random,
+      },
+      token: {
+        codes: { putIfAbsent: async () => true, take: async () => null },
+        refreshTokens: {
+          putInitial: async () => true,
+          rotate: vi.fn(),
+          revoke: vi.fn(),
+        },
+        capabilityIssuer: { issue: async () => "capability-token" },
+        audience: "https://cas.example/stacks/stack-1",
+        clock,
+        random,
+      },
+      renderConsent: view => Response.json(view),
+    });
+
+    const authorizeUrl = new URL("https://gateway.example/oauth/authorize");
+    for (const [name, value] of Object.entries({
+      response_type: "code",
+      client_id: "client-1",
+      redirect_uri: "https://app.example/callback",
+      scope: "cas:read",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    })) authorizeUrl.searchParams.set(name, value);
+
+    const consent = await provisionHandler(new Request(authorizeUrl));
+    expect(consent?.status).toBe(200);
+    const body = await consent?.json() as { authorization?: { tenantId?: string } };
+    expect(body.authorization?.tenantId).toBe("alice");
+    expect(provisioned).toEqual([{ principalId: "user-2", email: "alice@example.com" }]);
   });
 
   test("resolves the default tenant membership when tenant_id is absent", async () => {

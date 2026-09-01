@@ -34,6 +34,8 @@ export interface GatewayOAuthAuthorizationRequest {
   readonly codeChallengeMethod: string;
   /** Server-derived browser identity; never populate this from OAuth query input. */
   readonly authenticatedPrincipalId?: string;
+  /** Verified upstream email of the authenticated principal (tenant naming). */
+  readonly authenticatedEmail?: string;
 }
 
 export interface GatewayOAuthPendingAuthorization {
@@ -81,13 +83,18 @@ export async function startGatewayOAuthAuthorization(
   }
   // The tenant is server-derived: an explicitly supplied tenant_id is only a
   // hint; absent (or empty) it resolves to the principal's default
-  // membership. A raw client-supplied tenant is never authoritative.
+  // membership, auto-provisioning the account's own tenant on first login.
+  // A raw client-supplied tenant is never authoritative.
   let tenantId = request.tenantId?.trim() ?? "";
   if (tenantId.length === 0) {
     if (!request.authenticatedPrincipalId) {
       throw protocolError("invalid_request", "tenant_id is required when no principal membership is available");
     }
-    const membership = await ports.memberships.defaultForPrincipal(request.authenticatedPrincipalId);
+    const membership = await ports.memberships.defaultForPrincipal(request.authenticatedPrincipalId)
+      ?? await ports.memberships.provisionDefault(
+        request.authenticatedPrincipalId,
+        request.authenticatedEmail,
+      );
     if (!membership) {
       throw new GatewayOAuthProtocolError("invalid_scope", 403, "user has no tenant membership");
     }

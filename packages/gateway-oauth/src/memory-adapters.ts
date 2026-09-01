@@ -11,6 +11,7 @@ import type {
   GatewayOAuthTenantMembership,
   GatewayOAuthTenantMembershipPort,
 } from "./ports.js";
+import type { GatewayOAuthScope } from "./scopes.js";
 
 /** Reference adapters for conformance tests and single-process development only. */
 export class MemoryGatewayOAuthClientStore implements GatewayOAuthClientStorePort {
@@ -150,6 +151,22 @@ export class MemoryGatewayOAuthTenantMembershipStore
       if (k.startsWith(`${principalId.length}:${principalId}`)) return membership;
     }
     return null;
+  }
+
+  async provisionDefault(
+    principalId: string,
+    email?: string,
+  ): Promise<GatewayOAuthTenantMembership | null> {
+    if (await this.defaultForPrincipal(principalId)) return this.defaultForPrincipal(principalId);
+    const local = email?.split("@")[0]?.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const tenantId = local && local.length > 0 ? local : `user-${principalId.slice(0, 16)}`;
+    const membership: GatewayOAuthTenantMembership = Object.freeze({
+      tenantId,
+      scopes: Object.freeze(["cas:read", "cas:write", "cas:manage"] satisfies GatewayOAuthScope[]),
+      refDomain: "doc",
+    });
+    this.set(principalId, membership);
+    return membership;
   }
 }
 

@@ -90,6 +90,7 @@ export function createGatewayOAuthAuthorizationServerHandler(
           codeChallenge: requiredQuery(url, "code_challenge"),
           codeChallengeMethod: requiredQuery(url, "code_challenge_method"),
           authenticatedPrincipalId: user.principalId,
+          ...(user.email === undefined || user.email === null ? {} : { authenticatedEmail: user.email }),
           ...(url.searchParams.has("state") ? { state: url.searchParams.get("state")! } : {}),
         }, config.authorization);
         return config.renderConsent({

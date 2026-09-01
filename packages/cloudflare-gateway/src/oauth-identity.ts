@@ -139,6 +139,7 @@ function createOidcIdentity(
       return session === null ? null : Object.freeze({
         principalId: session.sub,
         displayName: session.name,
+        ...(session.email === undefined ? {} : { email: session.email }),
       });
     },
   });
@@ -232,6 +233,7 @@ function createOidcIdentity(
       const session = {
         sub: verified.sub,
         name: verified.name ?? verified.email ?? verified.sub,
+        ...(verified.email === null ? {} : { email: verified.email }),
         exp: Math.floor(Date.now() / 1000) + sessionTtlSeconds,
       };
       const target = new URL(state.continue);
@@ -266,6 +268,7 @@ interface OidcLoginState {
 interface GatewaySession {
   readonly sub: string;
   readonly name: string;
+  readonly email?: string;
   readonly exp: number;
 }
 

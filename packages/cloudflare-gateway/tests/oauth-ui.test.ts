@@ -143,7 +143,11 @@ describe("Cloudflare Gateway OAuth identity and consent", () => {
           headers: { Cookie: sessionCookie.split(";")[0]! },
         }),
       );
-      expect(authenticated).toEqual({ principalId: "google-user-1", displayName: "Alice" });
+      expect(authenticated).toEqual({
+        principalId: "google-user-1",
+        displayName: "Alice",
+        email: "alice@example.com",
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -17,6 +17,8 @@ export interface GatewayOAuthAuthenticatedUser {
   /** Stable, server-derived identifier used as the capability subject. */
   readonly principalId: string;
   readonly displayName: string | null;
+  /** Verified upstream email, when the provider supplies one (tenant naming). */
+  readonly email?: string | null;
 }
 
 export interface GatewayOAuthIdentityPort {
@@ -38,6 +40,15 @@ export interface GatewayOAuthTenantMembershipPort {
    * deterministic tenant when the principal has memberships.
    */
   defaultForPrincipal(principalId: string): Promise<GatewayOAuthTenantMembership | null>;
+  /**
+   * Auto-provision the principal's own tenant on first login. The platform
+   * decides the tenant id (derived from the verified email when available).
+   * Returns the membership, or null when provisioning is not supported.
+   */
+  provisionDefault(
+    principalId: string,
+    email?: string,
+  ): Promise<GatewayOAuthTenantMembership | null>;
 }
 
 export interface GatewayOAuthAuthorizationTransaction {

@@ -296,6 +296,31 @@ export class PgGatewayOAuthTenantMembershipStore implements GatewayOAuthTenantMe
       ...(row.ref_domain === null ? {} : { refDomain: row.ref_domain }),
     }) : null;
   }
+
+  async provisionDefault(
+    principalId: string,
+    email?: string,
+  ): Promise<GatewayOAuthTenantMembership | null> {
+    const tenantId = tenantIdFromEmail(email) ?? `user-${principalId.slice(0, 16)}`;
+    const scopes = ["cas:read", "cas:write", "cas:manage"];
+    const now = epochSeconds();
+    await this.db.query(
+      `INSERT INTO gateway_oauth_tenant_memberships
+         (principal_id, tenant_id, scopes_json, ref_domain, created_at, updated_at)
+       VALUES ($1, $2, $3, 'doc', $4, $4)
+       ON CONFLICT (principal_id, tenant_id) DO NOTHING`,
+      [principalId, tenantId, JSON.stringify(scopes), now],
+    );
+    return this.defaultForPrincipal(principalId);
+  }
+}
+
+function tenantIdFromEmail(email: string | undefined): string | null {
+  if (!email) return null;
+  const local = email.split("@")[0];
+  if (!local) return null;
+  const normalized = local.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : null;
 }
 
 export class PgGatewayOAuthAuditPort implements GatewayOAuthAuditPort {
