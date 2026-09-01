@@ -80,6 +80,35 @@ with a standards-based Stack OAuth trust relationship:
   production identity, Key Vault signing, deployment, registration, and shared
   black-box E2E remain.
 
+### Known issue — TODO 2026-09-02: production docx create is very slow
+
+Reproducible with `scripts/measure-create-latency.mjs` (mints a session cookie,
+runs the full authorize → consent → token → create flow against
+`https://unidocs.shazhou.work`):
+
+```text
+docx create:     200 in ~12840ms   (docId d3217cf7)
+markdown create: 200 in ~5489ms
+```
+
+Hypotheses to chase (do not batch-fix blindly; each trades memory for speed):
+
+1. Sequential CAS ref-lease acquisition in `sblob-context` (`#store` leases
+   refs one at a time) + `PART_IO_CONCURRENCY=2` were the OOM fix: a docx
+   create issues ~15+ sequential CAS round trips before it returns, and each
+   in-flight CAS subrequest pins a large buffer inside the calling DO isolate.
+   Measure how much of the 12.8s is CAS round trips (wrangler tail + `cf-ray`
+   timing) vs middleware cold starts.
+2. Doc/middleware DO cold start on first request of a new document (new DO
+   name per doc). Consider a warm-up or keeping per-doc middleware alive; the
+   markdown 5.5s baseline already includes some of this.
+3. Gateway → doc worker → CAS chain latency (round trips through
+   `unidocs-gateway` then `unidocs-docx` then the CAS middleware DO, plus the
+   data-plane capability validation on every hop).
+
+Target: bring docx create closer to the markdown baseline before tuning
+concurrency back up. Re-measure with the script after any change.
+
 ## Fixed architecture
 
 ### Roles
