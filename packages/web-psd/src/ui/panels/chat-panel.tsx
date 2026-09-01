@@ -87,7 +87,7 @@ export function ChatPanel() {
         ))}
       </div>
 
-      <Composer busy={s.chatBusy} onSend={(t, target) => void send(t, target)} />
+      <Composer busy={s.chatBusy || !!s.opening} onSend={(t, target) => void send(t, target)} />
       {s.historyOpen ? <HistoryDrawer /> : null}
     </section>
   );

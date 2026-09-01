@@ -22,7 +22,10 @@ export function SidePanel() {
   const s = useUiState();
   const total = s.doc ? countLayers(s.doc.layers) : 0;
   return (
-    <aside className="col-panel">
+    // `inert` 而不是给每个控件挂 disabled:它一次盖住指针、键盘焦点和 a11y
+    // 树,而逐个 disabled 既要改十几处,又漏掉树里那些不是 <button> 的可点行。
+    // `.is-locked` 只管视觉,不承担任何拦截职责。
+    <aside className={`col-panel${s.opening ? " is-locked" : ""}`} inert={!!s.opening}>
       <section className="pane pane-layers">
         <div className="col-head">
           <strong>图层</strong>

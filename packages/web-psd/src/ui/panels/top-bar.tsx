@@ -55,17 +55,29 @@ export function TopBar() {
         </button>
         <button type="button" aria-label="放大" onClick={() => zoomStep(1)}>+</button>
       </div>
-      <button type="button" className="btn" onClick={() => fileRef.current?.click()}>打开</button>
+      <button
+        type="button" className="btn"
+        disabled={!!s.opening}
+        onClick={() => fileRef.current?.click()}
+      >打开</button>
       <input
         ref={fileRef} type="file" accept=".psd" hidden
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) void openFile(f); }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // 立刻清空,不等 openFile 回来:同一个文件连选两次,第二次不触发
+          // change,看起来像点了没反应。openFile 是 async 的,放到它之后清
+          // 就等于在整个加载期间都留着这个坑。
+          e.target.value = "";
+          if (f) void openFile(f);
+        }}
       />
       {/* A button, not a link: the export has to flush the pending-op queue
           to the server before reading the document back from it, and a plain
           <a href> navigates without running any of our code. */}
       <button
         type="button" className="btn btn-primary"
-        disabled={!s.docId || s.exporting}
+        // `opening` 期间 docId 指向的可能正是那个正在被替换掉的旧文档。
+        disabled={!s.docId || s.exporting || !!s.opening}
         onClick={() => { void exportDoc(); }}
       >
         {s.exporting ? "导出中…" : "导出"}

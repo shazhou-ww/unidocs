@@ -9,7 +9,7 @@ const TOOLS: { id: ToolId; label: string }[] = [
 export function ToolStrip() {
   const s = useUiState();
   return (
-    <div className="tools">
+    <div className={`tools${s.opening ? " is-locked" : ""}`} inert={!!s.opening}>
       {TOOLS.map((t) => (
         <button key={t.id} type="button" data-on={s.tool === t.id || undefined}
                 onClick={() => setState({ tool: t.id })}>{t.label}</button>
