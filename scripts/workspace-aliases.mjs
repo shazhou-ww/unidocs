@@ -23,9 +23,20 @@ import { join } from "node:path";
  * (below), removes the "which subset does this one caller need" judgment
  * call entirely — every bundler in the repo always gets every entry, so
  * adding a workspace package here once is enough for a NEW alias/subpath to
- * become available to all three callers automatically. If it isn't listed
- * here at all, that failure mode is unchanged, but there is only one place
- * left to check when it happens.
+ * become available to all three callers automatically.
+ *
+ * A package missing from this table is NOT a benign "unresolved bare
+ * import" — that was this module's original claim and it was wrong, which
+ * is how `pnpm dev psd` came to fail. Every workspace package's `exports`
+ * maps `development` to `src/index.ts` but `import`/`default` to
+ * `dist/index.js`, and the esbuild callers pass only
+ * `["workerd", "worker", "browser"]` — never `development`. So an unlisted
+ * package silently resolves to its BUILD OUTPUT, which is either absent
+ * (never built) or stale (built before a rename), and the bundle fails with
+ * `Could not resolve` naming a package the source never mentions. Listing
+ * it here points esbuild at the source and makes that whole fallback
+ * unreachable. `tests/unit/scripts/workspace-aliases.test.mjs` now asserts
+ * every base package imported from any `src/` is present.
  */
 const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/protocol": "packages/protocol/src/index.ts",
@@ -38,6 +49,9 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/svalue-codec": "packages/svalue-codec/src/index.ts",
   "@unidocs/svalue-codec/internal": "packages/svalue-codec/src/internal.ts",
   "@unidocs/gateway-common": "packages/gateway-common/src/index.ts",
+  "@unicas/admin-protocol": "unicas-packages/admin-protocol/src/index.ts",
+  "@unicas/control-plane": "unicas-packages/control-plane/src/index.ts",
+  "@unicas/control-auth": "unicas-packages/control-auth/src/index.ts",
   "@unicas/tenant-blob-client": "unicas-packages/tenant-blob-client/src/index.ts",
   "@unicas/tenant-client": "unicas-packages/tenant-client/src/index.ts",
   "@unidocs/doctype-server-common": "packages/doctype-server-common/src/index.ts",
@@ -48,6 +62,7 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/doctype-docx": "packages/doctype-docx/src/index.ts",
   "@unidocs/doctype-psd": "packages/doctype-psd/src/index.ts",
   "@unidocs/doctype-psd/engine": "packages/doctype-psd/src/engine.ts",
+  "@unidocs/psd-client": "packages/psd-client/src/index.ts",
 };
 
 /**
