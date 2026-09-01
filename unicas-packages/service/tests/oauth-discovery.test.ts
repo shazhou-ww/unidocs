@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   canonicalizeOAuthIssuer,
   oauthDiscoveryCandidates,
+  parseOAuthJwks,
   parseOAuthMetadata,
 } from "../src/index.js";
 
@@ -99,5 +100,32 @@ describe("Stack OAuth discovery", () => {
       jwks_uri: "http://keys.example/jwks",
       code_challenge_methods_supported: ["S256"],
     }, "https://auth.example", candidate)).toThrow("jwks_uri must be an HTTPS URL");
+  });
+
+  test("accepts a bounded public signing JWKS", () => {
+    expect(parseOAuthJwks({ keys: [{
+      kid: "key-1",
+      alg: "ES256",
+      use: "sig",
+      key_ops: ["verify"],
+      kty: "EC",
+      crv: "P-256",
+      x: "x",
+      y: "y",
+    }] })).toEqual([{
+      kid: "key-1",
+      algorithm: "ES256",
+      publicJwk: expect.objectContaining({ kid: "key-1", alg: "ES256" }),
+    }]);
+  });
+
+  test.each([
+    [{ keys: [] }, "at least one key"],
+    [{ keys: [{ kid: "same", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y" }, { kid: "same", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y" }] }, "duplicate kid"],
+    [{ keys: [{ kid: "key", alg: "HS256", kty: "oct", k: "secret" }] }, "unsupported algorithm"],
+    [{ keys: [{ kid: "key", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y", d: "private" }] }, "private material"],
+    [{ keys: [{ kid: "key", alg: "ES256", kty: "EC", crv: "P-256", x: "x", y: "y", jku: "https://evil.example/jwks" }] }, "remote key URLs"],
+  ] as const)("rejects an unsafe JWKS: %s", (jwks, message) => {
+    expect(() => parseOAuthJwks(jwks)).toThrow(message);
   });
 });

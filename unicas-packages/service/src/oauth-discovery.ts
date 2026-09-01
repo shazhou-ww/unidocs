@@ -1,4 +1,9 @@
+import { validatePublicJwk } from "./control-possession.js";
+import { isSupportedKeyAlgorithm, type SupportedKeyAlgorithm } from "./control-validation.js";
+
 export type OAuthMetadataType = "oauth" | "oidc";
+
+export const OAUTH_DISCOVERY_MAX_KEYS = 20;
 
 export interface OAuthDiscoveryCandidate {
   readonly type: OAuthMetadataType;
@@ -15,6 +20,24 @@ export interface DiscoveredOAuthMetadata {
   readonly registrationEndpoint: string | null;
   readonly scopesSupported: readonly string[];
   readonly codeChallengeMethodsSupported: readonly string[];
+}
+
+export interface DiscoveredOAuthJwk {
+  readonly kid: string;
+  readonly algorithm: SupportedKeyAlgorithm;
+  readonly publicJwk: Readonly<Record<string, unknown>>;
+}
+
+export interface OAuthDiscoveryResult {
+  readonly metadata: DiscoveredOAuthMetadata;
+  readonly metadataDigest: string;
+  readonly jwksDigest: string;
+  readonly keys: readonly DiscoveredOAuthJwk[];
+}
+
+/** Platform-owned network boundary. Implementations must apply SSRF controls. */
+export interface OAuthDiscoveryPort {
+  inspectIssuer(input: { readonly issuer: string }): Promise<OAuthDiscoveryResult>;
 }
 
 /** Validate an issuer while preserving its identifier for exact metadata/token matching. */
@@ -85,6 +108,46 @@ export function parseOAuthMetadata(
     scopesSupported,
     codeChallengeMethodsSupported,
   };
+}
+
+/** Validate a provider JWKS before persisting a trusted snapshot. */
+export function parseOAuthJwks(input: unknown): readonly DiscoveredOAuthJwk[] {
+  if (!isRecord(input) || !Array.isArray(input.keys)) {
+    throw new TypeError("JWKS must be a JSON object containing a keys array");
+  }
+  if (input.keys.length === 0) throw new TypeError("JWKS must contain at least one key");
+  if (input.keys.length > OAUTH_DISCOVERY_MAX_KEYS) {
+    throw new TypeError(`JWKS must contain at most ${OAUTH_DISCOVERY_MAX_KEYS} keys`);
+  }
+
+  const seen = new Set<string>();
+  return input.keys.map((value, index) => {
+    if (!isRecord(value)) throw new TypeError(`JWKS key ${index} must be an object`);
+    if (typeof value.kid !== "string" || value.kid.length === 0 || value.kid.length > 128) {
+      throw new TypeError(`JWKS key ${index} must have a non-empty kid of at most 128 characters`);
+    }
+    if (seen.has(value.kid)) throw new TypeError(`JWKS contains duplicate kid '${value.kid}'`);
+    seen.add(value.kid);
+    if (typeof value.alg !== "string" || !isSupportedKeyAlgorithm(value.alg)) {
+      throw new TypeError(`JWKS key '${value.kid}' uses an unsupported algorithm`);
+    }
+    if (value.use !== undefined && value.use !== "sig") {
+      throw new TypeError(`JWKS key '${value.kid}' is not a signing key`);
+    }
+    if (value.key_ops !== undefined) {
+      if (!Array.isArray(value.key_ops)
+        || value.key_ops.some((operation) => operation !== "verify")
+        || !value.key_ops.includes("verify")) {
+        throw new TypeError(`JWKS key '${value.kid}' has invalid key_ops`);
+      }
+    }
+    if ("jku" in value || "x5u" in value) {
+      throw new TypeError(`JWKS key '${value.kid}' must not contain remote key URLs`);
+    }
+    const validationError = validatePublicJwk(value, value.alg);
+    if (validationError) throw new TypeError(`JWKS key '${value.kid}': ${validationError}`);
+    return { kid: value.kid, algorithm: value.alg, publicJwk: { ...value } };
+  });
 }
 
 function requireHttpsEndpoint(value: unknown, field: string): string {

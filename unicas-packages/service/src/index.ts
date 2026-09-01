@@ -169,13 +169,18 @@ export type { SupportedKeyAlgorithm } from "./control-validation.js";
 export {
   canonicalizeOAuthIssuer,
   oauthDiscoveryCandidates,
+  parseOAuthJwks,
   parseOAuthMetadata,
 } from "./oauth-discovery.js";
 export type {
+  DiscoveredOAuthJwk,
   DiscoveredOAuthMetadata,
   OAuthDiscoveryCandidate,
+  OAuthDiscoveryPort,
+  OAuthDiscoveryResult,
   OAuthMetadataType,
 } from "./oauth-discovery.js";
+export { OAUTH_DISCOVERY_MAX_KEYS } from "./oauth-discovery.js";
 export type {
   ControlPlaneCallContext,
   ControlPlaneOperations,
