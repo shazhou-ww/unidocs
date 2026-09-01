@@ -96,6 +96,12 @@ export default {
     if (request.method === "GET" && pathname === "/health") {
       return Response.json({ ok: true, service: "unicas" });
     }
+    const protectedResourceStackId = matchStackProtectedResourcePath(pathname);
+    if (protectedResourceStackId !== null) {
+      if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
+      await ensureControlSchema(env);
+      return stackProtectedResourceMetadata(env, protectedResourceStackId);
+    }
 
     const timing = new ServerTiming();
     const platform = platformFromEnv(env, timing);
@@ -158,6 +164,44 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+function matchStackProtectedResourcePath(pathname: string): string | null {
+  const match = /^\/\.well-known\/oauth-protected-resource\/stacks\/([^/]+)$/.exec(pathname);
+  if (!match) return null;
+  try {
+    const stackId = decodeURIComponent(match[1]!);
+    return stackId.length > 0 ? stackId : null;
+  } catch {
+    return null;
+  }
+}
+
+async function stackProtectedResourceMetadata(env: Env, stackId: string): Promise<Response> {
+  const issuer = await env.CAS_CONTROL_DB.prepare(
+    "SELECT issuer FROM cas_stack_oauth_issuers WHERE stack_id = ? AND status = 'active'",
+  ).bind(stackId).first<{ issuer: string }>();
+  if (!issuer) return Response.json({ error: "OAUTH_ISSUER_NOT_ACTIVE" }, { status: 404 });
+  const configuredOrigin = env.CAS_PUBLIC_ORIGIN ?? env.PUBLIC_ORIGIN;
+  if (!configuredOrigin) {
+    return Response.json({ error: "PUBLIC_ORIGIN_NOT_CONFIGURED" }, { status: 503 });
+  }
+  let origin: string;
+  try {
+    origin = new URL(configuredOrigin).origin;
+  } catch {
+    return Response.json({ error: "PUBLIC_ORIGIN_NOT_CONFIGURED" }, { status: 503 });
+  }
+  return Response.json({
+    resource: `${origin}/stacks/${encodeURIComponent(stackId)}`,
+    authorization_servers: [issuer.issuer],
+    scopes_supported: ["cas:read", "cas:write", "cas:manage"],
+  }, {
+    headers: {
+      "Cache-Control": "public, max-age=60",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
 
 const verifiers = new WeakMap<object, StackCapabilityVerifier>();
 const controlSchemaInitializations = new WeakMap<object, Promise<void>>();

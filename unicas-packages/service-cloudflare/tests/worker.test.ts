@@ -96,6 +96,33 @@ describe("service-cloudflare public routing", () => {
     }
   });
 
+  test("publishes RFC 9728 metadata only for stacks with an active OAuth issuer", async () => {
+    const first = vi.fn(async () => ({ issuer: "https://gateway.example/oauth" }));
+    const metadataEnv = {
+      ...env,
+      CAS_CONTROL_DB: {
+        prepare: vi.fn(() => ({ bind: vi.fn(() => ({ first })) })),
+      },
+    } as unknown as Env;
+    const response = await worker.fetch(new Request(
+      "https://cas.example/.well-known/oauth-protected-resource/stacks/cas_stack_a",
+    ), metadataEnv, ctx);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      resource: "https://cas.example/stacks/cas_stack_a",
+      authorization_servers: ["https://gateway.example/oauth"],
+      scopes_supported: ["cas:read", "cas:write", "cas:manage"],
+    });
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(handlers.migrateControl).toHaveBeenCalledTimes(1);
+
+    first.mockResolvedValueOnce(null as never);
+    const missing = await worker.fetch(new Request(
+      "https://cas.example/.well-known/oauth-protected-resource/stacks/cas_stack_missing",
+    ), metadataEnv, ctx);
+    expect(missing.status).toBe(404);
+  });
+
   test("routes tenant protocol requests without admin cookies or internal secrets", async () => {
     const response = await worker.fetch(new Request(
       "https://cas.example/stacks/s1/tenants/t1/cas/usage",
