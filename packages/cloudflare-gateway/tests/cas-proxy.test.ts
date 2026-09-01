@@ -47,6 +47,8 @@ describe("Gateway CAS proxy", () => {
       authorization_endpoint: "https://stack.test/authorize",
       token_endpoint: "https://stack.test/token",
       jwks_uri: "https://stack.test/jwks",
+      registration_endpoint: "https://stack.test/register",
+      revocation_endpoint: "https://stack.test/revoke",
       code_challenge_methods_supported: ["S256"],
     });
 
@@ -61,6 +63,17 @@ describe("Gateway CAS proxy", () => {
       crv: "P-256",
     });
     expect(body.keys[0]).not.toHaveProperty("d");
+    expect(bindings.casFetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before creating authorization state without a production identity", async () => {
+    const bindings = await env();
+    const response = await worker.fetch(
+      new Request("https://stack.test/authorize?response_type=code"),
+      bindings as never,
+    );
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "login_required" });
     expect(bindings.casFetch).not.toHaveBeenCalled();
   });
 
