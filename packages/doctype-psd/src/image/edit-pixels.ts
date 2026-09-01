@@ -39,17 +39,6 @@ const pngToPixels = (png: Uint8Array): Pixels => {
 const pixelsToPng = (px: Pixels): Uint8Array =>
   encode({ width: px.width, height: px.height, data: px.data, channels: 4, depth: 8 });
 
-/**
- * `changed` 为 null 时的整层替换：既然连"哪块改了"都不可信，逐像素的 alpha
- * 更不可信（可能是源本来的半透明，也可能是模型的重采样噪声）——干脆整层
- * 铺满不透明，别把一份不可信的透明度带进文档。
- */
-const forceOpaque = (px: Pixels): Pixels => {
-  const data = new Uint8ClampedArray(px.data);
-  for (let i = 3; i < data.length; i += 4) data[i] = 255;
-  return { width: px.width, height: px.height, data };
-};
-
 const fail = (structuredContent: JsonValue): EffectOutcome<PsdOp> =>
   ({ ops: [], result: { structuredContent } });
 
@@ -118,7 +107,7 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
       // 没它，整层无遮挡地盖上去等于给全图蒙一层不可见的偏色。
       const landed = result.changed
         ? applyCoverageToAlpha(result.pixels, softenMask(result.changed, MASK_SOFTEN))
-        : forceOpaque(result.pixels);
+        : result.pixels;
 
       const resultBlob = await ctx.writeBlob({
         data: pixelsToPng(landed),

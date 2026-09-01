@@ -125,7 +125,7 @@ describe("editPixels effect", () => {
     expect(ctx.writeBlob).not.toHaveBeenCalled();
   });
 
-  it("changed 为 null 时降级整层替换：alpha 不被裁剪，provenance 标 maskDerivation none", async () => {
+  it("changed 为 null 时降级整层替换：alpha 原样透传，不经过蒙版裁剪；provenance 标 maskDerivation none", async () => {
     const editor = createStubEditor();
     const noMask = {
       ...editor,
@@ -140,10 +140,27 @@ describe("editPixels effect", () => {
     const out = await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
     const payload = (out.ops[0] as any).payload;
     expect(payload.provenance.maskDerivation).toBe("none");
-    // 没有可信蒙版就整层盖上去：四角都不透明
     const png = decode(ctx.written[0].data);
     const ch = png.channels;
-    expect((png.data as ArrayLike<number>)[((SRC_H - 1) * SRC_W + SRC_W - 1) * ch + 3]).toBe(255);
+    const corner = (png.data as ArrayLike<number>)[((SRC_H - 1) * SRC_W + SRC_W - 1) * ch + 3];
+    // changed 为 null 时没有蒙版可用，直接透传 editor 返回的像素——不拉高、
+    // 不裁剪。sourcePng() 用 fill(200) 填出全通道（含 alpha）都是 200 的
+    // 夹具，桩 editor 只改写左上 1/4，右下角保留原样，所以这里应该是
+    // 源本身的 200，既不是被裁到 0，也不是被强行拉到 255。
+    expect(corner).toBe(200);
+
+    // 对照组：同一个桩 editor，走正常的蒙版路径（changed 非 null）时，
+    // 同一个角落覆盖度为 0，applyCoverageToAlpha 把它乘成 0。两条分支在
+    // 同一角落给出不同答案，才真正区分开"没走蒙版"和"走了蒙版且结果碰巧
+    // 不透明"——单看一个常数分不出这两种情况。
+    const maskedTool = createEditPixelsTool(createStubEditor());
+    if (maskedTool.kind !== "effect") throw new Error("kind");
+    const maskedCtx = fakeCtx();
+    await maskedTool.run({ layerId: "portrait", instruction: "x" }, maskedCtx);
+    const maskedPng = decode(maskedCtx.written[0].data);
+    const maskedCh = maskedPng.channels;
+    const maskedCorner = (maskedPng.data as ArrayLike<number>)[((SRC_H - 1) * SRC_W + SRC_W - 1) * maskedCh + 3];
+    expect(maskedCorner).toBe(0);
   });
 
   it("参数缺失时以 result 报错，不抛", async () => {
