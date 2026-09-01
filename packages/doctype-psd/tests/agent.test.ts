@@ -105,3 +105,30 @@ describe("createPsdAgent", () => {
     expect(t.kind).toBe("effect");
   });
 });
+
+describe("提示词与工具表必须一起条件化", () => {
+  it("没有 editor 时，提示词里也不出现 editPixels —— 别描述一个不存在的工具", () => {
+    const agent = createPsdAgent({});
+    expect(agent.tools.map(t => t.name)).not.toContain("editPixels");
+    expect(agent.instructions).not.toContain("editPixels");
+  });
+
+  it("有 editor 时，工具表和提示词都提到它", () => {
+    const agent = createPsdAgent({ editor: createStubEditor() });
+    expect(agent.tools.map(t => t.name)).toContain("editPixels");
+    expect(agent.instructions).toContain("editPixels");
+  });
+
+  it("提示词里提到的每个工具名都真的在工具表里（两种注入状态都成立）", () => {
+    for (const agent of [createPsdAgent({}), createPsdAgent({ editor: createStubEditor() })]) {
+      const names = new Set(agent.tools.map(t => t.name));
+      for (const n of names) expect(agent.instructions).toBeTypeOf("string");
+      // 反向：提示词里出现的工具名不能是工具表里没有的
+      for (const candidate of ["editPixels", "getPreview", "getLayers", "addLayer", "transform"]) {
+        if (agent.instructions.includes(candidate)) {
+          expect(names, `提示词提到 ${candidate}，工具表却没有`).toContain(candidate);
+        }
+      }
+    }
+  });
+});

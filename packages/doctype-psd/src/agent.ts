@@ -8,7 +8,7 @@
  * 宣称自己能画。
  */
 import type { DocumentAgent } from "@unidocs/doctype-server-common/agent";
-import { instructions, tools } from "./tools.js";
+import { editPixelsInstructions, instructions, tools } from "./tools.js";
 import { createEditPixelsTool } from "./image/edit-pixels.js";
 import type { ImageEditor } from "./image/editor.js";
 import type { PsdOp } from "./ops/index.js";
@@ -20,8 +20,12 @@ export interface PsdAgentDeps {
 }
 
 export function createPsdAgent(deps: PsdAgentDeps): DocumentAgent<PsdQuery, PsdOp> {
+  // 工具表和提示词必须一起条件化。只条件化其中一个，就会得到一个
+  // "提示词里有、工具表里没有"的幽灵工具 —— 模型会去找它，找不到，然后
+  // 向用户道歉。这是线上真实发生过的一次故障。
+  if (!deps.editor) return { tools, instructions };
   return {
-    tools: deps.editor ? [...tools, createEditPixelsTool(deps.editor)] : tools,
-    instructions,
+    tools: [...tools, createEditPixelsTool(deps.editor)],
+    instructions: instructions + editPixelsInstructions,
   };
 }

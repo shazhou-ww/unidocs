@@ -280,10 +280,26 @@ EDITING
 - transform supports translate ({op:{translate:[dx,dy]}}) and flip only — no scale or rotate.
 - Clipping: a layer with clipping:true is confined to the alpha of the layer directly BELOW it (its base). To move a clipped image, move its base layer by the same delta too, or they will separate.
 - Masks: a mask is grayscale coverage (black hides, white shows). Use editMask to set/replace/remove.
-- New layers need a caller-assigned unique id. addLayer/generativeFill require pixel data in their arguments, which you cannot produce — so use them only for layers whose pixels you were handed. To create or change pixels, use editPixels.
-- editPixels: change the pixels INSIDE a layer from a plain-language instruction — removing an object, replacing something, painting something in. This is the ONLY tool that can change pixels; every other write tool needs pixel data you cannot produce. Give it {layerId, instruction}. It lands the result as a new masked layer above the source and hands you back an after-preview, so you do NOT need a separate getPreview to check it.
-- If editPixels comes back with ok:false, read the reason: "refused" means rephrase the instruction; "timeout"/"provider_error" mean the attempt failed and nothing was changed — decide whether it is worth retrying.
+- New layers need a caller-assigned unique id. A RASTER layer needs pixel data in the arguments, which you cannot produce — so add a raster layer only when its pixels were handed to you. Adjustment, fill and group layers need no pixels and are yours to create freely.
 - Adjustment layers: create with addLayer (type "adjustment") using a PSD adjustType key (brit=brightness/contrast, blwh=black & white, hue2=hue/saturation); change params later with setAdjustment. The field is adjustType, not adjustmentType.
 
 WORKFLOW
-Query (getDoc/getLayers) → reason about coordinates → edit (layer ops, or editPixels for pixels) → getPreview to verify (editPixels already returns one) → correct if needed.`;
+Query (getDoc/getLayers) → reason about coordinates → edit → getPreview to verify → correct if needed.`;
+
+/**
+ * 只有注入了 ImageEditor 时才追加的一段。
+ *
+ * 与工具表分开的理由，是一次真实故障教出来的：工具表本来就是条件的
+ * （没 editor 就不注册 editPixels），但提示词是无条件的，于是没配 key 的
+ * 部署里，模型的系统提示词白纸黑字写着"editPixels 是唯一能改像素的工具"，
+ * 而工具列表里没有它。模型于是道歉、并建议用户改用 Photoshop —— 它没有
+ * 幻觉，是提示词在骗它。
+ *
+ * 一个模型看得见的工具就会去调；一个描述了却不存在的工具比没有更糟。
+ */
+export const editPixelsInstructions = `
+
+PIXEL EDITING
+- editPixels: change the pixels INSIDE a layer from a plain-language instruction — removing an object, replacing something, painting something in. This is the ONLY tool that can change pixels. Give it {layerId, instruction}. It lands the result as a new layer above the source, transparent outside the changed region, and hands you back an after-preview — so you do NOT need a separate getPreview to check it.
+- Write the instruction so it stands on its own: it is passed straight to an image model that sees only the layer and your sentence. "replace the hat with voluminous hair, with a bow hair accessory on top" works; "change it" does not.
+- If editPixels comes back with ok:false, read the reason: "refused" means rephrase the instruction; "timeout"/"provider_error" mean the attempt failed and nothing was changed — decide whether it is worth retrying.`;
