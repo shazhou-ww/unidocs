@@ -31,6 +31,16 @@ storage = "sqlite"
 type = "durable-object"
 storage = "sqlite"
 
+# The exports-based declarations register the DO classes; explicit bindings
+# make them reachable from this worker's own fetch handler (env.DOCX_EDITOR).
+[[durable_objects.bindings]]
+name = "DOCX_EDITOR"
+class_name = "DocxEditor"
+
+[[durable_objects.bindings]]
+name = "DOCX_OPERATOR"
+class_name = "DocxOperator"
+
 [[services]]
 binding = "CAS_SERVICE"
 service = "unidocs-cas"

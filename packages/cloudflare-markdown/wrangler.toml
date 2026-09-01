@@ -28,6 +28,16 @@ storage = "sqlite"
 type = "durable-object"
 storage = "sqlite"
 
+# Exports-based declarations register the DO classes; explicit bindings make
+# them reachable from this worker's own fetch handler (env.MARKDOWN_EDITOR).
+[[durable_objects.bindings]]
+name = "MARKDOWN_EDITOR"
+class_name = "MarkdownEditor"
+
+[[durable_objects.bindings]]
+name = "MARKDOWN_OPERATOR"
+class_name = "MarkdownOperator"
+
 [[services]]
 binding = "CAS_SERVICE"
 service = "unidocs-cas"
