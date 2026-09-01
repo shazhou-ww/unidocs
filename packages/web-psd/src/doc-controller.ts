@@ -15,6 +15,7 @@
 import { CasBlobStore, DocSession, loadDoc, RenderClient, Viewport } from "@unidocs/psd-client";
 import { cacheBytesFor, countLayers, rectsOverlap, type LocalLayer, type Rect, type SizedLayer } from "./doc-model.js";
 import type { Hit } from "./ui/hit-test.js";
+import type { OpenPhase } from "./ui/store.js";
 
 // Dev: Vite proxies `/gw/*` to the gateway (see vite.config.ts), which keeps
 // the browser same-origin without CORS. Production: the built app is served
@@ -33,6 +34,14 @@ export interface DocControllerEvents {
   /** Fires whenever the document or version changes: cold start, local op,
    *  rebase (409 / agent run / another tab), rollback. */
   onDoc(doc: DocSession["doc"], version: number): void;
+  /** 一次打开走到了新的阶段。只报告,不管 store 里那个 `opening` 字段的
+   *  生死——它的写入和清除归 ui/controller.ts 的 wrapper 所有(见那边的
+   *  createFrom)。 */
+  onOpenPhase(phase: OpenPhase): void;
+  /** 打开失败。单独一个事件,是因为 `createFrom` 按设计永不 reject(见
+   *  ui/controller.ts 里 `before` 比较那段注释),失败只能这样报出来。
+   *  成功没有对应事件:wrapper 的 finally 已经负责收尾。 */
+  onOpenFailed(error: Error): void;
 }
 
 export class DocController {
@@ -90,6 +99,7 @@ export class DocController {
     const docId = this.docIdField;
     if (!docId) return;
     this.events.onStatus(`loading ${docId.slice(0, 8)}…`);
+    this.events.onOpenPhase("load");
 
     const store = new CasBlobStore({ apiBaseUrl: API_BASE_URL });
     const { doc, version, snapshot } = await loadDoc({
@@ -128,6 +138,8 @@ export class DocController {
     // Size the browser cache to actually hold this doc's decoded layers (see
     // `decodedBytes` above), not the engine's small resident-doc default.
     const cacheBytes = cacheBytesFor(doc.layers as unknown as SizedLayer[]);
+    // 解码 + 首绘。这两段在 Worker 里是一段连续的忙,没有可拆的中间点。
+    this.events.onOpenPhase("render");
     const workerInitStart = performance.now();
     const init = await this.renderClient.init({ snapshot, apiBaseUrl: API_BASE_URL, cacheBytes });
     const workerInitMs = performance.now() - workerInitStart;
@@ -348,17 +360,24 @@ export class DocController {
 
   async createFrom(bytes: Uint8Array, label: string): Promise<void> {
     this.events.onStatus(`creating from ${label}…`);
+    this.events.onOpenPhase("upload");
     try {
       const fd = new FormData();
       fd.append("file", new Blob([bytes as BlobPart]), label);
-      const r = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/`, { method: "POST", body: fd });
-      const body = await r.json();
+      const body = await postForm(
+        `${GW}/tenants/${USER}/docs/${TYPE}/`,
+        fd,
+        // 最后一个字节走了,但服务器还要解析 PSD 并写 CAS。对一个大文件这
+        // 后半段一点也不短,合进「上传中」会让遮罩看起来卡住。
+        () => this.events.onOpenPhase("parse"),
+      );
       if (!body.success) throw new Error(body.error ?? "create failed");
-      this.docIdField = body.docId;
+      this.docIdField = body.docId ?? null;
       await this.initRender();
-      this.events.onStatus(`v${this.session?.version} · ${this.docIdField?.slice(0, 8)} · ${label}`);
+      this.events.onStatus(`v${this.session?.version} · ${this.docIdField?.slice(0, 8)}`);
     } catch (e) {
       this.events.onStatus(`failed: ${(e as Error).message}`);
+      this.events.onOpenFailed(e as Error);
     }
   }
 

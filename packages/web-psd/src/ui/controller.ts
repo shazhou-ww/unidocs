@@ -27,6 +27,12 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
   if (controller) return;
   controller = new DocController(view, stage, {
     onStatus: (status) => setState({ status }),
+    // 只改阶段,不碰同一个字段里的文件名和字节数——它们是 createFrom 播下的。
+    onOpenPhase: (phase) => {
+      const opening = getState().opening;
+      if (opening) setState({ opening: { ...opening, phase } });
+    },
+    onOpenFailed: (err) => reportError("打开文件失败", err),
     onDoc: (doc, version) => {
       // A doc whose id differs from the one that last fixed the boundary is
       // a NEWLY OPENED document (cold start, or a later `openFile`) — reset
@@ -85,34 +91,43 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
 async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   if (!controller) return;
   const before = controller.docId;
-  await controller.createFrom(bytes, label);
-  // `DocController.createFrom` never rejects — it reports failure only via
-  // `onStatus`. Comparing to `before` is what keeps a failed create from
-  // adopting the new label: on the very first (never-yet-successful) call
-  // `docId` is still `null`; when the POST itself fails it is still the
-  // previous document's id, unchanged.
-  //
-  // The gate is deliberately coarse, and cannot be tightened from here.
-  // `createFrom` assigns `docIdField` BEFORE awaiting `initRender()` (see
-  // doc-controller.ts), so a create whose POST succeeded but whose render
-  // then threw leaves the new docId in place and is indistinguishable, from
-  // out here, from a fully successful one — the store adopts the new
-  // docId/label while the canvas shows nothing, with `onStatus` carrying the
-  // only account of what went wrong. That is the correct trade: the document
-  // does exist server-side, so pretending the previous one is still open
-  // would be the bigger lie.
-  if (controller.docId && controller.docId !== before) {
-    // `selection`/`region` are normally cleared by `onDoc`'s fresh branch.
-    // They are cleared again here for the path where `initRender` threw
-    // BEFORE reaching that callback: the new docId is adopted (see the
-    // comment above) while the previous document's target is still in the
-    // store, pointing at layer ids that are not in any open document.
+  // `opening` 的生死归这里,不归 DocController:文件名和字节数只有这一层有,
+  // 而放进 finally 意味着任何路径都收得干净——包括 DocController 被替身顶掉、
+  // 一个事件都不发的情况。少一个事件就把遮罩永久留在屏幕上,而那是用户完全
+  // 无法自救的状态。
+  setState({ opening: { phase: "upload", name: label, bytes: bytes.length } });
+  try {
+    await controller.createFrom(bytes, label);
+    // `DocController.createFrom` never rejects — it reports failure only via
+    // `onStatus`. Comparing to `before` is what keeps a failed create from
+    // adopting the new label: on the very first (never-yet-successful) call
+    // `docId` is still `null`; when the POST itself fails it is still the
+    // previous document's id, unchanged.
     //
-    // `region` is cleared through `setRegion`, not folded into the `setState`
-    // below, so its mask sweep still runs — a raw `setState({ region: null })`
-    // would leave the stale mask's bytes in the module-level table forever.
-    setState({ docId: controller.docId, docName: label, history: [], chat: [], selection: [] });
-    setRegion(null);
+    // The gate is deliberately coarse, and cannot be tightened from here.
+    // `createFrom` assigns `docIdField` BEFORE awaiting `initRender()` (see
+    // doc-controller.ts), so a create whose POST succeeded but whose render
+    // then threw leaves the new docId in place and is indistinguishable, from
+    // out here, from a fully successful one — the store adopts the new
+    // docId/label while the canvas shows nothing, with `onStatus` carrying the
+    // only account of what went wrong. That is the correct trade: the document
+    // does exist server-side, so pretending the previous one is still open
+    // would be the bigger lie.
+    if (controller.docId && controller.docId !== before) {
+      // `selection`/`region` are normally cleared by `onDoc`'s fresh branch.
+      // They are cleared again here for the path where `initRender` threw
+      // BEFORE reaching that callback: the new docId is adopted (see the
+      // comment above) while the previous document's target is still in the
+      // store, pointing at layer ids that are not in any open document.
+      //
+      // `region` is cleared through `setRegion`, not folded into the `setState`
+      // below, so its mask sweep still runs — a raw `setState({ region: null })`
+      // would leave the stale mask's bytes in the module-level table forever.
+      setState({ docId: controller.docId, docName: label, history: [], chat: [], selection: [] });
+      setRegion(null);
+    }
+  } finally {
+    setState({ opening: null });
   }
 }
 
