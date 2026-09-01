@@ -93,15 +93,19 @@ GATEWAY_OIDC_CLIENT_SECRET       upstream OIDC client secret
 GATEWAY_SESSION_ENCRYPTION_KEY   base64 32-byte key sealing session cookies
 ```
 
-`GATEWAY_PUBLIC_ORIGIN` (the issuer origin, e.g. `https://unicas.shazhou.work`),
-`GATEWAY_CORS_ORIGIN` (the webui origin, e.g. `https://unidocs.shazhou.work`),
-`GATEWAY_OIDC_ISSUER` (default `https://accounts.google.com`),
-`GATEWAY_OIDC_REDIRECT_PATH`, and `GATEWAY_OIDC_SESSION_TTL_SECONDS` are plain
-vars. The upstream OIDC client's redirect URI must include
-`{GATEWAY_PUBLIC_ORIGIN}{GATEWAY_OIDC_REDIRECT_PATH}`. Tenant membership is
-seeded into the Gateway D1 `gateway_oauth_tenant_memberships` table (one row
-per `(principal_id, tenant_id)` with `scopes_json` and optional `ref_domain`);
-the user's `principalId` is the upstream OIDC subject (`sub`).
+`GATEWAY_PUBLIC_ORIGIN` (the app/webui origin where the OAuth authorization
+surface is served, e.g. `https://unidocs.shazhou.work`), `GATEWAY_OIDC_ISSUER`
+(default `https://accounts.google.com`), `GATEWAY_OIDC_REDIRECT_PATH`, and
+`GATEWAY_OIDC_SESSION_TTL_SECONDS` are plain vars. The upstream OIDC client's
+redirect URI must include `{GATEWAY_PUBLIC_ORIGIN}{GATEWAY_OIDC_REDIRECT_PATH}`
+(for the current deployment:
+`https://unidocs.shazhou.work/oauth/unidocs-cloudflare/login/callback`). The
+issuer claim in issued tokens keeps the registered identifier
+(`GATEWAY_OAUTH_ISSUER`); the endpoints themselves are served on the app
+origin too. Tenant membership is seeded into the Gateway D1
+`gateway_oauth_tenant_memberships` table (one row per `(principal_id,
+tenant_id)` with `scopes_json` and optional `ref_domain`); the user's
+`principalId` is the upstream OIDC subject (`sub`).
 
 Set these on each of `@unidocs/cloudflare-markdown`,
 `@unidocs/cloudflare-docx`, and `@unidocs/cloudflare-psd`:

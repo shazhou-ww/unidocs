@@ -93,13 +93,18 @@ export function createGatewayOAuthAuthorizationServerHandler(
         return config.renderConsent({
           authorization,
           user,
-          decisionEndpoint: new URL(paths.decision, issuerUrl.origin).href,
+          decisionEndpoint: new URL(paths.decision, url.origin).href,
         });
       }
 
       if (url.pathname === paths.decision) {
         if (request.method !== "POST") return methodNotAllowed("POST");
-        if (request.headers.get("Origin") !== issuerUrl.origin) {
+        // The consent form posts back to the same host that served it. The
+        // issuer origin is also accepted so a gateway that hosts the OAuth
+        // surface on both its app domain and its registered issuer domain
+        // keeps both same-origin flows working.
+        const origin = request.headers.get("Origin");
+        if (origin !== url.origin && origin !== issuerUrl.origin) {
           throw new GatewayOAuthProtocolError("invalid_request", 403, "consent origin is not allowed");
         }
         const user = await config.identity.currentUser(request);
