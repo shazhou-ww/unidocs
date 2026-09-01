@@ -57,7 +57,13 @@ export function ChatPanel() {
   };
 
   return (
-    <section className="col-chat">
+    // `inert` 而不是只锁 composer:「新会话」会对 OUTGOING 文档调
+    // `resetAgent`,ops 计数器会为它拉历史,而 ops-list.tsx 的「回退这 N 步」
+    // 会对它调 `rollback` —— 一次真正的服务端写——外加
+    // `getController()?.reconcile()`,跑在一个渲染还没结束、`view` 已经指向
+    // 新文档而 `session`/`viewport` 还是旧文档的 controller 上。加载期间聊天
+    // 历史也一并不可点,这是拿到项目 owner 认可的取舍。
+    <section className={`col-chat${s.opening ? " is-locked" : ""}`} inert={!!s.opening}>
       <div className="col-head">
         <strong>Chat</strong>
         <button type="button" className="ops-counter" onClick={() => void openHistory()}>
@@ -87,7 +93,7 @@ export function ChatPanel() {
         ))}
       </div>
 
-      <Composer busy={s.chatBusy} onSend={(t, target) => void send(t, target)} />
+      <Composer busy={s.chatBusy || !!s.opening} onSend={(t, target) => void send(t, target)} />
       {s.historyOpen ? <HistoryDrawer /> : null}
     </section>
   );

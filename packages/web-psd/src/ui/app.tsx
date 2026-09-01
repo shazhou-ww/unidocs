@@ -4,6 +4,7 @@ import { CanvasStage } from "./panels/canvas-stage.js";
 import { ContextBar } from "./panels/context-bar.js";
 import { SidePanel } from "./panels/side-panel.js";
 import { ChatPanel } from "./panels/chat-panel.js";
+import { OpenOverlay } from "./panels/open-overlay.js";
 import { zoomActual, zoomFit, zoomStep } from "./zoom-controller.js";
 import { setRegion, setSelection } from "./store.js";
 
@@ -23,6 +24,7 @@ export function App() {
         <section className="col-canvas">
           <CanvasStage />
           <ContextBar />
+          <OpenOverlay />
         </section>
         <SidePanel />
       </div>
