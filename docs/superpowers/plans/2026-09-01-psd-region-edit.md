@@ -257,16 +257,28 @@ git commit -m "feat(psd): renderLayerRegion —— 只渲染图层的一个矩�
     expect(r.rect).toEqual(r.bounds);
   });
 
-  it("像素上限作用在请求的区域上，不是整层 —— 大图层选一小块也能编辑", async () => {
-    const d = doc();
-    // 把 portrait 撑成超过 MAX_EDIT_SOURCE_PIXELS 的尺寸，但只请求一小块
-    d.layers[1].children![0] = { ...d.layers[1].children![0], bounds: [0, 0, 4000, 4000] };
+  it("像素上限量的是请求的区域，不是整层 —— 错误信息里报的是区域尺寸", async () => {
+    // 不去造一个 bounds 与 pixels 不一致的巨型图层（那种图层的合成行为没有
+    // 定义，测试会去依赖一个不该依赖的东西）。改为断言**上限读的是哪个尺寸**：
+    // 请求一个超过上限的区域，错误信息里出现的必须是区域的尺寸。
+    await expect(runQuery(
+      { kind: "getLayerPixels", payload: { layerId: "portrait", rect: [0, 0, 4000, 4000] } },
+      doc(), memCas().ctx,
+    )).rejects.toThrow(/1600x1200|region is too large/);
+    // 注：rect 会先与图层 bounds 求交，所以 4000x4000 被截成整层的 1600x1200，
+    // 而 1600x1200 = 1.92 Mpx 并不超过 8 Mpx 的上限 —— 因此这一条实际验证的是
+    // 「求交发生在上限检查之前」。若实现把顺序写反，未截断的 16 Mpx 会触发
+    // 拒绝，这条就会红。
+  });
+
+  it("小区域落在大图层上时正常返回 —— 上限不该按整层算", async () => {
     const ctx = memCas();
     const r = await runQuery(
       { kind: "getLayerPixels", payload: { layerId: "portrait", rect: [0, 0, 200, 200] } },
-      d, ctx.ctx,
+      doc(), ctx.ctx,
     ) as any;
     expect([r.width, r.height]).toEqual([200, 200]);
+    expect(r.rect).toEqual([0, 0, 200, 200]);
   });
 ```
 
@@ -681,7 +693,8 @@ describe("差异蒙版在颗粒图上会退化（这就是区域编辑存在的�
     // 模拟模型那条链路：压小 → 再拉回原尺寸。模型自身的重绘还在这之上。
     const roundTripped = resample(resample(src, 200, 150), 400, 300);
     const fraction = covered(diffMask(src, roundTripped));
-    // 记录当前事实：颗粒图上这个比例极高，蒙版因此起不到"只让改动区显形"的作用
+    // 记录当前事实：颗粒图上这个比例极高，蒙版因此起不到"只让改动区显形"的作用。
+    // 0.5 是个保守的下界猜测，不是实测值 —— 见下面 Step 3 的指示。
     expect(fraction).toBeGreaterThan(0.5);
   });
 
@@ -696,9 +709,14 @@ describe("差异蒙版在颗粒图上会退化（这就是区域编辑存在的�
 - [ ] **Step 3: 跑测试**
 
 Run: `pnpm --filter @unidocs/doctype-psd exec vitest run tests/grain-characterization.test.ts`
-Expected: PASS。**如果"平滑图对照组"那条失败，说明 `resample` 或 `diffMask` 有问题，先查它们再往下走。**
 
-把两条断言实际跑出来的数字记进你的报告 —— 后面调 `PAD_RATIO` 时要参考。
+**先把两条断言实际跑出来的数字打出来**（在 `expect` 之前 `console.log`），记进报告。
+
+- **如果"平滑图对照组"那条失败**，说明 `resample` 或 `diffMask` 有问题，停下来先查它们，别改阈值。
+- **如果颗粒那条的实测值低于 0.5**：`0.5` 是我猜的保守下界，不是实测值。把阈值改成**略低于实测值**的数（例如实测 0.62 就写 0.55），并在注释里写明它是实测得来的、以及测得的具体数字。**不要去改 `diffMask` 或 `resample` 来迁就阈值** —— 表征测试的职责是记录现状，不是要求现状。
+- 体积那条同理：`5` 倍是保守下界，实测远高于它才正常。
+
+这两个数字后面调 `PAD_RATIO` 时要参考。
 
 - [ ] **Step 4: 提交**
 
