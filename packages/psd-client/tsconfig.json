@@ -16,6 +16,9 @@
   ],
   "references": [
     {
+      "path": "../../unicas-packages/codec"
+    },
+    {
       "path": "../doctype-psd"
     },
     {

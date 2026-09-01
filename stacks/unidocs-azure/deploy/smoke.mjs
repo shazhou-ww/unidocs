@@ -50,7 +50,13 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeNodeDigest, encodeHeader, hashToHex } from "../../../unicas-packages/codec/dist/index.js";
+import {
+  CanonicalNodeContentType,
+  computeNodeDigest,
+  concatenateNodeBytes,
+  encodeHeader,
+  hashToHex,
+} from "../../../unicas-packages/codec/dist/index.js";
 import { readAzureDocTypes } from "../doc-types.mjs";
 
 const REPO_ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..");
@@ -265,14 +271,21 @@ async function docxImageFlow(gateway, docId) {
   const header = encodeHeader(imageBytes.length, "image/png", 0);
   const digest = await computeNodeDigest(header, "image/png", [], imageBytes);
   const hash = hashToHex(digest);
+  const canonicalBytes = concatenateNodeBytes(
+    header,
+    new TextEncoder().encode("image/png"),
+    [],
+    imageBytes,
+  );
 
-  const uploadRes = await fetch(`${gateway}/tenants/${USER}/cas/nodes/${hash}`, {
+  const uploadRes = await fetch(`${gateway}/tenants/${USER}/cas/nodes/${hash}/lease`, {
     method: "POST",
     headers: {
-      "Content-Type": "image/png",
+      "Content-Type": CanonicalNodeContentType,
+      "Content-Length": String(canonicalBytes.length),
       "X-CAS-Lease-Duration": "900000",
     },
-    body: imageBytes,
+    body: canonicalBytes,
   });
   const uploadBody = await uploadRes.json();
   check("CAS upload → ready === true", uploadBody.ready === true, JSON.stringify(uploadBody));

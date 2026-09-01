@@ -21,6 +21,7 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
+    "@unicas/codec": "workspace:*",
     "@unidocs/doctype-psd": "workspace:*",
     "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/protocol": "workspace:*"

@@ -545,6 +545,9 @@ importers:
 
   packages/psd-client:
     dependencies:
+      '@unicas/codec':
+        specifier: workspace:*
+        version: link:../../unicas-packages/codec
       '@unidocs/doctype-psd':
         specifier: workspace:*
         version: link:../doctype-psd

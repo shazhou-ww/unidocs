@@ -1,8 +1,13 @@
+import {
+  CanonicalNodeContentType,
+  computeNodeDigest,
+  concatenateNodeBytes,
+  encodeHeader,
+  hashToHex,
+} from "@unicas/codec";
 import type { BlobStore } from "@unidocs/doctype-psd/engine";
 
-function toHex(bytes: ArrayBuffer): string {
-  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+const PIXEL_CONTENT_TYPE = "image/png";
 
 /** HTTP-backed {@link BlobStore} against an authorized Gateway API base. */
 export class CasBlobStore implements BlobStore {
@@ -22,11 +27,18 @@ export class CasBlobStore implements BlobStore {
   }
 
   async put(bytes: Uint8Array): Promise<string> {
-    const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
-    const hash = toHex(digest);
-    const res = await this.fetchImpl(`${this.apiBaseUrl}/cas/nodes/${hash}`, {
+    const header = encodeHeader(bytes.length, PIXEL_CONTENT_TYPE, 0);
+    const canonicalBytes = concatenateNodeBytes(
+      header,
+      new TextEncoder().encode(PIXEL_CONTENT_TYPE),
+      [],
+      bytes,
+    );
+    const hash = hashToHex(await computeNodeDigest(header, PIXEL_CONTENT_TYPE, [], bytes));
+    const res = await this.fetchImpl(`${this.apiBaseUrl}/cas/nodes/${hash}/lease`, {
       method: "POST",
-      body: bytes as BodyInit,
+      headers: { "Content-Type": CanonicalNodeContentType },
+      body: canonicalBytes as BodyInit,
     });
     if (!res.ok) throw new Error(`CasBlobStore.put: unexpected status ${res.status} for hash "${hash}"`);
     return hash;
