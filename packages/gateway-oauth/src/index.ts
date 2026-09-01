@@ -54,9 +54,12 @@ export type {
 } from "./authorization.js";
 export {
   exchangeGatewayOAuthAuthorizationCode,
+  refreshGatewayOAuthAccessToken,
+  revokeGatewayOAuthRefreshToken,
 } from "./token.js";
 export type {
   GatewayOAuthAuthorizationCodeTokenRequest,
+  GatewayOAuthRefreshTokenRequest,
   GatewayOAuthTokenPorts,
   GatewayOAuthTokenResponse,
 } from "./token.js";
@@ -82,8 +85,11 @@ export type {
   GatewayOAuthHashPort,
   GatewayOAuthIdentityPort,
   GatewayOAuthRandomPort,
+  GatewayOAuthRefreshRotationResult,
+  GatewayOAuthRefreshTokenStorePort,
   GatewayOAuthRegisteredClient,
   GatewayOAuthStoredAuthorizationCode,
+  GatewayOAuthStoredRefreshToken,
   GatewayOAuthTenantMembership,
   GatewayOAuthTenantMembershipPort,
 } from "./ports.js";

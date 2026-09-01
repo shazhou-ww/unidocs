@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   completeGatewayOAuthAuthorization,
   exchangeGatewayOAuthAuthorizationCode,
+  refreshGatewayOAuthAccessToken,
+  revokeGatewayOAuthRefreshToken,
   startGatewayOAuthAuthorization,
   systemGatewayOAuthHash,
   type GatewayOAuthAuthorizationTransaction,
   type GatewayOAuthRegisteredClient,
   type GatewayOAuthStoredAuthorizationCode,
+  type GatewayOAuthStoredRefreshToken,
 } from "../src/index.js";
 
 const verifier = "correct-verifier-abcdefghijklmnopqrstuvwxyz-0123456789";
@@ -16,14 +19,26 @@ let now: number;
 let randomValues: string[];
 let transactions: Map<string, GatewayOAuthAuthorizationTransaction>;
 let codes: Map<string, GatewayOAuthStoredAuthorizationCode>;
+let refreshTokens: Map<string, GatewayOAuthStoredRefreshToken>;
+let usedRefreshTokens: Map<string, string>;
+let revokedRefreshFamilies: Set<string>;
 let issued: Array<Record<string, unknown>>;
 
 beforeEach(async () => {
   challenge = await systemGatewayOAuthHash.sha256Base64Url(verifier);
   now = 1_000;
-  randomValues = ["transaction-id", "authorization-code", "access-token-jti"];
+  randomValues = [
+    "transaction-id",
+    "authorization-code",
+    "refresh-family",
+    "refresh-token",
+    "access-token-jti",
+  ];
   transactions = new Map();
   codes = new Map();
+  refreshTokens = new Map();
+  usedRefreshTokens = new Map();
+  revokedRefreshFamilies = new Set();
   issued = [];
 });
 
@@ -68,6 +83,44 @@ function ports(membershipScopes = ["cas:read", "cas:write"] as const) {
         principalId === "user-1" && tenantId === "tenant-1"
           ? { tenantId, scopes: membershipScopes, refDomain: "documents" }
           : null,
+    },
+    refreshTokens: {
+      putInitial: async (token: GatewayOAuthStoredRefreshToken) => {
+        if (refreshTokens.has(token.tokenHash)) return false;
+        refreshTokens.set(token.tokenHash, token);
+        return true;
+      },
+      rotate: async (input: { currentHash: string; nextHash: string; now: number }) => {
+        const current = refreshTokens.get(input.currentHash);
+        if (!current) {
+          const replayedFamily = usedRefreshTokens.get(input.currentHash);
+          if (!replayedFamily) return { status: "invalid" as const };
+          revokedRefreshFamilies.add(replayedFamily);
+          for (const [hash, token] of refreshTokens) {
+            if (token.familyId === replayedFamily) refreshTokens.delete(hash);
+          }
+          return { status: "replayed" as const };
+        }
+        if (revokedRefreshFamilies.has(current.familyId)) return { status: "invalid" as const };
+        refreshTokens.delete(input.currentHash);
+        usedRefreshTokens.set(input.currentHash, current.familyId);
+        const replacement = Object.freeze({
+          ...current,
+          tokenHash: input.nextHash,
+          generation: current.generation + 1,
+          createdAt: input.now,
+        });
+        refreshTokens.set(input.nextHash, replacement);
+        return { status: "rotated" as const, token: replacement };
+      },
+      revoke: async (tokenHash: string, clientId: string) => {
+        const token = refreshTokens.get(tokenHash);
+        if (!token || token.clientId !== clientId) return;
+        revokedRefreshFamilies.add(token.familyId);
+        for (const [hash, candidate] of refreshTokens) {
+          if (candidate.familyId === token.familyId) refreshTokens.delete(hash);
+        }
+      },
     },
     clock: { now: () => now },
     random: { opaque: () => randomValues.shift() ?? "fallback-random" },
@@ -117,6 +170,7 @@ describe("Gateway OAuth authorization code flow", () => {
       codeVerifier: verifier,
     }, {
       codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
       capabilityIssuer: {
         issue: async input => {
           issued.push(input as unknown as Record<string, unknown>);
@@ -132,6 +186,7 @@ describe("Gateway OAuth authorization code flow", () => {
       token_type: "Bearer",
       expires_in: 120,
       scope: "cas:read cas:write",
+      refresh_token: "refresh-token",
     });
     expect(issued[0]).toMatchObject({
       subject: "user-1",
@@ -155,6 +210,7 @@ describe("Gateway OAuth authorization code flow", () => {
       codeVerifier,
     }, {
       codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
       capabilityIssuer: { issue: vi.fn() },
       audience: "cas",
       clock: corePorts.clock,
@@ -246,9 +302,98 @@ describe("Gateway OAuth authorization code flow", () => {
       codeVerifier: verifier,
     }, {
       codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
       capabilityIssuer: { issue: vi.fn() },
       audience: "cas",
       clock: corePorts.clock,
     })).rejects.toThrow("exchange failed");
+  });
+
+  test("rotates refresh tokens and revokes the family when an old token is replayed", async () => {
+    const corePorts = ports();
+    const authorization = await authorize(corePorts);
+    const initial = await exchangeGatewayOAuthAuthorizationCode({
+      grantType: "authorization_code",
+      code: authorization.code!,
+      clientId: "public-client",
+      redirectUri: "https://app.example/callback",
+      codeVerifier: verifier,
+    }, {
+      codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
+      capabilityIssuer: { issue: async () => "access-1" },
+      audience: "cas",
+      clock: corePorts.clock,
+      random: corePorts.random,
+    });
+
+    randomValues = ["refresh-token-2", "access-token-jti-2"];
+    const rotated = await refreshGatewayOAuthAccessToken({
+      grantType: "refresh_token",
+      refreshToken: initial.refresh_token,
+      clientId: "public-client",
+    }, {
+      codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
+      capabilityIssuer: { issue: async () => "access-2" },
+      audience: "cas",
+      clock: corePorts.clock,
+      random: corePorts.random,
+    });
+    expect(rotated).toMatchObject({
+      access_token: "access-2",
+      refresh_token: "refresh-token-2",
+    });
+
+    await expect(refreshGatewayOAuthAccessToken({
+      grantType: "refresh_token",
+      refreshToken: initial.refresh_token,
+      clientId: "public-client",
+    }, {
+      codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
+      capabilityIssuer: { issue: vi.fn() },
+      audience: "cas",
+      clock: corePorts.clock,
+    })).rejects.toThrow("already used");
+    expect(refreshTokens).toHaveLength(0);
+
+    await expect(refreshGatewayOAuthAccessToken({
+      grantType: "refresh_token",
+      refreshToken: rotated.refresh_token,
+      clientId: "public-client",
+    }, {
+      codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
+      capabilityIssuer: { issue: vi.fn() },
+      audience: "cas",
+      clock: corePorts.clock,
+    })).rejects.toMatchObject({ code: "invalid_grant" });
+  });
+
+  test("explicit refresh-token revocation is idempotent and family-wide", async () => {
+    const corePorts = ports();
+    const authorization = await authorize(corePorts);
+    const initial = await exchangeGatewayOAuthAuthorizationCode({
+      grantType: "authorization_code",
+      code: authorization.code!,
+      clientId: "public-client",
+      redirectUri: "https://app.example/callback",
+      codeVerifier: verifier,
+    }, {
+      codes: corePorts.codes,
+      refreshTokens: corePorts.refreshTokens,
+      capabilityIssuer: { issue: async () => "access" },
+      audience: "cas",
+      clock: corePorts.clock,
+      random: corePorts.random,
+    });
+    await revokeGatewayOAuthRefreshToken(initial.refresh_token, "public-client", {
+      refreshTokens: corePorts.refreshTokens,
+    });
+    await revokeGatewayOAuthRefreshToken(initial.refresh_token, "public-client", {
+      refreshTokens: corePorts.refreshTokens,
+    });
+    expect(refreshTokens).toHaveLength(0);
   });
 });

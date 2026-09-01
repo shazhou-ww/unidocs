@@ -71,6 +71,40 @@ export interface GatewayOAuthAuthorizationCodeStorePort {
   take(codeHash: string): Promise<GatewayOAuthStoredAuthorizationCode | null>;
 }
 
+export interface GatewayOAuthStoredRefreshToken {
+  readonly tokenHash: string;
+  readonly familyId: string;
+  readonly generation: number;
+  readonly clientId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+  readonly scopes: readonly GatewayOAuthScope[];
+  readonly permissions: readonly CapabilityPermission[];
+  readonly refDomain?: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+
+export type GatewayOAuthRefreshRotationResult =
+  | { readonly status: "rotated"; readonly token: GatewayOAuthStoredRefreshToken }
+  | { readonly status: "invalid" | "replayed" };
+
+export interface GatewayOAuthRefreshTokenStorePort {
+  putInitial(token: GatewayOAuthStoredRefreshToken): Promise<boolean>;
+  /**
+   * Atomically consumes `currentHash` and inserts its successor under
+   * `nextHash`. Reuse of a consumed token revokes the entire family and
+   * returns `replayed`.
+   */
+  rotate(input: {
+    readonly currentHash: string;
+    readonly nextHash: string;
+    readonly now: number;
+  }): Promise<GatewayOAuthRefreshRotationResult>;
+  /** RFC 7009-style idempotent revocation; implementations revoke the family. */
+  revoke(tokenHash: string, clientId: string): Promise<void>;
+}
+
 export interface GatewayOAuthCapabilityIssuerPort {
   issue(input: IssueCapabilityInput): Promise<string>;
 }
@@ -109,6 +143,14 @@ export type GatewayOAuthAuditEvent =
     }
   | {
       readonly action: "token.issued" | "token.rejected";
+      readonly clientId: string;
+      readonly principalId?: string;
+      readonly tenantId?: string;
+      readonly scopes?: readonly GatewayOAuthScope[];
+      readonly reason?: string;
+    }
+  | {
+      readonly action: "refresh.rotated" | "refresh.rejected" | "refresh.revoked";
       readonly clientId: string;
       readonly principalId?: string;
       readonly tenantId?: string;
