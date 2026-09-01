@@ -111,10 +111,17 @@ export function validateAndNormalizeLayer(layer: Layer): Layer {
   if (out.type === "adjustment" && (typeof out.adjustType !== "string" || !out.adjustType)) {
     throw new Error("adjustment layer requires an adjustType string (e.g. 'brit'); note the field is adjustType, not adjustmentType");
   }
+  // `pixels` 是 PixelSource：要么是驻留的 Pixels（带 data 缓冲），要么是惰性
+  // 的 PixelRef（只带 CAS hash，字节在 CAS 里）。两种都合法 ——
+  // render/pixel-source.ts 的 PixelSource 联合类型就是这么定义的，而
+  // editPixels 只能产出后者：一个整层 RGBA 是几十 MB，塞进 op 会把 delta
+  // 撑爆。只认 data 的旧写法让每一次成功的 editPixels 都在 apply() 里抛错。
   if (out.pixels) {
-    const p = out.pixels as { width?: unknown; height?: unknown; data?: unknown };
-    if (!isFiniteNum(p.width) || !isFiniteNum(p.height) || !p.data || typeof (p.data as { length?: unknown }).length !== "number") {
-      throw new Error("layer.pixels must have numeric width/height and a data buffer");
+    const p = out.pixels as { width?: unknown; height?: unknown; data?: unknown; hash?: unknown };
+    const isRef = typeof p.hash === "string";
+    const isResident = !!p.data && typeof (p.data as { length?: unknown }).length === "number";
+    if (!isFiniteNum(p.width) || !isFiniteNum(p.height) || (!isRef && !isResident)) {
+      throw new Error("layer.pixels must have numeric width/height and either a data buffer or a CAS hash");
     }
   }
   if (out.type === "group" && out.children) {
