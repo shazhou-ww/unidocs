@@ -37,7 +37,9 @@ import {
   StaticDocServiceRegistry,
 } from "@unidocs/gateway-common";
 import {
+  createGatewayOAuthAuthorizationServerHandler,
   createGatewayOAuthDiscoveryHandler,
+  type GatewayOAuthAuthorizationServerHandler,
   type GatewayOAuthDiscoveryHandler,
 } from "@unidocs/gateway-oauth";
 import {
@@ -47,6 +49,18 @@ import {
 } from "@unidocs/service-auth";
 import { PgGatewayDocumentDirectory } from "./document-directory.js";
 import { hasWebAssets, webAssetResponse } from "./web-assets.js";
+import { renderAzureGatewayOAuthConsent } from "./oauth-consent.js";
+import { createAzureGatewayOAuthIdentity } from "./oauth-identity.js";
+import {
+  cleanupGatewayOAuthPg,
+  PgGatewayOAuthAuditPort,
+  PgGatewayOAuthAuthorizationCodeStore,
+  PgGatewayOAuthAuthorizationTransactionStore,
+  PgGatewayOAuthClientStore,
+  PgGatewayOAuthRefreshTokenStore,
+  PgGatewayOAuthTenantMembershipStore,
+} from "./oauth-pg.js";
+import type { Pool } from "pg";
 
 async function main(): Promise<void> {
   const databaseUrl = requireEnv("DATABASE_URL");
@@ -62,6 +76,13 @@ async function main(): Promise<void> {
     casStackKeyId,
     casStackPrivateKey,
   );
+  const casCapabilityIssuer = await createPkcs8CapabilityIssuer({
+    issuer: casStackIssuer,
+    kid: casStackKeyId,
+    privateKeyPkcs8: casStackPrivateKey,
+    defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
+    maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
+  });
   const capabilityAuthority = new GatewayCapabilityAuthority({
     issuer: await createPkcs8CapabilityIssuer({
       issuer: requireEnv("CAPABILITY_ISSUER"),
@@ -70,13 +91,7 @@ async function main(): Promise<void> {
       defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
       maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
     }),
-    casIssuer: await createPkcs8CapabilityIssuer({
-      issuer: casStackIssuer,
-      kid: casStackKeyId,
-      privateKeyPkcs8: casStackPrivateKey,
-      defaultLifetimeSeconds: policy.defaultLifetimeSeconds,
-      maximumLifetimeSeconds: policy.maximumLifetimeSeconds,
-    }),
+    casIssuer: casCapabilityIssuer,
     casAudience: requireEnv("CAS_CAPABILITY_AUDIENCE"),
     casStackId,
     casRefDomain: process.env.CAS_REF_DOMAIN,
@@ -95,6 +110,14 @@ async function main(): Promise<void> {
   const pool = createPool({ databaseUrl, blobConnectionString: "" });
   attachPoolErrorLogger(pool, "azure-gateway");
   const directory = new PgGatewayDocumentDirectory(pool);
+  const oauthServer = createOAuthAuthorizationServer(
+    process.env.GATEWAY_OAUTH_ISSUER,
+    casStackIssuer,
+    casCapabilityIssuer,
+    requireEnv("CAS_CAPABILITY_AUDIENCE"),
+    policy.defaultLifetimeSeconds,
+    pool,
+  );
 
   // Transitional (deleted in phase 4): CAS_BASE_URL points at the
   // Cloudflare CAS worker itself. Unset means unchanged behavior — CAS
@@ -133,7 +156,18 @@ async function main(): Promise<void> {
   // else falls through to the UI, so the SPA and its API live under one
   // hostname and no CORS is involved.
   const withUi = async (request: Request): Promise<Response> =>
-    await oauthDiscovery?.(request) ?? webAssetResponse(request) ?? handler(request);
+    await oauthDiscovery?.(request)
+    ?? await oauthServer?.(request)
+    ?? webAssetResponse(request)
+    ?? handler(request);
+
+  const oauthCleanupTimer = oauthServer
+    ? setInterval(() => {
+      void cleanupGatewayOAuthPg(pool).catch(error => {
+        console.error("Azure Gateway OAuth cleanup failed", error);
+      });
+    }, 60 * 60 * 1000)
+    : undefined;
 
   const { close } = await serve(withUi, { port, host: "0.0.0.0" });
   console.log(
@@ -145,12 +179,50 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`azure-gateway received ${signal}, shutting down`);
+    if (oauthCleanupTimer !== undefined) clearInterval(oauthCleanupTimer);
     await close();
     await pool.end();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+function createOAuthAuthorizationServer(
+  oauthIssuer: string | undefined,
+  casIssuer: string,
+  capabilityIssuer: Awaited<ReturnType<typeof createPkcs8CapabilityIssuer>>,
+  audience: string,
+  accessTokenLifetimeSeconds: number,
+  pool: Pool,
+): GatewayOAuthAuthorizationServerHandler | null {
+  if (!oauthIssuer) return null;
+  if (oauthIssuer !== casIssuer) {
+    throw new Error("GATEWAY_OAUTH_ISSUER must exactly equal CAS_STACK_ISSUER");
+  }
+  const now = (): number => Math.floor(Date.now() / 1000);
+  const clients = new PgGatewayOAuthClientStore(pool);
+  const transactions = new PgGatewayOAuthAuthorizationTransactionStore(pool, now);
+  const codes = new PgGatewayOAuthAuthorizationCodeStore(pool, now);
+  const refreshTokens = new PgGatewayOAuthRefreshTokenStore(pool);
+  const memberships = new PgGatewayOAuthTenantMembershipStore(pool);
+  const audit = new PgGatewayOAuthAuditPort(pool, now);
+  return createGatewayOAuthAuthorizationServerHandler({
+    issuer: oauthIssuer,
+    identity: createAzureGatewayOAuthIdentity(process.env),
+    registration: { clients, clock: { now }, audit },
+    authorization: { clients, transactions, codes, memberships, clock: { now }, audit },
+    token: {
+      codes,
+      refreshTokens,
+      capabilityIssuer,
+      audience,
+      clock: { now },
+      audit,
+      accessTokenLifetimeSeconds,
+    },
+    renderConsent: renderAzureGatewayOAuthConsent,
+  });
 }
 
 async function createOAuthDiscovery(
@@ -164,8 +236,13 @@ async function createOAuthDiscovery(
     throw new Error("GATEWAY_OAUTH_ISSUER must exactly equal CAS_STACK_ISSUER");
   }
   const publicJwk = await derivePkcs8CapabilityPublicJwk(privateKeyPkcs8);
+  const issuerBase = oauthIssuer.replace(/\/$/, "");
   return createGatewayOAuthDiscoveryHandler({
-    metadata: { issuer: oauthIssuer },
+    metadata: {
+      issuer: oauthIssuer,
+      registrationEndpoint: `${issuerBase}/register`,
+      revocationEndpoint: `${issuerBase}/revoke`,
+    },
     signingKeys: {
       publicSigningKeys: async () => [{ algorithm: "ES256", kid, publicJwk }],
     },
