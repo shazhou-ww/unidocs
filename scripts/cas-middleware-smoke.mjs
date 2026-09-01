@@ -4,6 +4,8 @@
  * Usage: node scripts/cas-middleware-smoke.mjs [baseUrl]
  *   baseUrl defaults to https://unicas.shazhou.work (the live edge);
  *   pass http://127.0.0.1:<port> to test `wrangler dev --remote` tunnels.
+ *   Set UNICAS_SMOKE_STACK_ID/ISSUER/AUDIENCE/KID/KEY_FILE to target one
+ *   control-plane-managed smoke stack; cross-stack assertions are then skipped.
  *
  * Loads the provisioned stack issuer keys from .wrangler/cas-deploy,
  * issues stack capabilities, and runs the canonical tenant flow (lease ->
@@ -24,20 +26,31 @@ const RUN = `${process.pid}-${Date.now()}`;
 const TENANT = `deploy-smoke-${RUN}`;
 const KEY_DIR = join(import.meta.dirname, "..", ".wrangler", "cas-deploy");
 
-const stacks = [
+const defaultStacks = [
   {
     stackId: "unidocs-cloudflare",
+    issuer: "https://unicas.shazhou.work/cas/issuer/cloudflare",
     audience: "unidocs-cas-cloudflare",
     keyFile: "unidocs-cloudflare.pkcs8.pem",
     kid: "cf-rotate-1",
   },
   {
     stackId: "unidocs-azure",
+    issuer: "https://unicas.shazhou.work/cas/issuer/azure",
     audience: "unidocs-cas-azure",
     keyFile: "unidocs-azure.pkcs8.pem",
     kid: "az-rotate-1",
   },
 ];
+
+const configuredStackId = process.env.UNICAS_SMOKE_STACK_ID;
+const stacks = configuredStackId ? [{
+  stackId: configuredStackId,
+  issuer: requiredEnv("UNICAS_SMOKE_ISSUER"),
+  audience: requiredEnv("UNICAS_SMOKE_AUDIENCE"),
+  kid: requiredEnv("UNICAS_SMOKE_KID"),
+  keyFile: requiredEnv("UNICAS_SMOKE_KEY_FILE"),
+}] : defaultStacks;
 
 /** Canonical node wire content type (see @unicas/codec). */
 const NODE_CONTENT_TYPE = "application/vnd.unidocs.cas-node.v1";
@@ -45,6 +58,12 @@ const NODE_CONTENT_TYPE = "application/vnd.unidocs.cas-node.v1";
 function assert(condition, message) {
   if (!condition) throw new Error(`ASSERT FAILED: ${message}`);
   console.log(`  ok: ${message}`);
+}
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required when UNICAS_SMOKE_STACK_ID is set`);
+  return value;
 }
 
 function deferred() {
@@ -114,7 +133,7 @@ async function main() {
   for (const stack of stacks) {
     const privateKeyPkcs8 = await readFile(join(KEY_DIR, stack.keyFile), "utf8");
     issuers[stack.stackId] = await createPkcs8CapabilityIssuer({
-      issuer: `https://unicas.shazhou.work/cas/issuer/${stack.stackId === "unidocs-cloudflare" ? "cloudflare" : "azure"}`,
+      issuer: stack.issuer,
       kid: stack.kid,
       privateKeyPkcs8,
     });
@@ -128,14 +147,16 @@ async function main() {
   });
 
   console.log(`smoke base: ${BASE}`);
-  const cf = stacks[0];
-  const az = stacks[1];
-  const writer = await issue(cf, [casWritePermission(TENANT)], "doc");
-  const reader = await issue(cf, [casReadPermission(TENANT)]);
-  const usageReader = await issue(cf, [casManagePermission(TENANT)]);
-  const gcTrigger = await issue(cf, [casManagePermission(TENANT)]);
-  const azReader = await issue(az, [casReadPermission(TENANT)]);
-  const prefix = `/stacks/${cf.stackId}/tenants/${TENANT}`;
+  const primary = stacks[0];
+  const isolation = stacks[1];
+  const writer = await issue(primary, [casWritePermission(TENANT)], "doc");
+  const reader = await issue(primary, [casReadPermission(TENANT)]);
+  const usageReader = await issue(primary, [casManagePermission(TENANT)]);
+  const gcTrigger = await issue(primary, [casManagePermission(TENANT)]);
+  const isolationReader = isolation === undefined
+    ? undefined
+    : await issue(isolation, [casReadPermission(TENANT)]);
+  const prefix = `/stacks/${primary.stackId}/tenants/${TENANT}`;
 
   // Edge readiness + isolation (only meaningful against the live edge).
   const isLiveEdge = BASE.startsWith("https://");
@@ -146,52 +167,57 @@ async function main() {
     assert(internal.status === 404, "edge never forwards /_internal/health");
   }
 
-  // Hold one request body mid-stream. Its reservation proves lease begin has
-  // completed; usage and a different-hash lease must still finish before the
-  // first body is released.
-  const slow = await nodeOf("slow-upload-concurrency-probe");
-  const paused = pausedBody(slow.body);
-  const slowLease = fetch(`${BASE}${prefix}/cas/nodes/${slow.hash}/lease`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${writer}`,
-      "Content-Type": NODE_CONTENT_TYPE,
-      "Content-Length": String(slow.body.length),
-    },
-    body: paused.body,
-    duplex: "half",
-  });
-  await waitFor(async () => {
-    const response = await fetch(`${BASE}${prefix}/cas/usage`, {
-      headers: { Authorization: `Bearer ${usageReader}` },
-    });
-    if (!response.ok) return false;
-    const usage = await response.json();
-    return usage.reservedBytes >= slow.body.length;
-  }, "slow upload reservation");
-  assert(true, "usage bypasses an in-flight upload");
-
-  const concurrent = await nodeOf("concurrent-upload-probe");
-  let concurrentResult;
-  let concurrentError;
-  try {
-    concurrentResult = await withTimeout(fetch(
-      `${BASE}${prefix}/cas/nodes/${concurrent.hash}/lease`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${writer}`, "Content-Type": NODE_CONTENT_TYPE },
-        body: concurrent.body,
+  let concurrencyNodeCount = 0;
+  if (process.env.UNICAS_SMOKE_SKIP_CONCURRENCY !== "1") {
+    // Hold one request body mid-stream. Its reservation proves lease begin has
+    // completed; usage and a different-hash lease must still finish before the
+    // first body is released. Some ingress paths buffer a full client body;
+    // callers may skip this probe while still running the canonical flow.
+    const slow = await nodeOf("slow-upload-concurrency-probe");
+    const paused = pausedBody(slow.body);
+    const slowLease = fetch(`${BASE}${prefix}/cas/nodes/${slow.hash}/lease`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${writer}`,
+        "Content-Type": NODE_CONTENT_TYPE,
+        "Content-Length": String(slow.body.length),
       },
-    ), "concurrent lease while another body is paused");
-  } catch (error) {
-    concurrentError = error;
-  } finally {
-    paused.release();
+      body: paused.body,
+      duplex: "half",
+    });
+    await waitFor(async () => {
+      const response = await fetch(`${BASE}${prefix}/cas/usage`, {
+        headers: { Authorization: `Bearer ${usageReader}` },
+      });
+      if (!response.ok) return false;
+      const usage = await response.json();
+      return usage.reservedBytes >= slow.body.length;
+    }, "slow upload reservation");
+    assert(true, "usage bypasses an in-flight upload");
+
+    const concurrent = await nodeOf("concurrent-upload-probe");
+    let concurrentResult;
+    let concurrentError;
+    try {
+      concurrentResult = await withTimeout(fetch(
+        `${BASE}${prefix}/cas/nodes/${concurrent.hash}/lease`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${writer}`, "Content-Type": NODE_CONTENT_TYPE },
+          body: concurrent.body,
+        },
+      ), "concurrent lease while another body is paused");
+    } catch (error) {
+      concurrentError = error;
+    } finally {
+      paused.release();
+    }
+    const slowResult = await slowLease;
+    if (concurrentError) throw concurrentError;
+    assert(concurrentResult.status === 200, `concurrent lease -> ${concurrentResult.status}`);
+    assert(slowResult.status === 200, `paused lease -> ${slowResult.status}`);
+    concurrencyNodeCount = 2;
   }
-  const slowResult = await slowLease;
-  if (concurrentError) throw concurrentError;
-  assert(concurrentResult.status === 200, `concurrent lease -> ${concurrentResult.status}`);
-  assert(slowResult.status === 200, `paused lease -> ${slowResult.status}`);
 
   // Lease a parent with a child.
   const child = await nodeOf("smoke-child");
@@ -232,7 +258,7 @@ async function main() {
   // restart at 1 for a fresh smoke tenant — assert it advanced instead.
   assert(res.status === 200 && rootsBody.success === true
     && typeof rootsBody.revision === "number" && rootsBody.revision > 0,
-  `root-refs -> revision ${rootsBody.revision}`);
+    `root-refs -> revision ${rootsBody.revision}`);
 
   res = await fetch(`${BASE}${prefix}/root-refs`, {
     method: "POST",
@@ -245,7 +271,10 @@ async function main() {
 
   res = await fetch(`${BASE}${prefix}/cas/usage`, { headers: { Authorization: `Bearer ${usageReader}` } });
   const usageBody = await res.json();
-  assert(res.status === 200 && usageBody.nodeCount === 4, `usage nodeCount -> ${usageBody.nodeCount}`);
+  assert(
+    res.status === 200 && usageBody.nodeCount === 2 + concurrencyNodeCount,
+    `usage nodeCount -> ${usageBody.nodeCount}`,
+  );
 
   res = await fetch(`${BASE}${prefix}/cas/gc`, {
     method: "POST",
@@ -255,18 +284,20 @@ async function main() {
   const gcBody = await res.json();
   assert(res.status === 200 && gcBody.deleted === 0, "gc keeps leased nodes");
 
-  // Cross-stack isolation: azure token cannot read cloudflare's node.
-  res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/content`, {
-    headers: { Authorization: `Bearer ${azReader}` },
-  });
-  assert(res.status === 403, `cross-stack read -> ${res.status} (403)`);
+  if (isolation !== undefined && isolationReader !== undefined) {
+    // Cross-stack isolation: another stack's token cannot read the primary node.
+    res = await fetch(`${BASE}${prefix}/cas/nodes/${parent.hash}/content`, {
+      headers: { Authorization: `Bearer ${isolationReader}` },
+    });
+    assert(res.status === 403, `cross-stack read -> ${res.status} (403)`);
 
-  // Azure's own stack sees nothing under the same tenant id.
-  res = await fetch(`${BASE}/stacks/${az.stackId}/tenants/${TENANT}/cas/usage`, {
-    headers: { Authorization: `Bearer ${await issue(az, [casManagePermission(TENANT)])}` },
-  });
-  const azUsage = await res.json();
-  assert(azUsage.nodeCount === 0, `azure usage nodeCount -> ${azUsage.nodeCount}`);
+    // The isolation stack sees nothing under the same tenant id.
+    res = await fetch(`${BASE}/stacks/${isolation.stackId}/tenants/${TENANT}/cas/usage`, {
+      headers: { Authorization: `Bearer ${await issue(isolation, [casManagePermission(TENANT)])}` },
+    });
+    const isolationUsage = await res.json();
+    assert(isolationUsage.nodeCount === 0, `isolation usage nodeCount -> ${isolationUsage.nodeCount}`);
+  }
 
   console.log("\nSMOKE PASS");
 }
