@@ -35,6 +35,7 @@ import {
 } from "./domain-do.js";
 import { migrateStackTenantSchema } from "./schema.js";
 import { CasDurableObject, type TenantCasDoEnv } from "./tenant-do.js";
+import { ServerTiming, type TimingSink } from "./timing.js";
 
 export { CasDurableObject, RootRefDomainDurableObject };
 
@@ -88,22 +89,23 @@ const MCP_BROWSER_COOKIE_NAMES = new Set([
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const requestStarted = performance.now();
     const pathname = new URL(request.url).pathname;
     if (request.method === "GET" && pathname === "/health") {
       return Response.json({ ok: true, service: "unicas" });
     }
 
-    const platform = platformFromEnv(env);
+    const timing = new ServerTiming();
+    const platform = platformFromEnv(env, timing);
     const auditReader = localAuditReader(env);
     const verifier = verifierFor(env);
     const actor = createUniCasService({
       platform,
       authorizeTenantRequest: async ({ request: tenantRequest, route }) => {
         try {
-          return await verifier.verify(
-            tenantAuthorizationRequest(tenantRequest),
-            route,
-          );
+          return await timing.time("cas_auth", () => verifier.verify(
+            tenantAuthorizationRequest(tenantRequest), route,
+          ));
         } catch (error) {
           if (!(error instanceof Error) || error.name === "Error") {
             console.error("Unexpected tenant authorization failure", error);
@@ -117,9 +119,13 @@ export default {
 
     const serviceRoute = matchUniCasServiceRoute(request);
     if (serviceRoute) {
-      if (serviceRoute.plane === "tenant") await migrateStackTenantSchema(env.CAS_DB);
+      if (serviceRoute.plane === "tenant") {
+        await timing.time("cas_schema", () => ensureTenantSchema(env));
+      }
       try {
-        return await actor.fetch(request);
+        const response = await actor.fetch(request);
+        timing.record("cas_edge", performance.now() - requestStarted);
+        return timing.decorate(response);
       } catch (error) {
         console.error("Unhandled UniCAS service actor failure", error);
         throw error;
@@ -153,7 +159,19 @@ export default {
 
 const verifiers = new WeakMap<object, StackCapabilityVerifier>();
 const controlSchemaInitializations = new WeakMap<object, Promise<void>>();
+const tenantSchemaInitializations = new WeakMap<object, Promise<void>>();
 const adminHandlers = new WeakMap<object, Promise<(request: Request) => Promise<Response>>>();
+
+function ensureTenantSchema(env: Pick<Env, "CAS_DB">): Promise<void> {
+  const key = env.CAS_DB as object;
+  let initialization = tenantSchemaInitializations.get(key);
+  if (!initialization) {
+    initialization = migrateStackTenantSchema(env.CAS_DB);
+    tenantSchemaInitializations.set(key, initialization);
+    void initialization.catch(() => tenantSchemaInitializations.delete(key));
+  }
+  return initialization;
+}
 
 function ensureControlSchema(env: Env): Promise<void> {
   const key = env as object;
@@ -207,20 +225,21 @@ function verifierFor(env: Env): StackCapabilityVerifier {
   return verifier;
 }
 
-function platformFromEnv(env: Env): ServicePlatform {
+function platformFromEnv(env: Env, timing?: TimingSink): ServicePlatform {
   return {
     controlDatabase: env.CAS_CONTROL_DB as unknown as SqlDatabase,
     tenantDatabase: env.CAS_DB as unknown as SqlDatabase,
     blobs: env.CAS_R2 as unknown as BlobStore,
-    tenantActors: keyedActorPort(env.CAS_DO),
-    refDomainActors: keyedActorPort(env.CAS_DOMAIN_DO as unknown as DurableObjectNamespace),
+    tenantActors: keyedActorPort(env.CAS_DO, timing),
+    refDomainActors: keyedActorPort(env.CAS_DOMAIN_DO as unknown as DurableObjectNamespace, timing),
   };
 }
 
-function keyedActorPort(namespace: DurableObjectNamespace): KeyedActorPort {
+function keyedActorPort(namespace: DurableObjectNamespace, timing?: TimingSink): KeyedActorPort {
   return {
     fetch(key, request) {
-      return namespace.get(namespace.idFromName(key)).fetch(request);
+      const dispatch = () => namespace.get(namespace.idFromName(key)).fetch(request);
+      return timing ? timing.time("cas_do", dispatch) : dispatch();
     },
   };
 }
@@ -231,7 +250,7 @@ function localAuditReader(env: Env): Fetcher {
       const normalized = request instanceof Request
         ? request
         : new Request(request.toString());
-      await migrateStackTenantSchema(env.CAS_DB);
+      await ensureTenantSchema(env);
       return handleAuditRpc(normalized, env, new URL(normalized.url));
     },
     connect() {

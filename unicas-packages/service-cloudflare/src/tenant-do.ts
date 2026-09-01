@@ -32,6 +32,7 @@ import { CloudflareNodeReadRepository } from "./node-read.js";
 import { CloudflareNodeUsageRepository } from "./node-usage.js";
 import { canonicalizeRootRefsUpdate, parseRootRefsBody } from "./root-refs.js";
 import { RootRefsErrorCodes, RootRefsValidationError } from "./root-refs.js";
+import { ServerTiming } from "./timing.js";
 
 export interface TenantCasDoEnv {
   CAS_DB: D1Database;
@@ -48,6 +49,8 @@ export class CasDurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
+    const started = performance.now();
+    const timing = new ServerTiming();
     const url = new URL(request.url);
     const stackId = requireHeader(request, "X-CAS-Stack-Id");
     const tenantId = requireHeader(request, "X-CAS-Tenant-Id");
@@ -56,45 +59,46 @@ export class CasDurableObject {
       bucket: this.#env.CAS_R2,
       stackId,
       tenantId,
+      timing,
     };
 
     try {
+      let response: Response;
       if (url.pathname === "/updateRootRefs" && request.method === "POST") {
-        return await this.#forwardRootRefs(request, stackId, tenantId);
-      }
-      if (url.pathname === "/lease" && request.method === "POST") {
-        return jsonResponse(await this.#handleLease(request, store));
-      }
-      if (url.pathname === "/read" && request.method === "GET") {
-        return await this.#handleRead(request, store);
-      }
-      if (url.pathname === "/metadata" && request.method === "GET") {
-        return await this.#handleMetadata(request, store);
-      }
-      if (url.pathname === "/usage" && request.method === "GET") {
-        return jsonResponse(await readNodeUsage({
+        response = await this.#forwardRootRefs(request, stackId, tenantId);
+      } else if (url.pathname === "/lease" && request.method === "POST") {
+        response = jsonResponse(await this.#handleLease(request, store));
+      } else if (url.pathname === "/read" && request.method === "GET") {
+        response = await this.#handleRead(request, store);
+      } else if (url.pathname === "/metadata" && request.method === "GET") {
+        response = await this.#handleMetadata(request, store);
+      } else if (url.pathname === "/usage" && request.method === "GET") {
+        response = jsonResponse(await readNodeUsage({
           repository: new CloudflareNodeUsageRepository(store.db, store.bucket),
           scope: { stackId: store.stackId, tenantId: store.tenantId },
         }));
-      }
-      if (url.pathname === "/gc" && request.method === "POST") {
-        return jsonResponse(await this.#handleGc(request, store));
-      }
-      return Response.json(
-        { error: "SERVICE_UNAVAILABLE", message: "tenant CAS operation not implemented yet" },
-        { status: 501 },
-      );
-    } catch (error) {
-      if (error instanceof NodeOpError) {
-        return Response.json(
-          { error: error.code, message: error.message },
-          { status: error.status, headers: error.headers },
+      } else if (url.pathname === "/gc" && request.method === "POST") {
+        response = jsonResponse(await this.#handleGc(request, store));
+      } else {
+        response = Response.json(
+          { error: "SERVICE_UNAVAILABLE", message: "tenant CAS operation not implemented yet" },
+          { status: 501 },
         );
       }
-      return Response.json(
+      timing.record("cas_do_route", performance.now() - started);
+      return timing.decorate(response);
+    } catch (error) {
+      timing.record("cas_do_route", performance.now() - started);
+      if (error instanceof NodeOpError) {
+        return timing.decorate(Response.json(
+          { error: error.code, message: error.message },
+          { status: error.status, headers: error.headers },
+        ));
+      }
+      return timing.decorate(Response.json(
         { error: RootRefsErrorCodes.INVALID_REQUEST, message: "tenant CAS operation failed" },
         { status: 400 },
-      );
+      ));
     }
   }
 
@@ -147,7 +151,7 @@ export class CasDurableObject {
   async #handleRead(request: Request, store: Parameters<typeof leaseReadyNode>[0]): Promise<Response> {
     const hash = requireHeader(request, "X-CAS-Hash");
     const content = await readNodeContent({
-      repository: new CloudflareNodeReadRepository(store.db, store.bucket),
+      repository: new CloudflareNodeReadRepository(store.db, store.bucket, store.timing),
       scope: { stackId: store.stackId, tenantId: store.tenantId },
       hash,
       rangeHeader: request.headers.get("Range"),
@@ -174,7 +178,7 @@ export class CasDurableObject {
   async #handleMetadata(request: Request, store: Parameters<typeof leaseReadyNode>[0]): Promise<Response> {
     const hash = requireHeader(request, "X-CAS-Hash");
     const result = await readNodeMetadata({
-      repository: new CloudflareNodeReadRepository(store.db, store.bucket),
+      repository: new CloudflareNodeReadRepository(store.db, store.bucket, store.timing),
       scope: { stackId: store.stackId, tenantId: store.tenantId },
       hash,
     });

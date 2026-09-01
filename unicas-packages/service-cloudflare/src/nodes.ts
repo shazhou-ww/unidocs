@@ -8,6 +8,7 @@ export type { NodeOpErrorCode } from "@unicas/service";
 export { clampLeaseDuration, DEFAULT_LEASE_MS, MAX_LEASE_MS, MIN_LEASE_MS, parseLeaseDuration } from "@unicas/service";
 import { leaseCanonicalNode as leaseCanonicalNodeKernel, leaseReadyNode as leaseReadyNodeKernel, NodeOpError, NodeOpErrorCodes } from "@unicas/service";
 import { CloudflareNodeLeaseRepository } from "./node-lease.js";
+import type { TimingSink } from "./timing.js";
 
 export interface NodeStore {
   readonly db: D1Database;
@@ -15,6 +16,7 @@ export interface NodeStore {
   readonly stackId: string;
   readonly tenantId: string;
   readonly limits?: CanonicalNodeLimits;
+  readonly timing?: TimingSink;
 }
 
 export interface LeaseCanonicalNodeInput {
@@ -39,7 +41,7 @@ export function parseRefsHeader(header: string | null): string[] {
 
 export function leaseCanonicalNode(store: NodeStore, input: LeaseCanonicalNodeInput): Promise<CasLeaseResult> {
   return leaseCanonicalNodeKernel({
-    repository: new CloudflareNodeLeaseRepository(store.db, store.bucket),
+    repository: new CloudflareNodeLeaseRepository(store.db, store.bucket, store.timing),
     scope: { stackId: store.stackId, tenantId: store.tenantId },
     ...input,
     limits: store.limits,
@@ -48,7 +50,7 @@ export function leaseCanonicalNode(store: NodeStore, input: LeaseCanonicalNodeIn
 
 export function leaseReadyNode(store: NodeStore, input: { hash: string; leaseDurationMs: number }): Promise<CasLeaseResult> {
   return leaseReadyNodeKernel({
-    repository: new CloudflareNodeLeaseRepository(store.db, store.bucket),
+    repository: new CloudflareNodeLeaseRepository(store.db, store.bucket, store.timing),
     scope: { stackId: store.stackId, tenantId: store.tenantId },
     ...input,
     limits: store.limits,

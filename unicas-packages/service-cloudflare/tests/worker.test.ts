@@ -97,7 +97,7 @@ describe("service-cloudflare public routing", () => {
   });
 
   test("routes tenant protocol requests without admin cookies or internal secrets", async () => {
-    await worker.fetch(new Request(
+    const response = await worker.fetch(new Request(
       "https://cas.example/stacks/s1/tenants/t1/cas/usage",
       {
         headers: {
@@ -119,6 +119,18 @@ describe("service-cloudflare public routing", () => {
     expect(actorRequest.headers.get("Authorization")).toBeNull();
     expect(actorRequest.headers.get("X-CAS-Stack-Id")).toBe("s1");
     expect(actorRequest.headers.get("X-CAS-Tenant-Id")).toBe("t1");
+    expect(response.headers.get("Server-Timing")).toMatch(/cas_schema;dur=/);
+    expect(response.headers.get("Server-Timing")).toMatch(/cas_auth;dur=/);
+    expect(response.headers.get("Server-Timing")).toMatch(/cas_do;dur=/);
+    expect(response.headers.get("Server-Timing")).toMatch(/cas_edge;dur=/);
+    expect(response.headers.get("Timing-Allow-Origin")).toBe("*");
+    expect(handlers.migrate).toHaveBeenCalledTimes(1);
+
+    await worker.fetch(new Request(
+      "https://cas.example/stacks/s1/tenants/t1/cas/usage",
+      { headers: { Authorization: "Bearer tenant-capability" } },
+    ), env, ctx);
+    expect(handlers.migrate).toHaveBeenCalledTimes(1);
   });
 
   test("dispatches tenant operations to the canonical Durable Object with trusted headers", async () => {

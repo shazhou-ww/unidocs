@@ -11,24 +11,29 @@ import type {
   UploadedCanonicalNodeCommit,
 } from "@unicas/service";
 import { stackCanonicalNodeKey } from "./do-names.js";
+import { timeOperation, type TimingSink } from "./timing.js";
 
 /** D1/R2 adapter for node renewal, upload, and canonical orphan adoption. */
 export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseRepository {
-  constructor(readonly db: D1Database, readonly bucket: R2Bucket) { }
+  constructor(
+    readonly db: D1Database,
+    readonly bucket: R2Bucket,
+    readonly timing?: TimingSink,
+  ) { }
 
   async readNodeLease(scope: NodeLeaseScope, hash: string): Promise<NodeLeaseRecord | null> {
-    const row = await this.db.prepare(
+    const row = await timeOperation(this.timing, "cas_d1_lease", () => this.db.prepare(
       "SELECT lease_started_at, lease_expires_at FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-    ).bind(scope.stackId, scope.tenantId, hash).first<{ lease_started_at: number; lease_expires_at: number }>();
+    ).bind(scope.stackId, scope.tenantId, hash).first<{ lease_started_at: number; lease_expires_at: number }>());
     return row === null ? null : { leaseStartedAt: row.lease_started_at, leaseExpiresAt: row.lease_expires_at };
   }
 
   async readCanonicalNodeLease(scope: NodeLeaseScope, hash: string): Promise<CanonicalNodeLeaseRecord | null> {
-    const row = await this.db.prepare(
+    const row = await timeOperation(this.timing, "cas_d1_lease", () => this.db.prepare(
       "SELECT content_size, content_type, lease_started_at, lease_expires_at FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
     ).bind(scope.stackId, scope.tenantId, hash).first<{
       content_size: number; content_type: string; lease_started_at: number; lease_expires_at: number;
-    }>();
+    }>());
     return row === null ? null : {
       contentSize: row.content_size,
       contentType: row.content_type,
@@ -38,14 +43,15 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
   }
 
   async readNodeRefs(scope: NodeLeaseScope, hash: string): Promise<readonly string[]> {
-    const edges = await this.db.prepare(
+    const edges = await timeOperation(this.timing, "cas_d1_refs", () => this.db.prepare(
       "SELECT child_hash FROM cas_edges WHERE stack_id = ? AND tenant_id = ? AND parent_hash = ? ORDER BY ordinal ASC",
-    ).bind(scope.stackId, scope.tenantId, hash).all<{ child_hash: string }>();
+    ).bind(scope.stackId, scope.tenantId, hash).all<{ child_hash: string }>());
     return edges.results.map((edge) => edge.child_hash);
   }
 
   async readCanonicalObject(scope: NodeLeaseScope, hash: string): Promise<CanonicalOrphanObject | null> {
-    const object = await this.bucket.head(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash));
+    const object = await timeOperation(this.timing, "cas_r2_head", () =>
+      this.bucket.head(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash)));
     if (object === null) return null;
     return {
       storedBytes: object.size,
@@ -54,40 +60,42 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
   }
 
   async readCanonicalPrefix(scope: NodeLeaseScope, hash: string, length: number): Promise<ReadableStream<Uint8Array> | null> {
-    const object = await this.bucket.get(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash), { range: { offset: 0, length } });
+    const object = await timeOperation(this.timing, "cas_r2_prefix", () =>
+      this.bucket.get(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash), { range: { offset: 0, length } }));
     if (object === null || object.body === undefined) return null;
     return object.body as unknown as ReadableStream<Uint8Array>;
   }
 
   async isNodeReady(scope: NodeLeaseScope, hash: string): Promise<boolean> {
-    const row = await this.db.prepare(
+    const row = await timeOperation(this.timing, "cas_d1_ready", () => this.db.prepare(
       "SELECT 1 AS found FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-    ).bind(scope.stackId, scope.tenantId, hash).first<{ found: number }>();
-    return row !== null && await this.bucket.head(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash)) !== null;
+    ).bind(scope.stackId, scope.tenantId, hash).first<{ found: number }>());
+    return row !== null && await timeOperation(this.timing, "cas_r2_head", () =>
+      this.bucket.head(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash))) !== null;
   }
 
   async renewNodeLease(scope: NodeLeaseScope, hash: string, lease: NodeLeaseRecord): Promise<void> {
-    await this.db.prepare(
+    await timeOperation(this.timing, "cas_d1_renew", () => this.db.prepare(
       "UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
-    ).bind(lease.leaseStartedAt, lease.leaseExpiresAt, scope.stackId, scope.tenantId, hash).run();
+    ).bind(lease.leaseStartedAt, lease.leaseExpiresAt, scope.stackId, scope.tenantId, hash).run());
   }
 
   async reserveCanonicalUpload(scope: NodeLeaseScope, reservation: CanonicalUploadReservation): Promise<void> {
-    await this.db.prepare(
+    await timeOperation(this.timing, "cas_d1_reserve", () => this.db.prepare(
       `INSERT INTO cas_upload_reservations (stack_id, tenant_id, hash, stored_bytes, created_at, expires_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(stack_id, tenant_id, hash) DO UPDATE SET stored_bytes = excluded.stored_bytes, expires_at = excluded.expires_at`,
-    ).bind(scope.stackId, scope.tenantId, reservation.hash, reservation.storedBytes, reservation.createdAt, reservation.expiresAt).run();
+    ).bind(scope.stackId, scope.tenantId, reservation.hash, reservation.storedBytes, reservation.createdAt, reservation.expiresAt).run());
   }
 
   async putCanonicalObject(scope: NodeLeaseScope, hash: string, body: ReadableStream<Uint8Array>): Promise<void> {
     const key = stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash);
     try {
-      await this.bucket.put(
+      await timeOperation(this.timing, "cas_r2_put", () => this.bucket.put(
         key,
         body as unknown as Parameters<R2Bucket["put"]>[1],
         { sha256: hash },
-      );
+      ));
     } catch (error) {
       // The cloud-neutral kernel sanitizes this into a stable client error;
       // keep the platform detail (e.g. R2 checksum failure) in the logs only.
@@ -97,21 +105,21 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
   }
 
   async discardCanonicalUpload(scope: NodeLeaseScope, hash: string): Promise<void> {
-    await Promise.all([
+    await timeOperation(this.timing, "cas_discard", () => Promise.all([
       this.bucket.delete(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash)),
       this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
         .bind(scope.stackId, scope.tenantId, hash).run(),
-    ]);
+    ]).then(() => undefined));
   }
 
   async commitUploadedCanonicalNode(scope: NodeLeaseScope, plan: UploadedCanonicalNodeCommit): Promise<void> {
     if (plan.kind === "existing") {
-      await this.db.batch([
+      await timeOperation(this.timing, "cas_d1_commit", () => this.db.batch([
         this.db.prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
           .bind(plan.leaseStartedAt, plan.leaseExpiresAt, scope.stackId, scope.tenantId, plan.hash),
         this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
           .bind(scope.stackId, scope.tenantId, plan.hash),
-      ]);
+      ]).then(() => undefined));
       return;
     }
     await this.commitNewNode(scope, plan);
@@ -147,6 +155,6 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
     }
     batch.push(this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
       .bind(scope.stackId, scope.tenantId, plan.hash));
-    await this.db.batch(batch);
+    await timeOperation(this.timing, "cas_d1_commit", () => this.db.batch(batch).then(() => undefined));
   }
 }
