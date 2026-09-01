@@ -116,4 +116,16 @@ describe("editPixels 端到端：真 op 落到真 PsdDoc", () => {
     const previewHandle = await cas.ctx.openSBlob(preview.image);
     expect(previewHandle.size).toBeGreaterThan(0);
   });
+
+  it("同一图层同一指令连编两次，两层都落得下 —— 层 id 不能只由内容决定", async () => {
+    const cas = memCas();
+    const state0 = await storePsdDoc(doc(), cas.ctx);
+    const first = await editOnce(cas, state0, "删掉帽子");
+    const second = await editOnce(cas, first.next, "删掉帽子");
+    // 确定性 editor + 确定性输入 ⇒ 两次结果字节完全相同；若 id 取自内容
+    // 哈希，第二次会撞上 "layer id already exists"。
+    expect(second.layerId).not.toBe(first.layerId);
+    // 每次都插在源层正上方，所以后编的那层压在先编的下面。
+    expect(second.next.layers.map(l => l.id)).toEqual(["bg", "portrait", second.layerId, first.layerId]);
+  });
 });

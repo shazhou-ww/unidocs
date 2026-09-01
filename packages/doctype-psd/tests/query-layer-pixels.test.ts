@@ -76,8 +76,9 @@ describe("getLayerPixels", () => {
     //   - 若守卫被挪到 renderLayer 之后：renderLayer 会先尝试解析这个
     //     PixelRef，因 hash 在 store 里找不到而抛出完全不同的错误
     //     （blob/CAS not found），/too large/ 的断言就会失败。
-    // 已用「临时把守卫挪到 renderLayer 之后」验证过这一点会让本用例失败，
-    // 详见 task-3-report.md 的 fix 部分。
+    // 这一点是验证过的，不是推理出来的：把守卫临时挪到 renderLayer 之后
+    // 重跑，本用例的失败信息从 /too large/ 变成 CAS 里找不到
+    // "0000…0000" 这个 hash —— 断言确实抓住了顺序，而不是碰巧同名。
     d.layers[0] = {
       ...d.layers[0],
       bounds: [0, 0, 5000, 5000],

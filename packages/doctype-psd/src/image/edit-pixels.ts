@@ -1,6 +1,7 @@
 import { decode, encode } from "fast-png";
-import type { AgentTool, EffectContext, EffectOutcome, JsonValue, SBlob } from "@unidocs/protocol";
-import type { Layer, Pixels } from "../model/types.js";
+import { isSBlob } from "@unidocs/svalue-codec";
+import type { AgentTool, EffectContext, EffectOutcome, JsonValue, SBlob, SValueType } from "@unidocs/protocol";
+import type { Pixels } from "../model/types.js";
 import type { PsdOp } from "../ops/index.js";
 import type { PsdQuery } from "../queries.js";
 import { downscale } from "../render/index.js";
@@ -43,6 +44,56 @@ const fail = (structuredContent: JsonValue): EffectOutcome<PsdOp> =>
   ({ ops: [], result: { structuredContent } });
 
 /**
+ * getLayerPixels 的返回值是 SValue，静态类型上什么都不是。以前这里是一个
+ * 直接的 `as unknown as LayerPixelsResult` —— 而 C1（校验器拒绝惰性
+ * PixelRef）就藏在这条缝里：类型断言让编译器闭嘴，运行期的形状错误要等到
+ * 下游某个地方才炸，且炸出来的信息与真正的原因无关。这里改成显式检查，
+ * 一旦 query 的形状变了就当场报出来。
+ *
+ * 抛异常而不是返回 fail()：这是内部契约被破坏，不是模型能改措辞绕开的失败。
+ */
+function asLayerPixels(data: unknown): LayerPixelsResult {
+  const d = data as Record<string, unknown> | null;
+  const bad = (what: string): never => {
+    throw new Error(`editPixels: getLayerPixels returned an unexpected shape (${what})`);
+  };
+  if (!d || typeof d !== "object") bad("not an object");
+  if (!isSBlob(d!.image)) bad("image is not an SBlob");
+  if (typeof d!.width !== "number" || typeof d!.height !== "number") bad("width/height are not numbers");
+  const bounds = d!.bounds;
+  if (!Array.isArray(bounds) || bounds.length !== 4 || !bounds.every(n => typeof n === "number")) {
+    bad("bounds is not four numbers");
+  }
+  if (d!.parentId !== null && typeof d!.parentId !== "string") bad("parentId is neither string nor null");
+  if (typeof d!.index !== "number") bad("index is not a number");
+  return d as unknown as LayerPixelsResult;
+}
+
+/**
+ * 结果层 id 的判别位：扫出文档里已有的 `${layerId}-edit-N`，取最大 N + 1。
+ *
+ * 不能用内容哈希 —— 同一图层跑同一条指令、editor 又是确定性的，第二次会
+ * 产出同样的哈希，`addLayer` 抛 "layer id already exists"。也不能用时钟或
+ * 随机数：这个值要进 op，而 apply 必须能确定性重放。
+ */
+function nextEditOrdinal(layers: unknown, prefix: string): number {
+  let max = 0;
+  const walk = (list: unknown): void => {
+    if (!Array.isArray(list)) return;
+    for (const item of list) {
+      const l = item as { id?: unknown; children?: unknown } | null;
+      if (l && typeof l.id === "string" && l.id.startsWith(prefix)) {
+        const n = Number(l.id.slice(prefix.length));
+        if (Number.isInteger(n) && n > max) max = n;
+      }
+      walk(l?.children);
+    }
+  };
+  walk(layers);
+  return max + 1;
+}
+
+/**
  * `editPixels` —— 图层内部像素的唯一入口。
  *
  * 为什么必须是 effect：其余所有写工具都要求调用方在 JSON 参数里交出 RGBA
@@ -54,8 +105,9 @@ const fail = (structuredContent: JsonValue): EffectOutcome<PsdOp> =>
  *
  * 这个蒙版不是可有可无的修饰。模型返回的是整层重绘，未编辑区域也被重画了
  * 一遍；实测色偏虽小（-1.94/-1.62/+0.52），但整层无遮挡地盖上去就等于给
- * 全图蒙了一层不可见的偏色。烘进 alpha 之后，没动的那 97.7% 像素仍然是
- * 原层的原始字节。
+ * 全图蒙了一层不可见的偏色。烘进 alpha 之后，覆盖度为 0 的区域这一层完全
+ * 透明，露出的就是原层的原始字节；只有改动区和它周围那圈羽化过渡带里的
+ * 像素来自模型。改动占比越小，被重绘的面积就越小。
  *
  * 为什么不用真正的图层蒙版（Mask）：见 guards.ts 的 applyCoverageToAlpha。
  */
@@ -90,8 +142,8 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         return fail({ error: "editPixels: instruction must be a non-empty string" });
       }
 
-      const { data } = await ctx.query({ kind: "getLayerPixels", payload: { layerId } } as never);
-      const info = data as unknown as LayerPixelsResult;
+      const { data } = await ctx.query({ kind: "getLayerPixels", payload: { layerId } });
+      const info = asLayerPixels(data);
       const sourceBytes = await ctx.readBlob(info.image);
       const source = pngToPixels(sourceBytes.data);
 
@@ -114,8 +166,12 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         contentType: "image/png",
       });
 
+      // id 的判别位来自"已有多少个同源结果层"，不来自内容 —— 见
+      // nextEditOrdinal。所以确定性 editor 连编两次也不会撞 id。
+      const { data: layerTree } = await ctx.query({ kind: "getLayers" });
+      const idPrefix = `${layerId}-edit-`;
       const layer: Record<string, unknown> = {
-        id: `${layerId}-edit-${resultBlob.hash.slice(0, 8)}`,
+        id: `${idPrefix}${nextEditOrdinal(layerTree, idPrefix)}`,
         type: "raster",
         name: `${instruction.slice(0, 24)}`,
         bounds: info.bounds,
@@ -129,8 +185,12 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         pixels: { width: landed.width, height: landed.height, hash: resultBlob.hash, blob: resultBlob },
       };
 
+      // seed 被刻意丢掉：editPixels 从不给 editor 传 seed，适配器于是也
+      // 从不把 seed 发给 provider —— 记下来的那个 0 不是"重跑能复现的种子"，
+      // 而是一个默认值。把它写进文档就是在承诺一份我们拿不出的可复现性。
+      const { seed: _unusedSeed, ...editorProvenance } = result.provenance;
       const provenance: Record<string, unknown> = {
-        ...result.provenance,
+        ...editorProvenance,
         // changed 为 null 时降级整层替换，把这件事记在案上 —— 将来查
         // "为什么这张图整体偏了一点"时，这一行就是答案。
         ...(result.changed ? {} : { maskDerivation: "none" }),
@@ -145,7 +205,16 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
 
       return {
         // bottom-to-top 数组：源层 index + 1 就是它的正上方。
-        ops: [{ kind: "generative_fill", payload: { layer, parentId: info.parentId, index: info.index + 1, provenance } }] as never,
+        // 这个断言是**必需**的，不是懒：`PsdOp.payload` 是
+        // `Record<string, unknown>`，`unknown` 不满足 SValueShape，于是
+        // `SValueType<PsdOp>` 求值成 `never`，任何 op 字面量都赋不进去。
+        // tools.ts 的 psdOp() 出于同一个原因用同一个写法。相比之下，
+        // ctx.query 上原来那个 `as never` 是多余的：PsdQuery 里本来就有
+        // getLayerPixels，已经删掉。
+        ops: [{
+          kind: "generative_fill",
+          payload: { layer, parentId: info.parentId, index: info.index + 1, provenance },
+        }] as unknown as readonly SValueType<PsdOp>[],
         description: `editPixels(${layerId}): ${instruction}`,
         result: {
           structuredContent: {

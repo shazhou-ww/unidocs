@@ -101,6 +101,9 @@ describe("editPixels effect", () => {
     expect((out.ops[0] as any).payload.provenance).toMatchObject({
       model: "stub-editor", prompt: "删掉帽子",
     });
+    // seed 不进 op：editPixels 从不给 editor 传 seed，适配器也从不把它发给
+    // provider，记一个默认 0 等于承诺一份拿不出的可复现性。
+    expect((out.ops[0] as any).payload.provenance.seed).toBeUndefined();
   });
 
   it("返回一张 after 预览图，省掉模型再调一次 getPreview", async () => {

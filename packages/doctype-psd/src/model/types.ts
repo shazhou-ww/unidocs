@@ -97,7 +97,9 @@ export interface Layer {
   colorOverlay?: { r: number; g: number; b: number; opacity: number }; // Color Overlay effect (PSD solidFill), 0..255 RGB
   stroke?: Stroke;                       // Stroke effect (a border along the layer's shape edge)
   dropShadow?: DropShadow;               // Drop Shadow effect (a coloured, offset, optionally blurred copy behind the layer)
-  provenance?: { model: string; seed: number; prompt: string };
+  // seed 可选：只有真的把种子发给了 provider 的实现才该记它。qwen 适配器
+  // 不发 seed，editPixels 于是不写这个字段 —— 记一个默认 0 等于假装可复现。
+  provenance?: { model: string; seed?: number; prompt: string };
   text?: LayerText;                      // type === "text"
   vector?: LayerVector;                  // shape layers (and vector-masked others)
   smartObject?: LayerSmartObject;        // type === "smartObject"

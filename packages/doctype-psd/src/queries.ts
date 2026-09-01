@@ -100,8 +100,8 @@ function fitToBudget(source: Px, maxSize: number): { px: Px; png: Uint8Array } {
   return { px, png };
 }
 
-function requireCtx(ctx: DocumentTypeContext | undefined): DocumentTypeContext {
-  if (!ctx) throw new Error("getPreview needs a DocumentTypeContext to store the rendered PNG");
+function requireCtx(ctx: DocumentTypeContext | undefined, operation: string): DocumentTypeContext {
+  if (!ctx) throw new Error(`${operation} needs a DocumentTypeContext to store the rendered PNG`);
   return ctx;
 }
 
@@ -176,7 +176,7 @@ export async function runQuery(
         px = render ? await render.composite(doc) : await renderCached(doc, rc);
         region = [0, 0, doc.canvas.height, doc.canvas.width];
       }
-      return toImageResult(px, region, maxSize, requireCtx(ctx));
+      return toImageResult(px, region, maxSize, requireCtx(ctx, "getPreview"));
     }
 
     case "getLayerPixels": {
@@ -192,7 +192,7 @@ export async function runQuery(
       if (w * h > MAX_EDIT_SOURCE_PIXELS) {
         throw new Error(`layer ${layerId} is too large to edit: ${w}x${h} > ${MAX_EDIT_SOURCE_PIXELS} px`);
       }
-      const c = requireCtx(ctx);
+      const c = requireCtx(ctx, "getLayerPixels");
       const rc: RenderCtx | undefined = render
         ? render.ctx
         : { store: casBlobStore(c), cache: new PixelCache(DEFAULT_CACHE_BYTES) };
