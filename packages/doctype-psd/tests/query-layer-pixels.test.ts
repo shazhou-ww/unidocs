@@ -63,12 +63,26 @@ describe("getLayerPixels", () => {
       .rejects.toThrow(/nope/);
   });
 
-  it("超过像素上限直接拒绝，不 OOM", async () => {
+  it("超过像素上限直接拒绝，不 OOM —— 且拦截确实发生在渲染之前", async () => {
     const d = doc();
-    // 只把 bounds 撑大，不真的分配 5000x5000 的 RGBA（那是 100 MB）。
-    // 上限检查读的就是 bounds，在 renderLayer 之前就该拦下来 —— 这个
-    // 测试同时钉住了"拦截发生在分配之前"这件事。
-    d.layers[0] = { ...d.layers[0], bounds: [0, 0, 5000, 5000] };
+    // bounds 撑到 5000x5000 (25M px > MAX_EDIT_SOURCE_PIXELS)，但换成一个
+    // 懒 PixelRef，且它的 hash 故意不存在于这次的 CAS store 里，宽高也很小
+    // （不真的分配 5000x5000 的 RGBA，那是 100 MB）。
+    //
+    // 这个 hash-缺失的设计是为了让测试真正分辨守卫的先后顺序，而不只是
+    // 断言同一个错误信息：
+    //   - 守卫在 renderLayer 之前（当前实现）：从 bounds 算出的像素数超限，
+    //     直接抛 /too large/，从不触碰这个不存在的 hash。
+    //   - 若守卫被挪到 renderLayer 之后：renderLayer 会先尝试解析这个
+    //     PixelRef，因 hash 在 store 里找不到而抛出完全不同的错误
+    //     （blob/CAS not found），/too large/ 的断言就会失败。
+    // 已用「临时把守卫挪到 renderLayer 之后」验证过这一点会让本用例失败，
+    // 详见 task-3-report.md 的 fix 部分。
+    d.layers[0] = {
+      ...d.layers[0],
+      bounds: [0, 0, 5000, 5000],
+      pixels: { width: 4, height: 4, hash: "0".repeat(64) },
+    };
     d.canvas = { ...d.canvas, width: 5000, height: 5000 };
     const { ctx } = memCas();
     await expect(runQuery({ kind: "getLayerPixels", payload: { layerId: "bg" } }, d, ctx))
