@@ -82,8 +82,12 @@ with a standards-based Stack OAuth trust relationship:
 
 ### Known issue — TODO 2026-09-02: production docx create is very slow
 
+**RESOLVED 2026-09-02 — bucket migrated from EEUR to APAC.** Create latency:
+`docx 70s → ~5.1s`, `markdown 10.9s → ~3.2s`; R2 HEAD inside the middleware DO
+dropped from median 1.7s to ~65ms. Full diagnosis and migration record below.
+
 **Diagnosed 2026-09-02 — root cause confirmed: the production CAS R2 bucket
-`unidocs-cas` lives in the `EEUR` (Eastern Europe) region, ~6-15× farther from
+`unidocs-cas` lived in the `EEUR` (Eastern Europe) region, ~6-15× farther from
 the traffic than it should be. Everything else (D1, capability verify, DO
 dispatch, concurrency) is fast.**
 
@@ -151,13 +155,17 @@ Answers to the three review questions (2026-09-02):
 
 Recommended fix order (deploy-level first, then code):
 
-1. **Migrate `unidocs-cas` to an APAC bucket** (bucket location is immutable
-   at creation): create e.g. `unidocs-cas-apac` with `--location APAC`, copy
-   objects (S3 CopyObject per key from `stacks/.../nodes-v2/...` — keys carry
-   stack/tenant/hash so no path change), flip `CAS_R2` in
-   `unicas-packages/service-cloudflare/wrangler.toml` to the new bucket,
-   redeploy, verify, then delete the EEUR bucket. Expect docx create to drop
-   to ~2-4s on the EEUR→APAC move alone.
+1. **[DONE 2026-09-02] Migrate `unidocs-cas` to an APAC bucket.** Created
+   `unidocs-cas-apac` (`--location apac`), copied all 670 objects via the CF
+   v4 object API (`scripts/r2-migrate-copy.mjs`: list → GET → PUT, 0 failed,
+   0 missing, 0 size mismatch; raw body upload — the documented multipart
+   form is not implemented server-side, 501), flipped `CAS_R2` in
+   `unicas-packages/service-cloudflare/wrangler.toml`, redeployed, verified
+   pre-migration reads (metadata/content via CAS API, docx export via gateway),
+   then deleted the EEUR bucket (had to empty it first — R2 bucket delete
+   requires an empty bucket). Actual result: docx create ~5.1s, markdown ~3.2s
+   (slightly above the ~2-4s estimate because the remaining per-op R2 cost is
+   DO→R2, not bucket distance).
 2. Remove the redundant post-upload read-back R2 GET in
    `finalizeCanonicalNodeLease` (PUT already verified `sha256`).
 3. Cache `isNodeReady` (D1-ready marker / per-DO TTL) to cut the ~11 R2 HEADs.

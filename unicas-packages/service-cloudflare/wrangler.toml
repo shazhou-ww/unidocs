@@ -21,7 +21,7 @@ database_id = "66f8738b-b1a9-4727-b468-0c2c73287d2c"
 
 [[r2_buckets]]
 binding = "CAS_R2"
-bucket_name = "unidocs-cas"
+bucket_name = "unidocs-cas-apac"
 preview_bucket_name = "unidocs-cas-preview"
 
 [[kv_namespaces]]
