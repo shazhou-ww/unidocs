@@ -61,20 +61,42 @@ describe("PSD 工具表", () => {
     const t = tool("getPreview");
     if (t.kind !== "query" || !t.toResult) throw new Error("getPreview 必须有 toResult");
     const blob = createSBlob("a".repeat(64));
+    const alpha = { opaque: 1, transparent: 0, soft: 0 };
     const result = t.toResult(
-      { image: blob, width: 8, height: 6, region: [0, 0, 6, 8] } as never,
+      { image: blob, width: 8, height: 6, region: [0, 0, 6, 8], alpha } as never,
       7,
     );
     expect(result.content).toEqual([{
       type: "image", blob, mediaType: "image/png",
-      altText: "preview 8x6 region=[0,0,6,8] v7",
+      altText: "preview 8x6 region=[0,0,6,8] v7 fully-opaque",
     }]);
     // 信封与 defaultQueryToolResult / docx 的 getImage 同形：{data, version}。
     expect(result.structuredContent).toEqual({
-      data: { width: 8, height: 6, region: [0, 0, 6, 8] },
+      data: { width: 8, height: 6, region: [0, 0, 6, 8], alpha },
       version: 7,
     });
     expect(JSON.stringify(result)).not.toContain("$image");
+  });
+
+  it("带透明时 altText 把三个比例都说出来，并声明棋盘格不是图像内容", () => {
+    // 模型看不见透明（实测：它把全透明背景读成白色，白色图形因此整个消失），
+    // 所以这条信息只能用文字传。棋盘格那句同样重要 —— 不说的话模型会把它
+    // 当成图层里真实存在的花纹。
+    const t = tool("getPreview");
+    if (t.kind !== "query" || !t.toResult) throw new Error("getPreview 必须有 toResult");
+    const result = t.toResult(
+      {
+        image: createSBlob("b".repeat(64)), width: 8, height: 6, region: [0, 0, 6, 8],
+        alpha: { opaque: 0.21, transparent: 0.77, soft: 0.02 },
+      } as never,
+      9,
+    );
+    const alt = (result.content![0] as { altText: string }).altText;
+    expect(alt).toContain("opaque=0.21");
+    expect(alt).toContain("transparent=0.77");
+    expect(alt).toContain("soft=0.02");
+    expect(alt).toContain("checkerboard");
+    expect(alt).not.toContain("fully-opaque");
   });
 
   it("getPreview 的结果缺 image 时抛错，不吞", () => {

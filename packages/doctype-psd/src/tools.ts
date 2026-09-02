@@ -97,6 +97,21 @@ export const tools: readonly AgentTool<PsdQuery, PsdOp>[] = [
       const width = requireNumber(d.width, "width");
       const height = requireNumber(d.height, "height");
       const region = requireNumberArray(d.region, "getPreview region", 4);
+      const a = requireRecord(d.alpha, "getPreview alpha");
+      const alpha = {
+        opaque: requireNumber(a.opaque, "alpha.opaque"),
+        transparent: requireNumber(a.transparent, "alpha.transparent"),
+        soft: requireNumber(a.soft, "alpha.soft"),
+      };
+      // 透明度必须**用文字说**，不能指望模型从图上看出来。实测：把同一个图形
+      // 分别放在全透明背景和真实黑底上问 operator 模型，它把透明那张读成
+      // "白色背景"，而且因为图形也是白的，它连图形都没看见（"白色图形在白色
+      // 背景上而几乎不可见"）；黑底那张描述得一清二楚。图上现在铺了棋盘格让
+      // 内容重新可见，但"到底有多少透明"这种量的判断仍然只能靠数字。
+      const alphaNote = alpha.opaque === 1
+        ? " fully-opaque"
+        : ` alpha(opaque=${alpha.opaque} transparent=${alpha.transparent} soft=${alpha.soft});`
+          + " transparent areas are shown as a grey/white checkerboard, which is NOT part of the image";
       return {
         content: [{
           type: "image",
@@ -104,11 +119,11 @@ export const tools: readonly AgentTool<PsdQuery, PsdOp>[] = [
           mediaType: "image/png",
           // 裁剪降级时模型看到的就是这句（spec 6.2.3 第 1 级）。
           // 这点知识一直属于 PSD，此前却写在大模型适配层的 previewMeta 里。
-          altText: `preview ${width}x${height} region=${JSON.stringify(region)} v${version}`,
+          altText: `preview ${width}x${height} region=${JSON.stringify(region)} v${version}${alphaNote}`,
         }],
         // 信封与 defaultQueryToolResult / docx 的 getImage 一致：查询结果放
         // data，版本号在外面。同一次会话里模型只该见到一种形状。
-        structuredContent: { data: { width, height, region }, version } as JsonValue,
+        structuredContent: { data: { width, height, region, alpha }, version } as JsonValue,
       };
     },
   },

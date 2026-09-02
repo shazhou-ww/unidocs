@@ -114,6 +114,69 @@ function requireCtx(ctx: DocumentTypeContext | undefined, operation: string): Do
   return ctx;
 }
 
+/**
+ * 透明度统计。比例，保留三位小数。
+ *
+ * 存在的理由是实测出来的：**模型看不见透明。** 把同一个图形分别放在全透明
+ * 背景和真实黑底上交给 operator 模型，它把透明那张读成"白色背景"，而且因为
+ * 图形本身是白的，它连图形都没看见 —— 原话是"白色图形在白色背景上而几乎
+ * 不可见"；黑底那张它描述得一清二楚。
+ *
+ * 所以凡是"这一层有没有透明""透明占多少"的判断，都不能让模型去看图，得把
+ * 数字给它。`opaque + transparent + soft === 1`。
+ */
+export interface AlphaStats {
+  /** alpha === 255 的比例。为 1 就是一张实心矩形，透明相关的判断全部不适用。 */
+  readonly opaque: number;
+  /** alpha === 0 的比例。 */
+  readonly transparent: number;
+  /** 0 < alpha < 255 的比例 —— 抗锯齿软边、半透明笔触。 */
+  readonly soft: number;
+}
+
+/** 从**降采样之前**的像素上数，所以是精确值，不受预览缩放影响。 */
+export function alphaStats(px: Px): AlphaStats {
+  const n = px.width * px.height;
+  let opaque = 0, transparent = 0;
+  for (let i = 3; i < px.data.length; i += 4) {
+    const a = px.data[i];
+    if (a === 255) opaque++;
+    else if (a === 0) transparent++;
+  }
+  const r = (v: number) => Math.round((v / n) * 1000) / 1000;
+  return { opaque: r(opaque), transparent: r(transparent), soft: r(n - opaque - transparent) };
+}
+
+/** Photoshop 那种灰白棋盘格的方块边长（预览像素）。 */
+const CHECKER_SIZE = 8;
+const CHECKER_LIGHT = 255;
+const CHECKER_DARK = 204; // #CCC，与 Photoshop 的透明底一致
+
+/**
+ * 把带透明的预览合成到灰白棋盘格上，返回不透明的 RGBA。
+ *
+ * 不是装饰。模型收到的是 PNG，而它的视觉管线会把 alpha 压平 —— 实测压成了
+ * **白色**。于是一个白色 logo 或白色标题字放在透明图层上，`getPreview{layerId}`
+ * 交给模型的就是一片空白，它会以为那层是空的。棋盘格同时解决两件事：浅色
+ * 内容重新可见，且这个花纹本身就是"这里是透明"的通用视觉约定。
+ *
+ * 只在真的有透明像素时才铺 —— 实心图层铺了纯属给模型添乱。
+ */
+function overCheckerboard(px: Px): Px {
+  const out = new Uint8ClampedArray(px.data);
+  for (let y = 0; y < px.height; y++) {
+    for (let x = 0; x < px.width; x++) {
+      const o = (y * px.width + x) * 4;
+      const a = out[o + 3] / 255;
+      if (a === 1) continue;
+      const bg = ((x / CHECKER_SIZE | 0) + (y / CHECKER_SIZE | 0)) % 2 === 0 ? CHECKER_LIGHT : CHECKER_DARK;
+      for (let c = 0; c < 3; c++) out[o + c] = out[o + c] * a + bg * (1 - a);
+      out[o + 3] = 255;
+    }
+  }
+  return { width: px.width, height: px.height, data: out };
+}
+
 /** PNG-encode and hand out an SBlob reference; no more base64 (spec 5.3, 2.4). */
 async function toImageResult(
   source: Px,
@@ -121,9 +184,15 @@ async function toImageResult(
   maxSize: number,
   ctx: DocumentTypeContext,
 ): Promise<QueryValue> {
-  const { px, png } = fitToBudget(source, maxSize);
+  // 统计取自**原始**像素，不是降采样后的：降采样会把软边抹匀，比例就不准了。
+  const alpha = alphaStats(source);
+  // 棋盘格铺在降采样**之后**，方块才是恒定的视觉大小；也因此要重新编码。
+  // 全不透明时整条路都跳过 —— 不多花一次遍历、一次编码。
+  const fitted = fitToBudget(source, maxSize);
+  const px = alpha.opaque === 1 ? fitted.px : overCheckerboard(fitted.px);
+  const png = alpha.opaque === 1 ? fitted.png : pngOf(px);
   const image = await ctx.makeSBlob({ data: png, contentType: "image/png" });
-  return { image, width: px.width, height: px.height, region } as unknown as QueryValue;
+  return { image, width: px.width, height: px.height, region, alpha } as unknown as QueryValue;
 }
 
 export async function runQuery(
