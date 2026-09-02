@@ -50,7 +50,10 @@ export const PsdOperator = createOperatorDO({
   ),
   // The provider is built from env: a DO instance outlives a config change,
   // and `env` is only handed to us here.
-  provider: (env: Env) => createAnthropicProvider(env),
+  // 与出站 HTTP、DashScope、agent 循环同一条日志流。补这个观测是因为一次
+  // 真实故障：第一轮模型调用挂满 300 秒才被掐断，而日志里连它打去了哪个地址
+  // 都看不到 —— 它当时是系统里唯一不产 http_call 的出站调用。
+  provider: (env: Env) => createAnthropicProvider(env, fetch, { observe: consoleObserver }),
   getEditorStub: (env: Env, sessionId) => {
     const id = env.PSD_EDITOR.idFromName(sessionId);
     return env.PSD_EDITOR.get(id);

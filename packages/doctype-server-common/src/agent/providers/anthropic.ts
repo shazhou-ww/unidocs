@@ -11,6 +11,8 @@
  *   LLM_API_KEY   required
  *   LLM_MODEL     default claude-opus-5
  */
+import { httpCallEvent, httpCallFailure, noopObserver, truncateObservedBody } from "@unidocs/protocol-doc";
+import type { ObserveFn } from "@unidocs/protocol-doc";
 import type {
   AgentCompletion, AgentToolCall, AgentToolDefinition, JsonValue,
   LlmContentPart, LlmMessage, LlmProvider,
@@ -139,10 +141,39 @@ function toCompletion(data: AnthropicResponse): AgentCompletion {
   };
 }
 
+/**
+ * 一次模型调用的墙钟上限。
+ *
+ * **选定值，不是实测值。** 定它的理由是一次真实故障：这个 fetch 原本不带
+ * signal，某次第一轮调用就挂住，300.3 秒后 workerd 掐掉连接抛
+ * `Network connection lost.`，用户等了五分钟换回一个 500。而实测正常的一轮
+ * 是 5~7 秒（一次 25 轮的 run 用了 182 秒）。120 秒对最慢的推理轮仍有十几倍
+ * 余量，同时把"卡死"的代价从五分钟压到两分钟。
+ *
+ * 与 EFFECT_TIMEOUT_MS 取同一个数，是为了少一个要记的常数。
+ */
+export const LLM_TIMEOUT_MS = 120_000;
+
+export interface AnthropicProviderOptions {
+  /**
+   * 每次对模型的调用记一条 http_call。
+   *
+   * 补这个是因为它曾是系统里**唯一**不产事件的出站调用：CAS、doc worker、
+   * DashScope 都有，唯独 agent 循环里最关键的那一次没有。于是它挂住的那五
+   * 分钟里，日志上一个字都没有 —— 连它打去了哪个地址都看不到。
+   */
+  readonly observe?: ObserveFn;
+  /** 覆盖 {@link LLM_TIMEOUT_MS}。 */
+  readonly timeoutMs?: number;
+}
+
 export function createAnthropicProvider(
   env: AnthropicEnv,
   fetchImpl: typeof fetch = fetch,
+  opts: AnthropicProviderOptions = {},
 ): LlmProvider {
+  const observe = opts.observe ?? noopObserver;
+  const timeoutMs = opts.timeoutMs ?? LLM_TIMEOUT_MS;
   const endpoint = resolveEndpoint(env.LLM_BASE_URL || env.ANTHROPIC_API_BASE || "https://api.anthropic.com");
   const apiKey = env.LLM_API_KEY || env.ANTHROPIC_API_KEY;
   const model = env.LLM_MODEL || env.ANTHROPIC_MODELS?.split(",")[0]?.trim() || "claude-opus-5";
@@ -157,24 +188,54 @@ export function createAnthropicProvider(
         description: t.description,
         input_schema: toInputSchema(t.inputSchema),
       }));
-      const resp = await fetchImpl(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model,
-          // 非流式请求的常规上限。4096 偏低：默认模型开着思考，思考先花掉
-          // 预算就会返回一条既没 text 也没 tool_use 的响应。
-          max_tokens: 16000,
-          ...(system ? { system } : {}),
-          messages: toAnthropicMessages(messages),
-          ...(anthTools.length ? { tools: anthTools } : {}),
-        }),
+      const body = JSON.stringify({
+        model,
+        // 非流式请求的常规上限。4096 偏低：默认模型开着思考，思考先花掉
+        // 预算就会返回一条既没 text 也没 tool_use 的响应。
+        max_tokens: 16000,
+        ...(system ? { system } : {}),
+        messages: toAnthropicMessages(messages),
+        ...(anthTools.length ? { tools: anthTools } : {}),
       });
-      if (!resp.ok) throw new Error(`Anthropic ${resp.status}: ${await resp.text()}`);
+      const call = {
+        dir: "out" as const, target: "llm", op: "complete", method: "POST",
+        url: endpoint,
+        // 请求头一概不上报 —— x-api-key 在里面。
+        requestHeaders: { "content-type": "application/json", "content-length": String(body.length) },
+      };
+      const started = Date.now();
+      let resp: Response;
+      try {
+        resp = await fetchImpl(endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body,
+          // 没有它的时候实测挂满 300.3 秒才被 workerd 掐断。见 LLM_TIMEOUT_MS。
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        const durationMs = Date.now() - started;
+        observe(httpCallFailure({ ...call, durationMs }, err));
+        // 超时要说人话：`TimeoutError: signal timed out` 对读日志的人没有信息量，
+        // 而"打了谁、等了多久"才是下一步该查的东西。
+        if (err instanceof DOMException && err.name === "TimeoutError") {
+          throw new Error(`LLM did not respond within ${timeoutMs}ms (${endpoint})`);
+        }
+        throw err;
+      }
+      const durationMs = Date.now() - started;
+      if (!resp.ok) {
+        const text = await resp.text();
+        observe(httpCallEvent({ ...call, durationMs }, resp.status, truncateObservedBody(text).body === text
+          ? { responseBody: text }
+          : { responseBody: truncateObservedBody(text).body, truncated: true }));
+        throw new Error(`Anthropic ${resp.status}: ${text}`);
+      }
+      observe(httpCallEvent({ ...call, durationMs }, resp.status));
       return toCompletion(await resp.json() as AnthropicResponse);
     },
   };
