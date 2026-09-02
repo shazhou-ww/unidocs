@@ -82,32 +82,80 @@ with a standards-based Stack OAuth trust relationship:
 
 ### Known issue — TODO 2026-09-02: production docx create is very slow
 
-Reproducible with `scripts/measure-create-latency.mjs` (mints a session cookie,
-runs the full authorize → consent → token → create flow against
-`https://unidocs.shazhou.work`):
+**Diagnosed 2026-09-02 — root cause: R2 operation latency, not code
+concurrency.**
+
+Repro tooling: `scripts/measure-create-latency.mjs` (end-to-end create timing)
+and `scripts/probe-cas-latency.mjs` (direct CAS API calls with Server-Timing
+breakdown). Numbers below are production, tenant `shazhou-ww`,
+stack `cas_SZ6wfcfqS34J`.
+
+Measured create latency (2 samples ~1h apart):
 
 ```text
-docx create:     200 in ~12840ms   (docId d3217cf7)
-markdown create: 200 in ~5489ms
+docx create:     200 in 12840ms → 69987ms
+markdown create: 200 in 5489ms  → 10871ms
 ```
 
-Hypotheses to chase (do not batch-fix blindly; each trades memory for speed):
+Probe breakdown (Server-Timing measured inside the middleware DO, so purely
+Cloudflare-internal DO→R2):
 
-1. Sequential CAS ref-lease acquisition in `sblob-context` (`#store` leases
-   refs one at a time) + `PART_IO_CONCURRENCY=2` were the OOM fix: a docx
-   create issues ~15+ sequential CAS round trips before it returns, and each
-   in-flight CAS subrequest pins a large buffer inside the calling DO isolate.
-   Measure how much of the 12.8s is CAS round trips (wrangler tail + `cf-ray`
-   timing) vs middleware cold starts.
-2. Doc/middleware DO cold start on first request of a new document (new DO
-   name per doc). Consider a warm-up or keeping per-doc middleware alive; the
-   markdown 5.5s baseline already includes some of this.
-3. Gateway → doc worker → CAS chain latency (round trips through
-   `unidocs-gateway` then `unidocs-docx` then the CAS middleware DO, plus the
-   data-plane capability validation on every hop).
+```text
+lease full-body (new node)        8567ms  cas_r2_put=5673ms  cas_r2_prefix(GET)=1977ms  cas_d1_*=~60ms
+lease full-body (1 existing ref)  7530ms  cas_r2_put=5038ms  cas_r2_prefix=1372ms        cas_r2_head=985ms
+lease bodyless (ready node)       2486ms  cas_r2_head=1527ms  cas_d1_*=~40ms
+readMetadata                      116ms   (D1 only, no R2)
+10× bodyless sample:              890..3278ms (median ~1735ms) — every sample ≥ 0.77s
+```
 
-Target: bring docx create closer to the markdown baseline before tuning
-concurrency back up. Re-measure with the script after any change.
+Every other hop is cheap: D1 ~5-20ms/op, capability verify ~16ms cold / ~0ms
+warm, DO dispatch ~20ms, edge ~30ms. **All wall time is R2 PUT/GET/HEAD.**
+
+Why docx create serializes ~26 R2 ops:
+
+1. `storeState` stores 7 OpenXML parts (default `Document.create()` package:
+   `[Content_Types].xml`, `_rels/.rels`, `word/document.xml`,
+   `word/styles.xml`, `word/_rels/document.xml.rels`, `docProps/core.xml`,
+   `docProps/app.xml`). Each part = one full-body CAS lease = **R2 PUT + R2
+   GET (read-back verify)**.
+2. Snapshot SValue root (refs → the 7 parts) = R2 PUT + R2 GET + **7× R2 HEAD**
+   (one `isNodeReady` per child in `finalizeCanonicalNodeLease`).
+3. Delta root = R2 PUT + R2 GET + 1× R2 HEAD.
+4. `#settlePending` bodyless renewals = 2× R2 HEAD (`leaseReadyNode` →
+   `isNodeReady` does a D1 read **plus an R2 HEAD** on every call).
+5. All of it funnels through ONE per-`(stack,tenant)` middleware DO
+   (`canonicalActorKey`), whose `#mutationTail` gate serializes begin/finalize;
+   R2 latencies therefore add linearly.
+
+At ~0.5s/op (yesterday) ≈ 12.8s; at ~2s/op (now, degraded) ≈ 70s — matches
+measurements. Markdown is only ~6-8 R2 ops → 5.5s/10.9s.
+
+Acute factor: R2 appears region-degraded right now
+([R2 degraded performance in APAC](https://community.cloudflare.com/t/r2-degraded-performance-in-apac-buckets/896375/2),
+[DO errors in the Hong Kong region](https://isdown.app/status/cloudflare/incidents/642163-increased-errors-for-durable-objects-in-the-hong-kong-region),
+[elevated R2 latency](https://isdown.app/status/cloudflare/incidents/633781-elevated-r2-error-rates-and-latency)).
+Chronic factor: bucket home region vs DO colo distance; the account's buckets
+report no location hint (default region).
+
+Candidate fixes (NOT applied; investigate before changing code):
+
+1. Cut R2 ops per create — biggest wins, all in
+   `unicas-packages/service-cloudflare` / `service`:
+   - `isNodeReady` R2 HEAD runs on every bodyless lease and per child in
+     finalize; nodes are immutable once committed and only cooperative GC can
+     delete them. A per-DO in-memory ready-cache (short TTL, e.g. 60s) would
+     remove ~11 of ~26 R2 ops per docx create.
+   - `finalizeCanonicalNodeLease` re-reads the uploaded object prefix (R2 GET)
+     right after `bucket.put(..., {sha256})` already verified the checksum;
+     the read-back GET looks redundant for the new-object path.
+2. Reduce per-op R2 latency: recreate the bucket with an explicit `APAC`
+   location hint near the DO colo (bucket location is fixed at creation;
+   needs migration) — or wait out the current region degradation first.
+3. Structural: cache small canonical nodes in DO SQLite instead of R2, or shard
+   the per-tenant middleware DO, or overlap uploads further. Bigger redesign;
+   do 1+2 first.
+
+Re-measure with both scripts after any change or once the region recovers.
 
 ## Fixed architecture
 
