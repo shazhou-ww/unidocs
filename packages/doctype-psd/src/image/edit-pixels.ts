@@ -6,7 +6,7 @@ import type { PsdOp } from "../ops/index.js";
 import type { PsdQuery } from "../queries.js";
 import { downscale } from "../render/index.js";
 import type { ImageEditor } from "./editor.js";
-import { applyCoverageToAlpha, resample, softenMask } from "./guards.js";
+import { applyCoverageToAlpha, resample, softenMask, unmixSentinel } from "./guards.js";
 
 /** 回给模型看的 after 预览的长边上限。和 getPreview 的默认值一致。 */
 const AFTER_PREVIEW_MAX_SIZE = 768;
@@ -45,13 +45,6 @@ const pixelsToPng = (px: Pixels): Uint8Array =>
 
 const fail = (structuredContent: JsonValue): EffectOutcome<PsdOp> =>
   ({ ops: [], result: { structuredContent } });
-
-/** 模型返回的 RGB 配上**源自己的** alpha。两者同尺寸（适配器的后置条件）。 */
-function withSourceAlpha(rgb: Pixels, source: Pixels): Pixels {
-  const data = new Uint8ClampedArray(rgb.data);
-  for (let i = 3; i < data.length; i += 4) data[i] = source.data[i];
-  return { width: rgb.width, height: rgb.height, data };
-}
 
 /**
  * 模型想画到源轮廓**之外**的像素占源透明区的比例。
@@ -227,7 +220,10 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
       // alpha，边缘糙一点也远好过被裁掉 —— 由调用方用 `reshape` 声明，因为
       // 这两种意图从像素里分不出来（试过 max(源, 模型)：那 1.9% 的误判会被
       // 原样保留，毛边立刻回来）。
-      const shaped = reshape ? result.pixels : withSourceAlpha(result.pixels, source);
+      // reshape=false:轮廓由源说了算,所以 alpha 直接用源的 —— 而既然 alpha 已知,
+      // 哨兵底色就能**精确**地从 RGB 里除掉(unmixSentinel)。只换 alpha 不除底色
+      // 会把品红留在每一条抗锯齿边上:实测一张文字层空跑一趟,边缘平均色差 61.46。
+      const shaped = reshape ? result.pixels : unmixSentinel(result.pixels, source);
 
       // 差异蒙版烘进结果层自己的 alpha：未改动的区域全透明，下面的原层
       // 原样露出来。这一步就是"把模型带来的全局色偏关在改动区里"的全部机制 ——
