@@ -4,7 +4,7 @@ import type { PsdDoc, Layer } from "../src/model/types.js";
 import type { BlobStore } from "../src/render/pixel-source.js";
 import { isRef, resolvePixels, PixelCache } from "../src/render/pixel-source.js";
 import { serialize, deserialize } from "../src/psd/ir.js";
-import { resolveDoc, resolveLayerPixels } from "../src/resolve.js";
+import { FaultConcurrency, resolveDoc, resolveLayerPixels } from "../src/resolve.js";
 import { apply } from "../src/ops/index.js";
 import { save } from "../src/psd/save.js";
 import { findLayer } from "../src/model/tree.js";
@@ -158,5 +158,121 @@ describe("resolveDoc / resolveLayerPixels (C1/C2 fault-in)", () => {
     expect([...(findLayer(a.layers, "top-1")!.pixels as any).data]).toEqual(
       [...(findLayer(b.layers, "top-1")!.pixels as any).data],
     );
+  });
+});
+
+/**
+ * 一个会记录并发情况的 BlobStore:每次 get 都停一拍(等一个已解决的 Promise
+ * 队列排空),这样若干个并发的 get 会真的重叠,串行的则不会。
+ */
+function tracingStore(): BlobStore & {
+  blobs: Map<string, Uint8Array>;
+  gets: string[];
+  maxConcurrent: number;
+} {
+  const inner = memStore();
+  let live = 0;
+  const state = {
+    blobs: inner.blobs,
+    gets: [] as string[],
+    maxConcurrent: 0,
+    put: inner.put,
+    async get(hash: string) {
+      live += 1;
+      state.maxConcurrent = Math.max(state.maxConcurrent, live);
+      state.gets.push(hash);
+      // 让出几个微任务,给同批次的其它 get 机会重叠。
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      live -= 1;
+      return inner.get(hash);
+    },
+  };
+  return state;
+}
+
+/** 造一个有 n 个懒引用图层的文档,每层像素各不相同(哈希互不相同)。 */
+async function lazyDoc(store: BlobStore, n: number): Promise<PsdDoc> {
+  const layers: Layer[] = [];
+  for (let i = 0; i < n; i++) {
+    const data = new Uint8ClampedArray([i, 0, 0, 255, 0, i, 0, 255]);
+    const doc: PsdDoc = {
+      canvas,
+      layers: [{
+        id: `l${i}`, type: "raster", name: `L${i}`, bounds: [0, 0, 1, 2],
+        opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false,
+        pixels: { width: 2, height: 1, data },
+      }],
+    };
+    const serialized = await serialize(doc, store);
+    layers.push((await deserialize(serialized, store)).layers[0]!);
+  }
+  return { canvas, layers };
+}
+
+describe("resolveDoc 并发拉取", () => {
+  // 此前是 `for (…) await …` 的串行循环。生产环境每次 CAS 往返 ~1.3 秒,
+  // 于是导出耗时随图层数线性增长,几十层就超过网关 60 秒的截止时间。
+  it("并发拉取多个图层,而不是逐层等待", async () => {
+    const store = tracingStore();
+    const doc = await lazyDoc(store, 12);
+    store.gets.length = 0;
+    store.maxConcurrent = 0;
+
+    const resolved = await resolveDoc(doc, store);
+
+    expect(store.maxConcurrent).toBeGreaterThan(1);
+    expect(resolved.layers.every(l => l.pixels && !isRef(l.pixels))).toBe(true);
+  });
+
+  it("并发不超过上限", async () => {
+    const store = tracingStore();
+    const doc = await lazyDoc(store, 40);
+    store.maxConcurrent = 0;
+
+    await resolveDoc(doc, store);
+
+    expect(store.maxConcurrent).toBeLessThanOrEqual(FaultConcurrency);
+  });
+
+  // 在途去重是并行化的必要条件:PixelCache 只缓存已完成的结果,并行时多个
+  // 共享同一哈希的图层会同时发起请求 —— 既白做一次,又会撞上 CAS 对单个
+  // 对象的并发限流(10058)。
+  it("共享同一哈希的图层只取一次", async () => {
+    const store = tracingStore();
+    const base = await lazyDoc(store, 1);
+    const shared = base.layers[0]!;
+    const doc: PsdDoc = {
+      canvas,
+      layers: [
+        { ...shared, id: "a" },
+        { ...shared, id: "b" },
+        { ...shared, id: "c" },
+      ],
+    };
+    store.gets.length = 0;
+
+    const resolved = await resolveDoc(doc, store);
+
+    expect(store.gets).toHaveLength(1);
+    expect(resolved.layers.every(l => l.pixels && !isRef(l.pixels))).toBe(true);
+  });
+
+  it("分组的子层同样被拉取", async () => {
+    const store = tracingStore();
+    const flat = await lazyDoc(store, 3);
+    const doc: PsdDoc = {
+      canvas,
+      layers: [{
+        id: "g", type: "group", name: "G", bounds: [0, 0, 1, 2],
+        opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false,
+        children: flat.layers,
+      }],
+    };
+
+    const resolved = await resolveDoc(doc, store);
+
+    const children = resolved.layers[0]!.children!;
+    expect(children).toHaveLength(3);
+    expect(children.every(c => c.pixels && !isRef(c.pixels))).toBe(true);
   });
 });
