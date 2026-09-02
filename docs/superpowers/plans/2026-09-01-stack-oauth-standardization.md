@@ -163,17 +163,34 @@ Recommended fix order (deploy-level first, then code):
    `unicas-packages/service-cloudflare/wrangler.toml`, redeployed, verified
    pre-migration reads (metadata/content via CAS API, docx export via gateway),
    then deleted the EEUR bucket (had to empty it first — R2 bucket delete
-   requires an empty bucket). Actual result: docx create ~5.1s, markdown ~3.2s
-   (slightly above the ~2-4s estimate because the remaining per-op R2 cost is
-   DO→R2, not bucket distance).
-2. Remove the redundant post-upload read-back R2 GET in
-   `finalizeCanonicalNodeLease` (PUT already verified `sha256`).
-3. Cache `isNodeReady` (D1-ready marker / per-DO TTL) to cut the ~11 R2 HEADs.
-4. Only then reconsider concurrency/structural changes (DO SQLite node cache,
-   middleware DO sharding).
+   requires an empty bucket). Result: docx create ~5.1s, markdown ~3.2s.
+2. **[DONE 2026-09-02] Remove the post-upload read-back R2 GET in
+   `finalizeCanonicalNodeLease`.** The middleware now tee-parses each upload
+   stream while storing it (`#streamCanonicalUpload` → `parseCanonicalNodeStream`
+   on a tee branch) and passes `ParsedUploadedNodeMetadata` into the finalize
+   step, which skips `inspectCanonicalNode`'s R2 GET entirely. The R2 PUT is
+   sha256-checksum-verified, so parsing the stored bytes is authoritative.
+   Verified in production: fresh full-body leases emit `cas_r2_put` +
+   `cas_d1_commit` but never `cas_r2_prefix`.
+3. **[DONE 2026-09-02] Cache `isNodeReady`.** `CloudflareNodeLeaseRepository`
+   takes a per-DO `NodeReadyCache` (hash → expiry, 60s TTL). `isNodeReady`
+   still reads the D1 row every call (authoritative liveness; GC deletes the
+   row with the object) but skips the R2 HEAD while a recent positive result is
+   cached; commits pre-warm the cache including child refs, so the snapshot/
+   delta child checks and bodyless renewals inside one create flow issue zero
+   R2 HEADs. Verified in production: bodyless leases emit no `cas_r2_head`
+   (10/10 samples cached), DO time ~60ms.
+   End-to-end docx create after 2+3: ~5.2s (was ~5.1s right after the bucket
+   move) — the CAS-layer R2 HEAD/GET removals are real but end-to-end create
+   time is now dominated by per-doc editor DO cold start (~1s) plus ~9
+   serialized R2 PUTs (~200ms each) plus docx CPU, not by per-op R2 HEADs.
+4. Deferred structural changes (only if create latency still matters):
+   per-doc editor DO warm-up/reuse, raising `PART_IO_CONCURRENCY` above 2
+   (the OOM trade-off from earlier — revisit only with the memory fix),
+   middleware DO sharding, or DO SQLite node cache for small nodes.
 
 Re-measure with `scripts/measure-create-latency.mjs` + `scripts/probe-cas-latency.mjs`
-after the bucket move; `scripts/r2-bench/` can be redeployed for before/after
+after any further change; `scripts/r2-bench/` can be redeployed for before/after
 R2 numbers (it is intentionally gitignored-free but harmless to keep).
 
 ## Fixed architecture
