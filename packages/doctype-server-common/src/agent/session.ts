@@ -52,6 +52,9 @@ export class AgentSession<TQuery, TOp> {
     this.#history.push({ role: "user", content });
     const maxIterations = this.#deps.maxIterations ?? DEFAULT_MAX_ITERATIONS;
 
+    /** 本次 run 里工具被调用的顺序，只留名字 —— 到上限时靠它说清 25 轮花在哪。 */
+    const trace: string[] = [];
+
     for (let iterations = 1; iterations <= maxIterations; iterations++) {
       const messages = await materializeMessages(
         this.#history,
@@ -96,12 +99,20 @@ export class AgentSession<TQuery, TOp> {
       }
 
       for (const call of toolCalls) {
+        trace.push(call.name);
         const result = await this.#dispatch(call.name, call.arguments);
         this.#history.push(toolResultToMessage(call.id, result));
       }
     }
 
-    return { ok: false, error: `Max iterations (${maxIterations}) reached` };
+    // 光说"到上限了"对排查毫无用处。一次真实故障里，用户拿到的就是
+    // `Max iterations (25) reached`，而 25 轮到底花在哪儿完全看不出来 ——
+    // 是一直在找图层，还是一直在重画，还是某个工具每次都报错，这三种成因的
+    // 修法完全不同。把调用序列压缩后带出来，一眼就能分辨。
+    return {
+      ok: false,
+      error: `Max iterations (${maxIterations}) reached. Tools called: ${summarise(trace)}`,
+    };
   }
 
   reset(): void {
@@ -142,9 +153,34 @@ export class AgentSession<TQuery, TOp> {
       const { version } = await this.#deps.platform.apply(tool.toOps(parameters), `Agent: ${name}`);
       return defaultOpToolResult(version);
     } catch (err) {
+      // 工具失败一直是**静默**的：异常在这里被折成一段文本交给模型，循环继续，
+      // 而外面什么记录都没有。一次真实故障里这让排查彻底卡住 —— 用户只拿到
+      // `Max iterations (25) reached`，而"某个工具每次都抛"和"模型在反复重画"
+      // 在日志里长得一模一样。出站 HTTP 有观测，工具没有，这是个洞。
+      //
+      // 用 console.error 而不是注入一个 observer：这里是内核，加依赖要动所有
+      // 调用方；而 Worker 的 console 本来就进 wrangler tail 和生产日志。
+      console.error(JSON.stringify({
+        event: "agent_tool_error", tool: name, error: String(err),
+      }));
       return { structuredContent: { error: String(err) } };
     }
   }
+}
+
+/**
+ * `["getLayers","getPreview","getPreview","getPreview"]` → `getLayers, getPreview x3`。
+ * 压掉连续重复，因为循环恰恰长这样，而原样列出 25 个名字反而看不出来。
+ */
+function summarise(trace: readonly string[]): string {
+  if (trace.length === 0) return "none";
+  const runs: { name: string; n: number }[] = [];
+  for (const name of trace) {
+    const last = runs[runs.length - 1];
+    if (last && last.name === name) last.n++;
+    else runs.push({ name, n: 1 });
+  }
+  return runs.map(r => (r.n > 1 ? `${r.name} x${r.n}` : r.name)).join(", ");
 }
 
 function requireJsonObject(value: JsonValue): Readonly<Record<string, JsonValue>> {

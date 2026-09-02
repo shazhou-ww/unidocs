@@ -298,8 +298,17 @@ EDITING
 - New layers need a caller-assigned unique id. A RASTER layer needs pixel data in the arguments, which you cannot produce — so add a raster layer only when its pixels were handed to you. Adjustment, fill and group layers need no pixels and are yours to create freely.
 - Adjustment layers: create with addLayer (type "adjustment") using a PSD adjustType key (brit=brightness/contrast, blwh=black & white, hue2=hue/saturation); change params later with setAdjustment. The field is adjustType, not adjustmentType.
 
+THE SELECTION MARKER
+- When the user has something selected, their message starts with one <<selection ...>> marker. The layers=[{"id":..,"name":..}] list is what they picked: the id goes STRAIGHT into layerId on any tool, so you never have to translate a name through getLayers, and you never have to guess when two layers share a name. bounds=[t,l,b,r] appears only for a dragged region; a layer selection has no bounds because the layer has its own, readable from getLayers.
+- NO marker means nothing is selected. If the user then writes "the selected layer", "this layer", "the part I picked" — they are referring to something you cannot see. Do NOT go hunting through getLayers/getPreview for what they might have meant. Say which layers you can see and ask them to select one, in one turn.
+
 WORKFLOW
-Query (getDoc/getLayers) → reason about coordinates → edit → getPreview to verify → correct if needed.`;
+Query (getDoc/getLayers) → reason about coordinates → edit → getPreview to verify → correct if needed.
+
+WHEN TO STOP
+- "correct if needed" is not unlimited. If two attempts at the same goal have not produced it, stop and report: what you tried, what came back, and what you would need in order to continue. A clear "here is where it went wrong" is worth far more to the user than a third attempt.
+- Stop and ask, rather than guessing, whenever the target is ambiguous: the thing they described is nowhere in the document, several layers match equally well, or they referred to a selection that no marker carried.
+- Never keep calling tools just to look busy. Running out of turns produces an error with no result and no explanation — that is the worst outcome available to you, and it is always avoidable by reporting instead.`;
 
 /**
  * 只有注入了 ImageEditor 时才追加的一段。

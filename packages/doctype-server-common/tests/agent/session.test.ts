@@ -115,12 +115,25 @@ describe("AgentSession 循环", () => {
     expect(JSON.stringify(provider.seen[1].at(-1))).toContain("nope");
   });
 
-  it("达到 maxIterations 以失败结束", async () => {
+  // 光说"到上限了"对排查没用。一次真实故障里用户拿到的就是
+  // `Max iterations (25) reached`，而 25 轮花在哪完全看不出来 —— 一直在找
+  // 图层、一直在重画、某个工具每次都抛，这三种成因修法完全不同。
+  it("达到 maxIterations 时把调用序列一起带出来，连续重复压成 xN", async () => {
     const call = { content: [], toolCalls: [{ id: "c1", name: "getLayers", arguments: {} }] };
     const provider = scriptedProvider([call, call, call]);
     const s = new AgentSession({ agent, platform: fakePlatform(), provider, maxIterations: 2 });
     const out = await s.run([{ type: "text", text: "x" }]);
-    expect(out).toEqual({ ok: false, error: "Max iterations (2) reached" });
+    expect(out).toEqual({ ok: false, error: "Max iterations (2) reached. Tools called: getLayers x2" });
+  });
+
+  it("调用序列保留顺序，只压连续重复 —— 交替出现才是循环的样子", async () => {
+    const look = { content: [], toolCalls: [{ id: "c1", name: "getPreview", arguments: {} }] };
+    const list = { content: [], toolCalls: [{ id: "c2", name: "getLayers", arguments: {} }] };
+    const provider = scriptedProvider([list, look, look, list]);
+    const s = new AgentSession({ agent, platform: fakePlatform(), provider, maxIterations: 4 });
+    const out = await s.run([{ type: "text", text: "x" }]);
+    expect((out as { error: string }).error)
+      .toBe("Max iterations (4) reached. Tools called: getLayers, getPreview x2, getLayers");
   });
 
   it("提示词作为 system 传给 provider，不混进 messages", async () => {

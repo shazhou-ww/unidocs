@@ -64,12 +64,26 @@ export async function rollback(docId: string, version: number): Promise<number> 
   return body.version;
 }
 
-/** The selection target as the agent gets to see it. Layer NAMES, not ids:
- *  names are what the agent can match against its own `getLayers` result;
- *  ids mean nothing to it and only cost tokens. */
+/**
+ * The selection target as the agent gets to see it.
+ *
+ * Carries the layer **id AND name**. It used to be names only, on the reasoning
+ * that "ids mean nothing to the agent and only cost tokens" — that predates
+ * editPixels, whose first argument IS a layerId. Sending only a name forces a
+ * getLayers round trip to translate it, and a PSD may well hold several layers
+ * with the same name, in which case the translation is a guess.
+ *
+ * `bounds` is absent when the target is a layer selection rather than a dragged
+ * region: a layer has bounds of its own that the agent can read from getLayers,
+ * and inventing a rectangle here would say something the user did not.
+ */
+export interface AgentTargetLayer {
+  id: string;
+  name: string;
+}
 export interface AgentTarget {
-  bounds: [number, number, number, number];
-  layerNames: string[];
+  bounds?: [number, number, number, number];
+  layers: AgentTargetLayer[];
 }
 
 /**
@@ -90,11 +104,13 @@ export interface AgentTarget {
  */
 export function withTarget(instruction: string, target: AgentTarget | null): string {
   if (!target) return instruction;
-  const [top, left, bottom, right] = target.bounds;
-  const layers = target.layerNames.length > 0
-    ? ` layers=[${target.layerNames.map((n) => JSON.stringify(n)).join(",")}]`
+  const bounds = target.bounds ? ` bounds=[${target.bounds.join(",")}]` : "";
+  const layers = target.layers.length > 0
+    ? ` layers=[${target.layers.map((l) => JSON.stringify(l)).join(",")}]`
     : "";
-  return `<<selection bounds=[${top},${left},${bottom},${right}]${layers}>>\n${instruction}`;
+  // 两半都空就别发标记：一个 `<<selection>>` 空壳只会让 agent 以为用户
+  // 指了什么而其实没有。
+  return bounds || layers ? `<<selection${bounds}${layers}>>\n${instruction}` : instruction;
 }
 
 export async function runAgent(docId: string, instruction: string, target: AgentTarget | null = null): Promise<string> {
