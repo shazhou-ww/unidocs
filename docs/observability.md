@@ -1,7 +1,8 @@
 # 调用可观测性
 
 每一次 HTTP 调用产出一条 `http_call` 事件到 stdout。Azure 上由 Container Apps
-收进 Log Analytics 的 `ContainerAppConsoleLogs_CL`;Cloudflare 上进 `wrangler tail`。
+收进 Log Analytics 的 `ContainerAppConsoleLogs_CL`;Cloudflare 上进 `wrangler tail`;
+本地 `pnpm dev` 另外落一份 JSONL 到 `.dev-cloudflare.log`(见文末「本地日志文件」)。
 
 ## 事件形状
 
@@ -151,6 +152,49 @@ calls
 | order by TimeGenerated desc
 | take 10
 ```
+
+## 本地日志文件
+
+`pnpm dev`(Cloudflare 栈)默认把 Miniflare 运行时的输出再写一份到仓库根的
+`.dev-cloudflare.log`,终端里看到的一个字节都不少。目的是让 agent 能直接查,
+不必先请人手动 tee 一份。
+
+覆盖的是 **Miniflare 这一路**:网关和各 doc type worker 的全部输出。`pnpm dev`
+另外拉起的 Vite 子进程(各 web 前端、CAS admin 控制台)是 `stdio: "inherit"`,
+只进终端,不进这个文件。
+
+格式是 **JSONL**,一行一条记录 —— 不是终端那份的原样拷贝:
+
+```jsonc
+{"t":"2026-09-02T08:43:03.637Z","src":"worker","level":"log",
+ "event":"http_call","dir":"in","target":"gateway","op":"listDocuments","status":200,"durationMs":1,"ok":true}
+{"t":"2026-09-02T08:43:03.640Z","src":"miniflare",
+ "msg":"[mf:info] GET /tenants/u1/docs/markdown/ 200 OK (5ms)"}
+```
+
+- `src` 分两路:`"worker"` 是 Worker 自己 `console.*` 打的(`http_call`、
+  `doc_authentication`、`gateway_capability_issued` 都在这里),`"miniflare"`
+  是 Miniflare 运行时那几行(请求行、启动就绪、内部告警)。
+- 本身就是 JSON 的行**摊平**进信封,所以一条 `jq` 就能筛,不用先切前缀。
+  载荷万一自带 `t`/`src`/`level`/`msg`/`json` 中任一个键,就嵌到 `.json` 下
+  而不是摊平——摊平会用载荷的值顶掉信封的时间戳。
+- 多行的异常栈被转义成一行,**行与记录始终一一对应**,grep 不会把一条栈
+  切成几十条互不相干的"日志"。
+- 每次 `pnpm dev` 从头写,文件里永远只有本次这一趟。写是同步的,所以跑着的
+  时候另开一个终端 grep 就能看到最新的行。
+
+```bash
+jq 'select(.event == "http_call" and .ok == false)' .dev-cloudflare.log
+jq -s 'map(select(.op == "lease").durationMs) | sort' .dev-cloudflare.log
+jq 'select(.src == "worker" and .event == null)' .dev-cloudflare.log   # 非结构化的 worker 输出
+```
+
+`UNIDOCS_DEV_LOG=off` 关掉;给别的值就当路径用(相对仓库根,也接受绝对路径)。
+默认文件名命中 `.gitignore` 的 `.dev-*.log` —— 本地日志带着网关签发的凭据元
+数据,**永远不要提交**,换名字时必须让它继续落在那条规则里。
+
+`pnpm dev unidocs-azure` 目前不落盘(它的服务是独立子进程,走的是另一条转发
+路径),需要的话自己 `2>&1 | tee`。
 
 ## 成本
 

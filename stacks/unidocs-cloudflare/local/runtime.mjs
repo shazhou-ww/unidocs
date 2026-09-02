@@ -25,6 +25,7 @@ import {
   SERVICE_WORKER,
   resolvePorts,
 } from "./doc-types.mjs";
+import { openDevLog } from "./dev-log.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
 import { migrateControlSchema } from "../../../unicas-packages/service-cloudflare/src/control-schema.ts";
@@ -305,6 +306,52 @@ function createStorageProbe(mf, { stackId } = {}) {
 }
 
 /**
+ * Miniflare 自己那条日志通道的分流器。
+ *
+ * Worker 的 `console.*` 走的是 workerd 的 stdout/stderr,由
+ * `handleStructuredLogs` 接;而 Miniflare 运行时自己的行(`[mf:inf]` 请求行、
+ * 启动就绪、内部告警)走 `Log` 实例。两条通道互不相通,所以要落盘就得两边
+ * 都接一下。
+ *
+ * 覆盖的是 `log()` 而不是 `logWithLevel()`:后者会调前者,两个都覆盖就会把
+ * 每条日志写两遍。`log()` 是所有级别的唯一出口(error/warn/info/debug/verbose
+ * 全部经由 `logWithLevel` 落到它),接住这一个方法就等于接住了整条通道。
+ */
+class TeeLog extends Log {
+  #devLog;
+
+  constructor(level, devLog) {
+    super(level);
+    this.#devLog = devLog;
+  }
+
+  log(message) {
+    this.#devLog.write({ src: "miniflare", message });
+    super.log(message);
+  }
+}
+
+/**
+ * 复刻 Miniflare 对 workerd 结构化日志的默认打印行为(error/warn 走 stderr
+ * 并标红,其余走 stdout)。
+ *
+ * 一旦我们提供了自己的 `handleStructuredLogs`,Miniflare 的默认实现就整个
+ * 不再执行——终端输出全归我们负责。这个函数存在的唯一目的就是让"开了日志
+ * 文件"和"没开"在终端里看起来完全一样。
+ *
+ * 颜色按 `NO_COLOR` 和 stderr 是否 TTY 决定,而不是无条件加转义序列:输出被
+ * 重定向到文件或管道时,裸转义序列只会变成一堆垃圾字符。
+ */
+function printStructuredLog({ level, message }) {
+  if (level !== "error" && level !== "warn") {
+    console.log(message);
+    return;
+  }
+  const colour = process.env.NO_COLOR === undefined && process.stderr.isTTY === true;
+  console.error(colour ? `\u001b[31m${message}\u001b[39m` : message);
+}
+
+/**
  * Start the gateway plus the selected document type workers in one Miniflare
  * runtime. The Gateway receives a static registry containing only the selected
  * document types, so it 404s on the rest.
@@ -318,6 +365,10 @@ export async function startLocalRuntime({
   capabilityFixture,
   stackFixture,
   logLevel = LogLevel.WARN,
+  // 落盘的 JSONL 日志路径,见 dev-log.mjs。**默认关闭**:集成测试也走这个
+  // 函数,不该因为跑了个测试就在仓库根上留下一个文件。只有 `pnpm dev`
+  // (scripts/dev.mjs)会显式传它。
+  logFile,
   casAdminPublicOrigin,
   casMiddlewareOnly = false,
   casMiddleware = false,
@@ -377,14 +428,26 @@ export async function startLocalRuntime({
   }
   const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 
+  const devLog = logFile ? openDevLog(logFile) : null;
+
   let mf;
   try {
     mf = new Miniflare(
       convertV4MiniflareOptions({
         host,
         port: ports.gateway,
-        log: new Log(logLevel),
+        log: devLog ? new TeeLog(logLevel, devLog) : new Log(logLevel),
         logRequests: logLevel >= LogLevel.INFO,
+        // 只在开了日志文件时接管;不接管时 Miniflare 用它自己的默认打印,
+        // 一行代码都不受影响。
+        ...(devLog
+          ? {
+            handleStructuredLogs: (entry) => {
+              devLog.write({ src: "worker", level: entry.level, message: entry.message, timestamp: entry.timestamp });
+              printStructuredLog(entry);
+            },
+          }
+          : {}),
         ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
         workers: buildWorkers({
           docTypes,
@@ -450,12 +513,17 @@ export async function startLocalRuntime({
       storage: createStorageProbe(mf, {
         stackId: resolvedStackFixture.stackId,
       }),
+      ...(devLog ? { logFile: devLog.path } : {}),
       async dispose() {
         await mf.dispose();
+        // 关在 dispose 之后:Miniflare 拆运行时的过程本身还会打日志,提前
+        // 关掉就会把关停阶段的行(包括拆的时候抛的错)丢在文件外面。
+        devLog?.close();
       },
     };
   } catch (err) {
     await mf?.dispose();
+    devLog?.close();
     throw err;
   }
 }
