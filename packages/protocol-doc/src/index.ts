@@ -74,4 +74,7 @@ export {
   readObservedBody,
   truncateObservedBody,
 } from "./observe.js";
-export type { HttpCallEvent, HttpCallInput, ObserveFn } from "./observe.js";
+export { observedFailure } from "./observe.js";
+export type {
+  AgentRunEvent, AgentStepEvent, HttpCallEvent, HttpCallInput, ObservedEvent, ObserveFn,
+} from "./observe.js";

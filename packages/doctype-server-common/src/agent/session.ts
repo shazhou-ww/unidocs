@@ -2,6 +2,8 @@ import type {
   AgentContentPart, AgentMessage, AgentPlatform, AgentTool, AgentToolDefinition,
   AgentToolResult, DocumentAgent, JsonValue, LlmProvider,
 } from "@unidocs/protocol";
+import { noopObserver, observedFailure } from "@unidocs/protocol-doc";
+import type { ObserveFn } from "@unidocs/protocol-doc";
 import { ByteLru, materializeMessages } from "./messages.js";
 import { defaultOpToolResult, defaultQueryToolResult, toolResultToMessage } from "./tool-result.js";
 
@@ -29,6 +31,17 @@ export interface AgentSessionDeps<TQuery, TOp> {
   readonly platform: AgentPlatform<TQuery, TOp>;
   readonly provider: LlmProvider;
   readonly maxIterations?: number;
+  /**
+   * 每一轮模型调用、每一次工具调用各产出一条事件，run 的首尾各一条。
+   * 默认 noop，所以单测和既有调用方行为不变；composition root 注入
+   * `consoleObserver`。
+   *
+   * 没有它的时候，一次 agent 故障在日志里只剩下它顺带打出的那几条出站 HTTP：
+   * 调了哪些工具、跑了几轮、在第几步崩的，全靠猜。
+   */
+  readonly observe?: ObserveFn;
+  /** 只用于给事件打标，便于在多文档类型的日志里筛。 */
+  readonly docType?: string;
 }
 
 export class AgentSession<TQuery, TOp> {
@@ -49,70 +62,117 @@ export class AgentSession<TQuery, TOp> {
   }
 
   async run(content: readonly AgentContentPart[]): Promise<AgentRunOutcome> {
+    const observe = this.#deps.observe ?? noopObserver;
+    const docType = this.#deps.docType;
+    const started = Date.now();
+    /** 本次 run 里工具被调用的顺序，只留名字 —— 结束时靠它说清轮次花在哪。 */
+    const trace: string[] = [];
+    const finish = (outcome: AgentRunOutcome, iterations: number): AgentRunOutcome => {
+      observe({
+        event: "agent_run", phase: "end",
+        ...(docType ? { docType } : {}),
+        ok: outcome.ok, iterations, durationMs: Date.now() - started,
+        tools: summarise(trace),
+        ...(outcome.ok ? {} : { error: outcome.error }),
+      });
+      return outcome;
+    };
+
     this.#history.push({ role: "user", content });
     const maxIterations = this.#deps.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    observe({ event: "agent_run", phase: "start", ...(docType ? { docType } : {}) });
 
-    /** 本次 run 里工具被调用的顺序，只留名字 —— 到上限时靠它说清 25 轮花在哪。 */
-    const trace: string[] = [];
+    let iterations = 0;
+    try {
+      for (iterations = 1; iterations <= maxIterations; iterations++) {
+        // 模型调用与消息实体化都在这一段。以前它们不在任何 try 里，一抛就直接
+        // 穿出 DO，被 Cloudflare 包成 `internal error; reference = …` —— 原因
+        // 彻底丢失。实测一次故障：两次图像编辑都成功，然后静默 18 秒、500，
+        // 日志里没有任何线索。整个循环现在兜在下面那个 catch 里。
+        const llmStarted = Date.now();
+        const messages = await materializeMessages(
+          this.#history,
+          blob => this.#deps.platform.readBlob(blob),
+          this.#blobCache,
+        );
+        const completion = await this.#deps.provider.complete({
+          system: this.#deps.agent.instructions,
+          messages,
+          tools: this.#definitions,
+        });
 
-    for (let iterations = 1; iterations <= maxIterations; iterations++) {
-      const messages = await materializeMessages(
-        this.#history,
-        blob => this.#deps.platform.readBlob(blob),
-        this.#blobCache,
-      );
-      const completion = await this.#deps.provider.complete({
-        system: this.#deps.agent.instructions,
-        messages,
-        tools: this.#definitions,
-      });
+        // provider 返回的文字直接成为 assistant 的 text part。将来 provider
+        // 返回二进制时，这里先走 platform.writeBlob 再进历史（spec 5.4.2）。
+        const assistantContent = completion.content
+          .filter((p): p is { type: "text"; text: string } => p.type === "text")
+          .map(p => ({ type: "text" as const, text: p.text }));
+        const toolCalls = completion.toolCalls ?? [];
+        observe({
+          event: "agent_step", kind: "llm", iteration: iterations,
+          durationMs: Date.now() - llmStarted, ok: true,
+          toolCalls: toolCalls.map(c => c.name),
+          ...(completion.stopReason ? { stopReason: completion.stopReason } : {}),
+        });
 
-      // provider 返回的文字直接成为 assistant 的 text part。将来 provider
-      // 返回二进制时，这里先走 platform.writeBlob 再进历史（spec 5.4.2）。
-      const assistantContent = completion.content
-        .filter((p): p is { type: "text"; text: string } => p.type === "text")
-        .map(p => ({ type: "text" as const, text: p.text }));
-      const toolCalls = completion.toolCalls ?? [];
+        // 既没有可说的话也没有要调的工具 —— 思考阶段用光 max_tokens、refusal、
+        // pause_turn 都会这样。这条**不能进历史**：空 content 的 assistant 消息
+        // 一旦留下，此后每次 run 都会把它发给模型，而 Anthropic 拒收空 content，
+        // 这个会话就只能靠 reset 救活了。直接以失败结束，把原因说出来。
+        if (toolCalls.length === 0 && assistantContent.length === 0) {
+          const why = completion.stopReason ?? "未知";
+          return finish({ ok: false, error: `模型没有返回可用内容（stop_reason: ${why}）` }, iterations);
+        }
 
-      // 既没有可说的话也没有要调的工具 —— 思考阶段用光 max_tokens、refusal、
-      // pause_turn 都会这样。这条**不能进历史**：空 content 的 assistant 消息
-      // 一旦留下，此后每次 run 都会把它发给模型，而 Anthropic 拒收空 content，
-      // 这个会话就只能靠 reset 救活了。直接以失败结束，把原因说出来。
-      if (toolCalls.length === 0 && assistantContent.length === 0) {
-        const why = completion.stopReason ?? "未知";
-        return { ok: false, error: `模型没有返回可用内容（stop_reason: ${why}）` };
-      }
-
-      this.#history.push({
-        role: "assistant",
-        content: assistantContent,
-        ...(toolCalls.length ? { toolCalls } : {}),
-      });
-
-      if (toolCalls.length === 0) {
-        return {
-          ok: true,
+        this.#history.push({
+          role: "assistant",
           content: assistantContent,
-          response: assistantContent.map(p => p.text).join(""),
-          iterations,
-        };
-      }
+          ...(toolCalls.length ? { toolCalls } : {}),
+        });
 
-      for (const call of toolCalls) {
-        trace.push(call.name);
-        const result = await this.#dispatch(call.name, call.arguments);
-        this.#history.push(toolResultToMessage(call.id, result));
+        if (toolCalls.length === 0) {
+          return finish({
+            ok: true,
+            content: assistantContent,
+            response: assistantContent.map(p => p.text).join(""),
+            iterations,
+          }, iterations);
+        }
+
+        for (const call of toolCalls) {
+          trace.push(call.name);
+          const toolStarted = Date.now();
+          const result = await this.#dispatch(call.name, call.arguments);
+          // #dispatch 从不抛：它把异常折成 {error} 交给模型。所以"这一步成不成"
+          // 只能从结果里读，而不能靠 try/catch —— 靠 catch 会让每一次工具失败
+          // 都显示成成功。
+          const failed = (result.structuredContent as { error?: unknown } | undefined)?.error;
+          observe({
+            event: "agent_step", kind: "tool", iteration: iterations, name: call.name,
+            durationMs: Date.now() - toolStarted, ok: failed === undefined,
+            ...(failed === undefined ? {} : { error: String(failed) }),
+          });
+          this.#history.push(toolResultToMessage(call.id, result));
+        }
       }
+    } catch (err) {
+      // 走到这里说明异常来自模型调用或消息实体化 —— 工具那条路自己会兜。
+      // 记下来并折成一个**普通的失败结果**：抛出去只会变成一个不透明的 500。
+      const detail = observedFailure(err);
+      observe({
+        event: "agent_step", kind: "llm", iteration: iterations,
+        durationMs: Date.now() - started, ok: false, ...detail,
+      });
+      return finish({ ok: false, error: `Agent run failed: ${detail.error}` }, iterations);
     }
 
     // 光说"到上限了"对排查毫无用处。一次真实故障里，用户拿到的就是
     // `Max iterations (25) reached`，而 25 轮到底花在哪儿完全看不出来 ——
     // 是一直在找图层，还是一直在重画，还是某个工具每次都报错，这三种成因的
     // 修法完全不同。把调用序列压缩后带出来，一眼就能分辨。
-    return {
+    return finish({
       ok: false,
       error: `Max iterations (${maxIterations}) reached. Tools called: ${summarise(trace)}`,
-    };
+    }, maxIterations);
   }
 
   reset(): void {

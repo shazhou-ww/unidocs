@@ -9,6 +9,7 @@
 import { AgentSession } from "@unidocs/doctype-server-common/agent";
 import type { AgentContentPart, DocumentAgent, LlmProvider } from "@unidocs/protocol";
 import { docSessionObjectName } from "@unidocs/doctype-server-common";
+import { consoleObserver } from "@unidocs/protocol-doc";
 import { createCloudflareAgentPlatform } from "./agent-platform-do.js";
 
 export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
@@ -129,6 +130,10 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
         platform,
         provider: config.provider(this.#env),
         ...(config.maxIterations === undefined ? {} : { maxIterations: config.maxIterations }),
+        // agent 自己的运行过程此前完全没有观测：一次失败在日志里只剩下它顺带
+        // 打出的那几条出站 HTTP，调了哪些工具、跑了几轮、在第几步崩的全靠猜。
+        // 与出站 HTTP 用同一个 observer，落到同一条日志流里。
+        observe: consoleObserver,
       });
       return this.#agentSession;
     }

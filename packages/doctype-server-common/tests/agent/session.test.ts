@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   AgentCompletion, AgentPlatform, DocumentAgent, LlmMessage, SBlob, SBlobData, SValue,
 } from "@unidocs/protocol";
+import type { ObservedEvent } from "@unidocs/protocol-doc";
 import { AgentSession } from "../../src/agent/index.js";
 
 type Q = { kind: string; payload?: Record<string, unknown> };
@@ -223,5 +224,80 @@ describe("AgentSession 循环", () => {
     s.reset();
     await s.run([{ type: "text", text: "第二句" }]);
     expect(provider.seen[1]).toHaveLength(1);
+  });
+});
+
+/**
+ * agent 运行过程的观测。
+ *
+ * 这一族是被一次真实故障逼出来的：agent 跑了 64 秒，两次图像调用都成功，然后
+ * 整个请求以 `internal error; reference = …` 收场。日志里只有那两条出站 HTTP
+ * —— 调了哪些工具、跑了几轮、在第几步崩的，一个字都没有。成因是模型调用和
+ * 消息实体化不在任何 try 里，异常直接穿出 DO 被 Cloudflare 包成不透明 500。
+ */
+describe("AgentSession 观测", () => {
+  const collect = () => { const seen: ObservedEvent[] = []; return { seen, observe: (e: ObservedEvent) => seen.push(e) }; };
+  const kinds = (seen: ObservedEvent[]) => seen.map(e => (e.event === "agent_step" ? `${e.event}:${e.kind}` : `${e.event}:${(e as { phase: string }).phase}`));
+
+  it("一次干净的 run 产出 start / llm / tool / llm / end", async () => {
+    const { seen, observe } = collect();
+    const provider = scriptedProvider([
+      { content: [], toolCalls: [{ id: "c1", name: "getLayers", arguments: {} }] },
+      { content: [{ type: "text", text: "好了" }] },
+    ]);
+    const s = new AgentSession({ agent, platform: fakePlatform(), provider, observe, docType: "psd" });
+    await s.run([{ type: "text", text: "x" }]);
+    expect(kinds(seen)).toEqual([
+      "agent_run:start", "agent_step:llm", "agent_step:tool", "agent_step:llm", "agent_run:end",
+    ]);
+    const end = seen.at(-1) as { ok: boolean; iterations: number; tools: string; docType: string };
+    expect(end).toMatchObject({ ok: true, iterations: 2, tools: "getLayers", docType: "psd" });
+  });
+
+  it("工具失败记成 ok:false 并带上错误 —— #dispatch 从不抛，只能从结果里读", async () => {
+    // 靠 try/catch 判断这一步成不成会把每一次工具失败都显示成成功。
+    const { seen, observe } = collect();
+    const platform = fakePlatform({ apply: vi.fn(async () => { throw new Error("layer not found: L9"); }) });
+    const provider = scriptedProvider([
+      { content: [], toolCalls: [{ id: "c1", name: "transform", arguments: {} }] },
+      { content: [{ type: "text", text: "换一个" }] },
+    ]);
+    await new AgentSession({ agent, platform, provider, observe }).run([{ type: "text", text: "x" }]);
+    const tool = seen.find(e => e.event === "agent_step" && e.kind === "tool") as { ok: boolean; error: string; name: string };
+    expect(tool.ok).toBe(false);
+    expect(tool.name).toBe("transform");
+    expect(tool.error).toContain("layer not found: L9");
+  });
+
+  it("模型调用抛异常时以普通失败结束，并记下 error 和栈 —— 而不是穿出去变成不透明 500", async () => {
+    const { seen, observe } = collect();
+    const boom = Object.assign(new Error("payload too large"), { cause: new Error("413 from upstream") });
+    const provider = { seen: [], complete: vi.fn(async () => { throw boom; }) };
+    const out = await new AgentSession({ agent, platform: fakePlatform(), provider: provider as never, observe })
+      .run([{ type: "text", text: "x" }]);
+    expect(out.ok).toBe(false);
+    expect((out as { error: string }).error).toContain("payload too large");
+    // cause 也要展开：底层原因常被藏在外层那句话里面
+    expect((out as { error: string }).error).toContain("413 from upstream");
+    const failed = seen.find(e => e.event === "agent_step" && !e.ok) as { error: string; stack?: string };
+    expect(failed.error).toContain("payload too large");
+    expect(failed.stack).toBeTruthy();
+    // 即使崩了，end 事件也必须有 —— 否则日志里一次 run 有头无尾
+    expect(kinds(seen).at(-1)).toBe("agent_run:end");
+  });
+
+  it("到达上限时 end 事件带上完整调用序列", async () => {
+    const { seen, observe } = collect();
+    const call = { content: [], toolCalls: [{ id: "c1", name: "getLayers", arguments: {} }] };
+    const provider = scriptedProvider([call, call, call]);
+    await new AgentSession({ agent, platform: fakePlatform(), provider, observe, maxIterations: 2 })
+      .run([{ type: "text", text: "x" }]);
+    expect(seen.at(-1)).toMatchObject({ event: "agent_run", phase: "end", ok: false, tools: "getLayers x2" });
+  });
+
+  it("不注入 observe 就一条都不产出 —— 既有调用方与单测行为不变", async () => {
+    const provider = scriptedProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const out = await new AgentSession({ agent, platform: fakePlatform(), provider }).run([{ type: "text", text: "x" }]);
+    expect(out.ok).toBe(true);
   });
 });

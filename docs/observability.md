@@ -54,6 +54,42 @@ accept-encoding / user-agent),`Authorization`、`X-UniDocs-CAS-Capability`、
 `X-Internal-Token`、Cookie 永远不记。响应体只在出站且 ≥400 时从
 `response.clone()` 读,成功响应(可能是几十 MB 的文档)一个字节都不碰。
 
+## Agent 事件
+
+`http_call` 只看得见出站请求。一次 agent 故障里那远远不够 —— 实测过一次:
+agent 跑了 64 秒,两次图像调用都成功,然后整个请求以
+`internal error; reference = …` 收场,日志里只有那两条出站 HTTP。它调了哪些
+工具、跑了几轮、在第几步崩的、崩在什么上,一个字都没有。
+
+于是有了 `agent_` 这一族,两个事件名,`jq 'select(.event | startswith("agent_"))'`
+一条就能把一次 run 完整拉出来:
+
+| 事件 | 何时 | 关键字段 |
+|---|---|---|
+| `agent_run` `phase:"start"` | run 开始 | `docType` |
+| `agent_step` `kind:"llm"` | 每次模型调用 | `iteration` `durationMs` `toolCalls[]` `stopReason` |
+| `agent_step` `kind:"tool"` | 每次工具调用 | `iteration` `name` `durationMs` `ok` `error` |
+| `agent_run` `phase:"end"` | run 结束(**含崩溃**) | `ok` `iterations` `durationMs` `tools` `error` `stack` |
+
+`tools` 是整条调用序列,连续重复压成 `xN`(`getLayers, getPreview x8, editPixels`)
+——「一直在找图层」和「一直在重画」靠它一眼分开。
+
+两条与 `http_call` 一致的约定:成功只记简报,失败才带 `error` 与栈;`ObserveFn`
+由适配器注入,内核只产事件不决定往哪写。
+
+工具那一步的 `ok` 是从**结果**里读的,不是靠 try/catch:`AgentSession#dispatch`
+从不抛异常——它把错误折成 `{error}` 交给模型好让循环继续——所以靠 catch 判断
+会把每一次工具失败都显示成成功。
+
+```bash
+# 一次 run 的完整过程
+jq 'select(.event | startswith("agent_"))' .dev-cloudflare.log
+# 只看失败的步骤
+jq 'select(.event == "agent_step" and .ok == false)' .dev-cloudflare.log
+# 每次 run 花了多久、跑了几轮、调了什么
+jq 'select(.event == "agent_run" and .phase == "end") | {ok, iterations, durationMs, tools}' .dev-cloudflare.log
+```
+
 ## 埋点位置
 
 | 位置 | 覆盖 |
@@ -62,6 +98,8 @@ accept-encoding / user-agent),`Authorization`、`X-UniDocs-CAS-Capability`、
 | 同文件的 CAS 转发分支 | 网关 → CAS |
 | 同文件的 `forwardToWorker()` | 网关 → doc worker |
 | `azure-sdk/src/doc-type-service.ts` 的 `httpCasFetcher` | doc service → CAS |
+| `doctype-server-common/src/agent/session.ts` 的 `run()` | agent 的每一轮与每一次工具调用 |
+| `doctype-psd/src/image/qwen-editor.ts` | doc worker → DashScope |
 
 sink 由适配器注入(`observe: consoleObserver`),`gateway-common` 本身保持
 cloud-neutral、可测——测试注入一个收集器即可断言事件序列,见
