@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { encodeHeader, hashToHex } from "@unicas/codec";
 import {
+  finalizeCanonicalNodeLease,
   leaseCanonicalNode,
   leaseReadyNode,
   MAX_LEASE_MS,
@@ -33,6 +34,7 @@ class MemoryNodeLeaseRepository implements NodeLeaseRepository, CanonicalNodeLea
   readyAfterUpload = false;
   uploadError: Error | undefined;
   committed: UploadedCanonicalNodeCommit | undefined;
+  prefixReads = 0;
 
   async readNodeLease(_scope: NodeLeaseScope, _hash: string) {
     return this.lease;
@@ -51,6 +53,7 @@ class MemoryNodeLeaseRepository implements NodeLeaseRepository, CanonicalNodeLea
   }
 
   async readCanonicalPrefix(_scope: NodeLeaseScope, _hash: string, length: number) {
+    this.prefixReads += 1;
     const bytes = this.canonical.slice(0, length);
     return new ReadableStream<Uint8Array>({
       start(controller) {
@@ -373,6 +376,89 @@ describe("streaming node lease service kernel", () => {
       hash: "a".repeat(64),
       storedBytes: canonical.length,
     });
+  });
+});
+
+describe("finalizeCanonicalNodeLease parsed-metadata path", () => {
+  test("commits parsed metadata without the R2 read-back", async () => {
+    const child = "b".repeat(64);
+    const repository = new MemoryNodeLeaseRepository();
+    repository.ready.add(child);
+
+    const result = await finalizeCanonicalNodeLease({
+      repository,
+      scope: SCOPE,
+      plan: { hash: "a".repeat(64), storedBytes: 100, leaseDurationMs: DURATION },
+      parsed: { contentSize: 10, contentType: "text/plain", refs: [child] },
+      now: () => 100,
+    });
+
+    expect(result).toEqual({ hash: "a".repeat(64), ready: true, leaseStartedAt: 100, leaseExpiresAt: 60_100 });
+    expect(repository.committed).toEqual({
+      kind: "new",
+      hash: "a".repeat(64),
+      contentSize: 10,
+      contentType: "text/plain",
+      refs: [child],
+      leaseStartedAt: 100,
+      leaseExpiresAt: 60_100,
+    });
+    expect(repository.prefixReads).toBe(0);
+  });
+
+  test("falls back to the R2 read-back when no parsed metadata is supplied", async () => {
+    const child = "b".repeat(64);
+    const content = new TextEncoder().encode("payload");
+    const contentType = "text/plain";
+    const canonical = concatenate(
+      encodeHeader(content.length, contentType, 1),
+      new TextEncoder().encode(contentType),
+      hexBytes(child),
+      content,
+    );
+    const repository = new MemoryNodeLeaseRepository();
+    repository.canonical = canonical;
+    repository.ready.add(child);
+
+    await finalizeCanonicalNodeLease({
+      repository,
+      scope: SCOPE,
+      plan: {
+        hash: "a".repeat(64),
+        storedBytes: canonical.length,
+        leaseDurationMs: DURATION,
+      },
+      now: () => 100,
+    });
+
+    expect(repository.prefixReads).toBe(1);
+    expect(repository.committed).toMatchObject({
+      kind: "new",
+      hash: "a".repeat(64),
+      contentSize: content.length,
+      contentType,
+      refs: [child],
+    });
+  });
+
+  test("still rejects parsed metadata that conflicts with an existing row", async () => {
+    const repository = new MemoryNodeLeaseRepository();
+    repository.canonicalLease = {
+      contentSize: 1,
+      contentType: "text/plain",
+      leaseStartedAt: 1,
+      leaseExpiresAt: 2,
+    };
+
+    await expect(finalizeCanonicalNodeLease({
+      repository,
+      scope: SCOPE,
+      plan: { hash: "a".repeat(64), storedBytes: 100, leaseDurationMs: DURATION },
+      parsed: { contentSize: 1, contentType: "application/xml", refs: [] },
+      now: () => 100,
+    })).rejects.toMatchObject({ status: 409, code: "NODE_CONFLICT" });
+    expect(repository.prefixReads).toBe(0);
+    expect(repository.committed).toBeUndefined();
   });
 });
 

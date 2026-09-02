@@ -9,7 +9,7 @@
  * cycle.
  */
 
-import { CanonicalNodeContentType } from "@unicas/codec";
+import { CanonicalNodeContentType, parseCanonicalNodeStream } from "@unicas/codec";
 import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/workers-types";
 import {
   type CanonicalNodeUploadPlan,
@@ -20,6 +20,7 @@ import {
   readNodeContent,
   readNodeMetadata,
   readNodeUsage,
+  type ParsedUploadedNodeMetadata,
 } from "@unicas/service";
 import { canonicalComposite } from "./do-names.js";
 import {
@@ -56,6 +57,9 @@ export class CasDurableObject {
   readonly #env: TenantCasDoEnv;
   #mutationTail: Promise<void> = Promise.resolve();
   readonly #activeUploads = new Map<string, ActiveUpload>();
+  /** Positive node-ready cache (hash -> expiry) shared by every repository
+   *  built in this DO, so child-ready checks and renewals skip the R2 HEAD. */
+  readonly #readyCache = new Map<string, number>();
 
   constructor(_state: DurableObjectState, env: TenantCasDoEnv) {
     this.#env = env;
@@ -73,6 +77,7 @@ export class CasDurableObject {
       stackId,
       tenantId,
       timing,
+      readyCache: this.#readyCache,
     };
 
     try {
@@ -174,8 +179,11 @@ export class CasDurableObject {
       }
 
       try {
-        await this.#streamCanonicalUpload(store, admission.plan, request.body, declaredLength);
-        const result = await this.#withMutation(() => finalizeCanonicalNodeLease(store, admission.plan));
+        const parsed = await this.#streamCanonicalUpload(
+          store, admission.plan, request.body, declaredLength,
+        );
+        const result = await this.#withMutation(() =>
+          finalizeCanonicalNodeLease(store, admission.plan, parsed));
         admission.active.settle({ ok: true });
         return result;
       } catch (error) {
@@ -194,26 +202,28 @@ export class CasDurableObject {
     }));
   }
 
+  /** Store the canonical body in R2 while tee-parsing its metadata from the
+   *  exact bytes being stored. Returns the parsed header so the finalize step
+   *  can commit D1 metadata without a post-upload R2 read-back. */
   async #streamCanonicalUpload(
     store: Parameters<typeof leaseReadyNode>[0],
     plan: CanonicalNodeUploadPlan,
     body: ReadableStream<Uint8Array>,
     declaredLength: number,
-  ): Promise<void> {
-    if (typeof FixedLengthStream === "undefined") {
-      await uploadCanonicalNode(store, plan, body);
-      return;
-    }
-    const fixed = new FixedLengthStream(declaredLength);
+  ): Promise<ParsedUploadedNodeMetadata> {
     const abort = new AbortController();
-    const pumping = body.pipeTo(fixed.writable, { signal: abort.signal });
-    const uploading = uploadCanonicalNode(store, plan, fixed.readable);
+    const prepared = typeof FixedLengthStream === "undefined"
+      ? { stream: body, pumping: Promise.resolve() }
+      : fixedLengthBody(body, declaredLength, abort);
+    const [uploadStream, parseStream] = prepared.stream.tee();
+    const uploading = uploadCanonicalNode(store, plan, uploadStream);
+    const parsing = parseUploadedBody(parseStream, declaredLength, store.limits);
     try {
-      await uploading;
-      await pumping;
+      const [parsed] = await Promise.all([parsing, uploading, prepared.pumping]);
+      return parsed;
     } catch (error) {
       abort.abort(error);
-      await Promise.allSettled([uploading, pumping]);
+      await Promise.allSettled([parsing, uploading, prepared.pumping]);
       throw error;
     }
   }
@@ -333,6 +343,44 @@ function deferredUpload(): ActiveUpload {
     settle = resolve;
   });
   return { completion, settle };
+}
+
+function fixedLengthBody(
+  body: ReadableStream<Uint8Array>,
+  declaredLength: number,
+  abort: AbortController,
+): { stream: ReadableStream<Uint8Array>; pumping: Promise<void> } {
+  const fixed = new FixedLengthStream(declaredLength);
+  const pumping = body.pipeTo(fixed.writable, { signal: abort.signal });
+  return { stream: fixed.readable, pumping };
+}
+
+/** Parse the canonical header/refs from a tee branch of the bytes being
+ *  uploaded. Only the bounded prefix is consumed; the replayable remainder is
+ *  cancelled so the R2 upload branch drains freely. Errors map like the old
+ *  post-upload read-back inspection did. */
+async function parseUploadedBody(
+  stream: ReadableStream<Uint8Array>,
+  declaredLength: number,
+  limits: Parameters<typeof parseCanonicalNodeStream>[2],
+): Promise<ParsedUploadedNodeMetadata> {
+  try {
+    const parsed = await parseCanonicalNodeStream(stream, declaredLength, limits);
+    await parsed.body.cancel("Canonical prefix parsed; R2 upload consumes the rest")
+      .catch(() => undefined);
+    return {
+      contentSize: parsed.contentSize,
+      contentType: parsed.contentType,
+      refs: parsed.refs,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new NodeOpError(
+      message.includes("too large") ? 413 : 400,
+      NodeOpErrorCodes.INVALID_REQUEST,
+      message,
+    );
+  }
 }
 
 function cancelBody(body: ReadableStream<Uint8Array>, reason: string): void {

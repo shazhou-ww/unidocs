@@ -111,6 +111,7 @@ export type {
   NodeLeaseRecord,
   NodeLeaseRepository,
   NodeLeaseScope,
+  ParsedUploadedNodeMetadata,
   UploadedCanonicalNodeCommit,
 } from "./node-lease.js";
 

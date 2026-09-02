@@ -13,12 +13,32 @@ import type {
 import { stackCanonicalNodeKey } from "./do-names.js";
 import { timeOperation, type TimingSink } from "./timing.js";
 
+/**
+ * Short-lived positive "node is ready" cache keyed by hash, used to avoid an
+ * R2 HEAD on every readiness check. Nodes are immutable once committed; only
+ * cooperative GC can remove them, and GC deletes the D1 row too, so a row hit
+ * plus this cache is a safe readiness signal for everything a live document
+ * references. Entries expire quickly so a GC'd row is not masked for long.
+ */
+export interface NodeReadyCache {
+  get(hash: string): number | undefined;
+  set(hash: string, expiresAt: number): void;
+}
+
+/** Positive ready-cache lifetime. */
+export const READY_CACHE_TTL_MS = 60_000;
+
+function cacheExpiry(): number {
+  return Date.now() + READY_CACHE_TTL_MS;
+}
+
 /** D1/R2 adapter for node renewal, upload, and canonical orphan adoption. */
 export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseRepository {
   constructor(
     readonly db: D1Database,
     readonly bucket: R2Bucket,
     readonly timing?: TimingSink,
+    readonly readyCache?: NodeReadyCache,
   ) { }
 
   async readNodeLease(scope: NodeLeaseScope, hash: string): Promise<NodeLeaseRecord | null> {
@@ -70,8 +90,15 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
     const row = await timeOperation(this.timing, "cas_d1_ready", () => this.db.prepare(
       "SELECT 1 AS found FROM cas_nodes WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
     ).bind(scope.stackId, scope.tenantId, hash).first<{ found: number }>());
-    return row !== null && await timeOperation(this.timing, "cas_r2_head", () =>
-      this.bucket.head(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash))) !== null;
+    if (row === null) return false;
+    // The D1 row is authoritative liveness (GC deletes it with the object).
+    // Skip the R2 HEAD while a recent positive result is cached.
+    const cachedUntil = this.readyCache?.get(hash);
+    if (cachedUntil !== undefined && cachedUntil >= Date.now()) return true;
+    const object = await timeOperation(this.timing, "cas_r2_head", () =>
+      this.bucket.head(stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash)));
+    if (object !== null) this.readyCache?.set(hash, cacheExpiry());
+    return object !== null;
   }
 
   async renewNodeLease(scope: NodeLeaseScope, hash: string, lease: NodeLeaseRecord): Promise<void> {
@@ -112,6 +139,7 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
         this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
           .bind(scope.stackId, scope.tenantId, plan.hash),
       ]).then(() => undefined));
+      this.readyCache?.set(plan.hash, cacheExpiry());
       return;
     }
     await this.commitNewNode(scope, plan);
@@ -148,5 +176,9 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
     batch.push(this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
       .bind(scope.stackId, scope.tenantId, plan.hash));
     await timeOperation(this.timing, "cas_d1_commit", () => this.db.batch(batch).then(() => undefined));
+    // The node was uploaded by this same DO and the D1 row is now committed;
+    // mark it ready so later child checks in the same flow skip the R2 HEAD.
+    this.readyCache?.set(plan.hash, cacheExpiry());
+    for (const child of plan.refs) this.readyCache?.set(child, cacheExpiry());
   }
 }

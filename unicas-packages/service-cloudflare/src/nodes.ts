@@ -14,10 +14,15 @@ import {
   NodeOpError,
   NodeOpErrorCodes,
   uploadCanonicalNode as uploadCanonicalNodeKernel,
+  type ParsedUploadedNodeMetadata,
 } from "@unicas/service";
 import type { CanonicalNodeLeaseBeginResult, CanonicalNodeUploadPlan } from "@unicas/service";
 import { CloudflareNodeLeaseRepository } from "./node-lease.js";
+import type { NodeReadyCache } from "./node-lease.js";
 import type { TimingSink } from "./timing.js";
+
+export type { NodeReadyCache } from "./node-lease.js";
+export { READY_CACHE_TTL_MS } from "./node-lease.js";
 
 export interface NodeStore {
   readonly db: D1Database;
@@ -26,6 +31,8 @@ export interface NodeStore {
   readonly tenantId: string;
   readonly limits?: CanonicalNodeLimits;
   readonly timing?: TimingSink;
+  /** Per-DO positive ready-cache shared by every repository built from this store. */
+  readonly readyCache?: NodeReadyCache;
 }
 
 export interface LeaseCanonicalNodeInput {
@@ -36,7 +43,12 @@ export interface LeaseCanonicalNodeInput {
 }
 
 function repository(store: NodeStore): CloudflareNodeLeaseRepository {
-  return new CloudflareNodeLeaseRepository(store.db, store.bucket, store.timing);
+  return new CloudflareNodeLeaseRepository(
+    store.db,
+    store.bucket,
+    store.timing,
+    store.readyCache,
+  );
 }
 
 export function parseRefsHeader(header: string | null): string[] {
@@ -89,12 +101,14 @@ export function uploadCanonicalNode(
 export function finalizeCanonicalNodeLease(
   store: NodeStore,
   plan: CanonicalNodeUploadPlan,
+  parsed?: ParsedUploadedNodeMetadata,
 ): Promise<CasLeaseResult> {
   return finalizeCanonicalNodeLeaseKernel({
     repository: repository(store),
     scope: { stackId: store.stackId, tenantId: store.tenantId },
     plan,
     limits: store.limits,
+    ...(parsed === undefined ? {} : { parsed }),
   });
 }
 

@@ -81,6 +81,16 @@ export type UploadedCanonicalNodeCommit =
     readonly leaseExpiresAt: number;
   };
 
+/** Canonical-node metadata parsed from the upload stream itself (tee'd while
+ *  the bytes stream into storage). Supplying it lets the finalize step skip
+ *  the post-upload R2 read-back: the upload already carried a `sha256`
+ *  checksum, so the stored bytes are identical to the stream that was parsed. */
+export interface ParsedUploadedNodeMetadata {
+  readonly contentSize: number;
+  readonly contentType: string;
+  readonly refs: readonly string[];
+}
+
 /** Semantic persistence boundary for bodyless node renewal and orphan adoption. */
 export interface NodeLeaseRepository {
   readNodeLease(scope: NodeLeaseScope, hash: string): Promise<NodeLeaseRecord | null>;
@@ -217,27 +227,36 @@ export async function finalizeCanonicalNodeLease(input: {
   readonly plan: CanonicalNodeUploadPlan;
   readonly limits?: CanonicalNodeLimits;
   readonly now?: () => number;
+  /** Metadata parsed from the upload stream (tee) while it was stored. When
+   *  present the finalize step skips the R2 read-back entirely; the upload was
+   *  already checksum-verified by storage (`sha256`), so the parsed values are
+   *  authoritative for the exact bytes that were stored. */
+  readonly parsed?: ParsedUploadedNodeMetadata;
 }): Promise<CasLeaseResult> {
   validateLeaseHash(input.plan.hash);
   const existing = await input.repository.readCanonicalNodeLease(input.scope, input.plan.hash);
   const now = (input.now ?? (() => Date.now()))();
 
-  let parsed: Awaited<ReturnType<typeof parseCanonicalNodeStream>>;
-  try {
-    parsed = await inspectCanonicalNode(
-      input.repository,
-      input.scope,
-      input.plan.hash,
-      input.plan.storedBytes,
-      input.limits,
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Invalid canonical node";
-    throw new NodeOpError(
-      message.includes("too large") ? 413 : 400,
-      NodeOpErrorCodes.INVALID_REQUEST,
-      message,
-    );
+  let parsed: ParsedUploadedNodeMetadata;
+  if (input.parsed !== undefined) {
+    parsed = input.parsed;
+  } else {
+    try {
+      parsed = await inspectCanonicalNode(
+        input.repository,
+        input.scope,
+        input.plan.hash,
+        input.plan.storedBytes,
+        input.limits,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid canonical node";
+      throw new NodeOpError(
+        message.includes("too large") ? 413 : 400,
+        NodeOpErrorCodes.INVALID_REQUEST,
+        message,
+      );
+    }
   }
 
   if (existing !== null) {
