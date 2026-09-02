@@ -11,7 +11,9 @@
  *   LLM_API_KEY   required
  *   LLM_MODEL     default claude-opus-5
  */
-import { httpCallEvent, httpCallFailure, noopObserver, truncateObservedBody } from "@unidocs/protocol-doc";
+import {
+  httpCallEvent, httpCallFailure, LlmWaitHeartbeatMs, noopObserver, truncateObservedBody,
+} from "@unidocs/protocol-doc";
 import type { ObserveFn } from "@unidocs/protocol-doc";
 import type {
   AgentCompletion, AgentToolCall, AgentToolDefinition, JsonValue,
@@ -165,6 +167,12 @@ export interface AnthropicProviderOptions {
   readonly observe?: ObserveFn;
   /** 覆盖 {@link LLM_TIMEOUT_MS}。 */
   readonly timeoutMs?: number;
+  /**
+   * 覆盖 {@link LlmWaitHeartbeatMs}。存在的理由只有一个:让"心跳会**反复**
+   * 触发"这件事可以用真实时钟去测 —— 假时钟跨 await 挂起的异步帧时不会给
+   * interval 续期,于是断言不出真实行为。
+   */
+  readonly heartbeatMs?: number;
 }
 
 export function createAnthropicProvider(
@@ -203,7 +211,22 @@ export function createAnthropicProvider(
         // 请求头一概不上报 —— x-api-key 在里面。
         requestHeaders: { "content-type": "application/json", "content-length": String(body.length) },
       };
+      // 发出去之前先说清发的是什么。图片是整个内联进请求体的,历史一长
+      // requestBytes 能翻几个数量级 —— 事后回看时这是第一个要确认的数。
+      observe({
+        event: "llm_call", phase: "start", endpoint, model,
+        requestChars: body.length,
+        messages: messages.length,
+        images: messages.reduce((n, m) => n + m.content.filter(p => p.type === "image").length, 0),
+        tools: anthTools.length,
+      });
       const started = Date.now();
+      // 等待期间的心跳。它是"worker 还活着,只是在等"与"整个 isolate 卡住了"
+      // 之间唯一的区分器 —— 那次 300 秒的故障里,这两种可能一个都排除不掉。
+      const heartbeat = setInterval(
+        () => observe({ event: "llm_call", phase: "wait", endpoint, model, elapsedMs: Date.now() - started }),
+        opts.heartbeatMs ?? LlmWaitHeartbeatMs,
+      );
       let resp: Response;
       try {
         resp = await fetchImpl(endpoint, {
@@ -218,6 +241,7 @@ export function createAnthropicProvider(
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (err) {
+        clearInterval(heartbeat);
         const durationMs = Date.now() - started;
         observe(httpCallFailure({ ...call, durationMs }, err));
         // 超时要说人话：`TimeoutError: signal timed out` 对读日志的人没有信息量，
@@ -227,16 +251,24 @@ export function createAnthropicProvider(
         }
         throw err;
       }
-      const durationMs = Date.now() - started;
-      if (!resp.ok) {
-        const text = await resp.text();
-        observe(httpCallEvent({ ...call, durationMs }, resp.status, truncateObservedBody(text).body === text
-          ? { responseBody: text }
-          : { responseBody: truncateObservedBody(text).body, truncated: true }));
-        throw new Error(`Anthropic ${resp.status}: ${text}`);
+      // fetch 的 promise 在**响应头**到达时就 resolve,响应体是之后才读的。
+      // 心跳因此要留到读完为止 —— 卡在读 body 上和卡在等 header 上都得看见。
+      const ttfbMs = Date.now() - started;
+      try {
+        if (!resp.ok) {
+          const text = await resp.text();
+          observe(httpCallEvent({ ...call, durationMs: Date.now() - started, ttfbMs }, resp.status,
+            truncateObservedBody(text).body === text
+              ? { responseBody: text }
+              : { responseBody: truncateObservedBody(text).body, truncated: true }));
+          throw new Error(`Anthropic ${resp.status}: ${text}`);
+        }
+        const data = await resp.json() as AnthropicResponse;
+        observe(httpCallEvent({ ...call, durationMs: Date.now() - started, ttfbMs }, resp.status));
+        return toCompletion(data);
+      } finally {
+        clearInterval(heartbeat);
       }
-      observe(httpCallEvent({ ...call, durationMs }, resp.status));
-      return toCompletion(await resp.json() as AnthropicResponse);
     },
   };
 }

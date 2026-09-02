@@ -66,6 +66,7 @@ export {
   consoleObserver,
   httpCallEvent,
   httpCallFailure,
+  LlmWaitHeartbeatMs,
   noopObserver,
   ObservedBodyCap,
   ObservedStackCap,
@@ -76,5 +77,6 @@ export {
 } from "./observe.js";
 export { observedFailure } from "./observe.js";
 export type {
-  AgentRunEvent, AgentStepEvent, HttpCallEvent, HttpCallInput, ObservedEvent, ObserveFn,
+  AgentRunEvent, AgentStepEvent, HttpCallEvent, HttpCallInput, LlmCallEvent,
+  ObservedEvent, ObserveFn,
 } from "./observe.js";

@@ -57,6 +57,14 @@ export interface HttpCallEvent {
   /** HTTP 状态码;**0 表示根本没拿到响应**(超时/连接断/抛异常)。 */
   readonly status: number;
   readonly durationMs: number;
+  /**
+   * 响应**头**到达的耗时,与 `durationMs`(读完响应体)分开。
+   *
+   * 两者差得远意味着"对方开始回了但是回得慢",两者一样意味着"对方想了很久
+   * 才开口"——这是两种成因、两种修法。只有一个总耗时的时候分不出来。
+   * 只在拿到响应且调用方分别计了时的情况下出现。
+   */
+  readonly ttfbMs?: number;
   readonly ok: boolean;
   readonly tenantId?: string;
   readonly docType?: string;
@@ -128,7 +136,48 @@ export interface AgentStepEvent {
   readonly stack?: string;
 }
 
-export type ObservedEvent = HttpCallEvent | AgentRunEvent | AgentStepEvent;
+/**
+ * 一次模型调用**发出之前**与**等待期间**的事件。
+ *
+ * `http_call` 只在调用有结果之后才产出,于是"发出去"到"失败"之间是一段
+ * 全黑的区间。一次真实故障就卡在这里:第一轮模型调用挂了 300.3 秒,栈精确
+ * 停在 `await fetch(…)` 那一行(响应头始终没到),而那五分钟里日志上一个字
+ * 都没有 —— 分不出请求根本没发出去、发出去了对面不回、还是整个 worker 已经
+ * 不动了。这三种成因的修法完全不同。
+ *
+ * 两个 phase 各解决其中一半:
+ *   - `start` 在 fetch 之前发,带上**实际发出去的形状**(字节数、消息数、
+ *     图片数)。没有它就只能靠猜请求有多大 —— 图片是整个内联进请求的,
+ *     历史一长请求体能翻几个数量级。
+ *   - `wait`  在等待期间按 {@link LlmWaitHeartbeatMs} 周期发。它出现就证明
+ *     worker 还活着、只是在等;它不出现就说明整个 isolate 卡住了。
+ */
+export interface LlmCallEvent {
+  readonly event: "llm_call";
+  readonly phase: "start" | "wait";
+  readonly endpoint: string;
+  readonly model: string;
+  /**
+   * 仅 start:请求体的字符数。
+   *
+   * 刻意不算字节:UTF-8 编码一遍要把整个请求体再复制一份,而这个体积正是
+   * 它可能出问题的原因。图片以 base64 内联,是纯 ASCII,占了大头时两者一致。
+   */
+  readonly requestChars?: number;
+  /** 仅 start。 */
+  readonly messages?: number;
+  /** 仅 start:内联进请求的图片数 —— 请求体膨胀几乎总是它带来的。 */
+  readonly images?: number;
+  /** 仅 start。 */
+  readonly tools?: number;
+  /** 仅 wait:已经等了多久。 */
+  readonly elapsedMs?: number;
+}
+
+/** `llm_call` `phase:"wait"` 的间隔。够密看得出卡住,够疏不刷屏。 */
+export const LlmWaitHeartbeatMs = 15_000;
+
+export type ObservedEvent = HttpCallEvent | AgentRunEvent | AgentStepEvent | LlmCallEvent;
 
 export type ObserveFn = (event: ObservedEvent) => void;
 
@@ -207,6 +256,8 @@ export interface HttpCallInput {
   readonly op?: string;
   readonly method: string;
   readonly durationMs: number;
+  /** 响应头到达的耗时;调用方分别计时的才传。 */
+  readonly ttfbMs?: number;
   readonly tenantId?: string;
   readonly docType?: string;
   /** 完整 URL,只在非 2xx 时写进事件。 */
@@ -234,6 +285,7 @@ export function httpCallEvent(
     method: input.method,
     status,
     durationMs: input.durationMs,
+    ...(input.ttfbMs !== undefined ? { ttfbMs: input.ttfbMs } : {}),
     ok,
     ...(input.tenantId !== undefined ? { tenantId: input.tenantId } : {}),
     ...(input.docType !== undefined ? { docType: input.docType } : {}),

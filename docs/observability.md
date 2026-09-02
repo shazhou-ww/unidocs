@@ -70,12 +70,28 @@ agent 跑了 64 秒,两次图像调用都成功,然后整个请求以
 | `agent_step` `kind:"llm"` | 每次模型调用 | `iteration` `durationMs` `toolCalls[]` `stopReason` |
 | `agent_step` `kind:"tool"` | 每次工具调用 | `iteration` `name` `durationMs` `ok` `error` |
 | `agent_run` `phase:"end"` | run 结束(**含崩溃**) | `ok` `iterations` `durationMs` `tools` `error` `stack` |
+| `llm_call` `phase:"start"` | 模型调用**发出之前** | `endpoint` `model` `requestChars` `messages` `images` `tools` |
+| `llm_call` `phase:"wait"` | 等待期间每 15 秒 | `elapsedMs` |
 
 `tools` 是整条调用序列,连续重复压成 `xN`(`getLayers, getPreview x8, editPixels`)
 ——「一直在找图层」和「一直在重画」靠它一眼分开。
 
 两条与 `http_call` 一致的约定:成功只记简报,失败才带 `error` 与栈;`ObserveFn`
 由适配器注入,内核只产事件不决定往哪写。
+
+`llm_call` 这一族补的是另一个洞:`http_call` 只在调用**有结果之后**才产出,
+于是"发出去"到"失败"之间是一段全黑的区间。一次真实故障就卡在这里 —— 第一
+轮模型调用挂了 300.3 秒,栈精确停在 `await fetch(…)` 那一行(响应头始终没到),
+而那五分钟里日志上一个字都没有,分不出三件事:请求根本没发出去、发出去了对面
+不回、还是整个 isolate 已经不动了。
+
+- `start` 在 fetch 之前落盘,带上**实际发出去的形状**。`requestChars` 是第一
+  个要看的数:图片以 base64 整个内联进请求体,历史一长它能翻几个数量级。
+- `wait` 证明 worker 还活着、只是在等。它不出现就说明卡的不是对面。
+
+同一条 `http_call` 上另有 `ttfbMs`(响应**头**到达)与 `durationMs`(读完响应
+体)之分。两者差得远是"对方回得慢",两者一样是"对方想了很久才开口" —— 修法
+完全不同,只有一个总耗时的时候分不出来。
 
 工具那一步的 `ok` 是从**结果**里读的,不是靠 try/catch:`AgentSession#dispatch`
 从不抛异常——它把错误折成 `{error}` 交给模型好让循环继续——所以靠 catch 判断
@@ -86,6 +102,8 @@ agent 跑了 64 秒,两次图像调用都成功,然后整个请求以
 jq 'select(.event | startswith("agent_"))' .dev-cloudflare.log
 # 只看失败的步骤
 jq 'select(.event == "agent_step" and .ok == false)' .dev-cloudflare.log
+# 一次模型调用发出去的形状,以及它等了多久还没回
+jq 'select(.event == "llm_call")' .dev-cloudflare.log
 # 每次 run 花了多久、跑了几轮、调了什么
 jq 'select(.event == "agent_run" and .phase == "end") | {ok, iterations, durationMs, tools}' .dev-cloudflare.log
 ```
