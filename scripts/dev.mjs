@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOC_TYPES, parseDocTypes } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/unidocs-azure/doc-types.mjs";
@@ -171,6 +171,19 @@ const AZURE_CONTAINER_PORTS = {
   },
 };
 
+// 本次 dev 的 JSONL 日志落到哪。默认开着,因为它存在的理由就是「不用事先
+// 想起来加参数,agent 也能直接去查」——要事先记得开的日志等于没有。
+//
+// 名字必须命中 .gitignore 里的 `.dev-*.log`:那条规则是在一份手动 tee 的
+// dev 日志被 `git add -A` 连着提交了两次之后加的(88517ba),而本地日志会
+// 带上网关签发的能力票据。落在这个模式外面的文件名等于把那次教训作废。
+//
+// UNIDOCS_DEV_LOG=off 关掉;给别的值就当路径用(相对仓库根,也接受绝对路径)。
+const devLogSetting = process.env.UNIDOCS_DEV_LOG;
+const devLogFile = devLogSetting === "off"
+  ? null
+  : resolve(root, devLogSetting || ".dev-cloudflare.log");
+
 let runtime;
 let backend;
 
@@ -227,6 +240,7 @@ if (useAzure) {
     docTypes,
     persistPath: join(root, ".wrangler", "miniflare"),
     logLevel: LogLevel.INFO,
+    ...(devLogFile ? { logFile: devLogFile } : {}),
     ...(remoteCas ? {
       casOrigin: remoteCas.origin,
       stackFixture: remoteCas.stackFixture,
@@ -259,6 +273,12 @@ if (useAzure) {
   console.log(
     `Static registrations: ${docTypes.join(" / ")}`,
   );
+  // 从 runtime 上读而不是读上面那个变量:只有 Miniflare 这一路真的开了日志
+  // 文件,`runtime.logFile` 是「确实开了」的唯一凭据。
+  if (runtime.logFile) {
+    console.log(`Log file (JSONL): ${runtime.logFile}`);
+    console.log(`  jq 'select(.event == "http_call" and .ok == false)' ${runtime.logFile}`);
+  }
 }
 
 // Start each selected doc type's dev frontend (if it declares one), with the

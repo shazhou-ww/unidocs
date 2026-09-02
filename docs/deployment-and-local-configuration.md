@@ -230,6 +230,7 @@ Optional process variables:
 | `UNIDOCS_CAS_ORIGIN` | `https://unicas.shazhou.work` | UniCAS edge origin used by `--cas remote`; may point at a locally running `pnpm dev unicas` |
 | `UNIDOCS_CAS_STACK_CREDENTIAL` | `.wrangler/unidocs/stack.json` | Credential path |
 | `UNIDOCS_LOCAL_HOST` | `127.0.0.1` | Local bind host |
+| `UNIDOCS_DEV_LOG` | `.dev-cloudflare.log` | Where `pnpm dev` writes its JSONL log (relative to the repo root; absolute paths accepted). `off` disables it. See [observability.md](observability.md#本地日志文件) |
 | `LLM_API_KEY` | unset | PSD Operator credential |
 | `LLM_BASE_URL` | provider default | PSD provider endpoint |
 | `LLM_MODEL` | provider default | PSD model |
