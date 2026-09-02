@@ -1,0 +1,17 @@
+name = "r2-bench-shazhou"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+account_id = "92c3c4fdcc84a1590555bccf4f111de2"
+
+r2_buckets = [
+  { binding = "BUCKET", bucket_name = "unidocs-cas" },
+  { binding = "BUCKET_PREVIEW", bucket_name = "unidocs-cas-preview" }
+]
+
+[exports.BenchDO]
+type = "durable-object"
+storage = "sqlite"
+
+[[durable_objects.bindings]]
+name = "BENCH_DO"
+class_name = "BenchDO"
