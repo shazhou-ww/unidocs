@@ -29,6 +29,29 @@ export interface QwenEditorOptions {
   readonly maxImageBytes?: number;
 }
 
+/**
+ * 缺省模型。**换模型不用改代码** —— `model` 是个选项，composition root 从
+ * `IMAGE_EDIT_MODEL` 传进来。实测 `wan2.6-image` 与它走同一个 endpoint、
+ * 同一个请求体、同一个响应形状，所以同一套实现就够了。
+ *
+ * 同一张合成图（2048x1536 = 3.15 Mpx，带颗粒）上跑同一条指令，量未编辑区：
+ *
+ *                        输出分辨率              宽高比    颗粒 RMS   中位色偏
+ *   原图（原生）          2048x1536  3.15 Mpx    1.3333     33.57       —
+ *   qwen-image-edit-plus  1184x896   1.06 Mpx    1.3214      9.44    +2/+6/+6
+ *   wan2.6-image          1472x1104  1.63 Mpx    1.3333     12.78    +2/ 0/-1
+ *
+ * 三点值得记住：
+ *
+ * 1. **分辨率天花板在模型里，不在我们这边。** 送 3.15 Mpx 回来只有 34% / 52%。
+ *    wan2.6 多给 1.5 倍像素，宽高比还与输入精确一致（qwen 的 1.3214 意味着
+ *    缩回 bounds 时有一次轻微拉伸）。
+ * 2. **颗粒是模型抹掉的，不是降采样抹掉的。** 把原图纯降采样到同尺寸，颗粒
+ *    还有 22.35 / 27.73；模型回来只剩 9.44 / 12.78。也就是说就算完全不降
+ *    采样，它也不会还你颗粒 —— 它是重画的。想保住毛玻璃质感只能落地时自己补。
+ * 3. **对照只测了"保留能力"。** 跑的是合成图上的"红方块变蓝"，只证明模型会
+ *    执行指令，不证明它在人像上画得更好。生成质量没测过。
+ */
 const DEFAULT_MODEL = "qwen-image-edit-plus";
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com";
 
@@ -107,8 +130,8 @@ const CAPABILITIES: EditorCapabilities = {
   // 没有实测过的上限，纯粹是保守估计；唯一效果是触发缩小（安全方向），
   // 不是从任何一次真实调用里量出来的边界。
   maxPixels: 2048 * 2048,
-  // 实测 parameters.watermark=false 时未编辑区色偏 -1.94/-1.62/+0.52，
-  // 远低于 diffMask 的阈值 16 —— 差异蒙版可信。
+  // 实测 parameters.watermark=false 时未编辑区色偏很小，远低于 diffMask 的
+  // 阈值 16 —— 差异蒙版可信。两个模型都量过（见下面 DEFAULT_MODEL 的对照）。
   watermarked: false,
 };
 
