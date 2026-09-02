@@ -3,7 +3,7 @@ import { httpCallEvent, httpCallFailure, noopObserver, readObservedBody } from "
 import type { HttpCallInput, ObserveFn } from "@unidocs/protocol-doc";
 import type { Pixels } from "../model/types.js";
 import type { EditRequest, EditResult, EditorCapabilities, ImageEditor } from "./editor.js";
-import { compositeOnSentinel, diffMask, fitPixelBudget, resample } from "./guards.js";
+import { compositeOnSentinel, diffMask, fitPixelBudget, recoverAlpha, resample } from "./guards.js";
 
 export interface QwenEditorOptions {
   readonly apiKey: string;
@@ -134,19 +134,6 @@ const CAPABILITIES: EditorCapabilities = {
   // 阈值 16 —— 差异蒙版可信。两个模型都量过（见下面 DEFAULT_MODEL 的对照）。
   watermarked: false,
 };
-
-/**
- * 拿模型返回的 RGB，配上**源自己的** alpha。两者必须同尺寸（调用方已经把
- * 返回图缩回源尺寸了）。
- *
- * 这是 recoverAlpha 的替代：源的 alpha 是已知的精确值，没有理由去模型的
- * 输出里把它猜回来。见调用点的注释。
- */
-function withSourceAlpha(rgb: Pixels, source: Pixels): Pixels {
-  const data = new Uint8ClampedArray(rgb.data);
-  for (let i = 3; i < data.length; i += 4) data[i] = source.data[i];
-  return { width: rgb.width, height: rgb.height, data };
-}
 
 const toPixels = (png: Uint8Array): Pixels => {
   const img = decode(png);
@@ -287,28 +274,19 @@ export function createQwenImageEditor(opts: QwenEditorOptions): ImageEditor {
         // 坑 1 收尾：缩回源尺寸。所有实测的好指标都是在这一步之后测的，
         // 重采样噪声被 diffMask 的阈值吸收掉了。
         const back = resample(returned, source.width, source.height);
-        // 坑 3 收尾：还原 alpha —— **直接抄源的**，不去猜。
+        // 坑 3 收尾：哨兵色判回透明 —— 这是适配器**尽力而为**的 alpha，不是
+        // 最终答案。
         //
-        // 以前这里是 `recoverAlpha(back)`：按"输出像素离哨兵品红有多近"反推
-        // 透明区。那是在模型的输出里找一个我们本来就精确知道的答案。它必然
-        // 在边缘失手：模型会重采样，把品红和内容糊在一起，糊出来的中间色落在
-        // 容差之外就被判成不透明。实测一个圆角矩形的源，四角中心确实判回了
-        // 透明，但应该透明的像素里有 14.3% 变成了不透明 —— 全在圆角边缘，
-        // 落地就是沿着轮廓一圈毛边，四周透不出去。
+        // 它必然在轮廓边缘失手：模型会重采样，把哨兵品红和内容糊在一起，糊出来
+        // 的中间色落在容差之外就被判成不透明。实测一个四周留透明的圆角矩形，
+        // 该透明的 396741 个像素里 7613 个（1.9%）被判成不透明、全贴着轮廓，
+        // 526 个抗锯齿软边像素全部被二值化（这条路只吐 0 或 255）。
         //
-        // 而且哨兵路线**只吐 0 或 255**（见 editor.ts 的后置条件），源里
-        // 抗锯齿的软边一律被推到两端；抄源就把 8 位的软边原样保住了。
-        //
-        // 语义上这也是对的：editPixels 重绘的是图层**内部**的像素，轮廓是
-        // 图层的属性、不是像素的属性。改轮廓是另一种操作（还要动 bounds）。
-        // 代价是模型画不到源的轮廓之外去 —— 比如给一个抠好的人像"加一顶
-        // 帽子"，帽子超出人像轮廓的部分会被裁掉。这是真实的限制，但当前
-        // `bounds = info.bounds` 本来也不允许扩张，而"沿轮廓一圈毛边"是
-        // 每次都发生的。
-        //
-        // compositeOnSentinel 仍然要留着：它管的是**送出去的 RGB**，没有它
-        // 透明区会被合成到黑底，模型会把黑当成内容画进边缘。
-        const pixels = withSourceAlpha(back, source);
+        // **要不要保住源的轮廓，是调用方的政策，不是适配器的事**（见
+        // edit-pixels.ts 的 reshape）：同一份输出，重绘照片内容时该按源的
+        // alpha 裁回去，换字体时反而必须用这里这份。所以适配器只负责交出
+        // 模型这一侧的最佳估计。
+        const pixels = recoverAlpha(back);
 
         // 后置条件：适配器的 bug 不许污染文档。
         if (pixels.width !== source.width || pixels.height !== source.height

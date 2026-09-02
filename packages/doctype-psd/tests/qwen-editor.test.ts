@@ -83,37 +83,17 @@ describe("qwen-image-edit-plus 适配器", () => {
     expect([r.pixels.width, r.pixels.height]).toEqual([64, 48]);
   });
 
-  it("输出的 alpha 逐像素等于源的 alpha —— 不再从模型返回的颜色里反推轮廓", async () => {
-    // 以前这条测的是"哨兵色区域被判回透明"。那条路必然在轮廓边缘失手：模型
-    // 重采样会把品红和内容糊在一起，糊出来的中间色落在容差之外就变成不透明，
-    // 落地就是沿轮廓一圈毛边。实测一个圆角矩形的源，应该透明的像素里 14.3%
-    // 变成了不透明。而源的 alpha 我们本来就精确知道。
-    //
-    // 夹具刻意让"模型返回的颜色"与"源的 alpha"**对不上**：模型左半边是内容
-    // 色、右半边是哨兵品红，而源的 alpha 是横向三段 0/128/255。两者正交，
-    // 所以任何"按颜色判 alpha"的实现都过不了这条。
-    const width = 64, height = 48;
-    const banded = new Uint8ClampedArray(width * height * 4);
-    const alphaAt = (i: number) => [0, 128, 255][((i / width) | 0) % 3];
-    for (let i = 0; i < width * height; i++) banded.set([200, 200, 200, alphaAt(i)], i * 4);
-    const src = { width, height, data: banded };
-
-    const f = stubFetch({
-      generation: () => Response.json(fixture("qwen-edit-response.json")),
-      image: () => new Response(fakeEditedRGB(width, height).buffer),
-    });
-    const r = await editorWith(f).edit({ source: src, instruction: "x" }, AbortSignal.timeout(5000));
+  it("哨兵色区域被判回透明 —— 适配器对 alpha 的尽力估计", async () => {
+    // 这是适配器能给出的最好结果，**不是最终答案**：它只吐 0 或 255，且在
+    // 轮廓边缘会失手（实测一个四周留透明的圆角矩形，该透明的像素里 1.9% 被
+    // 判成不透明、全贴着轮廓）。要不要按源的轮廓裁回去是调用方的政策，
+    // 钉在 tests/edit-pixels.test.ts 的 reshape 那几条。
+    const f = stubFetch({ generation: () => Response.json(fixture("qwen-edit-response.json")) });
+    const r = await editorWith(f).edit({ source, instruction: "x" }, AbortSignal.timeout(5000));
     if (!r.ok) throw new Error(r.detail);
-    for (let i = 0; i < width * height; i++) {
-      if (r.pixels.data[i * 4 + 3] !== alphaAt(i)) {
-        throw new Error(`像素 ${i} (x=${i % width}, y=${(i / width) | 0}) 的 alpha 是 `
-          + `${r.pixels.data[i * 4 + 3]}，源是 ${alphaAt(i)}`);
-      }
-    }
-    // 半透明的 128 必须原样活下来：哨兵路线只吐 0 或 255，源里抗锯齿的软边
-    // 会被推到两端 —— 这条断言就是钉住"软边不再被二值化"。
-    expect(new Set(Array.from({ length: width * height }, (_, i) => r.pixels.data[i * 4 + 3])))
-      .toEqual(new Set([0, 128, 255]));
+    // 右半边（哨兵色）alpha 应为 0
+    const right = (48 >> 1) * 64 + 60;
+    expect(r.pixels.data[right * 4 + 3]).toBe(0);
   });
 
   it("高熵图像超出字节预算时会继续缩，直到编码后落进预算内", async () => {
@@ -209,8 +189,9 @@ describe("qwen-image-edit-plus 适配器", () => {
     const right = 24 * 64 + 60;
     expect([r.pixels.data[right * 4], r.pixels.data[right * 4 + 1], r.pixels.data[right * 4 + 2]])
       .toEqual([SENTINEL.r, SENTINEL.g, SENTINEL.b]);
-    expect(r.pixels.data[left * 4 + 3]).toBe(200);
-    expect(r.pixels.data[right * 4 + 3]).toBe(200);
+    // alpha 来自哨兵回收：内容色 → 255，哨兵品红 → 0。
+    expect(r.pixels.data[left * 4 + 3]).toBe(255);
+    expect(r.pixels.data[right * 4 + 3]).toBe(0);
   });
 
   it("限流 / 5xx → reason provider_error", async () => {

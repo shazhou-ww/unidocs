@@ -90,7 +90,10 @@ describe("editPixels effect", () => {
     const rgba = png.data as ArrayLike<number>;
     const ch = png.channels;
     const idx = (x: number, y: number) => (y * SRC_W + x) * ch;
-    expect(rgba[idx(4, 4) + 3]).toBe(255);          // 改动区：不透明
+    // 改动区：alpha = 源的 alpha（夹具是 200）× 覆盖度 255/255 = 200。
+    // **不是 255** —— 源本来就半透明的地方不该被拉回不透明，而结果层的轮廓
+    // 默认抄源（见 reshape）。
+    expect(rgba[idx(4, 4) + 3]).toBe(200);
     expect(rgba[idx(SRC_W - 4, SRC_H - 4) + 3]).toBe(0); // 未改动区：透明
   });
 
@@ -200,6 +203,104 @@ describe("editPixels effect", () => {
       kind: "getLayerPixels",
       payload: { layerId: "portrait", maxPixels: createStubEditor().capabilities.maxPixels },
     });
+  });
+
+  // ——— 轮廓政策（reshape）———
+  //
+  // 适配器交回的 alpha 是它从模型输出里猜的，只吐 0/255，且沿轮廓有约 1.9%
+  // 的误判（实测）。源的 alpha 是精确已知的。所以默认按源裁回去 —— 但轮廓
+  // 本来就该变的编辑（换字体、重塑抠图、加发光）不能这么裁，否则新字形会被
+  // 切成新旧交叠的畸形物。这几条钉住两条路各自的行为。
+
+  /** 源：上半不透明、下半全透明；模型：整层都画成不透明的红。 */
+  function halfTransparentCtx() {
+    const data = new Uint8ClampedArray(SRC_W * SRC_H * 4);
+    for (let i = 0; i < SRC_W * SRC_H; i++) {
+      data.set([120, 120, 120, ((i / SRC_W) | 0) < SRC_H / 2 ? 255 : 0], i * 4);
+    }
+    const png = encode({ width: SRC_W, height: SRC_H, data, channels: 4, depth: 8 });
+    const ctx = fakeCtx();
+    ctx.blobs.set("1".repeat(64), { data: png, contentType: "image/png" });
+    return ctx;
+  }
+  /** 无视源，整层吐不透明红并声称全改过 —— 模拟"模型想改轮廓"。 */
+  const paintsEverywhere = (): ImageEditor => ({
+    ...createStubEditor(),
+    async edit(req) {
+      const n = req.source.width * req.source.height;
+      const out = new Uint8ClampedArray(n * 4);
+      for (let i = 0; i < n; i++) out.set([255, 0, 0, 255], i * 4);
+      return {
+        ok: true,
+        pixels: { width: req.source.width, height: req.source.height, data: out },
+        changed: { width: req.source.width, height: req.source.height, data: new Uint8ClampedArray(n).fill(255) },
+        provenance: { model: "stub-editor", seed: 0, prompt: req.instruction },
+      };
+    },
+  });
+
+  it("默认按源的轮廓裁回去 —— 模型画到透明区的部分不落盘", async () => {
+    const tool = createEditPixelsTool(paintsEverywhere());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = halfTransparentCtx();
+    await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+    const png = decode(ctx.written[0].data);
+    const a = (x: number, y: number) => (png.data as ArrayLike<number>)[(y * SRC_W + x) * png.channels + 3];
+    expect(a(4, 4)).toBe(255);              // 源不透明处：留下
+    expect(a(4, SRC_H - 4)).toBe(0);        // 源透明处：裁掉，尽管模型画满了
+  });
+
+  it("reshape 时用模型的 alpha —— 轮廓本来就该变，裁回旧轮廓会切碎新形状", async () => {
+    const tool = createEditPixelsTool(paintsEverywhere());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = halfTransparentCtx();
+    await tool.run({ layerId: "portrait", instruction: "换个字体", reshape: true }, ctx);
+    const png = decode(ctx.written[0].data);
+    const a = (x: number, y: number) => (png.data as ArrayLike<number>)[(y * SRC_W + x) * png.channels + 3];
+    expect(a(4, 4)).toBe(255);
+    expect(a(4, SRC_H - 4)).toBe(255);      // 源透明处：这次留下了
+  });
+
+  it("reshape 时同一次 apply 里把源层隐藏 —— 否则旧轮廓从下面透出来", async () => {
+    const tool = createEditPixelsTool(paintsEverywhere());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "换个字体", reshape: true }, halfTransparentCtx());
+    expect(out.ops).toHaveLength(2);
+    expect(out.ops[1] as any).toEqual({
+      kind: "set_props", payload: { layerId: "portrait", props: { visible: false } },
+    });
+    // 两个 op 同一次 apply，所以不存在"新旧都可见"的中间版本
+    const text = (out.result.content ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ");
+    expect(text).toMatch(/HIDDEN/);
+  });
+
+  it("不 reshape 时只有一个 op，且明说源层还在", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, fakeCtx());
+    expect(out.ops).toHaveLength(1);
+    const text = (out.result.content ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ");
+    expect(text).toMatch(/still visible/);
+    expect(text).not.toMatch(/HIDDEN/);
+  });
+
+  it("模型大面积画到轮廓外却没声明 reshape 时，如实说出被裁掉了多少", async () => {
+    // 这条是"换字体忘了 reshape"的唯一救生索：不说的话，模型收到的是一句
+    // 干净的 Done，而画面上是新旧字形交叠的畸形物。
+    const tool = createEditPixelsTool(paintsEverywhere());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "换个字体" }, halfTransparentCtx());
+    const text = (out.result.content ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ");
+    expect(text).toMatch(/100% of this layer's transparent area/);
+    expect(text).toMatch(/reshape: true/);
+  });
+
+  it("源全不透明时不提 reshape —— 没有轮廓可裁，提了就是噪声", async () => {
+    const tool = createEditPixelsTool(paintsEverywhere());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, fakeCtx());
+    const text = (out.result.content ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ");
+    expect(text).not.toMatch(/reshape: true/);
   });
 
   it("参数缺失时以 result 报错，不抛", async () => {

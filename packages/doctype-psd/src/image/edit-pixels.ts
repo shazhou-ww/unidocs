@@ -43,6 +43,40 @@ const pixelsToPng = (px: Pixels): Uint8Array =>
 const fail = (structuredContent: JsonValue): EffectOutcome<PsdOp> =>
   ({ ops: [], result: { structuredContent } });
 
+/** 模型返回的 RGB 配上**源自己的** alpha。两者同尺寸（适配器的后置条件）。 */
+function withSourceAlpha(rgb: Pixels, source: Pixels): Pixels {
+  const data = new Uint8ClampedArray(rgb.data);
+  for (let i = 3; i < data.length; i += 4) data[i] = source.data[i];
+  return { width: rgb.width, height: rgb.height, data };
+}
+
+/**
+ * 模型想画到源轮廓**之外**的像素占源透明区的比例。
+ *
+ * 只在 reshape=false 时有意义：这些像素刚刚被按源的 alpha 裁掉了。比例高就
+ * 说明模型试图改轮廓，而调用方说了不改 —— 多半是 reshape 漏了。把这件事说
+ * 出来，"换字体得到一个新旧字形交叠的畸形物"才有可能被自己发现并纠正，而不
+ * 是静默交付。
+ */
+function clippedOutsideShape(model: Pixels, source: Pixels): number {
+  let outside = 0, transparent = 0;
+  for (let i = 3; i < source.data.length; i += 4) {
+    if (source.data[i] !== 0) continue;
+    transparent++;
+    if (model.data[i] > 0) outside++;
+  }
+  return transparent === 0 ? 0 : outside / transparent;
+}
+
+/**
+ * 超过这个比例就提醒模型 reshape 可能漏了。
+ *
+ * **选定值，不是实测值。** 下限不能是 0：适配器那份 alpha 本身就有约 1.9% 的
+ * 沿轮廓误判（实测），拿 0 当阈值等于每次都报警。0.15 把"边缘噪声"和"模型
+ * 真的在轮廓外画了东西"分开，量级上留了近十倍余量。真实文档上跑过之后该重定。
+ */
+const RESHAPE_HINT_FRACTION = 0.15;
+
 /**
  * getLayerPixels 的返回值是 SValue，静态类型上什么都不是。以前这里是一个
  * 直接的 `as unknown as LayerPixelsResult` —— 而 C1（校验器拒绝惰性
@@ -128,6 +162,18 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
           type: "string",
           description: "What to change, in plain language, e.g. \"remove the red hat from the person's head\".",
         },
+        reshape: {
+          type: "boolean",
+          description:
+            "Set true ONLY when the edit changes the layer's SHAPE — the outline of its non-transparent "
+            + "pixels. Re-lettering in a different font, reshaping a cut-out, adding a glow or outline that "
+            + "extends past the current edges: those change the shape. Repainting content INSIDE the existing "
+            + "outline (swapping a hat inside a photo, recolouring, removing an object) does NOT. "
+            + "Irrelevant when the layer is fully opaque — getPreview reports alpha(opaque=...); at 1 there is "
+            + "no outline to preserve or change. When true the source layer is HIDDEN, because otherwise its "
+            + "old shape shows through from underneath (two fonts at once). Default false, which keeps the "
+            + "source layer's exact outline, anti-aliased edges included, and leaves the source visible.",
+        },
       },
       required: ["layerId", "instruction"],
     },
@@ -141,6 +187,7 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
       if (typeof instruction !== "string" || instruction.length === 0) {
         return fail({ error: "editPixels: instruction must be a non-empty string" });
       }
+      const reshape = args.reshape === true;
 
       // 告诉 Editor 我们下游最多用得到多少像素：适配器拿到手第一件事就是把它
       // 压进这个区间，所以让 Editor 编一张全分辨率 PNG 是纯浪费，而且那份
@@ -160,12 +207,29 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         return fail({ ok: false, reason: result.reason, detail: result.detail });
       }
 
+      // ——— 轮廓政策 ———
+      //
+      // 适配器交回来的 alpha 是它从模型输出里**猜**的（哨兵回收），只吐 0 或
+      // 255，而且在轮廓边缘会失手：实测一个四周留透明的圆角矩形，该透明的像素
+      // 里 1.9% 被判成不透明、全贴着轮廓，落地就是沿边一圈毛边、四周透不出去；
+      // 526 个抗锯齿软边像素还全部被二值化。
+      //
+      // 而源的 alpha 是**精确已知**的。所以默认按源裁回去 —— editPixels 重绘的
+      // 是图层内部的内容，轮廓是图层的属性。
+      //
+      // 但这不能无条件做：轮廓本来就该变的编辑（换字体、重塑抠图、加发光），
+      // 按旧轮廓裁回去会把新字形切成新旧交叠的畸形物。那种情况只能用模型这份
+      // alpha，边缘糙一点也远好过被裁掉 —— 由调用方用 `reshape` 声明，因为
+      // 这两种意图从像素里分不出来（试过 max(源, 模型)：那 1.9% 的误判会被
+      // 原样保留，毛边立刻回来）。
+      const shaped = reshape ? result.pixels : withSourceAlpha(result.pixels, source);
+
       // 差异蒙版烘进结果层自己的 alpha：未改动的区域全透明，下面的原层
       // 原样露出来。这一步就是"把模型带来的全局色偏关在改动区里"的全部机制 ——
       // 没它，整层无遮挡地盖上去等于给全图蒙一层不可见的偏色。
       const masked = result.changed
-        ? applyCoverageToAlpha(result.pixels, softenMask(result.changed, MASK_SOFTEN))
-        : result.pixels;
+        ? applyCoverageToAlpha(shaped, softenMask(result.changed, MASK_SOFTEN))
+        : shaped;
 
       // 结果层要盖在源层身上，所以它的像素必须正好铺满源层的 bounds。
       // getLayerPixels 可能按 maxPixels 缩过（见那边的注释），这里缩回去。
@@ -220,6 +284,16 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         contentType: "image/png",
       });
 
+      // reshape=false 时，模型画到轮廓外的部分刚刚被裁掉了。裁得多就说明
+      // 它本来想改轮廓 —— 提醒一次，比静默交付一个被切碎的结果强。
+      const clipped = reshape ? 0 : clippedOutsideShape(result.pixels, source);
+      const reshapeNote = clipped > RESHAPE_HINT_FRACTION
+        ? ` NOTE: the model painted over ${(clipped * 100).toFixed(0)}% of this layer's transparent area, and`
+          + ` all of it was clipped away to keep the layer's existing outline. If this edit was meant to change`
+          + ` the SHAPE (different font, reshaped cut-out, added glow), removeLayer "${layer.id as string}" and`
+          + ` retry with reshape: true.`
+        : "";
+
       return {
         // bottom-to-top 数组：源层 index + 1 就是它的正上方。
         // 这个断言是**必需**的，不是懒：`PsdOp.payload` 是
@@ -228,10 +302,22 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         // tools.ts 的 psdOp() 出于同一个原因用同一个写法。相比之下，
         // ctx.query 上原来那个 `as never` 是多余的：PsdQuery 里本来就有
         // getLayerPixels，已经删掉。
-        ops: [{
-          kind: "generative_fill",
-          payload: { layer, parentId: info.parentId, index: info.index + 1, provenance },
-        }] as unknown as readonly SValueType<PsdOp>[],
+        ops: [
+          {
+            kind: "generative_fill",
+            payload: { layer, parentId: info.parentId, index: info.index + 1, provenance },
+          },
+          // 改轮廓时必须把源层藏起来，否则旧轮廓从下面透出来 —— 换字体会得到
+          // 两种字体并存，重塑抠图会得到新旧两个形状。用 visible:false 而不是
+          // removeLayer：像素一个字节没动，用户在图层面板里点回来就恢复，也照样
+          // 进版本历史可以回滚。
+          //
+          // 两个 op 在同一次 apply 里，所以"新层出现"和"源层隐藏"落在同一个
+          // 版本上，中间不存在一个两者都可见的中间态。
+          ...(reshape
+            ? [{ kind: "set_props", payload: { layerId, props: { visible: false } } }]
+            : []),
+        ] as unknown as readonly SValueType<PsdOp>[],
         description: `editPixels(${layerId}): ${instruction}`,
         result: {
           structuredContent: {
@@ -245,9 +331,16 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
             { type: "image", blob: previewBlob, mediaType: "image/png", altText: `after: ${instruction}` },
             {
               type: "text",
-              text: result.changed
-                ? `Done. Result landed as layer "${layer.id as string}" above ${layerId}, transparent outside the changed region. The original layer is untouched.`
-                : `Done, but the change covered the whole layer, so no mask was derived — the result replaces the source layer's appearance entirely. Landed as "${layer.id as string}".`,
+              // "The original layer is untouched" 在 reshape 时是假的 —— 它被
+              // 隐藏了。像素确实一个字节没动，但画面上它不见了，模型必须知道
+              // 这件事才可能在做错时把它恢复回来。
+              text: (result.changed
+                ? `Done. Result landed as layer "${layer.id as string}" above ${layerId}, transparent outside the changed region.`
+                : `Done, but the change covered the whole layer, so no mask was derived — the result replaces the source layer's appearance entirely. Landed as "${layer.id as string}".`)
+                + (reshape
+                  ? ` Because reshape was set, the source layer "${layerId}" is now HIDDEN so its old outline cannot show through — setProps visible:true to bring it back.`
+                  : ` The original layer is unchanged and still visible underneath.`)
+                + reshapeNote,
             },
           ],
         },
