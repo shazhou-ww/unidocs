@@ -20,6 +20,9 @@ interface LayerPixelsResult {
   bounds: [number, number, number, number];
   parentId: string | null;
   index: number;
+  /** 源层的合成属性，见 queries.ts 里 getLayerPixels 的注释。 */
+  clipping: boolean;
+  blendMode: string;
 }
 
 const pngToPixels = (png: Uint8Array): Pixels => {
@@ -100,6 +103,8 @@ function asLayerPixels(data: unknown): LayerPixelsResult {
   }
   if (d!.parentId !== null && typeof d!.parentId !== "string") bad("parentId is neither string nor null");
   if (typeof d!.index !== "number") bad("index is not a number");
+  if (typeof d!.clipping !== "boolean") bad("clipping is not a boolean");
+  if (typeof d!.blendMode !== "string") bad("blendMode is not a string");
   return d as unknown as LayerPixelsResult;
 }
 
@@ -256,11 +261,24 @@ export function createEditPixelsTool(editor: ImageEditor): AgentTool<PsdQuery, P
         type: "raster",
         name: `${instruction.slice(0, 24)}`,
         bounds: info.bounds,
+        // opacity 是 1、而不是源层的 opacity：孤立渲染已经把它乘进 alpha 了
+        // （composite.ts 的 compositeBuffer 收 layer.opacity），再带一次就是
+        // 乘两遍。mask 与图层效果同理，都已经烘进像素。
         opacity: 1,
-        blendMode: "normal",
         visible: true,
         locked: false,
-        clipping: false,
+        // 这两个必须跟着源层走。**clipping 在孤立渲染里根本不存在** ——
+        // renderLayer 渲的是只有这一层的文档，剪裁基底不在场，所以拿到的是
+        // 没被剪裁的整层。一张被剪进圆角矩形的照片，结果层若不跟着标 clipping，
+        // 落回文档就会越过那个圆角框铺满自己的 bounds，圆角和上下边距一起消失。
+        //
+        // 插在源层正上方是安全的：renderList 的 baseCoverage 在连续的 clipping
+        // 层之间保持不变（只有遇到非 clipping 层才重置），所以结果层用的是与
+        // 源层同一个基底。源层被 reshape 隐藏时也一样 —— 隐藏分支只在
+        // `!layer.clipping` 时清掉基底。
+        clipping: info.clipping,
+        // blendMode 没被烘进像素：孤立渲染的背景是透明的，混合模式在那儿无效。
+        blendMode: info.blendMode,
         // PixelRef，不是 Pixels：一个整层 RGBA 是几十 MB，塞进 delta 会把
         // 版本日志撑爆。字节已经在 CAS 里，op 只带引用。
         pixels: { width: landed.width, height: landed.height, hash: resultBlob.hash, blob: resultBlob },

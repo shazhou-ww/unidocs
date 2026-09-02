@@ -293,6 +293,22 @@ export async function runQuery(
         bounds: l.bounds,
         parentId: findParentId(doc.layers, layerId),
         index: findParentList(doc.layers, layerId)?.index ?? 0,
+        // 源层的**合成属性**。结果层要盖在源层身上，就得按同样的方式参与合成。
+        //
+        // `clipping` 是这里最要紧的一个，因为它在孤立渲染里根本不存在：
+        // renderLayer 渲的是一个只有这一层的文档，剪裁的基底不在场，所以
+        // `rendered` 是**没被剪裁**的整层。一张被剪进圆角矩形的照片，从这里
+        // 拿到的是完整的方角照片；结果层若不跟着标 clipping，落回文档就会
+        // 越过那个圆角框铺满自己的 bounds —— 圆角和边距一起消失。
+        //
+        // `blendMode` 同理：孤立渲染的背景是透明的，混合模式在那里没有效果，
+        // 所以它没被烘进像素，必须显式带过去。
+        //
+        // 不带的：opacity / fillOpacity 已经烘进孤立渲染的 alpha 了（见
+        // composite.ts 的 compositeBuffer 调用），再带一次就是乘两遍；
+        // mask 与图层效果同样已经烘进像素。
+        clipping: l.clipping === true,
+        blendMode: l.blendMode,
       } as unknown as QueryValue;
     }
   }

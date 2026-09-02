@@ -27,7 +27,7 @@ function fakeCtx(over: { queryResult?: Record<string, unknown> } = {}) {
         image: createSBlob(srcHash),
         width: SRC_W, height: SRC_H,
         bounds: [10, 20, 10 + SRC_H, 20 + SRC_W],
-        parentId: "g1", index: 2,
+        parentId: "g1", index: 2, clipping: false, blendMode: "normal",
       },
       version: 7,
     })) as never,
@@ -179,6 +179,7 @@ describe("editPixels effect", () => {
         width: SRC_W, height: SRC_H,
         bounds: [10, 20, 10 + SRC_H * 4, 20 + SRC_W * 4],
         parentId: "g1", index: 2,
+              clipping: false, blendMode: "normal",
       },
     });
     const tool = createEditPixelsTool(createStubEditor());
@@ -301,6 +302,35 @@ describe("editPixels effect", () => {
     const out = await tool.run({ layerId: "portrait", instruction: "x" }, fakeCtx());
     const text = (out.result.content ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ");
     expect(text).not.toMatch(/reshape: true/);
+  });
+
+  it("结果层继承源层的 clipping 和 blendMode —— 不继承就会越过剪裁框铺满 bounds", async () => {
+    // 这是"圆角和上下边距丢了"的成因。renderLayer 渲的是**孤立的单层文档**，
+    // 剪裁基底不在场，所以 getLayerPixels 返回的是没被剪裁的整层；结果层再
+    // 硬编码 clipping:false，落回文档就会越过那个圆角框铺满自己的 bounds。
+    // blendMode 同理：孤立渲染背景透明，混合模式没被烘进像素。
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const ctx = fakeCtx({ queryResult: {
+      image: createSBlob("1".repeat(64)),
+      width: SRC_W, height: SRC_H,
+      bounds: [10, 20, 10 + SRC_H, 20 + SRC_W],
+      parentId: "g1", index: 2,
+      clipping: true, blendMode: "multiply",
+    } });
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, ctx);
+    const layer = (out.ops[0] as any).payload.layer;
+    expect(layer.clipping).toBe(true);
+    expect(layer.blendMode).toBe("multiply");
+    // opacity 反过来**不能**继承：孤立渲染已经把它乘进 alpha，再带一次就是两遍。
+    expect(layer.opacity).toBe(1);
+  });
+
+  it("源层没有剪裁时结果层也没有 —— 不能一律标 true", async () => {
+    const tool = createEditPixelsTool(createStubEditor());
+    if (tool.kind !== "effect") throw new Error("kind");
+    const out = await tool.run({ layerId: "portrait", instruction: "x" }, fakeCtx());
+    expect((out.ops[0] as any).payload.layer.clipping).toBe(false);
   });
 
   it("参数缺失时以 result 报错，不抛", async () => {
