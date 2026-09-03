@@ -1,5 +1,5 @@
 import { writePsd, type Psd, type Layer as AgLayer } from "ag-psd";
-import type { PsdDoc, Layer, Mask } from "../model/types.js";
+import type { PsdDoc, Layer, LayerTextStyle, Mask } from "../model/types.js";
 import { isRef } from "../render/pixel-source.js";
 import { render } from "../render/composite.js";
 import { installCanvasShim } from "./canvas-shim.js";
@@ -22,6 +22,32 @@ function mapMask(m: Mask): AgLayer["mask"] {
     out.imageData = { width: m.pixels.width, height: m.pixels.height, data: m.pixels.data };
   }
   return out as AgLayer["mask"];
+}
+
+/** LayerTextStyle → ag-psd TextStyle。字段名两边不同的只有 font / size /
+ *  color / strokeWidth,其余同名直传。 */
+function agTextStyle(s: LayerTextStyle): Record<string, unknown> {
+  const caps = s.caps === "small" ? 1 : s.caps === "all" ? 2 : s.caps === "none" ? 0 : undefined;
+  return {
+    ...(s.font ? { font: { name: s.font } } : {}),
+    ...(s.size !== undefined ? { fontSize: s.size } : {}),
+    ...(s.color ? { fillColor: s.color } : {}),
+    ...(s.tracking !== undefined ? { tracking: s.tracking } : {}),
+    ...(s.leading !== undefined ? { leading: s.leading } : {}),
+    ...(caps !== undefined ? { fontCaps: caps } : {}),
+    ...(s.fauxBold !== undefined ? { fauxBold: s.fauxBold } : {}),
+    ...(s.fauxItalic !== undefined ? { fauxItalic: s.fauxItalic } : {}),
+    ...(s.horizontalScale !== undefined ? { horizontalScale: s.horizontalScale } : {}),
+    ...(s.verticalScale !== undefined ? { verticalScale: s.verticalScale } : {}),
+    ...(s.autoKerning !== undefined ? { autoKerning: s.autoKerning } : {}),
+    ...(s.kerning !== undefined ? { kerning: s.kerning } : {}),
+    ...(s.baselineShift !== undefined ? { baselineShift: s.baselineShift } : {}),
+    ...(s.underline !== undefined ? { underline: s.underline } : {}),
+    ...(s.strikethrough !== undefined ? { strikethrough: s.strikethrough } : {}),
+    ...(s.ligatures !== undefined ? { ligatures: s.ligatures } : {}),
+    ...(s.strokeColor ? { strokeColor: s.strokeColor } : {}),
+    ...(s.strokeWidth !== undefined ? { outlineWidth: s.strokeWidth } : {}),
+  };
 }
 
 export function mapLayer(l: Layer): AgLayer {
@@ -47,17 +73,21 @@ export function mapLayer(l: Layer): AgLayer {
       text: l.text.content,
       ...(l.text.transform ? { transform: l.text.transform } : {}),
       ...(l.text.shapeType ? { shapeType: l.text.shapeType } : {}),
-      ...(l.text.style
-        ? {
-            style: {
-              ...(l.text.style.font ? { font: { name: l.text.style.font } } : {}),
-              ...(l.text.style.size !== undefined ? { fontSize: l.text.style.size } : {}),
-              ...(l.text.style.color ? { fillColor: l.text.style.color } : {}),
-              ...(l.text.style.tracking !== undefined ? { tracking: l.text.style.tracking } : {}),
-              ...(l.text.style.leading !== undefined ? { leading: l.text.style.leading } : {}),
-            },
-          }
+      ...(l.text.boxBounds ? { boxBounds: l.text.boxBounds } : {}),
+      ...(l.text.pointBase ? { pointBase: l.text.pointBase } : {}),
+      ...(l.text.orientation ? { orientation: l.text.orientation } : {}),
+      ...(l.text.style ? { style: agTextStyle(l.text.style) } : {}),
+      // 逐段样式必须跟着写回去。只写顶层 style 的话,一次 import → export
+      // 就会把"第二行是红的"这种信息抹掉 —— 导入侧刚补上的东西在往返里丢光,
+      // 比不导入更糟。
+      ...(l.text.runs ? { styleRuns: l.text.runs.map(r => ({ length: r.length, style: agTextStyle(r.style) })) } : {}),
+      ...(l.text.paragraphStyle ? { paragraphStyle: { ...l.text.paragraphStyle } } : {}),
+      ...(l.text.paragraphRuns
+        ? { paragraphStyleRuns: l.text.paragraphRuns.map(r => ({ length: r.length, style: { ...r.style } })) }
         : {}),
+      // `uneditable` 不写:和 `degraded` 一样,它描述的是我们的能力,不是文档
+      // 的内容,load() 下次导入会重新推导。warp / textPath / gridInfo 本身走
+      // 的是 ag-psd 自己的字段,不经过这里。
     } as any;
   }
   if (l.vector?.fill) out.vectorFill = l.vector.fill as any;

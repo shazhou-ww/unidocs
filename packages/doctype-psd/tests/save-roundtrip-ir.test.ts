@@ -60,7 +60,7 @@ describe("save → load 往返保留 IR 元数据", () => {
     const back = await load(bytes);
     const headline = back.layers.find((l) => l.name === "headline")!;
     expect(headline.degraded).toEqual([
-      { reason: "文字层已栅格化", detail: "渲染与导出使用 PSD 烘焙像素；本期不支持编辑文字内容与排版" },
+      { reason: "文字层已栅格化", detail: "渲染与导出使用 PSD 烘焙像素；文字内容可编辑，重排需要本机有对应字体" },
     ]);
   });
 });

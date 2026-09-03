@@ -14,11 +14,37 @@ export type PsdQuery =
   | { kind: "getPreview"; payload?: { rect?: [number, number, number, number]; layerId?: string; maxSize?: number } }
   | { kind: "getLayerPixels"; payload: { layerId: string; maxPixels?: number } };
 
+/**
+ * getLayers 里一个文字层带多长的正文。
+ *
+ * 内容本身就是分流依据("这层写的是网址吗"),所以不能不给;但一层可以装
+ * 一整段文案,整棵树全带上会把这个"速览"查询撑爆。超了就截断并标出来,
+ * agent 需要全文时 getDoc 拿。
+ */
+const TEXT_SUMMARY_CHARS = 120;
+
 function summarize(l: Layer): any {
   return {
     id: l.id, type: l.type, name: l.name ?? "",
     opacity: l.opacity ?? 1, blendMode: l.blendMode ?? "normal",
     visible: l.visible ?? true, bounds: l.bounds ?? [0, 0, 0, 0],
+    // 文字层多给一层信息,agent 靠它决定走文字工具还是 editPixels ——
+    // 没有它就只能看图猜"这是真文字还是图片上的字",而这次实测它猜错了,
+    // 连试两次生图模型去画字。
+    ...(l.text
+      ? {
+        text: {
+          content: l.text.content.length > TEXT_SUMMARY_CHARS
+            ? { text: l.text.content.slice(0, TEXT_SUMMARY_CHARS), truncated: true }
+            : l.text.content,
+          ...(l.text.style?.font ? { font: l.text.style.font } : {}),
+          // 结构上能不能重排。为空表示能 —— 但真画得出来还要看渲染时
+          // 本机有没有那套字体,那是另一回事,这里不承诺。
+          editable: !l.text.uneditable?.length,
+          ...(l.text.uneditable?.length ? { uneditable: l.text.uneditable } : {}),
+        },
+      }
+      : {}),
     ...(l.children ? { children: l.children.map(summarize) } : {}),
   };
 }

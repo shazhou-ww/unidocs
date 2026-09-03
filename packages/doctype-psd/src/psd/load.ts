@@ -1,7 +1,8 @@
 import { readPsd, type Layer as AgLayer } from "ag-psd";
 import type {
   PsdDoc, Layer, BlendMode, Mask,
-  Degradation, LayerText, LayerTextStyle, LayerVector, LayerSmartObject,
+  Degradation, LayerText, LayerParagraphRun, LayerParagraphStyle, LayerTextRun,
+  LayerTextStyle, LayerVector, LayerSmartObject, TextUneditableReason,
 } from "../model/types.js";
 import { installCanvasShim } from "./canvas-shim.js";
 
@@ -47,33 +48,108 @@ function rgbOf(c: unknown): { r: number; g: number; b: number } | undefined {
   return v && isNum(v.r) && isNum(v.g) && isNum(v.b) ? { r: v.r, g: v.g, b: v.b } : undefined;
 }
 
+/** ag-psd 的 fontCaps 是个数字枚举:0 正常 / 1 小型大写 / 2 全大写。 */
+function capsOf(v: unknown): LayerTextStyle["caps"] | undefined {
+  return v === 1 ? "small" : v === 2 ? "all" : v === 0 ? "none" : undefined;
+}
+
+/**
+ * 一段 ag-psd TextStyle → 我们的 LayerTextStyle。
+ *
+ * 只映射**重排时用得上**的字段。有意留在外面的:antiAlias(渲染器自己决定
+ * 抗锯齿)、super/subscript 与 smallCapSize(等真遇到再说)、language/tsume/
+ * styleRunAlignment(CJK 细节,我们还没到那一步)。
+ */
+function mapTextStyle(s: NonNullable<AgLayer["text"]>["style"]): LayerTextStyle {
+  if (!s) return {};
+  const fill = rgbOf(s.fillColor);
+  const stroke = rgbOf(s.strokeColor);
+  return {
+    ...(s.font?.name ? { font: s.font.name } : {}),
+    ...(isNum(s.fontSize) ? { size: s.fontSize } : {}),
+    // ag-psd's text-engine colour encoding round-trips with float drift
+    // (e.g. 28 -> 27.999); model/types.ts promises 0..255 integers, so round
+    // here rather than let every downstream consumer see near-integer floats.
+    ...(fill ? { color: { r: Math.round(fill.r), g: Math.round(fill.g), b: Math.round(fill.b) } } : {}),
+    ...(isNum(s.tracking) ? { tracking: s.tracking } : {}),
+    ...(isNum(s.leading) ? { leading: s.leading } : {}),
+    ...(capsOf(s.fontCaps) ? { caps: capsOf(s.fontCaps) } : {}),
+    ...(s.fauxBold !== undefined ? { fauxBold: !!s.fauxBold } : {}),
+    ...(s.fauxItalic !== undefined ? { fauxItalic: !!s.fauxItalic } : {}),
+    ...(isNum(s.horizontalScale) ? { horizontalScale: s.horizontalScale } : {}),
+    ...(isNum(s.verticalScale) ? { verticalScale: s.verticalScale } : {}),
+    ...(s.autoKerning !== undefined ? { autoKerning: !!s.autoKerning } : {}),
+    ...(isNum(s.kerning) ? { kerning: s.kerning } : {}),
+    ...(isNum(s.baselineShift) ? { baselineShift: s.baselineShift } : {}),
+    ...(s.underline !== undefined ? { underline: !!s.underline } : {}),
+    ...(s.strikethrough !== undefined ? { strikethrough: !!s.strikethrough } : {}),
+    ...(s.ligatures !== undefined ? { ligatures: !!s.ligatures } : {}),
+    ...(stroke ? { strokeColor: { r: Math.round(stroke.r), g: Math.round(stroke.g), b: Math.round(stroke.b) } } : {}),
+    ...(isNum(s.outlineWidth) ? { strokeWidth: s.outlineWidth } : {}),
+  };
+}
+
+function mapParagraphStyle(p: NonNullable<AgLayer["text"]>["paragraphStyle"]): LayerParagraphStyle {
+  if (!p) return {};
+  return {
+    ...(p.justification ? { justification: p.justification } : {}),
+    ...(isNum(p.firstLineIndent) ? { firstLineIndent: p.firstLineIndent } : {}),
+    ...(isNum(p.startIndent) ? { startIndent: p.startIndent } : {}),
+    ...(isNum(p.endIndent) ? { endIndent: p.endIndent } : {}),
+    ...(isNum(p.spaceBefore) ? { spaceBefore: p.spaceBefore } : {}),
+    ...(isNum(p.spaceAfter) ? { spaceAfter: p.spaceAfter } : {}),
+  };
+}
+
+const nonEmpty = <T extends object>(o: T): T | undefined => (Object.keys(o).length ? o : undefined);
+
+/**
+ * PSD 里我们**复刻不了**的排版特性。命中任何一条,这层的文字就只能贴烘焙
+ * 像素:重排出来必然不像,不如老实说不支持,让 agent 去走 editPixels。
+ *
+ * 缺字体**不在这里** —— 那不是文件的属性,是"这台机器上有没有装"的属性,
+ * 只有渲染时才知道。
+ */
+function textUneditable(t: NonNullable<AgLayer["text"]>): TextUneditableReason[] {
+  const out: TextUneditableReason[] = [];
+  // warp.style 存在且不是 'none' 才算真的变形过。
+  if (t.warp?.style && t.warp.style !== "none") out.push("warp");
+  if (t.textPath) out.push("text-path");
+  if (t.gridding === "round" || t.gridInfo?.isOn) out.push("grid");
+  return out;
+}
+
 function mapText(t: AgLayer["text"]): { text: LayerText; degraded: Degradation } | undefined {
   if (!t || typeof t.text !== "string") return undefined;
-  const s = t.style;
-  // ag-psd's text-engine colour encoding round-trips with float drift
-  // (e.g. 28 -> 27.999); model/types.ts promises 0..255 integers, so round
-  // here rather than let every downstream consumer see near-integer floats.
-  const rawColor = rgbOf(s?.fillColor);
-  const color = rawColor
-    ? { r: Math.round(rawColor.r), g: Math.round(rawColor.g), b: Math.round(rawColor.b) }
-    : undefined;
-  const style: LayerTextStyle = {
-    ...(s?.font?.name ? { font: s.font.name } : {}),
-    ...(isNum(s?.fontSize) ? { size: s!.fontSize } : {}),
-    ...(color ? { color } : {}),
-    ...(isNum(s?.tracking) ? { tracking: s!.tracking } : {}),
-    ...(isNum(s?.leading) ? { leading: s!.leading } : {}),
-  };
+  const style = mapTextStyle(t.style);
+  const paragraphStyle = mapParagraphStyle(t.paragraphStyle);
+  // run 的 length 是字符数,顺次覆盖 content。长度为 0 的段没有意义,丢掉。
+  const runs: LayerTextRun[] = (t.styleRuns ?? [])
+    .filter((r) => isNum(r?.length) && r.length > 0)
+    .map((r) => ({ length: r.length, style: mapTextStyle(r.style) }));
+  const paragraphRuns: LayerParagraphRun[] = (t.paragraphStyleRuns ?? [])
+    .filter((r) => isNum(r?.length) && r.length > 0)
+    .map((r) => ({ length: r.length, style: mapParagraphStyle(r.style) }));
+  const uneditable = textUneditable(t);
   return {
     text: {
       content: t.text,
-      ...(Object.keys(style).length ? { style } : {}),
+      ...(nonEmpty(style) ? { style } : {}),
+      ...(runs.length ? { runs } : {}),
+      ...(nonEmpty(paragraphStyle) ? { paragraphStyle } : {}),
+      ...(paragraphRuns.length ? { paragraphRuns } : {}),
       ...(Array.isArray(t.transform) ? { transform: [...t.transform] } : {}),
       ...(t.shapeType ? { shapeType: t.shapeType } : {}),
+      ...(Array.isArray(t.boxBounds) ? { boxBounds: [...t.boxBounds] } : {}),
+      ...(Array.isArray(t.pointBase) ? { pointBase: [...t.pointBase] } : {}),
+      ...(t.orientation ? { orientation: t.orientation } : {}),
+      ...(uneditable.length ? { uneditable } : {}),
     },
     degraded: {
       reason: "文字层已栅格化",
-      detail: "渲染与导出使用 PSD 烘焙像素；本期不支持编辑文字内容与排版",
+      detail: uneditable.length
+        ? `渲染与导出使用 PSD 烘焙像素；文字不可重排（${uneditable.join("、")}）`
+        : "渲染与导出使用 PSD 烘焙像素；文字内容可编辑，重排需要本机有对应字体",
     },
   };
 }
