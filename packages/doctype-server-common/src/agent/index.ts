@@ -23,6 +23,7 @@ export {
 export {
   AgentSession, DEFAULT_MAX_ITERATIONS,
 } from "./session.js";
+export { decodeHistory, encodeHistory } from "./history-codec.js";
 export type { AgentRunOutcome, AgentSessionDeps } from "./session.js";
 
 export {
