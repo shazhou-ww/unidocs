@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { createSBlobContext, type SBlobCasAdapter } from "@unidocs/doctype-server-common";
 import { createDocxDocumentType } from "../src/index.js";
+import type { DocumentMemoryProbeSample } from "@unidocs/protocol";
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -49,7 +50,11 @@ describe("docx 的 CAS 扇出", () => {
    */
   it("init 的 part 上传受客户端闸门约束,而不是 doctype 自带的上限", async () => {
     const { adapter, peak, calls } = tracingAdapter();
-    const ctx = createSBlobContext(adapter, { casConcurrency: 2 });
+    const samples: DocumentMemoryProbeSample[] = [];
+    const ctx = createSBlobContext(adapter, {
+      casConcurrency: 2,
+      memoryProbe: sample => samples.push(sample),
+    });
     const docx = createDocxDocumentType(ctx);
 
     const state = await docx.init();
@@ -58,6 +63,25 @@ describe("docx 的 CAS 扇出", () => {
     expect(calls()).toBeGreaterThanOrEqual(7);
     expect(peak()).toBeLessThanOrEqual(2);
     expect(peak()).toBeGreaterThan(1);
+    expect(samples.map(sample => sample.stage)).toEqual(expect.arrayContaining([
+      "docx.store.start",
+      "docx.package.saved",
+      "docx.package.extracted",
+      "docx.parts.upload.start",
+      "docx.parts.upload.complete",
+      "docx.store.complete",
+      "cas.request.start",
+      "cas.request.complete",
+    ]));
+    const extracted = samples.find(sample => sample.stage === "docx.package.extracted");
+    expect(extracted?.details?.partCount).toBe(Object.keys(state.files).length);
+    expect(extracted?.details?.partBytes).toBeGreaterThan(0);
+    const observedCasPeak = Math.max(
+      ...samples
+        .filter(sample => sample.stage === "cas.request.start")
+        .map(sample => Number(sample.details?.inFlight ?? 0)),
+    );
+    expect(observedCasPeak).toBe(peak());
   });
 
   it("闸门放宽,扇出就真的跟着放宽(说明限的是同一处)", async () => {

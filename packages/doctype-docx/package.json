@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "probe:memory": "node scripts/run-memory-probe.mjs",
     "typecheck": "tsc -b",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
@@ -27,6 +28,7 @@
     "@ariadng/office": "0.3.0"
   },
   "devDependencies": {
+    "@unicas/tenant-blob-client": "workspace:*",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
     "@unicas/codec": "workspace:*"

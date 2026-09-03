@@ -66,6 +66,8 @@ interface SnapshotRow {
 export interface Env {
   readonly CAS_SERVICE: Fetcher;
   readonly CAS_STACK_ID: string;
+  readonly DOC_CAS_CONCURRENCY?: string;
+  readonly DOC_MEMORY_PROBE?: string;
 }
 
 export interface EditorDOInstance {
@@ -189,15 +191,22 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         },
         openBlob: (hash: string) => this.#requireCas().openBlob(hash),
       };
-      // casConcurrency 取 2:这条路跑在 128MB 的 DO isolate 里,而生产 docx create
-      // 正是在并发 8 上被撑爆的(0795252)。2 就是当时 doctype-docx 自己压到的那个
-      // 值 —— 现在那份本地限流撤掉了,取值移到这里,docx 在 CF 上的行为逐字节不变。
-      //
-      // 提高它是修复清单第 4 项(标为 Deferred,要求"revisit only with the memory
-      // fix")的内容,应当单独做并带生产实测,不搭在这次重构里。
+      const casConcurrency = parseCasConcurrency(this.#env.DOC_CAS_CONCURRENCY);
       const context = createSBlobContext(casAdapter, {
         maxReadBytes: MAX_SVALUE_ROOT_BYTES,
-        casConcurrency: 2,
+        casConcurrency,
+        ...(this.#env.DOC_MEMORY_PROBE === "1"
+          ? {
+              memoryProbe: (sample: import("@unidocs/protocol").DocumentMemoryProbeSample) => {
+                console.log({
+                  event: "document_memory_probe",
+                  docType: this.#docType,
+                  sessionId: this.#sessionId,
+                  ...sample,
+                });
+              },
+            }
+          : {}),
       });
       this.#context = context;
       this.#config = factory(context);
@@ -337,6 +346,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       forceSnapshot = false,
     ): Promise<number> {
       const context = this.#requireContext();
+      const probe = context.memoryProbe;
       const nextVersion = this.#version + 1;
       const timestamp = Date.now();
       const shouldSnapshot = forceSnapshot
@@ -345,12 +355,21 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
       let snapshotBlob: SBlob | null = null;
       let snapshotBytes: Uint8Array | null = null;
+      probe?.({ stage: "commit.start", details: { nextVersion, shouldSnapshot } });
       if (shouldSnapshot) {
         try {
           snapshotBytes = encodeSValue(doc as unknown as SValue);
+          probe?.({
+            stage: "commit.snapshot.encoded",
+            details: { nextVersion, snapshotBytes: snapshotBytes.length },
+          });
           snapshotBlob = await context.makeSBlob({
             data: snapshotBytes,
             contentType: SValueContentType,
+          });
+          probe?.({
+            stage: "commit.snapshot.uploaded",
+            details: { nextVersion, snapshotBytes: snapshotBytes.length },
           });
         } catch (err) {
           throw new Error(`Store snapshot root failed: ${String(err)}`);
@@ -364,9 +383,17 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           ? { kind: "restore", doc: snapshotBlob! }
           : delta;
         deltaBytes = encodeSValue(storedDelta as unknown as SValue);
+        probe?.({
+          stage: "commit.delta.encoded",
+          details: { nextVersion, deltaBytes: deltaBytes.length },
+        });
         deltaBlob = await context.makeSBlob({
           data: deltaBytes,
           contentType: SValueContentType,
+        });
+        probe?.({
+          stage: "commit.delta.uploaded",
+          details: { nextVersion, deltaBytes: deltaBytes.length },
         });
       } catch (err) {
         throw new Error(`Store delta root failed: ${String(err)}`);
@@ -384,6 +411,14 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         snapshotBlob?.hash ?? null,
         snapshotBytes,
       );
+      probe?.({
+        stage: "commit.pending.persisted",
+        details: {
+          nextVersion,
+          deltaBytes: deltaBytes.length,
+          snapshotBytes: snapshotBytes?.length ?? 0,
+        },
+      });
       try {
         await this.#settlePending();
       } catch (err) {
@@ -392,6 +427,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       }
       this.#version = nextVersion;
       this.#doc = doc;
+      probe?.({ stage: "commit.complete", details: { nextVersion } });
       return nextVersion;
     }
 
@@ -812,10 +848,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const identity = requestIdentity(request);
       this.#initializeRuntime();
       const config = this.#requireConfig();
+      const probe = this.#requireContext().memoryProbe;
+      probe?.({ stage: "create.start" });
       let doc: SValueType<TDoc>;
       const contentType = request.headers.get("content-type") ?? "";
       if (contentType.includes("multipart/form-data")) {
         const formData = await request.formData();
+        probe?.({ stage: "create.multipart.parsed" });
         const sourceId = formData.get("sourceId");
         if (typeof sourceId === "string" && sourceId.length > 0) {
           return Response.json({
@@ -833,15 +872,28 @@ export function createEditorDO<TDoc, TQuery, TOp>(
             mediaType: file.type,
             filename: file.name,
           });
-          doc = await format.load(new Uint8Array(await file.arrayBuffer()));
+          const uploadBytes = new Uint8Array(await file.arrayBuffer());
+          probe?.({
+            stage: "create.upload.buffered",
+            details: { uploadBytes: uploadBytes.length },
+          });
+          doc = await format.load(uploadBytes);
+          probe?.({ stage: "create.format.loaded", details: { uploadBytes: uploadBytes.length } });
         } else {
           doc = await config.init();
+          probe?.({ stage: "create.document.initialized" });
         }
       } else {
         doc = await config.init();
+        probe?.({ stage: "create.document.initialized" });
       }
-      encodeSValue(doc as unknown as SValue);
+      const validationBytes = encodeSValue(doc as unknown as SValue);
+      probe?.({
+        stage: "create.document.validated",
+        details: { stateBytes: validationBytes.length },
+      });
       await this.#storeIdentity(identity);
+      probe?.({ stage: "create.identity.persisted" });
       const version = await this.#commit(doc, { kind: "restore" }, "Document created", true);
       return Response.json({ success: true, sessionId: identity.sessionId, version });
     }
@@ -995,6 +1047,15 @@ function valueResponse(request: Request, value: SValue): Response {
     return Response.json({ error: "This response requires the SValue media type" }, { status: 406 });
   }
   return Response.json(value);
+}
+
+function parseCasConcurrency(value: string | undefined): number {
+  if (value === undefined) return 2;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 32) {
+    throw new TypeError("DOC_CAS_CONCURRENCY must be an integer between 1 and 32");
+  }
+  return parsed;
 }
 
 function parseOptionalVersion(value: string | null): number | null {

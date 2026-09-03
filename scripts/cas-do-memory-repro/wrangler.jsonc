@@ -1,0 +1,33 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "unidocs-cas-do-memory-repro",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-03",
+  "workers_dev": true,
+  "vars": {
+    "CAS_STACK_ID": "cas_SZ6wfcfqS34J"
+  },
+  "services": [
+    {
+      "binding": "CAS_SERVICE",
+      "service": "unidocs-cas"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REPRO_DO",
+        "class_name": "CasUploadReproDO"
+      }
+    ]
+  },
+  "exports": {
+    "CasUploadReproDO": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "observability": {
+    "enabled": false
+  }
+}

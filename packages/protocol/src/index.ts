@@ -17,6 +17,8 @@ export type {
   DocumentFormat,
   DocumentType,
   DocumentTypeContext,
+  DocumentMemoryProbe,
+  DocumentMemoryProbeSample,
   DocumentTypeFactory,
   EffectContext,
   EffectOutcome,

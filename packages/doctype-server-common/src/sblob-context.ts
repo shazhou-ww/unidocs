@@ -10,6 +10,7 @@ import {
 } from "@unicas/codec";
 import type {
   ByteStream,
+  DocumentMemoryProbe,
   DocumentTypeContext,
   MakeSBlob,
   SBlob,
@@ -36,6 +37,7 @@ export interface SBlobCasAdapter {
 
 export interface SBlobContextOptions {
   readonly maxReadBytes?: number;
+  readonly memoryProbe?: DocumentMemoryProbe;
   /**
    * 本上下文同时在途的 CAS 子请求上限,省略时取 DEFAULT_CAS_CONCURRENCY。
    *
@@ -56,13 +58,39 @@ export interface SBlobContextOptions {
  * open() 返回的 handler 由调用方持有,读多久由调用方决定,把许可攥在整个流的
  * 生命周期上会被一个慢读者锁死闸门。代价是"读取+解码"那段缓冲不受本闸门约束。
  */
-function limitedAdapter(cas: SBlobCasAdapter, limiter: CasLimiter): SBlobCasAdapter {
+function limitedAdapter(
+  cas: SBlobCasAdapter,
+  limiter: CasLimiter,
+  probe?: DocumentMemoryProbe,
+): SBlobCasAdapter {
+  let inFlight = 0;
+  const run = <T>(
+    operation: string,
+    details: Readonly<Record<string, number | string | boolean>>,
+    call: () => Promise<T>,
+  ): Promise<T> => limiter.run(async () => {
+    inFlight++;
+    probe?.({ stage: "cas.request.start", details: { operation, inFlight, ...details } });
+    try {
+      return await call();
+    } finally {
+      probe?.({ stage: "cas.request.complete", details: { operation, inFlight, ...details } });
+      inFlight--;
+    }
+  });
   return {
     leaseNodeContent: (hash, content, contentType, refs) =>
-      limiter.run(() => cas.leaseNodeContent(hash, content, contentType, refs)),
-    leaseNode: (hash) => limiter.run(() => cas.leaseNode(hash)),
-    storeBlob: (source) => limiter.run(() => cas.storeBlob(source)),
-    openBlob: (hash) => limiter.run(() => cas.openBlob(hash)),
+      run("leaseNodeContent", {
+        contentBytes: content.length,
+        refCount: refs?.length ?? 0,
+      }, () => cas.leaseNodeContent(hash, content, contentType, refs)),
+    leaseNode: (hash) => run("leaseNode", {}, () => cas.leaseNode(hash)),
+    storeBlob: (source) => run(
+      "storeBlob",
+      { contentBytes: "data" in source ? source.data.length : source.size ?? -1 },
+      () => cas.storeBlob(source),
+    ),
+    openBlob: (hash) => run("openBlob", {}, () => cas.openBlob(hash)),
   };
 }
 
@@ -123,7 +151,11 @@ class SBlobRuntime {
   readonly #pendingMakes = new Map<string, Promise<SBlob>>();
 
   constructor(cas: SBlobCasAdapter, options: SBlobContextOptions) {
-    this.#cas = limitedAdapter(cas, new CasLimiter(options.casConcurrency ?? DEFAULT_CAS_CONCURRENCY));
+    this.#cas = limitedAdapter(
+      cas,
+      new CasLimiter(options.casConcurrency ?? DEFAULT_CAS_CONCURRENCY),
+      options.memoryProbe,
+    );
     this.#maxReadBytes = validLimit(options.maxReadBytes, 8 * 1024 * 1024, "maxReadBytes");
   }
 
@@ -237,6 +269,7 @@ export function createSBlobContext(
   return Object.freeze({
     makeSBlob,
     openSBlob: (blob: SBlob) => runtime.open(blob),
+    ...(options.memoryProbe ? { memoryProbe: options.memoryProbe } : {}),
     readSBlob: async (blob: SBlob) => {
       const handler = await runtime.open(blob);
       return {

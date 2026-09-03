@@ -103,12 +103,21 @@ export interface MakeSBlob {
   (data: SBlobSource): Promise<SBlob>;
 }
 
+export interface DocumentMemoryProbeSample {
+  readonly stage: string;
+  readonly details?: Readonly<Record<string, number | string | boolean>>;
+}
+
+export type DocumentMemoryProbe = (sample: DocumentMemoryProbeSample) => void;
+
 export interface DocumentTypeContext {
   readonly makeSBlob: MakeSBlob;
   /** Open a reusable, range-capable file handle. */
   readonly openSBlob: (blob: SBlob) => Promise<SBlobHandler>;
   /** @deprecated Migrate to openSBlob().read() or bounded readBytes(). */
   readonly readSBlob?: (blob: SBlob) => Promise<SBlobBytes>;
+  /** Optional synchronous phase probe. Hosts may enrich samples with runtime memory metrics. */
+  readonly memoryProbe?: DocumentMemoryProbe;
 }
 
 export type AgentContentPart =

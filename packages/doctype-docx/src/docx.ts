@@ -76,15 +76,34 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
     previous?: DocxDoc,
     extracted?: Readonly<Record<string, PackageFileData>>,
   ): Promise<DocxDoc> {
-    const packageFiles = extracted ?? await extractOpenXmlPackage(await document.save());
+    context.memoryProbe?.({ stage: "docx.store.start" });
+    let packageFiles = extracted;
+    if (packageFiles === undefined) {
+      const packageBytes = await document.save();
+      context.memoryProbe?.({
+        stage: "docx.package.saved",
+        details: { packageBytes: packageBytes.length },
+      });
+      packageFiles = await extractOpenXmlPackage(packageBytes);
+    }
+    const packageEntries = Object.entries(packageFiles);
+    const partBytes = packageEntries.reduce((total, [, file]) => total + file.data.length, 0);
+    context.memoryProbe?.({
+      stage: "docx.package.extracted",
+      details: { partCount: packageEntries.length, partBytes },
+    });
     // 这里曾经是 `PART_IO_CONCURRENCY = 2` 的本地限流(0795252)。它限的其实就是
     // `openSBlob`/`makeSBlob` —— CAS 调用本身,和 sblob-context 里那条为躲同一个
     // OOM 而退化出的串行是同一个资源,只是各限各的。上限现在由 SBlob 客户端统一
     // 持有(`SBlobContextOptions.casConcurrency`),doctype 不再自带一份:两层套着
     // 只有紧的那层生效,而 doctype 侧那份既拿不到运行时的正确取值(CF 的 DO
     // isolate 和 Azure 差一个数量级),也让"上限到底是多少"失去单一出处。
+    context.memoryProbe?.({
+      stage: "docx.parts.upload.start",
+      details: { partCount: packageEntries.length, partBytes },
+    });
     const stored = await Promise.all(
-      Object.entries(packageFiles).map(async ([path, file]) => {
+      packageEntries.map(async ([path, file]) => {
         const blob = await context.makeSBlob({
           data: file.data,
           contentType: file.contentType,
@@ -93,6 +112,10 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
         return [path, prior?.hash === blob.hash ? prior : blob] as const;
       }),
     );
+    context.memoryProbe?.({
+      stage: "docx.parts.upload.complete",
+      details: { partCount: stored.length, partBytes },
+    });
     const files = Object.create(null) as Record<string, SBlob>;
     for (const [path, blob] of stored) {
       Object.defineProperty(files, path, { enumerable: true, value: blob });
@@ -102,6 +125,10 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
       files: Object.freeze(files),
     });
     modelCache.set(state, document);
+    context.memoryProbe?.({
+      stage: "docx.store.complete",
+      details: { partCount: stored.length },
+    });
     return state;
   }
 
