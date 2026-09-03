@@ -1,9 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { AgentMessage, AgentPlatform, DocumentAgent } from "@unidocs/protocol";
 import { AgentSession } from "../../src/agent/session.js";
-import type { LlmProvider } from "../../src/agent/index.js";
+import type { AgentRunOutcome, LlmProvider } from "../../src/agent/index.js";
 
-/** 只回一句话就收工的 provider：把它收到的 messages 记下来供断言。 */
+/**
+ * 只回一句话就收工的 provider：把它收到的 messages 记下来供断言。
+ *
+ * `content: [{ type: "text", text: "done" }]`，不是 `{ text: "done" }` ——
+ * 后者曾经是这里的写法，但 `AgentCompletion`（protocol/src/types.ts:341）
+ * 要的字段是 `content: readonly LlmContentPart[]`，没有 `text`。用错形状会
+ * 让 `session.ts` 的 `completion.content.filter(...)` 在每一次 run 都抛
+ * TypeError，被 `AgentSession.run()` 自己的 catch 折成 `{ok:false}` ——
+ * 于是这个文件的六条测试全部只走失败路径，"assistant 消息完全不写进历史"
+ * 这种改动也照样 6/6 全绿（2026-09-03 全分支评审 Important #4）。这里改对
+ * 之后，下面每条调用 run() 的测试都显式断言 `outcome.ok === true`，不让
+ * 同类回归再次无声无息地滑过去。
+ */
 function recordingProvider(): { provider: LlmProvider; seen: unknown[][] } {
   const seen: unknown[][] = [];
   return {
@@ -11,10 +23,15 @@ function recordingProvider(): { provider: LlmProvider; seen: unknown[][] } {
     provider: {
       async complete(req: { messages: readonly unknown[] }) {
         seen.push([...req.messages]);
-        return { text: "done", toolCalls: [] };
+        return { content: [{ type: "text", text: "done" }], toolCalls: [] };
       },
     } as unknown as LlmProvider,
   };
+}
+
+/** 断言一次 run 真的成功了，不是被内核的 catch-all 兜成了失败结果。 */
+function expectRunOk(outcome: AgentRunOutcome): void {
+  expect(outcome.ok, "error" in outcome ? outcome.error : undefined).toBe(true);
 }
 
 const agent: DocumentAgent<unknown, unknown> = { tools: [], instructions: "sys" };
@@ -36,7 +53,7 @@ describe("AgentSession 的历史进出口", () => {
     const { provider, seen } = recordingProvider();
     const session = new AgentSession({ agent, platform, provider, history: priorTurn });
 
-    await session.run([{ type: "text", text: "第二轮" }]);
+    expectRunOk(await session.run([{ type: "text", text: "第二轮" }]));
 
     // 第一次模型调用收到的 messages 里必须含上一轮的两条。
     expect(JSON.stringify(seen[0])).toContain("第一轮问的");
@@ -47,22 +64,31 @@ describe("AgentSession 的历史进出口", () => {
     const { provider, seen } = recordingProvider();
     const session = new AgentSession({ agent, platform, provider });
 
-    await session.run([{ type: "text", text: "只有这一轮" }]);
+    expectRunOk(await session.run([{ type: "text", text: "只有这一轮" }]));
 
     expect(JSON.stringify(seen[0])).not.toContain("第一轮");
     expect(seen[0]).toHaveLength(1);
   });
 
-  it("snapshotHistory 返回本轮之后的完整历史", async () => {
+  // 这条钉住的正是评审 Important #4 描述的检测力空洞:原断言只是
+  // `snap.length >= 3`——2 条注入的 + 1 条 user 就已经是 3,哪怕
+  // AgentSession 完全不再把 assistant 消息 push 进历史,这条也照样通过。
+  // 现在断言的是确切长度(4 = 2 条注入 + 本轮 user + 本轮 assistant)以及
+  // 最后一条确实是一条 assistant 消息、内容正是 provider 回的那句 ——
+  // 不写进历史,这两条断言至少有一条会挂。
+  it("snapshotHistory 返回本轮之后的完整历史,含新写入的 assistant 消息", async () => {
     const { provider } = recordingProvider();
     const session = new AgentSession({ agent, platform, provider, history: priorTurn });
 
-    await session.run([{ type: "text", text: "第二轮" }]);
+    expectRunOk(await session.run([{ type: "text", text: "第二轮" }]));
     const snap = session.snapshotHistory();
 
-    expect(snap.length).toBeGreaterThanOrEqual(3);
+    expect(snap.length).toBe(4);
     expect(JSON.stringify(snap)).toContain("第一轮问的");
     expect(JSON.stringify(snap)).toContain("第二轮");
+    const last = snap[snap.length - 1];
+    expect(last.role).toBe("assistant");
+    expect(last.content).toEqual([{ type: "text", text: "done" }]);
   });
 
   // 交出内部数组会让调用方在写回之前不小心改坏历史，而这种 bug 只在
@@ -83,7 +109,7 @@ describe("AgentSession 的历史进出口", () => {
     const caller = [...priorTurn];
     const session = new AgentSession({ agent, platform, provider, history: caller });
 
-    await session.run([{ type: "text", text: "第二轮" }]);
+    expectRunOk(await session.run([{ type: "text", text: "第二轮" }]));
 
     expect(caller).toHaveLength(2);
   });
