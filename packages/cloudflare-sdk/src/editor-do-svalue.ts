@@ -1,6 +1,6 @@
 import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
-import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
+import type { DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
@@ -8,6 +8,7 @@ import {
   DELTA_THRESHOLD,
   readableStreamFromByteStream,
   readableStreamFromSBlobSource,
+  selectFormat,
 } from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
@@ -780,12 +781,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         const file = formData.get("file") as unknown;
         if (isUploadedFile(file)) {
           const requested = formData.get("format");
-          const format = selectFormat(
-            config,
-            typeof requested === "string" ? requested : null,
-            file.type,
-            file.name,
-          );
+          const { format } = selectFormat(config, {
+            // 只有真的给了字符串才传 name。传 undefined 与传 null 在旧签名
+            // 里是同一件事(都表示"没指定"),新签名靠键的存在与否区分。
+            ...(typeof requested === "string" ? { name: requested } : {}),
+            mediaType: file.type,
+            filename: file.name,
+          });
           doc = await format.load(new Uint8Array(await file.arrayBuffer()));
         } else {
           doc = await config.init();
@@ -948,30 +950,6 @@ function valueResponse(request: Request, value: SValue): Response {
     return Response.json({ error: "This response requires the SValue media type" }, { status: 406 });
   }
   return Response.json(value);
-}
-
-function selectFormat<TDoc, TQuery, TOp>(
-  config: DocumentType<TDoc, TQuery, TOp>,
-  requested: string | null,
-  mediaType: string,
-  filename: string,
-): DocumentFormat<TDoc> {
-  if (requested) {
-    const explicit = config.formats[requested];
-    if (!explicit) throw new Error(`Unknown format: ${requested}`);
-    return explicit;
-  }
-  const byMediaType = Object.values(config.formats).filter(format =>
-    format.mediaTypes.some(candidate => candidate.toLowerCase() === mediaType.toLowerCase()));
-  if (byMediaType.length === 1) return byMediaType[0];
-  const lowerName = filename.toLowerCase();
-  const byExtension = Object.values(config.formats).filter(format =>
-    format.extensions.some(extension => lowerName.endsWith(extension.toLowerCase())));
-  if (byExtension.length === 1) return byExtension[0];
-  if (byMediaType.length > 1 || byExtension.length > 1) throw new Error("Ambiguous document format");
-  const fallback = config.formats[config.defaultFormat];
-  if (!fallback) throw new Error(`Default format ${config.defaultFormat} is not configured`);
-  return fallback;
 }
 
 function parseOptionalVersion(value: string | null): number | null {
