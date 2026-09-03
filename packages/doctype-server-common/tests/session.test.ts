@@ -1204,7 +1204,14 @@ describe("DocumentSession.apply — opId idempotency", () => {
 /** 在文本 doctype 上再挂一个 "upper" 格式,用来观察到底选中了哪一个。
  *  两个格式的 mediaTypes / extensions 不重叠,所以不会触发歧义。
  *  基础那一项沿用 makeTextDocType 的 `text`,连 defaultFormat 一起不动——
- *  这几条断言要证的正是"默认路径没变"。 */
+ *  这几条断言要证的正是"默认路径没变"。
+ *
+ *  顶层 contentType 故意覆盖成一个跟 formats.text.mediaTypes[0]
+ *  ("text/plain")不一样的值。护栏 2 要区分的正是"顶层 config.contentType"
+ *  和"所选格式的 mediaTypes[0]"这两个值——沿用 makeTextDocType 的
+ *  contentType("text/plain"恰好和 defaultFormat 的 mediaTypes[0] 相同)会让
+ *  这两个值永远相等,任何断言都观察不到 exportBytes/session-handler 到底
+ *  用了哪一个,测试因此恒绿钉不住任何东西。 */
 function makeTwoFormatDocType(): DocumentType<string, TextQuery, TextOp> {
   const inner = makeTextDocType();
   return {
@@ -1218,6 +1225,7 @@ function makeTwoFormatDocType(): DocumentType<string, TextQuery, TextOp> {
         async save(doc: string) { return encoder.encode(doc.toUpperCase()); },
       },
     },
+    contentType: "text/x-session-top-level",
   };
 }
 
@@ -1259,12 +1267,30 @@ describe("DocumentSession.exportBytes — 格式选择", () => {
 
   // 回归护栏:不带参数必须与今天完全一致——defaultFormat 的 save,
   // 加上**顶层的 config.contentType**(不是格式自己的 mediaTypes[0])。
+  // fixture 的顶层 contentType 被覆盖成 "text/x-session-top-level",跟
+  // defaultFormat("text")自己的 mediaTypes[0]("text/plain")不同——两者
+  // 不相等,这条断言才有区分力。
   it("不带参数时用 defaultFormat 与顶层 contentType", async () => {
     const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
     await session.load();
     await session.create({ bytes: encoder.encode("hi") });
 
     const exported = await session.exportBytes();
+    expect(decoder.decode(exported.bytes)).toBe("hi");
+    expect(exported.contentType).toBe("text/x-session-top-level");
+  });
+
+  // 配对断言:显式指定 defaultFormat 自己的名字("text")时,即使字节结果和
+  // "不带参数"完全一样,contentType 也必须切到 format.mediaTypes[0]
+  // ("text/plain"),而不是顶层的 "text/x-session-top-level"。这条和上面
+  // 那条一起,才把"顶层 contentType" vs "所选格式的 mediaTypes[0]"这两条
+  // 分支真正分开验证。
+  it("显式指定 defaultFormat 自己的名字时,contentType 切到该格式的 mediaTypes[0]", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await session.create({ bytes: encoder.encode("hi") });
+
+    const exported = await session.exportBytes("text");
     expect(decoder.decode(exported.bytes)).toBe("hi");
     expect(exported.contentType).toBe("text/plain");
   });
@@ -1282,6 +1308,18 @@ describe("session-handler GET /_internal/export — 空 ?format= 护栏", () => 
   // 而不是 null——`??` 挡不住它,只有 `||` 才行。这条钉住:带一个空的
   // `?format=` 必须和完全不带该参数的响应逐字节等价,不能因为 "" 被当成
   // 「显式指定了格式」而切到 format.mediaTypes[0] 当 Content-Type。
+  //
+  // 这条必须走真正的 HTTP handler(createSessionHandler),不能只在
+  // session.exportBytes() 层面断言——bug 出在 session-handler.ts 解析
+  // query string 的那一行,session.exportBytes() 本身的行为在两种调用方式
+  // 下都是"忠实执行调用方传来的 formatName",看不出 handler 有没有把 ""
+  // 错当成"指定了格式"传进去。
+  //
+  // 断言值必须是 fixture 里刻意覆盖的顶层 contentType
+  // ("text/x-session-top-level"),而不是 defaultFormat 的 mediaTypes[0]
+  // ("text/plain")——两者不同,断言才有区分力:如果 handler 把 "" 误当成
+  // 显式格式名传给 exportBytes,Content-Type 会变成 "text/plain",而不是
+  // 期望的顶层值,断言会失败而不是巧合地通过。
   it("?format=(空值)与完全不带该参数的响应等价", async () => {
     const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
     await session.load();
@@ -1295,7 +1333,7 @@ describe("session-handler GET /_internal/export — 空 ?format= 护栏", () => 
     const withoutParam = await handle(new Request("https://svc/_internal/export"));
     const withEmptyParam = await handle(new Request("https://svc/_internal/export?format="));
 
-    expect(withEmptyParam.headers.get("Content-Type")).toBe("text/plain");
+    expect(withEmptyParam.headers.get("Content-Type")).toBe("text/x-session-top-level");
     expect(withEmptyParam.headers.get("Content-Type"))
       .toBe(withoutParam.headers.get("Content-Type"));
     expect(withEmptyParam.headers.get("Content-Disposition"))
