@@ -96,6 +96,16 @@ class OpentypeFontFace implements FontFace {
     return this.font.getKerningValue(leftIndex, rightIndex);
   }
 
+  /**
+   * 返回值是 `outlineCache` 里缓存的那个数组实例本身，不是每次拷贝一份——
+   * 同一个码位被排版引擎多次请求轮廓（比如同一个字符在文档里重复出现）时
+   * 直接把缓存的引用递出去，省一次数组拷贝。调用方（`layout.ts`/
+   * `raster.ts`）不得原地修改返回的数组或数组里的对象（`sort()`/`push()`
+   * 之类）——那会污染后续所有同码位调用拿到的结果。`readonly PathCommand[]`
+   * 只是编译期的提醒，运行时挡不住；这里不用 `Object.freeze` 补一层运行时
+   * 保护，因为排版是逐字形调用的热路径，每个字形都 freeze 一遍是不必要的
+   * 开销，且 `readonly` 已经挡住了正常写代码时的 TypeScript 调用方。
+   */
   outline(codePoint: number): readonly PathCommand[] {
     const cached = this.outlineCache.get(codePoint);
     if (cached !== undefined) return cached;
@@ -124,8 +134,13 @@ class OpentypeFontFace implements FontFace {
  * 的 `Z`。用生成测试字体的矩形做了实测验证（`glyph.path.commands` 与
  * `glyph.getPath(0,0,unitsPerEm).commands` 数值上只差一个 y 符号，符合这
  * 段推断）。
+ *
+ * 导出仅为了让测试能直接调它（见 `tests/text-opentype-face.test.ts` 里
+ * `Q` 分支的测试注释——`parseFontFace` 解析出来的字体永远不会产出 `Q`
+ * 类型的命令，round-trip 测不到这个分支，只能直接传构造好的命令进来测）。
+ * 不是给 `opentype-face.ts` 之外的生产代码用的。
  */
-function translatePathCommand(cmd: OpentypePathCommand): PathCommand {
+export function translatePathCommand(cmd: OpentypePathCommand): PathCommand {
   switch (cmd.type) {
     case "M":
       return { type: "M", x: cmd.x, y: cmd.y };

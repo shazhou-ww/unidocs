@@ -37,10 +37,11 @@ function rectGlyph(spec: RectGlyphSpec): Glyph {
   });
 }
 
-/** 把一串矩形字形规格拼成一份可以被 `parseFontFace` 解析的字体文件字节。
- *  `.notdef` 必须显式给 advanceWidth——opentype.js 序列化时会检查每个字形
- *  的 advanceWidth 是不是数字,不给会在 `toArrayBuffer()` 时直接抛错。 */
-export function buildRectFont(specs: readonly RectGlyphSpec[]): Uint8Array {
+/** 把一串字形对象拼成一份可以被 `parseFontFace` 解析的字体文件字节,自动
+ *  补上 `.notdef`。`.notdef` 必须显式给 advanceWidth——opentype.js 序列化时
+ *  会检查每个字形的 advanceWidth 是不是数字,不给会在 `toArrayBuffer()` 时
+ *  直接抛错。 */
+function buildFontFromGlyphs(glyphs: readonly Glyph[]): Uint8Array {
   const notdef = new Glyph({ name: ".notdef", advanceWidth: 0, path: new Path() });
   const font = new Font({
     familyName: "UnidocsTestFont",
@@ -48,9 +49,14 @@ export function buildRectFont(specs: readonly RectGlyphSpec[]): Uint8Array {
     unitsPerEm: UNITS_PER_EM,
     ascender: ASCENDER,
     descender: DESCENDER,
-    glyphs: [notdef, ...specs.map(rectGlyph)],
+    glyphs: [notdef, ...glyphs],
   });
   return new Uint8Array(font.toArrayBuffer());
+}
+
+/** 把一串矩形字形规格拼成一份可以被 `parseFontFace` 解析的字体文件字节。 */
+export function buildRectFont(specs: readonly RectGlyphSpec[]): Uint8Array {
+  return buildFontFromGlyphs(specs.map(rectGlyph));
 }
 
 /**
@@ -85,6 +91,30 @@ export function buildTestFont(): Uint8Array {
  */
 export function buildGaplessTestFont(): Uint8Array {
   return buildRectFont([{ char: "A", width: 600, height: 700, advanceWidth: 600 }]);
+}
+
+/**
+ * 只有一个字形的字体,轮廓是 M → C → Z(一条三次贝塞尔曲线),专给
+ * `translatePathCommand` 的 `C` 分支做 round-trip 测试(task-4-fix-1-brief.md
+ * C1)。
+ *
+ * 六个控制点坐标(110/220/330/440/550/660)故意取六个互不相同的数值 ——
+ * `translatePathCommand` 的 `C` 分支里 x1/y1/x2/y2/x/y 任意两个字段被写反,
+ * outline() 断言都会因为数值对不上而挂掉,不会因为凑巧相等而放过。
+ *
+ * 之所以能用 round-trip(写进字体、序列化、再解析回来断言)测 `C`,是因为
+ * 实测过 opentype.js 的三次贝塞尔曲线经 `toArrayBuffer()` → `parse()` 之后
+ * 数值原样保留,不会被降次或改写(见 text-opentype-face.test.ts 里 C1 那条
+ * 测试上方的注释,那边写了实测方法)。
+ */
+export function buildCurveTestFont(): Uint8Array {
+  const path = new Path();
+  path.moveTo(0, 0);
+  path.curveTo(110, 220, 330, 440, 550, 660);
+  path.close();
+  return buildFontFromGlyphs([
+    new Glyph({ name: "curve", unicode: "K".codePointAt(0), advanceWidth: 700, path }),
+  ]);
 }
 
 /** 两个字形离得很远的码位（'A' = 0x41,'中' = 0x4E2D）,用来验证

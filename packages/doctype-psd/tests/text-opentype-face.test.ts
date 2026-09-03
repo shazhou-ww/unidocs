@@ -9,12 +9,17 @@
  * 之后的墨迹宽度可以被精确预测——这是三个任务接口对不对的唯一守门人。
  */
 import { describe, expect, it } from "vitest";
-import { fontCoverage, parseFontFace } from "../src/text/opentype-face.js";
+import { fontCoverage, parseFontFace, translatePathCommand } from "../src/text/opentype-face.js";
 import { layoutText } from "../src/text/layout.js";
 import type { Pixels } from "../src/model/types.js";
 import { rasterizeGlyphs } from "../src/text/raster.js";
 import { fakeFace } from "./text-fake-face.js";
-import { buildGaplessTestFont, buildSparseCoverageTestFont, buildTestFont } from "./text-test-font.js";
+import {
+  buildCurveTestFont,
+  buildGaplessTestFont,
+  buildSparseCoverageTestFont,
+  buildTestFont,
+} from "./text-test-font.js";
 
 const cp = (ch: string): number => ch.codePointAt(0)!;
 
@@ -117,6 +122,37 @@ describe("parseFontFace: 度量", () => {
     // 600 但矩形是 600x700——用 outline 的差异确认两个实例没有共享缓存。
     expect(faceA.outline(cp("A"))[1]).toEqual({ type: "L", x: 500, y: 0 });
     expect(faceB.outline(cp("A"))[1]).toEqual({ type: "L", x: 600, y: 0 });
+  });
+});
+
+describe("translatePathCommand: Q / C 分支（task-4-fix-1-brief.md C1）", () => {
+  it("C 分支：outline() 对含三次贝塞尔曲线的字形，六个控制点数值与写入时的一致（round-trip）", () => {
+    // 为什么能用 round-trip 测 C：实测过 opentype.js 的三次贝塞尔曲线经
+    // `Font.toArrayBuffer()` 序列化、再 `parse()` 解析回来之后，`glyph.path`
+    // 里的 C 命令六个字段数值原样保留，不会被降次或改写（探针脚本：造一个
+    // 含 curveTo(20,400,380,10,300,100) 的字形，写进字体再读回来，C 命令
+    // 六个字段与写入时逐一相等）。
+    const face = parseFontFace(buildCurveTestFont());
+    expect(face.outline("K".codePointAt(0)!)).toEqual([
+      { type: "M", x: 0, y: 0 },
+      { type: "C", x1: 110, y1: 220, x2: 330, y2: 440, x: 550, y: 660 },
+      { type: "Z" },
+    ]);
+  });
+
+  it("Q 分支：translatePathCommand 精确翻译四个字段（直接调用，非 round-trip）", () => {
+    // 为什么 Q 分支不能像 C 分支那样用 round-trip 测：同样用探针脚本验证
+    // 过，把 quadraticCurveTo(100,200,300,0) 写进字体、序列化再解析回来，
+    // 读到的不是原样的 'Q' 命令，而是被 opentype.js 自己的 glyf 解析逻辑
+    // （TrueType 的 glyf 表原生只有二次贝塞尔，opentype.js 解析时会把它
+    // 升阶成三次，构造 `glyph.path` 时一律产出 'C'）升阶成了等价的三次
+    // 曲线（控制点数值正好等于二次→三次的升阶公式算出来的值，验证过不是
+    // 巧合）。也就是说 `parseFontFace` 解析出来的任何字体，`outline()`
+    // 永远不会产出 'Q' 类型的命令——Q 分支在真实调用路径上是死代码，只能
+    // 绕过 opentype.js 的字体解析，直接把手写的 Q 命令喂给
+    // `translatePathCommand` 来测这四个字段有没有翻译对。
+    const result = translatePathCommand({ type: "Q", x1: 111, y1: 222, x: 333, y: 444 });
+    expect(result).toEqual({ type: "Q", x1: 111, y1: 222, x: 333, y: 444 });
   });
 });
 
