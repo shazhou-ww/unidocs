@@ -189,7 +189,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         },
         openBlob: (hash: string) => this.#requireCas().openBlob(hash),
       };
-      const context = createSBlobContext(casAdapter, { maxReadBytes: MAX_SVALUE_ROOT_BYTES });
+      // casConcurrency 取 4:这条路跑在 128MB 的 DO isolate 里,而生产 docx create
+      // 正是在并发 8 上被撑爆的(0795252)。4 严于崩过的值,又松于当时退化出来的
+      // 串行 1。
+      const context = createSBlobContext(casAdapter, {
+        maxReadBytes: MAX_SVALUE_ROOT_BYTES,
+        casConcurrency: 4,
+      });
       this.#context = context;
       this.#config = factory(context);
     }
