@@ -88,7 +88,7 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
   setState({ status: "打开一个文件开始" });
 }
 
-async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
+async function createFrom(bytes: Uint8Array, label: string, mimeType?: string): Promise<void> {
   if (!controller) return;
   const before = controller.docId;
   // How many chat bubbles existed before this open. The open itself may have
@@ -96,7 +96,7 @@ async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
   const chatBefore = getState().chat.length;
   // `opening` 的生死归 `openFile`,不归这里、也不归 DocController:两者都在
   // `openFile` 里一并解释。
-  await controller.createFrom(bytes, label);
+  await controller.createFrom(bytes, label, mimeType);
   // `DocController.createFrom` never rejects — it reports failure via
   // `onOpenFailed` (wired to `reportError` in `initController` below), which
   // appends a `{role:"err"}` bubble to `chat` before control ever returns
@@ -148,7 +148,9 @@ export async function openFile(file: File): Promise<void> {
   // 干净——包括 `controller` 是 `null`、`createFrom` 整个是空操作的情况。
   setState({ opening: { phase: "upload", name: file.name, bytes: file.size } });
   try {
-    await createFrom(new Uint8Array(await file.arrayBuffer()), file.name);
+    // `file.type` 一路带下去,让服务端的 selectFormat 能用 MIME 做判断,不
+    // 是只靠文件名扩展名——见 doc-controller.ts 的 createFrom 上的注释。
+    await createFrom(new Uint8Array(await file.arrayBuffer()), file.name, file.type);
   } finally {
     setState({ opening: null });
   }
