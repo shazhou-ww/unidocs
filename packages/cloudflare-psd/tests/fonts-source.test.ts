@@ -57,7 +57,7 @@ describe("createFontIndexSource", () => {
     const index = await source.load();
     expect([...index.keys()]).toEqual(["NotoSans-Regular", "NotoSansSC-Regular"]);
     expect(index.get("NotoSansSC-Regular")).toEqual(cjk);
-    expect(names).toEqual([fontsObjectName("cas_1", "tenant-1")]);
+    expect(names).toEqual([fontsObjectName({ stackId: "cas_1", tenantId: "tenant-1" })]);
     expect(new URL(urls[0]).pathname).toBe(FONTS_INTERNAL_PATH);
   });
 

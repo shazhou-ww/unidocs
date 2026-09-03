@@ -48,7 +48,10 @@ const MAX_CODE_POINT = 0x10ffff;
  * stack 那些字节就已经不在了。索引跟着一起换名，两边同生同死；不带前缀反而
  * 会得到一张指向不存在字节的索引，而那种失效是静默的。
  */
-export function fontsObjectName(stackId: string, tenantId: string): string {
+export function fontsObjectName({ stackId, tenantId }: {
+  readonly stackId: string;
+  readonly tenantId: string;
+}): string {
   if (stackId.length === 0 || tenantId.length === 0) {
     throw new TypeError("Fonts DO name parts must not be empty");
   }
@@ -263,7 +266,7 @@ export interface FontsRequestConfig {
   /** 与 `createDocTypeHandler` 用的是同一个校验器（`DocAuthConfigCache` 产出）。 */
   readonly docCapabilityVerifier: DocCapabilityVerifier;
   readonly namespace: DurableObjectNamespace;
-  /** `fontsObjectName(stackId, tenantId)`。 */
+  /** `fontsObjectName({ stackId, tenantId })`。 */
   readonly objectName: string;
   readonly audit?: (event: FontsAuditEvent) => void;
 }

@@ -34,7 +34,7 @@ export interface FontIndexSourceOptions {
 
 export function createFontIndexSource(options: FontIndexSourceOptions): FontIndexSource {
   const now = options.now ?? (() => Date.now());
-  const objectName = fontsObjectName(options.stackId, options.tenantId);
+  const objectName = fontsObjectName({ stackId: options.stackId, tenantId: options.tenantId });
   let cached: { at: number; index: Promise<FontIndex> } | null = null;
 
   const fetchIndex = async (): Promise<FontIndex> => {

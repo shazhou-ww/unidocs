@@ -23,8 +23,9 @@ export interface PsdAgentDeps {
    *
    * 判据就是"有没有字体可用"：setText 要把文字重新排版、重新栅格化，没有
    * 字体索引它连一个字形都拿不到，注册进去只会让模型调一次、失败一次。
-   * 租户级的字体 DO（Task 5b）还没接上，所以这一版实际部署里它总是缺省的
-   * —— 与 editor 同一套先例：没有手的 agent 不该在工具表里宣称自己能画。
+   * 与 editor 同一套先例：没有手的 agent 不该在工具表里宣称自己能画。
+   * 来源是租户级的字体索引 DO，由 worker 按 PSD_FONTS 绑定注入；绑定缺失
+   * （只可能是漏配）时这里缺省，工具表里也就没有 setText。
    */
   readonly fontIndex?: FontIndexSource;
 }

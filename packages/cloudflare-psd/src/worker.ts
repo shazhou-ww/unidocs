@@ -26,7 +26,7 @@ import {
   type AgentIdentity,
   type EditorEnv,
 } from "@unidocs/cloudflare-sdk";
-import { createPsdDocumentType, createPsdAgent, createQwenImageEditor } from "@unidocs/doctype-psd";
+import { createPsdDocumentType, createPsdAgent, createQwenImageEditor, type PsdAgentDeps } from "@unidocs/doctype-psd";
 import {
   createDocTypeHandler,
   DocAuthConfigCache,
@@ -47,16 +47,15 @@ const authConfig = new DocAuthConfigCache("psd");
 
 export const PsdEditor = createEditorDO(psdFactory);
 export const PsdFonts = PsdFontsDurableObject;
-export const PsdOperator = createOperatorDO({
-  // 按 env 构造：editPixels 需要一个带 API key 的图像模型，而 key 只在
-  // 这里拿得到。没配 key 就不注入 editor —— 工具表里也就没有 editPixels，
-  // 模型不会去调一个注定失败的工具。
-  //
-  // fontIndex 同一套判据（setText）：索引在租户级 DO 里，没有 PSD_FONTS 绑定
-  // 就一个字形都取不到。绑定缺失只可能是漏配（wrangler.toml 与本地
-  // doc-types.mjs 两处都要有），此时宁可工具表里没有 setText，也好过注册一个
-  // 每次调用都在 namespace.get 上炸的工具。tenantId 从身份来 —— 索引是租户级的。
-  agent: (env: Env, identity: AgentIdentity) => createPsdAgent({
+/**
+ * 从 env + 身份拼出 `createPsdAgent` 的依赖。**单独导出是为了能测**：
+ * 这段接线原先内联在 `createOperatorDO` 的 agent 工厂里，而那个工厂只有在
+ * 一次带凭据的真实 `/run` 里才会被调到 —— 也就是说把 `PSD_FONT_FALLBACKS`
+ * 换成 `[]`（回退链当场死掉）整套单测照样全绿。评审用注入法证实了这一点。
+ * 拆出来之后接线本身可以直接断言。
+ */
+export function psdAgentDeps(env: Env, identity: AgentIdentity): PsdAgentDeps {
+  return {
     ...(env.IMAGE_EDIT_API_KEY
       ? {
         editor: createQwenImageEditor({
@@ -79,7 +78,19 @@ export const PsdOperator = createOperatorDO({
         }),
       }
       : {}),
-  }),
+  };
+}
+
+export const PsdOperator = createOperatorDO({
+  // 按 env 构造：editPixels 需要一个带 API key 的图像模型，而 key 只在
+  // 这里拿得到。没配 key 就不注入 editor —— 工具表里也就没有 editPixels，
+  // 模型不会去调一个注定失败的工具。
+  //
+  // fontIndex 同一套判据（setText）：索引在租户级 DO 里，没有 PSD_FONTS 绑定
+  // 就一个字形都取不到。绑定缺失只可能是漏配（wrangler.toml 与本地
+  // doc-types.mjs 两处都要有），此时宁可工具表里没有 setText，也好过注册一个
+  // 每次调用都在 namespace.get 上炸的工具。tenantId 从身份来 —— 索引是租户级的。
+  agent: (env: Env, identity: AgentIdentity) => createPsdAgent(psdAgentDeps(env, identity)),
   // The provider is built from env: a DO instance outlives a config change,
   // and `env` is only handed to us here.
   // 与出站 HTTP、DashScope、agent 循环同一条日志流。补这个观测是因为一次
@@ -132,7 +143,7 @@ export default {
       return handleFontsRequest({
         docCapabilityVerifier: auth.docCapabilityVerifier,
         namespace: env.PSD_FONTS,
-        objectName: fontsObjectName(env.CAS_STACK_ID, fonts.tenantId),
+        objectName: fontsObjectName({ stackId: env.CAS_STACK_ID, tenantId: fonts.tenantId }),
         audit: event => console.log(JSON.stringify({
           event: "doc_authentication",
           docType: "psd",

@@ -210,13 +210,13 @@ describe("matchFontsRoute", () => {
 
 describe("fontsObjectName", () => {
   it("两段各自编码后用 | 连 —— 带分隔符的 tenantId 不会撞名", () => {
-    expect(fontsObjectName("cas_1", "alice")).toBe("cas_1|alice");
-    expect(fontsObjectName("cas_1", "a|b")).not.toBe(fontsObjectName("cas_1|a", "b"));
+    expect(fontsObjectName({ stackId: "cas_1", tenantId: "alice" })).toBe("cas_1|alice");
+    expect(fontsObjectName({ stackId: "cas_1", tenantId: "a|b" })).not.toBe(fontsObjectName({ stackId: "cas_1|a", tenantId: "b" }));
   });
 
   it("空段直接抛", () => {
-    expect(() => fontsObjectName("", "alice")).toThrow(/must not be empty/);
-    expect(() => fontsObjectName("cas_1", "")).toThrow(/must not be empty/);
+    expect(() => fontsObjectName({ stackId: "", tenantId: "alice" })).toThrow(/must not be empty/);
+    expect(() => fontsObjectName({ stackId: "cas_1", tenantId: "" })).toThrow(/must not be empty/);
   });
 });
 
@@ -262,7 +262,7 @@ function edge(
   const cfg = {
     docCapabilityVerifier: { verify: vi.fn(async () => verified) },
     namespace,
-    objectName: fontsObjectName("cas_1", "tenant-1"),
+    objectName: fontsObjectName({ stackId: "cas_1", tenantId: "tenant-1" }),
     audit: (event: unknown) => audits.push(event),
   };
   return { cfg, seen, audits };
