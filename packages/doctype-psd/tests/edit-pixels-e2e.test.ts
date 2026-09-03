@@ -17,7 +17,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { decode } from "fast-png";
-import { isSBlob, refsFromSValue } from "@unidocs/svalue-codec";
+import { createSBlob, isSBlob, refsFromSValue } from "@unidocs/svalue-codec";
 import type { EffectContext, SBlob, SBlobBytes, SValue } from "@unidocs/protocol";
 import type { Layer, PsdDoc } from "../src/model/types.js";
 import { createPsdDocumentType } from "../src/doctype.js";
@@ -170,6 +170,22 @@ describe("storePsdDoc/materializePsdDoc：fonts 在 DO 持久化路径上的往�
 
     const model = await materializePsdDoc(state, cas.ctx);
     expect("fonts" in model).toBe(false);
+  });
+
+  it("字体字节不在 CAS 里时 storePsdDoc 报错，而不是留下一个悬空引用", async () => {
+    // 这条锁的是 storeFont 用 context.makeSBlob 而不是 createSBlob。
+    // 两者产出的 SBlob 结构完全一样（makeSBlob 内部 leaseNode 成功后返回的
+    // 就是 createSBlob(hash)），所以"把 makeSBlob 换成 createSBlob"这种注入
+    // 骗得过上面三条断言——refsFromSValue 只做纯结构遍历，不关心对象是怎么
+    // 造出来的。真正的区别在这里：makeSBlob 会先确认字节确实在 CAS 里
+    // （不在就走回调），createSBlob 不会，于是文档里会留下一个指向不存在
+    // 内容的 hash，等到打开文档时才炸。
+    const cas = memCas();
+    const dangling: PsdDoc = {
+      ...doc(),
+      fonts: [{ postScriptName: "NotoSansSC", blob: createSBlob("0".repeat(64)) }],
+    };
+    await expect(storePsdDoc(dangling, cas.ctx)).rejects.toThrow(/was not stored during externalization/);
   });
 
   it("保活：storePsdDoc 产出的 stored doc 喂给 refsFromSValue 之后，字体的 hash 出现在结果里", async () => {
