@@ -23,3 +23,8 @@ dist/
 
 # subagent-driven-development 的工作区（台账、简报、评审包），不入库
 .superpowers/
+
+# 部署者自备的字体二进制。一套中文字体 5-20 MB,进 git 就永远留在历史里
+# (裁定 R19)。只挡这一个目录,不挡全仓库的 *.ttf —— 测试要用小字体
+# (packages/doctype-psd/tests 现在是在内存里现造的,将来可能落成 fixture)。
+/fonts/

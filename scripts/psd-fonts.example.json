@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "PSD 字体预置清单的示例。复制一份改成自己的（放哪儿都行，file 里的相对路径",
+    "按**这份配置文件自己所在的目录**解释），然后：",
+    "  node scripts/seed-psd-fonts.mjs <你的配置>.json",
+    "",
+    "字体二进制不进仓库：仓库根的 fonts/ 已经 gitignore，把下载来的字体放那儿即可。",
+    "Noto Sans / Noto Sans SC 都是 OFL 许可，见 https://fonts.google.com/noto",
+    "（CJK 那套也可从 https://github.com/notofonts/noto-cjk 取）。",
+    "",
+    "postScriptName 必须和字体文件里解析出来的**完全一致** —— 对不上会报错并把两个",
+    "名字都打出来。unitsPerEm / coverage / hash 不许写在这里，它们从字体文件解析。",
+    "",
+    "兜底要同时覆盖中英：只放一套拉丁字体的话，中文一个字都画不出来。脚本跑完会",
+    "打印每套字体覆盖了多少码位、其中 CJK 有多少 —— 那是唯一能一眼看出来的地方。",
+    "回退链本身是 psd worker 的 PSD_FONT_FALLBACKS 环境变量（逗号分隔、顺序即优先级），",
+    "不在这份配置里。"
+  ],
+  "tenantId": "alice",
+  "fonts": [
+    {
+      "postScriptName": "NotoSans-Regular",
+      "file": "../fonts/NotoSans-Regular.ttf"
+    },
+    {
+      "postScriptName": "NotoSansSC-Regular",
+      "file": "../fonts/NotoSansSC-Regular.otf"
+    }
+  ]
+}

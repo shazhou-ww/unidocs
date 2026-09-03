@@ -131,6 +131,37 @@ and are gone from the codebase. PSD chat additionally accepts `LLM_API_KEY`,
 never set in production (production data-plane requests fail closed without a
 valid access token).
 
+### PSD font seeding
+
+`setText` needs a tenant-level font index: PSD text layers record a font *name*,
+never the font file. `scripts/seed-psd-fonts.mjs` writes the bytes into CAS and
+registers the parsed metadata (`unitsPerEm`, `coverage`) into the tenant's
+`PsdFonts` Durable Object. Usage, config shape, and the reasoning live in that
+file's header comment; `scripts/psd-fonts.example.json` is a working example.
+
+Three deployment facts:
+
+- **It does not go through the Gateway.** `matchGatewayRoute` only knows
+  `/tenants/{t}/docs/…` and `/tenants/{t}/cas/…`, and CAS root-refs writes are
+  deliberately not proxied. The script therefore talks straight to the PSD
+  Worker and the CAS service, and needs both signing keys that the deployment
+  contract otherwise keeps on the Gateway alone
+  (`CAPABILITY_PRIVATE_KEY_PKCS8`, `CAS_STACK_PRIVATE_KEY_PKCS8`). Run it where
+  those keys are available and the PSD Worker is reachable. It is an operator
+  tool, not an end-user endpoint.
+- **Write access reuses the tenant-scoped `sessions:create` permission**
+  (ruling R41): anyone who can create a session for a tenant can register fonts
+  for it. Deliberate (fonts are additive and never mutate existing documents),
+  but do not assume stronger protection.
+- **Font binaries are never committed** (ruling R19). The config holds local
+  paths; the repository-root `fonts/` directory is gitignored. Noto Sans / Noto
+  Sans SC are OFL-licensed and available from Google Fonts.
+
+Registering a font is only half of the fallback chain: the PSD Worker's
+`PSD_FONT_FALLBACKS` var (comma-separated, order is priority) decides which
+registered fonts are actually tried. It defaults to empty and hardcodes no font
+name, so both steps are required for a CJK fallback to work.
+
 ## Azure deployment identity and secrets
 
 The Azure deploy script uses the active `az` CLI identity. For interactive use:
@@ -234,6 +265,13 @@ Optional process variables:
 | `LLM_API_KEY` | unset | PSD Operator credential |
 | `LLM_BASE_URL` | provider default | PSD provider endpoint |
 | `LLM_MODEL` | provider default | PSD model |
+
+`pnpm dev unidocs-cloudflare` also writes
+`.wrangler/unidocs/local-credentials.json` (mode 0600) on every start: the local
+runtime's two signing keys are generated per run and live only in that process,
+so tools that bypass the Gateway (currently `scripts/seed-psd-fonts.mjs`) have no
+other way to mint a credential. It is a private key file — gitignored, never
+committed.
 
 Command-line `--cas remote` overrides the default. It does not silently fall
 back to local when the credential is missing or the edge is unreachable — it

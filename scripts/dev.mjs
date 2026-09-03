@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOC_TYPES, parseDocTypes } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/unidocs-azure/doc-types.mjs";
-import { loadRemoteCasConfig, parseDevArgs } from "./unidocs-dev-config.mjs";
+import { loadRemoteCasConfig, parseDevArgs, writeLocalCredentials } from "./unidocs-dev-config.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -247,6 +247,14 @@ if (useAzure) {
     } : {}),
   });
   backend = { name: "Miniflare" };
+  // 本地运行时的两把签名密钥是每次启动现生成的,只落在这个进程的内存里。
+  // 绕过 gateway 直连 worker 的本地工具(scripts/seed-psd-fonts.mjs)签不出
+  // 凭据,除非把它们写出来一份。见 writeLocalCredentials 的注释。
+  backend.credentialsPath = await writeLocalCredentials({
+    root,
+    runtime,
+    ...(remoteCas ? { casOrigin: remoteCas.origin } : {}),
+  });
 }
 
 console.log(`UniDocs local runtime (${backend.name})`);
@@ -279,6 +287,7 @@ if (useAzure) {
     console.log(`Log file (JSONL): ${runtime.logFile}`);
     console.log(`  jq 'select(.event == "http_call" and .ok == false)' ${runtime.logFile}`);
   }
+  console.log(`Local credentials (0600, direct-to-worker tools): ${backend.credentialsPath}`);
 }
 
 // Start each selected doc type's dev frontend (if it declares one), with the
