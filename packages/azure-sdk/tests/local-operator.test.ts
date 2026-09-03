@@ -1,8 +1,22 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import type { AgentPlatform, DocumentAgent } from "@unidocs/protocol";
+import type {
+  AgentPlatform,
+  ByteStream,
+  DocumentAgent,
+  DocumentType,
+  DocumentTypeContext,
+  LlmProvider,
+  MakeSBlob,
+  SBlob,
+  SBlobHandler,
+} from "@unidocs/protocol";
+import { createSBlob, isSBlob } from "@unidocs/svalue-codec";
+import { CasClientError } from "@unicas/tenant-blob-client";
+import { createMemoryPorts } from "@unidocs/doctype-server-common/memory-ports";
 import { createPool, runMigrations, PgSessionIdentityStore, PgAgentSessionStore, AGENT_LEASE_SECONDS } from "../src/index.js";
 import { createLocalOperatorNamespace } from "../src/local-operator.js";
+import { createLocalEditorNamespace } from "../src/local-editor.js";
 import { DATABASE_URL } from "./containers.js";
 
 let pool: Pool;
@@ -227,5 +241,167 @@ describe("createLocalOperatorNamespace", () => {
     // 拿到租约（不是 null）。
     const verifyStore = new PgAgentSessionStore(pool, identity);
     expect(await verifyStore.acquire(AGENT_LEASE_SECONDS)).not.toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------
+// C1 (2026-09-03 final review): Azure's editor had every `/_internal/*`
+// route except `read_blob` / `write_blob`. platform-http.ts's readBlob()
+// then always got a 404 back and misread it as "the blob is gone",
+// silently degrading every image an agent tool returned into a line of
+// alt-text — psd/docx agents on Azure structurally could not see any
+// image, and `/run` still returned 200.
+//
+// This test wires up a *real* `createLocalEditorNamespace` (the same
+// factory `doc-type-service.ts` uses in production, exercising the actual
+// `blobs` passthrough added to close C1) behind `createLocalOperatorNamespace`,
+// with an agent tool that returns an image content part — the same shape
+// `doctype-psd/src/tools.ts`'s `getPreview` and `doctype-docx/src/tools.ts`'s
+// image tool return. It proves the whole path end to end: query tool ->
+// image SBlob ref -> materializeMessages -> platform.readBlob ->
+// POST /_internal/read_blob -> real bytes reach the provider. The CAS layer
+// itself is faked (an in-memory store), the same way it would be swapped for
+// a real one in `doc-type-service.ts`; what's under test is the routing this
+// task added, not CAS I/O.
+// --------------------------------------------------------------------------
+describe("createLocalOperatorNamespace + 真实 editor 命名空间 (C1 回归)", () => {
+  type ImgDoc = { readonly blob: SBlob };
+  type ImgQuery = { readonly kind: "getImage" };
+  type ImgOp = { readonly kind: "noop" };
+
+  async function fullHash(bytes: Uint8Array): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+    return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function byteStreamOf(bytes: Uint8Array): ByteStream {
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield bytes;
+      },
+    };
+  }
+
+  it("agent 的图片工具返回的 SBlob，经真实 read_blob 路由，原样字节送到 provider", async () => {
+    const pngBytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3, 4]);
+    const hash = await fullHash(pngBytes);
+    const store = new Map<string, { data: Uint8Array; contentType: string }>();
+    store.set(hash, { data: pngBytes, contentType: "image/png" });
+
+    const blobs: Pick<DocumentTypeContext, "openSBlob" | "makeSBlob"> = {
+      makeSBlob: (async () => { throw new Error("not used by this test"); }) as MakeSBlob,
+      openSBlob: async (blob: SBlob): Promise<SBlobHandler> => {
+        const stored = store.get(blob.hash);
+        if (!stored) throw new CasClientError(404, "Not Found", "openBlob");
+        return {
+          size: stored.data.length,
+          contentType: stored.contentType,
+          read: () => byteStreamOf(stored.data),
+          readBytes: async () => stored.data,
+        };
+      },
+    };
+
+    const documentType: DocumentType<ImgDoc, ImgQuery, ImgOp> = {
+      init: async () => ({ blob: createSBlob(hash) }),
+      query: async (_q, doc) => ({ blob: doc.blob }),
+      apply: async (_ops, doc) => doc,
+      formats: {
+        json: {
+          mediaTypes: ["application/json"],
+          extensions: [".json"],
+          load: async () => ({ blob: createSBlob(hash) }),
+          save: async () => new TextEncoder().encode("{}"),
+        },
+      },
+      defaultFormat: "json",
+      contentType: "application/json",
+    };
+
+    const memPorts = createMemoryPorts();
+    const editor = createLocalEditorNamespace<ImgDoc, ImgQuery, ImgOp>(
+      identity => ({
+        documentType,
+        deps: {
+          deltas: memPorts.deltas,
+          snapshots: memPorts.snapshots,
+          blobs: memPorts.blobs,
+          unitOfWork: memPorts.unitOfWork,
+          cas: memPorts.cas,
+          identity,
+          now: () => Date.now(),
+        },
+        blobs,
+      }),
+      async () => null,
+    );
+
+    const sessionId = await freshSession();
+
+    const created = await editor.get(editor.idFromName(sessionId)).fetch(new Request(
+      "http://editor/_internal/create",
+      {
+        method: "POST",
+        headers: {
+          "X-Tenant-Id": "t-op",
+          "X-Session-Id": sessionId,
+          "X-Doc-Type": "psd",
+          "X-UniDocs-Auth-Context": "legacy",
+        },
+      },
+    ));
+    expect(created.status).toBe(200);
+
+    const agent: DocumentAgent<ImgQuery, ImgOp> = {
+      instructions: "multimodal agent",
+      tools: [{
+        kind: "query",
+        name: "getImage",
+        description: "get the image",
+        inputSchema: {},
+        toQuery: () => ({ kind: "getImage" }),
+        toResult: (data) => {
+          const record = data as { readonly blob: unknown };
+          if (!isSBlob(record.blob)) throw new Error("query result has no blob");
+          return {
+            content: [{ type: "image", blob: record.blob, mediaType: "image/png", altText: "dot" }],
+          };
+        },
+      }],
+    };
+
+    let sawRealBytes = false;
+    let sawDegradedText = false;
+    const provider: LlmProvider = {
+      async complete(req) {
+        const toolMessage = req.messages.find(m => m.role === "tool");
+        if (!toolMessage) {
+          // Turn 1: no tool result materialized yet — call the tool.
+          return {
+            content: [],
+            toolCalls: [{ id: "call-1", name: "getImage", arguments: {} }],
+          };
+        }
+        // Turn 2: materializeMessages has run on the tool result by now.
+        const imagePart = toolMessage.content.find(p => p.type === "image");
+        const textPart = toolMessage.content.find(p => p.type === "text");
+        sawDegradedText = textPart !== undefined && /\[image:/.test(textPart.text);
+        if (imagePart && imagePart.type === "image") {
+          sawRealBytes = Array.from(imagePart.data).join(",") === Array.from(pngBytes).join(",");
+        }
+        return { content: [{ type: "text", text: "seen" }], toolCalls: [] };
+      },
+    };
+
+    const operator = createLocalOperatorNamespace({ pool, editor, agent, provider, docType: "psd" });
+    const res = await operator.get(sessionId).fetch(new Request(
+      "http://operator/_internal/run",
+      { method: "POST", headers: headers(sessionId), body: JSON.stringify({ instruction: "看看这张图" }) },
+    ));
+
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(sawDegradedText, "不该降级成 alt-text —— 那正是 C1 的症状").toBe(false);
+    expect(sawRealBytes, "provider 必须收到图片的真实字节").toBe(true);
   });
 });

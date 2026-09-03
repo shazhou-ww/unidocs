@@ -19,7 +19,7 @@ import {
   readObservedBody,
 } from "@unidocs/protocol-doc";
 import type { HttpCallInput } from "@unidocs/protocol-doc";
-import type { DocumentAgent, DocumentTypeFactory, SBlobSource } from "@unidocs/protocol";
+import type { DocumentAgent, DocumentTypeContext, DocumentTypeFactory, SBlobSource } from "@unidocs/protocol";
 import { createTenantCasClient, type HttpFetcher } from "@unicas/tenant-client";
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
@@ -172,6 +172,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
   ): {
     documentType: ReturnType<DocumentTypeFactory<TDoc, TQuery, TOp>>;
     deps: SessionDeps;
+    blobs: DocumentTypeContext;
   } {
     const delegatedCapability = requestContext.authKind === "capability"
       ? requestContext.delegatedCasCapability
@@ -210,6 +211,11 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
 
     return {
       documentType: documentTypeFactory(context),
+      // Same SBlobContext the DocumentType was built from, threaded to
+      // `createLocalEditorNamespace` -> `createSessionHandler` so the
+      // agent's `read_blob` / `write_blob` (platform-http.ts) have
+      // something to talk to. See local-editor.ts's `buildSession` doc.
+      blobs: context,
       deps: {
         deltas: new PgDeltaLog(pool, identity),
         snapshots: new BlobSnapshotCache(blobService, identity, `unidocs-${docType}-snapshots`),

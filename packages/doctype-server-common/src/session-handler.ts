@@ -29,10 +29,13 @@
  *   GET  /_internal/snapshot        — get current snapshot hash (for clone)
  *   GET  /_internal/ir              — get canonical current-TDoc bytes for browser cold start
  *   POST /_internal/init_from_hash  — initialize from existing snapshot hash (for clone)
+ *   POST /_internal/read_blob       — read SBlob bytes (only when `blobs` is configured; agent readBlob)
+ *   POST /_internal/write_blob      — store SBlob bytes (only when `blobs` is configured; agent writeBlob)
  */
 
-import { SValueContentType, type SValue } from "@unidocs/protocol";
-import { decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
+import { SValueContentType, type DocumentTypeContext, type SValue } from "@unidocs/protocol";
+import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
+import { encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { CasClientError } from "@unicas/tenant-blob-client";
 import {
   DeltaRejectedError,
@@ -46,6 +49,7 @@ import {
 import type { SessionIdentity } from "./ports.js";
 import type { DocumentSession } from "./session.js";
 import { AmbiguousFormatError, selectFormat, UnknownFormatError } from "./format-select.js";
+import { readableStreamFromByteStream } from "./sblob-context.js";
 
 const NOT_INITIALIZED = "Document not initialized. POST /{docType}/ to create.";
 
@@ -64,6 +68,18 @@ export interface CreateSessionHandlerConfig<TDoc, TQuery, TOp> {
    * than refusing the one request honestly.
    */
   maxUploadBytes?: number;
+  /**
+   * SBlob 读写上下文，给 agent 的 `read_blob` / `write_blob` 用
+   * (platform-http.ts 的 readBlob/writeBlob 打的正是这两条)。行为对齐
+   * Cloudflare 的等价实现 (editor-do-svalue.ts:606-646) —— 请求/响应形状、
+   * Content-Type 校验、空 body 校验、错误映射全部一致；缺失 CasClientError
+   * 时的三分映射复用下面的 `errorResponse`，与 CF 的 outer catch 是同一套
+   * 三分 (404→400 / 409→409 / else→502)，不是新发明。
+   *
+   * 省略 = 这两条端点维持 404 兜底，与它们存在之前的行为一致
+   * (Cloudflare 目前不走这里，它的 EditorDO 自己实现了这两条)。
+   */
+  blobs?: Pick<DocumentTypeContext, "openSBlob" | "makeSBlob">;
 }
 
 /**
@@ -241,10 +257,76 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
       }
 
       // POST /_internal/query
+      //
+      // 既有缺陷(2026-09-03 全分支评审之外新发现,与协调者核实过):这里曾经
+      // 是裸 `Response.json({success, data, version})`。`result.data` 可能带
+      // SBlob(例如 psd 的 getPreview 在 query 结果里放一张预览图的引用)——
+      // JSON.stringify 不认识 SBlob 品牌用的那个 symbol 键,会静默把它丢在
+      // 半路,客户端收到的只是一个 `{hash: "..."}` 的裸对象,`isSBlob()` 判它
+      // 不是 SBlob。这正是 C1(read_blob/write_blob 缺失)想解决的同一个问题
+      // 在更早一步的翻版:query 工具(getPreview 之类)的 `toResult` 走不到
+      // "blob 没了"那条降级路径,而是直接抛"不是 SBlob"——agent 一样看不见
+      // 图,只是失败点从 readBlob 挪到了这里。
+      //
+      // 改成 `valueResponse` 后与 CF 的 editor-do-svalue.ts:591 逐字对齐:
+      // `valueResponse` 是内容协商的(见上面的定义),数据里不含 SBlob 引用、
+      // 调用方也没要 SValue 类型时,产出的仍是逐字节相同的 `Response.json`——
+      // 所以这一行改动只影响"数据带 SBlob"这一种情况,从静默丢品牌变成正确
+      // 的 SValue 编码(调用方要了)或一个响亮的 406(调用方没要,不能悄悄
+      // 编）。刻意只改这一处:apply/status/rollback 等端点是否也有同样的
+      // 问题是另一件要单独核实的事,不在本轮范围内。
       if (method === "POST" && endpoint === "/_internal/query") {
         const q = await readRequestValue(request) as unknown as TQuery;
         const result = await session.query(q as never);
-        return Response.json({ success: true, data: result.data, version: result.version });
+        return valueResponse(request, { success: true, data: result.data, version: result.version });
+      }
+
+      // POST /_internal/read_blob — agent 侧 platform.readBlob 打的端点。
+      // 逐条对齐 editor-do-svalue.ts:606-628：body 形状校验、可选 range
+      // 校验、响应用裸字节 + Content-Type/X-UniDocs-SBlob-* 头，不走
+      // SValue 信封（净荷可以是几 MB 的图，多包一层等于复制一遍）。
+      if (cfg.blobs && method === "POST" && endpoint === "/_internal/read_blob") {
+        const value = await readRequestValue(request);
+        if (!isRecord(value) || !isSBlob(value.blob)) {
+          return Response.json({ success: false, error: "Invalid blob read request" }, { status: 400 });
+        }
+        const rangeValue = value.range;
+        const range = rangeValue === undefined
+          ? undefined
+          : isRecord(rangeValue)
+            && typeof rangeValue.offset === "number"
+            && (rangeValue.length === undefined || typeof rangeValue.length === "number")
+            ? { offset: rangeValue.offset, ...(rangeValue.length === undefined ? {} : { length: rangeValue.length }) }
+            : null;
+        if (range === null) {
+          return Response.json({ success: false, error: "Invalid blob read range" }, { status: 400 });
+        }
+        const handler = await cfg.blobs.openSBlob(value.blob);
+        return new Response(readableStreamFromByteStream(handler.read(range)), {
+          headers: {
+            "Content-Type": handler.contentType,
+            "X-UniDocs-SBlob-Size": String(handler.size),
+            "X-UniDocs-SBlob-Hash": value.blob.hash,
+          },
+        });
+      }
+
+      // POST /_internal/write_blob — agent 侧 effect 工具(图像模型返回的
+      // PNG)的落点，platform.writeBlob 打的端点。逐条对齐
+      // editor-do-svalue.ts:632-646：Content-Type 必须显式给、空 body 拒绝，
+      // 响应走 SValue 信封（回来的 SBlob 是带符号品牌的分支类型，纯 JSON
+      // 会把符号属性丢在半路，客户端的 isSBlob() 会判它不是 SBlob）。
+      if (cfg.blobs && method === "POST" && endpoint === "/_internal/write_blob") {
+        const contentType = request.headers.get("content-type");
+        if (!contentType) {
+          return Response.json({ success: false, error: "write_blob needs a Content-Type" }, { status: 400 });
+        }
+        const data = new Uint8Array(await request.arrayBuffer());
+        if (data.length === 0) {
+          return Response.json({ success: false, error: "write_blob got an empty body" }, { status: 400 });
+        }
+        const blob = await cfg.blobs.makeSBlob({ data, contentType });
+        return valueResponse(request, { blob });
       }
 
       // POST /_internal/apply — apply delta (batch of operations, transactional)
@@ -320,4 +402,30 @@ async function readRequestValue(request: Request): Promise<SValue> {
   }
   const json = await request.json();
   return decodeSValue(encodeSValue(json as SValue));
+}
+
+/** Same shape-check CF's editor-do-svalue.ts uses: a plain record, not an SBlob or array. */
+function isRecord(value: unknown): value is Record<string, SValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && !isSBlob(value);
+}
+
+/**
+ * Mirrors editor-do-svalue.ts's `valueResponse`: SValue-encode when the
+ * caller can take it (write_blob's client always sets Accept), otherwise
+ * fall back to plain JSON — but 406 if the value actually contains an SBlob
+ * ref, since a plain JSON round-trip silently drops the brand.
+ */
+function valueResponse(request: Request, value: SValue): Response {
+  const encoded = encodeSValueWithRefs(value);
+  const acceptsSValue = (request.headers.get("accept") ?? "").includes(SValueContentType)
+    || (request.headers.get("content-type") ?? "").toLowerCase() === SValueContentType;
+  if (acceptsSValue) {
+    return new Response(Uint8Array.from(encoded.data).buffer, {
+      headers: { "Content-Type": SValueContentType },
+    });
+  }
+  if (encoded.refs.length > 0) {
+    return Response.json({ error: "This response requires the SValue media type" }, { status: 406 });
+  }
+  return Response.json(value);
 }
