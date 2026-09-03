@@ -425,6 +425,21 @@ a:hover { color: var(--accent); }
 .degrade-row span { color: var(--warn-ink); font-size: 11.5px; }
 .degrade-row em { color: var(--fg-3); font-size: 11px; font-style: normal; }
 
+/* 导出格式菜单。定位、投影、圆角都与 .degrade-pop 同一套,只是右对齐——
+   导出按钮在最右边,左对齐会让菜单溢出窗口。 */
+.export { position: relative; }
+.export-pop {
+  position: absolute; top: 34px; right: 0; z-index: 5; min-width: 140px;
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 14px var(--shadow-pop); padding: 4px;
+}
+.export-row {
+  padding: 7px 8px; border: 0; border-radius: 6px; background: transparent;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.export-row:hover { background: var(--surface-hover); }
+
 .chip-on { border-color: var(--accent); color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 
 /* Layer-axis selection chrome. Geometry comes from ui/overlay-geometry.ts as

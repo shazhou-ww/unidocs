@@ -1,13 +1,16 @@
 import { decodeSValue, encodeSValue, isSBlob } from "@unidocs/svalue-codec";
 import { SValueContentType } from "@unidocs/protocol";
-import type { DocumentFormat, DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
+import type { DocumentType, DocumentTypeContext, DocumentTypeFactory, SBlob, SValue, SValueType } from "@unidocs/protocol";
 import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
 import {
+  AmbiguousFormatError,
   DELTA_THRESHOLD,
   readableStreamFromByteStream,
   readableStreamFromSBlobSource,
+  selectFormat,
+  UnknownFormatError,
 } from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
@@ -550,7 +553,12 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
         if (request.method === "GET" && url.pathname === "/_internal/export") {
           await this.#refreshCurrentRefs();
-          const formatName = url.searchParams.get("format") ?? this.#requireConfig().defaultFormat;
+          // `??` only catches `null` (param absent). `?format=` (empty
+          // string) must fall back the same way — Azure's session-handler.ts
+          // already guards this (`|| undefined`); this side didn't, so
+          // `?format=` picked `formats[""]` (always missing) and 400'd
+          // instead of exporting the default format like a bare `/export`.
+          const formatName = url.searchParams.get("format") || this.#requireConfig().defaultFormat;
           const format = this.#requireConfig().formats[formatName];
           if (!format) {
             return Response.json({ success: false, error: `Unknown format: ${formatName}` }, { status: 400 });
@@ -761,6 +769,19 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
         return Response.json({ success: false, error: `Unknown endpoint: ${url.pathname}` }, { status: 404 });
       } catch (err) {
+        if (err instanceof UnknownFormatError || err instanceof AmbiguousFormatError) {
+          // Same reasoning as the manual `Unknown format` check in the
+          // `/_internal/export` branch above: a bad `format` is a client
+          // input error, not a server fault. This path only ever reaches
+          // `#create`'s `selectFormat` call (import), which the generic
+          // catch below would otherwise report as 500 — the Azure side of
+          // this had the same bug (`session-handler.ts`'s `errorResponse`).
+          return Response.json({
+            success: false,
+            error: err.message,
+            version: this.#version,
+          }, { status: 400 });
+        }
         const status = err instanceof CasClientError
           ? err.status === 404 ? 400 : err.status === 409 ? 409 : 502
           : 500;
@@ -796,12 +817,13 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         const file = formData.get("file") as unknown;
         if (isUploadedFile(file)) {
           const requested = formData.get("format");
-          const format = selectFormat(
-            config,
-            typeof requested === "string" ? requested : null,
-            file.type,
-            file.name,
-          );
+          const { format } = selectFormat(config, {
+            // 只有真的给了字符串才传 name。传 undefined 与传 null 在旧签名
+            // 里是同一件事(都表示"没指定"),新签名靠键的存在与否区分。
+            ...(typeof requested === "string" ? { name: requested } : {}),
+            mediaType: file.type,
+            filename: file.name,
+          });
           doc = await format.load(new Uint8Array(await file.arrayBuffer()));
         } else {
           doc = await config.init();
@@ -964,30 +986,6 @@ function valueResponse(request: Request, value: SValue): Response {
     return Response.json({ error: "This response requires the SValue media type" }, { status: 406 });
   }
   return Response.json(value);
-}
-
-function selectFormat<TDoc, TQuery, TOp>(
-  config: DocumentType<TDoc, TQuery, TOp>,
-  requested: string | null,
-  mediaType: string,
-  filename: string,
-): DocumentFormat<TDoc> {
-  if (requested) {
-    const explicit = config.formats[requested];
-    if (!explicit) throw new Error(`Unknown format: ${requested}`);
-    return explicit;
-  }
-  const byMediaType = Object.values(config.formats).filter(format =>
-    format.mediaTypes.some(candidate => candidate.toLowerCase() === mediaType.toLowerCase()));
-  if (byMediaType.length === 1) return byMediaType[0];
-  const lowerName = filename.toLowerCase();
-  const byExtension = Object.values(config.formats).filter(format =>
-    format.extensions.some(extension => lowerName.endsWith(extension.toLowerCase())));
-  if (byExtension.length === 1) return byExtension[0];
-  if (byMediaType.length > 1 || byExtension.length > 1) throw new Error("Ambiguous document format");
-  const fallback = config.formats[config.defaultFormat];
-  if (!fallback) throw new Error(`Default format ${config.defaultFormat} is not configured`);
-  return fallback;
 }
 
 function parseOptionalVersion(value: string | null): number | null {

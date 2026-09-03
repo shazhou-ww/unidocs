@@ -358,12 +358,21 @@ export class DocController {
     }
   }
 
-  async createFrom(bytes: Uint8Array, label: string): Promise<void> {
+  /**
+   * `mimeType` is optional and additive: `openFile` has a real `File` and
+   * passes its `file.type` through so the server's `selectFormat` can use it
+   * (`mediaType` hint) alongside the filename. Without it the Blob's `type`
+   * defaults to `""`, same as before this parameter existed — a file picker
+   * `accept` always yields a real extension today, so this has been silently
+   * fine, but a future drag/paste entry point (bytes with a real MIME and no
+   * filename) would fall back to `defaultFormat` without this.
+   */
+  async createFrom(bytes: Uint8Array, label: string, mimeType?: string): Promise<void> {
     this.events.onStatus(`creating from ${label}…`);
     this.events.onOpenPhase("upload");
     try {
       const fd = new FormData();
-      fd.append("file", new Blob([bytes as BlobPart]), label);
+      fd.append("file", new Blob([bytes as BlobPart], mimeType ? { type: mimeType } : undefined), label);
       const body = await postForm(
         `${GW}/tenants/${USER}/docs/${TYPE}/`,
         fd,

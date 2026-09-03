@@ -4,6 +4,7 @@ import { type PsdOp } from "./ops/index.js";
 import { save } from "./psd/save.js";
 import { load } from "./psd/load.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
+import { docToPng, pngToDoc } from "./psd/png.js";
 import { resolveDoc, resolveLayerPixels } from "./resolve.js";
 import { DocRenderState } from "./render/doc-render-state.js";
 import { runQuery, type PsdQuery } from "./queries.js";
@@ -84,6 +85,18 @@ export function createPsdDocumentType(
         load: async (data: Uint8Array): Promise<PsdStoredDoc> => store(await load(data)),
         save: async (state: PsdStoredDoc): Promise<Uint8Array> =>
           save(await resolveDoc(await materialize(state), casBlobStore(ctx))),
+      },
+      // PNG 是**入口格式**,不是另一种文档类型:load 进来之后文档仍然是 psd,
+      // defaultFormat 也仍然是 psd,所以默认导出、目录里的 docType 都不变。
+      png: {
+        mediaTypes: ["image/png"],
+        extensions: [".png"],
+        load: async (data: Uint8Array): Promise<PsdStoredDoc> => store(pngToDoc(data)),
+        // 与上面 psd 的 save 结构完全对称:先 materialize 再 resolveDoc 把
+        // 懒加载的 CAS 像素拉实,然后才展平。少了 resolveDoc 就会渲染到
+        // PixelRef 上。
+        save: async (state: PsdStoredDoc): Promise<Uint8Array> =>
+          docToPng(await resolveDoc(await materialize(state), casBlobStore(ctx))),
       },
     },
     defaultFormat: "psd",
