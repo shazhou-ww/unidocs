@@ -8,7 +8,7 @@
  * 宣称自己能画。
  */
 import type { DocumentAgent } from "@unidocs/doctype-server-common/agent";
-import { editPixelsInstructions, instructions, setTextInstructions, tools } from "./tools.js";
+import { editPixelsInstructions, instructions, setTextInstructions, textRoutingInstructions, tools } from "./tools.js";
 import { createEditPixelsTool } from "./image/edit-pixels.js";
 import type { ImageEditor } from "./image/editor.js";
 import { createSetTextTool, type FontIndexSource } from "./text/set-text.js";
@@ -45,5 +45,9 @@ export function createPsdAgent(deps: PsdAgentDeps): DocumentAgent<PsdQuery, PsdO
     enabled.push(createSetTextTool(deps.fontIndex));
     prompt += setTextInstructions;
   }
+  // 分流规则点名了两个工具，所以它的条件就是两个工具都在场 —— 同一条
+  // "工具表与提示词一起条件化"的规矩，只是这一块的前提是两个 if 的交集。
+  // 少了任何一个就没有可分的流，基础提示词里那条不点名工具的规则接管。
+  if (deps.editor && deps.fontIndex) prompt += textRoutingInstructions;
   return { tools: enabled, instructions: prompt };
 }
