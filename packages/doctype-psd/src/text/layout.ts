@@ -26,14 +26,33 @@ const DEFAULT_FONT_SIZE = 12;
 /** 没有 `leading` 时，行距是字号的这个倍数。 */
 const DEFAULT_LEADING_RATIO = 1.2;
 
-/** `layoutText` 会照常产出字形、但没有还原效果的样式名。固定顺序，方便断言。 */
+/** `layoutText` 会照常产出字形、但没有还原效果的样式名（逐字符样式里的）。
+ *  固定顺序，方便断言。`strokeWidth` 和 `strokeColor` 是同一个特性
+ *  （描边）拆出来的两个字段，两个都要报——只报 `strokeColor` 会让"只设了
+ *  `strokeWidth` 没设颜色"这种数据静默漏报。 */
 const IGNORABLE_STYLE_NAMES = [
   "underline",
   "strikethrough",
   "strokeColor",
+  "strokeWidth",
   "fauxBold",
   "fauxItalic",
   "ligatures",
+] as const;
+
+/**
+ * 段落级样式里同样没有还原、但会真的影响版面的字段：段前/段后间距、三种
+ * 缩进。这几个字段的确切换算语义（比如 indent 是不是要叠加 tracking、
+ * spaceBefore 在同一页第一段要不要生效）没法对着真实 Photoshop 验证——
+ * 实现一个验证不了的数值就是在猜，猜错的结果是版面悄悄偏掉，比老实报
+ * "这次没还原"糟得多。所以这些字段现在只进 `ignored`，不实现（协调者裁定，
+ * 修复轮 3 / C5）。 */
+const PARAGRAPH_IGNORABLE_STYLE_NAMES = [
+  "firstLineIndent",
+  "startIndent",
+  "endIndent",
+  "spaceBefore",
+  "spaceAfter",
 ] as const;
 
 export interface PlacedGlyph {
@@ -87,6 +106,14 @@ export function layoutText(text: LayerText, resolveFace: FaceResolver): LayoutRe
   const ignored = new Set<string>();
   const charStyles = resolveCharStyles(text);
   for (const { style } of charStyles) collectIgnored(style, ignored);
+  // 段落样式不在 charStyles 那条路上（它按字符走，段落样式是按段的），所以
+  // 单独扫一遍：有 paragraphRuns 就逐段扫，没有就扫顶层 paragraphStyle——
+  // 和 resolveLineJustification 用的是同一条"谁在真正生效"的判断。
+  if (text.paragraphRuns && text.paragraphRuns.length > 0) {
+    for (const run of text.paragraphRuns) collectParagraphIgnored(run.style, ignored);
+  } else if (text.paragraphStyle) {
+    collectParagraphIgnored(text.paragraphStyle, ignored);
+  }
 
   const lines = splitIntoLines(charStyles);
 
@@ -142,7 +169,13 @@ export function layoutText(text: LayerText, resolveFace: FaceResolver): LayoutRe
         codePoint: unit.codePoint,
         face,
         x: cursorX,
-        y: cursorY + (unit.style.baselineShift ?? 0),
+        // 正的 baselineShift 让字形往“视觉向上”移动，跨标准都是这个方向
+        // （CSS 的 baseline-shift、PDF 的 Ts / text rise、PostScript、
+        // Photoshop 的 Baseline Shift 面板都是正值抬升）。这份坐标系
+        // "y 轴向下"（见 inkBounds 换向那段），所以视觉向上要用减法。
+        // 选定值，不是实测值——没有拿一份带非零 baselineShift 的真实 PSD
+        // 核对过方向，留到最后一轮实机验收再确认。
+        y: cursorY - (unit.style.baselineShift ?? 0),
         size,
         horizontalScale,
         verticalScale,
@@ -332,6 +365,12 @@ function collectIgnored(style: LayerTextStyle, into: Set<string>): void {
   for (const name of IGNORABLE_STYLE_NAMES) {
     const value = style[name];
     if (value !== undefined && value !== false) into.add(name);
+  }
+}
+
+function collectParagraphIgnored(style: LayerParagraphStyle, into: Set<string>): void {
+  for (const name of PARAGRAPH_IGNORABLE_STYLE_NAMES) {
+    if (style[name] !== undefined) into.add(name);
   }
 }
 

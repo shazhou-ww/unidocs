@@ -181,12 +181,25 @@ describe("layoutText", () => {
     expect(out.glyphs.map(g => g.y)).toEqual([0, 20, 40]);
   });
 
-  it("baselineShift 直接加到该字形的 y 上", () => {
+  // 方向而不只是数值：正的 baselineShift 让字形**视觉向上**（跨标准一致 ——
+  // CSS baseline-shift / PDF 的 Ts / PostScript / Photoshop 面板都是正值抬升），
+  // 而这份坐标系 y 轴向下，所以 y 必须**减小**。原来的实现按计划书字面写成了
+  // 加法,方向整个反了 —— 这条断言就是防它再反回去的。
+  it("正的 baselineShift 让字形视觉向上，也就是 y 减小", () => {
     const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
-    const out = layoutText({ content: "a", style: { size: 10, baselineShift: 5 } }, () => face);
+    const shifted = layoutText({ content: "a", style: { size: 10, baselineShift: 5 } }, () => face);
+    const plain = layoutText({ content: "a", style: { size: 10 } }, () => face);
+    expect(shifted.ok && plain.ok).toBe(true);
+    if (!shifted.ok || !plain.ok) return;
+    expect(shifted.glyphs[0].y).toBe(plain.glyphs[0].y - 5);
+  });
+
+  it("负的 baselineShift 让字形下沉", () => {
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    const out = layoutText({ content: "a", style: { size: 10, baselineShift: -3 } }, () => face);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.glyphs[0].y).toBe(5);
+    expect(out.glyphs[0].y).toBe(3);
   });
 
   it("逐字符回退：中英混排时英文字形来自 face A、中文来自 face B", () => {
@@ -411,5 +424,78 @@ describe("layoutText", () => {
     // 两行行宽都是 20px，右对齐首字形都应该是 -20。
     expect(out.glyphs[0].x).toBe(-20);
     expect(out.glyphs[2].x).toBe(-20);
+  });
+});
+
+describe("静默丢弃是缺陷：影响输出的样式必须要么实现、要么进 ignored", () => {
+  const face = () => fakeFace({ advance: 1000, unitsPerEm: 1000 });
+
+  it("strokeWidth 单独出现时也要报 —— 只报 strokeColor 会让它漏网", () => {
+    const out = layoutText({ content: "a", style: { size: 10, strokeWidth: 2 } }, () => face());
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.ignored).toContain("strokeWidth");
+    // 报了不等于不画：字形照常产出。
+    expect(out.glyphs).toHaveLength(1);
+  });
+
+  it("段落级的间距与缩进进 ignored —— 它们按段走，不在逐字符那条路上", () => {
+    const out = layoutText({
+      content: "a",
+      style: { size: 10 },
+      paragraphStyle: { spaceBefore: 4, spaceAfter: 6, firstLineIndent: 8, startIndent: 2, endIndent: 3 },
+    }, () => face());
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    for (const name of ["spaceBefore", "spaceAfter", "firstLineIndent", "startIndent", "endIndent"]) {
+      expect(out.ignored).toContain(name);
+    }
+  });
+
+  it("paragraphRuns 里的段落样式同样要被扫到", () => {
+    const out = layoutText({
+      content: "a\nb",
+      style: { size: 10 },
+      paragraphRuns: [
+        { length: 2, style: { justification: "left" } },
+        { length: 1, style: { spaceBefore: 5 } },
+      ],
+    }, () => face());
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.ignored).toContain("spaceBefore");
+  });
+
+  it("没设的字段不进 ignored —— 否则这个清单对 agent 毫无信息量", () => {
+    const out = layoutText({ content: "a", style: { size: 10 } }, () => face());
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.ignored).toEqual([]);
+  });
+});
+
+describe("horizontalScale / verticalScale 的回归", () => {
+  // 这两个字段实现是对的,但此前一条测试都没覆盖 —— 谁删掉一处乘法都不会挂。
+  // 默认轮廓就是占满 advance × unitsPerEm 的矩形，墨迹范围可精确预测。
+  const face = () => fakeFace({ advance: 1000, unitsPerEm: 1000 });
+
+  it("horizontalScale 让推进量按比例放大", () => {
+    const plain = layoutText({ content: "ab", style: { size: 10 } }, () => face());
+    const wide = layoutText({ content: "ab", style: { size: 10, horizontalScale: 2 } }, () => face());
+    expect(plain.ok && wide.ok).toBe(true);
+    if (!plain.ok || !wide.ok) return;
+    expect(plain.glyphs[1].x).toBe(10);
+    expect(wide.glyphs[1].x).toBe(20);
+  });
+
+  it("verticalScale 让墨迹高度按比例放大，宽度不变", () => {
+    const plain = layoutText({ content: "a", style: { size: 10 } }, () => face());
+    const tall = layoutText({ content: "a", style: { size: 10, verticalScale: 2 } }, () => face());
+    expect(plain.ok && tall.ok).toBe(true);
+    if (!plain.ok || !tall.ok) return;
+    const h = (b: { top: number; bottom: number }) => b.bottom - b.top;
+    const w = (b: { left: number; right: number }) => b.right - b.left;
+    expect(h(tall.inkBounds)).toBeCloseTo(h(plain.inkBounds) * 2, 6);
+    expect(w(tall.inkBounds)).toBeCloseTo(w(plain.inkBounds), 6);
   });
 });
