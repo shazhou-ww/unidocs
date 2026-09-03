@@ -46,13 +46,59 @@ describe("历史编解码器", () => {
     expect(decodeHistory(encodeHistory([]))).toEqual([]);
   });
 
-  it("可选字段缺席时不会凭空长出来", () => {
+  it("可选字段缺席时不会凭空长出来（toolCalls）", () => {
     const minimal: AgentMessage[] = [
       { role: "assistant", content: [{ type: "text", text: "无工具调用" }] },
     ];
     const decoded = decodeHistory(encodeHistory(minimal));
     expect(decoded).toEqual(minimal);
     expect("toolCalls" in decoded[0]!).toBe(false);
+  });
+
+  it("可选字段缺席时不会凭空长出来（image.altText）", () => {
+    const minimal: AgentMessage[] = [
+      { role: "user", content: [
+        { type: "image", blob: createSBlob(HASH_A), mediaType: "image/png" },
+      ] },
+    ];
+    const encoded = encodeHistory(minimal);
+    const encodedPart = (
+      (encoded as { content: Record<string, unknown>[] }[])[0]!.content[0]!
+    );
+    expect("altText" in encodedPart).toBe(false);
+    const decoded = decodeHistory(encoded);
+    expect(decoded).toEqual(minimal);
+    const decodedPart = (decoded[0] as { content: Record<string, unknown>[] }).content[0]!;
+    expect("altText" in decodedPart).toBe(false);
+  });
+
+  it("可选字段缺席时不会凭空长出来（file.filename）", () => {
+    const minimal: AgentMessage[] = [
+      { role: "tool", callId: "call-x", content: [
+        { type: "file", blob: createSBlob(HASH_B), mediaType: "application/pdf" },
+      ] },
+    ];
+    const encoded = encodeHistory(minimal);
+    const encodedPart = (
+      (encoded as { content: Record<string, unknown>[] }[])[0]!.content[0]!
+    );
+    expect("filename" in encodedPart).toBe(false);
+    const decoded = decodeHistory(encoded);
+    expect(decoded).toEqual(minimal);
+    const decodedPart = (decoded[0] as { content: Record<string, unknown>[] }).content[0]!;
+    expect("filename" in decodedPart).toBe(false);
+  });
+
+  it("可选字段缺席时不会凭空长出来（tool.structuredContent）", () => {
+    const minimal: AgentMessage[] = [
+      { role: "tool", callId: "call-y", content: [{ type: "text", text: "无结构化内容" }] },
+    ];
+    const encoded = encodeHistory(minimal);
+    const encodedMessage = (encoded as Record<string, unknown>[])[0]!;
+    expect("structuredContent" in encodedMessage).toBe(false);
+    const decoded = decodeHistory(encoded);
+    expect(decoded).toEqual(minimal);
+    expect("structuredContent" in decoded[0]!).toBe(false);
   });
 
   // 静默丢弃一条图片消息，会让模型在后续轮次里引用一张它其实没看到的图 ——
