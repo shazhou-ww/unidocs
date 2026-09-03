@@ -302,3 +302,54 @@ promise 链，等待不占任何资源——这是 DO 模型自带的性质。Az
 3. **租约锁死。** 进程崩溃后最多 30 分钟拿不到租约，靠 `/reset` 逃生。
 4. **Azure 侧首次有了"不丢的历史"。** 用户在 Azure 上可能看到一段很旧的对话
    （CF 上同样场景早就被驱逐清掉了）。`/reset` 是明确的清除入口。
+
+
+---
+
+## 后续项（本轮明确不做，按分量排）
+
+实现完成后记录，供接手者参考。每条都写明了触发条件与修法，不必重新推演。
+
+### 1. 租约没有持有者校验（Critical，已在上面「已知局限」详述）
+
+修法：`agent_sessions` 加 `lease_id` 列，`acquire` 生成并返回，`release` 的 WHERE 加
+`AND lease_id = $5`。`clear()` 保持无条件（`/reset` 的强制清场是设计意图）。
+
+### 2. psd 的 `maxIterations` 在 Azure 上是默认 10，Cloudflare 是 25
+
+**这一条必须和第 1 条同一个 PR 做。** 全分支评审指出：提到 25 会让最坏墙钟时间约 ×2.5，
+真的够得到 1800 秒租约——在没有 fencing token 的前提下提高迭代上限，等于把第 1 条从
+"理论风险"变成"可触达"。
+
+### 3. 历史无上限增长
+
+`ByteLru` 每请求重建，导致每次 run 冷拉全部历史图片；token 成本随对话轮次单调增长，
+最终越过 provider 的图片数量上限后，该会话永久 400。需要历史裁剪或图片引用的滑动窗口。
+
+### 4. `LLM_BASE_URL` / `IMAGE_EDIT_BASE_URL` 未参数化
+
+代码侧（`anthropic.ts:185`、`qwen-editor.ts`）已经读这两个 env，只缺 bicep 注入。
+Cloudflare 侧已列为可配置项。生产若需走代理/专线访问模型端点会卡住。纯加法。
+
+### 5. `BlobUnavailableError` 的降级契约不可达（既有，两条运行时都有）
+
+CAS 的 404 在到达 `agent/platform-http.ts:126` 之前，已被编辑器的外层 catch 映射成 400
+（CF `editor-do-svalue.ts:795` 与 Azure `session-handler.ts:102` 是同一套三分映射）。
+所以 `platform-http` 里那个 `response.status === 404` 判断从未触发，
+`packages/protocol/src/types.ts` 中描述该机制的注释（提交 `63f997b` 的背景）描述的是一个
+不存在的行为。
+
+**本轮刻意不修**：改它会让降级路径在 Cloudflare 上开始触发 = 改变 CF 运行时行为。
+而且当前行为落在安全侧——blob 真丢时是整次 run 响亮失败，而不是静默把图换成一行文字，
+这恰好是 `63f997b` 想要的结果。
+
+### 6. 一个会在修好别的 bug 之后才引爆的测试
+
+`tests/integration/azure/azure-psd.test.mjs:62-83` 用裸 `Content-Type: application/json`
+调 `getPreview`，不带 `Accept: SValueContentType`；而 `getPreview` 的结果携带 SBlob。
+按本轮改后的 `/_internal/query` 语义（`valueResponse` 内容协商），这条路径应当返回 **406**。
+
+它现在没有失败，只是因为被一个无关的既有缺陷（该测试的 CAS 写权限 403）挡在更早一步。
+**一旦有人单独修掉那个 CAS 权限问题，这条测试会转为 406 失败，而失败原因看起来与 CAS
+修复毫无关系。** 修法：给该调用补上 `Accept: SValueContentType` 头——生产侧唯一的调用方
+`agent/platform-http.ts` 本来就是这么做的。
