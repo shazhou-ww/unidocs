@@ -61,10 +61,14 @@ export type LayoutResult =
     }
   | { ok: false; reason: string };
 
-/** 逐字符的样式 + 原始码位，caps 变换之前的中间结果。 */
+/** 逐字符的样式 + 原始码位，caps 变换之前的中间结果。`utf16Start` 是这个
+ *  字符在**原始** `content` 里的 UTF-16 起始偏移——`paragraphRuns[].length`
+ *  是按原始内容算的，caps 展开（`ß` → `SS`）之后再数字符就对不上了，所以
+ *  这个偏移必须在展开之前记下来，见 `splitIntoLines` 的用法。 */
 interface CharStyle {
   codePoint: number;
   style: LayerTextStyle;
+  utf16Start: number;
 }
 
 /** caps 变换之后、已经分好行的字形单元：一个源字符可能因为大小写变换（如
@@ -85,19 +89,22 @@ export function layoutText(text: LayerText, resolveFace: FaceResolver): LayoutRe
   for (const { style } of charStyles) collectIgnored(style, ignored);
 
   const lines = splitIntoLines(charStyles);
-  const justification = resolveJustification(text.paragraphStyle);
 
   const glyphs: PlacedGlyph[] = [];
   const missing: number[] = [];
   let cursorY = 0;
 
   for (const line of lines) {
+    // 段落在 PSD 里就是以 \n 分隔的；对点文字来说“段”和“行”一一对应，所以
+    // 每一行各自查一次它落在哪个 paragraph run 里，而不是整篇文字共用一个
+    // justification——一层文字完全可能是“居中标题 + 左对齐正文”。
+    const justification = resolveLineJustification(line.startOffset, text);
     const lineGlyphs: PlacedGlyph[] = [];
     let cursorX = 0;
     let prevFace: FontFace | null = null;
     let prevCodePoint = 0;
 
-    for (const unit of line) {
+    for (const unit of line.units) {
       const face = resolveFace(unit.codePoint, unit.style.font);
       if (!face) {
         missing.push(unit.codePoint);
@@ -153,7 +160,7 @@ export function layoutText(text: LayerText, resolveFace: FaceResolver): LayoutRe
     const offset = justificationOffset(justification, cursorX);
     for (const g of lineGlyphs) glyphs.push({ ...g, x: g.x + offset });
 
-    cursorY += lineLeading(line);
+    cursorY += lineLeading(line.units);
   }
 
   return { ok: true, glyphs, inkBounds: computeInkBounds(glyphs), ignored: [...ignored], missing };
@@ -196,7 +203,7 @@ function resolveCharStyles(text: LayerText): CharStyle[] {
   let i = 0;
   while (i < content.length) {
     const codePoint = content.codePointAt(i)!;
-    out.push({ codePoint, style: perUnit[i] });
+    out.push({ codePoint, style: perUnit[i], utf16Start: i });
     i += codePoint > 0xffff ? 2 : 1;
   }
   return out;
@@ -204,19 +211,33 @@ function resolveCharStyles(text: LayerText): CharStyle[] {
 
 const NEWLINE = 10; // "\n".codePointAt(0)
 
+/** 一段：caps 展开之后的字形单元，加上这一行在**原始** content 里的起始
+ *  UTF-16 偏移（caps 展开之前的偏移，用来对齐 `paragraphRuns`）。 */
+interface Line {
+  units: GlyphUnit[];
+  startOffset: number;
+}
+
 /**
  * caps 变换 + 按 `\n` 分行。这两件事必须放在一起做：大小写变换会改变字符数
  * （`ß` → `SS`），所以要在“字符 → 样式”切好之后逐字符做，让展开出来的每个
  * 字符都带着源字符的样式；换行符本身在变换前后都不产生字形。
+ *
+ * 每一行的 `startOffset` 必须取自 `chars[].utf16Start`（caps 展开之前的
+ * 偏移），不能靠数展开之后的字符数反推——`paragraphRuns[].length` 是按
+ * 原始 content 算的，caps 展开会让两边对不上，选错了行会套错段落对齐。
  */
-function splitIntoLines(chars: readonly CharStyle[]): GlyphUnit[][] {
-  const lines: GlyphUnit[][] = [[]];
-  for (const { codePoint, style } of chars) {
+function splitIntoLines(chars: readonly CharStyle[]): Line[] {
+  const lines: Line[] = [{ units: [], startOffset: chars.length > 0 ? chars[0].utf16Start : 0 }];
+  for (const { codePoint, style, utf16Start } of chars) {
     if (codePoint === NEWLINE) {
-      lines.push([]);
+      // 换行符本身占 1 个 UTF-16 码元（它不可能是代理对的一半），下一行的
+      // 起点就是紧跟在它后面的那个偏移。
+      lines.push({ units: [], startOffset: utf16Start + 1 });
       continue;
     }
     const baseSize = style.size ?? DEFAULT_FONT_SIZE;
+    const line = lines[lines.length - 1];
     if (style.caps === "all" || style.caps === "small") {
       const original = String.fromCodePoint(codePoint);
       const upper = original.toUpperCase();
@@ -227,10 +248,10 @@ function splitIntoLines(chars: readonly CharStyle[]): GlyphUnit[][] {
       const wasLowered = original !== upper;
       const effectiveSize = style.caps === "small" && wasLowered ? baseSize * SMALL_CAPS_RATIO : baseSize;
       for (const ch of upper) {
-        lines[lines.length - 1].push({ codePoint: ch.codePointAt(0)!, style, effectiveSize });
+        line.units.push({ codePoint: ch.codePointAt(0)!, style, effectiveSize });
       }
     } else {
-      lines[lines.length - 1].push({ codePoint, style, effectiveSize: baseSize });
+      line.units.push({ codePoint, style, effectiveSize: baseSize });
     }
   }
   return lines;
@@ -257,9 +278,8 @@ type Justification = "left" | "right" | "center";
 /** `justify-*` 只在有换行宽度约束时才有意义（把词间距撑满一行）——v1 不支持
  *  框文字，没有宽度可撑，所以按对应的锚点降级：`justify-left/right/center`
  *  等价于去掉前缀；`justify-all` 没有对应的锚点，退到 `left`。 */
-function resolveJustification(paragraphStyle: LayerParagraphStyle | undefined): Justification {
-  const raw = paragraphStyle?.justification ?? "left";
-  switch (raw) {
+function normalizeJustification(raw: LayerParagraphStyle["justification"] | undefined): Justification {
+  switch (raw ?? "left") {
     case "left":
     case "justify-left":
       return "left";
@@ -274,6 +294,30 @@ function resolveJustification(paragraphStyle: LayerParagraphStyle | undefined): 
     default:
       return "left";
   }
+}
+
+/**
+ * 一行（= 一段）该用哪个 justification：`paragraphRuns[].length` 和
+ * `runs[].length` 同一套口径——按 UTF-16 码元数顺次覆盖 content，取覆盖
+ * `startOffset` 那个 run 的样式。**`startOffset` 必须是 caps 展开之前的
+ * 偏移**（调用方已经保证了这一点，见 `splitIntoLines`）——用展开之后的字符
+ * 数反推 offset 会因为 `ß → SS` 这类变换而错位，套错段落的对齐。
+ *
+ * 没有 `paragraphRuns` 就退回整层的 `text.paragraphStyle`；`startOffset`
+ * 落在所有 run 之后（内容末尾追加出来的空行）沿用最后一段的对齐，和
+ * `spliceRuns` 对“追加”的处理是同一个道理。
+ */
+function resolveLineJustification(startOffset: number, text: LayerText): Justification {
+  const runs = text.paragraphRuns;
+  if (runs && runs.length > 0) {
+    let at = 0;
+    for (const run of runs) {
+      if (startOffset < at + run.length) return normalizeJustification(run.style.justification);
+      at += run.length;
+    }
+    return normalizeJustification(runs[runs.length - 1].style.justification);
+  }
+  return normalizeJustification(text.paragraphStyle?.justification);
 }
 
 function justificationOffset(justification: Justification, lineWidth: number): number {

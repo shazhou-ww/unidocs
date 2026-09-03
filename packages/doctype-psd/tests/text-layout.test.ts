@@ -338,4 +338,78 @@ describe("layoutText", () => {
     if (!out.ok) return;
     expect(out.inkBounds).toEqual({ left: 0, top: -10, right: 10, bottom: 0 });
   });
+
+  it("paragraphRuns：逐段 justification，不是整篇共用一个", () => {
+    // 两段："ab"（居中）+ \n + "cd"（左对齐）。paragraphRuns 的 length 和
+    // runs[] 同一套口径——顺次覆盖 content，第一段连着它后面的换行符一起算
+    // 3 个字符，第二段是剩下的 2 个。
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    const out = layoutText(
+      {
+        content: "ab\ncd",
+        style: { size: 10 },
+        paragraphRuns: [
+          { length: 3, style: { justification: "center" } }, // "ab" + "\n"
+          { length: 2, style: { justification: "left" } }, // "cd"
+        ],
+      },
+      () => face,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    // 每行两个字形，每个宽 10px，行宽 20px。
+    expect(out.glyphs).toHaveLength(4);
+    expect(out.glyphs[0].x).toBe(-10); // 第一行居中：-width/2 = -10
+    expect(out.glyphs[2].x).toBe(0); // 第二行左对齐：0
+  });
+
+  it("paragraphRuns 的偏移必须按 caps 展开之前的字符数算，否则会错位到别的段", () => {
+    // 三段："ßß"（caps:"all" 展成 "SSSS"，4 个字形，居中）+ "c"（右对齐）
+    // + "d"（左对齐）。如果实现错误地用“展开之后”的字符数去推第二、三段
+    // 的起始偏移，"c" 那一行会算出偏大的 offset，套到相邻那个 run 的
+    // justification 上——这里特意把相邻两个 run 的对齐设成不同的值
+    // （center 和 right），一旦错位，"c" 行的断言就会失败。
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    const out = layoutText(
+      {
+        content: "ßß\nc\nd",
+        style: { size: 10, caps: "all" },
+        paragraphRuns: [
+          { length: 3, style: { justification: "center" } }, // "ß" + "ß" + "\n"（原始字符数，不是展开后的 4）
+          { length: 1, style: { justification: "right" } }, // "c"
+          { length: 1, style: { justification: "center" } }, // "\n"——故意放一个陷阱值，撞上错误实现就会被选中
+          { length: 1, style: { justification: "left" } }, // "d"
+        ],
+      },
+      () => face,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.glyphs.map(g => g.codePoint)).toEqual(
+      ["S", "S", "S", "S", "C", "D"].map(c => c.codePointAt(0)),
+    );
+    expect(out.glyphs[0].x).toBe(-20); // "SSSS" 行宽 40，居中：-20
+    expect(out.glyphs[4].x).toBe(-10); // "C" 行，右对齐：-width = -10（不是陷阱值 center 的 -5）
+    expect(out.glyphs[5].x).toBe(0); // "D" 行，左对齐：0
+  });
+
+  it("没有 paragraphRuns 时退回 text.paragraphStyle（既有行为不变）", () => {
+    // 两行都没有专属的 paragraph run，统一沿用顶层 paragraphStyle 的
+    // justification——这是重构前的行为，重构后必须继续成立。
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    const out = layoutText(
+      {
+        content: "ab\ncd",
+        style: { size: 10 },
+        paragraphStyle: { justification: "right" },
+      },
+      () => face,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.glyphs).toHaveLength(4);
+    // 两行行宽都是 20px，右对齐首字形都应该是 -20。
+    expect(out.glyphs[0].x).toBe(-20);
+    expect(out.glyphs[2].x).toBe(-20);
+  });
 });
