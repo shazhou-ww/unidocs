@@ -48,7 +48,7 @@ param casCapabilityAudience string = 'unidocs-cas-azure'
 @description('模型名。空 = 用 anthropic.ts 的默认 claude-opus-5。')
 param llmModel string = ''
 
-@description('Anthropic API key 明文,由 deploy.mjs 在部署时从 Key Vault 解析后传入(CLI 侧给的是 Key Vault 里的 secret 名,不是值本身)。空 = 不接 agent,operator 维持 501。')
+@description('Anthropic API key 明文,由 deploy.mjs 在部署时从 Key Vault 解析后传入(CLI 侧给的是 Key Vault 里的 secret 名,不是值本身)。空 = 不注入 LLM_API_KEY。三个 azure-{psd,docx,markdown}/main.ts 目前无条件构造 operator,所以不给 key 的实际行为不是 501,而是首次 /run 时 provider 报 "No API key set" 返回 500(且已消耗一次租约、写脏一条历史)——见评审 2026-09-03 §5 B1。')
 @secure()
 param llmApiKey string = ''
 

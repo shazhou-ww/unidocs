@@ -40,7 +40,12 @@ param casStackPrivateKeyPkcs8 string = ''
 @secure()
 param casStackTrustedJwks string = ''
 // agent 用的模型 key,doc service(operator)专用。都可选、默认空串——
-// 空 = 这个 doc type 不接 agent,不注入对应 secret/env,operator 维持 501。
+// 空 = 不注入对应 secret/env(LLM_API_KEY / IMAGE_EDIT_API_KEY)。三个
+// azure-{psd,docx,markdown}/main.ts 目前无条件构造 operator,不是「给了才接」,
+// 所以不给 key 的实际行为不是 501:容器正常起、/run 正常抢到租约,
+// 直到 provider.complete() 才因为 "No API key set" 抛错,折成 500——
+// 且那一轮已经写进了持久化历史、租约也已经用掉一次
+// (packages/azure-sdk/src/local-operator.ts,评审 2026-09-03 §5 B1)。
 @secure()
 param llmApiKey string = ''
 @secure()

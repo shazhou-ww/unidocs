@@ -219,11 +219,16 @@ export function parseArgs(argv) {
     casCapabilityAudience: "",
     skipBuild: false,
     buildConcurrency: DEFAULT_BUILD_CONCURRENCY,
-    // 四个都可选、默认空串：空 = 这个 doc type 不接 agent，operator 维持
-    // 501，与 --cas-base-url 的既有语义一致，不做必填校验。两个 *SecretName
-    // 是 Key Vault 里的 secret 名（由 seedSecrets() 在部署时解析成明文值，
-    // 见该函数与 CAPABILITY_PRIVATE_KEY_SECRET 的既有处理方式）；两个
-    // *Model 是明文模型名，直接透传给 bicep。
+    // 四个都可选、默认空串：空 = 不注入 LLM_API_KEY / IMAGE_EDIT_API_KEY，
+    // 不做必填校验（形式上与 --cas-base-url 一致）。但语义上不要读成
+    // "不给就是这个 doc type 不接 agent，operator 维持 501" —— 三个
+    // azure-{psd,docx,markdown}/main.ts 目前无条件构造 operator，不给 key
+    // 的真实行为是容器正常起、首次 /run 时 provider 因为 "No API key set"
+    // 报错返回 500（且已消耗一次租约、写脏一条历史），不是 501
+    // （评审 2026-09-03 §5 B1）。两个 *SecretName 是 Key Vault 里的
+    // secret 名（由 seedSecrets() 在部署时解析成明文值，见该函数与
+    // CAPABILITY_PRIVATE_KEY_SECRET 的既有处理方式）；两个 *Model 是明文
+    // 模型名，直接透传给 bicep。
     llmApiKeySecretName: "",
     llmModel: "",
     imageEditApiKeySecretName: "",
@@ -874,9 +879,14 @@ export async function seedSecrets(keyVaultName, args, io = {}) {
     : null;
   // LLM / 图像编辑模型的 API key 是给 doc service(operator)用的,不是
   // 网关——门槛是 `services`,不是 `gateway`(跟上面几个身份密钥反过来)。
-  // secret 名本身是可选的(`args.*SecretName` 默认空串):不给 = 这个
-  // doc type 不接 agent,operator 维持 501,连 Key Vault 都不去碰;给了
-  // 就必须真的存在,否则 requireExisting() 响亮失败,不静默退化成"未配置"。
+  // secret 名本身是可选的(`args.*SecretName` 默认空串):不给就不去碰
+  // Key Vault、不注入 LLM_API_KEY / IMAGE_EDIT_API_KEY。这**不等于**
+  // "这个 doc type 不接 agent,operator 维持 501"——三个
+  // azure-{psd,docx,markdown}/main.ts 目前无条件构造 operator,不给 key
+  // 的真实行为是容器正常起、首次 /run 时 provider 报 "No API key set"
+  // 返回 500(且已消耗一次租约、写脏一条历史),不是 501
+  // (评审 2026-09-03 §5 B1)。secret 名给了就必须真的存在,否则
+  // requireExisting() 响亮失败,不静默退化成"未配置"。
   const llmApiKey = args.targets.includes("services") && args.llmApiKeySecretName
     ? await requireExisting(keyVaultName, args.llmApiKeySecretName)
     : null;
@@ -1064,8 +1074,12 @@ function deployService(args, secrets, tag, docType) {
     ...(secrets.casStackTrustedJwks
       ? [`casStackTrustedJwks=${secrets.casStackTrustedJwks}`]
       : []),
-    // 四个都可选、默认空串,语义与 casBaseUrl 一致:不给就是这个 doc type
-    // 不接 agent,operator 维持 501。两个 model 名是明文,直接透传;两个
+    // 四个都可选、默认空串,不给就不注入 LLM_API_KEY / IMAGE_EDIT_API_KEY
+    // (语义与 casBaseUrl 一致)。不是"不给就是这个 doc type 不接 agent,
+    // operator 维持 501"——三个 azure-{psd,docx,markdown}/main.ts 目前
+    // 无条件构造 operator,不给 key 的真实行为是首次 /run 时 provider 报
+    // "No API key set" 返回 500(且已消耗一次租约、写脏一条历史),不是
+    // 501(评审 2026-09-03 §5 B1)。两个 model 名是明文,直接透传;两个
     // key 是 seedSecrets() 已经从 Key Vault 解析出的明文值,只有非空才追加
     // (bicep 那边靠 empty() 判断要不要注入对应的 secretRef env)。
     `llmModel=${args.llmModel}`,
