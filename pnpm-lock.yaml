@@ -56,6 +56,12 @@ importers:
       '@unidocs/doctype-docx':
         specifier: workspace:*
         version: link:../doctype-docx
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
+      '@unidocs/protocol-doc':
+        specifier: workspace:*
+        version: link:../protocol-doc
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -127,6 +133,12 @@ importers:
       '@unidocs/doctype-markdown':
         specifier: workspace:*
         version: link:../doctype-markdown
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
+      '@unidocs/protocol-doc':
+        specifier: workspace:*
+        version: link:../protocol-doc
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -158,6 +170,12 @@ importers:
       '@unidocs/doctype-psd':
         specifier: workspace:*
         version: link:../doctype-psd
+      '@unidocs/doctype-server-common':
+        specifier: workspace:*
+        version: link:../doctype-server-common
+      '@unidocs/protocol-doc':
+        specifier: workspace:*
+        version: link:../protocol-doc
       pg:
         specifier: ^8.23.0
         version: 8.23.0

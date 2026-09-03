@@ -22,12 +22,16 @@
  * uses the request-local delegated capability; this service has no shared CAS key.
  */
 import { runDocTypeService } from "@unidocs/azure-sdk";
-import { createDocxDocumentType } from "@unidocs/doctype-docx";
+import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
+import { consoleObserver } from "@unidocs/protocol-doc";
+import { createDocxDocumentType, docxAgent } from "@unidocs/doctype-docx";
 
 runDocTypeService({
   docType: "docx",
   documentTypeFactory: createDocxDocumentType,
   defaultPort: 41810,
+  documentAgent: docxAgent,
+  llmProvider: createAnthropicProvider(process.env, fetch, { observe: consoleObserver }),
 }).catch((err) => {
   console.error("azure-docx failed to start:", err);
   process.exit(1);

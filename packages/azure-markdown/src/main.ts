@@ -14,12 +14,16 @@
  * CAS_BASE_URL 可选（过渡形态，见 doc-type-service.ts）；CAS 使用请求级 delegated capability。
  */
 import { runDocTypeService } from "@unidocs/azure-sdk";
-import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
+import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
+import { consoleObserver } from "@unidocs/protocol-doc";
+import { createMarkdownDocumentType, markdownAgent } from "@unidocs/doctype-markdown";
 
 runDocTypeService({
   docType: "markdown",
   documentTypeFactory: createMarkdownDocumentType,
   defaultPort: 41800,
+  documentAgent: markdownAgent,
+  llmProvider: createAnthropicProvider(process.env, fetch, { observe: consoleObserver }),
 }).catch((err) => {
   console.error("azure-markdown failed to start:", err);
   process.exit(1);

@@ -12,11 +12,10 @@
  * `azure.service.json` 里的 `needsCas: true` 声明了这一点,本地栈与部署
  * 脚本都从那里读。
  *
- * **Operator 在 Azure 上不可用。** `azure-sdk` 的
- * `createStubOperatorNamespace()` 让所有 doc type 的 `/run` 与 `/reset` 一律
- * 501。Cloudflare 侧 psd 挂了真 Operator(`createPsdAgent` +
- * Anthropic,maxIterations 25),Azure 侧没有。这不是 psd 特有的缺口,接真
- * Operator 会同时影响 markdown/docx/psd 三家,是独立一轮的事——不是这里漏掉了。
+ * **Operator 已接。** `documentAgent` 与 `llmProvider` 同时提供时
+ * `runDocTypeService()` 挂真 operator,历史落 Postgres(`PgAgentSessionStore`);
+ * Azure 是 2-5 副本、无会话亲和,并发靠租约 + 409(抢不到锁就让调用方重试),
+ * 不是 Cloudflare DO 那种单线程排队。
  *
  * Env vars: DATABASE_URL, CAS_STACK_ID, PORT,加上一组
  * 二选一的 Blob 配置:云上是 BLOB_ACCOUNT_URL + AZURE_CLIENT_ID(用户分配
@@ -26,12 +25,31 @@
  * delegated capability，不再配置共享 CAS key。
  */
 import { runDocTypeService } from "@unidocs/azure-sdk";
-import { createPsdDocumentType } from "@unidocs/doctype-psd";
+import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
+import { consoleObserver } from "@unidocs/protocol-doc";
+import { createPsdAgent, createPsdDocumentType, createQwenImageEditor } from "@unidocs/doctype-psd";
 
 runDocTypeService({
   docType: "psd",
   documentTypeFactory: createPsdDocumentType,
   defaultPort: 41820,
+  // 与 Cloudflare 的条件化同形(cloudflare-psd/src/worker.ts:36-52):没有 key
+  // 就不注入 editor,于是工具表里没有 editPixels、提示词里也没有。
+  // doctype-psd/src/agent.ts:23-26 记着这条的由来 —— 只条件化其中一个会得到一个
+  // "提示词里有、工具表里没有"的幽灵工具,那是线上真实发生过的故障。
+  documentAgent: createPsdAgent(
+    process.env.IMAGE_EDIT_API_KEY
+      ? {
+        editor: createQwenImageEditor({
+          apiKey: process.env.IMAGE_EDIT_API_KEY,
+          observe: consoleObserver,
+          ...(process.env.IMAGE_EDIT_MODEL ? { model: process.env.IMAGE_EDIT_MODEL } : {}),
+          ...(process.env.IMAGE_EDIT_BASE_URL ? { baseUrl: process.env.IMAGE_EDIT_BASE_URL } : {}),
+        }),
+      }
+      : {},
+  ),
+  llmProvider: createAnthropicProvider(process.env, fetch, { observe: consoleObserver }),
 }).catch((err) => {
   console.error("azure-psd failed to start:", err);
   process.exit(1);
