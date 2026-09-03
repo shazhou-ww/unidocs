@@ -45,6 +45,7 @@ import {
 } from "@unidocs/protocol-doc";
 import type { SessionIdentity } from "./ports.js";
 import type { DocumentSession } from "./session.js";
+import { AmbiguousFormatError, selectFormat, UnknownFormatError } from "./format-select.js";
 
 const NOT_INITIALIZED = "Document not initialized. POST /{docType}/ to create.";
 
@@ -101,6 +102,15 @@ export function errorResponse(err: unknown, version: number): Response {
     const status = err.status === 409 ? 409 : err.status === 404 ? 400 : 502;
     return Response.json({ success: false, version, error: err.message }, { status });
   }
+  if (err instanceof UnknownFormatError || err instanceof AmbiguousFormatError) {
+    // A client picking (or a filename/mediaType detecting) a format the
+    // document type never registered is a bad request, not a server fault —
+    // and 5xx here would trip on-call / 5xx SLOs for a typo in `?format=`.
+    // `err.message`, not `String(err)`: the latter prepends `Error: `, which
+    // Cloudflare's equivalent (`editor-do-svalue.ts`'s manual format lookup)
+    // never did — this keeps the message text identical across runtimes.
+    return Response.json({ success: false, version, error: err.message }, { status: 400 });
+  }
   return Response.json({ success: false, error: String(err), version }, { status: 500 });
 }
 
@@ -137,9 +147,10 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         }
         let file: File | null = null;
         let sourceId: string | null = null;
+        let formData: FormData | null = null;
 
         if (contentType.includes("multipart/form-data")) {
-          const formData = await request.formData();
+          formData = await request.formData();
           file = formData.get("file") as File | null;
           sourceId = formData.get("sourceId") as string | null;
         }
@@ -161,7 +172,21 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
           );
         }
 
-        const created = await session.create({ bytes });
+        // 今天这里把 file.name / file.type 直接丢掉了,于是 Azure 这条路上
+        // 上传什么都按 defaultFormat 解。喂给 selectFormat,让服务端能据此
+        // 认出 .png。formData 里的显式 `format` 作为覆盖(与 Cloudflare 那条
+        // 的 :783 对齐;前端本期不用它)。
+        let formatName: string | undefined;
+        if (file) {
+          const requested = formData?.get("format");
+          formatName = selectFormat(session.config, {
+            ...(typeof requested === "string" ? { name: requested } : {}),
+            mediaType: file.type,
+            filename: file.name,
+          }).name;
+        }
+
+        const created = await session.create({ bytes, ...(formatName ? { format: formatName } : {}) });
         return Response.json({
           success: true,
           sessionId: created.sessionId,
@@ -193,7 +218,16 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
 
       // GET /_internal/export — download document
       if (method === "GET" && endpoint === "/_internal/export") {
-        const exported = await session.exportBytes();
+        // `??` 只挡 null;`?format=`(空值)会给出 "",那同样是「没指定格式」。
+        // 漏掉它会让这种请求走进 exportBytes 的显式格式分支,Content-Type
+        // 变成 mediaTypes[0] 而不是顶层 contentType——护栏 2 就破了。
+        const requested = url.searchParams.get("format") || undefined;
+        const exported = await session.exportBytes(requested);
+        // 扩展名跟着所选格式走。这不是新设计,是把 Azure 补齐到 Cloudflare
+        // 已有的行为(editor-do-svalue.ts:563 早就是 `document${extension}`)。
+        const extension = requested
+          ? selectFormat(session.config, { name: requested }).format.extensions[0] ?? ""
+          : session.config.formats[session.config.defaultFormat]?.extensions[0] ?? "";
         // `Uint8Array<ArrayBufferLike>` (the general shape `save()` returns)
         // isn't structurally `BodyInit` under lib.dom's stricter
         // `Uint8Array<ArrayBuffer>` — this is a type-level mismatch only, the
@@ -201,7 +235,7 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
         return new Response(exported.bytes as BodyInit, {
           headers: {
             "Content-Type": exported.contentType,
-            "Content-Disposition": "attachment; filename=\"document\"",
+            "Content-Disposition": `attachment; filename="document${extension}"`,
           },
         });
       }

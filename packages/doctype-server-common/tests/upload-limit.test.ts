@@ -16,9 +16,16 @@ import { createSessionHandler } from "../src/session-handler.js";
 const identity = { tenantId: "t1", sessionId: "s1", docType: "psd" };
 
 function handler(maxUploadBytes?: number) {
-  const created: { bytes?: Uint8Array }[] = [];
+  const created: { bytes?: Uint8Array; format?: string }[] = [];
   const session = {
-    create: async (input: { bytes?: Uint8Array }) => {
+    // session-handler now reads `session.config` to run `selectFormat` on
+    // any upload that carries a `file` — this fixture didn't exercise format
+    // selection before, so give it just enough config to not blow up.
+    config: {
+      formats: { psd: { mediaTypes: ["image/vnd.adobe.photoshop"], extensions: [".psd"] } },
+      defaultFormat: "psd",
+    },
+    create: async (input: { bytes?: Uint8Array; format?: string }) => {
       created.push(input);
       return { sessionId: "s1", version: 1 };
     },

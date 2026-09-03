@@ -73,6 +73,7 @@ import {
 } from "@unidocs/protocol-doc";
 import { computeHash } from "./hash.js";
 import { commitRootRefsOrRollback, leaseOpRefs } from "./cas-operations.js";
+import { selectFormat } from "./format-select.js";
 import type {
   BlobCas,
   DeltaLog,
@@ -157,6 +158,18 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     return this.#doc !== null;
   }
 
+  /**
+   * The `formats`/`defaultFormat` slice of the `DocumentType` this session
+   * was built with — exposed so the adapter (session-handler.ts) can run
+   * `selectFormat` against the exact same config this session uses
+   * internally, without needing its own copy threaded in as a separate
+   * parameter. Narrowed to just what `selectFormat` needs (not the full
+   * `DocumentType`) so this doesn't also hand out `init`/`apply`/`query`/
+   * `tools`/`instructions`, which the adapter has no business touching.
+   */
+  get config(): Pick<DocumentType<TDoc, TQuery, TOp>, "formats" | "defaultFormat"> {
+    return this.#config;
+  }
 
   #requireDoc(): TDoc {
     if (this.#doc === null) {
@@ -340,7 +353,7 @@ export class DocumentSession<TDoc, TQuery, TOp> {
    * Create a new document, optionally from uploaded bytes.
    * Multipart parsing stays in the adapter; this only takes the bytes.
    */
-  async create(input?: { bytes?: Uint8Array }): Promise<{ sessionId: string; version: number }> {
+  async create(input?: { bytes?: Uint8Array; format?: string }): Promise<{ sessionId: string; version: number }> {
     await this.load();
 
     if (this.#doc !== null) {
@@ -352,7 +365,9 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     // Build the document on the side. Same rule as apply(): nothing touches
     // #doc/#version until the conditional write has actually landed.
     const doc = input?.bytes
-      ? await this.#config.formats[this.#config.defaultFormat].load(input.bytes)
+      // `format` 为空时 selectFormat 回落 defaultFormat,与改动前逐字节等价。
+      ? await selectFormat(this.#config, { ...(input.format ? { name: input.format } : {}) })
+          .format.load(input.bytes)
       : await this.#config.init();
 
     // 1. Durable bytes first, outside the transaction. Version 1 is
@@ -518,11 +533,20 @@ export class DocumentSession<TDoc, TQuery, TOp> {
     return { data, version: this.#version };
   }
 
-  async exportBytes(): Promise<{ bytes: Uint8Array; contentType: string }> {
+  async exportBytes(formatName?: string): Promise<{ bytes: Uint8Array; contentType: string }> {
     await this.load();
     const doc = this.#requireDoc();
-    const bytes = await this.#config.formats[this.#config.defaultFormat].save(doc as SValueType<TDoc>);
-    return { bytes, contentType: this.#config.contentType };
+    // 不传格式名时保持**顶层** contentType,不是所选格式的 mediaTypes[0]:
+    // 那是今天的行为,而顶层 contentType 与 defaultFormat 的 mediaTypes[0]
+    // 未必相等(doctype 可以给同一个格式声明多个 mediaType)。只有显式指定
+    // 格式时才改用格式自己的。
+    if (formatName === undefined) {
+      const bytes = await this.#config.formats[this.#config.defaultFormat]!.save(doc as SValueType<TDoc>);
+      return { bytes, contentType: this.#config.contentType };
+    }
+    const { format } = selectFormat(this.#config, { name: formatName });
+    const bytes = await format.save(doc as SValueType<TDoc>);
+    return { bytes, contentType: format.mediaTypes[0] ?? "application/octet-stream" };
   }
 
   async history(from?: number, to?: number): Promise<HistoryEntry<TOp & SValue>[]> {

@@ -12,9 +12,10 @@ class FakeXHR {
   onabort: (() => void) | null = null;
   responseText = "";
   status = 200;
+  sentBody: FormData | null = null;
   constructor() { FakeXHR.last = this; }
   open(): void {}
-  send(): void {}
+  send(body: FormData): void { this.sentBody = body; }
 }
 
 function newController(events: {
@@ -76,5 +77,38 @@ describe("DocController.createFrom: a `{success:true}` body with no docId", () =
     await p;
 
     expect(onStatus.mock.calls.some(([msg]) => String(msg).startsWith("failed:"))).toBe(false);
+  });
+});
+
+// M1: `fd.append("file", new Blob([bytes]), label)` 只带了文件名,MIME 丢了
+// (`Blob` 不给 `type` 时默认为 `""`)。`openFile` 手里有真正的 `File`,现在
+// 把 `file.type` 一路带下去。
+describe("DocController.createFrom: 把 MIME 一路带到 FormData 的 Blob 上", () => {
+  it("给了 mimeType 就落在 Blob.type 上", async () => {
+    const controller = newController({
+      onStatus: vi.fn(), onDoc: vi.fn(), onOpenPhase: vi.fn(), onOpenFailed: vi.fn(),
+    });
+
+    const p = controller.createFrom(new Uint8Array([1, 2, 3]), "a.png", "image/png");
+    FakeXHR.last!.responseText = JSON.stringify({ success: true, docId: "d1" });
+    FakeXHR.last!.onload!();
+    await p.catch(() => {});
+
+    const file = FakeXHR.last!.sentBody!.get("file") as File;
+    expect(file.type).toBe("image/png");
+  });
+
+  it("不给 mimeType 时 Blob.type 仍是空串,行为不变", async () => {
+    const controller = newController({
+      onStatus: vi.fn(), onDoc: vi.fn(), onOpenPhase: vi.fn(), onOpenFailed: vi.fn(),
+    });
+
+    const p = controller.createFrom(new Uint8Array([1, 2, 3]), "a.psd");
+    FakeXHR.last!.responseText = JSON.stringify({ success: true, docId: "d1" });
+    FakeXHR.last!.onload!();
+    await p.catch(() => {});
+
+    const file = FakeXHR.last!.sentBody!.get("file") as File;
+    expect(file.type).toBe("");
   });
 });

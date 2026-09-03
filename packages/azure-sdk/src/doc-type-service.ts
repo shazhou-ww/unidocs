@@ -181,6 +181,12 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
         },
       ),
       openBlob: (hash) => cas.openBlob(hash),
+    }, {
+      // casConcurrency 取 8:这条路的内存远比 CF 的 DO isolate 宽松,而瓶颈是
+      // 延迟 —— doc service 在 southeastasia,CAS 是 Cloudflare Worker,单次
+      // 往返 ~1.3s(见 doctype-psd/src/resolve.ts 的说明)。8 是 psd 的
+      // FaultConcurrency 已经在这条路上发过的值。
+      casConcurrency: 8,
     });
 
     return {

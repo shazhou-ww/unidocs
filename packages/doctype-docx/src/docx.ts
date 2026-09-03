@@ -33,11 +33,6 @@ export type DocxDocumentTypeFactory = DocumentTypeFactory<
 
 const DOCX_CONTENT_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-// Low on purpose: each CAS subrequest from a Durable Object holds a large
-// in-flight buffer in the calling isolate, so a concurrent upload burst can
-// push the DO past its memory limit (see sblob-context.ts).
-const PART_IO_CONCURRENCY = 2;
-
 export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
   const modelCache = new WeakMap<DocxDoc, Document>();
 
@@ -45,10 +40,11 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
     const cached = modelCache.get(doc);
     if (cached) return cached;
 
-    const loaded = await mapConcurrent(
-      Object.entries(doc.files),
-      PART_IO_CONCURRENCY,
-      async ([path, blob]) => [path, await context.openSBlob(blob)] as const,
+    // 并发上限由 SBlob 客户端统一持有,这里不再自己限一层 —— 理由见 storeState。
+    const loaded = await Promise.all(
+      Object.entries(doc.files).map(
+        async ([path, blob]) => [path, await context.openSBlob(blob)] as const,
+      ),
     );
     let packageBytes = 0;
     for (const [path, handler] of loaded) {
@@ -81,17 +77,21 @@ export const createDocxDocumentType: DocxDocumentTypeFactory = (context) => {
     extracted?: Readonly<Record<string, PackageFileData>>,
   ): Promise<DocxDoc> {
     const packageFiles = extracted ?? await extractOpenXmlPackage(await document.save());
-    const stored = await mapConcurrent(
-      Object.entries(packageFiles),
-      PART_IO_CONCURRENCY,
-      async ([path, file]) => {
+    // 这里曾经是 `PART_IO_CONCURRENCY = 2` 的本地限流(0795252)。它限的其实就是
+    // `openSBlob`/`makeSBlob` —— CAS 调用本身,和 sblob-context 里那条为躲同一个
+    // OOM 而退化出的串行是同一个资源,只是各限各的。上限现在由 SBlob 客户端统一
+    // 持有(`SBlobContextOptions.casConcurrency`),doctype 不再自带一份:两层套着
+    // 只有紧的那层生效,而 doctype 侧那份既拿不到运行时的正确取值(CF 的 DO
+    // isolate 和 Azure 差一个数量级),也让"上限到底是多少"失去单一出处。
+    const stored = await Promise.all(
+      Object.entries(packageFiles).map(async ([path, file]) => {
         const blob = await context.makeSBlob({
           data: file.data,
           contentType: file.contentType,
         });
         const prior = previous?.files[path];
         return [path, prior?.hash === blob.hash ? prior : blob] as const;
-      },
+      }),
     );
     const files = Object.create(null) as Record<string, SBlob>;
     for (const [path, blob] of stored) {
@@ -246,22 +246,4 @@ async function materializeHandler(handler: SBlobHandler, maxBytes: number): Prom
   }
   if (offset !== bytes.length) throw new Error(`SBlob returned ${offset} bytes, expected ${bytes.length}`);
   return bytes;
-}
-
-async function mapConcurrent<T, TResult>(
-  values: readonly T[],
-  concurrency: number,
-  map: (value: T, index: number) => Promise<TResult>,
-): Promise<TResult[]> {
-  const results = new Array<TResult>(values.length);
-  let nextIndex = 0;
-  async function worker(): Promise<void> {
-    while (nextIndex < values.length) {
-      const index = nextIndex++;
-      results[index] = await map(values[index], index);
-    }
-  }
-  const workerCount = Math.min(concurrency, values.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results;
 }

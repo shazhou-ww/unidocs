@@ -95,6 +95,8 @@ describe("TopBar", () => {
     const button = screen.getByRole("button", { name: "导出" });
     expect(button.closest("a")).toBeNull();
     fireEvent.click(button);
+    // 导出按钮如今只是开菜单;真正的下载来自选中某个格式后调用 exportDoc。
+    fireEvent.click(screen.getByRole("button", { name: "导出为 PSD" }));
     expect(exportDoc).toHaveBeenCalledTimes(1);
   });
 
@@ -111,5 +113,49 @@ describe("TopBar", () => {
     render(<TopBar />);
     act(() => { setState({ docId: null }); });
     expect(screen.getByRole("button", { name: "导出" })).toBeDisabled();
+  });
+});
+
+describe("导出菜单", () => {
+  it("放开了 .png 的选择", () => {
+    const { container } = render(<TopBar />);
+    const input = container.querySelector('input[type="file"]')!;
+    expect(input.getAttribute("accept")).toBe(".psd,.png");
+  });
+
+  it("点导出弹出两个格式,选 PNG 时按 png 调用", () => {
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "导出为 PNG" }));
+    expect(exportDoc).toHaveBeenCalledWith("png");
+  });
+
+  it("选 PSD 时按 psd 调用", () => {
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "导出为 PSD" }));
+    expect(exportDoc).toHaveBeenCalledWith("psd");
+  });
+
+  it("选完就收起菜单", () => {
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+    fireEvent.click(screen.getByRole("button", { name: "导出为 PNG" }));
+
+    expect(screen.queryByRole("button", { name: "导出为 PNG" })).toBeNull();
+  });
+
+  // 导出进行中整个菜单不可用:重复点会打出第二个请求,而 `exporting` 只有
+  // 一个,第二次的 finally 会把第一次还在跑的状态清掉。
+  it("导出中时按钮禁用且菜单打不开", () => {
+    act(() => { setState({ exporting: true }); });
+    render(<TopBar />);
+
+    const button = screen.getByRole("button", { name: /导出中/ });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(screen.queryByRole("button", { name: "导出为 PNG" })).toBeNull();
   });
 });
