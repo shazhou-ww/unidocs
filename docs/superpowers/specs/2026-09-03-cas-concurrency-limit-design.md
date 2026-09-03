@@ -88,7 +88,7 @@ export const DEFAULT_CAS_CONCURRENCY = 4;
 
 | 运行时 | 值 | 依据 |
 |---|---|---|
-| Cloudflare (`editor-do-svalue.ts:192`) | `4` | 128MB DO isolate；OOM 发生在并发 8。4 严于崩过的值，又松于今天 `#store` 的串行 1 |
+| Cloudflare (`editor-do-svalue.ts:192`) | `2` | 128MB DO isolate；OOM 发生在并发 8。2 正是 `doctype-docx` 当时自己压到的值，本地限流撤掉后取值移到这里，docx 在 CF 上行为逐字节不变 |
 | Azure (`doc-type-service.ts:170`) | `8` | 内存宽松、跨云延迟主导；8 是 psd `FaultConcurrency` 已在这条路上发的值 |
 | 库默认 | `4` | 新运行时忘了设也仍然有界 |
 
@@ -127,12 +127,19 @@ export const DEFAULT_CAS_CONCURRENCY = 4;
    收益，而「上限到底是多少」失去单一出处，doctype 侧那份也拿不到运行时的正确
    取值（CF 的 DO isolate 与 Azure 差一个数量级）。
 
-   **代价要说清楚：** 撤掉后 docx 在 CF 上的 CAS 并发从 2 变成 4。这正是修复清单
-   第 4 项标为 Deferred、要求「revisit only with the memory fix」的那一步
-   （`docs/superpowers/plans/2026-09-01-stack-oauth-standardization.md:186-190`）。
-   4 仍远低于当初崩掉的 8，且桶已从 EEUR 迁到 APAC、单次 PUT 快了数倍（缓冲驻留
-   时间同比缩短），但这是**推理不是实测**。合并后应当用
-   `scripts/measure-create-latency.mjs` 在生产上复核一轮。
+   **取值的落点：** CF 的 `casConcurrency` 定为 **2** —— 正是 docx 本地限流当时压到
+   的那个值。于是 docx 在 CF 上的行为**逐字节不变**，这次改动对它是纯粹的"上限换了
+   个持有者"，不承担任何新的内存风险。
+
+   把它提上去（修复清单第 4 项，标为 Deferred、要求「revisit only with the memory
+   fix」，见 `docs/superpowers/plans/2026-09-01-stack-oauth-standardization.md:186-190`）
+   是另一件事：应当单独做，并用 `scripts/measure-create-latency.mjs` 带生产实测，
+   不搭在这次重构里。
+
+   **副作用要记下来：** CF 上的 psd 也会跟着收到 2。它此前是「读 ≤ 8
+   （`resolve.ts` 的池）、写无上限」。写这一侧收紧正是本设计的目的；读这一侧
+   8 → 2 是连带的，会让 CF 上的 psd 导出变慢。生产 psd 跑在 Azure（8），所以
+   影响面限于 CF 这条路。
 
 4. **`resolve.ts` 的 worker 池保留**，`FaultConcurrency = 8` 恢复为自有常数。
    保留的理由是它顺带做**在途哈希去重**（`resolve.ts:60-67`），闸门给不了——闸门只
