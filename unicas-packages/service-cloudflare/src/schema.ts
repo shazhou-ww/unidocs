@@ -31,6 +31,9 @@ const TABLE_MIGRATIONS = [
 
   // Internal quota reservation for the R2-before-D1 node commit window.
   "CREATE TABLE IF NOT EXISTS cas_upload_reservations (stack_id TEXT NOT NULL, tenant_id TEXT NOT NULL, hash TEXT NOT NULL, stored_bytes INTEGER NOT NULL CHECK (stored_bytes > 0), created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (stack_id, tenant_id, hash))",
+
+  // Direct-to-R2 upload sessions. Ready state remains represented only by cas_nodes.
+  "CREATE TABLE IF NOT EXISTS cas_direct_upload_sessions (stack_id TEXT NOT NULL, tenant_id TEXT NOT NULL, hash TEXT NOT NULL, upload_id TEXT NOT NULL, temporary_object_key TEXT NOT NULL, stored_bytes INTEGER NOT NULL CHECK (stored_bytes > 0), lease_duration_ms INTEGER NOT NULL CHECK (lease_duration_ms > 0), created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (stack_id, tenant_id, hash), UNIQUE (upload_id), UNIQUE (temporary_object_key))",
 ];
 
 const INDEX_MIGRATIONS = [

@@ -7,7 +7,11 @@ import {
   matchCasRoute,
   type CasRoute,
 } from "@unicas/tenant-protocol";
-import { CasLeaseDurationHeader } from "@unicas/tenant-protocol";
+import {
+  CasLeaseDurationHeader,
+  CasUploadIdHeader,
+  CasUploadLengthHeader,
+} from "@unicas/tenant-protocol";
 import type { ServicePlatform } from "./ports.js";
 
 export interface HttpActor {
@@ -143,6 +147,10 @@ async function dispatchTenantRequest(
       if (contentType) headers["Content-Type"] = contentType;
       const contentLength = request.headers.get("Content-Length");
       if (contentLength) headers["Content-Length"] = contentLength;
+      const uploadLength = request.headers.get(CasUploadLengthHeader);
+      if (uploadLength) headers[CasUploadLengthHeader] = uploadLength;
+      const uploadId = request.headers.get(CasUploadIdHeader);
+      if (uploadId) headers[CasUploadIdHeader] = uploadId;
       body = request.body;
       break;
     }

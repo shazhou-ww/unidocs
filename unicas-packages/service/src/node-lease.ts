@@ -14,6 +14,7 @@ import { NodeOpError, NodeOpErrorCodes } from "./node-errors.js";
 export const DEFAULT_LEASE_MS = 15 * 60 * 1000;
 export const MIN_LEASE_MS = 60 * 1000;
 export const MAX_LEASE_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_UPLOAD_SESSION_MS = 15 * 60 * 1000;
 
 export interface NodeLeaseScope {
   readonly stackId: string;
@@ -59,6 +60,44 @@ export interface CanonicalNodeUploadPlan {
   readonly storedBytes: number;
   readonly leaseDurationMs: number;
 }
+
+export interface CanonicalDirectUploadSession {
+  readonly hash: string;
+  readonly uploadId: string;
+  readonly temporaryObjectKey: string;
+  readonly storedBytes: number;
+  readonly leaseDurationMs: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+
+export interface CanonicalDirectUploadRepository extends NodeLeaseRepository {
+  readCanonicalUploadSession(
+    scope: NodeLeaseScope,
+    hash: string,
+  ): Promise<CanonicalDirectUploadSession | null>;
+  reserveCanonicalUploadSession(
+    scope: NodeLeaseScope,
+    session: CanonicalDirectUploadSession,
+  ): Promise<void>;
+  deleteCanonicalUploadSession(
+    scope: NodeLeaseScope,
+    hash: string,
+    uploadId: string,
+  ): Promise<void>;
+}
+
+export type CanonicalDirectUploadPrepareResult =
+  | { readonly kind: "ready"; readonly result: CasLeaseResult }
+  | {
+    readonly kind: "upload";
+    readonly session: CanonicalDirectUploadSession;
+    readonly replacedTemporaryObjectKey?: string;
+  };
+
+export type CanonicalDirectUploadFinalizeAdmission =
+  | { readonly kind: "ready"; readonly result: CasLeaseResult }
+  | { readonly kind: "upload"; readonly session: CanonicalDirectUploadSession };
 
 export type CanonicalNodeLeaseBeginResult =
   | { readonly kind: "ready"; readonly result: CasLeaseResult }
@@ -156,6 +195,102 @@ export function nextNodeLease(
     leaseStartedAt: existing && existing.leaseExpiresAt > now ? existing.leaseStartedAt : now,
     leaseExpiresAt: Math.max(existing?.leaseExpiresAt ?? 0, now + durationMs),
   };
+}
+
+export async function prepareCanonicalNodeUpload(input: {
+  readonly repository: CanonicalDirectUploadRepository;
+  readonly scope: NodeLeaseScope;
+  readonly hash: string;
+  readonly storedBytes: number;
+  readonly leaseDurationMs: number;
+  readonly createIdentifiers: () => { readonly uploadId: string; readonly temporaryObjectKey: string };
+  readonly limits?: CanonicalNodeLimits;
+  readonly uploadSessionMs?: number;
+  readonly now?: () => number;
+}): Promise<CanonicalDirectUploadPrepareResult> {
+  validateLeaseHash(input.hash);
+  try {
+    const result = await leaseReadyNode({
+      repository: input.repository,
+      scope: input.scope,
+      hash: input.hash,
+      leaseDurationMs: input.leaseDurationMs,
+      limits: input.limits,
+      now: input.now,
+    });
+    return { kind: "ready", result };
+  } catch (error) {
+    if (!(error instanceof NodeOpError) || error.code !== NodeOpErrorCodes.NOT_FOUND) throw error;
+  }
+  if (!Number.isSafeInteger(input.storedBytes) || input.storedBytes < 1) {
+    throw new NodeOpError(400, NodeOpErrorCodes.UPLOAD_INVALID, "Invalid canonical upload length");
+  }
+  if (input.storedBytes > (input.limits?.maxCanonicalNodeBytes ?? MAX_CANONICAL_NODE_BYTES)) {
+    throw new NodeOpError(413, NodeOpErrorCodes.UPLOAD_INVALID, "Canonical node is too large");
+  }
+
+  const now = (input.now ?? (() => Date.now()))();
+  const existing = await input.repository.readCanonicalUploadSession(input.scope, input.hash);
+  if (existing !== null && existing.expiresAt > now) {
+    if (existing.storedBytes !== input.storedBytes) {
+      throw new NodeOpError(409, NodeOpErrorCodes.UPLOAD_CONFLICT, "Canonical upload length conflicts with the active session");
+    }
+    return { kind: "upload", session: existing };
+  }
+
+  const identifiers = input.createIdentifiers();
+  if (identifiers.uploadId.length === 0 || identifiers.temporaryObjectKey.length === 0) {
+    throw new TypeError("Canonical upload identifiers must not be empty");
+  }
+  const session: CanonicalDirectUploadSession = {
+    hash: input.hash,
+    uploadId: identifiers.uploadId,
+    temporaryObjectKey: identifiers.temporaryObjectKey,
+    storedBytes: input.storedBytes,
+    leaseDurationMs: input.leaseDurationMs,
+    createdAt: now,
+    expiresAt: now + (input.uploadSessionMs ?? DEFAULT_UPLOAD_SESSION_MS),
+  };
+  await input.repository.reserveCanonicalUploadSession(input.scope, session);
+  return {
+    kind: "upload",
+    session,
+    ...(existing === null ? {} : { replacedTemporaryObjectKey: existing.temporaryObjectKey }),
+  };
+}
+
+export async function admitCanonicalNodeUploadFinalization(input: {
+  readonly repository: CanonicalDirectUploadRepository;
+  readonly scope: NodeLeaseScope;
+  readonly hash: string;
+  readonly uploadId: string;
+  readonly leaseDurationMs: number;
+  readonly limits?: CanonicalNodeLimits;
+  readonly now?: () => number;
+}): Promise<CanonicalDirectUploadFinalizeAdmission> {
+  validateLeaseHash(input.hash);
+  try {
+    const result = await leaseReadyNode({
+      repository: input.repository,
+      scope: input.scope,
+      hash: input.hash,
+      leaseDurationMs: input.leaseDurationMs,
+      limits: input.limits,
+      now: input.now,
+    });
+    return { kind: "ready", result };
+  } catch (error) {
+    if (!(error instanceof NodeOpError) || error.code !== NodeOpErrorCodes.NOT_FOUND) throw error;
+  }
+  const session = await input.repository.readCanonicalUploadSession(input.scope, input.hash);
+  if (session === null || session.uploadId !== input.uploadId) {
+    throw new NodeOpError(400, NodeOpErrorCodes.UPLOAD_INVALID, "Canonical upload session is invalid");
+  }
+  const now = (input.now ?? (() => Date.now()))();
+  if (session.expiresAt <= now) {
+    throw new NodeOpError(410, NodeOpErrorCodes.UPLOAD_EXPIRED, "Canonical upload session expired");
+  }
+  return { kind: "upload", session };
 }
 
 /** Establish an upload fence, or renew immediately when the node is already ready. */

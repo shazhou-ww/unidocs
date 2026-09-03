@@ -1,7 +1,13 @@
 import { CanonicalNodeContentType } from "@unicas/codec";
-import { casRoutes } from "@unicas/tenant-protocol";
+import {
+  CasUploadIdHeader,
+  CasUploadLengthHeader,
+  casRoutes,
+} from "@unicas/tenant-protocol";
 import type {
   CasGcResult,
+  CasLeaseOperationResult,
+  CasLeaseResult,
   CasNodeMetadata,
   CasRootRefUpdate,
   CasUsage,
@@ -29,6 +35,7 @@ function validateRange(range: CasNodeRange): void {
 export function createTenantCasClient(config: TenantCasClientConfig): TenantCasClient {
   const baseUrl = config.baseUrl.replace(/\/$/, "");
   const fetcher = config.fetcher ?? { fetch: globalThis.fetch.bind(globalThis) };
+  const uploadFetcher = config.uploadFetcher ?? fetcher;
   const path = { stackId: config.stackId, tenantId: config.tenantId };
 
   const request = async (
@@ -44,7 +51,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
 
   const requireOk = async (response: Response, operation: string): Promise<Response> => {
     if (!response.ok) {
-      const body = await response.clone().json().catch(() => null) as { message?: unknown; error?: unknown } | null;
+      const body = await response.json().catch(() => null) as { message?: unknown; error?: unknown } | null;
       const detail = typeof body?.message === "string"
         ? body.message
         : typeof body?.error === "string" ? body.error : undefined;
@@ -90,6 +97,55 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
     },
 
     async leaseNode(hash, source?: CasNodeSource, options: CasLeaseOptions = {}) {
+      if (source !== undefined && config.uploadMode === "direct") {
+        const prepareHeaders = new Headers({
+          [CasUploadLengthHeader]: String(source.contentLength),
+        });
+        if (options.durationMs !== undefined) {
+          prepareHeaders.set("X-CAS-Lease-Duration", String(options.durationMs));
+        }
+        const preparedResponse = await requireOk(
+          await request(casRoutes.lease({ ...path, hash }), {
+            method: "POST",
+            headers: prepareHeaders,
+            signal: options.signal,
+          }),
+          "prepareUpload",
+        );
+        const prepared = await preparedResponse.json() as CasLeaseOperationResult;
+        if (prepared.ready) return prepared;
+
+        const uploadInit: RequestInit = {
+          method: prepared.upload.method,
+          headers: prepared.upload.headers,
+          body: source.body as BodyInit,
+          signal: options.signal,
+        };
+        (uploadInit as RequestInit & { duplex?: "half" }).duplex = "half";
+        const uploadResponse = await uploadFetcher.fetch(prepared.upload.url, uploadInit);
+        await uploadResponse.body?.cancel("Direct CAS upload response consumed").catch(() => undefined);
+        if (!uploadResponse.ok && uploadResponse.status !== 412) {
+          throw new CasClientError(
+            uploadResponse.status,
+            uploadResponse.statusText,
+            "upload",
+          );
+        }
+
+        const finalizeHeaders = new Headers({ [CasUploadIdHeader]: prepared.uploadId });
+        if (options.durationMs !== undefined) {
+          finalizeHeaders.set("X-CAS-Lease-Duration", String(options.durationMs));
+        }
+        const finalized = await requireOk(
+          await request(casRoutes.lease({ ...path, hash }), {
+            method: "POST",
+            headers: finalizeHeaders,
+            signal: options.signal,
+          }),
+          "finalizeUpload",
+        );
+        return finalized.json() as Promise<CasLeaseResult>;
+      }
       const headers = new Headers();
       if (options.durationMs !== undefined) {
         headers.set("X-CAS-Lease-Duration", String(options.durationMs));

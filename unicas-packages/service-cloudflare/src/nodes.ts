@@ -7,16 +7,23 @@ export { NodeOpError, NodeOpErrorCodes } from "@unicas/service";
 export type { NodeOpErrorCode } from "@unicas/service";
 export { clampLeaseDuration, DEFAULT_LEASE_MS, MAX_LEASE_MS, MIN_LEASE_MS, parseLeaseDuration } from "@unicas/service";
 import {
+  admitCanonicalNodeUploadFinalization as admitCanonicalNodeUploadFinalizationKernel,
   beginCanonicalNodeLease as beginCanonicalNodeLeaseKernel,
   finalizeCanonicalNodeLease as finalizeCanonicalNodeLeaseKernel,
   leaseCanonicalNode as leaseCanonicalNodeKernel,
   leaseReadyNode as leaseReadyNodeKernel,
   NodeOpError,
   NodeOpErrorCodes,
+  prepareCanonicalNodeUpload as prepareCanonicalNodeUploadKernel,
   uploadCanonicalNode as uploadCanonicalNodeKernel,
   type ParsedUploadedNodeMetadata,
 } from "@unicas/service";
-import type { CanonicalNodeLeaseBeginResult, CanonicalNodeUploadPlan } from "@unicas/service";
+import type {
+  CanonicalDirectUploadFinalizeAdmission,
+  CanonicalDirectUploadPrepareResult,
+  CanonicalNodeLeaseBeginResult,
+  CanonicalNodeUploadPlan,
+} from "@unicas/service";
 import { CloudflareNodeLeaseRepository } from "./node-lease.js";
 import type { NodeReadyCache } from "./node-lease.js";
 import type { TimingSink } from "./timing.js";
@@ -83,6 +90,47 @@ export function beginCanonicalNodeLease(
     ...input,
     limits: store.limits,
   });
+}
+
+export function prepareCanonicalNodeUpload(
+  store: NodeStore,
+  input: {
+    readonly hash: string;
+    readonly storedBytes: number;
+    readonly leaseDurationMs: number;
+    readonly createIdentifiers: () => { readonly uploadId: string; readonly temporaryObjectKey: string };
+  },
+): Promise<CanonicalDirectUploadPrepareResult> {
+  return prepareCanonicalNodeUploadKernel({
+    repository: repository(store),
+    scope: { stackId: store.stackId, tenantId: store.tenantId },
+    ...input,
+    limits: store.limits,
+  });
+}
+
+export function admitCanonicalNodeUploadFinalization(
+  store: NodeStore,
+  input: { readonly hash: string; readonly uploadId: string; readonly leaseDurationMs: number },
+): Promise<CanonicalDirectUploadFinalizeAdmission> {
+  return admitCanonicalNodeUploadFinalizationKernel({
+    repository: repository(store),
+    scope: { stackId: store.stackId, tenantId: store.tenantId },
+    ...input,
+    limits: store.limits,
+  });
+}
+
+export function deleteCanonicalNodeUploadSession(
+  store: NodeStore,
+  hash: string,
+  uploadId: string,
+): Promise<void> {
+  return repository(store).deleteCanonicalUploadSession(
+    { stackId: store.stackId, tenantId: store.tenantId },
+    hash,
+    uploadId,
+  );
 }
 
 export function uploadCanonicalNode(

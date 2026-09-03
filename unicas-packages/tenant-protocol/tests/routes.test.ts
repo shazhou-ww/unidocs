@@ -1,10 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
   CasLeaseDurationHeader,
+  CasUploadIdHeader,
+  CasUploadLengthHeader,
   casRoutes,
   matchCasRoute,
 } from "../src/index.js";
 import type {
+  CasLeaseResponse,
   CasRoute,
   CasUpdateRootRefsRequest,
   CasUpdateRootRefsResponse,
@@ -50,6 +53,8 @@ describe("CAS routes (canonical stack-scoped)", () => {
     expect(casRoutes.updateRootRefs({ stackId: "stack/a", tenantId: "tenant/a" }))
       .toBe("/stacks/stack%2Fa/tenants/tenant%2Fa/root-refs");
     expect(CasLeaseDurationHeader).toBe("X-CAS-Lease-Duration");
+    expect(CasUploadLengthHeader).toBe("X-CAS-Upload-Length");
+    expect(CasUploadIdHeader).toBe("X-CAS-Upload-Id");
     expect(casRoutes.lease({ stackId: STACK, tenantId: TENANT, hash: "abc" }))
       .toBe(`/stacks/${STACK}/tenants/tenant%2Fa/cas/nodes/abc/lease`);
   });
@@ -83,6 +88,29 @@ describe("CAS routes (canonical stack-scoped)", () => {
 });
 
 describe("CAS write contract compile fixtures", () => {
+  test("lease response preserves ready results and admits direct uploads", () => {
+    const ready: CasLeaseResponse = {
+      hash: "a".repeat(64),
+      ready: true,
+      leaseStartedAt: 1,
+      leaseExpiresAt: 2,
+    };
+    const upload: CasLeaseResponse = {
+      hash: "b".repeat(64),
+      ready: false,
+      status: "upload_required",
+      uploadId: "upload-1",
+      expiresAt: 3,
+      upload: {
+        method: "PUT",
+        url: "https://example.r2.cloudflarestorage.com/bucket/key?signed",
+        headers: { "If-None-Match": "*" },
+      },
+    };
+    expect(ready.ready).toBe(true);
+    expect(upload.ready).toBe(false);
+  });
+
   test("updateRootRefs request carries a stack tenant path and the signed update", () => {
     const request: CasUpdateRootRefsRequest = {
       path: { stackId: STACK, tenantId: TENANT },

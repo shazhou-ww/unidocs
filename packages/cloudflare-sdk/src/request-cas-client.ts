@@ -8,6 +8,7 @@ export type RequestCasClient = CasBlobClient;
 export interface RequestCasEnv {
   readonly CAS_SERVICE: HttpFetcher;
   readonly CAS_STACK_ID: string;
+  readonly DOC_CAS_DIRECT_UPLOAD?: string;
 }
 
 export function createRequestCasClient(
@@ -25,9 +26,11 @@ export function createRequestCasClient(
     const cas = createTenantCasClient({
       baseUrl: "https://cas.internal",
       fetcher: env.CAS_SERVICE,
+      uploadFetcher: { fetch: globalThis.fetch.bind(globalThis) },
       stackId: env.CAS_STACK_ID,
       tenantId,
       getToken: async () => capability,
+      uploadMode: env.DOC_CAS_DIRECT_UPLOAD === "1" ? "direct" : "legacy",
     });
     return createCasBlobClient(cas);
   }

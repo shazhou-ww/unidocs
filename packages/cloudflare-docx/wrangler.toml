@@ -11,6 +11,13 @@ compatibility_date = "2025-08-17"
 # CAS_STACK_ISSUER / CAS_CAPABILITY_AUDIENCE / CAS_STACK_ID must exactly match
 # the values the Gateway signs delegated CAS capabilities with.
 [vars]
+# Temporary diagnostics: set DOC_MEMORY_PROBE = "1" and redeploy to emit
+# structured phase/byte/CAS-in-flight logs. Cloudflare exposes no in-code
+# isolate heap counter; use the local probe or DevTools for actual heap sizes.
+DOC_CAS_CONCURRENCY = "2"
+# Direct uploads still originate in the document DO; keep concurrency bounded
+# while production measurements establish the direct-R2 memory profile.
+DOC_CAS_DIRECT_UPLOAD = "1"
 DOC_CAPABILITY_AUDIENCE = "unidocs-doc:docx"
 CAS_CAPABILITY_AUDIENCE = "https://unicas.shazhou.work/stacks/cas_SZ6wfcfqS34J"
 CAS_STACK_ID = "cas_SZ6wfcfqS34J"

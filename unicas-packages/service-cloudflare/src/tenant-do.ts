@@ -9,8 +9,9 @@
  * cycle.
  */
 
-import { CanonicalNodeContentType, parseCanonicalNodeStream } from "@unicas/codec";
+import { CanonicalNodeContentType, hashToHex, parseCanonicalNodeStream } from "@unicas/codec";
 import type { D1Database, R2Bucket, DurableObjectNamespace } from "@cloudflare/workers-types";
+import { CasUploadIdHeader, CasUploadLengthHeader } from "@unicas/tenant-protocol";
 import {
   type CanonicalNodeUploadPlan,
   collectExpiredUnreferencedNodes,
@@ -24,10 +25,13 @@ import {
 } from "@unicas/service";
 import { canonicalComposite } from "./do-names.js";
 import {
+  admitCanonicalNodeUploadFinalization,
   beginCanonicalNodeLease,
+  deleteCanonicalNodeUploadSession,
   finalizeCanonicalNodeLease,
   leaseReadyNode,
   parseLeaseDuration,
+  prepareCanonicalNodeUpload,
   uploadCanonicalNode,
 } from "./nodes.js";
 import { CloudflareNodeGcRepository } from "./node-gc.js";
@@ -36,12 +40,19 @@ import { CloudflareNodeUsageRepository } from "./node-usage.js";
 import { canonicalizeRootRefsUpdate, parseRootRefsBody } from "./root-refs.js";
 import { RootRefsErrorCodes, RootRefsValidationError } from "./root-refs.js";
 import { ServerTiming } from "./timing.js";
+import { R2UploadPresigner } from "./r2-upload-presigner.js";
+import { stackCanonicalNodeKey } from "./do-names.js";
 
 export interface TenantCasDoEnv {
   CAS_DB: D1Database;
   CAS_R2: R2Bucket;
   /** Root Ref domain DO namespace (one-way calls only). */
   CAS_DOMAIN_DO: DurableObjectNamespace;
+  CAS_R2_ACCOUNT_ID?: string;
+  CAS_R2_BUCKET_NAME?: string;
+  CAS_R2_ACCESS_KEY_ID?: string;
+  CAS_R2_SECRET_ACCESS_KEY?: string;
+  CAS_UPLOAD_URL_EXPIRY_SECONDS?: string;
 }
 
 type UploadOutcome =
@@ -127,6 +138,19 @@ export class CasDurableObject {
     const hash = requireHeader(request, "X-CAS-Hash");
     const leaseDurationMs = parseLeaseDuration(request.headers.get("X-CAS-Lease-Duration"));
     const contentType = request.headers.get("Content-Type");
+    const uploadLengthHeader = request.headers.get(CasUploadLengthHeader);
+    const uploadId = request.headers.get(CasUploadIdHeader);
+    const modeCount = Number(contentType !== null) + Number(uploadLengthHeader !== null) + Number(uploadId !== null);
+    if (modeCount > 1) {
+      throw new NodeOpError(400, NodeOpErrorCodes.UPLOAD_INVALID, "Canonical lease upload modes are mutually exclusive");
+    }
+    if (uploadLengthHeader !== null) {
+      const storedBytes = Number(uploadLengthHeader);
+      return this.#prepareDirectUpload(store, hash, storedBytes, leaseDurationMs);
+    }
+    if (uploadId !== null) {
+      return this.#finalizeDirectUpload(store, hash, uploadId, leaseDurationMs);
+    }
     if (contentType !== null) {
       if (contentType !== CanonicalNodeContentType || request.body === null) {
         throw new NodeOpError(415, NodeOpErrorCodes.INVALID_REQUEST, `Content-Type must be ${CanonicalNodeContentType}`);
@@ -200,6 +224,142 @@ export class CasDurableObject {
       hash,
       leaseDurationMs,
     }));
+  }
+
+  async #prepareDirectUpload(
+    store: Parameters<typeof leaseReadyNode>[0],
+    hash: string,
+    storedBytes: number,
+    leaseDurationMs: number,
+  ): Promise<unknown> {
+    const prepared = await this.#withMutation(() => prepareCanonicalNodeUpload(store, {
+      hash,
+      storedBytes,
+      leaseDurationMs,
+      createIdentifiers: () => {
+        const id = crypto.randomUUID();
+        return { uploadId: id, temporaryObjectKey: `_uploads/v1/${id}` };
+      },
+    }));
+    if (prepared.kind === "ready") return prepared.result;
+    if (prepared.replacedTemporaryObjectKey !== undefined) {
+      await store.bucket.delete(prepared.replacedTemporaryObjectKey);
+    }
+    const upload = await this.#uploadPresigner().signPut(
+      prepared.session.temporaryObjectKey,
+      prepared.session.storedBytes,
+    );
+    return {
+      hash,
+      ready: false,
+      status: "upload_required",
+      uploadId: prepared.session.uploadId,
+      expiresAt: prepared.session.expiresAt,
+      upload,
+    };
+  }
+
+  async #finalizeDirectUpload(
+    store: Parameters<typeof leaseReadyNode>[0],
+    hash: string,
+    uploadId: string,
+    leaseDurationMs: number,
+  ): Promise<unknown> {
+    const uploadKey = `${store.stackId}\0${store.tenantId}\0${hash}`;
+    const admission = await this.#withMutation(async () => {
+      const active = this.#activeUploads.get(uploadKey);
+      if (active !== undefined) return { kind: "join" as const, active };
+      const admitted = await admitCanonicalNodeUploadFinalization(store, {
+        hash,
+        uploadId,
+        leaseDurationMs,
+      });
+      if (admitted.kind === "ready") return admitted;
+      const newActive = deferredUpload();
+      this.#activeUploads.set(uploadKey, newActive);
+      return { kind: "upload" as const, session: admitted.session, active: newActive };
+    });
+    if (admission.kind === "ready") return admission.result;
+    if (admission.kind === "join") {
+      const outcome = await admission.active.completion;
+      if (!outcome.ok) throw outcome.error;
+      return this.#withMutation(() => leaseReadyNode(store, { hash, leaseDurationMs }));
+    }
+
+    try {
+      const parsed = await this.#publishTemporaryUpload(store, admission.session);
+      const result = await this.#withMutation(() => finalizeCanonicalNodeLease(store, {
+        hash,
+        storedBytes: admission.session.storedBytes,
+        leaseDurationMs: admission.session.leaseDurationMs,
+      }, parsed));
+      await store.bucket.delete(admission.session.temporaryObjectKey);
+      admission.active.settle({ ok: true });
+      return result;
+    } catch (error) {
+      await Promise.allSettled([
+        store.bucket.delete(admission.session.temporaryObjectKey),
+        this.#withMutation(() => deleteCanonicalNodeUploadSession(store, hash, admission.session.uploadId)),
+      ]);
+      admission.active.settle({ ok: false, error });
+      throw error;
+    } finally {
+      if (this.#activeUploads.get(uploadKey) === admission.active) {
+        this.#activeUploads.delete(uploadKey);
+      }
+    }
+  }
+
+  async #publishTemporaryUpload(
+    store: Parameters<typeof leaseReadyNode>[0],
+    session: { readonly hash: string; readonly temporaryObjectKey: string; readonly storedBytes: number },
+  ): Promise<ParsedUploadedNodeMetadata> {
+    const temporary = await store.bucket.get(session.temporaryObjectKey);
+    if (temporary === null || temporary.body === undefined || temporary.size !== session.storedBytes) {
+      throw new NodeOpError(412, NodeOpErrorCodes.UPLOAD_INCOMPLETE, "Canonical upload is incomplete");
+    }
+    const [uploadStream, parseStream] = (temporary.body as unknown as ReadableStream<Uint8Array>).tee();
+    const parsing = parseUploadedBody(parseStream, session.storedBytes, store.limits);
+    const finalKey = stackCanonicalNodeKey(store.stackId, store.tenantId, session.hash);
+    const uploading = store.bucket.put(
+      finalKey,
+      uploadStream as unknown as Parameters<R2Bucket["put"]>[1],
+      { sha256: session.hash, onlyIf: { etagDoesNotMatch: "*" } },
+    );
+    try {
+      const [parsed, stored] = await Promise.all([parsing, uploading]);
+      if (stored === null) {
+        const existing = await store.bucket.head(finalKey);
+        const checksum = existing?.checksums.sha256;
+        const actualHash = checksum === undefined ? undefined : hashToHex(new Uint8Array(checksum));
+        if (existing?.size !== session.storedBytes || actualHash !== session.hash) {
+          throw new NodeOpError(409, NodeOpErrorCodes.CONFLICT, "Canonical object conflicts with an existing object");
+        }
+      }
+      return parsed;
+    } catch (error) {
+      await Promise.allSettled([parsing, uploading]);
+      if (error instanceof NodeOpError) throw error;
+      throw new NodeOpError(422, NodeOpErrorCodes.DIGEST_MISMATCH, "Canonical node checksum does not match its hash");
+    }
+  }
+
+  #uploadPresigner(): R2UploadPresigner {
+    const accountId = this.#env.CAS_R2_ACCOUNT_ID;
+    const bucketName = this.#env.CAS_R2_BUCKET_NAME;
+    const accessKeyId = this.#env.CAS_R2_ACCESS_KEY_ID;
+    const secretAccessKey = this.#env.CAS_R2_SECRET_ACCESS_KEY;
+    if (!accountId || !bucketName || !accessKeyId || !secretAccessKey) {
+      throw new NodeOpError(503, NodeOpErrorCodes.STORAGE, "Direct canonical upload is not configured");
+    }
+    const configuredExpiry = Number(this.#env.CAS_UPLOAD_URL_EXPIRY_SECONDS ?? "300");
+    return new R2UploadPresigner({
+      accountId,
+      bucketName,
+      accessKeyId,
+      secretAccessKey,
+      expiresInSeconds: configuredExpiry,
+    });
   }
 
   /** Store the canonical body in R2 while tee-parsing its metadata from the

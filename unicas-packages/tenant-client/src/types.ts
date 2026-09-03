@@ -81,7 +81,9 @@ export interface TenantCasClientConfig {
   readonly tenantId: string;
   readonly getToken: () => Promise<string>;
   readonly fetcher?: HttpFetcher;
+  readonly uploadFetcher?: HttpFetcher;
   readonly cache?: CasNodeCache;
+  readonly uploadMode?: "legacy" | "direct";
 }
 
 export type {

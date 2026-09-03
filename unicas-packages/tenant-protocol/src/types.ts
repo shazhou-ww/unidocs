@@ -29,6 +29,21 @@ export interface CasLeaseResult {
   readonly leaseExpiresAt: number;
 }
 
+export interface CasUploadRequiredResult {
+  readonly hash: CasHash;
+  readonly ready: false;
+  readonly status: "upload_required";
+  readonly uploadId: string;
+  readonly expiresAt: number;
+  readonly upload: {
+    readonly method: "PUT";
+    readonly url: string;
+    readonly headers: Readonly<Record<string, string>>;
+  };
+}
+
+export type CasLeaseOperationResult = CasLeaseResult | CasUploadRequiredResult;
+
 export type CasReferences = Readonly<Record<CasHash, number>>;
 export type CasRefChanges = Readonly<Record<CasHash, number>>;
 

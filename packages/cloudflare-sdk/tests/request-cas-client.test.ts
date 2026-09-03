@@ -11,6 +11,53 @@ import {
 import { createRequestCasClient } from "../src/request-cas-client.js";
 
 describe("createRequestCasClient", () => {
+  test("sends direct upload bodies through public fetch instead of the CAS service binding", async () => {
+    const hash = "a".repeat(64);
+    const casFetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        hash,
+        ready: false,
+        status: "upload_required",
+        uploadId: "upload-1",
+        expiresAt: Date.now() + 60_000,
+        upload: {
+          method: "PUT",
+          url: "https://account.r2.cloudflarestorage.com/bucket/temp?signed",
+          headers: {
+            "Content-Length": "3",
+            "Content-Type": "application/vnd.unidocs.cas-node.v1",
+            "If-None-Match": "*",
+          },
+        },
+      }))
+      .mockResolvedValueOnce(Response.json({
+        hash,
+        ready: true,
+        leaseStartedAt: 1,
+        leaseExpiresAt: 2,
+      }));
+    const publicFetch = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", publicFetch);
+    const client = createRequestCasClient(
+      { CAS_SERVICE: { fetch: casFetch }, CAS_STACK_ID: "stack-1", DOC_CAS_DIRECT_UPLOAD: "1" },
+      privateRequest({
+        "X-UniDocs-Auth-Context": "capability",
+        "X-UniDocs-CAS-Capability": "delegated-token",
+      }),
+    );
+
+    await expect(client!.unicasClient.leaseNode(hash, {
+      contentLength: 3,
+      body: new Response(Uint8Array.from([1, 2, 3])).body!,
+    })).resolves.toMatchObject({ hash, ready: true });
+
+    expect(casFetch).toHaveBeenCalledTimes(2);
+    expect(publicFetch).toHaveBeenCalledTimes(1);
+    const [uploadUrl, uploadInit] = publicFetch.mock.calls[0];
+    expect(uploadUrl).toContain("r2.cloudflarestorage.com");
+    expect(new Headers(uploadInit?.headers).has("Authorization")).toBe(false);
+  });
+
   test("uses only the delegated CAS Bearer on tenant-prefixed routes", async () => {
     const pair = await crypto.subtle.generateKey(
       { name: "ECDSA", namedCurve: "P-256" },

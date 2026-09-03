@@ -2,6 +2,8 @@ import type { D1Database, D1PreparedStatement, R2Bucket } from "@cloudflare/work
 import { hashToHex } from "@unicas/codec";
 import type {
   AdoptedCanonicalNodePlan,
+  CanonicalDirectUploadRepository,
+  CanonicalDirectUploadSession,
   CanonicalNodeLeaseRecord,
   CanonicalNodeLeaseRepository,
   CanonicalOrphanObject,
@@ -33,7 +35,7 @@ function cacheExpiry(): number {
 }
 
 /** D1/R2 adapter for node renewal, upload, and canonical orphan adoption. */
-export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseRepository {
+export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseRepository, CanonicalDirectUploadRepository {
   constructor(
     readonly db: D1Database,
     readonly bucket: R2Bucket,
@@ -115,6 +117,91 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
     ).bind(scope.stackId, scope.tenantId, reservation.hash, reservation.storedBytes, reservation.createdAt, reservation.expiresAt).run());
   }
 
+  async readCanonicalUploadSession(scope: NodeLeaseScope, hash: string): Promise<CanonicalDirectUploadSession | null> {
+    const row = await timeOperation(this.timing, "cas_d1_upload_session", () => this.db.prepare(
+      `SELECT upload_id, temporary_object_key, stored_bytes, lease_duration_ms, created_at, expires_at
+       FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?`,
+    ).bind(scope.stackId, scope.tenantId, hash).first<{
+      upload_id: string;
+      temporary_object_key: string;
+      stored_bytes: number;
+      lease_duration_ms: number;
+      created_at: number;
+      expires_at: number;
+    }>());
+    return row === null ? null : {
+      hash,
+      uploadId: row.upload_id,
+      temporaryObjectKey: row.temporary_object_key,
+      storedBytes: row.stored_bytes,
+      leaseDurationMs: row.lease_duration_ms,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    };
+  }
+
+  async reserveCanonicalUploadSession(scope: NodeLeaseScope, session: CanonicalDirectUploadSession): Promise<void> {
+    await timeOperation(this.timing, "cas_d1_upload_session_reserve", () => this.db.batch([
+      this.db.prepare(
+        `INSERT INTO cas_direct_upload_sessions
+           (stack_id, tenant_id, hash, upload_id, temporary_object_key, stored_bytes, lease_duration_ms, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(stack_id, tenant_id, hash) DO UPDATE SET
+           upload_id = excluded.upload_id,
+           temporary_object_key = excluded.temporary_object_key,
+           stored_bytes = excluded.stored_bytes,
+           lease_duration_ms = excluded.lease_duration_ms,
+           created_at = excluded.created_at,
+           expires_at = excluded.expires_at`,
+      ).bind(
+        scope.stackId,
+        scope.tenantId,
+        session.hash,
+        session.uploadId,
+        session.temporaryObjectKey,
+        session.storedBytes,
+        session.leaseDurationMs,
+        session.createdAt,
+        session.expiresAt,
+      ),
+      this.db.prepare(
+        `INSERT INTO cas_upload_reservations (stack_id, tenant_id, hash, stored_bytes, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(stack_id, tenant_id, hash) DO UPDATE SET
+           stored_bytes = excluded.stored_bytes,
+           created_at = excluded.created_at,
+           expires_at = excluded.expires_at`,
+      ).bind(
+        scope.stackId,
+        scope.tenantId,
+        session.hash,
+        session.storedBytes,
+        session.createdAt,
+        session.expiresAt,
+      ),
+    ]).then(() => undefined));
+  }
+
+  async deleteCanonicalUploadSession(
+    scope: NodeLeaseScope,
+    hash: string,
+    uploadId: string,
+  ): Promise<void> {
+    await timeOperation(this.timing, "cas_d1_upload_session_delete", () => this.db.batch([
+      this.db.prepare(
+        `DELETE FROM cas_upload_reservations
+         WHERE stack_id = ? AND tenant_id = ? AND hash = ?
+           AND EXISTS (
+             SELECT 1 FROM cas_direct_upload_sessions
+             WHERE stack_id = ? AND tenant_id = ? AND hash = ? AND upload_id = ?
+           )`,
+      ).bind(scope.stackId, scope.tenantId, hash, scope.stackId, scope.tenantId, hash, uploadId),
+      this.db.prepare(
+        "DELETE FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ? AND upload_id = ?",
+      ).bind(scope.stackId, scope.tenantId, hash, uploadId),
+    ]).then(() => undefined));
+  }
+
   async putCanonicalObject(scope: NodeLeaseScope, hash: string, body: ReadableStream<Uint8Array>): Promise<void> {
     const key = stackCanonicalNodeKey(scope.stackId, scope.tenantId, hash);
     try {
@@ -137,6 +224,8 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
         this.db.prepare("UPDATE cas_nodes SET lease_started_at = ?, lease_expires_at = ? WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
           .bind(plan.leaseStartedAt, plan.leaseExpiresAt, scope.stackId, scope.tenantId, plan.hash),
         this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
+          .bind(scope.stackId, scope.tenantId, plan.hash),
+        this.db.prepare("DELETE FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
           .bind(scope.stackId, scope.tenantId, plan.hash),
       ]).then(() => undefined));
       this.readyCache?.set(plan.hash, cacheExpiry());
@@ -174,6 +263,8 @@ export class CloudflareNodeLeaseRepository implements CanonicalNodeLeaseReposito
       );
     }
     batch.push(this.db.prepare("DELETE FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
+      .bind(scope.stackId, scope.tenantId, plan.hash));
+    batch.push(this.db.prepare("DELETE FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?")
       .bind(scope.stackId, scope.tenantId, plan.hash));
     await timeOperation(this.timing, "cas_d1_commit", () => this.db.batch(batch).then(() => undefined));
     // The node was uploaded by this same DO and the D1 row is now committed;

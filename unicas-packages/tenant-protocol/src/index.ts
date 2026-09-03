@@ -9,6 +9,7 @@
 export type {
   CasGcResult,
   CasHash,
+  CasLeaseOperationResult,
   CasLeaseResult,
   CasNode,
   CasNodeDescriptor,
@@ -17,11 +18,14 @@ export type {
   CasRefChanges,
   CasReferences,
   CasRootRefUpdate,
+  CasUploadRequiredResult,
   CasUsage,
 } from "./types.js";
 
 export {
   CasLeaseDurationHeader,
+  CasUploadIdHeader,
+  CasUploadLengthHeader,
 } from "./http.js";
 export type {
   CasEndpointContracts,

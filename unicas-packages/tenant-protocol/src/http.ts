@@ -10,7 +10,7 @@
 import type {
   CasGcResult,
   CasHash,
-  CasLeaseResult,
+  CasLeaseOperationResult,
   CasNodeMetadata,
   CasNodeState,
   CasRootRefUpdate,
@@ -18,6 +18,8 @@ import type {
 } from "./types.js";
 
 export const CasLeaseDurationHeader = "X-CAS-Lease-Duration";
+export const CasUploadLengthHeader = "X-CAS-Upload-Length";
+export const CasUploadIdHeader = "X-CAS-Upload-Id";
 
 export interface CasStackPath {
   readonly stackId: string;
@@ -55,13 +57,15 @@ export interface CasLeaseRequest {
   readonly path: CasNodePath;
   readonly headers: {
     leaseDurationMs?: number;
+    uploadLength?: number;
+    uploadId?: string;
     contentType?: "application/vnd.unidocs.cas-node.v1";
     contentLength?: number;
   };
   readonly body?: ReadableStream<Uint8Array>;
 }
 
-export type CasLeaseResponse = CasLeaseResult | CasErrorResponse;
+export type CasLeaseResponse = CasLeaseOperationResult | CasErrorResponse;
 
 export interface CasUsageRequest {
   readonly path: CasTenantPath;

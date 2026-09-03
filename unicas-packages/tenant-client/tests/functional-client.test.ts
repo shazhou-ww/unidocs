@@ -25,13 +25,14 @@ describe("functional tenant CAS client", () => {
     tokenCounter = 0;
   });
 
-  function createClient() {
+  function createClient(uploadMode: "legacy" | "direct" = "legacy") {
     return createTenantCasClient({
       baseUrl: "https://cas.test/",
       stackId: STACK,
       tenantId: TENANT,
       getToken: async () => `token-${++tokenCounter}`,
       fetcher: service,
+      uploadMode,
     });
   }
 
@@ -74,6 +75,15 @@ describe("functional tenant CAS client", () => {
     });
   });
 
+  it("prepares, uploads, and finalizes canonical nodes in direct mode", async () => {
+    const client = createClient("direct");
+    const hash = await storeNode(client, Uint8Array.from([1, 2, 3]), "application/octet-stream");
+
+    expect(service.nodes.has(hash)).toBe(true);
+    expect(service.directUploads.size).toBe(1);
+    expect(service.tokens).toEqual(["Bearer token-1", "Bearer token-2"]);
+  });
+
   it("updates roots and exposes tenant administration operations", async () => {
     const client = createClient();
     const hash = await storeNode(client, Uint8Array.from([1]), "application/octet-stream");
@@ -90,6 +100,25 @@ describe("functional tenant CAS client", () => {
     const error = await createClient().readMetadata("0".repeat(64)).catch(value => value);
     expect(error).toBeInstanceOf(CasClientError);
     expect(error).toMatchObject({ status: 404 });
+  });
+
+  it("consumes error response bodies instead of retaining an unread clone", async () => {
+    let errorResponse: Response | undefined;
+    const client = createTenantCasClient({
+      baseUrl: "https://cas.test/",
+      stackId: STACK,
+      tenantId: TENANT,
+      getToken: async () => "token",
+      fetcher: {
+        async fetch() {
+          errorResponse = Response.json({ error: "missing" }, { status: 404 });
+          return errorResponse;
+        },
+      },
+    });
+
+    await expect(client.leaseNode("0".repeat(64))).rejects.toMatchObject({ status: 404 });
+    expect(errorResponse?.bodyUsed).toBe(true);
   });
 });
 

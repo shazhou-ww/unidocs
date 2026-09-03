@@ -1,16 +1,19 @@
 import { describe, expect, test } from "vitest";
 import { encodeHeader, hashToHex } from "@unicas/codec";
 import {
+  admitCanonicalNodeUploadFinalization,
   finalizeCanonicalNodeLease,
   leaseCanonicalNode,
   leaseReadyNode,
   MAX_LEASE_MS,
   nextNodeLease,
   parseLeaseDuration,
+  prepareCanonicalNodeUpload,
   type AdoptedCanonicalNodePlan,
   type CanonicalOrphanObject,
   type CanonicalNodeLeaseRecord,
   type CanonicalNodeLeaseRepository,
+  type CanonicalDirectUploadSession,
   type CanonicalUploadReservation,
   type NodeLeaseRecord,
   type NodeLeaseRepository,
@@ -35,6 +38,7 @@ class MemoryNodeLeaseRepository implements NodeLeaseRepository, CanonicalNodeLea
   uploadError: Error | undefined;
   committed: UploadedCanonicalNodeCommit | undefined;
   prefixReads = 0;
+  directUpload: CanonicalDirectUploadSession | null = null;
 
   async readNodeLease(_scope: NodeLeaseScope, _hash: string) {
     return this.lease;
@@ -76,6 +80,18 @@ class MemoryNodeLeaseRepository implements NodeLeaseRepository, CanonicalNodeLea
     reservation: CanonicalUploadReservation,
   ) {
     this.reservation = reservation;
+  }
+
+  async readCanonicalUploadSession(_scope: NodeLeaseScope, _hash: string) {
+    return this.directUpload;
+  }
+
+  async reserveCanonicalUploadSession(_scope: NodeLeaseScope, session: CanonicalDirectUploadSession) {
+    this.directUpload = session;
+  }
+
+  async deleteCanonicalUploadSession(_scope: NodeLeaseScope, _hash: string, uploadId: string) {
+    if (this.directUpload?.uploadId === uploadId) this.directUpload = null;
   }
 
   async putCanonicalObject(
@@ -249,6 +265,96 @@ describe("bodyless node lease service kernel", () => {
       hash: "invalid",
       leaseDurationMs: DURATION,
     })).rejects.toMatchObject({ status: 400, code: "INVALID_REQUEST" });
+  });
+});
+
+describe("direct node upload session kernel", () => {
+  test("creates and reuses a matching upload session", async () => {
+    const repository = new MemoryNodeLeaseRepository();
+    const hash = "a".repeat(64);
+    const prepare = () => prepareCanonicalNodeUpload({
+      repository,
+      scope: SCOPE,
+      hash,
+      storedBytes: 560,
+      leaseDurationMs: DURATION,
+      createIdentifiers: () => ({ uploadId: "upload-1", temporaryObjectKey: "_uploads/v1/temp-1" }),
+      now: () => 100,
+    });
+
+    const first = await prepare();
+    const second = await prepare();
+    expect(first).toMatchObject({ kind: "upload", session: { uploadId: "upload-1", storedBytes: 560 } });
+    expect(second).toEqual(first);
+  });
+
+  test("rejects conflicting lengths and replaces expired sessions", async () => {
+    const repository = new MemoryNodeLeaseRepository();
+    const hash = "a".repeat(64);
+    repository.directUpload = {
+      hash,
+      uploadId: "old",
+      temporaryObjectKey: "_uploads/v1/old",
+      storedBytes: 100,
+      leaseDurationMs: DURATION,
+      createdAt: 1,
+      expiresAt: 200,
+    };
+    await expect(prepareCanonicalNodeUpload({
+      repository,
+      scope: SCOPE,
+      hash,
+      storedBytes: 101,
+      leaseDurationMs: DURATION,
+      createIdentifiers: () => ({ uploadId: "unused", temporaryObjectKey: "unused" }),
+      now: () => 100,
+    })).rejects.toMatchObject({ status: 409, code: "CAS_UPLOAD_CONFLICT" });
+
+    const replaced = await prepareCanonicalNodeUpload({
+      repository,
+      scope: SCOPE,
+      hash,
+      storedBytes: 101,
+      leaseDurationMs: DURATION,
+      createIdentifiers: () => ({ uploadId: "new", temporaryObjectKey: "_uploads/v1/new" }),
+      now: () => 200,
+    });
+    expect(replaced).toMatchObject({
+      kind: "upload",
+      session: { uploadId: "new" },
+      replacedTemporaryObjectKey: "_uploads/v1/old",
+    });
+  });
+
+  test("fences finalize by upload ID and expires stale sessions", async () => {
+    const repository = new MemoryNodeLeaseRepository();
+    const hash = "a".repeat(64);
+    repository.directUpload = {
+      hash,
+      uploadId: "upload-1",
+      temporaryObjectKey: "_uploads/v1/temp-1",
+      storedBytes: 100,
+      leaseDurationMs: DURATION,
+      createdAt: 1,
+      expiresAt: 200,
+    };
+    await expect(admitCanonicalNodeUploadFinalization({
+      repository,
+      scope: SCOPE,
+      hash,
+      uploadId: "wrong",
+      leaseDurationMs: DURATION,
+      now: () => 100,
+    })).rejects.toMatchObject({ status: 400, code: "CAS_UPLOAD_INVALID" });
+    await expect(admitCanonicalNodeUploadFinalization({
+      repository,
+      scope: SCOPE,
+      hash,
+      uploadId: "upload-1",
+      leaseDurationMs: DURATION,
+      now: () => 200,
+    })).rejects.toMatchObject({ status: 410, code: "CAS_UPLOAD_EXPIRED" });
+    expect(repository.directUpload?.uploadId).toBe("upload-1");
   });
 });
 

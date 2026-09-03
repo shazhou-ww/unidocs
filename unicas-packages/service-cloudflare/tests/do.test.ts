@@ -270,7 +270,15 @@ async function digestOf(content: string, contentType = "text/plain", refs: reado
 function tenantDo(bucketOverride: R2Bucket = bucket!): CasDurableObject {
   return new CasDurableObject(
     {} as DurableObjectState,
-    { CAS_DB: db!, CAS_R2: bucketOverride, CAS_DOMAIN_DO: {} as TenantCasDoEnv["CAS_DOMAIN_DO"] },
+    {
+      CAS_DB: db!,
+      CAS_R2: bucketOverride,
+      CAS_DOMAIN_DO: {} as TenantCasDoEnv["CAS_DOMAIN_DO"],
+      CAS_R2_ACCOUNT_ID: "account-id",
+      CAS_R2_BUCKET_NAME: "do-test-bucket",
+      CAS_R2_ACCESS_KEY_ID: "access-key-id",
+      CAS_R2_SECRET_ACCESS_KEY: "secret-access-key",
+    },
   );
 }
 
@@ -357,6 +365,137 @@ function tenantRequest(
 }
 
 describe("CasDurableObject (tenant DO) — node storage operations", () => {
+  test("R2 write-once upload rejects replay without replacing content", async () => {
+    await createStore();
+    const key = "_uploads/v1/write-once";
+    const onlyIfAbsent = { etagDoesNotMatch: "*" };
+    const first = new TextEncoder().encode("first");
+    const replay = new TextEncoder().encode("replay");
+
+    expect(await bucket!.put(key, first, { onlyIf: onlyIfAbsent })).not.toBeNull();
+    expect(await bucket!.put(key, replay, { onlyIf: onlyIfAbsent })).toBeNull();
+    expect(new Uint8Array(await (await bucket!.get(key))!.arrayBuffer())).toEqual(first);
+  });
+
+  test("prepares and finalizes a direct R2 canonical upload", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("direct canonical payload");
+    const contentType = "application/octet-stream";
+    const canonical = concatenateNodeBytes(
+      encodeHeader(content.length, contentType, 0),
+      new TextEncoder().encode(contentType),
+      [],
+      content,
+    );
+    const hash = hashToHex(await sha256(canonical));
+    const doInstance = tenantDo(nodeHostedStreamBucket());
+
+    const preparedResponse = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Upload-Length": String(canonical.length),
+    }));
+    expect(preparedResponse.status, await preparedResponse.clone().text()).toBe(200);
+    const prepared = await preparedResponse.json<{
+      ready: boolean;
+      uploadId: string;
+      upload: { method: string; url: string; headers: Record<string, string> };
+    }>();
+    expect(prepared).toMatchObject({
+      ready: false,
+      upload: {
+        method: "PUT",
+        headers: {
+          "Content-Length": String(canonical.length),
+          "Content-Type": CanonicalNodeContentType,
+          "If-None-Match": "*",
+        },
+      },
+    });
+    const session = await db!.prepare(
+      "SELECT temporary_object_key FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first<{ temporary_object_key: string }>();
+    expect(session).not.toBeNull();
+    await bucket!.put(session!.temporary_object_key, canonical);
+
+    const finalized = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Upload-Id": prepared.uploadId,
+    }));
+    expect(finalized.status, await finalized.clone().text()).toBe(200);
+    expect(await finalized.json()).toMatchObject({ hash, ready: true });
+    expect(await bucket!.head(session!.temporary_object_key)).toBeNull();
+    expect(await db!.prepare(
+      "SELECT 1 FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first()).toBeNull();
+    expect(new Uint8Array(await (await bucket!.get(stackCanonicalNodeKey(STACK, TENANT, hash)))!.arrayBuffer()))
+      .toEqual(canonical);
+  });
+
+  test("rejects an incomplete direct upload and releases its reservation", async () => {
+    await createStore();
+    const hash = "b".repeat(64);
+    const doInstance = tenantDo();
+    const preparedResponse = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Upload-Length": "42",
+    }));
+    const prepared = await preparedResponse.json<{ uploadId: string }>();
+
+    const finalized = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Upload-Id": prepared.uploadId,
+    }));
+
+    expect(finalized.status).toBe(412);
+    expect(await finalized.json()).toMatchObject({ error: NodeOpErrorCodes.UPLOAD_INCOMPLETE });
+    expect(await db!.prepare(
+      "SELECT 1 FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first()).toBeNull();
+    expect(await db!.prepare(
+      "SELECT 1 FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first()).toBeNull();
+    expect(await bucket!.head(stackCanonicalNodeKey(STACK, TENANT, hash))).toBeNull();
+  });
+
+  test("rejects a direct upload with the wrong digest and removes all upload state", async () => {
+    await createStore();
+    const content = new TextEncoder().encode("not the requested canonical node");
+    const contentType = "application/octet-stream";
+    const canonical = concatenateNodeBytes(
+      encodeHeader(content.length, contentType, 0),
+      new TextEncoder().encode(contentType),
+      [],
+      content,
+    );
+    const hash = "c".repeat(64);
+    const doInstance = tenantDo(nodeHostedStreamBucket());
+    const preparedResponse = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Upload-Length": String(canonical.length),
+    }));
+    const prepared = await preparedResponse.json<{ uploadId: string }>();
+    const session = await db!.prepare(
+      "SELECT temporary_object_key FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first<{ temporary_object_key: string }>();
+    await bucket!.put(session!.temporary_object_key, canonical);
+
+    const finalized = await doInstance.fetch(tenantRequest("/lease", "POST", {
+      "X-CAS-Hash": hash,
+      "X-CAS-Upload-Id": prepared.uploadId,
+    }));
+
+    expect(finalized.status).toBe(422);
+    expect(await finalized.json()).toMatchObject({ error: NodeOpErrorCodes.DIGEST_MISMATCH });
+    expect(await bucket!.head(session!.temporary_object_key)).toBeNull();
+    expect(await bucket!.head(stackCanonicalNodeKey(STACK, TENANT, hash))).toBeNull();
+    expect(await db!.prepare(
+      "SELECT 1 FROM cas_direct_upload_sessions WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first()).toBeNull();
+    expect(await db!.prepare(
+      "SELECT 1 FROM cas_upload_reservations WHERE stack_id = ? AND tenant_id = ? AND hash = ?",
+    ).bind(STACK, TENANT, hash).first()).toBeNull();
+  });
+
   test("workerd streams a known-length request body to R2 with SHA-256 verification", async () => {
     await createStore();
     const content = new TextEncoder().encode("workerd stream");

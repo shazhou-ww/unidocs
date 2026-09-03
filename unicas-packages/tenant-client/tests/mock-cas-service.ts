@@ -1,5 +1,5 @@
 import { hashToHex, parseNodeBytes, sha256 } from "@unicas/codec";
-import { matchCasRoute } from "@unicas/tenant-protocol";
+import { CasUploadIdHeader, CasUploadLengthHeader, matchCasRoute } from "@unicas/tenant-protocol";
 import type { CasRootRefUpdate } from "@unicas/tenant-protocol";
 import type { HttpFetcher } from "../src/index.js";
 
@@ -17,11 +17,14 @@ export class MockCasService implements HttpFetcher {
   readonly tokens: string[] = [];
   readonly rootRefUpdates: CasRootRefUpdate[] = [];
   gcCalls: { maxNodes?: number }[] = [];
+  readonly directUploads = new Map<string, Uint8Array>();
+  readonly uploadSessions = new Map<string, { uploadId: string; canonical?: Uint8Array }>();
 
   async fetch(input: string | Request, init?: RequestInit): Promise<Response> {
     const request = input instanceof Request ? input : new Request(input, init);
-    this.tokens.push(request.headers.get("Authorization") ?? "");
     const url = new URL(request.url);
+    if (url.origin === "https://r2.test") return this.#upload(url.pathname.slice(1), request);
+    this.tokens.push(request.headers.get("Authorization") ?? "");
     const route = matchCasRoute(request.method, url.pathname);
     if (route === null) return Response.json({ error: "NOT_FOUND" }, { status: 404, statusText: "Not Found" });
 
@@ -82,13 +85,60 @@ export class MockCasService implements HttpFetcher {
   async #lease(hash: string, request: Request): Promise<Response> {
     const now = Date.now();
     const existing = this.nodes.get(hash);
+    const uploadLength = request.headers.get(CasUploadLengthHeader);
+    const uploadId = request.headers.get(CasUploadIdHeader);
+    if (uploadLength !== null) {
+      if (existing !== undefined) {
+        return Response.json({ hash, ready: true, leaseStartedAt: existing.leaseStartedAt, leaseExpiresAt: existing.leaseExpiresAt });
+      }
+      const session = this.uploadSessions.get(hash) ?? { uploadId: `upload-${this.uploadSessions.size + 1}` };
+      this.uploadSessions.set(hash, session);
+      return Response.json({
+        hash,
+        ready: false,
+        status: "upload_required",
+        uploadId: session.uploadId,
+        expiresAt: now + 60_000,
+        upload: {
+          method: "PUT",
+          url: `https://r2.test/${session.uploadId}`,
+          headers: {
+            "Content-Length": uploadLength,
+            "Content-Type": "application/vnd.unidocs.cas-node.v1",
+            "If-None-Match": "*",
+          },
+        },
+      });
+    }
+    if (uploadId !== null) {
+      if (existing !== undefined) {
+        return Response.json({ hash, ready: true, leaseStartedAt: existing.leaseStartedAt, leaseExpiresAt: existing.leaseExpiresAt });
+      }
+      const session = this.uploadSessions.get(hash);
+      const canonical = session === undefined ? undefined : this.directUploads.get(session.uploadId);
+      if (session?.uploadId !== uploadId || canonical === undefined) {
+        return Response.json({ error: "CAS_UPLOAD_INCOMPLETE" }, { status: 412, statusText: "Precondition Failed" });
+      }
+      return this.#storeCanonical(hash, canonical, now);
+    }
     if (request.body === null) {
       if (existing === undefined) return Response.json({ error: "NODE_NOT_FOUND" }, { status: 404, statusText: "Not Found" });
       existing.leaseExpiresAt = now + 60_000;
       return Response.json({ hash, ready: true, leaseStartedAt: existing.leaseStartedAt, leaseExpiresAt: existing.leaseExpiresAt });
     }
 
-    const canonical = new Uint8Array(await request.arrayBuffer());
+    return this.#storeCanonical(hash, new Uint8Array(await request.arrayBuffer()), now);
+  }
+
+  async #upload(uploadId: string, request: Request): Promise<Response> {
+    if (request.method !== "PUT") return new Response(null, { status: 405 });
+    if (this.directUploads.has(uploadId)) return new Response(null, { status: 412, statusText: "Precondition Failed" });
+    this.directUploads.set(uploadId, new Uint8Array(await request.arrayBuffer()));
+    return new Response(null, { status: 200 });
+  }
+
+  async #storeCanonical(hash: string, canonical: Uint8Array, now: number): Promise<Response> {
+    const existing = this.nodes.get(hash);
     if (hashToHex(await sha256(canonical)) !== hash) {
       return Response.json({ error: "DIGEST_MISMATCH" }, { status: 400, statusText: "Bad Request" });
     }
@@ -102,6 +152,7 @@ export class MockCasService implements HttpFetcher {
       leaseExpiresAt: now + 60_000,
     };
     this.nodes.set(hash, stored);
+    this.uploadSessions.delete(hash);
     return Response.json({
       hash,
       ready: true,
