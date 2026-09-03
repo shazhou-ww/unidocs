@@ -8,3 +8,4 @@ export * from "./doc-auth-config.js";
 export * from "./format-select.js";
 export * from "./session-object-name.js";
 export * from "./sblob-context.js";
+export * from "./cas-limiter.js";
