@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 import type { AgentPlatform, DocumentAgent } from "@unidocs/protocol";
-import { createPool, runMigrations, PgSessionIdentityStore } from "../src/index.js";
+import { createPool, runMigrations, PgSessionIdentityStore, PgAgentSessionStore, AGENT_LEASE_SECONDS } from "../src/index.js";
 import { createLocalOperatorNamespace } from "../src/local-operator.js";
 import { DATABASE_URL } from "./containers.js";
 
@@ -139,6 +139,19 @@ describe("createLocalOperatorNamespace", () => {
     expect(res.status).toBe(404);
   });
 
+  // 评审 Important #1：身份校验必须在路由分支内部，不能在分发之前。CF 的
+  // #captureIdentity 只在 /_internal/run 与 /_internal/reset 分支内部调用，
+  // 所以"缺身份头 + 未知端点"在 CF 上是 404（路由先判），不是 401。这条钉住
+  // 那个顺序，不给它退化成"先判身份、后判路由"。
+  it("缺身份头 + 未知端点 -> 404（不是 401，与 CF 逐字对齐：先判路由再判身份）", async () => {
+    const { provider } = recordingProvider();
+    const res = await ns(provider).get("x").fetch(new Request(
+      "http://operator/_internal/nope",
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+    ));
+    expect(res.status).toBe(404);
+  });
+
   // 租约在 HTTP 这一层的表现。慢 provider 让第一次 run 悬着，第二次就撞上。
   it("同一文档并发 /run -> 第二个 409", async () => {
     const sessionId = await freshSession();
@@ -186,5 +199,33 @@ describe("createLocalOperatorNamespace", () => {
     await expectRunOk(await call("重试"));
 
     expect(JSON.stringify(seen[1])).toContain("失败的那句");
+  });
+
+  // 评审 Important #2：acquire() 成功之后、session.run() 之前的每一步都可能
+  // 抛 —— decodeHistory 对畸形历史（未知 part 类型 / role）是故意设计成抛
+  // 错而不是静默丢弃的（history-codec.ts）。这不是假设的风险：直接往库里
+  // 塞一段畸形历史，验证 /run 会 500，但租约不会跟着悬空到 1800 秒——
+  // release() 必须在 decodeHistory 抛出之后依然执行。
+  it("acquire 之后 decodeHistory 抛出仍要释放租约，不留悬空", async () => {
+    const sessionId = await freshSession();
+    const identity = { tenantId: "t-op", docType: "psd", sessionId };
+
+    const seedStore = new PgAgentSessionStore(pool, identity);
+    await seedStore.acquire(AGENT_LEASE_SECONDS);
+    // 一个未知的 content part 类型 —— decodePart 对此故意 fail()，不是
+    // 静默丢弃。
+    await seedStore.release([{ role: "user", content: [{ type: "not-a-real-part" }] }] as never);
+
+    const { provider } = recordingProvider();
+    const res = await ns(provider).get(sessionId).fetch(new Request(
+      "http://operator/_internal/run",
+      { method: "POST", headers: headers(sessionId), body: JSON.stringify({ instruction: "a" }) },
+    ));
+    expect(res.status).toBe(500);
+
+    // 证明租约真的被释放了，不是悬空到自然过期：另一个 store 现在能立刻
+    // 拿到租约（不是 null）。
+    const verifyStore = new PgAgentSessionStore(pool, identity);
+    expect(await verifyStore.acquire(AGENT_LEASE_SECONDS)).not.toBeNull();
   });
 });

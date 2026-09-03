@@ -54,26 +54,42 @@ export function createLocalOperatorNamespace<TQuery, TOp>(
 ): LocalNamespace {
   const leaseSeconds = deps.leaseSeconds ?? AGENT_LEASE_SECONDS;
 
+  /**
+   * 与 CF 的 `#captureIdentity` 同理，但**只在路由分支内部调用** ——
+   * 未知端点 / 非 POST 方法必须先判 404，再谈身份（评审 Important #1）：
+   * 挪到路由分发之前会让"缺身份头 + 未知端点"在 CF 上是 404，在这里变成
+   * 401，是一处未声明的契约差异。
+   */
+  function captureIdentity(request: Request): SessionIdentity | null {
+    const tenantId = request.headers.get("X-Tenant-Id");
+    const sessionId = request.headers.get("X-Session-Id");
+    if (!tenantId || !sessionId) return null;
+    return { tenantId, docType: deps.docType, sessionId };
+  }
+
   return {
     idFromName: (name: string) => name,
     get: () => ({
       fetch: async (request: Request): Promise<Response> => {
         const url = new URL(request.url);
-        const tenantId = request.headers.get("X-Tenant-Id");
-        const sessionId = request.headers.get("X-Session-Id");
-        if (!tenantId || !sessionId) {
-          return json({ success: false, error: "Missing tenant or session identity" }, 401);
-        }
-        const identity: SessionIdentity = { tenantId, docType: deps.docType, sessionId };
-        const store = new PgAgentSessionStore(deps.pool, identity);
 
         try {
           if (request.method === "POST" && url.pathname === "/_internal/reset") {
-            await store.clear();
+            const identity = captureIdentity(request);
+            if (!identity) {
+              return json({ success: false, error: "Missing tenant or session identity" }, 401);
+            }
+            await new PgAgentSessionStore(deps.pool, identity).clear();
             return json({ success: true });
           }
 
           if (request.method === "POST" && url.pathname === "/_internal/run") {
+            const identity = captureIdentity(request);
+            if (!identity) {
+              return json({ success: false, error: "Missing tenant or session identity" }, 401);
+            }
+            const store = new PgAgentSessionStore(deps.pool, identity);
+
             const body = await request.json() as { instruction?: unknown };
             if (typeof body.instruction !== "string") {
               return json({ success: false, error: "instruction must be a string" }, 400);
@@ -89,31 +105,40 @@ export function createLocalOperatorNamespace<TQuery, TOp>(
               }, 409);
             }
 
-            const headers = new Headers();
-            for (const name of FORWARDED_HEADERS) {
-              const value = request.headers.get(name);
-              if (value) headers.set(name, value);
-            }
-            const editorFetcher: EditorFetcher = {
-              fetch: (u, init) => deps.editor.get(deps.editor.idFromName(sessionId))
-                .fetch(new Request(u, init)),
-            };
-
-            const session = new AgentSession<TQuery, TOp>({
-              agent: deps.agent,
-              platform: createHttpAgentPlatform<TQuery, TOp, undefined>({
-                env: undefined,
-                getEditorStub: () => editorFetcher,
-                requestHeaders: () => headers,
-                editorObjectName: () => sessionId,
-              }),
-              provider: deps.provider,
-              history: decodeHistory(raw),
-              docType: deps.docType,
-            });
-
-            const content: readonly AgentContentPart[] = [{ type: "text", text: body.instruction }];
+            // 租约已经抢到手：从这里开始的每一步都可能抛（decodeHistory 对
+            // 畸形历史是故意设计成抛而不是静默丢弃——见 history-codec.ts），
+            // 一旦抛出又不释放，这份文档的租约要悬空到 1800 秒自然过期
+            // （评审 Important #2）。所以 finally 要罩住 acquire() 之后的
+            // 全部代码，不能只罩 session.run()。`session` 用 let 是因为
+            // decodeHistory 本身就可能在它被赋值之前抛出：那种情况下没有
+            // AgentSession 可以 snapshotHistory()，只能把原样的 raw 写回去
+            // ——不改内容，纯粹为了释放锁。
+            let session: AgentSession<TQuery, TOp> | undefined;
             try {
+              const headers = new Headers();
+              for (const name of FORWARDED_HEADERS) {
+                const value = request.headers.get(name);
+                if (value) headers.set(name, value);
+              }
+              const editorFetcher: EditorFetcher = {
+                fetch: (u, init) => deps.editor.get(deps.editor.idFromName(identity.sessionId))
+                  .fetch(new Request(u, init)),
+              };
+
+              session = new AgentSession<TQuery, TOp>({
+                agent: deps.agent,
+                platform: createHttpAgentPlatform<TQuery, TOp, undefined>({
+                  env: undefined,
+                  getEditorStub: () => editorFetcher,
+                  requestHeaders: () => headers,
+                  editorObjectName: () => identity.sessionId,
+                }),
+                provider: deps.provider,
+                history: decodeHistory(raw),
+                docType: deps.docType,
+              });
+
+              const content: readonly AgentContentPart[] = [{ type: "text", text: body.instruction }];
               const outcome = await session.run(content);
               if (!outcome.ok) return json({ success: false, error: outcome.error }, 500);
               return json({
@@ -124,7 +149,7 @@ export function createLocalOperatorNamespace<TQuery, TOp>(
               // finally,不是成功路径。CF 的 #history.push 在 try 之前
               // (session.ts:81),失败那轮也留在历史里 —— 两条运行时在"重试时
               // 模型看到什么"上不一致是最难查的那种 bug。
-              await store.release(encodeHistory(session.snapshotHistory()));
+              await store.release(session ? encodeHistory(session.snapshotHistory()) : raw);
             }
           }
 
