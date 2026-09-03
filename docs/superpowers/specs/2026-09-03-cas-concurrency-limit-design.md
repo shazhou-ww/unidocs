@@ -24,7 +24,7 @@ psd 自己在**图层这一层**的扇出当时没被覆盖到，至今无上限
 现状是四套机制、三个数值、没有一处能统一推理 isolate 内存：
 
 ```
-docx        PART_IO_CONCURRENCY = 2      （part 物化缓冲）
+docx        PART_IO_CONCURRENCY = 2      （openSBlob/makeSBlob，即 CAS 调用）
 sblob-context  硬串行 = 1                （CAS ref 租约）
 psd resolve.ts FaultConcurrency = 8      （像素 fault）
 psd 其余扇出   ∞
@@ -113,16 +113,33 @@ export const DEFAULT_CAS_CONCURRENCY = 4;
    0795252 的理由要改写成「上限现在由闸门保证」，不能删——那段历史是这行存在的原因。
 2. **撤掉 psd 里的模块级信号量**：删 `packages/doctype-psd/src/cas-concurrency.ts`，
    还原 `psd/cas-blobstore.ts`（put/get）与 `state.ts`（storePixels）三处包裹。
-3. **`resolve.ts` 的 worker 池保留**，`FaultConcurrency = 8` 恢复为自有常数。
+3. **撤掉 `doctype-docx` 的 `PART_IO_CONCURRENCY = 2`**（`docx.ts:39`）以及只服务于它的
+   `mapConcurrent` 助手。
+
+   > **更正（本设计初稿写错了）。** 初稿把这一条列进「非目标」，理由是「它限的是
+   > OpenXML part 的物化缓冲，不是 CAS 调用，本来就是另一个旋钮」。**这是事实错误。**
+   > 它包的两处正是 `context.openSBlob(blob)`（materialize）与
+   > `context.makeSBlob({data, contentType})`（storeState）——就是 CAS 调用本身，
+   > 和本设计限的是同一个资源；它自己的注释也写着 *"each CAS subrequest from a
+   > Durable Object holds a large in-flight buffer (see sblob-context.ts)"*。
+
+   留着它的结果是同一批调用上套两层限流器，紧的那层（2）生效：docx 拿不到任何
+   收益，而「上限到底是多少」失去单一出处，doctype 侧那份也拿不到运行时的正确
+   取值（CF 的 DO isolate 与 Azure 差一个数量级）。
+
+   **代价要说清楚：** 撤掉后 docx 在 CF 上的 CAS 并发从 2 变成 4。这正是修复清单
+   第 4 项标为 Deferred、要求「revisit only with the memory fix」的那一步
+   （`docs/superpowers/plans/2026-09-01-stack-oauth-standardization.md:186-190`）。
+   4 仍远低于当初崩掉的 8，且桶已从 EEUR 迁到 APAC、单次 PUT 快了数倍（缓冲驻留
+   时间同比缩短），但这是**推理不是实测**。合并后应当用
+   `scripts/measure-create-latency.mjs` 在生产上复核一轮。
+
+4. **`resolve.ts` 的 worker 池保留**，`FaultConcurrency = 8` 恢复为自有常数。
    保留的理由是它顺带做**在途哈希去重**（`resolve.ts:60-67`），闸门给不了——闸门只
    排队，不认识哈希。两层叠加不冲突。
 
 ## 非目标
 
-- **不动 `doctype-docx` 的 `PART_IO_CONCURRENCY = 2`。** 它限的是 OpenXML part 的
-  物化缓冲，不是 CAS 调用，本来就是另一个旋钮；且 2→8 正是修复清单第 4 项标为
-  Deferred、要求「revisit only with the memory fix」的那一步
-  （`docs/superpowers/plans/2026-09-01-stack-oauth-standardization.md:186-190`）。
 - **不做按字节的预算限流。** 8 个 48MB 图层和 8 个 4KB 节点不是一回事，按个数是
   粗糙代理。先落地个数版并把参数留出来，字节预算等有证据再说。
 - **不动浏览器那条。** `render/incremental.ts:163` 的 `prefetch()` 是无上限的
