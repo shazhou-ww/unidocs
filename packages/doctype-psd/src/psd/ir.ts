@@ -143,8 +143,10 @@ export async function deserialize(bytes: Uint8Array, store: BlobStore): Promise<
     canvas: ir.canvas,
     layers: await Promise.all(ir.layers.map((l) => deserializeLayer(l, store))),
   };
-  // ir.fonts 缺席（老文档）时保持 fonts 是 undefined，不重建成 []。
-  if (ir.fonts !== undefined) {
+  // ir.fonts 缺席（老文档）时保持 fonts 是 undefined，不重建成 []；用真值判断
+  // 而不是 !== undefined，同一份文档若手误写成 "fonts": null 也不会在这里
+  // null.map 抛 TypeError（deserializeMask 对 pixels.hash 也是这个防御姿态）。
+  if (ir.fonts) {
     doc.fonts = ir.fonts.map((f) => ({ postScriptName: f.postScriptName, blob: createSBlob(f.hash) }));
   }
   return doc;

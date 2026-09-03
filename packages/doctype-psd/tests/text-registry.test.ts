@@ -42,6 +42,17 @@ describe("resolveFaceChain", () => {
     const resolve = resolveFaceChain(loaded, ["B"]);
     expect(resolve(0x4e2d, "A")).toBeNull();
   });
+
+  it("两个候选都认识同一个码位时，命中排在前面的那个——顺序不能被打乱", () => {
+    // A、B 都不带 missing，默认什么都认识；如果候选数组被 reverse 了，
+    // 命中的会变成 B，这条用例才拦得住。
+    const loaded = new Map<string, FontFace>([
+      ["A", fakeFace({ postScriptName: "A" })],
+      ["B", fakeFace({ postScriptName: "B" })],
+    ]);
+    const resolve = resolveFaceChain(loaded, ["A", "B"]);
+    expect(resolve(0x41, undefined)?.postScriptName).toBe("A");
+  });
 });
 
 describe("selectFonts", () => {
@@ -92,5 +103,19 @@ describe("selectFonts", () => {
     const index: FontIndex = new Map([["F", entry("F", [[0x41, 0x41]])]]);
     const result = selectFonts(index, undefined, ["F"], "A");
     expect(result).toEqual(["F"]);
+  });
+
+  it("代理项对（补充平面字符）按码位查覆盖，不是按 UTF-16 码元——𠮷 是 U+20BB7", () => {
+    // 用 charCodeAt 逐码元遍历会把 𠮷 拆成两个孤立代理项，两个都查不到这个
+    // 区间；必须用 codePointAt（for...of 遍历字符串就是这么做的）才查得到。
+    const index: FontIndex = new Map([["ExtB", entry("ExtB", [[0x20bb7, 0x20bb7]])]]);
+    const result = selectFonts(index, undefined, ["ExtB"], "𠮷");
+    expect(result).toEqual(["ExtB"]);
+  });
+
+  it("emitted 去重防的是 fallbacks 内部本身重名的边角情况", () => {
+    const index: FontIndex = new Map([["A", entry("A", [[0x41, 0x41]])]]);
+    const result = selectFonts(index, undefined, ["A", "A"], "A");
+    expect(result).toEqual(["A"]);
   });
 });

@@ -56,9 +56,18 @@ export interface PsdStoredLayer {
   readonly children?: readonly PsdStoredLayer[];
 }
 
+/** stored 侧的字体条目：`blob` 是靠 `context.makeSBlob` 建的 branded SBlob——
+ *  只有这样 CAS 的保活遍历（`refsFromSValue`）才能在 stored doc 里找到这个
+ *  引用，把字体钉住。 */
+export interface PsdStoredFont {
+  readonly postScriptName: string;
+  readonly blob: SBlob;
+}
+
 export interface PsdStoredDoc {
   readonly canvas: Canvas;
   readonly layers: readonly PsdStoredLayer[];
+  readonly fonts?: readonly PsdStoredFont[];
 }
 
 interface JsonPixelRef {
@@ -83,6 +92,7 @@ interface JsonLayer extends Omit<PsdStoredLayer, "pixels" | "mask" | "children">
 interface JsonDoc {
   canvas: Canvas;
   layers: JsonLayer[];
+  fonts?: { postScriptName: string; hash: string }[];
 }
 
 /** Externalize resident/lazy pixels and return the immutable SValue TDoc. */
@@ -95,7 +105,10 @@ export async function storePsdDoc(
   return Object.freeze({
     canvas: Object.freeze({ ...ir.canvas }),
     layers: Object.freeze(await Promise.all(ir.layers.map(layer => storeLayer(layer, context)))),
-  });
+    // fonts 缺席（ir.fonts undefined）时不建这个属性——上一轮在 ir.ts 立的规矩
+    // 在这层也要守住，否则老文档一存一取就多出一个 fonts: [] 的形变。
+    ...(ir.fonts !== undefined ? { fonts: Object.freeze(await Promise.all(ir.fonts.map(f => storeFont(f, context)))) } : {}),
+  }) as PsdStoredDoc;
 }
 
 /** Materialize the editing/render model from a persistent SValue TDoc. */
@@ -114,6 +127,7 @@ export async function materializePsdDocFromStore(
   const ir: JsonDoc = {
     canvas: { ...state.canvas },
     layers: state.layers.map(loadLayer),
+    ...(state.fonts !== undefined ? { fonts: state.fonts.map(loadFont) } : {}),
   };
   const bytes = new TextEncoder().encode(JSON.stringify(ir));
   return deserialize(bytes, store);
@@ -148,6 +162,20 @@ async function storePixels(
     throw new Error(`PSD pixel SBlob ${pixels.hash} was not stored during externalization`);
   });
   return Object.freeze({ width: pixels.width, height: pixels.height, blob });
+}
+
+async function storeFont(
+  font: { postScriptName: string; hash: string },
+  context: DocumentTypeContext,
+): Promise<PsdStoredFont> {
+  const blob = await context.makeSBlob(font.hash, async () => {
+    throw new Error(`PSD font SBlob ${font.hash} was not stored during externalization`);
+  });
+  return Object.freeze({ postScriptName: font.postScriptName, blob });
+}
+
+function loadFont(font: PsdStoredFont): { postScriptName: string; hash: string } {
+  return { postScriptName: font.postScriptName, hash: font.blob.hash };
 }
 
 function loadLayer(layer: PsdStoredLayer): JsonLayer {

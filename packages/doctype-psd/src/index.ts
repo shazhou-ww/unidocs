@@ -1,5 +1,7 @@
 export { createPsdDocumentType } from "./doctype.js";
 export type { PsdDoc, PsdStoredDoc, PsdQuery, PsdOp } from "./doctype.js";
+export type { PsdStoredFont } from "./state.js";
+export type { FontEntry, FontIndex } from "./text/registry.js";
 export { createPsdAgent } from "./agent.js";
 export type { PsdAgentDeps } from "./agent.js";
 export { createQwenImageEditor } from "./image/qwen-editor.js";

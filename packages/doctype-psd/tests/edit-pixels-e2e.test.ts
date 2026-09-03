@@ -17,6 +17,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { decode } from "fast-png";
+import { isSBlob, refsFromSValue } from "@unidocs/svalue-codec";
 import type { EffectContext, SBlob, SBlobBytes, SValue } from "@unidocs/protocol";
 import type { Layer, PsdDoc } from "../src/model/types.js";
 import { createPsdDocumentType } from "../src/doctype.js";
@@ -131,5 +132,56 @@ describe("editPixels 端到端：真 op 落到真 PsdDoc", () => {
     expect(second.layerId).not.toBe(first.layerId);
     // 每次都插在源层正上方，所以后编的那层压在先编的下面。
     expect(second.next.layers.map(l => l.id)).toEqual(["bg", "portrait", second.layerId, first.layerId]);
+  });
+});
+
+/**
+ * state.ts 有自己的一套显式白名单（PsdStoredDoc/JsonDoc 各建一次），跟
+ * ir.ts 的 serialize/deserialize 是两层独立的收窄——ir.fonts 产出正确不代表
+ * 这一层没把它筛掉。这里单独锁住 storePsdDoc/materializePsdDoc 这条 DO
+ * 落库路径，尤其是 refsFromSValue 那条：前三条只证明"没丢"，这条证明
+ * "钉住了"（CAS GC 靠它遍历 stored doc 找 blob 引用）。
+ */
+describe("storePsdDoc/materializePsdDoc：fonts 在 DO 持久化路径上的往返", () => {
+  it("带 fonts 的文档往返之后 fonts 不丢，blob 能被 isSBlob 认出来", async () => {
+    const cas = memCas();
+    const fontBlob = await cas.ctx.makeSBlob({
+      data: new TextEncoder().encode("fake-otf-bytes"),
+      contentType: "font/otf",
+    });
+    const withFonts: PsdDoc = { ...doc(), fonts: [{ postScriptName: "NotoSansSC", blob: fontBlob }] };
+
+    const state = await storePsdDoc(withFonts, cas.ctx);
+    expect(state.fonts).toHaveLength(1);
+    expect(state.fonts![0].postScriptName).toBe("NotoSansSC");
+    expect(isSBlob(state.fonts![0].blob)).toBe(true);
+    expect(state.fonts![0].blob.hash).toBe(fontBlob.hash);
+
+    const model = await materializePsdDoc(state, cas.ctx);
+    expect(model.fonts).toHaveLength(1);
+    expect(model.fonts![0].postScriptName).toBe("NotoSansSC");
+    expect(model.fonts![0].blob.hash).toBe(fontBlob.hash);
+  });
+
+  it("不带 fonts 的文档往返之后仍然不带这个属性（不是 undefined 值）", async () => {
+    const cas = memCas();
+    const state = await storePsdDoc(doc(), cas.ctx);
+    expect("fonts" in state).toBe(false);
+
+    const model = await materializePsdDoc(state, cas.ctx);
+    expect("fonts" in model).toBe(false);
+  });
+
+  it("保活：storePsdDoc 产出的 stored doc 喂给 refsFromSValue 之后，字体的 hash 出现在结果里", async () => {
+    const cas = memCas();
+    const fontBlob = await cas.ctx.makeSBlob({
+      data: new TextEncoder().encode("fake-otf-bytes"),
+      contentType: "font/otf",
+    });
+    const withFonts: PsdDoc = { ...doc(), fonts: [{ postScriptName: "NotoSansSC", blob: fontBlob }] };
+
+    const state = await storePsdDoc(withFonts, cas.ctx);
+    const refs = refsFromSValue(state as unknown as SValue);
+    expect(Object.keys(refs)).toContain(fontBlob.hash);
   });
 });
