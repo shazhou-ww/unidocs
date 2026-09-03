@@ -120,6 +120,26 @@ blob 并登记进租户字体表。配置项而不是硬编码，这样加字体
 不能由配置填**。填错了排版会整体偏移，而这种错很难被发现 —— 字还是那些字，
 只是位置全错。
 
+### 3.6 保活：索引在租户，引用在文档
+
+CAS 的 GC 靠**文档里的 SBlob 引用**钉住 blob（`psd/snapshot.ts` 的
+`refsFromSnapshot` / `collectSBlobRefs`）。一个只被租户级字体表引用的字体 blob
+**不被任何文档引用，会被回收**。
+
+所以分两层：
+
+| | 存哪儿 | 负责什么 |
+|---|---|---|
+| 字体索引 | 租户级（新的 `PsdFonts` DO，按 tenantId 取实例） | `postScriptName` → hash 的查找。可变、可重建、**不负责保活** |
+| 字体引用 | 文档里（`PsdDoc.fonts: FontRef[]`，带 SBlob） | 保活 —— 走现有机制，不需要新代码 |
+
+`setText` 用到某套字体时，把它的 `FontRef` 记进文档。索引丢了可以重新预置；
+文档里的引用在，字体就不会被回收。
+
+psd worker 现在只绑了两个 DO namespace（`PSD_EDITOR` / `PSD_OPERATOR`）和
+`CAS_SERVICE` —— 没有 D1 也没有 KV，所以租户级索引用第三个 DO namespace 实现，
+和既有的两个同一套机制（sqlite DO）。
+
 ## 4. 排版与栅格化
 
 ### 4.1 已验证的技术选型（`实测`）
