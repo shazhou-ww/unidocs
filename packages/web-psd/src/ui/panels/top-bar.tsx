@@ -91,6 +91,11 @@ export function TopBar() {
             {(["psd", "png"] as const).map((format) => (
               <button
                 key={format} type="button" className="export-row"
+                // 触发按钮的守卫(`!s.docId || s.exporting || !!s.opening`)只挡住了
+                // 「打开菜单」这一下——菜单一旦开着,后续点格式行完全没有守卫。
+                // `opening` 期间 `docId` 可能仍指向即将被替换的旧文档:菜单开着
+                // 时点「打开」选新文件会让这两行按钮对旧文档发起导出。
+                disabled={s.exporting || !!s.opening}
                 onClick={() => { setExportOpen(false); void exportDoc(format); }}
               >
                 {`导出为 ${format.toUpperCase()}`}

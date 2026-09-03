@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import { TopBar } from "../src/ui/panels/top-bar.js";
 import { SidePanel } from "../src/ui/panels/side-panel.js";
 import { ContextBar } from "../src/ui/panels/context-bar.js";
@@ -52,6 +52,23 @@ describe("locks while a file is opening", () => {
     render(<TopBar />);
     expect(screen.getByRole("button", { name: "打开" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "导出" })).toBeEnabled();
+  });
+
+  // Minor 6:触发按钮的守卫只挡住了「打开菜单」这一下——菜单一旦开着,弹层
+  // 里那两个格式按钮此前完全没有守卫。场景:菜单打开 -> 用户点「打开」选
+  // 新文件 -> `opening` 变成非 null(`docId` 仍指向将被替换的旧文档)-> 弹层
+  // 还活着 -> 点「导出为 PNG」会对旧文档发起导出。
+  it("disables the format buttons inside an already-open export menu once opening starts", () => {
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole("button", { name: "导出" }));
+    const pngButton = screen.getByRole("button", { name: "导出为 PNG" });
+    expect(pngButton).toBeEnabled();
+
+    act(() => { setState({ opening }); });
+
+    expect(pngButton).toBeDisabled();
+    fireEvent.click(pngButton);
+    expect(exportDoc).not.toHaveBeenCalled();
   });
 
   // 同一个文件连选两次,第二次不触发 change,看起来像点了没反应。清 value
