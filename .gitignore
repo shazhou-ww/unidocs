@@ -20,3 +20,6 @@ dist/
 
 # local dev server logs (never commit — they contain issued capability tokens)
 .dev-*.log
+
+# subagent-driven-development 的工作区（台账、简报、评审包），不入库
+.superpowers/
