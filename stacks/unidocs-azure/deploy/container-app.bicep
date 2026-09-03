@@ -39,6 +39,12 @@ param capabilityTrustedJwks string = ''
 param casStackPrivateKeyPkcs8 string = ''
 @secure()
 param casStackTrustedJwks string = ''
+// agent 用的模型 key,doc service(operator)专用。都可选、默认空串——
+// 空 = 这个 doc type 不接 agent,不注入对应 secret/env,operator 维持 501。
+@secure()
+param llmApiKey string = ''
+@secure()
+param imageEditApiKey string = ''
 
 // PORT 必须和 ingress.targetPort 是同一个值的两种表现形式，而不是
 // 调用方各自再写一份字符串字面量——否则 ingress 转发到一个端口、
@@ -75,6 +81,18 @@ var optionalSecrets = concat(
       name: 'cas-stack-trusted-jwks'
       value: casStackTrustedJwks
     }
+  ],
+  empty(llmApiKey) ? [] : [
+    {
+      name: 'llm-api-key'
+      value: llmApiKey
+    }
+  ],
+  empty(imageEditApiKey) ? [] : [
+    {
+      name: 'image-edit-api-key'
+      value: imageEditApiKey
+    }
   ]
 )
 var optionalSecretEnv = concat(
@@ -106,6 +124,18 @@ var optionalSecretEnv = concat(
     {
       name: 'CAS_STACK_TRUSTED_JWKS'
       secretRef: 'cas-stack-trusted-jwks'
+    }
+  ],
+  empty(llmApiKey) ? [] : [
+    {
+      name: 'LLM_API_KEY'
+      secretRef: 'llm-api-key'
+    }
+  ],
+  empty(imageEditApiKey) ? [] : [
+    {
+      name: 'IMAGE_EDIT_API_KEY'
+      secretRef: 'image-edit-api-key'
     }
   ]
 )

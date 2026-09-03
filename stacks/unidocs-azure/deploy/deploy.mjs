@@ -219,6 +219,15 @@ export function parseArgs(argv) {
     casCapabilityAudience: "",
     skipBuild: false,
     buildConcurrency: DEFAULT_BUILD_CONCURRENCY,
+    // 四个都可选、默认空串：空 = 这个 doc type 不接 agent，operator 维持
+    // 501，与 --cas-base-url 的既有语义一致，不做必填校验。两个 *SecretName
+    // 是 Key Vault 里的 secret 名（由 seedSecrets() 在部署时解析成明文值，
+    // 见该函数与 CAPABILITY_PRIVATE_KEY_SECRET 的既有处理方式）；两个
+    // *Model 是明文模型名，直接透传给 bicep。
+    llmApiKeySecretName: "",
+    llmModel: "",
+    imageEditApiKeySecretName: "",
+    imageEditModel: "",
   };
 
   let bootstrapFlag = false;
@@ -241,6 +250,10 @@ export function parseArgs(argv) {
       case "--cas-stack-key-id": args.casStackKeyId = argv[++i]; break;
       case "--cas-ref-domain": args.casRefDomain = argv[++i]; break;
       case "--cas-capability-audience": args.casCapabilityAudience = argv[++i]; break;
+      case "--llm-api-key-secret": args.llmApiKeySecretName = argv[++i]; break;
+      case "--llm-model": args.llmModel = argv[++i]; break;
+      case "--image-edit-api-key-secret": args.imageEditApiKeySecretName = argv[++i]; break;
+      case "--image-edit-model": args.imageEditModel = argv[++i]; break;
       case "--skip-build": args.skipBuild = true; break;
       case "--bootstrap": bootstrapFlag = true; break;
       case "--platform": platformFlag = true; break;
@@ -859,12 +872,25 @@ export async function seedSecrets(keyVaultName, args, io = {}) {
   const casStackTrustedJwks = args.targets.includes("services")
     ? await requireExisting(keyVaultName, CAS_STACK_TRUSTED_JWKS_SECRET)
     : null;
+  // LLM / 图像编辑模型的 API key 是给 doc service(operator)用的,不是
+  // 网关——门槛是 `services`,不是 `gateway`(跟上面几个身份密钥反过来)。
+  // secret 名本身是可选的(`args.*SecretName` 默认空串):不给 = 这个
+  // doc type 不接 agent,operator 维持 501,连 Key Vault 都不去碰;给了
+  // 就必须真的存在,否则 requireExisting() 响亮失败,不静默退化成"未配置"。
+  const llmApiKey = args.targets.includes("services") && args.llmApiKeySecretName
+    ? await requireExisting(keyVaultName, args.llmApiKeySecretName)
+    : null;
+  const imageEditApiKey = args.targets.includes("services") && args.imageEditApiKeySecretName
+    ? await requireExisting(keyVaultName, args.imageEditApiKeySecretName)
+    : null;
   return {
     pgAdminPassword,
     capabilityPrivateKeyPkcs8,
     capabilityTrustedJwks,
     casStackPrivateKeyPkcs8,
     casStackTrustedJwks,
+    llmApiKey,
+    imageEditApiKey,
   };
 }
 
@@ -1038,6 +1064,14 @@ function deployService(args, secrets, tag, docType) {
     ...(secrets.casStackTrustedJwks
       ? [`casStackTrustedJwks=${secrets.casStackTrustedJwks}`]
       : []),
+    // 四个都可选、默认空串,语义与 casBaseUrl 一致:不给就是这个 doc type
+    // 不接 agent,operator 维持 501。两个 model 名是明文,直接透传;两个
+    // key 是 seedSecrets() 已经从 Key Vault 解析出的明文值,只有非空才追加
+    // (bicep 那边靠 empty() 判断要不要注入对应的 secretRef env)。
+    `llmModel=${args.llmModel}`,
+    `imageEditModel=${args.imageEditModel}`,
+    ...(secrets.llmApiKey ? [`llmApiKey=${secrets.llmApiKey}`] : []),
+    ...(secrets.imageEditApiKey ? [`imageEditApiKey=${secrets.imageEditApiKey}`] : []),
   ];
   run(
     "az",
@@ -1353,6 +1387,8 @@ export async function main(argv = process.argv.slice(2)) {
       capabilityTrustedJwks: null,
       casStackPrivateKeyPkcs8: null,
       casStackTrustedJwks: null,
+      llmApiKey: null,
+      imageEditApiKey: null,
     };
 
   const tag = capture("git", ["rev-parse", "--short", "HEAD"]);

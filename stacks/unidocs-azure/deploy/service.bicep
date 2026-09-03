@@ -45,6 +45,20 @@ param casStackTrustedJwks string = ''
 param capabilityIssuer string = 'unidocs-gateway:azure-dev'
 param casCapabilityAudience string = 'unidocs-cas-azure'
 
+@description('模型名。空 = 用 anthropic.ts 的默认 claude-opus-5。')
+param llmModel string = ''
+
+@description('Anthropic API key 明文,由 deploy.mjs 在部署时从 Key Vault 解析后传入(CLI 侧给的是 Key Vault 里的 secret 名,不是值本身)。空 = 不接 agent,operator 维持 501。')
+@secure()
+param llmApiKey string = ''
+
+@description('图像编辑模型名。空 = 用 qwen-editor.ts 的默认 qwen-image-edit-plus。')
+param imageEditModel string = ''
+
+@description('图像编辑模型 API key 明文,由 deploy.mjs 在部署时从 Key Vault 解析后传入。空 = psd 没有 editPixels 工具。')
+@secure()
+param imageEditApiKey string = ''
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }
@@ -145,7 +159,25 @@ var authEnv = [
   }
 ]
 
-var extraEnv = concat(blobEnv, casEnv, authEnv)
+// 模型名是明文,走普通 env,不是 secret——真正的密钥(llmApiKey /
+// imageEditApiKey)走 container-app.bicep 的 secrets:/secretRef,见下面
+// module 调用。空串不追加对应项,与 casEnv 同一套写法。
+var modelEnv = concat(
+  llmModel != '' ? [
+    {
+      name: 'LLM_MODEL'
+      value: llmModel
+    }
+  ] : [],
+  imageEditModel != '' ? [
+    {
+      name: 'IMAGE_EDIT_MODEL'
+      value: imageEditModel
+    }
+  ] : []
+)
+
+var extraEnv = concat(blobEnv, casEnv, authEnv, modelEnv)
 
 module app 'container-app.bicep' = {
   name: '${docType}-app'
@@ -165,6 +197,8 @@ module app 'container-app.bicep' = {
     databaseUrl: databaseUrl
     capabilityTrustedJwks: capabilityTrustedJwks
     casStackTrustedJwks: casStackTrustedJwks
+    llmApiKey: llmApiKey
+    imageEditApiKey: imageEditApiKey
     extraEnv: extraEnv
   }
 }

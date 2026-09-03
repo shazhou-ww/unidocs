@@ -568,3 +568,99 @@ describe("seedSecrets: capability keys", () => {
     expect(calls).toContain("cas-stack-trusted-jwks");
   });
 });
+
+/**
+ * Task 7: LLM / 图像编辑模型的部署参数。四个都可选、默认空串,语义与
+ * --cas-base-url 一致(不给 = 这个 doc type 不接 agent,operator 维持
+ * 501),不加必填校验——所以这里只验证"透传"和"门槛条件",不验证任何
+ * "缺了就报错"的分支(压根没有这种分支)。
+ */
+describe("parseArgs: LLM / 图像模型参数", () => {
+  const base = [
+    "--service", "psd",
+    "--cas-stack-id", "cas_TESTTEST",
+    "--cas-stack-issuer", "https://example.test/issuer",
+    "--cas-capability-audience", "aud",
+  ];
+
+  test("省略 agent 参数时是空串 —— 语义是不接 agent，不是报错", () => {
+    const args = parseArgs(base);
+    expect(args.llmApiKeySecretName).toBe("");
+    expect(args.llmModel).toBe("");
+    expect(args.imageEditApiKeySecretName).toBe("");
+    expect(args.imageEditModel).toBe("");
+  });
+
+  test("给了就带进来", () => {
+    const args = parseArgs([...base, "--llm-api-key-secret", "llm-key", "--image-edit-model", "wan2.6-image"]);
+    expect(args.llmApiKeySecretName).toBe("llm-key");
+    expect(args.imageEditModel).toBe("wan2.6-image");
+  });
+});
+
+/**
+ * seedSecrets() 里这两个 key 的解析门槛是 `services`,不是 `gateway`——
+ * 它们是给 doc service(operator)用的,跟网关无关,和上面
+ * capability/CAS 那组身份密钥（gateway 签发、services 验签）刚好反过来。
+ * 这条不是 brief 原文,是协调者核实 brief 缺陷后追加的必测分支：抄错门槛
+ * 条件会让"只跑 --service"的部署永远解析不出 key，容器起来但 501/未授权，
+ * 而且没有任何报错能提示这一点。
+ */
+describe("seedSecrets: LLM / 图像模型 key", () => {
+  test("不给 secret 名 —— 不碰 Key Vault，解析结果是 null", async () => {
+    // targets 含 services 时 seedSecrets() 还会解析
+    // capabilityTrustedJwks/casStackTrustedJwks——那两个跟这次改动无关,
+    // 这里不断言"完全没调用",只断言 llm/image 这两个名字压根没被查过、
+    // 且解析结果确实是 null(不是空字符串、不是被误当成"已配置")。
+    const calls = [];
+    const secrets = await seedSecrets("kv-test", {
+      targets: ["services"],
+      llmApiKeySecretName: "",
+      imageEditApiKeySecretName: "",
+    }, {
+      seedSecret: async () => "x",
+      requireExistingSecret: async (_vault, name) => { calls.push(name); return "y"; },
+    });
+    expect(calls).not.toContain("my-llm-key");
+    expect(calls).not.toContain("my-image-key");
+    expect(secrets.llmApiKey).toBeNull();
+    expect(secrets.imageEditApiKey).toBeNull();
+  });
+
+  test("给了 secret 名且 target 含 services —— 从 Key Vault 解析出明文值", async () => {
+    const calls = [];
+    const secrets = await seedSecrets("kv-test", {
+      targets: ["services"],
+      llmApiKeySecretName: "my-llm-key",
+      imageEditApiKeySecretName: "my-image-key",
+    }, {
+      seedSecret: async () => "x",
+      requireExistingSecret: async (_vault, name) => { calls.push(name); return `resolved-${name}`; },
+    });
+    expect(calls).toEqual(expect.arrayContaining(["my-llm-key", "my-image-key"]));
+    expect(secrets.llmApiKey).toBe("resolved-my-llm-key");
+    expect(secrets.imageEditApiKey).toBe("resolved-my-image-key");
+  });
+
+  test("门槛是 services，不是 gateway —— 只部 gateway 时不解析，也不报错", async () => {
+    // targets 含 gateway 时 seedSecrets() 还会解析
+    // capabilityPrivateKeyPkcs8/casStackPrivateKeyPkcs8——那两个跟这次改动
+    // 无关。这条测试守的是协调者核实出的那个真实缺陷:如果误抄成
+    // `targets.includes("gateway")`(像 capabilityPrivateKeyPkcs8 那样),
+    // 纯 --service 部署就永远解析不出 LLM key,这里必须证明反过来也一样
+    // 不解析——门槛是 services,不是 gateway。
+    const calls = [];
+    const secrets = await seedSecrets("kv-test", {
+      targets: ["gateway"],
+      llmApiKeySecretName: "my-llm-key",
+      imageEditApiKeySecretName: "my-image-key",
+    }, {
+      seedSecret: async () => "x",
+      requireExistingSecret: async (_vault, name) => { calls.push(name); return "y"; },
+    });
+    expect(calls).not.toContain("my-llm-key");
+    expect(calls).not.toContain("my-image-key");
+    expect(secrets.llmApiKey).toBeNull();
+    expect(secrets.imageEditApiKey).toBeNull();
+  });
+});
