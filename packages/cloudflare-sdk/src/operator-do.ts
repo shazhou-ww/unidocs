@@ -1,6 +1,7 @@
 export { createOperatorDO } from "./operator-do-agent.js";
 
 export type {
+  AgentIdentity,
   OperatorConfig,
   OperatorDOClass,
   OperatorDOInstance,

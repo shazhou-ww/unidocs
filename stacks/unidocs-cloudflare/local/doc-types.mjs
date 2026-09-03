@@ -90,6 +90,11 @@ export const DOC_TYPES = {
     editorClass: "PsdEditor",
     operator: "PSD_OPERATOR",
     operatorClass: "PsdOperator",
+    // 租户级字体索引（setText 的来源）。只有 psd 有,所以是可选字段 ——
+    // 本地环境按这张表装配,压根不解析 wrangler.toml,漏在这里的结果是
+    // 线上能跑、本地起不来,而报错只会指向一个看不出根因的绑定缺失。
+    fonts: "PSD_FONTS",
+    fontsClass: "PsdFonts",
     // 8790, not 8791: the gateway (8787) and doc types take 8788-8790,
     // and `startLocalRuntime` asserts every port in the map is free.
     port: 8790,
@@ -359,6 +364,9 @@ export function buildWorkers({
       durableObjects: {
         [spec.editor]: { className: spec.editorClass, useSQLite: true },
         [spec.operator]: { className: spec.operatorClass, useSQLite: true },
+        ...(spec.fonts
+          ? { [spec.fonts]: { className: spec.fontsClass, useSQLite: true } }
+          : {}),
       },
       serviceBindings: { CAS_SERVICE: docCasServiceTarget },
       unsafeDirectSockets: [{ host, port: ports[name] }],

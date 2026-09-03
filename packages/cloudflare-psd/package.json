@@ -19,7 +19,8 @@
     "@unidocs/cloudflare-sdk": "workspace:*",
     "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/doctype-psd": "workspace:*",
-    "@unidocs/protocol-doc": "workspace:*"
+    "@unidocs/protocol-doc": "workspace:*",
+    "@unidocs/service-auth": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

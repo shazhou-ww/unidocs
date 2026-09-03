@@ -12,6 +12,12 @@ import { docSessionObjectName } from "@unidocs/doctype-server-common";
 import { consoleObserver } from "@unidocs/protocol-doc";
 import { createCloudflareAgentPlatform } from "./agent-platform-do.js";
 
+/** 一个 operator DO 实例固定服务的那一对身份。 */
+export interface AgentIdentity {
+  readonly tenantId: string;
+  readonly sessionId: string;
+}
+
 export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
   /**
    * 工具表 + 系统提示词。
@@ -19,8 +25,17 @@ export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
    * 允许传函数，理由和下面的 provider 一模一样：有的工具需要按 env 构造的
    * 东西（PSD 的 editPixels 要一个带 API key 的 ImageEditor），而 env 只在
    * 构造 DO 时交到我们手上。传常量的文档类型照旧。
+   *
+   * 第二个参数是身份。有的工具还需要知道**是哪个租户**（PSD 的 setText 要打
+   * 租户级的字体索引 DO）。给得起是因为 `#captureIdentity` 拒绝一个实例换
+   * 身份（403 "Operator session mismatch"），所以一个 operator DO 固定服务
+   * 一对 (租户, 会话)，而 agent 是惰性建的、建的时候身份已经在手上。
+   * 只用 env 的工厂照旧 —— 少一个参数的函数赋给多参函数类型在 TypeScript 里
+   * 合法，`cloudflare-docx` / `cloudflare-markdown` 不用动。
    */
-  readonly agent: DocumentAgent<TQuery, TOp> | ((env: TEnv) => DocumentAgent<TQuery, TOp>);
+  readonly agent:
+    | DocumentAgent<TQuery, TOp>
+    | ((env: TEnv, identity: AgentIdentity) => DocumentAgent<TQuery, TOp>);
   /**
    * provider 按 env 构造：一个 DO 实例活得比一次配置改动久，而 env 只在
    * 构造 DO 时交到我们手上。
@@ -119,6 +134,12 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
      */
     #session(): AgentSession<TQuery, TOp> {
       if (this.#agentSession) return this.#agentSession;
+      // 身份此刻一定在手上：两个内部端点都是先 #captureIdentity 再往下走，
+      // 而 #session() 只在 /_internal/run 的捕获成功之后才被调到。这句断言
+      // 是给以后加端点的人看的 —— 漏了捕获就当场抛，而不是让 agent 拿着
+      // 空租户去打字体 DO。
+      if (!this.#tenantId || !this.#sessionId) throw new Error("Agent has no session identity");
+      const identity: AgentIdentity = { tenantId: this.#tenantId, sessionId: this.#sessionId };
       const platform = createCloudflareAgentPlatform<TQuery, TOp, TEnv>({
         env: this.#env,
         getEditorStub: config.getEditorStub,
@@ -126,7 +147,9 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
         editorObjectName: () => this.#editorObjectName(),
       });
       this.#agentSession = new AgentSession<TQuery, TOp>({
-        agent: typeof config.agent === "function" ? config.agent(this.#env) : config.agent,
+        agent: typeof config.agent === "function"
+          ? config.agent(this.#env, identity)
+          : config.agent,
         platform,
         provider: config.provider(this.#env),
         ...(config.maxIterations === undefined ? {} : { maxIterations: config.maxIterations }),

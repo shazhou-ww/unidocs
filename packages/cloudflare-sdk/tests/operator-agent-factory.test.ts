@@ -34,4 +34,54 @@ describe("OperatorConfig.agent 支持按 env 构造", () => {
     new Klass({} as DurableObjectState, { KEY: "k" });
     expect(seen).toEqual([]);
   });
+
+  it("工厂拿得到身份 —— 建 agent 时 #captureIdentity 已经跑过", async () => {
+    const identities: unknown[] = [];
+    const Klass = createOperatorDO<Q, O, { KEY?: string }>({
+      agent: (env, identity) => {
+        identities.push(identity);
+        return agentFor("工厂");
+      },
+      provider: () => ({ complete: async () => ({ content: [{ type: "text", text: "ok" }] }) }),
+      getEditorStub: () => ({} as DurableObjectStub),
+    });
+    const operator = new Klass(
+      { id: { toString: () => "operator-id" } } as unknown as DurableObjectState,
+      { KEY: "k" },
+    );
+    const response = await operator.fetch(new Request("http://operator/_internal/run", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-Id": "tenant-1",
+        "X-Session-Id": "session-1",
+        "X-UniDocs-Auth-Context": "capability",
+      },
+      body: JSON.stringify({ instruction: "hi" }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(identities).toEqual([{ tenantId: "tenant-1", sessionId: "session-1" }]);
+  });
+
+  it("身份没捕获就调不到 agent 工厂 —— 401 挡在前面", async () => {
+    const identities: unknown[] = [];
+    const Klass = createOperatorDO<Q, O, { KEY?: string }>({
+      agent: (_env, identity) => {
+        identities.push(identity);
+        return agentFor("工厂");
+      },
+      provider: () => ({ complete: async () => ({ content: [] }) }),
+      getEditorStub: () => ({} as DurableObjectStub),
+    });
+    const operator = new Klass({} as DurableObjectState, {});
+    const response = await operator.fetch(new Request("http://operator/_internal/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction: "hi" }),
+    }));
+
+    expect(response.status).toBe(401);
+    expect(identities).toEqual([]);
+  });
 });

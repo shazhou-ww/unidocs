@@ -15,3 +15,8 @@ IMAGE_EDIT_API_KEY=sk-...
 # Optional — defaults shown:
 # IMAGE_EDIT_MODEL=qwen-image-edit-plus
 # IMAGE_EDIT_BASE_URL=https://dashscope.aliyuncs.com
+
+# setText 的字体回退链,逗号分隔,顺序即优先级。名字必须是已经登记进租户级
+# 字体索引的 postScriptName —— 写一个不存在的名字不会报错,只会让回退链
+# 静默失效。缺省是空链。
+# PSD_FONT_FALLBACKS=NotoSans,NotoSansSC

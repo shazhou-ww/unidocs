@@ -171,6 +171,24 @@ test("buildWorkers binds each selected type's own DO classes and socket", () => 
   expect(docx.serviceBindings).toEqual({ CAS_SERVICE: SERVICE_WORKER });
 });
 
+test("psd 的租户级字体索引也在本地绑定表里", () => {
+  // 本地环境按 DOC_TYPES 装配，压根不解析 wrangler.toml：只改 wrangler.toml
+  // 的结果是线上能跑、本地起不来，报错只会指向一个看不出根因的绑定缺失。
+  const psd = buildWorkers(stackArgs({ docTypes: ["psd"], ports: { psd: 8790 } }))
+    .find((w) => w.name === "unidocs-psd");
+  expect(psd.durableObjects).toEqual({
+    PSD_EDITOR: { className: "PsdEditor", useSQLite: true },
+    PSD_OPERATOR: { className: "PsdOperator", useSQLite: true },
+    PSD_FONTS: { className: "PsdFonts", useSQLite: true },
+  });
+});
+
+test("没有 fonts 字段的文档类型不会凭空多出一条绑定", () => {
+  const markdown = buildWorkers(stackArgs({ docTypes: ["markdown"], ports: { markdown: 8788 } }))
+    .find((w) => w.name === "unidocs-markdown");
+  expect(Object.keys(markdown.durableObjects)).toEqual(["MARKDOWN_EDITOR", "MARKDOWN_OPERATOR"]);
+});
+
 test("gateway proxies CAS to the unified service and the service owns the stores", () => {
   const [gateway, service] = buildWorkers(stackArgs());
   expect(gateway.serviceBindings).toEqual({ CAS_SERVICE: SERVICE_WORKER });

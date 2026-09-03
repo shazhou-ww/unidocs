@@ -29,6 +29,7 @@ export type {
 	SValueType,
 } from "@unidocs/protocol";
 export {
+	createSBlob,
 	decodeSValue,
 	encodeSValue,
 	isSBlob,
@@ -43,6 +44,7 @@ export { createEditorDO, type Env as EditorEnv } from "./editor-do.js";
 export {
 	createOperatorDO,
 	createCloudflareAgentPlatform,
+	type AgentIdentity,
 	type CloudflarePlatformDeps,
 	type OperatorConfig,
 } from "./operator-do.js";
