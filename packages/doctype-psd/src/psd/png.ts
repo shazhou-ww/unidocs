@@ -1,5 +1,6 @@
-import { convertIndexedToRgb, type DecodedPng } from "fast-png";
-import type { Pixels } from "../model/types.js";
+import { convertIndexedToRgb, decode, encode, type DecodedPng } from "fast-png";
+import type { Pixels, PsdDoc } from "../model/types.js";
+import { render } from "../render/composite.js";
 
 /**
  * 把 `fast-png` 的解码结果归一化成本模型唯一认的像素形状:RGBA、每分量 8 位。
@@ -66,4 +67,62 @@ export function toRgba8(decoded: DecodedPng): Pixels {
     }
   }
   return { width, height, data: out };
+}
+
+/**
+ * 一张 PNG 变成一个单图层文档。
+ *
+ * 画布取图片尺寸,唯一那个图层铺满画布。图层 id 沿用 `psd/load.ts:298` 的
+ * `l${i}_${name}` 形式——前端的选中和 ops 的 layerId 都按这个约定走,这里
+ * 另起一套会让 PNG 打开的文档在图层操作上表现得跟 PSD 打开的不一样。
+ */
+export function pngToDoc(bytes: Uint8Array): PsdDoc {
+  const pixels = toRgba8(decode(bytes));
+  return {
+    canvas: {
+      width: pixels.width,
+      height: pixels.height,
+      colorMode: "RGB",
+      depth: 8,
+      // PNG 的 pHYs 是"每单位像素数",PSD 要的是 DPI,两者换算还要看单位
+      // 是不是米。绝大多数 PNG 根本没有 pHYs,为一个基本读不到的值引入
+      // 一套换算不值当——统一用 PSD 载入路径的同一个默认值(load.ts:340)。
+      resolution: 72,
+      profile: "sRGB",
+    },
+    layers: [{
+      id: "l0_背景",
+      type: "raster",
+      name: "背景",
+      bounds: [0, 0, pixels.height, pixels.width],
+      opacity: 1,
+      blendMode: "normal",
+      visible: true,
+      locked: false,
+      clipping: false,
+      pixels,
+    }],
+  };
+}
+
+/**
+ * 文档展平成一张 PNG。
+ *
+ * 走的是 `render()` —— 和 PSD 导出内嵌的那张合成图**同一个函数**
+ * (`psd/save.ts:108`)。这不是本期新建的约定,是既成事实;测试里有一条逐像素
+ * 断言钉着它。
+ *
+ * 传进来的 doc 必须已经 `resolveDoc` 过(懒加载的 CAS 像素拉实),否则
+ * `render` 读到的是 PixelRef 而不是字节。调用方负责——`doctype.ts` 里那行
+ * 与 psd 的 save 完全对称。
+ */
+export async function docToPng(doc: PsdDoc): Promise<Uint8Array> {
+  const composite = await render(doc);
+  return encode({
+    width: composite.width,
+    height: composite.height,
+    data: composite.data,
+    channels: 4,
+    depth: 8,
+  });
 }
