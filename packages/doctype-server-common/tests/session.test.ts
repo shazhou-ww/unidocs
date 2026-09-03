@@ -1195,3 +1195,83 @@ describe("DocumentSession.apply — opId idempotency", () => {
     expect((await session.query({ kind: "text" })).data).toBe("aa");
   });
 });
+
+// --------------------------------------------------------------------------
+// 格式选择:导入与导出
+// --------------------------------------------------------------------------
+
+/** 在文本 doctype 上再挂一个 "upper" 格式,用来观察到底选中了哪一个。
+ *  两个格式的 mediaTypes / extensions 不重叠,所以不会触发歧义。
+ *  基础那一项沿用 makeTextDocType 的 `text`,连 defaultFormat 一起不动——
+ *  这几条断言要证的正是"默认路径没变"。 */
+function makeTwoFormatDocType(): DocumentType<string, TextQuery, TextOp> {
+  const inner = makeTextDocType();
+  return {
+    ...inner,
+    formats: {
+      ...inner.formats,
+      upper: {
+        mediaTypes: ["text/x-upper"],
+        extensions: [".upper"],
+        async load(bytes: Uint8Array) { return decoder.decode(bytes).toUpperCase(); },
+        async save(doc: string) { return encoder.encode(doc.toUpperCase()); },
+      },
+    },
+  };
+}
+
+describe("DocumentSession.create — 格式选择", () => {
+  it("给了 format 就用那个格式 load", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await session.create({ bytes: encoder.encode("hi"), format: "upper" });
+    expect(await session.query({ kind: "text" })).toMatchObject({ data: "HI" });
+  });
+
+  // 回归护栏:不传 format 必须与今天逐字节一致。这条比上面那条更重要——
+  // 今天所有的上传走的都是这条路。
+  it("不传 format 就用 defaultFormat,与今天一致", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await session.create({ bytes: encoder.encode("hi") });
+    expect(await session.query({ kind: "text" })).toMatchObject({ data: "hi" });
+  });
+
+  it("给了没注册过的 format 就抛错", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await expect(session.create({ bytes: encoder.encode("hi"), format: "jpeg" }))
+      .rejects.toThrow("Unknown format: jpeg");
+  });
+});
+
+describe("DocumentSession.exportBytes — 格式选择", () => {
+  it("给了格式名就用那个格式 save,contentType 取该格式的 mediaTypes[0]", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await session.create({ bytes: encoder.encode("hi") });
+
+    const exported = await session.exportBytes("upper");
+    expect(decoder.decode(exported.bytes)).toBe("HI");
+    expect(exported.contentType).toBe("text/x-upper");
+  });
+
+  // 回归护栏:不带参数必须与今天完全一致——defaultFormat 的 save,
+  // 加上**顶层的 config.contentType**(不是格式自己的 mediaTypes[0])。
+  it("不带参数时用 defaultFormat 与顶层 contentType", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await session.create({ bytes: encoder.encode("hi") });
+
+    const exported = await session.exportBytes();
+    expect(decoder.decode(exported.bytes)).toBe("hi");
+    expect(exported.contentType).toBe("text/plain");
+  });
+
+  it("给了没注册过的格式名就抛错", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await session.create({ bytes: encoder.encode("hi") });
+    await expect(session.exportBytes("jpeg")).rejects.toThrow("Unknown format: jpeg");
+  });
+});
