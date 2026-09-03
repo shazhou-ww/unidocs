@@ -65,7 +65,14 @@ function coversCodePoint(coverage: FontCoverage, codePoint: number): boolean {
  * `requestedFont`）→ `fallbacks` 按给定顺序 → null。请求的字体如果不在
  * `loaded` 里（索引里有但没装载，或者压根没有这套字体），直接跳过继续走
  * fallbacks，不是提前返回 null —— 一个 run 缺一套字体不该让整条回退链
- * 报废。 */
+ * 报废。
+ *
+ * **返回值必须是 `loaded` 里的原对象**，不许包一层代理或适配器：调用方
+ * （`set-text.ts`）靠对象同一性反查"这个字形最后用的是哪套字体"，好在
+ * 中英混排时告诉用户"这两个字用的是 CJK 不是 Latin"。以身份为键在本模块
+ * 是既有惯例（`opentype-face.ts` 的 `backingFont` WeakMap 同理）。
+ * 破坏这条约定不会静默出错 —— `set-text.test.ts` 里断言具体字体名的那条
+ * 会当场变红 —— 但会红得让人摸不着头脑，所以写在这里。 */
 export function resolveFaceChain(
   loaded: ReadonlyMap<string, FontFace>,
   fallbacks: readonly string[],

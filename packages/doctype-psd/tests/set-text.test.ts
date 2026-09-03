@@ -485,6 +485,9 @@ describe("setText：模型能改措辞绕开的失败，返回 fail 而不是抛
     expect(structured.ignored).toBeUndefined();
     expect(String(structured.reason)).toContain("non-identity text transform");
     expect((structured.detail as { kind: string }).kind).toBe("non-identity-transform");
+    // 矩阵本身也要断言：它是 agent 唯一能拿来向用户解释"这层被缩放了 2 倍"
+    // 的东西。只断言 kind 的话,detail 里塞一个空数组照样绿。
+    expect((structured.detail as { transform: number[] }).transform).toEqual([2, 0, 0, 2, 100, 50]);
   });
 
   it("纯平移的 transform 不算 → 照常成功（点文字的锚点本来就靠 e/f 定位）", async () => {
@@ -556,7 +559,9 @@ describe("setText：缺字体自动回退 + 显式报告", () => {
     }, BOUNDS));
 
     const { ops, structured, text } = await runSetText(
-      cas, model, source, { layerId: "title", text: "A\u4e2d\u6587" },
+            // "中"故意出现两次：glyphFallbacks.chars 的期望值仍只有一个"中",
+      // 钉住去重。不去重的话同一个字缺 20 遍就报 20 遍。
+      cas, model, source, { layerId: "title", text: "A\u4e2d\u6587\u4e2d" },
     );
 
     expect(structured.ok).toBe(true);
@@ -564,13 +569,17 @@ describe("setText：缺字体自动回退 + 显式报告", () => {
     expect(structured.missing).toEqual([]);
     expect(structured.fontFallbacks).toEqual([]);
     expect((ops[0].payload as { bounds: number[] }).bounds)
-      .toEqual([10, 20, 10 + GLYPH_H, 20 + 3 * GLYPH_W]);
+      .toEqual([10, 20, 10 + GLYPH_H, 20 + 4 * GLYPH_W]);
     // 中英混排编辑里最常发生的一档：用户加两个中文字，字形变了得有人说。
+    // 内容里"中"出现两次,期望值仍只有一个 —— 钉住 chars 的去重。
+    // 不去重的话同一个字缺 20 遍就报 20 遍,人话会被噪音淹掉。
     expect(structured.glyphFallbacks).toEqual([
       { requested: "Latin", used: "CJK", chars: ["\u4e2d", "\u6587"] },
     ]);
-    expect(text).toContain("Latin");
-    expect(text).toContain("CJK");
+    // 只断言两个名字都在，把它们对调位置照样绿 —— 而说反了就是在告诉用户
+    // "中文字用的是 Latin"，比不说更糟。所以断言的是因果方向本身。
+    expect(text).toMatch(/drawn with "CJK"/);
+    expect(text).toMatch(/"Latin" has no glyph/);
     expect(text).toContain("WILL differ");
   });
 

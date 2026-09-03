@@ -263,7 +263,7 @@ async function loadFonts(
     const used = nameOfFace.get(face);
     // `index.has(requested)` 为假的那一档已经进了 `substitutions`，不重复记。
     if (used === undefined || used === requestedFont || !index.has(requestedFont)) return face;
-    const key = `${requestedFont} ${used}`;
+    const key = `${requestedFont}\u0000${used}`;
     let entry = byPair.get(key);
     if (!entry) {
       entry = { requested: requestedFont, used, chars: [] };
