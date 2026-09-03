@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
+import { createSBlob, isSBlob } from "@unidocs/svalue-codec";
 import type { PsdDoc, Layer } from "../src/model/types.js";
 import type { BlobStore } from "../src/render/pixel-source.js";
 import { isRef, resolvePixels, PixelCache } from "../src/render/pixel-source.js";
@@ -271,5 +272,38 @@ describe("psd IR serialize/deserialize", () => {
     const back = await deserialize(bytes, store);
     expect(isRef(back.layers[0].pixels!)).toBe(true);
     expect((back.layers[0].pixels as any).hash).toBe(preHash);
+  });
+
+  it("带 fonts 的文档往返之后 fonts 不丢，blob 是能被 isSBlob 认出来的 branded SBlob", async () => {
+    const store = memStore();
+    const fontHash = "cd".repeat(32);
+    const doc: PsdDoc = {
+      canvas,
+      layers: [],
+      fonts: [{ postScriptName: "NotoSansSC", blob: createSBlob(fontHash) }],
+    };
+    const bytes = await serialize(doc, store);
+
+    const ir = JSON.parse(new TextDecoder().decode(bytes));
+    expect(ir.fonts).toEqual([{ postScriptName: "NotoSansSC", hash: fontHash }]);
+
+    const back = await deserialize(bytes, store);
+    expect(back.fonts).toHaveLength(1);
+    expect(back.fonts![0].postScriptName).toBe("NotoSansSC");
+    expect(isSBlob(back.fonts![0].blob)).toBe(true); // 是 branded SBlob，不是普通对象——普通对象过不了 isSBlob
+    expect(isSBlob({ hash: fontHash })).toBe(false);
+    expect(back.fonts![0].blob.hash).toBe(fontHash);
+  });
+
+  it("不带 fonts 的文档往返之后仍然不带（undefined，不是 []），JSON 里也不出现 fonts 键", async () => {
+    const store = memStore();
+    const doc: PsdDoc = { canvas, layers: [] };
+    const bytes = await serialize(doc, store);
+
+    const ir = JSON.parse(new TextDecoder().decode(bytes));
+    expect("fonts" in ir).toBe(false);
+
+    const back = await deserialize(bytes, store);
+    expect(back.fonts).toBeUndefined();
   });
 });

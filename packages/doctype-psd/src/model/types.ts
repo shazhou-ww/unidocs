@@ -180,4 +180,12 @@ export interface Canvas {
   profile: string;
 }
 
-export interface PsdDoc { canvas: Canvas; layers: Layer[]; }
+/** 这份文档渲染文字时用到的字体。`blob` 是 branded SBlob —— CAS 的 GC 靠
+ *  文档里的 SBlob 引用钉住 blob，只被租户索引引用的字体会被回收
+ *  （设计文档 §3.6）。 */
+export interface FontRef {
+  postScriptName: string;
+  blob: SBlob;
+}
+
+export interface PsdDoc { canvas: Canvas; layers: Layer[]; fonts?: FontRef[]; }
