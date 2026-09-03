@@ -12,6 +12,7 @@
  */
 import type { Pool } from "pg";
 import type { AgentContentPart, DocumentAgent, JsonValue } from "@unidocs/protocol";
+import { consoleObserver } from "@unidocs/protocol-doc";
 import {
   AgentSession,
   createHttpAgentPlatform,
@@ -136,6 +137,12 @@ export function createLocalOperatorNamespace<TQuery, TOp>(
                 provider: deps.provider,
                 history: decodeHistory(raw),
                 docType: deps.docType,
+                // 评审 Important #2:CF 传了这个(operator-do-agent.ts:136),
+                // Azure 没传,于是这条全新上生产的路径恰恰是可观测性最差的
+                // 那条——一次故障连调了哪些工具、跑了几轮、在第几步崩的都要
+                // 靠猜。与出站 HTTP(doc-type-service.ts 的 httpCasFetcher)
+                // 用同一个 observer,落到同一条日志流里。
+                observe: consoleObserver,
               });
 
               const content: readonly AgentContentPart[] = [{ type: "text", text: body.instruction }];
