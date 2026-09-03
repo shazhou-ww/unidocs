@@ -1,0 +1,5 @@
+{
+  "code": "DataInspectionFailed",
+  "message": "input data may contain inappropriate content",
+  "request_id": "fixture-request-id"
+}

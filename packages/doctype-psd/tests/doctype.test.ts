@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 import { collectSBlobRefs, decodeSValue, encodeSValue } from "@unidocs/svalue-codec";
 import type { DocumentTypeContext, SValue } from "@unidocs/protocol";
 import { createPsdDocumentType, type PsdStoredDoc } from "../src/doctype.js";
-import { psdAgent } from "../src/agent.js";
+import { createPsdAgent } from "../src/agent.js";
 import { createMemorySBlobContext } from "./sblob-test-context.js";
+
+const psdAgent = createPsdAgent({});
 
 const fixture = fileURLToPath(new URL("./fixtures/sample.psd", import.meta.url));
 

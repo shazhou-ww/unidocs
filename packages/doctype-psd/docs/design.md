@@ -252,7 +252,7 @@ apply:用 `mask`(像素已预先算好)整体替换该层蒙版;`null` = 移除�
 ```jsonc
 payload: { "layer": <raster Layer,含已生成结果像素 + 调用方分配 id>,
            "parentId": string|null, "index": number,
-           "provenance": { "model", "seed", "prompt", "sourceMask"? } }
+           "provenance": { "model", "prompt", "maskDerivation"? } }
 ```
 apply:等价于把这张 raster 结果层 `add_layer` 插入(非破坏,盖在源层上);把 `provenance` 挂到该层备溯源/重掷。**apply 不调模型**,`provenance` 不参与 replay。
 
@@ -278,18 +278,27 @@ apply:等价于把这张 raster 结果层 `add_layer` 插入(非破坏,盖在源
 正确姿势:
 
 1. Operator 的工具(或一个 query)**先**调模型拿到结果像素;
-2. 再构造 `generative_fill` op,payload **携带已生成的结果**(§3.5 的 pixels/ref)+ 复现信息(`model`/`seed`/`prompt`/`mask`);
+
+   > 这一步由 `effect` 工具形态承载（protocol/types.ts），PSD 的实现是
+   > `editPixels`(src/image/edit-pixels.ts)。它是**唯一**被允许做 IO 的工具形态；
+   > query/op 仍然是同步纯函数。见 docs/superpowers/specs/2026-09-01-psd-image-edit-design.md。
+
+2. 再构造 `generative_fill` op,payload **携带已生成的结果**(§3.5 的 pixels/ref)+ 溯源信息(`model`/`prompt`);
 3. `apply` 只是把结果像素装进图层 —— **纯、可确定重放**。
 
 ```jsonc
 { "kind": "generative_fill", "payload": {
     "target": "l2", "mask": <pixels>,
     "result": <pixels>,                 // 已生成,apply 只安装它
-    "model": "sdxl-inpaint@1.2", "seed": 42, "prompt": "remove the car"
+    "model": "qwen-image-edit-plus", "prompt": "remove the car"
 } }
 ```
 
-`model/seed/prompt` 只作溯源与「重掷」用,不参与 replay。
+`model`/`prompt` 只作**溯源**用,不参与 replay。
+
+> 注意这里**没有 seed**。editPixels 从不给 editor 传 seed,适配器于是也从不把
+> seed 发给 provider —— 记一个默认的 0 进文档,等于承诺一份我们拿不出的可复现
+> 性。要真正支持「重掷」,得先把 seed 一路传到 provider 并确认它真的生效。
 
 ---
 

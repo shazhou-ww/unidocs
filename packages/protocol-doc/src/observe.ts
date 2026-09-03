@@ -57,6 +57,14 @@ export interface HttpCallEvent {
   /** HTTP 状态码;**0 表示根本没拿到响应**(超时/连接断/抛异常)。 */
   readonly status: number;
   readonly durationMs: number;
+  /**
+   * 响应**头**到达的耗时,与 `durationMs`(读完响应体)分开。
+   *
+   * 两者差得远意味着"对方开始回了但是回得慢",两者一样意味着"对方想了很久
+   * 才开口"——这是两种成因、两种修法。只有一个总耗时的时候分不出来。
+   * 只在拿到响应且调用方分别计了时的情况下出现。
+   */
+  readonly ttfbMs?: number;
   readonly ok: boolean;
   readonly tenantId?: string;
   readonly docType?: string;
@@ -76,7 +84,120 @@ export interface HttpCallEvent {
   readonly stack?: string;
 }
 
-export type ObserveFn = (event: HttpCallEvent) => void;
+/**
+ * Agent 一次 run 的生命周期事件。
+ *
+ * 加这一族是被一次真实故障逼出来的：agent 跑了 64 秒，两次图像调用都成功，
+ * 然后整个请求以 `internal error; reference = …` 收场。日志里能看到的只有那
+ * 两次出站 HTTP —— 它调了哪些工具、跑了几轮、在第几步崩的、崩在什么上，
+ * 一个字都没有。出站 HTTP 有观测，agent 自己没有，这是个洞。
+ *
+ * 两个事件名，都以 `agent_` 开头，`jq 'select(.event | startswith("agent_"))'`
+ * 一条就能把一次 run 完整拉出来：
+ *   - `agent_run`  —— 开始与结束各一条，结束那条带上整条调用序列
+ *   - `agent_step` —— 每一次模型调用、每一次工具调用各一条
+ *
+ * 与 `http_call` 同样的详略分级：成功只记简报，失败才带 error 与栈。
+ */
+export interface AgentRunEvent {
+  readonly event: "agent_run";
+  readonly phase: "start" | "end";
+  readonly docType?: string;
+  /** 仅 end。 */
+  readonly ok?: boolean;
+  readonly iterations?: number;
+  readonly durationMs?: number;
+  /**
+   * 仅 end。整条工具调用序列，连续重复压成 `xN`。
+   * 「一直在找图层」和「一直在重画」靠它一眼分开。
+   */
+  readonly tools?: string;
+  /** 仅 end 且失败。 */
+  readonly error?: string;
+  readonly stack?: string;
+}
+
+export interface AgentStepEvent {
+  readonly event: "agent_step";
+  /** `llm` = 一次模型调用；`tool` = 一次工具调用。 */
+  readonly kind: "llm" | "tool";
+  /** 第几轮，从 1 起。 */
+  readonly iteration: number;
+  readonly durationMs: number;
+  readonly ok: boolean;
+  /** 仅 tool。 */
+  readonly name?: string;
+  /** 仅 llm：模型这一轮要调的工具名。空数组表示它给出了最终答复。 */
+  readonly toolCalls?: readonly string[];
+  /** 仅 llm。 */
+  readonly stopReason?: string;
+  /** 仅失败。 */
+  readonly error?: string;
+  readonly stack?: string;
+}
+
+/**
+ * 一次模型调用**发出之前**与**等待期间**的事件。
+ *
+ * `http_call` 只在调用有结果之后才产出,于是"发出去"到"失败"之间是一段
+ * 全黑的区间。一次真实故障就卡在这里:第一轮模型调用挂了 300.3 秒,栈精确
+ * 停在 `await fetch(…)` 那一行(响应头始终没到),而那五分钟里日志上一个字
+ * 都没有 —— 分不出请求根本没发出去、发出去了对面不回、还是整个 worker 已经
+ * 不动了。这三种成因的修法完全不同。
+ *
+ * 两个 phase 各解决其中一半:
+ *   - `start` 在 fetch 之前发,带上**实际发出去的形状**(字节数、消息数、
+ *     图片数)。没有它就只能靠猜请求有多大 —— 图片是整个内联进请求的,
+ *     历史一长请求体能翻几个数量级。
+ *   - `wait`  在等待期间按 {@link LlmWaitHeartbeatMs} 周期发。它出现就证明
+ *     worker 还活着、只是在等;它不出现就说明整个 isolate 卡住了。
+ */
+export interface LlmCallEvent {
+  readonly event: "llm_call";
+  readonly phase: "start" | "wait";
+  readonly endpoint: string;
+  readonly model: string;
+  /**
+   * 仅 start:请求体的字符数。
+   *
+   * 刻意不算字节:UTF-8 编码一遍要把整个请求体再复制一份,而这个体积正是
+   * 它可能出问题的原因。图片以 base64 内联,是纯 ASCII,占了大头时两者一致。
+   */
+  readonly requestChars?: number;
+  /** 仅 start。 */
+  readonly messages?: number;
+  /** 仅 start:内联进请求的图片数 —— 请求体膨胀几乎总是它带来的。 */
+  readonly images?: number;
+  /** 仅 start。 */
+  readonly tools?: number;
+  /** 仅 wait:已经等了多久。 */
+  readonly elapsedMs?: number;
+}
+
+/** `llm_call` `phase:"wait"` 的间隔。够密看得出卡住,够疏不刷屏。 */
+export const LlmWaitHeartbeatMs = 15_000;
+
+export type ObservedEvent = HttpCallEvent | AgentRunEvent | AgentStepEvent | LlmCallEvent;
+
+export type ObserveFn = (event: ObservedEvent) => void;
+
+/**
+ * 把异常折成 `{error, stack}`，与 httpCallFailure 同一套处理：展开 cause
+ * （底层的 ECONNRESET 常被藏在 `TypeError: fetch failed` 里面），栈按
+ * {@link ObservedStackCap} 截断。
+ */
+export function observedFailure(error: unknown): { error: string; stack?: string } {
+  if (!(error instanceof Error)) return { error: String(error) };
+  const cause = error.cause;
+  const causeText = cause instanceof Error ? ` (cause: ${cause.name}: ${cause.message})` : "";
+  const stack = [error.stack, cause instanceof Error ? cause.stack : undefined]
+    .filter((v): v is string => typeof v === "string")
+    .join("\ncaused by: ");
+  return {
+    error: `${error.name}: ${error.message}${causeText}`,
+    ...(stack ? { stack: stack.length > ObservedStackCap ? stack.slice(0, ObservedStackCap) : stack } : {}),
+  };
+}
 
 /** 默认落地方式:一行 JSON 到 stdout。Container Apps 会把它收进
  *  Log Analytics 的 ContainerAppConsoleLogs_CL,Workers 收进 tail。 */
@@ -135,6 +256,8 @@ export interface HttpCallInput {
   readonly op?: string;
   readonly method: string;
   readonly durationMs: number;
+  /** 响应头到达的耗时;调用方分别计时的才传。 */
+  readonly ttfbMs?: number;
   readonly tenantId?: string;
   readonly docType?: string;
   /** 完整 URL,只在非 2xx 时写进事件。 */
@@ -162,6 +285,7 @@ export function httpCallEvent(
     method: input.method,
     status,
     durationMs: input.durationMs,
+    ...(input.ttfbMs !== undefined ? { ttfbMs: input.ttfbMs } : {}),
     ok,
     ...(input.tenantId !== undefined ? { tenantId: input.tenantId } : {}),
     ...(input.docType !== undefined ? { docType: input.docType } : {}),
@@ -187,16 +311,5 @@ export function httpCallEvent(
  * 的 cause 里,只看外层那句话什么都看不出来。
  */
 export function httpCallFailure(input: HttpCallInput, error: unknown): HttpCallEvent {
-  if (!(error instanceof Error)) {
-    return httpCallEvent(input, 0, { error: String(error) });
-  }
-  const cause = error.cause;
-  const causeText = cause instanceof Error ? ` (cause: ${cause.name}: ${cause.message})` : "";
-  const stack = [error.stack, cause instanceof Error ? cause.stack : undefined]
-    .filter((s): s is string => typeof s === "string")
-    .join("\ncaused by: ");
-  return httpCallEvent(input, 0, {
-    error: `${error.name}: ${error.message}${causeText}`,
-    stack: stack.length > ObservedStackCap ? stack.slice(0, ObservedStackCap) : stack,
-  });
+  return httpCallEvent(input, 0, observedFailure(error));
 }

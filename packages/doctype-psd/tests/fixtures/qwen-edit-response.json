@@ -1,0 +1,23 @@
+{
+  "output": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "message": {
+          "content": [
+            {
+              "image": "https://example.invalid/edited.png"
+            }
+          ],
+          "role": "assistant"
+        }
+      }
+    ]
+  },
+  "usage": {
+    "height": 896,
+    "image_count": 1,
+    "width": 1184
+  },
+  "request_id": "fixture-request-id"
+}

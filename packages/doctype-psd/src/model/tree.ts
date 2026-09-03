@@ -38,3 +38,18 @@ export function isDescendant(root: Layer, id: string): boolean {
   if (!root.children) return false;
   return root.children.some((c) => c.id === id || isDescendant(c, id));
 }
+
+/** 某层所在组的 id；在根列表里则是 null。找不到该层也返回 null。 */
+export function findParentId(layers: Layer[], id: string): string | null {
+  const walk = (list: Layer[], parent: string | null): string | null | undefined => {
+    for (const l of list) {
+      if (l.id === id) return parent;
+      if (l.children) {
+        const hit = walk(l.children, l.id);
+        if (hit !== undefined) return hit;
+      }
+    }
+    return undefined;
+  };
+  return walk(layers, null) ?? null;
+}

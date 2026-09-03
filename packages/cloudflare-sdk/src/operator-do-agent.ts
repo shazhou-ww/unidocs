@@ -9,11 +9,18 @@
 import { AgentSession } from "@unidocs/doctype-server-common/agent";
 import type { AgentContentPart, DocumentAgent, LlmProvider } from "@unidocs/protocol";
 import { docSessionObjectName } from "@unidocs/doctype-server-common";
+import { consoleObserver } from "@unidocs/protocol-doc";
 import { createCloudflareAgentPlatform } from "./agent-platform-do.js";
 
 export interface OperatorConfig<TQuery, TOp, TEnv = unknown> {
-  /** 纯数据的工具表 + 系统提示词。文档类型导出的常量，不是工厂。 */
-  readonly agent: DocumentAgent<TQuery, TOp>;
+  /**
+   * 工具表 + 系统提示词。
+   *
+   * 允许传函数，理由和下面的 provider 一模一样：有的工具需要按 env 构造的
+   * 东西（PSD 的 editPixels 要一个带 API key 的 ImageEditor），而 env 只在
+   * 构造 DO 时交到我们手上。传常量的文档类型照旧。
+   */
+  readonly agent: DocumentAgent<TQuery, TOp> | ((env: TEnv) => DocumentAgent<TQuery, TOp>);
   /**
    * provider 按 env 构造：一个 DO 实例活得比一次配置改动久，而 env 只在
    * 构造 DO 时交到我们手上。
@@ -119,10 +126,14 @@ export function createOperatorDO<TQuery, TOp, TEnv = unknown>(
         editorObjectName: () => this.#editorObjectName(),
       });
       this.#agentSession = new AgentSession<TQuery, TOp>({
-        agent: config.agent,
+        agent: typeof config.agent === "function" ? config.agent(this.#env) : config.agent,
         platform,
         provider: config.provider(this.#env),
         ...(config.maxIterations === undefined ? {} : { maxIterations: config.maxIterations }),
+        // agent 自己的运行过程此前完全没有观测：一次失败在日志里只剩下它顺带
+        // 打出的那几条出站 HTTP，调了哪些工具、跑了几轮、在第几步崩的全靠猜。
+        // 与出站 HTTP 用同一个 observer，落到同一条日志流里。
+        observe: consoleObserver,
       });
       return this.#agentSession;
     }

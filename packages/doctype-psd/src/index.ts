@@ -1,6 +1,10 @@
 export { createPsdDocumentType } from "./doctype.js";
 export type { PsdDoc, PsdStoredDoc, PsdQuery, PsdOp } from "./doctype.js";
-export { psdAgent } from "./agent.js";
+export { createPsdAgent } from "./agent.js";
+export type { PsdAgentDeps } from "./agent.js";
+export { createQwenImageEditor } from "./image/qwen-editor.js";
+export type { QwenEditorOptions } from "./image/qwen-editor.js";
+export type { ImageEditor, EditRequest, EditResult, EditorCapabilities, Coverage } from "./image/editor.js";
 export { tools as psdTools, instructions as psdInstructions } from "./tools.js";
 export type { Canvas, Layer, Mask, Pixels, BlendMode, LayerType } from "./model/types.js";
 

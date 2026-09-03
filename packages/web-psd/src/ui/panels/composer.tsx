@@ -18,7 +18,7 @@ import type { Region } from "../region.js";
  *
  * NAMES only, never ids — see `AgentTarget`.
  */
-function targetLayerNames(s: UiState, region: Region): string[] {
+function targetLayers(s: UiState, region: Region): { id: string; name: string }[] {
   // Always the layers the region overlaps — spec §4.3 asks for 「与区域相交的
   // 图层清单」, i.e. 「who is on top of this area」. Reading the SELECTED
   // layers instead would now be dead code as well as wrong: a region and a
@@ -26,8 +26,8 @@ function targetLayerNames(s: UiState, region: Region): string[] {
   // region to attach, the selection is empty by construction.
   const layers = s.doc?.layers ?? [];
   return layersIntersecting(layers, region.bounds)
-    .map((id) => findLayer(layers, id)?.name)
-    .filter((name): name is string => !!name);
+    .map((id) => { const l = findLayer(layers, id); return l ? { id: l.id, name: l.name } : null; })
+    .filter((l): l is { id: string; name: string } => !!l);
 }
 
 export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: string, target: AgentTarget | null) => void }) {
@@ -40,9 +40,18 @@ export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: strin
   const [dropped, setDropped] = useState<Region | null>(null);
 
   const attached = s.region && s.region !== dropped ? s.region : null;
+  // 图层选择也要随指令走。以前只有拖出来的**选区**才附带 target，在图层面板
+  // 里选中一层则什么都不附 —— 于是用户打"选中的图层中，网址改成 X"，agent
+  // 收到的是一句指着它根本看不见的东西的话，只能靠 getLayers/getPreview 一层
+  // 层猜。实测这样烧满 25 轮、182 秒，几乎不调图像模型。
+  //
+  // 选区与图层选择互斥（spec §3.3），所以这是干净的二选一，不会两个都有。
+  const picked = selectedLayers(s);
   const target: AgentTarget | null = attached
-    ? { bounds: attached.bounds, layerNames: targetLayerNames(s, attached) }
-    : null;
+    ? { bounds: attached.bounds, layers: targetLayers(s, attached) }
+    : picked.length > 0
+      ? { layers: picked.map((l) => ({ id: l.id, name: l.name })) }
+      : null;
 
   const submit = (): void => {
     const t = text.trim();

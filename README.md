@@ -8,6 +8,7 @@ Universal document editing framework for AI agents. Built on Cloudflare Workers 
 - [CAS Architecture](docs/cas-architecture.md) — tenant-scoped storage, leases, reference counts, GC, APIs, and DocumentType integration
 - [CAS Binary Format](docs/cas-binary-format.md) — canonical SHA-256 Merkle DAG node encoding derived from CASFA
 - [CAS Control-Plane MCP](docs/cas-control-plane-mcp.md) — OAuth-protected GitHub Copilot operations tools and deployment
+- [PSD Text Layers](docs/psd-text-layers.md) — what a text layer carries, what import keeps and drops, and the measured limits of editing text
 
 ## Architecture
 

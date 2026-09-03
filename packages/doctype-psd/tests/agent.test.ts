@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createSBlob } from "@unidocs/svalue-codec";
-import { psdAgent } from "../src/agent.js";
+import { createPsdAgent } from "../src/agent.js";
+import { createStubEditor } from "../src/testing/stub-editor.js";
+
+const psdAgent = createPsdAgent({});
 
 const tool = (name: string) => {
   const t = psdAgent.tools.find(x => x.name === name);
@@ -43,6 +46,10 @@ describe("PSD 工具表", () => {
 
   it("toQuery / toOps 是纯函数：同参调两次结果深相等（spec V7）", () => {
     for (const t of psdAgent.tools) {
+      // effect 分支既没有 toQuery 也没有 toOps —— 它的纯性不是靠"重复调用
+      // 结果相等"来保证的，而是靠它不产生 op 时不落库（EffectOutcome.ops
+      // 为空数组即可，参见 edit-pixels.test.ts 的失败用例）。
+      if (t.kind === "effect") continue;
       const args = { layerId: "L1" };
       const once = t.kind === "query" ? t.toQuery(args) : t.toOps(args);
       const twice = t.kind === "query" ? t.toQuery(args) : t.toOps(args);
@@ -54,20 +61,42 @@ describe("PSD 工具表", () => {
     const t = tool("getPreview");
     if (t.kind !== "query" || !t.toResult) throw new Error("getPreview 必须有 toResult");
     const blob = createSBlob("a".repeat(64));
+    const alpha = { opaque: 1, transparent: 0, soft: 0 };
     const result = t.toResult(
-      { image: blob, width: 8, height: 6, region: [0, 0, 6, 8] } as never,
+      { image: blob, width: 8, height: 6, region: [0, 0, 6, 8], alpha } as never,
       7,
     );
     expect(result.content).toEqual([{
       type: "image", blob, mediaType: "image/png",
-      altText: "preview 8x6 region=[0,0,6,8] v7",
+      altText: "preview 8x6 region=[0,0,6,8] v7 fully-opaque",
     }]);
     // 信封与 defaultQueryToolResult / docx 的 getImage 同形：{data, version}。
     expect(result.structuredContent).toEqual({
-      data: { width: 8, height: 6, region: [0, 0, 6, 8] },
+      data: { width: 8, height: 6, region: [0, 0, 6, 8], alpha },
       version: 7,
     });
     expect(JSON.stringify(result)).not.toContain("$image");
+  });
+
+  it("带透明时 altText 把三个比例都说出来，并声明棋盘格不是图像内容", () => {
+    // 模型看不见透明（实测：它把全透明背景读成白色，白色图形因此整个消失），
+    // 所以这条信息只能用文字传。棋盘格那句同样重要 —— 不说的话模型会把它
+    // 当成图层里真实存在的花纹。
+    const t = tool("getPreview");
+    if (t.kind !== "query" || !t.toResult) throw new Error("getPreview 必须有 toResult");
+    const result = t.toResult(
+      {
+        image: createSBlob("b".repeat(64)), width: 8, height: 6, region: [0, 0, 6, 8],
+        alpha: { opaque: 0.21, transparent: 0.77, soft: 0.02 },
+      } as never,
+      9,
+    );
+    const alt = (result.content![0] as { altText: string }).altText;
+    expect(alt).toContain("opaque=0.21");
+    expect(alt).toContain("transparent=0.77");
+    expect(alt).toContain("soft=0.02");
+    expect(alt).toContain("checkerboard");
+    expect(alt).not.toContain("fully-opaque");
   });
 
   it("getPreview 的结果缺 image 时抛错，不吞", () => {
@@ -84,5 +113,44 @@ describe("PSD 工具表", () => {
       { image: blob, width: 8, height: 6, region: [0, 0, 6] } as never,
       1,
     )).toThrow("getPreview region must be an array of 4 finite numbers");
+  });
+});
+
+describe("createPsdAgent", () => {
+  it("不注入 editor 就没有 editPixels —— 没有手就别宣称能画", () => {
+    expect(createPsdAgent({}).tools.map(t => t.name)).not.toContain("editPixels");
+  });
+
+  it("注入 editor 后 editPixels 出现在工具表里，且是 effect", () => {
+    const tools = createPsdAgent({ editor: createStubEditor() }).tools;
+    const t = tools.find(x => x.name === "editPixels")!;
+    expect(t.kind).toBe("effect");
+  });
+});
+
+describe("提示词与工具表必须一起条件化", () => {
+  it("没有 editor 时，提示词里也不出现 editPixels —— 别描述一个不存在的工具", () => {
+    const agent = createPsdAgent({});
+    expect(agent.tools.map(t => t.name)).not.toContain("editPixels");
+    expect(agent.instructions).not.toContain("editPixels");
+  });
+
+  it("有 editor 时，工具表和提示词都提到它", () => {
+    const agent = createPsdAgent({ editor: createStubEditor() });
+    expect(agent.tools.map(t => t.name)).toContain("editPixels");
+    expect(agent.instructions).toContain("editPixels");
+  });
+
+  it("提示词里提到的每个工具名都真的在工具表里（两种注入状态都成立）", () => {
+    for (const agent of [createPsdAgent({}), createPsdAgent({ editor: createStubEditor() })]) {
+      const names = new Set(agent.tools.map(t => t.name));
+      for (const n of names) expect(agent.instructions).toBeTypeOf("string");
+      // 反向：提示词里出现的工具名不能是工具表里没有的
+      for (const candidate of ["editPixels", "getPreview", "getLayers", "addLayer", "transform"]) {
+        if (agent.instructions.includes(candidate)) {
+          expect(names, `提示词提到 ${candidate}，工具表却没有`).toContain(candidate);
+        }
+      }
+    }
   });
 });

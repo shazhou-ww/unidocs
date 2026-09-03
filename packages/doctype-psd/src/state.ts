@@ -49,7 +49,8 @@ export interface PsdStoredLayer {
   readonly dropShadow?: DropShadow;
   readonly provenance?: {
     readonly model: string;
-    readonly seed: number;
+    /** 只有真的把种子发给了 provider 的实现才写它 —— 见 model/types.ts。 */
+    readonly seed?: number;
     readonly prompt: string;
   };
   readonly children?: readonly PsdStoredLayer[];

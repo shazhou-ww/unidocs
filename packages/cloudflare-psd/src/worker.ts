@@ -17,30 +17,49 @@
  */
 
 import { createEditorDO, createOperatorDO, type EditorEnv } from "@unidocs/cloudflare-sdk";
-import { createPsdDocumentType, psdAgent } from "@unidocs/doctype-psd";
+import { createPsdDocumentType, createPsdAgent, createQwenImageEditor } from "@unidocs/doctype-psd";
 import {
   createDocTypeHandler,
   DocAuthConfigCache,
   type DocAuthBindings,
 } from "@unidocs/doctype-server-common";
 import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
+import { consoleObserver } from "@unidocs/protocol-doc";
 
 const psdFactory = createPsdDocumentType;
 const authConfig = new DocAuthConfigCache("psd");
 
 export const PsdEditor = createEditorDO(psdFactory);
 export const PsdOperator = createOperatorDO({
-  agent: psdAgent,
+  // 按 env 构造：editPixels 需要一个带 API key 的图像模型，而 key 只在
+  // 这里拿得到。没配 key 就不注入 editor —— 工具表里也就没有 editPixels，
+  // 模型不会去调一个注定失败的工具。
+  agent: (env: Env) => createPsdAgent(
+    env.IMAGE_EDIT_API_KEY
+      ? {
+        editor: createQwenImageEditor({
+          apiKey: env.IMAGE_EDIT_API_KEY,
+          // 系统里唯一的第三方调用。不接观测的话，它出问题时只留下一个
+          // 不透明的 500 —— 排查只能靠猜。
+          observe: consoleObserver,
+          ...(env.IMAGE_EDIT_MODEL ? { model: env.IMAGE_EDIT_MODEL } : {}),
+          ...(env.IMAGE_EDIT_BASE_URL ? { baseUrl: env.IMAGE_EDIT_BASE_URL } : {}),
+        }),
+      }
+      : {},
+  ),
   // The provider is built from env: a DO instance outlives a config change,
   // and `env` is only handed to us here.
-  provider: (env: Env) => createAnthropicProvider(env),
+  // 与出站 HTTP、DashScope、agent 循环同一条日志流。补这个观测是因为一次
+  // 真实故障：第一轮模型调用挂满 300 秒才被掐断，而日志里连它打去了哪个地址
+  // 都看不到 —— 它当时是系统里唯一不产 http_call 的出站调用。
+  provider: (env: Env) => createAnthropicProvider(env, fetch, { observe: consoleObserver }),
   getEditorStub: (env: Env, sessionId) => {
     const id = env.PSD_EDITOR.idFromName(sessionId);
     return env.PSD_EDITOR.get(id);
   },
-  // A PSD edit is inherently multi-step — find the layer, preview it,
-  // transform it, preview again to check — so the platform default (10) cuts
-  // real instructions off mid-edit.
+  // 有了 editPixels，一次层内重绘从"无路可走、烧满 25 轮"变成 2~3 轮。
+  // 上限暂时保持 25：多图层、多步骤的指令仍然吃得下。
   maxIterations: 25,
 });
 
@@ -54,6 +73,11 @@ interface Env extends EditorEnv, DocAuthBindings {
   LLM_BASE_URL?: string;
   LLM_API_KEY?: string;
   LLM_MODEL?: string;
+  // 图像编辑模型（editPixels）。缺省时 agent 的工具表里没有 editPixels，
+  // 层内像素编辑不可用，其余功能不受影响。
+  IMAGE_EDIT_API_KEY?: string;
+  IMAGE_EDIT_MODEL?: string;
+  IMAGE_EDIT_BASE_URL?: string;
 }
 
 export default {

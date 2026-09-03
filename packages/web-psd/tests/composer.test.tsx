@@ -39,7 +39,7 @@ describe("Composer", () => {
     render(<Composer busy={false} onSend={onSend} />);
     expect(screen.getByText("已附带选区 200 × 100")).toBeInTheDocument();
     send("换成晚霞");
-    expect(onSend).toHaveBeenCalledWith("换成晚霞", { bounds: [20, 40, 120, 240], layerNames: ["天空"] });
+    expect(onSend).toHaveBeenCalledWith("换成晚霞", { bounds: [20, 40, 120, 240], layers: [{ id: "a", name: "天空" }] });
   });
 
   // Spec §4.3's fourth field is「与区域相交的图层清单」— who is on top of this
@@ -57,7 +57,26 @@ describe("Composer", () => {
     const onSend = vi.fn();
     render(<Composer busy={false} onSend={onSend} />);
     send("换成晚霞");
-    expect(onSend).toHaveBeenCalledWith("换成晚霞", { bounds: [0, 0, 50, 50], layerNames: ["天空"] });
+    expect(onSend).toHaveBeenCalledWith("换成晚霞", { bounds: [0, 0, 50, 50], layers: [{ id: "a", name: "天空" }] });
+  });
+
+  // 图层选择也必须随指令走。以前只有拖出来的**选区**才附带 target，在图层
+  // 面板里选中一层则什么都不附 —— 用户打"选中的图层中，网址改成 X"，agent
+  // 收到的是一句指着它根本看不见的东西的话，只能靠 getLayers/getPreview 一层
+  // 层猜。实测这样烧满 25 轮、182 秒，几乎不调图像模型。
+  it("选中图层但没有选区时，附带图层的 id 和名字，且不编造 bounds", () => {
+    setState({
+      region: null, selection: ["b"],
+      doc: { canvas: { width: 400, height: 200 }, layers: [
+        leaf("a", "天空", [0, 0, 40, 40]), leaf("b", "网址", [100, 100, 150, 150]),
+      ] },
+    });
+    const onSend = vi.fn();
+    render(<Composer busy={false} onSend={onSend} />);
+    send("网址改成 www.unidocs.com");
+    // 没有 bounds：图层自己有 bounds，agent 从 getLayers 就能读到，这里编一个
+    // 矩形等于替用户说了他没说的话。
+    expect(onSend).toHaveBeenCalledWith("网址改成 www.unidocs.com", { layers: [{ id: "b", name: "网址" }] });
   });
 
   // Attaching on every turn is required (by turn three, "a bit more to the

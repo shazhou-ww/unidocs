@@ -18,6 +18,8 @@ export type {
   DocumentType,
   DocumentTypeContext,
   DocumentTypeFactory,
+  EffectContext,
+  EffectOutcome,
   MakeSBlob,
   JsonPrimitive,
   JsonValue,
