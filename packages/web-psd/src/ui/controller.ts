@@ -85,7 +85,7 @@ export function initController(view: HTMLCanvasElement, stage: HTMLElement): voi
   // user opened was always a REPLACEMENT of something — which is both a
   // needless upload on every page load and the only way to see one document
   // hand over to another.
-  setState({ status: "打开一个 PSD 文件开始" });
+  setState({ status: "打开一个文件开始" });
 }
 
 async function createFrom(bytes: Uint8Array, label: string): Promise<void> {
@@ -192,11 +192,16 @@ export async function loadLayerAsRegion(layerId: string): Promise<void> {
 }
 
 /** The download's filename. The server sends `Content-Disposition:
- *  attachment; filename="document"`, which is both extension-less and the
- *  same for every document — name the file after the one on screen. */
-export function exportFileName(docName: string | null): string {
-  if (!docName) return "export.psd";
-  return /\.psd$/i.test(docName) ? docName : `${docName.replace(/\.[^.]+$/, "")}.psd`;
+ *  attachment; filename="document.psd"`, which is the same for every
+ *  document — name the file after the one on screen, with the extension
+ *  swapped to whatever format was actually requested. */
+export function exportFileName(docName: string | null, format: "psd" | "png"): string {
+  if (!docName) return `export.${format}`;
+  // `\.[^.]+$` 只在**确实有**扩展名时才替换。没有点的名字直接追加,否则
+  // 「summer sale」这种名字会被当成扩展名切掉一半。
+  return /\.[^.]+$/.test(docName)
+    ? docName.replace(/\.[^.]+$/, `.${format}`)
+    : `${docName}.${format}`;
 }
 
 /**
@@ -214,19 +219,23 @@ export function exportFileName(docName: string | null): string {
  * synthesized download. A failed flush aborts the export outright — a file
  * silently missing the edit that just failed to submit is worse than no file.
  */
-export async function exportDoc(): Promise<void> {
+export async function exportDoc(format: "psd" | "png" = "psd"): Promise<void> {
   const c = controller;
   const id = c?.docId;
   if (!c || !id) return;
   setState({ exporting: true });
   try {
     await c.flush();
-    const res = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/${id}/export`);
+    // psd 走**不带查询串**的老 URL,与改动前逐字节一致——服务端不传 format
+    // 时回落 defaultFormat,两条路等价,但保持 URL 不变让这次改动在网络层面
+    // 对既有行为零影响。
+    const query = format === "psd" ? "" : `?format=${format}`;
+    const res = await fetch(`${GW}/tenants/${USER}/docs/${TYPE}/${id}/export${query}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url;
-    a.download = exportFileName(getState().docName);
+    a.download = exportFileName(getState().docName, format);
     // Firefox only acts on `click()` for an anchor that is in the document.
     document.body.appendChild(a);
     a.click();

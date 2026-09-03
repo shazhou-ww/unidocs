@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { selectLayer, setState, useUiState } from "../store.js";
 import { exportDoc, openFile } from "../controller.js";
 import { collectDegradations, countLayers } from "../../doc-model.js";
@@ -7,6 +7,9 @@ import { zoomActual, zoomFit, zoomStep } from "../zoom-controller.js";
 export function TopBar() {
   const s = useUiState();
   const fileRef = useRef<HTMLInputElement>(null);
+  // 菜单开合是纯粹的一次性 UI 状态,别处没有人要关它,所以留在组件里而不是
+  // 进全局 store。`degradeOpen` 进 store 是因为图层树点一下也要把它收起来。
+  const [exportOpen, setExportOpen] = useState(false);
   const degradations = s.doc ? collectDegradations(s.doc.layers) : [];
 
   return (
@@ -61,7 +64,7 @@ export function TopBar() {
         onClick={() => fileRef.current?.click()}
       >打开</button>
       <input
-        ref={fileRef} type="file" accept=".psd" hidden
+        ref={fileRef} type="file" accept=".psd,.png" hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
           // 立刻清空,不等 openFile 回来:同一个文件连选两次,第二次不触发
@@ -74,14 +77,28 @@ export function TopBar() {
       {/* A button, not a link: the export has to flush the pending-op queue
           to the server before reading the document back from it, and a plain
           <a href> navigates without running any of our code. */}
-      <button
-        type="button" className="btn btn-primary"
-        // `opening` 期间 docId 指向的可能正是那个正在被替换掉的旧文档。
-        disabled={!s.docId || s.exporting || !!s.opening}
-        onClick={() => { void exportDoc(); }}
-      >
-        {s.exporting ? "导出中…" : "导出"}
-      </button>
+      <div className="export">
+        <button
+          type="button" className="btn btn-primary"
+          // `opening` 期间 docId 指向的可能正是那个正在被替换掉的旧文档。
+          disabled={!s.docId || s.exporting || !!s.opening}
+          onClick={() => setExportOpen(!exportOpen)}
+        >
+          {s.exporting ? "导出中…" : "导出"}
+        </button>
+        {exportOpen ? (
+          <div className="export-pop">
+            {(["psd", "png"] as const).map((format) => (
+              <button
+                key={format} type="button" className="export-row"
+                onClick={() => { setExportOpen(false); void exportDoc(format); }}
+              >
+                {`导出为 ${format.toUpperCase()}`}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </header>
   );
 }

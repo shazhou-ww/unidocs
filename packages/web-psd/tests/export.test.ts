@@ -147,4 +147,44 @@ describe("exportDoc", () => {
     expect(flush).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("导出 PNG 时请求带上 format=png,文件名换成 .png", async () => {
+    const fetchMock = vi.fn(async (_url: string) => okResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { exportDoc } = await openedEditor();
+    await exportDoc("png");
+
+    expect(fetchMock.mock.calls[0]![0]).toBe("/tenants/u1/docs/psd/doc-a/export?format=png");
+    expect(clicks[0]!.download).toBe("summer-sale.png");
+  });
+
+  // 回归护栏:不带参数、以及显式传 "psd",都必须是今天那个 URL(不带查询串)。
+  it("不指定格式时的请求与今天完全一致", async () => {
+    const fetchMock = vi.fn(async (_url: string) => okResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { exportDoc } = await openedEditor();
+    await exportDoc();
+
+    expect(fetchMock.mock.calls[0]![0]).toBe("/tenants/u1/docs/psd/doc-a/export");
+    expect(clicks[0]!.download).toBe("summer-sale.psd");
+  });
+});
+
+describe("exportFileName", () => {
+  it("按目标格式换扩展名", async () => {
+    const { exportFileName } = await import("../src/ui/controller.js");
+    expect(exportFileName("a.psd", "psd")).toBe("a.psd");
+    expect(exportFileName("a.psd", "png")).toBe("a.png");
+    expect(exportFileName("a.png", "psd")).toBe("a.psd");
+    // 没有扩展名的名字直接追加,而不是把最后一段当扩展名切掉。
+    expect(exportFileName("summer sale", "png")).toBe("summer sale.png");
+  });
+
+  it("没有文档名时回落到按格式命名", async () => {
+    const { exportFileName } = await import("../src/ui/controller.js");
+    expect(exportFileName(null, "psd")).toBe("export.psd");
+    expect(exportFileName(null, "png")).toBe("export.png");
+  });
 });
