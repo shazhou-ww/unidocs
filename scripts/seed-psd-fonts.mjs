@@ -75,11 +75,19 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 export const DEFAULT_CREDENTIALS_PATH = ".wrangler/unidocs/local-credentials.json";
 
-/** 路径不存在时要说清楚"去哪儿拿"，不然报一句 ENOENT 等于让人自己猜。 */
+/**
+ * 路径不存在时要说清楚"去哪儿拿"，不然报一句 ENOENT 等于让人自己猜。
+ *
+ * CJK 那一套点名到具体文件：noto-cjk 里好几个版本都叫得上"Noto Sans SC"，而它们
+ * 和下面 16 MiB 那道闸的距离差得很远（实测字节数见 docs/psd-text-layers.md §5.4）。
+ * 只说仓库名的话，操作者有很大概率抓一个过不了闸的，而那时他看到的只有
+ * "请改用子集化过的字体" —— 仓库里并没有子集化工具。
+ */
 export const FONT_SOURCE_HINT =
-  "Noto Sans / Noto Sans SC 都是 OFL 许可，可从 https://fonts.google.com/noto 下载"
-  + "（或 https://github.com/notofonts/noto-cjk 取 CJK 那套）。字体二进制不进仓库，"
-  + "由部署者自备。";
+  "Noto Sans / Noto Sans SC 都是 OFL 许可。拉丁那套从 https://fonts.google.com/noto 下载；"
+  + "中文那套建议取 noto-cjk 的子集化 OTF："
+  + "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf"
+  + "（约 8.0 MB，postScriptName 就是 NotoSansSC-Regular）。字体二进制不进仓库，由部署者自备。";
 
 /**
  * 单套字体的字节上限。
@@ -370,13 +378,26 @@ export async function seedFonts({
       contentType: font.contentType,
       size: font.bytes.length,
     });
+    const previous = previousHash.get(font.postScriptName);
     // 钉根引用，否则字节只有一份租约（最长 24 小时），GC 一跑索引就指向空气。
-    // requestId 里带上哈希：同一套字体重跑是同一个请求、幂等空转；换了字体文件
-    // 就是另一个请求，不会撞上"同 requestId 不同载荷"的 409。
-    await blobs.retain({
-      requestId: `psd-font:${tenantId}:${font.postScriptName}:${ref.hash}`,
-      references: { [ref.hash]: 1 },
-    });
+    //
+    // 重跑的幂等靠的是**上面这个哈希比较**，不是 CAS 的幂等记录：索引里已经是
+    // 这个哈希，说明上一遍钉过了，什么都不做。requestId 则反过来必须一次性 ——
+    // CAS 的 root-ref 幂等记录是**永久**的（`cas_root_ref_requests` 全仓库没有
+    // 任何 prune），把哈希编进 requestId 的话，"A → B → 换回 A"第三遍会撞上第一
+    // 遍那条记录、幂等空转，hashA 的根引用停在 0，24 小时后被 GC 收走，而且再跑
+    // 多少遍都补不回来。把 (旧哈希 → 新哈希) 编进去也只是把这一撞推迟到第四遍。
+    //
+    // 代价：retain 成功但下面的登记失败时，那一次根引用漏在外面（重跑不再自愈，
+    // 因为 requestId 换了）—— 多占一份字节，不是丢字体。反过来"登记失败就补一次
+    // release"更危险：登记其实成功了、只是响应丢了的话，那一下会把索引正用着的
+    // 字体解钉，正是这里要防的那种失效。
+    if (previous !== ref.hash) {
+      await blobs.retain({
+        requestId: `psd-font:${tenantId}:${font.postScriptName}:${crypto.randomUUID()}`,
+        references: { [ref.hash]: 1 },
+      });
+    }
 
     const response = await fetchImpl(fontsUrl, {
       method: "POST",
@@ -397,8 +418,7 @@ export async function seedFonts({
         `登记 ${font.postScriptName} 失败 ${response.status}：${await response.text()}`,
       );
     }
-    const old = previousHash.get(font.postScriptName);
-    if (old !== undefined && old !== ref.hash) superseded.push({ font, hash: old });
+    if (previous !== undefined && previous !== ref.hash) superseded.push({ font, hash: previous });
     log(`registered ${font.postScriptName}  hash=${ref.hash}  ${font.bytes.length} bytes  <- ${font.file}`);
   }
 
@@ -418,16 +438,25 @@ export async function seedFonts({
   }
   if (index.every(entry => countCjkCodePoints(entry.coverage) === 0)) {
     log("");
-    log("警告：索引里没有任何一套字体覆盖 CJK 统一表意文字 —— 中文会掉到回退链末端，一个字都画不出来。");
+    log(
+      "警告：索引里没有任何一套字体覆盖 CJK 统一表意文字基本区（U+4E00–U+9FFF）"
+      + " —— 常用汉字会掉到回退链末端，一个字都画不出来。",
+    );
   }
 
   // 被顶掉的旧字节：登记成功之后才放，顺序反了会在中途失败时把还在用的字体收掉。
   // 尽力而为 —— 旧条目可能是别的工具登记的，那时它的根引用不在我们名下，减到负数
   // 会被 CAS 挡回来（409 NEGATIVE_AGGREGATE）。那不是这次运行的失败。
+  //
+  // requestId 同样一次性，理由同 retain：定值 requestId 在"A → B → 换回 A → 再换 B"
+  // 时会撞上第二遍那条永久幂等记录、空转，hashA 的根引用就永远减不掉了。这一侧
+  // 反过来空转只会泄漏一份字节（不是丢字体），但成因是同一个，一起修。
+  // 重复 release 由 superseded 本身挡住：重跑时索引里已经是新哈希，`previous ===
+  // ref.hash`，压根不会进这个列表。
   for (const { font, hash } of superseded) {
     try {
       await blobs.release({
-        requestId: `psd-font-release:${tenantId}:${font.postScriptName}:${hash}`,
+        requestId: `psd-font-release:${tenantId}:${font.postScriptName}:${crypto.randomUUID()}`,
         references: { [hash]: 1 },
       });
       log(`released superseded blob ${hash} (${font.postScriptName})`);

@@ -161,12 +161,17 @@ test("seeds fonts into the tenant index and reads them back", async () => {
 
   // 换一份字节、同一个名字:替换,不是报冲突;哈希跟着变,旧的那份被释放。
   const cjk = await writeFontFiles([["cjk", CJK_FONT]]);
+  const replacedLines = [];
   const replaced = await seedFonts({
     kit,
     config: { tenantId: TENANT, fonts: cjk.fonts },
     credentials,
-    log: () => {},
+    log: line => replacedLines.push(line),
   });
+  // 反过来也要成立:装了 CJK 字体就**不能**再报这句。只有正向断言的话,把条件
+  // 改成恒真照样全绿,而一条每次都响的警告等于没有警告 —— 操作者会学会无视它,
+  // "中文兜底真的带了中文"这个唯一看得见的判据也就跟着没了。
+  expect(replacedLines.join("\n")).not.toMatch(/没有任何一套字体覆盖 CJK/);
   expect(replaced.index).toHaveLength(1);
   expect(replaced.index[0].hash).not.toBe(latinEntry.hash);
   expect(replaced.index[0].coverage).toEqual([[0x4e2d, 0x4e2d], [0x5b57, 0x5b57], [0x6587, 0x6587]]);
@@ -174,6 +179,44 @@ test("seeds fonts into the tenant index and reads them back", async () => {
   // 顶掉的那份不能一直占着 5-20 MB:新的钉住、旧的放掉,一进一出。
   expect(await runtime.storage.middlewareRetainedRoots(runtime.stackFixture.stackId, TENANT))
     .toEqual([{ hash: replaced.index[0].hash, count: 1 }]);
+}, 180_000);
+
+/**
+ * 换回上一个版本的字体，根引用必须重新钉上。
+ *
+ * 这条守的是一种只有跑到第三遍才露头的失效：CAS 的 root-ref 幂等记录是**永久**的
+ * （`cas_root_ref_requests` 没有任何 prune），所以只要 requestId 是从"租户+字体名+
+ * 哈希"算出来的定值，"A → B → 换回 A"第三遍就会撞上第一遍那条记录、幂等空转，
+ * hashA 的根引用停在 0。索引里明明白白登记着 hashA、脚本也打印了 registered，
+ * 但 24 小时租约一过 GC 就把字节收走，索引指向空气 —— 而且再跑多少遍都补不回来。
+ *
+ * 所以这里要跑满两个来回：只跑到第三遍的话，"把 (旧哈希 → 新哈希) 编进 requestId"
+ * 这种"只推迟一个来回"的修法也能装成绿的（它在第四遍才撞上）。
+ */
+test("switching a font back to a previous version re-pins its root ref", async () => {
+  runtime = await startLocalRuntime({ docTypes: ["psd"], ports: PORTS });
+  const credentials = credentialsOf();
+  const latin = await writeFontFiles([["latin", LATIN_FONT]]);
+  const cjk = await writeFontFiles([["cjk", CJK_FONT]]);
+  const seed = fonts => seedFonts({ kit, config: { tenantId: TENANT, fonts }, credentials, log: () => {} });
+  const roots = () => runtime.storage.middlewareRetainedRoots(runtime.stackFixture.stackId, TENANT);
+
+  const hashA = (await seed(latin.fonts)).index[0].hash;
+  expect(await roots()).toEqual([{ hash: hashA, count: 1 }]);
+
+  const hashB = (await seed(cjk.fonts)).index[0].hash;
+  expect(hashB).not.toBe(hashA);
+  expect(await roots()).toEqual([{ hash: hashB, count: 1 }]);
+
+  // 第三遍：换回 A。索引回到 hashA，根引用也必须跟着回到 hashA。
+  expect((await seed(latin.fonts)).index[0].hash).toBe(hashA);
+  expect(await roots()).toEqual([{ hash: hashA, count: 1 }]);
+
+  // 第四、五遍：再来一个来回。
+  await seed(cjk.fonts);
+  expect(await roots()).toEqual([{ hash: hashB, count: 1 }]);
+  await seed(latin.fonts);
+  expect(await roots()).toEqual([{ hash: hashA, count: 1 }]);
 }, 180_000);
 
 test("a font whose postScriptName disagrees with the file is refused before anything is written", async () => {

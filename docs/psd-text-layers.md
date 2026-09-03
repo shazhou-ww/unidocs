@@ -337,6 +337,22 @@ psd 文档共用），字节在 CAS 里。往里面灌东西的唯一入口是
 3. **字体二进制不进仓库**（裁定 R19）：一套中文字体 5–20 MB，进 git 就永远留在
    历史里。配置里写本地路径，文件由部署者自备（仓库根的 `fonts/` 已 gitignore）。
 
+**中文那套该取哪个文件。** 脚本有一道 16 MiB 的闸（`MAX_FONT_BYTES`，对齐编辑器
+DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto Sans SC"、
+体积差得很远。撞上闸只会看到一句"请改用子集化过的字体"，仓库里却没有任何子集化
+工具，所以这里点名（字节数 2026-09-03 实测自 `notofonts/noto-cjk` 的 `main`）：
+
+| 文件 | 字节 | 过 16 MiB 闸？ |
+|---|---|---|
+| `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` | 8,331,336（8.0 MB） | ✅ **用这个** |
+| `Sans/Variable/OTF/Subset/NotoSansSC-VF.otf` | 15,054,748 | ⚠️ 过，但只剩 1.6 MB 余量 |
+| `Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf` | 16,437,364 | ⚠️ 过，但只剩 0.3 MB 余量 |
+| `Sans/OTC/NotoSansCJK-Regular.ttc` | 19,484,784 | ❌ 超闸，脚本当场拒绝 |
+
+推荐那份实测跑过 `describeFont`：`postScriptName` 就是配置里要写的
+`NotoSansSC-Regular`，`unitsPerEm=1000`，覆盖 30,890 个码位、其中基本区汉字
+20,976 个。
+
 回退链本身不在配置里，是 psd worker 的 `PSD_FONT_FALLBACKS` 环境变量（逗号分隔、
 顺序即优先级）。缺省是空链、不硬编码字体名 —— 硬编码一个 CAS 里没有的名字只会
 让回退链静默失效。所以**装了字体还要配这个变量**，两步都做了兜底才真的生效。

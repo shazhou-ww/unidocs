@@ -157,6 +157,15 @@ Three deployment facts:
   paths; the repository-root `fonts/` directory is gitignored. Noto Sans / Noto
   Sans SC are OFL-licensed and available from Google Fonts.
 
+The script refuses any font over 16 MiB (`MAX_FONT_BYTES`, matching the editor
+DO's `MAX_SVALUE_ROOT_BYTES`), and several `notofonts/noto-cjk` files that all
+answer to "Noto Sans SC" sit on both sides of that line. Take
+`Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` (8,331,336 bytes, PostScript name
+`NotoSansSC-Regular`); `Sans/OTC/NotoSansCJK-Regular.ttc` (19,484,784 bytes) is
+over the limit, and the language-specific OTF (16,437,364 bytes) clears it by
+only ~0.3 MB. Sizes measured 2026-09-03 against `main`; there is no subsetting
+tool in this repository, so picking the right file up front is the whole story.
+
 Registering a font is only half of the fallback chain: the PSD Worker's
 `PSD_FONT_FALLBACKS` var (comma-separated, order is priority) decides which
 registered fonts are actually tried. It defaults to empty and hardcodes no font

@@ -6,9 +6,10 @@
  * `tests/integration/cloudflare/psd-fonts-e2e.test.mjs` 里对着真 workerd 跑，
  * 用假 fetch 复刻一遍只会测出我自己对协议的想象。
  */
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   countCjkCodePoints,
@@ -23,6 +24,7 @@ import * as kit from "../../../scripts/psd-fonts-kit.ts";
 import { buildRectFont, buildSparseCoverageTestFont } from "../../../packages/doctype-psd/tests/text-test-font.ts";
 
 const CONFIG_PATH = "/repo/psd-fonts.json";
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 function config(overrides) {
   return JSON.stringify({
@@ -86,6 +88,23 @@ describe("parseSeedConfig", () => {
     expect(() => parseSeedConfig(text, { configPath: CONFIG_PATH }))
       .toThrow(new RegExp(`fonts\\[0\\]\\.${field} 不允许出现在配置里`));
   });
+
+  // 示例配置是操作者第一眼看到的东西,也是文档里唯一一份"照着改就行"的样本。
+  // 没人解析它的话,解析器加一条校验、或者示例里手滑写错一个字段名,都要等到
+  // 部署者第一次跑脚本才炸。
+  it("parses the example config that ships with the repository", async () => {
+    const examplePath = join(ROOT, "scripts", "psd-fonts.example.json");
+    const parsed = parseSeedConfig(await readFile(examplePath, "utf8"), { configPath: examplePath });
+    expect(parsed.tenantId).toBe("alice");
+    expect(parsed.fonts.map(font => font.postScriptName))
+      .toEqual(["NotoSans-Regular", "NotoSansSC-Regular"]);
+    // 示例里写的是 `../fonts/…`,相对配置文件(scripts/)解释后落在仓库根的
+    // `fonts/` —— 也就是 .gitignore 里那一条。写错了相对基准这里就对不上。
+    expect(parsed.fonts.map(font => font.file)).toEqual([
+      join(ROOT, "fonts", "NotoSans-Regular.ttf"),
+      join(ROOT, "fonts", "NotoSansSC-Regular.otf"),
+    ]);
+  });
 });
 
 describe("parseCredentials", () => {
@@ -130,6 +149,38 @@ describe("coverage counting", () => {
   });
 });
 
+/**
+ * 把一份字体字节里 `head` 表的 `unitsPerEm` 改掉,别的一概不动。
+ *
+ * 为什么要动字节而不是让构造器造一套:opentype.js 的写入器把 head 表的
+ * `unitsPerEm` **硬编**成 1e3（`opentype.mjs` 的 `makeHeadTable` 里那条
+ * `{ name: "unitsPerEm", type: "USHORT", value: 1e3 }` 根本不读 `font.unitsPerEm`）,
+ * 所以 `buildRectFont` 造不出 1000 以外的 upm —— 而所有 fixture 的 upm 都是 1000,
+ * "从文件解析 upm"写死成 1000 也照样全绿。
+ *
+ * 改了字节不会让解析失败:`parseHeadTable` 只校验 magicNumber,`checkSumAdjustment`
+ * 是 `parseULong()` 读走就算,不做校验(同文件 `parseHeadTable`)。
+ *
+ * head 表内的偏移 +18 = version(4) + fontRevision(4) + checkSumAdjustment(4)
+ * + magicNumber(4) + flags(2);表在文件里的位置从 sfnt 表目录里查。
+ */
+function withUnitsPerEm(source, unitsPerEm) {
+  const bytes = source.slice();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const numTables = view.getUint16(4);
+  for (let index = 0; index < numTables; index++) {
+    // 表目录：12 字节文件头之后，每条记录 16 字节 = tag(4) + checkSum(4)
+    // + offset(4) + length(4)。
+    const record = 12 + index * 16;
+    const tag = String.fromCharCode(...bytes.subarray(record, record + 4));
+    if (tag === "head") {
+      view.setUint16(view.getUint32(record + 8) + 18, unitsPerEm);
+      return bytes;
+    }
+  }
+  throw new Error("测试字体里没有 head 表");
+}
+
 describe("describeFont", () => {
   async function fontFile(bytes, name = "font.ttf") {
     const dir = await mkdtemp(join(tmpdir(), "unidocs-seed-fonts-"));
@@ -150,6 +201,20 @@ describe("describeFont", () => {
     expect(described.coverage).toEqual([[0x41, 0x41], [0x4e2d, 0x4e2d]]);
     expect(countCjkCodePoints(described.coverage)).toBe(1);
     expect(described.contentType).toBe("font/ttf");
+  });
+
+  // upm 决定每个字号下所有度量的缩放系数。报错的 upm 不会让任何东西失败,只会让
+  // 每个字都落在错的位置上 —— 而 1000 是最常见的取值,恰恰最容易被"写死"蒙混过去。
+  it("reads unitsPerEm out of the head table instead of assuming 1000", async () => {
+    const file = await fontFile(withUnitsPerEm(buildSparseCoverageTestFont(), 2048));
+    const described = await describeFont(kit, {
+      postScriptName: "UnidocsTestFontRegular",
+      family: "UnidocsTestFont",
+      file,
+    });
+    expect(described.unitsPerEm).toBe(2048);
+    // 只动了 upm 那两个字节,别的照旧 —— 免得这条测试在"字体整个坏掉"时也变绿。
+    expect(described.coverage).toEqual([[0x41, 0x41], [0x4e2d, 0x4e2d]]);
   });
 
   it("names the missing path and where to get the font", async () => {
