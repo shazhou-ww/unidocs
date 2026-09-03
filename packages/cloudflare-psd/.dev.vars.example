@@ -19,4 +19,9 @@ IMAGE_EDIT_API_KEY=sk-...
 # setText 的字体回退链,逗号分隔,顺序即优先级。名字必须是已经登记进租户级
 # 字体索引的 postScriptName —— 写一个不存在的名字不会报错,只会让回退链
 # 静默失效。缺省是空链。
-# PSD_FONT_FALLBACKS=NotoSans,NotoSansSC
+#
+# 下面这两个值与 scripts/psd-fonts.example.json 里的 postScriptName 一致,
+# 是真实字体解析出来的名字(带 -Regular 后缀)。别按家族名写成 NotoSans ——
+# 那正是上一段说的"不会报错、只是静默失效"。跑完预置脚本可以照它打印的
+# 名字抄。
+# PSD_FONT_FALLBACKS=NotoSans-Regular,NotoSansSC-Regular
