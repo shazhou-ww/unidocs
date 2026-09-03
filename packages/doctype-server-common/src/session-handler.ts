@@ -209,8 +209,11 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
 
       // GET /_internal/export — download document
       if (method === "GET" && endpoint === "/_internal/export") {
-        const requested = url.searchParams.get("format");
-        const exported = await session.exportBytes(requested ?? undefined);
+        // `??` 只挡 null;`?format=`(空值)会给出 "",那同样是「没指定格式」。
+        // 漏掉它会让这种请求走进 exportBytes 的显式格式分支,Content-Type
+        // 变成 mediaTypes[0] 而不是顶层 contentType——护栏 2 就破了。
+        const requested = url.searchParams.get("format") || undefined;
+        const exported = await session.exportBytes(requested);
         // 扩展名跟着所选格式走。这不是新设计,是把 Azure 补齐到 Cloudflare
         // 已有的行为(editor-do-svalue.ts:563 早就是 `document${extension}`)。
         const extension = requested

@@ -20,6 +20,7 @@ import {
 } from "@unidocs/protocol-doc";
 import { CasClientError } from "@unicas/tenant-client";
 import { DocumentSession, type CasGateway, type SessionDeps } from "../src/session.js";
+import { createSessionHandler } from "../src/session-handler.js";
 
 // --------------------------------------------------------------------------
 // A minimal document type: the document is a string.
@@ -1273,5 +1274,31 @@ describe("DocumentSession.exportBytes — 格式选择", () => {
     await session.load();
     await session.create({ bytes: encoder.encode("hi") });
     await expect(session.exportBytes("jpeg")).rejects.toThrow("Unknown format: jpeg");
+  });
+});
+
+describe("session-handler GET /_internal/export — 空 ?format= 护栏", () => {
+  // `url.searchParams.get("format")` 对 `?format=`(等号后面是空的)给出 ""
+  // 而不是 null——`??` 挡不住它,只有 `||` 才行。这条钉住:带一个空的
+  // `?format=` 必须和完全不带该参数的响应逐字节等价,不能因为 "" 被当成
+  // 「显式指定了格式」而切到 format.mediaTypes[0] 当 Content-Type。
+  it("?format=(空值)与完全不带该参数的响应等价", async () => {
+    const { session } = makeHarness(1_000, undefined, makeTwoFormatDocType());
+    await session.load();
+    await session.create({ bytes: encoder.encode("hi") });
+
+    const handle = createSessionHandler({
+      session,
+      identity: { docType: "text", sessionId: "session-1", tenantId: "tenant-1" },
+    });
+
+    const withoutParam = await handle(new Request("https://svc/_internal/export"));
+    const withEmptyParam = await handle(new Request("https://svc/_internal/export?format="));
+
+    expect(withEmptyParam.headers.get("Content-Type")).toBe("text/plain");
+    expect(withEmptyParam.headers.get("Content-Type"))
+      .toBe(withoutParam.headers.get("Content-Type"));
+    expect(withEmptyParam.headers.get("Content-Disposition"))
+      .toBe(withoutParam.headers.get("Content-Disposition"));
   });
 });

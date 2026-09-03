@@ -159,12 +159,15 @@ export class DocumentSession<TDoc, TQuery, TOp> {
   }
 
   /**
-   * The `DocumentType` this session was built with. Exposed so the adapter
-   * (session-handler.ts) can run `selectFormat` against the exact same
-   * `formats`/`defaultFormat` this session uses internally, without needing
-   * its own copy of the config threaded in as a separate parameter.
+   * The `formats`/`defaultFormat` slice of the `DocumentType` this session
+   * was built with — exposed so the adapter (session-handler.ts) can run
+   * `selectFormat` against the exact same config this session uses
+   * internally, without needing its own copy threaded in as a separate
+   * parameter. Narrowed to just what `selectFormat` needs (not the full
+   * `DocumentType`) so this doesn't also hand out `init`/`apply`/`query`/
+   * `tools`/`instructions`, which the adapter has no business touching.
    */
-  get config(): DocumentType<TDoc, TQuery, TOp> {
+  get config(): Pick<DocumentType<TDoc, TQuery, TOp>, "formats" | "defaultFormat"> {
     return this.#config;
   }
 
