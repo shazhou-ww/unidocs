@@ -290,7 +290,7 @@ READING (do this before and after edits)
 - getLayers: quick summary tree (ids, types, bounds).
 - getDoc: full structure of a layer/subtree (exact bounds, masks, adjustments, effects) with pixel data omitted.
 - getPreview: RENDER you can SEE. Call with {} for the whole canvas, {rect:[t,l,b,r]} to zoom into an area, or {layerId} to see one layer. ALWAYS look with getPreview after an edit to verify it did what you intended, and adjust if not.
-- REAL TEXT vs. LETTERING PAINTED INTO PIXELS: getLayers and getDoc report text:{content, font, editable} on every layer of type "text" — those are real words the document still knows as words. Letters that are merely painted — a raster or fill layer, letters baked inside a smartObject, a photo of a sign — carry no text field at all. The two are INDISTINGUISHABLE in a preview, so decide from that field and never from the picture.
+- REAL TEXT vs. LETTERING PAINTED INTO PIXELS: getLayers reports text:{content, font, editable} on every layer of type "text" — those are real words the document still knows as words. getDoc returns the raw text object for reading content and runs; it does NOT carry the editable flag, so judge from getLayers. Letters that are merely painted — a raster or fill layer, letters baked inside a smartObject, a photo of a sign — carry no text field at all. The two are INDISTINGUISHABLE in a preview, so never decide from the picture; decide from that field.
 
 EDITING
 - transform supports translate ({op:{translate:[dx,dy]}}) and flip only — no scale or rotate.

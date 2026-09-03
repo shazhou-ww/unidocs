@@ -107,8 +107,34 @@ describe("基础提示词里的规则不点名任何条件工具", () => {
   });
 
   it("真文字与画上去的字靠字段区分，不靠看图", () => {
+    // 两个断言必须成对。评审证明过：只断言"含 picture 的从句里有否定词"是空转的
+    // —— 把整句判据反过来写成"从图判断、绝不从字段判断"，只要 field 和 picture
+    // 挤在同一个从句里（clauseWith 按 ,;.—: 切），拿到的就是整句，否定词到底
+    // 贴着哪个词分辨不出来，17 例照样全绿。所以提示词那句被拆成了两个从句，
+    // 这里正反各钉一次：picture 那半必须带否定，field 那半必须不带。
     const rule = ruleAbout(instructions, /no text field at all/);
     expect(clauseWith(rule, "picture")).toMatch(FORBIDDEN);
+    expect(clauseWith(rule, "that field")).not.toMatch(FORBIDDEN);
+  });
+
+  it("READING 段落不许声称 getDoc 报 editable —— 它不报", () => {
+    // 与"幽灵工具"同一类错误，对象从工具换成字段：getDoc 走 stripLayer，
+    // 把原始 Layer.text 原样 spread 出去,既没有 editable 也没有平铺的 font
+    // （评审实测过两个查询的真实返回）。而 setTextInstructions 让模型
+    // "先用 getDoc{layerId} 读当前内容" —— 提示词若声称那里有 editable,
+    // 模型会找不到、据此认定这层不可编辑、退回 editPixels,**正好复现要修的
+    // 那次故障**。
+    const reading = ruleAbout(instructions, /REAL TEXT vs\. LETTERING/);
+    // 不用 clauseWith：`text:{…}` 里的冒号会把从句切断。改成钉相对位置 ——
+    // editable 必须出现在 getLayers 之后、getDoc 之前，且 getDoc 那一句要
+    // 明说它不带这个字段。把两个查询名对调会让第一条断言变红。
+    const atLayers = reading.indexOf("getLayers reports");
+    const atEditable = reading.indexOf("editable");
+    const atDoc = reading.indexOf("getDoc");
+    expect(atLayers).toBeGreaterThanOrEqual(0);
+    expect(atEditable).toBeGreaterThan(atLayers);
+    expect(atDoc).toBeGreaterThan(atEditable);
+    expect(reading.slice(atDoc)).toMatch(/does NOT carry the editable flag/);
   });
 });
 
