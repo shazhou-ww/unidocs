@@ -118,6 +118,13 @@ export function pngToDoc(bytes: Uint8Array): PsdDoc {
  */
 export async function docToPng(doc: PsdDoc): Promise<Uint8Array> {
   const composite = await render(doc);
+  // 对称于 `toRgba8` 的导入侧守卫:一个空文档(`init()` 给出 0x0 画布)合成
+  // 出的是 0x0 的 composite,`fast-png` 的 `encode()` 会拒绝它
+  // (`width must be a positive integer`),报出来的错跟"文档是空的"这件事
+  // 毫无关系。在这里拦住,报一个看得懂的错误。
+  if (composite.width === 0 || composite.height === 0) {
+    throw new Error(`PNG has zero extent (${composite.width}x${composite.height})`);
+  }
   return encode({
     width: composite.width,
     height: composite.height,

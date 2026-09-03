@@ -114,6 +114,17 @@ describe("pngToDoc", () => {
 });
 
 describe("docToPng", () => {
+  // 对称于 pngToDoc 的"零尺寸的 PNG 抛错"——导出侧此前没有这道守卫,空文档
+  // (0x0 画布)会一路走到 fast-png 的 encode() 里被拒绝,报出一个跟现场无关
+  // 的 "width must be a positive integer"。
+  it("零尺寸文档抛出与现场相关的错误", async () => {
+    const empty: PsdDoc = {
+      canvas: { width: 0, height: 0, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
+      layers: [],
+    };
+    await expect(docToPng(empty)).rejects.toThrow(/zero extent/i);
+  });
+
   it("PNG -> 文档 -> PNG 往返:像素不变", async () => {
     const original = solidPng(11, 22, 33, 44);
     const back = decode(await docToPng(pngToDoc(original)));
