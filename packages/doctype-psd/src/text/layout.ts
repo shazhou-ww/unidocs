@@ -107,13 +107,27 @@ export function layoutText(text: LayerText, resolveFace: FaceResolver): LayoutRe
       const size = unit.effectiveSize;
       const horizontalScale = unit.style.horizontalScale ?? 1;
       const verticalScale = unit.style.verticalScale ?? 1;
+      // autoKerning 与手工 kerning 互斥（不是叠加）：默认（未显式关掉）用字体
+      // 自带的 kern 表；显式关掉之后改用 style.kerning 这个作者指定的手工值。
       const autoKerning = unit.style.autoKerning !== false;
+      const hasPrevGlyph = prevFace !== null;
 
-      // 字偶距只在“相邻两个字形来自同一套字体”时才有意义——跨字体的两个
-      // codePoint 对同一套 kerning 表毫无意义，加了反而会把排版拉歪。
-      if (prevFace === face && autoKerning) {
-        const kern = face.kerning(prevCodePoint, unit.codePoint);
-        cursorX += (kern / face.unitsPerEm) * size * horizontalScale;
+      if (hasPrevGlyph && autoKerning) {
+        // 字体自带的 kern 表只在“相邻两个字形来自同一套字体”时才有意
+        // 义——跨字体的两个 codePoint 对同一张表毫无意义，加了反而会把排版
+        // 拉歪，所以额外要求 prevFace === face。
+        if (prevFace === face) {
+          const kern = face.kerning(prevCodePoint, unit.codePoint);
+          cursorX += (kern / face.unitsPerEm) * size * horizontalScale;
+        }
+      } else if (hasPrevGlyph && !autoKerning) {
+        // 手工覆盖值：作者在这两个字符之间显式指定的偏移，和字形来自哪套
+        // 字体无关——即便前一个字形来自另一套字体（中英混排常见），这个
+        // 偏移依然要生效，所以这里**不**检查 prevFace === face。单位和
+        // tracking 一样是千分之一 em，所以换算公式也一样（不乘
+        // horizontalScale，与 tracking 保持同样的口径）。
+        const manualKerning = unit.style.kerning ?? 0;
+        cursorX += (manualKerning / 1000) * size;
       }
 
       const color = unit.style.color ?? { r: 0, g: 0, b: 0 };
@@ -204,8 +218,14 @@ function splitIntoLines(chars: readonly CharStyle[]): GlyphUnit[][] {
     }
     const baseSize = style.size ?? DEFAULT_FONT_SIZE;
     if (style.caps === "all" || style.caps === "small") {
-      const upper = String.fromCodePoint(codePoint).toUpperCase();
-      const effectiveSize = style.caps === "small" ? baseSize * SMALL_CAPS_RATIO : baseSize;
+      const original = String.fromCodePoint(codePoint);
+      const upper = original.toUpperCase();
+      // small caps 的真实语义：只有“本来是小写、被这次变换转成大写”的字符才
+      // 缩字号；本来就是大写（或没有大小写区分，如数字/中文）的字符维持原字
+      // 号不变——`toUpperCase()` 前后不同就说明它被真的转换过。`caps: "all"`
+      // 不受这条影响，恒定用原字号。
+      const wasLowered = original !== upper;
+      const effectiveSize = style.caps === "small" && wasLowered ? baseSize * SMALL_CAPS_RATIO : baseSize;
       for (const ch of upper) {
         lines[lines.length - 1].push({ codePoint: ch.codePointAt(0)!, style, effectiveSize });
       }

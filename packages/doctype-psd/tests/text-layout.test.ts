@@ -63,14 +63,85 @@ describe("layoutText", () => {
     expect(out.glyphs.map(g => g.codePoint)).toEqual(["A".codePointAt(0), "B".codePointAt(0)]);
   });
 
-  it('caps: "small" 大写之外还按 SMALL_CAPS_RATIO 缩字号', () => {
+  it('caps: "small" 只缩本来是小写的字符：本来就大写的维持原字号', () => {
+    // "Ab"：A 本来就是大写，toUpperCase() 前后不变，维持 baseSize；
+    // b 本来是小写，被真的转换过，按 SMALL_CAPS_RATIO 缩。
     const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
-    const out = layoutText({ content: "b", style: { size: 10, caps: "small" } }, () => face);
+    const out = layoutText({ content: "Ab", style: { size: 10, caps: "small" } }, () => face);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
-    expect(out.glyphs[0].codePoint).toBe("B".codePointAt(0));
-    expect(out.glyphs[0].size).toBeCloseTo(10 * SMALL_CAPS_RATIO, 6);
+    expect(out.glyphs.map(g => g.codePoint)).toEqual(["A".codePointAt(0), "B".codePointAt(0)]);
+    expect(out.glyphs[0].size).toBe(10); // A：本来就是大写，不缩
+    expect(out.glyphs[1].size).toBeCloseTo(10 * SMALL_CAPS_RATIO, 6); // b：本来是小写，缩
     expect(SMALL_CAPS_RATIO).toBe(0.7);
+  });
+
+  it('caps: "all" 不受“本来是不是小写”影响，恒定用原字号', () => {
+    // 反向验证：C2 的判据只应该影响 "small"，不该连带改了 "all" 的行为。
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    const out = layoutText({ content: "Ab", style: { size: 10, caps: "all" } }, () => face);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.glyphs.map(g => g.size)).toEqual([10, 10]);
+  });
+
+  it("手工 kerning：autoKerning:false 时按 kerning/1000*size 推进，与 tracking 同单位", () => {
+    // advance 清零，隔离掉步进宽度的贡献，位移只可能来自手工 kerning。
+    const face = fakeFace({ advance: 0, unitsPerEm: 1000 });
+    const out = layoutText(
+      {
+        content: "ab",
+        runs: [
+          { length: 1, style: { size: 10 } },
+          { length: 1, style: { size: 10, autoKerning: false, kerning: 200 } },
+        ],
+      },
+      () => face,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.glyphs.map(g => g.x)).toEqual([0, (200 / 1000) * 10]);
+  });
+
+  it("autoKerning 默认（未显式设置）时手工 kerning 不生效", () => {
+    // 同样的 kerning:200、advance 清零，但没有 autoKerning:false——手工值
+    // 必须被忽略，第二个字形应该落在 x=0（纯 advance，因为 advance 本身是 0）。
+    const face = fakeFace({ advance: 0, unitsPerEm: 1000 });
+    const out = layoutText(
+      {
+        content: "ab",
+        runs: [
+          { length: 1, style: { size: 10 } },
+          { length: 1, style: { size: 10, kerning: 200 } },
+        ],
+      },
+      () => face,
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.glyphs.map(g => g.x)).toEqual([0, 0]);
+  });
+
+  it("手工 kerning 跨字体也生效——它是作者指定的偏移，和字形来自哪套字体无关", () => {
+    // faceA、faceB 各自的 kerning 表都留空（0），如果手工值被“同字体”这条
+    // 规则误伤，位移会变回纯 advance（0），和预期的 5px 不一致。
+    const faceA = fakeFace({ advance: 0, unitsPerEm: 1000 });
+    const faceB = fakeFace({ advance: 0, unitsPerEm: 1000 });
+    const out = layoutText(
+      {
+        content: "ab",
+        runs: [
+          { length: 1, style: { size: 10 } },
+          { length: 1, style: { size: 10, autoKerning: false, kerning: 500 } },
+        ],
+      },
+      cp => (cp === "a".codePointAt(0) ? faceA : faceB),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.glyphs[0].face).toBe(faceA);
+    expect(out.glyphs[1].face).toBe(faceB);
+    expect(out.glyphs.map(g => g.x)).toEqual([0, (500 / 1000) * 10]);
   });
 
   it("三种 justification 的 x 偏移：同一串文本首字形分别是 0 / -w/2 / -w", () => {
