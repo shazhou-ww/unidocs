@@ -8,3 +8,5 @@ export * from "./local-editor.js";
 export * from "./doc-type-service.js";
 export * from "./legacy-session-import.js";
 export { AGENT_LEASE_SECONDS, PgAgentSessionStore } from "./agent-session-store.js";
+export { createLocalOperatorNamespace } from "./local-operator.js";
+export type { LocalOperatorDeps } from "./local-operator.js";
