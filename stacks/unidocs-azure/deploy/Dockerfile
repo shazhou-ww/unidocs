@@ -16,28 +16,27 @@ FROM node:24-alpine AS builder
 ARG SERVICE
 WORKDIR /repo
 
-# 公网 npm registry 在本环境被 SNI 拦截,且 corepack 的按版本解析端点在
-# 该镜像源上返回相对 tarball 路径导致失败 —— 与 e2e/Dockerfile 同源的
-# 问题,用同样的解法:npm install -g 直接打 registry 根。版本从
+# 公司环境只允许 Microsoft npm proxy,而它没有 corepack 所需的按版本
+# 解析端点。用 npm install -g 走标准 packument/tarball 路径。版本从
 # packageManager 字段读取,不硬编码(否则会是第二个真相来源)。
 COPY package.json /tmp/package.json
 RUN PNPM_VERSION=$(node -e "process.stdout.write(require('/tmp/package.json').packageManager.match(/^pnpm@([0-9.]+)/)[1])") \
     && rm /tmp/package.json \
-    && npm install -g "pnpm@${PNPM_VERSION}" --registry=https://repo.huaweicloud.com/repository/npm/ \
+    && npm install -g "pnpm@${PNPM_VERSION}" --registry=https://packagefeedproxy.microsoft.io/npm/ \
     && [ "$(pnpm --version)" = "$PNPM_VERSION" ]
 
 # 整个工作区一次性拷入:pnpm install --frozen-lockfile 需要每一个工作区
 # 包的 package.json 都在场,分层拷贝在 monorepo 里要靠 find 拼,得不偿失。
 COPY . .
 
-RUN pnpm install --frozen-lockfile --registry=https://repo.huaweicloud.com/repository/npm/
+RUN pnpm install --frozen-lockfile --registry=https://packagefeedproxy.microsoft.io/npm/
 RUN pnpm -r build
 # --legacy:pnpm 10 起,未启用 inject-workspace-packages 的工作区不加这个
 # 会直接 ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE。
 # --registry:deploy 会重新向 registry 解析依赖,不带镜像源会卡在被 SNI
 # 拦截的公网源上。两个开关都是实测确认必需的,不要删。
 RUN pnpm deploy --legacy --filter "@unidocs/${SERVICE}" --prod \
-    --registry=https://repo.huaweicloud.com/repository/npm/ /out
+    --registry=https://packagefeedproxy.microsoft.io/npm/ /out
 
 FROM node:24-alpine AS runtime
 ARG ENTRY

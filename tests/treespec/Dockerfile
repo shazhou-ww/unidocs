@@ -25,20 +25,10 @@ RUN /usr/lib/postgresql/*/bin/initdb -D "$PGDATA" \
     && echo "listen_addresses = 'localhost'" >> "$PGDATA/postgresql.conf"
 USER root
 
-# Public npm registries are SNI-blocked in this environment, same as the
-# Debian mirror rewrite above — `corepack prepare` needs the same treatment.
-# `COREPACK_NPM_REGISTRY` was tried first (the direct analogue of the apt
-# mirror line) but does not actually work against this particular mirror:
-# corepack resolves a package manager version via `<registry>/pnpm/<version>`
-# (not the bare `<registry>/pnpm` packument), and that per-version endpoint on
-# this mirror returns a *relative* `dist.tarball` path
-# (`/pnpm/-/pnpm-<version>.tgz`) instead of an absolute URL — which fails
-# corepack's own `tarball.startsWith("http")` check with "does not have a
-# valid tarball", reproduced directly against this image's bundled corepack
-# (`corepack --version` => 0.35.0) regardless of Accept header. Installing
-# pnpm via plain `npm install -g` instead sidesteps corepack's resolution
-# path entirely and hits the registry root, which this mirror does serve
-# with absolute tarball URLs.
+# Company policy requires the Microsoft npm proxy. Corepack resolves pnpm via
+# `<registry>/pnpm/<version>`, which this proxy does not serve, while npm's
+# standard packument and tarball paths do work. Install pnpm through npm to
+# avoid Corepack's incompatible endpoint.
 #
 # The version is read out of root package.json's `packageManager` field at
 # build time rather than hardcoded here — a hardcoded version would be a
@@ -52,7 +42,7 @@ USER root
 COPY package.json /tmp/package.json
 RUN PNPM_VERSION=$(node -e "process.stdout.write(require('/tmp/package.json').packageManager.match(/^pnpm@([0-9.]+)/)[1])") \
     && rm /tmp/package.json \
-    && npm install -g "pnpm@${PNPM_VERSION}" --registry=https://repo.huaweicloud.com/repository/npm/ \
+    && npm install -g "pnpm@${PNPM_VERSION}" --registry=https://packagefeedproxy.microsoft.io/npm/ \
     && [ "$(pnpm --version)" = "$PNPM_VERSION" ]
 
 # No ENTRYPOINT — treespec sets Cmd: ["sleep", "infinity"] itself

@@ -1,6 +1,8 @@
 packages:
   - 'packages/*'
   - 'unicas-packages/*'
+overrides:
+  '@jridgewell/sourcemap-codec': 1.5.5
 allowBuilds:
   cpu-features: true
   esbuild: true

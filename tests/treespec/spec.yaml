@@ -5,7 +5,7 @@ steps:
     timeout: "60s"
   # --registry: public npm registries are SNI-blocked in this environment
   # (see tests/treespec/Dockerfile's comment on the same constraint for `corepack`).
-  - command: "cd /workspace && pnpm install --registry=https://repo.huaweicloud.com/repository/npm"
+  - command: "cd /workspace && pnpm install --registry=https://packagefeedproxy.microsoft.io/npm/"
     timeout: "600s"
   - command: "cd /workspace && pnpm -r build"
     timeout: "120s"
