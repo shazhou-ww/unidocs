@@ -26,6 +26,9 @@ export {
 export { decodeHistory, encodeHistory } from "./history-codec.js";
 export type { AgentRunOutcome, AgentSessionDeps } from "./session.js";
 
+export { createHttpAgentPlatform } from "./platform-http.js";
+export type { EditorFetcher, HttpAgentPlatformDeps } from "./platform-http.js";
+
 export {
   createAnthropicProvider, toAnthropicMessages,
 } from "./providers/anthropic.js";
