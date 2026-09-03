@@ -189,7 +189,16 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         },
         openBlob: (hash: string) => this.#requireCas().openBlob(hash),
       };
-      const context = createSBlobContext(casAdapter, { maxReadBytes: MAX_SVALUE_ROOT_BYTES });
+      // casConcurrency 取 2:这条路跑在 128MB 的 DO isolate 里,而生产 docx create
+      // 正是在并发 8 上被撑爆的(0795252)。2 就是当时 doctype-docx 自己压到的那个
+      // 值 —— 现在那份本地限流撤掉了,取值移到这里,docx 在 CF 上的行为逐字节不变。
+      //
+      // 提高它是修复清单第 4 项(标为 Deferred,要求"revisit only with the memory
+      // fix")的内容,应当单独做并带生产实测,不搭在这次重构里。
+      const context = createSBlobContext(casAdapter, {
+        maxReadBytes: MAX_SVALUE_ROOT_BYTES,
+        casConcurrency: 2,
+      });
       this.#context = context;
       this.#config = factory(context);
     }

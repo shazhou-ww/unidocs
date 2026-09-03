@@ -20,6 +20,7 @@ import type {
 import { SValueContentType } from "@unidocs/protocol";
 import { isSBlob } from "@unidocs/svalue-codec";
 import { createSBlob, decodeSValueWithRefs } from "@unidocs/svalue-codec/internal";
+import { CasLimiter, DEFAULT_CAS_CONCURRENCY } from "./cas-limiter.js";
 
 export interface SBlobCasAdapter {
   leaseNodeContent(
@@ -35,6 +36,34 @@ export interface SBlobCasAdapter {
 
 export interface SBlobContextOptions {
   readonly maxReadBytes?: number;
+  /**
+   * 本上下文同时在途的 CAS 子请求上限,省略时取 DEFAULT_CAS_CONCURRENCY。
+   *
+   * 正确取值随运行时而不同:Cloudflare 跑在 128MB 的 DO isolate 里,要小;
+   * Azure 内存宽松、又是跨云调用(单次往返 ~1.3s),延迟主导,要大。所以它是
+   * 参数,不是常数。
+   */
+  readonly casConcurrency?: number;
+}
+
+/**
+ * 把每个 CAS 调用都送进闸门。
+ *
+ * 包整个 adapter 而不是在 SBlobRuntime 内部逐处 `limiter.run(...)`:四个方法
+ * 一次覆盖,以后往 SBlobCasAdapter 上加方法也不会漏掉一处。
+ *
+ * `openBlob` 只有**打开**这一步在闸门内,随后的流式读取不在。这是有意的:
+ * open() 返回的 handler 由调用方持有,读多久由调用方决定,把许可攥在整个流的
+ * 生命周期上会被一个慢读者锁死闸门。代价是"读取+解码"那段缓冲不受本闸门约束。
+ */
+function limitedAdapter(cas: SBlobCasAdapter, limiter: CasLimiter): SBlobCasAdapter {
+  return {
+    leaseNodeContent: (hash, content, contentType, refs) =>
+      limiter.run(() => cas.leaseNodeContent(hash, content, contentType, refs)),
+    leaseNode: (hash) => limiter.run(() => cas.leaseNode(hash)),
+    storeBlob: (source) => limiter.run(() => cas.storeBlob(source)),
+    openBlob: (hash) => limiter.run(() => cas.openBlob(hash)),
+  };
 }
 
 export function readableStreamFromSBlobSource(source: SBlobSource): ReadableStream<Uint8Array> {
@@ -94,7 +123,7 @@ class SBlobRuntime {
   readonly #pendingMakes = new Map<string, Promise<SBlob>>();
 
   constructor(cas: SBlobCasAdapter, options: SBlobContextOptions) {
-    this.#cas = cas;
+    this.#cas = limitedAdapter(cas, new CasLimiter(options.casConcurrency ?? DEFAULT_CAS_CONCURRENCY));
     this.#maxReadBytes = validLimit(options.maxReadBytes, 8 * 1024 * 1024, "maxReadBytes");
   }
 
@@ -169,13 +198,14 @@ class SBlobRuntime {
       const data = Uint8Array.from(source.data);
       const refs = decodeSValueWithRefs(data).refs;
       const hash = await computeHash(data, source.contentType, refs);
-      // Sequential, not Promise.all: each CAS subrequest from a Durable Object
-      // holds a large in-flight buffer in the calling isolate, so a concurrent
-      // burst (e.g. a docx snapshot referencing ~7 parts) pushes the DO past
-      // its memory limit. Sequential keeps the peak at one subrequest.
-      for (const ref of new Set(refs)) {
-        await this.#cas.leaseNode(ref);
-      }
+      // 这里曾经是 `for (const ref of ...) await leaseNode(ref)` 的完全串行。
+      // 理由不能删:每个 CAS 子请求都在调用方 isolate 里持有一份大缓冲,生产
+      // docx create 就是被并发的一批(引用 ~7 个 part 的快照)撑爆的 ——
+      // "Durable Object's isolate exceeded its memory limit"(0795252)。
+      // 当时没有别的上限可用,只能退化成串行。现在上限由 `limitedAdapter` 的
+      // 闸门保证,这里可以并发回来 —— 比串行快,峰值同样有界。
+      // 遍历的是 `new Set(refs)` 且返回值全部丢弃,不需要保序。
+      await Promise.all([...new Set(refs)].map((ref) => this.#cas.leaseNode(ref)));
       await this.#cas.leaseNodeContent(hash, data, source.contentType, refs);
       return hash;
     }
