@@ -329,3 +329,20 @@ PIXEL EDITING
 - You CANNOT see transparency. A PNG's alpha is flattened to white before you see it, so a transparent area looks like white paper and pale content on it can be invisible. Previews therefore paint transparent areas as a grey/white CHECKERBOARD — that pattern is not part of the image. For anything quantitative, read the alpha(...) numbers rather than judging from the picture.
 - Write the instruction so it stands on its own: it is passed straight to an image model that sees only the layer and your sentence. "replace the hat with voluminous hair, with a bow hair accessory on top" works; "change it" does not.
 - If editPixels comes back with ok:false, read the reason: "refused" means rephrase the instruction; "timeout"/"provider_error" mean the attempt failed and nothing was changed — decide whether it is worth retrying.`;
+
+/**
+ * 只有注入了字体索引来源时才追加的一段（与 editPixelsInstructions 同一个
+ * 道理，见上面那段注释：工具表和提示词必须一起条件化）。
+ *
+ * 这段里**刻意不提 editPixels** —— 两个工具各自独立条件化，完全可能出现
+ * "有字体、没 editor"的部署，那时这段话里的 editPixels 就又是一个幽灵工具。
+ * "文字层该走哪个工具"的分流规则属于基础提示词，不在这里写。
+ */
+export const setTextInstructions = `
+
+TEXT LAYERS
+- setText: change the WORDS of a text layer. Give it {layerId, text}, where text is the layer's COMPLETE new content — not a diff, not just the part you changed. Read the current content with getDoc{layerId} first so you can send the whole string back. Newlines separate paragraphs.
+- It re-typesets the layer from the real font outlines and re-rasterises it, so the letters come out exactly as you wrote them. The style runs are re-split around your change, and the layer's bounds move so that the edge fixed by the paragraph alignment stays put: left-aligned keeps its left edge, right-aligned its right edge, centred its centre.
+- ONE STYLED STRETCH AT A TIME. If your replacement spans a stretch whose styling changes partway (the first three words bold, the rest not), setText refuses rather than flattening the styling away — make the change in two calls, each touching a single styled stretch.
+- ok:false is a normal answer, not a crash. Read reason: some text layers cannot be re-typeset at all (warped text, text on a path, vertical text, text boxes that need line breaking) — for those the picture stays the baked bitmap and setText changes nothing.
+- Read the result before you report success. ignored lists styles this layer carries that the renderer did not reproduce (underline, strikethrough, stroke, paragraph indents). missing lists characters no available font can draw — they are simply absent from the picture. fontFallbacks means the font the layer asked for is not installed here and another one was used, so the letterforms and the line width WILL differ from the original. When any of the three is non-empty, say so to the user instead of reporting an exact result.`;

@@ -5,6 +5,7 @@ import { crop, transform } from "./geometry-ops.js";
 import { adjust } from "./adjust-ops.js";
 import { maskEdit } from "./mask-ops.js";
 import { generativeFill } from "./generative-ops.js";
+import { setText } from "./text-ops.js";
 import { resolveLayerPixels } from "../resolve.js";
 import { casBlobStore } from "../psd/cas-blobstore.js";
 
@@ -44,6 +45,7 @@ const HANDLERS: Record<string, (doc: PsdDoc, payload: any) => void> = {
   adjust,
   mask_edit: maskEdit,
   generative_fill: generativeFill,
+  set_text: setText,
 };
 
 export function applyOne(doc: PsdDoc, op: PsdOp): PsdDoc {
