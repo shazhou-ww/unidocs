@@ -9,9 +9,10 @@
 > 写成「语义要对齐的参考」，低估了它。据此改了四处：
 >
 > 1. 「现状」节重写为两条运行时的对照，并点明生产的 PSD 服务跑在**没有机制的那条**（Azure）。
-> 2. 第一节范围收窄为「只补 Azure」，语义从自拟改为**逐字照抄 CF 已有的那份**。
-> 3. 新增「落地顺序」节：三步的先后由「哪一步之后哪条运行时能用」决定，第三步必须最后。
-> 4. 第四节加了两条护栏测试：PNG 与 PSD 内嵌合成图逐像素一致、两份 `selectFormat` 的 parity。
+> 2. 第一节从「给 Azure 新写一套机制」改为**把 CF 那份原地搬进 `doctype-server-common`，两边共用**。
+>    初稿自拟的匹配规则作废，以 CF 的现有行为为准。
+> 3. 新增「落地顺序」节：一个 PR 三个提交，先后由「哪一步之后哪条运行时能用」决定，第三步必须最后。
+> 4. 第四节加了两条护栏测试：PNG 与 PSD 内嵌合成图逐像素一致；CF 调用点改写后的导入回归。
 >
 > 第二、三节的做法不变。所有行号已按 `0aab9c8` 重新核过。
 
@@ -57,14 +58,14 @@ Azure 那条的链路：
 
 **生产环境走的是没有机制的那条。** Azure 侧注册了 `docx` / `markdown` / `psd`，PSD 服务跑在 `azure-sdk`，用的正是 `doctype-server-common` 的 `Session`。
 
-## 一、格式选择机制 —— **只补 Azure 那条**（`doctype-server-common`）
+## 一、格式选择机制 —— 提为两条运行时**共用的一份**（`doctype-server-common`）
 
 > **别从这一节开始动手。** 章节编号是叙述顺序，不是施工顺序——本节是「落地顺序」里的**第 2 步**，
 > 第 1 步是第二节（注册 `formats.png`）。理由见文末「落地顺序」。
 
-Cloudflare 那条已经做完（见「现状」），本节不动它的任何逻辑。要补的只有 `doctype-server-common`。
+Cloudflare 那条已经有一份可用的实现（见「现状」），Azure 那条一点没有。本节**把 CF 那份原地搬到 `doctype-server-common`，两边共用**，而不是给 Azure 再写一份。
 
-新增纯函数，放在 `packages/doctype-server-common/src/format-select.ts`：
+把 `editor-do-svalue.ts:954-975` 的函数体搬进新文件 `packages/doctype-server-common/src/format-select.ts`：
 
 ```ts
 export function selectFormat<TDoc>(
@@ -73,9 +74,14 @@ export function selectFormat<TDoc>(
 ): { name: string; format: DocumentFormat<TDoc> }
 ```
 
-### 语义：逐字照抄 Cloudflare 那份
+只有两处相对原函数的调整，都不改判断逻辑：
 
-初稿在这里自己拟了一套匹配规则。本次修订**放弃自拟，改为逐字照抄 `editor-do-svalue.ts:954-975` 已有的语义**——那份代码今天在生产上跑着，两条运行时对同一个上传给出不同判断是比任何规则细节都更糟的结果。
+- **入参从位置参数改成 `hint` 对象。** 原签名是 `(config, requested: string | null, mediaType: string, filename: string)`，四个都必填；Azure 的导出路径只有 `name`，没有另外两个。
+- **返回值从 `DocumentFormat` 改成 `{ name, format }`。** Azure 的导入路径要把选中的**格式名**传给 `Session.create({ format })`，光有对象不够。CF 唯一的调用点解构 `.format` 即可。
+
+### 语义：原封不动
+
+搬家不改语义。下表就是 `editor-do-svalue.ts:954-975` 今天的行为，逐条抄录——它在生产上跑着，本节的目标是让 Azure 追上它，不是重新设计它。
 
 | 情形 | 行为 |
 |---|---|
@@ -89,15 +95,37 @@ export function selectFormat<TDoc>(
 
 匹配顺序 name → mediaType → 扩展名，两处比较均大小写不敏感。
 
-**注意「恰好命中一个」而不是「取第一个」。** 初稿写的是顺序匹配取第一个；CF 那份是命中多个就抛。差别只在**注册了 mediaTypes 或 extensions 相互重叠的两个格式**时才可见——psd 与 png 不重叠，本期任何用例都碰不到。正因为碰不到，更没有理由在这里制造分歧：照抄，让两份实现零差异。
+**注意「恰好命中一个」而不是「取第一个」。** 初稿自己拟的规则是顺序匹配取第一个，与 CF 现有行为不符。差别只在**注册了 mediaTypes 或 extensions 相互重叠的两个格式**时才可见——psd 与 png 不重叠，本期任何用例都碰不到。初稿的写法作废，以现有行为为准。
 
 **回落而不是报错**：认不出来的输入按 `defaultFormat` 处理，保持今天的行为。一个不带文件名、或者带着奇怪文件名的 PSD 上传必须继续能用；真正不是 PSD 的字节会在 `load()` 里报错，那才是正确的报错位置。
 
-### 为什么是两份实现而不是一份
+### 为什么是共用一份，不是各写一份
 
-合并意味着让 `cloudflare-sdk` 去 import `doctype-server-common` 的新函数，改动一条今天工作正常、且属于另一朵云的关键路径。收益是消掉一份重复，代价是本期的功能改动骑在一次跨包重构上。**本期两份并存，用第四节的 parity 测试锁住行为一致**；两份零差异，将来合并就是纯删除，不是调和。
+修订初稿时一度打算"两份并存、用 parity 测试锁住"，理由是"合并要让 `cloudflare-sdk` 去 import `doctype-server-common`，功能改动骑上跨包重构"。**这个理由的前提是错的**，查证如下：
 
-> **后续（不在本期）**：把 `format-select.ts` 提为两条运行时的唯一实现，`editor-do-svalue.ts:954-975` 删掉改为引用。依赖方向是通的——`cloudflare-sdk/src/sblob-context.ts` 等文件今天已经在 import `doctype-server-common`——只是不该和本期的功能改动混在一起。
+```
+packages/cloudflare-sdk/package.json:25
+  "@unidocs/doctype-server-common": "workspace:*"          ← 依赖早就声明了
+
+packages/cloudflare-sdk/src/editor-do-svalue.ts:7-11
+  import { DELTA_THRESHOLD, readableStreamFromByteStream,
+           readableStreamFromSBlobSource } from "@unidocs/doctype-server-common";
+                                                            ← 就是这个文件在 import 它
+```
+
+不存在跨包重构。合并的实际改动是：`doctype-server-common/src/index.ts` 加一行 barrel 导出，`editor-do-svalue.ts:7-11` 已有的 import 列表加一个名字，`:954-975` **删掉** 22 行，`:783`（`selectFormat` 在 CF 侧的**唯一**调用点，`:553` 的导出分支是自己 inline 查表的）改一下取值方式。
+
+合并之后，"两份并存"要付的代价全部消失：
+
+- 不需要给 CF 那个私有函数开 `export` 的测试口子
+- 不需要写一个 parity 测试，也不需要永远维护它
+- 净删除 22 行重复逻辑
+
+**而保留两份等于把当初的问题制度化。** 这份稿子的「现状」节记录的正是两条运行时漂移了——Azure 从来没拿到这个机制。再复制一份，就是给下一次漂移预留位置。
+
+风险是动了一条生产在跑的 CF 路径。但它是纯函数、无 I/O、单一调用点，而且是原地搬家：**CF 的行为按构造不变，不是靠测试保证不变。**
+
+归置也对：`doctype-server-common` 就是"两个云适配器共用"的那个包（分层规则见 CLAUDE.md：`protocol` + `doctype-*` 云中立，`cloudflare-*` / `azure-*` 是适配器），`cloudflare-sdk` 已经依赖它。
 
 ### 导入
 
@@ -121,6 +149,23 @@ async exportBytes(formatName?: string): Promise<{ bytes: Uint8Array; contentType
 `session-handler.ts:196` 的 `GET /_internal/export` 读 `url.searchParams.get("format")` 传进去。
 
 顺手修：`session-handler.ts:204` 的 `Content-Disposition` 今天写死 `attachment; filename="document"`，改成带上所选格式的 `extensions[0]`（`document.psd` / `document.png`）。**这不是新设计，是把 Azure 补齐到 Cloudflare 已有的行为**（`editor-do-svalue.ts:563` 早就是 `document${extension}`）。前端仍然自己设 `a.download`，这只是让直接打 API 的人拿到一个有扩展名的文件。
+
+### Cloudflare 侧的收尾
+
+删掉 `editor-do-svalue.ts:954-975` 的私有 `selectFormat`，`:7-11` 已有的 import 列表加上它，唯一调用点 `:783` 改成：
+
+```ts
+const requested = formData.get("format");
+const { format } = selectFormat(config, {
+  ...(typeof requested === "string" ? { name: requested } : {}),
+  mediaType: file.type,
+  filename: file.name,
+});
+```
+
+`doctype-server-common/src/index.ts` 是个纯 barrel，加一行 `export * from "./format-select.js"`。
+
+`:553` 的导出分支不动——它是自己 inline 查表的（`config.formats[formatName]`），本来就没走 `selectFormat`。
 
 ### 网关
 
@@ -211,35 +256,43 @@ png: {
 - `toRgba8` 归一化：灰度、灰度+alpha、调色板、16-bit 各一条。
 - 零尺寸 PNG 抛错。
 
+**步 2** —— `packages/doctype-server-common/tests/format-select.test.ts`（新增，搬家的行为规格）：
+
+第一节那张表的七种情形各一条：显式 name 命中 / 显式 name 未注册抛 `Unknown format` / mediaType 唯一命中 / 扩展名唯一命中 / 多命中抛 `Ambiguous document format` / 全不命中回落 `defaultFormat` / `defaultFormat` 未注册抛错。大小写不敏感另算一条。
+
+这些是**搬家之前 CF 那份就有、但从来没被测过**的分支。搬到公共包顺手补上，是本次合并的额外收益之一。
+
 **步 2** —— `packages/doctype-server-common/tests/session.test.ts`（扩充）：
 - `create` 带 `.png` 文件名 → 走 `png.load`。
 - `create` 带未知扩展名 / 不带文件名 → 回落 `defaultFormat`（今天的行为不变）。
 - `exportBytes("png")` → 用 `png.save`，`contentType` 是 `image/png`。
 - `exportBytes()` 不带参数 → 与今天完全一致（`defaultFormat` + 顶层 `contentType`）。这是**回归护栏**，比新功能的用例更重要。
-- `selectFormat` 的七种情形（第一节那张表）各一条：显式 name 命中 / 显式 name 未注册抛错 / mediaType 唯一命中 / 扩展名唯一命中 / 多命中抛 `Ambiguous document format` / 全不命中回落 / `defaultFormat` 未注册抛错。大小写不敏感另算一条。
 
-**步 2 的等价性护栏** —— 新增 `packages/cloudflare-sdk/tests/format-select-parity.test.ts`：对同一组输入（显式 name / 只有 mediaType / 只有扩展名 / 全不命中 / 多命中），`doctype-server-common` 的 `selectFormat` 与 `editor-do-svalue.ts:954` 那份选出同一个格式，或抛同一类错。两份并存的前提就是行为一致；没有这条断言，「将来合并是纯删除」这句话就没有保障。
+**步 2 的 Cloudflare 回归护栏 —— 不用新写，已经有了。** `selectFormat` 的搬家不改判断逻辑，但调用点 `:783` 的取值方式变了（位置参数 → `hint` 对象、返回值解构），需要有东西盯着它。现成的两条集成测试正好走这条路，改完必须仍然绿：
 
-> **代价说清楚**：`editor-do-svalue.ts:954` 的 `selectFormat` 今天是**模块私有**的（无 `export`，`index.ts` 也没转出），所以这条测试要求给它加一个 `export` 关键字。这是本设计对 `cloudflare-sdk` 的**唯一**改动：只放开测试可见性，没有任何行为变化，不进 `index.ts` 的公开面（测试从 `src/editor-do-svalue.js` 直接 import，与该包既有测试的做法一致）。
->
-> 不愿意动 `cloudflare-sdk` 的话，退路是放弃这条测试，改为把上面那张语义差异表当作规范，只测新实现。**但那样两份实现的一致性就只靠人读代码维持**，属于明确的降级，需要显式接受。
+- `tests/integration/cloudflare/psd-ir-e2e.test.mjs:44` —— 上传 `sample.psd`，`type: "image/vnd.adobe.photoshop"`，整条 CF 栈端到端
+- `tests/integration/shared/behavior-suite.mjs:239` —— 上传 `exported.md`，`type: "text/markdown"`，两个后端都跑
 
-`packages/web-psd/tests/export.test.ts` 与 `top-bar.test.tsx`（扩充）：
+两条覆盖的是「文件名和 MIME 都对得上」这个主路径，也正是唯一会在真实流量里出现的路径。分支行为由上面那个新单测文件负责，不重复到集成层。
+
+**步 3** —— `packages/web-psd/tests/export.test.ts` 与 `top-bar.test.tsx`（扩充）：
 - `exportFileName` 按格式换扩展名。
 - 导出菜单渲染两项；点击「导出为 PNG」发出的请求带 `format=png`。
 - 导出中（`s.exporting`）菜单整体禁用。
 
 ## 落地顺序
 
-三步各自是一个可独立验证的交付，**顺序由「哪一步之后哪条运行时能用」决定**，不是由文件依赖决定：
+**一个 PR，三个提交。** 不拆分支——三步之间没有需要独立评审的边界，拆开只会让 reviewer 在三个 PR 之间来回对照同一份设计。
+
+顺序由「哪一步之后哪条运行时能用」决定，不是由文件依赖决定：
 
 | 步 | 内容 | 做完之后 |
 |---|---|---|
 | **1** | 第二节：`doctype-psd` 的 `png.ts` + 注册 `formats.png` | **Cloudflare 全通**（打开 `.png`、`?format=png` 导出）。Azure 仍然只有 psd —— 机制没补，`?format=png` 被忽略、上传 `.png` 回落到 `psd.load` 报错 |
-| **2** | 第一节：`doctype-server-common` 的 `selectFormat` + `create(format)` + `exportBytes(name)` + Content-Disposition | **Azure 追平**。两条运行时行为一致 |
+| **2** | 第一节：`selectFormat` 搬进 `doctype-server-common` 两边共用 + Azure 的 `create(format)` / `exportBytes(name)` / Content-Disposition | **Azure 追平**，且两条运行时从此共用同一份选格式逻辑 |
 | **3** | 第三节：前端 `accept` + 导出菜单 | 用户能用上。**必须排在 2 之后**——生产的 PSD 服务跑在 Azure，先放开 `accept=".psd,.png"` 会让用户选到一个服务端还打不开的文件 |
 
-第 1 步单独上线是安全的（多注册一个格式，没有任何调用方会选到它）。第 2 步单独上线也是安全的（不传 `format`、不带可识别文件名时逐字节等价于今天）。
+每一步单独都是可发布状态（第 1 步只是多注册一个没人选得到的格式；第 2 步在不传 `format`、不带可识别文件名时逐字节等价于今天），所以中途被打断也不会留下半成品。**但第 3 步不能提前**，那是唯一一条硬约束。
 
 ## 影响面
 
@@ -249,10 +302,11 @@ png: {
 |---|---|---|
 | `doctype-psd/src/psd/png.ts` | 新增 `pngToDoc` / `toRgba8` | 1 |
 | `doctype-psd/src/doctype.ts` | 注册 `formats.png`（`:80` 的 `formats` 块） | 1 |
-| `doctype-server-common/src/format-select.ts` | 新增 `selectFormat` | 2 |
+| `doctype-server-common/src/format-select.ts` | 新增 —— 从 `editor-do-svalue.ts:954-975` 搬来的 `selectFormat` | 2 |
+| `doctype-server-common/src/index.ts` | barrel 加一行 `export * from "./format-select.js"` | 2 |
 | `doctype-server-common/src/session.ts` | `create` 收 `format`（`:343`/`:355`），`exportBytes` 收 `formatName`（`:521`/`:524`） | 2 |
 | `doctype-server-common/src/session-handler.ts` | `/create` 传文件名与 MIME（`:143`→`:164`）；`/export` 读 `?format=`（`:196`）；`Content-Disposition` 带扩展名（`:204`） | 2 |
-| `cloudflare-sdk/src/editor-do-svalue.ts` | `selectFormat`（`:954`）加 `export`，仅测试可见性 | 2 |
+| `cloudflare-sdk/src/editor-do-svalue.ts` | **删掉** `:954-975` 的私有 `selectFormat`；`:7-11` 的 import 加上共用的那份；`:783` 改取值方式 | 2 |
 | `web-psd/src/ui/panels/top-bar.tsx` | `accept`（`:64`）；导出菜单 | 3 |
 | `web-psd/src/ui/controller.ts` | `exportDoc(format)`；`exportFileName(docName, format)`；启动文案 | 3 |
 
@@ -260,7 +314,7 @@ png: {
 
 - `packages/protocol` —— `DocumentFormat` / `formats` / `defaultFormat` 已经够用（`src/types.ts:158-162`）
 - `packages/gateway-common` —— `?format=` 随 `originalUrl.search` 原样转发（`gateway-handler.ts:335`）
-- **`packages/cloudflare-sdk` —— 格式分发已经实现了，本期不动它的逻辑**（这是本次修订相对初稿的主要变化；两份 `selectFormat` 并存的理由见第一节）。唯一的改动是给 `editor-do-svalue.ts:954` 的 `selectFormat` 加一个 `export`，纯测试可见性，无行为变化 —— 理由与退路见第四节
 - `azure-*` —— 它只是 `doctype-server-common` 的宿主，机制补在被宿主的那一侧
+- **`packages/cloudflare-sdk` 不在此列。** 它有改动（上表最后一行），但都是搬家的收尾：净删除 22 行，行为不变。初稿之后一度写成「本期不动 cloudflare-sdk」，理由是合并需要跨包重构——**那个前提是错的**，依赖早就存在，查证见第一节
 
 无新增依赖（`fast-png` 已在 `doctype-psd/package.json:32`）。
