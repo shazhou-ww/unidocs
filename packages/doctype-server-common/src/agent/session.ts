@@ -32,6 +32,14 @@ export interface AgentSessionDeps<TQuery, TOp> {
   readonly provider: LlmProvider;
   readonly maxIterations?: number;
   /**
+   * 起始对话历史。省略 = 空数组，即 Cloudflare 今天的行为。
+   *
+   * 给需要跨请求持久化的运行时用：Azure 是多副本无亲和的容器，每次 /run 都要
+   * 重建 AgentSession，历史只能从外部灌进来。Cloudflare 把 AgentSession 对象
+   * 本身留在 DO 字段上跨请求存活，所以它不传这个。
+   */
+  readonly history?: readonly AgentMessage[];
+  /**
    * 每一轮模型调用、每一次工具调用各产出一条事件，run 的首尾各一条。
    * 默认 noop，所以单测和既有调用方行为不变；composition root 注入
    * `consoleObserver`。
@@ -49,9 +57,11 @@ export class AgentSession<TQuery, TOp> {
   readonly #tools: ReadonlyMap<string, AgentTool<TQuery, TOp>>;
   readonly #definitions: readonly AgentToolDefinition[];
   readonly #blobCache = new ByteLru(BLOB_CACHE_BYTES);
-  #history: AgentMessage[] = [];
+  #history: AgentMessage[];
 
   constructor(deps: AgentSessionDeps<TQuery, TOp>) {
+    // 复制而不是直接持有：调用方那份数组不该随 run 增长。
+    this.#history = deps.history ? [...deps.history] : [];
     this.#deps = deps;
     this.#tools = new Map(deps.agent.tools.map(t => [t.name, t]));
     this.#definitions = deps.agent.tools.map(t => ({
@@ -177,6 +187,16 @@ export class AgentSession<TQuery, TOp> {
 
   reset(): void {
     this.#history = [];
+  }
+
+  /**
+   * 当前对话历史的快照，供需要跨请求持久化的运行时取出写回。
+   *
+   * 返回副本，不把内部数组交出去 —— 调用方在写回之前改坏它，只会在下一次
+   * run 读到脏历史时才暴露，离现场很远。
+   */
+  snapshotHistory(): readonly AgentMessage[] {
+    return [...this.#history];
   }
 
   /**
