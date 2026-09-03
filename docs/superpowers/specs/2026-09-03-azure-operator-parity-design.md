@@ -35,43 +35,30 @@ Azure 没有这个性质：`/run` 是一次普通 HTTP 请求，且容器是
 Map 也不行——第二次请求大概率落到另一个进程。每次 `/run` 必须重建
 `AgentSession`，而新对象的 `#history` 是空的。
 
-### 决定：两边都持久化，走同一个接缝
+### 决定：本轮只开接缝、只让 Azure 持久化；CF 一行不动
 
 不让 Azure 去模仿 DO（Azure 的等价物是 Durable Entities，属于 Azure Functions，
-为会话模型换掉整个托管形态不值当），而是**让 CF 也持久化**：
+为会话模型换掉整个托管形态不值当）。接缝按"两边都能用"来设计，但**本轮只有
+Azure 落地**：
 
 ```
-AgentSession.snapshotHistory()  ──编码──►  存储适配器
-                                             ├─ CF:    ctx.storage
-                                             └─ Azure: Postgres
+AgentSession.snapshotHistory()  ──编码──►  Postgres        ← 本轮
   AgentSessionDeps.history      ◄─解码──
+
+                                （CF: 不接，历史仍只在 DO 内存里）
 ```
 
-收敛的三个理由：
+**CF 本轮完全不动**：`#agentSession` 记忆化字段保留，历史继续只在内存里，
+`OperatorDO` 的 `ctx` 继续丢弃。加到 `AgentSession` 上的两个新东西 CF 一个都不用，
+行为逐字不变。
 
-1. **语义一致。** 两边都是"会话活着，直到 reset"。不再有"CF 会丢、Azure 不丢"。
-2. **编解码器只写一份，且两边都在跑它。** `AgentMessage` 的 image part 带
-   `SBlob`（品牌对象），必须只存 hash、读回 `createSBlob(hash)`。若只有 Azure
-   持久化，这个编解码器就只有一条路径在用，CF 永远不会暴露它的 bug。
-3. **顺手修掉 CF 的既有疤。** 现在是 *"in-memory session (lost on DO
-   eviction)"*：用户聊到一半 DO 被驱逐，上下文静默消失。
+为什么先这样：CF 那条是在跑的生产路径，给它加持久化不是纯新增（每次 run 多一次
+storage 写、多一条失败路径），而本轮真正要解决的问题是**Azure 上根本没有 agent**。
+把两件事绑在一起，等于让一个"从无到有"的改动去承担一个"把好的改得更好"的风险。
 
-CF 的 `OperatorDO` 构造函数已经收到了 `ctx`，只是丢弃了
-（`operator-do-agent.ts:62` 的 `constructor(_ctx: DurableObjectState, env)`），
-所以拿到 storage 不需要改签名。
-
-**收敛到什么程度：两边都"每次请求重建"。** CF 现有的
-`#agentSession` 记忆化字段（`operator-do-agent.ts:57`、`#session()` 的
-`if (this.#agentSession) return this.#agentSession`）**去掉**，改成和 Azure
-一样的 load → run → save。
-
-这一条是刻意的：只在 Azure 走"读档—跑—存档"、CF 继续吃内存缓存，会留下**两条
-不同的流程**，收敛就只做了一半——真正会出分歧的边角（历史写回失败、编解码器
-的行为）仍然只有一条路径在跑。代价是 CF 每次 run 多一次 `ctx.storage` 读，
-而 DO storage 是进程内的，这个代价可以接受。
-
-`#requestTail` 保留：它仍然负责把同一个 DO 上的并发请求串起来，去掉它会让两个
-并发 run 读到同一份历史然后互相覆盖。
+**代价要说清楚：这么做会保留两条运行时差异，不是一条**（见下面「保留的差异」）。
+统一推到以后，那时的工作量已经被这次的接缝压得很小：实现一个 `ctx.storage` 版的
+store，去掉 `#agentSession` 记忆化，两处。
 
 ## 改动清单
 
@@ -141,21 +128,11 @@ const editorFetcher = (name: string): EditorFetcher => ({
 
 于是 Azure **不需要写 AgentPlatform**。
 
-### 4. 存储适配器
+### 4. 存储：只有 Azure 一个实现，所以不抽接口
 
-共用接口（放 `doctype-server-common/src/agent/history-store.ts`）：
-
-```ts
-export interface AgentHistoryStore {
-  /** 取出历史；从未存过返回 []。 */
-  load(): Promise<AgentMessage[]>;
-  save(history: readonly AgentMessage[]): Promise<void>;
-  clear(): Promise<void>;
-}
-```
-
-- **CF**（`cloudflare-sdk`）：`ctx.storage` 上的单键 `"agent:history"`。
-- **Azure**（`azure-sdk`）：Postgres，见下。
+本轮只有 Postgres 一个实现，`PgAgentSessionStore`（`azure-sdk`）就是具体类，
+**不预先抽 `AgentHistoryStore` 接口**——一个实现的接口是凭空猜出来的抽象，
+等 CF 那份真的要写时再提取，那时才知道两者的公因子究竟长什么样。
 
 ### 5. Azure 的表：历史与租约共用一行
 
@@ -241,9 +218,21 @@ RETURNING history;
 | `IMAGE_EDIT_API_KEY` | 否（psd 专用） | 不给就没有 `editPixels` |
 | `IMAGE_EDIT_MODEL` / `IMAGE_EDIT_BASE_URL` | 否 | 默认见 `qwen-editor.ts:55` |
 
-## 保留的差异（只此一条，明确记录）
+## 保留的差异（两条，明确记录）
 
-**并发：CF 排队，Azure 409。**
+### 差异一：会话持久性 —— CF 驱逐即丢，Azure 不丢
+
+CF 维持 *"in-memory session (lost on DO eviction)"*：用户聊到一半 DO 被驱逐，
+上下文静默消失。Azure 落库，重启不丢。
+
+这是本轮**刻意保留**的，不是疏忽。后果要认下来：
+
+- **同一个功能在两条运行时上表现不同**，排查问题时得先问"这是哪条栈"。
+- **编解码器只有 Azure 一条路径在跑。** `AgentMessage` 带 `SBlob`，编解码要是有
+  bug，CF 永远不会暴露它。缓解办法只能是测试——所以下面把编解码器的往返测试
+  列为权重最高的一项，并要求变异验证。
+
+### 差异二：并发 —— CF 排队，Azure 409
 
 CF 的 `#requestTail`（`operator-do-agent.ts:56`）是单线程 isolate 里的一条
 promise 链，等待不占任何资源——这是 DO 模型自带的性质。Azure 上跨副本的等待
@@ -259,6 +248,10 @@ promise 链，等待不占任何资源——这是 DO 模型自带的性质。Az
 
 ## 非目标
 
+- **CF 侧的持久化。** 本轮不动 CF。以后要统一，工作量是：写一个 `ctx.storage` 版
+  的 store（单键 `"agent:history"`，`OperatorDO` 的 `ctx` 现在就在手上，
+  `operator-do-agent.ts:62` 只是丢弃了它），去掉 `#agentSession` 记忆化字段，
+  然后把 `PgAgentSessionStore` 与它的公因子提成接口。
 - **轮询等待。** 用的是同一张租约表，以后要加不必改存储。
 - **Durable Entities。** 换托管形态的代价远大于收益，见上。
 - **新 provider。** 只有 anthropic。
@@ -275,7 +268,6 @@ promise 链，等待不占任何资源——这是 DO 模型自带的性质。Az
 - **写回时机**：`run()` 抛错时历史仍被写回，且包含失败那轮的 user 消息。
 - **租约**：并发两个 `/run` 只有一个拿到，另一个 409；租约过期后可再抢；
   `/reset` 清空租约。
-- **CF 持久化**：新建一个 `OperatorDO` 实例（模拟驱逐后重建）能读回历史。
 - **Azure operator**：`/run` 与 `/reset` 走通，返回体与 CF 同形。
 - **回归**：`pnpm typecheck`、各包测试、`tests/unit` + `tests/integration/cloudflare`。
 
@@ -285,8 +277,10 @@ promise 链，等待不占任何资源——这是 DO 模型自带的性质。Az
 
 ## 风险
 
-1. **动了 CF 在跑的代码。** 持久化不是纯新增：每次 run 多一次 `ctx.storage` 写。
-   `platform-http.ts` 的提取则是纯结构调整（CF 调用点不变）。CF 侧要跑完整回归。
-2. **租约锁死。** 进程崩溃后最多 30 分钟拿不到租约，靠 `/reset` 逃生。
-3. **首次上线会"凭空"多出历史。** CF 今天驱逐即丢，改后不丢——用户可能看到
-   一段以为早就没了的旧对话。可接受，且是修复而非回归。
+1. **CF 侧只剩一处结构调整。** `platform-http.ts` 的提取是 `git mv` + 换 4 处类型
+   + 一行再导出，CF 调用点（`operator-do-agent.ts:124`）不变、运行时零变化。
+   仍要跑 CF 完整回归，但风险比"给 CF 加持久化"低一个量级。
+2. **编解码器缺一条验证路径。** 见「差异一」：只有 Azure 在跑它。
+3. **租约锁死。** 进程崩溃后最多 30 分钟拿不到租约，靠 `/reset` 逃生。
+4. **Azure 侧首次有了"不丢的历史"。** 用户在 Azure 上可能看到一段很旧的对话
+   （CF 上同样场景早就被驱逐清掉了）。`/reset` 是明确的清除入口。
