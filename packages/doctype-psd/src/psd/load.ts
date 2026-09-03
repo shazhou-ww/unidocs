@@ -115,6 +115,12 @@ function textUneditable(t: NonNullable<AgLayer["text"]>): TextUneditableReason[]
   // warp.style 存在且不是 'none' 才算真的变形过。
   if (t.warp?.style && t.warp.style !== "none") out.push("warp");
   if (t.textPath) out.push("text-path");
+  // 两个字段都判,但 `gridInfo` 在当前 ag-psd(31.0.2)下**永远为假** —— 不是
+  // 死代码,是库的编码/解码不对称:`encodeEngineData` 把 GridIsOn/ShowGrid/
+  // GridSize… 写进 EngineData(text.js:522-528),而解码侧整个 dist 里再没有
+  // 第二处提到 GridIsOn。同一个解码器是会读 EngineData 的(antiAlias、
+  // superscriptSize、smallCapSize 都由它还原),单单漏了 Grid* 这一组。
+  // 库哪天补上,这半个条件自动生效;在那之前只有 `gridding` 兜得住。
   if (t.gridding === "round" || t.gridInfo?.isOn) out.push("grid");
   return out;
 }

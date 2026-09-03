@@ -85,8 +85,9 @@ describe("文字层导入：识别我们复刻不了的排版特性", () => {
     expect(findText(await psdWith({ warp: { style: "none" } })).uneditable).toBeUndefined();
   });
 
-  // 用 gridding 而不是 gridInfo:ag-psd 读得回 gridding,写不回 gridInfo,
-  // 所以后者在测试里造不出来。两个字段我们都认。
+  // 用 gridding 而不是 gridInfo:ag-psd 把 gridInfo 写进 EngineData 却从不
+  // 解回来(见 load.ts 里 textUneditable 的注释),所以那个状态在测试里根本
+  // 造不出来。两个字段我们都认,能测的只有这一个。
   it("CJK 排版网格 → 不可重排", async () => {
     expect(findText(await psdWith({ gridding: "round" })).uneditable).toContain("grid");
   });
