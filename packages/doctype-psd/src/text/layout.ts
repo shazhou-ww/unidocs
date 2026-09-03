@@ -306,12 +306,16 @@ function lineLeading(line: readonly GlyphUnit[]): number {
   return max;
 }
 
-type Justification = "left" | "right" | "center";
+export type Justification = "left" | "right" | "center";
 
 /** `justify-*` 只在有换行宽度约束时才有意义（把词间距撑满一行）——v1 不支持
  *  框文字，没有宽度可撑，所以按对应的锚点降级：`justify-left/right/center`
- *  等价于去掉前缀；`justify-all` 没有对应的锚点，退到 `left`。 */
-function normalizeJustification(raw: LayerParagraphStyle["justification"] | undefined): Justification {
+ *  等价于去掉前缀；`justify-all` 没有对应的锚点，退到 `left`。
+ *
+ *  导出是给 `set-text.ts` 的 `anchorEdge` 复用的：那边要按同一个对齐方式给
+ *  图层框定锚点，两处判据一旦分叉，字就会整体平移。抄第二份的话没有任何东西
+ *  盯着它们同步，所以共用这一份。 */
+export function normalizeJustification(raw: LayerParagraphStyle["justification"] | undefined): Justification {
   switch (raw ?? "left") {
     case "left":
     case "justify-left":

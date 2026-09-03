@@ -46,15 +46,32 @@ export function setText(doc: PsdDoc, p: SetTextPayload): void {
       );
     }
   }
+  // 段落 runs 同理，而且 effect 那边两者走的是同一套切分（`spliceRuns`）——
+  // 只兜住字符 runs 等于只兜住一半。`paragraphRuns[].length` 算错的后果是
+  // 逐行对齐静默套错段（居中的标题被按左对齐排），一样是永久的。
+  if (text.paragraphRuns) {
+    const total = text.paragraphRuns.reduce((n, r) => n + r.length, 0);
+    if (total !== text.content.length) {
+      throw new Error(
+        `set_text: paragraphRuns length ${total} does not cover content length ${text.content.length}`,
+      );
+    }
+  }
   if (!Array.isArray(p.bounds) || p.bounds.length !== 4 || !p.bounds.every(Number.isFinite)) {
     throw new Error("set_text: bounds must be four finite numbers [top,left,bottom,right]");
   }
 
+  // `text` / `pixels` / `provenance` 直接挂载荷对象：`applyOne` 每次都先
+  // `structuredClone` 整份 doc 再交给 handler，op 与 op 之间本来就不共享对象，
+  // 深拷一整份 `LayerText` 只是白花开销。（载荷可能来自 SValue 解码器、那些
+  // 对象是冻结的——这条本身成立，但落地之后没有任何一处**原地**改写它们，
+  // 所以不构成理由。）
   layer.text = text;
   layer.pixels = p.pixels;
   // 位置数组 [top,left,bottom,right]，与 inkBounds 那个 {left,top,right,bottom}
-  // 具名对象的字段顺序**是反的**（见 set-text.ts 里换算那一段）。拷一份是因为
-  // 载荷可能来自 SValue 解码器，那些对象是冻结的。
+  // 具名对象的字段顺序**是反的**（见 set-text.ts 里换算那一段）。这一处拷贝
+  // 是因为 `bounds` 是四个数的可变数组、图层把它当自己的东西用（`geometry-ops`
+  // 的 `shiftBounds` 会整体换掉它），四个数的浅拷贝也不值一提。
   layer.bounds = [...p.bounds] as [number, number, number, number];
   // 这层像素不再是 Photoshop 烘的，UI 和 agent 都得知道 —— 写法与
   // generativeFill 同一套（没有 seed 字段：自研排版链没有种子这回事）。

@@ -28,7 +28,7 @@ import type { FontRef, LayerParagraphStyle, LayerText, LayerTextStyle, Pixels } 
 import type { PsdOp } from "../ops/index.js";
 import type { PsdQuery } from "../queries.js";
 import type { FaceResolver, FontFace } from "./font.js";
-import { layoutText } from "./layout.js";
+import { layoutText, normalizeJustification, type Justification } from "./layout.js";
 import { parseFontFace } from "./opentype-face.js";
 import { rasterizeGlyphs } from "./raster.js";
 import type { FontEntry, FontIndex } from "./registry.js";
@@ -99,24 +99,36 @@ function asTextLayer(data: unknown, layerId: string): TextLayerInfo {
  * 一行（= 一段）的对齐方式决定改字之后哪条边不动，所以这里只关心**第一段**
  * 的对齐 —— 图层框是整层的，不可能一段一个位置。
  *
- * `justify-*` 的降级与 `layout.ts` 的 `normalizeJustification` 保持一致
- * （那个函数没有导出，而 Task 6 不改 layout.ts）：有宽度约束才谈得上撑满
- * 一行，v1 不支持框文字，所以按对应的锚点降级，`justify-all` 退到 `left`。
- * 两处必须同步 —— 排版把字按对齐方式摆好，这里再按同一个对齐方式给图层框
- * 定锚点，判据不一致的话字会整体平移。
+ * `justify-*` 的降级直接复用 `layout.ts` 的 `normalizeJustification`，不抄
+ * 第二份：排版把字按对齐方式摆好，这里再按同一个对齐方式给图层框定锚点，
+ * 两边判据一旦分叉字就会整体平移，而两份手抄的映射没有任何东西盯着它们同步。
  */
-function anchorEdge(text: LayerText): "left" | "right" | "center" {
-  const first = text.paragraphRuns?.[0]?.style ?? text.paragraphStyle;
-  switch ((first as LayerParagraphStyle | undefined)?.justification ?? "left") {
-    case "right":
-    case "justify-right":
-      return "right";
-    case "center":
-    case "justify-center":
-      return "center";
-    default:
-      return "left";
-  }
+function anchorEdge(text: LayerText): Justification {
+  const first: LayerParagraphStyle | undefined = text.paragraphRuns?.[0]?.style ?? text.paragraphStyle;
+  return normalizeJustification(first?.justification);
+}
+
+/**
+ * `text.transform` 是 ag-psd 逐字保留下来的仿射矩阵（`psd/load.ts`）：前四位
+ * `a/b/c/d` 是线性部分（缩放 / 旋转 / 斜切），后两位 `e/f` 是平移。
+ *
+ * 排版链**不消费**这个矩阵 —— `layoutText` 按 1:1 排版、`rasterizeGlyphs`
+ * 也按 1:1 画。线性部分不是单位阵时改一次字，等于当场把这层文字缩放或旋转
+ * 掉，而且输出**整个**是错的。所以这一档归 `fail`，不进 `ignored`：`ignored`
+ * 的语义是"这个样式我们没还原"（下划线那种局部损失，其余部分仍然正确），
+ * 整体变换算错没有"其余部分仍然正确"可言。
+ *
+ * 平移 `e/f` 不判：点文字的锚点本来就靠它定位，不影响字形大小，而新 bounds
+ * 是从**图层框**推出来的（见下面算 bounds 那段），根本不经过这个矩阵。
+ *
+ * 位数不足 4 的矩阵一样拒绝 —— 我们读不懂它，猜一个"大概是单位阵"正是这条
+ * 裁定要消灭的静默。
+ */
+function nonIdentityTransform(transform: readonly number[] | undefined): number[] | null {
+  if (transform === undefined) return null;
+  const identity = [1, 0, 0, 1];
+  const isIdentity = transform.length >= 4 && identity.every((v, i) => transform[i] === v);
+  return isIdentity ? null : [...transform];
 }
 
 /** caps 变换之后的字符串。选字体必须按**展开之后**的码位查覆盖：`caps` 会
@@ -161,11 +173,35 @@ interface FontSubstitution {
   usedInstead: string[];
 }
 
+/**
+ * 请求的字体**在**索引里、只是不认识某几个码位时的逐码位兜底记录。
+ *
+ * 和 `FontSubstitution` 分成两个字段而不是并成一个：那边是"整套字体这里没
+ * 有"，一层文字从头到尾都换了字形；这边是"这几个字这套字体画不出来"，中英
+ * 混排里最常发生的一档 —— 用户加两个中文字，只有那两个字的字形变了。两件事
+ * 该说的话不一样（一个说整层版面会变，一个说这几个字与同行其余字不同源），
+ * 合成一个字段反而让模型说不清。
+ *
+ * 整套缺席的情况**只**记在 `FontSubstitution` 里，不在这里重复记 —— 否则一段
+ * 纯英文会为每个字符都报一遍同一件事。
+ */
+interface GlyphFallback {
+  requested: string;
+  used: string;
+  /** 真正落到 `used` 上的那些字符，去重、按首次出现顺序。 */
+  chars: string[];
+}
+
 interface LoadedFonts {
   resolveFace: FaceResolver;
   /** 真正装载了的字体，用来写进 `doc.fonts` 保活。 */
   fonts: FontRef[];
   substitutions: FontSubstitution[];
+  /**
+   * 逐码位兜底的记账。**排版跑完才有内容** —— 这个数组由 `resolveFace` 在
+   * `layoutText` 逐字符调用时填，所以调用方必须在 `layoutText` 之后才读它。
+   */
+  glyphFallbacks: GlyphFallback[];
 }
 
 /**
@@ -211,7 +247,36 @@ async function loadFonts(
     fonts.push({ postScriptName: name, blob });
   }
 
-  return { resolveFace: resolveFaceChain(loaded, source.fallbacks), fonts, substitutions };
+  // 逐码位兜底也要报。`resolveFaceChain` 只交回一个 `FontFace`，不说它是哪
+  // 个候选，所以这里反查一张 face → 索引名的表 —— 不能用
+  // `face.postScriptName`：那是从字体文件里解析出来的名字，和索引这套命名
+  // （requested / fallbacks 用的那套）未必一致。
+  const nameOfFace = new Map<FontFace, string>();
+  for (const [name, face] of loaded) nameOfFace.set(face, name);
+
+  const chain = resolveFaceChain(loaded, source.fallbacks);
+  const glyphFallbacks: GlyphFallback[] = [];
+  const byPair = new Map<string, GlyphFallback>();
+  const resolveFace: FaceResolver = (codePoint, requestedFont) => {
+    const face = chain(codePoint, requestedFont);
+    if (face === null || requestedFont === undefined) return face;
+    const used = nameOfFace.get(face);
+    // `index.has(requested)` 为假的那一档已经进了 `substitutions`，不重复记。
+    if (used === undefined || used === requestedFont || !index.has(requestedFont)) return face;
+    const key = `${requestedFont} ${used}`;
+    let entry = byPair.get(key);
+    if (!entry) {
+      entry = { requested: requestedFont, used, chars: [] };
+      byPair.set(key, entry);
+      glyphFallbacks.push(entry);
+    }
+    const ch = String.fromCodePoint(codePoint);
+    // 去重：同一个字缺 20 遍，报 20 遍只是噪音（与 `missingChars` 同一口径）。
+    if (!entry.chars.includes(ch)) entry.chars.push(ch);
+    return face;
+  };
+
+  return { resolveFace, fonts, substitutions, glyphFallbacks };
 }
 
 /** 码位数组 → 可读的字符串，给模型看的。去重：一句话里缺 20 个同样的字，
@@ -281,6 +346,19 @@ export function createSetTextTool(source: FontIndexSource): AgentTool<PsdQuery, 
         });
       }
 
+      const transform = nonIdentityTransform(old.transform);
+      if (transform !== null) {
+        return fail({
+          ok: false,
+          reason: `setText: layer "${layerId}" carries a non-identity text transform`
+            + ` [${transform.join(", ")}] — the text is scaled, rotated or skewed. The typesetter`
+            + ` lays text out at 1:1 and does not apply that matrix, so re-typesetting would`
+            + ` silently resize or rotate the whole layer. This layer's text can only be repainted,`
+            + ` not retyped. The layer was not changed.`,
+          detail: { kind: "non-identity-transform", transform } as JsonValue,
+        });
+      }
+
       // 改动区间由这里推导，不让模型算字符偏移量 —— 它给的是整串新内容。
       const range = diffRange(old.content, newContent);
       const nextText: LayerText = { ...old, content: newContent };
@@ -297,7 +375,7 @@ export function createSetTextTool(source: FontIndexSource): AgentTool<PsdQuery, 
       }
 
       const index = await source.load();
-      const { resolveFace, fonts, substitutions } = await loadFonts(nextText, source, index, ctx);
+      const { resolveFace, fonts, substitutions, glyphFallbacks } = await loadFonts(nextText, source, index, ctx);
 
       const laid = layoutText(nextText, resolveFace);
       if (!laid.ok) {
@@ -399,8 +477,14 @@ export function createSetTextTool(source: FontIndexSource): AgentTool<PsdQuery, 
             ignored: laid.ignored as unknown as JsonValue,
             missing,
             fontFallbacks: substitutions as unknown as JsonValue,
+            // 逐码位兜底：请求的字体在、只是不认识这几个字。静默换字形正是
+            // 本任务要消灭的东西，所以它和整套替换一样必须出现在报告里。
+            glyphFallbacks: glyphFallbacks as unknown as JsonValue,
           },
-          content: [{ type: "text", text: summarize(layerId, newContent, laid.ignored, missing, substitutions) }],
+          content: [{
+            type: "text",
+            text: summarize(layerId, newContent, laid.ignored, missing, substitutions, glyphFallbacks),
+          }],
         },
       };
     },
@@ -442,8 +526,15 @@ function summarize(
   ignored: readonly string[],
   missing: readonly string[],
   substitutions: readonly FontSubstitution[],
+  glyphFallbacks: readonly GlyphFallback[],
 ): string {
   let text = `Done. Layer "${layerId}" now reads ${JSON.stringify(content)}, re-typeset and re-rasterised.`;
+  if (glyphFallbacks.length > 0) {
+    text += ` FONT SUBSTITUTED FOR SOME CHARACTERS: ${glyphFallbacks
+      .map(f => `${f.chars.map(c => JSON.stringify(c)).join(", ")} were drawn with "${f.used}" because`
+        + ` "${f.requested}" has no glyph for them`)
+      .join("; ")}. Those letterforms WILL differ from the rest of the line — tell the user.`;
+  }
   if (substitutions.length > 0) {
     text += ` FONT SUBSTITUTED: ${substitutions
       .map(s => `"${s.requested}" is not available here, so ${s.usedInstead.length > 0 ? s.usedInstead.map(n => `"${n}"`).join(" + ") : "no font"} was used instead`)

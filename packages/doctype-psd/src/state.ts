@@ -3,6 +3,7 @@ import type {
   BlendMode,
   Canvas,
   DropShadow,
+  LayerText,
   LayerType,
   PsdDoc,
   Stroke,
@@ -47,6 +48,12 @@ export interface PsdStoredLayer {
   };
   readonly stroke?: Stroke;
   readonly dropShadow?: DropShadow;
+  /** 文字层的文字描述。`storeLayer`/`loadLayer` 靠 `...rest` 把它带过持久化，
+   *  运行时一直是好的——但类型里不写出来，就等于在说"这个字段不持久化"，而
+   *  事实相反。危险在于 `PsdStoredDoc` 用的是显式字段：谁要是把 `storeLayer`
+   *  也改成显式字段与之看齐（很自然的重构冲动），`text` 会**静默**消失，和这
+   *  个分支上刚修过的 `fonts` 是同一个故障。 */
+  readonly text?: LayerText;
   readonly provenance?: {
     readonly model: string;
     /** 只有真的把种子发给了 provider 的实现才写它 —— 见 model/types.ts。 */

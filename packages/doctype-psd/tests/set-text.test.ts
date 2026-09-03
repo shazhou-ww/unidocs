@@ -44,6 +44,14 @@ const rectFontBytes = (): Uint8Array => buildRectFont([
   { char: "C", width: 600, height: 700, advanceWidth: 600 },
 ]);
 
+/** 只认识 `中`/`文` 的第二套字体，度量与 `rectFontBytes` 完全一样 —— 中英
+ *  混排的场景里要断言的是"哪个字用了哪套字体"，度量再不一样就没法把版面
+ *  的期望值手算出来了。 */
+const cjkFontBytes = (): Uint8Array => buildRectFont([
+  { char: "\u4e2d", width: 600, height: 700, advanceWidth: 600 },
+  { char: "\u6587", width: 600, height: 700, advanceWidth: 600 },
+]);
+
 type Cas = ReturnType<typeof memCas>;
 
 /**
@@ -115,17 +123,41 @@ function doc(layer: Layer): PsdDoc {
   };
 }
 
-/** 真 EffectContext：query 走真的 runQuery，blob 读写走同一个 memCas。 */
-function effectCtx(model: PsdDoc, cas: Cas): EffectContext<PsdQuery> {
+/** 真 EffectContext：query 走真的 runQuery，blob 读写走同一个 memCas。
+ *  `readLog` 给它记账：`setText` 只用 `ctx.readBlob` 读**字体**字节（渲染那条
+ *  路直接走 `cas.ctx`），所以这个日志就是"这次装载了哪几套字体"。 */
+function effectCtx(model: PsdDoc, cas: Cas, readLog?: string[]): EffectContext<PsdQuery> {
   return {
     query: async (q) => ({ data: await runQuery(q as PsdQuery, model, cas.ctx) as SValue, version: 1 }),
     readBlob: async (blob: SBlob): Promise<SBlobBytes> => {
+      readLog?.push(blob.hash);
       const handle = await cas.ctx.openSBlob(blob);
       return { data: await handle.readBytes({ offset: 0, length: handle.size }), contentType: handle.contentType };
     },
     writeBlob: (data: SBlobBytes) => cas.ctx.makeSBlob(data),
     signal: AbortSignal.timeout(60_000),
   } as EffectContext<PsdQuery>;
+}
+
+/** 解码出来的 PNG，只留断言要用的三样。 */
+interface DecodedPng { width: number; height: number; data: ArrayLike<number> }
+
+async function decodePng(cas: Cas, blob: SBlob): Promise<DecodedPng> {
+  const handle = await cas.ctx.openSBlob(blob);
+  const png = decode(await handle.readBytes({ offset: 0, length: handle.size }));
+  return { width: png.width, height: png.height, data: png.data as ArrayLike<number> };
+}
+
+/** (x, y) 处的 alpha，0..255。 */
+const alphaAt = (png: DecodedPng, x: number, y: number): number =>
+  Number(png.data[(y * png.width + x) * 4 + 3]);
+
+/** 完全不透明（alpha === 255）的像素个数。矩形测试字体的边缘正好落在整数
+ *  像素边界上，覆盖率恰好是 1，不会有抗锯齿的中间值。 */
+function fullyOpaqueCount(png: DecodedPng): number {
+  let n = 0;
+  for (let i = 3; i < png.data.length; i += 4) if (Number(png.data[i]) === 255) n++;
+  return n;
 }
 
 interface RunResult {
@@ -140,10 +172,11 @@ async function runSetText(
   model: PsdDoc,
   source: FontIndexSource,
   args: Record<string, unknown>,
+  readLog?: string[],
 ): Promise<RunResult> {
   const tool = createSetTextTool(source);
   if (tool.kind !== "effect") throw new Error("setText must be an effect tool");
-  const out = await tool.run(args as never, effectCtx(model, cas));
+  const out = await tool.run(args as never, effectCtx(model, cas, readLog));
   const parts = out.result.content ?? [];
   const textPart = parts.find(p => p.type === "text") as { text: string } | undefined;
   return {
@@ -236,6 +269,175 @@ describe("setText：成功路径", () => {
     expect(p.text.content).toBe("ABC");
     expect(p.text.runs).toBeUndefined();
   });
+
+  /**
+   * 像素断言。上面那几条只把 PNG decode 出来看了宽高 —— 把栅格化的 `origin`
+   * 写错，输出一整张**纯透明** PNG，宽高照样是对的。"自己排版、自己栅格化"
+   * 的全部价值就在墨迹落到哪儿。
+   *
+   * 手算（矩形字体：轮廓 600x700 font units、advance 600、unitsPerEm 1000，
+   * size 20 → 每个字形 12x14 px，墨迹正好占满自己的步进宽度）：
+   *   排版：基线 y = 0，第 i 个字形 x = 12i，轮廓在文档坐标系（y 轴向下）里占
+   *         x ∈ [12i, 12i+12)、y ∈ [-14, 0)
+   *   "AAA" → inkBounds = {left:0, top:-14, right:36, bottom:0}
+   *   左对齐 → 图层框左上角沿用旧框 (left=20, top=10) → bounds = [10,20,24,56]，
+   *         画布 36 x 14
+   *   origin = {x: 0 + (20-20), y: -14 + (10-10)} = {x:0, y:-14}
+   *         → 画布里第 i 个字形占 x ∈ [12i, 12i+12)、y ∈ [0, 14)
+   * 三个字形首尾相接、竖直方向占满整幅 → 36 x 14 = 504 个像素**全部**不透明。
+   */
+  it("栅格化：三个字形铺满 36x14 的画布，504 个像素一个不漏", async () => {
+    const { cas, model, source } = await scene();
+    const { ops } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    const p = ops[0].payload as { pixels: { blob: SBlob } };
+
+    const png = await decodePng(cas, p.pixels.blob);
+    expect([png.width, png.height]).toEqual([3 * GLYPH_W, GLYPH_H]);
+    expect(fullyOpaqueCount(png)).toBe(3 * GLYPH_W * GLYPH_H);
+    // 四角各抽一个：墨迹整体平移一个像素，这四条里至少有一条会掉。
+    expect(alphaAt(png, 0, 0)).toBe(255);
+    expect(alphaAt(png, 3 * GLYPH_W - 1, 0)).toBe(255);
+    expect(alphaAt(png, 0, GLYPH_H - 1)).toBe(255);
+    expect(alphaAt(png, 3 * GLYPH_W - 1, GLYPH_H - 1)).toBe(255);
+  });
+
+  /**
+   * 两行文字：画布上有**本来就该透明**的地方，所以这条抓得住"墨迹整体平移"，
+   * 上面那条满幅的抓不住。
+   *
+   * 手算（size 20，没有显式 leading → 行距 = 20 x 1.2 = 24）：
+   *   第 1 行 "A" ：基线 y = 0 ，墨迹 x ∈ [0,12)、y ∈ [-14, 0)
+   *   第 2 行 "AA"：基线 y = 24，墨迹 x ∈ [0,24)、y ∈ [ 10, 24)
+   *   inkBounds = {left:0, top:-14, right:24, bottom:24} → 24 x 38
+   *   左对齐 → bounds = [10, 20, 10+38, 20+24] = [10, 20, 48, 44]
+   *   origin = {x:0, y:-14} → 画布 y = 文档 y + 14：
+   *     第 1 行 → x ∈ [0,12)、y ∈ [ 0, 14)
+   *     第 2 行 → x ∈ [0,24)、y ∈ [24, 38)
+   *   不透明像素 = 12x14 + 24x14 = 168 + 336 = 504；画布共 24 x 38 = 912。
+   */
+  it("栅格化：两行文字的墨迹落点逐点手算，行间的空隙必须是透明的", async () => {
+    const { cas, model, source } = await scene({
+      content: "A",
+      style: { font: "TestFont", size: SIZE, color: BLACK },
+      paragraphStyle: { justification: "left" },
+    });
+    const { ops } = await runSetText(cas, model, source, { layerId: "title", text: "A\nAA" });
+    const p = ops[0].payload as { bounds: number[]; pixels: { blob: SBlob } };
+    expect(p.bounds).toEqual([10, 20, 48, 44]);
+
+    const png = await decodePng(cas, p.pixels.blob);
+    expect([png.width, png.height]).toEqual([24, 38]);
+    expect(fullyOpaqueCount(png)).toBe(504);
+    // 第 1 行只有一个字形宽：左半边是墨迹，右半边（第 2 行才够得着的那些列）不是。
+    expect(alphaAt(png, 0, 0)).toBe(255);
+    expect(alphaAt(png, 11, 13)).toBe(255);
+    expect(alphaAt(png, 12, 0)).toBe(0);
+    // 两行之间的空隙：文档 y ∈ [0,10) → 画布 y ∈ [14,24)。
+    expect(alphaAt(png, 0, 14)).toBe(0);
+    expect(alphaAt(png, 0, 23)).toBe(0);
+    // 第 2 行：整整 24 像素宽、14 像素高。
+    expect(alphaAt(png, 0, 24)).toBe(255);
+    expect(alphaAt(png, 23, 24)).toBe(255);
+    expect(alphaAt(png, 23, 37)).toBe(255);
+  });
+
+  it("没还原的样式（underline）进 structuredContent.ignored，人话里也说得出来", async () => {
+    const { cas, model, source } = await scene({
+      content: "AB",
+      style: { font: "TestFont", size: SIZE, color: BLACK, underline: true },
+      paragraphStyle: { justification: "left" },
+    });
+    const { ops, structured, text } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    expect(structured.ok).toBe(true);
+    expect(ops).toHaveLength(1);
+    expect(structured.ignored).toEqual(["underline"]);
+    // 不说出来的话，这次编辑会被当成"和原来一模一样，只是换了几个字"。
+    expect(text).toContain("NOT REPRODUCED");
+    expect(text).toContain("underline");
+  });
+
+  /**
+   * `paragraphRuns` 的重切分，外加"图层框的锚点取**第一段**的对齐"。
+   *
+   * 两段：第 1 段 `"A\n"`（居中，length 2）、第 2 段 `"A"`（左对齐，length 1）。
+   * 改成 `"AA\nA"`，`diffRange` 夹出来的是"在偏移 1 处纯插入 1 个字符"，落在
+   * 第 1 段里 → 第 1 段 2 → 3，第 2 段不动。
+   *
+   * bounds 手算：第 1 行 "AA" 居中 → 行宽 24、偏移 -12，墨迹 x ∈ [-12, 12)；
+   * 第 2 行 "A" 左对齐 → x ∈ [0, 12)。inkBounds.left = -12、right = 12 → 宽 24；
+   * 高与上一条一样 = 38。锚点取第一段的 center → 旧框中心 (20+60)/2 = 40，
+   * left = 40 - 24/2 = 28 → bounds = [10, 28, 48, 52]。锚点若误用了
+   * `paragraphStyle`（这层根本没有）会退成左对齐，left 就成了 20。
+   */
+  it("paragraphRuns 按改动区间重切，图层框的锚点取第一段的对齐方式", async () => {
+    const twoParagraphs = (): LayerText => ({
+      content: "A\nA",
+      style: { font: "TestFont", size: SIZE, color: BLACK },
+      paragraphRuns: [
+        { length: 2, style: { justification: "center" } },
+        { length: 1, style: { justification: "left" } },
+      ],
+    });
+    const { cas, model, source } = await scene(twoParagraphs());
+    const { ops, structured } = await runSetText(cas, model, source, { layerId: "title", text: "AA\nA" });
+    expect(structured.ok).toBe(true);
+    const p = ops[0].payload as { text: LayerText; bounds: number[] };
+    expect(p.text.paragraphRuns).toEqual([
+      { length: 3, style: { justification: "center" } },
+      { length: 1, style: { justification: "left" } },
+    ]);
+    expect(p.bounds).toEqual([10, 28, 48, 52]);
+
+    // 再真落地一次：op 那边校验 paragraphRuns 的长度和，切错了会当场炸。
+    const next = applyOne(model, { kind: "set_text", payload: ops[0].payload });
+    expect(next.layers[0].text?.paragraphRuns).toEqual(p.text.paragraphRuns);
+  });
+
+  /**
+   * caps 展开是**载荷承重**的，不是锦上添花：选字体必须按展开之后的码位查
+   * 覆盖。这层 `caps: "all"`、内容 `"abc"`，而字体只有 A/B/C 三个字形 ——
+   * 按原字符（小写）查覆盖会一套字体都装不上，三个字全成 missing，整层失败。
+   */
+  it("caps:\"all\" 的层：按展开后的大写查覆盖，abc 用只认识 A/B/C 的字体照样排得出来", async () => {
+    const { cas, model, source } = await scene({
+      content: "a",
+      style: { font: "TestFont", size: SIZE, color: BLACK, caps: "all" },
+      paragraphStyle: { justification: "left" },
+    });
+    const { ops, structured } = await runSetText(cas, model, source, { layerId: "title", text: "abc" });
+    expect(structured.ok).toBe(true);
+    expect(structured.missing).toEqual([]);
+    expect((ops[0].payload as { bounds: number[] }).bounds)
+      .toEqual([10, 20, 10 + GLYPH_H, 20 + 3 * GLYPH_W]);
+  });
+});
+
+describe("setText：只装真正用得上的字体", () => {
+  it("索引里两套字体、内容纯英文 → 只从 CAS 读了英文那套", async () => {
+    const cas = memCas();
+    const source = await fontSource(cas, [
+      { name: "Latin", bytes: rectFontBytes() },
+      { name: "CJK", bytes: cjkFontBytes() },
+    ], ["Latin", "CJK"]);
+    const index = await source.load();
+    const model = doc(textLayer({
+      content: "A",
+      style: { font: "Latin", size: SIZE, color: BLACK },
+      paragraphStyle: { justification: "left" },
+    }, BOUNDS));
+
+    // 记账，不是数出来的感觉：中文兜底字体动辄十几 MB，"先都装上再说"这种
+    // 改法在功能上看不出区别，只有把 readBlob 的调用记下来才挡得住。
+    const readLog: string[] = [];
+    const { ops, structured } = await runSetText(
+      cas, model, source, { layerId: "title", text: "AAA" }, readLog,
+    );
+
+    expect(structured.ok).toBe(true);
+    expect(readLog).toEqual([index.get("Latin")!.hash]);
+    expect((ops[0].payload as { fonts: { postScriptName: string }[] }).fonts.map(f => f.postScriptName))
+      .toEqual(["Latin"]);
+  });
 });
 
 describe("setText：模型能改措辞绕开的失败，返回 fail 而不是抛", () => {
@@ -270,6 +472,27 @@ describe("setText：模型能改措辞绕开的失败，返回 fail 而不是抛
     const { ops, structured } = await runSetText(cas, doc(raster), source, { layerId: "title", text: "AAA" });
     expect(ops).toEqual([]);
     expect(String(structured.reason)).toContain("raster");
+  });
+
+  it("text.transform 的线性部分不是单位阵 → 拒绝（整体缩放算错，输出整个是错的）", async () => {
+    // 2 倍自由变换的点文字层。排版链按 1:1 排、按 1:1 画，改一次字就把这层
+    // 当场缩掉一半 —— 所以归 fail，不是记进 ignored（ignored 的语义是"少还原
+    // 了一个下划线"，其余部分仍然正确）。
+    const { cas, model, source } = await scene({ ...twoRunText(), transform: [2, 0, 0, 2, 100, 50] });
+    const { ops, structured } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    expect(ops).toEqual([]);
+    expect(structured.ok).toBe(false);
+    expect(structured.ignored).toBeUndefined();
+    expect(String(structured.reason)).toContain("non-identity text transform");
+    expect((structured.detail as { kind: string }).kind).toBe("non-identity-transform");
+  });
+
+  it("纯平移的 transform 不算 → 照常成功（点文字的锚点本来就靠 e/f 定位）", async () => {
+    const { cas, model, source } = await scene({ ...twoRunText(), transform: [1, 0, 0, 1, 100, 50] });
+    const { ops, structured } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    expect(structured.ok).toBe(true);
+    expect((ops[0].payload as { bounds: number[] }).bounds)
+      .toEqual([10, 20, 10 + GLYPH_H, 20 + 3 * GLYPH_W]);
   });
 
   it("清空文字 → 拒绝，并指出该用 setProps/removeLayer", async () => {
@@ -315,6 +538,40 @@ describe("setText：缺字体自动回退 + 显式报告", () => {
     expect(text).toContain("NotoSans");
     // 字形与版面会变 —— 这句必须在，不然模型会把结果当成一模一样。
     expect(text).toContain("WILL differ");
+    // 整套缺席已经在 fontFallbacks 里说清楚了，不在逐码位那一档重复记一遍
+    // —— 否则一段纯英文会为每个字符都报同一件事。
+    expect(structured.glyphFallbacks).toEqual([]);
+  });
+
+  it("请求的字体在、只是不认识那几个字 → 逐码位兜底也要报出来，不许静默换字形", async () => {
+    const cas = memCas();
+    const source = await fontSource(cas, [
+      { name: "Latin", bytes: rectFontBytes() },
+      { name: "CJK", bytes: cjkFontBytes() },
+    ], ["Latin", "CJK"]);
+    const model = doc(textLayer({
+      content: "A",
+      style: { font: "Latin", size: SIZE, color: BLACK },
+      paragraphStyle: { justification: "left" },
+    }, BOUNDS));
+
+    const { ops, structured, text } = await runSetText(
+      cas, model, source, { layerId: "title", text: "A\u4e2d\u6587" },
+    );
+
+    expect(structured.ok).toBe(true);
+    // 三个字都画出来了，所以既不是 missing、也不是"整套字体不在"。
+    expect(structured.missing).toEqual([]);
+    expect(structured.fontFallbacks).toEqual([]);
+    expect((ops[0].payload as { bounds: number[] }).bounds)
+      .toEqual([10, 20, 10 + GLYPH_H, 20 + 3 * GLYPH_W]);
+    // 中英混排编辑里最常发生的一档：用户加两个中文字，字形变了得有人说。
+    expect(structured.glyphFallbacks).toEqual([
+      { requested: "Latin", used: "CJK", chars: ["\u4e2d", "\u6587"] },
+    ]);
+    expect(text).toContain("Latin");
+    expect(text).toContain("CJK");
+    expect(text).toContain("WILL differ");
   });
 
   it("字体在、但缺个别码位 → 成功，missing 报出那些字", async () => {
@@ -356,6 +613,28 @@ describe("set_text op 的校验", () => {
     const bad = payload({ text: { content: "AAA", runs: [{ length: 2, style: {} }] } });
     expect(() => applyOne(base(), { kind: "set_text", payload: bad }))
       .toThrow(/runs length 2 does not cover content length 3/);
+  });
+
+  it("bounds 不是四个有限数 → 抛", () => {
+    expect(() => applyOne(base(), { kind: "set_text", payload: payload({ bounds: [10, 20, 24] }) }))
+      .toThrow(/bounds must be four finite numbers/);
+    expect(() => applyOne(base(), { kind: "set_text", payload: payload({ bounds: [10, 20, 24, Number.NaN] }) }))
+      .toThrow(/bounds must be four finite numbers/);
+  });
+
+  it("text.content 不是字符串（或压根没有 text）→ 抛", () => {
+    expect(() => applyOne(base(), { kind: "set_text", payload: payload({ text: { content: 42 } }) }))
+      .toThrow(/text\.content must be a string/);
+    expect(() => applyOne(base(), { kind: "set_text", payload: payload({ text: undefined }) }))
+      .toThrow(/text\.content must be a string/);
+  });
+
+  it("paragraphRuns 的长度之和与 content 长度对不上 → 抛（逐行对齐会静默套错段）", () => {
+    const bad = payload({
+      text: { content: "AAA", runs: [{ length: 3, style: {} }], paragraphRuns: [{ length: 2, style: {} }] },
+    });
+    expect(() => applyOne(base(), { kind: "set_text", payload: bad }))
+      .toThrow(/paragraphRuns length 2 does not cover content length 3/);
   });
 
   it("校验通过时把 text/pixels/bounds/provenance 都写进图层", () => {
