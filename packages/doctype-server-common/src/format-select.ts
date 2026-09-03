@@ -1,5 +1,32 @@
 import type { DocumentFormat } from "@unidocs/protocol";
 
+/**
+ * Thrown when a caller names a format (`?format=`, form field, or explicit
+ * `Session.create({ format })`) that isn't registered on this document type.
+ *
+ * A named type so `session-handler.ts` (Azure) and `editor-do-svalue.ts`
+ * (Cloudflare) can map it to 400 instead of falling into their generic
+ * catch-all 500 — this is a client input error, not a server fault.
+ */
+export class UnknownFormatError extends Error {
+  constructor(formatName: string) {
+    super(`Unknown format: ${formatName}`);
+    this.name = "UnknownFormatError";
+  }
+}
+
+/**
+ * Thrown when `selectFormat`'s media-type/extension detection matches more
+ * than one registered format and neither dimension narrows it to exactly one.
+ * Same 400-not-500 reasoning as `UnknownFormatError`.
+ */
+export class AmbiguousFormatError extends Error {
+  constructor() {
+    super("Ambiguous document format");
+    this.name = "AmbiguousFormatError";
+  }
+}
+
 /** 调用方能提供的线索。三个都可选:导出路径通常只有 `name`,导入路径通常
  *  只有 `mediaType` + `filename`。 */
 export interface FormatHint {
@@ -48,7 +75,7 @@ export function selectFormat<TDoc>(
 ): SelectedFormat<TDoc> {
   if (hint.name) {
     const explicit = config.formats[hint.name];
-    if (!explicit) throw new Error(`Unknown format: ${hint.name}`);
+    if (!explicit) throw new UnknownFormatError(hint.name);
     return { name: hint.name, format: explicit };
   }
 
@@ -67,7 +94,7 @@ export function selectFormat<TDoc>(
   // 歧义判断刻意放在两次唯一命中之后——这是落空链不是并列规则,
   // 扩展名能唯一裁决时不该因为 mediaType 撞了就报错。照抄现有行为。
   if (byMediaType.length > 1 || byExtension.length > 1) {
-    throw new Error("Ambiguous document format");
+    throw new AmbiguousFormatError();
   }
 
   const fallback = config.formats[config.defaultFormat];

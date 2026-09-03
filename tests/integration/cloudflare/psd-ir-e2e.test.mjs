@@ -63,3 +63,73 @@ test("psd /ir returns canonical bytes for a doc whose refs live in CAS", async (
   expect(Array.isArray(state.layers)).toBe(true);
   expect(state.layers.length).toBeGreaterThan(0);
 }, 120_000);
+
+/**
+ * Real-worker coverage for the CF side of two final-review fixes — neither
+ * had any test touching the actual `EditorDO` before this (its route logic
+ * only runs under a real Durable Object, so a plain vitest unit test can't
+ * reach it; `packages/cloudflare-sdk/tests/` has nothing for
+ * `editor-do-svalue.ts`, and `http-conformance-suite.mjs`'s `format=missing`
+ * coverage is dead code — nothing in this repo ever calls
+ * `runHttpConformanceSuite`):
+ *
+ *  - Important 2: an unregistered `format` on `/_internal/create` (import)
+ *    used to fall into the generic `catch` (`CasClientError` or 500) because
+ *    `selectFormat`'s plain `Error` wasn't special-cased — now
+ *    `UnknownFormatError`/`AmbiguousFormatError` map to 400 there too, same
+ *    as the export branch's pre-existing manual 400.
+ *  - M3: `?format=` (present but empty) used to hit `formats[""]` (always
+ *    missing) and 400 instead of falling back to `defaultFormat` like a bare
+ *    `/export` — `??` only catches a missing param, not an empty one.
+ */
+test("psd CF worker: unregistered format is 400 on both import and export, empty ?format= falls back to defaultFormat", async () => {
+  const persistPath = await mkdtemp(join(tmpdir(), "unidocs-psd-format-"));
+  const ports = {
+    gateway: 33897, psd: 33898, cas: 33901,
+    admin: 33902, mockOidc: 33903, edge: 33904,
+  };
+  runtime = await startLocalRuntime({ docTypes: ["psd"], persistPath, ports });
+
+  const psd = readFileSync(
+    join(process.cwd(), "packages/doctype-psd/tests/fixtures/sample.psd"),
+  );
+
+  // Import: an explicit, unregistered `format` field must 400, not 500.
+  const badImportForm = new FormData();
+  badImportForm.append("file", new File([psd], "sample.psd", { type: "image/vnd.adobe.photoshop" }));
+  badImportForm.append("format", "jpeg");
+  const badImport = await closeFetch(`${runtime.urls.gateway}/tenants/alice/docs/psd/`, {
+    method: "POST",
+    body: badImportForm,
+  });
+  const badImportBody = await badImport.json();
+  expect(badImport.status, JSON.stringify(badImportBody)).toBe(400);
+  expect(badImportBody).toMatchObject({ success: false, error: "Unknown format: jpeg" });
+
+  // Create a real document to exercise the export branch against.
+  const goodForm = new FormData();
+  goodForm.append("file", new File([psd], "sample.psd", { type: "image/vnd.adobe.photoshop" }));
+  const created = await closeFetch(`${runtime.urls.gateway}/tenants/alice/docs/psd/`, {
+    method: "POST",
+    body: goodForm,
+  });
+  const createdBody = await created.json();
+  expect(created.ok, JSON.stringify(createdBody)).toBe(true);
+  const { docId } = createdBody;
+  const exportUrl = `${runtime.urls.gateway}/tenants/alice/docs/psd/${docId}/export`;
+
+  // Export: an unregistered format is still 400 (pre-existing behavior —
+  // this branch is a manual lookup, not `selectFormat` — kept as a control).
+  const badExport = await closeFetch(`${exportUrl}?format=missing`);
+  const badExportBody = await badExport.json();
+  expect(badExport.status, JSON.stringify(badExportBody)).toBe(400);
+  expect(badExportBody).toMatchObject({ success: false, error: "Unknown format: missing" });
+
+  // Export: `?format=` (empty) must behave exactly like no `format` param at
+  // all — both resolve to `defaultFormat` ("psd").
+  const bareExport = await closeFetch(exportUrl);
+  const emptyParamExport = await closeFetch(`${exportUrl}?format=`);
+  expect(emptyParamExport.status, await emptyParamExport.clone().text()).toBe(200);
+  expect(emptyParamExport.headers.get("content-type")).toBe(bareExport.headers.get("content-type"));
+  expect(emptyParamExport.headers.get("content-disposition")).toBe(bareExport.headers.get("content-disposition"));
+}, 120_000);

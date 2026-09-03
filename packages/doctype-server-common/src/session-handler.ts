@@ -45,7 +45,7 @@ import {
 } from "@unidocs/protocol-doc";
 import type { SessionIdentity } from "./ports.js";
 import type { DocumentSession } from "./session.js";
-import { selectFormat } from "./format-select.js";
+import { AmbiguousFormatError, selectFormat, UnknownFormatError } from "./format-select.js";
 
 const NOT_INITIALIZED = "Document not initialized. POST /{docType}/ to create.";
 
@@ -101,6 +101,15 @@ export function errorResponse(err: unknown, version: number): Response {
     // Same three-way split the pre-refactor `#leaseFailure` used.
     const status = err.status === 409 ? 409 : err.status === 404 ? 400 : 502;
     return Response.json({ success: false, version, error: err.message }, { status });
+  }
+  if (err instanceof UnknownFormatError || err instanceof AmbiguousFormatError) {
+    // A client picking (or a filename/mediaType detecting) a format the
+    // document type never registered is a bad request, not a server fault —
+    // and 5xx here would trip on-call / 5xx SLOs for a typo in `?format=`.
+    // `err.message`, not `String(err)`: the latter prepends `Error: `, which
+    // Cloudflare's equivalent (`editor-do-svalue.ts`'s manual format lookup)
+    // never did — this keeps the message text identical across runtimes.
+    return Response.json({ success: false, version, error: err.message }, { status: 400 });
   }
   return Response.json({ success: false, error: String(err), version }, { status: 500 });
 }

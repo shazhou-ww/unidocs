@@ -5,10 +5,12 @@ import { createSBlob, encodeSValueWithRefs } from "@unidocs/svalue-codec/interna
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
 import {
+  AmbiguousFormatError,
   DELTA_THRESHOLD,
   readableStreamFromByteStream,
   readableStreamFromSBlobSource,
   selectFormat,
+  UnknownFormatError,
 } from "@unidocs/doctype-server-common";
 import type { ApplyResult, HistoryEntry } from "./history.js";
 import { createSBlobContext } from "./sblob-context.js";
@@ -551,7 +553,12 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
         if (request.method === "GET" && url.pathname === "/_internal/export") {
           await this.#refreshCurrentRefs();
-          const formatName = url.searchParams.get("format") ?? this.#requireConfig().defaultFormat;
+          // `??` only catches `null` (param absent). `?format=` (empty
+          // string) must fall back the same way — Azure's session-handler.ts
+          // already guards this (`|| undefined`); this side didn't, so
+          // `?format=` picked `formats[""]` (always missing) and 400'd
+          // instead of exporting the default format like a bare `/export`.
+          const formatName = url.searchParams.get("format") || this.#requireConfig().defaultFormat;
           const format = this.#requireConfig().formats[formatName];
           if (!format) {
             return Response.json({ success: false, error: `Unknown format: ${formatName}` }, { status: 400 });
@@ -746,6 +753,19 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
         return Response.json({ success: false, error: `Unknown endpoint: ${url.pathname}` }, { status: 404 });
       } catch (err) {
+        if (err instanceof UnknownFormatError || err instanceof AmbiguousFormatError) {
+          // Same reasoning as the manual `Unknown format` check in the
+          // `/_internal/export` branch above: a bad `format` is a client
+          // input error, not a server fault. This path only ever reaches
+          // `#create`'s `selectFormat` call (import), which the generic
+          // catch below would otherwise report as 500 — the Azure side of
+          // this had the same bug (`session-handler.ts`'s `errorResponse`).
+          return Response.json({
+            success: false,
+            error: err.message,
+            version: this.#version,
+          }, { status: 400 });
+        }
         const status = err instanceof CasClientError
           ? err.status === 404 ? 400 : err.status === 409 ? 409 : 502
           : 500;
