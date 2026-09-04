@@ -230,7 +230,7 @@ describe("agent 接线", () => {
   // 只给一半是那种"容器起来了、跑到第一次 /run 才炸"的配置错误。启动期响亮
   // 失败,不要等 15 分钟部署完看崩溃日志。
   it("只给 documentAgent 不给 llmProvider -> 启动期抛错", async () => {
-    await expect(start(0, { documentAgent: { tools: [], instructions: "" } }))
+    await expect(start(0, { documentAgent: () => ({ tools: [], instructions: "" }) }))
       .rejects.toThrow(/llmProvider/);
   });
 

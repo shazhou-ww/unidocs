@@ -37,7 +37,9 @@ runDocTypeService({
   // 就不注入 editor,于是工具表里没有 editPixels、提示词里也没有。
   // doctype-psd/src/agent.ts:23-26 记着这条的由来 —— 只条件化其中一个会得到一个
   // "提示词里有、工具表里没有"的幽灵工具,那是线上真实发生过的故障。
-  documentAgent: createPsdAgent(
+  // 值改成工厂：本任务只对齐签名，真正让它按会话身份接 fontIndex 是下一个
+  // 任务的事（那时 identity 会被用上；这里先原样忽略它）。
+  documentAgent: () => createPsdAgent(
     process.env.IMAGE_EDIT_API_KEY
       ? {
         editor: createQwenImageEditor({

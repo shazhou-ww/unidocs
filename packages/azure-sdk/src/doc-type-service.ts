@@ -83,10 +83,12 @@ export interface DocTypeServiceOptions<TDoc, TQuery, TOp> {
   /**
    * 给了就挂真 operator，省略则维持 501 stub —— markdown/docx/psd 可以分批接。
    *
-   * 是**值**不是工厂：Azure 侧 `process.env` 在 `main.ts` 里就读得到，不需要
-   * Cloudflare 那种"env 只在 DO 构造时才拿得到"的延迟构造。
+   * 是**按会话身份构造的工厂**，不是值：字体索引是租户级的，而 `main.ts`
+   * 起进程、把这个选项传下来的那一刻根本没有租户 —— 身份只在每次请求里
+   * `local-operator.ts` 的 `captureIdentity(request)` 才拿得到。与 CF 的
+   * `agent: (env, identity) => ...` 对齐（cloudflare-psd/src/worker.ts:90）。
    */
-  documentAgent?: DocumentAgent<TQuery, TOp>;
+  documentAgent?: (identity: SessionIdentity) => DocumentAgent<TQuery, TOp>;
   /** 与 `documentAgent` 必须同时给；只给一个在启动期抛错。 */
   llmProvider?: LlmProvider;
 }
@@ -305,7 +307,7 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   docType: string;
   documentTypeFactory: DocumentTypeFactory<TDoc, TQuery, TOp>;
   defaultPort: number;
-  documentAgent?: DocumentAgent<TQuery, TOp>;
+  documentAgent?: (identity: SessionIdentity) => DocumentAgent<TQuery, TOp>;
   llmProvider?: LlmProvider;
 }): Promise<void> {
   const { docType, documentTypeFactory, defaultPort } = options;
