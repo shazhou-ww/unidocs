@@ -26,7 +26,7 @@ import {
   type AgentIdentity,
   type EditorEnv,
 } from "@unidocs/cloudflare-sdk";
-import { createPsdDocumentType, createPsdAgent, createQwenImageEditor, type PsdAgentDeps } from "@unidocs/doctype-psd";
+import { createPsdDocumentType, createPsdAgent } from "@unidocs/doctype-psd";
 import {
   createDocTypeHandler,
   DocAuthConfigCache,
@@ -37,56 +37,19 @@ import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
 import { consoleObserver, matchFontsRoute } from "@unidocs/protocol-doc";
 import { createDoFontRegistry } from "./font-registry-do.js";
 import { fontsObjectName, PsdFontsDurableObject } from "./fonts-do.js";
-import { createFontIndexSource, parseFontFallbacks } from "./fonts-source.js";
+import { psdAgentDeps, type PsdAgentEnv } from "./agent-deps.js";
 
 const psdFactory = createPsdDocumentType;
 const authConfig = new DocAuthConfigCache("psd");
 
 export const PsdEditor = createEditorDO(psdFactory);
 export const PsdFonts = PsdFontsDurableObject;
-/**
- * 从 env + 身份拼出 `createPsdAgent` 的依赖。**单独导出是为了能测**：
- * 这段接线原先内联在 `createOperatorDO` 的 agent 工厂里，而那个工厂只有在
- * 一次带凭据的真实 `/run` 里才会被调到 —— 也就是说把 `PSD_FONT_FALLBACKS`
- * 换成 `[]`（回退链当场死掉）整套单测照样全绿。评审用注入法证实了这一点。
- * 拆出来之后接线本身可以直接断言。
- */
-export function psdAgentDeps(env: Env, identity: AgentIdentity): PsdAgentDeps {
-  return {
-    ...(env.IMAGE_EDIT_API_KEY
-      ? {
-        editor: createQwenImageEditor({
-          apiKey: env.IMAGE_EDIT_API_KEY,
-          // 系统里唯一的第三方调用。不接观测的话，它出问题时只留下一个
-          // 不透明的 500 —— 排查只能靠猜。
-          observe: consoleObserver,
-          ...(env.IMAGE_EDIT_MODEL ? { model: env.IMAGE_EDIT_MODEL } : {}),
-          ...(env.IMAGE_EDIT_BASE_URL ? { baseUrl: env.IMAGE_EDIT_BASE_URL } : {}),
-        }),
-      }
-      : {}),
-    ...(env.PSD_FONTS
-      ? {
-        fontIndex: createFontIndexSource({
-          namespace: env.PSD_FONTS,
-          stackId: env.CAS_STACK_ID,
-          tenantId: identity.tenantId,
-          fallbacks: parseFontFallbacks(env.PSD_FONT_FALLBACKS),
-        }),
-      }
-      : {}),
-  };
-}
 
 export const PsdOperator = createOperatorDO({
-  // 按 env 构造：editPixels 需要一个带 API key 的图像模型，而 key 只在
-  // 这里拿得到。没配 key 就不注入 editor —— 工具表里也就没有 editPixels，
-  // 模型不会去调一个注定失败的工具。
-  //
-  // fontIndex 同一套判据（setText）：索引在租户级 DO 里，没有 PSD_FONTS 绑定
-  // 就一个字形都取不到。绑定缺失只可能是漏配（wrangler.toml 与本地
-  // doc-types.mjs 两处都要有），此时宁可工具表里没有 setText，也好过注册一个
-  // 每次调用都在 namespace.get 上炸的工具。tenantId 从身份来 —— 索引是租户级的。
+  // 接线本体在 ./agent-deps.ts（也是包的 "./agent-deps" 子路径导出）：这个
+  // 文件顶层有 createEditorDO / createOperatorDO / export default 这些副作用，
+  // 想 import 接线的人不该被迫连带执行它们。判据（没 key 就没 editor、没
+  // PSD_FONTS 绑定就没 fontIndex）与它们的由来都记在那边。
   agent: (env: Env, identity: AgentIdentity) => createPsdAgent(psdAgentDeps(env, identity)),
   // The provider is built from env: a DO instance outlives a config change,
   // and `env` is only handed to us here.
@@ -103,16 +66,11 @@ export const PsdOperator = createOperatorDO({
   maxIterations: 25,
 });
 
-interface Env extends EditorEnv, DocAuthBindings {
+// PSD_FONTS / PSD_FONT_FALLBACKS / IMAGE_EDIT_* 由 PsdAgentEnv 声明（连同它们
+// 各自"缺了会怎样"的注释）——接线读的就是那几个，两处各写一份迟早漂移。
+interface Env extends EditorEnv, DocAuthBindings, PsdAgentEnv {
   PSD_EDITOR: DurableObjectNamespace;
   PSD_OPERATOR: DurableObjectNamespace;
-  // 租户级字体索引。可选**只是为了容错**：绑定漏配时 setText 从工具表里消失，
-  // 而不是每次调用都在 namespace.get 上炸。正常部署两处都该配上。
-  PSD_FONTS?: DurableObjectNamespace;
-  // setText 的回退链，逗号分隔、顺序即优先级（如 "NotoSans,NotoSansSC"）。
-  // 缺省是空链，不硬编码字体名 —— 解析器现在住在 @unidocs/doctype-psd
-  // （text/font-index.ts 的 parseFontFallbacks），两个平台共用一份。
-  PSD_FONT_FALLBACKS?: string;
   // Operator LLM config — see the Anthropic provider in
   // @unidocs/doctype-server-common/agent and .dev.vars.example.
   // Absent in deployments that never run the chatbox; the provider throws a
@@ -120,11 +78,6 @@ interface Env extends EditorEnv, DocAuthBindings {
   LLM_BASE_URL?: string;
   LLM_API_KEY?: string;
   LLM_MODEL?: string;
-  // 图像编辑模型（editPixels）。缺省时 agent 的工具表里没有 editPixels，
-  // 层内像素编辑不可用，其余功能不受影响。
-  IMAGE_EDIT_API_KEY?: string;
-  IMAGE_EDIT_MODEL?: string;
-  IMAGE_EDIT_BASE_URL?: string;
 }
 
 export default {

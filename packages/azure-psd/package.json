@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/main.ts",
       "import": "./src/main.ts"
+    },
+    "./agent-deps": {
+      "types": "./src/agent-deps.ts",
+      "import": "./src/agent-deps.ts"
     }
   },
   "files": [
@@ -43,6 +47,10 @@
       ".": {
         "types": "./dist/main.d.ts",
         "import": "./dist/main.js"
+      },
+      "./agent-deps": {
+        "types": "./dist/agent-deps.d.ts",
+        "import": "./dist/agent-deps.js"
       }
     }
   }

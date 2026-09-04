@@ -2,7 +2,7 @@
  * `createPsdAgent` 的依赖接线 —— Azure 侧。
  *
  * **单独一个模块、单独导出，是为了能测。** CF 那边把同一段从 worker 里拆出来
- * 的理由记在 `cloudflare-psd/src/worker.ts` 的 `psdAgentDeps` 注释里：内联时
+ * 的理由记在对称文件 `cloudflare-psd/src/agent-deps.ts` 里：内联时
  * 它只在一次带凭据的真实 `/run` 里才被调到，于是"把 `PSD_FONT_FALLBACKS` 换成
  * `[]`（回退链当场死掉）整套单测照样全绿"。Azure 侧原来内联在 `main.ts` 里，
  * 而这个包连 tests 目录都没有 —— 同一课在这边没学到，那正是 setText 在 Azure
@@ -56,7 +56,7 @@ export function psdAgentDeps(
   pool: Queryable,
 ): PsdAgentDeps {
   return {
-    // 与 Cloudflare 的条件化同形（cloudflare-psd/src/worker.ts 的
+    // 与 Cloudflare 的条件化同形（cloudflare-psd/src/agent-deps.ts 的
     // psdAgentDeps）：没有 key 就不注入 editor，于是工具表里没有 editPixels、
     // 提示词里也没有。doctype-psd/src/agent.ts 记着这条的由来 —— 只条件化其中
     // 一个会得到一个"提示词里有、工具表里没有"的幽灵工具，那是线上真实发生过
