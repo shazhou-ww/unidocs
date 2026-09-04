@@ -46,10 +46,10 @@ export const PsdEditor = createEditorDO(psdFactory);
 export const PsdFonts = PsdFontsDurableObject;
 
 export const PsdOperator = createOperatorDO({
-  // 接线本体在 ./agent-deps.ts（也是包的 "./agent-deps" 子路径导出）：这个
-  // 文件顶层有 createEditorDO / createOperatorDO / export default 这些副作用，
-  // 想 import 接线的人不该被迫连带执行它们。判据（没 key 就没 editor、没
-  // PSD_FONTS 绑定就没 fontIndex）与它们的由来都记在那边。
+  // 接线本体在 ./agent-deps.ts：这个文件顶层有 createEditorDO /
+  // createOperatorDO / export default 这些副作用，想 import 接线的人不该被迫
+  // 连带执行它们。判据（没 key 就没 editor、没 PSD_FONTS 绑定就没 fontIndex）
+  // 与它们的由来都记在那边。
   agent: (env: Env, identity: AgentIdentity) => createPsdAgent(psdAgentDeps(env, identity)),
   // The provider is built from env: a DO instance outlives a config change,
   // and `env` is only handed to us here.
