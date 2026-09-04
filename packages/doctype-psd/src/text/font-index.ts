@@ -1,12 +1,12 @@
 /**
  * `FontIndexSource` 的中立实现 —— 架在 Task 1 下沉的 `FontRegistry` 之上。
  *
- * 两个平台的旧实现（`cloudflare-psd/src/fonts-source.ts` 与 Azure 那边尚缺的
- * 对应物）除了"怎么拿到一个 `FontRegistry`"之外，其余逻辑逐字相同 —— 都是
- * `registry.list()` 拍平成按 postScriptName 索引的 `FontIndex`，外加一层
- * 60 秒缓存。平台差异到此收敛成两个入参：`registry`（怎么打后端）和
- * `blobFor`（索引条目里的内容哈希怎么变成一个能交给 `ctx.readBlob` 的
- * `SBlob` —— Cloudflare 传 `createSBlob`，Azure 传自己的）。
+ * 两个平台的接线（`cloudflare-psd/src/fonts-source.ts` 与
+ * `azure-psd/src/agent-deps.ts`）除了"怎么拿到一个 `FontRegistry`"之外，其余
+ * 逻辑逐字相同 —— 都是 `registry.list()` 拍平成按 postScriptName 索引的
+ * `FontIndex`，外加一层 60 秒缓存。平台差异到此收敛成两个入参：`registry`
+ * （怎么打后端：CF 是租户级字体 DO，Azure 是 `PgFontRegistry`）和 `blobFor`
+ * （索引条目里的内容哈希怎么变成一个能交给 `ctx.readBlob` 的 `SBlob`）。
  */
 import type { FontRegistry } from "@unidocs/doctype-server-common";
 import type { SBlob } from "@unidocs/protocol";
@@ -61,4 +61,20 @@ export function createFontIndex(options: FontIndexOptions): FontIndexSource {
     fallbacks: options.fallbacks,
     blobFor: options.blobFor,
   };
+}
+
+/**
+ * 回退链配置：`PSD_FONT_FALLBACKS="NotoSans,NotoSansSC"`，逗号分隔，顺序即
+ * 优先级。
+ *
+ * 缺省是空数组，**不硬编码任何字体名**：硬编码一个 CAS 里可能不存在的名字，
+ * 回退链只会静默失效 —— `resolveFaceChain` 对没装载的候选是直接跳过，不报错。
+ *
+ * 住在这里而不是某个平台包里，是因为两个平台读的是同一个环境变量、要的是同一
+ * 套语义。它曾经只在 `cloudflare-psd` 里有一份；Azure 侧接线时若各写一份，
+ * "逗号分隔、trim、丢空段"这几条迟早会分叉。
+ */
+export function parseFontFallbacks(value: string | undefined): readonly string[] {
+  if (!value) return [];
+  return value.split(",").map(name => name.trim()).filter(name => name.length > 0);
 }

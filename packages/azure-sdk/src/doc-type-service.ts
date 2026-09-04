@@ -15,6 +15,7 @@ import {
   consoleObserver,
   httpCallEvent,
   httpCallFailure,
+  matchFontsRoute,
   pickObservedHeaders,
   readObservedBody,
 } from "@unidocs/protocol-doc";
@@ -26,6 +27,7 @@ import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-clien
 import type { TenantCasClient } from "@unicas/tenant-client";
 import type {
   DocCapabilityVerifier,
+  FontRegistry,
   SessionDeps,
   SessionIdentity,
 } from "@unidocs/doctype-server-common";
@@ -33,6 +35,7 @@ import {
   createDocTypeHandler,
   createSBlobContext,
   DocAuthConfigCache,
+  handleFontsRequest,
   readableStreamFromSBlobSource,
 } from "@unidocs/doctype-server-common";
 import { attachPoolErrorLogger, requireEnv, resolveBlobConfig } from "./env.js";
@@ -46,6 +49,7 @@ import type { LlmProvider } from "@unidocs/doctype-server-common/agent";
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";
 import { PgDeltaLog, PgSessionIdentityStore, PgUnitOfWork } from "./ports-pg.js";
 import { createBlobService, createPool } from "./pool.js";
+import type { Pool } from "pg";
 import { serve } from "./http-shell.js";
 
 export interface DocTypeServiceConfig {
@@ -88,9 +92,18 @@ export interface DocTypeServiceOptions<TDoc, TQuery, TOp> {
    * `local-operator.ts` 的 `captureIdentity(request)` 才拿得到。与 CF 的
    * `agent: (env, identity) => ...` 对齐（cloudflare-psd/src/worker.ts:90）。
    */
-  documentAgent?: (identity: SessionIdentity) => DocumentAgent<TQuery, TOp>;
+  documentAgent?: (identity: SessionIdentity, pool: Pool) => DocumentAgent<TQuery, TOp>;
   /** 与 `documentAgent` 必须同时给；只给一个在启动期抛错。 */
   llmProvider?: LlmProvider;
+  /**
+   * 给了就挂上租户级的 `/tenants/{t}/fonts`；缺省不挂（markdown/docx 没有
+   * 字体索引，给它们开一个永远读到空表的端点只会误导调用方）。
+   *
+   * 收 `pool` 的理由和 `documentAgent` 收 `identity` 一样：连接池是
+   * `startDocTypeService()` 自己建的，`main.ts` 传这个选项进来的那一刻还没有
+   * 池。让调用方自己再建一个池，等于同一个进程开两套连接。
+   */
+  fontRegistryFor?: (tenantId: string, pool: Pool) => FontRegistry;
 }
 
 export interface DocTypeServiceHandle {
@@ -245,24 +258,62 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
     return null;
   }, config.maxUploadBytes);
 
-  const handler = createDocTypeHandler({
+  // 一份审计输出，两条路由共用（doc handler 与 fonts handler 的事件形状不同，
+  // 但落到日志里是同一条流）。参数取 `object` 是为了同时接住两种事件类型。
+  const audit = (event: object): void =>
+    console.log(JSON.stringify({ event: "doc_authentication", docType, ...event }));
+
+  const documentAgent = options.documentAgent;
+  const docHandler = createDocTypeHandler({
     docType,
     docCapabilityVerifier: config.docCapabilityVerifier,
     casCapabilityVerifier: config.casCapabilityVerifier,
-    audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType, ...event })),
+    audit,
     editor: editorNamespace,
-    operator: options.documentAgent && options.llmProvider
+    operator: documentAgent && options.llmProvider
       ? createLocalOperatorNamespace({
         pool,
         editor: editorNamespace,
-        agent: options.documentAgent,
+        // 池在这里补上：`LocalOperatorDeps.agent` 的签名是
+        // `(identity) => agent`，每请求调一次（见 local-operator.ts）。
+        agent: identity => documentAgent(identity, pool),
         provider: options.llmProvider,
         docType,
       })
       : createStubOperatorNamespace(),
   });
 
-  const { close } = await serve(handler, { port, host });
+  const { close } = await serve(fontsRouter(docHandler), { port, host });
+
+  /**
+   * 租户级端点必须在 `createDocTypeHandler` **之前**分流：`matchDocRoute` 把
+   * 路径硬编码成 `/tenants/{t}/sessions/{s}[/{op}]`，`/tenants/{t}/fonts` 不
+   * 匹配，交给 doc handler 只会得到 404 "Unknown Doc endpoint"。与 CF 的
+   * `cloudflare-psd/src/worker.ts` 里的分流同形。
+   */
+  function fontsRouter(
+    fallback: (request: Request) => Promise<Response>,
+  ): (request: Request) => Promise<Response> {
+    const fontRegistryFor = options.fontRegistryFor;
+    if (fontRegistryFor === undefined) return fallback;
+    return async (request: Request): Promise<Response> => {
+      const fonts = matchFontsRoute(new URL(request.url).pathname);
+      if (!fonts) return fallback(request);
+      // 中立的 `handleFontsRequest` 不兜底存储层的异常（`registry.list/put`
+      // 抛出就直接 reject 出去）—— 原先 CF 的 `PsdFontsDurableObject.fetch`
+      // 自己的 try/catch 把这类故障变成 500，这一层责任现在落在宿主这里，
+      // 不然一次 Postgres 故障会变成未处理拒绝，而不是一个像样的 500。
+      try {
+        return await handleFontsRequest({
+          docCapabilityVerifier: config.docCapabilityVerifier,
+          registry: fontRegistryFor(fonts.tenantId, pool),
+          audit,
+        }, request, fonts);
+      } catch (err) {
+        return Response.json({ error: String(err) }, { status: 500 });
+      }
+    };
+  }
 
   return {
     url: `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`,
@@ -307,8 +358,10 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   docType: string;
   documentTypeFactory: DocumentTypeFactory<TDoc, TQuery, TOp>;
   defaultPort: number;
-  documentAgent?: (identity: SessionIdentity) => DocumentAgent<TQuery, TOp>;
+  documentAgent?: (identity: SessionIdentity, pool: Pool) => DocumentAgent<TQuery, TOp>;
   llmProvider?: LlmProvider;
+  /** 见 `DocTypeServiceOptions.fontRegistryFor`：缺省不挂 fonts 路由。 */
+  fontRegistryFor?: (tenantId: string, pool: Pool) => FontRegistry;
 }): Promise<void> {
   const { docType, documentTypeFactory, defaultPort } = options;
   const auth = await new DocAuthConfigCache(docType).get(process.env);
@@ -333,6 +386,7 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
     },
     ...(options.documentAgent === undefined ? {} : { documentAgent: options.documentAgent }),
     ...(options.llmProvider === undefined ? {} : { llmProvider: options.llmProvider }),
+    ...(options.fontRegistryFor === undefined ? {} : { fontRegistryFor: options.fontRegistryFor }),
   });
   console.log(`azure-${docType} CAS: baseUrl=${process.env.CAS_BASE_URL ?? "(none)"} stackId=${process.env.CAS_STACK_ID ?? "(none)"}`);
   console.log(`azure-${docType} listening on ${handle.url}`);

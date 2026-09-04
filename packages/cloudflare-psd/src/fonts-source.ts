@@ -42,13 +42,9 @@ export function createFontIndexSource(options: FontIndexSourceOptions): FontInde
 }
 
 /**
- * 回退链配置：`PSD_FONT_FALLBACKS="NotoSans,NotoSansSC"`，逗号分隔，顺序即
- * 优先级。
- *
- * 缺省是空数组，**不硬编码任何字体名**：硬编码一个 CAS 里可能不存在的名字，
- * 回退链只会静默失效 —— `resolveFaceChain` 对没装载的候选是直接跳过，不报错。
+ * `PSD_FONT_FALLBACKS` 的解析器。实现搬到了 `@unidocs/doctype-psd`
+ * （`text/font-index.ts`）—— 两个平台读的是同一个环境变量、要的是同一套
+ * 语义，各写一份迟早分叉。这里保留一个再导出，是因为它和上面的
+ * `createFontIndexSource` 总是一起用。
  */
-export function parseFontFallbacks(value: string | undefined): readonly string[] {
-  if (!value) return [];
-  return value.split(",").map(name => name.trim()).filter(name => name.length > 0);
-}
+export { parseFontFallbacks } from "@unidocs/doctype-psd";

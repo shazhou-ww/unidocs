@@ -110,7 +110,8 @@ interface Env extends EditorEnv, DocAuthBindings {
   // 而不是每次调用都在 namespace.get 上炸。正常部署两处都该配上。
   PSD_FONTS?: DurableObjectNamespace;
   // setText 的回退链，逗号分隔、顺序即优先级（如 "NotoSans,NotoSansSC"）。
-  // 缺省是空链，不硬编码字体名 —— 见 fonts-source.ts 的 parseFontFallbacks。
+  // 缺省是空链，不硬编码字体名 —— 解析器现在住在 @unidocs/doctype-psd
+  // （text/font-index.ts 的 parseFontFallbacks），两个平台共用一份。
   PSD_FONT_FALLBACKS?: string;
   // Operator LLM config — see the Anthropic provider in
   // @unidocs/doctype-server-common/agent and .dev.vars.example.

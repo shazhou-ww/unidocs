@@ -73,6 +73,7 @@ async function start(
     documentType?: DocumentType<any, any, any>;
     documentAgent?: any;
     llmProvider?: any;
+    fontRegistryFor?: any;
   } = {},
 ) {
   const docType = overrides.docType ?? "markdown";
@@ -95,6 +96,9 @@ async function start(
     },
     ...(overrides.documentAgent === undefined ? {} : { documentAgent: overrides.documentAgent }),
     ...(overrides.llmProvider === undefined ? {} : { llmProvider: overrides.llmProvider }),
+    ...(overrides.fontRegistryFor === undefined
+      ? {}
+      : { fontRegistryFor: overrides.fontRegistryFor }),
   });
 }
 
@@ -260,5 +264,77 @@ describe("agent 接线", () => {
     } finally {
       await handle.close();
     }
+  });
+});
+
+/**
+ * 租户级的 `/tenants/{t}/fonts`。
+ *
+ * 两条不变式，任何一条破了都只在生产里才看得出来：
+ *
+ * 1. **分流必须在 `createDocTypeHandler` 之前。** `matchDocRoute` 把路径硬编码
+ *    成 `/tenants/{t}/sessions/{s}[/{op}]`，`/tenants/{t}/fonts` 不匹配，交给
+ *    doc handler 只会得到 404 "Unknown Doc endpoint"。
+ * 2. **顶层必须兜住存储异常。** 中立的 `handleFontsRequest` 不接管
+ *    `registry.list/put` 的抛出（CF 那边原来由 DO 自己的 try/catch 兜），
+ *    宿主不兜的话一次 Postgres 故障就是一个未处理拒绝，而不是 500。
+ */
+describe("fonts 路由", () => {
+  const fontsUrl = (url: string, tenantId: string) => `${url}/tenants/${tenantId}/fonts`;
+  const fontsAuth = (tenantId: string) => ({
+    Connection: "close",
+    // 索引是租户级的，所以要的是租户作用域的那种权限 —— sessionCreatePermission。
+    Authorization: `Bearer doc|${tenantId}|any-session|create`,
+  });
+
+  it("不给 fontRegistryFor 就不挂这条路由 —— 落回 doc handler 的 404", async () => {
+    handle = await start(41996);
+    const res = await fetch(fontsUrl(handle.url, "tenant-1"), { headers: fontsAuth("tenant-1") });
+    expect(res.status).toBe(404);
+  });
+
+  it("给了就命中 fonts handler，且在 doc handler 之前分流", async () => {
+    const entry = {
+      postScriptName: "NotoSans-Regular",
+      family: "Noto Sans",
+      hash: "a".repeat(64),
+      unitsPerEm: 1000,
+      coverage: [[0x20, 0x7e]],
+    };
+    const seen: string[] = [];
+    handle = await start(41995, {
+      fontRegistryFor: (tenantId: string) => {
+        seen.push(tenantId);
+        return { list: async () => [entry], put: async () => {} };
+      },
+    });
+    const res = await fetch(fontsUrl(handle.url, "tenant-1"), { headers: fontsAuth("tenant-1") });
+    // 200 而不是 404 —— 404 正是"落到了 createDocTypeHandler 手里"的signal。
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ fonts: [entry] });
+    // registry 按路径里的租户构造，不是按启动期的某个固定值。
+    expect(seen).toEqual(["tenant-1"]);
+  });
+
+  it("registry 抛出 -> 500，不是未处理拒绝", async () => {
+    handle = await start(41994, {
+      fontRegistryFor: () => ({
+        list: async () => { throw new Error("connection terminated unexpectedly"); },
+        put: async () => {},
+      }),
+    });
+    const res = await fetch(fontsUrl(handle.url, "tenant-1"), { headers: fontsAuth("tenant-1") });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/connection terminated/);
+  });
+
+  it("会话级路径不受影响 —— 分流只吃 /tenants/{t}/fonts", async () => {
+    handle = await start(41993, {
+      fontRegistryFor: () => ({ list: async () => [], put: async () => {} }),
+    });
+    const created = await internal(handle.url, "tenant-1", `fonts-${Date.now()}`, "create", {
+      method: "PUT",
+    });
+    expect(await created.json()).toMatchObject({ success: true });
   });
 });
