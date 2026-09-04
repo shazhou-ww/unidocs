@@ -1,6 +1,11 @@
 /**
- * 把一套字体灌进某个租户的 PSD 字体索引：字节写进 CAS，元数据登记进
- * `PsdFonts` 这个租户级 Durable Object。
+ * 把一套字体灌进某个租户的 PSD 字体索引：字节写进 CAS，元数据登记进该租户的
+ * 字体登记表（中立契约 `FontRegistry`；Cloudflare 上是 `PsdFonts` 这个租户级
+ * Durable Object，Azure 上是 Postgres 的 `font_registry` 表）。
+ *
+ * **两个栈同一个脚本、同一条路径**：`POST /tenants/{t}/fonts` 已经下沉成中立
+ * 路由，`--psd-url` / 凭据文件指向哪个 doc service 就灌哪个。签发形状也一致
+ * ——同一份 capability 凭据两边都被接受，这一点是实测过的（2026-09-04）。
  *
  * PSD 文字层只记字体**名字**，不内嵌字体文件，所以 `setText` 要自己排版就得
  * 先有一张"这个名字 → CAS 里哪一坨字节 → 它认识哪些码位"的索引。这个脚本就是
@@ -42,8 +47,13 @@
  *                "privateKeyPkcs8": "…", "refDomain": "doc" }
  *   }
  *
- * `pnpm dev`（Cloudflare 栈）每次启动都会把这份文件写出来（`writeLocalCredentials`
- * in scripts/unidocs-dev-config.mjs），因为本地运行时的两把密钥是每次现生成的。
+ * `pnpm dev` 每次启动都会把这份文件写出来（`writeLocalCredentials` in
+ * scripts/unidocs-dev-config.mjs），因为本地运行时的两把密钥是每次现生成的。
+ * **两个栈各写各的一份**（`LOCAL_CREDENTIALS_PATHS`）：Cloudflare 是上面那个
+ * 默认路径，Azure 是 `.azure-runtime/local-credentials.json`。两套栈可以同时
+ * 跑，共用一份就会互相覆盖 —— 而拿错了那份不会报错，只会把字体灌进另一个栈的
+ * 表里。所以给 Azure 灌的时候必须显式 `--credentials .azure-runtime/local-credentials.json`
+ * （`pnpm dev` 启动时会把本次那一份的路径打在终端上）。
  *
  * ## 它**不走 gateway**，这是个已知限制
  *
@@ -55,10 +65,11 @@
  * 24 小时（`unicas-packages/service/src/node-lease.ts` 的 `MAX_LEASE_MS`），过期
  * 后 GC 收走字节，索引就指向了一堆不存在的哈希。
  *
- * 所以这是一个**部署者工具**：它直连 psd worker 和 CAS 服务，并且需要两把本该只
+ * 所以这是一个**部署者工具**：它直连 psd doc service 和 CAS 服务，并且需要两把本该只
  * 存在 gateway 上的私钥（`CAPABILITY_PRIVATE_KEY_PKCS8` / `CAS_STACK_PRIVATE_KEY_PKCS8`，
- * 见 stacks/unidocs-cloudflare/deploy/README.md）。生产环境要用它，就得在能拿到
- * 这两把密钥、并且 psd worker 对你可达的地方跑。别把它当成终端用户接口。
+ * 见 stacks/unidocs-cloudflare/deploy/README.md；Azure 侧见
+ * stacks/unidocs-azure/README.md 的「新环境的字体预置」）。生产环境要用它，就得在
+ * 能拿到这两把密钥、并且 psd doc service 对你可达的地方跑。别把它当成终端用户接口。
  *
  * ## 写权限沿用 `sessions:create`（裁定 R41）
  *
@@ -312,7 +323,7 @@ export async function describeFont(kit, font) {
 // ---------------------------------------------------------------------------
 
 /**
- * 租户级字体端点。**不走 gateway**（理由见文件头部），所以拼的是 psd worker
+ * 租户级字体端点。**不走 gateway**（理由见文件头部），所以拼的是 psd doc service
  * 自己的地址。
  *
  * 单独导出是因为启动时的自动预置（scripts/psd-font-bootstrap.mjs）要先读一次
@@ -577,7 +588,7 @@ async function main() {
     if (error.code === "ENOENT") {
       throw new Error(
         `端点/密钥文件不存在：${credentialsPath}。`
-        + "本地开发跑一次 `pnpm dev`（Cloudflare 栈）就会生成它；"
+        + "本地开发跑一次 `pnpm dev` 就会生成它（两个栈各写各的一份，路径见本文件顶部）；"
         + "真实部署请照 scripts/seed-psd-fonts.mjs 顶部注释里的形状自己写一份。",
       );
     }
@@ -590,7 +601,7 @@ async function main() {
     ...(options.casOrigin ? { casOrigin: trimSlash(options.casOrigin) } : {}),
   });
 
-  console.log(`psd worker: ${credentials.psdUrl}`);
+  console.log(`psd service: ${credentials.psdUrl}`);
   console.log(`CAS:        ${credentials.casOrigin}  (stack ${credentials.stack.stackId})`);
   await seedFonts({ kit: await loadKit(), config, credentials });
 }

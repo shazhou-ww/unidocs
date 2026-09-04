@@ -338,38 +338,44 @@ TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 
 
 ### 5.4 字体从哪儿来：预置脚本
 
-`代码`。字体索引是**租户级**的（一个 `PsdFonts` Durable Object，同租户下所有
-psd 文档共用），字节在 CAS 里。往里面灌东西的唯一入口是
+`代码`。字体索引是**租户级**的（同租户下所有 psd 文档共用），字节在 CAS 里。
+索引本身是中立契约 `FontRegistry`（`@unidocs/doctype-server-common`），两个栈各有
+一个适配器：Cloudflare 是 `PsdFonts` 这个租户级 Durable Object，Azure 是 psd 库里
+的 `font_registry` 表。往里面灌东西的唯一入口是
 [`scripts/seed-psd-fonts.mjs`](../scripts/seed-psd-fonts.mjs) —— 用法、配置形状、
 以及下面三条限制都写在那个文件顶部的注释里，示例配置见
 `scripts/psd-fonts.example.json`。
 
-**本地开发不用手工跑它。** `pnpm dev`（Cloudflare 栈、选中了 psd 时）启动就会
+**本地开发不用手工跑它。** `pnpm dev`（**两个栈**都算，选中了 psd 时）启动就会
 自己走一遍：先读一次租户 `u1` 的索引，两套都在就跳过，缺了就把缺的那套下到仓库
 根的 `fonts/` 再灌进去，并把 `PSD_FONT_FALLBACKS` 默认成那两个 postScriptName
 （挂载点与全部裁定见 [`scripts/psd-font-bootstrap.mjs`](../scripts/psd-font-bootstrap.mjs)）。
+`/tenants/{t}/fonts` 已经是中立路由，脚本指向哪个 doc service 就灌哪个 —— 本地与
+线上、Cloudflare 与 Azure 都是同一条路径。
 
 | 想做的事 | 怎么做 |
 |---|---|
 | 什么都不做 | 默认就是"有就跳过，没有就灌" |
 | 跳过（离线、CI、不想要这几 MB） | `pnpm dev … --fonts off`，或 `UNIDOCS_PSD_FONTS=off` |
 | 灌到别的租户 | `UNIDOCS_PSD_FONT_TENANT=<租户>`（默认 `u1`，与 web-psd 硬编码的 `USER` 一致） |
-| 自己配回退链 | 在 `packages/cloudflare-psd/.dev.vars` 里写 `PSD_FONT_FALLBACKS=…`（压过默认值） |
+| 自己配回退链 | Cloudflare 写在 `packages/cloudflare-psd/.dev.vars`，Azure 写在仓库根 `.env.azure`，都是 `PSD_FONT_FALLBACKS=…`（压过默认值） |
 | 换字体 / 灌到生产 | 还是手工跑 `seed-psd-fonts.mjs`，形状见下 |
 
 这一步**不会阻断启动**：没网、下载失败、预置失败，一律打一条说清"这次少了什么
 功能、怎么手工补、怎么彻底关掉"的警告然后继续。开发环境因为字体下不下来就起不
 来是不可接受的。代价是失败时索引仍然是空的 —— 那时 `setText` 还在工具表里
-（它的判据是 `PSD_FONTS` 绑定在不在，不是索引里有没有字体），只是每次调用都
-取不到字形。
+（判据是"有没有那张登记表"，不是"表里有没有字体"：Cloudflare 看 `PSD_FONTS` 绑定
+在不在，Azure 无条件注册），只是每次调用都取不到字形。
 
 三条要先知道的：
 
 1. **它不走 gateway。** gateway 的路由表只认 `/tenants/{t}/docs/…` 与
    `/tenants/{t}/cas/…`；字体端点 `/tenants/{t}/fonts` 和 CAS 的 root-refs 都不在
-   里面（后者是**有意**不暴露的私有服务操作）。所以脚本直连 psd worker 和 CAS
-   服务，并且需要两把本该只存在 gateway 上的私钥。它是**部署者工具**，不是终端
-   用户接口。
+   里面（后者是**有意**不暴露的私有服务操作）。所以脚本直连 psd doc service 和
+   CAS 服务，并且需要两把本该只存在 gateway 上的私钥。它是**部署者工具**，不是
+   终端用户接口。Azure 上还多一道：doc service 的 ingress 是内部的，脚本得在容器
+   环境内部跑（见 [`stacks/unidocs-azure/README.md`](../stacks/unidocs-azure/README.md)
+   的「新环境的字体预置」）。
 2. **写权限沿用租户作用域的 `sessions:create`**（裁定 R41）—— 能创建会话的人就
    能往该租户的字体表里登记字体。这是有意为之的取舍（字体是加法，不改动既有
    文档），但别以为这个端点有更严的保护。
@@ -403,8 +409,9 @@ DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto S
 `NotoSansSC-Regular`，`unitsPerEm=1000`，覆盖 30,890 个码位、其中基本区汉字
 20,976 个。
 
-回退链本身不在配置里，是 psd worker 的 `PSD_FONT_FALLBACKS` 环境变量（逗号分隔、
-顺序即优先级）。worker 的缺省是空链、不硬编码字体名 —— 硬编码一个 CAS 里没有的
+回退链本身不在配置里，是 psd doc service 的 `PSD_FONT_FALLBACKS` 环境变量（逗号
+分隔、顺序即优先级）。两个栈读的是同一个变量，缺省都是空链、不硬编码字体名 ——
+硬编码一个 CAS 里没有的
 名字只会让回退链静默失效。所以**装了字体还要配这个变量**，两步都做了兜底才真的
 生效。本地 `pnpm dev` 把这两步绑在一起做了（见本节开头）；**手工部署仍然要自己
 配**，只灌索引不配变量的结果不是报错，是中文一个字都画不出来。

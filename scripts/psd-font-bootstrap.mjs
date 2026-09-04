@@ -21,10 +21,18 @@
  *    看着也对，只在真去排字时炸。校验直接复用 `describeFont` —— 体积闸、
  *    解析、`postScriptName` 对得上、cmap 非空，与手工预置同一套判据。落盘先写
  *    `.part` 再改名，中断留下的是一个显然的半成品，不是一个假装完好的字体。
+ *
+ * ## 与栈无关
+ *
+ * 本模块**不知道自己在给哪个栈灌字体**，也不该知道：端点从 `credentials.psdUrl`
+ * 来，那份凭据由 `writeLocalCredentials` 按本次运行时的真实地址写出来。所以这里
+ * 没有、也不要有按 `UNIDOCS_LOCAL_PLATFORM` 分支的端口表 —— 端口的事实来源是
+ * `stacks/unidocs-cloudflare/local/doc-types.mjs` 与 `packages/azure-psd/azure.service.json`，
+ * 在这里抄一份就是第二个来源，改了那边这边不会报错，只会灌到一个没人在听的地址上。
  */
 
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import {
   createDocTokenFactory,
   describeFont,
@@ -39,7 +47,7 @@ import {
  * 默认灌进哪个租户。
  *
  * `u1` 不是随便挑的：本地 psd 前端把它硬编码成 `USER`
- * （`packages/web-psd/src/doc-controller.ts`），本地 gateway 又开着
+ * （`packages/web-psd/src/doc-controller.ts`），两个栈的本地 gateway 又都开着
  * `INSECURE_PATH_IDENTITY`，所以浏览器里点开的每一篇 psd 文档都落在这个租户下。
  * 灌进别的租户 = 灌了个寂寞。两处对不上会静默失效（索引查不到就是空索引），
  * 所以有一条测试盯着这两个常量相等。
@@ -103,9 +111,10 @@ export const PSD_FONT_PLAN = Object.freeze([
  * 一个都不试，中文一个字都画不出来而且不报错。所以这两步必须一起做。
  *
  * 为什么是从计划里取而不是"从刚灌进去的字体解析出来"：幂等判据要求先读索引、
- * 后下载（索引齐了就一次下载都不该发），而这个变量是 worker 的绑定、必须在
- * Miniflare 起来之前就定下来 —— 那时还没有任何字体文件可解析。名字的正确性
- * 由 `describeFont` 在灌的那一步保证（见 `PSD_FONT_PLAN` 的注释）。
+ * 后下载（索引齐了就一次下载都不该发），而这个变量必须在 doc service 起来之前
+ * 就定下来（Cloudflare 侧它是 worker 绑定，Azure 侧是 spawn 前的 `process.env`）
+ * —— 那时还没有任何字体文件可解析。名字的正确性由 `describeFont` 在灌的那一步
+ * 保证（见 `PSD_FONT_PLAN` 的注释）。
  */
 export function psdFontFallbacks(plan = PSD_FONT_PLAN) {
   // `fallback: false` 的条目照常灌进索引,但不进回退链:"这套字体这里有" 和
@@ -228,7 +237,7 @@ export async function ensurePsdFonts({
     });
     return { status: "seeded", registered: missing.map(font => font.postScriptName) };
   } catch (error) {
-    warn(fontWarning(error, { tenantId }));
+    warn(fontWarning(error, { tenantId, root, credentialsPath }));
     return { status: "failed", error: error.message };
   }
 }
@@ -236,8 +245,15 @@ export async function ensurePsdFonts({
 /**
  * 失败时打的那条警告。要说清三件事，缺一件就等于让人自己猜：**这次少了什么
  * 功能**、**怎么手工补**、**怎么彻底关掉**。
+ *
+ * 手工那条命令必须带上 `--credentials`：两个栈各写各的一份凭据（见
+ * `LOCAL_CREDENTIALS_PATHS`），照默认路径跑会拿 Cloudflare 那份去灌 —— 而那
+ * 不会报错，只会灌进另一个栈的字体表，本栈的索引照样是空的。
  */
-function fontWarning(error, { tenantId }) {
+function fontWarning(error, { tenantId, root, credentialsPath }) {
+  const credentialsFlag = credentialsPath
+    ? ` --credentials ${root ? relative(root, credentialsPath) : credentialsPath}`
+    : "";
   return [
     "",
     `⚠️  PSD 字体自动预置没成功：${error.message}`,
@@ -246,7 +262,7 @@ function fontWarning(error, { tenantId }) {
     "    联网后重跑 `pnpm dev` 会自动重试；也可以手工灌：",
     `      1) 把字体放进 fonts/（见 docs/psd-text-layers.md §5.4 的下载地址）`,
     `      2) 照 scripts/psd-fonts.example.json 写一份配置（tenantId 填 ${tenantId}）`,
-    "      3) node scripts/seed-psd-fonts.mjs <你的配置>.json",
+    `      3) node scripts/seed-psd-fonts.mjs <你的配置>.json${credentialsFlag}`,
     "    不想要字体：`pnpm dev … --fonts off`，或设 UNIDOCS_PSD_FONTS=off。",
     "",
   ].join("\n");
