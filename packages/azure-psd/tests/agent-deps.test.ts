@@ -58,7 +58,7 @@ describe("psdAgentDeps", () => {
    */
   it("端到端：Azure 的 psd 工具表里有 setText", () => {
     const agent = createPsdAgent(psdAgentDeps({ CAS_STACK_ID: "s" }, identity, pool));
-    expect(new Set(agent.tools.map(tool => tool.name))).toContain("setText");
+    expect(agent.tools.map(tool => tool.name)).toContain("setText");
   });
 
   it("端到端：没有 IMAGE_EDIT_API_KEY 时工具表里没有 editPixels，但仍有 setText", () => {

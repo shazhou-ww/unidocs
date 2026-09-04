@@ -3,7 +3,7 @@ import { isSBlob } from "@unidocs/cloudflare-sdk";
 import { createPsdAgent } from "@unidocs/doctype-psd";
 import type { FontEntry } from "@unidocs/doctype-psd";
 import { FONTS_INTERNAL_PATH, fontsObjectName } from "../src/fonts-do.js";
-import { createFontIndexSource, parseFontFallbacks } from "../src/fonts-source.js";
+import { createFontIndexSource } from "../src/fonts-source.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -123,17 +123,5 @@ describe("接上 agent", () => {
     const agent = createPsdAgent({});
     expect(agent.tools.map(tool => tool.name)).not.toContain("setText");
     expect(agent.instructions).not.toMatch(/setText/);
-  });
-});
-
-describe("parseFontFallbacks", () => {
-  it("逗号分隔，去空白，顺序即优先级", () => {
-    expect(parseFontFallbacks("NotoSans, NotoSansSC")).toEqual(["NotoSans", "NotoSansSC"]);
-  });
-
-  it("缺省和空串都是空链，不硬编码任何字体名", () => {
-    expect(parseFontFallbacks(undefined)).toEqual([]);
-    expect(parseFontFallbacks("")).toEqual([]);
-    expect(parseFontFallbacks(" , ")).toEqual([]);
   });
 });

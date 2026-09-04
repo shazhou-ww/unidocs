@@ -11,7 +11,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FontRegistry } from "@unidocs/doctype-server-common";
 import { sBlobSignature, type SBlob } from "@unidocs/protocol";
-import { createFontIndex } from "../src/text/font-index.js";
+import { createFontIndex, parseFontFallbacks } from "../src/text/font-index.js";
 import type { FontEntry } from "../src/text/registry.js";
 
 const HASH_A = "a".repeat(64);
@@ -81,5 +81,24 @@ describe("createFontIndex 的缓存", () => {
     failing = false;
     await expect(source.load()).resolves.toBeInstanceOf(Map);
     expect(list).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * 从 `cloudflare-psd/tests/fonts-source.test.ts` 搬来（Task 8）—— 实现搬到了
+ * 这个包，用例跟着走。两个平台读的是同一个 `PSD_FONT_FALLBACKS`，语义只有
+ * 一份，测试留在某一个平台包里就等于只有那一半被守住。
+ */
+describe("parseFontFallbacks", () => {
+  it("逗号分隔，去空白，顺序即优先级", () => {
+    expect(parseFontFallbacks("NotoSans, NotoSansSC")).toEqual(["NotoSans", "NotoSansSC"]);
+  });
+
+  it("缺省和空串都是空链，不硬编码任何字体名", () => {
+    // 硬编码一个 CAS 里可能不存在的名字，回退链只会静默失效 ——
+    // resolveFaceChain 对没装载的候选是直接跳过，不报错。
+    expect(parseFontFallbacks(undefined)).toEqual([]);
+    expect(parseFontFallbacks("")).toEqual([]);
+    expect(parseFontFallbacks(" , ")).toEqual([]);
   });
 });

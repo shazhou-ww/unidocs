@@ -300,9 +300,17 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       const fonts = matchFontsRoute(new URL(request.url).pathname);
       if (!fonts) return fallback(request);
       // 中立的 `handleFontsRequest` 不兜底存储层的异常（`registry.list/put`
-      // 抛出就直接 reject 出去）—— 原先 CF 的 `PsdFontsDurableObject.fetch`
-      // 自己的 try/catch 把这类故障变成 500，这一层责任现在落在宿主这里，
-      // 不然一次 Postgres 故障会变成未处理拒绝，而不是一个像样的 500。
+      // 抛出就直接 reject 出去）。这里再包一层**不是**为了防未处理拒绝 ——
+      // `serve()` 自己就有顶层兜底（http-shell.ts），一次 Postgres 故障在
+      // Node 宿主上本来也是 500，不会变成未处理拒绝。CF 那边"不兜就是未处理
+      // 拒绝"的说法对 workerd 成立，照抄到这里是假的。
+      //
+      // 真实理由是**错误形状**：`serve()` 的兜底给的是
+      // `{"error":"Unhandled error: ..."}`，那个前缀在语义上是"处理器本身坏
+      // 了"（见 serve() 的文档注释：能走到那里就说明 handler 有 bug）。而
+      // 一次存储故障是这个端点可预期的失败，应当以 fonts 端点自己的形状返回
+      // ——`{"error":"Error: ..."}`，与它其余的错误响应一致。下面那条测试用
+      // 精确的 body 相等区分这两条路径，删掉这个 catch 它会红。
       try {
         return await handleFontsRequest({
           docCapabilityVerifier: config.docCapabilityVerifier,
