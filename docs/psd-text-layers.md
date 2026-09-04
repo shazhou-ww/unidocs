@@ -93,11 +93,27 @@ import → export 就把刚补上的分段信息抹光。
 | 特性 | 为什么放弃 |
 |---|---|
 | `warp`（文字变形：arc / bulge / flag / …） | 需要复刻 Photoshop 的网格变形，重排出来必然不像 |
-| `textPath`（沿路径排字） | ag-psd 自己标了只读 |
+| `textPath`（沿路径排字） | 字沿曲线走，位置由弧长决定，我们的排版按基线推进 |
 | `gridding` / `gridInfo`（CJK 排版网格） | 同上，且 `gridInfo` 读不回来（见 §5.1） |
 
 **缺字体不在这一族。** 那不是文件的属性，是"这台机器上装没装"的属性，只有
 渲染时才知道。
+
+**`textPath` 的判据是帧类型，不是这个字段在不在。** Photoshop 给每个文字层都写
+一条 TextFrameSet 记录，ag-psd 无条件把它挂成 `text.textPath`，所以真实文件里
+这个字段**恒为真**。真正区分的是 `textPath.data.type`：缺省/0 = 点文字，
+1 = 框文字（这两种我们用 `shapeType` / `boxBounds` 自己建模），其余才是路径文字。
+两份素材量到的形状：
+
+```
+点文字  { data: { textRange: [-1,-1], pathData: { spacing: -1 } } }      无 bezierCurve
+框文字  { bezierCurve: { controlPoints: [矩形四角] },
+          data: { type: 1, textRange: [-2,-2] } }                        那条"曲线"就是文本框自己
+```
+
+所以既不能看字段在不在，也不能看有没有控制点。早先写成 `if (t.textPath)`，
+结果真实 Photoshop 文件里每一个文字层都被判成不可重排 —— `setText` 从未在真实
+文件上生效过。合成 fixture 测不出来：ag-psd 的 writer 不写 TextFrameSet。
 
 ### 2.3 仍未接入，暂时不影响重排
 
@@ -270,7 +286,7 @@ MORE INFO 行(不该变)  平均色差=38.71  >16 的像素=23.6%    ← 整张�
 没测。所以它只能当兜底，而且必须保留"agent 看结果再判断"这一环 —— 那次 agent
 两次都正确地否掉了 qwen 的输出，那个回路是好的。
 
-## 5. ag-psd 的两个坑
+## 5. ag-psd 与 opentype.js 的坑
 
 ### 5.1 `gridInfo` 编解码不对称（`代码`）
 
@@ -295,7 +311,7 @@ MORE INFO 行(不该变)  平均色差=38.71  >16 的像素=23.6%    ← 整张�
 `left` 是 PSD 的默认值，写出去和根本没写在文件里是一回事。拿它做往返断言会得到
 一个**永远绿的假测试**。测试必须用非默认值（我们用 `center`）。
 
-## 5.3 opentype.js 解析 glyf 时把二次曲线升阶成三次（`实测`）
+### 5.3 opentype.js 解析 glyf 时把二次曲线升阶成三次（`实测`）
 
 TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 才是三次（`C`）。
 但 opentype.js 2.0.0 解析 `glyf` 时会把每条二次曲线升阶成等价的三次曲线，构造
@@ -320,7 +336,7 @@ TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 
 这条结论绑死在 opentype.js 2.0.0 的实现行为上，不是规范保证。**升级这个依赖时要
 重跑一次上面的探针。**
 
-## 5.4 字体从哪儿来：预置脚本
+### 5.4 字体从哪儿来：预置脚本
 
 `代码`。字体索引是**租户级**的（一个 `PsdFonts` Durable Object，同租户下所有
 psd 文档共用），字节在 CAS 里。往里面灌东西的唯一入口是
@@ -397,6 +413,53 @@ DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto S
 其中落在 CJK 统一表意文字区的有多少 —— 一套只有拉丁字母的索引会得到一条明确的
 警告。那是操作者唯一能一眼看出"中文兜底真的带了中文"的地方。
 
+### 5.5 默认样式表不合并，只写在那里的字段全部丢失（`代码`）
+
+`layer.text.style` **不是**"这层的默认样式"，它是 `deduplicateValues` 从各个
+`styleRuns` 里往上提的公共值。真正的默认样式表读都没读 —— `text.js:322-326`：
+
+```js
+// const theNormalStyleSheet = resourceDict.TheNormalStyleSheet;
+// const styleSheetSet = resourceDict.StyleSheetSet;
+// const styleSheetData = styleSheetSet[theNormalStyleSheet].StyleSheetData;
+...
+result.style = {};   // decodeStyle(styleSheetData, fonts);
+```
+
+代码写好了，被注释掉了。**后果**：只写在默认表里的字段一个都到不了
+`layer.text.style`。实测 `strokeFlag` / `fillFlag` / `outlineWidth` 就是这一族
+—— 两份素材、14 个文字层全是 `undefined`，而原始字节里 `/StrokeFlag` 明明出现
+18 次。解码器本身是忠实的（`decodeObject` 把 EngineData 里有的键照抄，
+`styleKeys` 也列全了），丢的是这一层合并。
+
+**这决定了"有没有描边"我们判不出来**：每个文字层都带 `strokeColor: {0,0,0}`
+（Photoshop 默认值），而唯一能区分的开关取不到。所以 `IGNORABLE_STYLE_NAMES`
+里**不放** `strokeColor` —— 一条永远为真的警告会把它旁边那些真警告一起废掉。
+留 `strokeWidth`：真解出一个宽度来，那才是描边存在的证据。
+
+要拿回这些字段只能 fork（取消那几行注释）。作者主动禁用多半有原因 ——
+`encodeEngineData` 会往回写，`style` 预先塞满 34 个默认值会改变写回行为 ——
+而收益目前只有一个布尔值，不值得为它分叉一个活跃依赖。
+
+### 5.6 逐段样式是**增量**，不是整份样式（`实测`）
+
+不是 ag-psd 的坑，是读它的人容易踩的坑，写在这里因为形状和 §5.5 一样。
+`styleRuns[].style` 只存与层级 `style` 的差异：
+
+```
+style:     { font: "JosefinSans-Bold", size: 58.33, leading: 79.17, caps: "all", … }
+styleRuns: [ { length: 10, style: { tracking: 0,   fillColor: … } },
+             { length: 16, style: { tracking: 340, fillColor: … } } ]
+```
+
+字体、字号、行距、caps 一个都不在 run 里。**消费侧必须自己叠**（`effectiveStyle`），
+直接拿 `run.style` 当整份样式的后果：字号掉回 `DEFAULT_FONT_SIZE` 的 12px
+（58.33px 的两行字排成六分之一大）、请求字体恒为 `undefined`（缺字体的替换记录
+永远是空的，用户看到一层默默换了字体的文字）、caps 恒不展开（拿未展开的字符去
+查覆盖，选字体选的是错的码位）。
+
+合并只发生在消费侧，不写回模型 —— 写回去 `save` 就会把整份样式灌进每个 run。
+
 ## 6. 已交付与未决
 
 这份文档写在 `feat/psd-text-edit` 之前，下面前四条**已经由那条分支交付**，
@@ -409,6 +472,25 @@ DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto S
 | 字形栅格化（用现成库） | **一半自己写**。用 `opentype.js` 解析字体（零依赖、ESM、239 KB），但排版与扫描线栅格化是自己写的 —— 现成库要么带 DOM 依赖，要么把布局和绘制绑在一起 |
 | UI：图层选择的 chip | 已交付（`composer.tsx`） |
 
+**真实文件上的保真度（`实测`）**。上面那层 `Web`（58.33px 两行、tracking 340、
+1:1 变换），索引里有 `JosefinSans-Bold`：
+
+```
+Photoshop 烘的图层框            922 × 126    [1706, 186, 1832, 1108]
+我们排 "www.yoursite.com"       922 × 126    [1706, 186, 1832, 1108]
+我们排 "www.unidocs.com"        892 × 126    [1706, 186, 1832, 1078]
+```
+
+原文重排四个坐标逐一复现。换成 `unidocs` 少一个字符，左/上/下三边不动
+（左对齐），只有右边缩 30px。
+
+**这个数字是三个缺陷修完之后才拿到的**，而三个都只有真实 Photoshop 文件才暴露
+（合成 fixture 全绿）：`textPath` 恒真（§2.2）、逐段样式不继承（§5.6）、
+按 `strokeColor` 误报描边（§5.5）。前两个各自都足以让 `setText` 在真实文件上
+完全不可用。教训写在这里：**这条链的测试必须有真实素材那一档**，用 ag-psd 的
+writer 造出来的 PSD 证明不了任何事 —— 它写不出 TextFrameSet，也不会把样式拆成
+增量。
+
 **仍然未决**：
 
 1. **`reshape=true` 的 alpha 估计**（§4.2）—— 需要重做自适应哨兵的实验。
@@ -419,3 +501,9 @@ DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto S
    这个状态，而那个状态没有任何可观测信号。
 4. **子集化** —— CJK 字体每次拉 5–20 MB，靠既有的 `ByteLru` 缓存吃掉；
    真正的解法是按文档实际用到的码位做子集，v1 不做。
+5. **描边判不出来**（§5.5）—— ag-psd 不合并默认样式表，`strokeFlag` /
+   `outlineWidth` 取不到。现在按 `strokeWidth` 报，等于真实文件上一律不报描边。
+   要拿回来只能 fork ag-psd，为一个布尔值不值得；更该做的是给上游提 issue 问
+   那几行为什么被注释掉。
+6. **连字（ligatures）** —— 排版不做，命中就进 `ignored`。真实素材里那层
+   `ligatures: true`，所以每次编辑都会如实报一句。
