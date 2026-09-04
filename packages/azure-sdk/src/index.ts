@@ -2,6 +2,7 @@ export * from "./pool.js";
 export * from "./migrate.js";
 export * from "./ports-pg.js";
 export * from "./ports-blob.js";
+export * from "./font-registry-pg.js";
 export * from "./http-shell.js";
 export * from "./env.js";
 export * from "./local-editor.js";
