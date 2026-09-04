@@ -9,6 +9,7 @@ import type {
   UnitOfWork,
 } from "./ports.js";
 import type { CasGateway } from "./session.js";
+import type { FontEntry, FontRegistry } from "./font-registry.js";
 import { VersionConflictError } from "@unidocs/protocol-doc";
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unicas/codec";
 
@@ -269,5 +270,20 @@ export function createMemoryPorts(): {
     blobs: new MemoryBlobCas(),
     cas: new MemoryCas(),
     unitOfWork: new MemoryUnitOfWork({ deltas }),
+  };
+}
+
+/** 进程内的 FontRegistry —— 单测与本地夹具用,不持久化。 */
+export function createMemoryFontRegistry(): FontRegistry {
+  const rows = new Map<string, FontEntry>();
+  return {
+    async list() {
+      return [...rows.values()].sort(
+        (a, b) => a.postScriptName < b.postScriptName ? -1 : a.postScriptName > b.postScriptName ? 1 : 0,
+      );
+    },
+    async put(entry) {
+      rows.set(entry.postScriptName, entry);
+    },
   };
 }
