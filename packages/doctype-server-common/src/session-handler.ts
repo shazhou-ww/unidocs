@@ -359,7 +359,17 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
           from ? parseInt(from) : undefined,
           to ? parseInt(to) : undefined,
         );
-        return Response.json({ success: true, data: entries, version: session.version });
+        // `valueResponse` 而不是 `Response.json`,与 CF 的
+        // editor-do-svalue.ts:725 逐字对齐。自 `editPixels` 起,一条 delta 的
+        // `operations` 里可以躺着 SBlob 引用(`generative_fill` 就是这么记结果
+        // 层像素的),而 SBlob 没有 JSON 投影 —— 无条件 JSON 会把它悄悄摊平成
+        // 一个普通对象,而带 `Accept: application/svalue` 的客户端(web-psd 的
+        // `fetchHistory()`)拿到 JSON 后会把它当 CBOR 解,炸在编解码器里。
+        // 数据里不含 SBlob 时 `valueResponse` 照样回 JSON,老调用方不受影响。
+        return valueResponse(
+          request,
+          { success: true, data: entries, version: session.version } as unknown as SValue,
+        );
       }
 
       // POST /_internal/rollback
