@@ -11,8 +11,8 @@
  * 任何想要 import 这段接线的人（比如 `tests/unit/psd-agent-parity.test.mjs`
  * 那条跨栈 parity 断言）都得连带把它们一起执行。Azure 侧的对称文件
  * `azure-psd/src/agent-deps.ts` 同理 —— 那边的 `main.ts` 更狠，顶层直接
- * `runDocTypeService(...)`，import 一下就把服务跑起来了。
- * 包的 `"./agent-deps"` 子路径导出指向的就是这个无副作用的模块。
+ * `runDocTypeService(...)`，import 一下就把服务跑起来了。这个模块只导出纯
+ * 函数，import 不产生任何副作用 —— 那条 parity 断言直接按相对路径指向它。
  */
 import { createQwenImageEditor, type PsdAgentDeps } from "@unidocs/doctype-psd";
 import type { AgentIdentity } from "@unidocs/cloudflare-sdk";

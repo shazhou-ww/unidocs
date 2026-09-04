@@ -11,16 +11,20 @@
  * （CF 是租户级 DO，Azure 是 Postgres 连接池），该一致的是"模型能看见哪些
  * 工具"。
  *
- * 两个包各自的 `"./agent-deps"` 子路径导出指向的是无副作用的接线模块，不是
- * 包入口：`azure-psd` 的 `.` 映到 `src/main.ts`，而那个文件在模块顶层就
- * `runDocTypeService(...)` —— import 它会真的把服务跑起来（连 Postgres、绑
- * 端口）。`cloudflare-psd` 的 `src/worker.ts` 同理（顶层 `createEditorDO` /
- * `createOperatorDO` / `export default`）。
+ * **必须指向 `agent-deps.ts` 本身，不能是包入口。** `azure-psd` 的包入口是
+ * `src/main.ts`，而那个文件在模块顶层就 `runDocTypeService(...)` —— import 它
+ * 会真的把服务跑起来（连 Postgres、绑端口）。`cloudflare-psd` 的 `src/worker.ts`
+ * 同理（顶层 `createEditorDO` / `createOperatorDO` / `export default`）。两个
+ * `agent-deps.ts` 都只导出纯函数，import 不产生任何副作用。
+ *
+ * 走相对路径而不是 `@unidocs/*` 裸规格：仓库根的 `node_modules` 里没有
+ * `@unidocs/*` 链接（根 `package.json` 不依赖任何 workspace 包），`tests/` 下
+ * 现有的测试也都是相对路径 import。vitest 会当场转译这两个 `.ts`。
  */
 import { describe, expect, it } from "vitest";
-import { createPsdAgent } from "@unidocs/doctype-psd";
-import { psdAgentDeps as cfDeps } from "@unidocs/cloudflare-psd/agent-deps";
-import { psdAgentDeps as azDeps } from "@unidocs/azure-psd/agent-deps";
+import { createPsdAgent } from "../../packages/doctype-psd/src/index.ts";
+import { psdAgentDeps as cfDeps } from "../../packages/cloudflare-psd/src/agent-deps.ts";
+import { psdAgentDeps as azDeps } from "../../packages/azure-psd/src/agent-deps.ts";
 
 const identity = { docType: "psd", sessionId: "s1", tenantId: "t1" };
 
