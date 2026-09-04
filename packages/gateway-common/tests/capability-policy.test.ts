@@ -8,7 +8,11 @@ import {
 
 describe("Gateway capability policy", () => {
   test.each([
-    ["create", "tenants:t:sessions:create", ["tenants:t:cas:write"], 90, 120],
+    // 240 是平台天花板,不是我们挑的数:Consumption 版 ACA 的 ingress 请求
+    // 超时固定 240s 且不可调,写更大的值只会让 ingress 先掐断,把一条信息
+    // 明确的 502 换成一个 504。lifetime 必须严格大于 deadline —— 相等时
+    // 请求最后一刻发出的 CAS 写会撞上刚过期的票据(见 create 那一段注释)。
+    ["create", "tenants:t:sessions:create", ["tenants:t:cas:write"], 240, 300],
     ["status", "tenants:t:sessions:create", [], 15, 120],
     ["query", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],
     ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],

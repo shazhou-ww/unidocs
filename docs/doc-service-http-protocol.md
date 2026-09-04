@@ -151,7 +151,7 @@ The current capability route generation is:
 
 | Method and path | Operation | Request | Success response | Required Doc authority | Delegated CAS authority | Deadline |
 | --- | --- | --- | --- | --- | --- | ---: |
-| `PUT /tenants/{tenantId}/sessions/{sessionId}` | `create` | Empty or multipart `file` plus optional `format` | `{ success, sessionId, version }` | `sessions:create` for tenant | `cas:write` | 90 s |
+| `PUT /tenants/{tenantId}/sessions/{sessionId}` | `create` | Empty or multipart `file` plus optional `format` | `{ success, sessionId, version }` | `sessions:create` for tenant | `cas:write` | 240 s |
 | `GET .../status` | `status` | None | `{ exists, version }` | `sessions:create` for tenant | None | 15 s |
 | `POST .../query` | `query` | Document-type query | `{ success, data, version }` | Session read | `cas:read` | 60 s |
 | `POST .../apply` | `apply` | `{ operations, description, baseVersion, opId? }` | `{ success, version }` | Session write | `cas:read`, `cas:write` | 90 s |
@@ -161,13 +161,29 @@ The current capability route generation is:
 | `GET .../snapshot` | `snapshot` | None | `{ success, version, hash, docType }` | Session read | `cas:write` | 60 s |
 | `GET .../ir` | `ir` | None | Canonical SValue bytes | Session read | `cas:read` | 30 s |
 | `POST .../init-from-hash` | `initFromHash` | `{ hash, sourceVersion }` | `{ success, sessionId, version }` | Session write | `cas:read`, `cas:write` | 60 s |
-| `POST .../run` | `run` | `{ instruction }` | `{ success, data: { response, iterations } }` | Session write | `cas:read`, `cas:write` | 90 s |
+| `POST .../run` | `run` | `{ instruction }` | `{ success, data: { response, iterations } }` | Session write | `cas:read`, `cas:write` | 1800 s |
 | `POST .../reset` | `reset` | None | `{ success: true }` | Session write | None | 30 s |
 
 Deadlines are Gateway request deadlines. The default capability lifetime is 120
 seconds (`CAPABILITY_TTL_SECONDS`); the configured maximum is 1800 seconds in
 production (`CAPABILITY_MAX_LIFETIME_SECONDS`), bounded by the protocol hard
-maximum of 604800 seconds (7 days).
+maximum of 604800 seconds (7 days). Two operations carry a longer lifetime
+because their deadline exceeds the 120-second default and the doc service holds
+that capability for the whole request: `create` (300 s) and `run` (1800 s). The
+lifetime must stay strictly greater than the deadline — at equality a CAS write
+issued in the request's final moments meets a capability that has just expired,
+turning a timeout into a much harder-to-read 401.
+
+`create`'s 240-second deadline is a platform ceiling, not a tuning choice. The
+Gateway streams the upload onward (`body: request.body`, no buffering), so most
+of that budget is spent on the *client's* uplink rather than on ingestion — a
+237 MiB PSD measured on Azure spent 81 s receiving bytes with the container CPU
+at ≤0.01 of 2.0 cores, then only ~21 s ingesting. Consumption-plan Azure
+Container Apps fixes its ingress request timeout at 240 s and does not allow
+raising it (that needs Premium Ingress on a Dedicated workload profile), so a
+larger number here would only let the ingress cut first and replace a specific
+502 with an opaque 504. Uploads that cannot fit in that window need
+browser-to-storage upload rather than a bigger deadline.
 
 ### Capability authentication
 
