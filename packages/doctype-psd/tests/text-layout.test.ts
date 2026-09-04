@@ -322,13 +322,12 @@ describe("layoutText", () => {
     expect(out.glyphs).toHaveLength(2);
   });
 
-  it("六种忽略样式全部命中时都进 ignored，且跨 run 去重", () => {
+  it("五种忽略样式全部命中时都进 ignored，且跨 run 去重", () => {
     const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
     const ignoredStyle = {
       size: 10,
       underline: true,
       strikethrough: true,
-      strokeColor: { r: 255, g: 0, b: 0 },
       fauxBold: true,
       fauxItalic: true,
       ligatures: true,
@@ -346,7 +345,7 @@ describe("layoutText", () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect([...out.ignored].sort()).toEqual(
-      ["underline", "strikethrough", "strokeColor", "fauxBold", "fauxItalic", "ligatures"].sort(),
+      ["underline", "strikethrough", "fauxBold", "fauxItalic", "ligatures"].sort(),
     );
   });
 
@@ -479,13 +478,26 @@ describe("layoutText", () => {
 describe("静默丢弃是缺陷：影响输出的样式必须要么实现、要么进 ignored", () => {
   const face = () => fakeFace({ advance: 1000, unitsPerEm: 1000 });
 
-  it("strokeWidth 单独出现时也要报 —— 只报 strokeColor 会让它漏网", () => {
+  it("描边按 strokeWidth 报，不按 strokeColor —— 宽度才是描边存在的证据", () => {
     const out = layoutText({ content: "a", style: { size: 10, strokeWidth: 2 } }, () => face());
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.ignored).toContain("strokeWidth");
     // 报了不等于不画：字形照常产出。
     expect(out.glyphs).toHaveLength(1);
+  });
+
+  // 真实素材里**每个**文字层都带 strokeColor:{0,0,0}(Photoshop 默认值),而真正
+  // 的开关 strokeFlag / outlineWidth 在 ag-psd 31.0.2 下一次都没解出来过。按颜色
+  // 报就是每个文件都误报一次,而一条永远为真的警告会把旁边那些真警告一起废掉。
+  it("光有 strokeColor 没有 strokeWidth 时不报 —— 那是 Photoshop 的默认值，不是描边", () => {
+    const out = layoutText(
+      { content: "a", style: { size: 10, strokeColor: { r: 0, g: 0, b: 0 } } },
+      () => face(),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.ignored).toEqual([]);
   });
 
   it("段落级的间距与缩进进 ignored —— 它们按段走，不在逐字符那条路上", () => {

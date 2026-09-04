@@ -27,13 +27,19 @@ const DEFAULT_FONT_SIZE = 12;
 const DEFAULT_LEADING_RATIO = 1.2;
 
 /** `layoutText` 会照常产出字形、但没有还原效果的样式名（逐字符样式里的）。
- *  固定顺序，方便断言。`strokeWidth` 和 `strokeColor` 是同一个特性
- *  （描边）拆出来的两个字段，两个都要报——只报 `strokeColor` 会让"只设了
- *  `strokeWidth` 没设颜色"这种数据静默漏报。 */
+ *  固定顺序，方便断言。
+ *
+ *  `strokeColor` **不在**这张表里：它不是"有没有描边"的证据。真实素材里每个
+ *  文字层都带 `strokeColor: {0,0,0}`（Photoshop 的默认值），而真正的开关
+ *  `strokeFlag` 和 `outlineWidth` 在 ag-psd 31.0.2 下一次都没解出来过
+ *  —— 两份素材、14 个文字层全是 undefined。所以按 `strokeColor` 报等于每个
+ *  文件都误报一次；一条永远为真的警告会把它旁边那些真警告一起废掉。
+ *  `strokeWidth` 留着：真解出一个宽度来，那才是描边存在的证据。
+ *  (ag-psd 为什么解不出来:`text.js` 的 `decodeObject` 是忠实的,丢的是
+ *  `resourceDict.StyleSheetSet` —— 那行在 `text.js:323` 被注释掉了。) */
 const IGNORABLE_STYLE_NAMES = [
   "underline",
   "strikethrough",
-  "strokeColor",
   "strokeWidth",
   "fauxBold",
   "fauxItalic",
