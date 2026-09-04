@@ -90,7 +90,7 @@ export interface DocTypeServiceOptions<TDoc, TQuery, TOp> {
    * 是**按会话身份构造的工厂**，不是值：字体索引是租户级的，而 `main.ts`
    * 起进程、把这个选项传下来的那一刻根本没有租户 —— 身份只在每次请求里
    * `local-operator.ts` 的 `captureIdentity(request)` 才拿得到。与 CF 的
-   * `agent: (env, identity) => ...` 对齐（cloudflare-psd/src/worker.ts:90）。
+   * `agent: (env, identity) => ...` 对齐（cloudflare-psd/src/worker.ts:53）。
    */
   documentAgent?: (identity: SessionIdentity, pool: Pool) => DocumentAgent<TQuery, TOp>;
   /** 与 `documentAgent` 必须同时给；只给一个在启动期抛错。 */

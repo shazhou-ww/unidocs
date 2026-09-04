@@ -87,6 +87,14 @@ psd 的 `setText`(改文字层的文字)要自己排版、自己栅格化,每一
 service 就灌哪个):
 
 ```bash
+# 0) 先确认 0005_font_registry 迁移已经跑过 —— 登记表就是它建的。
+#    迁移 Job 只在部署 platform 目标时才跑(deploy.mjs 里 runMigrations() 挂在
+#    `targets.includes("platform")` 下面),所以只发服务的增量部署
+#    (`--service psd`)不触发它。冷启动的全量部署会跑。
+#    Job 名由 platform.bicep 的 docMigrateJobs 决定,psd 的那个是:
+az containerapp job execution list -g <rg> -n caj-unidocs-psd-migrate -o table
+#    没跑过就补一次 —— 只跑 platform 目标,不碰任何 doc service 的 revision:
+pnpm stack:deploy unidocs-azure --platform
 # 1) 字体文件自备(下载地址见 docs/psd-text-layers.md §5.4),配置照
 #    scripts/psd-fonts.example.json 写,tenantId 填真实租户
 # 2) 凭据文件照 scripts/seed-psd-fonts.mjs 顶部那份形状写,值与部署时注入的一一对应:
@@ -112,8 +120,22 @@ node scripts/seed-psd-fonts.mjs <配置>.json --credentials <凭据>.json
    "它不走 gateway"),所以不能拿网关地址代替。这一步得在环境内部跑——仓库里目前
    没有现成的跳板,得由运维自己安排。CAS 那一半不受影响:`casOrigin` 是对外的。
 2. **回退链要另外配。** `PSD_FONT_FALLBACKS`(逗号分隔、顺序即优先级)是 psd
-   service 的环境变量,**部署模板目前没有它的注入点**。只灌索引不配它的结果不是
-   报错:回退链是空的,PSD 里没点名的字体一个都不试,中文一个字都画不出来。
+   service 的环境变量,值写脚本回读时打印的那些 postScriptName。只灌索引不配它
+   的结果不是报错:回退链是空的,PSD 里没点名的字体一个都不试,中文一个字都画不
+   出来 —— 而 PSD 点名的几乎必然是设计用的字体、不在索引里,所以这一条实际上是
+   必配,不是可选项。
+
+   ```bash
+   pnpm stack:deploy unidocs-azure --service psd \
+     --psd-font-fallbacks NotoSans-Regular,NotoSansSC-Regular
+   ```
+
+   空串(默认)= 不注入这个环境变量,与 `--llm-model` 同一套"空串不追加"的写法,
+   所以不配它不会凭空多出一个空变量。注入点在 `deploy/service.bicep` 的
+   `psdFontFallbacks` 参数。**它是部署参数,不是一次性的手工 env 编辑**:
+   `az deployment group create` 是增量模式,下一次 `--service psd` 会按模板重刷
+   容器的环境变量,手工在门户上加的那一个会被抹掉。
+   Cloudflare 侧对应的位置是 `packages/cloudflare-psd/wrangler.toml` 的 `[vars]`。
 
 **漏跑的表现不是启动失败。** 容器照常起来、健康检查照常绿、`setText` 照常出现在
 工具表里(Azure 侧它是无条件注册的,判据是"有没有登记表"而不是"表里有没有字"),

@@ -59,6 +59,9 @@ param imageEditModel string = ''
 @secure()
 param imageEditApiKey string = ''
 
+@description('psd 的字体回退链:逗号分隔的 postScriptName,顺序即优先级(`PSD_FONT_FALLBACKS`)。空 = 不注入这个变量,回退链是空链 —— 那不是报错,是 setText 对 PSD 里点名的每一个未登记字体都一个字形都取不到,中文层整层画不出来。只有 docType=psd 读它。灌完 scripts/seed-psd-fonts.mjs 之后必须配,见 stacks/unidocs-azure/README.md 的「新环境的字体预置」。')
+param psdFontFallbacks string = ''
+
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: 'unidocs-identity'
 }
@@ -177,7 +180,18 @@ var modelEnv = concat(
   ] : []
 )
 
-var extraEnv = concat(blobEnv, casEnv, authEnv, modelEnv)
+// 字体回退链是明文名字列表,走普通 env。空串不追加对应项 —— 与 casEnv /
+// modelEnv 同一套写法:没配时不注入一个空的 PSD_FONT_FALLBACKS,免得把
+// "这个变量没被设置" 变成 "这个变量被设成了空串"(两者对 parseFontFallbacks
+// 恰好等价,但对读容器 env 排查问题的人不等价)。
+var fontEnv = psdFontFallbacks != '' ? [
+  {
+    name: 'PSD_FONT_FALLBACKS'
+    value: psdFontFallbacks
+  }
+] : []
+
+var extraEnv = concat(blobEnv, casEnv, authEnv, modelEnv, fontEnv)
 
 module app 'container-app.bicep' = {
   name: '${docType}-app'

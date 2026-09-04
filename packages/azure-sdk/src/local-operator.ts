@@ -44,7 +44,7 @@ export interface LocalOperatorDeps<TQuery, TOp> {
    * 按会话身份构造的工厂，不是启动期就定死的值 —— 字体索引是租户级的
    * （见本文件模块注释），而 `runDocTypeService()` 启动时根本没有租户。
    * 必须在 `captureIdentity(request)` 拿到身份**之后**调用，与 CF 的
-   * `agent: (env, identity) => ...` 对齐（cloudflare-psd/src/worker.ts:90）。
+   * `agent: (env, identity) => ...` 对齐（cloudflare-psd/src/worker.ts:53）。
    */
   readonly agent: (identity: SessionIdentity) => DocumentAgent<TQuery, TOp>;
   readonly provider: LlmProvider;

@@ -5,7 +5,11 @@
  *
  * **两个栈同一个脚本、同一条路径**：`POST /tenants/{t}/fonts` 已经下沉成中立
  * 路由，`--psd-url` / 凭据文件指向哪个 doc service 就灌哪个。签发形状也一致
- * ——同一份 capability 凭据两边都被接受，这一点是实测过的（2026-09-04）。
+ * ——同一份 capability 凭据两边都被接受。这一点在**两个本地栈上实测过**
+ * （2026-09-04，`pnpm dev` 起的 Cloudflare 与 Azure 运行时）；**部署环境上还
+ * 没实测过** —— Azure 线上的 doc service ingress 是内部的，脚本得先在容器
+ * 环境内部有个落脚点才跑得起来（见 stacks/unidocs-azure/README.md 的
+ * 「新环境的字体预置」）。
  *
  * PSD 文字层只记字体**名字**，不内嵌字体文件，所以 `setText` 要自己排版就得
  * 先有一张"这个名字 → CAS 里哪一坨字节 → 它认识哪些码位"的索引。这个脚本就是

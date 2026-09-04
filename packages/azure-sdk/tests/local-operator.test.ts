@@ -246,7 +246,7 @@ describe("createLocalOperatorNamespace", () => {
 
   // 字体索引是租户级的：agent 如果在启动期构造一次，就永远拿不到租户，
   // 这是 Azure 侧接不上 setText 的结构性障碍（与 CF 的
-  // `agent: (env, identity) => ...` 对齐，见 cloudflare-psd/src/worker.ts:90）。
+  // `agent: (env, identity) => ...` 对齐，见 cloudflare-psd/src/worker.ts:53）。
   // `deps.agent` 必须是按会话身份构造的工厂，且要在 `captureIdentity` 拿到
   // 身份**之后**才被调用 —— 这条测试用两次带不同 X-Tenant-Id 的 /run 证明:
   // 工厂被调用了两次，且各自拿到了对应请求的 tenantId，不是启动期那一次

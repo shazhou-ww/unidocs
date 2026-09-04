@@ -351,7 +351,13 @@ TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 
 根的 `fonts/` 再灌进去，并把 `PSD_FONT_FALLBACKS` 默认成那两个 postScriptName
 （挂载点与全部裁定见 [`scripts/psd-font-bootstrap.mjs`](../scripts/psd-font-bootstrap.mjs)）。
 `/tenants/{t}/fonts` 已经是中立路由，脚本指向哪个 doc service 就灌哪个 —— 本地与
-线上、Cloudflare 与 Azure 都是同一条路径。
+线上、Cloudflare 与 Azure，**路由与凭据形状**是同一条。但"同一条路径"只到这里为止：
+**能不能从你坐的地方够到那个 doc service，是另一回事。** 本地两个栈、以及线上的
+Cloudflare 都直接够得到；线上 Azure 够不到 —— doc service 的 ingress 是
+`external: false`，而网关的路由表有意不含 `/tenants/{t}/fonts`，仓库里也没有现成的
+跳板，得在容器环境内部跑。这一段免责说明和整套手工步骤见
+[`stacks/unidocs-azure/README.md`](../stacks/unidocs-azure/README.md) 的
+「新环境的字体预置」。
 
 | 想做的事 | 怎么做 |
 |---|---|
@@ -414,7 +420,10 @@ DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto S
 硬编码一个 CAS 里没有的
 名字只会让回退链静默失效。所以**装了字体还要配这个变量**，两步都做了兜底才真的
 生效。本地 `pnpm dev` 把这两步绑在一起做了（见本节开头）；**手工部署仍然要自己
-配**，只灌索引不配变量的结果不是报错，是中文一个字都画不出来。
+配**，只灌索引不配变量的结果不是报错，是中文一个字都画不出来。配在哪儿：
+Cloudflare 是 `packages/cloudflare-psd/wrangler.toml` 的 `[vars]`，Azure 是
+`pnpm stack:deploy unidocs-azure --service psd --psd-font-fallbacks …`
+（注入点在 `stacks/unidocs-azure/deploy/service.bicep` 的 `psdFontFallbacks`）。
 
 兜底必须同时覆盖中文和英文。脚本跑完会回读索引并打印每套字体覆盖了多少码位、
 其中落在 CJK 统一表意文字区的有多少 —— 一套只有拉丁字母的索引会得到一条明确的

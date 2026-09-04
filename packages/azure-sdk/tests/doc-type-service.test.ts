@@ -276,9 +276,14 @@ describe("agent 接线", () => {
  * 1. **分流必须在 `createDocTypeHandler` 之前。** `matchDocRoute` 把路径硬编码
  *    成 `/tenants/{t}/sessions/{s}[/{op}]`，`/tenants/{t}/fonts` 不匹配，交给
  *    doc handler 只会得到 404 "Unknown Doc endpoint"。
- * 2. **顶层必须兜住存储异常。** 中立的 `handleFontsRequest` 不接管
- *    `registry.list/put` 的抛出（CF 那边原来由 DO 自己的 try/catch 兜），
- *    宿主不兜的话一次 Postgres 故障就是一个未处理拒绝，而不是 500。
+ * 2. **存储异常要以 fonts 端点自己的错误形状返回。** 中立的
+ *    `handleFontsRequest` 不接管 `registry.list/put` 的抛出（CF 那边原来由 DO
+ *    自己的 try/catch 兜）。这里**不是**"不兜就变成未处理拒绝"——
+ *    `serve()`（http-shell.ts）有顶层兜底，Node 宿主上一次 Postgres 故障本来
+ *    就是 500；那条理由是从 CF/workerd 照抄的，在这里为假。真正的区别是错误
+ *    形状：宿主兜底给 `{"error":"Unhandled error: ..."}`，那个前缀的语义是
+ *    "处理器自己有 bug"，而存储故障是这个端点可预期的失败，不该借用它。
+ *    下面第三条用例用**精确的 body 相等**钉这条，理由写在它自己的注释里。
  */
 describe("fonts 路由", () => {
   const fontsUrl = (url: string, tenantId: string) => `${url}/tenants/${tenantId}/fonts`;
