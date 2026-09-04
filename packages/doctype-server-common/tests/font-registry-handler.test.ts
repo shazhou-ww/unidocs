@@ -1,0 +1,114 @@
+/**
+ * /tenants/{t}/fonts 的中立处理器。
+ *
+ * 鉴权规则从 cloudflare-psd/src/fonts-do.ts 的 authenticateFontsRoute 逐条
+ * 搬来,一条都不放松 —— 尤其"只接受 sessions:create 这一种权限"和"拒绝委派的
+ * CAS 权限"(R29:这个端点背后不碰 CAS,多带一份权柄是调用方搞错了)。
+ */
+import { describe, expect, it } from "vitest";
+import { handleFontsRequest } from "../src/font-registry-handler.js";
+import { createMemoryFontRegistry } from "../src/memory-ports.js";
+import type { FontEntry } from "../src/font-registry.js";
+
+const TENANT = "t1";
+const entry: FontEntry = {
+  postScriptName: "NotoSans-Regular",
+  family: "Noto Sans",
+  hash: "a".repeat(64),
+  unitsPerEm: 1000,
+  coverage: [[0x20, 0x7e]],
+};
+
+/** 只认一个 token 的假校验器,形状与 DocCapabilityVerifier 一致。 */
+function verifierAccepting(permissions: readonly string[]) {
+  return {
+    async verify(token: string) {
+      if (token !== "good") throw new Error("bad token");
+      return {
+        protectedHeader: { kid: "kid-1" },
+        claims: { sub: "gateway", jti: "jti-1", tenantId: TENANT, permissions },
+      };
+    },
+  } as never;
+}
+
+function req(method: string, body?: unknown, headers: Record<string, string> = {}): Request {
+  return new Request(`https://svc/tenants/${TENANT}/fonts`, {
+    method,
+    headers: { Authorization: "Bearer good", "Content-Type": "application/json", ...headers },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+describe("handleFontsRequest", () => {
+  const cfg = () => ({
+    docCapabilityVerifier: verifierAccepting([`tenants:${TENANT}:sessions:create`]),
+    registry: createMemoryFontRegistry(),
+  });
+
+  it("GET 列出登记表", async () => {
+    const c = cfg();
+    await c.registry.put(entry);
+    const res = await handleFontsRequest(c, req("GET"), { tenantId: TENANT });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ fonts: [entry] });
+  });
+
+  it("POST 登记一条,再 GET 能读回", async () => {
+    const c = cfg();
+    const res = await handleFontsRequest(c, req("POST", entry), { tenantId: TENANT });
+    expect(res.status).toBe(200);
+    expect(await c.registry.list()).toEqual([entry]);
+  });
+
+  it("方法不对回 405,不是 404 —— 别把\"方法用错\"说成\"端点不存在\"", async () => {
+    const res = await handleFontsRequest(cfg(), req("DELETE"), { tenantId: TENANT });
+    expect(res.status).toBe(405);
+  });
+
+  it("校验不过的载荷回 400 且不落库", async () => {
+    const c = cfg();
+    const res = await handleFontsRequest(c, req("POST", { ...entry, coverage: [] }), { tenantId: TENANT });
+    expect(res.status).toBe(400);
+    expect(await c.registry.list()).toEqual([]);
+  });
+
+  it("body 不是 JSON 回 400", async () => {
+    const c = cfg();
+    const bad = new Request(`https://svc/tenants/${TENANT}/fonts`, {
+      method: "POST",
+      headers: { Authorization: "Bearer good", "Content-Type": "application/json" },
+      body: "{oops",
+    });
+    expect((await handleFontsRequest(c, bad, { tenantId: TENANT })).status).toBe(400);
+  });
+
+  it("权限不是租户级的 sessions:create 就拒 —— 索引是租户级的,会话权限与它无关", async () => {
+    const c = {
+      docCapabilityVerifier: verifierAccepting([`tenants:${TENANT}:sessions:s1:write`]),
+      registry: createMemoryFontRegistry(),
+    };
+    expect((await handleFontsRequest(c, req("GET"), { tenantId: TENANT })).status).toBe(403);
+  });
+
+  it("带了委派的 CAS 权限就拒 —— R29:这个端点不碰 CAS,多带一份权柄是调用方搞错了", async () => {
+    const res = await handleFontsRequest(
+      cfg(),
+      req("GET", undefined, { "X-UniDocs-CAS-Capability": "whatever" }),
+      { tenantId: TENANT },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("审计事件报出 operation 与 tenantId,不含 token", async () => {
+    const events: unknown[] = [];
+    await handleFontsRequest(
+      { ...cfg(), audit: e => events.push(e) },
+      req("GET"),
+      { tenantId: TENANT },
+    );
+    expect(events).toHaveLength(1);
+    expect(JSON.stringify(events[0])).toContain("listFonts");
+    expect(JSON.stringify(events[0])).not.toContain("good");
+  });
+});

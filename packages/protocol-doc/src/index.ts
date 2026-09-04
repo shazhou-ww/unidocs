@@ -55,12 +55,15 @@ export {
   docRoutes,
   matchDocInternalRoute,
   matchDocRoute,
+  matchFontsRoute,
 } from "./routes.js";
 export type {
   DocInternalOperation,
   DocInternalRoute,
   DocOperation,
   DocRoute,
+  FontsRoute,
+  TenantOperation,
 } from "./routes.js";
 export {
   consoleObserver,
