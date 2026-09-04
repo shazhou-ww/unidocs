@@ -19,7 +19,7 @@ import {
   readObservedBody,
 } from "@unidocs/protocol-doc";
 import type { HttpCallInput } from "@unidocs/protocol-doc";
-import type { DocumentTypeFactory, SBlobSource } from "@unidocs/protocol";
+import type { DocumentAgent, DocumentTypeContext, DocumentTypeFactory, SBlobSource } from "@unidocs/protocol";
 import { createTenantCasClient, type HttpFetcher } from "@unicas/tenant-client";
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-client";
@@ -41,6 +41,8 @@ import {
   createStubOperatorNamespace,
   type PrivateDocRequestContext,
 } from "./local-editor.js";
+import { createLocalOperatorNamespace } from "./local-operator.js";
+import type { LlmProvider } from "@unidocs/doctype-server-common/agent";
 import { BlobCasStore, BlobSnapshotCache } from "./ports-blob.js";
 import { PgDeltaLog, PgSessionIdentityStore, PgUnitOfWork } from "./ports-pg.js";
 import { createBlobService, createPool } from "./pool.js";
@@ -78,6 +80,15 @@ export interface DocTypeServiceOptions<TDoc, TQuery, TOp> {
   port: number;
   host?: string;
   config: DocTypeServiceConfig;
+  /**
+   * 给了就挂真 operator，省略则维持 501 stub —— markdown/docx/psd 可以分批接。
+   *
+   * 是**值**不是工厂：Azure 侧 `process.env` 在 `main.ts` 里就读得到，不需要
+   * Cloudflare 那种"env 只在 DO 构造时才拿得到"的延迟构造。
+   */
+  documentAgent?: DocumentAgent<TQuery, TOp>;
+  /** 与 `documentAgent` 必须同时给；只给一个在启动期抛错。 */
+  llmProvider?: LlmProvider;
 }
 
 export interface DocTypeServiceHandle {
@@ -136,6 +147,14 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
   const { docType, documentTypeFactory, port, config } = options;
   const host = options.host ?? "0.0.0.0";
 
+  // 只给一半是那种"容器起来了、跑到第一次 /run 才炸"的配置错误。启动期响亮
+  // 失败，不要等部署完看崩溃日志。
+  if ((options.documentAgent === undefined) !== (options.llmProvider === undefined)) {
+    throw new Error(
+      "documentAgent 与 llmProvider 必须同时提供：只给一个会让 operator 在第一次 /run 时才失败",
+    );
+  }
+
   const pool = createPool(config);
   attachPoolErrorLogger(pool, `azure-${docType}`);
   const blobService = createBlobService(config);
@@ -153,6 +172,7 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
   ): {
     documentType: ReturnType<DocumentTypeFactory<TDoc, TQuery, TOp>>;
     deps: SessionDeps;
+    blobs: DocumentTypeContext;
   } {
     const delegatedCapability = requestContext.authKind === "capability"
       ? requestContext.delegatedCasCapability
@@ -191,6 +211,11 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
 
     return {
       documentType: documentTypeFactory(context),
+      // Same SBlobContext the DocumentType was built from, threaded to
+      // `createLocalEditorNamespace` -> `createSessionHandler` so the
+      // agent's `read_blob` / `write_blob` (platform-http.ts) have
+      // something to talk to. See local-editor.ts's `buildSession` doc.
+      blobs: context,
       deps: {
         deltas: new PgDeltaLog(pool, identity),
         snapshots: new BlobSnapshotCache(blobService, identity, `unidocs-${docType}-snapshots`),
@@ -206,23 +231,33 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
     };
   }
 
+  const editorNamespace = createLocalEditorNamespace(buildSession, async (identity, creating) => {
+    if (creating) await sessionIdentities.register(identity);
+    const stored = await sessionIdentities.get(identity);
+    if (!stored) {
+      return Response.json({ error: "Session not found" }, { status: 404 });
+    }
+    if (stored.tenantId !== identity.tenantId || stored.docType !== identity.docType) {
+      return Response.json({ error: "Session identity mismatch" }, { status: 403 });
+    }
+    return null;
+  }, config.maxUploadBytes);
+
   const handler = createDocTypeHandler({
     docType,
     docCapabilityVerifier: config.docCapabilityVerifier,
     casCapabilityVerifier: config.casCapabilityVerifier,
     audit: event => console.log(JSON.stringify({ event: "doc_authentication", docType, ...event })),
-    editor: createLocalEditorNamespace(buildSession, async (identity, creating) => {
-      if (creating) await sessionIdentities.register(identity);
-      const stored = await sessionIdentities.get(identity);
-      if (!stored) {
-        return Response.json({ error: "Session not found" }, { status: 404 });
-      }
-      if (stored.tenantId !== identity.tenantId || stored.docType !== identity.docType) {
-        return Response.json({ error: "Session identity mismatch" }, { status: 403 });
-      }
-      return null;
-    }, config.maxUploadBytes),
-    operator: createStubOperatorNamespace(),
+    editor: editorNamespace,
+    operator: options.documentAgent && options.llmProvider
+      ? createLocalOperatorNamespace({
+        pool,
+        editor: editorNamespace,
+        agent: options.documentAgent,
+        provider: options.llmProvider,
+        docType,
+      })
+      : createStubOperatorNamespace(),
   });
 
   const { close } = await serve(handler, { port, host });
@@ -270,6 +305,8 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   docType: string;
   documentTypeFactory: DocumentTypeFactory<TDoc, TQuery, TOp>;
   defaultPort: number;
+  documentAgent?: DocumentAgent<TQuery, TOp>;
+  llmProvider?: LlmProvider;
 }): Promise<void> {
   const { docType, documentTypeFactory, defaultPort } = options;
   const auth = await new DocAuthConfigCache(docType).get(process.env);
@@ -292,6 +329,8 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
       casStackId: process.env.CAS_STACK_ID,
       ...(maxUploadBytes === undefined ? {} : { maxUploadBytes }),
     },
+    ...(options.documentAgent === undefined ? {} : { documentAgent: options.documentAgent }),
+    ...(options.llmProvider === undefined ? {} : { llmProvider: options.llmProvider }),
   });
   console.log(`azure-${docType} CAS: baseUrl=${process.env.CAS_BASE_URL ?? "(none)"} stackId=${process.env.CAS_STACK_ID ?? "(none)"}`);
   console.log(`azure-${docType} listening on ${handle.url}`);

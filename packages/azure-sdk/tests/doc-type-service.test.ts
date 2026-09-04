@@ -4,7 +4,7 @@
  * local-editor.ts 的模块注释：这是多副本正确性的前提，不是可以之后用
  * LRU 优化掉的实现细节）。
  */
-import { afterEach, expect, test } from "vitest";
+import { afterEach, describe, expect, it, test } from "vitest";
 import { createSBlob } from "@unidocs/svalue-codec";
 import type { DocumentType, SBlob } from "@unidocs/protocol";
 import { createMarkdownDocumentType } from "@unidocs/doctype-markdown";
@@ -68,7 +68,12 @@ function createCasProbeDocumentType(): DocumentType<CasProbeDoc, unknown, CasPro
 
 async function start(
   port: number,
-  overrides: { docType?: string; documentType?: DocumentType<any, any, any> } = {},
+  overrides: {
+    docType?: string;
+    documentType?: DocumentType<any, any, any>;
+    documentAgent?: any;
+    llmProvider?: any;
+  } = {},
 ) {
   const docType = overrides.docType ?? "markdown";
   const pool = createPool({ databaseUrl: DATABASE_URL, blobConnectionString: "" });
@@ -88,6 +93,8 @@ async function start(
       docCapabilityVerifier: { verify: async token => verifyTestToken(token, "doc", docType) },
       casCapabilityVerifier: { verify: async token => verifyTestToken(token, "cas", docType) },
     },
+    ...(overrides.documentAgent === undefined ? {} : { documentAgent: overrides.documentAgent }),
+    ...(overrides.llmProvider === undefined ? {} : { llmProvider: overrides.llmProvider }),
   });
 }
 
@@ -95,7 +102,7 @@ function internal(
   url: string,
   tenantId: string,
   sessionId: string,
-  operation: "create" | "apply" | "query",
+  operation: "create" | "apply" | "query" | "run" | "reset",
   init: RequestInit = {},
 ) {
   const suffix = operation === "create" ? "" : `/${operation}`;
@@ -217,4 +224,41 @@ test("without a CAS base URL, create() pinning TDoc SBlobs surfaces the 501 stub
   expect(body.success).toBe(false);
   expect(body.error).toMatch(/updateRootRefs/);
   expect(body.error).toMatch(/501/);
+});
+
+describe("agent 接线", () => {
+  // 只给一半是那种"容器起来了、跑到第一次 /run 才炸"的配置错误。启动期响亮
+  // 失败,不要等 15 分钟部署完看崩溃日志。
+  it("只给 documentAgent 不给 llmProvider -> 启动期抛错", async () => {
+    await expect(start(0, { documentAgent: { tools: [], instructions: "" } }))
+      .rejects.toThrow(/llmProvider/);
+  });
+
+  it("只给 llmProvider 不给 documentAgent -> 启动期抛错", async () => {
+    await expect(start(0, { llmProvider: { complete: async () => ({ text: "", toolCalls: [] }) } }))
+      .rejects.toThrow(/documentAgent/);
+  });
+
+  // 测试 1、2 的校验在 serve() 之前就抛错,永远不会真的监听,所以 port: 0
+  // 无害;这条测试要发真实 HTTP 请求,而 startDocTypeService 是用传入的
+  // port 字面量拼 handle.url 的(不是 server.listen(0) 实际分到的端口),传
+  // 0 会得到 http://127.0.0.1:0,连不上 —— 所以这里用一个具体的未占用端口。
+  it("两个都不给 -> operator 维持 501,不报错", async () => {
+    const handle = await start(41997);
+    try {
+      const res = await internal(handle.url, "tenant-1", `svc-${Date.now()}`, "run", { method: "POST" });
+      expect(res.status).toBe(501);
+      // 501 和 404 都是"没跑起来":光看状态码分不清是 stub 正确拒绝了,还是
+      // 请求压根没路由到 operator(这正是上面那处 brief 缺陷落进去的盲区)。
+      // 断言错误文案确实来自 createStubOperatorNamespace(),钉住"路由通到了
+      // operator,且 operator 选择了 stub 分支"。
+      const body = await res.json();
+      expect(body).toMatchObject({
+        success: false,
+        error: "Operator is not implemented on Azure yet",
+      });
+    } finally {
+      await handle.close();
+    }
+  });
 });

@@ -29,7 +29,7 @@
  * writeup.
  */
 
-import type { DocumentType } from "@unidocs/protocol";
+import type { DocumentType, DocumentTypeContext } from "@unidocs/protocol";
 import type { SessionDeps, SessionIdentity } from "@unidocs/doctype-server-common";
 import { createSessionHandler, DocumentSession } from "@unidocs/doctype-server-common";
 
@@ -70,6 +70,15 @@ export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
   buildSession: (identity: SessionIdentity, requestContext: PrivateDocRequestContext) => {
     documentType: DocumentType<TDoc, TQuery, TOp>;
     deps: SessionDeps;
+    /**
+     * The same SBlob context `documentType` was built from — threaded
+     * through to `createSessionHandler` so agent `read_blob` / `write_blob`
+     * (platform-http.ts) have a real editor-side blob store to talk to.
+     * Missing this was C1 of the 2026-09-03 final review: the routes
+     * existed nowhere on Azure, so 404s got misread by platform-http.ts as
+     * "blob is gone" and images silently degraded to alt-text.
+     */
+    blobs?: Pick<DocumentTypeContext, "openSBlob" | "makeSBlob">;
   },
   prepareSession: (
     identity: SessionIdentity,
@@ -89,12 +98,13 @@ export function createLocalEditorNamespace<TDoc, TQuery, TOp>(
             || new URL(request.url).pathname === "/_internal/init_from_hash");
         const identityError = await prepareSession(identity, creating);
         if (identityError) return identityError;
-        const { documentType, deps } = buildSession(identity, requestContext);
+        const { documentType, deps, blobs } = buildSession(identity, requestContext);
         const session = new DocumentSession(documentType, deps);
         const handle = createSessionHandler({
           session,
           identity,
           ...(maxUploadBytes === undefined ? {} : { maxUploadBytes }),
+          ...(blobs === undefined ? {} : { blobs }),
         });
         return handle(request);
       },

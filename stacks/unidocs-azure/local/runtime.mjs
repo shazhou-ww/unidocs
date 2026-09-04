@@ -45,6 +45,7 @@ import {
 } from "jose";
 import { startLocalMiddleware } from "../../unidocs-cloudflare/local/runtime.mjs";
 import { EXTERNAL_NPM_PACKAGES, resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
+import { composeOwnsPortNow } from "./compose-status.mjs";
 import { allAzurePorts, azurePortLayout, describeAzurePorts } from "./ports.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../doc-types.mjs";
 import { startReplicaProxy } from "./replica-proxy.mjs";
@@ -439,6 +440,16 @@ function assertPortFree(port, hint) {
  * *expects* to find already bound. Every other port probe (gateway, proxy,
  * replicas, Azurite) still runs unchanged; only the Postgres check is
  * skipped, never inferred.
+ *
+ * `postgres: "compose"` 下还有第二种该跳过的情形:5433 上坐着的就是**本仓库
+ * compose 项目那个正在跑的容器**。上一轮 Ctrl-C 之后这是常态,而下面的
+ * `docker compose up -d` 幂等、本就该原地复用它。
+ *
+ * 这跟上面那段"绝不自动探测"并不矛盾,区别在于问的问题:被禁止的是"5433 上
+ * 有没有人在听"(那会把"compose 根本没起来"这种真故障变成"连上了别人的
+ * Postgres"这种假绿),这里问的是"在听的是不是我们"——同一个端口只能被一个
+ * 进程绑定,所以"我们的服务正在跑且发布着 5433"就是身份证明,compose 没起来
+ * 时它同样为假,真故障照样会响。判定见 `compose-status.mjs`。
  */
 async function assertPortsFree(layout, { skipPostgresPort = false } = {}) {
   const byPort = {
@@ -446,8 +457,9 @@ async function assertPortsFree(layout, { skipPostgresPort = false } = {}) {
     [AZURITE_PORT]: "expected by the azurite-blob process this run is about to spawn",
     [POSTGRES_PORT]: "expected by packages/azure-sdk/docker-compose.yml's postgres service (host port mapping)",
   };
+  const skipPostgres = skipPostgresPort || composeOwnsPortNow(POSTGRES_PORT);
   const ports = allAzurePorts(layout).concat(
-    skipPostgresPort ? [AZURITE_PORT] : [AZURITE_PORT, POSTGRES_PORT],
+    skipPostgres ? [AZURITE_PORT] : [AZURITE_PORT, POSTGRES_PORT],
   );
   await Promise.all(ports.map((port) => assertPortFree(port, byPort[port])));
 }

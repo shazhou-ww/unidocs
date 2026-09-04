@@ -201,11 +201,20 @@ if (useAzure) {
     replicas: 2,
   });
   const described = describeAzurePorts(layout);
+  // 5433 上如果坐着的是我们自己那个 compose 容器,就别拦——`docker compose
+  // up -d` 幂等,下面 startAzureRuntime() 会原地复用它。见 compose-status.mjs:
+  // 这条检查防的是"认错人"(连上陌生人的 Postgres 并往上跑 migrations),
+  // 不是"重复启动",而 Ctrl-C 之后的稳态恰恰就是我们的容器还在那儿。
+  const { composeOwnsPortNow } = await import("../stacks/unidocs-azure/local/compose-status.mjs");
+  const postgresIsOurs = composeOwnsPortNow(5433);
   await Promise.all([
     ...allAzurePorts(layout).map((port) => assertPortFree(LOCAL_HOST, port, described[port])),
-    assertPortFree(LOCAL_HOST, 5433, AZURE_CONTAINER_PORTS.postgres.hint),
+    ...(postgresIsOurs ? [] : [assertPortFree(LOCAL_HOST, 5433, AZURE_CONTAINER_PORTS.postgres.hint)]),
     assertPortFree(LOCAL_HOST, 10000, AZURE_CONTAINER_PORTS.azurite.hint),
   ]);
+  if (postgresIsOurs) {
+    console.log("Postgres 5433: reusing the running azure-sdk compose container.");
+  }
 
   const {
     startAzureRuntime,
