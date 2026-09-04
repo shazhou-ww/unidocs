@@ -1,4 +1,5 @@
 export * from "./ports.js";
+export * from "./font-registry.js";
 export * from "./hash.js";
 export * from "./cas-operations.js";
 export * from "./session.js";

@@ -12,14 +12,12 @@ import { Font, parse } from "opentype.js/dist/opentype.mjs";
 import type { OpentypePathCommand } from "opentype.js/dist/opentype.mjs";
 import type { FontFace, PathCommand } from "./font.js";
 
-/**
- * 一套字体覆盖的码位范围：排好序、互不重叠、左闭右闭的区间数组
- * （`[start, end]`，`start <= end`，相邻区间已经合并）。Task 5 的字体索引
- * 用它决定"这套字体覆盖了哪些码位"，不需要真的加载字体字节就能做选字体的
- * 前置判断（见协调者裁定 R1：这个类型定义在这里，因为只有解析器知道怎么
- * 从 `cmap` 表读出覆盖范围）。
- */
-export type FontCoverage = readonly (readonly [number, number])[];
+// FontCoverage 住在中立层(doctype-server-common/src/font-registry.ts):中立的
+// 字体路由处理器要引用 FontEntry,而依赖方向是 doctype-psd → server-common,
+// 反过来不行。这里 re-export 是为了让本包内既有的 import 一行都不用改 ——
+// 删掉它会静默断开一批引用。
+import type { FontCoverage } from "@unidocs/doctype-server-common";
+export type { FontCoverage } from "@unidocs/doctype-server-common";
 
 /** `parseFontFace` 产出的 `FontFace` 实例 → 背后那个 opentype.js `Font` 对象
  *  的登记表。`fontCoverage` 需要读 `cmap` 表算覆盖范围，但那不在 `FontFace`
