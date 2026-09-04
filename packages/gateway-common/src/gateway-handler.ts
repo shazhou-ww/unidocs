@@ -339,11 +339,10 @@ async function forwardToWorker(
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  const { deadlineSeconds } = docCapabilityPolicy(operation, tenantId, sessionId);
   const operationSignal = AbortSignal.any([
     request.signal,
-    AbortSignal.timeout(
-      docCapabilityPolicy(operation, tenantId, sessionId).deadlineSeconds * 1000,
-    ),
+    AbortSignal.timeout(deadlineSeconds * 1000),
   ]);
   const credentials = await cfg.capabilityAuthority.issueDocOperation({
     operation,
@@ -391,9 +390,34 @@ async function forwardToWorker(
     // 是我们合成的,如果只按响应码记,这条会被误记成一次正常的 502 响应。
     observe(httpCallFailure({ ...callInput, durationMs: Date.now() - started }, err));
     return Response.json({
-      error: `Document worker unreachable: ${err}`,
+      error: upstreamFailureMessage(err, deadlineSeconds),
     }, { status: 502 });
   }
+}
+
+/**
+ * 转发失败时合成给调用方的那句话。
+ *
+ * 连不上和超时是两件事,必须说成两件事。线上有过一次 237 MiB 的 create 超时,
+ * 浏览器收到 `Document worker unreachable: TimeoutError`,而日志显示 doc
+ * service 一直好好的 —— 它在整个窗口里收字节,我们放弃之后它还继续把 CAS
+ * root-refs 提交完(200)才停。"unreachable" 那个词直接把排查引向了网络连通性。
+ *
+ * 所以超时这一支要说清两件事:计时的是**我们**(带上 deadline,读的人才知道去
+ * 哪儿调),以及上游**可能还在跑**(于是可能留下半截状态,值得去查一眼)。
+ *
+ * 状态码仍是 502。504 更准确,但那是独立的一次改动 —— `observe.test.ts` 把
+ * "合成失败"钉在 502 上,而那条测试要表达的是另一件事(连不上不能被记成一次
+ * 正常的 502 响应),不该被这里顺手改掉。
+ */
+export function upstreamFailureMessage(err: unknown, deadlineSeconds: number): string {
+  // `AbortSignal.timeout()` 触发的是 TimeoutError;调用方自己断开是 AbortError,
+  // 那种情况计时的不是我们,不该说成超时。
+  if (err instanceof DOMException && err.name === "TimeoutError") {
+    return `Document worker timed out after ${deadlineSeconds}s (gateway operation deadline). `
+      + "The upstream request may still be running and may have left partial state.";
+  }
+  return `Document worker unreachable: ${err}`;
 }
 
 async function listDocuments(
