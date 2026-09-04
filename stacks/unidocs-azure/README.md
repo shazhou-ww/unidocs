@@ -12,7 +12,9 @@ Bicep 模板和 Dockerfile,不放业务逻辑。目录分界与 `stacks/` 的总
 - `local/` —— 本地开发/测试用的 Azure 栈:`runtime.mjs`
   (`startAzureRuntime()`,`pnpm dev unidocs-azure` 和 `tests/integration/azure/`
   都靠它起服务)、`ports.mjs`(端口布局,无依赖)、`replica-proxy.mjs`
-  (本地扮演 Container Apps 的多副本 ingress)。
+  (本地扮演 Container Apps 的多副本 ingress)、`dev-env.mjs`(读根目录
+  `.env.azure`,见下)、`compose-status.mjs`(判定某个宿主端口上坐着的是不是
+  本仓库 compose 项目的容器,见下)。
 
 删掉整个 `stacks/unidocs-azure/`,`pnpm build`/`pnpm typecheck`/`pnpm test` 依然
 全绿——代码不依赖它。反过来,`packages/azure-*` 一旦被删,这里的脚本会
@@ -45,6 +47,38 @@ Docker 只读**构建上下文根目录**那一份 `.dockerignore`,不会去构�
 **借用者**,不是第一消费者:它们各自 `docker compose -f
 packages/azure-sdk/docker-compose.yml up -d` 起同一个 Postgres 容器,复用
 `packages/azure-sdk` 已经在维护的那一份定义,而不是维护第二份。
+
+## 本地 Operator 密钥:`.env.azure`
+
+`pnpm dev unidocs-azure` 启动时会读仓库根的 `.env.azure`
+(`local/dev.mjs` → `local/dev-env.mjs`),把里面的键注入 `process.env`,再由
+`spawnService` 铺给网关和每个 doc service。不需要手动 `source`。复制
+`.env.azure.example` 起步;`.env.azure` 被 `.gitignore` 忽略,永不入库。
+
+Cloudflare 侧对应的是 `packages/cloudflare-psd/.dev.vars`(`readDevVars` 读、
+注入为 worker binding)。两边各读各的文件,但**语义要一致**:shell 里已有的
+同名变量优先,所以 `LLM_MODEL=xxx pnpm dev unidocs-azure` 这种一次性覆盖仍
+然成立。
+
+这件事之所以值得单独写一段:它的失败形态不是启动失败。缺了 key,栈照常起
+来、健康检查照常绿,只有聊天框第一次发消息才 500
+`No API key set`——`tests/unit/scripts/azure-dev-env.test.mjs` 钉的就是这条。
+
+## Ctrl-C 之后残留的 Postgres 容器
+
+`dispose()` 里的 `docker compose down -v` 只在优雅退出时跑得完;Ctrl-C 把整个
+进程组一起打断时它经常来不及,于是 `azure-sdk-postgres-1` 留在 5433 上——这是
+常态,不是异常。
+
+启动预检因此不问"5433 空不空",而问"上面坐着的是不是我们"
+(`local/compose-status.mjs`):是我们自己 compose 项目里正在跑的容器就放行,
+交给幂等的 `docker compose up -d` 原地复用,**不再需要先 `pnpm azure:down`**。
+陌生人占着 5433 仍然照旧响亮失败——连接串不认人,让 migrations 跑到别人库上
+是这条检查存在的全部理由。
+
+注意这条检查在仓库里有**两份**:`scripts/dev.mjs` 的启动预检(跑在 import
+`runtime.mjs` 之前),和 `runtime.mjs` 自己的 `assertPortsFree()`。两份都要放
+行,少一份另一份照样把你挡在门外。
 
 ## 相关命令
 
