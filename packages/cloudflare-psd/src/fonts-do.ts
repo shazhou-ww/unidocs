@@ -43,10 +43,16 @@ const MAX_CODE_POINT = 0x10ffff;
  * 的 `canonicalComposite`）：两段各自 `encodeURIComponent` 再用 `|` 连接，
  * 这样带 `|` 的 tenantId 不可能和另一对 (stackId, tenantId) 撞名。
  *
- * 带 stackId 前缀，不是只用 tenantId：字体**字节**在 CAS 里的键本来就是
- * stack 作用域的（`stackCanonicalNodeKey` = `stacks/{stackId}/...`），换一个
- * stack 那些字节就已经不在了。索引跟着一起换名，两边同生同死；不带前缀反而
- * 会得到一张指向不存在字节的索引，而那种失效是静默的。
+ * 带 stackId 前缀，不是只用 tenantId：字体**字节**在 CAS 里的键是
+ * `stacks/{stackId}/tenants/{tenantId}/nodes-v2/{hash}`
+ * （`service-cloudflare/src/do-names.ts` 的 `stackCanonicalNodeKey`）——
+ * **stack 和 tenant 两段都在键里**。换一个 stack，那些字节就已经不在了。
+ * 索引跟着一起换名，两边同生同死；不带前缀反而会得到一张指向不存在字节的
+ * 索引，而那种失效是静默的。
+ *
+ * 顺带说明一个常被问到的点：正因为 tenantId 也在 CAS 的键里，索引**做不到**
+ * "一份字节所有租户共用" —— 同一个哈希在别的租户分区里根本没有那个对象。
+ * 要做成栈级共享，得把字节挪出 CAS（栈级的 R2/KV）,那是另一套设计。
  */
 export function fontsObjectName({ stackId, tenantId }: {
   readonly stackId: string;
