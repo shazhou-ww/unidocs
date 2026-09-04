@@ -70,6 +70,26 @@ describe("Cloudflare doc type 的配套物", () => {
   test.each(cfDocTypes)("%s 有 wrangler.toml（部署配置）", (docType) => {
     expect(existsSync(join(ROOT, `packages/cloudflare-${docType}/wrangler.toml`))).toBe(true);
   });
+
+  // 本地环境按 DOC_TYPES 里那张手写的绑定表装配 Miniflare，**不解析
+  // wrangler.toml**；线上正相反。所以同一个 DO 要在两处各声明一次，漏掉
+  // 任一边都是"一边能跑、另一边起不来"，而报错只指向一个看不出根因的绑定
+  // 缺失。tests/unit/scripts/doc-types.test.mjs 守着本地那张表，这一条守
+  // wrangler.toml 那半边 —— 两条合起来才是双向的。
+  test.each(cfDocTypes)("%s 在 DOC_TYPES 里声明的每个 DO 绑定都出现在 wrangler.toml 里", (docType) => {
+    const spec = DOC_TYPES[docType];
+    const toml = readFileSync(join(ROOT, `packages/cloudflare-${docType}/wrangler.toml`), "utf8");
+    const bindings = [
+      [spec.editor, spec.editorClass],
+      [spec.operator, spec.operatorClass],
+      ...(spec.fonts ? [[spec.fonts, spec.fontsClass]] : []),
+    ];
+    for (const [name, className] of bindings) {
+      expect(toml, `${docType}: 缺 durable_objects 绑定 ${name}`).toContain(`name = "${name}"`);
+      expect(toml, `${docType}: 缺 class_name ${className}`).toContain(`class_name = "${className}"`);
+      expect(toml, `${docType}: 缺 [exports.${className}]`).toContain(`[exports.${className}]`);
+    }
+  });
 });
 
 // 两朵云支持的 doc type 集合必须相等：Cloudflare 有的，Azure 必须跟上——

@@ -20,6 +20,12 @@
     },
     {
       "path": "../doctype-psd"
+    },
+    {
+      "path": "../protocol-doc"
+    },
+    {
+      "path": "../service-auth"
     }
   ]
 }

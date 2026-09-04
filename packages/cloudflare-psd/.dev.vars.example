@@ -15,3 +15,18 @@ IMAGE_EDIT_API_KEY=sk-...
 # Optional — defaults shown:
 # IMAGE_EDIT_MODEL=qwen-image-edit-plus
 # IMAGE_EDIT_BASE_URL=https://dashscope.aliyuncs.com
+
+# setText 的字体回退链,逗号分隔,顺序即优先级。名字必须是已经登记进租户级
+# 字体索引的 postScriptName —— 写一个不存在的名字不会报错,只会让回退链
+# 静默失效。worker 自己的缺省是空链。
+#
+# **本地开发一般不用管这一段**:`pnpm dev` 起来时会自动把 Noto Sans /
+# Noto Sans SC 灌进租户 u1 的字体索引(有就跳过,没有就下载再灌),并把下面
+# 这一行的值当作默认的回退链传给 psd worker。见 scripts/psd-font-bootstrap.mjs
+# 与 docs/psd-text-layers.md §5.4;不想要就 `pnpm dev … --fonts off`。
+#
+# 这里写了就以这里为准(.dev.vars 压过自动默认值)。下面这两个值与
+# scripts/psd-fonts.example.json 里的 postScriptName 一致,是真实字体解析出来
+# 的名字(带 -Regular 后缀)。别按家族名写成 NotoSans —— 那正是上一段说的
+# "不会报错、只是静默失效"。跑完预置脚本可以照它打印的名字抄。
+# PSD_FONT_FALLBACKS=NotoSans-Regular,NotoSansSC-Regular

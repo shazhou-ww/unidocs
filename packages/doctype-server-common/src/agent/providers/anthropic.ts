@@ -227,7 +227,11 @@ export function createAnthropicProvider(
         () => observe({ event: "llm_call", phase: "wait", endpoint, model, elapsedMs: Date.now() - started }),
         opts.heartbeatMs ?? LlmWaitHeartbeatMs,
       );
-      let resp: Response;
+      // 类型从 fetchImpl 反推,而不是直接写那个 Web 全局类型的名字 ——
+      // agent 内核里不许出现平台标识符(spec 4.4 规则 1,由
+      // tests/unit/workspace/agent-kernel-purity 按正则扫源码守着,所以
+      // 连注释里都不能提那个词)。这一行原先就是那么写的,把纯度测试弄红了。
+      let resp: Awaited<ReturnType<typeof fetchImpl>>;
       try {
         resp = await fetchImpl(endpoint, {
           method: "POST",

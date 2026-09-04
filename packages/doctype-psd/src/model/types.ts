@@ -48,6 +48,18 @@ export interface DropShadow {
  *  what fidelity was lost instead of silently pretending the import was exact. */
 export interface Degradation { reason: string; detail?: string }
 
+/**
+ * "这层文字画出来的是 Photoshop 烘的像素"这条降级记录的 reason。
+ *
+ * 提成常量是因为 `setText` 成功之后要把它**摘掉** —— 那一刻像素已经是本仓库
+ * 排版链自己排的，再挂着"渲染与导出使用 PSD 烘焙像素"就是在陈述错误的事实，
+ * 模型复核时会同时读到它和 `provenance.model = "unidocs-text-layout"`，
+ * 轻则措辞含糊，重则以为编辑没生效而重试。靠字符串字面量在两处各写一遍
+ * 迟早漂移，所以只定义一次（`ops/text-ops.ts` 引用它）。
+ */
+export const TEXT_BAKED_DEGRADATION = "文字层已栅格化";
+
+
 export interface LayerTextStyle {
   font?: string;
   size?: number;
@@ -180,4 +192,12 @@ export interface Canvas {
   profile: string;
 }
 
-export interface PsdDoc { canvas: Canvas; layers: Layer[]; }
+/** 这份文档渲染文字时用到的字体。`blob` 是 branded SBlob —— CAS 的 GC 靠
+ *  文档里的 SBlob 引用钉住 blob，只被租户索引引用的字体会被回收
+ *  （设计文档 §3.6）。 */
+export interface FontRef {
+  postScriptName: string;
+  blob: SBlob;
+}
+
+export interface PsdDoc { canvas: Canvas; layers: Layer[]; fonts?: FontRef[]; }

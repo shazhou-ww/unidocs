@@ -340,6 +340,9 @@ importers:
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
+      '@unidocs/service-auth':
+        specifier: workspace:*
+        version: link:../service-auth
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250817.0
@@ -452,6 +455,9 @@ importers:
       fast-png:
         specifier: ^8.0.0
         version: 8.0.0
+      opentype.js:
+        specifier: ^2.0.0
+        version: 2.0.0
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -3495,6 +3501,10 @@ packages:
   open@10.2.0:
     resolution: {integrity: sha512-YgBpdJHPyQ2UE5x+hlSXcnejzAvD0b22U2OuAP+8OnlJT+PjWPxtgmGqKKc+RgTM63U9gN0YzrYc71R2WT/hTA==}
     engines: {node: '>=18'}
+
+  opentype.js@2.0.0:
+    resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
+    hasBin: true
 
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
@@ -6792,6 +6802,8 @@ snapshots:
       define-lazy-prop: 3.0.0
       is-inside-container: 1.0.0
       wsl-utils: 0.1.0
+
+  opentype.js@2.0.0: {}
 
   package-json-from-dist@1.0.1: {}
 

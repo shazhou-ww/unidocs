@@ -34,7 +34,10 @@ www.unidocs.com" —— agent 连试两次生图模型去画字，两次都自�
     "shapeType": "point",
     "transform": [1, 0, 0, 1, 184.65522620905017, 1750.9569536423846]
   },
-  "pixels": { "blob": { "$blob": "6dea1a62…" }, "width": 922, "height": 126 },
+  // IR JSON 里像素是 {width, height, hash} 三元组 —— branded SBlob 带不进
+  // JSON（见 psd/ir.ts），读回来时才用 hash 重建。早先这里画成
+  // { blob: { $blob: … } } 是错的。
+  "pixels": { "width": 922, "height": 126, "hash": "6dea1a62…" },
   "degraded": [{ "reason": "文字层已栅格化", "detail": "…" }]
 }
 ```
@@ -49,7 +52,8 @@ the importer lost, not what the document contains"）。
 
 ## 2. 导入侧：接了什么，丢了什么
 
-`代码`。ag-psd 的 `LayerTextData` 有 30 个字段，`TextStyle` 有 36 个。改动
+`代码`。ag-psd 31.0.2 的 `LayerTextData` 有 28 个顶层字段，`TextStyle` 有 34 个
+（数过；早先这里写的 30 / 36 是更早某个版本的数字）。改动
 （提交 `0593a61`）之前我们只留 4 个 / 5 个。
 
 **丢失的直接后果**：上面那层黑/红两色、全大写、大字距，在我们 IR 里全没了。
@@ -89,11 +93,27 @@ import → export 就把刚补上的分段信息抹光。
 | 特性 | 为什么放弃 |
 |---|---|
 | `warp`（文字变形：arc / bulge / flag / …） | 需要复刻 Photoshop 的网格变形，重排出来必然不像 |
-| `textPath`（沿路径排字） | ag-psd 自己标了只读 |
+| `textPath`（沿路径排字） | 字沿曲线走，位置由弧长决定，我们的排版按基线推进 |
 | `gridding` / `gridInfo`（CJK 排版网格） | 同上，且 `gridInfo` 读不回来（见 §5.1） |
 
 **缺字体不在这一族。** 那不是文件的属性，是"这台机器上装没装"的属性，只有
 渲染时才知道。
+
+**`textPath` 的判据是帧类型，不是这个字段在不在。** Photoshop 给每个文字层都写
+一条 TextFrameSet 记录，ag-psd 无条件把它挂成 `text.textPath`，所以真实文件里
+这个字段**恒为真**。真正区分的是 `textPath.data.type`：缺省/0 = 点文字，
+1 = 框文字（这两种我们用 `shapeType` / `boxBounds` 自己建模），其余才是路径文字。
+两份素材量到的形状：
+
+```
+点文字  { data: { textRange: [-1,-1], pathData: { spacing: -1 } } }      无 bezierCurve
+框文字  { bezierCurve: { controlPoints: [矩形四角] },
+          data: { type: 1, textRange: [-2,-2] } }                        那条"曲线"就是文本框自己
+```
+
+所以既不能看字段在不在，也不能看有没有控制点。早先写成 `if (t.textPath)`，
+结果真实 Photoshop 文件里每一个文字层都被判成不可重排 —— `setText` 从未在真实
+文件上生效过。合成 fixture 测不出来：ag-psd 的 writer 不写 TextFrameSet。
 
 ### 2.3 仍未接入，暂时不影响重排
 
@@ -266,7 +286,7 @@ MORE INFO 行(不该变)  平均色差=38.71  >16 的像素=23.6%    ← 整张�
 没测。所以它只能当兜底，而且必须保留"agent 看结果再判断"这一环 —— 那次 agent
 两次都正确地否掉了 qwen 的输出，那个回路是好的。
 
-## 5. ag-psd 的两个坑
+## 5. ag-psd 与 opentype.js 的坑
 
 ### 5.1 `gridInfo` 编解码不对称（`代码`）
 
@@ -291,21 +311,199 @@ MORE INFO 行(不该变)  平均色差=38.71  >16 的像素=23.6%    ← 整张�
 `left` 是 PSD 的默认值，写出去和根本没写在文件里是一回事。拿它做往返断言会得到
 一个**永远绿的假测试**。测试必须用非默认值（我们用 `center`）。
 
-## 6. 未决
+### 5.3 opentype.js 解析 glyf 时把二次曲线升阶成三次（`实测`）
 
-按依赖顺序：
+TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 才是三次（`C`）。
+但 opentype.js 2.0.0 解析 `glyf` 时会把每条二次曲线升阶成等价的三次曲线，构造
+`glyph.path` 时一律产出 `C`。
 
-1. **`set_text` op + 提示词分流** —— 让 agent 看见 `type: "text"` 且
-   `editable` 就走文字工具，`editPixels` 只留给真正的图片。数据基础（§2.4）
-   已就绪。
-2. **字体来源** —— 三条路：打包若干开源字体 / 允许用户上传 / 读系统字体。
-   它决定"缺字体"这条分支有多常见。倾向前两条，不做自动下载：收益只覆盖开源
-   字体，而那批正好也能预先打包，白担一个运行时网络依赖和授权判断。
-3. **字形栅格化** —— 不是从零写（`opentype.js` / `fontkit` / `harfbuzzjs` 都
-   现成），真正的工作量是把它们跑在 workerd 里（WASM 要算进脚本体积上限，
-   具体数字待查），以及写"PSD 文字模型 → 字形位置"的映射。难的是后者，不是
-   画曲线。
-4. **`reshape=true` 的 alpha 估计**（§4.2）—— 需要重做自适应哨兵的实验。
-5. **UI**：图层选择目前**会**随指令发给 agent（`composer.tsx` 拼
-   `<<selection layers=[…]>>`），但 composer 上只为"拖出来的选区"渲染了提示
-   chip，图层选择没有 —— 用户看不出自己附带了什么。数据没问题，是显示漏了。
+探针（写进去再读回来，同一份字体字节）：
+
+```
+写入前:   [M(0,0),  Q(x1=100, y1=200, x=300, y=400),                    Z]
+解析回来: [M(0,0),  C(x1=67, y1=133, x2=167, y2=267, x=300, y=400),     Z]
+```
+
+数值对得上二次→三次的标准升阶公式（`C1 = P0 + ⅔(C−P0)`、`C2 = P1 + ⅔(C−P1)`，
+即 (66.7, 133.3) 与 (166.7, 266.7)，差值来自 `glyf` 用整数坐标存储的取整），
+不是巧合。
+
+**后果**：`parseFontFace` 产出的任何字体，`outline()` **永远不会返回 `Q` 命令**。
+`translatePathCommand` 与 `raster.ts` 里的 `Q` 分支在真实调用路径上是死代码 ——
+不删（`PathCommand` 类型里有 `Q`，测试用的假字体仍会喂进来），但要知道它们**不受
+任何真实字体的测试保护**：Q 分支只能绕过字体解析、直接喂手写命令来测。
+
+这条结论绑死在 opentype.js 2.0.0 的实现行为上，不是规范保证。**升级这个依赖时要
+重跑一次上面的探针。**
+
+### 5.4 字体从哪儿来：预置脚本
+
+`代码`。字体索引是**租户级**的（一个 `PsdFonts` Durable Object，同租户下所有
+psd 文档共用），字节在 CAS 里。往里面灌东西的唯一入口是
+[`scripts/seed-psd-fonts.mjs`](../scripts/seed-psd-fonts.mjs) —— 用法、配置形状、
+以及下面三条限制都写在那个文件顶部的注释里，示例配置见
+`scripts/psd-fonts.example.json`。
+
+**本地开发不用手工跑它。** `pnpm dev`（Cloudflare 栈、选中了 psd 时）启动就会
+自己走一遍：先读一次租户 `u1` 的索引，两套都在就跳过，缺了就把缺的那套下到仓库
+根的 `fonts/` 再灌进去，并把 `PSD_FONT_FALLBACKS` 默认成那两个 postScriptName
+（挂载点与全部裁定见 [`scripts/psd-font-bootstrap.mjs`](../scripts/psd-font-bootstrap.mjs)）。
+
+| 想做的事 | 怎么做 |
+|---|---|
+| 什么都不做 | 默认就是"有就跳过，没有就灌" |
+| 跳过（离线、CI、不想要这几 MB） | `pnpm dev … --fonts off`，或 `UNIDOCS_PSD_FONTS=off` |
+| 灌到别的租户 | `UNIDOCS_PSD_FONT_TENANT=<租户>`（默认 `u1`，与 web-psd 硬编码的 `USER` 一致） |
+| 自己配回退链 | 在 `packages/cloudflare-psd/.dev.vars` 里写 `PSD_FONT_FALLBACKS=…`（压过默认值） |
+| 换字体 / 灌到生产 | 还是手工跑 `seed-psd-fonts.mjs`，形状见下 |
+
+这一步**不会阻断启动**：没网、下载失败、预置失败，一律打一条说清"这次少了什么
+功能、怎么手工补、怎么彻底关掉"的警告然后继续。开发环境因为字体下不下来就起不
+来是不可接受的。代价是失败时索引仍然是空的 —— 那时 `setText` 还在工具表里
+（它的判据是 `PSD_FONTS` 绑定在不在，不是索引里有没有字体），只是每次调用都
+取不到字形。
+
+三条要先知道的：
+
+1. **它不走 gateway。** gateway 的路由表只认 `/tenants/{t}/docs/…` 与
+   `/tenants/{t}/cas/…`；字体端点 `/tenants/{t}/fonts` 和 CAS 的 root-refs 都不在
+   里面（后者是**有意**不暴露的私有服务操作）。所以脚本直连 psd worker 和 CAS
+   服务，并且需要两把本该只存在 gateway 上的私钥。它是**部署者工具**，不是终端
+   用户接口。
+2. **写权限沿用租户作用域的 `sessions:create`**（裁定 R41）—— 能创建会话的人就
+   能往该租户的字体表里登记字体。这是有意为之的取舍（字体是加法，不改动既有
+   文档），但别以为这个端点有更严的保护。
+3. **字体二进制不进仓库**（裁定 R19）：一套中文字体 5–20 MB，进 git 就永远留在
+   历史里。配置里写本地路径，文件由部署者自备（仓库根的 `fonts/` 已 gitignore）。
+4. **脚本修不回"索引有条目、根引用是 0"这个状态**（`推断` —— 评审做过推演并用注入反证过，但那次验证只活在它的临时目录里，**仓库里没有任何测试守着这条**。这正是本文档反复强调的区别："我跑通了 X"不等于"有东西守着 X"）。
+   正常路径不会走到这个状态 —— 但如果它已经存在（早期版本的脚本、或有人绕过脚本
+   直接 POST 那个端点），重跑修好的脚本**不会修复它**：哈希没变就走"跳过"这条路，
+   一次 retain 都不发。字节倒是被重新传了一遍、续上 24 小时租约，于是**看起来好了
+   一天，然后再次消失**，如此往复。
+   而且没有任何可观测信号：脚本回读只打印覆盖范围，不提根引用；客户端的
+   `readMetadata` 把带计数的 `state` 丢掉了（`tenant-client/src/client.ts`）；
+   列根引用的只有本地测试探针，不是运维工具。**第一个症状就是字体凭空消失。**
+   出路：换一个 `postScriptName` 重新登记，或去 CAS 侧手工补一次根引用。
+   待办：给脚本加一个 `--repin` 开关（无条件重钉一次），或补一条 CAS 侧的
+   "列出有索引但无根引用"的运维命令。
+
+**中文那套该取哪个文件。** 脚本有一道 16 MiB 的闸（`MAX_FONT_BYTES`，对齐编辑器
+DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto Sans SC"、
+体积差得很远。撞上闸只会看到一句"请改用子集化过的字体"，仓库里却没有任何子集化
+工具，所以这里点名（字节数 2026-09-03 实测自 `notofonts/noto-cjk` 的 `main`）：
+
+| 文件 | 字节 | 过 16 MiB 闸？ |
+|---|---|---|
+| `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` | 8,331,336（8.0 MB） | ✅ **用这个** |
+| `Sans/Variable/OTF/Subset/NotoSansSC-VF.otf` | 15,054,748 | ⚠️ 过，但只剩 1.6 MB 余量 |
+| `Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf` | 16,437,364 | ⚠️ 过，但只剩 0.3 MB 余量 |
+| `Sans/OTC/NotoSansCJK-Regular.ttc` | 19,484,784 | ❌ 超闸，脚本当场拒绝 |
+
+推荐那份实测跑过 `describeFont`：`postScriptName` 就是配置里要写的
+`NotoSansSC-Regular`，`unitsPerEm=1000`，覆盖 30,890 个码位、其中基本区汉字
+20,976 个。
+
+回退链本身不在配置里，是 psd worker 的 `PSD_FONT_FALLBACKS` 环境变量（逗号分隔、
+顺序即优先级）。worker 的缺省是空链、不硬编码字体名 —— 硬编码一个 CAS 里没有的
+名字只会让回退链静默失效。所以**装了字体还要配这个变量**，两步都做了兜底才真的
+生效。本地 `pnpm dev` 把这两步绑在一起做了（见本节开头）；**手工部署仍然要自己
+配**，只灌索引不配变量的结果不是报错，是中文一个字都画不出来。
+
+兜底必须同时覆盖中文和英文。脚本跑完会回读索引并打印每套字体覆盖了多少码位、
+其中落在 CJK 统一表意文字区的有多少 —— 一套只有拉丁字母的索引会得到一条明确的
+警告。那是操作者唯一能一眼看出"中文兜底真的带了中文"的地方。
+
+### 5.5 默认样式表不合并，只写在那里的字段全部丢失（`代码`）
+
+`layer.text.style` **不是**"这层的默认样式"，它是 `deduplicateValues` 从各个
+`styleRuns` 里往上提的公共值。真正的默认样式表读都没读 —— `text.js:322-326`：
+
+```js
+// const theNormalStyleSheet = resourceDict.TheNormalStyleSheet;
+// const styleSheetSet = resourceDict.StyleSheetSet;
+// const styleSheetData = styleSheetSet[theNormalStyleSheet].StyleSheetData;
+...
+result.style = {};   // decodeStyle(styleSheetData, fonts);
+```
+
+代码写好了，被注释掉了。**后果**：只写在默认表里的字段一个都到不了
+`layer.text.style`。实测 `strokeFlag` / `fillFlag` / `outlineWidth` 就是这一族
+—— 两份素材、14 个文字层全是 `undefined`，而原始字节里 `/StrokeFlag` 明明出现
+18 次。解码器本身是忠实的（`decodeObject` 把 EngineData 里有的键照抄，
+`styleKeys` 也列全了），丢的是这一层合并。
+
+**这决定了"有没有描边"我们判不出来**：每个文字层都带 `strokeColor: {0,0,0}`
+（Photoshop 默认值），而唯一能区分的开关取不到。所以 `IGNORABLE_STYLE_NAMES`
+里**不放** `strokeColor` —— 一条永远为真的警告会把它旁边那些真警告一起废掉。
+留 `strokeWidth`：真解出一个宽度来，那才是描边存在的证据。
+
+要拿回这些字段只能 fork（取消那几行注释）。作者主动禁用多半有原因 ——
+`encodeEngineData` 会往回写，`style` 预先塞满 34 个默认值会改变写回行为 ——
+而收益目前只有一个布尔值，不值得为它分叉一个活跃依赖。
+
+### 5.6 逐段样式是**增量**，不是整份样式（`实测`）
+
+不是 ag-psd 的坑，是读它的人容易踩的坑，写在这里因为形状和 §5.5 一样。
+`styleRuns[].style` 只存与层级 `style` 的差异：
+
+```
+style:     { font: "JosefinSans-Bold", size: 58.33, leading: 79.17, caps: "all", … }
+styleRuns: [ { length: 10, style: { tracking: 0,   fillColor: … } },
+             { length: 16, style: { tracking: 340, fillColor: … } } ]
+```
+
+字体、字号、行距、caps 一个都不在 run 里。**消费侧必须自己叠**（`effectiveStyle`），
+直接拿 `run.style` 当整份样式的后果：字号掉回 `DEFAULT_FONT_SIZE` 的 12px
+（58.33px 的两行字排成六分之一大）、请求字体恒为 `undefined`（缺字体的替换记录
+永远是空的，用户看到一层默默换了字体的文字）、caps 恒不展开（拿未展开的字符去
+查覆盖，选字体选的是错的码位）。
+
+合并只发生在消费侧，不写回模型 —— 写回去 `save` 就会把整份样式灌进每个 run。
+
+## 6. 已交付与未决
+
+这份文档写在 `feat/psd-text-edit` 之前，下面前四条**已经由那条分支交付**，
+留在这里只为记录当时的判断与实际做法的差别。
+
+| 当时列为未决 | 实际做法 |
+|---|---|
+| `set_text` op + 提示词分流 | 已交付。分流规则拆成两半：不点名工具的硬规则进基础提示词，点名 `setText`/`editPixels` 的三条另立一块、只在两个工具**都**注入时追加 —— 否则会造出"提示词里有、工具表里没有"的幽灵工具 |
+| 字体来源（三条路，倾向打包） | **三条都没选**。打包被否掉了：兜底要同时覆盖中英，而一套中文字体 5–20 MB，进不了 Worker。改成全部走 CAS + 租户级索引 DO + 预置脚本（§5.4） |
+| 字形栅格化（用现成库） | **一半自己写**。用 `opentype.js` 解析字体（零依赖、ESM、239 KB），但排版与扫描线栅格化是自己写的 —— 现成库要么带 DOM 依赖，要么把布局和绘制绑在一起 |
+| UI：图层选择的 chip | 已交付（`composer.tsx`） |
+
+**真实文件上的保真度（`实测`）**。上面那层 `Web`（58.33px 两行、tracking 340、
+1:1 变换），索引里有 `JosefinSans-Bold`：
+
+```
+Photoshop 烘的图层框            922 × 126    [1706, 186, 1832, 1108]
+我们排 "www.yoursite.com"       922 × 126    [1706, 186, 1832, 1108]
+我们排 "www.unidocs.com"        892 × 126    [1706, 186, 1832, 1078]
+```
+
+原文重排四个坐标逐一复现。换成 `unidocs` 少一个字符，左/上/下三边不动
+（左对齐），只有右边缩 30px。
+
+**这个数字是三个缺陷修完之后才拿到的**，而三个都只有真实 Photoshop 文件才暴露
+（合成 fixture 全绿）：`textPath` 恒真（§2.2）、逐段样式不继承（§5.6）、
+按 `strokeColor` 误报描边（§5.5）。前两个各自都足以让 `setText` 在真实文件上
+完全不可用。教训写在这里：**这条链的测试必须有真实素材那一档**，用 ag-psd 的
+writer 造出来的 PSD 证明不了任何事 —— 它写不出 TextFrameSet，也不会把样式拆成
+增量。
+
+**仍然未决**：
+
+1. **`reshape=true` 的 alpha 估计**（§4.2）—— 需要重做自适应哨兵的实验。
+2. **`baselineShift` 的方向**（`layout.ts`）—— 正值向上是**按跨标准约定推定的**
+   （CSS baseline-shift / PDF 的 Ts / PostScript 都是正值抬升），**没有拿真
+   Photoshop 实测过**。需要一份带非零 `baselineShift` 的真实 PSD 核对。
+3. **预置脚本的 `--repin`**（§5.4 第 4 条）—— 脚本修不回"索引有条目、根引用是 0"
+   这个状态，而那个状态没有任何可观测信号。
+4. **子集化** —— CJK 字体每次拉 5–20 MB，靠既有的 `ByteLru` 缓存吃掉；
+   真正的解法是按文档实际用到的码位做子集，v1 不做。
+5. **描边判不出来**（§5.5）—— ag-psd 不合并默认样式表，`strokeFlag` /
+   `outlineWidth` 取不到。现在按 `strokeWidth` 报，等于真实文件上一律不报描边。
+   要拿回来只能 fork ag-psd，为一个布尔值不值得；更该做的是给上游提 issue 问
+   那几行为什么被注释掉。
+6. **连字（ligatures）** —— 排版不做，命中就进 `ignored`。真实素材里那层
+   `ligatures: true`，所以每次编辑都会如实报一句。

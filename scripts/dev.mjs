@@ -4,12 +4,13 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOC_TYPES, parseDocTypes } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/unidocs-azure/doc-types.mjs";
-import { loadRemoteCasConfig, parseDevArgs } from "./unidocs-dev-config.mjs";
+import { loadRemoteCasConfig, parseDevArgs, writeLocalCredentials } from "./unidocs-dev-config.mjs";
+import { DEFAULT_FONT_TENANT, ensurePsdFonts, psdFontFallbacks } from "./psd-font-bootstrap.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const USAGE =
-  "Usage: pnpm dev <unidocs-cloudflare|unidocs-azure> [docType ...] [--cas <remote|local>]";
+  "Usage: pnpm dev <unidocs-cloudflare|unidocs-azure> [docType ...] [--cas <remote|local>] [--fonts <auto|off>]";
 
 // 两套栈可以同时跑(docx/psd 的 CAS 过渡形态正需要这一点),那时两个 Vite
 // 都想要同一个端口。给 Azure 侧加一个固定偏移，与端口段本身的分离
@@ -65,6 +66,12 @@ let azureDocTypeTable;
 // docx services get `CAS_BASE_URL` wired up the same way the e2e test does.
 let azureCasBaseUrl;
 let remoteCas;
+
+// 字体预置只对 Miniflare 这一路的 psd 有意义:索引住在 psd worker 的租户级
+// `PsdFonts` DO 里,Azure 栈根本没有那个 worker,没选 psd 时也没有。
+const psdFontsEnabled = !useAzure
+  && devOptions.fontsMode === "auto"
+  && docTypes.includes("psd");
 
 if (devOptions.casMode === "remote") {
   try {
@@ -249,6 +256,10 @@ if (useAzure) {
     docTypes,
     persistPath: join(root, ".wrangler", "miniflare"),
     logLevel: LogLevel.INFO,
+    // 回退链的默认值必须**在 Miniflare 起来之前**就定下来 —— 它是 worker 的
+    // 一个绑定,而下面那次预置是运行时起来之后才跑的。只灌索引不配这个变量
+    // 的话回退链是空的:中文一个字都画不出来,而且不报错。
+    ...(psdFontsEnabled ? { bindingDefaults: { psd: { PSD_FONT_FALLBACKS: psdFontFallbacks() } } } : {}),
     ...(devLogFile ? { logFile: devLogFile } : {}),
     ...(remoteCas ? {
       casOrigin: remoteCas.origin,
@@ -256,6 +267,24 @@ if (useAzure) {
     } : {}),
   });
   backend = { name: "Miniflare" };
+  // 本地运行时的两把签名密钥是每次启动现生成的,只落在这个进程的内存里。
+  // 绕过 gateway 直连 worker 的本地工具(scripts/seed-psd-fonts.mjs)签不出
+  // 凭据,除非把它们写出来一份。见 writeLocalCredentials 的注释。
+  backend.credentialsPath = await writeLocalCredentials({
+    root,
+    runtime,
+    ...(remoteCas ? { casOrigin: remoteCas.origin } : {}),
+  });
+  // 挂在这里而不是更早:预置绕过 gateway 直连 worker 和 CAS,签凭据靠的就是
+  // 上面这一步写出来的文件。它**从不抛** —— 没网/下载失败/预置失败一律只警告,
+  // `pnpm dev` 照常起来(见 psd-font-bootstrap.mjs 的裁定 2)。
+  if (psdFontsEnabled) {
+    await ensurePsdFonts({
+      root,
+      credentialsPath: backend.credentialsPath,
+      tenantId: process.env.UNIDOCS_PSD_FONT_TENANT || DEFAULT_FONT_TENANT,
+    });
+  }
 }
 
 console.log(`UniDocs local runtime (${backend.name})`);
@@ -288,6 +317,7 @@ if (useAzure) {
     console.log(`Log file (JSONL): ${runtime.logFile}`);
     console.log(`  jq 'select(.event == "http_call" and .ok == false)' ${runtime.logFile}`);
   }
+  console.log(`Local credentials (0600, direct-to-worker tools): ${backend.credentialsPath}`);
 }
 
 // Start each selected doc type's dev frontend (if it declares one), with the

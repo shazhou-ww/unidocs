@@ -22,6 +22,9 @@ type IrLayer = Omit<Layer, "pixels" | "mask" | "children"> & {
 interface Ir {
   canvas: PsdDoc["canvas"];
   layers: IrLayer[];
+  /** `doc.fonts` 为 undefined 时这个字段整个不出现（不是 null/[]）——
+   *  老文档的快照字节不该因为加了这个字段就变形。 */
+  fonts?: { postScriptName: string; hash: string }[];
 }
 
 function pixelRefWire(ref: PixelRef): { width: number; height: number; hash: string } {
@@ -121,6 +124,11 @@ export async function serialize(doc: PsdDoc, store: BlobStore): Promise<Uint8Arr
     canvas: doc.canvas,
     layers: await Promise.all(doc.layers.map((l) => serializeLayer(l, store))),
   };
+  // fonts 是可选字段，JSON 装不下 branded SBlob，只写 hash；doc.fonts 为
+  // undefined 时不写这个键，不写成 null/[]（老文档往返不该变形）。
+  if (doc.fonts !== undefined) {
+    ir.fonts = doc.fonts.map((f) => ({ postScriptName: f.postScriptName, hash: f.blob.hash }));
+  }
   return new TextEncoder().encode(JSON.stringify(ir));
 }
 
@@ -131,8 +139,15 @@ export async function serialize(doc: PsdDoc, store: BlobStore): Promise<Uint8Arr
  *  Pixels. Both carry a branded SBlob so `collectSBlobRefs` can pin them. */
 export async function deserialize(bytes: Uint8Array, store: BlobStore): Promise<PsdDoc> {
   const ir = JSON.parse(new TextDecoder().decode(bytes)) as Ir;
-  return {
+  const doc: PsdDoc = {
     canvas: ir.canvas,
     layers: await Promise.all(ir.layers.map((l) => deserializeLayer(l, store))),
   };
+  // ir.fonts 缺席（老文档）时保持 fonts 是 undefined，不重建成 []；用真值判断
+  // 而不是 !== undefined，同一份文档若手误写成 "fonts": null 也不会在这里
+  // null.map 抛 TypeError（deserializeMask 对 pixels.hash 也是这个防御姿态）。
+  if (ir.fonts) {
+    doc.fonts = ir.fonts.map((f) => ({ postScriptName: f.postScriptName, blob: createSBlob(f.hash) }));
+  }
+  return doc;
 }

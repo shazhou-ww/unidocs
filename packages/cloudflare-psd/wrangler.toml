@@ -29,6 +29,13 @@ storage = "sqlite"
 type = "durable-object"
 storage = "sqlite"
 
+# 租户级字体索引（其余两个是会话级）。本地 dev 不读这个文件 —— 同一条绑定
+# 还要写进 stacks/unidocs-cloudflare/local/doc-types.mjs，只改这里的结果是
+# 线上能跑、本地起不来。
+[exports.PsdFonts]
+type = "durable-object"
+storage = "sqlite"
+
 # Exports-based declarations register the DO classes; explicit bindings make
 # them reachable from this worker's own fetch handler (env.PSD_EDITOR).
 [[durable_objects.bindings]]
@@ -38,6 +45,10 @@ class_name = "PsdEditor"
 [[durable_objects.bindings]]
 name = "PSD_OPERATOR"
 class_name = "PsdOperator"
+
+[[durable_objects.bindings]]
+name = "PSD_FONTS"
+class_name = "PsdFonts"
 
 [[services]]
 binding = "CAS_SERVICE"

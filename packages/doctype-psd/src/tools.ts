@@ -290,12 +290,14 @@ READING (do this before and after edits)
 - getLayers: quick summary tree (ids, types, bounds).
 - getDoc: full structure of a layer/subtree (exact bounds, masks, adjustments, effects) with pixel data omitted.
 - getPreview: RENDER you can SEE. Call with {} for the whole canvas, {rect:[t,l,b,r]} to zoom into an area, or {layerId} to see one layer. ALWAYS look with getPreview after an edit to verify it did what you intended, and adjust if not.
+- REAL TEXT vs. LETTERING PAINTED INTO PIXELS: getLayers reports text:{content, font, editable} on every layer of type "text" — those are real words the document still knows as words. getDoc returns the raw text object for reading content and runs; it does NOT carry the editable flag, so judge from getLayers. Letters that are merely painted — a raster or fill layer, letters baked inside a smartObject, a photo of a sign — carry no text field at all. The two are INDISTINGUISHABLE in a preview, so never decide from the picture; decide from that field.
 
 EDITING
 - transform supports translate ({op:{translate:[dx,dy]}}) and flip only — no scale or rotate.
 - Clipping: a layer with clipping:true is confined to the alpha of the layer directly BELOW it (its base). To move a clipped image, move its base layer by the same delta too, or they will separate.
 - Masks: a mask is grayscale coverage (black hides, white shows). Use editMask to set/replace/remove.
 - New layers need a caller-assigned unique id. A RASTER layer needs pixel data in the arguments, which you cannot produce — so add a raster layer only when its pixels were handed to you. Adjustment, fill and group layers need no pixels and are yours to create freely.
+- THE WORDS OF AN EDITABLE TEXT LAYER (type "text", text.editable true) ARE TEXT. The only honest way to change them is to re-typeset them from the font, so that the letters come out as the exact string you were given. Do NOT redraw them as pixels instead: an image model asked to write a particular string produces a plausible-looking misspelling of it, and a misspelt logo or URL is worse than no edit at all. If nothing in your tool list can re-typeset text, say so and stop rather than approximating the string.
 - Adjustment layers: create with addLayer (type "adjustment") using a PSD adjustType key (brit=brightness/contrast, blwh=black & white, hue2=hue/saturation); change params later with setAdjustment. The field is adjustType, not adjustmentType.
 
 THE SELECTION MARKER
@@ -329,3 +331,46 @@ PIXEL EDITING
 - You CANNOT see transparency. A PNG's alpha is flattened to white before you see it, so a transparent area looks like white paper and pale content on it can be invisible. Previews therefore paint transparent areas as a grey/white CHECKERBOARD — that pattern is not part of the image. For anything quantitative, read the alpha(...) numbers rather than judging from the picture.
 - Write the instruction so it stands on its own: it is passed straight to an image model that sees only the layer and your sentence. "replace the hat with voluminous hair, with a bow hair accessory on top" works; "change it" does not.
 - If editPixels comes back with ok:false, read the reason: "refused" means rephrase the instruction; "timeout"/"provider_error" mean the attempt failed and nothing was changed — decide whether it is worth retrying.`;
+
+/**
+ * 只有注入了字体索引来源时才追加的一段（与 editPixelsInstructions 同一个
+ * 道理，见上面那段注释：工具表和提示词必须一起条件化）。
+ *
+ * 这段里**刻意不提 editPixels** —— 两个工具各自独立条件化，完全可能出现
+ * "有字体、没 editor"的部署，那时这段话里的 editPixels 就又是一个幽灵工具。
+ * "文字层该走哪个工具"的分流规则因此不在这里，见下面的
+ * `textRoutingInstructions`（只在两个工具都注入时才追加）。
+ */
+export const setTextInstructions = `
+
+TEXT LAYERS
+- setText: change the WORDS of a text layer. Give it {layerId, text}, where text is the layer's COMPLETE new content — not a diff, not just the part you changed. Read the current content with getDoc{layerId} first so you can send the whole string back. Newlines separate paragraphs.
+- It re-typesets the layer from the real font outlines and re-rasterises it, so the letters come out exactly as you wrote them. The style runs are re-split around your change, and the layer's bounds move so that the edge fixed by the paragraph alignment stays put: left-aligned keeps its left edge, right-aligned its right edge, centred its centre.
+- ONE STYLED STRETCH AT A TIME. If your replacement spans a stretch whose styling changes partway (the first three words bold, the rest not), setText refuses rather than flattening the styling away — make the change in two calls, each touching a single styled stretch.
+- ok:false is a normal answer, not a crash. Read reason: some text layers cannot be re-typeset at all (warped text, text on a path, vertical text, text boxes that need line breaking, text carrying a scale/rotate/skew transform) — for those the picture stays the baked bitmap and setText changes nothing. getLayers already reports editable:false for every one of these, so you will normally know before you call.
+- Read the result before you report success. FOUR fields can tell you the picture is not exactly what was asked for:
+  - ignored: styles this layer carries that the renderer did not reproduce (underline, strikethrough, stroke, paragraph indents).
+  - missing: characters no available font can draw — they are simply absent from the picture.
+  - fontFallbacks: the font the layer asked for is not installed here and another one was used for the WHOLE layer, so the letterforms and the line width WILL differ from the original.
+  - glyphFallbacks: the requested font IS installed but does not cover some characters, so just those characters were drawn from a different font. This is what happens when you add Chinese to a Latin headline: only those few glyphs change shape, and they will not match the rest of the line.
+  When any of the four is non-empty, say so to the user instead of reporting an exact result.`;
+
+/**
+ * 只有 editor 与 fontIndex **都**注入时才追加的一段：文字层到底走哪个工具。
+ *
+ * 单独一个块的理由是这条规则必须同时点名 setText 和 editPixels，于是它只在
+ * 两个工具都在场的部署里才说得通。写进基础提示词，没配图像 key 的部署里
+ * editPixels 就成了幽灵工具；挂到 setTextInstructions 上，"有字体、没
+ * editor"的部署里 editPixels 同样是幽灵（那段刻意不提它就是这个理由）。
+ *
+ * 分流本身就是"在两个工具之间选一个"，只有一个工具时没有分流可言 —— 那种
+ * 部署靠基础提示词里那条不点名工具的规则兜底（可编辑文字层的字必须重新排版，
+ * 排不了就停下来说，别拿像素去凑）。
+ */
+export const textRoutingInstructions = `
+
+TEXT OR PIXELS: WHICH TOOL
+- type "text" with text.editable true — change the words with setText, NEVER with editPixels. setText re-typesets the real font outlines, so the string comes out exactly as you wrote it. editPixels hands your sentence to an image model that cannot spell: asked for WWW.UNIDOCS.COM on a real text layer it drew WWW.NOUCNIDE.COM, twice in a row, and the user was told it could not be done. That layer needed setText.
+- Everything else that merely LOOKS like writing is pixels, and editPixels is the tool for it: a raster or fill layer, letters baked inside a smartObject, a photo of a sign. Those layers have no text field in getLayers at all — that absence, not the picture, is how you tell.
+- type "text" with text.editable false — setText refuses this layer (uneditable says why: warped text, text on a path, vertical text, a box that needs re-flowing). Its words are already a baked bitmap, so editPixels is the only route left; it REDRAWS the letters, so check the result with getPreview and tell the user the lettering was redrawn rather than re-typeset.
+- Colour, opacity, blend mode, position and effects of a text layer are setProps and transform, whichever kind of layer it is. setText only ever changes the words.`;

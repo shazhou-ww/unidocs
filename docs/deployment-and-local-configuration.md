@@ -131,6 +131,54 @@ and are gone from the codebase. PSD chat additionally accepts `LLM_API_KEY`,
 never set in production (production data-plane requests fail closed without a
 valid access token).
 
+### PSD font seeding
+
+`setText` needs a tenant-level font index: PSD text layers record a font *name*,
+never the font file. `scripts/seed-psd-fonts.mjs` writes the bytes into CAS and
+registers the parsed metadata (`unitsPerEm`, `coverage`) into the tenant's
+`PsdFonts` Durable Object. Usage, config shape, and the reasoning live in that
+file's header comment; `scripts/psd-fonts.example.json` is a working example.
+
+Three deployment facts:
+
+- **It does not go through the Gateway.** `matchGatewayRoute` only knows
+  `/tenants/{t}/docs/…` and `/tenants/{t}/cas/…`, and CAS root-refs writes are
+  deliberately not proxied. The script therefore talks straight to the PSD
+  Worker and the CAS service, and needs both signing keys that the deployment
+  contract otherwise keeps on the Gateway alone
+  (`CAPABILITY_PRIVATE_KEY_PKCS8`, `CAS_STACK_PRIVATE_KEY_PKCS8`). Run it where
+  those keys are available and the PSD Worker is reachable. It is an operator
+  tool, not an end-user endpoint.
+- **Write access reuses the tenant-scoped `sessions:create` permission**
+  (ruling R41): anyone who can create a session for a tenant can register fonts
+  for it. Deliberate (fonts are additive and never mutate existing documents),
+  but do not assume stronger protection.
+- **Font binaries are never committed** (ruling R19). The config holds local
+  paths; the repository-root `fonts/` directory is gitignored. Noto Sans / Noto
+  Sans SC are OFL-licensed and available from Google Fonts.
+
+The script refuses any font over 16 MiB (`MAX_FONT_BYTES`, matching the editor
+DO's `MAX_SVALUE_ROOT_BYTES`), and several `notofonts/noto-cjk` files that all
+answer to "Noto Sans SC" sit on both sides of that line. Take
+`Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` (8,331,336 bytes, PostScript name
+`NotoSansSC-Regular`); `Sans/OTC/NotoSansCJK-Regular.ttc` (19,484,784 bytes) is
+over the limit, and the language-specific OTF (16,437,364 bytes) clears it by
+only ~0.3 MB. Sizes measured 2026-09-03 against `main`; there is no subsetting
+tool in this repository, so picking the right file up front is the whole story.
+
+Registering a font is only half of the fallback chain: the PSD Worker's
+`PSD_FONT_FALLBACKS` var (comma-separated, order is priority) decides which
+registered fonts are actually tried. It defaults to empty and hardcodes no font
+name, so both steps are required for a CJK fallback to work.
+
+Local development does both steps automatically: `pnpm dev` (Cloudflare stack,
+psd selected) reads the tenant font index on startup, downloads and seeds
+whatever is missing, and defaults `PSD_FONT_FALLBACKS` to the two PostScript
+names it seeds — see `scripts/psd-font-bootstrap.mjs` and
+`docs/psd-text-layers.md` §5.4. Opt out with `--fonts off` (or
+`UNIDOCS_PSD_FONTS=off`). A failure there only warns; it never blocks startup.
+**Real deployments still do both steps by hand.**
+
 ## Azure deployment identity and secrets
 
 The Azure deploy script uses the active `az` CLI identity. For interactive use:
@@ -234,6 +282,13 @@ Optional process variables:
 | `LLM_API_KEY` | unset | PSD Operator credential |
 | `LLM_BASE_URL` | provider default | PSD provider endpoint |
 | `LLM_MODEL` | provider default | PSD model |
+
+`pnpm dev unidocs-cloudflare` also writes
+`.wrangler/unidocs/local-credentials.json` (mode 0600) on every start: the local
+runtime's two signing keys are generated per run and live only in that process,
+so tools that bypass the Gateway (currently `scripts/seed-psd-fonts.mjs`) have no
+other way to mint a credential. It is a private key file — gitignored, never
+committed.
 
 Command-line `--cas remote` overrides the default. It does not silently fall
 back to local when the credential is missing or the edge is unreachable — it

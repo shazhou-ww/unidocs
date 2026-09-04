@@ -22,6 +22,9 @@
     },
     {
       "path": "../doctype-server-common"
+    },
+    {
+      "path": "../protocol-doc"
     }
   ]
 }

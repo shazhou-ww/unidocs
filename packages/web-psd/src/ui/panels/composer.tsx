@@ -38,6 +38,11 @@ export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: strin
   // selection re-attaches on its own and the dismissal only ever applies to
   // the one region it was aimed at.
   const [dropped, setDropped] = useState<Region | null>(null);
+  // 图层选择那一路的"取消"，同样按身份记而不是记一个布尔。`s.selection`
+  // 每次改选都是 `normalizeSelection` 现 filter 出来的新数组，所以重新选一次
+  // 就自动重新附带；而 doc/version 这类无关的 setState 不动这个数组，取消也
+  // 就不会被它们悄悄撤销。
+  const [droppedLayers, setDroppedLayers] = useState<readonly string[] | null>(null);
 
   const attached = s.region && s.region !== dropped ? s.region : null;
   // 图层选择也要随指令走。以前只有拖出来的**选区**才附带 target，在图层面板
@@ -46,7 +51,9 @@ export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: strin
   // 层猜。实测这样烧满 25 轮、182 秒，几乎不调图像模型。
   //
   // 选区与图层选择互斥（spec §3.3），所以这是干净的二选一，不会两个都有。
-  const picked = selectedLayers(s);
+  // `attached` 也算进来，是为了让 chip 的渲染条件和 target 只有**一个**来源：
+  // 显示一颗其实不会被发出去的 chip，比不显示更坏。
+  const picked = attached || s.selection === droppedLayers ? [] : selectedLayers(s);
   const target: AgentTarget | null = attached
     ? { bounds: attached.bounds, layers: targetLayers(s, attached) }
     : picked.length > 0
@@ -94,6 +101,21 @@ export function Composer({ busy, onSend }: { busy: boolean; onSend: (text: strin
               onClick={() => setDropped(attached)}
             >
               {`已附带选区 ${attached.bounds[3] - attached.bounds[1]} × ${attached.bounds[2] - attached.bounds[0]}`}
+            </button>
+          ) : null}
+          {/* 图层选择同样是"悄悄离开浏览器的状态"（`withTarget` 会把它拼成
+              <<selection layers=[…]>> 一起发出去），所以照选区那颗 chip 的规矩
+              办：看得见、一点就能摘掉。少了这颗，用户在图层面板里点中的东西
+              被附带出去了，界面上却一点痕迹都没有。 */}
+          {picked.length > 0 ? (
+            <button
+              type="button"
+              className="chip chip-on"
+              aria-label="不附带图层"
+              title="点击后本次不再附带选中的图层"
+              onClick={() => setDroppedLayers(s.selection)}
+            >
+              {`已附带图层 ${picked.map((l) => l.name).join("、")}`}
             </button>
           ) : null}
           <span className="spacer" />

@@ -1,4 +1,5 @@
 import { readPsd, type Layer as AgLayer } from "ag-psd";
+import { TEXT_BAKED_DEGRADATION } from "../model/types.js";
 import type {
   PsdDoc, Layer, BlendMode, Mask,
   Degradation, LayerText, LayerParagraphRun, LayerParagraphStyle, LayerTextRun,
@@ -110,11 +111,30 @@ const nonEmpty = <T extends object>(o: T): T | undefined => (Object.keys(o).leng
  * 缺字体**不在这里** —— 那不是文件的属性,是"这台机器上有没有装"的属性,
  * 只有渲染时才知道。
  */
-function textUneditable(t: NonNullable<AgLayer["text"]>): TextUneditableReason[] {
+export function textUneditable(t: NonNullable<AgLayer["text"]>): TextUneditableReason[] {
   const out: TextUneditableReason[] = [];
   // warp.style 存在且不是 'none' 才算真的变形过。
   if (t.warp?.style && t.warp.style !== "none") out.push("warp");
-  if (t.textPath) out.push("text-path");
+  // `textPath` 存在**不等于**文字排在路径上。Photoshop 给每个文字层都写一条
+  // TextFrameSet 记录,ag-psd 无条件把它挂成 `text.textPath`
+  // (additionalInfo.ts,Txt2 handler)。两份真实素材里量到的形状:
+  //   点文字: { data: { textRange: [-1,-1], pathData: { spacing: -1 } } }
+  //           —— 连 bezierCurve 都没有,type 缺省
+  //   框文字: { bezierCurve: { controlPoints: [矩形四角] }, data: { type: 1,
+  //           textRange: [-2,-2] } } —— 那条"曲线"就是文本框自己
+  // 所以既不能看字段在不在,也不能看有没有控制点。真正区分的是 `data.type`
+  // (帧类型):缺省/0 = 点文字,1 = 框文字 —— 这两种我们自己已经建模
+  // (shapeType / boxBounds)。剩下的才是路径文字,包括没见过的取值:认不出
+  // 来就当不可重排,错在保守一侧(贴烘焙像素),不会把跟着曲线的字排成直的。
+  //
+  // 早先写成 `if (t.textPath)`,结果真实 Photoshop 文件里**每一个**文字层
+  // 都被标成 text-path → editable:false → setText 全线拒绝 → agent 只剩
+  // editPixels,让图像模型重画字母、拼错。合成 fixture 测不出来:ag-psd 的
+  // writer 根本不写 TextFrameSet,回读就没有 textPath。
+  const frameType = t.textPath?.data?.type;
+  if (t.textPath && frameType !== undefined && frameType !== 0 && frameType !== 1) {
+    out.push("text-path");
+  }
   // 两个字段都判,但 `gridInfo` 在当前 ag-psd(31.0.2)下**永远为假** —— 不是
   // 死代码,是库的编码/解码不对称:`encodeEngineData` 把 GridIsOn/ShowGrid/
   // GridSize… 写进 EngineData(text.js:522-528),而解码侧整个 dist 里再没有
@@ -152,7 +172,7 @@ function mapText(t: AgLayer["text"]): { text: LayerText; degraded: Degradation }
       ...(uneditable.length ? { uneditable } : {}),
     },
     degraded: {
-      reason: "文字层已栅格化",
+      reason: TEXT_BAKED_DEGRADATION,
       detail: uneditable.length
         ? `渲染与导出使用 PSD 烘焙像素；文字不可重排（${uneditable.join("、")}）`
         : "渲染与导出使用 PSD 烘焙像素；文字内容可编辑，重排需要本机有对应字体",
