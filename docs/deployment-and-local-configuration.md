@@ -171,6 +171,14 @@ Registering a font is only half of the fallback chain: the PSD Worker's
 registered fonts are actually tried. It defaults to empty and hardcodes no font
 name, so both steps are required for a CJK fallback to work.
 
+Local development does both steps automatically: `pnpm dev` (Cloudflare stack,
+psd selected) reads the tenant font index on startup, downloads and seeds
+whatever is missing, and defaults `PSD_FONT_FALLBACKS` to the two PostScript
+names it seeds — see `scripts/psd-font-bootstrap.mjs` and
+`docs/psd-text-layers.md` §5.4. Opt out with `--fonts off` (or
+`UNIDOCS_PSD_FONTS=off`). A failure there only warns; it never blocks startup.
+**Real deployments still do both steps by hand.**
+
 ## Azure deployment identity and secrets
 
 The Azure deploy script uses the active `az` CLI identity. For interactive use:

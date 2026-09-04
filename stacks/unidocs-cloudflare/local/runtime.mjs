@@ -94,6 +94,19 @@ export async function readDevVars(path) {
   return out;
 }
 
+/**
+ * 一个 doc type 最终拿到的额外绑定。参数顺序就是优先级：调用方给的默认值垫底,
+ * `.dev.vars` 压过它,进程环境变量最高。
+ *
+ * 单独抽成一个函数只为把这个顺序钉住。顺序反了不会报错 —— 它只会让用户在
+ * `.dev.vars` 里亲手写的那一行悄悄不生效(第一个撞上这条的是
+ * `PSD_FONT_FALLBACKS`:那个变量的文档位置就是 .dev.vars.example,默认值反而
+ * 是后来才加的兜底)。
+ */
+export function mergeDocBindings({ defaults = {}, devVars = {}, processEnv = {} } = {}) {
+  return { ...defaults, ...devVars, ...processEnv };
+}
+
 const MIGRATIONS_DIR = join(
   ROOT,
   "packages",
@@ -375,6 +388,12 @@ export async function startLocalRuntime({
   middlewareStacks,
   casOrigin,
   gatewayOAuth,
+  // 按 doc type 给的绑定默认值(`{ psd: { PSD_FONT_FALLBACKS: "…" } }`)。
+  // 排在 .dev.vars 前面合并,所以它只是"没人显式配时的兜底"—— 那个变量的
+  // 文档位置是 .dev.vars.example,那里写了就该赢。
+  // **默认空**:集成测试也走这个函数,不该凭空多出一条指向没登记过的字体的
+  // 回退链。只有 `pnpm dev`(scripts/dev.mjs)会显式传它。
+  bindingDefaults = {},
 } = {}) {
   validateGatewayOAuthFixture(gatewayOAuth);
   const resolvedStackFixture = stackFixture
@@ -421,10 +440,11 @@ export async function startLocalRuntime({
   );
   for (const name of docTypes) {
     const devVars = DOC_TYPES[name].devVars;
-    extraBindings[name] = {
-      ...(devVars ? await readDevVars(join(ROOT, devVars)) : {}),
-      ...processDocBindings,
-    };
+    extraBindings[name] = mergeDocBindings({
+      defaults: bindingDefaults[name],
+      devVars: devVars ? await readDevVars(join(ROOT, devVars)) : {},
+      processEnv: processDocBindings,
+    });
   }
   const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 

@@ -20,7 +20,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
-import { seedFonts, countCjkCodePoints } from "../../../scripts/seed-psd-fonts.mjs";
+import {
+  countCjkCodePoints,
+  createDocTokenFactory,
+  fontsUrlFor,
+  readFontIndex,
+  seedFonts,
+} from "../../../scripts/seed-psd-fonts.mjs";
+import { ensurePsdFonts, psdFontFallbacks } from "../../../scripts/psd-font-bootstrap.mjs";
 import * as kit from "../../../scripts/psd-fonts-kit.ts";
 import { casReadPermission, casWritePermission } from "../../../packages/service-auth/src/index.ts";
 import { buildRectFont } from "../../../packages/doctype-psd/tests/text-test-font.ts";
@@ -239,4 +246,70 @@ test("a font whose postScriptName disagrees with the file is refused before anyt
     log: () => {},
   });
   expect(empty.index).toEqual([]);
+}, 180_000);
+
+/**
+ * `pnpm dev` 启动时那一步（`ensurePsdFonts`）对着真 worker 跑一遍。
+ *
+ * 单测把 `seed` 换成了探针，所以"灌"这个动作真的落到 DO 和 CAS 上、以及
+ * "第二遍什么都不写"，只有这里守得住。用的是现造的测试字体、`download` 传一个
+ * 一调就炸的桩：这条链不该在文件已经躺在本地时碰网络（CI 上也没有网）。
+ */
+test("startup bootstrap seeds an empty index once and then leaves it alone", async () => {
+  runtime = await startLocalRuntime({ docTypes: ["psd"], ports: PORTS });
+  const { dir } = await writeFontFiles([["latin", LATIN_FONT]]);
+  // 计划里的 file 是相对仓库根的；这里把临时目录当仓库根。
+  const plan = [{
+    postScriptName: "UnidocsTestFontRegular",
+    file: "latin.ttf",
+    url: "https://example.invalid/latin.ttf",
+  }];
+  const bootstrap = (log = () => {}) => ensurePsdFonts({
+    root: dir,
+    credentials: credentialsOf(),
+    tenantId: TENANT,
+    plan,
+    kit,
+    download: () => { throw new Error("字体文件就在本地，不该发起下载"); },
+    log,
+    warn: log,
+  });
+  const roots = () => runtime.storage.middlewareRetainedRoots(runtime.stackFixture.stackId, TENANT);
+  const requestIds = () => runtime.storage.middlewareRootRefRequestIds(runtime.stackFixture.stackId, TENANT);
+
+  const first = await bootstrap();
+  expect(first).toEqual({ status: "seeded", registered: ["UnidocsTestFontRegular"] });
+  const pinned = await roots();
+  expect(pinned).toHaveLength(1);
+  const idsAfterSeed = await requestIds();
+
+  // 回退链的默认值必须是**索引里真有的那个名字** —— 家族名写进去不会报错，
+  // 只会让回退链静默失效。索引里的名字是 describeFont 从字体文件解析出来的。
+  const index = await readFontIndex({
+    fontsUrl: fontsUrlFor(credentialsOf(), TENANT),
+    docToken: await createDocTokenFactory(kit, credentialsOf(), TENANT),
+  });
+  expect(psdFontFallbacks(plan).split(",")).toEqual(index.map(entry => entry.postScriptName));
+
+  // 第二遍：索引里已经有了，就该一个字节都不写。根引用的幂等记录是永久的，
+  // 多写一次就会在这里多出一条 —— 那是"跳过没跳干净"最直接的证据。
+  const lines = [];
+  expect(await bootstrap(line => lines.push(line))).toEqual({ status: "ready", registered: [] });
+  expect(await requestIds()).toEqual(idsAfterSeed);
+  expect(await roots()).toEqual(pinned);
+  expect(lines.join("\n")).toMatch(/字体索引已就绪/);
+}, 180_000);
+
+/**
+ * psd worker 真的拿到了回退链。只灌索引不配这个绑定的话，中文一个字都画不出来
+ * 而且不报错，所以"绑定确实落到了 unidocs-psd 上"必须有东西守着。
+ */
+test("the dev runtime hands the psd worker a font fallback chain", async () => {
+  runtime = await startLocalRuntime({
+    docTypes: ["psd"],
+    ports: PORTS,
+    bindingDefaults: { psd: { PSD_FONT_FALLBACKS: psdFontFallbacks() } },
+  });
+  const bindings = await runtime.mf.getBindings("unidocs-psd");
+  expect(bindings.PSD_FONT_FALLBACKS).toBe("NotoSans-Regular,NotoSansSC-Regular");
 }, 180_000);

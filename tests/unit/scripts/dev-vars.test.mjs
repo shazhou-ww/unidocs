@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { readDevVars } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
+import { mergeDocBindings, readDevVars } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
   ADMIN_PORT,
   buildWorkers,
@@ -92,6 +92,25 @@ test("readDevVars skips lines with no '='", async () => {
 
 test("readDevVars returns {} for a missing file", async () => {
   expect(await readDevVars(join(dir, "does-not-exist"))).toEqual({});
+});
+
+// 顺序反了不会报错,只会让用户在 .dev.vars 里亲手写的那一行悄悄不生效。
+// 第一个撞上这条的是 PSD_FONT_FALLBACKS:它的默认值由 `pnpm dev` 传进来,
+// 而它的文档位置是 .dev.vars.example —— 那里写了就必须赢。
+test("mergeDocBindings lets .dev.vars beat a caller default, and the process env beat both", () => {
+  expect(mergeDocBindings({
+    defaults: { PSD_FONT_FALLBACKS: "Default-Regular", ONLY_DEFAULT: "d" },
+    devVars: { PSD_FONT_FALLBACKS: "FromDevVars-Regular", LLM_MODEL: "from-dev-vars" },
+    processEnv: { LLM_MODEL: "from-process-env" },
+  })).toEqual({
+    PSD_FONT_FALLBACKS: "FromDevVars-Regular",
+    ONLY_DEFAULT: "d",
+    LLM_MODEL: "from-process-env",
+  });
+  // 没人显式配时,默认值才生效 —— 否则"自动灌了字体但回退链是空的"又回来了。
+  expect(mergeDocBindings({ defaults: { PSD_FONT_FALLBACKS: "Default-Regular" } }))
+    .toEqual({ PSD_FONT_FALLBACKS: "Default-Regular" });
+  expect(mergeDocBindings()).toEqual({});
 });
 
 test("psd declares a .dev.vars file so the Operator gets its LLM config", () => {

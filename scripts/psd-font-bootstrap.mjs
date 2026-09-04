@@ -1,0 +1,236 @@
+/**
+ * 让 `pnpm dev` 起来就带着一套能用的字体：**有就跳过，没有就灌**。
+ *
+ * 为什么要自动：`setText`（文字层真正改字的那个工具）要自己排版、自己栅格化，
+ * 一个字形都得从租户级字体索引里取。索引空着的时候它拿不到字形，模型就只能
+ * 退回用图像模型重画像素 —— 那正是这条链要消灭的故障（把 WWW.YOURSITE.COM
+ * 画成一串错别字）。而在此之前，索引要靠人手工跑一次 `seed-psd-fonts.mjs`
+ * 才有。一个没人会记得的手工步骤挡在功能前面，等于功能默认是关着的。
+ *
+ * ## 三条设计上的裁定
+ *
+ * 1. **幂等判据是"索引里有没有"，不是标记文件。** 标记文件会和真实状态漂移
+ *    —— 索引被清掉（换租户、删 `.wrangler/`）而标记还在，就永远补不回来了。
+ *    所以每次启动先 GET 一次索引，缺哪套灌哪套。
+ *
+ * 2. **一律不阻断启动。** 没网、下载失败、预置失败，全部收敛成一条醒目的警告
+ *    然后继续。开发环境因为字体下不下来就起不来，是不可接受的。本模块的
+ *    `ensurePsdFonts` 因此**从不抛**。
+ *
+ * 3. **下载来的文件要过校验才算数。** 半个文件比没有文件更难查：它存在、大小
+ *    看着也对，只在真去排字时炸。校验直接复用 `describeFont` —— 体积闸、
+ *    解析、`postScriptName` 对得上、cmap 非空，与手工预置同一套判据。落盘先写
+ *    `.part` 再改名，中断留下的是一个显然的半成品，不是一个假装完好的字体。
+ */
+
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import {
+  createDocTokenFactory,
+  describeFont,
+  fontsUrlFor,
+  loadKit,
+  parseCredentials,
+  readFontIndex,
+  seedFonts,
+} from "./seed-psd-fonts.mjs";
+
+/**
+ * 默认灌进哪个租户。
+ *
+ * `u1` 不是随便挑的：本地 psd 前端把它硬编码成 `USER`
+ * （`packages/web-psd/src/doc-controller.ts`），本地 gateway 又开着
+ * `INSECURE_PATH_IDENTITY`，所以浏览器里点开的每一篇 psd 文档都落在这个租户下。
+ * 灌进别的租户 = 灌了个寂寞。两处对不上会静默失效（索引查不到就是空索引），
+ * 所以有一条测试盯着这两个常量相等。
+ *
+ * 需要别的租户（比如走 OAuth 登录后拿到的真实租户）就设 `UNIDOCS_PSD_FONT_TENANT`。
+ */
+export const DEFAULT_FONT_TENANT = "u1";
+
+/**
+ * 要装哪两套、从哪儿下。
+ *
+ * 必须同时覆盖中英：只有拉丁那套的话，中文一个字都画不出来，而且**不报错**
+ * —— 回退链对没装载的候选是直接跳过。
+ *
+ * 中文那套点名到 `Sans/SubsetOTF/SC`：noto-cjk 里好几个都叫得上 "Noto Sans SC"，
+ * 而 `Sans/OTC/NotoSansCJK-Regular.ttc`（18.6 MB）过不了脚本 16 MiB 那道闸。
+ * 各版本实测体积见 docs/psd-text-layers.md §5.4。
+ *
+ * 两套都是 OFL，允许分发。字节不进仓库（裁定 R19），下到仓库根的 `fonts/`
+ * —— 那个目录已经 gitignore。
+ *
+ * `postScriptName` 在这里是**待核对的声明**，不是可以随手写的标签：它同时是
+ * 回退链的默认值（见 `psdFontFallbacks`），而回退链写错名字不会报错、只会静默
+ * 失效。核对由 `describeFont` 做 —— 解析出来的名字和这里对不上就当场拒绝，
+ * 于是"把 NotoSans-Regular 写成家族名 NotoSans"这种错只会响亮地失败，不会
+ * 变成一条谁也选不中的索引条目。
+ */
+export const PSD_FONT_PLAN = Object.freeze([
+  Object.freeze({
+    postScriptName: "NotoSans-Regular",
+    file: "fonts/NotoSans-Regular.ttf",
+    url: "https://github.com/notofonts/notofonts.github.io/raw/main/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf",
+  }),
+  Object.freeze({
+    postScriptName: "NotoSansSC-Regular",
+    file: "fonts/NotoSansSC-Regular.otf",
+    url: "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf",
+  }),
+]);
+
+/**
+ * `PSD_FONT_FALLBACKS` 的本地默认值：逗号分隔、顺序即优先级。
+ *
+ * 拉丁在前、中文在后 —— 前者不覆盖 CJK，汉字自然落到后者。
+ *
+ * 只灌索引不配这个变量的话，回退链是空的：`resolveFaceChain` 对没点名的字体
+ * 一个都不试，中文一个字都画不出来而且不报错。所以这两步必须一起做。
+ *
+ * 为什么是从计划里取而不是"从刚灌进去的字体解析出来"：幂等判据要求先读索引、
+ * 后下载（索引齐了就一次下载都不该发），而这个变量是 worker 的绑定、必须在
+ * Miniflare 起来之前就定下来 —— 那时还没有任何字体文件可解析。名字的正确性
+ * 由 `describeFont` 在灌的那一步保证（见 `PSD_FONT_PLAN` 的注释）。
+ */
+export function psdFontFallbacks(plan = PSD_FONT_PLAN) {
+  return plan.map(font => font.postScriptName).join(",");
+}
+
+/** 把计划里的相对路径解释成相对仓库根 —— 相对进程 CWD 会随启动目录漂。 */
+function resolvePlan(root, plan) {
+  return plan.map(font => Object.freeze({ ...font, file: resolve(root, font.file) }));
+}
+
+async function exists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 下一套字体到本地。
+ *
+ * 先写 `.part` 再校验再改名：中断或半截响应留下的是一个显然的半成品，而不是
+ * 一个大小不对却看着完好的字体文件。校验读的是**磁盘上那份**而不是内存里的
+ * buffer —— 要证明的正是"落到盘上的这个文件能用"。
+ */
+export async function downloadFont(font, { kit, fetchImpl = fetch, log = console.log } = {}) {
+  const part = `${font.file}.part`;
+  await mkdir(dirname(font.file), { recursive: true });
+  let response;
+  try {
+    // GitHub 的 /raw/ 会 302 到 raw.githubusercontent.com；fetch 默认跟随重定向。
+    response = await fetchImpl(font.url, { redirect: "follow" });
+  } catch (error) {
+    throw new Error(`下载 ${font.postScriptName} 失败（${font.url}）：${error.message}`);
+  }
+  if (!response.ok) {
+    throw new Error(`下载 ${font.postScriptName} 失败 ${response.status}（${font.url}）`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  await writeFile(part, bytes);
+  try {
+    await describeFont(kit, { ...font, family: font.postScriptName, file: part });
+  } catch (error) {
+    await rm(part, { force: true });
+    throw new Error(`下载来的 ${font.url} 没通过校验：${error.message}`);
+  }
+  await rename(part, font.file);
+  log(`downloaded ${font.postScriptName}  ${bytes.length} bytes  -> ${font.file}`);
+}
+
+/**
+ * 启动时的自动预置。**从不抛** —— 任何失败都变成一条 `warn` 然后返回。
+ *
+ * 返回 `{ status, ... }`：`ready`（索引已齐，什么都没做）、`seeded`（灌了）、
+ * `failed`（失败，已经警告过了）。调用方不需要据此做任何事，返回值是给测试和
+ * 日志用的。
+ */
+export async function ensurePsdFonts({
+  root,
+  credentialsPath,
+  credentials: providedCredentials,
+  tenantId = DEFAULT_FONT_TENANT,
+  plan = PSD_FONT_PLAN,
+  kit: providedKit,
+  fetchImpl = fetch,
+  // 两个注入点,都只为测试:单测要能断言"跳过时一次下载都没发"和"只灌缺的
+  // 那套",而真正的下载与真正的 CAS 写入分别由 downloadFont 自己的单测和
+  // tests/integration/cloudflare/psd-fonts-e2e.test.mjs 对着真 workerd 守着。
+  download = downloadFont,
+  seed = seedFonts,
+  log = console.log,
+  warn = console.warn,
+} = {}) {
+  try {
+    const fonts = resolvePlan(root, plan);
+    const credentials = providedCredentials
+      ?? parseCredentials(await readFile(credentialsPath, "utf8"), { credentialsPath });
+    // kit 要 esbuild 打一次包（见 seed-psd-fonts.mjs 的 loadKit）。跳过那条路
+    // 也得先有它 —— 读索引要签一张凭据，签发器只存在于 TypeScript 源码里。
+    const kit = providedKit ?? await loadKit();
+
+    const fontsUrl = fontsUrlFor(credentials, tenantId);
+    const docToken = await createDocTokenFactory(kit, credentials, tenantId);
+    const index = await readFontIndex({ fontsUrl, docToken, fetchImpl });
+    const present = new Set(index.map(entry => entry.postScriptName));
+    const missing = fonts.filter(font => !present.has(font.postScriptName));
+    if (missing.length === 0) {
+      log(`PSD 字体索引已就绪（${fonts.map(f => f.postScriptName).join(", ")}），跳过预置。`);
+      return { status: "ready", registered: [] };
+    }
+
+    // 缺文件的才下。两套并行：中文那套 8 MB，串起来会让首次启动明显更久。
+    const toDownload = [];
+    for (const font of missing) {
+      if (!await exists(font.file)) toDownload.push(font);
+    }
+    if (toDownload.length > 0) {
+      log(`PSD 字体：缺 ${toDownload.map(f => f.postScriptName).join(", ")}，正在下载（中文那套约 8 MB）…`);
+      await Promise.all(toDownload.map(font => download(font, { kit, fetchImpl, log })));
+    }
+
+    log(`PSD 字体：正在预置 ${missing.map(f => f.postScriptName).join(", ")} 到租户 ${tenantId}…`);
+    await seed({
+      kit,
+      config: {
+        tenantId,
+        fonts: missing.map(font => ({
+          postScriptName: font.postScriptName,
+          family: font.postScriptName,
+          file: font.file,
+        })),
+      },
+      credentials,
+      log,
+      fetchImpl,
+    });
+    return { status: "seeded", registered: missing.map(font => font.postScriptName) };
+  } catch (error) {
+    warn(fontWarning(error, { tenantId }));
+    return { status: "failed", error: error.message };
+  }
+}
+
+/**
+ * 失败时打的那条警告。要说清三件事，缺一件就等于让人自己猜：**这次少了什么
+ * 功能**、**怎么手工补**、**怎么彻底关掉**。
+ */
+function fontWarning(error, { tenantId }) {
+  return [
+    "",
+    `⚠️  PSD 字体自动预置没成功：${error.message}`,
+    "    本次启动 setText（改文字层的文字）用不了 —— 索引里没有字体，模型只能退回",
+    "    用图像模型重画像素，中文尤其容易画成错别字。其余功能不受影响。",
+    "    联网后重跑 `pnpm dev` 会自动重试；也可以手工灌：",
+    `      1) 把字体放进 fonts/（见 docs/psd-text-layers.md §5.4 的下载地址）`,
+    `      2) 照 scripts/psd-fonts.example.json 写一份配置（tenantId 填 ${tenantId}）`,
+    "      3) node scripts/seed-psd-fonts.mjs <你的配置>.json",
+    "    不想要字体：`pnpm dev … --fonts off`，或设 UNIDOCS_PSD_FONTS=off。",
+    "",
+  ].join("\n");
+}

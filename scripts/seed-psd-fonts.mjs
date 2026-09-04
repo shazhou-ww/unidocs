@@ -308,6 +308,42 @@ export async function describeFont(kit, font) {
 }
 
 // ---------------------------------------------------------------------------
+// 端点与凭据
+// ---------------------------------------------------------------------------
+
+/**
+ * 租户级字体端点。**不走 gateway**（理由见文件头部），所以拼的是 psd worker
+ * 自己的地址。
+ *
+ * 单独导出是因为启动时的自动预置（scripts/psd-font-bootstrap.mjs）要先读一次
+ * 索引才知道该不该灌 —— 那一步用的必须和 `seedFonts` 写进去时是同一条 URL、
+ * 同一种凭据，各拼各的就会出现"读的和写的不是同一张表"这种只在真跑起来时
+ * 才暴露的错。
+ */
+export function fontsUrlFor(credentials, tenantId) {
+  return `${credentials.psdUrl}/tenants/${encodeURIComponent(tenantId)}/fonts`;
+}
+
+/** 字体端点要的凭据。每次调用现签一张：凭据默认只活 120 秒。 */
+export async function createDocTokenFactory(kit, credentials, tenantId) {
+  const docIssuer = await kit.createPkcs8CapabilityIssuer({
+    issuer: credentials.doc.issuer,
+    kid: credentials.doc.kid,
+    privateKeyPkcs8: credentials.doc.privateKeyPkcs8,
+  });
+  return () => docIssuer.issue({
+    subject: "gateway",
+    audience: credentials.docAudience,
+    tenantId,
+    // 字体索引是**租户级**的，这个端点根本不看 sessionId。但签发器要求带
+    // `sessions:*` 权限的凭据必须有 sessionId（issuer.ts 的 `validatePermissionSet`），
+    // 所以现编一个 —— 它不指向任何真实会话，也不会被任何东西用来定位会话。
+    sessionId: `seed-psd-fonts-${crypto.randomUUID()}`,
+    permissions: [kit.sessionCreatePermission(tenantId)],
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 灌进去
 // ---------------------------------------------------------------------------
 
@@ -335,12 +371,6 @@ export async function seedFonts({
     kid: credentials.stack.kid,
     privateKeyPkcs8: credentials.stack.privateKeyPkcs8,
   });
-  const docIssuer = await kit.createPkcs8CapabilityIssuer({
-    issuer: credentials.doc.issuer,
-    kid: credentials.doc.kid,
-    privateKeyPkcs8: credentials.doc.privateKeyPkcs8,
-  });
-
   const cas = kit.createTenantCasClient({
     baseUrl: credentials.casOrigin,
     stackId: credentials.stack.stackId,
@@ -357,17 +387,8 @@ export async function seedFonts({
   });
   const blobs = kit.createCasBlobClient(cas);
 
-  const fontsUrl = `${credentials.psdUrl}/tenants/${encodeURIComponent(tenantId)}/fonts`;
-  const docToken = () => docIssuer.issue({
-    subject: "gateway",
-    audience: credentials.docAudience,
-    tenantId,
-    // 字体索引是**租户级**的，这个端点根本不看 sessionId。但签发器要求带
-    // `sessions:*` 权限的凭据必须有 sessionId（issuer.ts 的 `validatePermissionSet`），
-    // 所以现编一个 —— 它不指向任何真实会话，也不会被任何东西用来定位会话。
-    sessionId: `seed-psd-fonts-${crypto.randomUUID()}`,
-    permissions: [kit.sessionCreatePermission(tenantId)],
-  });
+  const fontsUrl = fontsUrlFor(credentials, tenantId);
+  const docToken = await createDocTokenFactory(kit, credentials, tenantId);
 
   const before = await readFontIndex({ fontsUrl, docToken, fetchImpl });
   const previousHash = new Map(before.map(entry => [entry.postScriptName, entry.hash]));
@@ -468,7 +489,8 @@ export async function seedFonts({
   return { registered: prepared.map(font => font.postScriptName), index };
 }
 
-async function readFontIndex({ fontsUrl, docToken, fetchImpl }) {
+/** 回读租户的字体索引。启动时的自动预置靠它判断"该不该灌"（见 psd-font-bootstrap.mjs）。 */
+export async function readFontIndex({ fontsUrl, docToken, fetchImpl = fetch }) {
   const response = await fetchImpl(fontsUrl, {
     headers: { Authorization: `Bearer ${await docToken()}` },
   });

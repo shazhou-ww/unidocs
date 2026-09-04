@@ -8,15 +8,24 @@ export function parseDevArgs(argv, env = process.env) {
     // 直接失败。默认值应该是「不配任何东西也能起来」的那个。
     // 需要远端时显式 `--cas remote`，或设 UNIDOCS_CAS_MODE=remote。
     casMode: env.UNIDOCS_CAS_MODE ?? "local",
+    // 字体预置默认开着（auto）：`setText` 没有字体索引就一个字形都取不到,
+    // 而"要人先手工跑一遍预置脚本"等于让这个功能默认关着。off 留给离线开发、
+    // CI、以及就是不想要这几 MB 的场景 —— 那时 setText 仍然在工具表里,只是
+    // 索引是空的。环境变量与 --cas 同一套优先级:显式参数 > 环境变量 > 默认。
+    fontsMode: env.UNIDOCS_PSD_FONTS ?? "auto",
     docTypes: [],
   };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === "--cas") options.casMode = argv[++index];
+    else if (arg === "--fonts") options.fontsMode = argv[++index];
     else options.docTypes.push(arg);
   }
   if (options.casMode !== "remote" && options.casMode !== "local") {
     throw new Error("--cas must be remote or local");
+  }
+  if (options.fontsMode !== "auto" && options.fontsMode !== "off") {
+    throw new Error("--fonts must be auto or off");
   }
   return options;
 }
