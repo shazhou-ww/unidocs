@@ -98,6 +98,21 @@ describe("回退链的默认值", () => {
     expect(psdFontFallbacks()).toBe("NotoSans-Regular,NotoSansSC-Regular");
   });
 
+  // 灌进索引 ≠ 进回退链。Josefin Sans Bold 是本地素材 PSD 点名的字体，灌上它
+  // 那些层才是按原字形重排；但它只有 574 个纯拉丁码位，进了回退链就会在缺字体
+  // 的中文层上被选中、然后一个字都画不出来。
+  it("素材字体灌进计划但不进回退链", () => {
+    const names = PSD_FONT_PLAN.map(font => font.postScriptName);
+    expect(names).toContain("JosefinSans-Bold");
+    expect(psdFontFallbacks().split(",")).not.toContain("JosefinSans-Bold");
+  });
+
+  // 缺省视为兜底 —— 不写 `fallback` 字段的计划（测试里的自制计划、以后新增的
+  // 条目）行为不变，不会因为漏写一个字段就得到一条空回退链。
+  it("没写 fallback 字段的条目照常进回退链", () => {
+    expect(psdFontFallbacks([{ postScriptName: "A" }, { postScriptName: "B" }])).toBe("A,B");
+  });
+
   // 家族名（NotoSans）和 postScriptName（NotoSans-Regular）写混了不会报错，
   // 只会让回退链静默失效。示例配置里那两个名字是拿真字体核对过的，所以这里
   // 拿它当基准 —— 两边只要有一边被改成家族名，这条就红。

@@ -97,12 +97,13 @@ describe("parseSeedConfig", () => {
     const parsed = parseSeedConfig(await readFile(examplePath, "utf8"), { configPath: examplePath });
     expect(parsed.tenantId).toBe("alice");
     expect(parsed.fonts.map(font => font.postScriptName))
-      .toEqual(["NotoSans-Regular", "NotoSansSC-Regular"]);
+      .toEqual(["NotoSans-Regular", "NotoSansSC-Regular", "JosefinSans-Bold"]);
     // 示例里写的是 `../fonts/…`,相对配置文件(scripts/)解释后落在仓库根的
     // `fonts/` —— 也就是 .gitignore 里那一条。写错了相对基准这里就对不上。
     expect(parsed.fonts.map(font => font.file)).toEqual([
       join(ROOT, "fonts", "NotoSans-Regular.ttf"),
       join(ROOT, "fonts", "NotoSansSC-Regular.otf"),
+      join(ROOT, "fonts", "JosefinSans-Bold.ttf"),
     ]);
   });
 });

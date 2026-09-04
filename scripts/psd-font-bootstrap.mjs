@@ -49,7 +49,7 @@ import {
 export const DEFAULT_FONT_TENANT = "u1";
 
 /**
- * 要装哪两套、从哪儿下。
+ * 要装哪几套、从哪儿下。
  *
  * 必须同时覆盖中英：只有拉丁那套的话，中文一个字都画不出来，而且**不报错**
  * —— 回退链对没装载的候选是直接跳过。
@@ -58,8 +58,10 @@ export const DEFAULT_FONT_TENANT = "u1";
  * 而 `Sans/OTC/NotoSansCJK-Regular.ttc`（18.6 MB）过不了脚本 16 MiB 那道闸。
  * 各版本实测体积见 docs/psd-text-layers.md §5.4。
  *
- * 两套都是 OFL，允许分发。字节不进仓库（裁定 R19），下到仓库根的 `fonts/`
+ * 都是 OFL，允许分发。字节不进仓库（裁定 R19），下到仓库根的 `fonts/`
  * —— 那个目录已经 gitignore。
+ *
+ * `fallback: false` 的条目灌进索引但不进回退链，见 `psdFontFallbacks`。
  *
  * `postScriptName` 在这里是**待核对的声明**，不是可以随手写的标签：它同时是
  * 回退链的默认值（见 `psdFontFallbacks`），而回退链写错名字不会报错、只会静默
@@ -78,6 +80,18 @@ export const PSD_FONT_PLAN = Object.freeze([
     file: "fonts/NotoSansSC-Regular.otf",
     url: "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf",
   }),
+  // 素材字体,不是兜底字体 —— 所以 `fallback: false`。它是本地那两份 PSD
+  // (landing-page / fashion-banner)真正点名的字体,灌上之后那些层是按原字形
+  // 重排,而不是"能排出来但换了个字体"。574 个码位、纯拉丁,当兜底会让任何
+  // 缺字体的中文层全军覆没,所以它绝不该进回退链。
+  //
+  // OFL,允许分发(仓库根 OFL.txt:"licensed under the SIL Open Font License")。
+  Object.freeze({
+    postScriptName: "JosefinSans-Bold",
+    file: "fonts/JosefinSans-Bold.ttf",
+    url: "https://github.com/googlefonts/josefinsans/raw/master/fonts/ttf/JosefinSans-Bold.ttf",
+    fallback: false,
+  }),
 ]);
 
 /**
@@ -94,7 +108,10 @@ export const PSD_FONT_PLAN = Object.freeze([
  * 由 `describeFont` 在灌的那一步保证（见 `PSD_FONT_PLAN` 的注释）。
  */
 export function psdFontFallbacks(plan = PSD_FONT_PLAN) {
-  return plan.map(font => font.postScriptName).join(",");
+  // `fallback: false` 的条目照常灌进索引,但不进回退链:"这套字体这里有" 和
+  // "缺字体时拿它顶" 是两件事。缺省视为兜底 —— 不写这个字段的计划(测试里的
+  // 自制计划、以后新增的条目)行为不变。
+  return plan.filter(font => font.fallback !== false).map(font => font.postScriptName).join(",");
 }
 
 /** 把计划里的相对路径解释成相对仓库根 —— 相对进程 CWD 会随启动目录漂。 */
