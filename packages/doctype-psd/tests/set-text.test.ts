@@ -547,6 +547,65 @@ describe("setText：缺字体自动回退 + 显式报告", () => {
     expect(structured.glyphFallbacks).toEqual([]);
   });
 
+  // 上一条把 font 写在了每个 run 上。真实 PSD 不是这个形状:font/size/caps
+  // 只写在层级 style 上,styleRuns 只存增量(颜色、tracking)。下面两条钉住
+  // "逐段样式叠在层级样式之上"这条继承 —— 少了它,请求字体恒为 undefined,
+  // 替换记录永远是空的,用户看到的是一层默默换了字体的文字。
+  it("font 只写在层级 style 上时，替换记录照样要报出来", async () => {
+    const cas = memCas();
+    const source = await fontSource(cas, [{ name: "NotoSans", bytes: rectFontBytes() }], ["NotoSans"]);
+    const model = doc(textLayer({
+      content: "AB",
+      style: { font: "JosefinSans-Bold", size: SIZE, color: BLACK },
+      // run 里**没有** font —— 与 ag-psd 从真实文件读出来的 styleRuns 同形。
+      runs: [
+        { length: 1, style: { color: BLACK } },
+        { length: 1, style: { color: RED } },
+      ],
+      paragraphStyle: { justification: "left" },
+    }, BOUNDS));
+
+    const { structured } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+
+    expect(structured.ok).toBe(true);
+    expect(structured.fontFallbacks).toEqual([
+      { requested: "JosefinSans-Bold", usedInstead: ["NotoSans"] },
+    ]);
+  });
+
+  it("caps 只写在层级 style 上时，选字体也要按展开后的字符查覆盖", async () => {
+    const cas = memCas();
+    // 两套字体各认一半大小写。caps 不继承的话,选字体拿到的是小写 a/b,
+    // 会挑中 Lower;而排版按 caps:"all" 要的是大写 A/B —— Lower 没有、
+    // Upper 又没装载,结果就是一个字都画不出来。
+    const source = await fontSource(cas, [
+      { name: "Upper", bytes: rectFontBytes() },
+      { name: "Lower", bytes: buildRectFont([
+        { char: "a", width: 600, height: 700, advanceWidth: 600 },
+        { char: "b", width: 600, height: 700, advanceWidth: 600 },
+        { char: "c", width: 600, height: 700, advanceWidth: 600 },
+      ]) },
+    ], ["Upper", "Lower"]);
+    const model = doc(textLayer({
+      content: "ab",
+      style: { font: "Upper", size: SIZE, caps: "all", color: BLACK },
+      runs: [
+        { length: 1, style: { color: BLACK } },
+        { length: 1, style: { color: RED } },
+      ],
+      paragraphStyle: { justification: "left" },
+    }, BOUNDS));
+
+    const { ops, structured } = await runSetText(cas, model, source, { layerId: "title", text: "ac" });
+
+    expect(structured.ok).toBe(true);
+    expect(structured.missing).toEqual([]);
+    expect(structured.fontFallbacks).toEqual([]);
+    // 两个字形都用 Upper 画出来了,墨迹正好两个字宽。
+    expect((ops[0].payload as { bounds: number[] }).bounds)
+      .toEqual([10, 20, 10 + GLYPH_H, 20 + 2 * GLYPH_W]);
+  });
+
   it("请求的字体在、只是不认识那几个字 → 逐码位兜底也要报出来，不许静默换字形", async () => {
     const cas = memCas();
     const source = await fontSource(cas, [

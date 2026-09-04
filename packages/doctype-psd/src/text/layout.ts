@@ -99,6 +99,35 @@ interface GlyphUnit {
   effectiveSize: number;
 }
 
+/**
+ * 逐段样式**叠**在层级样式之上,而不是替换它。
+ *
+ * PSD 里 `styleRuns[].style` 只存**增量**:字体、字号、行距、caps 这些整层
+ * 一致的字段只写在层级 `style` 上。真实素材量到的就是这个形状 ——
+ *   style:     { font: "JosefinSans-Bold", size: 58.33, leading: 79.17, caps: "all", … }
+ *   styleRuns: [ { length: 10, style: { tracking: 0,   color: … } },
+ *                { length: 16, style: { tracking: 340, color: … } } ]
+ * 早先这里直接拿 `run.style` 当整份样式,于是有 runs 的层字号和字体全丢:
+ * 58.33px 掉回 DEFAULT_FONT_SIZE 的 12px(版面缩成六分之一),请求字体变成
+ * undefined(缺字体的替换记录也就永远是空的)。合成 fixture 测不出来 ——
+ * 测试里每个 run 都把 font/size 写全了,继承与否没有区别。
+ *
+ * 只覆盖**有定义**的键:调用方手搓的样式里一个显式 `undefined` 不该把继承
+ * 来的字体抹掉。
+ */
+export function effectiveStyle(
+  base: LayerTextStyle | undefined,
+  run: LayerTextStyle | undefined,
+): LayerTextStyle {
+  if (!base) return run ?? {};
+  if (!run) return base;
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(run)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as LayerTextStyle;
+}
+
 export function layoutText(text: LayerText, resolveFace: FaceResolver): LayoutResult {
   const rejection = rejectionReason(text);
   if (rejection) return { ok: false, reason: rejection };
@@ -264,11 +293,13 @@ function resolveCharStyles(text: LayerText): CharStyle[] {
   if (text.runs && text.runs.length > 0) {
     let i = 0;
     for (const run of text.runs) {
-      for (let k = 0; k < run.length && i < content.length; k++) perUnit[i++] = run.style;
+      const style = effectiveStyle(text.style, run.style);
+      for (let k = 0; k < run.length && i < content.length; k++) perUnit[i++] = style;
     }
-    // runs 覆盖不满整串内容（上游数据本身有问题）时，剩下的字符兜底用空样式，
-    // 好过直接崩掉——排版引擎不是校验 runs 完整性的地方，那是 Task 1 的事。
-    for (; i < content.length; i++) perUnit[i] = {};
+    // runs 覆盖不满整串内容（上游数据本身有问题）时，剩下的字符兜底用层级
+    // 样式，好过直接崩掉——排版引擎不是校验 runs 完整性的地方，那是 Task 1
+    // 的事。
+    for (; i < content.length; i++) perUnit[i] = text.style ?? {};
   } else {
     perUnit.fill(text.style ?? {});
   }

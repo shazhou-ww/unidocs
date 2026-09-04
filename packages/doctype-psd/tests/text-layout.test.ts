@@ -12,6 +12,55 @@ describe("layoutText", () => {
     expect(out.glyphs.map(g => g.x)).toEqual([0, 10]);
   });
 
+  // 真实 PSD 的形状:字号/字体/caps 只写在层级 style 上,styleRuns 只存增量
+  // (颜色、tracking)。合成 fixture 里每个 run 都把样式写全了,所以"继承"这件
+  // 事在其余用例里完全测不到 —— 而漏掉它的后果是真实文件上字号掉回
+  // DEFAULT_FONT_SIZE(12px),58px 的标题排成六分之一大。
+  it("逐段样式叠在层级样式之上：run 只给颜色时，字号仍来自层级 style", () => {
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    const out = layoutText({
+      content: "ab",
+      style: { size: 58, font: "LayerFont" },
+      runs: [
+        { length: 1, style: { color: { r: 1, g: 2, b: 3 } } },
+        { length: 1, style: { color: { r: 4, g: 5, b: 6 } } },
+      ],
+    }, () => face);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    // 继承到了 size:58 → 步进 58px;丢了就是 DEFAULT_FONT_SIZE 的 12px。
+    expect(out.glyphs.map(g => g.x)).toEqual([0, 58]);
+    expect(out.glyphs.map(g => g.size)).toEqual([58, 58]);
+    // run 自己给的颜色照常压过层级。
+    expect(out.glyphs.map(g => g.color)).toEqual([{ r: 1, g: 2, b: 3 }, { r: 4, g: 5, b: 6 }]);
+  });
+
+  it("请求的字体也走继承：run 没写 font 时按层级 style 的字体去要", () => {
+    const asked: (string | undefined)[] = [];
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    layoutText({
+      content: "ab",
+      style: { size: 10, font: "LayerFont" },
+      runs: [{ length: 2, style: { color: { r: 0, g: 0, b: 0 } } }],
+    }, (_cp, requested) => { asked.push(requested); return face; });
+    expect(asked).toEqual(["LayerFont", "LayerFont"]);
+  });
+
+  it("run 显式给的字段压过层级，但显式 undefined 不抹掉继承来的值", () => {
+    const face = fakeFace({ advance: 1000, unitsPerEm: 1000 });
+    const out = layoutText({
+      content: "ab",
+      style: { size: 58 },
+      runs: [
+        { length: 1, style: { size: 10 } },
+        { length: 1, style: { size: undefined } },
+      ],
+    }, () => face);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.glyphs.map(g => g.size)).toEqual([10, 58]);
+  });
+
   it("字偶距生效：负 kerning 把第二个字形拉近确切的像素数", () => {
     // "a"(97) "b"(98) 一对 -100 font units 的 kerning，字号 10、em 1000。
     // 纯 advance 会落在 x=10；kerning 再把它拉回 -100/1000*10 = -1px → x=9。

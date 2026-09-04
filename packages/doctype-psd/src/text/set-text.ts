@@ -28,7 +28,7 @@ import type { FontRef, LayerParagraphStyle, LayerText, LayerTextStyle, Pixels } 
 import type { PsdOp } from "../ops/index.js";
 import type { PsdQuery } from "../queries.js";
 import type { FaceResolver, FontFace } from "./font.js";
-import { layoutText, nonIdentityTransform, normalizeJustification, type Justification } from "./layout.js";
+import { effectiveStyle, layoutText, nonIdentityTransform, normalizeJustification, type Justification } from "./layout.js";
 import { parseFontFace } from "./opentype-face.js";
 import { rasterizeGlyphs } from "./raster.js";
 import type { FontEntry, FontIndex } from "./registry.js";
@@ -134,11 +134,17 @@ function charsByRequestedFont(text: LayerText): Map<string | undefined, string> 
   if (text.runs && text.runs.length > 0) {
     let at = 0;
     for (const run of text.runs) {
+      // 与 `resolveCharStyles` 同一套继承:`font`/`caps` 通常只写在层级样式
+      // 上,直接读 `run.style` 会让请求字体恒为 undefined(替换记录永远空)、
+      // caps 恒不展开(拿小写字符去查覆盖,查的是错的码位)。
+      const style = effectiveStyle(text.style, run.style);
       const slice = content.slice(at, at + run.length);
       at += run.length;
-      push(run.style.font, expandCaps(slice, run.style.caps));
+      push(style.font, expandCaps(slice, style.caps));
     }
-    if (at < content.length) push(undefined, content.slice(at));
+    if (at < content.length) {
+      push(text.style?.font, expandCaps(content.slice(at), text.style?.caps));
+    }
   } else {
     push(text.style?.font, expandCaps(content, text.style?.caps));
   }
