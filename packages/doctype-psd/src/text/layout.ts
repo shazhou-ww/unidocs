@@ -202,16 +202,57 @@ export function layoutText(text: LayerText, resolveFace: FaceResolver): LayoutRe
 /** 三种“拒绝重排”的情形（设计文档 §4.3）：框文字换行、竖排、结构性不可编辑。
  *  这些不是“凑合画一下”能补的——要么算不出正确的换行，要么坐标系整个不对。 */
 function rejectionReason(text: LayerText): string | null {
+  return typesetRejection(text);
+}
+
+/**
+ * 这层文字能不能被重排；`null` 表示能，否则是给模型看的英文原因。
+ *
+ * **只定义一次，两个调用方共用**：`layoutText` 用它当闸门，`queries.ts` 的
+ * `summarize` 用它算 `getLayers` 报出去的 `editable`。分开写必然漂移 ——
+ * 而这两者一旦不一致，后果是最难查的那一种：`getLayers` 说这层可编辑、
+ * 提示词据此禁止模型改用 editPixels、`setText` 却拒绝，模型无路可走只能
+ * 道歉停下。那正是这条分支要消灭的那次故障的结局。
+ *
+ * 四条拒绝里只有第一条来自 PSD 自己的 `uneditable` 标记，其余三条是本仓库
+ * 排版引擎的能力边界，**不会**出现在 `text.uneditable` 里 —— 早先只按
+ * `uneditable` 算 `editable` 就是这么漏掉框文字（真实 PSD 里最常见的正文
+ * 形态）的。
+ *
+ * 原因用英文：它会原样透给模型，而工具面其余部分都是英文。
+ */
+export function typesetRejection(text: LayerText): string | null {
   if (text.uneditable && text.uneditable.length > 0) {
-    return `text.uneditable 非空（${text.uneditable.join(", ")}），这层文字来自我们复刻不了的 PSD 特性，只能贴烘焙像素`;
+    return `text.uneditable is non-empty (${text.uneditable.join(", ")}) — this layer uses a PSD text`
+      + " feature this typesetter cannot reproduce, so its words can only be repainted, not retyped";
   }
   if (text.boxBounds) {
-    return "text.boxBounds 存在（框文字换行），v1 排版引擎不做断行算法";
+    return "text.boxBounds is present (paragraph text that re-flows inside a box) —"
+      + " this typesetter does not implement line breaking, so it cannot re-flow the paragraph";
   }
   if (text.orientation === "vertical") {
-    return "orientation === \"vertical\"（竖排文字），v1 排版引擎不支持";
+    return "orientation is \"vertical\" — this typesetter lays out horizontally only";
+  }
+  const transform = nonIdentityTransform(text.transform);
+  if (transform !== null) {
+    return `text.transform has a non-identity linear part [${transform.join(", ")}] — the text is`
+      + " scaled, rotated or skewed. The typesetter lays text out at 1:1 and does not apply that"
+      + " matrix, so re-typesetting would silently resize or rotate the whole layer";
   }
   return null;
+}
+
+/**
+ * 仿射矩阵的**线性部分**（前四位）不是单位阵时返回它，否则 `null`。
+ * 平移（`e`/`f`，第 5、6 位）不算 —— 点文字的锚点本来就靠它定位，不影响字形大小。
+ * 位数不足 4 的矩阵一样拒绝：我们读不懂它，猜一个"大概是单位阵"正是这条
+ * 判据要消灭的静默。
+ */
+export function nonIdentityTransform(transform: readonly number[] | undefined): number[] | null {
+  if (transform === undefined) return null;
+  const identity = [1, 0, 0, 1];
+  const isIdentity = transform.length >= 4 && identity.every((v, i) => transform[i] === v);
+  return isIdentity ? null : [...transform];
 }
 
 /** 把 `content` 按 `runs[]` 的字符数切成“码位 → 样式”。没有 `runs` 就整串用

@@ -7,6 +7,7 @@ import type { DocRenderState } from "./render/doc-render-state.js";
 import { casBlobStore } from "./psd/cas-blobstore.js";
 import { findLayer, findParentList, findParentId } from "./model/tree.js";
 import { fitPixelBudget, resample } from "./image/guards.js";
+import { typesetRejection } from "./text/layout.js";
 
 export type PsdQuery =
   | { kind: "getLayers"; payload?: Record<string, never> }
@@ -38,9 +39,14 @@ function summarize(l: Layer): any {
             ? { text: l.text.content.slice(0, TEXT_SUMMARY_CHARS), truncated: true }
             : l.text.content,
           ...(l.text.style?.font ? { font: l.text.style.font } : {}),
-          // 结构上能不能重排。为空表示能 —— 但真画得出来还要看渲染时
-          // 本机有没有那套字体,那是另一回事,这里不承诺。
-          editable: !l.text.uneditable?.length,
+          // 结构上能不能重排。判据与 setText 的闸门**是同一个函数**
+          // (typesetRejection) —— 早先这里只看 text.uneditable,而框文字、竖排、
+          // 缩放 transform 三种拒绝都不进那个字段,于是 getLayers 对它们报
+          // editable:true、提示词据此禁止模型改用 editPixels、setText 却拒绝,
+          // 模型无路可走只能道歉停下 —— 正是这条分支要消灭的那次故障的结局。
+          // 为空表示能重排 —— 但真画得出来还要看渲染时本机有没有那套字体,
+          // 那是另一回事,这里不承诺。
+          editable: typesetRejection(l.text) === null,
           ...(l.text.uneditable?.length ? { uneditable: l.text.uneditable } : {}),
         },
       }

@@ -1,6 +1,7 @@
-import type { FontRef, LayerText, PsdDoc } from "../model/types.js";
+import { TEXT_BAKED_DEGRADATION, type FontRef, type LayerText, type PsdDoc } from "../model/types.js";
 import type { PixelRef } from "../render/pixel-source.js";
 import { findLayer } from "../model/tree.js";
+
 
 /**
  * `set_text` 的载荷。**每一个值都由 effect 算好**（见 `text/set-text.ts`）——
@@ -76,6 +77,15 @@ export function setText(doc: PsdDoc, p: SetTextPayload): void {
   // 这层像素不再是 Photoshop 烘的，UI 和 agent 都得知道 —— 写法与
   // generativeFill 同一套（没有 seed 字段：自研排版链没有种子这回事）。
   layer.provenance = p.provenance;
+
+  // 摘掉"文字层已栅格化"那条降级记录：像素刚刚被本仓库的排版链重排过,
+  // 它说的"渲染与导出使用 PSD 烘焙像素"此刻已经不成立。只摘这一条 ——
+  // 同一个图层上可能还挂着别的降级(矢量之类),那些仍然成立。
+  if (layer.degraded) {
+    const rest = layer.degraded.filter(d => d.reason !== TEXT_BAKED_DEGRADATION);
+    if (rest.length > 0) layer.degraded = rest;
+    else delete layer.degraded;
+  }
 
   if (p.fonts && p.fonts.length > 0) {
     // 合并而不是替换：同一份文档里别的文字层可能还在用别的字体，替换会把

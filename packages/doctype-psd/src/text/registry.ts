@@ -19,7 +19,17 @@ export interface FontEntry {
   readonly family: string;
   /** CAS 里字体文件的内容哈希。 */
   readonly hash: string;
-  /** 从字体文件**解析**出来的，不是登记时人工填的 —— 填错了字还是那些字，位置全错。 */
+  /**
+   * 从字体文件**解析**出来的，不是登记时人工填的。
+   *
+   * **排版不读这个字段** —— `layoutText` / `rasterizeGlyphs` 用的都是
+   * `face.unitsPerEm`，即渲染时从字节现解析的值。这里这份是给运维看的
+   * （登记了什么、对不对得上），改坏它不会影响任何输出。
+   * 早先这条注释写的是"填错了字还是那些字、位置全错" —— 那是错的，
+   * 而且误导了一轮测试补强：注入"写死 1000"之后全绿的真正原因不是测试字体
+   * 的 upm 恰好都是 1000，是**这个字段本来就没有可观测后果**。
+   * `family` 同理。
+   */
   readonly unitsPerEm: number;
   /** 覆盖的码位区间，合并后按起点升序排列，区间之间不重叠也不相邻。 */
   readonly coverage: FontCoverage;

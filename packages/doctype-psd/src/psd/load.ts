@@ -1,4 +1,5 @@
 import { readPsd, type Layer as AgLayer } from "ag-psd";
+import { TEXT_BAKED_DEGRADATION } from "../model/types.js";
 import type {
   PsdDoc, Layer, BlendMode, Mask,
   Degradation, LayerText, LayerParagraphRun, LayerParagraphStyle, LayerTextRun,
@@ -152,7 +153,7 @@ function mapText(t: AgLayer["text"]): { text: LayerText; degraded: Degradation }
       ...(uneditable.length ? { uneditable } : {}),
     },
     degraded: {
-      reason: "文字层已栅格化",
+      reason: TEXT_BAKED_DEGRADATION,
       detail: uneditable.length
         ? `渲染与导出使用 PSD 烘焙像素；文字不可重排（${uneditable.join("、")}）`
         : "渲染与导出使用 PSD 烘焙像素；文字内容可编辑，重排需要本机有对应字体",

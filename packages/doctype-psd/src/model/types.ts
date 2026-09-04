@@ -48,6 +48,18 @@ export interface DropShadow {
  *  what fidelity was lost instead of silently pretending the import was exact. */
 export interface Degradation { reason: string; detail?: string }
 
+/**
+ * "这层文字画出来的是 Photoshop 烘的像素"这条降级记录的 reason。
+ *
+ * 提成常量是因为 `setText` 成功之后要把它**摘掉** —— 那一刻像素已经是本仓库
+ * 排版链自己排的，再挂着"渲染与导出使用 PSD 烘焙像素"就是在陈述错误的事实，
+ * 模型复核时会同时读到它和 `provenance.model = "unidocs-text-layout"`，
+ * 轻则措辞含糊，重则以为编辑没生效而重试。靠字符串字面量在两处各写一遍
+ * 迟早漂移，所以只定义一次（`ops/text-ops.ts` 引用它）。
+ */
+export const TEXT_BAKED_DEGRADATION = "文字层已栅格化";
+
+
 export interface LayerTextStyle {
   font?: string;
   size?: number;

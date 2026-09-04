@@ -456,8 +456,9 @@ describe("setText：模型能改措辞绕开的失败，返回 fail 而不是抛
     const { ops, structured } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
     expect(ops).toEqual([]);
     expect(structured.ok).toBe(false);
-    // layout.ts 的 rejectionReason 已经写成人话了，不重新包装。
-    expect(String(structured.reason)).toContain("text.uneditable 非空");
+    // layout.ts 的 typesetRejection 已经写成人话了，不重新包装。英文 ——
+    // 这条 reason 原样透给模型，而工具面其余部分都是英文。
+    expect(String(structured.reason)).toContain("text.uneditable is non-empty");
     expect(String(structured.reason)).toContain("warp");
   });
 
@@ -738,5 +739,79 @@ describe("工具表与提示词必须一起条件化", () => {
     expect(names).toContain("editPixels");
     expect(agent.instructions).toContain("setText");
     expect(agent.instructions).toContain("editPixels");
+  });
+});
+
+/**
+ * `getLayers` 报出去的 `editable` 与 `setText` 到底收不收，**必须一致**。
+ *
+ * 这条守的是整分支最后一轮评审抓到的那个缺陷：`editable` 早先只看
+ * `text.uneditable`，而框文字 / 竖排 / 缩放 transform 三种拒绝**都不进那个
+ * 字段**，于是 `getLayers` 对它们报 `editable: true`；提示词又规定
+ * "editable true → 必须用 setText，绝不许用 editPixels"，逃生出口只在
+ * `editable === false` 时才开。结果是模型收到拒绝、无路可走、道歉停下 ——
+ * 和这条分支要消灭的那次原始故障一模一样的结局，而且这次连 editPixels
+ * 都不许试。框文字是真实 PSD 里最常见的正文形态，所以这不是边角情形。
+ *
+ * 现在两边共用 `typesetRejection`（`text/layout.ts`），下面逐种核对。
+ */
+describe("editable 与 setText 的接受与否一致", () => {
+  const cases: { name: string; text: LayerText }[] = [
+    { name: "warp（进 uneditable，一直是对的）", text: { ...twoRunText(), uneditable: ["warp"] } },
+    { name: "框文字（不进 uneditable —— 真实 PSD 正文最常见的形态）", text: { ...twoRunText(), boxBounds: [0, 0, 100, 40] } },
+    { name: "竖排（不进 uneditable）", text: { ...twoRunText(), orientation: "vertical" } },
+    { name: "缩放 transform（不进 uneditable）", text: { ...twoRunText(), transform: [2, 0, 0, 2, 100, 50] } },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}：getLayers 说不可编辑，setText 也确实拒绝`, async () => {
+      const { cas, model, source } = await scene(c.text);
+      // getLayers 直接返回图层数组，不是 { layers: [...] }（queries.ts:238）。
+      const layers = await runQuery({ kind: "getLayers" } as PsdQuery, model, cas.ctx) as unknown as
+        { id: string; text?: { editable: boolean } }[];
+      const summary = layers.find(l => l.id === "title");
+      const { structured } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+      // 一致性本身就是断言：两边都必须说"不行"。
+      expect({ editable: summary?.text?.editable, accepted: structured.ok })
+        .toEqual({ editable: false, accepted: false });
+    });
+  }
+
+  it("正常点文字：两边都说行", async () => {
+    const { cas, model, source } = await scene();
+    const layers = await runQuery({ kind: "getLayers" } as PsdQuery, model, cas.ctx) as unknown as
+      { id: string; text?: { editable: boolean } }[];
+    const summary = layers.find(l => l.id === "title");
+    const { structured } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    expect({ editable: summary?.text?.editable, accepted: structured.ok })
+      .toEqual({ editable: true, accepted: true });
+  });
+});
+
+describe("setText 成功之后不再挂着「渲染用的是烘焙像素」", () => {
+  it("那条降级记录被摘掉,别的降级不受影响", async () => {
+    // 导入时每个文字层都会挂上"文字层已栅格化 / 渲染与导出使用 PSD 烘焙像素"。
+    // setText 成功之后像素已经是本仓库排版链自己排的,那句话就成了错的 ——
+    // 模型复核时会同时读到它和 provenance.model = "unidocs-text-layout",
+    // 轻则措辞含糊,重则以为编辑没生效而重试。
+    const { cas, model, source } = await scene();
+    const layer = model.layers[0];
+    layer.degraded = [
+      { reason: "文字层已栅格化", detail: "渲染与导出使用 PSD 烘焙像素；文字内容可编辑" },
+      { reason: "矢量形状已栅格化", detail: "别的降级,仍然成立" },
+    ];
+    const { ops } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    const next = applyOne(model, ops[0] as never);
+    expect(next.layers[0].degraded).toEqual([
+      { reason: "矢量形状已栅格化", detail: "别的降级,仍然成立" },
+    ]);
+  });
+
+  it("只有那一条时,整个 degraded 字段消失(不是留一个空数组)", async () => {
+    const { cas, model, source } = await scene();
+    model.layers[0].degraded = [{ reason: "文字层已栅格化", detail: "渲染与导出使用 PSD 烘焙像素" }];
+    const { ops } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    const next = applyOne(model, ops[0] as never);
+    expect("degraded" in next.layers[0]).toBe(false);
   });
 });

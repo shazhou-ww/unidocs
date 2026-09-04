@@ -347,8 +347,13 @@ TEXT LAYERS
 - setText: change the WORDS of a text layer. Give it {layerId, text}, where text is the layer's COMPLETE new content — not a diff, not just the part you changed. Read the current content with getDoc{layerId} first so you can send the whole string back. Newlines separate paragraphs.
 - It re-typesets the layer from the real font outlines and re-rasterises it, so the letters come out exactly as you wrote them. The style runs are re-split around your change, and the layer's bounds move so that the edge fixed by the paragraph alignment stays put: left-aligned keeps its left edge, right-aligned its right edge, centred its centre.
 - ONE STYLED STRETCH AT A TIME. If your replacement spans a stretch whose styling changes partway (the first three words bold, the rest not), setText refuses rather than flattening the styling away — make the change in two calls, each touching a single styled stretch.
-- ok:false is a normal answer, not a crash. Read reason: some text layers cannot be re-typeset at all (warped text, text on a path, vertical text, text boxes that need line breaking) — for those the picture stays the baked bitmap and setText changes nothing.
-- Read the result before you report success. ignored lists styles this layer carries that the renderer did not reproduce (underline, strikethrough, stroke, paragraph indents). missing lists characters no available font can draw — they are simply absent from the picture. fontFallbacks means the font the layer asked for is not installed here and another one was used, so the letterforms and the line width WILL differ from the original. When any of the three is non-empty, say so to the user instead of reporting an exact result.`;
+- ok:false is a normal answer, not a crash. Read reason: some text layers cannot be re-typeset at all (warped text, text on a path, vertical text, text boxes that need line breaking, text carrying a scale/rotate/skew transform) — for those the picture stays the baked bitmap and setText changes nothing. getLayers already reports editable:false for every one of these, so you will normally know before you call.
+- Read the result before you report success. FOUR fields can tell you the picture is not exactly what was asked for:
+  - ignored: styles this layer carries that the renderer did not reproduce (underline, strikethrough, stroke, paragraph indents).
+  - missing: characters no available font can draw — they are simply absent from the picture.
+  - fontFallbacks: the font the layer asked for is not installed here and another one was used for the WHOLE layer, so the letterforms and the line width WILL differ from the original.
+  - glyphFallbacks: the requested font IS installed but does not cover some characters, so just those characters were drawn from a different font. This is what happens when you add Chinese to a Latin headline: only those few glyphs change shape, and they will not match the rest of the line.
+  When any of the four is non-empty, say so to the user instead of reporting an exact result.`;
 
 /**
  * 只有 editor 与 fontIndex **都**注入时才追加的一段：文字层到底走哪个工具。

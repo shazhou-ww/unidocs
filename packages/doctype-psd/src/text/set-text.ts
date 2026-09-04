@@ -28,7 +28,7 @@ import type { FontRef, LayerParagraphStyle, LayerText, LayerTextStyle, Pixels } 
 import type { PsdOp } from "../ops/index.js";
 import type { PsdQuery } from "../queries.js";
 import type { FaceResolver, FontFace } from "./font.js";
-import { layoutText, normalizeJustification, type Justification } from "./layout.js";
+import { layoutText, nonIdentityTransform, normalizeJustification, type Justification } from "./layout.js";
 import { parseFontFace } from "./opentype-face.js";
 import { rasterizeGlyphs } from "./raster.js";
 import type { FontEntry, FontIndex } from "./registry.js";
@@ -108,28 +108,6 @@ function anchorEdge(text: LayerText): Justification {
   return normalizeJustification(first?.justification);
 }
 
-/**
- * `text.transform` 是 ag-psd 逐字保留下来的仿射矩阵（`psd/load.ts`）：前四位
- * `a/b/c/d` 是线性部分（缩放 / 旋转 / 斜切），后两位 `e/f` 是平移。
- *
- * 排版链**不消费**这个矩阵 —— `layoutText` 按 1:1 排版、`rasterizeGlyphs`
- * 也按 1:1 画。线性部分不是单位阵时改一次字，等于当场把这层文字缩放或旋转
- * 掉，而且输出**整个**是错的。所以这一档归 `fail`，不进 `ignored`：`ignored`
- * 的语义是"这个样式我们没还原"（下划线那种局部损失，其余部分仍然正确），
- * 整体变换算错没有"其余部分仍然正确"可言。
- *
- * 平移 `e/f` 不判：点文字的锚点本来就靠它定位，不影响字形大小，而新 bounds
- * 是从**图层框**推出来的（见下面算 bounds 那段），根本不经过这个矩阵。
- *
- * 位数不足 4 的矩阵一样拒绝 —— 我们读不懂它，猜一个"大概是单位阵"正是这条
- * 裁定要消灭的静默。
- */
-function nonIdentityTransform(transform: readonly number[] | undefined): number[] | null {
-  if (transform === undefined) return null;
-  const identity = [1, 0, 0, 1];
-  const isIdentity = transform.length >= 4 && identity.every((v, i) => transform[i] === v);
-  return isIdentity ? null : [...transform];
-}
 
 /** caps 变换之后的字符串。选字体必须按**展开之后**的码位查覆盖：`caps` 会
  *  把 `ß` 变成 `SS`、把小写变成大写（见 `layout.ts` 的 `splitIntoLines`），

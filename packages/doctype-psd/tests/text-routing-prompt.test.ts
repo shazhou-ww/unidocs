@@ -11,7 +11,7 @@
  * 工具名的**极性**：谁是被指定的那个、谁是被禁止的那个。把两个名字对调就红。
  */
 import { describe, expect, it } from "vitest";
-import { instructions, textRoutingInstructions } from "../src/tools.js";
+import { instructions, setTextInstructions, textRoutingInstructions } from "../src/tools.js";
 import { createPsdAgent } from "../src/agent.js";
 import { createStubEditor } from "../src/testing/stub-editor.js";
 import type { FontIndexSource } from "../src/text/set-text.js";
@@ -211,5 +211,30 @@ describe("分流判据必须是 getLayers 真的给得出的字段", () => {
   it("画上去的字没有 text 字段 —— 提示词说的那个「缺席」是真的", async () => {
     const out = await runQuery({ kind: "getLayers" }, doc([raster("r")])) as any[];
     expect(out[0].text).toBeUndefined();
+  });
+});
+
+describe("setText 的说明块把四个报告字段都点到了", () => {
+  // 整分支最终评审找到的：structuredContent 有四个报告字段,提示词却只点名三个,
+  // 还写死"当这三个里任何一个非空时"——把 glyphFallbacks 结构性地排除在外。
+  // 后果:用户在英文标题里加两个中文字,另外三个字段全空,模型按提示词检查
+  // "这三个"、全空,于是报告"改好了,和原来一模一样"——而字形其实换了。
+  // 那正是裁定 R37 说"静默换字形是本任务要消灭的东西"的场景。
+  const block = setTextInstructions;
+
+  it("四个字段一个都不漏", () => {
+    for (const field of ["ignored", "missing", "fontFallbacks", "glyphFallbacks"]) {
+      expect(block, `说明块没点名 ${field}`).toContain(field);
+    }
+  });
+
+  it("数量词说的是四个,不是三个 —— 写死数字就会把新字段排除在外", () => {
+    expect(block).toMatch(/any of the four/);
+    expect(block).not.toMatch(/any of the three/);
+  });
+
+  it("拒绝理由里有缩放 transform 那一档", () => {
+    // 这一档是 R36 新增的第四种拒绝,原先的枚举漏了它。
+    expect(block).toMatch(/scale\/rotate\/skew|transform/);
   });
 });
