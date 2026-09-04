@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { writePsd } from "ag-psd";
-import { load } from "../src/psd/load.js";
+import { load, textUneditable } from "../src/psd/load.js";
 import { save } from "../src/psd/save.js";
 import { installCanvasShim } from "../src/psd/canvas-shim.js";
 import type { Layer, PsdDoc } from "../src/model/types.js";
@@ -90,6 +90,34 @@ describe("文字层导入：识别我们复刻不了的排版特性", () => {
   // 造不出来。两个字段我们都认,能测的只有这一个。
   it("CJK 排版网格 → 不可重排", async () => {
     expect(findText(await psdWith({ gridding: "round" })).uneditable).toContain("grid");
+  });
+
+  // 下面两条直接打 `textUneditable`,不走 load:ag-psd 的 writer 不写
+  // TextFrameSet,回读也就没有 `textPath`,合成 PSD 造不出这个状态。正是这个
+  // 盲区让 `if (t.textPath)` 一路过了测试,而真实 Photoshop 文件里每个文字层
+  // 都带这条空帧描述,于是整个 setText 在真实文件上全线失效。
+  it("点文字的空帧描述不算路径文字 —— Photoshop 给每个文字层都写一条", () => {
+    // 逐字段抄自真实文件(landing-page 的 Web 层):只有 data,没有 bezierCurve,
+    // type 缺省。
+    const pointFrame = { data: { textRange: [-1, -1], pathData: { spacing: -1 } } };
+    expect(textUneditable({ text: "hi", textPath: pointFrame } as never)).toEqual([]);
+  });
+
+  it("框文字的帧矩形不算路径文字 —— 那条曲线就是文本框自己", () => {
+    // 抄自真实文件(fashion-banner 的 Website 层):控制点是矩形四角,type=1。
+    const boxFrame = {
+      bezierCurve: { controlPoints: [0, 0, 0, 0, 815, 0, 815, 0, 815, 90, 815, 90, 0, 90, 0, 90] },
+      data: { type: 1, textRange: [-2, -2], pathData: { spacing: -1 } },
+    };
+    expect(textUneditable({ text: "hi", textPath: boxFrame } as never)).toEqual([]);
+  });
+
+  it("帧类型不是点/框的才是路径文字 → 不可重排", () => {
+    const onPath = {
+      bezierCurve: { controlPoints: [0, 0, 10, 0, 20, 10, 30, 10] },
+      data: { type: 2, textRange: [0, 5], pathData: { spacing: 0 } },
+    };
+    expect(textUneditable({ text: "hi", textPath: onPath } as never)).toContain("text-path");
   });
 
   it("不可重排时 degraded 说明原因,而不是笼统一句「已栅格化」", async () => {
