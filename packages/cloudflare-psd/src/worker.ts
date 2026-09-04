@@ -30,16 +30,13 @@ import { createPsdDocumentType, createPsdAgent, createQwenImageEditor, type PsdA
 import {
   createDocTypeHandler,
   DocAuthConfigCache,
+  handleFontsRequest,
   type DocAuthBindings,
 } from "@unidocs/doctype-server-common";
 import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
-import { consoleObserver } from "@unidocs/protocol-doc";
-import {
-  fontsObjectName,
-  handleFontsRequest,
-  matchFontsRoute,
-  PsdFontsDurableObject,
-} from "./fonts-do.js";
+import { consoleObserver, matchFontsRoute } from "@unidocs/protocol-doc";
+import { createDoFontRegistry } from "./font-registry-do.js";
+import { fontsObjectName, PsdFontsDurableObject } from "./fonts-do.js";
 import { createFontIndexSource, parseFontFallbacks } from "./fonts-source.js";
 
 const psdFactory = createPsdDocumentType;
@@ -140,16 +137,26 @@ export default {
       if (!env.PSD_FONTS) {
         return Response.json({ error: "Fonts index is not configured" }, { status: 501 });
       }
-      return handleFontsRequest({
-        docCapabilityVerifier: auth.docCapabilityVerifier,
-        namespace: env.PSD_FONTS,
-        objectName: fontsObjectName({ stackId: env.CAS_STACK_ID, tenantId: fonts.tenantId }),
-        audit: event => console.log(JSON.stringify({
-          event: "doc_authentication",
-          docType: "psd",
-          ...event,
-        })),
-      }, request, fonts);
+      // 中立的 handleFontsRequest 不兜底存储层的异常（registry.list/put 抛出
+      // 就直接 reject 出去）—— 原先 PsdFontsDurableObject.fetch 自己的 try/catch
+      // 把这类故障变成 500，这一层责任现在落在这里，不然一次存储故障会变成
+      // 未处理拒绝，而不是一个像样的 500。
+      try {
+        return await handleFontsRequest({
+          docCapabilityVerifier: auth.docCapabilityVerifier,
+          registry: createDoFontRegistry({
+            namespace: env.PSD_FONTS,
+            objectName: fontsObjectName({ stackId: env.CAS_STACK_ID, tenantId: fonts.tenantId }),
+          }),
+          audit: event => console.log(JSON.stringify({
+            event: "doc_authentication",
+            docType: "psd",
+            ...event,
+          })),
+        }, request, fonts);
+      } catch (err) {
+        return Response.json({ error: String(err) }, { status: 500 });
+      }
     }
     return createDocTypeHandler({
       docType: "psd",
