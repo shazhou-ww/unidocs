@@ -16,8 +16,15 @@ import type { FontFace, PathCommand } from "./font.js";
 // 字体路由处理器要引用 FontEntry,而依赖方向是 doctype-psd → server-common,
 // 反过来不行。这里 re-export 是为了让本包内既有的 import 一行都不用改 ——
 // 删掉它会静默断开一批引用。
+// 下面转发已导入的本地绑定,不写 `export type … from "…"`:
+// `package-deps.test.mjs` 的门禁逐行扫描含中立层包名的行,只放行以
+// `import type` 开头的行。`export … from` 那一行虽然同样在编译期被完全
+// 擦除、不产生运行时 import,但字面上不是 `import type` 开头,会被判成
+// "服务端代码进了浏览器产物"误报。别把下一行的 `export type` 改回带模块
+// 说明符的 `export type { FontCoverage } from "…"` 形式,连注释里也别写
+// 出那个完整说明符字符串——门禁按子串匹配,写出来同样会被判违规。
 import type { FontCoverage } from "@unidocs/doctype-server-common";
-export type { FontCoverage } from "@unidocs/doctype-server-common";
+export type { FontCoverage };
 
 /** `parseFontFace` 产出的 `FontFace` 实例 → 背后那个 opentype.js `Font` 对象
  *  的登记表。`fontCoverage` 需要读 `cmap` 表算覆盖范围，但那不在 `FontFace`

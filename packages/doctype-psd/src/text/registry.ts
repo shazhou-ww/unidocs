@@ -16,8 +16,15 @@ import type { FontCoverage } from "./opentype-face.js";
 
 // 同 opentype-face.ts 的 FontCoverage:类型下沉到中立层,这里保留 re-export
 // 让本包与外部既有 import 不受影响。
+// 下面转发已导入的本地绑定,不写 `export type … from "…"`:
+// `package-deps.test.mjs` 的门禁逐行扫描含中立层包名的行,只放行以
+// `import type` 开头的行。`export … from` 那一行虽然同样在编译期被完全
+// 擦除、不产生运行时 import,但字面上不是 `import type` 开头,会被判成
+// "服务端代码进了浏览器产物"误报。别把下一行的 `export type` 改回带模块
+// 说明符的 `export type { FontEntry } from "…"` 形式,连注释里也别写出
+// 那个完整说明符字符串——门禁按子串匹配,写出来同样会被判违规。
 import type { FontEntry } from "@unidocs/doctype-server-common";
-export type { FontEntry } from "@unidocs/doctype-server-common";
+export type { FontEntry };
 
 /** 按 postScriptName 索引。 */
 export type FontIndex = ReadonlyMap<string, FontEntry>;
