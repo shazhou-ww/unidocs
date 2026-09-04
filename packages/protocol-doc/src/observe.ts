@@ -127,6 +127,16 @@ export interface AgentStepEvent {
   readonly ok: boolean;
   /** 仅 tool。 */
   readonly name?: string;
+  /**
+   * 仅 tool：这次调用的参数摘要，**截断过**。
+   *
+   * 加它是因为一次实测排查卡住了：日志能看出 agent 调了 `editPixels`，
+   * 但看不出它编辑的是**哪一层** —— 而"它为什么没走 setText"恰恰取决于
+   * 那一层是不是 `editable` 的文字层。只记工具名回答不了这类问题。
+   * 截断是刻意的：`editPixels` 的参数里可能带指令文本，完整记下来会把
+   * 日志撑爆，而排查需要的只是 layerId 这类定位信息。
+   */
+  readonly args?: string;
   /** 仅 llm：模型这一轮要调的工具名。空数组表示它给出了最终答复。 */
   readonly toolCalls?: readonly string[];
   /** 仅 llm。 */

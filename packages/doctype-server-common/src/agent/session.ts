@@ -149,6 +149,7 @@ export class AgentSession<TQuery, TOp> {
           observe({
             event: "agent_step", kind: "tool", iteration: iterations, name: call.name,
             durationMs: Date.now() - toolStarted, ok: failed === undefined,
+            args: summariseArgs(call.arguments),
             ...(failed === undefined ? {} : { error: String(failed) }),
           });
           this.#history.push(toolResultToMessage(call.id, result));
@@ -232,6 +233,30 @@ export class AgentSession<TQuery, TOp> {
  * `["getLayers","getPreview","getPreview","getPreview"]` → `getLayers, getPreview x3`。
  * 压掉连续重复，因为循环恰恰长这样，而原样列出 25 个名字反而看不出来。
  */
+/**
+ * 工具参数的摘要，进 `agent_step`。
+ *
+ * 只记到能定位问题为止：一次实测排查里，日志显示 agent 调了 `editPixels`，
+ * 却看不出**编辑的是哪一层** —— 而"它为什么没改用 setText"完全取决于那层
+ * 是不是可编辑的文字层。工具名不够，参数才够。
+ *
+ * 截断而不是全记：`editPixels` 的参数带自然语言指令、`setText` 带整串新
+ * 内容，全记会把日志淹掉。`ARGS_CHARS` 取 200 是因为 layerId 这类定位字段
+ * 总在前面 —— 长文本在后面被切掉不影响定位。
+ */
+const ARGS_CHARS = 200;
+
+function summariseArgs(args: unknown): string {
+  let text: string;
+  try {
+    text = typeof args === "string" ? args : JSON.stringify(args) ?? String(args);
+  } catch {
+    // 循环引用之类：记不下来也不能让观测把整个 run 弄挂。
+    text = "<unserialisable>";
+  }
+  return text.length > ARGS_CHARS ? `${text.slice(0, ARGS_CHARS)}…(+${text.length - ARGS_CHARS})` : text;
+}
+
 function summarise(trace: readonly string[]): string {
   if (trace.length === 0) return "none";
   const runs: { name: string; n: number }[] = [];

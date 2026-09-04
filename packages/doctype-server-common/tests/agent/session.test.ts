@@ -269,6 +269,35 @@ describe("AgentSession 观测", () => {
     expect(tool.error).toContain("layer not found: L9");
   });
 
+  it("工具调用记下参数摘要 —— 只记名字回答不了「它编辑的是哪一层」", async () => {
+    // 一次真实排查卡在这里：日志能看出 agent 调了 editPixels，却看不出目标图层,
+    // 而"它为什么没改用 setText"完全取决于那层是不是可编辑的文字层。
+    const { seen, observe } = collect();
+    const provider = scriptedProvider([
+      { content: [], toolCalls: [{ id: "c1", name: "transform", arguments: { layerId: "L7", op: { translate: [3, 4] } } }] },
+      { content: [{ type: "text", text: "好了" }] },
+    ]);
+    await new AgentSession({ agent, platform: fakePlatform(), provider, observe }).run([{ type: "text", text: "x" }]);
+    const tool = seen.find(e => e.event === "agent_step" && e.kind === "tool") as { args: string };
+    expect(tool.args).toContain("L7");
+  });
+
+  it("超长参数被截断 —— editPixels 带自然语言指令,全记会把日志淹掉", async () => {
+    const { seen, observe } = collect();
+    const long = "改成蓝色".repeat(200);
+    const provider = scriptedProvider([
+      { content: [], toolCalls: [{ id: "c1", name: "transform", arguments: { layerId: "L7", instruction: long } }] },
+      { content: [{ type: "text", text: "好了" }] },
+    ]);
+    await new AgentSession({ agent, platform: fakePlatform(), provider, observe }).run([{ type: "text", text: "x" }]);
+    const tool = seen.find(e => e.event === "agent_step" && e.kind === "tool") as { args: string };
+    // 定位字段在前面,所以截断之后仍然找得到 layerId —— 这正是截断点选在
+    // 参数序列化的开头而不是结尾的理由。
+    expect(tool.args).toContain("L7");
+    expect(tool.args.length).toBeLessThan(long.length);
+    expect(tool.args).toMatch(/…\(\+\d+\)$/);
+  });
+
   it("模型调用抛异常时以普通失败结束，并记下 error 和栈 —— 而不是穿出去变成不透明 500", async () => {
     const { seen, observe } = collect();
     const boom = Object.assign(new Error("payload too large"), { cause: new Error("413 from upstream") });
