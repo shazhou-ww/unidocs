@@ -15,6 +15,7 @@ import { describe, expect, test } from "vitest";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const GENERATED = join(ROOT, "packages/azure-gateway/src/web-assets.generated.ts");
+const DECLARATION = join(ROOT, "packages/azure-gateway/src/web-assets.generated.d.ts");
 
 /** 只在构建产物存在时断言内容;裸 checkout 上跳过而不是失败。 */
 const built = existsSync(GENERATED)
@@ -40,8 +41,8 @@ describe("网关内联的 web-psd 资源", () => {
     expect(source).not.toContain("BEGIN PRIVATE KEY");
   });
 
-  test("生成的模块导出 WEB_ASSETS", () => {
-    // 存根与真实产物都必须满足 —— src/web-assets.ts 依赖这个具名导出。
-    expect(readFileSync(GENERATED, "utf8")).toContain("export const WEB_ASSETS");
+  test("声明生成模块导出的 WEB_ASSETS", () => {
+    // 裸 checkout 没有生成内容时，typecheck 依靠这个稳定声明解析具名导出。
+    expect(readFileSync(DECLARATION, "utf8")).toContain("export declare const WEB_ASSETS");
   });
 });

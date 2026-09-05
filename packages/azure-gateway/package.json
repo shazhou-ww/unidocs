@@ -19,9 +19,9 @@
     "build": "node scripts/build-web-assets.mjs && tsc && node scripts/bundle.mjs",
     "start": "node dist/main.js",
     "migrate": "node dist/migrate-cli.js",
-    "test": "vitest run --passWithNoTests",
+    "test": "node scripts/build-web-assets.mjs && vitest run --passWithNoTests",
     "typecheck": "tsc -b",
-    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\" src/web-assets.generated.ts"
   },
   "dependencies": {
     "@azure/identity": "^4.13.2",

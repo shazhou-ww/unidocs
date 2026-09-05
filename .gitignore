@@ -16,6 +16,11 @@ dist/
 .azure-runtime/
 .pnpm-store/
 
+# Build-time source modules containing bundled frontend assets
+/packages/azure-gateway/src/web-assets.generated.ts
+/packages/cloudflare-gateway/src/ui-assets.generated.ts
+/unicas-packages/service-cloudflare/src/admin-bff/ui-assets.generated.ts
+
 # 本地生成的部署私钥,永不入库
 .secrets/
 

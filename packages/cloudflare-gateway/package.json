@@ -11,9 +11,9 @@
   "scripts": {
     "build": "pnpm --filter @unidocs/web-gateway build && node scripts/build-ui-assets.mjs && tsc -b",
     "build:worker": "tsc -b",
-    "test": "vitest run",
+    "test": "node scripts/build-ui-assets.mjs && vitest run",
     "typecheck": "tsc -b",
-    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\" src/ui-assets.generated.ts",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

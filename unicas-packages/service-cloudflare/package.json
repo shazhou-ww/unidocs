@@ -19,9 +19,9 @@
   ],
   "scripts": {
     "build": "pnpm --filter @unicas/admin-webui build:ui && node scripts/build-ui-assets.mjs && tsc -b",
-    "test": "vitest run",
+    "test": "node scripts/build-ui-assets.mjs && vitest run",
     "typecheck": "tsc -b",
-    "clean": "rimraf --glob dist \"*.tsbuildinfo\"",
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\" src/admin-bff/ui-assets.generated.ts",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
