@@ -13,6 +13,6 @@ export { LoginErrorView } from "./views/login-error.js";
 export { MembersView } from "./views/members.js";
 export { IssuerView } from "./views/issuer.js";
 export { ControlAuditView } from "./views/control-audit.js";
-export { RootRefAuditView, UsageView } from "./views/placeholder-views.js";
+export { UsageView } from "./views/usage.js";
 export { api, ApiError, SessionExpiredError, readCsrfToken, ifMatch } from "./api.js";
 export { useHashRoute, matchRoute, navigate } from "./router.js";

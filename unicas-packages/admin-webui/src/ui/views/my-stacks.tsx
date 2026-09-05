@@ -49,7 +49,7 @@ export function MyStacksView() {
         title="CAS stacks"
         summary="A stack is the top-level UniCAS trust and storage boundary for one independently administered application deployment."
         concepts={[
-          { term: "Isolation", detail: "Each stack has independent issuer trust, tenants, Root Ref audit history, and stored objects." },
+          { term: "Isolation", detail: "Each stack has independent issuer trust, tenants, data history, and stored objects." },
           { term: "Stable identity", detail: "UniCAS generates an opaque stack ID. The display name is only an operator-facing label." },
           { term: "First membership", detail: "Registering a stack makes your current OIDC identity its first administrator." },
         ]}

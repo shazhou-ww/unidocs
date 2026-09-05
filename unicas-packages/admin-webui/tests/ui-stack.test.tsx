@@ -53,7 +53,8 @@ describe("StackView", () => {
     const switcher = screen.getByRole("combobox", { name: "Stack" });
     expect(switcher).toHaveValue("cas_one");
     expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");
-    expect(screen.getAllByRole("tab")).toHaveLength(6);
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getByRole("tab", { name: "Change Log" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Ref domains" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "My Stacks" })).not.toBeInTheDocument();
     const metadata = screen.getByRole("heading", { name: "Stack metadata" }).closest(".card");
@@ -73,10 +74,7 @@ describe("StackView", () => {
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Stack identity" })).toBeInTheDocument());
     const guides = [
       ["Members", "Stack administrators"],
-      ["OAuth issuer", "Stack OAuth issuer"],
-      ["Control audit", "Control-plane audit"],
-      ["Root Ref audit", "Root Ref audit"],
-      ["Usage", "Tenant storage usage"],
+      ["Change Log", "Change Log"],
     ] as const;
 
     for (const [tab, guide] of guides) {
@@ -85,8 +83,9 @@ describe("StackView", () => {
       expect(screen.getByText("About this page")).toBeInTheDocument();
     }
 
-    await user.click(screen.getByRole("tab", { name: "Root Ref audit" }));
-    expect(screen.getByText("Ref domain")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(screen.getByRole("heading", { name: "OAuth authorization server" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Usage" })).toBeInTheDocument();
   });
 
   test("updates the stack description with the current revision", async () => {
@@ -148,7 +147,7 @@ describe("StackView", () => {
     await user.click(within(dialog).getByRole("button", { name: "Sign out" }));
     expect(onLogout).toHaveBeenCalledOnce();
 
-    await user.click(screen.getByRole("tab", { name: "Usage" }));
+    await user.click(screen.getByRole("tab", { name: "Change Log" }));
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());

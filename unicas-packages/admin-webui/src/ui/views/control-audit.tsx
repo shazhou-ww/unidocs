@@ -45,8 +45,8 @@ export function ControlAuditView({ stackId }: { stackId: string }) {
   }, [load]);
 
   return (
-    <Card title="Control audit">
-      <p className="hint">Append-only record of every control-plane mutation on this stack.</p>
+    <Card title="Change Log">
+      <p className="hint">Append-only record of every administrative change to this stack.</p>
       {error ? <ErrorState message={error} /> : null}
       {page === null && !error ? <LoadingState /> : null}
       {page !== null && page.items.length === 0 ? (

@@ -6,7 +6,6 @@ import {
   MembersView,
   IssuerView,
   ControlAuditView,
-  RootRefAuditView,
   UsageView,
 } from "../src/ui/index.js";
 
@@ -179,12 +178,8 @@ describe("ControlAuditView", () => {
   });
 });
 
-describe("remaining read views", () => {
-  test("Root Ref audit shows an empty catalog and usage remains unavailable", async () => {
-    fetchMock.mockResolvedValueOnce(json({ domains: [] }));
-    const first = render(<RootRefAuditView stackId={STACK} />);
-    expect(await screen.findByText(/No Root Ref domains have been observed yet/)).toBeInTheDocument();
-    first.unmount();
+describe("UsageView", () => {
+  test("documents the delegated tenant-plane read", () => {
     render(<UsageView stackId={STACK} />);
     expect(screen.getByText(/Usage is a tenant-plane read/)).toBeInTheDocument();
   });

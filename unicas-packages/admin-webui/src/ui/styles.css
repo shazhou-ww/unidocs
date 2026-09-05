@@ -666,28 +666,6 @@ a:focus-visible,
   margin-top: 0.15rem;
 }
 
-.audit-filters {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.4fr) minmax(280px, 1fr);
-  gap: 0 1rem;
-}
-
-.ref-changes {
-  display: grid;
-  gap: 0.22rem;
-}
-
-.ref-changes span {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.ref-changes strong {
-  color: var(--muted-strong);
-  font-variant-numeric: tabular-nums;
-}
-
 .state {
   display: flex;
   min-height: 58px;
@@ -1305,10 +1283,6 @@ a:focus-visible,
 }
 
 @media (max-width: 640px) {
-  .audit-filters {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .app-header {
     padding: 0 0.85rem;
   }
