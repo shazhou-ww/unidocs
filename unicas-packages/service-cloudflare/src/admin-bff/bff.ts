@@ -721,6 +721,25 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         const result = await controlPlane.getOAuthIssuer(ctx, { path: { stackId: route.stackId } });
         return jsonWithEtag(result);
       }
+      case "getManagedIssuer": {
+        const result = await controlPlane.getManagedOAuthIssuer(ctx, { path: { stackId: route.stackId } });
+        return jsonWithEtag(result);
+      }
+      case "patchManagedIssuer": {
+        const body = await readJsonBody<{ enabled?: unknown }>(request);
+        if (!body || typeof body.enabled !== "boolean") return invalidRequest("enabled must be a boolean");
+        const result = await controlPlane.patchManagedOAuthIssuer(ctx, {
+          path: { stackId: route.stackId },
+          body: { enabled: body.enabled },
+        }, mutation);
+        return jsonWithEtag(result);
+      }
+      case "mintManagedCapability": {
+        const result = await controlPlane.mintManagedCapability(ctx, { path: { stackId: route.stackId } });
+        const response = json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      }
       case "inspectOAuthIssuer": {
         const body = await readJsonBody<{ issuer?: unknown }>(request);
         if (!body || Array.isArray(body)) return invalidRequest("JSON object body is required");

@@ -1,8 +1,9 @@
 /**
  * Browser API client for the `/admin` BFF. Browser code never holds Google
- * secrets, session signing material, tenant JWTs, or storage bindings; it
- * only calls the BFF with the HttpOnly session cookie, and the BFF enforces
- * membership. The CSRF token is read from the shell's meta tag.
+ * secrets, session signing material, refresh tokens, or storage bindings.
+ * It calls the BFF with the HttpOnly session cookie, and the BFF enforces
+ * membership. The Playground may explicitly request a 120-second tenant
+ * capability. The CSRF token is read from the shell's meta tag.
  */
 
 export class ApiError extends Error {

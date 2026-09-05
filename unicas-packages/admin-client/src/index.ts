@@ -31,4 +31,5 @@ export type {
   CasStack,
   CasStackMember,
   CasStackOAuthIssuer,
+  CasManagedCapability,
 } from "@unicas/admin-protocol";

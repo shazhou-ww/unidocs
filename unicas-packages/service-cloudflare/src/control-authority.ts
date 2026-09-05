@@ -24,9 +24,14 @@ export class AuthorityRepository implements StackAuthorityResolver {
   async resolveIssuer(issuer: string): Promise<ResolvedStackAuthority | null> {
     const oauthRow = await this.#db
       .prepare(
-        "SELECT stack_id, issuer, audience, jwks_uri, capability_max_lifetime_seconds FROM cas_stack_oauth_issuers WHERE issuer = ? AND status = 'active'",
+        `SELECT stack_id, issuer, audience, jwks_uri, capability_max_lifetime_seconds
+         FROM cas_stack_oauth_issuers WHERE issuer = ? AND status = 'active' AND mode = 'external'
+         UNION ALL
+         SELECT stack_id, issuer, audience, jwks_uri, capability_max_lifetime_seconds
+         FROM cas_stack_managed_issuers WHERE issuer = ? AND status = 'active'
+         LIMIT 1`,
       )
-      .bind(issuer)
+      .bind(issuer, issuer)
       .first<IssuerRow>();
     if (!oauthRow) return null;
     return toAuthority(oauthRow);

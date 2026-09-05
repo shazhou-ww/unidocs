@@ -9,6 +9,9 @@ export type CasAdminRoute =
   | { operation: "createMemberInvitation"; stackId: string }
   | { operation: "acceptMemberInvitation"; token: string }
   | { operation: "getOAuthIssuer"; stackId: string }
+  | { operation: "getManagedIssuer"; stackId: string }
+  | { operation: "patchManagedIssuer"; stackId: string }
+  | { operation: "mintManagedCapability"; stackId: string }
   | { operation: "inspectOAuthIssuer"; stackId: string }
   | { operation: "activateOAuthIssuer"; stackId: string }
   | { operation: "listRefDomains"; stackId: string }
@@ -41,6 +44,10 @@ export const casAdminRoutes = {
     `/admin/member-invitations/${segment(token)}/accept`,
   oauthIssuer: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/oauth-issuer`,
+  managedCapability: ({ stackId }: { stackId: string }) =>
+    `/admin/stacks/${segment(stackId)}/managed-capabilities`,
+  managedIssuer: ({ stackId }: { stackId: string }) =>
+    `/admin/stacks/${segment(stackId)}/managed-issuer`,
   oauthIssuerInspections: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/oauth-issuer/inspections`,
   refDomains: ({ stackId }: { stackId: string }) =>
@@ -107,6 +114,16 @@ export function matchCasAdminRoute(
   if (parts.length === 4 && parts[3] === "oauth-issuer") {
     if (method === "GET") return { operation: "getOAuthIssuer", stackId };
     if (method === "PUT") return { operation: "activateOAuthIssuer", stackId };
+    return null;
+  }
+
+  if (parts.length === 4 && parts[3] === "managed-capabilities" && method === "POST") {
+    return { operation: "mintManagedCapability", stackId };
+  }
+
+  if (parts.length === 4 && parts[3] === "managed-issuer") {
+    if (method === "GET") return { operation: "getManagedIssuer", stackId };
+    if (method === "PATCH") return { operation: "patchManagedIssuer", stackId };
     return null;
   }
 

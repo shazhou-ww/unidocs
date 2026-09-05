@@ -1,6 +1,7 @@
 import {
   ControlPlaneAdminService,
   type ControlPlaneOperations,
+  type ManagedCapabilityIssuer,
   type OAuthDiscoveryPort,
 } from "@unicas/service";
 import { D1ControlPlaneAdminRepository } from "./control-admin-repository.js";
@@ -12,6 +13,7 @@ export function createControlPlaneOperations(
     readonly now?: () => number;
     readonly oauthDiscovery?: OAuthDiscoveryPort;
     readonly oauthResourcePublicOrigin?: string;
+    readonly managedOAuthIssuer?: ManagedCapabilityIssuer;
   } = {},
 ): ControlPlaneOperations {
   const admin = new ControlPlaneAdminService(
@@ -20,6 +22,7 @@ export function createControlPlaneOperations(
       now: options.now,
       oauthDiscovery: options.oauthDiscovery,
       oauthResourcePublicOrigin: options.oauthResourcePublicOrigin,
+      managedOAuthIssuer: options.managedOAuthIssuer,
     },
   );
 
@@ -34,6 +37,9 @@ export function createControlPlaneOperations(
     createMemberInvitation: admin.createMemberInvitation.bind(admin),
     acceptMemberInvitation: admin.acceptMemberInvitation.bind(admin),
     getOAuthIssuer: admin.getOAuthIssuer.bind(admin),
+    getManagedOAuthIssuer: admin.getManagedOAuthIssuer.bind(admin),
+    patchManagedOAuthIssuer: admin.patchManagedOAuthIssuer.bind(admin),
+    mintManagedCapability: admin.mintManagedCapability.bind(admin),
     inspectOAuthIssuer: admin.inspectOAuthIssuer.bind(admin),
     activateOAuthIssuer: admin.activateOAuthIssuer.bind(admin),
     listControlAuditEvents: admin.listControlAuditEvents.bind(admin),

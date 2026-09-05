@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Cable,
+  FlaskConical,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -18,9 +19,11 @@ import { MembersView } from "./members.js";
 import { IssuerView } from "./issuer.js";
 import { ControlAuditView } from "./control-audit.js";
 import { UsageView } from "./usage.js";
+import { PlaygroundView } from "./playground.js";
 
 const TABS = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={15} /> },
+  { id: "playground", label: "Playground", icon: <FlaskConical size={15} /> },
   { id: "members", label: "Members", icon: <Users size={15} /> },
   { id: "change-log", label: "Change Log", icon: <ScrollText size={15} /> },
 ] as const;
@@ -42,6 +45,15 @@ const TAB_GUIDES = {
       { term: "Identity", detail: "Membership binds the provider issuer and immutable subject, not a changeable email address." },
       { term: "Equal access", detail: "All members currently have the same stack-administrator permissions." },
       { term: "Transfer", detail: "Invite the replacement first, then remove the previous member. UniCAS will not allow removal of the final member." },
+    ],
+  },
+  playground: {
+    title: "Tenant API playground",
+    summary: "The managed issuer grants each stack member a short-lived capability for an isolated development tenant.",
+    concepts: [
+      { term: "Member access", detail: "Only current stack members can issue managed capabilities." },
+      { term: "Isolation", detail: "Each member maps to a stable tenant partition without exposing the login identity in its tenant ID." },
+      { term: "Production", detail: "When the stack switches to an external issuer, that issuer owns tenant identity and authorization." },
     ],
   },
   "change-log": {
@@ -241,6 +253,7 @@ export function StackView({ stackId, onStackChange, onOpenMcpConfiguration, onLo
             </>
           ) : null}
           {tab === "members" ? <MembersView stackId={stackId} stackRevision={stack.revision} onChanged={reload} /> : null}
+          {tab === "playground" ? <PlaygroundView stackId={stackId} /> : null}
           {tab === "change-log" ? <ControlAuditView stackId={stackId} /> : null}
         </section>
       </div>

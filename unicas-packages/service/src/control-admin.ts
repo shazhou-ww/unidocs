@@ -17,6 +17,10 @@ import type {
   CasAdminErrorResponse,
   CasAdminGetOAuthIssuerRequest,
   CasAdminGetOAuthIssuerResponse,
+  CasAdminGetManagedIssuerRequest,
+  CasAdminGetManagedIssuerResponse,
+  CasAdminMintManagedCapabilityRequest,
+  CasAdminMintManagedCapabilityResponse,
   CasAdminInspectOAuthIssuerRequest,
   CasAdminInspectOAuthIssuerResponse,
   CasAdminGetStackRequest,
@@ -31,6 +35,8 @@ import type {
   CasAdminMeResponse,
   CasAdminPatchStackRequest,
   CasAdminPatchStackResponse,
+  CasAdminPatchManagedIssuerRequest,
+  CasAdminPatchManagedIssuerResponse,
   CasControlAuditEvent,
   CasOAuthIssuerInspection,
   CasOperatorIdentity,
@@ -38,6 +44,7 @@ import type {
   CasStack,
   CasStackMember,
   CasStackOAuthIssuer,
+  CasManagedCapability,
 } from "@unicas/admin-protocol";
 import { ControlAuditActions, type ControlAuditAction } from "./control-audit.js";
 import { decodeControlListCursor, encodeControlListCursor } from "./control-cursor.js";
@@ -160,6 +167,7 @@ export interface ControlIdentityPlan {
 export interface ControlCreateStackPlan {
   readonly stack: ControlStackRecord;
   readonly membership: ControlMembershipRecord & { readonly joinedAt: number };
+  readonly managedIssuer: ControlOAuthIssuerRecord | null;
   readonly audit: ControlAuditRecord;
   readonly idempotency: ControlIdempotencyRecord | null;
 }
@@ -200,6 +208,7 @@ export interface ControlAcceptMemberInvitationPlan {
 /** Singleton per-stack discovered OAuth authorization-server binding. */
 export interface ControlOAuthIssuerRecord {
   readonly stackId: string;
+  readonly mode: CasStackOAuthIssuer["mode"];
   readonly issuer: string;
   readonly audience: string;
   readonly metadataUrl: string;
@@ -217,6 +226,19 @@ export interface ControlOAuthIssuerRecord {
   readonly jwksDigest: string;
   readonly capabilityMaxLifetimeSeconds: number;
   readonly revision: number;
+}
+
+/** Platform-owned factory for the default issuer attached to a new stack. */
+export interface ManagedOAuthIssuerProvisioner {
+  provision(stackId: string, createdAt: number): Promise<ControlOAuthIssuerRecord>;
+}
+
+export interface ManagedCapabilityIssuer extends ManagedOAuthIssuerProvisioner {
+  issue(input: {
+    readonly stack: ControlStackRecord;
+    readonly issuer: ControlOAuthIssuerRecord;
+    readonly identity: CasOperatorIdentityKey;
+  }): Promise<CasManagedCapability>;
 }
 
 export interface ControlOAuthIssuerInspectionRecord {
@@ -260,6 +282,19 @@ export interface ControlActivateOAuthIssuerPlan {
   readonly activatedAt: number;
   readonly audit: ControlAuditRecord;
 }
+
+export interface ControlPatchManagedIssuerPlan {
+  readonly stackId: string;
+  readonly expectedRevision: number;
+  readonly enabled: boolean;
+  readonly nextRevision: number;
+  readonly issuer?: ControlOAuthIssuerRecord;
+  readonly audit: ControlAuditRecord;
+}
+
+export type ControlPatchManagedIssuerCommitResult =
+  | { readonly kind: "created" | "updated" }
+  | { readonly kind: "not-found" | "revision-mismatch" };
 
 export type ControlActivateOAuthIssuerCommitResult =
   | { readonly kind: "activated" }
@@ -318,6 +353,10 @@ export interface ControlPlaneAdminRepository {
   commitDeleteMember(plan: ControlDeleteMemberPlan): Promise<ControlDeleteMemberCommitResult>;
   commitAcceptMemberInvitation(plan: ControlAcceptMemberInvitationPlan): Promise<ControlAcceptMemberInvitationCommitResult>;
   getOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null>;
+  getManagedOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null>;
+  commitPatchManagedOAuthIssuer(
+    plan: ControlPatchManagedIssuerPlan,
+  ): Promise<ControlPatchManagedIssuerCommitResult>;
   hasOAuthIssuerElsewhere(issuer: string, stackId: string): Promise<boolean>;
   commitInspectOAuthIssuer(
     plan: ControlInspectOAuthIssuerPlan,
@@ -352,6 +391,7 @@ export interface ControlPlaneAdminServiceOptions {
   readonly generateOAuthInspectionId?: () => string;
   /** Configured UniCAS public origin used to derive Stack OAuth resources. */
   readonly oauthResourcePublicOrigin?: string;
+  readonly managedOAuthIssuer?: ManagedCapabilityIssuer;
 }
 
 /** Cloud-neutral business service for identity, stack administration, and session audit. */
@@ -370,6 +410,7 @@ export class ControlPlaneAdminService {
   readonly #oauthInspectionTtlMs: number;
   readonly #generateOAuthInspectionId: () => string;
   readonly #oauthResourcePublicOrigin: string | null;
+  readonly #managedOAuthIssuer: ManagedCapabilityIssuer | null;
 
   constructor(repository: ControlPlaneAdminRepository, options: ControlPlaneAdminServiceOptions = {}) {
     this.#repository = repository;
@@ -386,6 +427,7 @@ export class ControlPlaneAdminService {
     this.#oauthInspectionTtlMs = options.oauthInspectionTtlMs ?? OAUTH_ISSUER_INSPECTION_TTL_MS;
     this.#generateOAuthInspectionId = options.generateOAuthInspectionId ?? generateOAuthInspectionId;
     this.#oauthResourcePublicOrigin = options.oauthResourcePublicOrigin ?? null;
+    this.#managedOAuthIssuer = options.managedOAuthIssuer ?? null;
   }
 
   me(ctx: ControlPlaneCallContext): Promise<CasAdminMeResponse | CasAdminErrorResponse> {
@@ -560,6 +602,89 @@ export class ControlPlaneAdminService {
     });
   }
 
+  getManagedOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminGetManagedIssuerRequest,
+  ): Promise<CasAdminGetManagedIssuerResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      const issuer = await this.#managedIssuerResource(request.path.stackId);
+      return toCasStackOAuthIssuer(issuer);
+    });
+  }
+
+  patchManagedOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminPatchManagedIssuerRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminPatchManagedIssuerResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      const existingIssuer = await this.#repository.getManagedOAuthIssuer(request.path.stackId);
+      const issuer = existingIssuer ?? await this.#managedIssuerResource(request.path.stackId);
+      this.#requireIfMatch(mutation.ifMatch, issuer.revision);
+      const enabled = request.body.enabled;
+      if (typeof enabled !== "boolean") {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "enabled must be a boolean");
+      }
+      const currentlyEnabled = issuer.status === "active";
+      if (enabled === currentlyEnabled) {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "managed issuer state is unchanged");
+      }
+      const result = await this.#repository.commitPatchManagedOAuthIssuer({
+        stackId: issuer.stackId,
+        expectedRevision: issuer.revision,
+        enabled,
+        nextRevision: issuer.revision + 1,
+        issuer: existingIssuer ? undefined : { ...issuer, status: "active", revision: 1 },
+        audit: this.#audit(
+          ctx,
+          enabled ? ControlAuditActions.managedIssuerEnabled : ControlAuditActions.managedIssuerDisabled,
+          issuer.issuer,
+          issuer.stackId,
+        ),
+      });
+      if (result.kind === "not-found") throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "managed issuer is not configured");
+      if (result.kind === "revision-mismatch") throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "managed issuer revision has changed");
+      return toCasStackOAuthIssuer({
+        ...issuer,
+        status: enabled ? "active" : "disabled",
+        revision: issuer.revision + 1,
+      });
+    });
+  }
+
+  async #managedIssuerResource(stackId: string): Promise<ControlOAuthIssuerRecord> {
+    const existing = await this.#repository.getManagedOAuthIssuer(stackId);
+    if (existing) return existing;
+    if (!this.#managedOAuthIssuer) {
+      throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "managed issuer is not available");
+    }
+    const issuer = await this.#managedOAuthIssuer.provision(stackId, this.#now());
+    return { ...issuer, status: "disabled", revision: 0 };
+  }
+
+  mintManagedCapability(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminMintManagedCapabilityRequest,
+  ): Promise<CasAdminMintManagedCapabilityResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      const stack = await this.#requireStack(request.path.stackId);
+      if (stack.status !== "active") {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "stack is suspended");
+      }
+      const issuer = await this.#repository.getManagedOAuthIssuer(stack.stackId);
+      if (!issuer || issuer.mode !== "managed" || issuer.status !== "active") {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "managed issuer is not active for this stack");
+      }
+      if (!this.#managedOAuthIssuer) {
+        throw new ControlPlaneError(CasAdminErrorCodes.SERVICE_UNAVAILABLE, "managed issuer is not configured");
+      }
+      return this.#managedOAuthIssuer.issue({ stack, issuer, identity: ctx.identity });
+    });
+  }
+
   inspectOAuthIssuer(
     ctx: ControlPlaneCallContext,
     request: CasAdminInspectOAuthIssuerRequest,
@@ -618,6 +743,7 @@ export class ControlPlaneAdminService {
       const revision = (existing?.revision ?? 0) + 1;
       const issuerRecord: ControlOAuthIssuerRecord = {
         stackId: request.path.stackId,
+        mode: "external",
         ...discovered.metadata,
         audience,
         status: "pending",
@@ -869,9 +995,13 @@ export class ControlPlaneAdminService {
         createdAt: now,
         expiresAt: now + CAS_ADMIN_IDEMPOTENCY_RETENTION_MS,
       };
+      const managedIssuer = this.#managedOAuthIssuer
+        ? await this.#managedOAuthIssuer.provision(stack.stackId, now)
+        : null;
       const result = await this.#repository.commitCreateStack({
         stack,
         membership: { ...ctx.identity, stackId: stack.stackId, displayName: null, emailForDisplay: null, joinedAt: now },
+        managedIssuer,
         audit: this.#audit(ctx, ControlAuditActions.stackCreated, stack.stackId, stack.stackId),
         idempotency,
       });

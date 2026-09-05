@@ -155,6 +155,20 @@ function fakeControlPlane(): ControlPlaneOperations {
     createMemberInvitation: error as ControlPlaneOperations["createMemberInvitation"],
     acceptMemberInvitation: error as ControlPlaneOperations["acceptMemberInvitation"],
     getOAuthIssuer: error as ControlPlaneOperations["getOAuthIssuer"],
+    mintManagedCapability: async (ctx, request) => {
+      const stack = requireStack(ctx, request.path.stackId);
+      if (!stack) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
+      return {
+        accessToken: "short-lived-token",
+        tokenType: "Bearer",
+        expiresIn: 120,
+        expiresAt: Date.now() + 120_000,
+        issuer: `https://cas.example/managed-issuers/${stack.stackId}`,
+        audience: `https://cas.example/stacks/${stack.stackId}`,
+        tenantId: "member_test",
+        permissions: ["tenants:member_test:cas:manage"],
+      };
+    },
     inspectOAuthIssuer: error as ControlPlaneOperations["inspectOAuthIssuer"],
     activateOAuthIssuer: error as ControlPlaneOperations["activateOAuthIssuer"],
     listControlAuditEvents: error as ControlPlaneOperations["listControlAuditEvents"],
@@ -831,6 +845,30 @@ describe("cas-admin-webui BFF", () => {
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0].displayName).toBe("Renamed");
     expect(listed.items[0].description).toBe("Production documents");
+  });
+
+  test("managed capability mint requires CSRF and is never cacheable", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Managed");
+
+    const rejected = await authRequest(bff, `/admin/stacks/${stackId}/managed-capabilities`, cookie, {
+      method: "POST",
+    });
+    expect(rejected.status).toBe(403);
+
+    const minted = await authRequest(bff, `/admin/stacks/${stackId}/managed-capabilities`, cookie, {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrf },
+    });
+    expect(minted.status).toBe(200);
+    expect(minted.headers.get("Cache-Control")).toBe("no-store");
+    expect(await minted.json()).toMatchObject({
+      accessToken: "short-lived-token",
+      tenantId: "member_test",
+      expiresIn: 120,
+    });
   });
 
   test("invitation page redirects unauthenticated visitors to login, then to the hash route", async () => {

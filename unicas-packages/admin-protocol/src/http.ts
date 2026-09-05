@@ -114,6 +114,43 @@ export type CasAdminGetOAuthIssuerResponse =
   | CasStackOAuthIssuer
   | CasAdminErrorResponse;
 
+export interface CasAdminGetManagedIssuerRequest {
+  readonly path: CasAdminStackPath;
+}
+
+export type CasAdminGetManagedIssuerResponse =
+  | CasStackOAuthIssuer
+  | CasAdminErrorResponse;
+
+export interface CasAdminPatchManagedIssuerRequest {
+  readonly path: CasAdminStackPath;
+  readonly headers: CasAdminMutationPreconditions;
+  readonly body: { readonly enabled: boolean };
+}
+
+export type CasAdminPatchManagedIssuerResponse =
+  | CasStackOAuthIssuer
+  | CasAdminErrorResponse;
+
+export interface CasManagedCapability {
+  readonly accessToken: string;
+  readonly tokenType: "Bearer";
+  readonly expiresIn: number;
+  readonly expiresAt: number;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly tenantId: string;
+  readonly permissions: readonly string[];
+}
+
+export interface CasAdminMintManagedCapabilityRequest {
+  readonly path: CasAdminStackPath;
+}
+
+export type CasAdminMintManagedCapabilityResponse =
+  | CasManagedCapability
+  | CasAdminErrorResponse;
+
 export interface CasAdminInspectOAuthIssuerRequest {
   readonly path: CasAdminStackPath;
   readonly body: {

@@ -12,6 +12,10 @@ import type {
   CasAdminErrorResponse,
   CasAdminGetOAuthIssuerRequest,
   CasAdminGetOAuthIssuerResponse,
+  CasAdminGetManagedIssuerRequest,
+  CasAdminGetManagedIssuerResponse,
+  CasAdminMintManagedCapabilityRequest,
+  CasAdminMintManagedCapabilityResponse,
   CasAdminInspectOAuthIssuerRequest,
   CasAdminInspectOAuthIssuerResponse,
   CasAdminGetStackRequest,
@@ -25,6 +29,8 @@ import type {
   CasAdminMeResponse,
   CasAdminPatchStackRequest,
   CasAdminPatchStackResponse,
+  CasAdminPatchManagedIssuerRequest,
+  CasAdminPatchManagedIssuerResponse,
   CasOperatorIdentityKey,
 } from "@unicas/admin-protocol";
 import type { ControlAuditAction } from "./control-audit.js";
@@ -88,6 +94,19 @@ export interface ControlPlaneOperations {
     ctx: ControlPlaneCallContext,
     request: CasAdminGetOAuthIssuerRequest,
   ): Promise<CasAdminGetOAuthIssuerResponse>;
+  getManagedOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminGetManagedIssuerRequest,
+  ): Promise<CasAdminGetManagedIssuerResponse>;
+  patchManagedOAuthIssuer(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminPatchManagedIssuerRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminPatchManagedIssuerResponse>;
+  mintManagedCapability(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminMintManagedCapabilityRequest,
+  ): Promise<CasAdminMintManagedCapabilityResponse>;
   inspectOAuthIssuer(
     ctx: ControlPlaneCallContext,
     request: CasAdminInspectOAuthIssuerRequest,

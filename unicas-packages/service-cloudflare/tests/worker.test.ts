@@ -97,11 +97,14 @@ describe("service-cloudflare public routing", () => {
   });
 
   test("publishes RFC 9728 metadata only for stacks with an active OAuth issuer", async () => {
-    const first = vi.fn(async () => ({ issuer: "https://gateway.example/oauth" }));
+    const all = vi.fn(async () => ({ results: [
+      { issuer: "https://gateway.example/oauth", priority: 0 },
+      { issuer: "https://cas.example/managed-issuers/cas_stack_a", priority: 1 },
+    ] }));
     const metadataEnv = {
       ...env,
       CAS_CONTROL_DB: {
-        prepare: vi.fn(() => ({ bind: vi.fn(() => ({ first })) })),
+        prepare: vi.fn(() => ({ bind: vi.fn(() => ({ all })) })),
       },
     } as unknown as Env;
     const response = await worker.fetch(new Request(
@@ -110,13 +113,16 @@ describe("service-cloudflare public routing", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       resource: "https://cas.example/stacks/cas_stack_a",
-      authorization_servers: ["https://gateway.example/oauth"],
+      authorization_servers: [
+        "https://gateway.example/oauth",
+        "https://cas.example/managed-issuers/cas_stack_a",
+      ],
       scopes_supported: ["cas:read", "cas:write", "cas:manage"],
     });
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
     expect(handlers.migrateControl).toHaveBeenCalledTimes(1);
 
-    first.mockResolvedValueOnce(null as never);
+    all.mockResolvedValueOnce({ results: [] });
     const missing = await worker.fetch(new Request(
       "https://cas.example/.well-known/oauth-protected-resource/stacks/cas_stack_missing",
     ), metadataEnv, ctx);

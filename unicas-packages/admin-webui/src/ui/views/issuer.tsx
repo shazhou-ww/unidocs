@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Search, ShieldCheck } from "lucide-react";
+import { Power, Search, ShieldCheck } from "lucide-react";
 import type {
   CasOAuthIssuerInspection,
   CasStackOAuthIssuer,
@@ -16,22 +16,28 @@ import { formatErrorSafe } from "./view-helpers.js";
  */
 export function IssuerView({ stackId }: { stackId: string }) {
   const [oauthIssuer, setOAuthIssuer] = useState<CasStackOAuthIssuer | null>(null);
+  const [managedIssuer, setManagedIssuer] = useState<CasStackOAuthIssuer | null>(null);
   const [inspection, setInspection] = useState<CasOAuthIssuerInspection | null>(null);
   const [oauthIssuerUrl, setOAuthIssuerUrl] = useState("");
   const [activationProof, setActivationProof] = useState("");
   const [inspecting, setInspecting] = useState(false);
   const [activating, setActivating] = useState(false);
+  const [togglingManaged, setTogglingManaged] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const oauthResult = await api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer`)
-        .catch((caught) => {
-          if (caught instanceof ApiError && caught.status === 404) return null;
-          throw caught;
-        });
+      const [oauthResult, managedResult] = await Promise.all([
+        api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer`)
+          .catch((caught) => {
+            if (caught instanceof ApiError && caught.status === 404) return null;
+            throw caught;
+          }),
+        api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/managed-issuer`),
+      ]);
       setOAuthIssuer(oauthResult);
+      setManagedIssuer(managedResult);
       if (oauthResult) {
         setOAuthIssuerUrl(oauthResult.issuer);
       }
@@ -54,7 +60,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
         body: JSON.stringify({ issuer: oauthIssuerUrl.trim() }),
       });
       setInspection(result);
-      setOAuthIssuer({ ...result, status: "pending", verifiedAt: null, lastRefreshAt: Date.now(), lastRefreshError: null });
+      setOAuthIssuer({ ...result, mode: "external", status: "pending", verifiedAt: null, lastRefreshAt: Date.now(), lastRefreshError: null });
     } catch (caught) {
       setError(formatErrorSafe(caught));
     } finally {
@@ -82,20 +88,56 @@ export function IssuerView({ stackId }: { stackId: string }) {
     }
   }
 
+  async function toggleManagedIssuer() {
+    if (!managedIssuer) return;
+    setTogglingManaged(true);
+    setError(null);
+    try {
+      const enabled = managedIssuer.status !== "active";
+      setManagedIssuer(await api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/managed-issuer`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...ifMatch(managedIssuer.revision) },
+        body: JSON.stringify({ enabled }),
+      }));
+    } catch (caught) {
+      setError(formatErrorSafe(caught));
+    } finally {
+      setTogglingManaged(false);
+    }
+  }
+
   const configured = oauthIssuer !== null;
+  const canInspect = oauthIssuer === null || oauthIssuer.status !== "active";
 
   return (
-    <Card title="OAuth authorization server">
-      {error ? <ErrorState message={error} /> : null}
+    <>
+      <Card title="Managed issuer">
+        {error ? <ErrorState message={error} /> : null}
+        {managedIssuer ? (
+          <>
+            <p className="hint">
+              Status: <strong>{managedIssuer.status}</strong> · Revision {managedIssuer.revision}
+              <br />Issuer: <code>{managedIssuer.issuer}</code>
+            </p>
+            <div className="field-row">
+              <label htmlFor="managed-issuer-url">Managed issuer URL</label>
+              <input id="managed-issuer-url" value={managedIssuer.issuer} readOnly />
+            </div>
+            <Button icon={<Power size={15} />} variant="primary" onClick={() => void toggleManagedIssuer()} disabled={togglingManaged}>
+              {togglingManaged ? "Updating…" : managedIssuer.status === "active" ? "Disable managed issuer" : "Enable managed issuer"}
+            </Button>
+          </>
+        ) : null}
+      </Card>
+      <Card title="Custom OAuth authorization server">
       <p className="hint">
         Connect a standards-based authorization server through RFC 8414 or OpenID discovery.
         UniCAS validates its metadata and JWKS, then requires a signed control challenge before
-        activation. Verifiers refresh signing keys from the discovered JWKS URI after the authority
-        cache TTL — no manual key upload.
+        activation. When active, this issuer is listed before the managed issuer and is the CLI login default.
       </p>
       {configured ? (
         <p className="hint">
-          Status: <strong>{oauthIssuer!.status}</strong> · Metadata: {oauthIssuer!.metadataType} · Revision {oauthIssuer!.revision}
+          Mode: <strong>{oauthIssuer!.mode}</strong> · Status: <strong>{oauthIssuer!.status}</strong> · Metadata: {oauthIssuer!.metadataType} · Revision {oauthIssuer!.revision}
           <br />Issuer: {oauthIssuer!.issuer}
           <br />JWKS: <a href={oauthIssuer!.jwksUri} target="_blank" rel="noreferrer">{oauthIssuer!.jwksUri}</a>
           <br />Resource audience: {oauthIssuer!.audience} · Maximum capability lifetime: {oauthIssuer!.capabilityMaxLifetimeSeconds}s
@@ -103,9 +145,9 @@ export function IssuerView({ stackId }: { stackId: string }) {
       ) : null}
       <div className="field-row">
         <label htmlFor="oauth-issuer-url">Issuer</label>
-        <input id="oauth-issuer-url" value={oauthIssuerUrl} placeholder="https://authorization.example" disabled={oauthIssuer?.status === "active"} onChange={(event) => setOAuthIssuerUrl(event.target.value)} />
+        <input id="oauth-issuer-url" value={oauthIssuerUrl} placeholder="https://authorization.example" disabled={!canInspect} onChange={(event) => setOAuthIssuerUrl(event.target.value)} />
       </div>
-      <Button icon={<Search size={15} />} variant="primary" onClick={() => void inspectOAuthIssuer()} disabled={inspecting || oauthIssuer?.status === "active" || oauthIssuerUrl.trim().length === 0}>
+      <Button icon={<Search size={15} />} variant="primary" onClick={() => void inspectOAuthIssuer()} disabled={inspecting || !canInspect || oauthIssuerUrl.trim().length === 0}>
         {inspecting ? "Inspecting…" : oauthIssuer?.status === "active" ? "Issuer active" : "Inspect issuer"}
       </Button>
       {inspection ? (
@@ -124,6 +166,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
           </Button>
         </div>
       ) : null}
-    </Card>
+      </Card>
+    </>
   );
 }

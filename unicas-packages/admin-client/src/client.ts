@@ -35,6 +35,7 @@ import type {
   CasStackId,
   CasStackMember,
   CasStackOAuthIssuer,
+  CasManagedCapability,
 } from "@unicas/admin-protocol";
 import { AdminClientError } from "./errors.js";
 import type {
@@ -72,6 +73,13 @@ export interface AdminClient {
     headers?: CasAdminCreateHeaders,
   ): Promise<{ readonly invitation: CasMemberInvitation; readonly acceptUrl: string }>;
   getOAuthIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackOAuthIssuer>>;
+  getManagedOAuthIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackOAuthIssuer>>;
+  patchManagedOAuthIssuer(
+    path: { readonly stackId: CasStackId },
+    body: { readonly enabled: boolean },
+    ifMatch: string,
+  ): Promise<AdminClientRead<CasStackOAuthIssuer>>;
+  mintManagedCapability(path: { readonly stackId: CasStackId }): Promise<CasManagedCapability>;
   inspectOAuthIssuer(
     path: { readonly stackId: CasStackId },
     body: {
@@ -247,6 +255,34 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
         "getOAuthIssuer",
       );
       return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async getManagedOAuthIssuer(path) {
+      const response = await requireOk(
+        await request(casAdminRoutes.managedIssuer(path)),
+        "getManagedOAuthIssuer",
+      );
+      return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async patchManagedOAuthIssuer(path, body, ifMatch) {
+      const response = await requireOk(
+        await request(casAdminRoutes.managedIssuer(path), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...ifMatchHeader(ifMatch) },
+          body: JSON.stringify(body),
+        }),
+        "patchManagedOAuthIssuer",
+      );
+      return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async mintManagedCapability(path) {
+      const response = await requireOk(
+        await request(casAdminRoutes.managedCapability(path), { method: "POST" }),
+        "mintManagedCapability",
+      );
+      return response.json();
     },
 
     async inspectOAuthIssuer(path, body) {

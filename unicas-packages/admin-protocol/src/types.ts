@@ -58,6 +58,7 @@ export interface CasMemberInvitation {
 }
 
 export type CasOAuthIssuerMetadataType = "oauth" | "oidc";
+export type CasOAuthIssuerMode = "managed" | "external";
 
 export type CasOAuthIssuerStatus =
   | "pending"
@@ -69,6 +70,7 @@ export type CasOAuthIssuerStatus =
 /** Discovered Stack OAuth authorization-server binding. */
 export interface CasStackOAuthIssuer {
   readonly stackId: CasStackId;
+  readonly mode: CasOAuthIssuerMode;
   readonly issuer: string;
   readonly audience: string;
   readonly metadataUrl: string;

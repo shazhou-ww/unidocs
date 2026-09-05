@@ -36,6 +36,10 @@ beforeEach(() => {
     if (pathname === "/admin/stacks/cas_one") return json(CURRENT_STACK);
     if (pathname === "/admin/stacks") return json({ items: [CURRENT_STACK, OTHER_STACK] });
     if (pathname.endsWith("/members")) return json({ items: [] });
+    if (pathname.endsWith("/managed-issuer")) return json({
+      stackId: "cas_one", mode: "managed", issuer: "https://cas.example/managed-issuers/cas_one",
+      status: "active", revision: 1,
+    });
     if (pathname.endsWith("/oauth-issuer")) return json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404);
     if (pathname.endsWith("/ref-domains")) return json({ domains: [] });
     if (pathname.endsWith("/audit-events")) return json({ items: [], nextCursor: null });
@@ -53,7 +57,8 @@ describe("StackView", () => {
     const switcher = screen.getByRole("combobox", { name: "Stack" });
     expect(switcher).toHaveValue("cas_one");
     expect(screen.getByRole("tablist")).toHaveAttribute("aria-orientation", "vertical");
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
+    expect(screen.getByRole("tab", { name: "Playground" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Change Log" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Ref domains" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "My Stacks" })).not.toBeInTheDocument();
@@ -73,6 +78,7 @@ describe("StackView", () => {
 
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Stack identity" })).toBeInTheDocument());
     const guides = [
+      ["Playground", "Tenant API playground"],
       ["Members", "Stack administrators"],
       ["Change Log", "Change Log"],
     ] as const;
@@ -84,7 +90,8 @@ describe("StackView", () => {
     }
 
     await user.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(screen.getByRole("heading", { name: "OAuth authorization server" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Managed issuer" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Custom OAuth authorization server" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Usage" })).toBeInTheDocument();
   });
 

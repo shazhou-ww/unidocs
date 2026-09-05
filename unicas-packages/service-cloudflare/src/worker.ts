@@ -30,6 +30,7 @@ import { migrateControlSchema } from "./control-schema.js";
 import { createControlPlaneOperations } from "./control-operations.js";
 import { ControlSessionStore } from "./control-sessions.js";
 import { CloudflareOAuthDiscoveryPort } from "./oauth-discovery.js";
+import { CloudflareManagedIssuer } from "./managed-issuer.js";
 import {
   RootRefDomainDurableObject,
   type RootRefDomainDoEnv,
@@ -49,6 +50,8 @@ export interface TenantEnv extends TenantCasDoEnv, RootRefDomainDoEnv {
 export type Env = TenantEnv & AdminBffEnv & McpEnv & {
   CAS_PUBLIC_ORIGIN?: string;
   CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS?: string;
+  MANAGED_ISSUER_PRIVATE_KEY_PKCS8?: string;
+  MANAGED_ISSUER_KEY_ID?: string;
 };
 
 const TENANT_STRIPPED_HEADERS = [
@@ -101,6 +104,12 @@ export default {
       if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
       await ensureControlSchema(env);
       return stackProtectedResourceMetadata(env, protectedResourceStackId);
+    }
+    const managedIssuerRoute = matchManagedIssuerPath(pathname);
+    if (managedIssuerRoute) {
+      if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET" } });
+      await ensureControlSchema(env);
+      return managedIssuerDocument(env, managedIssuerRoute);
     }
 
     const timing = new ServerTiming();
@@ -177,10 +186,16 @@ function matchStackProtectedResourcePath(pathname: string): string | null {
 }
 
 async function stackProtectedResourceMetadata(env: Env, stackId: string): Promise<Response> {
-  const issuer = await env.CAS_CONTROL_DB.prepare(
-    "SELECT issuer FROM cas_stack_oauth_issuers WHERE stack_id = ? AND status = 'active'",
-  ).bind(stackId).first<{ issuer: string }>();
-  if (!issuer) return Response.json({ error: "OAUTH_ISSUER_NOT_ACTIVE" }, { status: 404 });
+  const result = await env.CAS_CONTROL_DB.prepare(
+    `SELECT issuer, 0 AS priority FROM cas_stack_oauth_issuers
+     WHERE stack_id = ? AND status = 'active' AND mode = 'external'
+     UNION ALL
+     SELECT issuer, 1 AS priority FROM cas_stack_managed_issuers
+     WHERE stack_id = ? AND status = 'active'
+     ORDER BY priority`,
+  ).bind(stackId, stackId).all<{ issuer: string; priority: number }>();
+  const issuers = (result.results ?? []).map((row) => row.issuer);
+  if (issuers.length === 0) return Response.json({ error: "OAUTH_ISSUER_NOT_ACTIVE" }, { status: 404 });
   const configuredOrigin = env.CAS_PUBLIC_ORIGIN ?? env.PUBLIC_ORIGIN;
   if (!configuredOrigin) {
     return Response.json({ error: "PUBLIC_ORIGIN_NOT_CONFIGURED" }, { status: 503 });
@@ -193,9 +208,49 @@ async function stackProtectedResourceMetadata(env: Env, stackId: string): Promis
   }
   return Response.json({
     resource: `${origin}/stacks/${encodeURIComponent(stackId)}`,
-    authorization_servers: [issuer.issuer],
+    authorization_servers: issuers,
     scopes_supported: ["cas:read", "cas:write", "cas:manage"],
   }, {
+    headers: {
+      "Cache-Control": "public, max-age=60",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
+type ManagedIssuerDocumentRoute = {
+  readonly stackId: string;
+  readonly document: "metadata" | "jwks";
+};
+
+function matchManagedIssuerPath(pathname: string): ManagedIssuerDocumentRoute | null {
+  const match = /^\/managed-issuers\/([^/]+)\/(\.well-known\/oauth-authorization-server|jwks\.json)$/.exec(pathname);
+  if (!match) return null;
+  try {
+    const stackId = decodeURIComponent(match[1]!);
+    if (!stackId) return null;
+    return {
+      stackId,
+      document: match[2] === "jwks.json" ? "jwks" : "metadata",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function managedIssuerDocument(env: Env, route: ManagedIssuerDocumentRoute): Promise<Response> {
+  const authority = managedIssuerFor(env);
+  if (!authority) return Response.json({ error: "MANAGED_ISSUER_NOT_CONFIGURED" }, { status: 503 });
+  const binding = await env.CAS_CONTROL_DB.prepare(
+    "SELECT issuer FROM cas_stack_managed_issuers WHERE stack_id = ? AND status = 'active'",
+  ).bind(route.stackId).first<{ issuer: string }>();
+  if (!binding || binding.issuer !== authority.issuer(route.stackId)) {
+    return Response.json({ error: "MANAGED_ISSUER_NOT_ACTIVE" }, { status: 404 });
+  }
+  const body = route.document === "jwks"
+    ? await authority.jwks()
+    : await authority.metadata(route.stackId);
+  return Response.json(body, {
     headers: {
       "Cache-Control": "public, max-age=60",
       "Access-Control-Allow-Origin": "*",
@@ -207,6 +262,7 @@ const verifiers = new WeakMap<object, StackCapabilityVerifier>();
 const controlSchemaInitializations = new WeakMap<object, Promise<void>>();
 const tenantSchemaInitializations = new WeakMap<object, Promise<void>>();
 const adminHandlers = new WeakMap<object, Promise<(request: Request) => Promise<Response>>>();
+const managedIssuers = new WeakMap<object, CloudflareManagedIssuer>();
 
 function ensureTenantSchema(env: Pick<Env, "CAS_DB">): Promise<void> {
   const key = env.CAS_DB as object;
@@ -257,10 +313,29 @@ function controlPlaneFor(env: Env, now?: () => number): ControlPlaneOperations {
   return createControlPlaneOperations(env.CAS_CONTROL_DB, {
     now,
     oauthResourcePublicOrigin: env.CAS_PUBLIC_ORIGIN ?? env.PUBLIC_ORIGIN,
+    managedOAuthIssuer: managedIssuerFor(env, now),
     oauthDiscovery: allowedOrigins.length === 0
       ? undefined
       : new CloudflareOAuthDiscoveryPort({ allowedOrigins }),
   });
+}
+
+function managedIssuerFor(env: Env, now?: () => number): CloudflareManagedIssuer | undefined {
+  if (!env.MANAGED_ISSUER_PRIVATE_KEY_PKCS8 || !env.MANAGED_ISSUER_KEY_ID) return undefined;
+  const key = env as object;
+  let issuer = managedIssuers.get(key);
+  if (!issuer) {
+    const publicOrigin = env.CAS_PUBLIC_ORIGIN ?? env.PUBLIC_ORIGIN;
+    if (!publicOrigin) return undefined;
+    issuer = new CloudflareManagedIssuer({
+      publicOrigin,
+      privateKeyPkcs8: env.MANAGED_ISSUER_PRIVATE_KEY_PKCS8,
+      keyId: env.MANAGED_ISSUER_KEY_ID,
+      now,
+    });
+    managedIssuers.set(key, issuer);
+  }
+  return issuer;
 }
 
 function parseOriginAllowlist(value: string | undefined): readonly string[] {

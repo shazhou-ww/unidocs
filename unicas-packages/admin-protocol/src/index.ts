@@ -3,6 +3,7 @@ export type {
   CasHash,
   CasMemberInvitation,
   CasMemberInvitationStatus,
+  CasOAuthIssuerMode,
   CasOAuthIssuerInspection,
   CasOAuthIssuerInspectionKey,
   CasOperatorIdentity,
@@ -69,6 +70,10 @@ export type {
   CasAdminEndpointContracts,
   CasAdminGetOAuthIssuerRequest,
   CasAdminGetOAuthIssuerResponse,
+  CasAdminGetManagedIssuerRequest,
+  CasAdminGetManagedIssuerResponse,
+  CasAdminMintManagedCapabilityRequest,
+  CasAdminMintManagedCapabilityResponse,
   CasAdminInspectOAuthIssuerRequest,
   CasAdminInspectOAuthIssuerResponse,
   CasAdminGetStackRequest,
@@ -88,8 +93,11 @@ export type {
   CasAdminMeResponse,
   CasAdminPatchStackRequest,
   CasAdminPatchStackResponse,
+  CasAdminPatchManagedIssuerRequest,
+  CasAdminPatchManagedIssuerResponse,
   CasAdminRootDomainPath,
   CasAdminStackPath,
+  CasManagedCapability,
 } from "./http.js";
 
 export { casAdminRoutes, matchCasAdminRoute } from "./routes.js";

@@ -23,6 +23,8 @@ import type {
   ControlMemberInvitationRecord,
   ControlPatchStackCommitResult,
   ControlPatchStackPlan,
+  ControlPatchManagedIssuerCommitResult,
+  ControlPatchManagedIssuerPlan,
   ControlPlaneAdminRepository,
   ControlStackRecord,
   DiscoveredOAuthJwk,
@@ -151,6 +153,26 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
       this.#db.prepare("INSERT INTO cas_stack_members (stack_id, identity_issuer, subject, joined_at) VALUES (?, ?, ?, ?)")
         .bind(plan.membership.stackId, plan.membership.identityIssuer, plan.membership.subject, plan.membership.joinedAt),
     ];
+    if (plan.managedIssuer) {
+      const issuer = plan.managedIssuer;
+      statements.push(this.#db.prepare(
+        "INSERT INTO cas_stack_managed_issuers (stack_id, issuer, audience, metadata_url, authorization_endpoint, token_endpoint, jwks_uri, scopes_supported, code_challenge_methods_supported, status, verified_at, jwks_digest, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+      ).bind(
+        issuer.stackId,
+        issuer.issuer,
+        issuer.audience,
+        issuer.metadataUrl,
+        issuer.authorizationEndpoint,
+        issuer.tokenEndpoint,
+        issuer.jwksUri,
+        JSON.stringify(issuer.scopesSupported),
+        JSON.stringify(issuer.codeChallengeMethodsSupported),
+        issuer.verifiedAt,
+        issuer.jwksDigest,
+        issuer.capabilityMaxLifetimeSeconds,
+        issuer.revision,
+      ));
+    }
     if (plan.idempotency) statements.push(this.#idempotencyStatement(plan.idempotency));
     try {
       await this.#db.batch(statements);
@@ -294,11 +316,60 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
   async getOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null> {
     const row = await this.#db
       .prepare(
-        "SELECT stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, last_refresh_at, last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision FROM cas_stack_oauth_issuers WHERE stack_id = ?",
+        "SELECT stack_id, 'external' AS mode, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, last_refresh_at, last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision FROM cas_stack_oauth_issuers WHERE stack_id = ? AND mode = 'external'",
       )
       .bind(stackId)
       .first<OAuthIssuerRow>();
     return row ? toOAuthIssuer(row) : null;
+  }
+
+  async getManagedOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null> {
+    const row = await this.#db.prepare(
+      "SELECT stack_id, 'managed' AS mode, issuer, audience, metadata_url, 'oauth' AS metadata_type, authorization_endpoint, token_endpoint, jwks_uri, NULL AS registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, verified_at AS last_refresh_at, NULL AS last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision FROM cas_stack_managed_issuers WHERE stack_id = ?",
+    ).bind(stackId).first<OAuthIssuerRow>();
+    return row ? toOAuthIssuer(row) : null;
+  }
+
+  async commitPatchManagedOAuthIssuer(
+    plan: ControlPatchManagedIssuerPlan,
+  ): Promise<ControlPatchManagedIssuerCommitResult> {
+    if (plan.issuer) {
+      const issuer = plan.issuer;
+      try {
+        await this.#db.batch([
+          this.#db.prepare(
+            "INSERT INTO cas_stack_managed_issuers (stack_id, issuer, audience, metadata_url, authorization_endpoint, token_endpoint, jwks_uri, scopes_supported, code_challenge_methods_supported, status, verified_at, jwks_digest, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+          ).bind(
+            issuer.stackId, issuer.issuer, issuer.audience, issuer.metadataUrl,
+            issuer.authorizationEndpoint, issuer.tokenEndpoint, issuer.jwksUri,
+            JSON.stringify(issuer.scopesSupported), JSON.stringify(issuer.codeChallengeMethodsSupported),
+            issuer.verifiedAt, issuer.jwksDigest, issuer.capabilityMaxLifetimeSeconds, issuer.revision,
+          ),
+          ...this.#mutationStatements(plan.audit),
+        ]);
+        return { kind: "created" };
+      } catch (error) {
+        if (!isUniqueViolation(error, "cas_stack_managed_issuers")) throw error;
+        return await this.getManagedOAuthIssuer(plan.stackId)
+          ? { kind: "revision-mismatch" }
+          : { kind: "not-found" };
+      }
+    }
+    const update = this.#db.prepare(
+      "UPDATE cas_stack_managed_issuers SET status = ?, revision = ? WHERE stack_id = ? AND revision = ?",
+    ).bind(plan.enabled ? "active" : "disabled", plan.nextRevision, plan.stackId, plan.expectedRevision);
+    const requireUpdated = this.#db.prepare(
+      "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('invalid', '$') END AS updated",
+    );
+    try {
+      await this.#db.batch([update, requireUpdated, ...this.#mutationStatements(plan.audit)]);
+      return { kind: "updated" };
+    } catch (error) {
+      if (!isJsonFailure(error)) throw error;
+      return await this.getManagedOAuthIssuer(plan.stackId)
+        ? { kind: "revision-mismatch" }
+        : { kind: "not-found" };
+    }
   }
 
   async hasOAuthIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
@@ -316,7 +387,7 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
     const inspection = plan.inspection;
     const issuerStatement = issuer.revision === 1
       ? this.#db.prepare(
-        "INSERT INTO cas_stack_oauth_issuers (stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, last_refresh_at, last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, ?, ?, 1)",
+        "INSERT INTO cas_stack_oauth_issuers (stack_id, mode, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint, jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported, status, verified_at, last_refresh_at, last_refresh_error, jwks_digest, capability_max_lifetime_seconds, revision) VALUES (?, 'external', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, ?, ?, 1)",
       ).bind(
         issuer.stackId,
         issuer.issuer,
@@ -334,7 +405,7 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
         issuer.capabilityMaxLifetimeSeconds,
       )
       : this.#db.prepare(
-        "UPDATE cas_stack_oauth_issuers SET issuer = ?, audience = ?, metadata_url = ?, metadata_type = ?, authorization_endpoint = ?, token_endpoint = ?, jwks_uri = ?, registration_endpoint = ?, scopes_supported = ?, code_challenge_methods_supported = ?, status = 'pending', verified_at = NULL, last_refresh_at = ?, last_refresh_error = NULL, jwks_digest = ?, capability_max_lifetime_seconds = ?, revision = revision + 1 WHERE stack_id = ? AND revision = ? AND status != 'active'",
+        "UPDATE cas_stack_oauth_issuers SET mode = 'external', issuer = ?, audience = ?, metadata_url = ?, metadata_type = ?, authorization_endpoint = ?, token_endpoint = ?, jwks_uri = ?, registration_endpoint = ?, scopes_supported = ?, code_challenge_methods_supported = ?, status = 'pending', verified_at = NULL, last_refresh_at = ?, last_refresh_error = NULL, jwks_digest = ?, capability_max_lifetime_seconds = ?, revision = revision + 1 WHERE stack_id = ? AND revision = ? AND status != 'active'",
       ).bind(
         issuer.issuer,
         issuer.audience,
@@ -428,7 +499,7 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
     plan: ControlActivateOAuthIssuerPlan,
   ): Promise<ControlActivateOAuthIssuerCommitResult> {
     const activateIssuer = this.#db.prepare(
-      "UPDATE cas_stack_oauth_issuers SET status = 'active', verified_at = ?, revision = revision + 1 WHERE stack_id = ? AND revision = ? AND status = 'pending'",
+      "UPDATE cas_stack_oauth_issuers SET status = 'active', verified_at = ?, revision = revision + 1 WHERE stack_id = ? AND revision = ? AND status = 'pending' AND mode = 'external'",
     ).bind(plan.activatedAt, plan.stackId, plan.expectedIssuerRevision);
     const requireIssuer = this.#db.prepare(
       "SELECT CASE WHEN changes() = 1 THEN 1 ELSE json_extract('invalid', '$') END AS updated",
@@ -567,6 +638,7 @@ interface IdempotencyRow {
 
 interface OAuthIssuerRow {
   readonly stack_id: string;
+  readonly mode: string;
   readonly issuer: string;
   readonly audience: string;
   readonly metadata_url: string;
@@ -665,6 +737,7 @@ function toStack(row: StackRow): ControlStackRecord {
 function toOAuthIssuer(row: OAuthIssuerRow): ControlOAuthIssuerRecord {
   return {
     stackId: row.stack_id,
+    mode: row.mode === "managed" ? "managed" : "external",
     issuer: row.issuer,
     audience: row.audience,
     metadataUrl: row.metadata_url,

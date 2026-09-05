@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -7,6 +7,7 @@ import {
   IssuerView,
   ControlAuditView,
   UsageView,
+  PlaygroundView,
 } from "../src/ui/index.js";
 
 function json(body: unknown, status = 200): Response {
@@ -17,6 +18,84 @@ function json(body: unknown, status = 200): Response {
 }
 
 const STACK = "cas_stack_a";
+
+function managedIssuer() {
+  return {
+    stackId: STACK,
+    mode: "managed",
+    issuer: `https://cas.example/managed-issuers/${STACK}`,
+    audience: `https://cas.example/stacks/${STACK}`,
+    metadataUrl: "https://cas.example/metadata",
+    metadataType: "oauth",
+    authorizationEndpoint: "https://cas.example/authorize",
+    tokenEndpoint: "https://cas.example/token",
+    jwksUri: "https://cas.example/jwks",
+    registrationEndpoint: null,
+    scopesSupported: ["cas:manage"],
+    codeChallengeMethodsSupported: ["S256"],
+    status: "active",
+    verifiedAt: 1,
+    lastRefreshAt: 1,
+    lastRefreshError: null,
+    jwksDigest: "digest",
+    capabilityMaxLifetimeSeconds: 120,
+    revision: 1,
+  };
+}
+
+describe("PlaygroundView", () => {
+  test("mints a short-lived member capability and reads tenant usage", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({
+        stackId: STACK,
+        mode: "managed",
+        issuer: `https://cas.example/managed-issuers/${STACK}`,
+        audience: `https://cas.example/stacks/${STACK}`,
+        metadataUrl: "https://cas.example/metadata",
+        metadataType: "oauth",
+        authorizationEndpoint: "https://cas.example/authorize",
+        tokenEndpoint: "https://cas.example/token",
+        jwksUri: "https://cas.example/jwks",
+        registrationEndpoint: null,
+        scopesSupported: ["cas:manage"],
+        codeChallengeMethodsSupported: ["S256"],
+        status: "active",
+        verifiedAt: 1,
+        lastRefreshAt: 1,
+        lastRefreshError: null,
+        jwksDigest: "digest",
+        capabilityMaxLifetimeSeconds: 120,
+        revision: 1,
+      }))
+      .mockResolvedValueOnce(json({
+        accessToken: "tenant-token",
+        tokenType: "Bearer",
+        expiresIn: 120,
+        expiresAt: Date.now() + 120_000,
+        issuer: `https://cas.example/managed-issuers/${STACK}`,
+        audience: `https://cas.example/stacks/${STACK}`,
+        tenantId: "member_abc",
+        permissions: ["tenants:member_abc:cas:manage"],
+      }))
+      .mockResolvedValueOnce(json({ logicalBytes: 0, nodeCount: 0 }));
+    const user = userEvent.setup();
+    render(<PlaygroundView stackId={STACK} />);
+
+    await user.click(await screen.findByRole("button", { name: "Issue capability" }));
+    expect(await screen.findByDisplayValue("tenant-token")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Read tenant usage" }));
+    await waitFor(() => expect(screen.getByText(/"nodeCount": 0/)).toBeInTheDocument());
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2,
+      `/admin/stacks/${STACK}/managed-capabilities`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(3,
+      `https://cas.example/stacks/${STACK}/tenants/member_abc/cas/usage`,
+      { headers: { Authorization: "Bearer tenant-token" } },
+    );
+  });
+});
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -72,10 +151,13 @@ describe("MembersView", () => {
 
 describe("IssuerView", () => {
   test("shows the connect form when no OAuth issuer is configured", async () => {
-    fetchMock.mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404));
+    fetchMock
+      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
+      .mockResolvedValueOnce(json(managedIssuer()));
     render(<IssuerView stackId={STACK} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Inspect issuer" })).toBeInTheDocument());
-    expect(screen.queryByText(/Status:/)).not.toBeInTheDocument();
+    const customCard = screen.getByRole("heading", { name: "Custom OAuth authorization server" }).closest(".card")!;
+    expect(within(customCard).queryByText(/Status:/)).not.toBeInTheDocument();
   });
 
   test("shows status for an active OAuth issuer", async () => {
@@ -98,9 +180,10 @@ describe("IssuerView", () => {
       jwksDigest: "digest",
       capabilityMaxLifetimeSeconds: 1800,
       revision: 2,
-    }));
+    })).mockResolvedValueOnce(json(managedIssuer()));
     render(<IssuerView stackId={STACK} />);
-    await waitFor(() => expect(screen.getByText(/Status:/)).toHaveTextContent("active"));
+    const customCard = screen.getByRole("heading", { name: "Custom OAuth authorization server" }).closest(".card")!;
+    await waitFor(() => expect(within(customCard).getByText(/Status:/)).toHaveTextContent("active"));
     expect(screen.getByRole("button", { name: "Issuer active" })).toBeDisabled();
     expect(screen.getByLabelText("Issuer")).toBeDisabled();
     expect(screen.getByRole("link", { name: "https://issuer.example/oauth/jwks" }))
@@ -110,6 +193,7 @@ describe("IssuerView", () => {
   test("inspects and activates a standards-based OAuth issuer", async () => {
     fetchMock
       .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
+      .mockResolvedValueOnce(json(managedIssuer()))
       .mockResolvedValueOnce(json({
         inspectionId: "oinsp_1", stackId: STACK, issuer: "https://auth.example", audience: `https://cas.example/stacks/${STACK}`,
         metadataUrl: "https://auth.example/.well-known/oauth-authorization-server", metadataType: "oauth",
@@ -139,7 +223,8 @@ describe("IssuerView", () => {
         jwksDigest: "j",
         capabilityMaxLifetimeSeconds: 1800,
         revision: 2,
-      }));
+      }))
+      .mockResolvedValueOnce(json(managedIssuer()));
     const user = userEvent.setup();
     render(<IssuerView stackId={STACK} />);
     await user.type(await screen.findByLabelText("Issuer", { selector: "#oauth-issuer-url" }), "https://auth.example");
@@ -147,7 +232,8 @@ describe("IssuerView", () => {
     await screen.findByText(/cas-oauth-issuer-inspection-v1/);
     await user.type(screen.getByLabelText("Activation proof (compact JWS)"), "proof");
     await user.click(screen.getByRole("button", { name: "Verify and activate" }));
-    await waitFor(() => expect(screen.getByText(/Status:/)).toHaveTextContent("active"));
+    const customCard = screen.getByRole("heading", { name: "Custom OAuth authorization server" }).closest(".card")!;
+    await waitFor(() => expect(within(customCard).getByText(/Status:/)).toHaveTextContent("active"));
     const inspectionCall = fetchMock.mock.calls.find((call) => String(call[0]).endsWith("/oauth-issuer/inspections"));
     expect(JSON.parse(inspectionCall![1]!.body as string)).toEqual({ issuer: "https://auth.example" });
     expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PUT" && String(call[0]).endsWith("/oauth-issuer"))).toBe(true);

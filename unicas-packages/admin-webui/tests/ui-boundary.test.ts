@@ -5,9 +5,9 @@ import { describe, expect, test } from "vitest";
 
 /**
  * Browser-boundary proof: `src/ui` is the only code delivered to the browser.
- * It must never reference Google secrets, session signing material, tenant
- * JWTs, storage bindings, or the control-plane/server modules — the BFF is
- * the only path browser code talks to.
+ * It must never reference Google secrets, session signing material, storage
+ * bindings, or control-plane/server modules. Only the explicit Playground
+ * view may hold a short-lived tenant capability, and it may not persist it.
  */
 
 const UI_DIR = join(dirname(fileURLToPath(import.meta.url)), "../src/ui");
@@ -34,15 +34,14 @@ const FORBIDDEN_TOKENS = [
   "DurableObject",
   "R2Bucket",
   "cloudflare-cas",
-  "Bearer",
-  "Authorization",
 ];
+const TENANT_CREDENTIAL_TOKENS = ["Bearer", "Authorization"];
 const FORBIDDEN_IMPORTS = [
   "../server/",
 ];
 
 describe("cas-admin-webui browser boundary", () => {
-  test("browser code never references secrets, storage bindings, or tenant credentials", () => {
+  test("browser code never references secrets or storage bindings", () => {
     const files = listFiles(UI_DIR);
     expect(files.length).toBeGreaterThan(5);
     for (const file of files) {
@@ -50,6 +49,19 @@ describe("cas-admin-webui browser boundary", () => {
       for (const token of FORBIDDEN_TOKENS) {
         expect(source, `${file} must not contain ${token}`).not.toContain(token);
       }
+      if (!file.endsWith("playground.tsx")) {
+        for (const token of TENANT_CREDENTIAL_TOKENS) {
+          expect(source, `${file} must not contain ${token}`).not.toContain(token);
+        }
+      }
+    }
+  });
+
+  test("the Playground credential exception remains memory-only", () => {
+    const source = readFileSync(join(UI_DIR, "views", "playground.tsx"), "utf8");
+    expect(source).toContain("Bearer");
+    for (const persistenceApi of ["localStorage", "sessionStorage", "indexedDB", "document.cookie"]) {
+      expect(source, `playground.tsx must not use ${persistenceApi}`).not.toContain(persistenceApi);
     }
   });
 

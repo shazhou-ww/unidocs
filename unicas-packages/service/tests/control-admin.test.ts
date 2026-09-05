@@ -21,9 +21,12 @@ import {
   type ControlInspectOAuthIssuerPlan,
   type ControlOAuthIssuerRecord,
   type ControlMembershipRecord,
+  type ManagedCapabilityIssuer,
   type ControlMemberInvitationRecord,
   type ControlPatchStackCommitResult,
   type ControlPatchStackPlan,
+  type ControlPatchManagedIssuerCommitResult,
+  type ControlPatchManagedIssuerPlan,
   type ControlPlaneAdminRepository,
   type ControlPlaneCallContext,
   type ControlStackRecord,
@@ -49,6 +52,7 @@ function fixture(options: {
   now?: () => number;
   oauthDiscovery?: OAuthDiscoveryPort;
   generateOAuthInspectionId?: () => string;
+  managedOAuthIssuer?: ManagedCapabilityIssuer;
 } = {}) {
   const repository = new MemoryControlAdminRepository();
   let stackSequence = 0;
@@ -72,6 +76,7 @@ function expectError(value: unknown, error: string): void {
 function oauthIssuerRecord(stackId: string): ControlOAuthIssuerRecord {
   return {
     stackId,
+    mode: "external",
     issuer: "https://issuer.example/oauth",
     audience: `https://cas.example/stacks/${stackId}`,
     metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
@@ -131,6 +136,57 @@ describe("ControlPlaneAdminService", () => {
       CasAdminErrorCodes.IDEMPOTENCY_CONFLICT,
     );
     expect(repository.stacks.size).toBe(1);
+  });
+
+  test("provisions managed issuer atomically and mints only for stack members", async () => {
+    const managedOAuthIssuer: ManagedCapabilityIssuer = {
+      provision: async (stackId, createdAt) => ({
+        ...oauthIssuerRecord(stackId),
+        mode: "managed",
+        issuer: `https://cas.example/managed-issuers/${stackId}`,
+        status: "active",
+        verifiedAt: createdAt,
+      }),
+      issue: async ({ issuer, identity }) => ({
+        accessToken: `token-for-${identity.subject}`,
+        tokenType: "Bearer",
+        expiresIn: 120,
+        expiresAt: 121_000,
+        issuer: issuer.issuer,
+        audience: issuer.audience,
+        tenantId: `member-${identity.subject}`,
+        permissions: [`tenants:member-${identity.subject}:cas:manage`],
+      }),
+    };
+    const { repository, service } = fixture({ managedOAuthIssuer });
+    const stack = await service.createStack(context(), { body: { displayName: "Managed" } });
+    if ("error" in stack) throw new Error(stack.error);
+    expect(repository.managedOAuthIssuers.get(stack.stackId)).toMatchObject({ mode: "managed", status: "active" });
+
+    repository.managedOAuthIssuers.delete(stack.stackId);
+    expect(await service.getManagedOAuthIssuer(context(), { path: { stackId: stack.stackId } }))
+      .toMatchObject({ mode: "managed", status: "disabled", revision: 0 });
+    expect(await service.patchManagedOAuthIssuer(
+      context(),
+      { path: { stackId: stack.stackId }, body: { enabled: true } },
+      { ifMatch: '"0"' },
+    )).toMatchObject({ status: "active", revision: 1 });
+
+    expect(await service.mintManagedCapability(context(), { path: { stackId: stack.stackId } }))
+      .toMatchObject({ accessToken: "token-for-alice", tenantId: "member-alice" });
+    expectError(
+      await service.mintManagedCapability(context(bob, "Bob"), { path: { stackId: stack.stackId } }),
+      CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED,
+    );
+
+    repository.managedOAuthIssuers.set(stack.stackId, {
+      ...repository.managedOAuthIssuers.get(stack.stackId)!,
+      status: "disabled",
+    });
+    expectError(
+      await service.mintManagedCapability(context(), { path: { stackId: stack.stackId } }),
+      CasAdminErrorCodes.INVALID_REQUEST,
+    );
   });
 
   test("paginates a stable membership-scoped snapshot and enforces list limits", async () => {
@@ -357,6 +413,48 @@ describe("ControlPlaneAdminService", () => {
     expect(repository.audits.at(-1)?.action).toBe("oauth_issuer.inspection.created");
   });
 
+  test("keeps managed issuer active while inspecting an external replacement", async () => {
+    const managedOAuthIssuer: ManagedCapabilityIssuer = {
+      provision: async (stackId, createdAt) => ({
+        ...oauthIssuerRecord(stackId),
+        mode: "managed",
+        issuer: `https://cas.example/managed-issuers/${stackId}`,
+        status: "active",
+        verifiedAt: createdAt,
+      }),
+      issue: async () => { throw new Error("not used"); },
+    };
+    const oauthDiscovery: OAuthDiscoveryPort = {
+      inspectIssuer: async ({ issuer }) => ({
+        metadata: {
+          issuer,
+          metadataUrl: `${issuer}/.well-known/oauth-authorization-server`,
+          metadataType: "oauth",
+          authorizationEndpoint: `${issuer}/authorize`,
+          tokenEndpoint: `${issuer}/token`,
+          jwksUri: `${issuer}/jwks`,
+          registrationEndpoint: null,
+          scopesSupported: ["cas:read"],
+          codeChallengeMethodsSupported: ["S256"],
+        },
+        metadataDigest: "a".repeat(64),
+        jwksDigest: "b".repeat(64),
+        keys: [{ kid: "key-1", algorithm: "ES256", publicJwk: { kty: "EC" } }],
+      }),
+    };
+    const { repository, service } = fixture({ managedOAuthIssuer, oauthDiscovery });
+    const stack = await service.createStack(context(), { body: { displayName: "Managed" } });
+    if ("error" in stack) throw new Error(stack.error);
+    const managed = repository.managedOAuthIssuers.get(stack.stackId);
+
+    const inspection = await service.inspectOAuthIssuer(context(), {
+      path: { stackId: stack.stackId },
+      body: { issuer: "https://external.example" },
+    });
+    expect(inspection).toMatchObject({ issuer: "https://external.example", revision: managed?.revision });
+    expect(repository.managedOAuthIssuers.get(stack.stackId)).toEqual(managed);
+  });
+
   test("pages control audit events with cursor and after binding", async () => {
     const { repository, service } = fixture({ listDefaultLimit: 2, listMaxLimit: 2 });
     const stack = await service.createStack(context(), { body: { displayName: "Audit" } });
@@ -406,6 +504,7 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
   readonly identities = new Map<string, ControlIdentityRecord>();
   readonly stacks = new Map<string, ControlStackRecord>();
   readonly oauthIssuers = new Map<string, ControlOAuthIssuerRecord>();
+  readonly managedOAuthIssuers = new Map<string, ControlOAuthIssuerRecord>();
   readonly inspections: ControlInspectOAuthIssuerPlan["inspection"][] = [];
   readonly memberships: ControlMembershipRecord[] = [];
   readonly idempotency = new Map<string, ControlIdempotencyRecord>();
@@ -463,6 +562,31 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
     return Promise.resolve(this.oauthIssuers.get(stackId) ?? null);
   }
 
+  getManagedOAuthIssuer(stackId: string): Promise<ControlOAuthIssuerRecord | null> {
+    return Promise.resolve(this.managedOAuthIssuers.get(stackId) ?? null);
+  }
+
+  commitPatchManagedOAuthIssuer(
+    plan: ControlPatchManagedIssuerPlan,
+  ): Promise<ControlPatchManagedIssuerCommitResult> {
+    const current = this.managedOAuthIssuers.get(plan.stackId);
+    if (plan.issuer) {
+      if (current) return Promise.resolve({ kind: "revision-mismatch" });
+      this.managedOAuthIssuers.set(plan.stackId, plan.issuer);
+      this.audits.push(plan.audit);
+      return Promise.resolve({ kind: "created" });
+    }
+    if (!current) return Promise.resolve({ kind: "not-found" });
+    if (current.revision !== plan.expectedRevision) return Promise.resolve({ kind: "revision-mismatch" });
+    this.managedOAuthIssuers.set(plan.stackId, {
+      ...current,
+      status: plan.enabled ? "active" : "disabled",
+      revision: plan.nextRevision,
+    });
+    this.audits.push(plan.audit);
+    return Promise.resolve({ kind: "updated" });
+  }
+
   hasOAuthIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
     return Promise.resolve([...this.oauthIssuers.values()]
       .some((record) => record.issuer === issuer && record.stackId !== stackId));
@@ -472,14 +596,15 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
     plan: ControlInspectOAuthIssuerPlan,
   ): Promise<ControlInspectOAuthIssuerCommitResult> {
     const existing = this.oauthIssuers.get(plan.issuer.stackId);
-    if (existing && existing.revision !== plan.issuer.revision - 1) {
+    const expectedRevision = plan.preserveActiveIssuer ? plan.issuer.revision : plan.issuer.revision - 1;
+    if (existing && existing.revision !== expectedRevision) {
       return Promise.resolve({ kind: "revision-mismatch" });
     }
     if ([...this.oauthIssuers.values()].some((record) =>
       record.issuer === plan.issuer.issuer && record.stackId !== plan.issuer.stackId)) {
       return Promise.resolve({ kind: "issuer-conflict" });
     }
-    this.oauthIssuers.set(plan.issuer.stackId, plan.issuer);
+    if (!plan.preserveActiveIssuer) this.oauthIssuers.set(plan.issuer.stackId, plan.issuer);
     this.inspections.push(plan.inspection);
     this.audits.push(plan.audit);
     this.snapshot += 1;
@@ -515,6 +640,7 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
     }
     this.stacks.set(plan.stack.stackId, plan.stack);
     this.memberships.push(plan.membership);
+    if (plan.managedIssuer) this.managedOAuthIssuers.set(plan.stack.stackId, plan.managedIssuer);
     this.audits.push(plan.audit);
     this.snapshot += 1;
     return Promise.resolve({ kind: "created" });
