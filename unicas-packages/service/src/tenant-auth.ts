@@ -1,10 +1,10 @@
 import {
-  createLocalJWKSet,
+  createRemoteJWKSet,
+  customFetch,
   decodeJwt,
   decodeProtectedHeader,
   jwtVerify,
 } from "jose";
-import type { JSONWebKeySet } from "jose";
 import {
   CapabilityAlgorithm,
   CapabilityAuthenticationError,
@@ -17,26 +17,26 @@ import {
   type CasRoute,
 } from "@unicas/tenant-protocol";
 
-export interface RegisteredStackKey {
-  readonly kid: string;
-  readonly algorithm: string;
-  readonly publicJwk: Record<string, unknown>;
-  readonly state: "active" | "retiring" | "revoked";
-}
-
 /** Cloud-neutral authority data required to verify a tenant capability. */
 export interface ResolvedStackAuthority {
   readonly stackId: string;
   readonly issuer: string;
   readonly audience: string;
+  readonly jwksUri: string;
   readonly capabilityMaxLifetimeSeconds: number;
-  readonly keys: readonly RegisteredStackKey[];
 }
 
 /** Read-only authority lookup port. Platform adapters own its persistence. */
 export interface StackAuthorityResolver {
   resolveIssuer(issuer: string): Promise<ResolvedStackAuthority | null>;
 }
+
+export type JwksFetcher = (url: string, options: {
+  readonly headers: Headers;
+  readonly method: "GET";
+  readonly redirect: "manual";
+  readonly signal: AbortSignal;
+}) => Promise<Response>;
 
 export interface StackAuthEvent {
   readonly kind: "authorized" | "rejected" | "registry_stale" | "fail_closed";
@@ -57,6 +57,7 @@ export interface StackVerifierOptions {
   readonly cacheTtlMs?: number;
   /** Hard bound after which a cached record is never used (revocation bound). */
   readonly hardStaleBoundMs?: number;
+  readonly jwksFetcher?: JwksFetcher;
   readonly now?: () => number;
   readonly onEvent?: (event: StackAuthEvent) => void;
 }
@@ -87,9 +88,11 @@ export class StackCapabilityVerifier {
   readonly #algorithms: string[];
   readonly #cacheTtlMs: number;
   readonly #hardStaleBoundMs: number;
+  readonly #jwksFetcher: JwksFetcher | undefined;
   readonly #now: () => number;
   readonly #onEvent: (event: StackAuthEvent) => void;
   readonly #authorityCache = new Map<string, CachedAuthority>();
+  readonly #remoteKeySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
   constructor(options: StackVerifierOptions) {
     this.#repository = options.repository;
@@ -99,6 +102,7 @@ export class StackCapabilityVerifier {
     if (this.#cacheTtlMs >= this.#hardStaleBoundMs) {
       throw new TypeError("cacheTtlMs must be below hardStaleBoundMs");
     }
+    this.#jwksFetcher = options.jwksFetcher;
     this.#now = options.now ?? (() => Date.now());
     this.#onEvent = options.onEvent ?? (() => undefined);
   }
@@ -170,7 +174,7 @@ export class StackCapabilityVerifier {
     if (!authority) {
       throw new CapabilityAuthenticationError("unknown_issuer", "CAS capability issuer is not registered");
     }
-    const keySet = createLocalJWKSet(stackJwks(authority));
+    const keySet = this.#remoteKeySet(authority.jwksUri);
     let payload: Omit<VerifiedPayload, "stackId" | "kid">;
     let lifetimeSeconds = 0;
     try {
@@ -214,6 +218,16 @@ export class StackCapabilityVerifier {
     return { ...payload, stackId: authority.stackId, kid, refDomain };
   }
 
+  #remoteKeySet(jwksUri: string): ReturnType<typeof createRemoteJWKSet> {
+    const cached = this.#remoteKeySets.get(jwksUri);
+    if (cached) return cached;
+    const keySet = createRemoteJWKSet(new URL(jwksUri), this.#jwksFetcher
+      ? { [customFetch]: this.#jwksFetcher }
+      : undefined);
+    this.#remoteKeySets.set(jwksUri, keySet);
+    return keySet;
+  }
+
   async #resolveAuthority(issuer: string): Promise<ResolvedStackAuthority | null> {
     const now = this.#now();
     const cached = this.#authorityCache.get(issuer);
@@ -224,6 +238,7 @@ export class StackCapabilityVerifier {
         try {
           const fresh = await this.#repository.resolveIssuer(issuer);
           if (fresh) {
+            this.#remoteKeySets.delete(cached.authority.jwksUri);
             this.#authorityCache.set(issuer, { authority: fresh, fetchedAt: now });
             return fresh;
           }
@@ -244,6 +259,7 @@ export class StackCapabilityVerifier {
       try {
         const fresh = await this.#repository.resolveIssuer(issuer);
         if (fresh) {
+          this.#remoteKeySets.delete(cached.authority.jwksUri);
           this.#authorityCache.set(issuer, { authority: fresh, fetchedAt: now });
           return fresh;
         }
@@ -308,19 +324,6 @@ interface VerifiedPayload {
 interface CachedAuthority {
   readonly authority: ResolvedStackAuthority;
   readonly fetchedAt: number;
-}
-
-function stackJwks(authority: ResolvedStackAuthority): JSONWebKeySet {
-  return {
-    keys: authority.keys
-      .filter((key) => key.state === "active" || key.state === "retiring")
-      .map((key) => ({
-        ...key.publicJwk,
-        kid: key.kid,
-        alg: key.algorithm,
-        use: "sig",
-      })),
-  };
 }
 
 function normalizePayload(payload: {

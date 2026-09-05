@@ -7,6 +7,7 @@ import {
   sha256Hex,
   type OAuthDiscoveryPort,
   type OAuthDiscoveryResult,
+  type JwksFetcher,
 } from "@unicas/service";
 
 const METADATA_MAX_BYTES = 128 * 1024;
@@ -31,6 +32,18 @@ export class CloudflareOAuthDiscoveryPort implements OAuthDiscoveryPort {
     this.#fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
+
+  readonly fetchJwks: JwksFetcher = async (url, options) => {
+    this.#assertAllowedUrl(url, "jwks_uri");
+    const response = await this.#fetcher(url, options);
+    this.#assertJsonResponse(response, "JWKS");
+    const text = await readBoundedText(response, JWKS_MAX_BYTES);
+    return new Response(text, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  };
 
   async inspectIssuer(input: { readonly issuer: string }): Promise<OAuthDiscoveryResult> {
     const issuer = canonicalizeOAuthIssuer(input.issuer);
@@ -87,14 +100,7 @@ export class CloudflareOAuthDiscoveryPort implements OAuthDiscoveryPort {
         redirect: "manual",
         signal: controller.signal,
       });
-      if (response.status >= 300 && response.status < 400) {
-        throw new TypeError("discovery redirects are not allowed");
-      }
-      if (!response.ok) throw new TypeError(`discovery endpoint returned HTTP ${response.status}`);
-      const contentType = response.headers.get("Content-Type");
-      if (contentType && !/(^|\s|;)application\/(?:[A-Za-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) {
-        throw new TypeError("discovery endpoint did not return JSON content");
-      }
+      this.#assertJsonResponse(response, "discovery endpoint");
       const text = await readBoundedText(response, maxBytes);
       try {
         return JSON.parse(text) as unknown;
@@ -103,6 +109,17 @@ export class CloudflareOAuthDiscoveryPort implements OAuthDiscoveryPort {
       }
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  #assertJsonResponse(response: Response, endpoint: string): void {
+    if (response.status >= 300 && response.status < 400) {
+      throw new TypeError(`${endpoint} redirects are not allowed`);
+    }
+    if (!response.ok) throw new TypeError(`${endpoint} returned HTTP ${response.status}`);
+    const contentType = response.headers.get("Content-Type");
+    if (contentType && !/(^|\s|;)application\/(?:[A-Za-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(contentType)) {
+      throw new TypeError(`${endpoint} did not return JSON content`);
     }
   }
 }

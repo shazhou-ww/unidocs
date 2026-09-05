@@ -34,8 +34,6 @@ const idempotencyKey = z.string().min(1).max(128);
 const etag = z.string().min(1);
 const email = z.string().email();
 const url = z.string().url();
-const keyAlgorithm = z.enum(["ES256", "RS256", "EdDSA"]);
-const keyState = z.enum(["retiring", "revoked"]);
 const refDomain = z.string().min(1).max(64);
 
 export const TOOL_CATALOG: readonly ToolDefinition[] = [
@@ -77,22 +75,8 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     requiredScope: "control:read",
   },
   {
-    name: "get_issuer",
-    description: "Get the tenant JWT issuer and current mutation ETag for a stack.",
-    inputSchema: z.object({ stackId }),
-    annotations: { readOnlyHint: true, destructiveHint: false },
-    requiredScope: "control:read",
-  },
-  {
     name: "get_oauth_issuer",
     description: "Get discovered OAuth issuer metadata, status, and current mutation ETag for a stack.",
-    inputSchema: z.object({ stackId }),
-    annotations: { readOnlyHint: true, destructiveHint: false },
-    requiredScope: "control:read",
-  },
-  {
-    name: "list_issuer_keys",
-    description: "List public issuer keys and their lifecycle states.",
     inputSchema: z.object({ stackId }),
     annotations: { readOnlyHint: true, destructiveHint: false },
     requiredScope: "control:read",
@@ -182,19 +166,6 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     requiredScope: "control:security",
   },
   {
-    name: "set_issuer",
-    description: "Deprecated: manually create or update a stack tenant JWT issuer. Prefer inspect_oauth_issuer and activate_oauth_issuer.",
-    inputSchema: z.object({
-      stackId,
-      issuer: url,
-      audience: z.string().min(1),
-      etag,
-      confirmIssuer: url,
-    }),
-    annotations: { destructiveHint: true, idempotentHint: false },
-    requiredScope: "control:security",
-  },
-  {
     name: "inspect_oauth_issuer",
     description: "Discover and persist a validated OAuth issuer metadata and JWKS snapshot, returning a control challenge.",
     inputSchema: z.object({
@@ -214,41 +185,6 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
       etag: etag.optional(),
     }),
     annotations: { destructiveHint: false, idempotentHint: false },
-    requiredScope: "control:security",
-  },
-  {
-    name: "create_issuer_key_challenge",
-    description: "Deprecated: create the one-time challenge used by legacy manual issuer-key registration.",
-    inputSchema: z.object({ stackId, kid: z.string().min(1), algorithm: keyAlgorithm }),
-    annotations: { destructiveHint: false, idempotentHint: false },
-    requiredScope: "control:security",
-  },
-  {
-    name: "add_issuer_key",
-    description: "Deprecated: manually add a public issuer key with a compact-JWS possession proof.",
-    inputSchema: z.object({
-      stackId,
-      kid: z.string().min(1),
-      algorithm: keyAlgorithm,
-      publicJwk: z.record(z.string(), z.unknown()),
-      possessionProof: z.string().min(1),
-      idempotencyKey,
-    }),
-    annotations: { destructiveHint: false, idempotentHint: true },
-    requiredScope: "control:security",
-  },
-  {
-    name: "transition_issuer_key",
-    description: "Deprecated: transition a manually managed issuer key to retiring or revoked.",
-    inputSchema: z.object({
-      stackId,
-      kid: z.string().min(1),
-      state: keyState,
-      etag,
-      confirmKid: z.string().min(1),
-      confirmState: keyState,
-    }),
-    annotations: { destructiveHint: true, idempotentHint: false },
     requiredScope: "control:security",
   },
 ];

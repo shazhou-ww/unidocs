@@ -1,6 +1,6 @@
 ---
 name: unicas-cli
-description: Use whenever a task involves operating the UniCAS control plane — listing or creating stacks, managing administrators, discovering or activating an OAuth issuer, legacy issuer keys, or reading audit data — through the `unicas` CLI or stdio MCP mode.
+description: Use whenever a task involves operating the UniCAS control plane — listing or creating stacks, managing administrators, discovering or activating a Stack OAuth issuer, or reading audit data — through the `unicas` CLI or stdio MCP mode.
 ---
 
 # Using the `unicas` CLI
@@ -8,8 +8,8 @@ description: Use whenever a task involves operating the UniCAS control plane —
 This skill teaches an agent to operate the Unicas control plane with the
 `unicas` command-line tool. The CLI is the supported path for agents that
 cannot complete OAuth in a browser: it performs the OAuth dance itself, stores
-the session, and exposes the same 21 tools as the control-plane MCP endpoint
-as plain shell commands and as a stdio MCP server.
+the session, and exposes the same tool contract as the control-plane MCP
+endpoint as plain shell commands and as a stdio MCP server.
 
 ## When to use this skill
 
@@ -19,11 +19,8 @@ Load and follow this skill when the task involves any of these:
   (`control:read` / `control:write`).
 - Member management: list a stack's administrators, invite a member, remove a
   member (`control:security`).
-- Issuer configuration: discover, inspect, prove control of, and activate a stack OAuth issuer
-  (`control:read` / `control:security`).
-- Issuer key lifecycle: list keys, create a possession challenge, add a public
-  key with a signed proof, transition a key to retiring/revoked
-  (`control:security`).
+- Stack OAuth issuer configuration: discover, inspect, prove control of, and
+  activate a stack OAuth issuer (`control:read` / `control:security`).
 - Audit and observability: refDomains catalog, control-plane audit events,
   Root Ref balances and events (`control:read`).
 
@@ -66,9 +63,7 @@ unicas whoami
 unicas stacks list [--limit N] [--cursor C]
 unicas stacks get <stackId>
 unicas members list <stackId> [--limit N] [--cursor C]
-unicas issuer get <stackId>
 unicas oauth-issuer get <stackId>
-unicas keys list <stackId>
 unicas ref-domains list <stackId>
 unicas audit control <stackId> [--limit N] [--cursor C] [--after ID]
 unicas audit root-domain-refs <stackId> <refDomain> [--tenant-id T] [--limit N] [--cursor C]
@@ -89,10 +84,6 @@ unicas members invite <stackId> <email> [--idempotency-key K]
 unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]
 unicas oauth-issuer inspect <stackId> <issuer>
 unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]
-unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]
-unicas keys challenge <stackId> <kid> <ES256|RS256|EdDSA>
-unicas keys add <stackId> <kid> <ES256|RS256|EdDSA> --public-jwk <json> --possession-proof <jws> [--idempotency-key K]
-unicas keys transition <stackId> <kid> <retiring|revoked> [--etag E] [--confirm-kid K] [--confirm-state S]
 ```
 
 Session: `unicas login`, `unicas logout` (ends the BFF session), `unicas status`.
@@ -100,19 +91,19 @@ MCP: `unicas mcp` (stdio server).
 
 ## Guardrails an agent must respect
 
-- **ETags**: `stacks update`, `members remove`, `issuer set`, and
-  `keys transition` need the current ETag. If `--etag` is omitted the CLI
-  reads it first (`get_stack` / `get_issuer` / `list_issuer_keys`); `issuer
-  set` uses `*` only when no issuer exists yet. A stale ETag fails with
+- **ETags**: `stacks update`, `members remove`, and `oauth-issuer activate`
+  need the current ETag. If `--etag` is omitted the CLI reads it first
+  (`get_stack` / `get_oauth_issuer`). A stale ETag fails with
   `REVISION_MISMATCH` — re-read and retry.
 - **Confirmations**: destructive operations require `--confirm-*` values that
   exactly match the target. Non-interactively (no TTY) the CLI refuses without
   them — always pass explicit flags, never guess.
 - **Idempotency**: creation commands auto-generate `unicas-cli:<uuid>` keys;
   pass `--idempotency-key` for deterministic retries.
-- **Secrets**: `keys add` accepts only a public JWK plus a compact-JWS
-  possession proof signed with the private key elsewhere (see
-  `scripts/cas-possession-sign.mjs`). Never pass private key material.
+- **Secrets**: `oauth-issuer activate` accepts only a compact-JWS activation
+  proof signed outside the CLI with a private key the discovered issuer
+  advertises. Never pass private key material or JWK uploads — the control
+  plane derives keys exclusively from verified issuer JWKS discovery.
 - **No stack deletion** exists on the control plane; do not invent or suggest
   one.
 
@@ -132,12 +123,13 @@ unicas members invite <stackId> ops@example.com --idempotency-key invite-ops-1
 # returns an acceptUrl to share once
 ```
 
-Rotate an issuer key (challenge -> sign -> add -> transition):
+Connect a Stack OAuth issuer (inspect -> sign off-band -> activate):
 
 ```powershell
-unicas keys challenge <stackId> key-2026 ES256      # sign the nonce off-band
-unicas keys add <stackId> key-2026 ES256 --public-jwk '{...}' --possession-proof '<jws>' --idempotency-key add-key-2026
-unicas keys transition <stackId> key-2025 retiring --confirm-kid key-2025 --confirm-state retiring
+unicas oauth-issuer get <stackId>
+unicas oauth-issuer inspect <stackId> https://issuer.example/oauth
+# returns the signed challenge + discovered keys; sign it with an advertised private key off-band
+unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof '<jws>' [--etag E]
 ```
 
 Read the audit trail after a mutation:
@@ -148,7 +140,7 @@ unicas audit control <stackId> --limit 20
 
 ## stdio MCP mode (DeepSeek Harness)
 
-`unicas mcp` spawns a stdio MCP server advertising the same 21 tools,
+`unicas mcp` spawns a stdio MCP server advertising the same tool contract,
 forwarding calls over the authenticated connection:
 
 ```json
@@ -173,5 +165,5 @@ invoke `node <checkout>/unicas-packages/admin-cli/dist/cli.js mcp` directly.
 
 - `docs/cas-control-plane-cli.md` — CLI overview and DSH integration.
 - `unicas-packages/admin-cli/README.md` — full command reference and guardrails.
-- `unicas-packages/admin-cli/src/mcp/catalog.ts` — the exact 21-tool contract
+- `unicas-packages/admin-cli/src/mcp/catalog.ts` — the exact tool contract
   mirrored from the remote control plane.

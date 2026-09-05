@@ -14,15 +14,10 @@ export { UI_ASSETS } from "./ui-assets.generated.js";
 export function uiAssets(pathname: string): Promise<Response | null> {
   const content = UI_ASSETS[pathname];
   if (content === undefined) return Promise.resolve(null);
-  // Skill files are fetched by agents and should never be cached as
-  // immutable; revalidate on every request so updates propagate.
-  const cacheControl = pathname.startsWith("/assets/skills/")
-    ? "no-cache"
-    : "public, max-age=31536000, immutable";
   return Promise.resolve(new Response(content, {
     headers: {
       "Content-Type": contentTypeFor(pathname),
-      "Cache-Control": cacheControl,
+      "Cache-Control": "no-cache",
     },
   }));
 }

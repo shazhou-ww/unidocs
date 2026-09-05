@@ -24,7 +24,6 @@ import type {
 } from "@unicas/admin-protocol";
 import type {
   CasControlAuditEvent,
-  CasIssuerKeyState,
   CasMemberInvitation,
   CasOperatorIdentity,
   CasOperatorIdentityKey,
@@ -34,8 +33,6 @@ import type {
   CasRootRefEvent,
   CasStack,
   CasStackId,
-  CasStackIssuer,
-  CasStackIssuerKey,
   CasStackMember,
   CasStackOAuthIssuer,
 } from "@unicas/admin-protocol";
@@ -74,7 +71,6 @@ export interface AdminClient {
     body: { readonly emailConstraint?: string },
     headers?: CasAdminCreateHeaders,
   ): Promise<{ readonly invitation: CasMemberInvitation; readonly acceptUrl: string }>;
-  getIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackIssuer>>;
   getOAuthIssuer(path: { readonly stackId: CasStackId }): Promise<AdminClientRead<CasStackOAuthIssuer>>;
   inspectOAuthIssuer(
     path: { readonly stackId: CasStackId },
@@ -87,36 +83,6 @@ export interface AdminClient {
     body: { readonly inspectionId: string; readonly activationProof: string },
     ifMatch: string,
   ): Promise<AdminClientRead<CasStackOAuthIssuer>>;
-  putIssuer(
-    path: { readonly stackId: CasStackId },
-    body: {
-      readonly issuer: string;
-      readonly audience: string;
-      readonly capabilityMaxLifetimeSeconds?: number;
-    },
-    ifMatch: string,
-  ): Promise<AdminClientRead<CasStackIssuer>>;
-  listIssuerKeys(path: { readonly stackId: CasStackId }): Promise<{ readonly keys: readonly CasStackIssuerKey[] }>;
-  createIssuerKeyChallenge(input: {
-    readonly stackId: CasStackId;
-    readonly kid: string;
-    readonly algorithm: string;
-  }): Promise<{ readonly nonce: string; readonly expiresAt: number }>;
-  createIssuerKey(
-    path: { readonly stackId: CasStackId },
-    body: {
-      readonly kid: string;
-      readonly algorithm: string;
-      readonly publicJwk: Readonly<Record<string, unknown>>;
-      readonly possessionProof: string;
-    },
-    headers?: CasAdminCreateHeaders,
-  ): Promise<AdminClientRead<CasStackIssuerKey>>;
-  deleteIssuerKey(
-    path: { readonly stackId: CasStackId; readonly kid: string },
-    toState: Extract<CasIssuerKeyState, "retiring" | "revoked"> | undefined,
-    ifMatch: string,
-  ): Promise<AdminClientRead<CasStackIssuerKey>>;
   listRefDomains(path: { readonly stackId: CasStackId }): Promise<{ readonly domains: readonly CasRefDomain[] }>;
   listControlAuditEvents(
     path: { readonly stackId: CasStackId },
@@ -275,11 +241,6 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
       return response.json();
     },
 
-    async getIssuer(path) {
-      const response = await requireOk(await request(casAdminRoutes.issuer(path)), "getIssuer");
-      return { value: await response.json(), etag: readEtag(response) };
-    },
-
     async getOAuthIssuer(path) {
       const response = await requireOk(
         await request(casAdminRoutes.oauthIssuer(path)),
@@ -308,62 +269,6 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
           body: JSON.stringify(body),
         }),
         "activateOAuthIssuer",
-      );
-      return { value: await response.json(), etag: readEtag(response) };
-    },
-
-    async putIssuer(path, body, ifMatch) {
-      const response = await requireOk(
-        await request(casAdminRoutes.issuer(path), {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", ...ifMatchHeader(ifMatch) },
-          body: JSON.stringify(body),
-        }),
-        "putIssuer",
-      );
-      return { value: await response.json(), etag: readEtag(response) };
-    },
-
-    async listIssuerKeys(path) {
-      const response = await requireOk(await request(casAdminRoutes.issuerKeys(path)), "listIssuerKeys");
-      return response.json();
-    },
-
-    async createIssuerKeyChallenge(input) {
-      const response = await requireOk(
-        await request(casAdminRoutes.possessionChallenge(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-        }),
-        "createIssuerKeyChallenge",
-      );
-      return response.json();
-    },
-
-    async createIssuerKey(path, body, headers) {
-      const response = await requireOk(
-        await request(casAdminRoutes.issuerKeys(path), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...mutationHeaders(headers),
-          },
-          body: JSON.stringify(body),
-        }),
-        "createIssuerKey",
-      );
-      return { value: await response.json(), etag: readEtag(response) };
-    },
-
-    async deleteIssuerKey(path, toState, ifMatch) {
-      const response = await requireOk(
-        await request(casAdminRoutes.issuerKey(path), {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json", ...ifMatchHeader(ifMatch) },
-          body: toState === undefined ? undefined : JSON.stringify({ toState }),
-        }),
-        "deleteIssuerKey",
       );
       return { value: await response.json(), etag: readEtag(response) };
     },

@@ -39,25 +39,11 @@ export function toAdminError(error: unknown): CasAdminErrorResponse {
   if (error instanceof ControlPlaneError) {
     return adminError(error.code, error.message);
   }
-  if (isUniqueConstraintError(error, "cas_stack_issuer.issuer")) {
-    return adminError(CasAdminErrorCodes.ISSUER_CONFLICT);
-  }
-  if (isUniqueConstraintError(error, "cas_stack_issuer_keys")) {
-    return adminError(CasAdminErrorCodes.KEY_STATE_CONFLICT, "issuer key already exists");
-  }
   // Unknown database or internal failure. 503 keeps clients from retrying a
   // request that may still have partially committed (D1 batches are atomic).
   return adminError(
     CasAdminErrorCodes.SERVICE_UNAVAILABLE,
     "control plane operation failed",
-  );
-}
-
-function isUniqueConstraintError(error: unknown, subject: string): boolean {
-  if (!(error instanceof Error)) return false;
-  return (
-    error.message.includes("UNIQUE constraint failed")
-    && error.message.includes(subject)
   );
 }
 

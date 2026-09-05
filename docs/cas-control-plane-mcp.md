@@ -37,9 +37,9 @@ accepted by `/mcp`.
 
 | Scope | Operations |
 | --- | --- |
-| `control:read` | Identity, stacks, membership, public issuer configuration, observed refDomains, and audit reads |
+| `control:read` | Identity, stacks, membership, Stack OAuth issuer configuration, observed refDomains, and audit reads |
 | `control:write` | Stack creation and stack metadata updates |
-| `control:security` | Member invitation/removal and issuer/key lifecycle operations |
+| `control:security` | Member invitation/removal and Stack OAuth issuer activation |
 
 Scopes do not imply each other. Current stack membership is checked during each
 tool call, so removing a member takes effect without waiting for token expiry.
@@ -57,9 +57,7 @@ Read tools:
 - `list_stacks`
 - `get_stack`
 - `list_members`
-- `get_issuer`
 - `get_oauth_issuer`
-- `list_issuer_keys`
 - `list_ref_domains`
 - `list_control_audit_events`
 - `list_root_domain_refs`
@@ -74,25 +72,19 @@ Security tools:
 
 - `invite_member`
 - `remove_member`
-- `set_issuer`
 - `inspect_oauth_issuer`
 - `activate_oauth_issuer`
-- `create_issuer_key_challenge`
-- `add_issuer_key`
-- `transition_issuer_key`
 
-`set_issuer`, `create_issuer_key_challenge`, `add_issuer_key`, and
-`transition_issuer_key` are deprecated compatibility tools. New stacks use
-`inspect_oauth_issuer` followed by a compact-JWS control proof passed to
-`activate_oauth_issuer`.
-
-The possession-challenge tool is required because legacy `add_issuer_key` accepts only
-public JWK material and a compact-JWS proof made with the private key. Private key
-material is never a valid MCP input.
+A stack's signing authority is exclusively a discovered OAuth issuer:
+`inspect_oauth_issuer` validates and persists the issuer's metadata and JWKS
+snapshot and returns a control challenge, which the operator signs with a key
+the issuer currently advertises and submits as a compact-JWS activation proof
+to `activate_oauth_issuer`. There is no manual issuer or JWK upload path, and
+private key material is never a valid MCP input.
 
 Creation tools require an idempotency key. Existing-resource mutations require a
 current ETag. Member invitations are email-bound and require the email twice.
-Member removal and key/issuer transitions require explicit target confirmation.
+Member removal requires explicit target confirmation.
 Destructive annotations are advisory metadata; the server always
 enforces scopes, membership, ETags, confirmations, and service invariants.
 

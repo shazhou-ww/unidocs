@@ -8,14 +8,9 @@ export type CasAdminRoute =
   | { operation: "deleteMember"; stackId: string }
   | { operation: "createMemberInvitation"; stackId: string }
   | { operation: "acceptMemberInvitation"; token: string }
-  | { operation: "getIssuer"; stackId: string }
   | { operation: "getOAuthIssuer"; stackId: string }
   | { operation: "inspectOAuthIssuer"; stackId: string }
   | { operation: "activateOAuthIssuer"; stackId: string }
-  | { operation: "putIssuer"; stackId: string }
-  | { operation: "listIssuerKeys"; stackId: string }
-  | { operation: "createIssuerKey"; stackId: string }
-  | { operation: "deleteIssuerKey"; stackId: string; kid: string }
   | { operation: "listRefDomains"; stackId: string }
   | { operation: "listControlAuditEvents"; stackId: string }
   | { operation: "listRootDomainRefs"; stackId: string; refDomain: string }
@@ -44,24 +39,10 @@ export const casAdminRoutes = {
     `/admin/stacks/${segment(stackId)}/member-invitations`,
   acceptMemberInvitation: ({ token }: { token: string }) =>
     `/admin/member-invitations/${segment(token)}/accept`,
-  issuer: ({ stackId }: { stackId: string }) =>
-    `/admin/stacks/${segment(stackId)}/issuer`,
   oauthIssuer: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/oauth-issuer`,
   oauthIssuerInspections: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/oauth-issuer/inspections`,
-  issuerKeys: ({ stackId }: { stackId: string }) =>
-    `/admin/stacks/${segment(stackId)}/issuer/keys`,
-  issuerKey: ({ stackId, kid }: { stackId: string; kid: string }) =>
-    `/admin/stacks/${segment(stackId)}/issuer/keys/${segment(kid)}`,
-  /**
-   * BFF helper route: mints a one-time possession challenge for a new issuer
-   * key. It is NOT a generic control-plane resource route and is deliberately
-   * absent from `matchCasAdminRoute` — the BFF handles it before the generic
-   * matcher (it needs its own session/CSRF enforcement with the stack id in
-   * the body, not the path).
-   */
-  possessionChallenge: () => "/admin/issuer/possession-challenge",
   refDomains: ({ stackId }: { stackId: string }) =>
     `/admin/stacks/${segment(stackId)}/ref-domains`,
   controlAuditEvents: ({ stackId }: { stackId: string }) =>
@@ -123,12 +104,6 @@ export function matchCasAdminRoute(
     return { operation: "createMemberInvitation", stackId };
   }
 
-  if (parts.length === 4 && parts[3] === "issuer") {
-    if (method === "GET") return { operation: "getIssuer", stackId };
-    if (method === "PUT") return { operation: "putIssuer", stackId };
-    return null;
-  }
-
   if (parts.length === 4 && parts[3] === "oauth-issuer") {
     if (method === "GET") return { operation: "getOAuthIssuer", stackId };
     if (method === "PUT") return { operation: "activateOAuthIssuer", stackId };
@@ -142,19 +117,6 @@ export function matchCasAdminRoute(
     && method === "POST"
   ) {
     return { operation: "inspectOAuthIssuer", stackId };
-  }
-
-  if (parts.length === 5 && parts[3] === "issuer" && parts[4] === "keys") {
-    if (method === "GET") return { operation: "listIssuerKeys", stackId };
-    if (method === "POST") return { operation: "createIssuerKey", stackId };
-    return null;
-  }
-
-  if (parts.length === 6 && parts[3] === "issuer" && parts[4] === "keys" && parts[5]) {
-    const kid = decodeSegment(parts[5]);
-    if (kid === null) return null;
-    if (method === "DELETE") return { operation: "deleteIssuerKey", stackId, kid };
-    return null;
   }
 
   if (parts.length === 4 && parts[3] === "ref-domains") {

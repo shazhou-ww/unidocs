@@ -52,15 +52,6 @@ class MockAdminService {
       this.stack.revision += 1;
       return Response.json(this.stack, { headers: { ETag: `"rev-${this.stack.revision}"` } });
     }
-    if (path === casAdminRoutes.issuer({ stackId: STACK }) && request.method === "GET") {
-      return Response.json({
-        stackId: STACK,
-        issuer: "https://issuer.example",
-        audience: "unidocs-cas",
-        status: "active",
-        revision: 2,
-      }, { headers: { ETag: `"rev-2"` } });
-    }
     if (path === casAdminRoutes.oauthIssuer({ stackId: STACK }) && request.method === "GET") {
       return Response.json({
         stackId: STACK,
@@ -109,9 +100,6 @@ class MockAdminService {
         keys: [],
         revision: 1,
       }, { headers: { ETag: `"rev-1"` } });
-    }
-    if (path === casAdminRoutes.issuerKeys({ stackId: STACK }) && request.method === "GET") {
-      return Response.json({ keys: [] });
     }
     return Response.json({ error: "NOT_FOUND" }, { status: 404 });
   };

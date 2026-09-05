@@ -107,20 +107,6 @@ export function createControlPlaneMcpServer(
   );
 
   server.registerTool(
-    "get_issuer",
-    {
-      description: "Get the tenant JWT issuer and current mutation ETag for a stack.",
-      inputSchema: z.object({ stackId: z.string().min(1) }),
-      annotations: { readOnlyHint: true, destructiveHint: false },
-    },
-    async ({ stackId }) => {
-      const grant = requireGrantScope("control:read");
-      const result = await controlPlane.getIssuer(serviceContext(grant, "get_issuer"), { path: { stackId } });
-      return toolResult(withEtag(result));
-    },
-  );
-
-  server.registerTool(
     "get_oauth_issuer",
     {
       description: "Get discovered OAuth issuer metadata, status, and current mutation ETag for a stack.",
@@ -134,20 +120,6 @@ export function createControlPlaneMcpServer(
         { path: { stackId } },
       );
       return toolResult(withEtag(result));
-    },
-  );
-
-  server.registerTool(
-    "list_issuer_keys",
-    {
-      description: "List public issuer keys and their lifecycle states.",
-      inputSchema: z.object({ stackId: z.string().min(1) }),
-      annotations: { readOnlyHint: true, destructiveHint: false },
-    },
-    async ({ stackId }) => {
-      const grant = requireGrantScope("control:read");
-      const result = await controlPlane.listIssuerKeys(serviceContext(grant, "list_issuer_keys"), { path: { stackId } });
-      return toolResult(result);
     },
   );
 
@@ -345,31 +317,6 @@ export function createControlPlaneMcpServer(
   );
 
   server.registerTool(
-    "set_issuer",
-    {
-      description: "Deprecated: manually create or update a stack tenant JWT issuer. Prefer inspect_oauth_issuer and activate_oauth_issuer.",
-      inputSchema: z.object({
-        stackId: z.string().min(1),
-        issuer: z.string().url(),
-        audience: z.string().min(1),
-        etag: z.string().min(1),
-        confirmIssuer: z.string().url(),
-      }),
-      annotations: { destructiveHint: true, idempotentHint: false },
-    },
-    async ({ stackId, issuer, audience, etag, confirmIssuer }) => {
-      const grant = requireMutation("control:security", options);
-      if (confirmIssuer !== issuer) return confirmationError("confirmIssuer must exactly match issuer");
-      const result = await controlPlane.putIssuer(
-        serviceContext(grant, "set_issuer"),
-        { path: { stackId }, body: { issuer, audience } },
-        { ifMatch: etag },
-      );
-      return toolResult(withEtag(result));
-    },
-  );
-
-  server.registerTool(
     "inspect_oauth_issuer",
     {
       description: "Discover and persist a validated OAuth issuer metadata and JWKS snapshot, returning a control challenge.",
@@ -416,83 +363,6 @@ export function createControlPlaneMcpServer(
         serviceContext(grant, "activate_oauth_issuer"),
         { path: { stackId }, body: { inspectionId, activationProof } },
         { ifMatch: currentEtag },
-      );
-      return toolResult(withEtag(result));
-    },
-  );
-
-  server.registerTool(
-    "create_issuer_key_challenge",
-    {
-      description: "Deprecated: create the one-time challenge used by legacy manual issuer-key registration.",
-      title: "Deprecated legacy issuer-key challenge",
-      inputSchema: z.object({
-        stackId: z.string().min(1),
-        kid: z.string().min(1),
-        algorithm: z.enum(["ES256", "RS256", "EdDSA"]),
-      }),
-      annotations: { destructiveHint: false, idempotentHint: false },
-    },
-    async ({ stackId, kid, algorithm }) => {
-      const grant = requireMutation("control:security", options);
-      const result = await controlPlane.createPossessionChallenge(
-        serviceContext(grant, "create_issuer_key_challenge"),
-        { stackId, kid, algorithm },
-      );
-      return toolResult(result);
-    },
-  );
-
-  server.registerTool(
-    "add_issuer_key",
-    {
-      description: "Deprecated: manually add a public issuer key with a compact-JWS possession proof.",
-      title: "Deprecated manual issuer key",
-      inputSchema: z.object({
-        stackId: z.string().min(1),
-        kid: z.string().min(1),
-        algorithm: z.enum(["ES256", "RS256", "EdDSA"]),
-        publicJwk: z.record(z.string(), z.unknown()),
-        possessionProof: z.string().min(1),
-        idempotencyKey: z.string().min(1).max(128),
-      }),
-      annotations: { destructiveHint: false, idempotentHint: true },
-    },
-    async ({ stackId, kid, algorithm, publicJwk, possessionProof, idempotencyKey }) => {
-      const grant = requireMutation("control:security", options);
-      const result = await controlPlane.createIssuerKey(
-        serviceContext(grant, "add_issuer_key"),
-        { path: { stackId }, body: { kid, algorithm, publicJwk, possessionProof } },
-        { idempotencyKey },
-      );
-      return toolResult(withEtag(result));
-    },
-  );
-
-  server.registerTool(
-    "transition_issuer_key",
-    {
-      description: "Deprecated: transition a manually managed issuer key to retiring or revoked.",
-      title: "Deprecated manual issuer-key transition",
-      inputSchema: z.object({
-        stackId: z.string().min(1),
-        kid: z.string().min(1),
-        state: z.enum(["retiring", "revoked"]),
-        etag: z.string().min(1),
-        confirmKid: z.string().min(1),
-        confirmState: z.enum(["retiring", "revoked"]),
-      }),
-      annotations: { destructiveHint: true, idempotentHint: false },
-    },
-    async ({ stackId, kid, state, etag, confirmKid, confirmState }) => {
-      const grant = requireMutation("control:security", options);
-      if (confirmKid !== kid || confirmState !== state) {
-        return confirmationError("confirmKid and confirmState must exactly match the requested transition");
-      }
-      const result = await controlPlane.deleteIssuerKey(
-        serviceContext(grant, "transition_issuer_key"),
-        { path: { stackId, kid }, body: { toState: state } },
-        { ifMatch: etag },
       );
       return toolResult(withEtag(result));
     },

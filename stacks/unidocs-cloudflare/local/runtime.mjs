@@ -504,9 +504,10 @@ export async function startLocalRuntime({
     if (!casOrigin) {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", SERVICE_WORKER);
       if (!middlewareStacks) {
-        // Register the local unidocs-cloudflare stack (issuer/keys/refDomains
-        // identical to what the gateway signs with). Skipped when the caller
-        // provided explicit middlewareStacks (they own the registration).
+        // Register the local unidocs-cloudflare stack as a locally-activated
+        // OAuth issuer (JWKS identical to what the gateway signs with).
+        // Skipped when the caller provided explicit middlewareStacks (they own
+        // the registration).
         const fixtureStacks = [{
           stackId: resolvedStackFixture.stackId,
           issuer: resolvedStackFixture.issuer,
@@ -647,23 +648,39 @@ async function createEphemeralCapabilityFixture() {
 }
 
 /**
- * Seed the middleware's CAS_CONTROL_DB with the locally registered stacks
- * (issuer + rotation key + refDomains). Callers keep the private keys and
- * issue stack capabilities with service-auth against the same public JWK.
+ * Seed the middleware's CAS_CONTROL_DB with the locally registered stacks as
+ * locally-activated Stack OAuth issuers. The local gateway signs stack
+ * capabilities with the key exposed by each seeded jwks_uri, so the data
+ * plane follows the same remote JWKS path as a discovered issuer.
  */
 export async function seedMiddlewareStacks(
   db,
   stacks,
 ) {
   await migrateControlSchema(db);
+  const now = Date.now();
   for (const stack of stacks) {
+    const jwksUri = stack.jwksUri ?? `data:application/json,${encodeURIComponent(JSON.stringify({
+      keys: [{
+        ...stack.publicJwk,
+        kid: stack.kid,
+        alg: stack.algorithm ?? "ES256",
+        use: "sig",
+      }],
+    }))}`;
     await db.batch([
       db.prepare(
-        "INSERT INTO cas_stack_issuer (stack_id, issuer, audience, revision) VALUES (?, ?, ?, 1) ON CONFLICT(stack_id) DO UPDATE SET issuer = excluded.issuer, audience = excluded.audience",
-      ).bind(stack.stackId, stack.issuer, stack.audience),
-      db.prepare(
-        "INSERT INTO cas_stack_issuer_keys (stack_id, kid, algorithm, public_jwk, state, revision) VALUES (?, ?, ?, ?, 'active', 1) ON CONFLICT(stack_id, kid) DO UPDATE SET public_jwk = excluded.public_jwk, state = 'active'",
-      ).bind(stack.stackId, stack.kid, stack.algorithm ?? "ES256", JSON.stringify(stack.publicJwk)),
+        `INSERT INTO cas_stack_oauth_issuers
+           (stack_id, issuer, audience, metadata_url, metadata_type, authorization_endpoint, token_endpoint,
+            jwks_uri, registration_endpoint, scopes_supported, code_challenge_methods_supported,
+            status, verified_at, last_refresh_at, last_refresh_error, jwks_digest,
+            capability_max_lifetime_seconds, revision)
+         VALUES (?, ?, ?, '', 'oauth', '', '', ?, NULL, '[]', '[]', 'active', ?, ?, NULL, 'local-seed', 28800, 1)
+         ON CONFLICT(stack_id) DO UPDATE SET
+           issuer = excluded.issuer, audience = excluded.audience, status = 'active',
+           verified_at = excluded.verified_at, last_refresh_at = excluded.last_refresh_at,
+           jwks_uri = excluded.jwks_uri, jwks_digest = excluded.jwks_digest`,
+      ).bind(stack.stackId, stack.issuer, stack.audience, jwksUri, now, now),
     ]);
   }
 }

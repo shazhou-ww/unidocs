@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import { CompactSign, exportJWK, generateKeyPair } from "jose";
 import { CasAdminErrorCodes } from "@unicas/admin-protocol";
 import type { CasOperatorIdentityKey } from "@unicas/admin-protocol";
 import {
@@ -9,14 +8,10 @@ import {
   type ControlAcceptMemberInvitationCommitResult,
   type ControlAcceptMemberInvitationPlan,
   type ControlAuditRecord,
-  type ControlCreateIssuerKeyCommitResult,
-  type ControlCreateIssuerKeyPlan,
   type ControlCreateMemberInvitationCommitResult,
   type ControlCreateMemberInvitationPlan,
   type ControlCreateStackCommitResult,
   type ControlCreateStackPlan,
-  type ControlDeleteIssuerKeyCommitResult,
-  type ControlDeleteIssuerKeyPlan,
   type ControlDeleteMemberCommitResult,
   type ControlDeleteMemberPlan,
   type ControlIdempotencyRecord,
@@ -24,8 +19,6 @@ import {
   type ControlIdentityRecord,
   type ControlInspectOAuthIssuerCommitResult,
   type ControlInspectOAuthIssuerPlan,
-  type ControlIssuerKeyRecord,
-  type ControlIssuerRecord,
   type ControlOAuthIssuerRecord,
   type ControlMembershipRecord,
   type ControlMemberInvitationRecord,
@@ -33,9 +26,6 @@ import {
   type ControlPatchStackPlan,
   type ControlPlaneAdminRepository,
   type ControlPlaneCallContext,
-  type ControlPossessionChallengeRecord,
-  type ControlPutIssuerCommitResult,
-  type ControlPutIssuerPlan,
   type ControlStackRecord,
   type OAuthDiscoveryPort,
 } from "../src/index.js";
@@ -99,16 +89,6 @@ function oauthIssuerRecord(stackId: string): ControlOAuthIssuerRecord {
     jwksDigest: "sha256:test",
     capabilityMaxLifetimeSeconds: 1800,
     revision: 1,
-  };
-}
-
-async function proof(input: { nonce: string; stackId: string; kid: string }) {
-  const pair = await generateKeyPair("ES256");
-  const challenge = ["cas-possession-v1", input.nonce, input.stackId, input.kid, "ES256"].join("\n");
-  return {
-    publicJwk: await exportJWK(pair.publicKey),
-    possessionProof: await new CompactSign(new TextEncoder().encode(challenge))
-      .setProtectedHeader({ alg: "ES256" }).sign(pair.privateKey),
   };
 }
 
@@ -302,23 +282,6 @@ describe("ControlPlaneAdminService", () => {
     ]);
   });
 
-  test("reads issuer configuration only for stack members", async () => {
-    const { repository, service } = fixture();
-    const created = await service.createStack(context(), { body: { displayName: "Issuer" } });
-    if ("error" in created) throw new Error(created.error);
-    expectError(
-      await service.getIssuer(context(), { path: { stackId: created.stackId } }),
-      CasAdminErrorCodes.NOT_FOUND,
-    );
-    expectError(
-      await service.getIssuer(context(bob, "Bob"), { path: { stackId: created.stackId } }),
-      CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED,
-    );
-    await service.putIssuer(context(), { path: { stackId: created.stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {});
-    expect(await service.getIssuer(context(), { path: { stackId: created.stackId } }))
-      .toEqual({ stackId: created.stackId, issuer: "https://issuer.example/a", audience: "cas", capabilityMaxLifetimeSeconds: 28800, revision: 1 });
-  });
-
   test("reads discovered OAuth issuer state only for stack members", async () => {
     const { repository, service } = fixture();
     const created = await service.createStack(context(), { body: { displayName: "OAuth" } });
@@ -394,140 +357,6 @@ describe("ControlPlaneAdminService", () => {
     expect(repository.audits.at(-1)?.action).toBe("oauth_issuer.inspection.created");
   });
 
-  test("creates an issuer with default lifetime and rejects global duplicates", async () => {
-    const { repository, service } = fixture();
-    const a = await service.createStack(context(), { body: { displayName: "A" } });
-    const b = await service.createStack(context(), { body: { displayName: "B" } });
-    if ("error" in a || "error" in b) throw new Error("stack create failed");
-    expect(await service.putIssuer(context(), { path: { stackId: a.stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {}))
-      .toMatchObject({ issuer: "https://issuer.example/a", audience: "cas", capabilityMaxLifetimeSeconds: 28800, revision: 1 });
-    expectError(
-      await service.putIssuer(context(), { path: { stackId: b.stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {}),
-      CasAdminErrorCodes.ISSUER_CONFLICT,
-    );
-    expectError(
-      await service.putIssuer(context(), { path: { stackId: b.stackId }, body: { issuer: "https://issuer.example/b", audience: "cas" } }, { ifMatch: '"1"' }),
-      CasAdminErrorCodes.REVISION_MISMATCH,
-    );
-    expect(repository.audits.map((event) => event.action)).toEqual([
-      "stack.created",
-      "stack.created",
-      "issuer.put",
-    ]);
-  });
-
-  test("keeps the issuer immutable and enforces preconditions and lifetime bounds", async () => {
-    const { repository, service } = fixture();
-    const created = await service.createStack(context(), { body: { displayName: "Issuer" } });
-    if ("error" in created) throw new Error(created.error);
-    const put = { path: { stackId: created.stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } };
-    expect(await service.putIssuer(context(), put, {})).toMatchObject({ revision: 1 });
-    expectError(await service.putIssuer(context(), put, {}), CasAdminErrorCodes.PRECONDITION_REQUIRED);
-    expectError(
-      await service.putIssuer(context(), { ...put, body: { ...put.body, issuer: "https://issuer.example/other" } }, { ifMatch: '"1"' }),
-      CasAdminErrorCodes.INVALID_REQUEST,
-    );
-    expectError(
-      await service.putIssuer(context(), { ...put, body: { ...put.body, capabilityMaxLifetimeSeconds: 5 } }, { ifMatch: '"1"' }),
-      CasAdminErrorCodes.INVALID_REQUEST,
-    );
-    expect(await service.putIssuer(context(), { ...put, body: { ...put.body, audience: "cas-v2", capabilityMaxLifetimeSeconds: 3600 } }, { ifMatch: '"1"' }))
-      .toMatchObject({ audience: "cas-v2", capabilityMaxLifetimeSeconds: 3600, revision: 2 });
-    expectError(await service.putIssuer(context(), put, { ifMatch: '"1"' }), CasAdminErrorCodes.REVISION_MISMATCH);
-    expect(repository.issuers.get(created.stackId)).toMatchObject({ revision: 2 });
-  });
-
-  test("mints one-time possession challenges for members of a configured stack", async () => {
-    const { repository, service } = fixture();
-    const stack = await service.createStack(context(), { body: { displayName: "Keys" } });
-    if ("error" in stack) throw new Error(stack.error);
-    expectError(
-      await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k1", algorithm: "ES256" }),
-      CasAdminErrorCodes.NOT_FOUND,
-    );
-    await service.putIssuer(context(), { path: { stackId: stack.stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {});
-    const challenge = await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k1", algorithm: "ES256" });
-    if (!("nonce" in challenge)) throw new Error("challenge failed");
-    expect(repository.possessionChallenges.get(challenge.nonce)).toMatchObject({ kid: "k1", algorithm: "ES256" });
-    expectError(
-      await service.createPossessionChallenge(context(bob, "Bob"), { stackId: stack.stackId, kid: "k1", algorithm: "ES256" }),
-      CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED,
-    );
-    expectError(
-      await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "bad kid!", algorithm: "ES256" }),
-      CasAdminErrorCodes.INVALID_REQUEST,
-    );
-    expectError(
-      await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k1", algorithm: "PS256" }),
-      CasAdminErrorCodes.INVALID_REQUEST,
-    );
-    expect(await service.listIssuerKeys(context(), { path: { stackId: stack.stackId } })).toEqual({ keys: [] });
-  });
-
-  test("creates keys only with a verified possession proof and replays idempotency", async () => {
-    const { repository, service } = fixture();
-    const stack = await service.createStack(context(), { body: { displayName: "Keys" } });
-    if ("error" in stack) throw new Error(stack.error);
-    await service.putIssuer(context(), { path: { stackId: stack.stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {});
-    const challenge = await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k1", algorithm: "ES256" });
-    if (!("nonce" in challenge)) throw new Error("challenge failed");
-    const signed = await proof({ nonce: challenge.nonce, stackId: stack.stackId, kid: "k1" });
-    const request = { path: { stackId: stack.stackId }, body: { kid: "k1", algorithm: "ES256", ...signed } };
-    expectError(
-      await service.createIssuerKey(context(), { ...request, body: { ...request.body, publicJwk: await exportJWK((await generateKeyPair("ES256")).publicKey) } }),
-      CasAdminErrorCodes.INVALID_REQUEST,
-    );
-    const created = await service.createIssuerKey(context(), request, { idempotencyKey: "create-key-1" });
-    expect(created).toMatchObject({ kid: "k1", state: "active", revision: 1 });
-    // The one-time challenge is consumed; even an idempotent retry must mint a
-    // fresh challenge (legacy ordering validates the challenge first).
-    expectError(
-      await service.createIssuerKey(context(), request, { idempotencyKey: "create-key-1" }),
-      CasAdminErrorCodes.INVALID_REQUEST,
-    );
-    expectError(await service.createIssuerKey(context(), request), CasAdminErrorCodes.INVALID_REQUEST);
-    // A fresh challenge for an existing kid is rejected before any insert.
-    const again = await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k1", algorithm: "ES256" });
-    if (!("nonce" in again)) throw new Error("challenge failed");
-    const resigned = await proof({ nonce: again.nonce, stackId: stack.stackId, kid: "k1" });
-    expectError(
-      await service.createIssuerKey(context(), { path: { stackId: stack.stackId }, body: { kid: "k1", algorithm: "ES256", ...resigned } }),
-      CasAdminErrorCodes.KEY_STATE_CONFLICT,
-    );
-    // Reusing the idempotency key with a different valid payload conflicts.
-    const other = await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k2", algorithm: "ES256" });
-    if (!("nonce" in other)) throw new Error("challenge failed");
-    const signed2 = await proof({ nonce: other.nonce, stackId: stack.stackId, kid: "k2" });
-    expectError(
-      await service.createIssuerKey(context(), { path: { stackId: stack.stackId }, body: { kid: "k2", algorithm: "ES256", ...signed2 } }, { idempotencyKey: "create-key-1" }),
-      CasAdminErrorCodes.IDEMPOTENCY_CONFLICT,
-    );
-    expect(repository.possessionChallenges.has(challenge.nonce)).toBe(false);
-    expect(await service.listIssuerKeys(context(), { path: { stackId: stack.stackId } })).toMatchObject({ keys: [{ kid: "k1" }] });
-  });
-
-  test("enforces active-key safety and revision preconditions on key transitions", async () => {
-    const { repository, service } = fixture();
-    const stack = await service.createStack(context(), { body: { displayName: "Keys" } });
-    if ("error" in stack) throw new Error(stack.error);
-    await service.putIssuer(context(), { path: { stackId: stack.stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {});
-    const first = await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k1", algorithm: "ES256" });
-    const second = await service.createPossessionChallenge(context(), { stackId: stack.stackId, kid: "k2", algorithm: "ES256" });
-    if (!("nonce" in first) || !("nonce" in second)) throw new Error("challenge failed");
-    await service.createIssuerKey(context(), { path: { stackId: stack.stackId }, body: { kid: "k1", algorithm: "ES256", ...await proof({ nonce: first.nonce, stackId: stack.stackId, kid: "k1" }) } });
-    expectError(await service.deleteIssuerKey(context(), { path: { stackId: stack.stackId, kid: "k1" } }, { ifMatch: '"1"' }), CasAdminErrorCodes.KEY_STATE_CONFLICT);
-    await service.createIssuerKey(context(), { path: { stackId: stack.stackId }, body: { kid: "k2", algorithm: "ES256", ...await proof({ nonce: second.nonce, stackId: stack.stackId, kid: "k2" }) } });
-    expectError(await service.deleteIssuerKey(context(), { path: { stackId: stack.stackId, kid: "k1" } }, {}), CasAdminErrorCodes.PRECONDITION_REQUIRED);
-    expectError(await service.deleteIssuerKey(context(), { path: { stackId: stack.stackId, kid: "k1" } }, { ifMatch: '"9"' }), CasAdminErrorCodes.REVISION_MISMATCH);
-    expectError(await service.deleteIssuerKey(context(), { path: { stackId: stack.stackId, kid: "missing" } }, { ifMatch: '"1"' }), CasAdminErrorCodes.NOT_FOUND);
-    expect(await service.deleteIssuerKey(context(), { path: { stackId: stack.stackId, kid: "k1" }, body: { toState: "retiring" } }, { ifMatch: '"1"' }))
-      .toMatchObject({ state: "retiring", revision: 2 });
-    expect(await service.deleteIssuerKey(context(), { path: { stackId: stack.stackId, kid: "k1" }, body: { toState: "revoked" } }, { ifMatch: '"2"' }))
-      .toMatchObject({ state: "revoked", revision: 3 });
-    expect(repository.issuerKeys.get(`${stack.stackId}\nk1`)).toMatchObject({ state: "revoked", revision: 3 });
-    expect(repository.audits.map((event) => event.action)).toContain("issuer.key.deleted");
-  });
-
   test("pages control audit events with cursor and after binding", async () => {
     const { repository, service } = fixture({ listDefaultLimit: 2, listMaxLimit: 2 });
     const stack = await service.createStack(context(), { body: { displayName: "Audit" } });
@@ -576,11 +405,8 @@ describe("ControlPlaneAdminService", () => {
 class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
   readonly identities = new Map<string, ControlIdentityRecord>();
   readonly stacks = new Map<string, ControlStackRecord>();
-  readonly issuers = new Map<string, ControlIssuerRecord>();
   readonly oauthIssuers = new Map<string, ControlOAuthIssuerRecord>();
   readonly inspections: ControlInspectOAuthIssuerPlan["inspection"][] = [];
-  readonly issuerKeys = new Map<string, ControlIssuerKeyRecord>();
-  readonly possessionChallenges = new Map<string, ControlPossessionChallengeRecord>();
   readonly memberships: ControlMembershipRecord[] = [];
   readonly idempotency = new Map<string, ControlIdempotencyRecord>();
   readonly invitations = new Map<string, ControlMemberInvitationRecord>();
@@ -758,99 +584,6 @@ class MemoryControlAdminRepository implements ControlPlaneAdminRepository {
   appendAudit(record: ControlAuditRecord): Promise<void> {
     this.audits.push(record);
     return Promise.resolve();
-  }
-
-  getIssuer(stackId: string): Promise<ControlIssuerRecord | null> {
-    return Promise.resolve(this.issuers.get(stackId) ?? null);
-  }
-
-  hasIssuerElsewhere(issuer: string, stackId: string): Promise<boolean> {
-    return Promise.resolve([...this.issuers.values()]
-      .some((record) => record.issuer === issuer && record.stackId !== stackId));
-  }
-
-  commitPutIssuer(plan: ControlPutIssuerPlan): Promise<ControlPutIssuerCommitResult> {
-    const existing = this.issuers.get(plan.stackId);
-    if (plan.kind === "insert") {
-      if (existing || [...this.issuers.values()].some((record) => record.issuer === plan.issuer)) {
-        return Promise.resolve({ kind: "issuer-conflict" });
-      }
-      this.issuers.set(plan.stackId, {
-        stackId: plan.stackId,
-        issuer: plan.issuer,
-        audience: plan.audience,
-        capabilityMaxLifetimeSeconds: plan.capabilityMaxLifetimeSeconds,
-        revision: plan.nextRevision,
-      });
-      this.audits.push(plan.audit);
-      this.snapshot += 1;
-      return Promise.resolve({ kind: "created" });
-    }
-    if (!existing) return Promise.resolve({ kind: "not-found" });
-    if (existing.revision !== plan.expectedRevision) return Promise.resolve({ kind: "revision-mismatch" });
-    this.issuers.set(plan.stackId, {
-      ...existing,
-      audience: plan.audience,
-      capabilityMaxLifetimeSeconds: plan.capabilityMaxLifetimeSeconds,
-      revision: plan.nextRevision,
-    });
-    this.audits.push(plan.audit);
-    this.snapshot += 1;
-    return Promise.resolve({ kind: "updated" });
-  }
-
-  createPossessionChallenge(record: ControlPossessionChallengeRecord): Promise<void> {
-    this.possessionChallenges.set(record.nonce, record);
-    return Promise.resolve();
-  }
-
-  getUsablePossessionChallenge(nonce: string): Promise<ControlPossessionChallengeRecord | null> {
-    return Promise.resolve(this.possessionChallenges.get(nonce) ?? null);
-  }
-
-  listIssuerKeys(stackId: string): Promise<readonly ControlIssuerKeyRecord[]> {
-    return Promise.resolve([...this.issuerKeys.values()]
-      .filter((key) => key.stackId === stackId)
-      .sort((left, right) => left.kid.localeCompare(right.kid)));
-  }
-
-  getIssuerKey(stackId: string, kid: string): Promise<ControlIssuerKeyRecord | null> {
-    return Promise.resolve(this.issuerKeys.get(`${stackId}\n${kid}`) ?? null);
-  }
-
-  hasIssuerKey(stackId: string, kid: string): Promise<boolean> {
-    return Promise.resolve(this.issuerKeys.has(`${stackId}\n${kid}`));
-  }
-
-  commitCreateIssuerKey(plan: ControlCreateIssuerKeyPlan): Promise<ControlCreateIssuerKeyCommitResult> {
-    if (plan.idempotency) {
-      const key = idempotencyKey(plan.idempotency);
-      const existing = this.idempotency.get(key);
-      if (existing) return Promise.resolve({ kind: "idempotency-race", record: existing as ControlIdempotencyRecord<ControlIssuerKeyRecord> });
-      this.idempotency.set(key, plan.idempotency);
-    }
-    if (this.issuerKeys.has(`${plan.key.stackId}\n${plan.key.kid}`)) return Promise.resolve({ kind: "key-exists" });
-    if (!this.possessionChallenges.has(plan.challengeNonce)) return Promise.resolve({ kind: "challenge-unavailable" });
-    this.issuerKeys.set(`${plan.key.stackId}\n${plan.key.kid}`, plan.key);
-    this.possessionChallenges.delete(plan.challengeNonce);
-    this.audits.push(plan.audit);
-    this.snapshot += 1;
-    return Promise.resolve({ kind: "created" });
-  }
-
-  commitDeleteIssuerKey(plan: ControlDeleteIssuerKeyPlan): Promise<ControlDeleteIssuerKeyCommitResult> {
-    const key = `${plan.stackId}\n${plan.kid}`;
-    const current = this.issuerKeys.get(key);
-    if (!current) return Promise.resolve({ kind: "not-found" });
-    if (current.revision !== plan.expectedRevision) return Promise.resolve({ kind: "revision-mismatch" });
-    if (plan.enforceLastActive) {
-      const activeCount = [...this.issuerKeys.values()].filter((record) => record.stackId === plan.stackId && record.state === "active").length;
-      if (activeCount <= 1) return Promise.resolve({ kind: "last-active" });
-    }
-    this.issuerKeys.set(key, { ...current, state: plan.toState, revision: plan.nextRevision });
-    this.audits.push(plan.audit);
-    this.snapshot += 1;
-    return Promise.resolve({ kind: "deleted" });
   }
 
   getAuditEventCreatedAt(stackId: string, eventId: string): Promise<number | null> {

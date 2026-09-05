@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -72,51 +72,45 @@ describe("MembersView", () => {
 });
 
 describe("IssuerView", () => {
-  test("configures the issuer and lists keys", async () => {
-    fetchMock
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ stackId: STACK, issuer: "https://issuer.example", audience: "unidocs-cas", status: "active", revision: 1 }))
-      .mockResolvedValueOnce(json({
-        keys: [
-          { stackId: STACK, kid: "k1", algorithm: "ES256", publicJwk: { kty: "EC" }, state: "active", revision: 1 },
-        ]
-      }));
+  test("shows the connect form when no OAuth issuer is configured", async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404));
     render(<IssuerView stackId={STACK} />);
-    await waitFor(() => expect(screen.getByDisplayValue("https://issuer.example")).toBeInTheDocument());
-    expect(screen.getByText("k1")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retire" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Inspect issuer" })).toBeInTheDocument());
+    expect(screen.queryByText(/Status:/)).not.toBeInTheDocument();
   });
 
-  test("requests a possession challenge and submits the signed proof", async () => {
-    fetchMock
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ keys: [] }))
-      .mockResolvedValueOnce(json({ nonce: "nonce-123" }))
-      .mockResolvedValueOnce(json({ stackId: STACK, kid: "k1", algorithm: "ES256", publicJwk: {}, state: "active", revision: 1 }))
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ keys: [{ stackId: STACK, kid: "k1", algorithm: "ES256", publicJwk: {}, state: "active", revision: 1 }] }));
-    const user = userEvent.setup();
+  test("shows status for an active OAuth issuer", async () => {
+    fetchMock.mockResolvedValueOnce(json({
+      stackId: STACK,
+      issuer: "https://issuer.example/oauth",
+      audience: `https://cas.example/stacks/${STACK}`,
+      metadataUrl: "https://issuer.example/.well-known/oauth-authorization-server/oauth",
+      metadataType: "oauth",
+      authorizationEndpoint: "https://issuer.example/oauth/authorize",
+      tokenEndpoint: "https://issuer.example/oauth/token",
+      jwksUri: "https://issuer.example/oauth/jwks",
+      registrationEndpoint: null,
+      scopesSupported: ["cas:read"],
+      codeChallengeMethodsSupported: ["S256"],
+      status: "active",
+      verifiedAt: 10,
+      lastRefreshAt: 11,
+      lastRefreshError: null,
+      jwksDigest: "digest",
+      capabilityMaxLifetimeSeconds: 1800,
+      revision: 2,
+    }));
     render(<IssuerView stackId={STACK} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Request possession challenge" })).toBeInTheDocument());
-    await user.type(screen.getByLabelText("kid"), "k1");
-    await user.click(screen.getByRole("button", { name: "Request possession challenge" }));
-    await waitFor(() => expect(screen.getByText(/cas-possession-v1/)).toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText("Public JWK"), { target: { value: '{"kty":"EC"}' } });
-    fireEvent.change(screen.getByLabelText("Possession proof (compact JWS)"), { target: { value: "eyJhbGciOiJFUzI1NiJ9.sig" } });
-    await user.click(screen.getByRole("button", { name: "Add key" }));
-    await waitFor(() => expect(screen.getByText("k1")).toBeInTheDocument());
-    const addCall = fetchMock.mock.calls.find((call) => call[0]?.includes("/issuer/keys") && call[1]?.method === "POST");
-    expect(addCall).toBeDefined();
-    expect(JSON.parse(addCall![1]!.body as string)).toMatchObject({ kid: "k1", algorithm: "ES256" });
+    await waitFor(() => expect(screen.getByText(/Status:/)).toHaveTextContent("active"));
+    expect(screen.getByRole("button", { name: "Issuer active" })).toBeDisabled();
+    expect(screen.getByLabelText("Issuer")).toBeDisabled();
+    expect(screen.getByRole("link", { name: "https://issuer.example/oauth/jwks" }))
+      .toHaveAttribute("href", "https://issuer.example/oauth/jwks");
   });
 
   test("inspects and activates a standards-based OAuth issuer", async () => {
     fetchMock
       .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ keys: [] }))
       .mockResolvedValueOnce(json({
         inspectionId: "oinsp_1", stackId: STACK, issuer: "https://auth.example", audience: `https://cas.example/stacks/${STACK}`,
         metadataUrl: "https://auth.example/.well-known/oauth-authorization-server", metadataType: "oauth",
@@ -126,10 +120,27 @@ describe("IssuerView", () => {
         capabilityMaxLifetimeSeconds: 1800, challenge: "cas-oauth-issuer-inspection-v1\nchallenge",
         expiresAt: 1000, keys: [{ kid: "key-1", algorithm: "ES256", publicJwk: {} }], revision: 1,
       }))
-      .mockResolvedValueOnce(json({ status: "active", revision: 2 }))
-      .mockResolvedValueOnce(json({ issuer: "https://auth.example", audience: "cas", status: "active", revision: 2 }))
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404))
-      .mockResolvedValueOnce(json({ keys: [] }));
+      .mockResolvedValueOnce(json({ stackId: STACK, status: "active", revision: 2 }))
+      .mockResolvedValueOnce(json({
+        stackId: STACK,
+        issuer: "https://auth.example",
+        audience: `https://cas.example/stacks/${STACK}`,
+        metadataUrl: "https://auth.example/.well-known/oauth-authorization-server",
+        metadataType: "oauth",
+        authorizationEndpoint: "https://auth.example/authorize",
+        tokenEndpoint: "https://auth.example/token",
+        jwksUri: "https://auth.example/jwks",
+        registrationEndpoint: null,
+        scopesSupported: ["cas:read"],
+        codeChallengeMethodsSupported: ["S256"],
+        status: "active",
+        verifiedAt: 20,
+        lastRefreshAt: 21,
+        lastRefreshError: null,
+        jwksDigest: "j",
+        capabilityMaxLifetimeSeconds: 1800,
+        revision: 2,
+      }));
     const user = userEvent.setup();
     render(<IssuerView stackId={STACK} />);
     await user.type(await screen.findByLabelText("Issuer", { selector: "#oauth-issuer-url" }), "https://auth.example");
@@ -150,6 +161,7 @@ describe("ControlAuditView", () => {
       .mockResolvedValueOnce(json({
         items: [
           { eventId: "evt_1", stackId: STACK, actor: { identityIssuer: "iss", subject: "alice" }, action: "stack.created", target: STACK, requestId: "r1", traceId: null, createdAt: 1 },
+          { eventId: "evt_legacy", stackId: STACK, actor: { identityIssuer: "iss", subject: "alice" }, action: "issuer.put", target: STACK, requestId: "r0", traceId: null, createdAt: 0 },
         ], nextCursor: "cursor-2"
       }))
       .mockResolvedValueOnce(json({
@@ -160,16 +172,18 @@ describe("ControlAuditView", () => {
     const user = userEvent.setup();
     render(<ControlAuditView stackId={STACK} />);
     await waitFor(() => expect(screen.getByText("stack.created")).toBeInTheDocument());
+    expect(screen.getByText("Legacy")).toHaveAttribute("title", "Historical action from the retired issuer-key API");
     await user.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(screen.getByText("member.invited")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 });
 
-describe("placeholder views", () => {
-  test("Root Ref audit and usage show documented not-available states", () => {
+describe("remaining read views", () => {
+  test("Root Ref audit shows an empty catalog and usage remains unavailable", async () => {
+    fetchMock.mockResolvedValueOnce(json({ domains: [] }));
     const first = render(<RootRefAuditView stackId={STACK} />);
-    expect(screen.getByText(/Audit data is not available yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/No Root Ref domains have been observed yet/)).toBeInTheDocument();
     first.unmount();
     render(<UsageView stackId={STACK} />);
     expect(screen.getByText(/Usage is a tenant-plane read/)).toBeInTheDocument();

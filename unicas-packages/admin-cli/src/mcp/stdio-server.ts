@@ -183,25 +183,9 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
     return admin.deleteMember({ stackId }, { identityIssuer, subject }, etag);
   },
 
-  async get_issuer(admin, args) {
-    return (await admin.getIssuer({ stackId: str(args.stackId) })).value;
-  },
-
   async get_oauth_issuer(admin, args) {
     const result = await admin.getOAuthIssuer({ stackId: str(args.stackId) });
     return { ...result.value, etag: result.etag };
-  },
-
-  async set_issuer(admin, args) {
-    const stackId = str(args.stackId);
-    requireMatch(args.confirmIssuer, args.issuer, "confirmIssuer must exactly match issuer");
-    const etag = await resolveEtag(admin, () => admin.getIssuer({ stackId }), "issuer", args.etag);
-    const { value } = await admin.putIssuer(
-      { stackId },
-      { issuer: str(args.issuer), audience: str(args.audience) },
-      etag,
-    );
-    return value;
   },
 
   async inspect_oauth_issuer(admin, args) {
@@ -220,53 +204,6 @@ const TOOL_HANDLERS: Readonly<Record<string, ToolHandler>> = {
       activationProof: str(args.activationProof),
     }, etag);
     return { ...result.value, etag: result.etag };
-  },
-
-  async list_issuer_keys(admin, args) {
-    return admin.listIssuerKeys({ stackId: str(args.stackId) });
-  },
-
-  async create_issuer_key_challenge(admin, args) {
-    return admin.createIssuerKeyChallenge({
-      stackId: str(args.stackId),
-      kid: str(args.kid),
-      algorithm: str(args.algorithm),
-    });
-  },
-
-  async add_issuer_key(admin, args) {
-    const { value } = await admin.createIssuerKey(
-      { stackId: str(args.stackId) },
-      {
-        kid: str(args.kid),
-        algorithm: str(args.algorithm),
-        publicJwk: args.publicJwk as Record<string, unknown>,
-        possessionProof: str(args.possessionProof),
-      },
-      { idempotencyKey: args.idempotencyKey as string | undefined },
-    );
-    return value;
-  },
-
-  async transition_issuer_key(admin, args) {
-    const stackId = str(args.stackId);
-    const kid = str(args.kid);
-    const state = args.state === "revoked" ? "revoked" as const : "retiring" as const;
-    requireMatch(args.confirmKid, kid, "confirmKid must exactly match kid");
-    requireMatch(args.confirmState, state, "confirmState must exactly match state");
-    const etag = await resolveEtag(
-      admin,
-      async () => {
-        const { keys } = await admin.listIssuerKeys({ stackId });
-        const key = keys.find((entry) => entry.kid === kid);
-        if (!key) throw new Error(`issuer key '${kid}' not found on stack '${stackId}'`);
-        return { etag: `"${key.revision}"` };
-      },
-      `issuer key '${kid}'`,
-      args.etag,
-    );
-    const { value } = await admin.deleteIssuerKey({ stackId, kid }, state, etag);
-    return value;
   },
 
   async list_ref_domains(admin, args) {

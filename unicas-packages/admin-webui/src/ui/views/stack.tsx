@@ -3,11 +3,11 @@ import {
   Cable,
   Database,
   Gauge,
-  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
   ScrollText,
+  ShieldCheck,
   Users,
   X,
 } from "lucide-react";
@@ -25,7 +25,7 @@ import { RootRefAuditView, UsageView } from "./placeholder-views.js";
 const TABS = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={15} /> },
   { id: "members", label: "Members", icon: <Users size={15} /> },
-  { id: "issuer", label: "Issuer & keys", icon: <KeyRound size={15} /> },
+  { id: "issuer", label: "OAuth issuer", icon: <ShieldCheck size={15} /> },
   { id: "audit", label: "Control audit", icon: <ScrollText size={15} /> },
   { id: "root-refs", label: "Root Ref audit", icon: <Database size={15} /> },
   { id: "usage", label: "Usage", icon: <Gauge size={15} /> },
@@ -51,12 +51,12 @@ const TAB_GUIDES = {
     ],
   },
   issuer: {
-    title: "Tenant capability trust",
-    summary: "The tenant issuer signs short-lived capabilities used by workloads to call this stack's CAS data plane. UniCAS maps the verified issuer to this stack.",
+    title: "Stack OAuth issuer",
+    summary: "The stack trusts one OAuth authorization server whose issuer UniCAS discovered and proved control of. That server signs the short-lived capability tokens workloads use to call this stack's CAS data plane.",
     concepts: [
-      { term: "Issuer and audience", detail: "Issuer identifies the signing authority; audience binds tokens to this CAS service." },
-      { term: "Key ID (kid)", detail: "Selects a registered public key. Private keys stay outside UniCAS and the browser." },
-      { term: "Key states", detail: "Active keys verify current traffic; retiring keys support overlap; revoked keys are rejected after cache propagation." },
+      { term: "Discovery", detail: "UniCAS fetches the issuer's RFC 8414/OIDC metadata and JWKS itself and validates compatibility — administrators never supply metadata, audiences, or keys." },
+      { term: "Control proof", detail: "Activation requires signing UniCAS's challenge with a key the issuer currently advertises, so a stack cannot claim someone else's public issuer." },
+      { term: "Key lifecycle", detail: "Verifiers refresh keys from the discovered JWKS URI after the authority cache TTL; providers publish overlapping keys for zero-downtime rotation." },
     ],
   },
   audit: {

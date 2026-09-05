@@ -9,11 +9,8 @@ import type {
   CasRootRefEvent,
   CasStack,
   CasStackId,
-  CasStackIssuer,
-  CasStackIssuerKey,
   CasStackMember,
   CasStackOAuthIssuer,
-  CasIssuerKeyState,
 } from "./types.js";
 import type { CasAdminErrorResponse } from "./errors.js";
 import type {
@@ -109,12 +106,6 @@ export type CasAdminAcceptMemberInvitationResponse =
   | CasStackMember
   | CasAdminErrorResponse;
 
-export interface CasAdminGetIssuerRequest {
-  readonly path: CasAdminStackPath;
-}
-
-export type CasAdminGetIssuerResponse = CasStackIssuer | CasAdminErrorResponse;
-
 export interface CasAdminGetOAuthIssuerRequest {
   readonly path: CasAdminStackPath;
 }
@@ -145,52 +136,6 @@ export interface CasAdminActivateOAuthIssuerRequest {
 
 export type CasAdminActivateOAuthIssuerResponse =
   | CasStackOAuthIssuer
-  | CasAdminErrorResponse;
-
-export interface CasAdminPutIssuerRequest {
-  readonly path: CasAdminStackPath;
-  readonly headers: CasAdminMutationPreconditions;
-  readonly body: {
-    readonly issuer: string;
-    readonly audience: string;
-    readonly capabilityMaxLifetimeSeconds?: number;
-  };
-}
-
-export type CasAdminPutIssuerResponse = CasStackIssuer | CasAdminErrorResponse;
-
-export interface CasAdminListIssuerKeysRequest {
-  readonly path: CasAdminStackPath;
-}
-
-export type CasAdminListIssuerKeysResponse =
-  | { readonly keys: readonly CasStackIssuerKey[] }
-  | CasAdminErrorResponse;
-
-export interface CasAdminCreateIssuerKeyRequest {
-  readonly path: CasAdminStackPath;
-  readonly headers?: CasAdminCreateHeaders;
-  readonly body: {
-    readonly kid: string;
-    readonly algorithm: string;
-    readonly publicJwk: Readonly<Record<string, unknown>>;
-    /** Proof of private-key possession (implementation-defined challenge response). */
-    readonly possessionProof: string;
-  };
-}
-
-export type CasAdminCreateIssuerKeyResponse =
-  | CasStackIssuerKey
-  | CasAdminErrorResponse;
-
-export interface CasAdminDeleteIssuerKeyRequest {
-  readonly path: CasAdminStackPath & { readonly kid: string };
-  readonly headers: CasAdminMutationPreconditions;
-  readonly body?: { readonly toState?: Extract<CasIssuerKeyState, "retiring" | "revoked"> };
-}
-
-export type CasAdminDeleteIssuerKeyResponse =
-  | CasStackIssuerKey
   | CasAdminErrorResponse;
 
 export interface CasAdminListRefDomainsRequest {
@@ -275,7 +220,6 @@ export interface CasAdminEndpointContracts {
     request: CasAdminAcceptMemberInvitationRequest;
     response: CasAdminAcceptMemberInvitationResponse;
   };
-  getIssuer: { request: CasAdminGetIssuerRequest; response: CasAdminGetIssuerResponse };
   getOAuthIssuer: {
     request: CasAdminGetOAuthIssuerRequest;
     response: CasAdminGetOAuthIssuerResponse;
@@ -287,19 +231,6 @@ export interface CasAdminEndpointContracts {
   activateOAuthIssuer: {
     request: CasAdminActivateOAuthIssuerRequest;
     response: CasAdminActivateOAuthIssuerResponse;
-  };
-  putIssuer: { request: CasAdminPutIssuerRequest; response: CasAdminPutIssuerResponse };
-  listIssuerKeys: {
-    request: CasAdminListIssuerKeysRequest;
-    response: CasAdminListIssuerKeysResponse;
-  };
-  createIssuerKey: {
-    request: CasAdminCreateIssuerKeyRequest;
-    response: CasAdminCreateIssuerKeyResponse;
-  };
-  deleteIssuerKey: {
-    request: CasAdminDeleteIssuerKeyRequest;
-    response: CasAdminDeleteIssuerKeyResponse;
   };
   listRefDomains: {
     request: CasAdminListRefDomainsRequest;

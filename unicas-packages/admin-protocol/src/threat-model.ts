@@ -25,11 +25,12 @@ export const casAdminThreatModel = {
     issuerGloballyUnique: true,
     oneActiveIssuerPerStack: true,
   },
-  keyRotation: {
-    states: ["active", "retiring", "revoked"] as const,
-    requireProofOfPossessionOnRegister: true,
-    overlappingActiveAndRetiringAllowed: true,
-    revokedRejectedAfterPropagationBound: true,
+  jwksRotation: {
+    jwksUriAlwaysFromVerifiedMetadata: true,
+    snapshotRefreshedOnScheduleAndUnknownKid: true,
+    keysRemovedOnRefreshStopValidatingImmediately: true,
+    overlapRequiredForZeroDowntimeRotation: true,
+    neverFallBackToLegacyManualKeys: true,
   },
   confusedDeputy: {
     tenantJwtNeverAcceptedOnAdminRoutes: true,

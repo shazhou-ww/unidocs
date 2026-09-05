@@ -33,22 +33,11 @@ interface FakeStack {
   revision: number;
 }
 
-interface FakeKey {
-  stackId: string;
-  kid: string;
-  algorithm: string;
-  publicJwk: Record<string, unknown>;
-  state: "active" | "retiring" | "revoked";
-  revision: number;
-}
-
 export class FakeAdminApi {
   readonly requests: RecordedRequest[] = [];
   readonly #options: FakeAdminOptions;
   readonly stacks = new Map<string, FakeStack>();
   readonly members = new Map<string, { identityIssuer: string; subject: string }[]>();
-  readonly keys = new Map<string, FakeKey[]>();
-  issuer = new Map<string, { issuer: string; audience: string; revision: number }>();
   oauthIssuer = new Map<string, { issuer: string; audience: string; status: "pending" | "active"; revision: number }>();
   readonly sessions = new Set<string>();
   /** PKCE challenge the cli/exchange endpoint expects (registered by tests). */
@@ -130,9 +119,6 @@ export class FakeAdminApi {
     if (url.pathname === "/admin/auth/logout" && method === "POST") {
       return new Response(null, { status: 204 });
     }
-    if (url.pathname === casAdminRoutes.possessionChallenge() && method === "POST") {
-      return json({ nonce: "challenge-nonce-1", expiresAt: 1_800_000_000 });
-    }
 
     if (cookie === null || !this.sessions.has(cookie.replace("cas_admin_session=", ""))) {
       return json({ error: "ADMIN_AUTH_REQUIRED", message: "session required" }, 401);
@@ -195,18 +181,7 @@ export class FakeAdminApi {
         acceptUrl: `${FAKE_ORIGIN}/admin/invitations/inv-1/accept`,
       });
     }
-    // issuer
-    if (url.pathname === casAdminRoutes.issuer({ stackId: "cas_stack_a" }) && method === "GET") {
-      const record = this.issuer.get("cas_stack_a");
-      return record === undefined
-        ? json({ error: "NOT_FOUND" }, 404)
-        : jsonWithEtag({ stackId: "cas_stack_a", ...record });
-    }
-    if (url.pathname === casAdminRoutes.issuer({ stackId: "cas_stack_a" }) && method === "PUT") {
-      const record = { issuer: String(body?.issuer ?? ""), audience: String(body?.audience ?? ""), revision: 1 };
-      this.issuer.set("cas_stack_a", record);
-      return jsonWithEtag({ stackId: "cas_stack_a", ...record });
-    }
+    // OAuth issuer
     if (url.pathname === casAdminRoutes.oauthIssuerInspections({ stackId: "cas_stack_a" }) && method === "POST") {
       const record = {
         issuer: String(body?.issuer ?? ""),
@@ -235,32 +210,6 @@ export class FakeAdminApi {
       const record = { ...current, status: "active" as const, revision: current.revision + 1 };
       this.oauthIssuer.set("cas_stack_a", record);
       return jsonWithEtag({ stackId: "cas_stack_a", ...record });
-    }
-    // keys
-    if (url.pathname === casAdminRoutes.issuerKeys({ stackId: "cas_stack_a" }) && method === "GET") {
-      return json({ keys: this.keys.get("cas_stack_a") ?? [] });
-    }
-    if (url.pathname === casAdminRoutes.issuerKeys({ stackId: "cas_stack_a" }) && method === "POST") {
-      const key: FakeKey = {
-        stackId: "cas_stack_a",
-        kid: String(body?.kid ?? ""),
-        algorithm: String(body?.algorithm ?? ""),
-        publicJwk: (body?.publicJwk ?? {}) as Record<string, unknown>,
-        state: "active",
-        revision: 1,
-      };
-      (this.keys.get("cas_stack_a") ?? this.keys.set("cas_stack_a", []).get("cas_stack_a")!).push(key);
-      return jsonWithEtag(key);
-    }
-    const keyMatch = /^\/admin\/stacks\/cas_stack_a\/issuer\/keys\/([^/]+)$/.exec(url.pathname);
-    if (keyMatch && method === "DELETE") {
-      const kid = decodeURIComponent(keyMatch[1]!);
-      const rows = this.keys.get("cas_stack_a") ?? [];
-      const key = rows.find((entry) => entry.kid === kid);
-      if (!key) return json({ error: "NOT_FOUND" }, 404);
-      key.state = body?.toState === "revoked" ? "revoked" : "retiring";
-      key.revision += 1;
-      return jsonWithEtag(key);
     }
     // ref-domains + audit
     if (url.pathname === casAdminRoutes.refDomains({ stackId: "cas_stack_a" })) {

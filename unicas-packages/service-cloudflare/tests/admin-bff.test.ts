@@ -7,7 +7,7 @@ import type {
   ControlSessionRepository,
   StoredSession,
 } from "@unicas/service";
-import { createAdminBff, OidcClient, SessionCrypto } from "../src/admin-bff/index.js";
+import { createAdminBff, OidcClient, SessionCrypto, uiAssets } from "../src/admin-bff/index.js";
 import type { AdminBffConfig } from "../src/admin-bff/config.js";
 
 const PUBLIC_ORIGIN = "https://cas.example";
@@ -37,6 +37,14 @@ afterEach(() => {
   fakeStacks.clear();
   fakeSessions.clear();
   nextStackId = 1;
+});
+
+test("stable admin asset URLs revalidate across deployments", async () => {
+  for (const pathname of ["/assets/index.js", "/assets/index.css", "/assets/skills/unicas-cli/SKILL.md"]) {
+    const response = await uiAssets(pathname);
+    expect(response?.headers.get("Cache-Control")).toBe("no-cache");
+  }
+  await expect(uiAssets("/assets/missing.js")).resolves.toBeNull();
 });
 
 function identityKey(ctx: ControlPlaneCallContext): string {
@@ -146,28 +154,9 @@ function fakeControlPlane(): ControlPlaneOperations {
     deleteMember: error as ControlPlaneOperations["deleteMember"],
     createMemberInvitation: error as ControlPlaneOperations["createMemberInvitation"],
     acceptMemberInvitation: error as ControlPlaneOperations["acceptMemberInvitation"],
-    getIssuer: error as ControlPlaneOperations["getIssuer"],
     getOAuthIssuer: error as ControlPlaneOperations["getOAuthIssuer"],
     inspectOAuthIssuer: error as ControlPlaneOperations["inspectOAuthIssuer"],
     activateOAuthIssuer: error as ControlPlaneOperations["activateOAuthIssuer"],
-    putIssuer: async (ctx, request) => {
-      if (!requireStack(ctx, request.path.stackId)) {
-        return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
-      }
-      return {
-        stackId: request.path.stackId,
-        issuer: request.body.issuer,
-        audience: request.body.audience,
-        capabilityMaxLifetimeSeconds: request.body.capabilityMaxLifetimeSeconds ?? 28_800,
-        revision: 1,
-      };
-    },
-    createPossessionChallenge: async (ctx, request) => requireStack(ctx, request.stackId)
-      ? { nonce: "fake-possession-nonce", expiresAt: Date.now() + 60_000 }
-      : { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" },
-    listIssuerKeys: error as ControlPlaneOperations["listIssuerKeys"],
-    createIssuerKey: error as ControlPlaneOperations["createIssuerKey"],
-    deleteIssuerKey: error as ControlPlaneOperations["deleteIssuerKey"],
     listControlAuditEvents: error as ControlPlaneOperations["listControlAuditEvents"],
     recordSessionAudit: async () => undefined,
   };
@@ -331,6 +320,8 @@ async function signIn(bff: (request: Request) => Promise<Response>, provider: Mo
   const shell = await authRequest(bff, "/admin/", cookie);
   expect(shell.status).toBe(200);
   const html = await shell.text();
+  expect(html).toContain("/admin/assets/index.css?v=issuer-discovery-v1");
+  expect(html).toContain("/admin/assets/index.js?v=issuer-discovery-v1");
   const match = /<meta name="x-csrf-token" content="([^"]+)"/.exec(html);
   expect(match).not.toBeNull();
   return { cookie, csrf: match![1]! };
@@ -384,6 +375,7 @@ describe("cas-admin-webui BFF", () => {
     expect(html).toContain("Sign in");
     expect(html).toContain("/admin/auth/oidc?returnTo=%2Fadmin%2F");
     expect(html).toContain("Continue with Google");
+    expect(html).toContain("/admin/assets/index.css?v=issuer-discovery-v1");
   });
 
   test("CLI login: authorize redirects to Google, callback hands a one-time code, exchange issues a session", async () => {
@@ -989,35 +981,6 @@ describe("cas-admin-webui BFF", () => {
     );
     expect(legacy.status).toBe(200);
     expect(rpcPaths).toEqual(["/_internal/audit/refs"]);
-  });
-
-  test("possession challenge route requires session and CSRF", async () => {
-    const provider = await createMockProvider();
-    const bff = await createBff(provider);
-    const { cookie, csrf } = await signIn(bff, provider);
-    const stackId = await createStack(bff, cookie, csrf, "Stack");
-    // An issuer must exist before a key challenge can be minted.
-    const issuer = await authRequest(bff, `/admin/stacks/${stackId}/issuer`, cookie, {
-      method: "PUT",
-      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/json" },
-      body: JSON.stringify({ issuer: "https://tenant-issuer.example", audience: "unidocs-cas" }),
-    });
-    expect(issuer.status).toBe(200);
-
-    const noCsrf = await authRequest(bff, "/admin/issuer/possession-challenge", cookie, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stackId, kid: "k1", algorithm: "ES256" }),
-    });
-    expect(noCsrf.status).toBe(403);
-
-    const ok = await authRequest(bff, "/admin/issuer/possession-challenge", cookie, {
-      method: "POST",
-      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/json" },
-      body: JSON.stringify({ stackId, kid: "k1", algorithm: "ES256" }),
-    });
-    expect(ok.status).toBe(200);
-    expect(await ok.json()).toMatchObject({ nonce: expect.any(String) });
   });
 
   test("logout clears the session", async () => {

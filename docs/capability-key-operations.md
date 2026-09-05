@@ -9,9 +9,7 @@ Gateway is the only workload that receives `CAPABILITY_PRIVATE_KEY_PKCS8`.
 Doc services receive `CAPABILITY_TRUSTED_JWKS` (public keys only) for
 session-capability verification. The CAS middleware does **not** verify
 Gateway's identity: it verifies stack-issued delegated capabilities against
-the registered stack's `CAS_STACK_TRUSTED_JWKS` (managed via the control
-plane in `@unicas/service-cloudflare`, with business semantics in
-`@unicas/service`). A deployment must also set:
+the active stack issuer's discovered `jwks_uri`. A deployment must also set:
 
 - `CAPABILITY_ALGORITHM`: `ES256`;
 - `CAPABILITY_TTL_SECONDS`: `120`;

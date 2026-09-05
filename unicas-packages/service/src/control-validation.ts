@@ -7,10 +7,8 @@
 export const CONTROL_LIST_DEFAULT_LIMIT = 50;
 export const CONTROL_LIST_MAX_LIMIT = 200;
 export const INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
-export const POSSESSION_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 
 export const STACK_ID_PATTERN = /^cas_[A-Za-z0-9_-]{8,64}$/;
-export const KID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** Reserved domain used only for imported migration audit baselines. */
 export const LEGACY_DOMAIN = "_legacy";
 export const SUPPORTED_KEY_ALGORITHMS = ["ES256", "RS256", "EdDSA"] as const;
@@ -29,57 +27,8 @@ export function validateDisplayName(value: unknown): string | null {
   return null;
 }
 
-export function validateKid(value: unknown): string | null {
-  if (typeof value !== "string") return "kid must be a string";
-  if (!KID_PATTERN.test(value)) {
-    return "kid must be 1-64 URL-safe characters";
-  }
-  return null;
-}
-
-export function validateIssuer(value: unknown): string | null {
-  if (typeof value !== "string") return "issuer must be a string";
-  if (value.length === 0 || value.length > 512) {
-    return "issuer must be 1-512 characters";
-  }
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return "issuer must be an absolute URL";
-  }
-  if (url.protocol !== "https:") return "issuer must use https";
-  if (url.username || url.password) return "issuer must not contain credentials";
-  if (url.hostname.length === 0) return "issuer must have a hostname";
-  return null;
-}
-
-export function validateAudience(value: unknown): string | null {
-  if (typeof value !== "string") return "audience must be a string";
-  if (value.length === 0 || value.length > 256) {
-    return "audience must be 1-256 characters";
-  }
-  return null;
-}
-
-/** Default per-stack capability signing cap (8 hours). */
-export const DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS = 8 * 60 * 60;
 /** Fixed cap for discovered Stack OAuth issuers; not administrator configurable. */
 export const OAUTH_CAPABILITY_MAX_LIFETIME_SECONDS = 30 * 60;
-/** Hard bounds for the per-stack cap; mirrors MaximumCapabilityLifetimeSeconds. */
-export const CAPABILITY_MAX_LIFETIME_SECONDS_MIN = 60;
-export const CAPABILITY_MAX_LIFETIME_SECONDS_MAX = 7 * 24 * 60 * 60;
-
-export function validateCapabilityMaxLifetimeSeconds(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    return "capabilityMaxLifetimeSeconds must be an integer";
-  }
-  if (value < CAPABILITY_MAX_LIFETIME_SECONDS_MIN || value > CAPABILITY_MAX_LIFETIME_SECONDS_MAX) {
-    return `capabilityMaxLifetimeSeconds must be between ${CAPABILITY_MAX_LIFETIME_SECONDS_MIN} and ${CAPABILITY_MAX_LIFETIME_SECONDS_MAX}`;
-  }
-  return null;
-}
 
 /** Canonical OAuth resource/audience owned by this UniCAS deployment. */
 export function stackOAuthResource(publicOrigin: string, stackId: string): string {

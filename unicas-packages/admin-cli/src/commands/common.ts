@@ -77,31 +77,12 @@ export async function resolveStackEtag(admin: AdminClient, stackId: string): Pro
   return etag;
 }
 
-export async function resolveIssuerEtag(admin: AdminClient, stackId: string): Promise<string> {
-  const { etag } = await admin.getIssuer({ stackId });
-  if (etag.length === 0) {
-    throw new CliError(`could not resolve the current ETag for issuer of stack '${stackId}'`, 1);
-  }
-  return etag;
-}
-
 export async function resolveOAuthIssuerEtag(admin: AdminClient, stackId: string): Promise<string> {
   const { etag } = await admin.getOAuthIssuer({ stackId });
   if (etag.length === 0) {
     throw new CliError(`could not resolve the current ETag for OAuth issuer of stack '${stackId}'`, 1);
   }
   return etag;
-}
-
-export async function resolveIssuerKeyEtag(
-  admin: AdminClient,
-  stackId: string,
-  kid: string,
-): Promise<string> {
-  const { keys } = await admin.listIssuerKeys({ stackId });
-  const key = keys.find((entry) => entry.kid === kid);
-  if (!key) throw new CliError(`issuer key '${kid}' not found on stack '${stackId}'`, 1);
-  return `"${key.revision}"`;
 }
 
 // ---------------------------------------------------------------------------

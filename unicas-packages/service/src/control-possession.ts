@@ -1,83 +1,16 @@
 /**
- * Issuer key proof of possession.
+ * Compact-JWS proof helpers for the Stack OAuth issuer activation challenge.
  *
- * The operator proves they hold the private key matching the submitted public
- * JWK by signing a server-issued one-time challenge. `possessionProof` is a
- * compact JWS whose payload is the UTF-8 challenge string; the service verifies
- * it with the submitted public JWK using the declared algorithm.
- *
- * The challenge string binds version, nonce, stack, kid, and algorithm:
- *
- *   cas-possession-v1\n{nonce}\n{stackId}\n{kid}\n{alg}
- *
- * ECDSA signatures must be raw r||s (P1363) — the form WebCrypto and jose
- * produce, matching `CompactSign` from jose.
+ * The Stack operator signs the server-issued inspection challenge with a
+ * private key whose public JWK is advertised by the discovered issuer JWKS.
+ * The service verifies the compact JWS with that public JWK using the
+ * declared algorithm.
  */
 
 import { compactVerify, decodeProtectedHeader } from "jose";
 import type { JWK } from "jose";
 import { isSupportedKeyAlgorithm } from "./control-validation.js";
 import type { SupportedKeyAlgorithm } from "./control-validation.js";
-
-export const POSSESSION_CHALLENGE_VERSION = "cas-possession-v1";
-
-export interface PossessionChallengeInput {
-  readonly nonce: string;
-  readonly stackId: string;
-  readonly kid: string;
-  readonly algorithm: SupportedKeyAlgorithm;
-}
-
-export function buildPossessionChallenge(input: PossessionChallengeInput): string {
-  return [
-    POSSESSION_CHALLENGE_VERSION,
-    input.nonce,
-    input.stackId,
-    input.kid,
-    input.algorithm,
-  ].join("\n");
-}
-
-/** Parse a signed challenge string back into its fields; null when malformed. */
-export function parsePossessionChallenge(
-  challenge: string,
-): PossessionChallengeInput | null {
-  const parts = challenge.split("\n");
-  if (parts.length !== 5 || parts[0] !== POSSESSION_CHALLENGE_VERSION) return null;
-  const [version, nonce, stackId, kid, algorithm] = parts as [
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
-  if (!version || !nonce || !stackId || !kid || !isSupportedKeyAlgorithm(algorithm)) {
-    return null;
-  }
-  return { nonce, stackId, kid, algorithm };
-}
-
-/**
- * Verify a possession proof against the exact challenge string.
- * Returns false for any malformed JWS, algorithm mismatch, or bad signature.
- */
-export async function verifyPossessionProof(input: {
-  readonly challenge: string;
-  readonly algorithm: SupportedKeyAlgorithm;
-  readonly publicJwk: Record<string, unknown>;
-  readonly possessionProof: string;
-}): Promise<boolean> {
-  try {
-    const { payload } = await compactVerify(
-      input.possessionProof,
-      input.publicJwk as JWK,
-      { algorithms: [input.algorithm] },
-    );
-    return new TextDecoder().decode(payload) === input.challenge;
-  } catch {
-    return false;
-  }
-}
 
 export async function verifyCompactJwsProof(input: {
   readonly challenge: string;

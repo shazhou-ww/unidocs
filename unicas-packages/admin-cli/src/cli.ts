@@ -11,8 +11,6 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { auditCommand } from "./commands/audit.js";
 import { createContext } from "./commands/common.js";
-import { issuerCommand } from "./commands/issuer.js";
-import { keysCommand } from "./commands/keys.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { membersCommand } from "./commands/members.js";
@@ -42,17 +40,9 @@ Usage:
   unicas members invite <stackId> <email> [--idempotency-key K]
   unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]
 
-  unicas issuer get <stackId>                              Legacy compatibility
-  unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]  Deprecated
-
   unicas oauth-issuer get <stackId>
   unicas oauth-issuer inspect <stackId> <issuer>
   unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]
-
-  unicas keys list <stackId>                               Legacy compatibility
-  unicas keys challenge <stackId> <kid> <ES256|RS256|EdDSA>
-  unicas keys add <stackId> <kid> <ES256|RS256|EdDSA> --public-jwk <json> --possession-proof <jws> [--idempotency-key K]
-  unicas keys transition <stackId> <kid> <retiring|revoked> [--etag E] [--confirm-kid K] [--confirm-state S]
 
   unicas ref-domains list <stackId>
   unicas audit control <stackId> [--limit N] [--cursor C] [--after ID]
@@ -96,19 +86,9 @@ export async function main(argv: readonly string[]): Promise<void> {
       await membersCommand(ctx, subcommand, subArgs);
       return;
     }
-    case "issuer": {
-      const [subcommand, ...subArgs] = rest;
-      await issuerCommand(ctx, subcommand, subArgs);
-      return;
-    }
     case "oauth-issuer": {
       const [subcommand, ...subArgs] = rest;
       await oauthIssuerCommand(ctx, subcommand, subArgs);
-      return;
-    }
-    case "keys": {
-      const [subcommand, ...subArgs] = rest;
-      await keysCommand(ctx, subcommand, subArgs);
       return;
     }
     case "ref-domains": {

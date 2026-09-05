@@ -10,6 +10,10 @@ interface AuditPage {
   readonly nextCursor: string | null;
 }
 
+function isLegacyIssuerAction(action: string): boolean {
+  return action.startsWith("issuer.");
+}
+
 export function ControlAuditView({ stackId }: { stackId: string }) {
   const [page, setPage] = useState<AuditPage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +59,12 @@ export function ControlAuditView({ stackId }: { stackId: string }) {
             empty="No events."
             rows={page.items.map((event) => [
               new Date(event.createdAt).toLocaleString(),
-              <code key={`action-${event.eventId}`}>{event.action}</code>,
+              <span className="action-label" key={`action-${event.eventId}`}>
+                <code>{event.action}</code>
+                {isLegacyIssuerAction(event.action) ? (
+                  <span className="legacy-badge" title="Historical action from the retired issuer-key API">Legacy</span>
+                ) : null}
+              </span>,
               event.actor.subject,
               <code key={`target-${event.eventId}`}>{event.target}</code>,
               event.requestId ?? "—",

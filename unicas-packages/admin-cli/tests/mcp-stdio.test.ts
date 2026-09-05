@@ -67,7 +67,7 @@ async function startStdioServer(fetchImpl: typeof fetch): Promise<{ stdin: PassT
 }
 
 describe("unicas mcp (stdio server)", () => {
-  test("answers initialize, lists the 21 tools, and serves tools/call from the admin client", async () => {
+  test("answers initialize, lists the tool contract, and serves tools/call from the admin client", async () => {
     await seedSession();
     const server = new FakeAdminApi();
     const { stdin, reader, done } = await startStdioServer(server.fetch);
@@ -95,9 +95,10 @@ describe("unicas mcp (stdio server)", () => {
     const toolsList = await reader.next();
     expect(toolsList.id).toBe(2);
     const tools = (toolsList.result as { tools: Array<{ name: string }> }).tools;
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(15);
     expect(tools[0]?.name).toBe("whoami");
-    expect(tools.map((tool) => tool.name)).toContain("transition_issuer_key");
+    expect(tools.map((tool) => tool.name)).toContain("get_oauth_issuer");
+    expect(tools.map((tool) => tool.name)).not.toContain("add_issuer_key");
 
     stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",

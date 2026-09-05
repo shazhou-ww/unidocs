@@ -3,19 +3,13 @@ import type {
   CasAdminAcceptMemberInvitationResponse,
   CasAdminActivateOAuthIssuerRequest,
   CasAdminActivateOAuthIssuerResponse,
-  CasAdminCreateIssuerKeyRequest,
-  CasAdminCreateIssuerKeyResponse,
   CasAdminCreateMemberInvitationRequest,
   CasAdminCreateMemberInvitationResponse,
   CasAdminCreateStackRequest,
   CasAdminCreateStackResponse,
-  CasAdminDeleteIssuerKeyRequest,
-  CasAdminDeleteIssuerKeyResponse,
   CasAdminDeleteMemberRequest,
   CasAdminDeleteMemberResponse,
   CasAdminErrorResponse,
-  CasAdminGetIssuerRequest,
-  CasAdminGetIssuerResponse,
   CasAdminGetOAuthIssuerRequest,
   CasAdminGetOAuthIssuerResponse,
   CasAdminInspectOAuthIssuerRequest,
@@ -24,8 +18,6 @@ import type {
   CasAdminGetStackResponse,
   CasAdminListControlAuditEventsRequest,
   CasAdminListControlAuditEventsResponse,
-  CasAdminListIssuerKeysRequest,
-  CasAdminListIssuerKeysResponse,
   CasAdminListMembersRequest,
   CasAdminListMembersResponse,
   CasAdminListStacksRequest,
@@ -33,8 +25,6 @@ import type {
   CasAdminMeResponse,
   CasAdminPatchStackRequest,
   CasAdminPatchStackResponse,
-  CasAdminPutIssuerRequest,
-  CasAdminPutIssuerResponse,
   CasOperatorIdentityKey,
 } from "@unicas/admin-protocol";
 import type { ControlAuditAction } from "./control-audit.js";
@@ -94,7 +84,6 @@ export interface ControlPlaneOperations {
     ctx: ControlPlaneCallContext,
     request: CasAdminAcceptMemberInvitationRequest,
   ): Promise<CasAdminAcceptMemberInvitationResponse>;
-  getIssuer(ctx: ControlPlaneCallContext, request: CasAdminGetIssuerRequest): Promise<CasAdminGetIssuerResponse>;
   getOAuthIssuer(
     ctx: ControlPlaneCallContext,
     request: CasAdminGetOAuthIssuerRequest,
@@ -108,26 +97,6 @@ export interface ControlPlaneOperations {
     request: Omit<CasAdminActivateOAuthIssuerRequest, "headers">,
     mutation: ServiceMutationInput,
   ): Promise<CasAdminActivateOAuthIssuerResponse>;
-  putIssuer(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminPutIssuerRequest, "headers">,
-    mutation: ServiceMutationInput,
-  ): Promise<CasAdminPutIssuerResponse>;
-  createPossessionChallenge(
-    ctx: ControlPlaneCallContext,
-    request: { readonly stackId: string; readonly kid: string; readonly algorithm: string },
-  ): Promise<{ readonly nonce: string; readonly expiresAt: number } | CasAdminErrorResponse>;
-  listIssuerKeys(ctx: ControlPlaneCallContext, request: CasAdminListIssuerKeysRequest): Promise<CasAdminListIssuerKeysResponse>;
-  createIssuerKey(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminCreateIssuerKeyRequest, "headers">,
-    mutation?: ServiceMutationInput,
-  ): Promise<CasAdminCreateIssuerKeyResponse>;
-  deleteIssuerKey(
-    ctx: ControlPlaneCallContext,
-    request: Omit<CasAdminDeleteIssuerKeyRequest, "headers">,
-    mutation: ServiceMutationInput,
-  ): Promise<CasAdminDeleteIssuerKeyResponse>;
   listControlAuditEvents(
     ctx: ControlPlaneCallContext,
     request: CasAdminListControlAuditEventsRequest,

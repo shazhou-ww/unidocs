@@ -25,14 +25,8 @@ describe("service-cloudflare package boundary", () => {
       "deleteMember",
       "createMemberInvitation",
       "acceptMemberInvitation",
-      "getIssuer",
       "getOAuthIssuer",
       "inspectOAuthIssuer",
-      "putIssuer",
-      "createPossessionChallenge",
-      "listIssuerKeys",
-      "createIssuerKey",
-      "deleteIssuerKey",
       "listControlAuditEvents",
     ]) {
       expect(operations).toContain(`${operation}: admin.${operation}.bind(admin)`);

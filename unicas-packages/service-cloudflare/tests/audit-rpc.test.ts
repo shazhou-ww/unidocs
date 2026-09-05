@@ -21,10 +21,10 @@ vi.mock("../src/admin-bff/index.js", () => ({
       const headers = new Headers();
       const key = request.headers.get("X-Test-Audit-Reader-Key");
       if (key !== null) headers.set("X-CAS-Audit-Reader-Key", key);
-      return options.auditReader.fetch(new Request(target, {
+      return options.auditReader.fetch(target, {
         method: request.method,
         headers,
-      }));
+      });
     };
   },
   uiAssets: () => null,

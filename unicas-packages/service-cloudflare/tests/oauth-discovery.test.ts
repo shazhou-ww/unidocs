@@ -105,6 +105,26 @@ describe("Cloudflare Stack OAuth discovery", () => {
     expect(fetcher.mock.calls.some(([input]) => String(input) === JWKS)).toBe(false);
   });
 
+  test("fetches runtime JWKS only through the discovery allowlist", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => json(jwks));
+    const port = new CloudflareOAuthDiscoveryPort({
+      allowedOrigins: ["https://keys.example"],
+      fetcher,
+    });
+    const options = {
+      headers: new Headers({ Accept: "application/json" }),
+      method: "GET" as const,
+      redirect: "manual" as const,
+      signal: new AbortController().signal,
+    };
+
+    await expect(port.fetchJwks(JWKS, options).then((response) => response.json()))
+      .resolves.toEqual(jwks);
+    await expect(port.fetchJwks("https://other.example/jwks", options))
+      .rejects.toThrow("jwks_uri origin is not allowlisted");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   test("rejects redirects and oversized responses", async () => {
     const redirecting = new CloudflareOAuthDiscoveryPort({
       allowedOrigins: ["https://auth.example"],

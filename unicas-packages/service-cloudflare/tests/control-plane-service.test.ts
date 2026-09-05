@@ -60,15 +60,6 @@ async function createStack(service: ControlPlaneOperations, identity = alice, di
   if ("error" in response) throw new Error(response.error);
   return response.stackId;
 }
-async function proof(input: { nonce: string; stackId: string; kid: string }) {
-  const pair = await generateKeyPair("ES256");
-  const challenge = ["cas-possession-v1", input.nonce, input.stackId, input.kid, "ES256"].join("\n");
-  return {
-    publicJwk: await exportJWK(pair.publicKey),
-    possessionProof: await new CompactSign(new TextEncoder().encode(challenge))
-      .setProtectedHeader({ alg: "ES256" }).sign(pair.privateKey),
-  };
-}
 
 describe("D1-backed control-plane service", () => {
   test("manages identities, stack visibility, metadata revisions, and membership authorization", async () => {
@@ -143,19 +134,6 @@ describe("D1-backed control-plane service", () => {
     expect(await db.prepare(
       "SELECT COUNT(*) AS count FROM cas_control_audit_events WHERE stack_id = ? AND action = 'member.invitation.accepted'",
     ).bind(stackId).first()).toEqual({ count: 1 });
-  });
-
-  test("enforces issuer uniqueness, immutability, preconditions, and capability lifetime bounds", async () => {
-    const { service } = await createService();
-    const a = await createStack(service, alice, "A");
-    const b = await createStack(service, alice, "B");
-    expect(await service.putIssuer(ctx(alice), { path: { stackId: a }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {}))
-      .toMatchObject({ capabilityMaxLifetimeSeconds: 28800, revision: 1 });
-    expectError(await service.putIssuer(ctx(alice), { path: { stackId: b }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {}), CasAdminErrorCodes.ISSUER_CONFLICT);
-    expectError(await service.putIssuer(ctx(alice), { path: { stackId: a }, body: { issuer: "https://issuer.example/other", audience: "cas" } }, { ifMatch: '"1"' }), CasAdminErrorCodes.INVALID_REQUEST);
-    expect(await service.putIssuer(ctx(alice), { path: { stackId: a }, body: { issuer: "https://issuer.example/a", audience: "cas-v2", capabilityMaxLifetimeSeconds: 3600 } }, { ifMatch: '"1"' }))
-      .toMatchObject({ audience: "cas-v2", capabilityMaxLifetimeSeconds: 3600, revision: 2 });
-    expectError(await service.putIssuer(ctx(alice), { path: { stackId: a }, body: { issuer: "https://issuer.example/a", audience: "cas", capabilityMaxLifetimeSeconds: 5 } }, { ifMatch: '"2"' }), CasAdminErrorCodes.INVALID_REQUEST);
   });
 
   test("reads persisted OAuth issuer state only for Stack members", async () => {
@@ -261,8 +239,8 @@ describe("D1-backed control-plane service", () => {
       "SELECT used_at FROM cas_oauth_issuer_inspections WHERE inspection_id = ?",
     ).bind(result.inspectionId).first()).toEqual({ used_at: 1_000 });
     expect(await db.prepare(
-      "SELECT kid, algorithm FROM cas_stack_oauth_issuer_keys WHERE stack_id = ?",
-    ).bind(stackId).first()).toEqual({ kid: "key-1", algorithm: "ES256" });
+      "SELECT jwks_uri FROM cas_stack_oauth_issuers WHERE stack_id = ?",
+    ).bind(stackId).first()).toEqual({ jwks_uri: "https://issuer.example/oauth/jwks" });
     expect(await db.prepare(
       "SELECT action FROM cas_control_audit_events WHERE stack_id = ? AND action = 'oauth_issuer.activated'",
     ).bind(stackId).first()).toEqual({ action: "oauth_issuer.activated" });
@@ -272,7 +250,7 @@ describe("D1-backed control-plane service", () => {
     }, { ifMatch: '"2"' }), CasAdminErrorCodes.NOT_FOUND);
   });
 
-  test("enforces issuer ownership across legacy and OAuth registries", async () => {
+  test("enforces issuer ownership across stacks in the OAuth registry", async () => {
     const oauthDiscovery: OAuthDiscoveryPort = {
       inspectIssuer: async ({ issuer }) => ({
         metadata: {
@@ -292,25 +270,17 @@ describe("D1-backed control-plane service", () => {
       }),
     };
     const { service } = await createService(() => 1_000, oauthDiscovery);
-    const legacyStack = await createStack(service, alice, "Legacy");
-    const oauthStack = await createStack(service, alice, "OAuth");
-    await service.putIssuer(ctx(alice), {
-      path: { stackId: legacyStack },
-      body: { issuer: "https://shared.example", audience: "cas" },
-    }, {});
-    expectError(await service.inspectOAuthIssuer(ctx(alice), {
-      path: { stackId: oauthStack },
-      body: { issuer: "https://shared.example" },
-    }), CasAdminErrorCodes.ISSUER_CONFLICT);
-    await service.inspectOAuthIssuer(ctx(alice), {
-      path: { stackId: oauthStack },
+    const firstStack = await createStack(service, alice, "First");
+    const secondStack = await createStack(service, alice, "Second");
+    const inspected = await service.inspectOAuthIssuer(ctx(alice), {
+      path: { stackId: firstStack },
       body: { issuer: "https://oauth.example" },
     });
-    const thirdStack = await createStack(service, alice, "Third");
-    expectError(await service.putIssuer(ctx(alice), {
-      path: { stackId: thirdStack },
-      body: { issuer: "https://oauth.example", audience: "cas" },
-    }, {}), CasAdminErrorCodes.ISSUER_CONFLICT);
+    if (!("challenge" in inspected)) throw new Error("first inspection failed");
+    expectError(await service.inspectOAuthIssuer(ctx(alice), {
+      path: { stackId: secondStack },
+      body: { issuer: "https://oauth.example" },
+    }), CasAdminErrorCodes.ISSUER_CONFLICT);
   });
 
   test("maps concurrent first OAuth issuer inspections to a revision mismatch", async () => {
@@ -362,25 +332,6 @@ describe("D1-backed control-plane service", () => {
     expect(results.filter((result) => "error" in result)).toEqual([
       expect.objectContaining({ error: CasAdminErrorCodes.REVISION_MISMATCH }),
     ]);
-  }, 10_000);
-
-  test("requires possession proof and safe issuer-key lifecycle transitions", async () => {
-    const { service } = await createService();
-    const stackId = await createStack(service);
-    await service.putIssuer(ctx(alice), { path: { stackId }, body: { issuer: "https://issuer.example/a", audience: "cas" } }, {});
-    const challenge = await service.createPossessionChallenge(ctx(alice), { stackId, kid: "k1", algorithm: "ES256" });
-    if (!("nonce" in challenge)) throw new Error("challenge failed");
-    const signed = await proof({ nonce: challenge.nonce, stackId, kid: "k1" });
-    const other = await generateKeyPair("ES256");
-    expectError(await service.createIssuerKey(ctx(alice), { path: { stackId }, body: { kid: "k1", algorithm: "ES256", publicJwk: await exportJWK(other.publicKey), possessionProof: signed.possessionProof } }), CasAdminErrorCodes.INVALID_REQUEST);
-    expect(await service.createIssuerKey(ctx(alice), { path: { stackId }, body: { kid: "k1", algorithm: "ES256", ...signed } })).toMatchObject({ kid: "k1", state: "active" });
-    expectError(await service.deleteIssuerKey(ctx(alice), { path: { stackId, kid: "k1" } }, { ifMatch: '"1"' }), CasAdminErrorCodes.KEY_STATE_CONFLICT);
-    const c2 = await service.createPossessionChallenge(ctx(alice), { stackId, kid: "k2", algorithm: "ES256" });
-    if (!("nonce" in c2)) throw new Error("challenge failed");
-    const signed2 = await proof({ nonce: c2.nonce, stackId, kid: "k2" });
-    await service.createIssuerKey(ctx(alice), { path: { stackId }, body: { kid: "k2", algorithm: "ES256", ...signed2 } });
-    expect(await service.deleteIssuerKey(ctx(alice), { path: { stackId, kid: "k1" }, body: { toState: "retiring" } }, { ifMatch: '"1"' }))
-      .toMatchObject({ state: "retiring", revision: 2 });
   }, 10_000);
 
   test("records audit context, makes creates idempotent, and snapshot-binds cursors", async () => {

@@ -25,7 +25,7 @@ export {
   StackCapabilityVerifier,
 } from "./tenant-auth.js";
 export type {
-  RegisteredStackKey,
+  JwksFetcher,
   ResolvedStackAuthority,
   StackAuthEvent,
   StackAuthorityResolver,
@@ -144,44 +144,29 @@ export {
   generateSessionId,
   generateStackId,
 } from "./control-ids.js";
-export { buildStackJwks } from "./control-jwks.js";
 export {
-  buildPossessionChallenge,
   extractJwsPayload,
   extractJwsProtectedHeader,
-  parsePossessionChallenge,
-  POSSESSION_CHALLENGE_VERSION,
   validatePublicJwk,
   verifyCompactJwsProof,
-  verifyPossessionProof,
 } from "./control-possession.js";
-export type { PossessionChallengeInput } from "./control-possession.js";
 export {
   canonicalJson,
-  CAPABILITY_MAX_LIFETIME_SECONDS_MAX,
-  CAPABILITY_MAX_LIFETIME_SECONDS_MIN,
   CONTROL_LIST_DEFAULT_LIMIT,
   CONTROL_LIST_MAX_LIMIT,
-  DEFAULT_CAPABILITY_MAX_LIFETIME_SECONDS,
   OAUTH_CAPABILITY_MAX_LIFETIME_SECONDS,
   INVITATION_TTL_MS,
   isSupportedKeyAlgorithm,
-  KID_PATTERN,
   LEGACY_DOMAIN,
   normalizeEmailConstraint,
   parseControlListLimit,
-  POSSESSION_CHALLENGE_TTL_MS,
   sha256Hex,
   stackOAuthResource,
   STACK_ID_PATTERN,
   SUPPORTED_KEY_ALGORITHMS,
-  validateAudience,
-  validateCapabilityMaxLifetimeSeconds,
   validateDisplayName,
   validateEmailConstraint,
   validateInvitationToken,
-  validateIssuer,
-  validateKid,
 } from "./control-validation.js";
 export type { SupportedKeyAlgorithm } from "./control-validation.js";
 export {
@@ -218,14 +203,10 @@ export type {
   ControlAcceptMemberInvitationCommitResult,
   ControlAcceptMemberInvitationPlan,
   ControlAuditRecord,
-  ControlCreateIssuerKeyCommitResult,
-  ControlCreateIssuerKeyPlan,
   ControlCreateMemberInvitationCommitResult,
   ControlCreateMemberInvitationPlan,
   ControlCreateStackCommitResult,
   ControlCreateStackPlan,
-  ControlDeleteIssuerKeyCommitResult,
-  ControlDeleteIssuerKeyPlan,
   ControlDeleteMemberCommitResult,
   ControlDeleteMemberPlan,
   ControlIdempotencyRecord,
@@ -233,8 +214,6 @@ export type {
   ControlIdentityRecord,
   ControlInspectOAuthIssuerCommitResult,
   ControlInspectOAuthIssuerPlan,
-  ControlIssuerKeyRecord,
-  ControlIssuerRecord,
   ControlOAuthIssuerRecord,
   ControlOAuthIssuerInspectionRecord,
   ControlMembershipRecord,
@@ -244,8 +223,5 @@ export type {
   ControlPatchStackPlan,
   ControlPlaneAdminRepository,
   ControlPlaneAdminServiceOptions,
-  ControlPossessionChallengeRecord,
-  ControlPutIssuerCommitResult,
-  ControlPutIssuerPlan,
   ControlStackRecord,
 } from "./control-admin.js";

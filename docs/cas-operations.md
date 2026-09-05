@@ -58,7 +58,7 @@ service request count + 5xx rate, tenant 401/403 rate by error code
 | Service 5xx rate | > 1% of requests over 5 min | P1 | Check `wrangler deployments list` for `unidocs-cas`; rollback if a recent deploy regressed |
 | `fail_closed` burst | `cas_stack_authorization` kind=`fail_closed` ≥ 3 in 5 min | P1 | D1 reachability from the tenant worker; registry row integrity |
 | `registry_unavailable` 401/403 rate | > 0.5% of tenant requests over 5 min | P1 | Same as above |
-| Unknown-issuer spike | `unknown_issuer` > threshold after a rotation | P2 | Issuer/keys registered? rotation SQL applied to the right stack? |
+| Unknown-issuer spike | `unknown_issuer` > threshold after a rotation | P2 | Issuer active? discovery still resolves to the expected `jwks_uri`? |
 | Key age | any active issuer key older than 90 days | P2 | Run the rotation drill |
 | Backup failure | scheduled D1 export fails | P2 | Re-run export; verify file non-empty (`--remote`!) |
 | Admin OIDC failures | login error rate > threshold | P2 | Google client config, redirect URI, session keys |
@@ -120,34 +120,38 @@ Backups were verified 2026-08-26 (control 4.1 KB, tenant 2.0 KB, content
 inspected). Restore was not executed against production (destructive); a
 throwaway-D1 restore drill is a pending ops item.
 
-### Issuer key rotation
+### Stack OAuth issuer key rotation
 
-Verified live 2026-08-26 (see round-9 notes). The `state` CHECK constraint
-allows only `active` / `retiring` / `revoked` (no `retired`).
+Stack signing keys come exclusively from the active issuer's discovered
+`jwks_uri`; UniCAS has no manual or copied active-key table. Rotation happens
+at the authorization server: it publishes the new key alongside the old one
+(overlap), and UniCAS refreshes the remote JWKS after the authority cache TTL
+and when an unknown `kid` is encountered outside the fetch cooldown.
 
-1. Generate a fresh ES256 pair; register the **public JWK** (kty/x/y/crv —
-   the middleware adds kid/alg/use itself) in `cas_stack_issuer_keys` with
-   state `active`, `ON CONFLICT(stack_id, kid) DO UPDATE` (idempotent).
-2. Sign a capability with the NEW private key; it must verify at the service
-   after the 30 s cache window (expect 404 `NODE_NOT_FOUND` for an absent
-   node, i.e. authentication passed). The OLD key keeps working throughout
-   (coexistence window).
-3. Retire the old key (`state='retiring'` → after the 60 s hard bound,
-   `state='revoked'`) or delete the drill row entirely.
-4. Keep the private key out of the repo; the drill harness persists it under
-   `.wrangler/` (gitignored) and deletes it after the drill.
+Verification behavior:
 
-Revocation guarantee: a revoked key stops verifying within 60 s (the verifier
-never serves a cached record past the hard bound unless a registry refresh
-succeeds first — and a refresh that no longer lists the key fails closed).
+- A key removed from a successfully refreshed JWKS stops validating immediately.
+- Within the cache TTL the cached JWKS keeps verifying; past the hard stale
+  bound a failed registry refresh fails closed (`registry_unavailable`) — it
+   never silently falls back to a manual key set.
+
+Operational checks:
+
+1. Confirm the stack's OAuth issuer is `active`
+   (`unicas oauth-issuer get <stackId>`).
+2. After the provider rotates keys with overlap, confirm traffic still
+   verifies with the new key after the refresh interval.
+3. On suspected compromise, rotate the provider signing key, then verify the
+   provider JWKS no longer lists the compromised `kid` and old tokens fail
+   after the cache TTL.
 
 ### Key compromise
 
-1. Add a replacement public key to `cas_stack_issuer_keys` (active).
-2. Switch signers to the replacement private key.
-3. Wait ≥ 60 s (revocation bound), then set the compromised key
-   `state='revoked'`.
-4. Rotate any secrets that may share the compromise (audit reader key,
+1. Rotate the authorization server's signing key so the compromised key stops
+   being advertised (publish the replacement with overlap first).
+2. Wait for UniCAS to refresh the remote JWKS and confirm tokens signed by the
+   compromised `kid` are rejected.
+3. Rotate any secrets that may share the compromise (audit reader key,
    session encryption keys) and review `cas_control_audit_events` for the
    affected window.
 

@@ -3,14 +3,13 @@
  *
  * Owns: Google OIDC login/callback/logout, encrypted session cookies, CSRF
  * and origin checks, the frozen control-plane API routes, the invitation
- * accept page redirect, the possession-challenge helper route, and SPA shell
- * serving. Persistence and control operations are injected by the deployment.
+ * accept page redirect, and SPA shell serving. Persistence and control
+ * operations are injected by the deployment.
  */
 
 import {
   CasAdminErrorCodes,
   casAdminErrorHttpStatus,
-  casAdminRoutes,
   formatCasAdminETag,
   matchCasAdminRoute,
 } from "@unicas/admin-protocol";
@@ -24,6 +23,8 @@ import type {
   ControlSessionRepository,
 } from "@unicas/service";
 import type { AdminBffConfig } from "./config.js";
+const ADMIN_ASSET_CACHE_BUSTER = "issuer-discovery-v1";
+
 import {
   generateOidcNonce,
   generateOidcState,
@@ -154,10 +155,6 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
       return handleInvitationPage(request, inviteMatch[1]!);
     }
 
-    if (pathname === casAdminRoutes.possessionChallenge() && method === "POST") {
-      return handlePossessionChallenge(request);
-    }
-
     if (pathname === "/admin" || pathname === "/admin/") {
       return handleShell(request);
     }
@@ -206,7 +203,7 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sign in - CAS Admin</title>
-  <link rel="stylesheet" href="/admin/assets/index.css" />
+  <link rel="stylesheet" href="/admin/assets/index.css?v=${ADMIN_ASSET_CACHE_BUSTER}" />
 </head>
 <body>
   <header class="app-header">
@@ -495,22 +492,6 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
     });
   }
 
-  async function handlePossessionChallenge(request: Request): Promise<Response> {
-    const auth = await requireAuthenticated(request);
-    if (auth instanceof Response) return auth;
-    if (!(await passCsrf(request, auth.payload))) return csrfRejected();
-    const body = await readJsonBody<{ stackId?: unknown; kid?: unknown; algorithm?: unknown }>(request);
-    if (!body || typeof body.stackId !== "string" || typeof body.kid !== "string" || typeof body.algorithm !== "string") {
-      return adminErrorResponse(CasAdminErrorCodes.INVALID_REQUEST, "stackId, kid, and algorithm are required");
-    }
-    const result = await controlPlane.createPossessionChallenge(serviceContext(auth.payload, request), {
-      stackId: body.stackId,
-      kid: body.kid,
-      algorithm: body.algorithm,
-    });
-    return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
-  }
-
   async function handleShell(request: Request): Promise<Response> {
     const sessionId = readSessionId(request);
     const payload = sessionId ? await readSession(sessionId) : null;
@@ -530,11 +511,11 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="x-csrf-token" content="${payload.csrfToken}" />
   <title>CAS Admin</title>
-  <link rel="stylesheet" href="/admin/assets/index.css" />
+  <link rel="stylesheet" href="/admin/assets/index.css?v=${ADMIN_ASSET_CACHE_BUSTER}" />
 </head>
 <body>
   <div id="root"></div>
-  <script type="module" src="/admin/assets/index.js"></script>
+  <script type="module" src="/admin/assets/index.js?v=${ADMIN_ASSET_CACHE_BUSTER}"></script>
 </body>
 </html>`;
     return new Response(html, {
@@ -736,10 +717,6 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         const result = await controlPlane.acceptMemberInvitation(ctx, { path: { token: route.token } });
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
-      case "getIssuer": {
-        const result = await controlPlane.getIssuer(ctx, { path: { stackId: route.stackId } });
-        return jsonWithEtag(result);
-      }
       case "getOAuthIssuer": {
         const result = await controlPlane.getOAuthIssuer(ctx, { path: { stackId: route.stackId } });
         return jsonWithEtag(result);
@@ -766,65 +743,6 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
             inspectionId: String(body.inspectionId ?? ""),
             activationProof: String(body.activationProof ?? ""),
           },
-        }, mutation);
-        return jsonWithEtag(result);
-      }
-      case "putIssuer": {
-        const body = await readJsonBody<{
-          issuer?: unknown;
-          audience?: unknown;
-          capabilityMaxLifetimeSeconds?: unknown;
-        }>(request);
-        if (!body) return invalidRequest("JSON body is required");
-        const nextBody: {
-          issuer: string;
-          audience: string;
-          capabilityMaxLifetimeSeconds?: number;
-        } = { issuer: String(body.issuer ?? ""), audience: String(body.audience ?? "") };
-        if (body.capabilityMaxLifetimeSeconds !== undefined) {
-          nextBody.capabilityMaxLifetimeSeconds = Number(body.capabilityMaxLifetimeSeconds);
-        }
-        const result = await controlPlane.putIssuer(ctx, {
-          path: { stackId: route.stackId },
-          body: nextBody,
-        }, mutation);
-        return jsonWithEtag(result);
-      }
-      case "listIssuerKeys": {
-        const result = await controlPlane.listIssuerKeys(ctx, { path: { stackId: route.stackId } });
-        return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
-      }
-      case "createIssuerKey": {
-        const body = await readJsonBody<{
-          kid?: unknown;
-          algorithm?: unknown;
-          publicJwk?: unknown;
-          possessionProof?: unknown;
-        }>(request);
-        if (!body || typeof body.publicJwk !== "object" || body.publicJwk === null || Array.isArray(body.publicJwk)) {
-          return invalidRequest("kid, algorithm, publicJwk, and possessionProof are required");
-        }
-        const result = await controlPlane.createIssuerKey(ctx, {
-          path: { stackId: route.stackId },
-          body: {
-            kid: String(body.kid ?? ""),
-            algorithm: String(body.algorithm ?? ""),
-            publicJwk: body.publicJwk as Record<string, unknown>,
-            possessionProof: String(body.possessionProof ?? ""),
-          },
-        }, mutation);
-        return jsonWithEtag(result);
-      }
-      case "deleteIssuerKey": {
-        const body = await readJsonBody<{ toState?: unknown }>(request);
-        const toState = body && body.toState === "revoked"
-          ? "revoked" as const
-          : body && body.toState === "retiring"
-            ? "retiring" as const
-            : undefined;
-        const result = await controlPlane.deleteIssuerKey(ctx, {
-          path: { stackId: route.stackId, kid: route.kid },
-          body: toState ? { toState } : undefined,
         }, mutation);
         return jsonWithEtag(result);
       }

@@ -68,15 +68,9 @@ pnpm --filter @unicas/admin-cli unicas login
 | `unicas members list <stackId> [--limit N] [--cursor C]` | `list_members` |
 | `unicas members invite <stackId> <email> [--idempotency-key K]` | `invite_member` |
 | `unicas members remove <stackId> --identity-issuer <url> --subject <sub> [--etag E] [--confirm-subject S]` | `remove_member` |
-| `unicas issuer get <stackId>` | `get_issuer` |
 | `unicas oauth-issuer get <stackId>` | `get_oauth_issuer` |
 | `unicas oauth-issuer inspect <stackId> <issuer>` | `inspect_oauth_issuer` |
 | `unicas oauth-issuer activate <stackId> <inspectionId> --activation-proof <jws> [--etag E]` | `activate_oauth_issuer` |
-| `unicas issuer set <stackId> <issuer> <audience> [--etag E] [--confirm-issuer I]` (deprecated) | `set_issuer` |
-| `unicas keys list <stackId>` | `list_issuer_keys` |
-| `unicas keys challenge <stackId> <kid> <ES256\|RS256\|EdDSA>` | `create_issuer_key_challenge` |
-| `unicas keys add <stackId> <kid> <ES256\|RS256\|EdDSA> --public-jwk <json> --possession-proof <jws> [--idempotency-key K]` | `add_issuer_key` |
-| `unicas keys transition <stackId> <kid> <retiring\|revoked> [--etag E] [--confirm-kid K] [--confirm-state S]` | `transition_issuer_key` |
 | `unicas ref-domains list <stackId>` | `list_ref_domains` |
 | `unicas audit control <stackId> [--limit N] [--cursor C] [--after ID]` | `list_control_audit_events` |
 | `unicas audit root-domain-refs <stackId> <refDomain> [--tenant-id T] [--limit N] [--cursor C]` | `list_root_domain_refs` |
@@ -90,24 +84,24 @@ diagnostics go to stderr.
 
 ## Guardrails
 
-- **ETags.** `update_stack`, `remove_member`, `activate_oauth_issuer`, `set_issuer`, and
-  `transition_issuer_key` need the current ETag. When `--etag` is omitted the
-  CLI reads it first (`get_stack` / `get_issuer` / `list_issuer_keys`).
-  `set_issuer` uses `*` only when no issuer exists yet.
+- **ETags.** `update_stack`, `remove_member`, and `activate_oauth_issuer`
+  need the current ETag. When `--etag` is omitted the CLI reads it first
+  (`get_stack` / `get_oauth_issuer`).
 - **Confirmations.** Destructive operations require their `--confirm-*` flag
   to exactly match the target. Without the flag and a TTY, the CLI prompts;
   without the flag and no TTY (scripts), the command fails.
-- **Idempotency.** `create_stack`, `invite_member`, and `add_issuer_key`
-  auto-generate a stable `unicas-cli:<uuid>` idempotency key when
-  `--idempotency-key` is omitted.
-- **Never secrets on the wire to the CLI.** Issuer keys accept only public JWK
-  + a compact-JWS possession proof; private key material is never a CLI input.
+- **Idempotency.** `create_stack` and `invite_member` auto-generate a stable
+  `unicas-cli:<uuid>` idempotency key when `--idempotency-key` is omitted.
+- **Never secrets on the wire to the CLI.** `activate_oauth_issuer` accepts
+  only a compact-JWS activation proof signed off-CLI with a private key the
+  discovered issuer advertises; private key material is never a CLI input, and
+  no JWK upload path exists.
 
 ## stdio MCP server (`unicas mcp`)
 
-Spawns a stdio MCP server that advertises the exact same 21 tools as the remote
-control plane and forwards each `tools/call` over the authenticated Streamable
-HTTP connection. Only MCP protocol frames go to stdout.
+Spawns a stdio MCP server that advertises the exact same tool contract as the
+remote control plane and forwards each `tools/call` over the authenticated
+Streamable HTTP connection. Only MCP protocol frames go to stdout.
 
 ```json
 {

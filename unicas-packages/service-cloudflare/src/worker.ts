@@ -272,8 +272,14 @@ function verifierFor(env: Env): StackCapabilityVerifier {
   const key = env as object;
   let verifier = verifiers.get(key);
   if (!verifier) {
+    const jwksPort = new CloudflareOAuthDiscoveryPort({
+      allowedOrigins: parseOriginAllowlist(env.CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS),
+    });
     verifier = new StackCapabilityVerifier({
       repository: new AuthorityRepository(env.CAS_CONTROL_DB),
+      jwksFetcher: (url, options) => new URL(url).protocol === "data:"
+        ? fetch(url, options)
+        : jwksPort.fetchJwks(url, options),
       onEvent: (event) => {
         console.log(JSON.stringify({ event: "cas_stack_authorization", ...event }));
       },
@@ -304,10 +310,10 @@ function keyedActorPort(namespace: DurableObjectNamespace, timing?: TimingSink):
 
 function localAuditReader(env: Env): Fetcher {
   return {
-    async fetch(request) {
+    async fetch(request, init) {
       const normalized = request instanceof Request
-        ? request
-        : new Request(request.toString());
+        ? new Request(request, init)
+        : new Request(request.toString(), init);
       await ensureTenantSchema(env);
       return handleAuditRpc(normalized, env, new URL(normalized.url));
     },

@@ -7,9 +7,9 @@ contract only — no reference provider in v1.
 
 ## Purpose
 
-A stack's tenant issuer (configured on the control plane via `issuer set
-<stackId> <issuer> <audience>`) must act as an **OAuth 2.0 authorization
-server** that:
+A stack's tenant issuer (registered on the control plane through Stack OAuth
+discovery: `unicas oauth-issuer inspect/activate <stackId> <issuer>`) must act
+as an **OAuth 2.0 authorization server** that:
 
 1. serves RFC 8414 discovery at `{issuer}/.well-known/openid-configuration`;
 2. accepts RFC 7591 dynamic client registration (public clients, no secrets);
@@ -93,7 +93,7 @@ The access token is a capability JWT:
 
 ```jsonc
 // protected header
-{ "alg": "ES256", "kid": "<kid registered on the control plane>", "typ": "unidocs-cap+jwt" }
+{ "alg": "ES256", "kid": "<kid advertised at jwks_uri>", "typ": "unidocs-cap+jwt" }
 // claims (per @unicas/tenant-protocol CapabilityClaims)
 {
   "ver": 1, "iss": "<configured issuer>", "sub": "<opaque user identity>",
@@ -110,8 +110,9 @@ Contract rules:
 - `tenantId` and `permissions` are decided by the provider from the
   authenticated identity and role; permissions use the canonical
   `tenants:{tenantId}:cas:{read|write|manage}` vocabulary.
-- Lifetime must not exceed the stack's configured capability cap (default
-  8 hours, maximum 7 days); the CAS verifier rejects over-cap tokens.
+- Lifetime must not exceed the stack authority's
+  `capabilityMaxLifetimeSeconds` (server policy for discovered Stack OAuth
+  issuers, 30 minutes); the CAS verifier rejects over-lifetime tokens.
 - Capabilities that write Root Refs must carry a valid `refDomain` claim
   (see `validateRefDomainClaim` in tenant-protocol); whether a user receives
   one is the provider's decision.
@@ -122,13 +123,13 @@ Contract rules:
 
 ## 5. JWKS
 
-`jwks_uri` must serve the **same public keys** registered on the control plane
-(`unicas keys list <stackId>`). The CAS verifier validates against the
-control-plane registry (30s cache); the tool validates against `jwks_uri`.
-Divergence produces confusing failures ("tool verified, CAS rejected"), so the
-contract requires the two key sources to stay in sync — the provider signs
-only with keys registered on the control plane and publishes exactly those
-keys at `jwks_uri`.
+`jwks_uri` is the **single source of signing keys**. UniCAS records the URI
+from verified issuer discovery and the CAS verifier fetches keys from it,
+with remote caching and refresh on authority-cache expiry or an unknown `kid`.
+The provider must therefore rotate keys with overlap — publish the new key
+alongside the old one, then remove the old key only after cached verifiers have
+refreshed. Keys removed from a successful refresh stop validating immediately.
+There is no separate manual or copied active-key registry.
 
 ## 6. Error semantics
 
@@ -147,8 +148,8 @@ keys at `jwks_uri`.
 - [ ] Accept RFC 7591 registration; return `client_id` for public clients.
 - [ ] Authorization endpoint: PKCE required, `scope=cas:manage` honored or
       downgraded, tenant decided from identity, consent screen.
-- [ ] Token endpoint: issue capability JWTs signed with a control-plane
-      registered key (`kid` + ES256), `iss`/`aud` matching configuration,
+- [ ] Token endpoint: issue capability JWTs signed with a key advertised at
+  `jwks_uri` (`kid` + ES256), `iss`/`aud` matching configuration,
       lifetime ≤ cap.
-- [ ] Publish the same keys at `jwks_uri` as registered on the control plane.
+- [ ] Publish every active capability signing key at `jwks_uri`.
 - [ ] Optional: refresh grant with one-time rotation, declared policy.

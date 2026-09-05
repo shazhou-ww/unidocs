@@ -36,8 +36,7 @@ beforeEach(() => {
     if (pathname === "/admin/stacks/cas_one") return json(CURRENT_STACK);
     if (pathname === "/admin/stacks") return json({ items: [CURRENT_STACK, OTHER_STACK] });
     if (pathname.endsWith("/members")) return json({ items: [] });
-    if (pathname.endsWith("/issuer/keys")) return json({ keys: [] });
-    if (pathname.endsWith("/issuer")) return json({ error: "NOT_FOUND", message: "issuer is not configured" }, 404);
+    if (pathname.endsWith("/oauth-issuer")) return json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404);
     if (pathname.endsWith("/ref-domains")) return json({ domains: [] });
     if (pathname.endsWith("/audit-events")) return json({ items: [], nextCursor: null });
     throw new Error(`Unexpected request: ${pathname}`);
@@ -74,7 +73,7 @@ describe("StackView", () => {
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Stack identity" })).toBeInTheDocument());
     const guides = [
       ["Members", "Stack administrators"],
-      ["Issuer & keys", "Tenant capability trust"],
+      ["OAuth issuer", "Stack OAuth issuer"],
       ["Control audit", "Control-plane audit"],
       ["Root Ref audit", "Root Ref audit"],
       ["Usage", "Tenant storage usage"],

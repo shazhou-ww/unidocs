@@ -7,9 +7,7 @@ const REMOTE_TOOL_NAMES = [
   "list_stacks",
   "get_stack",
   "list_members",
-  "get_issuer",
   "get_oauth_issuer",
-  "list_issuer_keys",
   "list_ref_domains",
   "list_control_audit_events",
   "list_root_domain_refs",
@@ -18,12 +16,8 @@ const REMOTE_TOOL_NAMES = [
   "update_stack",
   "invite_member",
   "remove_member",
-  "set_issuer",
   "inspect_oauth_issuer",
   "activate_oauth_issuer",
-  "create_issuer_key_challenge",
-  "add_issuer_key",
-  "transition_issuer_key",
 ];
 
 describe("tool catalog", () => {
@@ -40,13 +34,11 @@ describe("tool catalog", () => {
     }
   });
 
-  test("creation tools are idempotent; destructive transitions are annotated", () => {
+  test("creation tools are idempotent; destructive mutations are annotated", () => {
     expect(getToolDefinition("create_stack")?.annotations.idempotentHint).toBe(true);
     expect(getToolDefinition("invite_member")?.annotations.idempotentHint).toBe(true);
-    expect(getToolDefinition("add_issuer_key")?.annotations.idempotentHint).toBe(true);
     expect(getToolDefinition("remove_member")?.annotations.destructiveHint).toBe(true);
-    expect(getToolDefinition("set_issuer")?.annotations.destructiveHint).toBe(true);
-    expect(getToolDefinition("transition_issuer_key")?.annotations.destructiveHint).toBe(true);
+    expect(getToolDefinition("inspect_oauth_issuer")?.annotations.readOnlyHint).toBeUndefined();
   });
 
   test("input schemas validate and reject bad arguments", () => {
@@ -62,18 +54,17 @@ describe("tool catalog", () => {
     expect(updateStack?.inputSchema.safeParse({ stackId: "s", description: "Production", etag: '"1"' }).success).toBe(true);
     expect(updateStack?.inputSchema.safeParse({ stackId: "s", description: "x".repeat(2_001), etag: '"1"' }).success).toBe(false);
 
-    const challenge = getToolDefinition("create_issuer_key_challenge");
-    expect(challenge?.inputSchema.safeParse({ stackId: "s", kid: "k", algorithm: "EdDSA" }).success).toBe(true);
-    expect(challenge?.inputSchema.safeParse({ stackId: "s", kid: "k", algorithm: "HS256" }).success).toBe(false);
-
-    const transition = getToolDefinition("transition_issuer_key");
-    expect(transition?.inputSchema.safeParse({
+    const activate = getToolDefinition("activate_oauth_issuer");
+    expect(activate?.inputSchema.safeParse({
       stackId: "s",
-      kid: "k",
-      state: "revoked",
+      inspectionId: "oinsp_1",
+      activationProof: "eyJhbGciOiJFUzI1NiJ9.payload.sig",
       etag: '"3"',
-      confirmKid: "k",
-      confirmState: "revoked",
     }).success).toBe(true);
+    expect(activate?.inputSchema.safeParse({ stackId: "s", inspectionId: "oinsp_1" }).success).toBe(false);
+
+    const inspect = getToolDefinition("inspect_oauth_issuer");
+    expect(inspect?.inputSchema.safeParse({ stackId: "s", issuer: "https://issuer.example" }).success).toBe(true);
+    expect(inspect?.inputSchema.safeParse({ stackId: "s", issuer: "https://issuer.example", extra: true }).success).toBe(false);
   });
 });

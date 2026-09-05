@@ -79,11 +79,8 @@ describe("control-plane contract freezes", () => {
     expect(casAdminThreatModel.issuerJwksSubstitution.neverAcceptAdministratorSuppliedJwksUrl).toBe(true);
     expect(casAdminThreatModel.issuerJwksSubstitution.discoveryIssuerMustExactlyMatchRegisteredIssuer).toBe(true);
     expect(casAdminThreatModel.issuerJwksSubstitution.issuerControlProofUsesDiscoveredJwks).toBe(true);
-    expect(casAdminThreatModel.keyRotation.states).toEqual([
-      "active",
-      "retiring",
-      "revoked",
-    ]);
+    expect(casAdminThreatModel.jwksRotation.neverFallBackToLegacyManualKeys).toBe(true);
+    expect(casAdminThreatModel.jwksRotation.overlapRequiredForZeroDowntimeRotation).toBe(true);
     expect(casAdminThreatModel.confusedDeputy.tenantJwtNeverAcceptedOnAdminRoutes).toBe(true);
     expect(casAdminThreatModel.webuiCsrfSessionTheft.noLongLivedBearerInBrowser).toBe(true);
     expect(casAdminThreatModel.controlAuditTampering.appendOnlyEvents).toBe(true);
@@ -100,20 +97,15 @@ describe("control-plane contract freezes", () => {
       "deleteMember",
       "createMemberInvitation",
       "acceptMemberInvitation",
-      "getIssuer",
       "getOAuthIssuer",
       "inspectOAuthIssuer",
       "activateOAuthIssuer",
-      "putIssuer",
-      "listIssuerKeys",
-      "createIssuerKey",
-      "deleteIssuerKey",
       "listRefDomains",
       "listControlAuditEvents",
       "listRootDomainRefs",
       "listRootDomainEvents",
     ];
-    expect(keys).toHaveLength(21);
+    expect(keys).toHaveLength(16);
   });
 
   test("root-ref audit response shapes accept negative balances", () => {

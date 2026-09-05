@@ -392,7 +392,7 @@ function scopeDetail(scope: string): {
     case "control:write":
       return { title: "Manage stack configuration", description: "Create stacks and update non-security settings.", icon: "W", sensitive: false };
     case "control:security":
-      return { title: "Manage security settings", description: "Invite or remove members and rotate issuer keys.", icon: "!", sensitive: true };
+      return { title: "Manage security settings", description: "Invite or remove members and manage the Stack OAuth issuer.", icon: "!", sensitive: true };
     default:
       return { title: scope, description: "Access requested by this application.", icon: "·", sensitive: false };
   }

@@ -25,9 +25,10 @@ export type {
 export type {
   CasControlAuditEvent,
   CasOAuthIssuerInspection,
+  CasRefDomain,
+  CasRootRefBalance,
+  CasRootRefEvent,
   CasStack,
-  CasStackIssuer,
-  CasStackIssuerKey,
   CasStackMember,
   CasStackOAuthIssuer,
 } from "@unicas/admin-protocol";

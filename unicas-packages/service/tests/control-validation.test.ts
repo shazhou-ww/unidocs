@@ -8,12 +8,9 @@ import {
   parseControlListLimit,
   sha256Hex,
   stackOAuthResource,
-  validateAudience,
   validateDisplayName,
   validateEmailConstraint,
   validateInvitationToken,
-  validateIssuer,
-  validateKid,
 } from "../src/index.js";
 
 describe("control-plane validation", () => {
@@ -26,26 +23,7 @@ describe("control-plane validation", () => {
     expect(validateDisplayName(42)).not.toBeNull();
   });
 
-  test("kid is bounded and URL-safe", () => {
-    expect(validateKid("k1")).toBeNull();
-    expect(validateKid("key-2026_A")).toBeNull();
-    expect(validateKid("")).not.toBeNull();
-    expect(validateKid("key with space")).not.toBeNull();
-    expect(validateKid("x".repeat(65))).not.toBeNull();
-  });
-
-  test("issuer must be an https URL without credentials", () => {
-    expect(validateIssuer("https://accounts.google.com")).toBeNull();
-    expect(validateIssuer("https://issuer.example/realms/x")).toBeNull();
-    expect(validateIssuer("http://insecure.example")).not.toBeNull();
-    expect(validateIssuer("not a url")).not.toBeNull();
-    expect(validateIssuer("https://user:pass@host.example")).not.toBeNull();
-  });
-
-  test("audience and email constraint", () => {
-    expect(validateAudience("unidocs-cas")).toBeNull();
-    expect(validateAudience("")).not.toBeNull();
-    expect(validateAudience("a".repeat(257))).not.toBeNull();
+  test("email constraint normalization", () => {
     expect(validateEmailConstraint(undefined)).toBeNull();
     expect(validateEmailConstraint(null)).toBeNull();
     expect(validateEmailConstraint("person@example.com")).toBeNull();

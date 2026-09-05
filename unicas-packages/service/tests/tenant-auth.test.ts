@@ -50,17 +50,15 @@ async function fixture(): Promise<{
 }> {
   const clock = { now: 1_700_000_000_000 };
   const { publicKey, privateKey } = await generateKeyPair("ES256", { extractable: true });
+  const publicJwk = await exportJWK(publicKey);
   const authority: ResolvedStackAuthority = {
     stackId: STACK,
     issuer: ISSUER,
     audience: AUDIENCE,
+    jwksUri: `data:application/json,${encodeURIComponent(JSON.stringify({
+      keys: [{ ...publicJwk, kid: "key-1", alg: "ES256", use: "sig" }],
+    }))}`,
     capabilityMaxLifetimeSeconds: 28_800,
-    keys: [{
-      kid: "key-1",
-      algorithm: "ES256",
-      publicJwk: await exportJWK(publicKey),
-      state: "active",
-    }],
   };
   const resolver = new StubAuthorityResolver(authority);
   return {
@@ -304,14 +302,12 @@ describe("StackCapabilityVerifier", () => {
     await verifier.verify(request(token), ROUTE);
 
     const { publicKey } = await generateKeyPair("ES256", { extractable: true });
+    const publicJwk = await exportJWK(publicKey);
     resolver.authority = {
       ...resolver.authority!,
-      keys: [{
-        kid: "key-2",
-        algorithm: "ES256",
-        publicJwk: await exportJWK(publicKey),
-        state: "active",
-      }],
+      jwksUri: `data:application/json,${encodeURIComponent(JSON.stringify({
+        keys: [{ ...publicJwk, kid: "key-2", alg: "ES256", use: "sig" }],
+      }))}`,
     };
     clock.now += 5_000;
     await expect(verifier.verify(request(token), ROUTE)).resolves.toBeDefined();
