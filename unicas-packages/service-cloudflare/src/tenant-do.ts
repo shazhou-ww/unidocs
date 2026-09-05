@@ -37,7 +37,7 @@ import {
 import { CloudflareNodeGcRepository } from "./node-gc.js";
 import { CloudflareNodeReadRepository } from "./node-read.js";
 import { CloudflareNodeUsageRepository } from "./node-usage.js";
-import { canonicalizeRootRefsUpdate, parseRootRefsBody } from "./root-refs.js";
+import { canonicalizeRootRefsUpdate, listTenantRootRefs, parseRootRefsBody } from "./root-refs.js";
 import { RootRefsErrorCodes, RootRefsValidationError } from "./root-refs.js";
 import { ServerTiming } from "./timing.js";
 import { R2UploadPresigner } from "./r2-upload-presigner.js";
@@ -95,6 +95,17 @@ export class CasDurableObject {
       let response: Response;
       if (url.pathname === "/updateRootRefs" && request.method === "POST") {
         response = await this.#withMutation(() => this.#forwardRootRefs(request, stackId, tenantId));
+      } else if (url.pathname === "/rootRefs" && request.method === "GET") {
+        const limit = parseRootRefsLimit(url.searchParams.get("limit"));
+        const cursor = parseRootRefsCursor(url.searchParams.get("cursor"));
+        response = jsonResponse(await listTenantRootRefs({
+          db: store.db,
+          stackId,
+          tenantId,
+          refDomain: requireHeader(request, "X-CAS-Ref-Domain"),
+          limit,
+          cursor,
+        }));
       } else if (url.pathname === "/lease" && request.method === "POST") {
         response = jsonResponse(await this.#handleLease(request, store));
       } else if (url.pathname === "/read" && request.method === "GET") {
@@ -495,6 +506,23 @@ export class CasDurableObject {
     // Response types disagree structurally; the runtime value is the same.
     return response as unknown as Response;
   }
+}
+
+function parseRootRefsLimit(value: string | null): number {
+  if (value === null) return 50;
+  const limit = Number(value);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+    throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "root refs limit must be between 1 and 200");
+  }
+  return limit;
+}
+
+function parseRootRefsCursor(value: string | null): string {
+  if (value === null) return "";
+  if (!/^[a-f0-9]{64}$/.test(value)) {
+    throw new NodeOpError(400, NodeOpErrorCodes.INVALID_REQUEST, "root refs cursor is invalid");
+  }
+  return value;
 }
 
 function deferredUpload(): ActiveUpload {

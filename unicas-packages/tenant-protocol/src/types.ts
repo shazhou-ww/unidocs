@@ -52,6 +52,18 @@ export interface CasRootRefUpdate {
   readonly changes: CasRefChanges;
 }
 
+export interface CasRootRefBalance {
+  readonly hash: CasHash;
+  readonly refCount: number;
+}
+
+export interface CasRootRefsPage {
+  readonly refDomain: string;
+  readonly revision: number;
+  readonly items: readonly CasRootRefBalance[];
+  readonly nextCursor: string | null;
+}
+
 export interface CasUsage {
   readonly nodeCount: number;
   readonly readyContentBytes: number;

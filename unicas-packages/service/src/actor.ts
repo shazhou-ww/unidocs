@@ -108,14 +108,21 @@ async function dispatchTenantRequest(
     "X-CAS-Tenant-Id": call.tenantId,
   };
 
-  if (route.operation === "updateRootRefs") {
+  if (route.operation === "listRootRefs" || route.operation === "updateRootRefs") {
     if (call.refDomain === undefined) {
       return Response.json(
-        { error: "ROOT_REF_INVALID", message: "Root Refs write requires a verified refDomain" },
+        { error: "ROOT_REF_INVALID", message: "Root Refs access requires a verified refDomain" },
         { status: 403 },
       );
     }
     headers["X-CAS-Ref-Domain"] = call.refDomain;
+    if (route.operation === "listRootRefs") {
+      const query = new URL(request.url).search;
+      return platform.tenantActors.fetch(actorKey, new Request(
+        `https://tenant.internal/rootRefs${query}`,
+        { headers },
+      ));
+    }
     return platform.tenantActors.fetch(actorKey, new Request(
       "https://tenant.internal/updateRootRefs",
       { method: "POST", headers, body: await request.text() },

@@ -23,6 +23,7 @@ describe("CAS routes (canonical stack-scoped)", () => {
     ["POST", casRoutes.lease({ stackId: STACK, tenantId: TENANT, hash: "abc" }), "lease"],
     ["GET", casRoutes.usage({ stackId: STACK, tenantId: TENANT }), "usage"],
     ["POST", casRoutes.gc({ stackId: STACK, tenantId: TENANT }), "gc"],
+    ["GET", casRoutes.listRootRefs({ stackId: STACK, tenantId: TENANT }), "listRootRefs"],
     ["POST", casRoutes.updateRootRefs({ stackId: STACK, tenantId: TENANT }), "updateRootRefs"],
   ])("matches %s %s", (method, pathname, operation) => {
     expect(matchCasRoute(method, pathname)).toMatchObject({
@@ -39,6 +40,7 @@ describe("CAS routes (canonical stack-scoped)", () => {
       { operation: "lease", stackId: STACK, tenantId: TENANT, hash: "a".repeat(64) },
       { operation: "usage", stackId: STACK, tenantId: TENANT },
       { operation: "gc", stackId: STACK, tenantId: TENANT },
+      { operation: "listRootRefs", stackId: STACK, tenantId: TENANT },
       { operation: "updateRootRefs", stackId: STACK, tenantId: TENANT },
     ];
     for (const route of routes) {
@@ -52,6 +54,8 @@ describe("CAS routes (canonical stack-scoped)", () => {
       .toBe("/stacks/stack%2Fa/tenants/tenant%2Fa/cas/nodes/hash%20value/content");
     expect(casRoutes.updateRootRefs({ stackId: "stack/a", tenantId: "tenant/a" }))
       .toBe("/stacks/stack%2Fa/tenants/tenant%2Fa/root-refs");
+    expect(casRoutes.listRootRefs({ stackId: STACK, tenantId: TENANT }, { limit: 10, cursor: "abc" }))
+      .toBe(`/stacks/${STACK}/tenants/tenant%2Fa/root-refs?limit=10&cursor=abc`);
     expect(CasLeaseDurationHeader).toBe("X-CAS-Lease-Duration");
     expect(CasUploadLengthHeader).toBe("X-CAS-Upload-Length");
     expect(CasUploadIdHeader).toBe("X-CAS-Upload-Id");

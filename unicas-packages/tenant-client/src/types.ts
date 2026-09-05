@@ -4,6 +4,7 @@ import type {
   CasLeaseResult,
   CasNodeMetadata,
   CasRootRefUpdate,
+  CasRootRefsPage,
   CasUsage,
 } from "@unicas/tenant-protocol";
 
@@ -20,7 +21,7 @@ export interface CasNodeRange {
 
 export interface CasNodeSource {
   readonly contentLength: number;
-  readonly body: ReadableStream<Uint8Array>;
+  readonly body: BodyInit;
 }
 
 export interface CasLeaseOptions {
@@ -30,6 +31,12 @@ export interface CasLeaseOptions {
 
 export interface CasGcOptions {
   readonly maxNodes?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface CasListRootRefsOptions {
+  readonly limit?: number;
+  readonly cursor?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -71,6 +78,7 @@ export interface TenantCasClient {
     options?: CasLeaseOptions,
   ): Promise<CasLeaseResult>;
   updateRootRefs(update: CasRootRefUpdate): Promise<CasRootRefsResult>;
+  listRootRefs(options?: CasListRootRefsOptions): Promise<CasRootRefsPage>;
   usage(signal?: AbortSignal): Promise<CasUsage>;
   gc(options?: CasGcOptions): Promise<CasGcResult>;
 }
@@ -92,5 +100,6 @@ export type {
   CasLeaseResult,
   CasNodeMetadata,
   CasRootRefUpdate,
+  CasRootRefsPage,
   CasUsage,
 };

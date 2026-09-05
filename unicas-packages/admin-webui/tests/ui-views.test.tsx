@@ -44,7 +44,7 @@ function managedIssuer() {
 }
 
 describe("PlaygroundView", () => {
-  test("mints a short-lived member capability and reads tenant usage", async () => {
+  test("keeps the member capability private and reads tenant usage", async () => {
     fetchMock
       .mockResolvedValueOnce(json({
         stackId: STACK,
@@ -82,9 +82,11 @@ describe("PlaygroundView", () => {
     render(<PlaygroundView stackId={STACK} />);
 
     await user.click(await screen.findByRole("button", { name: "Issue capability" }));
-    expect(await screen.findByDisplayValue("tenant-token")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Read tenant usage" }));
-    await waitFor(() => expect(screen.getByText(/"nodeCount": 0/)).toBeInTheDocument());
+    expect(await screen.findByText("member_abc")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("tenant-token")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Usage" }));
+    await user.click(screen.getByRole("button", { name: "Refresh usage" }));
+    await waitFor(() => expect(screen.getByText("Nodes").nextSibling).toHaveTextContent("0"));
 
     expect(fetchMock).toHaveBeenNthCalledWith(2,
       `/admin/stacks/${STACK}/managed-capabilities`,
@@ -92,8 +94,9 @@ describe("PlaygroundView", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(3,
       `https://cas.example/stacks/${STACK}/tenants/member_abc/cas/usage`,
-      { headers: { Authorization: "Bearer tenant-token" } },
+      expect.objectContaining({ headers: expect.any(Headers) }),
     );
+    expect((fetchMock.mock.calls[2][1]?.headers as Headers).get("Authorization")).toBe("Bearer tenant-token");
   });
 });
 

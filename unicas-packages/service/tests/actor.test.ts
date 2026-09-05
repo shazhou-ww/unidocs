@@ -104,5 +104,15 @@ describe("createUniCasService", () => {
     expect(forwarded.headers.get("X-CAS-Stack-Id")).toBe("stack/a");
     expect(forwarded.headers.get("X-CAS-Tenant-Id")).toBe("tenant/b");
     expect(forwarded.headers.get("X-CAS-Ref-Domain")).toBe("doc");
+
+    await actor.fetch(new Request(
+      "https://cas.example/stacks/stack%2Fa/tenants/tenant%2Fb/root-refs?limit=10&cursor=abc",
+      { headers: { "X-CAS-Ref-Domain": "attacker" } },
+    ));
+    const [readKey, readForwarded] = tenantActorFetch.mock.calls.at(-1)!;
+    expect(readKey).toBe("stack%2Fa|tenant%2Fb");
+    expect(readForwarded.url).toBe("https://tenant.internal/rootRefs?limit=10&cursor=abc");
+    expect(readForwarded.method).toBe("GET");
+    expect(readForwarded.headers.get("X-CAS-Ref-Domain")).toBe("doc");
   });
 });

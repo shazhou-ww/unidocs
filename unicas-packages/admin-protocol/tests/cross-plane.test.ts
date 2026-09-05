@@ -90,8 +90,11 @@ describe("package dependency boundaries", () => {
     expect(webui.private).toBe(true);
     expect(cloudflareService.private).toBe(true);
 
-    // Final client direction: admin-webui -> admin-client -> admin-protocol.
+    // The WebUI reaches the tenant plane only through public client facades
+    // for its managed-capability Playground.
     expect(webui.dependencies?.["@unicas/admin-client"]).toBe("workspace:*");
+    expect(webui.dependencies?.["@unicas/tenant-client"]).toBe("workspace:*");
+    expect(webui.dependencies?.["@unicas/tenant-blob-client"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
     expect(webui.dependencies?.["@unicas/service"]).toBeUndefined();
     expect(webui.dependencies?.["@unicas/control-plane"]).toBeUndefined();
@@ -107,7 +110,7 @@ describe("package dependency boundaries", () => {
     expect(protocol.dependencies?.["@unicas/control-plane"]).toBeUndefined();
     expect(protocol.devDependencies?.["@unicas/control-plane"]).toBeUndefined();
 
-    for (const pkg of [protocol, webui]) {
+    for (const pkg of [protocol]) {
       const deps = {
         ...pkg.dependencies,
         ...pkg.devDependencies,

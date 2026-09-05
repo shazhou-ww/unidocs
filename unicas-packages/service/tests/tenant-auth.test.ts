@@ -149,6 +149,7 @@ describe("StackCapabilityVerifier", () => {
         { route: { operation: "readContent", stackId: STACK, tenantId: TENANT, hash }, permission: casReadPermission(TENANT) },
         { route: { operation: "readMetadata", stackId: STACK, tenantId: TENANT, hash }, permission: casReadPermission(TENANT) },
         { route: { operation: "lease", stackId: STACK, tenantId: TENANT, hash }, permission: casWritePermission(TENANT) },
+        { route: { operation: "listRootRefs", stackId: STACK, tenantId: TENANT }, permission: casReadPermission(TENANT), refDomain: "doc" },
         { route: { operation: "updateRootRefs", stackId: STACK, tenantId: TENANT }, permission: casWritePermission(TENANT), refDomain: "doc" },
         { route: { operation: "usage", stackId: STACK, tenantId: TENANT }, permission: casManagePermission(TENANT) },
         { route: { operation: "gc", stackId: STACK, tenantId: TENANT }, permission: casManagePermission(TENANT) },

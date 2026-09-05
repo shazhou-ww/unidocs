@@ -52,7 +52,7 @@ export async function leaseNodeContent(
   }
   return cas.leaseNode(hash, {
     contentLength: canonical.bytes.length,
-    body: streamBytes(canonical.bytes),
+    body: canonical.bytes.slice().buffer,
   }, options);
 }
 
@@ -66,16 +66,7 @@ export async function storeNodeContent(
   const canonical = await encodeCanonicalNode(content, contentType, refs);
   await cas.leaseNode(canonical.hash, {
     contentLength: canonical.bytes.length,
-    body: streamBytes(canonical.bytes),
+    body: canonical.bytes.slice().buffer,
   }, options);
   return canonical.hash;
-}
-
-function streamBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      if (bytes.length > 0) controller.enqueue(bytes);
-      controller.close();
-    },
-  });
 }

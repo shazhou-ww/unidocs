@@ -113,7 +113,7 @@ describe("functional blob client", () => {
     expect(leaseNode).toHaveBeenCalledTimes(cas.nodes.size);
     expect(leaseNode).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ body: expect.any(ReadableStream) }),
+      expect.objectContaining({ body: expect.any(ArrayBuffer) }),
       { durationMs: 30 * 60 * 1000, signal: undefined },
     );
     expect(leaseNode.mock.calls.every(call => call[2]?.durationMs === 30 * 60 * 1000)).toBe(true);

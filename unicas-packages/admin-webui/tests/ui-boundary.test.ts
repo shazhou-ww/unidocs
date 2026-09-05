@@ -59,9 +59,20 @@ describe("cas-admin-webui browser boundary", () => {
 
   test("the Playground credential exception remains memory-only", () => {
     const source = readFileSync(join(UI_DIR, "views", "playground.tsx"), "utf8");
-    expect(source).toContain("Bearer");
+    expect(source).toContain("current.accessToken");
     for (const persistenceApi of ["localStorage", "sessionStorage", "indexedDB", "document.cookie"]) {
       expect(source, `playground.tsx must not use ${persistenceApi}`).not.toContain(persistenceApi);
+    }
+  });
+
+  test("only the Playground imports tenant client facades", () => {
+    for (const file of listFiles(UI_DIR)) {
+      const source = readFileSync(file, "utf8");
+      if (!file.endsWith("playground.tsx")) {
+        expect(source, `${file} must not import the tenant plane`).not.toContain("@unicas/tenant-");
+      }
+      expect(source).not.toContain("@unicas/tenant-protocol");
+      expect(source).not.toContain("@unicas/codec");
     }
   });
 

@@ -10,12 +10,14 @@ import type {
   CasLeaseResult,
   CasNodeMetadata,
   CasRootRefUpdate,
+  CasRootRefsPage,
   CasUsage,
 } from "@unicas/tenant-protocol";
 import { CasClientError } from "./errors.js";
 import type {
   CasGcOptions,
   CasLeaseOptions,
+  CasListRootRefsOptions,
   CasNodeRange,
   CasNodeSource,
   CasRootRefsResult,
@@ -121,7 +123,9 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
           body: source.body as BodyInit,
           signal: options.signal,
         };
-        (uploadInit as RequestInit & { duplex?: "half" }).duplex = "half";
+        if (source.body instanceof ReadableStream) {
+          (uploadInit as RequestInit & { duplex?: "half" }).duplex = "half";
+        }
         const uploadResponse = await uploadFetcher.fetch(prepared.upload.url, uploadInit);
         await uploadResponse.body?.cancel("Direct CAS upload response consumed").catch(() => undefined);
         if (!uploadResponse.ok && uploadResponse.status !== 412) {
@@ -152,7 +156,9 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
       }
       if (source !== undefined) {
         headers.set("Content-Type", CanonicalNodeContentType);
-        headers.set("Content-Length", String(source.contentLength));
+        if (source.body instanceof ReadableStream) {
+          headers.set("Content-Length", String(source.contentLength));
+        }
       }
       const init: RequestInit = {
         method: "POST",
@@ -160,7 +166,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
         body: source?.body as BodyInit | undefined,
         signal: options.signal,
       };
-      if (source !== undefined) {
+      if (source?.body instanceof ReadableStream) {
         (init as RequestInit & { duplex?: "half" }).duplex = "half";
       }
       const response = await requireOk(
@@ -180,6 +186,14 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
         "updateRootRefs",
       );
       return response.json() as Promise<CasRootRefsResult>;
+    },
+
+    async listRootRefs(options: CasListRootRefsOptions = {}): Promise<CasRootRefsPage> {
+      const response = await requireOk(
+        await request(casRoutes.listRootRefs(path, options), { signal: options.signal }),
+        "listRootRefs",
+      );
+      return response.json() as Promise<CasRootRefsPage>;
     },
 
     async usage(signal?: AbortSignal): Promise<CasUsage> {

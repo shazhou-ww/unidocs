@@ -5,6 +5,7 @@ import { migrateStackTenantSchema } from "../src/schema.js";
 import {
   canonicalizeRootRefsUpdate,
   executeDomainUpdate,
+  listTenantRootRefs,
   parseRootRefsBody,
   withDomainRetry,
   RootRefsErrorCodes,
@@ -101,6 +102,34 @@ async function aggregate(hash: string): Promise<number> {
 }
 
 describe("atomic Root Refs update", () => {
+  test("lists only the requested tenant domain with hash cursor pagination", async () => {
+    await createStore();
+    await seedNode(H1);
+    await seedNode(H2);
+    await runUpdate({ requestId: "r1", changes: { [H1]: 1, [H2]: 2 } });
+    await db!.prepare(
+      "INSERT INTO cas_root_domain_refs (stack_id, ref_domain, tenant_id, hash, ref_count) VALUES (?, ?, ?, ?, ?)",
+    ).bind(STACK, "other", TENANT, H3, 9).run();
+
+    const first = await listTenantRootRefs({
+      db: db!, stackId: STACK, tenantId: TENANT, refDomain: DOMAIN, limit: 1, cursor: "",
+    });
+    expect(first).toEqual({
+      refDomain: DOMAIN,
+      revision: 1,
+      items: [{ hash: H1, refCount: 1 }],
+      nextCursor: H1,
+    });
+    await expect(listTenantRootRefs({
+      db: db!, stackId: STACK, tenantId: TENANT, refDomain: DOMAIN, limit: 1, cursor: H1,
+    })).resolves.toEqual({
+      refDomain: DOMAIN,
+      revision: 1,
+      items: [{ hash: H2, refCount: 2 }],
+      nextCursor: null,
+    });
+  });
+
   test("applies deltas, appends one event, updates projection and idempotency", async () => {
     await createStore();
     await seedNode(H1, 3);

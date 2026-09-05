@@ -666,6 +666,82 @@ a:focus-visible,
   margin-top: 0.15rem;
 }
 
+.playground-actions,
+.playground-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.playground-actions {
+  margin-bottom: 0.85rem;
+}
+
+.playground-hash {
+  max-width: 28rem;
+  padding: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.playground-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  color: var(--muted-strong);
+  font-size: 0.84rem;
+}
+
+.playground-check input {
+  width: 1rem;
+  min-height: 1rem;
+  margin: 0;
+}
+
+.playground-result {
+  margin: 0.85rem 0 0;
+}
+
+.playground-expired {
+  color: var(--danger);
+  font-weight: 650;
+}
+
+.playground-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 1px;
+  margin: 1rem 0 0;
+  overflow: hidden;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.playground-metrics div {
+  padding: 0.8rem;
+  background: var(--surface);
+}
+
+.playground-metrics dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.playground-metrics dd {
+  margin: 0.2rem 0 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
 .state {
   display: flex;
   min-height: 58px;

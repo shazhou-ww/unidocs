@@ -170,6 +170,41 @@ export class CloudflareRootRefRepository implements RootRefRepository {
   }
 }
 
+export async function listTenantRootRefs(input: {
+  readonly db: D1Database;
+  readonly stackId: string;
+  readonly tenantId: string;
+  readonly refDomain: string;
+  readonly limit: number;
+  readonly cursor: string;
+}) {
+  const revisionRow = await input.db.prepare(
+    "SELECT revision FROM cas_root_domain_revisions WHERE stack_id = ? AND ref_domain = ?",
+  ).bind(input.stackId, input.refDomain).first<{ revision: number }>();
+  const rows = await input.db.prepare(
+    `SELECT hash, ref_count FROM cas_root_domain_refs
+     WHERE stack_id = ? AND ref_domain = ? AND tenant_id = ? AND hash > ?
+     ORDER BY hash LIMIT ?`,
+  ).bind(
+    input.stackId,
+    input.refDomain,
+    input.tenantId,
+    input.cursor,
+    input.limit + 1,
+  ).all<{ hash: string; ref_count: number }>();
+  const results = rows.results ?? [];
+  const items = results.slice(0, input.limit).map((row) => ({
+    hash: row.hash,
+    refCount: row.ref_count,
+  }));
+  return {
+    refDomain: input.refDomain,
+    revision: revisionRow?.revision ?? 0,
+    items,
+    nextCursor: results.length > input.limit ? items[items.length - 1]!.hash : null,
+  };
+}
+
 /** Compatibility entry point used by the transitional Cloudflare DO. */
 export function executeDomainUpdate(input: {
   readonly db: D1Database;

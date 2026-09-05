@@ -212,7 +212,7 @@ export class StackCapabilityVerifier {
     }
 
     let refDomain: string | undefined;
-    if (route.operation === "updateRootRefs") {
+    if (route.operation === "listRootRefs" || route.operation === "updateRootRefs") {
       refDomain = this.#requireValidRefDomain(payload);
     }
     return { ...payload, stackId: authority.stackId, kid, refDomain };
@@ -300,6 +300,7 @@ export function permissionFor(route: CasRoute): string {
   switch (route.operation) {
     case "readContent":
     case "readMetadata":
+    case "listRootRefs":
       return casReadPermission(route.tenantId);
     case "lease":
     case "updateRootRefs":

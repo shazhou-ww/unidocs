@@ -13,13 +13,15 @@ describe("cas-admin-webui package boundary", () => {
     );
     expect(pkg.private).toBe(true);
     expect(pkg.dependencies["@unicas/admin-client"]).toBe("workspace:*");
-    // The final client direction is admin-webui -> admin-client -> admin-protocol;
-    // protocol types flow through the client facade, never directly.
+    // The Admin UI uses the admin facade generally and the tenant/blob
+    // facades only for its managed-capability Playground.
     expect(pkg.dependencies["@unicas/admin-protocol"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/service"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/control-plane"]).toBeUndefined();
-    expect(pkg.dependencies["@unicas/tenant-client"]).toBeUndefined();
+    expect(pkg.dependencies["@unicas/tenant-client"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unicas/tenant-blob-client"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/tenant-protocol"]).toBeUndefined();
+    expect(pkg.dependencies["@unicas/codec"]).toBeUndefined();
     expect(pkg.scripts.deploy).toBeUndefined();
     // The OIDC BFF composition moved to @unicas/service-cloudflare; this
     // package ships only the browser UI.

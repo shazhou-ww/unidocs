@@ -783,6 +783,12 @@ importers:
       '@unicas/admin-client':
         specifier: workspace:*
         version: link:../admin-client
+      '@unicas/tenant-blob-client':
+        specifier: workspace:*
+        version: link:../tenant-blob-client
+      '@unicas/tenant-client':
+        specifier: workspace:*
+        version: link:../tenant-client
       lucide-react:
         specifier: ^1.34.0
         version: 1.34.0(react@19.2.8)

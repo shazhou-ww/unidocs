@@ -14,6 +14,7 @@ import type {
   CasNodeMetadata,
   CasNodeState,
   CasRootRefUpdate,
+  CasRootRefsPage,
   CasUsage,
 } from "./types.js";
 
@@ -80,6 +81,13 @@ export interface CasGcRequest {
 
 export type CasGcResponse = CasGcResult | CasErrorResponse;
 
+export interface CasListRootRefsRequest {
+  readonly path: CasTenantPath;
+  readonly query?: { readonly limit?: number; readonly cursor?: string };
+}
+
+export type CasListRootRefsResponse = CasRootRefsPage | CasErrorResponse;
+
 /** Signed Root Refs write. `refDomain` is NOT caller-supplied; it comes only
  *  from the verified tenant capability (Task 4). */
 export interface CasUpdateRootRefsRequest {
@@ -97,6 +105,7 @@ export interface CasEndpointContracts {
   lease: { request: CasLeaseRequest; response: CasLeaseResponse };
   usage: { request: CasUsageRequest; response: CasUsageResponse };
   gc: { request: CasGcRequest; response: CasGcResponse };
+  listRootRefs: { request: CasListRootRefsRequest; response: CasListRootRefsResponse };
   updateRootRefs: {
     request: CasUpdateRootRefsRequest;
     response: CasUpdateRootRefsResponse;

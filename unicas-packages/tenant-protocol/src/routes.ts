@@ -13,6 +13,7 @@ export type CasRoute =
   | { operation: "lease"; stackId: string; tenantId: string; hash: string }
   | { operation: "usage"; stackId: string; tenantId: string }
   | { operation: "gc"; stackId: string; tenantId: string }
+  | { operation: "listRootRefs"; stackId: string; tenantId: string }
   | { operation: "updateRootRefs"; stackId: string; tenantId: string };
 
 function segment(value: string): string {
@@ -40,6 +41,16 @@ export const casRoutes = {
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/cas/gc`,
   updateRootRefs: ({ stackId, tenantId }: { stackId: string; tenantId: string }) =>
     `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/root-refs`,
+  listRootRefs: (
+    { stackId, tenantId }: { stackId: string; tenantId: string },
+    query: { readonly limit?: number; readonly cursor?: string } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.cursor !== undefined) params.set("cursor", query.cursor);
+    const suffix = params.size === 0 ? "" : `?${params}`;
+    return `/stacks/${segment(stackId)}/tenants/${segment(tenantId)}/root-refs${suffix}`;
+  },
 } as const;
 
 /** Matches only stack-and-tenant service routes. Never /admin. */
@@ -53,8 +64,10 @@ export function matchCasRoute(method: string, pathname: string): CasRoute | null
   const tenantId = decodeSegment(parts[3]);
   if (stackId === null || tenantId === null) return null;
 
-  if (parts.length === 5 && parts[4] === "root-refs" && method === "POST") {
-    return { operation: "updateRootRefs", stackId, tenantId };
+  if (parts.length === 5 && parts[4] === "root-refs") {
+    if (method === "GET") return { operation: "listRootRefs", stackId, tenantId };
+    if (method === "POST") return { operation: "updateRootRefs", stackId, tenantId };
+    return null;
   }
 
   if (parts[4] !== "cas") return null;
