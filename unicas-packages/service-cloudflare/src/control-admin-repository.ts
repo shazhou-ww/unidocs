@@ -26,6 +26,7 @@ import type {
   ControlPatchManagedIssuerCommitResult,
   ControlPatchManagedIssuerPlan,
   ControlPlaneAdminRepository,
+  ControlPlaygroundFileRootRecord,
   ControlStackRecord,
   DiscoveredOAuthJwk,
 } from "@unicas/service";
@@ -79,6 +80,67 @@ export class D1ControlPlaneAdminRepository implements ControlPlaneAdminRepositor
       .bind(input.stackId, input.afterSubject, input.limit)
       .all<MembershipRow>();
     return (rows.results ?? []).map(toMembership);
+  }
+
+  async listPlaygroundFileRoots(stackId: string, ownerKey: string): Promise<readonly ControlPlaygroundFileRootRecord[]> {
+    const rows = await this.#db
+      .prepare("SELECT stack_id, owner_key, root_id, name, manifest_hash, revision, created_at, updated_at FROM cas_playground_file_roots WHERE stack_id = ? AND owner_key = ? ORDER BY name, root_id")
+      .bind(stackId, ownerKey)
+      .all<PlaygroundFileRootRow>();
+    return (rows.results ?? []).map(toPlaygroundFileRoot);
+  }
+
+  async getPlaygroundFileRoot(stackId: string, ownerKey: string, rootId: string): Promise<ControlPlaygroundFileRootRecord | null> {
+    const row = await this.#db
+      .prepare("SELECT stack_id, owner_key, root_id, name, manifest_hash, revision, created_at, updated_at FROM cas_playground_file_roots WHERE stack_id = ? AND owner_key = ? AND root_id = ?")
+      .bind(stackId, ownerKey, rootId)
+      .first<PlaygroundFileRootRow>();
+    return row ? toPlaygroundFileRoot(row) : null;
+  }
+
+  async createPlaygroundFileRoot(record: ControlPlaygroundFileRootRecord): Promise<"created" | "conflict"> {
+    try {
+      await this.#db.prepare(
+        "INSERT INTO cas_playground_file_roots (stack_id, owner_key, root_id, name, manifest_hash, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).bind(record.stackId, record.ownerKey, record.rootId, record.name, record.manifestHash, record.revision, record.createdAt, record.updatedAt).run();
+      return "created";
+    } catch (error) {
+      if (isUniqueViolation(error, "cas_playground_file_roots")) return "conflict";
+      throw error;
+    }
+  }
+
+  async updatePlaygroundFileRoot(input: {
+    readonly stackId: string;
+    readonly ownerKey: string;
+    readonly rootId: string;
+    readonly expectedRevision: number;
+    readonly name: string;
+    readonly manifestHash: string;
+    readonly updatedAt: number;
+  }): Promise<"updated" | "not-found" | "revision-mismatch"> {
+    const result = await this.#db.prepare(
+      "UPDATE cas_playground_file_roots SET name = ?, manifest_hash = ?, revision = revision + 1, updated_at = ? WHERE stack_id = ? AND owner_key = ? AND root_id = ? AND revision = ?",
+    ).bind(input.name, input.manifestHash, input.updatedAt, input.stackId, input.ownerKey, input.rootId, input.expectedRevision).run();
+    if ((result.meta.changes ?? 0) === 1) return "updated";
+    return await this.getPlaygroundFileRoot(input.stackId, input.ownerKey, input.rootId)
+      ? "revision-mismatch"
+      : "not-found";
+  }
+
+  async deletePlaygroundFileRoot(input: {
+    readonly stackId: string;
+    readonly ownerKey: string;
+    readonly rootId: string;
+    readonly expectedRevision: number;
+  }): Promise<"deleted" | "not-found" | "revision-mismatch"> {
+    const result = await this.#db.prepare(
+      "DELETE FROM cas_playground_file_roots WHERE stack_id = ? AND owner_key = ? AND root_id = ? AND revision = ?",
+    ).bind(input.stackId, input.ownerKey, input.rootId, input.expectedRevision).run();
+    if ((result.meta.changes ?? 0) === 1) return "deleted";
+    return await this.getPlaygroundFileRoot(input.stackId, input.ownerKey, input.rootId)
+      ? "revision-mismatch"
+      : "not-found";
   }
 
   async readSnapshot(): Promise<number> {
@@ -624,6 +686,17 @@ interface MembershipRow {
   readonly joined_at: number;
 }
 
+interface PlaygroundFileRootRow {
+  readonly stack_id: string;
+  readonly owner_key: string;
+  readonly root_id: string;
+  readonly name: string;
+  readonly manifest_hash: string;
+  readonly revision: number;
+  readonly created_at: number;
+  readonly updated_at: number;
+}
+
 interface IdempotencyRow {
   readonly identity_issuer: string;
   readonly subject: string;
@@ -810,6 +883,19 @@ function toMembership(row: MembershipRow): ControlMembershipRecord {
     displayName: row.display_name,
     emailForDisplay: row.email_for_display,
     joinedAt: row.joined_at,
+  };
+}
+
+function toPlaygroundFileRoot(row: PlaygroundFileRootRow): ControlPlaygroundFileRootRecord {
+  return {
+    stackId: row.stack_id,
+    ownerKey: row.owner_key,
+    rootId: row.root_id,
+    name: row.name,
+    manifestHash: row.manifest_hash,
+    revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

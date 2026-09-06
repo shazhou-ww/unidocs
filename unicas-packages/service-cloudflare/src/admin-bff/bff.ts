@@ -692,6 +692,38 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         const result = await controlPlane.listMembers(ctx, { path: { stackId: route.stackId }, query: pageQuery(query) });
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
+      case "listPlaygroundFileRoots": {
+        const result = await controlPlane.listPlaygroundFileRoots(ctx, { path: { stackId: route.stackId } });
+        return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
+      }
+      case "createPlaygroundFileRoot": {
+        const body = await readJsonBody<{ rootId?: unknown; name?: unknown; manifestHash?: unknown }>(request);
+        if (!body) return invalidRequest("JSON body is required");
+        const result = await controlPlane.createPlaygroundFileRoot(ctx, {
+          path: { stackId: route.stackId },
+          body: {
+            rootId: String(body.rootId ?? ""),
+            name: String(body.name ?? ""),
+            manifestHash: String(body.manifestHash ?? ""),
+          },
+        });
+        return jsonWithEtag(result);
+      }
+      case "patchPlaygroundFileRoot": {
+        const body = await readJsonBody<{ name?: unknown; manifestHash?: unknown }>(request);
+        if (!body) return invalidRequest("JSON body is required");
+        const result = await controlPlane.patchPlaygroundFileRoot(ctx, {
+          path: { stackId: route.stackId, rootId: route.rootId },
+          body: { name: String(body.name ?? ""), manifestHash: String(body.manifestHash ?? "") },
+        }, mutation);
+        return jsonWithEtag(result);
+      }
+      case "deletePlaygroundFileRoot": {
+        const result = await controlPlane.deletePlaygroundFileRoot(ctx, {
+          path: { stackId: route.stackId, rootId: route.rootId },
+        }, mutation);
+        return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
+      }
       case "deleteMember": {
         const result = await controlPlane.deleteMember(ctx, {
           path: { stackId: route.stackId },

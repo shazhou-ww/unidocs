@@ -39,6 +39,16 @@ export interface CasStackMember extends CasOperatorIdentityKey {
   readonly emailForDisplay: string | null;
 }
 
+/** Playground-owned business record that gives a retained CAS manifest meaning. */
+export interface CasPlaygroundFileRoot {
+  readonly rootId: string;
+  readonly name: string;
+  readonly manifestHash: CasHash;
+  readonly revision: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 /**
  * MVP membership is equal: every member has identical stack-admin authority.
  * There is no per-member RBAC grant on control-plane routes.

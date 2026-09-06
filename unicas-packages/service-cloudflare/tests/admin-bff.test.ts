@@ -31,11 +31,20 @@ interface FakeStack {
 
 const fakeStacks = new Map<string, FakeStack>();
 const fakeSessions = new Map<string, StoredSession>();
+const fakeFileRoots = new Map<string, Map<string, {
+  rootId: string;
+  name: string;
+  manifestHash: string;
+  revision: number;
+  createdAt: number;
+  updatedAt: number;
+}>>();
 let nextStackId = 1;
 
 afterEach(() => {
   fakeStacks.clear();
   fakeSessions.clear();
+  fakeFileRoots.clear();
   nextStackId = 1;
 });
 
@@ -49,6 +58,10 @@ test("stable admin asset URLs revalidate across deployments", async () => {
 
 function identityKey(ctx: ControlPlaneCallContext): string {
   return `${ctx.identity.identityIssuer}\n${ctx.identity.subject}`;
+}
+
+function fileRootsKey(ctx: ControlPlaneCallContext, stackId: string): string {
+  return `${stackId}\n${identityKey(ctx)}`;
 }
 
 class MemorySessionRepository implements ControlSessionRepository {
@@ -151,6 +164,33 @@ function fakeControlPlane(): ControlPlaneOperations {
       return response;
     },
     listMembers: error as ControlPlaneOperations["listMembers"],
+    listPlaygroundFileRoots: async (ctx, request) => ({
+      items: [...(fakeFileRoots.get(fileRootsKey(ctx, request.path.stackId))?.values() ?? [])],
+    }),
+    createPlaygroundFileRoot: async (ctx, request) => {
+      if (!requireStack(ctx, request.path.stackId)) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
+      const roots = fakeFileRoots.get(fileRootsKey(ctx, request.path.stackId)) ?? new Map();
+      fakeFileRoots.set(fileRootsKey(ctx, request.path.stackId), roots);
+      const now = Date.now();
+      const root = { ...request.body, revision: 1, createdAt: now, updatedAt: now };
+      roots.set(root.rootId, root);
+      return root;
+    },
+    patchPlaygroundFileRoot: async (ctx, request, mutation) => {
+      const root = fakeFileRoots.get(fileRootsKey(ctx, request.path.stackId))?.get(request.path.rootId);
+      if (!root) return { error: "NOT_FOUND", message: "file root not found" };
+      if (mutation.ifMatch !== `"${root.revision}"`) return { error: "REVISION_MISMATCH", message: "revision mismatch" };
+      Object.assign(root, request.body, { revision: root.revision + 1, updatedAt: Date.now() });
+      return root;
+    },
+    deletePlaygroundFileRoot: async (ctx, request, mutation) => {
+      const roots = fakeFileRoots.get(fileRootsKey(ctx, request.path.stackId));
+      const root = roots?.get(request.path.rootId);
+      if (!root) return { error: "NOT_FOUND", message: "file root not found" };
+      if (mutation.ifMatch !== `"${root.revision}"`) return { error: "REVISION_MISMATCH", message: "revision mismatch" };
+      roots!.delete(request.path.rootId);
+      return { ok: true };
+    },
     deleteMember: error as ControlPlaneOperations["deleteMember"],
     createMemberInvitation: error as ControlPlaneOperations["createMemberInvitation"],
     acceptMemberInvitation: error as ControlPlaneOperations["acceptMemberInvitation"],
@@ -869,6 +909,40 @@ describe("cas-admin-webui BFF", () => {
       tenantId: "member_test",
       expiresIn: 120,
     });
+  });
+
+  test("Playground file-root catalog uses CSRF and resource ETags", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Files");
+    const path = `/admin/stacks/${stackId}/playground/file-roots`;
+    const manifestHash = "a".repeat(64);
+
+    const created = await authRequest(bff, path, cookie, {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/json" },
+      body: JSON.stringify({ rootId: "root-1", name: "Project", manifestHash }),
+    });
+    expect(created.status).toBe(200);
+    expect(created.headers.get("ETag")).toBe('"1"');
+
+    const list = await authRequest(bff, path, cookie);
+    expect(await list.json()).toMatchObject({ items: [{ rootId: "root-1", name: "Project" }] });
+
+    const patched = await authRequest(bff, `${path}/root-1`, cookie, {
+      method: "PATCH",
+      headers: { "X-CSRF-Token": csrf, "Content-Type": "application/json", "If-Match": '"1"' },
+      body: JSON.stringify({ name: "Renamed", manifestHash }),
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.headers.get("ETag")).toBe('"2"');
+
+    const deleted = await authRequest(bff, `${path}/root-1`, cookie, {
+      method: "DELETE",
+      headers: { "X-CSRF-Token": csrf, "If-Match": '"2"' },
+    });
+    expect(deleted.status).toBe(200);
   });
 
   test("invitation page redirects unauthenticated visitors to login, then to the hash route", async () => {

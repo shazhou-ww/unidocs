@@ -72,13 +72,12 @@ describe("StackView", () => {
     expect(window.location.hash).toBe("#/stacks/cas_two");
   });
 
-  test("documents the concepts behind every management section", async () => {
+  test("documents management sections except the task-focused Playground", async () => {
     const user = userEvent.setup();
     render(<StackView stackId="cas_one" onOpenMcpConfiguration={vi.fn()} onLogout={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByRole("complementary", { name: "Stack identity" })).toBeInTheDocument());
     const guides = [
-      ["Playground", "Tenant API playground"],
       ["Members", "Stack administrators"],
       ["Change Log", "Change Log"],
     ] as const;
@@ -88,6 +87,9 @@ describe("StackView", () => {
       expect(screen.getByRole("complementary", { name: guide })).toBeInTheDocument();
       expect(screen.getByText("About this page")).toBeInTheDocument();
     }
+
+    await user.click(screen.getByRole("tab", { name: "Playground" }));
+    expect(screen.queryByText("About this page")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     expect(screen.getByRole("heading", { name: "Managed issuer" })).toBeInTheDocument();

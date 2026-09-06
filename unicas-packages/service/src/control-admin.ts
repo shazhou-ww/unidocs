@@ -12,6 +12,10 @@ import type {
   CasAdminCreateMemberInvitationResponse,
   CasAdminCreateStackRequest,
   CasAdminCreateStackResponse,
+  CasAdminCreatePlaygroundFileRootRequest,
+  CasAdminCreatePlaygroundFileRootResponse,
+  CasAdminDeletePlaygroundFileRootRequest,
+  CasAdminDeletePlaygroundFileRootResponse,
   CasAdminDeleteMemberRequest,
   CasAdminDeleteMemberResponse,
   CasAdminErrorResponse,
@@ -30,17 +34,22 @@ import type {
   CasAdminListControlAuditEventsResponse,
   CasAdminListMembersRequest,
   CasAdminListMembersResponse,
+  CasAdminListPlaygroundFileRootsRequest,
+  CasAdminListPlaygroundFileRootsResponse,
   CasAdminListStacksRequest,
   CasAdminListStacksResponse,
   CasAdminMeResponse,
   CasAdminPatchStackRequest,
   CasAdminPatchStackResponse,
+  CasAdminPatchPlaygroundFileRootRequest,
+  CasAdminPatchPlaygroundFileRootResponse,
   CasAdminPatchManagedIssuerRequest,
   CasAdminPatchManagedIssuerResponse,
   CasControlAuditEvent,
   CasOAuthIssuerInspection,
   CasOperatorIdentity,
   CasOperatorIdentityKey,
+  CasPlaygroundFileRoot,
   CasStack,
   CasStackMember,
   CasStackOAuthIssuer,
@@ -80,6 +89,7 @@ import {
   CONTROL_LIST_MAX_LIMIT,
   OAUTH_CAPABILITY_MAX_LIFETIME_SECONDS,
   INVITATION_TTL_MS,
+  managedPlaygroundOwnerKey,
   normalizeEmailConstraint,
   parseControlListLimit,
   sha256Hex,
@@ -156,6 +166,11 @@ export interface ControlMemberInvitationRecord {
 export interface ControlMemberInvitationResponse {
   readonly invitation: Omit<ControlMemberInvitationRecord, "tokenHash">;
   readonly acceptUrl: string;
+}
+
+export interface ControlPlaygroundFileRootRecord extends CasPlaygroundFileRoot {
+  readonly stackId: string;
+  readonly ownerKey: string;
 }
 
 export interface ControlIdentityPlan {
@@ -331,6 +346,24 @@ export interface ControlPlaneAdminRepository {
     readonly afterSubject: string;
     readonly limit: number;
   }): Promise<readonly ControlMembershipRecord[]>;
+  listPlaygroundFileRoots(stackId: string, ownerKey: string): Promise<readonly ControlPlaygroundFileRootRecord[]>;
+  getPlaygroundFileRoot(stackId: string, ownerKey: string, rootId: string): Promise<ControlPlaygroundFileRootRecord | null>;
+  createPlaygroundFileRoot(record: ControlPlaygroundFileRootRecord): Promise<"created" | "conflict">;
+  updatePlaygroundFileRoot(input: {
+    readonly stackId: string;
+    readonly ownerKey: string;
+    readonly rootId: string;
+    readonly expectedRevision: number;
+    readonly name: string;
+    readonly manifestHash: string;
+    readonly updatedAt: number;
+  }): Promise<"updated" | "not-found" | "revision-mismatch">;
+  deletePlaygroundFileRoot(input: {
+    readonly stackId: string;
+    readonly ownerKey: string;
+    readonly rootId: string;
+    readonly expectedRevision: number;
+  }): Promise<"deleted" | "not-found" | "revision-mismatch">;
   readSnapshot(): Promise<number>;
   listStacks(input: {
     readonly identity: CasOperatorIdentityKey;
@@ -469,6 +502,100 @@ export class ControlPlaneAdminService {
         ? encodeControlListCursor({ version: 1, snapshot, last: items[items.length - 1]!.subject })
         : null;
       return { items, nextCursor };
+    });
+  }
+
+  listPlaygroundFileRoots(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminListPlaygroundFileRootsRequest,
+  ): Promise<CasAdminListPlaygroundFileRootsResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      const ownerKey = await managedPlaygroundOwnerKey(request.path.stackId, ctx.identity);
+      const items = await this.#repository.listPlaygroundFileRoots(request.path.stackId, ownerKey);
+      return { items: items.map(toPlaygroundFileRoot) };
+    });
+  }
+
+  createPlaygroundFileRoot(
+    ctx: ControlPlaneCallContext,
+    request: CasAdminCreatePlaygroundFileRootRequest,
+  ): Promise<CasAdminCreatePlaygroundFileRootResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      validatePlaygroundFileRootInput(request.body.rootId, request.body.name, request.body.manifestHash);
+      const now = this.#now();
+      const record: ControlPlaygroundFileRootRecord = {
+        stackId: request.path.stackId,
+        ownerKey: await managedPlaygroundOwnerKey(request.path.stackId, ctx.identity),
+        rootId: request.body.rootId,
+        name: request.body.name.trim(),
+        manifestHash: request.body.manifestHash,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (await this.#repository.createPlaygroundFileRoot(record) === "conflict") {
+        throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "file root already exists");
+      }
+      return toPlaygroundFileRoot(record);
+    });
+  }
+
+  patchPlaygroundFileRoot(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminPatchPlaygroundFileRootRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminPatchPlaygroundFileRootResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      validatePlaygroundFileRootInput(request.path.rootId, request.body.name, request.body.manifestHash);
+      const ownerKey = await managedPlaygroundOwnerKey(request.path.stackId, ctx.identity);
+      const current = await this.#repository.getPlaygroundFileRoot(request.path.stackId, ownerKey, request.path.rootId);
+      if (!current) throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "file root not found");
+      this.#requireIfMatch(mutation.ifMatch, current.revision);
+      const updatedAt = this.#now();
+      const result = await this.#repository.updatePlaygroundFileRoot({
+        stackId: request.path.stackId,
+        ownerKey,
+        rootId: request.path.rootId,
+        expectedRevision: current.revision,
+        name: request.body.name.trim(),
+        manifestHash: request.body.manifestHash,
+        updatedAt,
+      });
+      if (result === "not-found") throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "file root not found");
+      if (result === "revision-mismatch") throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "resource revision has changed");
+      return toPlaygroundFileRoot({
+        ...current,
+        name: request.body.name.trim(),
+        manifestHash: request.body.manifestHash,
+        revision: current.revision + 1,
+        updatedAt,
+      });
+    });
+  }
+
+  deletePlaygroundFileRoot(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminDeletePlaygroundFileRootRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminDeletePlaygroundFileRootResponse> {
+    return this.#guard(async () => {
+      await this.#requireMember(ctx.identity, request.path.stackId);
+      const ownerKey = await managedPlaygroundOwnerKey(request.path.stackId, ctx.identity);
+      const current = await this.#repository.getPlaygroundFileRoot(request.path.stackId, ownerKey, request.path.rootId);
+      if (!current) throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "file root not found");
+      this.#requireIfMatch(mutation.ifMatch, current.revision);
+      const result = await this.#repository.deletePlaygroundFileRoot({
+        stackId: request.path.stackId,
+        ownerKey,
+        rootId: request.path.rootId,
+        expectedRevision: current.revision,
+      });
+      if (result === "not-found") throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "file root not found");
+      if (result === "revision-mismatch") throw new ControlPlaneError(CasAdminErrorCodes.REVISION_MISMATCH, "resource revision has changed");
+      return { ok: true };
     });
   }
 
@@ -1195,6 +1322,29 @@ export class ControlPlaneAdminService {
 
 function identityTarget(identity: CasOperatorIdentityKey): string {
   return `${identity.identityIssuer}:${identity.subject}`;
+}
+
+function validatePlaygroundFileRootInput(rootId: unknown, name: unknown, manifestHash: unknown): void {
+  if (typeof rootId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(rootId)) {
+    throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "rootId is malformed");
+  }
+  if (typeof name !== "string" || name.trim().length === 0 || name.trim().length > 120 || /[\u0000-\u001f\u007f]/.test(name.trim())) {
+    throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "name must be 1-120 characters without controls");
+  }
+  if (typeof manifestHash !== "string" || !/^[0-9a-f]{64}$/.test(manifestHash)) {
+    throw new ControlPlaneError(CasAdminErrorCodes.INVALID_REQUEST, "manifestHash must be a lowercase SHA-256 hash");
+  }
+}
+
+function toPlaygroundFileRoot(record: ControlPlaygroundFileRootRecord): CasPlaygroundFileRoot {
+  return {
+    rootId: record.rootId,
+    name: record.name,
+    manifestHash: record.manifestHash,
+    revision: record.revision,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
 }
 
 function toCasStack(record: ControlStackRecord): CasStack {

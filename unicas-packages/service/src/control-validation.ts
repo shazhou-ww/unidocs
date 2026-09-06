@@ -95,6 +95,14 @@ export async function sha256Hex(value: string): Promise<string> {
     .join("");
 }
 
+/** Stable, non-PII owner key shared by managed capabilities and Playground state. */
+export function managedPlaygroundOwnerKey(
+  stackId: string,
+  identity: { readonly identityIssuer: string; readonly subject: string },
+): Promise<string> {
+  return sha256Hex(`${stackId}\0${identity.identityIssuer}\0${identity.subject}`);
+}
+
 /** Stable canonical JSON for idempotency payload comparison. */
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(value);

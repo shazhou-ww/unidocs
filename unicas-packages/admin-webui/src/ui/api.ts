@@ -2,7 +2,7 @@
  * Browser API client for the `/admin` BFF. Browser code never holds Google
  * secrets, session signing material, refresh tokens, or storage bindings.
  * It calls the BFF with the HttpOnly session cookie, and the BFF enforces
- * membership. The Playground may explicitly request a 120-second tenant
+ * membership. The Playground may request a short-lived tenant
  * capability. The CSRF token is read from the shell's meta tag.
  */
 

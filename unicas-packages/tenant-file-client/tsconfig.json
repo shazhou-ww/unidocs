@@ -8,18 +8,17 @@
       "ES2024",
       "DOM"
     ],
-    "types": [],
-    "jsx": "react-jsx"
+    "types": []
   },
   "include": [
     "src"
   ],
   "references": [
     {
-      "path": "../admin-client"
+      "path": "../tenant-client"
     },
     {
-      "path": "../tenant-file-client"
+      "path": "../tenant-blob-client"
     }
   ]
 }

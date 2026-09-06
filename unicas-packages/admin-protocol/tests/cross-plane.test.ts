@@ -22,6 +22,7 @@ function readPkg(name: string): {
 const TENANT_CLIENT_PACKAGES = [
   "@unicas/tenant-client",
   "@unicas/tenant-blob-client",
+  "@unicas/tenant-file-client",
 ] as const;
 
 const TENANT_ONLY_PACKAGES = [
@@ -95,6 +96,7 @@ describe("package dependency boundaries", () => {
     expect(webui.dependencies?.["@unicas/admin-client"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/tenant-client"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/tenant-blob-client"]).toBe("workspace:*");
+    expect(webui.dependencies?.["@unicas/tenant-file-client"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
     expect(webui.dependencies?.["@unicas/service"]).toBeUndefined();
     expect(webui.dependencies?.["@unicas/control-plane"]).toBeUndefined();

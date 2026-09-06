@@ -1,0 +1,44 @@
+{
+  "name": "@unicas/tenant-file-client",
+  "version": "0.1.0",
+  "description": "File-manifest and root-catalog layer above the UniCAS tenant clients",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "typecheck": "tsc -b",
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
+  },
+  "dependencies": {
+    "@unicas/tenant-blob-client": "workspace:*",
+    "@unicas/tenant-client": "workspace:*",
+    "cborg": "^6.1.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  }
+}

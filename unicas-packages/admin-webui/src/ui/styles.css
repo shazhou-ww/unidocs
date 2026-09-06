@@ -710,6 +710,17 @@ a:focus-visible,
   margin: 0.85rem 0 0;
 }
 
+.playground-tool-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.playground-tool-section h3 {
+  margin: 0 0 0.8rem;
+  font-size: 0.95rem;
+}
+
 .playground-expired {
   color: var(--danger);
   font-weight: 650;
@@ -740,6 +751,195 @@ a:focus-visible,
   margin: 0.2rem 0 0;
   font-size: 1rem;
   font-weight: 650;
+}
+
+.file-playground {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.28fr) minmax(0, 1fr);
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.file-root-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  background: #fafafa;
+  border-right: 1px solid var(--border);
+}
+
+.file-root-list-header {
+  padding: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-root-list-header > div:first-child {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.file-root-list-header span,
+.file-root-nav small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.file-root-add {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: var(--muted-strong);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.file-root-add:hover:not(:disabled) {
+  color: var(--foreground);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.file-root-inline-editor {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.file-root-inline-editor input {
+  min-width: 0;
+  height: 32px;
+  padding: 0.35rem 0.45rem;
+}
+
+.file-root-inline-editor [role="alert"] {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: 0.72rem;
+}
+
+.file-root-nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding: 0.45rem;
+}
+
+.file-root-nav button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.58rem 0.62rem;
+  overflow: hidden;
+  color: var(--muted-strong);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.file-root-nav button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-root-nav button:hover,
+.file-root-nav button.active {
+  color: var(--foreground);
+  background: var(--surface);
+}
+
+.file-root-nav button:last-child {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.file-root-empty {
+  padding: 0 0.62rem;
+  font-size: 0.78rem;
+}
+
+.file-detail {
+  min-width: 0;
+  padding: 1rem;
+  background: var(--surface-subtle);
+}
+
+.file-detail > .card {
+  margin: 0;
+}
+
+.file-root-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.file-root-actions {
+  justify-content: flex-end;
+  margin: -2.3rem 0 1rem;
+}
+
+.file-manager-shell {
+  min-width: 0;
+  margin: 0 -1.1rem -1rem;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+}
+
+.file-manager-shell > * {
+  max-width: 100%;
+}
+
+.file-upload-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.file-upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.file-capability-status {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 820px) {
+  .file-playground {
+    grid-template-columns: 1fr;
+  }
+
+  .file-root-list {
+    max-height: 260px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .file-root-nav button:last-child {
+    margin-top: 0.35rem;
+  }
+
 }
 
 .state {

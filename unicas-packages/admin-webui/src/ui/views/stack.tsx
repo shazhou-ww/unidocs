@@ -19,7 +19,7 @@ import { MembersView } from "./members.js";
 import { IssuerView } from "./issuer.js";
 import { ControlAuditView } from "./control-audit.js";
 import { UsageView } from "./usage.js";
-import { PlaygroundView } from "./playground.js";
+import { PlaygroundView } from "./file-playground.js";
 
 const TABS = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={15} /> },
@@ -244,7 +244,7 @@ export function StackView({ stackId, onStackChange, onOpenMcpConfiguration, onLo
           </div>
         </aside>
         <section className="stack-content" aria-hidden={mobileNavigationOpen ? true : undefined}>
-          <ConceptGuide {...activeGuide} />
+          {tab !== "playground" ? <ConceptGuide {...activeGuide} /> : null}
           {tab === "overview" ? (
             <>
               <StackOverviewView stack={stack} onChanged={reload} />

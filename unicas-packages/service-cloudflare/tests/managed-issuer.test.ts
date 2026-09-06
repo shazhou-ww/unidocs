@@ -23,7 +23,7 @@ describe("CloudflareManagedIssuer", () => {
       status: "active",
       issuer: "https://cas.example/managed-issuers/cas_first",
       audience: "https://cas.example/stacks/cas_first",
-      capabilityMaxLifetimeSeconds: 120,
+      capabilityMaxLifetimeSeconds: 3600,
     });
     expect(second.issuer).not.toBe(first.issuer);
     expect((await authority.jwks()).keys).toHaveLength(1);
@@ -63,6 +63,8 @@ describe("CloudflareManagedIssuer", () => {
       `tenants:${alice.tenantId}:cas:write`,
       `tenants:${alice.tenantId}:cas:manage`,
     ]);
+    expect(alice.expiresIn).toBe(3600);
+    expect(alice.expiresAt).toBe(1_700_003_600_000);
 
     const jwks = await authority.jwks() as { keys: Array<Record<string, unknown>> };
     const publicKey = await importJWK(jwks.keys[0]!, "ES256");

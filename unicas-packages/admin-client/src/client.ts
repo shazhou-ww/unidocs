@@ -28,6 +28,7 @@ import type {
   CasOperatorIdentity,
   CasOperatorIdentityKey,
   CasOAuthIssuerInspection,
+  CasPlaygroundFileRoot,
   CasRefDomain,
   CasRootRefBalance,
   CasRootRefEvent,
@@ -62,6 +63,20 @@ export interface AdminClient {
     path: { readonly stackId: CasStackId },
     query?: CasAdminPageQuery,
   ): Promise<CasAdminPage<CasStackMember>>;
+  listPlaygroundFileRoots(path: { readonly stackId: CasStackId }): Promise<{ readonly items: readonly CasPlaygroundFileRoot[] }>;
+  createPlaygroundFileRoot(
+    path: { readonly stackId: CasStackId },
+    body: { readonly rootId: string; readonly name: string; readonly manifestHash: string },
+  ): Promise<AdminClientRead<CasPlaygroundFileRoot>>;
+  patchPlaygroundFileRoot(
+    path: { readonly stackId: CasStackId; readonly rootId: string },
+    body: { readonly name: string; readonly manifestHash: string },
+    ifMatch: string,
+  ): Promise<AdminClientRead<CasPlaygroundFileRoot>>;
+  deletePlaygroundFileRoot(
+    path: { readonly stackId: CasStackId; readonly rootId: string },
+    ifMatch: string,
+  ): Promise<{ readonly ok: true }>;
   deleteMember(
     path: { readonly stackId: CasStackId },
     query: CasOperatorIdentityKey,
@@ -219,6 +234,49 @@ export function createAdminClient(config: AdminClientConfig): AdminClient {
       const response = await requireOk(
         await request(`${casAdminRoutes.members(path)}${queryString(pageQuery(query))}`),
         "listMembers",
+      );
+      return response.json();
+    },
+
+    async listPlaygroundFileRoots(path) {
+      const response = await requireOk(
+        await request(casAdminRoutes.playgroundFileRoots(path)),
+        "listPlaygroundFileRoots",
+      );
+      return response.json();
+    },
+
+    async createPlaygroundFileRoot(path, body) {
+      const response = await requireOk(
+        await request(casAdminRoutes.playgroundFileRoots(path), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        "createPlaygroundFileRoot",
+      );
+      return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async patchPlaygroundFileRoot(path, body, ifMatch) {
+      const response = await requireOk(
+        await request(casAdminRoutes.playgroundFileRoot(path), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...ifMatchHeader(ifMatch) },
+          body: JSON.stringify(body),
+        }),
+        "patchPlaygroundFileRoot",
+      );
+      return { value: await response.json(), etag: readEtag(response) };
+    },
+
+    async deletePlaygroundFileRoot(path, ifMatch) {
+      const response = await requireOk(
+        await request(casAdminRoutes.playgroundFileRoot(path), {
+          method: "DELETE",
+          headers: ifMatchHeader(ifMatch),
+        }),
+        "deletePlaygroundFileRoot",
       );
       return response.json();
     },

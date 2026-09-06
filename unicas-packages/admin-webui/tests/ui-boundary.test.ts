@@ -58,7 +58,7 @@ describe("cas-admin-webui browser boundary", () => {
   });
 
   test("the Playground credential exception remains memory-only", () => {
-    const source = readFileSync(join(UI_DIR, "views", "playground.tsx"), "utf8");
+    const source = readFileSync(join(UI_DIR, "views", "file-playground.tsx"), "utf8");
     expect(source).toContain("current.accessToken");
     for (const persistenceApi of ["localStorage", "sessionStorage", "indexedDB", "document.cookie"]) {
       expect(source, `playground.tsx must not use ${persistenceApi}`).not.toContain(persistenceApi);

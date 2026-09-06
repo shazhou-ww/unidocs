@@ -124,6 +124,7 @@ export type {
 
 export { ControlAuditActions } from "./control-audit.js";
 export type { ControlAuditAction } from "./control-audit.js";
+export { managedPlaygroundOwnerKey } from "./control-validation.js";
 export {
   decodeControlListCursor,
   encodeControlListCursor,
@@ -227,5 +228,6 @@ export type {
   ControlPatchManagedIssuerPlan,
   ControlPlaneAdminRepository,
   ControlPlaneAdminServiceOptions,
+  ControlPlaygroundFileRootRecord,
   ControlStackRecord,
 } from "./control-admin.js";

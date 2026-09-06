@@ -39,6 +39,7 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unicas/admin-client": "unicas-packages/admin-client/src/index.ts",
   "@unicas/tenant-client": "unicas-packages/tenant-client/src/index.ts",
   "@unicas/tenant-blob-client": "unicas-packages/tenant-blob-client/src/index.ts",
+  "@unicas/tenant-file-client": "unicas-packages/tenant-file-client/src/index.ts",
   "@unidocs/protocol-doc": "packages/protocol-doc/src/index.ts",
   "@unidocs/protocol-gateway": "packages/protocol-gateway/src/index.ts",
   "@unidocs/service-auth": "packages/service-auth/src/index.ts",

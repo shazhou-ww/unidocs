@@ -57,6 +57,9 @@
       "path": "unicas-packages/tenant-blob-client"
     },
     {
+      "path": "unicas-packages/tenant-file-client"
+    },
+    {
       "path": "unicas-packages/tenant-client"
     },
     {

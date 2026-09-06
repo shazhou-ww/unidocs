@@ -8,7 +8,7 @@ const STACK = "cas_stack_a";
 
 /** Minimal in-memory fake of the /admin BFF API. */
 class MockAdminService {
-  readonly requests: { path: string; method: string; cookie: string | null; csrf: string | null; body?: string }[] = [];
+  readonly requests: { path: string; method: string; cookie: string | null; csrf: string | null; ifMatch: string | null; body?: string }[] = [];
   readonly stack = {
     stackId: STACK,
     displayName: "Ops",
@@ -18,6 +18,14 @@ class MockAdminService {
     revision: 3,
   };
   session = true;
+  fileRoot = {
+    rootId: "root-1",
+    name: "Files",
+    manifestHash: "a".repeat(64),
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  };
 
   readonly fetch: AdminHttpFetcher = async (input, init): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -25,7 +33,7 @@ class MockAdminService {
     const cookie = request.headers.get("Cookie");
     const csrf = request.headers.get("X-CSRF-Token");
     const body = request.body ? await request.clone().text() : undefined;
-    this.requests.push({ path: url.pathname, method: request.method, cookie, csrf, body });
+    this.requests.push({ path: url.pathname, method: request.method, cookie, csrf, ifMatch: request.headers.get("If-Match"), body });
     if (!this.session) {
       return Response.json({ error: "ADMIN_AUTH_REQUIRED", message: "session required" }, { status: 401 });
     }
@@ -51,6 +59,19 @@ class MockAdminService {
     if (path === casAdminRoutes.stack({ stackId: STACK }) && request.method === "PATCH") {
       this.stack.revision += 1;
       return Response.json(this.stack, { headers: { ETag: `"rev-${this.stack.revision}"` } });
+    }
+    if (path === casAdminRoutes.playgroundFileRoots({ stackId: STACK }) && request.method === "GET") {
+      return Response.json({ items: [this.fileRoot] });
+    }
+    if (path === casAdminRoutes.playgroundFileRoots({ stackId: STACK }) && request.method === "POST") {
+      return Response.json(this.fileRoot, { headers: { ETag: '"1"' } });
+    }
+    if (path === casAdminRoutes.playgroundFileRoot({ stackId: STACK, rootId: "root-1" }) && request.method === "PATCH") {
+      this.fileRoot = { ...this.fileRoot, ...(await request.json()), revision: 2, updatedAt: 2 };
+      return Response.json(this.fileRoot, { headers: { ETag: '"2"' } });
+    }
+    if (path === casAdminRoutes.playgroundFileRoot({ stackId: STACK, rootId: "root-1" }) && request.method === "DELETE") {
+      return Response.json({ ok: true });
     }
     if (path === casAdminRoutes.oauthIssuer({ stackId: STACK }) && request.method === "GET") {
       return Response.json({
@@ -139,6 +160,21 @@ describe("functional admin client", () => {
     const { value, etag } = await client.getOAuthIssuer({ stackId: STACK });
     expect(value).toMatchObject({ metadataType: "oauth", status: "active", jwksUri: "https://issuer.example/oauth/jwks" });
     expect(etag).toBe('"rev-4"');
+  });
+
+  it("transports Playground file-root catalog mutations with ETags", async () => {
+    expect((await client.listPlaygroundFileRoots({ stackId: STACK })).items).toHaveLength(1);
+    expect(await client.createPlaygroundFileRoot(
+      { stackId: STACK },
+      { rootId: "root-1", name: "Files", manifestHash: "a".repeat(64) },
+    )).toMatchObject({ etag: '"1"' });
+    expect(await client.patchPlaygroundFileRoot(
+      { stackId: STACK, rootId: "root-1" },
+      { name: "Renamed", manifestHash: "b".repeat(64) },
+      '"1"',
+    )).toMatchObject({ value: { name: "Renamed", revision: 2 }, etag: '"2"' });
+    expect(await client.deletePlaygroundFileRoot({ stackId: STACK, rootId: "root-1" }, '"2"')).toEqual({ ok: true });
+    expect(service.requests.at(-1)).toMatchObject({ method: "DELETE", csrf: "csrf-1", ifMatch: '"2"' });
   });
 
   it("posts OAuth issuer inspections with CSRF", async () => {

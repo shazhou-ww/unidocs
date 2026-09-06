@@ -38,7 +38,7 @@ generated with `pnpm keys:local`; use the resulting `kid` and
 
 Only current stack members can mint managed capabilities through the admin
 BFF. Each `(stack, OIDC issuer, subject)` maps to a stable isolated tenant.
-Capabilities expire after 120 seconds and include read, write, and manage for
+Capabilities expire after one hour and include read, write, and manage for
 that tenant. The Playground keeps the bearer only in React state.
 
 Managed issuer metadata and JWKS are public only while that issuer remains

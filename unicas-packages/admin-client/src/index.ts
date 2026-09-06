@@ -25,6 +25,7 @@ export type {
 export type {
   CasControlAuditEvent,
   CasOAuthIssuerInspection,
+  CasPlaygroundFileRoot,
   CasRefDomain,
   CasRootRefBalance,
   CasRootRefEvent,

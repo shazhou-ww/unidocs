@@ -7,6 +7,10 @@ import type {
   CasAdminCreateMemberInvitationResponse,
   CasAdminCreateStackRequest,
   CasAdminCreateStackResponse,
+  CasAdminCreatePlaygroundFileRootRequest,
+  CasAdminCreatePlaygroundFileRootResponse,
+  CasAdminDeletePlaygroundFileRootRequest,
+  CasAdminDeletePlaygroundFileRootResponse,
   CasAdminDeleteMemberRequest,
   CasAdminDeleteMemberResponse,
   CasAdminErrorResponse,
@@ -24,11 +28,15 @@ import type {
   CasAdminListControlAuditEventsResponse,
   CasAdminListMembersRequest,
   CasAdminListMembersResponse,
+  CasAdminListPlaygroundFileRootsRequest,
+  CasAdminListPlaygroundFileRootsResponse,
   CasAdminListStacksRequest,
   CasAdminListStacksResponse,
   CasAdminMeResponse,
   CasAdminPatchStackRequest,
   CasAdminPatchStackResponse,
+  CasAdminPatchPlaygroundFileRootRequest,
+  CasAdminPatchPlaygroundFileRootResponse,
   CasAdminPatchManagedIssuerRequest,
   CasAdminPatchManagedIssuerResponse,
   CasOperatorIdentityKey,
@@ -76,6 +84,18 @@ export interface ControlPlaneOperations {
     mutation: ServiceMutationInput,
   ): Promise<CasAdminPatchStackResponse>;
   listMembers(ctx: ControlPlaneCallContext, request: CasAdminListMembersRequest): Promise<CasAdminListMembersResponse>;
+  listPlaygroundFileRoots(ctx: ControlPlaneCallContext, request: CasAdminListPlaygroundFileRootsRequest): Promise<CasAdminListPlaygroundFileRootsResponse>;
+  createPlaygroundFileRoot(ctx: ControlPlaneCallContext, request: CasAdminCreatePlaygroundFileRootRequest): Promise<CasAdminCreatePlaygroundFileRootResponse>;
+  patchPlaygroundFileRoot(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminPatchPlaygroundFileRootRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminPatchPlaygroundFileRootResponse>;
+  deletePlaygroundFileRoot(
+    ctx: ControlPlaneCallContext,
+    request: Omit<CasAdminDeletePlaygroundFileRootRequest, "headers">,
+    mutation: ServiceMutationInput,
+  ): Promise<CasAdminDeletePlaygroundFileRootResponse>;
   deleteMember(
     ctx: ControlPlaneCallContext,
     request: Omit<CasAdminDeleteMemberRequest, "headers">,

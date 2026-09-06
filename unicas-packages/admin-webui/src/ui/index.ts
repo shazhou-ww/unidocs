@@ -1,6 +1,6 @@
 /**
  * Stack administration UI entry. Browser code may hold only the explicit
- * 120-second Playground capability; it never holds Google client secrets,
+ * short-lived Playground capability; it never holds Google client secrets,
  * refresh tokens, private keys, or session signing material.
  */
 export const CAS_ADMIN_UI_PACKAGE = "@unicas/admin-webui/ui" as const;
@@ -15,6 +15,6 @@ export { MembersView } from "./views/members.js";
 export { IssuerView } from "./views/issuer.js";
 export { ControlAuditView } from "./views/control-audit.js";
 export { UsageView } from "./views/usage.js";
-export { PlaygroundView } from "./views/playground.js";
+export { PlaygroundView } from "./views/file-playground.js";
 export { api, ApiError, SessionExpiredError, readCsrfToken, ifMatch } from "./api.js";
 export { useHashRoute, matchRoute, navigate } from "./router.js";
