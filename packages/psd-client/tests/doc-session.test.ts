@@ -3,6 +3,7 @@ import { createSBlob, encodeSValue } from "@unidocs/svalue-codec";
 import type { SValue } from "@unidocs/protocol";
 import { DocSession } from "../src/doc-session.js";
 import type { RenderLike } from "../src/doc-session.js";
+import { applyOne } from "@unidocs/doctype-psd/engine";
 import type { BlobStore, Layer, PsdDoc, PsdOp } from "@unidocs/doctype-psd/engine";
 
 const canvas = { width: 4, height: 4, colorMode: "RGB" as const, depth: 8 as const, resolution: 72, profile: "sRGB" };
@@ -141,6 +142,51 @@ const opts = (extra: Partial<{
   store: memStore({}),
   render: mockRender(),
   ...extra,
+});
+
+describe("embedded editor compatibility boundaries", () => {
+  it("can derive and paint a local draft without constructing a submitting DocSession", async () => {
+    const base = docWithLayers(["l1"]);
+    const original = structuredClone(base);
+    const render = mockRender();
+    const operations = [setOp("l1", 0.5), setOp("l1", 0.2)];
+    let draft = base;
+
+    for (const operation of operations) {
+      draft = applyOne(draft, operation);
+      await render.applyOp(operation);
+    }
+
+    expect(base).toEqual(original);
+    expect(draft.layers[0]!.opacity).toBe(0.2);
+    expect(render.applyOpCalls).toEqual(operations);
+    expect(applyOne(original, operations[0]!)).not.toEqual(draft);
+  });
+
+  it("does not recover an unacknowledged queue when a session is reconstructed", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => { });
+    let acknowledge!: (response: Response) => void;
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => { acknowledge = resolve; }));
+    try {
+      const original = new DocSession(opts({ fetchImpl: fetchImpl as typeof fetch }));
+      await original.applyLocal(setOp("l1", 0.5));
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+      expect(original.pendingCount).toBe(1);
+
+      const restored = new DocSession(opts({ fetchImpl: fetchImpl as typeof fetch }));
+      expect(restored.pendingCount).toBe(0);
+      expect(restored.doc.layers[0]!.opacity).toBe(1);
+      expect(restored.version).toBe(5);
+
+      acknowledge(new Response(JSON.stringify({ success: true, version: 6 }), {
+        status: 200, headers: { "content-type": "application/json" },
+      }));
+      await original.flush();
+      expect(restored.version).toBe(5);
+    } finally {
+      warning.mockRestore();
+    }
+  });
 });
 
 describe("DocSession.applyLocal", () => {

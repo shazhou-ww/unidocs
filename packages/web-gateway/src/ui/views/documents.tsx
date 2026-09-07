@@ -1,4 +1,4 @@
-import { LoaderCircle, Plus, Download, LogOut } from "lucide-react";
+import { LoaderCircle, Plus, Download, LogOut, Eye } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
@@ -156,6 +156,7 @@ export function DocumentsView({ session, onSignedOut }: DocumentsViewProps) {
                         <td>{new Date(doc.created_at).toLocaleString()}</td>
                         <td>{new Date(doc.updated_at).toLocaleString()}</td>
                         <td>
+                          {(doc.doc_type === "markdown" || doc.doc_type === "psd") && <button type="button" className="btn" onClick={() => navigate(`/preview/${encodeURIComponent(doc.doc_type)}/${encodeURIComponent(doc.doc_id)}`)}><Eye size={14} /><span>打开预览</span></button>}
                           <button type="button" className="btn" onClick={() => void exportDocument(doc)}>
                             <Download size={14} aria-hidden="true" />
                             <span>Download</span>

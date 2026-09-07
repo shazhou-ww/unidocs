@@ -17,7 +17,7 @@ vi.mock("../src/ui/config.js", () => ({
 
 beforeEach(() => {
   window.history.replaceState(null, "", "/ui/");
-  window.location.hash = "/";
+  window.location.hash = "/documents";
   sessionStorage.clear();
   localStorage.clear();
 });
@@ -100,5 +100,20 @@ describe("gateway webui app", () => {
     expect(screen.getByRole("heading", { name: "docx" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "markdown" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "New document" })).toHaveLength(2);
+  });
+
+  test("guards preview links behind sign-in", () => {
+    window.location.hash = "/preview/markdown/doc";
+    render(<App />);
+    expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+  });
+
+  test("sign out removes stored credentials", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ success: true, data: [], count: 0 })));
+    accessTokenSession("alice");
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    expect(sessionStorage.getItem("unidocs.oauth.session")).toBeNull();
   });
 });

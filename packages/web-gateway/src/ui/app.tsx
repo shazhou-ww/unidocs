@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { REDIRECT_PATH } from "./config.js";
-import { completeLogin, loadSession, type OAuthTokenSession } from "./oauth.js";
-import { useHashRoute } from "./router.js";
+import { clearSession, completeLogin, loadSession, type OAuthTokenSession } from "./oauth.js";
+import { matchRoute, useHashRoute } from "./router.js";
 import { DocumentsView } from "./views/documents.js";
 import { LoginView } from "./views/login.js";
+
+const StudioView = lazy(() => import("./studio/studio.js").then(module => ({ default: module.StudioView })));
+const CloudPreview = lazy(() => import("./views/cloud-preview.js").then(module => ({ default: module.CloudPreview })));
 
 /**
  * Root component: hash routing, OAuth callback handling, and the session
@@ -31,10 +34,15 @@ export function App() {
   }, []);
 
   const signedOut = () => {
+    clearSession();
     setSession(null);
     setCallbackError(null);
-    window.location.hash = "/";
+    window.location.hash = "/documents";
   };
+
+  if (route !== "/documents" && !route.startsWith("/preview/") && window.location.pathname !== REDIRECT_PATH) {
+    return <Suspense fallback={<p role="status">正在打开工作台…</p>}><StudioView /></Suspense>;
+  }
 
   if (!session) {
     return (
@@ -47,6 +55,14 @@ export function App() {
 
   if (route === "/documents") {
     return <DocumentsView session={session} onSignedOut={signedOut} />;
+  }
+
+  if (route.startsWith("/preview/")) {
+    try {
+      const match = matchRoute("/preview/:docType/:docId", route);
+      if (match) return <Suspense fallback={<p role="status">正在打开预览…</p>}><CloudPreview key={`${session.tenantId}:${route}`} session={session} docType={match.params.docType!} docId={match.params.docId!} onSignedOut={signedOut} /></Suspense>;
+    } catch { }
+    return <main className="shell"><p role="alert">无效的作品链接</p><a href="#/documents">返回作品列表</a></main>;
   }
 
   // Anything else after login goes to the document list.

@@ -52,7 +52,7 @@ export function serveGatewayWebUi(request: Request): Response | null {
     }
     return textResponse(index, CONTENT_TYPES[".html"], true);
   }
-  return textResponse(asset, contentType(requested), false);
+  return textResponse(asset, contentType(requested), requested.endsWith(".html"));
 }
 
 function textResponse(body: string, contentTypeValue: string, spaFallback: boolean): Response {

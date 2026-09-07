@@ -1089,6 +1089,44 @@ describe("DocumentSession — normal paths", () => {
 // --------------------------------------------------------------------------
 
 describe("DocumentSession.apply — opId idempotency", () => {
+  it("P0: a reused opId does not validate a different payload in the same instance", async () => {
+    const { session } = makeHarness();
+    await session.create();
+    await session.apply([{ kind: "append", text: "a" }], "first", 1, "op-fixed");
+
+    const result = await session.apply([{ kind: "append", text: "different" }], "changed", 2, "op-fixed");
+
+    expect(result.version).toBe(2);
+    expect((await session.query({ kind: "text" })).data).toBe("a");
+  });
+
+  it("P0: a fresh instance cannot confirm a committed opId after a lost acknowledgement", async () => {
+    const { session, deps } = makeHarness();
+    await session.create();
+    const operations: TextOp[] = [{ kind: "append", text: "a" }];
+    await session.apply(operations, "first", 1, "op-fixed");
+
+    const restored = new DocumentSession(makeTextDocType(), deps);
+    await expect(restored.apply(operations, "first", 1, "op-fixed")).rejects.toBeInstanceOf(VersionConflictError);
+    expect((await restored.query({ kind: "text" })).data).toBe("a");
+    expect(await deps.deltas.head()).toBe(2);
+  });
+
+  it("P0: snapshot cache failure can reject apply after the delta committed", async () => {
+    const { session, deps } = makeHarness();
+    await session.create();
+    deps.snapshots = {
+      get: () => Promise.resolve(null),
+      put: async () => { throw new Error("cache unavailable"); },
+    };
+    const operations: TextOp[] = [{ kind: "append", text: "a" }];
+
+    await expect(session.apply(operations, "first", 1, "op-fixed")).rejects.toThrow("cache unavailable");
+    expect(await deps.deltas.head()).toBe(2);
+    expect((await session.query({ kind: "text" })).data).toBe("a");
+    await expect(session.apply(operations, "first", 1, "op-fixed")).rejects.toBeInstanceOf(VersionConflictError);
+  });
+
   it("29. the same opId applied twice does not double-apply — second call returns the first call's version and the doc is unchanged", async () => {
     const { session, deps } = makeHarness();
     await session.load();
@@ -1300,6 +1338,22 @@ describe("DocumentSession.exportBytes — 格式选择", () => {
     await session.load();
     await session.create({ bytes: encoder.encode("hi") });
     await expect(session.exportBytes("jpeg")).rejects.toThrow("Unknown format: jpeg");
+  });
+});
+
+describe("session-handler historical read compatibility", () => {
+  it("P0: an unsupported version parameter on ir still returns the current version", async () => {
+    const { session, deps } = makeHarness();
+    await session.create({ bytes: encoder.encode("original") });
+    await session.apply([{ kind: "append", text: " updated" }], "update", 1);
+    const handle = createSessionHandler({ session, identity: deps.identity });
+
+    const response = await handle(new Request("https://svc/_internal/ir?version=1"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-Doc-Version")).toBe("2");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(snapshotBytes("original updated"));
+    expect(await deps.deltas.head()).toBe(2);
   });
 });
 

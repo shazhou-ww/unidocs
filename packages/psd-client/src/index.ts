@@ -8,3 +8,5 @@ export type { TileMessage } from "./render-client.js";
 export type { WorkerRequest, WorkerResponse } from "./render-worker.js";
 export { DocSession } from "./doc-session.js";
 export type { RenderLike } from "./doc-session.js";
+export { EditorDraft } from "./editor-draft.js";
+export type { DraftCandidate, DraftCommitResult, DraftCheckpoint } from "./editor-draft.js";

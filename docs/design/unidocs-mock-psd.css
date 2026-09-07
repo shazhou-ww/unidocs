@@ -180,15 +180,28 @@
 }
 
 .doc-thumb.psd-thumb {
-  padding: 12px;
+  padding: 20px 24px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .psd-thumb .psd-thumbnail {
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  border: 4px solid white;
+  background: white;
+  box-shadow: 0 2px 5px #24364d14, 0 8px 16px #24364d24;
+}
+
+.list .doc-thumb.psd-thumb {
+  padding: 14px;
+}
+
+.list .psd-thumb .psd-thumbnail {
+  border-width: 3px;
 }
 
 .doc-type {

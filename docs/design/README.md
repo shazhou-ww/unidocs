@@ -2,6 +2,14 @@
 
 入口：[打开 HTML 原型](unidocs-mock.html)。用浏览器直接打开，不需要启动服务。
 
+可运行迭代：[Iteration 02](iteration-02.md) 已部署到 https://unidocs.shazhou.work/?iteration=02 ，使用真实 PSD 引擎，本地版本和草稿保存在 IndexedDB，刷新可恢复，尚未接云端写入。[Iteration 01](iteration-01.md) 保留作为历史发布记录。原型与实际迭代的范围请分开看待。
+
+最新交付：[Iteration 03](iteration-03.md) 新增登录后的 Markdown／PSD 云端只读预览，入口 https://unidocs.shazhou.work/?iteration=03#/documents 。生产账号真实文档读取待真人登录验收，本地样例与云端只读内容不共用存储。
+
+架构草案：[Editor Host Protocol v0](editor-host-protocol-v0.md)，按编辑器用例分析、消息时序和协议定义展开。尚未实现 iframe 拆分。
+
+实施规划：[统一 WebUI 实施计划](implementation-plan.md)，包含阶段依赖、现有代码复用、PSD 同步适配、PR 切分与验收标准。P0 已启动，证据与测试记录见 [P0 能力矩阵](p0-capability-matrix.md)。
+
 ## 已确定的产品约定
 
 - UniDocs 是人和外部 Agent 共同创作、迭代数字作品的平台。

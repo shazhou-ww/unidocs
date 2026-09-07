@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>UniDocs</title>
+  <g transform="rotate(-15 32 32)">
+    <path fill="#365744" fill-rule="evenodd" d="M32 3a29 29 0 1 0 0 58 29 29 0 0 0 0-58ZM23.95 11.3h16.1v8.05l9.2 11.5L32 55 14.75 30.85l9.2-11.5V11.3Z" clip-rule="evenodd"/>
+    <circle cx="32" cy="29.7" r="4.6" fill="#365744"/>
+    <path stroke="#365744" stroke-width="2.875" d="M32 32v25.3"/>
+  </g>
+</svg>

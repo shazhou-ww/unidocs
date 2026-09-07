@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UniDocs · Logo 方向</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&display=swap');
+
+    :root {
+      color-scheme: light;
+      font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+      color: #292e28;
+      background: #f5f6f2;
+      letter-spacing: 0;
+      --green: #365744;
+      --line: #dfe3db;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    header {
+      padding: 32px 40px 26px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    h1 {
+      font-family: Georgia, serif;
+      font-size: 36px;
+      margin: 0;
+    }
+
+    .header-meta {
+      display: flex;
+      gap: 20px;
+      color: #7b8375;
+      font-size: 11px;
+    }
+
+    main {
+      padding: 30px 40px 44px;
+      max-width: 1500px;
+      margin: auto;
+    }
+
+    .directions {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    article {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .label {
+      padding: 17px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      gap: 10px;
+    }
+
+    h2 {
+      font-size: 12px;
+      font-weight: 500;
+      margin: 0;
+    }
+
+    .number {
+      font-family: Georgia, serif;
+      font-size: 14px;
+      color: #8b9484;
+    }
+
+    .stage {
+      height: 214px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(#e0e5da .6px, transparent .6px);
+      background-size: 12px 12px;
+    }
+
+    .stage img {
+      width: 120px;
+      height: 120px;
+    }
+
+    .wordmark {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 80px;
+      border-top: 1px solid var(--line);
+      font-family: Georgia, serif;
+      font-size: 29px;
+      font-weight: bold;
+      white-space: nowrap;
+    }
+
+    .wordmark img {
+      width: 36px;
+      height: 36px;
+    }
+
+    .scales {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 88px;
+      padding: 15px 22px;
+      border-top: 1px solid var(--line);
+      gap: 10px;
+    }
+
+    .scale {
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 9px;
+      color: #87917e;
+      min-width: 32px;
+    }
+
+    .scale img {
+      object-fit: contain;
+    }
+
+    .reverse {
+      background: #34473b;
+      height: 78px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .reverse img {
+      width: 35px;
+      height: 35px;
+      filter: brightness(0) invert(1);
+    }
+
+    .reverse .black {
+      filter: brightness(0);
+      background: #f3f5ef;
+      border-radius: 4px;
+      padding: 4px;
+      width: 35px;
+      height: 35px;
+    }
+
+    .mono {
+      display: flex;
+      background: #f3f5ef;
+      border-radius: 4px;
+      padding: 4px;
+    }
+
+    .mono img {
+      width: 27px;
+      height: 27px;
+      filter: brightness(0);
+    }
+
+    footer {
+      padding: 12px 18px;
+      font-size: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #858d7e;
+    }
+
+    a {
+      color: var(--green);
+      text-decoration: underline;
+      text-underline-offset: 4px;
+    }
+
+    a:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 4px;
+    }
+
+    .in-context {
+      margin-top: 32px;
+      border-top: 1px solid var(--line);
+      padding-top: 22px;
+    }
+
+    .context-heading {
+      color: #7b8375;
+      font-size: 10px;
+      margin: 0 0 18px;
+    }
+
+    .context-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .context-item {
+      min-width: 0;
+    }
+
+    .app-header {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 15px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #eef1e9;
+      font-family: Georgia, serif;
+      font-size: 23px;
+      font-weight: bold;
+    }
+
+    .app-header img {
+      width: 28px;
+      height: 30px;
+    }
+
+    .browser-tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 12px;
+      background: white;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .browser-tab img {
+      width: 16px;
+      height: 16px;
+    }
+
+    .bottom {
+      padding-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: 10px;
+      color: #818a79;
+    }
+
+    @media(max-width:1100px) {
+      header {
+        padding: 24px;
+      }
+
+      main {
+        padding: 24px;
+      }
+
+      .directions,
+      .context-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media(max-width:540px) {
+      header {
+        align-items: flex-start;
+      }
+
+      .header-meta {
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      main {
+        padding: 18px;
+      }
+
+      .directions,
+      .context-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stage {
+        height: 190px;
+      }
+
+      .bottom {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>UniDocs</h1>
+    <div class="header-meta"><span>品牌标记 / 方向探索</span><span>01—04 · 2026.09</span></div>
+  </header>
+  <main>
+    <div class="directions">
+      <article>
+        <div class="label"><span class="number">01</span>
+          <h2>几何笔尖</h2>
+        </div>
+        <div class="stage"><img src="logo/01-solid-nib.svg" alt="实心几何笔尖，中心圆孔与竖向切口"></div>
+        <div class="wordmark"><img src="logo/01-solid-nib.svg" alt="">UniDocs</div>
+        <div class="scales"><span class="scale"><img src="logo/01-solid-nib.svg" width="16" height="16"
+              alt="16 像素">16</span><span class="scale"><img src="logo/01-solid-nib.svg" width="24" height="24"
+              alt="24 像素">24</span><span class="scale"><img src="logo/01-solid-nib.svg" width="32" height="32"
+              alt="32 像素">32</span><span class="scale"><img src="logo/01-solid-nib.svg" width="40" height="40"
+              alt="40 像素">40</span></div>
+        <div class="reverse"><img src="logo/01-solid-nib.svg" alt="白色反白"><span class="mono"><img
+              src="logo/01-solid-nib.svg" alt="黑色单色"></span></div>
+        <footer><span>SOLID NIB</span><a href="logo/01-solid-nib.svg" download>下载 SVG</a></footer>
+      </article>
+      <article>
+        <div class="label"><span class="number">02</span>
+          <h2>线描笔尖</h2>
+        </div>
+        <div class="stage"><img src="logo/02-outline-nib.svg" alt="细线勾勒的端正钢笔笔尖"></div>
+        <div class="wordmark"><img src="logo/02-outline-nib.svg" alt="">UniDocs</div>
+        <div class="scales"><span class="scale"><img src="logo/02-outline-nib.svg" width="16" height="16"
+              alt="16 像素">16</span><span class="scale"><img src="logo/02-outline-nib.svg" width="24" height="24"
+              alt="24 像素">24</span><span class="scale"><img src="logo/02-outline-nib.svg" width="32" height="32"
+              alt="32 像素">32</span><span class="scale"><img src="logo/02-outline-nib.svg" width="40" height="40"
+              alt="40 像素">40</span></div>
+        <div class="reverse"><img src="logo/02-outline-nib.svg" alt="白色反白"><span class="mono"><img
+              src="logo/02-outline-nib.svg" alt="黑色单色"></span></div>
+        <footer><span>OUTLINE NIB</span><a href="logo/02-outline-nib.svg" download>下载 SVG</a></footer>
+      </article>
+      <article>
+        <div class="label"><span class="number">03</span>
+          <h2>U · 共创</h2>
+        </div>
+        <div class="stage"><img src="logo/03-union-nib.svg" alt="U 形双臂围绕中央笔尖"></div>
+        <div class="wordmark"><img src="logo/03-union-nib.svg" alt="">UniDocs</div>
+        <div class="scales"><span class="scale"><img src="logo/03-union-nib.svg" width="16" height="16"
+              alt="16 像素">16</span><span class="scale"><img src="logo/03-union-nib.svg" width="24" height="24"
+              alt="24 像素">24</span><span class="scale"><img src="logo/03-union-nib.svg" width="32" height="32"
+              alt="32 像素">32</span><span class="scale"><img src="logo/03-union-nib.svg" width="40" height="40"
+              alt="40 像素">40</span></div>
+        <div class="reverse"><img src="logo/03-union-nib.svg" alt="白色反白"><span class="mono"><img
+              src="logo/03-union-nib.svg" alt="黑色单色"></span></div>
+        <footer><span>UNION NIB</span><a href="logo/03-union-nib.svg" download>下载 SVG</a></footer>
+      </article>
+      <article>
+        <div class="label"><span class="number">04</span>
+          <h2>创作印记</h2>
+        </div>
+        <div class="stage"><img src="logo/04-studio-seal.svg" alt="圆章中留白的钢笔笔尖"></div>
+        <div class="wordmark"><img src="logo/04-studio-seal.svg" alt="">UniDocs</div>
+        <div class="scales"><span class="scale"><img src="logo/04-studio-seal.svg" width="16" height="16"
+              alt="16 像素">16</span><span class="scale"><img src="logo/04-studio-seal.svg" width="24" height="24"
+              alt="24 像素">24</span><span class="scale"><img src="logo/04-studio-seal.svg" width="32" height="32"
+              alt="32 像素">32</span><span class="scale"><img src="logo/04-studio-seal.svg" width="40" height="40"
+              alt="40 像素">40</span></div>
+        <div class="reverse"><img src="logo/04-studio-seal.svg" alt="白色反白"><span class="mono"><img
+              src="logo/04-studio-seal.svg" alt="黑色单色"></span></div>
+        <footer><span>STUDIO SEAL</span><a href="logo/04-studio-seal.svg" download>下载 SVG</a></footer>
+      </article>
+    </div>
+    <section class="in-context" aria-label="界面中的品牌效果">
+      <p class="context-heading">IN CONTEXT / 界面中的标记</p>
+      <div class="context-grid">
+        <div class="context-item">
+          <div class="app-header"><img src="logo/01-solid-nib.svg" alt="方案 01">UniDocs</div>
+          <div class="browser-tab"><img src="logo/01-solid-nib.svg" alt="">我的作品 · UniDocs</div>
+        </div>
+        <div class="context-item">
+          <div class="app-header"><img src="logo/02-outline-nib.svg" alt="方案 02">UniDocs</div>
+          <div class="browser-tab"><img src="logo/02-outline-nib.svg" alt="">我的作品 · UniDocs</div>
+        </div>
+        <div class="context-item">
+          <div class="app-header"><img src="logo/03-union-nib.svg" alt="方案 03">UniDocs</div>
+          <div class="browser-tab"><img src="logo/03-union-nib.svg" alt="">我的作品 · UniDocs</div>
+        </div>
+        <div class="context-item">
+          <div class="app-header"><img src="logo/04-studio-seal.svg" alt="方案 04">UniDocs</div>
+          <div class="browser-tab"><img src="logo/04-studio-seal.svg" alt="">我的作品 · UniDocs</div>
+        </div>
+      </div>
+    </section>
+    <div class="bottom"><span>UniDocs / Identity Studies</span><a href="unidocs-mock.html">返回工作台</a></div>
+  </main>
+</body>
+
+</html>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>UniDocs - Union Nib</title>
+  <path fill="#365744" d="M9 10h9v23c0 10 5 17 14 22C17 53 9 45 9 33V10Zm46 0h-9v23c0 10-5 17-14 22 15-2 23-10 23-22V10Z"/>
+  <path fill="#365744" fill-rule="evenodd" d="m32 8 10 23-10 20-10-20L32 8Zm0 17a3.5 3.5 0 0 0-1.5 6.66V45l1.5 3 1.5-3V31.66A3.5 3.5 0 0 0 32 25Z" clip-rule="evenodd"/>
+</svg>

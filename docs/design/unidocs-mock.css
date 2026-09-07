@@ -211,14 +211,17 @@ small,
 }
 
 .brand-mark {
-  width: 28px;
+  width: 30px;
   height: 30px;
-  border: 1px solid #b7bdb1;
-  border-radius: 5px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
-  background: white;
-  color: var(--green);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .workspace {
@@ -444,6 +447,9 @@ small,
 }
 
 .doc-card {
+  --type-tint: #edf2e8;
+  --type-ink: #45613b;
+  --type-border: #cbdac0;
   border: 1px solid var(--line);
   border-radius: 7px;
   overflow: hidden;
@@ -451,6 +457,21 @@ small,
   transition: transform .16s, border-color .16s;
   animation: arrive .3s ease both;
   min-width: 0;
+}
+
+.doc-card:has(.psd-thumb) {
+  --type-tint: #e8eff7;
+  --type-ink: #365f89;
+  --type-border: #c2d4e8;
+}
+
+.doc-card .doc-type {
+  background: var(--type-tint);
+  border: 1px solid var(--type-border);
+  color: var(--type-ink);
+  font-weight: 700;
+  min-width: 32px;
+  justify-content: center;
 }
 
 .doc-card:hover {
@@ -464,18 +485,35 @@ small,
 }
 
 .doc-thumb {
+  position: relative;
+  isolation: isolate;
   height: 184px;
-  padding: 20px 24px 0;
+  padding: 26px 28px 0 22px;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
-  background: repeating-linear-gradient(0deg, #f3f4f0, #f3f4f0 23px, #eceee7 24px);
+  background: var(--type-tint);
+}
+
+.doc-thumb:not(.psd-thumb)::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  left: 32px;
+  right: 18px;
+  height: 190px;
+  background: white;
+  border: 1px solid #dfe5d9;
+  box-shadow: 0 2px 6px #24341b0a;
+  pointer-events: none;
 }
 
 .mini-paper {
+  position: relative;
+  z-index: 1;
   background: white;
   min-height: 190px;
   padding: 22px 22px 10px;
-  box-shadow: 0 2px 10px #222a1710;
+  box-shadow: 1px -1px 8px #24341b12, 0 2px 10px #222a1710;
   font-size: 8px;
   line-height: 1.8;
   transform: rotate(-1deg);
@@ -572,6 +610,16 @@ small,
 
 .list .mini-paper {
   padding: 10px;
+}
+
+.list .doc-thumb:not(.psd-thumb) {
+  padding: 20px 18px 0 10px;
+}
+
+.list .doc-thumb:not(.psd-thumb)::before {
+  top: 9px;
+  left: 20px;
+  right: 10px;
 }
 
 .list .doc-info {
@@ -1102,11 +1150,15 @@ dialog::backdrop {
   display: flex;
   flex-direction: column;
   max-height: 340px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .ref-option {
   width: 100%;
+  flex: 0 0 auto;
+  min-height: 76px;
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
@@ -1124,12 +1176,15 @@ dialog::backdrop {
   font-size: 12px;
   display: block;
   margin-bottom: 5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .ref-option small {
   font-size: 10px;
   display: block;
   line-height: 1.8;
+  overflow-wrap: anywhere;
 }
 
 .review-item {

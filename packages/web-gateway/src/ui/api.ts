@@ -52,13 +52,15 @@ async function ensureFreshSession(): Promise<OAuthTokenSession> {
   return session;
 }
 
-async function gatewayFetch(path: string, init: RequestInit = {}): Promise<Response> {
+async function gatewayFetch(path: string, init: RequestInit = {}, expectedTenant?: string): Promise<Response> {
   const session = await ensureFreshSession();
+  if (expectedTenant && session.tenantId !== expectedTenant) throw new ApiError(403, "账号上下文已改变，请重新打开作品");
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${session.accessToken}`);
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (response.status === 401) {
     const refreshed = await refreshSession(session);
+    if (expectedTenant && refreshed.tenantId !== expectedTenant) throw new ApiError(403, "账号上下文已改变，请重新打开作品");
     const retryHeaders = new Headers(init.headers);
     retryHeaders.set("Authorization", `Bearer ${refreshed.accessToken}`);
     const retry = await fetch(`${API_BASE}${path}`, { ...init, headers: retryHeaders });
@@ -69,6 +71,43 @@ async function gatewayFetch(path: string, init: RequestInit = {}): Promise<Respo
     return retry;
   }
   return response;
+}
+
+export interface MarkdownPreview {
+  content: string;
+  version: number;
+}
+
+export async function readMarkdownPreview(tenantId: string, docId: string, signal: AbortSignal): Promise<MarkdownPreview> {
+  const response = await gatewayFetch(`/tenants/${encodeURIComponent(tenantId)}/docs/markdown/${encodeURIComponent(docId)}/query`, {
+    method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ kind: "getContent" }), signal, cache: "no-store",
+  }, tenantId);
+  const result = await readJson<{ data: unknown; version: number }>(response);
+  if (typeof result.data !== "string" || !Number.isSafeInteger(result.version) || result.version < 1) throw new ApiError(502, "文档内容或版本格式无效");
+  return { content: result.data, version: result.version };
+}
+
+export function createPsdPreviewTransport(tenantId: string, docId: string, signal: AbortSignal): { apiBaseUrl: string; fetchImpl: typeof fetch } {
+  const path = `/tenants/${encodeURIComponent(tenantId)}`;
+  const apiBaseUrl = `${API_BASE}${path}`;
+  const irUrl = `${apiBaseUrl}/docs/psd/${encodeURIComponent(docId)}/ir`;
+  const pixelsPrefix = `${apiBaseUrl}/cas/nodes/`;
+  const fetchImpl: typeof fetch = async (input, init = {}) => {
+    const url = String(input);
+    if ((init.method ?? "GET") !== "GET" || init.body != null
+      || (url !== irUrl && !(url.startsWith(pixelsPrefix) && /^[a-f0-9]{64}\/content$/.test(url.slice(pixelsPrefix.length))))) {
+      throw new ApiError(403, "只读预览拒绝此请求");
+    }
+    const response = await gatewayFetch(url.slice(API_BASE.length), { method: "GET", signal, cache: "no-store" }, tenantId);
+    if (!response.ok) throw new ApiError(response.status, `预览读取失败 (${response.status})`);
+    if (url === irUrl) {
+      const version = Number(response.headers.get("X-Doc-Version"));
+      if (!Number.isSafeInteger(version) || version < 1) throw new ApiError(502, "作品响应缺少有效版本号");
+    }
+    return response;
+  };
+  return { apiBaseUrl, fetchImpl };
 }
 
 async function readJson<T>(response: Response): Promise<T> {
