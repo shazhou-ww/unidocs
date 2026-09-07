@@ -77,7 +77,7 @@ export class MarkdownEditor extends ProductionEditor {
         deltas: sql.exec("SELECT version FROM svalue_deltas ORDER BY version").toArray(),
         snapshots: sql.exec("SELECT version FROM svalue_snapshots ORDER BY version").toArray(),
         pending: sql.exec("SELECT version, commit_op_id FROM svalue_pending").toArray(),
-        receipts: exists ? sql.exec("SELECT op_id, state FROM doc_commit_intents_v1").toArray() : [],
+        receipts: exists ? sql.exec("SELECT op_id, state, length(payload) AS payload_bytes FROM doc_commit_intents_v1").toArray() : [],
       });
     }
     return super.fetch(request);

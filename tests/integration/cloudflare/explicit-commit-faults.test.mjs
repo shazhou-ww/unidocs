@@ -41,7 +41,7 @@ test.each(["before-roots", "before-pending", "after-pending", "after-delta", "af
     if (fault === "after-finalize") {
       expect(failed.status, JSON.stringify(failed.body)).toBe(200);
       expect(failed.body.receipt).toMatchObject({ state: "committed", version: nextVersion });
-      expect((await inspect()).body).toMatchObject({ fired: true, pending: [], receipts: [{ op_id: "fault-op", state: "committed" }] });
+      expect((await inspect()).body).toMatchObject({ fired: true, pending: [], receipts: [{ op_id: "fault-op", state: "committed", payload_bytes: 0 }] });
       expect((await send(`${path}/query`, { kind: "getContent" })).body).toMatchObject({ version: nextVersion, data: "\n\n## Once\n\nOriginal candidate" });
       const control = { opId: "fault-op", baseVersion, requestDigest: failed.body.receipt.requestDigest };
       await runtime.dispose(); runtime = undefined;
@@ -53,6 +53,7 @@ test.each(["before-roots", "before-pending", "after-pending", "after-delta", "af
     expect(failed.status, JSON.stringify(failed.body)).toBe(503);
     expect(failed.body.receipt).toMatchObject({ state: "pending", opId: "fault-op", baseVersion });
     const before = (await inspect()).body;
+    expect(before.receipts[0].payload_bytes).toBeGreaterThan(0);
     const hasPendingRoot = !["before-roots", "before-pending"].includes(fault);
     expect(before).toMatchObject({ fired: true, deltas: originalDeltas, snapshots: [{ version: 1 }], receipts: [{ op_id: "fault-op", state: "pending" }],
       pending: hasPendingRoot ? [{ version: nextVersion, commit_op_id: "fault-op" }] : [] });
@@ -77,7 +78,7 @@ test.each(["before-roots", "before-pending", "after-pending", "after-delta", "af
     expect((await send(`${path}/apply`, candidate)).body.receipt).toEqual(recovered.body.receipt);
     expect((await inspect()).body).toMatchObject({ deltas: [...originalDeltas, { version: nextVersion }],
       snapshots: fault === "after-snapshot" ? [{ version: 1 }, { version: nextVersion }] : [{ version: 1 }],
-      pending: [], receipts: [{ op_id: "fault-op", state: "committed" }] });
+      pending: [], receipts: [{ op_id: "fault-op", state: "committed", payload_bytes: 0 }] });
     expect((await send(`${path}/query`, { kind: "getContent" })).body).toEqual(query.body);
     expect((await runtime.storage.middlewareRootRefRequestIds(stackFixture.stackId, tenant)).filter(value => value === rootRequest)).toHaveLength(1);
     expect((await runtime.storage.middlewareRetainedRoots(stackFixture.stackId, tenant)).every(row => row.count === 1)).toBe(true);

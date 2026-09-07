@@ -1,6 +1,6 @@
 # UniDocs 统一 WebUI 实施计划
 
-日期：2026-09-07。状态：P0 进行中；P1 可信嵌入未启动，P2/P3 的非 iframe 早期切片已交付，完整阶段 gate 尚未通过。进度核对至 [Iteration 09 第七切片](iteration-09.md)，区分已部署能力与当前工作区的未部署实现。
+日期：2026-09-07。状态：P0 进行中；P1 可信嵌入未启动，P2/P3 的非 iframe 早期切片已交付，完整阶段 gate 尚未通过。进度核对至 [Iteration 09 第八切片](iteration-09.md)，区分已部署能力与未部署实现。
 
 可见交付：[Iteration 01](iteration-01.md) 已上线真实 PSD 引擎本地试验页；不代表 P1 iframe 协议或 P2 真实云端保存已完成。
 

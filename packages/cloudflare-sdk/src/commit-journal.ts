@@ -100,7 +100,7 @@ export class SqliteCommitJournal {
       if (returned !== null && (typeof returned === "object" || typeof returned === "function") && "then" in returned) {
         throw new Error("Commit finalization must be synchronous");
       }
-      this.storage.sql.exec("UPDATE doc_commit_intents_v1 SET state = ?, receipt = ? WHERE scope = ? AND op_id = ?",
+      this.storage.sql.exec("UPDATE doc_commit_intents_v1 SET state = ?, receipt = ?, payload = X'' WHERE scope = ? AND op_id = ?",
         receipt.state, JSON.stringify(receipt), this.#scope, receipt.opId);
       return receipt;
     });

@@ -82,6 +82,7 @@ it("rolls back local writes and retains pending on finalization failure", async 
   })).toThrow("disk failure");
   expect(storage.sql.exec("SELECT * FROM committed_versions").toArray()).toEqual([]);
   expect(journal.lookup(pending)).toEqual(pending);
+  expect(await journal.recoverPending()).toEqual({ receipt: pending, payload });
 });
 
 it("isolates tenant, type and session and returns unknown for absent identities", async () => {
@@ -147,4 +148,24 @@ it("metadata-only lookup does not create tables in an untouched database", () =>
   const journal = new SqliteCommitJournal(storage, scope, false);
   expect(journal.lookup({ opId: "missing", requestDigest: "0".repeat(64), baseVersion: 1 })).toMatchObject({ state: "unknown", reason: "not_found" });
   expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([]);
+});
+
+it.each(["committed", "rejected"] as const)("removes only terminal %s candidate bytes and retains durable dedup metadata", async state => {
+  const directory = mkdtempSync(join(tmpdir(), "commit-terminal-")); directories.push(directory);
+  const path = join(directory, "journal.sqlite");
+  const first = open(path);
+  const pending = await first.journal.begin("op-1", payload);
+  const result = state === "committed"
+    ? { ...pending, state, version: 2 }
+    : { ...pending, state, reason: "invalid_operations" as const };
+  first.journal.settle(result, () => undefined);
+  expect(first.storage.sql.exec("SELECT length(payload) AS bytes FROM doc_commit_intents_v1 WHERE op_id = ?", "op-1").toArray()).toEqual([{ bytes: 0 }]);
+  const next = await first.journal.begin("op-2", { ...payload, baseVersion: 2 });
+  expect((first.storage.sql.exec("SELECT length(payload) AS bytes FROM doc_commit_intents_v1 WHERE op_id = ?", "op-2").toArray()[0]!.bytes as number)).toBeGreaterThan(0);
+  first.database.close();
+  const restored = open(path);
+  expect(restored.journal.lookup(pending)).toEqual(result);
+  expect(await restored.journal.begin("op-1", payload)).toEqual(result);
+  await expect(restored.journal.begin("op-1", { ...payload, description: "different" })).rejects.toMatchObject({ code: "payload_mismatch" });
+  expect(await restored.journal.recoverPending()).toEqual({ receipt: next, payload: { ...payload, baseVersion: 2 } });
 });
