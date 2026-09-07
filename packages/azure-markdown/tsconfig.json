@@ -16,6 +16,12 @@
     },
     {
       "path": "../doctype-markdown"
+    },
+    {
+      "path": "../doctype-server-common"
+    },
+    {
+      "path": "../protocol-doc"
     }
   ]
 }

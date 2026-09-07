@@ -723,6 +723,7 @@ export class ControlPlaneAdminService {
       await this.#requireMember(ctx.identity, request.path.stackId);
       const issuer = await this.#repository.getOAuthIssuer(request.path.stackId);
       if (!issuer) {
+        if (request.query?.optional) return null;
         throw new ControlPlaneError(CasAdminErrorCodes.NOT_FOUND, "OAuth issuer is not configured");
       }
       return toCasStackOAuthIssuer(issuer);

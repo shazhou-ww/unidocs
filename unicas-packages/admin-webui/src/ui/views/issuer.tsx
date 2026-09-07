@@ -4,7 +4,7 @@ import type {
   CasOAuthIssuerInspection,
   CasStackOAuthIssuer,
 } from "@unicas/admin-client";
-import { api, ApiError, ifMatch } from "../api.js";
+import { api, ifMatch } from "../api.js";
 import { Button, Card, ErrorState } from "../components.js";
 import { formatErrorSafe } from "./view-helpers.js";
 
@@ -29,11 +29,7 @@ export function IssuerView({ stackId }: { stackId: string }) {
     setError(null);
     try {
       const [oauthResult, managedResult] = await Promise.all([
-        api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer`)
-          .catch((caught) => {
-            if (caught instanceof ApiError && caught.status === 404) return null;
-            throw caught;
-          }),
+        api<CasStackOAuthIssuer | null>(`/admin/stacks/${encodeURIComponent(stackId)}/oauth-issuer?optional=true`),
         api<CasStackOAuthIssuer>(`/admin/stacks/${encodeURIComponent(stackId)}/managed-issuer`),
       ]);
       setOAuthIssuer(oauthResult);

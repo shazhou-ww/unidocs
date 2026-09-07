@@ -19,7 +19,9 @@ describe("cas-admin-webui package boundary", () => {
     expect(pkg.dependencies["@unicas/service"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/control-plane"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/tenant-client"]).toBe("workspace:*");
-    expect(pkg.dependencies["@unicas/tenant-blob-client"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unicas/tenant-blob-client"]).toBeUndefined();
+    expect(pkg.dependencies["@unicas/tenant-file-client"]).toBe("workspace:*");
+    expect(pkg.dependencies["@unicas/tenant-browser-cache"]).toBe("workspace:*");
     expect(pkg.dependencies["@unicas/tenant-protocol"]).toBeUndefined();
     expect(pkg.dependencies["@unicas/codec"]).toBeUndefined();
     expect(pkg.scripts.deploy).toBeUndefined();

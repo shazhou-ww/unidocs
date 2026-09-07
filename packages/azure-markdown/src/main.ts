@@ -22,7 +22,7 @@ runDocTypeService({
   docType: "markdown",
   documentTypeFactory: createMarkdownDocumentType,
   defaultPort: 41800,
-  documentAgent: markdownAgent,
+  documentAgent: () => markdownAgent,
   llmProvider: createAnthropicProvider(process.env, fetch, { observe: consoleObserver }),
 }).catch((err) => {
   console.error("azure-markdown failed to start:", err);

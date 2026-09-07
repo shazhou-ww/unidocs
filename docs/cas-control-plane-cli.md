@@ -71,6 +71,33 @@ off-CLI with a key the discovered issuer advertises — private key material is
 never a valid input, and there is no manual JWK upload path: UniCAS derives
 keys exclusively from verified issuer JWKS discovery.
 
+The WebUI reads the optional custom issuer with
+`GET /admin/stacks/:stackId/oauth-issuer?optional=true`. An authorized member
+receives `200 null` when no custom issuer is configured; membership and stack
+errors remain errors. Omitting `optional` preserves the default `404 NOT_FOUND`
+behavior used by the CLI and MCP. Configured issuers still return their metadata
+and ETag.
+
+The Playground retains opened file-root snapshots and each root's current path
+in page memory. Switching roots or folders reuses those snapshots without a
+network request. Refresh reloads the selected root from the server and invalidates
+other cached roots whose catalog revision or manifest hash changed. Successful
+edits update the working snapshot; failed edits discard uncommitted changes and
+evict it. Leaving the Playground or changing stacks clears these working snapshots.
+
+Immutable node metadata and completely read small node content use the independent
+`@unicas/tenant-browser-cache` strategy (8 MiB memory, 64 MiB IndexedDB per
+endpoint/principal, 4 MiB entry limit). These bytes survive page reloads. Keys also
+include stack, tenant and hash. Session identity discovery, capability issuance and
+the mutable root catalog remain live server reads before reopening a root; a
+changed manifest hash loads new content. Refresh reloads the catalog, but may reuse
+unchanged immutable bytes. Logout clears the current principal's persisted entries
+across endpoints, including prior page sessions. Storage failures degrade to
+memory/network; deletion is best-effort when browser storage is unavailable.
+Tenant capabilities remain memory-only and renew when a request needs an
+unexpired token. A cached node is not proof of current server existence, permission,
+lease or retention; usage, GC and other mutable node state are never cached here.
+
 ## Testing
 
 ```powershell

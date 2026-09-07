@@ -16,6 +16,12 @@
     },
     {
       "path": "../doctype-docx"
+    },
+    {
+      "path": "../doctype-server-common"
+    },
+    {
+      "path": "../protocol-doc"
     }
   ]
 }

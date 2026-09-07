@@ -43,6 +43,7 @@ describe("runMigrations", () => {
       "0002_session_identity.sql",
       "0003_tenant_doc_session_keys.sql",
       "0004_agent_sessions.sql",
+      "0005_font_registry.sql",
     ]);
   }, 120_000);
 

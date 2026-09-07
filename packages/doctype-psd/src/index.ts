@@ -3,6 +3,8 @@ export type { PsdDoc, PsdStoredDoc, PsdQuery, PsdOp } from "./doctype.js";
 export type { PsdStoredFont } from "./state.js";
 export type { FontEntry, FontIndex } from "./text/registry.js";
 export type { FontIndexSource } from "./text/set-text.js";
+export { createFontIndex, parseFontFallbacks } from "./text/font-index.js";
+export type { FontIndexOptions } from "./text/font-index.js";
 export { createPsdAgent } from "./agent.js";
 export type { PsdAgentDeps } from "./agent.js";
 export { createQwenImageEditor } from "./image/qwen-editor.js";

@@ -346,6 +346,9 @@ describe("ControlPlaneAdminService", () => {
       await service.getOAuthIssuer(context(), { path: { stackId: created.stackId } }),
       CasAdminErrorCodes.NOT_FOUND,
     );
+    expect(await service.getOAuthIssuer(context(), { path: { stackId: created.stackId }, query: { optional: true } })).toBeNull();
+    expect(await service.getOAuthIssuer(context(bob, "Bob"), { path: { stackId: created.stackId }, query: { optional: true } }))
+      .toMatchObject({ error: CasAdminErrorCodes.STACK_MEMBERSHIP_REQUIRED });
     repository.oauthIssuers.set(created.stackId, oauthIssuerRecord(created.stackId));
     expectError(
       await service.getOAuthIssuer(context(bob, "Bob"), { path: { stackId: created.stackId } }),

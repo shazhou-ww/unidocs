@@ -7,7 +7,7 @@
  * 整套单测照样全绿。这里断言的就是那几条"只连一次、连错了没人知道"的线。
  */
 import { describe, expect, it } from "vitest";
-import { psdAgentDeps } from "../src/worker.js";
+import { psdAgentDeps } from "../src/agent-deps.js";
 
 const namespace = {
   idFromName: (name: string) => name,

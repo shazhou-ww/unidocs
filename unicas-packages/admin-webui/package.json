@@ -19,16 +19,15 @@
   ],
   "scripts": {
     "build": "vite build",
-    "build:ui": "pnpm --filter '@unicas/admin-webui^...' build && vite build",
+    "build:ui": "pnpm --filter \"@unicas/admin-webui^...\" build && vite build",
     "dev:ui": "vite",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@cubone/react-file-manager": "1.35.0",
     "@unicas/admin-client": "workspace:*",
-    "@unicas/tenant-blob-client": "workspace:*",
+    "@unicas/tenant-browser-cache": "workspace:*",
     "@unicas/tenant-client": "workspace:*",
     "@unicas/tenant-file-client": "workspace:*",
     "lucide-react": "^1.34.0",
@@ -43,6 +42,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "jsdom": "^25.0.0",
+    "fake-indexeddb": "^6.2.4",
     "typescript": "^5.9.0",
     "vite": "^7.3.0",
     "vitest": "^3.2.0"

@@ -72,7 +72,7 @@ describe("PlaygroundView", () => {
     await user.type(editor, "Project");
     await user.tab();
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /Project/ })).toBeInTheDocument());
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "File roots" })).getByRole("button", { name: /Project/ })).toBeInTheDocument());
     const createCall = fetchMock.mock.calls.find(([path, init]) =>
       path === `/admin/stacks/${STACK}/playground/file-roots` && init?.method === "POST"
     );
@@ -147,12 +147,48 @@ describe("PlaygroundView", () => {
     expect((fetchMock.mock.calls[3][1]?.headers as Headers).get("Authorization")).toBe("Bearer tenant-token");
   });
 
+  test.each([false, true])("refreshes usage after GC and preserves its result if the refresh fails (%s)", async (refreshFails) => {
+    const before = { nodeCount: 3, readyContentBytes: 2048, readyStoredBytes: 3072, reservedBytes: 0, notReadyNodeCount: 0, leasedNodeCount: 0 };
+    const after = { ...before, nodeCount: 1, readyContentBytes: 1024, readyStoredBytes: 1536 };
+    fetchMock
+      .mockResolvedValueOnce(json(managedIssuer()))
+      .mockResolvedValueOnce(json({ items: [] }))
+      .mockResolvedValueOnce(json({
+        accessToken: "tenant-token", tokenType: "Bearer", expiresIn: 3600,
+        expiresAt: Date.now() + 3_600_000,
+        issuer: `https://cas.example/managed-issuers/${STACK}`,
+        audience: `https://cas.example/stacks/${STACK}`, tenantId: "member_abc",
+        permissions: ["tenants:member_abc:cas:manage"],
+      }))
+      .mockResolvedValueOnce(json(before))
+      .mockResolvedValueOnce(json({ examined: 3, deleted: 2, reclaimedContentBytes: 1024 }))
+      .mockResolvedValueOnce(refreshFails ? json({ error: "UNAVAILABLE", message: "Usage temporarily unavailable" }, 503) : json(after));
+    const user = userEvent.setup();
+    render(<PlaygroundView stackId={STACK} />);
+    await user.click(await screen.findByRole("button", { name: "Refresh usage" }));
+    await waitFor(() => expect(screen.getByText("Nodes").nextSibling).toHaveTextContent("3"));
+    const confirmation = screen.getByRole("checkbox", { name: /I understand/ });
+    await user.click(confirmation);
+    await user.click(screen.getByRole("button", { name: "Run garbage collection" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh usage" })).toBeEnabled());
+    expect(fetchMock.mock.calls.slice(4).map(([path]) => path)).toEqual([
+      `https://cas.example/stacks/${STACK}/tenants/member_abc/cas/gc`,
+      `https://cas.example/stacks/${STACK}/tenants/member_abc/cas/usage`,
+    ]);
+    expect(screen.getByText(/Examined 3, deleted 2/)).toBeInTheDocument();
+    expect(confirmation).not.toBeChecked();
+    expect(screen.getByText("Nodes").nextSibling).toHaveTextContent(refreshFails ? "3" : "1");
+    expect(screen.getByText("Content").nextSibling).toHaveTextContent(refreshFails ? "2.00 KiB" : "1.00 KiB");
+    if (refreshFails) expect(screen.getByRole("alert")).toHaveTextContent("Usage temporarily unavailable");
+  });
+
   test("renews a capability only when a request finds it expired", async () => {
+    const now = Date.now();
     const capability = (accessToken: string) => ({
       accessToken,
       tokenType: "Bearer",
-      expiresIn: 0,
-      expiresAt: Date.now() - 1,
+      expiresIn: 1,
+      expiresAt: now + (accessToken === "tenant-token-1" ? 1000 : 10_000),
       issuer: `https://cas.example/managed-issuers/${STACK}`,
       audience: `https://cas.example/stacks/${STACK}`,
       tenantId: "member_abc",
@@ -170,6 +206,7 @@ describe("PlaygroundView", () => {
 
     await user.click(await screen.findByRole("button", { name: "Refresh usage" }));
     await waitFor(() => expect(screen.getByText("Nodes").nextSibling).toHaveTextContent("1"));
+    vi.spyOn(Date, "now").mockReturnValue(now + 2000);
     await user.click(screen.getByRole("button", { name: "Refresh usage" }));
     await waitFor(() => expect(screen.getByText("Nodes").nextSibling).toHaveTextContent("2"));
 
@@ -190,6 +227,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -236,12 +274,13 @@ describe("MembersView", () => {
 describe("IssuerView", () => {
   test("shows the connect form when no OAuth issuer is configured", async () => {
     fetchMock
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
+      .mockResolvedValueOnce(json(null))
       .mockResolvedValueOnce(json(managedIssuer()));
     render(<IssuerView stackId={STACK} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Inspect issuer" })).toBeInTheDocument());
     const customCard = screen.getByRole("heading", { name: "Custom OAuth authorization server" }).closest(".card")!;
     expect(within(customCard).queryByText(/Status:/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls[0][0]).toBe(`/admin/stacks/${STACK}/oauth-issuer?optional=true`);
   });
 
   test("shows status for an active OAuth issuer", async () => {
@@ -276,7 +315,7 @@ describe("IssuerView", () => {
 
   test("inspects and activates a standards-based OAuth issuer", async () => {
     fetchMock
-      .mockResolvedValueOnce(json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404))
+      .mockResolvedValueOnce(json(null))
       .mockResolvedValueOnce(json(managedIssuer()))
       .mockResolvedValueOnce(json({
         inspectionId: "oinsp_1", stackId: STACK, issuer: "https://auth.example", audience: `https://cas.example/stacks/${STACK}`,

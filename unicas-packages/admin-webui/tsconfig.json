@@ -16,6 +16,12 @@
   ],
   "references": [
     {
+      "path": "../tenant-client"
+    },
+    {
+      "path": "../tenant-browser-cache"
+    },
+    {
       "path": "../admin-client"
     },
     {

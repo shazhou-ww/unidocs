@@ -166,18 +166,23 @@ over the limit, and the language-specific OTF (16,437,364 bytes) clears it by
 only ~0.3 MB. Sizes measured 2026-09-03 against `main`; there is no subsetting
 tool in this repository, so picking the right file up front is the whole story.
 
-Registering a font is only half of the fallback chain: the PSD Worker's
+Registering a font is only half of the fallback chain: the PSD service's
 `PSD_FONT_FALLBACKS` var (comma-separated, order is priority) decides which
 registered fonts are actually tried. It defaults to empty and hardcodes no font
 name, so both steps are required for a CJK fallback to work.
 
-Local development does both steps automatically: `pnpm dev` (Cloudflare stack,
-psd selected) reads the tenant font index on startup, downloads and seeds
+`POST /tenants/{t}/fonts` is a neutral route both stacks mount, so one script
+seeds either one — point it at the doc service you mean.
+
+Local development does both steps automatically on **both** stacks: `pnpm dev`
+(psd selected) reads the tenant font index on startup, downloads and seeds
 whatever is missing, and defaults `PSD_FONT_FALLBACKS` to the two PostScript
 names it seeds — see `scripts/psd-font-bootstrap.mjs` and
 `docs/psd-text-layers.md` §5.4. Opt out with `--fonts off` (or
 `UNIDOCS_PSD_FONTS=off`). A failure there only warns; it never blocks startup.
-**Real deployments still do both steps by hand.**
+**Real deployments still do both steps by hand** — for Azure, see
+`stacks/unidocs-azure/README.md`, section 新环境的字体预置; missing that step
+does not fail startup, it just leaves `setText` unable to lay out any glyph.
 
 ## Azure deployment identity and secrets
 
@@ -283,11 +288,14 @@ Optional process variables:
 | `LLM_BASE_URL` | provider default | PSD provider endpoint |
 | `LLM_MODEL` | provider default | PSD model |
 
-`pnpm dev unidocs-cloudflare` also writes
-`.wrangler/unidocs/local-credentials.json` (mode 0600) on every start: the local
-runtime's two signing keys are generated per run and live only in that process,
-so tools that bypass the Gateway (currently `scripts/seed-psd-fonts.mjs`) have no
-other way to mint a credential. It is a private key file — gitignored, never
+`pnpm dev` also writes a `local-credentials.json` (mode 0600) on every start:
+the local runtime's two signing keys are generated per run and live only in that
+process, so tools that bypass the Gateway (currently `scripts/seed-psd-fonts.mjs`)
+have no other way to mint a credential. Each stack writes its own file —
+`.wrangler/unidocs/local-credentials.json` for Cloudflare,
+`.azure-runtime/local-credentials.json` for Azure — because both stacks can run
+at once and a shared path would silently seed the wrong one. The path used for
+this run is printed at startup. It is a private key file — gitignored, never
 committed.
 
 Command-line `--cas remote` overrides the default. It does not silently fall

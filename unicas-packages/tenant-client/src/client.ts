@@ -64,6 +64,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
 
   const client: TenantCasClient = {
     readMetadata(hash, options: { readonly signal?: AbortSignal } = {}) {
+      options.signal?.throwIfAborted();
       const key = { ...path, hash };
       const loadMetadata = async (): Promise<CasNodeMetadata> => {
         const response = await requireOk(
@@ -73,13 +74,14 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
         const body = await response.json() as { metadata: CasNodeMetadata };
         return body.metadata;
       };
-      return config.cache?.metadata(key, loadMetadata) ?? loadMetadata();
+      return config.cache?.metadata(key, loadMetadata, options) ?? loadMetadata();
     },
 
     readContent(hash, range?: CasNodeRange, options: { readonly signal?: AbortSignal } = {}) {
+      options.signal?.throwIfAborted();
+      if (range !== undefined) validateRange(range);
       const key = { ...path, hash };
       const loadContent = async (): Promise<ReadableStream<Uint8Array>> => {
-        if (range !== undefined) validateRange(range);
         if (range?.length === 0) {
           return new ReadableStream({ start: controller => controller.close() });
         }
@@ -95,7 +97,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
         }
         return response.body;
       };
-      return config.cache?.read(key, range, loadContent) ?? loadContent();
+      return config.cache?.read(key, range, loadContent, options) ?? loadContent();
     },
 
     async leaseNode(hash, source?: CasNodeSource, options: CasLeaseOptions = {}) {
@@ -156,9 +158,14 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
       }
       if (source !== undefined) {
         headers.set("Content-Type", CanonicalNodeContentType);
-        if (source.body instanceof ReadableStream) {
-          headers.set("Content-Length", String(source.contentLength));
-        }
+        // 无条件设,不只对流设。服务端(service/src/node-lease.ts)缺 declaredLength
+        // 就回 411,而它只认 Content-Length 头。buffer body 的那份长度原先是靠
+        // fetch 自动补的 —— 而自动值**活不过一次 Request 重建**:doc service 为了
+        // 埋观测会 `new Request(input, init)` 再 `fetch(target, req)`
+        // (azure-sdk/src/doc-type-service.ts 的 httpCasFetcher),重建之后 body 变
+        // 成流、长度丢失、转 chunked,服务端就再也看不到长度。
+        // 长度这一层本来就知道(source.contentLength),没有理由让传输层去猜。
+        headers.set("Content-Length", String(source.contentLength));
       }
       const init: RequestInit = {
         method: "POST",

@@ -750,7 +750,14 @@ export function createAdminBff(options: CreateAdminBffOptions): (request: Reques
         return json(result, "error" in result ? casAdminErrorHttpStatus[result.error] : 200);
       }
       case "getOAuthIssuer": {
-        const result = await controlPlane.getOAuthIssuer(ctx, { path: { stackId: route.stackId } });
+        if (query.optional !== undefined && query.optional !== "true" && query.optional !== "false") {
+          return invalidRequest("optional must be true or false");
+        }
+        const result = await controlPlane.getOAuthIssuer(ctx, {
+          path: { stackId: route.stackId },
+          query: { optional: query.optional === "true" },
+        });
+        if (result === null) return json(null, 200);
         return jsonWithEtag(result);
       }
       case "getManagedIssuer": {
