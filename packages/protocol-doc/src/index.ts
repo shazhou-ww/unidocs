@@ -8,6 +8,8 @@ export {
 } from "./errors.js";
 
 export { SValueContentType } from "./http.js";
+export { parseCommitReceipt, parseCommitRequestIdentity } from "./commit-receipt.js";
+export type { CommitReceipt, CommitRequestIdentity } from "./commit-receipt.js";
 export type {
   ApplyResult,
   CreateResult,

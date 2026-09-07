@@ -54,6 +54,12 @@ export default {
         && (requestId.includes(":version:2:roots") || /^apply:.*:2$/.test(requestId));
       if (isVersionTwo && !failedVersionTwo) {
         failedVersionTwo = true;
+        if (env.CAS_FAULT_MODE === "after-commit") {
+          const response = await env.CAS_UPSTREAM.fetch(request);
+          if (!response.ok) return response;
+          await response.arrayBuffer();
+          return Response.json({ error: "injected response loss after root-refs commit" }, { status: 503 });
+        }
         return Response.json({ error: "injected root-refs failure" }, { status: 503 });
       }
     }
@@ -333,6 +339,7 @@ export function buildWorkers({
       modules: true,
       script: CAS_FAULT_SCRIPT,
       compatibilityDate: COMPATIBILITY_DATE,
+      bindings: { CAS_FAULT_MODE: casFault === "after-commit" ? "after-commit" : "before-commit" },
       serviceBindings: { CAS_UPSTREAM: SERVICE_WORKER },
     });
   }

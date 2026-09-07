@@ -116,6 +116,8 @@ Owner：两个 session 实现及其持久端口、protocol-doc、Gateway 权限�
 
 ## 5. 尚未完成的 P0 Gate
 
+第 09 轮第二切片更新：本地 Miniflare 已验证 CAS 成功后注入响应丢失、持久目录重启、pending 恢复及 roots 幂等；原 opId 仍返回 409。新增 receipt 状态校验和完整 SHA-256／规范 SValue 载荷摘要工具，尚未接持久端口或 HTTP 路由。协议包 77 条、共享核心 267 条、相关 Cloudflare 集成 5 条通过；详见 [第 09 轮记录](iteration-09.md)。不勾选跨云持久核实 gate 完成。
+
 2026-09-07 第 09 轮补充：[首个故障测试切片](iteration-09.md) 新增 2 条共享 session 测试，51 条 session 测试通过。CAS 响应丢失后补偿可能复用相同 root-ref 请求 ID；并发推进 head 时，返回 RootRefsError 的 delta 可能仍被保留并重放。receipt 不能仅以 delta 存在或异常类型判断终态。该结果来自内存／CAS 替身，不代表 Cloudflare SValue 或生产 CAS 已验证。
 
 - [ ] 真正的 embedded draft adapter 探针：本地编辑零 apply，用户保存一个批次一次 apply，未知结果不重试；覆盖真实 RenderClient／Worker 资源边界。

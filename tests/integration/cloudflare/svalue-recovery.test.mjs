@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 
 let runtime;
@@ -97,3 +100,54 @@ test("response-loss recovery re-settles idempotently without leaking roots", asy
   ]);
   expect(requestIds.filter((id) => id.endsWith(":version:1:roots"))).toHaveLength(1);
 }, 60_000);
+
+test("committed CAS roots survive response loss and restart without becoming an opId receipt", async () => {
+  const persistPath = await mkdtemp(join(tmpdir(), "unidocs-pending-restart-"));
+  const ports = { gateway: 34787, markdown: 34788, cas: 34791, admin: 34792, mockOidc: 34793 };
+  try {
+    runtime = await startLocalRuntime({ docTypes: ["markdown"], ports, persistPath, casFault: "after-commit" });
+    const userId = "pending-restart-user";
+    const { stackFixture, capabilityFixture } = runtime;
+    const create = await request(`/tenants/${userId}/docs/markdown/`, { method: "POST" });
+    const created = await create.json();
+    expect(create.status, JSON.stringify(created)).toBe(200);
+    const { docId } = created;
+    const { sessionId } = await runtime.storage.sessionIdentity("markdown", docId, userId);
+    const path = `/tenants/${userId}/docs/markdown/${docId}`;
+    const applyBody = {
+      baseVersion: 1,
+      description: "pending before restart",
+      opId: "pending-restart-op",
+      operations: [{ kind: "setContent", payload: { content: "# Recovered original" } }],
+    };
+    const apply = await request(`${path}/apply`, { method: "POST", body: JSON.stringify(applyBody) });
+    expect(apply.status, await apply.clone().text()).toBe(502);
+    expect(await apply.json()).toMatchObject({ success: false, version: 1 });
+    const rootRequestId = `session:${sessionId}:version:2:roots`;
+    expect(await runtime.storage.middlewareRootRefRequestIds(stackFixture.stackId, userId)).toContain(rootRequestId);
+    const retainedBefore = await runtime.storage.middlewareRetainedRoots(stackFixture.stackId, userId);
+    expect(retainedBefore).toHaveLength(2);
+    expect(retainedBefore.every(row => row.count === 1)).toBe(true);
+
+    await runtime.dispose();
+    runtime = undefined;
+    runtime = await startLocalRuntime({ docTypes: ["markdown"], ports, persistPath, stackFixture, capabilityFixture });
+    const retry = await request(`${path}/apply`, { method: "POST", body: JSON.stringify(applyBody) });
+    expect(retry.status, await retry.clone().text()).toBe(409);
+    expect(await retry.json()).toMatchObject({ success: false, version: 2 });
+    const query = await request(`${path}/query`, { method: "POST", body: JSON.stringify({ kind: "getContent" }) });
+    expect(await query.json()).toMatchObject({ success: true, data: "# Recovered original", version: 2 });
+    const repeated = await request(`${path}/apply`, { method: "POST", body: JSON.stringify(applyBody) });
+    expect(repeated.status).toBe(409);
+    await repeated.arrayBuffer();
+    const requestIds = await runtime.storage.middlewareRootRefRequestIds(stackFixture.stackId, userId);
+    expect(requestIds.filter(requestId => requestId === rootRequestId)).toHaveLength(1);
+    const retainedAfter = await runtime.storage.middlewareRetainedRoots(stackFixture.stackId, userId);
+    expect(retainedAfter).toHaveLength(retainedBefore.length);
+    expect(retainedAfter).toEqual(expect.arrayContaining(retainedBefore));
+  } finally {
+    await runtime?.dispose();
+    runtime = undefined;
+    await rm(persistPath, { recursive: true, force: true });
+  }
+}, 120_000);

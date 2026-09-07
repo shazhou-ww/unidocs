@@ -18,7 +18,7 @@
 
 编辑迭代：[Iteration 08](iteration-08.md) 增加 Markdown 源码／安全预览双栏及按身份隔离的标签页草稿恢复；返回预览保留草稿，云端新版本不改写草稿基准。已部署，生产登录后流程待验收，不开放云端保存。
 
-提交可靠性：[Iteration 09](iteration-09.md) 已启动首个测试切片，验证共享 session 在 CAS 响应丢失和并发补偿时的未知结果边界；持久 receipt 与云端保存尚未实现。
+提交可靠性：[Iteration 09](iteration-09.md) 已验证共享 session 故障与 Cloudflare pending 跨重启恢复，并实现 receipt 状态解析和规范载荷摘要工具；持久 receipt 存储、核实 API 与云端保存尚未接入。
 
 实施规划：[统一 WebUI 实施计划](implementation-plan.md)，包含阶段依赖、现有代码复用、PSD 同步适配、PR 切分与验收标准。P0 已启动，证据与测试记录见 [P0 能力矩阵](p0-capability-matrix.md)。
 
