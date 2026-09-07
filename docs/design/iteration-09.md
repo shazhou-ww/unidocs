@@ -1,6 +1,6 @@
 # Iteration 09：可靠提交结果，故障验证与结果契约
 
-日期：2026-09-07。状态：进行中；共享 session 与 Cloudflare pending 恢复故障测试通过，结果解析与规范载荷摘要工具已实现。持久 receipt 存储、核实 API 和 WebUI 显式云端保存尚未实现，旧 apply 路由与生产运行逻辑未改。
+日期：2026-09-07。状态：进行中；共享 session 与 Cloudflare pending 恢复故障测试通过，结果解析、规范载荷摘要及独立 SQLite 提交意图日志已实现。日志尚未接入文档提交器，核实 API 和 WebUI 显式云端保存尚未实现，旧 apply 路由与生产运行逻辑未改。
 
 ## 本切片结论
 
@@ -37,6 +37,25 @@
 
 ## Receipt 集成边界（待实现）
 
+### 第三个切片：独立 SQLite 提交意图日志
+
+[SqliteCommitJournal](../../packages/cloudflare-sdk/src/commit-journal.ts) 是尚未接入生产入口的存储组件；构造时在传入 SQLite 中创建 `doc_commit_intents_v1` 表及唯一索引。它没有被现有 EditorDO 导入，也没有在本次部署中执行 schema 变更。
+
+- 按 tenantId、docType、不可变 sessionId 和 opId 定位。`begin` 在 await 前编码字段白名单候选，再从相同字节计算摘要；正文与摘要一起登记，不保存令牌或调用方额外顶层字段。SBlob 使用 SValue 编码保留身份。
+- 同一 opId、同摘要返回原 pending／终态；同 opId 异载荷抛出 payload_mismatch，不能覆盖原记录。每个 scope 最多一个 pending，由 SQLite 部分唯一索引及同步事务保证；不同意图抢占返回 pending_exists。
+- `recoverPending` 返回原候选并重新验证摘要，损坏记录报错且不清理。它是读取快照，不是执行权租约；调用方必须串行协调恢复与提交，不能由多个恢复任务同时触发 CAS 写入。
+- `lookup` 仅返回结果元数据；未登记记录为 unknown/not_found，摘要不匹配报错。存储错误直接抛出，不解释为拒绝或未提交。
+- `settle` 用 `transactionSync` 将同步本地完成回调与终态更新放在同一事务，回调失败或 receipt SQL 写入失败都回滚。重复相同终态直接返回，不再次执行回调；矛盾终态拒绝。确定终态释放 pending 槽位。
+- 本地完成回调必须同步，不得发起异步任务或网络请求。CAS 网络结果须由上层事先确认；该组件不验证 CAS 事实，也不能代替提交器。后续必须在回调中一起完成真实 delta／snapshot／pending 清理，不能先独立写 committed 再写文档。
+- 当前候选编码上限 1 MiB；未实现过期、删除或 GC，终态暂保留原候选字节。长期数据保留、容量策略及载荷清理待接入前设计，不能把它视作无限容量的生产存储。
+- 当前唯一约束只覆盖该日志，不拦截旧 apply 或其他写入入口。与现有 SValue pending 关联、旧写路径互斥、请求鉴权及跨云实现仍是接入 gate。
+
+[9 条 SQLite 单测](../../packages/cloudflare-sdk/tests/commit-journal.test.ts) 覆盖真实磁盘关闭重开、调用方对象变更、同请求并发登记、异载荷与 pending 冲突、身份隔离、事务回滚、receipt 写失败、重复终态、确定拒绝与损坏／超限记录。测试使用 Node 内置 SQLite，测试运行会有其 experimental warning。
+
+[workerd 集成测试](../../tests/integration/cloudflare/commit-journal.test.mjs) 将同一实现传入真实 `ctx.storage`，通过仅测试的 [DO 探针](../../tests/integration/cloudflare/commit-journal-probe.ts) 验证 pending／终态在两次 Miniflare 重启后恢复、事务回滚和重复完成不再执行本地写入。探针未加入部署入口，使用的本地版本表不是真实 SValue delta 提交。
+
+### 尚待接入的约束
+
 - 新显式提交语义与旧 DocSession 的自动 rebase／同 opId 重放分开协商，不直接改变旧接口的去重语义。
 - 持久记录以不可变 session 身份与客户端 opId 定位，绑定原 baseVersion、operations、description 的规范化载荷摘要。摘要必须沿用 SValue 编码处理二进制／SBlob，不使用普通 JSON 冒充协议摘要。
 - 提交意图与操作载荷需要先持久记录；提交阶段至少区分 pending、committed 和确定 rejected。记录不存在、过期、网络错误或补偿结果无法确认时统一按 unknown 处理，不允许客户端换 opId 猜结果。
@@ -58,10 +77,16 @@ pnpm --filter @unidocs/doctype-server-common typecheck
 # passed
 pnpm exec vitest run tests/integration/cloudflare/svalue-recovery.test.mjs tests/integration/cloudflare/cas-rollback.test.mjs tests/integration/cloudflare/svalue-editor-e2e.test.mjs --fileParallelism=false --silent
 # 5 passed，包括新增响应丢失后重启 1 条
+pnpm --filter @unidocs/cloudflare-sdk test -- --silent
+# 44 passed，包括提交意图日志 9 条
+pnpm --filter @unidocs/cloudflare-sdk typecheck
+# passed
+pnpm exec vitest run tests/integration/cloudflare/commit-journal.test.mjs --fileParallelism=false --silent
+# 1 passed，真实 workerd SQLite 事务及持久目录重启
 ```
 
 首个切片使用内存 DeltaLog 和可控 CAS 替身；第二个切片使用本地 Miniflare 执行真实 Cloudflare DO／CAS 实现，并在服务绑定代理注入故障。未运行 Azure 或生产端到端。没有修改 HTTP API、存储 schema 或生产作品，不将这些测试与独立工具描述为持久提交结果已落地。
 
 ## 下一切片
 
-下一切片将已校验的结果身份接入持久提交意图端口，覆盖同 opId 同摘要重试、异载荷冲突、pending 恢复与确定终态。Cloudflare 的 receipt 必须与 pending／delta 完成写入关联；共享 Azure 路径必须解决上文的并发补偿边界。只有两条云适配路径具备可核实结果后，再开放 WebUI 显式保存；冲突与 unknown 都保留第 08 轮原基准草稿。
+下一切片将独立日志与 Cloudflare SValue pending／delta 完成路径关联，明确旧写路径互斥及 CAS 已确认的终态提交点，再接受鉴权保护的核实入口。共享 Azure 路径仍须解决上文的并发补偿边界。只有两条云适配路径具备可核实结果后，再开放 WebUI 显式保存；冲突与 unknown 都保留第 08 轮原基准草稿。
