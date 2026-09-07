@@ -19,6 +19,22 @@ function reservation(overrides: Partial<Parameters<MemoryGatewayDocumentDirector
 }
 
 describe("MemoryGatewayDocumentDirectory", () => {
+  it("advances only ready higher versions without changing time for stale observations", async () => {
+    const directory = new MemoryGatewayDocumentDirectory();
+    await directory.reserve(reservation());
+    await directory.advanceVersion("tenant-1", "doc-1", 2, 200);
+    expect(await directory.get("tenant-1", "doc-1")).toMatchObject({ state: "creating", version: null, updatedAt: 100 });
+    await directory.markReady("tenant-1", "doc-1", 1, 120);
+    await Promise.all([directory.advanceVersion("tenant-1", "doc-1", 5, 200), directory.advanceVersion("tenant-1", "doc-1", 3, 300)]);
+    await directory.advanceVersion("tenant-1", "doc-1", 5, 400);
+    expect(await directory.get("tenant-1", "doc-1")).toMatchObject({ version: 5, updatedAt: 200 });
+    await directory.advanceVersion("tenant-1", "doc-1", 6, 150);
+    expect(await directory.get("tenant-1", "doc-1")).toMatchObject({ version: 6, updatedAt: 200 });
+    await directory.advanceVersion("other-tenant", "doc-1", 99, 900);
+    expect(await directory.get("tenant-1", "doc-1")).toMatchObject({ version: 6, updatedAt: 200 });
+    await expect(directory.advanceVersion("tenant-1", "doc-1", 0, 300)).rejects.toThrow();
+  });
+
   it("returns the original document and session for a repeated idempotency key", async () => {
     const directory = new MemoryGatewayDocumentDirectory();
     const first = await directory.reserve(reservation());

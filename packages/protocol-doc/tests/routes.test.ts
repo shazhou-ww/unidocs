@@ -14,6 +14,8 @@ describe("Doc routes", () => {
     ["PUT", docRoutes.create(path), "create"],
     ["POST", docRoutes.query(path), "query"],
     ["POST", docRoutes.apply(path), "apply"],
+    ["POST", docRoutes.commitStatus(path), "commitStatus"],
+    ["POST", docRoutes.commitRecover(path), "commitRecover"],
     ["GET", docRoutes.export(path), "export"],
     ["GET", docRoutes.history(path), "history"],
     ["POST", docRoutes.rollback(path), "rollback"],

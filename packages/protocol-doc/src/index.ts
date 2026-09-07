@@ -15,6 +15,8 @@ export type {
   CreateResult,
   DocApplyRequest,
   DocApplyResponse,
+  DocCommitControlRequest,
+  DocCommitControlResponse,
   DocCreateRequest,
   DocCreateResponse,
   DocEndpointContracts,

@@ -147,6 +147,10 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
     const url = new URL(request.url);
     const method = request.method;
     const endpoint = url.pathname;
+    if (method === "POST" && (endpoint === "/_internal/commit_status" || endpoint === "/_internal/commit_recover")) {
+      if (request.body) await request.body.pipeTo(new WritableStream({ write() {} }));
+      return Response.json({ success: false, error: "Commit control is not supported by this adapter" }, { status: 501 });
+    }
 
     try {
       // POST /_internal/create — create new document

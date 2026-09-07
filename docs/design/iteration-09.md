@@ -1,8 +1,10 @@
 # Iteration 09：可靠提交结果，故障验证与结果契约
 
-日期：2026-09-07。状态：进行中；结果解析、规范载荷摘要和 SQLite 意图日志已实现，并在默认关闭的实验开关后接通 Cloudflare Markdown 真实提交与恢复。独立核实 API、Azure 持久提交及 WebUI 保存尚未实现。本轮未部署，线上仍为第 08 轮。
+日期：2026-09-07。状态：进行中；默认关闭的 Cloudflare Markdown 实验模式已接通持久提交、独立核实／恢复和目录同步，真实提交器八个异常窗口已验证，并修复提交后异常导致旧内存正文继续被读取的问题。Azure 持久提交、实际硬崩溃验证及 WebUI 保存尚未完成。本轮未部署，线上仍为第 08 轮。
 
 日志检查点已提交为 `bad1851`；下文前三个切片记录保留其当时的实现边界，第四个切片描述当前工作区新增的接入。
+
+第四切片检查点已提交为 `d09f8f4`。下文各切片保留历史边界，第七切片为当前最新进度。
 
 ## 本切片结论
 
@@ -76,6 +78,64 @@
 
 ### 跨云后续约束
 
+### 第五个切片：独立核实与受控恢复
+
+新增 `POST /tenants/{tenantId}/docs/{docType}/{docId}/commit-status` 和 `commit-recover`，沿现有 Gateway／Doc 路由转发。公共类型为 DocCommitControlRequest／Response 和 GatewayCommitControlRequest／Response，完整边界见 [HTTP 协议](../doc-service-http-protocol.md#experimental-commit-controls)。
+
+- 核实要求文档读权限，无 delegated CAS 权限；Doc 边缘拒绝附带 CAS 能力的核实请求。DO 只读取身份与 journal 元数据，不初始化 schema、重建正文、访问 CAS 或完成 pending，冷启动也遵守这一边界。
+- 恢复要求文档写权限及精确的 CAS 读写能力。只读文档能力、缺失或不完整的 delegated CAS 能力都在 DO 查找前拒绝。恢复不再要求客户端重新发送完整 apply 载荷。
+- 两个入口只接受 opId、requestDigest、baseVersion。错误摘要／基准返回 409；无效身份或夹带正文／operations 返回 400。最多保留 4 KiB 输入，超限流式丢弃剩余输入并返回 413。
+- 不存在的意图返回 unknown/not_found，恢复也不调用 journal.begin，不会创建新意图；完成／拒绝的记录直接返回原终态，不重放操作。匹配 pending 的恢复才加载正文并继续原候选。
+- 接口成功查到 pending、终态或 unknown/not_found 都返回 200 和 `{ receipt }`；200 不等于云端已保存。恢复仍 pending 或 journal 不可用返回 503；不可用不解释为 rejected。receipt 响应为 JSON，并设置 no-store。
+- 新核实／恢复入口仍受默认关闭的实验开关与 Markdown 类型限制。共享 Azure handler 返回 501，不加载或更改 session。未增加 Gateway 目录 touch：查询不更新时间，重复核实／恢复终态也不伪造新的作品更新时间；真实恢复后的目录版本／时间同步仍待后续明确处理。
+
+新增权限测试验证核实与恢复的最小权限及越权拒绝；SQLite 测试验证核实不创建表。6 条显式提交集成测试现已通过独立控制入口验证跨重启 pending 核实、原候选恢复、终态重复查询、未知意图不登记、错误摘要与夹带正文不触发 CAS、超限请求和跨租户拒绝。原候选 CAS 确认前失败时，核实前后正文仍为 v1 且没有新增 roots 请求记录。
+
+这些是本地真实实现与测试凭据驱动的验证，不是生产真人只读 OAuth 会话验收。新 HTTP 接口尚未部署，旧版本后端不保证识别实验 apply 字段。journal 登记后／根上传前、本地完成事务故障等完整提交器崩溃矩阵仍待补齐。
+
+### 第六个切片：恢复完成后的目录同步
+
+Gateway 的目录是可修复的版本缓存，不是提交结果的权威。本轮为 [目录端口](../../packages/gateway-common/src/document-directory.ts) 增加 advanceVersion，内存、[D1](../../packages/cloudflare-gateway/src/document-directory.ts) 和 [PostgreSQL](../../packages/azure-gateway/src/document-directory.ts) 都按同一语义实现：
+
+- 只更新同一 tenant／docId 的 ready 记录，且观测版本必须严格高于目录版本；缺失、非 ready、重复或更低版本不改变记录。不需要 schema 迁移。
+- SQL 用单条条件 UPDATE 防止并发迟到结果覆盖较高版本，更新时间取现有值和观测时间的较大值，不倒退。时间代表 Gateway 首次成功同步较高版本时的观测时间，不是服务端精确提交时间。
+- 成功 apply／rollback 的有效版本及 commit-recover 的 committed receipt 会推进目录；旧普通 apply／rollback 也同步版本，避免其后迟到的显式 receipt 把目录错误覆盖。run／reset 仍保持原 touch 逻辑，不声称其版本缓存已同步。
+- commit-status 永远不更新目录；pending、unknown、rejected receipt 不更新目录。重复恢复或重试已完成 apply 不刷新时间，迟到的旧结果不会覆盖新版本。目录初始版本落后时，首次看到旧 receipt 只能推进到该已确认版本，不把它当作当前最新 head。
+- commit-recover 必须携带可解析的 committed receipt，不能只凭通用 success/version 更新。结果解析最多保留 16 KiB 元数据，超限或损坏不改变目录，原上游响应仍完整转发。
+- 目录同步失败不改变原 HTTP 状态、receipt 或内容，响应额外带 `X-UniDocs-Directory-Sync: pending`。这里的 pending 只指目录尚未同步，不是内容提交变回 pending。客户端可以重新调用原意图的恢复接口：已完成意图不会再次 apply，但 Gateway 会再次尝试修复目录。只读核实不承担这项写修复。
+- 当前无后台目录修复任务，未接入 WebUI 同步告警；目录失败后必须再次经过写结果或显式恢复路径才会修复。Azure 仅实现了目录更新语句，并没有因此获得持久 receipt 或恢复能力。
+
+新增 [9 条 Gateway 同步测试](../../packages/gateway-common/tests/commit-directory-sync.test.ts) 覆盖高版本推进、重复与迟到结果、只读核实、失败后原成功响应保留、后续恢复修复以及非 committed／损坏／超限结果。另补内存目录单调性测试，真实 D1 条件更新验证，以及 [2 条 PostgreSQL 语句契约测试](../../packages/azure-gateway/tests/document-directory.test.ts)。PostgreSQL 使用查询替身，未连接真实 Azure/PostgreSQL。
+
+6 条显式提交集成测试通过，其中真实恢复流程新增目录断言：pending 核实前后目录相同，恢复后为 v2，重复核实／恢复／原 apply 重试都不改变目录记录。
+
+### 尚待完成的跨云约束
+
+### 第七个切片：真实提交器异常窗口与缓存修复
+
+[故障集成测试](../../tests/integration/cloudflare/explicit-commit-faults.test.mjs) 通过 [测试专用 Markdown Worker](../../tests/integration/cloudflare/explicit-commit-fault-worker.ts) 包装生产 MarkdownEditor 的存储对象；其余 Gateway、Doc 鉴权、Markdown 引擎和 CAS middleware 使用真实本地实现。[本地 runtime](../../stacks/unidocs-cloudflare/local/runtime.mjs) 新增默认空的 bundleEntryOverrides，仅测试显式替换打包入口，正常开发和生产入口不包含故障控制端点。
+
+测试包装器有 arm／inspect 接口，只用于本地测试。它在指定存储调用处注入一次异常，并只检查版本、意图状态、pending 关联等元数据，不返回正文或令牌。每个用例结束后清理其临时持久目录；没有生产故障开关、部署配置变更或生产作品操作。
+
+八个窗口及其断言：
+
+1. 意图已登记，进入恢复检查时、尚未计算／上传新根：journal 保留原候选，svalue_pending 不存在。
+2. 根上传后、写入 svalue_pending 前：journal 仍 pending，无新 delta；未完成的 roots 不冒充提交。
+3. svalue_pending 已写入、尚未 CAS roots 提交：原 opId 和版本关联跨重启保留。
+4. 本地完成事务中写入 delta 后失败：delta 回滚，pending 和 receipt 均维持待完成。
+5. v21 阈值提交在写入 snapshot 后失败：新 delta 和 snapshot 一起回滚，旧 snapshot 保留。
+6. 本地事务清除 svalue_pending 后失败：删除回滚，恢复所需 pending 不丢失。
+7. 本地事务更新 committed receipt 后失败：receipt 与 delta／snapshot／pending 清理全部回滚，不留下伪成功记录。
+8. 本地事务已经成功返回、内存刷新前异常：receipt 保持 committed，随后读取必须使用新版本正文，跨重启重复恢复不再应用操作。
+
+前七个窗口分别验证失败现场与持久目录重启后状态一致、旧 apply 被互斥、只读核实不改变 pending，再经独立恢复入口完成原意图。测试使用 appendSection 而非 setContent，重复应用会在正文中产生重复章节，因此能检测实际重复操作。恢复后只有一个新版本，CAS 原 roots 请求只记录一次，保留根计数均为 1。
+
+第八个窗口先发现并复现缺陷：事务成功后异常路径返回 committed receipt，但内存仍是旧 v1，随后 query 返回空正文。修复位于 [SValue EditorDO](../../packages/cloudflare-sdk/src/editor-do-svalue.ts) 的显式恢复异常处理：从 journal 确认 committed 后使已加载状态和正文缓存失效，下次需要正文的请求从持久状态重建。仍返回原 committed 结果，不回滚、不重发 apply；修复后当前实例读取与重启读取均为新版本。
+
+这些用例是存储调用前后的异常注入加优雅关闭／重启，不是强杀 workerd、断电或磁盘持久化丢失测试，不证明全部硬崩溃窗口。CAS 网络分区、长期配额耗尽、恢复鉴权过期与候选保留／GC 也不在本切片结论内。生产请求体／并发／延迟行为仍需后续验收。
+
+### 跨云发布前约束
+
 - 新显式提交语义与旧 DocSession 的自动 rebase／同 opId 重放分开协商，不直接改变旧接口的去重语义。
 - 持久记录以不可变 session 身份与客户端 opId 定位，绑定原 baseVersion、operations、description 的规范化载荷摘要。摘要必须沿用 SValue 编码处理二进制／SBlob，不使用普通 JSON 冒充协议摘要。
 - 提交意图与操作载荷需要先持久记录；提交阶段至少区分 pending、committed 和确定 rejected。记录不存在、过期、网络错误或补偿结果无法确认时统一按 unknown 处理，不允许客户端换 opId 猜结果。
@@ -107,10 +167,39 @@ pnpm exec vitest run tests/integration/cloudflare/explicit-commit.test.mjs --fil
 # 5 passed，新增实验提交端到端
 pnpm --filter @unidocs/doctype-server-common test -- --silent
 # 第四切片回归：268 passed（新增共享适配器失败关闭 1 条）
+pnpm --filter @unidocs/protocol-doc --filter @unidocs/protocol-gateway --filter @unidocs/gateway-common --filter @unidocs/doctype-server-common --filter @unidocs/cloudflare-sdk test -- --silent
+# 第五切片：协议 Doc 81、协议 Gateway 23、共享核心 273、SDK 45 通过
+# Gateway 59 通过、1 条原上传测试超时，单独复跑仍超时
+pnpm --filter @unidocs/cloudflare-gateway --filter @unidocs/cloudflare-sdk typecheck
+# passed
+pnpm exec vitest run tests/integration/cloudflare/explicit-commit.test.mjs tests/integration/cloudflare/commit-journal.test.mjs tests/integration/cloudflare/svalue-recovery.test.mjs --fileParallelism=false --silent
+# 9 passed
+pnpm --filter @unidocs/gateway-common test -- --silent
+# 第六切片：69 passed，1 条原上传测试仍因不可达上游超时
+pnpm --filter @unidocs/cloudflare-gateway exec vitest run tests/migration.test.ts --silent
+# 1 passed，含真实 D1 单调版本／时间验证
+pnpm --filter @unidocs/azure-gateway exec vitest run tests/document-directory.test.ts --silent
+# 2 passed，查询替身，非真实 PostgreSQL 集成
+pnpm --filter @unidocs/cloudflare-gateway --filter @unidocs/azure-gateway typecheck
+# passed
+pnpm exec vitest run tests/integration/cloudflare/explicit-commit.test.mjs --fileParallelism=false --silent
+# 6 passed，含恢复后目录同步与重复恢复不刷新时间
+pnpm exec vitest run tests/integration/cloudflare/explicit-commit-faults.test.mjs tests/integration/cloudflare/explicit-commit.test.mjs --fileParallelism=false --silent
+# 第七切片：14 passed，含新增八个异常窗口
+pnpm exec vitest run tests/integration/cloudflare/explicit-commit.test.mjs tests/integration/cloudflare/local-runtime.test.mjs --fileParallelism=false --silent
+# 13 passed，含默认本地入口回归 7 条
+pnpm --filter @unidocs/cloudflare-sdk test -- --silent
+# 45 passed
+pnpm --filter @unidocs/cloudflare-sdk typecheck
+# passed
 ```
 
 首个切片使用内存 DeltaLog 和可控 CAS 替身；第二个及第四个切片使用本地 Miniflare 执行真实 Cloudflare DO／CAS 实现，并在服务绑定代理注入故障。第四个切片新增实验请求模式及 svalue_pending 的可空 commit_op_id 列，现有 DO 加载时按需补列；日志表按需创建。未运行 Azure 或生产端到端，也未将本轮 schema 或代码部署到生产，不将局部实验闭环描述为跨云可靠保存已完成。
 
 ## 下一切片
 
-下一切片定义并接入鉴权保护的 receipt 核实与原意图恢复入口，区分只读查询和需要 CAS 写权限的恢复，并补齐登记后、根上传前及本地完成事务失败的实际提交器故障测试。共享 Azure 路径仍须解决上文的并发补偿边界。只有两条云适配路径具备可核实结果后，再开放 WebUI 显式保存；冲突与 unknown 都保留第 08 轮原基准草稿。
+提交前验证更新：已修复 Gateway 的 `tests/upload-size.test.ts` 对 `http://doc.invalid` 的真实 DNS／网络等待依赖。测试现在注入确定性的上游失败，额外断言请求确实被转发，未延长超时或跳过测试，未修改生产上传逻辑。此前第五／六切片的超时记录是历史结果；最新 Gateway 70 条全部通过。
+
+本次提交前五个相关包回归：protocol-doc 81、protocol-gateway 23、doctype-server-common 273、gateway-common 70、cloudflare-sdk 45，共 492 条通过；Cloudflare Gateway 构建通过。用户确认先提交、不部署，线上保持第 08 轮，前端尚无云端保存按钮。
+
+Cloudflare 的上述八个异常窗口已形成可回归证据；后续补共享 Azure 路径的持久意图、并发写互斥及提交点设计，不直接复制 DO 单实例假设。发布前仍需收敛候选保留与容量策略，并补真实硬崩溃和鉴权失效验证。只有两条云适配路径具备可核实结果后，再开放 WebUI 显式保存；冲突与 unknown 都保留第 08 轮原基准草稿。

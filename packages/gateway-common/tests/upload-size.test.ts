@@ -14,7 +14,7 @@
  *  2. 上限之内、但明显不可能是克隆请求的体积,跳过那次 formData() ——
  *     克隆请求只带一个 sourceId 字段,几百字节封顶。
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGatewayHandler } from "../src/gateway-handler.js";
 import { GatewayCapabilityAuthority } from "../src/capability-authority.js";
 import { MemoryGatewayDocumentDirectory } from "../src/document-directory.js";
@@ -64,6 +64,8 @@ function upload(bytes: number, declared?: number): Request {
   return request;
 }
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("网关上传体积", () => {
   it("超过上限返回 413", async () => {
     const { handle } = handler(1024);
@@ -79,8 +81,11 @@ describe("网关上传体积", () => {
 
   it("不配上限时不设限（保持既有行为）", async () => {
     const { handle } = handler();
-    // 上游不可达 → 502,重点是它没有在体积上先被拒。
+    const upstream = vi.fn<typeof fetch>(async () => { throw new TypeError("Injected upstream unavailable"); });
+    vi.stubGlobal("fetch", upstream);
     const res = await handle(upload(16, 10_000));
     expect(res.status).not.toBe(413);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(String(upstream.mock.calls[0]?.[0])).toMatch(/^http:\/\/doc\.invalid\/tenants\/u1\/sessions\//);
   });
 });

@@ -27,6 +27,7 @@ export function docEdgeCapabilityRequirements(
     case "export":
       return requirements(sessionReadPermission(tenantId, sessionId), [casReadPermission(tenantId)]);
     case "history":
+    case "commitStatus":
       return requirements(sessionReadPermission(tenantId, sessionId), []);
     case "ir":
       return requirements(
@@ -36,6 +37,7 @@ export function docEdgeCapabilityRequirements(
     case "snapshot":
       return requirements(sessionReadPermission(tenantId, sessionId), [casWritePermission(tenantId)]);
     case "apply":
+    case "commitRecover":
     case "rollback":
     case "run":
       return requirements(

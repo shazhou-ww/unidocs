@@ -8,6 +8,8 @@ import type {
 import type {
   DocApplyRequest,
   DocApplyResponse,
+  DocCommitControlRequest,
+  DocCommitControlResponse,
   DocCreateRequest,
   DocExportRequest,
   DocExportResponse,
@@ -130,6 +132,12 @@ export interface GatewayApplyDocumentRequest<TOp extends SValue = SValue> {
 }
 export type GatewayApplyDocumentResponse = DocApplyResponse;
 
+export interface GatewayCommitControlRequest {
+  path: GatewayDocumentPath;
+  body: DocCommitControlRequest["body"];
+}
+export type GatewayCommitControlResponse = DocCommitControlResponse;
+
 export interface GatewayExportDocumentRequest {
   path: GatewayDocumentPath;
   query: DocExportRequest["query"];
@@ -209,6 +217,8 @@ export interface GatewayEndpointContracts {
     request: GatewayApplyDocumentRequest;
     response: GatewayApplyDocumentResponse;
   };
+  commitStatusDocument: { request: GatewayCommitControlRequest; response: GatewayCommitControlResponse };
+  commitRecoverDocument: { request: GatewayCommitControlRequest; response: GatewayCommitControlResponse };
   exportDocument: {
     request: GatewayExportDocumentRequest;
     response: GatewayExportDocumentResponse;
@@ -263,6 +273,8 @@ export type GatewayDocumentOperation =
   | "statusDocument"
   | "queryDocument"
   | "applyDocument"
+  | "commitStatusDocument"
+  | "commitRecoverDocument"
   | "exportDocument"
   | "historyDocument"
   | "rollbackDocument"
@@ -294,6 +306,8 @@ export type GatewayCasRoute =
 const documentOperations = {
   query: { method: "POST", operation: "queryDocument" },
   apply: { method: "POST", operation: "applyDocument" },
+  "commit-status": { method: "POST", operation: "commitStatusDocument" },
+  "commit-recover": { method: "POST", operation: "commitRecoverDocument" },
   export: { method: "GET", operation: "exportDocument" },
   history: { method: "GET", operation: "historyDocument" },
   rollback: { method: "POST", operation: "rollbackDocument" },
@@ -330,6 +344,8 @@ export const gatewayRoutes = {
   statusDocument: documentPath,
   queryDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/query`,
   applyDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/apply`,
+  commitStatusDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/commit-status`,
+  commitRecoverDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/commit-recover`,
   exportDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/export`,
   historyDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/history`,
   rollbackDocument: (path: GatewayDocumentPath) => `${documentPath(path)}/rollback`,

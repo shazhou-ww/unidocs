@@ -41,6 +41,10 @@ test("explicit commit remains pending across lost CAS acknowledgement, blocks ol
     const first = await call(`${path}/apply`, request);
     expect(first.status, JSON.stringify(first.body)).toBe(503);
     expect(first.body).toMatchObject({ success: false, version: 1, receipt: { state: "pending", opId: request.opId, baseVersion: 1 } });
+    const control = { opId: request.opId, requestDigest: first.body.receipt.requestDigest, baseVersion: 1 };
+    const directoryBefore = (await call(path)).body;
+    expect((await call(`${path}/commit-status`, control)).body).toEqual({ receipt: first.body.receipt });
+    expect((await call(path)).body).toEqual(directoryBefore);
     const roots = await runtime.storage.middlewareRetainedRoots(stackFixture.stackId, tenant);
     expect(roots).toHaveLength(2);
     const rootRequest = `session:${sessionId}:commit:${request.opId}:roots`;
@@ -59,11 +63,20 @@ test("explicit commit remains pending across lost CAS acknowledgement, blocks ol
     await runtime.dispose(); runtime = undefined;
     runtime = await startLocalRuntime({ docTypes: ["markdown"], ports, bindingDefaults, persistPath, stackFixture, capabilityFixture });
     expect((await call(`${path}/apply`, { ...request, commitMode: undefined, opId: "old-after-restart" })).status).toBe(409);
+    expect((await call(`${path}/commit-status`, control)).body).toEqual({ receipt: first.body.receipt });
+    const recovery = await call(`${path}/commit-recover`, control);
+    expect(recovery.status, JSON.stringify(recovery.body)).toBe(200);
+    expect(recovery.body.receipt).toEqual({ ...first.body.receipt, state: "committed", version: 2 });
+    const directoryRecovered = (await call(path)).body;
+    expect(directoryRecovered).toMatchObject({ data: { version: 2 } });
     const recovered = await call(`${path}/apply`, request);
     expect(recovered.status, JSON.stringify(recovered.body)).toBe(200);
     expect(recovered.body).toEqual({ success: true, version: 2, receipt: { ...first.body.receipt, state: "committed", version: 2 } });
     expect((await call(`${path}/query`, { kind: "getContent" })).body).toMatchObject({ version: 2, data: "# Original candidate" });
     expect((await call(`${path}/apply`, request)).body).toEqual(recovered.body);
+    expect((await call(`${path}/commit-status`, control)).body).toEqual({ receipt: recovered.body.receipt });
+    expect((await call(`${path}/commit-recover`, control)).body).toEqual({ receipt: recovered.body.receipt });
+    expect((await call(path)).body).toEqual(directoryRecovered);
     const retained = await runtime.storage.middlewareRetainedRoots(stackFixture.stackId, tenant);
     expect(retained).toHaveLength(roots.length); expect(retained).toEqual(expect.arrayContaining(roots));
     expect((await runtime.storage.middlewareRootRefRequestIds(stackFixture.stackId, tenant)).filter(value => value === rootRequest)).toHaveLength(1);
@@ -119,10 +132,43 @@ test("failure before CAS confirmation keeps the intent pending and concurrent id
   const { sessionId } = await runtime.storage.sessionIdentity("markdown", docId, tenant);
   const rootRequest = `session:${sessionId}:commit:${request.opId}:roots`;
   expect(await runtime.storage.middlewareRootRefRequestIds(runtime.stackFixture.stackId, tenant)).not.toContain(rootRequest);
+  const control = { opId: request.opId, requestDigest: first.body.receipt.requestDigest, baseVersion: 1 };
+  expect((await call(`${path}/commit-status`, control)).body).toEqual({ receipt: first.body.receipt });
+  expect((await call(`${path}/commit-recover`, { ...control, requestDigest: "0".repeat(64) })).status).toBe(409);
+  expect((await call(`${path}/commit-recover`, { ...control, operations: [] })).status).toBe(400);
+  expect((await call(`${path}/query`, { kind: "getContent" })).body).toMatchObject({ version: 1, data: "" });
+  expect(await runtime.storage.middlewareRootRefRequestIds(runtime.stackFixture.stackId, tenant)).not.toContain(rootRequest);
   const [retry, duplicate] = await Promise.all([call(`${path}/apply`, request), call(`${path}/apply`, request)]);
   expect(retry.status).toBe(200);
   expect(duplicate).toEqual(retry);
   expect(retry.body.receipt).toMatchObject({ state: "committed", version: 2 });
+  expect((await call(`${path}/query`, { kind: "getContent" })).body.version).toBe(2);
+}, 60_000);
+
+test("commit controls never register unknown requests and return metadata without replaying completed commits", async () => {
+  runtime = await startLocalRuntime({ docTypes: ["markdown"], ports, bindingDefaults });
+  const { path, tenant } = await create();
+  const unknown = { opId: "never-submitted", baseVersion: 1, requestDigest: "0".repeat(64) };
+  const rootsBefore = await runtime.storage.middlewareRootRefRequestIds(runtime.stackFixture.stackId, tenant);
+  for (const operation of ["commit-status", "commit-recover"]) {
+    const response = await call(`${path}/${operation}`, unknown);
+    expect(response).toEqual({ status: 200, body: { receipt: { ...unknown, state: "unknown", reason: "not_found" } } });
+    expect((await call(`${path}/${operation}`, { ...unknown, baseVersion: 0 })).status).toBe(400);
+    expect((await call(`${path}/${operation}`, { ...unknown, description: "new candidate" })).status).toBe(400);
+    expect((await call(`${path}/${operation}`, { ...unknown, padding: "x".repeat(5000) })).status).toBe(413);
+    expect([403, 404]).toContain((await call(path.replace("/tenants/receipt-user/", "/tenants/other-user/") + `/${operation}`, unknown)).status);
+  }
+  expect(await runtime.storage.middlewareRootRefRequestIds(runtime.stackFixture.stackId, tenant)).toEqual(rootsBefore);
+  const committed = await call(`${path}/apply`, candidate("new-commit"));
+  expect(committed.status).toBe(200);
+  const control = { opId: committed.body.receipt.opId, baseVersion: 1, requestDigest: committed.body.receipt.requestDigest };
+  const rootsAfter = await runtime.storage.middlewareRootRefRequestIds(runtime.stackFixture.stackId, tenant);
+  for (const operation of ["commit-status", "commit-recover"]) {
+    const response = await call(`${path}/${operation}`, control);
+    expect(response.body).toEqual({ receipt: committed.body.receipt });
+    expect((await call(`${path}/${operation}`, { ...control, requestDigest: "f".repeat(64) })).status).toBe(409);
+  }
+  expect(await runtime.storage.middlewareRootRefRequestIds(runtime.stackFixture.stackId, tenant)).toEqual(rootsAfter);
   expect((await call(`${path}/query`, { kind: "getContent" })).body.version).toBe(2);
 }, 60_000);
 

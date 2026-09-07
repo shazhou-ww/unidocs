@@ -394,6 +394,7 @@ export async function startLocalRuntime({
   // **默认空**:集成测试也走这个函数,不该凭空多出一条指向没登记过的字体的
   // 回退链。只有 `pnpm dev`(scripts/dev.mjs)会显式传它。
   bindingDefaults = {},
+  bundleEntryOverrides = {},
 } = {}) {
   validateGatewayOAuthFixture(gatewayOAuth);
   const resolvedStackFixture = stackFixture
@@ -422,7 +423,7 @@ export async function startLocalRuntime({
 
   await Promise.all(
     bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || !casOrigin }).map(({ entry, outfile }) =>
-      bundleWorker(join(ROOT, entry), join(bundleDir, outfile)),
+      bundleWorker(join(ROOT, bundleEntryOverrides[entry] ?? entry), join(bundleDir, outfile)),
     ),
   );
 

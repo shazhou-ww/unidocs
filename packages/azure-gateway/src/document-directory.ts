@@ -134,6 +134,16 @@ export class PgGatewayDocumentDirectory implements GatewayDocumentDirectory {
     }
   }
 
+  async advanceVersion(tenantId: string, docId: string, version: number, observedAt: number): Promise<void> {
+    if (!Number.isSafeInteger(version) || version < 1 || !Number.isSafeInteger(observedAt) || observedAt < 0) {
+      throw new TypeError("Invalid committed version observation");
+    }
+    await this.#pool.query(`UPDATE gateway_documents
+      SET version = $3, updated_at = GREATEST(updated_at, $4)
+      WHERE tenant_id = $1 AND doc_id = $2 AND state = 'ready' AND COALESCE(version, 0) < $3`,
+    [tenantId, docId, version, observedAt]);
+  }
+
   async #findByIdempotencyKey(
     tenantId: string,
     idempotencyKey: string,

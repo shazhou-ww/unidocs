@@ -1,6 +1,7 @@
 import { SValueContentType } from "@unidocs/protocol";
 import type { SBlob, SValue } from "@unidocs/protocol";
 import type { CasHash } from "@unicas/tenant-protocol";
+import type { CommitReceipt } from "./commit-receipt.js";
 
 export { SValueContentType };
 
@@ -83,6 +84,13 @@ export interface DocApplyRequest<TOp extends SValue = SValue> {
 }
 
 export type DocApplyResponse = ApplyResult | DocErrorResponse;
+
+export interface DocCommitControlRequest {
+  path: DocSessionPath;
+  body: DocStructuredRequestBody<{ opId: string; requestDigest: string; baseVersion: number }>;
+}
+
+export type DocCommitControlResponse = { receipt: CommitReceipt } | DocErrorResponse;
 
 export interface DocExportRequest {
   path: DocSessionPath;
@@ -198,6 +206,8 @@ export interface DocEndpointContracts {
   create: { request: DocCreateRequest; response: DocCreateResponse };
   query: { request: DocQueryRequest; response: DocQueryResponse };
   apply: { request: DocApplyRequest; response: DocApplyResponse };
+  commitStatus: { request: DocCommitControlRequest; response: DocCommitControlResponse };
+  commitRecover: { request: DocCommitControlRequest; response: DocCommitControlResponse };
   export: { request: DocExportRequest; response: DocExportResponse };
   history: { request: DocHistoryRequest; response: DocHistoryResponse };
   rollback: { request: DocRollbackRequest; response: DocRollbackResponse };

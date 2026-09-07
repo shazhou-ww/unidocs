@@ -16,6 +16,8 @@ describe("Gateway routes", () => {
     ["GET", gatewayRoutes.statusDocument(document), "statusDocument"],
     ["POST", gatewayRoutes.queryDocument(document), "queryDocument"],
     ["POST", gatewayRoutes.applyDocument(document), "applyDocument"],
+    ["POST", gatewayRoutes.commitStatusDocument(document), "commitStatusDocument"],
+    ["POST", gatewayRoutes.commitRecoverDocument(document), "commitRecoverDocument"],
     ["GET", gatewayRoutes.exportDocument(document), "exportDocument"],
     ["GET", gatewayRoutes.historyDocument(document), "historyDocument"],
     ["POST", gatewayRoutes.rollbackDocument(document), "rollbackDocument"],
@@ -54,6 +56,8 @@ describe("Gateway routes", () => {
     expect(matchGatewayRoute("POST", "/tenants/t/cas/nodes/h")).toBeNull();
     expect(matchGatewayRoute("GET", "/users/u/docs/docx/")).toBeNull();
     expect(matchGatewayRoute("GET", gatewayRoutes.applyDocument(document))).toBeNull();
+    expect(matchGatewayRoute("GET", gatewayRoutes.commitStatusDocument(document))).toBeNull();
+    expect(matchGatewayRoute("GET", gatewayRoutes.commitRecoverDocument(document))).toBeNull();
   });
 
   test("Gateway exposure policy excludes private writes and audit operations", () => {

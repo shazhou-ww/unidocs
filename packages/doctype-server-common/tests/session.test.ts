@@ -1391,6 +1391,19 @@ describe("DocumentSession.exportBytes — 格式选择", () => {
 });
 
 describe("session-handler historical read compatibility", () => {
+  it("rejects unsupported commit controls without initializing or changing the session", async () => {
+    const { session, deps } = makeHarness();
+    const handle = createSessionHandler({ session, identity: deps.identity });
+    for (const endpoint of ["commit_status", "commit_recover"]) {
+      const response = await handle(new Request(`https://svc/_internal/${endpoint}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ opId: "unknown", baseVersion: 1, requestDigest: "0".repeat(64) }),
+      }));
+      expect(response.status).toBe(501);
+      expect(session.initialized).toBe(false);
+      expect(await deps.deltas.head()).toBe(0);
+    }
+  });
+
   it("rejects explicit commit mode without silently executing a legacy apply", async () => {
     const { session, deps } = makeHarness();
     await session.create();

@@ -134,3 +134,17 @@ it("does not register oversize or invalid candidates", async () => {
   await expect(journal.begin("op-1", { ...payload, description: "x".repeat(1_048_576) })).rejects.toThrow("limit");
   expect(await journal.recoverPending()).toBeNull();
 });
+
+it("metadata-only lookup does not create tables in an untouched database", () => {
+  const database = new DatabaseSync(":memory:"); databases.push(database);
+  const storage: CommitJournalStorage = {
+    sql: { exec(query, ...bindings) {
+      const rows = database.prepare(query).all(...bindings.map(value => value instanceof ArrayBuffer ? new Uint8Array(value) : value));
+      return { toArray: () => rows };
+    } },
+    transactionSync() { throw new Error("Read-only lookup must not start a transaction"); },
+  };
+  const journal = new SqliteCommitJournal(storage, scope, false);
+  expect(journal.lookup({ opId: "missing", requestDigest: "0".repeat(64), baseVersion: 1 })).toMatchObject({ state: "unknown", reason: "not_found" });
+  expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([]);
+});

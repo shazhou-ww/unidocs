@@ -21,6 +21,7 @@ import {
   httpCallEvent,
   httpCallFailure,
   noopObserver,
+  parseCommitReceipt,
   pickObservedHeaders,
   readObservedBody,
 } from "@unidocs/protocol-doc";
@@ -68,7 +69,7 @@ export interface DocServiceRegistration {
 
 const EDITOR_METHODS = new Set([
   "apply", "query", "export", "history", "rollback",
-  "snapshot", "ir",
+  "snapshot", "ir", "commit-status", "commit-recover",
 ]);
 
 const OPERATOR_METHODS = new Set(["run", "reset"]);
@@ -275,6 +276,9 @@ export function createGatewayHandler(
         record.sessionId,
         operation,
       );
+      if (response.ok && (method === "apply" || method === "rollback" || method === "commit-recover")) {
+        return synchronizeCommittedVersion(response, cfg.directory, tenantId, docId, now(), method === "commit-recover");
+      }
       if (response.ok && MUTATING_METHODS.has(method)) {
         await cfg.directory.touch(tenantId, docId, now());
       }
@@ -727,7 +731,50 @@ async function reconcileCreatingDocument(
   );
 }
 
+async function synchronizeCommittedVersion(
+  response: Response, directory: GatewayDocumentDirectory, tenantId: string, docId: string, observedAt: number, requireReceipt: boolean,
+): Promise<Response> {
+  try {
+    const reader = response.clone().body?.getReader();
+    if (!reader) throw new Error("Missing commit response");
+    const bytes = new Uint8Array(16_384);
+    let size = 0;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        if (size + chunk.value.byteLength > bytes.length) throw new Error("Commit response exceeds metadata limit");
+        bytes.set(chunk.value, size);
+        size += chunk.value.byteLength;
+      }
+    } finally {
+      void reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+    const result = JSON.parse(new TextDecoder().decode(bytes.subarray(0, size)));
+    let version: number;
+    if (result?.receipt !== undefined) {
+      const receipt = parseCommitReceipt(result.receipt);
+      if (receipt.state !== "committed") return response;
+      version = receipt.version;
+    } else {
+      if (requireReceipt || result?.success !== true || !Number.isSafeInteger(result.version) || result.version < 1) {
+        throw new Error("Invalid committed version response");
+      }
+      version = result.version;
+    }
+    await directory.advanceVersion(tenantId, docId, version, observedAt);
+    return response;
+  } catch {
+    const headers = new Headers(response.headers);
+    headers.set("X-UniDocs-Directory-Sync", "pending");
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  }
+}
+
 function docOperation(method: string): DocOperation {
+  if (method === "commit-status") return "commitStatus";
+  if (method === "commit-recover") return "commitRecover";
   if (method === "apply"
     || method === "query"
     || method === "export"

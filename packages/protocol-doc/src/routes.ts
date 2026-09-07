@@ -2,6 +2,8 @@ export type DocOperation =
   | "create"
   | "query"
   | "apply"
+  | "commitStatus"
+  | "commitRecover"
   | "export"
   | "history"
   | "rollback"
@@ -24,6 +26,8 @@ export type DocInternalRoute = { operation: DocInternalOperation };
 const operationRoutes = {
   query: { method: "POST", segment: "query" },
   apply: { method: "POST", segment: "apply" },
+  commitStatus: { method: "POST", segment: "commit-status" },
+  commitRecover: { method: "POST", segment: "commit-recover" },
   export: { method: "GET", segment: "export" },
   history: { method: "GET", segment: "history" },
   rollback: { method: "POST", segment: "rollback" },
@@ -55,6 +59,8 @@ export const docRoutes = {
   create: sessionPath,
   query: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/query`,
   apply: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/apply`,
+  commitStatus: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/commit-status`,
+  commitRecover: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/commit-recover`,
   export: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/export`,
   history: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/history`,
   rollback: (path: { tenantId: string; sessionId: string }) => `${sessionPath(path)}/rollback`,
@@ -70,6 +76,8 @@ export const docInternalRoutes = {
   create: "/_internal/create",
   query: "/_internal/query",
   apply: "/_internal/apply",
+  commitStatus: "/_internal/commit_status",
+  commitRecover: "/_internal/commit_recover",
   export: "/_internal/export",
   history: "/_internal/history",
   rollback: "/_internal/rollback",

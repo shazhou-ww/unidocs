@@ -136,6 +136,16 @@ export class D1GatewayDocumentDirectory implements GatewayDocumentDirectory {
     }
   }
 
+  async advanceVersion(tenantId: string, docId: string, version: number, observedAt: number): Promise<void> {
+    if (!Number.isSafeInteger(version) || version < 1 || !Number.isSafeInteger(observedAt) || observedAt < 0) {
+      throw new TypeError("Invalid committed version observation");
+    }
+    await this.#db.prepare(`UPDATE gateway_documents
+      SET version = ?, updated_at = MAX(updated_at, ?)
+      WHERE tenant_id = ? AND doc_id = ? AND state = 'ready' AND COALESCE(version, 0) < ?`)
+      .bind(version, observedAt, tenantId, docId, version).run();
+  }
+
   async #findByIdempotencyKey(
     tenantId: string,
     idempotencyKey: string,

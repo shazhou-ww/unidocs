@@ -221,6 +221,16 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     async #ensureLoaded(): Promise<void> {
       if (this.#loaded) return;
       this.#initializeSchema();
+      await this.#loadIdentity(true);
+      if (this.#tenantId) {
+        this.#initializeRuntime();
+        this.#version = this.#latestVersion();
+        if (this.#version > 0) this.#doc = await this.#reconstruct(this.#version);
+      }
+      this.#loaded = true;
+    }
+
+    async #loadIdentity(migrate: boolean): Promise<void> {
       const [storedTenantId, storedSessionId, docType, legacyOwner, legacyDocument] = await Promise.all([
         this.#ctx.storage.get<string>(KEY_TENANT_ID),
         this.#ctx.storage.get<string>(KEY_SESSION_ID),
@@ -231,7 +241,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const tenantId = storedTenantId ?? legacyOwner;
       const sessionId = storedSessionId
         ?? (legacyOwner && legacyDocument ? `${legacyOwner}:${legacyDocument}` : undefined);
-      if (tenantId && sessionId && (!storedTenantId || !storedSessionId)) {
+      if (migrate && tenantId && sessionId && (!storedTenantId || !storedSessionId)) {
         await Promise.all([
           this.#ctx.storage.put(KEY_TENANT_ID, tenantId),
           this.#ctx.storage.put(KEY_SESSION_ID, sessionId),
@@ -240,12 +250,6 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       this.#tenantId = tenantId ?? null;
       this.#sessionId = sessionId ?? null;
       this.#docType = docType ?? null;
-      if (this.#tenantId) {
-        this.#initializeRuntime();
-        this.#version = this.#latestVersion();
-        if (this.#version > 0) this.#doc = await this.#reconstruct(this.#version);
-      }
-      this.#loaded = true;
     }
 
     async #recoverPending(): Promise<void> {
@@ -305,6 +309,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         throw error;
       }
       if (receipt.state !== "pending") return this.#receiptResponse(receipt);
+      return this.#resumeExplicit(receipt);
+    }
+
+    async #resumeExplicit(receipt: CommitReceipt): Promise<Response> {
+      const journal = this.#commitJournal();
       try {
         await this.#recoverPending();
         const current = journal.lookup(receipt);
@@ -326,7 +335,59 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         await this.#commit(doc, { kind: "apply", operations }, intent.payload.description, false, receipt);
         return this.#receiptResponse(journal.lookup(receipt));
       } catch {
-        return this.#receiptResponse(journal.lookup(receipt));
+        const current = journal.lookup(receipt);
+        if (current.state === "committed") {
+          this.#loaded = false;
+          this.#doc = null;
+        }
+        return this.#receiptResponse(current);
+      }
+    }
+
+    async #handleCommitControl(request: Request, recover: boolean): Promise<Response> {
+      let identity: CommitRequestIdentity;
+      try {
+        const bytes = new Uint8Array(4096);
+        let size = 0;
+        if (request.body) await request.body.pipeTo(new WritableStream<Uint8Array>({
+          write(chunk) {
+            if (size + chunk.byteLength <= bytes.length) bytes.set(chunk, size);
+            size = Math.min(bytes.length + 1, size + chunk.byteLength);
+          },
+        }));
+        if (size > bytes.length) return Response.json({ error: "Commit control request exceeds 4096 bytes" }, { status: 413 });
+        const value = await readRequestValue(new Request(request.url, {
+          method: "POST", headers: request.headers, body: bytes.slice(0, size),
+        }));
+        if (!isRecord(value) || Object.keys(value).some(key => !["opId", "requestDigest", "baseVersion"].includes(key))) {
+          throw new Error("Unexpected commit control fields");
+        }
+        identity = parseCommitRequestIdentity(value);
+      } catch {
+        return Response.json({ success: false, error: "Invalid commit control identity" }, { status: 400 });
+      }
+      await this.#loadIdentity(false);
+      const identityError = this.#verifyIdentity(request, false);
+      if (identityError) return identityError;
+      if (this.#env.DOC_EXPLICIT_COMMITS !== "1" || this.#docType !== "markdown") {
+        return Response.json({ success: false, error: "Explicit commits are not enabled" }, { status: 400 });
+      }
+      const journal = new SqliteCommitJournal(this.#ctx.storage, {
+        tenantId: this.#tenantId!, docType: this.#docType, sessionId: this.#requireSessionId(),
+      }, false);
+      try {
+        const receipt = journal.lookup(identity);
+        if (!recover || receipt.state !== "pending") {
+          return Response.json({ receipt }, { headers: { "Cache-Control": "no-store" } });
+        }
+        if (!this.#requestCas) return Response.json({ error: "Recovery requires delegated CAS authority" }, { status: 403 });
+        await this.#ensureLoaded();
+        const response = await this.#resumeExplicit(receipt);
+        const result = await response.json() as { receipt: CommitReceipt };
+        return Response.json({ receipt: result.receipt }, { status: response.status === 503 ? 503 : 200, headers: { "Cache-Control": "no-store" } });
+      } catch (error) {
+        if (error instanceof CommitJournalConflict) return Response.json({ error: error.code }, { status: 409 });
+        return Response.json({ receipt: { ...identity, state: "unknown", reason: "unavailable" } }, { status: 503, headers: { "Cache-Control": "no-store" } });
       }
     }
 
@@ -653,6 +714,9 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       this.#requestOperation = request.headers.get("X-UniDocs-Doc-Operation");
       try {
         const url = new URL(request.url);
+        if (request.method === "POST" && (url.pathname === "/_internal/commit_status" || url.pathname === "/_internal/commit_recover")) {
+          return await this.#handleCommitControl(request, url.pathname === "/_internal/commit_recover");
+        }
         await this.#ensureLoaded();
         if (this.#docType !== null) {
           const identityError = this.#verifyIdentity(request, false);

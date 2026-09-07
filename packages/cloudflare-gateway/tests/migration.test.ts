@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
+import { D1GatewayDocumentDirectory } from "../src/document-directory.js";
 
 let miniflare: Miniflare | undefined;
 
@@ -74,5 +75,13 @@ describe("Gateway D1 migrations", () => {
       "gateway_oauth_tenant_memberships",
       "gateway_oauth_audit_events",
     ]));
+    const directory = new D1GatewayDocumentDirectory(db as unknown as D1Database);
+    await directory.advanceVersion("alice", "doc-1", 25, 300);
+    await Promise.all([directory.advanceVersion("alice", "doc-1", 25, 500), directory.advanceVersion("alice", "doc-1", 23, 400)]);
+    expect(await directory.get("alice", "doc-1")).toMatchObject({ version: 25, updatedAt: 300 });
+    await directory.advanceVersion("alice", "doc-1", 26, 250);
+    await directory.advanceVersion("bob", "doc-1", 99, 900);
+    expect(await directory.get("alice", "doc-1")).toMatchObject({ version: 26, updatedAt: 300 });
+    await expect(directory.advanceVersion("alice", "doc-1", 0, 400)).rejects.toThrow();
   }, 15_000);
 });

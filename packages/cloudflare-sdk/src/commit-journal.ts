@@ -20,12 +20,13 @@ export class SqliteCommitJournal {
   readonly #scope: string;
   readonly #identity: SessionIdentity;
 
-  constructor(private readonly storage: CommitJournalStorage, identity: SessionIdentity) {
+  constructor(private readonly storage: CommitJournalStorage, identity: SessionIdentity, initialize = true) {
     if (![identity.tenantId, identity.docType, identity.sessionId].every(value => typeof value === "string" && value.length > 0)) {
       throw new Error("Invalid commit journal scope");
     }
     this.#identity = { tenantId: identity.tenantId, docType: identity.docType, sessionId: identity.sessionId };
     this.#scope = JSON.stringify([identity.tenantId, identity.docType, identity.sessionId]);
+    if (!initialize) return;
     storage.sql.exec(`CREATE TABLE IF NOT EXISTS doc_commit_intents_v1 (
       scope TEXT NOT NULL, op_id TEXT NOT NULL, request_digest TEXT NOT NULL,
       base_version INTEGER NOT NULL, payload BLOB NOT NULL,
@@ -106,6 +107,7 @@ export class SqliteCommitJournal {
   }
 
   #read(opId: string): CommitReceipt | null {
+    if (!this.storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'doc_commit_intents_v1'").toArray().length) return null;
     const row = this.storage.sql.exec("SELECT op_id, request_digest, base_version, state, receipt FROM doc_commit_intents_v1 WHERE scope = ? AND op_id = ?", this.#scope, opId).toArray()[0];
     return row ? this.#receipt(row) : null;
   }

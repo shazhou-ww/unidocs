@@ -63,6 +63,7 @@ export function docCapabilityPolicy(
         60,
       );
     case "history":
+    case "commitStatus":
       return policy(sessionReadPermission(tenantId, sessionId), [], 30);
     // `ir` returns canonical bytes whose SBlob refs the client then reads from
     // CAS, so the editor verifies those refs are live before encoding — that
@@ -80,6 +81,7 @@ export function docCapabilityPolicy(
         60,
       );
     case "apply":
+    case "commitRecover":
     case "rollback":
       return policy(
         sessionWritePermission(tenantId, sessionId),

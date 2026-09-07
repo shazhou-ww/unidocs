@@ -18,6 +18,40 @@ import {
 } from "../src/doc-type-handler.js";
 
 describe("Doc capability edge", () => {
+  test("commit status accepts read authority without CAS and cannot be used to recover", async () => {
+    const primary = capability({ sub: "gateway", audience: "unidocs-doc:markdown", permissions: [sessionReadPermission("tenant-1", "session-1")] });
+    const editor = trackingNamespace(async request => {
+      expect(new URL(request.url).pathname).toBe("/_internal/commit_status");
+      expect(request.headers.get("X-UniDocs-CAS-Capability")).toBeNull();
+      return Response.json({ receipt: { state: "pending" } });
+    });
+    const handler = capabilityHandler(primary, undefined, editor);
+    const request = (operation: string, cas = false) => new Request(`https://doc/tenants/tenant-1/sessions/session-1/${operation}`, {
+      method: "POST", headers: { Authorization: "Bearer doc-token", ...(cas ? { "X-UniDocs-CAS-Capability": "unexpected" } : {}) }, body: "{}",
+    });
+    expect((await handler(request("commit-status"))).status).toBe(200);
+    expect((await handler(request("commit-status", true))).status).toBe(403);
+    expect((await handler(request("commit-recover"))).status).toBe(403);
+    expect(editor.ids).toHaveLength(1);
+  });
+
+  test("commit recovery requires write authority and the exact delegated CAS read/write set", async () => {
+    const primary = capability({ sub: "gateway", audience: "unidocs-doc:markdown", permissions: [sessionWritePermission("tenant-1", "session-1")] });
+    const editor = trackingNamespace(async request => {
+      expect(new URL(request.url).pathname).toBe("/_internal/commit_recover");
+      return Response.json({ receipt: { state: "committed" } });
+    });
+    const request = (cas = false) => new Request("https://doc/tenants/tenant-1/sessions/session-1/commit-recover", {
+      method: "POST", headers: { Authorization: "Bearer doc-token", ...(cas ? { "X-UniDocs-CAS-Capability": "cas-token" } : {}) }, body: "{}",
+    });
+    expect((await capabilityHandler(primary, undefined, editor)(request())).status).toBe(401);
+    const readOnly = capability({ sub: "doc:markdown", audience: "unidocs-cas", permissions: [casReadPermission("tenant-1")] });
+    expect((await capabilityHandler(primary, readOnly, editor)(request(true))).status).toBe(403);
+    const delegated = capability({ sub: "doc:markdown", audience: "unidocs-cas", permissions: [casReadPermission("tenant-1"), casWritePermission("tenant-1")] });
+    expect((await capabilityHandler(primary, delegated, editor)(request(true))).status).toBe(200);
+    expect(editor.ids).toHaveLength(1);
+  });
+
   test("verifies separated credentials before forwarding derived context", async () => {
     const primary = capability({
       sub: "gateway",

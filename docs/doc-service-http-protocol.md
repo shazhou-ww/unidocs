@@ -299,6 +299,61 @@ The spelling difference is intentional and frozen by route tests:
 | Doc edge API | `/{sessionId}/init-from-hash` |
 | Adapter-internal API | `/_internal/init_from_hash` |
 
+## Experimental commit controls
+
+These endpoints are implemented only for Cloudflare Markdown with
+`DOC_EXPLICIT_COMMITS="1"`. They are not deployed or a cross-adapter release
+promise. The shared adapter used by Azure returns `501` without loading or
+mutating the document session. A disabled Cloudflare adapter returns `400`.
+
+| Boundary | Read-only receipt lookup | Resume existing intent |
+| --- | --- | --- |
+| Gateway document path | `POST /{docId}/commit-status` | `POST /{docId}/commit-recover` |
+| Doc session path | `POST /{sessionId}/commit-status` | `POST /{sessionId}/commit-recover` |
+| Internal | `POST /_internal/commit_status` | `POST /_internal/commit_recover` |
+
+Both requests contain exactly `{ opId, requestDigest, baseVersion }`, encoded
+as JSON or SValue. The Cloudflare handler buffers at most 4096 bytes and
+returns `413` for a larger body; it drains remaining input without buffering.
+Extra fields, including operations or candidate content, return `400`.
+Responses are JSON `{ receipt }`; the receipt has the state and identity
+defined by `CommitReceipt` in `@unidocs/protocol-doc`. Callers must inspect the
+receipt state, not interpret HTTP `200` as proof that content was committed.
+
+`commitStatus` requires session read authority and accepts no delegated CAS
+capability. Despite using POST to carry the identity, it only reads identity
+and journal metadata: it does not create journal tables, reconstruct document
+content, access CAS, or settle pending work. `commitRecover` requires session
+write authority plus delegated CAS read and write authority. It verifies the
+expected identity before resuming the stored candidate; it never registers a
+missing intent or accepts replacement operations.
+
+Existing pending/terminal lookup and unknown/not_found return `200` with a
+receipt; successful recovery also returns `200`, including a definitive
+rejected result. A still-pending recovery or unavailable journal returns
+`503`. A mismatching digest or base version returns `409` without executing
+recovery. Receipt-bearing responses use `Cache-Control: no-store`. Requests
+still undergo the existing Gateway document lookup and Doc edge tenant,
+session and exact-permission verification; the digest is not an access token.
+
+Successful apply/rollback results and committed recovery receipts advance the
+Gateway's directory version only when greater than the cached version. Equal
+or older results do not change its recency. Directory time is a Gateway
+observation time, not an authoritative commit timestamp. Read-only receipt
+lookup never updates the directory.
+
+If directory synchronization fails, the original upstream status and response
+remain intact and `X-UniDocs-Directory-Sync: pending` is added. This header
+describes a stale directory projection, not an uncertain content commit.
+Repeating recovery for the same completed intent can repair the directory
+without applying the content again. There is no background repair guarantee.
+
+Experimental initial submission still uses apply with
+`commitMode: "receipt-v1"`. Do not send this field to older deployments that
+may ignore it. Azure durable completion, retention/GC, all crash-window
+coverage and WebUI explicit saving remain unfinished. See
+[Iteration 09](design/iteration-09.md) for implementation and test boundaries.
+
 ## Error model
 
 Gateway directory and edge authentication errors use:

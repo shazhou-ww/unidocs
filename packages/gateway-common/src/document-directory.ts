@@ -48,6 +48,7 @@ export interface GatewayDocumentDirectory {
     updatedAt: number,
   ): Promise<GatewayDocumentRecord>;
   touch(tenantId: string, docId: string, updatedAt: number): Promise<void>;
+  advanceVersion(tenantId: string, docId: string, version: number, observedAt: number): Promise<void>;
 }
 
 export class GatewayDirectoryConflictError extends Error {
@@ -151,6 +152,15 @@ export class MemoryGatewayDocumentDirectory implements GatewayDocumentDirectory 
       throw new GatewayDirectoryConflictError(`Document ${docId} is not ready`);
     }
     this.#replace(record, { updatedAt });
+  }
+
+  async advanceVersion(tenantId: string, docId: string, version: number, observedAt: number): Promise<void> {
+    if (!Number.isSafeInteger(version) || version < 1 || !Number.isSafeInteger(observedAt) || observedAt < 0) {
+      throw new TypeError("Invalid committed version observation");
+    }
+    const record = this.#byDocument.get(directoryKey(tenantId, docId));
+    if (!record || record.state !== "ready" || (record.version ?? 0) >= version) return;
+    this.#replace(record, { version, updatedAt: Math.max(record.updatedAt, observedAt) });
   }
 
   #require(tenantId: string, docId: string): GatewayDocumentRecord {

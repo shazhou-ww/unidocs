@@ -17,6 +17,8 @@ describe("Gateway capability policy", () => {
     ["query", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],
     ["export", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 60, 120],
     ["history", "tenants:t:sessions:s:read", [], 30, 120],
+    ["commitStatus", "tenants:t:sessions:s:read", [], 30, 120],
+    ["commitRecover", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90, 120],
     ["ir", "tenants:t:sessions:s:read", ["tenants:t:cas:read"], 30, 120],
     ["snapshot", "tenants:t:sessions:s:read", ["tenants:t:cas:write"], 60, 120],
     ["apply", "tenants:t:sessions:s:write", ["tenants:t:cas:read", "tenants:t:cas:write"], 90, 120],
