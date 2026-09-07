@@ -1089,6 +1089,55 @@ describe("DocumentSession — normal paths", () => {
 // --------------------------------------------------------------------------
 
 describe("DocumentSession.apply — opId idempotency", () => {
+  it("P0: a lost CAS acknowledgement can leave committed refs after delta compensation and reuse the root request ID", async () => {
+    const { session, deps, cas } = makeHarness();
+    await session.create();
+    const committed = new Map<string, CasReferences>();
+    const attempted: Array<{ requestId: string; changes: CasReferences }> = [];
+    cas.updateRootRefs = async update => {
+      attempted.push(update);
+      if (committed.has(update.requestId)) {
+        throw new Error("request ID already bound to another root-ref payload");
+      }
+      committed.set(update.requestId, update.changes);
+      throw new Error("response lost after CAS commit");
+    };
+
+    await expect(session.apply([{ kind: "append", text: "first", blob: createSBlob(HASH_1) }], "first", 1, "first-op"))
+      .rejects.toBeInstanceOf(RootRefsError);
+    expect(await deps.deltas.head()).toBe(1);
+    expect((await session.query({ kind: "text" })).data).toBe("");
+    expect([...committed.values()]).toEqual([{ [HASH_1]: 1 }]);
+
+    const restored = new DocumentSession(makeTextDocType(), deps);
+    await expect(restored.apply([{ kind: "append", text: "second", blob: createSBlob(HASH_2) }], "second", 1, "second-op"))
+      .rejects.toBeInstanceOf(RootRefsError);
+    expect(attempted).toHaveLength(2);
+    expect(attempted[1]!.requestId).toBe(attempted[0]!.requestId);
+    expect(attempted[1]!.changes).not.toEqual(attempted[0]!.changes);
+    expect(await deps.deltas.head()).toBe(1);
+  });
+
+  it("P0: failed root refs do not prove rejection when another writer has advanced the delta head", async () => {
+    const { session, deps, cas } = makeHarness();
+    await session.create();
+    cas.updateRootRefs = async () => {
+      const nextWriter = new DocumentSession(makeTextDocType(), deps);
+      await nextWriter.apply([{ kind: "append", text: "second" }], "second", 2, "second-op");
+      throw new Error("first writer's root refs failed");
+    };
+
+    const operations: TextOp[] = [{ kind: "append", text: "first", blob: createSBlob(HASH_1) }];
+    await expect(session.apply(operations, "first", 1, "first-op")).rejects.toBeInstanceOf(RootRefsError);
+    expect(await deps.deltas.head()).toBe(3);
+    expect((await deps.deltas.range()).map(delta => delta.version)).toEqual([1, 2, 3]);
+    expect(session.version).toBe(1);
+
+    const restored = new DocumentSession(makeTextDocType(), deps);
+    expect((await restored.query({ kind: "text" })).data).toBe("firstsecond");
+    await expect(restored.apply(operations, "first", 1, "first-op")).rejects.toBeInstanceOf(VersionConflictError);
+  });
+
   it("P0: a reused opId does not validate a different payload in the same instance", async () => {
     const { session } = makeHarness();
     await session.create();

@@ -1,6 +1,10 @@
 # Iteration 08：Markdown 编辑与标签页草稿
 
-日期：2026-09-07。状态：本地实现与前端验收通过，未部署、未提交 Git。
+日期：2026-09-07。状态：已提交并部署现有 Cloudflare Gateway；生产登录后草稿流程待真人验收。
+
+- 实现提交：`d452218`（`feat(webui): add isolated Markdown editing drafts and recovery`）。
+- Worker：`unidocs-gateway`，版本 `c3a19a0e-50c7-4a7f-9b1c-0a1e3513a43e`。
+- 生产入口：https://unidocs.shazhou.work/ui/?iteration=08#/documents 。
 
 ## 可体验变化
 
@@ -32,13 +36,19 @@ pnpm --filter @unidocs/web-gateway typecheck
 # passed
 pnpm --filter @unidocs/web-gateway build
 # passed
+pnpm --filter @unidocs/cloudflare-gateway build
+# passed
+pnpm --filter @unidocs/cloudflare-gateway test
+# 25 passed
 ```
 
 新增测试覆盖编辑／预览往返、安全渲染、确认丢弃、刷新恢复、原基础正文和版本保留、身份／tenant／类型／作品隔离、令牌轮换、记录字段白名单、存储上限与损坏、配额失败及本地重试、删除失败、退出清理和清理失败、401 与 403、手机不读取私有内容。
 
 localhost 浏览器替身验收：1440px 桌面和 820px 平板双栏截图与尺寸检查通过，无横向溢出，平板源码／预览各 368px 且不重叠；390px 手机只有提示页，无编辑器或数据请求。v12 草稿在刷新读取 v15 后保留原基准与正文，返回预览显示 v15。退出后令牌和草稿记录已清除。单测验证了取消／确认丢弃及删除失败；浏览器也操作了确认丢弃和退出。
 
-记录到的文档请求均为 `POST /query`，正文为 `{"kind":"getContent"}`；没有云端内容修改请求。调试浏览器替身时曾出现本地代理 500 和 OAuth register 请求，不是生产请求，也不作为真实鉴权验收。本轮没有自动创建、上传、编辑或删除生产作品，没有部署 Cloudflare/Azure，也未运行后端构建或测试。
+记录到的文档请求均为 `POST /query`，正文为 `{"kind":"getContent"}`；没有云端内容修改请求。调试浏览器替身时曾出现本地代理 500 和 OAuth register 请求，不是生产请求，也不作为真实鉴权验收。本轮没有自动创建、上传、编辑或删除生产作品。
+
+发布使用 `cfg` 的 Cloudflare API token 与 account ID，仅注入发布进程并在 finally 清除。执行现有 Gateway 的 `wrangler deploy --keep-vars --strict`，没有修改配置、服务绑定、secrets 或数据库，没有部署其他 Worker 或 Azure。线上 HTML 为 200／no-store，9 个静态资源 SHA-256 均与本地构建一致，OAuth 元数据端点 200，issuer 与 authorization_endpoint 保持原配置。浏览器加载生产登录页成功；当前无登录会话，未验证真实作品草稿流程。浏览器另有一条未定位的 ERR_CONNECTION_CLOSED 资源事件，不以此宣称所有浏览器网络请求均无错误。
 
 本地开发入口：http://127.0.0.1:5184/ui/ 。真实登录与作品读取需要另外运行／配置本地 Gateway；本轮浏览器验收使用虚构会话和 API 替身。
 

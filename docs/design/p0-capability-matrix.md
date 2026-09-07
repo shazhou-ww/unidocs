@@ -116,6 +116,8 @@ Owner：两个 session 实现及其持久端口、protocol-doc、Gateway 权限�
 
 ## 5. 尚未完成的 P0 Gate
 
+2026-09-07 第 09 轮补充：[首个故障测试切片](iteration-09.md) 新增 2 条共享 session 测试，51 条 session 测试通过。CAS 响应丢失后补偿可能复用相同 root-ref 请求 ID；并发推进 head 时，返回 RootRefsError 的 delta 可能仍被保留并重放。receipt 不能仅以 delta 存在或异常类型判断终态。该结果来自内存／CAS 替身，不代表 Cloudflare SValue 或生产 CAS 已验证。
+
 - [ ] 真正的 embedded draft adapter 探针：本地编辑零 apply，用户保存一个批次一次 apply，未知结果不重试；覆盖真实 RenderClient／Worker 资源边界。
 - [ ] Cloudflare SValue session 对应故障注入与重建测试；Azure 请求级适配测试，不仅是共享内存端口测试。
 - [ ] 历史重建在 restore/import/clone 上的完整正确性，引用依赖和 GC 生命周期，固定字体／渲染资源的策略。
