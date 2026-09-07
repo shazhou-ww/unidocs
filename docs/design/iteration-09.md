@@ -1,6 +1,8 @@
 # Iteration 09：可靠提交结果，故障验证与结果契约
 
-日期：2026-09-07。状态：进行中；共享 session 与 Cloudflare pending 恢复故障测试通过，结果解析、规范载荷摘要及独立 SQLite 提交意图日志已实现。日志尚未接入文档提交器，核实 API 和 WebUI 显式云端保存尚未实现，旧 apply 路由与生产运行逻辑未改。
+日期：2026-09-07。状态：进行中；结果解析、规范载荷摘要和 SQLite 意图日志已实现，并在默认关闭的实验开关后接通 Cloudflare Markdown 真实提交与恢复。独立核实 API、Azure 持久提交及 WebUI 保存尚未实现。本轮未部署，线上仍为第 08 轮。
+
+日志检查点已提交为 `bad1851`；下文前三个切片记录保留其当时的实现边界，第四个切片描述当前工作区新增的接入。
 
 ## 本切片结论
 
@@ -35,7 +37,7 @@
 
 这些工具已导出，但未注册新 HTTP 路由、未增加数据库字段、未接入旧 apply 或 WebUI，也不是可用的端到端保存功能。
 
-## Receipt 集成边界（待实现）
+## Receipt 集成进度
 
 ### 第三个切片：独立 SQLite 提交意图日志
 
@@ -54,7 +56,25 @@
 
 [workerd 集成测试](../../tests/integration/cloudflare/commit-journal.test.mjs) 将同一实现传入真实 `ctx.storage`，通过仅测试的 [DO 探针](../../tests/integration/cloudflare/commit-journal-probe.ts) 验证 pending／终态在两次 Miniflare 重启后恢复、事务回滚和重复完成不再执行本地写入。探针未加入部署入口，使用的本地版本表不是真实 SValue delta 提交。
 
-### 尚待接入的约束
+### 第四个切片：Cloudflare Markdown 实验提交闭环
+
+[SValue EditorDO](../../packages/cloudflare-sdk/src/editor-do-svalue.ts) 在 `DOC_EXPLICIT_COMMITS="1"` 且 doctype 为 Markdown 时，接受 apply 请求中的实验字段 `commitMode: "receipt-v1"`。未开启、类型不支持或模式未知都返回 400，不执行旧 apply。生产 Wrangler 配置没有启用该开关，也没有部署本次代码；该字段不是已发布的跨云能力协商契约，客户端不得向旧版本后端盲发它。
+
+- 继续经既有 Gateway 与 Doc capability 鉴权进入；在恢复写入前检查 DO 的 tenant／session 身份。共享 [session-handler](../../packages/doctype-server-common/src/session-handler.ts) 也明确拒绝任何带 commitMode 的 apply，避免 Azure 当前实现忽略字段后执行旧写入。
+- 先用 journal 登记固定候选，重试同 opId 同载荷返回原记录，异载荷或不同 pending 意图返回 409。新模式不使用旧 recentOps 缓存，也不改变无 commitMode 请求原有的内存去重语义。
+- 有 journal pending 时，旧 apply／rollback 等带 CAS 写权限的入口返回 409，不自动恢复或推进该意图；query／ir／export／history 等只读路径仍查看已完成版本。关闭实验开关后，已有 pending 也不允许旧写入口绕过，恢复必须重新启用新模式并使用原请求。
+- 对被提前拒绝且尚未读取请求体的写请求，流式消费请求体后返回，避免本地 Gateway 流式转发连接被中断；不执行原写操作，也不把正文缓冲到内存。
+- 在原候选基准上计算 Markdown，成功得到待提交根后，将 svalue_pending 与原 opId 关联。恢复验证 journal 摘要、baseVersion、description 及 delta 字节一致性，不拿最新 head 重新解释旧候选。
+- 新 CAS roots 请求身份为 `session:{sessionId}:commit:{opId}:roots`，不使用可能被重用的版本号作为唯一意图身份。原普通 apply 保留旧请求身份。
+- CAS 确认后，在同一 SQLite transactionSync 中写入 delta／必要的 snapshot、删除 svalue_pending 并将 receipt 标记 committed。恢复与提交阶段的失败保留 pending；内存版本在重建成功后才更新，不把旧正文标成新版本。
+- 同请求重试若已 committed，即使文档后来推进了版本，也返回原 receipt 与原提交版本，不再次执行操作。确定的基准冲突和 Markdown 计算拒绝写入 rejected，后续相同请求返回同一终态。
+- 成功返回 200 与 `{ success: true, version, receipt }`；未确定的持久意图返回 503 与 pending receipt；确定拒绝返回 409 与 rejected receipt。普通输入错误／未登记时的存储失败可能没有 receipt，不能据此推断请求曾经或从未持久提交。
+
+[5 条新集成测试](../../tests/integration/cloudflare/explicit-commit.test.mjs) 使用本地 Gateway、Markdown Worker、真实 SValue DO 和 CAS middleware：CAS 确认前失败、确认后响应丢失、并发相同请求、不同载荷／意图冲突、旧 apply／rollback 互斥、跨租户拒绝、开关关闭与重新启用、确定拒绝、终态跨重启重试，以及 v21 同时产生 delta／snapshot 的恢复。原 roots 请求只记一次，恢复后根计数各为 1；旧客户端在新意图完成后仍可正常写入。
+
+这里用重复提交原请求来驱动恢复，只是后端实验协议，不是 WebUI 的最终 unknown 核实交互。独立只读 receipt 查询与受控恢复 API 尚未提供；不允许前端拿旧 apply 重试猜结果。本轮没有生产故障注入，没有覆盖 journal 登记到 pending 根写入之间的全部硬崩溃窗口，也未完成容量、保留期与候选 GC 策略。实验模式暂不支持 PSD／DOCX，Azure 持久事务和结果核实也仍是发布 gate。
+
+### 跨云后续约束
 
 - 新显式提交语义与旧 DocSession 的自动 rebase／同 opId 重放分开协商，不直接改变旧接口的去重语义。
 - 持久记录以不可变 session 身份与客户端 opId 定位，绑定原 baseVersion、operations、description 的规范化载荷摘要。摘要必须沿用 SValue 编码处理二进制／SBlob，不使用普通 JSON 冒充协议摘要。
@@ -83,10 +103,14 @@ pnpm --filter @unidocs/cloudflare-sdk typecheck
 # passed
 pnpm exec vitest run tests/integration/cloudflare/commit-journal.test.mjs --fileParallelism=false --silent
 # 1 passed，真实 workerd SQLite 事务及持久目录重启
+pnpm exec vitest run tests/integration/cloudflare/explicit-commit.test.mjs --fileParallelism=false --silent
+# 5 passed，新增实验提交端到端
+pnpm --filter @unidocs/doctype-server-common test -- --silent
+# 第四切片回归：268 passed（新增共享适配器失败关闭 1 条）
 ```
 
-首个切片使用内存 DeltaLog 和可控 CAS 替身；第二个切片使用本地 Miniflare 执行真实 Cloudflare DO／CAS 实现，并在服务绑定代理注入故障。未运行 Azure 或生产端到端。没有修改 HTTP API、存储 schema 或生产作品，不将这些测试与独立工具描述为持久提交结果已落地。
+首个切片使用内存 DeltaLog 和可控 CAS 替身；第二个及第四个切片使用本地 Miniflare 执行真实 Cloudflare DO／CAS 实现，并在服务绑定代理注入故障。第四个切片新增实验请求模式及 svalue_pending 的可空 commit_op_id 列，现有 DO 加载时按需补列；日志表按需创建。未运行 Azure 或生产端到端，也未将本轮 schema 或代码部署到生产，不将局部实验闭环描述为跨云可靠保存已完成。
 
 ## 下一切片
 
-下一切片将独立日志与 Cloudflare SValue pending／delta 完成路径关联，明确旧写路径互斥及 CAS 已确认的终态提交点，再接受鉴权保护的核实入口。共享 Azure 路径仍须解决上文的并发补偿边界。只有两条云适配路径具备可核实结果后，再开放 WebUI 显式保存；冲突与 unknown 都保留第 08 轮原基准草稿。
+下一切片定义并接入鉴权保护的 receipt 核实与原意图恢复入口，区分只读查询和需要 CAS 写权限的恢复，并补齐登记后、根上传前及本地完成事务失败的实际提交器故障测试。共享 Azure 路径仍须解决上文的并发补偿边界。只有两条云适配路径具备可核实结果后，再开放 WebUI 显式保存；冲突与 unknown 都保留第 08 轮原基准草稿。

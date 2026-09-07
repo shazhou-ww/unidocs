@@ -51,7 +51,7 @@ export default {
       const body = await request.clone().json().catch(() => null);
       const requestId = body?.requestId;
       const isVersionTwo = typeof requestId === "string"
-        && (requestId.includes(":version:2:roots") || /^apply:.*:2$/.test(requestId));
+        && (requestId.includes(":version:2:roots") || requestId.includes(":commit:") || /^apply:.*:2$/.test(requestId));
       if (isVersionTwo && !failedVersionTwo) {
         failedVersionTwo = true;
         if (env.CAS_FAULT_MODE === "after-commit") {

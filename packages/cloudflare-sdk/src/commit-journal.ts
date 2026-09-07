@@ -65,6 +65,11 @@ export class SqliteCommitJournal {
     return receipt;
   }
 
+  pendingIdentity(): CommitReceipt | null {
+    const row = this.storage.sql.exec("SELECT op_id, request_digest, base_version, state, receipt FROM doc_commit_intents_v1 WHERE scope = ? AND state = 'pending'", this.#scope).toArray()[0];
+    return row ? this.#receipt(row) : null;
+  }
+
   async recoverPending(): Promise<{ receipt: CommitReceipt; payload: CommitPayload } | null> {
     const row = this.storage.sql.exec("SELECT * FROM doc_commit_intents_v1 WHERE scope = ? AND state = 'pending'", this.#scope).toArray()[0];
     if (!row) return null;

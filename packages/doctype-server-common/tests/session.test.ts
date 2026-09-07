@@ -1391,6 +1391,26 @@ describe("DocumentSession.exportBytes — 格式选择", () => {
 });
 
 describe("session-handler historical read compatibility", () => {
+  it("rejects explicit commit mode without silently executing a legacy apply", async () => {
+    const { session, deps } = makeHarness();
+    await session.create();
+    const handle = createSessionHandler({ session, identity: deps.identity });
+    const request = { operations: [{ kind: "append", text: "must not apply" }], description: "explicit", baseVersion: 1, opId: "explicit-1" };
+    for (const commitMode of ["receipt-v1", "unsupported", null]) {
+      const response = await handle(new Request("https://svc/_internal/apply", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...request, commitMode }),
+      }));
+      expect(response.status).toBe(400);
+      expect(await deps.deltas.head()).toBe(1);
+      expect((await session.query({ kind: "text" })).data).toBe("");
+    }
+    const legacy = await handle(new Request("https://svc/_internal/apply", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+    }));
+    expect(legacy.status).toBe(200);
+    expect(await deps.deltas.head()).toBe(2);
+  });
+
   it("P0: an unsupported version parameter on ir still returns the current version", async () => {
     const { session, deps } = makeHarness();
     await session.create({ bytes: encoder.encode("original") });

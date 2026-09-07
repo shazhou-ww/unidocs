@@ -17,6 +17,8 @@ import { createSBlobContext } from "./sblob-context.js";
 import { createRequestCasClient } from "./request-cas-client.js";
 import type { RequestCasClient } from "./request-cas-client.js";
 import { rootTransitionChanges } from "./root-transition.js";
+import { SqliteCommitJournal, CommitJournalConflict } from "./commit-journal.js";
+import { parseCommitRequestIdentity, type CommitReceipt, type CommitRequestIdentity } from "@unidocs/protocol-doc";
 
 const KEY_DOC_TYPE = "docType";
 const KEY_SESSION_ID = "sessionId";
@@ -39,6 +41,7 @@ interface RestoreDelta {
 type StoredDelta<TOp> = ApplyDelta<TOp> | RestoreDelta;
 
 interface PendingRow {
+  readonly commit_op_id: string | null;
   readonly version: number;
   readonly timestamp: number;
   readonly description: string;
@@ -64,6 +67,7 @@ interface SnapshotRow {
 }
 
 export interface Env {
+  readonly DOC_EXPLICIT_COMMITS?: string;
   readonly CAS_SERVICE: Fetcher;
   readonly CAS_STACK_ID: string;
   readonly DOC_CAS_CONCURRENCY?: string;
@@ -97,6 +101,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
     #sessionId: string | null = null;
     #docType: string | null = null;
     readonly #recentOps = new Map<string, number>();
+    #journal: SqliteCommitJournal | null = null;
 
     constructor(ctx: DurableObjectState, env: Env) {
       this.#ctx = ctx;
@@ -152,6 +157,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       `);
       this.#ensureColumn("svalue_deltas", "root_bytes", "BLOB");
       this.#ensureColumn("svalue_snapshots", "root_bytes", "BLOB");
+      this.#ensureColumn("svalue_pending", "commit_op_id", "TEXT");
     }
 
     #ensureColumn(table: string, column: string, type: string): void {
@@ -246,10 +252,11 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       if (!this.#config) return;
       const before = this.#version;
       await this.#settlePending();
-      this.#version = this.#latestVersion();
-      if (this.#version !== before || (this.#version > 0 && this.#doc === null)) {
-        this.#doc = await this.#reconstruct(this.#version);
+      const version = this.#latestVersion();
+      if (version !== before || (version > 0 && this.#doc === null)) {
+        this.#doc = await this.#reconstruct(version);
       }
+      this.#version = version;
     }
 
     #latestVersion(): number {
@@ -257,6 +264,70 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         "SELECT MAX(version) AS max_version FROM svalue_deltas",
       ).toArray();
       return Number(rows[0]?.max_version ?? 0);
+    }
+
+    #commitJournal(): SqliteCommitJournal {
+      if (!this.#journal) {
+        if (!this.#tenantId || !this.#docType) throw new Error("Commit identity unavailable");
+        this.#journal = new SqliteCommitJournal(this.#ctx.storage, {
+          tenantId: this.#tenantId, docType: this.#docType, sessionId: this.#requireSessionId(),
+        });
+      }
+      return this.#journal;
+    }
+
+    #receiptResponse(receipt: CommitReceipt): Response {
+      const status = receipt.state === "committed" ? 200 : receipt.state === "pending" ? 503 : 409;
+      return Response.json({ success: receipt.state === "committed", receipt,
+        version: receipt.state === "committed" ? receipt.version : this.#version }, { status });
+    }
+
+    async #applyExplicit(value: Record<string, unknown>): Promise<Response> {
+      try {
+        parseCommitRequestIdentity({ opId: value.opId, baseVersion: value.baseVersion, requestDigest: "0".repeat(64) });
+      } catch {
+        return Response.json({ success: false, error: "Invalid explicit commit identity" }, { status: 400 });
+      }
+      const pending = this.#pending();
+      if (pending && !pending.commit_op_id) {
+        return Response.json({ success: false, error: "Legacy pending version requires recovery" }, { status: 409 });
+      }
+      const journal = this.#commitJournal();
+      let receipt: CommitReceipt;
+      try {
+        receipt = await journal.begin(value.opId as string, {
+          baseVersion: value.baseVersion as number, description: value.description as string, operations: value.operations as SValue[],
+        });
+      } catch (error) {
+        if (error instanceof CommitJournalConflict) {
+          return Response.json({ success: false, error: error.code }, { status: 409 });
+        }
+        throw error;
+      }
+      if (receipt.state !== "pending") return this.#receiptResponse(receipt);
+      try {
+        await this.#recoverPending();
+        const current = journal.lookup(receipt);
+        if (current.state !== "pending") return this.#receiptResponse(current);
+        const intent = await journal.recoverPending();
+        if (!intent || intent.receipt.opId !== receipt.opId) throw new Error("Pending commit identity changed");
+        if (intent.payload.baseVersion !== this.#version) {
+          return this.#receiptResponse(journal.settle({ ...receipt, state: "rejected", reason: "version_conflict", headVersion: this.#version }, () => undefined));
+        }
+        await this.#refreshCurrentRefs();
+        const operations = intent.payload.operations as readonly SValueType<TOp>[];
+        let doc: SValueType<TDoc>;
+        try {
+          doc = await this.#requireConfig().apply(operations, this.#requireDoc());
+          encodeSValue(doc as unknown as SValue);
+        } catch {
+          return this.#receiptResponse(journal.settle({ ...receipt, state: "rejected", reason: "invalid_operations" }, () => undefined));
+        }
+        await this.#commit(doc, { kind: "apply", operations }, intent.payload.description, false, receipt);
+        return this.#receiptResponse(journal.lookup(receipt));
+      } catch {
+        return this.#receiptResponse(journal.lookup(receipt));
+      }
     }
 
     #latestSnapshotVersion(): number {
@@ -268,7 +339,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
     #pending(): PendingRow | null {
       const rows = this.#ctx.storage.sql.exec(
-        "SELECT version, timestamp, description, delta_hash, delta_bytes, snapshot_hash, snapshot_bytes FROM svalue_pending WHERE singleton = 1",
+        "SELECT version, timestamp, description, delta_hash, delta_bytes, snapshot_hash, snapshot_bytes, commit_op_id FROM svalue_pending WHERE singleton = 1",
       ).toArray();
       return (rows[0] as unknown as PendingRow | undefined) ?? null;
     }
@@ -287,6 +358,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       const cas = this.#requireCas();
       const sessionId = this.#requireSessionId();
       const deltaBytes = toBytes(pending.delta_bytes);
+      const intent = pending.commit_op_id ? await this.#commitJournal().recoverPending() : null;
+      if (pending.commit_op_id) {
+        if (!intent || intent.receipt.opId !== pending.commit_op_id || intent.receipt.baseVersion + 1 !== pending.version
+          || intent.payload.description !== pending.description) throw new Error("Pending version does not match commit intent");
+        const expected = encodeSValue({ kind: "apply", operations: [...intent.payload.operations] });
+        if (expected.length !== deltaBytes.length || !expected.every((byte, index) => byte === deltaBytes[index])) {
+          throw new Error("Pending delta does not match commit candidate");
+        }
+      }
       await context.makeSBlob(pending.delta_hash, async () => ({
         data: deltaBytes,
         contentType: SValueContentType,
@@ -309,34 +389,38 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       );
       if (Object.keys(changes).length > 0) {
         await cas.unicasClient.updateRootRefs({
-          requestId: `session:${sessionId}:version:${pending.version}:roots`,
+          requestId: intent ? `session:${sessionId}:commit:${intent.receipt.opId}:roots` : `session:${sessionId}:version:${pending.version}:roots`,
           changes,
         });
       }
 
-      this.#ctx.storage.sql.exec(
-        `INSERT OR REPLACE INTO svalue_deltas
-          (version, timestamp, description, root_hash, root_bytes)
-         VALUES (?, ?, ?, ?, ?)`,
-        pending.version,
-        pending.timestamp,
-        pending.description,
-        pending.delta_hash,
-        deltaBytes,
-      );
-      if (pending.snapshot_hash !== null) {
-        const snapshotBytes = toBytes(pending.snapshot_bytes);
+      const finalize = (): undefined => {
         this.#ctx.storage.sql.exec(
-          `INSERT OR REPLACE INTO svalue_snapshots
-            (version, root_hash, timestamp, root_bytes)
-           VALUES (?, ?, ?, ?)`,
+          `INSERT OR REPLACE INTO svalue_deltas
+            (version, timestamp, description, root_hash, root_bytes)
+           VALUES (?, ?, ?, ?, ?)`,
           pending.version,
-          pending.snapshot_hash,
           pending.timestamp,
-          snapshotBytes,
+          pending.description,
+          pending.delta_hash,
+          deltaBytes,
         );
-      }
-      this.#ctx.storage.sql.exec("DELETE FROM svalue_pending WHERE singleton = 1");
+        if (pending.snapshot_hash !== null) {
+          const snapshotBytes = toBytes(pending.snapshot_bytes);
+          this.#ctx.storage.sql.exec(
+            `INSERT OR REPLACE INTO svalue_snapshots
+              (version, root_hash, timestamp, root_bytes)
+             VALUES (?, ?, ?, ?)`,
+            pending.version,
+            pending.snapshot_hash,
+            pending.timestamp,
+            snapshotBytes,
+          );
+        }
+        this.#ctx.storage.sql.exec("DELETE FROM svalue_pending WHERE singleton = 1");
+      };
+      if (intent) this.#commitJournal().settle({ ...intent.receipt, state: "committed", version: pending.version }, finalize);
+      else this.#ctx.storage.transactionSync(finalize);
     }
 
     async #commit(
@@ -344,6 +428,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       delta: ApplyDelta<TOp> | { readonly kind: "restore" },
       description: string,
       forceSnapshot = false,
+      intent?: CommitRequestIdentity,
     ): Promise<number> {
       const context = this.#requireContext();
       const probe = context.memoryProbe;
@@ -401,8 +486,8 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
       this.#ctx.storage.sql.exec(
         `INSERT OR REPLACE INTO svalue_pending
-          (singleton, version, timestamp, description, delta_hash, delta_bytes, snapshot_hash, snapshot_bytes)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
+          (singleton, version, timestamp, description, delta_hash, delta_bytes, snapshot_hash, snapshot_bytes, commit_op_id)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
         nextVersion,
         timestamp,
         description,
@@ -410,6 +495,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         deltaBytes,
         snapshotBlob?.hash ?? null,
         snapshotBytes,
+        intent?.opId ?? null,
       );
       probe?.({
         stage: "commit.pending.persisted",
@@ -568,7 +654,20 @@ export function createEditorDO<TDoc, TQuery, TOp>(
       try {
         const url = new URL(request.url);
         await this.#ensureLoaded();
-        if (this.#requestCas && !this.#isReadOnlyOperation()) {
+        if (this.#docType !== null) {
+          const identityError = this.#verifyIdentity(request, false);
+          if (identityError) return identityError;
+        }
+        const applyValue = request.method === "POST" && url.pathname === "/_internal/apply" ? await readRequestValue(request) : null;
+        const explicit = isRecord(applyValue) && applyValue.commitMode === "receipt-v1";
+        if (isRecord(applyValue) && applyValue.commitMode !== undefined && (!explicit || this.#env.DOC_EXPLICIT_COMMITS !== "1" || this.#docType !== "markdown")) {
+          return Response.json({ success: false, error: "Explicit commits are not enabled or mode is unsupported" }, { status: 400 });
+        }
+        if (this.#docType !== null && this.#requestCas && !this.#isReadOnlyOperation() && !explicit && this.#commitJournal().pendingIdentity()) {
+          if (!request.bodyUsed && request.body) await request.body.pipeTo(new WritableStream({ write() {} }));
+          return Response.json({ success: false, error: "Explicit commit pending; recover the original request", version: this.#version }, { status: 409 });
+        }
+        if (this.#requestCas && !this.#isReadOnlyOperation() && !explicit) {
           await this.#recoverPending();
         }
         if (request.method === "POST" && url.pathname === "/_internal/create") {
@@ -682,7 +781,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         }
 
         if (request.method === "POST" && url.pathname === "/_internal/apply") {
-          const value = await readRequestValue(request);
+          const value = applyValue;
           if (!isRecord(value)
             || !Array.isArray(value.operations)
             || typeof value.description !== "string"
@@ -692,6 +791,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
             return Response.json({ success: false, error: "Invalid apply request" }, { status: 400 });
           }
           const opId = typeof value.opId === "string" ? value.opId : undefined;
+          if (explicit) return await this.#applyExplicit(value);
           if (opId !== undefined) {
             const seenVersion = this.#recentOps.get(opId);
             if (seenVersion !== undefined) {

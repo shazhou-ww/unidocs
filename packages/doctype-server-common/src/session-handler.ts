@@ -336,8 +336,12 @@ export function createSessionHandler<TDoc, TQuery, TOp>(
           description: string;
           baseVersion: number;
           opId?: string;
+          commitMode?: unknown;
         };
 
+        if (body.commitMode !== undefined) {
+          return Response.json({ success: false, error: "Explicit commits are not supported by this adapter" }, { status: 400 });
+        }
         const applied = await session.apply(
           body.operations as never,
           body.description,
