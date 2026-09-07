@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fafaf9">
+  <title>UniDocs · 我的作品</title>
+  <link rel="stylesheet" href="unidocs-mock.css">
+  <link rel="stylesheet" href="unidocs-mock-psd.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script defer src="unidocs-mock-psd.js"></script>
+  <script defer src="unidocs-mock.js"></script>
+</head>
+
+<body>
+  <section id="device-notice" aria-labelledby="device-notice-title">
+    <div class="brand"><span class="brand-mark"><i data-lucide="files" aria-hidden="true"></i></span>UniDocs</div>
+    <div class="device-notice-content">
+      <i data-lucide="monitor" aria-hidden="true"></i>
+      <h1 id="device-notice-title">请在电脑或平板上查看</h1>
+      <p>移动端暂未开放。</p>
+    </div>
+  </section>
+  <div id="app"></div>
+  <dialog id="modal"></dialog>
+  <div id="reference-popover" class="reference-popover" hidden></div>
+  <button id="selection-comment" class="primary" data-action="add-comment" hidden>添加批注</button>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>请启用 JavaScript 以打开此原型。</noscript>
+</body>
+
+</html>
