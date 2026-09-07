@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { App } from "../src/ui/app.js";
 import { accessTokenSession } from "./session-fixture.js";
+import { loadSession } from "../src/ui/oauth.js";
+import { markdownDraftKey, writeMarkdownDraft } from "../src/ui/markdown-draft.js";
 
 vi.mock("../src/ui/config.js", () => ({
   API_PREFIX: "",
@@ -111,9 +113,30 @@ describe("gateway webui app", () => {
   test("sign out removes stored credentials", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ success: true, data: [], count: 0 })));
     accessTokenSession("alice");
+    const key = markdownDraftKey(loadSession()!, "markdown", "document")!;
+    writeMarkdownDraft(key, { content: "private draft", baseContent: "", baseVersion: 1 });
     render(<App />);
     await userEvent.setup().click(screen.getByRole("button", { name: "退出登录" }));
     expect(await screen.findByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
     expect(sessionStorage.getItem("unidocs.oauth.session")).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
+  });
+
+  test("returns to sign-in and reports local cleanup failures without retaining visible content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ success: true, data: [], count: 0 })));
+    accessTokenSession("alice");
+    const key = markdownDraftKey(loadSession()!, "markdown", "document")!;
+    writeMarkdownDraft(key, { content: "private draft", baseContent: "", baseVersion: 1 });
+    const original = Storage.prototype.removeItem;
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, name) {
+      if (name === key) throw new Error("blocked");
+      original.call(this, name);
+    });
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "退出登录" }));
+    expect(await screen.findByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("未能全部清除");
+    expect(sessionStorage.getItem("unidocs.oauth.session")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "我的作品" })).not.toBeInTheDocument();
   });
 });

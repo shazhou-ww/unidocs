@@ -16,6 +16,8 @@
 
 架构草案：[Editor Host Protocol v0](editor-host-protocol-v0.md)，按编辑器用例分析、消息时序和协议定义展开。尚未实现 iframe 拆分。
 
+编辑迭代：[Iteration 08](iteration-08.md) 增加 Markdown 源码／安全预览双栏及按身份隔离的标签页草稿恢复；返回预览保留草稿，云端新版本不改写草稿基准。仅本地验收，未部署，不开放云端保存。
+
 实施规划：[统一 WebUI 实施计划](implementation-plan.md)，包含阶段依赖、现有代码复用、PSD 同步适配、PR 切分与验收标准。P0 已启动，证据与测试记录见 [P0 能力矩阵](p0-capability-matrix.md)。
 
 ## 已确定的产品约定

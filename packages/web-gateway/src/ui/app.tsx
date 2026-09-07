@@ -35,9 +35,9 @@ export function App() {
   }, []);
 
   const signedOut = () => {
-    clearSession();
+    const cleared = clearSession();
     setSession(null);
-    setCallbackError(null);
+    setCallbackError(cleared ? null : "本地登录或草稿记录未能全部清除，请关闭当前标签页并清除本站浏览器数据。");
     window.location.hash = "/documents";
   };
 

@@ -11,6 +11,7 @@
 
 import { CLIENT_NAME, OAUTH_BASE, REDIRECT_URI } from "./config.js";
 import { CREATION_TRACKING_KEY } from "./creation-tracking.js";
+import { clearMarkdownDrafts } from "./markdown-draft.js";
 
 const CLIENT_STORAGE_KEY = "unidocs.oauth.clientId";
 const SESSION_STORAGE_KEY = "unidocs.oauth.session";
@@ -194,11 +195,13 @@ export function saveSession(session: OAuthTokenSession): void {
   sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
-export function clearSession(): void {
-  sessionStorage.removeItem(SESSION_STORAGE_KEY);
-  sessionStorage.removeItem(CREATION_TRACKING_KEY);
-  sessionStorage.removeItem(PKCE_STORAGE_KEY);
-  sessionStorage.removeItem(STATE_STORAGE_KEY);
+export function clearSession(): boolean {
+  let cleared = true;
+  for (const key of [SESSION_STORAGE_KEY, CREATION_TRACKING_KEY, PKCE_STORAGE_KEY, STATE_STORAGE_KEY]) {
+    try { sessionStorage.removeItem(key); } catch { cleared = false; }
+  }
+  try { clearMarkdownDrafts(); } catch { cleared = false; }
+  return cleared;
 }
 
 export function sessionIsExpired(session: OAuthTokenSession): boolean {

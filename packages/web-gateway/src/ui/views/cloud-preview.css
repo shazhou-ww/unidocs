@@ -160,6 +160,61 @@
   overflow-wrap: anywhere;
 }
 
+.cloud-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 32px;
+  font-size: 12px;
+  border-bottom: 1px solid #e1e6dc;
+}
+
+.cloud-draft-error {
+  color: #a4473c;
+  overflow-wrap: anywhere;
+}
+
+.cloud-markdown-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.cloud-markdown-editor .cloud-prose {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 24px;
+}
+
+.cloud-source {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.cloud-source textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 600px;
+  flex: 1;
+  resize: vertical;
+  padding: 20px;
+  border: 1px solid #dce3d7;
+  border-radius: 4px;
+  background: white;
+  color: #293128;
+  font: 14px/1.8 Consolas, "Microsoft YaHei", monospace;
+}
+
+.cloud-source textarea:focus-visible {
+  outline: 2px solid #527553;
+  outline-offset: 2px;
+}
+
 .cloud-prose h1 {
   font-size: 28px;
   line-height: 1.5;

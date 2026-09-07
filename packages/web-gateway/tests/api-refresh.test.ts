@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { listDocuments } from "../src/ui/api.js";
 import { loadSession, saveSession } from "../src/ui/oauth.js";
 import { accessTokenSession } from "./session-fixture.js";
+import { markdownDraftKey, writeMarkdownDraft } from "../src/ui/markdown-draft.js";
 
 vi.mock("../src/ui/config.js", () => ({ API_BASE: "https://gateway.test", OAUTH_BASE: "https://gateway.test/oauth", CLIENT_NAME: "test", REDIRECT_URI: "https://gateway.test/callback" }));
 beforeEach(() => { localStorage.clear(); sessionStorage.clear(); localStorage.setItem("unidocs.oauth.clientId", "client"); accessTokenSession("alice"); saveSession({ ...loadSession()!, expiresAt: 1 }); });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("parallel directory session refresh", () => {
   it("rotates a refresh token once for simultaneous type requests", async () => {
@@ -33,5 +34,18 @@ describe("parallel directory session refresh", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Temporary failure", { status: 503 })));
     await expect(listDocuments("alice", "markdown")).rejects.toThrow("token refresh failed");
     expect(loadSession()).not.toBeNull();
+  });
+
+  it("still reports 401 when local draft cleanup fails after an invalid grant", async () => {
+    const key = markdownDraftKey(loadSession()!, "markdown", "document")!;
+    writeMarkdownDraft(key, { content: "private", baseContent: "", baseVersion: 1 });
+    const original = Storage.prototype.removeItem;
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, name) {
+      if (name === key) throw new Error("blocked");
+      original.call(this, name);
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "invalid_grant" }, { status: 400 })));
+    await expect(listDocuments("alice", "markdown")).rejects.toMatchObject({ status: 401 });
+    expect(loadSession()).toBeNull();
   });
 });
