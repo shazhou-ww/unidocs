@@ -146,13 +146,64 @@ test("opens and cancels folder creation without native prompts or writes", async
   const requestCount = fetchMock.mock.calls.length;
   await user.click(screen.getByRole("button", { name: "New folder" }));
   expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveFocus();
-  expect(screen.getByRole("button", { name: "Create folder" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Create folder" })).not.toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: "New folder" })).getByRole("textbox", { name: "Folder name" })).toHaveFocus();
   await user.type(screen.getByRole("textbox", { name: "Folder name" }), "../invalid{Enter}");
   expect(screen.getByRole("alert")).toHaveTextContent("without path separators");
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("textbox", { name: "Folder name" })).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledTimes(requestCount);
   expect(prompt).not.toHaveBeenCalled();
+});
+
+test("commits the temporary row on blur exactly once", async () => {
+  const user = userEvent.setup();
+  render(<PlaygroundView stackId={stackId} />);
+  await selectRoot(user, "Alpha");
+  await user.click(screen.getByRole("button", { name: "New folder" }));
+  const row = screen.getByRole("row", { name: "New folder" });
+  expect(row.parentElement?.firstElementChild).toBe(row);
+  expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New folder" })).toBeDisabled();
+  await user.type(within(row).getByRole("textbox"), "Blur folder");
+  await user.tab();
+  expect(await screen.findByRole("button", { name: "Blur folder", exact: true })).toBeInTheDocument();
+  expect(screen.queryByRole("row", { name: "New folder" })).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
+});
+
+test("cancels empty blur and rejects duplicate names without writes", async () => {
+  const user = userEvent.setup();
+  render(<PlaygroundView stackId={stackId} />);
+  await selectRoot(user, "Alpha");
+  const requests = fetchMock.mock.calls.length;
+  await user.click(screen.getByRole("button", { name: "New folder" }));
+  await user.type(screen.getByRole("textbox", { name: "Folder name" }), "   ");
+  await user.tab();
+  expect(screen.queryByRole("textbox", { name: "Folder name" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "New folder" }));
+  await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Documents");
+  await user.tab();
+  expect(screen.getByRole("alert")).toHaveTextContent("already exists");
+  expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("Documents");
+  expect(fetchMock).toHaveBeenCalledTimes(requests);
+});
+
+test("retains a failed blur draft and allows explicit retry", async () => {
+  const user = userEvent.setup();
+  render(<PlaygroundView stackId={stackId} />);
+  await selectRoot(user, "Alpha");
+  failCommit = true;
+  await user.click(screen.getByRole("button", { name: "New folder" }));
+  await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Retry folder");
+  await user.tab();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Revision conflict");
+  expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("Retry folder");
+  failCommit = false;
+  await user.click(screen.getByRole("textbox", { name: "Folder name" }));
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("button", { name: "Retry folder", exact: true })).toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(2);
 });
 
 test("does not reuse roots or tenant credentials across stacks", async () => {

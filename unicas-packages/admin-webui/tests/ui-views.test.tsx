@@ -272,6 +272,32 @@ describe("MembersView", () => {
 });
 
 describe("IssuerView", () => {
+  test("copies the managed issuer URL from a non-editable text block with keyboard support", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    fetchMock.mockResolvedValueOnce(json(null)).mockResolvedValueOnce(json(managedIssuer()));
+    render(<IssuerView stackId={STACK} />);
+    const copy = await screen.findByRole("button", { name: "Copy managed issuer URL" });
+    expect(screen.queryByRole("textbox", { name: "Managed issuer URL" })).not.toBeInTheDocument();
+    expect(copy).toHaveTextContent(managedIssuer().issuer);
+    await user.click(copy);
+    expect(writeText).toHaveBeenCalledWith(managedIssuer().issuer);
+    expect(screen.getByRole("status")).toHaveTextContent("Copied");
+    await user.keyboard("{Enter}");
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("reports clipboard failures without changing the issuer", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
+    fetchMock.mockResolvedValueOnce(json(null)).mockResolvedValueOnce(json(managedIssuer()));
+    render(<IssuerView stackId={STACK} />);
+    await user.click(await screen.findByRole("button", { name: "Copy managed issuer URL" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Could not copy URL");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   test("shows the connect form when no OAuth issuer is configured", async () => {
     fetchMock
       .mockResolvedValueOnce(json(null))

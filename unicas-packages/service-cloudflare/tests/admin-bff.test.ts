@@ -198,6 +198,8 @@ function fakeControlPlane(): ControlPlaneOperations {
       if (!requireStack(ctx, request.path.stackId)) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
       return request.query?.optional ? null : { error: "NOT_FOUND", message: "OAuth issuer is not configured" };
     },
+    getManagedOAuthIssuer: error,
+    patchManagedOAuthIssuer: error,
     mintManagedCapability: async (ctx, request) => {
       const stack = requireStack(ctx, request.path.stackId);
       if (!stack) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
