@@ -2,24 +2,127 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentsView } from "../src/ui/views/workspace-documents.js";
-import { ApiError, createDocument, downloadDocument, listDocuments, type GatewayDocumentRecord } from "../src/ui/api.js";
+import { ApiError, createDocument, documentStatus, downloadDocument, listDocuments, type GatewayDocumentRecord } from "../src/ui/api.js";
 import { loadSession } from "../src/ui/oauth.js";
 import { accessTokenSession } from "./session-fixture.js";
+import { CREATION_TRACKING_KEY } from "../src/ui/creation-tracking.js";
 
 vi.mock("../src/ui/config.js", () => ({ DEFAULT_DOC_TYPES: ["markdown", "psd", "docx"] }));
-vi.mock("../src/ui/api.js", async original => ({ ...await original<typeof import("../src/ui/api.js")>(), listDocuments: vi.fn(), createDocument: vi.fn(), downloadDocument: vi.fn() }));
+vi.mock("../src/ui/api.js", async original => ({ ...await original<typeof import("../src/ui/api.js")>(), listDocuments: vi.fn(), createDocument: vi.fn(), documentStatus: vi.fn(), downloadDocument: vi.fn() }));
 const record = (type: string, id: string, updated: number): GatewayDocumentRecord => ({ doc_id: id, doc_type: type, owner_id: "alice", version: 2, created_at: 1000, updated_at: updated });
 const markdown = record("markdown", "alpha-note", 2000);
 const psd = record("psd", "beta-image", 3000);
 const docx = record("docx", "gamma-document", 1000);
 beforeEach(() => {
+  sessionStorage.clear();
   accessTokenSession("alice");
   vi.mocked(listDocuments).mockReset().mockImplementation(async (_tenant, type) => ({ markdown: [markdown], psd: [psd], docx: [docx] })[type] ?? []);
-  vi.mocked(createDocument).mockReset(); vi.mocked(downloadDocument).mockReset();
+  vi.mocked(createDocument).mockReset(); vi.mocked(documentStatus).mockReset(); vi.mocked(downloadDocument).mockReset();
 });
 const mount = () => render(<DocumentsView session={loadSession()!} onSignedOut={vi.fn()} />);
 
 describe("unified cloud workspace", () => {
+  it("restores pending creation after remount without resubmitting and removes completed tracking", async () => {
+    const user = userEvent.setup(); const view = mount(); await screen.findByRole("table");
+    vi.mocked(createDocument).mockResolvedValue({ success: true, docId: "restore-pending", state: "creating" });
+    await user.click(screen.getByRole("button", { name: "新建作品" }));
+    await user.click(screen.getByRole("button", { name: "创建" }));
+    await screen.findByRole("region", { name: "创建状态 restore-pending" });
+    expect(sessionStorage.getItem(CREATION_TRACKING_KEY)).toContain("restore-pending");
+    view.unmount();
+    const restored = mount();
+    const region = screen.getByRole("region", { name: "创建状态 restore-pending" });
+    expect(documentStatus).not.toHaveBeenCalled(); expect(createDocument).toHaveBeenCalledTimes(1);
+    vi.mocked(documentStatus).mockResolvedValue({ doc_id: "restore-pending", doc_type: "markdown", state: "ready", version: 1 });
+    await user.click(within(region).getByRole("button", { name: "检查创建状态" }));
+    await within(region).findByRole("link", { name: "打开预览" });
+    restored.unmount(); mount();
+    await screen.findByRole("table");
+    expect(screen.queryByRole("region", { name: "创建状态 restore-pending" })).not.toBeInTheDocument();
+    expect(createDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a successful creation tracked in memory when persistence fails, without reuploading", async () => {
+    const user = userEvent.setup(); mount(); await screen.findByRole("table");
+    const original = Storage.prototype.setItem;
+    const failure = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === CREATION_TRACKING_KEY) throw new Error("Storage full");
+      original.call(this, key, value);
+    });
+    try {
+      vi.mocked(createDocument).mockResolvedValue({ success: true, docId: "in-memory", state: "creating" });
+      await user.click(screen.getByRole("button", { name: "新建作品" }));
+      await user.click(screen.getByRole("button", { name: "创建" }));
+      expect(await screen.findByRole("region", { name: "创建状态 in-memory" })).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("创建跟踪尚未保存");
+      expect(createDocument).toHaveBeenCalledTimes(1);
+    } finally { failure.mockRestore(); }
+    await user.click(screen.getByRole("button", { name: "重试保存跟踪" }));
+    expect(sessionStorage.getItem(CREATION_TRACKING_KEY)).toContain("in-memory");
+    expect(createDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("tracks a pending create through status checks without submitting another create", async () => {
+    const user = userEvent.setup(); mount(); await screen.findByRole("table");
+    vi.mocked(createDocument).mockResolvedValue({ success: true, docId: "processing", state: "creating" });
+    vi.mocked(documentStatus).mockResolvedValueOnce({ doc_id: "processing", doc_type: "markdown", state: "creating", version: null })
+      .mockResolvedValueOnce({ doc_id: "processing", doc_type: "markdown", state: "ready", version: 1 });
+    await user.click(screen.getByRole("button", { name: "新建作品" }));
+    await user.click(screen.getByRole("button", { name: "创建" }));
+    const region = await screen.findByRole("region", { name: "创建状态 processing" });
+    expect(documentStatus).not.toHaveBeenCalled();
+    await user.click(within(region).getByRole("button", { name: "检查创建状态" }));
+    expect(within(region).queryByRole("link")).not.toBeInTheDocument();
+    await user.click(within(region).getByRole("button", { name: "检查创建状态" }));
+    expect(await within(region).findByRole("link", { name: "打开预览" })).toHaveAttribute("href", "#/preview/markdown/processing");
+    expect(createDocument).toHaveBeenCalledTimes(1);
+    expect(documentStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows a new file after a definite upload rejection", async () => {
+    const user = userEvent.setup(); mount(); await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "新建作品" }));
+    await user.click(screen.getByRole("radio", { name: "导入文件" }));
+    await user.upload(screen.getByLabelText("选择文件 · 最大 32 MiB"), new File(["large"], "notes.md"));
+    vi.mocked(createDocument).mockRejectedValue(new ApiError(413, "Upload limit"));
+    await user.click(screen.getByRole("button", { name: "导入为新作品" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("重新选择文件");
+    expect(screen.getByLabelText("选择文件 · 最大 32 MiB")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "导入为新作品" })).toBeDisabled();
+  });
+
+  it("selects a file without uploading until confirmed, then offers the ready preview", async () => {
+    const user = userEvent.setup(); mount(); await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "新建作品" }));
+    await user.click(screen.getByRole("radio", { name: "导入文件" }));
+    const file = new File(["# Real content"], "notes.md", { type: "text/markdown" });
+    await user.upload(screen.getByLabelText("选择文件 · 最大 32 MiB"), file);
+    expect(createDocument).not.toHaveBeenCalled();
+    vi.mocked(createDocument).mockResolvedValue({ success: true, docId: "import-ready", state: "ready", version: 1 });
+    await user.click(screen.getByRole("button", { name: "导入为新作品" }));
+    expect(await screen.findByRole("link", { name: "打开预览" })).toHaveAttribute("href", "#/preview/markdown/import-ready");
+    expect(createDocument).toHaveBeenCalledWith("alice", "markdown", { file, requestId: expect.any(String) });
+  });
+
+  it("retains the file and idempotency key after network failure", async () => {
+    const user = userEvent.setup(); mount(); await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "新建作品" }));
+    await user.click(screen.getByRole("radio", { name: "导入文件" }));
+    await user.selectOptions(screen.getByLabelText("内容类型"), "psd");
+    const file = new File(["psd fixture"], "cover.psd");
+    await user.upload(screen.getByLabelText("选择文件 · 最大 32 MiB"), file);
+    vi.mocked(createDocument).mockRejectedValueOnce(new Error("Network failed"))
+      .mockResolvedValueOnce({ success: true, docId: "import-pending", state: "creating" });
+    await user.click(screen.getByRole("button", { name: "导入为新作品" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("保留文件和请求标识");
+    expect(screen.getByLabelText("内容类型")).toBeDisabled();
+    const firstOptions = vi.mocked(createDocument).mock.calls[0]![2];
+    await user.click(screen.getByRole("button", { name: "重试导入" }));
+    expect(vi.mocked(createDocument).mock.calls[1]![2]).toEqual(firstOptions);
+    expect(await screen.findByText(/正在创建 PSD · import-pending/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "打开预览" })).not.toBeInTheDocument();
+  });
+
   it("mixes types in one metadata list, sorts timestamps and combines ID and type filters", async () => {
     const user = userEvent.setup(); mount();
     const table = await screen.findByRole("table");

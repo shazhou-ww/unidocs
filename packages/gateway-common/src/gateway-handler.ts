@@ -249,7 +249,10 @@ export function createGatewayHandler(
     }
 
     if (!method && request.method === "GET") {
-      return documentStatus(record);
+      const resolved = record.state === "creating"
+        ? await reconcileCreatingDocument(cfg, docService, record, now())
+        : null;
+      return documentStatus(resolved ?? record);
     }
 
     if (record.state !== "ready") {
@@ -686,7 +689,7 @@ function documentStatus(record: GatewayDocumentRecord): Response {
       created_at: record.createdAt,
       updated_at: record.updatedAt,
     },
-  });
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
 async function reconcileCreatingDocument(
@@ -715,7 +718,7 @@ async function reconcileCreatingDocument(
     exists?: unknown;
     version?: unknown;
   } | null;
-  if (status?.exists !== true || !Number.isSafeInteger(status.version)) return null;
+  if (status?.exists !== true || !Number.isSafeInteger(status.version) || (status.version as number) < 1) return null;
   return cfg.directory.markReady(
     record.tenantId,
     record.docId,

@@ -10,6 +10,7 @@
  */
 
 import { CLIENT_NAME, OAUTH_BASE, REDIRECT_URI } from "./config.js";
+import { CREATION_TRACKING_KEY } from "./creation-tracking.js";
 
 const CLIENT_STORAGE_KEY = "unidocs.oauth.clientId";
 const SESSION_STORAGE_KEY = "unidocs.oauth.session";
@@ -163,6 +164,7 @@ export async function refreshSession(session: OAuthTokenSession): Promise<OAuthT
   });
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok || typeof payload.access_token !== "string") {
+    if (response.status === 400 && payload.error === "invalid_grant") throw new OAuthError("invalid_grant", "登录已失效，请重新登录");
     throw new OAuthError("refresh_failed", "token refresh failed");
   }
   const next: OAuthTokenSession = {
@@ -194,6 +196,7 @@ export function saveSession(session: OAuthTokenSession): void {
 
 export function clearSession(): void {
   sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  sessionStorage.removeItem(CREATION_TRACKING_KEY);
   sessionStorage.removeItem(PKCE_STORAGE_KEY);
   sessionStorage.removeItem(STATE_STORAGE_KEY);
 }

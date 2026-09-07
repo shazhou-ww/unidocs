@@ -136,6 +136,14 @@ Retrying the same idempotency key probes the original session and can converge
 it to `ready`. A deterministic client failure records `failed`; a timeout or
 5xx leaves the row `creating` because the Doc service may have committed.
 
+An authenticated `GET /{docId}` also probes the original Doc session when the
+directory row is `creating`. A confirmed existing session with a positive
+version moves the row to `ready`; an unavailable or inconclusive probe leaves
+it `creating`. The response retains the status envelope `{ success, data }`,
+uses `Cache-Control: no-store`, and never starts another create. Already-ready
+and failed rows do not trigger this probe; ready status remains a directory
+record, not a fresh read of the document head.
+
 Clone is restricted to a ready source in the same tenant, document type, and
 registered Doc service. Gateway fetches the source snapshot and initializes a
 new opaque session with that root; it does not copy the content DAG.

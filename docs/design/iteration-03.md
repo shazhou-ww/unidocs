@@ -1,6 +1,6 @@
 # Iteration 03：云端作品只读预览
 
-日期：2026-09-07。状态：已部署，生产账号文档读取待真人登录验收。
+日期：2026-09-07。状态：已部署；真人登录后已验证生产 Markdown 空文档读取与刷新，非空正文及 PSD 待验收。
 
 - 入口：https://unidocs.shazhou.work/?iteration=03#/documents
 - Worker：`unidocs-gateway`。
@@ -62,7 +62,9 @@ pnpm --filter @unidocs/cloudflare-gateway test
 
 - 入口与 hash 构建资源返回 200；cloud-preview chunk 返回 200；HTML 缓存策略为 no-store。
 - 未登录的文档 API 返回 401，OAuth metadata 返回 200，云端列表显示 Google 登录入口。
-- 当前共享生产浏览器没有用户登录会话，因此未读取真实用户文档、未代执行 Google 登录，不能将本地替身验证当作生产端到端成功。
+- 首次发布检查时共享生产浏览器没有用户登录会话，未读取真实用户文档；当时的本地替身验证不作为生产端到端成功。
+- 用户随后自行登录，2026-09-07 补验：通过页面抽查两篇真实 Markdown，均显示 v1 与空内容状态，无加载错误、无编辑入口；手动刷新仍正常返回 v1。未读取／输出令牌，未创建或修改作品。
+- 当前账号目录没有 PSD，抽查的 Markdown 均为空；非空 Markdown 渲染与生产 PSD 资源读取仍未验证，不据此扩大验收结论。
 
 部署只更新 Gateway，未执行迁移、写入云端作品、修改 OAuth secrets 或部署 doctype 服务。cfg 凭据未打印，部署结束在 finally 中清理。未提交 Git。
 

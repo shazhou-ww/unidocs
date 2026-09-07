@@ -93,6 +93,37 @@ function createGatewayHandler(config: Record<string, unknown>) {
 }
 
 describe("createGatewayHandler — forwardToWorker streaming body", () => {
+  it("checks a pending document via GET without creating another session", async () => {
+    const directory = new MemoryGatewayDocumentDirectory();
+    await directory.reserve({ docId: "pending-doc", tenantId: "tenant-1", docType: "markdown", serviceId: "markdown-primary", sessionId: "original-session", idempotencyKey: "create-key", requestedDocId: null, now: 100 });
+    const handler = createGatewayHandler({
+      identityResolver: { resolve: async () => ({ userId: "user", tenantId: "tenant-1", canManageTenant: false }) },
+      resolveDocService: async () => ({ serviceId: "markdown-primary", url: "https://doc.invalid", audience: "unidocs-doc:markdown" }),
+      casFetcher: { fetch: async () => new Response(null, { status: 501 }) }, directory,
+      isGatewayExposedCasRoute: () => false, now: () => 200,
+    });
+    const originalFetch = globalThis.fetch;
+    const responses = [Response.json({ exists: false }), Response.json({ exists: true, version: 0 }), Response.json({ exists: true, version: 1 })];
+    let calls = 0;
+    globalThis.fetch = async (input, init) => {
+      expect(String(input)).toBe("https://doc.invalid/tenants/tenant-1/sessions/original-session/status");
+      expect(init?.method).toBe("GET"); calls++;
+      return responses.shift()!;
+    };
+    const request = () => new Request("https://gw/tenants/tenant-1/docs/markdown/pending-doc");
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(await (await handler(request())).json()).toMatchObject({ data: { state: "creating", version: null } });
+      }
+      const ready = await handler(request());
+      expect(ready.headers.get("Cache-Control")).toBe("no-store");
+      expect(await ready.json()).toMatchObject({ data: { doc_id: "pending-doc", state: "ready", version: 1 } });
+      await handler(request());
+      expect(calls).toBe(3);
+      expect(await directory.get("tenant-1", "pending-doc")).toMatchObject({ sessionId: "original-session", state: "ready" });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   it("forwards a POST body intact through a bare fetch() to the resolved worker URL", async () => {
     const port = await startUpstream();
 

@@ -9,6 +9,7 @@ import {
   loadSession,
   refreshSession,
   sessionIsExpired,
+  OAuthError,
   type OAuthTokenSession,
 } from "./oauth.js";
 
@@ -43,11 +44,32 @@ export class ApiError extends Error {
   }
 }
 
+const pendingRefresh = new Map<string, Promise<OAuthTokenSession>>();
+
+function refreshOnce(session: OAuthTokenSession): Promise<OAuthTokenSession> {
+  const current = loadSession();
+  if (!current) return Promise.reject(new ApiError(401, "请重新登录"));
+  if (current.accessToken !== session.accessToken || current.refreshToken !== session.refreshToken) return Promise.resolve(current);
+  const key = session.refreshToken || session.accessToken;
+  const pending = pendingRefresh.get(key);
+  if (pending) return pending;
+  const request = refreshSession(session).catch(reason => {
+    if (reason instanceof OAuthError && ["invalid_grant", "no_refresh_token"].includes(reason.code)) {
+      const latest = loadSession();
+      if (latest?.refreshToken === session.refreshToken && latest?.accessToken === session.accessToken) clearSession();
+      throw new ApiError(401, "登录已失效，请重新登录");
+    }
+    throw reason;
+  }).finally(() => { pendingRefresh.delete(key); });
+  pendingRefresh.set(key, request);
+  return request;
+}
+
 async function ensureFreshSession(): Promise<OAuthTokenSession> {
   let session = loadSession();
   if (!session) throw new ApiError(401, "Not signed in");
   if (sessionIsExpired(session)) {
-    session = await refreshSession(session);
+    session = await refreshOnce(session);
   }
   return session;
 }
@@ -59,7 +81,7 @@ async function gatewayFetch(path: string, init: RequestInit = {}, expectedTenant
   headers.set("Authorization", `Bearer ${session.accessToken}`);
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (response.status === 401) {
-    const refreshed = await refreshSession(session);
+    const refreshed = await refreshOnce(session);
     if (expectedTenant && refreshed.tenantId !== expectedTenant) throw new ApiError(403, "账号上下文已改变，请重新打开作品");
     const retryHeaders = new Headers(init.headers);
     retryHeaders.set("Authorization", `Bearer ${refreshed.accessToken}`);
@@ -127,26 +149,63 @@ export async function listDocuments(tenantId: string, docType: string, signal?: 
   return body.data ?? [];
 }
 
-export async function createDocument(tenantId: string, docType: string): Promise<GatewayCreateResponse> {
+export interface CreateDocumentOptions {
+  file: File;
+  requestId: string;
+}
+
+export function validateImportFile(docType: string, file: File): void {
+  const extensions: Record<string, RegExp> = { markdown: /\.(md|markdown)$/i, psd: /\.psd$/i };
+  if (!extensions[docType]?.test(file.name)) throw new ApiError(400, "请选择与内容类型匹配的 Markdown 或 PSD 文件");
+  if (file.size === 0) throw new ApiError(400, "不能导入空文件");
+  if (file.size > 32 * 1024 * 1024) throw new ApiError(413, "本轮导入支持不超过 32 MiB 的文件");
+}
+
+export async function createDocument(tenantId: string, docType: string, options?: CreateDocumentOptions): Promise<GatewayCreateResponse> {
+  let body: BodyInit = JSON.stringify({});
+  const headers = new Headers();
+  if (options) {
+    validateImportFile(docType, options.file);
+    if (!options.requestId) throw new ApiError(400, "导入请求缺少标识");
+    const form = new FormData(); form.append("file", options.file); form.append("format", docType);
+    body = form;
+    headers.set("Idempotency-Key", options.requestId);
+  } else headers.set("Content-Type", "application/json");
   return readJson<GatewayCreateResponse>(
     await gatewayFetch(`/tenants/${encodeURIComponent(tenantId)}/docs/${encodeURIComponent(docType)}/`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      headers,
+      body,
     }, tenantId),
   );
+}
+
+export interface GatewayDocumentStatus {
+  doc_id: string;
+  doc_type: string;
+  state: "creating" | "ready" | "failed";
+  version: number | null;
 }
 
 export async function documentStatus(
   tenantId: string,
   docType: string,
   docId: string,
-): Promise<GatewayCreateResponse> {
-  return readJson<GatewayCreateResponse>(
+  signal?: AbortSignal,
+): Promise<GatewayDocumentStatus> {
+  const body = await readJson<{ data: GatewayDocumentStatus }>(
     await gatewayFetch(
       `/tenants/${encodeURIComponent(tenantId)}/docs/${encodeURIComponent(docType)}/${encodeURIComponent(docId)}`,
+      { signal, cache: "no-store" }, tenantId,
     ),
   );
+  const data = body.data;
+  if (!data || data.doc_id !== docId || data.doc_type !== docType
+    || !["creating", "ready", "failed"].includes(data.state)
+    || (data.state === "ready" && (!Number.isSafeInteger(data.version) || data.version! < 1))) {
+    throw new ApiError(502, "创建状态响应无效，未确认作品就绪");
+  }
+  return data;
 }
 
 /** Downloads an exported document through the authenticated API as a blob. */

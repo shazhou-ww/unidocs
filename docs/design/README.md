@@ -8,6 +8,12 @@
 
 工作台迭代：[Iteration 04](iteration-04.md) 将云端目录合并为统一列表，提供类型筛选、ID 搜索、排序和总创建入口；不伪造尚未支持的标题、tag 或缩略图。入口 https://unidocs.shazhou.work/?iteration=04#/documents 。前三轮已合并到远程 main。
 
+导入迭代：[Iteration 05](iteration-05.md) 增加 Markdown／PSD 文件创建、同请求重试和失效会话返回登录，已部署。真实生产文件上传待用户选择确认，本轮未自动上传文件。
+
+状态迭代：[Iteration 06](iteration-06.md) 增加创建中的手动状态核实，确认就绪后才出现预览入口，不重复创建、不自动轮询。已部署，共享 Gateway 回归通过，生产真实创建任务与 Azure 部署验证仍待完成。
+
+恢复迭代：[Iteration 07](iteration-07.md) 在当前标签页恢复待完成创建的检查入口，按登录身份隔离，退出时清除。已部署，真实登录目录 23 件作品及一件 Markdown v1 只读验收通过；生产 PSD 与真实创建恢复仍待实际任务验收。
+
 架构草案：[Editor Host Protocol v0](editor-host-protocol-v0.md)，按编辑器用例分析、消息时序和协议定义展开。尚未实现 iframe 拆分。
 
 实施规划：[统一 WebUI 实施计划](implementation-plan.md)，包含阶段依赖、现有代码复用、PSD 同步适配、PR 切分与验收标准。P0 已启动，证据与测试记录见 [P0 能力矩阵](p0-capability-matrix.md)。

@@ -4,6 +4,7 @@ import { clearSession, completeLogin, loadSession, type OAuthTokenSession } from
 import { matchRoute, useHashRoute } from "./router.js";
 import { DocumentsView } from "./views/workspace-documents.js";
 import { LoginView } from "./views/login.js";
+import { creationTrackingScope } from "./creation-tracking.js";
 
 const StudioView = lazy(() => import("./studio/studio.js").then(module => ({ default: module.StudioView })));
 const CloudPreview = lazy(() => import("./views/cloud-preview.js").then(module => ({ default: module.CloudPreview })));
@@ -54,7 +55,7 @@ export function App() {
   }
 
   if (route === "/documents") {
-    return <DocumentsView key={session.tenantId} session={session} onSignedOut={signedOut} />;
+    return <DocumentsView key={creationTrackingScope(session) ?? session.tenantId} session={session} onSignedOut={signedOut} />;
   }
 
   if (route.startsWith("/preview/")) {
@@ -66,5 +67,5 @@ export function App() {
   }
 
   // Anything else after login goes to the document list.
-  return <DocumentsView key={session.tenantId} session={session} onSignedOut={signedOut} />;
+  return <DocumentsView key={creationTrackingScope(session) ?? session.tenantId} session={session} onSignedOut={signedOut} />;
 }
