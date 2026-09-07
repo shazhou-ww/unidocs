@@ -341,6 +341,10 @@ function unavailableTenantCasClient(): TenantCasClient {
     readContent: unavailable,
     leaseNode: unavailable,
     updateRootRefs: unavailable,
+    // main 在 094b4af 之前给 TenantCasClient 加了 listRootRefs,这个 stub 没跟上,
+    // 全仓 typecheck 因此红着(main 上同样红,错误逐字相同,只是行号不同)。
+    // 与其余方法同样返回 501:这个 stub 的语义就是"没有委派权限,一律不可用"。
+    listRootRefs: unavailable,
     usage: unavailable,
     gc: unavailable,
   };

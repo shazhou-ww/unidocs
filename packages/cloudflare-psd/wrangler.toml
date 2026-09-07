@@ -1,6 +1,13 @@
 name = "unidocs-psd"
 main = "dist/worker.js"
 compatibility_date = "2025-08-17"
+# 必须在任何 [table] 头之前 —— TOML 里表头之后的所有键都归那张表。此前它写在
+# [vars] 内部,于是被解析成一个名叫 compatibility_flags 的 worker 环境变量,
+# 而不是兼容性标志: wrangler dry-run 会把它列进绑定表、整份输出里没有任何一
+# 行提到 compatibility flags。opentype.js 要 fs,ag-psd 要 fs/path/util/buffer,
+# 这个标志就是冲它们加的(aed79e7,2026-08-19),而从那一刻起就没生效过。
+# 对照写对的形式: unicas-packages/service-cloudflare/wrangler.toml。
+compatibility_flags = ["nodejs_compat"]
 
 # Stack mode: the editor DO routes canonical /stacks/{stackId}/tenants/...
 # to the middleware worker; the delegated CAS capability is verified against
@@ -27,7 +34,6 @@ CAPABILITY_CLOCK_SKEW_SECONDS = "30"
 # 在 .dev.vars (见 .dev.vars.example). Azure 侧对应的是 deploy.mjs 的
 # --psd-font-fallbacks (stacks/unidocs-azure/deploy/service.bicep).
 PSD_FONT_FALLBACKS = ""
-compatibility_flags = ["nodejs_compat"]
 
 [exports.PsdEditor]
 type = "durable-object"
