@@ -156,9 +156,14 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
       }
       if (source !== undefined) {
         headers.set("Content-Type", CanonicalNodeContentType);
-        if (source.body instanceof ReadableStream) {
-          headers.set("Content-Length", String(source.contentLength));
-        }
+        // 无条件设,不只对流设。服务端(service/src/node-lease.ts)缺 declaredLength
+        // 就回 411,而它只认 Content-Length 头。buffer body 的那份长度原先是靠
+        // fetch 自动补的 —— 而自动值**活不过一次 Request 重建**:doc service 为了
+        // 埋观测会 `new Request(input, init)` 再 `fetch(target, req)`
+        // (azure-sdk/src/doc-type-service.ts 的 httpCasFetcher),重建之后 body 变
+        // 成流、长度丢失、转 chunked,服务端就再也看不到长度。
+        // 长度这一层本来就知道(source.contentLength),没有理由让传输层去猜。
+        headers.set("Content-Length", String(source.contentLength));
       }
       const init: RequestInit = {
         method: "POST",

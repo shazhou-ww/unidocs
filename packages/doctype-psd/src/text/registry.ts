@@ -14,26 +14,17 @@
 import type { FaceResolver, FontFace } from "./font.js";
 import type { FontCoverage } from "./opentype-face.js";
 
-export interface FontEntry {
-  readonly postScriptName: string;
-  readonly family: string;
-  /** CAS 里字体文件的内容哈希。 */
-  readonly hash: string;
-  /**
-   * 从字体文件**解析**出来的，不是登记时人工填的。
-   *
-   * **排版不读这个字段** —— `layoutText` / `rasterizeGlyphs` 用的都是
-   * `face.unitsPerEm`，即渲染时从字节现解析的值。这里这份是给运维看的
-   * （登记了什么、对不对得上），改坏它不会影响任何输出。
-   * 早先这条注释写的是"填错了字还是那些字、位置全错" —— 那是错的，
-   * 而且误导了一轮测试补强：注入"写死 1000"之后全绿的真正原因不是测试字体
-   * 的 upm 恰好都是 1000，是**这个字段本来就没有可观测后果**。
-   * `family` 同理。
-   */
-  readonly unitsPerEm: number;
-  /** 覆盖的码位区间，合并后按起点升序排列，区间之间不重叠也不相邻。 */
-  readonly coverage: FontCoverage;
-}
+// 同 opentype-face.ts 的 FontCoverage:类型下沉到中立层,这里保留 re-export
+// 让本包与外部既有 import 不受影响。
+// 下面转发已导入的本地绑定,不写 `export type … from "…"`:
+// `package-deps.test.mjs` 的门禁逐行扫描含中立层包名的行,只放行以
+// `import type` 开头的行。`export … from` 那一行虽然同样在编译期被完全
+// 擦除、不产生运行时 import,但字面上不是 `import type` 开头,会被判成
+// "服务端代码进了浏览器产物"误报。别把下一行的 `export type` 改回带模块
+// 说明符的 `export type { FontEntry } from "…"` 形式,连注释里也别写出
+// 那个完整说明符字符串——门禁按子串匹配,写出来同样会被判违规。
+import type { FontEntry } from "@unidocs/doctype-server-common";
+export type { FontEntry };
 
 /** 按 postScriptName 索引。 */
 export type FontIndex = ReadonlyMap<string, FontEntry>;

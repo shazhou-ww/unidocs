@@ -14,6 +14,7 @@ import type {
 import { createSBlob, isSBlob } from "@unidocs/svalue-codec";
 import { CasClientError } from "@unicas/tenant-blob-client";
 import { createMemoryPorts } from "@unidocs/doctype-server-common/memory-ports";
+import type { SessionIdentity } from "@unidocs/doctype-server-common";
 import { createPool, runMigrations, PgSessionIdentityStore, PgAgentSessionStore, AGENT_LEASE_SECONDS } from "../src/index.js";
 import { createLocalOperatorNamespace } from "../src/local-operator.js";
 import { createLocalEditorNamespace } from "../src/local-editor.js";
@@ -64,7 +65,7 @@ beforeAll(async () => {
 afterAll(async () => { await pool.end(); });
 
 function ns(provider: never) {
-  return createLocalOperatorNamespace({ pool, editor, agent, provider, docType: "psd" });
+  return createLocalOperatorNamespace({ pool, editor, agent: () => agent, provider, docType: "psd" });
 }
 
 /** 断言一次 /run 真的成功了，不是被内核的 catch-all 兜成了 500。 */
@@ -242,6 +243,45 @@ describe("createLocalOperatorNamespace", () => {
     const verifyStore = new PgAgentSessionStore(pool, identity);
     expect(await verifyStore.acquire(AGENT_LEASE_SECONDS)).not.toBeNull();
   });
+
+  // 字体索引是租户级的：agent 如果在启动期构造一次，就永远拿不到租户，
+  // 这是 Azure 侧接不上 setText 的结构性障碍（与 CF 的
+  // `agent: (env, identity) => ...` 对齐，见 cloudflare-psd/src/worker.ts:53）。
+  // `deps.agent` 必须是按会话身份构造的工厂，且要在 `captureIdentity` 拿到
+  // 身份**之后**才被调用 —— 这条测试用两次带不同 X-Tenant-Id 的 /run 证明:
+  // 工厂被调用了两次，且各自拿到了对应请求的 tenantId，不是启动期那一次
+  // 固定值,也不是两次都拿到同一个租户。
+  it("agent 工厂按每次请求的身份被调用，不同租户各自拿到自己的 tenantId", async () => {
+    const sessionId = `op-factory-${++seq}-${Date.now()}`;
+    // agent_sessions 有外键指到 doc_sessions（见 agent_sessions_session_fk）
+    // ——两个租户各自的 (tenant_id, doc_type, session_id) 都要先在
+    // doc_sessions 里登记，acquire() 才不会因为外键约束 500。
+    await new PgSessionIdentityStore(pool).register({ tenantId: "tenant-a", docType: "psd", sessionId });
+    await new PgSessionIdentityStore(pool).register({ tenantId: "tenant-b", docType: "psd", sessionId });
+    const seenTenants: string[] = [];
+    const agentFactory = (identity: SessionIdentity): DocumentAgent<unknown, unknown> => {
+      seenTenants.push(identity.tenantId);
+      return { tools: [], instructions: "sys" };
+    };
+    const { provider } = recordingProvider();
+    const namespace = createLocalOperatorNamespace({
+      pool, editor, agent: agentFactory, provider, docType: "psd",
+    });
+
+    const callAsTenant = (tenantId: string) => namespace.get(sessionId).fetch(new Request(
+      "http://operator/_internal/run",
+      {
+        method: "POST",
+        headers: { ...headers(sessionId), "X-Tenant-Id": tenantId },
+        body: JSON.stringify({ instruction: "hi" }),
+      },
+    ));
+
+    await expectRunOk(await callAsTenant("tenant-a"));
+    await expectRunOk(await callAsTenant("tenant-b"));
+
+    expect(seenTenants).toEqual(["tenant-a", "tenant-b"]);
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -393,7 +433,7 @@ describe("createLocalOperatorNamespace + 真实 editor 命名空间 (C1 回归)"
       },
     };
 
-    const operator = createLocalOperatorNamespace({ pool, editor, agent, provider, docType: "psd" });
+    const operator = createLocalOperatorNamespace({ pool, editor, agent: () => agent, provider, docType: "psd" });
     const res = await operator.get(sessionId).fetch(new Request(
       "http://operator/_internal/run",
       { method: "POST", headers: headers(sessionId), body: JSON.stringify({ instruction: "看看这张图" }) },

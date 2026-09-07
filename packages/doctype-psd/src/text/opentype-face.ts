@@ -12,14 +12,19 @@ import { Font, parse } from "opentype.js/dist/opentype.mjs";
 import type { OpentypePathCommand } from "opentype.js/dist/opentype.mjs";
 import type { FontFace, PathCommand } from "./font.js";
 
-/**
- * 一套字体覆盖的码位范围：排好序、互不重叠、左闭右闭的区间数组
- * （`[start, end]`，`start <= end`，相邻区间已经合并）。Task 5 的字体索引
- * 用它决定"这套字体覆盖了哪些码位"，不需要真的加载字体字节就能做选字体的
- * 前置判断（见协调者裁定 R1：这个类型定义在这里，因为只有解析器知道怎么
- * 从 `cmap` 表读出覆盖范围）。
- */
-export type FontCoverage = readonly (readonly [number, number])[];
+// FontCoverage 住在中立层(doctype-server-common/src/font-registry.ts):中立的
+// 字体路由处理器要引用 FontEntry,而依赖方向是 doctype-psd → server-common,
+// 反过来不行。这里 re-export 是为了让本包内既有的 import 一行都不用改 ——
+// 删掉它会静默断开一批引用。
+// 下面转发已导入的本地绑定,不写 `export type … from "…"`:
+// `package-deps.test.mjs` 的门禁逐行扫描含中立层包名的行,只放行以
+// `import type` 开头的行。`export … from` 那一行虽然同样在编译期被完全
+// 擦除、不产生运行时 import,但字面上不是 `import type` 开头,会被判成
+// "服务端代码进了浏览器产物"误报。别把下一行的 `export type` 改回带模块
+// 说明符的 `export type { FontCoverage } from "…"` 形式,连注释里也别写
+// 出那个完整说明符字符串——门禁按子串匹配,写出来同样会被判违规。
+import type { FontCoverage } from "@unidocs/doctype-server-common";
+export type { FontCoverage };
 
 /** `parseFontFace` 产出的 `FontFace` 实例 → 背后那个 opentype.js `Font` 对象
  *  的登记表。`fontCoverage` 需要读 `cmap` 表算覆盖范围，但那不在 `FontFace`

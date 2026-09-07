@@ -302,6 +302,27 @@ describe("失败一律不阻断启动", () => {
     expect(warning).toMatch(/--fonts off/);
   });
 
+  // 两个栈各写各的一份凭据(LOCAL_CREDENTIALS_PATHS)。手工补那条命令不带
+  // `--credentials` 的话,操作者会拿 Cloudflare 那一份去灌 Azure —— 而那不会
+  // 报错,只会把字体登记进另一个栈的表,本栈的索引照样是空的。
+  it("警告里那条手工命令指向本次真正用的那份凭据", async () => {
+    const root = await tempRoot();
+    const warnings = [];
+    const result = await ensurePsdFonts({
+      root,
+      credentialsPath: join(root, ".azure-runtime", "local-credentials.json"),
+      kit,
+      fetchImpl: async () => { throw new TypeError("fetch failed 读索引"); },
+      download: () => {},
+      seed: () => {},
+      log: () => {},
+      warn: line => warnings.push(line),
+    });
+    expect(result.status).toBe("failed");
+    expect(warnings.join("\n"))
+      .toContain("--credentials .azure-runtime/local-credentials.json");
+  });
+
   it("凭据文件不存在也只是警告", async () => {
     const warnings = [];
     const result = await ensurePsdFonts({

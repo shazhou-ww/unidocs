@@ -67,12 +67,6 @@ let azureDocTypeTable;
 let azureCasBaseUrl;
 let remoteCas;
 
-// 字体预置只对 Miniflare 这一路的 psd 有意义:索引住在 psd worker 的租户级
-// `PsdFonts` DO 里,Azure 栈根本没有那个 worker,没选 psd 时也没有。
-const psdFontsEnabled = !useAzure
-  && devOptions.fontsMode === "auto"
-  && docTypes.includes("psd");
-
 if (devOptions.casMode === "remote") {
   try {
     remoteCas = await loadRemoteCasConfig({ root });
@@ -99,6 +93,16 @@ if (useAzure) {
   azureDocTypes = positional.length === 0 ? Object.keys(azureDocTypeTable) : docTypes;
 
 }
+
+// 本次真正要起的 doc type。Azure 侧「无参数 = 起全部」取的是它自己那张表,
+// 与 `docTypes`(Cloudflare 的表)可以不一样,所以下面判断「选了 psd 吗」必须
+// 用这个,不能用 `docTypes`。
+const selectedDocTypes = useAzure ? azureDocTypes : docTypes;
+
+// 字体预置对**两个栈**都做:`/tenants/{t}/fonts` 已经下沉成中立路由,两个栈
+// 都挂着它,预置脚本指向哪个 service 就灌哪个(设计裁定 D4)。判据只剩「这次
+// 起了 psd 吗」和「没被 --fonts off 关掉吗」。
+const psdFontsEnabled = devOptions.fontsMode === "auto" && selectedDocTypes.includes("psd");
 
 /** Matches `docker compose -f packages/azure-sdk/docker-compose.yml up -d` failing for the same reason, but with an actionable message instead of the raw compose error. */
 function assertDockerRunning() {
@@ -232,6 +236,15 @@ if (useAzure) {
     "../stacks/unidocs-azure/local/runtime.mjs"
   );
 
+  // 回退链的默认值必须在 spawn 之前定下来。Azure 侧没有 binding 这一层 ——
+  // `spawnService` 把 `process.env` 原样铺给每个 doc service,而子进程拿到的是
+  // spawn 那一刻的快照(同 stacks/unidocs-azure/local/dev.mjs 加载 .env.azure 的
+  // 理由)。已经在 env 里的一律不覆盖:shell / `.env.azure` 显式配了就以它为准。
+  //
+  // 只灌索引不配这个变量的结果不是报错,是中文一个字都画不出来 —— 所以这一步
+  // 必须和下面那次预置绑在一起,不能只做一半。
+  if (psdFontsEnabled) process.env.PSD_FONT_FALLBACKS ??= psdFontFallbacks();
+
   runtime = await startAzureRuntime({
     host: LOCAL_HOST,
     docTypes: azureDocTypes,
@@ -267,24 +280,28 @@ if (useAzure) {
     } : {}),
   });
   backend = { name: "Miniflare" };
-  // 本地运行时的两把签名密钥是每次启动现生成的,只落在这个进程的内存里。
-  // 绕过 gateway 直连 worker 的本地工具(scripts/seed-psd-fonts.mjs)签不出
-  // 凭据,除非把它们写出来一份。见 writeLocalCredentials 的注释。
-  backend.credentialsPath = await writeLocalCredentials({
+}
+
+// 以下两步**两个栈同一条路径** —— 这正是字体登记表下沉成中立契约换来的东西。
+
+// 本地运行时的两把签名密钥是每次启动现生成的,只落在这个进程的内存里。
+// 绕过 gateway 直连 doc service 的本地工具(scripts/seed-psd-fonts.mjs)签不出
+// 凭据,除非把它们写出来一份。见 writeLocalCredentials 的注释。
+backend.credentialsPath = await writeLocalCredentials({
+  root,
+  runtime,
+  platform,
+  ...(remoteCas ? { casOrigin: remoteCas.origin } : {}),
+});
+// 挂在这里而不是更早:预置绕过 gateway 直连 doc service 和 CAS,签凭据靠的就是
+// 上面这一步写出来的文件。它**从不抛** —— 没网/下载失败/预置失败一律只警告,
+// `pnpm dev` 照常起来(见 psd-font-bootstrap.mjs 的裁定 2)。
+if (psdFontsEnabled) {
+  await ensurePsdFonts({
     root,
-    runtime,
-    ...(remoteCas ? { casOrigin: remoteCas.origin } : {}),
+    credentialsPath: backend.credentialsPath,
+    tenantId: process.env.UNIDOCS_PSD_FONT_TENANT || DEFAULT_FONT_TENANT,
   });
-  // 挂在这里而不是更早:预置绕过 gateway 直连 worker 和 CAS,签凭据靠的就是
-  // 上面这一步写出来的文件。它**从不抛** —— 没网/下载失败/预置失败一律只警告,
-  // `pnpm dev` 照常起来(见 psd-font-bootstrap.mjs 的裁定 2)。
-  if (psdFontsEnabled) {
-    await ensurePsdFonts({
-      root,
-      credentialsPath: backend.credentialsPath,
-      tenantId: process.env.UNIDOCS_PSD_FONT_TENANT || DEFAULT_FONT_TENANT,
-    });
-  }
 }
 
 console.log(`UniDocs local runtime (${backend.name})`);
@@ -317,8 +334,10 @@ if (useAzure) {
     console.log(`Log file (JSONL): ${runtime.logFile}`);
     console.log(`  jq 'select(.event == "http_call" and .ok == false)' ${runtime.logFile}`);
   }
-  console.log(`Local credentials (0600, direct-to-worker tools): ${backend.credentialsPath}`);
 }
+// 两个栈各写各的一份,路径不同(见 LOCAL_CREDENTIALS_PATHS)——手工跑
+// `seed-psd-fonts.mjs` 时要 `--credentials` 指的就是这里打出来的这一个。
+console.log(`Local credentials (0600, direct-to-service tools): ${backend.credentialsPath}`);
 
 // Start each selected doc type's dev frontend (if it declares one), with the
 // gateway URL injected so its Vite proxy can forward API calls end-to-end.

@@ -30,7 +30,7 @@ runDocTypeService({
   docType: "docx",
   documentTypeFactory: createDocxDocumentType,
   defaultPort: 41810,
-  documentAgent: docxAgent,
+  documentAgent: () => docxAgent,
   llmProvider: createAnthropicProvider(process.env, fetch, { observe: consoleObserver }),
 }).catch((err) => {
   console.error("azure-docx failed to start:", err);

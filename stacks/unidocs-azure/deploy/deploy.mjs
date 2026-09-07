@@ -233,6 +233,13 @@ export function parseArgs(argv) {
     llmModel: "",
     imageEditApiKeySecretName: "",
     imageEditModel: "",
+    // psd 的字体回退链（`PSD_FONT_FALLBACKS`，逗号分隔、顺序即优先级）。
+    // 同样是可选、默认空串、不做必填校验，但**语义与上面四个相反**：那四个
+    // 缺了会响亮地 500，这个缺了完全不报错 —— setText 照常在工具表里，只是
+    // PSD 里点名的字体一个都没登记时回退链是空的，中文层一个字都画不出来。
+    // 所以灌完 scripts/seed-psd-fonts.mjs 之后它实际上是必配项，见
+    // stacks/unidocs-azure/README.md 的「新环境的字体预置」。
+    psdFontFallbacks: "",
   };
 
   let bootstrapFlag = false;
@@ -259,6 +266,7 @@ export function parseArgs(argv) {
       case "--llm-model": args.llmModel = argv[++i]; break;
       case "--image-edit-api-key-secret": args.imageEditApiKeySecretName = argv[++i]; break;
       case "--image-edit-model": args.imageEditModel = argv[++i]; break;
+      case "--psd-font-fallbacks": args.psdFontFallbacks = argv[++i]; break;
       case "--skip-build": args.skipBuild = true; break;
       case "--bootstrap": bootstrapFlag = true; break;
       case "--platform": platformFlag = true; break;
@@ -1086,6 +1094,10 @@ function deployService(args, secrets, tag, docType) {
     `imageEditModel=${args.imageEditModel}`,
     ...(secrets.llmApiKey ? [`llmApiKey=${secrets.llmApiKey}`] : []),
     ...(secrets.imageEditApiKey ? [`imageEditApiKey=${secrets.imageEditApiKey}`] : []),
+    // 明文,直接透传(空串 = bicep 那边不注入 PSD_FONT_FALLBACKS)。对
+    // docx/markdown 是死参数——它们不读这个变量,但和 llmModel 一样统一传,
+    // 不在这里按 docType 分叉。
+    `psdFontFallbacks=${args.psdFontFallbacks}`,
   ];
   run(
     "az",

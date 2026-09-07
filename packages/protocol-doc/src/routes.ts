@@ -122,3 +122,34 @@ export function matchDocInternalRoute(
   }
   return null;
 }
+
+/**
+ * 租户级路由,与 matchDocRoute 平行。
+ *
+ * 后者硬性要求 parts[2] === "sessions",只认会话级路径 —— 这就是租户级端点
+ * 在中立层没有落脚点、当初只能在 cloudflare-psd 里自建一套的原因。
+ *
+ * 只按路径匹配,不按方法:方法不认识时由字体处理器回 405,而不是在这里返回
+ * null —— 返回 null 会落回 createDocTypeHandler,那边不认识这条路径,答的是
+ * 404 "Unknown Doc endpoint",把"方法用错了"说成"这个端点不存在"。
+ */
+export interface FontsRoute {
+  readonly tenantId: string;
+}
+
+/** 租户级 operation。**刻意不并入 DocOperation**:后者喂给网关的
+ *  docCapabilityPolicy 是个无 default 的穷尽 switch,加成员会强迫为两个根本
+ *  不走网关的操作编一套 deadline 策略。 */
+export type TenantOperation = "listFonts" | "registerFont";
+
+export function matchFontsRoute(pathname: string): FontsRoute | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 3 || parts[0] !== "tenants" || parts[2] !== "fonts") return null;
+  let tenantId: string;
+  try {
+    tenantId = decodeURIComponent(parts[1]);
+  } catch {
+    return null;
+  }
+  return tenantId.length === 0 ? null : { tenantId };
+}

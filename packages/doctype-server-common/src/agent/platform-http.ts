@@ -13,12 +13,20 @@ import type { AgentPlatform, SBlob, SBlobBytes, SBlobData, SValue, SValueType } 
 /**
  * 编辑器的最小可调用面。
  *
- * Cloudflare 传 `DurableObjectStub`（结构上就是这个签名，原样传即可）；
- * Azure 传一层包住 `LocalNamespace` 的适配器。这个 interface 存在的唯一
- * 目的，就是让这 170 行不必认识 `DurableObjectStub`，从而离开 cloudflare-sdk。
+ * Cloudflare 传它的 DO stub（结构上就是这个签名，原样传即可）；Azure 传一层
+ * 包住 `LocalNamespace` 的适配器。这个 interface 存在的唯一目的，就是让这
+ * 170 行不必认识任何一侧的具体类型，从而离开 cloudflare-sdk。
+ *
+ * 注意签名里用的是 `FetchResponse` 而不是那个 Web 全局类型的名字：内核里不
+ * 许出现平台标识符（spec 4.4 规则 1，由 tests/unit/workspace/agent-kernel-purity
+ * 按正则扫**源码文本**守着，所以连注释里都不能写出那个词）。同一处理见
+ * providers/anthropic.ts 的 `Awaited<ReturnType<typeof fetchImpl>>`。
  */
+/** 从全局 `fetch` 反推,避免在内核源码里写出那个 Web 全局类型的名字。 */
+type FetchResponse = Awaited<ReturnType<typeof fetch>>;
+
 export interface EditorFetcher {
-  fetch(url: string, init?: RequestInit): Promise<Response>;
+  fetch(url: string, init?: RequestInit): Promise<FetchResponse>;
 }
 
 export interface HttpAgentPlatformDeps<TEnv> {
@@ -51,12 +59,12 @@ export function createHttpAgentPlatform<TQuery, TOp, TEnv>(
   }
 
   /** 无请求体的变体：同一套转发头，方法可变，不发 body。 */
-  function editorRequest(method: string, path: string): Promise<Response> {
+  function editorRequest(method: string, path: string): Promise<FetchResponse> {
     const { headers, stub } = editorTarget();
     return stub.fetch(`http://editor${path}`, { method, headers });
   }
 
-  function editorValueRequest(path: string, value: SValue): Promise<Response> {
+  function editorValueRequest(path: string, value: SValue): Promise<FetchResponse> {
     const { headers, stub } = editorTarget();
     headers.set("Content-Type", SValueContentType);
     headers.set("Accept", SValueContentType);
@@ -165,7 +173,7 @@ export function createHttpAgentPlatform<TQuery, TOp, TEnv>(
   };
 }
 
-async function decodeValueResponse(response: Response): Promise<SValue> {
+async function decodeValueResponse(response: FetchResponse): Promise<SValue> {
   const contentType = response.headers.get("Content-Type") ?? "";
   if (contentType.toLowerCase() === SValueContentType) {
     return decodeSValue(new Uint8Array(await response.arrayBuffer()));

@@ -16,6 +16,12 @@ vi.mock("../src/ui/controller.js", () => ({
     requestVisibleTiles: vi.fn(),
     toCanvas: (x: number, y: number) => ({ x, y }),
     toScreen: (x: number, y: number) => ({ x, y }),
+    // 位移小于 CLICK_SLOP_PX 的 pointerup 会被 canvas-stage 当成点击,走
+    // `c.hitTest(...).then(...)`。这个替身缺了它时,那条路径抛的
+    // `TypeError: c.hitTest is not a function` 逃进事件处理器、被 vitest 记成
+    // unhandled error —— 7 条断言照样绿,包却以非零码退出。断言不覆盖的分支
+    // 也得能跑通,替身才算跟得上真实接口。
+    hitTest: () => Promise.resolve([]),
   }),
   dispatch,
 }));

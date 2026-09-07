@@ -12,7 +12,8 @@
  * `azure.service.json` 里的 `needsCas: true` 声明了这一点,本地栈与部署
  * 脚本都从那里读。
  *
- * **Operator 已接。** `documentAgent` 与 `llmProvider` 同时提供时
+ * **Operator 已接，且带字体索引。** `documentAgent` 是按会话身份构造的工厂
+ * （字体索引是租户级的，接线在 `agent-deps.ts`）。它与 `llmProvider` 同时提供时
  * `runDocTypeService()` 挂真 operator,历史落 Postgres(`PgAgentSessionStore`);
  * Azure 是 2-5 副本、无会话亲和,并发靠租约 + 409(抢不到锁就让调用方重试),
  * 不是 Cloudflare DO 那种单线程排队。
@@ -24,32 +25,28 @@
  * BLOB_CONNECTION_STRING。CAS_BASE_URL 可选(过渡形态)，CAS 使用请求级
  * delegated capability，不再配置共享 CAS key。
  */
-import { runDocTypeService } from "@unidocs/azure-sdk";
+import { PgFontRegistry, requireEnv, runDocTypeService } from "@unidocs/azure-sdk";
 import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
 import { consoleObserver } from "@unidocs/protocol-doc";
-import { createPsdAgent, createPsdDocumentType, createQwenImageEditor } from "@unidocs/doctype-psd";
+import { createPsdAgent, createPsdDocumentType } from "@unidocs/doctype-psd";
+import { psdAgentDeps } from "./agent-deps.js";
 
 runDocTypeService({
   docType: "psd",
   documentTypeFactory: createPsdDocumentType,
   defaultPort: 41820,
-  // 与 Cloudflare 的条件化同形(cloudflare-psd/src/worker.ts:36-52):没有 key
-  // 就不注入 editor,于是工具表里没有 editPixels、提示词里也没有。
-  // doctype-psd/src/agent.ts:23-26 记着这条的由来 —— 只条件化其中一个会得到一个
-  // "提示词里有、工具表里没有"的幽灵工具,那是线上真实发生过的故障。
-  documentAgent: createPsdAgent(
-    process.env.IMAGE_EDIT_API_KEY
-      ? {
-        editor: createQwenImageEditor({
-          apiKey: process.env.IMAGE_EDIT_API_KEY,
-          observe: consoleObserver,
-          ...(process.env.IMAGE_EDIT_MODEL ? { model: process.env.IMAGE_EDIT_MODEL } : {}),
-          ...(process.env.IMAGE_EDIT_BASE_URL ? { baseUrl: process.env.IMAGE_EDIT_BASE_URL } : {}),
-        }),
-      }
-      : {},
-  ),
+  // 接线本体在 `agent-deps.ts` —— 这里只负责调用。拆出去是为了能测：内联在
+  // 入口里的接线只有一次带凭据的真实 `/run` 才会执行到，把回退链改坏、把
+  // fontIndex 拿掉，整套单测照样全绿（CF 侧用注入法证实过）。
+  // identity 与 pool 都由 SDK 在每次请求 / 启动后给：字体索引是租户级的，
+  // 进程起来的这一刻既没有租户，也还没有连接池。
+  documentAgent: (identity, pool) => createPsdAgent(psdAgentDeps(process.env, identity, pool)),
   llmProvider: createAnthropicProvider(process.env, fetch, { observe: consoleObserver }),
+  // 租户级的 `/tenants/{t}/fonts`（预置脚本往这里登记字体）。只有 psd 挂它 ——
+  // markdown/docx 没有字体索引。SDK 在 `createDocTypeHandler` 之前分流，因为
+  // `matchDocRoute` 只认会话级路径。
+  fontRegistryFor: (tenantId, pool) =>
+    new PgFontRegistry(pool, { stackId: requireEnv("CAS_STACK_ID"), tenantId }),
 }).catch((err) => {
   console.error("azure-psd failed to start:", err);
   process.exit(1);

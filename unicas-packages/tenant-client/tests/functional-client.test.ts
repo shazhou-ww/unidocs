@@ -120,6 +120,57 @@ describe("functional tenant CAS client", () => {
     await expect(client.leaseNode("0".repeat(64))).rejects.toMatchObject({ status: 404 });
     expect(errorResponse?.bodyUsed).toBe(true);
   });
+
+  /**
+   * 回归：带 buffer body 的 lease 必须**显式**带上 Content-Length。
+   *
+   * 服务端(unicas-packages/service/src/node-lease.ts)在 declaredLength 缺席时回
+   * 411,而它是从 Content-Length 头读的。客户端原先只在 body 是 ReadableStream 时
+   * 显式设这个头,buffer body 靠 fetch 自动补 —— 而那份自动值**活不过一次 Request
+   * 重建**:Azure 的 doc service 为了埋观测,用 `new Request(input, init)` 加
+   * `fetch(target, req)` 包了一层(azure-sdk/src/doc-type-service.ts 的
+   * httpCasFetcher),重建之后 body 变成流、长度丢失、转成 chunked,服务端再也看不
+   * 到长度,于是 411 Length Required。
+   *
+   * 实测(Node 24 / undici):直接 fetch 带 ArrayBuffer -> content-length: 64;
+   * 经 new Request 包一层 -> content-length 消失、transfer-encoding: chunked;
+   * 显式设过的能活下来。所以长度必须由知道它的这一层写死,不能依赖传输层推断。
+   *
+   * 本文件其余用例都走 streamBytes(),流式路径本来就显式设长度 —— buffer 路径
+   * 因此一直没被覆盖到。
+   */
+  it("buffer body 的 lease 显式带 Content-Length —— 中间任何一次 Request 重建都不该弄丢它", async () => {
+    const seen: Array<string | null> = [];
+    const client = createTenantCasClient({
+      baseUrl: "https://cas.test/",
+      stackId: STACK,
+      tenantId: TENANT,
+      getToken: async () => `token-${++tokenCounter}`,
+      // 模拟 httpCasFetcher:重建一次 Request 再转发。长度若只靠传输层自动推断,
+      // 这一步就会把它抹掉。
+      fetcher: {
+        fetch: async (input, init) => {
+          const req = new Request(input, init);
+          if (req.method === "POST" && new URL(req.url).pathname.endsWith("/lease")) {
+            seen.push(req.headers.get("Content-Length"));
+          }
+          return service.fetch(req);
+        },
+      },
+      uploadMode: "legacy",
+    });
+
+    const content = new Uint8Array(128).fill(7);
+    const contentType = "application/octet-stream";
+    const header = encodeHeader(content.length, contentType, 0);
+    const hash = hashToHex(await computeNodeDigest(header, contentType, [], content));
+    const bytes = concatenateNodeBytes(header, new TextEncoder().encode(contentType), [], content);
+
+    await client.leaseNode(hash, { contentLength: bytes.length, body: bytes.slice().buffer });
+
+    expect(seen).toEqual([String(bytes.length)]);
+  });
+
 });
 
 function streamBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
