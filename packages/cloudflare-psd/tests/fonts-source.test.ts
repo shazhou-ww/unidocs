@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { isSBlob } from "@unidocs/cloudflare-sdk";
 import { createPsdAgent } from "@unidocs/doctype-psd";
 import type { FontEntry } from "@unidocs/doctype-psd";
 import { FONTS_INTERNAL_PATH, fontsObjectName } from "../src/fonts-do.js";
-import { createFontIndexSource, parseFontFallbacks } from "../src/fonts-source.js";
+import { createFontIndexSource } from "../src/fonts-source.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -85,76 +85,10 @@ describe("createFontIndexSource", () => {
     expect(source.fallbacks).toEqual(["NotoSans", "NotoSansSC"]);
   });
 
-  it("TTL 之内第二次 load 不再打 DO", async () => {
-    const respond = vi.fn(okIndex([latin]));
-    const { namespace } = fakeNamespace(respond);
-    let clock = 0;
-    const source = createFontIndexSource({
-      namespace,
-      stackId: "cas_1",
-      tenantId: "tenant-1",
-      fallbacks: [],
-      now: () => clock,
-    });
-
-    await source.load();
-    clock = 59_999;
-    await source.load();
-    expect(respond).toHaveBeenCalledTimes(1);
-  });
-
-  it("TTL 过了重新打一次 —— 新登记的字体不该等到 DO 被回收才可见", async () => {
-    const respond = vi.fn(okIndex([latin]));
-    const { namespace } = fakeNamespace(respond);
-    let clock = 0;
-    const source = createFontIndexSource({
-      namespace,
-      stackId: "cas_1",
-      tenantId: "tenant-1",
-      fallbacks: [],
-      now: () => clock,
-    });
-
-    await source.load();
-    clock = 60_000;
-    await source.load();
-    expect(respond).toHaveBeenCalledTimes(2);
-  });
-
-  it("并发的两次 load 只打一次 DO（缓存的是 Promise）", async () => {
-    const respond = vi.fn(okIndex([latin]));
-    const { namespace } = fakeNamespace(respond);
-    const source = createFontIndexSource({
-      namespace,
-      stackId: "cas_1",
-      tenantId: "tenant-1",
-      fallbacks: [],
-      now: () => 0,
-    });
-
-    await Promise.all([source.load(), source.load()]);
-    expect(respond).toHaveBeenCalledTimes(1);
-  });
-
-  it("失败不进缓存 —— 一次抖动不该被记住一整个 TTL", async () => {
-    let failing = true;
-    const respond = vi.fn((): Response => failing
-      ? Response.json({ error: "boom" }, { status: 500 })
-      : Response.json({ fonts: [latin] }));
-    const { namespace } = fakeNamespace(respond);
-    const source = createFontIndexSource({
-      namespace,
-      stackId: "cas_1",
-      tenantId: "tenant-1",
-      fallbacks: [],
-      now: () => 0,
-    });
-
-    await expect(source.load()).rejects.toThrow(/500/);
-    failing = false;
-    await expect(source.load()).resolves.toBeInstanceOf(Map);
-    expect(respond).toHaveBeenCalledTimes(2);
-  });
+  // TTL 缓存、并发合并、失败不入缓存这三条不变式已经下沉进中立的
+  // `createFontIndex`（doctype-psd/src/text/font-index.ts），两个平台共用，
+  // 对应用例搬到了 doctype-psd/tests/font-index.test.ts（Task 5）。这里只剩
+  // 这一层接线本身的行为：DO 响应 → FontIndex、blobFor、fallbacks 透传。
 
   it("返回体没有 fonts 数组时抛错，不静默当成空索引", async () => {
     const { namespace } = fakeNamespace(() => Response.json({ ok: true }));
@@ -189,17 +123,5 @@ describe("接上 agent", () => {
     const agent = createPsdAgent({});
     expect(agent.tools.map(tool => tool.name)).not.toContain("setText");
     expect(agent.instructions).not.toMatch(/setText/);
-  });
-});
-
-describe("parseFontFallbacks", () => {
-  it("逗号分隔，去空白，顺序即优先级", () => {
-    expect(parseFontFallbacks("NotoSans, NotoSansSC")).toEqual(["NotoSans", "NotoSansSC"]);
-  });
-
-  it("缺省和空串都是空链，不硬编码任何字体名", () => {
-    expect(parseFontFallbacks(undefined)).toEqual([]);
-    expect(parseFontFallbacks("")).toEqual([]);
-    expect(parseFontFallbacks(" , ")).toEqual([]);
   });
 });

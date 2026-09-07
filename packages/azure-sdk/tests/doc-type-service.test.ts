@@ -19,6 +19,7 @@ import {
 } from "../../service-auth/src/index.js";
 import type { CapabilityPermission, VerifiedCapability } from "../../service-auth/src/index.js";
 import { startDocTypeService } from "../src/doc-type-service.js";
+import { PgFontRegistry } from "../src/font-registry-pg.js";
 import { runMigrations } from "../src/migrate.js";
 import { createPool } from "../src/pool.js";
 import { BLOB_CONNECTION_STRING, DATABASE_URL } from "./containers.js";
@@ -73,6 +74,7 @@ async function start(
     documentType?: DocumentType<any, any, any>;
     documentAgent?: any;
     llmProvider?: any;
+    fontRegistryFor?: any;
   } = {},
 ) {
   const docType = overrides.docType ?? "markdown";
@@ -95,6 +97,9 @@ async function start(
     },
     ...(overrides.documentAgent === undefined ? {} : { documentAgent: overrides.documentAgent }),
     ...(overrides.llmProvider === undefined ? {} : { llmProvider: overrides.llmProvider }),
+    ...(overrides.fontRegistryFor === undefined
+      ? {}
+      : { fontRegistryFor: overrides.fontRegistryFor }),
   });
 }
 
@@ -230,7 +235,7 @@ describe("agent 接线", () => {
   // 只给一半是那种"容器起来了、跑到第一次 /run 才炸"的配置错误。启动期响亮
   // 失败,不要等 15 分钟部署完看崩溃日志。
   it("只给 documentAgent 不给 llmProvider -> 启动期抛错", async () => {
-    await expect(start(0, { documentAgent: { tools: [], instructions: "" } }))
+    await expect(start(0, { documentAgent: () => ({ tools: [], instructions: "" }) }))
       .rejects.toThrow(/llmProvider/);
   });
 
@@ -260,5 +265,138 @@ describe("agent 接线", () => {
     } finally {
       await handle.close();
     }
+  });
+});
+
+/**
+ * 租户级的 `/tenants/{t}/fonts`。
+ *
+ * 两条不变式，任何一条破了都只在生产里才看得出来：
+ *
+ * 1. **分流必须在 `createDocTypeHandler` 之前。** `matchDocRoute` 把路径硬编码
+ *    成 `/tenants/{t}/sessions/{s}[/{op}]`，`/tenants/{t}/fonts` 不匹配，交给
+ *    doc handler 只会得到 404 "Unknown Doc endpoint"。
+ * 2. **存储异常要以 fonts 端点自己的错误形状返回。** 中立的
+ *    `handleFontsRequest` 不接管 `registry.list/put` 的抛出（CF 那边原来由 DO
+ *    自己的 try/catch 兜）。这里**不是**"不兜就变成未处理拒绝"——
+ *    `serve()`（http-shell.ts）有顶层兜底，Node 宿主上一次 Postgres 故障本来
+ *    就是 500；那条理由是从 CF/workerd 照抄的，在这里为假。真正的区别是错误
+ *    形状：宿主兜底给 `{"error":"Unhandled error: ..."}`，那个前缀的语义是
+ *    "处理器自己有 bug"，而存储故障是这个端点可预期的失败，不该借用它。
+ *    下面第三条用例用**精确的 body 相等**钉这条，理由写在它自己的注释里。
+ */
+describe("fonts 路由", () => {
+  const fontsUrl = (url: string, tenantId: string) => `${url}/tenants/${tenantId}/fonts`;
+  const fontsAuth = (tenantId: string) => ({
+    Connection: "close",
+    // 索引是租户级的，所以要的是租户作用域的那种权限 —— sessionCreatePermission。
+    Authorization: `Bearer doc|${tenantId}|any-session|create`,
+  });
+
+  it("不给 fontRegistryFor 就不挂这条路由 —— 落回 doc handler 的 404", async () => {
+    handle = await start(41996);
+    const res = await fetch(fontsUrl(handle.url, "tenant-1"), { headers: fontsAuth("tenant-1") });
+    expect(res.status).toBe(404);
+  });
+
+  it("给了就命中 fonts handler，且在 doc handler 之前分流", async () => {
+    const entry = {
+      postScriptName: "NotoSans-Regular",
+      family: "Noto Sans",
+      hash: "a".repeat(64),
+      unitsPerEm: 1000,
+      coverage: [[0x20, 0x7e]],
+    };
+    const seen: string[] = [];
+    handle = await start(41995, {
+      fontRegistryFor: (tenantId: string) => {
+        seen.push(tenantId);
+        return { list: async () => [entry], put: async () => {} };
+      },
+    });
+    const res = await fetch(fontsUrl(handle.url, "tenant-1"), { headers: fontsAuth("tenant-1") });
+    // 200 而不是 404 —— 404 正是"落到了 createDocTypeHandler 手里"的signal。
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ fonts: [entry] });
+    // registry 按路径里的租户构造，不是按启动期的某个固定值。
+    expect(seen).toEqual(["tenant-1"]);
+  });
+
+  /**
+   * 只断言 `status === 500` + `/connection terminated/` 是一张**假安全网**：
+   * `serve()` 自己的顶层兜底（http-shell.ts）对同一次抛出也给 500、body 里
+   * 也含这个串，两条路径分不开 —— 把 `fontsRouter` 的 try/catch 整段删掉，
+   * 那样的断言照样全绿（评审实测）。
+   *
+   * 所以这里比的是**精确的 body**：
+   *   走 fontsRouter 的 catch -> {"error":"Error: connection terminated ..."}
+   *   落到 serve() 的兜底     -> {"error":"Unhandled error: Error: ..."}
+   * `Unhandled error:` 那个前缀在语义上是"处理器本身有 bug"，而存储故障是这个
+   * 端点可预期的失败，不该借用它。
+   */
+  it("registry 抛出 -> 500，且是 fonts 端点自己的错误形状（不带 Unhandled error: 前缀）", async () => {
+    handle = await start(41994, {
+      fontRegistryFor: () => ({
+        list: async () => { throw new Error("connection terminated unexpectedly"); },
+        put: async () => {},
+      }),
+    });
+    const res = await fetch(fontsUrl(handle.url, "tenant-1"), { headers: fontsAuth("tenant-1") });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Error: connection terminated unexpectedly" });
+  });
+
+  /**
+   * 真实端到端：`PgFontRegistry` 与 `handleFontsRequest` 的**接缝**。
+   *
+   * 两半各自单测过（font-registry-pg.test.ts 打真 Postgres，font-registry
+   * 的校验器有自己的用例），但没有在一次真实 HTTP 请求里串起来过。这条覆盖
+   * 的是只在接缝上才会出问题的那几件事：handler 校验后的 `FontEntry` 能否
+   * 原样落库、`coverage` 的 jsonb 往返是否保形（数组套数组，pg 解析回来的
+   * 是 JS 值不是字符串）、`ORDER BY post_script_name` 的行形状能否直接满足
+   * `Response.json({ fonts })`。
+   *
+   * 不需要 CAS 里有真字节：登记表只存元数据（裁定 R29），`hash` 就是一个
+   * 64 位十六进制字符串。`font_registry` 表由 start() 里的 runMigrations()
+   * 建好（migrations/0005_font_registry.sql）。
+   */
+  it("端到端：POST 登记 -> GET 取回，经真的 PgFontRegistry", async () => {
+    // 每次跑用一个新租户，免得同一个库上的重复运行互相看见对方的行。
+    const tenantId = `fonts-e2e-${Date.now()}`;
+    handle = await start(41992, {
+      fontRegistryFor: (t: string, pool: any) =>
+        new PgFontRegistry(pool, { stackId: "test-stack", tenantId: t }),
+    });
+    const entry = {
+      postScriptName: "NotoSansSC-Regular",
+      family: "Noto Sans SC",
+      hash: "b".repeat(64),
+      unitsPerEm: 1000,
+      // 两段、升序、不相邻 —— coverage 的形状是硬要求（乱序会让 selectFonts
+      // 的二分查找静默返回错的结果）。jsonb 往返必须原样带回来。
+      coverage: [[0x20, 0x7e], [0x4e00, 0x9fff]],
+    };
+
+    const registered = await fetch(fontsUrl(handle.url, tenantId), {
+      method: "POST",
+      headers: { ...fontsAuth(tenantId), "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    });
+    expect(registered.status, JSON.stringify(await registered.clone().json())).toBe(200);
+    expect(await registered.json()).toEqual({ success: true });
+
+    const listed = await fetch(fontsUrl(handle.url, tenantId), { headers: fontsAuth(tenantId) });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({ fonts: [entry] });
+  });
+
+  it("会话级路径不受影响 —— 分流只吃 /tenants/{t}/fonts", async () => {
+    handle = await start(41993, {
+      fontRegistryFor: () => ({ list: async () => [], put: async () => {} }),
+    });
+    const created = await internal(handle.url, "tenant-1", `fonts-${Date.now()}`, "create", {
+      method: "PUT",
+    });
+    expect(await created.json()).toMatchObject({ success: true });
   });
 });

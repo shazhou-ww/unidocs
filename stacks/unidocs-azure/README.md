@@ -64,6 +64,85 @@ Cloudflare 侧对应的是 `packages/cloudflare-psd/.dev.vars`(`readDevVars` 读
 来、健康检查照常绿,只有聊天框第一次发消息才 500
 `No API key set`——`tests/unit/scripts/azure-dev-env.test.mjs` 钉的就是这条。
 
+## 新环境的字体预置
+
+psd 的 `setText`(改文字层的文字)要自己排版、自己栅格化,每一个字形都从**租户级
+字体登记表**里取(Azure 上就是 psd 库里的 `font_registry` 表,迁移 `0005`)。表是空
+的,`setText` 一个字形都取不到。
+
+**本地不用管。** `pnpm dev unidocs-azure psd` 启动时会自己走一遍:先读一次租户
+`u1` 的索引,齐了就跳过,缺哪套就下哪套再灌进去,并把 `PSD_FONT_FALLBACKS` 默认
+成计划里那两个 postScriptName。不想要(离线、CI、不想下这几 MB)就 `--fonts off`
+或 `UNIDOCS_PSD_FONTS=off`。这一步**从不阻断启动**——失败只打一条警告。
+
+**新部署的环境要手工跑一次。** 这是有意的人工动作,不是待办:
+
+- 字体二进制不进仓库(裁定 R19)。一套中文字体 5-20 MB,进 git 就永远留在历史里,
+  所以镜像里也没有它。
+- 那就只剩"构建时从公网下载"这一条自动化路径,而那等于给部署加一条供应链依赖:
+  Google Fonts / noto-cjk 的某次 404 或改名会让**部署**失败,换来的只是省掉一次
+  一次性操作。
+
+命令与本地是同一条(路由已经下沉成中立的 `/tenants/{t}/fonts`,脚本指向哪个 doc
+service 就灌哪个):
+
+```bash
+# 0) 先确认 0005_font_registry 迁移已经跑过 —— 登记表就是它建的。
+#    迁移 Job 只在部署 platform 目标时才跑(deploy.mjs 里 runMigrations() 挂在
+#    `targets.includes("platform")` 下面),所以只发服务的增量部署
+#    (`--service psd`)不触发它。冷启动的全量部署会跑。
+#    Job 名由 platform.bicep 的 docMigrateJobs 决定,psd 的那个是:
+az containerapp job execution list -g <rg> -n caj-unidocs-psd-migrate -o table
+#    没跑过就补一次 —— 只跑 platform 目标,不碰任何 doc service 的 revision:
+pnpm stack:deploy unidocs-azure --platform
+# 1) 字体文件自备(下载地址见 docs/psd-text-layers.md §5.4),配置照
+#    scripts/psd-fonts.example.json 写,tenantId 填真实租户
+# 2) 凭据文件照 scripts/seed-psd-fonts.mjs 顶部那份形状写,值与部署时注入的一一对应:
+#      psdUrl        https://unidocs-psd.internal.<容器环境默认域>
+#      casOrigin     部署时 --cas-base-url 的那个 CAS edge
+#      docAudience   unidocs-doc:psd            (service.bicep 的 DOC_CAPABILITY_AUDIENCE)
+#      doc.issuer    --capability-issuer        (CAPABILITY_ISSUER)
+#      doc.kid       --capability-key-id        (CAPABILITY_KEY_ID)
+#      stack.*       --cas-stack-id / --cas-stack-issuer / --cas-stack-key-id
+#                    + CAS_CAPABILITY_AUDIENCE,refDomain 取 --cas-ref-domain(默认 doc)
+#    两把私钥从 Key Vault 读,脚本不生成也不接受命令行传入:
+az keyvault secret show --vault-name <kv> --name capability-private-key-pkcs8 --query value -o tsv
+az keyvault secret show --vault-name <kv> --name cas-stack-private-key-pkcs8  --query value -o tsv
+# 3) 灌
+node scripts/seed-psd-fonts.mjs <配置>.json --credentials <凭据>.json
+```
+
+两件事先知道,不然会卡在第三步:
+
+1. **doc service 的 ingress 是 `external: false`**(`deploy/service.bicep`),只有
+   容器环境内部解析得到 `*.internal.*`。网关虽然是外部的,但它的路由表**有意**
+   不含 `/tenants/{t}/fonts` 与 CAS 的 root-refs(见 `seed-psd-fonts.mjs` 顶部
+   "它不走 gateway"),所以不能拿网关地址代替。这一步得在环境内部跑——仓库里目前
+   没有现成的跳板,得由运维自己安排。CAS 那一半不受影响:`casOrigin` 是对外的。
+2. **回退链要另外配。** `PSD_FONT_FALLBACKS`(逗号分隔、顺序即优先级)是 psd
+   service 的环境变量,值写脚本回读时打印的那些 postScriptName。只灌索引不配它
+   的结果不是报错:回退链是空的,PSD 里没点名的字体一个都不试,中文一个字都画不
+   出来 —— 而 PSD 点名的几乎必然是设计用的字体、不在索引里,所以这一条实际上是
+   必配,不是可选项。
+
+   ```bash
+   pnpm stack:deploy unidocs-azure --service psd \
+     --psd-font-fallbacks NotoSans-Regular,NotoSansSC-Regular
+   ```
+
+   空串(默认)= 不注入这个环境变量,与 `--llm-model` 同一套"空串不追加"的写法,
+   所以不配它不会凭空多出一个空变量。注入点在 `deploy/service.bicep` 的
+   `psdFontFallbacks` 参数。**它是部署参数,不是一次性的手工 env 编辑**:
+   `az deployment group create` 是增量模式,下一次 `--service psd` 会按模板重刷
+   容器的环境变量,手工在门户上加的那一个会被抹掉。
+   Cloudflare 侧对应的位置是 `packages/cloudflare-psd/wrangler.toml` 的 `[vars]`。
+
+**漏跑的表现不是启动失败。** 容器照常起来、健康检查照常绿、`setText` 照常出现在
+工具表里(Azure 侧它是无条件注册的,判据是"有没有登记表"而不是"表里有没有字"),
+只有用户真去改一个文字层时才发现排不出字——而模型这时会退回用图像模型重画像素,
+中文尤其容易画成一串错别字。没有任何一步失败,日志、告警、烟测全都看不见。这一节
+存在的全部理由就是这句话。
+
 ## Ctrl-C 之后残留的 Postgres 容器
 
 `dispose()` 里的 `docker compose down -v` 只在优雅退出时跑得完;Ctrl-C 把整个
