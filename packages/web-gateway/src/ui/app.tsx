@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { REDIRECT_PATH } from "./config.js";
 import { clearSession, completeLogin, loadSession, type OAuthTokenSession } from "./oauth.js";
 import { matchRoute, useHashRoute } from "./router.js";
-import { DocumentsView } from "./views/documents.js";
+import { DocumentsView } from "./views/workspace-documents.js";
 import { LoginView } from "./views/login.js";
 
 const StudioView = lazy(() => import("./studio/studio.js").then(module => ({ default: module.StudioView })));
@@ -54,7 +54,7 @@ export function App() {
   }
 
   if (route === "/documents") {
-    return <DocumentsView session={session} onSignedOut={signedOut} />;
+    return <DocumentsView key={session.tenantId} session={session} onSignedOut={signedOut} />;
   }
 
   if (route.startsWith("/preview/")) {
@@ -66,5 +66,5 @@ export function App() {
   }
 
   // Anything else after login goes to the document list.
-  return <DocumentsView session={session} onSignedOut={signedOut} />;
+  return <DocumentsView key={session.tenantId} session={session} onSignedOut={signedOut} />;
 }

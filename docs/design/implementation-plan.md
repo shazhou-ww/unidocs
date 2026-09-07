@@ -8,6 +8,8 @@
 
 后续小迭代：[Iteration 03](iteration-03.md) 已部署登录后的 Markdown／PSD 只读页面；API 替身与真实渲染验证通过，生产账号验收待完成，未开放云端写入或完成 iframe 协议。
 
+目录迭代：[Iteration 04](iteration-04.md) 已部署统一云端列表、类型过滤、ID 搜索／排序及总创建入口。标题、tag、真实缩略图和服务端分页仍待实现，不视为 P3 全部完成。前三轮与设计成果已正常合并到远程 main。
+
 依据：[产品与 mock 约定](README.md)、[Editor Host Protocol v0](editor-host-protocol-v0.md)、[交互原型](unidocs-mock.html)。实施时按阶段推进，完成验收后再扩大范围。
 
 部署更新：用户已授权用新 WebUI 直接覆盖 `https://unidocs.shazhou.work` 的旧界面，不要求保留旧页面或双入口灰度。授权不包含删除作品数据、清空存储或重置 OAuth/API。Iteration 01 已通过本机 `cfg` 注入部署凭据后发布，凭据未打印、未写入仓库或前端 bundle，部署后已清理终端环境；发布证据见本轮记录。

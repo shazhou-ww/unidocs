@@ -17,8 +17,8 @@ export interface GatewayDocumentRecord {
   readonly doc_type: string;
   readonly owner_id: string;
   readonly version: number;
-  readonly created_at: string;
-  readonly updated_at: string;
+  readonly created_at: number | string;
+  readonly updated_at: number | string;
 }
 
 export interface GatewayListResponse {
@@ -30,7 +30,7 @@ export interface GatewayListResponse {
 export interface GatewayCreateResponse {
   readonly success: boolean;
   readonly docId: string;
-  readonly version: number;
+  readonly version?: number;
   readonly state?: string;
 }
 
@@ -120,9 +120,9 @@ async function readJson<T>(response: Response): Promise<T> {
   return body;
 }
 
-export async function listDocuments(tenantId: string, docType: string): Promise<GatewayDocumentRecord[]> {
+export async function listDocuments(tenantId: string, docType: string, signal?: AbortSignal): Promise<GatewayDocumentRecord[]> {
   const body = await readJson<GatewayListResponse>(
-    await gatewayFetch(`/tenants/${encodeURIComponent(tenantId)}/docs/${encodeURIComponent(docType)}/`),
+    await gatewayFetch(`/tenants/${encodeURIComponent(tenantId)}/docs/${encodeURIComponent(docType)}/`, { signal, cache: "no-store" }, tenantId),
   );
   return body.data ?? [];
 }
@@ -133,7 +133,7 @@ export async function createDocument(tenantId: string, docType: string): Promise
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
-    }),
+    }, tenantId),
   );
 }
 

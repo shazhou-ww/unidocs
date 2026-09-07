@@ -4,6 +4,6 @@
  */
 export { App } from "./app.js";
 export { LoginView } from "./views/login.js";
-export { DocumentsView } from "./views/documents.js";
+export { DocumentsView } from "./views/workspace-documents.js";
 export { ApiError } from "./api.js";
 export { useHashRoute, matchRoute, navigate } from "./router.js";

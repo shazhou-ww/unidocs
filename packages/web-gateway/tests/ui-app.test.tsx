@@ -97,9 +97,9 @@ describe("gateway webui app", () => {
     window.location.hash = "/documents";
     render(<App />);
     expect(await screen.findByText(/tenant: alice/i)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "docx" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "markdown" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "New document" })).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "我的作品" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "按类型筛选" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "新建作品" })).toHaveLength(1);
   });
 
   test("guards preview links behind sign-in", () => {
@@ -112,7 +112,7 @@ describe("gateway webui app", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ success: true, data: [], count: 0 })));
     accessTokenSession("alice");
     render(<App />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Sign out" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "退出登录" }));
     expect(await screen.findByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
     expect(sessionStorage.getItem("unidocs.oauth.session")).toBeNull();
   });

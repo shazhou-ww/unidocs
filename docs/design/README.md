@@ -6,6 +6,8 @@
 
 最新交付：[Iteration 03](iteration-03.md) 新增登录后的 Markdown／PSD 云端只读预览，入口 https://unidocs.shazhou.work/?iteration=03#/documents 。生产账号真实文档读取待真人登录验收，本地样例与云端只读内容不共用存储。
 
+工作台迭代：[Iteration 04](iteration-04.md) 将云端目录合并为统一列表，提供类型筛选、ID 搜索、排序和总创建入口；不伪造尚未支持的标题、tag 或缩略图。入口 https://unidocs.shazhou.work/?iteration=04#/documents 。前三轮已合并到远程 main。
+
 架构草案：[Editor Host Protocol v0](editor-host-protocol-v0.md)，按编辑器用例分析、消息时序和协议定义展开。尚未实现 iframe 拆分。
 
 实施规划：[统一 WebUI 实施计划](implementation-plan.md)，包含阶段依赖、现有代码复用、PSD 同步适配、PR 切分与验收标准。P0 已启动，证据与测试记录见 [P0 能力矩阵](p0-capability-matrix.md)。
