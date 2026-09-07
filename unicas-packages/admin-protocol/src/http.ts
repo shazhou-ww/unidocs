@@ -150,10 +150,12 @@ export type CasAdminAcceptMemberInvitationResponse =
 
 export interface CasAdminGetOAuthIssuerRequest {
   readonly path: CasAdminStackPath;
+  readonly query?: { readonly optional?: boolean };
 }
 
 export type CasAdminGetOAuthIssuerResponse =
   | CasStackOAuthIssuer
+  | null
   | CasAdminErrorResponse;
 
 export interface CasAdminGetManagedIssuerRequest {

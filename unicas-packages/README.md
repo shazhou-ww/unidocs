@@ -44,7 +44,7 @@ tenant: [tenant-cli, tenant-webui] -> tenant-client -> tenant-protocol
 - 上图是固定的角色与依赖模型；某个 CLI/WebUI 产品尚未实现时不创建空包。
   WebUI 的服务端 BFF 属于服务端梳理范围，不改变浏览器侧的依赖方向。
 
-## 包清单（12 包）
+## 包清单（13 包）
 
 ```
 unicas-packages/                    @unicas org
@@ -96,6 +96,9 @@ unicas-packages/                    @unicas org
     │     WebDAV 风格 working tree（stat/readdir/read/write/mkdir/move/copy/remove）
     │     + 显式 commit/discard；文件 manifest 协议独立定义，root 名称与 revision
     │     经注入的业务 catalog port 持久化，CAS 仍不解析目录语义
+    ├── tenant-browser-cache/@unicas/tenant-browser-cache  tenant 组 · 浏览器缓存策略
+    │     实现 CasNodeCache；仅缓存不可变节点元数据和完整内容，内存 + IndexedDB LRU
+    │     按 endpoint/principal/stack/tenant/hash 隔离，不持久化凭据或 working tree
     ├── admin-client/      @unicas/admin-client        admin 组 · 控制面 HTTP client
     │     纯函数传输层（对标 tenant-client）：每操作一函数，类型直接来自
     │     @unicas/admin-protocol；session cookie + CSRF 由 session provider 提供

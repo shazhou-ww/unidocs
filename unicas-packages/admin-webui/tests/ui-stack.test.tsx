@@ -40,7 +40,7 @@ beforeEach(() => {
       stackId: "cas_one", mode: "managed", issuer: "https://cas.example/managed-issuers/cas_one",
       status: "active", revision: 1,
     });
-    if (pathname.endsWith("/oauth-issuer")) return json({ error: "NOT_FOUND", message: "OAuth issuer is not configured" }, 404);
+    if (pathname.endsWith("/oauth-issuer")) return json(null);
     if (pathname.endsWith("/ref-domains")) return json({ domains: [] });
     if (pathname.endsWith("/audit-events")) return json({ items: [], nextCursor: null });
     throw new Error(`Unexpected request: ${pathname}`);

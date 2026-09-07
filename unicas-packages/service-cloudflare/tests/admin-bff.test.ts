@@ -194,7 +194,10 @@ function fakeControlPlane(): ControlPlaneOperations {
     deleteMember: error as ControlPlaneOperations["deleteMember"],
     createMemberInvitation: error as ControlPlaneOperations["createMemberInvitation"],
     acceptMemberInvitation: error as ControlPlaneOperations["acceptMemberInvitation"],
-    getOAuthIssuer: error as ControlPlaneOperations["getOAuthIssuer"],
+    getOAuthIssuer: async (ctx, request) => {
+      if (!requireStack(ctx, request.path.stackId)) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
+      return request.query?.optional ? null : { error: "NOT_FOUND", message: "OAuth issuer is not configured" };
+    },
     mintManagedCapability: async (ctx, request) => {
       const stack = requireStack(ctx, request.path.stackId);
       if (!stack) return { error: "STACK_MEMBERSHIP_REQUIRED", message: "stack membership required" };
@@ -567,6 +570,19 @@ describe("cas-admin-webui BFF", () => {
       `${PUBLIC_ORIGIN}/admin/auth/cli/authorize?client_id=other&redirect_uri=${encodeURIComponent("http://127.0.0.1:9999/callback")}&state=s&code_challenge=c&code_challenge_method=S256`,
     ));
     expect(badClient.status).toBe(400);
+  });
+
+  test("optional issuer reads return empty configuration without suppressing access errors", async () => {
+    const provider = await createMockProvider();
+    const bff = await createBff(provider);
+    const { cookie, csrf } = await signIn(bff, provider);
+    const stackId = await createStack(bff, cookie, csrf, "Stack");
+    const optional = await authRequest(bff, `/admin/stacks/${stackId}/oauth-issuer?optional=true`, cookie);
+    expect(optional.status).toBe(200);
+    expect(await optional.json()).toBeNull();
+    expect((await authRequest(bff, `/admin/stacks/${stackId}/oauth-issuer`, cookie)).status).toBe(404);
+    expect((await authRequest(bff, `/admin/stacks/${stackId}/oauth-issuer?optional=invalid`, cookie)).status).toBe(400);
+    expect((await authRequest(bff, "/admin/stacks/cas_other/oauth-issuer?optional=true", cookie)).status).toBe(403);
   });
 
   test("OAuth issuer inspection rejects administrator-supplied resource policy", async () => {

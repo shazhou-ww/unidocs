@@ -57,11 +57,13 @@ export interface CasNodeCache {
   metadata(
     key: CasNodeCacheKey,
     load: () => Promise<CasNodeMetadata>,
+    options?: { readonly signal?: AbortSignal },
   ): Promise<CasNodeMetadata>;
   read(
     key: CasNodeCacheKey,
     range: CasNodeRange | undefined,
     load: () => Promise<ReadableStream<Uint8Array>>,
+    options?: { readonly signal?: AbortSignal },
   ): Promise<ReadableStream<Uint8Array>>;
 }
 

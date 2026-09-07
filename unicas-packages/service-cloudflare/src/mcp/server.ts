@@ -119,7 +119,7 @@ export function createControlPlaneMcpServer(
         serviceContext(grant, "get_oauth_issuer"),
         { path: { stackId } },
       );
-      return toolResult(withEtag(result));
+      return toolResult(withEtag(result ?? { error: "NOT_FOUND", message: "OAuth issuer is not configured" }));
     },
   );
 
@@ -356,6 +356,7 @@ export function createControlPlaneMcpServer(
           serviceContext(grant, "activate_oauth_issuer"),
           { path: { stackId } },
         );
+        if (!current) return toolResult({ error: "NOT_FOUND", message: "OAuth issuer is not configured" });
         if ("error" in current) return toolResult(current);
         currentEtag = formatCasAdminETag(current.revision);
       }

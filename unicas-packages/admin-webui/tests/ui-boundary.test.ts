@@ -65,10 +65,13 @@ describe("cas-admin-webui browser boundary", () => {
     }
   });
 
-  test("only the Playground imports tenant client facades", () => {
+  test("only the Playground imports tenant client facades; its lifecycle module imports only the cache", () => {
     for (const file of listFiles(UI_DIR)) {
       const source = readFileSync(file, "utf8");
-      if (!file.endsWith("playground.tsx")) {
+      if (file.endsWith("playground-cache.ts")) {
+        expect(source.replaceAll("@unicas/tenant-browser-cache", "")).not.toContain("@unicas/tenant-");
+        expect(source).not.toContain("accessToken");
+      } else if (!file.endsWith("playground.tsx")) {
         expect(source, `${file} must not import the tenant plane`).not.toContain("@unicas/tenant-");
       }
       expect(source).not.toContain("@unicas/tenant-protocol");

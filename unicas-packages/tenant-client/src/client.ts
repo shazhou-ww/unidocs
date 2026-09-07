@@ -64,6 +64,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
 
   const client: TenantCasClient = {
     readMetadata(hash, options: { readonly signal?: AbortSignal } = {}) {
+      options.signal?.throwIfAborted();
       const key = { ...path, hash };
       const loadMetadata = async (): Promise<CasNodeMetadata> => {
         const response = await requireOk(
@@ -73,13 +74,14 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
         const body = await response.json() as { metadata: CasNodeMetadata };
         return body.metadata;
       };
-      return config.cache?.metadata(key, loadMetadata) ?? loadMetadata();
+      return config.cache?.metadata(key, loadMetadata, options) ?? loadMetadata();
     },
 
     readContent(hash, range?: CasNodeRange, options: { readonly signal?: AbortSignal } = {}) {
+      options.signal?.throwIfAborted();
+      if (range !== undefined) validateRange(range);
       const key = { ...path, hash };
       const loadContent = async (): Promise<ReadableStream<Uint8Array>> => {
-        if (range !== undefined) validateRange(range);
         if (range?.length === 0) {
           return new ReadableStream({ start: controller => controller.close() });
         }
@@ -95,7 +97,7 @@ export function createTenantCasClient(config: TenantCasClientConfig): TenantCasC
         }
         return response.body;
       };
-      return config.cache?.read(key, range, loadContent) ?? loadContent();
+      return config.cache?.read(key, range, loadContent, options) ?? loadContent();
     },
 
     async leaseNode(hash, source?: CasNodeSource, options: CasLeaseOptions = {}) {

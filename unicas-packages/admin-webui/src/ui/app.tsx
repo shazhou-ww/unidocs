@@ -11,9 +11,12 @@ import { Button, ErrorState, LoadingState, Page } from "./components.js";
 import { McpConfigurationDialog } from "./mcp-configuration-dialog.js";
 import { UserMenu } from "./user-menu.js";
 import { formatErrorSafe } from "./views/view-helpers.js";
+import { createPlaygroundCacheSession, PlaygroundCacheContext, type PlaygroundCacheSession } from "./playground-cache.js";
 
 interface MeResponse {
   readonly identity: {
+    readonly identityIssuer: string;
+    readonly subject: string;
     readonly displayName: string | null;
     readonly emailForDisplay: string | null;
   };
@@ -26,15 +29,26 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [mcpConfigurationOpen, setMcpConfigurationOpen] = useState(false);
   const [activeStack, setActiveStack] = useState<CasStack | null>(null);
+  const [cacheSession, setCacheSession] = useState<PlaygroundCacheSession | null>(null);
 
   useEffect(() => {
+    let active = true;
+    let session: PlaygroundCacheSession | undefined;
     void api<MeResponse>("/admin/me")
-      .then(setMe)
-      .catch((caught) => setError(formatErrorSafe(caught)));
+      .then((response) => {
+        if (!active) return;
+        session = createPlaygroundCacheSession(response.identity);
+        setCacheSession(session);
+        setMe(response);
+      })
+      .catch((caught) => { if (active) setError(formatErrorSafe(caught)); });
+    return () => { active = false; session?.close(); };
   }, []);
 
   async function logout() {
+    setMe(null);
     try {
+      await cacheSession?.clear();
       await fetch("/admin/auth/logout", { method: "POST", credentials: "same-origin" });
     } finally {
       window.location.href = "/admin/auth/login";
@@ -98,7 +112,9 @@ export function App() {
         </div>
       </header>
       {error ? <div className="app-error"><ErrorState message={error} /></div> : null}
-      <main className="app-main">{content}</main>
+      <main className="app-main">
+        <PlaygroundCacheContext value={cacheSession}>{me || route === "/login-error" ? content : null}</PlaygroundCacheContext>
+      </main>
       <McpConfigurationDialog
         open={mcpConfigurationOpen}
         onClose={() => setMcpConfigurationOpen(false)}
