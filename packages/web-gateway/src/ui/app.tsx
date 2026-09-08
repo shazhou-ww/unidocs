@@ -8,6 +8,7 @@ import { creationTrackingScope } from "./creation-tracking.js";
 
 const StudioView = lazy(() => import("./studio/studio.js").then(module => ({ default: module.StudioView })));
 const CloudPreview = lazy(() => import("./views/cloud-preview.js").then(module => ({ default: module.CloudPreview })));
+const AdminView = lazy(() => import("./views/admin.js").then(module => ({ default: module.AdminView })));
 
 /**
  * Root component: hash routing, OAuth callback handling, and the session
@@ -15,6 +16,13 @@ const CloudPreview = lazy(() => import("./views/cloud-preview.js").then(module =
  * Google OIDC login.
  */
 export function App() {
+  if (window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/")) {
+    return <Suspense fallback={<p role="status">正在打开运营后台…</p>}><AdminView /></Suspense>;
+  }
+  return <WorkspaceApp />;
+}
+
+function WorkspaceApp() {
   const route = useHashRoute();
   const [session, setSession] = useState<OAuthTokenSession | null>(() => loadSession());
   const [callbackError, setCallbackError] = useState<string | null>(null);

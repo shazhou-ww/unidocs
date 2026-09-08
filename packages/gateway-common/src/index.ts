@@ -31,6 +31,14 @@ export type {
 	OAuthAccessTokenIdentityConfig,
 } from "./access-token-identity.js";
 export { StaticDocServiceRegistry } from "./doc-service-registry.js";
+export { AdminTypeDirectory } from "./admin-type-directory.js";
+export type { ApprovedDocTypeEndpoint } from "./admin-type-directory.js";
+export { adminTypeEtag, normalizeDocTypeBaseUrl, parseDocTypeDescriptor } from "./admin-type-contract.js";
+export type { AdminTypeRegistration, AdminUrlValidation, DocTypeDescriptor } from "./admin-type-contract.js";
+export { AdminDirectory, AdminDirectoryError, normalizeAdminEmail } from "./admin-directory.js";
+export type { AdminActor, Administrator, AdminAuditEvent, AdminCommandResult, AdminGoogleIdentity, AdminDirectoryStore, AdminDirectoryTransaction } from "./admin-directory.js";
+export { createAdminHandler, administratorEtag } from "./admin-handler.js";
+export type { AdminBrowserSession, AdminHandlerOptions } from "./admin-handler.js";
 export { casCapabilityPolicy, docCapabilityPolicy } from "./capability-policy.js";
 export type { CasCapabilityPolicy, DocCapabilityPolicy } from "./capability-policy.js";
 export { GatewayCapabilityAuthority } from "./capability-authority.js";

@@ -8,6 +8,19 @@ import type {
   GatewayOAuthAuthenticatedUser,
   GatewayOAuthIdentityPort,
 } from "@unidocs/gateway-oauth";
+import { decodeJwt } from "jose";
+import type { AdminGoogleIdentity } from "@unidocs/gateway-common";
+
+export interface GoogleLoginReplayStore {
+  register(nonce: string, expiresAt: number): Promise<void>;
+  consume(nonce: string, now: number): Promise<boolean>;
+}
+
+export interface VerifiedGoogleLogin extends AdminGoogleIdentity {
+  readonly authenticatedAt: number;
+  readonly expiresAt: number;
+  readonly loginId: string;
+}
 
 export interface CloudflareGatewayOAuthIdentityBindings {
   /** Never configure outside local Miniflare/test environments. */
@@ -28,6 +41,8 @@ export interface CloudflareGatewayOAuthIdentityBindings {
 
 export interface CloudflareGatewayOAuthIdentityPorts {
   readonly identity: GatewayOAuthIdentityPort;
+  readonly currentGoogleLogin: (request: Request) => Promise<VerifiedGoogleLogin | null>;
+  readonly managementAuthenticationRequired: (request: Request) => Response;
   /** Handles the OIDC login start and callback routes; null means unrelated. */
   readonly handleLogin: (request: Request) => Promise<Response | null>;
   /** Redirects unauthenticated authorize requests to the login start. */
@@ -44,6 +59,8 @@ const failClosedIdentity: GatewayOAuthIdentityPort = Object.freeze({
 export function createFailClosedGatewayOAuthIdentity(): CloudflareGatewayOAuthIdentityPorts {
   return Object.freeze({
     identity: failClosedIdentity,
+    currentGoogleLogin: async () => null,
+    managementAuthenticationRequired: () => Response.json({ error: "login_required" }, { status: 401 }),
     handleLogin: async () => null,
     authenticationRequired: () =>
       Response.json({ error: "login_required" }, { status: 401 }),
@@ -51,6 +68,7 @@ export function createFailClosedGatewayOAuthIdentity(): CloudflareGatewayOAuthId
 }
 
 const SESSION_COOKIE = "gw_sess";
+const LOGIN_COOKIE = "gw_login_binding";
 const DEFAULT_OIDC_ISSUER = "https://accounts.google.com";
 const DEFAULT_SESSION_TTL_SECONDS = 8 * 60 * 60;
 const OIDC_STATE_TTL_MS = 10 * 60 * 1000;
@@ -70,13 +88,16 @@ const MAX_CONTINUE_URL_LENGTH = 4096;
 export function createCloudflareGatewayOAuthIdentity(
   bindings: CloudflareGatewayOAuthIdentityBindings,
   issuer: string,
+  replayStore?: GoogleLoginReplayStore,
 ): CloudflareGatewayOAuthIdentityPorts {
   if (bindings.GATEWAY_OIDC_CLIENT_ID !== undefined) {
-    return createOidcIdentity(bindings, issuer);
+    return createOidcIdentity(bindings, issuer, replayStore);
   }
   const local = createLocalIdentity(bindings);
   return {
     identity: local,
+    currentGoogleLogin: async () => null,
+    managementAuthenticationRequired: () => Response.json({ error: "login_required" }, { status: 401 }),
     handleLogin: async () => null,
     authenticationRequired: () =>
       Response.json({ error: "login_required" }, { status: 401 }),
@@ -106,6 +127,7 @@ function createLocalIdentity(
 function createOidcIdentity(
   bindings: CloudflareGatewayOAuthIdentityBindings,
   issuer: string,
+  replayStore?: GoogleLoginReplayStore,
 ): CloudflareGatewayOAuthIdentityPorts {
   const clientId = requireConfigured(bindings.GATEWAY_OIDC_CLIENT_ID, "GATEWAY_OIDC_CLIENT_ID");
   const clientSecret = bindings.GATEWAY_OIDC_CLIENT_SECRET ?? "";
@@ -163,6 +185,27 @@ function createOidcIdentity(
     });
   };
 
+  const managementAuthenticationRequired = (request: Request): Response => {
+    const response = authenticationRequired(request);
+    const target = new URL(response.headers.get("Location")!);
+    target.searchParams.set("reauth", "1");
+    response.headers.set("Location", target.toString());
+    return response;
+  };
+
+  const currentGoogleLogin = async (request: Request): Promise<VerifiedGoogleLogin | null> => {
+    if (!replayStore || oidcIssuer !== DEFAULT_OIDC_ISSUER || new URL(request.url).origin !== new URL(publicOrigin).origin) return null;
+    const session = await openSession(request, sealer);
+    if (!session || session.iss !== DEFAULT_OIDC_ISSUER || session.emailVerified !== true || !session.email
+      || session.replayProtected !== true || typeof session.loginId !== "string" || !session.loginId
+      || session.loginConfirmation !== "authorization-code-v1"
+      || !Number.isSafeInteger(session.authenticatedAt) || session.authenticatedAt! <= 0 || session.authenticatedAt! > Date.now()) return null;
+    return {
+      issuer: session.iss, subject: session.sub, email: session.email, emailVerified: true,
+      authenticatedAt: session.authenticatedAt!, expiresAt: session.exp * 1000, loginId: session.loginId
+    };
+  };
+
   const handleLogin = async (request: Request): Promise<Response | null> => {
     const url = new URL(request.url);
     if (request.method !== "GET") {
@@ -172,34 +215,43 @@ function createOidcIdentity(
     }
 
     if (url.pathname === loginPath) {
+      if (url.origin !== new URL(publicOrigin).origin) return new Response("Invalid login origin", { status: 400 });
       const continueUrl = url.searchParams.get("continue") ?? publicOrigin;
       if (continueUrl.length > MAX_CONTINUE_URL_LENGTH || !isSameOrigin(continueUrl, publicOrigin)) {
         return new Response("Invalid continue URL", { status: 400 });
       }
       const verifier = generatePkceVerifier();
+      const browserBinding = generateOidcNonce();
       const state = {
         nonce: generateOidcNonce(),
         verifier,
         continue: continueUrl,
         exp: Date.now() + OIDC_STATE_TTL_MS,
+        browserBinding,
+        replayProtected: Boolean(replayStore),
+        reauth: url.searchParams.get("reauth") === "1",
       };
+      if (state.reauth && !replayStore) return new Response("Management login unavailable", { status: 503 });
       const challenge = await s256Challenge(verifier);
       const sealedState = await sealer.seal(JSON.stringify(state));
-      const authorizationUrl = await oidc.authorizationUrl({
+      const authorizationUrl = new URL(await oidc.authorizationUrl({
         state: sealedState,
         nonce: state.nonce,
         codeChallenge: challenge,
-      });
+      }));
+      await replayStore?.register(state.nonce, state.exp);
       return new Response(null, {
         status: 303,
         headers: {
-          Location: authorizationUrl,
+          Location: authorizationUrl.toString(),
           "Cache-Control": "no-store",
+          "Set-Cookie": cookie(LOGIN_COOKIE, browserBinding, { httpOnly: true, secure: isSecureOrigin(publicOrigin), sameSite: "Lax", maxAge: OIDC_STATE_TTL_MS / 1000 }),
         },
       });
     }
 
     if (url.pathname === callbackPath) {
+      if (url.origin !== new URL(publicOrigin).origin) return new Response("Invalid login origin", { status: 400 });
       const code = url.searchParams.get("code");
       const stateValue = url.searchParams.get("state");
       if (!code || !stateValue) {
@@ -217,14 +269,28 @@ function createOidcIdentity(
       }
       if (typeof state.nonce !== "string" || typeof state.verifier !== "string"
         || typeof state.continue !== "string" || typeof state.exp !== "number"
-        || state.exp < Date.now()) {
+        || !Number.isFinite(state.exp) || state.exp <= Date.now()
+        || !isSameOrigin(state.continue, publicOrigin)
+        || typeof state.browserBinding !== "string" || !state.browserBinding
+        || state.browserBinding !== readCookie(request, LOGIN_COOKIE)) {
         return new Response("Invalid OIDC state", { status: 400 });
       }
+      if (state.replayProtected && (!replayStore || !await replayStore.consume(state.nonce, Date.now()))) return new Response("OIDC state already consumed or expired", { status: 400 });
+      if (state.reauth && state.replayProtected !== true) return new Response("Invalid management login", { status: 400 });
       const exchanged = await oidc.exchangeCode({ code, codeVerifier: state.verifier });
       const verified = await oidc.verifyIdToken({
         idToken: exchanged.idToken,
         nonce: state.nonce,
       });
+      const claims = decodeJwt(exchanged.idToken);
+      const confirmedAt = Date.now();
+      const issuedAt = typeof claims.iat === "number" && Number.isSafeInteger(claims.iat) ? claims.iat * 1000 : null;
+      const tokenExpiresAt = typeof claims.exp === "number" && Number.isSafeInteger(claims.exp) ? claims.exp * 1000 : null;
+      const freshCodeExchange = issuedAt !== null && tokenExpiresAt !== null && tokenExpiresAt > confirmedAt
+        && issuedAt <= confirmedAt + 30_000 && issuedAt >= state.exp - OIDC_STATE_TTL_MS - 30_000;
+      if (state.reauth && !freshCodeExchange) {
+        return new Response("Google login confirmation failed. Please start a new login from /admin/.", { status: 403, headers: { "Cache-Control": "no-store" } });
+      }
       console.log(JSON.stringify({
         event: "gateway_oauth_login",
         principalId: verified.sub,
@@ -232,6 +298,12 @@ function createOidcIdentity(
       }));
       const session = {
         sub: verified.sub,
+        iss: oidcIssuer,
+        emailVerified: verified.emailVerified,
+        authenticatedAt: state.replayProtected === true && freshCodeExchange ? confirmedAt : null,
+        loginConfirmation: state.replayProtected === true && freshCodeExchange ? "authorization-code-v1" : null,
+        loginId: state.nonce,
+        replayProtected: state.replayProtected === true,
         name: verified.name ?? verified.email ?? verified.sub,
         ...(verified.email === null ? {} : { email: verified.email }),
         exp: Math.floor(Date.now() / 1000) + sessionTtlSeconds,
@@ -255,7 +327,7 @@ function createOidcIdentity(
     return null;
   };
 
-  return { identity, handleLogin, authenticationRequired };
+  return { identity, handleLogin, authenticationRequired, currentGoogleLogin, managementAuthenticationRequired };
 }
 
 interface OidcLoginState {
@@ -263,6 +335,9 @@ interface OidcLoginState {
   readonly verifier: string;
   readonly continue: string;
   readonly exp: number;
+  readonly browserBinding: string;
+  readonly replayProtected?: boolean;
+  readonly reauth?: boolean;
 }
 
 interface GatewaySession {
@@ -270,6 +345,12 @@ interface GatewaySession {
   readonly name: string;
   readonly email?: string;
   readonly exp: number;
+  readonly iss?: string;
+  readonly emailVerified?: boolean;
+  readonly authenticatedAt?: number | null;
+  readonly loginConfirmation?: "authorization-code-v1" | null;
+  readonly loginId?: string;
+  readonly replayProtected?: boolean;
 }
 
 interface CookieSealer {
@@ -326,7 +407,7 @@ async function openSession(
     return null;
   }
   if (typeof session.sub !== "string" || session.sub.length === 0
-    || typeof session.exp !== "number" || session.exp < Math.floor(Date.now() / 1000)) {
+    || typeof session.exp !== "number" || !Number.isFinite(session.exp) || session.exp <= Math.floor(Date.now() / 1000)) {
     return null;
   }
   return session;

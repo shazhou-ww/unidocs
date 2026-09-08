@@ -203,15 +203,15 @@ export function createEditorDO<TDoc, TQuery, TOp>(
         casConcurrency,
         ...(this.#env.DOC_MEMORY_PROBE === "1"
           ? {
-              memoryProbe: (sample: import("@unidocs/protocol").DocumentMemoryProbeSample) => {
-                console.log({
-                  event: "document_memory_probe",
-                  docType: this.#docType,
-                  sessionId: this.#sessionId,
-                  ...sample,
-                });
-              },
-            }
+            memoryProbe: (sample: import("@unidocs/protocol").DocumentMemoryProbeSample) => {
+              console.log({
+                event: "document_memory_probe",
+                docType: this.#docType,
+                sessionId: this.#sessionId,
+                ...sample,
+              });
+            },
+          }
           : {}),
       });
       this.#context = context;
@@ -282,8 +282,10 @@ export function createEditorDO<TDoc, TQuery, TOp>(
 
     #receiptResponse(receipt: CommitReceipt): Response {
       const status = receipt.state === "committed" ? 200 : receipt.state === "pending" ? 503 : 409;
-      return Response.json({ success: receipt.state === "committed", receipt,
-        version: receipt.state === "committed" ? receipt.version : this.#version }, { status });
+      return Response.json({
+        success: receipt.state === "committed", receipt,
+        version: receipt.state === "committed" ? receipt.version : this.#version
+      }, { status });
     }
 
     async #applyExplicit(value: Record<string, unknown>): Promise<Response> {
@@ -728,7 +730,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           return Response.json({ success: false, error: "Explicit commits are not enabled or mode is unsupported" }, { status: 400 });
         }
         if (this.#docType !== null && this.#requestCas && !this.#isReadOnlyOperation() && !explicit && this.#commitJournal().pendingIdentity()) {
-          if (!request.bodyUsed && request.body) await request.body.pipeTo(new WritableStream({ write() {} }));
+          if (!request.bodyUsed && request.body) await request.body.pipeTo(new WritableStream({ write() { } }));
           return Response.json({ success: false, error: "Explicit commit pending; recover the original request", version: this.#version }, { status: 409 });
         }
         if (this.#requestCas && !this.#isReadOnlyOperation() && !explicit) {
@@ -1048,6 +1050,7 @@ export function createEditorDO<TDoc, TQuery, TOp>(
           probe?.({ stage: "create.document.initialized" });
         }
       } else {
+        if (request.body) await request.body.pipeTo(new WritableStream({ write() { } }));
         doc = await config.init();
         probe?.({ stage: "create.document.initialized" });
       }

@@ -59,6 +59,20 @@ GATEWAY_OIDC_SESSION_TTL_SECONDS = "28800"
 # The OAuth/login surface is served on the app domain; the issuer claim keeps
 # the registered unicas.shazhou.work identifier.
 GATEWAY_PUBLIC_ORIGIN = "https://unidocs.shazhou.work"
+UNIDOCS_ADMIN_ENABLED = "1"
+UNIDOCS_ADMIN_BOOTSTRAP_EMAIL = "shazhou.ww@gmail.com"
+ADMIN_MARKDOWN_BASE_URL = "https://unidocs-markdown.shazhou.workers.dev/"
+ADMIN_MARKDOWN_SERVICE_ID = "markdown"
+ADMIN_MARKDOWN_STORAGE_IDENTITY = "cf-do:ff628e0e897f4ef0b85388a319097cdf"
+ADMIN_MARKDOWN_AUDIENCE = "unidocs-doc:markdown"
+
+[[durable_objects.bindings]]
+name = "UNIDOCS_ADMIN"
+class_name = "UniDocsAdminControl"
+
+[[migrations]]
+tag = "unidocs-admin-v1"
+new_sqlite_classes = ["UniDocsAdminControl"]
 
 [[d1_databases]]
 binding = "GATEWAY_DB"
@@ -69,6 +83,10 @@ migrations_dir = "migrations"
 [[services]]
 binding = "CAS_SERVICE"
 service = "unidocs-cas"
+
+[[services]]
+binding = "ADMIN_MARKDOWN_SERVICE"
+service = "unidocs-markdown"
 
 [triggers]
 crons = ["17 * * * *"]

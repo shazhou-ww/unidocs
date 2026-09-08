@@ -2,6 +2,17 @@
 
 日期：2026-09-07。状态：进行中；默认关闭的 Cloudflare Markdown 实验模式已接通持久提交、独立核实／恢复和目录同步，真实提交器八个异常窗口已验证，并修复提交后异常导致旧内存正文继续被读取的问题。Azure 持久提交、实际硬崩溃验证及 WebUI 保存尚未完成。本轮未部署，线上仍为第 08 轮。
 
+## 2026-09-08 阶段收尾
+
+已在同步后的 `92481d7` 实现基线上复验。本轮 Cloudflare 实验后端切片告一段落，不将整个第 09 轮或跨云可靠保存标记完成。用户决定暂缓 UI 扩展，下一步先讨论 doctype 对应 editor 和 service 的动态注册、发现与加载方法，不直接实现注册接口或开放云端保存。下文各切片和“下一切片”保留历史推进记录；当前工作优先级以本节为准。
+
+- 六包回归全部通过：web-gateway 70、protocol-doc 81、protocol-gateway 23、doctype-server-common 273、gateway-common 70、cloudflare-sdk 47，共 564 条。
+- `explicit-commit.test.mjs`、`explicit-commit-faults.test.mjs`、`commit-journal.test.mjs` 串行运行，共 15 条通过，包含真实本地 DO/CAS 与八个异常窗口。
+- web-gateway、doctype-server-common、cloudflare-sdk、cloudflare-gateway、azure-gateway 类型检查及 Cloudflare Gateway 构建通过。
+- 首次集成运行因缺失 UniCAS 的生成 UI 资源，14 条未进入业务逻辑；执行 `pnpm --filter @unicas/service-cloudflare build` 后重跑同一组测试全部通过。没有修改业务实现或跳过用例。
+- 本次未部署、未启用实验开关，未操作生产作品。生产仍按第 08 轮发布记录；本次未新增生产浏览器验收。
+- Azure 持久意图与并发互斥、receipt 容量与保留、真实硬崩溃和鉴权失效验证、WebUI 保存仍是未完成门槛。动态注册必须准确描述实际能力，不能因注册了 editor 就宣称具备可靠保存或历史读取。
+
 日志检查点已提交为 `bad1851`；下文前三个切片记录保留其当时的实现边界，第四个切片描述当前工作区新增的接入。
 
 第四切片检查点已提交为 `d09f8f4`。下文各切片保留历史边界，第八切片为当前最新进度。

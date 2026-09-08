@@ -1,0 +1,793 @@
+.admin-mock {
+  --sidebar: 216px;
+}
+
+.admin-mock .admin-layout {
+  min-height: 100vh;
+}
+
+.admin-mock .admin-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: var(--sidebar);
+  padding: 30px 16px 18px;
+  background: #f5f6f2;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+}
+
+.admin-mock .admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  font-size: 23px;
+  font-weight: 650;
+}
+
+.admin-mock .admin-brand img {
+  width: 32px;
+  height: 32px;
+}
+
+.admin-mock .admin-workspace {
+  margin: 26px 12px 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.admin-mock .admin-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  margin: 3px 0;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.admin-mock .admin-nav-item:hover {
+  background: #eceee7;
+}
+
+.admin-mock .admin-nav-item.active {
+  background: #e6e9df;
+  color: #314c38;
+  font-weight: 550;
+}
+
+.admin-mock .admin-nav-item .nav-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.admin-mock .admin-sidebar-bottom {
+  margin-top: auto;
+  padding: 18px 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.admin-mock .admin-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #e6e9df;
+  color: #4e664f;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.admin-mock .account-email {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.admin-mock .admin-sidebar-bottom>.row {
+  flex-wrap: wrap;
+  column-gap: 7px;
+}
+
+.admin-mock .admin-sidebar-bottom .grow {
+  flex-basis: calc(100% - 45px);
+}
+
+.admin-mock .admin-sidebar-bottom>.row>button {
+  margin-top: 8px;
+  margin-left: auto;
+}
+
+.admin-mock .admin-main {
+  margin-left: var(--sidebar);
+  min-width: 0;
+}
+
+.admin-mock .admin-topbar {
+  height: 64px;
+  padding: 0 38px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--paper);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.admin-mock .admin-crumb {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.admin-mock .admin-crumb span:last-child {
+  color: var(--ink);
+}
+
+.admin-mock .admin-environment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.admin-mock .admin-content {
+  padding: 38px 38px 54px;
+  max-width: 1560px;
+  margin: auto;
+  animation: admin-enter .2s ease-out;
+}
+
+@keyframes admin-enter {
+  from {
+    opacity: .4;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.admin-mock .admin-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 28px;
+}
+
+.admin-mock .admin-eyebrow {
+  color: #8b9084;
+  font-size: 10px;
+  margin-bottom: 10px;
+}
+
+.admin-mock .admin-heading h1 {
+  font-size: 29px;
+  font-weight: 550;
+  line-height: 1.35;
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+
+.admin-mock .admin-heading p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.admin-mock .admin-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-mock .admin-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 18px;
+}
+
+.admin-mock .admin-search {
+  width: 300px;
+  max-width: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.admin-mock .admin-search>svg {
+  position: absolute;
+  left: 11px;
+  color: #95998e;
+  pointer-events: none;
+}
+
+.admin-mock .admin-search input {
+  width: 100%;
+  padding-left: 35px;
+  height: 36px;
+}
+
+.admin-mock .admin-result {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.admin-mock .admin-table-wrap {
+  overflow-x: auto;
+  background: white;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-mock .admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: left;
+  font-size: 12px;
+}
+
+.admin-mock .admin-table th {
+  font-weight: 450;
+  color: var(--muted);
+  font-size: 11px;
+  height: 42px;
+  background: #f7f8f5;
+}
+
+.admin-mock .admin-table td,
+.admin-mock .admin-table th {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.admin-mock .admin-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-mock .admin-table tbody tr:hover {
+  background: #fbfcf9;
+}
+
+.admin-mock .admin-table td {
+  height: 82px;
+  vertical-align: middle;
+}
+
+.admin-mock .admin-table a:hover {
+  color: var(--green);
+}
+
+.admin-mock .admin-table td:last-child a {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.admin-mock .admin-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.admin-mock .type-symbol {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 40px;
+  border: 1px solid #e2e7dc;
+  border-radius: 5px;
+  background: #f0f3eb;
+  color: #66775a;
+  flex-shrink: 0;
+}
+
+.admin-mock .type-symbol.psd {
+  background: #eef3f5;
+  border-color: #dde5e8;
+  color: #617f8d;
+}
+
+.admin-mock .type-symbol.docx {
+  background: #f1f1f8;
+  border-color: #e4e4ed;
+  color: #75768f;
+}
+
+.admin-mock .admin-cell-name strong {
+  font-weight: 550;
+  display: block;
+}
+
+.admin-mock .admin-secondary {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 5px;
+  font-weight: 400;
+}
+
+.admin-mock .admin-mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.admin-mock .admin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.admin-mock .admin-status::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #a8aba3;
+  flex-shrink: 0;
+}
+
+.admin-mock .admin-status.good {
+  color: #50764f;
+}
+
+.admin-mock .admin-status.good::before {
+  background: #68895e;
+}
+
+.admin-mock .admin-status.warn {
+  color: #95752f;
+}
+
+.admin-mock .admin-status.warn::before {
+  background: #b2944f;
+}
+
+.admin-mock .admin-status.bad {
+  color: #a0524f;
+}
+
+.admin-mock .admin-status.bad::before {
+  background: #b16e69;
+}
+
+.admin-mock .admin-table-footer {
+  margin-top: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.admin-mock .admin-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 26px;
+}
+
+.admin-mock .admin-tab {
+  padding: 12px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+
+.admin-mock .admin-tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+.admin-mock .admin-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: 38px;
+}
+
+.admin-mock .admin-section {
+  margin-bottom: 30px;
+}
+
+.admin-mock .admin-section h2 {
+  font-size: 14px;
+  font-weight: 550;
+  margin: 0 0 18px;
+}
+
+.admin-mock .admin-kv {
+  margin: 0;
+}
+
+.admin-mock .admin-kv>div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-mock .admin-kv dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-mock .admin-kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-mock .admin-aside {
+  border-left: 1px solid var(--line);
+  padding-left: 26px;
+}
+
+.admin-mock .admin-aside h2 {
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.admin-mock .admin-aside p {
+  line-height: 1.9;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.admin-mock .admin-big-number {
+  font-size: 30px;
+  font-weight: 450;
+  margin: 8px 0;
+}
+
+.admin-mock .admin-release {
+  border-block: 1px solid var(--line);
+  padding: 20px 0;
+  margin-bottom: 20px;
+}
+
+.admin-mock .admin-release .admin-release-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.admin-mock .admin-release h3 {
+  font-size: 14px;
+  margin: 0;
+  font-weight: 550;
+}
+
+.admin-mock .admin-checks {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+
+.admin-mock .admin-checks li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.admin-mock .admin-checks .passed {
+  color: #638452;
+}
+
+.admin-mock .admin-checks .failed {
+  color: var(--red);
+}
+
+.admin-mock .admin-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #f1f3ed;
+  border-left: 2px solid #8b9e79;
+  line-height: 1.8;
+  font-size: 12px;
+  margin: 18px 0;
+}
+
+.admin-mock .admin-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 3px 6px;
+  background: var(--soft);
+  border-radius: 3px;
+  color: var(--muted);
+  margin: 2px;
+}
+
+.admin-mock .admin-danger {
+  color: var(--red);
+}
+
+.admin-mock .admin-empty {
+  padding: 65px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-mock #admin-modal {
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  max-height: 88vh;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 20px 80px #2223;
+}
+
+.admin-mock dialog::backdrop {
+  background: #20241d45;
+  backdrop-filter: blur(2px);
+}
+
+.admin-mock .admin-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-mock .admin-modal-head h2 {
+  font-size: 16px;
+  font-weight: 550;
+  margin: 0;
+}
+
+.admin-mock .admin-modal-body {
+  padding: 24px;
+}
+
+.admin-mock .admin-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding: 16px 24px;
+}
+
+.admin-mock .admin-fields {
+  display: grid;
+  gap: 17px;
+}
+
+.admin-mock .admin-fields label {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.admin-mock .admin-fields input,
+.admin-mock .admin-fields select {
+  width: 100%;
+}
+
+.admin-mock .admin-fields .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-mock .admin-fields .checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: #4d6550;
+}
+
+.admin-mock .admin-form-error {
+  color: var(--red);
+  font-size: 12px;
+  margin: 16px 0 0;
+}
+
+.admin-mock .admin-form-error:empty {
+  display: none;
+}
+
+.admin-mock .admin-form-page {
+  max-width: 760px;
+}
+
+.admin-mock .admin-form-page .admin-fields {
+  grid-template-columns: 1fr 1fr;
+}
+
+.admin-mock .admin-form-page .full {
+  grid-column: 1/-1;
+}
+
+.admin-mock .admin-form-page .admin-actions {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  justify-content: flex-end;
+}
+
+.admin-mock #admin-toast {
+  position: fixed;
+  bottom: 28px;
+  left: calc(50% + 80px);
+  transform: translate(-50%, 12px);
+  opacity: 0;
+  pointer-events: none;
+  background: #292d26;
+  color: white;
+  border-radius: 6px;
+  padding: 11px 18px;
+  font-size: 12px;
+  z-index: 100;
+  transition: opacity .18s, transform .18s;
+  max-width: calc(100vw - 40px);
+}
+
+.admin-mock #admin-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.admin-mock .admin-menu {
+  display: none;
+}
+
+.admin-mock #admin-nav {
+  inset: 0 0 0 auto;
+  margin: 0;
+  height: 100%;
+  max-height: none;
+  width: 260px;
+  border: 0;
+  padding: 30px 16px;
+  background: #f5f6f2;
+}
+
+.admin-mock .admin-device {
+  display: none;
+}
+
+.admin-mock .admin-login {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 20px;
+}
+
+.admin-mock .admin-login .admin-brand {
+  justify-content: center;
+  font-size: 30px;
+}
+
+.admin-mock .admin-login p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media(max-width:1200px) {
+  .admin-mock {
+    --sidebar: 192px;
+  }
+
+  .admin-mock .admin-content {
+    padding: 30px 24px;
+  }
+
+  .admin-mock .admin-topbar {
+    padding: 0 24px;
+  }
+
+  .admin-mock .admin-detail-grid {
+    grid-template-columns: minmax(0, 1fr) 200px;
+    gap: 24px;
+  }
+}
+
+@media(max-width:1099px) {
+  .admin-mock .admin-sidebar {
+    display: none;
+  }
+
+  .admin-mock .admin-main {
+    margin-left: 0;
+  }
+
+  .admin-mock .admin-menu {
+    display: inline-flex;
+  }
+
+  .admin-mock #admin-toast {
+    left: 50%;
+  }
+}
+
+@media(max-width:900px) {
+  .admin-mock .admin-table .optional {
+    display: none;
+  }
+
+  .admin-mock .admin-table th,
+  .admin-mock .admin-table td {
+    padding: 12px 10px;
+  }
+
+  .admin-mock .admin-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-mock .admin-aside {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 20px 0;
+  }
+}
+
+@media(max-width:760px) {
+
+  .admin-mock #admin-app,
+  .admin-mock #admin-toast,
+  .admin-mock dialog {
+    display: none;
+  }
+
+  .admin-mock .admin-device {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+  }
+
+  .admin-mock .admin-device img {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 24px;
+  }
+
+  .admin-mock .admin-device h1 {
+    font-size: 20px;
+    font-weight: 500;
+  }
+}
+
+@media(prefers-reduced-motion:reduce) {
+  .admin-mock * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

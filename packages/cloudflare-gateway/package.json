@@ -21,7 +21,8 @@
     "@unidocs/gateway-common": "workspace:*",
     "@unidocs/gateway-oauth": "workspace:*",
     "@unidocs/protocol-gateway": "workspace:*",
-    "@unidocs/service-auth": "workspace:*"
+    "@unidocs/service-auth": "workspace:*",
+    "jose": "^6.2.10"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250817.0",

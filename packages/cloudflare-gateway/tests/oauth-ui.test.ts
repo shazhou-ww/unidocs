@@ -128,8 +128,14 @@ describe("Cloudflare Gateway OAuth identity and consent", () => {
         exp: number;
       };
       pendingNonce = state.nonce;
+      const browserCookie = started!.headers.get("Set-Cookie")!.split(";")[0]!;
+      const missingBinding = await identity.handleLogin(new Request(
+        `https://gateway.test/oauth/unidocs-cloudflare/login/callback?code=exchange-code&state=${encodeURIComponent(sealedState)}`,
+      ));
+      expect(missingBinding!.status).toBe(400);
       const finished = await identity.handleLogin(new Request(
         `https://gateway.test/oauth/unidocs-cloudflare/login/callback?code=exchange-code&state=${encodeURIComponent(sealedState)}`,
+        { headers: { Cookie: browserCookie } },
       ));
       expect(finished!.status).toBe(303);
       expect(new URL(finished!.headers.get("Location")!).pathname)

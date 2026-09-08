@@ -1,5 +1,17 @@
 # UniDocs WebUI 讨论原型
 
+最新交付：[Iteration 14](iteration-14.md) 已部署真实 admin 类型目录、URL 验证与登记、目标状态保存、审计。入口 https://unidocs.shazhou.work/admin/ ，主站不消费注册数据；首版批准 Markdown 一方 URL，未自动登记类型。215 条相关测试通过。
+
+最新工作：[Iteration 13](iteration-13.md) 已增加 Markdown 本地发现入口与 `/api/` 别名；已修复空白创建未消费 JSON 正文导致后续请求 502 的问题，新旧路径读写集成通过，未部署。editor 明确声明未提供，不开放类型启用。
+
+目录实现进度：[Iteration 12](iteration-12.md) 已实现类型发现契约、目录 SQLite 与可选管理 API，本地 130 条相关测试通过，尚未接生产路由或真实目录页面。第 11 轮真人 Google 登录已由用户确认成功。
+
+管理实现进度：[Iteration 11](iteration-11.md) 已部署共享 Google 登录和真实管理员名单页面，入口 https://unidocs.shazhou.work/admin/ 。首位管理员为用户指定邮箱，待真人登录验收；类型 URL 目录与审计页面仍未开放。[Iteration 10](iteration-10.md) 保留原子核心首切片记录。
+
+运营后台设计（2026-09-08）：[管理服务 API v0](unidocs-admin-api-v0.md) 与 [管理后台 WebUI v0](unidocs-admin-webui-v0.md)。Google 邮箱名单管理，每种一方文档类型只登记 Base URL 和主站启用状态，API/editor 均相对此地址；版本与发布由微服务自己管理。当前为设计草案，未实现或部署。
+
+运营后台 HTML：[打开运营后台原型](unidocs-admin-mock.html)。沿用创作者原型的基础样式，提供类型目录、URL 验证与更换、主站创建/编辑统一开关、管理员和审计；不再提供独立服务、editor 或发布管理。全部为页面内存样例，刷新恢复初始数据；Google 登录、URL 发现与存储连续性验证均为固定沙盒数据模拟，不访问真实服务。可用 `https://types.example.com/diagram/` 演示新类型登记，`https://markdown-next.example.com/` 演示同身份 URL 更换；未知地址验证失败。图标与字体沿用原型 CDN 依赖，不是管理 API 的正式实现。
+
 入口：[打开 HTML 原型](unidocs-mock.html)。用浏览器直接打开，不需要启动服务。
 
 可运行迭代：[Iteration 02](iteration-02.md) 已部署到 https://unidocs.shazhou.work/?iteration=02 ，使用真实 PSD 引擎，本地版本和草稿保存在 IndexedDB，刷新可恢复，尚未接云端写入。[Iteration 01](iteration-01.md) 保留作为历史发布记录。原型与实际迭代的范围请分开看待。

@@ -53,8 +53,10 @@ import {
 } from "./oauth-identity.js";
 import { serveGatewayWebUi } from "./static-assets.js";
 import { createCorsHandler } from "./cors.js";
+import { routeAdmin, type AdminRoutingBindings } from "./admin-routing.js";
+export { UniDocsAdminControl } from "./admin-control-do.js";
 
-interface Env extends CapabilityRuntimePolicyBindings, CloudflareGatewayOAuthIdentityBindings {
+interface Env extends CapabilityRuntimePolicyBindings, CloudflareGatewayOAuthIdentityBindings, AdminRoutingBindings {
   GATEWAY_DB: D1Database;
   DOC_SERVICES_JSON: string;
   CAPABILITY_PRIVATE_KEY_PKCS8?: string;
@@ -99,6 +101,8 @@ function registry(env: Env): StaticDocServiceRegistry {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const admin = await routeAdmin(request, env);
+    if (admin) return admin;
     const cors = corsHandler(env);
     const preflight = cors.preflight(request);
     if (preflight) return preflight;

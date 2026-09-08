@@ -8,6 +8,8 @@ compatibility_date = "2025-08-17"
 # jwks_uri (HTTPS issuer) or the pinned CAS_STACK_TRUSTED_JWKS snapshot
 # (non-URL dev issuers).
 [vars]
+DOC_SERVICE_ID = "markdown"
+DOC_STORAGE_IDENTITY = "cf-do:ff628e0e897f4ef0b85388a319097cdf"
 DOC_CAPABILITY_AUDIENCE = "unidocs-doc:markdown"
 CAS_CAPABILITY_AUDIENCE = "https://unicas.shazhou.work/stacks/cas_SZ6wfcfqS34J"
 CAS_STACK_ID = "cas_SZ6wfcfqS34J"
