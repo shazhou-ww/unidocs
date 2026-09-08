@@ -35,7 +35,7 @@ import {
 } from "@unidocs/doctype-server-common";
 import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
 import { consoleObserver, matchFontsRoute } from "@unidocs/protocol-doc";
-import { createDoFontRegistry } from "./font-registry-do.js";
+import { createDoFontProvider } from "./font-provider-do.js";
 import { fontsObjectName, PsdFontsDurableObject } from "./fonts-do.js";
 import { psdAgentDeps, type PsdAgentEnv } from "./agent-deps.js";
 
@@ -91,14 +91,16 @@ export default {
       if (!env.PSD_FONTS) {
         return Response.json({ error: "Fonts index is not configured" }, { status: 501 });
       }
-      // 中立的 handleFontsRequest 不兜底存储层的异常（registry.list/put 抛出
+      // 中立的 handleFontsRequest 不兜底存储层的异常（provider.list/put 抛出
       // 就直接 reject 出去）—— 原先 PsdFontsDurableObject.fetch 自己的 try/catch
       // 把这类故障变成 500，这一层责任现在落在这里，不然一次存储故障会变成
       // 未处理拒绝，而不是一个像样的 500。
       try {
         return await handleFontsRequest({
           docCapabilityVerifier: auth.docCapabilityVerifier,
-          registry: createDoFontRegistry({
+          // 只给租户那一档，不给门面：这个端点回答的是"这个租户登记了什么"
+          // （见 FontsRequestConfig.provider 的注释）。
+          provider: createDoFontProvider({
             namespace: env.PSD_FONTS,
             objectName: fontsObjectName({ stackId: env.CAS_STACK_ID, tenantId: fonts.tenantId }),
           }),

@@ -19,7 +19,7 @@ import {
 } from "../../service-auth/src/index.js";
 import type { CapabilityPermission, VerifiedCapability } from "../../service-auth/src/index.js";
 import { startDocTypeService } from "../src/doc-type-service.js";
-import { PgFontRegistry } from "../src/font-registry-pg.js";
+import { PgFontProvider } from "../src/font-provider-pg.js";
 import { runMigrations } from "../src/migrate.js";
 import { createPool } from "../src/pool.js";
 import { BLOB_CONNECTION_STRING, DATABASE_URL } from "./containers.js";
@@ -74,7 +74,7 @@ async function start(
     documentType?: DocumentType<any, any, any>;
     documentAgent?: any;
     llmProvider?: any;
-    fontRegistryFor?: any;
+    fontProviderFor?: any;
   } = {},
 ) {
   const docType = overrides.docType ?? "markdown";
@@ -97,9 +97,9 @@ async function start(
     },
     ...(overrides.documentAgent === undefined ? {} : { documentAgent: overrides.documentAgent }),
     ...(overrides.llmProvider === undefined ? {} : { llmProvider: overrides.llmProvider }),
-    ...(overrides.fontRegistryFor === undefined
+    ...(overrides.fontProviderFor === undefined
       ? {}
-      : { fontRegistryFor: overrides.fontRegistryFor }),
+      : { fontProviderFor: overrides.fontProviderFor }),
   });
 }
 
@@ -277,7 +277,7 @@ describe("agent 接线", () => {
  *    成 `/tenants/{t}/sessions/{s}[/{op}]`，`/tenants/{t}/fonts` 不匹配，交给
  *    doc handler 只会得到 404 "Unknown Doc endpoint"。
  * 2. **存储异常要以 fonts 端点自己的错误形状返回。** 中立的
- *    `handleFontsRequest` 不接管 `registry.list/put` 的抛出（CF 那边原来由 DO
+ *    `handleFontsRequest` 不接管 `provider.list/put` 的抛出（CF 那边原来由 DO
  *    自己的 try/catch 兜）。这里**不是**"不兜就变成未处理拒绝"——
  *    `serve()`（http-shell.ts）有顶层兜底，Node 宿主上一次 Postgres 故障本来
  *    就是 500；那条理由是从 CF/workerd 照抄的，在这里为假。真正的区别是错误
@@ -293,7 +293,7 @@ describe("fonts 路由", () => {
     Authorization: `Bearer doc|${tenantId}|any-session|create`,
   });
 
-  it("不给 fontRegistryFor 就不挂这条路由 —— 落回 doc handler 的 404", async () => {
+  it("不给 fontProviderFor 就不挂这条路由 —— 落回 doc handler 的 404", async () => {
     handle = await start(41996);
     const res = await fetch(fontsUrl(handle.url, "tenant-1"), { headers: fontsAuth("tenant-1") });
     expect(res.status).toBe(404);
@@ -309,7 +309,7 @@ describe("fonts 路由", () => {
     };
     const seen: string[] = [];
     handle = await start(41995, {
-      fontRegistryFor: (tenantId: string) => {
+      fontProviderFor: (tenantId: string) => {
         seen.push(tenantId);
         return { list: async () => [entry], put: async () => {} };
       },
@@ -318,7 +318,7 @@ describe("fonts 路由", () => {
     // 200 而不是 404 —— 404 正是"落到了 createDocTypeHandler 手里"的signal。
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ fonts: [entry] });
-    // registry 按路径里的租户构造，不是按启动期的某个固定值。
+    // provider 按路径里的租户构造，不是按启动期的某个固定值。
     expect(seen).toEqual(["tenant-1"]);
   });
 
@@ -334,9 +334,9 @@ describe("fonts 路由", () => {
    * `Unhandled error:` 那个前缀在语义上是"处理器本身有 bug"，而存储故障是这个
    * 端点可预期的失败，不该借用它。
    */
-  it("registry 抛出 -> 500，且是 fonts 端点自己的错误形状（不带 Unhandled error: 前缀）", async () => {
+  it("provider 抛出 -> 500，且是 fonts 端点自己的错误形状（不带 Unhandled error: 前缀）", async () => {
     handle = await start(41994, {
-      fontRegistryFor: () => ({
+      fontProviderFor: () => ({
         list: async () => { throw new Error("connection terminated unexpectedly"); },
         put: async () => {},
       }),
@@ -347,9 +347,9 @@ describe("fonts 路由", () => {
   });
 
   /**
-   * 真实端到端：`PgFontRegistry` 与 `handleFontsRequest` 的**接缝**。
+   * 真实端到端：`PgFontProvider` 与 `handleFontsRequest` 的**接缝**。
    *
-   * 两半各自单测过（font-registry-pg.test.ts 打真 Postgres，font-registry
+   * 两半各自单测过（font-provider-pg.test.ts 打真 Postgres，font-registry
    * 的校验器有自己的用例），但没有在一次真实 HTTP 请求里串起来过。这条覆盖
    * 的是只在接缝上才会出问题的那几件事：handler 校验后的 `FontEntry` 能否
    * 原样落库、`coverage` 的 jsonb 往返是否保形（数组套数组，pg 解析回来的
@@ -360,12 +360,12 @@ describe("fonts 路由", () => {
    * 64 位十六进制字符串。`font_registry` 表由 start() 里的 runMigrations()
    * 建好（migrations/0005_font_registry.sql）。
    */
-  it("端到端：POST 登记 -> GET 取回，经真的 PgFontRegistry", async () => {
+  it("端到端：POST 登记 -> GET 取回，经真的 PgFontProvider", async () => {
     // 每次跑用一个新租户，免得同一个库上的重复运行互相看见对方的行。
     const tenantId = `fonts-e2e-${Date.now()}`;
     handle = await start(41992, {
-      fontRegistryFor: (t: string, pool: any) =>
-        new PgFontRegistry(pool, { stackId: "test-stack", tenantId: t }),
+      fontProviderFor: (t: string, pool: any) =>
+        new PgFontProvider(pool, { stackId: "test-stack", tenantId: t }),
     });
     const entry = {
       postScriptName: "NotoSansSC-Regular",
@@ -392,7 +392,7 @@ describe("fonts 路由", () => {
 
   it("会话级路径不受影响 —— 分流只吃 /tenants/{t}/fonts", async () => {
     handle = await start(41993, {
-      fontRegistryFor: () => ({ list: async () => [], put: async () => {} }),
+      fontProviderFor: () => ({ list: async () => [], put: async () => {} }),
     });
     const created = await internal(handle.url, "tenant-1", `fonts-${Date.now()}`, "create", {
       method: "PUT",
