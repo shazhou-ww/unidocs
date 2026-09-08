@@ -143,6 +143,11 @@ export interface FontRegistry {
    * 缺的是**保活那一半**，不是权限：会话里能用 `ctx.makeSBlob` 往 CAS 写字节，但
    * 只被租户登记表引用的字体 24 小时租约到期后会被 GC 收走（见
    * docs/psd-text-layers.md §5.4「看起来好了一天，然后凭空消失」）。
+   *
+   * 同一个保活缺口还有另一面，一并留到那时解决：那个状态下租户那条记录仍在索引
+   * 里、按同名覆盖顶掉内置那份好的，而取字节这条路**没有** fail-soft（下面
+   * `onProviderError` 只包 `list()`），于是 `setText` 对该层直接失败。互相指路
+   * 见 docs/psd-text-layers.md §3.4 第 2 条的待办。
    */
   install?(entry: FontEntry): Promise<void>;
 }

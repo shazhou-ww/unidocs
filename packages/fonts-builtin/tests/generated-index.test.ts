@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { fontEntryProblem } from "@unidocs/doctype-server-common";
 import { BUILTIN_FONTS } from "../src/index.js";
 import { loadKit } from "../../../scripts/seed-psd-fonts.mjs";
 
@@ -24,6 +25,23 @@ describe("BUILTIN_FONTS", () => {
     expect(BUILTIN_FONTS.map(r => r.entry.postScriptName))
       .toEqual(["NotoSans-Regular", "NotoSansSC-Regular"]);
   });
+
+  /**
+   * 内置条目**绕过写入侧的校验**，所以形状要在这里挡。
+   *
+   * `fontEntryProblem` 的注释自己写着：coverage 的升序/不重叠/已合并是硬要求，
+   * `coversCodePoint` 的二分查找对乱序或重叠会**静默返回错的结果**（那个字被判
+   * 成"这套字体不认识"，掉进回退链，不报错），而"写入侧是唯一挡得住的地方"。
+   * 内置是本仓库的第二个字体来源，它**永远不经过写入侧** —— 它的条目直接从
+   * `fonts.generated.ts` 进合成。上面那条"索引与字节对得上"只保证生成物没漂移，
+   * 保证不了生成规则本身产出的形状合法；下次换字体版本、换解析器时挡在这里的
+   * 就是这一句。
+   */
+  for (const record of BUILTIN_FONTS) {
+    it(`${record.entry.postScriptName}：条目形状过写入侧那套校验`, () => {
+      expect(fontEntryProblem(record.entry)).toBeNull();
+    });
+  }
 
   for (const record of BUILTIN_FONTS) {
     it(`${record.entry.postScriptName}：索引与字节逐字段对得上`, async () => {

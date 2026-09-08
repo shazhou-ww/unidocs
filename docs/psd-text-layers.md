@@ -218,12 +218,43 @@ provider 数组（内部 SPI `FontProvider`，外层不该认识它），今天�
 1. **内置字体不进 `doc.fonts`。** `blobFor()` 恒为 `null` —— 字节不在 CAS 里，
    没有可回收的对象，也就没有要保活的东西。硬写进去会撞上 `state.ts` 的
    `"PSD font SBlob … was not stored during externalization"`。
-2. **租户那一档不可达时是 fail-soft，但必须喊出来。** `createFontRegistry` 配了
-   `onProviderError` 才降级（两个栈的 `agent-deps.ts` 都配了
-   `logFontProviderError`）：那一档这一轮被跳过，内置那档仍然可用，`setText` 不
-   整体失效。代价是租户装的字体**凭空消失**、字换了个字形而没有任何一步失败，
-   所以降级本身是一条 `event: "font_provider_error"` 的 stderr 日志。降级后那份
-   "只有内置字体"的索引还会被当成成功结果缓存满 60 秒，而日志只喊一次。
+2. **租户那一档不可达时是 fail-soft，但必须喊出来 —— 而且这层保护只盖索引合成。**
+   `createFontRegistry` 配了 `onProviderError` 才降级（两个栈的 `agent-deps.ts`
+   都配了 `logFontProviderError`）：那一档这一轮被跳过，内置那档仍然可用，
+   `setText` 不整体失效。代价是租户装的字体**凭空消失**、字换了个字形而没有任何
+   一步失败，所以降级本身是一条 `event: "font_provider_error"` 的 stderr 日志。
+   降级后那份"只有内置字体"的索引还会被当成成功结果缓存满 60 秒，而日志只喊一次
+   （**这个窗口两个栈不一样**：CF 的 operator DO 把 agent 连同 registry 缓存在
+   实例上，窗口跨请求；Azure 的 `deps.agent(identity)` 每请求新建，窗口只到本次
+   `/run` 结束）。
+
+   **保护范围仅限索引合成阶段。** `font-registry.ts` 的 try/catch 只包
+   `provider.list()`；**取字节那一步不在保护范围内** —— `set-text.ts` 的
+   `await source.registry.read(found, ctx)` 没有任何兜底，异常直接穿出 effect，
+   那一层的 `setText` 彻底失败。这两件事合起来有一个反直觉的后果：**一个灌过
+   字体的环境可能比一个从没灌过的环境更糟。** 具体触发条件文档里已经有了 ——
+   §5.4 第 4 条那个"索引有条目、根引用是 0"的状态，字节的 24 小时租约到期被 GC
+   收走之后，租户那条 `NotoSansSC-Regular` **仍然在索引里**，按同名覆盖顶掉了
+   内置那份好的子集，于是 `readBlob` 抛、`setText` 对该层直接失败；而零配置的
+   环境只会用内置那份，好好的。
+
+   这里**刻意不做**"read 失败就跳到下一个候选"的降级：那等于静默换字形，正是
+   本文档反复在消灭的那类故障。
+
+   **待办：这条缺口与 `FontRegistry.install` 的未实现是同一个保活问题的两面，
+   一并留到做 `install_font` 工具时解决。** 上面那个触发条件的根因是保活——字节
+   在 CAS 里没被钉住，24 小时租约到期被 GC，而登记表里那条记录还在；而
+   `install`（`packages/doctype-server-common/src/font-registry.ts`）当初决定
+   "只声明不实现"，缺的**也正是保活那一半**：设计文档
+   [D6](superpowers/specs/2026-09-08-builtin-fonts-design.md) 写着"原因不是权限。
+   在会话里往 CAS 写字节是做得到的（`ctx.makeSBlob` 就是这么存栅格化 PNG 的），
+   缺的是保活那一半"。所以届时二选一（也可能两条都做）：**要么把保活做对**——
+   登记表也钉住字节，那这里的触发条件本身就消失了；**要么在 `read` 失败时降级并
+   显式上报**替换——`setText` 已有 `fontFallbacks`（整套字体不在索引里）与
+   `glyphFallbacks`（逐码位兜底）两个上报通道，它们既进 `structuredContent`
+   也进给模型看的那句 summary，正是干这个用的，第三种"字节读不到"接进去即可。
+   在此之前**不动行为**：先补可观测性（§5.4 第 4 条的 `--repin` 开关，或 CAS 侧
+   "列出有索引但无根引用"的运维命令），让这个状态在字节被 GC 之前就能被发现。
 3. **字节怎么从包里拿出来是本仓库唯一必须分平台的一段。** Cloudflare 侧由
    bundler 把字节内联进 worker（`packages/cloudflare-psd/src/builtin-fonts.ts`）；
    Node 侧从磁盘读（`packages/azure-psd/src/builtin-fonts.ts`）——
@@ -388,9 +419,15 @@ TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 
 怎么往里灌，以及为什么它现在是**可选的**。
 
 租户级字体索引（同租户下所有 psd 文档共用）的字节在 CAS 里。
-索引本身是中立契约 `FontRegistry`（`@unidocs/doctype-server-common`），两个栈各有
-一个适配器：Cloudflare 是 `PsdFonts` 这个租户级 Durable Object，Azure 是 psd 库里
-的 `font_registry` 表。往里面灌东西的唯一入口是
+索引本身是中立契约。注意分清两层：外层唯一认识的是**门面** `FontRegistry`
+（`@unidocs/doctype-server-common`），而两个栈各自实现的是它背后那个内部 SPI 的
+可写实现 **`WritableFontProvider`**（id 都是 `tenant`）—— Cloudflare 是
+`PsdFonts` 这个租户级 Durable Object（适配器
+`cloudflare-psd/src/font-provider-do.ts`），Azure 是 psd 库里的 `font_registry`
+表（`azure-sdk/src/font-provider-pg.ts` 的 `PgFontProvider`）。把这两层叫成同一
+个名字正是本轮重构要消除的混淆：门面只有一个，来源有两档（§3.4）。
+
+往里面灌东西的唯一入口是
 [`scripts/seed-psd-fonts.mjs`](../scripts/seed-psd-fonts.mjs) —— 用法、配置形状、
 以及下面三条限制都写在那个文件顶部的注释里，示例配置见
 `scripts/psd-fonts.example.json`。
@@ -550,10 +587,14 @@ styleRuns: [ { length: 10, style: { tracking: 0,   fillColor: … } },
 这份文档写在 `feat/psd-text-edit` 之前，下面前四条**已经由那条分支交付**，
 留在这里只为记录当时的判断与实际做法的差别。
 
+> **这张表反映的是 `feat/psd-text-edit` 时点的判断，后续分支可能推翻其中任何一
+> 条。** 被推翻的行会就地标注"（日期 推翻，见 §x.y）"；没有标注**不等于**仍然
+> 成立，只等于还没有人回来扫过。以正文各节为准，不要拿这张表当现状。
+
 | 当时列为未决 | 实际做法 |
 |---|---|
 | `set_text` op + 提示词分流 | 已交付。分流规则拆成两半：不点名工具的硬规则进基础提示词，点名 `setText`/`editPixels` 的三条另立一块、只在两个工具**都**注入时追加 —— 否则会造出"提示词里有、工具表里没有"的幽灵工具 |
-| 字体来源（三条路，倾向打包） | **三条都没选**。打包被否掉了：兜底要同时覆盖中英，而一套中文字体 5–20 MB，进不了 Worker。改成全部走 CAS + 租户级索引 DO + 预置脚本（§5.4） |
+| 字体来源（三条路，倾向打包） | 当时**三条都没选**：打包被否掉了，理由是兜底要同时覆盖中英，而一套中文字体 5–20 MB，进不了 Worker。改成全部走 CAS + 租户级索引 DO + 预置脚本（§5.4）。**（2026-09-08 推翻，见 §3.4）** 打包正是后来做的事 —— 子集化把中文那套压到 1.91 MiB，psd worker 加字体后 `wrangler deploy --dry-run` 实测 4550.72 KiB / gzip 2277.48 KiB，离 Cloudflare 10 MB（压缩后）上限还有约 78% 余量。"进不了 Worker"这个前提对**子集**不成立。今天是两档并存：内置打包 + 租户走 CAS |
 | 字形栅格化（用现成库） | **一半自己写**。用 `opentype.js` 解析字体（零依赖、ESM、239 KB），但排版与扫描线栅格化是自己写的 —— 现成库要么带 DOM 依赖，要么把布局和绘制绑在一起 |
 | UI：图层选择的 chip | 已交付（`composer.tsx`） |
 

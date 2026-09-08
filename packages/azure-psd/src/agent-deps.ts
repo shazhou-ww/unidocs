@@ -94,7 +94,10 @@ export function psdAgentDeps(
         // 与 setText 在 Azure 上缺席三周同一种病。理由与落地形状见
         // `logFontProviderError` 的注释；**降级之后那份"只有内置字体"的索引会被
         // 当成成功结果缓存满 60 秒、而日志只喊一次**，这条排查陷阱记在
-        // `doctype-psd/src/agent.ts` 的 `fontIndex` 契约注释里。
+        // `doctype-psd/src/agent.ts` 的 `fontIndex` 契约注释里。**Azure 上那
+        // 60 秒只覆盖本次 `/run`**：上面第 2 条说的每请求新建在这里第二次生效
+        // —— registry 跟着 agent 一起新建，跨请求没有缓存可言。CF 那边的
+        // operator DO 把 agent 缓存在实例上，窗口是跨请求的。
         onProviderError: logFontProviderError,
       }),
       fallbacks: parseFontFallbacks(env.PSD_FONT_FALLBACKS, BUILTIN_FALLBACKS),

@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPsdAgent } from "@unidocs/doctype-psd";
 import type { FontEntry } from "@unidocs/doctype-server-common";
 import { psdAgentDeps } from "../src/agent-deps.js";
+import { fontsObjectName } from "../src/fonts-do.js";
 
 const tenantFont: FontEntry = {
   postScriptName: "NotoSans-Regular",
@@ -24,16 +25,28 @@ const tenantFont: FontEntry = {
   coverage: [[0x20, 0x7e]],
 };
 
-/** 门面是惰性的：构造期不打后端，第一次 `index()` 才 `namespace.get(...).fetch(...)`。 */
-const namespaceReturning = (fonts: FontEntry[]) => ({
-  idFromName: (name: string) => name,
-  get: () => ({ fetch: async () => Response.json({ fonts }) }),
-});
+/**
+ * 门面是惰性的：构造期不打后端，第一次 `index()` 才 `namespace.get(...).fetch(...)`。
+ *
+ * **假件记下 `idFromName` 收到的名字**，因为那个名字就是 CF 侧租户隔离的全部
+ * 实现 —— 接线里 `fontsObjectName({ stackId, tenantId: identity.tenantId })` 这
+ * 一行穿错，租户就读到一张别人的（或空的）索引，而"索引是空的"在内置那一档的
+ * 掩护下不报错、不失败，表现只是"我装的字体凭空消失"。不记就断言不了。
+ */
+const fakeNamespace = (fetchImpl: () => Promise<Response>) => {
+  const names: string[] = [];
+  return {
+    names,
+    idFromName: (name: string) => { names.push(name); return name; },
+    get: () => ({ fetch: fetchImpl }),
+  };
+};
 
-const namespaceThrowing = () => ({
-  idFromName: (name: string) => name,
-  get: () => ({ fetch: async () => { throw new Error("DO unreachable"); } }),
-});
+const namespaceReturning = (fonts: FontEntry[]) =>
+  fakeNamespace(async () => Response.json({ fonts }));
+
+const namespaceThrowing = () =>
+  fakeNamespace(async () => { throw new Error("DO unreachable"); });
 
 const baseEnv = { CAS_STACK_ID: "cas_1" };
 const env = (extra: Record<string, unknown> = {}) =>
@@ -81,6 +94,20 @@ describe("psdAgentDeps 的接线", () => {
     expect(index.get("NotoSans-Regular")!.source).toBe("tenant");
     // 租户没覆盖的那条内置仍在。
     expect(index.get("NotoSansSC-Regular")!.source).toBe("builtin");
+  });
+
+  it("租户那一档打的是本租户的 DO —— 对象名里带着 stackId 与 identity.tenantId", async () => {
+    // 这条断言的是 `fontsObjectName({ stackId, tenantId: identity.tenantId })`
+    // 那一行真的接上了：它是 CF 侧租户隔离的全部实现，此前零覆盖 ——
+    // `fonts-do.test.ts` 只测了这个函数自己，没有任何东西测"接线把身份喂给了它"。
+    // 期望值**用那个函数现算**，不手写 "cas_1|alice"：手写等于在测试里再实现一遍
+    // 命名规则，两份实现会一起改、一起错。
+    const namespace = namespaceReturning([tenantFont]);
+    const deps = psdAgentDeps(env({ PSD_FONTS: namespace }), identity);
+    await deps.fontIndex!.registry.index();
+    expect(namespace.names).toEqual([
+      fontsObjectName({ stackId: baseEnv.CAS_STACK_ID, tenantId: identity.tenantId }),
+    ]);
   });
 
   it("字体 DO 打不通时只掉租户那一层，内置仍在 —— 而且喊出来", async () => {

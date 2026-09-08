@@ -10,8 +10,11 @@ src/fonts.generated.ts）提交进仓库。这样构建既不依赖 Python 也�
     python3 scripts/build-subset.py ../../fonts/NotoSansSC-Regular.otf
 然后跑 `node scripts/generate-index.mjs` 重新生成索引。
 
-所有影响输出的参数都写死在下面，不接受命令行覆盖 —— 「重跑一次得到逐字节相同的
-结果」这条性质，是靠没有可变参数保证的。
+所有影响输出的参数都写死在下面，不接受命令行覆盖。这只保证了**这个脚本**不引入
+变量；「重跑得到逐字节相同的结果」还要求**同一份源字体 + 同一个 fontTools 版本**
+——两者都没有 pin，所以升级前先对着 README「产物出处」那张表核一遍版本，对不上就
+不要指望字节相同（也别为了对上而重跑：产物已提交，重跑只会换来一次不可复现的
+搅动）。
 """
 import sys, pathlib
 from fontTools import subset
@@ -41,6 +44,11 @@ def main() -> None:
         "--layout-features=*",
         "--no-hinting",
         "--desubroutinize",
+        # fontTools 默认只保留 nameID 0–6，于是子集里 13(license) / 14(licenseURL)
+        # 整条不存在（nameID 0 的版权行还在）。包一级有 OFL.txt 且已进 package.json
+        # 的 files，OFL §2 的义务本来就已经满足 —— 这一行是让下次升级字体时把许可
+        # 声明也一起带进字节里，而不是修一个今天存在的合规缺口。
+        "--name-IDs+=13,14",
     ])
     print(f"{OUT.name}: {OUT.stat().st_size:,} bytes，覆盖 {len(unicodes)} 个码位")
 

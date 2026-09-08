@@ -18,6 +18,29 @@ const identity: SessionIdentity = { docType: "psd", sessionId: "s1", tenantId: "
 // 第一次 `registry.index()` 才会走到 `list()`。
 const pool = { query: async () => ({ rows: [] }) } as unknown as Queryable;
 
+/**
+ * 记下每条 SQL 与它的参数。
+ *
+ * 上面那个 `pool` 不看参数，于是接线里
+ * `new PgFontProvider(pool, { stackId, tenantId: identity.tenantId })` 这一行
+ * ——Azure 侧租户隔离的全部实现——此前零覆盖。穿错了不会报错：
+ * `WHERE stack_id = $1 AND tenant_id = $2` 照样是一条合法查询，只是返回别人的
+ * （多半是空的）行，而"索引是空的"在内置那一档的掩护下不失败，表现只是"我装的
+ * 字体凭空消失"。
+ */
+const recordingPool = (): { calls: { sql: string; params: unknown[] }[]; pool: Queryable } => {
+  const calls: { sql: string; params: unknown[] }[] = [];
+  return {
+    calls,
+    pool: {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: params ?? [] });
+        return { rows: [], rowCount: 0 };
+      },
+    } as Queryable,
+  };
+};
+
 describe("psdAgentDeps", () => {
   it("没有 IMAGE_EDIT_API_KEY 就不注入 editor", () => {
     expect(psdAgentDeps({ CAS_STACK_ID: "s" }, identity, pool).editor).toBeUndefined();
@@ -77,6 +100,17 @@ describe("psdAgentDeps", () => {
     expect(overridden.get("NotoSans-Regular")!.source).toBe("tenant");
     // 内置那条没被租户覆盖的仍在。
     expect(overridden.get("NotoSansSC-Regular")!.source).toBe("builtin");
+  });
+
+  it("租户那一档查的是本租户的行 —— stackId 与 identity.tenantId 都进了 SQL 参数", async () => {
+    // 这条断言的是 `new PgFontProvider(pool, { stackId, tenantId: identity.tenantId })`
+    // 那一行真的接上了。参数**位置**也一起钉住：`$1`/`$2` 反了会静默查另一个租户
+    // 的行，形状合法、不抛错。
+    const { calls, pool: recording } = recordingPool();
+    await psdAgentDeps({ CAS_STACK_ID: "s" }, identity, recording).fontIndex!.registry.index();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.sql).toMatch(/stack_id = \$1 AND tenant_id = \$2/);
+    expect(calls[0]!.params).toEqual(["s", identity.tenantId]);
   });
 
   it("租户 provider 打不通时只掉租户那一层，内置仍在 —— 而且喊出来", async () => {

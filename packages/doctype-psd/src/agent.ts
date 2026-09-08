@@ -40,6 +40,13 @@ export interface PsdAgentDeps {
    * 满 60 秒（`font-registry.ts` 里"失败不入缓存"靠的是 `index.catch`，
    * 这条路走不到）。所以一次瞬时抖动会让租户字体隐身整整一个 TTL，而降级
    * 日志**只喊一次**：看到一条 `font_provider_error` 不等于"只失败了一次"。
+   *
+   * **这个 60 秒窗口两个栈不一样，排查时别照搬。** CF 的 operator DO 把
+   * `AgentSession`（连同这份 registry）缓存在实例上（`cloudflare-sdk` 的
+   * `operator-do-agent.ts` 里的 `#agentSession`），所以窗口跨请求，DO 不被回收
+   * 就一直有效；Azure 每个 `/run` 都重新 `deps.agent(identity)`（`azure-sdk` 的
+   * `local-operator.ts`，调用点就在 `/run` 处理器里），registry 跟着新建，那
+   * 60 秒最多覆盖**本次 run 内**的多次 setText，跨请求形同虚设。
    */
   readonly fontIndex?: FontIndexSource;
 }

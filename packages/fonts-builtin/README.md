@@ -11,6 +11,35 @@
 
 两套都是 OFL，允许分发，见 `OFL.txt`。子集同样受 OFL 约束。
 
+## 产物出处
+
+「重跑得到相同结果」不是脚本自己就能保证的性质 —— `build-subset.py` 只保证**它**
+不引入变量（所有影响输出的参数写死、不接受命令行覆盖），源字体和 fontTools 都**没有
+pin**。所以这里把当时那次的三个版本记下来，升级前先核一遍；对不上就不要指望字节相同。
+
+| | 版本 | 下载处（同 `scripts/psd-font-bootstrap.mjs`） |
+| --- | --- | --- |
+| `NotoSans-Regular.ttf`（未子集化，原样提交） | `2.015`（name ID 5：`Version 2.015; ttfautohint (v1.8.4.7-5d5b)`） | `notofonts/notofonts.github.io` 的 `fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf` |
+| 子集的源 `NotoSansSC-Regular.otf` | `2.004`（name ID 5：`Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603`） | `notofonts/noto-cjk` 的 `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` |
+| 跑子集化的 fontTools | `4.64.0` | `python3 -c "import fontTools; print(fontTools.version)"` |
+
+前两行的版本号直接读自仓库里这两份字节的 `name` 表（子集保留了源字体的
+name ID 3/5），不是从别处抄来的：
+
+```bash
+python3 -c "
+from fontTools.ttLib import TTFont
+for f in ['fonts/NotoSans-Regular.ttf', 'fonts/NotoSansSC-Regular.subset.otf']:
+    print(f, TTFont(f, lazy=True)['name'].getDebugName(5))"
+```
+
+**子集里没有 name ID 13/14**（license / licenseURL）：fontTools 默认只保留
+nameID 0–6，而源字体的许可声明在 13/14 上。nameID 0 的版权行**在**，包一级有
+`OFL.txt` 且已进 `package.json` 的 `files`，所以 OFL §2 的分发义务已经满足 ——
+这不是一个待修的合规问题。`build-subset.py` 已加上 `--name-IDs+=13,14`，下次升级
+字体时会自动把它们带进去；**不为此单独重跑子集**：两个版本都没 pin，重跑只会换来
+一份可能字节不同的 2 MB 二进制加一份重新生成的万行索引。
+
 ## 升级字体版本
 
 产物提交进仓库，**不在构建流程里生成** —— 构建因此既不依赖 Python 也不依赖公网。
