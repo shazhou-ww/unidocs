@@ -77,10 +77,17 @@ describe("Cloudflare Stack OAuth discovery", () => {
     });
   });
 
-  test("fails closed without an explicit origin allowlist", async () => {
+  test("discovers independent public issuer and JWKS origins without a platform allowlist", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => String(input) === JWKS ? json(jwks) : json(metadata()));
+    const port = new CloudflareOAuthDiscoveryPort({ fetcher });
+    await expect(port.inspectIssuer({ issuer: ISSUER })).resolves.toMatchObject({ metadata: { issuer: ISSUER, jwksUri: JWKS } });
+    await expect(port.fetchJwks(JWKS, {}).then((response) => response.json())).resolves.toEqual(jwks);
+  });
+
+  test("an explicitly empty origin restriction denies all requests", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const port = new CloudflareOAuthDiscoveryPort({ allowedOrigins: [], fetcher });
-    await expect(port.inspectIssuer({ issuer: ISSUER })).rejects.toThrow("disabled until allowed origins");
+    await expect(port.inspectIssuer({ issuer: ISSUER })).rejects.toThrow("empty origin allowlist");
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -92,6 +99,18 @@ describe("Cloudflare Stack OAuth discovery", () => {
     "https://auth.example:8443",
   ])("rejects unsafe allowlisted origins: %s", (origin) => {
     expect(() => new CloudflareOAuthDiscoveryPort({ allowedOrigins: [origin] })).toThrow();
+  });
+
+  test.each([
+    "http://auth.example", "https://localhost.", "https://foo.local", "https://metadata.google.internal",
+    "https://router.home.arpa", "https://intranet", "https://127.1", "https://2130706433",
+    "https://0x7f000001", "https://10.0.0.1", "https://169.254.169.254", "https://[::ffff:127.0.0.1]",
+    "https://auth.example:8443", "https://user:password@auth.example", "https://auth.example/jwks#fragment",
+  ])("public mode rejects unsafe targets before fetching: %s", async (url) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const port = new CloudflareOAuthDiscoveryPort({ fetcher });
+    await expect(port.fetchJwks(url, {})).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   test("rejects a JWKS origin that was not allowlisted", async () => {
@@ -126,6 +145,10 @@ describe("Cloudflare Stack OAuth discovery", () => {
   });
 
   test("rejects redirects and oversized responses", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 302, headers: { Location: "https://localhost/jwks" } }));
+    const runtime = new CloudflareOAuthDiscoveryPort({ allowedOrigins: ["https://keys.example"], fetcher });
+    await expect(runtime.fetchJwks(JWKS, { redirect: "follow", headers: { Authorization: "must-not-forward" } })).rejects.toThrow("redirects are not allowed");
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: "GET", redirect: "manual", headers: { Accept: "application/json" } });
     const redirecting = new CloudflareOAuthDiscoveryPort({
       allowedOrigins: ["https://auth.example"],
       fetcher: async () => new Response(null, { status: 302, headers: { Location: OIDC_METADATA } }),
@@ -148,5 +171,32 @@ describe("Cloudflare Stack OAuth discovery", () => {
       fetcher: async () => json(metadata({ issuer: "https://auth.example/tenant-b" })),
     });
     await expect(port.inspectIssuer({ issuer: ISSUER })).rejects.toThrow("issuer must exactly match");
+  });
+
+  test("runtime JWKS enforces its own timeout and honors caller cancellation", async () => {
+    const fetcher = vi.fn<typeof fetch>((_input, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+    }));
+    const port = new CloudflareOAuthDiscoveryPort({ fetcher, timeoutMs: 5 });
+    await expect(port.fetchJwks(JWKS, {})).rejects.toThrow();
+    expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    const controller = new AbortController();
+    const pending = port.fetchJwks(JWKS, { signal: controller.signal });
+    controller.abort(new Error("caller cancelled"));
+    await expect(pending).rejects.toThrow("caller cancelled");
+    await expect(port.fetchJwks(JWKS, { signal: AbortSignal.abort() })).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  test("cancels rejected and streaming oversized bodies", async () => {
+    const cancel = vi.fn();
+    const port = new CloudflareOAuthDiscoveryPort({
+      fetcher: async () => new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array(256 * 1024 + 1)); },
+        cancel,
+      }), { headers: { "Content-Type": "application/json" } }),
+    });
+    await expect(port.fetchJwks(JWKS, {})).rejects.toThrow("too large");
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });

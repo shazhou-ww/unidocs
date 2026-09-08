@@ -314,9 +314,7 @@ function controlPlaneFor(env: Env, now?: () => number): ControlPlaneOperations {
     now,
     oauthResourcePublicOrigin: env.CAS_PUBLIC_ORIGIN ?? env.PUBLIC_ORIGIN,
     managedOAuthIssuer: managedIssuerFor(env, now),
-    oauthDiscovery: allowedOrigins.length === 0
-      ? undefined
-      : new CloudflareOAuthDiscoveryPort({ allowedOrigins }),
+    oauthDiscovery: new CloudflareOAuthDiscoveryPort({ allowedOrigins }),
   });
 }
 
@@ -338,8 +336,8 @@ function managedIssuerFor(env: Env, now?: () => number): CloudflareManagedIssuer
   return issuer;
 }
 
-function parseOriginAllowlist(value: string | undefined): readonly string[] {
-  if (value === undefined) return [];
+function parseOriginAllowlist(value: string | undefined): readonly string[] | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
   return [...new Set(value.split(",").map((origin) => origin.trim()).filter(Boolean))];
 }
 
