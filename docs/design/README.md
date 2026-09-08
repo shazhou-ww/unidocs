@@ -1,5 +1,9 @@
 # UniDocs WebUI 讨论原型
 
+下一阶段计划：[Platform 与 Markdown 新协议接入](platform-markdown-integration-plan.md)。Platform 管持久化，editor service 只计算，operator 独立，前端包由平台托管；最小验收为 Markdown 注册后主站真实在线使用。此为目标计划，尚未实施，不改变下方历史发布事实。
+
+开发者接入指南：[将你的文档类型接入 UniDocs](../doctype-developer-guide.md)，从内容引擎、服务 API、Base URL 描述到 editor 和运营登记，区分当前实现与目标契约。
+
 最新交付：[Iteration 14](iteration-14.md) 已部署真实 admin 类型目录、URL 验证与登记、目标状态保存、审计。入口 https://unidocs.shazhou.work/admin/ ，主站不消费注册数据；首版批准 Markdown 一方 URL，未自动登记类型。215 条相关测试通过。
 
 最新工作：[Iteration 13](iteration-13.md) 已增加 Markdown 本地发现入口与 `/api/` 别名；已修复空白创建未消费 JSON 正文导致后续请求 502 的问题，新旧路径读写集成通过，未部署。editor 明确声明未提供，不开放类型启用。

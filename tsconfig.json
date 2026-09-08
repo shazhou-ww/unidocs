@@ -42,6 +42,9 @@
       "path": "packages/protocol-doc"
     },
     {
+      "path": "packages/protocol-doctype"
+    },
+    {
       "path": "packages/protocol-gateway"
     },
     {

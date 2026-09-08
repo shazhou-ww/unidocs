@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2024", "DOM"],
+    "types": []
+  },
+  "include": ["src", "tests"],
+  "references": [{ "path": "../protocol" }]
+}

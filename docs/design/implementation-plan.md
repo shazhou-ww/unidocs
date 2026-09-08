@@ -1,5 +1,7 @@
 # UniDocs 统一 WebUI 实施计划
 
+方向更新（2026-09-08）：下一阶段按 [Platform 与 Markdown 新协议接入计划](platform-markdown-integration-plan.md) 推进。持久化归 platform，计算 editor/operator 解耦，前端包平台托管；本文件保留旧 UI 阶段规划，不再作为新服务职责和首个闭环范围的依据。
+
 日期：2026-09-07。状态：P0 进行中；P1 可信嵌入未启动，P2/P3 的非 iframe 早期切片已交付，完整阶段 gate 尚未通过。进度核对至 [Iteration 09 第八切片](iteration-09.md)，区分已部署能力与未部署实现。
 
 可见交付：[Iteration 01](iteration-01.md) 已上线真实 PSD 引擎本地试验页；不代表 P1 iframe 协议或 P2 真实云端保存已完成。

@@ -1,5 +1,7 @@
 # UniDocs 管理服务 API v0
 
+> 后续目标更新（2026-09-08）：类型注册改为 editor 服务 URL、平台托管的 editor 前端资源包引用、可选 operator 服务 URL；platform 调用两个服务使用分服务 HMAC，不转发用户登录 JWT。配置、鉴权与 MVP iteration checklist 以 [Platform 与 Markdown 新协议接入计划](platform-markdown-integration-plan.md) 为准。本文下方单 baseUrl 模型保留为旧设计/实现对照，尚未按新契约改造，不代表线上已支持这些配置。
+
 当前落地：[Iteration 14](iteration-14.md) 已部署 admin 自身闭环，主站消费按用户决定推迟。enabled 只存目标状态，不再要求 editor 已提供才能保存；主站是否可用仍需后续能力与权限校验。发现请求仅通过固定一方 service binding，不允许通用公网 URL 访问；首版只批准 `https://unidocs-markdown.shazhou.workers.dev/`。GET /audit-events 返回最近 100 条及 presentationLimit=100，GET /changes/{key} 当前只核实本人类型命令。下文涉及主站立即启停的语义是后续目标，不是本轮行为。
 
 最新进度：[Iteration 12](iteration-12.md) 已完成可选目录后端切片，尚未注入生产管理 DO。当前 URL 验证同步返回 200，只保存成功短时记录；与下文 202 异步任务目标的差异、安全及用户面接入门槛见该记录。不得将未上线目录 enabled 当作主站开关已经生效。
