@@ -54,10 +54,13 @@ import {
 import { serveGatewayWebUi } from "./static-assets.js";
 import { createCorsHandler } from "./cors.js";
 import { routeAdmin, type AdminRoutingBindings } from "./admin-routing.js";
+import type { PlatformDocument } from "./platform-document-do.js";
 export { UniDocsAdminControl } from "./admin-control-do.js";
+export { PlatformDocument } from "./platform-document-do.js";
 
 interface Env extends CapabilityRuntimePolicyBindings, CloudflareGatewayOAuthIdentityBindings, AdminRoutingBindings {
   GATEWAY_DB: D1Database;
+  PLATFORM_DOCUMENTS: DurableObjectNamespace<PlatformDocument>;
   DOC_SERVICES_JSON: string;
   CAPABILITY_PRIVATE_KEY_PKCS8?: string;
   CAPABILITY_KEY_ID?: string;
@@ -73,6 +76,8 @@ interface Env extends CapabilityRuntimePolicyBindings, CloudflareGatewayOAuthIde
   GATEWAY_OAUTH_REFRESH_TTL_SECONDS?: string;
   /** refDomain claim carried by CAS capabilities (stack mode). */
   CAS_REF_DOMAIN?: string;
+  /** Dedicated root-ref domain for platform-owned document versions. */
+  PLATFORM_CAS_REF_DOMAIN?: string;
   INSECURE_PATH_IDENTITY?: string;
   /** Webui origin allowed to call the OAuth endpoints cross-origin. */
   GATEWAY_CORS_ORIGIN?: string;
@@ -341,6 +346,7 @@ async function createCapabilityAuthority(env: Env): Promise<GatewayCapabilityAut
     casAudience: requireBinding(env.CAS_CAPABILITY_AUDIENCE, "CAS_CAPABILITY_AUDIENCE"),
     casStackId: stackId,
     casRefDomain: env.CAS_REF_DOMAIN,
+    platformCasRefDomain: env.PLATFORM_CAS_REF_DOMAIN,
     audit: event => console.log(JSON.stringify({ event: "gateway_capability_issued", ...event })),
   });
 }

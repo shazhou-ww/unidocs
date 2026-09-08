@@ -4,6 +4,7 @@ import type {
   CapabilityPermission,
   IssueCapabilityInput,
 } from "@unidocs/service-auth";
+import { casWritePermission } from "@unidocs/service-auth";
 import {
   casCapabilityPolicy,
   docCapabilityPolicy,
@@ -15,7 +16,7 @@ export interface GatewayCapabilityIssuer {
 }
 
 export interface GatewayCapabilityAuditEvent {
-  readonly kind: "doc" | "delegated-cas" | "gateway-cas";
+  readonly kind: "doc" | "delegated-cas" | "gateway-cas" | "platform-cas";
   readonly kid: string;
   readonly jti: string;
   readonly subject: string;
@@ -35,6 +36,8 @@ export interface GatewayCapabilityAuthorityConfig {
   readonly casStackId: string;
   /** refDomain claim carried by CAS capabilities. */
   readonly casRefDomain?: string;
+  /** Dedicated refDomain for platform-owned immutable document versions. */
+  readonly platformCasRefDomain?: string;
   readonly generateJti?: () => string;
   readonly audit?: (event: GatewayCapabilityAuditEvent) => void;
 }
@@ -51,6 +54,7 @@ export class GatewayCapabilityAuthority {
   readonly #casAudience: string;
   readonly #casStackId: string;
   readonly #casRefDomain?: string;
+  readonly #platformCasRefDomain?: string;
   readonly #generateJti: () => string;
   readonly #audit: (event: GatewayCapabilityAuditEvent) => void;
 
@@ -64,6 +68,7 @@ export class GatewayCapabilityAuthority {
     this.#casAudience = config.casAudience;
     this.#casStackId = config.casStackId;
     this.#casRefDomain = config.casRefDomain;
+    this.#platformCasRefDomain = config.platformCasRefDomain;
     this.#generateJti = config.generateJti ?? (() => crypto.randomUUID());
     this.#audit = config.audit ?? (() => undefined);
   }
@@ -125,6 +130,22 @@ export class GatewayCapabilityAuthority {
       refDomain: this.#casRefDomain,
       permissions: [policy.permission],
       lifetimeSeconds: policy.lifetimeSeconds,
+    });
+    return `Bearer ${token}`;
+  }
+
+  async issuePlatformRootRetention(tenantId: string): Promise<string> {
+    if (!this.#platformCasRefDomain) throw new Error("Platform CAS ref domain is required");
+    const token = await this.#issue(this.#casIssuer, {
+      kind: "platform-cas",
+      subject: "platform",
+      audience: this.#casAudience,
+      tenantId,
+      refDomain: this.#platformCasRefDomain,
+      // UniCAS currently groups lease and updateRootRefs under cas:write.
+      // The dedicated subject/refDomain narrows this token until refs gets its own permission.
+      permissions: [casWritePermission(tenantId)],
+      lifetimeSeconds: 120,
     });
     return `Bearer ${token}`;
   }

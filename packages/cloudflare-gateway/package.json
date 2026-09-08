@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@unicas/control-auth": "workspace:*",
+    "@unicas/tenant-client": "workspace:*",
     "@unidocs/gateway-common": "workspace:*",
     "@unidocs/gateway-oauth": "workspace:*",
     "@unidocs/protocol-gateway": "workspace:*",

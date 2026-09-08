@@ -80,4 +80,5 @@ describe("Gateway routes", () => {
     expect(gatewayRoutes.initFromHash(document))
       .toBe("/tenants/tenant%2Fa/docs/doc%20type/doc%2F1/init_from_hash");
   });
+
 });

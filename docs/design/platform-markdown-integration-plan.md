@@ -255,6 +255,10 @@ HTTP/认证完整回归：`pnpm --filter @unidocs/service-auth test` 为 5 files
 
 Cloudflare 适配验证：`pnpm exec vitest run tests/integration/cloudflare/platform-nonces.test.mjs tests/integration/cloudflare/markdown-compute.test.mjs --fileParallelism=false` 覆盖真实 SQLite DO、重启持久性、真实本地 UniCAS 状态根读取、中文 SValue、RO/RW 与跨 tenant 拒绝、只读不更新 refs、context 重启丢失后从固定 source 重建及 CAS 重定向拒绝。首次运行暴露 workerd 不支持 `redirect: "error"` 导致 init 返回 503，改用 `manual` 并显式拒绝 3xx 后通过。该证据仍是本地隔离集成测试，不是线上部署或生产权限验收。
 
+Platform 持久与提交进展（2026-09-08）：Cloudflare gateway 新增独立 SQLite `PlatformDocument` Durable Object namespace，不复用 legacy editor session。每个对象固定 tenant/doc/type/owner/schema 身份，版本行只接受已保留状态根；创建先持久登记唯一 identity/hash creation intent，再用身份绑定的确定性 requestId 保留初始根，成功后才让 v1 可读，避免先可见未保留版本或并发冲突泄漏 refs。后续提交同样先按 operationId、baseVersion、候选状态根摘要登记固定 pending intent，协调器再在平台专属 `platform:documents` 域保留候选根，最后由 `commitRetained` 在同一 SQLite 事务写入新版本、推进 head 并固化 committed receipt。UniCAS 成功但响应丢失时，本地保持 intent；重启后只重试原 payload，依靠 refs 幂等更新避免重复计数。重复创建和重复提交返回原结果，候选变化、身份变化和过期 base 明确冲突；只凭 operationId 查询不存在记录时不伪造请求摘要或版本。
+
+Platform 持久与真实 CAS 验证：`pnpm exec vitest run tests/integration/cloudflare/platform-document.test.mjs tests/integration/cloudflare/platform-commit-cas.test.mjs --fileParallelism=false` 在真实 workerd/SQLite DO 与本地 UniCAS 中覆盖并发同候选幂等、候选篡改拒绝、creation/pending/receipt 跨重启、条件推进 v1 → v2、stale base 拒绝，以及 create、commit 两阶段各自在 refs 成功后丢失响应再恢复。v1/v2 均先写入真实 SValue 且各保留一次，恢复后 refs 计数不增加、head 只推进一次。authority、协调器和 retention adapter 的 11 个聚焦单测及 gateway-common/cloudflare-gateway typecheck 同时通过。当前 UniCAS refs 契约要求 `cas:write`，尚无只允许平台 refs 更新的细粒度 permission；独立 subject、无 session、独立 refDomain 已缩小归属边界，但权限仍偏宽，正式上线前必须明确接受或收紧该风险。此路径仍仅为内部 RPC，尚未接公开 HTTP、用户作品授权、editor 编排或浏览器链路，不能勾选本轮验收项。下一步先串联 compute snapshot 到固定 platform intent；解除公开 API gate 后再接鉴权后的 create/read/commit/status HTTP。
+
 ### P-MVP-02：管理员登记，用户即可使用
 
 用户结果：管理员登记 Markdown 后，用户从主站目录新建并继续上一轮的编辑/保存流程，无需重新构建主站。

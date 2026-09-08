@@ -133,4 +133,35 @@ describe("GatewayCapabilityAuthority", () => {
       jti: "cas-jti",
     }]);
   });
+
+  test("issues a dedicated platform root retention capability in the configured domain", async () => {
+    const issued: IssueCapabilityInput[] = [];
+    const audits: GatewayCapabilityAuditEvent[] = [];
+    const authority = new GatewayCapabilityAuthority({
+      issuer: { keyId: "doc-key", issue: async () => "unused" },
+      casIssuer: { keyId: "cas-key", issue: async input => { issued.push(input); return "platform-token"; } },
+      casAudience: "unidocs-cas", casStackId: "stack-1", casRefDomain: "doc",
+      platformCasRefDomain: "platform:documents",
+      generateJti: () => "platform-jti", audit: event => audits.push(event),
+    });
+
+    await expect(authority.issuePlatformRootRetention("tenant-1")).resolves.toBe("Bearer platform-token");
+    expect(issued).toEqual([{
+      subject: "platform", audience: "unidocs-cas", tenantId: "tenant-1", refDomain: "platform:documents",
+      permissions: ["tenants:tenant-1:cas:write"], lifetimeSeconds: 120, jti: "platform-jti",
+    }]);
+    expect(audits).toEqual([expect.objectContaining({ kind: "platform-cas", subject: "platform",
+      refDomain: "platform:documents", permissions: ["tenants:tenant-1:cas:write"] })]);
+    expect(JSON.stringify(audits)).not.toContain("platform-token");
+  });
+
+  test("fails closed when platform root retention has no ref domain", async () => {
+    const authority = new GatewayCapabilityAuthority({
+      issuer: { keyId: "doc-key", issue: async () => "unused" },
+      casIssuer: { keyId: "cas-key", issue: async () => "unused" },
+      casAudience: "unidocs-cas", casStackId: "stack-1",
+    });
+
+    await expect(authority.issuePlatformRootRetention("tenant-1")).rejects.toThrow("ref domain");
+  });
 });

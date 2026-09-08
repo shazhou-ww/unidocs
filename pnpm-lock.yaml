@@ -275,6 +275,9 @@ importers:
       '@unicas/control-auth':
         specifier: workspace:*
         version: link:../../unicas-packages/control-auth
+      '@unicas/tenant-client':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-client
       '@unidocs/gateway-common':
         specifier: workspace:*
         version: link:../gateway-common

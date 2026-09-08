@@ -51,6 +51,7 @@ CAS_STACK_ID = "cas_SZ6wfcfqS34J"
 CAS_STACK_ISSUER = "https://unicas.shazhou.work/oauth/unidocs-cloudflare"
 CAS_STACK_KEY_ID = "cf-oauth-2026-09"
 CAS_REF_DOMAIN = "doc"
+PLATFORM_CAS_REF_DOMAIN = "platform:documents"
 CAS_CAPABILITY_AUDIENCE = "https://unicas.shazhou.work/stacks/cas_SZ6wfcfqS34J"
 GATEWAY_OAUTH_ISSUER = "https://unicas.shazhou.work/oauth/unidocs-cloudflare"
 GATEWAY_OIDC_ISSUER = "https://accounts.google.com"
@@ -70,9 +71,17 @@ ADMIN_MARKDOWN_AUDIENCE = "unidocs-doc:markdown"
 name = "UNIDOCS_ADMIN"
 class_name = "UniDocsAdminControl"
 
+[[durable_objects.bindings]]
+name = "PLATFORM_DOCUMENTS"
+class_name = "PlatformDocument"
+
 [[migrations]]
 tag = "unidocs-admin-v1"
 new_sqlite_classes = ["UniDocsAdminControl"]
+
+[[migrations]]
+tag = "platform-documents-v1"
+new_sqlite_classes = ["PlatformDocument"]
 
 [[d1_databases]]
 binding = "GATEWAY_DB"

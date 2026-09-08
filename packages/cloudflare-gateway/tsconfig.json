@@ -16,6 +16,9 @@
       "path": "../../unicas-packages/control-auth"
     },
     {
+      "path": "../../unicas-packages/tenant-client"
+    },
+    {
       "path": "../gateway-common"
     },
     {
