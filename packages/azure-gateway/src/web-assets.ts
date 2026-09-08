@@ -7,7 +7,7 @@
  * API calls are already same-origin and `web-psd/src/main.ts` drops its `/gw`
  * prefix in a production build.
  *
- * Routing rule: `/tenants/*` always belongs to the API. Everything else is a
+ * Routing rule: tenant, discovery and OAuth namespaces belong to protocol handlers. Everything else is a
  * UI path, with unknown paths falling back to `index.html` so client-side
  * routes survive a reload.
  */
@@ -52,7 +52,7 @@ export function webAssetResponse(request: Request): Response | null {
   const { pathname } = new URL(request.url);
   // The API owns this prefix outright — never shadow it with a UI fallback,
   // or a typo'd API path would return HTML with a 200 instead of a 404.
-  if (pathname === "/tenants" || pathname.startsWith("/tenants/")) return null;
+  if (["/tenants", "/.well-known", "/oauth"].some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))) return null;
 
   const direct = WEB_ASSETS[pathname];
   if (direct !== undefined) return asset(pathname, direct, true);
