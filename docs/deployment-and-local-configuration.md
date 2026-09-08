@@ -58,6 +58,13 @@ D1/R2/KV/DO bindings, and policy values remain in
 
 ### Cloudflare UniDocs secrets
 
+UniCAS accepts downstream public HTTPS OAuth issuers without a platform domain
+allowlist. `CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS` is optional: unset/blank enables
+public discovery; a nonblank comma-separated list restricts origins. The deployment
+must retain `global_fetch_strictly_public` and use global fetch, not private network
+bindings, for metadata and JWKS. See [discovery policy and issuer migration](cas-oauth-discovery-and-issuer-migration.md)
+for the network boundary and the prerequisites for moving existing Gateway issuers.
+
 There are two ES256 identities:
 
 - The Gateway capability key signs Gateway-to-Doc capabilities. Gateway gets

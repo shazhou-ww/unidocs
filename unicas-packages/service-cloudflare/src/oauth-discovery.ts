@@ -15,34 +15,28 @@ const JWKS_MAX_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 5_000;
 
 export interface CloudflareOAuthDiscoveryOptions {
-  /** Explicit production allowlist; an empty set fails closed before fetch. */
-  readonly allowedOrigins: readonly string[];
+  /** Optional restriction on public HTTPS origins; an explicit empty list denies all. */
+  readonly allowedOrigins?: readonly string[];
   readonly fetcher?: typeof fetch;
   readonly timeoutMs?: number;
 }
 
 /** SSRF-hardened OAuth metadata/JWKS fetch adapter for the Cloudflare runtime. */
 export class CloudflareOAuthDiscoveryPort implements OAuthDiscoveryPort {
-  readonly #allowedOrigins: ReadonlySet<string>;
+  readonly #allowedOrigins: ReadonlySet<string> | undefined;
   readonly #fetcher: typeof fetch;
   readonly #timeoutMs: number;
 
-  constructor(options: CloudflareOAuthDiscoveryOptions) {
-    this.#allowedOrigins = new Set(options.allowedOrigins.map(normalizeAllowedOrigin));
+  constructor(options: CloudflareOAuthDiscoveryOptions = {}) {
+    this.#allowedOrigins = options.allowedOrigins === undefined ? undefined : new Set(options.allowedOrigins.map(normalizeAllowedOrigin));
     this.#fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   readonly fetchJwks: JwksFetcher = async (url, options) => {
     this.#assertAllowedUrl(url, "jwks_uri");
-    const response = await this.#fetcher(url, options);
-    this.#assertJsonResponse(response, "JWKS");
-    const text = await readBoundedText(response, JWKS_MAX_BYTES);
-    return new Response(text, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
+    const text = await this.#fetchText(url, JWKS_MAX_BYTES, options.signal);
+    return new Response(text, { headers: { "Content-Type": "application/json" } });
   };
 
   async inspectIssuer(input: { readonly issuer: string }): Promise<OAuthDiscoveryResult> {
@@ -72,8 +66,8 @@ export class CloudflareOAuthDiscoveryPort implements OAuthDiscoveryPort {
   }
 
   #assertAllowedUrl(value: string, field: string): void {
-    if (this.#allowedOrigins.size === 0) {
-      throw new TypeError("OAuth discovery is disabled until allowed origins are configured");
+    if (this.#allowedOrigins?.size === 0) {
+      throw new TypeError("OAuth discovery is disabled by the empty origin allowlist");
     }
     let url: URL;
     try {
@@ -81,34 +75,42 @@ export class CloudflareOAuthDiscoveryPort implements OAuthDiscoveryPort {
     } catch {
       throw new TypeError(`${field} must be an absolute URL`);
     }
-    if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
+    if (url.protocol !== "https:" || url.username || url.password || url.hash || (url.port && url.port !== "443")) {
       throw new TypeError(`${field} must use HTTPS on the default port without credentials`);
     }
     if (isUnsafeHostname(url.hostname)) throw new TypeError(`${field} hostname is not allowed`);
-    if (!this.#allowedOrigins.has(url.origin)) {
+    if (this.#allowedOrigins && !this.#allowedOrigins.has(url.origin)) {
       throw new TypeError(`${field} origin is not allowlisted`);
     }
   }
 
   async #fetchJson(url: string, maxBytes: number): Promise<unknown> {
+    const text = await this.#fetchText(url, maxBytes);
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      throw new TypeError("discovery endpoint returned invalid JSON");
+    }
+  }
+
+  async #fetchText(url: string, maxBytes: number, signal?: AbortSignal | null): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+    const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    let response: Response | undefined;
     try {
-      const response = await this.#fetcher(url, {
+      requestSignal.throwIfAborted();
+      response = await this.#fetcher(url, {
         method: "GET",
         headers: { Accept: "application/json" },
         redirect: "manual",
-        signal: controller.signal,
+        signal: requestSignal,
       });
       this.#assertJsonResponse(response, "discovery endpoint");
-      const text = await readBoundedText(response, maxBytes);
-      try {
-        return JSON.parse(text) as unknown;
-      } catch {
-        throw new TypeError("discovery endpoint returned invalid JSON");
-      }
+      return await readBoundedText(response, maxBytes);
     } finally {
       clearTimeout(timer);
+      if (response?.body && !response.body.locked) await response.body.cancel().catch(() => undefined);
     }
   }
 
@@ -165,6 +167,8 @@ function normalizeAllowedOrigin(value: string): string {
 function isUnsafeHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   return normalized === "localhost"
+    || !normalized.includes(".")
+    || normalized.endsWith(".home.arpa")
     || normalized.endsWith(".localhost")
     || normalized.endsWith(".local")
     || normalized.endsWith(".internal")

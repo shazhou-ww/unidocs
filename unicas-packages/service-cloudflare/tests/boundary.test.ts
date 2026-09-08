@@ -34,6 +34,10 @@ describe("service-cloudflare package boundary", () => {
     expect(wrangler).toContain('name = "unidocs-cas"');
     expect(wrangler).toContain('pattern = "unicas.shazhou.work/*"');
     expect(wrangler).not.toContain("[[services]]");
+    expect(wrangler).toContain('"global_fetch_strictly_public"');
+    expect(wrangler).not.toContain("global_fetch_private_origin");
+    expect(wrangler).not.toContain("CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS =");
+    expect(wrangler).not.toContain("[[vpc_services]]");
     expect(wrangler).toContain('binding = "CAS_CONTROL_DB"');
     expect(wrangler).toContain('binding = "CAS_DB"');
     expect(wrangler).toContain('binding = "CAS_R2"');

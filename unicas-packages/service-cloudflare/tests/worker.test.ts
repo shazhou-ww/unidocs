@@ -61,6 +61,7 @@ vi.mock("../src/mcp/worker.js", () => ({
 }));
 
 import worker, { type Env } from "../src/worker.js";
+import { createControlPlaneOperations } from "../src/control-operations.js";
 
 const env = {
   CAS_CONTROL_DB: {},
@@ -86,6 +87,29 @@ beforeEach(() => {
 });
 
 describe("service-cloudflare public routing", () => {
+  test.each([undefined, "", "   "])("enables discovery without a domain restriction (%s)", async (restriction) => {
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response('{"keys":[]}'));
+    try {
+      await worker.fetch(new Request("https://cas.example/admin/stacks"), { ...env, CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS: restriction }, ctx);
+      const options = vi.mocked(createControlPlaneOperations).mock.calls.at(-1)![1]!;
+      expect(options.oauthDiscovery).toBeDefined();
+      const discovery = options.oauthDiscovery!;
+      await expect(discovery.inspectIssuer({ issuer: "https://independent.example/oauth" })).rejects.toThrow();
+      expect(fetcher).toHaveBeenCalled();
+      expect(String(fetcher.mock.calls[0]![0])).toContain("https://independent.example/");
+    } finally { fetcher.mockRestore(); }
+  });
+
+  test("applies an operator's optional origin restriction before fetching", async () => {
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    try {
+      await worker.fetch(new Request("https://cas.example/admin/stacks"), { ...env, CAS_OAUTH_DISCOVERY_ALLOWED_ORIGINS: "https://approved.example" }, ctx);
+      const options = vi.mocked(createControlPlaneOperations).mock.calls.at(-1)![1]!;
+      await expect(options.oauthDiscovery!.inspectIssuer({ issuer: "https://independent.example/oauth" })).rejects.toThrow("not allowlisted");
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally { fetcher.mockRestore(); }
+  });
+
   test("serves health and rejects unknown or private internal routes", async () => {
     const health = await worker.fetch(new Request("https://cas.example/health"), env, ctx);
     await expect(health.json()).resolves.toEqual({ ok: true, service: "unicas" });
@@ -97,10 +121,12 @@ describe("service-cloudflare public routing", () => {
   });
 
   test("publishes RFC 9728 metadata only for stacks with an active OAuth issuer", async () => {
-    const all = vi.fn(async () => ({ results: [
-      { issuer: "https://gateway.example/oauth", priority: 0 },
-      { issuer: "https://cas.example/managed-issuers/cas_stack_a", priority: 1 },
-    ] }));
+    const all = vi.fn(async () => ({
+      results: [
+        { issuer: "https://gateway.example/oauth", priority: 0 },
+        { issuer: "https://cas.example/managed-issuers/cas_stack_a", priority: 1 },
+      ]
+    }));
     const metadataEnv = {
       ...env,
       CAS_CONTROL_DB: {
