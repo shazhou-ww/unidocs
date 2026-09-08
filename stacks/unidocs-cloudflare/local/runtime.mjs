@@ -52,6 +52,10 @@ async function bundleWorker(entry, outfile) {
     target: "es2024",
     conditions: ["workerd", "worker", "browser"],
     alias: WORKSPACE_ALIASES,
+    // 内置字体：Workers 没有文件系统，字节必须内联进产物。生产侧对应的是
+    // packages/cloudflare-psd/wrangler.toml 的 [[rules]] type = "Data"。
+    // 漏了这一项是构建期报错（esbuild 不认识 .ttf 扩展名），不是运行时静默失效。
+    loader: { ".ttf": "binary", ".otf": "binary" },
     ...(entry.replaceAll("\\", "/").includes("unicas-packages/service-cloudflare/")
       ? { external: ["cloudflare:workers", "node:*"] }
       : {}),

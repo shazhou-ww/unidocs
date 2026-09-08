@@ -9,6 +9,17 @@ compatibility_date = "2025-08-17"
 # 对照写对的形式: unicas-packages/service-cloudflare/wrangler.toml。
 compatibility_flags = ["nodejs_compat"]
 
+# 内置字体的字节要内联进 worker 产物 —— Workers 没有文件系统。
+# 同上：必须在任何 [table] 头之前，TOML 里表头之后的所有键都归那张表。写错的
+# 表现是 wrangler 把它当成一个环境变量而不是规则，且整份 dry-run 输出里不会有
+# 任何一行提到它 —— 与上面 compatibility_flags 那次一模一样的坑。
+# 本地栈不读这个文件：同一条规则还要写进 stacks/unidocs-cloudflare/local/runtime.mjs
+# 的 esbuild loader（另见 stacks/unidocs-azure/local/runtime.mjs 的冗余保险）。
+[[rules]]
+type = "Data"
+globs = ["**/*.ttf", "**/*.otf"]
+fallthrough = true
+
 # Stack mode: the editor DO routes canonical /stacks/{stackId}/tenants/...
 # to the middleware worker; the delegated CAS capability is verified against
 # the registered stack issuer — either by RFC 8414 discovery of the issuer's

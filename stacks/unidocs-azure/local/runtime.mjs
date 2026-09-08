@@ -216,6 +216,11 @@ async function bundleService(entry, outfile) {
     target: "node24",
     external: EXTERNAL_NPM_PACKAGES,
     alias: WORKSPACE_ALIASES,
+    // 冗余保险。Azure 生产不打包（node dist/main.js + 真实 node_modules），走的是
+    // packages/azure-psd/src/builtin-fonts.ts 那个 fs 加载器，不需要这一项；但本地
+    // Azure 栈是 esbuild 打包跑的，将来有人把 CF 侧的 `import … from ".../*.ttf"`
+    // 写法搬过来，没有这一项就是一句「No loader is configured for .ttf」。
+    loader: { ".ttf": "binary", ".otf": "binary" },
     logOverride: { "empty-import-meta": "silent" },
   });
 }

@@ -176,6 +176,9 @@ importers:
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
+      '@unidocs/fonts-builtin':
+        specifier: workspace:*
+        version: link:../fonts-builtin
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
@@ -337,6 +340,9 @@ importers:
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
+      '@unidocs/fonts-builtin':
+        specifier: workspace:*
+        version: link:../fonts-builtin
       '@unidocs/protocol-doc':
         specifier: workspace:*
         version: link:../protocol-doc
