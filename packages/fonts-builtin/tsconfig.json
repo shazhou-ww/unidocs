@@ -9,7 +9,6 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../doctype-server-common" },
-    { "path": "../protocol" }
+    { "path": "../doctype-server-common" }
   ]
 }
