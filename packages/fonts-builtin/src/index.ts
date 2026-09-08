@@ -10,3 +10,5 @@
  */
 export type { BuiltinFontRecord } from "./types.js";
 export { BUILTIN_FONTS } from "./fonts.generated.js";
+export { BUILTIN_FALLBACKS } from "./fallbacks.js";
+export { createBuiltinFontProvider, type BuiltinFontLoader } from "./provider.js";

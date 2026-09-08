@@ -508,6 +508,9 @@ importers:
       '@unidocs/doctype-server-common':
         specifier: workspace:*
         version: link:../doctype-server-common
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       typescript:
         specifier: ^5.9.0

@@ -18,7 +18,8 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/doctype-server-common": "workspace:*"
+    "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/protocol": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",
