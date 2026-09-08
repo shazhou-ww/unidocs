@@ -219,8 +219,11 @@ priority or to point at a font registered under a different name.
 Neither stack sets it by default: `packages/cloudflare-psd/wrangler.toml`
 deliberately omits the line, and Azure's `service.bicep` skips the env entry when
 `--psd-font-fallbacks` is not passed. Override per-developer in
-`packages/cloudflare-psd/.dev.vars` on Cloudflare; on Azure there is no bindings
-layer, so set it in the process environment — the shell, or `.env.azure`
+`packages/cloudflare-psd/.dev.vars` on Cloudflare — that is the only door, since
+the process-environment layer that outranks `.dev.vars` passes through just
+`LLM_API_KEY`, `LLM_BASE_URL` and `LLM_MODEL`, so a shell `PSD_FONT_FALLBACKS`
+does nothing there. Azure has no bindings layer at all, so set it in the process
+environment instead — the shell, or `.env.azure`
 (`loadAzureDevEnv` folds that file into `process.env`, shell wins), which
 `spawnService` then spreads onto every doc service.
 
