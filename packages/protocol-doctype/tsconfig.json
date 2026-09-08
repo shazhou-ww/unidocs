@@ -6,6 +6,12 @@
     "composite": true,
     "types": []
   },
-  "include": ["src"],
-  "references": [{ "path": "../protocol" }]
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../protocol"
+    }
+  ]
 }
