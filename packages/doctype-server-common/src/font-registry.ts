@@ -13,6 +13,7 @@
  * 天然没有 sessionId,拿不到。
  */
 import type { SBlob } from "@unidocs/protocol";
+import { observedFailure } from "@unidocs/protocol-doc";
 import type { FontIo, FontProvider } from "./font-provider.js";
 
 /** 覆盖的码位区间,合并后按起点升序排列,区间之间不重叠也不相邻。 */
@@ -219,4 +220,34 @@ export function createFontRegistry(options: {
     read: (font, io) => providerOf(font).read(font.entry, io),
     blobFor: font => providerOf(font).blobFor(font.entry),
   };
+}
+
+/**
+ * `onProviderError` 的默认去处：一行 JSON 到 stderr。
+ *
+ * **为什么降级必须喊出来。** `createFontRegistry` 配了 `onProviderError` 就 fail-soft
+ * —— 那正是"租户的字体 DO 打不通时内置那一档仍然可用、setText 不整体失效"这条设计
+ * 承诺的实现方式。代价是这一档的字体**凭空消失**：模型照样能调 setText，字照样排得
+ * 出来，只是换了个字形。没有任何一步失败，用户看到的是"我装的字体不生效了"，而日志、
+ * 测试、告警全都看不见 —— 与 setText 在 Azure 上缺席三周同一种病。所以降级本身必须
+ * 是一条日志。
+ *
+ * 用 `console.error` 而不是 `consoleObserver`：后者的 `ObservedEvent` 是一个封闭联合
+ * （http_call / agent_run / agent_step / llm_call），没有一支装得下"某个字体来源这一轮
+ * 挂了"，硬塞要先把中立的观测契约撑开一支，代价远大于收益。落地形状与它一致 —— 同样
+ * 一行带 `event` 字段的 JSON，Container Apps 收进 Log Analytics、Workers 收进 tail，
+ * `jq 'select(.event == "font_provider_error")'` 一条就能捞出来。stderr 而不是 stdout：
+ * 这是降级，不是流水账。
+ *
+ * 抽到中立层而不是让两个平台各写一份：两边要的是同一套语义，各写一遍迟早分叉 ——
+ * 与 `casFontBytes` 同一条理由。
+ */
+export function logFontProviderError(providerId: string, error: unknown): void {
+  console.error(JSON.stringify({
+    event: "font_provider_error",
+    providerId,
+    // 展开 cause 并带上截断的栈：这一档最常见的成因是"字体 DO / 连接池打不通"，
+    // 真正的 ECONNRESET 常被藏在 `TypeError: fetch failed` 里面。
+    ...observedFailure(error),
+  }));
 }

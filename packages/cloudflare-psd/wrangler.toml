@@ -37,14 +37,19 @@ CAPABILITY_ALGORITHM = "ES256"
 CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "1800"
 CAPABILITY_CLOCK_SKEW_SECONDS = "30"
-# psd 的字体回退链: 逗号分隔的 postScriptName, 顺序即优先级. 空 = 空链, 这
-# 不是报错 —— PSD 文字层点名的字体没在租户字体索引里登记时, 一个候选都不试,
-# 中文层整层画不出来. 灌完 scripts/seed-psd-fonts.mjs 之后把这里改成它回读时
-# 打印的那些名字 (家族名如 NotoSans 是错的, 要带 -Regular 后缀).
-# 本地 dev 不读这个文件: `pnpm dev` 自己灌字体并把默认值传成 binding, 覆盖写
-# 在 .dev.vars (见 .dev.vars.example). Azure 侧对应的是 deploy.mjs 的
-# --psd-font-fallbacks (stacks/unidocs-azure/deploy/service.bicep).
-PSD_FONT_FALLBACKS = ""
+# psd 的字体回退链: 逗号分隔的 postScriptName, 顺序即优先级.
+#
+# **刻意不在这里列出来**: 不设这个变量时, 接线取 `BUILTIN_FALLBACKS` —— 随包
+# 发行的那两套内置字体, 名字从生成的索引里取, 与字节同源. 早先这里写着
+# `PSD_FONT_FALLBACKS = ""`, 那在旧语义下与"不设"等价; 新语义下**空串是逃生口**
+# (显式要一条空链), 留着它等于把生产 CF 钉死在"一个候选都不试"上 —— 而那正是
+# "中文层整层画不出来"的那条路.
+#
+# 只有想覆盖内置默认时才写它, 值用 scripts/seed-psd-fonts.mjs 回读时打印的名字
+# (家族名如 NotoSans 是错的, 要带 -Regular 后缀). 本地 dev 不读这个文件:
+# `pnpm dev` 自己灌字体并把默认值传成 binding, 覆盖写在 .dev.vars
+# (见 .dev.vars.example). Azure 侧对应的是 deploy.mjs 的 --psd-font-fallbacks
+# (stacks/unidocs-azure/deploy/service.bicep), 那边空值同样是"不注入这个变量".
 
 [exports.PsdEditor]
 type = "durable-object"
