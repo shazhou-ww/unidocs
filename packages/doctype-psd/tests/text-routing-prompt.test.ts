@@ -14,14 +14,15 @@ import { describe, expect, it } from "vitest";
 import { instructions, setTextInstructions, textRoutingInstructions } from "../src/tools.js";
 import { createPsdAgent } from "../src/agent.js";
 import { createStubEditor } from "../src/testing/stub-editor.js";
+import { createFontRegistry } from "@unidocs/doctype-server-common";
 import type { FontIndexSource } from "../src/text/set-text.js";
 import { runQuery } from "../src/queries.js";
 import type { Layer, PsdDoc } from "../src/model/types.js";
 
+/** 本文件只看提示词，不排一个字 —— 一个没有任何来源的门面就够了。 */
 const fontIndex: FontIndexSource = {
-  load: async () => new Map(),
+  registry: createFontRegistry({ providers: [] }),
   fallbacks: [],
-  blobFor: () => { throw new Error("unused"); },
 };
 
 /** 提示词里的一条规则 = 一个 `- ` 开头的行。 */
