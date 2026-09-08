@@ -1,4 +1,5 @@
 export * from "./ports.js";
+export * from "./font-provider.js";
 export * from "./font-registry.js";
 export * from "./font-registry-handler.js";
 export * from "./hash.js";
