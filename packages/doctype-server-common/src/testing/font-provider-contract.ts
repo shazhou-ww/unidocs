@@ -1,6 +1,7 @@
 /**
- * FontRegistry 的共享契约测试。两个平台的适配器都跑同一份 —— 这是"两边行为
- * 一致"唯一能被机器验证的地方,与 testing/port-contract.ts 同一个思路。
+ * 可写字体来源(`WritableFontProvider`)的共享契约测试。两个平台的适配器都跑
+ * 同一份 —— 这是"两边行为一致"唯一能被机器验证的地方,与 testing/port-contract.ts
+ * 同一个思路。
  *
  * **前提,`make` 必须满足**:每次调用返回的实例互不共享底层作用域/存储 ——
  * 即两次 `make()` 拿到的 registry 各自独立,一个的 `put` 不能被另一个的
@@ -8,7 +9,8 @@
  * 见其注释里的理由。
  */
 import { describe, expect, it } from "vitest";
-import type { FontEntry, FontRegistry } from "../font-registry.js";
+import type { FontIo, WritableFontProvider } from "../index.js";
+import type { FontEntry } from "../font-registry.js";
 
 const noto: FontEntry = {
   postScriptName: "NotoSans-Regular",
@@ -25,9 +27,9 @@ const josefin: FontEntry = {
   coverage: [[0x20, 0x7e]],
 };
 
-export function runFontRegistryContract(
+export function runFontProviderContract(
   label: string,
-  make: () => Promise<FontRegistry>,
+  make: () => Promise<WritableFontProvider>,
 ): void {
   describe(label, () => {
     /**
@@ -55,34 +57,55 @@ export function runFontRegistryContract(
     });
 
     it("登记后能读回,字段逐一对上", async () => {
-      const registry = await make();
-      await registry.put(noto);
-      expect(await registry.list()).toEqual([noto]);
+      const provider = await make();
+      await provider.put(noto);
+      expect(await provider.list()).toEqual([noto]);
     });
 
     it("同名登记两次只剩一条,且是后一条 —— 预置脚本每次跑都会全量登记一遍", async () => {
-      const registry = await make();
-      await registry.put(noto);
-      await registry.put({ ...noto, hash: "c".repeat(64), family: "Noto Sans 2" });
-      const rows = await registry.list();
+      const provider = await make();
+      await provider.put(noto);
+      await provider.put({ ...noto, hash: "c".repeat(64), family: "Noto Sans 2" });
+      const rows = await provider.list();
       expect(rows).toHaveLength(1);
       expect(rows[0]?.hash).toBe("c".repeat(64));
       expect(rows[0]?.family).toBe("Noto Sans 2");
     });
 
     it("多条按 postScriptName 升序返回 —— 顺序稳定,回退链的选择才可复现", async () => {
-      const registry = await make();
-      await registry.put(noto);
-      await registry.put(josefin);
-      expect((await registry.list()).map(e => e.postScriptName))
+      const provider = await make();
+      await provider.put(noto);
+      await provider.put(josefin);
+      expect((await provider.list()).map(e => e.postScriptName))
         .toEqual(["JosefinSans-Bold", "NotoSans-Regular"]);
     });
 
     it("coverage 原样往返,不被 JSON 序列化改形状", async () => {
-      const registry = await make();
+      const provider = await make();
       const wide: FontEntry = { ...noto, coverage: [[0x20, 0x7e], [0x4e00, 0x9fff]] };
-      await registry.put(wide);
-      expect((await registry.list())[0]?.coverage).toEqual([[0x20, 0x7e], [0x4e00, 0x9fff]]);
+      await provider.put(wide);
+      expect((await provider.list())[0]?.coverage).toEqual([[0x20, 0x7e], [0x4e00, 0x9fff]]);
+    });
+
+    it("id 是 tenant —— 门面按它分发", async () => {
+      expect((await make()).id).toBe("tenant");
+    });
+
+    it("blobFor 返回内容哈希对得上的 SBlob", async () => {
+      const provider = await make();
+      await provider.put(noto);
+      const blob = provider.blobFor(noto);
+      expect(blob).not.toBeNull();
+      expect(blob!.hash).toBe(noto.hash);
+    });
+
+    it("read 经过 io.readBlob，不自己去碰 CAS（裁定 R29）", async () => {
+      const provider = await make();
+      await provider.put(noto);
+      const seen: string[] = [];
+      const io: FontIo = { readBlob: async b => { seen.push(b.hash); return { data: new Uint8Array([7]) }; } };
+      expect(await provider.read(noto, io)).toEqual(new Uint8Array([7]));
+      expect(seen).toEqual([noto.hash]);
     });
   });
 }

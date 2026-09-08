@@ -26,7 +26,10 @@ describe("UniDocs local CAS configuration", () => {
       .toEqual({ casMode: "remote", fontsMode: "auto", docTypes: ["docx"] });
   });
 
-  // 字体预置默认开着——"要人先手工跑一遍预置脚本"等于让 setText 默认关着。
+  // 字体预置默认开着。内置字体随包发行之后这**不再**是"否则 setText 默认关着"
+  // ——`--fonts off` 之后索引里仍有内置那两条，中英混排照样排得出来。默认开着
+  // 是为了本地多拿全量 NotoSansSC 与示例 PSD 点名的 JosefinSans-Bold（理由写在
+  // scripts/unidocs-dev-config.mjs 的 fontsMode 那段）。
   // 退出开关是给离线开发和 CI 的，照 --cas 那一套：显式参数 > 环境变量 > 默认。
   it("seeds PSD fonts by default and takes an explicit opt-out", () => {
     expect(parseDevArgs(["psd"], {}).fontsMode).toBe("auto");

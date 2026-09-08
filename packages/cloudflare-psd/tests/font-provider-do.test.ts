@@ -1,6 +1,6 @@
 /**
- * `createDoFontRegistry` 跑中立层的共享契约（doctype-server-common 的
- * font-registry-contract）—— 与内存实现验证的是同一份行为，后端换成真的
+ * `createDoFontProvider` 跑中立层的共享契约（doctype-server-common 的
+ * font-provider-contract）—— 与内存实现验证的是同一份行为，后端换成真的
  * `PsdFontsDurableObject`。
  *
  * `makeStubNamespace()` 抄的是 fonts-do.test.ts 里给 DO 造 sqlite 假体的
@@ -15,8 +15,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { runFontRegistryContract } from "@unidocs/doctype-server-common/font-registry-contract";
-import { createDoFontRegistry } from "../src/font-registry-do.js";
+import { runFontProviderContract } from "@unidocs/doctype-server-common/font-provider-contract";
+import { createDoFontProvider } from "../src/font-provider-do.js";
 import { PsdFontsDurableObject } from "../src/fonts-do.js";
 
 /** `ctx.storage.sql` 的形状，背后是一个真的内存 sqlite。同 fonts-do.test.ts。 */
@@ -59,18 +59,18 @@ function makeStubNamespace(): DurableObjectNamespace {
   } as unknown as DurableObjectNamespace;
 }
 
-runFontRegistryContract("createDoFontRegistry", async () =>
-  createDoFontRegistry({ namespace: makeStubNamespace(), objectName: "s1|t1" }));
+runFontProviderContract("createDoFontProvider", async () =>
+  createDoFontProvider({ namespace: makeStubNamespace(), objectName: "s1|t1" }));
 
 /**
  * 存储层故障时适配器要抛，不能吞。
  *
- * 中立的 `handleFontsRequest` 不兜底 `registry.list/put` 抛出的异常 —— 那是
+ * 中立的 `handleFontsRequest` 不兜底 provider 的 `list/put` 抛出的异常 —— 那是
  * `worker.ts` 那层顶层 try/catch 的责任（把它变成 500）。这两条用例锁住的是
- * 前一半：DO 侧一旦不返回 2xx，`createDoFontRegistry` 必须让异常穿出去，
+ * 前一半：DO 侧一旦不返回 2xx，`createDoFontProvider` 必须让异常穿出去，
  * `worker.ts` 的 catch 才有东西可接。
  */
-describe("createDoFontRegistry 的故障穿透", () => {
+describe("createDoFontProvider 的故障穿透", () => {
   const failingNamespace = (status: number): DurableObjectNamespace => ({
     idFromName: (name: string) => name,
     get: () => ({
@@ -79,13 +79,13 @@ describe("createDoFontRegistry 的故障穿透", () => {
   } as unknown as DurableObjectNamespace);
 
   it("list() 遇到非 2xx 响应会抛，不是吞掉返回空数组", async () => {
-    const registry = createDoFontRegistry({ namespace: failingNamespace(500), objectName: "s1|t1" });
-    await expect(registry.list()).rejects.toThrow(/Font index request failed 500/);
+    const provider = createDoFontProvider({ namespace: failingNamespace(500), objectName: "s1|t1" });
+    await expect(provider.list()).rejects.toThrow(/Font index request failed 500/);
   });
 
   it("put() 遇到非 2xx 响应会抛，不是静默当成功", async () => {
-    const registry = createDoFontRegistry({ namespace: failingNamespace(400), objectName: "s1|t1" });
-    await expect(registry.put({
+    const provider = createDoFontProvider({ namespace: failingNamespace(400), objectName: "s1|t1" });
+    await expect(provider.put({
       postScriptName: "NotoSans-Regular",
       family: "Noto Sans",
       hash: "a".repeat(64),

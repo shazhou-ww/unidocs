@@ -19,6 +19,7 @@
     "@unidocs/cloudflare-sdk": "workspace:*",
     "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/doctype-psd": "workspace:*",
+    "@unidocs/fonts-builtin": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*",
     "@unidocs/service-auth": "workspace:*"
   },

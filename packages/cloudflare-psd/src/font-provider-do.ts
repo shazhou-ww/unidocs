@@ -1,20 +1,25 @@
 /**
- * FontRegistry 的 Cloudflare 实现 —— 薄适配层，把 list/put 映到现有字体 DO 的
- * GET/POST。
+ * 租户字体来源（`WritableFontProvider`）的 Cloudflare 实现 —— 薄适配层，把
+ * list/put 映到现有字体 DO 的 GET/POST。
  *
  * DO 内部与它的 sqlite 表**刻意不动**：线上已有登记数据，而这次要解决的是
  * "Azure 没有实现"，不是"CF 的实现不好"。表的五个具名列与 FontEntry 一比一
  * 对上，所以这里不需要任何打包/拆包。
  */
 import { FONTS_INTERNAL_PATH } from "./fonts-do.js";
-import type { FontEntry, FontRegistry } from "@unidocs/doctype-server-common";
+import { casFontBytes } from "@unidocs/doctype-server-common";
+import type { FontEntry, WritableFontProvider } from "@unidocs/doctype-server-common";
 
-export function createDoFontRegistry(opts: {
+export function createDoFontProvider(opts: {
   readonly namespace: DurableObjectNamespace;
   readonly objectName: string;
-}): FontRegistry {
+}): WritableFontProvider {
   const stub = () => opts.namespace.get(opts.namespace.idFromName(opts.objectName));
   return {
+    id: "tenant",
+    // 与 Azure 侧复用同一份 —— 两边的读取语义逐字相同，各写一遍迟早分叉。
+    read: casFontBytes.read,
+    blobFor: casFontBytes.blobFor,
     async list() {
       const response = await stub().fetch(`http://psd-fonts${FONTS_INTERNAL_PATH}`, { method: "GET" });
       if (!response.ok) {

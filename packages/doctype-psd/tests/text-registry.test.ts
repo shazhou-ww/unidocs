@@ -1,12 +1,18 @@
 import { describe, it, expect } from "vitest";
 import type { FontFace } from "../src/text/font.js";
 import type { FontCoverage } from "../src/text/opentype-face.js";
-import type { FontEntry, FontIndex } from "../src/text/registry.js";
+import type { RegisteredFont } from "@unidocs/doctype-server-common";
+import type { FontIndex } from "../src/text/registry.js";
 import { resolveFaceChain, selectFonts } from "../src/text/registry.js";
 import { fakeFace } from "./text-fake-face.js";
 
-function entry(postScriptName: string, coverage: FontCoverage): FontEntry {
-  return { postScriptName, family: postScriptName, hash: `hash-${postScriptName}`, unitsPerEm: 1000, coverage };
+/** 索引里装的是 RegisteredFont（`{ entry, source }`）。`source` 对 selectFonts
+ *  没有影响 —— 它只看 coverage —— 所以这里一律填同一个值。 */
+function entry(postScriptName: string, coverage: FontCoverage): RegisteredFont {
+  return {
+    entry: { postScriptName, family: postScriptName, hash: `hash-${postScriptName}`, unitsPerEm: 1000, coverage },
+    source: "test",
+  };
 }
 
 describe("resolveFaceChain", () => {

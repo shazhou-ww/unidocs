@@ -28,6 +28,7 @@
     "@azure/storage-blob": "^12.33.0",
     "pg": "^8.23.0",
     "@unidocs/doctype-server-common": "workspace:*",
+    "@unidocs/fonts-builtin": "workspace:*",
     "@unidocs/protocol-doc": "workspace:*"
   },
   "devDependencies": {

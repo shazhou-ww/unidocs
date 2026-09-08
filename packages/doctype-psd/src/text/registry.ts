@@ -23,11 +23,10 @@ import type { FontCoverage } from "./opentype-face.js";
 // "服务端代码进了浏览器产物"误报。别把下一行的 `export type` 改回带模块
 // 说明符的 `export type { FontEntry } from "…"` 形式,连注释里也别写出
 // 那个完整说明符字符串——门禁按子串匹配,写出来同样会被判违规。
-import type { FontEntry } from "@unidocs/doctype-server-common";
-export type { FontEntry };
-
-/** 按 postScriptName 索引。 */
-export type FontIndex = ReadonlyMap<string, FontEntry>;
+import type { FontEntry, FontIndex } from "@unidocs/doctype-server-common";
+// FontIndex 同理:它现在映射到的是 RegisteredFont({ entry, source }),由门面
+// 合成多个来源之后产出,本包不再自己定义一份。
+export type { FontEntry, FontIndex };
 
 /** 按候选顺序挑第一个"认识"这个码位的候选；都不认识返回 null。
  *  `knows` 是判据，两个调用方各喂各的。 */
@@ -105,8 +104,10 @@ export function selectFonts(
   for (const ch of content) {
     const codePoint = ch.codePointAt(0)!;
     const name = pick(candidates, codePoint, (postScriptName, cp) => {
-      const entry = index.get(postScriptName);
-      return entry !== undefined && coversCodePoint(entry.coverage, cp);
+      // 多一层 `.entry`:索引里装的是 RegisteredFont,coverage 在它包着的
+      // FontEntry 上。这里不关心 `.source` —— 选字体只看覆盖,来源是排查用的。
+      const found = index.get(postScriptName);
+      return found !== undefined && coversCodePoint(found.entry.coverage, cp);
     });
     if (name !== null) needed.add(name);
   }

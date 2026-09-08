@@ -25,6 +25,8 @@ import { materializePsdDoc, storePsdDoc, type PsdStoredDoc } from "../src/state.
 import { runQuery, type PsdQuery } from "../src/queries.js";
 import { createPsdAgent } from "../src/agent.js";
 import { createStubEditor } from "../src/testing/stub-editor.js";
+import { createFontRegistry } from "@unidocs/doctype-server-common";
+import type { FontProvider } from "@unidocs/doctype-server-common";
 import { createSetTextTool, type FontIndexSource } from "../src/text/set-text.js";
 import { fontCoverage, parseFontFace } from "../src/text/opentype-face.js";
 import type { FontEntry } from "../src/text/registry.js";
@@ -54,38 +56,71 @@ const cjkFontBytes = (): Uint8Array => buildRectFont([
 
 type Cas = ReturnType<typeof memCas>;
 
+/** 内置字体的假哈希。**刻意不进 memCas** —— 内置字节随包走，CAS 里根本没有
+ *  这个对象，这正是"不许写进 doc.fonts"的理由。真往 CAS 里塞一份会让这个
+ *  夹具和被测语义脱节。 */
+const fakeHash = (name: string): string =>
+  [...name].reduce((h, c) => (Math.imul(h, 31) + c.codePointAt(0)!) >>> 0, 7)
+    .toString(16).padStart(64, "0");
+
 /**
- * 一个内存字体来源：字节进 memCas，索引里的 `coverage`/`unitsPerEm` 都是从
- * 字体文件**解析**出来的（与预置脚本的要求一致，不是人工填的）。
+ * 一个内存字体来源。索引里的 `coverage`/`unitsPerEm` 都是从字体文件**解析**
+ * 出来的（与预置脚本的要求一致，不是人工填的）。
+ *
+ * `kind` 选的是**来源的性质**，不只是一个 id：
+ *   - `"tenant"` —— 字节在 memCas 里，`blobFor` 交出 SBlob（文档靠它保活）；
+ *   - `"builtin"` —— 字节随包走，`read` 直接给内存里那份，`blobFor` 恒为 null。
+ * 走的是真的 `createFontRegistry` 门面，不是手搓一个 registry：合成、缓存、
+ * 按 source 分发这几段都该被这些用例顺带压到。
  */
 async function fontSource(
   cas: Cas,
   entries: readonly { name: string; bytes: Uint8Array }[],
   fallbacks: readonly string[],
+  kind: "tenant" | "builtin" = "tenant",
 ): Promise<FontIndexSource> {
-  const index = new Map<string, FontEntry>();
+  const list: FontEntry[] = [];
   const blobs = new Map<string, SBlob>();
+  const bytesByHash = new Map<string, Uint8Array>();
   for (const { name, bytes } of entries) {
-    const blob = await cas.ctx.makeSBlob({ data: bytes, contentType: "font/otf" });
     const face = parseFontFace(bytes);
-    index.set(name, {
+    let hash: string;
+    if (kind === "tenant") {
+      const blob = await cas.ctx.makeSBlob({ data: bytes, contentType: "font/otf" });
+      hash = blob.hash;
+      blobs.set(hash, blob);
+    } else {
+      hash = fakeHash(name);
+    }
+    list.push({
       postScriptName: name,
       family: name,
-      hash: blob.hash,
+      hash,
       unitsPerEm: face.unitsPerEm,
       coverage: fontCoverage(face),
     });
-    blobs.set(blob.hash, blob);
+    bytesByHash.set(hash, bytes);
   }
-  return {
-    load: async () => index,
-    fallbacks,
-    blobFor: (entry) => {
-      const blob = blobs.get(entry.hash);
-      if (!blob) throw new Error(`test font source: no blob for ${entry.postScriptName}`);
-      return blob;
-    },
+  const blobOf = (entry: FontEntry): SBlob => {
+    const blob = blobs.get(entry.hash);
+    if (!blob) throw new Error(`test font source: no blob for ${entry.postScriptName}`);
+    return blob;
   };
+  const provider: FontProvider = kind === "tenant"
+    ? {
+      id: "tenant",
+      list: async () => list,
+      read: async (entry, io) => (await io.readBlob(blobOf(entry))).data,
+      blobFor: blobOf,
+    }
+    : {
+      id: "builtin",
+      list: async () => list,
+      // 内置来源忽略 io：字节不在 CAS 里，没有会话身份可用之处。
+      read: async (entry) => bytesByHash.get(entry.hash)!,
+      blobFor: () => null,
+    };
+  return { registry: createFontRegistry({ providers: [provider] }), fallbacks };
 }
 
 const BLACK = { r: 0, g: 0, b: 0 };
@@ -419,7 +454,7 @@ describe("setText：只装真正用得上的字体", () => {
       { name: "Latin", bytes: rectFontBytes() },
       { name: "CJK", bytes: cjkFontBytes() },
     ], ["Latin", "CJK"]);
-    const index = await source.load();
+    const index = await source.registry.index();
     const model = doc(textLayer({
       content: "A",
       style: { font: "Latin", size: SIZE, color: BLACK },
@@ -434,7 +469,7 @@ describe("setText：只装真正用得上的字体", () => {
     );
 
     expect(structured.ok).toBe(true);
-    expect(readLog).toEqual([index.get("Latin")!.hash]);
+    expect(readLog).toEqual([index.get("Latin")!.entry.hash]);
     expect((ops[0].payload as { fonts: { postScriptName: string }[] }).fonts.map(f => f.postScriptName))
       .toEqual(["Latin"]);
   });
@@ -768,9 +803,8 @@ describe("setText 端到端：真 op 落到真 PsdDoc，再往返一次持久化
 
 describe("工具表与提示词必须一起条件化", () => {
   const source: FontIndexSource = {
-    load: async () => new Map(),
+    registry: createFontRegistry({ providers: [] }),
     fallbacks: [],
-    blobFor: () => { throw new Error("unused"); },
   };
 
   it("没有 fontIndex 时，工具表和提示词里都没有 setText", () => {
@@ -872,5 +906,29 @@ describe("setText 成功之后不再挂着「渲染用的是烘焙像素」", ()
     const { ops } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
     const next = applyOne(model, ops[0] as never);
     expect("degraded" in next.layers[0]).toBe(false);
+  });
+});
+
+describe("字体来源与保活", () => {
+  it("内置字体排完不进 doc.fonts —— 它不在 CAS 里，没有可回收的对象", async () => {
+    // 走那条路会撞上 state.ts 的
+    // "PSD font SBlob … was not stored during externalization"。
+    const cas = memCas();
+    const source = await fontSource(
+      cas, [{ name: "TestFont", bytes: rectFontBytes() }], ["TestFont"], "builtin",
+    );
+    const { ops } = await runSetText(cas, doc(textLayer(twoRunText(), BOUNDS)), source, {
+      layerId: "title", text: "AAA",
+    });
+    const setTextOp = ops.find(o => o.kind === "set_text")!;
+    expect(setTextOp.payload.fonts).toEqual([]);
+  });
+
+  it("租户字体排完仍然进 doc.fonts —— 保活靠文档钉着", async () => {
+    const { cas, model, source } = await scene();
+    const { ops } = await runSetText(cas, model, source, { layerId: "title", text: "AAA" });
+    const setTextOp = ops.find(o => o.kind === "set_text")!;
+    expect((setTextOp.payload.fonts as { postScriptName: string }[]).map(f => f.postScriptName))
+      .toEqual(["TestFont"]);
   });
 });

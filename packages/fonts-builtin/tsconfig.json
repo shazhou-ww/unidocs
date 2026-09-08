@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    "lib": ["ES2024"],
+    "types": []
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../doctype-server-common" },
+    { "path": "../protocol" }
+  ]
+}

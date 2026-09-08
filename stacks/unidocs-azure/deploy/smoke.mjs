@@ -330,6 +330,30 @@ async function psdFlow(gateway, docId) {
   // SBlob → CAS wiring (getPreview on a raster layer) is a separate,
   // planned integration test, not this deployment smoke flow — see this
   // plan's Task 6 brief.
+  //
+  // The built-in fonts (`packages/fonts-builtin`) deliberately get NO assertion
+  // here, and that is not an oversight. This flow speaks the raw
+  // create/apply/query/export wire, and `set_text` is not reachable over it:
+  //
+  //   - `set_text` is a *pure op*. Every value in its payload — the re-split
+  //     `LayerText`, the re-rasterised `PixelRef`, the new bounds — is computed
+  //     by the setText *effect* (`doctype-psd/src/text/set-text.ts`), which is
+  //     where the font registry is actually read. Ops themselves never touch a
+  //     font. A hand-built `set_text` payload would therefore assert nothing
+  //     about fonts while looking like it did.
+  //   - Effects run only inside the agent's ReAct loop (`/_internal/*` has no
+  //     "invoke one tool" endpoint), which needs an LLM. A smoke assertion that
+  //     depends on a model's tool choice is not a deterministic assertion.
+  //   - This flow's layer is a `group` anyway; `set_text` refuses anything that
+  //     is not a text layer, and `add_layer` cannot conjure a text layer with a
+  //     baked bitmap out of nothing.
+  //
+  // The zero-config claim ("a brand-new tenant can typeset 中英混排 with no
+  // seeding") is covered where it can be asserted for real, against a live
+  // worker and the real shipped bytes:
+  // `tests/integration/cloudflare/psd-fonts-e2e.test.mjs`. Covering it here
+  // would need an e2e with a real PSD fixture carrying a text layer, driven
+  // through the agent — a separate piece of work, not a line in this file.
   const layerId = `smoke-layer-${RUN}`;
   const layerName = `Smoke ${RUN}`;
   const { body: applyBody } = await apply(gateway, "psd", docId, 1, "smoke: add layer", [

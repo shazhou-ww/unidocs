@@ -16,7 +16,8 @@ import {
 } from "@unidocs/service-auth";
 import type { VerifiedCapability } from "@unidocs/service-auth";
 import { fontEntryProblem } from "./font-registry.js";
-import type { FontEntry, FontRegistry } from "./font-registry.js";
+import type { FontEntry } from "./font-registry.js";
+import type { WritableFontProvider } from "./font-provider.js";
 import type { DocCapabilityVerifier } from "./doc-type-handler.js";
 
 export interface FontsAuditEvent {
@@ -30,7 +31,12 @@ export interface FontsAuditEvent {
 export interface FontsRequestConfig {
   /** 与 `createDocTypeHandler` 用的是同一个校验器(`DocAuthConfigCache` 产出)。 */
   readonly docCapabilityVerifier: DocCapabilityVerifier;
-  readonly registry: FontRegistry;
+  /**
+   * 租户那一档来源。**刻意不收门面**:这个端点回答的是"这个租户**登记了**什么",
+   * 不是"这个租户**能用**什么"。掺进内置字体会让 `scripts/seed-psd-fonts.mjs`
+   * 的幂等判据("索引里有没有")每次都判成"已经有了",于是一套字体都灌不进去。
+   */
+  readonly provider: WritableFontProvider;
   readonly audit?: (event: FontsAuditEvent) => void;
 }
 
@@ -70,7 +76,7 @@ export async function handleFontsRequest(
   }));
 
   if (request.method === "GET") {
-    return Response.json({ fonts: await cfg.registry.list() });
+    return Response.json({ fonts: await cfg.provider.list() });
   }
   let body: unknown;
   try {
@@ -80,7 +86,7 @@ export async function handleFontsRequest(
   }
   const problem = fontEntryProblem(body);
   if (problem) return Response.json({ error: problem }, { status: 400 });
-  await cfg.registry.put(body as FontEntry);
+  await cfg.provider.put(body as FontEntry);
   return Response.json({ success: true });
 }
 
