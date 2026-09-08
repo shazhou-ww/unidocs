@@ -9,7 +9,9 @@ import type {
   UnitOfWork,
 } from "./ports.js";
 import type { CasGateway } from "./session.js";
-import type { FontEntry, FontRegistry } from "./font-registry.js";
+import { casFontBytes } from "./font-provider.js";
+import type { WritableFontProvider } from "./font-provider.js";
+import type { FontEntry } from "./font-registry.js";
 import { VersionConflictError } from "@unidocs/protocol-doc";
 import { computeNodeDigest, encodeHeader, hashToHex } from "@unicas/codec";
 
@@ -273,10 +275,20 @@ export function createMemoryPorts(): {
   };
 }
 
-/** 进程内的 FontRegistry —— 单测与本地夹具用,不持久化。 */
-export function createMemoryFontRegistry(): FontRegistry {
+/**
+ * 进程内的租户字体来源 —— 单测与本地夹具用,不持久化。
+ *
+ * `read`/`blobFor` 直接复用 `casFontBytes`,而不是就地再写一遍:两个平台的租户
+ * 适配器用的就是这一份,内存这一档跟着用,契约测试才是在验同一段代码;各写一遍
+ * 只会让"内存版跟真实现不一样"这种偏差有地方藏。登记表里本来也只有元数据,
+ * 字节始终在 CAS(裁定 R29),内存不内存对这两个成员没有区别。
+ */
+export function createMemoryFontProvider(): WritableFontProvider {
   const rows = new Map<string, FontEntry>();
   return {
+    id: "tenant",
+    read: casFontBytes.read,
+    blobFor: casFontBytes.blobFor,
     async list() {
       return [...rows.values()].sort(
         (a, b) => a.postScriptName < b.postScriptName ? -1 : a.postScriptName > b.postScriptName ? 1 : 0,

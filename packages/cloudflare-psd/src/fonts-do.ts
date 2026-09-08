@@ -14,8 +14,8 @@
  * `/tenants/{t}/fonts` 的路由匹配与边缘鉴权/转发已经下沉到中立层
  * （`@unidocs/protocol-doc` 的 `matchFontsRoute`、`@unidocs/doctype-server-common`
  * 的 `handleFontsRequest`）。这个文件此前把边缘处理和 DO 放在一起，是因为
- * 它们是同一个端点的两端；现在两端分处两层，接线靠 `font-registry-do.ts`
- * 的 `createDoFontRegistry`（把 `FontRegistry.list/put` 映到这个 DO 的
+ * 它们是同一个端点的两端；现在两端分处两层，接线靠 `font-provider-do.ts`
+ * 的 `createDoFontProvider`（把租户 provider 的 `list/put` 映到这个 DO 的
  * GET/POST）与 `worker.ts` 完成。
  */
 import type { FontEntry } from "@unidocs/doctype-psd";
