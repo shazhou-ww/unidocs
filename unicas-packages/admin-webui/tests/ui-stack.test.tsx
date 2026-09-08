@@ -48,6 +48,33 @@ beforeEach(() => {
 });
 
 describe("StackView", () => {
+  test("takes a disabled Playground to managed issuer settings without enabling it", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(fetch);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const pathname = new URL(String(input), "http://localhost").pathname;
+      if (pathname.endsWith("/managed-issuer")) return json({
+        stackId: "cas_one", mode: "managed", status: "disabled", revision: 0,
+        issuer: "https://cas.example/managed-issuers/cas_one",
+      });
+      if (pathname.endsWith("/file-roots")) return json({ items: [] });
+      return original(input, init);
+    });
+    render(<StackView stackId="cas_one" onOpenMcpConfiguration={vi.fn()} onLogout={vi.fn()} />);
+    await user.click(await screen.findByRole("tab", { name: "Playground" }));
+    expect(await screen.findByRole("heading", { name: "Managed issuer required" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Go to managed issuer settings" }));
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    const settings = screen.getByRole("region", { name: "Managed issuer settings" });
+    await within(settings).findByRole("button", { name: "Enable managed issuer" });
+    expect(settings).toHaveFocus();
+    expect(settings).toHaveTextContent("Admin sign-in grants stack management access, not access to tenant data");
+    expect(settings).toHaveTextContent("isolated sandbox tenant");
+    expect(settings).toHaveTextContent("Applications using a custom OAuth issuer do not need to enable it");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH" || init?.method === "POST")).toBe(false);
+  });
+
   test("renders a stack switcher above vertical management navigation", async () => {
     const user = userEvent.setup();
     render(<StackView stackId="cas_one" onOpenMcpConfiguration={vi.fn()} onLogout={vi.fn()} />);

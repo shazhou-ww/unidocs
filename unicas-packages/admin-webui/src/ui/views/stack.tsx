@@ -77,6 +77,7 @@ export function StackView({ stackId, onStackChange, onOpenMcpConfiguration, onLo
   const [stacks, setStacks] = useState<CasStack[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<string>("overview");
+  const [focusManagedIssuer, setFocusManagedIssuer] = useState(false);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const navigationButtonRef = useRef<HTMLButtonElement>(null);
@@ -157,6 +158,7 @@ export function StackView({ stackId, onStackChange, onOpenMcpConfiguration, onLo
   }
 
   function selectTab(id: string) {
+    setFocusManagedIssuer(false);
     setTab(id);
     if (mobileNavigationOpen) closeMobileNavigation();
   }
@@ -248,12 +250,15 @@ export function StackView({ stackId, onStackChange, onOpenMcpConfiguration, onLo
           {tab === "overview" ? (
             <>
               <StackOverviewView stack={stack} onChanged={reload} />
-              <IssuerView stackId={stackId} />
+              <IssuerView stackId={stackId} focusManagedIssuer={focusManagedIssuer} />
               <UsageView stackId={stackId} />
             </>
           ) : null}
           {tab === "members" ? <MembersView stackId={stackId} stackRevision={stack.revision} onChanged={reload} /> : null}
-          {tab === "playground" ? <PlaygroundView stackId={stackId} /> : null}
+          {tab === "playground" ? <PlaygroundView stackId={stackId} onOpenManagedIssuer={() => {
+            selectTab("overview");
+            setFocusManagedIssuer(true);
+          }} /> : null}
           {tab === "change-log" ? <ControlAuditView stackId={stackId} /> : null}
         </section>
       </div>

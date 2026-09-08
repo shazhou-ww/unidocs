@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, Power, Search, ShieldCheck } from "lucide-react";
 import type {
   CasOAuthIssuerInspection,
@@ -14,7 +14,15 @@ import { formatErrorSafe } from "./view-helpers.js";
  * keys: activation proves control of a key the issuer currently advertises,
  * and tenant verification reads the issuer's discovered jwks_uri.
  */
-export function IssuerView({ stackId }: { stackId: string }) {
+export function IssuerView({ stackId, focusManagedIssuer = false }: { stackId: string; focusManagedIssuer?: boolean }) {
+  const managedSettingsRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!focusManagedIssuer) return;
+    managedSettingsRef.current?.focus();
+    managedSettingsRef.current?.scrollIntoView?.({ block: "start" });
+  }, [focusManagedIssuer, stackId]);
+
   const [oauthIssuer, setOAuthIssuer] = useState<CasStackOAuthIssuer | null>(null);
   const [managedIssuer, setManagedIssuer] = useState<CasStackOAuthIssuer | null>(null);
   const [inspection, setInspection] = useState<CasOAuthIssuerInspection | null>(null);
@@ -128,37 +136,50 @@ export function IssuerView({ stackId }: { stackId: string }) {
 
   return (
     <>
-      <Card title="Managed issuer">
-        {error ? <ErrorState message={error} /> : null}
-        {managedIssuer ? (
-          <>
-            <p className="hint">
-              Status: <strong>{managedIssuer.status}</strong> · Revision {managedIssuer.revision}
-            </p>
-            {managedIssuer.status === "active" ? (
-              <div className="field-row">
-                <span className="hint">Managed issuer URL</span>
-                <button
-                  type="button"
-                  className="issuer-url-copy"
-                  aria-label="Copy managed issuer URL"
-                  title={copyStatus === "copied" ? "Copied" : "Copy managed issuer URL"}
-                  onClick={() => void copyManagedIssuerUrl()}
-                >
-                  <code>{managedIssuer.issuer}</code>
-                  {copyStatus === "copied" ? <Check size={15} /> : <Copy size={15} />}
-                </button>
-                <span className="hint" role="status">
-                  {copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Could not copy URL. Clipboard access is unavailable." : ""}
-                </span>
-              </div>
-            ) : null}
-            <Button icon={<Power size={15} />} variant="primary" onClick={() => void toggleManagedIssuer()} disabled={togglingManaged}>
-              {togglingManaged ? "Updating…" : managedIssuer.status === "active" ? "Disable managed issuer" : "Enable managed issuer"}
-            </Button>
-          </>
-        ) : null}
-      </Card>
+      <section
+        aria-label="Managed issuer settings"
+        tabIndex={-1}
+        ref={managedSettingsRef}
+      >
+        <Card title="Managed issuer">
+          <p className="hint">
+            Admin sign-in grants stack management access, not access to tenant data.
+            The managed issuer is UniCAS's built-in authorization server: it issues short-lived
+            tenant capabilities for Playground and gives each stack member an isolated sandbox tenant.
+            Enable it to use Playground without running your own authorization server.
+            Applications using a custom OAuth issuer do not need to enable it.
+          </p>
+          {error ? <ErrorState message={error} /> : null}
+          {managedIssuer ? (
+            <>
+              <p className="hint">
+                Status: <strong>{managedIssuer.status}</strong> · Revision {managedIssuer.revision}
+              </p>
+              {managedIssuer.status === "active" ? (
+                <div className="field-row">
+                  <span className="hint">Managed issuer URL</span>
+                  <button
+                    type="button"
+                    className="issuer-url-copy"
+                    aria-label="Copy managed issuer URL"
+                    title={copyStatus === "copied" ? "Copied" : "Copy managed issuer URL"}
+                    onClick={() => void copyManagedIssuerUrl()}
+                  >
+                    <code>{managedIssuer.issuer}</code>
+                    {copyStatus === "copied" ? <Check size={15} /> : <Copy size={15} />}
+                  </button>
+                  <span className="hint" role="status">
+                    {copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Could not copy URL. Clipboard access is unavailable." : ""}
+                  </span>
+                </div>
+              ) : null}
+              <Button icon={<Power size={15} />} variant="primary" onClick={() => void toggleManagedIssuer()} disabled={togglingManaged}>
+                {togglingManaged ? "Updating…" : managedIssuer.status === "active" ? "Disable managed issuer" : "Enable managed issuer"}
+              </Button>
+            </>
+          ) : null}
+        </Card>
+      </section>
       <Card title="Custom OAuth authorization server">
         <p className="hint">
           Connect a standards-based authorization server through RFC 8414 or OpenID discovery.
