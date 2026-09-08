@@ -46,8 +46,10 @@ CAPABILITY_CLOCK_SKEW_SECONDS = "30"
 # "中文层整层画不出来"的那条路.
 #
 # 只有想覆盖内置默认时才写它, 值用 scripts/seed-psd-fonts.mjs 回读时打印的名字
-# (家族名如 NotoSans 是错的, 要带 -Regular 后缀). 本地 dev 不读这个文件:
-# `pnpm dev` 自己灌字体并把默认值传成 binding, 覆盖写在 .dev.vars
+# (家族名如 NotoSans 是错的, 要带 -Regular 后缀). 本地 dev 不读这个文件
+# (stacks/unidocs-cloudflare/local/doc-types.mjs 按自己那张表装配, 压根不解析
+# wrangler.toml): `pnpm dev` 那边同样不设这个变量 —— 它只是把同名的全量版灌进
+# 租户索引, 靠"同名覆盖"顶掉内置子集, 覆盖写在 .dev.vars
 # (见 .dev.vars.example). Azure 侧对应的是 deploy.mjs 的 --psd-font-fallbacks
 # (stacks/unidocs-azure/deploy/service.bicep), 那边空值同样是"不注入这个变量".
 

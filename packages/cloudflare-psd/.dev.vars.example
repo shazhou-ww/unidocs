@@ -16,17 +16,23 @@ IMAGE_EDIT_API_KEY=sk-...
 # IMAGE_EDIT_MODEL=qwen-image-edit-plus
 # IMAGE_EDIT_BASE_URL=https://dashscope.aliyuncs.com
 
-# setText 的字体回退链,逗号分隔,顺序即优先级。名字必须是已经登记进租户级
-# 字体索引的 postScriptName —— 写一个不存在的名字不会报错,只会让回退链
-# 静默失效。worker 自己的缺省是空链。
+# setText 的字体回退链,逗号分隔,顺序即优先级。名字必须是索引里真有的
+# postScriptName(内置那一档 + 租户登记的那一档)—— 写一个不存在的名字不会
+# 报错,只会让回退链静默失效。
 #
-# **本地开发一般不用管这一段**:`pnpm dev` 起来时会自动把 Noto Sans /
-# Noto Sans SC 灌进租户 u1 的字体索引(有就跳过,没有就下载再灌),并把下面
-# 这一行的值当作默认的回退链传给 psd worker。见 scripts/psd-font-bootstrap.mjs
+# **不设 = 内置字体那两套**(@unidocs/fonts-builtin 的 BUILTIN_FALLBACKS:
+# 拉丁全量 + 中文 8105 字,随包发行)。所以这一段基本不用管,包括本地开发。
+# **显式设成空串是逃生口**,意思是"一个候选都不试" —— 那会让中文层整层画不
+# 出来,别拿它当"默认值"。
+#
+# `pnpm dev` 起来时还会把 Noto Sans / Noto Sans SC / Josefin Sans Bold 的
+# **全量版**灌进租户 u1 的字体索引(有就跳过,没有就下载再灌)。它不再改这个
+# 变量:前两套用的是和内置那两套一样的名字,租户那一档按 postScriptName 盖掉
+# 内置那一档,同一条默认回退链自动指向全量版。见 scripts/psd-font-bootstrap.mjs
 # 与 docs/psd-text-layers.md §5.4;不想要就 `pnpm dev … --fonts off`。
 #
-# 这里写了就以这里为准(.dev.vars 压过自动默认值)。下面这两个值与
-# scripts/psd-fonts.example.json 里的 postScriptName 一致,是真实字体解析出来
-# 的名字(带 -Regular 后缀)。别按家族名写成 NotoSans —— 那正是上一段说的
-# "不会报错、只是静默失效"。跑完预置脚本可以照它打印的名字抄。
+# 只有想改优先级、或者装了别的名字的字体时才写这里(.dev.vars 压过一切默认值)。
+# 下面这两个值与 scripts/psd-fonts.example.json 里的 postScriptName 一致,是真实
+# 字体解析出来的名字(带 -Regular 后缀)。别按家族名写成 NotoSans —— 那正是上面
+# 说的"不会报错、只是静默失效"。跑完预置脚本可以照它打印的名字抄。
 # PSD_FONT_FALLBACKS=NotoSans-Regular,NotoSansSC-Regular

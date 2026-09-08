@@ -1,11 +1,18 @@
 /**
- * 让 `pnpm dev` 起来就带着一套能用的字体：**有就跳过，没有就灌**。
+ * 让 `pnpm dev` 起来就带着一套**全量**字体：**有就跳过，没有就灌**。
  *
- * 为什么要自动：`setText`（文字层真正改字的那个工具）要自己排版、自己栅格化，
- * 一个字形都得从租户级字体索引里取。索引空着的时候它拿不到字形，模型就只能
- * 退回用图像模型重画像素 —— 那正是这条链要消灭的故障（把 WWW.YOURSITE.COM
- * 画成一串错别字）。而在此之前，索引要靠人手工跑一次 `seed-psd-fonts.mjs`
- * 才有。一个没人会记得的手工步骤挡在功能前面，等于功能默认是关着的。
+ * ## 它现在是"锦上添花"，不再是"功能的前提"
+ *
+ * 内置字体（@unidocs/fonts-builtin）随包走，`setText` 不跑这一步也能工作。这个
+ * 脚本现在解决的是另外两件事：
+ *   1. 本地素材 PSD 点名的 JosefinSans-Bold —— 灌上它那些层才是按原字形重排；
+ *   2. 全量 NotoSansSC 比内置子集多两万多个码位（港台字形、扩展区、生僻字）。
+ * 所以它失败仍然不阻断启动，而且现在连"功能默认是关着的"这个后果都没有了。
+ *
+ * 第 2 件事靠的是**同名覆盖**：它灌进去的两套用的是和内置那两套一样的
+ * `postScriptName`，而 `createFontRegistry` 的 providers 顺序是"内置在前、租户
+ * 在后、后者按 postScriptName 覆盖前者"。所以不需要动回退链配置 —— 同一条
+ * `BUILTIN_FALLBACKS` 在灌过之后解析到的就是全量版。
  *
  * ## 三条设计上的裁定
  *
@@ -59,8 +66,10 @@ export const DEFAULT_FONT_TENANT = "u1";
 /**
  * 要装哪几套、从哪儿下。
  *
- * 必须同时覆盖中英：只有拉丁那套的话，中文一个字都画不出来，而且**不报错**
- * —— 回退链对没装载的候选是直接跳过。
+ * 中英各一套，与内置那两档一一对应 —— 这份计划的作用是**同名顶替**，少哪一套
+ * 就是那一档留在内置的版本上（拉丁那档其实同为全量，中文那档会停在 8105 字的
+ * 子集）。拉丁那套和内置那份眼下是**同一份字节**（同一个哈希），真正多出东西的
+ * 只有中文那套。少了不会报错，也不会有一个字画不出来，只是少了多出来的那些码位。
  *
  * 中文那套点名到 `Sans/SubsetOTF/SC`：noto-cjk 里好几个都叫得上 "Noto Sans SC"，
  * 而 `Sans/OTC/NotoSansCJK-Regular.ttc`（18.6 MB）过不了脚本 16 MiB 那道闸。
@@ -71,11 +80,12 @@ export const DEFAULT_FONT_TENANT = "u1";
  *
  * `fallback: false` 的条目灌进索引但不进回退链，见 `psdFontFallbacks`。
  *
- * `postScriptName` 在这里是**待核对的声明**，不是可以随手写的标签：它同时是
- * 回退链的默认值（见 `psdFontFallbacks`），而回退链写错名字不会报错、只会静默
- * 失效。核对由 `describeFont` 做 —— 解析出来的名字和这里对不上就当场拒绝，
- * 于是"把 NotoSans-Regular 写成家族名 NotoSans"这种错只会响亮地失败，不会
- * 变成一条谁也选不中的索引条目。
+ * `postScriptName` 在这里是**待核对的声明**，不是可以随手写的标签：前两条必须
+ * 和 `@unidocs/fonts-builtin` 内置那两套**逐字一致**，同名才会覆盖，全量版才
+ * 顶掉内置子集；写岔一个字母就变成"索引里多了两条谁也选不中的条目"，而回退链
+ * 仍然解析到内置子集，不报错。核对由 `describeFont` 做 —— 解析出来的名字和这里
+ * 对不上就当场拒绝，于是"把 NotoSans-Regular 写成家族名 NotoSans"这种错只会
+ * 响亮地失败。
  */
 export const PSD_FONT_PLAN = Object.freeze([
   Object.freeze({
@@ -103,18 +113,20 @@ export const PSD_FONT_PLAN = Object.freeze([
 ]);
 
 /**
- * `PSD_FONT_FALLBACKS` 的本地默认值：逗号分隔、顺序即优先级。
+ * 这份计划里**当兜底**的那些名字：逗号分隔、顺序即优先级。
  *
  * 拉丁在前、中文在后 —— 前者不覆盖 CJK，汉字自然落到后者。
  *
- * 只灌索引不配这个变量的话，回退链是空的：`resolveFaceChain` 对没点名的字体
- * 一个都不试，中文一个字都画不出来而且不报错。所以这两步必须一起做。
+ * **它已经不是 `PSD_FONT_FALLBACKS` 的默认值了**：那个默认值住在
+ * `@unidocs/fonts-builtin` 的 `BUILTIN_FALLBACKS` 里，由
+ * `parseFontFallbacks(env.PSD_FONT_FALLBACKS, BUILTIN_FALLBACKS)` 接线，
+ * `scripts/dev.mjs` 不再往两个栈里传这个值。这里灌的两套用的是**同名**
+ * `postScriptName`，租户那一档按名字盖掉内置那一档，所以那条默认回退链在灌过
+ * 之后自动指向全量版 —— 不需要也不该再配一遍。
  *
- * 为什么是从计划里取而不是"从刚灌进去的字体解析出来"：幂等判据要求先读索引、
- * 后下载（索引齐了就一次下载都不该发），而这个变量必须在 doc service 起来之前
- * 就定下来（Cloudflare 侧它是 worker 绑定，Azure 侧是 spawn 前的 `process.env`）
- * —— 那时还没有任何字体文件可解析。名字的正确性由 `describeFont` 在灌的那一步
- * 保证（见 `PSD_FONT_PLAN` 的注释）。
+ * 留着它是因为"这套字体这里有"和"缺字体时拿它顶"仍然是两件事（`fallback: false`
+ * 的 JosefinSans-Bold 就只满足前者），而 `.dev.vars.example` 里那行给操作者抄的
+ * 示例值必须和这份判断一致 —— 有一条测试盯着这两处相等。
  */
 export function psdFontFallbacks(plan = PSD_FONT_PLAN) {
   // `fallback: false` 的条目照常灌进索引,但不进回退链:"这套字体这里有" 和
@@ -257,8 +269,9 @@ function fontWarning(error, { tenantId, root, credentialsPath }) {
   return [
     "",
     `⚠️  PSD 字体自动预置没成功：${error.message}`,
-    "    本次启动 setText（改文字层的文字）用不了 —— 索引里没有字体，模型只能退回",
-    "    用图像模型重画像素，中文尤其容易画成错别字。其余功能不受影响。",
+    "    setText（改文字层的文字）照常可用 —— 内置字体随包走，拉丁全量 + 中文 8105 字。",
+    "    本次启动少的是这两样：素材 PSD 点名的 JosefinSans-Bold（那些层会换个字形重排），",
+    "    以及全量 NotoSansSC 多出来的那两万多个码位（港台字形、扩展区、生僻字会缺字形）。",
     "    联网后重跑 `pnpm dev` 会自动重试；也可以手工灌：",
     `      1) 把字体放进 fonts/（见 docs/psd-text-layers.md §5.4 的下载地址）`,
     `      2) 照 scripts/psd-fonts.example.json 写一份配置（tenantId 填 ${tenantId}）`,

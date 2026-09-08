@@ -138,13 +138,33 @@ and are gone from the codebase. PSD chat additionally accepts `LLM_API_KEY`,
 never set in production (production data-plane requests fail closed without a
 valid access token).
 
-### PSD font seeding
+### PSD fonts
 
-`setText` needs a tenant-level font index: PSD text layers record a font *name*,
-never the font file. `scripts/seed-psd-fonts.mjs` writes the bytes into CAS and
-registers the parsed metadata (`unitsPerEm`, `coverage`) into the tenant's
-`PsdFonts` Durable Object. Usage, config shape, and the reasoning live in that
-file's header comment; `scripts/psd-fonts.example.json` is a working example.
+`setText` needs a font index: PSD text layers record a font *name*, never the
+font file. The index has two sources, merged by `createFontRegistry`
+(`packages/doctype-server-common/src/font-registry.ts`) in that order:
+
+1. **Built-in, shipped inside the package** — `@unidocs/fonts-builtin` carries
+   the full Noto Sans (Latin) plus a Noto Sans SC subset covering the 8,105
+   characters of 《通用规范汉字表》. Nothing to configure: a brand-new
+   environment and a brand-new tenant can run `setText` on day one.
+2. **Tenant-registered, seeded by an operator** — optional extras on top.
+
+Later sources win by `postScriptName`, so registering a font under a built-in
+name **replaces** it. That is the supported way to swap the CJK subset for the
+full `NotoSansSC-Regular`: 30,890 code points against the subset's 8,618 (the
+8,105 表 characters plus Latin and punctuation), i.e. Hong Kong/Taiwan glyph
+variants, the extension blocks and rare characters.
+
+#### Seeding extra fonts (optional)
+
+`scripts/seed-psd-fonts.mjs` writes the bytes into CAS and registers the parsed
+metadata (`unitsPerEm`, `coverage`) into the tenant's `PsdFonts` Durable Object
+(Cloudflare) or `font_registry` table (Azure). It is the only entry point for
+source 2, and it never touches source 1. Usage, config shape, and the reasoning
+live in that file's header comment; `scripts/psd-fonts.example.json` is a
+working example. **Skipping it no longer breaks anything** — you lose the extra
+glyphs, not `setText`.
 
 Three deployment facts:
 
@@ -160,9 +180,11 @@ Three deployment facts:
   (ruling R41): anyone who can create a session for a tenant can register fonts
   for it. Deliberate (fonts are additive and never mutate existing documents),
   but do not assume stronger protection.
-- **Font binaries are never committed** (ruling R19). The config holds local
+- **Fonts you seed are never committed** (ruling R19). The config holds local
   paths; the repository-root `fonts/` directory is gitignored. Noto Sans / Noto
-  Sans SC are OFL-licensed and available from Google Fonts.
+  Sans SC are OFL-licensed and available from Google Fonts. The exception is the
+  built-in set, which is committed on purpose under
+  `packages/fonts-builtin/fonts/` so it can ship inside the package.
 
 The script refuses any font over 16 MiB (`MAX_FONT_BYTES`, matching the editor
 DO's `MAX_SVALUE_ROOT_BYTES`), and several `notofonts/noto-cjk` files that all
@@ -173,23 +195,57 @@ over the limit, and the language-specific OTF (16,437,364 bytes) clears it by
 only ~0.3 MB. Sizes measured 2026-09-03 against `main`; there is no subsetting
 tool in this repository, so picking the right file up front is the whole story.
 
-Registering a font is only half of the fallback chain: the PSD service's
-`PSD_FONT_FALLBACKS` var (comma-separated, order is priority) decides which
-registered fonts are actually tried. It defaults to empty and hardcodes no font
-name, so both steps are required for a CJK fallback to work.
-
 `POST /tenants/{t}/fonts` is a neutral route both stacks mount, so one script
 seeds either one — point it at the doc service you mean.
 
-Local development does both steps automatically on **both** stacks: `pnpm dev`
-(psd selected) reads the tenant font index on startup, downloads and seeds
-whatever is missing, and defaults `PSD_FONT_FALLBACKS` to the two PostScript
-names it seeds — see `scripts/psd-font-bootstrap.mjs` and
-`docs/psd-text-layers.md` §5.4. Opt out with `--fonts off` (or
-`UNIDOCS_PSD_FONTS=off`). A failure there only warns; it never blocks startup.
-**Real deployments still do both steps by hand** — for Azure, see
-`stacks/unidocs-azure/README.md`, section 新环境的字体预置; missing that step
-does not fail startup, it just leaves `setText` unable to lay out any glyph.
+#### `PSD_FONT_FALLBACKS`
+
+The PSD service's `PSD_FONT_FALLBACKS` var (comma-separated, order is priority)
+decides which indexed fonts are tried for a code point the layer's own font does
+not cover. `parseFontFallbacks`
+(`packages/doctype-psd/src/text/font-fallbacks.ts`) distinguishes three states,
+and the difference matters:
+
+| State | Chain |
+| --- | --- |
+| **unset** | `BUILTIN_FALLBACKS` — the two built-in faces. This is the default you want. |
+| explicit empty string | empty chain: nothing is tried. An escape hatch, not a default — it is what leaves a CJK layer with no glyphs at all. |
+| a list of names | exactly those, in order. Names not present in the index are skipped silently. |
+
+Because seeding a same-named font replaces the built-in one, installing the full
+`NotoSansSC-Regular` needs no config change at all. Set this var only to reorder
+priority or to point at a font registered under a different name.
+
+Neither stack sets it by default: `packages/cloudflare-psd/wrangler.toml`
+deliberately omits the line, and Azure's `service.bicep` skips the env entry when
+`--psd-font-fallbacks` is not passed. Override per-developer in
+`packages/cloudflare-psd/.dev.vars`.
+
+#### Local development
+
+`pnpm dev` (psd selected) additionally seeds the **full** Noto Sans, Noto Sans
+SC and Josefin Sans Bold into tenant `u1` on **both** stacks: it reads the tenant
+index on startup and downloads only what is missing. Two reasons it still exists
+now that the built-ins ship: the sample PSDs name `JosefinSans-Bold` by hand, and
+the full `NotoSansSC` adds ~22k code points over the built-in subset. It does not
+touch `PSD_FONT_FALLBACKS` — the first two use the built-in names, so the default
+chain resolves to the seeded full faces on its own. See
+`scripts/psd-font-bootstrap.mjs` and `docs/psd-text-layers.md` §5.4. Opt out with
+`--fonts off` (or `UNIDOCS_PSD_FONTS=off`). A failure there only warns; it never
+blocks startup.
+
+`UNIDOCS_BUILTIN_FONTS_DIR` overrides where the Azure-side loader
+(`packages/azure-psd/src/builtin-fonts.ts`) looks for the built-in font bytes; it
+falls back to `require.resolve("@unidocs/fonts-builtin/package.json")`. **The
+local Azure stack cannot use that fallback.** pnpm does not hoist workspace links
+to the repository root, so once `stacks/unidocs-azure/local/runtime.mjs`
+esbuild-bundles each service into `.azure-runtime/bundles/`, the resolve runs
+from outside `packages/azure-psd/` and throws `MODULE_NOT_FOUND`. Resolution is
+lazy, so the service still starts — the failure lands on the first `setText`
+instead, as an error naming `@unidocs/fonts-builtin`. `spawnService` injects the
+var automatically, so you set it by hand only when running a bundle from some
+other location. Production images do not need it: `pnpm deploy --prod` produces a
+real (non-symlink) `node_modules` with the entry point inside the package.
 
 ## Azure deployment identity and secrets
 

@@ -94,9 +94,11 @@ test("readDevVars returns {} for a missing file", async () => {
   expect(await readDevVars(join(dir, "does-not-exist"))).toEqual({});
 });
 
-// 顺序反了不会报错,只会让用户在 .dev.vars 里亲手写的那一行悄悄不生效。
-// 第一个撞上这条的是 PSD_FONT_FALLBACKS:它的默认值由 `pnpm dev` 传进来,
-// 而它的文档位置是 .dev.vars.example —— 那里写了就必须赢。
+// 顺序反了不会报错,只会让用户在 .dev.vars 里亲手写的那一行悄悄不生效,而
+// .dev.vars.example 正是那些变量的文档位置 —— 那里写了就必须赢。
+// (下面拿 PSD_FONT_FALLBACKS 当例子只是因为它是第一个撞上这条的;内置字体
+// 随包发行之后 `pnpm dev` 已经不给它传默认值了,默认值住在 BUILTIN_FALLBACKS。
+// 这条顺序对下一个用 bindingDefaults 的变量照样成立。)
 test("mergeDocBindings lets .dev.vars beat a caller default, and the process env beat both", () => {
   expect(mergeDocBindings({
     defaults: { PSD_FONT_FALLBACKS: "Default-Regular", ONLY_DEFAULT: "d" },
@@ -107,7 +109,7 @@ test("mergeDocBindings lets .dev.vars beat a caller default, and the process env
     ONLY_DEFAULT: "d",
     LLM_MODEL: "from-process-env",
   });
-  // 没人显式配时,默认值才生效 —— 否则"自动灌了字体但回退链是空的"又回来了。
+  // 没人显式配时,调用方给的默认值才生效 —— 不然 bindingDefaults 这一层等于不存在。
   expect(mergeDocBindings({ defaults: { PSD_FONT_FALLBACKS: "Default-Regular" } }))
     .toEqual({ PSD_FONT_FALLBACKS: "Default-Regular" });
   expect(mergeDocBindings()).toEqual({});

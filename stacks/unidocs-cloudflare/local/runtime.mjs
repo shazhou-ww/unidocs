@@ -103,9 +103,11 @@ export async function readDevVars(path) {
  * `.dev.vars` 压过它,进程环境变量最高。
  *
  * 单独抽成一个函数只为把这个顺序钉住。顺序反了不会报错 —— 它只会让用户在
- * `.dev.vars` 里亲手写的那一行悄悄不生效(第一个撞上这条的是
- * `PSD_FONT_FALLBACKS`:那个变量的文档位置就是 .dev.vars.example,默认值反而
- * 是后来才加的兜底)。
+ * `.dev.vars` 里亲手写的那一行悄悄不生效,而 `.dev.vars.example` 正是那些变量
+ * 的文档位置,那里写了就该赢。(第一个撞上这条的是 `PSD_FONT_FALLBACKS`;
+ * 内置字体随包发行之后 `scripts/dev.mjs` 不再给它传默认值了 —— 默认值住在
+ * `@unidocs/fonts-builtin` 的 `BUILTIN_FALLBACKS` 里 —— 但这条顺序对下一个
+ * 用 `bindingDefaults` 的变量照样成立。)
  */
 export function mergeDocBindings({ defaults = {}, devVars = {}, processEnv = {} } = {}) {
   return { ...defaults, ...devVars, ...processEnv };
@@ -393,10 +395,11 @@ export async function startLocalRuntime({
   casOrigin,
   gatewayOAuth,
   // 按 doc type 给的绑定默认值(`{ psd: { PSD_FONT_FALLBACKS: "…" } }`)。
-  // 排在 .dev.vars 前面合并,所以它只是"没人显式配时的兜底"—— 那个变量的
+  // 排在 .dev.vars 前面合并,所以它只是"没人显式配时的兜底"—— 那些变量的
   // 文档位置是 .dev.vars.example,那里写了就该赢。
-  // **默认空**:集成测试也走这个函数,不该凭空多出一条指向没登记过的字体的
-  // 回退链。只有 `pnpm dev`(scripts/dev.mjs)会显式传它。
+  // **默认空**:集成测试也走这个函数,不该凭空多出一条谁也没要求过的绑定。
+  // `pnpm dev` 现在一个都不传(回退链的默认值随内置字体走,见 scripts/dev.mjs);
+  // 眼下唯一的调用方是想钉死某条回退链的集成测试。
   bindingDefaults = {},
 } = {}) {
   validateGatewayOAuthFixture(gatewayOAuth);
