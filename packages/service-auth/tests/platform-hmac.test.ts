@@ -51,7 +51,7 @@ describe("platform HMAC", () => {
     const canonical = fields.map((field) => `${Buffer.byteLength(field)}:${field}`).join("");
     expect(request.headers.get("x-unidocs-signature"))
       .toBe(createHmac("sha256", rawKey).update(canonical).digest("hex"));
-    expect(request.redirect).toBe("error");
+    expect(request.redirect).toBe("manual");
     const nonces = nonceStore();
     const result = await verify(request, { nonces });
     expect(result.body).toEqual(bytes);

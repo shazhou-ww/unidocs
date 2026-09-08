@@ -1,6 +1,9 @@
 import { PlatformDocument } from "../../../packages/cloudflare-gateway/src/platform-document-do.js";
 import { commitPlatformDocument, createPlatformDocument } from "../../../packages/cloudflare-gateway/src/platform-commit-coordinator.js";
+import { commitPlatformEditorSnapshot } from "../../../packages/cloudflare-gateway/src/platform-editor-commit.js";
+import { createPlatformComputeSnapshot } from "../../../packages/cloudflare-gateway/src/platform-compute-snapshot.js";
 import { createPlatformRootRetention } from "../../../packages/cloudflare-gateway/src/platform-root-retention.js";
+import { importPlatformHmacKey } from "../../../packages/service-auth/src/index.js";
 
 export { PlatformDocument };
 
@@ -9,6 +12,10 @@ interface Env {
   readonly CAS_SERVICE?: Fetcher;
   readonly CAS_STACK_ID?: string;
   readonly PLATFORM_CAS_AUTHORIZATION?: string;
+  readonly COMPUTE_SERVICE?: Fetcher;
+  readonly COMPUTE_ORIGIN?: string;
+  readonly COMPUTE_HMAC_KEY_HEX?: string;
+  readonly COMPUTE_CAS_AUTHORIZATION?: string;
 }
 
 export default {
@@ -40,6 +47,29 @@ export default {
           const roots = createPlatformRootRetention({ stackId: env.CAS_STACK_ID, tenantId,
             fetcher: env.CAS_SERVICE, getAuthorization: async () => env.PLATFORM_CAS_AUTHORIZATION! });
           return Response.json(await commitPlatformDocument(document, roots, body.candidate as never, Number(body.at)));
+        }
+        case "snapshot-save": {
+          if (!env.CAS_SERVICE || !env.CAS_STACK_ID || !env.PLATFORM_CAS_AUTHORIZATION
+            || !env.COMPUTE_SERVICE || !env.COMPUTE_ORIGIN || !env.COMPUTE_HMAC_KEY_HEX
+            || !env.COMPUTE_CAS_AUTHORIZATION) throw new Error("Snapshot commit unavailable");
+          const roots = createPlatformRootRetention({ stackId: env.CAS_STACK_ID, tenantId,
+            fetcher: env.CAS_SERVICE, getAuthorization: async () => env.PLATFORM_CAS_AUTHORIZATION! });
+          const key = await importPlatformHmacKey(Uint8Array.from(
+            env.COMPUTE_HMAC_KEY_HEX.match(/../g) ?? [], value => Number.parseInt(value, 16),
+          ));
+          const snapshot = createPlatformComputeSnapshot({
+            computeOrigin: env.COMPUTE_ORIGIN, snapshotPath: "/v1/editor/snapshot",
+            computeFetcher: env.COMPUTE_SERVICE,
+            hmacKey: { keyId: "compute-key", platformId: "test-platform", environment: "test",
+              serviceId: "markdown-compute", role: "editor", key },
+            casStackId: env.CAS_STACK_ID, casFetcher: env.CAS_SERVICE,
+            getComputeAuthorization: async () => env.COMPUTE_CAS_AUTHORIZATION!,
+            getPlatformAuthorization: async () => env.PLATFORM_CAS_AUTHORIZATION!,
+          }, body.invocation as never, body.context as never);
+          return Response.json(await commitPlatformEditorSnapshot({
+            document, roots, snapshot, operationId: String(body.operationId),
+            baseVersion: Number(body.baseVersion), committedAt: Number(body.at),
+          }));
         }
         default: return new Response(null, { status: 404 });
       }

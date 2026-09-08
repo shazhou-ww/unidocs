@@ -231,7 +231,7 @@ URL、包或鉴权配置变更使相关验证失效；验证记录绑定整份�
 用户结果：测试用户登录后能在隔离线上入口新建、输入中文、保存并刷新读取同一篇作品。
 
 - [ ] 只定义 Markdown v1 文本状态、最小 changeset、init/apply/snapshot，以及 platform create/read/commit/status；直接接真实 Markdown 引擎，不先实现完整 query/export/operator。
-- [ ] 打通 platform 的最小持久作品/版本/意图/receipt、状态根保留和 head 条件提交，计算服务只管理临时 context；提交中断能核实或受控恢复，不能假报成功。
+- [x] 打通 platform 的最小持久作品/版本/意图/receipt、状态根保留和 head 条件提交，计算服务只管理临时 context；提交中断能核实或受控恢复，不能假报成功。
 - [ ] 接通 HMAC 签名/验签、分环境服务密钥、nonce 原子去重、临时 CAS 访问及用户作品授权；正式写入前明确 refs 权限 TODO 的处置。
 - [ ] 发布一个最小但完整的托管 Markdown 包，包含源码编辑和安全只读渲染；实现隔离 iframe、受控内容通道及显式保存状态。首轮包上传可用受控发布接口，类型配置经内部授权入口登记到真实目录，不硬编码渲染分支。
 - [ ] 验收两次保存与刷新内容一致；成功响应丢失后 status 核实不重复版本；无签名/错误 tenant 被拒绝；editor context 清空后仍可重开已提交内容。
@@ -239,7 +239,7 @@ URL、包或鉴权配置变更使相关验证失效；验证记录绑定整份�
 
 本轮不等待：后台上传表单、历史 UI、文件导入/导出、summary、完整 Operator。内部登记是明确的临时入口，下轮移交运营界面，不算注册闭环完成。
 
-当前进展（2026-09-08）：已在 `@unidocs/doctype-markdown` 接入第一段真实计算内核，固定 `markdown/1` 状态和仅整篇替换的 `setContent` operation，实现从 platform 提供的 snapshot 读取端口加载 base、按顺序重放 changeset、创建身份绑定的临时 context，以及带计算序列检查的原子 apply/snapshot。聚焦测试已覆盖中文内容、重建顺序、失败 apply 不污染工作副本、迟到序列和跨 actor/tenant/doc/type 访问。此进展尚不包含 HTTP/SValue wire、HMAC/nonce、真实 CAS adapter、platform 持久提交或浏览器链路，因此本轮复选框保持未完成。
+当前进展（2026-09-08）：已在 `@unidocs/doctype-markdown` 接入第一段真实计算内核，固定 `markdown/1` 状态和仅整篇替换的 `setContent` operation，实现从 platform 提供的 snapshot 读取端口加载 base、按顺序重放 changeset、创建身份绑定的临时 context，以及带计算序列检查的原子 apply/snapshot。聚焦测试已覆盖中文内容、重建顺序、失败 apply 不污染工作副本、迟到序列和跨 actor/tenant/doc/type 访问。后续已补齐 HTTP/SValue wire、HMAC/nonce、真实 CAS adapter、platform 持久提交及内部编排，证据见下文；公开 platform API、用户授权和浏览器链路仍未完成。
 
 后续计算层验证（2026-09-08）：并发回归测试实际复现了两个同序列 apply 都成功的缺陷，现已将 apply/snapshot 连同序列检查放入每 context 串行队列；snapshot 改为异步返回。补齐固定输入捕获、默认五分钟有效期、包含正在 init 请求的实例容量限制、ID 冲突拒绝、严格输入校验，以及不泄漏异常信息的 resource_unavailable 分类。测试覆盖过期、排队读取、失败后继续执行、实例重建和快照副本隔离；新增计算测试纳入 TypeScript 检查。接口与限制见 [Markdown 计算包说明](../../packages/doctype-markdown/README.md)。这些仍是进程内与注入读取端口验证，不作为真实 CAS、鉴权或隔离线上验收证据。
 
@@ -257,7 +257,11 @@ Cloudflare 适配验证：`pnpm exec vitest run tests/integration/cloudflare/pla
 
 Platform 持久与提交进展（2026-09-08）：Cloudflare gateway 新增独立 SQLite `PlatformDocument` Durable Object namespace，不复用 legacy editor session。每个对象固定 tenant/doc/type/owner/schema 身份，版本行只接受已保留状态根；创建先持久登记唯一 identity/hash creation intent，再用身份绑定的确定性 requestId 保留初始根，成功后才让 v1 可读，避免先可见未保留版本或并发冲突泄漏 refs。后续提交同样先按 operationId、baseVersion、候选状态根摘要登记固定 pending intent，协调器再在平台专属 `platform:documents` 域保留候选根，最后由 `commitRetained` 在同一 SQLite 事务写入新版本、推进 head 并固化 committed receipt。UniCAS 成功但响应丢失时，本地保持 intent；重启后只重试原 payload，依靠 refs 幂等更新避免重复计数。重复创建和重复提交返回原结果，候选变化、身份变化和过期 base 明确冲突；只凭 operationId 查询不存在记录时不伪造请求摘要或版本。
 
-Platform 持久与真实 CAS 验证：`pnpm exec vitest run tests/integration/cloudflare/platform-document.test.mjs tests/integration/cloudflare/platform-commit-cas.test.mjs --fileParallelism=false` 在真实 workerd/SQLite DO 与本地 UniCAS 中覆盖并发同候选幂等、候选篡改拒绝、creation/pending/receipt 跨重启、条件推进 v1 → v2、stale base 拒绝，以及 create、commit 两阶段各自在 refs 成功后丢失响应再恢复。v1/v2 均先写入真实 SValue 且各保留一次，恢复后 refs 计数不增加、head 只推进一次。authority、协调器和 retention adapter 的 11 个聚焦单测及 gateway-common/cloudflare-gateway typecheck 同时通过。当前 UniCAS refs 契约要求 `cas:write`，尚无只允许平台 refs 更新的细粒度 permission；独立 subject、无 session、独立 refDomain 已缩小归属边界，但权限仍偏宽，正式上线前必须明确接受或收紧该风险。此路径仍仅为内部 RPC，尚未接公开 HTTP、用户作品授权、editor 编排或浏览器链路，不能勾选本轮验收项。下一步先串联 compute snapshot 到固定 platform intent；解除公开 API gate 后再接鉴权后的 create/read/commit/status HTTP。
+Platform 持久与真实 CAS 验证：`pnpm exec vitest run tests/integration/cloudflare/platform-document.test.mjs tests/integration/cloudflare/platform-commit-cas.test.mjs --fileParallelism=false` 在真实 workerd/SQLite DO 与本地 UniCAS 中覆盖并发同候选幂等、候选篡改拒绝、creation/pending/receipt 跨重启、条件推进 v1 → v2、stale base 拒绝，以及 create、commit 两阶段各自在 refs 成功后丢失响应再恢复。v1/v2 均先写入真实 SValue 且各保留一次，恢复后 refs 计数不增加、head 只推进一次。authority、协调器和 retention adapter 的 11 个聚焦单测及 gateway-common/cloudflare-gateway typecheck 同时通过。当前 UniCAS refs 契约要求 `cas:write`，尚无只允许平台 refs 更新的细粒度 permission；独立 subject、无 session、独立 refDomain 已缩小归属边界，但权限仍偏宽，正式上线前必须明确接受或收紧该风险。持久层仍仅为内部 RPC，尚未接公开 HTTP、用户作品授权或浏览器链路，因此不能判定 P-MVP-01 完成；内部 editor 编排见下述进展。
+
+Platform/compute 编排进展（2026-09-08）：Gateway 私有编排现先查询 operation status；已 pending 时完全绕过临时 compute context，按固定 intent 恢复 refs/finalize，已 terminal 时不再调用 compute 或 CAS，只有 unknown operation 才以 HMAC 请求 editor snapshot、严格解码成功 SValue、流式限制响应体、lease 为状态节点并登记 platform commit。compute CAS capability 与 platform refs capability 分离：init/snapshot 使用无 session、无 refDomain 的 `doc:markdown` 精确 RO token，apply 使用精确 RO+RW token，正式节点写入/refs 使用 `platform` + `platform:documents` token。共享 signer 改用 workerd 支持的 `redirect: manual`，具体 adapter 显式拒绝全部 3xx，canonical HMAC bytes 不变。
+
+Platform/compute 真实验证：`pnpm exec vitest run tests/integration/cloudflare/platform-markdown-commit.test.mjs --fileParallelism=false` 同时启动本地 UniCAS、Markdown compute Worker 和 PlatformDocument DO，覆盖从真实 v1 根 init、中文 `setContent` apply、认证 snapshot、CAS lease、refs retain、v2 条件提交、同 operationId 重试，到 compute runtime 重启后从正式 head 根重新 init/snapshot，最终内容一致且 v1/v2 refs 各为 1。编排与 adapter 聚焦测试覆盖 pending/terminal 不依赖临时 context、HMAC/CAS 头、redirect 拒绝及无 Content-Length 流式超限。该证据完成内部 editor snapshot 到 platform intent 的串联，但生产 Worker 仍未暴露 platform create/read/commit/status 路由，也未接用户作品授权或浏览器保存状态，因此 P-MVP-01 整体仍未完成。下一步定义并验证鉴权后的最小 platform HTTP 协议面，再接隔离前端。
 
 ### P-MVP-02：管理员登记，用户即可使用
 
@@ -350,4 +354,4 @@ Platform 持久与真实 CAS 验证：`pnpm exec vitest run tests/integration/cl
 - [Admin 闭环](iteration-14.md)：复用管理员/审计/配置事务，扩展三项接入配置与 HMAC 验证；[Admin API v0](unidocs-admin-api-v0.md) 和 [Admin WebUI v0](unidocs-admin-webui-v0.md) 中的旧单 URL 模型不作为新目标。
 - [开发者指南初稿](../doctype-developer-guide.md)：每轮同步已验证的 service 责任、前端包和新接口，保留未实现标识，不把初稿当目标架构。
 
-下一项实际工作是继续 P-MVP-01：为已验证的 HMAC/SValue HTTP 计算入口接入 Cloudflare 持久 nonce 与真实受限 CAS adapter，再打通 platform 提交与浏览器“新建 → 输入 → 保存 → 刷新读取”。完成隔离线上演示后更新本 checklist，再进入运营注册迭代。
+下一项实际工作是继续 P-MVP-01：为已验证的内部持久化与 compute 编排定义鉴权后的最小 platform create/read/commit/status 协议面，再打通隔离托管前端“新建 → 输入 → 保存 → 刷新读取”。完成隔离线上演示后更新本 checklist，再进入运营注册迭代。

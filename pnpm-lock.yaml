@@ -275,6 +275,9 @@ importers:
       '@unicas/control-auth':
         specifier: workspace:*
         version: link:../../unicas-packages/control-auth
+      '@unicas/tenant-blob-client':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-blob-client
       '@unicas/tenant-client':
         specifier: workspace:*
         version: link:../../unicas-packages/tenant-client
@@ -284,12 +287,21 @@ importers:
       '@unidocs/gateway-oauth':
         specifier: workspace:*
         version: link:../gateway-oauth
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@unidocs/protocol-doctype':
+        specifier: workspace:*
+        version: link:../protocol-doctype
       '@unidocs/protocol-gateway':
         specifier: workspace:*
         version: link:../protocol-gateway
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
       jose:
         specifier: ^6.2.10
         version: 6.2.10

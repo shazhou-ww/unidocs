@@ -19,16 +19,28 @@
       "path": "../../unicas-packages/tenant-client"
     },
     {
+      "path": "../../unicas-packages/tenant-blob-client"
+    },
+    {
       "path": "../gateway-common"
     },
     {
       "path": "../gateway-oauth"
     },
     {
+      "path": "../protocol"
+    },
+    {
+      "path": "../protocol-doctype"
+    },
+    {
       "path": "../protocol-gateway"
     },
     {
       "path": "../service-auth"
+    },
+    {
+      "path": "../svalue-codec"
     }
   ]
 }

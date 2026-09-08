@@ -18,11 +18,15 @@
   },
   "dependencies": {
     "@unicas/control-auth": "workspace:*",
+    "@unicas/tenant-blob-client": "workspace:*",
     "@unicas/tenant-client": "workspace:*",
     "@unidocs/gateway-common": "workspace:*",
     "@unidocs/gateway-oauth": "workspace:*",
+    "@unidocs/protocol": "workspace:*",
+    "@unidocs/protocol-doctype": "workspace:*",
     "@unidocs/protocol-gateway": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "jose": "^6.2.10"
   },
   "devDependencies": {

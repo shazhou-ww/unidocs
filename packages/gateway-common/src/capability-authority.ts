@@ -4,7 +4,7 @@ import type {
   CapabilityPermission,
   IssueCapabilityInput,
 } from "@unidocs/service-auth";
-import { casWritePermission } from "@unidocs/service-auth";
+import { casReadPermission, casWritePermission } from "@unidocs/service-auth";
 import {
   casCapabilityPolicy,
   docCapabilityPolicy,
@@ -16,7 +16,7 @@ export interface GatewayCapabilityIssuer {
 }
 
 export interface GatewayCapabilityAuditEvent {
-  readonly kind: "doc" | "delegated-cas" | "gateway-cas" | "platform-cas";
+  readonly kind: "doc" | "delegated-cas" | "gateway-cas" | "platform-cas" | "platform-compute-cas";
   readonly kid: string;
   readonly jti: string;
   readonly subject: string;
@@ -145,6 +145,24 @@ export class GatewayCapabilityAuthority {
       // UniCAS currently groups lease and updateRootRefs under cas:write.
       // The dedicated subject/refDomain narrows this token until refs gets its own permission.
       permissions: [casWritePermission(tenantId)],
+      lifetimeSeconds: 120,
+    });
+    return `Bearer ${token}`;
+  }
+
+  async issuePlatformComputeCas(input: {
+    readonly tenantId: string;
+    readonly docType: string;
+    readonly mode: "ro" | "rw";
+  }): Promise<string> {
+    if (input.docType.length === 0) throw new TypeError("Compute document type is required");
+    const read = casReadPermission(input.tenantId);
+    const token = await this.#issue(this.#casIssuer, {
+      kind: "platform-compute-cas",
+      subject: `doc:${input.docType}`,
+      audience: this.#casAudience,
+      tenantId: input.tenantId,
+      permissions: input.mode === "ro" ? [read] : [read, casWritePermission(input.tenantId)],
       lifetimeSeconds: 120,
     });
     return `Bearer ${token}`;

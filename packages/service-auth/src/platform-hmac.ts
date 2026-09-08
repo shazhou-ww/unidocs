@@ -106,7 +106,7 @@ export async function signPlatformRequest(options: {
   }
   if (casAuthorization !== null) headers.set(CasAuthorizationHeader, casAuthorization);
   if (platformAuthorization !== null) headers.set(PlatformDelegationHeader, platformAuthorization);
-  return new Request(url, { method: "POST", headers, body, redirect: "error" });
+  return new Request(url, { method: "POST", headers, body, redirect: "manual" });
 }
 
 export async function verifyPlatformRequest(

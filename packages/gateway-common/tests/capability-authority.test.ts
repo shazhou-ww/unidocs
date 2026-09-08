@@ -164,4 +164,33 @@ describe("GatewayCapabilityAuthority", () => {
 
     await expect(authority.issuePlatformRootRetention("tenant-1")).rejects.toThrow("ref domain");
   });
+
+  test("issues sessionless compute CAS capabilities with exact mode permissions", async () => {
+    const issued: IssueCapabilityInput[] = [];
+    const audits: GatewayCapabilityAuditEvent[] = [];
+    const authority = new GatewayCapabilityAuthority({
+      issuer: { keyId: "doc-key", issue: async () => "unused" },
+      casIssuer: { keyId: "cas-key", issue: async input => { issued.push(input); return "compute-token"; } },
+      casAudience: "unidocs-cas", casStackId: "stack-1",
+      generateJti: () => `compute-${issued.length + 1}`, audit: event => audits.push(event),
+    });
+
+    await expect(authority.issuePlatformComputeCas({ tenantId: "tenant-1", docType: "markdown", mode: "ro" }))
+      .resolves.toBe("Bearer compute-token");
+    await expect(authority.issuePlatformComputeCas({ tenantId: "tenant-1", docType: "markdown", mode: "rw" }))
+      .resolves.toBe("Bearer compute-token");
+    expect(issued).toEqual([
+      { subject: "doc:markdown", audience: "unidocs-cas", tenantId: "tenant-1",
+        permissions: ["tenants:tenant-1:cas:read"], lifetimeSeconds: 120, jti: "compute-1" },
+      { subject: "doc:markdown", audience: "unidocs-cas", tenantId: "tenant-1",
+        permissions: ["tenants:tenant-1:cas:read", "tenants:tenant-1:cas:write"], lifetimeSeconds: 120, jti: "compute-2" },
+    ]);
+    expect(audits).toEqual([
+      expect.objectContaining({ kind: "platform-compute-cas", subject: "doc:markdown",
+        permissions: ["tenants:tenant-1:cas:read"] }),
+      expect.objectContaining({ kind: "platform-compute-cas", subject: "doc:markdown",
+        permissions: ["tenants:tenant-1:cas:read", "tenants:tenant-1:cas:write"] }),
+    ]);
+    expect(JSON.stringify(audits)).not.toContain("compute-token");
+  });
 });
