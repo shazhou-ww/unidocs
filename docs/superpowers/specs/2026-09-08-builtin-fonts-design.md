@@ -135,6 +135,211 @@ PNG 的），缺的是**保活那一半**：租户级登记表不钉字节，只
 
 ## 组件与接口
 
+### 类图
+
+方框里第一行是它所在的包。虚线空心箭头是实现，实线是持有/引用，虚线是使用。
+
+```mermaid
+classDiagram
+    direction TB
+
+    class FontRegistry {
+        pkg: doctype-server-common
+        <<interface>>
+        +index() Promise~FontIndex~
+        +read(font, io) Promise~Uint8Array~
+        +blobFor(font) SBlob_or_null
+        +install(entry)? Promise~void~
+    }
+
+    class createFontRegistry {
+        pkg: doctype-server-common
+        <<factory>>
+        providers: FontProvider[]
+        now?: () =~ number
+    }
+
+    class FontProvider {
+        pkg: doctype-server-common
+        <<interface, 内部 SPI>>
+        +id string
+        +list() Promise~FontEntry[]~
+        +read(entry, io) Promise~Uint8Array~
+        +blobFor(entry) SBlob_or_null
+    }
+
+    class RegisteredFont {
+        pkg: doctype-server-common
+        <<interface>>
+        +entry FontEntry
+        +source string
+    }
+
+    class FontEntry {
+        pkg: doctype-server-common
+        <<interface>>
+        +postScriptName string
+        +family string
+        +hash string
+        +unitsPerEm number
+        +coverage FontCoverage
+    }
+
+    class FontIo {
+        pkg: doctype-server-common
+        <<interface>>
+        +readBlob(blob) Promise~Bytes~
+    }
+
+    class fontsRouteHandler {
+        pkg: doctype-server-common
+        <<handler>>
+        POST /tenants/id/fonts
+        GET /tenants/id/fonts
+    }
+
+    class BuiltinFontProvider {
+        pkg: fonts-builtin
+        +id = "builtin"
+        -index BUILTIN_FONT_INDEX
+        -load BuiltinFontLoader
+    }
+
+    class BuiltinFontLoader {
+        pkg: fonts-builtin
+        <<interface>>
+        +(fileName) Promise~Uint8Array~
+    }
+
+    class BUILTIN_FONT_INDEX {
+        pkg: fonts-builtin
+        <<generated>>
+        NotoSans-Regular
+        NotoSansSC-Regular
+    }
+
+    class BUILTIN_FALLBACKS {
+        pkg: fonts-builtin
+        <<const>>
+        PSD_FONT_FALLBACKS 的默认值
+    }
+
+    class PgFontProvider {
+        pkg: azure-sdk
+        +id = "tenant"
+        -pool Queryable
+        -scope stackId + tenantId
+    }
+
+    class DoFontProvider {
+        pkg: cloudflare-psd
+        +id = "tenant"
+        -namespace PSD_FONTS
+    }
+
+    class PsdFontsDO {
+        pkg: cloudflare-psd
+        <<durable object>>
+        表结构不动
+    }
+
+    class NodeBuiltinFontLoader {
+        pkg: azure-psd
+        fs + import.meta.url
+    }
+
+    class BundledBuiltinFontLoader {
+        pkg: cloudflare-psd
+        esbuild/wrangler Data 模块
+    }
+
+    class psdAgentDeps_azure {
+        pkg: azure-psd
+        <<wiring>>
+    }
+
+    class psdAgentDeps_cf {
+        pkg: cloudflare-psd
+        <<wiring>>
+    }
+
+    class FontIndexSource {
+        pkg: doctype-psd
+        <<interface>>
+        +registry FontRegistry
+        +fallbacks string[]
+    }
+
+    class setText {
+        pkg: doctype-psd
+        <<effect>>
+        loadFonts()
+        selectFonts()
+        resolveFaceChain()
+    }
+
+    class FontRef {
+        pkg: doctype-psd
+        +postScriptName string
+        +blob SBlob
+    }
+
+    class SBlob {
+        pkg: protocol
+        <<branded>>
+        +hash string
+    }
+
+    FontRegistry <|.. createFontRegistry
+    createFontRegistry o-- FontProvider : 有序持有, 后者覆盖前者
+    FontRegistry ..> RegisteredFont
+    RegisteredFont *-- FontEntry
+    FontProvider ..> FontEntry
+    FontProvider ..> FontIo
+    FontProvider ..> SBlob
+
+    FontProvider <|.. BuiltinFontProvider
+    FontProvider <|.. PgFontProvider
+    FontProvider <|.. DoFontProvider
+
+    BuiltinFontProvider o-- BuiltinFontLoader
+    BuiltinFontProvider *-- BUILTIN_FONT_INDEX
+    BuiltinFontLoader <|.. NodeBuiltinFontLoader
+    BuiltinFontLoader <|.. BundledBuiltinFontLoader
+    DoFontProvider --> PsdFontsDO
+
+    fontsRouteHandler ..> FontProvider : 只打租户那个
+
+    psdAgentDeps_azure ..> createFontRegistry
+    psdAgentDeps_azure ..> BuiltinFontProvider
+    psdAgentDeps_azure ..> PgFontProvider
+    psdAgentDeps_azure ..> NodeBuiltinFontLoader
+    psdAgentDeps_azure ..> BUILTIN_FALLBACKS
+    psdAgentDeps_cf ..> createFontRegistry
+    psdAgentDeps_cf ..> BuiltinFontProvider
+    psdAgentDeps_cf ..> DoFontProvider
+    psdAgentDeps_cf ..> BundledBuiltinFontLoader
+    psdAgentDeps_cf ..> BUILTIN_FALLBACKS
+
+    FontIndexSource *-- FontRegistry
+    setText ..> FontIndexSource
+    setText ..> FontRef : blobFor 非 null 才写
+    FontRef *-- SBlob
+```
+
+读这张图的三个要点：
+
+- **`setText` 只连到 `FontRegistry`**，没有任何一条线通向 `FontProvider`。这是 D2 的
+  全部意思：外层不知道有几个来源、谁优先、哪个能写。
+- **`FontProvider` 有三个实现，跨三个包**：内置那个在中立层，两个租户实现各在自己的
+  平台包里。加第四种来源（系统字体目录、字体 CDN）是纯加法，图上只多一个方框。
+- **只有 `blobFor` 返回非 null 的那条线通向 `FontRef`**。内置字体不在 CAS 里、没有可
+  回收的对象，所以不进 `doc.fonts`（D4）。
+
+`BuiltinFontLoader` 是把"字节怎么从包里拿出来"这一件事收窄成的一个函数类型
+（`(fileName: string) => Promise<Uint8Array>`）—— 它是本设计里**唯一**必须分平台的东西。
+
+
 ### 契约（中立，`packages/doctype-server-common/`）
 
 ```ts
