@@ -10,7 +10,7 @@
     "./fonts/*": "./fonts/*",
     "./package.json": "./package.json"
   },
-  "files": ["dist", "fonts"],
+  "files": ["dist", "fonts", "OFL.txt"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
