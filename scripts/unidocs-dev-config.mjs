@@ -75,7 +75,8 @@ function normalizeOrigin(value) {
  * 为什么不是一个文件：两套栈可以同时跑（见 scripts/dev.mjs 顶部
  * `AZURE_WEB_PORT_OFFSET` 的注释），共用一个路径就是后起的那个把先起的那个
  * 覆盖掉。而覆盖之后手工跑 `seed-psd-fonts.mjs` 的失败形态是**静默的**：
- * 凭据签得出来、请求也成功，只是灌进了另一个栈的字体表，本栈的索引仍然是空的。
+ * 凭据签得出来、请求也成功，只是灌进了另一个栈的字体表，本栈的登记表仍然是空的
+ * （说"索引"会读岔：本计划之后"索引"指的是合成索引，而它有内置那一档兜着、永不为空）。
  */
 export const LOCAL_CREDENTIALS_PATHS = Object.freeze({
   cloudflare: Object.freeze([".wrangler", "unidocs", "local-credentials.json"]),

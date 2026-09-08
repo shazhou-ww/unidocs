@@ -6,12 +6,17 @@
  * 工作区包在那一步是按 `package.json` 的 `files` 打包的（外加 npm 一贯无条件
  * 带上的 package.json / README / `main` 指向的那个入口文件）。
  *
- * 漏了 `fonts` 的后果是"这个环境的 setText 从此每次都炸"：Node 侧
- * `builtinFontLoader` 的 `readFile` 抛 ENOENT，而 `set-text.ts` 的 `loadFonts`
- * 那一段没有任何 try/catch，异常一路穿出 effect；CF 侧更早，静态 import
- * `@unidocs/fonts-builtin/fonts/*.ttf` 在**构建期**就解析不到。两边都是响亮
- * 失败，不是静默少字 —— 但那个环境从此没有 setText，与"这个环境从没灌过字体"
- * 是同一种损失。那正是本次重构要消灭的损失，所以要有东西盯着。
+ * **`files` 只在打包裁剪那条路上起作用**（`npm publish` / `pnpm deploy`），也就是
+ * 只影响 Azure 镜像。Cloudflare 不在这条路上：`wrangler deploy` 直接对工作区跑，
+ * `fonts/` 本来就躺在那儿，`files` 写错了它也照样打得进 worker 产物。
+ *
+ * 漏了 `fonts` 的后果因此只落在镜像里，而且是"这个环境的 setText 从此每次都炸"：
+ * `require.resolve("@unidocs/fonts-builtin/package.json")` **仍然解析得到**
+ * （package.json 永远会被打包），于是 `join(dirname(...), "fonts")` 指向一个不存在
+ * 的目录，`builtinFontLoader` 的 `readFile` 抛 ENOENT；而 `set-text.ts` 的
+ * `loadFonts` 那一段没有任何 try/catch，异常一路穿出 effect。是响亮失败不是静默
+ * 少字 —— 但那个环境从此没有 setText，与"这个环境从没灌过字体"是同一种损失。
+ * 那正是本次重构要消灭的损失，所以要有东西盯着。
  *
  * **`publishConfig` 在这一步不生效**（pnpm 11.24.0 实测：`/out` 里这个包的
  * `main` 仍然是 `./src/index.ts`，`exports["."]` 也还指向 src）。它不构成问题，
@@ -26,11 +31,17 @@
  *
  *  - `files` 带上 `fonts` —— 字节进得去（上面那一段）。
  *  - `files` 带上 `dist` —— 这一条服务的是 `npm publish` 那条路：`publishConfig`
- *    把 `main`/`types`/`exports` 全指向 `./dist/*`，`files` 不含 `dist` 就会发出
- *    一个入口指向空气的包。**它与 Cloudflare 无关** —— `wrangler deploy` 直接对
- *    工作区跑，`files` 在那条路上根本不参与，而 wrangler 解析本包走的是
- *    `main`/`exports` → `./src/index.ts`，`packages/fonts-builtin/dist` 今天没有
- *    任何消费者。
+ *    把 `main`、`types` 和 `exports` 的 `"."` 这一条指向 `./dist/*`（`"./fonts/*"`
+ *    与 `"./package.json"` 两条不指向 dist，它们两份 exports 里逐字相同），
+ *    `files` 不含 `dist` 就会发出一个主入口指向空气的包。
+ *
+ *    `dist` **运行时**确实没有消费者（两个平台包交付的都是自包含 bundle，wrangler
+ *    解析本包走的还是 `main`/`exports` → `./src/index.ts`），但**构建期有**：本包是
+ *    `composite: true` + `outDir: ./dist`，`cloudflare-psd` 与 `azure-psd` 的
+ *    tsconfig 都 `references` 它，两者的 `tsconfig.tsbuildinfo` 里
+ *    `fonts-builtin/dist/*.d.ts` 各命中 5 条、`fonts-builtin/src` 各 0 条 ——
+ *    `tsc` 读的是 `dist` 那份声明。而 Dockerfile 正是 `pnpm -r build` 之后才
+ *    `pnpm deploy`，所以镜像构建期就在消费这个 `dist`。
  *  - 两份 exports 都导出 `./package.json` —— Node 侧加载器唯一的定位手段：少了
  *    它，Node 的 exports 封装会直接拒绝那次 `require.resolve`。
  */

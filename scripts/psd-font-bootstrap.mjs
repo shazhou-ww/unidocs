@@ -262,7 +262,8 @@ export async function ensurePsdFonts({
  *
  * 手工那条命令必须带上 `--credentials`：两个栈各写各的一份凭据（见
  * `LOCAL_CREDENTIALS_PATHS`），照默认路径跑会拿 Cloudflare 那份去灌 —— 而那
- * 不会报错，只会灌进另一个栈的字体表，本栈的索引照样是空的。
+ * 不会报错，只会灌进另一个栈的字体表，本栈的登记表照样是空的（说"索引"会读岔：
+ * 本计划之后"索引"指的是合成索引，而它有内置那一档兜着、永不为空）。
  */
 function fontWarning(error, { tenantId, root, credentialsPath }) {
   const credentialsFlag = credentialsPath
