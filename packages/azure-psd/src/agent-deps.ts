@@ -92,7 +92,9 @@ export function psdAgentDeps(
         // 这条设计承诺。**降级必须往某处喊** —— 静默吞掉一档的表现是"我装的字体
         // 凭空消失、字换了个字形"，没有任何一步失败，日志、测试、告警全看不见，
         // 与 setText 在 Azure 上缺席三周同一种病。理由与落地形状见
-        // `logFontProviderError` 的注释。
+        // `logFontProviderError` 的注释；**降级之后那份"只有内置字体"的索引会被
+        // 当成成功结果缓存满 60 秒、而日志只喊一次**，这条排查陷阱记在
+        // `doctype-psd/src/agent.ts` 的 `fontIndex` 契约注释里。
         onProviderError: logFontProviderError,
       }),
       fallbacks: parseFontFallbacks(env.PSD_FONT_FALLBACKS, BUILTIN_FALLBACKS),
