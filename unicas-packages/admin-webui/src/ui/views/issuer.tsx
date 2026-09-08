@@ -135,22 +135,24 @@ export function IssuerView({ stackId }: { stackId: string }) {
             <p className="hint">
               Status: <strong>{managedIssuer.status}</strong> · Revision {managedIssuer.revision}
             </p>
-            <div className="field-row">
-              <span className="hint">Managed issuer URL</span>
-              <button
-                type="button"
-                className="issuer-url-copy"
-                aria-label="Copy managed issuer URL"
-                title={copyStatus === "copied" ? "Copied" : "Copy managed issuer URL"}
-                onClick={() => void copyManagedIssuerUrl()}
-              >
-                <code>{managedIssuer.issuer}</code>
-                {copyStatus === "copied" ? <Check size={15} /> : <Copy size={15} />}
-              </button>
-              <span className="hint" role="status">
-                {copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Could not copy URL. Clipboard access is unavailable." : ""}
-              </span>
-            </div>
+            {managedIssuer.status === "active" ? (
+              <div className="field-row">
+                <span className="hint">Managed issuer URL</span>
+                <button
+                  type="button"
+                  className="issuer-url-copy"
+                  aria-label="Copy managed issuer URL"
+                  title={copyStatus === "copied" ? "Copied" : "Copy managed issuer URL"}
+                  onClick={() => void copyManagedIssuerUrl()}
+                >
+                  <code>{managedIssuer.issuer}</code>
+                  {copyStatus === "copied" ? <Check size={15} /> : <Copy size={15} />}
+                </button>
+                <span className="hint" role="status">
+                  {copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Could not copy URL. Clipboard access is unavailable." : ""}
+                </span>
+              </div>
+            ) : null}
             <Button icon={<Power size={15} />} variant="primary" onClick={() => void toggleManagedIssuer()} disabled={togglingManaged}>
               {togglingManaged ? "Updating…" : managedIssuer.status === "active" ? "Disable managed issuer" : "Enable managed issuer"}
             </Button>

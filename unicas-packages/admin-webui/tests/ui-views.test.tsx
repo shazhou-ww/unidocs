@@ -272,6 +272,28 @@ describe("MembersView", () => {
 });
 
 describe("IssuerView", () => {
+  test.each([0, 3])("hides a disabled managed issuer URL at revision %s and follows enable/disable changes", async (revision) => {
+    const user = userEvent.setup();
+    const disabled = { ...managedIssuer(), status: "disabled", revision };
+    fetchMock
+      .mockResolvedValueOnce(json(null))
+      .mockResolvedValueOnce(json(disabled))
+      .mockResolvedValueOnce(json({ ...disabled, status: "active", revision: revision + 1 }))
+      .mockResolvedValueOnce(json({ ...disabled, revision: revision + 2 }));
+    render(<IssuerView stackId={STACK} />);
+    const enable = await screen.findByRole("button", { name: "Enable managed issuer" });
+    expect(screen.queryByText("Managed issuer URL")).not.toBeInTheDocument();
+    expect(screen.queryByText(disabled.issuer)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy managed issuer URL" })).not.toBeInTheDocument();
+    await user.click(enable);
+    expect(await screen.findByRole("button", { name: "Copy managed issuer URL" })).toHaveTextContent(disabled.issuer);
+    await user.click(screen.getByRole("button", { name: "Disable managed issuer" }));
+    await screen.findByRole("button", { name: "Enable managed issuer" });
+    expect(screen.queryByText("Managed issuer URL")).not.toBeInTheDocument();
+    expect(screen.queryByText(disabled.issuer)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy managed issuer URL" })).not.toBeInTheDocument();
+  });
+
   test("copies the managed issuer URL from a non-editable text block with keyboard support", async () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
