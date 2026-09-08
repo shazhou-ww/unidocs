@@ -189,6 +189,51 @@ import → export 就把刚补上的分段信息抹光。
 `setText` 不应静默改完，而要把选择摆给用户（上传字体 / 接受兜底字形 /
 只改数据），否则用户导出、隔天再打开会以为改丢了。
 
+### 3.4 字体有两个来源：内置 / 租户
+
+`代码`。`setText` 认识的只有一个门面 —— `FontRegistry`
+（`packages/doctype-server-common/src/font-registry.ts`）。它背后是一个
+provider 数组（内部 SPI `FontProvider`，外层不该认识它），今天有两档：
+
+| 来源 | id | 字节在哪 | `blobFor()` | 谁装的 |
+|---|---|---|---|---|
+| 内置 | `builtin` | 随安装包发行，`packages/fonts-builtin/fonts/` | 恒为 `null` | 谁都不用装，天生就在 |
+| 租户 | `tenant` | CAS | 一个 `SBlob` | `scripts/seed-psd-fonts.mjs` 灌，见 §5.4 |
+
+**顺序即优先级，同名后者盖前者。** provider 数组是 `[内置, 租户]`，所以租户装
+的同名字体覆盖内置的那套 —— 这就是"想要全量 `NotoSansSC`（含港台字形与扩展区）"
+的扩展点，装上去即可，不需要任何开关，也不需要改 `PSD_FONT_FALLBACKS`。合成之后
+索引里每条都带一个 `source` 字段，那是排查"为什么这个字用的不是我装的那套"时
+唯一的抓手。
+
+内置那两套是 Noto Sans 全量（621 KB）+ Noto Sans SC 按《通用规范汉字表》8105 字
+子集化（1.91 MB）。它存在的理由是**即装即用**：在它之前，`setText` 能不能工作
+取决于有没有人对着这个环境、这个租户跑过一次预置脚本，没跑过的表现不是报错，是
+中文层整层画不出来。现在一个全新的部署、一个从没出现过的租户，第一篇 psd 文档的
+`setText` 就排得出中英混排。
+
+三条容易踩的：
+
+1. **内置字体不进 `doc.fonts`。** `blobFor()` 恒为 `null` —— 字节不在 CAS 里，
+   没有可回收的对象，也就没有要保活的东西。硬写进去会撞上 `state.ts` 的
+   `"PSD font SBlob … was not stored during externalization"`。
+2. **租户那一档不可达时是 fail-soft，但必须喊出来。** `createFontRegistry` 配了
+   `onProviderError` 才降级（两个栈的 `agent-deps.ts` 都配了
+   `logFontProviderError`）：那一档这一轮被跳过，内置那档仍然可用，`setText` 不
+   整体失效。代价是租户装的字体**凭空消失**、字换了个字形而没有任何一步失败，
+   所以降级本身是一条 `event: "font_provider_error"` 的 stderr 日志。降级后那份
+   "只有内置字体"的索引还会被当成成功结果缓存满 60 秒，而日志只喊一次。
+3. **字节怎么从包里拿出来是本仓库唯一必须分平台的一段。** Cloudflare 侧由
+   bundler 把字节内联进 worker（`packages/cloudflare-psd/src/builtin-fonts.ts`）；
+   Node 侧从磁盘读（`packages/azure-psd/src/builtin-fonts.ts`）——
+   `UNIDOCS_BUILTIN_FONTS_DIR` 优先，没设就回退到
+   `require.resolve("@unidocs/fonts-builtin/package.json")`。本地 Azure 栈**只能**
+   走前者：pnpm 不把 workspace 链接提升到仓库根，而 esbuild 打出来的
+   `.azure-runtime/bundles/psd.mjs` 不在 `packages/azure-psd/` 子树里，
+   `require.resolve` 在那儿是 `MODULE_NOT_FOUND`（`spawnService` 因此显式传这个
+   变量）。**解析是惰性的**：缺了它服务照常启动、健康检查照常绿，报错落在第一次
+   `setText` 真去取字节那一步，错误串里点名 `@unidocs/fonts-builtin`。
+
 ## 4. 实测数据
 
 ### 4.1 哨兵往返对文字的破坏（`实测`）
@@ -336,9 +381,12 @@ TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 
 这条结论绑死在 opentype.js 2.0.0 的实现行为上，不是规范保证。**升级这个依赖时要
 重跑一次上面的探针。**
 
-### 5.4 字体从哪儿来：预置脚本
+### 5.4 字体从哪儿来：内置那一档 + 预置脚本
 
-`代码`。字体索引是**租户级**的（同租户下所有 psd 文档共用），字节在 CAS 里。
+`代码`。**字体有两个来源**，语义见 §3.4；这一节讲的是第二个来源（租户登记表）
+怎么往里灌，以及为什么它现在是**可选的**。
+
+租户级字体索引（同租户下所有 psd 文档共用）的字节在 CAS 里。
 索引本身是中立契约 `FontRegistry`（`@unidocs/doctype-server-common`），两个栈各有
 一个适配器：Cloudflare 是 `PsdFonts` 这个租户级 Durable Object，Azure 是 psd 库里
 的 `font_registry` 表。往里面灌东西的唯一入口是
@@ -347,9 +395,12 @@ TrueType 的 `glyf` 表原生**只有**二次贝塞尔曲线（`Q`），CFF/OTF 
 `scripts/psd-fonts.example.json`。
 
 **本地开发不用手工跑它。** `pnpm dev`（**两个栈**都算，选中了 psd 时）启动就会
-自己走一遍：先读一次租户 `u1` 的索引，两套都在就跳过，缺了就把缺的那套下到仓库
-根的 `fonts/` 再灌进去，并把 `PSD_FONT_FALLBACKS` 默认成那两个 postScriptName
-（挂载点与全部裁定见 [`scripts/psd-font-bootstrap.mjs`](../scripts/psd-font-bootstrap.mjs)）。
+自己走一遍：先读一次租户 `u1` 的索引，齐了就跳过，缺了就把缺的那套下到仓库
+根的 `fonts/` 再灌进去（挂载点与全部裁定见
+[`scripts/psd-font-bootstrap.mjs`](../scripts/psd-font-bootstrap.mjs)）。
+它**不再**设 `PSD_FONT_FALLBACKS`：那个默认值住在 `@unidocs/fonts-builtin` 的
+`BUILTIN_FALLBACKS` 里，而这份计划灌的两套用的是**同名** postScriptName，租户那
+一档按名字盖掉内置那一档，于是默认回退链在灌过之后自动指向全量版。
 `/tenants/{t}/fonts` 已经是中立路由，脚本指向哪个 doc service 就灌哪个 —— 本地与
 线上、Cloudflare 与 Azure，**路由与凭据形状**是同一条。但"同一条路径"只到这里为止：
 **能不能从你坐的地方够到那个 doc service，是另一回事。** 本地两个栈、以及线上的
@@ -357,7 +408,7 @@ Cloudflare 都直接够得到；线上 Azure 够不到 —— doc service 的 in
 `external: false`，而网关的路由表有意不含 `/tenants/{t}/fonts`，仓库里也没有现成的
 跳板，得在容器环境内部跑。这一段免责说明和整套手工步骤见
 [`stacks/unidocs-azure/README.md`](../stacks/unidocs-azure/README.md) 的
-「新环境的字体预置」。
+「装额外字体(可选)」。
 
 | 想做的事 | 怎么做 |
 |---|---|
@@ -369,9 +420,11 @@ Cloudflare 都直接够得到；线上 Azure 够不到 —— doc service 的 in
 
 这一步**不会阻断启动**：没网、下载失败、预置失败，一律打一条说清"这次少了什么
 功能、怎么手工补、怎么彻底关掉"的警告然后继续。开发环境因为字体下不下来就起不
-来是不可接受的。代价是失败时索引仍然是空的 —— 那时 `setText` 还在工具表里
-（判据是"有没有那张登记表"，不是"表里有没有字体"：Cloudflare 看 `PSD_FONTS` 绑定
-在不在，Azure 无条件注册），只是每次调用都取不到字形。
+来是不可接受的。**失败的代价现在小得多**：索引空着，但内置那一档还在，`setText`
+照样排得出中英混排（`tests/integration/cloudflare/psd-fonts-e2e.test.mjs` 的
+「零配置」那条守着这一点），少的只是全量中文字体多出来的那两万多个码位、以及
+两份示例 PSD 点名的 `JosefinSans-Bold`。`setText` 也不再会从工具表里消失 ——
+`fontIndex` 两个栈都是**无条件**注入的（内置字体总在，"有没有字体可用"永远为真）。
 
 三条要先知道的：
 
@@ -381,12 +434,16 @@ Cloudflare 都直接够得到；线上 Azure 够不到 —— doc service 的 in
    CAS 服务，并且需要两把本该只存在 gateway 上的私钥。它是**部署者工具**，不是
    终端用户接口。Azure 上还多一道：doc service 的 ingress 是内部的，脚本得在容器
    环境内部跑（见 [`stacks/unidocs-azure/README.md`](../stacks/unidocs-azure/README.md)
-   的「新环境的字体预置」）。
+   的「装额外字体(可选)」）。
 2. **写权限沿用租户作用域的 `sessions:create`**（裁定 R41）—— 能创建会话的人就
    能往该租户的字体表里登记字体。这是有意为之的取舍（字体是加法，不改动既有
    文档），但别以为这个端点有更严的保护。
-3. **字体二进制不进仓库**（裁定 R19）：一套中文字体 5–20 MB，进 git 就永远留在
-   历史里。配置里写本地路径，文件由部署者自备（仓库根的 `fonts/` 已 gitignore）。
+3. **字体二进制只许提交子集**（裁定 R19，2026-09-08 收窄）：默认字体（拉丁全量 +
+   中文《通用规范汉字表》8105 字子集，共约 2.5 MB）随包发行，见
+   `packages/fonts-builtin`。全量字体（一套 5–20 MB）仍然不进仓库，走 CAS ——
+   这个脚本的配置里写本地路径，文件由部署者自备（仓库根的 `fonts/` 已 gitignore）。
+   收窄的理由：R19 原本的顾虑是"永远留在 git 历史里"，2.5 MB 不触发那个顾虑，
+   而它换来的是"任何新环境、任何新租户零配置可用"。
 4. **脚本修不回"索引有条目、根引用是 0"这个状态**（`推断` —— 评审做过推演并用注入反证过，但那次验证只活在它的临时目录里，**仓库里没有任何测试守着这条**。这正是本文档反复强调的区别："我跑通了 X"不等于"有东西守着 X"）。
    正常路径不会走到这个状态 —— 但如果它已经存在（早期版本的脚本、或有人绕过脚本
    直接 POST 那个端点），重跑修好的脚本**不会修复它**：哈希没变就走"跳过"这条路，
@@ -416,18 +473,29 @@ DO 的 `MAX_SVALUE_ROOT_BYTES`），而 noto-cjk 里好几个都叫得上"Noto S
 20,976 个。
 
 回退链本身不在配置里，是 psd doc service 的 `PSD_FONT_FALLBACKS` 环境变量（逗号
-分隔、顺序即优先级）。两个栈读的是同一个变量，缺省都是空链、不硬编码字体名 ——
-硬编码一个 CAS 里没有的
-名字只会让回退链静默失效。所以**装了字体还要配这个变量**，两步都做了兜底才真的
-生效。本地 `pnpm dev` 把这两步绑在一起做了（见本节开头）；**手工部署仍然要自己
-配**，只灌索引不配变量的结果不是报错，是中文一个字都画不出来。配在哪儿：
+分隔、顺序即优先级）。两个栈读的是同一个变量，`parseFontFallbacks`
+（`packages/doctype-psd/src/text/font-fallbacks.ts`）把它分成三态：
+
+| 状态 | 回退链 |
+|---|---|
+| **不设**（两个栈的默认） | `BUILTIN_FALLBACKS` —— 内置那两套。这就是想要的默认值 |
+| 显式空串 | 空链，什么都不试。这是**逃生口不是默认值**，它正是"中文层一个字都画不出来"的那个状态 |
+| 一串名字 | 就按这个顺序；索引里没有的名字被静默跳过 |
+
+以前这里写的是"缺省是空链、不硬编码字体名，因为硬编码一个 CAS 里没有的名字只会
+让回退链静默失效"。内置字体随包发行之后那个理由消失了：默认值里的名字与字节同源
+（`BUILTIN_FALLBACKS` 是从生成的索引里取的，不是手抄的字符串），不可能不存在。
+于是**装了字体通常不必再配这个变量** —— 同名字体会盖掉内置那一档，默认回退链自动
+指向新装的那套。只有想改优先级、或者想指向一个换了名字登记的字体时才配。配在哪儿：
 Cloudflare 是 `packages/cloudflare-psd/wrangler.toml` 的 `[vars]`，Azure 是
 `pnpm stack:deploy unidocs-azure --service psd --psd-font-fallbacks …`
 （注入点在 `stacks/unidocs-azure/deploy/service.bicep` 的 `psdFontFallbacks`）。
 
 兜底必须同时覆盖中文和英文。脚本跑完会回读索引并打印每套字体覆盖了多少码位、
 其中落在 CJK 统一表意文字区的有多少 —— 一套只有拉丁字母的索引会得到一条明确的
-警告。那是操作者唯一能一眼看出"中文兜底真的带了中文"的地方。
+警告。注意这条警告只看**租户登记表**这一档，看不见内置那一档：内置的中文子集
+仍然兜着，所以它现在的含义是"你灌进去的这批里没有中文"，不再是"这个环境排不出
+中文"。
 
 ### 5.5 默认样式表不合并，只写在那里的字段全部丢失（`代码`）
 

@@ -180,11 +180,13 @@ Three deployment facts:
   (ruling R41): anyone who can create a session for a tenant can register fonts
   for it. Deliberate (fonts are additive and never mutate existing documents),
   but do not assume stronger protection.
-- **Fonts you seed are never committed** (ruling R19). The config holds local
-  paths; the repository-root `fonts/` directory is gitignored. Noto Sans / Noto
-  Sans SC are OFL-licensed and available from Google Fonts. The exception is the
-  built-in set, which is committed on purpose under
-  `packages/fonts-builtin/fonts/` so it can ship inside the package.
+- **Full font binaries are never committed** (ruling R19, narrowed 2026-09-08 to
+  "only subsets with a documented public character list, under about 3 MB per
+  file"). The config holds local paths; the repository-root `fonts/` directory is
+  gitignored. Noto Sans / Noto Sans SC are OFL-licensed and available from Google
+  Fonts. The built-in set under `packages/fonts-builtin/fonts/` is committed on
+  purpose — that is what the narrowing bought: it ships inside the package, so
+  seeding is optional rather than a prerequisite.
 
 The script refuses any font over 16 MiB (`MAX_FONT_BYTES`, matching the editor
 DO's `MAX_SVALUE_ROOT_BYTES`), and several `notofonts/noto-cjk` files that all
