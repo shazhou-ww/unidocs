@@ -14,8 +14,13 @@
     "src"
   ],
   "references": [
+    { "path": "../service-auth" },
+    { "path": "../svalue-codec" },
     {
       "path": "../protocol"
+    },
+    {
+      "path": "../protocol-doctype"
     },
     {
       "path": "../doctype-server-common"

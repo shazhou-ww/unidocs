@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unidocs-markdown-compute-staging",
+  "main": "src/compute-worker.ts",
+  "compatibility_date": "2026-08-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "COMPUTE_ORIGIN": "https://configure-compute-origin.invalid",
+    "PLATFORM_ID": "unidocs-platform",
+    "COMPUTE_ENVIRONMENT": "staging",
+    "COMPUTE_SERVICE_ID": "markdown-compute",
+    "CAS_ORIGIN": "https://configure-cas-origin.invalid",
+    "CAS_STACK_ID": "configure-isolated-stack",
+    "CAS_ISSUER": "https://configure-cas-issuer.invalid",
+    "CAS_AUDIENCE": "https://configure-cas-origin.invalid/stacks/configure-isolated-stack",
+    "CAS_JWKS_URL": "https://configure-cas-issuer.invalid/jwks"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "PLATFORM_NONCES", "class_name": "PlatformNonces" }]
+  },
+  "migrations": [{ "tag": "compute-v1", "new_sqlite_classes": ["PlatformNonces"] }],
+  "services": [{ "binding": "CAS_SERVICE", "service": "unidocs-cas" }],
+  "observability": { "enabled": true }
+}

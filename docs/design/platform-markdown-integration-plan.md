@@ -239,6 +239,22 @@ URL、包或鉴权配置变更使相关验证失效；验证记录绑定整份�
 
 本轮不等待：后台上传表单、历史 UI、文件导入/导出、summary、完整 Operator。内部登记是明确的临时入口，下轮移交运营界面，不算注册闭环完成。
 
+当前进展（2026-09-08）：已在 `@unidocs/doctype-markdown` 接入第一段真实计算内核，固定 `markdown/1` 状态和仅整篇替换的 `setContent` operation，实现从 platform 提供的 snapshot 读取端口加载 base、按顺序重放 changeset、创建身份绑定的临时 context，以及带计算序列检查的原子 apply/snapshot。聚焦测试已覆盖中文内容、重建顺序、失败 apply 不污染工作副本、迟到序列和跨 actor/tenant/doc/type 访问。此进展尚不包含 HTTP/SValue wire、HMAC/nonce、真实 CAS adapter、platform 持久提交或浏览器链路，因此本轮复选框保持未完成。
+
+后续计算层验证（2026-09-08）：并发回归测试实际复现了两个同序列 apply 都成功的缺陷，现已将 apply/snapshot 连同序列检查放入每 context 串行队列；snapshot 改为异步返回。补齐固定输入捕获、默认五分钟有效期、包含正在 init 请求的实例容量限制、ID 冲突拒绝、严格输入校验，以及不泄漏异常信息的 resource_unavailable 分类。测试覆盖过期、排队读取、失败后继续执行、实例重建和快照副本隔离；新增计算测试纳入 TypeScript 检查。接口与限制见 [Markdown 计算包说明](../../packages/doctype-markdown/README.md)。这些仍是进程内与注入读取端口验证，不作为真实 CAS、鉴权或隔离线上验收证据。
+
+验证记录：`pnpm --filter @unidocs/doctype-markdown exec vitest run tests/editor-service.test.ts` 先复现同序列两次并发 apply 均成功（1 failed / 5 passed），串行化后通过；补齐生命周期用例后为 21 passed。`pnpm --filter @unidocs/doctype-markdown test` 为 3 files / 29 passed；`pnpm --filter @unidocs/doctype-markdown typecheck`（含新增计算测试）及 `git diff --check` 均通过。未执行部署或生产写入。
+
+HTTP/认证进展（2026-09-08）：`service-auth` 新增 HMAC-SHA-256 signer/verifier、固定跨实现向量、目标白名单、授权头摘要、流式 body 限额、时间窗和强制原子 nonce 端口；Markdown 新增 SValue-only `probe/init/apply/snapshot` HTTP adapter，先验签再验证 CAS 模式，读取端口按请求隔离凭据。首版不接受 query/path 转义别名或重定向。Markdown v1 init 明确 RO，apply 为计算 RW，snapshot 为 RO；真实 CAS adapter 必须验证精确模式及 tenant/有效期，不能把返回 true 的测试替身作为权限证明。聚焦验证为 HMAC 38 tests、HTTP 13 tests（含中文往返、重放、跨 tenant、并发凭据隔离、nonce 故障与超时拒绝）；契约见 [HMAC 说明](../../packages/service-auth/README.md) 和 [Markdown HTTP 说明](../../packages/doctype-markdown/README.md)。
+
+Cloudflare 适配进展（2026-09-08）：已增加 SQLite Durable Object nonce store，按平台/目标 scope 和 nonce 分片路由，claim 使用唯一键原子写入并以 alarm 清理过期记录；本地 workerd 持久目录验证并发同 nonce 只有一次成功、scope 隔离及运行时重启后仍拒绝重放。compute Worker 已接真实 UniCAS tenant client 和 capability verifier，固定 Markdown subject、tenant、无 session、精确 RO/RW permissions；状态根读取限制为同源 GET，校验 metadata、大小、零 refs、SValue Content-Type、完整字节数和节点摘要。Workers 不支持 `redirect: "error"`，现使用 `manual` 并显式拒绝全部 3xx；负向测试确认不会跟随 CAS 重定向。snapshot 读取失败只返回收敛错误，并记录不含凭据的结构化事件。
+
+当前部署门槛：持久 nonce 与真实只读 CAS adapter 已完成本地集成验证，但尚未隔离线上部署。下一步打通 platform create/read/commit/status、真实版本/receipt/refs 保留和用户权限，再串联隔离托管前端“新建 → 输入 → 保存 → 刷新”；无需等待后续历史/导入导出/运营表单。当前没有执行部署或生产写入，不给出未经验证的可用日期，不将单独计算服务 URL 当成 P-MVP-01 完成。
+
+HTTP/认证完整回归：`pnpm --filter @unidocs/service-auth test` 为 5 files / 105 passed；`pnpm --filter @unidocs/doctype-markdown test` 为 4 files / 42 passed；`pnpm --filter @unidocs/doctype-markdown typecheck`（含 HTTP/计算测试及引用项目）通过。验签与 SValue wire 已验证，持久 nonce 和真实 CAS 权限不在这些测试证据内。
+
+Cloudflare 适配验证：`pnpm exec vitest run tests/integration/cloudflare/platform-nonces.test.mjs tests/integration/cloudflare/markdown-compute.test.mjs --fileParallelism=false` 覆盖真实 SQLite DO、重启持久性、真实本地 UniCAS 状态根读取、中文 SValue、RO/RW 与跨 tenant 拒绝、只读不更新 refs、context 重启丢失后从固定 source 重建及 CAS 重定向拒绝。首次运行暴露 workerd 不支持 `redirect: "error"` 导致 init 返回 503，改用 `manual` 并显式拒绝 3xx 后通过。该证据仍是本地隔离集成测试，不是线上部署或生产权限验收。
+
 ### P-MVP-02：管理员登记，用户即可使用
 
 用户结果：管理员登记 Markdown 后，用户从主站目录新建并继续上一轮的编辑/保存流程，无需重新构建主站。
@@ -330,4 +346,4 @@ URL、包或鉴权配置变更使相关验证失效；验证记录绑定整份�
 - [Admin 闭环](iteration-14.md)：复用管理员/审计/配置事务，扩展三项接入配置与 HMAC 验证；[Admin API v0](unidocs-admin-api-v0.md) 和 [Admin WebUI v0](unidocs-admin-webui-v0.md) 中的旧单 URL 模型不作为新目标。
 - [开发者指南初稿](../doctype-developer-guide.md)：每轮同步已验证的 service 责任、前端包和新接口，保留未实现标识，不把初稿当目标架构。
 
-下一项实际工作是启动 P-MVP-01：围绕“新建 → 输入 → 保存 → 刷新读取”定义最小契约并立即接真实实现，完成隔离线上演示后更新本 checklist，再进入运营注册迭代。
+下一项实际工作是继续 P-MVP-01：为已验证的 HMAC/SValue HTTP 计算入口接入 Cloudflare 持久 nonce 与真实受限 CAS adapter，再打通 platform 提交与浏览器“新建 → 输入 → 保存 → 刷新读取”。完成隔离线上演示后更新本 checklist，再进入运营注册迭代。

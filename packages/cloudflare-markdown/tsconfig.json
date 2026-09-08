@@ -12,6 +12,11 @@
     "src"
   ],
   "references": [
+    { "path": "../../unicas-packages/tenant-client" },
+    { "path": "../../unicas-packages/codec" },
+    { "path": "../service-auth" },
+    { "path": "../protocol" },
+    { "path": "../svalue-codec" },
     {
       "path": "../cloudflare-sdk"
     },

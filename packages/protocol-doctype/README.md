@@ -75,6 +75,12 @@ Header names, canonical byte format, signature encoding, route paths and HTTP er
 must be fixed with shared test vectors before exposing a service. The protocol identifier
 `unidocs-doctype/2-draft` deliberately does not assert a stable wire release.
 
+The P-MVP-01 runtime draft now fixes these details in
+[@unidocs/service-auth](../service-auth/README.md) and the
+[Markdown HTTP adapter](../doctype-markdown/README.md). Those implementations
+remain outside this pure protocol package. Their tests do not prove durable nonce
+storage, real CAS access or an online platform commit flow.
+
 ## Helpers
 
 ```ts

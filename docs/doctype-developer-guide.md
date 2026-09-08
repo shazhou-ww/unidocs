@@ -4,6 +4,12 @@
 
 > 架构方向已更新：本文初稿仍描述旧的 doctype 持久服务和前端分发模式，不是下一代接入规范。后续实施以 [Platform 与 Markdown 新协议接入计划](design/platform-markdown-integration-plan.md) 为准：platform 负责持久化，editor 只计算，operator 独立，前端包由平台托管；注册分别配置 editor URL、资源包和可选 operator URL，服务调用采用 HMAC，不转发用户登录 JWT。本指南随每轮 MVP 已验证接口增量更新，不等待完整协议冻结；类型草案见 [protocol-doctype](../packages/protocol-doctype/README.md)。
 
+## 新协议的已实现部分
+
+P-MVP-01 已提供进程内 [Markdown 计算内核](../packages/doctype-markdown/README.md)：`markdown/1` 状态为 `{ content: string }`，操作只接受整文 `setContent`，`init/apply/snapshot` 均异步返回计算结果。它复用现有引擎，但不持有正式版本或 CAS refs；同 context 串行计算并检查序列，过期或实例丢失后由 platform 从固定状态重建。
+
+现已提供 SValue-only Fetch HTTP adapter（受保护的 probe/init/apply/snapshot）和 [平台 HMAC 实现](../packages/service-auth/README.md)，包含固定签名字节、角色/目标绑定、授权头摘要和强制 nonce 去重端口。测试已贯通签名请求与真实 Markdown 计算，但 nonce/CAS 仍是注入测试端口，不能当成可部署闭环：持久 nonce、真实 CAS、platform 提交和托管前端仍待实施。计算 ACK 不能显示为“已保存”。下文继续保留 legacy 接入流程作对照，不应将其持久 session、能力凭据或前端分发模式套到新 editor 上。
+
 ## 你将交付什么
 
 UniDocs 为不同类型的数字作品提供统一的身份、访问入口、目录和创作工作台。接入一种文档类型，是让平台能够创建、读取和修改这种作品，并让用户在工作台中使用它的专用编辑器。

@@ -78,3 +78,11 @@ export {
   isHttpsIssuerUrl,
 } from "./discovery.js";
 export type { DiscoveredOAuthIssuerMetadata } from "./discovery.js";
+export {
+  CasAuthorizationHeader, PlatformDelegationHeader, PlatformHmacHeaders,
+  PlatformHmacError, importPlatformHmacKey, signPlatformRequest, verifyPlatformRequest,
+} from "./platform-hmac.js";
+export type {
+  PlatformHmacKey, PlatformHmacTarget, PlatformNonceStore,
+  VerifiedPlatformRequest, VerifyPlatformRequestOptions,
+} from "./platform-hmac.js";

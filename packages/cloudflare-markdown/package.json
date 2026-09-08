@@ -16,6 +16,11 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@unicas/tenant-client": "workspace:*",
+    "@unicas/codec": "workspace:*",
+    "@unidocs/service-auth": "workspace:*",
+    "@unidocs/protocol": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "@unidocs/cloudflare-sdk": "workspace:*",
     "@unidocs/doctype-server-common": "workspace:*",
     "@unidocs/doctype-markdown": "workspace:*"

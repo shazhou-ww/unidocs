@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2024", "DOM"],
+    "types": []
+  },
+  "include": ["src", "tests/editor-service.test.ts", "tests/editor-http.test.ts"],
+  "references": [
+    { "path": "../service-auth" },
+    { "path": "../svalue-codec" },
+    { "path": "../protocol" },
+    { "path": "../protocol-doctype" },
+    { "path": "../doctype-server-common" }
+  ]
+}
