@@ -31,7 +31,8 @@ IMAGE_EDIT_API_KEY=sk-...
 # 内置那一档,同一条默认回退链自动指向全量版。见 scripts/psd-font-bootstrap.mjs
 # 与 docs/psd-text-layers.md §5.4;不想要就 `pnpm dev … --fonts off`。
 #
-# 只有想改优先级、或者装了别的名字的字体时才写这里(.dev.vars 压过一切默认值)。
+# 只有想改优先级、或者装了别的名字的字体时才写这里(.dev.vars 压过默认值,但压不过
+# 进程环境变量 —— 顺序见 runtime.mjs 的 mergeDocBindings,shell 里设了同名的仍然赢)。
 # 下面这两个值与 scripts/psd-fonts.example.json 里的 postScriptName 一致,是真实
 # 字体解析出来的名字(带 -Regular 后缀)。别按家族名写成 NotoSans —— 那正是上面
 # 说的"不会报错、只是静默失效"。跑完预置脚本可以照它打印的名字抄。
