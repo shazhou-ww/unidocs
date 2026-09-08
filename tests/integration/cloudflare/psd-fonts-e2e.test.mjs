@@ -12,12 +12,20 @@
  * 拿 `runtime.capabilityFixture` / `runtime.stackFixture` 现签 —— 与
  * `tests/integration/azure/azure-multi-replica.test.mjs` 直连副本时同一套做法。
  *
- * 灌进去的那几套字体是在内存里现造的（`packages/doctype-psd/tests/text-test-font.ts`）：
+ * 灌进去的字体多数是在内存里现造的（`packages/doctype-psd/tests/text-test-font.ts`）：
  * CI 上没有系统字体，而"部署者自备的全量字体"按裁定 R19 仍然不进仓库。仓库里现在
  * **有**字体二进制了 —— `packages/fonts-builtin/fonts/` 下那两套随包发行的默认字体
- * （R19 于 2026-09-08 收窄为"只许提交有公开字表依据的子集"）。它们是下面
- * 「零配置」那两条用例的被测对象，不是这里灌的对象：内置字节随包走、不进 CAS，
- * 灌这个动作对它们无从谈起。
+ * （R19 于 2026-09-08 收窄为"只许提交有明确公开字表依据的子集"）。
+ *
+ * 对这两套要把**来源**和**字节**分开说，否则很容易读岔：
+ *
+ *  - 不能被灌的是**内置这个来源**。它的 provider 是只读的（`blobFor()` 恒为
+ *    `null`，字节随包走、不进 CAS），门面上根本没有一条通往它的写入路径。
+ *  - 它们的**字节**当然可以被当作租户字体灌进 CAS —— 最后那条「装一套同名字体」
+ *    的用例就是这么做的（拿 `packages/fonts-builtin/fonts/NotoSans-Regular.ttf`
+ *    当配置里的 `file`）。那不是为了测试凑的形态，是线上的真实形态：
+ *    `scripts/psd-font-bootstrap.mjs` 的计划里，拉丁那套与内置那份眼下同为全量、
+ *    同一份字节，装上去就是"同名顶替"。
  */
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -484,9 +492,11 @@ test("零配置：一个从没灌过字体的租户，setText 仍然把中英混
  * 只留拉丁那一档（回退链也只剩它），同一段字再排一遍："你""好"必须出现在
  * `missing` 里。这条一旦跟着上一条一起变绿，说明断言写在了实现的返回值上、
  * 而不是写在"字体覆盖"这个约束上。
+ *
+ * **它不起 workerd**，尽管住在这个文件里：对照组要去掉的恰恰是租户那一档，
+ * 剩下的全在进程内。白起一次运行时除了慢，还会让读者以为它依赖真服务。
  */
 test("负向对照：只留拉丁那一档，汉字就落进 missing", async () => {
-  runtime = await startLocalRuntime({ docTypes: ["psd"], ports: PORTS });
   const latinOnly = BUILTIN_FONTS.find(r => r.entry.postScriptName === "NotoSans-Regular");
   const registry = createFontRegistry({
     providers: [{
@@ -506,16 +516,16 @@ test("负向对照：只留拉丁那一档，汉字就落进 missing", async () 
   expect(structured.ok).toBe(true);
   expect(structured.missing).toEqual(["你", "好"]);
   expect(structured.glyphFallbacks).toEqual([]);
-}, 180_000);
+}, 30_000);
 
 /**
  * 覆盖可覆盖：装一套同名字体，索引里那条的来源从内置变成租户。
  *
- * 灌的就是内置那份拉丁字节本身 —— `psd-font-bootstrap.mjs` 的计划里，拉丁那套
- * 眼下与内置同为全量、同一个哈希，所以这是**真实的**线上形态，不是为了测试凑的。
- * 正因为哈希相同，这里不能只断言 `source` 这个标签：还要断言 `blobFor` 从 null
- * 变成了一个真的 SBlob —— 那是行为上的差别（文档靠它把 CAS 里那份字节钉住），
- * 也是"这条真的换了来源"的唯一硬证据。
+ * 灌的就是内置那份拉丁**字节**本身 —— `psd-font-bootstrap.mjs` 的计划里，拉丁那套
+ * 与内置那份眼下同为全量、同一份字节，所以这是**真实的**线上形态，不是为了测试凑的。
+ * 字节相同让"这条真的换了来源吗"格外要防空转，所以除了 `source` 这个标签，还要
+ * 断言 `blobFor` 从 `null` 变成一个真的 SBlob —— 那是行为上的差别（文档靠它把 CAS
+ * 里那份字节钉住），标签改不出来。
  */
 test("装一套同名字体：索引里那条的 source 从 builtin 变成 tenant", async () => {
   runtime = await startLocalRuntime({ docTypes: ["psd"], ports: PORTS });

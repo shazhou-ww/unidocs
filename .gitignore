@@ -32,7 +32,7 @@ dist/
 
 # 部署者自备的**全量**字体二进制。一套中文字体 5-20 MB,进 git 就永远留在历史里
 # (裁定 R19)。R19 于 2026-09-08 收窄为"只许提交有明确公开字表依据的子集,单文件
-# 不超过约 3 MB",所以 packages/fonts-builtin/fonts/ 下那两套随包发行的默认字体
+# 不超过约 3 MiB",所以 packages/fonts-builtin/fonts/ 下那两套随包发行的默认字体
 # 是**有意提交**的,不在这条规则的射程内。
 # 只挡这一个目录,不挡全仓库的 *.ttf —— 测试要用小字体
 # (packages/doctype-psd/tests 现在是在内存里现造的,将来可能落成 fixture)。

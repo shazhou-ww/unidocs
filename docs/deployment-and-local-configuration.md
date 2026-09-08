@@ -181,7 +181,7 @@ Three deployment facts:
   for it. Deliberate (fonts are additive and never mutate existing documents),
   but do not assume stronger protection.
 - **Full font binaries are never committed** (ruling R19, narrowed 2026-09-08 to
-  "only subsets with a documented public character list, under about 3 MB per
+  "only subsets with a documented public character list, under about 3 MiB per
   file"). The config holds local paths; the repository-root `fonts/` directory is
   gitignored. Noto Sans / Noto Sans SC are OFL-licensed and available from Google
   Fonts. The built-in set under `packages/fonts-builtin/fonts/` is committed on

@@ -4,9 +4,14 @@
  * Dockerfile（`stacks/unidocs-azure/deploy/Dockerfile`）用
  * `pnpm deploy --legacy --prod` 把 azure-psd 连同它的依赖裁剪进 `/out`。
  * 工作区包在那一步是按 `package.json` 的 `files` 打包的（外加 npm 一贯无条件
- * 带上的 package.json / README / `main` 指向的那个入口文件）。漏了 `fonts` 的
- * 症状与"这个环境从没灌过字体"一模一样：setText 还在工具表里，每次调用都取不到
- * 字形，不报错。那正是本次重构要消灭的症状，所以要有东西盯着。
+ * 带上的 package.json / README / `main` 指向的那个入口文件）。
+ *
+ * 漏了 `fonts` 的后果是"这个环境的 setText 从此每次都炸"：Node 侧
+ * `builtinFontLoader` 的 `readFile` 抛 ENOENT，而 `set-text.ts` 的 `loadFonts`
+ * 那一段没有任何 try/catch，异常一路穿出 effect；CF 侧更早，静态 import
+ * `@unidocs/fonts-builtin/fonts/*.ttf` 在**构建期**就解析不到。两边都是响亮
+ * 失败，不是静默少字 —— 但那个环境从此没有 setText，与"这个环境从没灌过字体"
+ * 是同一种损失。那正是本次重构要消灭的损失，所以要有东西盯着。
  *
  * **`publishConfig` 在这一步不生效**（pnpm 11.24.0 实测：`/out` 里这个包的
  * `main` 仍然是 `./src/index.ts`，`exports["."]` 也还指向 src）。它不构成问题，
@@ -17,10 +22,17 @@
  * 这一条在 `exports` 与 `publishConfig.exports` 里逐字相同，所以它照样解析得到，
  * 再 `join(dirname(...), "fonts")` 就是随包发行的那两个文件。
  *
- * 于是这里盯的是那条链上真正承重的三件事：`files` 带上 `fonts`（字节进得去）、
- * `files` 带上 `dist`（CF 侧 wrangler 那条路要的编译产物）、以及两份 exports 都
- * 导出 `./package.json`（Node 侧加载器唯一的定位手段 —— 少了它，Node 的 exports
- * 封装会直接拒绝那次 require.resolve）。
+ * 三条断言各自守什么：
+ *
+ *  - `files` 带上 `fonts` —— 字节进得去（上面那一段）。
+ *  - `files` 带上 `dist` —— 这一条服务的是 `npm publish` 那条路：`publishConfig`
+ *    把 `main`/`types`/`exports` 全指向 `./dist/*`，`files` 不含 `dist` 就会发出
+ *    一个入口指向空气的包。**它与 Cloudflare 无关** —— `wrangler deploy` 直接对
+ *    工作区跑，`files` 在那条路上根本不参与，而 wrangler 解析本包走的是
+ *    `main`/`exports` → `./src/index.ts`，`packages/fonts-builtin/dist` 今天没有
+ *    任何消费者。
+ *  - 两份 exports 都导出 `./package.json` —— Node 侧加载器唯一的定位手段：少了
+ *    它，Node 的 exports 封装会直接拒绝那次 `require.resolve`。
  */
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -41,6 +53,7 @@ const manifest = async (): Promise<Manifest> =>
 
 describe("发行产物", () => {
   it("package.json 的 files 必须同时包含 dist 与 fonts", async () => {
+    // fonts：镜像里的字节。dist：npm publish 那条路的入口（publishConfig 指向它）。
     const pkg = await manifest();
     expect(pkg.files).toContain("fonts");
     expect(pkg.files).toContain("dist");

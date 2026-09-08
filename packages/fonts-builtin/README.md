@@ -6,8 +6,8 @@
 
 | 文件 | 来源 | 体积 |
 | --- | --- | --- |
-| `fonts/NotoSans-Regular.ttf` | Noto Sans，全量 | 621 KB |
-| `fonts/NotoSansSC-Regular.subset.otf` | Noto Sans SC，按 `charset/tongyong-guifan-8105.txt` 子集化 | 1.91 MB |
+| `fonts/NotoSans-Regular.ttf` | Noto Sans，全量 | 607 KiB（621,572 B） |
+| `fonts/NotoSansSC-Regular.subset.otf` | Noto Sans SC，按 `charset/tongyong-guifan-8105.txt` 子集化 | 1.91 MiB（2,002,388 B） |
 
 两套都是 OFL，允许分发，见 `OFL.txt`。子集同样受 OFL 约束。
 

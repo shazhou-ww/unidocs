@@ -51,7 +51,7 @@ describe("BUILTIN_FONTS", () => {
     for (let cp = 0x20; cp <= 0x7e; cp++) expect(covers(cp), `U+${cp.toString(16)}`).toBe(true);
   });
 
-  it("每套字体的体积都在 R19 改写后的 3 MB 上限内", async () => {
+  it("每套字体的体积都在 R19 改写后的 3 MiB 上限内", async () => {
     for (const record of BUILTIN_FONTS) {
       const bytes = await readFile(join(PKG, "fonts", record.file));
       expect(bytes.byteLength, record.file).toBeLessThan(3 * 1024 * 1024);

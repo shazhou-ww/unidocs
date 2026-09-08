@@ -8,10 +8,15 @@ export function parseDevArgs(argv, env = process.env) {
     // 直接失败。默认值应该是「不配任何东西也能起来」的那个。
     // 需要远端时显式 `--cas remote`，或设 UNIDOCS_CAS_MODE=remote。
     casMode: env.UNIDOCS_CAS_MODE ?? "local",
-    // 字体预置默认开着（auto）：`setText` 没有字体索引就一个字形都取不到,
-    // 而"要人先手工跑一遍预置脚本"等于让这个功能默认关着。off 留给离线开发、
-    // CI、以及就是不想要这几 MB 的场景 —— 那时 setText 仍然在工具表里,只是
-    // 索引是空的。环境变量与 --cas 同一套优先级:显式参数 > 环境变量 > 默认。
+    // 字体预置默认开着（auto）。**理由已经不是"不预置就排不出字"** —— 内置那
+    // 两套（`@unidocs/fonts-builtin`，拉丁全量 + 中文 8105 字子集）随包走，
+    // `--fonts off` 之后合成索引仍然是那两条、不是空的，中英混排照样排得出来
+    // （`tests/integration/cloudflare/psd-fonts-e2e.test.mjs` 的「零配置」那条
+    // 守着这件事）。默认开着是因为它多装的东西本地确实要用：全量 NotoSansSC
+    // 比内置子集多两万多个码位,而两份示例 PSD 点名的 JosefinSans-Bold 只有灌了
+    // 才是按原字形重排。off 留给离线开发、CI、以及就是不想要这几 MB 的场景 ——
+    // 代价只是少掉这些,不是 setText 失灵。
+    // 环境变量与 --cas 同一套优先级:显式参数 > 环境变量 > 默认。
     fontsMode: env.UNIDOCS_PSD_FONTS ?? "auto",
     docTypes: [],
   };

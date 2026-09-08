@@ -77,7 +77,7 @@ export const DEFAULT_FONT_TENANT = "u1";
  * 各版本实测体积见 docs/psd-text-layers.md §5.4。
  *
  * 都是 OFL，允许分发。**全量**字节不进仓库（裁定 R19 于 2026-09-08 收窄为"只许
- * 提交有明确公开字表依据的子集，单文件不超过约 3 MB"，随包发行的那两套子集见
+ * 提交有明确公开字表依据的子集，单文件不超过约 3 MiB"，随包发行的那两套子集见
  * `packages/fonts-builtin`），下到仓库根的 `fonts/` —— 那个目录已经 gitignore。
  *
  * `fallback: false` 的条目灌进索引但不进回退链，见 `psdFontFallbacks`。
