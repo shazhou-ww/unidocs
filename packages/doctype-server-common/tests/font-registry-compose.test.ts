@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createSBlob } from "@unidocs/svalue-codec";
 import type { FontEntry, FontIo, FontProvider } from "../src/index.js";
-import { createFontRegistry } from "../src/index.js";
+import { casFontBytes, createFontRegistry } from "../src/index.js";
 
 const entry = (postScriptName: string, hash: string): FontEntry => ({
   postScriptName,
@@ -26,8 +25,8 @@ function fakeTenant(entries: readonly FontEntry[]): FontProvider {
   return {
     id: "tenant",
     list: async () => entries,
-    read: async (e, io) => (await io.readBlob(createSBlob(e.hash))).data,
-    blobFor: e => createSBlob(e.hash),
+    read: casFontBytes.read,
+    blobFor: casFontBytes.blobFor,
   };
 }
 
