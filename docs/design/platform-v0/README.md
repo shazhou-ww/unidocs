@@ -4,6 +4,7 @@
 
 ## 权威材料
 
+- [当前任务状态](TASK-STATUS.md)：本轮完成范围、验证结果、未实现边界和下一轮建议；续接时先读此文档。
 - [人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)：评论驱动协作、版本双图、ping/pong 水位和原子 submission 的产品与一致性模型。
 - [Platform、View 与 Operator API v0](platform-view-operator-api-v0.md)：Platform、View bundle、Operator Agent、Admin、Host RPC 和 Agent API 的统一目标契约。
 - [Admin WebUI mock](unidocs-admin-mock.html)：从 UI 反推控制面资源和 mutation；直接用浏览器打开，无需开发服务器。
