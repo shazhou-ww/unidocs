@@ -19,6 +19,9 @@
       "path": "../doctype-server-common"
     },
     {
+      "path": "../fonts-builtin"
+    },
+    {
       "path": "../doctype-psd"
     },
     {

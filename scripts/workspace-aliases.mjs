@@ -49,6 +49,15 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/gateway-oauth": "packages/gateway-oauth/src/index.ts",
   "@unidocs/doctype-server-common": "packages/doctype-server-common/src/index.ts",
   "@unidocs/doctype-server-common/agent": "packages/doctype-server-common/src/agent/index.ts",
+  "@unidocs/fonts-builtin": "packages/fonts-builtin/src/index.ts",
+  // 字体文件本身也要登记。基础包一旦在这张表里，esbuild 的 alias 就是前缀
+  // 重写：`@unidocs/fonts-builtin/fonts/X.ttf` 会变成 `src/index.ts/fonts/X.ttf`
+  // （"Cannot read directory ... not a directory"）。两条指向真实字节文件，
+  // 交给各 bundler 的 `.ttf`/`.otf` binary loader 处理。
+  "@unidocs/fonts-builtin/fonts/NotoSans-Regular.ttf":
+    "packages/fonts-builtin/fonts/NotoSans-Regular.ttf",
+  "@unidocs/fonts-builtin/fonts/NotoSansSC-Regular.subset.otf":
+    "packages/fonts-builtin/fonts/NotoSansSC-Regular.subset.otf",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",
   "@unidocs/cloudflare-sdk": "packages/cloudflare-sdk/src/index.ts",
   "@unidocs/doctype-markdown": "packages/doctype-markdown/src/index.ts",

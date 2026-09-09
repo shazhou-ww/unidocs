@@ -12,6 +12,9 @@
  * 编辑会话里的 setText effect 读,两边都拿得到会话身份;而租户级的登记表
  * 天然没有 sessionId,拿不到。
  */
+import type { SBlob } from "@unidocs/protocol";
+import { observedFailure } from "@unidocs/protocol-doc";
+import type { FontIo, FontProvider } from "./font-provider.js";
 
 /** 覆盖的码位区间,合并后按起点升序排列,区间之间不重叠也不相邻。 */
 export type FontCoverage = readonly (readonly [number, number])[];
@@ -19,7 +22,8 @@ export type FontCoverage = readonly (readonly [number, number])[];
 export interface FontEntry {
   readonly postScriptName: string;
   readonly family: string;
-  /** CAS 里字体文件的内容哈希。 */
+  /** 这份字体字节的内容哈希。**不代表它在 CAS 里** —— 内置字体的字节随包走，
+   *  同样有合法的哈希。"在不在 CAS 里"由 provider 的 `blobFor()` 回答。 */
   readonly hash: string;
   /**
    * 从字体文件**解析**出来的,不是登记时人工填的。
@@ -33,17 +37,6 @@ export interface FontEntry {
    */
   readonly unitsPerEm: number;
   readonly coverage: FontCoverage;
-}
-
-/**
- * 作用域是 (stackId, tenantId),跨会话存活。适配器构造时绑定这两段身份,
- * 所以方法签名里没有它们。
- */
-export interface FontRegistry {
-  list(): Promise<readonly FontEntry[]>;
-  /** 幂等:同一个 postScriptName 重登记覆盖旧的一条,不是报冲突 ——
-   *  预置脚本每次跑都会把配置里的全套字体登记一遍。 */
-  put(entry: FontEntry): Promise<void>;
 }
 
 /** createSBlob 只收 64 位小写十六进制;登记时就挡住,别留到 setText 才炸。 */
@@ -114,4 +107,152 @@ function isCodePoint(value: unknown): value is number {
     && Number.isInteger(value)
     && value >= 0
     && value <= MAX_CODE_POINT;
+}
+
+/** 索引里的一条。`source` 是 provider id：冲突解决之后，这条到底来自哪个来源。 */
+export interface RegisteredFont {
+  readonly entry: FontEntry;
+  readonly source: string;
+}
+
+export type FontIndex = ReadonlyMap<string, RegisteredFont>;
+
+/**
+ * 字体的门面 —— **外层唯一要认识的东西**。字体从哪来、同名冲突谁赢、字节怎么取、
+ * 装到哪儿，全部收在实现里。
+ */
+export interface FontRegistry {
+  /** 合成、去冲突之后的索引，按 postScriptName。带 TTL 缓存。 */
+  index(): Promise<FontIndex>;
+
+  /** 取字节。内部按这条的来源分发。
+   *  收 `RegisteredFont` 而不是名字：调用方本来就是从 `index()` 里取出来的，
+   *  收名字就要在这里再查一次索引 —— 而索引是异步的，同步的 `blobFor` 查不了。 */
+  read(font: RegisteredFont, io: FontIo): Promise<Uint8Array>;
+
+  /** 这条要不要被文档钉住。转发给它的来源。 */
+  blobFor(font: RegisteredFont): SBlob | null;
+
+  /**
+   * 装一套字体：内部路由到可写的那个来源，一个都没有时明确失败。
+   *
+   * **本次不实现。** 声明成可选，于是合成实现可以干脆不提供它 —— 必选会逼出一个
+   * 只会抛异常的空壳，那既是死代码，也在类型上骗人（签名说它能装，实际调用必炸）。
+   * 将来补实现时把 `?` 去掉，所有调用点会当场变红。
+   *
+   * 缺的是**保活那一半**，不是权限：会话里能用 `ctx.makeSBlob` 往 CAS 写字节，但
+   * 只被租户登记表引用的字体 24 小时租约到期后会被 GC 收走（见
+   * docs/psd-text-layers.md §5.4「看起来好了一天，然后凭空消失」）。
+   *
+   * 同一个保活缺口还有另一面，一并留到那时解决：那个状态下租户那条记录仍在索引
+   * 里、按同名覆盖顶掉内置那份好的，而取字节这条路**没有** fail-soft（下面
+   * `onProviderError` 只包 `list()`），于是 `setText` 对该层直接失败。互相指路
+   * 见 docs/psd-text-layers.md §3.4 第 2 条的待办。
+   */
+  install?(entry: FontEntry): Promise<void>;
+}
+
+/**
+ * 索引缓存的存活时长。
+ *
+ * `setText` 每调用一次就取一次索引，而索引几乎不变 —— 每次排版前多打一次后端纯属
+ * 浪费。反过来，永久缓存会让"新登记一套字体"在所有已经热起来的 operator DO 里都
+ * 看不见，直到实例被回收，而 operator DO 是跨请求存活的。一分钟的上限把这个窗口
+ * 关掉，代价是每分钟至多多打一次后端。
+ */
+const INDEX_TTL_MS = 60_000;
+
+export function createFontRegistry(options: {
+  readonly providers: readonly FontProvider[];
+  readonly now?: () => number;
+  /**
+   * 某个来源 `list()` 失败时的去处。
+   *
+   * **配了它就 fail-soft**：那个来源这一轮被跳过，其余来源照常合成 —— 租户的
+   * 字体 DO 打不通时，内置那一档仍然可用，`setText` 不整体失效。
+   * **没配就 fail-hard**：整个 `index()` 拒绝。默认不降级是刻意的 —— 静默吞掉
+   * 一个来源，表现是"租户装的字体凭空消失、字换了个字形"，没有任何信号。
+   * 降级必须是调用方明确选的，并且它得说清降级之后往哪儿喊。
+   */
+  readonly onProviderError?: (providerId: string, error: unknown) => void;
+}): FontRegistry {
+  const now = options.now ?? (() => Date.now());
+  const providerById = new Map(options.providers.map(p => [p.id, p]));
+  let cached: { at: number; index: Promise<FontIndex> } | null = null;
+
+  const compose = async (): Promise<FontIndex> => {
+    const merged = new Map<string, RegisteredFont>();
+    // 顺序即优先级：后面的 provider 按 postScriptName 覆盖前面的。租户装的
+    // 同名字体盖掉内置的，这就是"用户主动装 external 字体"的扩展点。
+    for (const provider of options.providers) {
+      let entries: readonly FontEntry[];
+      try {
+        entries = await provider.list();
+      } catch (error) {
+        if (!options.onProviderError) throw error;
+        options.onProviderError(provider.id, error);
+        continue;
+      }
+      for (const entry of entries) {
+        merged.set(entry.postScriptName, { entry, source: provider.id });
+      }
+    }
+    return merged;
+  };
+
+  const providerOf = (font: RegisteredFont): FontProvider => {
+    const provider = providerById.get(font.source);
+    if (!provider) {
+      // 只可能是调用方拿了另一个 registry 实例的索引条目过来。静默返回空字节
+      // 会表现成"这套字体解析失败"，查起来毫无线索。
+      throw new Error(`Unknown font source ${JSON.stringify(font.source)}`);
+    }
+    return provider;
+  };
+
+  return {
+    index: () => {
+      if (cached && now() - cached.at < INDEX_TTL_MS) return cached.index;
+      // 缓存的是 Promise 而不是结果：一个 operator DO 里并发的两次 setText 只该
+      // 打一次后端。失败不留在缓存里 —— 否则一次网络抖动会被整整记住一个 TTL，
+      // 期间每次 setText 都拿同一个 rejected promise。
+      const index = compose();
+      const record = { at: now(), index };
+      cached = record;
+      index.catch(() => { if (cached === record) cached = null; });
+      return index;
+    },
+    read: (font, io) => providerOf(font).read(font.entry, io),
+    blobFor: font => providerOf(font).blobFor(font.entry),
+  };
+}
+
+/**
+ * `onProviderError` 的默认去处：一行 JSON 到 stderr。
+ *
+ * **为什么降级必须喊出来。** `createFontRegistry` 配了 `onProviderError` 就 fail-soft
+ * —— 那正是"租户的字体 DO 打不通时内置那一档仍然可用、setText 不整体失效"这条设计
+ * 承诺的实现方式。代价是这一档的字体**凭空消失**：模型照样能调 setText，字照样排得
+ * 出来，只是换了个字形。没有任何一步失败，用户看到的是"我装的字体不生效了"，而日志、
+ * 测试、告警全都看不见 —— 与 setText 在 Azure 上缺席三周同一种病。所以降级本身必须
+ * 是一条日志。
+ *
+ * 用 `console.error` 而不是 `consoleObserver`：后者的 `ObservedEvent` 是一个封闭联合
+ * （http_call / agent_run / agent_step / llm_call），没有一支装得下"某个字体来源这一轮
+ * 挂了"，硬塞要先把中立的观测契约撑开一支，代价远大于收益。落地形状与它一致 —— 同样
+ * 一行带 `event` 字段的 JSON，Container Apps 收进 Log Analytics、Workers 收进 tail，
+ * `jq 'select(.event == "font_provider_error")'` 一条就能捞出来。stderr 而不是 stdout：
+ * 这是降级，不是流水账。
+ *
+ * 抽到中立层而不是让两个平台各写一份：两边要的是同一套语义，各写一遍迟早分叉 ——
+ * 与 `casFontBytes` 同一条理由。
+ */
+export function logFontProviderError(providerId: string, error: unknown): void {
+  console.error(JSON.stringify({
+    event: "font_provider_error",
+    providerId,
+    // 展开 cause 并带上截断的栈：这一档最常见的成因是"字体 DO / 连接池打不通"，
+    // 真正的 ECONNRESET 常被藏在 `TypeError: fetch failed` 里面。
+    ...observedFailure(error),
+  }));
 }

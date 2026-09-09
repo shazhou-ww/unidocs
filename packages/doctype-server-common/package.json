@@ -14,9 +14,9 @@
       "types": "./src/testing/port-contract.ts",
       "import": "./src/testing/port-contract.ts"
     },
-    "./font-registry-contract": {
-      "types": "./src/testing/font-registry-contract.ts",
-      "import": "./src/testing/font-registry-contract.ts"
+    "./font-provider-contract": {
+      "types": "./src/testing/font-provider-contract.ts",
+      "import": "./src/testing/font-provider-contract.ts"
     },
     "./agent": {
       "types": "./src/agent/index.ts",
@@ -70,9 +70,9 @@
         "types": "./dist/testing/port-contract.d.ts",
         "import": "./dist/testing/port-contract.js"
       },
-      "./font-registry-contract": {
-        "types": "./dist/testing/font-registry-contract.d.ts",
-        "import": "./dist/testing/font-registry-contract.js"
+      "./font-provider-contract": {
+        "types": "./dist/testing/font-provider-contract.d.ts",
+        "import": "./dist/testing/font-provider-contract.js"
       },
       "./agent": {
         "types": "./dist/agent/index.d.ts",

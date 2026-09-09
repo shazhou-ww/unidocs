@@ -21,9 +21,9 @@ import type {
   EffectContext,
   EffectOutcome,
   JsonValue,
-  SBlob,
   SValueType,
 } from "@unidocs/protocol";
+import type { FontRegistry } from "@unidocs/doctype-server-common";
 import type { FontRef, LayerParagraphStyle, LayerText, LayerTextStyle, Pixels } from "../model/types.js";
 import type { PsdOp } from "../ops/index.js";
 import type { PsdQuery } from "../queries.js";
@@ -31,26 +31,23 @@ import type { FaceResolver, FontFace } from "./font.js";
 import { effectiveStyle, layoutText, nonIdentityTransform, normalizeJustification, type Justification } from "./layout.js";
 import { parseFontFace } from "./opentype-face.js";
 import { rasterizeGlyphs } from "./raster.js";
-import type { FontEntry, FontIndex } from "./registry.js";
+import type { FontIndex } from "./registry.js";
 import { resolveFaceChain, selectFonts } from "./registry.js";
 import { diffRange, spliceParagraphRuns, spliceTextRuns } from "./runs.js";
 
 /**
  * `setText` 的字体来源。
  *
- * 拆成三块而不是直接收一个 `FontIndex`，是因为索引与字节是**分开存**的
- * （裁定 R29）：租户级的字体 DO 只存元数据（它拿不到 CAS 权限），字节留在
- * CAS，由跑在编辑会话里的这个 effect 去读。所以除了索引本身，还需要知道
- * 回退链的顺序，以及怎么把索引里的内容哈希变成一个能交给 `ctx.readBlob`
- * 的 SBlob。
+ * 两个字段而不是三个：字节在哪儿、要不要保活，全都收进了中立层的 `FontRegistry`
+ * 门面。这里只剩"哪个 registry"和"回退链顺序" —— 后者是排版语义，不属于 registry。
+ *
+ * （门面的包名刻意不写进注释：`package-deps.test.mjs` 的门禁按子串逐行扫描，
+ * 只放行 `import type` 开头的行，注释里写出完整说明符同样会被判违规。）
  */
 export interface FontIndexSource {
-  /** 取一次可用字体的索引，按 postScriptName。异步：真实实现要打一次字体 DO。 */
-  readonly load: () => Promise<FontIndex>;
+  readonly registry: FontRegistry;
   /** 回退链，按优先级。请求的字体缺席、或者它不认识某个码位时逐个试。 */
   readonly fallbacks: readonly string[];
-  /** 索引条目 → 可以读的 SBlob。字节在哪儿、怎么建这个引用由来源方决定。 */
-  readonly blobFor: (entry: FontEntry) => SBlob;
 }
 
 /** 这层像素的出处。**不是**一个模型的名字 —— 它就是要跟"Photoshop 烘的"和
@@ -220,15 +217,19 @@ async function loadFonts(
   const loaded = new Map<string, FontFace>();
   const fonts: FontRef[] = [];
   for (const name of needed) {
-    const entry = index.get(name);
-    if (!entry) continue; // selectFonts 只会返回索引里有的名字；防御性。
-    const blob = source.blobFor(entry);
-    const bytes = await ctx.readBlob(blob);
+    const found = index.get(name);
+    if (!found) continue; // selectFonts 只会返回索引里有的名字；防御性。
+    // ctx 结构上满足 FontIo（它有 readBlob），直接传，不另造适配对象。
+    const bytes = await source.registry.read(found, ctx);
     // 按**索引里的名字**入表，不是按 `face.postScriptName`：候选名单
     // （requested + fallbacks）用的是索引这套命名，`resolveFaceChain` 拿
     // 候选名去 `loaded` 里查，两边不同名就一个都查不到。
-    loaded.set(name, parseFontFace(bytes.data));
-    fonts.push({ postScriptName: name, blob });
+    loaded.set(name, parseFontFace(bytes));
+    // 内置字体的 blobFor 返回 null：它不在 CAS 里，没有可回收的对象，也就
+    // 不需要（而且不能）写进 doc.fonts —— state.ts 的 storeFont 会对一个
+    // 不存在的 CAS 对象抛 "was not stored during externalization"。
+    const blob = source.registry.blobFor(found);
+    if (blob) fonts.push({ postScriptName: name, blob });
   }
 
   // 逐码位兜底也要报。`resolveFaceChain` 只交回一个 `FontFace`，不说它是哪
@@ -358,7 +359,7 @@ export function createSetTextTool(source: FontIndexSource): AgentTool<PsdQuery, 
         nextText.paragraphRuns = spliced.runs;
       }
 
-      const index = await source.load();
+      const index = await source.registry.index();
       const { resolveFace, fonts, substitutions, glyphFallbacks } = await loadFonts(nextText, source, index, ctx);
 
       const laid = layoutText(nextText, resolveFace);

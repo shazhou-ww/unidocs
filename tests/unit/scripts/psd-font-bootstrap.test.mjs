@@ -25,6 +25,9 @@ import {
 import { parseSeedConfig } from "../../../scripts/seed-psd-fonts.mjs";
 import * as kit from "../../../scripts/psd-fonts-kit.ts";
 import { buildRectFont } from "../../../packages/doctype-psd/tests/text-test-font.ts";
+// 只取 fallbacks.ts 而不是包的 index：那个入口还导出 provider，会把
+// doctype-server-common 那条依赖链一起拖进来，而这里只要那两个名字。
+import { BUILTIN_FALLBACKS } from "../../../packages/fonts-builtin/src/fallbacks.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const PSD_URL = "http://127.0.0.1:8790";
@@ -93,9 +96,18 @@ async function tempRoot() {
   return mkdtemp(join(tmpdir(), "unidocs-font-boot-"));
 }
 
-describe("回退链的默认值", () => {
+describe("这份计划里当兜底的那些名字", () => {
   it("是计划里那两套的 postScriptName，拉丁在前", () => {
     expect(psdFontFallbacks()).toBe("NotoSans-Regular,NotoSansSC-Regular");
+  });
+
+  // 内置字体随包发行之后，`pnpm dev` 不再传 PSD_FONT_FALLBACKS —— 默认值是
+  // BUILTIN_FALLBACKS。本地灌的全量版之所以能顶掉内置子集，靠的**只有同名**
+  // （createFontRegistry 按 postScriptName 覆盖）。名字一旦分叉，症状是静默的：
+  // 索引里凭空多两条谁也选不中的条目，回退链照旧解析到内置子集，中文照样排得
+  // 出来、只是少了两万多个码位。所以这条必须逐字盯着。
+  it("与内置那一档逐字同名 —— 同名才覆盖", () => {
+    expect(psdFontFallbacks().split(",")).toEqual([...BUILTIN_FALLBACKS]);
   });
 
   // 灌进索引 ≠ 进回退链。Josefin Sans Bold 是本地素材 PSD 点名的字体，灌上它
@@ -123,13 +135,29 @@ describe("回退链的默认值", () => {
       .toEqual(example.fonts.map(font => font.postScriptName));
   });
 
-  // .dev.vars.example 是操作者手工配这个变量时抄的地方。自动灌进去的和那里
-  // 写着的对不上，等于文档在教人配一条失效的回退链。
-  it("与 .dev.vars.example 里那一行一致", async () => {
+  // .dev.vars.example 是操作者手工配这个变量时抄的地方。那一行现在只是**示例
+  // 值**（不设这个变量才是常态，默认取 BUILTIN_FALLBACKS），但示例值抄错一样
+  // 有害：写一个索引里没有的名字不报错，只让回退链静默失效。所以它必须仍然等于
+  // 本地真正灌进去、且当兜底的那些名字。
+  //
+  // 那一行是注释掉的（`# PSD_FONT_FALLBACKS=…`），所以取值只能按第一个 `=` 切，
+  // 不能整行解析成 KV。
+  it("与 .dev.vars.example 里那个示例值一致", async () => {
     const text = await readFile(join(ROOT, "packages", "cloudflare-psd", ".dev.vars.example"), "utf8");
     const line = text.split("\n").find(l => l.includes("PSD_FONT_FALLBACKS="));
     expect(line).toBeDefined();
     expect(line.slice(line.indexOf("=") + 1).trim()).toBe(psdFontFallbacks());
+  });
+
+  // 新语义的另一半：**不设**才是默认（取内置那两套），**显式空串**是逃生口。
+  // wrangler.toml 里留着一行 `PSD_FONT_FALLBACKS = ""` 就等于替生产选了逃生口，
+  // 中文层整层画不出来 —— 那正是这次重构亲手挖过的地雷，所以钉住它别回来。
+  it("wrangler.toml 不设这个变量", async () => {
+    const text = await readFile(join(ROOT, "packages", "cloudflare-psd", "wrangler.toml"), "utf8");
+    const assignment = text.split("\n")
+      .filter(l => !l.trimStart().startsWith("#"))
+      .find(l => /^\s*PSD_FONT_FALLBACKS\s*=/.test(l));
+    expect(assignment).toBeUndefined();
   });
 
   it("每套字体的下载地址都是 https，中文那套取的是过得了 16 MiB 闸的子集版", () => {

@@ -10,10 +10,10 @@
  *
  * 与 CF 的两处刻意差异：
  *
- * 1. **fontIndex 无条件注入。** CF 那边它是条件的，判据是 `PSD_FONTS` 这条
- *    可能漏配的 DO 绑定。这边的后端是本进程已经在用的那个 Postgres 连接池，
- *    没有"绑定漏配"这种状态可言；条件化只会凭空造出一条 setText 静默消失的路。
- * 2. **必须每个租户一个实例。** `createFontIndex` 自带的 60 秒缓存是**每实例**
+ * 1. **fontIndex 无条件注入,两个平台一致。** 以前 CF 那边它是条件的,判据是
+ *    `PSD_FONTS` 这条可能漏配的 DO 绑定。内置字体随包走之后,"有没有字体可用"
+ *    永远为真,条件化只会凭空造出一条 setText 静默消失的路。
+ * 2. **必须每个租户一个实例。** `createFontRegistry` 自带的 60 秒缓存是**每实例**
  *    的，而字体索引是租户级的。这个函数因此收 `identity` 并在每次调用时新建
  *    ——绝不能把返回值缓存到任何跨租户的作用域里。Azure 的
  *    `LocalNamespace.get()` 完全忽略传入的 name（CF 的 DO 名字含 tenantId，
@@ -21,18 +21,17 @@
  *    实际调用点是 `local-operator.ts` 里每请求一次的 `deps.agent(identity)`。
  *
  * 字节永不经过 `FontRegistry`（裁定 R29）：登记表只存元数据，字体文件在 CAS，
- * 由跑在编辑会话里的 setText effect 自己带着会话身份去读。这里的 `blobFor`
- * 只是把登记的内容哈希包成一个可以交给 `ctx.readBlob` 的 `SBlob`。
+ * 由跑在编辑会话里的 setText effect 自己带着会话身份去读 —— 门面把这一步收进了
+ * provider 的 `read(entry, io)`，`io` 就是那个 effect 的上下文。内置那一档不走
+ * 这条路：字节随包走，由 `builtinFontLoader` 从磁盘读。
  */
-import { createSBlob, PgFontRegistry, type Queryable } from "@unidocs/azure-sdk";
+import { PgFontProvider, type Queryable } from "@unidocs/azure-sdk";
 import type { SessionIdentity } from "@unidocs/doctype-server-common";
-import {
-  createFontIndex,
-  createQwenImageEditor,
-  parseFontFallbacks,
-  type PsdAgentDeps,
-} from "@unidocs/doctype-psd";
+import { createFontRegistry, logFontProviderError } from "@unidocs/doctype-server-common";
+import { createQwenImageEditor, parseFontFallbacks, type PsdAgentDeps } from "@unidocs/doctype-psd";
+import { BUILTIN_FALLBACKS, createBuiltinFontProvider } from "@unidocs/fonts-builtin";
 import { consoleObserver } from "@unidocs/protocol-doc";
+import { builtinFontLoader } from "./builtin-fonts.js";
 
 /**
  * 接线只读这几个环境变量。收窄成一个显式的形状（而不是直接吃
@@ -42,7 +41,10 @@ import { consoleObserver } from "@unidocs/protocol-doc";
 export interface PsdAgentEnv {
   /** 字体登记表的作用域之一（另一半是租户）。缺省时下面会响亮失败。 */
   readonly CAS_STACK_ID?: string | undefined;
-  /** setText 的回退链，逗号分隔、顺序即优先级（如 "NotoSans,NotoSansSC"）。 */
+  /**
+   * setText 的回退链，逗号分隔、顺序即优先级（如 "NotoSans,NotoSansSC"）。
+   * **未设**时取内置字体那两套的名字；**显式设成空串**是空链，作为逃生口。
+   */
   readonly PSD_FONT_FALLBACKS?: string | undefined;
   /** 缺省时工具表里没有 editPixels —— 没有手的 agent 不该宣称自己能画。 */
   readonly IMAGE_EDIT_API_KEY?: string | undefined;
@@ -73,21 +75,40 @@ export function psdAgentDeps(
         }),
       }
       : {}),
-    fontIndex: createFontIndex({
-      registry: new PgFontRegistry(pool, {
-        stackId: requireStackId(env.CAS_STACK_ID),
-        tenantId: identity.tenantId,
+    fontIndex: {
+      registry: createFontRegistry({
+        // 顺序即优先级：租户登记的同名字体盖掉内置的。这就是"用户主动装
+        // external 字体"的扩展点 —— 想要全量 NotoSansSC（含港台字形与扩展区），
+        // 用 scripts/seed-psd-fonts.mjs 装上去即可，不需要任何开关。
+        providers: [
+          createBuiltinFontProvider({ load: builtinFontLoader }),
+          new PgFontProvider(pool, {
+            stackId: requireStackId(env.CAS_STACK_ID),
+            tenantId: identity.tenantId,
+          }),
+        ],
+        // 没有它就是 fail-hard：Postgres 抖一下，`index()` 整个拒绝，setText 连
+        // 内置字体都排不出来。配上它才兑现"租户 provider 不可达只影响租户那一层"
+        // 这条设计承诺。**降级必须往某处喊** —— 静默吞掉一档的表现是"我装的字体
+        // 凭空消失、字换了个字形"，没有任何一步失败，日志、测试、告警全看不见，
+        // 与 setText 在 Azure 上缺席三周同一种病。理由与落地形状见
+        // `logFontProviderError` 的注释；**降级之后那份"只有内置字体"的索引会被
+        // 当成成功结果缓存满 60 秒、而日志只喊一次**，这条排查陷阱记在
+        // `doctype-psd/src/agent.ts` 的 `fontIndex` 契约注释里。**Azure 上那
+        // 60 秒只覆盖本次 `/run`**：上面第 2 条说的每请求新建在这里第二次生效
+        // —— registry 跟着 agent 一起新建，跨请求没有缓存可言。CF 那边的
+        // operator DO 把 agent 缓存在实例上，窗口是跨请求的。
+        onProviderError: logFontProviderError,
       }),
-      fallbacks: parseFontFallbacks(env.PSD_FONT_FALLBACKS),
-      blobFor: entry => createSBlob(entry.hash),
-    }),
+      fallbacks: parseFontFallbacks(env.PSD_FONT_FALLBACKS, BUILTIN_FALLBACKS),
+    },
   };
 }
 
 /**
- * 缺了就抛，不静默用空串。空 stackId 会让 `PgFontRegistry.list()` 每次都返回
- * 零条 —— 于是 setText 仍在工具表里，但一个字形都找不到，表现成"字体全都没
- * 登记"而不是一条配置错误。
+ * 缺了就抛，不静默用空串。空 stackId 会让 `PgFontProvider.list()` 每次都返回
+ * 零条 —— 于是租户登记的字体一套都找不到，表现成"字体全都没登记"而不是一条
+ * 配置错误。（内置那一档不受影响，所以这条错配今天更难被看见，更值得响亮。）
  */
 function requireStackId(stackId: string | undefined): string {
   if (stackId === undefined || stackId.length === 0) {

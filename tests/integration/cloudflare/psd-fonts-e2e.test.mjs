@@ -12,12 +12,25 @@
  * 拿 `runtime.capabilityFixture` / `runtime.stackFixture` 现签 —— 与
  * `tests/integration/azure/azure-multi-replica.test.mjs` 直连副本时同一套做法。
  *
- * 字体是在内存里现造的（`packages/doctype-psd/tests/text-test-font.ts`），不是
- * 仓库里的字体文件：字体二进制不进仓库（裁定 R19），而 CI 上也没有系统字体。
+ * 灌进去的字体多数是在内存里现造的（`packages/doctype-psd/tests/text-test-font.ts`）：
+ * CI 上没有系统字体，而"部署者自备的全量字体"按裁定 R19 仍然不进仓库。仓库里现在
+ * **有**字体二进制了 —— `packages/fonts-builtin/fonts/` 下那两套随包发行的默认字体
+ * （R19 于 2026-09-08 收窄为"只许提交有明确公开字表依据的子集"）。
+ *
+ * 对这两套要把**来源**和**字节**分开说，否则很容易读岔：
+ *
+ *  - 不能被灌的是**内置这个来源**。它的 provider 是只读的（`blobFor()` 恒为
+ *    `null`，字节随包走、不进 CAS），门面上根本没有一条通往它的写入路径。
+ *  - 它们的**字节**当然可以被当作租户字体灌进 CAS —— 最后那条「装一套同名字体」
+ *    的用例就是这么做的（拿 `packages/fonts-builtin/fonts/NotoSans-Regular.ttf`
+ *    当配置里的 `file`）。那不是为了测试凑的形态，是线上的真实形态：
+ *    `scripts/psd-font-bootstrap.mjs` 的计划里，拉丁那套与内置那份眼下同为全量、
+ *    同一份字节，装上去就是"同名顶替"。
  */
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
 import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
@@ -31,6 +44,15 @@ import { ensurePsdFonts, psdFontFallbacks } from "../../../scripts/psd-font-boot
 import * as kit from "../../../scripts/psd-fonts-kit.ts";
 import { casReadPermission, casWritePermission } from "../../../packages/service-auth/src/index.ts";
 import { buildRectFont } from "../../../packages/doctype-psd/tests/text-test-font.ts";
+import { casFontBytes, createFontRegistry } from "../../../packages/doctype-server-common/src/index.ts";
+import {
+  BUILTIN_FALLBACKS,
+  BUILTIN_FONTS,
+  createBuiltinFontProvider,
+} from "../../../packages/fonts-builtin/src/index.ts";
+import { createSetTextTool } from "../../../packages/doctype-psd/src/text/set-text.ts";
+import { runQuery } from "../../../packages/doctype-psd/src/queries.ts";
+import { memCas } from "../../../packages/doctype-psd/tests/helpers/mem-cas.ts";
 
 let runtime;
 
@@ -301,8 +323,13 @@ test("startup bootstrap seeds an empty index once and then leaves it alone", asy
 }, 180_000);
 
 /**
- * psd worker 真的拿到了回退链。只灌索引不配这个绑定的话，中文一个字都画不出来
- * 而且不报错，所以"绑定确实落到了 unidocs-psd 上"必须有东西守着。
+ * `bindingDefaults` 真的落到了 unidocs-psd 上。
+ *
+ * 它守的**不再**是"缺了这个绑定中文就画不出来" —— 那条已经由
+ * `@unidocs/fonts-builtin` 的 `BUILTIN_FALLBACKS` 兜住了（`scripts/dev.mjs`
+ * 也因此不再传这个值，见 `tests/unit/scripts/psd-font-bootstrap.test.mjs`）。
+ * 它守的是 `startLocalRuntime({ bindingDefaults })` 这条**接线**本身：调用方
+ * 想覆盖回退链时，值确实到得了 worker 手上。
  */
 test("the dev runtime hands the psd worker a font fallback chain", async () => {
   runtime = await startLocalRuntime({
@@ -312,4 +339,233 @@ test("the dev runtime hands the psd worker a font fallback chain", async () => {
   });
   const bindings = await runtime.mf.getBindings("unidocs-psd");
   expect(bindings.PSD_FONT_FALLBACKS).toBe("NotoSans-Regular,NotoSansSC-Regular");
+}, 180_000);
+
+// ---------------------------------------------------------------------------
+// 零配置：内置字体这一档
+// ---------------------------------------------------------------------------
+
+const BUILTIN_FONTS_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..", "..", "..", "packages", "fonts-builtin", "fonts",
+);
+
+/** Node 侧的内置字节加载器。与 `packages/azure-psd/src/builtin-fonts.ts` 同一个
+ *  语义（按 `fonts/` 下的文件名读），这里直接给目录，不重跑那边的定位逻辑 ——
+ *  定位逻辑由 `packages/azure-psd/tests/builtin-fonts.test.ts` 守着。 */
+const builtinLoader = async fileName =>
+  new Uint8Array(await readFile(join(BUILTIN_FONTS_DIR, fileName)));
+
+/**
+ * 生产接线的复刻：`[内置, 租户]` 两个来源，顺序即优先级（后者按 postScriptName
+ * 盖掉前者）—— 与 `packages/cloudflare-psd/src/agent-deps.ts` 和
+ * `packages/azure-psd/src/agent-deps.ts` 里那两处逐条对应。
+ *
+ * 租户那一档在这里是**真的**：`list` 打的是跑着的 worker 上那个
+ * `/tenants/{t}/fonts`，`read`/`blobFor` 用的是中立层的 `casFontBytes` ——
+ * 与两个平台适配器用的是同一个常量，不是这里手搓一套语义。
+ */
+function registryFor(credentials, docToken) {
+  const fontsUrl = fontsUrlFor(credentials, TENANT);
+  return createFontRegistry({
+    providers: [
+      createBuiltinFontProvider({ load: builtinLoader }),
+      {
+        id: "tenant",
+        list: () => readFontIndex({ fontsUrl, docToken }),
+        read: casFontBytes.read,
+        blobFor: casFontBytes.blobFor,
+      },
+    ],
+  });
+}
+
+/** 一个带文字层的最小文档。字号 64 是为了让 8105 字子集里的汉字轮廓落在若干
+ *  个像素上而不是亚像素 —— 这条用例断言的是"排得出来",不是精确版面。 */
+function textDocument(content) {
+  const bounds = [0, 0, 200, 1200];
+  return {
+    canvas: { width: 1400, height: 400, colorMode: "RGB", depth: 8, resolution: 72, profile: "sRGB" },
+    layers: [{
+      id: "title", type: "text", name: "title", bounds,
+      opacity: 1, blendMode: "normal", visible: true, locked: false, clipping: false,
+      pixels: { width: 1200, height: 200, data: new Uint8ClampedArray(1200 * 200 * 4) },
+      text: {
+        content,
+        // 请求的字体是拉丁那套 —— 它不覆盖 CJK，汉字必须靠回退链落到内置的中文
+        // 子集上。这正是 `glyphFallbacks` 要报出来的那一档。
+        style: { font: "NotoSans-Regular", size: 64, color: { r: 0, g: 0, b: 0 } },
+        paragraphStyle: { justification: "left" },
+      },
+    }],
+  };
+}
+
+/** 跑一次真的 setText effect。ctx 照 `packages/doctype-psd/tests/set-text.test.ts`
+ *  的 `effectCtx` 手搓：query 走真的 runQuery，blob 读写走同一个 memCas。 */
+async function runSetText(registry, fallbacks, model, cas, args) {
+  const tool = createSetTextTool({ registry, fallbacks });
+  if (tool.kind !== "effect") throw new Error("setText must be an effect tool");
+  const out = await tool.run(args, {
+    query: async q => ({ data: await runQuery(q, model, cas.ctx), version: 1 }),
+    readBlob: async blob => {
+      const handle = await cas.ctx.openSBlob(blob);
+      return {
+        data: await handle.readBytes({ offset: 0, length: handle.size }),
+        contentType: handle.contentType,
+      };
+    },
+    writeBlob: data => cas.ctx.makeSBlob(data),
+    signal: AbortSignal.timeout(120_000),
+  });
+  return { ops: out.ops, structured: out.result.structuredContent };
+}
+
+/**
+ * **本次重构的核心断言**：新环境、新租户，不灌任何字体，`setText` 就把中英混排
+ * 排得出来。
+ *
+ * 为什么它不空转 —— 三条断言各挡一种"看起来绿了其实什么都没排出来"：
+ *
+ *  1. `structured.missing` 是 `laid.missing`，装的是**一个 face 都认不出来的
+ *     码位**。内置的中文子集缺了、坏了、或者压根没被 registry 合进来，"你好"
+ *     两个字就会出现在这里 —— 所以 `toEqual([])` 是有内容的。
+ *  2. `structured.glyphFallbacks` 精确说出"哪几个字最后是用哪套字体排的"。它必须
+ *     点名 `NotoSans-Regular → NotoSansSC-Regular` 并带上那几个汉字：光有
+ *     "missing 为空"还可能是因为汉字被整段跳过了，而这一条要求它们真的被某个
+ *     face 认领。
+ *  3. 文件末尾那条负向对照（只留拉丁那一档）把同一段字排一遍，`missing` 里必须
+ *     出现"你""好"。没有它的话，上面两条在"实现改成永远返回空数组"时照样全绿。
+ *
+ * 另外断言 `fonts` 为空：内置来源的 `blobFor` 恒为 null，字节不在 CAS 里，
+ * 写进 `doc.fonts` 会撞上 state.ts 的 "was not stored during externalization"。
+ */
+test("零配置：一个从没灌过字体的租户，setText 仍然把中英混排排得出来", async () => {
+  runtime = await startLocalRuntime({ docTypes: ["psd"], ports: PORTS });
+  const credentials = credentialsOf();
+  const docToken = await createDocTokenFactory(kit, credentials, TENANT);
+
+  // 前提：真 workerd 上，这个租户的登记表是空的 —— 这条用例没有灌过任何东西。
+  expect(await readFontIndex({ fontsUrl: fontsUrlFor(credentials, TENANT), docToken })).toEqual([]);
+
+  const registry = registryFor(credentials, docToken);
+  const index = await registry.index();
+  expect([...index.keys()]).toEqual(["NotoSans-Regular", "NotoSansSC-Regular"]);
+  expect([...index.values()].map(font => font.source)).toEqual(["builtin", "builtin"]);
+
+  const cas = memCas();
+  const model = textDocument("Hello");
+  const { ops, structured } = await runSetText(
+    registry, BUILTIN_FALLBACKS, model, cas,
+    { layerId: "title", text: "你好 UniDocs 2026" },
+  );
+
+  expect(structured.ok).toBe(true);
+  // 一个字都不能落下。
+  expect(structured.missing).toEqual([]);
+  // 汉字确实是内置的中文子集排的，不是被跳过的。
+  expect(structured.glyphFallbacks).toEqual([{
+    requested: "NotoSans-Regular",
+    used: "NotoSansSC-Regular",
+    chars: ["你", "好"],
+  }]);
+
+  expect(ops).toHaveLength(1);
+  const payload = ops[0].payload;
+  expect(payload.text.content).toBe("你好 UniDocs 2026");
+  // 墨迹包围盒是从真实字形轮廓算出来的（宽或高为 0 时 effect 直接 fail），
+  // 所以这两个正数就是"真的排出了墨迹"。
+  expect(payload.pixels.width).toBeGreaterThan(0);
+  expect(payload.pixels.height).toBeGreaterThan(0);
+  // 栅格化结果真的落进了 CAS，且是一张 PNG（`\x89PNG`）。
+  const handle = await cas.ctx.openSBlob(payload.pixels.blob);
+  expect(handle.contentType).toBe("image/png");
+  expect([...await handle.readBytes({ offset: 0, length: 4 })]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+
+  // 内置字体不进 doc.fonts —— 没有可回收的对象，也就没有要保活的东西。
+  expect(payload.fonts).toEqual([]);
+}, 180_000);
+
+/**
+ * 负向对照。上一条的 `missing: []` 必须是被中文子集挣来的，不是恒真。
+ *
+ * 只留拉丁那一档（回退链也只剩它），同一段字再排一遍："你""好"必须出现在
+ * `missing` 里。这条一旦跟着上一条一起变绿，说明断言写在了实现的返回值上、
+ * 而不是写在"字体覆盖"这个约束上。
+ *
+ * **它不起 workerd**，尽管住在这个文件里：对照组要去掉的恰恰是租户那一档，
+ * 剩下的全在进程内。白起一次运行时除了慢，还会让读者以为它依赖真服务。
+ */
+test("负向对照：只留拉丁那一档，汉字就落进 missing", async () => {
+  const latinOnly = BUILTIN_FONTS.find(r => r.entry.postScriptName === "NotoSans-Regular");
+  const registry = createFontRegistry({
+    providers: [{
+      id: "builtin",
+      list: async () => [latinOnly.entry],
+      read: async () => await builtinLoader(latinOnly.file),
+      blobFor: () => null,
+    }],
+  });
+
+  const cas = memCas();
+  const { structured } = await runSetText(
+    registry, ["NotoSans-Regular"], textDocument("Hello"), cas,
+    { layerId: "title", text: "你好 UniDocs 2026" },
+  );
+
+  expect(structured.ok).toBe(true);
+  expect(structured.missing).toEqual(["你", "好"]);
+  expect(structured.glyphFallbacks).toEqual([]);
+}, 30_000);
+
+/**
+ * 覆盖可覆盖：装一套同名字体，索引里那条的来源从内置变成租户。
+ *
+ * 灌的就是内置那份拉丁**字节**本身 —— `psd-font-bootstrap.mjs` 的计划里，拉丁那套
+ * 与内置那份眼下同为全量、同一份字节，所以这是**真实的**线上形态，不是为了测试凑的。
+ * 字节相同让"这条真的换了来源吗"格外要防空转，所以除了 `source` 这个标签，还要
+ * 断言 `blobFor` 从 `null` 变成一个真的 SBlob —— 那是行为上的差别（文档靠它把 CAS
+ * 里那份字节钉住），标签改不出来。
+ */
+test("装一套同名字体：索引里那条的 source 从 builtin 变成 tenant", async () => {
+  runtime = await startLocalRuntime({ docTypes: ["psd"], ports: PORTS });
+  const credentials = credentialsOf();
+  const docToken = await createDocTokenFactory(kit, credentials, TENANT);
+
+  const before = await registryFor(credentials, docToken).index();
+  expect(before.get("NotoSans-Regular").source).toBe("builtin");
+  expect(registryFor(credentials, docToken).blobFor(before.get("NotoSans-Regular"))).toBeNull();
+
+  const latin = BUILTIN_FONTS.find(r => r.entry.postScriptName === "NotoSans-Regular");
+  const seeded = await seedFonts({
+    kit,
+    config: {
+      tenantId: TENANT,
+      fonts: [{
+        postScriptName: "NotoSans-Regular",
+        family: "Noto Sans",
+        file: join(BUILTIN_FONTS_DIR, latin.file),
+      }],
+    },
+    credentials,
+    log: () => {},
+  });
+  expect(seeded.registered).toEqual(["NotoSans-Regular"]);
+
+  // 新建一个 registry 而不是复用上面那个：`index()` 带 60 秒 TTL 缓存，复用会
+  // 读到灌之前那一份 —— 那是缓存在骗人，不是覆盖没生效。
+  const after = registryFor(credentials, docToken);
+  const index = await after.index();
+  // 中文那一档没被碰过，仍然来自内置；只有同名的那条易主。
+  expect([...index.values()].map(font => font.source)).toEqual(["tenant", "builtin"]);
+  const latinEntry = index.get("NotoSans-Regular");
+  // 索引里那条换成了**脚本刚登记的那一条**，不只是标签变了。
+  expect(latinEntry.entry.hash).toBe(seeded.index.find(e => e.postScriptName === "NotoSans-Regular").hash);
+  // 两个哈希不同,尽管字节逐字节相同:内置那条的 hash 是字体字节的裸 sha256,
+  // 租户那条是 CAS 的节点摘要(带规范化头)。`FontEntry.hash` 的注释说的
+  // "不代表它在 CAS 里"就是这个意思 —— 这里顺带把它钉住。
+  expect(latinEntry.entry.hash).not.toBe(latin.entry.hash);
+  // 租户那一档给得出 SBlob（文档靠它把 CAS 里那份字节钉住）；内置那一档恒为 null。
+  expect(after.blobFor(latinEntry)?.hash).toBe(latinEntry.entry.hash);
+  expect(after.blobFor(index.get("NotoSansSC-Regular"))).toBeNull();
 }, 180_000);

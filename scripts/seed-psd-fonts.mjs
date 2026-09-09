@@ -9,11 +9,15 @@
  * （2026-09-04，`pnpm dev` 起的 Cloudflare 与 Azure 运行时）；**部署环境上还
  * 没实测过** —— Azure 线上的 doc service ingress 是内部的，脚本得先在容器
  * 环境内部有个落脚点才跑得起来（见 stacks/unidocs-azure/README.md 的
- * 「新环境的字体预置」）。
+ * 「装额外字体(可选)」）。
  *
  * PSD 文字层只记字体**名字**，不内嵌字体文件，所以 `setText` 要自己排版就得
- * 先有一张"这个名字 → CAS 里哪一坨字节 → 它认识哪些码位"的索引。这个脚本就是
- * 往那张索引里写东西的唯一入口（见 docs/psd-text-layers.md §3）。
+ * 先有一张"这个名字 → 哪一坨字节 → 它认识哪些码位"的索引（见
+ * docs/psd-text-layers.md §3）。
+ *
+ * 它是往**租户那一档**索引里写东西的唯一入口。内置那一档（@unidocs/fonts-builtin）
+ * 随包走，不经这里 —— 租户登记的同名字体会**覆盖**内置的，那正是"装全量字体把内置
+ * 子集换掉"的做法。
  *
  * ## 用法
  *
@@ -36,9 +40,15 @@
  * `unitsPerEm` / `coverage` / `hash` **不许写在配置里**，它们从字体文件解析出来
  * （裁定：填错了字还是那些字，位置全错）。写了会直接报错，不会被静默忽略。
  *
- * 字体二进制**不进仓库**（裁定 R19）：一套中文字体 5–20 MB，进 git 就永远留在
- * 历史里。`file` 写的是本地路径，文件由部署者自备；Noto Sans / Noto Sans SC 都是
- * OFL 许可，见 FONT_SOURCE_HINT。
+ * **全量**字体二进制不进仓库（裁定 R19）：一套中文字体 5–20 MB，进 git 就永远
+ * 留在历史里。`file` 写的是本地路径，文件由部署者自备；Noto Sans / Noto Sans SC
+ * 都是 OFL 许可，见 FONT_SOURCE_HINT。
+ *
+ * R19 于 2026-09-08 收窄为"只许提交有明确公开字表依据的子集，单文件不超过约
+ * 3 MiB"：默认字体（拉丁全量 + 中文《通用规范汉字表》8105 字子集，合计约 2.5 MiB）
+ * 随包发行，见 `packages/fonts-builtin`。**所以这个脚本已经不是必跑项了** ——
+ * 不跑它，`setText` 照样排得出中英混排；跑它是为了拿到全量中文字体多出来的那
+ * 两万多个码位，或者装一套素材字体。同名 postScriptName 会盖掉内置那一档。
  *
  * ## 端点与密钥（`--credentials`，默认 .wrangler/unidocs/local-credentials.json）
  *
@@ -72,7 +82,7 @@
  * 所以这是一个**部署者工具**：它直连 psd doc service 和 CAS 服务，并且需要两把本该只
  * 存在 gateway 上的私钥（`CAPABILITY_PRIVATE_KEY_PKCS8` / `CAS_STACK_PRIVATE_KEY_PKCS8`，
  * 见 stacks/unidocs-cloudflare/deploy/README.md；Azure 侧见
- * stacks/unidocs-azure/README.md 的「新环境的字体预置」）。生产环境要用它，就得在
+ * stacks/unidocs-azure/README.md 的「装额外字体(可选)」）。生产环境要用它，就得在
  * 能拿到这两把密钥、并且 psd doc service 对你可达的地方跑。别把它当成终端用户接口。
  *
  * ## 写权限沿用 `sessions:create`（裁定 R41）
@@ -102,7 +112,8 @@ export const FONT_SOURCE_HINT =
   "Noto Sans / Noto Sans SC 都是 OFL 许可。拉丁那套从 https://fonts.google.com/noto 下载；"
   + "中文那套建议取 noto-cjk 的子集化 OTF："
   + "https://github.com/notofonts/noto-cjk/raw/main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf"
-  + "（约 8.0 MB，postScriptName 就是 NotoSansSC-Regular）。字体二进制不进仓库，由部署者自备。";
+  + "（约 8.0 MB，postScriptName 就是 NotoSansSC-Regular）。全量字体不进仓库（裁定 R19），由部署者自备；"
+  + "随包发行的是 @unidocs/fonts-builtin 里那两套子集，不需要也不能用这个脚本灌。";
 
 /**
  * 单套字体的字节上限。
@@ -476,7 +487,9 @@ export async function seedFonts({
     log("");
     log(
       "警告：索引里没有任何一套字体覆盖 CJK 统一表意文字基本区（U+4E00–U+9FFF）"
-      + " —— 常用汉字会掉到回退链末端，一个字都画不出来。",
+      + " —— 这里说的是上面列出的**这个租户的登记表**（含往次登记的），"
+      + "看不见内置那一档：@unidocs/fonts-builtin 的中文 8105 字子集仍然兜着，"
+      + "常用汉字照样排得出来。但这张表里点名的字体如果本该带中文，那它没带。",
     );
   }
 

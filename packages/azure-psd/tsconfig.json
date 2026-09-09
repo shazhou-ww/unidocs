@@ -21,6 +21,9 @@
       "path": "../doctype-server-common"
     },
     {
+      "path": "../fonts-builtin"
+    },
+    {
       "path": "../protocol-doc"
     }
   ]

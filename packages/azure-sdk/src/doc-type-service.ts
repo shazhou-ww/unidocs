@@ -27,9 +27,9 @@ import { createCasBlobClient, leaseNodeContent } from "@unicas/tenant-blob-clien
 import type { TenantCasClient } from "@unicas/tenant-client";
 import type {
   DocCapabilityVerifier,
-  FontRegistry,
   SessionDeps,
   SessionIdentity,
+  WritableFontProvider,
 } from "@unidocs/doctype-server-common";
 import {
   createDocTypeHandler,
@@ -103,7 +103,7 @@ export interface DocTypeServiceOptions<TDoc, TQuery, TOp> {
    * `startDocTypeService()` 自己建的，`main.ts` 传这个选项进来的那一刻还没有
    * 池。让调用方自己再建一个池，等于同一个进程开两套连接。
    */
-  fontRegistryFor?: (tenantId: string, pool: Pool) => FontRegistry;
+  fontProviderFor?: (tenantId: string, pool: Pool) => WritableFontProvider;
 }
 
 export interface DocTypeServiceHandle {
@@ -294,12 +294,12 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
   function fontsRouter(
     fallback: (request: Request) => Promise<Response>,
   ): (request: Request) => Promise<Response> {
-    const fontRegistryFor = options.fontRegistryFor;
-    if (fontRegistryFor === undefined) return fallback;
+    const fontProviderFor = options.fontProviderFor;
+    if (fontProviderFor === undefined) return fallback;
     return async (request: Request): Promise<Response> => {
       const fonts = matchFontsRoute(new URL(request.url).pathname);
       if (!fonts) return fallback(request);
-      // 中立的 `handleFontsRequest` 不兜底存储层的异常（`registry.list/put`
+      // 中立的 `handleFontsRequest` 不兜底存储层的异常（`provider.list/put`
       // 抛出就直接 reject 出去）。这里再包一层**不是**为了防未处理拒绝 ——
       // `serve()` 自己就有顶层兜底（http-shell.ts），一次 Postgres 故障在
       // Node 宿主上本来也是 500，不会变成未处理拒绝。CF 那边"不兜就是未处理
@@ -314,7 +314,9 @@ export async function startDocTypeService<TDoc, TQuery, TOp>(
       try {
         return await handleFontsRequest({
           docCapabilityVerifier: config.docCapabilityVerifier,
-          registry: fontRegistryFor(fonts.tenantId, pool),
+          // 只给租户那一档，不给门面：这个端点回答的是"这个租户登记了什么"
+          // （见 `FontsRequestConfig.provider` 的注释）。
+          provider: fontProviderFor(fonts.tenantId, pool),
           audit,
         }, request, fonts);
       } catch (err) {
@@ -372,8 +374,8 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
   defaultPort: number;
   documentAgent?: (identity: SessionIdentity, pool: Pool) => DocumentAgent<TQuery, TOp>;
   llmProvider?: LlmProvider;
-  /** 见 `DocTypeServiceOptions.fontRegistryFor`：缺省不挂 fonts 路由。 */
-  fontRegistryFor?: (tenantId: string, pool: Pool) => FontRegistry;
+  /** 见 `DocTypeServiceOptions.fontProviderFor`：缺省不挂 fonts 路由。 */
+  fontProviderFor?: (tenantId: string, pool: Pool) => WritableFontProvider;
 }): Promise<void> {
   const { docType, documentTypeFactory, defaultPort } = options;
   const auth = await new DocAuthConfigCache(docType).get(process.env);
@@ -398,7 +400,7 @@ export async function runDocTypeService<TDoc, TQuery, TOp>(options: {
     },
     ...(options.documentAgent === undefined ? {} : { documentAgent: options.documentAgent }),
     ...(options.llmProvider === undefined ? {} : { llmProvider: options.llmProvider }),
-    ...(options.fontRegistryFor === undefined ? {} : { fontRegistryFor: options.fontRegistryFor }),
+    ...(options.fontProviderFor === undefined ? {} : { fontProviderFor: options.fontProviderFor }),
   });
   console.log(`azure-${docType} CAS: baseUrl=${process.env.CAS_BASE_URL ?? "(none)"} stackId=${process.env.CAS_STACK_ID ?? "(none)"}`);
   console.log(`azure-${docType} listening on ${handle.url}`);

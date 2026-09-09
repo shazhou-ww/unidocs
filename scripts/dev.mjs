@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DOC_TYPES, parseDocTypes } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/unidocs-azure/doc-types.mjs";
 import { loadRemoteCasConfig, parseDevArgs, writeLocalCredentials } from "./unidocs-dev-config.mjs";
-import { DEFAULT_FONT_TENANT, ensurePsdFonts, psdFontFallbacks } from "./psd-font-bootstrap.mjs";
+import { DEFAULT_FONT_TENANT, ensurePsdFonts } from "./psd-font-bootstrap.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -236,14 +236,16 @@ if (useAzure) {
     "../stacks/unidocs-azure/local/runtime.mjs"
   );
 
-  // 回退链的默认值必须在 spawn 之前定下来。Azure 侧没有 binding 这一层 ——
-  // `spawnService` 把 `process.env` 原样铺给每个 doc service,而子进程拿到的是
-  // spawn 那一刻的快照(同 stacks/unidocs-azure/local/dev.mjs 加载 .env.azure 的
-  // 理由)。已经在 env 里的一律不覆盖:shell / `.env.azure` 显式配了就以它为准。
+  // 这里**不再**替 psd 设 `PSD_FONT_FALLBACKS`:默认值住在
+  // `@unidocs/fonts-builtin` 的 `BUILTIN_FALLBACKS` 里,由
+  // `parseFontFallbacks(env.PSD_FONT_FALLBACKS, BUILTIN_FALLBACKS)` 接线
+  // (packages/azure-psd/src/agent-deps.ts)。不设 ≠ 空链。
   //
-  // 只灌索引不配这个变量的结果不是报错,是中文一个字都画不出来 —— 所以这一步
-  // 必须和下面那次预置绑在一起,不能只做一半。
-  if (psdFontsEnabled) process.env.PSD_FONT_FALLBACKS ??= psdFontFallbacks();
+  // 下面那次本地预置照做,而且**不需要**再传一遍回退链:它灌进租户索引的是
+  // 同名的全量版(NotoSans-Regular / NotoSansSC-Regular),而
+  // `createFontRegistry` 的 providers 顺序是"内置在前、租户在后、后者按
+  // postScriptName 覆盖前者",所以同一条内置默认回退链在本地解析到的就是刚
+  // 灌进去的那两套全量字体。在这里再写一份名字只会多一个会分叉的来源。
 
   runtime = await startAzureRuntime({
     host: LOCAL_HOST,
@@ -269,10 +271,10 @@ if (useAzure) {
     docTypes,
     persistPath: join(root, ".wrangler", "miniflare"),
     logLevel: LogLevel.INFO,
-    // 回退链的默认值必须**在 Miniflare 起来之前**就定下来 —— 它是 worker 的
-    // 一个绑定,而下面那次预置是运行时起来之后才跑的。只灌索引不配这个变量
-    // 的话回退链是空的:中文一个字都画不出来,而且不报错。
-    ...(psdFontsEnabled ? { bindingDefaults: { psd: { PSD_FONT_FALLBACKS: psdFontFallbacks() } } } : {}),
+    // 这里**不再**传 `bindingDefaults` 给 psd 配回退链 —— 理由同 Azure 那一支
+    // (见上面那段注释):默认值住在 `BUILTIN_FALLBACKS`,而本地预置灌的是同名
+    // 全量版,租户那一档按 postScriptName 盖掉内置那一档。不设 ≠ 空链,所以
+    // 也不再需要"绑定必须在 Miniflare 起来之前定下来"这个时序约束。
     ...(devLogFile ? { logFile: devLogFile } : {}),
     ...(remoteCas ? {
       casOrigin: remoteCas.origin,

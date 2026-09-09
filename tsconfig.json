@@ -72,6 +72,9 @@
       "path": "packages/doctype-server-common"
     },
     {
+      "path": "packages/fonts-builtin"
+    },
+    {
       "path": "packages/azure-sdk"
     },
     {

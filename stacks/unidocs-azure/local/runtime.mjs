@@ -216,6 +216,11 @@ async function bundleService(entry, outfile) {
     target: "node24",
     external: EXTERNAL_NPM_PACKAGES,
     alias: WORKSPACE_ALIASES,
+    // 冗余保险。Azure 生产不打包（node dist/main.js + 真实 node_modules），走的是
+    // packages/azure-psd/src/builtin-fonts.ts 那个 fs 加载器，不需要这一项；但本地
+    // Azure 栈是 esbuild 打包跑的，将来有人把 CF 侧的 `import … from ".../*.ttf"`
+    // 写法搬过来，没有这一项就是一句「No loader is configured for .ttf」。
+    loader: { ".ttf": "binary", ".otf": "binary" },
     logOverride: { "empty-import-meta": "silent" },
   });
 }
@@ -784,6 +789,12 @@ export async function startAzureRuntime({
             CAS_STACK_TRUSTED_JWKS: JSON.stringify(resolvedStackFixture.jwks),
             PORT: String(port),
             CAS_BASE_URL: resolvedCasBaseUrl,
+            // 内置字体的目录。必须显式传：pnpm 不把 workspace 链接提升到仓库根，
+            // 而这些 bundle 落在 <ROOT>/.azure-runtime/bundles/ —— 不在
+            // packages/azure-psd/ 的子树里，`require.resolve("@unidocs/fonts-builtin/…")`
+            // 从那儿是 MODULE_NOT_FOUND。生产镜像不需要它（入口在包内，
+            // node_modules 是真实目录），所以加载器把它当优先分支、resolve 当兜底。
+            UNIDOCS_BUILTIN_FONTS_DIR: join(ROOT, "packages", "fonts-builtin", "fonts"),
           },
           `azure-${name}-${i + 1}`,
         );

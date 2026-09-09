@@ -5,7 +5,7 @@
  * 搬到了 `packages/protocol-doc/tests/routes-fonts.test.ts`（路由匹配）与
  * `packages/doctype-server-common/tests/font-registry-handler.test.ts`
  * （边缘鉴权/转发，14 条）。这里只剩 DO 本体与 `fontsObjectName` 这两样
- * 没搬走的东西 —— 适配层的契约测试在同目录的 `font-registry-do.test.ts`。
+ * 没搬走的东西 —— 适配层的契约测试在同目录的 `font-provider-do.test.ts`。
  *
  * 这个包此前没有任何测试基建，也没有 `@cloudflare/vitest-pool-workers`。
  * DO 的 sqlite 用 `node:sqlite` 顶上：`ctx.storage.sql.exec` 的形状（可变位置

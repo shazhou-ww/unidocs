@@ -31,6 +31,7 @@ import {
   sessionCreatePermission,
 } from "@unidocs/service-auth";
 import worker, { PsdEditor, PsdFonts, PsdOperator } from "../src/worker.js";
+import { fontsObjectName } from "../src/fonts-do.js";
 
 const ISSUER = "https://issuer.example";
 const DOC_AUDIENCE = "unidocs-doc:psd";
@@ -67,6 +68,9 @@ const signFontsToken = (tenantId: string): Promise<string> => docIssuer.issue({
 /** 够 `resolveDocAuthConfig` 跑通的最小 env；`CAPABILITY_TRUSTED_JWKS` 是上面
  *  这把真密钥的公钥——多数用例不带 Authorization、用不上它，文件末尾的端到端
  *  用例用得上。 */
+/** 共享 env 的字体 DO 假件把入参记在这里；跨用例累积，所以断言只看本次新增的那些。 */
+const fontsObjectNames: string[] = [];
+
 const env = {
   CAPABILITY_ISSUER: ISSUER,
   CAPABILITY_TRUSTED_JWKS: DOC_JWKS,
@@ -80,7 +84,13 @@ const env = {
   CAPABILITY_MAX_LIFETIME_SECONDS: "1800",
   CAPABILITY_CLOCK_SKEW_SECONDS: "30",
   PSD_FONTS: {
-    idFromName: (name: string) => name,
+    // 记下 `idFromName` 收到的名字。写入侧的租户隔离**就是**这个名字：
+    // `worker.ts` 的 `fontsObjectName({ stackId, tenantId: fonts.tenantId })`
+    // 若把 tenantId 整个漏掉，一个 stack 下所有租户会共用同一个 DO，字体
+    // **元数据**（postScriptName / family / hash / coverage）就跨租户可见了
+    // ——字节仍安全（`casFontBytes.read` 走会话作用域的 CAS 分区），但这里是
+    // 这条链上唯一还会造成跨租户可见的地方。不记就断言不了。
+    idFromName: (name: string) => { fontsObjectNames.push(name); return name; },
     get: () => ({ fetch: async () => Response.json({ fonts: [] }) }),
   },
 } as unknown as Parameters<typeof worker.fetch>[1];
@@ -157,6 +167,24 @@ describe("worker.fetch 的字体端点：真凭据端到端", () => {
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ fonts: [] });
+  });
+
+  it("打的是本租户的字体 DO —— 对象名里带着 stackId 与路由上的 tenantId", async () => {
+    // 上面那条只证明"这条链是通的"，证明不了"打对了 DO"：假件对任何名字都回同
+    // 一份 `{fonts: []}`。这条钉住 `worker.ts` 的
+    // `fontsObjectName({ stackId: env.CAS_STACK_ID, tenantId: fonts.tenantId })`
+    // ——读取侧同形的断言在 `agent-deps.test.ts` 里，两侧各一条。
+    // 期望值**用那个函数现算**，不手写 "cas_1|alice"：手写等于在测试里再实现一遍
+    // 命名规则，两份实现会一起改、一起错。
+    const before = fontsObjectNames.length;
+    const token = await signFontsToken("bob");
+    expect((await fetchWorker("/tenants/bob/fonts", {
+      headers: { Authorization: `Bearer ${token}` },
+    })).status).toBe(200);
+
+    expect(fontsObjectNames.slice(before)).toEqual([
+      fontsObjectName({ stackId: "cas_1", tenantId: "bob" }),
+    ]);
   });
 
   it("PSD_FONTS 存储故障（DO stub 的 fetch 直接抛）时，真凭据请求拿到 500，不是未处理拒绝", async () => {

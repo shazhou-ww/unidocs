@@ -7,8 +7,10 @@
  */
 import { describe, expect, it } from "vitest";
 import { handleFontsRequest } from "../src/font-registry-handler.js";
-import { createMemoryFontRegistry } from "../src/memory-ports.js";
+import { createMemoryFontProvider } from "../src/memory-ports.js";
+import { createFontRegistry } from "../src/font-registry.js";
 import type { FontEntry } from "../src/font-registry.js";
+import type { FontProvider } from "../src/font-provider.js";
 
 const TENANT = "t1";
 const entry: FontEntry = {
@@ -61,12 +63,12 @@ function req(method: string, body?: unknown, headers: Record<string, string> = {
 describe("handleFontsRequest", () => {
   const cfg = () => ({
     docCapabilityVerifier: verifierAccepting([`tenants:${TENANT}:sessions:create`]),
-    registry: createMemoryFontRegistry(),
+    provider: createMemoryFontProvider(),
   });
 
   it("GET 列出登记表", async () => {
     const c = cfg();
-    await c.registry.put(entry);
+    await c.provider.put(entry);
     const res = await handleFontsRequest(c, req("GET"), { tenantId: TENANT });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ fonts: [entry] });
@@ -76,7 +78,34 @@ describe("handleFontsRequest", () => {
     const c = cfg();
     const res = await handleFontsRequest(c, req("POST", entry), { tenantId: TENANT });
     expect(res.status).toBe(200);
-    expect(await c.registry.list()).toEqual([entry]);
+    expect(await c.provider.list()).toEqual([entry]);
+  });
+
+  it("GET 仍然只返回租户那一档,不掺内置字体", async () => {
+    // 路由直接持有租户 provider,不经门面 —— 这个端点回答的是"这个租户**登记了**
+    // 什么",不是"这个租户**能用**什么"。掺进内置字体会让 seed 脚本的幂等判据
+    //("索引里有没有")每次都判成"已经有了",于是一套字体都灌不进去。
+    const builtinEntry: FontEntry = {
+      ...entry,
+      postScriptName: "Builtin-Regular",
+      family: "Builtin",
+    };
+    const builtin: FontProvider = {
+      id: "builtin",
+      list: async () => [builtinEntry],
+      read: async () => { throw new Error("路由不读字节"); },
+      blobFor: () => null,
+    };
+    const c = cfg();
+    await c.provider.put(entry);
+    // 先证明这条断言不是空转:门面确实会把内置那一档合进来。少了这一句,下面那条
+    // "只有一条"在内置来源根本没生效时也照样绿。
+    const merged = await createFontRegistry({ providers: [builtin, c.provider] }).index();
+    expect([...merged.keys()]).toEqual([builtinEntry.postScriptName, entry.postScriptName]);
+
+    const res = await handleFontsRequest(c, req("GET"), { tenantId: TENANT });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ fonts: [entry] });
   });
 
   it("方法不对回 405,不是 404 —— 别把\"方法用错\"说成\"端点不存在\"", async () => {
@@ -88,7 +117,7 @@ describe("handleFontsRequest", () => {
     const c = cfg();
     const res = await handleFontsRequest(c, req("POST", { ...entry, coverage: [] }), { tenantId: TENANT });
     expect(res.status).toBe(400);
-    expect(await c.registry.list()).toEqual([]);
+    expect(await c.provider.list()).toEqual([]);
   });
 
   it("body 不是 JSON 回 400", async () => {
@@ -104,7 +133,7 @@ describe("handleFontsRequest", () => {
   it("权限不是租户级的 sessions:create 就拒 —— 索引是租户级的,会话权限与它无关", async () => {
     const c = {
       docCapabilityVerifier: verifierAccepting([`tenants:${TENANT}:sessions:s1:write`]),
-      registry: createMemoryFontRegistry(),
+      provider: createMemoryFontProvider(),
     };
     expect((await handleFontsRequest(c, req("GET"), { tenantId: TENANT })).status).toBe(403);
   });
@@ -115,7 +144,7 @@ describe("handleFontsRequest", () => {
         `tenants:${TENANT}:sessions:create`,
         `tenants:${TENANT}:cas:read`,
       ]),
-      registry: createMemoryFontRegistry(),
+      provider: createMemoryFontProvider(),
     };
     expect((await handleFontsRequest(c, req("GET"), { tenantId: TENANT })).status).toBe(403);
   });
@@ -123,7 +152,7 @@ describe("handleFontsRequest", () => {
   it("权限为空数组也拒", async () => {
     const c = {
       docCapabilityVerifier: verifierAccepting([]),
-      registry: createMemoryFontRegistry(),
+      provider: createMemoryFontProvider(),
     };
     expect((await handleFontsRequest(c, req("GET"), { tenantId: TENANT })).status).toBe(403);
   });
@@ -135,7 +164,7 @@ describe("handleFontsRequest", () => {
         tenantId: TENANT,
         permissions: [`tenants:${TENANT}:sessions:create`],
       }),
-      registry: createMemoryFontRegistry(),
+      provider: createMemoryFontProvider(),
     };
     expect((await handleFontsRequest(c, req("GET"), { tenantId: TENANT })).status).toBe(401);
   });
@@ -147,7 +176,7 @@ describe("handleFontsRequest", () => {
         tenantId: "other-tenant",
         permissions: [`tenants:${TENANT}:sessions:create`],
       }),
-      registry: createMemoryFontRegistry(),
+      provider: createMemoryFontProvider(),
     };
     expect((await handleFontsRequest(c, req("GET"), { tenantId: TENANT })).status).toBe(403);
   });
@@ -161,7 +190,7 @@ describe("handleFontsRequest", () => {
   it("token 校验抛出普通 Error(非 CapabilityError)也回 401,不是把服务端异常透出", async () => {
     const c = {
       docCapabilityVerifier: verifierThrowing(new Error("network exploded")),
-      registry: createMemoryFontRegistry(),
+      provider: createMemoryFontProvider(),
     };
     expect((await handleFontsRequest(c, req("GET"), { tenantId: TENANT })).status).toBe(401);
   });

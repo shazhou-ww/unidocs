@@ -25,7 +25,7 @@
  * BLOB_CONNECTION_STRING。CAS_BASE_URL 可选(过渡形态)，CAS 使用请求级
  * delegated capability，不再配置共享 CAS key。
  */
-import { PgFontRegistry, requireEnv, runDocTypeService } from "@unidocs/azure-sdk";
+import { PgFontProvider, requireEnv, runDocTypeService } from "@unidocs/azure-sdk";
 import { createAnthropicProvider } from "@unidocs/doctype-server-common/agent";
 import { consoleObserver } from "@unidocs/protocol-doc";
 import { createPsdAgent, createPsdDocumentType } from "@unidocs/doctype-psd";
@@ -45,8 +45,10 @@ runDocTypeService({
   // 租户级的 `/tenants/{t}/fonts`（预置脚本往这里登记字体）。只有 psd 挂它 ——
   // markdown/docx 没有字体索引。SDK 在 `createDocTypeHandler` 之前分流，因为
   // `matchDocRoute` 只认会话级路径。
-  fontRegistryFor: (tenantId, pool) =>
-    new PgFontRegistry(pool, { stackId: requireEnv("CAS_STACK_ID"), tenantId }),
+  // 只给租户那一档（`WritableFontProvider`），不给门面：这个端点回答的是"这个
+  // 租户登记了什么"，掺进内置字体会让预置脚本的幂等判据永远判成"已经有了"。
+  fontProviderFor: (tenantId, pool) =>
+    new PgFontProvider(pool, { stackId: requireEnv("CAS_STACK_ID"), tenantId }),
 }).catch((err) => {
   console.error("azure-psd failed to start:", err);
   process.exit(1);
