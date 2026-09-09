@@ -888,6 +888,73 @@
   font-weight: 550;
 }
 
+.admin-mock .candidate-description {
+  margin: 5px 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.admin-mock .contract-history {
+  border-top: 1px solid var(--line);
+}
+
+.admin-mock .contract-row {
+  padding: 18px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-mock .contract-row.active {
+  background: #f7f9f4;
+  box-shadow: inset 2px 0 #70866a;
+}
+
+.admin-mock .contract-idx {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid #dfe4da;
+  border-radius: 50%;
+  background: var(--paper);
+  color: #526b55;
+  font-weight: 600;
+}
+
+.admin-mock .contract-summary>.bundle-meta {
+  margin-left: 46px;
+}
+
+.admin-mock .contract-row details {
+  margin: 14px 0 0 46px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.admin-mock .contract-row summary {
+  cursor: pointer;
+}
+
+.admin-mock .contract-row pre {
+  max-height: 260px;
+  overflow: auto;
+  padding: 14px;
+  background: #f4f5f1;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.admin-mock .admin-code-input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 .admin-mock .bundle-meta {
   display: flex;
   flex-wrap: wrap;

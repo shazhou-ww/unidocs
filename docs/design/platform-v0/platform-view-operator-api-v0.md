@@ -1,6 +1,6 @@
 # UniDocs Platform、View 与 Operator API v0
 
-状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](../agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的契约源位于 [`@unidocs/protocol-platform`](../../packages/protocol-platform/src/index.ts)。
+状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的契约源位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)。
 
 ## 1. 决策摘要
 
@@ -9,11 +9,12 @@
 1. **UniDocs Platform**：面向用户、View、管理员和 Agent 的唯一数据权威；
 2. **Operator Agent**：理解具体文档类型并生成 pong 和完整新 snapshot。
 
-View 不是第三类服务。每种文档类型提供一个静态 **View resource bundle**，由 Admin 上传并由 Platform 托管在公共 R2 bucket。浏览器在隔离 iframe 中运行 bundle，通过 Host RPC 使用 Platform 能力。
+View 不是第三类服务。每种文档类型可以绑定两个独立的静态资源包：面向创建入口的 **Type Card bundle**，以及运行文档界面的 **View resource bundle**。两者由 Admin 上传并由 Platform 托管在公共 R2 bucket；浏览器只在隔离 iframe 中运行 View bundle，通过 Host RPC 使用 Platform 能力。
 
 ```mermaid
 flowchart LR
   U[用户] --> H[Platform Web Host]
+  H --> T[Type Card bundle]
   H --> V[隔离的 View bundle]
   H --> P[Platform API]
   H -->|短期 tenant JWT| C[(UniCAS)]
@@ -45,7 +46,7 @@ flowchart LR
 - 不透明的类型化 location；
 - Agent submission 的幂等记录、双重乐观锁和原子提交；
 - operator webhook 的至少一次投递；
-- View bundle 的上传、验证、R2 托管和当前绑定。
+- Type Card bundle 与 View bundle 的上传、验证、R2 托管和当前绑定。
 
 ### 1.3 Operator Agent 的职责
 
@@ -76,6 +77,8 @@ View bundle 不创建正式版本。需要改变正式内容的用户操作最�
 type TenantId = string;
 type DocumentId = string;
 type DocumentType = string;
+/** 文档类型内单调递增的 snapshot contract revision。 */
+type SnapshotContractIdx = number;
 /** 文档内单调递增的版本 record ID。 */
 type VersionIdx = number;
 type ThreadId = string;
@@ -83,6 +86,8 @@ type PingIdx = number;
 type PongIdx = number;
 type SubmissionId = string;
 type ViewBundleId = string;
+type TypeCardBundleId = string;
+type OperatorCandidateId = string;
 type ValidationId = string;
 type Cursor = string;
 type IsoDateTime = string;
@@ -122,13 +127,30 @@ interface MessageContent {
   readonly richContent: CasBlobRef | null;
   readonly attachments: readonly CasBlobRef[];
 }
+
+type SValueSchema = Readonly<Record<string, JsonValue>> & {
+  readonly $schema: "https://schemas.unidocs.dev/svalue/v1";
+  readonly "x-unidocs-sblob"?: true;
+  readonly "x-unidocs-blob-content-types"?: readonly string[];
+  readonly "x-unidocs-blob-max-size"?: number;
+};
 ```
+
+`SValueSchema` 是 JSON Schema 2020-12 的扩展 dialect。普通节点沿用 JSON Schema 关键字；`x-unidocs-sblob: true` 表示该节点匹配一个原子的 `SBlob`，可选关键字约束其逻辑 content type 和最大字节数。Schema 本身是 JSON，不把内存中的 symbol-branded `SBlob` 伪装成 JSON 对象。
 
 所有文档版本 snapshot、ping/pong 富内容和附件都以 `CasBlobRef` 持久化。其语义与现行 `@unicas/tenant-blob-client` 完全相同：`hash` 是 blob root，`size` 是逻辑总字节数，`contentType` 描述完整逻辑 blob，而不是某个内部 chunk。调用方不能假定 root 是单个 CAS node；大 blob 可以是 blob-index tree。`text` 与 `richContent` 至少一个非空；附件不能替代正文。
 
 ## 3. 文档与协作资源
 
 ```ts
+interface SnapshotContractRecord {
+  readonly snapshotContractIdx: SnapshotContractIdx;
+  readonly contentType: string;
+  readonly schema: SValueSchema;
+  readonly schemaHash: string;
+  readonly createdAt: IsoDateTime;
+}
+
 interface DocumentRecord {
   readonly documentId: DocumentId;
   readonly name: string;
@@ -140,6 +162,7 @@ interface DocumentRecord {
 interface VersionRecord {
   readonly versionIdx: VersionIdx;
   readonly parentVersionIdx: VersionIdx | null;
+  readonly snapshotContractIdx: SnapshotContractIdx;
   readonly snapshot: SValue;
   readonly authorAgentId: string;
   readonly createdAt: IsoDateTime;
@@ -177,6 +200,8 @@ interface ThreadDetail {
 
 `VersionIdx` 是 Platform 在版本提交成功时按 Document 分配的单调递增安全整数，同时表达版本 record 身份和出生顺序。`PingIdx` 和 `PongIdx` 分别由 Platform 在各 thread 的 ping/pong 序列中分配。所有整数 record 身份使用 `Idx`，字符串身份使用 `Id`，内容哈希使用 `Hash`。
 
+每个文档类型的 `SnapshotContractIdx` 从 1 开始单调递增，只能追加，不能修改、删除、回退或手动选择 current。最大 idx 是自动派生的最新版，也是唯一允许创建新 snapshot 的 revision；旧 revision 只用于验证和解释历史 `VersionRecord`。添加 revision 时 Platform 对 schema 做 canonical JSON digest，产生 `schemaHash`。
+
 snapshot 是逻辑文档值 `SValue`，其中的大型二进制内容以 `SBlob` 引用 UniCAS；它不是 snapshot CAS hash。相同 snapshot 仍可因 parent、provenance、作者和创建时间不同而形成不同版本。HTTP 使用 canonical SValue CBOR 编码，Platform 可将编码结果作为内部 CAS 业务根持久化，但该存储引用不进入 `VersionRecord` 公共模型。
 
 `DocumentLocation` 只描述一个指定版本内部的位置，自身不重复携带 `versionIdx`。`PingRecord.location` 相对于该 ping 的 `baseVersionIdx`；`PongRecord.resultLocations` 相对于产生该 pong 的 submission 所创建的新版本。持久化层通过这些所属关系确定版本上下文。
@@ -193,46 +218,52 @@ Admin 继续只有“文档类型、管理员、审计”三个业务模块，�
 
 | 列 | 内容 |
 | --- | --- |
-| 文档类型 | manifest 中的名称和稳定 `documentType` |
-| View bundle | 当前 bundle 短 ID 和 Host 协议 |
+| 文档类型 | 当前 Type Card bundle 中匹配 Admin UI locale 的名称、图标和稳定 `documentType`；未绑定时显示内部名称与占位图标 |
+| View bundle | 当前 bundle 短 ID 和入口文件 |
 | Builtin operator | 已验证的 operator 名称；未配置时明确显示 |
-| 主站状态 | enabled / disabled |
+| 主站状态 | enabled / 配置未完成 / disabled |
 | 最近更新 | 类型配置最后更新时间 |
 
 删除 Base URL、存储身份、editor endpoint 和 editor service 健康状态。搜索匹配类型、显示名称、bundle digest 和 operator host。
 
 ### 4.2 登记文档类型
 
-登记流程保持在一个弹窗内：
+登记时只填写 Admin 使用的内部名称。Platform 据此生成稳定且唯一的 `documentType`，并创建 `enabled = false`、三个当前绑定均为空的草稿。内部名称可以后续修改，不进入用户侧类型目录，也不改变 `documentType`。
 
-1. 上传 `.zip` View bundle；
-2. Platform 完成解包和 manifest 校验，展示发现的类型、能力、location types 与资源摘要；
-3. 输入 builtin operator base URL 并执行协议与鉴权验证；
-4. 选择是否启用；
-5. 原子创建类型配置。
-
-文档类型身份和显示信息来自 bundle manifest，不重复手填。允许把“只有 bundle、暂未配置 operator”的类型保存为 disabled；启用必须同时拥有通过验证的 bundle 和 builtin operator。
+Type Card bundle、View bundle 和 builtin operator 都在类型详情中后续配置。信息不完整的类型可以长期存在并接受管理操作，但不能启用，也不出现在主站类型目录中。
 
 ### 4.3 类型详情
 
-详情包含两个 tab：
+详情包含六个 tab：
 
-- **接入配置**：当前 bundle、上传新 bundle、operator URL 验证与更换、启用状态；
-- **变更记录**：bundle 上传与绑定、operator 变更、启停和验证结果。
+- **基本信息**：内部名称和稳定 `documentType`；
+- **Snapshot 契约**：查看只读 revision 历史，在类型停用时追加下一个 revision；
+- **类型卡片包**：上传候选包、编辑 Admin 名称与描述、按 locale 预览创建卡片、选择当前包；
+- **界面包**：上传 View bundle 候选包、编辑 Admin 名称与描述并选择当前包；
+- **处理服务**：验证 Operator、创建可命名的候选项、编辑 Admin 描述并选择当前服务；
+- **变更记录**：资源上传与绑定、operator 变更、启停和验证结果。
 
-上传 bundle 不自动绑定。绑定新 bundle、更换 operator 和启停都通过同一个带 `If-Match` 的配置 PATCH 原子完成，防止管理员互相覆盖。
+上传任一种 bundle 都不自动绑定。绑定 Type Card bundle、绑定 View bundle、更换 operator 和启停都通过同一个带 `If-Match` 的配置 PATCH 原子完成，防止管理员互相覆盖。
+
+三类候选项都有仅供 Admin 识别的可变 `name` 和 `description`。bundle 的这两个字段位于 Platform 管理记录上，不进入内容寻址 manifest，修改时不产生新 bundle ID。Operator 的 Admin 文案位于持久候选记录上，不修改 discovery descriptor。候选 metadata 使用各自 `etag` 和 `If-Match` 独立更新；它不出现在用户侧类型目录。
+
+Snapshot contract 没有删除、弃用或“设为当前”操作。类型已启用时不能追加 revision，管理员必须先停用；追加成功后新 idx 立即成为唯一可写 revision。重新启用前，当前 View bundle 和 Operator 候选必须都声明支持最新版。
+
+只有最新 Snapshot contract、当前 Type Card bundle、当前 View bundle 和当前 builtin operator 全部存在且有效时才能设置 `enabled = true`。类型卡片的名称、描述、图标和 sample thumbnail 都来自当前 Type Card bundle；Admin 的预览工具初始跟随 Admin UI locale，也可以显式切换 locale，但语言切换控件不属于卡片本身。
 
 当前已打开的 View session 固定启动时的 `viewBundleId`。Admin 切换 bundle 只影响新 session，不热替换正在编辑 ping 草稿的 iframe。
 
 ### 4.4 Bundle 上传状态
 
-UI 在一次上传请求中展示进度，完成后显示验证结果。失败上传不产生可绑定 bundle，也不改变类型配置。
+UI 在一次上传请求中展示进度，完成后显示验证结果。失败上传不产生可绑定 bundle，也不改变类型配置。Type Card 与 View bundle 使用相同的 zip 安全边界，但按各自 manifest 做资源校验。
 
-Platform 至少校验：
+Platform 对所有 bundle 至少校验：
 
 - zip 路径穿越、符号链接、文件数量、单文件/总大小和压缩比；
-- manifest schema、入口文件、资源摘要和 MIME；
-- `documentType`、Host 协议和 location type 格式；
+- manifest schema、声明文件、资源摘要和 MIME；
+- manifest 的 `documentType` 与目标类型完全相同；
+- Type Card bundle 的 locale 覆盖、每个 locale 的文案与 alt、SVG/PNG 图标和 sample thumbnail；
+- View bundle 的入口文件、支持的 Snapshot contract revisions 和 location type 格式；
 - 禁止远程脚本和可绕过 Platform 内容通道的默认网络权限；
 - HTML、JS、CSS 和资源均可从 Platform 的 bundle origin 独立加载。
 
@@ -248,9 +279,48 @@ Admin 只配置 base URL，不录入或回显密钥。Operator 服务身份和�
 
 健康检查不是持续监控。最后验证成功不等于当前服务一定在线。
 
-## 5. View bundle manifest 与托管
+## 5. Type Card、View bundle manifest 与托管
 
-### 5.1 Manifest
+### 5.1 Type Card manifest
+
+zip 根目录必须包含 `unidocs-type-card.json`：
+
+```ts
+interface TypeCardLocaleV1 {
+  readonly name: string;
+  readonly description: string;
+  readonly sampleThumbnailAlt: string;
+}
+
+type TypeCardIconRasterSize = 16 | 32 | 64 | 128 | 256;
+
+interface TypeCardIconSvgV1 {
+  readonly kind: "svg";
+  readonly path: string;
+}
+
+interface TypeCardIconPngV1 {
+  readonly kind: "png";
+  /** key 是正方形 PNG 的预定义宽高像素。 */
+  readonly images: Readonly<Record<TypeCardIconRasterSize, string>>;
+}
+
+type TypeCardIconV1 = TypeCardIconSvgV1 | TypeCardIconPngV1;
+
+interface TypeCardBundleManifestV1 {
+  readonly protocol: "unidocs-type-card/v1";
+  readonly documentType: DocumentType;
+  readonly locales: Readonly<Record<string, TypeCardLocaleV1>>;
+  readonly icon: TypeCardIconV1;
+  readonly sampleThumbnail: string;
+}
+```
+
+locale key 使用规范 BCP 47 language tag，且 `locales` 必须包含 `en`。`name`、`description` 和 `sampleThumbnailAlt` 都是该 locale 下的创建卡片文案。bundle 不声明默认 locale；Host 按当前 UI 的用户 locale 执行 RFC 4647 lookup，逐级匹配失败后回退到 `en`。`icon` 是二选一资源：SVG 不携带尺寸；PNG 必须在 `images` 中提供 16、32、64、128、256 五个预定义正方形尺寸，不接受任意数字或缺失尺寸。图标和 sample thumbnail 是卡片资源；thumbnail 只展示样例，不是创建文档时使用的初始 snapshot。
+
+`typeCardBundleId` 是 Platform 根据规范 manifest 和解包后文件路径、摘要计算出的内容身份。相同内容重复上传得到相同 ID。上传新包不影响当前绑定；Admin 必须通过类型配置 PATCH 显式选择。
+
+### 5.2 View manifest
 
 zip 根目录必须包含 `unidocs-view.json`：
 
@@ -258,20 +328,19 @@ zip 根目录必须包含 `unidocs-view.json`：
 interface ViewBundleManifestV1 {
   readonly protocol: "unidocs-view-bundle/v1";
   readonly documentType: DocumentType;
-  readonly displayName: string;
-  readonly description: string;
   readonly entrypoint: string;
-  readonly hostProtocol: "unidocs-view-host/v1";
-  readonly snapshotContentTypes: readonly string[];
+  readonly supportedSnapshotContractIdxs: readonly SnapshotContractIdx[];
   readonly locationTypes: readonly string[];
 }
 ```
 
 `viewBundleId` 是 Platform 根据规范 manifest 和解包后文件路径、摘要计算出的内容身份。相同内容重复上传得到相同 ID；已有对象可直接复用。
 
-### 5.2 R2 布局与分发
+### 5.3 R2 布局与分发
 
 ```text
+type-card-bundles/{typeCardBundleId}/manifest.json
+type-card-bundles/{typeCardBundleId}/assets/{normalizedPath}
 view-bundles/{viewBundleId}/manifest.json
 view-bundles/{viewBundleId}/assets/{normalizedPath}
 ```
@@ -295,7 +364,22 @@ bundle 存 R2 是当前实现边界；未来 UniCAS 支持 stack 公共内容后
 ```ts
 interface ViewBundleRecord {
   readonly viewBundleId: ViewBundleId;
+  readonly name: string;
+  readonly description: string;
   readonly manifest: ViewBundleManifestV1;
+  readonly size: number;
+  readonly uploadedAt: IsoDateTime;
+  readonly etag: string;
+}
+
+interface TypeCardBundleRecord {
+  readonly typeCardBundleId: TypeCardBundleId;
+  readonly name: string;
+  readonly description: string;
+  readonly manifest: TypeCardBundleManifestV1;
+  readonly size: number;
+  readonly uploadedAt: IsoDateTime;
+  readonly etag: string;
 }
 
 interface OperatorDescriptor {
@@ -303,43 +387,109 @@ interface OperatorDescriptor {
   readonly operatorId: string;
   readonly displayName: string;
   readonly supportedDocumentTypes: readonly DocumentType[];
+  readonly supportedSnapshotContracts: Readonly<
+    Record<DocumentType, readonly SnapshotContractIdx[]>
+  >;
 }
 
-interface OperatorBinding {
+interface OperatorCandidateRecord {
+  readonly operatorCandidateId: OperatorCandidateId;
+  readonly documentType: DocumentType;
+  /** 仅供 Admin 识别，可修改。 */
+  readonly name: string;
+  readonly description: string;
   readonly baseUrl: string;
-  readonly operatorId: string;
-  readonly displayName: string;
+  readonly descriptor: OperatorDescriptor;
+  readonly validatedAt: IsoDateTime;
+  readonly etag: string;
+}
+
+interface SnapshotContractRecord {
+  readonly snapshotContractIdx: SnapshotContractIdx;
+  readonly contentType: string;
+  readonly schema: SValueSchema;
+  readonly schemaHash: string;
+  readonly createdAt: IsoDateTime;
 }
 
 interface DocumentTypeRegistration {
   readonly documentType: DocumentType;
+  readonly internalName: string;
   readonly enabled: boolean;
-  readonly viewBundle: ViewBundleRecord;
-  readonly builtinOperator: OperatorBinding | null;
+  readonly latestSnapshotContract: SnapshotContractRecord | null;
+  readonly typeCardBundle: TypeCardBundleRecord | null;
+  readonly viewBundle: ViewBundleRecord | null;
+  readonly builtinOperator: OperatorCandidateRecord | null;
   readonly etag: string;
+  readonly updatedAt: IsoDateTime;
 }
 ```
 
-### 6.2 Bundle 上传
+### 6.2 Snapshot Contract
 
 ```text
-POST /view-bundles
-GET  /view-bundles/{viewBundleId}
+GET  /document-types/{documentType}/snapshot-contracts?cursor=&limit=
+GET  /document-types/{documentType}/snapshot-contracts/{snapshotContractIdx}
+POST /document-types/{documentType}/snapshot-contracts
 ```
 
 ```ts
-interface UploadViewBundleRequest {
+interface AppendSnapshotContractRequest {
+  readonly observedLatestSnapshotContractIdx: SnapshotContractIdx | null;
+  readonly contentType: string;
+  readonly schema: SValueSchema;
+  readonly reason: string;
+}
+
+type ListSnapshotContractsResponse = Page<SnapshotContractRecord>;
+```
+
+POST 只在文档类型停用时接受请求，并要求 `observedLatestSnapshotContractIdx` 与当前最大 idx 完全相等。Platform 分配下一个 idx、规范编码 schema、计算 `schemaHash` 并原子追加；没有 PATCH 或 DELETE。网络重试使用 Admin `Idempotency-Key`。读取历史 revision 不产生状态变化。
+
+### 6.3 Bundle 上传
+
+```text
+POST /type-card-bundles
+GET  /type-card-bundles?documentType=&cursor=&limit=
+GET  /type-card-bundles/{typeCardBundleId}
+PATCH /type-card-bundles/{typeCardBundleId}
+POST /view-bundles
+GET  /view-bundles?documentType=&cursor=&limit=
+GET  /view-bundles/{viewBundleId}
+PATCH /view-bundles/{viewBundleId}
+```
+
+```ts
+interface UploadTypeCardBundleRequest {
   readonly contentType: "application/zip";
+  readonly name: string;
+  readonly description: string;
   readonly body: ReadableStream<Uint8Array>;
 }
 
+interface UploadViewBundleRequest {
+  readonly contentType: "application/zip";
+  readonly name: string;
+  readonly description: string;
+  readonly body: ReadableStream<Uint8Array>;
+}
+
+interface UpdateCandidateMetadataRequest {
+  readonly name: string;
+  readonly description: string;
+}
+
+type UploadTypeCardBundleResponse = { readonly data: TypeCardBundleRecord };
+type ListTypeCardBundlesResponse = Page<TypeCardBundleRecord>;
+type GetTypeCardBundleResponse = { readonly data: TypeCardBundleRecord };
 type UploadViewBundleResponse = { readonly data: ViewBundleRecord };
+type ListViewBundlesResponse = Page<ViewBundleRecord>;
 type GetViewBundleResponse = { readonly data: ViewBundleRecord };
 ```
 
-Platform 有界地流式读取 zip、验证并写入内容寻址 R2 路径。成功返回 `201`；相同内容重复上传返回同一 `viewBundleId`。失败时返回同步错误且不产生可绑定 bundle。请求不暴露 R2 bucket 凭据。
+Platform 有界地流式读取 zip、验证并写入对应的内容寻址 R2 路径，同时创建初始 Admin `name`/`description`。成功返回 `201`；相同内容重复上传返回同一 bundle ID，但 Admin metadata 可通过带 `If-Match` 的 PATCH 独立修改。失败时返回同步错误且不产生可绑定 bundle。请求不暴露 R2 bucket 凭据。bundle ID 是唯一的不可变内容身份，manifest 不另设版本字段。两个列表接口按 manifest 中的 `documentType` 返回候选包。
 
-### 6.3 Operator 验证
+### 6.4 Operator 验证
 
 ```text
 POST /operator-validations
@@ -370,7 +520,25 @@ GET {baseUrl}/.well-known/unidocs-operator
 
 并向不含用户数据的 probe 路径发送签名 webhook。Platform 不跟随重定向，不允许任意内网目标。成功响应返回短期 `validationId`；失败直接返回错误，不维护验证任务状态机。
 
-### 6.4 文档类型目录
+验证成功后创建持久候选项：
+
+```text
+POST  /operator-candidates
+GET   /operator-candidates?documentType=&cursor=&limit=
+PATCH /operator-candidates/{operatorCandidateId}
+```
+
+```ts
+interface CreateOperatorCandidateRequest {
+  readonly validationId: ValidationId;
+  readonly name: string;
+  readonly description: string;
+}
+```
+
+创建时把 validation 的 `baseUrl` 与不可变 `descriptor` 固化到 `OperatorCandidateRecord`，并保存可修改的 Admin `name`/`description`。metadata PATCH 同样要求 `If-Match`。
+
+### 6.5 文档类型目录
 
 ```text
 GET   /document-types?q=&enabled=&cursor=&limit=
@@ -381,22 +549,16 @@ PATCH /document-types/{documentType}
 
 ```ts
 interface CreateDocumentTypeRequest {
-  readonly viewBundleId: ViewBundleId;
-  readonly builtinOperator: {
-    readonly baseUrl: string;
-    readonly validationId: ValidationId;
-  } | null;
-  readonly enabled: boolean;
+  readonly internalName: string;
 }
 
 interface UpdateDocumentTypeRequest {
+  readonly internalName?: string;
+  readonly typeCardBundleId?: TypeCardBundleId;
   readonly viewBundleId?: ViewBundleId;
-  readonly builtinOperator?: {
-    readonly baseUrl: string;
-    readonly validationId: ValidationId;
-  } | null;
+  readonly builtinOperatorCandidateId?: OperatorCandidateId | null;
   readonly enabled?: boolean;
-  readonly reason: string;
+  readonly reason?: string;
 }
 
 type GetDocumentTypeResponse = { readonly data: DocumentTypeRegistration };
@@ -405,15 +567,24 @@ type CreateDocumentTypeResponse = { readonly data: DocumentTypeRegistration };
 type UpdateDocumentTypeResponse = { readonly data: DocumentTypeRegistration };
 ```
 
-创建时从 ready bundle manifest 取得 `documentType`、名称、描述和能力。更新 bundle 时，新 manifest 的 `documentType` 必须与现有类型相同。启用要求 bundle 为 ready、Operator 验证仍有效且支持该类型。
+创建只生成 disabled 草稿和稳定 `documentType`，不要求 contract、bundle 或 Operator。更新任一 bundle 时，新 manifest 的 `documentType` 必须与现有类型相同。启用要求至少已有一个 Snapshot contract，当前 Type Card bundle 和 View bundle 均为 ready，且 View 与已验证 Operator 候选都支持最新 revision；任一条件不满足都拒绝启用。短期 `validationId` 只用于创建候选项，候选创建后不要求原 validation 继续有效。仅修改 `internalName` 时 `reason` 可省略；改变任一当前绑定或 `enabled` 时 `reason` 必填。
 
 管理员、session、audit 和 change receipt API 保持通用形状。审计新增：
 
 ```ts
 type DocumentTypeAuditAction =
+  | "type_card_bundle.uploaded"
+  | "type_card_bundle.validation_failed"
+  | "type_card_bundle.metadata_changed"
   | "view_bundle.uploaded"
   | "view_bundle.validation_failed"
+  | "view_bundle.metadata_changed"
+  | "operator_candidate.created"
+  | "operator_candidate.metadata_changed"
+  | "snapshot_contract.appended"
   | "document_type.registered"
+  | "document_type.internal_name_changed"
+  | "document_type.type_card_bundle_changed"
   | "document_type.view_bundle_changed"
   | "document_type.operator_changed"
   | "document_type.enabled"
@@ -430,6 +601,7 @@ type DocumentTypeAuditAction =
 
 ```text
 GET  /document-types
+GET  /document-types/{documentType}/snapshot-contracts/{snapshotContractIdx}
 GET  /documents?documentType=&cursor=&limit=
 POST /documents
 GET  /documents/{documentId}
@@ -440,10 +612,36 @@ GET  /documents/{documentId}/audit?cursor=&limit=
 ```
 
 ```ts
+interface PublicTypeCardLocale {
+  readonly name: string;
+  readonly description: string;
+  readonly sampleThumbnailAlt: string;
+}
+
+interface PublicTypeCardIconSvg {
+  readonly kind: "svg";
+  readonly url: string;
+}
+
+interface PublicTypeCardIconPng {
+  readonly kind: "png";
+  readonly imageUrls: Readonly<Record<TypeCardIconRasterSize, string>>;
+}
+
+type PublicTypeCardIcon = PublicTypeCardIconSvg | PublicTypeCardIconPng;
+
+interface PublicTypeCard {
+  readonly locales: Readonly<Record<string, PublicTypeCardLocale>>;
+  readonly icon: PublicTypeCardIcon;
+  readonly sampleThumbnailUrl: string;
+}
+
 interface PublicDocumentType {
   readonly documentType: DocumentType;
-  readonly displayName: string;
+  readonly typeCardBundleId: TypeCardBundleId;
+  readonly typeCard: PublicTypeCard;
   readonly viewBundleId: ViewBundleId;
+  readonly latestSnapshotContract: SnapshotContractRecord;
 }
 
 interface CreateDocumentRequest {
@@ -463,6 +661,8 @@ type ListVersionsResponse = Page<VersionRecord>;
 ```
 
 单资源成功响应直接返回对应 record，不再包装为 `{ data }` 或 `{ document }`：创建/读取文档和移动 current 返回 `DocumentRecord`，读取版本返回 `VersionRecord`。
+
+公共目录只返回已启用类型，因此 `typeCardBundleId`、`viewBundleId` 和 `latestSnapshotContract` 均确定存在。`typeCard` 是 Platform 从当前 Type Card manifest 解析出的用户侧投影：保留 locale 文案，但把所有资源路径解析为固定 bundle origin 下的绝对 URL。主站不拼接 R2 key，也不把 Admin 内部名称作为展示回退。Host 与 Agent 可按 idx 查询历史 contract，以解释确切 `VersionRecord`。
 
 `viewEntrypointUrl` 不作为公共类型字段；Platform 根据 `viewBundleId` 读取已验证 manifest，并由固定 bundle origin、bundle ID 和 `entrypoint` 构造入口 URL。
 
@@ -717,6 +917,8 @@ interface AgentSubmissionRequest {
   readonly submissionId: SubmissionId;
   /** 纯 pong 时可省略；创建版本时必填，包括 null 初始状态。 */
   readonly observedCurrentVersionIdx?: VersionIdx | null;
+  /** 创建版本时必填，且必须等于该文档类型的最新 revision。 */
+  readonly newSnapshotContractIdx?: SnapshotContractIdx;
   readonly newSnapshot?: SValue;
   readonly threadUpdates: readonly {
     readonly threadId: ThreadId;
@@ -730,6 +932,7 @@ interface AgentSubmissionRequest {
 
 interface SubmissionConflict {
   readonly currentVersionIdx: VersionIdx | null;
+  readonly latestSnapshotContractIdx: SnapshotContractIdx;
   readonly threads: readonly {
     readonly threadId: ThreadId;
     readonly acknowledgedPingIdx: PingIdx | null;
@@ -746,7 +949,10 @@ type SubmissionReceipt = {
 } | {
   readonly submissionId: SubmissionId;
   readonly state: "rejected";
-  readonly reason: "version_conflict" | "pong_watermark_conflict";
+  readonly reason:
+    | "version_conflict"
+    | "snapshot_contract_conflict"
+    | "pong_watermark_conflict";
   readonly conflict: SubmissionConflict;
   readonly rejectedAt: IsoDateTime;
 };
@@ -758,15 +964,16 @@ type SubmissionReceipt = {
 提交规则：
 
 1. 有 `newSnapshot` 时必须显式携带 `observedCurrentVersionIdx`，并与提交时 current 完全相等；
-2. 每个 update 的 `observedAcknowledgedPingIdx` 与 thread 当前水位完全相等；
-3. `respondThroughPingIdx` 必须在该水位之后且不超过 thread 最新 ping；
-4. 一个 submission 内同一 thread 最多出现一次；
-5. 非空 `resultLocations` 必须同时携带 `newSnapshot`，并且全部位置都相对于本次创建的新版本；纯 pong 的 `resultLocations` 必须为空；
-6. Platform 只在整个 submission 成功时分配下一个 `VersionIdx` 和各 thread 的下一个 `PongIdx`；幂等重试由 `submissionId` 返回同一 receipt；
-7. 纯 pong 省略 `newSnapshot` 和 `observedCurrentVersionIdx`；
-8. 任一检查失败，版本、全部 pong、current 和内容持久引用都不变化；
-9. 成功时，版本、pong、thread 水位、provenance 和 current 在同一业务事务中生效；
-10. 网络超时是客户端的 unknown 状态，Agent 必须以同一 `submissionId` 查询或重试，不能生成新 ID 猜测结果。
+2. 有 `newSnapshot` 时必须显式携带 `newSnapshotContractIdx`，并与文档类型的最新 revision 完全相等；Platform 按该 schema 校验 snapshot；
+3. 每个 update 的 `observedAcknowledgedPingIdx` 与 thread 当前水位完全相等；
+4. `respondThroughPingIdx` 必须在该水位之后且不超过 thread 最新 ping；
+5. 一个 submission 内同一 thread 最多出现一次；
+6. 非空 `resultLocations` 必须同时携带 `newSnapshot`，并且全部位置都相对于本次创建的新版本；纯 pong 的 `resultLocations` 必须为空；
+7. Platform 只在整个 submission 成功时分配下一个 `VersionIdx` 和各 thread 的下一个 `PongIdx`；幂等重试由 `submissionId` 返回同一 receipt；
+8. 纯 pong 省略 `newSnapshot`、`newSnapshotContractIdx` 和 `observedCurrentVersionIdx`；
+9. 任一检查失败，版本、全部 pong、current 和内容持久引用都不变化；
+10. 成功时，版本、pong、thread 水位、provenance 和 current 在同一业务事务中生效；
+11. 网络超时是客户端的 unknown 状态，Agent 必须以同一 `submissionId` 查询或重试，不能生成新 ID 猜测结果。
 
 候选 blob 必须在提交前完成 `storeBlob` 并处于 lease 中。Platform 同步返回并持久化 `committed/rejected` receipt；只有 committed receipt 能作为成功事实。网络断开导致客户端结果未知时，以同一 `submissionId` 查询或重试。
 
@@ -839,6 +1046,7 @@ type PlatformErrorCode =
   | "upload_expired"
   | "bundle_invalid"
   | "operator_validation_required"
+  | "snapshot_contract_conflict"
   | "revision_conflict"
   | "version_conflict"
   | "pong_watermark_conflict"
@@ -874,9 +1082,19 @@ type PlatformErrorCode =
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
+| POST | `/admin/api/v1/type-card-bundles` | 上传并验证不可变类型卡片包 |
+| GET | `/admin/api/v1/type-card-bundles?documentType=...` | 列出类型卡片候选包 |
+| GET | `/admin/api/v1/type-card-bundles/{id}` | 读取类型卡片包 manifest |
+| PATCH | `/admin/api/v1/type-card-bundles/{id}` | 修改候选包的 Admin 名称与描述 |
 | POST | `/admin/api/v1/view-bundles` | 上传并验证不可变 bundle |
+| GET | `/admin/api/v1/view-bundles?documentType=...` | 列出 View bundle 候选包 |
+| PATCH | `/admin/api/v1/view-bundles/{id}` | 修改候选包的 Admin 名称与描述 |
 | POST | `/admin/api/v1/operator-validations` | 验证 operator base URL |
 | GET | `/admin/api/v1/operator-validations/{id}` | 查询验证状态 |
+| POST/GET | `/admin/api/v1/operator-candidates` | 创建/列出 Operator 候选项 |
+| PATCH | `/admin/api/v1/operator-candidates/{id}` | 修改候选项的 Admin 名称与描述 |
+| GET/POST | `/admin/api/v1/document-types/{type}/snapshot-contracts` | 列出/追加 Snapshot contract revision |
+| GET | `/admin/api/v1/document-types/{type}/snapshot-contracts/{idx}` | 读取历史 Snapshot contract |
 | GET/POST | `/admin/api/v1/document-types` | 列表/登记类型 |
 | GET/PATCH | `/admin/api/v1/document-types/{type}` | 详情/原子更新 |
 
@@ -885,6 +1103,7 @@ type PlatformErrorCode =
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/api/v1/tenants/{tenantId}/document-types` | 动态类型目录 |
+| GET | `/api/v1/tenants/{tenantId}/document-types/{type}/snapshot-contracts/{idx}` | 读取确切 Snapshot contract |
 | POST/GET | `/api/v1/tenants/{tenantId}/documents` | 创建/列出文档 |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}` | 文档与 current/latest |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions` | 版本浏览 |
@@ -908,8 +1127,8 @@ type PlatformErrorCode =
 
 1. 建立新平台核心类型、初始 ping、version/current 和 thread ping/pong 存储；
 2. 实现 submission receipt、内容上传和双重乐观锁；
-3. 实现 bundle R2 repository、manifest validator 和隔离静态 ingress；
-4. 替换 Admin 类型目录为 bundle + builtin operator 模型；
+3. 实现 Type Card/View bundle R2 repository、manifest validator 和隔离静态 ingress；
+4. 替换 Admin 类型目录为草稿 + 两类 bundle + builtin operator 模型；
 5. 实现最小 View Host RPC：load/read/create thread/append ping；
 6. 实现 Operator discovery、webhook 和 Agent OAuth API；
 7. 打通首个文档类型的 document.created → webhook → 首版本 → View 渲染闭环；
@@ -923,8 +1142,9 @@ type PlatformErrorCode =
 
 | 旧抽象 | 调整后的目标 |
 | --- | --- |
-| Admin 登记单一 doctype Base URL | Admin 上传 View bundle，并配置 builtin operator base URL |
-| `/.well-known/unidocs-doctype` 发现 editor、存储身份和能力 | bundle manifest 提供 View 能力；`/.well-known/unidocs-operator` 只发现 Operator 身份和协议 |
+| Admin 登记单一 doctype Base URL | Admin 先以内部名称创建 disabled 草稿，再分别绑定 Type Card bundle、View bundle 和 builtin operator |
+| doctype 服务提供显示名称、图标或创建入口元数据 | 版本化 Type Card bundle 提供多语言名称、描述、图标和 sample thumbnail |
+| `/.well-known/unidocs-doctype` 发现 editor、存储身份和能力 | Type Card/View bundle manifest 提供静态能力；`/.well-known/unidocs-operator` 只发现 Operator 身份和协议 |
 | `/url-validations` | `/operator-validations`；bundle 使用上传后的本地验证流程 |
 | editor service 的 `init/import/query/apply/snapshot/export/summary` | 删除；View 本地渲染，用户修改成为 ping，Agent 直接生成完整 snapshot |
 | 文档服务维护 session、operation history 和 snapshot | Platform 直接维护 Document、Version、current pointer 和 `CasBlobRef` |

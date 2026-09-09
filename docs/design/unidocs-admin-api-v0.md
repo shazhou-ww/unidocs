@@ -1,12 +1,14 @@
 # UniDocs 管理服务 API v0
 
+> 已由 [Platform、View 与 Operator API v0](platform-v0/platform-view-operator-api-v0.md) 取代。本文保留为旧实现和设计演进对照；当前 Admin mock 位于 [Platform v0 设计上下文](platform-v0/README.md)。
+
 > 后续目标更新（2026-09-08）：类型注册改为 editor 服务 URL、平台托管的 editor 前端资源包引用、可选 operator 服务 URL；platform 调用两个服务使用分服务 HMAC，不转发用户登录 JWT。配置、鉴权与 MVP iteration checklist 以 [Platform 与 Markdown 新协议接入计划](platform-markdown-integration-plan.md) 为准。本文下方单 baseUrl 模型保留为旧设计/实现对照，尚未按新契约改造，不代表线上已支持这些配置。
 
 当前落地：[Iteration 14](iteration-14.md) 已部署 admin 自身闭环，主站消费按用户决定推迟。enabled 只存目标状态，不再要求 editor 已提供才能保存；主站是否可用仍需后续能力与权限校验。发现请求仅通过固定一方 service binding，不允许通用公网 URL 访问；首版只批准 `https://unidocs-markdown.shazhou.workers.dev/`。GET /audit-events 返回最近 100 条及 presentationLimit=100，GET /changes/{key} 当前只核实本人类型命令。下文涉及主站立即启停的语义是后续目标，不是本轮行为。
 
 最新进度：[Iteration 12](iteration-12.md) 已完成可选目录后端切片，尚未注入生产管理 DO。当前 URL 验证同步返回 200，只保存成功短时记录；与下文 202 异步任务目标的差异、安全及用户面接入门槛见该记录。不得将未上线目录 enabled 当作主站开关已经生效。
 
-日期：2026-09-08。状态：精简后的设计草案，尚未实现或部署。配套 [后台设计](unidocs-admin-webui-v0.md) 与 [HTML 原型](unidocs-admin-mock.html)。本文取代此前 service/editor/release 分别注册的方案。
+日期：2026-09-08。状态：精简后的设计草案，尚未实现或部署。配套 [后台设计](unidocs-admin-webui-v0.md)；当时的 HTML 原型已由 [新版 Admin mock](platform-v0/unidocs-admin-mock.html) 取代。本文取代此前 service/editor/release 分别注册的方案。
 
 实现更新：[Iteration 10](iteration-10.md) 已完成管理员核心、SQLite 和部分独立名单 HTTP handler，未接 Google callback 或生产路由。本文其余 API 仍是目标设计，实际覆盖和限制以该实现记录为准。
 

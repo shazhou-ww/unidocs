@@ -8,6 +8,8 @@ import type { JsonValue } from "@unidocs/protocol";
 export type TenantId = string;
 export type DocumentId = string;
 export type DocumentType = string;
+/** Document-type-scoped, monotonically increasing snapshot contract revision. */
+export type SnapshotContractIdx = number;
 /** Document-scoped, monotonically increasing version record ID. */
 export type VersionIdx = number;
 export type ThreadId = string;
@@ -17,6 +19,9 @@ export type PingIdx = number;
 export type PongIdx = number;
 export type SubmissionId = string;
 export type ViewBundleId = string;
+export type TypeCardBundleId = string;
+export type TypeCardIconRasterSize = 16 | 32 | 64 | 128 | 256;
+export type OperatorCandidateId = string;
 export type ValidationId = string;
 export type Cursor = string;
 export type IsoDateTime = string;
@@ -70,6 +75,7 @@ export type PlatformErrorCode =
   | "upload_expired"
   | "bundle_invalid"
   | "operator_validation_required"
+  | "snapshot_contract_conflict"
   | "revision_conflict"
   | "version_conflict"
   | "pong_watermark_conflict"

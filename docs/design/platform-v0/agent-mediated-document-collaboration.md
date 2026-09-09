@@ -46,10 +46,13 @@ Version 是一次完整内容交付，指向一个不可变 snapshot。每个版
 
 - 文档内单调递增的整数版本号，同时作为版本 record 身份和创建顺序；
 - 唯一 base parent，即提交时的 current version；
+- 该 snapshot 使用的文档类型 Snapshot Contract revision；
 - snapshot 逻辑值 `SValue`，大型二进制内容通过 `SBlob` 引用；
 - 本次提交所携带的 pong 及其来源 ping，用于追溯修改依据。
 
 `VersionIdx` 由平台在提交成功时分配，表示出生顺序，不表示祖先顺序。snapshot 是 `SValue` 而不是 CAS hash；相同内容仍可因 parent、provenance、作者或创建时间不同而形成不同版本。跨文档引用版本时必须同时携带文档身份。
+
+每个文档类型的 Snapshot Contract revision 单调递增且只追加。最新版是唯一允许创建新 snapshot 的 revision；历史 revision 不可修改或删除，只用于验证和解释已有版本。contract 使用扩展 JSON Schema 描述 `SValue`，其中可显式约束原子的 `SBlob`。
 
 ### 3.3 Current 与 latest
 
@@ -361,6 +364,7 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 平台向人类 View 和 Agent 暴露通用能力：
 
 - 查询文档身份、文档类型和 current version；
+- 查询最新版或历史 Snapshot Contract；
 - 查询版本关系、审计和确切版本内容；
 - 查询 thread、ping/pong 序列和 open 状态；
 - 追加 ping；
@@ -419,6 +423,7 @@ sequenceDiagram
 10. 文档版本只保证自身 snapshot 与引用值不变，不保证跟随引用的递归内容不变。
 11. location payload 的语义只由对应文档类型解释。
 12. 版本归档不会立即归档仍可从热历史关联到的 thread。
+13. Snapshot Contract revision 只能追加；新 snapshot 只能使用最新版，历史版本永久记录其 revision。
 
 ## 15. 协议细化项
 

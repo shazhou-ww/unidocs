@@ -27,23 +27,53 @@ import type {
   EndpointContract,
   MessageContent,
   Page,
+  SnapshotContractIdx,
   TenantId,
   ThreadId,
+  TypeCardBundleId,
+  TypeCardIconRasterSize,
   VersionIdx,
   ViewBundleId,
 } from "./common.js";
 import type {
   DocumentRecord,
   PingRecord,
+  SnapshotContractRecord,
   ThreadDetail,
   ThreadRef,
   VersionRecord,
 } from "./resources.js";
 
+export interface PublicTypeCardLocale {
+  readonly name: string;
+  readonly description: string;
+  readonly sampleThumbnailAlt: string;
+}
+
+export interface PublicTypeCardIconSvg {
+  readonly kind: "svg";
+  readonly url: string;
+}
+
+export interface PublicTypeCardIconPng {
+  readonly kind: "png";
+  readonly imageUrls: Readonly<Record<TypeCardIconRasterSize, string>>;
+}
+
+export type PublicTypeCardIcon = PublicTypeCardIconSvg | PublicTypeCardIconPng;
+
+export interface PublicTypeCard {
+  readonly locales: Readonly<Record<string, PublicTypeCardLocale>>;
+  readonly icon: PublicTypeCardIcon;
+  readonly sampleThumbnailUrl: string;
+}
+
 export interface PublicDocumentType {
   readonly documentType: DocumentType;
-  readonly displayName: string;
+  readonly typeCardBundleId: TypeCardBundleId;
+  readonly typeCard: PublicTypeCard;
   readonly viewBundleId: ViewBundleId;
+  readonly latestSnapshotContract: SnapshotContractRecord;
 }
 
 export interface CreateDocumentRequest {
@@ -92,6 +122,14 @@ export interface DocumentPath extends TenantPath {
   readonly documentId: DocumentId;
 }
 
+export interface DocumentTypePath extends TenantPath {
+  readonly documentType: DocumentType;
+}
+
+export interface SnapshotContractPath extends DocumentTypePath {
+  readonly snapshotContractIdx: SnapshotContractIdx;
+}
+
 export interface VersionPath extends DocumentPath {
   readonly versionIdx: VersionIdx;
 }
@@ -118,6 +156,10 @@ export interface PlatformEndpointContracts {
   readonly listPublicDocumentTypes: EndpointContract<
     { readonly path: TenantPath; readonly query?: PageQuery },
     ListPublicDocumentTypesResponse
+  >;
+  readonly getSnapshotContract: EndpointContract<
+    { readonly path: SnapshotContractPath },
+    SnapshotContractRecord
   >;
   readonly listDocuments: EndpointContract<
     { readonly path: TenantPath; readonly query?: ListDocumentsQuery },

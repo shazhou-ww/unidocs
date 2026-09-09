@@ -4,8 +4,9 @@ Universal document editing framework for AI agents. Built on Cloudflare Workers 
 
 ## Design documents
 
-- [Agent-Mediated Document Collaboration](docs/agent-mediated-document-collaboration.md) — target model for comment-driven human/Agent collaboration, version graphs, cumulative pong watermarks, and typed locations
-- [Platform, View, and Operator API v0](docs/design/platform-view-operator-api-v0.md) — target two-service boundary, R2-hosted View bundles, Admin changes, and typed Viewer/Agent APIs
+- [Platform v0 design context](docs/design/platform-v0/README.md) — current collaboration model, unified API design, and Admin mock
+- [Agent-Mediated Document Collaboration](docs/design/platform-v0/agent-mediated-document-collaboration.md) — target model for comment-driven human/Agent collaboration, version graphs, cumulative pong watermarks, and typed locations
+- [Platform, View, and Operator API v0](docs/design/platform-v0/platform-view-operator-api-v0.md) — target two-service boundary, hosted bundles, Admin changes, and typed Viewer/Agent APIs
 - [Microservice Architecture](docs/microservice-architecture.md) — service ownership, identity translation, static registration, and deployment boundaries
 - [CAS Architecture](docs/cas-architecture.md) — tenant-scoped storage, leases, reference counts, GC, APIs, and DocumentType integration
 - [CAS Binary Format](docs/cas-binary-format.md) — canonical SHA-256 Merkle DAG node encoding derived from CASFA

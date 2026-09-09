@@ -17,6 +17,7 @@ import type {
   IsoDateTime,
   MessageContent,
   PingIdx,
+  SnapshotContractIdx,
   SubmissionId,
   ThreadId,
   TenantId,
@@ -44,12 +45,15 @@ export interface AgentThreadUpdate {
 export interface AgentSubmissionRequest {
   readonly submissionId: SubmissionId;
   readonly observedCurrentVersionIdx?: VersionIdx | null;
+  /** Required with newSnapshot and must equal the document type's latest revision. */
+  readonly newSnapshotContractIdx?: SnapshotContractIdx;
   readonly newSnapshot?: SValue;
   readonly threadUpdates: readonly AgentThreadUpdate[];
 }
 
 export interface SubmissionConflict {
   readonly currentVersionIdx: VersionIdx | null;
+  readonly latestSnapshotContractIdx: SnapshotContractIdx;
   readonly threads: readonly {
     readonly threadId: ThreadId;
     readonly acknowledgedPingIdx: PingIdx | null;
@@ -68,7 +72,10 @@ export type SubmissionReceipt =
   | {
     readonly submissionId: SubmissionId;
     readonly state: "rejected";
-    readonly reason: "version_conflict" | "pong_watermark_conflict";
+    readonly reason:
+      | "version_conflict"
+      | "snapshot_contract_conflict"
+      | "pong_watermark_conflict";
     readonly conflict: SubmissionConflict;
     readonly rejectedAt: IsoDateTime;
   };

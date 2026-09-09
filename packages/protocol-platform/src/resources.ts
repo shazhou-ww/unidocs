@@ -2,7 +2,7 @@
  * Authoritative persisted resource shapes for documents, versions, pings,
  * pongs, and thread query results.
  */
-import type { SValue } from "@unidocs/protocol";
+import type { SValue, SValueSchema } from "@unidocs/protocol";
 import type {
   DocumentId,
   DocumentLocation,
@@ -11,10 +11,19 @@ import type {
   MessageContent,
   PingIdx,
   PongIdx,
+  SnapshotContractIdx,
   SubmissionId,
   ThreadId,
   VersionIdx,
 } from "./common.js";
+
+export interface SnapshotContractRecord {
+  readonly snapshotContractIdx: SnapshotContractIdx;
+  readonly contentType: string;
+  readonly schema: SValueSchema;
+  readonly schemaHash: string;
+  readonly createdAt: IsoDateTime;
+}
 
 export interface DocumentRecord {
   readonly documentId: DocumentId;
@@ -27,6 +36,7 @@ export interface DocumentRecord {
 export interface VersionRecord {
   readonly versionIdx: VersionIdx;
   readonly parentVersionIdx: VersionIdx | null;
+  readonly snapshotContractIdx: SnapshotContractIdx;
   /** Logical document state; large binary values are represented by SBlob. */
   readonly snapshot: SValue;
   readonly authorAgentId: string;

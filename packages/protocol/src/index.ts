@@ -35,6 +35,7 @@ export type {
   SBlobSource,
   SPrimitive,
   SValue,
+  SValueSchema,
   SValueShape,
   SValueType,
   DecodedSValue,
@@ -57,4 +58,5 @@ export {
   sBlobSignature,
   SBlobTag,
   SValueContentType,
+  SValueSchemaDialect,
 } from "./types.js";

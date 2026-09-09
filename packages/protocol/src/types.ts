@@ -29,6 +29,17 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
+/** JSON Schema 2020-12 dialect extended with atomic SBlob validation keywords. */
+export const SValueSchemaDialect = "https://schemas.unidocs.dev/svalue/v1";
+
+export type SValueSchema = Readonly<Record<string, JsonValue>> & {
+  readonly $schema: typeof SValueSchemaDialect;
+  /** This schema node matches an atomic SBlob rather than a JSON value. */
+  readonly "x-unidocs-sblob"?: true;
+  readonly "x-unidocs-blob-content-types"?: readonly string[];
+  readonly "x-unidocs-blob-max-size"?: number;
+};
+
 export const sBlobSignature: unique symbol = Symbol("unidocs.sblob");
 export const SValueContentType = "application/vnd.unidocs.svalue+cbor;version=1";
 

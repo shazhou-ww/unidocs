@@ -1,10 +1,12 @@
 # UniDocs 运营后台 WebUI v0
 
+> 已由 [Platform v0 设计上下文](platform-v0/README.md) 取代。本文保留为旧单 URL 管理模型的历史对照；当前原型位于 [新版 Admin mock](platform-v0/unidocs-admin-mock.html)。
+
 > 后续目标更新（2026-09-08）：类型表单需支持 editor 服务 URL、editor 前端资源包上传/绑定、可选 operator 服务 URL，以及验证和密钥配置状态，不回显密钥。platform 调用服务采用 HMAC，不转发用户登录 JWT。按 [Platform 与 Markdown 新协议接入计划](platform-markdown-integration-plan.md) 的 MVP iteration 逐轮实现，仍保留三个导航模块，不增加独立发布系统。本文下方单 URL 表单和原型为旧设计，尚未改造或上线。
 
 实现更新：[Iteration 14](iteration-14.md) 已上线真实目录和审计，沿用该视觉方案。按后续用户决定，enabled 仅为目标配置，页面明示“尚未接入主站”；无 editor 可保存目标启用，不显示主站已生效。主站消费和实际创建/编辑控制另行推进。审计首版仅最近 100 条，不提供全量翻页；操作只在页面内存恢复，不承诺跨刷新。
 
-日期：2026-09-08。状态：按最新产品边界简化的交互设计；配套 [管理 API](unidocs-admin-api-v0.md) 和 [HTML 原型](unidocs-admin-mock.html)。此文取代此前分别管理服务、编辑器和发布版本的方案。
+日期：2026-09-08。状态：按当时产品边界简化的交互设计；配套 [管理 API](unidocs-admin-api-v0.md)，原型已由 [新版 Admin mock](platform-v0/unidocs-admin-mock.html) 取代。此文取代此前分别管理服务、编辑器和发布版本的方案。
 
 ## 1. 界面边界
 
@@ -92,7 +94,7 @@ Google 管理员邮箱名单保持原约定：添加只有邮箱输入；规范�
 
 ## 8. HTML 演示与验证范围
 
-[原型](unidocs-admin-mock.html) 复用原样式，页面内存样例，刷新恢复初始值，不读写现有创作者原型存储。Google 登录、URL 发现、身份/存储检查均为演示；不能据其通过宣称真实服务已安全接入。
+[新版原型](platform-v0/unidocs-admin-mock.html) 复用原样式，页面内存样例，刷新恢复初始值，不读写现有创作者原型存储。Google 登录与服务验证均为演示；不能据其通过宣称真实服务已安全接入。
 
 可演示 URL：
 

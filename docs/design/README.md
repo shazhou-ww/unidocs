@@ -14,7 +14,7 @@
 
 运营后台设计（2026-09-08）：[管理服务 API v0](unidocs-admin-api-v0.md) 与 [管理后台 WebUI v0](unidocs-admin-webui-v0.md)。Google 邮箱名单管理，每种一方文档类型只登记 Base URL 和主站启用状态，API/editor 均相对此地址；版本与发布由微服务自己管理。当前为设计草案，未实现或部署。
 
-运营后台 HTML：[打开运营后台原型](unidocs-admin-mock.html)。沿用创作者原型的基础样式，提供类型目录、URL 验证与更换、主站创建/编辑统一开关、管理员和审计；不再提供独立服务、editor 或发布管理。全部为页面内存样例，刷新恢复初始数据；Google 登录、URL 发现与存储连续性验证均为固定沙盒数据模拟，不访问真实服务。可用 `https://types.example.com/diagram/` 演示新类型登记，`https://markdown-next.example.com/` 演示同身份 URL 更换；未知地址验证失败。图标与字体沿用原型 CDN 依赖，不是管理 API 的正式实现。
+新版 Platform v0 设计上下文：[设计索引](platform-v0/README.md) 与 [运营后台原型](platform-v0/unidocs-admin-mock.html)。该目录定义当前目标边界；下方 2026-09-08 Admin 单 URL 设计仅作历史对照。
 
 入口：[打开 HTML 原型](unidocs-mock.html)。用浏览器直接打开，不需要启动服务。
 
