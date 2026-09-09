@@ -2,211 +2,208 @@
   'use strict';
   const app = document.getElementById('admin-app');
   const modal = document.getElementById('admin-modal');
-  const navDialog = document.getElementById('admin-nav');
-  const selfEmail = 'lee@example.com';
-  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
-  const icon = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
-  const icons = () => window.lucide?.createIcons();
-  const button = (action, label, glyph, extra = '') => `<button type="button" data-action="${action}" ${extra}>${icon(glyph)}${label}</button>`;
-  const iconButton = (action, label, glyph, extra = '') => `<button type="button" class="icon ghost" data-action="${action}" title="${label}" aria-label="${label}" ${extra}>${icon(glyph)}</button>`;
-  const status = (label, tone = '') => `<span class="admin-status ${tone}">${escapeHtml(label)}</span>`;
-  const secondary = value => `<span class="admin-secondary">${escapeHtml(value)}</span>`;
-  const mono = value => `<span class="admin-mono">${escapeHtml(value)}</span>`;
-  const catalog = {
-    markdown: { id: 'markdown', name: 'Markdown', description: '文本、笔记与结构化写作', icon: 'file-text', formats: '.md, .markdown', serviceId: 'markdown-cf' },
-    psd: { id: 'psd', name: 'PSD', description: '图层、画布与视觉创作', icon: 'layers', formats: '.psd', serviceId: 'psd-cf' },
-    docx: { id: 'docx', name: 'Word 文档', description: '排版文档与格式交换', icon: 'file-type-2', formats: '.docx', serviceId: 'docx-cf' },
-    diagram: { id: 'diagram', name: '流程图', description: '流程、关系与架构', icon: 'workflow', formats: '.diagram', serviceId: 'diagram-cf' }
-  };
-  const fixtures = {
-    'https://markdown.example.com/': catalog.markdown,
-    'https://markdown-next.example.com/': catalog.markdown,
-    'https://psd.example.com/': catalog.psd,
-    'https://docx.example.com/': catalog.docx,
-    'https://types.example.com/diagram/': catalog.diagram,
-    'https://markdown-other.example.com/': { ...catalog.markdown, serviceId: 'other-storage' }
-  };
+  const nav = document.getElementById('admin-nav');
+  const me = 'lee@example.com';
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const ico = name => `<i data-lucide="${name}" aria-hidden="true"></i>`;
+  const drawIcons = () => window.lucide?.createIcons();
+  const btn = (action, label, icon, attrs = '') => `<button type="button" data-action="${action}" ${attrs}>${ico(icon)}${label}</button>`;
+  const iconBtn = (action, label, icon, attrs = '') => `<button type="button" class="icon ghost" data-action="${action}" title="${label}" aria-label="${label}" ${attrs}>${ico(icon)}</button>`;
+  const tone = (label, kind = '') => `<span class="admin-status ${kind}">${esc(label)}</span>`;
+  const sub = value => `<span class="admin-secondary">${esc(value)}</span>`;
+  const code = value => `<span class="admin-mono">${esc(value)}</span>`;
+  const short = value => `${value.slice(0, 7)}…${value.slice(-5)}`;
+  const bundle = (id, type, version, date, size, current = false) => ({ id, type, version, date, size, current, protocol: 'unidocs-view-host/v1', entry: 'index.html', snapshots: [`application/vnd.unidocs.${type}+value`], locations: type === 'psd' ? ['canvas-point', 'layer'] : type === 'diagram' ? ['node', 'edge'] : ['text-range'] });
+  const typeCardBundle = (id, version, date, size, glyph, locales, current = false) => ({ id, version, date, size, glyph, locales, current, protocol: 'unidocs-type-card/v1', iconFiles: ['icon.svg', 'icon-32.png', 'icon-128.png'], thumbnail: 'example-thumbnail.webp' });
+  const operator = (name, id, url, date, current = false) => ({ name, id, url, date, current, protocol: 'unidocs-operator/v1' });
   const state = {
-    signedIn: true,
     types: [
-      { ...catalog.markdown, baseUrl: 'https://markdown.example.com/', enabled: true, checkedAt: '今天 10:32', documents: 128, configRevision: 1 },
-      { ...catalog.psd, baseUrl: 'https://psd.example.com/', enabled: true, checkedAt: '今天 10:28', documents: 46, configRevision: 1 },
-      { ...catalog.docx, baseUrl: 'https://docx.example.com/', enabled: false, checkedAt: '昨天 17:40', documents: 83, configRevision: 1 }
+      { id: 'markdown', name: 'Markdown', text: '文本、笔记与结构化写作', icon: 'file-text', enabled: true, documents: 128, updated: '今天 10:32', etag: 'cfg-18', operators: [operator('Markdown 写作代理', 'markdown-operator', 'https://operator-markdown.example.com/', '今天 09:55', true), operator('Markdown 写作代理预览版', 'markdown-next', 'https://operator-markdown-next.example.com/', '昨天 15:20')], bundles: [bundle('vb_7fa912d40e83c38a', 'markdown', '1.4.0', '今天 10:32', '184 KB', true), bundle('vb_b126bc3e95278d17', 'markdown', '1.3.2', '08-29 16:18', '179 KB'), bundle('vb_163ec94b108af214', 'markdown', '1.2.0', '08-12 09:44', '171 KB')] },
+      { id: 'psd', name: 'PSD', text: '图层、画布与视觉创作', icon: 'layers', enabled: true, documents: 46, updated: '今天 09:18', etag: 'cfg-07', operators: [operator('画布操作代理', 'psd-canvas', 'https://operator-psd.example.com/', '今天 09:18', true)], bundles: [bundle('vb_4db2794e86c811a9', 'psd', '2.1.0', '今天 09:18', '2.8 MB', true), bundle('vb_f51cd740631af822', 'psd', '2.0.0', '08-21 13:05', '2.6 MB')] },
+      { id: 'docx', name: 'Word 文档', text: '排版文档与格式交换', icon: 'file-type-2', enabled: false, documents: 83, updated: '昨天 17:40', etag: 'cfg-11', operators: [], bundles: [bundle('vb_98c1f24da7e503bc', 'docx', '0.9.0', '昨天 17:40', '736 KB', true)] }
     ],
-    admins: [{ email: selfEmail, added: '2026-09-01', by: '初始化', bound: true }, { email: 'chen@example.com', added: '2026-09-05', by: selfEmail, bound: true }],
+    admins: [{ email: me, bound: true, by: '初始化', date: '2026-09-01' }, { email: 'chen@example.com', bound: true, by: me, date: '2026-09-05' }],
     audit: [
-      { time: '今天 10:32', action: '验证 URL', target: 'markdown', actor: selfEmail, detail: '类型、服务身份与标准入口匹配。' },
-      { time: '今天 10:28', action: '启用类型', target: 'psd', actor: 'chen@example.com', detail: '主站开放创建与编辑入口。' },
-      { time: '昨天 17:40', action: '停用类型', target: 'docx', actor: selfEmail, detail: '停止主站新建与编辑；已有作品仍保留。' },
-      { time: '09-05 09:16', action: '添加管理员', target: 'chen@example.com', actor: selfEmail, detail: '添加邮箱名单，等待首次 Google 登录绑定。' }
+      ['今天 10:32', me, '切换视图包', 'markdown', 'vb_b126…78d17 → vb_7fa9…3c38a'],
+      ['今天 10:29', me, '上传视图包', 'markdown', 'vb_7fa9…3c38a · 184 KB · 验证通过'],
+      ['今天 09:18', 'chen@example.com', '验证操作代理', 'psd', '协议、Webhook 验签与服务身份通过'],
+      ['昨天 17:40', me, '停用类型', 'docx', '等待内置操作代理接入']
     ]
   };
-  const sections = [{ id: 'types', label: '文档类型', icon: 'shapes' }, { id: 'admins', label: '管理员', icon: 'users-round' }, { id: 'audit', label: '审计', icon: 'history' }];
-  const route = () => { const params = new URLSearchParams(location.hash.slice(1)); return { section: params.get('view') || 'types', id: params.get('id') || '' }; };
-  const href = (section, id = '') => `#view=${section}${id ? `&id=${encodeURIComponent(id)}` : ''}`;
-  let search = '';
+  const operators = {
+    'https://operator-markdown.example.com/': ['Markdown 写作代理', 'markdown-operator', ['markdown']],
+    'https://operator-markdown-next.example.com/': ['Markdown 写作代理预览版', 'markdown-next', ['markdown']],
+    'https://operator-psd.example.com/': ['画布操作代理', 'psd-canvas', ['psd']],
+    'https://operator-docx.example.com/': ['文档写作代理', 'docx-writer', ['docx']],
+    'https://operator-multi.example.com/': ['UniDocs 通用代理', 'generalist', ['markdown', 'diagram']]
+  };
+  const sections = [['types', '文档类型', 'shapes'], ['admins', '管理员', 'users-round'], ['audit', '审计', 'history']];
+  const route = () => { const p = new URLSearchParams(location.hash.slice(1)); return { page: p.get('view') || 'types', id: p.get('id') || '' }; };
+  const href = (page, id = '') => `#view=${page}${id ? `&id=${id}` : ''}`;
+  const activeBundle = item => item.bundles.find(item => item.current);
+  const activeTypeCardBundle = item => item.typeCardBundles.find(item => item.current);
+  const activeOperator = item => item.operators.find(item => item.current);
+  const publicName = item => activeTypeCardBundle(item)?.locales.en.name || item.name;
+  const publicDescription = item => activeTypeCardBundle(item)?.locales.en.description || '';
+  const englishCopy = {
+    markdown: ['Markdown', 'Text, notes and structured writing'],
+    psd: ['PSD', 'Layers, canvases and visual creation'],
+    docx: ['Word document', 'Formatted documents and file exchange']
+  };
+  for (const item of state.types) {
+    item.chineseName = item.name;
+    item.chineseDescription = item.text;
+    [item.name, item.text] = englishCopy[item.id];
+    item.typeCardBundles = [typeCardBundle(`tb_${item.id}9f1428cd`, '1.0.0', item.updated, item.id === 'psd' ? '164 KB' : '118 KB', item.icon, { en: { name: item.name, description: item.text }, zh: { name: item.chineseName, description: item.chineseDescription } }, true)];
+  }
+  let tab = 'config';
+  let query = '';
   let filter = '';
-  let activeTab = 'config';
+  let context = null;
   let toastTimer;
-  let modalTrigger;
-  let urlContext = null;
-  const brand = '<a class="admin-brand" href="#view=types"><img src="logo/04-studio-seal.svg" alt="">UniDocs</a>';
-  function toast(message) { const element = document.getElementById('admin-toast'); element.textContent = message; element.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => element.classList.remove('show'), 3500); }
-  function log(action, target, detail, failed = false) { state.audit.unshift({ time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), action, target, actor: selfEmail, detail, failed }); }
-  function navigation() { return sections.map(section => `<a class="admin-nav-item ${route().section === section.id ? 'active' : ''}" href="${href(section.id)}">${icon(section.icon)}${section.label}${section.id === 'types' ? `<span class="nav-count">${String(state.types.length).padStart(2, '0')}</span>` : ''}</a>`).join(''); }
-  function shell(content, detailName = '') {
-    const section = sections.find(item => item.id === route().section) || sections[0];
-    document.title = `UniDocs 运营 · ${detailName || section.label}`;
-    app.innerHTML = `<div class="admin-layout"><aside class="admin-sidebar">${brand}<div class="admin-workspace">运营工作空间</div><nav aria-label="主导航">${navigation()}</nav><div class="admin-sidebar-bottom"><div class="row"><span class="admin-avatar">LS</span><div class="grow"><div style="font-size:12px">Lee <span class="admin-tag">管理员</span></div><div class="account-email">${selfEmail}</div></div>${iconButton('logout', '退出登录', 'log-out')}</div></div></aside><main class="admin-main"><header class="admin-topbar"><div class="admin-crumb"><span>运营工作空间</span><span>/</span><a href="${href(section.id)}">${section.label}</a>${detailName ? `<span>/</span><span>${escapeHtml(detailName)}</span>` : ''}</div><div class="row"><span class="admin-environment">${icon('flask-conical')}沙盒</span><button type="button" class="icon ghost admin-menu" data-action="navigation" title="打开导航" aria-label="打开导航">${icon('menu')}</button></div></header><div class="admin-content">${content}</div></main></div>`;
-    icons();
+
+  function toast(message) { const el = document.getElementById('admin-toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3000); }
+  function log(action, target, detail) { state.audit.unshift([new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), me, action, target, detail]); }
+  function navigation() { return sections.map(([id, label, icon]) => `<a class="admin-nav-item ${route().page === id ? 'active' : ''}" href="${href(id)}">${ico(icon)}${label}${id === 'types' ? `<span class="nav-count">0${state.types.length}</span>` : ''}</a>`).join(''); }
+  function shell(content, detail = '') {
+    const section = sections.find(([id]) => id === route().page) || sections[0];
+    document.title = `UniDocs 管理 · ${detail || section[1]}`;
+    app.innerHTML = `<div class="admin-layout"><aside class="admin-sidebar"><a class="admin-brand" href="#view=types"><img src="logo/04-studio-seal.svg" alt="">UniDocs</a><div class="admin-workspace">管理工作空间</div><nav>${navigation()}</nav><div class="admin-sidebar-bottom"><div class="row"><span class="admin-avatar">LS</span><div class="grow"><div>Lee <span class="admin-tag">管理员</span></div><div class="account-email">${me}</div></div>${iconBtn('logout', '退出', 'log-out')}</div></div></aside><main class="admin-main"><header class="admin-topbar"><div class="admin-crumb"><span>管理工作空间</span><span>/</span><a href="${href(section[0])}">${section[1]}</a>${detail ? `<span>/</span><span>${esc(detail)}</span>` : ''}</div><div class="row"><span class="admin-environment">${ico('flask-conical')}沙盒</span><button type="button" class="icon ghost admin-menu" data-action="navigation" title="打开导航" aria-label="打开导航">${ico('menu')}</button></div></header><div class="admin-content">${content}</div></main></div>`;
+    drawIcons();
   }
-  function heading(title, eyebrow, subtitle, actions = '') { return `<div class="admin-heading"><div><div class="admin-eyebrow">${eyebrow}</div><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div><div class="admin-actions">${actions}</div></div>`; }
-  function kv(entries) { return `<dl class="admin-kv">${entries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${value}</dd></div>`).join('')}</dl>`; }
-  function listing() {
-    const section = route().section;
-    const config = { types: ['文档类型', 'TYPE DIRECTORY', `${state.types.length} 种文档类型 · ${state.types.filter(item => item.enabled).length} 种主站启用`, '登记类型', 'new-type'], admins: ['管理员', 'ACCESS CONTROL', `${state.admins.length} 位管理员 · Google 身份`, '添加管理员', 'new-admin'], audit: ['审计', 'ACTIVITY LOG', '类型目录与访问管理记录', '', ''] }[section];
-    const headers = section === 'types' ? [['文档类型', 'width:23%'], ['Base URL', 'width:34%'], ['主站状态', ''], ['最近验证', ''], ['', 'width:70px']] : section === 'admins' ? [['管理员邮箱', 'width:32%'], ['Google 身份', ''], ['添加人', ''], ['添加时间', ''], ['', 'width:56px']] : [['时间', 'width:14%'], ['操作者', 'width:23%'], ['动作', ''], ['目标', 'width:25%'], ['结果', '']];
-    const placeholder = section === 'types' ? '搜索名称、ID 或 URL' : section === 'admins' ? '搜索邮箱' : '搜索动作、目标或操作者';
-    shell(heading(config[0], config[1], config[2], `${iconButton('refresh', '刷新列表', 'refresh-cw')}${config[3] ? button(config[4], config[3], 'plus', 'class="primary"') : ''}`) + `<div class="admin-filters"><label class="admin-search">${icon('search')}<input id="admin-search" type="search" aria-label="${placeholder}" placeholder="${placeholder}" value="${escapeHtml(search)}"></label>${section === 'types' ? '<select id="admin-filter" aria-label="按主站状态筛选"><option value="">所有状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select>' : ''}<span class="admin-result" id="admin-result"></span></div><div class="admin-table-wrap"><table class="admin-table"><thead><tr>${headers.map(([name, style]) => `<th style="${style}">${name}</th>`).join('')}</tr></thead><tbody id="admin-rows"></tbody></table></div><div id="admin-footer"></div>`);
-    const select = document.getElementById('admin-filter'); if (select) select.value = filter;
-    renderRows();
+  const heading = (title, eyebrow, copy, actions = '') => `<div class="admin-heading"><div><div class="admin-eyebrow">${eyebrow}</div><h1>${esc(title)}</h1><p>${esc(copy)}</p></div><div class="admin-actions">${actions}</div></div>`;
+  const kv = rows => `<dl class="admin-kv">${rows.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${value}</dd></div>`).join('')}</dl>`;
+  function listPage() {
+    const page = route().page;
+    const meta = page === 'types' ? ['文档类型', '类型目录', `${state.types.length} 种类型 · ${state.types.filter(item => item.enabled).length} 种启用`, btn('new-type', '登记类型', 'plus', 'class="primary"')] : page === 'admins' ? ['管理员', '访问控制', `${state.admins.length} 位管理员 · Google 身份`, btn('new-admin', '添加管理员', 'plus', 'class="primary"')] : ['审计', '活动记录', '视图包、操作代理与访问管理记录', ''];
+    const heads = page === 'types' ? ['文档类型', '当前视图包', '当前操作代理', '主站状态', '最近更新', ''] : page === 'admins' ? ['管理员邮箱', 'Google 身份', '添加人', '添加时间', ''] : ['时间', '操作者', '动作', '目标', '结果'];
+    shell(heading(...meta) + `<div class="admin-filters"><label class="admin-search">${ico('search')}<input id="admin-search" type="search" placeholder="搜索${page === 'types' ? '类型、视图包或操作代理' : '记录'}" value="${esc(query)}"></label>${page === 'types' ? '<select id="admin-filter"><option value="">所有状态</option><option value="on">已启用</option><option value="off">已停用</option></select>' : ''}<span class="admin-result" id="admin-result"></span></div><div class="admin-table-wrap"><table class="admin-table"><thead><tr>${heads.map(value => `<th>${value}</th>`).join('')}</tr></thead><tbody id="admin-rows"></tbody></table></div><div id="admin-footer"></div>`);
+    if (page === 'types') document.getElementById('admin-filter').value = filter;
+    rows();
   }
-  function renderRows() {
-    const section = route().section;
-    let items = state[section].filter(item => JSON.stringify(item).toLowerCase().includes(search.toLowerCase()));
-    if (section === 'types' && filter) items = items.filter(item => filter === 'enabled' ? item.enabled : !item.enabled);
-    let rows;
-    if (section === 'types') rows = items.map(item => `<tr><td><a class="admin-cell-name" href="${href('types', item.id)}"><span class="type-symbol ${item.id}">${icon(item.icon)}</span><span><strong>${escapeHtml(item.name)}</strong>${secondary(item.id)}</span></a></td><td>${mono(item.baseUrl)}</td><td>${status(item.enabled ? '已启用' : '已停用', item.enabled ? 'good' : '')}</td><td>${escapeHtml(item.checkedAt)}</td><td><a href="${href('types', item.id)}" aria-label="管理 ${escapeHtml(item.name)}">管理 ${icon('arrow-up-right')}</a></td></tr>`).join('');
-    if (section === 'admins') rows = items.map(item => `<tr><td><strong style="font-weight:500">${escapeHtml(item.email)}</strong>${item.email === selfEmail ? '<span class="admin-tag">你</span>' : ''}</td><td>${status(item.bound ? '已绑定' : '尚未登录', item.bound ? 'good' : '')}</td><td>${escapeHtml(item.by)}</td><td>${escapeHtml(item.added)}</td><td>${iconButton('delete-admin', item.email === selfEmail ? '不能删除自己' : `删除 ${escapeHtml(item.email)}`, 'trash-2', `data-id="${escapeHtml(item.email)}" ${item.email === selfEmail ? 'disabled' : ''}`)}</td></tr>`).join('');
-    if (section === 'audit') rows = items.map(item => `<tr><td>${escapeHtml(item.time)}</td><td>${escapeHtml(item.actor)}</td><td><button type="button" class="ghost small" data-action="audit-detail" data-id="${state.audit.indexOf(item)}">${escapeHtml(item.action)}</button></td><td>${mono(item.target)}</td><td>${status(item.failed ? '未通过' : '成功', item.failed ? 'bad' : 'good')}</td></tr>`).join('');
-    document.getElementById('admin-rows').innerHTML = rows || '<tr><td colspan="5"><div class="admin-empty">没有匹配的记录</div></td></tr>';
+  function rows() {
+    const page = route().page;
+    let items = state[page].filter(item => JSON.stringify(item).toLowerCase().includes(query.toLowerCase()));
+    if (page === 'types' && filter) items = items.filter(item => item.enabled === (filter === 'on'));
+    let html = '';
+    if (page === 'types') html = items.map(item => { const bundle = activeBundle(item); const card = activeTypeCardBundle(item); const operator = activeOperator(item); return `<tr><td><a class="admin-cell-name" href="${href('types', item.id)}"><span class="type-symbol ${item.id}">${ico(card?.glyph || 'shapes')}</span><span><strong>${esc(publicName(item))}</strong>${sub(item.id)}</span></a></td><td>${bundle ? `${code(short(bundle.id))}${sub(`版本 ${bundle.version} · ${item.bundles.length} 个候选项`)}` : tone('未配置', 'warn')}</td><td>${operator ? `<strong class="admin-table-strong">${esc(operator.name)}</strong>${sub(`${item.operators.length} 个候选项 · ${new URL(operator.url).host}`)}` : tone('未配置', 'warn')}</td><td>${tone(item.enabled ? '已启用' : '未完成', item.enabled ? 'good' : 'warn')}</td><td>${item.updated}</td><td><a href="${href('types', item.id)}">管理 ${ico('arrow-up-right')}</a></td></tr>`; }).join('');
+    if (page === 'admins') html = items.map(item => `<tr><td><strong>${item.email}</strong>${item.email === me ? '<span class="admin-tag">你</span>' : ''}</td><td>${tone(item.bound ? '已绑定' : '待登录', item.bound ? 'good' : '')}</td><td>${item.by}</td><td>${item.date}</td><td>${iconBtn('delete-admin', '删除', 'trash-2', `data-id="${item.email}" ${item.email === me ? 'disabled' : ''}`)}</td></tr>`).join('');
+    if (page === 'audit') html = items.map((item, index) => `<tr><td>${item[0]}</td><td>${item[1]}</td><td><button class="ghost small" data-action="audit-detail" data-id="${index}">${item[2]}</button></td><td>${code(item[3])}</td><td>${tone('成功', 'good')}</td></tr>`).join('');
+    document.getElementById('admin-rows').innerHTML = html || '<tr><td colspan="6"><div class="admin-empty">没有匹配的记录</div></td></tr>';
     document.getElementById('admin-result').textContent = `${items.length} 条记录`;
     document.getElementById('admin-footer').innerHTML = `<div class="admin-table-footer"><span>${items.length} 条记录</span><span>全部已加载</span></div>`;
-    icons();
+    drawIcons();
   }
-  function typeDetail(item) {
-    const tabs = `<div class="admin-tabs" role="tablist" aria-label="类型详情">${[['config', '接入配置'], ['changes', '变更记录']].map(([key, label]) => `<button type="button" role="tab" aria-selected="${key === activeTab}" class="admin-tab ${key === activeTab ? 'active' : ''}" data-action="tab" data-id="${key}">${label}</button>`).join('')}</div>`;
-    const content = activeTab === 'config' ? `<section class="admin-section"><div class="row spread"><h2>接入地址</h2>${button('change-url', '更换 URL', 'pencil')}</div>${kv([['Base URL', mono(item.baseUrl)], ['服务 API', mono(new URL('./api/', item.baseUrl).href)], ['编辑器入口', mono(new URL('./editor/', item.baseUrl).href)], ['类型 ID', mono(item.id)], ['名称', escapeHtml(item.name)], ['支持格式', escapeHtml(item.formats)]])}</section>` : `<section class="admin-section"><h2>近期变更</h2>${state.audit.filter(entry => entry.target === item.id).map(entry => `<div class="admin-release"><strong>${escapeHtml(entry.action)}</strong>${secondary(`${entry.time} · ${entry.actor}`)}<p style="margin:12px 0 0;font-size:12px">${escapeHtml(entry.detail)}</p></div>`).join('') || '<div class="admin-empty">暂无变更记录</div>'}</section>`;
-    shell(heading(item.name, `TYPE / ${item.id.toUpperCase()}`, item.description, button(item.enabled ? 'disable-type' : 'enable-type', item.enabled ? '停用类型' : '启用类型', item.enabled ? 'pause' : 'play')) + tabs + `<div class="admin-detail-grid"><div role="tabpanel">${content}</div><aside class="admin-aside"><h2>UniDocs 主站</h2>${status(item.enabled ? '已启用' : '已停用', item.enabled ? 'good' : '')}<p>${item.enabled ? '创建、编辑入口已开放' : '创建、编辑入口已关闭'}</p><hr style="border:0;border-top:1px solid var(--line);margin:24px 0"><h2>已有作品</h2><div class="admin-big-number">${item.documents}<span style="font-size:12px;color:var(--muted)"> 件</span></div><h2>最近验证</h2><p>${escapeHtml(item.checkedAt)}</p></aside></div>`, item.name);
+  function bundleSummary(record) { return `<div class="bundle-summary"><span class="bundle-mark">${ico('package-open')}</span><div class="grow"><div class="row"><strong>视图版本 ${record.version}</strong>${record.current ? '<span class="admin-tag current">当前</span>' : ''}</div><div class="admin-mono">${record.id}</div><div class="bundle-meta"><span>${ico('file-archive')}${record.size}</span><span>${ico('calendar')}${record.date}</span><span>${ico('radio-tower')}${record.protocol}</span></div></div></div>`; }
+  function typeCardBundleSummary(record) { return `<div class="bundle-summary"><span class="type-card-bundle-mark">${ico('layout-template')}</span><div class="grow"><div class="row"><strong>类型卡片版本 ${record.version}</strong>${record.current ? '<span class="admin-tag current">当前</span>' : ''}</div><div class="admin-mono">${record.id}</div><div class="bundle-meta"><span>${ico('file-archive')}${record.size}</span><span>${ico('languages')}${Object.keys(record.locales).join(' / ')}</span><span>${ico('image')}图标 + example thumbnail</span></div></div></div>`; }
+  function typeCardPreview(record) { const locales = Object.entries(record.locales); const defaultLocale = record.locales.en ? 'en' : locales[0][0]; const defaultCopy = record.locales[defaultLocale]; return `<div class="type-card-preview-tool" data-preview-locale="${defaultLocale}"><div class="type-card-preview-toolbar"><span>卡片预览</span><div class="type-card-locales" role="group" aria-label="预览语言">${locales.map(([locale]) => `<button type="button" class="${locale === defaultLocale ? 'active' : ''}" data-action="card-preview-locale" data-locale="${locale}" aria-pressed="${locale === defaultLocale}">${locale.toUpperCase()}</button>`).join('')}</div></div><div class="type-card-preview"><div class="type-card-thumbnail" role="img" aria-label="${esc(defaultCopy.name)} example thumbnail"><span>${ico(record.glyph)}</span><small>${esc(record.thumbnail)}</small></div><div class="type-card-copy"><span class="type-card-icon">${ico(record.glyph)}</span>${locales.map(([locale, copy]) => `<div class="type-card-locale" data-locale-panel="${locale}" data-locale-name="${esc(copy.name)}" ${locale === defaultLocale ? '' : 'hidden'}><strong>${esc(copy.name)}</strong><p>${esc(copy.description)}</p></div>`).join('')}</div></div></div>`; }
+  function operatorSummary(record) { return `<div class="bundle-summary"><span class="operator-mark">${ico('bot')}</span><div class="grow"><div class="row"><strong>${esc(record.name)}</strong>${record.current ? '<span class="admin-tag current">当前</span>' : ''}</div><div class="admin-mono">${esc(record.id)}</div><div class="bundle-meta"><span>${ico('link')}${esc(record.url)}</span><span>${ico('calendar')}${record.date}</span><span>${ico('shield-check')}验证通过</span></div></div></div>`; }
+  function detailPage(item) {
+    const bundle = activeBundle(item);
+    const card = activeTypeCardBundle(item);
+    const operator = activeOperator(item);
+    const tabs = `<div class="admin-tabs">${[['config', '基本信息'], ['cards', `类型卡片包 ${item.typeCardBundles.length}`], ['bundles', `界面版本 ${item.bundles.length}`], ['operators', `处理服务 ${item.operators.length}`], ['changes', '变更记录']].map(([id, label]) => `<button class="admin-tab ${tab === id ? 'active' : ''}" data-action="tab" data-id="${id}">${label}</button>`).join('')}</div>`;
+    let body = '';
+    if (tab === 'config') body = `<section class="admin-section"><div class="admin-section-head"><h2>基本信息</h2>${btn('edit-info', '编辑内部名称', 'pencil')}</div>${kv([['内部名称', esc(item.name)], ['类型标识', code(item.id)]])}</section><section class="admin-section"><div class="admin-section-head"><h2>当前类型卡片</h2>${btn('tab', '管理类型卡片包', 'list', 'data-id="cards"')}</div>${card ? `<div class="admin-config-band">${typeCardBundleSummary(card)}${typeCardPreview(card)}</div>` : '<div class="admin-empty compact">尚未选择类型卡片包</div>'}</section><section class="admin-section"><div class="admin-section-head"><h2>当前界面版本</h2>${btn('tab', '全部版本', 'list', 'data-id="bundles"')}</div>${bundle ? `<div class="admin-config-band">${bundleSummary(bundle)}</div>` : '<div class="admin-empty compact">尚未选择视图包</div>'}</section><section class="admin-section"><div class="admin-section-head"><h2>当前处理服务</h2>${btn('tab', '全部服务', 'list', 'data-id="operators"')}</div>${operator ? `<div class="admin-config-band">${operatorSummary(operator)}</div>` : '<div class="admin-empty compact">尚未配置处理服务</div>'}</section>`;
+    if (tab === 'cards') body = `<section class="admin-section"><div class="admin-section-head"><div><h2>类型卡片包候选项</h2><p>每个不可变版本包含多语言名称与描述、图标资源和 example thumbnail。</p></div>${btn('upload-type-card-bundle', '上传候选项', 'upload')}</div>${item.typeCardBundles.length ? `<div class="bundle-history">${item.typeCardBundles.map(record => `<article class="bundle-row ${record.current ? 'active' : ''}"><div>${typeCardBundleSummary(record)}${typeCardPreview(record)}</div><div class="candidate-actions">${record.current ? tone('正在使用', 'good') : btn('activate-type-card-bundle', '设为当前', 'check', `data-id="${record.id}"`)}${iconBtn('delete-type-card-bundle', record.current ? '不能删除当前类型卡片包' : '删除类型卡片包', 'trash-2', `data-id="${record.id}" ${record.current ? 'disabled' : ''}`)}</div></article>`).join('')}</div>` : `<div class="admin-placeholder">${ico('layout-template')}<div><strong>还没有类型卡片包候选项</strong><p>上传包含 manifest、多语言文案、图标和 example thumbnail 的 ZIP 文件。</p></div></div>`}</section>`;
+    if (tab === 'bundles') body = `<section class="admin-section"><div class="admin-section-head"><div><h2>视图包候选项</h2><p>可上传多个；同时只能有一个当前项。</p></div>${btn('upload-bundle', '上传候选项', 'upload')}</div>${item.bundles.length ? `<div class="bundle-history">${item.bundles.map(record => `<article class="bundle-row ${record.current ? 'active' : ''}">${bundleSummary(record)}<div class="candidate-actions">${record.current ? tone('正在使用', 'good') : btn('activate-bundle', '设为当前', 'check', `data-id="${record.id}"`)}${iconBtn('delete-bundle', record.current ? '不能删除当前视图包' : '删除视图包', 'trash-2', `data-id="${record.id}" ${record.current ? 'disabled' : ''}`)}</div></article>`).join('')}</div>` : `<div class="admin-placeholder">${ico('package-open')}<div><strong>还没有视图包候选项</strong><p>上传并验证后，再选择一个当前版本。</p></div></div>`}</section>`;
+    if (tab === 'operators') body = `<section class="admin-section"><div class="admin-section-head"><div><h2>操作代理候选项</h2><p>可配置多个；同时只能有一个当前项。</p></div>${btn('add-operator', '添加候选项', 'plus')}</div>${item.operators.length ? `<div class="bundle-history">${item.operators.map(record => `<article class="bundle-row ${record.current ? 'active' : ''}">${operatorSummary(record)}<div class="candidate-actions">${record.current ? tone('正在使用', 'good') : btn('activate-operator', '设为当前', 'check', `data-id="${record.id}"`)}${iconBtn('delete-operator', record.current ? '不能删除当前操作代理' : '删除操作代理', 'trash-2', `data-id="${record.id}" ${record.current ? 'disabled' : ''}`)}</div></article>`).join('')}</div>` : `<div class="admin-placeholder">${ico('bot-off')}<div><strong>还没有操作代理候选项</strong><p>添加并验证后，可将其设为当前项。</p></div></div>`}</section>`;
+    if (tab === 'changes') body = `<section class="admin-section"><h2>近期变更</h2>${state.audit.filter(entry => entry[3] === item.id).map(entry => `<div class="admin-release"><div class="row spread"><strong>${entry[2]}</strong>${tone('成功', 'good')}</div>${sub(`${entry[0]} · ${entry[1]}`)}<p>${entry[4]}</p></div>`).join('')}</section>`;
+    const missing = [[card, '类型卡片包'], [bundle, '视图包'], [operator, '处理服务']].filter(([value]) => !value).map(([, label]) => label);
+    const toggle = item.enabled ? btn('disable-type', '停用类型', 'pause') : btn('enable-type', '启用类型', 'play', missing.length ? `disabled title="还需配置：${missing.join('、')}"` : '');
+    shell(heading(publicName(item), `文档类型 / ${item.id.toUpperCase()}`, publicDescription(item) || '尚未绑定公开展示信息', toggle) + tabs + `<div class="admin-detail-grid"><div>${body}</div><aside class="admin-aside"><h2>主站状态</h2>${tone(item.enabled ? '已启用' : missing.length ? '配置未完成' : '可启用', item.enabled ? 'good' : missing.length ? 'warn' : '')}<p>${item.enabled ? '新建与编辑入口开放' : missing.length ? `还需配置：${missing.join('、')}` : '所有必要配置已就绪'}</p><hr><h2>现有文档</h2><div class="admin-big-number">${item.documents}<span> 件</span></div><h2>配置版本</h2><p>${code(item.etag)}</p><h2>最近更新</h2><p>${item.updated}</p></aside></div>`, publicName(item));
   }
-  function render() {
-    if (!state.signedIn) { app.innerHTML = `<main class="admin-login">${brand}<h1 style="font-size:20px;font-weight:500;margin:0">运营工作空间</h1><p>Google 管理员账号</p>${button('login', '使用 Google 账号登录', 'log-in', 'class="primary"')}</main>`; icons(); return; }
-    const current = route();
-    if (!sections.some(item => item.id === current.section)) { location.hash = href('types'); return; }
-    if (current.section === 'types' && current.id) {
-      const item = state.types.find(record => record.id === current.id);
-      if (item) typeDetail(item); else shell(heading('找不到此记录', 'NOT FOUND', '', '') + '<a href="#view=types">返回文档类型</a>');
-    } else listing();
+  function render() { const r = route(); const item = state.types.find(item => item.id === r.id); r.page === 'types' && item ? detailPage(item) : listPage(); }
+  function editInfo(item) {
+    dialog('编辑内部名称', `<div class="admin-notice">${ico('info')}<span>内部名称只供管理员识别。用户看到的名称和描述来自当前类型卡片包。</span></div><div class="admin-fields"><label>内部名称<input name="name" value="${esc(item.name)}" required maxlength="80"></label><label>类型标识<input value="${esc(item.id)}" readonly></label></div>`, '保存', fields => {
+      const name = fields.get('name').trim();
+      if (!name) return '请填写内部名称';
+      item.name = name;
+      item.updated = '刚刚';
+      log('编辑基本信息', item.id, '更新内部名称');
+      toast('基本信息已保存');
+    }, { wide: true });
   }
-  function openModal(title, body, submitLabel, onSubmit, danger = false) {
-    urlContext = null;
-    modalTrigger = { action: document.activeElement?.dataset.action, id: document.activeElement?.dataset.id };
-    modal.innerHTML = `<form id="admin-dialog-form"><div class="admin-modal-head"><h2 id="modal-heading">${escapeHtml(title)}</h2>${iconButton('close-modal', '关闭', 'x')}</div><div class="admin-modal-body">${body}<p class="admin-form-error" role="alert"></p></div><div class="admin-modal-foot"><button type="button" data-action="close-modal">取消</button><button type="submit" class="${danger ? 'admin-danger' : 'primary'}">${escapeHtml(submitLabel)}</button></div></form>`;
-    modal.querySelector('form').addEventListener('submit', event => {
-      event.preventDefault();
-      const error = onSubmit(new FormData(event.target));
-      if (error) { modal.querySelector('[role=alert]').textContent = error; return; }
-      modal.close(); render();
+  function dialog(title, body, submit, onSubmit, options = {}) {
+    modal.className = options.wide ? 'wide' : '';
+    modal.innerHTML = `<form><div class="admin-modal-head"><h2 id="modal-heading">${title}</h2>${iconBtn('close-modal', '关闭', 'x')}</div><div class="admin-modal-body">${body}<p class="admin-form-error"></p></div><div class="admin-modal-foot"><button type="button" data-action="close-modal">取消</button><button type="submit" class="${options.danger ? 'admin-danger' : 'primary'}" ${options.disabled ? 'disabled' : ''}>${submit}</button></div></form>`;
+    modal.querySelector('form').onsubmit = event => { event.preventDefault(); const error = onSubmit(new FormData(event.currentTarget)); if (error) { modal.querySelector('.admin-form-error').textContent = error; return; } modal.close(); render(); };
+    modal.querySelector('[name="englishDescription"]')?.setAttribute('aria-label', '英文描述');
+    modal.querySelector('[name="chineseDescription"]')?.setAttribute('aria-label', '中文描述');
+    modal.showModal(); drawIcons();
+  }
+  const uploadControl = type => `<div class="upload-zone">${ico('file-archive')}<div class="grow"><strong>视图包 ZIP 文件</strong><input name="bundle" type="file" accept=".zip,application/zip"></div>${type ? `<input name="type" type="hidden" value="${type}">` : '<select name="type"><option value="diagram">流程图</option><option value="markdown">Markdown</option><option value="docx">Word 文档</option></select>'}${btn('verify-bundle', '上传并验证', 'upload-cloud')}</div><div id="bundle-result"></div>`;
+  const typeCardBundleUploadControl = () => `<div class="upload-zone">${ico('layout-template')}<div class="grow"><strong>类型卡片包 ZIP 文件</strong><p>包含 unidocs-type-card.json、多语言文案、图标与 example thumbnail。</p><input name="typeCardBundle" type="file" accept=".zip,application/zip"></div>${btn('verify-type-card-bundle', '上传并验证', 'upload-cloud')}</div><div id="type-card-bundle-result"></div>`;
+  function verifyBundle() {
+    const form = modal.querySelector('form'); const file = form.elements.bundle.files[0];
+    if (!file || !file.name.toLowerCase().endsWith('.zip')) { modal.querySelector('.admin-form-error').textContent = '请选择 ZIP 文件'; return; }
+    const type = form.elements.type.value; const names = { markdown: 'Markdown', psd: 'PSD', docx: 'Word 文档', diagram: '流程图' }; const hash = [...file.name].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 17).toString(16).padStart(8, '0');
+    context.bundle = bundle(`vb_${hash}a91e4c7d`, type, type === 'diagram' ? '1.0.0' : 'next', '刚刚', file.size ? `${Math.max(1, Math.ceil(file.size / 1024))} KB` : '318 KB');
+    document.getElementById('bundle-result').innerHTML = `<div class="manifest-panel"><div class="row spread"><strong>${ico('circle-check')} 视图包验证通过</strong>${tone(context.bundle.size, 'good')}</div>${kv([['文档类型', `<strong>${names[type] || context.item?.name || type}</strong>${sub(type)}`], ['视图包 ID', code(context.bundle.id)], ['宿主协议', code(context.bundle.protocol)], ['入口', code(context.bundle.entry)], ['位置类型', context.bundle.locations.map(value => `<span class="admin-tag">${value}</span>`).join('')]])}</div>`;
+    modal.querySelector('button[type=submit]').disabled = false; modal.querySelector('.admin-form-error').textContent = ''; drawIcons();
+  }
+  function verifyTypeCardBundle() {
+    const form = modal.querySelector('form'); const file = form.elements.typeCardBundle.files[0];
+    if (!file || !file.name.toLowerCase().endsWith('.zip')) { modal.querySelector('.admin-form-error').textContent = '请选择类型卡片包 ZIP 文件'; return; }
+    const hash = [...file.name].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 23).toString(16).padStart(8, '0');
+    const glyphs = { markdown: 'file-text', psd: 'layers', docx: 'file-type-2', diagram: 'workflow' };
+    const cardNames = { markdown: ['Markdown', 'Text, notes and structured writing', 'Markdown', '文本、笔记与结构化写作'], psd: ['PSD', 'Layers, canvases and visual creation', 'PSD', '图层、画布与视觉创作'], docx: ['Word document', 'Formatted documents and file exchange', 'Word 文档', '排版文档与格式交换'], diagram: ['Flowchart', 'Flows, relationships and architecture', '流程图', '流程、关系与架构'] };
+    const names = cardNames[context.item.id] || [context.item.name, 'Create and collaborate on a new document.', context.item.name, '创建并协作编辑新文档。'];
+    context.typeCardBundle = typeCardBundle(`tb_${hash}c318a6e2`, 'next', '刚刚', file.size ? `${Math.max(1, Math.ceil(file.size / 1024))} KB` : '132 KB', glyphs[context.item.id] || 'shapes', { en: { name: names[0], description: names[1] }, zh: { name: names[2], description: names[3] } });
+    document.getElementById('type-card-bundle-result').innerHTML = `<div class="manifest-panel"><div class="row spread"><strong>${ico('circle-check')} 类型卡片包验证通过</strong>${tone(context.typeCardBundle.size, 'good')}</div>${kv([['类型卡片包 ID', code(context.typeCardBundle.id)], ['Manifest 协议', code(context.typeCardBundle.protocol)], ['默认语言', code('en')], ['可用语言', Object.keys(context.typeCardBundle.locales).map(value => `<span class="admin-tag">${value}</span>`).join('')], ['图标资源', context.typeCardBundle.iconFiles.map(value => `<span class="admin-tag">${value}</span>`).join('')], ['示例缩略图', code(context.typeCardBundle.thumbnail)]])}${typeCardPreview(context.typeCardBundle)}</div>`;
+    modal.querySelector('button[type=submit]').disabled = false; modal.querySelector('.admin-form-error').textContent = ''; drawIcons();
+  }
+  function verifyOperator() {
+    let url; try { url = new URL(modal.querySelector('[name=url]').value); } catch { modal.querySelector('.admin-form-error').textContent = '请输入有效的 HTTPS URL'; return; }
+    const fixture = operators[url.href]; const type = context.item?.id || context.bundle?.type;
+    if (!fixture) { modal.querySelector('.admin-form-error').textContent = '沙盒没有此操作代理的发现数据'; return; }
+    if (type && !fixture[2].includes(type)) { modal.querySelector('.admin-form-error').textContent = `此操作代理不支持 ${type}`; return; }
+    context.operator = operator(fixture[0], fixture[1], url.href, '刚刚');
+    document.getElementById('operator-result').innerHTML = `<div class="manifest-panel"><div class="row spread"><strong>${fixture[0]}</strong>${tone('验证通过', 'good')}</div><ul class="admin-checks"><li class="passed">${ico('circle-check')}unidocs-operator/v1</li><li class="passed">${ico('circle-check')}Webhook 验签通过</li><li class="passed">${ico('circle-check')}平台服务身份可用</li></ul></div>`;
+    modal.querySelector('button[type=submit]').disabled = false; modal.querySelector('.admin-form-error').textContent = ''; drawIcons();
+  }
+  function newType() {
+    dialog('登记文档类型', `<div class="admin-notice">${ico('info')}<span>先创建停用的类型草稿。类型卡片包、视图包和处理服务都可以稍后配置。</span></div><div class="admin-fields"><label>内部名称<input name="name" required maxlength="80" autofocus placeholder="例如 Spreadsheet"></label></div>`, '创建类型', fields => {
+      const name = fields.get('name').trim();
+      if (!name) return '请填写英文名称';
+      const baseId = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'document-type';
+      let id = baseId; let suffix = 2;
+      while (state.types.some(item => item.id === id)) id = `${baseId}-${suffix++}`;
+      state.types.push({ id, name, text: '', enabled: false, documents: 0, updated: '刚刚', etag: 'cfg-01', operators: [], bundles: [], typeCardBundles: [] });
+      log('登记文档类型', id, '已创建待配置草稿');
+      location.hash = href('types', id);
+      toast('类型草稿已创建');
     });
-    modal.showModal(); icons();
-  }
-  function normalizeUrl(value) {
-    const url = new URL(value.trim());
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('请输入不带凭据、查询参数或 fragment 的 HTTPS Base URL');
-    if (!url.pathname.endsWith('/')) url.pathname += '/';
-    return url.href;
-  }
-  function openUrlDialog(item, mode = 'change') {
-    const adding = !item;
-    const enabling = mode === 'enable';
-    const title = adding ? '登记文档类型' : enabling ? '验证并启用类型' : '更换 Base URL';
-    openModal(title, `<div class="admin-fields"><label>Base URL<input name="baseUrl" type="url" required maxlength="2048" list="admin-url-options" value="${escapeHtml(item?.baseUrl || '')}" placeholder="https://types.example.com/diagram/" ${enabling ? 'readonly' : ''}></label><datalist id="admin-url-options">${Object.keys(fixtures).filter(value => !value.includes('other')).map(value => `<option value="${value}"></option>`).join('')}</datalist><div>${button('verify-url', '验证 URL', 'shield-check')}</div></div><div id="admin-url-result" aria-live="polite"></div>${adding ? '<div class="admin-fields" style="margin-top:18px"><label class="checkbox"><input type="checkbox" name="enabled">在主站启用（可创建、编辑）</label></div>' : `${!enabling ? `<div class="admin-notice">${icon('info')}<span>保存后将使用新地址访问此类型。类型和服务身份必须保持一致，不执行数据迁移。</span></div>` : ''}<div class="admin-fields" style="margin-top:18px"><label>变更原因<input name="reason" required maxlength="200"></label></div>`}`, adding ? '登记类型' : enabling ? '确认启用' : '保存 URL', fields => {
-      const context = urlContext;
-      if (!context?.validation) return '请先验证 URL';
-      let baseUrl; try { baseUrl = normalizeUrl(fields.get('baseUrl')); } catch { return 'Base URL 格式无效'; }
-      if (baseUrl !== context.validation.baseUrl || Date.now() >= context.validation.expiresAt || item && item.configRevision !== context.expectedRevision) return '配置或验证已变化，请重新验证';
-      if (adding) {
-        if (state.types.some(record => record.id === context.validation.descriptor.id)) return '该文档类型已登记';
-        const next = { ...context.validation.descriptor, baseUrl, enabled: fields.get('enabled') === 'on', documents: 0, checkedAt: '刚刚', configRevision: 1 };
-        state.types.push(next); log('登记类型', next.id, `${baseUrl} · ${next.enabled ? '主站已启用' : '主站未启用'}`); location.hash = href('types', next.id); toast('类型已登记');
-      } else {
-        const previous = item.baseUrl;
-        item.baseUrl = baseUrl; item.checkedAt = '刚刚'; item.configRevision += 1;
-        if (enabling) item.enabled = true;
-        log(enabling ? '启用类型' : '更换 URL', item.id, enabling ? fields.get('reason') : `${previous} → ${baseUrl}；${fields.get('reason')}`);
-        toast(enabling ? '主站已开放创建与编辑' : 'Base URL 已更新');
-      }
-    });
-    urlContext = { item, mode, expectedRevision: item?.configRevision, validation: null };
-    modal.querySelector('button[type=submit]').disabled = true;
-  }
-  function verifyUrl() {
-    const context = urlContext; if (!context) return;
-    context.validation = null;
-    modal.querySelector('button[type=submit]').disabled = true;
-    modal.querySelector('[role=alert]').textContent = '';
-    const result = document.getElementById('admin-url-result');
-    let baseUrl;
-    try {
-      baseUrl = normalizeUrl(modal.querySelector('[name=baseUrl]').value);
-      const descriptor = fixtures[baseUrl];
-      if (!descriptor) throw new Error('沙盒没有此地址的发现数据');
-      if (context.item && descriptor.id !== context.item.id) throw new Error('文档类型不匹配，原 URL 未修改');
-      if (context.item && descriptor.serviceId !== context.item.serviceId) throw new Error('服务身份或存储归属不匹配，原 URL 未修改');
-      if (!context.item && state.types.some(item => item.id === descriptor.id)) throw new Error('该文档类型已登记');
-      if (context.item && context.mode === 'change' && baseUrl === context.item.baseUrl) throw new Error('请输入不同的新地址');
-      context.validation = { baseUrl, descriptor, expiresAt: Date.now() + 15 * 60_000 };
-      context.expectedRevision = context.item?.configRevision;
-      result.innerHTML = `<ul class="admin-checks"><li class="passed">${icon('circle-check')}类型身份与标准入口匹配</li>${context.item ? `<li class="passed">${icon('circle-check')}服务身份与存储归属一致</li>` : ''}</ul>${kv([['文档类型', `${escapeHtml(descriptor.name)} ${secondary(descriptor.id)}`], ['服务 API', mono(new URL('./api/', baseUrl).href)], ['编辑器入口', mono(new URL('./editor/', baseUrl).href)]])}`;
-      modal.querySelector('button[type=submit]').disabled = false;
-      log('验证 URL', descriptor.id, `${baseUrl} · 沙盒匹配通过`);
-    } catch (error) {
-      result.innerHTML = `<div class="admin-notice admin-danger">${icon('circle-alert')}<span>${escapeHtml(error.message)}</span></div>`;
-      log('验证 URL', context.item?.id || '未登记类型', error.message, true);
-    }
-    icons();
   }
   document.addEventListener('click', event => {
-    const target = event.target.closest('[data-action]'); if (!target || target.disabled) return;
-    const action = target.dataset.action;
-    const item = state.types.find(record => record.id === route().id);
-    if (action === 'close-modal') { modal.close(); return; }
-    if (action === 'navigation') { navDialog.innerHTML = `<div class="row spread" style="margin-bottom:24px"><strong>运营工作空间</strong>${iconButton('close-nav', '关闭导航', 'x')}</div><nav>${navigation()}</nav>${button('logout', '退出登录', 'log-out')}`; navDialog.showModal(); icons(); return; }
-    if (action === 'close-nav') { navDialog.close(); return; }
-    if (action === 'refresh') { render(); toast('列表已刷新'); return; }
-    if (action === 'login') { state.signedIn = true; render(); toast('已进入沙盒工作空间'); return; }
-    if (action === 'logout') { if (navDialog.open) navDialog.close(); openModal('退出运营工作空间', `<p>${selfEmail}</p>`, '退出', () => { state.signedIn = false; }); return; }
-    if (action === 'tab') { activeTab = target.dataset.id; render(); return; }
-    if (action === 'new-type') { openUrlDialog(null); return; }
-    if (action === 'change-url' && item) { openUrlDialog(item); return; }
-    if (action === 'enable-type' && item) { openUrlDialog(item, 'enable'); return; }
-    if (action === 'verify-url') { verifyUrl(); return; }
-    if (action === 'disable-type' && item) { openModal('停用文档类型', `<p>${escapeHtml(item.name)}</p><div class="admin-notice">${icon('info')}<span>主站将关闭此类型的新建和编辑入口。${item.documents} 件已有作品保留，仍可按原权限读取和导出。</span></div><div class="admin-fields"><label>变更原因<input name="reason" required maxlength="200"></label></div>`, '确认停用', fields => { item.enabled = false; item.configRevision += 1; log('停用类型', item.id, fields.get('reason')); toast('主站已关闭创建与编辑'); }, true); return; }
-    if (action === 'new-admin') {
-      openModal('添加管理员', '<div class="admin-fields"><label>Google 账号邮箱<input name="email" type="email" placeholder="name@example.com" required maxlength="254" autofocus></label></div>', '添加管理员', fields => {
-        const email = fields.get('email').trim().toLowerCase();
-        if (!/^[\x21-\x7e]+$/.test(email)) return '请输入 ASCII 邮箱地址';
-        if (state.admins.some(admin => admin.email === email)) return '该邮箱已在管理员名单中';
-        state.admins.push({ email, added: new Date().toISOString().slice(0, 10), by: selfEmail, bound: false }); log('添加管理员', email, '添加邮箱名单，等待首次 Google 登录绑定。'); toast('管理员已添加');
-      }); return;
-    }
-    if (action === 'delete-admin') {
-      const email = target.dataset.id; if (email === selfEmail) return;
-      openModal('删除管理员', `<p>${escapeHtml(email)}</p><div class="admin-notice">${icon('shield-alert')}<span>管理权限将被撤销。普通账号与文档权限不受影响。</span></div>`, '删除管理员', () => { if (state.admins.length <= 1) return '至少保留一名管理员'; state.admins = state.admins.filter(admin => admin.email !== email); log('删除管理员', email, '撤销运营管理资格。'); toast('管理员已删除'); }, true); return;
-    }
-    if (action === 'audit-detail') { const entry = state.audit[Number(target.dataset.id)]; openModal('变更记录', kv([['动作', escapeHtml(entry.action)], ['目标', mono(entry.target)], ['操作者', escapeHtml(entry.actor)], ['时间', escapeHtml(entry.time)], ['结果', status(entry.failed ? '未通过' : '成功', entry.failed ? 'bad' : 'good')], ['详情', escapeHtml(entry.detail)]]), '完成', () => { }); }
+    const target = event.target.closest('[data-action]'); if (!target || target.disabled) return; const action = target.dataset.action; const item = state.types.find(item => item.id === route().id);
+    if (action === 'card-preview-locale') { const previewTool = target.closest('.type-card-preview-tool'); const locale = target.dataset.locale; previewTool.dataset.previewLocale = locale; previewTool.querySelectorAll('[data-action="card-preview-locale"]').forEach(button => { const active = button.dataset.locale === locale; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); }); previewTool.querySelectorAll('[data-locale-panel]').forEach(panel => { panel.hidden = panel.dataset.localePanel !== locale; }); const copy = previewTool.querySelector(`[data-locale-panel="${locale}"]`); previewTool.querySelector('.type-card-thumbnail').setAttribute('aria-label', `${copy.dataset.localeName} example thumbnail`); return; }
+    if (action === 'close-modal') return modal.close();
+    if (action === 'edit-info' && item) return editInfo(item);
+    if (action === 'tab') { tab = target.dataset.id; return render(); }
+    if (action === 'new-type') return newType();
+    if (action === 'verify-bundle') return verifyBundle();
+    if (action === 'verify-type-card-bundle') return verifyTypeCardBundle();
+    if (action === 'verify-operator') return verifyOperator();
+    if (action === 'upload-bundle') { dialog('上传视图包候选项', `<div class="admin-notice">${ico('info')}<span>验证后加入候选列表，不会自动替换当前项。</span></div>${uploadControl(item.id)}`, '完成', () => { if (!context.bundle) return '请先验证视图包'; if (item.bundles.some(record => record.id === context.bundle.id)) return '此视图包已在候选列表中'; item.bundles.unshift(context.bundle); tab = 'bundles'; log('上传视图包候选项', item.id, context.bundle.id); toast('视图包候选项已添加'); }, { disabled: true }); context = { mode: 'upload', item, bundle: null }; return; }
+    if (action === 'upload-type-card-bundle') { dialog('上传类型卡片包候选项', `<div class="admin-notice">${ico('info')}<span>验证 manifest、所有 locale 和视觉资源后加入候选列表，不会自动设为当前。</span></div>${typeCardBundleUploadControl()}`, '完成', () => { if (!context.typeCardBundle) return '请先验证类型卡片包'; if (item.typeCardBundles.some(record => record.id === context.typeCardBundle.id)) return '此类型卡片包已在候选列表中'; item.typeCardBundles.unshift(context.typeCardBundle); tab = 'cards'; item.updated = '刚刚'; log('上传类型卡片包候选项', item.id, context.typeCardBundle.id); toast('类型卡片包候选项已添加'); }, { wide: true, disabled: true }); context = { item, typeCardBundle: null }; return; }
+    if (action === 'add-operator') { dialog('添加操作代理候选项', `<div class="admin-notice">${ico('info')}<span>验证后加入候选列表，不会自动替换当前项。</span></div><div class="admin-fields"><label>操作代理基础地址<input name="url" type="url" list="operator-options" placeholder="https://operator.example.com/"></label><datalist id="operator-options">${Object.keys(operators).map(url => `<option value="${url}">`).join('')}</datalist><div>${btn('verify-operator', '验证操作代理', 'shield-check')}</div></div><div id="operator-result"></div>`, '添加候选项', () => { if (!context.operator) return '请先验证操作代理'; if (item.operators.some(record => record.id === context.operator.id)) return '此操作代理已在候选列表中'; if (!activeOperator(item)) context.operator.current = true; item.operators.unshift(context.operator); item.updated = '刚刚'; log('添加操作代理候选项', item.id, context.operator.id); toast('操作代理候选项已添加'); }, { disabled: true }); context = { item, operator: null }; return; }
+    if (action === 'activate-bundle') { const next = item.bundles.find(bundle => bundle.id === target.dataset.id); dialog('切换视图包', `${bundleSummary(next)}<div class="admin-notice">${ico('info')}<span>只影响之后新打开的视图，当前会话不会热替换。</span></div><div class="admin-fields"><label>变更原因<input name="reason" required></label></div>`, '确认切换', form => { const current = activeBundle(item); if (current) current.current = false; next.current = true; item.updated = '刚刚'; log('切换视图包', item.id, form.get('reason')); toast('视图包已切换'); }); return; }
+    if (action === 'activate-type-card-bundle') { const next = item.typeCardBundles.find(record => record.id === target.dataset.id); dialog('切换类型卡片包', `${typeCardBundleSummary(next)}${typeCardPreview(next)}<div class="admin-fields"><label>变更原因<input name="reason" required></label></div>`, '确认切换', form => { const current = activeTypeCardBundle(item); if (current) current.current = false; next.current = true; item.updated = '刚刚'; log('切换类型卡片包', item.id, form.get('reason')); toast('类型卡片包已切换'); }, { wide: true }); return; }
+    if (action === 'activate-operator') { const next = item.operators.find(operator => operator.id === target.dataset.id); dialog('切换操作代理', `${operatorSummary(next)}<div class="admin-notice">${ico('info')}<span>之后的 document.created 事件与新消息将发送给此操作代理。</span></div><div class="admin-fields"><label>变更原因<input name="reason" required></label></div>`, '确认切换', form => { const current = activeOperator(item); if (current) current.current = false; next.current = true; item.updated = '刚刚'; log('切换操作代理', item.id, form.get('reason')); toast('操作代理已切换'); }); return; }
+    if (action === 'delete-bundle') { const candidate = item.bundles.find(bundle => bundle.id === target.dataset.id); if (!candidate || candidate.current) return; dialog('删除视图包候选项', `${bundleSummary(candidate)}<div class="admin-notice">${ico('trash-2')}<span>仅从此类型的候选列表移除，不影响当前项。</span></div>`, '删除候选项', () => { item.bundles = item.bundles.filter(bundle => bundle.id !== candidate.id); log('删除视图包候选项', item.id, candidate.id); toast('视图包候选项已删除'); }, { danger: true }); return; }
+    if (action === 'delete-type-card-bundle') { const candidate = item.typeCardBundles.find(record => record.id === target.dataset.id); if (!candidate || candidate.current) return; dialog('删除类型卡片包候选项', `${typeCardBundleSummary(candidate)}<div class="admin-notice">${ico('trash-2')}<span>仅从此类型的候选列表移除，不影响当前项。</span></div>`, '删除候选项', () => { item.typeCardBundles = item.typeCardBundles.filter(record => record.id !== candidate.id); log('删除类型卡片包候选项', item.id, candidate.id); toast('类型卡片包候选项已删除'); }, { danger: true }); return; }
+    if (action === 'delete-operator') { const candidate = item.operators.find(operator => operator.id === target.dataset.id); if (!candidate || candidate.current) return; dialog('删除操作代理候选项', `${operatorSummary(candidate)}<div class="admin-notice">${ico('trash-2')}<span>仅移除此候选项，不影响当前操作代理。</span></div>`, '删除候选项', () => { item.operators = item.operators.filter(operator => operator.id !== candidate.id); log('删除操作代理候选项', item.id, candidate.id); toast('操作代理候选项已删除'); }, { danger: true }); return; }
+    if (action === 'enable-type' || action === 'disable-type') { const enabling = action === 'enable-type'; dialog(enabling ? '启用文档类型' : '停用文档类型', `<div class="admin-notice">${ico('info')}<span>主站将${enabling ? '开放' : '关闭'}新建与编辑入口，现有文档不会删除。</span></div><div class="admin-fields"><label>变更原因<input name="reason" required></label></div>`, enabling ? '确认启用' : '确认停用', form => { item.enabled = enabling; item.updated = '刚刚'; log(enabling ? '启用类型' : '停用类型', item.id, form.get('reason')); toast(`文档类型已${enabling ? '启用' : '停用'}`); }, { danger: !enabling }); return; }
+    if (action === 'new-admin') { dialog('添加管理员', '<div class="admin-fields"><label>Google 账号邮箱<input name="email" type="email" required></label></div>', '添加', form => { const email = form.get('email').trim(); if (state.admins.some(item => item.email === email)) return '此邮箱已存在'; state.admins.push({ email, bound: false, by: me, date: new Date().toISOString().slice(0, 10) }); toast('管理员已添加'); }); return; }
+    if (action === 'delete-admin') { const email = target.dataset.id; dialog('删除管理员', `<p>${email}</p>`, '删除', () => { state.admins = state.admins.filter(item => item.email !== email); toast('管理员已删除'); }, { danger: true }); return; }
+    if (action === 'audit-detail') { const entry = state.audit[target.dataset.id]; dialog('变更记录', kv([['动作', entry[2]], ['目标', code(entry[3])], ['操作者', entry[1]], ['时间', entry[0]], ['详情', entry[4]]]), '完成', () => {}); return; }
+    if (action === 'navigation') { nav.innerHTML = `<div class="row spread"><strong>管理工作空间</strong>${iconBtn('close-nav', '关闭', 'x')}</div><nav>${navigation()}</nav>`; nav.showModal(); drawIcons(); return; }
+    if (action === 'close-nav') return nav.close();
   });
-  document.addEventListener('input', event => {
-    if (event.target.id === 'admin-search') { search = event.target.value; renderRows(); }
-    if (event.target.name === 'baseUrl' && urlContext) { urlContext.validation = null; document.getElementById('admin-url-result').innerHTML = ''; modal.querySelector('[role=alert]').textContent = ''; modal.querySelector('button[type=submit]').disabled = true; }
-  });
-  document.addEventListener('change', event => { if (event.target.id === 'admin-filter') { filter = event.target.value; renderRows(); } });
-  modal.addEventListener('close', () => {
-    urlContext = null;
-    const trigger = [...document.querySelectorAll('#admin-app [data-action]')].find(element => element.dataset.action === modalTrigger?.action && element.dataset.id === modalTrigger?.id);
-    trigger?.focus();
-  });
-  navDialog.addEventListener('click', event => { if (event.target.closest('a')) navDialog.close(); });
-  window.addEventListener('hashchange', () => { search = ''; filter = ''; activeTab = 'config'; if (modal.open) modal.close(); render(); });
+  document.addEventListener('input', event => { if (event.target.id === 'admin-search') { query = event.target.value; rows(); } if (event.target.name === 'url' && context) { context.operator = null; const result = document.getElementById('operator-result'); if (result) result.innerHTML = ''; modal.querySelector('button[type=submit]').disabled = true; } });
+  document.addEventListener('change', event => { if (event.target.id === 'admin-filter') { filter = event.target.value; rows(); } if (event.target.name === 'bundle' && context) { context.bundle = null; document.getElementById('bundle-result').innerHTML = ''; modal.querySelector('button[type=submit]').disabled = true; } if (event.target.name === 'typeCardBundle' && context) { context.typeCardBundle = null; document.getElementById('type-card-bundle-result').innerHTML = ''; modal.querySelector('button[type=submit]').disabled = true; } });
+  modal.addEventListener('close', () => { context = null; modal.className = ''; });
+  window.addEventListener('hashchange', () => { tab = 'config'; query = ''; filter = ''; if (modal.open) modal.close(); render(); });
   render();
 })();
