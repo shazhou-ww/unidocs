@@ -48,6 +48,9 @@
       "path": "packages/protocol-gateway"
     },
     {
+      "path": "packages/protocol-platform"
+    },
+    {
       "path": "packages/service-auth"
     },
     {
