@@ -116,12 +116,9 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 ## 下一轮建议
 
-1. 审查 `SValueSchema` 类型是否需要更精确地覆盖递归 JSON Schema 关键字，以及 `$defs` 中的 SBlob 扩展。
-2. 明确 Document Contract canonical JSON、两个 `schemaHash` 与 `contractHash` 算法和大小限制。
-3. 明确当前 View/Operator 可写 revision 交集变化时，对已有文档和进行中 Agent session 的处理。
-4. 审查 View/Operator 对 paired revision 的支持声明，是显式 idx 集合还是连续范围。
-5. 从 Admin mock 逐项核对候选 metadata PATCH、`If-Match`、`Idempotency-Key` 与协议包生成的 OpenAPI。
-6. 基于 `@unidocs/protocol-admin-portal` contract 实现云中立 Admin handler，再分别接 Node.js 与 Cloudflare Fetch adapter。
+按 [Cloudflare 实现计划](IMPLEMENTATION-PLAN.md) 推进 Admin Portal。本期只实现 `admin-portal-client`、`admin-portal-webui`、`portal-service` 的 Admin 业务核与 `cloudflare-portal`；Azure、Tenant Portal、Agent/document 数据面和 thumbnail service 暂不实施。
+
+第一步先完成 canonical JSON/hash、D1 原子写、Admin bootstrap/auth、bundle 限制和 Operator SSRF 六项技术决策与可执行 spike，再冻结首份 D1 migration。
 
 ## 相关提交
 
