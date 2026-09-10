@@ -31,7 +31,7 @@ admin 与 tenant 两类参与者的访问面保持分离，客户端包采用同
 
 ```
 admin:  [admin-cli, admin-webui] -> admin-client -> admin-protocol
-tenant: [tenant-cli, tenant-webui] -> tenant-client -> tenant-protocol
+tenant: [tenant-cli, portal-webui] -> tenant-client -> tenant-protocol
 ```
 
 - `protocol` 定义该访问面的 HTTP 接口、接口依赖的 request/response 类型，

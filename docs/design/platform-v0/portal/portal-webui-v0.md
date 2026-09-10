@@ -1,8 +1,12 @@
-# Tenant WebUI v0 · 评论驱动的阅读与讨论界面
+# Portal WebUI v0 · 评论驱动的阅读与讨论界面
 
 状态：设计定稿待评审，2026-09-10。
 
-本文只定义面向最终用户的 tenant WebUI，不讨论实现排期。协议依据是
+本文只定义 portal —— 普通用户使用的门户，与 admin 控制台对位。不讨论实现排期。
+
+命名上区分两件事：**tenant 是组织**（`tenantId`、`TenantMembership`、租户平面的 API 与
+客户端包都保持 `tenant-`），**portal 是人用的那个界面**。规划中的包 `tenant-webui` 相应
+改为 `portal-webui`，与 `admin-webui` 成对。协议依据是
 [`../agent-mediated-document-collaboration.md`](../agent-mediated-document-collaboration.md)，
 视觉沿用 [`../../unidocs-mock.css`](../../unidocs-mock.css)。
 
