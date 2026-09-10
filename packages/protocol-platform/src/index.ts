@@ -3,7 +3,6 @@
  */
 export { SValueContentType } from "@unidocs/protocol";
 export type { JsonPrimitive, JsonValue, SBlob, SValue, SValueSchema } from "@unidocs/protocol";
-export type * from "./admin.js";
 export type * from "./agent.js";
 export type * from "./common.js";
 export type * from "./operator.js";

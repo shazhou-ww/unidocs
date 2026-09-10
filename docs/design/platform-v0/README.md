@@ -1,15 +1,18 @@
 # UniDocs Platform v0 设计上下文
 
-状态：2026-09-09 目标设计工作区。此目录收拢本轮新版 Platform 设计的权威文档与 Admin WebUI mock，供后续会话直接续接。
+状态：2026-09-10 目标设计工作区。根目录保存跨角色的 Platform 设计，管理员与最终用户材料分别收拢到 `admin/` 和 `tenant/`。
 
 ## 权威材料
 
-- [当前任务状态](TASK-STATUS.md)：本轮完成范围、验证结果、未实现边界和下一轮建议；续接时先读此文档。
+- [Admin 设计索引](admin/README.md)：管理员控制面状态、WebUI mock、协议与生成文档入口。
+- [Admin 当前任务状态](admin/TASK-STATUS.md)：本轮完成范围、验证结果、未实现边界和下一轮建议。
+- [Tenant TODO](tenant/TODO.md)：面向最终用户的 tenant 体验与 API 后续设计入口。
 - [人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)：评论驱动协作、版本双图、ping/pong 水位和原子 submission 的产品与一致性模型。
 - [Platform、View 与 Operator API v0](platform-view-operator-api-v0.md)：Platform、View bundle、Operator Agent、Admin、Host RPC 和 Agent API 的统一目标契约。
-- [Admin WebUI mock](unidocs-admin-mock.html)：从 UI 反推控制面资源和 mutation；直接用浏览器打开，无需开发服务器。
 
-可由 TypeScript 检查的线契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)。SValue JSON Schema dialect 位于 [`@unidocs/protocol`](../../../packages/protocol/src/types.ts)。
+可由 TypeScript 检查的公共、Agent 与 Operator 线契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin`](../../../packages/protocol-admin/src/index.ts)。SValue JSON Schema dialect 位于 [`@unidocs/protocol`](../../../packages/protocol/src/types.ts)。
+
+管理员 API 的机器可读 OpenAPI 3.1 文档位于 [`admin-v1.openapi.json`](../../../packages/protocol-admin/openapi/admin-v1.openapi.json)，并由 `@unidocs/protocol-admin/openapi.json` 独立导出；供本地或静态站点阅读的 Scalar 页面位于 [`admin-v1.html`](../../../packages/protocol-admin/openapi/admin-v1.html)。两者都保留在 `@unidocs/protocol-admin` 包内，并由 `pnpm --filter @unidocs/protocol-admin docs:generate` 从同一份 contract 生成。
 
 ## 已确定决策
 
@@ -26,7 +29,7 @@
 ```text
 pnpm typecheck
 pnpm check:cas-contract-docs
-node --check docs/design/platform-v0/unidocs-admin-mock.js
+node --check docs/design/platform-v0/admin/unidocs-admin-mock.js
 git diff --check
 ```
 

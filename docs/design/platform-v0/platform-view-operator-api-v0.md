@@ -1,6 +1,6 @@
 # UniDocs Platform、View 与 Operator API v0
 
-状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的契约源位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)。
+状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的公共、Agent 与 Operator 契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin`](../../../packages/protocol-admin/src/index.ts)。
 
 ## 1. 决策摘要
 
@@ -449,11 +449,11 @@ POST 只在文档类型停用时接受请求，并要求 `observedLatestSnapshot
 ### 6.3 Bundle 上传
 
 ```text
-POST /type-card-bundles
+POST /type-card-bundles?name=&description=
 GET  /type-card-bundles?documentType=&cursor=&limit=
 GET  /type-card-bundles/{typeCardBundleId}
 PATCH /type-card-bundles/{typeCardBundleId}
-POST /view-bundles
+POST /view-bundles?name=&description=
 GET  /view-bundles?documentType=&cursor=&limit=
 GET  /view-bundles/{viewBundleId}
 PATCH /view-bundles/{viewBundleId}
@@ -461,16 +461,26 @@ PATCH /view-bundles/{viewBundleId}
 
 ```ts
 interface UploadTypeCardBundleRequest {
-  readonly contentType: "application/zip";
-  readonly name: string;
-  readonly description: string;
+  readonly query: {
+    readonly name: string;
+    readonly description: string;
+  };
+  readonly headers: {
+    readonly "x-csrf-token": string;
+    readonly "idempotency-key": string;
+  };
   readonly body: ReadableStream<Uint8Array>;
 }
 
 interface UploadViewBundleRequest {
-  readonly contentType: "application/zip";
-  readonly name: string;
-  readonly description: string;
+  readonly query: {
+    readonly name: string;
+    readonly description: string;
+  };
+  readonly headers: {
+    readonly "x-csrf-token": string;
+    readonly "idempotency-key": string;
+  };
   readonly body: ReadableStream<Uint8Array>;
 }
 
@@ -487,7 +497,7 @@ type ListViewBundlesResponse = Page<ViewBundleRecord>;
 type GetViewBundleResponse = { readonly data: ViewBundleRecord };
 ```
 
-Platform 有界地流式读取 zip、验证并写入对应的内容寻址 R2 路径，同时创建初始 Admin `name`/`description`。成功返回 `201`；相同内容重复上传返回同一 bundle ID，但 Admin metadata 可通过带 `If-Match` 的 PATCH 独立修改。失败时返回同步错误且不产生可绑定 bundle。请求不暴露 R2 bucket 凭据。bundle ID 是唯一的不可变内容身份，manifest 不另设版本字段。两个列表接口按 manifest 中的 `documentType` 返回候选包。
+Platform 从 UTF-8 query 参数读取有界的初始 Admin `name`/`description`，并有界地流式读取 `application/zip` body、验证并写入对应的内容寻址 R2 路径。这样 metadata 不占用二进制 body，也不要求把非 ASCII 文案编码进 HTTP header。成功返回 `201`；相同内容重复上传返回同一 bundle ID，但 Admin metadata 可通过带 `If-Match` 的 PATCH 独立修改。失败时返回同步错误且不产生可绑定 bundle。请求不暴露 R2 bucket 凭据。bundle ID 是唯一的不可变内容身份，manifest 不另设版本字段。两个列表接口按 manifest 中的 `documentType` 返回候选包。
 
 ### 6.4 Operator 验证
 
@@ -569,7 +579,38 @@ type UpdateDocumentTypeResponse = { readonly data: DocumentTypeRegistration };
 
 创建只生成 disabled 草稿和稳定 `documentType`，不要求 contract、bundle 或 Operator。更新任一 bundle 时，新 manifest 的 `documentType` 必须与现有类型相同。启用要求至少已有一个 Snapshot contract，当前 Type Card bundle 和 View bundle 均为 ready，且 View 与已验证 Operator 候选都支持最新 revision；任一条件不满足都拒绝启用。短期 `validationId` 只用于创建候选项，候选创建后不要求原 validation 继续有效。仅修改 `internalName` 时 `reason` 可省略；改变任一当前绑定或 `enabled` 时 `reason` 必填。
 
-管理员、session、audit 和 change receipt API 保持通用形状。审计新增：
+### 6.6 管理员成员
+
+```text
+GET    /administrators?cursor=&limit=
+POST   /administrators
+DELETE /administrators/{adminId}
+```
+
+```ts
+interface AdministratorMemberRecord {
+  readonly adminId: string;
+  readonly email: string;
+  readonly bound: boolean;
+  readonly addedBy: string;
+  readonly addedAt: IsoDateTime;
+  readonly etag: string;
+}
+
+interface AdministratorMemberListItem extends AdministratorMemberRecord {
+  readonly isSelf: boolean;
+}
+
+interface AddAdministratorMemberRequest {
+  readonly email: string;
+}
+
+type ListAdministratorMembersResponse = Page<AdministratorMemberListItem>;
+```
+
+新增成员只把规范化 Google 邮箱加入管理员 allowlist；该邮箱首次完成管理员登录后才绑定 Google identity。新增使用 `Idempotency-Key`，重复邮箱返回 `409`。删除要求 `If-Match`，且不能删除当前管理员自身或最后一名管理员；成功返回 `204`。
+
+session、audit 和 change receipt API 保持通用形状。审计新增：
 
 ```ts
 type DocumentTypeAuditAction =
@@ -1082,6 +1123,10 @@ type PlatformErrorCode =
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
+| GET/POST | `/admin/api/v1/document-types` | 列表/登记类型 |
+| GET/PATCH | `/admin/api/v1/document-types/{type}` | 详情/原子更新 |
+| GET/POST | `/admin/api/v1/document-types/{type}/snapshot-contracts` | 列出/追加 Snapshot contract revision |
+| GET | `/admin/api/v1/document-types/{type}/snapshot-contracts/{idx}` | 读取历史 Snapshot contract |
 | POST | `/admin/api/v1/type-card-bundles` | 上传并验证不可变类型卡片包 |
 | GET | `/admin/api/v1/type-card-bundles?documentType=...` | 列出类型卡片候选包 |
 | GET | `/admin/api/v1/type-card-bundles/{id}` | 读取类型卡片包 manifest |
@@ -1093,10 +1138,8 @@ type PlatformErrorCode =
 | GET | `/admin/api/v1/operator-validations/{id}` | 查询验证状态 |
 | POST/GET | `/admin/api/v1/operator-candidates` | 创建/列出 Operator 候选项 |
 | PATCH | `/admin/api/v1/operator-candidates/{id}` | 修改候选项的 Admin 名称与描述 |
-| GET/POST | `/admin/api/v1/document-types/{type}/snapshot-contracts` | 列出/追加 Snapshot contract revision |
-| GET | `/admin/api/v1/document-types/{type}/snapshot-contracts/{idx}` | 读取历史 Snapshot contract |
-| GET/POST | `/admin/api/v1/document-types` | 列表/登记类型 |
-| GET/PATCH | `/admin/api/v1/document-types/{type}` | 详情/原子更新 |
+| GET/POST | `/admin/api/v1/administrators` | 列出/添加管理员成员 |
+| DELETE | `/admin/api/v1/administrators/{adminId}` | 按 ETag 删除非自身、非最后一名管理员 |
 
 ### 13.2 Viewer Host 与用户
 

@@ -8,7 +8,7 @@
 
 最新进度：[Iteration 12](iteration-12.md) 已完成可选目录后端切片，尚未注入生产管理 DO。当前 URL 验证同步返回 200，只保存成功短时记录；与下文 202 异步任务目标的差异、安全及用户面接入门槛见该记录。不得将未上线目录 enabled 当作主站开关已经生效。
 
-日期：2026-09-08。状态：精简后的设计草案，尚未实现或部署。配套 [后台设计](unidocs-admin-webui-v0.md)；当时的 HTML 原型已由 [新版 Admin mock](platform-v0/unidocs-admin-mock.html) 取代。本文取代此前 service/editor/release 分别注册的方案。
+日期：2026-09-08。状态：精简后的设计草案，尚未实现或部署。配套 [后台设计](unidocs-admin-webui-v0.md)；当时的 HTML 原型已由 [新版 Admin mock](platform-v0/admin/unidocs-admin-mock.html) 取代。本文取代此前 service/editor/release 分别注册的方案。
 
 实现更新：[Iteration 10](iteration-10.md) 已完成管理员核心、SQLite 和部分独立名单 HTTP handler，未接 Google callback 或生产路由。本文其余 API 仍是目标设计，实际覆盖和限制以该实现记录为准。
 

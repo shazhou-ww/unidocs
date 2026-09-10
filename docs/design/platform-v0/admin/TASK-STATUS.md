@@ -1,8 +1,8 @@
 # UniDocs Platform v0 当前任务状态
 
-更新时间：2026-09-09  
+更新时间：2026-09-10
 分支：`unidocs-webui`  
-阶段：目标设计与 TypeScript 线契约定义，尚未进入 Platform 服务实现。
+阶段：目标设计与可执行线契约定义，尚未进入 Platform 服务实现。
 
 ## 本轮目标
 
@@ -53,10 +53,11 @@
 
 本轮权威上下文已收拢到本目录：
 
-- [协作范式](agent-mediated-document-collaboration.md)
-- [统一 API 设计](platform-view-operator-api-v0.md)
+- [协作范式](../agent-mediated-document-collaboration.md)
+- [统一 API 设计](../platform-view-operator-api-v0.md)
 - [Admin WebUI mock](unidocs-admin-mock.html)
-- [上下文索引](README.md)
+- [Admin 上下文索引](README.md)
+- [Platform v0 上下文索引](../README.md)
 
 旧的 Admin 单 URL API/WebUI 文档保留在上级目录，仅作历史对照，并已标记由本设计取代。
 
@@ -65,17 +66,24 @@
 - `packages/protocol/src/types.ts`：`SValueSchema` dialect。
 - `packages/protocol-platform/src/common.ts`：Snapshot Contract 与候选项身份类型。
 - `packages/protocol-platform/src/resources.ts`：`SnapshotContractRecord`、版本 revision。
-- `packages/protocol-platform/src/admin.ts`：bundle/candidate metadata、Snapshot Contract Admin API。
+- `packages/protocol-admin/src/schemas.ts`：管理员控制面 DTO 的 Zod 4 runtime schema 与静态类型。
+- `packages/protocol-admin/src/contract.ts`：bundle、Snapshot Contract、Operator、文档类型与管理员成员 API。
 - `packages/protocol-platform/src/platform.ts`：公共类型目录与 contract 读取。
 - `packages/protocol-platform/src/agent.ts`：最新版 contract submission 锁。
 
-这些目前都是 type-only 契约，没有实现 HTTP handler、持久化、schema validator 或 bundle validator。
+管理员控制面已从 `@unidocs/protocol-platform` 拆分到 `@unidocs/protocol-admin`。新包只依赖拥有 SValue schema dialect 的基础 `@unidocs/protocol`，不依赖 Platform 服务、`@unidocs/protocol-platform`、Node.js 或 Cloudflare adapter。
+
+`@unidocs/protocol-admin` 已升级为 contract-first 协议包：Zod 4 schema 是 Admin DTO 的运行时与静态类型来源，oRPC contract 定义 23 个 Admin v1 operation 的 method、path、headers、status 与领域错误，并从同一 contract 生成 OpenAPI 3.1 JSON 和内嵌规范的 Scalar HTML。文档分组按 Admin UI 排列为 Document types、Snapshot Contracts、Type Card bundles、View bundles、Operators、Members。bundle 上传的初始 `name`/`description` 使用 UTF-8 query 参数，body 保持原始 `application/zip` 流。
+
+目前没有实现 Platform HTTP handler、持久化、Snapshot Contract validator 或 bundle validator；Admin 协议包只负责 wire contract、基础 DTO runtime validation 与文档生成。
 
 ## 已验证
 
-- `pnpm typecheck`：40 个 workspace package 通过。
-- `pnpm check:cas-contract-docs`：60 份当前契约文档通过。
-- `node --check docs/design/platform-v0/unidocs-admin-mock.js`：通过。
+- `pnpm typecheck`：41 个 workspace package 通过。
+- `pnpm check:cas-contract-docs`：64 份当前契约文档通过。
+- `pnpm --filter @unidocs/protocol-admin test`：9 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
+- `pnpm --filter @unidocs/protocol-admin typecheck`：源码、测试与文档生成脚本通过。
+- `node --check docs/design/platform-v0/admin/unidocs-admin-mock.js`：通过。
 - `git diff --check`：通过。
 - 浏览器验证：停用类型可追加 revision 2；新 revision 自动成为唯一可写；旧 revision 只读；无删除或“设为当前”操作；移动后的 mock 资源正常加载。
 
@@ -92,8 +100,8 @@
 2. 明确 Snapshot Contract append 的 canonical JSON、`schemaHash` 算法、content type 规范和大小限制。
 3. 明确新 revision 对已有文档的迁移工作流；当前只规定新 snapshot 必须使用最新版。
 4. 审查 View/Operator 对 revision 的支持声明，是显式 idx 集合还是连续范围。
-5. 从 Admin mock 逐项核对 API：上传流如何携带初始 Admin metadata、候选 metadata PATCH、`If-Match` 与 `Idempotency-Key`。
-6. 再决定是否开始 Platform 控制面持久化与 validator 实现。
+5. 从 Admin mock 逐项核对候选 metadata PATCH、`If-Match`、`Idempotency-Key` 与协议包生成的 OpenAPI。
+6. 基于 `@unidocs/protocol-admin` contract 实现云中立 Admin handler，再分别接 Node.js 与 Cloudflare Fetch adapter。
 
 ## 相关提交
 
