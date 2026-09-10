@@ -1,5 +1,5 @@
 {
-  "name": "@unidocs/protocol-admin",
+  "name": "@unidocs/protocol-admin-portal",
   "version": "0.1.0",
   "description": "Administrator control-plane HTTP contracts for the UniDocs Platform",
   "type": "module",

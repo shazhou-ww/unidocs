@@ -1,4 +1,4 @@
-# @unidocs/protocol-admin
+# @unidocs/protocol-admin-portal
 
 Contract-first administrator control-plane protocol for UniDocs Platform.
 
@@ -19,7 +19,7 @@ A frontend can derive its complete client type from the contract:
 
 ```ts
 import type { ContractRouterClient } from "@orpc/contract";
-import { adminApiContract } from "@unidocs/protocol-admin";
+import { adminApiContract } from "@unidocs/protocol-admin-portal";
 
 type AdminClient = ContractRouterClient<typeof adminApiContract>;
 ```
@@ -63,13 +63,13 @@ is independent from the server-assigned `DocumentContractIdx` schema revision.
 From the repository root:
 
 ```text
-pnpm --filter @unidocs/protocol-admin docs:generate
+pnpm --filter @unidocs/protocol-admin-portal docs:generate
 ```
 
 This writes two artifacts:
 
-- `packages/protocol-admin/openapi/admin-v1.openapi.json` for tooling, client generation, and compatibility checks;
-- `packages/protocol-admin/openapi/admin-v1.html` as a human-readable Scalar API reference.
+- `packages/protocol-admin-portal/openapi/admin-v1.openapi.json` for tooling, client generation, and compatibility checks;
+- `packages/protocol-admin-portal/openapi/admin-v1.html` as a human-readable Scalar API reference.
 
 The HTML embeds the OpenAPI document, so it can be opened directly from the
 filesystem or published as one static file. It loads the pinned Scalar renderer
@@ -80,12 +80,12 @@ The generator and HTML renderer are internal build tools and are not exported
 from the package. The committed JSON document has its own package entrypoint:
 
 ```ts
-import adminOpenApi from "@unidocs/protocol-admin/openapi.json" with { type: "json" };
+import adminOpenApi from "@unidocs/protocol-admin-portal/openapi.json" with { type: "json" };
 ```
 
 ## Validate
 
 ```text
-pnpm --filter @unidocs/protocol-admin test
-pnpm --filter @unidocs/protocol-admin typecheck
+pnpm --filter @unidocs/protocol-admin-portal test
+pnpm --filter @unidocs/protocol-admin-portal typecheck
 ```

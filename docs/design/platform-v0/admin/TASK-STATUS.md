@@ -33,6 +33,13 @@
 - 图标是 discriminated union：单个无尺寸 SVG，或包含 16/32/64/128/256 全部预定义尺寸的 PNG 集合。
 - Admin preview 的语言选择器属于预览工具栏，不属于最终用户卡片。
 
+### View bundle
+
+- manifest 提供不同文件的 `interactive` 与 `thumbnail` 两个 HTML 入口。
+- interactive 入口承载完整 snapshot 视图、viewport state、comment 锚点高亮和类型专用视图工具。
+- thumbnail 入口不含交互 chrome，按 Host 指定的尺寸、device pixel ratio 和背景策略确定性渲染，供无头浏览器或 `html2canvas` 捕获。
+- thumbnail 尺寸不写入 manifest；同一入口通过 View Host RPC 服务多种当前及未来尺寸。
+
 ### Document Contract
 
 - `DocumentContractIdx`、`VersionIdx`、`PingIdx` 和 `PongIdx` 均从 0 开始；`null` 表示尚无 record，0 不是 sentinel。
@@ -69,14 +76,14 @@
 - `packages/protocol/src/types.ts`：`SValueSchema` dialect。
 - `packages/protocol-platform/src/common.ts`：Document Contract、location 与候选项身份类型。
 - `packages/protocol-platform/src/resources.ts`：`DocumentContractRecord`、版本 revision。
-- `packages/protocol-admin/src/schemas.ts`：管理员控制面 DTO 的 Zod 4 runtime schema 与静态类型。
-- `packages/protocol-admin/src/contract.ts`：bundle、Document Contract、Operator、文档类型与管理员成员 API。
+- `packages/protocol-admin-portal/src/schemas.ts`：管理员控制面 DTO 的 Zod 4 runtime schema 与静态类型。
+- `packages/protocol-admin-portal/src/contract.ts`：bundle、Document Contract、Operator、文档类型与管理员成员 API。
 - `packages/protocol-platform/src/platform.ts`：公共类型目录与 contract 读取。
 - `packages/protocol-platform/src/agent.ts`：可用 paired contract submission 约束。
 
-管理员控制面已从 `@unidocs/protocol-platform` 拆分到 `@unidocs/protocol-admin`。新包只依赖拥有 SValue schema dialect 的基础 `@unidocs/protocol`，不依赖 Platform 服务、`@unidocs/protocol-platform`、Node.js 或 Cloudflare adapter。
+管理员控制面已从 `@unidocs/protocol-platform` 拆分到 `@unidocs/protocol-admin-portal`。新包只依赖拥有 SValue schema dialect 的基础 `@unidocs/protocol`，不依赖 Platform 服务、`@unidocs/protocol-platform`、Node.js 或 Cloudflare adapter。
 
-`@unidocs/protocol-admin` 已升级为 contract-first 协议包：Zod 4 schema 是 Admin DTO 的运行时与静态类型来源，oRPC contract 定义 26 个 Admin v1 operation 的 method、path、headers、status 与领域错误，并从同一 contract 生成 OpenAPI 3.1 JSON 和内嵌规范的 Scalar HTML。文档分组按 Admin UI 排列为 Document types、Document Contracts、Type Card bundles、View bundles、Operators、Members、Audit。Type Card/View bundle body 保持原始 `application/zip` 流；Document Contract 直接以 JSON body 原子提交两个 schema 与审计原因。`GET /audit-events` 提供 actor、action、resource、document type、时间与 cursor 过滤，并返回带 request correlation 的不可变事件。
+`@unidocs/protocol-admin-portal` 已升级为 contract-first 协议包：Zod 4 schema 是 Admin DTO 的运行时与静态类型来源，oRPC contract 定义 26 个 Admin v1 operation 的 method、path、headers、status 与领域错误，并从同一 contract 生成 OpenAPI 3.1 JSON 和内嵌规范的 Scalar HTML。文档分组按 Admin UI 排列为 Document types、Document Contracts、Type Card bundles、View bundles、Operators、Members、Audit。Type Card/View bundle body 保持原始 `application/zip` 流；Document Contract 直接以 JSON body 原子提交两个 schema 与审计原因。`GET /audit-events` 提供 actor、action、resource、document type、时间与 cursor 过滤，并返回带 request correlation 的不可变事件。
 
 Admin v1 的每个 operation 支持 Bearer token 与 Web UI session cookie 两套独立鉴权。请求存在 Bearer token 时只走 Bearer 鉴权，失败不 fallback 到 cookie；没有 Bearer token 时使用 cookie，且 mutation 额外要求 CSRF。OpenAPI 对读取建模为 `Bearer OR cookie`，对 mutation 建模为 `Bearer OR (cookie AND CSRF)`。
 
@@ -94,8 +101,8 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 - `pnpm typecheck`：41 个 workspace package 通过。
 - `pnpm check:cas-contract-docs`：66 份当前契约文档通过。
-- `pnpm --filter @unidocs/protocol-admin test`：18 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
-- `pnpm --filter @unidocs/protocol-admin typecheck`：源码、测试与文档生成脚本通过。
+- `pnpm --filter @unidocs/protocol-admin-portal test`：20 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
+- `pnpm --filter @unidocs/protocol-admin-portal typecheck`：源码、测试与文档生成脚本通过。
 - `node --check docs/design/platform-v0/admin/unidocs-admin-mock.js`：通过。
 - `git diff --check`：通过。
 - 浏览器验证：enabled 类型可追加配对 revision 2；表单在同一 JSON 中提交 snapshot schema 与 location schema；旧 revision 保持可用于新数据；无删除或“设为当前”操作。
@@ -114,7 +121,7 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 3. 明确当前 View/Operator 可写 revision 交集变化时，对已有文档和进行中 Agent session 的处理。
 4. 审查 View/Operator 对 paired revision 的支持声明，是显式 idx 集合还是连续范围。
 5. 从 Admin mock 逐项核对候选 metadata PATCH、`If-Match`、`Idempotency-Key` 与协议包生成的 OpenAPI。
-6. 基于 `@unidocs/protocol-admin` contract 实现云中立 Admin handler，再分别接 Node.js 与 Cloudflare Fetch adapter。
+6. 基于 `@unidocs/protocol-admin-portal` contract 实现云中立 Admin handler，再分别接 Node.js 与 Cloudflare Fetch adapter。
 
 ## 相关提交
 

@@ -492,7 +492,7 @@ Do not add authoritative columns for:
 - latest document version;
 - available contract idx intersection;
 - public Type Card projection;
-- View entrypoint URL;
+- View interactive/thumbnail entrypoint URLs;
 - credentials, access tokens, raw CSRF tokens, or raw Admin session handles.
 
 These values are derived from authoritative rows or external configuration. A materialized projection is allowed only as a rebuildable cache and cannot become a second authority.

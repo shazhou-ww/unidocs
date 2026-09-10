@@ -51,7 +51,7 @@
       "path": "packages/protocol-platform"
     },
     {
-      "path": "packages/protocol-admin"
+      "path": "packages/protocol-admin-portal"
     },
     {
       "path": "packages/service-auth"

@@ -151,7 +151,15 @@ export type AdminAuditEvent = z.infer<typeof AdminAuditEventSchema>;
 export const ViewBundleManifestV1Schema = z.object({
   protocol: z.literal("unidocs-view-bundle/v1").describe("View bundle manifest protocol."),
   documentType: DocumentTypeSchema.describe("Document type implemented by this View."),
-  entrypoint: NonEmptyStringSchema.describe("Normalized bundle-relative HTML entrypoint."),
+  entrypoints: z.object({
+    interactive: NonEmptyStringSchema
+      .describe("Normalized bundle-relative HTML entrypoint for the full interactive View."),
+    thumbnail: NonEmptyStringSchema
+      .describe("Normalized bundle-relative HTML entrypoint for deterministic thumbnail rendering."),
+  }).refine(
+    ({ interactive, thumbnail }) => interactive !== thumbnail,
+    { message: "Interactive and thumbnail entrypoints must be different" },
+  ).readonly().describe("Dedicated HTML entrypoints for interactive viewing and thumbnail capture."),
   supportedDocumentContractIdxs: z.array(DocumentContractIdxSchema).min(1).readonly()
     .describe("Paired Document Contract revisions this View can render, edit, and locate."),
 }).readonly().meta({ id: "ViewBundleManifestV1" });

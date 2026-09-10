@@ -3,13 +3,14 @@
  * rendering and focus commands, plus View-to-Host data and mutation requests.
  *
  * Host -> View methods: `view.initialize`, `view.loadSnapshot`,
- * `view.setMarkers`, `view.focusLocation`, and `view.dispose`.
+ * `view.setViewport`, `view.setMarkers`, `view.focusLocation`, and
+ * `view.dispose`.
  * View -> Host methods: `host.readBlob`, `host.listThreads`, `host.getThread`,
  * `host.createThread`, `host.appendPing`, and `host.storeBlob`.
  * Every message uses `HostRpcRequest` / `HostRpcResponse` over MessageChannel;
  * this file intentionally defines no HTTP routes.
  */
-import type { SValue } from "@unidocs/protocol";
+import type { JsonValue, SValue } from "@unidocs/protocol";
 import type {
   CasBlobRef,
   Cursor,
@@ -59,9 +60,24 @@ export interface ViewContext {
   readonly readOnly: boolean;
 }
 
+export type ViewRenderMode =
+  | {
+    readonly kind: "interactive";
+  }
+  | {
+    readonly kind: "thumbnail";
+    readonly viewport: {
+      readonly width: number;
+      readonly height: number;
+      readonly devicePixelRatio: number;
+    };
+    readonly background: "document" | "transparent";
+  };
+
 export interface ViewInitializeRequest {
   readonly protocol: "unidocs-view-host/v1";
   readonly context: ViewContext;
+  readonly mode: ViewRenderMode;
 }
 
 export interface ViewInitializeResponse {
@@ -75,6 +91,15 @@ export interface ViewLoadSnapshotRequest {
 
 export interface ViewLoadSnapshotResponse {
   readonly renderedVersionIdx: VersionIdx | null;
+}
+
+export interface ViewSetViewportRequest {
+  readonly revision: number;
+  readonly state: JsonValue;
+}
+
+export interface ViewSetViewportResponse {
+  readonly appliedRevision: number;
 }
 
 export interface ViewSetMarkersRequest {
@@ -128,6 +153,10 @@ export interface ViewRpcContracts {
   readonly "view.loadSnapshot": {
     readonly request: ViewLoadSnapshotRequest;
     readonly response: ViewLoadSnapshotResponse;
+  };
+  readonly "view.setViewport": {
+    readonly request: ViewSetViewportRequest;
+    readonly response: ViewSetViewportResponse;
   };
   readonly "view.setMarkers": {
     readonly request: ViewSetMarkersRequest;

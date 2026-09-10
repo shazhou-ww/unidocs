@@ -1,6 +1,6 @@
 # UniDocs Platform、View 与 Operator API v0
 
-状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的公共、Agent 与 Operator 契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin`](../../../packages/protocol-admin/src/index.ts)。
+状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的公共、Agent 与 Operator 契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin-portal`](../../../packages/protocol-admin-portal/src/index.ts)。
 
 ## 1. 决策摘要
 
@@ -62,10 +62,13 @@ flowchart LR
 ### 1.4 View bundle 的职责
 
 - 在浏览器中渲染 Platform 下发的 snapshot；
+- 通过 interactive 入口提供完整文档视图，接受滚动位置、缩放和可见区域等类型专用 viewport state；
 - 创建、解释和高亮本类型的 `DocumentLocation`；
 - 展示 thread marker 和 pong result locations；
+- 提供类型专用视图工具，例如 PSD 图层与通道控制；
 - 将圈选评论和轻编辑编译成 ping；
 - 在本地提供类型专用查看工具和草稿体验。
+- 通过独立 thumbnail 入口在指定尺寸内快速、确定性地渲染 snapshot，供无头浏览器或 `html2canvas` 生成缩略图。
 
 View bundle 不创建正式版本。需要改变正式内容的用户操作最终都成为 ping，由 Agent 生成新 snapshot。
 
@@ -349,10 +352,17 @@ zip 根目录必须包含 `unidocs-view.json`：
 interface ViewBundleManifestV1 {
   readonly protocol: "unidocs-view-bundle/v1";
   readonly documentType: DocumentType;
-  readonly entrypoint: string;
+  readonly entrypoints: {
+    readonly interactive: string;
+    readonly thumbnail: string;
+  };
   readonly supportedDocumentContractIdxs: readonly DocumentContractIdx[];
 }
 ```
+
+两个入口都是规范化的 bundle-relative HTML 路径，必须指向不同文件。`interactive` 是 Tenant Portal 使用的完整视图：负责 snapshot 渲染、viewport state、comment marker 与选区高亮，并可包含文档类型专用工具。`thumbnail` 是无交互 chrome 的轻量渲染入口：只把 snapshot 布局到 Host 指定的 viewport 中，不显示评论、选区、工具栏或编辑状态，也不依赖 interactive 入口当前的滚动与缩放状态。
+
+thumbnail 尺寸不固化在 manifest。thumbnail 服务通过 View Host RPC 传入 CSS pixel 宽高、device pixel ratio 和背景策略，因此同一 bundle 可以生成当前及后续新增的缩略图尺寸。`view.loadSnapshot` 只有在 snapshot、字体、图片和其他渲染资源达到可捕获状态后才能返回；无头浏览器随后截图，或在页面上下文中调用 `html2canvas`。thumbnail 页面不得运行持续动画或产生依赖时钟、随机数的布局变化。
 
 `viewBundleId` 是 Platform 根据规范 manifest 和解包后文件路径、摘要计算出的内容身份。相同内容重复上传得到相同 ID；已有对象可直接复用。
 
@@ -863,7 +873,7 @@ type ListVersionsResponse = Page<VersionRecord>;
 
 公共目录只返回已启用类型，因此 `typeCardBundleId`、`viewBundleId` 和非空 `availableDocumentContractIdxs` 均确定存在。该数组是当前 View、builtin Operator 与已提交 revision 的交集，不按 idx 大小隐式选择。`typeCard` 是 Platform 从当前 Type Card manifest 解析出的用户侧投影：保留 locale 文案，但把所有资源路径解析为固定 bundle origin 下的绝对 URL。Host 与 Agent 可按 idx 查询任一 paired contract，以解释和创建数据。
 
-数据库保存上传时确认的 immutable canonical `bundleUrl`，并校验其 stable origin、资源类型与内容 ID。bundle origin 迁移必须继续路由旧 URL 或显式迁移记录，读取端不能静默按新配置重算。`viewEntrypointUrl` 不作为独立持久字段；Platform 由 View bundle 的 `bundleUrl` 与 manifest `entrypoint` 解析。Type Card 的具体 asset URL 同理由其 `bundleUrl` 与 manifest 相对路径解析。
+数据库保存上传时确认的 immutable canonical `bundleUrl`，并校验其 stable origin、资源类型与内容 ID。bundle origin 迁移必须继续路由旧 URL 或显式迁移记录，读取端不能静默按新配置重算。interactive 与 thumbnail entrypoint URL 不作为独立持久字段；Platform 由 View bundle 的 `bundleUrl` 与 manifest `entrypoints` 分别解析。Type Card 的具体 asset URL 同理由其 `bundleUrl` 与 manifest 相对路径解析。
 
 创建文档只原子地产生名称、稳定文档身份和 `currentVersionIdx = null` 的记录，不创建 thread 或 ping。Platform 随即向 builtin operator 投递 `document.created` 事件；Agent 以 `observedCurrentVersionIdx = null`、`newSnapshot` 和空 `threadUpdates` 提交初始 snapshot 后，文档即可打开。用户确有初始化要求或附件时，在创建后通过普通 thread API 添加，不把 instructions 强制耦合进文档创建。
 
@@ -979,6 +989,17 @@ interface ViewContext {
 interface ViewInitializeRequest {
   readonly protocol: "unidocs-view-host/v1";
   readonly context: ViewContext;
+  readonly mode:
+    | { readonly kind: "interactive" }
+    | {
+        readonly kind: "thumbnail";
+        readonly viewport: {
+          readonly width: number;
+          readonly height: number;
+          readonly devicePixelRatio: number;
+        };
+        readonly background: "document" | "transparent";
+      };
 }
 
 interface ViewInitializeResponse {
@@ -992,6 +1013,15 @@ interface ViewLoadSnapshotRequest {
 
 interface ViewLoadSnapshotResponse {
   readonly renderedVersionIdx: VersionIdx | null;
+}
+
+interface ViewSetViewportRequest {
+  readonly revision: number;
+  readonly state: JsonValue;
+}
+
+interface ViewSetViewportResponse {
+  readonly appliedRevision: number;
 }
 
 interface ViewSetMarkersRequest {
@@ -1015,10 +1045,13 @@ interface ViewFocusLocationResponse {
 ```text
 view.initialize
 view.loadSnapshot
+view.setViewport
 view.setMarkers
 view.focusLocation
 view.dispose
 ```
+
+`view.setViewport` 只用于 interactive 入口。`state` 是由具体 View bundle 解释的 JSON，例如文本滚动位置、画布平移与缩放；Host 将它视为不透明状态，并用单调递增的 `revision` 避免异步应用旧状态。comment marker 与锚点高亮继续由 `view.setMarkers` 和 `view.focusLocation` 控制。thumbnail 入口的可见范围完全由初始化时的固定 viewport 决定。
 
 ### 8.4 View 调用 Host
 

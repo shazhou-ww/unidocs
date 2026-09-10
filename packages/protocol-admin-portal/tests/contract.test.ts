@@ -12,6 +12,7 @@ import {
   TypeCardBundleManifestV1Schema,
   TypeCardIconPngV1Schema,
   UpdateDocumentTypeRequestSchema,
+  ViewBundleManifestV1Schema,
   adminApiContract,
 } from "../src/index.js";
 import type { TypeCardBundleRecord } from "../src/index.js";
@@ -153,6 +154,33 @@ describe("administrator schemas", () => {
     }).success).toBe(false);
   });
 
+  it("requires distinct interactive and thumbnail View entrypoints", () => {
+    const base = {
+      protocol: "unidocs-view-bundle/v1",
+      documentType: "psd",
+      supportedDocumentContractIdxs: [0],
+    } as const;
+
+    expect(ViewBundleManifestV1Schema.safeParse({
+      ...base,
+      entrypoints: {
+        interactive: "view.html",
+        thumbnail: "thumbnail.html",
+      },
+    }).success).toBe(true);
+    expect(ViewBundleManifestV1Schema.safeParse({
+      ...base,
+      entrypoint: "index.html",
+    }).success).toBe(false);
+    expect(ViewBundleManifestV1Schema.safeParse({
+      ...base,
+      entrypoints: {
+        interactive: "index.html",
+        thumbnail: "index.html",
+      },
+    }).success).toBe(false);
+  });
+
   it("validates the SValue dialect and non-empty document type updates", () => {
     expect(SValueSchemaSchema.safeParse({
       $schema: "https://schemas.unidocs.dev/svalue/v1",
@@ -245,6 +273,17 @@ describe("administrator OpenAPI", () => {
     ]));
     expect(patch?.responses).toHaveProperty("412");
     expect(patch?.responses).toHaveProperty("428");
+  });
+
+  it("publishes both View entrypoints in the canonical bundle response", async () => {
+    const document = await generateAdminOpenApiDocument();
+    const get = document.paths?.["/admin/api/v1/view-bundles/{viewBundleId}"]?.get;
+    const response = JSON.stringify(get?.responses?.["200"]);
+
+    expect(response).toContain("entrypoints");
+    expect(response).toContain("interactive");
+    expect(response).toContain("thumbnail");
+    expect(response).not.toContain("\"entrypoint\"");
   });
 
   it("appends paired Document Contracts as JSON without a latest-revision lock", async () => {
