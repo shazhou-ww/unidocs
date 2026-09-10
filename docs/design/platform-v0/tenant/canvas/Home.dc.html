@@ -1,0 +1,256 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;450;500;550;600;650;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #fafaf9; }
+    * { box-sizing: border-box; }
+    a { color: #40745b; text-decoration: none; }
+    a:hover { color: #2f5a45; }
+    .u-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 12px; min-height: 34px; border: 1px solid #e6e7e2; background: #fff; border-radius: 6px; white-space: nowrap; font: inherit; color: inherit; cursor: pointer; }
+    .u-btn-tb { height: 34px; padding: 6px 10px; font-size: 12px; line-height: 20px; }
+    .u-btn:hover { background: #f2f3ef; border-color: #cdd0c8; }
+    .u-ghost { border-color: transparent; background: transparent; }
+    .u-ghost:hover { background: #f2f3ef; }
+    .u-nav { width: 100%; justify-content: flex-start; border: 0; background: transparent; padding: 10px 12px; margin: 2px 0; color: #66695f; border-radius: 6px; cursor: pointer; font: inherit; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+    .u-nav:hover { background: #edefe8; }
+    .u-icon { width: 16px; height: 16px; stroke-width: 1.65; flex-shrink: 0; }
+    .u-card { border: 1px solid #e6e7e2; border-radius: 7px; overflow: hidden; background: #fff; transition: transform .16s, border-color .16s; cursor: pointer; display: flex; flex-direction: column; }
+    .u-card:hover { transform: translateY(-3px); border-color: #b8c1b4; }
+    .u-scroll { overflow: auto; }
+    .u-scroll::-webkit-scrollbar { width: 9px; }
+    .u-scroll::-webkit-scrollbar-thumb { background: #dcded6; border-radius: 5px; }
+  </style>
+</helmet>
+
+<div style="display: flex; width: 1440px; height: 980px; background: #fafaf9; font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; font-size: 13px; color: #242522; overflow: hidden;">
+
+  <aside style="width: 216px; flex-shrink: 0; background: #f5f6f2; border-right: 1px solid #e6e7e2; display: flex; flex-direction: column; padding: 26px 16px 16px;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 24px; font-family: Georgia, 'Times New Roman', serif; font-weight: bold;">
+      <span style="width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center;">
+        <svg viewBox="0 0 64 64" fill="none" style="width: 100%; height: 100%;"><g transform="rotate(-15 32 32)"><path fill="#365744" fill-rule="evenodd" d="M32 3a29 29 0 1 0 0 58 29 29 0 0 0 0-58ZM23.95 11.3h16.1v8.05l9.2 11.5L32 55 14.75 30.85l9.2-11.5V11.3Z" clip-rule="evenodd"></path><circle cx="32" cy="29.7" r="4.6" fill="#365744"></circle><path stroke="#365744" stroke-width="2.875" d="M32 32v25.3"></path></g></svg>
+      </span>UniDocs
+    </div>
+    <div style="margin: 26px 8px 22px; font-size: 11px; color: #797b75; display: flex; align-items: center; gap: 7px;">
+      <span style="width: 6px; height: 6px; background: #40745b; border-radius: 50%;"></span>林工作室
+    </div>
+    <button class="u-nav" style="background: #e8ebe3; color: #22271f; font-weight: 550;">
+      <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v5h6"></path></svg>
+      我的作品<span style="margin-left: auto; font-size: 11px; color: #797b75;">6</span>
+    </button>
+    <button class="u-nav">
+      <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path></svg>
+      与我共享
+    </button>
+    <button class="u-nav">
+      <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+      待我回应
+      <span style="margin-left: auto; font-size: 11px; background: #e8ebe3; color: #45613b; border-radius: 9px; padding: 1px 7px;">6</span>
+    </button>
+    <div style="font-size: 10px; color: #797b75; margin: 30px 12px 10px;">标签</div>
+    <button class="u-nav" style="font-size: 12px;"><span style="height: 6px; width: 6px; background: #83917b; border-radius: 2px;"></span>产品</button>
+    <button class="u-nav" style="font-size: 12px;"><span style="height: 6px; width: 6px; background: #83917b; border-radius: 2px;"></span>设计</button>
+    <button class="u-nav" style="font-size: 12px;"><span style="height: 6px; width: 6px; background: #83917b; border-radius: 2px;"></span>写作</button>
+    <div style="margin-top: auto; padding: 16px 8px 0; border-top: 1px solid #e6e7e2; font-size: 10px; color: #93968d;">设计原型 · 非真实数据</div>
+  </aside>
+
+  <main class="u-scroll" style="flex: 1; min-width: 0; height: 980px;">
+    <div style="max-width: 1350px; padding: 42px 44px; margin: auto;">
+
+      <div style="color: #797b75; font-size: 11px; margin-bottom: 10px;">林工作室</div>
+      <h1 style="font-size: 28px; font-weight: 550; margin: 0 0 10px;">我的作品</h1>
+      <p style="color: #797b75; font-size: 12px; margin: 0 0 26px;">内容由 Agent 编辑。你要做的只有评论 —— 圈一处，说一句，发出去。Agent 在后台自动接手，改完回你一条回复，必要时带一个新版本。</p>
+
+      <!-- Agent 最新回复 -->
+      <section style="border: 1px solid #e2e8de; background: #f7f9f6; border-radius: 8px; padding: 16px 18px; margin-bottom: 28px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 13px;">
+          <span style="width: 28px; height: 28px; border-radius: 5px; background: #ecf0ed; color: #40745b; display: inline-grid; place-items: center;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width: 15px; height: 15px;"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path></svg>
+          </span>
+          <strong style="font-size: 12px; font-weight: 550;">Agent 回复了 3 处评论</strong>
+          <span style="font-size: 11px; color: #797b75;">回复表示 Agent 已处理，不表示你已接受 —— 不同意就在原处追加一条评论。</span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+          <sc-for list="{{inbox}}" as="i" hint-placeholder-count="3">
+            <div style="background: #fff; border: 1px solid #e2e8de; border-radius: 6px; padding: 11px 12px; cursor: pointer;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px;">
+                <span style="font-size: 11px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{i.doc}}</span>
+                <span style="{{i.verStyle}}">{{i.ver}}</span>
+              </div>
+              <p style="font-size: 11px; line-height: 1.75; color: #6d7565; margin: 0;">{{i.text}}</p>
+              <div style="font-size: 10px; color: #a2a59b; margin-top: 8px;">{{i.meta}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <!-- 筛选 -->
+      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 20px;">
+        <div style="position: relative; flex: 1; min-width: 220px; max-width: 340px;">
+          <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="#797b75" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; top: 11px; left: 12px;"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <input placeholder="搜索作品" style="width: 100%; padding: 9px 11px 9px 36px; border: 1px solid #e6e7e2; background: #fff; border-radius: 5px; font: inherit; font-size: 13px;">
+        </div>
+        <sc-for list="{{chips}}" as="c" hint-placeholder-count="3">
+          <button onClick="{{c.pick}}" style="{{c.style}}">{{c.label}}</button>
+        </sc-for>
+        <div style="margin-left: auto; display: flex; gap: 2px; padding: 3px; border: 1px solid #e6e7e2; border-radius: 6px;">
+          <button onClick="{{gridPick}}" style="{{gridStyle}}">
+            <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+          </button>
+          <button onClick="{{listPick}}" style="{{listStyle}}">
+            <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div style="font-size: 11px; color: #797b75; display: flex; justify-content: space-between; margin: 6px 0 15px;">
+        <span>{{countLabel}}</span><span>按最近更新排序</span>
+      </div>
+
+      <div style="{{gridStyleOuter}}">
+        <sc-for list="{{docs}}" as="d" hint-placeholder-count="6">
+          <article class="u-card" style="{{d.cardStyle}}">
+            <div style="{{d.thumbStyle}}">
+              <div style="{{d.paperStyle}}">
+                <sc-if value="{{d.isPsd}}" hint-placeholder-val="{{ false }}">
+                  <div style="position: relative; width: 100%; height: 100%; background: linear-gradient(160deg, #f3ecdd 0%, #e6dcc6 55%, #d8cbb0 100%); overflow: hidden;">
+                    <div style="position: absolute; left: 52%; top: 12%; width: 40%; height: 72%; border-radius: 50% 50% 46% 46%; background: linear-gradient(200deg, #b8a88c, #8d7f66);"></div>
+                    <div style="position: absolute; left: 8%; top: 34%; font-size: 13px; font-weight: 700; color: #4a3f2a;">秋季新品</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{d.isDoc}}" hint-placeholder-val="{{ true }}">
+                  <div style="padding: 14px 15px;">
+                    <div style="height: 8px; width: 62%; background: #d9dbd2; border-radius: 2px; margin-bottom: 11px;"></div>
+                    <div style="height: 4px; width: 100%; background: #eceee7; border-radius: 2px; margin-bottom: 6px;"></div>
+                    <div style="height: 4px; width: 94%; background: #eceee7; border-radius: 2px; margin-bottom: 6px;"></div>
+                    <div style="height: 4px; width: 80%; background: #eceee7; border-radius: 2px; margin-bottom: 14px;"></div>
+                    <div style="height: 4px; width: 100%; background: #eceee7; border-radius: 2px; margin-bottom: 6px;"></div>
+                    <div style="height: 4px; width: 70%; background: #eceee7; border-radius: 2px;"></div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+            <div style="padding: 17px 18px; flex: 1; display: flex; flex-direction: column; min-width: 0;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <span style="{{d.typeStyle}}">{{d.type}}</span>
+                <strong style="font-size: 14px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{d.title}}</strong>
+              </div>
+              <p style="font-size: 11px; line-height: 1.75; color: #797b75; margin: 0 0 12px;">{{d.excerpt}}</p>
+              <div style="margin-top: auto; border-top: 1px solid #f0f1ed; padding-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="{{d.threadStyle}}">{{d.threadLabel}}</span>
+                <span style="font-size: 10px; color: #797b75; margin-left: auto;">{{d.meta}}</span>
+              </div>
+            </div>
+          </article>
+        </sc-for>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { view: 'grid', chip: 'all' };
+  }
+
+  renderVals() {
+    const self = this;
+    const grid = this.state.view === 'grid';
+
+    const all = [
+      { title: 'UniDocs · 产品构想', type: 'MD', excerpt: '为人和 Agent 一起创作而设计。每一件作品都可以被持续阅读、讨论和迭代。', open: 3, pong: 2, ver: 'v4', meta: '今天 09:12 · Agent 提交', mine: true },
+      { title: '秋季新品 · 主视觉', type: 'PSD', excerpt: '主标题下移避开人物面部，字重调到 Bold。背景渐变仍在讨论。', open: 1, pong: 1, ver: 'v3', meta: '今天 11:04 · Agent 提交', mine: true },
+      { title: '版本引用约定', type: 'MD', excerpt: '引用固定在明确版本，源作品更新由使用者决定是否跟进。', open: 0, pong: 3, ver: 'v3', meta: '18 分钟前 · Agent 提交', mine: false },
+      { title: '一轮好的创作反馈', type: 'MD', excerpt: '先理解作品，再表达判断。把意见落到具体位置上。', open: 2, pong: 0, ver: 'v1', meta: '1 小时前 · Agent 提交', mine: true },
+      { title: '创作链路 · 技术笔记', type: 'MD', excerpt: '让不同的创作工具落在同一套版本与批注协议上。', open: 0, pong: 1, ver: 'v2', meta: '昨天 · Agent 提交', mine: false },
+      { title: '空间与留白', type: 'MD', excerpt: '让内容成为视线的落点。排版先决定呼吸，再决定密度。', open: 0, pong: 0, ver: 'v1', meta: '昨天 · Agent 提交', mine: true }
+    ];
+    const openTotal = all.reduce(function (n, d) { return n + d.open; }, 0);
+    const docs = all.filter(function (d) {
+      if (self.state.chip === 'open') return d.open > 0;
+      if (self.state.chip === 'mine') return d.mine;
+      return true;
+    }).map(function (d) {
+      const psd = d.type === 'PSD';
+      let label, style;
+      if (d.open > 0) {
+        label = d.open + ' 处待回复';
+        style = 'font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f6f1df; color: #8d742e;';
+      } else if (d.pong > 0) {
+        label = 'Agent 已回复 ' + d.pong + ' 处';
+        style = 'font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #ecf0ed; color: #40745b;';
+      } else {
+        label = '暂无讨论';
+        style = 'font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f2f3ef; color: #93968d;';
+      }
+      return {
+        title: d.title, type: d.type, excerpt: d.excerpt, meta: d.ver + ' · ' + d.meta,
+        isPsd: psd, isDoc: !psd,
+        typeStyle: 'font-size: 10px; font-weight: 700; min-width: 32px; justify-content: center; display: inline-flex; padding: 2px 6px; border-radius: 3px; '
+          + (psd ? 'background: #e8eff7; border: 1px solid #c2d4e8; color: #365f89;' : 'background: #edf2e8; border: 1px solid #cbdac0; color: #45613b;'),
+        threadLabel: label, threadStyle: style,
+        cardStyle: grid ? '' : 'flex-direction: row;',
+        thumbStyle: grid
+          ? 'height: 184px; padding: 26px 28px 0 22px; overflow: hidden; border-bottom: 1px solid #e6e7e2; background: ' + (psd ? '#e8eff7' : '#edf2e8') + ';'
+          : 'width: 150px; height: 134px; flex-shrink: 0; padding: 12px 12px 0; background: ' + (psd ? '#e8eff7' : '#edf2e8') + ';',
+        paperStyle: 'height: 100%; background: #fff; border: 1px solid #e9eae4; border-bottom: 0; overflow: hidden;'
+      };
+    });
+
+    const chips = [
+      { id: 'all', label: '全部' },
+      { id: 'open', label: '有待回复' },
+      { id: 'mine', label: '我发起的' }
+    ].map(function (c) {
+      return {
+        label: c.label,
+        style: 'display: inline-flex; align-items: center; padding: 7px 12px; min-height: 34px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; '
+          + (self.state.chip === c.id
+            ? 'background: #e8ebe3; border: 1px solid #cdd4c4; color: #22271f;'
+            : 'background: #fff; border: 1px solid #e6e7e2; color: #66695f;'),
+        pick: function () { self.setState({ chip: c.id }); }
+      };
+    });
+
+    const seg = function (on) {
+      return 'border: 0; height: 28px; width: 32px; border-radius: 6px; display: inline-grid; place-items: center; cursor: pointer; color: #242522; '
+        + (on ? 'background: #fff; box-shadow: 0 1px 3px #00000012;' : 'background: transparent;');
+    };
+
+    return {
+      docs: docs,
+      chips: chips,
+      countLabel: docs.length + ' 件作品 · ' + openTotal + ' 处待回复',
+      gridStyleOuter: grid
+        ? 'display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px;'
+        : 'display: grid; grid-template-columns: 1fr; gap: 8px;',
+      gridStyle: seg(grid),
+      listStyle: seg(!grid),
+      gridPick: function () { self.setState({ view: 'grid' }); },
+      listPick: function () { self.setState({ view: 'list' }); },
+      inbox: [
+        { doc: 'UniDocs · 产品构想', ver: '→ v4', text: '已合并两段引用说明，并按你的措辞改写。', meta: '一次回复了 3 条评论 · 今天 09:12' },
+        { doc: '秋季新品 · 主视觉', ver: '→ v3', text: '标题组下移 130px，字重调到 Bold。', meta: '一次回复了 2 条评论 · 今天 11:04' },
+        { doc: '版本引用约定', ver: '只回复', pure: true, text: '两条意见相互矛盾，需要你和小张先对齐再改。', meta: '没有产生新版本 · 昨天 20:31' }
+      ].map(function (i) {
+        return {
+          doc: i.doc, ver: i.ver, text: i.text, meta: i.meta,
+          verStyle: 'font-size: 10px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; '
+            + (i.pure ? 'background: #f6f1df; color: #8d742e;' : 'background: #ecf0ed; color: #40745b;')
+        };
+      })
+    };
+  }
+}
+</script>
+</body>
+</html>
