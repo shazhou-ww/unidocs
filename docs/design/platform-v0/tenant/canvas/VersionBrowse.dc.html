@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;450;500;550;600;650;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #fafaf9; }
+    * { box-sizing: border-box; }
+    a { color: #40745b; text-decoration: none; }
+    a:hover { color: #2f5a45; }
+    .u-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 12px; min-height: 34px; border: 1px solid #e6e7e2; background: #fff; border-radius: 6px; white-space: nowrap; font: inherit; color: inherit; cursor: pointer; }
+    .u-btn-tb { height: 34px; padding: 6px 10px; font-size: 12px; line-height: 20px; }
+    .u-btn:hover { background: #f2f3ef; border-color: #cdd0c8; }
+    .u-ghost { border-color: transparent; background: transparent; }
+    .u-ghost:hover { background: #f2f3ef; }
+    .u-icon { width: 16px; height: 16px; stroke-width: 1.65; flex-shrink: 0; }
+    .u-scroll { overflow: auto; }
+    .u-scroll::-webkit-scrollbar { width: 9px; }
+    .u-scroll::-webkit-scrollbar-thumb { background: #dcded6; border-radius: 5px; }
+  </style>
+</helmet>
+
+<div style="display: flex; flex-direction: column; width: 1440px; height: 980px; background: #fafaf9; font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; font-size: 13px; color: #242522; overflow: hidden;">
+
+  <!-- 历史模式提示条：全屏回看的唯一入口标识 -->
+  <div style="display: flex; align-items: center; gap: 12px; padding: 11px 30px; background: #f6f1df; border-bottom: 1px solid #e4dcc0; flex-shrink: 0;">
+    <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="#8d742e" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M12 7v5l4 2"></path></svg>
+    <span style="font-size: 12px; color: #7d6828;">正在全屏回看 <strong style="font-weight: 650;">{{shown.label}}</strong> —— 只读快照，讨论面板在此模式下收起。</span>
+    <sc-if value="{{shown.isCurrent}}" hint-placeholder-val="{{ false }}">
+      <span style="margin-left: auto; font-size: 11px; color: #8d742e;">这一版就是 current。</span>
+    </sc-if>
+    <sc-if value="{{shown.isHistory}}" hint-placeholder-val="{{ true }}">
+      <span style="margin-left: auto; display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 10px; color: #97873f;">移动 current 会写入文档级审计</span>
+        <button class="u-btn" style="background: #fff; border-color: #ddd0a8;">
+          <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"></path></svg>
+          把 current 移到这一版
+        </button>
+        <button class="u-btn" style="background: #242522; border-color: #242522; color: #fff;">{{shown.backLabel}}</button>
+      </span>
+    </sc-if>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex;">
+
+    <!-- 版本历史面板 -->
+    <aside style="width: 340px; flex-shrink: 0; border-right: 1px solid #e6e7e2; background: #fff; display: flex; flex-direction: column;">
+      <div style="padding: 18px 20px 14px; border-bottom: 1px solid #e6e7e2; flex-shrink: 0;">
+        <h2 style="font-size: 13px; font-weight: 550; margin: 0 0 8px;">版本历史</h2>
+        <p style="font-size: 10px; color: #93968d; margin: 0; line-height: 1.75;">左侧竖线 = base parent 链，每一版只有一个。虚线块 = comment provenance —— 这一版回应了哪些 ping、它们各自基于哪个版本。两者不能互相替代。</p>
+      </div>
+      <div class="u-scroll" style="flex: 1; padding: 16px 20px 24px;">
+        <sc-for list="{{versions}}" as="v" hint-placeholder-count="4">
+          <div onClick="{{v.pick}}" style="{{v.rowStyle}}">
+            <div style="{{v.railStyle}}">
+              <span style="{{v.lineStyle}}"></span>
+              <span style="{{v.dotStyle}}"></span>
+            </div>
+            <div style="flex: 1; min-width: 0; padding-bottom: 20px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <strong style="font-size: 13px; font-weight: 600;">{{v.name}}</strong>
+                <span style="{{v.tagStyle}}">{{v.tag}}</span>
+                <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">{{v.time}}</span>
+              </div>
+              <div style="font-size: 11px; color: #797b75; margin-top: 6px;">{{v.base}}</div>
+              <p style="font-size: 11px; line-height: 1.8; color: #6d7565; margin: 8px 0 0;">{{v.note}}</p>
+              <sc-if value="{{v.hasProv}}" hint-placeholder-val="{{ true }}">
+                <div style="margin-top: 9px; border-left: 2px dashed #c9b98a; background: #fbf8ef; padding: 8px 10px; border-radius: 0 5px 5px 0;">
+                  <div style="font-size: 10px; color: #8d742e; margin-bottom: 5px;">comment provenance</div>
+                  <sc-for list="{{v.prov}}" as="p" hint-placeholder-count="2">
+                    <div style="font-size: 11px; color: #7d6828; line-height: 1.8;">{{p.text}}</div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </aside>
+
+    <!-- 全宽只读正文 -->
+    <div class="u-scroll" style="flex: 1; min-width: 0; background: #f0f0ec; padding: 34px;">
+      <article style="background: #fff; border: 1px solid #e9eae4; padding: 42px 46px; max-width: 820px; margin: auto; line-height: 1.95; font-size: 13px;">
+        <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 26px; padding-bottom: 16px; border-bottom: 1px solid #eceee7;">
+          <span style="display: inline-flex; padding: 2px 7px; border-radius: 3px; background: #e3e7dc; color: #4c5546; font-weight: 550; font-size: 10px;">{{shown.badge}}</span>
+          <span style="font-size: 11px; color: #93968d;">{{shown.sub}}</span>
+        </div>
+        <sc-for list="{{blocks}}" as="b" hint-placeholder-count="7">
+          <div style="{{b.style}}">{{b.text}}</div>
+        </sc-for>
+      </article>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { v: 2 };
+  }
+
+  source(v) {
+    if (v === 1) return [
+      { k: 'h1', t: 'UniDocs' },
+      { k: 'p', t: '为人和 AI 一起创作而设计。' },
+      { k: 'p', t: '目标：让一件作品有长期身份，人给意见，Agent 做修改。先把这句话立住，其余后面补。' }
+    ];
+    if (v === 2) return [
+      { k: 'h1', t: '为共同创作，留一个空间' },
+      { k: 'p', t: 'UniDocs 是一个面向人和 Agent 的创作平台。每一件作品，都可以被持续阅读、讨论和迭代。' },
+      { k: 'q', t: '人负责判断与表达，Agent 负责把想法变成作品。' },
+      { k: 'h2', t: '03 · 作品之间，也有连接' },
+      { k: 'p', t: '引用不是复制。引用固定在一个明确的版本，源作品更新时，由使用者决定是否跟进。' },
+      { k: 'p', t: '锁定引用会同时记下被引用文档的指针和锁定的版本，不丢失升级路径。' },
+      { k: 'h2', t: '下一步' },
+      { k: 'p', t: '一个版本，保留当时的完整上下文。' },
+      { k: 'p', t: '先用 Markdown 跑通创作、审阅和引用，再扩展更多内容类型。' }
+    ];
+    if (v === 3) return [
+      { k: 'h1', t: '为共同创作，留一个空间' },
+      { k: 'p', t: 'UniDocs 是一个面向人和 Agent 的创作平台。每一件作品，都可以被持续阅读、讨论和迭代。' },
+      { k: 'q', t: '人负责判断与表达，Agent 负责把想法变成作品。' },
+      { k: 'h2', t: '03 · 作品之间，也有连接' },
+      { k: 'p', t: '引用不是复制。引用固定在一个明确的版本，源作品更新时，由使用者决定是否跟进。' },
+      { k: 'p', t: '锁定引用会同时记下被引用文档的指针和锁定的版本，不丢失升级路径。' },
+      { k: 'h2', t: '下一步' },
+      { k: 'p', t: '一个版本，保留当时的完整上下文；批注也锚定在提出时的那个版本，不随 current 前移而失效。' },
+      { k: 'p', t: '先用 Markdown 跑通创作、审阅和引用，再扩展更多内容类型。' }
+    ];
+    return [
+      { k: 'h1', t: '为共同创作，留一个空间' },
+      { k: 'p', t: 'UniDocs 是一个面向人和 Agent 的创作平台。每一件作品，都可以被持续阅读、讨论和迭代。' },
+      { k: 'q', t: '人负责判断与表达，Agent 负责把想法变成作品。' },
+      { k: 'h2', t: '03 · 作品之间，也有连接' },
+      { k: 'p', t: '引用不复制内容，只固定到一个明确的版本。源作品出现新版本时，由你决定是否跟进——不会自动替换；锁定的引用也始终保留升级路径。' },
+      { k: 'h2', t: '下一步' },
+      { k: 'p', t: '一个版本，保留当时的完整上下文；批注也锚定在提出时的那个版本，不随 current 前移而失效。' },
+      { k: 'p', t: '先用 Markdown 跑通创作、审阅和引用，再扩展更多内容类型。' }
+    ];
+  }
+
+  renderVals() {
+    const self = this;
+    const cur = this.state.v;
+
+    const CURRENT = 4;
+    const meta = [
+      { n: 1, name: 'v1', time: '9 月 5 日', base: '根版本 · 无 base parent · 由 Agent 提交（你创建了文档）', note: '按你给的一句话需求建立文档，落下第一版正文。', prov: [] },
+      { n: 2, name: 'v2', time: '9 月 8 日', base: 'base parent · v1 · 由 Agent 提交', note: '铺开正文结构：引用、锁定引用、下一步三节。', prov: [] },
+      { n: 3, name: 'v3', time: '昨天 17:40', base: 'base parent · v2 · 由 Agent 提交', note: '补充「批注锚定提出时的版本」，避免读成锚定 current。', prov: ['thread 2 · ping 1（基于 v2）'] },
+      { n: 4, name: 'v4', time: '今天 09:12', base: 'base parent · v3 · 由 Agent 提交', note: '合并两段引用说明并改写措辞；锁定引用的升级路径并入同一段。', prov: ['thread 1 · ping 1、ping 2（基于 v2）', 'thread 1 · ping 3（基于 v3）'] }
+    ];
+
+    const versions = meta.map(function (m, idx) {
+      const on = m.n === cur;
+      const isCurrent = m.n === CURRENT;
+      return {
+        name: m.name,
+        time: m.time,
+        base: m.base,
+        note: m.note,
+        tag: isCurrent ? 'current' : 'Agent 提交',
+        tagStyle: 'font-size: 10px; padding: 2px 6px; border-radius: 3px; '
+          + (isCurrent ? 'background: #ecf0ed; color: #40745b;' : 'background: #f2f3ef; color: #74796b;'),
+        hasProv: m.prov.length > 0,
+        prov: m.prov.map(function (p) { return { text: p }; }),
+        rowStyle: 'display: flex; gap: 12px; cursor: pointer; border-radius: 6px; padding: 10px 10px 0; margin: 0 -10px; '
+          + (on ? 'background: #f4f7f0;' : 'background: transparent;'),
+        railStyle: 'width: 12px; flex-shrink: 0; position: relative; display: flex; flex-direction: column; align-items: center; padding-top: 5px;',
+        /* base parent 链：从本行的点向上连到上一版的点 */
+        lineStyle: idx === 0
+          ? 'display: none;'
+          : 'position: absolute; left: 50%; transform: translateX(-50%); top: -26px; height: 31px; width: 1px; background: #c8cbc2;',
+        dotStyle: 'width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; position: relative; '
+          + (on ? 'background: #40745b; box-shadow: 0 0 0 3px #d9e5dc;' : 'background: #c8cbc2;'),
+        pick: function () { self.setState({ v: m.n }); }
+      };
+    });
+
+    const m = meta.filter(function (x) { return x.n === cur; })[0];
+    const style = {
+      h1: 'font-size: 27px; line-height: 1.5; font-weight: 650; margin: 0 0 22px;',
+      h2: 'font-size: 18px; font-weight: 600; margin: 30px 0 12px;',
+      p: 'margin: 0 0 16px;',
+      q: 'margin: 20px 0; border-left: 3px solid #aaba9e; padding: 8px 18px; color: #63705e; background: #f6f8f3;'
+    };
+
+    return {
+      versions: versions,
+      shown: {
+        label: m.name + (cur === CURRENT ? ' · current' : ''),
+        badge: m.name + (cur === CURRENT ? ' · current' : ' · 历史快照'),
+        sub: m.base + ' · ' + m.time,
+        isCurrent: cur === CURRENT,
+        isHistory: cur !== CURRENT,
+        backLabel: '回到 current v' + CURRENT
+      },
+      blocks: this.source(cur).map(function (b) { return { style: style[b.k], text: b.t }; })
+    };
+  }
+}
+</script>
+</body>
+</html>

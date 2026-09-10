@@ -1,0 +1,243 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;450;500;550;600;650;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #fff; }
+    * { box-sizing: border-box; }
+    a { color: #40745b; text-decoration: none; }
+    a:hover { color: #2f5a45; }
+    .u-icon { width: 16px; height: 16px; stroke-width: 1.65; flex-shrink: 0; }
+    .u-card { border: 1px solid #eaebe5; border-radius: 7px; padding: 12px; background: #fff; }
+    .u-ping { padding: 9px 9px 9px 8px; margin: 0 -3px; border-radius: 5px; }
+    .u-head { display: flex; align-items: center; gap: 8px; }
+    .u-av { width: 28px; height: 28px; border-radius: 50%; background: #e7e9e2; display: inline-grid; place-items: center; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+    .u-av-a { width: 28px; height: 28px; border-radius: 5px; background: #ecf0ed; color: #40745b; display: inline-grid; place-items: center; flex-shrink: 0; }
+    .u-txt { font-size: 12px; line-height: 1.8; margin: 7px 0 0 38px; color: #3a3c37; }
+    .u-loc { margin: 6px 0 0 38px; font-size: 10px; color: #9a9d93; }
+    .u-quote { border-left: 2px solid #b6c4ab; background: #f5f7f1; padding: 8px 10px; margin: 9px 0 4px; font-size: 11px; color: #777f6e; line-height: 1.7; }
+    code { background: #f2f3ef; padding: 2px 5px; border-radius: 3px; font-size: 12px; font-family: Consolas, 'Noto Sans SC', monospace; }
+    .u-ver { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #f2f3ef; color: #74796b; }
+    .u-water { display: flex; align-items: center; gap: 8px; margin: 14px 0 10px; }
+    .u-water span.line { flex: 1; height: 1px; background: #e2e4dc; }
+    .u-water span.txt { font-size: 10px; color: #93968d; white-space: nowrap; }
+    .u-pong { background: #f7f9f6; border: 1px solid #e2e8de; border-radius: 6px; padding: 11px 12px; }
+    .u-note { font-size: 10px; color: #93968d; line-height: 1.75; margin: 7px 0 16px; padding-left: 12px; border-left: 2px solid #e6e7e2; }
+    .u-label { font-size: 11px; font-weight: 600; color: #40745b; letter-spacing: .04em; margin: 0 0 4px; }
+  </style>
+</helmet>
+
+<div style="width: 480px; padding: 26px 24px 30px; background: #fff; font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; font-size: 13px; color: #242522;">
+
+  <h1 style="font-size: 17px; font-weight: 600; margin: 0 0 6px;">Thread 状态表</h1>
+  <p style="font-size: 11px; color: #797b75; line-height: 1.8; margin: 0 0 24px;">
+    一个 thread = 文档里一个锚点。界面上用户只看到「评论」：<strong style="font-weight: 600;">一条评论 = 一条 ping，Agent 的一条回复 = 一条 pong</strong>。评论逐条发送，发出即成为 ping；ping 序列只由人追加，pong 序列只由 Agent 追加，一条 pong 累计确认到某个 ping 水位 ——
+    这就是「n 条 ping + 一条 pong」。
+    <code>open := latestPingSequence &gt; acknowledgedPingSequence</code>
+    —— 没有「解决」按钮，状态是算出来的。
+  </p>
+
+  <!-- A -->
+  <div class="u-label">A · 已回复（addressed）</div>
+  <div class="u-note">3 条 ping 攒在一个锚点上，Agent 一条 pong 累计确认到 ping 3。这是最常见的形态。</div>
+  <section class="u-card" style="border-color: #c5d2bd; border-left: 3px solid #7d9b7a; background: #f6f9f3; margin-bottom: 26px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #ecf0ed; color: #40745b;">已回复 · 水位 ping 3</span>
+      <span style="font-size: 10px; color: #93968d;">3 ping · 1 pong</span>
+    </div>
+    <div class="u-quote">03 · 作品之间，也有连接 — 引用与锁定引用两段</div>
+
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v2</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 1</span></div>
+      <p class="u-txt">更新引用需要用户明确确认，不要自动替换。</p>
+      <div class="u-loc">text-range · v2 ·「引用不是复制。」</div>
+    </div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v2</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 2</span></div>
+      <p class="u-txt">这段和上面的引用说明重复了，合并成一段。</p>
+      <div class="u-loc">text-range · v2 ·「锁定引用」</div>
+    </div>
+    <div class="u-ping" style="background: #eaf1e4; box-shadow: inset 2px 0 0 #7d9b7a;">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver" style="background: #7d9b7a; color: #fff;">v3</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 3</span></div>
+      <p class="u-txt">措辞再收一点，「使用者」改成「你」。</p>
+      <div class="u-loc">text-range · v3 ·「由使用者决定是否跟进」— 选中，左栏切到 v3</div>
+    </div>
+
+    <div class="u-water"><span class="line"></span><span class="txt">Agent 累计确认至 ping 3</span><span class="line"></span></div>
+    <div class="u-pong">
+      <div class="u-head">
+        <span class="u-av-a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width: 15px; height: 15px;"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path></svg></span>
+        <span style="font-size: 11px; font-weight: 550; color: #40745b;">Agent</span>
+        <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">今天 09:12</span>
+      </div>
+      <p class="u-txt">已合并两段引用说明，并按你的措辞改写。锁定引用的升级路径写进了同一段。</p>
+      <div style="margin: 9px 0 0 38px;">
+        <span style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 3px; background: #f3ecd8; border: 1px solid #e3d5ab; color: #8a7331; font-size: 10px;">v4 · 1 处结果位置</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- B -->
+  <div class="u-label">B · 回复后又追加（自动 re-open）</div>
+  <div class="u-note">新 ping 落在已冻结水位之后，thread 自动重新 open。不需要「重新打开」这个动作。</div>
+  <section class="u-card" style="margin-bottom: 26px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f6f1df; color: #8d742e;">未处理 · 水位 ping 1</span>
+      <span style="font-size: 10px; color: #93968d;">2 ping · 1 pong</span>
+    </div>
+    <div class="u-quote">下一步 — 一个版本，保留当时的完整上下文</div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v2</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 1</span></div>
+      <p class="u-txt">需要强调批注也锚定版本。</p>
+    </div>
+    <div class="u-water"><span class="line"></span><span class="txt">Agent 累计确认至 ping 1</span><span class="line"></span></div>
+    <div class="u-pong">
+      <div class="u-head">
+        <span class="u-av-a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width: 15px; height: 15px;"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path></svg></span>
+        <span style="font-size: 11px; font-weight: 550; color: #40745b;">Agent</span>
+        <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">昨天 17:40</span>
+      </div>
+      <p class="u-txt">已补充：批注锚定在提出时的版本。</p>
+      <div style="margin: 9px 0 0 38px;">
+        <span style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 3px; background: #f3ecd8; border: 1px solid #e3d5ab; color: #8a7331; font-size: 10px;">v3 · 1 处结果位置</span>
+      </div>
+    </div>
+    <div class="u-ping" style="margin-top: 10px; background: #fdf9ef; box-shadow: inset 2px 0 0 #d8c68a;">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v3</span><span style="margin-left: auto; font-size: 10px; color: #8d742e;">ping 2 · 水位之后</span></div>
+      <p class="u-txt">改得对，但「不随 current 前移而失效」这句太绕，拆成两句。</p>
+    </div>
+  </section>
+
+  <!-- C -->
+  <div class="u-label">C · 纯 pong（冲突协商，不产生新版本）</div>
+  <div class="u-note">意见互相矛盾时 Agent 只回 pong、不建新版本，也不允许为了留痕造一个内容相同的版本。结果位置为空。</div>
+  <section class="u-card" style="margin-bottom: 26px;">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #ecf0ed; color: #40745b;">已回复 · 水位 ping 2</span>
+      <span style="font-size: 10px; color: #93968d;">2 ping · 1 pong · 无新版本</span>
+    </div>
+    <div class="u-quote">01 · 从作品出发 — 开篇小节</div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v3</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 1</span></div>
+      <p class="u-txt">开篇太长，砍到三句以内。</p>
+    </div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av" style="background: #e2e7ea;">Z</span><span style="font-size: 11px; font-weight: 550;">小张</span><span class="u-ver">v3</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 2</span></div>
+      <p class="u-txt">开篇要补一段面向新用户的背景，现在不够。</p>
+    </div>
+    <div class="u-water"><span class="line"></span><span class="txt">Agent 累计确认至 ping 2</span><span class="line"></span></div>
+    <div class="u-pong" style="background: #fbf8ef; border-color: #e4dcc0;">
+      <div class="u-head">
+        <span class="u-av-a" style="background: #f4eddb; color: #8d742e;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path></svg></span>
+        <span style="font-size: 11px; font-weight: 550; color: #8d742e;">Agent · 需要协商</span>
+        <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">昨天 20:31</span>
+      </div>
+      <p class="u-txt">两条意见方向相反（砍短 vs 补背景）。我先不动内容，请你和小张对齐后追加一条 ping 告诉我按哪个来。</p>
+      <div style="margin: 9px 0 0 38px; font-size: 10px; color: #93968d;">未创建新版本 · 结果位置为空</div>
+    </div>
+  </section>
+
+  <!-- D -->
+  <div class="u-label">D · 基版已归档（位置不可用）</div>
+  <div class="u-note">版本归档后，引用它的 thread 不连带归档。View 把无法解析的位置置灰，并保留恢复入口。</div>
+  <section class="u-card" style="background: #fafaf9;">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f2f3ef; color: #93968d;">已回复 · 基版已归档</span>
+      <span style="font-size: 10px; color: #93968d;">1 ping · 1 pong</span>
+    </div>
+    <div class="u-quote" style="border-left-color: #d5d7d0; background: #f3f4f0; color: #a2a59b;">位置不可用 —— v1 已归档</div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av" style="opacity: .6;">L</span><span style="font-size: 11px; font-weight: 550; color: #93968d;">你</span><span class="u-ver" style="color: #a2a59b;">v1 · 已归档</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 1</span></div>
+      <p class="u-txt" style="color: #8b8e85;">这句话的语气太硬了。</p>
+      <div class="u-loc" style="display: flex; align-items: center; gap: 6px;">
+        <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width: 11px; height: 11px;"><rect x="2" y="4" width="20" height="5" rx="1"></rect><path d="M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"></path><path d="M10 13h4"></path></svg>
+        对照基版不可用 · <span style="color: #40745b; text-decoration: underline; text-underline-offset: 2px;">申请恢复归档</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- E -->
+  <div class="u-label" style="margin-top: 26px;">E · 基版落后 current（选区还在）</div>
+  <div class="u-note">ping 提在 v2，current 已经是 v4。选区文字仍能在 current 里找到，右栏用<strong style="font-weight: 600;">虚线</strong>标出对应位置 —— 那只是尽力定位，不是 Agent 的结果位置，样式上必须和金色的 result location 区分开。</div>
+  <section class="u-card" style="margin-bottom: 26px;">
+    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f6f1df; color: #8d742e;">未处理</span>
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f0f1eb; color: #6f7268; border: 1px dashed #ccd0c4;">基版落后 2 版</span>
+      <span style="margin-left: auto; font-size: 10px; color: #93968d;">1 ping · 0 pong</span>
+    </div>
+    <div class="u-quote">开篇 — 每一件作品，都可以被持续阅读、讨论和迭代</div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v2</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 1</span></div>
+      <p class="u-txt">「持续阅读、讨论和迭代」三个词并列得有点散，收成两个。</p>
+      <div class="u-loc">text-range · v2 —— 同一段文字在 v4 仍可定位</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 7px; margin-top: 12px; padding: 9px 11px; border: 1px dashed #ddd8c4; border-radius: 6px; background: #fbf8ef; color: #8d742e; font-size: 11px;">
+      <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+      等待 Agent 处理 · 已通知
+    </div>
+  </section>
+
+  <!-- F -->
+  <div class="u-label">F · 基版落后 current（选区已不存在）</div>
+  <div class="u-note">同样提在 v2，但那段文字在 v4 已被改写掉 —— 往往是 Agent 处理<em>别的</em> thread 时顺带改的。右栏没有可高亮的位置，改为一条说明：平台不做语义迁移，也不因为 current 前移就作废这条 ping，由 Agent 判断是否仍然适用（§5.4 / §8.2）。</div>
+  <section class="u-card">
+    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f6f1df; color: #8d742e;">未处理</span>
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f0f1eb; color: #6f7268; border: 1px dashed #ccd0c4;">基版落后 2 版</span>
+      <span style="margin-left: auto; font-size: 10px; color: #93968d;">1 ping · 0 pong</span>
+    </div>
+    <div class="u-quote">03 · 作品之间，也有连接 — 锁定引用那一段</div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v2</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">ping 1</span></div>
+      <p class="u-txt">这句里的「指针」太技术了，读者看不懂，换个说法。</p>
+      <div class="u-loc">text-range · v2 —— 该段在 v4 已不存在</div>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border: 1px dashed #ddd8c4; border-radius: 6px; background: #fbf8ef;">
+      <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="#a68a3d" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px; margin-top: 2px;"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path></svg>
+      <p style="font-size: 11px; line-height: 1.85; color: #8d742e; margin: 0;">这条 ping 圈的内容在 v4 里已经不存在了 —— v4 处理 thread 1 时把这一段并进了上一段。ping 本身依然有效，等 Agent 判断是否仍然适用。</p>
+    </div>
+  </section>
+
+  <!-- G -->
+  <div class="u-label" style="margin-top: 26px;">G · 草稿，以及「修改一条已发送的评论」</div>
+  <div class="u-note">草稿只在本地，不是 ping —— 每个位置一份，可以同时存多份。<strong style="font-weight: 600;">已发送的评论不可改</strong>（协议里 ping 追加即存在，没有编辑或删除），所以「修改」只能是：原文留在原地并标出它此刻的处理状态，你改的那份压回草稿，发送时作为同一处的<strong style="font-weight: 600;">新一条</strong>追加。</div>
+  <section class="u-card" style="border-color: #c5d2bd; border-left: 3px solid #7d9b7a; background: #f6f9f3;">
+    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+      <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f6f1df; color: #8d742e;">待回复</span>
+      <span style="margin-left: auto; font-size: 10px; color: #93968d;">2 条评论 · 暂无回复</span>
+    </div>
+    <div class="u-quote">下一步 — 先用 Markdown 跑通创作、审阅和引用</div>
+    <div class="u-ping">
+      <div class="u-head"><span class="u-av">L</span><span style="font-size: 11px; font-weight: 550;">你</span><span class="u-ver">v4</span><span style="margin-left: auto; font-size: 10px; color: #a2a59b;">评论 1</span></div>
+      <p class="u-txt">补一句：PSD 的验证也要排进第一轮。</p>
+      <div style="display: flex; align-items: center; gap: 8px; margin: 7px 0 0 38px;">
+        <span style="font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #f6f1df; color: #8d742e;">正在执行</span>
+        <span style="font-size: 10px; color: #9a9d93;">基于 v4</span>
+        <button class="u-btn u-ghost" style="margin-left: auto; min-height: 22px; padding: 1px 7px; font-size: 10px; color: #6f7268;">修改</button>
+      </div>
+    </div>
+    <div style="margin-top: 10px; border: 1px solid #c5d2bd; border-radius: 6px; padding: 9px 10px; background: #fff;">
+      <div style="font-size: 10px; color: #8d742e; background: #f6f1df; padding: 3px 7px; border-radius: 3px; margin-bottom: 8px; line-height: 1.7;">你在改评论 1。已发送的评论不能覆盖 —— 原文留在上面，这份发出去是同一处的新一条。</div>
+      <p style="font-size: 12px; line-height: 1.8; margin: 0; color: #242522;">补一句：PSD 的验证也要排进第一轮，验证脚本得能跑图片链路。<span style="display: inline-block; width: 1px; height: 13px; background: #40745b; vertical-align: -2px; margin-left: 1px;"></span></p>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+        <button class="u-btn u-ghost" style="min-height: 26px; padding: 3px 8px; font-size: 10px; color: #a33d39;">丢弃</button>
+        <button class="u-btn u-ghost" style="margin-left: auto; min-height: 26px; padding: 3px 9px; font-size: 11px;">留作草稿</button>
+        <button class="u-btn" style="min-height: 26px; padding: 3px 12px; font-size: 11px; background: #242522; border-color: #242522; color: #fff;">发送</button>
+      </div>
+    </div>
+  </section>
+  <div class="u-note" style="margin-top: 12px;">收起来的样子：草稿在卡片底部留一块黄色虚线块（「草稿 · 未发送 · 改自评论 1」+ 首句 + 「继续写」），面板顶部显示「N 条未发送」，筛选里有「未发送」一档。写到一半切去看别处不会丢。</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":480,"height":3020}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>
