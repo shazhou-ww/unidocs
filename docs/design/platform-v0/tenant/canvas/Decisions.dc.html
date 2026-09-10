@@ -1,0 +1,163 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;450;500;550;600;650;700&amp;display=swap">
+  <style>
+    body { margin: 0; background: #fff; }
+    * { box-sizing: border-box; }
+    a { color: #40745b; text-decoration: none; }
+    a:hover { color: #2f5a45; }
+    .u-icon { width: 16px; height: 16px; stroke-width: 1.65; flex-shrink: 0; }
+    code { background: #f2f3ef; padding: 2px 5px; border-radius: 3px; font-size: 12px; font-family: Consolas, 'Noto Sans SC', monospace; }
+  </style>
+</helmet>
+
+<div style="width: 820px; padding: 34px 38px 40px; background: #fff; font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; font-size: 13px; color: #242522;">
+
+  <div style="color: #797b75; font-size: 11px; margin-bottom: 8px;">tenant UI 重设计 · 2026-09-10</div>
+  <h1 style="font-size: 21px; font-weight: 600; margin: 0 0 8px;">决策与未决项</h1>
+  <p style="font-size: 12px; color: #797b75; line-height: 1.85; margin: 0 0 26px;">
+    对齐依据：<code>docs/design/platform-v0/agent-mediated-document-collaboration.md</code>。
+    视觉沿用 <code>docs/design/unidocs-mock.css</code>。
+  </p>
+
+  <!-- 已定 -->
+  <h2 style="font-size: 13px; font-weight: 600; margin: 0 0 14px; display: flex; align-items: center; gap: 8px;">
+    <span style="width: 18px; height: 18px; border-radius: 4px; background: #ecf0ed; color: #40745b; display: inline-grid; place-items: center;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 11px; height: 11px;"><path d="M20 6 9 17l-5-5"></path></svg>
+    </span>
+    已定
+  </h2>
+
+  <div style="display: grid; gap: 10px; margin-bottom: 30px;">
+
+    <div style="border: 1px solid #e6e7e2; border-left: 3px solid #7d9b7a; border-radius: 6px; padding: 13px 15px;">
+      <strong style="font-size: 12px; font-weight: 600;">01 · thread 身份 = 位置锚定</strong>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 7px 0 0;">
+        一个 thread 对应文档里一个锚点，长期存在。ping 序列只由人追加、可跨版本；Agent 一条 pong 累计确认到某个 ping 水位。
+        <code>open := latestPingSequence &gt; acknowledgedPingSequence</code>，因此 UI 里没有「解决 / 重新打开」按钮 —— 追加 ping 就自动 re-open。
+        对应架构文档 §5.1–§5.3。
+      </p>
+    </div>
+
+    <div style="border: 1px solid #e6e7e2; border-left: 3px solid #7d9b7a; border-radius: 6px; padding: 13px 15px;">
+      <strong style="font-size: 12px; font-weight: 600;">02 · 选中 thread = 主区分屏对照</strong>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 7px 0 0;">
+        左栏渲染该 ping 的 base version（下称「基版」，灰底、只读徽标、绿色高亮 ping location），右栏渲染 current，最右仍是 316px 讨论面板。不做浮窗方案。
+      </p>
+      <div style="margin-top: 9px; font-size: 11px; color: #6d7565; line-height: 1.9; padding-left: 13px; border-left: 2px solid #dfe3d8;">
+        右栏分三种情况：<br>
+        · 有 pong —— 金色高亮 result location<br>
+        · ping 就写在 current 上 —— 不重复高亮，标「暂无改动 · 与左栏同一版本」<br>
+        · ping 基于旧版本 —— 那段话还在则用灰底虚线标出对应位置（明说不是 Agent 的改动）；已被改写掉则不高亮，换一条说明（§5.4 / §8.2）
+      </div>
+    </div>
+
+    <div style="border: 1px solid #e6e7e2; border-left: 3px solid #7d9b7a; border-radius: 6px; padding: 13px 15px;">
+      <strong style="font-size: 12px; font-weight: 600;">03 · 同一 thread 内逐条 ping 可切版本</strong>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 7px 0 0;">
+        点 thread 默认展示最新一条 ping 的基版；点 thread 内某条具体 ping，左栏切到那条 ping 的基版和它的高亮。ping 卡片上标出各自的 v 号。
+        对应 §5.4：ping 不要求基于 current，基于历史版本的 ping 依然有效。
+      </p>
+    </div>
+
+    <div style="border: 1px solid #e6e7e2; border-left: 3px solid #7d9b7a; border-radius: 6px; padding: 13px 15px;">
+      <strong style="font-size: 12px; font-weight: 600;">04 · 内容对人永远只读</strong>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 7px 0 0;">
+        分屏两栏都不可编辑。人的唯一产出是 ping，版本只由 Agent 提交。
+        现有 mock 里的源码编辑器、双栏 Markdown 编辑、以及用户自己 <code>commitDraft</code> 推新版本的路径全部移除；顶栏改为一枚「只读 · 内容由 Agent 编辑」标识。
+      </p>
+    </div>
+
+    <div style="border: 1px solid #e6e7e2; border-left: 3px solid #7d9b7a; border-radius: 6px; padding: 13px 15px;">
+      <strong style="font-size: 12px; font-weight: 600;">05 · 版本下拉 = 独立的全屏只读回看</strong>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 7px 0 0;">
+        与「选中 thread → 分屏对照」是两条独立路径。全屏回看模式收起讨论面板，换上版本历史面板，同时呈现 base parent 链与 comment provenance 块，并提供「把 current 移到这一版」入口 —— 该动作必须写审计（§3.3）。
+      </p>
+    </div>
+
+    <div style="border: 1px solid #e6e7e2; border-left: 3px solid #7d9b7a; border-radius: 6px; padding: 13px 15px;">
+      <strong style="font-size: 12px; font-weight: 600;">06 · 评论逐条发送，Agent 后台自动接手</strong>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 7px 0 0;">
+        用户视角只有「评论」：选中一处、写一句、发送，随时可以往同一处追加。<strong>没有「统一提交 N 条」这一步</strong> —— 界面上不出现批次，也不出现 ping/pong 这两个词。
+      </p>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 8px 0 0;">
+        发送由人完成，标记这一条说完了；发出即写入平台成为该 thread 的一条 ping，平台把新增 ping 推给 operator hook，Agent 在后台自动开始处理（§6.3），不需要用户再点一次「交给 Agent」。
+        Agent 什么时候攒批、一次处理几条，是它自己的排队策略，用户不感知。
+      </p>
+      <div style="margin-top: 10px; font-size: 11px; color: #6d7565; line-height: 1.9; padding-left: 13px; border-left: 2px solid #dfe3d8;">
+        输入框都由动作触发，不常驻：<br>
+        · 新评论 —— 在正文里选中一段文字 → 浮出「添加评论」 → 展开输入框<br>
+        · 追加 —— 选中的那一处底部有「回复」按钮 → 点开才出输入框 → 发送或取消<br>
+        · 面板上没有常驻的输入区，也没有底部的批次提交条<br>
+        <br>
+        界面词 ↔ 协议词：<br>
+        · 一条评论 = 一条 ping<br>
+        · Agent 的一条回复 = 一条 pong（可累计回应同一处的多条评论）<br>
+        · 「待回复 / 已回复」= 由水位派生的 open 状态，不是一个可切换的标志
+      </div>
+    </div>
+  </div>
+
+  <!-- 未决 -->
+  <h2 style="font-size: 13px; font-weight: 600; margin: 0 0 14px; display: flex; align-items: center; gap: 8px;">
+    <span style="width: 18px; height: 18px; border-radius: 4px; background: #f6f1df; color: #8d742e; display: inline-grid; place-items: center;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width: 11px; height: 11px;"><path d="M12 17h.01"></path><path d="M9.1 9a3 3 0 1 1 4.2 3.5c-.8.4-1.3 1-1.3 1.8"></path></svg>
+    </span>
+    未决
+  </h2>
+
+  <div style="display: grid; gap: 10px;">
+
+    <div style="border: 1px dashed #ddd8c4; border-radius: 6px; padding: 14px 15px; background: #fdfcf7;">
+      <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 8px;">
+        <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f6f1df; color: #8d742e;">OPEN ISSUE</span>
+        <strong style="font-size: 12px; font-weight: 600;">编辑型 ping（架构文档 §11.2）绕过，后面再看怎么实现</strong>
+      </div>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 0 0 10px;">
+        架构文档允许用户在 View 里直接改字、挪对象，发布时由文档类型组件编码成一条编辑型 ping。<strong>本阶段一律不实现</strong>：所有渲染面只读，画布上不画任何直接操作入口。
+      </p>
+      <div style="font-size: 11px; color: #6d7565; line-height: 1.9; padding-left: 13px; border-left: 2px solid #e4dcc0;">
+        重新捡起时要先答的问题：<br>
+        · 编辑型 ping 落在哪个 thread —— 新建位置锚定 thread，还是并入已有锚点？<br>
+        · 用户看到的是即时编辑，但 Agent 可能不照做。「我改了但没生效」怎么在 UI 上表达？<br>
+        · 编辑型 ping 与意见型 ping 在同一 thread 里如何排序、如何各自渲染卡片？<br>
+        · 编辑期间 current 前移，本地草稿的基版已陈旧，如何提示？
+      </div>
+    </div>
+
+    <div style="border: 1px dashed #dcdfd6; border-radius: 6px; padding: 14px 15px;">
+      <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 8px;">
+        <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f2f3ef; color: #74796b;">未画</span>
+        <strong style="font-size: 12px; font-weight: 600;">子文档批注的归属与转发</strong>
+      </div>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 0;">
+        §9.1：评论默认归属于用户当前所在的 View，主文档 Agent 可把工作转发给子文档。
+        那么在主文档里对一张嵌入图片提的 ping，thread 显示在主文档面板还是跳到子文档？转发后原 thread 的 pong 怎么写？本轮未画。
+      </p>
+    </div>
+
+    <div style="border: 1px dashed #dcdfd6; border-radius: 6px; padding: 14px 15px;">
+      <div style="display: flex; align-items: center; gap: 9px; margin-bottom: 8px;">
+        <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #f2f3ef; color: #74796b;">未画</span>
+        <strong style="font-size: 12px; font-weight: 600;">窄屏与移动端</strong>
+      </div>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 0;">
+        分屏对照在 1440 宽下成立。现有 mock 对移动端直接给「请在电脑或平板上查看」。窄屏下分屏怎么降级 —— 上下堆叠、还是回退成单栏加版本切换 —— 本轮未定。
+      </p>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":820,"height":1760}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>
