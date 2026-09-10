@@ -172,12 +172,14 @@
       <!-- ============ 讨论面板 316px ============ -->
       <aside style="width: 316px; flex-shrink: 0; border-left: 1px solid #e6e7e2; background: #fff; display: flex; flex-direction: column;">
         <div style="padding: 18px; border-bottom: 1px solid #e6e7e2; flex-shrink: 0;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
             <h2 style="font-size: 13px; font-weight: 550; margin: 0;">讨论 · {{threadCount}} 处</h2>
-            <button class="u-btn u-ghost" style="width: 34px; min-height: 34px; padding: 7px;"><svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></button>
+            <sc-if value="{{hasDrafts}}" hint-placeholder-val="{{ true }}">
+              <span style="font-size: 10px; color: #8d742e; background: #f6f1df; padding: 2px 7px; border-radius: 3px;">{{draftCount}} 条未发送</span>
+            </sc-if>
           </div>
           <div style="display: flex; gap: 2px; padding: 3px; border: 1px solid #e6e7e2; border-radius: 6px; margin-top: 12px;">
-            <sc-for list="{{filters}}" as="f" hint-placeholder-count="3">
+            <sc-for list="{{filters}}" as="f" hint-placeholder-count="4">
               <button onClick="{{f.pick}}" style="{{f.style}}">{{f.label}}</button>
             </sc-for>
           </div>
@@ -186,7 +188,6 @@
         <div class="u-scroll" style="flex: 1; padding: 14px 16px 20px;">
           <sc-for list="{{threads}}" as="t" hint-placeholder-count="3">
             <section style="{{t.cardStyle}}">
-              <!-- thread 头 -->
               <div onClick="{{t.pick}}" style="cursor: pointer;">
                 <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                   <span style="{{t.badgeStyle}}">{{t.badge}}</span>
@@ -198,7 +199,7 @@
                 <div style="border-left: 2px solid #b6c4ab; background: #f5f7f1; padding: 8px 10px; margin: 9px 0 4px; font-size: 11px; color: #777f6e; line-height: 1.7;">{{t.anchor}}</div>
               </div>
 
-              <!-- ping 序列 -->
+              <!-- 已发送的评论：不可改。想改就是新提一条 -->
               <sc-for list="{{t.pings}}" as="p" hint-placeholder-count="3">
                 <div onClick="{{p.pick}}" style="{{p.style}}">
                   <div style="display: flex; align-items: center; gap: 8px;">
@@ -208,14 +209,16 @@
                     <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">{{p.idx}}</span>
                   </div>
                   <p style="font-size: 12px; line-height: 1.8; margin: 7px 0 0 38px; color: #3a3c37;">{{p.text}}</p>
-                  <div style="margin: 6px 0 0 38px; font-size: 10px; color: #9a9d93; display: flex; align-items: center; gap: 5px;">
-                    <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width: 11px; height: 11px;"><path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path></svg>
-                    {{p.loc}}
+                  <div style="display: flex; align-items: center; gap: 8px; margin: 7px 0 0 38px;">
+                    <span style="{{p.stateStyle}}">{{p.stateLabel}}</span>
+                    <span style="font-size: 10px; color: #9a9d93;">{{p.loc}}</span>
+                    <sc-if value="{{p.canEdit}}" hint-placeholder-val="{{ false }}">
+                      <button class="u-btn u-ghost" onClick="{{p.edit}}" style="margin-left: auto; min-height: 22px; padding: 1px 7px; font-size: 10px; color: #6f7268;">修改</button>
+                    </sc-if>
                   </div>
                 </div>
               </sc-for>
 
-              <!-- 水位线 + pong -->
               <sc-if value="{{t.hasPong}}" hint-placeholder-val="{{ true }}">
                 <div>
                   <div style="display: flex; align-items: center; gap: 8px; margin: 14px 0 10px;">
@@ -249,7 +252,35 @@
                 </div>
               </sc-if>
 
-              <!-- 回复：点了才出输入框 -->
+              <!-- 这一处的草稿：收着的样子 -->
+              <sc-if value="{{t.draftIdle}}" hint-placeholder-val="{{ false }}">
+                <div onClick="{{t.openDraft}}" style="margin-top: 10px; border: 1px dashed #ddd8c4; border-radius: 6px; padding: 9px 11px; background: #fdfcf7; cursor: pointer;">
+                  <div style="display: flex; align-items: center; gap: 7px;">
+                    <span style="font-size: 10px; color: #8d742e; background: #f6f1df; padding: 2px 6px; border-radius: 3px;">草稿 · 未发送</span>
+                    <sc-if value="{{t.draftFromLabel}}" hint-placeholder-val="{{ false }}">
+                      <span style="font-size: 10px; color: #a2a59b;">{{t.draftFromLabel}}</span>
+                    </sc-if>
+                    <span style="margin-left: auto; font-size: 10px; color: #40745b;">继续写</span>
+                  </div>
+                  <p style="font-size: 12px; line-height: 1.8; margin: 7px 0 0; color: #7d7563;">{{t.draftText}}</p>
+                </div>
+              </sc-if>
+
+              <!-- 这一处的草稿：展开写的样子 -->
+              <sc-if value="{{t.replying}}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top: 10px; border: 1px solid #c5d2bd; border-radius: 6px; padding: 9px 10px; background: #fff;">
+                  <sc-if value="{{t.draftFromLabel}}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size: 10px; color: #8d742e; background: #f6f1df; padding: 3px 7px; border-radius: 3px; margin-bottom: 8px; line-height: 1.7;">{{t.draftFromNote}}</div>
+                  </sc-if>
+                  <textarea id="reply-input" rows="3" placeholder="再说一句…" style="width: 100%; border: 0; outline: none; resize: vertical; font: inherit; font-size: 12px; line-height: 1.8; color: #242522; background: transparent; padding: 0;"></textarea>
+                  <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+                    <button class="u-btn u-ghost" onClick="{{t.discardDraft}}" style="min-height: 26px; padding: 3px 8px; font-size: 10px; color: #a33d39;">丢弃</button>
+                    <button class="u-btn u-ghost" onClick="{{t.cancelReply}}" style="margin-left: auto; min-height: 26px; padding: 3px 9px; font-size: 11px;">留作草稿</button>
+                    <button class="u-btn" onClick="{{t.sendReply}}" style="min-height: 26px; padding: 3px 12px; font-size: 11px; background: #242522; border-color: #242522; color: #fff;">发送</button>
+                  </div>
+                </div>
+              </sc-if>
+
               <sc-if value="{{t.canReply}}" hint-placeholder-val="{{ true }}">
                 <div style="margin-top: 10px;">
                   <button class="u-btn u-ghost" onClick="{{t.openReply}}" style="min-height: 28px; padding: 4px 9px; font-size: 11px; color: #5f6358;">
@@ -258,38 +289,36 @@
                   </button>
                 </div>
               </sc-if>
-              <sc-if value="{{t.replying}}" hint-placeholder-val="{{ false }}">
-                <div style="margin-top: 10px; border: 1px solid #c5d2bd; border-radius: 6px; padding: 9px 10px; background: #fff;">
-                  <textarea id="reply-input" rows="2" placeholder="再说一句…" style="width: 100%; border: 0; outline: none; resize: vertical; font: inherit; font-size: 12px; line-height: 1.8; color: #242522; background: transparent; padding: 0;"></textarea>
+            </section>
+          </sc-for>
+
+          <!-- 还没有对应讨论的草稿：新选区上写了一半 -->
+          <sc-for list="{{loose}}" as="d" hint-placeholder-count="1">
+            <section style="{{d.cardStyle}}">
+              <div style="display: flex; align-items: center; gap: 7px;">
+                <span style="font-size: 10px; color: #8d742e; background: #f6f1df; padding: 2px 6px; border-radius: 3px;">草稿 · 未发送</span>
+                <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">新的一处 · 基于 v4</span>
+              </div>
+              <div style="border-left: 2px solid #d8cba4; background: #faf6ea; padding: 8px 10px; margin: 9px 0; font-size: 11px; color: #7d7563; line-height: 1.7;">{{d.quote}}</div>
+              <sc-if value="{{d.editing}}" hint-placeholder-val="{{ true }}">
+                <div>
+                  <textarea id="new-input" rows="3" placeholder="说说这里该怎么改…" style="width: 100%; border: 0; outline: none; resize: vertical; font: inherit; font-size: 12px; line-height: 1.8; color: #242522; background: transparent; padding: 0;"></textarea>
                   <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
-                    <span style="font-size: 10px; color: #93968d;">发送后 Agent 自动接手</span>
-                    <button class="u-btn u-ghost" onClick="{{t.cancelReply}}" style="margin-left: auto; min-height: 26px; padding: 3px 9px; font-size: 11px;">取消</button>
-                    <button class="u-btn" onClick="{{t.sendReply}}" style="min-height: 26px; padding: 3px 12px; font-size: 11px; background: #242522; border-color: #242522; color: #fff;">发送</button>
+                    <button class="u-btn u-ghost" onClick="{{d.discard}}" style="min-height: 26px; padding: 3px 8px; font-size: 10px; color: #a33d39;">丢弃</button>
+                    <button class="u-btn u-ghost" onClick="{{d.stash}}" style="margin-left: auto; min-height: 26px; padding: 3px 9px; font-size: 11px;">留作草稿</button>
+                    <button class="u-btn" onClick="{{d.send}}" style="min-height: 26px; padding: 3px 12px; font-size: 11px; background: #242522; border-color: #242522; color: #fff;">发送</button>
                   </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{d.idle}}" hint-placeholder-val="{{ false }}">
+                <div onClick="{{d.open}}" style="cursor: pointer;">
+                  <p style="font-size: 12px; line-height: 1.8; margin: 0; color: #7d7563;">{{d.text}}</p>
+                  <div style="font-size: 10px; color: #40745b; margin-top: 7px;">继续写</div>
                 </div>
               </sc-if>
             </section>
           </sc-for>
 
-          <!-- 新评论：在正文里选中一段文字才出现 -->
-          <sc-if value="{{composing}}" hint-placeholder-val="{{ false }}">
-          <section style="border: 1px solid #c5d2bd; border-radius: 7px; padding: 12px; background: #fff; box-shadow: 0 2px 10px #26301c0f;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="font-size: 10px; color: #40745b; background: #ecf0ed; padding: 2px 7px; border-radius: 3px;">新评论</span>
-              <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">基于 v4</span>
-            </div>
-            <div style="border-left: 2px solid #b6c4ab; background: #f5f7f1; padding: 8px 10px; margin: 9px 0; font-size: 11px; color: #777f6e; line-height: 1.7;">{{quote}}</div>
-            <textarea id="new-input" rows="3" placeholder="说说这里该怎么改…" style="width: 100%; border: 0; outline: none; resize: vertical; font: inherit; font-size: 12px; line-height: 1.8; color: #242522; background: transparent; padding: 0;"></textarea>
-            <div style="display: flex; align-items: center; gap: 8px; margin-top: 9px;">
-              <span style="font-size: 10px; color: #93968d; line-height: 1.6;">发送后 Agent 自动接手</span>
-              <button class="u-btn u-ghost" onClick="{{cancelNew}}" style="margin-left: auto; min-height: 28px; padding: 4px 10px; font-size: 11px;">取消</button>
-              <button class="u-btn" onClick="{{sendNew}}" style="min-height: 28px; padding: 4px 12px; font-size: 12px; background: #242522; border-color: #242522; color: #fff;">
-                发送
-                <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;"><path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4Z"></path></svg>
-              </button>
-            </div>
-          </section>
-          </sc-if>
           <sc-if value="{{emptyHint}}" hint-placeholder-val="{{ false }}">
             <div style="padding: 30px 10px; text-align: center; color: #a2a59b; font-size: 11px; line-height: 1.9;">这里还没有评论。<br>在左边正文里选中一段文字，就能提一条。</div>
           </sc-if>
@@ -315,20 +344,22 @@ class Component extends DCLogic {
     super(props);
     this.state = {
       thread: 't1', ping: 'p3', split: true, filter: 'all',
-      replyTo: null,          /* 正在回复哪一处，null = 只显示「回复」按钮 */
-      composing: false,       /* 正在写新评论 */
-      quote: '',              /* 新评论圈住的那段话 */
-      sel: null,              /* 当前正文选区，用来浮出「添加评论」 */
-      replies: {},            /* 已追加的回复：threadId -> [文本] */
-      added: []               /* 新提的评论线索 */
+      /* 每个位置一份草稿，可以同时存多份；null = 没有展开的输入框 */
+      replyTo: null,
+      drafts: { t3: { text: 'PSD 那条也别忘了，验证脚本得能跑图片链路。', from: null } },
+      /* 还没有对应讨论的草稿：在新选区上写了一半 */
+      loose: [{ id: 'd1', quote: '人负责判断与表达，Agent 负责把想法变成作品。', text: '这句是不是可以直接当副标题？', editing: false }],
+      composingId: null,
+      sel: null,
+      replies: {},
+      added: []
     };
   }
 
-  /* 选中正文才浮出「添加评论」；写字期间不打扰 */
   componentDidMount() {
     const self = this;
     this._onSel = function () {
-      if (self.state.composing || self.state.replyTo) return;
+      if (self.state.replyTo || self.state.composingId) return;
       const s = document.getSelection();
       const txt = s ? String(s).trim() : '';
       const art = document.getElementById('doc-current');
@@ -348,12 +379,44 @@ class Component extends DCLogic {
     document.removeEventListener('selectionchange', this._onSel);
   }
 
+  /* 输入框是非受控的，打开时把草稿写回去 */
+  componentDidUpdate(prevProps, prevState) {
+    if (this.state.replyTo && this.state.replyTo !== prevState.replyTo) {
+      const el = document.getElementById('reply-input');
+      const d = this.state.drafts[this.state.replyTo];
+      if (el) { el.value = d ? d.text : ''; el.focus(); }
+    }
+    if (this.state.composingId && this.state.composingId !== prevState.composingId) {
+      const el = document.getElementById('new-input');
+      const d = this.state.loose.filter(function (x) { return x.id === this.state.composingId; }.bind(this))[0];
+      if (el) { el.value = d ? d.text : ''; el.focus(); }
+    }
+  }
+
   readInput(id) {
     const el = document.getElementById(id);
     return el ? String(el.value || '').trim() : '';
   }
 
-  /* 基础数据 + 已追加的回复 + 新提的评论 */
+  /* 换地方之前，先把正在写的存成草稿 —— 不发送就不会变成评论 */
+  stash(next) {
+    const st = this.state;
+    const drafts = Object.assign({}, st.drafts);
+    let loose = st.loose;
+    if (st.replyTo) {
+      const text = this.readInput('reply-input');
+      if (text) drafts[st.replyTo] = { text: text, from: (drafts[st.replyTo] || {}).from || null };
+      else delete drafts[st.replyTo];
+    }
+    if (st.composingId) {
+      const text = this.readInput('new-input');
+      loose = st.loose.map(function (d) {
+        return d.id === st.composingId ? { id: d.id, quote: d.quote, text: text, editing: false } : d;
+      }).filter(function (d) { return d.text; });
+    }
+    this.setState(Object.assign({ drafts: drafts, loose: loose, replyTo: null, composingId: null }, next || {}));
+  }
+
   threads() {
     const self = this;
     const merged = this.data().map(function (t) {
@@ -363,7 +426,7 @@ class Component extends DCLogic {
       const pings = t.pings.concat(extra.map(function (x, i) {
         return {
           id: 'r' + i, idx: '评论 ' + (t.pings.length + i + 1), ver: 4,
-          text: x, quote: anchorQuote, loc: '基于 v4 · 刚刚发送'
+          text: x, quote: anchorQuote, loc: '基于 v4'
         };
       }));
       return { id: t.id, anchor: t.anchor, pings: pings, pong: t.pong, staleNote: t.staleNote };
@@ -371,7 +434,6 @@ class Component extends DCLogic {
     return merged.concat(this.state.added);
   }
 
-  /* ---------- 内容：三个版本的 snapshot ---------- */
   source(v) {
     if (v === 2) return [
       { k: 'h1', t: '为共同创作，留一个空间' },
@@ -407,7 +469,6 @@ class Component extends DCLogic {
     ];
   }
 
-  /* ---------- thread / ping / pong ---------- */
   data() {
     return [
       {
@@ -470,7 +531,6 @@ class Component extends DCLogic {
     ];
   }
 
-  /* ---------- 文本 range 高亮 ---------- */
   block(b, hitText, markStyle, pick) {
     const base = {
       h1: 'font-size: 27px; line-height: 1.5; font-weight: 650; margin: 0 0 22px;',
@@ -490,17 +550,19 @@ class Component extends DCLogic {
 
   renderVals() {
     const self = this;
+    const st = this.state;
     const threads = this.threads();
-    const thread = threads.filter(function (t) { return t.id === self.state.thread; })[0] || null;
-    const ping = thread ? (thread.pings.filter(function (p) { return p.id === self.state.ping; })[0] || thread.pings[thread.pings.length - 1]) : null;
-    const split = !!(thread && this.state.split);
+    const thread = threads.filter(function (t) { return t.id === st.thread; })[0] || null;
+    const ping = thread ? (thread.pings.filter(function (p) { return p.id === st.ping; })[0] || thread.pings[thread.pings.length - 1]) : null;
+    const split = !!(thread && st.split);
 
     const PING_MARK = 'background: #dde9d5; box-shadow: 0 0 0 2px #dde9d5; border-radius: 2px; color: #2e3c2b;';
     const PONG_MARK = 'background: #f5ead1; box-shadow: 0 0 0 2px #f5ead1; border-radius: 2px; color: #4a3f22;';
+    const STALE_MARK = 'background: #eff0ea; box-shadow: 0 0 0 2px #eff0ea; border-bottom: 1px dashed #a3a798; border-radius: 2px; color: #5a5d54;';
     const ANCHOR_MARK = 'border-bottom: 2px solid #cdd6c5; cursor: pointer;';
-
-    /* 左栏：选中 ping 的基版（可能正好就是 current） */
     const CURRENT = 4;
+
+    /* 左栏：选中评论所基于的版本 */
     const left = { label: '', hint: '', blocks: [] };
     if (split && ping) {
       const onCurrent = ping.ver === CURRENT;
@@ -511,15 +573,11 @@ class Component extends DCLogic {
       });
     }
 
-    /* 右栏 / 单栏：current v4
-       三种情况：① 有 pong → 高亮 result location；② ping 就提在 current 上 → 无需重复高亮；
-       ③ ping 的基版落后 current → 尽力在 current 里定位同一段选区，定位不到就降级成提示。 */
-    const STALE_MARK = 'background: #eff0ea; box-shadow: 0 0 0 2px #eff0ea; border-bottom: 1px dashed #a3a798; border-radius: 2px; color: #5a5d54;';
+    /* 右栏 */
     let rightHit = null, rightMark = PONG_MARK, rightHint = '', notice = null;
     if (split && thread && ping) {
       if (thread.pong) {
-        rightHit = thread.pong.hit; rightMark = PONG_MARK;
-        rightHint = '高亮 = Agent 这次改动的位置';
+        rightHit = thread.pong.hit; rightHint = '高亮 = Agent 这次改动的位置';
       } else if (ping.ver === CURRENT) {
         rightHint = '暂无改动 · 与左栏同一版本';
       } else {
@@ -535,14 +593,13 @@ class Component extends DCLogic {
         }
       }
     }
-    const rightBlocks = this.source(4).map(function (b) {
+    const rightBlocks = this.source(CURRENT).map(function (b) {
       if (rightHit && b.t.indexOf(rightHit) >= 0) return self.block(b, rightHit, rightMark, null);
       if (!split && b.a) {
         const owner = threads.filter(function (t) { return t.id === b.a; })[0];
-        /* 锚点要落在 current 的文字上：有 pong 时用它的 result location，否则用最后一条 ping 的选区 */
         const q = owner ? (owner.pong ? owner.pong.hit : owner.pings[owner.pings.length - 1].quote) : null;
         if (q && b.t.indexOf(q) >= 0) {
-          return self.block(b, q, ANCHOR_MARK, function () { self.setState({ thread: b.a, ping: owner.pings[owner.pings.length - 1].id, split: true }); });
+          return self.block(b, q, ANCHOR_MARK, function () { self.stash({ thread: b.a, ping: owner.pings[owner.pings.length - 1].id, split: true }); });
         }
       }
       return self.block(b, null, '', null);
@@ -563,43 +620,40 @@ class Component extends DCLogic {
       blocks: rightBlocks
     };
 
-    /* 面板 */
+    /* ---------- 面板 ---------- */
+    const isOpenThread = function (t) { return !t.pong || t.pong.through < t.pings.length; };
+    const hasDraft = function (t) { return !!st.drafts[t.id] || st.replyTo === t.id; };
+    const visible = threads.filter(function (t) {
+      if (st.filter === 'open') return isOpenThread(t);
+      if (st.filter === 'done') return !isOpenThread(t);
+      if (st.filter === 'draft') return hasDraft(t);
+      return true;
+    });
+
+    const draftCount = Object.keys(st.drafts).length + st.loose.length;
+
     const filters = [
       { id: 'all', label: '全部' },
+      { id: 'draft', label: '未发送' },
       { id: 'open', label: '待回复' },
       { id: 'done', label: '已回复' }
     ].map(function (f) {
       return {
         label: f.label,
-        style: 'border: 0; height: 28px; flex: 1; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; color: #242522; '
-          + (self.state.filter === f.id ? 'background: #fff; box-shadow: 0 1px 3px #00000012;' : 'background: transparent;'),
-        /* 换筛选时把选中项落回仍然可见的 thread，避免分屏显示一个已被筛掉的 thread */
-        pick: function () {
-          const kept = threads.filter(function (t) {
-            if (f.id === 'open') return isOpenThread(t);
-            if (f.id === 'done') return !isOpenThread(t);
-            return true;
-          });
-          const still = kept.filter(function (t) { return t.id === self.state.thread; }).length > 0;
-          if (still) { self.setState({ filter: f.id }); return; }
-          if (kept.length === 0) { self.setState({ filter: f.id, thread: null, split: false }); return; }
-          self.setState({ filter: f.id, thread: kept[0].id, ping: kept[0].pings[kept[0].pings.length - 1].id });
-        }
+        style: 'border: 0; height: 26px; flex: 1; border-radius: 6px; font: inherit; font-size: 11px; cursor: pointer; color: #242522; padding: 0 4px; '
+          + (st.filter === f.id ? 'background: #fff; box-shadow: 0 1px 3px #00000012;' : 'background: transparent;'),
+        pick: function () { self.stash({ filter: f.id }); }
       };
     });
 
-    const isOpenThread = function (t) { return !t.pong || t.pong.through < t.pings.length; };
-    const visible = threads.filter(function (t) {
-      if (self.state.filter === 'open') return isOpenThread(t);
-      if (self.state.filter === 'done') return !isOpenThread(t);
-      return true;
-    });
-
     const cards = visible.map(function (t) {
-      const on = self.state.thread === t.id;
-      const isOpen = !t.pong || t.pong.through < t.pings.length;
+      const on = st.thread === t.id;
+      const isOpen = isOpenThread(t);
       const lastVer = t.pings[t.pings.length - 1].ver;
       const behind = isOpen && lastVer < CURRENT;
+      const draft = st.drafts[t.id] || null;
+      const editing = st.replyTo === t.id;
+      const through = t.pong ? t.pong.through : 0;
       return {
         anchor: t.anchor,
         selected: on,
@@ -613,34 +667,91 @@ class Component extends DCLogic {
         meta: t.pings.length + ' 条评论 · ' + (t.pong ? 'Agent 回复 1 次' : '暂无回复'),
         isOpen: isOpen,
         hasPong: !!t.pong,
-        waterline: t.pong ? (t.pong.through > 1 ? 'Agent 一次回复了上面 ' + t.pong.through + ' 条评论' : 'Agent 回复了这条评论') : '',
+        waterline: t.pong ? (through > 1 ? 'Agent 一次回复了上面 ' + through + ' 条评论' : 'Agent 回复了这条评论') : '',
         pongTime: t.pong ? t.pong.time : '',
         pongText: t.pong ? t.pong.text : '',
         pongResult: t.pong ? t.pong.result : '',
-        canReply: on && self.state.replyTo !== t.id,
-        replying: self.state.replyTo === t.id,
-        openReply: function () { self.setState({ thread: t.id, replyTo: t.id, sel: null }); },
-        cancelReply: function () { self.setState({ replyTo: null }); },
+
+        /* 草稿三态：没有 / 收着 / 展开写 */
+        draftIdle: !!draft && !editing,
+        draftText: draft ? draft.text : '',
+        draftFromLabel: draft && draft.from ? '改自' + draft.from : '',
+        draftFromNote: draft && draft.from
+          ? '你在改' + draft.from + '。已发送的评论不能覆盖 —— 原文留在上面，这份发出去是同一处的新一条。' : '',
+        replying: editing,
+        canReply: on && !editing && !draft,
+        openReply: function () { self.stash({ thread: t.id, replyTo: t.id, sel: null }); },
+        openDraft: function () { self.stash({ thread: t.id, replyTo: t.id, sel: null }); },
+        cancelReply: function () { self.stash({}); },
+        discardDraft: function () {
+          const d = Object.assign({}, st.drafts);
+          delete d[t.id];
+          self.setState({ drafts: d, replyTo: null });
+        },
         sendReply: function () {
           const text = self.readInput('reply-input');
           if (!text) return;
           const next = {};
-          Object.keys(self.state.replies).forEach(function (k) { next[k] = self.state.replies[k]; });
+          Object.keys(st.replies).forEach(function (k) { next[k] = st.replies[k]; });
           next[t.id] = (next[t.id] || []).concat([text]);
-          self.setState({ replies: next, replyTo: null, thread: t.id, split: true });
+          const d = Object.assign({}, st.drafts);
+          delete d[t.id];
+          self.setState({ replies: next, drafts: d, replyTo: null, thread: t.id, split: true });
         },
-        pick: function () { self.setState({ thread: t.id, ping: t.pings[t.pings.length - 1].id, split: true }); },
-        pings: t.pings.map(function (p) {
+        pick: function () { self.stash({ thread: t.id, ping: t.pings[t.pings.length - 1].id, split: true }); },
+
+        pings: t.pings.map(function (p, i) {
           const sel = on && ping && ping.id === p.id;
+          const done = t.pong && (i + 1) <= through;
           return {
             idx: p.idx, text: p.text, loc: p.loc, ver: 'v' + p.ver,
+            stateLabel: done ? '已处理' : '正在执行',
+            stateStyle: 'font-size: 10px; padding: 1px 6px; border-radius: 3px; '
+              + (done ? 'background: #f2f3ef; color: #93968d;' : 'background: #f6f1df; color: #8d742e;'),
+            canEdit: on,
+            edit: function () {
+              const d = Object.assign({}, st.drafts);
+              d[t.id] = { text: p.text, from: p.idx };
+              self.setState({ drafts: d, thread: t.id, ping: p.id, replyTo: t.id, composingId: null, split: true });
+            },
             style: 'padding: 9px 9px 9px 8px; margin: 0 -3px; border-radius: 5px; cursor: pointer; '
               + (sel ? 'background: #eaf1e4; box-shadow: inset 2px 0 0 #7d9b7a;' : 'background: transparent;'),
             verStyle: 'font-size: 10px; padding: 1px 6px; border-radius: 3px; '
               + (sel ? 'background: #7d9b7a; color: #fff;' : 'background: #f2f3ef; color: #74796b;'),
-            pick: function () { self.setState({ thread: t.id, ping: p.id, split: true }); }
+            pick: function () { self.stash({ thread: t.id, ping: p.id, split: true }); }
           };
         })
+      };
+    });
+
+    /* 还没有对应讨论的草稿 */
+    const looseCards = (st.filter === 'all' || st.filter === 'draft' ? st.loose : []).map(function (d) {
+      const editing = st.composingId === d.id;
+      return {
+        quote: d.quote, text: d.text,
+        editing: editing, idle: !editing,
+        cardStyle: 'border: 1px ' + (editing ? 'solid #c5d2bd' : 'dashed #ddd8c4') + '; border-radius: 7px; padding: 12px; margin-bottom: 14px; background: '
+          + (editing ? '#fff' : '#fdfcf7') + (editing ? '; box-shadow: 0 2px 10px #26301c0f;' : ';'),
+        open: function () { self.stash({ composingId: d.id }); },
+        stash: function () { self.stash({}); },
+        discard: function () {
+          self.setState({ loose: st.loose.filter(function (x) { return x.id !== d.id; }), composingId: null });
+        },
+        send: function () {
+          const text = self.readInput('new-input');
+          if (!text) return;
+          const id = 'n' + (st.added.length + 1);
+          self.setState({
+            added: st.added.concat([{
+              id: id,
+              anchor: '你刚圈的一处 —— ' + (d.quote.length > 22 ? d.quote.slice(0, 22) + '…' : d.quote),
+              pings: [{ id: 'p1', idx: '评论 1', ver: 4, text: text, quote: d.quote, loc: '基于 v4' }],
+              pong: null
+            }]),
+            loose: st.loose.filter(function (x) { return x.id !== d.id; }),
+            composingId: null, thread: id, ping: 'p1', split: true, filter: 'all'
+          });
+        }
       };
     });
 
@@ -651,44 +762,32 @@ class Component extends DCLogic {
       right: right,
       threads: cards,
       threadCount: cards.length,
-      emptyHint: cards.length === 0 && !this.state.composing,
+      loose: looseCards,
+      hasDrafts: draftCount > 0,
+      draftCount: draftCount,
+      emptyHint: cards.length === 0 && looseCards.length === 0,
       filters: filters,
 
-      /* 选中正文才出现的浮标 */
-      hasSel: this.state.sel !== null,
-      selBtnStyle: this.state.sel === null ? 'display: none;'
-        : 'position: fixed; left: ' + this.state.sel.x + 'px; top: ' + (this.state.sel.y - 44)
+      hasSel: st.sel !== null,
+      selBtnStyle: st.sel === null ? 'display: none;'
+        : 'position: fixed; left: ' + st.sel.x + 'px; top: ' + (st.sel.y - 44)
           + 'px; transform: translateX(-50%); z-index: 60; min-height: 30px; padding: 4px 11px; font-size: 12px;'
           + ' background: #242522; border-color: #242522; color: #fff; box-shadow: 0 4px 14px #26301c33;',
       keepSel: function (e) { if (e && e.preventDefault) e.preventDefault(); },
       addComment: function () {
-        const picked = self.state.sel || self._lastSel;
+        const picked = st.sel || self._lastSel;
         if (!picked) return;
         try { document.getSelection().removeAllRanges(); } catch (e) { /* 忽略 */ }
-        self.setState({ composing: true, quote: picked.text, sel: null, replyTo: null });
-      },
-
-      /* 新评论 composer */
-      composing: this.state.composing,
-      quote: this.state.quote,
-      cancelNew: function () { self.setState({ composing: false, quote: '' }); },
-      sendNew: function () {
-        const text = self.readInput('new-input');
-        if (!text) return;
-        const q = self.state.quote;
-        const id = 'n' + (self.state.added.length + 1);
-        const added = self.state.added.concat([{
-          id: id,
-          anchor: '你刚圈的一处 —— ' + (q.length > 22 ? q.slice(0, 22) + '…' : q),
-          pings: [{ id: 'p1', idx: '评论 1', ver: 4, text: text, quote: q, loc: '基于 v4 · 刚刚发送' }],
-          pong: null
-        }]);
-        self.setState({ added: added, composing: false, quote: '', thread: id, ping: 'p1', split: true, filter: 'all' });
+        const id = 'd' + (st.loose.length + 1) + '-' + st.added.length;
+        self.stash({
+          loose: st.loose.concat([{ id: id, quote: picked.text, text: '', editing: true }]),
+          composingId: id, sel: null, filter: 'all'
+        });
       },
 
       splitBtnStyle: split ? 'background: #f2f3ef; border-color: #cdd0c8;' : '',
       historyBtnStyle: '',
-      toggleSplit: function () { self.setState({ split: !self.state.split }); },
+      toggleSplit: function () { self.setState({ split: !st.split }); },
       openHistory: function () { self.setState({ split: false }); }
     };
   }

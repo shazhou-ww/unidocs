@@ -103,6 +103,22 @@
         · 「待回复 / 已回复」= 由水位派生的 open 状态，不是一个可切换的标志
       </div>
     </div>
+
+    <div style="border: 1px solid #e6e7e2; border-left: 3px solid #7d9b7a; border-radius: 6px; padding: 13px 15px;">
+      <strong style="font-size: 12px; font-weight: 600;">07 · 草稿留在本地；已发送的评论不可改，改＝新提一条</strong>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 7px 0 0;">
+        没发送的评论是草稿，只在本地、Agent 看不到，<strong>每个位置一份、可以同时存多份</strong>：写到一半切去看别处不会丢。
+        面板顶部显示「N 条未发送」，筛选里有「未发送」一档；收起来的草稿在该处卡片底部留一块黄色虚线块。
+      </p>
+      <p style="font-size: 12px; line-height: 1.85; color: #56594f; margin: 8px 0 0;">
+        <strong>已发送的评论不可编辑也不可删除</strong> —— 协议里 ping 追加即存在（§5.1），而且它可能已经在被 Agent 处理。
+        所以「修改」是这样一条路径：原文留在原地并标出此刻状态（水位未覆盖 = <strong>正在执行</strong>，已覆盖 = 已处理），
+        你改的那份压回草稿并注明「改自评论 N」，发送时作为同一处的<strong>新一条</strong>追加 —— 于是它落在水位之后，该处自动从「已回复」变回「待回复」。
+      </p>
+      <div style="margin-top: 10px; font-size: 11px; color: #6d7565; line-height: 1.9; padding-left: 13px; border-left: 2px solid #dfe3d8;">
+        没有做、也不打算在这一层做的：撤回已发送的评论。协议层没有定义「撤回」是什么，要做得先回到协议。
+      </div>
+    </div>
   </div>
 
   <!-- 未决 -->
@@ -156,7 +172,7 @@
   </div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":820,"height":1760}}'>
+<script data-dc-script data-props='{"$preview":{"width":820,"height":2060}}'>
 class Component extends DCLogic {}
 </script>
 </body>

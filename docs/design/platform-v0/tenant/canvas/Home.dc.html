@@ -144,6 +144,9 @@
               <p style="font-size: 11px; line-height: 1.75; color: #797b75; margin: 0 0 12px;">{{d.excerpt}}</p>
               <div style="margin-top: auto; border-top: 1px solid #f0f1ed; padding-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <span style="{{d.threadStyle}}">{{d.threadLabel}}</span>
+                <sc-if value="{{d.hasDrafts}}" hint-placeholder-val="{{ false }}">
+                  <span style="font-size: 10px; padding: 2px 7px; border-radius: 3px; background: #fdfcf7; color: #8d742e; border: 1px dashed #ddd8c4;">{{d.draftLabel}}</span>
+                </sc-if>
                 <span style="font-size: 10px; color: #797b75; margin-left: auto;">{{d.meta}}</span>
               </div>
             </div>
@@ -167,10 +170,10 @@ class Component extends DCLogic {
     const grid = this.state.view === 'grid';
 
     const all = [
-      { title: 'UniDocs · 产品构想', type: 'MD', excerpt: '为人和 Agent 一起创作而设计。每一件作品都可以被持续阅读、讨论和迭代。', open: 3, pong: 2, ver: 'v4', meta: '今天 09:12 · Agent 提交', mine: true },
-      { title: '秋季新品 · 主视觉', type: 'PSD', excerpt: '主标题下移避开人物面部，字重调到 Bold。背景渐变仍在讨论。', open: 1, pong: 1, ver: 'v3', meta: '今天 11:04 · Agent 提交', mine: true },
+      { title: 'UniDocs · 产品构想', type: 'MD', excerpt: '为人和 Agent 一起创作而设计。每一件作品都可以被持续阅读、讨论和迭代。', open: 3, pong: 2, drafts: 2, ver: 'v4', meta: '今天 09:12 · Agent 提交', mine: true },
+      { title: '秋季新品 · 主视觉', type: 'PSD', excerpt: '主标题下移避开人物面部，字重调到 Bold。背景渐变仍在讨论。', open: 1, pong: 1, drafts: 0, ver: 'v3', meta: '今天 11:04 · Agent 提交', mine: true },
       { title: '版本引用约定', type: 'MD', excerpt: '引用固定在明确版本，源作品更新由使用者决定是否跟进。', open: 0, pong: 3, ver: 'v3', meta: '18 分钟前 · Agent 提交', mine: false },
-      { title: '一轮好的创作反馈', type: 'MD', excerpt: '先理解作品，再表达判断。把意见落到具体位置上。', open: 2, pong: 0, ver: 'v1', meta: '1 小时前 · Agent 提交', mine: true },
+      { title: '一轮好的创作反馈', type: 'MD', excerpt: '先理解作品，再表达判断。把意见落到具体位置上。', open: 2, pong: 0, drafts: 1, ver: 'v1', meta: '1 小时前 · Agent 提交', mine: true },
       { title: '创作链路 · 技术笔记', type: 'MD', excerpt: '让不同的创作工具落在同一套版本与批注协议上。', open: 0, pong: 1, ver: 'v2', meta: '昨天 · Agent 提交', mine: false },
       { title: '空间与留白', type: 'MD', excerpt: '让内容成为视线的落点。排版先决定呼吸，再决定密度。', open: 0, pong: 0, ver: 'v1', meta: '昨天 · Agent 提交', mine: true }
     ];
@@ -194,6 +197,8 @@ class Component extends DCLogic {
       }
       return {
         title: d.title, type: d.type, excerpt: d.excerpt, meta: d.ver + ' · ' + d.meta,
+        hasDrafts: !!d.drafts,
+        draftLabel: d.drafts ? d.drafts + ' 条未发送' : '',
         isPsd: psd, isDoc: !psd,
         typeStyle: 'font-size: 10px; font-weight: 700; min-width: 32px; justify-content: center; display: inline-flex; padding: 2px 6px; border-radius: 3px; '
           + (psd ? 'background: #e8eff7; border: 1px solid #c2d4e8; color: #365f89;' : 'background: #edf2e8; border: 1px solid #cbdac0; color: #45613b;'),
