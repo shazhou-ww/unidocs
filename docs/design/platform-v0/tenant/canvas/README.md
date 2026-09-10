@@ -17,8 +17,9 @@
 ## 重新构建
 
 画板源文件是 Design Component 格式（`.dc.html`）。构建产物
-`unidocs-tenant-thread-ui.html`（约 2.5 MB，内含画布编辑器）**不入库**，需要时用
-Claude Code 的 `design` skill 重新 seed：
+`unidocs-tenant-thread-ui.html`（约 2.5 MB，内含画布编辑器）**一并入库**，这样在任何
+一台机器上直接用浏览器打开它就能看（不用登录、不用联网、不依赖已发布的画布链接）。
+改了画板源文件之后要重新 seed 并把产物一起提交：
 
 ```
 node <design-skill>/seed-canvas.mjs \
@@ -32,6 +33,8 @@ node <design-skill>/seed-canvas.mjs \
 
 ## 使用
 
+- 直接用浏览器打开 `unidocs-tenant-thread-ui.html` 即可；已发布的画布链接是私有的，
+  换台没登录的机器打不开，本地文件没有这个限制（本地打开时不能保存，只能看和导出）。
 - 画布总览里点击只会选中画板；要交互，点画板标题栏上的 ▶︎ 进原型模式。
 - Export PDF 只收当前可见的画板 —— 导出前先确保没有画板处于展开状态，否则被遮住的
   会被排除。
