@@ -33,6 +33,9 @@ export function renderAdminApiReferenceHtml(document: OpenAPI.Document): string 
       content: ${content},
       layout: 'modern',
       theme: 'default',
+      authentication: {
+        preferredSecurityScheme: 'adminBearer'
+      },
       pageTitle: 'UniDocs Administrator API'
     })
   </script>

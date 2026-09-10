@@ -55,6 +55,9 @@ export type {
 
 export {
   BlobUnavailableError,
+  DocumentContentFormatVersion,
+  DocumentLocationContentType,
+  DocumentSnapshotContentType,
   sBlobSignature,
   SBlobTag,
   SValueContentType,

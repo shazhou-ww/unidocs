@@ -11,13 +11,13 @@
  */
 import type { SValue } from "@unidocs/protocol";
 import type {
+  DocumentContractIdx,
   DocumentLocation,
   DocumentId,
   EndpointContract,
   IsoDateTime,
   MessageContent,
   PingIdx,
-  SnapshotContractIdx,
   SubmissionId,
   ThreadId,
   TenantId,
@@ -45,15 +45,15 @@ export interface AgentThreadUpdate {
 export interface AgentSubmissionRequest {
   readonly submissionId: SubmissionId;
   readonly observedCurrentVersionIdx?: VersionIdx | null;
-  /** Required with newSnapshot and must equal the document type's latest revision. */
-  readonly newSnapshotContractIdx?: SnapshotContractIdx;
+  /** Required with newSnapshot and must name an available paired contract revision. */
+  readonly newDocumentContractIdx?: DocumentContractIdx;
   readonly newSnapshot?: SValue;
   readonly threadUpdates: readonly AgentThreadUpdate[];
 }
 
 export interface SubmissionConflict {
   readonly currentVersionIdx: VersionIdx | null;
-  readonly latestSnapshotContractIdx: SnapshotContractIdx;
+  readonly availableDocumentContractIdxs: readonly DocumentContractIdx[];
   readonly threads: readonly {
     readonly threadId: ThreadId;
     readonly acknowledgedPingIdx: PingIdx | null;
@@ -74,7 +74,7 @@ export type SubmissionReceipt =
     readonly state: "rejected";
     readonly reason:
       | "version_conflict"
-      | "snapshot_contract_conflict"
+      | "document_contract_conflict"
       | "pong_watermark_conflict";
     readonly conflict: SubmissionConflict;
     readonly rejectedAt: IsoDateTime;

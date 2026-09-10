@@ -37,11 +37,13 @@ export type SValueSchema = Readonly<Record<string, JsonValue>> & {
   /** This schema node matches an atomic SBlob rather than a JSON value. */
   readonly "x-unidocs-sblob"?: true;
   readonly "x-unidocs-blob-content-types"?: readonly string[];
-  readonly "x-unidocs-blob-max-size"?: number;
 };
 
 export const sBlobSignature: unique symbol = Symbol("unidocs.sblob");
 export const SValueContentType = "application/vnd.unidocs.svalue+cbor;version=1";
+export const DocumentContentFormatVersion = 1;
+export const DocumentSnapshotContentType = "application/vnd.unidocs.document-snapshot+cbor;version=1";
+export const DocumentLocationContentType = "application/vnd.unidocs.document-location+json;version=1";
 
 export interface SBlob {
   readonly [sBlobSignature]: true;

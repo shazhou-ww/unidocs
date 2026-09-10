@@ -21,13 +21,13 @@
  */
 import type {
   Cursor,
+  DocumentContractIdx,
   DocumentId,
   DocumentLocation,
   DocumentType,
   EndpointContract,
   MessageContent,
   Page,
-  SnapshotContractIdx,
   TenantId,
   ThreadId,
   TypeCardBundleId,
@@ -36,9 +36,9 @@ import type {
   ViewBundleId,
 } from "./common.js";
 import type {
+  DocumentContractRecord,
   DocumentRecord,
   PingRecord,
-  SnapshotContractRecord,
   ThreadDetail,
   ThreadRef,
   VersionRecord,
@@ -73,7 +73,7 @@ export interface PublicDocumentType {
   readonly typeCardBundleId: TypeCardBundleId;
   readonly typeCard: PublicTypeCard;
   readonly viewBundleId: ViewBundleId;
-  readonly latestSnapshotContract: SnapshotContractRecord;
+  readonly availableDocumentContractIdxs: readonly DocumentContractIdx[];
 }
 
 export interface CreateDocumentRequest {
@@ -126,8 +126,8 @@ export interface DocumentTypePath extends TenantPath {
   readonly documentType: DocumentType;
 }
 
-export interface SnapshotContractPath extends DocumentTypePath {
-  readonly snapshotContractIdx: SnapshotContractIdx;
+export interface DocumentContractPath extends DocumentTypePath {
+  readonly documentContractIdx: DocumentContractIdx;
 }
 
 export interface VersionPath extends DocumentPath {
@@ -157,9 +157,9 @@ export interface PlatformEndpointContracts {
     { readonly path: TenantPath; readonly query?: PageQuery },
     ListPublicDocumentTypesResponse
   >;
-  readonly getSnapshotContract: EndpointContract<
-    { readonly path: SnapshotContractPath },
-    SnapshotContractRecord
+  readonly getDocumentContract: EndpointContract<
+    { readonly path: DocumentContractPath },
+    DocumentContractRecord
   >;
   readonly listDocuments: EndpointContract<
     { readonly path: TenantPath; readonly query?: ListDocumentsQuery },

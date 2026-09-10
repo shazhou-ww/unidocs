@@ -8,6 +8,7 @@ The package is the single source of truth for:
 - the oRPC contract used by browser clients and server implementations;
 - Admin v1 HTTP methods, paths, headers, status codes, and typed errors;
 - administrator member list, add, and conditional remove operations;
+- paginated administrator audit events with actor, action, resource, document type, and time filters;
 - generated OpenAPI 3.1 documentation.
 
 It contains no Platform handler, persistence, Node.js server, or Cloudflare Worker adapter.
@@ -28,12 +29,34 @@ A service package can implement the same contract with `implement` from
 OpenAPI handler. Cloudflare Workers use the Fetch handler without changing the
 contract or business implementation.
 
-All mutation operations require `X-CSRF-Token` and `Idempotency-Key`. PATCH
-operations additionally require `If-Match`. Authentication uses the existing
-same-origin `__Host-unidocs_admin` HttpOnly session cookie.
+Every operation supports two authentication modes. Requests carrying an
+`Authorization: Bearer` header use only that token. Requests without one use
+the same-origin `__Host-unidocs_admin` HttpOnly session cookie. A rejected
+Bearer token never falls back to the cookie, even when a valid cookie is also
+present.
 
-Bundle uploads use a raw `application/zip` body. Initial Admin `name` and
-`description` are UTF-8 query parameters so the binary body remains streamable.
+Cookie-authenticated mutations require `X-CSRF-Token`; Bearer-authenticated
+mutations do not. All mutations require `Idempotency-Key`, and PATCH operations
+additionally require `If-Match`.
+
+Stored-resource mutations return compact identity results: a resource ID and
+ETag, or a revision and content hash. Complete manifests, schemas, descriptors,
+and registrations are read through their GET operations. Synchronous Operator
+validation remains a full response because the validation result is the direct
+product of that operation.
+
+Collection operations return lightweight summary DTOs. Item GET operations are
+the canonical source for complete representations, including bundle manifests,
+Operator descriptors, and paired contract schemas. Each operation documents
+only its applicable errors; bundle validation and conditional-update errors are
+not attached to unrelated reads.
+
+Type Card and View bundle uploads use a raw `application/zip` body and put
+initial Admin `name` and `description` in UTF-8 query parameters. A Document
+Contract append uses `application/json` and atomically carries the snapshot
+schema, location schema, shared `formatVersion`, and audit reason in one body.
+Format version 1 derives fixed snapshot CBOR and location JSON media types; it
+is independent from the server-assigned `DocumentContractIdx` schema revision.
 
 ## Generate OpenAPI
 

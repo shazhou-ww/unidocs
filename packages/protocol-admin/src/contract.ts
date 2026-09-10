@@ -2,34 +2,44 @@ import { oc } from "@orpc/contract";
 import { z } from "zod";
 import {
   AddAdministratorMemberRequestSchema,
+  AppendDocumentContractRequestSchema,
   AdminErrorDataSchema,
+  AdministratorMemberAuditActions,
+  AdministratorMemberMutationResultSchema,
   AdministratorMemberRecordSchema,
-  AppendSnapshotContractRequestSchema,
   BundleUploadQuerySchema,
   ConditionalMutationHeadersSchema,
   CreateDocumentTypeRequestSchema,
+    DocumentContractIdxSchema,
+    DocumentContractAppendResultSchema,
+    DocumentContractRecordSchema,
+    DocumentTypeAuditActions,
+    DocumentTypeMutationResultSchema,
   CreateOperatorCandidateRequestSchema,
   CreateOperatorValidationRequestSchema,
   DocumentTypeRegistrationSchema,
   IdSchema,
+  ListAdminAuditEventsQuerySchema,
+  ListAdminAuditEventsResponseSchema,
   ListBundlesQuerySchema,
   ListAdministratorMembersResponseSchema,
   ListDocumentTypesQuerySchema,
   ListDocumentTypesResponseSchema,
   ListOperatorCandidatesResponseSchema,
-  ListSnapshotContractsResponseSchema,
+  ListDocumentContractsResponseSchema,
   ListTypeCardBundlesResponseSchema,
   ListViewBundlesResponseSchema,
   MutationHeadersSchema,
   OperatorCandidateRecordSchema,
+  OperatorCandidateMutationResultSchema,
   OperatorValidationSchema,
   PaginationQuerySchema,
-  SnapshotContractIdxSchema,
-  SnapshotContractRecordSchema,
   TypeCardBundleRecordSchema,
+  TypeCardBundleMutationResultSchema,
   UpdateCandidateMetadataRequestSchema,
   UpdateDocumentTypeRequestSchema,
   ViewBundleRecordSchema,
+  ViewBundleMutationResultSchema,
   ZipBundleStreamSchema,
 } from "./schemas.js";
 
@@ -56,22 +66,12 @@ export const AdminApiErrorMap = {
     message: "The requested administrator resource was not found",
     data: AdminErrorDataSchema,
   },
-  DOCUMENT_TYPE_DISABLED: {
-    status: 409,
-    message: "The operation requires a disabled document type",
-    data: AdminErrorDataSchema,
-  },
   OPERATOR_VALIDATION_REQUIRED: {
     status: 409,
     message: "A current Operator validation is required",
     data: AdminErrorDataSchema,
   },
-  SNAPSHOT_CONTRACT_CONFLICT: {
-    status: 409,
-    message: "The Snapshot Contract revision does not match the latest revision",
-    data: AdminErrorDataSchema,
-  },
-  REVISION_CONFLICT: {
+  IDEMPOTENCY_CONFLICT: {
     status: 409,
     message: "The idempotency key was used with a different request",
     data: AdminErrorDataSchema,
@@ -89,6 +89,11 @@ export const AdminApiErrorMap = {
   BUNDLE_INVALID: {
     status: 422,
     message: "The uploaded bundle is invalid",
+    data: AdminErrorDataSchema,
+  },
+  BUNDLE_ALREADY_EXISTS: {
+    status: 409,
+    message: "The content-addressed bundle already exists",
     data: AdminErrorDataSchema,
   },
   PRECONDITION_REQUIRED: {
@@ -118,28 +123,51 @@ export const AdminApiErrorMap = {
   },
 } as const;
 
-const adminProcedure = oc.errors(AdminApiErrorMap);
+const adminProcedure = oc.errors({
+  INVALID_REQUEST: AdminApiErrorMap.INVALID_REQUEST,
+  UNAUTHORIZED: AdminApiErrorMap.UNAUTHORIZED,
+  FORBIDDEN: AdminApiErrorMap.FORBIDDEN,
+  INTERNAL_ERROR: AdminApiErrorMap.INTERNAL_ERROR,
+});
+const resourceReadProcedure = adminProcedure.errors({
+  NOT_FOUND: AdminApiErrorMap.NOT_FOUND,
+});
+const idempotentMutationProcedure = adminProcedure.errors({
+  IDEMPOTENCY_CONFLICT: AdminApiErrorMap.IDEMPOTENCY_CONFLICT,
+});
+const resourceMutationProcedure = idempotentMutationProcedure.errors({
+  NOT_FOUND: AdminApiErrorMap.NOT_FOUND,
+});
+const conditionalMutationProcedure = resourceMutationProcedure.errors({
+  PRECONDITION_FAILED: AdminApiErrorMap.PRECONDITION_FAILED,
+  PRECONDITION_REQUIRED: AdminApiErrorMap.PRECONDITION_REQUIRED,
+});
+const bundleUploadProcedure = idempotentMutationProcedure.errors({
+  UNSUPPORTED_CONTENT_TYPE: AdminApiErrorMap.UNSUPPORTED_CONTENT_TYPE,
+  BUNDLE_INVALID: AdminApiErrorMap.BUNDLE_INVALID,
+  BUNDLE_ALREADY_EXISTS: AdminApiErrorMap.BUNDLE_ALREADY_EXISTS,
+});
 
 const typeCardBundleIdParams = z.object({ typeCardBundleId: IdSchema }).readonly();
 const viewBundleIdParams = z.object({ viewBundleId: IdSchema }).readonly();
 const operatorValidationIdParams = z.object({ validationId: IdSchema }).readonly();
 const operatorCandidateIdParams = z.object({ operatorCandidateId: IdSchema }).readonly();
 const documentTypeParams = z.object({ documentType: IdSchema }).readonly();
-const snapshotContractParams = z.object({
+const documentContractParams = z.object({
   documentType: IdSchema,
-  snapshotContractIdx: SnapshotContractIdxSchema,
+  documentContractIdx: DocumentContractIdxSchema,
 }).readonly();
 const administratorMemberParams = z.object({
   adminId: IdSchema.describe("Administrator membership to remove."),
 }).readonly();
 
-export const uploadTypeCardBundleContract = adminProcedure
+export const uploadTypeCardBundleContract = bundleUploadProcedure
   .route({
     method: "POST",
     path: `${AdminApiV1BasePath}/type-card-bundles`,
     operationId: "uploadTypeCardBundle",
     summary: "Upload and validate an immutable Type Card bundle",
-    description: "Streams an `application/zip` bundle, validates its manifest and assets, and stores it under a content-derived identity. The upload creates initial administrator metadata but does not bind the bundle to a document type. Repeating the same idempotent request returns the same result.",
+    description: "Streams an `application/zip` bundle, validates its manifest and assets, and stores it under a content-derived identity. The upload creates initial administrator metadata but does not bind the bundle to a document type. Replaying the same idempotency key returns the original `201` result. Uploading existing content under a different key returns `409` with the existing bundle identity in error details; metadata must be changed explicitly through PATCH.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["Type Card bundles"],
@@ -149,7 +177,7 @@ export const uploadTypeCardBundleContract = adminProcedure
     headers: MutationHeadersSchema,
     body: ZipBundleStreamSchema,
   }).readonly())
-  .output(TypeCardBundleRecordSchema);
+  .output(TypeCardBundleMutationResultSchema);
 
 export const listTypeCardBundlesContract = adminProcedure
   .route({
@@ -157,14 +185,14 @@ export const listTypeCardBundlesContract = adminProcedure
     path: `${AdminApiV1BasePath}/type-card-bundles`,
     operationId: "listTypeCardBundles",
     summary: "List Type Card bundle candidates for a document type",
-    description: "Returns validated Type Card bundles whose manifest declares the requested document type. Results are cursor-paginated and include mutable administrator metadata alongside immutable manifest data.",
+    description: "Returns cursor-paginated Type Card bundle summaries for the requested document type. Full manifests are available from the item GET operation.",
     inputStructure: "detailed",
     tags: ["Type Card bundles"],
   })
   .input(z.object({ query: ListBundlesQuerySchema }).readonly())
   .output(ListTypeCardBundlesResponseSchema);
 
-export const getTypeCardBundleContract = adminProcedure
+export const getTypeCardBundleContract = resourceReadProcedure
   .route({
     method: "GET",
     path: `${AdminApiV1BasePath}/type-card-bundles/{typeCardBundleId}`,
@@ -177,7 +205,7 @@ export const getTypeCardBundleContract = adminProcedure
   .input(z.object({ params: typeCardBundleIdParams }).readonly())
   .output(TypeCardBundleRecordSchema);
 
-export const updateTypeCardBundleMetadataContract = adminProcedure
+export const updateTypeCardBundleMetadataContract = conditionalMutationProcedure
   .route({
     method: "PATCH",
     path: `${AdminApiV1BasePath}/type-card-bundles/{typeCardBundleId}`,
@@ -192,15 +220,15 @@ export const updateTypeCardBundleMetadataContract = adminProcedure
     headers: ConditionalMutationHeadersSchema,
     body: UpdateCandidateMetadataRequestSchema,
   }).readonly())
-  .output(TypeCardBundleRecordSchema);
+  .output(TypeCardBundleMutationResultSchema);
 
-export const uploadViewBundleContract = adminProcedure
+export const uploadViewBundleContract = bundleUploadProcedure
   .route({
     method: "POST",
     path: `${AdminApiV1BasePath}/view-bundles`,
     operationId: "uploadViewBundle",
     summary: "Upload and validate an immutable View bundle",
-    description: "Streams an `application/zip` View bundle, validates its manifest and assets, and stores it under a content-derived identity. Uploading does not select the bundle for a document type.",
+    description: "Streams an `application/zip` View bundle, validates its manifest and assets, and stores it under a content-derived identity. Uploading does not select the bundle for a document type. Replaying the same idempotency key returns the original `201` result. Uploading existing content under a different key returns `409` with the existing bundle identity in error details; metadata must be changed explicitly through PATCH.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["View bundles"],
@@ -210,7 +238,7 @@ export const uploadViewBundleContract = adminProcedure
     headers: MutationHeadersSchema,
     body: ZipBundleStreamSchema,
   }).readonly())
-  .output(ViewBundleRecordSchema);
+  .output(ViewBundleMutationResultSchema);
 
 export const listViewBundlesContract = adminProcedure
   .route({
@@ -218,14 +246,14 @@ export const listViewBundlesContract = adminProcedure
     path: `${AdminApiV1BasePath}/view-bundles`,
     operationId: "listViewBundles",
     summary: "List View bundle candidates for a document type",
-    description: "Returns validated View bundles that support the requested document type, including their declared Snapshot Contract revisions and location types.",
+    description: "Returns cursor-paginated View bundle summaries and their supported paired Document Contract revisions. Full manifests are available from the item GET operation.",
     inputStructure: "detailed",
     tags: ["View bundles"],
   })
   .input(z.object({ query: ListBundlesQuerySchema }).readonly())
   .output(ListViewBundlesResponseSchema);
 
-export const getViewBundleContract = adminProcedure
+export const getViewBundleContract = resourceReadProcedure
   .route({
     method: "GET",
     path: `${AdminApiV1BasePath}/view-bundles/{viewBundleId}`,
@@ -238,7 +266,7 @@ export const getViewBundleContract = adminProcedure
   .input(z.object({ params: viewBundleIdParams }).readonly())
   .output(ViewBundleRecordSchema);
 
-export const updateViewBundleMetadataContract = adminProcedure
+export const updateViewBundleMetadataContract = conditionalMutationProcedure
   .route({
     method: "PATCH",
     path: `${AdminApiV1BasePath}/view-bundles/{viewBundleId}`,
@@ -253,9 +281,9 @@ export const updateViewBundleMetadataContract = adminProcedure
     headers: ConditionalMutationHeadersSchema,
     body: UpdateCandidateMetadataRequestSchema,
   }).readonly())
-  .output(ViewBundleRecordSchema);
+  .output(ViewBundleMutationResultSchema);
 
-export const createOperatorValidationContract = adminProcedure
+export const createOperatorValidationContract = idempotentMutationProcedure
   .route({
     method: "POST",
     path: `${AdminApiV1BasePath}/operator-validations`,
@@ -271,7 +299,7 @@ export const createOperatorValidationContract = adminProcedure
   }).readonly())
   .output(OperatorValidationSchema);
 
-export const getOperatorValidationContract = adminProcedure
+export const getOperatorValidationContract = resourceReadProcedure
   .route({
     method: "GET",
     path: `${AdminApiV1BasePath}/operator-validations/{validationId}`,
@@ -284,7 +312,9 @@ export const getOperatorValidationContract = adminProcedure
   .input(z.object({ params: operatorValidationIdParams }).readonly())
   .output(OperatorValidationSchema);
 
-export const createOperatorCandidateContract = adminProcedure
+export const createOperatorCandidateContract = idempotentMutationProcedure.errors({
+  OPERATOR_VALIDATION_REQUIRED: AdminApiErrorMap.OPERATOR_VALIDATION_REQUIRED,
+})
   .route({
     method: "POST",
     path: `${AdminApiV1BasePath}/operator-candidates`,
@@ -299,7 +329,7 @@ export const createOperatorCandidateContract = adminProcedure
     headers: MutationHeadersSchema,
     body: CreateOperatorCandidateRequestSchema,
   }).readonly())
-  .output(OperatorCandidateRecordSchema);
+  .output(OperatorCandidateMutationResultSchema);
 
 export const listOperatorCandidatesContract = adminProcedure
   .route({
@@ -307,14 +337,27 @@ export const listOperatorCandidatesContract = adminProcedure
     path: `${AdminApiV1BasePath}/operator-candidates`,
     operationId: "listOperatorCandidates",
     summary: "List Operator candidates for a document type",
-    description: "Returns persistent, validated Operator candidates available for explicit binding to the requested document type.",
+    description: "Returns cursor-paginated Operator candidate summaries available for explicit binding to the requested document type. Full discovery descriptors are available from the item GET operation.",
     inputStructure: "detailed",
     tags: ["Operators"],
   })
   .input(z.object({ query: ListBundlesQuerySchema }).readonly())
   .output(ListOperatorCandidatesResponseSchema);
 
-export const updateOperatorCandidateMetadataContract = adminProcedure
+export const getOperatorCandidateContract = resourceReadProcedure
+  .route({
+    method: "GET",
+    path: `${AdminApiV1BasePath}/operator-candidates/{operatorCandidateId}`,
+    operationId: "getOperatorCandidate",
+    summary: "Read an Operator candidate",
+    description: "Returns one persistent Operator candidate with its immutable discovery descriptor, administrator metadata, and current ETag.",
+    inputStructure: "detailed",
+    tags: ["Operators"],
+  })
+  .input(z.object({ params: operatorCandidateIdParams }).readonly())
+  .output(OperatorCandidateRecordSchema);
+
+export const updateOperatorCandidateMetadataContract = conditionalMutationProcedure
   .route({
     method: "PATCH",
     path: `${AdminApiV1BasePath}/operator-candidates/{operatorCandidateId}`,
@@ -329,7 +372,7 @@ export const updateOperatorCandidateMetadataContract = adminProcedure
     headers: ConditionalMutationHeadersSchema,
     body: UpdateCandidateMetadataRequestSchema,
   }).readonly())
-  .output(OperatorCandidateRecordSchema);
+  .output(OperatorCandidateMutationResultSchema);
 
 export const listDocumentTypesContract = adminProcedure
   .route({
@@ -337,33 +380,33 @@ export const listDocumentTypesContract = adminProcedure
     path: `${AdminApiV1BasePath}/document-types`,
     operationId: "listDocumentTypes",
     summary: "List registered document types",
-    description: "Lists document type drafts and enabled registrations with optional text and enabled-state filters. Each item includes the currently selected bundles, Operator candidate, and latest Snapshot Contract revision.",
+    description: "Lists lightweight document type summaries with optional text and enabled-state filters. Full selected resources and the latest Document Contract are available from the item GET operation.",
     inputStructure: "detailed",
     tags: ["Document types"],
   })
   .input(z.object({ query: ListDocumentTypesQuerySchema.optional() }).readonly())
   .output(ListDocumentTypesResponseSchema);
 
-export const getDocumentTypeContract = adminProcedure
+export const getDocumentTypeContract = resourceReadProcedure
   .route({
     method: "GET",
     path: `${AdminApiV1BasePath}/document-types/{documentType}`,
     operationId: "getDocumentType",
     summary: "Read a document type registration",
-    description: "Returns the complete administrator view of a document type, including draft completeness, selected immutable candidates, enabled state, latest Snapshot Contract, and ETag.",
+    description: "Returns the complete administrator view of a document type, including draft completeness, selected immutable candidates, enabled state, highest assigned Document Contract revision, and ETag.",
     inputStructure: "detailed",
     tags: ["Document types"],
   })
   .input(z.object({ params: documentTypeParams }).readonly())
   .output(DocumentTypeRegistrationSchema);
 
-export const createDocumentTypeContract = adminProcedure
+export const createDocumentTypeContract = idempotentMutationProcedure
   .route({
     method: "POST",
     path: `${AdminApiV1BasePath}/document-types`,
     operationId: "createDocumentType",
     summary: "Create a disabled document type draft",
-    description: "Creates a new disabled draft from an internal administrator name. A draft may remain incomplete; it cannot be enabled until the latest Snapshot Contract and compatible Type Card, View, and Operator candidates are selected.",
+    description: "Creates a new disabled draft from an internal administrator name. A draft may remain incomplete; it cannot be enabled until a paired Document Contract and compatible Type Card, View, and Operator candidates are available.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["Document types"],
@@ -372,9 +415,11 @@ export const createDocumentTypeContract = adminProcedure
     headers: MutationHeadersSchema,
     body: CreateDocumentTypeRequestSchema,
   }).readonly())
-  .output(DocumentTypeRegistrationSchema);
+  .output(DocumentTypeMutationResultSchema);
 
-export const updateDocumentTypeContract = adminProcedure
+export const updateDocumentTypeContract = conditionalMutationProcedure.errors({
+  OPERATOR_VALIDATION_REQUIRED: AdminApiErrorMap.OPERATOR_VALIDATION_REQUIRED,
+})
   .route({
     method: "PATCH",
     path: `${AdminApiV1BasePath}/document-types/{documentType}`,
@@ -389,54 +434,54 @@ export const updateDocumentTypeContract = adminProcedure
     headers: ConditionalMutationHeadersSchema,
     body: UpdateDocumentTypeRequestSchema,
   }).readonly())
-  .output(DocumentTypeRegistrationSchema);
+  .output(DocumentTypeMutationResultSchema);
 
-export const listSnapshotContractsContract = adminProcedure
+export const listDocumentContractsContract = resourceReadProcedure
   .route({
     method: "GET",
-    path: `${AdminApiV1BasePath}/document-types/{documentType}/snapshot-contracts`,
-    operationId: "listSnapshotContracts",
-    summary: "List append-only Snapshot Contract revisions",
-    description: "Returns immutable Snapshot Contract revisions in a cursor-paginated list. The revision with the highest index is always the latest revision.",
+    path: `${AdminApiV1BasePath}/document-types/{documentType}/document-contracts`,
+    operationId: "listDocumentContracts",
+    summary: "List paired Document Contract revisions",
+    description: "Returns lightweight immutable paired contract revisions and their hashes in a cursor-paginated list. Full schemas are available from the item GET operation. The highest index is informational and does not make older revisions read-only for new data.",
     inputStructure: "detailed",
-    tags: ["Snapshot Contracts"],
+    tags: ["Document Contracts"],
   })
   .input(z.object({
     params: documentTypeParams,
     query: PaginationQuerySchema.optional(),
   }).readonly())
-  .output(ListSnapshotContractsResponseSchema);
+  .output(ListDocumentContractsResponseSchema);
 
-export const getSnapshotContractContract = adminProcedure
+export const getDocumentContractContract = resourceReadProcedure
   .route({
     method: "GET",
-    path: `${AdminApiV1BasePath}/document-types/{documentType}/snapshot-contracts/{snapshotContractIdx}`,
-    operationId: "getSnapshotContract",
-    summary: "Read an immutable Snapshot Contract revision",
-    description: "Returns one historical or latest Snapshot Contract revision, including the SValue schema, canonical schema hash, content type, and creation time.",
+    path: `${AdminApiV1BasePath}/document-types/{documentType}/document-contracts/{documentContractIdx}`,
+    operationId: "getDocumentContract",
+    summary: "Read an immutable Document Contract revision",
+    description: "Returns one paired revision, including its format version, snapshot and location schemas, derived media types, canonical schema hashes, contract hash, and creation time.",
     inputStructure: "detailed",
-    tags: ["Snapshot Contracts"],
+    tags: ["Document Contracts"],
   })
-  .input(z.object({ params: snapshotContractParams }).readonly())
-  .output(SnapshotContractRecordSchema);
+  .input(z.object({ params: documentContractParams }).readonly())
+  .output(DocumentContractRecordSchema);
 
-export const appendSnapshotContractContract = adminProcedure
+export const appendDocumentContractContract = resourceMutationProcedure
   .route({
     method: "POST",
-    path: `${AdminApiV1BasePath}/document-types/{documentType}/snapshot-contracts`,
-    operationId: "appendSnapshotContract",
-    summary: "Append the next Snapshot Contract revision",
-    description: "Appends exactly one revision while the document type is disabled. `observedLatestSnapshotContractIdx` must equal the current latest index; the Platform assigns the next index, canonically encodes the schema, and computes its hash. Revisions cannot be patched, deleted, or manually selected as latest.",
+    path: `${AdminApiV1BasePath}/document-types/{documentType}/document-contracts`,
+    operationId: "appendDocumentContract",
+    summary: "Append a paired Document Contract revision",
+    description: "Accepts one JSON object containing a shared format version plus snapshot and location schemas. Format version 1 derives the standard snapshot CBOR and location JSON media types; clients do not submit free-form content types. The Platform validates both schemas atomically, assigns the next index, and stores their individual canonical hashes plus the paired contract hash. Append is allowed while the document type is enabled, and every existing compatible revision remains available for new snapshots and locations.",
     inputStructure: "detailed",
     successStatus: 201,
-    tags: ["Snapshot Contracts"],
+    tags: ["Document Contracts"],
   })
   .input(z.object({
     params: documentTypeParams,
     headers: MutationHeadersSchema,
-    body: AppendSnapshotContractRequestSchema,
+    body: AppendDocumentContractRequestSchema,
   }).readonly())
-  .output(SnapshotContractRecordSchema);
+  .output(DocumentContractAppendResultSchema);
 
 export const listAdministratorMembersContract = adminProcedure
   .route({
@@ -451,7 +496,22 @@ export const listAdministratorMembersContract = adminProcedure
   .input(z.object({ query: PaginationQuerySchema.optional() }).readonly())
   .output(ListAdministratorMembersResponseSchema);
 
-export const addAdministratorMemberContract = adminProcedure
+export const getAdministratorMemberContract = resourceReadProcedure
+  .route({
+    method: "GET",
+    path: `${AdminApiV1BasePath}/administrators/{adminId}`,
+    operationId: "getAdministratorMember",
+    summary: "Read an administrator member",
+    description: "Returns one administrator membership with identity-binding status, provenance, and current ETag.",
+    inputStructure: "detailed",
+    tags: ["Members"],
+  })
+  .input(z.object({ params: administratorMemberParams }).readonly())
+  .output(AdministratorMemberRecordSchema);
+
+export const addAdministratorMemberContract = idempotentMutationProcedure.errors({
+  ADMINISTRATOR_EXISTS: AdminApiErrorMap.ADMINISTRATOR_EXISTS,
+})
   .route({
     method: "POST",
     path: `${AdminApiV1BasePath}/administrators`,
@@ -466,9 +526,12 @@ export const addAdministratorMemberContract = adminProcedure
     headers: MutationHeadersSchema,
     body: AddAdministratorMemberRequestSchema,
   }).readonly())
-  .output(AdministratorMemberRecordSchema);
+  .output(AdministratorMemberMutationResultSchema);
 
-export const removeAdministratorMemberContract = adminProcedure
+export const removeAdministratorMemberContract = conditionalMutationProcedure.errors({
+  CANNOT_REMOVE_SELF: AdminApiErrorMap.CANNOT_REMOVE_SELF,
+  LAST_ADMINISTRATOR: AdminApiErrorMap.LAST_ADMINISTRATOR,
+})
   .route({
     method: "DELETE",
     path: `${AdminApiV1BasePath}/administrators/{adminId}`,
@@ -485,16 +548,29 @@ export const removeAdministratorMemberContract = adminProcedure
   }).readonly())
   .output(z.undefined());
 
+export const listAdminAuditEventsContract = adminProcedure
+  .route({
+    method: "GET",
+    path: `${AdminApiV1BasePath}/audit-events`,
+    operationId: "listAdminAuditEvents",
+    summary: "List administrator audit events",
+    description: "Returns immutable administrator control-plane audit events in reverse chronological order. Results may be filtered by actor, action, resource kind, related document type, and occurrence time.",
+    inputStructure: "detailed",
+    tags: ["Audit"],
+  })
+  .input(z.object({ query: ListAdminAuditEventsQuerySchema.optional() }).readonly())
+  .output(ListAdminAuditEventsResponseSchema);
+
 export const adminApiContract = {
   documentTypes: {
     list: listDocumentTypesContract,
     get: getDocumentTypeContract,
     create: createDocumentTypeContract,
     update: updateDocumentTypeContract,
-    snapshotContracts: {
-      list: listSnapshotContractsContract,
-      get: getSnapshotContractContract,
-      append: appendSnapshotContractContract,
+    documentContracts: {
+      list: listDocumentContractsContract,
+      get: getDocumentContractContract,
+      append: appendDocumentContractContract,
     },
   },
   typeCardBundles: {
@@ -516,45 +592,24 @@ export const adminApiContract = {
   operatorCandidates: {
     create: createOperatorCandidateContract,
     list: listOperatorCandidatesContract,
+    get: getOperatorCandidateContract,
     updateMetadata: updateOperatorCandidateMetadataContract,
   },
   members: {
     list: listAdministratorMembersContract,
+    get: getAdministratorMemberContract,
     add: addAdministratorMemberContract,
     remove: removeAdministratorMemberContract,
+  },
+  audit: {
+    list: listAdminAuditEventsContract,
   },
 };
 
 export type AdminApiContract = typeof adminApiContract;
 
-export const DocumentTypeAuditActions = [
-  "type_card_bundle.uploaded",
-  "type_card_bundle.validation_failed",
-  "type_card_bundle.metadata_changed",
-  "view_bundle.uploaded",
-  "view_bundle.validation_failed",
-  "view_bundle.metadata_changed",
-  "operator_candidate.created",
-  "operator_candidate.metadata_changed",
-  "snapshot_contract.appended",
-  "document_type.registered",
-  "document_type.internal_name_changed",
-  "document_type.type_card_bundle_changed",
-  "document_type.view_bundle_changed",
-  "document_type.operator_changed",
-  "document_type.enabled",
-  "document_type.disabled",
-  "operator.validation_passed",
-  "operator.validation_failed",
-] as const;
-
-export type DocumentTypeAuditAction = typeof DocumentTypeAuditActions[number];
-
-export const AdministratorMemberAuditActions = [
-  "administrator.bootstrap",
-  "administrator.bound",
-  "administrator.added",
-  "administrator.removed",
-] as const;
-
-export type AdministratorMemberAuditAction = typeof AdministratorMemberAuditActions[number];
+export { AdministratorMemberAuditActions, DocumentTypeAuditActions };
+export type {
+  AdministratorMemberAuditAction,
+  DocumentTypeAuditAction,
+} from "./schemas.js";

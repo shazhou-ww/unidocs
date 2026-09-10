@@ -46,13 +46,13 @@ Version 是一次完整内容交付，指向一个不可变 snapshot。每个版
 
 - 文档内单调递增的整数版本号，同时作为版本 record 身份和创建顺序；
 - 唯一 base parent，即提交时的 current version；
-- 该 snapshot 使用的文档类型 Snapshot Contract revision；
+- 该 snapshot 与其 locations 共用的文档类型 Document Contract revision；
 - snapshot 逻辑值 `SValue`，大型二进制内容通过 `SBlob` 引用；
 - 本次提交所携带的 pong 及其来源 ping，用于追溯修改依据。
 
-`VersionIdx` 由平台在提交成功时分配，表示出生顺序，不表示祖先顺序。snapshot 是 `SValue` 而不是 CAS hash；相同内容仍可因 parent、provenance、作者或创建时间不同而形成不同版本。跨文档引用版本时必须同时携带文档身份。
+`VersionIdx` 由平台从 0 开始在提交成功时分配，表示出生顺序，不表示祖先顺序。`DocumentContractIdx`、`PingIdx` 和 `PongIdx` 也分别在各自作用域从 0 开始；`null` 才表示尚无记录或水位，0 是合法首项。snapshot 是 `SValue` 而不是 CAS hash；相同内容仍可因 parent、provenance、作者或创建时间不同而形成不同版本。跨文档引用版本时必须同时携带文档身份。
 
-每个文档类型的 Snapshot Contract revision 单调递增且只追加。最新版是唯一允许创建新 snapshot 的 revision；历史 revision 不可修改或删除，只用于验证和解释已有版本。contract 使用扩展 JSON Schema 描述 `SValue`，其中可显式约束原子的 `SBlob`。
+每个文档类型的 Document Contract revision 单调递增且只追加。每个不可变 contract JSON 原子包含 snapshot schema 与 location schema；任一已提交且受当前 View/Operator 支持的 revision 都可用于创建新数据，最大 idx 只表示最后提交。snapshot schema 使用扩展 JSON Schema 描述 `SValue`，location schema 约束 `{ locationType, payload }`。
 
 ### 3.3 Current 与 latest
 
@@ -189,6 +189,7 @@ Agent 可以提交：
 ```ts
 interface AgentSubmission {
   observedCurrentVersionIdx?: VersionIdx;
+  newDocumentContractIdx?: DocumentContractIdx;
   newSnapshot?: SValue;
   threadUpdates: Array<{
     threadId: ThreadId;
@@ -234,6 +235,7 @@ thread 锁防止两个 Agent 对同一批 ping 重复作答或意外跨过未读
 
 ```ts
 interface DocumentLocation {
+  documentContractIdx: DocumentContractIdx;
   locationType: string;
   payload: JsonValue;
 }
@@ -246,7 +248,7 @@ unidocs.markdown.text-range/v1
 unidocs.psd.layer-region/v2
 ```
 
-一个标识符唯一确定 payload 的结构。结构发生不兼容变化时发布新的 `locationType`，不修改已有定义。
+location schema 与 snapshot schema 位于同一个 Document Contract JSON。Platform 使用 `documentContractIdx` 选择 schema，并校验 `{ locationType, payload }` 投影；`locationType` 仍作为该 schema 内的语义 discriminator。
 
 ### 8.2 基数与解释职责
 
@@ -257,7 +259,7 @@ unidocs.psd.layer-region/v2
 - location 自身不携带版本；同一 ping 的所有 locations 均相对于该 ping 的同一个 base version，pong result locations 相对于同一 submission 创建的新版本；
 - 非空 pong result locations 必须随新版本提交，纯 pong 的 result locations 为空。
 
-平台只负责保存封套，并校验 `locationType` 格式、payload 是合法 JSON 以及大小限制。对应文档类型的 View 与 Agent hook 负责：
+平台保存封套，校验它引用的 contract 与所属版本一致，并按该 revision 的 location schema 和大小限制验证。对应文档类型的 View 与 Agent hook 负责：
 
 - 创建、序列化和验证 payload；
 - 在指定版本中解析、定位和高亮；
@@ -364,7 +366,7 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 平台向人类 View 和 Agent 暴露通用能力：
 
 - 查询文档身份、文档类型和 current version；
-- 查询最新版或历史 Snapshot Contract；
+- 查询任一配对 Document Contract revision；
 - 查询版本关系、审计和确切版本内容；
 - 查询 thread、ping/pong 序列和 open 状态；
 - 追加 ping；
@@ -421,9 +423,9 @@ sequenceDiagram
 8. operator 注册只影响通知路由，不授予排他写入权。
 9. current pointer 移动必须审计，且不会隐式删除任何版本。
 10. 文档版本只保证自身 snapshot 与引用值不变，不保证跟随引用的递归内容不变。
-11. location payload 的语义只由对应文档类型解释。
+11. location payload 的语义由对应文档类型解释，结构合法性由 paired Document Contract 校验。
 12. 版本归档不会立即归档仍可从热历史关联到的 thread。
-13. Snapshot Contract revision 只能追加；新 snapshot 只能使用最新版，历史版本永久记录其 revision。
+13. Document Contract revision 只能追加且原子配对 snapshot/location schema；所有兼容 revision 都可写，版本与 location 永久记录同一 revision。
 
 ## 15. 协议细化项
 

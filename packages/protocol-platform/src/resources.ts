@@ -2,8 +2,15 @@
  * Authoritative persisted resource shapes for documents, versions, pings,
  * pongs, and thread query results.
  */
-import type { SValue, SValueSchema } from "@unidocs/protocol";
 import type {
+  DocumentContentFormatVersion,
+  DocumentLocationContentType,
+  DocumentSnapshotContentType,
+  SValue,
+  SValueSchema,
+} from "@unidocs/protocol";
+import type {
+  DocumentContractIdx,
   DocumentId,
   DocumentLocation,
   DocumentType,
@@ -11,17 +18,26 @@ import type {
   MessageContent,
   PingIdx,
   PongIdx,
-  SnapshotContractIdx,
   SubmissionId,
   ThreadId,
   VersionIdx,
 } from "./common.js";
 
-export interface SnapshotContractRecord {
-  readonly snapshotContractIdx: SnapshotContractIdx;
-  readonly contentType: string;
-  readonly schema: SValueSchema;
-  readonly schemaHash: string;
+export interface DocumentContractRecord {
+  readonly documentContractIdx: DocumentContractIdx;
+  readonly formatVersion: typeof DocumentContentFormatVersion;
+  readonly snapshot: {
+    readonly contentType: typeof DocumentSnapshotContentType;
+    readonly schema: SValueSchema;
+    readonly schemaHash: string;
+  };
+  /** Validates the locationType and payload projection of DocumentLocation. */
+  readonly location: {
+    readonly contentType: typeof DocumentLocationContentType;
+    readonly schema: SValueSchema;
+    readonly schemaHash: string;
+  };
+  readonly contractHash: string;
   readonly createdAt: IsoDateTime;
 }
 
@@ -36,7 +52,7 @@ export interface DocumentRecord {
 export interface VersionRecord {
   readonly versionIdx: VersionIdx;
   readonly parentVersionIdx: VersionIdx | null;
-  readonly snapshotContractIdx: SnapshotContractIdx;
+  readonly documentContractIdx: DocumentContractIdx;
   /** Logical document state; large binary values are represented by SBlob. */
   readonly snapshot: SValue;
   readonly authorAgentId: string;

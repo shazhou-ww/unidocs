@@ -20,9 +20,9 @@
 2. 文档类型先以 Admin 内部名称创建 disabled 草稿；信息不完整可以长期存在，但不能启用。
 3. Type Card bundle 和 View bundle 内容寻址且不可变；Operator validation 可转成持久候选项。三类候选都有独立、可修改、仅 Admin 可见的名称与描述。
 4. Type Card manifest 提供多语言创建卡片、二选一 SVG/预定义尺寸 PNG 图标和 sample thumbnail；bundle 不声明默认 locale，Host 跟随用户 UI locale 并最终回退到 `en`。
-5. 每个文档类型拥有 append-only Snapshot Contract revisions。最大 `SnapshotContractIdx` 自动成为唯一可写 revision；历史 revision 只读、不可删除、不可回退、不可手动设为 current。
+5. 每个文档类型拥有从 0 开始的 append-only Document Contract revisions；同一不可变 JSON 原子携带 snapshot 与 location schema，并共享 `DocumentContractIdx`。所有 `Idx` 均从 0 开始，`null` 才表示不存在。
 6. SValue schema 是 JSON Schema 2020-12 扩展，通过 `x-unidocs-sblob` 等关键字描述原子 SBlob。
-7. 已启用类型不能追加 Snapshot Contract；先停用、追加 revision、绑定支持最新版的 View/Operator，再重新启用。
+7. enabled 类型也可上传新 Document Contract；最大 idx 不是唯一可写版本，当前 View/Operator 共同支持的已有 revisions 构成可写集合。
 
 ## 当前检查
 

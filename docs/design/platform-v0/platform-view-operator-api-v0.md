@@ -77,12 +77,17 @@ View bundle 不创建正式版本。需要改变正式内容的用户操作最�
 type TenantId = string;
 type DocumentId = string;
 type DocumentType = string;
-/** 文档类型内单调递增的 snapshot contract revision。 */
-type SnapshotContractIdx = number;
-/** 文档内单调递增的版本 record ID。 */
+/** 从 0 开始、文档类型内单调递增的 snapshot/location 配对 contract revision。 */
+type DocumentContractIdx = number;
+type DocumentContentFormatVersion = 1;
+const DocumentSnapshotContentType = "application/vnd.unidocs.document-snapshot+cbor;version=1";
+const DocumentLocationContentType = "application/vnd.unidocs.document-location+json;version=1";
+/** 从 0 开始、文档内单调递增的版本 record ID。 */
 type VersionIdx = number;
 type ThreadId = string;
+/** 从 0 开始、thread 内单调递增的 ping record ID。 */
 type PingIdx = number;
+/** 从 0 开始、thread 内单调递增的 pong record ID。 */
 type PongIdx = number;
 type SubmissionId = string;
 type ViewBundleId = string;
@@ -117,6 +122,7 @@ interface CasBlobRef {
 }
 
 interface DocumentLocation {
+  readonly documentContractIdx: DocumentContractIdx;
   /** 例如 unidocs.markdown.text-range/v1。 */
   readonly locationType: string;
   readonly payload: JsonValue;
@@ -132,22 +138,30 @@ type SValueSchema = Readonly<Record<string, JsonValue>> & {
   readonly $schema: "https://schemas.unidocs.dev/svalue/v1";
   readonly "x-unidocs-sblob"?: true;
   readonly "x-unidocs-blob-content-types"?: readonly string[];
-  readonly "x-unidocs-blob-max-size"?: number;
 };
 ```
 
-`SValueSchema` 是 JSON Schema 2020-12 的扩展 dialect。普通节点沿用 JSON Schema 关键字；`x-unidocs-sblob: true` 表示该节点匹配一个原子的 `SBlob`，可选关键字约束其逻辑 content type 和最大字节数。Schema 本身是 JSON，不把内存中的 symbol-branded `SBlob` 伪装成 JSON 对象。
+`SValueSchema` 是 JSON Schema 2020-12 的扩展 dialect。普通节点沿用 JSON Schema 关键字；`x-unidocs-sblob: true` 表示该节点匹配一个原子的 `SBlob`，`x-unidocs-blob-content-types` 可约束其逻辑 content type。SBlob 大小上限完全由 UniCAS 规定和执行，dialect 不提供 `x-unidocs-blob-max-size`，提交包含该关键字的 contract 必须拒绝，不能静默忽略。Schema 本身是 JSON，不把内存中的 symbol-branded `SBlob` 伪装成 JSON 对象。
 
 所有文档版本 snapshot、ping/pong 富内容和附件都以 `CasBlobRef` 持久化。其语义与现行 `@unicas/tenant-blob-client` 完全相同：`hash` 是 blob root，`size` 是逻辑总字节数，`contentType` 描述完整逻辑 blob，而不是某个内部 chunk。调用方不能假定 root 是单个 CAS node；大 blob 可以是 blob-index tree。`text` 与 `richContent` 至少一个非空；附件不能替代正文。
 
 ## 3. 文档与协作资源
 
 ```ts
-interface SnapshotContractRecord {
-  readonly snapshotContractIdx: SnapshotContractIdx;
-  readonly contentType: string;
-  readonly schema: SValueSchema;
-  readonly schemaHash: string;
+interface DocumentContractRecord {
+  readonly documentContractIdx: DocumentContractIdx;
+  readonly formatVersion: DocumentContentFormatVersion;
+  readonly snapshot: {
+    readonly contentType: typeof DocumentSnapshotContentType;
+    readonly schema: SValueSchema;
+    readonly schemaHash: string;
+  };
+  readonly location: {
+    readonly contentType: typeof DocumentLocationContentType;
+    readonly schema: SValueSchema;
+    readonly schemaHash: string;
+  };
+  readonly contractHash: string;
   readonly createdAt: IsoDateTime;
 }
 
@@ -162,7 +176,7 @@ interface DocumentRecord {
 interface VersionRecord {
   readonly versionIdx: VersionIdx;
   readonly parentVersionIdx: VersionIdx | null;
-  readonly snapshotContractIdx: SnapshotContractIdx;
+  readonly documentContractIdx: DocumentContractIdx;
   readonly snapshot: SValue;
   readonly authorAgentId: string;
   readonly createdAt: IsoDateTime;
@@ -198,13 +212,17 @@ interface ThreadDetail {
 }
 ```
 
-`VersionIdx` 是 Platform 在版本提交成功时按 Document 分配的单调递增安全整数，同时表达版本 record 身份和出生顺序。`PingIdx` 和 `PongIdx` 分别由 Platform 在各 thread 的 ping/pong 序列中分配。所有整数 record 身份使用 `Idx`，字符串身份使用 `Id`，内容哈希使用 `Hash`。
+`DocumentContractIdx`、`VersionIdx`、`PingIdx` 和 `PongIdx` 都是从 0 开始的单调递增安全整数，首条 record 分配 0，之后分配当前最大值加 1。`VersionIdx` 同时表达版本 record 身份和出生顺序；`PingIdx` 和 `PongIdx` 分别在各 thread 的序列内分配。`null` 表示尚无 record 或尚未确认，不能用 0 充当 sentinel。所有整数 record 身份使用 `Idx`，字符串身份使用 `Id`，内容哈希使用 `Hash`。
 
-每个文档类型的 `SnapshotContractIdx` 从 1 开始单调递增，只能追加，不能修改、删除、回退或手动选择 current。最大 idx 是自动派生的最新版，也是唯一允许创建新 snapshot 的 revision；旧 revision 只用于验证和解释历史 `VersionRecord`。添加 revision 时 Platform 对 schema 做 canonical JSON digest，产生 `schemaHash`。
+每个文档类型的 `DocumentContractIdx` 从 0 开始单调递增。一个 revision 是同时包含 snapshot schema 与 location schema 的不可变 JSON，不能只更新其中一项。revision 只能追加，不能修改或删除；最大 idx 只表示最后提交，不是 current，也不是唯一可写 revision。Platform 对两个 schema 分别做 canonical JSON digest，并记录完整 contract digest。
+
+`formatVersion` 描述 snapshot/location 的线编码，不是 schema revision。v1 固定派生出 `application/vnd.unidocs.document-snapshot+cbor;version=1` 与 `application/vnd.unidocs.document-location+json;version=1`；客户端不提交自由 content type。以后只有线编码本身发生不兼容变化时才增加 format version，普通 schema 演进只增加 `DocumentContractIdx`。
+
+location content type 描述 location 对象的规范 JSON 表示；当前它通常嵌在 ping/pong JSON body 中，因此不会成为该 HTTP 请求的顶层 `Content-Type` header，但仍作为 contract record 的明确格式标识。
 
 snapshot 是逻辑文档值 `SValue`，其中的大型二进制内容以 `SBlob` 引用 UniCAS；它不是 snapshot CAS hash。相同 snapshot 仍可因 parent、provenance、作者和创建时间不同而形成不同版本。HTTP 使用 canonical SValue CBOR 编码，Platform 可将编码结果作为内部 CAS 业务根持久化，但该存储引用不进入 `VersionRecord` 公共模型。
 
-`DocumentLocation` 只描述一个指定版本内部的位置，自身不重复携带 `versionIdx`。`PingRecord.location` 相对于该 ping 的 `baseVersionIdx`；`PongRecord.resultLocations` 相对于产生该 pong 的 submission 所创建的新版本。持久化层通过这些所属关系确定版本上下文。
+`DocumentLocation` 只描述一个指定版本内部的位置，自身不重复携带 `versionIdx`。它携带与该版本相同的 `documentContractIdx`；Location Contract schema 校验 `{ locationType, payload }` 投影。`PingRecord.location` 相对于该 ping 的 `baseVersionIdx`，其 contract idx 必须等于 base version；`PongRecord.resultLocations` 相对于同次 submission 创建的新版本，并使用与新 snapshot 相同的 contract idx。
 
 `latestPing`、`pongWatermark` 和 `open` 都从两个消息序列计算，不作为独立 API 结构或持久状态。`GET /threads?open=true` 可以在服务端按相同规则过滤，但只返回 `ThreadRef`。每个 ping 都绑定一个已存在的确切版本；首版本产生前不能创建 thread 或追加 ping。
 
@@ -237,7 +255,7 @@ Type Card bundle、View bundle 和 builtin operator 都在类型详情中后续�
 详情包含六个 tab：
 
 - **基本信息**：内部名称和稳定 `documentType`；
-- **Snapshot 契约**：查看只读 revision 历史，在类型停用时追加下一个 revision；
+- **文档契约**：上传并查看同时包含 snapshot 与 location schema 的不可变 revision 包；
 - **类型卡片包**：上传候选包、编辑 Admin 名称与描述、按 locale 预览创建卡片、选择当前包；
 - **界面包**：上传 View bundle 候选包、编辑 Admin 名称与描述并选择当前包；
 - **处理服务**：验证 Operator、创建可命名的候选项、编辑 Admin 描述并选择当前服务；
@@ -247,9 +265,9 @@ Type Card bundle、View bundle 和 builtin operator 都在类型详情中后续�
 
 三类候选项都有仅供 Admin 识别的可变 `name` 和 `description`。bundle 的这两个字段位于 Platform 管理记录上，不进入内容寻址 manifest，修改时不产生新 bundle ID。Operator 的 Admin 文案位于持久候选记录上，不修改 discovery descriptor。候选 metadata 使用各自 `etag` 和 `If-Match` 独立更新；它不出现在用户侧类型目录。
 
-Snapshot contract 没有删除、弃用或“设为当前”操作。类型已启用时不能追加 revision，管理员必须先停用；追加成功后新 idx 立即成为唯一可写 revision。重新启用前，当前 View bundle 和 Operator 候选必须都声明支持最新版。
+Document Contract 没有删除、弃用或“设为当前”操作。无论类型是否启用都可以追加新 revision；append 本身不改变已有可写集合。当前 View bundle 与 Operator 候选共同支持、且已经存在的 revision 构成可用于新数据的集合，最大 idx 不享有特殊写入地位。
 
-只有最新 Snapshot contract、当前 Type Card bundle、当前 View bundle 和当前 builtin operator 全部存在且有效时才能设置 `enabled = true`。类型卡片的名称、描述、图标和 sample thumbnail 都来自当前 Type Card bundle；Admin 的预览工具初始跟随 Admin UI locale，也可以显式切换 locale，但语言切换控件不属于卡片本身。
+只有至少一个 Document Contract revision、当前 Type Card bundle、当前 View bundle 和当前 builtin operator 全部存在，且 View/Operator 至少共同支持一个已有 revision 时，才能设置 `enabled = true`。类型卡片的名称、描述、图标和 sample thumbnail 都来自当前 Type Card bundle；Admin 的预览工具初始跟随 Admin UI locale，也可以显式切换 locale，但语言切换控件不属于卡片本身。
 
 当前已打开的 View session 固定启动时的 `viewBundleId`。Admin 切换 bundle 只影响新 session，不热替换正在编辑 ping 草稿的 iframe。
 
@@ -263,7 +281,7 @@ Platform 对所有 bundle 至少校验：
 - manifest schema、声明文件、资源摘要和 MIME；
 - manifest 的 `documentType` 与目标类型完全相同；
 - Type Card bundle 的 locale 覆盖、每个 locale 的文案与 alt、SVG/PNG 图标和 sample thumbnail；
-- View bundle 的入口文件、支持的 Snapshot contract revisions 和 location type 格式；
+- View bundle 的入口文件和支持的配对 Document Contract revisions；
 - 禁止远程脚本和可绕过 Platform 内容通道的默认网络权限；
 - HTML、JS、CSS 和资源均可从 Platform 的 bundle origin 独立加载。
 
@@ -329,14 +347,32 @@ interface ViewBundleManifestV1 {
   readonly protocol: "unidocs-view-bundle/v1";
   readonly documentType: DocumentType;
   readonly entrypoint: string;
-  readonly supportedSnapshotContractIdxs: readonly SnapshotContractIdx[];
-  readonly locationTypes: readonly string[];
+  readonly supportedDocumentContractIdxs: readonly DocumentContractIdx[];
 }
 ```
 
 `viewBundleId` 是 Platform 根据规范 manifest 和解包后文件路径、摘要计算出的内容身份。相同内容重复上传得到相同 ID；已有对象可直接复用。
 
-### 5.3 R2 布局与分发
+### 5.3 Document Contract
+
+Document Contract 本身是 JSON，不使用 ZIP 或 manifest：
+
+```ts
+interface AppendDocumentContractRequest {
+  readonly formatVersion: 1;
+  readonly snapshot: {
+    readonly schema: SValueSchema;
+  };
+  readonly location: {
+    readonly schema: SValueSchema;
+  };
+  readonly reason: string;
+}
+```
+
+snapshot schema 校验 `SValue`；location schema 校验 `DocumentLocation` 的 `{ locationType, payload }` 投影。`documentType` 来自 URL path，不在 body 中重复。`formatVersion` 同时选择两种标准 content type；当前只接受 1。任一 schema、dialect 或 format version 校验失败，整个 append 失败且不分配 revision。
+
+### 5.4 R2 布局与分发
 
 ```text
 type-card-bundles/{typeCardBundleId}/manifest.json
@@ -357,7 +393,11 @@ bundle 存 R2 是当前实现边界；未来 UniCAS 支持 stack 公共内容后
 
 ## 6. Admin API
 
-根路径：`/admin/api/v1`。继续使用 Admin session、CSRF、近期重新认证、`Idempotency-Key`、`If-Match` 和审计。普通 JSON mutation 的大小限制不应用于 bundle 二进制流。
+根路径：`/admin/api/v1`。所有 operation 支持两套相互独立的鉴权：请求带有 `Authorization: Bearer` 时只验证 Bearer token，面向非浏览器客户端；没有 Bearer token 时验证 Admin session cookie，面向 Web UI。Bearer token 存在但验证失败时直接返回 `401`，即使请求同时带有有效 cookie 也不得 fallback。cookie 鉴权的 mutation 必须验证 `X-CSRF-Token`，Bearer 鉴权不要求 CSRF。两条路径在认证成功后使用相同的 Admin 授权与审计语义。
+
+继续使用近期重新认证、`Idempotency-Key`、`If-Match` 和审计。普通 JSON mutation 的大小限制不应用于 bundle 二进制流。
+
+响应遵循[顶层 API conventions](../../api-conventions.md)：GET 返回完整 representation；持久资源 mutation 只返回继续操作所需的资源身份、ETag 或 hash，不回显 manifest、schema、descriptor 或完整 registration。同步 Operator validation 的完整验证结果是该 operation 的直接产物，因此保留完整响应。
 
 ### 6.1 Admin 类型
 
@@ -387,8 +427,8 @@ interface OperatorDescriptor {
   readonly operatorId: string;
   readonly displayName: string;
   readonly supportedDocumentTypes: readonly DocumentType[];
-  readonly supportedSnapshotContracts: Readonly<
-    Record<DocumentType, readonly SnapshotContractIdx[]>
+  readonly supportedDocumentContracts: Readonly<
+    Record<DocumentType, readonly DocumentContractIdx[]>
   >;
 }
 
@@ -404,47 +444,96 @@ interface OperatorCandidateRecord {
   readonly etag: string;
 }
 
-interface SnapshotContractRecord {
-  readonly snapshotContractIdx: SnapshotContractIdx;
-  readonly contentType: string;
-  readonly schema: SValueSchema;
-  readonly schemaHash: string;
-  readonly createdAt: IsoDateTime;
-}
-
 interface DocumentTypeRegistration {
   readonly documentType: DocumentType;
   readonly internalName: string;
   readonly enabled: boolean;
-  readonly latestSnapshotContract: SnapshotContractRecord | null;
+  readonly latestDocumentContract: DocumentContractRecord | null;
   readonly typeCardBundle: TypeCardBundleRecord | null;
   readonly viewBundle: ViewBundleRecord | null;
   readonly builtinOperator: OperatorCandidateRecord | null;
   readonly etag: string;
   readonly updatedAt: IsoDateTime;
 }
+
+interface CandidateListItemBase {
+  readonly name: string;
+  readonly description: string;
+  readonly size: number;
+  readonly uploadedAt: IsoDateTime;
+  readonly etag: string;
+}
+
+interface TypeCardBundleListItem extends CandidateListItemBase {
+  readonly typeCardBundleId: TypeCardBundleId;
+  readonly documentType: DocumentType;
+}
+
+interface ViewBundleListItem extends CandidateListItemBase {
+  readonly viewBundleId: ViewBundleId;
+  readonly documentType: DocumentType;
+  readonly supportedDocumentContractIdxs: readonly DocumentContractIdx[];
+}
+
+interface OperatorCandidateListItem {
+  readonly operatorCandidateId: OperatorCandidateId;
+  readonly documentType: DocumentType;
+  readonly name: string;
+  readonly description: string;
+  readonly baseUrl: string;
+  readonly supportedDocumentContractIdxs: readonly DocumentContractIdx[];
+  readonly validatedAt: IsoDateTime;
+  readonly etag: string;
+}
+
+interface DocumentContractListItem {
+  readonly documentContractIdx: DocumentContractIdx;
+  readonly formatVersion: DocumentContentFormatVersion;
+  readonly snapshotSchemaHash: string;
+  readonly locationSchemaHash: string;
+  readonly contractHash: string;
+  readonly createdAt: IsoDateTime;
+}
+
+interface DocumentTypeListItem {
+  readonly documentType: DocumentType;
+  readonly internalName: string;
+  readonly enabled: boolean;
+  readonly latestDocumentContractIdx: DocumentContractIdx | null;
+  readonly typeCardBundle: { readonly id: TypeCardBundleId; readonly name: string } | null;
+  readonly viewBundle: { readonly id: ViewBundleId; readonly name: string } | null;
+  readonly builtinOperator: { readonly id: OperatorCandidateId; readonly name: string } | null;
+  readonly etag: string;
+  readonly updatedAt: IsoDateTime;
+}
 ```
 
-### 6.2 Snapshot Contract
+### 6.2 Document Contract
 
 ```text
-GET  /document-types/{documentType}/snapshot-contracts?cursor=&limit=
-GET  /document-types/{documentType}/snapshot-contracts/{snapshotContractIdx}
-POST /document-types/{documentType}/snapshot-contracts
+GET  /document-types/{documentType}/document-contracts?cursor=&limit=
+GET  /document-types/{documentType}/document-contracts/{documentContractIdx}
+POST /document-types/{documentType}/document-contracts
 ```
 
 ```ts
-interface AppendSnapshotContractRequest {
-  readonly observedLatestSnapshotContractIdx: SnapshotContractIdx | null;
-  readonly contentType: string;
-  readonly schema: SValueSchema;
+interface AppendDocumentContractRequest {
+  readonly formatVersion: 1;
+  readonly snapshot: {
+    readonly schema: SValueSchema;
+  };
+  readonly location: { readonly schema: SValueSchema };
   readonly reason: string;
 }
 
-type ListSnapshotContractsResponse = Page<SnapshotContractRecord>;
+type ListDocumentContractsResponse = Page<DocumentContractListItem>;
+type AppendDocumentContractResponse = {
+  readonly documentContractIdx: DocumentContractIdx;
+  readonly contractHash: string;
+};
 ```
 
-POST 只在文档类型停用时接受请求，并要求 `observedLatestSnapshotContractIdx` 与当前最大 idx 完全相等。Platform 分配下一个 idx、规范编码 schema、计算 `schemaHash` 并原子追加；没有 PATCH 或 DELETE。网络重试使用 Admin `Idempotency-Key`。读取历史 revision 不产生状态变化。
+POST 接收 `application/json`，根据 `formatVersion` 派生 snapshot/location content type，原子验证两个 schema 后分配下一个 idx，并计算两个 `schemaHash` 与整体 `contractHash`。类型处于 enabled 时也允许 append；append 不切换 current，也不会使旧 revision 失去写入资格。没有 PATCH 或 DELETE。网络重试使用 Admin `Idempotency-Key`，审计原因直接位于 JSON body。
 
 ### 6.3 Bundle 上传
 
@@ -466,7 +555,8 @@ interface UploadTypeCardBundleRequest {
     readonly description: string;
   };
   readonly headers: {
-    readonly "x-csrf-token": string;
+    /** 使用 Admin session cookie 鉴权时必需；Bearer 鉴权时省略。 */
+    readonly "x-csrf-token"?: string;
     readonly "idempotency-key": string;
   };
   readonly body: ReadableStream<Uint8Array>;
@@ -478,7 +568,8 @@ interface UploadViewBundleRequest {
     readonly description: string;
   };
   readonly headers: {
-    readonly "x-csrf-token": string;
+    /** 使用 Admin session cookie 鉴权时必需；Bearer 鉴权时省略。 */
+    readonly "x-csrf-token"?: string;
     readonly "idempotency-key": string;
   };
   readonly body: ReadableStream<Uint8Array>;
@@ -489,15 +580,23 @@ interface UpdateCandidateMetadataRequest {
   readonly description: string;
 }
 
-type UploadTypeCardBundleResponse = { readonly data: TypeCardBundleRecord };
+type UploadTypeCardBundleResponse = {
+  readonly typeCardBundleId: TypeCardBundleId;
+  readonly etag: string;
+};
+type UpdateTypeCardBundleMetadataResponse = UploadTypeCardBundleResponse;
 type ListTypeCardBundlesResponse = Page<TypeCardBundleRecord>;
-type GetTypeCardBundleResponse = { readonly data: TypeCardBundleRecord };
-type UploadViewBundleResponse = { readonly data: ViewBundleRecord };
+type GetTypeCardBundleResponse = TypeCardBundleRecord;
+type UploadViewBundleResponse = {
+  readonly viewBundleId: ViewBundleId;
+  readonly etag: string;
+};
+type UpdateViewBundleMetadataResponse = UploadViewBundleResponse;
 type ListViewBundlesResponse = Page<ViewBundleRecord>;
-type GetViewBundleResponse = { readonly data: ViewBundleRecord };
+type GetViewBundleResponse = ViewBundleRecord;
 ```
 
-Platform 从 UTF-8 query 参数读取有界的初始 Admin `name`/`description`，并有界地流式读取 `application/zip` body、验证并写入对应的内容寻址 R2 路径。这样 metadata 不占用二进制 body，也不要求把非 ASCII 文案编码进 HTTP header。成功返回 `201`；相同内容重复上传返回同一 bundle ID，但 Admin metadata 可通过带 `If-Match` 的 PATCH 独立修改。失败时返回同步错误且不产生可绑定 bundle。请求不暴露 R2 bucket 凭据。bundle ID 是唯一的不可变内容身份，manifest 不另设版本字段。两个列表接口按 manifest 中的 `documentType` 返回候选包。
+Platform 从 UTF-8 query 参数读取有界的初始 Admin `name`/`description`，并有界地流式读取 `application/zip` body、验证并写入对应的内容寻址 R2 路径。这样 metadata 不占用二进制 body，也不要求把非 ASCII 文案编码进 HTTP header。新内容成功返回 `201`；同一 `Idempotency-Key` 重放原始 `201` 结果。不同 key 上传已存在内容返回 `409 bundle_already_exists`，错误 details 携带已有 bundle ID；upload 不得隐式覆盖 metadata，管理员必须通过带 `If-Match` 的 PATCH 显式修改。失败时不产生可绑定 bundle。请求不暴露 R2 bucket 凭据。bundle ID 是唯一的不可变内容身份，manifest 不另设版本字段。两个列表接口按 manifest 中的 `documentType` 返回候选包。
 
 ### 6.4 Operator 验证
 
@@ -519,7 +618,7 @@ interface OperatorValidation {
   readonly expiresAt: IsoDateTime;
 }
 
-type CreateOperatorValidationResponse = { readonly data: OperatorValidation };
+type CreateOperatorValidationResponse = OperatorValidation;
 ```
 
 验证在同一请求内读取：
@@ -535,6 +634,7 @@ GET {baseUrl}/.well-known/unidocs-operator
 ```text
 POST  /operator-candidates
 GET   /operator-candidates?documentType=&cursor=&limit=
+GET   /operator-candidates/{operatorCandidateId}
 PATCH /operator-candidates/{operatorCandidateId}
 ```
 
@@ -544,6 +644,11 @@ interface CreateOperatorCandidateRequest {
   readonly name: string;
   readonly description: string;
 }
+
+type OperatorCandidateMutationResponse = {
+  readonly operatorCandidateId: OperatorCandidateId;
+  readonly etag: string;
+};
 ```
 
 创建时把 validation 的 `baseUrl` 与不可变 `descriptor` 固化到 `OperatorCandidateRecord`，并保存可修改的 Admin `name`/`description`。metadata PATCH 同样要求 `If-Match`。
@@ -571,18 +676,21 @@ interface UpdateDocumentTypeRequest {
   readonly reason?: string;
 }
 
-type GetDocumentTypeResponse = { readonly data: DocumentTypeRegistration };
-type ListDocumentTypesResponse = Page<DocumentTypeRegistration>;
-type CreateDocumentTypeResponse = { readonly data: DocumentTypeRegistration };
-type UpdateDocumentTypeResponse = { readonly data: DocumentTypeRegistration };
+type GetDocumentTypeResponse = DocumentTypeRegistration;
+type ListDocumentTypesResponse = Page<DocumentTypeListItem>;
+type DocumentTypeMutationResponse = {
+  readonly documentType: DocumentType;
+  readonly etag: string;
+};
 ```
 
-创建只生成 disabled 草稿和稳定 `documentType`，不要求 contract、bundle 或 Operator。更新任一 bundle 时，新 manifest 的 `documentType` 必须与现有类型相同。启用要求至少已有一个 Snapshot contract，当前 Type Card bundle 和 View bundle 均为 ready，且 View 与已验证 Operator 候选都支持最新 revision；任一条件不满足都拒绝启用。短期 `validationId` 只用于创建候选项，候选创建后不要求原 validation 继续有效。仅修改 `internalName` 时 `reason` 可省略；改变任一当前绑定或 `enabled` 时 `reason` 必填。
+创建只生成 disabled 草稿和稳定 `documentType`，不要求 contract、bundle 或 Operator。更新任一 bundle 时，新 manifest 的 `documentType` 必须与现有类型相同。启用要求至少已有一个 Document Contract，当前 Type Card bundle 和 View bundle 均为 ready，且 View 与已验证 Operator 候选至少共同支持一个已有 revision；任一条件不满足都拒绝启用。短期 `validationId` 只用于创建候选项，候选创建后不要求原 validation 继续有效。仅修改 `internalName` 时 `reason` 可省略；改变任一当前绑定或 `enabled` 时 `reason` 必填。
 
 ### 6.6 管理员成员
 
 ```text
 GET    /administrators?cursor=&limit=
+GET    /administrators/{adminId}
 POST   /administrators
 DELETE /administrators/{adminId}
 ```
@@ -605,12 +713,49 @@ interface AddAdministratorMemberRequest {
   readonly email: string;
 }
 
+type AddAdministratorMemberResponse = {
+  readonly adminId: string;
+  readonly etag: string;
+};
+
 type ListAdministratorMembersResponse = Page<AdministratorMemberListItem>;
 ```
 
 新增成员只把规范化 Google 邮箱加入管理员 allowlist；该邮箱首次完成管理员登录后才绑定 Google identity。新增使用 `Idempotency-Key`，重复邮箱返回 `409`。删除要求 `If-Match`，且不能删除当前管理员自身或最后一名管理员；成功返回 `204`。
 
-session、audit 和 change receipt API 保持通用形状。审计新增：
+### 6.7 审计
+
+```text
+GET /audit-events?cursor=&limit=&actorId=&action=&resourceType=&documentType=&occurredFrom=&occurredTo=
+```
+
+```ts
+interface AdminAuditEvent {
+  readonly auditEventId: string;
+  readonly actorId: string;
+  readonly action: AdminAuditAction;
+  readonly resourceType:
+    | "document_type"
+    | "document_contract"
+    | "type_card_bundle"
+    | "view_bundle"
+    | "operator_candidate"
+    | "operator_validation"
+    | "administrator";
+  readonly resourceId: string;
+  readonly documentType: DocumentType | null;
+  readonly occurredAt: IsoDateTime;
+  readonly requestId: string;
+  readonly reason: string | null;
+  readonly details?: JsonValue;
+}
+
+type ListAdminAuditEventsResponse = Page<AdminAuditEvent>;
+```
+
+事件按 `occurredAt` 倒序稳定分页。`details` 只能包含该 action 所需的非敏感结构化信息，不记录 Bearer token、cookie、CSRF token、Operator secret 或原始 bundle 内容。`requestId` 用于关联请求日志；失败类 validation action 也形成事件，但未提交成功的资源 mutation 不伪造成功事件。
+
+审计 action 包括：
 
 ```ts
 type DocumentTypeAuditAction =
@@ -622,7 +767,7 @@ type DocumentTypeAuditAction =
   | "view_bundle.metadata_changed"
   | "operator_candidate.created"
   | "operator_candidate.metadata_changed"
-  | "snapshot_contract.appended"
+  | "document_contract.appended"
   | "document_type.registered"
   | "document_type.internal_name_changed"
   | "document_type.type_card_bundle_changed"
@@ -634,6 +779,8 @@ type DocumentTypeAuditAction =
   | "operator.validation_failed";
 ```
 
+管理员成员 action 为 `administrator.bootstrap`、`administrator.bound`、`administrator.added` 和 `administrator.removed`。该 GET 使用 Admin API 的 Bearer-or-cookie 鉴权，不需要 CSRF。
+
 ## 7. 面向 Platform Web Host 的 HTTP API
 
 根路径：`/api/v1/tenants/{tenantId}`。浏览器顶层 Host 使用用户 session 调用这些 API；隔离 View iframe 不直接调用。
@@ -642,7 +789,7 @@ type DocumentTypeAuditAction =
 
 ```text
 GET  /document-types
-GET  /document-types/{documentType}/snapshot-contracts/{snapshotContractIdx}
+GET  /document-types/{documentType}/document-contracts/{documentContractIdx}
 GET  /documents?documentType=&cursor=&limit=
 POST /documents
 GET  /documents/{documentId}
@@ -682,7 +829,7 @@ interface PublicDocumentType {
   readonly typeCardBundleId: TypeCardBundleId;
   readonly typeCard: PublicTypeCard;
   readonly viewBundleId: ViewBundleId;
-  readonly latestSnapshotContract: SnapshotContractRecord;
+  readonly availableDocumentContractIdxs: readonly DocumentContractIdx[];
 }
 
 interface CreateDocumentRequest {
@@ -703,7 +850,7 @@ type ListVersionsResponse = Page<VersionRecord>;
 
 单资源成功响应直接返回对应 record，不再包装为 `{ data }` 或 `{ document }`：创建/读取文档和移动 current 返回 `DocumentRecord`，读取版本返回 `VersionRecord`。
 
-公共目录只返回已启用类型，因此 `typeCardBundleId`、`viewBundleId` 和 `latestSnapshotContract` 均确定存在。`typeCard` 是 Platform 从当前 Type Card manifest 解析出的用户侧投影：保留 locale 文案，但把所有资源路径解析为固定 bundle origin 下的绝对 URL。主站不拼接 R2 key，也不把 Admin 内部名称作为展示回退。Host 与 Agent 可按 idx 查询历史 contract，以解释确切 `VersionRecord`。
+公共目录只返回已启用类型，因此 `typeCardBundleId`、`viewBundleId` 和非空 `availableDocumentContractIdxs` 均确定存在。该数组是当前 View、builtin Operator 与已提交 revision 的交集，不按 idx 大小隐式选择。`typeCard` 是 Platform 从当前 Type Card manifest 解析出的用户侧投影：保留 locale 文案，但把所有资源路径解析为固定 bundle origin 下的绝对 URL。Host 与 Agent 可按 idx 查询任一 paired contract，以解释和创建数据。
 
 `viewEntrypointUrl` 不作为公共类型字段；Platform 根据 `viewBundleId` 读取已验证 manifest，并由固定 bundle origin、bundle ID 和 `entrypoint` 构造入口 URL。
 
@@ -736,7 +883,7 @@ type ListThreadsResponse = Page<ThreadRef>;
 
 创建/读取 thread 直接返回 `ThreadDetail`，追加 ping 直接返回 `PingRecord`。
 
-Platform 校验 `baseVersionIdx` 指向当前文档中的版本。location 始终相对于同一请求的 `baseVersionIdx`。Platform 在 thread 内分配下一个 `PingIdx`；创建 thread 和追加 ping 使用 HTTP `Idempotency-Key` 保证重试幂等。
+Platform 校验 `baseVersionIdx` 指向当前文档中的版本。location 始终相对于同一请求的 `baseVersionIdx`，其 `documentContractIdx` 必须等于 base version，并通过该 revision 的 location schema。Platform 在 thread 内分配下一个 `PingIdx`；创建 thread 和追加 ping 使用 HTTP `Idempotency-Key` 保证重试幂等。
 
 ### 7.3 Tenant CAS capability
 
@@ -958,8 +1105,8 @@ interface AgentSubmissionRequest {
   readonly submissionId: SubmissionId;
   /** 纯 pong 时可省略；创建版本时必填，包括 null 初始状态。 */
   readonly observedCurrentVersionIdx?: VersionIdx | null;
-  /** 创建版本时必填，且必须等于该文档类型的最新 revision。 */
-  readonly newSnapshotContractIdx?: SnapshotContractIdx;
+  /** 创建版本时必填，且必须属于当前可用的配对 revision 集合。 */
+  readonly newDocumentContractIdx?: DocumentContractIdx;
   readonly newSnapshot?: SValue;
   readonly threadUpdates: readonly {
     readonly threadId: ThreadId;
@@ -973,7 +1120,7 @@ interface AgentSubmissionRequest {
 
 interface SubmissionConflict {
   readonly currentVersionIdx: VersionIdx | null;
-  readonly latestSnapshotContractIdx: SnapshotContractIdx;
+  readonly availableDocumentContractIdxs: readonly DocumentContractIdx[];
   readonly threads: readonly {
     readonly threadId: ThreadId;
     readonly acknowledgedPingIdx: PingIdx | null;
@@ -992,7 +1139,7 @@ type SubmissionReceipt = {
   readonly state: "rejected";
   readonly reason:
     | "version_conflict"
-    | "snapshot_contract_conflict"
+    | "document_contract_conflict"
     | "pong_watermark_conflict";
   readonly conflict: SubmissionConflict;
   readonly rejectedAt: IsoDateTime;
@@ -1005,13 +1152,13 @@ type SubmissionReceipt = {
 提交规则：
 
 1. 有 `newSnapshot` 时必须显式携带 `observedCurrentVersionIdx`，并与提交时 current 完全相等；
-2. 有 `newSnapshot` 时必须显式携带 `newSnapshotContractIdx`，并与文档类型的最新 revision 完全相等；Platform 按该 schema 校验 snapshot；
+2. 有 `newSnapshot` 时必须显式携带 `newDocumentContractIdx`，并属于当前可用 revision 集合；Platform 按该 revision 的 snapshot schema 校验 snapshot；
 3. 每个 update 的 `observedAcknowledgedPingIdx` 与 thread 当前水位完全相等；
 4. `respondThroughPingIdx` 必须在该水位之后且不超过 thread 最新 ping；
 5. 一个 submission 内同一 thread 最多出现一次；
-6. 非空 `resultLocations` 必须同时携带 `newSnapshot`，并且全部位置都相对于本次创建的新版本；纯 pong 的 `resultLocations` 必须为空；
+6. 非空 `resultLocations` 必须同时携带 `newSnapshot`，全部位置都相对于本次创建的新版本，且 `documentContractIdx` 等于 `newDocumentContractIdx`；Platform 按同一 revision 的 location schema 校验 `{ locationType, payload }`；纯 pong 的 `resultLocations` 必须为空；
 7. Platform 只在整个 submission 成功时分配下一个 `VersionIdx` 和各 thread 的下一个 `PongIdx`；幂等重试由 `submissionId` 返回同一 receipt；
-8. 纯 pong 省略 `newSnapshot`、`newSnapshotContractIdx` 和 `observedCurrentVersionIdx`；
+8. 纯 pong 省略 `newSnapshot`、`newDocumentContractIdx` 和 `observedCurrentVersionIdx`；
 9. 任一检查失败，版本、全部 pong、current 和内容持久引用都不变化；
 10. 成功时，版本、pong、thread 水位、provenance 和 current 在同一业务事务中生效；
 11. 网络超时是客户端的 unknown 状态，Agent 必须以同一 `submissionId` 查询或重试，不能生成新 ID 猜测结果。
@@ -1083,7 +1230,7 @@ type PlatformErrorCode =
   | "not_found"
   | "document_type_disabled"
   | "unsupported_content_type"
-  | "unsupported_location_type"
+  | "location_contract_violation"
   | "upload_expired"
   | "bundle_invalid"
   | "operator_validation_required"
@@ -1125,8 +1272,8 @@ type PlatformErrorCode =
 | --- | --- | --- |
 | GET/POST | `/admin/api/v1/document-types` | 列表/登记类型 |
 | GET/PATCH | `/admin/api/v1/document-types/{type}` | 详情/原子更新 |
-| GET/POST | `/admin/api/v1/document-types/{type}/snapshot-contracts` | 列出/追加 Snapshot contract revision |
-| GET | `/admin/api/v1/document-types/{type}/snapshot-contracts/{idx}` | 读取历史 Snapshot contract |
+| GET/POST | `/admin/api/v1/document-types/{type}/document-contracts` | 列出/追加配对 Document Contract revision |
+| GET | `/admin/api/v1/document-types/{type}/document-contracts/{idx}` | 读取不可变 paired contract |
 | POST | `/admin/api/v1/type-card-bundles` | 上传并验证不可变类型卡片包 |
 | GET | `/admin/api/v1/type-card-bundles?documentType=...` | 列出类型卡片候选包 |
 | GET | `/admin/api/v1/type-card-bundles/{id}` | 读取类型卡片包 manifest |
@@ -1137,16 +1284,17 @@ type PlatformErrorCode =
 | POST | `/admin/api/v1/operator-validations` | 验证 operator base URL |
 | GET | `/admin/api/v1/operator-validations/{id}` | 查询验证状态 |
 | POST/GET | `/admin/api/v1/operator-candidates` | 创建/列出 Operator 候选项 |
-| PATCH | `/admin/api/v1/operator-candidates/{id}` | 修改候选项的 Admin 名称与描述 |
+| GET/PATCH | `/admin/api/v1/operator-candidates/{id}` | 读取完整候选项/修改 Admin metadata |
 | GET/POST | `/admin/api/v1/administrators` | 列出/添加管理员成员 |
-| DELETE | `/admin/api/v1/administrators/{adminId}` | 按 ETag 删除非自身、非最后一名管理员 |
+| GET/DELETE | `/admin/api/v1/administrators/{adminId}` | 读取成员/按 ETag 删除非自身、非最后一名管理员 |
+| GET | `/admin/api/v1/audit-events` | 分页筛选不可变管理员审计事件 |
 
 ### 13.2 Viewer Host 与用户
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/api/v1/tenants/{tenantId}/document-types` | 动态类型目录 |
-| GET | `/api/v1/tenants/{tenantId}/document-types/{type}/snapshot-contracts/{idx}` | 读取确切 Snapshot contract |
+| GET | `/api/v1/tenants/{tenantId}/document-types/{type}/document-contracts/{idx}` | 读取确切 paired contract |
 | POST/GET | `/api/v1/tenants/{tenantId}/documents` | 创建/列出文档 |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}` | 文档与 current/latest |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions` | 版本浏览 |
