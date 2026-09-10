@@ -2,12 +2,12 @@
   "info": {
     "title": "UniDocs Administrator API",
     "version": "0.1.0",
-    "description": "Administrator control-plane API for configuring UniDocs document types.\n\nThe API manages document type registrations, append-only paired Document Contract revisions, immutable Type Card and View bundles, Operator candidates, administrator membership, and control-plane audit events.\n\nEvery request supports either a Bearer token or the same-origin administrator session cookie. If an `Authorization: Bearer` header is present, the server uses only that token and must not fall back to cookie authentication when token authentication fails. Mutations authenticated by cookie additionally require `X-CSRF-Token`; Bearer-authenticated mutations do not. All mutations require `Idempotency-Key`, and conditional metadata and registration updates also require `If-Match`."
+    "description": "Administrator control-plane API for configuring UniDocs document types.\n\nThe API manages document type registrations, append-only paired Document Contract revisions, immutable Type Card and View bundles, Operators, administrator membership, and control-plane audit events.\n\nEvery request supports either a Bearer token or the same-origin administrator session cookie. If an `Authorization: Bearer` header is present, the server uses only that token and must not fall back to cookie authentication when token authentication fails. Mutations authenticated by cookie additionally require `X-CSRF-Token`; Bearer-authenticated mutations do not. All mutations require `Idempotency-Key`, and conditional metadata and registration updates also require `If-Match`."
   },
   "tags": [
     {
       "name": "Document types",
-      "description": "Document type drafts and their currently selected Type Card bundle, View bundle, Operator candidate, and enabled state."
+      "description": "Document type drafts and their currently selected Type Card bundle, View bundle, Operator, and enabled state."
     },
     {
       "name": "Document Contracts",
@@ -23,7 +23,7 @@
     },
     {
       "name": "Operators",
-      "description": "Validate Operator endpoints without user data, then persist successful validations as administrator-visible candidates that can be bound to document types."
+      "description": "Validate Operator endpoints without user data, then persist successful validation records as administrator-visible Operators that can be bound to document types."
     },
     {
       "name": "Members",
@@ -162,7 +162,7 @@
                               {
                                 "type": "object",
                                 "properties": {
-                                  "id": {
+                                  "typeCardBundleId": {
                                     "type": "string",
                                     "minLength": 1
                                   },
@@ -172,7 +172,7 @@
                                   }
                                 },
                                 "required": [
-                                  "id",
+                                  "typeCardBundleId",
                                   "name"
                                 ],
                                 "readOnly": true
@@ -187,7 +187,7 @@
                               {
                                 "type": "object",
                                 "properties": {
-                                  "id": {
+                                  "viewBundleId": {
                                     "type": "string",
                                     "minLength": 1
                                   },
@@ -197,7 +197,7 @@
                                   }
                                 },
                                 "required": [
-                                  "id",
+                                  "viewBundleId",
                                   "name"
                                 ],
                                 "readOnly": true
@@ -212,7 +212,7 @@
                               {
                                 "type": "object",
                                 "properties": {
-                                  "id": {
+                                  "operatorId": {
                                     "type": "string",
                                     "minLength": 1
                                   },
@@ -222,7 +222,7 @@
                                   }
                                 },
                                 "required": [
-                                  "id",
+                                  "operatorId",
                                   "name"
                                 ],
                                 "readOnly": true
@@ -438,7 +438,7 @@
       "post": {
         "operationId": "createDocumentType",
         "summary": "Create a disabled document type draft",
-        "description": "Creates a new disabled draft from an internal administrator name. A draft may remain incomplete; it cannot be enabled until a paired Document Contract and compatible Type Card, View, and Operator candidates are available.",
+        "description": "Creates a new disabled draft from an internal administrator name. A draft may remain incomplete; it cannot be enabled until a paired Document Contract and compatible Type Card, View, and Operator resources are available.",
         "tags": [
           "Document types"
         ],
@@ -1106,6 +1106,14 @@
                               "minLength": 1,
                               "description": "Immutable content-derived Type Card bundle identity."
                             },
+                            "bundleUrl": {
+                              "type": "string",
+                              "format": "uri",
+                              "description": "Immutable canonical URL of the validated Type Card bundle root.",
+                              "examples": [
+                                "https://bundles.example/type-card-bundles/tb_9f1428cd/"
+                              ]
+                            },
                             "name": {
                               "type": "string",
                               "minLength": 1,
@@ -1268,6 +1276,7 @@
                           },
                           "required": [
                             "typeCardBundleId",
+                            "bundleUrl",
                             "name",
                             "description",
                             "manifest",
@@ -1292,6 +1301,14 @@
                               "type": "string",
                               "minLength": 1,
                               "description": "Immutable content-derived View bundle identity."
+                            },
+                            "bundleUrl": {
+                              "type": "string",
+                              "format": "uri",
+                              "description": "Immutable canonical URL of the validated View bundle root.",
+                              "examples": [
+                                "https://bundles.example/view-bundles/vb_7fa912d40e83c38a/"
+                              ]
                             },
                             "name": {
                               "type": "string",
@@ -1362,6 +1379,7 @@
                           },
                           "required": [
                             "viewBundleId",
+                            "bundleUrl",
                             "name",
                             "description",
                             "manifest",
@@ -1382,24 +1400,24 @@
                         {
                           "type": "object",
                           "properties": {
-                            "operatorCandidateId": {
+                            "operatorId": {
                               "type": "string",
                               "minLength": 1,
-                              "description": "Persistent Operator candidate identity."
+                              "description": "Persistent Platform Operator resource identity."
                             },
                             "documentType": {
                               "type": "string",
                               "pattern": "^[a-z][a-z0-9-]{0,63}$",
-                              "description": "Document type for which this candidate was validated."
+                              "description": "Document type for which this Operator was validated."
                             },
                             "name": {
                               "type": "string",
                               "minLength": 1,
-                              "description": "Mutable administrator-visible candidate name."
+                              "description": "Mutable administrator-visible Operator name."
                             },
                             "description": {
                               "type": "string",
-                              "description": "Mutable administrator-visible candidate description."
+                              "description": "Mutable administrator-visible Operator description."
                             },
                             "baseUrl": {
                               "type": "string",
@@ -1413,10 +1431,10 @@
                                   "const": "unidocs-operator/v1",
                                   "description": "Operator discovery protocol."
                                 },
-                                "operatorId": {
+                                "declaredOperatorId": {
                                   "type": "string",
                                   "minLength": 1,
-                                  "description": "Stable identity declared by the Operator."
+                                  "description": "Stable service identity declared by the Operator."
                                 },
                                 "displayName": {
                                   "type": "string",
@@ -1456,7 +1474,7 @@
                               },
                               "required": [
                                 "protocol",
-                                "operatorId",
+                                "declaredOperatorId",
                                 "displayName",
                                 "supportedDocumentTypes",
                                 "supportedDocumentContracts"
@@ -1479,7 +1497,7 @@
                             }
                           },
                           "required": [
-                            "operatorCandidateId",
+                            "operatorId",
                             "documentType",
                             "name",
                             "description",
@@ -1494,7 +1512,7 @@
                           "type": "null"
                         }
                       ],
-                      "description": "Currently selected built-in Operator candidate, or null."
+                      "description": "Currently selected built-in Operator, or null."
                     },
                     "etag": {
                       "type": "string",
@@ -1721,7 +1739,7 @@
       "patch": {
         "operationId": "updateDocumentType",
         "summary": "Atomically update a document type registration",
-        "description": "Atomically changes the internal name, selected Type Card bundle, selected View bundle, selected Operator candidate, or enabled state. `If-Match` protects the complete registration from lost updates, and enabling validates all required selections together.",
+        "description": "Atomically changes the internal name, selected Type Card bundle, selected View bundle, selected Operator, or enabled state. `If-Match` protects the complete registration from lost updates, and enabling validates all required selections together.",
         "tags": [
           "Document types"
         ],
@@ -1792,7 +1810,7 @@
                     "minLength": 1,
                     "description": "View bundle to select."
                   },
-                  "builtinOperatorCandidateId": {
+                  "builtinOperatorId": {
                     "anyOf": [
                       {
                         "type": "string",
@@ -1802,7 +1820,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Operator candidate to select, or null to clear the selection."
+                    "description": "Operator to select, or null to clear the selection."
                   },
                   "enabled": {
                     "type": "boolean",
@@ -4044,6 +4062,14 @@
                             "minLength": 1,
                             "description": "Immutable content-derived Type Card bundle identity."
                           },
+                          "bundleUrl": {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Immutable canonical URL of the validated Type Card bundle root.",
+                            "examples": [
+                              "https://bundles.example/type-card-bundles/tb_9f1428cd/"
+                            ]
+                          },
                           "name": {
                             "type": "string",
                             "minLength": 1,
@@ -4080,6 +4106,7 @@
                         },
                         "required": [
                           "typeCardBundleId",
+                          "bundleUrl",
                           "name",
                           "description",
                           "size",
@@ -4271,7 +4298,7 @@
       "get": {
         "operationId": "getTypeCardBundle",
         "summary": "Read a Type Card bundle candidate",
-        "description": "Returns one validated Type Card bundle record, including its immutable manifest, content identity, size, administrator metadata, and current ETag.",
+        "description": "Returns one validated Type Card bundle record, including its immutable canonical bundle root URL, manifest, content identity, size, administrator metadata, and current ETag.",
         "tags": [
           "Type Card bundles"
         ],
@@ -4298,6 +4325,14 @@
                       "type": "string",
                       "minLength": 1,
                       "description": "Immutable content-derived Type Card bundle identity."
+                    },
+                    "bundleUrl": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Immutable canonical URL of the validated Type Card bundle root.",
+                      "examples": [
+                        "https://bundles.example/type-card-bundles/tb_9f1428cd/"
+                      ]
                     },
                     "name": {
                       "type": "string",
@@ -4461,6 +4496,7 @@
                   },
                   "required": [
                     "typeCardBundleId",
+                    "bundleUrl",
                     "name",
                     "description",
                     "manifest",
@@ -5528,6 +5564,14 @@
                             "minLength": 1,
                             "description": "Immutable content-derived View bundle identity."
                           },
+                          "bundleUrl": {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Immutable canonical URL of the validated View bundle root.",
+                            "examples": [
+                              "https://bundles.example/view-bundles/vb_7fa912d40e83c38a/"
+                            ]
+                          },
                           "name": {
                             "type": "string",
                             "minLength": 1,
@@ -5574,6 +5618,7 @@
                         },
                         "required": [
                           "viewBundleId",
+                          "bundleUrl",
                           "name",
                           "description",
                           "size",
@@ -5766,7 +5811,7 @@
       "get": {
         "operationId": "getViewBundle",
         "summary": "Read a View bundle candidate",
-        "description": "Returns one validated View bundle record with immutable manifest data, administrator metadata, content size, and current ETag.",
+        "description": "Returns one validated View bundle record with its immutable canonical bundle root URL, manifest data, administrator metadata, content size, and current ETag.",
         "tags": [
           "View bundles"
         ],
@@ -5793,6 +5838,14 @@
                       "type": "string",
                       "minLength": 1,
                       "description": "Immutable content-derived View bundle identity."
+                    },
+                    "bundleUrl": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Immutable canonical URL of the validated View bundle root.",
+                      "examples": [
+                        "https://bundles.example/view-bundles/vb_7fa912d40e83c38a/"
+                      ]
                     },
                     "name": {
                       "type": "string",
@@ -5863,6 +5916,7 @@
                   },
                   "required": [
                     "viewBundleId",
+                    "bundleUrl",
                     "name",
                     "description",
                     "manifest",
@@ -6495,7 +6549,7 @@
       "post": {
         "operationId": "createOperatorValidation",
         "summary": "Validate an Operator endpoint",
-        "description": "Fetches Operator discovery and performs a signed, user-data-free probe without following redirects or allowing private-network targets. A successful response contains a short-lived validation identity; failures are synchronous and create no validation task.",
+        "description": "Fetches Operator discovery and performs a signed, user-data-free probe without following redirects or allowing private-network targets. Success creates and returns a short-lived immutable validation record; failures are synchronous, create no validation record, and are captured only in audit.",
         "tags": [
           "Operators"
         ],
@@ -6576,12 +6630,33 @@
                     "validationId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Short-lived validation identity used to create a candidate."
+                      "description": "Short-lived validation record identity used to create an Operator."
+                    },
+                    "documentType": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                      "description": "Document type against which the Operator was validated."
                     },
                     "baseUrl": {
                       "type": "string",
                       "format": "uri",
                       "description": "Operator base URL that was validated."
+                    },
+                    "expectedConfigEtag": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\"[\\x21\\x23-\\x7E]+\"$",
+                          "description": "Strong HTTP entity-tag owned by an external service, including double quotes.",
+                          "examples": [
+                            "\"operator-config-v3\""
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "External Operator configuration ETag pinned by validation, or null."
                     },
                     "descriptor": {
                       "type": "object",
@@ -6590,10 +6665,10 @@
                           "const": "unidocs-operator/v1",
                           "description": "Operator discovery protocol."
                         },
-                        "operatorId": {
+                        "declaredOperatorId": {
                           "type": "string",
                           "minLength": 1,
-                          "description": "Stable identity declared by the Operator."
+                          "description": "Stable service identity declared by the Operator."
                         },
                         "displayName": {
                           "type": "string",
@@ -6633,7 +6708,7 @@
                       },
                       "required": [
                         "protocol",
-                        "operatorId",
+                        "declaredOperatorId",
                         "displayName",
                         "supportedDocumentTypes",
                         "supportedDocumentContracts"
@@ -6641,16 +6716,24 @@
                       "readOnly": true,
                       "description": "Descriptor captured during validation."
                     },
+                    "validatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Time at which validation succeeded."
+                    },
                     "expiresAt": {
                       "type": "string",
                       "format": "date-time",
-                      "description": "Time after which this validation cannot create a candidate."
+                      "description": "Time after which this validation cannot create an Operator."
                     }
                   },
                   "required": [
                     "validationId",
+                    "documentType",
                     "baseUrl",
+                    "expectedConfigEtag",
                     "descriptor",
+                    "validatedAt",
                     "expiresAt"
                   ],
                   "readOnly": true
@@ -6864,7 +6947,7 @@
       "get": {
         "operationId": "getOperatorValidation",
         "summary": "Read a current Operator validation",
-        "description": "Returns a successful, unexpired Operator validation and the immutable discovery descriptor captured during validation.",
+        "description": "Returns a successful, unexpired immutable Operator validation record and the discovery descriptor captured at `validatedAt`.",
         "tags": [
           "Operators"
         ],
@@ -6890,12 +6973,33 @@
                     "validationId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Short-lived validation identity used to create a candidate."
+                      "description": "Short-lived validation record identity used to create an Operator."
+                    },
+                    "documentType": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                      "description": "Document type against which the Operator was validated."
                     },
                     "baseUrl": {
                       "type": "string",
                       "format": "uri",
                       "description": "Operator base URL that was validated."
+                    },
+                    "expectedConfigEtag": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^\"[\\x21\\x23-\\x7E]+\"$",
+                          "description": "Strong HTTP entity-tag owned by an external service, including double quotes.",
+                          "examples": [
+                            "\"operator-config-v3\""
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "External Operator configuration ETag pinned by validation, or null."
                     },
                     "descriptor": {
                       "type": "object",
@@ -6904,10 +7008,10 @@
                           "const": "unidocs-operator/v1",
                           "description": "Operator discovery protocol."
                         },
-                        "operatorId": {
+                        "declaredOperatorId": {
                           "type": "string",
                           "minLength": 1,
-                          "description": "Stable identity declared by the Operator."
+                          "description": "Stable service identity declared by the Operator."
                         },
                         "displayName": {
                           "type": "string",
@@ -6947,7 +7051,7 @@
                       },
                       "required": [
                         "protocol",
-                        "operatorId",
+                        "declaredOperatorId",
                         "displayName",
                         "supportedDocumentTypes",
                         "supportedDocumentContracts"
@@ -6955,16 +7059,24 @@
                       "readOnly": true,
                       "description": "Descriptor captured during validation."
                     },
+                    "validatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Time at which validation succeeded."
+                    },
                     "expiresAt": {
                       "type": "string",
                       "format": "date-time",
-                      "description": "Time after which this validation cannot create a candidate."
+                      "description": "Time after which this validation cannot create an Operator."
                     }
                   },
                   "required": [
                     "validationId",
+                    "documentType",
                     "baseUrl",
+                    "expectedConfigEtag",
                     "descriptor",
+                    "validatedAt",
                     "expiresAt"
                   ],
                   "readOnly": true
@@ -7165,11 +7277,11 @@
         }
       }
     },
-    "/admin/api/v1/operator-candidates": {
+    "/admin/api/v1/operators": {
       "post": {
-        "operationId": "createOperatorCandidate",
-        "summary": "Persist a validated Operator candidate",
-        "description": "Converts a current validation into a persistent candidate for one document type. The validated base URL and descriptor become immutable while the administrator name and description remain editable.",
+        "operationId": "createOperator",
+        "summary": "Persist a validated Operator",
+        "description": "Converts a current validation into a persistent Operator for one document type. The validated base URL and descriptor become immutable while the administrator name and description remain editable.",
         "tags": [
           "Operators"
         ],
@@ -7210,11 +7322,11 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Initial administrator-visible candidate name."
+                    "description": "Initial administrator-visible Operator name."
                   },
                   "description": {
                     "type": "string",
-                    "description": "Initial administrator-visible candidate description."
+                    "description": "Initial administrator-visible Operator description."
                   }
                 },
                 "required": [
@@ -7235,10 +7347,10 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "operatorCandidateId": {
+                    "operatorId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Created or updated Operator candidate identity."
+                      "description": "Created or updated Operator identity."
                     },
                     "etag": {
                       "type": "string",
@@ -7250,7 +7362,7 @@
                     }
                   },
                   "required": [
-                    "operatorCandidateId",
+                    "operatorId",
                     "etag"
                   ],
                   "readOnly": true
@@ -7461,9 +7573,9 @@
         ]
       },
       "get": {
-        "operationId": "listOperatorCandidates",
-        "summary": "List Operator candidates for a document type",
-        "description": "Returns cursor-paginated Operator candidate summaries available for explicit binding to the requested document type. Full discovery descriptors are available from the item GET operation.",
+        "operationId": "listOperators",
+        "summary": "List Operators for a document type",
+        "description": "Returns cursor-paginated Operator summaries available for explicit binding to the requested document type. Full discovery descriptors are available from the item GET operation.",
         "tags": [
           "Operators"
         ],
@@ -7519,24 +7631,24 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "operatorCandidateId": {
+                          "operatorId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Persistent Operator candidate identity."
+                            "description": "Persistent Platform Operator resource identity."
                           },
                           "documentType": {
                             "type": "string",
                             "pattern": "^[a-z][a-z0-9-]{0,63}$",
-                            "description": "Document type for which this candidate was validated."
+                            "description": "Document type for which this Operator was validated."
                           },
                           "name": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Mutable administrator-visible candidate name."
+                            "description": "Mutable administrator-visible Operator name."
                           },
                           "description": {
                             "type": "string",
-                            "description": "Mutable administrator-visible candidate description."
+                            "description": "Mutable administrator-visible Operator description."
                           },
                           "baseUrl": {
                             "type": "string",
@@ -7568,7 +7680,7 @@
                           }
                         },
                         "required": [
-                          "operatorCandidateId",
+                          "operatorId",
                           "documentType",
                           "name",
                           "description",
@@ -7757,17 +7869,17 @@
         }
       }
     },
-    "/admin/api/v1/operator-candidates/{operatorCandidateId}": {
+    "/admin/api/v1/operators/{operatorId}": {
       "get": {
-        "operationId": "getOperatorCandidate",
-        "summary": "Read an Operator candidate",
-        "description": "Returns one persistent Operator candidate with its immutable discovery descriptor, administrator metadata, and current ETag.",
+        "operationId": "getOperator",
+        "summary": "Read an Operator",
+        "description": "Returns one persistent Operator with its immutable discovery descriptor, administrator metadata, and current ETag.",
         "tags": [
           "Operators"
         ],
         "parameters": [
           {
-            "name": "operatorCandidateId",
+            "name": "operatorId",
             "in": "path",
             "required": true,
             "schema": {
@@ -7784,24 +7896,24 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "operatorCandidateId": {
+                    "operatorId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Persistent Operator candidate identity."
+                      "description": "Persistent Platform Operator resource identity."
                     },
                     "documentType": {
                       "type": "string",
                       "pattern": "^[a-z][a-z0-9-]{0,63}$",
-                      "description": "Document type for which this candidate was validated."
+                      "description": "Document type for which this Operator was validated."
                     },
                     "name": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Mutable administrator-visible candidate name."
+                      "description": "Mutable administrator-visible Operator name."
                     },
                     "description": {
                       "type": "string",
-                      "description": "Mutable administrator-visible candidate description."
+                      "description": "Mutable administrator-visible Operator description."
                     },
                     "baseUrl": {
                       "type": "string",
@@ -7815,10 +7927,10 @@
                           "const": "unidocs-operator/v1",
                           "description": "Operator discovery protocol."
                         },
-                        "operatorId": {
+                        "declaredOperatorId": {
                           "type": "string",
                           "minLength": 1,
-                          "description": "Stable identity declared by the Operator."
+                          "description": "Stable service identity declared by the Operator."
                         },
                         "displayName": {
                           "type": "string",
@@ -7858,7 +7970,7 @@
                       },
                       "required": [
                         "protocol",
-                        "operatorId",
+                        "declaredOperatorId",
                         "displayName",
                         "supportedDocumentTypes",
                         "supportedDocumentContracts"
@@ -7881,7 +7993,7 @@
                     }
                   },
                   "required": [
-                    "operatorCandidateId",
+                    "operatorId",
                     "documentType",
                     "name",
                     "description",
@@ -8088,15 +8200,15 @@
         }
       },
       "patch": {
-        "operationId": "updateOperatorCandidateMetadata",
-        "summary": "Update Operator candidate administrator metadata",
+        "operationId": "updateOperatorMetadata",
+        "summary": "Update Operator administrator metadata",
         "description": "Changes only the administrator-visible name and description. The validated base URL and discovery descriptor remain unchanged, and `If-Match` enforces optimistic concurrency.",
         "tags": [
           "Operators"
         ],
         "parameters": [
           {
-            "name": "operatorCandidateId",
+            "name": "operatorId",
             "in": "path",
             "required": true,
             "schema": {
@@ -8172,10 +8284,10 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "operatorCandidateId": {
+                    "operatorId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Created or updated Operator candidate identity."
+                      "description": "Created or updated Operator identity."
                     },
                     "etag": {
                       "type": "string",
@@ -8187,7 +8299,7 @@
                     }
                   },
                   "required": [
-                    "operatorCandidateId",
+                    "operatorId",
                     "etag"
                   ],
                   "readOnly": true
@@ -9774,8 +9886,8 @@
                 "view_bundle.uploaded",
                 "view_bundle.validation_failed",
                 "view_bundle.metadata_changed",
-                "operator_candidate.created",
-                "operator_candidate.metadata_changed",
+                "operator.created",
+                "operator.metadata_changed",
                 "document_contract.appended",
                 "document_type.registered",
                 "document_type.internal_name_changed",
@@ -9806,7 +9918,7 @@
                 "document_contract",
                 "type_card_bundle",
                 "view_bundle",
-                "operator_candidate",
+                "operator",
                 "operator_validation",
                 "administrator"
               ],
@@ -9881,8 +9993,8 @@
                               "view_bundle.uploaded",
                               "view_bundle.validation_failed",
                               "view_bundle.metadata_changed",
-                              "operator_candidate.created",
-                              "operator_candidate.metadata_changed",
+                              "operator.created",
+                              "operator.metadata_changed",
                               "document_contract.appended",
                               "document_type.registered",
                               "document_type.internal_name_changed",
@@ -9907,7 +10019,7 @@
                               "document_contract",
                               "type_card_bundle",
                               "view_bundle",
-                              "operator_candidate",
+                              "operator",
                               "operator_validation",
                               "administrator"
                             ],

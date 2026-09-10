@@ -5,7 +5,7 @@
 ## 1. 存储边界
 
 - **Platform database**：文档类型配置、contract revisions、候选 metadata、管理员、文档、版本、thread、ping/pong、submission receipt、审计、幂等记录与可靠投递 outbox 的唯一权威。
-- **R2-compatible bundle store**：Type Card/View bundle 的不可变 ZIP 解包内容。数据库只保存内容身份、manifest、大小和 Admin metadata；对象存储不是关系权威。
+- **R2-compatible bundle store**：Type Card/View bundle 的不可变 ZIP 解包内容。数据库保存内容身份、canonical public `bundle_url`、manifest、大小和 Admin metadata；对象存储不是关系权威。
 - **UniCAS**：snapshot 编码及 ping/pong 富内容、附件的 blob graph。数据库只保存 `CasBlobRef` 或内部 snapshot root；业务事务提交后由 Platform retain，失败时让 lease 到期。
 - **Identity provider / tenant authority**：登录凭据和 tenant 成员事实不复制为业务正文。数据库只保存稳定 principal reference 和必要的授权投影。
 
@@ -13,48 +13,46 @@
 
 ### 1.1 写入模式图例
 
-- **Mutable**：允许原地更新明确列；每次更新仍受事务、ETag 或状态转换约束。
-- **Metadata mutable**：内容身份与不可变 payload 不变，只允许更新 Admin metadata。
-- **Append-only**：只能插入新行，已有行不能更新或删除。
-- **Immutable child**：随父记录原子插入，此后不能单独更新或删除。
-- **Ephemeral**：业务内容不可变或按状态机变化，但允许按过期/撤销策略物理删除。
-- **Projection**：由外部权威或不可变 JSON 派生，可重建，不是第二权威。
-- **Outbox state machine**：业务 payload 不变，只更新投递尝试、下次重试与完成状态。
+- `«AO»` **Append-only**：只能插入，不修改、不删除；旧数据可以按保留策略归档到冷库。
+- `«EI»` **Ephemeral immutable**：只能插入，不修改；生命周期短，过期或失效后定期物理删除。
+- **Normal**：普通可读写表，不加 stereotype。具体允许更新或删除的列仍由约束说明限定。
+
+stereotype 只是图上标记，不是逻辑表名的一部分。未标 stereotype 即表示 Normal，不代表每一列都可任意更新；精确列级约束仍以 1.2 的矩阵为准。
 
 ### 1.2 实体写入模式
 
 | 实体 | 写入模式 | 可变范围 / 约束 |
 | --- | --- | --- |
-| `DOCUMENT_TYPE` | Mutable | `internal_name`、三个 current binding、`enabled`、`updated_at`；受完整 registration ETag 保护 |
-| `DOCUMENT_CONTRACT` | Append-only | 整行不可变；每个 document type 只追加下一个 idx |
-| `TYPE_CARD_BUNDLE` | Metadata mutable | 只允许 `name`、`description`；内容 ID、document type、manifest、size、upload time 不变 |
-| `VIEW_BUNDLE` | Metadata mutable | 只允许 `name`、`description`；内容 ID、document type、manifest、size、upload time 不变 |
-| `VIEW_CONTRACT_SUPPORT` | Immutable projection | 与 View manifest 原子创建；不单独更新，必要时可从 manifest 重建 |
-| `OPERATOR_VALIDATION` | Ephemeral immutable | 创建后内容不变；过期后可删除 |
-| `OPERATOR_CANDIDATE` | Metadata mutable | 只允许 `name`、`description`；base URL、descriptor、validated time 不变 |
-| `OPERATOR_CONTRACT_SUPPORT` | Immutable projection | 与 candidate descriptor 原子创建；不单独更新，可从 descriptor 重建 |
-| `ADMINISTRATOR` | Mutable lifecycle | 未绑定到已绑定是一次单向更新；成员可删除，但不能删除自身或最后一名管理员 |
-| `ADMIN_SESSION` | Ephemeral mutable | 可撤销或缩短有效期；过期后删除，不修改绑定的 administrator |
-| `ADMIN_IDEMPOTENCY` | Ephemeral receipt | request identity/payload 不变；若实现 reservation，只允许 `pending -> completed/failed`；到期可删除 |
-| `ADMIN_AUDIT_EVENT` | Append-only | 永不更新；保留不依赖 actor/resource 当前是否存在 |
-| `TENANT` | Mutable projection | 外部 tenant authority 的本地投影；具体同步规则待定 |
-| `PRINCIPAL` | Mutable projection | 外部身份/tenant membership 投影；可禁用或重建 |
-| `DOCUMENT_GRANT` | Mutable relation | 可添加、改变 role 或撤销；具体 role vocabulary 待定 |
-| `DOCUMENT` | Mutable | `name`、`current_version_idx`、`updated_at`；身份、tenant、document type、creator、created time 不变 |
-| `VERSION` | Append-only | 整行不可变；每个 document 只追加下一个 idx |
-| `DOCUMENT_AUDIT_EVENT` | Append-only | 永不更新；current pointer 移动与对应事件原子提交 |
-| `THREAD` | Append-only | thread row 与 ping 0 原子插入，此后不更新 |
-| `PING` | Append-only | 整行不可变；每个 thread 只追加下一个 ping idx |
-| `PING_LOCATION` | Immutable child | 与 ping 原子插入，不单独更新 |
-| `PING_ATTACHMENT` | Immutable child | 与 ping 原子插入，ordinal 与 blob ref 不变 |
-| `PONG` | Append-only | 整行不可变；每个 thread 只追加下一个 pong idx |
-| `PONG_RESULT_LOCATION` | Immutable child | 与 pong/submission 原子插入，不单独更新 |
-| `PONG_ATTACHMENT` | Immutable child | 与 pong 原子插入，ordinal 与 blob ref 不变 |
-| `SUBMISSION` | Append-only receipt | committed/rejected receipt 一次写入后不可变；相同 submission ID 只重放 |
-| `SUBMISSION_THREAD_LOCK` | Immutable child | 与 submission receipt 原子写入，不单独更新 |
-| `DOCUMENT_IDEMPOTENCY` | Ephemeral receipt | request identity/payload 不变；完成后只读，到期可删除 |
-| `OPERATOR_OUTBOX` | Outbox state machine | event identity/reason/payload 不变；只更新 attempts、next attempt、delivered time |
-| `CAS_RETAIN_OUTBOX` | Outbox state machine | root/owner/ref-domain 不变；只更新 attempts、next attempt、completed time |
+| `DOCUMENT_TYPE` | Normal | `internal_name`、三个 current binding、`enabled`、`updated_at`；受完整 registration ETag 保护 |
+| `DOCUMENT_CONTRACT` | AO | 整行不可变；每个 document type 只追加下一个 idx |
+| `TYPE_CARD_BUNDLE` | Normal | 只允许更新 `name`、`description`；其他列不变 |
+| `VIEW_BUNDLE` | Normal | 只允许更新 `name`、`description`；其他列不变 |
+| `VIEW_CONTRACT_SUPPORT` | AO | 与 View manifest 原子插入；不更新、不删除，归档随所属 View |
+| `OPERATOR_VALIDATION` | EI | 只记录成功 validation；失败只进 audit；过期后定期删除 |
+| `OPERATOR` | Normal | 只允许更新 `name`、`description`；base URL、descriptor、validated time 不变 |
+| `OPERATOR_CONTRACT_SUPPORT` | AO | 与 Operator descriptor 原子插入；不更新、不删除，归档随所属 Operator |
+| `ADMINISTRATOR` | Normal | 未绑定到已绑定是单向更新；成员可删除，但不能删除自身或最后一名管理员 |
+| `ADMIN_SESSION` | EI | 创建后不更新；登出、撤销、身份失效或过期后删除 |
+| `ADMIN_IDEMPOTENCY` | EI | 操作结果提交时原子创建；到期后删除 |
+| `ADMIN_AUDIT_EVENT` | AO | 永不更新、删除；可按保留策略归档冷库 |
+| `TENANT` | Normal | 外部 tenant authority 的本地投影；具体同步规则待定 |
+| `PRINCIPAL` | Normal | 外部身份/tenant membership 投影；可禁用或重建 |
+| `DOCUMENT_GRANT` | Normal | 可添加、改变 role 或撤销；具体 role vocabulary 待定 |
+| `DOCUMENT` | Normal | 只更新 `name`、`current_version_idx`、`updated_at` |
+| `VERSION` | AO | 整行不可变；每个 document 只追加下一个 idx |
+| `DOCUMENT_AUDIT_EVENT` | AO | 永不更新、删除；可按保留策略归档冷库 |
+| `THREAD` | AO | 与 ping 0 原子插入，此后不更新、删除 |
+| `PING` | AO | 整行不可变；每个 thread 只追加下一个 ping idx |
+| `PING_LOCATION` | AO | 与 ping 原子插入，不单独更新或删除 |
+| `PING_ATTACHMENT` | AO | 与 ping 原子插入，ordinal 与 blob ref 不变 |
+| `PONG` | AO | 整行不可变；每个 thread 只追加下一个 pong idx |
+| `PONG_RESULT_LOCATION` | AO | 与 pong/submission 原子插入，不单独更新或删除 |
+| `PONG_ATTACHMENT` | AO | 与 pong 原子插入，ordinal 与 blob ref 不变 |
+| `SUBMISSION` | AO | committed/rejected receipt 一次写入后不可变；相同 submission ID 只重放 |
+| `SUBMISSION_THREAD_LOCK` | AO | 与 submission receipt 原子写入，不单独更新或删除 |
+| `DOCUMENT_IDEMPOTENCY` | EI | completed receipt 创建后只读，到期后删除 |
+| `OPERATOR_OUTBOX` | Normal | 只更新 attempts、next attempt、delivered time；event payload 不变 |
+| `CAS_RETAIN_OUTBOX` | Normal | 只更新 attempts、next attempt、completed time；root/owner 不变 |
 
 ## 2. 文档类型控制面
 
@@ -63,14 +61,14 @@ erDiagram
     DOCUMENT_TYPE ||--o{ DOCUMENT_CONTRACT : defines
     DOCUMENT_TYPE ||--o{ TYPE_CARD_BUNDLE : presents
     DOCUMENT_TYPE ||--o{ VIEW_BUNDLE : renders
-    DOCUMENT_TYPE ||--o{ OPERATOR_CANDIDATE : processes
+    DOCUMENT_TYPE ||--o{ OPERATOR : processes
     DOCUMENT_TYPE ||--o{ OPERATOR_VALIDATION : validates_for
     DOCUMENT_TYPE o|--o| TYPE_CARD_BUNDLE : selects_current
     DOCUMENT_TYPE o|--o| VIEW_BUNDLE : selects_current
-    DOCUMENT_TYPE o|--o| OPERATOR_CANDIDATE : selects_builtin
+    DOCUMENT_TYPE o|--o| OPERATOR : selects_builtin
     VIEW_BUNDLE ||--o{ VIEW_CONTRACT_SUPPORT : declares
     DOCUMENT_CONTRACT ||--o{ VIEW_CONTRACT_SUPPORT : supported_by
-    OPERATOR_CANDIDATE ||--o{ OPERATOR_CONTRACT_SUPPORT : declares
+    OPERATOR ||--o{ OPERATOR_CONTRACT_SUPPORT : declares
     DOCUMENT_CONTRACT ||--o{ OPERATOR_CONTRACT_SUPPORT : supported_by
 
     DOCUMENT_TYPE {
@@ -79,11 +77,11 @@ erDiagram
         boolean enabled
         text current_type_card_bundle_id FK
         text current_view_bundle_id FK
-        text builtin_operator_candidate_id FK
+        text builtin_operator_id FK
         timestamp created_at
         timestamp updated_at
     }
-    DOCUMENT_CONTRACT {
+    DOCUMENT_CONTRACT["«AO» DOCUMENT_CONTRACT"] {
         text document_type PK,FK
         bigint document_contract_idx PK
         smallint format_version
@@ -97,6 +95,7 @@ erDiagram
     TYPE_CARD_BUNDLE {
         text type_card_bundle_id PK
         text document_type FK
+        text bundle_url
         text name
         text description
         json manifest
@@ -106,18 +105,19 @@ erDiagram
     VIEW_BUNDLE {
         text view_bundle_id PK
         text document_type FK
+        text bundle_url
         text name
         text description
         json manifest
         bigint compressed_size
         timestamp uploaded_at
     }
-    VIEW_CONTRACT_SUPPORT {
+    VIEW_CONTRACT_SUPPORT["«AO» VIEW_CONTRACT_SUPPORT"] {
         text view_bundle_id PK,FK
         text document_type PK,FK
         bigint document_contract_idx PK,FK
     }
-    OPERATOR_VALIDATION {
+    OPERATOR_VALIDATION["«EI» OPERATOR_VALIDATION"] {
         text validation_id PK
         text document_type FK
         text base_url
@@ -126,8 +126,8 @@ erDiagram
         timestamp validated_at
         timestamp expires_at
     }
-    OPERATOR_CANDIDATE {
-        text operator_candidate_id PK
+    OPERATOR {
+        text operator_id PK
         text document_type FK
         text name
         text description
@@ -135,8 +135,8 @@ erDiagram
         json descriptor
         timestamp validated_at
     }
-    OPERATOR_CONTRACT_SUPPORT {
-        text operator_candidate_id PK,FK
+    OPERATOR_CONTRACT_SUPPORT["«AO» OPERATOR_CONTRACT_SUPPORT"] {
+        text operator_id PK,FK
         text document_type PK,FK
         bigint document_contract_idx PK,FK
     }
@@ -147,11 +147,11 @@ erDiagram
 - `DOCUMENT_CONTRACT(document_type, document_contract_idx)` is append-only. The first idx is 0; allocation and insert occur in one transaction.
 - `document_type` matches `[a-z][a-z0-9-]{0,63}` and combines with `format_version` to derive the snapshot/location media types; neither media type needs a stored column.
 - `contract_hash` is unique within a document type. `snapshot_schema_hash` and `location_schema_hash` use canonical schema JSON; `contract_hash` covers `document_type`, `format_version`, and both schemas.
-- A current bundle/candidate FK must point to a row with the same `document_type`.
+- A current bundle/Operator FK must point to a row with the same `document_type`.
 - A type may be enabled only when all three current bindings exist and the intersection of uploaded contracts, `VIEW_CONTRACT_SUPPORT`, and `OPERATOR_CONTRACT_SUPPORT` is non-empty.
 - Bundle IDs are content-derived and globally unique. Re-upload under the same idempotency key replays the original result; an existing content ID under a different key is a conflict and never overwrites metadata.
-- Bundle `manifest` remains in the database so item GET and validation do not depend on reading R2. Large extracted files remain only in R2.
-- Validation is temporary and may expire after candidate creation. Candidate creation copies the validated immutable base URL and descriptor; it does not retain a live FK dependency on `OPERATOR_VALIDATION`.
+- `bundle_url` is the canonical absolute root URL confirmed at upload time, for example `https://bundles.example/view-bundles/{viewBundleId}/`. It is immutable and must match the configured stable bundle origin, resource kind and content-derived bundle ID. An origin migration must preserve old URLs through permanent routing or an explicit data migration; readers must not silently recompute a different URL. Bundle `manifest` remains in the database so item GET and validation do not depend on reading R2. Large extracted files remain only in R2.
+- A successful validation creates an immutable `OPERATOR_VALIDATION` record because GET validation and subsequent Operator creation cross request boundaries. Failed validation creates no row and is recorded only in audit. The successful record may expire and be physically deleted; Operator creation copies its validated base URL, descriptor and `validated_at`, and does not retain a live FK dependency.
 - Support join rows are projections of immutable manifests/descriptors. They are stored for indexed compatibility checks and must exactly match their source JSON.
 
 ## 3. Administrators and control audit
@@ -171,14 +171,14 @@ erDiagram
         timestamp added_at
         timestamp bound_at
     }
-    ADMIN_SESSION {
+    ADMIN_SESSION["«EI» ADMIN_SESSION"] {
         bytes session_hash PK
         text admin_id FK
         timestamp authenticated_at
         timestamp expires_at
         timestamp created_at
     }
-    ADMIN_IDEMPOTENCY {
+    ADMIN_IDEMPOTENCY["«EI» ADMIN_IDEMPOTENCY"] {
         text admin_id PK,FK
         text operation_scope PK
         text idempotency_key PK
@@ -188,7 +188,7 @@ erDiagram
         timestamp created_at
         timestamp expires_at
     }
-    ADMIN_AUDIT_EVENT {
+    ADMIN_AUDIT_EVENT["«AO» ADMIN_AUDIT_EVENT"] {
         text audit_event_id PK
         text actor_id
         text action
@@ -203,8 +203,8 @@ erDiagram
 ```
 
 - `(issuer, subject)` is unique when bound. Email is normalized before uniqueness checks.
-- Session storage contains only a hash of the opaque cookie handle. CSRF material may be session-bound but must not appear in audit or idempotency response bodies.
-- `operation_scope` prevents accidental key collision across unrelated routes. Reusing a key with another fingerprint is `idempotency_conflict`; a matching replay returns the stored status/body.
+- Session storage contains only a hash of the opaque cookie handle. The row is immutable after creation; logout, administrative revocation, identity invalidation, and expiry delete it. CSRF material may be session-bound but must not appear in audit or idempotency response bodies.
+- `operation_scope` prevents accidental key collision across unrelated routes. The immutable receipt is inserted atomically with the completed business mutation; reusing a key with another fingerprint is `idempotency_conflict`, while a matching replay returns the stored status/body. If an adapter later needs an in-progress lease/reservation for work outside the database transaction, it uses a separate ephemeral reservation entity rather than mutating this receipt.
 - Audit rows are append-only. Secrets, cookies, Bearer tokens, CSRF tokens, raw bundle bytes and complete document content are forbidden in `details`.
 - `document_type` on audit is a nullable denormalized filter key, not necessarily an FK: administrator-wide events have no type, and retained audit must survive later lifecycle changes.
 
@@ -246,7 +246,7 @@ erDiagram
         timestamp created_at
         timestamp updated_at
     }
-    VERSION {
+    VERSION["«AO» VERSION"] {
         text tenant_id PK,FK
         text document_id PK,FK
         bigint version_idx PK
@@ -257,7 +257,7 @@ erDiagram
         text author_agent_id
         timestamp created_at
     }
-    DOCUMENT_AUDIT_EVENT {
+    DOCUMENT_AUDIT_EVENT["«AO» DOCUMENT_AUDIT_EVENT"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text audit_event_id PK
@@ -295,13 +295,13 @@ erDiagram
     PONG ||--o{ PONG_RESULT_LOCATION : locates
     PONG ||--o{ PONG_ATTACHMENT : attaches
 
-    THREAD {
+    THREAD["«AO» THREAD"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK
         timestamp created_at
     }
-    PING {
+    PING["«AO» PING"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
@@ -314,7 +314,7 @@ erDiagram
         text author_id
         timestamp created_at
     }
-    PING_LOCATION {
+    PING_LOCATION["«AO» PING_LOCATION"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
@@ -323,7 +323,7 @@ erDiagram
         text location_type
         json payload
     }
-    PING_ATTACHMENT {
+    PING_ATTACHMENT["«AO» PING_ATTACHMENT"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
@@ -333,7 +333,7 @@ erDiagram
         text content_type
         bigint size
     }
-    PONG {
+    PONG["«AO» PONG"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
@@ -347,7 +347,7 @@ erDiagram
         text author_agent_id
         timestamp created_at
     }
-    PONG_RESULT_LOCATION {
+    PONG_RESULT_LOCATION["«AO» PONG_RESULT_LOCATION"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
@@ -357,7 +357,7 @@ erDiagram
         text location_type
         json payload
     }
-    PONG_ATTACHMENT {
+    PONG_ATTACHMENT["«AO» PONG_ATTACHMENT"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
@@ -388,7 +388,7 @@ erDiagram
     DOCUMENT ||--o{ OPERATOR_OUTBOX : notifies
     SUBMISSION ||--o{ CAS_RETAIN_OUTBOX : retains
 
-    SUBMISSION {
+    SUBMISSION["«AO» SUBMISSION"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text submission_id PK
@@ -401,7 +401,7 @@ erDiagram
         timestamp committed_at
         timestamp rejected_at
     }
-    SUBMISSION_THREAD_LOCK {
+    SUBMISSION_THREAD_LOCK["«AO» SUBMISSION_THREAD_LOCK"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text submission_id PK,FK
@@ -409,7 +409,7 @@ erDiagram
         bigint observed_acknowledged_ping_idx
         bigint respond_through_ping_idx
     }
-    DOCUMENT_IDEMPOTENCY {
+    DOCUMENT_IDEMPOTENCY["«EI» DOCUMENT_IDEMPOTENCY"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text operation_scope PK
@@ -473,7 +473,7 @@ Minimum logical indexes:
 - `DOCUMENT_CONTRACT(document_type, document_contract_idx DESC)`.
 - `TYPE_CARD_BUNDLE(document_type, uploaded_at DESC, type_card_bundle_id)`.
 - `VIEW_BUNDLE(document_type, uploaded_at DESC, view_bundle_id)`.
-- `OPERATOR_CANDIDATE(document_type, validated_at DESC, operator_candidate_id)`.
+- `OPERATOR(document_type, validated_at DESC, operator_id)`.
 - `ADMIN_AUDIT_EVENT(occurred_at DESC, audit_event_id)` plus actor/action/resource/document-type filter indexes.
 - `DOCUMENT(tenant_id, updated_at DESC, document_id)` and `(tenant_id, document_type, updated_at DESC, document_id)`.
 - `VERSION(tenant_id, document_id, version_idx DESC)`.
@@ -491,7 +491,7 @@ Do not add authoritative columns for:
 - thread latest ping, acknowledged watermark, or open state;
 - latest document version;
 - available contract idx intersection;
-- public Type Card projection or resolved bundle URLs;
+- public Type Card projection;
 - View entrypoint URL;
 - credentials, access tokens, raw CSRF tokens, or raw Admin session handles.
 

@@ -16,7 +16,7 @@ export async function generateAdminOpenApiDocument() {
       description: [
         "Administrator control-plane API for configuring UniDocs document types.",
         "",
-        "The API manages document type registrations, append-only paired Document Contract revisions, immutable Type Card and View bundles, Operator candidates, administrator membership, and control-plane audit events.",
+        "The API manages document type registrations, append-only paired Document Contract revisions, immutable Type Card and View bundles, Operators, administrator membership, and control-plane audit events.",
         "",
         "Every request supports either a Bearer token or the same-origin administrator session cookie. If an `Authorization: Bearer` header is present, the server uses only that token and must not fall back to cookie authentication when token authentication fails. Mutations authenticated by cookie additionally require `X-CSRF-Token`; Bearer-authenticated mutations do not. All mutations require `Idempotency-Key`, and conditional metadata and registration updates also require `If-Match`.",
       ].join("\n"),
@@ -24,7 +24,7 @@ export async function generateAdminOpenApiDocument() {
     tags: [
       {
         name: "Document types",
-        description: "Document type drafts and their currently selected Type Card bundle, View bundle, Operator candidate, and enabled state.",
+        description: "Document type drafts and their currently selected Type Card bundle, View bundle, Operator, and enabled state.",
       },
       {
         name: "Document Contracts",
@@ -40,7 +40,7 @@ export async function generateAdminOpenApiDocument() {
       },
       {
         name: "Operators",
-        description: "Validate Operator endpoints without user data, then persist successful validations as administrator-visible candidates that can be bound to document types.",
+        description: "Validate Operator endpoints without user data, then persist successful validation records as administrator-visible Operators that can be bound to document types.",
       },
       {
         name: "Members",

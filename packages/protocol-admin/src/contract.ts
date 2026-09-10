@@ -16,7 +16,7 @@ import {
     DocumentTypeAuditActions,
     DocumentTypeMutationResultSchema,
     DocumentTypeSchema,
-  CreateOperatorCandidateRequestSchema,
+  CreateOperatorRequestSchema,
   CreateOperatorValidationRequestSchema,
   DocumentTypeRegistrationSchema,
   IdSchema,
@@ -26,13 +26,13 @@ import {
   ListAdministratorMembersResponseSchema,
   ListDocumentTypesQuerySchema,
   ListDocumentTypesResponseSchema,
-  ListOperatorCandidatesResponseSchema,
+  ListOperatorsResponseSchema,
   ListDocumentContractsResponseSchema,
   ListTypeCardBundlesResponseSchema,
   ListViewBundlesResponseSchema,
   MutationHeadersSchema,
-  OperatorCandidateRecordSchema,
-  OperatorCandidateMutationResultSchema,
+  OperatorRecordSchema,
+  OperatorMutationResultSchema,
   OperatorValidationSchema,
   PaginationQuerySchema,
   TypeCardBundleRecordSchema,
@@ -152,7 +152,7 @@ const bundleUploadProcedure = idempotentMutationProcedure.errors({
 const typeCardBundleIdParams = z.object({ typeCardBundleId: IdSchema }).readonly();
 const viewBundleIdParams = z.object({ viewBundleId: IdSchema }).readonly();
 const operatorValidationIdParams = z.object({ validationId: IdSchema }).readonly();
-const operatorCandidateIdParams = z.object({ operatorCandidateId: IdSchema }).readonly();
+const operatorIdParams = z.object({ operatorId: IdSchema }).readonly();
 const documentTypeParams = z.object({ documentType: DocumentTypeSchema }).readonly();
 const documentContractParams = z.object({
   documentType: DocumentTypeSchema,
@@ -199,7 +199,7 @@ export const getTypeCardBundleContract = resourceReadProcedure
     path: `${AdminApiV1BasePath}/type-card-bundles/{typeCardBundleId}`,
     operationId: "getTypeCardBundle",
     summary: "Read a Type Card bundle candidate",
-    description: "Returns one validated Type Card bundle record, including its immutable manifest, content identity, size, administrator metadata, and current ETag.",
+    description: "Returns one validated Type Card bundle record, including its immutable canonical bundle root URL, manifest, content identity, size, administrator metadata, and current ETag.",
     inputStructure: "detailed",
     tags: ["Type Card bundles"],
   })
@@ -260,7 +260,7 @@ export const getViewBundleContract = resourceReadProcedure
     path: `${AdminApiV1BasePath}/view-bundles/{viewBundleId}`,
     operationId: "getViewBundle",
     summary: "Read a View bundle candidate",
-    description: "Returns one validated View bundle record with immutable manifest data, administrator metadata, content size, and current ETag.",
+    description: "Returns one validated View bundle record with its immutable canonical bundle root URL, manifest data, administrator metadata, content size, and current ETag.",
     inputStructure: "detailed",
     tags: ["View bundles"],
   })
@@ -290,7 +290,7 @@ export const createOperatorValidationContract = idempotentMutationProcedure
     path: `${AdminApiV1BasePath}/operator-validations`,
     operationId: "createOperatorValidation",
     summary: "Validate an Operator endpoint",
-    description: "Fetches Operator discovery and performs a signed, user-data-free probe without following redirects or allowing private-network targets. A successful response contains a short-lived validation identity; failures are synchronous and create no validation task.",
+    description: "Fetches Operator discovery and performs a signed, user-data-free probe without following redirects or allowing private-network targets. Success creates and returns a short-lived immutable validation record; failures are synchronous, create no validation record, and are captured only in audit.",
     inputStructure: "detailed",
     tags: ["Operators"],
   })
@@ -306,74 +306,74 @@ export const getOperatorValidationContract = resourceReadProcedure
     path: `${AdminApiV1BasePath}/operator-validations/{validationId}`,
     operationId: "getOperatorValidation",
     summary: "Read a current Operator validation",
-    description: "Returns a successful, unexpired Operator validation and the immutable discovery descriptor captured during validation.",
+    description: "Returns a successful, unexpired immutable Operator validation record and the discovery descriptor captured at `validatedAt`.",
     inputStructure: "detailed",
     tags: ["Operators"],
   })
   .input(z.object({ params: operatorValidationIdParams }).readonly())
   .output(OperatorValidationSchema);
 
-export const createOperatorCandidateContract = idempotentMutationProcedure.errors({
+export const createOperatorContract = idempotentMutationProcedure.errors({
   OPERATOR_VALIDATION_REQUIRED: AdminApiErrorMap.OPERATOR_VALIDATION_REQUIRED,
 })
   .route({
     method: "POST",
-    path: `${AdminApiV1BasePath}/operator-candidates`,
-    operationId: "createOperatorCandidate",
-    summary: "Persist a validated Operator candidate",
-    description: "Converts a current validation into a persistent candidate for one document type. The validated base URL and descriptor become immutable while the administrator name and description remain editable.",
+    path: `${AdminApiV1BasePath}/operators`,
+    operationId: "createOperator",
+    summary: "Persist a validated Operator",
+    description: "Converts a current validation into a persistent Operator for one document type. The validated base URL and descriptor become immutable while the administrator name and description remain editable.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["Operators"],
   })
   .input(z.object({
     headers: MutationHeadersSchema,
-    body: CreateOperatorCandidateRequestSchema,
+    body: CreateOperatorRequestSchema,
   }).readonly())
-  .output(OperatorCandidateMutationResultSchema);
+  .output(OperatorMutationResultSchema);
 
-export const listOperatorCandidatesContract = adminProcedure
+export const listOperatorsContract = adminProcedure
   .route({
     method: "GET",
-    path: `${AdminApiV1BasePath}/operator-candidates`,
-    operationId: "listOperatorCandidates",
-    summary: "List Operator candidates for a document type",
-    description: "Returns cursor-paginated Operator candidate summaries available for explicit binding to the requested document type. Full discovery descriptors are available from the item GET operation.",
+    path: `${AdminApiV1BasePath}/operators`,
+    operationId: "listOperators",
+    summary: "List Operators for a document type",
+    description: "Returns cursor-paginated Operator summaries available for explicit binding to the requested document type. Full discovery descriptors are available from the item GET operation.",
     inputStructure: "detailed",
     tags: ["Operators"],
   })
   .input(z.object({ query: ListBundlesQuerySchema }).readonly())
-  .output(ListOperatorCandidatesResponseSchema);
+  .output(ListOperatorsResponseSchema);
 
-export const getOperatorCandidateContract = resourceReadProcedure
+export const getOperatorContract = resourceReadProcedure
   .route({
     method: "GET",
-    path: `${AdminApiV1BasePath}/operator-candidates/{operatorCandidateId}`,
-    operationId: "getOperatorCandidate",
-    summary: "Read an Operator candidate",
-    description: "Returns one persistent Operator candidate with its immutable discovery descriptor, administrator metadata, and current ETag.",
+    path: `${AdminApiV1BasePath}/operators/{operatorId}`,
+    operationId: "getOperator",
+    summary: "Read an Operator",
+    description: "Returns one persistent Operator with its immutable discovery descriptor, administrator metadata, and current ETag.",
     inputStructure: "detailed",
     tags: ["Operators"],
   })
-  .input(z.object({ params: operatorCandidateIdParams }).readonly())
-  .output(OperatorCandidateRecordSchema);
+  .input(z.object({ params: operatorIdParams }).readonly())
+  .output(OperatorRecordSchema);
 
-export const updateOperatorCandidateMetadataContract = conditionalMutationProcedure
+export const updateOperatorMetadataContract = conditionalMutationProcedure
   .route({
     method: "PATCH",
-    path: `${AdminApiV1BasePath}/operator-candidates/{operatorCandidateId}`,
-    operationId: "updateOperatorCandidateMetadata",
-    summary: "Update Operator candidate administrator metadata",
+    path: `${AdminApiV1BasePath}/operators/{operatorId}`,
+    operationId: "updateOperatorMetadata",
+    summary: "Update Operator administrator metadata",
     description: "Changes only the administrator-visible name and description. The validated base URL and discovery descriptor remain unchanged, and `If-Match` enforces optimistic concurrency.",
     inputStructure: "detailed",
     tags: ["Operators"],
   })
   .input(z.object({
-    params: operatorCandidateIdParams,
+    params: operatorIdParams,
     headers: ConditionalMutationHeadersSchema,
     body: UpdateCandidateMetadataRequestSchema,
   }).readonly())
-  .output(OperatorCandidateMutationResultSchema);
+  .output(OperatorMutationResultSchema);
 
 export const listDocumentTypesContract = adminProcedure
   .route({
@@ -407,7 +407,7 @@ export const createDocumentTypeContract = idempotentMutationProcedure
     path: `${AdminApiV1BasePath}/document-types`,
     operationId: "createDocumentType",
     summary: "Create a disabled document type draft",
-    description: "Creates a new disabled draft from an internal administrator name. A draft may remain incomplete; it cannot be enabled until a paired Document Contract and compatible Type Card, View, and Operator candidates are available.",
+    description: "Creates a new disabled draft from an internal administrator name. A draft may remain incomplete; it cannot be enabled until a paired Document Contract and compatible Type Card, View, and Operator resources are available.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["Document types"],
@@ -426,7 +426,7 @@ export const updateDocumentTypeContract = conditionalMutationProcedure.errors({
     path: `${AdminApiV1BasePath}/document-types/{documentType}`,
     operationId: "updateDocumentType",
     summary: "Atomically update a document type registration",
-    description: "Atomically changes the internal name, selected Type Card bundle, selected View bundle, selected Operator candidate, or enabled state. `If-Match` protects the complete registration from lost updates, and enabling validates all required selections together.",
+    description: "Atomically changes the internal name, selected Type Card bundle, selected View bundle, selected Operator, or enabled state. `If-Match` protects the complete registration from lost updates, and enabling validates all required selections together.",
     inputStructure: "detailed",
     tags: ["Document types"],
   })
@@ -590,11 +590,11 @@ export const adminApiContract = {
     create: createOperatorValidationContract,
     get: getOperatorValidationContract,
   },
-  operatorCandidates: {
-    create: createOperatorCandidateContract,
-    list: listOperatorCandidatesContract,
-    get: getOperatorCandidateContract,
-    updateMetadata: updateOperatorCandidateMetadataContract,
+  operators: {
+    create: createOperatorContract,
+    list: listOperatorsContract,
+    get: getOperatorContract,
+    updateMetadata: updateOperatorMetadataContract,
   },
   members: {
     list: listAdministratorMembersContract,

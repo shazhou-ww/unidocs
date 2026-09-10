@@ -92,8 +92,8 @@ export const DocumentTypeAuditActions = [
   "view_bundle.uploaded",
   "view_bundle.validation_failed",
   "view_bundle.metadata_changed",
-  "operator_candidate.created",
-  "operator_candidate.metadata_changed",
+  "operator.created",
+  "operator.metadata_changed",
   "document_contract.appended",
   "document_type.registered",
   "document_type.internal_name_changed",
@@ -127,7 +127,7 @@ export const AdminAuditResourceTypeSchema = z.enum([
   "document_contract",
   "type_card_bundle",
   "view_bundle",
-  "operator_candidate",
+  "operator",
   "operator_validation",
   "administrator",
 ]);
@@ -160,6 +160,8 @@ export type ViewBundleManifestV1 = z.infer<typeof ViewBundleManifestV1Schema>;
 
 export const ViewBundleRecordSchema = z.object({
   viewBundleId: IdSchema.describe("Immutable content-derived View bundle identity."),
+  bundleUrl: z.url().describe("Immutable canonical URL of the validated View bundle root.")
+    .meta({ examples: ["https://bundles.example/view-bundles/vb_7fa912d40e83c38a/"] }),
   name: NonEmptyStringSchema.describe("Mutable administrator-visible candidate name."),
   description: z.string().describe("Mutable administrator-visible candidate description."),
   manifest: ViewBundleManifestV1Schema.describe("Validated immutable View manifest."),
@@ -220,6 +222,8 @@ export type TypeCardBundleManifestV1 = z.infer<typeof TypeCardBundleManifestV1Sc
 
 export const TypeCardBundleRecordSchema = z.object({
   typeCardBundleId: IdSchema.describe("Immutable content-derived Type Card bundle identity."),
+  bundleUrl: z.url().describe("Immutable canonical URL of the validated Type Card bundle root.")
+    .meta({ examples: ["https://bundles.example/type-card-bundles/tb_9f1428cd/"] }),
   name: NonEmptyStringSchema.describe("Mutable administrator-visible candidate name."),
   description: z.string().describe("Mutable administrator-visible candidate description."),
   manifest: TypeCardBundleManifestV1Schema.describe("Validated immutable Type Card manifest."),
@@ -232,7 +236,7 @@ export type TypeCardBundleRecord = z.infer<typeof TypeCardBundleRecordSchema>;
 
 export const OperatorDescriptorSchema = z.object({
   protocol: z.literal("unidocs-operator/v1").describe("Operator discovery protocol."),
-  operatorId: NonEmptyStringSchema.describe("Stable identity declared by the Operator."),
+  declaredOperatorId: NonEmptyStringSchema.describe("Stable service identity declared by the Operator."),
   displayName: NonEmptyStringSchema.describe("Operator-provided display name."),
   supportedDocumentTypes: z.array(DocumentTypeSchema).min(1).readonly()
     .describe("Document types declared by the Operator."),
@@ -244,24 +248,28 @@ export const OperatorDescriptorSchema = z.object({
 
 export type OperatorDescriptor = z.infer<typeof OperatorDescriptorSchema>;
 
-export const OperatorCandidateRecordSchema = z.object({
-  operatorCandidateId: IdSchema.describe("Persistent Operator candidate identity."),
-  documentType: DocumentTypeSchema.describe("Document type for which this candidate was validated."),
-  name: NonEmptyStringSchema.describe("Mutable administrator-visible candidate name."),
-  description: z.string().describe("Mutable administrator-visible candidate description."),
+export const OperatorRecordSchema = z.object({
+  operatorId: IdSchema.describe("Persistent Platform Operator resource identity."),
+  documentType: DocumentTypeSchema.describe("Document type for which this Operator was validated."),
+  name: NonEmptyStringSchema.describe("Mutable administrator-visible Operator name."),
+  description: z.string().describe("Mutable administrator-visible Operator description."),
   baseUrl: z.url().describe("Validated Operator service base URL."),
   descriptor: OperatorDescriptorSchema.describe("Immutable descriptor captured during validation."),
   validatedAt: IsoDateTimeSchema.describe("Time at which discovery and probe validation succeeded."),
   etag: EtagSchema.describe("Current optimistic-concurrency token for mutable metadata."),
-}).readonly().meta({ id: "OperatorCandidateRecord" });
+}).readonly().meta({ id: "OperatorRecord" });
 
-export type OperatorCandidateRecord = z.infer<typeof OperatorCandidateRecordSchema>;
+export type OperatorRecord = z.infer<typeof OperatorRecordSchema>;
 
 export const OperatorValidationSchema = z.object({
-  validationId: IdSchema.describe("Short-lived validation identity used to create a candidate."),
+  validationId: IdSchema.describe("Short-lived validation record identity used to create an Operator."),
+  documentType: DocumentTypeSchema.describe("Document type against which the Operator was validated."),
   baseUrl: z.url().describe("Operator base URL that was validated."),
+  expectedConfigEtag: ExternalEtagSchema.nullable()
+    .describe("External Operator configuration ETag pinned by validation, or null."),
   descriptor: OperatorDescriptorSchema.describe("Descriptor captured during validation."),
-  expiresAt: IsoDateTimeSchema.describe("Time after which this validation cannot create a candidate."),
+  validatedAt: IsoDateTimeSchema.describe("Time at which validation succeeded."),
+  expiresAt: IsoDateTimeSchema.describe("Time after which this validation cannot create an Operator."),
 }).readonly().meta({ id: "OperatorValidation" });
 
 export type OperatorValidation = z.infer<typeof OperatorValidationSchema>;
@@ -338,10 +346,10 @@ export const ViewBundleMutationResultSchema = z.object({
   etag: EtagSchema.describe("Current metadata ETag."),
 }).readonly().meta({ id: "ViewBundleMutationResult" });
 
-export const OperatorCandidateMutationResultSchema = z.object({
-  operatorCandidateId: IdSchema.describe("Created or updated Operator candidate identity."),
+export const OperatorMutationResultSchema = z.object({
+  operatorId: IdSchema.describe("Created or updated Operator identity."),
   etag: EtagSchema.describe("Current metadata ETag."),
-}).readonly().meta({ id: "OperatorCandidateMutationResult" });
+}).readonly().meta({ id: "OperatorMutationResult" });
 
 export const DocumentTypeMutationResultSchema = z.object({
   documentType: DocumentTypeSchema.describe("Created or updated document type identity."),
@@ -362,8 +370,8 @@ export type TypeCardBundleMutationResult = z.infer<
   typeof TypeCardBundleMutationResultSchema
 >;
 export type ViewBundleMutationResult = z.infer<typeof ViewBundleMutationResultSchema>;
-export type OperatorCandidateMutationResult = z.infer<
-  typeof OperatorCandidateMutationResultSchema
+export type OperatorMutationResult = z.infer<
+  typeof OperatorMutationResultSchema
 >;
 export type DocumentTypeMutationResult = z.infer<typeof DocumentTypeMutationResultSchema>;
 export type DocumentContractAppendResult = z.infer<
@@ -383,8 +391,8 @@ export const DocumentTypeRegistrationSchema = z.object({
     .describe("Currently selected Type Card bundle, or null while unconfigured."),
   viewBundle: ViewBundleRecordSchema.nullable()
     .describe("Currently selected View bundle, or null while unconfigured."),
-  builtinOperator: OperatorCandidateRecordSchema.nullable()
-    .describe("Currently selected built-in Operator candidate, or null."),
+  builtinOperator: OperatorRecordSchema.nullable()
+    .describe("Currently selected built-in Operator, or null."),
   etag: EtagSchema.describe("Optimistic-concurrency token for the complete registration."),
   updatedAt: IsoDateTimeSchema.describe("Time of the latest registration change."),
 }).readonly().meta({ id: "DocumentTypeRegistration" });
@@ -426,12 +434,12 @@ export const ViewBundleListItemSchema = ViewBundleRecordSchema.unwrap().omit({
     .describe("Paired Document Contract revisions declared by the omitted manifest."),
 }).readonly().meta({ id: "ViewBundleListItem" });
 
-export const OperatorCandidateListItemSchema = OperatorCandidateRecordSchema.unwrap().omit({
+export const OperatorListItemSchema = OperatorRecordSchema.unwrap().omit({
   descriptor: true,
 }).extend({
   supportedDocumentContractIdxs: z.array(DocumentContractIdxSchema).readonly()
     .describe("Paired Document Contract revisions declared for this document type."),
-}).readonly().meta({ id: "OperatorCandidateListItem" });
+}).readonly().meta({ id: "OperatorListItem" });
 
 export const DocumentContractListItemSchema = DocumentContractRecordObjectSchema.omit({
   snapshot: true,
@@ -441,8 +449,18 @@ export const DocumentContractListItemSchema = DocumentContractRecordObjectSchema
   locationSchemaHash: NonEmptyStringSchema.describe("Digest of the omitted location schema."),
 }).readonly().meta({ id: "DocumentContractListItem" });
 
-const SelectedCandidateSummarySchema = z.object({
-  id: IdSchema,
+const SelectedTypeCardBundleSummarySchema = z.object({
+  typeCardBundleId: IdSchema,
+  name: NonEmptyStringSchema,
+}).readonly();
+
+const SelectedViewBundleSummarySchema = z.object({
+  viewBundleId: IdSchema,
+  name: NonEmptyStringSchema,
+}).readonly();
+
+const SelectedOperatorSummarySchema = z.object({
+  operatorId: IdSchema,
   name: NonEmptyStringSchema,
 }).readonly();
 
@@ -451,16 +469,16 @@ export const DocumentTypeListItemSchema = z.object({
   internalName: NonEmptyStringSchema.describe("Mutable administrator-only name."),
   enabled: z.boolean().describe("Whether users may create new documents of this type."),
   latestDocumentContractIdx: DocumentContractIdxSchema.nullable(),
-  typeCardBundle: SelectedCandidateSummarySchema.nullable(),
-  viewBundle: SelectedCandidateSummarySchema.nullable(),
-  builtinOperator: SelectedCandidateSummarySchema.nullable(),
+  typeCardBundle: SelectedTypeCardBundleSummarySchema.nullable(),
+  viewBundle: SelectedViewBundleSummarySchema.nullable(),
+  builtinOperator: SelectedOperatorSummarySchema.nullable(),
   etag: EtagSchema,
   updatedAt: IsoDateTimeSchema,
 }).readonly().meta({ id: "DocumentTypeListItem" });
 
 export type TypeCardBundleListItem = z.infer<typeof TypeCardBundleListItemSchema>;
 export type ViewBundleListItem = z.infer<typeof ViewBundleListItemSchema>;
-export type OperatorCandidateListItem = z.infer<typeof OperatorCandidateListItemSchema>;
+export type OperatorListItem = z.infer<typeof OperatorListItemSchema>;
 export type DocumentContractListItem = z.infer<typeof DocumentContractListItemSchema>;
 export type DocumentTypeListItem = z.infer<typeof DocumentTypeListItemSchema>;
 
@@ -475,8 +493,8 @@ export const ListTypeCardBundlesResponseSchema = pageSchema(TypeCardBundleListIt
   .meta({ id: "ListTypeCardBundlesResponse" });
 export const ListViewBundlesResponseSchema = pageSchema(ViewBundleListItemSchema)
   .meta({ id: "ListViewBundlesResponse" });
-export const ListOperatorCandidatesResponseSchema = pageSchema(OperatorCandidateListItemSchema)
-  .meta({ id: "ListOperatorCandidatesResponse" });
+export const ListOperatorsResponseSchema = pageSchema(OperatorListItemSchema)
+  .meta({ id: "ListOperatorsResponse" });
 export const ListDocumentTypesResponseSchema = pageSchema(DocumentTypeListItemSchema)
   .meta({ id: "ListDocumentTypesResponse" });
 export const ListDocumentContractsResponseSchema = pageSchema(DocumentContractListItemSchema)
@@ -488,7 +506,7 @@ export const ListAdminAuditEventsResponseSchema = pageSchema(AdminAuditEventSche
 
 export type ListTypeCardBundlesResponse = z.infer<typeof ListTypeCardBundlesResponseSchema>;
 export type ListViewBundlesResponse = z.infer<typeof ListViewBundlesResponseSchema>;
-export type ListOperatorCandidatesResponse = z.infer<typeof ListOperatorCandidatesResponseSchema>;
+export type ListOperatorsResponse = z.infer<typeof ListOperatorsResponseSchema>;
 export type ListDocumentTypesResponse = z.infer<typeof ListDocumentTypesResponseSchema>;
 export type ListDocumentContractsResponse = z.infer<typeof ListDocumentContractsResponseSchema>;
 export type ListAdministratorMembersResponse = z.infer<
@@ -563,14 +581,14 @@ export type CreateOperatorValidationRequest = z.infer<
   typeof CreateOperatorValidationRequestSchema
 >;
 
-export const CreateOperatorCandidateRequestSchema = z.object({
+export const CreateOperatorRequestSchema = z.object({
   validationId: IdSchema.describe("Current successful validation to persist."),
-  name: NonEmptyStringSchema.describe("Initial administrator-visible candidate name."),
-  description: z.string().describe("Initial administrator-visible candidate description."),
-}).readonly().meta({ id: "CreateOperatorCandidateRequest" });
+  name: NonEmptyStringSchema.describe("Initial administrator-visible Operator name."),
+  description: z.string().describe("Initial administrator-visible Operator description."),
+}).readonly().meta({ id: "CreateOperatorRequest" });
 
-export type CreateOperatorCandidateRequest = z.infer<
-  typeof CreateOperatorCandidateRequestSchema
+export type CreateOperatorRequest = z.infer<
+  typeof CreateOperatorRequestSchema
 >;
 
 export const CreateDocumentTypeRequestSchema = z.object({
@@ -591,8 +609,8 @@ export const UpdateDocumentTypeRequestSchema = z.object({
   internalName: NonEmptyStringSchema.optional().describe("Replacement administrator-only name."),
   typeCardBundleId: IdSchema.optional().describe("Type Card bundle to select."),
   viewBundleId: IdSchema.optional().describe("View bundle to select."),
-  builtinOperatorCandidateId: IdSchema.nullable().optional()
-    .describe("Operator candidate to select, or null to clear the selection."),
+  builtinOperatorId: IdSchema.nullable().optional()
+    .describe("Operator to select, or null to clear the selection."),
   enabled: z.boolean().optional().describe("Replacement enabled state."),
   reason: z.string().optional().describe("Administrator-provided audit reason."),
 }).refine(

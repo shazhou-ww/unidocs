@@ -313,8 +313,8 @@ describe("administrator OpenAPI", () => {
       [document.paths?.["/admin/api/v1/type-card-bundles/{typeCardBundleId}"]?.patch, "200", "typeCardBundleId"],
       [document.paths?.["/admin/api/v1/view-bundles"]?.post, "201", "viewBundleId"],
       [document.paths?.["/admin/api/v1/view-bundles/{viewBundleId}"]?.patch, "200", "viewBundleId"],
-      [document.paths?.["/admin/api/v1/operator-candidates"]?.post, "201", "operatorCandidateId"],
-      [document.paths?.["/admin/api/v1/operator-candidates/{operatorCandidateId}"]?.patch, "200", "operatorCandidateId"],
+      [document.paths?.["/admin/api/v1/operators"]?.post, "201", "operatorId"],
+      [document.paths?.["/admin/api/v1/operators/{operatorId}"]?.patch, "200", "operatorId"],
       [document.paths?.["/admin/api/v1/document-types"]?.post, "201", "documentType"],
       [document.paths?.["/admin/api/v1/document-types/{documentType}"]?.patch, "200", "documentType"],
       [document.paths?.["/admin/api/v1/document-types/{documentType}/document-contracts"]?.post, "201", "documentContractIdx"],
@@ -344,7 +344,7 @@ describe("administrator OpenAPI", () => {
       document.paths?.["/admin/api/v1/document-types"]?.get,
       document.paths?.["/admin/api/v1/type-card-bundles"]?.get,
       document.paths?.["/admin/api/v1/view-bundles"]?.get,
-      document.paths?.["/admin/api/v1/operator-candidates"]?.get,
+      document.paths?.["/admin/api/v1/operators"]?.get,
       document.paths?.["/admin/api/v1/document-types/{documentType}/document-contracts"]?.get,
     ];
 
@@ -354,13 +354,41 @@ describe("administrator OpenAPI", () => {
     }
 
     const operatorGet = document.paths?.[
-      "/admin/api/v1/operator-candidates/{operatorCandidateId}"
+      "/admin/api/v1/operators/{operatorId}"
     ]?.get;
     const memberGet = document.paths?.["/admin/api/v1/administrators/{adminId}"]?.get;
-    expect(operatorGet?.operationId).toBe("getOperatorCandidate");
+    expect(operatorGet?.operationId).toBe("getOperator");
     expect(JSON.stringify(operatorGet?.responses?.["200"])).toContain("descriptor");
     expect(memberGet?.operationId).toBe("getAdministratorMember");
     expect(JSON.stringify(memberGet?.responses?.["200"])).toContain("email");
+  });
+
+  it("stores canonical bundle URLs and immutable validation timestamps", async () => {
+    const document = await generateAdminOpenApiDocument();
+    const typeCardList = JSON.stringify(
+      document.paths?.["/admin/api/v1/type-card-bundles"]?.get?.responses?.["200"],
+    );
+    const typeCardGet = JSON.stringify(
+      document.paths?.["/admin/api/v1/type-card-bundles/{typeCardBundleId}"]?.get
+        ?.responses?.["200"],
+    );
+    const viewList = JSON.stringify(
+      document.paths?.["/admin/api/v1/view-bundles"]?.get?.responses?.["200"],
+    );
+    const validation = JSON.stringify(
+      document.paths?.["/admin/api/v1/operator-validations/{validationId}"]?.get
+        ?.responses?.["200"],
+    );
+
+    expect(typeCardList).toContain("bundleUrl");
+    expect(typeCardList).toContain("https://bundles.example/type-card-bundles/");
+    expect(typeCardGet).toContain("bundleUrl");
+    expect(viewList).toContain("bundleUrl");
+    expect(viewList).toContain("https://bundles.example/view-bundles/");
+    expect(validation).toContain("validatedAt");
+    expect(validation).toContain("expiresAt");
+    expect(validation).toContain("documentType");
+    expect(validation).toContain("expectedConfigEtag");
   });
 
   it("documents only operation-applicable errors", async () => {

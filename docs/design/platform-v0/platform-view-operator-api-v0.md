@@ -94,7 +94,7 @@ type PongIdx = number;
 type SubmissionId = string;
 type ViewBundleId = string;
 type TypeCardBundleId = string;
-type OperatorCandidateId = string;
+type OperatorId = string;
 type ValidationId = string;
 type Cursor = string;
 type IsoDateTime = string;
@@ -387,7 +387,8 @@ view-bundles/{viewBundleId}/assets/{normalizedPath}
 ready bundle 的对象不可原地覆盖。资源通过独立 bundle origin 分发：
 
 ```text
-GET https://views.example/.../{viewBundleId}/{path}
+GET https://bundles.example/type-card-bundles/{typeCardBundleId}/{path}
+GET https://bundles.example/view-bundles/{viewBundleId}/{path}
 ```
 
 响应使用不可变缓存、`nosniff`、严格 CSP 和明确 MIME。R2 bucket 不公开，只有 Platform bundle ingress 可读取。MVP 不实现 bundle GC；旧的不可变 bundle 暂时保留。
@@ -407,6 +408,7 @@ bundle 存 R2 是当前实现边界；未来 UniCAS 支持 stack 公共内容后
 ```ts
 interface ViewBundleRecord {
   readonly viewBundleId: ViewBundleId;
+  readonly bundleUrl: string;
   readonly name: string;
   readonly description: string;
   readonly manifest: ViewBundleManifestV1;
@@ -417,6 +419,7 @@ interface ViewBundleRecord {
 
 interface TypeCardBundleRecord {
   readonly typeCardBundleId: TypeCardBundleId;
+  readonly bundleUrl: string;
   readonly name: string;
   readonly description: string;
   readonly manifest: TypeCardBundleManifestV1;
@@ -427,7 +430,7 @@ interface TypeCardBundleRecord {
 
 interface OperatorDescriptor {
   readonly protocol: "unidocs-operator/v1";
-  readonly operatorId: string;
+  readonly declaredOperatorId: string;
   readonly displayName: string;
   readonly supportedDocumentTypes: readonly DocumentType[];
   readonly supportedDocumentContracts: Readonly<
@@ -435,8 +438,8 @@ interface OperatorDescriptor {
   >;
 }
 
-interface OperatorCandidateRecord {
-  readonly operatorCandidateId: OperatorCandidateId;
+interface OperatorRecord {
+  readonly operatorId: OperatorId;
   readonly documentType: DocumentType;
   /** 仅供 Admin 识别，可修改。 */
   readonly name: string;
@@ -454,7 +457,7 @@ interface DocumentTypeRegistration {
   readonly latestDocumentContract: DocumentContractRecord | null;
   readonly typeCardBundle: TypeCardBundleRecord | null;
   readonly viewBundle: ViewBundleRecord | null;
-  readonly builtinOperator: OperatorCandidateRecord | null;
+  readonly builtinOperator: OperatorRecord | null;
   readonly etag: string;
   readonly updatedAt: IsoDateTime;
 }
@@ -469,17 +472,19 @@ interface CandidateListItemBase {
 
 interface TypeCardBundleListItem extends CandidateListItemBase {
   readonly typeCardBundleId: TypeCardBundleId;
+  readonly bundleUrl: string;
   readonly documentType: DocumentType;
 }
 
 interface ViewBundleListItem extends CandidateListItemBase {
   readonly viewBundleId: ViewBundleId;
+  readonly bundleUrl: string;
   readonly documentType: DocumentType;
   readonly supportedDocumentContractIdxs: readonly DocumentContractIdx[];
 }
 
-interface OperatorCandidateListItem {
-  readonly operatorCandidateId: OperatorCandidateId;
+interface OperatorListItem {
+  readonly operatorId: OperatorId;
   readonly documentType: DocumentType;
   readonly name: string;
   readonly description: string;
@@ -503,9 +508,9 @@ interface DocumentTypeListItem {
   readonly internalName: string;
   readonly enabled: boolean;
   readonly latestDocumentContractIdx: DocumentContractIdx | null;
-  readonly typeCardBundle: { readonly id: TypeCardBundleId; readonly name: string } | null;
-  readonly viewBundle: { readonly id: ViewBundleId; readonly name: string } | null;
-  readonly builtinOperator: { readonly id: OperatorCandidateId; readonly name: string } | null;
+  readonly typeCardBundle: { readonly typeCardBundleId: TypeCardBundleId; readonly name: string } | null;
+  readonly viewBundle: { readonly viewBundleId: ViewBundleId; readonly name: string } | null;
+  readonly builtinOperator: { readonly operatorId: OperatorId; readonly name: string } | null;
   readonly etag: string;
   readonly updatedAt: IsoDateTime;
 }
@@ -616,8 +621,11 @@ interface CreateOperatorValidationRequest {
 
 interface OperatorValidation {
   readonly validationId: ValidationId;
+  readonly documentType: DocumentType;
   readonly baseUrl: string;
+  readonly expectedConfigEtag: string | null;
   readonly descriptor: OperatorDescriptor;
+  readonly validatedAt: IsoDateTime;
   readonly expiresAt: IsoDateTime;
 }
 
@@ -635,26 +643,26 @@ GET {baseUrl}/.well-known/unidocs-operator
 验证成功后创建持久候选项：
 
 ```text
-POST  /operator-candidates
-GET   /operator-candidates?documentType=&cursor=&limit=
-GET   /operator-candidates/{operatorCandidateId}
-PATCH /operator-candidates/{operatorCandidateId}
+POST  /operators
+GET   /operators?documentType=&cursor=&limit=
+GET   /operators/{operatorId}
+PATCH /operators/{operatorId}
 ```
 
 ```ts
-interface CreateOperatorCandidateRequest {
+interface CreateOperatorRequest {
   readonly validationId: ValidationId;
   readonly name: string;
   readonly description: string;
 }
 
-type OperatorCandidateMutationResponse = {
-  readonly operatorCandidateId: OperatorCandidateId;
+type OperatorMutationResponse = {
+  readonly operatorId: OperatorId;
   readonly etag: string;
 };
 ```
 
-创建时把 validation 的 `baseUrl` 与不可变 `descriptor` 固化到 `OperatorCandidateRecord`，并保存可修改的 Admin `name`/`description`。metadata PATCH 同样要求 `If-Match`。
+成功 validation 作为短期 immutable record 持久化，因为 validation GET 与后续 Operator 创建跨请求；失败只写 audit，不创建 validation row。记录过期后可以物理删除，因此不是严格 append-only 表。创建 Operator 时把 validation 的 `baseUrl`、`descriptor` 与 `validatedAt` 固化到 `OperatorRecord`，并保存可修改的 Admin `name`/`description`；Operator 不保留指向 validation row 的 FK。metadata PATCH 同样要求 `If-Match`。
 
 ### 6.5 文档类型目录
 
@@ -674,7 +682,7 @@ interface UpdateDocumentTypeRequest {
   readonly internalName?: string;
   readonly typeCardBundleId?: TypeCardBundleId;
   readonly viewBundleId?: ViewBundleId;
-  readonly builtinOperatorCandidateId?: OperatorCandidateId | null;
+  readonly builtinOperatorId?: OperatorId | null;
   readonly enabled?: boolean;
   readonly reason?: string;
 }
@@ -742,7 +750,7 @@ interface AdminAuditEvent {
     | "document_contract"
     | "type_card_bundle"
     | "view_bundle"
-    | "operator_candidate"
+    | "operator"
     | "operator_validation"
     | "administrator";
   readonly resourceId: string;
@@ -768,8 +776,8 @@ type DocumentTypeAuditAction =
   | "view_bundle.uploaded"
   | "view_bundle.validation_failed"
   | "view_bundle.metadata_changed"
-  | "operator_candidate.created"
-  | "operator_candidate.metadata_changed"
+  | "operator.created"
+  | "operator.metadata_changed"
   | "document_contract.appended"
   | "document_type.registered"
   | "document_type.internal_name_changed"
@@ -855,7 +863,7 @@ type ListVersionsResponse = Page<VersionRecord>;
 
 公共目录只返回已启用类型，因此 `typeCardBundleId`、`viewBundleId` 和非空 `availableDocumentContractIdxs` 均确定存在。该数组是当前 View、builtin Operator 与已提交 revision 的交集，不按 idx 大小隐式选择。`typeCard` 是 Platform 从当前 Type Card manifest 解析出的用户侧投影：保留 locale 文案，但把所有资源路径解析为固定 bundle origin 下的绝对 URL。Host 与 Agent 可按 idx 查询任一 paired contract，以解释和创建数据。
 
-`viewEntrypointUrl` 不作为公共类型字段；Platform 根据 `viewBundleId` 读取已验证 manifest，并由固定 bundle origin、bundle ID 和 `entrypoint` 构造入口 URL。
+数据库保存上传时确认的 immutable canonical `bundleUrl`，并校验其 stable origin、资源类型与内容 ID。bundle origin 迁移必须继续路由旧 URL 或显式迁移记录，读取端不能静默按新配置重算。`viewEntrypointUrl` 不作为独立持久字段；Platform 由 View bundle 的 `bundleUrl` 与 manifest `entrypoint` 解析。Type Card 的具体 asset URL 同理由其 `bundleUrl` 与 manifest 相对路径解析。
 
 创建文档只原子地产生名称、稳定文档身份和 `currentVersionIdx = null` 的记录，不创建 thread 或 ping。Platform 随即向 builtin operator 投递 `document.created` 事件；Agent 以 `observedCurrentVersionIdx = null`、`newSnapshot` 和空 `threadUpdates` 提交初始 snapshot 后，文档即可打开。用户确有初始化要求或附件时，在创建后通过普通 thread API 添加，不把 instructions 强制耦合进文档创建。
 
@@ -1286,8 +1294,8 @@ type PlatformErrorCode =
 | PATCH | `/admin/api/v1/view-bundles/{id}` | 修改候选包的 Admin 名称与描述 |
 | POST | `/admin/api/v1/operator-validations` | 验证 operator base URL |
 | GET | `/admin/api/v1/operator-validations/{id}` | 查询验证状态 |
-| POST/GET | `/admin/api/v1/operator-candidates` | 创建/列出 Operator 候选项 |
-| GET/PATCH | `/admin/api/v1/operator-candidates/{id}` | 读取完整候选项/修改 Admin metadata |
+| POST/GET | `/admin/api/v1/operators` | 创建/列出 Operator |
+| GET/PATCH | `/admin/api/v1/operators/{id}` | 读取完整 Operator/修改 Admin metadata |
 | GET/POST | `/admin/api/v1/administrators` | 列出/添加管理员成员 |
 | GET/DELETE | `/admin/api/v1/administrators/{adminId}` | 读取成员/按 ETag 删除非自身、非最后一名管理员 |
 | GET | `/admin/api/v1/audit-events` | 分页筛选不可变管理员审计事件 |

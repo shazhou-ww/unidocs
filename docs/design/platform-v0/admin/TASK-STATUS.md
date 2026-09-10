@@ -20,10 +20,10 @@
 ### 文档类型控制面
 
 - 新类型只用 Admin 内部名称创建，初始为 disabled 草稿。
-- 草稿允许长期缺少配置；启用前必须具备至少一个 Document Contract、当前 Type Card bundle、当前 View bundle 和当前 Operator candidate，且 View/Operator 至少共同支持一个已有 contract revision。
-- Type Card bundle 与 View bundle 内容寻址且不可变，上传后显式选择当前包。
-- Operator validation 是短期结果，可转换为持久 Operator candidate。
-- 三类候选均有独立、可修改、仅 Admin 可见的 `name`、`description` 和 `etag`；这些字段不进入不可变 manifest 或 Operator discovery descriptor。
+- 草稿允许长期缺少配置；启用前必须具备至少一个 Document Contract、当前 Type Card bundle、当前 View bundle 和当前 Operator，且 View/Operator 至少共同支持一个已有 contract revision。
+- Type Card bundle 与 View bundle 内容寻址且不可变，上传后显式选择当前包；记录保存上传时确认的 immutable canonical `bundleUrl`。
+- 成功 Operator validation 是短期 immutable record，可转换为持久 Operator；失败只写 audit。validation 过期后可物理删除，因此 validation 表不是严格 append-only。
+- Type Card bundle、View bundle 与 Operator 均有独立、可修改、仅 Admin 可见的 `name`、`description` 和 `etag`；这些字段不进入不可变 manifest 或 Operator discovery descriptor。
 
 ### Type Card bundle
 
@@ -82,7 +82,7 @@ Admin v1 的每个 operation 支持 Bearer token 与 Web UI session cookie 两�
 
 Admin API 遵循顶层 `docs/api-conventions.md` 的“完整读、瘦写”规则：持久资源 mutation 只返回资源 ID/idx 与新的 ETag/hash，不回显 manifest、schema、descriptor 或完整 registration；完整 representation 通过 GET 获取。同步 Operator validation 保留完整结果，DELETE 保持 `204`。
 
-所有 collection GET 使用轻量 summary DTO；完整 manifest、Operator descriptor、paired schemas 和 registration 只由 item GET 返回。Operator candidate 与 administrator member 已补充 canonical item GET。每个 operation 只声明实际可能出现的领域错误，不再把 bundle、precondition 等错误复制到无关 GET。
+所有 collection GET 使用轻量 summary DTO；完整 manifest、Operator descriptor、paired schemas 和 registration 只由 item GET 返回。Operator 与 administrator member 已补充 canonical item GET。每个 operation 只声明实际可能出现的领域错误，不再把 bundle、precondition 等错误复制到无关 GET。
 
 Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-256 entity-tag，格式为 `"sha256-<base64url digest>"`；hash 输入排除 `etag` 自身，但包含全部并发控制字段。客户端必须原样回传，不能解析或自行重算。
 
@@ -94,7 +94,7 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 - `pnpm typecheck`：41 个 workspace package 通过。
 - `pnpm check:cas-contract-docs`：66 份当前契约文档通过。
-- `pnpm --filter @unidocs/protocol-admin test`：17 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
+- `pnpm --filter @unidocs/protocol-admin test`：18 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
 - `pnpm --filter @unidocs/protocol-admin typecheck`：源码、测试与文档生成脚本通过。
 - `node --check docs/design/platform-v0/admin/unidocs-admin-mock.js`：通过。
 - `git diff --check`：通过。
