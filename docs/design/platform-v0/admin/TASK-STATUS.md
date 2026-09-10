@@ -107,10 +107,20 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 - `git diff --check`：通过。
 - 浏览器验证：enabled 类型可追加配对 revision 2；表单在同一 JSON 中提交 snapshot schema 与 location schema；旧 revision 保持可用于新数据；无删除或“设为当前”操作。
 
+## Portal 实施进度（2026-09-10）
+
+认证纵向闭环已落地：首份 D1 migration、真实 auth repository、BFF login/callback/session/logout、Worker 入口和生成 Env。12 个真实 D1/BFF 测试通过，包含 workerd 内跨请求和 Worker 重建；Cloudflare 包 107 个测试、类型检查及 Wrangler dry-run 通过。重新登录采用单管理员单活跃 session，原 session 原子失效。未配置生产 D1/secret/bootstrap，尚未部署；需要真人验证时会提供受控入口。
+
+本轮补充 Operator：第一方 Service Binding 受控传输、全程 deadline、响应/请求上限与凭据隔离（41 个测试），以及 identity/ETag/revision discovery 业务校验（21 个测试）。双 Worker workerd 测试证明请求目标来自 binding 而非 URL DNS。外部出口、签名 probe 和 validation 持久化仍未实现；没有把传输成功当作验证成功。当前业务核 134、Cloudflare 包 106 个测试通过。
+
+已开始 [Cloudflare 实现计划](IMPLEMENTATION-PLAN.md) 的 Phase 0：新增 `@unidocs/portal-service` 和 `@unidocs/cloudflare-portal`，实现 canonical JSON/hash/ETag、有界 ZIP archive 安全检查、Type Card/View manifest/引用/内容身份、Google 管理员身份策略、Bearer/session/CSRF 鉴权及 PKCE/nonce callback。Google 配置复用现有 Gateway client，生产 origin 为 `https://unidocs.shazhou.work`，用户已确认 `https://unidocs.shazhou.work/admin/auth/callback` 配置完成。业务核 113 个、Cloudflare 鉴权/配置/OIDC 65 个、D1 原子写 6 个、管理员/session D1 12 个及跨运行时 5 个测试通过。
+
+尚未完成 Phase 0：现有 Google client 的 `auth_time`/重新认证仍需真人登录验证；bundle 还需实际资源内容/MIME 安全检查与存储流程，Operator 网络安全门禁仍待验证。认证持久化已接通，但 26 个 Admin operation 与真实 WebUI 尚未实现；旧 `/admin/` 入口尚未切换。详细证据、命令及剩余项见实现计划的“当前进展与决策”。
+
 ## 当前不做
 
 - 不实现真实 Admin WebUI；`unidocs-admin-mock.html` 只是页面内存 mock。
-- 不实现 Platform 服务、数据库表、R2 repository 或 Operator 服务。
+- 仅认证部分先行落 migration；不提前冻结 bundle/Operator 表，不部署 R2 repository 或 Operator 服务。
 - 不设计旧系统兼容或迁移。
 - 不把目标设计描述为已部署能力。
 
@@ -118,7 +128,7 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 按 [Cloudflare 实现计划](IMPLEMENTATION-PLAN.md) 推进 Admin Portal。本期只实现 `admin-portal-client`、`admin-portal-webui`、`portal-service` 的 Admin 业务核与 `cloudflare-portal`；Azure、Tenant Portal、Agent/document 数据面和 thumbnail service 暂不实施。
 
-第一步先完成 canonical JSON/hash、D1 原子写、Admin bootstrap/auth、bundle 限制和 Operator SSRF 六项技术决策与可执行 spike，再冻结首份 D1 migration。
+按已确认的认证先行顺序，接下来准备受控真实 Google 登录验收和文档类型最小业务闭环；bundle/Operator 的剩余门禁继续独立推进。
 
 ## 相关提交
 
