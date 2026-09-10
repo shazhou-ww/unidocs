@@ -250,11 +250,11 @@ unidocs.psd.layer-region/v2
 
 ### 8.2 基数与解释职责
 
-- 一个 ping 最多携带一个 location；
+- 一个 ping 可以携带零到多个 locations，用一条意见关联同一版本中的多个位置；
 - 一个 pong 可以关联零到多个 result locations；
-- ping location 表示意见上下文；
+- ping locations 共同表示该意见的上下文；
 - pong locations 表示该批意见在结果中的零个、一个或多个落点；
-- location 自身不携带版本；ping location 相对于该 ping 的 base version，pong result locations 相对于同一 submission 创建的新版本；
+- location 自身不携带版本；同一 ping 的所有 locations 均相对于该 ping 的同一个 base version，pong result locations 相对于同一 submission 创建的新版本；
 - 非空 pong result locations 必须随新版本提交，纯 pong 的 result locations 为空。
 
 平台只负责保存封套，并校验 `locationType` 格式、payload 是合法 JSON 以及大小限制。对应文档类型的 View 与 Agent hook 负责：
@@ -351,7 +351,7 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 用户感知的是即时编辑；平台与 Agent 接收的仍是：
 
 - 确切 base version；
-- 文档类型专用 location；
+- 零到多个文档类型专用 locations；
 - 修改意图或候选结果；
 - 可选附件。
 
@@ -379,8 +379,8 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 
 新增文档类型只需要两端能力：
 
-1. **面向人的 View**：渲染版本、采集类型专用 location、提交 ping，并显示 pong 和结果位置；
-2. **面向 Agent 的 hook 能力**：理解 snapshot、location 和编辑意图，生成完整新 snapshot。
+1. **面向人的 View**：渲染版本、采集类型专用 locations、提交 ping，并显示 pong 和结果位置；
+2. **面向 Agent 的 hook 能力**：理解 snapshot、locations 和编辑意图，生成完整新 snapshot。
 
 存储、版本、thread、水位、通知和并发提交协议保持不变。
 
@@ -416,7 +416,7 @@ sequenceDiagram
 3. 被拒绝的提交不产生版本、pong 或部分关系。
 4. 每个 thread 的 pong 水位单调前进，且不能跨过未响应 ping。
 5. 一个 pong 只属于一个 thread，但可累计回应该 thread 内连续的多条 ping。
-6. 一个 ping 最多有一个 location；一个 pong 可有零到多个 result locations。
+6. 一个 ping 可有零到多个 locations，且均相对于该 ping 的同一个 base version；一个 pong 可有零到多个 result locations。
 7. Agent 可以只提交 pong，也可以只处理 open comments 的任意子集。
 8. operator 注册只影响通知路由，不授予排他写入权。
 9. current pointer 移动必须审计，且不会隐式删除任何版本。
