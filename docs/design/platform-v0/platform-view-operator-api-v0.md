@@ -80,8 +80,10 @@ type DocumentType = string;
 /** 从 0 开始、文档类型内单调递增的 snapshot/location 配对 contract revision。 */
 type DocumentContractIdx = number;
 type DocumentContentFormatVersion = 1;
-const DocumentSnapshotContentType = "application/vnd.unidocs.document-snapshot+cbor;version=1";
-const DocumentLocationContentType = "application/vnd.unidocs.document-location+json;version=1";
+type DocumentSnapshotContentType<T extends DocumentType = DocumentType> =
+  `application/vnd.unidocs.${T}.snapshot+cbor;version=1`;
+type DocumentLocationContentType<T extends DocumentType = DocumentType> =
+  `application/vnd.unidocs.${T}.location+json;version=1`;
 /** 从 0 开始、文档内单调递增的版本 record ID。 */
 type VersionIdx = number;
 type ThreadId = string;
@@ -148,16 +150,17 @@ type SValueSchema = Readonly<Record<string, JsonValue>> & {
 ## 3. 文档与协作资源
 
 ```ts
-interface DocumentContractRecord {
+interface DocumentContractRecord<T extends DocumentType = DocumentType> {
+  readonly documentType: T;
   readonly documentContractIdx: DocumentContractIdx;
   readonly formatVersion: DocumentContentFormatVersion;
   readonly snapshot: {
-    readonly contentType: typeof DocumentSnapshotContentType;
+    readonly contentType: DocumentSnapshotContentType<T>;
     readonly schema: SValueSchema;
     readonly schemaHash: string;
   };
   readonly location: {
-    readonly contentType: typeof DocumentLocationContentType;
+    readonly contentType: DocumentLocationContentType<T>;
     readonly schema: SValueSchema;
     readonly schemaHash: string;
   };
@@ -214,9 +217,9 @@ interface ThreadDetail {
 
 `DocumentContractIdx`、`VersionIdx`、`PingIdx` 和 `PongIdx` 都是从 0 开始的单调递增安全整数，首条 record 分配 0，之后分配当前最大值加 1。`VersionIdx` 同时表达版本 record 身份和出生顺序；`PingIdx` 和 `PongIdx` 分别在各 thread 的序列内分配。`null` 表示尚无 record 或尚未确认，不能用 0 充当 sentinel。所有整数 record 身份使用 `Idx`，字符串身份使用 `Id`，内容哈希使用 `Hash`。
 
-每个文档类型的 `DocumentContractIdx` 从 0 开始单调递增。一个 revision 是同时包含 snapshot schema 与 location schema 的不可变 JSON，不能只更新其中一项。revision 只能追加，不能修改或删除；最大 idx 只表示最后提交，不是 current，也不是唯一可写 revision。Platform 对两个 schema 分别做 canonical JSON digest，并记录完整 contract digest。
+每个文档类型的 `DocumentContractIdx` 从 0 开始单调递增。一个 revision 是同时包含 snapshot schema 与 location schema 的不可变 JSON，不能只更新其中一项。revision 只能追加，不能修改或删除；最大 idx 只表示最后提交，不是 current，也不是唯一可写 revision。Platform 对两个 schema 分别做 canonical JSON digest；完整 contract digest 覆盖 `documentType`、`formatVersion` 与两个 schema。
 
-`formatVersion` 描述 snapshot/location 的线编码，不是 schema revision。v1 固定派生出 `application/vnd.unidocs.document-snapshot+cbor;version=1` 与 `application/vnd.unidocs.document-location+json;version=1`；客户端不提交自由 content type。以后只有线编码本身发生不兼容变化时才增加 format version，普通 schema 演进只增加 `DocumentContractIdx`。
+`documentType` 必须匹配 MIME-safe slug `[a-z][a-z0-9-]{0,63}`。`formatVersion` 描述 snapshot/location 的线编码，不是 schema revision。v1 从 `(documentType, formatVersion)` 派生两条媒体类型；例如 PSD 使用 `application/vnd.unidocs.psd.snapshot+cbor;version=1` 与 `application/vnd.unidocs.psd.location+json;version=1`。客户端不提交自由 content type。以后只有线编码本身发生不兼容变化时才增加 format version，普通 schema 演进只增加 `DocumentContractIdx`。
 
 location content type 描述 location 对象的规范 JSON 表示；当前它通常嵌在 ping/pong JSON body 中，因此不会成为该 HTTP 请求的顶层 `Content-Type` header，但仍作为 contract record 的明确格式标识。
 

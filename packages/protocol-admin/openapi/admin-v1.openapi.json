@@ -133,7 +133,7 @@
                         "properties": {
                           "documentType": {
                             "type": "string",
-                            "minLength": 1,
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
                             "description": "Stable public document type identifier."
                           },
                           "internalName": {
@@ -495,7 +495,7 @@
                   "properties": {
                     "documentType": {
                       "type": "string",
-                      "minLength": 1,
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$",
                       "description": "Created or updated document type identity."
                     },
                     "etag": {
@@ -733,7 +733,8 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
+              "description": "MIME-safe document type identifier."
             }
           }
         ],
@@ -747,7 +748,7 @@
                   "properties": {
                     "documentType": {
                       "type": "string",
-                      "minLength": 1,
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$",
                       "description": "Stable public document type identifier."
                     },
                     "internalName": {
@@ -764,6 +765,11 @@
                         {
                           "type": "object",
                           "properties": {
+                            "documentType": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                              "description": "MIME-safe document type identifier."
+                            },
                             "documentContractIdx": {
                               "type": "integer",
                               "minimum": 0,
@@ -778,8 +784,12 @@
                               "type": "object",
                               "properties": {
                                 "contentType": {
-                                  "const": "application/vnd.unidocs.document-snapshot+cbor;version=1",
-                                  "description": "Snapshot media type derived from formatVersion."
+                                  "type": "string",
+                                  "pattern": "^application\\/vnd\\.unidocs\\.[a-z][a-z0-9-]{0,63}\\.snapshot\\+cbor;version=1$",
+                                  "description": "Snapshot media type derived from documentType and formatVersion.",
+                                  "examples": [
+                                    "application/vnd.unidocs.psd.snapshot+cbor;version=1"
+                                  ]
                                 },
                                 "schema": {
                                   "type": "object",
@@ -918,8 +928,12 @@
                               "type": "object",
                               "properties": {
                                 "contentType": {
-                                  "const": "application/vnd.unidocs.document-location+json;version=1",
-                                  "description": "Location media type derived from formatVersion."
+                                  "type": "string",
+                                  "pattern": "^application\\/vnd\\.unidocs\\.[a-z][a-z0-9-]{0,63}\\.location\\+json;version=1$",
+                                  "description": "Location media type derived from documentType and formatVersion.",
+                                  "examples": [
+                                    "application/vnd.unidocs.psd.location+json;version=1"
+                                  ]
                                 },
                                 "schema": {
                                   "type": "object",
@@ -1066,6 +1080,7 @@
                             }
                           },
                           "required": [
+                            "documentType",
                             "documentContractIdx",
                             "formatVersion",
                             "snapshot",
@@ -1109,7 +1124,7 @@
                                 },
                                 "documentType": {
                                   "type": "string",
-                                  "minLength": 1,
+                                  "pattern": "^[a-z][a-z0-9-]{0,63}$",
                                   "description": "Document type presented by this card."
                                 },
                                 "locales": {
@@ -1296,7 +1311,7 @@
                                 },
                                 "documentType": {
                                   "type": "string",
-                                  "minLength": 1,
+                                  "pattern": "^[a-z][a-z0-9-]{0,63}$",
                                   "description": "Document type implemented by this View."
                                 },
                                 "entrypoint": {
@@ -1374,7 +1389,7 @@
                             },
                             "documentType": {
                               "type": "string",
-                              "minLength": 1,
+                              "pattern": "^[a-z][a-z0-9-]{0,63}$",
                               "description": "Document type for which this candidate was validated."
                             },
                             "name": {
@@ -1413,7 +1428,8 @@
                                   "minItems": 1,
                                   "items": {
                                     "type": "string",
-                                    "minLength": 1
+                                    "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                                    "description": "MIME-safe document type identifier."
                                   },
                                   "readOnly": true,
                                   "description": "Document types declared by the Operator."
@@ -1422,7 +1438,8 @@
                                   "type": "object",
                                   "propertyNames": {
                                     "type": "string",
-                                    "minLength": 1
+                                    "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                                    "description": "MIME-safe document type identifier."
                                   },
                                   "additionalProperties": {
                                     "type": "array",
@@ -1715,7 +1732,8 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
+              "description": "MIME-safe document type identifier."
             }
           },
           {
@@ -1810,7 +1828,7 @@
                   "properties": {
                     "documentType": {
                       "type": "string",
-                      "minLength": 1,
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$",
                       "description": "Created or updated document type identity."
                     },
                     "etag": {
@@ -2163,7 +2181,8 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
+              "description": "MIME-safe document type identifier."
             }
           },
           {
@@ -2203,6 +2222,11 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "documentType": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                            "description": "MIME-safe document type identifier."
+                          },
                           "documentContractIdx": {
                             "type": "integer",
                             "minimum": 0,
@@ -2235,6 +2259,7 @@
                           }
                         },
                         "required": [
+                          "documentType",
                           "documentContractIdx",
                           "formatVersion",
                           "contractHash",
@@ -2473,7 +2498,8 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
+              "description": "MIME-safe document type identifier."
             }
           },
           {
@@ -3035,7 +3061,8 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
+              "description": "MIME-safe document type identifier."
             }
           },
           {
@@ -3057,6 +3084,11 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "documentType": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                      "description": "MIME-safe document type identifier."
+                    },
                     "documentContractIdx": {
                       "type": "integer",
                       "minimum": 0,
@@ -3071,8 +3103,12 @@
                       "type": "object",
                       "properties": {
                         "contentType": {
-                          "const": "application/vnd.unidocs.document-snapshot+cbor;version=1",
-                          "description": "Snapshot media type derived from formatVersion."
+                          "type": "string",
+                          "pattern": "^application\\/vnd\\.unidocs\\.[a-z][a-z0-9-]{0,63}\\.snapshot\\+cbor;version=1$",
+                          "description": "Snapshot media type derived from documentType and formatVersion.",
+                          "examples": [
+                            "application/vnd.unidocs.psd.snapshot+cbor;version=1"
+                          ]
                         },
                         "schema": {
                           "type": "object",
@@ -3211,8 +3247,12 @@
                       "type": "object",
                       "properties": {
                         "contentType": {
-                          "const": "application/vnd.unidocs.document-location+json;version=1",
-                          "description": "Location media type derived from formatVersion."
+                          "type": "string",
+                          "pattern": "^application\\/vnd\\.unidocs\\.[a-z][a-z0-9-]{0,63}\\.location\\+json;version=1$",
+                          "description": "Location media type derived from documentType and formatVersion.",
+                          "examples": [
+                            "application/vnd.unidocs.psd.location+json;version=1"
+                          ]
                         },
                         "schema": {
                           "type": "object",
@@ -3359,6 +3399,7 @@
                     }
                   },
                   "required": [
+                    "documentType",
                     "documentContractIdx",
                     "formatVersion",
                     "snapshot",
@@ -3978,7 +4019,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
               "description": "Document type declared by candidate manifests."
             },
             "allowEmptyValue": true,
@@ -4033,7 +4074,7 @@
                           },
                           "documentType": {
                             "type": "string",
-                            "minLength": 1,
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
                             "description": "Document type declared by the omitted manifest."
                           }
                         },
@@ -4276,7 +4317,7 @@
                         },
                         "documentType": {
                           "type": "string",
-                          "minLength": 1,
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$",
                           "description": "Document type presented by this card."
                         },
                         "locales": {
@@ -5462,7 +5503,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
               "description": "Document type declared by candidate manifests."
             },
             "allowEmptyValue": true,
@@ -5517,7 +5558,7 @@
                           },
                           "documentType": {
                             "type": "string",
-                            "minLength": 1,
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
                             "description": "Document type declared by the omitted manifest."
                           },
                           "supportedDocumentContractIdxs": {
@@ -5771,7 +5812,7 @@
                         },
                         "documentType": {
                           "type": "string",
-                          "minLength": 1,
+                          "pattern": "^[a-z][a-z0-9-]{0,63}$",
                           "description": "Document type implemented by this View."
                         },
                         "entrypoint": {
@@ -6494,7 +6535,7 @@
                   },
                   "expectedDocumentType": {
                     "type": "string",
-                    "minLength": 1,
+                    "pattern": "^[a-z][a-z0-9-]{0,63}$",
                     "description": "Document type the Operator must declare support for."
                   },
                   "expectedConfigEtag": {
@@ -6564,7 +6605,8 @@
                           "minItems": 1,
                           "items": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                            "description": "MIME-safe document type identifier."
                           },
                           "readOnly": true,
                           "description": "Document types declared by the Operator."
@@ -6573,7 +6615,8 @@
                           "type": "object",
                           "propertyNames": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                            "description": "MIME-safe document type identifier."
                           },
                           "additionalProperties": {
                             "type": "array",
@@ -6876,7 +6919,8 @@
                           "minItems": 1,
                           "items": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                            "description": "MIME-safe document type identifier."
                           },
                           "readOnly": true,
                           "description": "Document types declared by the Operator."
@@ -6885,7 +6929,8 @@
                           "type": "object",
                           "propertyNames": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                            "description": "MIME-safe document type identifier."
                           },
                           "additionalProperties": {
                             "type": "array",
@@ -7454,7 +7499,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
               "description": "Document type declared by candidate manifests."
             },
             "allowEmptyValue": true,
@@ -7481,7 +7526,7 @@
                           },
                           "documentType": {
                             "type": "string",
-                            "minLength": 1,
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
                             "description": "Document type for which this candidate was validated."
                           },
                           "name": {
@@ -7746,7 +7791,7 @@
                     },
                     "documentType": {
                       "type": "string",
-                      "minLength": 1,
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$",
                       "description": "Document type for which this candidate was validated."
                     },
                     "name": {
@@ -7785,7 +7830,8 @@
                           "minItems": 1,
                           "items": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                            "description": "MIME-safe document type identifier."
                           },
                           "readOnly": true,
                           "description": "Document types declared by the Operator."
@@ -7794,7 +7840,8 @@
                           "type": "object",
                           "propertyNames": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                            "description": "MIME-safe document type identifier."
                           },
                           "additionalProperties": {
                             "type": "array",
@@ -9774,7 +9821,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9-]{0,63}$",
               "description": "Restrict events related to one document type."
             },
             "allowEmptyValue": true,
@@ -9876,7 +9923,8 @@
                             "anyOf": [
                               {
                                 "type": "string",
-                                "minLength": 1
+                                "pattern": "^[a-z][a-z0-9-]{0,63}$",
+                                "description": "MIME-safe document type identifier."
                               },
                               {
                                 "type": "null"

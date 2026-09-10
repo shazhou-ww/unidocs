@@ -3,10 +3,12 @@
  */
 export {
 	DocumentContentFormatVersion,
-	DocumentLocationContentType,
-	DocumentSnapshotContentType,
+	DocumentTypePattern,
 	SValueContentType,
+	documentLocationContentType,
+	documentSnapshotContentType,
 } from "@unidocs/protocol";
+export type { DocumentLocationContentType, DocumentSnapshotContentType } from "@unidocs/protocol";
 export type { JsonPrimitive, JsonValue, SBlob, SValue, SValueSchema } from "@unidocs/protocol";
 export type * from "./agent.js";
 export type * from "./common.js";

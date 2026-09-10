@@ -37,3 +37,5 @@ All wire fields named `*Idx` are zero-based, monotonically increasing safe integ
 ## Format versions and schema revisions
 
 A format version identifies a wire encoding. A contract index identifies a schema revision. Do not derive one from the other or increment the format version for ordinary schema evolution.
+
+Document snapshot and location media types also encode the MIME-safe document type: `application/vnd.unidocs.<documentType>.snapshot+cbor;version=<formatVersion>` and `application/vnd.unidocs.<documentType>.location+json;version=<formatVersion>`. Document types therefore match `[a-z][a-z0-9-]{0,63}`. The server derives both media types from the URL/document record and format version; clients do not submit free-form values.

@@ -9,6 +9,7 @@
 - [Tenant TODO](tenant/TODO.md)：面向最终用户的 tenant 体验与 API 后续设计入口。
 - [人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)：评论驱动协作、版本双图、ping/pong 水位和原子 submission 的产品与一致性模型。
 - [Platform、View 与 Operator API v0](platform-view-operator-api-v0.md)：Platform、View bundle、Operator Agent、Admin、Host RPC 和 Agent API 的统一目标契约。
+- [Platform v0 ER Model](platform-er-model-v0.md)：控制面、文档协作、审计、幂等、submission 与 outbox 的逻辑实体关系和事务约束。
 
 可由 TypeScript 检查的公共、Agent 与 Operator 线契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin`](../../../packages/protocol-admin/src/index.ts)。SValue JSON Schema dialect 位于 [`@unidocs/protocol`](../../../packages/protocol/src/types.ts)。
 

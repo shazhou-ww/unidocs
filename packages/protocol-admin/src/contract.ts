@@ -15,6 +15,7 @@ import {
     DocumentContractRecordSchema,
     DocumentTypeAuditActions,
     DocumentTypeMutationResultSchema,
+    DocumentTypeSchema,
   CreateOperatorCandidateRequestSchema,
   CreateOperatorValidationRequestSchema,
   DocumentTypeRegistrationSchema,
@@ -152,9 +153,9 @@ const typeCardBundleIdParams = z.object({ typeCardBundleId: IdSchema }).readonly
 const viewBundleIdParams = z.object({ viewBundleId: IdSchema }).readonly();
 const operatorValidationIdParams = z.object({ validationId: IdSchema }).readonly();
 const operatorCandidateIdParams = z.object({ operatorCandidateId: IdSchema }).readonly();
-const documentTypeParams = z.object({ documentType: IdSchema }).readonly();
+const documentTypeParams = z.object({ documentType: DocumentTypeSchema }).readonly();
 const documentContractParams = z.object({
-  documentType: IdSchema,
+  documentType: DocumentTypeSchema,
   documentContractIdx: DocumentContractIdxSchema,
 }).readonly();
 const administratorMemberParams = z.object({

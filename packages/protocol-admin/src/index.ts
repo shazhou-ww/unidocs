@@ -3,9 +3,11 @@
  */
 export {
   DocumentContentFormatVersion,
-  DocumentLocationContentType,
-  DocumentSnapshotContentType,
+  DocumentTypePattern,
+  documentLocationContentType,
+  documentSnapshotContentType,
 } from "@unidocs/protocol";
+export type { DocumentLocationContentType, DocumentSnapshotContentType } from "@unidocs/protocol";
 export {
   AdminApiErrorMap,
   AdminApiV1BasePath,
@@ -40,6 +42,7 @@ export {
   DocumentTypeListItemSchema,
   DocumentTypeMutationResultSchema,
   DocumentTypeRegistrationSchema,
+  DocumentTypeSchema,
   EtagSchema,
   ExternalEtagSchema,
   ListBundlesQuerySchema,

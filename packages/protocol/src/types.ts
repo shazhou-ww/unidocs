@@ -42,8 +42,25 @@ export type SValueSchema = Readonly<Record<string, JsonValue>> & {
 export const sBlobSignature: unique symbol = Symbol("unidocs.sblob");
 export const SValueContentType = "application/vnd.unidocs.svalue+cbor;version=1";
 export const DocumentContentFormatVersion = 1;
-export const DocumentSnapshotContentType = "application/vnd.unidocs.document-snapshot+cbor;version=1";
-export const DocumentLocationContentType = "application/vnd.unidocs.document-location+json;version=1";
+export const DocumentTypePattern = /^[a-z][a-z0-9-]{0,63}$/;
+export type DocumentSnapshotContentType<TDocumentType extends string = string> =
+  `application/vnd.unidocs.${TDocumentType}.snapshot+cbor;version=1`;
+export type DocumentLocationContentType<TDocumentType extends string = string> =
+  `application/vnd.unidocs.${TDocumentType}.location+json;version=1`;
+
+export function documentSnapshotContentType<TDocumentType extends string>(
+  documentType: TDocumentType,
+): DocumentSnapshotContentType<TDocumentType> {
+  if (!DocumentTypePattern.test(documentType)) throw new RangeError("Invalid document type");
+  return `application/vnd.unidocs.${documentType}.snapshot+cbor;version=1`;
+}
+
+export function documentLocationContentType<TDocumentType extends string>(
+  documentType: TDocumentType,
+): DocumentLocationContentType<TDocumentType> {
+  if (!DocumentTypePattern.test(documentType)) throw new RangeError("Invalid document type");
+  return `application/vnd.unidocs.${documentType}.location+json;version=1`;
+}
 
 export interface SBlob {
   readonly [sBlobSignature]: true;

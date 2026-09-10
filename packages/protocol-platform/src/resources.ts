@@ -23,17 +23,18 @@ import type {
   VersionIdx,
 } from "./common.js";
 
-export interface DocumentContractRecord {
+export interface DocumentContractRecord<TDocumentType extends DocumentType = DocumentType> {
+  readonly documentType: TDocumentType;
   readonly documentContractIdx: DocumentContractIdx;
   readonly formatVersion: typeof DocumentContentFormatVersion;
   readonly snapshot: {
-    readonly contentType: typeof DocumentSnapshotContentType;
+    readonly contentType: DocumentSnapshotContentType<TDocumentType>;
     readonly schema: SValueSchema;
     readonly schemaHash: string;
   };
   /** Validates the locationType and payload projection of DocumentLocation. */
   readonly location: {
-    readonly contentType: typeof DocumentLocationContentType;
+    readonly contentType: DocumentLocationContentType<TDocumentType>;
     readonly schema: SValueSchema;
     readonly schemaHash: string;
   };

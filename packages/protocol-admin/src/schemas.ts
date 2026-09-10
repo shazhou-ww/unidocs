@@ -1,15 +1,18 @@
 import { JSON_SCHEMA_INPUT_REGISTRY } from "@orpc/zod/zod4";
 import {
   DocumentContentFormatVersion,
-  DocumentLocationContentType,
-  DocumentSnapshotContentType,
+  DocumentTypePattern,
   SValueSchemaDialect,
+  documentLocationContentType,
+  documentSnapshotContentType,
   type JsonValue,
 } from "@unidocs/protocol";
 import { z } from "zod";
 
 export const NonEmptyStringSchema = z.string().min(1);
 export const IdSchema = NonEmptyStringSchema;
+export const DocumentTypeSchema = z.string().regex(DocumentTypePattern)
+  .describe("MIME-safe document type identifier.");
 export const EtagSchema = z.string()
   .regex(/^"sha256-[A-Za-z0-9_-]{43}"$/)
   .describe("Strong Platform ETag containing the base64url SHA-256 digest of the canonical resource representation, including the HTTP double quotes. Clients must not parse it.")
@@ -135,7 +138,7 @@ export const AdminAuditEventSchema = z.object({
   action: AdminAuditActionSchema.describe("Stable machine-readable audit action."),
   resourceType: AdminAuditResourceTypeSchema.describe("Kind of resource directly affected."),
   resourceId: IdSchema.describe("Stable identity of the resource directly affected."),
-  documentType: IdSchema.nullable()
+  documentType: DocumentTypeSchema.nullable()
     .describe("Related document type, or null for administrator-wide events."),
   occurredAt: IsoDateTimeSchema.describe("Time at which the operation committed or failed."),
   requestId: IdSchema.describe("Request correlation identity."),
@@ -147,7 +150,7 @@ export type AdminAuditEvent = z.infer<typeof AdminAuditEventSchema>;
 
 export const ViewBundleManifestV1Schema = z.object({
   protocol: z.literal("unidocs-view-bundle/v1").describe("View bundle manifest protocol."),
-  documentType: NonEmptyStringSchema.describe("Document type implemented by this View."),
+  documentType: DocumentTypeSchema.describe("Document type implemented by this View."),
   entrypoint: NonEmptyStringSchema.describe("Normalized bundle-relative HTML entrypoint."),
   supportedDocumentContractIdxs: z.array(DocumentContractIdxSchema).min(1).readonly()
     .describe("Paired Document Contract revisions this View can render, edit, and locate."),
@@ -204,7 +207,7 @@ export type TypeCardIconV1 = z.infer<typeof TypeCardIconV1Schema>;
 
 export const TypeCardBundleManifestV1Schema = z.object({
   protocol: z.literal("unidocs-type-card/v1").describe("Type Card manifest protocol."),
-  documentType: NonEmptyStringSchema.describe("Document type presented by this card."),
+  documentType: DocumentTypeSchema.describe("Document type presented by this card."),
   locales: z.record(NonEmptyStringSchema, TypeCardLocaleV1Schema).refine(
     (locales) => locales.en !== undefined,
     { message: "Type Card locales must include en" },
@@ -231,10 +234,10 @@ export const OperatorDescriptorSchema = z.object({
   protocol: z.literal("unidocs-operator/v1").describe("Operator discovery protocol."),
   operatorId: NonEmptyStringSchema.describe("Stable identity declared by the Operator."),
   displayName: NonEmptyStringSchema.describe("Operator-provided display name."),
-  supportedDocumentTypes: z.array(NonEmptyStringSchema).min(1).readonly()
+  supportedDocumentTypes: z.array(DocumentTypeSchema).min(1).readonly()
     .describe("Document types declared by the Operator."),
   supportedDocumentContracts: z.record(
-    NonEmptyStringSchema,
+    DocumentTypeSchema,
     z.array(DocumentContractIdxSchema).min(1).readonly(),
   ).describe("Supported paired Document Contract revisions keyed by document type."),
 }).readonly().meta({ id: "OperatorDescriptor" });
@@ -243,7 +246,7 @@ export type OperatorDescriptor = z.infer<typeof OperatorDescriptorSchema>;
 
 export const OperatorCandidateRecordSchema = z.object({
   operatorCandidateId: IdSchema.describe("Persistent Operator candidate identity."),
-  documentType: NonEmptyStringSchema.describe("Document type for which this candidate was validated."),
+  documentType: DocumentTypeSchema.describe("Document type for which this candidate was validated."),
   name: NonEmptyStringSchema.describe("Mutable administrator-visible candidate name."),
   description: z.string().describe("Mutable administrator-visible candidate description."),
   baseUrl: z.url().describe("Validated Operator service base URL."),
@@ -264,14 +267,18 @@ export const OperatorValidationSchema = z.object({
 export type OperatorValidation = z.infer<typeof OperatorValidationSchema>;
 
 const DocumentContractSnapshotSchema = z.object({
-  contentType: z.literal(DocumentSnapshotContentType)
-    .describe("Snapshot media type derived from formatVersion."),
+  contentType: z.string()
+    .regex(/^application\/vnd\.unidocs\.[a-z][a-z0-9-]{0,63}\.snapshot\+cbor;version=1$/)
+    .describe("Snapshot media type derived from documentType and formatVersion.")
+    .meta({ examples: [documentSnapshotContentType("psd")] }),
   schema: SValueSchemaSchema.describe("SValue schema for snapshots."),
 }).readonly();
 
 const DocumentContractLocationSchema = z.object({
-  contentType: z.literal(DocumentLocationContentType)
-    .describe("Location media type derived from formatVersion."),
+  contentType: z.string()
+    .regex(/^application\/vnd\.unidocs\.[a-z][a-z0-9-]{0,63}\.location\+json;version=1$/)
+    .describe("Location media type derived from documentType and formatVersion.")
+    .meta({ examples: [documentLocationContentType("psd")] }),
   schema: SValueSchemaSchema
     .describe("Schema for the locationType and payload projection of a location."),
 }).readonly();
@@ -293,7 +300,8 @@ export type AppendDocumentContractRequest = z.infer<
   typeof AppendDocumentContractRequestSchema
 >;
 
-export const DocumentContractRecordSchema = z.object({
+const DocumentContractRecordObjectSchema = z.object({
+  documentType: DocumentTypeSchema,
   documentContractIdx: DocumentContractIdxSchema
     .describe("Document-type-scoped, monotonically increasing paired revision."),
   formatVersion: z.literal(DocumentContentFormatVersion)
@@ -306,7 +314,17 @@ export const DocumentContractRecordSchema = z.object({
   }).readonly(),
   contractHash: NonEmptyStringSchema.describe("Digest of the canonical paired contract."),
   createdAt: IsoDateTimeSchema.describe("Time at which this revision was appended."),
-}).readonly().meta({ id: "DocumentContractRecord" });
+});
+
+export const DocumentContractRecordSchema = DocumentContractRecordObjectSchema
+  .superRefine((record, context) => {
+  if (record.snapshot.contentType !== documentSnapshotContentType(record.documentType)) {
+    context.addIssue({ code: "custom", path: ["snapshot", "contentType"], message: "Snapshot content type does not match documentType" });
+  }
+  if (record.location.contentType !== documentLocationContentType(record.documentType)) {
+    context.addIssue({ code: "custom", path: ["location", "contentType"], message: "Location content type does not match documentType" });
+  }
+  }).readonly().meta({ id: "DocumentContractRecord" });
 
 export type DocumentContractRecord = z.infer<typeof DocumentContractRecordSchema>;
 
@@ -326,7 +344,7 @@ export const OperatorCandidateMutationResultSchema = z.object({
 }).readonly().meta({ id: "OperatorCandidateMutationResult" });
 
 export const DocumentTypeMutationResultSchema = z.object({
-  documentType: IdSchema.describe("Created or updated document type identity."),
+  documentType: DocumentTypeSchema.describe("Created or updated document type identity."),
   etag: EtagSchema.describe("Current registration ETag."),
 }).readonly().meta({ id: "DocumentTypeMutationResult" });
 
@@ -356,7 +374,7 @@ export type AdministratorMemberMutationResult = z.infer<
 >;
 
 export const DocumentTypeRegistrationSchema = z.object({
-  documentType: NonEmptyStringSchema.describe("Stable public document type identifier."),
+  documentType: DocumentTypeSchema.describe("Stable public document type identifier."),
   internalName: NonEmptyStringSchema.describe("Mutable administrator-only name."),
   enabled: z.boolean().describe("Whether users may create new documents of this type."),
   latestDocumentContract: DocumentContractRecordSchema.nullable()
@@ -397,13 +415,13 @@ export type AdministratorMemberListItem = z.infer<typeof AdministratorMemberList
 export const TypeCardBundleListItemSchema = TypeCardBundleRecordSchema.unwrap().omit({
   manifest: true,
 }).extend({
-  documentType: NonEmptyStringSchema.describe("Document type declared by the omitted manifest."),
+  documentType: DocumentTypeSchema.describe("Document type declared by the omitted manifest."),
 }).readonly().meta({ id: "TypeCardBundleListItem" });
 
 export const ViewBundleListItemSchema = ViewBundleRecordSchema.unwrap().omit({
   manifest: true,
 }).extend({
-  documentType: NonEmptyStringSchema.describe("Document type declared by the omitted manifest."),
+  documentType: DocumentTypeSchema.describe("Document type declared by the omitted manifest."),
   supportedDocumentContractIdxs: z.array(DocumentContractIdxSchema).readonly()
     .describe("Paired Document Contract revisions declared by the omitted manifest."),
 }).readonly().meta({ id: "ViewBundleListItem" });
@@ -415,7 +433,7 @@ export const OperatorCandidateListItemSchema = OperatorCandidateRecordSchema.unw
     .describe("Paired Document Contract revisions declared for this document type."),
 }).readonly().meta({ id: "OperatorCandidateListItem" });
 
-export const DocumentContractListItemSchema = DocumentContractRecordSchema.unwrap().omit({
+export const DocumentContractListItemSchema = DocumentContractRecordObjectSchema.omit({
   snapshot: true,
   location: true,
 }).extend({
@@ -429,7 +447,7 @@ const SelectedCandidateSummarySchema = z.object({
 }).readonly();
 
 export const DocumentTypeListItemSchema = z.object({
-  documentType: NonEmptyStringSchema.describe("Stable public document type identifier."),
+  documentType: DocumentTypeSchema.describe("Stable public document type identifier."),
   internalName: NonEmptyStringSchema.describe("Mutable administrator-only name."),
   enabled: z.boolean().describe("Whether users may create new documents of this type."),
   latestDocumentContractIdx: DocumentContractIdxSchema.nullable(),
@@ -485,7 +503,7 @@ export const PaginationQuerySchema = z.object({
 }).readonly();
 
 export const ListBundlesQuerySchema = PaginationQuerySchema.unwrap().extend({
-  documentType: NonEmptyStringSchema.describe("Document type declared by candidate manifests."),
+  documentType: DocumentTypeSchema.describe("Document type declared by candidate manifests."),
 }).readonly();
 
 export type ListBundlesQuery = z.infer<typeof ListBundlesQuerySchema>;
@@ -502,7 +520,7 @@ export const ListAdminAuditEventsQuerySchema = PaginationQuerySchema.unwrap().ex
   action: AdminAuditActionSchema.optional().describe("Restrict events to one audit action."),
   resourceType: AdminAuditResourceTypeSchema.optional()
     .describe("Restrict events to one resource kind."),
-  documentType: IdSchema.optional().describe("Restrict events related to one document type."),
+  documentType: DocumentTypeSchema.optional().describe("Restrict events related to one document type."),
   occurredFrom: IsoDateTimeSchema.optional().describe("Include events at or after this time."),
   occurredTo: IsoDateTimeSchema.optional().describe("Include events before this time."),
 }).readonly();
@@ -536,7 +554,7 @@ export type UpdateCandidateMetadataRequest = z.infer<
 
 export const CreateOperatorValidationRequestSchema = z.object({
   baseUrl: z.url().describe("Operator base URL to discover and probe."),
-  expectedDocumentType: NonEmptyStringSchema.describe("Document type the Operator must declare support for."),
+  expectedDocumentType: DocumentTypeSchema.describe("Document type the Operator must declare support for."),
   expectedConfigEtag: ExternalEtagSchema.nullable()
     .describe("Expected Operator configuration ETag, or null when not pinned."),
 }).readonly().meta({ id: "CreateOperatorValidationRequest" });

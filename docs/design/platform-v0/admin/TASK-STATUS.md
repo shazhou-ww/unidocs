@@ -42,7 +42,7 @@
 - 当前 View、Operator 与已提交 revisions 的交集构成可用于新数据的集合，不再只有最新 revision 可写。
 - `VersionRecord` 与对应的 `DocumentLocation` 永久记录同一 `documentContractIdx`；Platform 分别校验 snapshot 和 `{ locationType, payload }`。
 - Agent submission 创建版本时必须携带 `newDocumentContractIdx`，但不要求等于最大 idx。
-- append 请求只传配对的 `formatVersion`，不传自由 content type；v1 固定派生 snapshot CBOR 与 location JSON media type。format version 表示线编码，`DocumentContractIdx` 表示 schema revision。
+- append 请求只传配对的 `formatVersion`，不传自由 content type；v1 结合 MIME-safe `documentType` 派生类型专属 snapshot CBOR 与 location JSON media type，例如 PSD 使用 `application/vnd.unidocs.psd.snapshot+cbor;version=1` 和 `application/vnd.unidocs.psd.location+json;version=1`。format version 表示线编码，`DocumentContractIdx` 表示 schema revision。
 
 ### SValue schema
 
@@ -57,6 +57,7 @@
 
 - [协作范式](../agent-mediated-document-collaboration.md)
 - [统一 API 设计](../platform-view-operator-api-v0.md)
+- [Platform ER Model](../platform-er-model-v0.md)
 - [Admin WebUI mock](unidocs-admin-mock.html)
 - [Admin 上下文索引](README.md)
 - [Platform v0 上下文索引](../README.md)
@@ -87,11 +88,13 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 目前没有实现 Platform HTTP handler、持久化、Document Contract validator 或 bundle validator；Admin 协议包只负责 wire contract、基础 DTO runtime validation 与文档生成。
 
+实现前的逻辑 ER Model 已建立：全局文档类型控制面、管理员/审计、tenant 文档、版本、thread/ping/pong、submission receipt、幂等记录和可靠外部效果 outbox 都有明确实体、复合键与事务边界。R2 只保存不可变 bundle 文件，UniCAS 只保存 snapshot/message blob graph。tenant principal 与文档共享角色仍标为物理 schema 冻结前必须确定的开放决策。
+
 ## 已验证
 
 - `pnpm typecheck`：41 个 workspace package 通过。
-- `pnpm check:cas-contract-docs`：64 份当前契约文档通过。
-- `pnpm --filter @unidocs/protocol-admin test`：16 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
+- `pnpm check:cas-contract-docs`：66 份当前契约文档通过。
+- `pnpm --filter @unidocs/protocol-admin test`：17 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
 - `pnpm --filter @unidocs/protocol-admin typecheck`：源码、测试与文档生成脚本通过。
 - `node --check docs/design/platform-v0/admin/unidocs-admin-mock.js`：通过。
 - `git diff --check`：通过。

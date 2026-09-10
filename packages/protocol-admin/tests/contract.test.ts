@@ -3,8 +3,9 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   AppendDocumentContractRequestSchema,
   DocumentContentFormatVersion,
-  DocumentLocationContentType,
-  DocumentSnapshotContentType,
+  DocumentContractRecordSchema,
+  documentLocationContentType,
+  documentSnapshotContentType,
   EtagSchema,
   ExternalEtagSchema,
   SValueSchemaSchema,
@@ -46,6 +47,33 @@ function parameterNames(operation: { parameters?: unknown[] }) {
 }
 
 describe("administrator schemas", () => {
+  it("derives snapshot and location media types from documentType", () => {
+    expect(documentSnapshotContentType("psd"))
+      .toBe("application/vnd.unidocs.psd.snapshot+cbor;version=1");
+    expect(documentLocationContentType("psd"))
+      .toBe("application/vnd.unidocs.psd.location+json;version=1");
+    expect(() => documentSnapshotContentType("PSD document")).toThrow("Invalid document type");
+
+    const schema = { $schema: "https://schemas.unidocs.dev/svalue/v1" } as const;
+    expect(DocumentContractRecordSchema.safeParse({
+      documentType: "psd",
+      documentContractIdx: 0,
+      formatVersion: 1,
+      snapshot: {
+        contentType: documentSnapshotContentType("markdown"),
+        schema,
+        schemaHash: "sha256:snapshot",
+      },
+      location: {
+        contentType: documentLocationContentType("psd"),
+        schema,
+        schemaHash: "sha256:location",
+      },
+      contractHash: "sha256:contract",
+      createdAt: "2026-09-10T00:00:00Z",
+    }).success).toBe(false);
+  });
+
   it("uses canonical representation hashes as quoted Platform ETags", () => {
     expect(EtagSchema.safeParse(
       "\"sha256-qpj883GyEC_ISq5zghYn7x9MAjOW27ImPGJamTCcRkA\"",
@@ -245,8 +273,9 @@ describe("administrator OpenAPI", () => {
     expect(requestBody).not.toContain('"snapshot":{"type":"object","readOnly":true');
     expect(requestBody).not.toContain('"location":{"type":"object","readOnly":true');
     const getResponses = JSON.stringify(get?.responses?.["200"]);
-    expect(getResponses).toContain(DocumentSnapshotContentType);
-    expect(getResponses).toContain(DocumentLocationContentType);
+    expect(getResponses).toContain("application/vnd.unidocs.");
+    expect(getResponses).toContain(".snapshot+cbor;version=1");
+    expect(getResponses).toContain(".location+json;version=1");
     expect(JSON.stringify(upload)).not.toContain("bundleHash");
     expect(JSON.stringify(upload)).not.toContain("observedLatestDocumentContractIdx");
     const idxParameter = get?.parameters?.find((parameter) =>
