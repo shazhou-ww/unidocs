@@ -1,11 +1,35 @@
 import { describe, expect, test } from "vitest";
-import { AdminAccessError, googleIdentityFromVerifiedClaims, normalizeAdministratorEmail, requireBootstrapIdentity, requireBoundAdministrator, requireRecentAuthentication } from "../src/index.js";
+import { AdminAccessError, googleIdentityFromVerifiedClaims, googleIdentityFromConfirmedLogin, validateAdminIdentity, normalizeAdministratorEmail, requireBootstrapIdentity, requireBoundAdministrator, requireRecentAuthentication } from "../src/index.js";
 
 const now = 1_800_000_000;
 const claims = { iss: "https://accounts.google.com", sub: "google-subject", email: " Admin.Name+tag@Gmail.com ", email_verified: true, auth_time: now };
 const identity = googleIdentityFromVerifiedClaims(claims, now);
 
 describe("administrator identity policy", () => {
+  test("keeps login confirmation separate from absent or old Google authentication time", () => {
+    const confirmed = googleIdentityFromConfirmedLogin({ ...claims, auth_time: undefined }, now);
+    expect(confirmed).toMatchObject({ authenticatedAt: null, loginConfirmedAt: now, loginConfirmation: "authorization-code-v1" });
+    expect(validateAdminIdentity(confirmed, now + 100)).toEqual(confirmed);
+    expect(() => requireBootstrapIdentity(confirmed, confirmed.email, now)).not.toThrow();
+    expect(() => requireRecentAuthentication(confirmed, now + 300)).not.toThrow();
+    expect(() => requireRecentAuthentication(confirmed, now + 301)).toThrow();
+    expect(() => requireRecentAuthentication(confirmed, now - 1)).toThrow();
+    const old = googleIdentityFromConfirmedLogin({ ...claims, auth_time: now - 3600 }, now);
+    expect(old.authenticatedAt).toBe(now - 3600);
+    expect(() => requireRecentAuthentication(old, now)).not.toThrow();
+  });
+
+  test("unmarked timestamps and token claims do not grant callback confirmation", () => {
+    const unconfirmed = { ...identity, authenticatedAt: null, loginConfirmedAt: now };
+    expect(() => validateAdminIdentity(unconfirmed, now)).toThrow();
+    expect(() => requireRecentAuthentication(unconfirmed, now)).toThrow();
+    expect(() => validateAdminIdentity({ ...identity, loginConfirmation: "authorization-code-v1" }, now)).toThrow();
+    const bearer = googleIdentityFromVerifiedClaims({ ...claims, auth_time: now - 3600, loginConfirmedAt: now, loginConfirmation: "authorization-code-v1" }, now);
+    expect(bearer).not.toHaveProperty("loginConfirmedAt");
+    expect(() => requireRecentAuthentication(bearer, now)).toThrow();
+    expect(() => googleIdentityFromVerifiedClaims({ ...claims, auth_time: undefined, iat: now }, now)).toThrow();
+    expect(() => googleIdentityFromConfirmedLogin({ ...claims, auth_time: "bad" }, now)).toThrow();
+  });
   test("normalizes case and whitespace without conflating Gmail aliases", () => {
     expect(identity.email).toBe("admin.name+tag@gmail.com");
     expect(normalizeAdministratorEmail("AdminName@gmail.com")).not.toBe(identity.email);

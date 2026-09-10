@@ -1,7 +1,7 @@
-import { AdminAccessError } from "@unidocs/portal-service";
+import { AdminAccessError, type AdminContext } from "@unidocs/portal-service";
 import { clearedAdminCookie, createAdminAuthenticator, hashSessionSecret, SESSION_TTL_SECONDS, sessionTokenFromCookie } from "./auth.js";
 import { D1PortalAuthRepository } from "./auth-repository.js";
-import { createPortalGoogleLogin, LOGIN_COOKIE } from "./google-login.js";
+import { createPortalGoogleLogin, GoogleLoginError, LOGIN_COOKIE } from "./google-login.js";
 import type { PortalGoogleConfig } from "./google-config.js";
 
 export const ADMIN_CSRF_COOKIE = "__Host-unidocs_admin_csrf";
@@ -10,6 +10,7 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
   readonly bootstrapEmail: string | null;
   readonly now?: () => number;
   readonly googleFetch?: typeof fetch;
+  readonly adminApi?: (request: Request, context: AdminContext, requestId: string) => Promise<Response>;
 }) {
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const login = createPortalGoogleLogin(config, {
@@ -31,9 +32,10 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
     let response: Response;
     try {
       if (url.origin !== config.origin) throw new AdminAccessError("forbidden");
-      const methods: Record<string, string> = { "/admin/auth/login": "GET", "/admin/auth/callback": "GET", "/admin/auth/session": "GET", "/admin/auth/logout": "POST" };
+      const methods: Record<string, string> = { "/admin": "GET", "/admin/": "GET", "/admin/auth/login": "GET", "/admin/auth/callback": "GET", "/admin/auth/session": "GET", "/admin/auth/logout": "POST" };
       const method = methods[url.pathname];
-      if (!method) response = new Response(null, { status: 404 });
+      if (url.pathname.startsWith("/admin/api/v1/") && options.adminApi) response = await options.adminApi(request, await authenticate(request), requestId);
+      else if (!method) response = new Response(null, { status: 404 });
       else if (request.method !== method) response = new Response(null, { status: 405, headers: { Allow: method } });
       else if (url.pathname === "/admin/auth/login") response = await login.begin(request);
       else if (url.pathname === "/admin/auth/callback") {
@@ -46,8 +48,9 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
         response = new Response(null, { status: 303, headers });
       } else {
         const context = await authenticate(request);
-        if (url.pathname === "/admin/auth/session") {
-          response = Response.json({ memberId: context.memberId, email: context.identity.email, authenticatedAt: context.identity.authenticatedAt, transport: context.transport });
+        if (url.pathname === "/admin/auth/session" || url.pathname === "/admin/" || url.pathname === "/admin") {
+          response = Response.json({ memberId: context.memberId, email: context.identity.email, authenticatedAt: context.identity.authenticatedAt,
+            loginConfirmedAt: context.identity.loginConfirmedAt ?? null, loginConfirmation: context.identity.loginConfirmation ?? null, transport: context.transport });
         } else {
           if (context.transport !== "session") throw new AdminAccessError("forbidden");
           const hash = await hashSessionSecret(sessionTokenFromCookie(request.headers.get("cookie")));
@@ -61,7 +64,12 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
     } catch (error) {
       const accessError = error instanceof AdminAccessError;
       const code = accessError ? error.code : "internal_error";
-      response = Response.json({ error: { code, message: accessError ? error.message : "Administrator operation failed", requestId } }, { status: accessError ? code === "unauthorized" ? 401 : 403 : 500 });
+      const details = error instanceof GoogleLoginError ? { stage: error.stage, reason: error.reason } : undefined;
+      if (details) console.warn(JSON.stringify({ event: "portal_google_login_failed", requestId, ...details }));
+      response = Response.json({ error: { code, message: accessError ? error.message : "Administrator operation failed", requestId, ...(details ? { details } : {}) } }, { status: accessError ? code === "unauthorized" ? 401 : 403 : 500 });
+      if (accessError && code === "unauthorized" && request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/") && !request.headers.has("authorization")) {
+        response = new Response(null, { status: 303, headers: { Location: `${config.origin}/admin/auth/login` } });
+      }
       if (url.pathname === "/admin/auth/callback") response.headers.append("Set-Cookie", `${LOGIN_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`);
     }
     response.headers.set("Cache-Control", "no-store");

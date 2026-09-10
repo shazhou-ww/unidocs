@@ -1,6 +1,8 @@
 import { D1PortalAuthRepository } from "./auth-repository.js";
 import { createPortalBff } from "./bff.js";
 import { portalGoogleConfigFromGateway } from "./google-config.js";
+import { createDocumentTypesHttp } from "./document-types-http.js";
+import { D1DocumentTypeRepository } from "./document-types-repository.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -11,7 +13,7 @@ export default {
         GATEWAY_OIDC_ISSUER: env.GATEWAY_OIDC_ISSUER,
       }, env.PORTAL_ORIGIN);
       const repository = new D1PortalAuthRepository(env.DB);
-      const response = await createPortalBff(config, repository, { bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null })(request);
+      const response = await createPortalBff(config, repository, { bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null, adminApi: createDocumentTypesHttp(new D1DocumentTypeRepository(env.DB)) })(request);
       console.log(JSON.stringify({ event: "portal_request", requestId: response.headers.get("X-Request-ID"), path: new URL(request.url).pathname, status: response.status }));
       return response;
     } catch {

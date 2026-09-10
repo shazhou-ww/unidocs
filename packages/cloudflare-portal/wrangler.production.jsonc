@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "unidocs-portal",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "unidocs.shazhou.work/admin", "zone_name": "shazhou.work" },
+    { "pattern": "unidocs.shazhou.work/admin/*", "zone_name": "shazhou.work" }
+  ],
+  "secrets": { "required": ["GATEWAY_OIDC_CLIENT_SECRET"] },
+  "vars": {
+    "PORTAL_ORIGIN": "https://unidocs.shazhou.work",
+    "GATEWAY_OIDC_ISSUER": "https://accounts.google.com",
+    "GATEWAY_OIDC_CLIENT_ID": "1092012735121-ukf9g56u8m7bpk20vqurlqj3q58on885.apps.googleusercontent.com",
+    "PORTAL_BOOTSTRAP_EMAIL": "shazhou.ww@gmail.com"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "unidocs-portal", "database_id": "b03c6e6b-e4b7-49a8-b3f1-6ab8e5baeae1", "migrations_dir": "migrations" }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false, "head_sampling_rate": 1 }
+  }
+}

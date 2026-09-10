@@ -1,5 +1,5 @@
 import { TypeCardBundleManifestV1Schema, ViewBundleManifestV1Schema, type TypeCardBundleManifestV1, type ViewBundleManifestV1 } from "@unidocs/protocol-admin-portal";
-import { parseTree, type Node, type ParseError } from "jsonc-parser";
+import { parseStrictJson } from "../strict-json.js";
 import { canonicalJson, schemaHash } from "../identity.js";
 import { validateBundlePath } from "./ingress.js";
 import { BundleZipError, scanBundleZip, type BundleZipFile } from "./zip.js";
@@ -14,27 +14,6 @@ export interface BundleManifestInspection {
   readonly files: readonly BundleZipFile[];
 }
 
-function parseManifest(content: Uint8Array): unknown {
-  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(content);
-  const errors: ParseError[] = [];
-  const root = parseTree(text, errors, { disallowComments: true, allowTrailingComma: false });
-  if (!root || errors.length) throw new BundleZipError();
-  function inspect(node: Node, depth: number): void {
-    if (depth > 64) throw new BundleZipError();
-    if (node.type === "object") {
-      const keys = new Set<string>();
-      for (const property of node.children ?? []) {
-        const key: unknown = property.children?.[0]?.value;
-        if (typeof key !== "string" || keys.has(key)) throw new BundleZipError();
-        keys.add(key);
-      }
-    }
-    for (const child of node.children ?? []) inspect(child, depth + 1);
-  }
-  inspect(root, 0);
-  return JSON.parse(text);
-}
-
 export async function inspectBundleManifest(
   source: ReadableStream<Uint8Array>,
   expected: { readonly kind: BundleKind; readonly documentType: string; readonly documentContractIdxs: readonly number[] },
@@ -47,7 +26,7 @@ export async function inspectBundleManifest(
       if (file.path === otherManifestPath) throw new BundleZipError();
       if (file.path !== manifestPath) return;
       if (file.size > 65_536) throw new BundleZipError();
-      rawManifest = parseManifest(content);
+      rawManifest = parseStrictJson(content);
     });
     const manifest = expected.kind === "type-card"
       ? TypeCardBundleManifestV1Schema.parse(rawManifest)

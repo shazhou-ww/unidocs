@@ -6,11 +6,49 @@
 
 ## 当前进展与决策
 
+### 文档类型首个 API 闭环（2026-09-10）
+
+用户已确认真实 Google 登录成功，返回 session、`loginConfirmation: "authorization-code-v1"` 与独立的 `loginConfirmedAt`；Google `authenticatedAt` 为 null，符合已批准语义。该项真人认证验收完成，不声称近期密码/MFA。
+
+- 已上线 `createDocumentType`、`listDocumentTypes`、`getDocumentType`，共 **3/26** 个 Admin v1 operation；使用现有 oRPC contract 的真实 OpenAPI handler，非手写兼容 API。版本 `2b41733b-ceb9-443a-991c-ba83b164fa74`，独立 Portal D1 已应用 `0002_document_types.sql`。
+- `portal-service/src/admin/document-types.ts` 创建稳定 `dt-<UUID>` disabled 草稿，所有 bundle/contract/Operator 引用为空；强 ETag 来自完整 canonical GET representation。mutation 仅返回 documentType/etag，不自动启用类型。
+- `cloudflare-portal/src/document-types-repository.ts` 同批提交资源、actor/operation/key 作用域的幂等 receipt 和成功 audit；同 key 同内容重放原结果，不同内容 409。事务内再次检查有效管理员及 session/family，前置鉴权后 logout 的竞争请求不能提交；撤销会话也不能重放旧 receipt。当前 receipt 无自动清理，保留期策略待统一制定。
+- 列表提供 name/ID 文本筛选、enabled 筛选及按稳定 documentType ID 的 cursor 分页；cursor 绑定筛选条件，列表为 summary DTO。当前数据库搜索大小写折叠使用 SQLite lower，非完整 Unicode case folding；跨请求分页不是数据库 snapshot。
+- HTTP 创建 body 限制 16 KiB，复用严格 JSON parser，拒绝重复 key、非标准 JSON、未知创建字段、重复/非法 query；GET 单独启用锁定版本的 Zod query coercion，POST 不进行类型纠正。错误保持稳定 code/requestId，认证和 CSRF 在 BFF 执行，响应 no-store。PATCH、contract、bundle 和 Operator handler 尚未注册。
+- 验证：147 个业务核测试、111 个 Cloudflare 测试、20 个 D1/BFF/HTTP 集成测试、全仓 typecheck 与生产 dry-run 通过。workerd 内完成登录→创建→重放→详情→筛选列表→logout→拒绝旧 cookie 的全链路；线上只做匿名 smoke，读写均 401，主站及 `/ui/` 仍为 200。未用用户 cookie 创建生产测试数据。
+- 已登录用户可访问 `https://unidocs.shazhou.work/admin/api/v1/document-types` 检查真实列表。当前 `/admin/` 仍显示认证 JSON；client 与 WebUI 下一步接入，不能将 API 上线描述为完整管理体验。
+
+以下上线记录按时间保留；当前 operation 数与版本以上述段落为准。
+
+### 认证上线记录（2026-09-10）
+
+最新策略与版本：用户复验确认失败为 `identity/auth_time_missing`（request ID `00d15aa3-6959-4c6a-9fbd-29c66bdd4e9b`），随后明确批准与 Gateway 对齐的“近期登录确认”语义。已部署 `98b2084e-56b4-482f-89df-270bfb6a7ed4`：仅在 PKCE、浏览器绑定、单次 state、签名、nonce、issuer/audience/azp、token 签发和到期检查通过后，生成 `loginConfirmedAt` 与 `loginConfirmation: "authorization-code-v1"`。Google `authenticatedAt` 独立保留，缺少时为 `null`，不以 `iat` 或 callback 时间伪造 Google 认证时间。五分钟确认窗口从 `loginConfirmedAt` 起算，session 查询不会续期；这不是近期密码/MFA 证明。Bearer 仍要求原来的 `auth_time` 校验，token 自带的确认字段不被采纳。无需 migration，确认字段保存在现有 D1 session JSON。136 个业务核测试、111 个 Cloudflare 测试、14 个 D1/BFF 集成测试及两包类型检查通过；该版本上线时真人登录尚待验收，随后已成功，见顶部最新记录。以下早期严格 auth_time 策略记录仅为历史。
+
+真人首次验收返回 `unauthorized`，request ID `f2ae6b04-a44f-4506-83d2-0e61e7ecff4d`。旧响应合并了所有 callback 校验失败，无法从该响应确定根因；`auth_time` 缺失仅为候选原因，未确认。已部署诊断版 `3b729507-5892-4be5-bdee-a66d48325bda`，用固定枚举返回 `details.stage`/`details.reason` 并关联 request ID，不记录原始 OAuth 错误、claims、code、token 或 cookie。110 个 Cloudflare 包测试、12 个 D1/BFF 测试及类型检查通过；线上缺参 callback 的安全诊断和 Google 303 跳转验证通过。认证策略未降低，真人登录仍未通过；需要从 `/admin/` 重新开始，不重放已消费的 callback。
+
+用户已明确允许直接切换旧后台。认证版 Portal 已部署到 `https://unidocs.shazhou.work/admin/`：未登录时跳转 Google，登录成功后返回 session JSON；这不是完整 Admin WebUI，26 个业务 operation 仍未实现。
+
+- Worker：`unidocs-portal`；版本：`f67f8a85-82f8-4ecc-9906-4573986f2c84`。
+- 独立 D1：`unidocs-portal`，ID `b03c6e6b-e4b7-49a8-b3f1-6ab8e5baeae1`，已在远端应用 `0001_admin_auth.sql`。未改动 Gateway 的 `unidocs-snapshots` 数据。
+- 生产配置：`packages/cloudflare-portal/wrangler.production.jsonc`，仅接管 `unidocs.shazhou.work/admin` 和 `unidocs.shazhou.work/admin/*`。Gateway 原 OAuth callback、主站和文档 API 保留；旧后台 UI/管理接口暂由认证版取代。
+- Google client secret 从用户提供的本地 JSON 经 stdin 注入 Worker，未写入源码/配置或输出日志；部署 token 仅用于临时进程环境。初始管理员沿用原 Gateway 配置的 `shazhou.ww@gmail.com`，首次成功登录才原子 bootstrap。
+- 线上匿名 smoke：`/admin/` 303、session 无 cookie 401、缺参数 callback 401、GET logout 405；login 303 指向 Google、callback 精确匹配已登记 URI、PKCE 为 S256、响应 no-store。主站 `/`、`/ui/` 和旧 OAuth discovery 切换前后均为 200。没有验证受保护文档 mutation 或真人登录。
+- **待用户验收**：从 `/admin/` 重新开始登录，不刷新旧 callback。成功应看到 `memberId`、`email`、`transport: "session"`、`loginConfirmedAt` 与 `loginConfirmation: "authorization-code-v1"`；`authenticatedAt: null` 表示 Google 未提供认证时间。如失败只提供错误 JSON，不发送 callback 完整 URL、code、cookie 或 token。
+- **回退**：把生产配置的 `routes` 改回 `[]` 后部署同一 Portal Worker，移除其两个后台路由，使旧 Gateway catch-all 恢复处理后台。不要删除任何 D1 数据或修改 Gateway 原 OAuth route。由于 cookie 名共享，回退后可能需要在旧后台重新登录。回退方案已记录，未实际执行演练。
+
+以下较早进度条目保留其阶段背景；当前部署状态以上述上线记录为准。
+
+认证闭环与验证基础已提交为 `c45f080`（未 push）。提交后开始生产认证部署准备：新增 `stacks/unidocs-cloudflare/deploy/portal-auth.mjs`，以独立 Worker/D1、空 routes、关闭 workers.dev/preview 的临时配置执行纯 dry-run；拒绝本地 D1 占位值和当前 Gateway D1 ID，不复制 secret 值，成功/失败均清理临时配置。9 个预检测试和使用测试参数的真实 Wrangler dry-run 通过，不代表生产数据库或凭据已验证。
+
+部署前检查发现：旧 Gateway 与新 Portal 共享 `/admin/auth/login`、`/admin/auth/session` 及 `__Host-unidocs_admin` cookie；旧 session API 为 POST，新查询接口为 GET。用户已接受旧后台切换，不能声称此切换不影响旧后台；主站和文档 API 的路由保持不变。
+
+较早本地凭据存在性检查只输出布尔状态：部署 token 可从 cfg 读取，但所查 Google/D1 键名未找到。用户随后提供本地 Google JSON，生产 Portal D1 已独立创建；缺凭据阻塞已解除。凭据轮换应继续只在本地进程/Worker secret 中进行，不写入仓库。
+
 线上 origin 已由用户确定为 `https://unidocs.shazhou.work`，代码默认配置已固定。Portal 的精确 Google redirect URI 为 **`https://unidocs.shazhou.work/admin/auth/callback`**。仓库 Gateway 配置中的旧 URI 是 `https://unidocs.shazhou.work/oauth/unidocs-cloudflare/login/callback`，保留旧 URI。用户已于 2026-09-10 确认新回调配置完成；这不是实际 Google 登录验收结果，仍需接通 BFF 后验证。
 
-域名复用是对原计划“独立 hostname”的更新，不改变独立 Worker/D1/R2 的边界。当前 Gateway catch-all 与旧管理页面已占用 `/admin/`；未来路由切换会替换旧后台入口，需要在 Portal 完成后单独确认切换和回退。当前未修改 Gateway 路由、未部署 Portal，不接管旧 OAuth callback、`/ui/`、`/tenants/` 或文档 API。共同 origin 也不是浏览器安全隔离边界，bundle 内容仍需独立 origin。
+域名复用是对原计划“独立 hostname”的更新，不改变独立 Worker/D1/R2 的边界。用户已批准并完成后台路径切换，未修改 Gateway 包或其原有路由配置；Portal 更具体的后台路由优先生效，不接管旧 OAuth callback、`/ui/`、`/tenants/` 或文档 API。共同 origin 也不是浏览器安全隔离边界，bundle 内容仍需独立 origin。
 
-2026-09-10：已落地内容身份、D1 原子写与安全 spike，并开始认证纵向闭环。`@unidocs/cloudflare-portal` 已有首份认证 migration、真实 D1 repository、BFF 和 Worker fetch 入口；**不代表 Phase 0 或 Phase 1 已完成**。尚无线上部署、client 或真实 WebUI，26 个 Admin contract operation 尚无真实 handler。
+2026-09-10：已落地内容身份、D1 原子写与安全 spike、真实认证闭环与文档类型 create/list/get；**不代表 Phase 0 或 Phase 1 已完成**。Portal 已有线上部署和 3/26 个真实 Admin handler，client 与真实 WebUI 仍未创建。
 
 已验证：
 
@@ -43,12 +81,12 @@
 - 同一 D1 spike 还验证 session family 单次轮换、logout 撤销整个 family、logout/rotation 竞争不遗留后继 session、到期或成员失效禁止轮换、轮换审计失败保留旧 session，以及 browser-bound login state 的 TTL 和并发单次消费。这里的 SQL 仍是行为 spike，不是正式 repository 或公开 audit action 的扩展。
 - `cloudflare-portal/src/auth.ts` 实现 JWT Bearer 与 session cookie 鉴权。Bearer 使用 `jose` 验证 RS256 签名、Google issuer、配置的 client audience、azp、exp/iat/nbf 与 `auth_time`；固定当前 Google JWKS URL，不读取 JWT 的动态 key URL。最大 token age 3600 秒、时钟容差 30 秒；JWKS 请求超时 5 秒，缓存 10 分钟、刷新冷却 30 秒。任何 Authorization header 的失败均不退回 cookie。
 - session/CSRF 各使用独立 256-bit 随机值，持久记录只含 SHA-256 hash；session 绝对寿命 8 小时、不滑动续期。cookie 为 `__Host-unidocs_admin; Path=/; Secure; HttpOnly; SameSite=Lax`。每次读取 session 后重新查询有效成员；cookie mutation 必须同时匹配精确 Origin 与 CSRF hash，比较使用 `timingSafeEqual`。真实 D1/BFF 已接入登录替换 session 和 logout。
-- `tests/integration/cloudflare/portal-auth.test.mjs` 以真实 RSA JWT 在 workerd 中验证 Bearer、cookie 和 CSRF，包括无 fallback；Cloudflare 鉴权模块使用 `node:crypto`，Worker 本地配置已启用 `nodejs_compat`，Env 已由 Wrangler 生成。生产资源及路由尚未配置。
+- `tests/integration/cloudflare/portal-auth.test.mjs` 以真实 RSA JWT 在 workerd 中验证 Bearer、cookie 和 CSRF，包括无 fallback；Cloudflare 鉴权模块使用 `node:crypto`，Worker 配置已启用 `nodejs_compat`，Env 已由 Wrangler 生成。生产认证资源和后台路由随后已部署，详见顶部最新记录。
 - 按用户要求，Google auth 复用现有 Gateway 的 client ID、client secret 和 issuer。`cloudflare-portal/src/google-config.ts` 从 `GATEWAY_OIDC_CLIENT_ID`、`GATEWAY_OIDC_CLIENT_SECRET`、`GATEWAY_OIDC_ISSUER` 解析配置，缺少凭据或非 Google issuer 时拒绝。Portal origin 默认 `https://unidocs.shazhou.work`，测试可显式覆盖；redirect URI 固定为 `<Portal origin>/admin/auth/callback`，不读取 Gateway callback、session cookie 或 session encryption key。部署时将同源凭据配置到独立 Worker，不修改 Gateway 包，也不把 secret 发到浏览器。
 - `cloudflare-portal/src/google-login.ts` 使用 `oauth4webapi` 完成登录启动及 authorization-code callback：S256 PKCE、独立 nonce、hashed state/browser cookie 绑定、600 秒 TTL、原子单次消费 port、返回路径校验、ID token 签名/issuer/audience/azp/nonce/时间校验。返回路径先解码再检查，拒绝跳出 `/admin/`、返回 auth 路由或编码绕过。Google discovery/token/JWKS 请求固定端点、禁止 redirect、超时 5 秒、响应最多 64 KiB，超过上限取消流。
 - OIDC 模块在验证成功后返回身份与安全 return path，丢弃 Google access token；BFF 已接通管理员绑定、session 持久化和登录 cookie 清理。state 在 token exchange 前消费，失败后须重新登录，不能重放。模拟 Google 测试和 workerd 完整持久化登录流程通过，不等同于已联通真实 Google client。
 
-Google OIDC 上线前提：在现有 Gateway Google client 的 authorized redirect URIs 中增加 `<Portal origin>/admin/auth/callback`，保留 Gateway 原有 URI。已查询 [Google 当前发现文档](https://accounts.google.com/.well-known/openid-configuration) 和 [官方 OIDC 文档](https://developers.google.com/identity/openid-connect/openid-connect)。`auth_time` 不在默认 discovery claims 中，官方说明须在认证请求中申请且在 Google 配置中启用。Portal 已发送 `max_age=300` 和 essential `auth_time` claim 请求，缺少该 claim 仍拒绝。Gateway 当前以 fresh authorization-code exchange 记录“登录确认”，Portal 不把这一语义当成 Google 近期重新认证证明，也不以 `iat`、`prompt=consent` 或重新选择账号替代。必须用现有实际 client 验证该 claim；若无法取得，需要另行决定可验证的 step-up 方案，不能静默放宽权限。复用 client 也意味着 audience 不再区分 Portal 与 Gateway，因此 Portal 自身的 issuer/subject 成员授权仍为必要条件。部署 token 与 Google OAuth client 凭据互不替代。
+Google OIDC 当前策略（用户已批准）：现有 Google client 保留 Gateway URI 并已追加 Portal callback。实际 Google token 未返回 `auth_time`，因此浏览器登录改用完成验证的 fresh authorization-code exchange 作为“近期登录确认”，不再发送 `max_age` 或 essential `auth_time` 请求。不证明 Google 刚要求密码/MFA，不用 `iat` 充当认证时间；若 token 带 `auth_time`，仍校验其类型/范围并单独保存。bootstrap、邀请绑定与 session 创建使用独立确认时间，Bearer 不获得此例外。复用 client 的 audience 不能区分 Gateway 与 Portal，必须继续检查 Portal 自身 issuer/subject 成员授权。将来若需要真正 step-up，须另行选择可验证的密码/MFA 方案。
 
 验证命令：
 
@@ -70,13 +108,13 @@ pnpm exec vitest run tests/integration/cloudflare/portal-d1-atomicity.test.mjs t
 
 Phase 0 剩余门禁（按第 5 节已确认的认证先行顺序，对应功能冻结 schema/发布前完成）：
 
-1. 用户已确认现有 Gateway Google OAuth client 的 Portal 回调配置完成；BFF session 持久化已接通，仍需生产 D1/secret/bootstrap 配置、受控认证路由与真人登录验证 `auth_time`，不能提前放宽近期认证。
+1. 生产 D1、secret、bootstrap 配置与认证路由已部署，匿名 smoke 通过；等待用户真人登录验证 `auth_time`，不能提前放宽近期认证。
 2. 认证 repository 已独立实现且通过 D1 集成测试，查询过滤 revoked family/无效成员；剩余管理员 CRUD、业务 API precondition/idempotency/audit 接线和过期 state/session 清理仍待完成。
 3. ZIP 解析库、大小限制、manifest/引用校验与 canonical 内容身份已落地；继续验证目录条目、本地额外字段/编码歧义及资源预算。尚需 MIME allowlist、图片实际解码/尺寸、SVG 与执行资源安全策略、R2 reservation/cleanup 和稳定 URL；不能把 manifest/引用检查通过当作 bundle 上传完成。
 4. 第一方 Operator Service Binding 的固定目标、防 redirect、全程超时/响应上限已验证；外部 Operator 网络出口及 DNS rebinding 防护仍未完成，不能退回任意 URL fetch。接下来固定签名 probe wire format、nonce/回执和服务身份验证、validation TTL 及 D1 原子记录；传输或 discovery 单独通过都不产生成功 validation。
 5. 将 D1 spike 推进到正式模型时，验证成员授权条件也在写事务内、公开 ETag 对应的 SQL 并发条件、幂等 receipt 保留期与响应重放、失败分类和审计脱敏；不得把所有 D1 异常统一当作幂等冲突。
 
-本轮未读取 `cfg` 的 token，也未部署线上资源。待具备真实鉴权和可演示的纵向闭环后，使用独立 Portal Worker/D1/R2 部署，凭据仅在本地进程中传递。
+认证版已按用户授权完成线上切换；完整业务闭环与 R2 部署仍未完成，详见顶部上线记录。凭据仅在本地进程和 Worker secret 中传递。
 
 ## 1. 目标
 
@@ -212,7 +250,8 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 实现已认证 Admin context、Google 身份绑定及近期认证策略。
 - [x] 实现 canonical resource representation 的强 ETag 计算与测试。
 - [ ] 实现统一 HTTP 错误映射、request ID、cursor、clock 和 ID ports；当前仅有模块级错误及部分注入式时钟。
-- [ ] 实现正式 `If-Match`、idempotency fingerprint/receipt；D1 spike 已验证行为，尚未形成 application service/repository。
+- [x] 在文档类型创建实现正式 idempotency fingerprint/receipt、原子审计与回滚，D1/HTTP 并发测试通过。
+- [ ] 实现正式 `If-Match` 与其余 mutation 的统一幂等/audit unit of work；创建用例不替代全量基础设施。
 - [ ] 实现 audit redaction 和 mutation-with-audit unit of work；当前原子回滚仅在 spike 中验证。
 - [ ] 用内存测试 adapter 驱动完整 cloud-neutral mutation 行为测试。
 
@@ -220,7 +259,9 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 3：文档类型与 Document Contract
 
-- [ ] 实现 register/list/get/patch document type。
+- 当前进度：本 Phase 3/7 个 operation、全部 Admin v1 3/26 个 operation 已上线。
+- [x] 实现并上线 register/list/get document type，使用真实 service/D1/oRPC handler，涵盖鉴权、CSRF、幂等、审计及筛选分页。
+- [ ] 实现 PATCH document type，包括并发 If-Match、候选绑定及启用条件。
 - [ ] 实现 paired contract append/list/get。
 - [x] 实现 schema/paired contract canonical hash 及测试。
 - [ ] 在真实 append 服务中接入 SValue dialect、零基 idx 和 append-only 校验；协议校验与 D1 分配 spike 已有，handler 尚无。
@@ -264,8 +305,10 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 实现 hashed session、`__Host-` cookie、CSRF 和逐请求成员有效性鉴权模块。
 - [x] 接通 D1 state 消费、bootstrap/绑定、session family 创建与登录替换/撤销、BFF logout；当前采用单管理员单活跃 session。
 - [ ] 完成过期登录 state、session 和撤销 family 的有界清理任务。
-- [ ] 验证真实 Google 登录与 `auth_time`/近期认证配置；不以模拟 token 测试替代。
-- [ ] 通过正式 Worker adapter 暴露 oRPC/OpenAPI handler，限制 CORS 与安全 headers。
+- [x] 根据真人失败证据和用户批准，实施独立授权码登录确认时间，不伪造 Google auth_time；保持 Bearer 策略不变。
+- [x] 用户已验收新策略下真实 Google 登录成功；记录本地登录确认，不声称近期密码/MFA 验证。
+- [x] 通过正式 Worker adapter 暴露 document type create/list/get 三个 oRPC/OpenAPI handler，限制同源 cookie 访问并设置安全 headers。
+- [ ] 暴露其余 23 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。
@@ -282,10 +325,18 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 8：Stack、部署与发布门禁
 
-- [ ] 在 `stacks/unidocs-cloudflare` 增加 Portal 本地编排、deploy 和 smoke。
-- [ ] 配置独立 Worker 名、D1、R2，复用 `unidocs.shazhou.work`；不替换现有 Gateway Worker。
-- [ ] 确认并执行 `/admin/*` 切换及旧后台回退，验证其余 Gateway 路由保留。
-- [ ] smoke 覆盖登录、读取、一次幂等 mutation、一次 bundle fetch 和 audit correlation。
+- [x] 增加 Portal 认证无路由部署预检和真实打包 dry-run；校验独立 D1、配置要求与旧认证冲突，不执行线上变更。
+- [x] 获取现有 Google client 的本地凭据来源，并取得用户直接切换旧后台的授权。
+- [x] 部署独立 Portal D1、远端认证 migration、Google secret 与认证版 Worker，切换 `/admin`、`/admin/*`；匿名 smoke 通过。
+- [x] 记录认证路由回退方式，保留 Gateway 原 OAuth 与文档 API；回退尚未实际演练。
+- [x] 在 `stacks/unidocs-cloudflare` 增加 Portal 认证部署预检和边界测试；生产发布目前仍由显式 Wrangler 命令执行。
+- [ ] 将 Portal migration/deploy/smoke 接入统一 stack runner，保持默认 Gateway 发布序列不误触 Portal。
+- [x] 配置并部署独立 Worker 名和 D1，复用 `unidocs.shazhou.work`；未替换 Gateway Worker，R2 尚未配置。
+- [ ] 配置独立 R2 与 bundle origin。
+- [x] 确认并执行 `/admin`、`/admin/*` 切换，验证主站、`/ui/` 与旧 OAuth discovery 保留。
+- [ ] 实际演练旧后台路由回退；已有无数据删除的书面步骤。
+- [x] smoke 覆盖匿名登录跳转、匿名 API 拒绝、真实 Google 登录和 session 读取。
+- [ ] smoke 覆盖一次经 client 发起的幂等 mutation、bundle fetch 和 audit correlation；workerd 已覆盖 mutation，但未用生产用户 cookie 自动写数据。
 - [ ] 记录 rollback：Worker 版本回退、向前兼容 migration、不可变 R2 对象保留。
 
 - [ ] **退出条件**：全新环境可部署、smoke 通过、旧 Gateway stack 不受影响。

@@ -1,5 +1,5 @@
 import * as oauth from "oauth4webapi";
-import { AdminAccessError, boundedBytes, googleIdentityFromVerifiedClaims, requireRecentAuthentication } from "@unidocs/portal-service";
+import { AdminAccessError, boundedBytes, googleIdentityFromConfirmedLogin, requireRecentAuthentication } from "@unidocs/portal-service";
 import { hashSessionSecret } from "./auth.js";
 import type { PortalGoogleConfig } from "./google-config.js";
 
@@ -10,6 +10,16 @@ const authorizationUrl = "https://accounts.google.com/o/oauth2/v2/auth";
 const tokenUrl = "https://oauth2.googleapis.com/token";
 const jwksUrl = "https://www.googleapis.com/oauth2/v3/certs";
 const opaquePattern = /^[A-Za-z0-9_-]{43}$/;
+
+type GoogleLoginStage = "callback" | "browser_binding" | "state" | "discovery" | "authorization_response" | "token_exchange" | "token_response" | "signature" | "claims" | "identity" | "recent_authentication";
+type GoogleLoginReason = "validation_failed" | "auth_time_missing" | "auth_time_invalid" | "authentication_too_old";
+
+export class GoogleLoginError extends AdminAccessError {
+  constructor(readonly stage: GoogleLoginStage, readonly reason: GoogleLoginReason = "validation_failed") {
+    super("unauthorized");
+    this.name = "GoogleLoginError";
+  }
+}
 
 export interface PortalLoginTransaction {
   readonly stateHash: string;
@@ -108,19 +118,19 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
         nonce,
         code_challenge: await oauth.calculatePKCECodeChallenge(verifier),
         code_challenge_method: "S256",
-        max_age: "300",
-        claims: JSON.stringify({ id_token: { auth_time: { essential: true } } }),
       }).toString();
       await ports.put({ stateHash: await hashSessionSecret(state), browserHash: await hashSessionSecret(browser), verifier, nonce, returnTo, createdAt: now, expiresAt: now + loginLifetime });
       return new Response(null, { status: 303, headers: { Location: target.href, "Set-Cookie": loginCookie(browser, loginLifetime), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
     },
 
     async complete(request: Request) {
+      let stage: GoogleLoginStage = "callback";
       try {
         const url = new URL(request.url);
         if (request.method !== "GET" || url.origin !== config.origin || url.pathname !== "/admin/auth/callback" || url.hash) throw new AdminAccessError("unauthorized");
         const state = url.searchParams.get("state");
         if (!state || !opaquePattern.test(state) || url.searchParams.getAll("state").length !== 1 || url.searchParams.getAll("code").length > 1 || url.search.length > 8192) throw new AdminAccessError("unauthorized");
+        stage = "browser_binding";
         const cookies = (request.headers.get("cookie") ?? "").split(";").map(cookie => cookie.trim()).filter(cookie => cookie.split("=", 1)[0] === LOGIN_COOKIE);
         if (cookies.length !== 1) throw new AdminAccessError("unauthorized");
         const browser = cookies[0].slice(LOGIN_COOKIE.length + 1);
@@ -128,24 +138,35 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
         const now = currentTime();
         const stateHash = await hashSessionSecret(state);
         const browserHash = await hashSessionSecret(browser);
+        stage = "state";
         const transaction = await ports.take(stateHash, browserHash, now);
         if (!transaction || transaction.stateHash !== stateHash || transaction.browserHash !== browserHash || !Number.isSafeInteger(transaction.createdAt) || !Number.isSafeInteger(transaction.expiresAt) || transaction.createdAt > now || transaction.expiresAt <= now || transaction.expiresAt <= transaction.createdAt || transaction.expiresAt - transaction.createdAt > loginLifetime || !opaquePattern.test(transaction.verifier) || !opaquePattern.test(transaction.nonce)) throw new AdminAccessError("unauthorized");
         const returnTo = portalReturnPath(transaction.returnTo);
+        stage = "discovery";
         const server = await metadata();
         const client: oauth.Client = { client_id: config.clientId, id_token_signed_response_alg: "RS256", [oauth.clockSkew]: now - Math.floor(Date.now() / 1000), [oauth.clockTolerance]: 30 };
+        stage = "authorization_response";
         const parameters = oauth.validateAuthResponse(server, client, url, state);
+        stage = "token_exchange";
         const response = await oauth.authorizationCodeGrantRequest(server, client, oauth.ClientSecretPost(config.clientSecret), parameters, config.redirectUri, transaction.verifier, requestOptions);
+        stage = "token_response";
         const result = await oauth.processAuthorizationCodeResponse(server, client, response, { expectedNonce: transaction.nonce, requireIdToken: true });
+        stage = "signature";
         await oauth.validateApplicationLevelSignature(server, response, requestOptions);
+        stage = "claims";
         const claims = oauth.getValidatedIdTokenClaims(result);
-        if (!claims || typeof claims.iat !== "number" || claims.iat < transaction.createdAt - 30 || claims.iat > now + 30 || (claims.azp !== undefined && claims.azp !== config.clientId)) throw new AdminAccessError("unauthorized");
+        if (!claims || !Number.isSafeInteger(claims.iat) || typeof claims.iat !== "number" || claims.iat < transaction.createdAt - 30 || claims.iat > now + 30 || (claims.azp !== undefined && claims.azp !== config.clientId)) throw new AdminAccessError("unauthorized");
         const completedAt = currentTime();
-        if (completedAt < now || completedAt >= transaction.expiresAt || typeof claims.exp !== "number" || completedAt >= claims.exp) throw new AdminAccessError("unauthorized");
-        const identity = googleIdentityFromVerifiedClaims(claims, completedAt);
+        if (completedAt < now || completedAt >= transaction.expiresAt || !Number.isSafeInteger(claims.exp) || typeof claims.exp !== "number" || completedAt >= claims.exp) throw new AdminAccessError("unauthorized");
+        stage = "identity";
+        if (claims.auth_time !== undefined && (typeof claims.auth_time !== "number" || !Number.isSafeInteger(claims.auth_time) || claims.auth_time < 0 || claims.auth_time > completedAt + 30)) throw new GoogleLoginError(stage, "auth_time_invalid");
+        const identity = googleIdentityFromConfirmedLogin(claims, completedAt);
+        stage = "recent_authentication";
         requireRecentAuthentication(identity, completedAt);
         return { identity, returnTo, clearLoginCookie: loginCookie("", 0) };
-      } catch {
-        throw new AdminAccessError("unauthorized");
+      } catch (error) {
+        if (error instanceof GoogleLoginError) throw error;
+        throw new GoogleLoginError(stage);
       }
     },
   };

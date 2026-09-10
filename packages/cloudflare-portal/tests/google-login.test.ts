@@ -62,7 +62,8 @@ describe("Portal Google authorization-code flow", () => {
     expect(target.searchParams.get("redirect_uri")).toBe(config.redirectUri);
     expect(target.searchParams.get("code_challenge_method")).toBe("S256");
     expect(target.searchParams.get("nonce")).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(target.searchParams.get("max_age")).toBe("300");
+    expect(target.searchParams.has("max_age")).toBe(false);
+    expect(target.searchParams.has("claims")).toBe(false);
     expect(target.href).not.toContain(config.clientSecret);
     expect(start.headers.get("set-cookie")).toContain(`${LOGIN_COOKIE}=`);
     expect(start.headers.get("set-cookie")).toContain("Secure; HttpOnly; SameSite=Lax; Max-Age=600");
@@ -102,16 +103,48 @@ describe("Portal Google authorization-code flow", () => {
 
   test.each([
     { nonce: "wrong" }, { aud: "other-client" }, { iss: "https://attacker.example" },
-    { auth_time: undefined }, { email_verified: false }, { azp: "other-client" }, { iat: 1 }, { exp: 1 },
+    { auth_time: "bad" }, { auth_time: Math.floor(Date.now() / 1000) + 3600 }, { email_verified: false }, { azp: "other-client" }, { iat: 1 }, { exp: 1 },
   ])("rejects invalid signed callback claims %#", async overrides => {
     const { login, callback, transactions } = await setup(overrides);
     await expect(login.complete(callback())).rejects.toMatchObject({ code: "unauthorized" });
     expect(transactions.size).toBe(0);
   });
 
-  test("rejects stale authentication even when a fresh token was issued", async () => {
-    const { login, callback } = await setup({ auth_time: Math.floor(Date.now() / 1000) - 301 });
-    await expect(login.complete(callback())).rejects.toMatchObject({ code: "unauthorized" });
+  test("preserves old Google authentication time separately from fresh code confirmation", async () => {
+    const authenticatedAt = Math.floor(Date.now() / 1000) - 3600;
+    const { login, callback } = await setup({ auth_time: authenticatedAt });
+    const result = await login.complete(callback());
+    expect(result.identity.authenticatedAt).toBe(authenticatedAt);
+    expect(result.identity.loginConfirmation).toBe("authorization-code-v1");
+    expect(result.identity.loginConfirmedAt).toBeGreaterThan(authenticatedAt);
+  });
+
+  test("confirms a verified code flow without synthesizing missing Google auth_time", async () => {
+    const { login, callback } = await setup({ auth_time: undefined });
+    const result = await login.complete(callback());
+    expect(result.identity).toMatchObject({ authenticatedAt: null, loginConfirmation: "authorization-code-v1" });
+    expect(Number.isSafeInteger(result.identity.loginConfirmedAt)).toBe(true);
+    await expect(login.complete(callback())).rejects.toMatchObject({ stage: "state" });
+  });
+
+  test("distinguishes invalid authentication time from malformed responses and state failures", async () => {
+    const invalid = await setup({ auth_time: -1 });
+    await expect(invalid.login.complete(invalid.callback())).rejects.toMatchObject({ stage: "token_response", reason: "validation_failed" });
+    const wrongNonce = await setup({ nonce: "wrong" });
+    await expect(wrongNonce.login.complete(wrongNonce.callback())).rejects.toMatchObject({ stage: "token_response", reason: "validation_failed" });
+    const expired = await setup();
+    expired.advance(600);
+    await expect(expired.login.complete(expired.callback())).rejects.toMatchObject({ stage: "state", reason: "validation_failed" });
+  });
+
+  test("does not attach original upstream errors or secrets to diagnostics", async () => {
+    const { login, callback, fetcher } = await setup();
+    fetcher.mockRejectedValue(new Error("sensitive-provider-response"));
+    const error = await login.complete(callback()).catch((failure: unknown) => failure);
+    expect(error).toMatchObject({ stage: "discovery", reason: "validation_failed" });
+    expect(JSON.stringify(error)).not.toContain("sensitive-provider-response");
+    expect(JSON.stringify(error)).not.toContain(config.clientSecret);
+    expect(error).not.toHaveProperty("cause");
   });
 
   test("rechecks freshness after network verification finishes", async () => {

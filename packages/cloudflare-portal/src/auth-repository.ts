@@ -1,5 +1,5 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
-import { AdminAccessError, googleIdentityFromVerifiedClaims, requireBootstrapIdentity, requireRecentAuthentication, type AdminIdentity, type BoundAdministrator } from "@unidocs/portal-service";
+import { AdminAccessError, adminConfirmationTime, validateAdminIdentity, requireBootstrapIdentity, requireRecentAuthentication, type AdminIdentity, type BoundAdministrator } from "@unidocs/portal-service";
 import { createAdminSession, type AdminSession } from "./auth.js";
 import type { PortalLoginTransaction } from "./google-login.js";
 
@@ -56,18 +56,20 @@ export class D1PortalAuthRepository {
         member_id: string; issuer: string; subject: string;
       }>();
     if (!row) return null;
-    const identity: AdminIdentity = JSON.parse(row.identity_json);
+    const identity = validateAdminIdentity(JSON.parse(row.identity_json), this.now());
     if (identity.issuer !== row.issuer || identity.subject !== row.subject) return null;
     return { sessionHash: row.session_hash, csrfHash: row.csrf_hash, identity, memberId: row.member_id, createdAt: row.created_at, expiresAt: row.expires_at };
   }
 
   async completeLogin(identity: AdminIdentity, bootstrapEmail: string | null, requestId: string) {
     const now = this.now();
-    const verified = googleIdentityFromVerifiedClaims({ iss: identity.issuer, sub: identity.subject, email: identity.email, email_verified: true, auth_time: identity.authenticatedAt }, now);
+    const verified = validateAdminIdentity(identity, now);
     requireRecentAuthentication(verified, now);
+    const confirmationTime = adminConfirmationTime(verified);
+    if (confirmationTime === null) throw new AdminAccessError("forbidden");
     const bound = await this.database.prepare("SELECT * FROM portal_administrators WHERE issuer = ? AND subject = ? AND active = 1").bind(verified.issuer, verified.subject).first<MemberRow>();
     const invited = bound ? null : await this.database.prepare("SELECT * FROM portal_administrators WHERE email = ? AND active = 1 AND subject IS NULL").bind(verified.email).first<MemberRow>();
-    if (invited && verified.authenticatedAt < invited.created_at) throw new AdminAccessError("forbidden");
+    if (invited && confirmationTime < invited.created_at) throw new AdminAccessError("forbidden");
     const memberId = bound?.member_id ?? invited?.member_id ?? crypto.randomUUID();
     const member: BoundAdministrator = { memberId, issuer: verified.issuer, subject: verified.subject, active: true };
     const issued = await createAdminSession(member, verified, now);
@@ -88,7 +90,7 @@ export class D1PortalAuthRepository {
       statements.push(
         this.database.prepare(`UPDATE portal_administrators SET issuer = ?, subject = ?, revision = revision + 1, updated_at = ?
           WHERE member_id = ? AND email = ? AND active = 1 AND subject IS NULL AND revision = ? AND created_at <= ?`)
-          .bind(verified.issuer, verified.subject, now, memberId, verified.email, invited.revision, verified.authenticatedAt),
+          .bind(verified.issuer, verified.subject, now, memberId, verified.email, invited.revision, confirmationTime),
         ...this.guard(),
       );
       action = "administrator.bound";

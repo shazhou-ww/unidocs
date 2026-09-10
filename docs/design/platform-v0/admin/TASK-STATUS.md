@@ -109,13 +109,17 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 ## Portal 实施进度（2026-09-10）
 
-认证纵向闭环已落地：首份 D1 migration、真实 auth repository、BFF login/callback/session/logout、Worker 入口和生成 Env。12 个真实 D1/BFF 测试通过，包含 workerd 内跨请求和 Worker 重建；Cloudflare 包 107 个测试、类型检查及 Wrangler dry-run 通过。重新登录采用单管理员单活跃 session，原 session 原子失效。未配置生产 D1/secret/bootstrap，尚未部署；需要真人验证时会提供受控入口。
+最新：用户已确认真人 Google 登录成功。文档类型 create/list/get 三个 Admin contract handler 已上线（3/26），版本 `2b41733b-ceb9-443a-991c-ba83b164fa74`，Portal D1 已应用 `0002_document_types.sql`。草稿创建、receipt 和 audit 同批提交，列表支持筛选和 cursor；workerd 内完整登录到 API 流程通过。147 个业务核、111 个 Cloudflare 包、20 个 D1/HTTP 集成测试及全仓类型检查通过。线上匿名 API 读写拒绝验证通过；已登录列表 URL 为 `https://unidocs.shazhou.work/admin/api/v1/document-types`。PATCH、client 和真实 WebUI 尚未完成，下面为较早阶段记录。
+
+较早认证上线版本为 `f67f8a85-82f8-4ecc-9906-4573986f2c84`；用户随后已完成真人登录，当前生产版本和 operation 进度以本节第一段及实现计划顶部记录为准。旧后台路径已切换，原 Google callback、主站与文档数据面保留。
+
+认证纵向闭环已落地：首份 D1 migration、真实 auth repository、BFF login/callback/session/logout、Worker 入口和生成 Env。该段记录的是部署前测试状态；生产 D1/secret/bootstrap、后台路由和真人验收随后均已完成，当前状态以上方最新段落为准。
 
 本轮补充 Operator：第一方 Service Binding 受控传输、全程 deadline、响应/请求上限与凭据隔离（41 个测试），以及 identity/ETag/revision discovery 业务校验（21 个测试）。双 Worker workerd 测试证明请求目标来自 binding 而非 URL DNS。外部出口、签名 probe 和 validation 持久化仍未实现；没有把传输成功当作验证成功。当前业务核 134、Cloudflare 包 106 个测试通过。
 
 已开始 [Cloudflare 实现计划](IMPLEMENTATION-PLAN.md) 的 Phase 0：新增 `@unidocs/portal-service` 和 `@unidocs/cloudflare-portal`，实现 canonical JSON/hash/ETag、有界 ZIP archive 安全检查、Type Card/View manifest/引用/内容身份、Google 管理员身份策略、Bearer/session/CSRF 鉴权及 PKCE/nonce callback。Google 配置复用现有 Gateway client，生产 origin 为 `https://unidocs.shazhou.work`，用户已确认 `https://unidocs.shazhou.work/admin/auth/callback` 配置完成。业务核 113 个、Cloudflare 鉴权/配置/OIDC 65 个、D1 原子写 6 个、管理员/session D1 12 个及跨运行时 5 个测试通过。
 
-尚未完成 Phase 0：现有 Google client 的 `auth_time`/重新认证仍需真人登录验证；bundle 还需实际资源内容/MIME 安全检查与存储流程，Operator 网络安全门禁仍待验证。认证持久化已接通，但 26 个 Admin operation 与真实 WebUI 尚未实现；旧 `/admin/` 入口尚未切换。详细证据、命令及剩余项见实现计划的“当前进展与决策”。
+尚未完成 Phase 0：bundle 仍需实际资源内容/MIME 安全检查与存储流程，Operator 外部出口和签名 probe 门禁未完成。认证、生产部署与 3/26 个 Admin v1 handler 已完成；PATCH、client 和真实 WebUI 尚未实现。详细证据、命令及剩余项见实现计划的“当前进展与决策”。
 
 ## 当前不做
 
