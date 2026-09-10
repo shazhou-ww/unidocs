@@ -191,7 +191,13 @@
                     <span style="margin-left: auto; font-size: 10px; color: #a2a59b;">{{p.idx}}</span>
                   </div>
                   <p style="font-size: 12px; line-height: 1.8; margin: 7px 0 0 38px; color: #3a3c37;">{{p.text}}</p>
-                  <div style="margin: 6px 0 0 38px; font-size: 10px; color: #9a9d93;">{{p.loc}}</div>
+                  <div style="display: flex; align-items: center; gap: 8px; margin: 7px 0 0 38px;">
+                    <span style="{{p.stateStyle}}">{{p.stateLabel}}</span>
+                    <span style="font-size: 10px; color: #9a9d93;">{{p.loc}}</span>
+                    <sc-if value="{{p.canEdit}}" hint-placeholder-val="{{ false }}">
+                      <button class="u-btn u-ghost" onClick="{{p.edit}}" style="margin-left: auto; min-height: 22px; padding: 1px 7px; font-size: 10px; color: #6f7268;">修改</button>
+                    </sc-if>
+                  </div>
                 </div>
               </sc-for>
               <sc-if value="{{t.hasPong}}" hint-placeholder-val="{{ true }}">
@@ -223,22 +229,37 @@
                 </div>
               </sc-if>
 
+              <sc-if value="{{t.draftIdle}}" hint-placeholder-val="{{ false }}">
+                <div onClick="{{t.openDraft}}" style="margin-top: 10px; border: 1px dashed #ddd8c4; border-radius: 6px; padding: 9px 11px; background: #fdfcf7; cursor: pointer;">
+                  <div style="display: flex; align-items: center; gap: 7px;">
+                    <span style="font-size: 10px; color: #8d742e; background: #f6f1df; padding: 2px 6px; border-radius: 3px;">草稿 · 未发送</span>
+                    <sc-if value="{{t.draftFromLabel}}" hint-placeholder-val="{{ false }}">
+                      <span style="font-size: 10px; color: #a2a59b;">{{t.draftFromLabel}}</span>
+                    </sc-if>
+                    <span style="margin-left: auto; font-size: 10px; color: #40745b;">继续写</span>
+                  </div>
+                  <p style="font-size: 12px; line-height: 1.8; margin: 7px 0 0; color: #7d7563;">{{t.draftText}}</p>
+                </div>
+              </sc-if>
+              <sc-if value="{{t.replying}}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top: 10px; border: 1px solid #c5d2bd; border-radius: 6px; padding: 9px 10px; background: #fff;">
+                  <sc-if value="{{t.draftFromLabel}}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size: 10px; color: #8d742e; background: #f6f1df; padding: 3px 7px; border-radius: 3px; margin-bottom: 8px; line-height: 1.7;">{{t.draftFromNote}}</div>
+                  </sc-if>
+                  <textarea id="psd-reply-input" rows="3" placeholder="再说一句…" style="width: 100%; border: 0; outline: none; resize: vertical; font: inherit; font-size: 12px; line-height: 1.8; color: #242522; background: transparent; padding: 0;"></textarea>
+                  <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+                    <button class="u-btn u-ghost" onClick="{{t.discardDraft}}" style="min-height: 26px; padding: 3px 8px; font-size: 10px; color: #a33d39;">丢弃</button>
+                    <button class="u-btn u-ghost" onClick="{{t.cancelReply}}" style="margin-left: auto; min-height: 26px; padding: 3px 9px; font-size: 11px;">留作草稿</button>
+                    <button class="u-btn" onClick="{{t.sendReply}}" style="min-height: 26px; padding: 3px 12px; font-size: 11px; background: #242522; border-color: #242522; color: #fff;">发送</button>
+                  </div>
+                </div>
+              </sc-if>
               <sc-if value="{{t.canReply}}" hint-placeholder-val="{{ true }}">
                 <div style="margin-top: 10px;">
                   <button class="u-btn u-ghost" onClick="{{t.openReply}}" style="min-height: 28px; padding: 4px 9px; font-size: 11px; color: #5f6358;">
                     <svg class="u-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" style="width: 13px; height: 13px;"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
                     回复
                   </button>
-                </div>
-              </sc-if>
-              <sc-if value="{{t.replying}}" hint-placeholder-val="{{ false }}">
-                <div style="margin-top: 10px; border: 1px solid #c5d2bd; border-radius: 6px; padding: 9px 10px; background: #fff;">
-                  <textarea id="psd-reply-input" rows="2" placeholder="再说一句…" style="width: 100%; border: 0; outline: none; resize: vertical; font: inherit; font-size: 12px; line-height: 1.8; color: #242522; background: transparent; padding: 0;"></textarea>
-                  <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
-                    <span style="font-size: 10px; color: #93968d;">发送后 Agent 自动接手</span>
-                    <button class="u-btn u-ghost" onClick="{{t.cancelReply}}" style="margin-left: auto; min-height: 26px; padding: 3px 9px; font-size: 11px;">取消</button>
-                    <button class="u-btn" onClick="{{t.sendReply}}" style="min-height: 26px; padding: 3px 12px; font-size: 11px; background: #242522; border-color: #242522; color: #fff;">发送</button>
-                  </div>
                 </div>
               </sc-if>
             </section>
@@ -254,7 +275,7 @@
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    this.state = { thread: 't1', ping: 'p2', split: true, replyTo: null, replies: {} };
+    this.state = { thread: 't1', ping: 'p2', split: true, replyTo: null, replies: {}, drafts: {} };
   }
 
   /* v1 人物更大、还没有徽标层；v2 人物收窄并加上徽标；v3 标题下移并加粗 */
@@ -321,6 +342,26 @@ class Component extends DCLogic {
     return el ? String(el.value || '').trim() : '';
   }
 
+  componentDidUpdate(prevProps, prevState) {
+    if (this.state.replyTo && this.state.replyTo !== prevState.replyTo) {
+      const el = document.getElementById('psd-reply-input');
+      const d = this.state.drafts[this.state.replyTo];
+      if (el) { el.value = d ? d.text : ''; el.focus(); }
+    }
+  }
+
+  /* 换地方之前先把正在写的存成草稿 */
+  stash(next) {
+    const st = this.state;
+    const drafts = Object.assign({}, st.drafts);
+    if (st.replyTo) {
+      const text = this.readInput('psd-reply-input');
+      if (text) drafts[st.replyTo] = { text: text, from: (drafts[st.replyTo] || {}).from || null };
+      else delete drafts[st.replyTo];
+    }
+    this.setState(Object.assign({ drafts: drafts, replyTo: null }, next || {}));
+  }
+
   renderVals() {
     const self = this;
     const threads = this.data().map(function (t) {
@@ -372,6 +413,9 @@ class Component extends DCLogic {
     const cards = threads.map(function (t) {
       const on = self.state.thread === t.id;
       const isOpen = !t.pong || t.pong.through < t.pings.length;
+      const draft = self.state.drafts[t.id] || null;
+      const editing = self.state.replyTo === t.id;
+      const through = t.pong ? t.pong.through : 0;
       return {
         anchor: t.anchor,
         cardStyle: 'border: 1px solid ' + (on ? '#c5d2bd' : '#eaebe5') + '; border-left: 3px solid ' + (on ? '#7d9b7a' : 'transparent')
@@ -386,28 +430,51 @@ class Component extends DCLogic {
         pongTime: t.pong ? t.pong.time : '',
         pongText: t.pong ? t.pong.text : '',
         pongResult: t.pong ? t.pong.result : '',
-        canReply: on && self.state.replyTo !== t.id,
-        replying: self.state.replyTo === t.id,
-        openReply: function () { self.setState({ thread: t.id, replyTo: t.id }); },
-        cancelReply: function () { self.setState({ replyTo: null }); },
+        draftIdle: !!draft && !editing,
+        draftText: draft ? draft.text : '',
+        draftFromLabel: draft && draft.from ? '改自' + draft.from : '',
+        draftFromNote: draft && draft.from
+          ? '你在改' + draft.from + '。已发送的评论不能覆盖 —— 原文留在上面，这份发出去是同一处的新一条。' : '',
+        canReply: on && !editing && !draft,
+        replying: editing,
+        openReply: function () { self.stash({ thread: t.id, replyTo: t.id }); },
+        openDraft: function () { self.stash({ thread: t.id, replyTo: t.id }); },
+        cancelReply: function () { self.stash({}); },
+        discardDraft: function () {
+          const d = Object.assign({}, self.state.drafts);
+          delete d[t.id];
+          self.setState({ drafts: d, replyTo: null });
+        },
         sendReply: function () {
           const text = self.readInput('psd-reply-input');
           if (!text) return;
           const next = {};
           Object.keys(self.state.replies).forEach(function (k) { next[k] = self.state.replies[k]; });
           next[t.id] = (next[t.id] || []).concat([text]);
-          self.setState({ replies: next, replyTo: null, thread: t.id, split: true });
+          const d = Object.assign({}, self.state.drafts);
+          delete d[t.id];
+          self.setState({ replies: next, drafts: d, replyTo: null, thread: t.id, split: true });
         },
-        pick: function () { self.setState({ thread: t.id, ping: t.pings[t.pings.length - 1].id, split: true }); },
-        pings: t.pings.map(function (p) {
+        pick: function () { self.stash({ thread: t.id, ping: t.pings[t.pings.length - 1].id, split: true }); },
+        pings: t.pings.map(function (p, i) {
           const sel = on && ping.id === p.id;
+          const done = t.pong && (i + 1) <= through;
           return {
             idx: p.idx, text: p.text, loc: p.loc, ver: 'v' + p.ver,
+            stateLabel: done ? '已处理' : '正在执行',
+            stateStyle: 'font-size: 10px; padding: 1px 6px; border-radius: 3px; '
+              + (done ? 'background: #f2f3ef; color: #93968d;' : 'background: #f6f1df; color: #8d742e;'),
+            canEdit: on,
+            edit: function () {
+              const d = Object.assign({}, self.state.drafts);
+              d[t.id] = { text: p.text, from: p.idx };
+              self.setState({ drafts: d, thread: t.id, ping: p.id, replyTo: t.id, split: true });
+            },
             style: 'padding: 9px 9px 9px 8px; margin: 0 -3px; border-radius: 5px; cursor: pointer; '
               + (sel ? 'background: #eaf1e4; box-shadow: inset 2px 0 0 #7d9b7a;' : 'background: transparent;'),
             verStyle: 'font-size: 10px; padding: 1px 6px; border-radius: 3px; '
               + (sel ? 'background: #7d9b7a; color: #fff;' : 'background: #f2f3ef; color: #74796b;'),
-            pick: function () { self.setState({ thread: t.id, ping: p.id, split: true }); }
+            pick: function () { self.stash({ thread: t.id, ping: p.id, split: true }); }
           };
         })
       };
