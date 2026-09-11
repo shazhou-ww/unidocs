@@ -8,6 +8,9 @@ test("serves the embedded Admin shell and immutable hashed assets", async () => 
   expect(shell?.headers.get("cache-control")).toBe("no-store");
   const html = await shell!.text();
   expect(html).toContain("<title>UniDocs 管理</title>");
+  const login = serveAdminWebUi(new Request("https://portal.test/admin/login"));
+  expect(login?.status).toBe(200);
+  expect(await login!.text()).toBe(html);
   const assetPath = html.match(/src="(\/admin\/assets\/[^"]+\.js)"/)?.[1];
   expect(assetPath).toBeTruthy();
   const asset = serveAdminWebUi(new Request(`https://portal.test${assetPath}`));

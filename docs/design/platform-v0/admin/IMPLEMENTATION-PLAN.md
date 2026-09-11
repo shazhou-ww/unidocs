@@ -6,15 +6,26 @@
 
 ## 当前进展与决策
 
+### 登录、授权与退出四态闭环（2026-09-11）
+
+已按真人反馈重构浏览器认证状态机并部署 Worker 版本 `48ffb028-6a9c-40b1-a8c4-00000836fca2`：未登录、已登录有权限、已登录无权限和 logout 四种状态均有独立且可恢复的 UI/路由行为，不再把登录提示、OIDC 启动、授权拒绝和 session 清理混在同一个跳转中。
+
+- 未登录访问 `/admin/` 时 303 到公开的 `/admin/login` 提示页；只有点击“使用 Google Account 登录”才进入 `/admin/auth/login`。OIDC authorization 固定 `prompt=select_account`，每次都显示 Google 账号选择器，同时保留 PKCE S256、nonce、单次 state 和既有授权码登录确认语义。
+- 有效且有权限的 session 直接进入真实管理页面。生产回读确认 `shazhou.ww@gmail.com`、`yanjiayiceshi@gmail.com` 和 `neko.shazhou.ww@gmail.com` 均为 active、已绑定成员。
+- 浏览器 callback 的 401/403 303 到 `/admin/access-denied`；页面展示安全原因、request ID 和“退出并返回登录”。该操作先尝试 POST logout，再回 `/admin/login`，不会直接重启 OIDC。API 与非 HTML 调用继续返回稳定 JSON。
+- logout 对浏览器保持幂等：有效 session 会撤销 family 并清除 session/CSRF cookie；session 已过期或不存在时，同源 POST 仍返回 204 并清除两枚 cookie。正常退出最终回到 `/admin/login`，不会自动进入 Google。
+- 已处理并发 callback 的陈旧页面竞态：`/admin/login` 和 `/admin/access-denied` 首帧只显示中性的“正在确认登录状态”，先读取 `/admin/auth/session`。若另一个 callback 已建立有效 session，则直接 `replace('/admin/')`；只有 session 探测失败才显示登录或拒绝内容，因此不会闪现错误的“没有管理员权限”。生产浏览器记录的完整标题序列为“正在确认登录状态”→“文档类型”。
+- 验证：Google OIDC 36 个测试、Admin client 4 个 transport tests、WebUI 6 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 22 个集成测试，以及相关 typecheck/build/dry-run 通过。匿名 production smoke 固定 `/admin/`→`/admin/login`、提示页 200、OIDC 303 且 `prompt=select_account`、拒绝页 200、无 session logout 204 且清除两枚 cookie；有效 `shazhou.ww@gmail.com` session 在线回读为 200 并可进入管理页面。
+
 ### 管理员首个 API 与 WebUI 闭环（2026-09-11）
 
 已上线 `listAdministratorMembers`、`getAdministratorMember`、`addAdministratorMember`，Admin v1 完整 operation 总数增至 **6/26**；生产 Worker 版本 `1adaa634-9f7f-47d5-a082-93e62446b863`。WebUI 新增管理员导航、真实 allowlist、身份绑定状态、自身标识和添加邮箱对话框；同批保留搜索框 Enter 提交且不显示冗余搜索按钮的交互调整。
 
 - add service 先 trim/lowercase 规范化 Google 邮箱，创建未绑定成员与 canonical ETag；D1 batch 在事务内复查当前管理员/session，并原子提交 actor/operation/key receipt、allowlist 行和 `administrator.added` audit。同 key 同请求重放，不同请求返回 409；已有 active 邮箱返回 `administrator_exists`。
 - list/get 只返回 active 成员，按稳定 member ID cursor 分页；`bound` 来自 issuer/subject 是否已完成绑定，`isSelf` 只出现在列表 DTO。成员时间在写入前固定到 D1 的秒精度，保证 mutation 返回与后续 GET 的 ETag 相同。
-- 生产 allowlist 已加入 `yanjiayiceshi@gmail.com`，成员、receipt 与 audit 通过一次 D1 原子 import 提交并回读均为 1。当前状态为 active、等待首次邀请后登录绑定；邀请前失败的 OAuth state 不可重放，必须从 `/admin/` 重新开始登录。
-- 浏览器 callback 的 401/403 不再显示裸 JSON：带 `Accept: text/html` 的失败导航会 303 到 `/admin/access-denied`，显示安全的原因文案、request ID 和重新登录操作；API 与非 HTML 调用仍返回原稳定 JSON。拒绝页不调用受保护 API，390×844 下无横向或纵向溢出。
-- 验证：portal-service 155 个测试、Cloudflare Portal 112 个测试、真实 D1/BFF 22 个集成测试、client 3 个 transport tests、WebUI 3 个组件测试及相关 typecheck/build/dry-run 通过。生产 WebUI 已回读两位管理员，目标邮箱显示“等待登录”，搜索按钮不存在且 Enter 查询测试保留。
+- 生产 allowlist 已加入 `yanjiayiceshi@gmail.com`，成员、receipt 与 audit 通过一次 D1 原子 import 提交并回读均为 1；该账号及随后通过正式 WebUI 添加的 `neko.shazhou.ww@gmail.com` 均已完成身份绑定。邀请前失败的 OAuth state 不可重放，必须从 `/admin/` 重新开始登录。
+- 浏览器 callback 的 401/403 不再显示裸 JSON：带 `Accept: text/html` 的失败导航会 303 到 `/admin/access-denied`，显示安全原因、request ID 和退出操作；API 与非 HTML 调用仍返回原稳定 JSON。拒绝页只读取 session 状态，不调用业务 API，390×844 下无横向或纵向溢出。
+- 最新验证数字与认证 UX 见上方四态闭环记录。生产 WebUI 已回读三位 active、已绑定管理员；搜索按钮不存在且 Enter 查询测试保留。
 
 ### Admin WebUI MVP 上线（2026-09-11）
 
@@ -323,6 +334,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 实现 Bearer 优先且失败不 fallback cookie，并通过 Node/workerd 测试。
 - [x] 复用 Gateway Google client 配置，固定 Portal origin 和独立 callback；用户已确认回调登记完成。
 - [x] 实现 OIDC authorization code + PKCE、nonce、浏览器绑定和单次 state port，并通过模拟 Google/workerd 测试。
+- [x] 实现公开登录提示页、Google `prompt=select_account`、浏览器授权拒绝页、幂等 logout 与陈旧 callback 页面无闪烁恢复。
 - [x] 实现 hashed session、`__Host-` cookie、CSRF 和逐请求成员有效性鉴权模块。
 - [x] 接通 D1 state 消费、bootstrap/绑定、session family 创建与登录替换/撤销、BFF logout；当前采用单管理员单活跃 session。
 - [ ] 完成过期登录 state、session 和撤销 family 的有界清理任务。
@@ -339,7 +351,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 - [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update 与 administrator list/get/add transport。
 - [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；文档类型列表、筛选、详情、创建和管理员 list/add MVP 已上线，其余页面待实现。
-- [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用 loading/empty/error 与稳定错误展示，冲突恢复和上传状态待实现。
+- [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用 loading/empty/error、公开登录/授权拒绝/session 检查状态与稳定错误展示，冲突恢复和上传状态待实现。
 - [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。
 
@@ -357,7 +369,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [ ] 配置独立 R2 与 bundle origin。
 - [x] 确认并执行 `/admin`、`/admin/*` 切换，验证主站、`/ui/` 与旧 OAuth discovery 保留。
 - [ ] 实际演练旧后台路由回退；已有无数据删除的书面步骤。
-- [x] smoke 覆盖匿名登录跳转、匿名 API 拒绝、真实 Google 登录和 session 读取。
+- [x] smoke 覆盖匿名登录提示、显式 Google 账号选择、匿名 API 拒绝、授权拒绝 UI、幂等 logout、真实 Google 登录和 session 读取。
 - [ ] smoke 覆盖一次经 client 发起的幂等 mutation、bundle fetch 和 audit correlation；workerd 已覆盖 mutation，但未用生产用户 cookie 自动写数据。
 - [ ] 记录 rollback：Worker 版本回退、向前兼容 migration、不可变 R2 对象保留。
 

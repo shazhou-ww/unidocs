@@ -17,11 +17,74 @@ function shortEtag(etag: string): string {
   return etag.length > 24 ? `${etag.slice(0, 18)}...${etag.slice(-5)}` : etag;
 }
 
+export async function logoutToLogin(logout: () => Promise<void>, navigate: (path: string) => void = path => window.location.assign(path)) {
+  try {
+    await logout();
+  } catch {
+    // Logout is idempotent from the browser's perspective; the next page is public.
+  } finally {
+    navigate("/admin/login");
+  }
+}
+
+export async function returnToAppWhenAuthenticated(session: () => Promise<unknown>, navigate: (path: string) => void = path => window.location.replace(path)) {
+  try {
+    await session();
+    navigate("/admin/");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function SessionCheck() {
+  return <main className="access-page">
+    <section className="access-panel checking-panel" role="status">
+      <div className="brand access-brand"><span className="brand-mark">U</span><span><strong>UniDocs</strong><small>管理控制台</small></span></div>
+      <LoaderCircle className="spin" size={24} aria-hidden="true" />
+      <h1>正在确认登录状态</h1>
+    </section>
+  </main>;
+}
+
+function usePublicPageReady(session: () => Promise<unknown>) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void returnToAppWhenAuthenticated(session).then(authenticated => {
+      if (active && !authenticated) setReady(true);
+    });
+    return () => { active = false; };
+  }, [session]);
+  return ready;
+}
+
+function LoginPrompt() {
+  const [client] = useState(() => createAdminPortalClient());
+  const [session] = useState(() => () => client.session());
+  const ready = usePublicPageReady(session);
+  if (!ready) return <SessionCheck />;
+  return <main className="access-page">
+    <section className="access-panel">
+      <div className="brand access-brand"><span className="brand-mark">U</span><span><strong>UniDocs</strong><small>管理控制台</small></span></div>
+      <span className="access-icon login-icon" aria-hidden="true"><LogIn size={24} /></span>
+      <p className="eyebrow">ADMINISTRATOR SIGN IN</p>
+      <h1>登录管理控制台</h1>
+      <p>使用已加入管理员列表的 Google Account 登录。</p>
+      <a className="primary-button access-action" href="/admin/auth/login"><LogIn size={17} />使用 Google Account 登录</a>
+    </section>
+  </main>;
+}
+
 function AccessDenied() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const requestId = params.get("requestId");
   const forbidden = code === "forbidden";
+  const [client] = useState(() => createAdminPortalClient());
+  const [session] = useState(() => () => client.session());
+  const ready = usePublicPageReady(session);
+  if (!ready) return <SessionCheck />;
   return <main className="access-page">
     <section className="access-panel">
       <div className="brand access-brand"><span className="brand-mark">U</span><span><strong>UniDocs</strong><small>管理控制台</small></span></div>
@@ -30,7 +93,7 @@ function AccessDenied() {
       <h1>{forbidden ? "没有管理员权限" : "登录未完成"}</h1>
       <p>{forbidden ? "当前 Google 账户尚未加入管理员列表，或成员资格已失效。" : "登录请求已过期或未能通过验证，请重新开始。"}</p>
       {requestId && <div className="request-reference"><span>请求 ID</span><code>{requestId}</code></div>}
-      <a className="primary-button access-action" href="/admin/auth/login"><LogIn size={17} />重新登录</a>
+      <button className="primary-button access-action" type="button" onClick={() => void logoutToLogin(() => client.logout())}><LogOut size={17} />退出并返回登录</button>
       <small>需要由现有管理员先将 Google 账户邮箱加入 allowlist。</small>
     </section>
   </main>;
@@ -140,7 +203,7 @@ function AdminApp() {
   }
 
   async function logout() {
-    try { await client.logout(); } finally { window.location.assign("/admin/auth/login"); }
+    await logoutToLogin(() => client.logout());
   }
 
   function submitSearch(event: FormEvent) {
@@ -250,5 +313,7 @@ function AdminApp() {
 }
 
 export function App() {
-  return window.location.pathname === "/admin/access-denied" ? <AccessDenied /> : <AdminApp />;
+  if (window.location.pathname === "/admin/login") return <LoginPrompt />;
+  if (window.location.pathname === "/admin/access-denied") return <AccessDenied />;
+  return <AdminApp />;
 }

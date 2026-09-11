@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
-import { App } from "../src/app.js";
+import { App, logoutToLogin, returnToAppWhenAuthenticated } from "../src/app.js";
 
 test("loads the signed-in administrator and real empty document type state", async () => {
   const fetchMock = vi.fn<typeof fetch>(async input => {
@@ -44,15 +44,50 @@ test("loads members and submits a new administrator from the navigation", async 
   vi.unstubAllGlobals();
 });
 
-test("renders a useful access denial without calling authenticated APIs", () => {
+test("renders a useful access denial only after the session probe fails", async () => {
   window.history.replaceState({}, "", "/admin/access-denied?code=forbidden&requestId=request-1");
-  const fetchMock = vi.fn<typeof fetch>();
+  let rejectSession!: (reason: Error) => void;
+  const fetchMock = vi.fn<typeof fetch>(() => new Promise((_resolve, reject) => { rejectSession = reject; }));
   vi.stubGlobal("fetch", fetchMock);
   render(<App />);
-  expect(screen.getByRole("heading", { name: "没有管理员权限" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "正在确认登录状态" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "没有管理员权限" })).not.toBeInTheDocument();
+  rejectSession(new Error("not signed in"));
+  expect(await screen.findByRole("heading", { name: "没有管理员权限" })).toBeInTheDocument();
   expect(screen.getByText("request-1")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "重新登录" })).toHaveAttribute("href", "/admin/auth/login");
-  expect(fetchMock).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "退出并返回登录" })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(fetchMock).toHaveBeenCalledWith("/admin/auth/session", { credentials: "include" });
   window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
+});
+
+test("shows a public Google login prompt after the session probe fails", async () => {
+  window.history.replaceState({}, "", "/admin/login");
+  const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ error: { code: "unauthorized", message: "Authentication required", requestId: "request" } }, { status: 401 }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(screen.getByRole("heading", { name: "正在确认登录状态" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "登录管理控制台" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "使用 Google Account 登录" })).toHaveAttribute("href", "/admin/auth/login");
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(fetchMock).toHaveBeenCalledWith("/admin/auth/session", { credentials: "include" });
+  window.history.replaceState({}, "", "/");
+  vi.unstubAllGlobals();
+});
+
+test("logout always returns to the login prompt after attempting session cleanup", async () => {
+  const order: string[] = [];
+  await logoutToLogin(async () => { order.push("logout"); }, path => order.push(path));
+  expect(order).toEqual(["logout", "/admin/login"]);
+  await logoutToLogin(async () => { order.push("failed-logout"); throw new Error("expired"); }, path => order.push(path));
+  expect(order.slice(-2)).toEqual(["failed-logout", "/admin/login"]);
+});
+
+test("leaves stale denial and login pages when another callback already created a valid session", async () => {
+  const destinations: string[] = [];
+  expect(await returnToAppWhenAuthenticated(async () => ({ email: "admin@example.com" }), path => destinations.push(path))).toBe(true);
+  expect(destinations).toEqual(["/admin/"]);
+  expect(await returnToAppWhenAuthenticated(async () => { throw new Error("not signed in"); }, path => destinations.push(path))).toBe(false);
+  expect(destinations).toEqual(["/admin/"]);
 });

@@ -12,9 +12,9 @@ const contentTypes: Readonly<Record<string, string>> = {
 
 export function serveAdminWebUi(request: Request): Response | null {
   const url = new URL(request.url);
-  if (url.pathname !== "/admin" && url.pathname !== "/admin/" && url.pathname !== "/admin/index.html" && url.pathname !== "/admin/access-denied" && !url.pathname.startsWith("/admin/assets/")) return null;
+  if (url.pathname !== "/admin" && url.pathname !== "/admin/" && url.pathname !== "/admin/index.html" && url.pathname !== "/admin/login" && url.pathname !== "/admin/access-denied" && !url.pathname.startsWith("/admin/assets/")) return null;
   if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-  const path = url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname === "/admin/access-denied" ? "/admin/index.html" : url.pathname;
+  const path = url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname === "/admin/login" || url.pathname === "/admin/access-denied" ? "/admin/index.html" : url.pathname;
   const body = ADMIN_UI_ASSETS[path];
   if (body === undefined) return new Response("Admin WebUI asset not found", { status: 404 });
   const extensionAt = path.lastIndexOf(".");

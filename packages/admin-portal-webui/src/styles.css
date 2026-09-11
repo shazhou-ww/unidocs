@@ -1020,7 +1020,7 @@ tbody tr.selected-row {
   font-size: 28px;
 }
 
-.access-panel > p:not(.eyebrow) {
+.access-panel>p:not(.eyebrow) {
   max-width: 430px;
   margin-bottom: 24px;
   color: var(--muted);
@@ -1039,7 +1039,7 @@ tbody tr.selected-row {
 }
 
 .request-reference span,
-.access-panel > small {
+.access-panel>small {
   color: var(--muted);
   font-size: 10px;
 }
@@ -1055,6 +1055,34 @@ tbody tr.selected-row {
   text-decoration: none;
 }
 
-.access-panel > small {
+.access-panel>small {
   display: block;
+}
+
+.access-icon.login-icon {
+  border-color: #bfcfc4;
+  background: #edf4ef;
+  color: var(--accent);
+}
+
+.checking-panel {
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.checking-panel .access-brand {
+  width: 100%;
+}
+
+.checking-panel>svg {
+  margin-bottom: 18px;
+  color: var(--accent);
+}
+
+.checking-panel h1 {
+  margin-bottom: 0;
+  font-size: 22px;
 }

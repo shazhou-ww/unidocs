@@ -82,7 +82,10 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
 
   return {
     session: () => request<AdminPortalSession>("/admin/auth/session"),
-    logout: () => request<void>("/admin/auth/logout", { method: "POST", headers: mutationHeaders() }),
+    logout: () => {
+      const csrfToken = getCsrfToken();
+      return request<void>("/admin/auth/logout", { method: "POST", headers: csrfToken ? { "x-csrf-token": csrfToken } : undefined });
+    },
     listDocumentTypes(query = {}) {
       const params = new URLSearchParams();
       if (query.q !== undefined) params.set("q", query.q);

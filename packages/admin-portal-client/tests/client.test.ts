@@ -33,3 +33,11 @@ test("lists and adds administrator members through the typed transport", async (
   expect(new Headers(fetcher.mock.calls[1][1]?.headers).get("idempotency-key")).toBe("member-key");
   expect(fetcher.mock.calls[1][1]?.body).toBe('{"email":"member@example.com"}');
 });
+
+test("attempts idempotent logout even when no CSRF cookie remains", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+  const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher, getCsrfToken: () => null });
+  await client.logout();
+  expect(fetcher).toHaveBeenCalledWith("https://portal.test/admin/auth/logout", expect.objectContaining({ method: "POST", credentials: "include" }));
+  expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("x-csrf-token")).toBe(false);
+});

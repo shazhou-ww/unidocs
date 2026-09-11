@@ -33,13 +33,13 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
     let response: Response;
     try {
       if (url.origin !== config.origin) throw new AdminAccessError("forbidden");
-      const methods: Record<string, string> = { "/admin": "GET", "/admin/": "GET", "/admin/access-denied": "GET", "/admin/auth/login": "GET", "/admin/auth/callback": "GET", "/admin/auth/session": "GET", "/admin/auth/logout": "POST" };
+      const methods: Record<string, string> = { "/admin": "GET", "/admin/": "GET", "/admin/login": "GET", "/admin/access-denied": "GET", "/admin/auth/login": "GET", "/admin/auth/callback": "GET", "/admin/auth/session": "GET", "/admin/auth/logout": "POST" };
       const method = methods[url.pathname];
       if (url.pathname.startsWith("/admin/assets/") && options.adminUi) response = options.adminUi(request) ?? new Response(null, { status: 404 });
       else if (url.pathname.startsWith("/admin/api/v1/") && options.adminApi) response = await options.adminApi(request, await authenticate(request), requestId);
       else if (!method) response = new Response(null, { status: 404 });
       else if (request.method !== method) response = new Response(null, { status: 405, headers: { Allow: method } });
-      else if (url.pathname === "/admin/access-denied" && options.adminUi) response = options.adminUi(request) ?? new Response(null, { status: 503 });
+      else if ((url.pathname === "/admin/login" || url.pathname === "/admin/access-denied") && options.adminUi) response = options.adminUi(request) ?? new Response(null, { status: 503 });
       else if (url.pathname === "/admin/auth/login") response = await login.begin(request);
       else if (url.pathname === "/admin/auth/callback") {
         const completed = await login.complete(request);
@@ -75,7 +75,13 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
       if (details) console.warn(JSON.stringify({ event: "portal_google_login_failed", requestId, ...details }));
       response = Response.json({ error: { code, message: accessError ? error.message : "Administrator operation failed", requestId, ...(details ? { details } : {}) } }, { status: accessError ? code === "unauthorized" ? 401 : 403 : 500 });
       if (accessError && code === "unauthorized" && request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/") && !request.headers.has("authorization")) {
-        response = new Response(null, { status: 303, headers: { Location: `${config.origin}/admin/auth/login` } });
+        response = new Response(null, { status: 303, headers: { Location: `${config.origin}/admin/login` } });
+      } else if (accessError && code === "unauthorized" && url.pathname === "/admin/auth/logout"
+        && request.method === "POST" && request.headers.get("origin") === config.origin && request.headers.get("sec-fetch-site") !== "cross-site") {
+        const headers = new Headers();
+        headers.append("Set-Cookie", clearedAdminCookie());
+        headers.append("Set-Cookie", csrfCookie("", 0));
+        response = new Response(null, { status: 204, headers });
       } else if (accessError && request.method === "GET" && request.headers.get("accept")?.includes("text/html")
         && (url.pathname === "/admin/auth/callback" || url.pathname === "/admin" || url.pathname === "/admin/")) {
         const target = new URL("/admin/access-denied", config.origin);
@@ -88,7 +94,7 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
     if (!url.pathname.startsWith("/admin/assets/")) response.headers.set("Cache-Control", "no-store");
     response.headers.set("Referrer-Policy", "no-referrer");
     response.headers.set("X-Content-Type-Options", "nosniff");
-    response.headers.set("Content-Security-Policy", url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname === "/admin/access-denied" || url.pathname.startsWith("/admin/assets/")
+    response.headers.set("Content-Security-Policy", url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname === "/admin/login" || url.pathname === "/admin/access-denied" || url.pathname.startsWith("/admin/assets/")
       ? "default-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
       : "default-src 'none'; frame-ancestors 'none'");
     response.headers.set("X-Request-ID", requestId);

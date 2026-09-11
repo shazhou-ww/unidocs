@@ -287,11 +287,16 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
     const token = await new SignJWT({ iss: config.issuer, aud: config.clientId, sub: identity.subject, email: identity.email, email_verified: true, iat: now, exp: now + 600, nonce }).setProtectedHeader({ alg: "RS256", kid: "test" }).sign(keys.privateKey);
     return Response.json({ access_token: "discarded", token_type: "Bearer", id_token: token });
   };
-  const handle = createPortalBff(config, repository, { bootstrapEmail: identity.email, now: () => now, googleFetch,
-    adminUi: () => new Response("<!doctype html><title>Admin UI</title>", { headers: { "content-type": "text/html" } }) });
+  const handle = createPortalBff(config, repository, {
+    bootstrapEmail: identity.email, now: () => now, googleFetch,
+    adminUi: () => new Response("<!doctype html><title>Admin UI</title>", { headers: { "content-type": "text/html" } })
+  });
   const entry = await handle(new Request("https://portal.test/admin/"));
   expect(entry.status).toBe(303);
-  expect(entry.headers.get("location")).toBe("https://portal.test/admin/auth/login");
+  expect(entry.headers.get("location")).toBe("https://portal.test/admin/login");
+  const loginPrompt = await handle(new Request("https://portal.test/admin/login", { headers: { accept: "text/html" } }));
+  expect(loginPrompt.status).toBe(200);
+  expect(loginPrompt.headers.get("content-type")).toContain("text/html");
   expect((await handle(new Request("https://portal.test/admin/", { headers: { authorization: "Bearer invalid" } }))).status).toBe(401);
   const start = await handle(new Request("https://portal.test/admin/auth/login"));
   expect(start.status).toBe(303);
@@ -334,6 +339,9 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
   expect((await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { cookie, origin: config.origin } }))).status).toBe(403);
   expect((await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { cookie, origin: config.origin, "x-csrf-token": csrf } }))).status).toBe(204);
   expect((await handle(new Request("https://portal.test/admin/auth/session", { headers: { cookie } }))).status).toBe(401);
+  const repeatedLogout = await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { origin: config.origin } }));
+  expect(repeatedLogout.status).toBe(204);
+  expect(repeatedLogout.headers.getSetCookie()).toEqual(expect.arrayContaining([expect.stringContaining("__Host-unidocs_admin=;"), expect.stringContaining("__Host-unidocs_admin_csrf=;")]));
   expect((await handle(new Request("https://portal.test/admin/auth/logout"))).status).toBe(405);
   expect((await handle(new Request("https://portal.test/admin/api/v1/document-types"))).status).toBe(404);
 });
