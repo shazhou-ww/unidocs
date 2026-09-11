@@ -17,3 +17,5 @@ export { createTenantCatalogService } from "./tenant/catalog.js";
 export type { TenantCatalogRepository } from "./tenant/catalog.js";
 export { createTenantDocumentService } from "./tenant/documents.js";
 export type { CurrentVersionMoveCommand, DocumentCreateCommand, TenantDocumentRepository } from "./tenant/documents.js";
+export { createTenantVersionService } from "./tenant/versions.js";
+export type { TenantVersionRepository, VersionSnapshot } from "./tenant/versions.js";
