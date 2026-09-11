@@ -14,14 +14,15 @@
 - receipt 验证使用 Web Crypto HMAC verify，拒绝未知/缺失字段、错误 challenge/key/signature、identity/document type/config ETag 错配、未来签发和过期回执。probe 不包含管理员身份、document 内容、CAS capability、cookie 或 bearer token。
 - 当前只完成 cloud-neutral wire primitive 与 6 个篡改/过期测试。下一切片将其接入现有 bounded Service Binding transport，严格解析 discovery/receipt，并在验证全通过后才以 D1 原子写发布短期 validation record 与 audit；失败不创建 validation record。
 
-### Operator validation 本地纵向闭环（2026-09-11）
+### Operator validation 纵向闭环（2026-09-11）
 
-已在本地完成 `createOperatorValidation` 与 `getOperatorValidation`：Admin v1 本地完整 operation 为 **21/26**，生产仍为 **19/26**。`0006_operator_validations.sql`、Markdown Operator endpoint、Portal Service Binding 与两个 Worker 的共享 secret 尚未部署。
+已上线 `createOperatorValidation` 与 `getOperatorValidation`，Admin v1 完整 operation 增至 **21/26**。Portal Worker 版本 `0c425c93-b810-4540-a791-4851e3e3e984`，Markdown Worker 版本 `53a5a8ad-d04f-47d4-a075-d3206f81756c`；独立 Portal D1 已应用 `0006_operator_validations.sql`。
 
 - probe HMAC wire 已下沉到 cloud-neutral `@unidocs/service-auth`，Portal 与 Markdown 共用同一字节实现。Markdown 暴露 `/.well-known/unidocs-operator` 与 `/operator/probe`，严格有界解析 JSON、验证 request 签名/时间/identity/document type/config ETag，再返回 domain-separated signed receipt；缺 secret/document type 时 503 fail closed。
 - 第一方目标固定为 `unidocs-markdown` Service Binding，无公网 fetch fallback。生产 Portal D1 只读确认 Markdown registration 为 `dt-292d2d45-fbd9-4392-99cd-f46474679667`、latest contract revision 0；Markdown descriptor 从部署配置声明该精确 document type 和 revision 0，强 config ETag 由完整 descriptor SHA-256 派生。
 - validation service 在任何网络 I/O 前完成幂等 replay、target key 与 document type/contract 查询；discovery 与 probe 全部通过后才发布 15 分钟 immutable validation。D1 batch 原子写 validation、receipt 与 `operator.validation_passed` audit；失败只写脱敏 phase audit，不创建 validation/receipt；过期 validation 对 GET 隐藏。持久化故障不伪装成对端验证失败。
-- 验证：portal-service 326 个测试、Cloudflare Portal 119 个测试、Admin client 11 个 transport tests、Markdown Worker 6 个测试、service-auth 105 个测试、真实 D1/HTTP 4 个 validation 集成测试、真实双 Worker Service Binding 签名交换 2 个集成测试、全仓 typecheck、Markdown/Portal production-shaped dry-run 与 `git diff --check` 通过。下一步先提交 checkpoint，再安装同一随机 256-bit secret 到两个 Worker、部署 Markdown、应用 migration、部署 Portal 并做匿名/真实 validation smoke。
+- 同一随机 256-bit HMAC key 已通过 stdin 分别安装为两个 Worker secret，未写入配置、源码或日志。Cloudflare 首次将公开 discovery 强 ETag 弱化为 `W/`；加入 `Cache-Control: no-store, no-transform` 后生产重新验证为强 `"sha256-..."`，Service Binding 与公开 discovery 使用同一 descriptor identity。
+- 验证：portal-service 326 个测试、Cloudflare Portal 119 个测试、Admin client 11 个 transport tests、Markdown Worker 6 个测试、service-auth 105 个测试、真实 D1/HTTP 4 个 validation 集成测试、真实双 Worker Service Binding 签名交换 2 个集成测试、全仓 typecheck、Markdown/Portal production-shaped dry-run 与 `git diff --check` 通过。生产匿名 validation API 401、Operator discovery 200/强 ETag、无签名 probe 401、旧 DocType discovery 与主站 200；smoke 后 validation/receipt/success audit 仍均为 0。一次登录管理员发起的真实 validation 与 audit correlation 尚待验收。
 
 ### View bundle 纵向闭环（2026-09-11）
 
@@ -443,7 +444,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
 - [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
 - [x] 通过正式 Worker adapter 暴露 Document Contract append/list/get 三个 handler，涵盖严格 JSON、并发 idx、幂等和原子 registration/audit 更新。
-- [ ] 暴露其余 contract handler，并完成整体 CORS/OpenAPI surface 验证；Operator validation 两个 handler 已在本地接入，当前本地剩余 5 个、生产剩余 7 个。
+- [ ] 暴露其余 5 个 contract handler，并完成整体 CORS/OpenAPI surface 验证；Operator validation 两个 handler 已上线。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。

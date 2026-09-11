@@ -27,7 +27,7 @@ test("verifies the Portal challenge and returns a signed bound receipt", async (
   expect(response?.status).toBe(200);
   const receipt = await response?.json();
   expect(await verifyOperatorProbeReceipt(receipt, response!.headers.get("x-unidocs-probe-signature")!, probe.body, keyBytes, now)).toEqual(receipt);
-  expect(response?.headers.get("cache-control")).toBe("no-store");
+  expect(response?.headers.get("cache-control")).toBe("no-store, no-transform");
 });
 
 test("fails closed for missing configuration, bad signatures, and ambiguous JSON", async () => {

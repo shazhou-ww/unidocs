@@ -9,7 +9,7 @@ export interface MarkdownOperatorBindings {
 }
 
 function headers(extra: Record<string, string> = {}) {
-  return { "Cache-Control": "no-store", "Content-Type": "application/json", "X-Content-Type-Options": "nosniff", ...extra };
+  return { "Cache-Control": "no-store, no-transform", "Content-Type": "application/json", "X-Content-Type-Options": "nosniff", ...extra };
 }
 
 function keyBytes(value: string | undefined): Uint8Array | null {
