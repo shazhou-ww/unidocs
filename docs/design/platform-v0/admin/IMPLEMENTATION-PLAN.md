@@ -14,6 +14,7 @@
 - 在扩展文档类型详情前先建立真实前端路由，不再只用 React 内存 `view`。目标 URL 为 `/admin/document-types`、`/admin/document-types/{documentType}?tab=contracts`、`/admin/administrators`、`/admin/audit`；Worker 对这些受保护路径提供 SPA shell，WebUI 从 pathname/query 恢复 page、选中类型和 tab，并用 History API 更新。桌面/移动端刷新、前进/后退必须保持正确位置。
 - 路由不可与 `/admin/api/*`、`/admin/auth/*`、`/admin/login` 或 `/admin/access-denied` 混淆；未知受保护 UI route 返回明确 404 或安全默认页，不能吞掉 API/auth 路径。路由行为需有 BFF/静态资源测试和浏览器刷新验收。
 - Document Contract 持久化继续遵守已验证约束：document-type scoped 零基 idx、append-only、canonical snapshot/location schema hash 与 paired contract hash、同 key 重放、事务内权限复查、idx 分配和 audit 原子提交。公开 list/get 必须从真实 D1 返回稳定 cursor 与完整 schema DTO。
+- refresh-safe 路由基础已部署为 `540f5fc3-ed5a-4135-aec8-ce94d70d1e0b`：Worker 只对固定 `/admin/document-types[/id]`、`/admin/administrators`、`/admin/audit` 路径在鉴权后返回 SPA shell，不吞 API/auth/未知路径；WebUI 从 URL 初始化 page/detail/tab，使用 History API 导航并监听 popstate。生产浏览器已验证审计刷新、管理员→后退恢复审计、文档类型详情 `?tab=contracts` 刷新恢复与无横向溢出；Contract tab 内容尚待下一切片接入。
 
 ### Admin audit 查询闭环（2026-09-11）
 
@@ -386,7 +387,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用 loading/empty/error、公开登录/授权拒绝/session 检查状态与稳定错误展示，冲突恢复和上传状态待实现。
 - [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。
-- [ ] 建立 refresh-safe 前端路由；目标 page/detail/tab URL 已在阶段启动约束中固定，当前内存 view 尚待替换。
+- [x] 建立 refresh-safe 前端路由；page/detail/tab URL、Worker 鉴权 shell fallback、刷新和前进/后退已通过测试及生产浏览器验收。
 
 - [ ] **退出条件**：组件测试覆盖主要 workflow；浏览器中可完成类型创建、contract append、bundle 上传/绑定、Operator 配置、启用、成员管理与审计查询。
 

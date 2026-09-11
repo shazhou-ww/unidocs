@@ -1,7 +1,17 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { expect, test, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { AdminPortalClientError } from "@unidocs/admin-portal-client";
-import { App, logoutToLogin, returnToAppWhenAuthenticated, sessionInvalidPath } from "../src/app.js";
+import { adminRoutePath, App, logoutToLogin, parseAdminRoute, returnToAppWhenAuthenticated, sessionInvalidPath } from "../src/app.js";
+
+beforeEach(() => window.history.replaceState({}, "", "/"));
+
+test("parses and builds stable Admin routes", () => {
+  expect(parseAdminRoute("https://portal.test/admin/audit")).toEqual({ view: "audit" });
+  expect(parseAdminRoute("https://portal.test/admin/administrators")).toEqual({ view: "administrators" });
+  expect(parseAdminRoute("https://portal.test/admin/document-types/markdown?tab=contracts")).toEqual({ view: "documentTypes", documentType: "markdown", tab: "contracts" });
+  expect(parseAdminRoute("https://portal.test/admin/document-types/markdown?tab=invalid")).toEqual({ view: "documentTypes", documentType: "markdown", tab: "config" });
+  expect(adminRoutePath({ view: "documentTypes", documentType: "markdown", tab: "contracts" })).toBe("/admin/document-types/markdown?tab=contracts");
+});
 
 test("loads the signed-in administrator and real empty document type state", async () => {
   const fetchMock = vi.fn<typeof fetch>(async input => {
@@ -23,6 +33,9 @@ test("loads the signed-in administrator and real empty document type state", asy
   fireEvent.submit(searchInput.closest("form")!);
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("q=markdown"), expect.anything()));
+  fireEvent.click(screen.getByRole("button", { name: "管理员" }));
+  expect(window.location.pathname).toBe("/admin/administrators");
+  expect(await screen.findByText("还没有管理员成员")).toBeInTheDocument();
   vi.unstubAllGlobals();
 });
 
@@ -37,7 +50,7 @@ test("loads members and submits a new administrator from the navigation", async 
   Object.defineProperty(document, "cookie", { configurable: true, value: "__Host-unidocs_admin_csrf=csrf" });
   vi.stubGlobal("fetch", fetchMock);
   render(<App />);
-  fireEvent.click(screen.getByRole("button", { name: /管理员/ }));
+  fireEvent.click(screen.getByRole("button", { name: "管理员" }));
   expect(await screen.findByRole("heading", { name: "管理员" })).toBeInTheDocument();
   expect(await screen.findByText("当前账户")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "添加管理员" }));
@@ -59,7 +72,7 @@ test("confirms removal of another administrator with its current ETag", async ()
   Object.defineProperty(document, "cookie", { configurable: true, value: "__Host-unidocs_admin_csrf=csrf" });
   vi.stubGlobal("fetch", fetchMock);
   render(<App />);
-  fireEvent.click(screen.getByRole("button", { name: /管理员/ }));
+  fireEvent.click(screen.getByRole("button", { name: "管理员" }));
   await screen.findByText("member@example.com");
   fireEvent.click(screen.getByRole("button", { name: "移除 member@example.com" }));
   expect(screen.getByRole("dialog", { name: "移除管理员" })).toHaveTextContent("member@example.com");
@@ -108,6 +121,21 @@ test("filters, paginates, and opens audit event details", async () => {
   fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
   expect(await screen.findByRole("row", { name: /administrator\.bootstrap/ })).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("cursor=next"), expect.anything());
+  vi.unstubAllGlobals();
+});
+
+test("restores the audit page from a direct refresh route", async () => {
+  window.history.replaceState({}, "", "/admin/audit");
+  const fetchMock = vi.fn<typeof fetch>(async input => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    return Response.json({ items: [], nextCursor: null });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(screen.getByRole("heading", { name: "审计" })).toBeInTheDocument();
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/audit-events"), expect.anything()));
+  window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
 });
 

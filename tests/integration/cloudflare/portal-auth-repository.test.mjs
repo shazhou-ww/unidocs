@@ -403,6 +403,9 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
   const storedIdentity = JSON.parse(await database.prepare("SELECT identity_json FROM portal_sessions").first("identity_json"));
   expect(storedIdentity).toMatchObject({ authenticatedAt: null, loginConfirmedAt: now, loginConfirmation: "authorization-code-v1" });
   expect((await handle(new Request("https://portal.test/admin/", { headers: { cookie } }))).status).toBe(200);
+  expect((await handle(new Request("https://portal.test/admin/document-types/markdown?tab=contracts", { headers: { cookie } }))).status).toBe(200);
+  expect((await handle(new Request("https://portal.test/admin/administrators", { headers: { cookie } }))).status).toBe(200);
+  expect((await handle(new Request("https://portal.test/admin/audit", { headers: { cookie } }))).status).toBe(200);
   expect(session.headers.get("cache-control")).toBe("no-store");
   const replay = await handle(callback);
   expect(replay.status).toBe(401);

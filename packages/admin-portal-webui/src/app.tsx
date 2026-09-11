@@ -58,6 +58,35 @@ function administratorName(email: string) {
   return email.slice(0, email.lastIndexOf("@"));
 }
 
+type AdminView = "documentTypes" | "administrators" | "audit";
+type DocumentTypeTab = "config" | "contracts" | "cards" | "bundles" | "operators" | "changes";
+interface AdminRoute {
+  readonly view: AdminView;
+  readonly documentType?: string;
+  readonly tab?: DocumentTypeTab;
+}
+
+const documentTypeTabs = new Set<DocumentTypeTab>(["config", "contracts", "cards", "bundles", "operators", "changes"]);
+
+export function parseAdminRoute(url: string | URL): AdminRoute {
+  const parsed = typeof url === "string" ? new URL(url, "https://portal.invalid") : url;
+  if (parsed.pathname === "/admin/administrators") return { view: "administrators" };
+  if (parsed.pathname === "/admin/audit") return { view: "audit" };
+  const match = /^\/admin\/document-types\/([A-Za-z0-9!$&^_.+-]+)$/.exec(parsed.pathname);
+  if (match) {
+    const requestedTab = parsed.searchParams.get("tab") as DocumentTypeTab | null;
+    return { view: "documentTypes", documentType: match[1], tab: requestedTab && documentTypeTabs.has(requestedTab) ? requestedTab : "config" };
+  }
+  return { view: "documentTypes" };
+}
+
+export function adminRoutePath(route: AdminRoute): string {
+  if (route.view === "administrators") return "/admin/administrators";
+  if (route.view === "audit") return "/admin/audit";
+  if (route.documentType) return `/admin/document-types/${encodeURIComponent(route.documentType)}?tab=${route.tab ?? "config"}`;
+  return "/admin/document-types";
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof AdminPortalClientError) {
     if (error.status === 401) return "登录已失效，请重新登录。";
@@ -166,7 +195,8 @@ function AccessDenied() {
 
 function AdminApp() {
   const [client] = useState(() => createAdminPortalClient({ onUnauthorized: error => window.location.replace(sessionInvalidPath(error)) }));
-  const [view, setView] = useState<"documentTypes" | "administrators" | "audit">("documentTypes");
+  const [initialRoute] = useState(() => parseAdminRoute(window.location.href));
+  const [view, setView] = useState<AdminView>(initialRoute.view);
   const [session, setSession] = useState<AdminPortalSession | null>(null);
   const [items, setItems] = useState<readonly DocumentTypeListItem[]>([]);
   const [members, setMembers] = useState<readonly AdministratorMemberListItem[]>([]);
@@ -214,7 +244,20 @@ function AdminApp() {
     return () => { active = false; };
   }, [client]);
 
-  async function openDetail(documentType: string) {
+  useEffect(() => {
+    if (initialRoute.view === "administrators") void loadMembers();
+    if (initialRoute.view === "audit") {
+      void loadMembers();
+      void loadAudit();
+    }
+    if (initialRoute.documentType) void openDetail(initialRoute.documentType, false);
+    const handlePopState = () => applyRoute(parseAdminRoute(window.location.href));
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  async function openDetail(documentType: string, updateRoute = true) {
+    if (updateRoute) window.history.pushState({}, "", adminRoutePath({ view: "documentTypes", documentType, tab: "config" }));
     setDetailLoading(true);
     setError(null);
     try { setSelected(await client.getDocumentType(documentType)); }
@@ -264,15 +307,26 @@ function AdminApp() {
     return member ? { name: administratorName(member.email), email: member.email } : null;
   }
 
-  function showView(nextView: "documentTypes" | "administrators" | "audit") {
-    setView(nextView);
-    setMobileNav(false);
+  function applyRoute(route: AdminRoute) {
+    setView(route.view);
     setSelected(null);
-    if (nextView === "administrators" && members.length === 0) void loadMembers();
-    if (nextView === "audit") {
+    setSelectedAudit(null);
+    if (route.view === "documentTypes" && route.documentType) void openDetail(route.documentType, false);
+    if (route.view === "administrators") void loadMembers();
+    if (route.view === "audit") {
       if (members.length === 0) void loadMembers();
-      if (auditEvents.length === 0) void loadAudit();
+      void loadAudit();
     }
+  }
+
+  function navigate(route: AdminRoute) {
+    window.history.pushState({}, "", adminRoutePath(route));
+    applyRoute(route);
+  }
+
+  function showView(nextView: AdminView) {
+    navigate({ view: nextView });
+    setMobileNav(false);
   }
 
   async function createType(event: FormEvent) {
@@ -386,7 +440,7 @@ function AdminApp() {
 
           <aside className={`detail-panel ${selected || detailLoading ? "open" : ""}`} aria-label="文档类型详情">
             {detailLoading ? <div className="detail-placeholder"><LoaderCircle className="spin" size={22} />正在读取</div> : selected ? <>
-              <div className="detail-header"><div><span>类型详情</span><h2>{selected.internalName}</h2><code>{selected.documentType}</code></div><button className="icon-button" type="button" onClick={() => setSelected(null)} aria-label="关闭详情"><X size={17} /></button></div>
+              <div className="detail-header"><div><span>类型详情</span><h2>{selected.internalName}</h2><code>{selected.documentType}</code></div><button className="icon-button" type="button" onClick={() => navigate({ view: "documentTypes" })} aria-label="关闭详情"><X size={17} /></button></div>
               <dl className="detail-list"><div><dt>状态</dt><dd>{selected.enabled ? "已启用" : "草稿"}</dd></div><div><dt>Document Contract</dt><dd>{selected.latestDocumentContract ? `r${selected.latestDocumentContract.documentContractIdx}` : "未配置"}</dd></div><div><dt>Type Card</dt><dd>{selected.typeCardBundle?.name ?? "未选择"}</dd></div><div><dt>View bundle</dt><dd>{selected.viewBundle?.name ?? "未选择"}</dd></div><div><dt>内置 Operator</dt><dd>{selected.builtinOperator?.name ?? "未选择"}</dd></div><div><dt>ETag</dt><dd><code title={selected.etag}>{shortEtag(selected.etag)}</code></dd></div></dl>
               <div className="readiness"><strong>启用准备度</strong><div className="readiness-track"><span className={`progress-${[selected.latestDocumentContract, selected.typeCardBundle, selected.viewBundle, selected.builtinOperator].filter(Boolean).length}`} /></div><small>需要 Contract、Type Card、View 与 Operator。</small></div>
             </> : <div className="detail-placeholder"><FileText size={24} /><span>选择一行查看完整配置</span></div>}

@@ -10,11 +10,17 @@ const contentTypes: Readonly<Record<string, string>> = {
   ".woff2": "font/woff2",
 };
 
+export function isProtectedAdminWebUiPath(pathname: string): boolean {
+  return pathname === "/admin" || pathname === "/admin/" || pathname === "/admin/document-types"
+    || pathname === "/admin/administrators" || pathname === "/admin/audit"
+    || /^\/admin\/document-types\/[A-Za-z0-9!#$&^_.+-]+$/.test(pathname);
+}
+
 export function serveAdminWebUi(request: Request): Response | null {
   const url = new URL(request.url);
-  if (url.pathname !== "/admin" && url.pathname !== "/admin/" && url.pathname !== "/admin/index.html" && url.pathname !== "/admin/login" && url.pathname !== "/admin/access-denied" && !url.pathname.startsWith("/admin/assets/")) return null;
+  if (!isProtectedAdminWebUiPath(url.pathname) && url.pathname !== "/admin/index.html" && url.pathname !== "/admin/login" && url.pathname !== "/admin/access-denied" && !url.pathname.startsWith("/admin/assets/")) return null;
   if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-  const path = url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname === "/admin/login" || url.pathname === "/admin/access-denied" ? "/admin/index.html" : url.pathname;
+  const path = isProtectedAdminWebUiPath(url.pathname) || url.pathname === "/admin/login" || url.pathname === "/admin/access-denied" ? "/admin/index.html" : url.pathname;
   const body = ADMIN_UI_ASSETS[path];
   if (body === undefined) return new Response("Admin WebUI asset not found", { status: 404 });
   const extensionAt = path.lastIndexOf(".");
