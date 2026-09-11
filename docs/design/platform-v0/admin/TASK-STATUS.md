@@ -14,7 +14,7 @@
 
 - Platform 是文档、版本、thread、current pointer、审计和 Agent submission 的唯一持久权威。
 - View bundle 在隔离 iframe 中运行，只通过 Host RPC 使用 Platform 能力。
-- Operator Agent 维护自己的任务/session，通过 Platform 查询和原子 submission 生成 pong 与完整 snapshot。
+- Operator Agent 维护自己的任务/session，通过 Platform 查询和原子 submission 生成 reply 与完整 snapshot。
 - 不再引入独立 editor service 或由文档类型服务持有的正式 document session。
 
 ### 文档类型控制面
@@ -42,7 +42,7 @@
 
 ### Document Contract
 
-- `DocumentContractIdx`、`VersionIdx`、`PingIdx` 和 `PongIdx` 均从 0 开始；`null` 表示尚无 record，0 不是 sentinel。
+- `DocumentContractIdx`、`VersionIdx`、`CommentIdx` 和 `ReplyIdx` 均从 0 开始；`null` 表示尚无 record，0 不是 sentinel。
 - 同一不可变 JSON 原子携带 snapshot schema 与 location schema；任一部分失败则整个 append 失败。
 - revision 只能追加，不可修改、删除、弃用、回退或手动设为 current；最大 idx 只表示最后上传。
 - enabled 类型也可随时追加 revision；append 不会改变已有可写集合。
@@ -83,7 +83,7 @@
 
 管理员控制面已从 `@unidocs/protocol-platform` 拆分到 `@unidocs/protocol-admin-portal`。新包只依赖拥有 SValue schema dialect 的基础 `@unidocs/protocol`，不依赖 Platform 服务、`@unidocs/protocol-platform`、Node.js 或 Cloudflare adapter。
 
-`@unidocs/protocol-admin-portal` 已升级为 contract-first 协议包：Zod 4 schema 是 Admin DTO 的运行时与静态类型来源，oRPC contract 定义 26 个 Admin v1 operation 的 method、path、headers、status 与领域错误，并从同一 contract 生成 OpenAPI 3.1 JSON 和内嵌规范的 Scalar HTML。文档分组按 Admin UI 排列为 Document types、Document Contracts、Type Card bundles、View bundles、Operators、Members、Audit。Type Card/View bundle body 保持原始 `application/zip` 流；Document Contract 直接以 JSON body 原子提交两个 schema 与审计原因。`GET /audit-events` 提供 actor、action、resource、document type、时间与 cursor 过滤，并返回带 request correlation 的不可变事件。
+`@unidocs/protocol-admin-portal` 已升级为 contract-first 协议包：Zod 4 schema 是 Admin DTO 的运行时与静态类型来源，oRPC contract 定义 26 个 Admin v1 operation 的 method、path、headers、status 与领域错误，并从同一 contract 生成 OpenAPI 3.1 JSON。Markdown 文章、Scalar 渲染与导航编排由共享 `@unidocs/docs-webui` 消费该 JSON，在 `https://docs.shazhou.work/unidocs` 发布。Type Card/View bundle body 保持原始 `application/zip` 流；Document Contract 直接以 JSON body 原子提交两个 schema 与审计原因。`GET /audit-events` 提供 actor、action、resource、document type、时间与 cursor 过滤，并返回带 request correlation 的不可变事件。
 
 Admin v1 的每个 operation 支持 Bearer token 与 Web UI session cookie 两套独立鉴权。请求存在 Bearer token 时只走 Bearer 鉴权，失败不 fallback 到 cookie；没有 Bearer token 时使用 cookie，且 mutation 额外要求 CSRF。OpenAPI 对读取建模为 `Bearer OR cookie`，对 mutation 建模为 `Bearer OR (cookie AND CSRF)`。
 
@@ -95,13 +95,13 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 目前没有实现 Platform HTTP handler、持久化、Document Contract validator 或 bundle validator；Admin 协议包只负责 wire contract、基础 DTO runtime validation 与文档生成。
 
-实现前的逻辑 ER Model 已建立：全局文档类型控制面、管理员/审计、tenant 文档、版本、thread/ping/pong、submission receipt、幂等记录和可靠外部效果 outbox 都有明确实体、复合键与事务边界。R2 只保存不可变 bundle 文件，UniCAS 只保存 snapshot/message blob graph。tenant principal 与文档共享角色仍标为物理 schema 冻结前必须确定的开放决策。
+实现前的逻辑 ER Model 已建立：全局文档类型控制面、管理员/审计、tenant 文档、版本、thread/comment/reply、submission receipt、幂等记录和可靠外部效果 outbox 都有明确实体、复合键与事务边界。R2 只保存不可变 bundle 文件，UniCAS 只保存 snapshot/message blob graph。tenant principal 与文档共享角色仍标为物理 schema 冻结前必须确定的开放决策。
 
 ## 已验证
 
 - `pnpm typecheck`：41 个 workspace package 通过。
 - `pnpm check:cas-contract-docs`：66 份当前契约文档通过。
-- `pnpm --filter @unidocs/protocol-admin-portal test`：20 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
+- `pnpm --filter @unidocs/protocol-admin-portal test`：schema、contract 与 OpenAPI 测试通过。
 - `pnpm --filter @unidocs/protocol-admin-portal typecheck`：源码、测试与文档生成脚本通过。
 - `node --check docs/design/platform-v0/admin/unidocs-admin-mock.js`：通过。
 - `git diff --check`：通过。

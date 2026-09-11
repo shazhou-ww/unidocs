@@ -6,6 +6,13 @@
  * live in @unicas/codec and are intentionally NOT re-exported here.
  */
 
+export {
+  CasApiErrorMap,
+  CasTenantApiBasePath,
+  casTenantApiContract,
+} from "./contract.js";
+export type { CasTenantApiContract } from "./contract.js";
+
 export type {
   CasGcResult,
   CasHash,
@@ -23,6 +30,24 @@ export type {
   CasUploadRequiredResult,
   CasUsage,
 } from "./types.js";
+
+export {
+  CasGcResultSchema,
+  CasHashSchema,
+  CasLeaseOperationResultSchema,
+  CasLeaseResultSchema,
+  CasNodeDescriptorSchema,
+  CasNodeMetadataSchema,
+  CasNodeSchema,
+  CasNodeStateSchema,
+  CasRefChangesSchema,
+  CasReferencesSchema,
+  CasRootRefBalanceSchema,
+  CasRootRefsPageSchema,
+  CasRootRefUpdateSchema,
+  CasUploadRequiredResultSchema,
+  CasUsageSchema,
+} from "./schemas.js";
 
 export {
   CasLeaseDurationHeader,

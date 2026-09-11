@@ -26,6 +26,33 @@ export type {
 export { CAS_STACK_MEMBER_AUTHORITY } from "./types.js";
 
 export {
+  CasAdminApiBasePath,
+  CasAdminApiErrorMap,
+  casAdminApiContract,
+} from "./contract.js";
+export type { CasAdminApiContract } from "./contract.js";
+
+export {
+  CasAdminErrorResponseSchema,
+  CasControlAuditEventSchema,
+  CasHashSchema,
+  CasManagedCapabilitySchema,
+  CasMemberInvitationSchema,
+  CasOAuthIssuerInspectionSchema,
+  CasOAuthIssuerInspectionKeySchema,
+  CasOperatorIdentityKeySchema,
+  CasOperatorIdentitySchema,
+  CasPlaygroundFileRootSchema,
+  CasRefChangesSchema,
+  CasRefDomainSchema,
+  CasRootRefBalanceSchema,
+  CasRootRefEventSchema,
+  CasStackMemberSchema,
+  CasStackOAuthIssuerSchema,
+  CasStackSchema,
+} from "./schemas.js";
+
+export {
   CasAdminErrorCodes,
   casAdminErrorHttpStatus,
 } from "./errors.js";

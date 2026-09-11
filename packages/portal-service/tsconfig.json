@@ -8,5 +8,5 @@
     "types": []
   },
   "include": ["src"],
-  "references": [{ "path": "../protocol-admin-portal" }]
+  "references": [{ "path": "../protocol-admin-portal" }, { "path": "../protocol-tenant-portal" }]
 }

@@ -6,7 +6,7 @@
  * `view.setViewport`, `view.setMarkers`, `view.focusLocation`, and
  * `view.dispose`.
  * View -> Host methods: `host.readBlob`, `host.listThreads`, `host.getThread`,
- * `host.createThread`, `host.appendPing`, and `host.storeBlob`.
+ * `host.createThread`, `host.appendComment`, and `host.storeBlob`.
  * Every message uses `HostRpcRequest` / `HostRpcResponse` over MessageChannel;
  * this file intentionally defines no HTTP routes.
  */
@@ -16,15 +16,15 @@ import type {
   Cursor,
   DocumentLocation,
   Page,
-  PingIdx,
+  CommentIdx,
   ThreadId,
   VersionIdx,
   ViewBundleId,
 } from "./common.js";
-import type { AppendPingRequest, CreateThreadRequest } from "./platform.js";
+import type { AppendCommentRequest, CreateThreadRequest } from "./messages.js";
 import type {
   DocumentRecord,
-  PingRecord,
+  CommentRecord,
   ThreadDetail,
   ThreadRef,
   VersionRecord,
@@ -106,7 +106,7 @@ export interface ViewSetMarkersRequest {
   readonly revision: number;
   readonly markers: readonly {
     readonly threadId: ThreadId;
-    readonly pingIdx: PingIdx;
+    readonly commentIdx: CommentIdx;
     readonly open: boolean;
     readonly location: DocumentLocation;
   }[];
@@ -135,12 +135,12 @@ export interface HostListThreadsRequest {
   readonly limit: number;
 }
 
-export interface HostAppendPingRequest extends AppendPingRequest {
+export interface HostAppendCommentRequest extends AppendCommentRequest {
   readonly threadId: ThreadId;
 }
 
 export interface HostStoreBlobRequest {
-  readonly purpose: "ping_attachment" | "ping_rich_content" | "view_draft";
+  readonly purpose: "comment_attachment" | "comment_rich_content" | "view_draft";
   readonly contentType: string;
   readonly bytes: ArrayBuffer;
 }
@@ -189,9 +189,9 @@ export interface HostRpcContracts {
     readonly request: CreateThreadRequest;
     readonly response: ThreadDetail;
   };
-  readonly "host.appendPing": {
-    readonly request: HostAppendPingRequest;
-    readonly response: PingRecord;
+  readonly "host.appendComment": {
+    readonly request: HostAppendCommentRequest;
+    readonly response: CommentRecord;
   };
   readonly "host.storeBlob": {
     readonly request: HostStoreBlobRequest;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cable } from "lucide-react";
+import { BookOpenText, Cable } from "lucide-react";
 import type { CasStack } from "@unicas/admin-client";
 import { api } from "./api.js";
 import { matchRoute, navigate, useHashRoute } from "./router.js";
@@ -94,6 +94,16 @@ export function App() {
         <div className="app-header-right">
           {me ? (
             <>
+              <a
+                className="docs-header-link"
+                href="https://docs.shazhou.work/unicas"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open UniCAS documentation"
+              >
+                <BookOpenText size={15} aria-hidden="true" />
+                <span>Documentation</span>
+              </a>
               <span className="mcp-header-action">
                 <Button
                   variant="plain"

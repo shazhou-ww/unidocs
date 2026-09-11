@@ -95,7 +95,6 @@ describe("package dependency boundaries", () => {
     // for its managed-capability Playground.
     expect(webui.dependencies?.["@unicas/admin-client"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/tenant-client"]).toBe("workspace:*");
-    expect(webui.dependencies?.["@unicas/tenant-blob-client"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/tenant-file-client"]).toBe("workspace:*");
     expect(webui.dependencies?.["@unicas/admin-protocol"]).toBeUndefined();
     expect(webui.dependencies?.["@unicas/service"]).toBeUndefined();

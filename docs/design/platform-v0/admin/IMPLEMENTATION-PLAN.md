@@ -246,7 +246,7 @@ Phase 0 剩余门禁（按第 5 节已确认的认证先行顺序，对应功能
 - 不创建 `@unidocs/tenant-portal-client` 或 `@unidocs/tenant-portal-webui`；
 - 不创建 `@unidocs/azure-portal`，不设计 PostgreSQL/Blob adapter；
 - `@unidocs/portal-service` 本期不依赖 `@unidocs/protocol-platform`；
-- 不实现 tenant、document、version、thread、ping/pong、submission、CAS retain 或 Operator outbox；
+- 不实现 tenant、document、version、thread、comment/reply、submission、CAS retain 或 Operator outbox；
 - 不实现 View Host、View bundle runtime 或 thumbnail 生成服务；本期只验证和托管双入口 View bundle；
 - 不迁移、不复用或重命名现有 `gateway-common`、`web-gateway`、`cloudflare-gateway`、`azure-gateway`；
 - 不提供旧 Admin API 兼容层。

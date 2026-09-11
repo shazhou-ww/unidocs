@@ -13,10 +13,10 @@ export type DocumentContractIdx = number;
 /** Zero-based, document-scoped, monotonically increasing version record ID. */
 export type VersionIdx = number;
 export type ThreadId = string;
-/** Zero-based, thread-scoped, monotonically increasing ping record ID. */
-export type PingIdx = number;
-/** Zero-based, thread-scoped, monotonically increasing pong record ID. */
-export type PongIdx = number;
+/** Zero-based, thread-scoped, monotonically increasing comment record ID. */
+export type CommentIdx = number;
+/** Zero-based, thread-scoped, monotonically increasing reply record ID. */
+export type ReplyIdx = number;
 export type SubmissionId = string;
 export type ViewBundleId = string;
 export type TypeCardBundleId = string;
@@ -79,7 +79,7 @@ export type PlatformErrorCode =
   | "document_contract_conflict"
   | "revision_conflict"
   | "version_conflict"
-  | "pong_watermark_conflict"
+  | "reply_watermark_conflict"
   | "idempotency_conflict"
   | "content_unavailable"
   | "limit_exceeded"

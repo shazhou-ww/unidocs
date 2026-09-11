@@ -1,0 +1,32 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist-types",
+    "rootDir": "./src",
+    "composite": true,
+    "noEmit": true,
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
+    "types": [
+      "vite/client"
+    ],
+    "jsx": "react-jsx",
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../protocol-admin-portal"
+    },
+    {
+      "path": "../../unicas-packages/admin-protocol"
+    },
+    {
+      "path": "../../unicas-packages/tenant-protocol"
+    }
+  ]
+}

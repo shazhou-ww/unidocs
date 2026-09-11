@@ -23,3 +23,15 @@ export { DocumentContractOperationError, createDocumentContractService } from ".
 export type { DocumentContractAppendCommand, DocumentContractRepository } from "./admin/document-contracts.js";
 export { TypeCardBundleOperationError, createTypeCardBundleService, typeCardBundleIdentity } from "./admin/type-card-bundles.js";
 export type { TypeCardBundleMetadataCommand, TypeCardBundlePublishCommand, TypeCardBundleRepository, TypeCardBundleReservation, TypeCardBundleUploadCommand } from "./admin/type-card-bundles.js";
+export { guardCanonicalization, requireExactFields, requireIdempotencyKey, requireIdentifier, requirePagination, requireRecordIdx, requireTenantScope, TENANT_LIMITS, TenantAccessError, TenantOperationError } from "./tenant/access.js";
+export type { TenantContext, TenantOperationCode } from "./tenant/access.js";
+export { createTenantCatalogService } from "./tenant/catalog.js";
+export type { TenantCatalogRepository } from "./tenant/catalog.js";
+export { createTenantDocumentService } from "./tenant/documents.js";
+export type { CurrentVersionMoveCommand, DocumentCreateCommand, TenantDocumentRepository } from "./tenant/documents.js";
+export { createTenantVersionService } from "./tenant/versions.js";
+export type { TenantVersionRepository, VersionSnapshot } from "./tenant/versions.js";
+export { createTenantThreadService } from "./tenant/threads.js";
+export type { CommentAnchor, CommentAppendCommand, DocumentLocationValidator, TenantThreadRepository, ThreadCreateCommand } from "./tenant/threads.js";
+export { createTenantCasService } from "./tenant/cas.js";
+export type { CasCapabilityIssuer } from "./tenant/cas.js";
