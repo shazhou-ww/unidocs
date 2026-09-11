@@ -502,9 +502,11 @@ export function resolvePorts(docTypes, overrides = {}, services = []) {
 `buildWorkers` — add `services = []` to the destructured options, and build one config per service worker. Place this beside `mockOidcWorker`, and include it in every array the function returns except the `casMiddlewareOnly` one:
 
 ```js
-  // The portal always points at the real Google. Without credentials in the
-  // environment the worker answers 503 rather than starting a login it cannot
-  // finish, which is the honest failure for "you have not configured this yet".
+  // The portal always points at the real Google. The placeholder credentials
+  // mirror the CAS admin BFF's: the config only checks they are non-empty, so
+  // the worker boots and serves everything except a completed sign-in. Failing
+  // closed instead would make `pnpm dev portal` useless to anyone who has not
+  // registered a loopback redirect URI, which is most readers most of the time.
   const serviceWorkerConfigs = serviceWorkers(services).map(component => ({
     name: component.worker,
     modules: true,
@@ -516,8 +518,8 @@ export function resolvePorts(docTypes, overrides = {}, services = []) {
       // Always the real Google: the portal requires auth_time and
       // email_verified, which the local mock provider does not issue.
       GATEWAY_OIDC_ISSUER: "https://accounts.google.com",
-      GATEWAY_OIDC_CLIENT_ID: googleOidcClientId ?? "",
-      GATEWAY_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "",
+      GATEWAY_OIDC_CLIENT_ID: googleOidcClientId ?? "unidocs-portal-local",
+      GATEWAY_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "unidocs-portal-local-secret",
       PORTAL_BOOTSTRAP_EMAIL: process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL ?? "",
     },
     d1Databases: { [component.d1Binding]: component.worker },
@@ -741,7 +743,7 @@ Confirm the printed URL list contains both the portal and the psd worker, and th
 
 - [ ] **Step 3: Document it**
 
-Add a short section covering: `pnpm dev portal` and `pnpm dev portal psd`; that `portal` is an umbrella whose WebUI components land later; that the local runtime supplies its own compatibility date, so running `wrangler dev` directly inside `packages/cloudflare-portal` fails against the pinned workerd; that signing in locally needs `GOOGLE_OIDC_CLIENT_ID` / `GOOGLE_OIDC_CLIENT_SECRET` in the environment and `http://127.0.0.1:8795/admin/auth/callback` registered as a redirect URI on that client; and that without those the worker answers 503, which is expected.
+Add a short section covering: `pnpm dev portal` and `pnpm dev portal psd`; that `portal` is an umbrella whose WebUI components land later; that the local runtime supplies its own compatibility date, so running `wrangler dev` directly inside `packages/cloudflare-portal` fails against the pinned workerd; and that the portal starts and serves without any Google setup — only *completing* a sign-in needs `GOOGLE_OIDC_CLIENT_ID` / `GOOGLE_OIDC_CLIENT_SECRET` in the environment plus `http://127.0.0.1:8795/admin/auth/callback` registered as a redirect URI on that client. Without them `/admin/auth/login` still redirects to Google, which then rejects the placeholder client; everything else works.
 
 Do not edit `CLAUDE.md` (see the Files list above). If you notice its `pnpm dev` examples are stale, say so in your report instead.
 
