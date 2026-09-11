@@ -86,16 +86,22 @@ test("the issuer requirement is unchanged by the origin allowance", () => {
 // canonicality guard and so would keep passing however the predicate rotted.
 
 test("the pattern is anchored at both ends", () => {
-  // Pins the trailing `$` specifically: without it every string below matches,
-  // and a caller that trusts the pattern alone accepts a non-loopback host.
-  // The predicate's own canonicality check would still refuse these, which is
-  // exactly why the anchor needs pinning where the anchor lives.
+  // Each anchor gets its own spellings, because a suffix case cannot observe
+  // the leading `^` and a prefix case cannot observe the trailing `$`: drop
+  // either anchor and exactly one of the two groups below starts matching.
+  // The predicate's own canonicality check would still refuse all of these,
+  // which is exactly why the anchors need pinning where the anchors live.
   for (const spelling of [
+    // Trailing `$`: everything after the port.
     "http://127.0.0.1:8795@evil.test",
     "http://127.0.0.1:8795.evil.test",
     "http://127.0.0.1:8795/admin",
     "http://localhost:8795@evil.test",
     "http://localhost:8795.evil.test",
+    // Leading `^`: everything before the scheme.
+    "xhttp://127.0.0.1:8795",
+    "https://evil.test/redirect?to=http://127.0.0.1:8795",
+    " http://localhost:8795",
   ]) expect(LOCAL_DEV_ORIGIN_PATTERN.test(spelling), spelling).toBe(false);
   expect(LOCAL_DEV_ORIGIN_PATTERN.test("http://127.0.0.1:8795")).toBe(true);
   expect(LOCAL_DEV_ORIGIN_PATTERN.test("http://localhost:8795")).toBe(true);

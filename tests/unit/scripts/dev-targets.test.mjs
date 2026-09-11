@@ -204,3 +204,26 @@ test("a service frontend is started on the same terms as a doc-type one", async 
   expect(stdout).toContain("portal-webui web http://127.0.0.1:5199");
   expect(stderr).toBe("");
 });
+
+/**
+ * The other half of the docstring above: the service loop must *not* take the
+ * Azure port offset the doc-type loop takes. `serviceFrontends(services)` runs
+ * in common code after the platform branch, so the loop is reachable on Azure
+ * as soon as some service supports it — the availability stub stands in for
+ * that day. Without this case the offset claim is unobservable, because the
+ * only other test reaching the loop runs on Cloudflare where `useAzure` is
+ * false either way.
+ */
+test("a service frontend takes no Azure port offset even on the Azure stack", async () => {
+  const { stdout, stderr } = await runDev(["portal", "--cas", "local", "--fonts", "off"], {
+    platform: "azure",
+    stubs: true,
+    env: { UNIDOCS_TEST_STUB_SERVICE_AVAILABILITY: "1", UNIDOCS_TEST_STUB_SERVICE_FRONTEND: "1" },
+  });
+
+  const webui = viteSpawns(stdout).find(spawned => spawned.cwd.endsWith("/packages/stub-webui"));
+  expect(webui, `no service-frontend Vite spawn in:\n${stdout}`).toBeDefined();
+  expect(webui.args).toEqual(["vite", "--host", "127.0.0.1", "--port", "5199", "--strictPort"]);
+  expect(stdout).toContain("portal-webui web http://127.0.0.1:5199");
+  expect(stderr).toBe("");
+});

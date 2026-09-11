@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
@@ -100,6 +101,20 @@ test("resolvePorts only allocates ports for the gateway and selected types", () 
 });
 
 /**
+ * The one fixed port that lives in no registry: `scripts/dev.mjs` spawns the
+ * gateway WebUI's Vite server on a literal, so it is read back out of the
+ * script rather than restated here — a copy would drift the moment the literal
+ * moves. `--strictPort` is part of the match because it is what makes a
+ * collision fatal instead of a silent re-bind on the next port.
+ */
+const GATEWAY_WEB_PORT = (() => {
+  const source = readFileSync(new URL("../../../scripts/dev.mjs", import.meta.url), "utf8");
+  const match = /"--port", "(\d+)", "--strictPort"/.exec(source);
+  if (!match) throw new Error("scripts/dev.mjs no longer spawns the gateway WebUI on a literal port; update FIXED_LOCAL_PORTS.");
+  return Number(match[1]);
+})();
+
+/**
  * Every fixed port the local runtime binds, whichever module declares it.
  *
  * `resolvePorts` only covers the gateway, doc types and services, so the
@@ -112,6 +127,7 @@ test("resolvePorts only allocates ports for the gateway and selected types", () 
  */
 const FIXED_LOCAL_PORTS = [
   ["gateway", GATEWAY_PORT],
+  ["web-gateway", GATEWAY_WEB_PORT],
   ["cas admin", ADMIN_PORT],
   ["mock OIDC", MOCK_OIDC_PORT],
   ["cas edge", EDGE_PORT],
