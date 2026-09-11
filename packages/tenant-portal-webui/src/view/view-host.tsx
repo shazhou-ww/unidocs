@@ -4,7 +4,7 @@ import { createLocalChannel, type HostImplementation, type ViewChannel } from ".
 import { createMarkdownView } from "./markdown-view.js";
 import type { RoledMarker } from "./markers.js";
 
-const noopHost: HostImplementation = {
+export const noopHost: HostImplementation = {
   readBlob: async () => { throw new Error("readBlob is not available in this round"); },
   listThreads: async () => ({ items: [], nextCursor: null }),
   getThread: async () => { throw new Error("getThread is not available in this round"); },

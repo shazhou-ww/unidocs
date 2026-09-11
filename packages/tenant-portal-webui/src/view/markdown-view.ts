@@ -4,7 +4,7 @@
  */
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { readMarkdownTextRange, type MarkdownSnapshot } from "@unidocs/tenant-portal-client";
+import { createMarkdownTextRange, readMarkdownTextRange, type MarkdownSnapshot } from "@unidocs/tenant-portal-client";
 import type {
   DocumentLocation,
   ViewFocusLocationResponse,
@@ -16,7 +16,8 @@ import type {
   ViewSetViewportRequest,
   ViewSetViewportResponse,
 } from "@unidocs/protocol-platform";
-import type { ViewImplementation } from "./channel.js";
+import { errorText } from "../error-text.js";
+import type { HostImplementation, ViewImplementation } from "./channel.js";
 import type { MarkerRole, RoledMarker } from "./markers.js";
 
 export interface MarkdownViewInstance extends ViewImplementation {
@@ -88,14 +89,156 @@ function clearMarkers(container: HTMLElement): void {
 
 export function createMarkdownView(options: { container: HTMLElement }): MarkdownViewInstance {
   const { container } = options;
+  // 浮动按钮/输入框用 absolute 定位，要相对这个容器，不是相对整个页面。
+  if (container.style.position === "") container.style.position = "relative";
   let source = "";
+  let host: HostImplementation | null = null;
+  let documentContractIdx = 0;
+  let currentVersionIdx = 0;
+
+  // ---- 选区上方浮出的「添加评论」（§2.6、§3.1）--------------------------------
+  //
+  // 只有 View 能把选区读出来再编码成 DocumentLocation，所以这一整段——浮动按钮、
+  // 内联输入框、失败后的重试——都活在这个模块里，不在 React 那一侧。jsdom 的
+  // Selection 支持有限，这条路径没有自动化测试覆盖（Task 15 brief 明确说明）；
+  // 手工验证记在提交信息和任务报告里。
+  let floatingEl: HTMLElement | null = null;
+
+  function removeFloating(): void {
+    floatingEl?.remove();
+    floatingEl = null;
+  }
+
+  function currentSelectionRange(): { start: number; end: number } | null {
+    const selection = window.getSelection();
+    if (selection === null || selection.isCollapsed || selection.rangeCount === 0) return null;
+    if (!container.contains(selection.anchorNode)) return null;
+
+    const quote = selection.toString();
+    const at = source.indexOf(quote);
+    if (at === -1) return null;
+    return { start: at, end: at + quote.length };
+  }
+
+  function anchorRect(): DOMRect | null {
+    const selection = window.getSelection();
+    if (selection === null || selection.rangeCount === 0) return null;
+    return selection.getRangeAt(0).getBoundingClientRect();
+  }
+
+  function positionNear(element: HTMLElement, rect: DOMRect): void {
+    const containerRect = container.getBoundingClientRect();
+    element.style.position = "absolute";
+    element.style.left = `${Math.max(0, rect.left - containerRect.left + container.scrollLeft)}px`;
+    element.style.top = `${Math.max(0, rect.top - containerRect.top + container.scrollTop - 8)}px`;
+  }
+
+  function openComposer(range: { start: number; end: number }, rect: DOMRect): void {
+    removeFloating();
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "selection-composer";
+    positionNear(wrapper, rect);
+
+    const textarea = document.createElement("textarea");
+    textarea.setAttribute("aria-label", "添加评论");
+    wrapper.appendChild(textarea);
+
+    const errorEl = document.createElement("p");
+    errorEl.setAttribute("role", "alert");
+    errorEl.hidden = true;
+    wrapper.appendChild(errorEl);
+
+    const actions = document.createElement("div");
+    actions.className = "selection-composer-actions";
+    const sendButton = document.createElement("button");
+    sendButton.type = "button";
+    sendButton.textContent = "发送";
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.textContent = "取消";
+    actions.append(sendButton, cancelButton);
+    wrapper.appendChild(actions);
+
+    cancelButton.addEventListener("click", () => removeFloating());
+
+    sendButton.addEventListener("click", () => {
+      void (async () => {
+        const text = textarea.value.trim();
+        if (text === "" || host === null) return;
+
+        const location = createMarkdownTextRange({
+          documentContractIdx,
+          content: source,
+          start: range.start,
+          end: range.end,
+        });
+
+        errorEl.hidden = true;
+        sendButton.disabled = true;
+        try {
+          // 每次点「发送」都用同一个 host.createThread 调用；失败时文本原样留在
+          // 输入框里，用户可以直接改「发送」为「重试」——见下面 catch 分支里
+          // 文案没有清空 textarea。
+          await host?.createThread({
+            baseVersionIdx: currentVersionIdx,
+            content: { text, richContent: null, attachments: [] },
+            location,
+          });
+          removeFloating();
+          window.getSelection()?.removeAllRanges();
+        } catch (cause) {
+          errorEl.hidden = false;
+          errorEl.textContent = errorText(cause);
+          sendButton.disabled = false;
+          sendButton.textContent = "重试";
+        }
+      })();
+    });
+
+    container.appendChild(wrapper);
+    floatingEl = wrapper;
+    textarea.focus();
+  }
+
+  function showTrigger(range: { start: number; end: number }, rect: DOMRect): void {
+    removeFloating();
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "add-comment-trigger";
+    button.textContent = "添加评论";
+    positionNear(button, rect);
+    // 按下时不要抢焦点，否则选区会在 click 触发前先被清掉。
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => openComposer(range, rect));
+
+    container.appendChild(button);
+    floatingEl = button;
+  }
+
+  container.addEventListener("mouseup", () => {
+    // 浮层自己被点击时也会经过这里；此时选区多半已经空了，交给上面各自的
+    // click handler 处理，这里只负责「有新选区才出触发按钮」。
+    const range = currentSelectionRange();
+    if (range === null) { removeFloating(); return; }
+    const rect = anchorRect();
+    if (rect === null) { removeFloating(); return; }
+    showTrigger(range, rect);
+  });
 
   return {
-    async initialize(_request: ViewInitializeRequest): Promise<ViewInitializeResponse> {
+    async initialize(_request: ViewInitializeRequest, hostImpl: HostImplementation): Promise<ViewInitializeResponse> {
+      host = hostImpl;
       return { acceptedProtocol: "unidocs-view-host/v1" };
     },
 
-    async loadSnapshot(request: ViewLoadSnapshotRequest): Promise<ViewLoadSnapshotResponse> {
+    async loadSnapshot(request: ViewLoadSnapshotRequest, hostImpl: HostImplementation): Promise<ViewLoadSnapshotResponse> {
+      host = hostImpl;
+      documentContractIdx = request.context.viewVersion?.documentContractIdx ?? documentContractIdx;
+      currentVersionIdx = request.context.viewVersion?.versionIdx ?? currentVersionIdx;
+
+      removeFloating();
       const snapshot = request.snapshot as unknown as MarkdownSnapshot | null;
       source = snapshot?.content ?? "";
       container.innerHTML = source === ""
@@ -131,19 +274,13 @@ export function createMarkdownView(options: { container: HTMLElement }): Markdow
     },
 
     async dispose(): Promise<void> {
+      removeFloating();
       container.innerHTML = "";
       source = "";
     },
 
     selectionRange() {
-      const selection = window.getSelection();
-      if (selection === null || selection.isCollapsed || selection.rangeCount === 0) return null;
-      if (!container.contains(selection.anchorNode)) return null;
-
-      const quote = selection.toString();
-      const at = source.indexOf(quote);
-      if (at === -1) return null;
-      return { start: at, end: at + quote.length };
+      return currentSelectionRange();
     },
   };
 }

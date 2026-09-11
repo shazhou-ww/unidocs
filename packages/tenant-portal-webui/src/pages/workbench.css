@@ -14,5 +14,6 @@
 .document-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .document-grid article { display: grid; gap: 12px; padding: 16px; min-height: 140px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .document-grid a { color: inherit; font-weight: 600; text-decoration: none; }
-.document-grid footer { margin-top: auto; color: var(--text-muted); font-size: 12px; }
+.document-grid footer { margin-top: auto; display: flex; gap: 8px; align-items: baseline; color: var(--text-muted); font-size: 12px; }
+.document-grid .draft-count { color: var(--accent-draft); }
 .muted { color: var(--text-muted); }

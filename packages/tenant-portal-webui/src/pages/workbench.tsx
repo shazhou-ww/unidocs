@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DocumentRecord } from "@unidocs/protocol-platform";
 import { useClient } from "../client-context.js";
+import { createDraftStore } from "../drafts/draft-store.js";
 import { loadDiscussionSummary, type DiscussionSummary } from "../model/discussion-summary.js";
 import { routeToHash } from "../router.js";
 import "./workbench.css";
@@ -20,6 +21,7 @@ function discussionLabel(summary: DiscussionSummary): string {
 
 export function WorkbenchPage() {
   const client = useClient();
+  const draftStore = useMemo(() => createDraftStore(globalThis.localStorage), []);
   const [entries, setEntries] = useState<readonly Entry[] | null>(null);
   const [keyword, setKeyword] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
@@ -101,7 +103,12 @@ export function WorkbenchPage() {
               <a href={routeToHash({ kind: "document", documentId: entry.document.documentId })}>
                 {entry.document.name}
               </a>
-              <footer>{discussionLabel(entry.summary)}</footer>
+              <footer>
+                {discussionLabel(entry.summary)}
+                {draftStore.countForDocument(entry.document.documentId) > 0 && (
+                  <span className="draft-count">{draftStore.countForDocument(entry.document.documentId)} 条未发送</span>
+                )}
+              </footer>
             </article>
           </li>
         ))}

@@ -1,11 +1,16 @@
 import type { PingRecord, PongRecord, VersionIdx } from "@unidocs/protocol-platform";
+import type { Draft } from "../drafts/draft-store.js";
 import type { ThreadState } from "../model/thread-state.js";
+import { Composer } from "./composer.js";
+import { DraftBlock } from "./draft-block.js";
 
 export function PingCard(props: {
   ping: PingRecord;
   currentVersionIdx: VersionIdx | null;
+  acknowledged: boolean;
   selected?: boolean;
   onSelect?(): void;
+  onEdit?(): void;
 }) {
   const behind = props.currentVersionIdx === null ? 0 : props.currentVersionIdx - props.ping.baseVersionIdx;
 
@@ -16,8 +21,12 @@ export function PingCard(props: {
         <footer>
           <span className="version-badge">v{props.ping.baseVersionIdx}</span>
           {behind > 0 && <span className="behind">基于 v{props.ping.baseVersionIdx} · 已过 {behind} 版</span>}
+          {/* 徽标只从水位派生，从不落库；见 model/thread-state.ts 的 acknowledgedPingIdx。 */}
+          <span className="ping-status">{props.acknowledged ? "已处理" : "正在执行"}</span>
         </footer>
       </button>
+      {/* 已发送的评论不可编辑也不可删除：只提供「修改」，它会压回一份新草稿（§2.7）。 */}
+      <button type="button" className="ping-edit" onClick={props.onEdit}>修改</button>
     </li>
   );
 }
@@ -43,6 +52,21 @@ export function ThreadCard(props: {
   selectedPingIdx?: number;
   onSelect(): void;
   onSelectPing?(pingIdx: number): void;
+  /** 该处的草稿——回复中的那一份已经在别处（Composer）显示，这里已被上游排除。 */
+  drafts: readonly Draft[];
+  draftFailures: Readonly<Record<string, string>>;
+  onSendDraft(draft: Draft): void;
+  onDiscardDraft(draftId: string): void;
+  onEditPing(ping: PingRecord): void;
+  composing: boolean;
+  composingInitialText: string;
+  onComposeOpen(): void;
+  onComposeChange(text: string): void;
+  onComposeSend(text: string): void;
+  onComposeCancel(): void;
+  /** 焦点离开整个回复区（而不是点了区内的按钮）时关闭输入框，但保留草稿——写到一半
+      切去看别处不会丢（§2.7）。 */
+  onComposeBlurAway(): void;
 }) {
   const first = props.pings[0];
 
@@ -69,11 +93,45 @@ export function ThreadCard(props: {
               key={ping.pingIdx}
               ping={ping}
               currentVersionIdx={props.currentVersionIdx}
+              acknowledged={props.state.acknowledgedPingIdx >= ping.pingIdx}
               selected={props.selectedPingIdx === ping.pingIdx}
               onSelect={() => props.onSelectPing?.(ping.pingIdx)}
+              onEdit={() => props.onEditPing(ping)}
             />
           ))}
           {props.pongs.map((pong) => <PongCard key={pong.pongIdx} pong={pong} />)}
+          {props.drafts.map((draft) => (
+            <li key={draft.draftId}>
+              <DraftBlock
+                draft={draft}
+                failure={props.draftFailures[draft.draftId] ?? null}
+                onRetry={() => props.onSendDraft(draft)}
+                onDiscard={() => props.onDiscardDraft(draft.draftId)}
+              />
+            </li>
+          ))}
+          <li
+            className="thread-compose"
+            onBlur={(event) => {
+              // relatedTarget 仍在这个区域内（比如从输入框点到「发送」）不算离开；
+              // 真正离开——点了区域外的任何东西——才收起输入框。
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                props.onComposeBlurAway();
+              }
+            }}
+          >
+            {props.composing
+              ? (
+                <Composer
+                  label="回复这一处"
+                  initialText={props.composingInitialText}
+                  onChange={props.onComposeChange}
+                  onSend={props.onComposeSend}
+                  onCancel={props.onComposeCancel}
+                />
+              )
+              : <button type="button" onClick={props.onComposeOpen}>回复</button>}
+          </li>
         </ul>
       )}
     </article>

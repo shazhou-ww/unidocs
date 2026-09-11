@@ -2,6 +2,7 @@
 .document-top { display: flex; gap: 12px; align-items: baseline; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .document-top h1 { font-size: 16px; margin: 0; }
 .readonly-badge { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); font-size: 12px; }
+.refreshing-badge { color: var(--text-muted); font-size: 12px; }
 
 .document-body { display: grid; grid-template-columns: 1fr var(--panel-width); min-height: 0; }
 .pane { overflow: auto; padding: 24px 32px; }
@@ -32,3 +33,22 @@
 .pane-base { background: var(--surface-sunken); }
 .pane-label { margin: 0; padding: 8px 32px; color: var(--text-muted); font-size: 12px; border-bottom: 1px solid var(--border); }
 .pane-note { margin: 0; padding: 8px 32px; color: var(--text-muted); font-size: 12px; background: var(--surface-sunken); border-bottom: 1px solid var(--border); }
+
+.composer { display: grid; gap: 6px; }
+.composer textarea { width: 100%; min-height: 64px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; resize: vertical; }
+.composer-actions { display: flex; gap: 6px; }
+
+.draft-block { padding: 10px; border: 1px dashed var(--accent-draft); border-radius: 6px; background: color-mix(in srgb, var(--accent-draft) 8%, transparent); }
+.draft-origin { margin: 0 0 4px; color: var(--accent-draft); font-size: 12px; }
+.draft-text { margin: 0 0 6px; }
+.draft-actions { display: flex; gap: 6px; }
+.draft-count { color: var(--accent-draft); font-size: 12px; }
+.ping-status { color: var(--text-muted); }
+.ping-edit { border: 0; background: none; color: var(--text-muted); font-size: 12px; cursor: pointer; padding: 0 10px 10px; }
+
+/* 选区上方浮出的「添加评论」触发按钮与内联输入框——由 markdown-view.ts 直接管理 DOM，
+   不经过 React，所以样式挂在这里而不是某个组件上。§3.1 的第一个入口。 */
+.add-comment-trigger { z-index: 1; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--text); color: var(--surface); font-size: 12px; cursor: pointer; }
+.selection-composer { z-index: 1; display: grid; gap: 6px; width: min(320px, 90%); padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); }
+.selection-composer textarea { width: 100%; min-height: 56px; padding: 6px; border: 1px solid var(--border); border-radius: 4px; font: inherit; resize: vertical; }
+.selection-composer-actions { display: flex; gap: 6px; }

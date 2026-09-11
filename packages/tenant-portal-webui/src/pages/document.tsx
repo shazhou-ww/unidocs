@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PingRecord, VersionRecord } from "@unidocs/protocol-platform";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
-import { decideRightPane, type RightPaneDecision } from "../model/compare.js";
-import { useDocumentSession } from "../model/use-document.js";
 import { useClient } from "../client-context.js";
+import { anchorKeyOf, type Draft } from "../drafts/draft-store.js";
+import { useDrafts } from "../drafts/use-drafts.js";
+import { errorText } from "../error-text.js";
+import { decideRightPane, type RightPaneDecision } from "../model/compare.js";
+import { sendDraft } from "../model/send-comment.js";
+import { useDocumentSession } from "../model/use-document.js";
 import { ThreadPanel } from "../panel/thread-panel.js";
 import { routeToHash } from "../router.js";
-import { ViewHost } from "../view/view-host.js";
+import type { HostImplementation } from "../view/channel.js";
 import type { RoledMarker } from "../view/markers.js";
+import { noopHost, ViewHost } from "../view/view-host.js";
 import "./document.css";
 
 const RIGHT_PANE_NOTE: Readonly<Record<RightPaneDecision["kind"], string | null>> = {
@@ -17,10 +22,26 @@ const RIGHT_PANE_NOTE: Readonly<Record<RightPaneDecision["kind"], string | null>
   "stale-rewritten": "这段内容已经不在当前版本里。平台不做语义迁移，这条评论依然有效，由 Agent 判断它是否仍然适用；常见成因是它处理别的一处评论时顺带改动了这里。",
 };
 
+function removeKey<T>(record: Readonly<Record<string, T>>, key: string): Readonly<Record<string, T>> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
 export function DocumentPage(props: { documentId: string; threadId?: string; pingIdx?: number }) {
   const client = useClient();
   const session = useDocumentSession(props.documentId);
+  const drafts = useDrafts(props.documentId);
   const [baseVersion, setBaseVersion] = useState<VersionRecord | null>(null);
+
+  // 输入框都由动作触发：回复某一处开一份 Composer，「修改」直接压回一份草稿
+  // （不经过 Composer——见 editFrom）。composeDraftId 记住当前 Composer 绑定的
+  // 草稿，好让 ThreadPanel 把它从草稿块列表里剔掉，不然「发送」按钮会出现两次。
+  const [composingThreadId, setComposingThreadId] = useState<string | null>(null);
+  const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+  const [composingInitialText, setComposingInitialText] = useState("");
+  const [draftFailures, setDraftFailures] = useState<Readonly<Record<string, string>>>({});
 
   const selected = session.summary?.threads.find(({ detail }) => detail.threadId === props.threadId) ?? null;
   const ping: PingRecord | null = selected === null
@@ -80,8 +101,124 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
     return decision.markers.map((marker) => ({ ...marker, threadId: props.threadId ?? "" }));
   }, [decision, props.threadId]);
 
-  if (session.failure !== null) return <main className="document"><p role="alert">{session.failure.message}</p></main>;
-  if (session.loading || session.document === null) return <main className="document"><p className="muted">加载中……</p></main>;
+  // View 的「添加评论」是唯一能把选区编码成 DocumentLocation 的地方（§3.1），
+  // 所以要给它一个能真的建 thread 的 host。carry-forward 2：ViewHost 的挂载 effect
+  // 只在挂载时读一次 props.host，这个对象因此必须引用稳定，且只能闭包住 client 与
+  // documentId 这两个不会变质的值——否则通道会永远绑死第一次渲染时的 host。
+  const viewHost: HostImplementation = useMemo(() => ({
+    ...noopHost,
+    createThread: async (request) => client.createThread(props.documentId, globalThis.crypto.randomUUID(), request),
+  }), [client, props.documentId]);
+
+  const send = async (draft: Draft) => {
+    try {
+      await sendDraft(client, props.documentId, draft);
+      drafts.removeDraft(draft.draftId);
+      setDraftFailures((previous) => removeKey(previous, draft.draftId));
+      // carry-forward 1：reload() 会把 loading 重新置 true，但下面的早退已经改成
+      // 只在“还没有任何内容”时才整页早退，所以这次刷新不会把已经渲染的面板闪掉。
+      session.reload();
+    } catch (cause) {
+      // 失败一律保留草稿，复用原 idempotencyKey 重试——永远不丢用户写的字。
+      setDraftFailures((previous) => ({ ...previous, [draft.draftId]: errorText(cause) }));
+    }
+  };
+
+  const onComposeOpen = (threadId: string) => {
+    const anchorKey = anchorKeyOf({ threadId, location: null });
+    // 回到之前写了一半就切走的那份草稿，而不是每次打开都另起一份。
+    const existing = drafts.draftsForAnchor(anchorKey).find((draft) => draft.editedFromPingIdx === null);
+    setComposingThreadId(threadId);
+    setComposeDraftId(existing?.draftId ?? null);
+    setComposingInitialText(existing?.text ?? "");
+  };
+
+  const composeBaseVersionIdx = (threadId: string): number => {
+    const thread = session.summary?.threads.find((candidate) => candidate.detail.threadId === threadId);
+    return session.document?.currentVersionIdx ?? thread?.detail.pings[0]?.baseVersionIdx ?? 0;
+  };
+
+  const composeLocation = (threadId: string) => {
+    const thread = session.summary?.threads.find((candidate) => candidate.detail.threadId === threadId);
+    return thread?.detail.pings[0]?.location ?? null;
+  };
+
+  const onComposeChange = (threadId: string, text: string) => {
+    const draft = drafts.saveDraft({
+      draftId: composeDraftId ?? undefined,
+      threadId,
+      location: composeLocation(threadId),
+      baseVersionIdx: composeBaseVersionIdx(threadId),
+      text,
+    });
+    setComposeDraftId(draft.draftId);
+  };
+
+  const onComposeSend = (threadId: string, text: string) => {
+    const draft = drafts.saveDraft({
+      draftId: composeDraftId ?? undefined,
+      threadId,
+      location: composeLocation(threadId),
+      baseVersionIdx: composeBaseVersionIdx(threadId),
+      text,
+    });
+    // 发送这个动作本身就收起输入框：成功了草稿会被移除，失败了它会作为草稿块
+    // 带着错误说明和「重试」重新出现——重试走 DraftBlock，复用同一个 draftId、
+    // 同一个 idempotencyKey，不会因为还停留在 Composer 里而被排除渲染。
+    setComposingThreadId(null);
+    setComposeDraftId(null);
+    void send(draft);
+  };
+
+  const onComposeCancel = () => {
+    // 明确点「取消」＝放弃这次输入；和「切去看别处」（onComposeBlurAway）不同，
+    // 那种情况要保留草稿。
+    if (composeDraftId !== null) {
+      drafts.removeDraft(composeDraftId);
+      setDraftFailures((previous) => removeKey(previous, composeDraftId));
+    }
+    setComposingThreadId(null);
+    setComposeDraftId(null);
+  };
+
+  const onComposeBlurAway = () => {
+    setComposingThreadId(null);
+    setComposeDraftId(null);
+  };
+
+  const onSendDraft = (draft: Draft) => void send(draft);
+
+  const onDiscardDraft = (draftId: string) => {
+    drafts.removeDraft(draftId);
+    setDraftFailures((previous) => removeKey(previous, draftId));
+    if (composeDraftId === draftId) { setComposingThreadId(null); setComposeDraftId(null); }
+  };
+
+  const onEditFromPing = (threadId: string, editPing: PingRecord) => {
+    const anchorKey = anchorKeyOf({ threadId, location: null });
+    // 重复点「修改」复用同一份草稿，不会每点一次就多一份。
+    const existing = drafts.draftsForAnchor(anchorKey)
+      .find((draft) => draft.editedFromPingIdx === editPing.pingIdx);
+    const draft = drafts.saveDraft({
+      draftId: existing?.draftId,
+      threadId,
+      location: editPing.location,
+      // 新草稿基于 current，不是原评论的基版——这是一条关于用户此刻看到的版本的新评论。
+      baseVersionIdx: session.document?.currentVersionIdx ?? editPing.baseVersionIdx,
+      text: editPing.content.text ?? "",
+      editedFromPingIdx: editPing.pingIdx,
+    });
+    setDraftFailures((previous) => removeKey(previous, draft.draftId));
+  };
+
+  // carry-forward 1：只有在“还没有任何内容可看”时才整页早退（首次加载 / 加载失败且
+  // 从未成功过）。一旦 document 已经取到过，之后每一次 reload()（例如发送评论后）
+  // 都继续渲染已有内容，只用一个不起眼的提示表示正在刷新，不能把已经画出来的面板、
+  // 分屏、只读徽标全部闪没再重新挂载一遍。
+  if (session.document === null) {
+    if (session.failure !== null) return <main className="document"><p role="alert">{session.failure.message}</p></main>;
+    return <main className="document"><p className="muted">加载中……</p></main>;
+  }
 
   const note = decision === null ? null : RIGHT_PANE_NOTE[decision.kind];
   const split = ping !== null && baseVersion !== null;
@@ -91,6 +228,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
       <header className="document-top">
         <h1>{session.document.name}</h1>
         <span className="readonly-badge">只读 · 内容由 Agent 编辑</span>
+        {session.loading && <span className="refreshing-badge" aria-live="polite">正在刷新…</span>}
       </header>
 
       <div className={`document-body${split ? " split" : ""}`}>
@@ -105,7 +243,15 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
           {note !== null && <p className="pane-note">{note}</p>}
           {session.currentVersion === null
             ? <p className="muted">这件作品还在初始化，暂时没有可读的版本。</p>
-            : <ViewHost label="当前版本" version={session.currentVersion} markers={rightMarkers} className="pane pane-current" />}
+            : (
+              <ViewHost
+                label="当前版本"
+                version={session.currentVersion}
+                markers={rightMarkers}
+                className="pane pane-current"
+                host={viewHost}
+              />
+            )}
         </div>
 
         <ThreadPanel
@@ -121,6 +267,20 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
               kind: "document", documentId: props.documentId, threadId: props.threadId ?? "", pingIdx,
             });
           }}
+          draftsForAnchor={drafts.draftsForAnchor}
+          draftCount={drafts.count}
+          composingThreadId={composingThreadId}
+          composeDraftId={composeDraftId}
+          composingInitialText={composingInitialText}
+          draftFailures={draftFailures}
+          onComposeOpen={onComposeOpen}
+          onComposeChange={onComposeChange}
+          onComposeSend={onComposeSend}
+          onComposeCancel={onComposeCancel}
+          onComposeBlurAway={onComposeBlurAway}
+          onSendDraft={onSendDraft}
+          onDiscardDraft={onDiscardDraft}
+          onEditFromPing={onEditFromPing}
         />
       </div>
     </main>
