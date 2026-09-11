@@ -2,26 +2,89 @@ import { OpenAPIGenerator } from "@orpc/openapi";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { casAdminApiContract } from "../src/contract.js";
 
-export function generateAdminOpenApiDocument() {
+export const AdminApiTagGroups = [
+  {
+    name: "Stack Administration",
+    tags: ["Identity", "Stacks", "Members"],
+  },
+  {
+    name: "Capability Configuration",
+    tags: ["OAuth Issuer", "Managed Issuer"],
+  },
+  {
+    name: "Application Workflow",
+    tags: ["Playground"],
+  },
+  {
+    name: "Audit & Diagnostics",
+    tags: ["Audit", "Root Ref Audit"],
+  },
+] as const;
+
+export const AdminApiOperationOrder = [
+  "GET /admin/me",
+  "GET /admin/stacks",
+  "POST /admin/stacks",
+  "GET /admin/stacks/{stackId}",
+  "PATCH /admin/stacks/{stackId}",
+  "GET /admin/stacks/{stackId}/members",
+  "POST /admin/stacks/{stackId}/member-invitations",
+  "POST /admin/member-invitations/{token}/accept",
+  "DELETE /admin/stacks/{stackId}/members",
+  "GET /admin/stacks/{stackId}/oauth-issuer",
+  "POST /admin/stacks/{stackId}/oauth-issuer/inspections",
+  "PUT /admin/stacks/{stackId}/oauth-issuer",
+  "GET /admin/stacks/{stackId}/managed-issuer",
+  "PATCH /admin/stacks/{stackId}/managed-issuer",
+  "POST /admin/stacks/{stackId}/managed-capabilities",
+  "GET /admin/stacks/{stackId}/playground/file-roots",
+  "POST /admin/stacks/{stackId}/playground/file-roots",
+  "PATCH /admin/stacks/{stackId}/playground/file-roots/{rootId}",
+  "DELETE /admin/stacks/{stackId}/playground/file-roots/{rootId}",
+  "GET /admin/stacks/{stackId}/audit-events",
+  "GET /admin/stacks/{stackId}/ref-domains",
+  "GET /admin/stacks/{stackId}/root-ref-domains/{refDomain}/refs",
+  "GET /admin/stacks/{stackId}/root-ref-domains/{refDomain}/events",
+] as const;
+
+export async function generateAdminOpenApiDocument() {
   const generator = new OpenAPIGenerator({
     schemaConverters: [new ZodToJsonSchemaConverter()],
   });
 
-  return generator.generate(casAdminApiContract, {
+  const document = await generator.generate(casAdminApiContract, {
     info: {
       title: "UniCAS Administrator API",
       version: "0.1.0",
-      description: "Administrator control-plane API for stacks, membership, OAuth issuers, Playground roots, and audit data.",
+      description: [
+        "Administrator control-plane API for stacks, equal-authority membership, Stack OAuth issuers, Playground roots, and append-only audit data.",
+        "",
+        "## Authentication and authorization",
+        "",
+        "Browser and MCP requests are authenticated through the HttpOnly same-origin administrator session cookie. Most stack resources additionally require membership in the selected `{stackId}`. Membership is equal authority: there are no per-member roles, and the final member cannot be removed. OIDC issuer plus subject is the immutable identity key; display email is never an ownership key.",
+        "",
+        "## Concurrency and idempotency",
+        "",
+        "Mutable resources expose an integer `revision`. Send that revision in `If-Match` for conditional update or deletion. A missing precondition returns `PRECONDITION_REQUIRED`; a stale revision returns `REVISION_MISMATCH`. Creation operations that expose `Idempotency-Key` retain a successful result for safe retry; reusing a key with different input returns `IDEMPOTENCY_CONFLICT`.",
+        "",
+        "## OAuth issuer activation",
+        "",
+        "External issuers use an inspect-then-activate workflow. Inspection performs bounded public HTTPS discovery and returns an expiring challenge. Activation requires a compact-JWS proof made by a private key corresponding to the discovered public JWKS. UniCAS stores and refreshes public keys only; never send private signing material to this API.",
+        "",
+        "## Pagination, errors, and time values",
+        "",
+        "List cursors are opaque and bound to their filters and control-data snapshot. Pass `nextCursor` unchanged. Error bodies contain a stable uppercase `error` code and may include a human-readable `message`; clients should branch on the code. All numeric timestamps are Unix milliseconds.",
+      ].join("\n"),
     },
     tags: [
-      { name: "Identity", description: "Inspect the authenticated administrator and stack memberships." },
-      { name: "Stacks", description: "Create, list, inspect, and update UniCAS stacks." },
-      { name: "Members", description: "Manage equal-authority stack members and invitations." },
-      { name: "Playground", description: "Manage Playground business roots that retain CAS manifests." },
-      { name: "OAuth Issuer", description: "Discover, prove control of, and activate external Stack OAuth issuers." },
-      { name: "Managed Issuer", description: "Configure the UniCAS-managed issuer and mint development capabilities." },
-      { name: "Audit", description: "Read append-only administrator control events." },
-      { name: "Root Ref Audit", description: "Inspect refDomains, balances, and append-only Root Ref events." },
+      { name: "Identity", description: "Inspect the immutable OIDC identity of the authenticated administrator and the stacks in which that identity is an equal member." },
+      { name: "Stacks", description: "Create, list, inspect, and conditionally update UniCAS stack resources. Stack identifiers are generated by UniCAS and remain stable." },
+      { name: "Members", description: "Manage equal-authority stack administrators through single-use invitations and identity-keyed removal with final-member protection." },
+      { name: "OAuth Issuer", description: "Discover an external public HTTPS authorization server, prove control using a discovered signing key, and activate it as a Stack capability issuer." },
+      { name: "Managed Issuer", description: "Inspect or enable the UniCAS-managed Stack issuer and mint short-lived capabilities for administrative Playground workflows." },
+      { name: "Playground", description: "Manage Playground business records that give retained CAS manifest hashes application meaning. Replacing or deleting a root changes retention state." },
+      { name: "Audit", description: "Read append-only administrator control events with actor, action, target, ingress-channel, request, and trace correlation." },
+      { name: "Root Ref Audit", description: "Inspect capability-derived refDomains and their tenant balances and immutable commit-event history without entering the tenant data plane." },
     ],
     security: [{ adminSession: [] }],
     components: {
@@ -30,7 +93,7 @@ export function generateAdminOpenApiDocument() {
           type: "apiKey",
           in: "cookie",
           name: "__Host-unicas_admin",
-          description: "HttpOnly same-origin administrator session cookie",
+          description: "HttpOnly same-origin administrator session cookie established by the UniCAS OIDC/BFF login flow. Tenant bearer capabilities are rejected on this plane.",
         },
       },
     },
@@ -42,5 +105,9 @@ export function generateAdminOpenApiDocument() {
       },
       required: ["error"],
     }),
+  });
+
+  return Object.assign(document, {
+    "x-tagGroups": AdminApiTagGroups,
   });
 }

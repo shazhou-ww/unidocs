@@ -2,20 +2,20 @@
   "info": {
     "title": "UniCAS Tenant API",
     "version": "0.1.0",
-    "description": "Tenant data-plane API for immutable CAS nodes, leases, usage, garbage collection, and signed Root Ref updates."
+    "description": "Tenant data-plane API for immutable content-addressed nodes, temporary leases, usage accounting, garbage collection, and atomic Root Ref commits.\n\n## Authentication and isolation\n\nEvery request uses a Stack-issued JWT capability in `Authorization: Bearer`. The capability must match the `{stackId}` and `{tenantId}` resource path and grant the operation-specific CAS permission. Root Ref operations additionally use the capability's `refDomain`; it is intentionally not accepted as caller input. A tenant capability is never valid on the `/admin` control plane.\n\n## Node lifecycle\n\nNodes are immutable and identified by the lowercase SHA-256 digest of their canonical bytes. Prepare new state by leasing each required node and completing any returned direct upload. A lease protects uncommitted data from garbage collection but does not make it durable business state.\n\n## Root Ref commit\n\nCommit a prepared DAG by atomically applying all Root Ref deltas with one stable `requestId`. Positive Root Refs are authoritative retained state; negative deltas release old roots. If the response is lost, repeat the identical request. Never generate a new requestId for an uncertain commit.\n\n## Errors and time values\n\nError bodies contain a stable uppercase `error` code and may include a human-readable `message`; clients should branch on the code. All numeric timestamps are Unix milliseconds. Opaque upload identities and pagination cursors must not be parsed or modified."
   },
   "tags": [
     {
       "name": "Nodes",
-      "description": "Read immutable nodes and establish or extend upload leases."
+      "description": "Read immutable DAG nodes and establish or extend temporary protection leases. Lease readiness and upload instructions describe the prepare phase before a Root Ref commit."
     },
     {
       "name": "Root Refs",
-      "description": "Read and atomically update capability-scoped Root Ref balances."
+      "description": "Read and atomically update business-root balances in the verified capability's refDomain. Updates are idempotent commit operations, not best-effort counters."
     },
     {
       "name": "Operations",
-      "description": "Inspect tenant usage and run bounded garbage collection."
+      "description": "Inspect volatile tenant storage accounting and run race-safe, bounded garbage collection passes."
     }
   ],
   "security": [
@@ -29,7 +29,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Stack-issued tenant capability"
+        "description": "Stack-issued JWT capability. Its resource scope must match the path and its permission set must grant the requested CAS operation."
       }
     }
   },
@@ -39,7 +39,7 @@
       "get": {
         "operationId": "readContent",
         "summary": "Read immutable node content",
-        "description": "Streams the canonical bytes for a ready content-addressed node.",
+        "description": "Streams the canonical bytes for a ready content-addressed node. The path hash is the SHA-256 digest of those bytes; callers should verify the digest after reading. Metadata and mutable lease/reference state are available from the metadata operation. A missing or not-ready node returns `NOT_FOUND`.",
         "tags": [
           "Nodes"
         ],
@@ -51,7 +51,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "CAS stack identifier."
+              "description": "Opaque UniCAS stack identifier that scopes issuer trust and tenant storage."
             }
           },
           {
@@ -61,7 +61,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Tenant identifier within the stack."
+              "description": "Tenant storage partition within the stack. The capability must authorize this exact tenant."
             }
           },
           {
@@ -255,7 +255,7 @@
       "get": {
         "operationId": "readMetadata",
         "summary": "Read node metadata",
-        "description": "Returns immutable node metadata together with current lease and reference state.",
+        "description": "Returns immutable node metadata together with current lease and reference state. `metadata.refs` describes the stored DAG edges and never changes for a digest. Lease timestamps and reference counts are mutable retention state and must not be included when recomputing the content hash.",
         "tags": [
           "Nodes"
         ],
@@ -267,7 +267,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "CAS stack identifier."
+              "description": "Opaque UniCAS stack identifier that scopes issuer trust and tenant storage."
             }
           },
           {
@@ -277,7 +277,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Tenant identifier within the stack."
+              "description": "Tenant storage partition within the stack. The capability must authorize this exact tenant."
             }
           },
           {
@@ -304,24 +304,29 @@
                       "properties": {
                         "hash": {
                           "type": "string",
-                          "pattern": "^[0-9a-f]{64}$"
+                          "pattern": "^[0-9a-f]{64}$",
+                          "description": "Digest that identifies this immutable node."
                         },
                         "size": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Logical length of the canonical node content in bytes."
                         },
                         "contentType": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "description": "Media type recorded for the immutable node content."
                         },
                         "refs": {
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "pattern": "^[0-9a-f]{64}$"
+                            "pattern": "^[0-9a-f]{64}$",
+                            "description": "Lowercase hexadecimal SHA-256 digest of the canonical node bytes. The digest is the immutable node identity within a tenant."
                           },
-                          "readOnly": true
+                          "readOnly": true,
+                          "description": "Digests of child nodes referenced by this node. Each occurrence contributes one child reference."
                         }
                       },
                       "required": [
@@ -338,22 +343,26 @@
                         "leaseStartedAt": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Start of the current uninterrupted lease period, or 0 when no lease has existed."
                         },
                         "leaseExpiresAt": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Guaranteed protection deadline. Garbage collection cannot delete the node before this time."
                         },
                         "childRefCount": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Number of stored parent edges that currently reference this node."
                         },
                         "rootRefCount": {
                           "type": "integer",
                           "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Aggregate business Root Ref balance for this node. Positive balances retain committed state."
                         }
                       },
                       "required": [
@@ -549,7 +558,7 @@
       "post": {
         "operationId": "leaseNode",
         "summary": "Lease or upload a node",
-        "description": "Extends a ready node lease, or reserves an upload and returns upload instructions.",
+        "description": "Protects a node from garbage collection while a business transaction is preparing a Root Ref commit. If the node is ready, UniCAS extends its lease and returns `ready: true`. Otherwise it reserves the digest and returns `ready: false` with a short-lived direct `PUT` upload request. Send the returned headers exactly, then retry this operation with the upload identity to finalize readiness. The service chooses the actual lease deadline; clients must renew before it expires when work may run longer.",
         "tags": [
           "Nodes"
         ],
@@ -561,7 +570,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "CAS stack identifier."
+              "description": "Opaque UniCAS stack identifier that scopes issuer trust and tenant storage."
             }
           },
           {
@@ -571,7 +580,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Tenant identifier within the stack."
+              "description": "Tenant storage partition within the stack. The capability must authorize this exact tenant."
             }
           },
           {
@@ -591,7 +600,8 @@
               "type": "integer",
               "minimum": -9007199254740991,
               "maximum": 9007199254740991,
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Requested lease duration in milliseconds. UniCAS may grant a later deadline."
             }
           },
           {
@@ -600,7 +610,8 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "Expected canonical upload length in bytes when reserving missing content."
             }
           },
           {
@@ -608,14 +619,16 @@
             "in": "header",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "description": "Opaque upload identity returned by a previous reservation attempt."
             }
           },
           {
             "name": "content-type",
             "in": "header",
             "schema": {
-              "const": "application/vnd.unidocs.cas-node.v1"
+              "const": "application/vnd.unidocs.cas-node.v1",
+              "description": "Canonical CAS node media type when node bytes are supplied inline."
             }
           },
           {
@@ -624,7 +637,8 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "Exact length of an inline canonical node body."
             }
           }
         ],
@@ -653,20 +667,24 @@
                       "properties": {
                         "hash": {
                           "type": "string",
-                          "pattern": "^[0-9a-f]{64}$"
+                          "pattern": "^[0-9a-f]{64}$",
+                          "description": "Digest of the ready node whose lease is protected."
                         },
                         "ready": {
-                          "const": true
+                          "const": true,
+                          "description": "Always true when canonical content is already available."
                         },
                         "leaseStartedAt": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Start of the current uninterrupted lease period."
                         },
                         "leaseExpiresAt": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Service-selected protection deadline; it may exceed the requested duration."
                         }
                       },
                       "required": [
@@ -682,32 +700,39 @@
                       "properties": {
                         "hash": {
                           "type": "string",
-                          "pattern": "^[0-9a-f]{64}$"
+                          "pattern": "^[0-9a-f]{64}$",
+                          "description": "Digest reserved for the pending node upload."
                         },
                         "ready": {
-                          "const": false
+                          "const": false,
+                          "description": "Always false while canonical content still needs to be uploaded."
                         },
                         "status": {
-                          "const": "upload_required"
+                          "const": "upload_required",
+                          "description": "Indicates that the caller must complete the returned direct upload."
                         },
                         "uploadId": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "description": "Opaque reservation identity used to correlate upload completion."
                         },
                         "expiresAt": {
                           "type": "integer",
                           "minimum": 0,
-                          "maximum": 9007199254740991
+                          "maximum": 9007199254740991,
+                          "description": "Time at which the upload reservation and signed instructions expire."
                         },
                         "upload": {
                           "type": "object",
                           "properties": {
                             "method": {
-                              "const": "PUT"
+                              "const": "PUT",
+                              "description": "HTTP method required by the signed upload target."
                             },
                             "url": {
                               "type": "string",
-                              "format": "uri"
+                              "format": "uri",
+                              "description": "Short-lived signed URL for uploading the canonical node bytes."
                             },
                             "headers": {
                               "type": "object",
@@ -717,7 +742,8 @@
                               "additionalProperties": {
                                 "type": "string"
                               },
-                              "readOnly": true
+                              "readOnly": true,
+                              "description": "Headers that must be sent exactly as returned when uploading content."
                             }
                           },
                           "required": [
@@ -725,7 +751,8 @@
                             "url",
                             "headers"
                           ],
-                          "readOnly": true
+                          "readOnly": true,
+                          "description": "Direct-upload request that the caller must execute before retrying the lease operation."
                         }
                       },
                       "required": [
@@ -918,7 +945,7 @@
       "get": {
         "operationId": "getUsage",
         "summary": "Read tenant CAS usage",
-        "description": "Returns node, content-byte, reservation, and lease counters for one tenant.",
+        "description": "Returns a current operational accounting snapshot for one tenant: metadata rows, logical and stored ready bytes, pending reservations, not-ready nodes, and active leases. Counters are diagnostic and may change immediately as uploads, leases, Root Refs, and garbage collection progress.",
         "tags": [
           "Operations"
         ],
@@ -930,7 +957,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "CAS stack identifier."
+              "description": "Opaque UniCAS stack identifier that scopes issuer trust and tenant storage."
             }
           },
           {
@@ -940,7 +967,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Tenant identifier within the stack."
+              "description": "Tenant storage partition within the stack. The capability must authorize this exact tenant."
             }
           }
         ],
@@ -955,32 +982,38 @@
                     "nodeCount": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Total node metadata rows owned by the tenant."
                     },
                     "readyContentBytes": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Logical bytes of nodes whose canonical content is ready."
                     },
                     "readyStoredBytes": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Physical stored bytes attributed to ready node content."
                     },
                     "reservedBytes": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Bytes reserved by incomplete uploads."
                     },
                     "notReadyNodeCount": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Nodes that have metadata or a reservation but no ready content."
                     },
                     "leasedNodeCount": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Nodes currently protected by an unexpired lease."
                     }
                   },
                   "required": [
@@ -1171,7 +1204,7 @@
       "post": {
         "operationId": "runGc",
         "summary": "Run tenant garbage collection",
-        "description": "Examines unreferenced, unleased nodes and reclaims eligible stored content.",
+        "description": "Runs one bounded garbage-collection pass. A node is eligible only when it has no positive root or child references and its lease has expired. Eligibility is rechecked inside the tenant mutation queue before deletion, closing races with concurrent lease and Root Ref operations. Repeated calls are expected until the desired amount of work has been examined.",
         "tags": [
           "Operations"
         ],
@@ -1183,7 +1216,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "CAS stack identifier."
+              "description": "Opaque UniCAS stack identifier that scopes issuer trust and tenant storage."
             }
           },
           {
@@ -1193,7 +1226,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Tenant identifier within the stack."
+              "description": "Tenant storage partition within the stack. The capability must authorize this exact tenant."
             }
           }
         ],
@@ -1208,7 +1241,8 @@
                     "type": "integer",
                     "minimum": -9007199254740991,
                     "maximum": 9007199254740991,
-                    "exclusiveMinimum": 0
+                    "exclusiveMinimum": 0,
+                    "description": "Optional upper bound on candidate nodes examined by this pass."
                   }
                 },
                 "readOnly": true
@@ -1227,17 +1261,20 @@
                     "examined": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Candidate nodes examined during this bounded collection pass."
                     },
                     "deleted": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Eligible node records and content objects deleted by this pass."
                     },
                     "reclaimedContentBytes": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Logical content bytes reclaimed by successful deletions."
                     }
                   },
                   "required": [
@@ -1425,7 +1462,7 @@
       "get": {
         "operationId": "listRootRefs",
         "summary": "List Root Ref balances",
-        "description": "Returns a cursor-paginated snapshot of balances in the capability's refDomain.",
+        "description": "Returns a cursor-paginated, revision-stable snapshot of Root Ref balances in the `refDomain` carried by the verified capability. The caller cannot select another refDomain. Pass `nextCursor` unchanged to continue; cursors are opaque and bound to the snapshot and filters.",
         "tags": [
           "Root Refs"
         ],
@@ -1437,7 +1474,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "CAS stack identifier."
+              "description": "Opaque UniCAS stack identifier that scopes issuer trust and tenant storage."
             }
           },
           {
@@ -1447,7 +1484,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Tenant identifier within the stack."
+              "description": "Tenant storage partition within the stack. The capability must authorize this exact tenant."
             }
           },
           {
@@ -1456,7 +1493,8 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 1000
+              "maximum": 1000,
+              "description": "Maximum balances to return, from 1 through 1000."
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -1466,7 +1504,8 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "description": "Opaque `nextCursor` from the preceding page. Do not parse or modify it."
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -1482,12 +1521,14 @@
                   "properties": {
                     "refDomain": {
                       "type": "string",
-                      "minLength": 1
+                      "minLength": 1,
+                      "description": "Business lifecycle namespace taken from the verified capability, never from caller input."
                     },
                     "revision": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Stable Root Ref snapshot revision represented by this page."
                     },
                     "items": {
                       "type": "array",
@@ -1496,12 +1537,14 @@
                         "properties": {
                           "hash": {
                             "type": "string",
-                            "pattern": "^[0-9a-f]{64}$"
+                            "pattern": "^[0-9a-f]{64}$",
+                            "description": "Node whose business Root Ref balance is reported."
                           },
                           "refCount": {
                             "type": "integer",
                             "minimum": -9007199254740991,
-                            "maximum": 9007199254740991
+                            "maximum": 9007199254740991,
+                            "description": "Current balance in the capability's refDomain."
                           }
                         },
                         "required": [
@@ -1510,7 +1553,8 @@
                         ],
                         "readOnly": true
                       },
-                      "readOnly": true
+                      "readOnly": true,
+                      "description": "Root Ref balances in this page."
                     },
                     "nextCursor": {
                       "anyOf": [
@@ -1521,7 +1565,8 @@
                         {
                           "type": "null"
                         }
-                      ]
+                      ],
+                      "description": "Opaque cursor for the next page, or null when this snapshot is exhausted."
                     }
                   },
                   "required": [
@@ -1708,7 +1753,7 @@
       "post": {
         "operationId": "updateRootRefs",
         "summary": "Apply signed Root Ref changes",
-        "description": "Atomically applies idempotent balance changes in the capability's refDomain.",
+        "description": "Atomically applies the complete set of signed Root Ref deltas in the `refDomain` carried by the verified capability. This is the business commit boundary: positive balances retain committed DAG roots and negative balances release obsolete roots. A positive reference is accepted only for a ready node. Retry an uncertain result with the identical `requestId` and changes; UniCAS returns the original revision with `idempotent: true` instead of applying the delta twice.",
         "tags": [
           "Root Refs"
         ],
@@ -1720,7 +1765,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "CAS stack identifier."
+              "description": "Opaque UniCAS stack identifier that scopes issuer trust and tenant storage."
             }
           },
           {
@@ -1730,7 +1775,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "Tenant identifier within the stack."
+              "description": "Tenant storage partition within the stack. The capability must authorize this exact tenant."
             }
           }
         ],
@@ -1743,20 +1788,23 @@
                 "properties": {
                   "requestId": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Stable caller-generated idempotency identity. Retrying the same requestId with the same changes returns the original result."
                   },
                   "changes": {
                     "type": "object",
                     "propertyNames": {
                       "type": "string",
-                      "pattern": "^[0-9a-f]{64}$"
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "Lowercase hexadecimal SHA-256 digest of the canonical node bytes. The digest is the immutable node identity within a tenant."
                     },
                     "additionalProperties": {
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
                     },
-                    "readOnly": true
+                    "readOnly": true,
+                    "description": "Complete atomic set of Root Ref balance changes for this commit."
                   }
                 },
                 "required": [
@@ -1777,15 +1825,18 @@
                   "type": "object",
                   "properties": {
                     "success": {
-                      "const": true
+                      "const": true,
+                      "description": "Always true for a committed or successfully replayed update."
                     },
                     "idempotent": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "True when this response replays a previously committed requestId."
                     },
                     "revision": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "Root Ref revision assigned to the original atomic commit."
                     }
                   },
                   "required": [
@@ -1969,5 +2020,20 @@
         }
       }
     }
-  }
+  },
+  "x-tagGroups": [
+    {
+      "name": "Content Lifecycle",
+      "tags": [
+        "Nodes",
+        "Root Refs"
+      ]
+    },
+    {
+      "name": "Operations & Diagnostics",
+      "tags": [
+        "Operations"
+      ]
+    }
+  ]
 }

@@ -45,6 +45,18 @@ describe("CAS admin OpenAPI", () => {
     expect(allOperations).toHaveLength(23);
     expect(new Set(allOperations.map((operation) => operation.operationId)).size).toBe(23);
     expect(document.security).toEqual([{ adminSession: [] }]);
+    expect(document.info.description).toContain("## Concurrency and idempotency");
+    expect(document.info.description).toContain("## OAuth issuer activation");
+    expect(document.paths?.["/admin/stacks/{stackId}/oauth-issuer/inspections"]?.post?.description)
+      .toContain("activation challenge");
+    expect(document.paths?.["/admin/stacks/{stackId}"]?.get)
+      .toHaveProperty("responses.200.content.application/json.schema.properties.revision.description");
+    expect(document["x-tagGroups"]).toEqual([
+      { name: "Stack Administration", tags: ["Identity", "Stacks", "Members"] },
+      { name: "Capability Configuration", tags: ["OAuth Issuer", "Managed Issuer"] },
+      { name: "Application Workflow", tags: ["Playground"] },
+      { name: "Audit & Diagnostics", tags: ["Audit", "Root Ref Audit"] },
+    ]);
   });
 
   test("documents optimistic concurrency and renders standalone HTML", async () => {
@@ -60,5 +72,7 @@ describe("CAS admin OpenAPI", () => {
     const html = renderAdminApiReferenceHtml(document);
     expect(html).toContain("Scalar.createApiReference");
     expect(html).toContain("\"openapi\":\"3.1.1\"");
+    expect(html).toContain("tagsSorter: (a, b)");
+    expect(html).toContain("operationsSorter: (a, b)");
   });
 });

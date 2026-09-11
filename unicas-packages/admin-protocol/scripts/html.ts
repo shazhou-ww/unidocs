@@ -1,4 +1,5 @@
 import type { OpenAPI } from "@orpc/openapi";
+import { AdminApiOperationOrder, AdminApiTagGroups } from "./openapi.js";
 
 const ScalarApiReferenceVersion = "1.68.0";
 
@@ -11,6 +12,8 @@ function serializeForInlineScript(value: unknown): string {
 
 export function renderAdminApiReferenceHtml(document: OpenAPI.Document): string {
   const content = serializeForInlineScript(document);
+  const tagOrder = serializeForInlineScript(AdminApiTagGroups.flatMap((group) => group.tags));
+  const operationOrder = serializeForInlineScript(AdminApiOperationOrder);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -24,7 +27,24 @@ export function renderAdminApiReferenceHtml(document: OpenAPI.Document): string 
   <div id="app"></div>
   <noscript>JavaScript is required to render the UniCAS Administrator API reference.</noscript>
   <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@${ScalarApiReferenceVersion}"></script>
-  <script>Scalar.createApiReference('#app', { content: ${content}, layout: 'modern', theme: 'default', pageTitle: 'UniCAS Administrator API' })</script>
+  <script>
+    const tagOrder = new Map(${tagOrder}.map((name, index) => [name, index]))
+    const operationOrder = new Map(${operationOrder}.map((key, index) => [key, index]))
+    Scalar.createApiReference('#app', {
+      content: ${content},
+      layout: 'modern',
+      theme: 'default',
+      pageTitle: 'UniCAS Administrator API',
+      tagsSorter: (a, b) => (tagOrder.get(a.name) ?? Number.MAX_SAFE_INTEGER) - (tagOrder.get(b.name) ?? Number.MAX_SAFE_INTEGER),
+      operationsSorter: (a, b) => {
+        const keyA = a.method.toUpperCase() + ' ' + a.path
+        const keyB = b.method.toUpperCase() + ' ' + b.path
+        return (operationOrder.get(keyA) ?? Number.MAX_SAFE_INTEGER) - (operationOrder.get(keyB) ?? Number.MAX_SAFE_INTEGER)
+      },
+      orderSchemaPropertiesBy: 'preserve',
+      modelsSectionLabel: 'Schemas'
+    })
+  </script>
 </body>
 </html>
 `;

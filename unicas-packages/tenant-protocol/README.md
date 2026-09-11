@@ -27,6 +27,11 @@ The generated files are `openapi/tenant-v1.openapi.json` and
 `openapi/tenant-v1.html`. The HTML embeds the specification and can be opened
 directly; it loads the pinned Scalar renderer from jsDelivr.
 
+The generator emits Scalar-compatible `x-tagGroups` to organize related tags
+into lifecycle sections. Section, tag, and workflow operation order are
+defined in `scripts/openapi.ts`; the standalone HTML applies the same order
+through Scalar's `tagsSorter` and `operationsSorter` configuration.
+
 Validate with:
 
 ```text

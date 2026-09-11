@@ -34,9 +34,25 @@ describe("CAS tenant OpenAPI", () => {
     expect(Object.keys(document.paths ?? {})).toHaveLength(6);
     expect(operationIds).toHaveLength(7);
     expect(document.security).toEqual([{ tenantCapability: [] }]);
+    expect(document.info.description).toContain("## Node lifecycle");
+    expect(document.info.description).toContain("## Root Ref commit");
+    expect(document.paths?.["/stacks/{stackId}/tenants/{tenantId}/cas/nodes/{hash}/lease"]?.post?.description)
+      .toContain("direct `PUT` upload");
+    expect(document.paths?.["/stacks/{stackId}/tenants/{tenantId}/root-refs"]?.post?.description)
+      .toContain("business commit boundary");
+    expect(document.paths?.["/stacks/{stackId}/tenants/{tenantId}/cas/usage"]?.get)
+      .toHaveProperty(
+        "responses.200.content.application/json.schema.properties.reservedBytes.description",
+      );
+    expect(document["x-tagGroups"]).toEqual([
+      { name: "Content Lifecycle", tags: ["Nodes", "Root Refs"] },
+      { name: "Operations & Diagnostics", tags: ["Operations"] },
+    ]);
 
     const html = renderTenantApiReferenceHtml(document);
     expect(html).toContain("Scalar.createApiReference");
     expect(html).toContain("\"openapi\":\"3.1.1\"");
+    expect(html).toContain("tagsSorter: (a, b)");
+    expect(html).toContain("operationsSorter: (a, b)");
   });
 });
