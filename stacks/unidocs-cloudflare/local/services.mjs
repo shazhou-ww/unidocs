@@ -49,3 +49,18 @@ export function serviceWorkers(names) {
 export function serviceFrontends(names) {
   return names.flatMap(expandServiceTarget).filter(component => component.web);
 }
+
+/** Which stacks can run a given target, and what is missing when they cannot. */
+const SERVICE_PLATFORMS = {
+  portal: { cloudflare: true, azure: "packages/azure-portal does not exist yet" },
+};
+
+export function assertServicesAvailable(platform, names) {
+  for (const name of names) {
+    const support = SERVICE_PLATFORMS[name]?.[platform];
+    if (support === true) continue;
+    throw new Error(
+      `${name} is not available on the unidocs-${platform} stack yet (${support ?? "no adapter is registered"}).`,
+    );
+  }
+}

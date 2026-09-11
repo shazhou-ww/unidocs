@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { expandServiceTarget, PORTAL_PORT, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
+import { assertServicesAvailable, expandServiceTarget, PORTAL_PORT, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 import { parseTargets } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
 
 test("portal is an umbrella that expands to every component it owns", () => {
@@ -67,4 +67,15 @@ test("the registry stays dependency-free so argv validation costs nothing", asyn
     fs.readFile(new URL("../../../stacks/unidocs-cloudflare/local/services.mjs", import.meta.url), "utf8"));
   const imports = [...source.matchAll(/^import .* from "([^"]+)";$/gm)].map(match => match[1]);
   expect(imports.filter(specifier => specifier !== "node:path")).toEqual([]);
+});
+
+test("services are available on the Cloudflare stack", () => {
+  expect(() => assertServicesAvailable("cloudflare", ["portal"])).not.toThrow();
+  expect(() => assertServicesAvailable("azure", [])).not.toThrow();
+});
+
+test("asking for the portal on Azure says why, and names the missing package", () => {
+  expect(() => assertServicesAvailable("azure", ["portal"]))
+    .toThrow(/portal is not available on the unidocs-azure stack/);
+  expect(() => assertServicesAvailable("azure", ["portal"])).toThrow(/packages\/azure-portal/);
 });
