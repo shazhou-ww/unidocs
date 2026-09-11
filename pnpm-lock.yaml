@@ -877,6 +877,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.0
         version: 19.2.5(@types/react@19.2.18)
+      '@unidocs/protocol-platform':
+        specifier: workspace:*
+        version: link:../protocol-platform
       '@vitejs/plugin-react':
         specifier: ^4.3.0
         version: 4.3.0(supports-color@10.2.2)(vite@7.3.6(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0))
