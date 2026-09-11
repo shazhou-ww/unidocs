@@ -19,3 +19,5 @@ export { createTenantDocumentService } from "./tenant/documents.js";
 export type { CurrentVersionMoveCommand, DocumentCreateCommand, TenantDocumentRepository } from "./tenant/documents.js";
 export { createTenantVersionService } from "./tenant/versions.js";
 export type { TenantVersionRepository, VersionSnapshot } from "./tenant/versions.js";
+export { createTenantThreadService } from "./tenant/threads.js";
+export type { CommentAnchor, CommentAppendCommand, DocumentLocationValidator, TenantThreadRepository, ThreadCreateCommand } from "./tenant/threads.js";
