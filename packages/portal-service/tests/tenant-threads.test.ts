@@ -100,3 +100,15 @@ test("thread creation requires an idempotency key", async () => {
   const { service } = setup();
   await expect(service.create(context, "tenant-a", "doc-1", { baseVersionIdx: 5, content, location: null }, "")).rejects.toMatchObject({ code: "invalid_request" });
 });
+
+test("a mismatched path tenant is forbidden before any storage call", async () => {
+  const { repository, service } = setup();
+  await expect(service.create(context, "tenant-b", "doc-1", { baseVersionIdx: 5, content, location: null }, "retry-1")).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.loadCommentAnchor).not.toHaveBeenCalled();
+});
+
+test("a malformed document id is rejected before any storage call", async () => {
+  const { repository, service } = setup();
+  await expect(service.create(context, "tenant-a", "doc 1", { baseVersionIdx: 5, content, location: null }, "retry-1")).rejects.toMatchObject({ code: "invalid_request" });
+  expect(repository.loadCommentAnchor).not.toHaveBeenCalled();
+});
