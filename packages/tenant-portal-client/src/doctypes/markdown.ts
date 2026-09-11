@@ -60,10 +60,12 @@ export function resolveMarkdownTextRange(
   const range = readMarkdownTextRange(location);
   if (range === null) return { located: false, reason: "unsupported_type" };
 
+  // Empty quote cannot be resolved; it would match everywhere and is ambiguous.
+  if (range.quote.length === 0) return { located: false, reason: "unresolvable" };
+
   if (content.slice(range.start, range.start + range.quote.length) === range.quote) {
     return { located: true, start: range.start, end: range.start + range.quote.length, shifted: false };
   }
-  if (range.quote.length === 0) return { located: false, reason: "unresolvable" };
 
   // quote 可能出现多次，取起点最接近原偏移的那一处。
   let best = -1;

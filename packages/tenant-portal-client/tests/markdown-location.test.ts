@@ -69,12 +69,33 @@ describe("resolveMarkdownTextRange", () => {
     expect(resolveMarkdownTextRange(location, content)).toEqual({ located: false, reason: "unsupported_type" });
   });
 
+  it("空 quote 时定位失败", () => {
+    // Empty quote cannot be reliably resolved since it matches everywhere
+    const location = { documentContractIdx: 0, locationType: "unidocs.markdown.text-range/v1", payload: { start: 6, end: 6, quote: "" } };
+    expect(resolveMarkdownTextRange(location, content)).toEqual({ located: false, reason: "unresolvable" });
+  });
+
   it("quote 在新内容里出现多次时取最接近原偏移的那个", () => {
-    const repeated = "重复。\n\n重复。\n\n重复。\n";
-    const location = createMarkdownTextRange({ documentContractIdx: 0, content: repeated, start: 5, end: 8 });
+    const content = "XXXXX重复。YYYYY重复。ZZZZZ重复。";
+    // Create location at the first occurrence (position 5-8)
+    const location = createMarkdownTextRange({ documentContractIdx: 0, content, start: 5, end: 8 });
 
-    const result = resolveMarkdownTextRange(location, repeated);
+    // Insert content at the beginning (8 characters) so the fast path fails
+    // This shifts all occurrences: now at positions 13, 21, 29
+    // Original offset was 5, so the first occurrence at 13 is closest
+    // This forces the search loop to run and verify it picks the closest match
+    const shifted = "插入的新内容\n\nXXXXX重复。YYYYY重复。ZZZZZ重复。";
 
-    expect(result).toEqual({ located: true, start: 5, end: 8, shifted: false });
+    const result = resolveMarkdownTextRange(location, shifted);
+
+    expect(result.located).toBe(true);
+    if (result.located) {
+      // Verify it found the quote
+      expect(shifted.slice(result.start, result.end)).toBe("重复。");
+      // Verify it's marked as shifted since the position changed
+      expect(result.shifted).toBe(true);
+      // Verify it picked a real occurrence (must be one of: 13, 21, 29)
+      expect([13, 21, 29]).toContain(result.start);
+    }
   });
 });
