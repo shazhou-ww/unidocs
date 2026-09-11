@@ -82,11 +82,14 @@ describe("DocumentPage", () => {
     expect(panel.querySelector(".status-answered")).not.toBeInTheDocument();
   });
 
+  // Task 13 起，thread-card 的切换按钮用 aria-label（「待回复的讨论 · 展开/折叠」）覆盖了
+  // 可访问名，为的是和展开后内层 PingCard 里同样文字的按钮不撞车——所以这里改成按可见摘要
+  // 文字定位再取其按钮祖先，而不是按可访问名匹配 ping 原文；点击目标和断言结果都没变。
   it("点一处会把它写进 hash，供定位链接使用", async () => {
     renderPage();
     const panel = await screen.findByRole("complementary", { name: "讨论" });
 
-    await userEvent.click(within(panel).getByRole("button", { name: /这一句还能再收紧吗？/ }));
+    await userEvent.click(within(panel).getByText("这一句还能再收紧吗？").closest("button")!);
 
     expect(window.location.hash).toBe("#/d/doc-sample/th-open");
   });

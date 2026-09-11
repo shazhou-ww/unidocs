@@ -48,13 +48,18 @@ export function ThreadCard(props: {
 
   return (
     <article className={`thread-card${props.selected ? " selected" : ""}`}>
-      <button type="button" onClick={props.onSelect}>
+      {/* 展开后 PingCard 自己的按钮里也带着同一段原文（单条 ping 的 thread 尤其明显），
+          aria-label 覆盖（而非追加）这个按钮的可访问名，避免和内层撞车；
+          可见摘要文字不受影响，任何状态下都照常渲染。 */}
+      <button
+        type="button"
+        onClick={props.onSelect}
+        aria-label={`${props.state.open ? "待回复" : "已回复"}的讨论 · ${props.selected ? "折叠" : "展开"}`}
+      >
         <span className={props.state.open ? "status-open" : "status-answered"}>
           {props.state.open ? "待回复" : "已回复"}
         </span>
-        {/* 展开后详情已经在下面的 PingCard 里逐条给出，摘要行不再重复，
-            顺带避免摘要文字与展开后某条评论文字相同时，可访问名撞车。 */}
-        {!props.selected && <span className="thread-excerpt">{first?.content.text}</span>}
+        <span className="thread-excerpt">{first?.content.text}</span>
       </button>
 
       {props.selected && (

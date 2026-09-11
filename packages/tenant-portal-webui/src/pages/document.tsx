@@ -53,12 +53,19 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
     });
   }, [ping, selected, currentVersionIdx, currentContent]);
 
+  // 跨版本切换评论时，leftMarkers 依赖的 ping 会立刻变，但 baseVersion 要等下一轮
+  // fetch 回来才跟上（见上面的 effect）。如果不等两者对齐就下发标记，ViewHost 会把
+  // 新评论的锚点套在旧版本的正文上，出现一瞬间标错位置、随后才自愈的问题——正是
+  // §2.3「点某一条评论切基版」这条路径每次切换都会走到的地方。baseReady 就是那个
+  // 对齐点：version 和 markers 一起交给 ViewHost，宁可过渡期什么都不标，也不要标错。
+  const baseReady = baseVersion !== null && ping !== null && baseVersion.versionIdx === ping.baseVersionIdx;
+
   // Ruling B: decideRightPane 不知道 threadId，markers 里带的是空串；两栏都要在这里补上
   // 真实值，否则渲染出的 mark[data-thread-id] 是空的，将来点高亮反查 thread 会悄悄失效。
   // Ruling C: ViewHost 的 view-sync effect 把 markers 列进依赖数组，这里必须 useMemo
   // 让数组引用稳定，否则父组件每次渲染都会重新触发三次 RPC。
   const leftMarkers = useMemo<readonly RoledMarker[]>(() => {
-    if (ping === null || ping.location === null || selected === null) return [];
+    if (!baseReady || ping === null || ping.location === null || selected === null) return [];
     return [{
       threadId: props.threadId ?? "",
       pingIdx: ping.pingIdx,
@@ -66,7 +73,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
       location: ping.location,
       role: "ping" as const,
     }];
-  }, [ping, selected, props.threadId]);
+  }, [baseReady, ping, selected, props.threadId]);
 
   const rightMarkers = useMemo<readonly RoledMarker[]>(() => {
     if (decision === null) return [];
