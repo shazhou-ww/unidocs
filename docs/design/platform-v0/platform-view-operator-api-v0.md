@@ -1,6 +1,6 @@
 # UniDocs Platform、View 与 Operator API v0
 
-状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的公共、Agent 与 Operator 契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin-portal`](../../../packages/protocol-admin-portal/src/index.ts)。
+状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的线契约分三个包：§7 的 tenant HTTP API 位于 [`@unidocs/protocol-tenant-portal`](../../../packages/protocol-tenant-portal/src/index.ts)（contract-first，附生成的 OpenAPI 与中英双语 Scalar 文档），§6 的管理员控制面位于 [`@unidocs/protocol-admin-portal`](../../../packages/protocol-admin-portal/src/index.ts)，§8 View Host RPC、§9 Agent API 与 §10 Operator webhook 位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)。
 
 ## 1. 决策摘要
 
@@ -179,12 +179,20 @@ interface DocumentRecord {
   readonly createdAt: IsoDateTime;
 }
 
+interface AddressedPing {
+  readonly threadId: ThreadId;
+  readonly pingIdx: PingIdx;
+  readonly baseVersionIdx: VersionIdx;
+}
+
 interface VersionRecord {
   readonly versionIdx: VersionIdx;
   readonly parentVersionIdx: VersionIdx | null;
   readonly documentContractIdx: DocumentContractIdx;
-  readonly snapshot: SValue;
   readonly authorAgentId: string;
+  readonly submissionId: SubmissionId;
+  /** comment provenance；首个版本为空。 */
+  readonly addressedPings: readonly AddressedPing[];
   readonly createdAt: IsoDateTime;
 }
 
@@ -227,6 +235,12 @@ interface ThreadDetail {
 location content type 描述 location 对象的规范 JSON 表示；当前它通常嵌在 ping/pong JSON body 中，因此不会成为该 HTTP 请求的顶层 `Content-Type` header，但仍作为 contract record 的明确格式标识。
 
 snapshot 是逻辑文档值 `SValue`，其中的大型二进制内容以 `SBlob` 引用 UniCAS；它不是 snapshot CAS hash。相同 snapshot 仍可因 parent、provenance、作者和创建时间不同而形成不同版本。HTTP 使用 canonical SValue CBOR 编码，Platform 可将编码结果作为内部 CAS 业务根持久化，但该存储引用不进入 `VersionRecord` 公共模型。
+
+snapshot **不内嵌在 `VersionRecord` 里**，而是由独立 operation 读取：`SValue` 携带的原子 `SBlob` 没有 JSON 表示，同一个响应体不可能既是 JSON 又是 canonical SValue CBOR。于是 `VersionRecord` 是纯 JSON 元数据、列表与详情共用同一形状，snapshot 单独走
+`GET /documents/{documentId}/versions/{versionIdx}/snapshot`，响应 `Content-Type` 正是该版本 contract revision 上记录的
+`application/vnd.unidocs.{documentType}.snapshot+cbor;version=1`。版本历史面板因此不必为了画一条父子连线拉下整份 PSD。
+
+`VersionRecord` 同时承载两张图：`parentVersionIdx` 是 base parent forest，`addressedPings` 是 comment provenance（§4.2）。后者由 submission 在同一事务内写入（§9.2 规则 10），两者不可互相替代，也不能靠遍历 thread 反查——那要求客户端扫描全部 thread 的 pong。
 
 `DocumentLocation` 只描述一个指定版本内部的位置，自身不重复携带 `versionIdx`。它携带与该版本相同的 `documentContractIdx`；Location Contract schema 校验 `{ locationType, payload }` 投影。`PingRecord.location` 相对于该 ping 的 `baseVersionIdx`，其 contract idx 必须等于 base version；`PongRecord.resultLocations` 相对于同次 submission 创建的新版本，并使用与新 snapshot 相同的 contract idx。
 
@@ -816,6 +830,7 @@ POST /documents
 GET  /documents/{documentId}
 GET  /documents/{documentId}/versions?cursor=&limit=
 GET  /documents/{documentId}/versions/{versionIdx}
+GET  /documents/{documentId}/versions/{versionIdx}/snapshot
 POST /documents/{documentId}/current-version
 GET  /documents/{documentId}/audit?cursor=&limit=
 ```
@@ -865,8 +880,22 @@ interface MoveCurrentVersionRequest {
 }
 
 type ListPublicDocumentTypesResponse = Page<PublicDocumentType>;
+type DocumentAuditAction = "document.created" | "current_version.moved";
+
+interface DocumentAuditEvent {
+  readonly auditEventId: string;
+  readonly actorId: string;
+  readonly action: DocumentAuditAction;
+  readonly beforeVersionIdx: VersionIdx | null;
+  readonly afterVersionIdx: VersionIdx | null;
+  readonly reason: string | null;
+  readonly requestId: string;
+  readonly occurredAt: IsoDateTime;
+}
+
 type ListDocumentsResponse = Page<DocumentRecord>;
 type ListVersionsResponse = Page<VersionRecord>;
+type ListDocumentAuditEventsResponse = Page<DocumentAuditEvent>;
 ```
 
 单资源成功响应直接返回对应 record，不再包装为 `{ data }` 或 `{ document }`：创建/读取文档和移动 current 返回 `DocumentRecord`，读取版本返回 `VersionRecord`。
@@ -1293,7 +1322,7 @@ type PlatformErrorCode =
 ### 12.2 幂等
 
 - Admin mutation 使用 `Idempotency-Key`，同 key 不同 body 返回冲突；
-- thread/ping 创建使用 `Idempotency-Key`；
+- 文档、thread 和 ping 创建使用 `Idempotency-Key`；移动 current 不需要，`observedCurrentVersionIdx` 等值锁已使重试安全；
 - submission 使用 `submissionId`；
 - webhook 使用 `eventId`；
 - 二进制 complete 操作绑定 upload 身份和接收 digest；
@@ -1341,8 +1370,10 @@ type PlatformErrorCode =
 | GET | `/api/v1/tenants/{tenantId}/document-types/{type}/document-contracts/{idx}` | 读取确切 paired contract |
 | POST/GET | `/api/v1/tenants/{tenantId}/documents` | 创建/列出文档 |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}` | 文档与 current/latest |
-| GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions` | 版本浏览 |
+| GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions` | 版本浏览（元数据，含 provenance） |
+| GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions/{idx}/snapshot` | 读取 canonical SValue CBOR snapshot |
 | POST | `/api/v1/tenants/{tenantId}/documents/{id}/current-version` | 审计式移动 current |
+| GET | `/api/v1/tenants/{tenantId}/documents/{id}/audit` | 文档级审计事件 |
 | GET/POST | `/api/v1/tenants/{tenantId}/documents/{id}/threads` | 列出/创建 thread |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}/threads/{threadId}` | thread 双序列 |
 | POST | `/api/v1/tenants/{tenantId}/documents/{id}/threads/{threadId}/pings` | 追加 ping |

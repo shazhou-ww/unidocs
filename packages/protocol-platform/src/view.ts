@@ -21,7 +21,7 @@ import type {
   VersionIdx,
   ViewBundleId,
 } from "./common.js";
-import type { AppendPingRequest, CreateThreadRequest } from "./platform.js";
+import type { AppendPingRequest, CreateThreadRequest } from "./messages.js";
 import type {
   DocumentRecord,
   PingRecord,

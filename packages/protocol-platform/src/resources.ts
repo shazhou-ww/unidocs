@@ -6,7 +6,6 @@ import type {
   DocumentContentFormatVersion,
   DocumentLocationContentType,
   DocumentSnapshotContentType,
-  SValue,
   SValueSchema,
 } from "@unidocs/protocol";
 import type {
@@ -50,13 +49,29 @@ export interface DocumentRecord {
   readonly createdAt: IsoDateTime;
 }
 
+/** One comment provenance edge recorded by the version that responded to it. */
+export interface AddressedPing {
+  readonly threadId: ThreadId;
+  readonly pingIdx: PingIdx;
+  readonly baseVersionIdx: VersionIdx;
+}
+
+/**
+ * Version metadata. The snapshot is not part of this record: an SValue carries
+ * atomic SBlob references that have no JSON representation, so it crosses the
+ * wire separately as canonical SValue CBOR.
+ *
+ * `parentVersionIdx` is the base parent forest; `addressedPings` is comment
+ * provenance. They are different graphs and neither substitutes for the other.
+ */
 export interface VersionRecord {
   readonly versionIdx: VersionIdx;
   readonly parentVersionIdx: VersionIdx | null;
   readonly documentContractIdx: DocumentContractIdx;
-  /** Logical document state; large binary values are represented by SBlob. */
-  readonly snapshot: SValue;
   readonly authorAgentId: string;
+  readonly submissionId: SubmissionId;
+  /** Pings this version responded to; empty for the first version. */
+  readonly addressedPings: readonly AddressedPing[];
   readonly createdAt: IsoDateTime;
 }
 

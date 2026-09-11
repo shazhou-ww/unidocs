@@ -1,7 +1,7 @@
 # Tenant Portal 线契约 —— `@unidocs/protocol-tenant-portal`
 
 **日期：** 2026-09-11
-**状态：** 待 review
+**状态：** 已实施，2026-09-11
 **基线：** `main @ 570a531`
 
 ## 现状
@@ -382,6 +382,19 @@ getVersionSnapshot + CONTENT_UNAVAILABLE
 - 不设计 `tenant-portal-client` / `tenant-portal-webui`；
 - 不碰 §5.1 编辑型 ping、§5.2 子文档评论归属（tenant WebUI 设计已标为未决）；
 - 不做 tenant 登录/回调/session 端点——那是 portal-service 的 BFF，Admin 包同样没有。
+
+## 实施结果
+
+D1–D9 全部按本文落地。实施中额外确定的两点：
+
+- `getVersionSnapshot` 的响应在 OpenAPI 里标为 `application/cbor` + `contentEncoding: binary`。
+  具体的 `application/vnd.unidocs.{documentType}.snapshot+cbor;version=1` 依赖运行时的
+  `documentType`，单一静态 schema 表达不了，因此写在 operation 描述里。
+- 生成的参考文档是中英双语单页：contract 保持英文事实源，`scripts/locales/zh.ts` 按英文原文
+  做 key 覆盖，出两份 OpenAPI，HTML 内嵌两份并就地切换。四条测试双向卡住漏翻与残留。
+
+验证结果：`pnpm typecheck` 44 个 project 全过；`@unidocs/protocol-tenant-portal` 26 个测试、
+`@unidocs/protocol-admin-portal` 20 个测试通过；`git diff --check` 干净。
 
 ## 验证
 
