@@ -15,7 +15,9 @@ export function ThreadPanel(props: {
   threads: readonly SummarizedThread[];
   currentVersionIdx: VersionIdx | null;
   selectedThreadId?: string;
+  selectedPingIdx?: number;
   onSelect(threadId: string): void;
+  onSelectPing?(pingIdx: number): void;
 }) {
   const [filter, setFilter] = useState<ThreadFilter>("all");
 
@@ -48,7 +50,9 @@ export function ThreadPanel(props: {
           state={state}
           currentVersionIdx={props.currentVersionIdx}
           selected={props.selectedThreadId === detail.threadId}
+          selectedPingIdx={props.selectedPingIdx}
           onSelect={() => props.onSelect(detail.threadId)}
+          onSelectPing={props.onSelectPing}
         />
       ))}
     </aside>

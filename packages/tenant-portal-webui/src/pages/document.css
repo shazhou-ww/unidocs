@@ -26,3 +26,9 @@
 .version-badge { padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
 .pong-card.pong-plain { border-left: 2px solid var(--accent-stale); }
 .pong-card.pong-versioned { border-left: 2px solid var(--accent-pong); }
+
+.document-body.split { grid-template-columns: 1fr 1fr var(--panel-width); }
+.pane-wrapper { display: grid; grid-template-rows: auto 1fr; min-height: 0; border-right: 1px solid var(--border); }
+.pane-base { background: var(--surface-sunken); }
+.pane-label { margin: 0; padding: 8px 32px; color: var(--text-muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+.pane-note { margin: 0; padding: 8px 32px; color: var(--text-muted); font-size: 12px; background: var(--surface-sunken); border-bottom: 1px solid var(--border); }
