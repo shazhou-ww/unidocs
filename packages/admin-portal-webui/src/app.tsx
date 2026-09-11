@@ -3,29 +3,43 @@ import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText,
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
 import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentTypeListItem, type DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
 
-const auditActionLabels: Partial<Record<AdminAuditEvent["action"], string>> = {
+const auditActionLabels: Record<AdminAuditEvent["action"], string> = {
+  "type_card_bundle.uploaded": "上传类型卡片包",
+  "type_card_bundle.validation_failed": "类型卡片包验证失败",
+  "type_card_bundle.metadata_changed": "修改类型卡片包信息",
+  "view_bundle.uploaded": "上传视图包",
+  "view_bundle.validation_failed": "视图包验证失败",
+  "view_bundle.metadata_changed": "修改视图包信息",
+  "operator.created": "创建算子",
+  "operator.metadata_changed": "修改算子信息",
+  "document_contract.appended": "添加文档契约版本",
   "administrator.bootstrap": "初始化管理员",
   "administrator.bound": "绑定管理员身份",
   "administrator.added": "添加管理员",
   "administrator.removed": "移除管理员",
   "document_type.registered": "创建文档类型",
   "document_type.internal_name_changed": "修改内部名称",
+  "document_type.type_card_bundle_changed": "切换类型卡片包",
+  "document_type.view_bundle_changed": "切换视图包",
+  "document_type.operator_changed": "切换内置算子",
   "document_type.enabled": "启用文档类型",
   "document_type.disabled": "停用文档类型",
+  "operator.validation_passed": "算子验证通过",
+  "operator.validation_failed": "算子验证失败",
 };
 
-const resourceLabels: Partial<Record<AdminAuditEvent["resourceType"], string>> = {
+const resourceLabels: Record<AdminAuditEvent["resourceType"], string> = {
   administrator: "管理员",
   document_type: "文档类型",
-  document_contract: "Document Contract",
-  type_card_bundle: "Type Card",
-  view_bundle: "View bundle",
-  operator: "Operator",
-  operator_validation: "Operator validation",
+  document_contract: "文档契约",
+  type_card_bundle: "类型卡片包",
+  view_bundle: "视图包",
+  operator: "算子",
+  operator_validation: "算子验证",
 };
 
 function auditActionLabel(action: AdminAuditEvent["action"]) {
-  return auditActionLabels[action] ?? action;
+  return auditActionLabels[action];
 }
 
 const auditActions = [...AdministratorMemberAuditActions, ...DocumentTypeAuditActions];
@@ -420,7 +434,7 @@ function AdminApp() {
                 <tbody>{auditEvents.map(event => <tr key={event.auditEventId} className={selectedAudit?.auditEventId === event.auditEventId ? "selected-row" : ""} onClick={() => setSelectedAudit(event)}>
                   <td><time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString("zh-CN")}</time></td>
                   <td><strong>{auditActionLabel(event.action)}</strong><code>{event.action}</code></td>
-                  <td><strong>{resourceLabels[event.resourceType] ?? event.resourceType}</strong><code>{event.resourceId}</code></td>
+                  <td><strong>{resourceLabels[event.resourceType]}</strong><code>{event.resourceId}</code></td>
                   <td>{actorIdentity(event.actorId) ? <span className="actor-identity"><strong>{actorIdentity(event.actorId)!.name}</strong><small>{actorIdentity(event.actorId)!.email}</small></span> : <code>{event.actorId}</code>}</td>
                   <td><ChevronRight size={16} className="row-arrow" /></td>
                 </tr>)}</tbody>
