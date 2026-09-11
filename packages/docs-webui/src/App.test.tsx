@@ -37,11 +37,12 @@ describe("shared documentation site", () => {
     fireEvent.click(screen.getByRole("link", { name: "UniDocs" }));
 
     expect(window.location.pathname).toBe("/unidocs");
-    expect(screen.getByRole("heading", { name: "UniDocs Admin control plane" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What is UniDocs?" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open UniDocs/ })).toHaveAttribute(
       "href",
       "https://unidocs.shazhou.work/",
     );
-    expect(screen.getByRole("link", { name: /Document type lifecycle/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Document types and lifecycle/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Investigate audit events/ })).toBeInTheDocument();
   });
 });

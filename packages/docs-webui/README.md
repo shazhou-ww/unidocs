@@ -27,7 +27,7 @@ pnpm --filter @unidocs/docs-webui test
 pnpm --filter @unidocs/docs-webui build
 ```
 
-The build refreshes the two UniCAS protocol documents and the UniDocs Admin protocol document before emitting `dist/`.
+The build refreshes the two UniCAS protocol documents and the UniDocs Admin Portal protocol document before emitting `dist/`.
 
 ## Deploy
 

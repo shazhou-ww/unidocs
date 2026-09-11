@@ -17,6 +17,7 @@ function run(command) {
 run(["pnpm", "--filter", "@unicas/admin-protocol", "docs:generate"]);
 run(["pnpm", "--filter", "@unicas/tenant-protocol", "docs:generate"]);
 run(["pnpm", "--filter", "@unidocs/protocol-admin-portal", "docs:generate"]);
+run(["pnpm", "--filter", "@unidocs/protocol-admin", "docs:generate"]);
 
 const forwardedArgs = process.argv.slice(2);
 const child = spawn("pnpm", [

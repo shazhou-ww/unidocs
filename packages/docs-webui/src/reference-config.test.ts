@@ -36,8 +36,7 @@ describe("API reference presentation", () => {
       { name: "Processing", tags: ["Operators"] },
       { name: "Administration", tags: ["Members", "Audit"] },
     ]);
-    const paths = sourceDocument.paths as Record<string, unknown>;
-    expect(Object.keys(paths)).toHaveLength(15);
+    expect(Object.keys(sourceDocument.paths as Record<string, unknown>)).toHaveLength(15);
     expect(admin?.operationOrder).toHaveLength(26);
   });
 });

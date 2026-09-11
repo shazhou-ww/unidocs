@@ -1,28 +1,30 @@
-# Admin security and retries
+# Authentication and safe writes
 
-The Admin API supports browser-mediated administration and automation clients with explicit credential selection and mutation safeguards.
+The Admin API supports automation and browser-mediated administration while applying the same authorization policy to both.
 
-## Session and CSRF
+## Authentication and authorization
 
-Every operation accepts either an administrator Bearer token or the same-origin `__Host-unidocs_admin` HttpOnly session cookie. When an `Authorization: Bearer` header is present, the server uses only that token and never falls back to a cookie after token failure.
+Every operation accepts either an OAuth Bearer token or the same-origin `__Host-unidocs_admin` HttpOnly session cookie. If an `Authorization: Bearer` header is present, the server uses only that credential. A rejected Bearer token must never fall back to a valid cookie.
 
-Cookie-authenticated mutations require `X-CSRF-Token`; Bearer-authenticated mutations do not. A client should never persist or expose the session cookie to JavaScript.
+Cookie-authenticated mutations also require `X-CSRF-Token`. Bearer-authenticated mutations do not require CSRF. A browser client must not persist or expose the HttpOnly session cookie to JavaScript.
 
-## Idempotency
+Authentication establishes identity; administrator membership authorizes Admin API access.
+
+## Idempotency and retries
 
 Every mutation requires `Idempotency-Key`. Generate a stable key before the first attempt and reuse it only for the same administrator, method, route, and request. Reusing a key with different input returns an idempotency conflict.
 
-## Optimistic concurrency
+When a response is lost, retry the exact request with the same key. Generate a new key only for a new intended mutation.
 
-Conditional metadata and registration updates require `If-Match` with the current ETag. On precondition failure, read the current resource and reconcile the administrator's intent instead of blindly retrying.
+## ETags and concurrent changes
+
+PATCH operations and conditional member removal require `If-Match` with the exact quoted ETag from the canonical item GET. ETags represent the Platform resource, while an Operator's external configuration ETag represents discovered service configuration; the two are not interchangeable.
+
+On precondition failure, read current state and reconcile the administrator's intent instead of blindly retrying.
 
 ## Administrator membership
 
-The allowlist stores normalized Google account emails and binds verified identities during sign-in. Removal is conditional, an administrator cannot remove their own membership, and the final administrator cannot be removed.
-
-## Audit
-
-The append-only audit feed supports actor, action, resource type, document type, time-range, and cursor filters. Events include request correlation for investigation and attribution.
+The allowlist stores normalized Google account emails and binds verified identities during sign-in. Adding and removing membership are idempotent mutations. Removal is conditional, an administrator cannot remove their own membership, and the final administrator cannot be removed.
 
 ## Binary uploads
 
