@@ -4,6 +4,7 @@ export interface TagGroup {
 }
 
 export interface ReferenceDefinition {
+  readonly product: "unicas" | "unidocs";
   readonly path: string;
   readonly title: string;
   readonly loadDocument: () => Promise<Record<string, unknown>>;
@@ -13,6 +14,7 @@ export interface ReferenceDefinition {
 
 export const references: readonly ReferenceDefinition[] = [
   {
+    product: "unicas",
     path: "/unicas/reference/admin",
     title: "Admin API",
     loadDocument: async () => (await import("@unicas/admin-protocol/openapi.json")).default as Record<string, unknown>,
@@ -37,6 +39,7 @@ export const references: readonly ReferenceDefinition[] = [
     ],
   },
   {
+    product: "unicas",
     path: "/unicas/reference/tenant",
     title: "Tenant API",
     loadDocument: async () => (await import("@unicas/tenant-protocol/openapi.json")).default as Record<string, unknown>,
@@ -52,6 +55,43 @@ export const references: readonly ReferenceDefinition[] = [
       "GET /stacks/{stackId}/tenants/{tenantId}/root-refs",
       "GET /stacks/{stackId}/tenants/{tenantId}/cas/usage",
       "POST /stacks/{stackId}/tenants/{tenantId}/cas/gc",
+    ],
+  },
+  {
+    product: "unidocs",
+    path: "/unidocs/reference/admin",
+    title: "Admin API",
+    loadDocument: async () => (await import("@unidocs/protocol-admin/openapi.json")).default as Record<string, unknown>,
+    tagGroups: [
+      { name: "Document Type Configuration", tags: ["Document types", "Snapshot Contracts"] },
+      { name: "Presentation Bundles", tags: ["Type Card bundles", "View bundles"] },
+      { name: "Processing", tags: ["Operators"] },
+      { name: "Administration", tags: ["Members"] },
+    ],
+    operationOrder: [
+      "GET /admin/api/v1/document-types",
+      "POST /admin/api/v1/document-types",
+      "GET /admin/api/v1/document-types/{documentType}",
+      "PATCH /admin/api/v1/document-types/{documentType}",
+      "GET /admin/api/v1/document-types/{documentType}/snapshot-contracts",
+      "POST /admin/api/v1/document-types/{documentType}/snapshot-contracts",
+      "GET /admin/api/v1/document-types/{documentType}/snapshot-contracts/{snapshotContractIdx}",
+      "GET /admin/api/v1/type-card-bundles",
+      "POST /admin/api/v1/type-card-bundles",
+      "GET /admin/api/v1/type-card-bundles/{typeCardBundleId}",
+      "PATCH /admin/api/v1/type-card-bundles/{typeCardBundleId}",
+      "GET /admin/api/v1/view-bundles",
+      "POST /admin/api/v1/view-bundles",
+      "GET /admin/api/v1/view-bundles/{viewBundleId}",
+      "PATCH /admin/api/v1/view-bundles/{viewBundleId}",
+      "POST /admin/api/v1/operator-validations",
+      "GET /admin/api/v1/operator-validations/{validationId}",
+      "GET /admin/api/v1/operator-candidates",
+      "POST /admin/api/v1/operator-candidates",
+      "PATCH /admin/api/v1/operator-candidates/{operatorCandidateId}",
+      "GET /admin/api/v1/administrators",
+      "POST /admin/api/v1/administrators",
+      "DELETE /admin/api/v1/administrators/{adminId}",
     ],
   },
 ];

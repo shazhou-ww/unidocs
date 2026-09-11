@@ -8,7 +8,6 @@ import {
   adminApiContract,
 } from "../src/index.js";
 import type { TypeCardBundleRecord } from "../src/index.js";
-import { renderAdminApiReferenceHtml } from "../scripts/html.js";
 import { generateAdminOpenApiDocument } from "../scripts/openapi.js";
 
 const methodNames = ["get", "post", "put", "patch", "delete"] as const;
@@ -186,12 +185,4 @@ describe("administrator OpenAPI", () => {
     ]));
   });
 
-  it("renders a standalone HTML reference with the specification embedded", async () => {
-    const html = renderAdminApiReferenceHtml(await generateAdminOpenApiDocument());
-
-    expect(html).toContain("Scalar.createApiReference");
-    expect(html).toContain("@scalar/api-reference@1.68.0");
-    expect(html).toContain("\"openapi\":\"3.1.1\"");
-    expect(html).not.toContain("url: '/admin-v1.openapi.json'");
-  });
 });

@@ -1,6 +1,6 @@
 import { ArrowUpRight, BookOpenText, Braces, ExternalLink, Menu, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { guides, guideSections } from "./content.js";
+import { guides, guideSections, products, type ProductId } from "./content.js";
 import { MarkdownArticle } from "./MarkdownArticle.js";
 import { references } from "./reference-config.js";
 import { navigate, usePath } from "./router.js";
@@ -34,8 +34,12 @@ function SiteLink({ path, active, children, onNavigate }: {
 export function App() {
   const path = usePath();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const guide = guides.find((item) => item.path === path)
-    ?? (path === "/" || path === "/unicas" ? guides[0] : undefined);
+  const productId: ProductId = path.startsWith("/unidocs") ? "unidocs" : "unicas";
+  const product = products[productId];
+  const productGuides = guides.filter((item) => item.product === productId);
+  const productReferences = references.filter((item) => item.product === productId);
+  const guide = productGuides.find((item) => item.path === path)
+    ?? (path === "/" || path === product.homePath ? productGuides[0] : undefined);
   const reference = references.find((item) => item.path === path);
 
   useEffect(() => {
@@ -45,14 +49,26 @@ export function App() {
   return (
     <div className={`docs-app${reference ? " reference-route" : ""}`}>
       <header className="site-header">
-        <a className="brand" href="/unicas" onClick={(event) => { event.preventDefault(); navigate("/unicas"); }}>
-          <span className="brand-mark">U</span>
-          <span>UniCAS</span>
+        <a className="brand" href={product.homePath} onClick={(event) => { event.preventDefault(); navigate(product.homePath); }}>
+          <span className="brand-mark">{product.mark}</span>
+          <span>{product.name}</span>
           <span className="brand-section">Documentation</span>
         </a>
+        <nav className="product-switch" aria-label="Product documentation">
+          {Object.values(products).map((item) => (
+            <a
+              key={item.id}
+              className={item.id === productId ? "active" : ""}
+              href={item.homePath}
+              onClick={(event) => { event.preventDefault(); navigate(item.homePath); }}
+            >
+              {item.name}
+            </a>
+          ))}
+        </nav>
         <div className="header-actions">
-          <a className="portal-link" href="https://unicas.shazhou.work/admin/" target="_blank" rel="noreferrer">
-            Open Admin Portal <ArrowUpRight size={15} aria-hidden="true" />
+          <a className="portal-link" href={product.externalUrl} target="_blank" rel="noreferrer">
+            {product.externalLabel} <ArrowUpRight size={15} aria-hidden="true" />
           </a>
           <button className="menu-button" type="button" aria-label="Toggle navigation" onClick={() => setMobileOpen((open) => !open)}>
             {mobileOpen ? <X size={19} /> : <Menu size={19} />}
@@ -62,10 +78,10 @@ export function App() {
 
       <aside className={`site-sidebar${mobileOpen ? " open" : ""}`} aria-label="Documentation navigation">
         <nav>
-          {guideSections.map((section) => (
+          {guideSections[productId].map((section) => (
             <div className="nav-group" key={section}>
               <div className="nav-group-title">{section}</div>
-              {guides.filter((item) => item.section === section).map((item) => (
+              {productGuides.filter((item) => item.section === section).map((item) => (
                 <SiteLink key={item.path} path={item.path} active={guide?.path === item.path && !reference} onNavigate={() => setMobileOpen(false)}>
                   <BookOpenText size={15} aria-hidden="true" /> {item.title}
                 </SiteLink>
@@ -74,15 +90,15 @@ export function App() {
           ))}
           <div className="nav-group">
             <div className="nav-group-title">API Reference</div>
-            {references.map((item) => (
+            {productReferences.map((item) => (
               <SiteLink key={item.path} path={item.path} active={path === item.path} onNavigate={() => setMobileOpen(false)}>
                 <Braces size={15} aria-hidden="true" /> {item.title}
               </SiteLink>
             ))}
           </div>
         </nav>
-        <a className="sidebar-external" href="https://unicas.shazhou.work" target="_blank" rel="noreferrer">
-          UniCAS service <ExternalLink size={14} aria-hidden="true" />
+        <a className="sidebar-external" href={product.footerUrl} target="_blank" rel="noreferrer">
+          {product.footerLabel} <ExternalLink size={14} aria-hidden="true" />
         </a>
       </aside>
 
@@ -97,7 +113,7 @@ export function App() {
           <div className="not-found">
             <span>404</span>
             <h1>Page not found</h1>
-            <button type="button" onClick={() => navigate("/unicas")}>Return to documentation</button>
+            <button type="button" onClick={() => navigate(product.homePath)}>Return to documentation</button>
           </div>
         ) : null}
       </main>

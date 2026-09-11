@@ -89,6 +89,38 @@ button {
   font-weight: 550;
 }
 
+.product-switch {
+  position: absolute;
+  left: 50%;
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--docs-border);
+  border-radius: 7px;
+  background: var(--docs-subtle);
+  transform: translateX(-50%);
+}
+
+.product-switch a {
+  min-width: 74px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  color: var(--docs-muted);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: center;
+  text-decoration: none;
+}
+
+.product-switch a:hover {
+  color: var(--docs-text);
+}
+
+.product-switch a.active {
+  color: var(--docs-text);
+  background: white;
+  box-shadow: 0 1px 2px rgba(24, 24, 27, 0.08);
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -399,6 +431,17 @@ button {
 
   .portal-link {
     display: none;
+  }
+
+  .product-switch {
+    position: static;
+    margin-left: auto;
+    transform: none;
+  }
+
+  .product-switch a {
+    min-width: auto;
+    padding-inline: 8px;
   }
 
   .menu-button {

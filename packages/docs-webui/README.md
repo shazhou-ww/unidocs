@@ -1,6 +1,6 @@
 # @unidocs/docs-webui
 
-Shared public product documentation portal. UniCAS guides and Admin/Tenant API references are currently published under `/unicas`; UniDocs can be added as a sibling `/unidocs` section.
+Shared public product documentation portal. UniCAS guides and Admin/Tenant API references are published under `/unicas`; UniDocs Admin guides and the `@unidocs/protocol-admin` reference are published under `/unidocs`.
 
 The package owns presentation only:
 
@@ -27,7 +27,7 @@ pnpm --filter @unidocs/docs-webui test
 pnpm --filter @unidocs/docs-webui build
 ```
 
-The build refreshes both protocol OpenAPI files before emitting `dist/`.
+The build refreshes the two UniCAS protocol documents and the UniDocs Admin protocol document before emitting `dist/`.
 
 ## Deploy
 

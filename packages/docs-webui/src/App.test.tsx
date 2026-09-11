@@ -6,7 +6,7 @@ vi.mock("@scalar/api-reference", () => ({
   createApiReference: vi.fn(),
 }));
 
-describe("UniCAS documentation site", () => {
+describe("shared documentation site", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
@@ -30,5 +30,18 @@ describe("UniCAS documentation site", () => {
 
     expect(window.location.pathname).toBe("/unicas/concepts/leases-and-root-refs");
     expect(screen.getByRole("heading", { name: "Leases and Root Refs" })).toBeInTheDocument();
+  });
+
+  test("switches from UniCAS to the UniDocs Admin documentation", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("link", { name: "UniDocs" }));
+
+    expect(window.location.pathname).toBe("/unidocs");
+    expect(screen.getByRole("heading", { name: "UniDocs Admin control plane" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open UniDocs/ })).toHaveAttribute(
+      "href",
+      "https://unidocs.shazhou.work/",
+    );
+    expect(screen.getByRole("link", { name: /Document type lifecycle/ })).toBeInTheDocument();
   });
 });

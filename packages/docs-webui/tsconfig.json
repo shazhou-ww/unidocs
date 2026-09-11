@@ -20,6 +20,9 @@
   ],
   "references": [
     {
+      "path": "../protocol-admin"
+    },
+    {
       "path": "../../unicas-packages/admin-protocol"
     },
     {

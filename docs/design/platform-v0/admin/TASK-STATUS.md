@@ -73,7 +73,7 @@
 
 管理员控制面已从 `@unidocs/protocol-platform` 拆分到 `@unidocs/protocol-admin`。新包只依赖拥有 SValue schema dialect 的基础 `@unidocs/protocol`，不依赖 Platform 服务、`@unidocs/protocol-platform`、Node.js 或 Cloudflare adapter。
 
-`@unidocs/protocol-admin` 已升级为 contract-first 协议包：Zod 4 schema 是 Admin DTO 的运行时与静态类型来源，oRPC contract 定义 23 个 Admin v1 operation 的 method、path、headers、status 与领域错误，并从同一 contract 生成 OpenAPI 3.1 JSON 和内嵌规范的 Scalar HTML。文档分组按 Admin UI 排列为 Document types、Snapshot Contracts、Type Card bundles、View bundles、Operators、Members。bundle 上传的初始 `name`/`description` 使用 UTF-8 query 参数，body 保持原始 `application/zip` 流。
+`@unidocs/protocol-admin` 已升级为 contract-first 协议包：Zod 4 schema 是 Admin DTO 的运行时与静态类型来源，oRPC contract 定义 23 个 Admin v1 operation 的 method、path、headers、status 与领域错误，并从同一 contract 生成 OpenAPI 3.1 JSON。Markdown 文章、Scalar 渲染与导航编排由共享 `@unidocs/docs-webui` 消费该 JSON，在 `https://docs.shazhou.work/unidocs` 发布。bundle 上传的初始 `name`/`description` 使用 UTF-8 query 参数，body 保持原始 `application/zip` 流。
 
 目前没有实现 Platform HTTP handler、持久化、Snapshot Contract validator 或 bundle validator；Admin 协议包只负责 wire contract、基础 DTO runtime validation 与文档生成。
 
@@ -81,7 +81,7 @@
 
 - `pnpm typecheck`：41 个 workspace package 通过。
 - `pnpm check:cas-contract-docs`：64 份当前契约文档通过。
-- `pnpm --filter @unidocs/protocol-admin test`：9 个 schema、contract、OpenAPI 与 Scalar HTML 测试通过。
+- `pnpm --filter @unidocs/protocol-admin test`：schema、contract 与 OpenAPI 测试通过。
 - `pnpm --filter @unidocs/protocol-admin typecheck`：源码、测试与文档生成脚本通过。
 - `node --check docs/design/platform-v0/admin/unidocs-admin-mock.js`：通过。
 - `git diff --check`：通过。

@@ -43,18 +43,14 @@ From the repository root:
 pnpm --filter @unidocs/protocol-admin docs:generate
 ```
 
-This writes two artifacts:
+This writes one artifact:
 
 - `packages/protocol-admin/openapi/admin-v1.openapi.json` for tooling, client generation, and compatibility checks;
-- `packages/protocol-admin/openapi/admin-v1.html` as a human-readable Scalar API reference.
 
-The HTML embeds the OpenAPI document, so it can be opened directly from the
-filesystem or published as one static file. It loads the pinned Scalar renderer
-from jsDelivr; the Admin site can later bundle `@scalar/api-reference` locally
-while continuing to consume the same generated document.
-
-The generator and HTML renderer are internal build tools and are not exported
-from the package. The committed JSON document has its own package entrypoint:
+The generator is an internal build tool and is not exported from the package.
+Markdown guides, navigation grouping, and Scalar rendering are owned by
+`@unidocs/docs-webui` and published at `https://docs.shazhou.work/unidocs`.
+The committed JSON document has its own package entrypoint:
 
 ```ts
 import adminOpenApi from "@unidocs/protocol-admin/openapi.json" with { type: "json" };

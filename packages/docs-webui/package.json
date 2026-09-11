@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "pnpm --filter @unicas/admin-protocol docs:generate && pnpm --filter @unicas/tenant-protocol docs:generate && tsc -b && vite build",
+    "build": "pnpm --filter @unicas/admin-protocol docs:generate && pnpm --filter @unicas/tenant-protocol docs:generate && pnpm --filter @unidocs/protocol-admin docs:generate && tsc -b && vite build",
     "test": "vitest run",
     "typecheck": "tsc -b",
     "preview": "vite preview",
@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@scalar/api-reference": "1.68.0",
+    "@unidocs/protocol-admin": "workspace:*",
     "@unicas/admin-protocol": "workspace:*",
     "@unicas/tenant-protocol": "workspace:*",
     "lucide-react": "^1.34.0",

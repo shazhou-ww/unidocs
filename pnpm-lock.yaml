@@ -444,6 +444,9 @@ importers:
       '@unicas/tenant-protocol':
         specifier: workspace:*
         version: link:../../unicas-packages/tenant-protocol
+      '@unidocs/protocol-admin':
+        specifier: workspace:*
+        version: link:../protocol-admin
       lucide-react:
         specifier: ^1.34.0
         version: 1.34.0(react@19.2.8)

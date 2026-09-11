@@ -12,7 +12,7 @@
 
 可由 TypeScript 检查的公共、Agent 与 Operator 线契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin`](../../../packages/protocol-admin/src/index.ts)。SValue JSON Schema dialect 位于 [`@unidocs/protocol`](../../../packages/protocol/src/types.ts)。
 
-管理员 API 的机器可读 OpenAPI 3.1 文档位于 [`admin-v1.openapi.json`](../../../packages/protocol-admin/openapi/admin-v1.openapi.json)，并由 `@unidocs/protocol-admin/openapi.json` 独立导出；供本地或静态站点阅读的 Scalar 页面位于 [`admin-v1.html`](../../../packages/protocol-admin/openapi/admin-v1.html)。两者都保留在 `@unidocs/protocol-admin` 包内，并由 `pnpm --filter @unidocs/protocol-admin docs:generate` 从同一份 contract 生成。
+管理员 API 的机器可读 OpenAPI 3.1 文档位于 [`admin-v1.openapi.json`](../../../packages/protocol-admin/openapi/admin-v1.openapi.json)，并由 `@unidocs/protocol-admin/openapi.json` 独立导出。该 JSON 由 `pnpm --filter @unidocs/protocol-admin docs:generate` 从 contract 生成；Markdown 文章、导航编排与 Scalar 页面由 `@unidocs/docs-webui` 统一构建并发布到 `https://docs.shazhou.work/unidocs`。
 
 ## 已确定决策
 

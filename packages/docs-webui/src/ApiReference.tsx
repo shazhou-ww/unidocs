@@ -3,12 +3,13 @@ import "@scalar/api-reference/style.css";
 import { useEffect, useRef } from "react";
 import type { ReferenceDefinition } from "./reference-config.js";
 import { prepareReference } from "./reference-config.js";
+import { products } from "./content.js";
 
 export function ApiReference({ definition }: { readonly definition: ReferenceDefinition }) {
   const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    document.title = `${definition.title} | UniCAS Documentation`;
+    document.title = `${definition.title} | ${products[definition.product].name} Documentation`;
     const tagOrder = new Map(definition.tagGroups.flatMap((group) => group.tags).map((name, index) => [name, index]));
     const operationOrder = new Map(definition.operationOrder.map((key, index) => [key, index]));
     const target = container.current;
@@ -19,6 +20,7 @@ export function ApiReference({ definition }: { readonly definition: ReferenceDef
       if (!active) return;
       createApiReference(target, {
         content,
+        agent: { disabled: true },
         layout: "modern",
         theme: "default",
         hideTestRequestButton: true,
