@@ -6,6 +6,15 @@
 
 ## 当前进展与决策
 
+### Document Contract 阶段启动约束（2026-09-11）
+
+下一阶段按“先计划 checkpoint，再实现可部署纵向切片”的顺序推进 Document Contract append/list/get；阶段开始前先更新本计划并提交，功能完成后再单独部署、验收和提交。当前完整 operation 数仍为 **8/26**，不因计划或路由骨架提前计数。
+
+- 文档类型配置 UI 必须以 `docs/design/platform-v0/admin/unidocs-admin-mock.html` / `unidocs-admin-mock.js` 为交互参考：详情使用基本信息、文档契约、类型卡片包、界面包、处理服务、变更记录六个 tab；Document Contract 首版对齐 mock 的 revision 摘要、append 表单、schema/hash 信息和右侧启用准备度，但数据全部来自真实 client/API，不复制 mock state 或伪数据。
+- 在扩展文档类型详情前先建立真实前端路由，不再只用 React 内存 `view`。目标 URL 为 `/admin/document-types`、`/admin/document-types/{documentType}?tab=contracts`、`/admin/administrators`、`/admin/audit`；Worker 对这些受保护路径提供 SPA shell，WebUI 从 pathname/query 恢复 page、选中类型和 tab，并用 History API 更新。桌面/移动端刷新、前进/后退必须保持正确位置。
+- 路由不可与 `/admin/api/*`、`/admin/auth/*`、`/admin/login` 或 `/admin/access-denied` 混淆；未知受保护 UI route 返回明确 404 或安全默认页，不能吞掉 API/auth 路径。路由行为需有 BFF/静态资源测试和浏览器刷新验收。
+- Document Contract 持久化继续遵守已验证约束：document-type scoped 零基 idx、append-only、canonical snapshot/location schema hash 与 paired contract hash、同 key 重放、事务内权限复查、idx 分配和 audit 原子提交。公开 list/get 必须从真实 D1 返回稳定 cursor 与完整 schema DTO。
+
 ### Admin audit 查询闭环（2026-09-11）
 
 已上线 `listAdminAuditEvents`，Admin v1 完整 operation 总数增至 **8/26**；生产 Worker 版本 `e3d9cdf3-886b-4117-809f-a383fa5761c6`。WebUI 新增“审计”导航、动作/资源筛选、反向时间列表、cursor 加载更多和事件详情；详情展示 event/request/actor/resource identity、document type、reason 与结构化 details。
@@ -316,7 +325,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - 当前进度：本 Phase 3/7 个 operation、全部 Admin v1 8/26 个 operation 已上线。
 - [x] 实现并上线 register/list/get document type，使用真实 service/D1/oRPC handler，涵盖鉴权、CSRF、幂等、审计及筛选分页。
 - [ ] 实现 PATCH document type，包括并发 If-Match、候选绑定及启用条件。
-- [ ] 实现 paired contract append/list/get。
+- [ ] 实现 paired contract append/list/get；已固定 mock UI 参考、真实路由 contract 与刷新恢复验收要求，service/D1/HTTP 尚待实现。
 - [x] 实现 schema/paired contract canonical hash 及测试。
 - [ ] 在真实 append 服务中接入 SValue dialect、零基 idx 和 append-only 校验；协议校验与 D1 分配 spike 已有，handler 尚无。
 - [ ] 实现 View/Operator contract 支持交集与 enable 前置条件。
@@ -377,6 +386,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用 loading/empty/error、公开登录/授权拒绝/session 检查状态与稳定错误展示，冲突恢复和上传状态待实现。
 - [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。
+- [ ] 建立 refresh-safe 前端路由；目标 page/detail/tab URL 已在阶段启动约束中固定，当前内存 view 尚待替换。
 
 - [ ] **退出条件**：组件测试覆盖主要 workflow；浏览器中可完成类型创建、contract append、bundle 上传/绑定、Operator 配置、启用、成员管理与审计查询。
 
