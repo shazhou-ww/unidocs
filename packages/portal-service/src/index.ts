@@ -15,3 +15,5 @@ export { requireExactFields, requireIdempotencyKey, requireIdentifier, requirePa
 export type { TenantContext, TenantOperationCode } from "./tenant/access.js";
 export { createTenantCatalogService } from "./tenant/catalog.js";
 export type { TenantCatalogRepository } from "./tenant/catalog.js";
+export { createTenantDocumentService } from "./tenant/documents.js";
+export type { CurrentVersionMoveCommand, DocumentCreateCommand, TenantDocumentRepository } from "./tenant/documents.js";
