@@ -5,7 +5,9 @@ import { D1PortalAuthRepository } from "../../../packages/cloudflare-portal/src/
 import { D1DocumentTypeRepository } from "../../../packages/cloudflare-portal/src/document-types-repository.ts";
 import { D1OperatorValidationRepository } from "../../../packages/cloudflare-portal/src/operator-validations-repository.ts";
 import { createOperatorValidationsHttp } from "../../../packages/cloudflare-portal/src/operator-validations-http.ts";
-import { createDocumentTypeService, createOperatorValidationService, parseStrictJson, signOperatorProbeReceipt } from "../../../packages/portal-service/src/index.ts";
+import { D1OperatorRepository } from "../../../packages/cloudflare-portal/src/operators-repository.ts";
+import { createOperatorsHttp } from "../../../packages/cloudflare-portal/src/operators-http.ts";
+import { createDocumentTypeService, createOperatorService, createOperatorValidationService, parseStrictJson, signOperatorProbeReceipt } from "../../../packages/portal-service/src/index.ts";
 
 let miniflare;
 let database;
@@ -25,7 +27,7 @@ beforeEach(async () => {
     compatibilityDate: "2026-08-18", d1Databases: { DB: `portal-operator-validation-${crypto.randomUUID()}` },
   }] }));
   database = await miniflare.getD1Database("DB", "portal-operator-validations");
-  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql", "0005_view_bundles.sql", "0006_operator_validations.sql"]) await migrate(name);
+  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql", "0005_view_bundles.sql", "0006_operator_validations.sql", "0007_operators.sql"]) await migrate(name);
 });
 
 afterEach(async () => { await miniflare?.dispose(); });
@@ -96,4 +98,24 @@ test("HTTP creates and reads a current validation with stable errors", async () 
   currentTime += 901;
   const expired = await handle(new Request(`${base}/${validation.validationId}`), context, "request-expired");
   expect(expired.status).toBe(404);
+});
+
+test("consumes a validation into one persistent Operator and supports list/get/metadata", async () => {
+  const { context, service: validationService } = await setup();
+  const validation = await validationService.validate(context, { baseUrl: "https://operator.test", expectedDocumentType: "dt-markdown", expectedConfigEtag: null }, "validate", "request-validate");
+  const repository = new D1OperatorRepository(database, () => now);
+  let operatorId = 0;
+  const service = createOperatorService(repository, { now: () => new Date(now * 1000), id: () => `one-${++operatorId}` });
+  const created = await service.create(context, { validationId: validation.validationId, name: "Primary", description: "Candidate" }, "create", "request-create");
+  expect((await service.create(context, { validationId: validation.validationId, name: "Primary", description: "Candidate" }, "create", "request-replay")).operatorId).toBe(created.operatorId);
+  await expect(service.create(context, { validationId: validation.validationId, name: "Other", description: "" }, "other", "request-other")).rejects.toMatchObject({ code: "operator_validation_required" });
+  expect((await service.list(context, { documentType: "dt-markdown" })).items[0]).toMatchObject({ operatorId: created.operatorId, supportedDocumentContractIdxs: [0] });
+  const record = await service.get(context, created.operatorId);
+  const updated = await service.updateMetadata(context, created.operatorId, { name: "Next", description: "Notes" }, "patch", record.etag, "request-patch");
+  await expect(service.updateMetadata(context, created.operatorId, { name: "Stale", description: "" }, "stale", record.etag, "request-stale")).rejects.toMatchObject({ code: "precondition_failed" });
+  expect(updated.etag).not.toBe(record.etag);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_operator_validations").first("count")).toBe(0);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action IN ('operator.created','operator.metadata_changed')").first("count")).toBe(2);
+  const handle = createOperatorsHttp(repository);
+  expect((await handle(new Request("https://portal.test/admin/api/v1/operators?documentType=dt-markdown"), context, "request-list")).status).toBe(200);
 });

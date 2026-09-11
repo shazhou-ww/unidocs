@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, ExternalLink, FileText, Languages, LayoutTemplate, LoaderCircle, LogIn, LogOut, Menu, Pencil, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UploadCloud, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
-import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type TypeCardBundleListItem, type TypeCardBundleRecord, type ViewBundleListItem, type ViewBundleRecord } from "@unidocs/protocol-admin-portal";
+import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type OperatorListItem, type OperatorRecord, type OperatorValidation, type TypeCardBundleListItem, type TypeCardBundleRecord, type ViewBundleListItem, type ViewBundleRecord } from "@unidocs/protocol-admin-portal";
 
 const auditActionLabels: Record<AdminAuditEvent["action"], string> = {
   "type_card_bundle.uploaded": "上传类型卡片包",
@@ -97,6 +97,7 @@ function errorMessage(error: unknown): string {
     if (error.code === "precondition_failed") return "资源信息已发生变化，请刷新后重试。";
     if (error.code === "bundle_already_exists") return "相同内容的 bundle 已经存在，请编辑现有候选项。";
     if (error.code === "bundle_invalid") return "ZIP 未通过 bundle 安全校验。";
+    if (error.code === "operator_validation_failed") return "处理服务未通过 discovery 与签名探针验证。";
     return `${error.message}${error.requestId ? `（请求 ${error.requestId}）` : ""}`;
   }
   return "暂时无法连接管理服务。";
@@ -230,6 +231,16 @@ function AdminApp() {
   const [viewFile, setViewFile] = useState<File | null>(null);
   const [viewName, setViewName] = useState("");
   const [viewDescription, setViewDescription] = useState("");
+  const [operatorBaseUrl, setOperatorBaseUrl] = useState("https://unidocs-markdown.shazhou.workers.dev");
+  const [operatorExpectedConfigEtag, setOperatorExpectedConfigEtag] = useState("");
+  const [operatorValidation, setOperatorValidation] = useState<OperatorValidation | null>(null);
+  const [operatorValidationLoading, setOperatorValidationLoading] = useState(false);
+  const [operatorValidationError, setOperatorValidationError] = useState<string | null>(null);
+  const [operators, setOperators] = useState<readonly OperatorListItem[]>([]);
+  const [operatorCursor, setOperatorCursor] = useState<string | null>(null);
+  const [selectedOperator, setSelectedOperator] = useState<OperatorRecord | null>(null);
+  const [operatorName, setOperatorName] = useState("Markdown Operator");
+  const [operatorDescription, setOperatorDescription] = useState("");
   const [query, setQuery] = useState("");
   const [enabled, setEnabled] = useState<"all" | "true" | "false">("all");
   const [loading, setLoading] = useState(true);
@@ -295,6 +306,7 @@ function AdminApp() {
       if (tab === "contracts") await loadContracts(documentType);
       if (tab === "cards") await loadTypeCardBundles(documentType);
       if (tab === "bundles") await loadViewBundles(documentType);
+      if (tab === "operators") await Promise.all([restoreOperatorValidation(documentType), loadOperators(documentType)]);
     }
     catch (caught) { setError(errorMessage(caught)); }
     finally { setDetailLoading(false); }
@@ -366,6 +378,27 @@ function AdminApp() {
     finally { setViewBundlesLoading(false); }
   }
 
+  async function restoreOperatorValidation(documentType: string) {
+    setOperatorValidation(null);
+    setOperatorValidationError(null);
+    const validationId = sessionStorage.getItem(`unidocs.operator-validation.${documentType}`);
+    if (!validationId) return;
+    setOperatorValidationLoading(true);
+    try { setOperatorValidation(await client.getOperatorValidation(validationId)); }
+    catch {
+      sessionStorage.removeItem(`unidocs.operator-validation.${documentType}`);
+    } finally { setOperatorValidationLoading(false); }
+  }
+
+  async function loadOperators(documentType: string, cursor: string | null = null) {
+    setOperatorValidationLoading(true);
+    try { const page = await client.listOperators(documentType, { limit: 25, cursor: cursor ?? undefined }); setOperators(current => cursor ? [...current, ...page.items] : page.items); setOperatorCursor(page.nextCursor); }
+    catch (caught) { setOperatorValidationError(errorMessage(caught)); }
+    finally { setOperatorValidationLoading(false); }
+  }
+
+  async function openOperator(operatorId: string) { setOperatorValidationLoading(true); try { const record = await client.getOperator(operatorId); setSelectedOperator(record); setOperatorName(record.name); setOperatorDescription(record.description); } catch (caught) { setOperatorValidationError(errorMessage(caught)); } finally { setOperatorValidationLoading(false); } }
+
   function changeTypeTab(tab: DocumentTypeTab) {
     if (!selected) return;
     window.history.pushState({}, "", adminRoutePath({ view: "documentTypes", documentType: selected.documentType, tab }));
@@ -373,9 +406,11 @@ function AdminApp() {
     setSelectedContract(null);
     setSelectedTypeCardBundle(null);
     setSelectedViewBundle(null);
+    setOperatorValidationError(null);
     if (tab === "contracts" && contracts.length === 0) void loadContracts(selected.documentType);
     if (tab === "cards" && typeCardBundles.length === 0) void loadTypeCardBundles(selected.documentType);
     if (tab === "bundles" && viewBundles.length === 0) void loadViewBundles(selected.documentType);
+    if (tab === "operators") { void restoreOperatorValidation(selected.documentType); void loadOperators(selected.documentType); }
   }
 
   async function uploadTypeCardBundle(event: FormEvent) {
@@ -452,6 +487,44 @@ function AdminApp() {
       await openViewBundle(selectedViewBundle.viewBundleId);
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setSaving(false); }
+  }
+
+  async function validateOperator(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !operatorBaseUrl.trim()) return;
+    setOperatorValidationLoading(true);
+    setOperatorValidationError(null);
+    setOperatorValidation(null);
+    try {
+      const validation = await client.createOperatorValidation({
+        baseUrl: operatorBaseUrl.trim(),
+        expectedDocumentType: selected.documentType,
+        expectedConfigEtag: operatorExpectedConfigEtag.trim() || null,
+      });
+      sessionStorage.setItem(`unidocs.operator-validation.${selected.documentType}`, validation.validationId);
+      setOperatorValidation(await client.getOperatorValidation(validation.validationId));
+    } catch (caught) {
+      setOperatorValidationError(errorMessage(caught));
+    } finally { setOperatorValidationLoading(false); }
+  }
+
+  async function persistOperator() {
+    if (!selected || !operatorValidation || !operatorName.trim()) return;
+    setSaving(true); setOperatorValidationError(null);
+    try { const created = await client.createOperator({ validationId: operatorValidation.validationId, name: operatorName.trim(), description: operatorDescription }); sessionStorage.removeItem(`unidocs.operator-validation.${selected.documentType}`); setOperatorValidation(null); await loadOperators(selected.documentType); await openOperator(created.operatorId); }
+    catch (caught) { setOperatorValidationError(errorMessage(caught)); } finally { setSaving(false); }
+  }
+
+  async function updateOperatorInfo() {
+    if (!selected || !selectedOperator || !operatorName.trim()) return;
+    setSaving(true); try { await client.updateOperatorMetadata(selectedOperator.operatorId, { name: operatorName.trim(), description: operatorDescription }, selectedOperator.etag); await loadOperators(selected.documentType); await openOperator(selectedOperator.operatorId); }
+    catch (caught) { setOperatorValidationError(errorMessage(caught)); } finally { setSaving(false); }
+  }
+
+  async function updateRegistration(body: { typeCardBundleId?: string; viewBundleId?: string; builtinOperatorId?: string | null; enabled?: boolean }, reason: string) {
+    if (!selected) return; setSaving(true); setError(null);
+    try { await client.updateDocumentType(selected.documentType, { ...body, reason }, selected.etag); setSelected(await client.getDocumentType(selected.documentType)); await loadTypes(); }
+    catch (caught) { setError(errorMessage(caught)); } finally { setSaving(false); }
   }
 
   async function appendContract(event: FormEvent) {
@@ -636,11 +709,11 @@ function AdminApp() {
             <div className="type-config-head"><div><button className="back-link" type="button" onClick={() => navigate({ view: "documentTypes" })}>文档类型</button><h2>{selected.internalName}</h2><code>{selected.documentType}</code></div><span className={`status ${selected.enabled ? "enabled" : "draft"}`}>{selected.enabled ? "已启用" : "草稿"}</span></div>
             <div className="type-tabs" role="tablist" aria-label="文档类型配置">{([
               ["config", "基本信息"], ["contracts", `文档契约 ${contracts.length || selected.latestDocumentContract ? (selected.latestDocumentContract?.documentContractIdx ?? -1) + 1 : 0}`],
-              ["cards", "类型卡片包"], ["bundles", "界面包"], ["operators", "处理服务"], ["changes", "变更记录"],
+                 ["cards", "类型卡片包"], ["bundles", "界面包"], ["operators", "处理服务"], ["changes", "变更记录"],
             ] as const).map(([tab, label]) => <button key={tab} role="tab" aria-selected={activeTypeTab === tab} className={activeTypeTab === tab ? "active" : ""} type="button" onClick={() => changeTypeTab(tab)}>{label}</button>)}</div>
             <div className="type-config-body">
               <div className="type-config-main">
-                {activeTypeTab === "config" && <section className="config-section"><h3>基本信息</h3><dl className="detail-list"><div><dt>内部名称</dt><dd>{selected.internalName}</dd></div><div><dt>状态</dt><dd>{selected.enabled ? "已启用" : "草稿"}</dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selected.etag)}</code></dd></div><div><dt>更新时间</dt><dd>{new Date(selected.updatedAt).toLocaleString("zh-CN")}</dd></div></dl></section>}
+                {activeTypeTab === "config" && <section className="config-section"><div className="section-heading"><div><h3>基本信息</h3><p>启用前必须完成文档契约与三个运行资源。</p></div><button className={selected.enabled ? "secondary-button" : "primary-button"} type="button" disabled={saving} onClick={() => void updateRegistration({ enabled: !selected.enabled }, selected.enabled ? "Disable document type" : "Enable document type")}>{selected.enabled ? "停用" : "启用"}</button></div><dl className="detail-list"><div><dt>内部名称</dt><dd>{selected.internalName}</dd></div><div><dt>状态</dt><dd>{selected.enabled ? "已启用" : "草稿"}</dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selected.etag)}</code></dd></div><div><dt>更新时间</dt><dd>{new Date(selected.updatedAt).toLocaleString("zh-CN")}</dd></div></dl></section>}
                 {activeTypeTab === "contracts" && <section className="config-section"><div className="section-heading"><div><h3>文档契约</h3><p>不可变的 snapshot/location 配对 schema revision。</p></div><button className="primary-button" type="button" onClick={() => setAppendContractOpen(true)}><Plus size={16} />添加版本</button></div>
                   {contracts.map(contract => <button className={`contract-row ${selectedContract?.documentContractIdx === contract.documentContractIdx ? "active" : ""}`} type="button" key={contract.documentContractIdx} onClick={() => void openContract(selected.documentType, contract.documentContractIdx)}><span className="contract-idx">{contract.documentContractIdx}</span><span><strong>文档契约 {contract.documentContractIdx}</strong><code>{contract.contractHash}</code><small>{new Date(contract.createdAt).toLocaleString("zh-CN")} · format v{contract.formatVersion}</small></span><ChevronRight size={16} /></button>)}
                   {!contractsLoading && contracts.length === 0 && <div className="empty-state compact-empty"><ScrollText size={26} /><strong>尚未添加文档契约</strong><span>第一个版本将分配 revision 0。</span></div>}
@@ -653,6 +726,7 @@ function AdminApp() {
                   {!typeCardBundlesLoading && typeCardBundles.length === 0 && <div className="empty-state compact-empty"><LayoutTemplate size={26} /><strong>尚未上传类型卡片包</strong><span>上传 ZIP 后会先校验 manifest 与全部图片资源。</span></div>}
                   {typeCardBundlesLoading && typeCardBundles.length === 0 && <div className="empty-state compact-empty"><LoaderCircle className="spin" size={24} /><strong>正在读取类型卡片包</strong></div>}
                   {typeCardBundleCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadTypeCardBundles(selected.documentType, typeCardBundleCursor)}>加载更多</button></div>}
+                  {selectedTypeCardBundle && <div className="load-more"><button className="primary-button" type="button" disabled={saving || selected.typeCardBundle?.typeCardBundleId === selectedTypeCardBundle.typeCardBundleId} onClick={() => void updateRegistration({ typeCardBundleId: selectedTypeCardBundle.typeCardBundleId }, "Select Type Card bundle")}>{selected.typeCardBundle?.typeCardBundleId === selectedTypeCardBundle.typeCardBundleId ? "当前卡片包" : "绑定所选卡片包"}</button></div>}
                   {selectedTypeCardBundle && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>VALIDATED CANDIDATE</span><h3>{selectedTypeCardBundle.name}</h3><p>{selectedTypeCardBundle.description || "没有管理员备注"}</p></div><button className="secondary-button" type="button" onClick={beginEditTypeCardBundle}><Pencil size={15} />编辑信息</button></div><div className="type-card-preview"><img src={new URL(selectedTypeCardBundle.manifest.sampleThumbnail, selectedTypeCardBundle.bundleUrl).href} alt={selectedTypeCardBundle.manifest.locales.en.sampleThumbnailAlt} /><div><span className="preview-icon"><img src={new URL(selectedTypeCardBundle.manifest.icon.kind === "svg" ? selectedTypeCardBundle.manifest.icon.path : selectedTypeCardBundle.manifest.icon.images[128], selectedTypeCardBundle.bundleUrl).href} alt="" /></span><strong>{selectedTypeCardBundle.manifest.locales.en.name}</strong><p>{selectedTypeCardBundle.manifest.locales.en.description}</p></div></div><dl><div><dt>Bundle ID</dt><dd><code>{selectedTypeCardBundle.typeCardBundleId}</code></dd></div><div><dt>Manifest protocol</dt><dd><code>{selectedTypeCardBundle.manifest.protocol}</code></dd></div><div><dt>可用语言</dt><dd className="locale-list"><Languages size={14} />{Object.keys(selectedTypeCardBundle.manifest.locales).join(" · ")}</dd></div><div><dt>Icon</dt><dd><code>{selectedTypeCardBundle.manifest.icon.kind === "svg" ? selectedTypeCardBundle.manifest.icon.path : Object.values(selectedTypeCardBundle.manifest.icon.images).join(", ")}</code></dd></div><div><dt>Sample thumbnail</dt><dd><code>{selectedTypeCardBundle.manifest.sampleThumbnail}</code></dd></div><div><dt>Bundle URL</dt><dd><a href={selectedTypeCardBundle.bundleUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedTypeCardBundle.bundleUrl}</a></dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selectedTypeCardBundle.etag)}</code></dd></div></dl></div>}
                 </section>}
                 {activeTypeTab === "bundles" && <section className="config-section"><div className="section-heading"><div><h3>界面包候选项</h3><p>每个不可变版本包含隔离运行的交互与缩略图入口。</p></div><button className="primary-button" type="button" onClick={() => setUploadViewOpen(true)}><UploadCloud size={16} />上传候选项</button></div>
@@ -660,9 +734,25 @@ function AdminApp() {
                   {!viewBundlesLoading && viewBundles.length === 0 && <div className="empty-state compact-empty"><LayoutTemplate size={26} /><strong>尚未上传界面包</strong><span>上传 ZIP 后会校验双入口、revision 与全部静态资源。</span></div>}
                   {viewBundlesLoading && viewBundles.length === 0 && <div className="empty-state compact-empty"><LoaderCircle className="spin" size={24} /><strong>正在读取界面包</strong></div>}
                   {viewBundleCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadViewBundles(selected.documentType, viewBundleCursor)}>加载更多</button></div>}
+                  {selectedViewBundle && <div className="load-more"><button className="primary-button" type="button" disabled={saving || selected.viewBundle?.viewBundleId === selectedViewBundle.viewBundleId} onClick={() => void updateRegistration({ viewBundleId: selectedViewBundle.viewBundleId }, "Select View bundle")}>{selected.viewBundle?.viewBundleId === selectedViewBundle.viewBundleId ? "当前界面包" : "绑定所选界面包"}</button></div>}
                   {selectedViewBundle && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>VALIDATED CANDIDATE</span><h3>{selectedViewBundle.name}</h3><p>{selectedViewBundle.description || "没有管理员备注"}</p></div><button className="secondary-button" type="button" onClick={beginEditViewBundle}><Pencil size={15} />编辑信息</button></div><dl><div><dt>Bundle ID</dt><dd><code>{selectedViewBundle.viewBundleId}</code></dd></div><div><dt>Manifest protocol</dt><dd><code>{selectedViewBundle.manifest.protocol}</code></dd></div><div><dt>支持 revisions</dt><dd>{selectedViewBundle.manifest.supportedDocumentContractIdxs.map(idx => `revision ${idx}`).join(" · ")}</dd></div><div><dt>交互入口</dt><dd><a href={new URL(selectedViewBundle.manifest.entrypoints.interactive, selectedViewBundle.bundleUrl).href} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedViewBundle.manifest.entrypoints.interactive}</a></dd></div><div><dt>缩略图入口</dt><dd><a href={new URL(selectedViewBundle.manifest.entrypoints.thumbnail, selectedViewBundle.bundleUrl).href} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedViewBundle.manifest.entrypoints.thumbnail}</a></dd></div><div><dt>Bundle URL</dt><dd><a href={selectedViewBundle.bundleUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedViewBundle.bundleUrl}</a></dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selectedViewBundle.etag)}</code></dd></div></dl></div>}
                 </section>}
-                {!["config", "contracts", "cards", "bundles"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>该配置将在对应候选资源 API 上线后接入。</span></div>}
+                {activeTypeTab === "operators" && <section className="config-section"><div className="section-heading"><div><h3>处理服务验证</h3><p>通过受控 Service Binding 完成 discovery 与签名探针。</p></div></div>
+                  <form className="operator-validation-form" onSubmit={validateOperator}>
+                    <label><span>服务 URL</span><input aria-label="处理服务 URL" type="url" required value={operatorBaseUrl} onChange={event => setOperatorBaseUrl(event.target.value)} /></label>
+                    <label><span>文档类型</span><input aria-label="验证文档类型" readOnly value={selected.documentType} /></label>
+                    <label><span>预期配置 ETag（可选）</span><input aria-label="预期配置 ETag" value={operatorExpectedConfigEtag} onChange={event => setOperatorExpectedConfigEtag(event.target.value)} placeholder={'例如："sha256-..."'} /></label>
+                    <div className="modal-actions"><button className="primary-button" type="submit" disabled={operatorValidationLoading || !operatorBaseUrl.trim()}>{operatorValidationLoading ? <LoaderCircle className="spin" size={16} /> : <ShieldAlert size={16} />}验证处理服务</button></div>
+                  </form>
+                  {operatorValidationError && <div className="error-banner" role="alert"><AlertCircle size={18} /><span>{operatorValidationError}</span><button type="button" onClick={() => setOperatorValidationError(null)} aria-label="关闭验证错误"><X size={16} /></button></div>}
+                  {operatorValidationLoading && !operatorValidation && <div className="empty-state compact-empty" role="status"><LoaderCircle className="spin" size={24} /><strong>正在验证处理服务</strong></div>}
+                  {!operatorValidationLoading && !operatorValidation && !operatorValidationError && <div className="empty-state compact-empty"><ShieldAlert size={26} /><strong>尚未完成验证</strong><span>验证不会自动创建或绑定持久处理服务。</span></div>}
+                  {operatorValidation && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>VALIDATION PASSED</span><h3>{operatorValidation.descriptor.displayName}</h3><p>此验证将在 {new Date(operatorValidation.expiresAt).toLocaleString("zh-CN")} 过期。</p></div><span className="status enabled"><Check size={13} />已验证</span></div><dl><div><dt>Validation ID</dt><dd><code>{operatorValidation.validationId}</code></dd></div><div><dt>Declared Operator ID</dt><dd><code>{operatorValidation.descriptor.declaredOperatorId}</code></dd></div><div><dt>协议</dt><dd><code>{operatorValidation.descriptor.protocol}</code></dd></div><div><dt>Base URL</dt><dd><a href={operatorValidation.baseUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />{operatorValidation.baseUrl}</a></dd></div><div><dt>Config ETag</dt><dd><code>{operatorValidation.expectedConfigEtag ?? "未固定"}</code></dd></div><div><dt>支持 revisions</dt><dd>{operatorValidation.descriptor.supportedDocumentContracts[selected.documentType]?.map(idx => `revision ${idx}`).join(" · ") ?? "无"}</dd></div></dl><div className="operator-validation-form"><label><span>候选项名称</span><input aria-label="处理服务候选项名称" value={operatorName} onChange={event => setOperatorName(event.target.value)} /></label><label><span>管理员备注</span><textarea className="metadata-textarea" value={operatorDescription} onChange={event => setOperatorDescription(event.target.value)} /></label><div className="modal-actions"><button className="primary-button" type="button" disabled={saving || !operatorName.trim()} onClick={() => void persistOperator()}><Plus size={16} />保存处理服务</button></div></div></div>}
+                  <div className="bundle-history">{operators.map(operator => <button className={`bundle-row ${selectedOperator?.operatorId === operator.operatorId ? "active" : ""}`} type="button" key={operator.operatorId} onClick={() => void openOperator(operator.operatorId)}><span className="bundle-mark"><ShieldAlert size={17} /></span><span><strong>{operator.name}</strong><code>{operator.operatorId}</code><small>revisions {operator.supportedDocumentContractIdxs.join(" · ")}</small></span><ChevronRight size={16} /></button>)}</div>
+                  {operatorCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadOperators(selected.documentType, operatorCursor)}>加载更多</button></div>}
+                  {selectedOperator && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>PERSISTENT CANDIDATE</span><h3>{selectedOperator.name}</h3><p>{selectedOperator.description || "没有管理员备注"}</p></div><span className={`status ${selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "enabled" : "draft"}`}>{selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "当前绑定" : "候选项"}</span></div><dl><div><dt>Operator ID</dt><dd><code>{selectedOperator.operatorId}</code></dd></div><div><dt>Declared ID</dt><dd><code>{selectedOperator.descriptor.declaredOperatorId}</code></dd></div><div><dt>Base URL</dt><dd><a href={selectedOperator.baseUrl} target="_blank" rel="noreferrer">{selectedOperator.baseUrl}</a></dd></div><div><dt>支持 revisions</dt><dd>{selectedOperator.descriptor.supportedDocumentContracts[selected.documentType]?.map(idx => `revision ${idx}`).join(" · ")}</dd></div></dl><div className="operator-validation-form"><label><span>候选项名称</span><input aria-label="编辑处理服务名称" value={operatorName} onChange={event => setOperatorName(event.target.value)} /></label><label><span>管理员备注</span><textarea className="metadata-textarea" value={operatorDescription} onChange={event => setOperatorDescription(event.target.value)} /></label><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => void updateOperatorInfo()}><Pencil size={15} />保存信息</button><button className="primary-button" type="button" disabled={saving} onClick={() => void updateRegistration({ builtinOperatorId: selected.builtinOperator?.operatorId === selectedOperator.operatorId ? null : selectedOperator.operatorId }, selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "Clear builtin Operator" : "Select builtin Operator")}>{selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "解除绑定" : "绑定为当前服务"}</button></div></div></div>}
+                </section>}
+                {!["config", "contracts", "cards", "bundles", "operators"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>变更记录请前往审计页面查看。</span></div>}
               </div>
               <aside className="config-aside"><h3>启用准备度</h3><dl><div><dt>文档契约</dt><dd>{selected.latestDocumentContract ? `revision ${selected.latestDocumentContract.documentContractIdx}` : "缺失"}</dd></div><div><dt>类型卡片包</dt><dd>{selected.typeCardBundle?.name ?? "缺失"}</dd></div><div><dt>视图包</dt><dd>{selected.viewBundle?.name ?? "缺失"}</dd></div><div><dt>处理服务</dt><dd>{selected.builtinOperator?.name ?? "缺失"}</dd></div></dl></aside>
             </div>

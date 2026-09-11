@@ -34,6 +34,7 @@ export interface DocumentTypeRepository {
   resolveTypeCardBundle(context: AdminContext, documentType: string, bundleId: string): Promise<TypeCardBundleRecord | null>;
   resolveViewBundle(context: AdminContext, documentType: string, bundleId: string): Promise<ViewBundleRecord | null>;
   resolveOperator(context: AdminContext, documentType: string, operatorId: string): Promise<OperatorRecord | null>;
+  listDocumentContractIdxs(context: AdminContext, documentType: string): Promise<readonly number[]>;
 }
 
 export function createDocumentTypeService(repository: DocumentTypeRepository, options: {
@@ -94,6 +95,11 @@ export function createDocumentTypeService(repository: DocumentTypeRepository, op
       }
       const enabled = parsed.data.enabled ?? current.enabled;
       if (enabled && (!current.latestDocumentContract || !typeCardBundle || !viewBundle || !builtinOperator)) throw new AdminOperationError("invalid_request");
+      if (enabled) {
+        const contractIdxs = await repository.listDocumentContractIdxs(context, documentType);
+        const operatorIdxs = new Set(builtinOperator!.descriptor.supportedDocumentContracts[documentType] ?? []);
+        if (!contractIdxs.some(idx => viewBundle!.manifest.supportedDocumentContractIdxs.includes(idx) && operatorIdxs.has(idx))) throw new AdminOperationError("invalid_request");
+      }
       const representation = {
         documentType, internalName: parsed.data.internalName ?? current.internalName, enabled,
         latestDocumentContract: current.latestDocumentContract, typeCardBundle, viewBundle, builtinOperator, updatedAt: timestamp,

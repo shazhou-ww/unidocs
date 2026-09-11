@@ -6,6 +6,7 @@ import {
   type AppendDocumentContractRequest,
   type CreateDocumentTypeRequest,
   type CreateOperatorValidationRequest,
+  type CreateOperatorRequest,
   type DocumentContractAppendResult,
   type DocumentContractRecord,
   type DocumentTypeMutationResult,
@@ -19,6 +20,9 @@ import {
   type ListTypeCardBundlesResponse,
   type ListViewBundlesResponse,
   type OperatorValidation,
+  type ListOperatorsResponse,
+  type OperatorMutationResult,
+  type OperatorRecord,
   type TypeCardBundleMutationResult,
   type TypeCardBundleRecord,
   type UpdateCandidateMetadataRequest,
@@ -68,6 +72,10 @@ export interface AdminPortalClient {
   updateViewBundleMetadata(viewBundleId: string, body: UpdateCandidateMetadataRequest, ifMatch: string, idempotencyKey?: string): Promise<ViewBundleMutationResult>;
   createOperatorValidation(body: CreateOperatorValidationRequest, idempotencyKey?: string): Promise<OperatorValidation>;
   getOperatorValidation(validationId: string): Promise<OperatorValidation>;
+  createOperator(body: CreateOperatorRequest, idempotencyKey?: string): Promise<OperatorMutationResult>;
+  listOperators(documentType: string, query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListOperatorsResponse>;
+  getOperator(operatorId: string): Promise<OperatorRecord>;
+  updateOperatorMetadata(operatorId: string, body: UpdateCandidateMetadataRequest, ifMatch: string, idempotencyKey?: string): Promise<OperatorMutationResult>;
 }
 
 export interface AdminPortalClientConfig {
@@ -207,5 +215,9 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
       method: "POST", headers: mutationHeaders({ "idempotency-key": idempotencyKey }), body: JSON.stringify(body),
     }),
     getOperatorValidation: validationId => request<OperatorValidation>(`${AdminApiV1BasePath}/operator-validations/${encodeURIComponent(validationId)}`),
+    createOperator: (body, idempotencyKey = createIdempotencyKey()) => request<OperatorMutationResult>(`${AdminApiV1BasePath}/operators`, { method: "POST", headers: mutationHeaders({ "idempotency-key": idempotencyKey }), body: JSON.stringify(body) }),
+    listOperators(documentType, query = {}) { const params = new URLSearchParams({ documentType }); if (query.limit !== undefined) params.set("limit", String(query.limit)); if (query.cursor !== undefined) params.set("cursor", query.cursor); return request<ListOperatorsResponse>(`${AdminApiV1BasePath}/operators?${params}`); },
+    getOperator: operatorId => request<OperatorRecord>(`${AdminApiV1BasePath}/operators/${encodeURIComponent(operatorId)}`),
+    updateOperatorMetadata: (operatorId, body, ifMatch, idempotencyKey = createIdempotencyKey()) => request<OperatorMutationResult>(`${AdminApiV1BasePath}/operators/${encodeURIComponent(operatorId)}`, { method: "PATCH", headers: mutationHeaders({ "idempotency-key": idempotencyKey, "if-match": ifMatch }), body: JSON.stringify(body) }),
   };
 }

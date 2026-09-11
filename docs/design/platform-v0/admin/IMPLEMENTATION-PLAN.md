@@ -6,6 +6,15 @@
 
 ## 当前进展与决策
 
+### Admin v1 与 WebUI 本地完整闭环（2026-09-11）
+
+已在本地完成剩余 `createOperator`、`listOperators`、`getOperator`、`updateOperatorMetadata` 与完整 `updateDocumentType`，Admin v1 本地达到 **26/26**，生产仍为 **21/26**。`0007_operators.sql` 与新 Portal Worker 尚未部署。
+
+- validation 按 actor/TTL 在一个 D1 batch 中单次消费，并与持久 Operator、idempotency receipt、`operator.created` audit 原子提交；相同 key 优先重放，不因 validation 已消费误报。Operator metadata PATCH 只改变 name/description/ETag，使用 If-Match 与内部 revision 条件更新，list/get 返回真实 D1 candidate。
+- document type PATCH 已接入持久 Operator resolver，并在启用或保持启用时要求真实 Document Contract、Type Card、View、Operator 齐全且 View/Operator 对至少一个已登记 revision 有交集。不兼容资源不能使类型进入或停留在 enabled 状态。
+- WebUI 的“处理服务”tab 已覆盖 discovery/signature validation、刷新恢复、validation 转持久候选、候选 list/get、metadata 编辑、绑定/解绑；Type Card/View 详情可绑定候选，基本信息可启用/停用，右侧持续展示完整准备度。所有 mutation 继续使用 CSRF、Idempotency-Key 与 If-Match，无 mock candidate state。
+- 验证：portal-service 329 个测试、Cloudflare Portal 119 个测试、Admin client 12 个 transport tests、WebUI 16 个组件测试、真实 D1 validation/Operator 集成测试 5 个、相关 typecheck 通过。下一步执行全仓 typecheck、production dry-run、提交，然后应用 `0007`、部署 Portal 并做匿名 smoke；生产真人创建 validation/Operator/绑定/启用仍由管理员明确触发。
+
 ### Operator 签名 probe wire checkpoint（2026-09-11）
 
 已固定 Operator validation 的签名 probe 原语，尚未接入 transport、D1 或公开 handler，因此 Admin v1 完整 operation 仍为 **19/26**。每个部署登记 target 使用独立的至少 256-bit HMAC-SHA256 key；该 key 只属于 Portal 与对应 Operator，不复用 DocType service auth。
@@ -418,8 +427,8 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 - [x] 实现 Operator discovery descriptor 的 identity、配置 ETag、类型声明和 revisions 业务校验。
 - [x] 验证第一方 Service Binding 受控传输与完整 I/O deadline；当前为未接入 handler 的实现切片。
-- [ ] 实现 Operator validation 与 candidate creation；第一方 Markdown 的签名 probe/回执、15 分钟 TTL validation record 和 create/get handler 已在本地完成，持久 candidate 与外部 Operator 受控出口尚待实现。
-- [ ] 实现 Operator list/get/metadata patch。
+- [ ] 实现 Operator validation 与 candidate creation；第一方 Markdown validation 与持久 candidate 已在本地完成，外部 Operator 受控出口尚待实现。
+- [x] 实现 Operator list/get/metadata patch。
 - [x] 实现管理员 bootstrap/list/get/add/remove 的真实 application service 与 adapter。
 - [x] 在真实成员 mutation 中实现不可删除自身/最后管理员约束，并以真实 D1 并发互删测试固定。
 - [x] 实现可过滤、稳定 cursor 分页的 Admin audit，并接入真实 D1、HTTP、client 与 WebUI 详情。
@@ -444,7 +453,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
 - [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
 - [x] 通过正式 Worker adapter 暴露 Document Contract append/list/get 三个 handler，涵盖严格 JSON、并发 idx、幂等和原子 registration/audit 更新。
-- [ ] 暴露其余 5 个 contract handler，并完成整体 CORS/OpenAPI surface 验证；Operator validation 两个 handler 已上线。
+- [x] 暴露全部 26 个 contract handler；整体 CORS/OpenAPI surface 验证仍作为 Phase 6 退出门禁。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。
@@ -452,7 +461,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 ### Phase 7：Admin client 与真实 WebUI
 
 - [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、Document Contract append/list/get、Type Card/View bundle upload/list/get/metadata patch、administrator list/get/add/remove 与 audit list transport。
-- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置、Document Contract、Type Card、View bundle、管理员和 audit 已上线，Operator tab 待真实 API。
+- [x] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置、Document Contract、Type Card、View bundle、Operator、管理员和 audit 均接入真实 API。
 - [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用状态、Type Card upload/metadata mutation 状态与稳定错误展示，细粒度上传进度和全部冲突恢复待实现。
 - [x] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。

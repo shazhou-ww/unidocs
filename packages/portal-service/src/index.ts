@@ -19,6 +19,8 @@ export { OperatorProbeError, createOperatorProbeRequest, signOperatorProbeReceip
 export type { OperatorProbeReceipt, OperatorProbeRequestBody } from "./operators/probe.js";
 export { OperatorValidationOperationError, createOperatorValidationService } from "./admin/operator-validations.js";
 export type { OperatorValidationFailureCommand, OperatorValidationKeyResolver, OperatorValidationPublishCommand, OperatorValidationRepository, OperatorValidationTransport, OperatorValidationTransportResponse } from "./admin/operator-validations.js";
+export { OperatorOperationError, createOperatorService } from "./admin/operators.js";
+export type { OperatorCreateCommand, OperatorMetadataCommand, OperatorRepository } from "./admin/operators.js";
 export { AdminOperationError, createDocumentTypeService } from "./admin/document-types.js";
 export type { DocumentTypeCreateCommand, DocumentTypeRepository, DocumentTypeUpdateCommand } from "./admin/document-types.js";
 export { AdministratorOperationError, createAdministratorService } from "./admin/administrators.js";

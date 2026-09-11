@@ -3,7 +3,10 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { AdminPortalClientError } from "@unidocs/admin-portal-client";
 import { adminRoutePath, App, logoutToLogin, parseAdminRoute, returnToAppWhenAuthenticated, sessionInvalidPath } from "../src/app.js";
 
-beforeEach(() => window.history.replaceState({}, "", "/"));
+beforeEach(() => {
+  window.history.replaceState({}, "", "/");
+  sessionStorage.clear();
+});
 
 test("parses and builds stable Admin routes", () => {
   expect(parseAdminRoute("https://portal.test/admin/audit")).toEqual({ view: "audit" });
@@ -257,6 +260,52 @@ test("restores the View bundle tab, exposes both entrypoints, uploads, and edits
   const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH")!;
   expect(new Headers(patchCall[1]?.headers).get("if-match")).toBe('"sha256-view"');
   expect(window.location.pathname + window.location.search).toBe("/admin/document-types/markdown?tab=bundles");
+  vi.unstubAllGlobals();
+});
+
+test("validates the Markdown Operator and restores its short-lived result", async () => {
+  window.history.replaceState({}, "", "/admin/document-types/dt-markdown?tab=operators");
+  const registration = { documentType: "dt-markdown", internalName: "Markdown", enabled: false, latestDocumentContract: null, typeCardBundle: null, viewBundle: null, builtinOperator: null, etag: '"sha256-registration"', updatedAt: "2026-09-11T00:00:00.000Z" };
+  const validation = {
+    validationId: "validation-1", documentType: "dt-markdown", baseUrl: "https://unidocs-markdown.shazhou.workers.dev", expectedConfigEtag: '"sha256-config"',
+    descriptor: { protocol: "unidocs-operator/v1", declaredOperatorId: "markdown-primary", displayName: "Markdown Operator", supportedDocumentTypes: ["dt-markdown"], supportedDocumentContracts: { "dt-markdown": [0] } },
+    validatedAt: "2026-09-11T12:00:00.000Z", expiresAt: "2026-09-11T12:15:00.000Z",
+  };
+  const operator = { operatorId: "op_one", documentType: "dt-markdown", name: "Markdown Operator", description: "Candidate", baseUrl: validation.baseUrl, descriptor: validation.descriptor, validatedAt: validation.validatedAt, etag: '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"' };
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.endsWith("/document-types/dt-markdown")) return Response.json(registration);
+    if (url.endsWith("/operator-validations") && init?.method === "POST") return Response.json(validation);
+    if (url.endsWith("/operator-validations/validation-1")) return Response.json(validation);
+    if (url.endsWith("/operators") && init?.method === "POST") return Response.json({ operatorId: "op_one", etag: operator.etag }, { status: 201 });
+    if (url.endsWith("/operators/op_one")) return Response.json(operator);
+    if (url.includes("/operators?")) return Response.json({ items: [{ ...operator, supportedDocumentContractIdxs: [0] }], nextCursor: null });
+    if (url.endsWith("/document-types/dt-markdown") && init?.method === "PATCH") return Response.json({ documentType: "dt-markdown", etag: '"sha256-next"' });
+    return Response.json({ items: [], nextCursor: null });
+  });
+  Object.defineProperty(document, "cookie", { configurable: true, value: "__Host-unidocs_admin_csrf=csrf" });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(await screen.findByRole("tab", { name: "处理服务" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("textbox", { name: "处理服务 URL" })).toHaveValue("https://unidocs-markdown.shazhou.workers.dev");
+  expect(screen.getByRole("textbox", { name: "验证文档类型" })).toHaveValue("dt-markdown");
+  fireEvent.click(screen.getByRole("button", { name: "验证处理服务" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+  const createCall = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")!;
+  expect(JSON.parse(String(createCall[1]?.body))).toEqual({ baseUrl: "https://unidocs-markdown.shazhou.workers.dev", expectedDocumentType: "dt-markdown", expectedConfigEtag: null });
+  expect(await screen.findByRole("heading", { name: "Markdown Operator" })).toBeInTheDocument();
+  expect(screen.getByText("revision 0")).toBeInTheDocument();
+  expect(screen.getByText("validation-1")).toBeInTheDocument();
+  expect(sessionStorage.getItem("unidocs.operator-validation.dt-markdown")).toBe("validation-1");
+  expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/operator-validations/validation-1"))).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "保存处理服务" }));
+  expect(await screen.findByRole("button", { name: /Markdown Operator/ })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Markdown Operator/ }));
+  expect((await screen.findAllByText("op_one")).length).toBeGreaterThanOrEqual(2);
+  fireEvent.click(screen.getByRole("button", { name: "绑定为当前服务" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/document-types/dt-markdown") && init?.method === "PATCH")).toBe(true));
+  expect(window.location.pathname + window.location.search).toBe("/admin/document-types/dt-markdown?tab=operators");
   vi.unstubAllGlobals();
 });
 

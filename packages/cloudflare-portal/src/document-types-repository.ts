@@ -1,6 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { AdminOperationError, schemaHash, type AdminContext, type DocumentTypeCreateCommand, type DocumentTypeRepository, type DocumentTypeUpdateCommand } from "@unidocs/portal-service";
-import { DocumentTypeRegistrationSchema, DocumentTypeSchema, ListDocumentTypesQuerySchema, TypeCardBundleRecordSchema, ViewBundleRecordSchema, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
+import { DocumentTypeRegistrationSchema, DocumentTypeSchema, ListDocumentTypesQuerySchema, OperatorRecordSchema, TypeCardBundleRecordSchema, ViewBundleRecordSchema, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
 
 export class D1DocumentTypeRepository implements DocumentTypeRepository {
   constructor(private readonly database: D1Database, private readonly now: () => number = () => Math.floor(Date.now() / 1000)) { }
@@ -118,9 +118,16 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
     return row ? ViewBundleRecordSchema.parse(JSON.parse(row.record_json)) : null;
   }
 
-  async resolveOperator(context: AdminContext, _documentType: string, _operatorId: string) {
+  async resolveOperator(context: AdminContext, documentType: string, operatorId: string) {
     await this.authorize(context);
-    return null;
+    const row = await this.database.prepare("SELECT record_json FROM portal_operators WHERE operator_id = ? AND document_type = ?").bind(operatorId, documentType).first<{ record_json: string }>();
+    return row ? OperatorRecordSchema.parse(JSON.parse(row.record_json)) : null;
+  }
+
+  async listDocumentContractIdxs(context: AdminContext, documentType: string) {
+    await this.authorize(context);
+    const result = await this.database.prepare("SELECT document_contract_idx FROM portal_document_contracts WHERE document_type = ? ORDER BY document_contract_idx ASC").bind(documentType).all<{ document_contract_idx: number }>();
+    return result.results.map(row => row.document_contract_idx);
   }
 
   async get(context: AdminContext, documentType: string): Promise<DocumentTypeRegistration | null> {

@@ -1721,3 +1721,26 @@ tbody tr.selected-row {
   margin-bottom: 0;
   font-size: 22px;
 }
+
+.operator-validation-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.operator-validation-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.button-row,
+.aside-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.aside-actions {
+  margin-top: 16px;
+}

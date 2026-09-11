@@ -19,6 +19,8 @@ import { D1ViewBundleRepository } from "./view-bundles-repository.js";
 import { createOperatorValidationsHttp } from "./operator-validations-http.js";
 import { D1OperatorValidationRepository } from "./operator-validations-repository.js";
 import { createMarkdownOperatorValidationTarget } from "./operator-validation-target.js";
+import { createOperatorsHttp } from "./operators-http.js";
+import { D1OperatorRepository } from "./operators-repository.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -38,6 +40,7 @@ export default {
       const viewBundlesHttp = createViewBundlesHttp(new D1ViewBundleRepository(env.DB), new R2BundleObjectStore(env.BUNDLES), env.BUNDLE_ORIGIN);
       const operatorTarget = createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY);
       const operatorValidationsHttp = createOperatorValidationsHttp(new D1OperatorValidationRepository(env.DB), operatorTarget.transport, operatorTarget.keys);
+      const operatorsHttp = createOperatorsHttp(new D1OperatorRepository(env.DB));
       const response = await createPortalBff(config, repository, {
         bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null,
         bundleOrigin: env.BUNDLE_ORIGIN,
@@ -49,6 +52,7 @@ export default {
           if (path.startsWith("/admin/api/v1/type-card-bundles")) return typeCardBundlesHttp(apiRequest, admin, requestId);
           if (path.startsWith("/admin/api/v1/view-bundles")) return viewBundlesHttp(apiRequest, admin, requestId);
           if (path.startsWith("/admin/api/v1/operator-validations")) return operatorValidationsHttp(apiRequest, admin, requestId);
+          if (path.startsWith("/admin/api/v1/operators")) return operatorsHttp(apiRequest, admin, requestId);
           return documentTypesHttp(apiRequest, admin, requestId);
         },
         adminUi: serveAdminWebUi

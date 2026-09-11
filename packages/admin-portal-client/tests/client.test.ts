@@ -148,3 +148,17 @@ test("creates and reads short-lived Operator validations", async () => {
   await client.getOperatorValidation("validation/one");
   expect(String(fetcher.mock.calls[1][0])).toBe("https://portal.test/admin/api/v1/operator-validations/validation%2Fone");
 });
+
+test("creates, lists, reads, and updates persistent Operators", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => Response.json({ operatorId: "op_one", etag: '"sha256-operator"' }));
+  const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher, getCsrfToken: () => "csrf", createIdempotencyKey: () => "operator-key" });
+  await client.createOperator({ validationId: "validation-1", name: "Primary", description: "Candidate" });
+  expect(String(fetcher.mock.calls[0][0])).toBe("https://portal.test/admin/api/v1/operators");
+  expect(new Headers(fetcher.mock.calls[0][1]?.headers).get("idempotency-key")).toBe("operator-key");
+  await client.listOperators("markdown/type", { limit: 10, cursor: "next" });
+  expect(String(fetcher.mock.calls[1][0])).toBe("https://portal.test/admin/api/v1/operators?documentType=markdown%2Ftype&limit=10&cursor=next");
+  await client.getOperator("op/one");
+  expect(String(fetcher.mock.calls[2][0])).toBe("https://portal.test/admin/api/v1/operators/op%2Fone");
+  await client.updateOperatorMetadata("op_one", { name: "Next", description: "Notes" }, '"sha256-old"');
+  expect(new Headers(fetcher.mock.calls[3][1]?.headers).get("if-match")).toBe('"sha256-old"');
+});
