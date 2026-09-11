@@ -21,3 +21,5 @@ export { createTenantVersionService } from "./tenant/versions.js";
 export type { TenantVersionRepository, VersionSnapshot } from "./tenant/versions.js";
 export { createTenantThreadService } from "./tenant/threads.js";
 export type { CommentAnchor, CommentAppendCommand, DocumentLocationValidator, TenantThreadRepository, ThreadCreateCommand } from "./tenant/threads.js";
+export { createTenantCasService } from "./tenant/cas.js";
+export type { CasCapabilityIssuer } from "./tenant/cas.js";
