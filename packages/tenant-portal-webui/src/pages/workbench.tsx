@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { Bot, Search } from "lucide-react";
-import type { DocumentRecord } from "@unidocs/protocol-platform";
+import type { DocumentRecord } from "@unidocs/protocol-tenant-portal";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
 import { useClient } from "../client-context.js";
 import { createDraftStore } from "../drafts/draft-store.js";
@@ -58,8 +58,8 @@ export function WorkbenchPage() {
           const summary = await loadDiscussionSummary(client, document.documentId);
           let content = "";
           if (document.currentVersionIdx !== null) {
-            const version = await client.getVersion(document.documentId, document.currentVersionIdx);
-            content = (version.snapshot as unknown as MarkdownSnapshot | undefined)?.content ?? "";
+            const snapshot = await client.getVersionSnapshot(document.documentId, document.currentVersionIdx);
+            content = (snapshot as unknown as MarkdownSnapshot | undefined)?.content ?? "";
           }
           return { document, summary, content };
         }));
@@ -79,9 +79,9 @@ export function WorkbenchPage() {
   }, [entries, keyword]);
 
   const latest = useMemo(
-    () => entries?.flatMap((entry) => entry.summary.latestPong === null
+    () => entries?.flatMap((entry) => entry.summary.latestReply === null
       ? []
-      : [{ document: entry.document, pong: entry.summary.latestPong }]) ?? [],
+      : [{ document: entry.document, reply: entry.summary.latestReply }]) ?? [],
     [entries],
   );
 
@@ -112,15 +112,15 @@ export function WorkbenchPage() {
             ? <p className="muted">还没有回复。</p>
             : (
               <ul className="list">
-                {latest.map(({ document, pong }) => (
+                {latest.map(({ document, reply }) => (
                   <li key={document.documentId} className="row" style={{ gap: 10 }}>
                     <a
-                      href={routeToHash({ kind: "document", documentId: document.documentId, threadId: pong.threadId })}
+                      href={routeToHash({ kind: "document", documentId: document.documentId, threadId: reply.threadId })}
                       aria-label={`${document.name} — 打开 Agent 回复的这一处`}
                     >
                       {document.name}
                     </a>
-                    <span className={pong.isPlain ? "pong-plain muted" : "pong-versioned"}>{pong.text}</span>
+                    <span className={reply.isPlain ? "pong-plain muted" : "pong-versioned"}>{reply.text}</span>
                   </li>
                 ))}
               </ul>

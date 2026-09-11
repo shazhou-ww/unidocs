@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { DocumentLocation } from "@unidocs/protocol-platform";
+import type { DocumentLocation } from "@unidocs/protocol-tenant-portal";
 import {
   createMemoryStore, createMemoryTransport, createScriptedAgent, createTenantPortalClient, sampleSeed,
   type MemoryStore, type PlatformTransport,
@@ -60,7 +60,7 @@ async function seedOrphanedDraft(): Promise<{ store: MemoryStore; client: Return
       baseVersionIdx: input.baseVersionIdx,
       text: input.text,
       idempotencyKey: crypto.randomUUID(),
-      editedFromPingIdx: null,
+      editedFromCommentIdx: null,
       updatedAt: new Date().toISOString(),
     };
     draftStore.save(draft);
@@ -111,7 +111,7 @@ describe("评论流程", () => {
     await userEvent.click(within(p).getByRole("button", { name: "发送" }));
 
     expect(await within(p).findByText("还想再改一处")).toBeInTheDocument();
-    expect(store.getThread("doc-sample", "th-answered").pings).toHaveLength(2);
+    expect(store.getThread("doc-sample", "th-answered").comments).toHaveLength(2);
     expect(within(p).getAllByText("待回复").length).toBeGreaterThan(0);
   });
 
@@ -135,7 +135,7 @@ describe("评论流程", () => {
     await userEvent.type(within(p).getByRole("textbox", { name: "回复这一处" }), "写了一半");
     // ThreadCard 的切换按钮用 aria-label 覆盖了可访问名（Task 13 起的既定设计，见
     // document-page.test.tsx 的 Ruling C5），不能按摘要原文当按钮名匹配，改按可见
-    // 文字定位再取其按钮祖先。原文是 seed.ts 里 th-on-current 的 ping 原文「这节改得
+    // 文字定位再取其按钮祖先。原文是 seed.ts 里 th-on-current 的评论原文「这节改得
     // 不错」（没有「一」）——brief 里的 /这一节改得不错/ 与样本数据不符，按实际值改。
     await userEvent.click(within(p).getByText(/这节改得不错/).closest("button")!);
 
@@ -201,8 +201,8 @@ describe("评论流程", () => {
     await userEvent.click(within(p).getByRole("button", { name: "发送" }));
 
     const thread = store.getThread("doc-sample", "th-open");
-    expect(thread.pings).toHaveLength(2);
-    expect(thread.pings[0].content.text).toBe("这一句还能再收紧吗？");
+    expect(thread.comments).toHaveLength(2);
+    expect(thread.comments[0].content.text).toBe("这一句还能再收紧吗？");
   });
 
   it("发送失败时保留草稿并给出中文说明与重试", async () => {
@@ -232,7 +232,7 @@ describe("评论流程", () => {
     await userEvent.click(within(p).getByRole("button", { name: "重试" }));
 
     expect(await within(p).findByText("会失败一次")).toBeInTheDocument();
-    expect(store.getThread("doc-sample", "th-open").pings).toHaveLength(2);
+    expect(store.getThread("doc-sample", "th-open").comments).toHaveLength(2);
   });
 
   it("重试复用同一个 idempotencyKey", async () => {
@@ -287,7 +287,7 @@ describe("评论流程", () => {
     await waitFor(() => expect(within(p).queryByText(/条未发送/)).not.toBeInTheDocument());
     const threadIds = store.listThreadIds("doc-sample");
     const sent = threadIds.some(
-      (threadId) => store.getThread("doc-sample", threadId).pings[0]?.content.text === "选区评论失败",
+      (threadId) => store.getThread("doc-sample", threadId).comments[0]?.content.text === "选区评论失败",
     );
     expect(sent).toBe(true);
   });

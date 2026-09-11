@@ -3,47 +3,47 @@ import { createMemoryTransport, createTenantPortalClient, sampleSeed } from "@un
 import { deriveThreadState } from "../src/model/thread-state.js";
 import { loadDiscussionSummary } from "../src/model/discussion-summary.js";
 
-const ping = (pingIdx: number) => ({
-  pingIdx, baseVersionIdx: 0, content: { text: `p${pingIdx}`, richContent: null, attachments: [] },
+const comment = (commentIdx: number) => ({
+  commentIdx, baseVersionIdx: 0, content: { text: `p${commentIdx}`, richContent: null, attachments: [] },
   location: null, authorId: "user:1", createdAt: "2026-09-01T00:00:00.000Z",
 });
-const pong = (pongIdx: number, through: number, resultLocations: unknown[] = []) => ({
-  pongIdx, respondThroughPingIdx: through, content: { text: `a${pongIdx}`, richContent: null, attachments: [] },
-  resultLocations, authorAgentId: "agent:1", submissionId: `s${pongIdx}`, createdAt: "2026-09-01T00:00:00.000Z",
+const reply = (replyIdx: number, through: number, resultLocations: unknown[] = []) => ({
+  replyIdx, respondThroughCommentIdx: through, content: { text: `a${replyIdx}`, richContent: null, attachments: [] },
+  resultLocations, authorAgentId: "agent:1", submissionId: `s${replyIdx}`, createdAt: "2026-09-01T00:00:00.000Z",
 });
 
 describe("deriveThreadState", () => {
-  it("只有 ping 时是待回复", () => {
-    const state = deriveThreadState({ threadId: "t", pings: [ping(0)], pongs: [] } as never);
-    expect(state).toMatchObject({ open: true, latestPingIdx: 0, acknowledgedPingIdx: -1 });
+  it("只有评论时是待回复", () => {
+    const state = deriveThreadState({ threadId: "t", comments: [comment(0)], replies: [] } as never);
+    expect(state).toMatchObject({ open: true, latestCommentIdx: 0, acknowledgedCommentIdx: -1 });
   });
 
-  it("水位覆盖最新 ping 时是已回复", () => {
-    const state = deriveThreadState({ threadId: "t", pings: [ping(0)], pongs: [pong(0, 0)] } as never);
+  it("水位覆盖最新评论时是已回复", () => {
+    const state = deriveThreadState({ threadId: "t", comments: [comment(0)], replies: [reply(0, 0)] } as never);
     expect(state.open).toBe(false);
   });
 
-  it("水位之后又追加 ping 时重新变成待回复", () => {
-    const state = deriveThreadState({ threadId: "t", pings: [ping(0), ping(1)], pongs: [pong(0, 0)] } as never);
-    expect(state).toMatchObject({ open: true, acknowledgedPingIdx: 0, latestPingIdx: 1 });
+  it("水位之后又追加评论时重新变成待回复", () => {
+    const state = deriveThreadState({ threadId: "t", comments: [comment(0), comment(1)], replies: [reply(0, 0)] } as never);
+    expect(state).toMatchObject({ open: true, acknowledgedCommentIdx: 0, latestCommentIdx: 1 });
   });
 
-  it("一条 pong 可以累计确认多条 ping", () => {
-    const state = deriveThreadState({ threadId: "t", pings: [ping(0), ping(1), ping(2)], pongs: [pong(0, 2)] } as never);
+  it("一条回复可以累计确认多条评论", () => {
+    const state = deriveThreadState({ threadId: "t", comments: [comment(0), comment(1), comment(2)], replies: [reply(0, 2)] } as never);
     expect(state.open).toBe(false);
   });
 
-  it("latestPong 取最后一条", () => {
-    const state = deriveThreadState({ threadId: "t", pings: [ping(0)], pongs: [pong(0, 0), pong(1, 0)] } as never);
-    expect(state.latestPong?.pongIdx).toBe(1);
+  it("latestReply 取最后一条", () => {
+    const state = deriveThreadState({ threadId: "t", comments: [comment(0)], replies: [reply(0, 0), reply(1, 0)] } as never);
+    expect(state.latestReply?.replyIdx).toBe(1);
   });
 
-  it("纯 pong 被标出来，不携带版本号", () => {
-    const plain = deriveThreadState({ threadId: "t", pings: [ping(0)], pongs: [pong(0, 0)] } as never);
-    const withVersion = deriveThreadState({ threadId: "t", pings: [ping(0)], pongs: [pong(0, 0, [{}])] } as never);
+  it("纯回复被标出来，不携带版本号", () => {
+    const plain = deriveThreadState({ threadId: "t", comments: [comment(0)], replies: [reply(0, 0)] } as never);
+    const withVersion = deriveThreadState({ threadId: "t", comments: [comment(0)], replies: [reply(0, 0, [{}])] } as never);
 
-    expect(plain.latestPongIsPlain).toBe(true);
-    expect(withVersion.latestPongIsPlain).toBe(false);
+    expect(plain.latestReplyIsPlain).toBe(true);
+    expect(withVersion.latestReplyIsPlain).toBe(false);
   });
 });
 

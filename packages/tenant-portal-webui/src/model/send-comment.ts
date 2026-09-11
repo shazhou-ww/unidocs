@@ -1,5 +1,5 @@
 /**
- * 把一份草稿发送成 ping。新评论建 thread，追加评论走 appendPing。
+ * 把一份草稿发送成评论。新评论建 thread，追加评论走 appendComment。
  * 两条路径都带草稿自己的 idempotencyKey——重试不会产生第二条。
  */
 import type { TenantPortalClient } from "@unidocs/tenant-portal-client";
@@ -21,7 +21,7 @@ export async function sendDraft(
     return;
   }
 
-  await client.appendPing(documentId, draft.threadId, draft.idempotencyKey, {
+  await client.appendComment(documentId, draft.threadId, draft.idempotencyKey, {
     baseVersionIdx: draft.baseVersionIdx,
     content,
     location: draft.location,

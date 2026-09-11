@@ -7,11 +7,11 @@ import {
 import { ClientProvider } from "../src/client-context.js";
 import { DocumentPage } from "../src/pages/document.js";
 
-function renderPage(props: { threadId?: string; pingIdx?: number } = {}) {
+function renderPage(props: { threadId?: string; commentIdx?: number } = {}) {
   const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
   return render(
     <ClientProvider client={client}>
-      <DocumentPage documentId="doc-sample" threadId={props.threadId} pingIdx={props.pingIdx} />
+      <DocumentPage documentId="doc-sample" threadId={props.threadId} commentIdx={props.commentIdx} />
     </ClientProvider>,
   );
 }
@@ -54,7 +54,7 @@ describe("DocumentPage", () => {
     expect(within(panel).queryByRole("button", { name: /提交.*条/ })).not.toBeInTheDocument();
   });
 
-  // Ruling C4: ThreadCard 只在选中时渲染 ping/pong 详情，所以要带 threadId 渲染。
+  // Ruling C4: ThreadCard 只在选中时渲染评论/回复详情，所以要带 threadId 渲染。
   it("评论卡片标出各自的版本号与落后多少版", async () => {
     renderPage({ threadId: "th-answered" });
     const panel = await screen.findByRole("complementary", { name: "讨论" });
@@ -63,9 +63,9 @@ describe("DocumentPage", () => {
     expect(within(panel).getAllByText(/基于 v0 · 已过 2 版/).length).toBeGreaterThan(0);
   });
 
-  // Ruling C4: 同上，纯 pong 详情只在选中该 thread 时渲染。
-  it("纯 pong 用中性色且不显示版本号", async () => {
-    renderPage({ threadId: "th-plain-pong" });
+  // Ruling C4: 同上，纯回复详情只在选中该 thread 时渲染。
+  it("纯回复用中性色且不显示版本号", async () => {
+    renderPage({ threadId: "th-plain-reply" });
     const panel = await screen.findByRole("complementary", { name: "讨论" });
     const plain = within(panel).getByText(/指平台上一切有版本身份的创作产物/).closest(".pong-card")!;
 
@@ -85,8 +85,8 @@ describe("DocumentPage", () => {
   });
 
   // Task 13 起，thread-card 的切换按钮用 aria-label（「待回复的讨论 · 展开/折叠」）覆盖了
-  // 可访问名，为的是和展开后内层 PingCard 里同样文字的按钮不撞车——所以这里改成按可见摘要
-  // 文字定位再取其按钮祖先，而不是按可访问名匹配 ping 原文；点击目标和断言结果都没变。
+  // 可访问名，为的是和展开后内层 CommentCard 里同样文字的按钮不撞车——所以这里改成按可见摘要
+  // 文字定位再取其按钮祖先，而不是按可访问名匹配评论原文；点击目标和断言结果都没变。
   it("点一处会把它写进 hash，供定位链接使用", async () => {
     renderPage();
     const panel = await screen.findByRole("complementary", { name: "讨论" });
@@ -116,7 +116,7 @@ describe("DocumentPage", () => {
       </ClientProvider>,
     );
     const p = await screen.findByRole("complementary", { name: "讨论" });
-    // 先确认真的加载成功过一次——有旧内容可留。th-open 被选中时展开的 ping 卡片和折叠
+    // 先确认真的加载成功过一次——有旧内容可留。th-open 被选中时展开的评论卡片和折叠
     // 摘要里都有这段原文，用 getAllByText 而不是 getByText，免得两处匹配互相打架。
     await waitFor(() => expect(within(p).getAllByText("这一句还能再收紧吗？").length).toBeGreaterThan(0));
 

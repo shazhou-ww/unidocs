@@ -2,7 +2,8 @@
  * 未发送的评论是草稿：只在本地，Agent 看不到。每个位置一份、可以同时存多份，
  * 写到一半切去看别处不会丢（tenant-webui-v0.md §2.7）。
  */
-import type { DocumentLocation, VersionIdx } from "@unidocs/protocol-platform";
+import type { DocumentLocation } from "@unidocs/protocol-tenant-portal";
+import type { VersionIdx } from "@unidocs/tenant-portal-client";
 
 const STORAGE_KEY = "unidocs.portal.drafts.v1";
 
@@ -19,7 +20,7 @@ export interface Draft {
   /** 创建时生成并持久化；发送失败重试时复用，真后端接上时幂等天然成立。 */
   readonly idempotencyKey: string;
   /** 「改自评论 N」：这份草稿改自哪一条已发送的评论。 */
-  readonly editedFromPingIdx: number | null;
+  readonly editedFromCommentIdx: number | null;
   readonly updatedAt: string;
 }
 

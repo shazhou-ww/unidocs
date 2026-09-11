@@ -7,8 +7,8 @@ function stubHost(): HostImplementation {
     readBlob: vi.fn(),
     listThreads: vi.fn(async () => ({ items: [], nextCursor: null })),
     getThread: vi.fn(),
-    createThread: vi.fn(async () => ({ threadId: "th-new", pings: [], pongs: [] })),
-    appendPing: vi.fn(),
+    createThread: vi.fn(async () => ({ threadId: "th-new", comments: [], replies: [] })),
+    appendComment: vi.fn(),
     storeBlob: vi.fn(),
   } as unknown as HostImplementation;
 }
@@ -79,13 +79,13 @@ describe("createLocalChannel", () => {
 describe("toProtocolMarkers", () => {
   it("剥掉本地的 role 字段，只留协议形状", () => {
     const roled: RoledMarker[] = [{
-      threadId: "th-1", pingIdx: 0, open: true, role: "ping",
+      threadId: "th-1", commentIdx: 0, open: true, role: "ping",
       location: { documentContractIdx: 0, locationType: "unidocs.markdown.text-range/v1", payload: { start: 0, end: 1, quote: "x" } },
     }];
 
     const markers = toProtocolMarkers(roled);
 
     expect(markers[0]).not.toHaveProperty("role");
-    expect(markers[0]).toMatchObject({ threadId: "th-1", pingIdx: 0, open: true });
+    expect(markers[0]).toMatchObject({ threadId: "th-1", commentIdx: 0, open: true });
   });
 });

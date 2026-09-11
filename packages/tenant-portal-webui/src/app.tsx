@@ -31,7 +31,7 @@ export function App(props: { client: TenantPortalClient }) {
         <main className="main">
           {route.kind === "workbench"
             ? <WorkbenchPage />
-            : <DocumentPage documentId={route.documentId} threadId={route.threadId} pingIdx={route.pingIdx} />}
+            : <DocumentPage documentId={route.documentId} threadId={route.threadId} commentIdx={route.commentIdx} />}
         </main>
       </div>
     </ClientProvider>

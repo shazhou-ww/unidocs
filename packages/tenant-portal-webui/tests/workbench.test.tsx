@@ -48,7 +48,7 @@ describe("WorkbenchPage", () => {
     // 条里的链接与作品卡片的链接可见文字相同（都是文档名），靠 aria-label 区分去向：
     // 这条应该指向具体那一处讨论，而不是整篇文档。
     const replyLink = within(strip).getByRole("link", { name: /打开 Agent 回复的这一处/ });
-    expect(replyLink).toHaveAttribute("href", "#/d/doc-sample/th-plain-pong");
+    expect(replyLink).toHaveAttribute("href", "#/d/doc-sample/th-plain-reply");
   });
 
   it("关键词筛选匹配标题", async () => {

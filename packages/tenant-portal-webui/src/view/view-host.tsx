@@ -9,13 +9,17 @@ export const noopHost: HostImplementation = {
   listThreads: async () => ({ items: [], nextCursor: null }),
   getThread: async () => { throw new Error("getThread is not available in this round"); },
   createThread: async () => { throw new Error("createThread is wired in Task 15"); },
-  appendPing: async () => { throw new Error("appendPing is wired in Task 15"); },
+  appendComment: async () => { throw new Error("appendComment is wired in Task 15"); },
   storeBlob: async () => { throw new Error("storeBlob is not available in this round"); },
 };
 
 export function ViewHost(props: {
   label: string;
   version: VersionRecord | null;
+  /** version 的正文：VersionRecord 不再携带 snapshot，调用方各自用
+      client.getVersionSnapshot(documentId, versionIdx) 单独取。version 供元信息
+      （比如栏位标签读 versionIdx），snapshot 供内容——两者分开传入，不在这里内部去拿。 */
+  snapshot: SValue | null;
   markers: readonly RoledMarker[];
   host?: HostImplementation;
   /** 没有真实 host 的栏位传 false：不装「添加评论」触发器，装了也必然失败（问题 2）。 */
@@ -75,7 +79,7 @@ export function ViewHost(props: {
         if (cancelled) return;
         await channel.callView("loadSnapshot", {
           context: context as never,
-          snapshot: (props.version?.snapshot ?? null) as SValue | null,
+          snapshot: props.snapshot,
         });
         if (cancelled) return;
         await channel.callView("setMarkers", {
@@ -93,7 +97,7 @@ export function ViewHost(props: {
     })();
 
     return () => { cancelled = true; };
-  }, [props.label, props.version, props.markers]);
+  }, [props.label, props.version, props.snapshot, props.markers]);
 
   return <div ref={containerRef} role="region" aria-label={props.label} className={props.className} />;
 }

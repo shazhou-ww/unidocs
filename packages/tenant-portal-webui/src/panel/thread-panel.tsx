@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { PingRecord, VersionIdx } from "@unidocs/protocol-platform";
+import type { CommentRecord } from "@unidocs/protocol-tenant-portal";
+import type { VersionIdx } from "@unidocs/tenant-portal-client";
 import { anchorKeyOf, type Draft } from "../drafts/draft-store.js";
 import type { SummarizedThread } from "../model/discussion-summary.js";
 import { DraftBlock } from "./draft-block.js";
@@ -18,9 +19,9 @@ export function ThreadPanel(props: {
   threads: readonly SummarizedThread[];
   currentVersionIdx: VersionIdx | null;
   selectedThreadId?: string;
-  selectedPingIdx?: number;
+  selectedCommentIdx?: number;
   onSelect(threadId: string): void;
-  onSelectPing?(pingIdx: number): void;
+  onSelectComment?(commentIdx: number): void;
   /** 未发送的草稿：按锚点取——thread 内的草稿和回复中的那一份共用同一个来源（§2.7）。 */
   draftsForAnchor(anchorKey: string): readonly Draft[];
   draftCount: number;
@@ -41,7 +42,7 @@ export function ThreadPanel(props: {
   onComposeBlurAway(): void;
   onSendDraft(draft: Draft): void;
   onDiscardDraft(draftId: string): void;
-  onEditFromPing(threadId: string, ping: PingRecord): void;
+  onEditFromComment(threadId: string, comment: CommentRecord): void;
 }) {
   const [filter, setFilter] = useState<ThreadFilter>("all");
 
@@ -105,19 +106,19 @@ export function ThreadPanel(props: {
           <ThreadCard
             key={detail.threadId}
             threadId={detail.threadId}
-            pings={detail.pings}
-            pongs={detail.pongs}
+            comments={detail.comments}
+            replies={detail.replies}
             state={state}
             currentVersionIdx={props.currentVersionIdx}
             selected={props.selectedThreadId === detail.threadId}
-            selectedPingIdx={props.selectedPingIdx}
+            selectedCommentIdx={props.selectedCommentIdx}
             onSelect={() => props.onSelect(detail.threadId)}
-            onSelectPing={props.onSelectPing}
+            onSelectComment={props.onSelectComment}
             drafts={cardDrafts}
             draftFailures={props.draftFailures}
             onSendDraft={props.onSendDraft}
             onDiscardDraft={props.onDiscardDraft}
-            onEditPing={(ping) => props.onEditFromPing(detail.threadId, ping)}
+            onEditComment={(comment) => props.onEditFromComment(detail.threadId, comment)}
             composing={composing}
             composingInitialText={composing ? props.composingInitialText : ""}
             onComposeOpen={() => props.onComposeOpen(detail.threadId)}
