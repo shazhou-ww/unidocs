@@ -768,6 +768,37 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  packages/protocol-tenant-portal:
+    dependencies:
+      '@orpc/contract':
+        specifier: 1.15.0
+        version: 1.15.0(@opentelemetry/api@1.9.1)
+      '@orpc/openapi':
+        specifier: 1.15.0
+        version: 1.15.0(@opentelemetry/api@1.9.1)(ws@8.21.0)
+      '@orpc/zod':
+        specifier: 1.15.0
+        version: 1.15.0(@opentelemetry/api@1.9.1)(@orpc/contract@1.15.0(@opentelemetry/api@1.9.1))(@orpc/server@1.15.0(@opentelemetry/api@1.9.1)(ws@8.21.0))(ws@8.21.0)(zod@4.4.3)
+      '@unidocs/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      tsx:
+        specifier: ^4.23.13
+        version: 4.23.13
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jsdom@25.0.0(supports-color@10.2.2))(supports-color@10.2.2)(tsx@4.23.13)(yaml@2.9.0)
+
   packages/psd-client:
     dependencies:
       '@unicas/codec':
