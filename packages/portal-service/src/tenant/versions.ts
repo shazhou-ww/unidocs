@@ -41,6 +41,7 @@ export function createTenantVersionService(repository: TenantVersionRepository) 
       try {
         return { contentType: documentSnapshotContentType(snapshot.documentType), body: snapshot.body };
       } catch {
+        await snapshot.body.cancel();
         throw new TenantOperationError("content_unavailable");
       }
     },

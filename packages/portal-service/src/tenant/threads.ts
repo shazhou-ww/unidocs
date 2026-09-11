@@ -5,7 +5,7 @@ import {
 } from "@unidocs/protocol-tenant-portal";
 import { canonicalJson, schemaHash } from "../identity.js";
 import {
-  requireExactFields, requireIdempotencyKey, requireIdentifier, requirePagination, requireRecordIdx, requireTenantScope,
+  guardCanonicalization, requireExactFields, requireIdempotencyKey, requireIdentifier, requirePagination, requireRecordIdx, requireTenantScope,
   TENANT_LIMITS, TenantOperationError, type TenantContext,
 } from "./access.js";
 
@@ -43,9 +43,12 @@ export interface TenantThreadRepository {
   appendComment(command: CommentAppendCommand): Promise<CommentRecord>;
 }
 
-function requireBoundedMessage(request: { readonly content: { readonly text: string | null; readonly attachments: readonly unknown[] }; readonly location: DocumentLocation | null }): void {
+async function requireBoundedMessage(request: { readonly content: { readonly text: string | null; readonly attachments: readonly unknown[] }; readonly location: DocumentLocation | null }): Promise<void> {
   if ((request.content.text?.length ?? 0) > TENANT_LIMITS.messageText || request.content.attachments.length > TENANT_LIMITS.attachments) throw new TenantOperationError("limit_exceeded");
-  if (request.location && new TextEncoder().encode(canonicalJson(request.location.payload)).byteLength > TENANT_LIMITS.locationPayloadBytes) throw new TenantOperationError("limit_exceeded");
+  const location = request.location;
+  if (!location) return;
+  const payloadBytes = await guardCanonicalization(() => new TextEncoder().encode(canonicalJson(location.payload)).byteLength);
+  if (payloadBytes > TENANT_LIMITS.locationPayloadBytes) throw new TenantOperationError("limit_exceeded");
 }
 
 export function createTenantThreadService(repository: TenantThreadRepository, options: { readonly validateLocation: DocumentLocationValidator }) {
@@ -77,11 +80,11 @@ export function createTenantThreadService(repository: TenantThreadRepository, op
       requireExactFields(body, ["baseVersionIdx", "content", "location"]);
       const parsed = CreateThreadRequestSchema.safeParse(body);
       if (!parsed.success) throw new TenantOperationError("invalid_request");
-      requireBoundedMessage(parsed.data);
+      await requireBoundedMessage(parsed.data);
       await anchor(context, document, parsed.data);
       return repository.create({
         context, documentId: document, key: idempotencyKey,
-        fingerprint: await schemaHash({ operation: "createThread", body: parsed.data }), request: parsed.data,
+        fingerprint: await guardCanonicalization(() => schemaHash({ operation: "createThread", body: parsed.data })), request: parsed.data,
       });
     },
 
@@ -100,11 +103,11 @@ export function createTenantThreadService(repository: TenantThreadRepository, op
       requireExactFields(body, ["baseVersionIdx", "content", "location"]);
       const parsed = AppendCommentRequestSchema.safeParse(body);
       if (!parsed.success) throw new TenantOperationError("invalid_request");
-      requireBoundedMessage(parsed.data);
+      await requireBoundedMessage(parsed.data);
       await anchor(context, document, parsed.data);
       return repository.appendComment({
         context, documentId: document, threadId: thread, key: idempotencyKey,
-        fingerprint: await schemaHash({ operation: "appendComment", threadId: thread, body: parsed.data }), request: parsed.data,
+        fingerprint: await guardCanonicalization(() => schemaHash({ operation: "appendComment", threadId: thread, body: parsed.data })), request: parsed.data,
       });
     },
   };

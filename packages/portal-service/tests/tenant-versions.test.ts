@@ -33,9 +33,12 @@ test("derives the snapshot media type from the document type rather than trustin
   expect(snapshot.body).toBeInstanceOf(ReadableStream);
 });
 
-test("rejects a document type the media type cannot be derived from", async () => {
-  const { service } = setup({ readSnapshot: vi.fn(async () => ({ documentType: "PSD document", body: body() })) });
+test("rejects a document type the media type cannot be derived from, and cancels the dropped stream", async () => {
+  const cancel = vi.fn();
+  const undeliverable = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1])); }, cancel });
+  const { service } = setup({ readSnapshot: vi.fn(async () => ({ documentType: "PSD document", body: undeliverable })) });
   await expect(service.getSnapshot(context, "tenant-a", "doc-1", 7)).rejects.toMatchObject({ code: "content_unavailable" });
+  expect(cancel).toHaveBeenCalledOnce();
 });
 
 test("reports missing versions and missing snapshot bytes distinctly", async () => {

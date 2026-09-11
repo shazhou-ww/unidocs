@@ -112,3 +112,17 @@ test("a malformed document id is rejected before any storage call", async () => 
   await expect(service.create(context, "tenant-a", "doc 1", { baseVersionIdx: 5, content, location: null }, "retry-1")).rejects.toMatchObject({ code: "invalid_request" });
   expect(repository.loadCommentAnchor).not.toHaveBeenCalled();
 });
+
+test("a lone surrogate in a new thread's message text is rejected as invalid, not thrown as a bare error", async () => {
+  const { repository, service } = setup();
+  const surrogate = { text: "\uD800", richContent: null, attachments: [] };
+  await expect(service.create(context, "tenant-a", "doc-1", { baseVersionIdx: 5, content: surrogate, location: null }, "retry-1")).rejects.toMatchObject({ code: "invalid_request" });
+  expect(repository.create).not.toHaveBeenCalled();
+});
+
+test("a lone surrogate in an appended comment's message text is rejected as invalid, not thrown as a bare error", async () => {
+  const { repository, service } = setup();
+  const surrogate = { text: "\uD800", richContent: null, attachments: [] };
+  await expect(service.appendComment(context, "tenant-a", "doc-1", "th-1", { baseVersionIdx: 5, content: surrogate, location: null }, "retry-1")).rejects.toMatchObject({ code: "invalid_request" });
+  expect(repository.appendComment).not.toHaveBeenCalled();
+});

@@ -43,3 +43,14 @@ test("refuses to issue against another tenant's path", async () => {
   await expect(service.issue(context, "tenant-b")).rejects.toMatchObject({ code: "forbidden" });
   expect(issuer.issue).not.toHaveBeenCalled();
 });
+
+test("with no options supplied, falls back to the real clock and still refuses an expired grant", async () => {
+  const issuer: CasCapabilityIssuer = { issue: vi.fn(async () => ({ ...grant, expiresAt: 1 })) };
+  const service = createTenantCasService(issuer);
+  await expect(service.issue(context, "tenant-a")).rejects.toMatchObject({ code: "unavailable" });
+});
+
+test("refuses a grant whose expiry exactly equals now, not only one strictly in the past", async () => {
+  const { service } = setup(vi.fn(async () => ({ ...grant, expiresAt: 1_000 })));
+  await expect(service.issue(context, "tenant-a")).rejects.toMatchObject({ code: "unavailable" });
+});

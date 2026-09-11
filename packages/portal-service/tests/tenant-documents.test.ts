@@ -69,3 +69,33 @@ test("filters the document list by document type only when one is supplied", asy
   expect(repository.list).toHaveBeenLastCalledWith(context, { limit: 5, documentType: "markdown" });
   await expect(service.list(context, "tenant-a", { documentType: "PSD document" })).rejects.toMatchObject({ code: "invalid_request" });
 });
+
+test("refuses to create a document under another tenant's path", async () => {
+  const { repository, service } = setup();
+  await expect(service.create(context, "tenant-b", { documentType: "markdown", name: "Notes" }, "retry-1", "request-1")).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.create).not.toHaveBeenCalled();
+});
+
+test("refuses to read a document under another tenant's path", async () => {
+  const { repository, service } = setup();
+  await expect(service.get(context, "tenant-b", "doc-1")).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.get).not.toHaveBeenCalled();
+});
+
+test("refuses to list documents under another tenant's path", async () => {
+  const { repository, service } = setup();
+  await expect(service.list(context, "tenant-b", {})).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.list).not.toHaveBeenCalled();
+});
+
+test("refuses to move the current version under another tenant's path", async () => {
+  const { repository, service } = setup();
+  await expect(service.moveCurrentVersion(context, "tenant-b", "doc-1", { observedCurrentVersionIdx: null, targetVersionIdx: 0, reason: "publish" }, "request-1")).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.moveCurrentVersion).not.toHaveBeenCalled();
+});
+
+test("a lone surrogate in the name is rejected as invalid, not thrown as a bare error", async () => {
+  const { repository, service } = setup();
+  await expect(service.create(context, "tenant-a", { documentType: "markdown", name: "\uD800" }, "retry-1", "request-1")).rejects.toMatchObject({ code: "invalid_request" });
+  expect(repository.create).not.toHaveBeenCalled();
+});

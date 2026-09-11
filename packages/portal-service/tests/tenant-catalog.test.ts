@@ -51,3 +51,9 @@ test("reports a missing revision as not found", async () => {
   const { service } = setup({ getDocumentContract: vi.fn(async () => null) });
   await expect(service.getDocumentContract(context, "tenant-a", "markdown", 7)).rejects.toMatchObject({ code: "not_found" });
 });
+
+test("refuses to read a document contract under another tenant's path", async () => {
+  const { repository, service } = setup();
+  await expect(service.getDocumentContract(context, "tenant-b", "markdown", 0)).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.getDocumentContract).not.toHaveBeenCalled();
+});

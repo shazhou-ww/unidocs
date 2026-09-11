@@ -46,6 +46,16 @@ export interface TenantContext {
   readonly scopes?: readonly string[];
 }
 
+/**
+ * A bound on the *shape* of a field is invalid_request; a bound on *payload
+ * size* or a *tenant quota* is limit_exceeded. documentName and reason are
+ * shape bounds — a name or a reason is either a reasonable label or it isn't,
+ * regardless of how much traffic the tenant sends. messageText, attachments
+ * and locationPayloadBytes are payload-size bounds. createDocument's declared
+ * 413 is reserved for a repository-raised per-tenant document quota, the same
+ * way document_type_disabled is repository-raised: nothing in this file can
+ * currently produce it.
+ */
 export const TENANT_LIMITS = {
   documentName: 256,
   reason: 512,
@@ -93,4 +103,19 @@ export function requireExactFields(body: unknown, fields: readonly string[]): Re
   const record = body as Record<string, unknown>;
   if (Object.keys(record).some(field => !fields.includes(field))) throw new TenantOperationError("invalid_request");
   return record;
+}
+
+/**
+ * canonicalJson/schemaHash throw a bare TypeError on a lone surrogate, which the
+ * Zod schemas upstream (and JSON.parse) legally let through. Run a canonicalizing
+ * step through here so it reaches the caller as invalid_request, not an
+ * uncoded 500; anything else propagates unchanged.
+ */
+export async function guardCanonicalization<T>(operation: () => T | Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof TypeError) throw new TenantOperationError("invalid_request");
+    throw error;
+  }
 }

@@ -4,7 +4,7 @@ import {
 } from "@unidocs/protocol-tenant-portal";
 import { schemaHash } from "../identity.js";
 import {
-  requireExactFields, requireIdempotencyKey, requireIdentifier, requirePagination, requireTenantScope,
+  guardCanonicalization, requireExactFields, requireIdempotencyKey, requireIdentifier, requirePagination, requireTenantScope,
   TENANT_LIMITS, TenantOperationError, type TenantContext,
 } from "./access.js";
 
@@ -56,7 +56,7 @@ export function createTenantDocumentService(repository: TenantDocumentRepository
         documentId: `doc-${id()}`, name: parsed.data.name, documentType: parsed.data.documentType, currentVersionIdx: null, createdAt: occurredAt,
       });
       return repository.create({
-        context, key: idempotencyKey, fingerprint: await schemaHash({ operation: "createDocument", body: parsed.data }), document,
+        context, key: idempotencyKey, fingerprint: await guardCanonicalization(() => schemaHash({ operation: "createDocument", body: parsed.data })), document,
         audit: DocumentAuditEventSchema.parse({
           auditEventId: id(), actorId: context.principalId, action: "document.created",
           beforeVersionIdx: null, afterVersionIdx: null, reason: null, requestId, occurredAt,
