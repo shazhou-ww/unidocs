@@ -20,3 +20,8 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 syst
   .device-notice { display: grid; place-content: center; gap: 8px; min-height: 100dvh; padding: 24px; text-align: center; }
   .app { display: none; }
 }
+
+.marker { background: none; color: inherit; border-radius: 2px; padding: 0 1px; }
+.marker-ping { background: color-mix(in srgb, var(--accent-ping) 22%, transparent); box-shadow: inset 0 -2px 0 var(--accent-ping); }
+.marker-pong-result { background: color-mix(in srgb, var(--accent-pong) 24%, transparent); box-shadow: inset 0 -2px 0 var(--accent-pong); }
+.marker-stale-ping { background: var(--surface-sunken); outline: 1px dashed var(--accent-stale); outline-offset: 1px; }
