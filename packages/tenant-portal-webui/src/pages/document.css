@@ -1,0 +1,28 @@
+.document { display: grid; grid-template-rows: auto 1fr; height: 100dvh; }
+.document-top { display: flex; gap: 12px; align-items: baseline; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.document-top h1 { font-size: 16px; margin: 0; }
+.readonly-badge { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); font-size: 12px; }
+
+.document-body { display: grid; grid-template-columns: 1fr var(--panel-width); min-height: 0; }
+.pane { overflow: auto; padding: 24px 32px; }
+.pane-current { background: var(--surface); }
+
+.thread-panel { border-left: 1px solid var(--border); background: var(--surface-sunken); overflow: auto; padding: 16px; }
+.thread-filter { display: flex; gap: 4px; margin-bottom: 12px; }
+.thread-filter button { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 12px; cursor: pointer; }
+.thread-filter button[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: var(--text); }
+
+.thread-card { margin-bottom: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.thread-card.selected { border-color: var(--text-muted); }
+.thread-card > button { display: grid; gap: 4px; width: 100%; padding: 12px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; }
+.status-open { color: var(--accent-ping); font-size: 12px; }
+.status-answered { color: var(--text-muted); font-size: 12px; }
+.thread-excerpt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.thread-messages { list-style: none; margin: 0; padding: 0 12px 12px; display: grid; gap: 8px; }
+.ping-card, .pong-card { padding: 10px; border-radius: 6px; background: var(--surface-sunken); }
+.ping-card p, .pong-card p { margin: 0 0 6px; }
+.ping-card footer, .pong-card footer { display: flex; gap: 8px; color: var(--text-muted); font-size: 12px; }
+.version-badge { padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.pong-card.pong-plain { border-left: 2px solid var(--accent-stale); }
+.pong-card.pong-versioned { border-left: 2px solid var(--accent-pong); }
