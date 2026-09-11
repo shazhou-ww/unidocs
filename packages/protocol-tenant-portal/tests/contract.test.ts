@@ -18,7 +18,14 @@ import {
   tenantApiContract,
 } from "../src/index.js";
 import type { DocumentRecord, VersionRecord } from "../src/index.js";
-import { renderTenantApiReferenceHtml } from "../scripts/html.js";
+import { ReferenceLocales, renderTenantApiReferenceHtml } from "../scripts/html.js";
+import { zhTenantApiStrings, zhTenantApiTranslation } from "../scripts/locales/zh.js";
+import {
+  collectProseStrings,
+  collectTagNames,
+  localizeDocument,
+  missingTranslations,
+} from "../scripts/localize.js";
 import { generateTenantOpenApiDocument } from "../scripts/openapi.js";
 
 const methodNames = ["get", "post", "put", "patch", "delete"] as const;
@@ -348,25 +355,88 @@ describe("tenant API contract", () => {
       .toEqualTypeOf<VersionRecord>();
   });
 
-  it("renders a self-contained Scalar reference from the same document", async () => {
-    const document = await generateTenantOpenApiDocument();
-    const html = renderTenantApiReferenceHtml(document);
+  it("renders one self-contained Scalar reference holding every translation", async () => {
+    const en = await generateTenantOpenApiDocument();
+    const html = renderTenantApiReferenceHtml({
+      en,
+      zh: localizeDocument(en, zhTenantApiTranslation),
+    });
 
     expect(html).toContain("<title>UniDocs Tenant API</title>");
     expect(html).toContain("preferredSecurityScheme: 'tenantSession'");
     expect(html).toContain("\"operationId\":\"appendPing\"");
+    for (const locale of ReferenceLocales) {
+      expect(html).toContain(locale.label);
+    }
+    expect(html).toContain("向 thread 追加一条 ping");
+    expect(html).toContain("Append a ping to a thread");
   });
 
   it("escapes markup that would otherwise break out of the inline script", async () => {
-    const document = await generateTenantOpenApiDocument();
+    const en = await generateTenantOpenApiDocument();
     const hostile = {
-      ...document,
-      info: { ...document.info, title: "</script><script>alert(1)</script>" },
+      ...en,
+      info: { ...en.info, title: "</script><script>alert(1)</script>" },
     };
 
-    const html = renderTenantApiReferenceHtml(hostile);
+    const html = renderTenantApiReferenceHtml({ en: hostile, zh: hostile });
 
     expect(html).not.toContain("</script><script>alert");
     expect(html).toContain("\\u003c/script>");
+  });
+});
+
+describe("Simplified Chinese reference", () => {
+  it("translates every prose string in the document", async () => {
+    const en = await generateTenantOpenApiDocument();
+
+    expect(missingTranslations(en, zhTenantApiStrings)).toEqual([]);
+  });
+
+  it("carries no translation the contract no longer uses", async () => {
+    const en = await generateTenantOpenApiDocument();
+    const used = new Set(collectProseStrings(en));
+
+    expect(Object.keys(zhTenantApiStrings).filter((text) => !used.has(text))).toEqual([]);
+  });
+
+  it("translates prose without touching identifiers or structure", async () => {
+    const en = await generateTenantOpenApiDocument();
+    const zh = localizeDocument(en, zhTenantApiTranslation);
+
+    const strip = (document: unknown) =>
+      JSON.parse(JSON.stringify(document, (key, value) =>
+        (key === "description" || key === "summary" || key === "tags" || key === "name")
+            && (typeof value === "string" || Array.isArray(value))
+          ? undefined
+          : value));
+
+    expect(strip(zh)).toEqual(strip(en));
+    expect(collectProseStrings(zh).some((text) => /[\u4e00-\u9fff]/.test(text))).toBe(true);
+  });
+
+  it("refuses to emit a half-translated reference", async () => {
+    const en = await generateTenantOpenApiDocument();
+
+    expect(() => localizeDocument(en, {
+      prose: { "Create a document": "创建文档" },
+      tagNames: zhTenantApiTranslation.tagNames,
+    })).toThrow(/untranslated string/);
+  });
+
+  it("renames navigation headings and the operations filed under them together", async () => {
+    const en = await generateTenantOpenApiDocument();
+    const zh = localizeDocument(en, zhTenantApiTranslation);
+
+    const declared = new Set((zh.tags ?? []).map((tag) => tag.name));
+    expect(declared.has("文档类型")).toBe(true);
+    expect(collectTagNames(zh).every((tag) => declared.has(tag))).toBe(true);
+    expect(collectTagNames(zh)).not.toContain("Document types");
+  });
+
+  it("keeps status-derived response descriptions out of the translation surface", async () => {
+    const en = await generateTenantOpenApiDocument();
+
+    expect(collectProseStrings(en).filter((text) => /^(OK|\d{3})$/.test(text))).toEqual([]);
   });
 });

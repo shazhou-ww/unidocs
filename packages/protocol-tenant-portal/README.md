@@ -75,22 +75,41 @@ From the repository root:
 pnpm --filter @unidocs/protocol-tenant-portal docs:generate
 ```
 
-This writes two artifacts:
+This writes three artifacts:
 
 - `packages/protocol-tenant-portal/openapi/tenant-v1.openapi.json` for tooling, client generation, and compatibility checks;
-- `packages/protocol-tenant-portal/openapi/tenant-v1.html` as a human-readable Scalar API reference.
+- `packages/protocol-tenant-portal/openapi/tenant-v1.zh.openapi.json`, the same document with Simplified Chinese prose;
+- `packages/protocol-tenant-portal/openapi/tenant-v1.html` as a human-readable Scalar API reference carrying both, with a language switch.
 
-The HTML embeds the OpenAPI document, so it can be opened directly from the
-filesystem or published as one static file. It loads the pinned Scalar renderer
-from jsDelivr; the Tenant Portal can later bundle `@scalar/api-reference`
-locally while continuing to consume the same generated document.
+The HTML embeds both documents, so it can be opened directly from the
+filesystem or published as one static file and read in either language without
+a server. The reader's choice is remembered per browser and falls back to
+English when nothing is stored. It loads the pinned Scalar renderer from
+jsDelivr; the Tenant Portal can later bundle `@scalar/api-reference` locally
+while continuing to consume the same generated documents.
 
 The generator and HTML renderer are internal build tools and are not exported
-from the package. The committed JSON document has its own package entrypoint:
+from the package. The committed English document has its own package
+entrypoint:
 
 ```ts
 import tenantOpenApi from "@unidocs/protocol-tenant-portal/openapi.json" with { type: "json" };
 ```
+
+## Translate
+
+The oRPC contract stays English and is the source of truth; the English
+document is generated from it unchanged. `scripts/locales/zh.ts` overlays
+Simplified Chinese, keyed by the exact English string rather than by a schema
+path, because oRPC inlines every schema and the same field description appears
+in many operations.
+
+Adding or rewording an operation therefore breaks `docs:generate` until the
+table is updated, rather than silently shipping stale Chinese. Tests assert
+both directions: every prose string and tag name has a translation, and no
+translation survives for text the contract no longer uses. Protocol words —
+thread, ping, pong, snapshot, current — stay English in the Chinese text, the
+way the design documents write them.
 
 ## Validate
 
