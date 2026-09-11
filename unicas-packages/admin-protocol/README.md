@@ -16,21 +16,15 @@ import { casAdminApiContract } from "@unicas/admin-protocol";
 type AdminClient = ContractRouterClient<typeof casAdminApiContract>;
 ```
 
-Generate the OpenAPI 3.1 JSON and standalone Scalar reference from the
-repository root:
+Generate the OpenAPI 3.1 JSON from the repository root:
 
 ```text
 pnpm --filter @unicas/admin-protocol docs:generate
 ```
 
-The generated files are `openapi/admin-v1.openapi.json` and
-`openapi/admin-v1.html`. The HTML embeds the specification and can be opened
-directly; it loads the pinned Scalar renderer from jsDelivr.
-
-The generator emits Scalar-compatible `x-tagGroups` to organize related tags
-into sidebar sections. Section, tag, and workflow operation order are defined
-in `scripts/openapi.ts`; the standalone HTML applies the same order through
-Scalar's `tagsSorter` and `operationsSorter` configuration.
+The generated file is `openapi/admin-v1.openapi.json`. Presentation, guides,
+navigation grouping, and Scalar rendering are owned by `@unicas/docs-webui`,
+which consumes the package's `./openapi.json` export.
 
 Validate with:
 

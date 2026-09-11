@@ -19,6 +19,7 @@ Unicas 是 UniDocs 的独立可部署 CAS 中间件（content-addressed storage 
   无平台绑定、**不含任何编码**。两面共用的协议类型归 `tenant-protocol`；
   `admin-protocol` 可依赖 `tenant-protocol`，反向禁止。
 5. **界面/入口**：`admin-webui`（管理 WebUI，纯浏览器包）、
+  `docs-webui`（公开文档与 API Reference 静态站）、
    `admin-cli`（管理 CLI + stdio MCP）、`tenant-client`（数据面 HTTP client）。
 6. **服务端按平台分层，不按 actor 拆部署**：`service` 是 cloud-neutral 的
   tenant + admin HTTP actor 与平台端口；`service-cloudflare` 是唯一 Cloudflare
@@ -44,7 +45,7 @@ tenant: [tenant-cli, tenant-webui] -> tenant-client -> tenant-protocol
 - 上图是固定的角色与依赖模型；某个 CLI/WebUI 产品尚未实现时不创建空包。
   WebUI 的服务端 BFF 属于服务端梳理范围，不改变浏览器侧的依赖方向。
 
-## 包清单（13 包）
+## 包清单（14 包）
 
 ```
 unicas-packages/                    @unicas org
@@ -81,6 +82,9 @@ unicas-packages/                    @unicas org
 │         MCP/OAuth ingress、control schema 与 D1 repository 适配
 │
 └── ■ client 层
+  ├── docs-webui/        @unicas/docs-webui          公开文档站（纯静态展示）
+  │     构建时消费 admin/tenant protocol 生成的 OpenAPI JSON；拥有 Markdown
+  │     文章、Scalar 分组/排序与站点导航，不依赖 client/service，不持有凭据
     ├── admin-webui/       @unicas/admin-webui         admin 组 · 浏览器 UI（纯前端）
     │     经 @unicas/admin-client 取 admin-protocol 类型；不含任何服务端代码
     ├── tenant-client/     @unicas/tenant-client       tenant 组 · 传输层

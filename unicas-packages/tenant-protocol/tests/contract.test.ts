@@ -2,7 +2,6 @@ import type { ContractRouterClient } from "@orpc/contract";
 import { describe, expect, expectTypeOf, test } from "vitest";
 import type { CasUsage } from "../src/index.js";
 import { CasHashSchema, CasRootRefUpdateSchema, casTenantApiContract } from "../src/index.js";
-import { renderTenantApiReferenceHtml } from "../scripts/html.js";
 import { generateTenantOpenApiDocument } from "../scripts/openapi.js";
 
 describe("CAS tenant schemas", () => {
@@ -44,15 +43,5 @@ describe("CAS tenant OpenAPI", () => {
       .toHaveProperty(
         "responses.200.content.application/json.schema.properties.reservedBytes.description",
       );
-    expect(document["x-tagGroups"]).toEqual([
-      { name: "Content Lifecycle", tags: ["Nodes", "Root Refs"] },
-      { name: "Operations & Diagnostics", tags: ["Operations"] },
-    ]);
-
-    const html = renderTenantApiReferenceHtml(document);
-    expect(html).toContain("Scalar.createApiReference");
-    expect(html).toContain("\"openapi\":\"3.1.1\"");
-    expect(html).toContain("tagsSorter: (a, b)");
-    expect(html).toContain("operationsSorter: (a, b)");
   });
 });

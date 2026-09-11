@@ -2,57 +2,12 @@ import { OpenAPIGenerator } from "@orpc/openapi";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { casAdminApiContract } from "../src/contract.js";
 
-export const AdminApiTagGroups = [
-  {
-    name: "Stack Administration",
-    tags: ["Identity", "Stacks", "Members"],
-  },
-  {
-    name: "Capability Configuration",
-    tags: ["OAuth Issuer", "Managed Issuer"],
-  },
-  {
-    name: "Application Workflow",
-    tags: ["Playground"],
-  },
-  {
-    name: "Audit & Diagnostics",
-    tags: ["Audit", "Root Ref Audit"],
-  },
-] as const;
-
-export const AdminApiOperationOrder = [
-  "GET /admin/me",
-  "GET /admin/stacks",
-  "POST /admin/stacks",
-  "GET /admin/stacks/{stackId}",
-  "PATCH /admin/stacks/{stackId}",
-  "GET /admin/stacks/{stackId}/members",
-  "POST /admin/stacks/{stackId}/member-invitations",
-  "POST /admin/member-invitations/{token}/accept",
-  "DELETE /admin/stacks/{stackId}/members",
-  "GET /admin/stacks/{stackId}/oauth-issuer",
-  "POST /admin/stacks/{stackId}/oauth-issuer/inspections",
-  "PUT /admin/stacks/{stackId}/oauth-issuer",
-  "GET /admin/stacks/{stackId}/managed-issuer",
-  "PATCH /admin/stacks/{stackId}/managed-issuer",
-  "POST /admin/stacks/{stackId}/managed-capabilities",
-  "GET /admin/stacks/{stackId}/playground/file-roots",
-  "POST /admin/stacks/{stackId}/playground/file-roots",
-  "PATCH /admin/stacks/{stackId}/playground/file-roots/{rootId}",
-  "DELETE /admin/stacks/{stackId}/playground/file-roots/{rootId}",
-  "GET /admin/stacks/{stackId}/audit-events",
-  "GET /admin/stacks/{stackId}/ref-domains",
-  "GET /admin/stacks/{stackId}/root-ref-domains/{refDomain}/refs",
-  "GET /admin/stacks/{stackId}/root-ref-domains/{refDomain}/events",
-] as const;
-
-export async function generateAdminOpenApiDocument() {
+export function generateAdminOpenApiDocument() {
   const generator = new OpenAPIGenerator({
     schemaConverters: [new ZodToJsonSchemaConverter()],
   });
 
-  const document = await generator.generate(casAdminApiContract, {
+  return generator.generate(casAdminApiContract, {
     info: {
       title: "UniCAS Administrator API",
       version: "0.1.0",
@@ -107,7 +62,4 @@ export async function generateAdminOpenApiDocument() {
     }),
   });
 
-  return Object.assign(document, {
-    "x-tagGroups": AdminApiTagGroups,
-  });
 }

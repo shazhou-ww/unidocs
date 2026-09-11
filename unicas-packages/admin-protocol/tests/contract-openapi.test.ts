@@ -2,7 +2,6 @@ import type { ContractRouterClient } from "@orpc/contract";
 import { describe, expect, expectTypeOf, test } from "vitest";
 import type { CasStack } from "../src/index.js";
 import { CasStackSchema, casAdminApiContract } from "../src/index.js";
-import { renderAdminApiReferenceHtml } from "../scripts/html.js";
 import { generateAdminOpenApiDocument } from "../scripts/openapi.js";
 
 const methods = ["get", "post", "put", "patch", "delete"] as const;
@@ -51,15 +50,9 @@ describe("CAS admin OpenAPI", () => {
       .toContain("activation challenge");
     expect(document.paths?.["/admin/stacks/{stackId}"]?.get)
       .toHaveProperty("responses.200.content.application/json.schema.properties.revision.description");
-    expect(document["x-tagGroups"]).toEqual([
-      { name: "Stack Administration", tags: ["Identity", "Stacks", "Members"] },
-      { name: "Capability Configuration", tags: ["OAuth Issuer", "Managed Issuer"] },
-      { name: "Application Workflow", tags: ["Playground"] },
-      { name: "Audit & Diagnostics", tags: ["Audit", "Root Ref Audit"] },
-    ]);
   });
 
-  test("documents optimistic concurrency and renders standalone HTML", async () => {
+  test("documents optimistic concurrency", async () => {
     const document = await generateAdminOpenApiDocument();
     const patch = document.paths?.["/admin/stacks/{stackId}"]?.patch;
     const parameterNames = (patch?.parameters ?? []).map((parameter) =>
@@ -68,11 +61,5 @@ describe("CAS admin OpenAPI", () => {
     expect(parameterNames).toContain("if-match");
     expect(patch?.responses).toHaveProperty("412");
     expect(patch?.responses).toHaveProperty("428");
-
-    const html = renderAdminApiReferenceHtml(document);
-    expect(html).toContain("Scalar.createApiReference");
-    expect(html).toContain("\"openapi\":\"3.1.1\"");
-    expect(html).toContain("tagsSorter: (a, b)");
-    expect(html).toContain("operationsSorter: (a, b)");
   });
 });

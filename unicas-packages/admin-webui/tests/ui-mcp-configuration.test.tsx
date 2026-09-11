@@ -29,6 +29,11 @@ describe("AI tool connection", () => {
 
     render(<App />);
 
+    const docsLink = await screen.findByRole("link", { name: "Open UniCAS documentation" });
+    expect(docsLink).toHaveAttribute("href", "https://unicas-docs.shazhou.work/");
+    expect(docsLink).toHaveAttribute("target", "_blank");
+    expect(docsLink).toHaveAttribute("rel", "noreferrer");
+
     const trigger = await screen.findByRole("button", { name: "Connect AI tools" });
     const userMenu = screen.getByRole("button", { name: "Admin User" });
     expect(trigger.compareDocumentPosition(userMenu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

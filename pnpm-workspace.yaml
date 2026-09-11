@@ -10,4 +10,5 @@ allowBuilds:
   ssh2: true
   workerd: true
   sharp: true
+  vue-demi: true
   core-js-pure: false

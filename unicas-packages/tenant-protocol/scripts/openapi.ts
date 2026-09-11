@@ -2,33 +2,12 @@ import { OpenAPIGenerator } from "@orpc/openapi";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { casTenantApiContract } from "../src/contract.js";
 
-export const TenantApiTagGroups = [
-  {
-    name: "Content Lifecycle",
-    tags: ["Nodes", "Root Refs"],
-  },
-  {
-    name: "Operations & Diagnostics",
-    tags: ["Operations"],
-  },
-] as const;
-
-export const TenantApiOperationOrder = [
-  "POST /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{hash}/lease",
-  "GET /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{hash}/metadata",
-  "GET /stacks/{stackId}/tenants/{tenantId}/cas/nodes/{hash}/content",
-  "POST /stacks/{stackId}/tenants/{tenantId}/root-refs",
-  "GET /stacks/{stackId}/tenants/{tenantId}/root-refs",
-  "GET /stacks/{stackId}/tenants/{tenantId}/cas/usage",
-  "POST /stacks/{stackId}/tenants/{tenantId}/cas/gc",
-] as const;
-
-export async function generateTenantOpenApiDocument() {
+export function generateTenantOpenApiDocument() {
   const generator = new OpenAPIGenerator({
     schemaConverters: [new ZodToJsonSchemaConverter()],
   });
 
-  const document = await generator.generate(casTenantApiContract, {
+  return generator.generate(casTenantApiContract, {
     info: {
       title: "UniCAS Tenant API",
       version: "0.1.0",
@@ -78,7 +57,4 @@ export async function generateTenantOpenApiDocument() {
     }),
   });
 
-  return Object.assign(document, {
-    "x-tagGroups": TenantApiTagGroups,
-  });
 }

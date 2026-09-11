@@ -2020,20 +2020,5 @@
         }
       }
     }
-  },
-  "x-tagGroups": [
-    {
-      "name": "Content Lifecycle",
-      "tags": [
-        "Nodes",
-        "Root Refs"
-      ]
-    },
-    {
-      "name": "Operations & Diagnostics",
-      "tags": [
-        "Operations"
-      ]
-    }
-  ]
+  }
 }

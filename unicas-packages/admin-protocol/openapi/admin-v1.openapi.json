@@ -8328,35 +8328,5 @@
         }
       }
     }
-  },
-  "x-tagGroups": [
-    {
-      "name": "Stack Administration",
-      "tags": [
-        "Identity",
-        "Stacks",
-        "Members"
-      ]
-    },
-    {
-      "name": "Capability Configuration",
-      "tags": [
-        "OAuth Issuer",
-        "Managed Issuer"
-      ]
-    },
-    {
-      "name": "Application Workflow",
-      "tags": [
-        "Playground"
-      ]
-    },
-    {
-      "name": "Audit & Diagnostics",
-      "tags": [
-        "Audit",
-        "Root Ref Audit"
-      ]
-    }
-  ]
+  }
 }

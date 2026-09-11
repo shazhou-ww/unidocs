@@ -115,6 +115,25 @@ a {
   gap: 0.65rem;
 }
 
+.docs-header-link {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  color: var(--muted-strong);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.docs-header-link:hover {
+  color: var(--foreground);
+  background: var(--surface-hover);
+}
+
 .user-menu {
   position: relative;
 }
@@ -1585,6 +1604,10 @@ a:focus-visible,
   }
 
   .mcp-header-action {
+    display: none;
+  }
+
+  .docs-header-link span {
     display: none;
   }
 

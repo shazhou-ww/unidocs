@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist-types",
+    "rootDir": "./src",
+    "composite": true,
+    "noEmit": true,
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
+    "types": [
+      "vite/client"
+    ],
+    "jsx": "react-jsx",
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../admin-protocol"
+    },
+    {
+      "path": "../tenant-protocol"
+    }
+  ]
+}
