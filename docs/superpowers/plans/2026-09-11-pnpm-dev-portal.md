@@ -727,11 +727,11 @@ Then, against the printed portal URL:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8795/admin/auth/session          # expect 401
-curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://127.0.0.1:8795/admin/auth/login  # expect 303 to the mock provider on 8793
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://127.0.0.1:8795/admin/auth/login  # expect 303 to accounts.google.com
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8795/admin/api/v1/document-types # expect 401
 ```
 
-Record the three results. If the login redirect points at `accounts.google.com` rather than the mock, the issuer binding did not reach the worker — fix that before continuing.
+Record the three results. The redirect must point at `accounts.google.com` — local development signs in against the real Google, per the Global Constraints above. If it points at a loopback mock provider instead, the issuer binding did not reach the worker; fix that before continuing. A 303 is the success case even without Google credentials configured: the portal builds the authorization URL from the placeholder client id, and only Google's own rejection of that placeholder comes later.
 
 - [ ] **Step 2: Confirm the combined selection**
 
