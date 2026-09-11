@@ -1,9 +1,9 @@
 /**
  * Agent data-plane contracts for OAuth scopes, optimistic concurrency,
- * atomic version-and-pong submissions, conflicts, and durable receipts.
+ * atomic version-and-reply submissions, conflicts, and durable receipts.
  *
  * - `POST /api/v1/tenants/{tenantId}/documents/{documentId}/submissions`:
- *   atomically validate locks, create an optional version, append pongs, and persist a receipt.
+ *   atomically validate locks, create an optional version, append replies, and persist a receipt.
  * - `GET /api/v1/tenants/{tenantId}/documents/{documentId}/submissions/{submissionId}`:
  *   recover the durable receipt after timeout or retry without repeating work.
  *
@@ -17,26 +17,26 @@ import type {
   EndpointContract,
   IsoDateTime,
   MessageContent,
-  PingIdx,
+  CommentIdx,
   SubmissionId,
   ThreadId,
   TenantId,
   VersionIdx,
 } from "./common.js";
-import type { PongRecord, VersionRecord } from "./resources.js";
+import type { ReplyRecord, VersionRecord } from "./resources.js";
 
 export type AgentScope =
   | "documents:read"
   | "cas:read"
   | "cas:lease"
   | "comments:read"
-  | "comments:pong"
+  | "comments:reply"
   | "versions:submit";
 
 export interface AgentThreadUpdate {
   readonly threadId: ThreadId;
-  readonly observedAcknowledgedPingIdx: PingIdx | null;
-  readonly respondThroughPingIdx: PingIdx;
+  readonly observedAcknowledgedCommentIdx: CommentIdx | null;
+  readonly respondThroughCommentIdx: CommentIdx;
   readonly content: MessageContent;
   /** Relative to newSnapshot; must be empty when newSnapshot is omitted. */
   readonly resultLocations: readonly DocumentLocation[];
@@ -56,8 +56,8 @@ export interface SubmissionConflict {
   readonly availableDocumentContractIdxs: readonly DocumentContractIdx[];
   readonly threads: readonly {
     readonly threadId: ThreadId;
-    readonly acknowledgedPingIdx: PingIdx | null;
-    readonly latestPingIdx: PingIdx;
+    readonly acknowledgedCommentIdx: CommentIdx | null;
+    readonly latestCommentIdx: CommentIdx;
   }[];
 }
 
@@ -66,7 +66,7 @@ export type SubmissionReceipt =
     readonly submissionId: SubmissionId;
     readonly state: "committed";
     readonly version: VersionRecord | null;
-    readonly pongs: readonly PongRecord[];
+    readonly replies: readonly ReplyRecord[];
     readonly committedAt: IsoDateTime;
   }
   | {
@@ -75,7 +75,7 @@ export type SubmissionReceipt =
     readonly reason:
       | "version_conflict"
       | "document_contract_conflict"
-      | "pong_watermark_conflict";
+      | "reply_watermark_conflict";
     readonly conflict: SubmissionConflict;
     readonly rejectedAt: IsoDateTime;
   };

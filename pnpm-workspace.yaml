@@ -1,6 +1,26 @@
 packages:
   - 'packages/*'
   - 'unicas-packages/*'
+# The company npm proxy's manifests lag upstream, so pnpm cannot read a publish
+# date for these exact versions and fails the release-age policy outright. The
+# message is "version not present in registry manifest", not "published too
+# recently", so no threshold value makes it pass. Their tarballs are still
+# verified against the sha512 integrity pinned in pnpm-lock.yaml. Drop an entry
+# once the proxy has caught up with that package.
+#
+# The proxy also cannot serve their tarballs, so a machine with a cold pnpm
+# store hits ERR_PNPM_FETCH_404 before reaching this policy. Prime the store
+# from a mirror once; pnpm then verifies what it fetched against the lockfile
+# integrity, so a tampered mirror fails the install rather than poisoning it:
+#
+#   pnpm store add oauth4webapi@3.8.8 '@zip.js/zip.js@2.13.1' \
+#     --registry=https://repo.huaweicloud.com/repository/npm
+#
+# Do not pass --registry to `pnpm install` itself: that rewrites every
+# resolution entry in pnpm-lock.yaml and downgrades integrity to sha1.
+minimumReleaseAgeExclude:
+  - oauth4webapi
+  - '@zip.js/zip.js'
 overrides:
   '@jridgewell/sourcemap-codec': 1.5.5
 allowBuilds:

@@ -4,9 +4,9 @@
 
 ## 1. 存储边界
 
-- **Platform database**：文档类型配置、contract revisions、候选 metadata、管理员、文档、版本、thread、ping/pong、submission receipt、审计、幂等记录与可靠投递 outbox 的唯一权威。
+- **Platform database**：文档类型配置、contract revisions、候选 metadata、管理员、文档、版本、thread、comment/reply、submission receipt、审计、幂等记录与可靠投递 outbox 的唯一权威。
 - **R2-compatible bundle store**：Type Card/View bundle 的不可变 ZIP 解包内容。数据库保存内容身份、canonical public `bundle_url`、manifest、大小和 Admin metadata；对象存储不是关系权威。
-- **UniCAS**：snapshot 编码及 ping/pong 富内容、附件的 blob graph。数据库只保存 `CasBlobRef` 或内部 snapshot root；业务事务提交后由 Platform retain，失败时让 lease 到期。
+- **UniCAS**：snapshot 编码及 comment/reply 富内容、附件的 blob graph。数据库只保存 `CasBlobRef` 或内部 snapshot root；业务事务提交后由 Platform retain，失败时让 lease 到期。
 - **Identity provider / tenant authority**：登录凭据和 tenant 成员事实不复制为业务正文。数据库只保存稳定 principal reference 和必要的授权投影。
 
 所有 `*Idx` 从 0 开始并在其作用域内单调递增。`null` 表示尚无记录，0 不是 sentinel。时间统一保存 UTC instant。ETag 从 canonical GET representation 计算，不作为独立可修改事实；实现可以缓存，但必须可重算。
@@ -41,13 +41,13 @@ stereotype 只是图上标记，不是逻辑表名的一部分。未标 stereoty
 | `DOCUMENT` | Normal | 只更新 `name`、`current_version_idx`、`updated_at` |
 | `VERSION` | AO | 整行不可变；每个 document 只追加下一个 idx |
 | `DOCUMENT_AUDIT_EVENT` | AO | 永不更新、删除；可按保留策略归档冷库 |
-| `THREAD` | AO | 与 ping 0 原子插入，此后不更新、删除 |
-| `PING` | AO | 整行不可变；每个 thread 只追加下一个 ping idx |
-| `PING_LOCATION` | AO | 与 ping 原子插入，不单独更新或删除 |
-| `PING_ATTACHMENT` | AO | 与 ping 原子插入，ordinal 与 blob ref 不变 |
-| `PONG` | AO | 整行不可变；每个 thread 只追加下一个 pong idx |
-| `PONG_RESULT_LOCATION` | AO | 与 pong/submission 原子插入，不单独更新或删除 |
-| `PONG_ATTACHMENT` | AO | 与 pong 原子插入，ordinal 与 blob ref 不变 |
+| `THREAD` | AO | 与 comment 0 原子插入，此后不更新、删除 |
+| `COMMENT` | AO | 整行不可变；每个 thread 只追加下一个 comment idx |
+| `COMMENT_LOCATION` | AO | 与 comment 原子插入，不单独更新或删除 |
+| `COMMENT_ATTACHMENT` | AO | 与 comment 原子插入，ordinal 与 blob ref 不变 |
+| `REPLY` | AO | 整行不可变；每个 thread 只追加下一个 reply idx |
+| `REPLY_RESULT_LOCATION` | AO | 与 reply/submission 原子插入，不单独更新或删除 |
+| `REPLY_ATTACHMENT` | AO | 与 reply 原子插入，ordinal 与 blob ref 不变 |
 | `SUBMISSION` | AO | committed/rejected receipt 一次写入后不可变；相同 submission ID 只重放 |
 | `SUBMISSION_THREAD_LOCK` | AO | 与 submission receipt 原子写入，不单独更新或删除 |
 | `DOCUMENT_IDEMPOTENCY` | EI | completed receipt 创建后只读，到期后删除 |
@@ -286,14 +286,14 @@ erDiagram
 ```mermaid
 erDiagram
     DOCUMENT ||--o{ THREAD : contains
-    THREAD ||--|{ PING : receives
-    VERSION ||--o{ PING : anchors
-    PING ||--o| PING_LOCATION : locates
-    PING ||--o{ PING_ATTACHMENT : attaches
-    THREAD ||--o{ PONG : receives
-    SUBMISSION ||--o{ PONG : commits
-    PONG ||--o{ PONG_RESULT_LOCATION : locates
-    PONG ||--o{ PONG_ATTACHMENT : attaches
+    THREAD ||--|{ COMMENT : receives
+    VERSION ||--o{ COMMENT : anchors
+    COMMENT ||--o| COMMENT_LOCATION : locates
+    COMMENT ||--o{ COMMENT_ATTACHMENT : attaches
+    THREAD ||--o{ REPLY : receives
+    SUBMISSION ||--o{ REPLY : commits
+    REPLY ||--o{ REPLY_RESULT_LOCATION : locates
+    REPLY ||--o{ REPLY_ATTACHMENT : attaches
 
     THREAD["«AO» THREAD"] {
         text tenant_id PK,FK
@@ -301,11 +301,11 @@ erDiagram
         text thread_id PK
         timestamp created_at
     }
-    PING["«AO» PING"] {
+    COMMENT["«AO» COMMENT"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
-        bigint ping_idx PK
+        bigint comment_idx PK
         bigint base_version_idx FK
         text text
         text rich_content_blob_hash
@@ -314,31 +314,31 @@ erDiagram
         text author_id
         timestamp created_at
     }
-    PING_LOCATION["«AO» PING_LOCATION"] {
+    COMMENT_LOCATION["«AO» COMMENT_LOCATION"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
-        bigint ping_idx PK,FK
+        bigint comment_idx PK,FK
         bigint document_contract_idx FK
         text location_type
         json payload
     }
-    PING_ATTACHMENT["«AO» PING_ATTACHMENT"] {
+    COMMENT_ATTACHMENT["«AO» COMMENT_ATTACHMENT"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
-        bigint ping_idx PK,FK
+        bigint comment_idx PK,FK
         int ordinal PK
         text blob_hash
         text content_type
         bigint size
     }
-    PONG["«AO» PONG"] {
+    REPLY["«AO» REPLY"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
-        bigint pong_idx PK
-        bigint respond_through_ping_idx FK
+        bigint reply_idx PK
+        bigint respond_through_comment_idx FK
         text submission_id FK
         text text
         text rich_content_blob_hash
@@ -347,21 +347,21 @@ erDiagram
         text author_agent_id
         timestamp created_at
     }
-    PONG_RESULT_LOCATION["«AO» PONG_RESULT_LOCATION"] {
+    REPLY_RESULT_LOCATION["«AO» REPLY_RESULT_LOCATION"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
-        bigint pong_idx PK,FK
+        bigint reply_idx PK,FK
         int ordinal PK
         bigint document_contract_idx FK
         text location_type
         json payload
     }
-    PONG_ATTACHMENT["«AO» PONG_ATTACHMENT"] {
+    REPLY_ATTACHMENT["«AO» REPLY_ATTACHMENT"] {
         text tenant_id PK,FK
         text document_id PK,FK
         text thread_id PK,FK
-        bigint pong_idx PK,FK
+        bigint reply_idx PK,FK
         int ordinal PK
         text blob_hash
         text content_type
@@ -369,10 +369,10 @@ erDiagram
     }
 ```
 
-- Thread creation inserts `THREAD` and ping 0 atomically. A thread cannot exist without at least one ping.
-- Ping/pong indexes are allocated independently per thread. Thread open state and acknowledged watermark are derived from the two sequences and are not stored as mutable columns.
-- `PING.base_version_idx` references a version of the same document. Its optional location uses that version's `document_contract_idx`.
-- A pong's `respond_through_ping_idx` must advance beyond the previous pong watermark without exceeding the latest ping.
+- Thread creation inserts `THREAD` and comment 0 atomically. A thread cannot exist without at least one comment.
+- Comment/reply indexes are allocated independently per thread. Thread open state and acknowledged watermark are derived from the two sequences and are not stored as mutable columns.
+- `COMMENT.base_version_idx` references a version of the same document. Its optional location uses that version's `document_contract_idx`.
+- A reply's `respond_through_comment_idx` must advance beyond the previous reply watermark without exceeding the latest comment.
 - Result locations exist only when the same submission creates a version; every result location uses that new version's contract idx.
 - Attachment tables preserve order with `ordinal`. `text` and rich content obey the wire invariant that at least one body form is present.
 
@@ -383,7 +383,7 @@ erDiagram
     DOCUMENT ||--o{ SUBMISSION : accepts
     SUBMISSION o|--o| VERSION : creates
     SUBMISSION ||--o{ SUBMISSION_THREAD_LOCK : checks
-    SUBMISSION ||--o{ PONG : appends
+    SUBMISSION ||--o{ REPLY : appends
     DOCUMENT ||--o{ DOCUMENT_IDEMPOTENCY : protects
     DOCUMENT ||--o{ OPERATOR_OUTBOX : notifies
     SUBMISSION ||--o{ CAS_RETAIN_OUTBOX : retains
@@ -406,8 +406,8 @@ erDiagram
         text document_id PK,FK
         text submission_id PK,FK
         text thread_id PK,FK
-        bigint observed_acknowledged_ping_idx
-        bigint respond_through_ping_idx
+        bigint observed_acknowledged_comment_idx
+        bigint respond_through_comment_idx
     }
     DOCUMENT_IDEMPOTENCY["«EI» DOCUMENT_IDEMPOTENCY"] {
         text tenant_id PK,FK
@@ -454,16 +454,16 @@ One database transaction must:
 3. compare every observed thread watermark;
 4. validate the selected contract and all result locations;
 5. allocate and insert the optional version;
-6. allocate and insert every pong, attachment and result location;
+6. allocate and insert every reply, attachment and result location;
 7. advance `DOCUMENT.current_version_idx` when a version is created;
 8. persist the committed or rejected `SUBMISSION` receipt;
 9. enqueue CAS retain and Operator notification effects.
 
 No R2 or UniCAS network call participates in the database transaction. Outbox consumers retry external effects idempotently. A committed receipt is the durable client fact even while an outbox effect is pending.
 
-### 6.2 Thread/ping idempotency
+### 6.2 Thread/comment idempotency
 
-Create-thread and append-ping requests use `DOCUMENT_IDEMPOTENCY`. Their operation scope includes the route family and thread identity where applicable. Request fingerprint, created identities, status and compact response are stored together so network retries cannot append duplicate pings.
+Create-thread and append-comment requests use `DOCUMENT_IDEMPOTENCY`. Their operation scope includes the route family and thread identity where applicable. Request fingerprint, created identities, status and compact response are stored together so network retries cannot append duplicate comments.
 
 ## 7. Keys and indexes
 
@@ -477,7 +477,7 @@ Minimum logical indexes:
 - `ADMIN_AUDIT_EVENT(occurred_at DESC, audit_event_id)` plus actor/action/resource/document-type filter indexes.
 - `DOCUMENT(tenant_id, updated_at DESC, document_id)` and `(tenant_id, document_type, updated_at DESC, document_id)`.
 - `VERSION(tenant_id, document_id, version_idx DESC)`.
-- `PING(tenant_id, document_id, thread_id, ping_idx)` and `PONG(..., pong_idx)`.
+- `COMMENT(tenant_id, document_id, thread_id, comment_idx)` and `REPLY(..., reply_idx)`.
 - `OPERATOR_OUTBOX(delivered_at, next_attempt_at)` and `CAS_RETAIN_OUTBOX(completed_at, next_attempt_at)`.
 
 Cursor pagination uses the complete stable sort key, never an offset.
@@ -488,7 +488,7 @@ Do not add authoritative columns for:
 
 - resource ETags;
 - latest Document Contract idx;
-- thread latest ping, acknowledged watermark, or open state;
+- thread latest comment, acknowledged watermark, or open state;
 - latest document version;
 - available contract idx intersection;
 - public Type Card projection;

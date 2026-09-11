@@ -1,5 +1,5 @@
 /**
- * Platform-to-Operator webhook contracts for document creation, new pings,
+ * Platform-to-Operator webhook contracts for document creation, new comments,
  * and current-version movement notifications.
  *
  * - `POST {operatorBaseUrl}/tenants/{tenantId}/documents/{documentId}`:
@@ -11,7 +11,7 @@ import type {
   DocumentType,
   EndpointContract,
   IsoDateTime,
-  PingIdx,
+  CommentIdx,
   TenantId,
   ThreadId,
   VersionIdx,
@@ -19,7 +19,7 @@ import type {
 
 export type OperatorEventReason =
   | "document.created"
-  | "ping.appended"
+  | "comment.appended"
   | "current_version.moved";
 
 export interface OperatorWebhookRequest {
@@ -30,10 +30,10 @@ export interface OperatorWebhookRequest {
   readonly documentId: DocumentId;
   readonly documentType: DocumentType;
   readonly currentVersionIdx: VersionIdx | null;
-  readonly newPings: readonly {
+  readonly newComments: readonly {
     readonly threadId: ThreadId;
-    readonly pingIdx: PingIdx;
-    readonly acknowledgedPingIdx: PingIdx | null;
+    readonly commentIdx: CommentIdx;
+    readonly acknowledgedCommentIdx: CommentIdx | null;
   }[];
   readonly occurredAt: IsoDateTime;
 }
