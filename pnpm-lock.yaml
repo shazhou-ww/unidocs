@@ -650,6 +650,9 @@ importers:
       '@unidocs/protocol-admin-portal':
         specifier: workspace:*
         version: link:../protocol-admin-portal
+      '@unidocs/protocol-tenant-portal':
+        specifier: workspace:*
+        version: link:../protocol-tenant-portal
       '@zip.js/zip.js':
         specifier: ^2.13.1
         version: 2.13.1
