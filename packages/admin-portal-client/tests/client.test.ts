@@ -65,3 +65,11 @@ test("notifies the application before surfacing any unauthorized response", asyn
   expect(onUnauthorized).toHaveBeenCalledWith(error);
   expect(error).toMatchObject({ status: 401, code: "unauthorized", requestId: "request-401" });
 });
+
+test("encodes audit filters and pagination", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => Response.json({ items: [], nextCursor: null }));
+  const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher });
+  await client.listAuditEvents({ actorId: "admin one", action: "administrator.added", resourceType: "administrator", documentType: "markdown",
+    occurredFrom: "2026-09-10T00:00:00.000Z", occurredTo: "2026-09-11T00:00:00.000Z", limit: 50, cursor: "next" });
+  expect(String(fetcher.mock.calls[0][0])).toBe("https://portal.test/admin/api/v1/audit-events?actorId=admin+one&action=administrator.added&resourceType=administrator&documentType=markdown&occurredFrom=2026-09-10T00%3A00%3A00.000Z&occurredTo=2026-09-11T00%3A00%3A00.000Z&limit=50&cursor=next");
+});

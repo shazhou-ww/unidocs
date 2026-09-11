@@ -1,7 +1,32 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText, LoaderCircle, LogIn, LogOut, Menu, Plus, RefreshCw, Search, ShieldAlert, Trash2, UserPlus, Users, X } from "lucide-react";
+import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText, LoaderCircle, LogIn, LogOut, Menu, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
-import type { AdministratorMemberListItem, DocumentTypeListItem, DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
+import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentTypeListItem, type DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
+
+const auditActionLabels: Partial<Record<AdminAuditEvent["action"], string>> = {
+  "administrator.bootstrap": "初始化管理员",
+  "administrator.bound": "绑定管理员身份",
+  "administrator.added": "添加管理员",
+  "administrator.removed": "移除管理员",
+  "document_type.registered": "创建文档类型",
+  "document_type.internal_name_changed": "修改内部名称",
+  "document_type.enabled": "启用文档类型",
+  "document_type.disabled": "停用文档类型",
+};
+
+const resourceLabels: Partial<Record<AdminAuditEvent["resourceType"], string>> = {
+  administrator: "管理员",
+  document_type: "文档类型",
+  document_contract: "Document Contract",
+  type_card_bundle: "Type Card",
+  view_bundle: "View bundle",
+  operator: "Operator",
+  operator_validation: "Operator validation",
+};
+
+function auditActionLabel(action: AdminAuditEvent["action"]) {
+  return auditActionLabels[action] ?? action;
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof AdminPortalClientError) {
@@ -111,7 +136,7 @@ function AccessDenied() {
 
 function AdminApp() {
   const [client] = useState(() => createAdminPortalClient({ onUnauthorized: error => window.location.replace(sessionInvalidPath(error)) }));
-  const [view, setView] = useState<"documentTypes" | "administrators">("documentTypes");
+  const [view, setView] = useState<"documentTypes" | "administrators" | "audit">("documentTypes");
   const [session, setSession] = useState<AdminPortalSession | null>(null);
   const [items, setItems] = useState<readonly DocumentTypeListItem[]>([]);
   const [members, setMembers] = useState<readonly AdministratorMemberListItem[]>([]);
@@ -128,6 +153,12 @@ function AdminApp() {
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [memberEmail, setMemberEmail] = useState("");
   const [memberToRemove, setMemberToRemove] = useState<AdministratorMemberListItem | null>(null);
+  const [auditEvents, setAuditEvents] = useState<readonly AdminAuditEvent[]>([]);
+  const [selectedAudit, setSelectedAudit] = useState<AdminAuditEvent | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditCursor, setAuditCursor] = useState<string | null>(null);
+  const [auditAction, setAuditAction] = useState<AdminAuditEvent["action"] | "all">("all");
+  const [auditResource, setAuditResource] = useState<AdminAuditEvent["resourceType"] | "all">("all");
   const [mobileNav, setMobileNav] = useState(false);
 
   async function loadTypes(nextQuery = query, nextEnabled = enabled) {
@@ -174,11 +205,32 @@ function AdminApp() {
     }
   }
 
-  function showView(nextView: "documentTypes" | "administrators") {
+  async function loadAudit(cursor: string | null = null, nextAction = auditAction, nextResource = auditResource) {
+    setAuditLoading(true);
+    setError(null);
+    try {
+      const page = await client.listAuditEvents({
+        action: nextAction === "all" ? undefined : nextAction,
+        resourceType: nextResource === "all" ? undefined : nextResource,
+        cursor: cursor ?? undefined,
+        limit: 25,
+      });
+      startTransition(() => setAuditEvents(current => cursor ? [...current, ...page.items] : page.items));
+      setAuditCursor(page.nextCursor);
+      if (!cursor) setSelectedAudit(null);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
+  function showView(nextView: "documentTypes" | "administrators" | "audit") {
     setView(nextView);
     setMobileNav(false);
     setSelected(null);
     if (nextView === "administrators" && members.length === 0) void loadMembers();
+    if (nextView === "audit" && auditEvents.length === 0) void loadAudit();
   }
 
   async function createType(event: FormEvent) {
@@ -243,6 +295,7 @@ function AdminApp() {
     <nav aria-label="管理导航">
       <button className={`nav-item ${view === "documentTypes" ? "active" : ""}`} type="button" onClick={() => showView("documentTypes")}><BookOpenText size={17} />文档类型</button>
       <button className={`nav-item ${view === "administrators" ? "active" : ""}`} type="button" onClick={() => showView("administrators")}><Users size={17} />管理员</button>
+      <button className={`nav-item ${view === "audit" ? "active" : ""}`} type="button" onClick={() => showView("audit")}><ScrollText size={17} />审计</button>
     </nav>
     <div className="account">
       <div className="avatar" aria-hidden="true">{session?.email.slice(0, 1).toUpperCase() || "U"}</div>
@@ -297,7 +350,7 @@ function AdminApp() {
             </> : <div className="detail-placeholder"><FileText size={24} /><span>选择一行查看完整配置</span></div>}
           </aside>
         </section>
-      </> : <>
+      </> : view === "administrators" ? <>
         <section className="page-heading">
           <div><p className="eyebrow">ACCESS CONTROL</p><h1>管理员</h1><p>管理可登录 UniDocs 管理控制台的 Google 账户。</p></div>
           <button className="primary-button" type="button" onClick={() => setAddMemberOpen(true)}><UserPlus size={17} />添加管理员</button>
@@ -320,6 +373,42 @@ function AdminApp() {
               {membersLoading && members.length === 0 && <div className="empty-state"><LoaderCircle className="spin" size={26} /><strong>正在读取管理员</strong></div>}
             </div>
           </div>
+        </section>
+      </> : <>
+        <section className="page-heading">
+          <div><p className="eyebrow">CONTROL PLANE HISTORY</p><h1>审计</h1><p>查看管理员控制面的不可变操作记录。</p></div>
+          <button className="icon-button bordered" type="button" onClick={() => void loadAudit()} title="刷新" aria-label="刷新审计"><RefreshCw className={auditLoading ? "spin" : ""} size={17} /></button>
+        </section>
+        <section className="toolbar" aria-label="审计筛选">
+          <label className="select-control"><span>动作</span><select aria-label="审计动作" value={auditAction} onChange={event => { const value = event.target.value as typeof auditAction; setAuditAction(value); void loadAudit(null, value, auditResource); }}><option value="all">全部动作</option>{[...AdministratorMemberAuditActions, ...DocumentTypeAuditActions].map(action => <option key={action} value={action}>{auditActionLabel(action)}</option>)}</select></label>
+          <label className="select-control"><span>资源</span><select aria-label="审计资源" value={auditResource} onChange={event => { const value = event.target.value as typeof auditResource; setAuditResource(value); void loadAudit(null, auditAction, value); }}><option value="all">全部资源</option>{Object.entries(resourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        </section>
+        {error && <div className="error-banner" role="alert"><AlertCircle size={18} /><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label="关闭错误"><X size={16} /></button></div>}
+        <section className="workspace audit-workspace">
+          <div className="table-region">
+            <div className="table-meta"><span>{auditLoading && auditEvents.length === 0 ? "正在同步" : `${auditEvents.length} 条事件`}</span><span>按时间倒序</span></div>
+            <div className="table-scroll">
+              <table className="audit-table"><thead><tr><th>时间</th><th>动作</th><th>资源</th><th>操作者</th><th><span className="sr-only">详情</span></th></tr></thead>
+                <tbody>{auditEvents.map(event => <tr key={event.auditEventId} className={selectedAudit?.auditEventId === event.auditEventId ? "selected-row" : ""} onClick={() => setSelectedAudit(event)}>
+                  <td><time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString("zh-CN")}</time></td>
+                  <td><strong>{auditActionLabel(event.action)}</strong><code>{event.action}</code></td>
+                  <td><strong>{resourceLabels[event.resourceType] ?? event.resourceType}</strong><code>{event.resourceId}</code></td>
+                  <td><code>{event.actorId}</code></td>
+                  <td><ChevronRight size={16} className="row-arrow" /></td>
+                </tr>)}</tbody>
+              </table>
+              {!auditLoading && auditEvents.length === 0 && <div className="empty-state"><ScrollText size={28} /><strong>没有匹配的审计事件</strong><span>调整筛选条件后重试。</span></div>}
+              {auditLoading && auditEvents.length === 0 && <div className="empty-state"><LoaderCircle className="spin" size={26} /><strong>正在读取审计事件</strong></div>}
+              {auditCursor && <div className="load-more"><button className="secondary-button" type="button" disabled={auditLoading} onClick={() => void loadAudit(auditCursor)}>{auditLoading ? <LoaderCircle className="spin" size={16} /> : null}加载更多</button></div>}
+            </div>
+          </div>
+          <aside className={`detail-panel ${selectedAudit ? "open" : ""}`} aria-label="审计事件详情">
+            {selectedAudit ? <>
+              <div className="detail-header"><div><span>事件详情</span><h2>{auditActionLabel(selectedAudit.action)}</h2><code>{selectedAudit.auditEventId}</code></div><button className="icon-button" type="button" onClick={() => setSelectedAudit(null)} aria-label="关闭详情"><X size={17} /></button></div>
+              <dl className="detail-list audit-detail"><div><dt>时间</dt><dd>{new Date(selectedAudit.occurredAt).toLocaleString("zh-CN")}</dd></div><div><dt>Request ID</dt><dd><code>{selectedAudit.requestId}</code></dd></div><div><dt>操作者</dt><dd><code>{selectedAudit.actorId}</code></dd></div><div><dt>资源</dt><dd><code>{selectedAudit.resourceType}/{selectedAudit.resourceId}</code></dd></div><div><dt>文档类型</dt><dd>{selectedAudit.documentType ?? "—"}</dd></div><div><dt>原因</dt><dd>{selectedAudit.reason ?? "—"}</dd></div></dl>
+              {selectedAudit.details !== undefined && <div className="audit-details-json"><strong>详情</strong><pre>{JSON.stringify(selectedAudit.details, null, 2)}</pre></div>}
+            </> : <div className="detail-placeholder"><ScrollText size={24} /><span>选择一条事件查看详情</span></div>}
+          </aside>
         </section>
       </>}
     </main>

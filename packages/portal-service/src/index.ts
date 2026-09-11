@@ -13,3 +13,5 @@ export { AdminOperationError, createDocumentTypeService } from "./admin/document
 export type { DocumentTypeCreateCommand, DocumentTypeRepository, DocumentTypeUpdateCommand } from "./admin/document-types.js";
 export { AdministratorOperationError, createAdministratorService } from "./admin/administrators.js";
 export type { AdministratorAddCommand, AdministratorRemoveCommand, AdministratorRepository } from "./admin/administrators.js";
+export { AuditOperationError, createAuditEventService } from "./admin/audit-events.js";
+export type { AuditEventRepository } from "./admin/audit-events.js";

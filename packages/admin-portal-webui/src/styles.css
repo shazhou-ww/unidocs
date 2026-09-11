@@ -976,6 +976,80 @@ tbody tr.selected-row {
   display: block;
 }
 
+.audit-workspace:has(.detail-panel.open) {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+}
+
+.audit-table th:first-child {
+  width: 170px;
+}
+
+.audit-table th:nth-child(2) {
+  width: 210px;
+}
+
+.audit-table th:nth-child(3) {
+  width: 32%;
+}
+
+.audit-table th:nth-child(4) {
+  width: 26%;
+}
+
+.audit-table th:last-child {
+  width: 38px;
+}
+
+.audit-table td strong,
+.audit-table td code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-table td strong {
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.audit-table td code {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+.audit-detail dd code {
+  overflow-wrap: anywhere;
+}
+
+.audit-details-json {
+  min-width: 280px;
+  padding: 8px 20px 20px;
+}
+
+.audit-details-json>strong {
+  font-size: 10px;
+}
+
+.audit-details-json pre {
+  max-height: 240px;
+  margin: 8px 0 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #f5f7f4;
+  font: 9px/1.6 "Cascadia Mono", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .members-workspace .table-meta {
   height: 48px;
 }

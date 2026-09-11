@@ -7,6 +7,8 @@ import {
   type DocumentTypeMutationResult,
   type DocumentTypeRegistration,
   type ListAdministratorMembersResponse,
+  type ListAdminAuditEventsQuery,
+  type ListAdminAuditEventsResponse,
   type ListDocumentTypesQuery,
   type ListDocumentTypesResponse,
   type UpdateDocumentTypeRequest,
@@ -39,6 +41,7 @@ export interface AdminPortalClient {
   getAdministrator(adminId: string): Promise<AdministratorMemberRecord>;
   addAdministrator(body: AddAdministratorMemberRequest, idempotencyKey?: string): Promise<AdministratorMemberMutationResult>;
   removeAdministrator(adminId: string, ifMatch: string, idempotencyKey?: string): Promise<void>;
+  listAuditEvents(query?: ListAdminAuditEventsQuery): Promise<ListAdminAuditEventsResponse>;
 }
 
 export interface AdminPortalClientConfig {
@@ -120,5 +123,18 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
     removeAdministrator: (adminId, ifMatch, idempotencyKey = createIdempotencyKey()) => request<void>(`${AdminApiV1BasePath}/administrators/${encodeURIComponent(adminId)}`, {
       method: "DELETE", headers: mutationHeaders({ "idempotency-key": idempotencyKey, "if-match": ifMatch }),
     }),
+    listAuditEvents(query = {}) {
+      const params = new URLSearchParams();
+      if (query.actorId !== undefined) params.set("actorId", query.actorId);
+      if (query.action !== undefined) params.set("action", query.action);
+      if (query.resourceType !== undefined) params.set("resourceType", query.resourceType);
+      if (query.documentType !== undefined) params.set("documentType", query.documentType);
+      if (query.occurredFrom !== undefined) params.set("occurredFrom", query.occurredFrom);
+      if (query.occurredTo !== undefined) params.set("occurredTo", query.occurredTo);
+      if (query.limit !== undefined) params.set("limit", String(query.limit));
+      if (query.cursor !== undefined) params.set("cursor", query.cursor);
+      const encoded = params.toString();
+      return request<ListAdminAuditEventsResponse>(`${AdminApiV1BasePath}/audit-events${encoded ? `?${encoded}` : ""}`);
+    },
   };
 }

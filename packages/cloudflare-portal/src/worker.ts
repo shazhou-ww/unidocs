@@ -6,6 +6,8 @@ import { D1DocumentTypeRepository } from "./document-types-repository.js";
 import { serveAdminWebUi } from "./static-assets.js";
 import { createAdministratorsHttp } from "./administrators-http.js";
 import { D1AdministratorRepository } from "./administrators-repository.js";
+import { createAuditEventsHttp } from "./audit-events-http.js";
+import { D1AuditEventRepository } from "./audit-events-repository.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -18,10 +20,15 @@ export default {
       const repository = new D1PortalAuthRepository(env.DB);
       const documentTypesHttp = createDocumentTypesHttp(new D1DocumentTypeRepository(env.DB));
       const administratorsHttp = createAdministratorsHttp(new D1AdministratorRepository(env.DB));
+      const auditEventsHttp = createAuditEventsHttp(new D1AuditEventRepository(env.DB));
       const response = await createPortalBff(config, repository, {
         bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null,
-        adminApi: (apiRequest, admin, requestId) => new URL(apiRequest.url).pathname.startsWith("/admin/api/v1/administrators")
-          ? administratorsHttp(apiRequest, admin, requestId) : documentTypesHttp(apiRequest, admin, requestId),
+        adminApi: (apiRequest, admin, requestId) => {
+          const path = new URL(apiRequest.url).pathname;
+          if (path.startsWith("/admin/api/v1/administrators")) return administratorsHttp(apiRequest, admin, requestId);
+          if (path === "/admin/api/v1/audit-events") return auditEventsHttp(apiRequest, admin, requestId);
+          return documentTypesHttp(apiRequest, admin, requestId);
+        },
         adminUi: serveAdminWebUi
       })(request);
       console.log(JSON.stringify({ event: "portal_request", requestId: response.headers.get("X-Request-ID"), path: new URL(request.url).pathname, status: response.status }));

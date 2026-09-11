@@ -6,7 +6,9 @@ import { D1DocumentTypeRepository } from "../../../packages/cloudflare-portal/sr
 import { D1AdministratorRepository } from "../../../packages/cloudflare-portal/src/administrators-repository.ts";
 import { createDocumentTypesHttp } from "../../../packages/cloudflare-portal/src/document-types-http.ts";
 import { createAdministratorsHttp } from "../../../packages/cloudflare-portal/src/administrators-http.ts";
-import { createAdministratorService, createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
+import { D1AuditEventRepository } from "../../../packages/cloudflare-portal/src/audit-events-repository.ts";
+import { createAuditEventsHttp } from "../../../packages/cloudflare-portal/src/audit-events-http.ts";
+import { createAdministratorService, createAuditEventService, createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
 import { googleIdentityFromConfirmedLogin } from "../../../packages/portal-service/src/index.ts";
 import { createPortalBff } from "../../../packages/cloudflare-portal/src/bff.ts";
 import { portalGoogleConfigFromGateway } from "../../../packages/cloudflare-portal/src/google-config.ts";
@@ -52,7 +54,7 @@ async function documentTypes() {
 async function administrators() {
   const setup = await documentTypes();
   const members = new D1AdministratorRepository(database, () => now);
-  return { ...setup, members, memberService: createAdministratorService(members) };
+  return { ...setup, members, memberService: createAdministratorService(members, { now: () => new Date(now * 1000) }) };
 }
 
 test("administrator HTTP endpoints add, replay, read and list an unbound member", async () => {
@@ -133,7 +135,7 @@ test("concurrent mutual administrator removal leaves one bound administrator and
   const secondContext = { memberId: secondIssued.memberId, identity: secondIdentity, transport: "session", sessionHash: secondIssued.session.sessionHash };
   const secondRecord = await memberService.get(firstContext, added.adminId);
   const firstRecord = await memberService.get(secondContext, firstContext.memberId);
-  const secondService = createAdministratorService(members);
+  const secondService = createAdministratorService(members, { now: () => new Date(now * 1000) });
   const results = await Promise.allSettled([
     memberService.remove(firstContext, secondRecord.adminId, "remove-second-mutual", secondRecord.etag, "remove-second-mutual"),
     secondService.remove(secondContext, firstRecord.adminId, "remove-first-mutual", firstRecord.etag, "remove-first-mutual"),
@@ -142,6 +144,39 @@ test("concurrent mutual administrator removal leaves one bound administrator and
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators WHERE active = 1 AND subject IS NOT NULL").first("count")).toBe(1);
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_sessions").first("count")).toBe(1);
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.removed'").first("count")).toBe(1);
+}, 30_000);
+
+test("audit events filter and paginate same-second rows without gaps or cursor reuse", async () => {
+  const { context, issued, memberService } = await administrators();
+  await memberService.add(context, { email: "audit-one@example.com" }, "audit-one", "request-one");
+  await memberService.add(context, { email: "audit-two@example.com" }, "audit-two", "request-two");
+  await memberService.add(context, { email: "audit-three@example.com" }, "audit-three", "request-three");
+  const audits = new D1AuditEventRepository(database, () => now);
+  const service = createAuditEventService(audits);
+  const query = { action: "administrator.added", resourceType: "administrator", limit: 2 };
+  const first = await service.list(context, query);
+  expect(first.items).toHaveLength(2);
+  expect(first.nextCursor).toEqual(expect.any(String));
+  const second = await service.list(context, { ...query, cursor: first.nextCursor });
+  expect(second.items).toHaveLength(1);
+  expect(second.nextCursor).toBeNull();
+  expect(new Set([...first.items, ...second.items].map(event => event.auditEventId))).toHaveLength(3);
+  expect([...first.items, ...second.items].map(event => event.requestId).sort()).toEqual(["request-one", "request-three", "request-two"]);
+  await expect(service.list(context, { ...query, actorId: "different", cursor: first.nextCursor })).rejects.toMatchObject({ code: "invalid_request" });
+  const boundary = new Date(now * 1000).toISOString();
+  expect((await service.list(context, { action: "administrator.added", occurredTo: boundary })).items).toEqual([]);
+  expect((await service.list(context, { action: "administrator.added", occurredFrom: boundary })).items).toHaveLength(3);
+
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createAuditEventsHttp(audits) });
+  const base = "https://portal.test/admin/api/v1/audit-events";
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  expect((await handle(new Request(base))).status).toBe(401);
+  const response = await handle(new Request(`${base}?action=administrator.added&resourceType=administrator&limit=2`, { headers: { cookie } }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ items: [{ action: "administrator.added" }, { action: "administrator.added" }], nextCursor: expect.any(String) });
+  expect((await handle(new Request(`${base}?limit=1&limit=2`, { headers: { cookie } }))).status).toBe(400);
+  expect((await handle(new Request(`${base}?unknown=value`, { headers: { cookie } }))).status).toBe(400);
 }, 30_000);
 
 test("contract HTTP endpoints create/read/list real drafts with authentication, CSRF and retry errors", async () => {

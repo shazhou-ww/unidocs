@@ -6,6 +6,15 @@
 
 ## 当前进展与决策
 
+### Admin audit 查询闭环（2026-09-11）
+
+已上线 `listAdminAuditEvents`，Admin v1 完整 operation 总数增至 **8/26**；生产 Worker 版本 `e3d9cdf3-886b-4117-809f-a383fa5761c6`。WebUI 新增“审计”导航、动作/资源筛选、反向时间列表、cursor 加载更多和事件详情；详情展示 event/request/actor/resource identity、document type、reason 与结构化 details。
+
+- cloud-neutral service 严格验证 protocol query、长度预算和时间范围；D1 adapter 逐请求验证当前管理员/session，按 `(occurred_at DESC, audit_event_id DESC)` 稳定分页。cursor 绑定 actor/action/resource/document type/time 全部筛选条件，换筛选后重放 cursor 返回 400。
+- 同秒事件用复合 cursor 比较，真实 D1 测试固定跨页无丢失、无重复；`occurredFrom` 为包含下界，`occurredTo` 为排除上界。每条数据库行在返回前经过 `AdminAuditEventSchema` 验证，`details_json` 只在存在时解析为公开 details。
+- HTTP 拒绝重复/未知 query 和非法 limit，复用 oRPC/OpenAPI contract，不另建兼容 API。Admin client 编码全部八个筛选/分页字段；任意 401 继续进入统一 session-invalid UI。
+- 验证：portal-service 168 个测试、Admin client 7 个 transport tests、WebUI 10 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 25 个集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产匿名 audit API 为 401；D1 回读现有 10 条事件、5 种动作，未产生测试 mutation。共享浏览器 session 已过期，等待用户重新登录进行 WebUI 人工验收。
+
 ### 管理员移除闭环（2026-09-11）
 
 已上线 `removeAdministratorMember`，Admin v1 完整 operation 总数增至 **7/26**；生产 Worker 版本 `036dcee4-ad56-46b5-86e8-43614357e74a`。WebUI 管理员表只对非当前成员显示移除操作，确认框明确目标邮箱和 session 撤销后果；部署与 smoke 不自动删除任何生产成员，需由真人在 WebUI 确认。
@@ -302,7 +311,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 3：文档类型与 Document Contract
 
-- 当前进度：本 Phase 3/7 个 operation、全部 Admin v1 7/26 个 operation 已上线。
+- 当前进度：本 Phase 3/7 个 operation、全部 Admin v1 8/26 个 operation 已上线。
 - [x] 实现并上线 register/list/get document type，使用真实 service/D1/oRPC handler，涵盖鉴权、CSRF、幂等、审计及筛选分页。
 - [ ] 实现 PATCH document type，包括并发 If-Match、候选绑定及启用条件。
 - [ ] 实现 paired contract append/list/get。
@@ -333,7 +342,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [ ] 实现 Operator list/get/metadata patch。
 - [x] 实现管理员 bootstrap/list/get/add/remove 的真实 application service 与 adapter。
 - [x] 在真实成员 mutation 中实现不可删除自身/最后管理员约束，并以真实 D1 并发互删测试固定。
-- [ ] 实现可过滤、稳定 cursor 分页的 Admin audit。
+- [x] 实现可过滤、稳定 cursor 分页的 Admin audit，并接入真实 D1、HTTP、client 与 WebUI 详情。
 
 - [ ] **退出条件**：剩余 11 个 operation 通过；SSRF、过期 validation、成员竞态和审计过滤测试通过，26 个 operation 全部有真实 handler。
 
@@ -353,15 +362,16 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 用户已验收新策略下真实 Google 登录成功；记录本地登录确认，不声称近期密码/MFA 验证。
 - [x] 通过正式 Worker adapter 暴露 document type create/list/get 三个 oRPC/OpenAPI handler，限制同源 cookie 访问并设置安全 headers。
 - [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
-- [ ] 暴露其余 19 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
+- [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
+- [ ] 暴露其余 18 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。
 
 ### Phase 7：Admin client 与真实 WebUI
 
-- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update 与 administrator list/get/add/remove transport。
-- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；文档类型列表、筛选、详情、创建和管理员 list/add/remove MVP 已上线，其余页面待实现。
+- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、administrator list/get/add/remove 与 audit list transport。
+- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；文档类型列表、筛选、详情、创建、管理员 list/add/remove 和 audit list/detail MVP 已上线，其余页面待实现。
 - [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用 loading/empty/error、公开登录/授权拒绝/session 检查状态与稳定错误展示，冲突恢复和上传状态待实现。
 - [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。

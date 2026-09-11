@@ -70,6 +70,30 @@ test("confirms removal of another administrator with its current ETag", async ()
   vi.unstubAllGlobals();
 });
 
+test("filters, paginates, and opens audit event details", async () => {
+  const first = { auditEventId: "event-2", actorId: "admin", action: "administrator.added", resourceType: "administrator", resourceId: "member", documentType: null, occurredAt: "2026-09-11T01:00:00.000Z", requestId: "request-2", reason: null };
+  const second = { ...first, auditEventId: "event-1", action: "administrator.bootstrap", resourceId: "admin", occurredAt: "2026-09-11T00:00:00.000Z", requestId: "request-1" };
+  const fetchMock = vi.fn<typeof fetch>(async input => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.includes("/audit-events") && url.includes("cursor=next")) return Response.json({ items: [second], nextCursor: null });
+    if (url.includes("/audit-events")) return Response.json({ items: [first], nextCursor: "next" });
+    return Response.json({ items: [], nextCursor: null });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: "审计" }));
+  const firstRow = await screen.findByRole("row", { name: /administrator\.added/ });
+  fireEvent.click(firstRow);
+  expect(screen.getByRole("complementary", { name: "审计事件详情" })).toHaveTextContent("request-2");
+  fireEvent.change(screen.getByRole("combobox", { name: "审计资源" }), { target: { value: "administrator" } });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("resourceType=administrator"), expect.anything()));
+  fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+  expect(await screen.findByRole("row", { name: /administrator\.bootstrap/ })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("cursor=next"), expect.anything());
+  vi.unstubAllGlobals();
+});
+
 test("renders a useful access denial only after the session probe fails", async () => {
   window.history.replaceState({}, "", "/admin/access-denied?code=forbidden&requestId=request-1");
   let rejectSession!: (reason: Error) => void;
