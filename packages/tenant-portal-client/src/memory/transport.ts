@@ -11,6 +11,7 @@ import {
   createMemoryStore,
 } from "./store.js";
 import type { MemorySeed } from "./store.js";
+import { createScriptedAgent } from "./agent.js";
 
 type Handler = (store: MemoryStore, request: PlatformRequest, params: readonly string[]) => unknown;
 
@@ -117,8 +118,11 @@ function apiError(code: string, message: string): ApiError {
 export function createMemoryTransport(options: {
   store?: MemoryStore;
   seed?: MemorySeed;
+  agent?: { autoRun?: boolean; respond?: Parameters<typeof createScriptedAgent>[0]["respond"] };
 } = {}): PlatformTransport {
   const store = options.store ?? createMemoryStore(options.seed);
+  const agent = createScriptedAgent({ store, respond: options.agent?.respond });
+  const autoRun = options.agent?.autoRun ?? false;
 
   return async (request: PlatformRequest): Promise<PlatformResponse> => {
     for (const route of memoryRoutes) {
@@ -128,7 +132,9 @@ export function createMemoryTransport(options: {
 
       const params = match.slice(1).map((value) => decodeURIComponent(value));
       try {
-        return { ok: true, data: route.handle(store, request, params) };
+        const data = route.handle(store, request, params);
+        if (autoRun && request.method === "POST") agent.runPending();
+        return { ok: true, data };
       } catch (cause) {
         if (cause instanceof NotFound) return { ok: false, error: apiError("not_found", cause.message) };
         if (cause instanceof InvalidRequest) return { ok: false, error: apiError("invalid_request", cause.message) };

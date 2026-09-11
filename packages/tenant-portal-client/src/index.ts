@@ -16,3 +16,9 @@ export type {
   MarkdownSnapshot,
   MarkdownTextRangePayload,
 } from "./doctypes/markdown.js";
+export { createMemoryStore, isOpen } from "./memory/store.js";
+export type { MemorySeed, MemoryStore, SeedDocument, SeedPing, SeedPong, SeedThread } from "./memory/store.js";
+export { createMemoryTransport } from "./memory/transport.js";
+export { createScriptedAgent } from "./memory/agent.js";
+export type { AgentContext, AgentReply, ScriptedAgent } from "./memory/agent.js";
+export { rangeOf, sampleSeed } from "./memory/seed.js";
