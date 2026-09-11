@@ -1468,3 +1468,63 @@ These are deliberately not in this plan, and no task should start them:
 - **Tenant sessions and the `__Host-unidocs_tenant` cookie.** No tenant login exists yet; `TenantContext` is the seam it will fill.
 - **A real `DocumentLocationValidator`.** No SValue schema validator exists in the repository yet. The port is declared so the adapter must supply one.
 - **Agent submissions (§9).** Until they exist, no version can be created, so versions, threads and comments have nothing real to operate on. That is expected: this plan fixes the business rules so the data plane is ready when submissions land.
+
+
+---
+
+## Follow-ups left open when this plan landed
+
+Recorded here because the execution workspace that held them is deleted once the
+branch is done. None blocks the business core; all four were adjudicated during
+the final review and deliberately not fixed.
+
+- **`threads.ts` — the location-payload canonicalization guard is unpinned.** Removing
+  the `guardCanonicalization` wrap around the payload measurement leaves the whole
+  suite green, because both lone-surrogate tests pass `location: null`. The code is
+  correct; one test closes it. This is the same gap class the final review raised
+  against five other operations, reintroduced by the fix for a different one.
+- **`guardCanonicalization` converts any `TypeError`.** A genuine programming error
+  inside the guarded closure reaches the tenant as `invalid_request` rather than a
+  fault. The closures are single expressions over Zod-parsed plain data, so the blast
+  radius is small; the clean fix is a dedicated error class thrown by
+  `canonicalJson` in `src/identity.ts`, which belongs with that module.
+- **`versions.ts` — `await snapshot.body.cancel()` is itself unguarded.** A rejecting
+  cancel (a locked stream rejects with a `TypeError`) makes `getSnapshot` reject with
+  that instead of `content_unavailable`, turning a declared 409 into an uncoded 500 on
+  the path the cancel was added to clean up. `.catch(() => {})` makes it best-effort.
+- **Unguarded canonicalization outside `tenant/`.** `src/admin/document-types.ts`,
+  `src/bundles/manifest.ts` and `src/operators/discovery.ts` all canonicalize without
+  the guard. Pre-existing, and out of this plan's scope.
+
+## What the storage adapter must know
+
+Accumulated while writing the business core; none of it is expressible in the
+repository interfaces themselves.
+
+- **Authorization lives in the repository.** Every service passes `TenantContext`
+  through and compares only the path tenant against the credential tenant. Whether a
+  principal may read or write a given document is the repository's decision, the way
+  `D1DocumentTypeRepository.authorize()` already works on the administrator side.
+  Settle the `DOCUMENT_GRANT` role vocabulary before the tables freeze.
+- **Scope every idempotency key by its path.** The fingerprint identifies the request
+  body, not the target: `createDocument`'s omits `tenantId`, `createThread`'s omits
+  `documentId`. The commands carry those ids, so the key must be scoped by
+  `(tenantId, principal, operation, documentId[, threadId])` — the fingerprint only
+  detects the same key reused with a different body.
+- **`document_type_disabled` and `createDocument`'s declared 413 are yours.** Neither
+  is knowable in the business core: the enabled flag is storage state on the
+  administrator registration, and the 413 is reserved for a per-tenant document quota.
+- **Coerce query strings.** `PaginationQuerySchema` types `limit` as a number while
+  HTTP delivers a string; without coercion every paged GET returns 400. Bodies are
+  validated exactly (unknown fields rejected); query strings are lenient (unknown keys
+  stripped).
+- **Two error classes reach your mapper.** `TenantAccessError` (`unauthorized`,
+  `forbidden`) comes from the authentication boundary and `TenantOperationError` from
+  the services; both can produce `forbidden` with the same message. Anything else
+  reaching the mapper is a fault, not a tenant error.
+- **`CasCapabilityGrant.expiresAt` is a Unix timestamp in seconds.** The service's
+  default clock assumes it, and no test would catch an issuer that returned
+  milliseconds.
+- **Repository-minted ids must be printable ASCII no longer than 128 bytes.** The
+  services run `requireIdentifier` on `documentId` and `threadId` when reading, so an
+  id containing padding or braces would round-trip on write and fail on read.
