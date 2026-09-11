@@ -6,6 +6,16 @@
 
 ## 当前进展与决策
 
+### Type Card bundle 阶段启动约束（2026-09-11）
+
+下一阶段推进 Type Card bundle upload/list/get/metadata patch；当前 Portal 尚未配置 R2 binding 或独立 bundle origin，因此不能把已有 ZIP/manifest 校验描述为完整上传。阶段先提交计划 checkpoint，再实现 R2 不可变存储、D1 reservation/record、API/client/WebUI，最后按“创建/绑定 R2 → migration → Worker → smoke”顺序部署。当前完整 operation 数保持 **11/26**。
+
+- 使用独立 Portal R2 bucket，不复用 Gateway/CAS bucket。对象 key 由 canonical bundle content hash 派生，canonical manifest 字节与已验证资源字节不可变；D1 是 bundle metadata、identity、reservation 和 selection 的权威，R2 不充当关系数据库。
+- 上传必须复用现有有界 ZIP 与 Type Card manifest 检查，补齐当前发布门禁：实际 PNG 解码/五尺寸验证、SVG 安全规则、sample thumbnail 实际图片验证、MIME allowlist 和可执行资源拒绝。验证通过不等于发布成功；R2 写失败或 D1 提交失败需有显式 reservation/cleanup，不能伪装成单事务。
+- stable `bundleUrl` 使用 Portal 控制的独立 bundle ingress；在独立 hostname 就绪前不得返回 `/admin` cookie origin 下可执行的不受信任内容。Type Card 仅允许受控图片/manifest 资源，响应固定 MIME、nosniff、immutable cache 和禁止 HTML/script 执行策略。
+- UI 继续参考 Admin mock 的“类型卡片包”tab：候选摘要、上传并验证、manifest 协议/语言/图标/thumbnail 结果、多语言卡片预览、metadata 编辑和后续选择入口；所有数据来自真实 API，不复制 mock candidate state。页面/tab URL 必须继续 refresh-safe。
+- metadata PATCH 只改变 name/description 和 ETag，不改变 content hash、manifest、size 或 bundle URL；upload/patch 继续遵守 CSRF、Idempotency-Key/If-Match、事务内权限复查与原子 audit。重复 content 不创建第二份对象或 candidate。
+
 ### Document Contract 纵向闭环（2026-09-11）
 
 已上线 `appendDocumentContract`、`listDocumentContracts`、`getDocumentContract`，Admin v1 完整 operation 总数增至 **11/26**，Phase 3 进度为 **6/7**；生产 Worker 版本 `4608b2d3-fad7-483f-baf7-c69d0974290b`。独立 Portal D1 已应用 `0003_document_contracts.sql`，为 document type 增加 `last_contract_idx` 并建立不可变 paired contract 表/倒序分页索引；migration 后现有 Markdown registration 保持 latest=null、idx=-1，contract 表为空。
