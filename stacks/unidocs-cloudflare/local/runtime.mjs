@@ -42,6 +42,42 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 // own esbuild bundlers so this table is kept in one place.
 const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 
+/**
+ * Entries that run under `compatibilityFlags: ["nodejs_compat"]` — see the
+ * `serviceWorker` and `serviceWorkerConfigs` worker configs in doc-types.mjs.
+ * Only these may leave `node:*` specifiers unbundled.
+ */
+const NODE_COMPAT_ENTRY_PREFIXES = [
+  "unicas-packages/service-cloudflare/",
+  "packages/cloudflare-portal/",
+];
+
+/**
+ * The esbuild `external` list for one bundle entry.
+ *
+ * Two different reasons, deliberately not one list:
+ *
+ * - `cloudflare:workers` is a workerd *built-in* module. It resolves at
+ *   runtime on every worker, with no compatibility flag involved, so esbuild
+ *   must leave it alone for every entry — there is nothing to bundle and no
+ *   condition to check. Scoping it to a path list is what broke
+ *   `packages/cloudflare-gateway/src/worker.ts` (esbuild: `Could not resolve
+ *   "cloudflare:workers"`) the moment platform-document-do.ts started
+ *   importing `DurableObject` from it. The gateway is bundled on *every*
+ *   `pnpm dev`, so that one unresolved import took the entire local runtime
+ *   down, for every target. Keep this unconditional.
+ * - `node:*` is the opposite: workerd resolves those only under
+ *   `nodejs_compat`, so it stays scoped to the entries that declare that flag.
+ *   Externalizing it everywhere would turn a missing flag from a build error
+ *   into a runtime one. The portal needs it for `node:crypto`'s
+ *   `timingSafeEqual` (auth.ts).
+ */
+export function bundleExternals(entry) {
+  const path = entry.replaceAll("\\", "/");
+  const nodeCompat = NODE_COMPAT_ENTRY_PREFIXES.some(prefix => path.includes(prefix));
+  return nodeCompat ? ["cloudflare:workers", "node:*"] : ["cloudflare:workers"];
+}
+
 async function bundleWorker(entry, outfile) {
   await mkdir(dirname(outfile), { recursive: true });
   await esbuild.build({
@@ -58,15 +94,9 @@ async function bundleWorker(entry, outfile) {
     // packages/cloudflare-psd/wrangler.toml 的 [[rules]] type = "Data"。
     // 漏了这一项是构建期报错（esbuild 不认识 .ttf 扩展名），不是运行时静默失效。
     loader: { ".ttf": "binary", ".otf": "binary" },
-    // Both entries run under `compatibilityFlags: ["nodejs_compat"]` (see
-    // doc-types.mjs), so workerd resolves `node:*` specifiers itself at
-    // runtime — esbuild only needs to leave them alone rather than trying
-    // (and failing, on `platform: "browser"`) to bundle them. The portal
-    // needs this for `node:crypto`'s `timingSafeEqual` (auth.ts).
-    ...(entry.replaceAll("\\", "/").includes("unicas-packages/service-cloudflare/")
-      || entry.replaceAll("\\", "/").includes("packages/cloudflare-portal/")
-      ? { external: ["cloudflare:workers", "node:*"] }
-      : {}),
+    // See bundleExternals: `cloudflare:workers` for every entry, `node:*`
+    // only for the entries that declare `nodejs_compat`.
+    external: bundleExternals(entry),
     logOverride: { "empty-import-meta": "silent" },
   });
 }

@@ -15,9 +15,6 @@ import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runt
  */
 
 const PORTS = { gateway: 19187, admin: 19192, mockOidc: 19193, edge: 19194, portal: 19195 };
-// See portal-gateway-stub.ts — the real gateway entry does not bundle on this
-// branch for reasons unrelated to the portal.
-const GATEWAY_STUB = { "packages/cloudflare-gateway/src/worker.ts": "tests/integration/cloudflare/portal-gateway-stub.ts" };
 const BOOTSTRAP_EMAIL = "portal-bootstrap@example.test";
 
 /** Every table the portal's two committed migrations declare. */
@@ -71,7 +68,6 @@ describe("a fresh portal database", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath,
-      bundleEntryOverrides: GATEWAY_STUB,
     });
     db = await runtime.mf.getD1Database("DB", "unidocs-portal");
   }, 180_000);
@@ -143,7 +139,6 @@ describe("a second boot on the same portal database", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath,
-      bundleEntryOverrides: GATEWAY_STUB,
     });
     try {
       const db = await runtime.mf.getD1Database("DB", "unidocs-portal");
