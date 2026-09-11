@@ -28,6 +28,22 @@ function auditActionLabel(action: AdminAuditEvent["action"]) {
   return auditActionLabels[action] ?? action;
 }
 
+const auditActions = [...AdministratorMemberAuditActions, ...DocumentTypeAuditActions];
+
+function actionResource(action: AdminAuditEvent["action"]): AdminAuditEvent["resourceType"] {
+  if (action.startsWith("administrator.")) return "administrator";
+  if (action.startsWith("document_type.")) return "document_type";
+  if (action.startsWith("document_contract.")) return "document_contract";
+  if (action.startsWith("type_card_bundle.")) return "type_card_bundle";
+  if (action.startsWith("view_bundle.")) return "view_bundle";
+  if (action.startsWith("operator.validation_")) return "operator_validation";
+  return "operator";
+}
+
+function administratorName(email: string) {
+  return email.slice(0, email.lastIndexOf("@"));
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof AdminPortalClientError) {
     if (error.status === 401) return "登录已失效，请重新登录。";
@@ -225,12 +241,24 @@ function AdminApp() {
     }
   }
 
+  function actorMember(actorId: string) {
+    return members.find(member => member.adminId === actorId) ?? null;
+  }
+
+  function actorIdentity(actorId: string) {
+    const member = actorMember(actorId);
+    return member ? { name: administratorName(member.email), email: member.email } : null;
+  }
+
   function showView(nextView: "documentTypes" | "administrators" | "audit") {
     setView(nextView);
     setMobileNav(false);
     setSelected(null);
     if (nextView === "administrators" && members.length === 0) void loadMembers();
-    if (nextView === "audit" && auditEvents.length === 0) void loadAudit();
+    if (nextView === "audit") {
+      if (members.length === 0) void loadMembers();
+      if (auditEvents.length === 0) void loadAudit();
+    }
   }
 
   async function createType(event: FormEvent) {
@@ -380,8 +408,8 @@ function AdminApp() {
           <button className="icon-button bordered" type="button" onClick={() => void loadAudit()} title="刷新" aria-label="刷新审计"><RefreshCw className={auditLoading ? "spin" : ""} size={17} /></button>
         </section>
         <section className="toolbar" aria-label="审计筛选">
-          <label className="select-control"><span>动作</span><select aria-label="审计动作" value={auditAction} onChange={event => { const value = event.target.value as typeof auditAction; setAuditAction(value); void loadAudit(null, value, auditResource); }}><option value="all">全部动作</option>{[...AdministratorMemberAuditActions, ...DocumentTypeAuditActions].map(action => <option key={action} value={action}>{auditActionLabel(action)}</option>)}</select></label>
-          <label className="select-control"><span>资源</span><select aria-label="审计资源" value={auditResource} onChange={event => { const value = event.target.value as typeof auditResource; setAuditResource(value); void loadAudit(null, auditAction, value); }}><option value="all">全部资源</option>{Object.entries(resourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="select-control"><span>资源</span><select aria-label="审计资源" value={auditResource} onChange={event => { const value = event.target.value as typeof auditResource; const compatibleAction = auditAction === "all" || value === "all" || actionResource(auditAction) === value ? auditAction : "all"; setAuditResource(value); setAuditAction(compatibleAction); void loadAudit(null, compatibleAction, value); }}><option value="all">全部资源</option>{Object.entries(resourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="select-control"><span>动作</span><select aria-label="审计动作" value={auditAction} onChange={event => { const value = event.target.value as typeof auditAction; setAuditAction(value); void loadAudit(null, value, auditResource); }}><option value="all">全部动作</option>{auditActions.filter(action => auditResource === "all" || actionResource(action) === auditResource).map(action => <option key={action} value={action}>{auditActionLabel(action)}</option>)}</select></label>
         </section>
         {error && <div className="error-banner" role="alert"><AlertCircle size={18} /><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label="关闭错误"><X size={16} /></button></div>}
         <section className="workspace audit-workspace">
@@ -393,7 +421,7 @@ function AdminApp() {
                   <td><time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString("zh-CN")}</time></td>
                   <td><strong>{auditActionLabel(event.action)}</strong><code>{event.action}</code></td>
                   <td><strong>{resourceLabels[event.resourceType] ?? event.resourceType}</strong><code>{event.resourceId}</code></td>
-                  <td><code>{event.actorId}</code></td>
+                  <td>{actorIdentity(event.actorId) ? <span className="actor-identity"><strong>{actorIdentity(event.actorId)!.name}</strong><small>{actorIdentity(event.actorId)!.email}</small></span> : <code>{event.actorId}</code>}</td>
                   <td><ChevronRight size={16} className="row-arrow" /></td>
                 </tr>)}</tbody>
               </table>
@@ -405,7 +433,7 @@ function AdminApp() {
           <aside className={`detail-panel ${selectedAudit ? "open" : ""}`} aria-label="审计事件详情">
             {selectedAudit ? <>
               <div className="detail-header"><div><span>事件详情</span><h2>{auditActionLabel(selectedAudit.action)}</h2><code>{selectedAudit.auditEventId}</code></div><button className="icon-button" type="button" onClick={() => setSelectedAudit(null)} aria-label="关闭详情"><X size={17} /></button></div>
-              <dl className="detail-list audit-detail"><div><dt>时间</dt><dd>{new Date(selectedAudit.occurredAt).toLocaleString("zh-CN")}</dd></div><div><dt>Request ID</dt><dd><code>{selectedAudit.requestId}</code></dd></div><div><dt>操作者</dt><dd><code>{selectedAudit.actorId}</code></dd></div><div><dt>资源</dt><dd><code>{selectedAudit.resourceType}/{selectedAudit.resourceId}</code></dd></div><div><dt>文档类型</dt><dd>{selectedAudit.documentType ?? "—"}</dd></div><div><dt>原因</dt><dd>{selectedAudit.reason ?? "—"}</dd></div></dl>
+              <dl className="detail-list audit-detail"><div><dt>时间</dt><dd>{new Date(selectedAudit.occurredAt).toLocaleString("zh-CN")}</dd></div><div><dt>Request ID</dt><dd><code>{selectedAudit.requestId}</code></dd></div><div><dt>操作者</dt><dd>{actorIdentity(selectedAudit.actorId) ? <><strong>{actorIdentity(selectedAudit.actorId)!.name}</strong><small>{actorIdentity(selectedAudit.actorId)!.email}</small><code>{selectedAudit.actorId}</code></> : <code>{selectedAudit.actorId}</code>}</dd></div><div><dt>资源</dt><dd><code>{selectedAudit.resourceType}/{selectedAudit.resourceId}</code></dd></div><div><dt>文档类型</dt><dd>{selectedAudit.documentType ?? "—"}</dd></div><div><dt>原因</dt><dd>{selectedAudit.reason ?? "—"}</dd></div></dl>
               {selectedAudit.details !== undefined && <div className="audit-details-json"><strong>详情</strong><pre>{JSON.stringify(selectedAudit.details, null, 2)}</pre></div>}
             </> : <div className="detail-placeholder"><ScrollText size={24} /><span>选择一条事件查看详情</span></div>}
           </aside>

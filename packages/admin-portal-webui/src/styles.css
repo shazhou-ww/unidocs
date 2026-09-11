@@ -1018,6 +1018,36 @@ tbody tr.selected-row {
   font-size: 9px;
 }
 
+.actor-identity {
+  display: block;
+  min-width: 0;
+}
+
+.actor-identity strong,
+.actor-identity small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actor-identity strong {
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.actor-identity small,
+.audit-detail dd small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.audit-detail dd strong,
+.audit-detail dd small,
+.audit-detail dd code {
+  display: block;
+}
+
 .load-more {
   display: flex;
   justify-content: center;

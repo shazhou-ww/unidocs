@@ -76,6 +76,7 @@ test("filters, paginates, and opens audit event details", async () => {
   const fetchMock = vi.fn<typeof fetch>(async input => {
     const url = String(input);
     if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.includes("/administrators")) return Response.json({ items: [{ adminId: "admin", email: "lee.scott@example.com", bound: true, addedBy: "bootstrap", addedAt: "2026-09-11T00:00:00.000Z", etag: '"sha256-admin"', isSelf: true }], nextCursor: null });
     if (url.includes("/audit-events") && url.includes("cursor=next")) return Response.json({ items: [second], nextCursor: null });
     if (url.includes("/audit-events")) return Response.json({ items: [first], nextCursor: "next" });
     return Response.json({ items: [], nextCursor: null });
@@ -84,10 +85,22 @@ test("filters, paginates, and opens audit event details", async () => {
   render(<App />);
   fireEvent.click(screen.getByRole("button", { name: "审计" }));
   const firstRow = await screen.findByRole("row", { name: /administrator\.added/ });
+  expect(firstRow).toHaveTextContent("lee.scott");
+  expect(firstRow).toHaveTextContent("lee.scott@example.com");
   fireEvent.click(firstRow);
   expect(screen.getByRole("complementary", { name: "审计事件详情" })).toHaveTextContent("request-2");
+  expect(screen.getByRole("complementary", { name: "审计事件详情" })).toHaveTextContent("admin");
+  fireEvent.change(screen.getByRole("combobox", { name: "审计动作" }), { target: { value: "document_type.registered" } });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("action=document_type.registered"), expect.anything()));
   fireEvent.change(screen.getByRole("combobox", { name: "审计资源" }), { target: { value: "administrator" } });
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("resourceType=administrator"), expect.anything()));
+  const actionSelect = screen.getByRole("combobox", { name: "审计动作" }) as HTMLSelectElement;
+  expect(actionSelect.value).toBe("all");
+  const actionOptions = Array.from(actionSelect.options).map(option => option.value);
+  expect(actionOptions).toEqual(["all", "administrator.bootstrap", "administrator.bound", "administrator.added", "administrator.removed"]);
+  await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => {
+    const url = String(input);
+    return url.includes("resourceType=administrator") && !url.includes("action=");
+  })).toBe(true));
   fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
   expect(await screen.findByRole("row", { name: /administrator\.bootstrap/ })).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("cursor=next"), expect.anything());

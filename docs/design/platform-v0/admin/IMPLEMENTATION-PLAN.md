@@ -14,6 +14,7 @@
 - 同秒事件用复合 cursor 比较，真实 D1 测试固定跨页无丢失、无重复；`occurredFrom` 为包含下界，`occurredTo` 为排除上界。每条数据库行在返回前经过 `AdminAuditEventSchema` 验证，`details_json` 只在存在时解析为公开 details。
 - HTTP 拒绝重复/未知 query 和非法 limit，复用 oRPC/OpenAPI contract，不另建兼容 API。Admin client 编码全部八个筛选/分页字段；任意 401 继续进入统一 session-invalid UI。
 - 验证：portal-service 168 个测试、Admin client 7 个 transport tests、WebUI 10 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 25 个集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产匿名 audit API 为 401；D1 回读现有 10 条事件、5 种动作，未产生测试 mutation。共享浏览器 session 已过期，等待用户重新登录进行 WebUI 人工验收。
+- 审计 UX 后续迭代已部署为 `eeb9d73b-801a-4d78-bcf4-2f9e210cf0f5`：进入审计页时并行读取 active 管理员目录，actor 优先显示 email 本地部分作为可读名称和完整 email，详情保留 member UUID；已删除或无法解析的历史 actor 回退 UUID。筛选顺序调整为“资源 → 动作”，动作选项按资源类型一对多收窄，切换资源会清除不兼容动作并以新筛选重新查询。生产真实事件已验证显示 `shazhou.ww`/`shazhou.ww@gmail.com`，管理员资源只提供四个成员动作，桌面无横向溢出。
 
 ### 管理员移除闭环（2026-09-11）
 
