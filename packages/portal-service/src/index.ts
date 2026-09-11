@@ -13,3 +13,5 @@ export { AdminOperationError, createDocumentTypeService } from "./admin/document
 export type { DocumentTypeCreateCommand, DocumentTypeRepository } from "./admin/document-types.js";
 export { requireExactFields, requireIdempotencyKey, requireIdentifier, requirePagination, requireRecordIdx, requireTenantScope, TENANT_LIMITS, TenantAccessError, TenantOperationError } from "./tenant/access.js";
 export type { TenantContext, TenantOperationCode } from "./tenant/access.js";
+export { createTenantCatalogService } from "./tenant/catalog.js";
+export type { TenantCatalogRepository } from "./tenant/catalog.js";
