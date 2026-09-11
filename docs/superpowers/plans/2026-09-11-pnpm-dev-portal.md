@@ -29,6 +29,7 @@
 | `stacks/unidocs-cloudflare/local/services.mjs` | **New.** The portal component registry and the pure helpers that expand a selection into worker/frontend descriptors. Dependency-free. |
 | `stacks/unidocs-cloudflare/local/doc-types.mjs` | Gains `parseTargets`, which splits positional args into document types and service targets. `DOC_TYPES` itself is untouched. |
 | `stacks/unidocs-cloudflare/local/runtime.mjs` | Starts the selected service workers, applies the portal's D1 migrations, and reports their URLs. |
+| `scripts/workspace-aliases.mjs` | Gains the two entries the portal's bundle needs. |
 | `scripts/dev.mjs` | Routes the split selection to the two stacks; rejects service targets on Azure with a specific message. |
 | `packages/cloudflare-portal/src/google-config.ts` | Gains the local-development origin and issuer allowance. |
 | `tests/unit/scripts/services.test.mjs` | **New.** Registry expansion and argument splitting. |
@@ -386,6 +387,7 @@ misconfigured deployment can reach the allowance alone."
 **Files:**
 - Modify: `stacks/unidocs-cloudflare/local/doc-types.mjs` (`bundleTargets`, `resolvePorts`, `buildWorkers`)
 - Modify: `stacks/unidocs-cloudflare/local/runtime.mjs`
+- Modify: `scripts/workspace-aliases.mjs`
 - Test: `tests/unit/scripts/doc-types.test.mjs`
 
 **Interfaces:**
@@ -540,6 +542,21 @@ Call it once per selected component that declares migrations, in the same place 
 ```
 
 Use whatever the module already calls the repository root — `migrateSnapshotsDb` resolves `MIGRATIONS_DIR` from it, so the constant exists.
+
+**Register the portal's workspace aliases, or the bundle will fail at runtime rather than at build time.**
+
+`packages/cloudflare-portal/src/worker.ts` reaches `@unidocs/portal-service` (through `auth-repository.ts`) and `@unidocs/protocol-admin-portal` (through `document-types-http.ts`). Neither is in `scripts/workspace-aliases.mjs`. That table's own header explains the consequence: a missing entry is **not** a build failure — `packages: "external"` leaves the unaliased specifier as a bare import, and the worker fails with `ERR_MODULE_NOT_FOUND` only once it actually runs. `tests/unit/scripts/workspace-aliases.test.mjs` already fails for exactly these two, naming the importing files.
+
+Add to `WORKSPACE_PACKAGE_ENTRYPOINTS`, in the position matching the table's existing grouping:
+
+```js
+  "@unidocs/protocol-admin-portal": "packages/protocol-admin-portal/src/index.ts",
+  "@unidocs/portal-service": "packages/portal-service/src/index.ts",
+```
+
+Then run `pnpm exec vitest run tests/unit/scripts/workspace-aliases.test.mjs` and confirm those two cases now pass.
+
+**Four other cases in that file fail for reasons outside this plan** — `@unicas/admin-protocol/openapi.json` and `@unicas/tenant-protocol/openapi.json` (subpath imports from `packages/docs-webui`), `@unidocs/protocol-doctype` (imported by `packages/cloudflare-gateway`), and a second `@unidocs/protocol-admin-portal` case reported against `docs-webui`. The last one is fixed by the same entry you are adding. Leave the other three alone and say in your report whether they still fail; they belong to whoever added `docs-webui` and the gateway's snapshot compute.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
