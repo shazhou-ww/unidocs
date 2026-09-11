@@ -34,7 +34,7 @@ test("reuses Gateway Google credentials but keeps Portal origin, callback and se
 test.each([
   [{ GATEWAY_OIDC_CLIENT_ID: "" }, "Gateway Google OIDC client ID and secret are required"],
   [{ GATEWAY_OIDC_CLIENT_SECRET: "" }, "Gateway Google OIDC client ID and secret are required"],
-  [{ GATEWAY_OIDC_ISSUER: "https://untrusted.example" }, "Gateway requires the Google issuer"],
+  [{ GATEWAY_OIDC_ISSUER: "https://untrusted.example" }, "Portal requires the Google issuer"],
 ])("rejects missing or non-Google Gateway configuration without exposing credentials %#", (changed, message) => {
   expect(() => portalGoogleConfigFromGateway({ ...settings, ...changed }, "https://portal.example")).toThrow(message);
   try { portalGoogleConfigFromGateway({ ...settings, ...changed }, "https://portal.example"); } catch (error) {
@@ -62,12 +62,20 @@ test("accepts a loopback origin for local development, still with the Google iss
 // meant to fail on the origin could silently start passing on the issuer
 // instead. Each case below also names the guard that must fire.
 test.each([
-  ["a public origin over http", { ...settings }, "http://unidocs.shazhou.work", "Portal requires a canonical HTTPS origin, or a loopback origin in local development"],
-  ["a loopback-looking hostname that is not loopback", { ...settings }, "http://127.0.0.1.evil.test:8795", "Portal requires a canonical HTTPS origin, or a loopback origin in local development"],
-  ["a loopback origin with a path", { ...settings }, "http://127.0.0.1:8795/admin", "Portal requires a canonical origin"],
-  ["a loopback origin with a non-Google issuer", { ...settings, GATEWAY_OIDC_ISSUER: "http://accounts.example" }, "http://127.0.0.1:8795", "Gateway requires the Google issuer"],
-  ["a production origin with a loopback-looking issuer", { ...settings, GATEWAY_OIDC_ISSUER: "http://127.0.0.1:8793" }, "https://unidocs.shazhou.work", "Gateway requires the Google issuer"],
-])("refuses %s", (_label, override, origin, message) => {
-  expect(() => portalGoogleConfigFromGateway(override, origin)).toThrow(TypeError);
-  expect(() => portalGoogleConfigFromGateway(override, origin)).toThrow(message);
+  ["a public origin over http", "http://unidocs.shazhou.work", "Portal requires a canonical HTTPS origin, or a loopback origin for local development"],
+  ["a loopback-looking hostname that is not loopback", "http://127.0.0.1.evil.test:8795", "Portal requires a canonical HTTPS origin, or a loopback origin for local development"],
+  ["a loopback origin with a path", "http://127.0.0.1:8795/admin", "Portal requires a canonical origin"],
+  ["a loopback origin without a port", "http://127.0.0.1", "Portal requires a canonical HTTPS origin, or a loopback origin for local development"],
+])("refuses %s", (_label, origin, message) => {
+  expect(() => portalGoogleConfigFromGateway(settings, origin)).toThrow(TypeError);
+  expect(() => portalGoogleConfigFromGateway(settings, origin)).toThrow(message);
+});
+
+// The origin allowance is orthogonal to the issuer: a loopback origin does
+// not relax it, and a loopback-looking issuer does not smuggle itself in
+// through a production origin either.
+test("the issuer requirement is unchanged by the origin allowance", () => {
+  const wrongIssuer = { ...settings, GATEWAY_OIDC_ISSUER: "http://127.0.0.1:8793" };
+  expect(() => portalGoogleConfigFromGateway(wrongIssuer, "http://127.0.0.1:8795")).toThrow("Portal requires the Google issuer");
+  expect(() => portalGoogleConfigFromGateway(wrongIssuer, "https://unidocs.shazhou.work")).toThrow("Portal requires the Google issuer");
 });
