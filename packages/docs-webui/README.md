@@ -1,6 +1,6 @@
 # @unidocs/docs-webui
 
-Shared public product documentation portal. UniCAS guides and Admin/Tenant API references are published under `/unicas`; UniDocs Admin guides and the `@unidocs/protocol-admin` reference are published under `/unidocs`.
+Shared public product documentation portal. UniCAS guides and Admin/Tenant API references are published under `/unicas`; UniDocs Admin guides and the `@unidocs/protocol-admin-portal` reference are published under `/unidocs`.
 
 The package owns presentation only:
 

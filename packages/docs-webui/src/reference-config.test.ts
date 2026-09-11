@@ -31,10 +31,13 @@ describe("API reference presentation", () => {
     const sourceDocument = await admin!.loadDocument();
     expect(sourceDocument).not.toHaveProperty("x-tagGroups");
     expect(await prepareReference(admin!)).toHaveProperty("x-tagGroups", [
-      { name: "Document Type Configuration", tags: ["Document types", "Snapshot Contracts"] },
+      { name: "Document Type Configuration", tags: ["Document types", "Document Contracts"] },
       { name: "Presentation Bundles", tags: ["Type Card bundles", "View bundles"] },
       { name: "Processing", tags: ["Operators"] },
-      { name: "Administration", tags: ["Members"] },
+      { name: "Administration", tags: ["Members", "Audit"] },
     ]);
+    const paths = sourceDocument.paths as Record<string, unknown>;
+    expect(Object.keys(paths)).toHaveLength(15);
+    expect(admin?.operationOrder).toHaveLength(26);
   });
 });

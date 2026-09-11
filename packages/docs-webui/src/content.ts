@@ -7,7 +7,7 @@ import unidocsAdminSecurity from "./content/unidocs/admin-security.md?raw";
 import unidocsBundles from "./content/unidocs/bundles-and-operators.md?raw";
 import unidocsDocumentTypes from "./content/unidocs/document-types.md?raw";
 import unidocsGettingStarted from "./content/unidocs/getting-started.md?raw";
-import unidocsSnapshotContracts from "./content/unidocs/snapshot-contracts.md?raw";
+import unidocsDocumentContracts from "./content/unidocs/document-contracts.md?raw";
 
 export type ProductId = "unicas" | "unidocs";
 
@@ -62,7 +62,7 @@ export const guides: readonly Guide[] = [
   { product: "unicas", path: "/unicas/operations/recovery", title: "Operations and recovery", description: "Retries, idempotency, usage accounting, and garbage collection.", section: "Operations", markdown: operations },
   { product: "unidocs", path: "/unidocs/getting-started", title: "Admin control plane", description: "Understand the UniDocs administrator workflow and resource model.", section: "Start", markdown: unidocsGettingStarted },
   { product: "unidocs", path: "/unidocs/configuration/document-types", title: "Document type lifecycle", description: "Create drafts, bind compatible resources, and enable a document type.", section: "Configuration model", markdown: unidocsDocumentTypes },
-  { product: "unidocs", path: "/unidocs/configuration/snapshot-contracts", title: "Snapshot Contracts", description: "Evolve append-only SValue schemas without invalidating history.", section: "Configuration model", markdown: unidocsSnapshotContracts },
+  { product: "unidocs", path: "/unidocs/configuration/document-contracts", title: "Document Contracts", description: "Pair snapshot and location schemas in append-only revisions.", section: "Configuration model", markdown: unidocsDocumentContracts },
   { product: "unidocs", path: "/unidocs/configuration/bundles-and-operators", title: "Bundles and Operators", description: "Upload immutable presentation bundles and validate processing candidates.", section: "Configuration model", markdown: unidocsBundles },
   { product: "unidocs", path: "/unidocs/administration/security", title: "Admin security and retries", description: "Sessions, CSRF, idempotency, ETags, and membership safeguards.", section: "Administration", markdown: unidocsAdminSecurity },
 ];

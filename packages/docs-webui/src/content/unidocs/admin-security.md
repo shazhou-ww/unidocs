@@ -1,10 +1,12 @@
 # Admin security and retries
 
-The Admin API is designed for browser-mediated administration with explicit mutation safeguards.
+The Admin API supports browser-mediated administration and automation clients with explicit credential selection and mutation safeguards.
 
 ## Session and CSRF
 
-Every request requires the same-origin `__Host-unidocs_admin` HttpOnly session cookie. Mutations also require `X-CSRF-Token`. A client should never persist or expose the session cookie to JavaScript.
+Every operation accepts either an administrator Bearer token or the same-origin `__Host-unidocs_admin` HttpOnly session cookie. When an `Authorization: Bearer` header is present, the server uses only that token and never falls back to a cookie after token failure.
+
+Cookie-authenticated mutations require `X-CSRF-Token`; Bearer-authenticated mutations do not. A client should never persist or expose the session cookie to JavaScript.
 
 ## Idempotency
 
@@ -17,6 +19,10 @@ Conditional metadata and registration updates require `If-Match` with the curren
 ## Administrator membership
 
 The allowlist stores normalized Google account emails and binds verified identities during sign-in. Removal is conditional, an administrator cannot remove their own membership, and the final administrator cannot be removed.
+
+## Audit
+
+The append-only audit feed supports actor, action, resource type, document type, time-range, and cursor filters. Events include request correlation for investigation and attribution.
 
 ## Binary uploads
 

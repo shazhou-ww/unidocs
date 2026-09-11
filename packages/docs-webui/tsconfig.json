@@ -20,7 +20,7 @@
   ],
   "references": [
     {
-      "path": "../protocol-admin"
+      "path": "../protocol-admin-portal"
     },
     {
       "path": "../../unicas-packages/admin-protocol"

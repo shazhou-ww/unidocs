@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "unidocs-portal-local",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "vars": {
+    "PORTAL_ORIGIN": "https://unidocs.shazhou.work",
+    "GATEWAY_OIDC_ISSUER": "https://accounts.google.com",
+    "GATEWAY_OIDC_CLIENT_ID": "",
+    "PORTAL_BOOTSTRAP_EMAIL": ""
+  },
+  "secrets": { "required": ["GATEWAY_OIDC_CLIENT_SECRET"] },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "unidocs-portal-local", "database_id": "local-portal-auth", "migrations_dir": "migrations" }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false, "head_sampling_rate": 1 }
+  }
+}

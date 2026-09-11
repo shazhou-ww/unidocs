@@ -51,7 +51,16 @@
       "path": "packages/protocol-platform"
     },
     {
-      "path": "packages/protocol-admin"
+      "path": "packages/protocol-admin-portal"
+    },
+    {
+      "path": "packages/protocol-tenant-portal"
+    },
+    {
+      "path": "packages/portal-service"
+    },
+    {
+      "path": "packages/cloudflare-portal"
     },
     {
       "path": "packages/service-auth"

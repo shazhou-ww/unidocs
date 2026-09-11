@@ -7,12 +7,15 @@
 - [Admin 设计索引](admin/README.md)：管理员控制面状态、WebUI mock、协议与生成文档入口。
 - [Admin 当前任务状态](admin/TASK-STATUS.md)：本轮完成范围、验证结果、未实现边界和下一轮建议。
 - [Tenant TODO](tenant/TODO.md)：面向最终用户的 tenant 体验与 API 后续设计入口。
-- [人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)：评论驱动协作、版本双图、ping/pong 水位和原子 submission 的产品与一致性模型。
+- [人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)：评论驱动协作、版本双图、comment/reply 水位和原子 submission 的产品与一致性模型。
 - [Platform、View 与 Operator API v0](platform-view-operator-api-v0.md)：Platform、View bundle、Operator Agent、Admin、Host RPC 和 Agent API 的统一目标契约。
+- [Platform v0 ER Model](platform-er-model-v0.md)：控制面、文档协作、审计、幂等、submission 与 outbox 的逻辑实体关系和事务约束。
 
-可由 TypeScript 检查的公共、Agent 与 Operator 线契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin`](../../../packages/protocol-admin/src/index.ts)。SValue JSON Schema dialect 位于 [`@unidocs/protocol`](../../../packages/protocol/src/types.ts)。
+可由 TypeScript 检查的线契约分三个包：最终用户数据面位于 [`@unidocs/protocol-tenant-portal`](../../../packages/protocol-tenant-portal/src/index.ts)，管理员控制面位于 [`@unidocs/protocol-admin-portal`](../../../packages/protocol-admin-portal/src/index.ts)，View Host RPC、Agent 与 Operator 契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)。SValue JSON Schema dialect 位于 [`@unidocs/protocol`](../../../packages/protocol/src/types.ts)。
 
-管理员 API 的机器可读 OpenAPI 3.1 文档位于 [`admin-v1.openapi.json`](../../../packages/protocol-admin/openapi/admin-v1.openapi.json)，并由 `@unidocs/protocol-admin/openapi.json` 独立导出。该 JSON 由 `pnpm --filter @unidocs/protocol-admin docs:generate` 从 contract 生成；Markdown 文章、导航编排与 Scalar 页面由 `@unidocs/docs-webui` 统一构建并发布到 `https://docs.shazhou.work/unidocs`。
+tenant API 的机器可读 OpenAPI 3.1 文档位于 [`tenant-v1.openapi.json`](../../../packages/protocol-tenant-portal/openapi/tenant-v1.openapi.json)，中文版位于 [`tenant-v1.zh.openapi.json`](../../../packages/protocol-tenant-portal/openapi/tenant-v1.zh.openapi.json)；两者共用的可读 Scalar 页面 [`tenant-v1.html`](../../../packages/protocol-tenant-portal/openapi/tenant-v1.html) 内嵌双语并可就地切换。
+
+管理员 API 的机器可读 OpenAPI 3.1 文档位于 [`admin-v1.openapi.json`](../../../packages/protocol-admin-portal/openapi/admin-v1.openapi.json)，并由 `@unidocs/protocol-admin-portal/openapi.json` 独立导出。该 JSON 由 `pnpm --filter @unidocs/protocol-admin-portal docs:generate` 从 contract 生成；Admin Markdown 文章、导航编排与 Scalar 页面由 `@unidocs/docs-webui` 统一构建并发布到 `https://docs.shazhou.work/unidocs`。
 
 ## 已确定决策
 
@@ -20,9 +23,36 @@
 2. 文档类型先以 Admin 内部名称创建 disabled 草稿；信息不完整可以长期存在，但不能启用。
 3. Type Card bundle 和 View bundle 内容寻址且不可变；Operator validation 可转成持久候选项。三类候选都有独立、可修改、仅 Admin 可见的名称与描述。
 4. Type Card manifest 提供多语言创建卡片、二选一 SVG/预定义尺寸 PNG 图标和 sample thumbnail；bundle 不声明默认 locale，Host 跟随用户 UI locale 并最终回退到 `en`。
-5. 每个文档类型拥有 append-only Snapshot Contract revisions。最大 `SnapshotContractIdx` 自动成为唯一可写 revision；历史 revision 只读、不可删除、不可回退、不可手动设为 current。
+5. 每个文档类型拥有从 0 开始的 append-only Document Contract revisions；同一不可变 JSON 原子携带 snapshot 与 location schema，并共享 `DocumentContractIdx`。所有 `Idx` 均从 0 开始，`null` 才表示不存在。
 6. SValue schema 是 JSON Schema 2020-12 扩展，通过 `x-unidocs-sblob` 等关键字描述原子 SBlob。
-7. 已启用类型不能追加 Snapshot Contract；先停用、追加 revision、绑定支持最新版的 View/Operator，再重新启用。
+7. enabled 类型也可上传新 Document Contract；最大 idx 不是唯一可写版本，当前 View/Operator 共同支持的已有 revisions 构成可写集合。
+
+## 新实现包命名
+
+Admin 与 tenant 用户界面分别称为 **Admin Portal** 和 **Tenant Portal**。新实现使用以下包名，不覆盖现有 `*-gateway` 包：
+
+```text
+@unidocs/admin-portal-client
+@unidocs/admin-portal-webui
+@unidocs/tenant-portal-client
+@unidocs/tenant-portal-webui
+@unidocs/portal-service
+@unidocs/cloudflare-portal
+@unidocs/azure-portal
+```
+
+客户端依赖方向固定为：
+
+```text
+admin-portal-webui  -> admin-portal-client  -> protocol-admin-portal
+tenant-portal-webui -> tenant-portal-client -> protocol-tenant-portal
+
+cloudflare-portal / azure-portal
+  -> portal-service
+  -> protocol-admin-portal + protocol-tenant-portal + protocol-platform
+```
+
+`@unidocs/portal-service` 是同时实现 Admin、tenant 与 Agent access plane 的云中立后端。`@unidocs/cloudflare-portal` 和 `@unidocs/azure-portal` 是部署适配器；Admin Portal 与 Tenant Portal 可以使用不同 origin 和独立前端发布，但第一阶段共享一个后端部署与 Platform 数据权威。
 
 ## 当前检查
 

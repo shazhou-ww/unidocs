@@ -1,7 +1,7 @@
 /**
  * @unidocs/protocol — Cloud-neutral document protocol contracts.
  *
- * Pure type definitions and protocol constants only — no logic, no I/O.
+ * Pure type definitions, protocol constants, and deterministic wire-format helpers only — no I/O.
  * The SValue/SBlob codec lives in @unidocs/svalue-codec, which
  * depends on this package for its types.
  */
@@ -55,8 +55,13 @@ export type {
 
 export {
   BlobUnavailableError,
+  DocumentContentFormatVersion,
+  DocumentTypePattern,
+  documentLocationContentType,
+  documentSnapshotContentType,
   sBlobSignature,
   SBlobTag,
   SValueContentType,
   SValueSchemaDialect,
 } from "./types.js";
+export type { DocumentLocationContentType, DocumentSnapshotContentType } from "./types.js";

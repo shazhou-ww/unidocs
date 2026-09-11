@@ -8,7 +8,7 @@ A document type begins as an incomplete, disabled draft. Drafts may remain incom
 
 ## Explicit bindings
 
-A document type selects one current Type Card bundle, one current View bundle, and optionally a built-in Operator candidate. Uploading or validating a candidate never binds it automatically.
+A document type selects one current Type Card bundle, one current View bundle, and optionally a built-in Operator. Uploading a bundle or validating an Operator never binds it automatically.
 
 The document type update uses `If-Match` against the current registration ETag. Changes to current bindings or enabled state require an audit reason.
 
@@ -16,9 +16,9 @@ The document type update uses `If-Match` against the current registration ETag. 
 
 A type can be enabled only when:
 
-- at least one Snapshot Contract exists;
+- at least one paired Document Contract exists;
 - a current Type Card bundle is ready;
-- a current View bundle supports the latest Snapshot Contract;
-- the selected Operator candidate supports the document type and latest contract revision.
+- a current View bundle is ready;
+- the selected View and Operator share at least one supported Document Contract revision.
 
-Disable the type before appending a new Snapshot Contract. After appending, bind compatible View and Operator candidates before enabling it again.
+Enabled types may receive additional Document Contract revisions. Appending a revision does not invalidate the existing writable set; new data can use any revision supported by both the current View and Operator.

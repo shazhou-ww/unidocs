@@ -37,3 +37,6 @@ dist/
 # 只挡这一个目录,不挡全仓库的 *.ttf —— 测试要用小字体
 # (packages/doctype-psd/tests 现在是在内存里现造的,将来可能落成 fixture)。
 /fonts/
+
+
+.DS_Store

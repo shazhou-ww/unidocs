@@ -8,20 +8,20 @@ import type { JsonValue } from "@unidocs/protocol";
 export type TenantId = string;
 export type DocumentId = string;
 export type DocumentType = string;
-/** Document-type-scoped, monotonically increasing snapshot contract revision. */
-export type SnapshotContractIdx = number;
-/** Document-scoped, monotonically increasing version record ID. */
+/** Zero-based, document-type-scoped, monotonically increasing paired contract revision. */
+export type DocumentContractIdx = number;
+/** Zero-based, document-scoped, monotonically increasing version record ID. */
 export type VersionIdx = number;
 export type ThreadId = string;
-/** Thread-scoped, monotonically increasing ping record ID. */
-export type PingIdx = number;
-/** Thread-scoped, monotonically increasing pong record ID. */
-export type PongIdx = number;
+/** Zero-based, thread-scoped, monotonically increasing comment record ID. */
+export type CommentIdx = number;
+/** Zero-based, thread-scoped, monotonically increasing reply record ID. */
+export type ReplyIdx = number;
 export type SubmissionId = string;
 export type ViewBundleId = string;
 export type TypeCardBundleId = string;
 export type TypeCardIconRasterSize = 16 | 32 | 64 | 128 | 256;
-export type OperatorCandidateId = string;
+export type OperatorId = string;
 export type ValidationId = string;
 export type Cursor = string;
 export type IsoDateTime = string;
@@ -54,6 +54,7 @@ export interface CasBlobRef {
 
 /** A position relative to a version supplied by the owning record or context. */
 export interface DocumentLocation {
+  readonly documentContractIdx: DocumentContractIdx;
   readonly locationType: string;
   readonly payload: JsonValue;
 }
@@ -71,14 +72,14 @@ export type PlatformErrorCode =
   | "not_found"
   | "document_type_disabled"
   | "unsupported_content_type"
-  | "unsupported_location_type"
+  | "location_contract_violation"
   | "upload_expired"
   | "bundle_invalid"
   | "operator_validation_required"
-  | "snapshot_contract_conflict"
+  | "document_contract_conflict"
   | "revision_conflict"
   | "version_conflict"
-  | "pong_watermark_conflict"
+  | "reply_watermark_conflict"
   | "idempotency_conflict"
   | "content_unavailable"
   | "limit_exceeded"
