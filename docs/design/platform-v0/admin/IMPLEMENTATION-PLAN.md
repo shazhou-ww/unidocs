@@ -6,14 +6,14 @@
 
 ## 当前进展与决策
 
-### Admin v1 与 WebUI 本地完整闭环（2026-09-11）
+### Admin v1 与 WebUI 完整闭环（2026-09-11）
 
-已在本地完成剩余 `createOperator`、`listOperators`、`getOperator`、`updateOperatorMetadata` 与完整 `updateDocumentType`，Admin v1 本地达到 **26/26**，生产仍为 **21/26**。`0007_operators.sql` 与新 Portal Worker 尚未部署。
+已上线剩余 `createOperator`、`listOperators`、`getOperator`、`updateOperatorMetadata` 与完整 `updateDocumentType`，Admin v1 达到 **26/26**。独立 Portal D1 已应用 `0007_operators.sql`，生产 Worker 版本 `73b86398-fd44-4f07-a3d7-589d4a987f2e`。
 
 - validation 按 actor/TTL 在一个 D1 batch 中单次消费，并与持久 Operator、idempotency receipt、`operator.created` audit 原子提交；相同 key 优先重放，不因 validation 已消费误报。Operator metadata PATCH 只改变 name/description/ETag，使用 If-Match 与内部 revision 条件更新，list/get 返回真实 D1 candidate。
 - document type PATCH 已接入持久 Operator resolver，并在启用或保持启用时要求真实 Document Contract、Type Card、View、Operator 齐全且 View/Operator 对至少一个已登记 revision 有交集。不兼容资源不能使类型进入或停留在 enabled 状态。
 - WebUI 的“处理服务”tab 已覆盖 discovery/signature validation、刷新恢复、validation 转持久候选、候选 list/get、metadata 编辑、绑定/解绑；Type Card/View 详情可绑定候选，基本信息可启用/停用，右侧持续展示完整准备度。所有 mutation 继续使用 CSRF、Idempotency-Key 与 If-Match，无 mock candidate state。
-- 验证：portal-service 329 个测试、Cloudflare Portal 119 个测试、Admin client 12 个 transport tests、WebUI 16 个组件测试、真实 D1 validation/Operator 集成测试 5 个、相关 typecheck 通过。下一步执行全仓 typecheck、production dry-run、提交，然后应用 `0007`、部署 Portal 并做匿名 smoke；生产真人创建 validation/Operator/绑定/启用仍由管理员明确触发。
+- 验证：portal-service 329 个测试、Cloudflare Portal 119 个测试、Admin client 12 个 transport tests、WebUI 16 个组件测试、真实 D1 validation/Operator 集成测试 5 个、全仓 typecheck、WebUI build 与 production dry-run 通过。生产匿名 `/operators`、`/operator-validations` 均为 401，后台 303、Markdown discovery 200/强 ETag、主站与 `/ui/` 200；smoke 后 validation/operator/receipt/success audit 均为 0。真人可从文档类型“处理服务”tab 执行验证→保存候选→绑定，再在“基本信息”启用；这些操作会写真实生产 D1，尚未自动代为执行。
 
 ### Operator 签名 probe wire checkpoint（2026-09-11）
 
