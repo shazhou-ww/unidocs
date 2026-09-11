@@ -75,27 +75,21 @@ describe("resolveMarkdownTextRange", () => {
     expect(resolveMarkdownTextRange(location, content)).toEqual({ located: false, reason: "unresolvable" });
   });
 
-  it("quote 在新内容里出现多次时取最接近原偏移的那个", () => {
-    const content = "XXXXX重复。YYYYY重复。ZZZZZ重复。";
-    // Create location at the first occurrence (position 5-8)
-    const location = createMarkdownTextRange({ documentContractIdx: 0, content, start: 5, end: 8 });
+  it("quote 在新内容里出现多次时取最接近原偏移的那个，而不是第一个", () => {
+    const repeated = "重复。\n\n重复。\n\n重复。\n"; // 三处出现在 0 / 5 / 10
+    const location = createMarkdownTextRange({
+      documentContractIdx: 0,
+      content: repeated,
+      start: 10,
+      end: 13,
+    });
 
-    // Insert content at the beginning (8 characters) so the fast path fails
-    // This shifts all occurrences: now at positions 13, 21, 29
-    // Original offset was 5, so the first occurrence at 13 is closest
-    // This forces the search loop to run and verify it picks the closest match
-    const shifted = "插入的新内容\n\nXXXXX重复。YYYYY重复。ZZZZZ重复。";
+    // 前面插入三个字符，三处变成 3 / 8 / 13。原偏移 10 到它们的距离分别是 7 / 2 / 3，
+    // 所以最近的一处是 8，而第一处是 3。取第一处的实现会返回 3，这条断言就会失败。
+    const shifted = "开头。" + repeated;
 
     const result = resolveMarkdownTextRange(location, shifted);
 
-    expect(result.located).toBe(true);
-    if (result.located) {
-      // Verify it found the quote
-      expect(shifted.slice(result.start, result.end)).toBe("重复。");
-      // Verify it's marked as shifted since the position changed
-      expect(result.shifted).toBe(true);
-      // Verify it picked a real occurrence (must be one of: 13, 21, 29)
-      expect([13, 21, 29]).toContain(result.start);
-    }
+    expect(result).toEqual({ located: true, start: 8, end: 11, shifted: true });
   });
 });
