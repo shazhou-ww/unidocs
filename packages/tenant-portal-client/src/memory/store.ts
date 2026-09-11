@@ -217,9 +217,19 @@ export class MemoryStore {
     return response;
   }
 
+  private nextDocumentId(name: string): DocumentId {
+    let n = this.documents.size + 1;
+    let candidate = `doc-${n}-${name.length}`;
+    while (this.documents.has(candidate)) {
+      n += 1;
+      candidate = `doc-${n}-${name.length}`;
+    }
+    return candidate;
+  }
+
   createDocument(name: string, documentType: DocumentType): DocumentRecord {
     if (name.trim() === "") throw new InvalidRequest("name must not be empty");
-    const documentId = `doc-${this.documents.size + 1}-${name.length}`;
+    const documentId = this.nextDocumentId(name);
     const state: DocumentState = {
       documentId,
       name,
@@ -239,6 +249,16 @@ export class MemoryStore {
     }
   }
 
+  private nextThreadId(state: DocumentState): ThreadId {
+    let n = state.threads.size + 1;
+    let candidate = `th-${n}`;
+    while (state.threads.has(candidate)) {
+      n += 1;
+      candidate = `th-${n}`;
+    }
+    return candidate;
+  }
+
   createThread(
     documentId: DocumentId,
     body: { baseVersionIdx: VersionIdx; content: PingRecord["content"]; location: DocumentLocation | null },
@@ -246,7 +266,7 @@ export class MemoryStore {
     const state = this.requireDocument(documentId);
     this.requireVersion(state, body.baseVersionIdx);
 
-    const threadId = `th-${state.threads.size + 1}`;
+    const threadId = this.nextThreadId(state);
     const ping: PingRecord = {
       pingIdx: 0,
       baseVersionIdx: body.baseVersionIdx,

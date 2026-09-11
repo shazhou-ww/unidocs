@@ -112,4 +112,52 @@ describe("memory transport 写操作", () => {
     expect(record.currentVersionIdx).toBeNull();
     expect(record.name).toBe("新作品");
   });
+
+  it("createThread 生成的 id 与 seed 中已有的 thread id 撞车时不覆盖它", () => {
+    const seeded = createMemoryStore({
+      documents: [
+        {
+          documentId: "doc-1",
+          name: "样例",
+          versions: [{ content: "# 一\n" }],
+          threads: [
+            {
+              threadId: "th-2",
+              pings: [{ baseVersionIdx: 0, text: "seeded", location: null }],
+              pongs: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    // state.threads.size 是 1，size 派生方案会算出 "th-2"——与 seed 里已有的 thread 撞车。
+    const created = seeded.createThread("doc-1", { baseVersionIdx: 0, content: text("new"), location: null });
+
+    expect(seeded.listThreadIds("doc-1")).toHaveLength(2);
+    expect(created.threadId).not.toBe("th-2");
+    expect(seeded.getThread("doc-1", "th-2").pings[0]?.content.text).toBe("seeded");
+    expect(seeded.getThread("doc-1", created.threadId).pings[0]?.content.text).toBe("new");
+  });
+
+  it("createDocument 生成的 id 与 seed 中已有的 document id 撞车时不覆盖它", () => {
+    const seeded = createMemoryStore({
+      documents: [
+        {
+          documentId: "doc-2-2",
+          name: "占位",
+          versions: [],
+          threads: [],
+        },
+      ],
+    });
+
+    // documents.size 是 1，size 派生方案对 name.length === 2 会算出 "doc-2-2"——与 seed 撞车。
+    const created = seeded.createDocument("ab", "markdown");
+
+    expect(seeded.listDocuments()).toHaveLength(2);
+    expect(created.documentId).not.toBe("doc-2-2");
+    expect(seeded.toRecord(seeded.requireDocument("doc-2-2")).name).toBe("占位");
+    expect(seeded.toRecord(seeded.requireDocument(created.documentId)).name).toBe("ab");
+  });
 });
