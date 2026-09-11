@@ -1,0 +1,254 @@
+import { startTransition, useEffect, useState, type FormEvent } from "react";
+import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText, LoaderCircle, LogIn, LogOut, Menu, Plus, RefreshCw, Search, ShieldAlert, UserPlus, Users, X } from "lucide-react";
+import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
+import type { AdministratorMemberListItem, DocumentTypeListItem, DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
+
+function errorMessage(error: unknown): string {
+  if (error instanceof AdminPortalClientError) {
+    if (error.status === 401) return "登录已失效，请重新登录。";
+    if (error.code === "idempotency_conflict") return "请求标识已被另一项操作使用。";
+    if (error.code === "administrator_exists") return "这个邮箱已经在管理员列表中。";
+    return `${error.message}${error.requestId ? `（请求 ${error.requestId}）` : ""}`;
+  }
+  return "暂时无法连接管理服务。";
+}
+
+function shortEtag(etag: string): string {
+  return etag.length > 24 ? `${etag.slice(0, 18)}...${etag.slice(-5)}` : etag;
+}
+
+function AccessDenied() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const requestId = params.get("requestId");
+  const forbidden = code === "forbidden";
+  return <main className="access-page">
+    <section className="access-panel">
+      <div className="brand access-brand"><span className="brand-mark">U</span><span><strong>UniDocs</strong><small>管理控制台</small></span></div>
+      <span className="access-icon" aria-hidden="true"><ShieldAlert size={24} /></span>
+      <p className="eyebrow">ACCESS NOT GRANTED</p>
+      <h1>{forbidden ? "没有管理员权限" : "登录未完成"}</h1>
+      <p>{forbidden ? "当前 Google 账户尚未加入管理员列表，或成员资格已失效。" : "登录请求已过期或未能通过验证，请重新开始。"}</p>
+      {requestId && <div className="request-reference"><span>请求 ID</span><code>{requestId}</code></div>}
+      <a className="primary-button access-action" href="/admin/auth/login"><LogIn size={17} />重新登录</a>
+      <small>需要由现有管理员先将 Google 账户邮箱加入 allowlist。</small>
+    </section>
+  </main>;
+}
+
+function AdminApp() {
+  const [client] = useState(() => createAdminPortalClient());
+  const [view, setView] = useState<"documentTypes" | "administrators">("documentTypes");
+  const [session, setSession] = useState<AdminPortalSession | null>(null);
+  const [items, setItems] = useState<readonly DocumentTypeListItem[]>([]);
+  const [members, setMembers] = useState<readonly AdministratorMemberListItem[]>([]);
+  const [selected, setSelected] = useState<DocumentTypeRegistration | null>(null);
+  const [query, setQuery] = useState("");
+  const [enabled, setEnabled] = useState<"all" | "true" | "false">("all");
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [internalName, setInternalName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [memberEmail, setMemberEmail] = useState("");
+  const [mobileNav, setMobileNav] = useState(false);
+
+  async function loadTypes(nextQuery = query, nextEnabled = enabled) {
+    setLoading(true);
+    setError(null);
+    try {
+      const page = await client.listDocumentTypes({ q: nextQuery || undefined, enabled: nextEnabled === "all" ? undefined : nextEnabled === "true", limit: 50 });
+      startTransition(() => setItems(page.items));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([client.session(), client.listDocumentTypes({ limit: 50 })]).then(([nextSession, page]) => {
+      if (!active) return;
+      setSession(nextSession);
+      setItems(page.items);
+    }).catch(caught => { if (active) setError(errorMessage(caught)); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [client]);
+
+  async function openDetail(documentType: string) {
+    setDetailLoading(true);
+    setError(null);
+    try { setSelected(await client.getDocumentType(documentType)); }
+    catch (caught) { setError(errorMessage(caught)); }
+    finally { setDetailLoading(false); }
+  }
+
+  async function loadMembers() {
+    setMembersLoading(true);
+    setError(null);
+    try {
+      const page = await client.listAdministrators({ limit: 100 });
+      startTransition(() => setMembers(page.items));
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setMembersLoading(false);
+    }
+  }
+
+  function showView(nextView: "documentTypes" | "administrators") {
+    setView(nextView);
+    setMobileNav(false);
+    setSelected(null);
+    if (nextView === "administrators" && members.length === 0) void loadMembers();
+  }
+
+  async function createType(event: FormEvent) {
+    event.preventDefault();
+    if (!internalName.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await client.createDocumentType({ internalName: internalName.trim() });
+      setCreateOpen(false);
+      setInternalName("");
+      await loadTypes();
+      await openDetail(created.documentType);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setSaving(false); }
+  }
+
+  async function addMember(event: FormEvent) {
+    event.preventDefault();
+    if (!memberEmail.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await client.addAdministrator({ email: memberEmail.trim() });
+      setAddMemberOpen(false);
+      setMemberEmail("");
+      await loadMembers();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function logout() {
+    try { await client.logout(); } finally { window.location.assign("/admin/auth/login"); }
+  }
+
+  function submitSearch(event: FormEvent) {
+    event.preventDefault();
+    void loadTypes();
+  }
+
+  const navigation = <>
+    <div className="brand"><span className="brand-mark">U</span><span><strong>UniDocs</strong><small>管理控制台</small></span></div>
+    <nav aria-label="管理导航">
+      <button className={`nav-item ${view === "documentTypes" ? "active" : ""}`} type="button" onClick={() => showView("documentTypes")}><BookOpenText size={17} />文档类型<span>{items.length}</span></button>
+      <button className={`nav-item ${view === "administrators" ? "active" : ""}`} type="button" onClick={() => showView("administrators")}><Users size={17} />管理员<span>{members.length}</span></button>
+    </nav>
+    <div className="account">
+      <div className="avatar" aria-hidden="true">{session?.email.slice(0, 1).toUpperCase() || "U"}</div>
+      <div><strong>{session?.email || "正在读取账户"}</strong><small>Administrator</small></div>
+      <button className="icon-button" type="button" onClick={() => void logout()} title="退出登录" aria-label="退出登录"><LogOut size={17} /></button>
+    </div>
+  </>;
+
+  return <div className="app-shell">
+    <aside className="sidebar">{navigation}</aside>
+    <header className="mobile-header"><div className="brand compact"><span className="brand-mark">U</span><strong>UniDocs</strong></div></header>
+    <main>
+      {view === "documentTypes" ? <>
+        <section className="page-heading">
+          <div><p className="eyebrow">CONTENT REGISTRY</p><h1>文档类型</h1><p>管理可用文档格式与运行依赖。</p></div>
+          <button className="primary-button" type="button" onClick={() => setCreateOpen(true)}><Plus size={17} />新建类型</button>
+        </section>
+
+        <section className="toolbar" aria-label="文档类型筛选">
+          <form className="search-form" onSubmit={submitSearch}>
+            <Search size={16} aria-hidden="true" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="按名称或 ID 搜索" aria-label="搜索文档类型" />
+          </form>
+          <label className="select-control"><span>状态</span><select value={enabled} onChange={event => { const value = event.target.value as typeof enabled; setEnabled(value); void loadTypes(query, value); }}><option value="all">全部</option><option value="true">已启用</option><option value="false">草稿</option></select></label>
+          <button className="icon-button bordered" type="button" onClick={() => void loadTypes()} title="刷新" aria-label="刷新文档类型"><RefreshCw className={loading ? "spin" : ""} size={17} /></button>
+        </section>
+
+        {error && <div className="error-banner" role="alert"><AlertCircle size={18} /><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label="关闭错误"><X size={16} /></button></div>}
+
+        <section className="workspace">
+          <div className="table-region">
+            <div className="table-meta"><span>{loading ? "正在同步" : `${items.length} 个类型`}</span><span>最多显示 50 项</span></div>
+            <div className="table-scroll">
+              <table><thead><tr><th>文档类型</th><th>状态</th><th>Contract</th><th>资源</th><th><span className="sr-only">详情</span></th></tr></thead>
+                <tbody>{items.map(item => <tr key={item.documentType} className={selected?.documentType === item.documentType ? "selected-row" : ""} onClick={() => void openDetail(item.documentType)}>
+                  <td><div className="type-name"><span className="file-icon"><FileText size={17} /></span><span><strong>{item.internalName}</strong><code>{item.documentType}</code></span></div></td>
+                  <td><span className={`status ${item.enabled ? "enabled" : "draft"}`}>{item.enabled ? <Check size={13} /> : <CircleDashed size={13} />}{item.enabled ? "已启用" : "草稿"}</span></td>
+                  <td>{item.latestDocumentContractIdx === null ? <span className="muted">未配置</span> : `r${item.latestDocumentContractIdx}`}</td>
+                  <td><span className="resource-count">{[item.typeCardBundle, item.viewBundle, item.builtinOperator].filter(Boolean).length}/3</span></td>
+                  <td><ChevronRight size={16} className="row-arrow" /></td>
+                </tr>)}</tbody>
+              </table>
+              {!loading && items.length === 0 && <div className="empty-state"><BookOpenText size={28} /><strong>没有匹配的文档类型</strong><span>调整筛选条件，或创建一个新的草稿。</span></div>}
+              {loading && items.length === 0 && <div className="empty-state"><LoaderCircle className="spin" size={26} /><strong>正在读取文档类型</strong></div>}
+            </div>
+          </div>
+
+          <aside className={`detail-panel ${selected || detailLoading ? "open" : ""}`} aria-label="文档类型详情">
+            {detailLoading ? <div className="detail-placeholder"><LoaderCircle className="spin" size={22} />正在读取</div> : selected ? <>
+              <div className="detail-header"><div><span>类型详情</span><h2>{selected.internalName}</h2><code>{selected.documentType}</code></div><button className="icon-button" type="button" onClick={() => setSelected(null)} aria-label="关闭详情"><X size={17} /></button></div>
+              <dl className="detail-list"><div><dt>状态</dt><dd>{selected.enabled ? "已启用" : "草稿"}</dd></div><div><dt>Document Contract</dt><dd>{selected.latestDocumentContract ? `r${selected.latestDocumentContract.documentContractIdx}` : "未配置"}</dd></div><div><dt>Type Card</dt><dd>{selected.typeCardBundle?.name ?? "未选择"}</dd></div><div><dt>View bundle</dt><dd>{selected.viewBundle?.name ?? "未选择"}</dd></div><div><dt>内置 Operator</dt><dd>{selected.builtinOperator?.name ?? "未选择"}</dd></div><div><dt>ETag</dt><dd><code title={selected.etag}>{shortEtag(selected.etag)}</code></dd></div></dl>
+              <div className="readiness"><strong>启用准备度</strong><div className="readiness-track"><span className={`progress-${[selected.latestDocumentContract, selected.typeCardBundle, selected.viewBundle, selected.builtinOperator].filter(Boolean).length}`} /></div><small>需要 Contract、Type Card、View 与 Operator。</small></div>
+            </> : <div className="detail-placeholder"><FileText size={24} /><span>选择一行查看完整配置</span></div>}
+          </aside>
+        </section>
+      </> : <>
+        <section className="page-heading">
+          <div><p className="eyebrow">ACCESS CONTROL</p><h1>管理员</h1><p>管理可登录 UniDocs 管理控制台的 Google 账户。</p></div>
+          <button className="primary-button" type="button" onClick={() => setAddMemberOpen(true)}><UserPlus size={17} />添加管理员</button>
+        </section>
+        {error && <div className="error-banner" role="alert"><AlertCircle size={18} /><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label="关闭错误"><X size={16} /></button></div>}
+        <section className="workspace members-workspace">
+          <div className="table-region">
+            <div className="table-meta"><span>{membersLoading ? "正在同步" : `${members.length} 位管理员`}</span><button className="icon-button bordered" type="button" onClick={() => void loadMembers()} title="刷新" aria-label="刷新管理员"><RefreshCw className={membersLoading ? "spin" : ""} size={17} /></button></div>
+            <div className="table-scroll">
+              <table className="members-table"><thead><tr><th>Google 账户</th><th>身份状态</th><th>添加时间</th><th>成员</th></tr></thead>
+                <tbody>{members.map(member => <tr key={member.adminId}>
+                  <td><div className="type-name"><span className="avatar member-avatar" aria-hidden="true">{member.email.slice(0, 1).toUpperCase()}</span><span><strong>{member.email}</strong><code>{member.adminId}</code></span></div></td>
+                  <td><span className={`status ${member.bound ? "enabled" : "draft"}`}>{member.bound ? <Check size={13} /> : <CircleDashed size={13} />}{member.bound ? "已绑定" : "等待登录"}</span></td>
+                  <td><time dateTime={member.addedAt}>{new Date(member.addedAt).toLocaleDateString("zh-CN")}</time></td>
+                  <td>{member.isSelf ? <span className="self-badge">当前账户</span> : <span className="muted">管理员</span>}</td>
+                </tr>)}</tbody>
+              </table>
+              {!membersLoading && members.length === 0 && <div className="empty-state"><Users size={28} /><strong>还没有管理员成员</strong></div>}
+              {membersLoading && members.length === 0 && <div className="empty-state"><LoaderCircle className="spin" size={26} /><strong>正在读取管理员</strong></div>}
+            </div>
+          </div>
+        </section>
+      </>}
+    </main>
+
+    <button className="mobile-menu-button" type="button" onClick={() => setMobileNav(true)} aria-label="打开导航"><Menu size={20} /></button>
+    {mobileNav && <div className="mobile-nav-layer" onClick={() => setMobileNav(false)}><aside onClick={event => event.stopPropagation()}><button className="mobile-close icon-button" type="button" onClick={() => setMobileNav(false)} aria-label="关闭导航"><X size={18} /></button>{navigation}</aside></div>}
+
+    {createOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setCreateOpen(false); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="create-title"><div className="modal-header"><div><span>NEW DOCUMENT TYPE</span><h2 id="create-title">新建文档类型</h2></div><button className="icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <form onSubmit={createType}><label><span>内部名称</span><input autoFocus maxLength={256} value={internalName} onChange={event => setInternalName(event.target.value)} placeholder="例如：Markdown" /></label><p>新类型将以未启用草稿创建。</p><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !internalName.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}创建草稿</button></div></form>
+      </section>
+    </div>}
+    {addMemberOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setAddMemberOpen(false); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="add-member-title"><div className="modal-header"><div><span>ACCESS ALLOWLIST</span><h2 id="add-member-title">添加管理员</h2></div><button className="icon-button" type="button" onClick={() => setAddMemberOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <form onSubmit={addMember}><label><span>Google 账户邮箱</span><input autoFocus type="email" value={memberEmail} onChange={event => setMemberEmail(event.target.value)} placeholder="name@gmail.com" /></label><p>该账户首次完成 Google 登录后会绑定身份。</p><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setAddMemberOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !memberEmail.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <UserPlus size={16} />}添加成员</button></div></form>
+      </section>
+    </div>}
+  </div>;
+}
+
+export function App() {
+  return window.location.pathname === "/admin/access-denied" ? <AccessDenied /> : <AdminApp />;
+}

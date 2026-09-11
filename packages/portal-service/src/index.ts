@@ -10,4 +10,6 @@ export type { AdminContext, AdminIdentity, BoundAdministrator } from "./auth/adm
 export { adminConfirmationTime, googleIdentityFromConfirmedLogin, validateAdminIdentity } from "./auth/administrator.js";
 export { OperatorDiscoveryError, validateOperatorDiscovery } from "./operators/discovery.js";
 export { AdminOperationError, createDocumentTypeService } from "./admin/document-types.js";
-export type { DocumentTypeCreateCommand, DocumentTypeRepository } from "./admin/document-types.js";
+export type { DocumentTypeCreateCommand, DocumentTypeRepository, DocumentTypeUpdateCommand } from "./admin/document-types.js";
+export { AdministratorOperationError, createAdministratorService } from "./admin/administrators.js";
+export type { AdministratorAddCommand, AdministratorRepository } from "./admin/administrators.js";

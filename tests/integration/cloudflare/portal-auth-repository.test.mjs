@@ -3,8 +3,10 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { D1PortalAuthRepository } from "../../../packages/cloudflare-portal/src/auth-repository.ts";
 import { D1DocumentTypeRepository } from "../../../packages/cloudflare-portal/src/document-types-repository.ts";
+import { D1AdministratorRepository } from "../../../packages/cloudflare-portal/src/administrators-repository.ts";
 import { createDocumentTypesHttp } from "../../../packages/cloudflare-portal/src/document-types-http.ts";
-import { createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
+import { createAdministratorsHttp } from "../../../packages/cloudflare-portal/src/administrators-http.ts";
+import { createAdministratorService, createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
 import { googleIdentityFromConfirmedLogin } from "../../../packages/portal-service/src/index.ts";
 import { createPortalBff } from "../../../packages/cloudflare-portal/src/bff.ts";
 import { portalGoogleConfigFromGateway } from "../../../packages/cloudflare-portal/src/google-config.ts";
@@ -18,10 +20,12 @@ let repository;
 const now = 1_800_000_000;
 const identity = { issuer: "https://accounts.google.com", subject: "first", email: "first@example.com", authenticatedAt: now };
 beforeEach(async () => {
-  miniflare = new Miniflare(convertV4MiniflareOptions({ workers: [{
-    name: "portal-auth-repository", modules: true, script: "export default { fetch() { return new Response('test'); } };",
-    compatibilityDate: "2026-08-18", d1Databases: { DB: `portal-auth-${crypto.randomUUID()}` },
-  }] }));
+  miniflare = new Miniflare(convertV4MiniflareOptions({
+    workers: [{
+      name: "portal-auth-repository", modules: true, script: "export default { fetch() { return new Response('test'); } };",
+      compatibilityDate: "2026-08-18", d1Databases: { DB: `portal-auth-${crypto.randomUUID()}` },
+    }]
+  }));
   database = await miniflare.getD1Database("DB", "portal-auth-repository");
   const migration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0001_admin_auth.sql", import.meta.url), "utf8");
   await database.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
@@ -45,6 +49,52 @@ async function documentTypes() {
   return { context, issued, types, service: createDocumentTypeService(types) };
 }
 
+async function administrators() {
+  const setup = await documentTypes();
+  const members = new D1AdministratorRepository(database, () => now);
+  return { ...setup, members, memberService: createAdministratorService(members) };
+}
+
+test("administrator HTTP endpoints add, replay, read and list an unbound member", async () => {
+  const { issued, members } = await administrators();
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createAdministratorsHttp(members) });
+  const base = "https://portal.test/admin/api/v1/administrators";
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  const headers = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "content-type": "application/json", "idempotency-key": "add-member" };
+  expect((await handle(new Request(base))).status).toBe(401);
+  expect((await handle(new Request(base, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: '{"email":"member@example.com"}' }))).status).toBe(403);
+  const add = () => handle(new Request(base, { method: "POST", headers, body: '{"email":"Member@Example.com"}' }));
+  const added = await add();
+  expect(added.status).toBe(201);
+  const value = await added.json();
+  expect(value).toMatchObject({ adminId: expect.any(String), etag: expect.stringMatching(/^"sha256-/) });
+  expect(await (await add()).json()).toEqual(value);
+  const keyConflict = await handle(new Request(base, { method: "POST", headers, body: '{"email":"other@example.com"}' }));
+  expect(keyConflict.status).toBe(409);
+  expect(await keyConflict.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
+  const duplicate = await handle(new Request(base, { method: "POST", headers: { ...headers, "idempotency-key": "duplicate-email" }, body: '{"email":"member@example.com"}' }));
+  expect(duplicate.status).toBe(409);
+  expect(await duplicate.json()).toMatchObject({ error: { code: "administrator_exists" } });
+  const detail = await handle(new Request(`${base}/${value.adminId}`, { headers: { cookie } }));
+  expect(detail.status).toBe(200);
+  expect(await detail.json()).toMatchObject({ adminId: value.adminId, email: "member@example.com", bound: false, addedBy: expect.any(String), etag: value.etag });
+  const list = await handle(new Request(`${base}?limit=10`, { headers: { cookie } }));
+  expect(list.status).toBe(200);
+  expect(await list.json()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ adminId: value.adminId, email: "member@example.com", bound: false, isSelf: false })]), nextCursor: null });
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators WHERE email = 'member@example.com'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.added'").first("count")).toBe(1);
+});
+
+test("concurrent administrator retries create one member, receipt and audit", async () => {
+  const { context, memberService } = await administrators();
+  const results = await Promise.all(Array.from({ length: 4 }, () => memberService.add(context, { email: "parallel@example.com" }, "parallel-add", "request")));
+  expect(results.every(result => result.adminId === results[0].adminId)).toBe(true);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators WHERE email = 'parallel@example.com'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'addAdministratorMember'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.added'").first("count")).toBe(1);
+}, 30_000);
+
 test("contract HTTP endpoints create/read/list real drafts with authentication, CSRF and retry errors", async () => {
   const { issued, types } = await documentTypes();
   const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
@@ -67,6 +117,19 @@ test("contract HTTP endpoints create/read/list real drafts with authentication, 
   const read = await handle(new Request(`${base}/${value.documentType}`, { headers: { cookie } }));
   expect(read.status).toBe(200);
   expect(await read.json()).toMatchObject({ documentType: value.documentType, internalName: "Markdown", enabled: false, etag: value.etag });
+  const patchHeaders = { ...headers, "idempotency-key": "http-update", "if-match": value.etag };
+  const update = () => handle(new Request(`${base}/${value.documentType}`, { method: "PATCH", headers: patchHeaders, body: '{"internalName":"Markdown documents","reason":"Clarify name"}' }));
+  const updated = await update();
+  expect(updated.status).toBe(200);
+  const updatedValue = await updated.json();
+  expect(updatedValue).toMatchObject({ documentType: value.documentType, etag: expect.stringMatching(/^"sha256-/) });
+  expect(updatedValue.etag).not.toBe(value.etag);
+  expect(await (await update()).json()).toEqual(updatedValue);
+  const stale = await handle(new Request(`${base}/${value.documentType}`, { method: "PATCH", headers: { ...patchHeaders, "idempotency-key": "stale-update" }, body: '{"internalName":"Stale"}' }));
+  expect(stale.status).toBe(412);
+  expect(await stale.json()).toMatchObject({ error: { code: "precondition_failed" } });
+  expect((await handle(new Request(`${base}/${value.documentType}`, { method: "PATCH", headers, body: '{"internalName":"Missing precondition"}' }))).status).toBe(428);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'document_type.internal_name_changed'").first("count")).toBe(1);
   const list = await handle(new Request(`${base}?enabled=false&limit=1`, { headers: { cookie } }));
   expect(list.status).toBe(200);
   expect(await list.json()).toMatchObject({ items: [{ documentType: value.documentType, latestDocumentContractIdx: null }], nextCursor: null });
@@ -224,7 +287,8 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
     const token = await new SignJWT({ iss: config.issuer, aud: config.clientId, sub: identity.subject, email: identity.email, email_verified: true, iat: now, exp: now + 600, nonce }).setProtectedHeader({ alg: "RS256", kid: "test" }).sign(keys.privateKey);
     return Response.json({ access_token: "discarded", token_type: "Bearer", id_token: token });
   };
-  const handle = createPortalBff(config, repository, { bootstrapEmail: identity.email, now: () => now, googleFetch });
+  const handle = createPortalBff(config, repository, { bootstrapEmail: identity.email, now: () => now, googleFetch,
+    adminUi: () => new Response("<!doctype html><title>Admin UI</title>", { headers: { "content-type": "text/html" } }) });
   const entry = await handle(new Request("https://portal.test/admin/"));
   expect(entry.status).toBe(303);
   expect(entry.headers.get("location")).toBe("https://portal.test/admin/auth/login");
@@ -258,6 +322,15 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
   expect(replayError.error.requestId).toBe(replay.headers.get("X-Request-ID"));
   expect(JSON.stringify(replayError)).not.toContain("fixture-secret");
   expect(JSON.stringify(replayError)).not.toContain(authorization.searchParams.get("state"));
+  const browserReplay = await handle(new Request(callback.url, { headers: { cookie: start.headers.getSetCookie()[0].split(";")[0], accept: "text/html" } }));
+  expect(browserReplay.status).toBe(303);
+  const deniedLocation = new URL(browserReplay.headers.get("location"));
+  expect(deniedLocation.pathname).toBe("/admin/access-denied");
+  expect(deniedLocation.searchParams.get("code")).toBe("unauthorized");
+  expect(deniedLocation.searchParams.get("requestId")).toBe(browserReplay.headers.get("x-request-id"));
+  const deniedPage = await handle(new Request(deniedLocation, { headers: { accept: "text/html" } }));
+  expect(deniedPage.status).toBe(200);
+  expect(deniedPage.headers.get("content-type")).toContain("text/html");
   expect((await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { cookie, origin: config.origin } }))).status).toBe(403);
   expect((await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { cookie, origin: config.origin, "x-csrf-token": csrf } }))).status).toBe(204);
   expect((await handle(new Request("https://portal.test/admin/auth/session", { headers: { cookie } }))).status).toBe(401);
@@ -333,10 +406,13 @@ test("BFF and repository run together inside workerd across HTTP requests", asyn
     },
     bundle: true, write: false, format: "esm", platform: "browser", target: "es2024", external: ["node:crypto"],
   });
-  const options = nonce => convertV4MiniflareOptions({ workers: [{ name: "portal-bff-runtime", modules: true,
-    script: built.outputFiles[0].text, compatibilityDate: "2026-08-18", compatibilityFlags: ["nodejs_compat"],
-    d1Databases: { DB: "portal-bff-runtime-db" }, bindings: { FIXTURE: { ...fixture, nonce } },
-  }] });
+  const options = nonce => convertV4MiniflareOptions({
+    workers: [{
+      name: "portal-bff-runtime", modules: true,
+      script: built.outputFiles[0].text, compatibilityDate: "2026-08-18", compatibilityFlags: ["nodejs_compat"],
+      d1Databases: { DB: "portal-bff-runtime-db" }, bindings: { FIXTURE: { ...fixture, nonce } },
+    }]
+  });
   const runtime = new Miniflare(options(""));
   try {
     const db = await runtime.getD1Database("DB", "portal-bff-runtime");

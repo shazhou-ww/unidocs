@@ -10,11 +10,12 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "build:webui": "pnpm --filter @unidocs/admin-portal-webui build && node scripts/build-ui-assets.mjs",
     "types:generate": "wrangler types src/env.generated.d.ts --include-runtime=false --strict-vars=false",
     "dev": "wrangler dev --local",
     "migrate:local": "wrangler d1 migrations apply DB --local",
-    "deploy:check": "wrangler deploy --dry-run",
-    "build": "tsc -b",
+    "deploy:check": "pnpm run build:webui && wrangler deploy --dry-run",
+    "build": "pnpm run build:webui && tsc -b",
     "test": "vitest run",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""

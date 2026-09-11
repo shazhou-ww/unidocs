@@ -1,10 +1,10 @@
-import { CreateDocumentTypeRequestSchema, DocumentTypeRegistrationSchema, DocumentTypeSchema, type AdminAuditEvent, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
+import { CreateDocumentTypeRequestSchema, DocumentTypeRegistrationSchema, DocumentTypeSchema, EtagSchema, UpdateDocumentTypeRequestSchema, type AdminAuditEvent, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse, type OperatorRecord, type TypeCardBundleRecord, type ViewBundleRecord } from "@unidocs/protocol-admin-portal";
 import { resourceEtag, schemaHash } from "../identity.js";
 import type { AdminContext } from "../auth/administrator.js";
 
 export class AdminOperationError extends Error {
-  constructor(readonly code: "invalid_request" | "not_found" | "idempotency_conflict" | "forbidden") {
-    super({ invalid_request: "The request is invalid", not_found: "Document type not found", idempotency_conflict: "The idempotency key was used with a different request", forbidden: "Administrator access is denied" }[code]);
+  constructor(readonly code: "invalid_request" | "not_found" | "idempotency_conflict" | "precondition_failed" | "forbidden") {
+    super({ invalid_request: "The request is invalid", not_found: "Document type not found", idempotency_conflict: "The idempotency key was used with a different request", precondition_failed: "The If-Match precondition failed", forbidden: "Administrator access is denied" }[code]);
     this.name = "AdminOperationError";
   }
 }
@@ -17,10 +17,23 @@ export interface DocumentTypeCreateCommand {
   readonly audit: AdminAuditEvent;
 }
 
+export interface DocumentTypeUpdateCommand {
+  readonly context: AdminContext;
+  readonly key: string;
+  readonly fingerprint: string;
+  readonly expectedEtag: string;
+  readonly registration: DocumentTypeRegistration;
+  readonly audits: readonly AdminAuditEvent[];
+}
+
 export interface DocumentTypeRepository {
   create(command: DocumentTypeCreateCommand): Promise<{ readonly documentType: string; readonly etag: string }>;
+  update(command: DocumentTypeUpdateCommand): Promise<{ readonly documentType: string; readonly etag: string }>;
   get(context: AdminContext, documentType: string): Promise<DocumentTypeRegistration | null>;
   list(context: AdminContext, query: ListDocumentTypesQuery): Promise<ListDocumentTypesResponse>;
+  resolveTypeCardBundle(context: AdminContext, documentType: string, bundleId: string): Promise<TypeCardBundleRecord | null>;
+  resolveViewBundle(context: AdminContext, documentType: string, bundleId: string): Promise<ViewBundleRecord | null>;
+  resolveOperator(context: AdminContext, documentType: string, operatorId: string): Promise<OperatorRecord | null>;
 }
 
 export function createDocumentTypeService(repository: DocumentTypeRepository, options: {
@@ -39,9 +52,12 @@ export function createDocumentTypeService(repository: DocumentTypeRepository, op
         enabled: false, latestDocumentContract: null, typeCardBundle: null, viewBundle: null, builtinOperator: null, updatedAt: timestamp,
       };
       const registration = DocumentTypeRegistrationSchema.parse({ ...representation, etag: await resourceEtag(representation) });
-      return repository.create({ context, key, fingerprint: await schemaHash({ operation: "createDocumentType", body: parsed.data }), registration,
-        audit: { auditEventId: id(), actorId: context.memberId, action: "document_type.registered", resourceType: "document_type", resourceId: registration.documentType,
-          documentType: registration.documentType, occurredAt: timestamp, requestId, reason: null },
+      return repository.create({
+        context, key, fingerprint: await schemaHash({ operation: "createDocumentType", body: parsed.data }), registration,
+        audit: {
+          auditEventId: id(), actorId: context.memberId, action: "document_type.registered", resourceType: "document_type", resourceId: registration.documentType,
+          documentType: registration.documentType, occurredAt: timestamp, requestId, reason: null
+        },
       });
     },
     async get(context: AdminContext, documentType: string) {
@@ -49,6 +65,54 @@ export function createDocumentTypeService(repository: DocumentTypeRepository, op
       const registration = await repository.get(context, documentType);
       if (!registration) throw new AdminOperationError("not_found");
       return registration;
+    },
+    async update(context: AdminContext, documentType: string, body: unknown, key: string, expectedEtag: string, requestId: string) {
+      const parsed = UpdateDocumentTypeRequestSchema.safeParse(body);
+      const allowedFields = ["internalName", "typeCardBundleId", "viewBundleId", "builtinOperatorId", "enabled", "reason"];
+      if (!parsed.success || typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).some(field => !allowedFields.includes(field))
+        || (parsed.data.internalName !== undefined && (!parsed.data.internalName.trim() || parsed.data.internalName.length > 256))
+        || !/^[\x21-\x7e]{1,128}$/.test(key) || !EtagSchema.safeParse(expectedEtag).success) throw new AdminOperationError("invalid_request");
+      if (!DocumentTypeSchema.safeParse(documentType).success) throw new AdminOperationError("invalid_request");
+      const current = await repository.get(context, documentType);
+      if (!current) throw new AdminOperationError("not_found");
+
+      const timestamp = now().toISOString();
+      let typeCardBundle = current.typeCardBundle;
+      let viewBundle = current.viewBundle;
+      let builtinOperator = current.builtinOperator;
+      if (parsed.data.typeCardBundleId !== undefined) {
+        typeCardBundle = await repository.resolveTypeCardBundle(context, documentType, parsed.data.typeCardBundleId);
+        if (!typeCardBundle) throw new AdminOperationError("not_found");
+      }
+      if (parsed.data.viewBundleId !== undefined) {
+        viewBundle = await repository.resolveViewBundle(context, documentType, parsed.data.viewBundleId);
+        if (!viewBundle) throw new AdminOperationError("not_found");
+      }
+      if (parsed.data.builtinOperatorId !== undefined) {
+        builtinOperator = parsed.data.builtinOperatorId === null ? null : await repository.resolveOperator(context, documentType, parsed.data.builtinOperatorId);
+        if (parsed.data.builtinOperatorId !== null && !builtinOperator) throw new AdminOperationError("not_found");
+      }
+      const enabled = parsed.data.enabled ?? current.enabled;
+      if (enabled && (!current.latestDocumentContract || !typeCardBundle || !viewBundle || !builtinOperator)) throw new AdminOperationError("invalid_request");
+      const representation = {
+        documentType, internalName: parsed.data.internalName ?? current.internalName, enabled,
+        latestDocumentContract: current.latestDocumentContract, typeCardBundle, viewBundle, builtinOperator, updatedAt: timestamp,
+      };
+      const registration = DocumentTypeRegistrationSchema.parse({ ...representation, etag: await resourceEtag(representation) });
+      const changedActions: AdminAuditEvent["action"][] = [];
+      if (parsed.data.internalName !== undefined && parsed.data.internalName !== current.internalName) changedActions.push("document_type.internal_name_changed");
+      if (parsed.data.typeCardBundleId !== undefined && typeCardBundle?.typeCardBundleId !== current.typeCardBundle?.typeCardBundleId) changedActions.push("document_type.type_card_bundle_changed");
+      if (parsed.data.viewBundleId !== undefined && viewBundle?.viewBundleId !== current.viewBundle?.viewBundleId) changedActions.push("document_type.view_bundle_changed");
+      if (parsed.data.builtinOperatorId !== undefined && builtinOperator?.operatorId !== current.builtinOperator?.operatorId) changedActions.push("document_type.operator_changed");
+      if (parsed.data.enabled !== undefined && enabled !== current.enabled) changedActions.push(enabled ? "document_type.enabled" : "document_type.disabled");
+      const audits = changedActions.map(action => ({
+        auditEventId: id(), actorId: context.memberId, action, resourceType: "document_type" as const,
+        resourceId: documentType, documentType, occurredAt: timestamp, requestId, reason: parsed.data.reason ?? null
+      }));
+      return repository.update({
+        context, key, expectedEtag, registration, audits,
+        fingerprint: await schemaHash({ operation: "updateDocumentType", documentType, expectedEtag, body: parsed.data }),
+      });
     },
     list: (context: AdminContext, query: ListDocumentTypesQuery = {}) => repository.list(context, query),
   };

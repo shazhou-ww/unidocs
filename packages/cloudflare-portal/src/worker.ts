@@ -3,6 +3,9 @@ import { createPortalBff } from "./bff.js";
 import { portalGoogleConfigFromGateway } from "./google-config.js";
 import { createDocumentTypesHttp } from "./document-types-http.js";
 import { D1DocumentTypeRepository } from "./document-types-repository.js";
+import { serveAdminWebUi } from "./static-assets.js";
+import { createAdministratorsHttp } from "./administrators-http.js";
+import { D1AdministratorRepository } from "./administrators-repository.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -13,7 +16,14 @@ export default {
         GATEWAY_OIDC_ISSUER: env.GATEWAY_OIDC_ISSUER,
       }, env.PORTAL_ORIGIN);
       const repository = new D1PortalAuthRepository(env.DB);
-      const response = await createPortalBff(config, repository, { bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null, adminApi: createDocumentTypesHttp(new D1DocumentTypeRepository(env.DB)) })(request);
+      const documentTypesHttp = createDocumentTypesHttp(new D1DocumentTypeRepository(env.DB));
+      const administratorsHttp = createAdministratorsHttp(new D1AdministratorRepository(env.DB));
+      const response = await createPortalBff(config, repository, {
+        bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null,
+        adminApi: (apiRequest, admin, requestId) => new URL(apiRequest.url).pathname.startsWith("/admin/api/v1/administrators")
+          ? administratorsHttp(apiRequest, admin, requestId) : documentTypesHttp(apiRequest, admin, requestId),
+        adminUi: serveAdminWebUi
+      })(request);
       console.log(JSON.stringify({ event: "portal_request", requestId: response.headers.get("X-Request-ID"), path: new URL(request.url).pathname, status: response.status }));
       return response;
     } catch {
