@@ -13,9 +13,9 @@
 - `stacks/unidocs-cloudflare/local/doc-types.mjs` is deliberately dependency-free (only `node:path`) so `dev.mjs` can validate argv before importing esbuild or Miniflare. Any new registry module must keep that property: no imports beyond `node:path`.
 - `DOC_TYPES` describes document types. The portal has no editor or operator Durable Object, takes no gateway route, and does not appear in `docServicesJson`. Do not add it to that table.
 - `packages/cloudflare-portal/wrangler.jsonc` is the deployment contract. Do not change its `compatibility_date`; the local runtime supplies its own (`COMPATIBILITY_DATE` in `doc-types.mjs`, currently `"2025-08-17"`).
-- `portalGoogleConfigFromGateway` currently requires a canonical HTTPS origin and exactly the Google issuer. Both need a **narrow, explicit** local-development allowance. A production origin or a production issuer must never be able to fall into the allowance.
-- Local dev secrets never enter the repository. `.dev.vars` is gitignored; the runtime passes the mock OIDC client id and secret as bindings instead.
-- The existing local mock OIDC provider (`stacks/unicas/local/mock-oidc-worker.mjs`, port `MOCK_OIDC_PORT` 8793) serves discovery and JWKS for its own origin and accepts any `client_id` — it does not validate the secret. Reuse it; do not write a second one.
+- The portal origin must be canonical HTTPS in three independent places (`google-config.ts`, `google-login.ts`, `auth.ts`), all of which run on every request. Only the **origin** gets a local-development allowance, and only for loopback; the issuer requirement stays exactly `https://accounts.google.com`, because local development signs in against the real Google with a loopback redirect URI registered on the existing client.
+- Local dev secrets never enter the repository. The portal's Google client id and secret reach the worker from the developer's environment (`GOOGLE_OIDC_CLIENT_ID` / `GOOGLE_OIDC_CLIENT_SECRET`, the same variables the CAS admin BFF already reads); `.dev.vars` stays gitignored and no credential is committed.
+- Do **not** wire the portal to the local mock OIDC provider. It issues for its own loopback origin and omits `auth_time` and `email_verified`, which the portal requires; local development uses the real Google instead. The mock stays untouched — it belongs to the UniCAS admin BFF.
 - Occupied ports fail fast, matching the existing `assertPortFree` behaviour.
 - `CLAUDE.md` is local-only: it is in `.git/info/exclude` and has never been tracked. Never edit it, never `git add` it, and never `git add -A` from a directory that would sweep it in.
 - Commit messages are English, imperative, and explain the reasoning; do not push or open a PR.
@@ -248,108 +248,137 @@ exist."
 
 ---
 
-### Task 2: The local-development origin and issuer allowance
+### Task 2: The local-development origin allowance, in all three places that enforce it
 
 **Files:**
 - Modify: `packages/cloudflare-portal/src/google-config.ts`
-- Test: `packages/cloudflare-portal/tests/google-config.test.ts`
+- Modify: `packages/cloudflare-portal/src/google-login.ts`
+- Modify: `packages/cloudflare-portal/src/auth.ts`
+- Test: `packages/cloudflare-portal/tests/google-config.test.ts`, and the suites covering the other two
 
 **Interfaces:**
-- Consumes: nothing from Task 1.
-- Produces: `portalGoogleConfigFromGateway` accepting a loopback HTTP origin together with a loopback issuer; `LOCAL_DEV_ORIGIN_PATTERN` exported for the runtime to assert against.
+- Produces: `isLocalDevOrigin(origin)` exported from `google-config.ts`, called by the other two modules so the rule exists once.
 
-- [ ] **Step 1: Write the failing test**
+**Background — why three files.** The same rule, "the portal origin must be canonical HTTPS", is written independently in `google-config.ts:40`, `google-login.ts:55` and `auth.ts:64`. All three run on every request: `createPortalBff` constructs the login handler and the authenticator unconditionally, so any one of them throwing makes the worker answer 503 to everything. Relaxing one and not the others changes nothing observable. Having written it three times is also why the first attempt at this task missed two of them.
 
-Append to `packages/cloudflare-portal/tests/google-config.test.ts`:
+**The rule.** The origin may be canonical HTTPS **or** a loopback origin. The issuer requirement does not change at all: it stays exactly `https://accounts.google.com`, because local development uses the real Google with a loopback redirect URI registered on the existing client, not a mock provider. `PortalGoogleConfig.issuer` keeps its literal type.
+
+A previous attempt at this task (commit `2bdd2d9`) implemented a different rule — a loopback origin paired with a loopback issuer — for a mock-provider design that has since been dropped. That pairing **rejects** the combination this task needs. Remove it.
+
+- [ ] **Step 1: Write the failing tests**
+
+Replace the loopback cases previously added to `packages/cloudflare-portal/tests/google-config.test.ts` with these, keeping every pre-existing case in that file:
 
 ```ts
-test("accepts a loopback origin only when the issuer is also loopback", () => {
-  const local = { ...settings, GATEWAY_OIDC_ISSUER: "http://127.0.0.1:8793" };
-  expect(portalGoogleConfigFromGateway(local, "http://127.0.0.1:8795")).toMatchObject({
+test("accepts a loopback origin with the real Google issuer, which is what local development uses", () => {
+  expect(portalGoogleConfigFromGateway(settings, "http://127.0.0.1:8795")).toMatchObject({
     origin: "http://127.0.0.1:8795",
     redirectUri: "http://127.0.0.1:8795/admin/auth/callback",
-    issuer: "http://127.0.0.1:8793",
+    issuer: "https://accounts.google.com",
   });
-  expect(portalGoogleConfigFromGateway({ ...settings }, "http://localhost:8795").origin).toBe("http://localhost:8795");
+  expect(portalGoogleConfigFromGateway(settings, "http://localhost:8795").origin).toBe("http://localhost:8795");
 });
 
 test.each([
-  ["a public origin over http", { ...settings }, "http://unidocs.shazhou.work"],
-  ["a loopback-looking hostname that is not loopback", { ...settings }, "http://127.0.0.1.evil.test:8795"],
-  ["a loopback origin with a path", { ...settings }, "http://127.0.0.1:8795/admin"],
-  ["a non-loopback issuer over http", { ...settings, GATEWAY_OIDC_ISSUER: "http://accounts.example" }, "http://127.0.0.1:8795"],
-])("refuses %s", (_label, override, origin) => {
-  expect(() => portalGoogleConfigFromGateway(override, origin)).toThrow(TypeError);
+  ["a public origin over http", "http://unidocs.shazhou.work"],
+  ["a loopback-looking hostname that is not loopback", "http://127.0.0.1.evil.test:8795"],
+  ["a loopback origin with a path", "http://127.0.0.1:8795/admin"],
+  ["a loopback origin without a port", "http://127.0.0.1"],
+])("refuses %s", (_label, origin) => {
+  expect(() => portalGoogleConfigFromGateway(settings, origin)).toThrow(/canonical/);
 });
 
-test("a loopback issuer is never accepted for a production origin", () => {
-  const local = { ...settings, GATEWAY_OIDC_ISSUER: "http://127.0.0.1:8793" };
-  expect(() => portalGoogleConfigFromGateway(local, "https://unidocs.shazhou.work")).toThrow(TypeError);
+test("the issuer requirement is unchanged by the origin allowance", () => {
+  const wrongIssuer = { ...settings, GATEWAY_OIDC_ISSUER: "http://127.0.0.1:8793" };
+  expect(() => portalGoogleConfigFromGateway(wrongIssuer, "http://127.0.0.1:8795")).toThrow(/issuer/);
+  expect(() => portalGoogleConfigFromGateway(wrongIssuer, "https://unidocs.shazhou.work")).toThrow(/issuer/);
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+Add to the suite covering `createPortalGoogleLogin` (`tests/google-login.test.ts`):
+
+```ts
+test("accepts a loopback portal origin, and still refuses a non-Google issuer", () => {
+  const local = { issuer: "https://accounts.google.com" as const, clientId: "id", clientSecret: "secret",
+    origin: "http://127.0.0.1:8795", redirectUri: "http://127.0.0.1:8795/admin/auth/callback" };
+  expect(() => createPortalGoogleLogin(local, ports)).not.toThrow();
+  expect(() => createPortalGoogleLogin({ ...local, issuer: "http://127.0.0.1:8793" as never }, ports)).toThrow(TypeError);
+  expect(() => createPortalGoogleLogin({ ...local, origin: "http://unidocs.shazhou.work" }, ports)).toThrow(TypeError);
+});
+```
+
+Use whatever `ports` fixture that file already builds for its other cases.
+
+Add to the suite covering `createAdminAuthenticator` (`tests/auth.test.ts`):
+
+```ts
+test("accepts a loopback origin, and still refuses a public http origin", () => {
+  expect(() => createAdminAuthenticator({ origin: "http://127.0.0.1:8795", audience: "client" }, dependencies)).not.toThrow();
+  expect(() => createAdminAuthenticator({ origin: "http://unidocs.shazhou.work", audience: "client" }, dependencies)).toThrow(TypeError);
+});
+```
+
+Use whatever `dependencies` fixture that file already builds.
+
+- [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-pnpm --filter @unidocs/cloudflare-portal exec vitest run tests/google-config.test.ts
+pnpm --filter @unidocs/cloudflare-portal test
 ```
 
-Expected: FAIL — the loopback cases throw today.
+Expected: FAIL on the new cases. The `google-config` loopback case fails because `2bdd2d9`'s pairing rule rejects a Google issuer with a loopback origin; the other two fail because those modules still require HTTPS.
 
 - [ ] **Step 3: Write the implementation**
 
-Replace the body of `portalGoogleConfigFromGateway` in `packages/cloudflare-portal/src/google-config.ts`:
+In `packages/cloudflare-portal/src/google-config.ts`, replace the pairing logic from `2bdd2d9` with:
 
 ```ts
 export const GOOGLE_ISSUER = "https://accounts.google.com";
 
 /**
- * Loopback only, and only the two spellings a local runtime actually binds.
- * A hostname that merely starts with 127.0.0.1 is a different host, so this
- * matches the whole authority rather than a prefix.
+ * Loopback only, and only the two spellings a local runtime binds. A hostname
+ * that merely starts with 127.0.0.1 is a different host, so this matches the
+ * whole authority rather than a prefix, and requires an explicit port so a
+ * bare `http://127.0.0.1` cannot slip through.
+ *
+ * Exported because the same rule is enforced in `google-login.ts` and
+ * `auth.ts`: writing it three times is what let two of them keep requiring
+ * HTTPS after the first was relaxed.
  */
 export const LOCAL_DEV_ORIGIN_PATTERN = /^http:\/\/(?:127\.0\.0\.1|localhost):\d{1,5}$/;
 
-function isLoopback(origin: string): boolean {
+export function isLocalDevOrigin(origin: string): boolean {
   return LOCAL_DEV_ORIGIN_PATTERN.test(origin);
 }
-
-export function portalGoogleConfigFromGateway(settings: Readonly<Record<string, string | undefined>>, portalOrigin = PORTAL_PUBLIC_ORIGIN): PortalGoogleConfig {
-  const clientId = settings.GATEWAY_OIDC_CLIENT_ID?.trim();
-  const clientSecret = settings.GATEWAY_OIDC_CLIENT_SECRET;
-  const issuer = (settings.GATEWAY_OIDC_ISSUER ?? GOOGLE_ISSUER).replace(/\/$/, "");
-  const origin = new URL(portalOrigin);
-  if (origin.origin !== portalOrigin) throw new TypeError("Portal requires a canonical origin");
-
-  // A loopback origin is a local runtime, and it may only talk to a loopback
-  // OIDC provider — the mock. Pairing them is what keeps this allowance from
-  // ever applying in production: a deployed origin is not loopback, and a
-  // loopback issuer is refused for any other origin, so neither half can be
-  // reached by a misconfigured deployment on its own.
-  const local = isLoopback(portalOrigin);
-  const localIssuer = isLoopback(issuer);
-  if (local !== localIssuer) throw new TypeError("Portal pairs a loopback origin with a loopback OIDC issuer, or neither");
-  if (!local && (origin.protocol !== "https:" || issuer !== GOOGLE_ISSUER)) {
-    throw new TypeError("Portal requires a canonical HTTPS origin and the Google issuer");
-  }
-  if (!clientId || !clientSecret?.trim()) throw new TypeError("Gateway Google OIDC client ID and secret are required");
-
-  return { issuer: issuer as PortalGoogleConfig["issuer"], clientId, clientSecret, origin: portalOrigin, redirectUri: `${portalOrigin}/admin/auth/callback` };
-}
 ```
 
-Widen the `issuer` field on `PortalGoogleConfig` from the literal to `string`, keeping the doc comment that says production is always Google:
+and make the validation:
 
 ```ts
-export interface PortalGoogleConfig {
-  /** Always the Google issuer in production; a loopback mock only in local development. */
-  readonly issuer: string;
-  readonly clientId: string;
-  readonly clientSecret: string;
-  readonly origin: string;
-  readonly redirectUri: string;
-}
+  const origin = new URL(portalOrigin);
+  if (origin.origin !== portalOrigin) throw new TypeError("Portal requires a canonical origin");
+  if (origin.protocol !== "https:" && !isLocalDevOrigin(portalOrigin)) {
+    throw new TypeError("Portal requires a canonical HTTPS origin, or a loopback origin for local development");
+  }
+  if (issuer !== GOOGLE_ISSUER) throw new TypeError("Portal requires the Google issuer");
+  if (!clientId || !clientSecret?.trim()) throw new TypeError("Gateway Google OIDC client ID and secret are required");
 ```
+
+Restore `PortalGoogleConfig.issuer` to its literal type `"https://accounts.google.com"` if `2bdd2d9` widened it.
+
+In `packages/cloudflare-portal/src/google-login.ts:55`, change only the origin clause of the existing guard, leaving every other clause exactly as it is:
+
+```ts
+  if (config.issuer !== GOOGLE_ISSUER || new URL(config.origin).origin !== config.origin || (!config.origin.startsWith("https://") && !isLocalDevOrigin(config.origin)) || config.redirectUri !== `${config.origin}/admin/auth/callback` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
+```
+
+In `packages/cloudflare-portal/src/auth.ts:64`, the same treatment:
+
+```ts
+  if ((origin.protocol !== "https:" && !isLocalDevOrigin(config.origin)) || origin.origin !== config.origin || !config.audience.trim()) throw new TypeError("Invalid administrator auth configuration");
+```
+
+Do **not** touch anything else in those two files. The four Google endpoint constants in `google-login.ts:8-11`, the JWKS URL and the issuer allowlist in `auth.ts:65,77` all stay: local development signs in against the real Google, so they are correct as they stand.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -358,26 +387,23 @@ pnpm --filter @unidocs/cloudflare-portal test
 pnpm --filter @unidocs/cloudflare-portal typecheck
 ```
 
-Expected: PASS, including every pre-existing case in `google-config.test.ts`, `auth.test.ts` and `worker.test.ts`.
+Expected: PASS, including every pre-existing case across all five test files.
 
-- [ ] **Step 5: Verify the allowance cannot be reached in production**
-
-Temporarily change the production default in `wrangler.production.jsonc`'s `PORTAL_ORIGIN` to `http://127.0.0.1:8795`, run `pnpm --filter @unidocs/cloudflare-portal exec wrangler deploy --dry-run --config wrangler.production.jsonc`, and confirm it still builds — then revert. The point of the check is to confirm nothing in the deployment path silently depends on the old strictness. Record what you observed; revert the file and confirm `git diff` is empty.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/cloudflare-portal/src/google-config.ts packages/cloudflare-portal/tests/google-config.test.ts
-git commit -m "feat(portal): allow a loopback origin paired with a loopback issuer
+git add packages/cloudflare-portal/src packages/cloudflare-portal/tests
+git commit -m "feat(portal): accept a loopback origin for local development
 
-Local development needs both halves: the runtime binds http://127.0.0.1, and
-the mock OIDC provider issues for its own loopback origin, so requiring the
-Google issuer refused local login just as firmly as requiring HTTPS refused the
-local origin.
+The portal origin must be canonical HTTPS in three independent places, and all
+three run on every request, so relaxing one changed nothing observable. The
+rule now lives in one exported predicate that the other two call: having
+written it three times is exactly why the first attempt relaxed one and left
+the other two refusing.
 
-The two are allowed only together. A deployed origin is not loopback, and a
-loopback issuer is refused for any other origin, so neither half of a
-misconfigured deployment can reach the allowance alone."
+The issuer requirement is untouched. Local development signs in against the
+real Google with a loopback redirect URI registered on the existing client, so
+the endpoint constants and the JWKS URL stay correct as they are."
 ```
 
 ---
@@ -476,9 +502,9 @@ export function resolvePorts(docTypes, overrides = {}, services = []) {
 `buildWorkers` — add `services = []` to the destructured options, and build one config per service worker. Place this beside `mockOidcWorker`, and include it in every array the function returns except the `casMiddlewareOnly` one:
 
 ```js
-  // The portal reads its Google settings from the same switch the CAS admin BFF
-  // uses: a real client id means a real Google, its absence means the local mock
-  // provider. `useRealGoogle` is already computed above for exactly this.
+  // The portal always points at the real Google. Without credentials in the
+  // environment the worker answers 503 rather than starting a login it cannot
+  // finish, which is the honest failure for "you have not configured this yet".
   const serviceWorkerConfigs = serviceWorkers(services).map(component => ({
     name: component.worker,
     modules: true,
@@ -487,11 +513,11 @@ export function resolvePorts(docTypes, overrides = {}, services = []) {
     compatibilityFlags: ["nodejs_compat"],
     bindings: {
       PORTAL_ORIGIN: `http://${host}:${ports[component.name]}`,
-      GATEWAY_OIDC_ISSUER: useRealGoogle
-        ? googleOidcIssuer ?? "https://accounts.google.com"
-        : `http://${host}:${ports.mockOidc}`,
-      GATEWAY_OIDC_CLIENT_ID: googleOidcClientId ?? "unidocs-portal-local",
-      GATEWAY_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "unidocs-portal-local-secret",
+      // Always the real Google: the portal requires auth_time and
+      // email_verified, which the local mock provider does not issue.
+      GATEWAY_OIDC_ISSUER: "https://accounts.google.com",
+      GATEWAY_OIDC_CLIENT_ID: googleOidcClientId ?? "",
+      GATEWAY_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "",
       PORTAL_BOOTSTRAP_EMAIL: process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL ?? "",
     },
     d1Databases: { [component.d1Binding]: component.worker },
@@ -715,7 +741,7 @@ Confirm the printed URL list contains both the portal and the psd worker, and th
 
 - [ ] **Step 3: Document it**
 
-Add a short section covering: `pnpm dev portal` and `pnpm dev portal psd`; that `portal` is an umbrella whose WebUI components land later; that the local runtime supplies its own compatibility date, so running `wrangler dev` directly inside `packages/cloudflare-portal` fails against the pinned workerd; and that local login uses the mock OIDC provider, so no Google credentials are needed.
+Add a short section covering: `pnpm dev portal` and `pnpm dev portal psd`; that `portal` is an umbrella whose WebUI components land later; that the local runtime supplies its own compatibility date, so running `wrangler dev` directly inside `packages/cloudflare-portal` fails against the pinned workerd; that signing in locally needs `GOOGLE_OIDC_CLIENT_ID` / `GOOGLE_OIDC_CLIENT_SECRET` in the environment and `http://127.0.0.1:8795/admin/auth/callback` registered as a redirect URI on that client; and that without those the worker answers 503, which is expected.
 
 Do not edit `CLAUDE.md` (see the Files list above). If you notice its `pnpm dev` examples are stale, say so in your report instead.
 
@@ -736,9 +762,10 @@ git commit -m "docs(dev): document the portal dev target
 
 Records the two things a reader cannot derive from the code: that running
 wrangler dev directly inside packages/cloudflare-portal fails because its
-deployment compatibility date is newer than the pinned workerd, and that local
-login needs no Google credentials because the runtime points the portal at the
-mock OIDC provider."
+deployment compatibility date is newer than the pinned workerd, and that
+signing in locally needs a loopback redirect URI registered on the same Google
+client production uses, because the portal requires claims the local mock
+provider does not issue."
 ```
 
 ---
