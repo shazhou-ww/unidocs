@@ -21,6 +21,14 @@ packages:
 minimumReleaseAgeExclude:
   - oauth4webapi
   - '@zip.js/zip.js'
+  # packages/docs-webui bundles the Scalar API reference; the proxy carries none
+  # of that tree. The three below are Scalar's own transitive dependencies, not
+  # anything this repository declares — they are listed separately only because
+  # they do not share its scope.
+  - '@scalar/*'
+  - '@codemirror/state'
+  - '@tanstack/virtual-core'
+  - '@tanstack/vue-virtual'
 overrides:
   '@jridgewell/sourcemap-codec': 1.5.5
 allowBuilds:
