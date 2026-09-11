@@ -26,6 +26,7 @@ import {
   resolvePorts,
 } from "./doc-types.mjs";
 import { serviceWorkers } from "./services.mjs";
+import { splitSqlStatements } from "./sql-statements.mjs";
 import { openDevLog } from "./dev-log.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
@@ -164,18 +165,29 @@ async function migrateSnapshotsDb(mf) {
  * local databases that predate its ledger and must have their generation
  * inferred, while a service database here has no such history — a fresh one
  * simply applies every file.
+ *
+ * Unlike `migrateSnapshotsDb` it does **not** hand the file to `db.exec()`.
+ * D1's `exec` splits on newlines and runs each line as a whole statement,
+ * which only works because every gateway migration happens to be written
+ * one-statement-per-line; a service's migrations are authored for
+ * `wrangler d1 migrations apply` and are multi-line `CREATE TABLE (...)`
+ * blocks, which `exec` rejects with `incomplete input`. `splitSqlStatements`
+ * does the splitting properly (strings, comments, trigger bodies) so service
+ * migrations stay readable — see sql-statements.mjs.
  */
 async function migrateServiceDb(mf, component, root) {
   const db = await mf.getD1Database(component.d1Binding, component.worker);
   const directory = join(root, component.migrations);
   const files = (await readdir(directory)).filter(file => file.endsWith(".sql")).sort();
-  await db.exec(`CREATE TABLE IF NOT EXISTS _unidocs_service_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);`);
+  await db.exec("CREATE TABLE IF NOT EXISTS _unidocs_service_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);");
   const appliedResult = await db.prepare("SELECT name FROM _unidocs_service_migrations ORDER BY name").all();
   const applied = new Set((appliedResult.results ?? []).map(row => row.name));
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = await readFile(join(directory, file), "utf8");
-    await db.exec(sql);
+    for (const statement of splitSqlStatements(sql)) {
+      await db.prepare(statement).run();
+    }
     await db.prepare(
       "INSERT INTO _unidocs_service_migrations (name, applied_at) VALUES (?, ?)",
     ).bind(file, Date.now()).run();
@@ -524,6 +536,7 @@ export async function startLocalRuntime({
           googleOidcClientId: process.env.GOOGLE_OIDC_CLIENT_ID,
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
+          portalBootstrapEmail: process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL ?? "",
           casMiddlewareOnly,
           casMiddleware: casMiddleware || !casOrigin,
           casOrigin,

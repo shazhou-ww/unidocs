@@ -20,7 +20,7 @@ import {
   parseDocTypes,
   resolvePorts,
 } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
-import { serviceWorkers } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
+import { PORTAL_PORT, serviceWorkers } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 
 /** Ports every buildWorkers call needs in these tests. */
 const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, edge: 8794 };
@@ -327,21 +327,89 @@ test("service ports are reserved alongside the gateway and document types", () =
   expect(new Set(Object.values(ports)).size).toBe(Object.keys(ports).length);
 });
 
+const portalWorker = (extra = {}) => buildWorkers({
+  docTypes: [], host: "127.0.0.1", ports: resolvePorts([], {}, ["portal"]),
+  bundleDir: "/tmp/bundle", services: ["portal"],
+  stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+  ...extra,
+}).find(worker => worker.name === "unidocs-portal");
+
 test("a selected service becomes a Miniflare worker with its D1 binding", () => {
-  const workers = buildWorkers({
-    docTypes: [], host: "127.0.0.1", ports: resolvePorts([], {}, ["portal"]),
-    bundleDir: "/tmp/bundle", services: ["portal"],
-    stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
-  });
-  const portal = workers.find(worker => worker.name === "unidocs-portal");
+  const portal = portalWorker();
   expect(portal).toBeDefined();
   expect(portal.d1Databases).toMatchObject({ DB: expect.any(String) });
-  expect(portal.bindings.PORTAL_ORIGIN).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  // Exact, not /:\d+/: mutating `ports[component.name]` to `ports.gateway`
+  // still yields a loopback URL, and PORTAL_ORIGIN is what the portal turns
+  // into its OAuth redirect URI — the wrong port is a broken sign-in.
+  expect(portal.bindings.PORTAL_ORIGIN).toBe(`http://127.0.0.1:${PORTAL_PORT}`);
   // The portal always points at the real Google, never the local mock OIDC
   // provider — see google-config.ts: the mock omits auth_time/email_verified,
   // which the portal requires.
   expect(portal.bindings.GATEWAY_OIDC_ISSUER).toBe("https://accounts.google.com");
   expect(portal.compatibilityDate).toBe(COMPATIBILITY_DATE);
+});
+
+// `packages/cloudflare-portal/src/auth.ts` imports node:crypto's
+// timingSafeEqual, and runtime.mjs leaves `node:*` external for that entry on
+// the strength of this flag. Without it workerd does not degrade — the whole
+// Miniflare process refuses to start (ERR_RUNTIME_FAILURE).
+test("the portal worker runs with nodejs_compat", () => {
+  expect(portalWorker().compatibilityFlags).toEqual(["nodejs_compat"]);
+});
+
+// Without this the worker is built and bound but nothing listens on 8795, so
+// `pnpm dev portal` fails with a connection refused that looks like a port
+// problem. `runtime.urls.portal` is derived from `ports` and keeps working,
+// which is exactly why its absence is silent.
+test("the portal worker listens on its own reserved port", () => {
+  expect(portalWorker().unsafeDirectSockets).toEqual([{ host: "127.0.0.1", port: PORTAL_PORT }]);
+});
+
+// scriptPath must name the file bundleTargets actually writes. Asserting the
+// literal "portal.js" on both sides would not pin their agreement; deriving
+// the expectation from bundleTargets does.
+test("the portal worker's scriptPath is the file bundleTargets writes", () => {
+  const [component] = serviceWorkers(["portal"]);
+  const target = bundleTargets([], { services: ["portal"] })
+    .find(entry => entry.entry === component.entry);
+  expect(target).toBeDefined();
+  expect(portalWorker().scriptPath).toBe(join("/tmp/bundle", target.outfile));
+});
+
+// The fallbacks are what let the portal boot for a reader who has not
+// registered a loopback redirect URI. worker.ts wraps its handler in a catch
+// that answers `portal_unavailable`, so an empty client id turns every
+// response into a 503 rather than a working sign-in page.
+test("the portal worker boots with placeholder Google credentials", () => {
+  const bindings = portalWorker().bindings;
+  expect(bindings.GATEWAY_OIDC_CLIENT_ID).toBe("unidocs-portal-local");
+  expect(bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("unidocs-portal-local-secret");
+});
+
+test("real Google credentials win over the placeholders", () => {
+  const bindings = portalWorker({
+    googleOidcClientId: "real-client-id",
+    googleOidcClientSecret: "real-client-secret",
+  }).bindings;
+  expect(bindings.GATEWAY_OIDC_CLIENT_ID).toBe("real-client-id");
+  expect(bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("real-client-secret");
+});
+
+// doc-types.mjs is dependency-free and pure by construction, so every
+// environment-derived value is threaded in from runtime.mjs. PORTAL_BOOTSTRAP_EMAIL
+// was the one exception; reading process.env here would make a developer's
+// shell change buildWorkers' output.
+test("the bootstrap email is a parameter, not an ambient environment read", () => {
+  const previous = process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL;
+  process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL = "ambient@example.test";
+  try {
+    expect(portalWorker().bindings.PORTAL_BOOTSTRAP_EMAIL).toBe("");
+    expect(portalWorker({ portalBootstrapEmail: "owner@example.test" }).bindings.PORTAL_BOOTSTRAP_EMAIL)
+      .toBe("owner@example.test");
+  } finally {
+    if (previous === undefined) delete process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL;
+    else process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL = previous;
+  }
 });
 
 test("no selected service leaves the worker list exactly as it was", () => {
