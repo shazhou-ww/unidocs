@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { expandServiceTarget, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
+import { expandServiceTarget, PORTAL_PORT, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 import { parseTargets } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
 
 test("portal is an umbrella that expands to every component it owns", () => {
@@ -53,6 +53,13 @@ test("an unknown positional names both kinds of valid target", () => {
   expect(() => parseTargets(["nope"])).toThrow(/Unknown target: nope/);
   expect(() => parseTargets(["nope"])).toThrow(/markdown/);
   expect(() => parseTargets(["nope"])).toThrow(/portal/);
+});
+
+// Moved from the integration file's "reserves the port the registry
+// declares..." test, which compared this constant against a literal and
+// needed no running Miniflare to do it.
+test("PORTAL_PORT is pinned at 8795", () => {
+  expect(PORTAL_PORT).toBe(8795);
 });
 
 test("the registry stays dependency-free so argv validation costs nothing", async () => {

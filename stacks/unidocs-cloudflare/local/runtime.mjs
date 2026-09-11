@@ -185,7 +185,7 @@ async function migrateServiceDb(mf, component, root) {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = await readFile(join(directory, file), "utf8");
-    for (const statement of splitSqlStatements(sql)) {
+    for (const statement of splitSqlStatements(sql, file)) {
       await db.prepare(statement).run();
     }
     await db.prepare(

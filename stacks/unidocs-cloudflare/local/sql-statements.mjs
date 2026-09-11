@@ -29,6 +29,14 @@
  * (only possible if quoted, which this function already skips, or via a
  * SQLite-specific keyword-as-identifier quirk) could miscount. No migration in
  * this repository does that, and `wrangler`'s own splitter has the same shape.
+ *
+ * That miscount, like an unterminated string literal, fails loudly: the
+ * merged statement is malformed SQL, and `prepare()` throws on it. An
+ * unterminated `/* ... *\/` block comment is different — with nothing left to
+ * balance, the naive read would silently drop the rest of the file, and the
+ * caller would record the migration as applied with part of its schema never
+ * created. This function throws instead of doing that; see the `/*` branch
+ * below.
  */
 
 const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/;
@@ -36,7 +44,7 @@ const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/;
 /** Closing delimiter for each opening quote character. */
 const QUOTE_CLOSERS = { "'": "'", '"': '"', "`": "`", "[": "]" };
 
-export function splitSqlStatements(sql) {
+export function splitSqlStatements(sql, file) {
   const statements = [];
   let current = "";
   let blockDepth = 0;
@@ -64,7 +72,14 @@ export function splitSqlStatements(sql) {
     }
     if (pair === "/*") {
       const end = sql.indexOf("*/", index + 2);
-      index = end === -1 ? sql.length : end + 2;
+      if (end === -1) {
+        throw new Error(
+          `Unterminated block comment (missing closing "*/")${file ? ` in ${file}` : ""}: `
+          + "a \"/*\" was opened but never closed, so the rest of the file would be "
+          + "silently dropped instead of applied.",
+        );
+      }
+      index = end + 2;
       current += " ";
       continue;
     }

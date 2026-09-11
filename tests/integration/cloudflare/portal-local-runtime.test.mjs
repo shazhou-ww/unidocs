@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
-import { PORTAL_PORT } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 
 /**
  * The portal half of `startLocalRuntime({ services })`. Everything here is
@@ -132,10 +131,6 @@ describe("a fresh portal database", () => {
     expect(bindings.GATEWAY_OIDC_ISSUER).toBe("https://accounts.google.com");
     expect(bindings.GATEWAY_OIDC_CLIENT_ID).not.toBe("");
     expect(bindings.GATEWAY_OIDC_CLIENT_SECRET).not.toBe("");
-  });
-
-  test("reserves the port the registry declares when nothing overrides it", () => {
-    expect(PORTAL_PORT).toBe(8795);
   });
 });
 

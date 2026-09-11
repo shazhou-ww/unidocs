@@ -79,6 +79,20 @@ CREATE TABLE t ( /* inline; comment */ a TEXT );
   expect(statements[0]).not.toContain("inline");
 });
 
+// The one input that used to fail silently: an unterminated `/*` used to
+// consume the rest of the file as a comment, so the statements after it were
+// just gone — and `migrateServiceDb` would still record the file as applied.
+// This must throw instead, loudly enough to name the file.
+test("an unterminated block comment throws instead of silently dropping the rest of the file", () => {
+  expect(() => splitSqlStatements("CREATE TABLE t (a TEXT);\n/* oops\nCREATE TABLE u (b TEXT);\n"))
+    .toThrow(/unterminated block comment/i);
+});
+
+test("the unterminated-block-comment error names the migration file", () => {
+  expect(() => splitSqlStatements("/* never closed", "0003_broken.sql"))
+    .toThrow(/0003_broken\.sql/);
+});
+
 test("a trailing statement without a terminating semicolon is still returned", () => {
   expect(splitSqlStatements("SELECT 1;\nSELECT\n  2")).toEqual(["SELECT 1", "SELECT\n  2"]);
 });
