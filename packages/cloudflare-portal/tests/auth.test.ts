@@ -128,3 +128,20 @@ describe("Cloudflare administrator authentication", () => {
     await expect(authenticate(request())).rejects.toMatchObject({ code: "forbidden" });
   });
 });
+
+describe("Administrator auth configuration", () => {
+  const configPorts = { now: () => now, findSession: async () => null, findMemberById: async () => null, findMemberByIdentity: async () => null };
+
+  // createAdminAuthenticator has its own copy of the origin guard
+  // (independent of portalGoogleConfigFromGateway) — this is what let a
+  // config built for local development still get refused here even after
+  // google-config.ts's own check was relaxed.
+  test("accepts a loopback origin for local development", () => {
+    expect(() => createAdminAuthenticator({ origin: "http://127.0.0.1:8795", audience }, configPorts)).not.toThrow();
+    expect(() => createAdminAuthenticator({ origin: "http://localhost:8795", audience }, configPorts)).not.toThrow();
+  });
+
+  test.each(["http://admin.example.com", "http://127.0.0.1.evil.test:8795"])("refuses a non-loopback http origin %s", authOrigin => {
+    expect(() => createAdminAuthenticator({ origin: authOrigin, audience }, configPorts)).toThrow("Invalid administrator auth configuration");
+  });
+});

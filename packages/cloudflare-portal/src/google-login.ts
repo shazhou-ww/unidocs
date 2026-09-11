@@ -1,7 +1,7 @@
 import * as oauth from "oauth4webapi";
 import { AdminAccessError, boundedBytes, googleIdentityFromConfirmedLogin, requireRecentAuthentication } from "@unidocs/portal-service";
 import { hashSessionSecret } from "./auth.js";
-import type { PortalGoogleConfig } from "./google-config.js";
+import { isLocalDevOrigin, type PortalGoogleConfig } from "./google-config.js";
 
 export const LOGIN_COOKIE = "__Host-unidocs_admin_login";
 const loginLifetime = 600;
@@ -52,7 +52,10 @@ function loginCookie(value: string, maxAge: number): string {
 }
 
 export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts) {
-  if (config.issuer !== "https://accounts.google.com" || new URL(config.origin).origin !== config.origin || !config.origin.startsWith("https://") || config.redirectUri !== `${config.origin}/admin/auth/callback` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
+  // The origin may be a loopback local-dev origin instead of HTTPS — see
+  // isLocalDevOrigin — but the issuer is never relaxed: local development
+  // signs in against real Google, not a mock.
+  if (config.issuer !== "https://accounts.google.com" || new URL(config.origin).origin !== config.origin || (!config.origin.startsWith("https://") && !isLocalDevOrigin(config.origin)) || config.redirectUri !== `${config.origin}/admin/auth/callback` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
 
   const boundedFetch: typeof fetch = async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
