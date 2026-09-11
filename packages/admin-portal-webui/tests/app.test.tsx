@@ -169,6 +169,52 @@ test("restores the Contract tab, reads a revision, and appends a new one", async
   vi.unstubAllGlobals();
 });
 
+test("restores the Type Card tab, uploads a ZIP, previews the manifest, and edits metadata", async () => {
+  window.history.replaceState({}, "", "/admin/document-types/markdown?tab=cards");
+  const bundleId = `tb_${"a".repeat(64)}`;
+  const registration = { documentType: "markdown", internalName: "Markdown", enabled: false, latestDocumentContract: null, typeCardBundle: null, viewBundle: null, builtinOperator: null, etag: '"sha256-registration"', updatedAt: "2026-09-11T00:00:00.000Z" };
+  let candidateName = "Primary card";
+  const record = () => ({
+    typeCardBundleId: bundleId, bundleUrl: `https://bundles.unidocs.test/type-card-bundles/${bundleId}/`, name: candidateName, description: "Candidate",
+    manifest: { protocol: "unidocs-type-card/v1", documentType: "markdown", locales: { en: { name: "Markdown", description: "Text documents", sampleThumbnailAlt: "Markdown sample" } }, icon: { kind: "svg", path: "icon.svg" }, sampleThumbnail: "sample.webp" },
+    size: 1024, uploadedAt: "2026-09-11T00:00:00.000Z", etag: candidateName === "Primary card" ? '"sha256-card"' : '"sha256-updated"',
+  });
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.includes("/type-card-bundles?") && init?.method === "POST") return Response.json({ typeCardBundleId: bundleId, etag: '"sha256-card"' }, { status: 201 });
+    if (url.endsWith(`/type-card-bundles/${bundleId}`) && init?.method === "PATCH") { candidateName = "Updated card"; return Response.json({ typeCardBundleId: bundleId, etag: '"sha256-updated"' }); }
+    if (url.endsWith(`/type-card-bundles/${bundleId}`)) return Response.json(record());
+    if (url.includes("/type-card-bundles?")) { const { manifest: _manifest, ...item } = record(); return Response.json({ items: [{ ...item, documentType: "markdown" }], nextCursor: null }); }
+    if (url.endsWith("/document-types/markdown")) return Response.json(registration);
+    return Response.json({ items: [], nextCursor: null });
+  });
+  Object.defineProperty(document, "cookie", { configurable: true, value: "__Host-unidocs_admin_csrf=csrf" });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "Markdown" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "类型卡片包" })).toHaveAttribute("aria-selected", "true");
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(candidateName) }));
+  expect(await screen.findByText("Text documents")).toBeInTheDocument();
+  expect(screen.getByAltText("Markdown sample")).toHaveAttribute("src", expect.stringContaining("sample.webp"));
+  fireEvent.click(screen.getByRole("button", { name: "上传候选项" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "候选项名称" }), { target: { value: "Primary card" } });
+  const file = new File(["zip"], "card.zip", { type: "application/zip" });
+  fireEvent.change(screen.getByLabelText("类型卡片包 ZIP"), { target: { files: [file] } });
+  fireEvent.click(screen.getByRole("button", { name: "上传并验证" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST" && init.body === file)).toBe(true));
+  const uploadCall = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")!;
+  expect(new Headers(uploadCall[1]?.headers).get("content-type")).toBe("application/zip");
+  fireEvent.click(await screen.findByRole("button", { name: "编辑信息" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "候选项名称" }), { target: { value: "Updated card" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存信息" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true));
+  const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH")!;
+  expect(new Headers(patchCall[1]?.headers).get("if-match")).toBe('"sha256-card"');
+  expect(window.location.pathname + window.location.search).toBe("/admin/document-types/markdown?tab=cards");
+  vi.unstubAllGlobals();
+});
+
 test("renders a useful access denial only after the session probe fails", async () => {
   window.history.replaceState({}, "", "/admin/access-denied?code=forbidden&requestId=request-1");
   let rejectSession!: (reason: Error) => void;

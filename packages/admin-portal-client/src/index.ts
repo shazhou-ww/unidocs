@@ -15,6 +15,10 @@ import {
   type ListDocumentTypesQuery,
   type ListDocumentTypesResponse,
   type ListDocumentContractsResponse,
+  type ListTypeCardBundlesResponse,
+  type TypeCardBundleMutationResult,
+  type TypeCardBundleRecord,
+  type UpdateCandidateMetadataRequest,
   type UpdateDocumentTypeRequest,
 } from "@unidocs/protocol-admin-portal";
 
@@ -28,7 +32,7 @@ export interface AdminPortalSession {
 }
 
 export class AdminPortalClientError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string, readonly requestId: string | null = null) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly requestId: string | null = null, readonly details?: unknown) {
     super(message);
     this.name = "AdminPortalClientError";
   }
@@ -49,6 +53,10 @@ export interface AdminPortalClient {
   listDocumentContracts(documentType: string, query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListDocumentContractsResponse>;
   getDocumentContract(documentType: string, documentContractIdx: number): Promise<DocumentContractRecord>;
   appendDocumentContract(documentType: string, body: AppendDocumentContractRequest, idempotencyKey?: string): Promise<DocumentContractAppendResult>;
+  uploadTypeCardBundle(file: Blob, metadata: { readonly name: string; readonly description: string }, idempotencyKey?: string): Promise<TypeCardBundleMutationResult>;
+  listTypeCardBundles(documentType: string, query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListTypeCardBundlesResponse>;
+  getTypeCardBundle(typeCardBundleId: string): Promise<TypeCardBundleRecord>;
+  updateTypeCardBundleMetadata(typeCardBundleId: string, body: UpdateCandidateMetadataRequest, ifMatch: string, idempotencyKey?: string): Promise<TypeCardBundleMutationResult>;
 }
 
 export interface AdminPortalClientConfig {
@@ -77,10 +85,10 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetcher(`${baseUrl}${path}`, { ...init, credentials: "include" });
     if (!response.ok) {
-      const payload = await response.json().catch(() => null) as { error?: { code?: unknown; message?: unknown; requestId?: unknown } } | null;
+      const payload = await response.json().catch(() => null) as { error?: { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } } | null;
       const error = payload?.error;
       const clientError = new AdminPortalClientError(response.status, typeof error?.code === "string" ? error.code : `http_${response.status}`,
-        typeof error?.message === "string" ? error.message : "Administrator request failed", typeof error?.requestId === "string" ? error.requestId : response.headers.get("x-request-id"));
+        typeof error?.message === "string" ? error.message : "Administrator request failed", typeof error?.requestId === "string" ? error.requestId : response.headers.get("x-request-id"), error?.details);
       if (response.status === 401) config.onUnauthorized?.(clientError);
       throw clientError;
     }
@@ -153,6 +161,21 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
     getDocumentContract: (documentType, documentContractIdx) => request<DocumentContractRecord>(`${AdminApiV1BasePath}/document-types/${encodeURIComponent(documentType)}/document-contracts/${documentContractIdx}`),
     appendDocumentContract: (documentType, body, idempotencyKey = createIdempotencyKey()) => request<DocumentContractAppendResult>(`${AdminApiV1BasePath}/document-types/${encodeURIComponent(documentType)}/document-contracts`, {
       method: "POST", headers: mutationHeaders({ "idempotency-key": idempotencyKey }), body: JSON.stringify(body),
+    }),
+    uploadTypeCardBundle(file, metadata, idempotencyKey = createIdempotencyKey()) {
+      const params = new URLSearchParams({ name: metadata.name, description: metadata.description });
+      const headers = mutationHeaders({ "content-type": "application/zip", "idempotency-key": idempotencyKey });
+      return request<TypeCardBundleMutationResult>(`${AdminApiV1BasePath}/type-card-bundles?${params}`, { method: "POST", headers, body: file });
+    },
+    listTypeCardBundles(documentType, query = {}) {
+      const params = new URLSearchParams({ documentType });
+      if (query.limit !== undefined) params.set("limit", String(query.limit));
+      if (query.cursor !== undefined) params.set("cursor", query.cursor);
+      return request<ListTypeCardBundlesResponse>(`${AdminApiV1BasePath}/type-card-bundles?${params}`);
+    },
+    getTypeCardBundle: typeCardBundleId => request<TypeCardBundleRecord>(`${AdminApiV1BasePath}/type-card-bundles/${encodeURIComponent(typeCardBundleId)}`),
+    updateTypeCardBundleMetadata: (typeCardBundleId, body, ifMatch, idempotencyKey = createIdempotencyKey()) => request<TypeCardBundleMutationResult>(`${AdminApiV1BasePath}/type-card-bundles/${encodeURIComponent(typeCardBundleId)}`, {
+      method: "PATCH", headers: mutationHeaders({ "idempotency-key": idempotencyKey, "if-match": ifMatch }), body: JSON.stringify(body),
     }),
   };
 }

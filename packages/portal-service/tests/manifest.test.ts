@@ -134,6 +134,7 @@ describe("bundle manifest and content identity", () => {
 
   test("validates Type Card fallback locale and referenced assets", async () => {
     const result = await inspectBundleManifest(await archive(card, cardFiles, "type-card"), expectedCard);
+    expect(result.archiveBytes).toBeGreaterThan(0);
     expect(result.manifest).toEqual(card);
     expect(result.kind).toBe("type-card");
     expect(result.assets?.map(({ path, contentType, width, height }) => ({ path, contentType, width, height }))).toEqual([

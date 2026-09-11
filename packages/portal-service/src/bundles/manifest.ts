@@ -17,18 +17,20 @@ export interface BundleManifestInspection {
   readonly manifest: TypeCardBundleManifestV1 | ViewBundleManifestV1;
   readonly canonicalManifest: string;
   readonly contentHash: string;
+  readonly archiveBytes: number;
   readonly files: readonly BundleZipFile[];
   readonly assets?: readonly TypeCardBundleAsset[];
 }
 
 export async function inspectBundleManifest(
   source: ReadableStream<Uint8Array>,
-  expected: { readonly kind: BundleKind; readonly documentType: string; readonly documentContractIdxs: readonly number[] },
+  expected: { readonly kind: BundleKind; readonly documentType?: string; readonly documentContractIdxs: readonly number[] },
 ): Promise<BundleManifestInspection> {
   try {
     const manifestPath = expected.kind === "type-card" ? "unidocs-type-card.json" : "unidocs-view.json";
     const otherManifestPath = expected.kind === "type-card" ? "unidocs-view.json" : "unidocs-type-card.json";
     let rawManifest: unknown;
+    let archiveBytes = 0;
     const contents = new Map<string, Uint8Array>();
     const files = await scanBundleZip(source, {}, (file, content) => {
       if (file.path === otherManifestPath) throw new BundleZipError();
@@ -36,12 +38,12 @@ export async function inspectBundleManifest(
       if (file.path !== manifestPath) return;
       if (file.size > 65_536) throw new BundleZipError();
       rawManifest = parseStrictJson(content);
-    });
+    }, size => { archiveBytes = size; });
     const manifest = expected.kind === "type-card"
       ? TypeCardBundleManifestV1Schema.parse(rawManifest)
       : ViewBundleManifestV1Schema.parse(rawManifest);
     const canonicalManifest = canonicalJson(manifest);
-    if (manifest.documentType !== expected.documentType || canonicalManifest !== canonicalJson(rawManifest)) throw new BundleZipError();
+    if ((expected.documentType !== undefined && manifest.documentType !== expected.documentType) || canonicalManifest !== canonicalJson(rawManifest)) throw new BundleZipError();
     const fileIndex = new Map(files.map(file => [file.path, file]));
     function requireFile(path: string, extensions: readonly string[]) {
       validateBundlePath(path);
@@ -87,7 +89,7 @@ export async function inspectBundleManifest(
     const resources = files.filter(file => file.path !== manifestPath);
     const contentHash = await schemaHash({ kind: expected.kind, manifest, files: resources });
     const manifestFile = { path: manifestPath, size: new TextEncoder().encode(canonicalManifest).byteLength, sha256: (await schemaHash(manifest)).slice("sha256:".length) };
-    return { kind: expected.kind, manifest, canonicalManifest, contentHash, files: files.map(file => file.path === manifestPath ? manifestFile : file), ...(assets ? { assets } : {}) };
+    return { kind: expected.kind, manifest, canonicalManifest, contentHash, archiveBytes, files: files.map(file => file.path === manifestPath ? manifestFile : file), ...(assets ? { assets } : {}) };
   } catch {
     throw new BundleZipError();
   }

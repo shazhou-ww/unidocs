@@ -7,6 +7,8 @@ export { inspectBundleManifest } from "./bundles/manifest.js";
 export type { BundleKind, BundleManifestInspection, TypeCardBundleAsset } from "./bundles/manifest.js";
 export { inspectTypeCardAsset } from "./bundles/type-card-assets.js";
 export type { TypeCardAssetInfo } from "./bundles/type-card-assets.js";
+export { IMMUTABLE_BUNDLE_CACHE_CONTROL, storeTypeCardBundleObjects } from "./bundles/type-card-store.js";
+export type { BundleObjectStore, BundleObjectWrite, StoredTypeCardBundle } from "./bundles/type-card-store.js";
 export { AdminAccessError, googleIdentityFromVerifiedClaims, normalizeAdministratorEmail, requireBootstrapIdentity, requireBoundAdministrator, requireRecentAuthentication } from "./auth/administrator.js";
 export type { AdminContext, AdminIdentity, BoundAdministrator } from "./auth/administrator.js";
 export { adminConfirmationTime, googleIdentityFromConfirmedLogin, validateAdminIdentity } from "./auth/administrator.js";
@@ -19,3 +21,5 @@ export { AuditOperationError, createAuditEventService } from "./admin/audit-even
 export type { AuditEventRepository } from "./admin/audit-events.js";
 export { DocumentContractOperationError, createDocumentContractService } from "./admin/document-contracts.js";
 export type { DocumentContractAppendCommand, DocumentContractRepository } from "./admin/document-contracts.js";
+export { TypeCardBundleOperationError, createTypeCardBundleService, typeCardBundleIdentity } from "./admin/type-card-bundles.js";
+export type { TypeCardBundleMetadataCommand, TypeCardBundlePublishCommand, TypeCardBundleRepository, TypeCardBundleReservation, TypeCardBundleUploadCommand } from "./admin/type-card-bundles.js";

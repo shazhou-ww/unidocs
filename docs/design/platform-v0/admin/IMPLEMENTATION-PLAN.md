@@ -6,9 +6,19 @@
 
 ## 当前进展与决策
 
+### Type Card bundle 纵向闭环（2026-09-11）
+
+已上线 `uploadTypeCardBundle`、`listTypeCardBundles`、`getTypeCardBundle`、`updateTypeCardBundleMetadata`，Admin v1 完整 operation 总数增至 **15/26**，Phase 4 为 Type Card **4/4**、View bundle **0/4**；生产 Worker 版本 `f2faecd8-dfb0-4118-93af-2b4fc6bdd73f`。独立 Portal D1 已应用 `0004_type_card_bundles.sql`，生产 candidate/reservation 初始均为 0 行，部署和 smoke 未自动上传 bundle。
+
+- service 在 8 MiB 有界 ZIP 内验证 canonical Type Card manifest、BCP 47 locale、引用闭包、PNG/JPEG/WebP 实际结构与像素预算、五尺寸 PNG 图标和受限 SVG；只把 canonical manifest 与已验证图片字节写入内容寻址 R2 key。公开 ID 使用完整 SHA-256：`tb_<64 lowercase hex>`，record 的 `size` 保存原始压缩 ZIP 字节数。
+- D1 reservation 对 content hash 和 actor/idempotency key 唯一。R2 全部写成功后，candidate、idempotency receipt、reservation 消费和 `type_card_bundle.uploaded` audit 才在一个 D1 batch 中发布；重复内容用 409 返回既有 identity。metadata PATCH 通过 If-Match 与内部 revision 原子更新，只改变 name/description/ETag，并原子写 receipt/audit。
+- 独立 R2 bucket `unidocs-portal-bundles`、`BUNDLES` binding 与 `https://bundles.shazhou.work` custom-domain trigger 已部署。ingress 只接受完整 hash Type Card 路径以及 canonical JSON/PNG/JPEG/WebP/SVG，成功响应重新固定 MIME、`nosniff`、sandbox CSP、cross-origin resource policy 和一年 immutable cache；Admin CSP 只额外允许该 origin 的图片。最初选择的三层 hostname `bundles.unidocs.shazhou.work` 在 custom certificate 就绪前持续 TLS 握手失败；生产尚无 candidate，因此改用 zone wildcard 已覆盖的单层 hostname，无既有 `bundleUrl` 兼容负担。新 origin 的 DNS/TLS/Worker 404 smoke 已通过。
+- client 已接入 raw ZIP upload、list/get 和 metadata PATCH。WebUI 按 Admin mock 的“类型卡片包”tab 提供候选列表、upload/validate、manifest/locale/icon/thumbnail 详情、跨 origin 图片预览和 metadata 编辑；直达 `?tab=cards` 的组件测试固定刷新安全路由。
+- 验证：portal-service 182 个测试、Admin client 9 个 transport tests、WebUI 14 个组件测试、Cloudflare Portal 114 个测试、真实 D1/HTTP 4 个 Type Card 集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产匿名 smoke 已确认 `/admin/` 303、Type Card API 401、CSP 包含独立图片 origin，以及 bundle hostname DNS/TLS/404 ingress；一次真人上传、真实对象 fetch 和 audit correlation 尚待验收。
+
 ### Type Card bundle 阶段启动约束（2026-09-11）
 
-下一阶段推进 Type Card bundle upload/list/get/metadata patch。独立 R2 bucket `unidocs-portal-bundles` 已创建，local/production Wrangler 配置和生成 Env 已加入 `BUNDLES` binding；独立公开 bundle origin 仍未配置，因此不能把已有 ZIP/manifest 校验描述为完整上传。阶段按 R2 adapter → D1 record/reservation → API/client/WebUI → migration/Worker/smoke 顺序推进。当前完整 operation 数保持 **11/26**。
+本阶段启动时按 R2 adapter → D1 record/reservation → API/client/WebUI → migration/Worker/smoke 顺序推进，完整 operation 数为 **11/26**。当前完成状态以上方纵向闭环记录为准。
 
 - 使用独立 Portal R2 bucket，不复用 Gateway/CAS bucket。对象 key 由 canonical bundle content hash 派生，canonical manifest 字节与已验证资源字节不可变；D1 是 bundle metadata、identity、reservation 和 selection 的权威，R2 不充当关系数据库。
 - 上传必须复用现有有界 ZIP 与 Type Card manifest 检查，补齐当前发布门禁：实际 PNG 解码/五尺寸验证、SVG 安全规则、sample thumbnail 实际图片验证、MIME allowlist 和可执行资源拒绝。验证通过不等于发布成功；R2 写失败或 D1 提交失败需有显式 reservation/cleanup，不能伪装成单事务。
@@ -351,7 +361,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 3：文档类型与 Document Contract
 
-- 当前进度：本 Phase 6/7 个 operation、全部 Admin v1 11/26 个 operation 已上线。
+- 当前进度：本 Phase 6/7 个 operation、全部 Admin v1 15/26 个 operation 已上线。
 - [x] 实现并上线 register/list/get document type，使用真实 service/D1/oRPC handler，涵盖鉴权、CSRF、幂等、审计及筛选分页。
 - [ ] 实现 PATCH document type，包括并发 If-Match、候选绑定及启用条件。
 - [x] 实现 paired contract append/list/get，涵盖真实 service/D1/oRPC/client/WebUI、零基并发分配、幂等、原子审计和刷新恢复。
@@ -363,14 +373,15 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 4：Type Card 与 View bundle
 
+- 当前进度：Type Card 4/4 个 operation 已上线；View bundle 0/4，Phase 合计 4/8。
 - [x] 实现有界 ZIP 扫描、zip-slip/zip-bomb/重复路径防护；当前压缩输入最多暂存 8 MiB，不是无限大小流式 ingestion。
 - [x] 校验 Type Card manifest、canonical locale、图标五尺寸文件引用和 sample thumbnail 引用。
-- [ ] 校验图标/thumbnail 的真实图片内容、像素尺寸及 SVG 安全性。
+- [x] 校验 Type Card 图标/thumbnail 的真实 PNG/JPEG/WebP 内容、像素尺寸及 SVG 安全性。
 - [x] 校验 View 的不同 `interactive`/`thumbnail` 入口、规范路径、文件存在性与已登记 revisions。
-- [ ] 校验 MIME allowlist、HTML/JS/CSS 及资源加载安全策略。
+- [ ] 校验 MIME allowlist、HTML/JS/CSS 及资源加载安全策略；Type Card 图片/manifest allowlist 与隔离 ingress 已完成，View 执行资源仍待实现。
 - [x] 计算 canonical manifest 与资源文件清单的内容身份，验证 Node/Workers 一致性。
-- [ ] 建立 R2 reservation/cleanup，写入不可变对象并持久化 canonical `bundleUrl`。
-- [ ] 实现两类 bundle 的 upload/list/get/metadata patch。
+- [ ] 建立 R2 reservation/cleanup，写入不可变对象并持久化 canonical `bundleUrl`；Type Card reservation/write/publish 已完成，过期 reservation 与孤儿对象 GC 尚待实现。
+- [ ] 实现两类 bundle 的 upload/list/get/metadata patch；Type Card 四个 operation 已完成，View 四个 operation 尚待实现。
 
 - [ ] **退出条件**：8 个 bundle operation 通过；重复内容、失败清理、不可变缓存 header 和恶意 ZIP fixtures 通过。
 
@@ -389,8 +400,8 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 ### Phase 6：Cloudflare adapter 与认证入口
 
 - [x] 建立认证部分 D1 migration 和 repository adapter，并通过真实 D1 集成测试。
-- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter；document type、Document Contract、管理员与 audit 已接入，bundle/Operator 尚待实现。
-- [ ] 建立 R2 adapter、bundle ingress 与独立稳定 bundle origin。
+- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter；document type、Document Contract、Type Card、管理员与 audit 已接入，View bundle/Operator 尚待实现。
+- [ ] 建立 R2 adapter、bundle ingress 与独立稳定 bundle origin；Type Card adapter/ingress/custom domain 的 DNS/TLS smoke 已通过，View ingress 尚待实现。
 - [x] 实现 Bearer 优先且失败不 fallback cookie，并通过 Node/workerd 测试。
 - [x] 复用 Gateway Google client 配置，固定 Portal origin 和独立 callback；用户已确认回调登记完成。
 - [x] 实现 OIDC authorization code + PKCE、nonce、浏览器绑定和单次 state port，并通过模拟 Google/workerd 测试。
@@ -404,16 +415,16 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
 - [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
 - [x] 通过正式 Worker adapter 暴露 Document Contract append/list/get 三个 handler，涵盖严格 JSON、并发 idx、幂等和原子 registration/audit 更新。
-- [ ] 暴露其余 15 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
+- [ ] 暴露其余 11 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。
 
 ### Phase 7：Admin client 与真实 WebUI
 
-- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、Document Contract append/list/get、administrator list/get/add/remove 与 audit list transport。
-- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置骨架、Document Contract list/get/append、管理员 list/add/remove 和 audit list/detail 已上线，bundle/Operator tab 待真实 API。
-- [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用 loading/empty/error、公开登录/授权拒绝/session 检查状态与稳定错误展示，冲突恢复和上传状态待实现。
+- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、Document Contract append/list/get、Type Card upload/list/get/metadata patch、administrator list/get/add/remove 与 audit list transport。
+- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置、Document Contract、Type Card、管理员和 audit 已上线，View bundle/Operator tab 待真实 API。
+- [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用状态、Type Card upload/metadata mutation 状态与稳定错误展示，细粒度上传进度和全部冲突恢复待实现。
 - [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。
 - [x] 建立 refresh-safe 前端路由；page/detail/tab URL、Worker 鉴权 shell fallback、刷新和前进/后退已通过测试及生产浏览器验收。
@@ -428,8 +439,8 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 记录认证路由回退方式，保留 Gateway 原 OAuth 与文档 API；回退尚未实际演练。
 - [x] 在 `stacks/unidocs-cloudflare` 增加 Portal 认证部署预检和边界测试；生产发布目前仍由显式 Wrangler 命令执行。
 - [ ] 将 Portal migration/deploy/smoke 接入统一 stack runner，保持默认 Gateway 发布序列不误触 Portal。
-- [x] 配置并部署独立 Worker 名和 D1，复用 `unidocs.shazhou.work`；未替换 Gateway Worker，R2 尚未配置。
-- [ ] 配置独立 R2 与 bundle origin。
+- [x] 配置并部署独立 Worker 名和 D1，复用 `unidocs.shazhou.work`；未替换 Gateway Worker，独立 Portal R2 已绑定。
+- [x] 配置独立 R2 与 bundle origin；bucket、binding、custom-domain trigger 和独立 hostname DNS/TLS/404 smoke 已通过，真实对象 fetch 等待首次人工上传验收。
 - [x] 确认并执行 `/admin`、`/admin/*` 切换，验证主站、`/ui/` 与旧 OAuth discovery 保留。
 - [ ] 实际演练旧后台路由回退；已有无数据删除的书面步骤。
 - [x] smoke 覆盖匿名登录提示、显式 Google 账号选择、匿名 API 拒绝、授权拒绝 UI、幂等 logout、真实 Google 登录和 session 读取。

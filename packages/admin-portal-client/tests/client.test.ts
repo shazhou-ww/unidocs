@@ -92,3 +92,24 @@ test("lists, reads, and appends paired Document Contracts", async () => {
   expect(headers.get("x-csrf-token")).toBe("csrf");
   expect(headers.get("idempotency-key")).toBe("contract-key");
 });
+
+test("uploads, lists, reads, and updates Type Card bundles", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => Response.json({ typeCardBundleId: "tb_bundle", etag: '"sha256-bundle"' }));
+  const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher, getCsrfToken: () => "csrf", createIdempotencyKey: () => "bundle-key" });
+  const file = new Blob(["zip"], { type: "application/zip" });
+  await client.uploadTypeCardBundle(file, { name: "Primary card", description: "Candidate" });
+  expect(String(fetcher.mock.calls[0][0])).toBe("https://portal.test/admin/api/v1/type-card-bundles?name=Primary+card&description=Candidate");
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "POST", body: file, credentials: "include" });
+  const uploadHeaders = new Headers(fetcher.mock.calls[0][1]?.headers);
+  expect(uploadHeaders.get("content-type")).toBe("application/zip");
+  expect(uploadHeaders.get("x-csrf-token")).toBe("csrf");
+  expect(uploadHeaders.get("idempotency-key")).toBe("bundle-key");
+  await client.listTypeCardBundles("markdown/type", { limit: 10, cursor: "next" });
+  expect(String(fetcher.mock.calls[1][0])).toBe("https://portal.test/admin/api/v1/type-card-bundles?documentType=markdown%2Ftype&limit=10&cursor=next");
+  await client.getTypeCardBundle("tb/one");
+  expect(String(fetcher.mock.calls[2][0])).toBe("https://portal.test/admin/api/v1/type-card-bundles/tb%2Fone");
+  await client.updateTypeCardBundleMetadata("tb_bundle", { name: "Next", description: "Notes" }, '"sha256-old"');
+  const patchHeaders = new Headers(fetcher.mock.calls[3][1]?.headers);
+  expect(fetcher.mock.calls[3][1]).toMatchObject({ method: "PATCH", body: '{"name":"Next","description":"Notes"}' });
+  expect(patchHeaders.get("if-match")).toBe('"sha256-old"');
+});

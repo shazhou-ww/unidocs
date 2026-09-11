@@ -11,6 +11,7 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
   readonly bootstrapEmail: string | null;
   readonly now?: () => number;
   readonly googleFetch?: typeof fetch;
+  readonly bundleOrigin?: string;
   readonly adminApi?: (request: Request, context: AdminContext, requestId: string) => Promise<Response>;
   readonly adminUi?: (request: Request) => Response | null;
 }) {
@@ -97,7 +98,7 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
     response.headers.set("Referrer-Policy", "no-referrer");
     response.headers.set("X-Content-Type-Options", "nosniff");
     response.headers.set("Content-Security-Policy", isProtectedAdminWebUiPath(url.pathname) || url.pathname === "/admin/login" || url.pathname === "/admin/access-denied" || url.pathname.startsWith("/admin/assets/")
-      ? "default-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+      ? `default-src 'self'; connect-src 'self'; img-src 'self' data:${options.bundleOrigin ? ` ${options.bundleOrigin}` : ""}; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`
       : "default-src 'none'; frame-ancestors 'none'");
     response.headers.set("X-Request-ID", requestId);
     return response;

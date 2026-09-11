@@ -1,6 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { AdminOperationError, schemaHash, type AdminContext, type DocumentTypeCreateCommand, type DocumentTypeRepository, type DocumentTypeUpdateCommand } from "@unidocs/portal-service";
-import { DocumentTypeRegistrationSchema, DocumentTypeSchema, ListDocumentTypesQuerySchema, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
+import { DocumentTypeRegistrationSchema, DocumentTypeSchema, ListDocumentTypesQuerySchema, TypeCardBundleRecordSchema, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
 
 export class D1DocumentTypeRepository implements DocumentTypeRepository {
   constructor(private readonly database: D1Database, private readonly now: () => number = () => Math.floor(Date.now() / 1000)) { }
@@ -104,9 +104,11 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
     }
   }
 
-  async resolveTypeCardBundle(context: AdminContext, _documentType: string, _bundleId: string) {
+  async resolveTypeCardBundle(context: AdminContext, documentType: string, bundleId: string) {
     await this.authorize(context);
-    return null;
+    const row = await this.database.prepare(`SELECT record_json FROM portal_type_card_bundles
+      WHERE type_card_bundle_id = ? AND document_type = ?`).bind(bundleId, documentType).first<{ record_json: string }>();
+    return row ? TypeCardBundleRecordSchema.parse(JSON.parse(row.record_json)) : null;
   }
 
   async resolveViewBundle(context: AdminContext, _documentType: string, _bundleId: string) {

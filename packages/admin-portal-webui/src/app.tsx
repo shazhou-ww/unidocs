@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText, LoaderCircle, LogIn, LogOut, Menu, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UserPlus, Users, X } from "lucide-react";
+import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, ExternalLink, FileText, Languages, LayoutTemplate, LoaderCircle, LogIn, LogOut, Menu, Pencil, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UploadCloud, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
-import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
+import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type TypeCardBundleListItem, type TypeCardBundleRecord } from "@unidocs/protocol-admin-portal";
 
 const auditActionLabels: Record<AdminAuditEvent["action"], string> = {
   "type_card_bundle.uploaded": "上传类型卡片包",
@@ -94,7 +94,9 @@ function errorMessage(error: unknown): string {
     if (error.code === "administrator_exists") return "这个邮箱已经在管理员列表中。";
     if (error.code === "cannot_remove_self") return "不能移除当前登录的管理员。";
     if (error.code === "last_administrator") return "不能移除最后一位可登录管理员。";
-    if (error.code === "precondition_failed") return "成员信息已发生变化，请刷新后重试。";
+    if (error.code === "precondition_failed") return "资源信息已发生变化，请刷新后重试。";
+    if (error.code === "bundle_already_exists") return "相同内容的类型卡片包已经存在，请编辑现有候选项。";
+    if (error.code === "bundle_invalid") return "ZIP 未通过类型卡片包安全校验。";
     return `${error.message}${error.requestId ? `（请求 ${error.requestId}）` : ""}`;
   }
   return "暂时无法连接管理服务。";
@@ -210,6 +212,15 @@ function AdminApp() {
   const [snapshotSchemaText, setSnapshotSchemaText] = useState('{\n  "$schema": "https://schemas.unidocs.dev/svalue/v1",\n  "type": "object"\n}');
   const [locationSchemaText, setLocationSchemaText] = useState('{\n  "$schema": "https://schemas.unidocs.dev/svalue/v1",\n  "type": "object"\n}');
   const [contractReason, setContractReason] = useState("");
+  const [typeCardBundles, setTypeCardBundles] = useState<readonly TypeCardBundleListItem[]>([]);
+  const [typeCardBundleCursor, setTypeCardBundleCursor] = useState<string | null>(null);
+  const [selectedTypeCardBundle, setSelectedTypeCardBundle] = useState<TypeCardBundleRecord | null>(null);
+  const [typeCardBundlesLoading, setTypeCardBundlesLoading] = useState(false);
+  const [uploadTypeCardOpen, setUploadTypeCardOpen] = useState(false);
+  const [editTypeCardOpen, setEditTypeCardOpen] = useState(false);
+  const [typeCardFile, setTypeCardFile] = useState<File | null>(null);
+  const [typeCardName, setTypeCardName] = useState("");
+  const [typeCardDescription, setTypeCardDescription] = useState("");
   const [query, setQuery] = useState("");
   const [enabled, setEnabled] = useState<"all" | "true" | "false">("all");
   const [loading, setLoading] = useState(true);
@@ -273,6 +284,7 @@ function AdminApp() {
     try {
       setSelected(await client.getDocumentType(documentType));
       if (tab === "contracts") await loadContracts(documentType);
+      if (tab === "cards") await loadTypeCardBundles(documentType);
     }
     catch (caught) { setError(errorMessage(caught)); }
     finally { setDetailLoading(false); }
@@ -301,12 +313,75 @@ function AdminApp() {
     finally { setContractsLoading(false); }
   }
 
+  async function loadTypeCardBundles(documentType: string, cursor: string | null = null) {
+    setTypeCardBundlesLoading(true);
+    setError(null);
+    try {
+      const page = await client.listTypeCardBundles(documentType, { limit: 25, cursor: cursor ?? undefined });
+      startTransition(() => setTypeCardBundles(current => cursor ? [...current, ...page.items] : page.items));
+      setTypeCardBundleCursor(page.nextCursor);
+      if (!cursor) setSelectedTypeCardBundle(null);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setTypeCardBundlesLoading(false);
+    }
+  }
+
+  async function openTypeCardBundle(typeCardBundleId: string) {
+    setTypeCardBundlesLoading(true);
+    setError(null);
+    try { setSelectedTypeCardBundle(await client.getTypeCardBundle(typeCardBundleId)); }
+    catch (caught) { setError(errorMessage(caught)); }
+    finally { setTypeCardBundlesLoading(false); }
+  }
+
   function changeTypeTab(tab: DocumentTypeTab) {
     if (!selected) return;
     window.history.pushState({}, "", adminRoutePath({ view: "documentTypes", documentType: selected.documentType, tab }));
     setActiveTypeTab(tab);
     setSelectedContract(null);
+    setSelectedTypeCardBundle(null);
     if (tab === "contracts" && contracts.length === 0) void loadContracts(selected.documentType);
+    if (tab === "cards" && typeCardBundles.length === 0) void loadTypeCardBundles(selected.documentType);
+  }
+
+  async function uploadTypeCardBundle(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !typeCardFile || !typeCardName.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await client.uploadTypeCardBundle(typeCardFile, { name: typeCardName.trim(), description: typeCardDescription });
+      setUploadTypeCardOpen(false);
+      setTypeCardFile(null);
+      setTypeCardName("");
+      setTypeCardDescription("");
+      await loadTypeCardBundles(selected.documentType);
+      await openTypeCardBundle(created.typeCardBundleId);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setSaving(false); }
+  }
+
+  function beginEditTypeCardBundle() {
+    if (!selectedTypeCardBundle) return;
+    setTypeCardName(selectedTypeCardBundle.name);
+    setTypeCardDescription(selectedTypeCardBundle.description);
+    setEditTypeCardOpen(true);
+  }
+
+  async function updateTypeCardBundleMetadata(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !selectedTypeCardBundle || !typeCardName.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await client.updateTypeCardBundleMetadata(selectedTypeCardBundle.typeCardBundleId, { name: typeCardName.trim(), description: typeCardDescription }, selectedTypeCardBundle.etag);
+      setEditTypeCardOpen(false);
+      await loadTypeCardBundles(selected.documentType);
+      await openTypeCardBundle(selectedTypeCardBundle.typeCardBundleId);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setSaving(false); }
   }
 
   async function appendContract(event: FormEvent) {
@@ -503,7 +578,14 @@ function AdminApp() {
                   {contractCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadContracts(selected.documentType, contractCursor)}>加载更多</button></div>}
                   {selectedContract && <div className="contract-detail"><h3>Revision {selectedContract.documentContractIdx}</h3><dl><div><dt>Contract hash</dt><dd><code>{selectedContract.contractHash}</code></dd></div><div><dt>Snapshot media type</dt><dd><code>{selectedContract.snapshot.contentType}</code></dd></div><div><dt>Snapshot hash</dt><dd><code>{selectedContract.snapshot.schemaHash}</code></dd></div><div><dt>Location media type</dt><dd><code>{selectedContract.location.contentType}</code></dd></div><div><dt>Location hash</dt><dd><code>{selectedContract.location.schemaHash}</code></dd></div></dl><div className="schema-grid"><div><strong>Snapshot schema</strong><pre>{JSON.stringify(selectedContract.snapshot.schema, null, 2)}</pre></div><div><strong>Location schema</strong><pre>{JSON.stringify(selectedContract.location.schema, null, 2)}</pre></div></div></div>}
                 </section>}
-                {!["config", "contracts"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>该配置将在对应候选资源 API 上线后接入。</span></div>}
+                {activeTypeTab === "cards" && <section className="config-section"><div className="section-heading"><div><h3>类型卡片包候选项</h3><p>每个不可变版本包含多语言文案、图标与样例缩略图。</p></div><button className="primary-button" type="button" onClick={() => setUploadTypeCardOpen(true)}><UploadCloud size={16} />上传候选项</button></div>
+                  <div className="bundle-history">{typeCardBundles.map(bundle => <button className={`bundle-row ${selectedTypeCardBundle?.typeCardBundleId === bundle.typeCardBundleId ? "active" : ""}`} type="button" key={bundle.typeCardBundleId} onClick={() => void openTypeCardBundle(bundle.typeCardBundleId)}><span className="bundle-mark"><LayoutTemplate size={17} /></span><span><strong>{bundle.name}</strong><code>{bundle.typeCardBundleId}</code><small>{new Date(bundle.uploadedAt).toLocaleString("zh-CN")} · {Math.max(1, Math.ceil(bundle.size / 1024))} KB</small></span><ChevronRight size={16} /></button>)}</div>
+                  {!typeCardBundlesLoading && typeCardBundles.length === 0 && <div className="empty-state compact-empty"><LayoutTemplate size={26} /><strong>尚未上传类型卡片包</strong><span>上传 ZIP 后会先校验 manifest 与全部图片资源。</span></div>}
+                  {typeCardBundlesLoading && typeCardBundles.length === 0 && <div className="empty-state compact-empty"><LoaderCircle className="spin" size={24} /><strong>正在读取类型卡片包</strong></div>}
+                  {typeCardBundleCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadTypeCardBundles(selected.documentType, typeCardBundleCursor)}>加载更多</button></div>}
+                  {selectedTypeCardBundle && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>VALIDATED CANDIDATE</span><h3>{selectedTypeCardBundle.name}</h3><p>{selectedTypeCardBundle.description || "没有管理员备注"}</p></div><button className="secondary-button" type="button" onClick={beginEditTypeCardBundle}><Pencil size={15} />编辑信息</button></div><div className="type-card-preview"><img src={new URL(selectedTypeCardBundle.manifest.sampleThumbnail, selectedTypeCardBundle.bundleUrl).href} alt={selectedTypeCardBundle.manifest.locales.en.sampleThumbnailAlt} /><div><span className="preview-icon"><img src={new URL(selectedTypeCardBundle.manifest.icon.kind === "svg" ? selectedTypeCardBundle.manifest.icon.path : selectedTypeCardBundle.manifest.icon.images[128], selectedTypeCardBundle.bundleUrl).href} alt="" /></span><strong>{selectedTypeCardBundle.manifest.locales.en.name}</strong><p>{selectedTypeCardBundle.manifest.locales.en.description}</p></div></div><dl><div><dt>Bundle ID</dt><dd><code>{selectedTypeCardBundle.typeCardBundleId}</code></dd></div><div><dt>Manifest protocol</dt><dd><code>{selectedTypeCardBundle.manifest.protocol}</code></dd></div><div><dt>可用语言</dt><dd className="locale-list"><Languages size={14} />{Object.keys(selectedTypeCardBundle.manifest.locales).join(" · ")}</dd></div><div><dt>Icon</dt><dd><code>{selectedTypeCardBundle.manifest.icon.kind === "svg" ? selectedTypeCardBundle.manifest.icon.path : Object.values(selectedTypeCardBundle.manifest.icon.images).join(", ")}</code></dd></div><div><dt>Sample thumbnail</dt><dd><code>{selectedTypeCardBundle.manifest.sampleThumbnail}</code></dd></div><div><dt>Bundle URL</dt><dd><a href={selectedTypeCardBundle.bundleUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedTypeCardBundle.bundleUrl}</a></dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selectedTypeCardBundle.etag)}</code></dd></div></dl></div>}
+                </section>}
+                {!["config", "contracts", "cards"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>该配置将在对应候选资源 API 上线后接入。</span></div>}
               </div>
               <aside className="config-aside"><h3>启用准备度</h3><dl><div><dt>文档契约</dt><dd>{selected.latestDocumentContract ? `revision ${selected.latestDocumentContract.documentContractIdx}` : "缺失"}</dd></div><div><dt>类型卡片包</dt><dd>{selected.typeCardBundle?.name ?? "缺失"}</dd></div><div><dt>视图包</dt><dd>{selected.viewBundle?.name ?? "缺失"}</dd></div><div><dt>处理服务</dt><dd>{selected.builtinOperator?.name ?? "缺失"}</dd></div></dl></aside>
             </div>
@@ -611,6 +693,16 @@ function AdminApp() {
     {appendContractOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setAppendContractOpen(false); }}>
       <section className="modal contract-modal" role="dialog" aria-modal="true" aria-labelledby="append-contract-title"><div className="modal-header"><div><span>APPEND IMMUTABLE REVISION</span><h2 id="append-contract-title">添加文档契约</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setAppendContractOpen(false)} aria-label="关闭"><X size={18} /></button></div>
         <form onSubmit={appendContract}><div className="schema-input-grid"><label><span>Snapshot schema</span><textarea aria-label="Snapshot schema" value={snapshotSchemaText} onChange={event => setSnapshotSchemaText(event.target.value)} /></label><label><span>Location schema</span><textarea aria-label="Location schema" value={locationSchemaText} onChange={event => setLocationSchemaText(event.target.value)} /></label></div><label><span>变更原因</span><input required value={contractReason} onChange={event => setContractReason(event.target.value)} placeholder="说明新增 revision 的原因" /></label><p>提交后不可修改或删除；revision 从 0 连续分配。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setAppendContractOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !contractReason.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}提交版本</button></div></form>
+      </section>
+    </div>}
+    {uploadTypeCardOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setUploadTypeCardOpen(false); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="upload-card-title"><div className="modal-header"><div><span>VALIDATE IMMUTABLE BUNDLE</span><h2 id="upload-card-title">上传类型卡片包</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setUploadTypeCardOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <form onSubmit={uploadTypeCardBundle}><label><span>候选项名称</span><input autoFocus maxLength={256} value={typeCardName} onChange={event => setTypeCardName(event.target.value)} placeholder="例如：Markdown 主卡片" /></label><label><span>管理员备注</span><textarea className="metadata-textarea" maxLength={2048} value={typeCardDescription} onChange={event => setTypeCardDescription(event.target.value)} placeholder="仅供管理员识别，不进入 manifest" /></label><label className="file-control"><span>类型卡片包 ZIP</span><input aria-label="类型卡片包 ZIP" type="file" accept=".zip,application/zip" onChange={event => setTypeCardFile(event.target.files?.[0] ?? null)} /></label><p>服务端将验证 canonical manifest、路径闭包、图片格式与尺寸；成功后内容不可修改。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setUploadTypeCardOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !typeCardName.trim() || !typeCardFile}>{saving ? <LoaderCircle className="spin" size={16} /> : <UploadCloud size={16} />}上传并验证</button></div></form>
+      </section>
+    </div>}
+    {editTypeCardOpen && selectedTypeCardBundle && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setEditTypeCardOpen(false); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-card-title"><div className="modal-header"><div><span>ADMIN METADATA</span><h2 id="edit-card-title">编辑候选项信息</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setEditTypeCardOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <form onSubmit={updateTypeCardBundleMetadata}><label><span>候选项名称</span><input autoFocus maxLength={256} value={typeCardName} onChange={event => setTypeCardName(event.target.value)} /></label><label><span>管理员备注</span><textarea className="metadata-textarea" maxLength={2048} value={typeCardDescription} onChange={event => setTypeCardDescription(event.target.value)} /></label><p>只更新管理员 metadata；bundle 内容、URL 与 manifest 保持不变。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setEditTypeCardOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !typeCardName.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Pencil size={16} />}保存信息</button></div></form>
       </section>
     </div>}
   </div>;
