@@ -30,6 +30,25 @@ describe("decideRightPane", () => {
     expect(decision).toEqual({ kind: "same-version", markers: [] });
   });
 
+  it("写在 current 上但已被回复时，仍走 pong-result 而不是 same-version", () => {
+    const decision = decideRightPane({
+      ping: ping(1, "保留的一段。"), // baseVersionIdx 1 === currentVersionIdx 1
+      pongs: [{
+        pongIdx: 0,
+        respondThroughPingIdx: 0,
+        resultLocations: [at("另一段。")],
+        content: { text: "改好了", richContent: null, attachments: [] },
+        authorAgentId: "a",
+        submissionId: "s",
+        createdAt: "x",
+      }] as never,
+      currentVersionIdx: 1,
+      currentContent: content,
+    });
+
+    expect(decision.kind).toBe("pong-result");
+  });
+
   it("基于旧版本且内容仍在时给灰底虚线", () => {
     const decision = decideRightPane({ ping: ping(0, "保留的一段。"), pongs: [], currentVersionIdx: 1, currentContent: content });
 
@@ -62,6 +81,7 @@ describe("decideRightPane", () => {
       ping: { ...ping(0, "保留的一段。"), location: null }, pongs: [], currentVersionIdx: 1, currentContent: content,
     });
 
+    expect(decision.kind).toBe("same-version");
     expect(decision.markers).toEqual([]);
   });
 });
