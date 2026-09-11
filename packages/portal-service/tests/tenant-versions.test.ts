@@ -51,9 +51,27 @@ test.each([-1, 1.5, "7"])("rejects a version index that is not zero-based %#", a
   expect(repository.get).not.toHaveBeenCalled();
 });
 
+test.each([-1, 1.5, "7"])("rejects a snapshot version index that is not zero-based %#", async versionIdx => {
+  const { repository, service } = setup();
+  await expect(service.getSnapshot(context, "tenant-a", "doc-1", versionIdx as number)).rejects.toMatchObject({ code: "invalid_request" });
+  expect(repository.readSnapshot).not.toHaveBeenCalled();
+});
+
 test("pages version metadata and refuses another tenant's document", async () => {
   const { repository, service } = setup();
   await service.list(context, "tenant-a", "doc-1", { limit: 50 });
   expect(repository.list).toHaveBeenCalledWith(context, "doc-1", { limit: 50 });
   await expect(service.list(context, "tenant-b", "doc-1")).rejects.toMatchObject({ code: "forbidden" });
+});
+
+test("refuses another tenant's document when reading version metadata", async () => {
+  const { repository, service } = setup();
+  await expect(service.get(context, "tenant-b", "doc-1", 7)).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.get).not.toHaveBeenCalled();
+});
+
+test("refuses another tenant's document when reading snapshot bytes", async () => {
+  const { repository, service } = setup();
+  await expect(service.getSnapshot(context, "tenant-b", "doc-1", 7)).rejects.toMatchObject({ code: "forbidden" });
+  expect(repository.readSnapshot).not.toHaveBeenCalled();
 });
