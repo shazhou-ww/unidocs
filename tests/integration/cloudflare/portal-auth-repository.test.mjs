@@ -8,7 +8,9 @@ import { createDocumentTypesHttp } from "../../../packages/cloudflare-portal/src
 import { createAdministratorsHttp } from "../../../packages/cloudflare-portal/src/administrators-http.ts";
 import { D1AuditEventRepository } from "../../../packages/cloudflare-portal/src/audit-events-repository.ts";
 import { createAuditEventsHttp } from "../../../packages/cloudflare-portal/src/audit-events-http.ts";
-import { createAdministratorService, createAuditEventService, createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
+import { D1DocumentContractRepository } from "../../../packages/cloudflare-portal/src/document-contracts-repository.ts";
+import { createDocumentContractsHttp } from "../../../packages/cloudflare-portal/src/document-contracts-http.ts";
+import { createAdministratorService, createAuditEventService, createDocumentContractService, createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
 import { googleIdentityFromConfirmedLogin } from "../../../packages/portal-service/src/index.ts";
 import { createPortalBff } from "../../../packages/cloudflare-portal/src/bff.ts";
 import { portalGoogleConfigFromGateway } from "../../../packages/cloudflare-portal/src/google-config.ts";
@@ -45,10 +47,18 @@ test("auth migration initializes independent tables with foreign keys and expiry
 async function documentTypes() {
   const migration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0002_document_types.sql", import.meta.url), "utf8");
   await database.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
+  const contractsMigration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0003_document_contracts.sql", import.meta.url), "utf8");
+  await database.batch(contractsMigration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
   const issued = await repository.completeLogin(identity, identity.email, "bootstrap");
   const context = { memberId: issued.memberId, identity, transport: "session", sessionHash: issued.session.sessionHash };
   const types = new D1DocumentTypeRepository(database, () => now);
   return { context, issued, types, service: createDocumentTypeService(types) };
+}
+
+async function documentContracts() {
+  const setup = await documentTypes();
+  const contracts = new D1DocumentContractRepository(database, () => now);
+  return { ...setup, contracts, contractService: createDocumentContractService(contracts, { now: () => new Date(now * 1000) }) };
 }
 
 async function administrators() {
@@ -177,6 +187,65 @@ test("audit events filter and paginate same-second rows without gaps or cursor r
   expect(await response.json()).toMatchObject({ items: [{ action: "administrator.added" }, { action: "administrator.added" }], nextCursor: expect.any(String) });
   expect((await handle(new Request(`${base}?limit=1&limit=2`, { headers: { cookie } }))).status).toBe(400);
   expect((await handle(new Request(`${base}?unknown=value`, { headers: { cookie } }))).status).toBe(400);
+}, 30_000);
+
+const contractSchema = { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" };
+const contractBody = (variant = "base", reason = "Initial schemas") => ({
+  formatVersion: 1,
+  snapshot: { schema: { ...contractSchema, title: `snapshot-${variant}` } },
+  location: { schema: { ...contractSchema, title: `location-${variant}` } },
+  reason,
+});
+
+test("Document Contract HTTP appends, replays, lists and reads canonical paired revisions", async () => {
+  const { context, issued, service, contracts } = await documentContracts();
+  const created = await service.create(context, { internalName: "Markdown" }, "create-contract-type", "create-contract-type");
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createDocumentContractsHttp(contracts) });
+  const base = `https://portal.test/admin/api/v1/document-types/${created.documentType}/document-contracts`;
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  const headers = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "content-type": "application/json", "idempotency-key": "append-contract" };
+  const append = () => handle(new Request(base, { method: "POST", headers, body: JSON.stringify(contractBody()) }));
+  const appended = await append();
+  expect(appended.status).toBe(201);
+  const value = await appended.json();
+  expect(value).toMatchObject({ documentContractIdx: 0, contractHash: expect.stringMatching(/^sha256:/) });
+  expect(await (await append()).json()).toEqual(value);
+  const conflict = await handle(new Request(base, { method: "POST", headers, body: JSON.stringify(contractBody("base", "Different reason")) }));
+  expect(conflict.status).toBe(409);
+  expect(await conflict.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
+  const list = await handle(new Request(`${base}?limit=1`, { headers: { cookie } }));
+  expect(list.status).toBe(200);
+  expect(await list.json()).toMatchObject({ items: [{ documentContractIdx: 0, contractHash: value.contractHash, snapshotSchemaHash: expect.stringMatching(/^sha256:/), locationSchemaHash: expect.stringMatching(/^sha256:/) }], nextCursor: null });
+  const detail = await handle(new Request(`${base}/0`, { headers: { cookie } }));
+  expect(detail.status).toBe(200);
+  expect(await detail.json()).toMatchObject({ documentType: created.documentType, documentContractIdx: 0, snapshot: { schema: contractBody().snapshot.schema }, location: { schema: contractBody().location.schema } });
+  expect((await service.get(context, created.documentType)).latestDocumentContract).toMatchObject({ documentContractIdx: 0, contractHash: value.contractHash });
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'document_contract.appended'").first("count")).toBe(1);
+}, 30_000);
+
+test("concurrent Document Contract appends allocate contiguous revisions and update registration", async () => {
+  const { context, service, contractService } = await documentContracts();
+  const created = await service.create(context, { internalName: "Concurrent" }, "create-concurrent-contract", "create-concurrent-contract");
+  const results = await Promise.all(Array.from({ length: 8 }, (_, index) => contractService.append(context, created.documentType, contractBody(String(index)), `append-${index}`, `append-${index}`)));
+  expect(results.map(result => result.documentContractIdx).sort((left, right) => left - right)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  const registration = await service.get(context, created.documentType);
+  expect(registration.latestDocumentContract?.documentContractIdx).toBe(7);
+  expect(registration.etag).not.toBe(created.etag);
+  expect(await database.prepare("SELECT last_contract_idx FROM portal_document_types WHERE document_type = ?").bind(created.documentType).first("last_contract_idx")).toBe(7);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_document_contracts WHERE document_type = ?").bind(created.documentType).first("count")).toBe(8);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'document_contract.appended'").first("count")).toBe(8);
+}, 30_000);
+
+test("Document Contract audit failure rolls back receipt, record, counter and registration", async () => {
+  const { context, service, contractService } = await documentContracts();
+  const created = await service.create(context, { internalName: "Rollback" }, "create-rollback-contract", "create-rollback-contract");
+  await database.prepare("CREATE TRIGGER reject_contract_audit BEFORE INSERT ON portal_admin_audit WHEN NEW.action = 'document_contract.appended' BEGIN SELECT RAISE(ABORT, 'injected failure'); END").run();
+  await expect(contractService.append(context, created.documentType, contractBody(), "rollback-contract", "rollback-contract")).rejects.toThrow();
+  expect(await database.prepare("SELECT last_contract_idx FROM portal_document_types WHERE document_type = ?").bind(created.documentType).first("last_contract_idx")).toBe(-1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_document_contracts WHERE document_type = ?").bind(created.documentType).first("count")).toBe(0);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'appendDocumentContract'").first("count")).toBe(0);
+  expect((await service.get(context, created.documentType)).latestDocumentContract).toBeNull();
 }, 30_000);
 
 test("contract HTTP endpoints create/read/list real drafts with authentication, CSRF and retry errors", async () => {

@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText, LoaderCircle, LogIn, LogOut, Menu, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
-import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentTypeListItem, type DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
+import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
 
 const auditActionLabels: Record<AdminAuditEvent["action"], string> = {
   "type_card_bundle.uploaded": "上传类型卡片包",
@@ -201,6 +201,15 @@ function AdminApp() {
   const [items, setItems] = useState<readonly DocumentTypeListItem[]>([]);
   const [members, setMembers] = useState<readonly AdministratorMemberListItem[]>([]);
   const [selected, setSelected] = useState<DocumentTypeRegistration | null>(null);
+  const [activeTypeTab, setActiveTypeTab] = useState<DocumentTypeTab>(initialRoute.tab ?? "config");
+  const [contracts, setContracts] = useState<readonly DocumentContractListItem[]>([]);
+  const [contractCursor, setContractCursor] = useState<string | null>(null);
+  const [selectedContract, setSelectedContract] = useState<DocumentContractRecord | null>(null);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [appendContractOpen, setAppendContractOpen] = useState(false);
+  const [snapshotSchemaText, setSnapshotSchemaText] = useState('{\n  "$schema": "https://schemas.unidocs.dev/svalue/v1",\n  "type": "object"\n}');
+  const [locationSchemaText, setLocationSchemaText] = useState('{\n  "$schema": "https://schemas.unidocs.dev/svalue/v1",\n  "type": "object"\n}');
+  const [contractReason, setContractReason] = useState("");
   const [query, setQuery] = useState("");
   const [enabled, setEnabled] = useState<"all" | "true" | "false">("all");
   const [loading, setLoading] = useState(true);
@@ -250,19 +259,75 @@ function AdminApp() {
       void loadMembers();
       void loadAudit();
     }
-    if (initialRoute.documentType) void openDetail(initialRoute.documentType, false);
+    if (initialRoute.documentType) void openDetail(initialRoute.documentType, false, initialRoute.tab ?? "config");
     const handlePopState = () => applyRoute(parseAdminRoute(window.location.href));
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  async function openDetail(documentType: string, updateRoute = true) {
-    if (updateRoute) window.history.pushState({}, "", adminRoutePath({ view: "documentTypes", documentType, tab: "config" }));
+  async function openDetail(documentType: string, updateRoute = true, tab: DocumentTypeTab = "config") {
+    if (updateRoute) window.history.pushState({}, "", adminRoutePath({ view: "documentTypes", documentType, tab }));
+    setActiveTypeTab(tab);
     setDetailLoading(true);
     setError(null);
-    try { setSelected(await client.getDocumentType(documentType)); }
+    try {
+      setSelected(await client.getDocumentType(documentType));
+      if (tab === "contracts") await loadContracts(documentType);
+    }
     catch (caught) { setError(errorMessage(caught)); }
     finally { setDetailLoading(false); }
+  }
+
+  async function loadContracts(documentType: string, cursor: string | null = null) {
+    setContractsLoading(true);
+    setError(null);
+    try {
+      const page = await client.listDocumentContracts(documentType, { limit: 25, cursor: cursor ?? undefined });
+      startTransition(() => setContracts(current => cursor ? [...current, ...page.items] : page.items));
+      setContractCursor(page.nextCursor);
+      if (!cursor) setSelectedContract(null);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setContractsLoading(false);
+    }
+  }
+
+  async function openContract(documentType: string, documentContractIdx: number) {
+    setContractsLoading(true);
+    setError(null);
+    try { setSelectedContract(await client.getDocumentContract(documentType, documentContractIdx)); }
+    catch (caught) { setError(errorMessage(caught)); }
+    finally { setContractsLoading(false); }
+  }
+
+  function changeTypeTab(tab: DocumentTypeTab) {
+    if (!selected) return;
+    window.history.pushState({}, "", adminRoutePath({ view: "documentTypes", documentType: selected.documentType, tab }));
+    setActiveTypeTab(tab);
+    setSelectedContract(null);
+    if (tab === "contracts" && contracts.length === 0) void loadContracts(selected.documentType);
+  }
+
+  async function appendContract(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !contractReason.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const snapshotSchema = JSON.parse(snapshotSchemaText);
+      const locationSchema = JSON.parse(locationSchemaText);
+      await client.appendDocumentContract(selected.documentType, { formatVersion: 1, snapshot: { schema: snapshotSchema }, location: { schema: locationSchema }, reason: contractReason.trim() });
+      setAppendContractOpen(false);
+      setContractReason("");
+      const refreshed = await client.getDocumentType(selected.documentType);
+      setSelected(refreshed);
+      await loadContracts(selected.documentType);
+    } catch (caught) {
+      setError(caught instanceof SyntaxError ? "Schema 必须是有效 JSON。" : errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function loadMembers() {
@@ -311,7 +376,8 @@ function AdminApp() {
     setView(route.view);
     setSelected(null);
     setSelectedAudit(null);
-    if (route.view === "documentTypes" && route.documentType) void openDetail(route.documentType, false);
+    setActiveTypeTab(route.tab ?? "config");
+    if (route.view === "documentTypes" && route.documentType) void openDetail(route.documentType, false, route.tab ?? "config");
     if (route.view === "administrators") void loadMembers();
     if (route.view === "audit") {
       if (members.length === 0) void loadMembers();
@@ -420,31 +486,46 @@ function AdminApp() {
 
         {error && <div className="error-banner" role="alert"><AlertCircle size={18} /><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label="关闭错误"><X size={16} /></button></div>}
 
-        <section className="workspace">
-          <div className="table-region">
-            <div className="table-meta"><span>{loading ? "正在同步" : `${items.length} 个类型`}</span><span>最多显示 50 项</span></div>
-            <div className="table-scroll">
-              <table><thead><tr><th>文档类型</th><th>状态</th><th>Contract</th><th>资源</th><th><span className="sr-only">详情</span></th></tr></thead>
-                <tbody>{items.map(item => <tr key={item.documentType} className={selected?.documentType === item.documentType ? "selected-row" : ""} onClick={() => void openDetail(item.documentType)}>
-                  <td><div className="type-name"><span className="file-icon"><FileText size={17} /></span><span><strong>{item.internalName}</strong><code>{item.documentType}</code></span></div></td>
-                  <td><span className={`status ${item.enabled ? "enabled" : "draft"}`}>{item.enabled ? <Check size={13} /> : <CircleDashed size={13} />}{item.enabled ? "已启用" : "草稿"}</span></td>
-                  <td>{item.latestDocumentContractIdx === null ? <span className="muted">未配置</span> : `r${item.latestDocumentContractIdx}`}</td>
-                  <td><span className="resource-count">{[item.typeCardBundle, item.viewBundle, item.builtinOperator].filter(Boolean).length}/3</span></td>
-                  <td><ChevronRight size={16} className="row-arrow" /></td>
-                </tr>)}</tbody>
-              </table>
-              {!loading && items.length === 0 && <div className="empty-state"><BookOpenText size={28} /><strong>没有匹配的文档类型</strong><span>调整筛选条件，或创建一个新的草稿。</span></div>}
-              {loading && items.length === 0 && <div className="empty-state"><LoaderCircle className="spin" size={26} /><strong>正在读取文档类型</strong></div>}
+        <section className={`workspace ${selected ? "type-config-workspace" : ""}`}>
+          {selected ? <div className="type-config">
+            <div className="type-config-head"><div><button className="back-link" type="button" onClick={() => navigate({ view: "documentTypes" })}>文档类型</button><h2>{selected.internalName}</h2><code>{selected.documentType}</code></div><span className={`status ${selected.enabled ? "enabled" : "draft"}`}>{selected.enabled ? "已启用" : "草稿"}</span></div>
+            <div className="type-tabs" role="tablist" aria-label="文档类型配置">{([
+              ["config", "基本信息"], ["contracts", `文档契约 ${contracts.length || selected.latestDocumentContract ? (selected.latestDocumentContract?.documentContractIdx ?? -1) + 1 : 0}`],
+              ["cards", "类型卡片包"], ["bundles", "界面包"], ["operators", "处理服务"], ["changes", "变更记录"],
+            ] as const).map(([tab, label]) => <button key={tab} role="tab" aria-selected={activeTypeTab === tab} className={activeTypeTab === tab ? "active" : ""} type="button" onClick={() => changeTypeTab(tab)}>{label}</button>)}</div>
+            <div className="type-config-body">
+              <div className="type-config-main">
+                {activeTypeTab === "config" && <section className="config-section"><h3>基本信息</h3><dl className="detail-list"><div><dt>内部名称</dt><dd>{selected.internalName}</dd></div><div><dt>状态</dt><dd>{selected.enabled ? "已启用" : "草稿"}</dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selected.etag)}</code></dd></div><div><dt>更新时间</dt><dd>{new Date(selected.updatedAt).toLocaleString("zh-CN")}</dd></div></dl></section>}
+                {activeTypeTab === "contracts" && <section className="config-section"><div className="section-heading"><div><h3>文档契约</h3><p>不可变的 snapshot/location 配对 schema revision。</p></div><button className="primary-button" type="button" onClick={() => setAppendContractOpen(true)}><Plus size={16} />添加版本</button></div>
+                  {contracts.map(contract => <button className={`contract-row ${selectedContract?.documentContractIdx === contract.documentContractIdx ? "active" : ""}`} type="button" key={contract.documentContractIdx} onClick={() => void openContract(selected.documentType, contract.documentContractIdx)}><span className="contract-idx">{contract.documentContractIdx}</span><span><strong>文档契约 {contract.documentContractIdx}</strong><code>{contract.contractHash}</code><small>{new Date(contract.createdAt).toLocaleString("zh-CN")} · format v{contract.formatVersion}</small></span><ChevronRight size={16} /></button>)}
+                  {!contractsLoading && contracts.length === 0 && <div className="empty-state compact-empty"><ScrollText size={26} /><strong>尚未添加文档契约</strong><span>第一个版本将分配 revision 0。</span></div>}
+                  {contractsLoading && contracts.length === 0 && <div className="empty-state compact-empty"><LoaderCircle className="spin" size={24} /><strong>正在读取文档契约</strong></div>}
+                  {contractCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadContracts(selected.documentType, contractCursor)}>加载更多</button></div>}
+                  {selectedContract && <div className="contract-detail"><h3>Revision {selectedContract.documentContractIdx}</h3><dl><div><dt>Contract hash</dt><dd><code>{selectedContract.contractHash}</code></dd></div><div><dt>Snapshot media type</dt><dd><code>{selectedContract.snapshot.contentType}</code></dd></div><div><dt>Snapshot hash</dt><dd><code>{selectedContract.snapshot.schemaHash}</code></dd></div><div><dt>Location media type</dt><dd><code>{selectedContract.location.contentType}</code></dd></div><div><dt>Location hash</dt><dd><code>{selectedContract.location.schemaHash}</code></dd></div></dl><div className="schema-grid"><div><strong>Snapshot schema</strong><pre>{JSON.stringify(selectedContract.snapshot.schema, null, 2)}</pre></div><div><strong>Location schema</strong><pre>{JSON.stringify(selectedContract.location.schema, null, 2)}</pre></div></div></div>}
+                </section>}
+                {!["config", "contracts"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>该配置将在对应候选资源 API 上线后接入。</span></div>}
+              </div>
+              <aside className="config-aside"><h3>启用准备度</h3><dl><div><dt>文档契约</dt><dd>{selected.latestDocumentContract ? `revision ${selected.latestDocumentContract.documentContractIdx}` : "缺失"}</dd></div><div><dt>类型卡片包</dt><dd>{selected.typeCardBundle?.name ?? "缺失"}</dd></div><div><dt>视图包</dt><dd>{selected.viewBundle?.name ?? "缺失"}</dd></div><div><dt>处理服务</dt><dd>{selected.builtinOperator?.name ?? "缺失"}</dd></div></dl></aside>
             </div>
-          </div>
+          </div> : <>
+            <div className="table-region">
+              <div className="table-meta"><span>{loading ? "正在同步" : `${items.length} 个类型`}</span><span>最多显示 50 项</span></div>
+              <div className="table-scroll">
+                <table><thead><tr><th>文档类型</th><th>状态</th><th>Contract</th><th>资源</th><th><span className="sr-only">详情</span></th></tr></thead>
+                  <tbody>{items.map(item => <tr key={item.documentType} onClick={() => void openDetail(item.documentType)}>
+                    <td><div className="type-name"><span className="file-icon"><FileText size={17} /></span><span><strong>{item.internalName}</strong><code>{item.documentType}</code></span></div></td>
+                    <td><span className={`status ${item.enabled ? "enabled" : "draft"}`}>{item.enabled ? <Check size={13} /> : <CircleDashed size={13} />}{item.enabled ? "已启用" : "草稿"}</span></td>
+                    <td>{item.latestDocumentContractIdx === null ? <span className="muted">未配置</span> : `r${item.latestDocumentContractIdx}`}</td>
+                    <td><span className="resource-count">{[item.typeCardBundle, item.viewBundle, item.builtinOperator].filter(Boolean).length}/3</span></td>
+                    <td><ChevronRight size={16} className="row-arrow" /></td>
+                  </tr>)}</tbody>
+                </table>
+                {!loading && items.length === 0 && <div className="empty-state"><BookOpenText size={28} /><strong>没有匹配的文档类型</strong><span>调整筛选条件，或创建一个新的草稿。</span></div>}
+                {loading && items.length === 0 && <div className="empty-state"><LoaderCircle className="spin" size={26} /><strong>正在读取文档类型</strong></div>}
+              </div>
+            </div>
 
-          <aside className={`detail-panel ${selected || detailLoading ? "open" : ""}`} aria-label="文档类型详情">
-            {detailLoading ? <div className="detail-placeholder"><LoaderCircle className="spin" size={22} />正在读取</div> : selected ? <>
-              <div className="detail-header"><div><span>类型详情</span><h2>{selected.internalName}</h2><code>{selected.documentType}</code></div><button className="icon-button" type="button" onClick={() => navigate({ view: "documentTypes" })} aria-label="关闭详情"><X size={17} /></button></div>
-              <dl className="detail-list"><div><dt>状态</dt><dd>{selected.enabled ? "已启用" : "草稿"}</dd></div><div><dt>Document Contract</dt><dd>{selected.latestDocumentContract ? `r${selected.latestDocumentContract.documentContractIdx}` : "未配置"}</dd></div><div><dt>Type Card</dt><dd>{selected.typeCardBundle?.name ?? "未选择"}</dd></div><div><dt>View bundle</dt><dd>{selected.viewBundle?.name ?? "未选择"}</dd></div><div><dt>内置 Operator</dt><dd>{selected.builtinOperator?.name ?? "未选择"}</dd></div><div><dt>ETag</dt><dd><code title={selected.etag}>{shortEtag(selected.etag)}</code></dd></div></dl>
-              <div className="readiness"><strong>启用准备度</strong><div className="readiness-track"><span className={`progress-${[selected.latestDocumentContract, selected.typeCardBundle, selected.viewBundle, selected.builtinOperator].filter(Boolean).length}`} /></div><small>需要 Contract、Type Card、View 与 Operator。</small></div>
-            </> : <div className="detail-placeholder"><FileText size={24} /><span>选择一行查看完整配置</span></div>}
-          </aside>
+          </>}
         </section>
       </> : view === "administrators" ? <>
         <section className="page-heading">
@@ -525,6 +606,11 @@ function AdminApp() {
     {memberToRemove && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setMemberToRemove(null); }}>
       <section className="modal" role="dialog" aria-modal="true" aria-labelledby="remove-member-title"><div className="modal-header"><div><span>REMOVE ACCESS</span><h2 id="remove-member-title">移除管理员</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setMemberToRemove(null)} aria-label="关闭"><X size={18} /></button></div>
         <div className="confirm-body"><p>将移除 <strong>{memberToRemove.email}</strong> 的管理员权限，并立即撤销该成员的活动 session。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setMemberToRemove(null)}>取消</button><button className="danger-button" type="button" disabled={saving} onClick={() => void confirmRemoveMember()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}确认移除</button></div></div>
+      </section>
+    </div>}
+    {appendContractOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setAppendContractOpen(false); }}>
+      <section className="modal contract-modal" role="dialog" aria-modal="true" aria-labelledby="append-contract-title"><div className="modal-header"><div><span>APPEND IMMUTABLE REVISION</span><h2 id="append-contract-title">添加文档契约</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setAppendContractOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <form onSubmit={appendContract}><div className="schema-input-grid"><label><span>Snapshot schema</span><textarea aria-label="Snapshot schema" value={snapshotSchemaText} onChange={event => setSnapshotSchemaText(event.target.value)} /></label><label><span>Location schema</span><textarea aria-label="Location schema" value={locationSchemaText} onChange={event => setLocationSchemaText(event.target.value)} /></label></div><label><span>变更原因</span><input required value={contractReason} onChange={event => setContractReason(event.target.value)} placeholder="说明新增 revision 的原因" /></label><p>提交后不可修改或删除；revision 从 0 连续分配。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setAppendContractOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !contractReason.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}提交版本</button></div></form>
       </section>
     </div>}
   </div>;

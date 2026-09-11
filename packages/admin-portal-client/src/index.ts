@@ -3,7 +3,10 @@ import {
   type AddAdministratorMemberRequest,
   type AdministratorMemberMutationResult,
   type AdministratorMemberRecord,
+  type AppendDocumentContractRequest,
   type CreateDocumentTypeRequest,
+  type DocumentContractAppendResult,
+  type DocumentContractRecord,
   type DocumentTypeMutationResult,
   type DocumentTypeRegistration,
   type ListAdministratorMembersResponse,
@@ -11,6 +14,7 @@ import {
   type ListAdminAuditEventsResponse,
   type ListDocumentTypesQuery,
   type ListDocumentTypesResponse,
+  type ListDocumentContractsResponse,
   type UpdateDocumentTypeRequest,
 } from "@unidocs/protocol-admin-portal";
 
@@ -42,6 +46,9 @@ export interface AdminPortalClient {
   addAdministrator(body: AddAdministratorMemberRequest, idempotencyKey?: string): Promise<AdministratorMemberMutationResult>;
   removeAdministrator(adminId: string, ifMatch: string, idempotencyKey?: string): Promise<void>;
   listAuditEvents(query?: ListAdminAuditEventsQuery): Promise<ListAdminAuditEventsResponse>;
+  listDocumentContracts(documentType: string, query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListDocumentContractsResponse>;
+  getDocumentContract(documentType: string, documentContractIdx: number): Promise<DocumentContractRecord>;
+  appendDocumentContract(documentType: string, body: AppendDocumentContractRequest, idempotencyKey?: string): Promise<DocumentContractAppendResult>;
 }
 
 export interface AdminPortalClientConfig {
@@ -136,5 +143,16 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
       const encoded = params.toString();
       return request<ListAdminAuditEventsResponse>(`${AdminApiV1BasePath}/audit-events${encoded ? `?${encoded}` : ""}`);
     },
+    listDocumentContracts(documentType, query = {}) {
+      const params = new URLSearchParams();
+      if (query.limit !== undefined) params.set("limit", String(query.limit));
+      if (query.cursor !== undefined) params.set("cursor", query.cursor);
+      const encoded = params.toString();
+      return request<ListDocumentContractsResponse>(`${AdminApiV1BasePath}/document-types/${encodeURIComponent(documentType)}/document-contracts${encoded ? `?${encoded}` : ""}`);
+    },
+    getDocumentContract: (documentType, documentContractIdx) => request<DocumentContractRecord>(`${AdminApiV1BasePath}/document-types/${encodeURIComponent(documentType)}/document-contracts/${documentContractIdx}`),
+    appendDocumentContract: (documentType, body, idempotencyKey = createIdempotencyKey()) => request<DocumentContractAppendResult>(`${AdminApiV1BasePath}/document-types/${encodeURIComponent(documentType)}/document-contracts`, {
+      method: "POST", headers: mutationHeaders({ "idempotency-key": idempotencyKey }), body: JSON.stringify(body),
+    }),
   };
 }

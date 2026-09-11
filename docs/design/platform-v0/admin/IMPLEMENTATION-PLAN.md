@@ -6,6 +6,16 @@
 
 ## 当前进展与决策
 
+### Document Contract 纵向闭环（2026-09-11）
+
+已上线 `appendDocumentContract`、`listDocumentContracts`、`getDocumentContract`，Admin v1 完整 operation 总数增至 **11/26**，Phase 3 进度为 **6/7**；生产 Worker 版本 `4608b2d3-fad7-483f-baf7-c69d0974290b`。独立 Portal D1 已应用 `0003_document_contracts.sql`，为 document type 增加 `last_contract_idx` 并建立不可变 paired contract 表/倒序分页索引；migration 后现有 Markdown registration 保持 latest=null、idx=-1，contract 表为空。
+
+- service 严格验证 SValue dialect、format v1、reason 和幂等 key，计算 snapshot/location schema hash 与不含 idx/时间/hash 字段的 paired contract hash。repository 每次竞争尝试读取最新 registration/idx，构建候选 record 和新 registration ETag，再以 `last_contract_idx + current ETag` 双条件原子提交 receipt、idx 分配、contract、registration 与 `document_contract.appended` audit。
+- append 在有限重试内处理 D1 竞争；8 路真实并发测试得到连续零基 revision 0..7，最终 registration/latest/last_contract_idx 一致。相同 key/内容重放原 response，不同 fingerprint 409；重复内容不同 key 拒绝。audit 故障会回滚 receipt、record、counter 和 registration，不留下 idx gap。
+- list 按 revision 倒序稳定 cursor 分页，cursor 绑定 document type；get 返回完整 snapshot/location schema、派生 media type、schema hash、contract hash 和 createdAt。HTTP body 上限 256 KiB，使用严格 JSON parser，拒绝重复/非标准 JSON 和非法 query；认证、CSRF 与 no-store 继续由 BFF 负责。
+- Admin client 已接入 append/list/get。WebUI 按 Admin mock 重构为六 tab 文档类型配置工作区；“文档契约”tab 提供 revision 摘要、完整 schema/hash 详情、cursor 加载和 append 对话框，右侧展示启用准备度；其他候选 tab 在真实 API 上线前只显示明确空状态，不含 mock data。URL `?tab=contracts` 在桌面/移动刷新后保持，append 对话框同时编辑 snapshot/location JSON 和 reason。
+- 验证：portal-service 173 个测试、Admin client 8 个 transport tests、WebUI 13 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 28 个集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产桌面验证六 tab、空 revision 0 状态、append 表单和刷新恢复；390×844 下页面/对话框无横向溢出。部署与 smoke 未创建生产 Contract，等待用户人工提交首个 revision 验收。
+
 ### Document Contract 阶段启动约束（2026-09-11）
 
 下一阶段按“先计划 checkpoint，再实现可部署纵向切片”的顺序推进 Document Contract append/list/get；阶段开始前先更新本计划并提交，功能完成后再单独部署、验收和提交。当前完整 operation 数仍为 **8/26**，不因计划或路由骨架提前计数。
@@ -323,12 +333,12 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 3：文档类型与 Document Contract
 
-- 当前进度：本 Phase 3/7 个 operation、全部 Admin v1 8/26 个 operation 已上线。
+- 当前进度：本 Phase 6/7 个 operation、全部 Admin v1 11/26 个 operation 已上线。
 - [x] 实现并上线 register/list/get document type，使用真实 service/D1/oRPC handler，涵盖鉴权、CSRF、幂等、审计及筛选分页。
 - [ ] 实现 PATCH document type，包括并发 If-Match、候选绑定及启用条件。
-- [ ] 实现 paired contract append/list/get；已固定 mock UI 参考、真实路由 contract 与刷新恢复验收要求，service/D1/HTTP 尚待实现。
+- [x] 实现 paired contract append/list/get，涵盖真实 service/D1/oRPC/client/WebUI、零基并发分配、幂等、原子审计和刷新恢复。
 - [x] 实现 schema/paired contract canonical hash 及测试。
-- [ ] 在真实 append 服务中接入 SValue dialect、零基 idx 和 append-only 校验；协议校验与 D1 分配 spike 已有，handler 尚无。
+- [x] 在真实 append 服务中接入 SValue dialect、零基 idx、append-only 校验与 canonical hashes。
 - [ ] 实现 View/Operator contract 支持交集与 enable 前置条件。
 
 - [ ] **退出条件**：相关 7 个 operation 通过 contract、领域和并发测试。
@@ -361,7 +371,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 ### Phase 6：Cloudflare adapter 与认证入口
 
 - [x] 建立认证部分 D1 migration 和 repository adapter，并通过真实 D1 集成测试。
-- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter。
+- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter；document type、Document Contract、管理员与 audit 已接入，bundle/Operator 尚待实现。
 - [ ] 建立 R2 adapter、bundle ingress 与独立稳定 bundle origin。
 - [x] 实现 Bearer 优先且失败不 fallback cookie，并通过 Node/workerd 测试。
 - [x] 复用 Gateway Google client 配置，固定 Portal origin 和独立 callback；用户已确认回调登记完成。
@@ -375,15 +385,16 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 通过正式 Worker adapter 暴露 document type create/list/get 三个 oRPC/OpenAPI handler，限制同源 cookie 访问并设置安全 headers。
 - [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
 - [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
-- [ ] 暴露其余 18 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
+- [x] 通过正式 Worker adapter 暴露 Document Contract append/list/get 三个 handler，涵盖严格 JSON、并发 idx、幂等和原子 registration/audit 更新。
+- [ ] 暴露其余 15 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。
 
 ### Phase 7：Admin client 与真实 WebUI
 
-- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、administrator list/get/add/remove 与 audit list transport。
-- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；文档类型列表、筛选、详情、创建、管理员 list/add/remove 和 audit list/detail MVP 已上线，其余页面待实现。
+- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、Document Contract append/list/get、administrator list/get/add/remove 与 audit list transport。
+- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置骨架、Document Contract list/get/append、管理员 list/add/remove 和 audit list/detail 已上线，bundle/Operator tab 待真实 API。
 - [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用 loading/empty/error、公开登录/授权拒绝/session 检查状态与稳定错误展示，冲突恢复和上传状态待实现。
 - [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。

@@ -69,7 +69,26 @@ test("notifies the application before surfacing any unauthorized response", asyn
 test("encodes audit filters and pagination", async () => {
   const fetcher = vi.fn<typeof fetch>(async () => Response.json({ items: [], nextCursor: null }));
   const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher });
-  await client.listAuditEvents({ actorId: "admin one", action: "administrator.added", resourceType: "administrator", documentType: "markdown",
-    occurredFrom: "2026-09-10T00:00:00.000Z", occurredTo: "2026-09-11T00:00:00.000Z", limit: 50, cursor: "next" });
+  await client.listAuditEvents({
+    actorId: "admin one", action: "administrator.added", resourceType: "administrator", documentType: "markdown",
+    occurredFrom: "2026-09-10T00:00:00.000Z", occurredTo: "2026-09-11T00:00:00.000Z", limit: 50, cursor: "next"
+  });
   expect(String(fetcher.mock.calls[0][0])).toBe("https://portal.test/admin/api/v1/audit-events?actorId=admin+one&action=administrator.added&resourceType=administrator&documentType=markdown&occurredFrom=2026-09-10T00%3A00%3A00.000Z&occurredTo=2026-09-11T00%3A00%3A00.000Z&limit=50&cursor=next");
+});
+
+test("lists, reads, and appends paired Document Contracts", async () => {
+  const fetcher = vi.fn<typeof fetch>(async (_input, init) => Response.json(init?.method === "POST"
+    ? { documentContractIdx: 0, contractHash: "sha256:contract" }
+    : { items: [], nextCursor: null }));
+  const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher, getCsrfToken: () => "csrf", createIdempotencyKey: () => "contract-key" });
+  await client.listDocumentContracts("markdown/type", { limit: 25, cursor: "next" });
+  expect(String(fetcher.mock.calls[0][0])).toBe("https://portal.test/admin/api/v1/document-types/markdown%2Ftype/document-contracts?limit=25&cursor=next");
+  await client.getDocumentContract("markdown/type", 3);
+  expect(String(fetcher.mock.calls[1][0])).toBe("https://portal.test/admin/api/v1/document-types/markdown%2Ftype/document-contracts/3");
+  const body = { formatVersion: 1 as const, snapshot: { schema: { $schema: "https://schemas.unidocs.dev/svalue/v1" as const } }, location: { schema: { $schema: "https://schemas.unidocs.dev/svalue/v1" as const } }, reason: "Initial" };
+  await client.appendDocumentContract("markdown", body);
+  const headers = new Headers(fetcher.mock.calls[2][1]?.headers);
+  expect(fetcher.mock.calls[2][1]).toMatchObject({ method: "POST", body: JSON.stringify(body) });
+  expect(headers.get("x-csrf-token")).toBe("csrf");
+  expect(headers.get("idempotency-key")).toBe("contract-key");
 });

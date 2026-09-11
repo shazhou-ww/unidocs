@@ -8,6 +8,8 @@ import { createAdministratorsHttp } from "./administrators-http.js";
 import { D1AdministratorRepository } from "./administrators-repository.js";
 import { createAuditEventsHttp } from "./audit-events-http.js";
 import { D1AuditEventRepository } from "./audit-events-repository.js";
+import { createDocumentContractsHttp } from "./document-contracts-http.js";
+import { D1DocumentContractRepository } from "./document-contracts-repository.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -21,12 +23,14 @@ export default {
       const documentTypesHttp = createDocumentTypesHttp(new D1DocumentTypeRepository(env.DB));
       const administratorsHttp = createAdministratorsHttp(new D1AdministratorRepository(env.DB));
       const auditEventsHttp = createAuditEventsHttp(new D1AuditEventRepository(env.DB));
+      const documentContractsHttp = createDocumentContractsHttp(new D1DocumentContractRepository(env.DB));
       const response = await createPortalBff(config, repository, {
         bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null,
         adminApi: (apiRequest, admin, requestId) => {
           const path = new URL(apiRequest.url).pathname;
           if (path.startsWith("/admin/api/v1/administrators")) return administratorsHttp(apiRequest, admin, requestId);
           if (path === "/admin/api/v1/audit-events") return auditEventsHttp(apiRequest, admin, requestId);
+          if (path.includes("/document-contracts")) return documentContractsHttp(apiRequest, admin, requestId);
           return documentTypesHttp(apiRequest, admin, requestId);
         },
         adminUi: serveAdminWebUi

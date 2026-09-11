@@ -139,6 +139,36 @@ test("restores the audit page from a direct refresh route", async () => {
   vi.unstubAllGlobals();
 });
 
+test("restores the Contract tab, reads a revision, and appends a new one", async () => {
+  window.history.replaceState({}, "", "/admin/document-types/markdown?tab=contracts");
+  const schema = { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" };
+  const registration = { documentType: "markdown", internalName: "Markdown", enabled: false, latestDocumentContract: { documentType: "markdown", documentContractIdx: 0, formatVersion: 1, snapshot: { contentType: "application/vnd.unidocs.markdown.snapshot+cbor;version=1", schema, schemaHash: "sha256:snapshot" }, location: { contentType: "application/vnd.unidocs.markdown.location+json;version=1", schema, schemaHash: "sha256:location" }, contractHash: "sha256:contract", createdAt: "2026-09-11T00:00:00.000Z" }, typeCardBundle: null, viewBundle: null, builtinOperator: null, etag: '"sha256-registration"', updatedAt: "2026-09-11T00:00:00.000Z" };
+  const listItem = { documentType: "markdown", documentContractIdx: 0, formatVersion: 1, snapshotSchemaHash: "sha256:snapshot", locationSchemaHash: "sha256:location", contractHash: "sha256:contract", createdAt: "2026-09-11T00:00:00.000Z" };
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.endsWith("/document-contracts/0")) return Response.json(registration.latestDocumentContract);
+    if (url.includes("/document-contracts") && init?.method === "POST") return Response.json({ documentContractIdx: 1, contractHash: "sha256:next" }, { status: 201 });
+    if (url.includes("/document-contracts")) return Response.json({ items: [listItem], nextCursor: null });
+    if (url.endsWith("/document-types/markdown")) return Response.json(registration);
+    return Response.json({ items: [], nextCursor: null });
+  });
+  Object.defineProperty(document, "cookie", { configurable: true, value: "__Host-unidocs_admin_csrf=csrf" });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "Markdown" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: /文档契约/ })).toHaveAttribute("aria-selected", "true");
+  fireEvent.click(await screen.findByRole("button", { name: /文档契约 0/ }));
+  expect(await screen.findByText("Snapshot media type")).toBeInTheDocument();
+  expect(screen.getByText("application/vnd.unidocs.markdown.snapshot+cbor;version=1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "添加版本" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "变更原因" }), { target: { value: "Add revision one" } });
+  fireEvent.click(screen.getByRole("button", { name: "提交版本" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/document-contracts"), expect.objectContaining({ method: "POST" })));
+  expect(window.location.pathname + window.location.search).toBe("/admin/document-types/markdown?tab=contracts");
+  vi.unstubAllGlobals();
+});
+
 test("renders a useful access denial only after the session probe fails", async () => {
   window.history.replaceState({}, "", "/admin/access-denied?code=forbidden&requestId=request-1");
   let rejectSession!: (reason: Error) => void;

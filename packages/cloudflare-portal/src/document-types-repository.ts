@@ -41,7 +41,8 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
         this.database.prepare("DELETE FROM portal_mutation_guard"),
         this.database.prepare("INSERT INTO portal_idempotency_receipts VALUES (?, 'createDocumentType', ?, ?, ?, ?)")
           .bind(context.memberId, key, fingerprint, JSON.stringify(response), registration.updatedAt),
-        this.database.prepare("INSERT INTO portal_document_types VALUES (?, ?, ?, ?, ?)")
+        this.database.prepare(`INSERT INTO portal_document_types
+          (document_type, internal_name, enabled, registration_json, created_at) VALUES (?, ?, ?, ?, ?)`)
           .bind(registration.documentType, registration.internalName, registration.enabled ? 1 : 0, JSON.stringify(registration), registration.updatedAt),
         this.database.prepare(`INSERT INTO portal_admin_audit
           (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
