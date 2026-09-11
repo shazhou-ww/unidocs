@@ -1,0 +1,22 @@
+:root {
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --surface-sunken: #f5f5f4;
+  --border: #e7e5e4;
+  --text: #1c1917;
+  --text-muted: #78716c;
+  --accent-ping: #16a34a;
+  --accent-pong: #d97706;
+  --accent-stale: #a8a29e;
+  --accent-draft: #ca8a04;
+  --panel-width: 316px;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 system-ui, -apple-system, "PingFang SC", sans-serif; }
+
+.device-notice { display: none; }
+@media (max-width: 760px) {
+  .device-notice { display: grid; place-content: center; gap: 8px; min-height: 100dvh; padding: 24px; text-align: center; }
+  .app { display: none; }
+}
