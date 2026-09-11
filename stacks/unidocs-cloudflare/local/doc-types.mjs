@@ -174,10 +174,58 @@ export function resolvePorts(docTypes, overrides = {}, services = []) {
   return ports;
 }
 
+/** The unified UniCAS service's bundle entry; see `serviceWorker` below. */
+export const CAS_SERVICE_ENTRY = "unicas-packages/service-cloudflare/src/worker.ts";
+
+/**
+ * Every bundle entry whose Miniflare worker declares
+ * `compatibilityFlags: ["nodejs_compat"]` — derived from the same two places
+ * `buildWorkers` takes them from, never restated:
+ *
+ * - `CAS_SERVICE_ENTRY`, the unified UniCAS service (`serviceWorker`);
+ * - every `SERVICE_TARGETS` component with an entry (`serviceWorkerConfigs`),
+ *   which gets the flag unconditionally — so a new service row lands here for
+ *   free instead of needing a second edit somewhere else.
+ */
+export const NODE_COMPAT_ENTRIES = [
+  CAS_SERVICE_ENTRY,
+  ...serviceWorkers(Object.keys(SERVICE_TARGETS)).map(component => component.entry),
+];
+
+/**
+ * The esbuild `external` list for one bundle entry (see `bundleWorker` in
+ * runtime.mjs).
+ *
+ * Two different reasons, deliberately not one list:
+ *
+ * - `cloudflare:workers` is a workerd *built-in* module. It resolves at
+ *   runtime on every worker, with no compatibility flag involved, so esbuild
+ *   must leave it alone for every entry — there is nothing to bundle and no
+ *   condition to check. Scoping it to a path list is what broke
+ *   `packages/cloudflare-gateway/src/worker.ts` (esbuild: `Could not resolve
+ *   "cloudflare:workers"`) the moment platform-document-do.ts started
+ *   importing `DurableObject` from it. The gateway is bundled on
+ *   *every* `pnpm dev`, so that one unresolved import took the entire local
+ *   runtime down, for every target. Keep this unconditional.
+ * - `node:*` is the opposite: workerd resolves those only under
+ *   `nodejs_compat`, so it stays scoped to the entries that declare that flag.
+ *   Externalizing it everywhere would turn a missing flag from a build error
+ *   into a runtime one. The portal needs it for `node:crypto`'s
+ *   `timingSafeEqual` (auth.ts).
+ *
+ * `bundleWorker` passes `join(ROOT, entry)`, so the match is a suffix/substring
+ * one on a forward-slash-normalized path rather than a prefix anchor.
+ */
+export function bundleExternals(entry) {
+  const path = entry.replaceAll("\\", "/");
+  const nodeCompat = NODE_COMPAT_ENTRIES.some(candidate => path.includes(candidate));
+  return nodeCompat ? ["cloudflare:workers", "node:*"] : ["cloudflare:workers"];
+}
+
 /** Entry point of every worker that needs bundling for the given selection. */
 export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = true, services = [] } = {}) {
   const serviceTargets = [
-    { entry: "unicas-packages/service-cloudflare/src/worker.ts", outfile: "cas-service.js" },
+    { entry: CAS_SERVICE_ENTRY, outfile: "cas-service.js" },
   ];
   if (casMiddlewareOnly) {
     return [

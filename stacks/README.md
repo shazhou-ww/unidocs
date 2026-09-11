@@ -124,7 +124,21 @@ credentials:
   redirect URI on that same client.
 
 Without them `/admin/auth/login` still redirects, and Google rejects the
-placeholder client id when the browser arrives. Nothing else is affected.
+placeholder client id when the browser arrives.
+
+**Setting them is not portal-local.** The same two variables are read once, in
+`runtime.mjs`, and handed to both the portal *and* the CAS admin BFF. Setting
+either one (`buildWorkers` checks them with `||`, not `&&`) flips the admin
+BFF's `OIDC_ISSUER` off the local mock provider on :8793 and onto
+`https://accounts.google.com` — or onto `GOOGLE_OIDC_ISSUER`, if that is set
+too — and gives it the portal's client id and secret in place of its own
+`unidocs-local-admin` placeholders. So the CAS admin UI on :4070 will start
+redirecting to Google as well, and signing into it then requires a *second*
+redirect URI on that same Google client:
+`http://localhost:4070/admin/auth/callback` (its `PUBLIC_ORIGIN`, overridable
+with `UNIDOCS_CAS_ADMIN_ORIGIN`). If you only want to exercise the portal,
+expect that side effect; to put the CAS admin UI back on the mock provider,
+unset both variables.
 
 ## Code boundary
 

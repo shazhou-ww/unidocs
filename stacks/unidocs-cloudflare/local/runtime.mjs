@@ -16,6 +16,7 @@ import {
 } from "miniflare";
 import {
   buildWorkers,
+  bundleExternals,
   bundleTargets,
   ADMIN_PORT,
   MOCK_OIDC_PORT,
@@ -33,6 +34,10 @@ import { docSessionObjectName } from "../../../packages/doctype-server-common/sr
 import { migrateControlSchema } from "../../../unicas-packages/service-cloudflare/src/control-schema.ts";
 
 export { DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
+// Re-exported for the callers that reach for it through the runtime; the rule
+// itself lives in doc-types.mjs, where it can derive the nodejs_compat entry
+// set from the registry instead of restating it.
+export { bundleExternals } from "./doc-types.mjs";
 
 export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
@@ -42,43 +47,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 // own esbuild bundlers so this table is kept in one place.
 const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 
-/**
- * Entries that run under `compatibilityFlags: ["nodejs_compat"]` — see the
- * `serviceWorker` and `serviceWorkerConfigs` worker configs in doc-types.mjs.
- * Only these may leave `node:*` specifiers unbundled.
- */
-const NODE_COMPAT_ENTRY_PREFIXES = [
-  "unicas-packages/service-cloudflare/",
-  "packages/cloudflare-portal/",
-];
-
-/**
- * The esbuild `external` list for one bundle entry.
- *
- * Two different reasons, deliberately not one list:
- *
- * - `cloudflare:workers` is a workerd *built-in* module. It resolves at
- *   runtime on every worker, with no compatibility flag involved, so esbuild
- *   must leave it alone for every entry — there is nothing to bundle and no
- *   condition to check. Scoping it to a path list is what broke
- *   `packages/cloudflare-gateway/src/worker.ts` (esbuild: `Could not resolve
- *   "cloudflare:workers"`) the moment platform-document-do.ts started
- *   importing `DurableObject` from it. The gateway is bundled on *every*
- *   `pnpm dev`, so that one unresolved import took the entire local runtime
- *   down, for every target. Keep this unconditional.
- * - `node:*` is the opposite: workerd resolves those only under
- *   `nodejs_compat`, so it stays scoped to the entries that declare that flag.
- *   Externalizing it everywhere would turn a missing flag from a build error
- *   into a runtime one. The portal needs it for `node:crypto`'s
- *   `timingSafeEqual` (auth.ts).
- */
-export function bundleExternals(entry) {
-  const path = entry.replaceAll("\\", "/");
-  const nodeCompat = NODE_COMPAT_ENTRY_PREFIXES.some(prefix => path.includes(prefix));
-  return nodeCompat ? ["cloudflare:workers", "node:*"] : ["cloudflare:workers"];
-}
-
-async function bundleWorker(entry, outfile) {
+export async function bundleWorker(entry, outfile) {
   await mkdir(dirname(outfile), { recursive: true });
   await esbuild.build({
     absWorkingDir: ROOT,

@@ -17,25 +17,44 @@
  *   entry `bundleTargets` can emit, present and future.
  * - `node:*` resolves only under `compatibilityFlags: ["nodejs_compat"]`, so
  *   externalizing it on an entry whose worker lacks that flag would convert a
- *   build error into a runtime one. The last test ties the two tables together
- *   so neither can drift.
+ *   build error into a runtime one. The drift guard ties the two tables
+ *   together so neither can drift.
+ *
+ * Both sweeps expand from the registries themselves (`DOC_TYPES`,
+ * `SERVICE_TARGETS`) rather than a hand-written list: a guard that has to be
+ * edited when a row is added is a guard that will be green on the day it
+ * matters. The final describe pins that `bundleWorker` asks for the computed
+ * list instead of restating one at the call site.
  */
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
-import { bundleExternals } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import * as esbuild from "esbuild";
+import { bundleWorker } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
   ADMIN_PORT,
   DOC_TYPES,
   EDGE_PORT,
   MOCK_OIDC_PORT,
   buildWorkers,
+  bundleExternals,
   bundleTargets,
   resolvePorts,
 } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
+import { SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 
+// `bundleWorker` is the only thing here that reaches esbuild; stubbing it lets
+// the wiring test read back the options without a real build.
+vi.mock("esbuild", () => ({ build: vi.fn(async () => ({})) }));
+
+// Both registries, expanded — never a hand-written list. A doc type or a
+// service target added later is swept by every test below automatically, which
+// is the whole point: the tables these tests compare can only be kept honest
+// if both sides grow from the same rows.
 const ALL_DOC_TYPES = Object.keys(DOC_TYPES);
-const ALL_SERVICES = ["portal"];
+const ALL_SERVICES = Object.keys(SERVICE_TARGETS);
 const GATEWAY_ENTRY = "packages/cloudflare-gateway/src/worker.ts";
+const PORTAL_ENTRY = "packages/cloudflare-portal/src/worker.ts";
 
 /** Every entry the local runtime can ask esbuild to bundle. */
 const ALL_TARGETS = bundleTargets(ALL_DOC_TYPES, { services: ALL_SERVICES });
@@ -73,7 +92,17 @@ describe("node:* stays scoped to the nodejs_compat entries", () => {
   });
 
   test("the portal does externalize node:*", () => {
-    expect(bundleExternals("packages/cloudflare-portal/src/worker.ts")).toContain("node:*");
+    expect(bundleExternals(PORTAL_ENTRY)).toContain("node:*");
+  });
+
+  // The classifier normalizes separators before matching. Without that, a
+  // Windows-style path misses the table and silently loses `node:*` — a
+  // runtime "node:crypto is not available" on the portal rather than a build
+  // error, and only on the one platform nobody here runs.
+  test("a Windows-separator portal path classifies the same way", () => {
+    expect(bundleExternals(PORTAL_ENTRY.replaceAll("/", "\\"))).toContain("node:*");
+    expect(bundleExternals(join("C:\\unidocs", PORTAL_ENTRY).replaceAll("/", "\\")))
+      .toContain("node:*");
   });
 
   /**
@@ -125,5 +154,26 @@ describe("node:* stays scoped to the nodejs_compat entries", () => {
 
     expect(nodeCompatOutfiles.length).toBeGreaterThan(0);
     expect(externalizedOutfiles).toEqual(nodeCompatOutfiles);
+  });
+});
+
+/**
+ * Everything above pins the *rule*. This pins that `bundleWorker` actually
+ * asks for it: hard-coding `external: ["cloudflare:workers", "node:*"]` at the
+ * call site would leave every other test in this file green while handing
+ * `node:*` to workers that never declared `nodejs_compat`.
+ */
+describe("bundleWorker passes the computed list to esbuild", () => {
+  const outfile = join(tmpdir(), "unidocs-externals-wiring", "out.js");
+
+  beforeEach(() => {
+    vi.mocked(esbuild.build).mockClear();
+  });
+
+  test.each([GATEWAY_ENTRY, PORTAL_ENTRY])("%s", async (entry) => {
+    await bundleWorker(entry, outfile);
+    expect(esbuild.build).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(esbuild.build).mock.calls[0][0].external)
+      .toEqual(bundleExternals(entry));
   });
 });
