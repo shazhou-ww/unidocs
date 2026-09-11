@@ -15,6 +15,8 @@ export { AdminAccessError, googleIdentityFromVerifiedClaims, normalizeAdministra
 export type { AdminContext, AdminIdentity, BoundAdministrator } from "./auth/administrator.js";
 export { adminConfirmationTime, googleIdentityFromConfirmedLogin, validateAdminIdentity } from "./auth/administrator.js";
 export { OperatorDiscoveryError, validateOperatorDiscovery } from "./operators/discovery.js";
+export { OperatorProbeError, createOperatorProbeRequest, signOperatorProbeReceipt, verifyOperatorProbeReceipt } from "./operators/probe.js";
+export type { OperatorProbeReceipt, OperatorProbeRequestBody } from "./operators/probe.js";
 export { AdminOperationError, createDocumentTypeService } from "./admin/document-types.js";
 export type { DocumentTypeCreateCommand, DocumentTypeRepository, DocumentTypeUpdateCommand } from "./admin/document-types.js";
 export { AdministratorOperationError, createAdministratorService } from "./admin/administrators.js";

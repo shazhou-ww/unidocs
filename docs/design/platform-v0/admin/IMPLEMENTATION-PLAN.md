@@ -6,6 +6,14 @@
 
 ## 当前进展与决策
 
+### Operator 签名 probe wire checkpoint（2026-09-11）
+
+已固定 Operator validation 的签名 probe 原语，尚未接入 transport、D1 或公开 handler，因此 Admin v1 完整 operation 仍为 **19/26**。每个部署登记 target 使用独立的至少 256-bit HMAC-SHA256 key；该 key 只属于 Portal 与对应 Operator，不复用 DocType service auth。
+
+- Portal request 使用 256-bit 单次 challenge，绑定部署登记的 `declaredOperatorId`、待验证 document type、discovery config ETag、秒精度 issued/expires 时间；TTL 上限 300 秒。Operator receipt 必须原样回显这些字段，request 与 receipt 使用不同 domain separator 对 RFC 8785 canonical JSON 签名。
+- receipt 验证使用 Web Crypto HMAC verify，拒绝未知/缺失字段、错误 challenge/key/signature、identity/document type/config ETag 错配、未来签发和过期回执。probe 不包含管理员身份、document 内容、CAS capability、cookie 或 bearer token。
+- 当前只完成 cloud-neutral wire primitive 与 6 个篡改/过期测试。下一切片将其接入现有 bounded Service Binding transport，严格解析 discovery/receipt，并在验证全通过后才以 D1 原子写发布短期 validation record 与 audit；失败不创建 validation record。
+
 ### View bundle 纵向闭环（2026-09-11）
 
 已上线 `uploadViewBundle`、`listViewBundles`、`getViewBundle`、`updateViewBundleMetadata` 纵向闭环：service、D1 repository、migration、HTTP/Worker、R2 ingress、client 与 WebUI 均已接通。Admin v1 完整 operation 增至 **19/26**，Phase 4 为 Type Card **4/4**、View bundle **4/4**；生产 Worker 版本 `eae033db-f724-4221-bf97-3fe5c62b2ba9`。
