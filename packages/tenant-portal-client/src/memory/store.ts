@@ -197,6 +197,108 @@ export class MemoryStore {
       .filter(([, record]) => open === undefined || isOpen(record) === open)
       .map(([threadId]) => threadId);
   }
+
+  /** 同 key 同内容重放原结果；同 key 不同内容 409。 */
+  withIdempotency<T>(scope: string, key: string | undefined, body: unknown, run: () => T): T {
+    if (key === undefined) return run();
+
+    const receiptKey = `${scope}:${key}`;
+    const fingerprint = JSON.stringify(body ?? null);
+    const existing = this.receipts.get(receiptKey);
+    if (existing !== undefined) {
+      if (existing.bodyFingerprint !== fingerprint) {
+        throw new Conflict("idempotency_conflict", `idempotency key ${key} reused with a different body`);
+      }
+      return existing.response as T;
+    }
+
+    const response = run();
+    this.receipts.set(receiptKey, { bodyFingerprint: fingerprint, response });
+    return response;
+  }
+
+  createDocument(name: string, documentType: DocumentType): DocumentRecord {
+    if (name.trim() === "") throw new InvalidRequest("name must not be empty");
+    const documentId = `doc-${this.documents.size + 1}-${name.length}`;
+    const state: DocumentState = {
+      documentId,
+      name,
+      documentType,
+      createdAt: this.nextStamp(),
+      currentVersionIdx: null,
+      versions: [],
+      threads: new Map(),
+    };
+    this.documents.set(documentId, state);
+    return this.toRecord(state);
+  }
+
+  private requireVersion(state: DocumentState, versionIdx: VersionIdx): void {
+    if (state.versions[versionIdx] === undefined) {
+      throw new InvalidRequest(`baseVersionIdx ${versionIdx} does not exist`);
+    }
+  }
+
+  createThread(
+    documentId: DocumentId,
+    body: { baseVersionIdx: VersionIdx; content: PingRecord["content"]; location: DocumentLocation | null },
+  ): ThreadDetail {
+    const state = this.requireDocument(documentId);
+    this.requireVersion(state, body.baseVersionIdx);
+
+    const threadId = `th-${state.threads.size + 1}`;
+    const ping: PingRecord = {
+      pingIdx: 0,
+      baseVersionIdx: body.baseVersionIdx,
+      content: body.content,
+      location: body.location,
+      authorId: "user:sample",
+      createdAt: this.nextStamp(),
+    };
+    state.threads.set(threadId, { pings: [ping], pongs: [] });
+    return { threadId, pings: [ping], pongs: [] };
+  }
+
+  appendPing(
+    documentId: DocumentId,
+    threadId: ThreadId,
+    body: { baseVersionIdx: VersionIdx; content: PingRecord["content"]; location: DocumentLocation | null },
+  ): PingRecord {
+    const state = this.requireDocument(documentId);
+    this.requireVersion(state, body.baseVersionIdx);
+
+    const record = state.threads.get(threadId);
+    if (record === undefined) throw new NotFound(`thread ${threadId}`);
+
+    const ping: PingRecord = {
+      pingIdx: record.pings.length,
+      baseVersionIdx: body.baseVersionIdx,
+      content: body.content,
+      location: body.location,
+      authorId: "user:sample",
+      createdAt: this.nextStamp(),
+    };
+    record.pings.push(ping);
+    return ping;
+  }
+
+  moveCurrentVersion(
+    documentId: DocumentId,
+    body: { observedCurrentVersionIdx: VersionIdx | null; targetVersionIdx: VersionIdx },
+  ): DocumentRecord {
+    const state = this.requireDocument(documentId);
+    if (state.currentVersionIdx !== body.observedCurrentVersionIdx) {
+      throw new Conflict(
+        "version_conflict",
+        `current version is ${state.currentVersionIdx}, not ${body.observedCurrentVersionIdx}`,
+      );
+    }
+    if (state.versions[body.targetVersionIdx] === undefined) {
+      throw new InvalidRequest(`target version ${body.targetVersionIdx} does not exist`);
+    }
+    state.currentVersionIdx = body.targetVersionIdx;
+    return this.toRecord(state);
+  }
 }
 
 export function isOpen(record: { pings: readonly PingRecord[]; pongs: readonly PongRecord[] }): boolean {

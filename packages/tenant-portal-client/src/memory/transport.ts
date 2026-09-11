@@ -63,8 +63,49 @@ const readRoutes: readonly Route[] = [
   },
 ];
 
-/** Task 5 会在这里追加写路由。 */
-export const memoryRoutes: Route[] = [...readRoutes];
+const writeRoutes: readonly Route[] = [
+  {
+    method: "POST",
+    pattern: new RegExp(`^${TENANT}/documents$`),
+    handle: (store, request) => {
+      const body = request.body as { documentType?: unknown; name?: unknown };
+      if (typeof body?.name !== "string" || typeof body?.documentType !== "string") {
+        throw new InvalidRequest("documentType and name are required");
+      }
+      return store.withIdempotency("createDocument", request.idempotencyKey, request.body, () =>
+        store.createDocument(body.name as string, body.documentType as string));
+    },
+  },
+  {
+    method: "POST",
+    pattern: new RegExp(`^${TENANT}/documents/([^/]+)/threads$`),
+    handle: (store, request, [documentId]) =>
+      store.withIdempotency(`createThread:${documentId}`, request.idempotencyKey, request.body, () =>
+        store.createThread(documentId, request.body as Parameters<MemoryStore["createThread"]>[1])),
+  },
+  {
+    method: "POST",
+    pattern: new RegExp(`^${TENANT}/documents/([^/]+)/threads/([^/]+)/pings$`),
+    handle: (store, request, [documentId, threadId]) =>
+      store.withIdempotency(`appendPing:${documentId}:${threadId}`, request.idempotencyKey, request.body, () =>
+        store.appendPing(documentId, threadId, request.body as Parameters<MemoryStore["appendPing"]>[2])),
+  },
+  {
+    method: "POST",
+    pattern: new RegExp(`^${TENANT}/documents/([^/]+)/current-version$`),
+    handle: (store, request, [documentId]) =>
+      store.moveCurrentVersion(documentId, request.body as Parameters<MemoryStore["moveCurrentVersion"]>[1]),
+  },
+  {
+    method: "POST",
+    pattern: new RegExp(`^${TENANT}/cas-capabilities$`),
+    handle: () => {
+      throw new NotFound("cas capabilities are not available against the memory backend");
+    },
+  },
+];
+
+export const memoryRoutes: Route[] = [...readRoutes, ...writeRoutes];
 
 let requestCounter = 0;
 
