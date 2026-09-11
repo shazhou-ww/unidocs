@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { PingRecord, VersionIdx } from "@unidocs/protocol-platform";
 import { anchorKeyOf, type Draft } from "../drafts/draft-store.js";
 import type { SummarizedThread } from "../model/discussion-summary.js";
+import { DraftBlock } from "./draft-block.js";
 import { ThreadCard } from "./thread-card.js";
 
 export type ThreadFilter = "all" | "open" | "answered" | "unsent";
@@ -23,6 +24,12 @@ export function ThreadPanel(props: {
   /** 未发送的草稿：按锚点取——thread 内的草稿和回复中的那一份共用同一个来源（§2.7）。 */
   draftsForAnchor(anchorKey: string): readonly Draft[];
   draftCount: number;
+  /**
+   * threadId 为 null 的草稿——选区来的「添加评论」发送失败后留下的那种（问题 2）。
+   * 它们没有对应的 thread 卡片可以挂靠，draftCount 仍然把它们计进去，所以必须单独
+   * 渲染成卡片，不然用户点不到、也丢弃不了自己写的字。
+   */
+  orphanedDrafts: readonly Draft[];
   composingThreadId: string | null;
   composeDraftId: string | null;
   composingInitialText: string;
@@ -62,7 +69,24 @@ export function ThreadPanel(props: {
 
       {props.draftCount > 0 && <p className="draft-count">{props.draftCount} 条未发送</p>}
 
-      {visible.length === 0 && <p className="muted">暂无讨论。在正文里选中一段内容即可添加评论。</p>}
+      {props.orphanedDrafts.length > 0 && (
+        <ul className="orphaned-drafts">
+          {props.orphanedDrafts.map((draft) => (
+            <li key={draft.draftId}>
+              <DraftBlock
+                draft={draft}
+                failure={props.draftFailures[draft.draftId] ?? null}
+                onRetry={() => props.onSendDraft(draft)}
+                onDiscard={() => props.onDiscardDraft(draft.draftId)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {visible.length === 0 && props.orphanedDrafts.length === 0 && (
+        <p className="muted">暂无讨论。在正文里选中一段内容即可添加评论。</p>
+      )}
 
       {visible.map(({ detail, state }) => {
         const anchorKey = anchorKeyOf({ threadId: detail.threadId, location: null });

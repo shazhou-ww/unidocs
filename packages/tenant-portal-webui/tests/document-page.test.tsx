@@ -1,7 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { createMemoryTransport, createTenantPortalClient, sampleSeed } from "@unidocs/tenant-portal-client";
+import {
+  createMemoryTransport, createTenantPortalClient, sampleSeed, type PlatformTransport,
+} from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
 import { DocumentPage } from "../src/pages/document.js";
 
@@ -92,6 +94,43 @@ describe("DocumentPage", () => {
     await userEvent.click(within(panel).getByText("这一句还能再收紧吗？").closest("button")!);
 
     expect(window.location.hash).toBe("#/d/doc-sample/th-open");
+  });
+
+  // 问题 E：send() 在发送成功后总会调一次 session.reload()。假后端从不让读失败，
+  // 这条路径此前一直没被测到——use-document.ts 的 catch 分支把 document 直接置 null，
+  // 而 document.tsx 的早退只看 document 是否为 null，于是一次紧跟在成功发送后面的、
+  // 纯粹是网络抖了一下的读失败，会把整块面板、分屏、正在开着的输入框全部闪没。
+  it("发送成功后紧跟的一次刷新读失败时，保留已有内容，只多一条不影响阅读的错误提示", async () => {
+    let failReads = false;
+    const inner = createMemoryTransport({ seed: sampleSeed() });
+    const transport: PlatformTransport = async (request) => {
+      if (failReads && request.method === "GET") {
+        return { ok: false, error: { error: { code: "transport_failure", message: "网络不通", requestId: "r1" } } };
+      }
+      return inner(request);
+    };
+    const client = createTenantPortalClient({ tenantId: "t1", transport });
+    render(
+      <ClientProvider client={client}>
+        <DocumentPage documentId="doc-sample" threadId="th-open" />
+      </ClientProvider>,
+    );
+    const p = await screen.findByRole("complementary", { name: "讨论" });
+    // 先确认真的加载成功过一次——有旧内容可留。th-open 被选中时展开的 ping 卡片和折叠
+    // 摘要里都有这段原文，用 getAllByText 而不是 getByText，免得两处匹配互相打架。
+    await waitFor(() => expect(within(p).getAllByText("这一句还能再收紧吗？").length).toBeGreaterThan(0));
+
+    // 发送这一条本身（POST）必须成功；只有它之后紧跟着的 reload()（GET）失败。
+    failReads = true;
+    await userEvent.click(within(p).getByRole("button", { name: "回复" }));
+    await userEvent.type(within(p).getByRole("textbox", { name: "回复这一处" }), "触发一次刷新");
+    await userEvent.click(within(p).getByRole("button", { name: "发送" }));
+
+    // 旧内容（面板、讨论摘要、只读徽标）仍然画在页面上，没有被整页早退换掉。
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("刷新失败"));
+    expect(screen.getByText("只读 · 内容由 Agent 编辑")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "讨论" })).toBeInTheDocument();
+    expect(within(p).getAllByText("这一句还能再收紧吗？").length).toBeGreaterThan(0);
   });
 
   it("文档还没有 current version 时给初始化空态", async () => {

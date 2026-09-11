@@ -52,7 +52,14 @@ describe("分屏对照", () => {
     // marker-ping 只在左栏出现，且恰好是 markdown-view.ts 里 `marker.role ?? "ping"`
     // 的兜底值，之前没有测试单独钉住它——这里补上，确认左栏的 ping 高亮确实用的是
     // "ping" 这个 role，而不是巧合地落在某个默认样式上。
-    expect(pane.querySelector(".marker-ping")).not.toBeNull();
+    //
+    // await base() 只等到 pane 这个 <div role="region"> 元素本身挂载，不等 ViewHost 的
+    // initialize/loadSnapshot/setMarkers 异步链跑完——marker 是那条链的最后一步才画出来的。
+    // 之前这里紧接着同步查询，能过是因为 RTL 的 act 包裹恰好把微任务队列冲平了，不是
+    // 有意同步这两者；一个实现者报告过大约 1/6 概率失败。改成 waitFor 关掉这个窗口。
+    await waitFor(() => {
+      expect(pane.querySelector(".marker-ping")).not.toBeNull();
+    });
   });
 
   it("左栏渲染该 ping 的基版，不是 current", async () => {
@@ -74,14 +81,28 @@ describe("分屏对照", () => {
     renderAt("th-answered");
     await base();
 
-    expect(current().querySelector(".marker-pong-result")).not.toBeNull();
+    // 同上：右栏的 marker 也是 ViewHost 异步链跑完才出现的，不能紧跟 await base() 同步查询。
+    await waitFor(() => {
+      expect(current().querySelector(".marker-pong-result")).not.toBeNull();
+    });
   });
 
   it("ping 就写在 current 上时右栏标暂无改动且不重复高亮", async () => {
     renderAt("th-on-current");
-    await base();
+    const pane = await base();
 
     expect(screen.getByText("暂无改动 · 与左栏同一版本")).toBeInTheDocument();
+
+    // decideRightPane 对 same-version 情形无条件返回空 markers（见 compare.test.ts
+    // 「ping 就写在 current 上时不重复高亮」），所以下面两条 toBeNull 断言在异步链跑完
+    // 之前、之后都成立——不管实现对不对都不会失败，是两条测不出问题的断言。改法：
+    // 先等左栏的 marker-ping 出现——th-on-current 的 ping 带着位置锚点，左栏一定会画
+    // 出这个 marker，用它确认 ViewHost 的 initialize/loadSnapshot/setMarkers 那条链
+    // 这一轮已经跑完——这时候再断言右栏没有 marker，才是真的在检查「same-version 情形
+    // 下右栏没有被错误地下发 marker」，而不是巧合地测在了链跑完之前。
+    await waitFor(() => {
+      expect(pane.querySelector(".marker-ping")).not.toBeNull();
+    });
     expect(current().querySelector(".marker-pong-result")).toBeNull();
     expect(current().querySelector(".marker-stale-ping")).toBeNull();
   });
@@ -90,7 +111,9 @@ describe("分屏对照", () => {
     renderAt("th-stale-present");
     await base();
 
-    expect(current().querySelector(".marker-stale-ping")).not.toBeNull();
+    await waitFor(() => {
+      expect(current().querySelector(".marker-stale-ping")).not.toBeNull();
+    });
     expect(screen.getByText(/这不是 Agent 的改动/)).toBeInTheDocument();
   });
 

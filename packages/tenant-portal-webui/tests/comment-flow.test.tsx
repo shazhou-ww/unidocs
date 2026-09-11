@@ -1,10 +1,14 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { DocumentLocation } from "@unidocs/protocol-platform";
 import {
   createMemoryStore, createMemoryTransport, createScriptedAgent, createTenantPortalClient, sampleSeed,
+  type MemoryStore, type PlatformTransport,
 } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
+import { anchorKeyOf, createDraftStore } from "../src/drafts/draft-store.js";
+import { createThreadFromView, type CreateThreadFromViewDeps } from "../src/model/create-thread-from-view.js";
 import { DocumentPage } from "../src/pages/document.js";
 
 function setup(threadId?: string) {
@@ -18,6 +22,66 @@ function setup(threadId?: string) {
 }
 
 const panel = () => screen.findByRole("complementary", { name: "讨论" });
+
+/**
+ * 问题 2 的回归测试用夹具：让 doc-sample 上带一份「选区来的评论发送失败」留下的
+ * 草稿——直接驱动 createThreadFromView（等价于 host.createThread 的真正实现），
+ * 不经过 Selection API（jsdom 测不到，见 create-thread-from-view.test.ts）。
+ * 用真实 localStorage，好让随后渲染的 DocumentPage 的 useDrafts 读到同一份草稿。
+ */
+async function seedOrphanedDraft(): Promise<{ store: MemoryStore; client: ReturnType<typeof createTenantPortalClient> }> {
+  const store = createMemoryStore(sampleSeed());
+  let failNext = true;
+  const inner = createMemoryTransport({ store });
+  const transport: PlatformTransport = async (request) => {
+    if (failNext && request.method === "POST" && request.path.endsWith("/threads")) {
+      failNext = false;
+      return { ok: false, error: { error: { code: "limit_exceeded", message: "too many", requestId: "r1" } } };
+    }
+    return inner(request);
+  };
+  const client = createTenantPortalClient({ tenantId: "t1", transport });
+
+  const location: DocumentLocation = {
+    documentContractIdx: 0,
+    locationType: "unidocs.markdown.text-range/v1",
+    payload: { start: 0, end: 3, quote: "abc" },
+  };
+
+  const draftStore = createDraftStore(localStorage);
+  const saveDraft: CreateThreadFromViewDeps["saveDraft"] = (input) => {
+    const draftId = input.draftId ?? crypto.randomUUID();
+    const draft = {
+      draftId,
+      documentId: "doc-sample",
+      anchorKey: anchorKeyOf({ threadId: input.threadId, location: input.location }),
+      threadId: input.threadId,
+      location: input.location,
+      baseVersionIdx: input.baseVersionIdx,
+      text: input.text,
+      idempotencyKey: crypto.randomUUID(),
+      editedFromPingIdx: null,
+      updatedAt: new Date().toISOString(),
+    };
+    draftStore.save(draft);
+    return draftStore.list().find((candidate) => candidate.draftId === draftId) ?? draft;
+  };
+
+  await expect(createThreadFromView({
+    client,
+    documentId: "doc-sample",
+    draftsForAnchor: (anchorKey) => draftStore.list().filter((candidate) => candidate.anchorKey === anchorKey),
+    saveDraft,
+    removeDraft: (draftId) => draftStore.remove(draftId),
+    onSent: () => {},
+  }, {
+    baseVersionIdx: 2,
+    content: { text: "选区评论失败", richContent: null, attachments: [] },
+    location,
+  })).rejects.toThrow();
+
+  return { store, client };
+}
 
 describe("评论流程", () => {
   beforeEach(() => { localStorage.clear(); window.location.hash = ""; });
@@ -203,5 +267,41 @@ describe("评论流程", () => {
     expect(within(p).queryByRole("button", { name: /解决/ })).not.toBeInTheDocument();
     expect(within(p).queryByRole("button", { name: /重新打开/ })).not.toBeInTheDocument();
     expect(within(p).queryByRole("button", { name: /提交.*条/ })).not.toBeInTheDocument();
+  });
+
+  // 问题 2：选区评论发送失败后，anchorKeyOf({ threadId: null, location }) 产出的
+  // 是 location:… 锚点，任何 thread 卡片都不会认领它——但 draftCount 仍然把它算
+  // 进「N 条未发送」。草稿必须自己渲染成一张能点得到的卡片，不能只被计数、摸不着。
+  it("选区评论发送失败留下的草稿单独渲染成卡片，可以重试发送", async () => {
+    const { store, client } = await seedOrphanedDraft();
+
+    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    const p = await panel();
+
+    expect(within(p).getByText("1 条未发送")).toBeInTheDocument();
+    const note = within(p).getByRole("note", { name: "未发送的评论" });
+    expect(note).toHaveTextContent("选区评论失败");
+
+    await userEvent.click(within(note).getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(within(p).queryByText(/条未发送/)).not.toBeInTheDocument());
+    const threadIds = store.listThreadIds("doc-sample");
+    const sent = threadIds.some(
+      (threadId) => store.getThread("doc-sample", threadId).pings[0]?.content.text === "选区评论失败",
+    );
+    expect(sent).toBe(true);
+  });
+
+  it("选区评论发送失败留下的草稿可以丢弃，丢弃后「N 条未发送」清零", async () => {
+    const { client } = await seedOrphanedDraft();
+
+    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    const p = await panel();
+
+    const note = within(p).getByRole("note", { name: "未发送的评论" });
+    await userEvent.click(within(note).getByRole("button", { name: "丢弃" }));
+
+    expect(within(p).queryByRole("note", { name: "未发送的评论" })).not.toBeInTheDocument();
+    expect(within(p).queryByText(/条未发送/)).not.toBeInTheDocument();
   });
 });

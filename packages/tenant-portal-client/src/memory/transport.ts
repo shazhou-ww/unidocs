@@ -11,7 +11,7 @@ import {
   createMemoryStore,
 } from "./store.js";
 import type { MemorySeed } from "./store.js";
-import { createScriptedAgent } from "./agent.js";
+import { createScriptedAgent, type RunPendingScope } from "./agent.js";
 
 type Handler = (store: MemoryStore, request: PlatformRequest, params: readonly string[]) => unknown;
 
@@ -19,6 +19,13 @@ interface Route {
   readonly method: "GET" | "POST";
   readonly pattern: RegExp;
   readonly handle: Handler;
+  /**
+   * 这次写请求真正写到了哪一个 thread——autoRun 只让 Agent 处理这一处，不动其它
+   * 已经播好种的 thread 状态（问题 D：写一处会把全店铺待回复的每一处都答一遍）。
+   * 不写这个路由（比如 createDocument/moveCurrentVersion，没有 thread 被写）时，
+   * autoRun 对这次请求什么都不做——不再退化成「跑全部」。
+   */
+  readonly scopeOf?: (data: unknown, params: readonly string[]) => RunPendingScope | null;
 }
 
 const TENANT = String.raw`/api/v1/tenants/[^/]+`;
@@ -83,6 +90,7 @@ const writeRoutes: readonly Route[] = [
     handle: (store, request, [documentId]) =>
       store.withIdempotency(`createThread:${documentId}`, request.idempotencyKey, request.body, () =>
         store.createThread(documentId, request.body as Parameters<MemoryStore["createThread"]>[1])),
+    scopeOf: (data, [documentId]) => ({ documentId, threadId: (data as { threadId: string }).threadId }),
   },
   {
     method: "POST",
@@ -90,6 +98,7 @@ const writeRoutes: readonly Route[] = [
     handle: (store, request, [documentId, threadId]) =>
       store.withIdempotency(`appendPing:${documentId}:${threadId}`, request.idempotencyKey, request.body, () =>
         store.appendPing(documentId, threadId, request.body as Parameters<MemoryStore["appendPing"]>[2])),
+    scopeOf: (_data, [documentId, threadId]) => ({ documentId, threadId }),
   },
   {
     method: "POST",
@@ -133,7 +142,10 @@ export function createMemoryTransport(options: {
       const params = match.slice(1).map((value) => decodeURIComponent(value));
       try {
         const data = route.handle(store, request, params);
-        if (autoRun && request.method === "POST") agent.runPending();
+        if (autoRun && request.method === "POST") {
+          const scope = route.scopeOf?.(data, params) ?? null;
+          if (scope !== null) agent.runPending(scope);
+        }
         return { ok: true, data };
       } catch (cause) {
         if (cause instanceof NotFound) return { ok: false, error: apiError("not_found", cause.message) };

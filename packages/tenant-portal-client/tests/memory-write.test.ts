@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createTenantPortalClient } from "../src/client.js";
 import type { TenantPortalClient } from "../src/client.js";
 import { createMemoryStore } from "../src/memory/store.js";
+import { sampleSeed } from "../src/memory/seed.js";
 import { createMemoryTransport } from "../src/memory/transport.js";
 import type { MemoryStore } from "../src/memory/store.js";
 
@@ -159,5 +160,31 @@ describe("memory transport 写操作", () => {
     expect(created.documentId).not.toBe("doc-2-2");
     expect(seeded.toRecord(seeded.requireDocument("doc-2-2")).name).toBe("占位");
     expect(seeded.toRecord(seeded.requireDocument(created.documentId)).name).toBe("ab");
+  });
+});
+
+// 问题 D：agent.autoRun 曾经在任何一次写成功后都跑 runPending()（whole-store），
+// 而 runPending() 处理的是「全店铺待回复的每一处」——写一处会把 sampleSeed() 播好种的
+// 其它几处开放 thread 一起答掉，收拢成一种状态，seed 数据本来精心铺的六种情形当场
+// 塌缩。修复后 autoRun 必须只处理刚写的那一个 thread。
+describe("memory transport agent.autoRun 的作用范围", () => {
+  it("写一处只让那一处被 Agent 答复，其余种子里已经开放的 thread 原样保留", async () => {
+    const store = createMemoryStore(sampleSeed());
+    const client = createTenantPortalClient({
+      tenantId: "t1",
+      transport: createMemoryTransport({ store, agent: { autoRun: true } }),
+    });
+
+    // th-open / th-stale-present / th-stale-rewritten 在 sampleSeed() 里都是没有 pong
+    // 的开放 thread；只往 th-open 追加一条。
+    await client.appendPing("doc-sample", "th-open", "key-1", {
+      baseVersionIdx: 2,
+      content: text("追加一条"),
+      location: null,
+    });
+
+    expect((await client.getThread("doc-sample", "th-open")).pongs).toHaveLength(1);
+    expect((await client.getThread("doc-sample", "th-stale-present")).pongs).toHaveLength(0);
+    expect((await client.getThread("doc-sample", "th-stale-rewritten")).pongs).toHaveLength(0);
   });
 });

@@ -84,4 +84,26 @@ describe("decideRightPane", () => {
     expect(decision.kind).toBe("same-version");
     expect(decision.markers).toEqual([]);
   });
+
+  // 问题 C1：resolveMarkdownTextRange 对非 Markdown 位置类型同样返回
+  // { located: false, reason: "unsupported_type" }——修复前这条 unsupported_type
+  // 和「内容确实已经不在了」的 unresolvable 走的是同一个 stale-rewritten 分支，
+  // 会让 UI 对一个它根本判断不了的位置类型，说出「这段内容已经不在当前版本里」
+  // 这句不知道真假的断言。这里换一种 host 不认识的 locationType（模拟未来的 PSD
+  // 位置），断言不能落到 stale-rewritten，也不能在 markers 里假装找到了什么。
+  it("位置类型不是 host 认识的 Markdown 文本区间时，不冒充「已改写」", () => {
+    const decision = decideRightPane({
+      ping: {
+        ...ping(0, "保留的一段。"),
+        location: { documentContractIdx: 0, locationType: "unidocs.psd.layer/v1", payload: { layerId: "l1" } },
+      },
+      pongs: [],
+      currentVersionIdx: 1,
+      currentContent: content,
+    });
+
+    expect(decision.kind).not.toBe("stale-rewritten");
+    expect(decision.kind).toBe("unsupported-location");
+    expect(decision.markers).toEqual([]);
+  });
 });

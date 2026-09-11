@@ -21,6 +21,10 @@ const RIGHT_PANE_NOTE: Readonly<Record<RightPaneDecision["kind"], string | null>
   "same-version": "暂无改动 · 与左栏同一版本",
   "stale-present": "这段内容还在，但这不是 Agent 的改动——常见成因是它处理别的一处评论时顺带改动了附近内容。",
   "stale-rewritten": "这段内容已经不在当前版本里。平台不做语义迁移，这条评论依然有效，由 Agent 判断它是否仍然适用；常见成因是它处理别的一处评论时顺带改动了这里。",
+  // 这条评论的位置类型不是当前 host 能判断的 Markdown 文本区间（比如未来的 PSD 位置）。
+  // 不能顺着「内容已不在当前版本里」的说法去猜——那是在没有证据时做出断言，宁可诚实地
+  // 说「看不出来」，也不能给用户一个可能是错的结论（见 model/compare.ts 的判定与 spec §11）。
+  "unsupported-location": "这条评论使用的位置类型，当前视图还判断不出它是否仍然适用。",
 };
 
 function removeKey<T>(record: Readonly<Record<string, T>>, key: string): Readonly<Record<string, T>> {
@@ -242,8 +246,11 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
 
   // carry-forward 1：只有在“还没有任何内容可看”时才整页早退（首次加载 / 加载失败且
   // 从未成功过）。一旦 document 已经取到过，之后每一次 reload()（例如发送评论后）
-  // 都继续渲染已有内容，只用一个不起眼的提示表示正在刷新，不能把已经画出来的面板、
-  // 分屏、只读徽标全部闪没再重新挂载一遍。
+  // 都继续渲染已有内容，即使这次 reload 本身失败了也一样——use-document.ts 的
+  // catch 分支不再把 document/currentVersion/summary 清空，只记下 failure，
+  // 交给下面渲染的横幅去提示；不能把已经画出来的面板、分屏、只读徽标、还开着的
+  // Composer 全部闪没再重新挂载一遍。session.document === null 时才是真的没有
+  // 旧内容可以保留，只能整页显示错误。
   if (session.document === null) {
     if (session.failure !== null) return <main className="document"><p role="alert">{session.failure.message}</p></main>;
     return <main className="document"><p className="muted">加载中……</p></main>;
@@ -254,11 +261,20 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
 
   return (
     <main className="document">
-      <header className="document-top">
-        <h1>{session.document.name}</h1>
-        <span className="readonly-badge">只读 · 内容由 Agent 编辑</span>
-        {session.loading && <span className="refreshing-badge" aria-live="polite">正在刷新…</span>}
-      </header>
+      <div className="document-top-wrap">
+        <header className="document-top">
+          <h1>{session.document.name}</h1>
+          <span className="readonly-badge">只读 · 内容由 Agent 编辑</span>
+          {session.loading && <span className="refreshing-badge" aria-live="polite">正在刷新…</span>}
+        </header>
+
+        {/* 已经有内容可看时，一次刷新失败（比如发完评论后紧跟的那次 reload() 网络抖了一下）
+            不清空已有内容——只在这里给个不破坏页面的提示，document 仍然是上一次成功加载的
+            那一份。首次加载失败没有旧内容可留，走的是上面 session.document === null 的整页早退。 */}
+        {session.failure !== null && (
+          <p role="alert" className="reload-error-banner">刷新失败：{session.failure.message}</p>
+        )}
+      </div>
 
       <div className={`document-body${split ? " split" : ""}`}>
         {split && (
@@ -310,6 +326,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
           }}
           draftsForAnchor={drafts.draftsForAnchor}
           draftCount={drafts.count}
+          orphanedDrafts={drafts.drafts.filter((draft) => draft.threadId === null)}
           composingThreadId={composingThreadId}
           composeDraftId={composeDraftId}
           composingInitialText={composingInitialText}

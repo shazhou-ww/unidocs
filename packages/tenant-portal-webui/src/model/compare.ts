@@ -8,7 +8,7 @@ import type { PingRecord, PongRecord, VersionIdx } from "@unidocs/protocol-platf
 import { resolveMarkdownTextRange } from "@unidocs/tenant-portal-client";
 import type { RoledMarker } from "../view/markers.js";
 
-export type RightPaneKind = "pong-result" | "same-version" | "stale-present" | "stale-rewritten";
+export type RightPaneKind = "pong-result" | "same-version" | "stale-present" | "stale-rewritten" | "unsupported-location";
 
 export interface RightPaneDecision {
   readonly kind: RightPaneKind;
@@ -38,7 +38,16 @@ export function decideRightPane(input: {
   if (ping.location === null) return { kind: "same-version", markers: [] };
 
   const resolution = resolveMarkdownTextRange(ping.location, currentContent);
-  if (!resolution.located) return { kind: "stale-rewritten", markers: [] };
+  if (!resolution.located) {
+    // spec §4.2：第三、四种的区分本该由 View 回答（ViewFocusLocationResponse 的
+    // { located, reason }），这里直接调 resolveMarkdownTextRange 是本轮对 spec 的
+    // 偏离（记在 spec §11）。但即使这样猜，也不能把「这个 host 看不懂的位置类型」
+    // 误判成「内容已经不在了」——resolveMarkdownTextRange 对非 Markdown 文本区间
+    // 位置同样返回 unsupported_type，那是「host 判断不了」，不是「确实不在了」。
+    // 前者必须诚实地说不知道，绝不能顺着 stale-rewritten 分支说出一句错误的断言。
+    if (resolution.reason === "unsupported_type") return { kind: "unsupported-location", markers: [] };
+    return { kind: "stale-rewritten", markers: [] };
+  }
 
   return {
     kind: "stale-present",

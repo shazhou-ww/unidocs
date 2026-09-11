@@ -3,6 +3,10 @@
 .document-top h1 { font-size: 16px; margin: 0; }
 .readonly-badge { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); font-size: 12px; }
 .refreshing-badge { color: var(--text-muted); font-size: 12px; }
+/* 一次 reload() 失败不清空已有内容——这条只是个不打断阅读的提示条，不是整页错误。
+   放在 .document-top-wrap 里而不是直接挂在 .document 下，好让 .document 的
+   grid-template-rows（auto 1fr）不用管这一行出不出现，document-body 的 1fr 始终成立。 */
+.reload-error-banner { margin: 0 24px 12px; padding: 8px 12px; border: 1px solid #dc2626; border-radius: 6px; background: color-mix(in srgb, #dc2626 8%, transparent); color: #b91c1c; font-size: 13px; }
 
 .document-body { display: grid; grid-template-columns: 1fr var(--panel-width); min-height: 0; }
 .pane { overflow: auto; padding: 24px 32px; }

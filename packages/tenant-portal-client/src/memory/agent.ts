@@ -23,10 +23,20 @@ export interface AgentContext {
   readonly latestPingText: string | null;
 }
 
+/** 只处理这一个 thread——不传（undefined）时处理全店铺待回复的每一处。 */
+export interface RunPendingScope {
+  readonly documentId: string;
+  readonly threadId: string;
+}
+
 export interface ScriptedAgent {
   pendingCount(): number;
-  /** 处理所有待回复的一处，返回处理了几处。 */
-  runPending(): number;
+  /**
+   * 处理待回复的一处或多处，返回处理了几处。
+   * 传 scope 时只处理那一个 thread（不在其中或已经不是待回复状态则什么都不做）；
+   * 不传时处理全店铺待回复的每一处——供测试直接驱动用，行为和之前一样。
+   */
+  runPending(scope?: RunPendingScope): number;
 }
 
 const defaultRespond = (context: AgentContext): AgentReply => ({
@@ -53,8 +63,10 @@ export function createScriptedAgent(options: {
   return {
     pendingCount: () => pending().length,
 
-    runPending: () => {
-      const work = pending();
+    runPending: (scope) => {
+      const work = scope === undefined
+        ? pending()
+        : pending().filter((item) => item.documentId === scope.documentId && item.threadId === scope.threadId);
       for (const { documentId, threadId } of work) {
         const state = store.requireDocument(documentId);
         const record = state.threads.get(threadId);

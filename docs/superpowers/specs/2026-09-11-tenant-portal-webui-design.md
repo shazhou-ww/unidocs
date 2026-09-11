@@ -404,3 +404,12 @@ git diff --check
 - 全屏版本回看、PSD 位置类型、真实 iframe 隔离、真实后端与登录，均另起轮次。
 - 窄屏与移动端降级未定（`tenant-webui-v0.md` §5.3）。本轮沿用 mock 的做法：窄于 760px
   显示「请在电脑或平板上查看」。
+- §4.2 说右栏第三、四种（灰底虚线 / 不高亮只给说明）的区分应该**由 View 回答**——host 不猜，
+  这正是 `ViewFocusLocationResponse` 的 `{ located, reason }` 存在的原因。实现里
+  `model/compare.ts` 没有走这条路：它直接在 host 侧调 `resolveMarkdownTextRange(ping.location,
+  currentContent)` 来做这个判断，是本轮对 spec 的偏离，没有当时记下来。后果是 `view.focusLocation`
+  与 `view.setViewport` 虽然实现了、也有单测覆盖，但没有任何 host 代码真的调用它们。把这个判断
+  路由回 channel、真正问 View，是一次不小的改造（不能塞进一个 `useMemo` 里），本轮没有做；
+  PSD 位置类型落地之前必须先做——因为只有 View 自己认识它拥有的那个位置类型，host 侧猜不出来。
+  过渡期内 `model/compare.ts` 已经加了一层保护：`locationType` 不是它认识的 Markdown 文本区间时，
+  不会被误判成「已经不在当前版本里」，而是给一条诚实的「判断不出来」。

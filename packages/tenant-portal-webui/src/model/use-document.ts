@@ -34,10 +34,16 @@ export function useDocumentSession(documentId: string): DocumentSession {
         if (!cancelled) setState({ document, currentVersion, summary, failure: null, loading: false });
       } catch (cause) {
         if (!cancelled) {
-          setState({
-            document: null, currentVersion: null, summary: null, loading: false,
-            failure: cause instanceof Error ? cause : new Error("加载失败"),
-          });
+          const failure = cause instanceof Error ? cause : new Error("加载失败");
+          // 只有首次加载（还没有任何内容可看）失败才整页置空——那种情况没有旧内容
+          // 可以保留，只能显示全屏错误。一旦曾经成功过，之后任何一次 reload() 失败
+          // 都保留上一次成功的 document/currentVersion/summary，只把失败记下来，
+          // 交给页面用一条不影响已有内容的提示条展示（document.tsx 的 carry-forward 1）。
+          setState((previous) => ({
+            ...previous,
+            failure,
+            loading: false,
+          }));
         }
       }
     })();
