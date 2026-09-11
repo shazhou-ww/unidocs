@@ -1,5 +1,7 @@
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createDraftStore, anchorKeyOf, type Draft } from "../src/drafts/draft-store.js";
+import { useDrafts } from "../src/drafts/use-drafts.js";
 
 function draft(overrides: Partial<Draft> = {}): Draft {
   return {
@@ -47,8 +49,10 @@ describe("createDraftStore", () => {
   it("覆盖时保留原 idempotencyKey", () => {
     const store = createDraftStore(localStorage);
     store.save(draft({ idempotencyKey: "key-1" }));
-    store.save({ ...draft({ text: "改了" }), idempotencyKey: "key-1" });
+    store.save({ ...draft({ text: "改了" }), idempotencyKey: "key-2" });
 
+    expect(store.list()).toHaveLength(1);
+    expect(store.list()[0].text).toBe("改了");
     expect(store.list()[0].idempotencyKey).toBe("key-1");
   });
 
@@ -106,5 +110,28 @@ describe("anchorKeyOf", () => {
     const b = { documentContractIdx: 0, locationType: "t", payload: { start: 5, end: 6, quote: "b" } };
 
     expect(anchorKeyOf({ threadId: null, location: a })).not.toBe(anchorKeyOf({ threadId: null, location: b }));
+  });
+});
+
+describe("useDrafts", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("saveDraft 覆盖同一 draftId 时返回值里的 idempotencyKey 不变，text 是新的", () => {
+    const { result } = renderHook(() => useDrafts("doc-1"));
+
+    let first!: Draft;
+    act(() => {
+      first = result.current.saveDraft({ threadId: "th-1", location: null, baseVersionIdx: 0, text: "一稿" });
+    });
+
+    let second!: Draft;
+    act(() => {
+      second = result.current.saveDraft({
+        draftId: first.draftId, threadId: "th-1", location: null, baseVersionIdx: 0, text: "二稿",
+      });
+    });
+
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    expect(second.text).toBe("二稿");
   });
 });
