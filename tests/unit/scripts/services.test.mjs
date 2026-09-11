@@ -46,6 +46,7 @@ test("no arguments still means every document type and no service", () => {
 
 test("duplicates collapse and order is preserved within each kind", () => {
   expect(parseTargets(["psd", "portal", "psd", "portal"])).toEqual({ docTypes: ["psd"], services: ["portal"] });
+  expect(parseTargets(["psd", "portal", "markdown"])).toEqual({ docTypes: ["psd", "markdown"], services: ["portal"] });
 });
 
 test("an unknown positional names both kinds of valid target", () => {
