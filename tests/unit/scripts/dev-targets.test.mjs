@@ -87,6 +87,22 @@ test("a selected service reaches startLocalRuntime and is announced on its own l
   expect(stderr).toBe("");
 });
 
+// The mirror image of the test below, and the one `pnpm dev portal` actually
+// hits: no document type is selected, so the `Static registrations:` line has
+// nothing to list. An empty one reads exactly like the empty `Services:` line
+// the guard below exists to suppress — "started and failed" — so the two
+// guards have to be symmetric.
+test("no document type selected means no Static registrations line", async () => {
+  const { stdout, stderr } = await runDev(["portal", "--cas", "local", "--fonts", "off"], {
+    platform: "cloudflare",
+    stubs: true,
+  });
+
+  expect(stdout).not.toContain("Static registrations:");
+  expect(stdout).toContain("Services: portal");
+  expect(stderr).toBe("");
+});
+
 // The `Services:` line is conditional: an empty one reads like something was
 // started and failed.
 test("no service selected means an empty services list and no Services line", async () => {

@@ -340,9 +340,13 @@ if (useAzure) {
   }
   console.log(`  azurite  http://127.0.0.1:10000  (connection string: ${backend.BLOB_CONNECTION_STRING})`);
 } else {
-  console.log(
-    `Static registrations: ${docTypes.join(" / ")}`,
-  );
+  // 同 `Services:` 一样的理由,对称处理:`pnpm dev portal` 一个 doc type 都
+  // 没选,空列表("Static registrations: ")看起来正是「起了但没起来」。
+  if (docTypes.length > 0) {
+    console.log(
+      `Static registrations: ${docTypes.join(" / ")}`,
+    );
+  }
   // 单独一行而不是并进上面那行:那行说的是"网关注册表里有哪些 doc type",
   // service 不在那张表里(它们不是 doc type,也不参与 docType 路由)。
   // 一个 service 都没选时整行不打,免得空列表看起来像"起了但没起来"。
