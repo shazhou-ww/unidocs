@@ -133,4 +133,112 @@ describe("MarkdownView", () => {
 
     expect(container.innerHTML).toBe("");
   });
+
+  it("锚点原文重复出现时,高亮定位到正确的一处而不是永远第一处", async () => {
+    const quote = "重复的句子。";
+    const repeatedContent = `${quote}\n\n${quote}\n\n${quote}\n`;
+    const { container, view } = mounted();
+    await view.loadSnapshot({ context, snapshot: { content: repeatedContent } as never }, host);
+
+    const firstAt = repeatedContent.indexOf(quote);
+    const secondAt = repeatedContent.indexOf(quote, firstAt + 1);
+    expect(secondAt).toBeGreaterThan(firstAt);
+
+    await view.setMarkers({
+      revision: 1,
+      markers: [
+        {
+          threadId: "th-1",
+          pingIdx: 0,
+          open: true,
+          role: "ping",
+          location: createMarkdownTextRange({ documentContractIdx: 0, content: repeatedContent, start: secondAt, end: secondAt + quote.length }),
+        },
+      ] as never,
+    }, host);
+
+    const paragraphs = container.querySelectorAll("p");
+    expect(paragraphs).toHaveLength(3);
+    expect(paragraphs[0]?.querySelector(".marker-ping")).toBeNull();
+    expect(paragraphs[1]?.querySelector(".marker-ping")).not.toBeNull();
+    expect(paragraphs[2]?.querySelector(".marker-ping")).toBeNull();
+    expect(container.querySelectorAll(".marker-ping")).toHaveLength(1);
+  });
+
+  it("focusLocation 滚动到正确的元素,而不是 DOM 里任意一个 mark", async () => {
+    const { container, view } = mounted();
+    await view.loadSnapshot({ context, snapshot: { content } as never }, host);
+
+    // 先给第一段建一个 mark,制造「容器里已经有别的 mark」的情形。
+    await view.setMarkers({
+      revision: 1,
+      markers: [
+        {
+          threadId: "th-1",
+          pingIdx: 0,
+          open: true,
+          role: "ping",
+          location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第一段内容。"), end: content.indexOf("第一段内容。") + 6 }),
+        },
+      ] as never,
+    }, host);
+
+    const scrolledOn: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn(function (this: Element) {
+      scrolledOn.push(this);
+    });
+    Element.prototype.scrollIntoView = scrollIntoView as typeof original;
+
+    try {
+      const location = createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第二段内容。"), end: content.indexOf("第二段内容。") + 6 });
+      const result = await view.focusLocation(location, host);
+
+      expect(result).toEqual({ located: true, reason: "located" });
+      expect(scrollIntoView).toHaveBeenCalledOnce();
+      expect(scrolledOn).toHaveLength(1);
+      expect(scrolledOn[0]?.textContent).toContain("第二段内容。");
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("原文重叠(一个锚点的原文是另一个已高亮原文的子串)不抛异常,clearMarkers 完全还原", async () => {
+    const overlapContent = "这是较长的原文片段。\n\n第二段。\n";
+    const outer = "较长的原文片段";
+    const inner = "长的原文";
+    const outerStart = overlapContent.indexOf(outer);
+    const innerStart = overlapContent.indexOf(inner);
+    expect(innerStart).toBeGreaterThanOrEqual(outerStart);
+    expect(innerStart + inner.length).toBeLessThanOrEqual(outerStart + outer.length);
+
+    const { container, view } = mounted();
+    await view.loadSnapshot({ context, snapshot: { content: overlapContent } as never }, host);
+
+    await expect(view.setMarkers({
+      revision: 1,
+      markers: [
+        {
+          threadId: "th-outer",
+          pingIdx: 0,
+          open: true,
+          role: "ping",
+          location: createMarkdownTextRange({ documentContractIdx: 0, content: overlapContent, start: outerStart, end: outerStart + outer.length }),
+        },
+        {
+          threadId: "th-inner",
+          pingIdx: 0,
+          open: true,
+          role: "pong-result",
+          location: createMarkdownTextRange({ documentContractIdx: 0, content: overlapContent, start: innerStart, end: innerStart + inner.length }),
+        },
+      ] as never,
+    }, host)).resolves.toBeUndefined();
+
+    await view.setMarkers({ revision: 2, markers: [] as never }, host);
+
+    expect(container.querySelectorAll(".marker")).toHaveLength(0);
+    expect(container.textContent).toContain("这是较长的原文片段。");
+    expect(container.textContent).toContain("第二段。");
+  });
 });

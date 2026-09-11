@@ -24,31 +24,59 @@ export interface MarkdownViewInstance extends ViewImplementation {
   selectionRange(): { start: number; end: number } | null;
 }
 
-function renderedText(container: HTMLElement): string {
-  return container.textContent ?? "";
+/** 源码中位于 start 之前的出现次数 —— 即锚点是第几处出现（0 起）。 */
+function occurrenceOrdinal(source: string, quote: string, start: number): number {
+  if (quote === "") return 0;
+  let count = 0;
+  for (let at = source.indexOf(quote); at !== -1 && at < start; at = source.indexOf(quote, at + 1)) {
+    count += 1;
+  }
+  return count;
 }
 
-/** 在渲染后的 DOM 里按原文查找并包一层 <mark>。查不到返回 false。 */
-function highlight(container: HTMLElement, quote: string, role: MarkerRole, threadId: string): boolean {
-  if (quote === "") return false;
-
+/**
+ * 在渲染后的 DOM 里找第 ordinal 处出现（0 起）。
+ * 渲染时有出现被符号吃掉的情况，序号可能超出范围，此时退到最后一处；
+ * 一处都没有则返回 null（保持「找不到就跳过」的既定行为）。
+ */
+function findOccurrence(
+  container: HTMLElement,
+  quote: string,
+  ordinal: number,
+): { node: Text; at: number } | null {
+  if (quote === "") return null;
+  const hits: { node: Text; at: number }[] = [];
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     const text = node.textContent ?? "";
-    const at = text.indexOf(quote);
-    if (at === -1) continue;
-
-    const range = document.createRange();
-    range.setStart(node, at);
-    range.setEnd(node, at + quote.length);
-
-    const mark = document.createElement("mark");
-    mark.className = `marker marker-${role}`;
-    mark.dataset.threadId = threadId;
-    range.surroundContents(mark);
-    return true;
+    for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
+      hits.push({ node: node as Text, at });
+    }
   }
-  return false;
+  if (hits.length === 0) return null;
+  return hits[Math.min(ordinal, hits.length - 1)];
+}
+
+/** 在渲染后的 DOM 里按原文查找第 ordinal 处出现并包一层 <mark>。查不到返回 false。 */
+function highlight(
+  container: HTMLElement,
+  quote: string,
+  ordinal: number,
+  role: MarkerRole,
+  threadId: string,
+): boolean {
+  const hit = findOccurrence(container, quote, ordinal);
+  if (hit === null) return false;
+
+  const range = document.createRange();
+  range.setStart(hit.node, hit.at);
+  range.setEnd(hit.node, hit.at + quote.length);
+
+  const mark = document.createElement("mark");
+  mark.className = `marker marker-${role}`;
+  mark.dataset.threadId = threadId;
+  range.surroundContents(mark);
+  return true;
 }
 
 function clearMarkers(container: HTMLElement): void {
@@ -85,7 +113,8 @@ export function createMarkdownView(options: { container: HTMLElement }): Markdow
       for (const marker of request.markers as readonly RoledMarker[]) {
         const range = readMarkdownTextRange(marker.location);
         if (range === null) continue;
-        highlight(container, range.quote, marker.role ?? "ping", marker.threadId);
+        const ordinal = occurrenceOrdinal(source, range.quote, range.start);
+        highlight(container, range.quote, ordinal, marker.role ?? "ping", marker.threadId);
       }
     },
 
@@ -93,10 +122,11 @@ export function createMarkdownView(options: { container: HTMLElement }): Markdow
       const range = readMarkdownTextRange(location);
       if (range === null) return { located: false, reason: "unsupported_type" };
 
-      const found = renderedText(container).includes(range.quote) && range.quote !== "";
-      if (!found) return { located: false, reason: "unresolvable" };
+      const ordinal = occurrenceOrdinal(source, range.quote, range.start);
+      const hit = findOccurrence(container, range.quote, ordinal);
+      if (hit === null) return { located: false, reason: "unresolvable" };
 
-      container.querySelector(`mark[data-thread-id]`)?.scrollIntoView?.({ block: "center" });
+      hit.node.parentElement?.scrollIntoView?.({ block: "center" });
       return { located: true, reason: "located" };
     },
 
