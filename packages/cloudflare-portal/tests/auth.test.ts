@@ -72,6 +72,13 @@ describe("Cloudflare administrator authentication", () => {
     { iat: now + 31 }, { iat: now - 3_631 }, { auth_time: now + 31 },
     { email_verified: false }, { azp: "other-client" }, { aud: [audience, "other-client"] },
     { auth_time: undefined }, { exp: undefined }, { nbf: now + 31 },
+    // Proves a loopback-looking issuer is rejected end-to-end — the value a
+    // future local-dev change might plausibly add to the jwtVerify allowlist
+    // at auth.ts:81 by mistake. It does not isolate that allowlist alone:
+    // @unidocs/portal-service's readGoogleIdentity enforces the identical
+    // literal independently, so this case stays green even if the allowlist
+    // itself is loosened (verified by mutation testing — see the report).
+    { iss: "http://127.0.0.1:8793" },
   ])("rejects signed tokens with invalid claims %# without cookie fallback", async overrides => {
     const { ports, authenticate, request } = await setup();
     await expect(authenticate(request({ authorization: `Bearer ${await bearer(overrides)}` }))).rejects.toMatchObject({ code: "unauthorized" });

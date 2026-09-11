@@ -207,4 +207,11 @@ describe("Portal Google login configuration", () => {
   test.each(["http://portal.example", "http://127.0.0.1.evil.test:8795"])("refuses a non-loopback http origin %s", loginOrigin => {
     expect(() => createPortalGoogleLogin(rawConfig(loginOrigin), ports)).toThrow("Invalid Portal Google configuration");
   });
+
+  // The origin allowance must not smuggle in an issuer allowance: a loopback
+  // origin is otherwise fully valid here, so this is the case that pins
+  // config.issuer !== GOOGLE_ISSUER staying in the guard on its own.
+  test("refuses a non-Google issuer even for an otherwise-valid loopback origin", () => {
+    expect(() => createPortalGoogleLogin({ ...rawConfig("http://127.0.0.1:8795"), issuer: "http://127.0.0.1:8793" as never }, ports)).toThrow("Invalid Portal Google configuration");
+  });
 });
