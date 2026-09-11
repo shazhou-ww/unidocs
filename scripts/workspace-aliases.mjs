@@ -58,6 +58,8 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
     "packages/fonts-builtin/fonts/NotoSans-Regular.ttf",
   "@unidocs/fonts-builtin/fonts/NotoSansSC-Regular.subset.otf":
     "packages/fonts-builtin/fonts/NotoSansSC-Regular.subset.otf",
+  "@unidocs/protocol-admin-portal": "packages/protocol-admin-portal/src/index.ts",
+  "@unidocs/portal-service": "packages/portal-service/src/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",
   "@unidocs/cloudflare-sdk": "packages/cloudflare-sdk/src/index.ts",
   "@unidocs/doctype-markdown": "packages/doctype-markdown/src/index.ts",

@@ -25,6 +25,7 @@ import {
   SERVICE_WORKER,
   resolvePorts,
 } from "./doc-types.mjs";
+import { serviceWorkers } from "./services.mjs";
 import { openDevLog } from "./dev-log.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
@@ -56,7 +57,13 @@ async function bundleWorker(entry, outfile) {
     // packages/cloudflare-psd/wrangler.toml 的 [[rules]] type = "Data"。
     // 漏了这一项是构建期报错（esbuild 不认识 .ttf 扩展名），不是运行时静默失效。
     loader: { ".ttf": "binary", ".otf": "binary" },
+    // Both entries run under `compatibilityFlags: ["nodejs_compat"]` (see
+    // doc-types.mjs), so workerd resolves `node:*` specifiers itself at
+    // runtime — esbuild only needs to leave them alone rather than trying
+    // (and failing, on `platform: "browser"`) to bundle them. The portal
+    // needs this for `node:crypto`'s `timingSafeEqual` (auth.ts).
     ...(entry.replaceAll("\\", "/").includes("unicas-packages/service-cloudflare/")
+      || entry.replaceAll("\\", "/").includes("packages/cloudflare-portal/")
       ? { external: ["cloudflare:workers", "node:*"] }
       : {}),
     logOverride: { "empty-import-meta": "silent" },
@@ -147,6 +154,30 @@ async function migrateSnapshotsDb(mf) {
     await db.exec(sql);
     await db.prepare(
       "INSERT INTO _unidocs_gateway_migrations (name, applied_at) VALUES (?, ?)",
+    ).bind(file, Date.now()).run();
+  }
+}
+
+/**
+ * Apply a service's committed D1 migrations. Same ledger shape as
+ * `migrateSnapshotsDb`, minus its bootstrap-inference branch: the gateway has
+ * local databases that predate its ledger and must have their generation
+ * inferred, while a service database here has no such history — a fresh one
+ * simply applies every file.
+ */
+async function migrateServiceDb(mf, component, root) {
+  const db = await mf.getD1Database(component.d1Binding, component.worker);
+  const directory = join(root, component.migrations);
+  const files = (await readdir(directory)).filter(file => file.endsWith(".sql")).sort();
+  await db.exec(`CREATE TABLE IF NOT EXISTS _unidocs_service_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);`);
+  const appliedResult = await db.prepare("SELECT name FROM _unidocs_service_migrations ORDER BY name").all();
+  const applied = new Set((appliedResult.results ?? []).map(row => row.name));
+  for (const file of files) {
+    if (applied.has(file)) continue;
+    const sql = await readFile(join(directory, file), "utf8");
+    await db.exec(sql);
+    await db.prepare(
+      "INSERT INTO _unidocs_service_migrations (name, applied_at) VALUES (?, ?)",
     ).bind(file, Date.now()).run();
   }
 }
@@ -378,6 +409,7 @@ function printStructuredLog({ level, message }) {
 export async function startLocalRuntime({
   host = "127.0.0.1",
   docTypes = Object.keys(DOC_TYPES),
+  services = [],
   ports: portOverrides = {},
   persistPath,
   casFault = false,
@@ -409,7 +441,7 @@ export async function startLocalRuntime({
   if (gatewayOAuth && gatewayOAuth.issuer !== resolvedStackFixture.issuer) {
     throw new Error("gatewayOAuth.issuer must exactly equal stackFixture.issuer");
   }
-  const ports = resolvePorts(docTypes, portOverrides);
+  const ports = resolvePorts(docTypes, portOverrides, services);
   if (!casOrigin) {
     ports.admin = portOverrides.admin ?? ADMIN_PORT;
     ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
@@ -429,7 +461,7 @@ export async function startLocalRuntime({
   const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway ?? "cas-admin"));
 
   await Promise.all(
-    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || !casOrigin }).map(({ entry, outfile }) =>
+    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || !casOrigin, services }).map(({ entry, outfile }) =>
       bundleWorker(join(ROOT, bundleEntryOverrides[entry] ?? entry), join(bundleDir, outfile)),
     ),
   );
@@ -496,6 +528,7 @@ export async function startLocalRuntime({
           casMiddleware: casMiddleware || !casOrigin,
           casOrigin,
           gatewayOAuth,
+          services,
         }),
       }),
     );
@@ -508,6 +541,9 @@ export async function startLocalRuntime({
         const gatewayDb = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
         await seedGatewayOAuthMemberships(gatewayDb, gatewayOAuth);
       }
+    }
+    for (const component of serviceWorkers(services)) {
+      if (component.migrations) await migrateServiceDb(mf, component, ROOT);
     }
     if (!casOrigin) {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", SERVICE_WORKER);

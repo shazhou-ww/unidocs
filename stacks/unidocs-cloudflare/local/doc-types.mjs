@@ -8,7 +8,7 @@
  */
 
 import { join } from "node:path";
-import { SERVICE_TARGETS } from "./services.mjs";
+import { SERVICE_TARGETS, serviceWorkers } from "./services.mjs";
 
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
@@ -163,16 +163,19 @@ export function parseTargets(args) {
 }
 
 /** Ports for the gateway plus the selected doc types; overrides win per key. */
-export function resolvePorts(docTypes, overrides = {}) {
+export function resolvePorts(docTypes, overrides = {}, services = []) {
   const ports = { gateway: overrides.gateway ?? GATEWAY_PORT };
   for (const name of docTypes) {
     ports[name] = overrides[name] ?? DOC_TYPES[name].port;
+  }
+  for (const component of serviceWorkers(services)) {
+    ports[component.name] = overrides[component.name] ?? component.port;
   }
   return ports;
 }
 
 /** Entry point of every worker that needs bundling for the given selection. */
-export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = true } = {}) {
+export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = true, services = [] } = {}) {
   const serviceTargets = [
     { entry: "unicas-packages/service-cloudflare/src/worker.ts", outfile: "cas-service.js" },
   ];
@@ -192,6 +195,7 @@ export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddlewa
       entry: DOC_TYPES[name].entry,
       outfile: `${name}.js`,
     })),
+    ...serviceWorkers(services).map(component => ({ entry: component.entry, outfile: component.outfile })),
   ];
 }
 
@@ -228,6 +232,7 @@ export function buildWorkers({
   casMiddleware = false,
   casOrigin,
   gatewayOAuth,
+  services = [],
 }) {
   if (!stackFixture) {
     throw new Error("stackFixture is required for the stack local runtime");
@@ -298,6 +303,30 @@ export function buildWorkers({
     compatibilityDate: COMPATIBILITY_DATE,
     unsafeDirectSockets: [{ host, port: ports.mockOidc }],
   };
+
+  // The portal always points at the real Google. The placeholder credentials
+  // mirror the CAS admin BFF's: the config only checks they are non-empty, so
+  // the worker boots and serves everything except a completed sign-in. Failing
+  // closed instead would make `pnpm dev portal` useless to anyone who has not
+  // registered a loopback redirect URI, which is most readers most of the time.
+  const serviceWorkerConfigs = serviceWorkers(services).map(component => ({
+    name: component.worker,
+    modules: true,
+    scriptPath: join(bundleDir, component.outfile),
+    compatibilityDate: COMPATIBILITY_DATE,
+    compatibilityFlags: ["nodejs_compat"],
+    bindings: {
+      PORTAL_ORIGIN: `http://${host}:${ports[component.name]}`,
+      // Always the real Google: the portal requires auth_time and
+      // email_verified, which the local mock provider does not issue.
+      GATEWAY_OIDC_ISSUER: "https://accounts.google.com",
+      GATEWAY_OIDC_CLIENT_ID: googleOidcClientId ?? "unidocs-portal-local",
+      GATEWAY_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "unidocs-portal-local-secret",
+      PORTAL_BOOTSTRAP_EMAIL: process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL ?? "",
+    },
+    d1Databases: { [component.d1Binding]: component.worker },
+    unsafeDirectSockets: [{ host, port: ports[component.name] }],
+  }));
 
   if (casMiddlewareOnly) {
     return [
@@ -407,6 +436,8 @@ export function buildWorkers({
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }
+
+  workers.push(...serviceWorkerConfigs);
 
   return workers;
 }

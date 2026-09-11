@@ -8,6 +8,7 @@ import {
   CAS_AUDIT_READER_KEY,
   CAS_MIDDLEWARE_BUCKET,
   CAS_MIDDLEWARE_DB,
+  COMPATIBILITY_DATE,
   CONTROL_DB,
   DOC_TYPES,
   docServicesJson,
@@ -19,6 +20,7 @@ import {
   parseDocTypes,
   resolvePorts,
 } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
+import { serviceWorkers } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 
 /** Ports every buildWorkers call needs in these tests. */
 const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, edge: 8794 };
@@ -311,4 +313,41 @@ test("接线:统一服务是公网入口并持有全部 CAS 存储绑定", () =>
     { host: "127.0.0.1", port: ADMIN_PORT },
     { host: "127.0.0.1", port: 8794 },
   ]);
+});
+
+test("selected services contribute their own bundle targets", () => {
+  const withPortal = bundleTargets(["psd"], { services: ["portal"] }).map(target => target.outfile);
+  expect(withPortal).toContain("portal.js");
+  expect(bundleTargets(["psd"]).map(target => target.outfile)).not.toContain("portal.js");
+});
+
+test("service ports are reserved alongside the gateway and document types", () => {
+  const ports = resolvePorts(["psd"], {}, ["portal"]);
+  expect(ports.portal).toBe(serviceWorkers(["portal"])[0].port);
+  expect(new Set(Object.values(ports)).size).toBe(Object.keys(ports).length);
+});
+
+test("a selected service becomes a Miniflare worker with its D1 binding", () => {
+  const workers = buildWorkers({
+    docTypes: [], host: "127.0.0.1", ports: resolvePorts([], {}, ["portal"]),
+    bundleDir: "/tmp/bundle", services: ["portal"],
+    stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+  });
+  const portal = workers.find(worker => worker.name === "unidocs-portal");
+  expect(portal).toBeDefined();
+  expect(portal.d1Databases).toMatchObject({ DB: expect.any(String) });
+  expect(portal.bindings.PORTAL_ORIGIN).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  // The portal always points at the real Google, never the local mock OIDC
+  // provider — see google-config.ts: the mock omits auth_time/email_verified,
+  // which the portal requires.
+  expect(portal.bindings.GATEWAY_OIDC_ISSUER).toBe("https://accounts.google.com");
+  expect(portal.compatibilityDate).toBe(COMPATIBILITY_DATE);
+});
+
+test("no selected service leaves the worker list exactly as it was", () => {
+  const base = buildWorkers({
+    docTypes: ["psd"], host: "127.0.0.1", ports: resolvePorts(["psd"]), bundleDir: "/tmp/bundle",
+    stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+  });
+  expect(base.some(worker => worker.name === "unidocs-portal")).toBe(false);
 });
