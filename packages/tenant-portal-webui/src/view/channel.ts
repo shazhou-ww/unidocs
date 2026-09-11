@@ -8,13 +8,13 @@ import type {
   CasBlobRef,
   CreateThreadRequest,
   DocumentLocation,
-  HostAppendPingRequest,
+  HostAppendCommentRequest,
   HostListThreadsRequest,
   HostReadBlobRequest,
   HostReadBlobResponse,
   HostStoreBlobRequest,
   Page,
-  PingRecord,
+  CommentRecord,
   ThreadDetail,
   ThreadId,
   ThreadRef,
@@ -35,7 +35,7 @@ export interface HostImplementation {
   listThreads(request: HostListThreadsRequest): Promise<Page<ThreadRef>>;
   getThread(threadId: ThreadId): Promise<ThreadDetail>;
   createThread(request: CreateThreadRequest): Promise<ThreadDetail>;
-  appendPing(request: HostAppendPingRequest): Promise<PingRecord>;
+  appendComment(request: HostAppendCommentRequest): Promise<CommentRecord>;
   storeBlob(request: HostStoreBlobRequest): Promise<CasBlobRef>;
 }
 

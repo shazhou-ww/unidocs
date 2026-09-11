@@ -4,11 +4,11 @@
  * 平台不做语义迁移，也不因为 current 前移就作废旧版本上的评论。第三、四种的常见成因
  * 不是用户自己改的，而是 Agent 处理别的一处评论时顺带改掉了这段内容。
  */
-import type { PingRecord, PongRecord, VersionIdx } from "@unidocs/protocol-platform";
-import { resolveMarkdownTextRange } from "@unidocs/tenant-portal-client";
+import type { CommentRecord, ReplyRecord } from "@unidocs/protocol-tenant-portal";
+import { resolveMarkdownTextRange, type VersionIdx } from "@unidocs/tenant-portal-client";
 import type { RoledMarker } from "../view/markers.js";
 
-export type RightPaneKind = "pong-result" | "same-version" | "stale-present" | "stale-rewritten" | "unsupported-location";
+export type RightPaneKind = "reply-result" | "same-version" | "stale-present" | "stale-rewritten" | "unsupported-location";
 
 export interface RightPaneDecision {
   readonly kind: RightPaneKind;
@@ -16,28 +16,31 @@ export interface RightPaneDecision {
 }
 
 export function decideRightPane(input: {
-  ping: PingRecord;
-  pongs: readonly PongRecord[];
+  comment: CommentRecord;
+  replies: readonly ReplyRecord[];
   currentVersionIdx: VersionIdx | null;
   currentContent: string;
 }): RightPaneDecision {
-  const { ping, pongs, currentVersionIdx, currentContent } = input;
+  const { comment, replies, currentVersionIdx, currentContent } = input;
 
-  const covering = pongs.filter((pong) => pong.respondThroughPingIdx >= ping.pingIdx);
+  const covering = replies.filter((reply) => reply.respondThroughCommentIdx >= comment.commentIdx);
   if (covering.length > 0) {
     const latest = covering[covering.length - 1];
     return {
-      kind: "pong-result",
+      kind: "reply-result",
+      // role 仍用 "pong-result"：它驱动的是 styles.css 里的 .marker-pong-result，
+      // 是渲染层的既有命名，不随协议里 ping/pong → comment/reply 的改名而改——
+      // 改了这里就要连带改 CSS，超出本轮协议对齐的范围。
       markers: latest.resultLocations.map((location) => ({
-        threadId: "", pingIdx: ping.pingIdx, open: false, location, role: "pong-result" as const,
+        threadId: "", commentIdx: comment.commentIdx, open: false, location, role: "pong-result" as const,
       })),
     };
   }
 
-  if (ping.baseVersionIdx === currentVersionIdx) return { kind: "same-version", markers: [] };
-  if (ping.location === null) return { kind: "same-version", markers: [] };
+  if (comment.baseVersionIdx === currentVersionIdx) return { kind: "same-version", markers: [] };
+  if (comment.location === null) return { kind: "same-version", markers: [] };
 
-  const resolution = resolveMarkdownTextRange(ping.location, currentContent);
+  const resolution = resolveMarkdownTextRange(comment.location, currentContent);
   if (!resolution.located) {
     // spec §4.2：第三、四种的区分本该由 View 回答（ViewFocusLocationResponse 的
     // { located, reason }），这里直接调 resolveMarkdownTextRange 是本轮对 spec 的
@@ -51,6 +54,6 @@ export function decideRightPane(input: {
 
   return {
     kind: "stale-present",
-    markers: [{ threadId: "", pingIdx: ping.pingIdx, open: true, location: ping.location, role: "stale-ping" }],
+    markers: [{ threadId: "", commentIdx: comment.commentIdx, open: true, location: comment.location, role: "stale-ping" }],
   };
 }

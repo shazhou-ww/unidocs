@@ -1,10 +1,10 @@
 /**
  * 真后端的 transport。本轮写出来并做单元测试，但尚无服务可连。
  */
-import type { ApiError } from "@unidocs/protocol-platform";
+import type { TenantApiError } from "@unidocs/protocol-tenant-portal";
 import type { PlatformRequest, PlatformResponse, PlatformTransport } from "./transport.js";
 
-function isApiError(value: unknown): value is ApiError {
+function isApiError(value: unknown): value is TenantApiError {
   if (typeof value !== "object" || value === null) return false;
   const error = (value as { error?: unknown }).error;
   if (typeof error !== "object" || error === null) return false;
@@ -34,7 +34,8 @@ export function createHttpTransport(options: {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }
 
-    const headers = new Headers({ accept: "application/json" });
+    const wantsBytes = request.accept === "cbor";
+    const headers = new Headers({ accept: wantsBytes ? "application/cbor" : "application/json" });
     if (request.idempotencyKey !== undefined) {
       headers.set("idempotency-key", request.idempotencyKey);
     }
@@ -50,6 +51,18 @@ export function createHttpTransport(options: {
       });
     } catch (cause) {
       return transportFailure(cause instanceof Error ? cause.message : "network error");
+    }
+
+    // 成功且调用方要的是字节（目前只有 snapshot：canonical SValue CBOR），整段读成 bytes，
+    // 不当 JSON 解析。失败响应无论 accept 是什么都还是 JSON 形状的 TenantApiError。
+    if (wantsBytes && response.ok) {
+      let buffer: ArrayBuffer;
+      try {
+        buffer = await response.arrayBuffer();
+      } catch (cause) {
+        return transportFailure(cause instanceof Error ? cause.message : "response body could not be read");
+      }
+      return { ok: true, bytes: new Uint8Array(buffer) };
     }
 
     let payload: unknown;

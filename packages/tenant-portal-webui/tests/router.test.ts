@@ -16,7 +16,7 @@ describe("parseRoute", () => {
       kind: "document", documentId: "doc-sample", threadId: "th-open",
     });
     expect(parseRoute("#/d/doc-sample/th-open/2")).toEqual({
-      kind: "document", documentId: "doc-sample", threadId: "th-open", pingIdx: 2,
+      kind: "document", documentId: "doc-sample", threadId: "th-open", commentIdx: 2,
     });
   });
 
@@ -28,17 +28,17 @@ describe("parseRoute", () => {
     expect(parseRoute("#/nonsense/x")).toEqual({ kind: "workbench" });
   });
 
-  it("畸形的 pingIdx 片段退化为只带 threadId,不被 Number() 强制转成合法整数", () => {
-    const withoutPingIdx = { kind: "document", documentId: "doc-sample", threadId: "th-open" };
-    expect(parseRoute("#/d/doc-sample/th-open/")).toEqual(withoutPingIdx);
-    expect(parseRoute("#/d/doc-sample/th-open/%20")).toEqual(withoutPingIdx);
-    expect(parseRoute("#/d/doc-sample/th-open/0x2")).toEqual(withoutPingIdx);
-    expect(parseRoute("#/d/doc-sample/th-open/+2")).toEqual(withoutPingIdx);
-    expect(parseRoute("#/d/doc-sample/th-open/1e1")).toEqual(withoutPingIdx);
+  it("畸形的 commentIdx 片段退化为只带 threadId,不被 Number() 强制转成合法整数", () => {
+    const withoutCommentIdx = { kind: "document", documentId: "doc-sample", threadId: "th-open" };
+    expect(parseRoute("#/d/doc-sample/th-open/")).toEqual(withoutCommentIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/%20")).toEqual(withoutCommentIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/0x2")).toEqual(withoutCommentIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/+2")).toEqual(withoutCommentIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/1e1")).toEqual(withoutCommentIdx);
   });
 
   it("routeToHash 与 parseRoute 互为逆运算", () => {
-    const route = { kind: "document", documentId: "doc one", threadId: "th/1", pingIdx: 0 } as const;
+    const route = { kind: "document", documentId: "doc one", threadId: "th/1", commentIdx: 0 } as const;
     expect(parseRoute(routeToHash(route))).toEqual(route);
   });
 });

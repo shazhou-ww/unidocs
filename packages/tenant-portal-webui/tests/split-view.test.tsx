@@ -10,11 +10,11 @@ import {
 import { ClientProvider } from "../src/client-context.js";
 import { DocumentPage } from "../src/pages/document.js";
 
-function renderAt(threadId: string, pingIdx?: number) {
+function renderAt(threadId: string, commentIdx?: number) {
   const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
   return render(
     <ClientProvider client={client}>
-      <DocumentPage documentId="doc-sample" threadId={threadId} pingIdx={pingIdx} />
+      <DocumentPage documentId="doc-sample" threadId={threadId} commentIdx={commentIdx} />
     </ClientProvider>,
   );
 }
@@ -50,8 +50,9 @@ describe("分屏对照", () => {
 
     // 三种 role 里，marker-pong-result 和 marker-stale-ping 各有专门的用例覆盖；
     // marker-ping 只在左栏出现，且恰好是 markdown-view.ts 里 `marker.role ?? "ping"`
-    // 的兜底值，之前没有测试单独钉住它——这里补上，确认左栏的 ping 高亮确实用的是
-    // "ping" 这个 role，而不是巧合地落在某个默认样式上。
+    // 的兜底值，之前没有测试单独钉住它——这里补上，确认左栏的评论高亮确实用的是
+    // "ping" 这个 role（role 本身不随协议改名，见 model/compare.ts 的注释），
+    // 而不是巧合地落在某个默认样式上。
     //
     // await base() 只等到 pane 这个 <div role="region"> 元素本身挂载，不等 ViewHost 的
     // initialize/loadSnapshot/setMarkers 异步链跑完——marker 是那条链的最后一步才画出来的。
@@ -62,7 +63,7 @@ describe("分屏对照", () => {
     });
   });
 
-  it("左栏渲染该 ping 的基版，不是 current", async () => {
+  it("左栏渲染该评论的基版，不是 current", async () => {
     renderAt("th-answered");
     const pane = await base();
 
@@ -77,7 +78,7 @@ describe("分屏对照", () => {
     expect(within(wrapper as HTMLElement).getByText("基版 v0 · 只读")).toBeInTheDocument();
   });
 
-  it("有 pong 时右栏金色高亮结果位置", async () => {
+  it("有回复时右栏金色高亮结果位置", async () => {
     renderAt("th-answered");
     await base();
 
@@ -87,16 +88,16 @@ describe("分屏对照", () => {
     });
   });
 
-  it("ping 就写在 current 上时右栏标暂无改动且不重复高亮", async () => {
+  it("评论就写在 current 上时右栏标暂无改动且不重复高亮", async () => {
     renderAt("th-on-current");
     const pane = await base();
 
     expect(screen.getByText("暂无改动 · 与左栏同一版本")).toBeInTheDocument();
 
     // decideRightPane 对 same-version 情形无条件返回空 markers（见 compare.test.ts
-    // 「ping 就写在 current 上时不重复高亮」），所以下面两条 toBeNull 断言在异步链跑完
+    // 「评论就写在 current 上时不重复高亮」），所以下面两条 toBeNull 断言在异步链跑完
     // 之前、之后都成立——不管实现对不对都不会失败，是两条测不出问题的断言。改法：
-    // 先等左栏的 marker-ping 出现——th-on-current 的 ping 带着位置锚点，左栏一定会画
+    // 先等左栏的 marker-ping 出现——th-on-current 的评论带着位置锚点，左栏一定会画
     // 出这个 marker，用它确认 ViewHost 的 initialize/loadSnapshot/setMarkers 那条链
     // 这一轮已经跑完——这时候再断言右栏没有 marker，才是真的在检查「same-version 情形
     // 下右栏没有被错误地下发 marker」，而不是巧合地测在了链跑完之前。
@@ -141,7 +142,7 @@ describe("分屏对照", () => {
     expect(window.location.hash).toBe("#/d/doc-sample/th-answered/0");
   });
 
-  it("pingIdx 指定时左栏用那一条的基版", async () => {
+  it("commentIdx 指定时左栏用那一条的基版", async () => {
     renderAt("th-answered", 0);
     const wrapper = (await base()).closest(".pane-wrapper")!;
 
@@ -149,7 +150,7 @@ describe("分屏对照", () => {
   });
 
   it("跨版本切换评论时，新基版一直没追上前左栏不会把新位置套在旧版本正文上", async () => {
-    // th-stale-present 的 ping 基于 v0；th-open 的 ping 基于 v2。故意挑这一对，是因为
+    // th-stale-present 的评论基于 v0；th-open 的评论基于 v2。故意挑这一对，是因为
     // th-open 的锚点原文「平台让人和外部 Agent 共同创作数字作品。」从 V0 到 V2 逐字未改、
     // 偏移也一样——如果 leftMarkers 没等 baseVersion 对齐就把它套到还停在 v0 的正文上，
     // 这段文字在 v0 里同样能被找到并高亮，bug 会真的显形，而不是像别的评论对那样因为
@@ -167,7 +168,7 @@ describe("分屏对照", () => {
     const firstWrapper = (await base()).closest(".pane-wrapper") as HTMLElement;
     expect(within(firstWrapper).getByText("基版 v0 · 只读")).toBeInTheDocument();
 
-    // 冻结之后，任何 getVersion 请求都不会 resolve——baseVersion 从此永远停在 v0。
+    // 冻结之后，任何 getVersion/getVersionSnapshot 请求都不会 resolve——base 从此永远停在 v0。
     // 这不是在赌一个可能被跳过的窄时间窗：不管等多久、poll 多少轮，v0 都不会变成 v2，
     // 所以下面的断言可以放心用 waitFor 等到底，而不用去猜某个精确的微任务时刻。
     freeze();
@@ -180,7 +181,7 @@ describe("分屏对照", () => {
     const pane = screen.getByRole("region", { name: "评论所基于的版本" });
 
     // 分屏结构本身不应该在切换、甚至在新基版迟迟不来的时候被收起——收起会导致布局跳动；
-    // split 只看 ping/baseVersion 是否非空，不看两者是否已经对齐。
+    // split 只看 comment/base 是否非空，不看两者是否已经对齐。
     expect(pane.closest(".pane-wrapper")).not.toBeNull();
 
     // 给 ViewHost 自己的异步链（initialize/loadSnapshot/setMarkers）充分时间把 leftMarkers

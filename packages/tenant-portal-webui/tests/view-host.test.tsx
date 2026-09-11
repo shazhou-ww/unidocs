@@ -1,18 +1,21 @@
 import { render } from "@testing-library/react";
 import type { HostImplementation } from "../src/view/channel.js";
 import { describe, expect, it, vi } from "vitest";
-import type { VersionRecord } from "@unidocs/protocol-platform";
+import type { SValue, VersionRecord } from "@unidocs/protocol-platform";
 import { ViewHost } from "../src/view/view-host.js";
 import type { ViewChannel } from "../src/view/channel.js";
 
+// VersionRecord 不再携带 snapshot——它是独立的 client.getVersionSnapshot 调用结果，
+// 测试里同样拆成两份分别传给 ViewHost 的 version/snapshot 两个 prop。
 const version = {
   versionIdx: 0,
   parentVersionIdx: null,
   documentContractIdx: 0,
-  snapshot: { content: "# 标题\n\n正文。\n" },
   authorAgentId: "a1",
   createdAt: "2026-01-01T00:00:00.000Z",
 } as unknown as VersionRecord;
+
+const snapshot = { content: "# 标题\n\n正文。\n" } as unknown as SValue;
 
 function flushMicrotasks(times = 4): Promise<void> {
   return (async () => {
@@ -46,6 +49,7 @@ describe("ViewHost", () => {
       <ViewHost
         label="当前版本"
         version={version}
+        snapshot={snapshot}
         markers={[]}
         onReady={(channel) => {
           captured = channel;
@@ -94,20 +98,20 @@ describe("ViewHost", () => {
       listThreads: async () => ({ items: [], nextCursor: null }),
       getThread: async () => { throw new Error("n/a"); },
       createThread: async () => { throw new Error("host A"); },
-      appendPing: async () => { throw new Error("n/a"); },
+      appendComment: async () => { throw new Error("n/a"); },
       storeBlob: async () => { throw new Error("n/a"); },
     };
     const hostB: HostImplementation = { ...hostA, createThread: async () => { throw new Error("host B"); } };
 
     const ready = vi.fn();
-    const { rerender } = render(<ViewHost label="当前版本" version={version} markers={[]} host={hostA} onReady={ready} />);
+    const { rerender } = render(<ViewHost label="当前版本" version={version} snapshot={snapshot} markers={[]} host={hostA} onReady={ready} />);
 
     expect(ready).toHaveBeenCalledTimes(1);
 
     // 换了 host（模拟 document.tsx 里 viewHost 因为文档变了而重算出一个新对象），
     // 但没换 key——这正是修复前 app.tsx 不带 key 渲染 DocumentPage 时的处境。
     // 挂载 effect 依赖数组是 []，不会重新跑，onReady 不应该再被调用。
-    rerender(<ViewHost label="当前版本" version={version} markers={[]} host={hostB} onReady={ready} />);
+    rerender(<ViewHost label="当前版本" version={version} snapshot={snapshot} markers={[]} host={hostB} onReady={ready} />);
     await flushMicrotasks();
 
     expect(ready).toHaveBeenCalledTimes(1);
@@ -119,7 +123,7 @@ describe("ViewHost", () => {
       listThreads: async () => ({ items: [], nextCursor: null }),
       getThread: async () => { throw new Error("n/a"); },
       createThread: async () => { throw new Error("host A"); },
-      appendPing: async () => { throw new Error("n/a"); },
+      appendComment: async () => { throw new Error("n/a"); },
       storeBlob: async () => { throw new Error("n/a"); },
     };
     const hostB: HostImplementation = { ...hostA, createThread: async () => { throw new Error("host B"); } };
@@ -136,7 +140,7 @@ describe("ViewHost", () => {
     };
 
     const { rerender } = render(
-      <ViewHost key="doc-A" label="当前版本" version={version} markers={[]} host={hostA} onReady={onReady} />,
+      <ViewHost key="doc-A" label="当前版本" version={version} snapshot={snapshot} markers={[]} host={hostA} onReady={onReady} />,
     );
     await flushMicrotasks();
     expect(channels).toHaveLength(1);
@@ -144,7 +148,7 @@ describe("ViewHost", () => {
     // 对应 document.tsx 里 key={`${props.documentId}:current`}：documentId 变了，
     // key 跟着变——这一步强制 React 把整棵子树当成不同的组件实例，卸载旧的、
     // 挂载一个全新的。
-    rerender(<ViewHost key="doc-B" label="当前版本" version={version} markers={[]} host={hostB} onReady={onReady} />);
+    rerender(<ViewHost key="doc-B" label="当前版本" version={version} snapshot={snapshot} markers={[]} host={hostB} onReady={onReady} />);
     await flushMicrotasks();
 
     // 新建了第二个通道，不是复用第一个——绑定的 host 因此也是全新算出来的那个，

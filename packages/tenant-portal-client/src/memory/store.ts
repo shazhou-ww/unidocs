@@ -1,40 +1,42 @@
 /**
- * 假后端的内存数据。它实现的是 contract，不是 UI 的 mock——webui 不该知道它存在。
+ * 内存假后端：测试夹具（test fixture），不是产品功能。它实现的是 TenantApiContract
+ * 的形状，供本包与 tenant-portal-webui 的测试驱动用；真正的后端实现是
+ * packages/portal-service/src/tenant/。
  */
 import type {
-  DocumentId,
+  AddressedComment,
+  CommentRecord,
   DocumentLocation,
   DocumentRecord,
-  DocumentType,
-  PingRecord,
-  PongRecord,
+  MessageContent,
+  ReplyRecord,
   ThreadDetail,
-  ThreadId,
-  VersionIdx,
   VersionRecord,
-} from "@unidocs/protocol-platform";
+} from "@unidocs/protocol-tenant-portal";
+import type { MarkdownSnapshot } from "../doctypes/markdown.js";
 import { MarkdownDocumentType } from "../doctypes/markdown.js";
+import type { CommentIdx, DocumentId, DocumentType, ThreadId, VersionIdx } from "../ids.js";
 
-export interface SeedPing {
+export interface SeedComment {
   readonly baseVersionIdx: VersionIdx;
   readonly text: string;
   readonly location: DocumentLocation | null;
   readonly authorId?: string;
 }
 
-export interface SeedPong {
-  readonly respondThroughPingIdx: number;
+export interface SeedReply {
+  readonly respondThroughCommentIdx: CommentIdx;
   readonly text: string;
-  /** 相对于该 pong 产生的新版本。空数组表示纯 pong（只回复，不产生新版本）。 */
+  /** 相对于该 reply 产生的新版本。空数组表示纯 reply（只回复，不产生新版本）。 */
   readonly resultLocations?: readonly DocumentLocation[];
-  /** 该 pong 产生的新版本内容；省略表示纯 pong。 */
+  /** 该 reply 产生的新版本内容；省略表示纯 reply。 */
   readonly producesContent?: string;
 }
 
 export interface SeedThread {
   readonly threadId: ThreadId;
-  readonly pings: readonly SeedPing[];
-  readonly pongs: readonly SeedPong[];
+  readonly comments: readonly SeedComment[];
+  readonly replies: readonly SeedReply[];
 }
 
 export interface SeedDocument {
@@ -49,6 +51,11 @@ export interface MemorySeed {
   readonly documents: readonly SeedDocument[];
 }
 
+interface ThreadState {
+  comments: CommentRecord[];
+  replies: ReplyRecord[];
+}
+
 interface DocumentState {
   documentId: DocumentId;
   name: string;
@@ -56,7 +63,13 @@ interface DocumentState {
   createdAt: string;
   currentVersionIdx: VersionIdx | null;
   versions: VersionRecord[];
-  threads: Map<ThreadId, { pings: PingRecord[]; pongs: PongRecord[] }>;
+  /**
+   * snapshot 已经从 VersionRecord 拆出去，是独立 operation
+   * (GET .../versions/{versionIdx}/snapshot)。这里按 versionIdx 对齐存内容，
+   * 供该 operation 单独读取。
+   */
+  snapshots: string[];
+  threads: Map<ThreadId, ThreadState>;
 }
 
 export interface IdempotencyReceipt {
@@ -101,6 +114,7 @@ export class MemoryStore {
       createdAt: this.nextStamp(),
       currentVersionIdx: null,
       versions: [],
+      snapshots: [],
       threads: new Map(),
     };
     this.documents.set(seed.documentId, state);
@@ -108,48 +122,60 @@ export class MemoryStore {
     for (const version of seed.versions) this.appendVersion(state, version.content, "agent:seed");
 
     for (const thread of seed.threads) {
-      const record = { pings: [] as PingRecord[], pongs: [] as PongRecord[] };
+      const record: ThreadState = { comments: [], replies: [] };
       state.threads.set(thread.threadId, record);
 
-      for (const ping of thread.pings) {
-        record.pings.push({
-          pingIdx: record.pings.length,
-          baseVersionIdx: ping.baseVersionIdx,
-          content: { text: ping.text, richContent: null, attachments: [] },
-          location: ping.location,
-          authorId: ping.authorId ?? "user:sample",
+      for (const comment of thread.comments) {
+        record.comments.push({
+          commentIdx: record.comments.length,
+          baseVersionIdx: comment.baseVersionIdx,
+          content: { text: comment.text, richContent: null, attachments: [] },
+          location: comment.location,
+          authorId: comment.authorId ?? "user:sample",
           createdAt: this.nextStamp(),
         });
       }
 
-      for (const pong of thread.pongs) {
-        // SeedPong.producesContent 只供运行时 Agent 生成 pong 时使用；种子加载阶段的版本
+      for (const reply of thread.replies) {
+        // SeedReply.producesContent 只供运行时 Agent 生成 reply 时使用；种子加载阶段的版本
         // 序列完全来自 SeedDocument.versions，这里不据此追加版本（否则会与显式声明的
-        // versions 产生重复）。
-        record.pongs.push({
-          pongIdx: record.pongs.length,
-          respondThroughPingIdx: pong.respondThroughPingIdx,
-          content: { text: pong.text, richContent: null, attachments: [] },
-          resultLocations: pong.resultLocations ?? [],
+        // versions 产生重复）。因此这些 reply 的 submissionId 不对应任何已创建的版本。
+        record.replies.push({
+          replyIdx: record.replies.length,
+          respondThroughCommentIdx: reply.respondThroughCommentIdx,
+          content: { text: reply.text, richContent: null, attachments: [] },
+          resultLocations: reply.resultLocations ?? [],
           authorAgentId: "agent:sample",
-          submissionId: `sub-${state.documentId}-${thread.threadId}-${record.pongs.length}`,
+          submissionId: `sub-${state.documentId}-${thread.threadId}-${record.replies.length}`,
           createdAt: this.nextStamp(),
         });
       }
     }
   }
 
-  appendVersion(state: DocumentState, content: string, authorAgentId: string): VersionRecord {
+  appendVersion(
+    state: DocumentState,
+    content: string,
+    authorAgentId: string,
+    options: {
+      readonly submissionId?: string;
+      readonly addressedComments?: readonly AddressedComment[];
+    } = {},
+  ): VersionRecord {
+    const versionIdx = state.versions.length;
     const version: VersionRecord = {
-      versionIdx: state.versions.length,
-      parentVersionIdx: state.versions.length === 0 ? null : state.versions.length - 1,
+      versionIdx,
+      // "当前指针在提交时的观测值"：不一定是 versionIdx - 1。
+      parentVersionIdx: state.currentVersionIdx,
       documentContractIdx: 0,
-      snapshot: { content } as VersionRecord["snapshot"],
       authorAgentId,
+      submissionId: options.submissionId ?? `sub-${state.documentId}-v${versionIdx}`,
+      addressedComments: options.addressedComments ?? [],
       createdAt: this.nextStamp(),
     };
     state.versions.push(version);
-    state.currentVersionIdx = version.versionIdx;
+    state.snapshots.push(content);
+    state.currentVersionIdx = versionIdx;
     return version;
   }
 
@@ -181,6 +207,13 @@ export class MemoryStore {
     return version;
   }
 
+  /** snapshot 是独立 operation：getVersion 只给元数据，这里单独给内容。 */
+  getVersionSnapshot(documentId: DocumentId, versionIdx: VersionIdx): MarkdownSnapshot {
+    this.getVersion(documentId, versionIdx); // 复用其 NotFound 语义
+    const content = this.requireDocument(documentId).snapshots[versionIdx];
+    return { content: content as string };
+  }
+
   listVersions(documentId: DocumentId): readonly VersionRecord[] {
     return this.requireDocument(documentId).versions;
   }
@@ -188,7 +221,7 @@ export class MemoryStore {
   getThread(documentId: DocumentId, threadId: ThreadId): ThreadDetail {
     const record = this.requireDocument(documentId).threads.get(threadId);
     if (record === undefined) throw new NotFound(`thread ${threadId}`);
-    return { threadId, pings: record.pings, pongs: record.pongs };
+    return { threadId, comments: record.comments, replies: record.replies };
   }
 
   listThreadIds(documentId: DocumentId, open?: boolean): readonly ThreadId[] {
@@ -237,6 +270,7 @@ export class MemoryStore {
       createdAt: this.nextStamp(),
       currentVersionIdx: null,
       versions: [],
+      snapshots: [],
       threads: new Map(),
     };
     this.documents.set(documentId, state);
@@ -261,45 +295,45 @@ export class MemoryStore {
 
   createThread(
     documentId: DocumentId,
-    body: { baseVersionIdx: VersionIdx; content: PingRecord["content"]; location: DocumentLocation | null },
+    body: { baseVersionIdx: VersionIdx; content: MessageContent; location: DocumentLocation | null },
   ): ThreadDetail {
     const state = this.requireDocument(documentId);
     this.requireVersion(state, body.baseVersionIdx);
 
     const threadId = this.nextThreadId(state);
-    const ping: PingRecord = {
-      pingIdx: 0,
+    const comment: CommentRecord = {
+      commentIdx: 0,
       baseVersionIdx: body.baseVersionIdx,
       content: body.content,
       location: body.location,
       authorId: "user:sample",
       createdAt: this.nextStamp(),
     };
-    state.threads.set(threadId, { pings: [ping], pongs: [] });
-    return { threadId, pings: [ping], pongs: [] };
+    state.threads.set(threadId, { comments: [comment], replies: [] });
+    return { threadId, comments: [comment], replies: [] };
   }
 
-  appendPing(
+  appendComment(
     documentId: DocumentId,
     threadId: ThreadId,
-    body: { baseVersionIdx: VersionIdx; content: PingRecord["content"]; location: DocumentLocation | null },
-  ): PingRecord {
+    body: { baseVersionIdx: VersionIdx; content: MessageContent; location: DocumentLocation | null },
+  ): CommentRecord {
     const state = this.requireDocument(documentId);
     this.requireVersion(state, body.baseVersionIdx);
 
     const record = state.threads.get(threadId);
     if (record === undefined) throw new NotFound(`thread ${threadId}`);
 
-    const ping: PingRecord = {
-      pingIdx: record.pings.length,
+    const comment: CommentRecord = {
+      commentIdx: record.comments.length,
       baseVersionIdx: body.baseVersionIdx,
       content: body.content,
       location: body.location,
       authorId: "user:sample",
       createdAt: this.nextStamp(),
     };
-    record.pings.push(ping);
-    return ping;
+    record.comments.push(comment);
+    return comment;
   }
 
   moveCurrentVersion(
@@ -321,9 +355,9 @@ export class MemoryStore {
   }
 }
 
-export function isOpen(record: { pings: readonly PingRecord[]; pongs: readonly PongRecord[] }): boolean {
-  const acknowledged = record.pongs.reduce((max, pong) => Math.max(max, pong.respondThroughPingIdx), -1);
-  const latest = record.pings.reduce((max, ping) => Math.max(max, ping.pingIdx), -1);
+export function isOpen(record: { comments: readonly CommentRecord[]; replies: readonly ReplyRecord[] }): boolean {
+  const acknowledged = record.replies.reduce((max, reply) => Math.max(max, reply.respondThroughCommentIdx), -1);
+  const latest = record.comments.reduce((max, comment) => Math.max(max, comment.commentIdx), -1);
   return latest > acknowledged;
 }
 

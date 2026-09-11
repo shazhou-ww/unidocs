@@ -58,8 +58,8 @@ describe("MarkdownView", () => {
     await view.setMarkers({
       revision: 1,
       markers: [
-        { threadId: "th-1", pingIdx: 0, open: true, location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第一段内容。"), end: content.indexOf("第一段内容。") + 6 }), role: "ping" },
-        { threadId: "th-2", pingIdx: 0, open: false, location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第二段内容。"), end: content.indexOf("第二段内容。") + 6 }), role: "pong-result" },
+        { threadId: "th-1", commentIdx: 0, open: true, location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第一段内容。"), end: content.indexOf("第一段内容。") + 6 }), role: "ping" },
+        { threadId: "th-2", commentIdx: 0, open: false, location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第二段内容。"), end: content.indexOf("第二段内容。") + 6 }), role: "pong-result" },
       ] as never,
     }, host);
 
@@ -71,7 +71,7 @@ describe("MarkdownView", () => {
     const { container, view } = mounted();
     await view.loadSnapshot({ context, snapshot: { content } as never }, host);
     const marker = (quote: string, role: string) => ({
-      threadId: "th-1", pingIdx: 0, open: true, role,
+      threadId: "th-1", commentIdx: 0, open: true, role,
       location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf(quote), end: content.indexOf(quote) + quote.length }),
     });
 
@@ -89,8 +89,8 @@ describe("MarkdownView", () => {
     await view.setMarkers({
       revision: 1,
       markers: [
-        { threadId: "th-gone", pingIdx: 0, open: true, role: "ping", location: createMarkdownTextRange({ documentContractIdx: 0, content: "别处的原文", start: 0, end: 5 }) },
-        { threadId: "th-ok", pingIdx: 0, open: true, role: "ping", location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第一段内容。"), end: content.indexOf("第一段内容。") + 6 }) },
+        { threadId: "th-gone", commentIdx: 0, open: true, role: "ping", location: createMarkdownTextRange({ documentContractIdx: 0, content: "别处的原文", start: 0, end: 5 }) },
+        { threadId: "th-ok", commentIdx: 0, open: true, role: "ping", location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第一段内容。"), end: content.indexOf("第一段内容。") + 6 }) },
       ] as never,
     }, host);
 
@@ -149,7 +149,7 @@ describe("MarkdownView", () => {
       markers: [
         {
           threadId: "th-1",
-          pingIdx: 0,
+          commentIdx: 0,
           open: true,
           role: "ping",
           location: createMarkdownTextRange({ documentContractIdx: 0, content: repeatedContent, start: secondAt, end: secondAt + quote.length }),
@@ -175,7 +175,7 @@ describe("MarkdownView", () => {
       markers: [
         {
           threadId: "th-1",
-          pingIdx: 0,
+          commentIdx: 0,
           open: true,
           role: "ping",
           location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("第一段内容。"), end: content.indexOf("第一段内容。") + 6 }),
@@ -220,14 +220,14 @@ describe("MarkdownView", () => {
       markers: [
         {
           threadId: "th-outer",
-          pingIdx: 0,
+          commentIdx: 0,
           open: true,
           role: "ping",
           location: createMarkdownTextRange({ documentContractIdx: 0, content: overlapContent, start: outerStart, end: outerStart + outer.length }),
         },
         {
           threadId: "th-inner",
-          pingIdx: 0,
+          commentIdx: 0,
           open: true,
           role: "pong-result",
           location: createMarkdownTextRange({ documentContractIdx: 0, content: overlapContent, start: innerStart, end: innerStart + inner.length }),

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import type { DocumentRecord, VersionRecord } from "@unidocs/protocol-platform";
+import type { SValue } from "@unidocs/protocol-platform";
+import type { DocumentRecord, VersionRecord } from "@unidocs/protocol-tenant-portal";
 import { PlatformError } from "@unidocs/tenant-portal-client";
 import { useClient } from "../client-context.js";
 import { loadDiscussionSummary, type DiscussionSummary } from "./discussion-summary.js";
@@ -7,6 +8,9 @@ import { loadDiscussionSummary, type DiscussionSummary } from "./discussion-summ
 export interface DocumentSession {
   readonly document: DocumentRecord | null;
   readonly currentVersion: VersionRecord | null;
+  /** currentVersion 的正文：snapshot 已经从 VersionRecord 拆出去，是独立的 client 调用。
+      与 currentVersion 在同一次 effect 里一起取、一起落地，不会出现两者互相对不上的中间态。 */
+  readonly currentSnapshot: SValue | null;
   readonly summary: DiscussionSummary | null;
   readonly failure: PlatformError | Error | null;
   readonly loading: boolean;
@@ -16,7 +20,7 @@ export interface DocumentSession {
 export function useDocumentSession(documentId: string): DocumentSession {
   const client = useClient();
   const [state, setState] = useState<Omit<DocumentSession, "reload">>({
-    document: null, currentVersion: null, summary: null, failure: null, loading: true,
+    document: null, currentVersion: null, currentSnapshot: null, summary: null, failure: null, loading: true,
   });
   const [epoch, setEpoch] = useState(0);
 
@@ -30,8 +34,11 @@ export function useDocumentSession(documentId: string): DocumentSession {
         const currentVersion = document.currentVersionIdx === null
           ? null
           : await client.getVersion(documentId, document.currentVersionIdx);
+        const currentSnapshot = currentVersion === null
+          ? null
+          : await client.getVersionSnapshot(documentId, currentVersion.versionIdx);
         const summary = await loadDiscussionSummary(client, documentId);
-        if (!cancelled) setState({ document, currentVersion, summary, failure: null, loading: false });
+        if (!cancelled) setState({ document, currentVersion, currentSnapshot, summary, failure: null, loading: false });
       } catch (cause) {
         if (!cancelled) {
           const failure = cause instanceof Error ? cause : new Error("加载失败");

@@ -19,7 +19,9 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/protocol-platform": "workspace:*"
+    "@unidocs/protocol": "workspace:*",
+    "@unidocs/protocol-tenant-portal": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

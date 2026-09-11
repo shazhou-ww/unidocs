@@ -7,7 +7,7 @@ function draft(overrides: Partial<Draft> = {}): Draft {
   return {
     draftId: "d1", documentId: "doc-1", anchorKey: "th-1", threadId: "th-1",
     location: null, baseVersionIdx: 0, text: "写了一半",
-    idempotencyKey: "key-1", editedFromPingIdx: null, updatedAt: "2026-09-01T00:00:00.000Z",
+    idempotencyKey: "key-1", editedFromCommentIdx: null, updatedAt: "2026-09-01T00:00:00.000Z",
     ...overrides,
   };
 }

@@ -11,7 +11,7 @@ export interface DraftsApi {
     location: Draft["location"];
     baseVersionIdx: number;
     text: string;
-    editedFromPingIdx?: number | null;
+    editedFromCommentIdx?: number | null;
   }): Draft;
   removeDraft(draftId: string): void;
 }
@@ -41,7 +41,7 @@ export function useDrafts(documentId: string): DraftsApi {
       baseVersionIdx: input.baseVersionIdx,
       text: input.text,
       idempotencyKey: newId(),
-      editedFromPingIdx: input.editedFromPingIdx ?? null,
+      editedFromCommentIdx: input.editedFromCommentIdx ?? null,
       updatedAt: new Date().toISOString(),
     };
     store.save(draft);

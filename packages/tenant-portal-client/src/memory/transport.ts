@@ -1,7 +1,10 @@
 /**
  * 把 PlatformRequest 路由到 MemoryStore。它扮演服务器，所以必须按路径反解 operation。
+ * 测试夹具（test fixture）：真正的后端实现是 packages/portal-service/src/tenant/。
  */
-import type { ApiError } from "@unidocs/protocol-platform";
+import type { SValue } from "@unidocs/protocol";
+import type { TenantApiError } from "@unidocs/protocol-tenant-portal";
+import { encodeSValue } from "@unidocs/svalue-codec";
 import type { PlatformRequest, PlatformResponse, PlatformTransport } from "../transport.js";
 import {
   Conflict,
@@ -26,6 +29,11 @@ interface Route {
    * autoRun 对这次请求什么都不做——不再退化成「跑全部」。
    */
   readonly scopeOf?: (data: unknown, params: readonly string[]) => RunPendingScope | null;
+  /**
+   * 响应体是原始字节（canonical SValue CBOR），不是 JSON——目前只有 snapshot 这一个
+   * operation。handle 的返回值本身就是编码好的 Uint8Array。
+   */
+  readonly binary?: boolean;
 }
 
 const TENANT = String.raw`/api/v1/tenants/[^/]+`;
@@ -54,6 +62,13 @@ const readRoutes: readonly Route[] = [
     method: "GET",
     pattern: new RegExp(`^${TENANT}/documents/([^/]+)/versions/(\\d+)$`),
     handle: (store, _request, [documentId, versionIdx]) => store.getVersion(documentId, Number(versionIdx)),
+  },
+  {
+    method: "GET",
+    pattern: new RegExp(`^${TENANT}/documents/([^/]+)/versions/(\\d+)/snapshot$`),
+    handle: (store, _request, [documentId, versionIdx]) =>
+      encodeSValue(store.getVersionSnapshot(documentId, Number(versionIdx)) as unknown as SValue),
+    binary: true,
   },
   {
     method: "GET",
@@ -94,10 +109,10 @@ const writeRoutes: readonly Route[] = [
   },
   {
     method: "POST",
-    pattern: new RegExp(`^${TENANT}/documents/([^/]+)/threads/([^/]+)/pings$`),
+    pattern: new RegExp(`^${TENANT}/documents/([^/]+)/threads/([^/]+)/comments$`),
     handle: (store, request, [documentId, threadId]) =>
-      store.withIdempotency(`appendPing:${documentId}:${threadId}`, request.idempotencyKey, request.body, () =>
-        store.appendPing(documentId, threadId, request.body as Parameters<MemoryStore["appendPing"]>[2])),
+      store.withIdempotency(`appendComment:${documentId}:${threadId}`, request.idempotencyKey, request.body, () =>
+        store.appendComment(documentId, threadId, request.body as Parameters<MemoryStore["appendComment"]>[2])),
     scopeOf: (_data, [documentId, threadId]) => ({ documentId, threadId }),
   },
   {
@@ -119,7 +134,7 @@ export const memoryRoutes: Route[] = [...readRoutes, ...writeRoutes];
 
 let requestCounter = 0;
 
-function apiError(code: string, message: string): ApiError {
+function apiError(code: string, message: string): TenantApiError {
   requestCounter += 1;
   return { error: { code, message, requestId: `mem-${requestCounter}` } };
 }
@@ -146,7 +161,7 @@ export function createMemoryTransport(options: {
           const scope = route.scopeOf?.(data, params) ?? null;
           if (scope !== null) agent.runPending(scope);
         }
-        return { ok: true, data };
+        return route.binary ? { ok: true, bytes: data as Uint8Array } : { ok: true, data };
       } catch (cause) {
         if (cause instanceof NotFound) return { ok: false, error: apiError("not_found", cause.message) };
         if (cause instanceof InvalidRequest) return { ok: false, error: apiError("invalid_request", cause.message) };

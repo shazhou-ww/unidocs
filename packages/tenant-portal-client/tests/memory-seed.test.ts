@@ -30,37 +30,37 @@ describe("sampleSeed", () => {
     expect((await api.listThreads("doc-sample")).items.length).toBeGreaterThanOrEqual(6);
   });
 
-  it("覆盖六种情形：待回复 / 已回复产新版 / 基于旧版内容仍在 / 基于旧版已改写 / 纯 pong / 基于 current", async () => {
+  it("覆盖六种情形：待回复 / 已回复产新版 / 基于旧版内容仍在 / 基于旧版已改写 / 纯 reply / 基于 current", async () => {
     const api = client();
     const current = (await api.getDocument("doc-sample")).currentVersionIdx as number;
-    const snapshot = (await api.getVersion("doc-sample", current)).snapshot as unknown as MarkdownSnapshot;
+    const snapshot = await api.getVersionSnapshot("doc-sample", current) as unknown as MarkdownSnapshot;
 
     const detail = async (id: string) => api.getThread("doc-sample", id);
-    const ack = (pongs: readonly { respondThroughPingIdx: number }[]) =>
-      pongs.reduce((max, p) => Math.max(max, p.respondThroughPingIdx), -1);
+    const ack = (replies: readonly { respondThroughCommentIdx: number }[]) =>
+      replies.reduce((max, r) => Math.max(max, r.respondThroughCommentIdx), -1);
 
     const open = await detail("th-open");
-    expect(open.pongs).toHaveLength(0);
+    expect(open.replies).toHaveLength(0);
 
     const answered = await detail("th-answered");
-    expect(ack(answered.pongs)).toBe(answered.pings[answered.pings.length - 1].pingIdx);
-    expect(answered.pongs[0].resultLocations.length).toBeGreaterThan(0);
+    expect(ack(answered.replies)).toBe(answered.comments[answered.comments.length - 1].commentIdx);
+    expect(answered.replies[0].resultLocations.length).toBeGreaterThan(0);
 
     const stale = await detail("th-stale-present");
-    expect(stale.pings[0].baseVersionIdx).toBeLessThan(current);
-    expect(resolveMarkdownTextRange(stale.pings[0].location!, snapshot.content).located).toBe(true);
+    expect(stale.comments[0].baseVersionIdx).toBeLessThan(current);
+    expect(resolveMarkdownTextRange(stale.comments[0].location!, snapshot.content).located).toBe(true);
 
     const rewritten = await detail("th-stale-rewritten");
-    expect(resolveMarkdownTextRange(rewritten.pings[0].location!, snapshot.content)).toEqual({
+    expect(resolveMarkdownTextRange(rewritten.comments[0].location!, snapshot.content)).toEqual({
       located: false,
       reason: "unresolvable",
     });
 
-    const plain = await detail("th-plain-pong");
-    expect(plain.pongs[0].resultLocations).toEqual([]);
+    const plain = await detail("th-plain-reply");
+    expect(plain.replies[0].resultLocations).toEqual([]);
 
     const onCurrent = await detail("th-on-current");
-    expect(onCurrent.pings[0].baseVersionIdx).toBe(current);
+    expect(onCurrent.comments[0].baseVersionIdx).toBe(current);
   });
 
   it("还有一件空文档，供空态使用", async () => {

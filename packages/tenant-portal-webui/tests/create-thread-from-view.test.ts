@@ -5,7 +5,7 @@
  * 依赖都以参数传入，可以完全脱离 React/DOM 直接调用和断言，这条能真正守住修复。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CreateThreadRequest, DocumentLocation } from "@unidocs/protocol-platform";
+import type { CreateThreadRequest, DocumentLocation } from "@unidocs/protocol-tenant-portal";
 import { createMemoryStore, createMemoryTransport, createTenantPortalClient, sampleSeed } from "@unidocs/tenant-portal-client";
 import { anchorKeyOf, createDraftStore, type Draft } from "../src/drafts/draft-store.js";
 import { createThreadFromView, type CreateThreadFromViewDeps } from "../src/model/create-thread-from-view.js";
@@ -31,7 +31,7 @@ function fakeDrafts(documentId: string) {
       baseVersionIdx: input.baseVersionIdx,
       text: input.text,
       idempotencyKey: crypto.randomUUID(),
-      editedFromPingIdx: null,
+      editedFromCommentIdx: null,
       updatedAt: new Date().toISOString(),
     };
     store.save(draft);
@@ -102,8 +102,8 @@ describe("createThreadFromView", () => {
     expect(keys[0]).toBe(keys[1]);
     expect(onSent).toHaveBeenCalledOnce();
     expect(drafts.draftsForAnchor(anchorKey)).toHaveLength(0);
-    expect(detail.pings).toHaveLength(1);
-    expect(detail.pings[0].content.text).toBe("选区来的评论");
+    expect(detail.comments).toHaveLength(1);
+    expect(detail.comments[0].content.text).toBe("选区来的评论");
     expect(store.listThreadIds("doc-sample")).toHaveLength(threadsBefore + 1);
   });
 

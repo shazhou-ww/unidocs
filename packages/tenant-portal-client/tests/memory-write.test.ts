@@ -30,29 +30,29 @@ describe("memory transport 写操作", () => {
     ({ client, store } = fixture());
   });
 
-  it("createThread 建出带第一条 ping 的 thread", async () => {
+  it("createThread 建出带第一条 comment 的 thread", async () => {
     const thread = await client.createThread("doc-1", "key-1", {
       baseVersionIdx: 1,
       content: text("第一条"),
       location: null,
     });
 
-    expect(thread.pings).toHaveLength(1);
-    expect(thread.pings[0]).toMatchObject({ pingIdx: 0, baseVersionIdx: 1 });
-    expect(thread.pongs).toHaveLength(0);
+    expect(thread.comments).toHaveLength(1);
+    expect(thread.comments[0]).toMatchObject({ commentIdx: 0, baseVersionIdx: 1 });
+    expect(thread.replies).toHaveLength(0);
     expect(store.listThreadIds("doc-1")).toEqual([thread.threadId]);
   });
 
-  it("appendPing 递增 pingIdx", async () => {
+  it("appendComment 递增 commentIdx", async () => {
     const thread = await client.createThread("doc-1", "key-1", { baseVersionIdx: 1, content: text("一"), location: null });
-    const ping = await client.appendPing("doc-1", thread.threadId, "key-2", {
+    const comment = await client.appendComment("doc-1", thread.threadId, "key-2", {
       baseVersionIdx: 1,
       content: text("二"),
       location: null,
     });
 
-    expect(ping.pingIdx).toBe(1);
-    expect((await client.getThread("doc-1", thread.threadId)).pings).toHaveLength(2);
+    expect(comment.commentIdx).toBe(1);
+    expect((await client.getThread("doc-1", thread.threadId)).comments).toHaveLength(2);
   });
 
   it("同 key 同内容重放原结果，不产生第二条", async () => {
@@ -72,15 +72,15 @@ describe("memory transport 写操作", () => {
     ).rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 
-  it("appendPing 的幂等与 createThread 不串号", async () => {
+  it("appendComment 的幂等与 createThread 不串号", async () => {
     const thread = await client.createThread("doc-1", "key-1", { baseVersionIdx: 1, content: text("一"), location: null });
     const body = { baseVersionIdx: 1, content: text("二"), location: null };
 
-    const first = await client.appendPing("doc-1", thread.threadId, "key-2", body);
-    const second = await client.appendPing("doc-1", thread.threadId, "key-2", body);
+    const first = await client.appendComment("doc-1", thread.threadId, "key-2", body);
+    const second = await client.appendComment("doc-1", thread.threadId, "key-2", body);
 
-    expect(second.pingIdx).toBe(first.pingIdx);
-    expect((await client.getThread("doc-1", thread.threadId)).pings).toHaveLength(2);
+    expect(second.commentIdx).toBe(first.commentIdx);
+    expect((await client.getThread("doc-1", thread.threadId)).comments).toHaveLength(2);
   });
 
   it("baseVersionIdx 指向不存在的版本时 invalid_request", async () => {
@@ -124,8 +124,8 @@ describe("memory transport 写操作", () => {
           threads: [
             {
               threadId: "th-2",
-              pings: [{ baseVersionIdx: 0, text: "seeded", location: null }],
-              pongs: [],
+              comments: [{ baseVersionIdx: 0, text: "seeded", location: null }],
+              replies: [],
             },
           ],
         },
@@ -137,8 +137,8 @@ describe("memory transport 写操作", () => {
 
     expect(seeded.listThreadIds("doc-1")).toHaveLength(2);
     expect(created.threadId).not.toBe("th-2");
-    expect(seeded.getThread("doc-1", "th-2").pings[0]?.content.text).toBe("seeded");
-    expect(seeded.getThread("doc-1", created.threadId).pings[0]?.content.text).toBe("new");
+    expect(seeded.getThread("doc-1", "th-2").comments[0]?.content.text).toBe("seeded");
+    expect(seeded.getThread("doc-1", created.threadId).comments[0]?.content.text).toBe("new");
   });
 
   it("createDocument 生成的 id 与 seed 中已有的 document id 撞车时不覆盖它", () => {
@@ -175,16 +175,16 @@ describe("memory transport agent.autoRun 的作用范围", () => {
       transport: createMemoryTransport({ store, agent: { autoRun: true } }),
     });
 
-    // th-open / th-stale-present / th-stale-rewritten 在 sampleSeed() 里都是没有 pong
+    // th-open / th-stale-present / th-stale-rewritten 在 sampleSeed() 里都是没有 reply
     // 的开放 thread；只往 th-open 追加一条。
-    await client.appendPing("doc-sample", "th-open", "key-1", {
+    await client.appendComment("doc-sample", "th-open", "key-1", {
       baseVersionIdx: 2,
       content: text("追加一条"),
       location: null,
     });
 
-    expect((await client.getThread("doc-sample", "th-open")).pongs).toHaveLength(1);
-    expect((await client.getThread("doc-sample", "th-stale-present")).pongs).toHaveLength(0);
-    expect((await client.getThread("doc-sample", "th-stale-rewritten")).pongs).toHaveLength(0);
+    expect((await client.getThread("doc-sample", "th-open")).replies).toHaveLength(1);
+    expect((await client.getThread("doc-sample", "th-stale-present")).replies).toHaveLength(0);
+    expect((await client.getThread("doc-sample", "th-stale-rewritten")).replies).toHaveLength(0);
   });
 });

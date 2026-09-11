@@ -5,7 +5,7 @@ import { PlatformError } from "@unidocs/tenant-portal-client";
 
 const TEXT: Readonly<Record<string, string>> = {
   version_conflict: "当前版本已经变了，请刷新后再试。",
-  pong_watermark_conflict: "Agent 正在处理这一处，请稍后再试。",
+  reply_watermark_conflict: "Agent 正在处理这一处，请稍后再试。",
   idempotency_conflict: "这条评论已经用另一份内容发送过了，请新写一条。",
   not_found: "这件作品或这一处已经不存在了。",
   forbidden: "你没有访问这件作品的权限。",

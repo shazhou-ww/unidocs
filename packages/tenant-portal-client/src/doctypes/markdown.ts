@@ -5,7 +5,8 @@
  * 代码里还没有归属包。假后端（本包）与 MarkdownView（tenant-portal-webui）都要用同
  * 一份形状，client 是两者的共同下游。将来 Markdown doctype 包落地后应迁走。
  */
-import type { DocumentContractIdx, DocumentLocation } from "@unidocs/protocol-platform";
+import type { DocumentLocation } from "@unidocs/protocol-tenant-portal";
+import type { DocumentContractIdx } from "../ids.js";
 
 export const MarkdownDocumentType = "markdown";
 export const MarkdownTextRangeLocationType = "unidocs.markdown.text-range/v1";

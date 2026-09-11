@@ -7,7 +7,7 @@ export type Route =
       readonly kind: "document";
       readonly documentId: string;
       readonly threadId?: string;
-      readonly pingIdx?: number;
+      readonly commentIdx?: number;
     };
 
 export function parseRoute(hash: string): Route {
@@ -24,15 +24,15 @@ export function parseRoute(hash: string): Route {
   if (parts[3] === undefined) return { kind: "document", documentId, threadId };
 
   if (!/^\d+$/.test(parts[3])) return { kind: "document", documentId, threadId };
-  const pingIdx = Number(parts[3]);
-  if (!Number.isInteger(pingIdx) || pingIdx < 0) return { kind: "document", documentId, threadId };
-  return { kind: "document", documentId, threadId, pingIdx };
+  const commentIdx = Number(parts[3]);
+  if (!Number.isInteger(commentIdx) || commentIdx < 0) return { kind: "document", documentId, threadId };
+  return { kind: "document", documentId, threadId, commentIdx };
 }
 
 export function routeToHash(route: Route): string {
   if (route.kind === "workbench") return "#/";
   const parts = ["d", route.documentId];
   if (route.threadId !== undefined) parts.push(route.threadId);
-  if (route.pingIdx !== undefined) parts.push(String(route.pingIdx));
+  if (route.commentIdx !== undefined) parts.push(String(route.commentIdx));
   return `#/${parts.map((segment) => encodeURIComponent(segment)).join("/")}`;
 }

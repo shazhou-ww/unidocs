@@ -1,27 +1,28 @@
-import type { PingRecord, PongRecord, VersionIdx } from "@unidocs/protocol-platform";
+import type { CommentRecord, ReplyRecord } from "@unidocs/protocol-tenant-portal";
+import type { VersionIdx } from "@unidocs/tenant-portal-client";
 import type { Draft } from "../drafts/draft-store.js";
 import type { ThreadState } from "../model/thread-state.js";
 import { Composer } from "./composer.js";
 import { DraftBlock } from "./draft-block.js";
 
-export function PingCard(props: {
-  ping: PingRecord;
+export function CommentCard(props: {
+  comment: CommentRecord;
   currentVersionIdx: VersionIdx | null;
   acknowledged: boolean;
   selected?: boolean;
   onSelect?(): void;
   onEdit?(): void;
 }) {
-  const behind = props.currentVersionIdx === null ? 0 : props.currentVersionIdx - props.ping.baseVersionIdx;
+  const behind = props.currentVersionIdx === null ? 0 : props.currentVersionIdx - props.comment.baseVersionIdx;
 
   return (
     <li className={`ping-card${props.selected === true ? " selected" : ""}`}>
       <button type="button" onClick={props.onSelect}>
-        <p>{props.ping.content.text}</p>
+        <p>{props.comment.content.text}</p>
         <footer>
-          <span className="version-badge">v{props.ping.baseVersionIdx}</span>
-          {behind > 0 && <span className="behind">基于 v{props.ping.baseVersionIdx} · 已过 {behind} 版</span>}
-          {/* 徽标只从水位派生，从不落库；见 model/thread-state.ts 的 acknowledgedPingIdx。 */}
+          <span className="version-badge">v{props.comment.baseVersionIdx}</span>
+          {behind > 0 && <span className="behind">基于 v{props.comment.baseVersionIdx} · 已过 {behind} 版</span>}
+          {/* 徽标只从水位派生，从不落库；见 model/thread-state.ts 的 acknowledgedCommentIdx。 */}
           <span className="ping-status">{props.acknowledged ? "已处理" : "正在执行"}</span>
         </footer>
       </button>
@@ -31,12 +32,12 @@ export function PingCard(props: {
   );
 }
 
-export function PongCard(props: { pong: PongRecord }) {
-  const plain = props.pong.resultLocations.length === 0;
+export function ReplyCard(props: { reply: ReplyRecord }) {
+  const plain = props.reply.resultLocations.length === 0;
 
   return (
     <li className={`pong-card ${plain ? "pong-plain" : "pong-versioned"}`}>
-      <p>{props.pong.content.text}</p>
+      <p>{props.reply.content.text}</p>
       <footer>{plain ? "Agent 已回复，未改动内容" : "Agent 已处理并提交了新版本"}</footer>
     </li>
   );
@@ -44,20 +45,20 @@ export function PongCard(props: { pong: PongRecord }) {
 
 export function ThreadCard(props: {
   threadId: string;
-  pings: readonly PingRecord[];
-  pongs: readonly PongRecord[];
+  comments: readonly CommentRecord[];
+  replies: readonly ReplyRecord[];
   state: ThreadState;
   currentVersionIdx: VersionIdx | null;
   selected: boolean;
-  selectedPingIdx?: number;
+  selectedCommentIdx?: number;
   onSelect(): void;
-  onSelectPing?(pingIdx: number): void;
+  onSelectComment?(commentIdx: number): void;
   /** 该处的草稿——回复中的那一份已经在别处（Composer）显示，这里已被上游排除。 */
   drafts: readonly Draft[];
   draftFailures: Readonly<Record<string, string>>;
   onSendDraft(draft: Draft): void;
   onDiscardDraft(draftId: string): void;
-  onEditPing(ping: PingRecord): void;
+  onEditComment(comment: CommentRecord): void;
   composing: boolean;
   composingInitialText: string;
   onComposeOpen(): void;
@@ -68,11 +69,11 @@ export function ThreadCard(props: {
       切去看别处不会丢（§2.7）。 */
   onComposeBlurAway(): void;
 }) {
-  const first = props.pings[0];
+  const first = props.comments[0];
 
   return (
     <article className={`thread-card${props.selected ? " selected" : ""}`}>
-      {/* 展开后 PingCard 自己的按钮里也带着同一段原文（单条 ping 的 thread 尤其明显），
+      {/* 展开后 CommentCard 自己的按钮里也带着同一段原文（单条评论的 thread 尤其明显），
           aria-label 覆盖（而非追加）这个按钮的可访问名，避免和内层撞车；
           可见摘要文字不受影响，任何状态下都照常渲染。 */}
       <button
@@ -88,18 +89,18 @@ export function ThreadCard(props: {
 
       {props.selected && (
         <ul className="thread-messages">
-          {props.pings.map((ping) => (
-            <PingCard
-              key={ping.pingIdx}
-              ping={ping}
+          {props.comments.map((comment) => (
+            <CommentCard
+              key={comment.commentIdx}
+              comment={comment}
               currentVersionIdx={props.currentVersionIdx}
-              acknowledged={props.state.acknowledgedPingIdx >= ping.pingIdx}
-              selected={props.selectedPingIdx === ping.pingIdx}
-              onSelect={() => props.onSelectPing?.(ping.pingIdx)}
-              onEdit={() => props.onEditPing(ping)}
+              acknowledged={props.state.acknowledgedCommentIdx >= comment.commentIdx}
+              selected={props.selectedCommentIdx === comment.commentIdx}
+              onSelect={() => props.onSelectComment?.(comment.commentIdx)}
+              onEdit={() => props.onEditComment(comment)}
             />
           ))}
-          {props.pongs.map((pong) => <PongCard key={pong.pongIdx} pong={pong} />)}
+          {props.replies.map((reply) => <ReplyCard key={reply.replyIdx} reply={reply} />)}
           {props.drafts.map((draft) => (
             <li key={draft.draftId}>
               <DraftBlock
