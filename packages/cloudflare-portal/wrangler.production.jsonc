@@ -24,7 +24,8 @@
   ],
   "secrets": {
     "required": [
-      "GATEWAY_OIDC_CLIENT_SECRET"
+      "GATEWAY_OIDC_CLIENT_SECRET",
+      "MARKDOWN_OPERATOR_HMAC_KEY"
     ]
   },
   "vars": {
@@ -46,6 +47,12 @@
     {
       "binding": "BUNDLES",
       "bucket_name": "unidocs-portal-bundles"
+    }
+  ],
+  "services": [
+    {
+      "binding": "ADMIN_MARKDOWN_SERVICE",
+      "service": "unidocs-markdown"
     }
   ],
   "observability": {

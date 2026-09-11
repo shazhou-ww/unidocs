@@ -14,6 +14,15 @@
 - receipt 验证使用 Web Crypto HMAC verify，拒绝未知/缺失字段、错误 challenge/key/signature、identity/document type/config ETag 错配、未来签发和过期回执。probe 不包含管理员身份、document 内容、CAS capability、cookie 或 bearer token。
 - 当前只完成 cloud-neutral wire primitive 与 6 个篡改/过期测试。下一切片将其接入现有 bounded Service Binding transport，严格解析 discovery/receipt，并在验证全通过后才以 D1 原子写发布短期 validation record 与 audit；失败不创建 validation record。
 
+### Operator validation 本地纵向闭环（2026-09-11）
+
+已在本地完成 `createOperatorValidation` 与 `getOperatorValidation`：Admin v1 本地完整 operation 为 **21/26**，生产仍为 **19/26**。`0006_operator_validations.sql`、Markdown Operator endpoint、Portal Service Binding 与两个 Worker 的共享 secret 尚未部署。
+
+- probe HMAC wire 已下沉到 cloud-neutral `@unidocs/service-auth`，Portal 与 Markdown 共用同一字节实现。Markdown 暴露 `/.well-known/unidocs-operator` 与 `/operator/probe`，严格有界解析 JSON、验证 request 签名/时间/identity/document type/config ETag，再返回 domain-separated signed receipt；缺 secret/document type 时 503 fail closed。
+- 第一方目标固定为 `unidocs-markdown` Service Binding，无公网 fetch fallback。生产 Portal D1 只读确认 Markdown registration 为 `dt-292d2d45-fbd9-4392-99cd-f46474679667`、latest contract revision 0；Markdown descriptor 从部署配置声明该精确 document type 和 revision 0，强 config ETag 由完整 descriptor SHA-256 派生。
+- validation service 在任何网络 I/O 前完成幂等 replay、target key 与 document type/contract 查询；discovery 与 probe 全部通过后才发布 15 分钟 immutable validation。D1 batch 原子写 validation、receipt 与 `operator.validation_passed` audit；失败只写脱敏 phase audit，不创建 validation/receipt；过期 validation 对 GET 隐藏。持久化故障不伪装成对端验证失败。
+- 验证：portal-service 326 个测试、Cloudflare Portal 119 个测试、Admin client 11 个 transport tests、Markdown Worker 6 个测试、service-auth 105 个测试、真实 D1/HTTP 4 个 validation 集成测试、真实双 Worker Service Binding 签名交换 2 个集成测试、全仓 typecheck、Markdown/Portal production-shaped dry-run 与 `git diff --check` 通过。下一步先提交 checkpoint，再安装同一随机 256-bit secret 到两个 Worker、部署 Markdown、应用 migration、部署 Portal 并做匿名/真实 validation smoke。
+
 ### View bundle 纵向闭环（2026-09-11）
 
 已上线 `uploadViewBundle`、`listViewBundles`、`getViewBundle`、`updateViewBundleMetadata` 纵向闭环：service、D1 repository、migration、HTTP/Worker、R2 ingress、client 与 WebUI 均已接通。Admin v1 完整 operation 增至 **19/26**，Phase 4 为 Type Card **4/4**、View bundle **4/4**；生产 Worker 版本 `eae033db-f724-4221-bf97-3fe5c62b2ba9`。
@@ -349,7 +358,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 固定 ZIP 首批 adversarial fixtures：路径、重复条目、symlink、CRC、截断、伪造大小、zip bomb 和取消行为。
 - [x] 固定第一方 Operator Service Binding 的目标、redirect、超时、大小及凭据隔离 fixtures。
 - [x] 用 D1 spike 验证 bootstrap、身份唯一绑定、成员移除、session 轮换/撤销和单次登录 state。
-- [ ] 完成剩余安全 fixtures：ZIP 目录/额外字段歧义、实际资源内容安全、外部 Operator SSRF 与签名 probe。
+- [ ] 完成剩余安全 fixtures：ZIP 目录/额外字段歧义和外部 Operator SSRF；第一方签名 probe/receipt 已固定并通过真实 Service Binding 测试。
 - [ ] 完成第 3 节全部六项技术决策；已验证结论已写入本计划，未决项见“Phase 0 剩余门禁”。
 
 - [ ] **退出条件**：原子写、hash 一致性和安全限制都有可执行测试；没有未决项会改变对应功能 D1 主键或公开 contract。
@@ -408,7 +417,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 - [x] 实现 Operator discovery descriptor 的 identity、配置 ETag、类型声明和 revisions 业务校验。
 - [x] 验证第一方 Service Binding 受控传输与完整 I/O deadline；当前为未接入 handler 的实现切片。
-- [ ] 实现外部 Operator 受控出口、签名 probe/回执验证、TTL record 和 candidate creation。
+- [ ] 实现 Operator validation 与 candidate creation；第一方 Markdown 的签名 probe/回执、15 分钟 TTL validation record 和 create/get handler 已在本地完成，持久 candidate 与外部 Operator 受控出口尚待实现。
 - [ ] 实现 Operator list/get/metadata patch。
 - [x] 实现管理员 bootstrap/list/get/add/remove 的真实 application service 与 adapter。
 - [x] 在真实成员 mutation 中实现不可删除自身/最后管理员约束，并以真实 D1 并发互删测试固定。
@@ -419,7 +428,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 ### Phase 6：Cloudflare adapter 与认证入口
 
 - [x] 建立认证部分 D1 migration 和 repository adapter，并通过真实 D1 集成测试。
-- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter；document type、Document Contract、Type Card、View bundle、管理员与 audit 已接入，Operator 尚待实现。
+- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter；document type、Document Contract、Type Card、View bundle、管理员、audit 与 Operator validation 已接入，持久 Operator candidate 尚待实现。
 - [x] 建立 R2 adapter、bundle ingress 与独立稳定 bundle origin；Type Card/View adapter 与 ingress 已上线，custom domain 的 DNS/TLS/404 smoke 已通过，真实 View 对象等待首次人工上传验收。
 - [x] 实现 Bearer 优先且失败不 fallback cookie，并通过 Node/workerd 测试。
 - [x] 复用 Gateway Google client 配置，固定 Portal origin 和独立 callback；用户已确认回调登记完成。
@@ -434,7 +443,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
 - [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
 - [x] 通过正式 Worker adapter 暴露 Document Contract append/list/get 三个 handler，涵盖严格 JSON、并发 idx、幂等和原子 registration/audit 更新。
-- [ ] 暴露其余 7 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
+- [ ] 暴露其余 contract handler，并完成整体 CORS/OpenAPI surface 验证；Operator validation 两个 handler 已在本地接入，当前本地剩余 5 个、生产剩余 7 个。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。

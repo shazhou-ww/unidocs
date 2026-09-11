@@ -58,6 +58,15 @@ describe("bound Operator transport", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  test("returns only the fixed probe signature response header", async () => {
+    const { transport, fetcher } = setup();
+    fetcher.mockResolvedValue(Response.json({ protocol: "receipt" }, { headers: {
+      "x-unidocs-probe-signature": "a".repeat(43), "x-unidocs-other": "hidden", "set-cookie": "secret=value",
+    } }));
+    const response = await transport.probe(baseUrl, new TextEncoder().encode("{}"), {});
+    expect(response.proofHeaders).toEqual({ "x-unidocs-probe-signature": "a".repeat(43) });
+  });
+
   test.each([
     { "x-unidocs-cas-authorization": "secret" },
     { "x-unidocs-platform-authorization": "secret" },

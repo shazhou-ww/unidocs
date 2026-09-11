@@ -17,6 +17,7 @@ export interface OperatorServiceTarget {
 export interface OperatorTransportResponse {
   readonly body: Uint8Array;
   readonly etag: string | null;
+  readonly proofHeaders: Readonly<Record<string, string>>;
 }
 
 function canonicalBaseUrl(value: string): string {
@@ -100,7 +101,13 @@ export function createBoundOperatorTransport(targets: readonly OperatorServiceTa
         content.set(chunk.value, size - chunk.value.byteLength);
       }
       complete = true;
-      return { body: content.slice(0, size), etag: response.headers.get("etag") };
+      const probeSignature = operation === "probe" ? response.headers.get("x-unidocs-probe-signature") : null;
+      if (probeSignature !== null && !/^[A-Za-z0-9_-]{43}$/.test(probeSignature)) throw new OperatorTransportError();
+      return {
+        body: content.slice(0, size),
+        etag: response.headers.get("etag"),
+        proofHeaders: probeSignature === null ? {} : { "x-unidocs-probe-signature": probeSignature },
+      };
     } catch {
       throw new OperatorTransportError();
     } finally {

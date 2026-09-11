@@ -7,6 +7,8 @@ test("Worker fails closed before touching D1 when Google credentials are absent"
     const env = {
       get BUNDLES(): never { throw new Error("Bundle storage must not be touched"); },
       get DB(): never { throw new Error("Database must not be touched"); },
+      get ADMIN_MARKDOWN_SERVICE(): never { throw new Error("Operator service must not be touched"); },
+      get MARKDOWN_OPERATOR_HMAC_KEY(): never { throw new Error("Operator key must not be touched"); },
       PORTAL_ORIGIN: "https://unidocs.shazhou.work",
       BUNDLE_ORIGIN: "https://bundles.shazhou.work",
       GATEWAY_OIDC_ISSUER: "https://accounts.google.com",

@@ -72,6 +72,11 @@ export const AdminApiErrorMap = {
     message: "A current Operator validation is required",
     data: AdminErrorDataSchema,
   },
+  OPERATOR_VALIDATION_FAILED: {
+    status: 422,
+    message: "The Operator could not be validated",
+    data: AdminErrorDataSchema,
+  },
   IDEMPOTENCY_CONFLICT: {
     status: 409,
     message: "The idempotency key was used with a different request",
@@ -284,7 +289,9 @@ export const updateViewBundleMetadataContract = conditionalMutationProcedure
   }).readonly())
   .output(ViewBundleMutationResultSchema);
 
-export const createOperatorValidationContract = idempotentMutationProcedure
+export const createOperatorValidationContract = idempotentMutationProcedure.errors({
+  OPERATOR_VALIDATION_FAILED: AdminApiErrorMap.OPERATOR_VALIDATION_FAILED,
+})
   .route({
     method: "POST",
     path: `${AdminApiV1BasePath}/operator-validations`,

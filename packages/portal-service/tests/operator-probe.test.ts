@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createOperatorProbeRequest, signOperatorProbeReceipt, verifyOperatorProbeReceipt } from "../src/index.js";
+import { createOperatorProbeRequest, signOperatorProbeReceipt, verifyOperatorProbeReceipt, verifyOperatorProbeRequest } from "../src/index.js";
 
 const keyBytes = new TextEncoder().encode("0123456789abcdef0123456789abcdef");
 const otherKeyBytes = new TextEncoder().encode("abcdef0123456789abcdef0123456789");
@@ -26,7 +26,17 @@ describe("Operator signed probe", () => {
       expiresAt: request.body.expiresAt,
     };
     const signature = await signOperatorProbeReceipt(receipt, keyBytes);
+    expect(await verifyOperatorProbeRequest(request.body, request.signature, keyBytes, now)).toEqual(request.body);
     expect(await verifyOperatorProbeReceipt(receipt, signature, request.body, keyBytes, new Date("2026-09-11T12:00:30.000Z"))).toEqual(receipt);
+  });
+
+  test("rejects a tampered or expired request on the Operator side", async () => {
+    const request = await createOperatorProbeRequest({
+      challenge: new Uint8Array(32).fill(7), declaredOperatorId: "markdown-primary", documentType: "markdown",
+      configEtag: '"operator-v1"', issuedAt: now, ttlSeconds: 60, keyBytes,
+    });
+    await expect(verifyOperatorProbeRequest({ ...request.body, documentType: "psd" }, request.signature, keyBytes, now)).rejects.toMatchObject({ name: "OperatorProbeError" });
+    await expect(verifyOperatorProbeRequest(request.body, request.signature, keyBytes, new Date("2026-09-11T12:01:01.000Z"))).rejects.toMatchObject({ name: "OperatorProbeError" });
   });
 
   test.each(["challenge", "operator", "documentType", "etag"] as const)("rejects a receipt with a mismatched %s", async field => {

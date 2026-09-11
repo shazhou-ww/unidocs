@@ -21,6 +21,7 @@ CAPABILITY_ALGORITHM = "ES256"
 CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "1800"
 CAPABILITY_CLOCK_SKEW_SECONDS = "30"
+MARKDOWN_OPERATOR_DOCUMENT_TYPE = "dt-292d2d45-fbd9-4392-99cd-f46474679667"
 
 [exports.MarkdownEditor]
 type = "durable-object"
@@ -49,3 +50,5 @@ service = "unidocs-cas"
 #   CAPABILITY_TRUSTED_JWKS      doc-service identity public JWKS (pinned)
 #   CAS_STACK_TRUSTED_JWKS       only for non-URL dev issuers; production uses
 #                                RFC 8414 discovery from CAS_STACK_ISSUER
+#   MARKDOWN_OPERATOR_HMAC_KEY   64 lowercase hex characters shared only with
+#                                the Admin Portal Operator validation target

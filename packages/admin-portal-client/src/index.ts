@@ -5,6 +5,7 @@ import {
   type AdministratorMemberRecord,
   type AppendDocumentContractRequest,
   type CreateDocumentTypeRequest,
+  type CreateOperatorValidationRequest,
   type DocumentContractAppendResult,
   type DocumentContractRecord,
   type DocumentTypeMutationResult,
@@ -17,6 +18,7 @@ import {
   type ListDocumentContractsResponse,
   type ListTypeCardBundlesResponse,
   type ListViewBundlesResponse,
+  type OperatorValidation,
   type TypeCardBundleMutationResult,
   type TypeCardBundleRecord,
   type UpdateCandidateMetadataRequest,
@@ -64,6 +66,8 @@ export interface AdminPortalClient {
   listViewBundles(documentType: string, query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListViewBundlesResponse>;
   getViewBundle(viewBundleId: string): Promise<ViewBundleRecord>;
   updateViewBundleMetadata(viewBundleId: string, body: UpdateCandidateMetadataRequest, ifMatch: string, idempotencyKey?: string): Promise<ViewBundleMutationResult>;
+  createOperatorValidation(body: CreateOperatorValidationRequest, idempotencyKey?: string): Promise<OperatorValidation>;
+  getOperatorValidation(validationId: string): Promise<OperatorValidation>;
 }
 
 export interface AdminPortalClientConfig {
@@ -199,5 +203,9 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
     updateViewBundleMetadata: (viewBundleId, body, ifMatch, idempotencyKey = createIdempotencyKey()) => request<ViewBundleMutationResult>(`${AdminApiV1BasePath}/view-bundles/${encodeURIComponent(viewBundleId)}`, {
       method: "PATCH", headers: mutationHeaders({ "idempotency-key": idempotencyKey, "if-match": ifMatch }), body: JSON.stringify(body),
     }),
+    createOperatorValidation: (body, idempotencyKey = createIdempotencyKey()) => request<OperatorValidation>(`${AdminApiV1BasePath}/operator-validations`, {
+      method: "POST", headers: mutationHeaders({ "idempotency-key": idempotencyKey }), body: JSON.stringify(body),
+    }),
+    getOperatorValidation: validationId => request<OperatorValidation>(`${AdminApiV1BasePath}/operator-validations/${encodeURIComponent(validationId)}`),
   };
 }

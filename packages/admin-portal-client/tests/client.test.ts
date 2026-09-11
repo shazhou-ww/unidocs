@@ -134,3 +134,17 @@ test("uploads, lists, reads, and updates View bundles", async () => {
   expect(fetcher.mock.calls[3][1]).toMatchObject({ method: "PATCH", body: '{"name":"Next","description":"Notes"}' });
   expect(patchHeaders.get("if-match")).toBe('"sha256-old"');
 });
+
+test("creates and reads short-lived Operator validations", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => Response.json({ validationId: "validation-1" }));
+  const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher, getCsrfToken: () => "csrf", createIdempotencyKey: () => "validation-key" });
+  const body = { baseUrl: "https://operator.test", expectedDocumentType: "markdown", expectedConfigEtag: null };
+  await client.createOperatorValidation(body);
+  expect(String(fetcher.mock.calls[0][0])).toBe("https://portal.test/admin/api/v1/operator-validations");
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "POST", body: JSON.stringify(body), credentials: "include" });
+  const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+  expect(headers.get("x-csrf-token")).toBe("csrf");
+  expect(headers.get("idempotency-key")).toBe("validation-key");
+  await client.getOperatorValidation("validation/one");
+  expect(String(fetcher.mock.calls[1][0])).toBe("https://portal.test/admin/api/v1/operator-validations/validation%2Fone");
+});

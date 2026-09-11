@@ -25,6 +25,7 @@ import {
 } from "@unidocs/doctype-server-common";
 
 import { markdownDiscovery, markdownApiRequest, type MarkdownDiscoveryBindings } from "./discovery.js";
+import { markdownOperatorEndpoint, type MarkdownOperatorBindings } from "./operator-endpoint.js";
 
 const markdownFactory = createMarkdownDocumentType;
 const authConfig = new DocAuthConfigCache("markdown");
@@ -46,13 +47,15 @@ export const MarkdownOperator = createOperatorDO({
   },
 });
 
-interface Env extends EditorEnv, DocAuthBindings, MarkdownDiscoveryBindings {
+interface Env extends EditorEnv, DocAuthBindings, MarkdownDiscoveryBindings, MarkdownOperatorBindings {
   MARKDOWN_EDITOR: DurableObjectNamespace;
   MARKDOWN_OPERATOR: DurableObjectNamespace;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const operatorEndpoint = await markdownOperatorEndpoint(request, env);
+    if (operatorEndpoint) return operatorEndpoint;
     const discovery = markdownDiscovery(request, env);
     if (discovery) return discovery;
     return createDocTypeHandler({
