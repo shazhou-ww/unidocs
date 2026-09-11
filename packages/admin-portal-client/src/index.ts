@@ -16,10 +16,13 @@ import {
   type ListDocumentTypesResponse,
   type ListDocumentContractsResponse,
   type ListTypeCardBundlesResponse,
+  type ListViewBundlesResponse,
   type TypeCardBundleMutationResult,
   type TypeCardBundleRecord,
   type UpdateCandidateMetadataRequest,
   type UpdateDocumentTypeRequest,
+  type ViewBundleMutationResult,
+  type ViewBundleRecord,
 } from "@unidocs/protocol-admin-portal";
 
 export interface AdminPortalSession {
@@ -57,6 +60,10 @@ export interface AdminPortalClient {
   listTypeCardBundles(documentType: string, query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListTypeCardBundlesResponse>;
   getTypeCardBundle(typeCardBundleId: string): Promise<TypeCardBundleRecord>;
   updateTypeCardBundleMetadata(typeCardBundleId: string, body: UpdateCandidateMetadataRequest, ifMatch: string, idempotencyKey?: string): Promise<TypeCardBundleMutationResult>;
+  uploadViewBundle(file: Blob, metadata: { readonly name: string; readonly description: string }, idempotencyKey?: string): Promise<ViewBundleMutationResult>;
+  listViewBundles(documentType: string, query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListViewBundlesResponse>;
+  getViewBundle(viewBundleId: string): Promise<ViewBundleRecord>;
+  updateViewBundleMetadata(viewBundleId: string, body: UpdateCandidateMetadataRequest, ifMatch: string, idempotencyKey?: string): Promise<ViewBundleMutationResult>;
 }
 
 export interface AdminPortalClientConfig {
@@ -175,6 +182,21 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
     },
     getTypeCardBundle: typeCardBundleId => request<TypeCardBundleRecord>(`${AdminApiV1BasePath}/type-card-bundles/${encodeURIComponent(typeCardBundleId)}`),
     updateTypeCardBundleMetadata: (typeCardBundleId, body, ifMatch, idempotencyKey = createIdempotencyKey()) => request<TypeCardBundleMutationResult>(`${AdminApiV1BasePath}/type-card-bundles/${encodeURIComponent(typeCardBundleId)}`, {
+      method: "PATCH", headers: mutationHeaders({ "idempotency-key": idempotencyKey, "if-match": ifMatch }), body: JSON.stringify(body),
+    }),
+    uploadViewBundle(file, metadata, idempotencyKey = createIdempotencyKey()) {
+      const params = new URLSearchParams({ name: metadata.name, description: metadata.description });
+      const headers = mutationHeaders({ "content-type": "application/zip", "idempotency-key": idempotencyKey });
+      return request<ViewBundleMutationResult>(`${AdminApiV1BasePath}/view-bundles?${params}`, { method: "POST", headers, body: file });
+    },
+    listViewBundles(documentType, query = {}) {
+      const params = new URLSearchParams({ documentType });
+      if (query.limit !== undefined) params.set("limit", String(query.limit));
+      if (query.cursor !== undefined) params.set("cursor", query.cursor);
+      return request<ListViewBundlesResponse>(`${AdminApiV1BasePath}/view-bundles?${params}`);
+    },
+    getViewBundle: viewBundleId => request<ViewBundleRecord>(`${AdminApiV1BasePath}/view-bundles/${encodeURIComponent(viewBundleId)}`),
+    updateViewBundleMetadata: (viewBundleId, body, ifMatch, idempotencyKey = createIdempotencyKey()) => request<ViewBundleMutationResult>(`${AdminApiV1BasePath}/view-bundles/${encodeURIComponent(viewBundleId)}`, {
       method: "PATCH", headers: mutationHeaders({ "idempotency-key": idempotencyKey, "if-match": ifMatch }), body: JSON.stringify(body),
     }),
   };

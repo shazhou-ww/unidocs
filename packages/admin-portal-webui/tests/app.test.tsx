@@ -215,6 +215,51 @@ test("restores the Type Card tab, uploads a ZIP, previews the manifest, and edit
   vi.unstubAllGlobals();
 });
 
+test("restores the View bundle tab, exposes both entrypoints, uploads, and edits metadata", async () => {
+  window.history.replaceState({}, "", "/admin/document-types/markdown?tab=bundles");
+  const bundleId = `vb_${"b".repeat(64)}`;
+  const registration = { documentType: "markdown", internalName: "Markdown", enabled: false, latestDocumentContract: null, typeCardBundle: null, viewBundle: null, builtinOperator: null, etag: '"sha256-registration"', updatedAt: "2026-09-11T00:00:00.000Z" };
+  let candidateName = "Primary view";
+  const record = () => ({
+    viewBundleId: bundleId, bundleUrl: `https://bundles.unidocs.test/view-bundles/${bundleId}/`, name: candidateName, description: "Candidate",
+    manifest: { protocol: "unidocs-view-bundle/v1", documentType: "markdown", entrypoints: { interactive: "view.html", thumbnail: "thumbnail.html" }, supportedDocumentContractIdxs: [0, 2] },
+    size: 2048, uploadedAt: "2026-09-11T00:00:00.000Z", etag: candidateName === "Primary view" ? '"sha256-view"' : '"sha256-updated"',
+  });
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.includes("/view-bundles?") && init?.method === "POST") return Response.json({ viewBundleId: bundleId, etag: '"sha256-view"' }, { status: 201 });
+    if (url.endsWith(`/view-bundles/${bundleId}`) && init?.method === "PATCH") { candidateName = "Updated view"; return Response.json({ viewBundleId: bundleId, etag: '"sha256-updated"' }); }
+    if (url.endsWith(`/view-bundles/${bundleId}`)) return Response.json(record());
+    if (url.includes("/view-bundles?")) { const { manifest, ...item } = record(); return Response.json({ items: [{ ...item, documentType: "markdown", supportedDocumentContractIdxs: manifest.supportedDocumentContractIdxs }], nextCursor: null }); }
+    if (url.endsWith("/document-types/markdown")) return Response.json(registration);
+    return Response.json({ items: [], nextCursor: null });
+  });
+  Object.defineProperty(document, "cookie", { configurable: true, value: "__Host-unidocs_admin_csrf=csrf" });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "Markdown" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "界面包" })).toHaveAttribute("aria-selected", "true");
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(candidateName) }));
+  expect(await screen.findByText("revision 0 · revision 2")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /view.html/ })).toHaveAttribute("href", `${record().bundleUrl}view.html`);
+  expect(screen.getByRole("link", { name: /thumbnail.html/ })).toHaveAttribute("href", `${record().bundleUrl}thumbnail.html`);
+  fireEvent.click(screen.getByRole("button", { name: "上传候选项" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "候选项名称" }), { target: { value: "Primary view" } });
+  const file = new File(["zip"], "view.zip", { type: "application/zip" });
+  fireEvent.change(screen.getByLabelText("界面包 ZIP"), { target: { files: [file] } });
+  fireEvent.click(screen.getByRole("button", { name: "上传并验证" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST" && init.body === file)).toBe(true));
+  fireEvent.click(await screen.findByRole("button", { name: "编辑信息" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "候选项名称" }), { target: { value: "Updated view" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存信息" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true));
+  const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH")!;
+  expect(new Headers(patchCall[1]?.headers).get("if-match")).toBe('"sha256-view"');
+  expect(window.location.pathname + window.location.search).toBe("/admin/document-types/markdown?tab=bundles");
+  vi.unstubAllGlobals();
+});
+
 test("renders a useful access denial only after the session probe fails", async () => {
   window.history.replaceState({}, "", "/admin/access-denied?code=forbidden&requestId=request-1");
   let rejectSession!: (reason: Error) => void;

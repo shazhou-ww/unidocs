@@ -79,7 +79,21 @@ describe("bundle manifest and content identity", () => {
     const result = await inspectBundleManifest(await archive(view), expectedView);
     expect(result.manifest).toEqual(view);
     expect(result.files).toHaveLength(4);
+    expect(result.assets?.map(({ path, contentType }) => ({ path, contentType }))).toEqual([
+      { path: "app.js", contentType: "text/javascript" },
+      { path: "thumbnail.html", contentType: "text/html" },
+      { path: "view.html", contentType: "text/html" },
+    ]);
+    expect(result.assets?.find(asset => asset.path === "app.js")?.bytes).toEqual(new TextEncoder().encode("export {};"));
     expect(result.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  test.each([
+    ["payload.exe", new Uint8Array([77, 90])],
+    ["fake.png", new TextEncoder().encode("not-png")],
+    ["broken.js", new Uint8Array([0xff])],
+  ] satisfies FixtureFile[])("rejects unsupported or malformed View resource %s", async (path, content) => {
+    await expect(inspectBundleManifest(await archive(view, [...viewFiles, [path, content]]), expectedView)).rejects.toBeInstanceOf(BundleZipError);
   });
 
   test("canonical identity ignores ZIP ordering and manifest whitespace/key order", async () => {

@@ -70,7 +70,11 @@ export class D1TypeCardBundleRepository implements TypeCardBundleRepository {
     }
     const candidate = await this.database.prepare("SELECT type_card_bundle_id FROM portal_type_card_bundles WHERE content_hash = ?")
       .bind(command.contentHash).first<{ type_card_bundle_id: string }>();
-    if (candidate) throw new TypeCardBundleOperationError("bundle_already_exists", { typeCardBundleId: candidate.type_card_bundle_id });
+    if (candidate) {
+      const replayed = await this.replay(command.context, command.key, command.fingerprint);
+      if (replayed) return { kind: "replay", result: replayed };
+      throw new TypeCardBundleOperationError("bundle_already_exists", { typeCardBundleId: candidate.type_card_bundle_id });
+    }
     const byContent = await this.database.prepare("SELECT type_card_bundle_id FROM portal_type_card_bundle_reservations WHERE content_hash = ?")
       .bind(command.contentHash).first<{ type_card_bundle_id: string }>();
     if (byContent) throw new TypeCardBundleOperationError("bundle_already_exists", { typeCardBundleId: byContent.type_card_bundle_id });

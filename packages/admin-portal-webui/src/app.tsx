@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, ExternalLink, FileText, Languages, LayoutTemplate, LoaderCircle, LogIn, LogOut, Menu, Pencil, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UploadCloud, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
-import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type TypeCardBundleListItem, type TypeCardBundleRecord } from "@unidocs/protocol-admin-portal";
+import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type TypeCardBundleListItem, type TypeCardBundleRecord, type ViewBundleListItem, type ViewBundleRecord } from "@unidocs/protocol-admin-portal";
 
 const auditActionLabels: Record<AdminAuditEvent["action"], string> = {
   "type_card_bundle.uploaded": "上传类型卡片包",
@@ -95,8 +95,8 @@ function errorMessage(error: unknown): string {
     if (error.code === "cannot_remove_self") return "不能移除当前登录的管理员。";
     if (error.code === "last_administrator") return "不能移除最后一位可登录管理员。";
     if (error.code === "precondition_failed") return "资源信息已发生变化，请刷新后重试。";
-    if (error.code === "bundle_already_exists") return "相同内容的类型卡片包已经存在，请编辑现有候选项。";
-    if (error.code === "bundle_invalid") return "ZIP 未通过类型卡片包安全校验。";
+    if (error.code === "bundle_already_exists") return "相同内容的 bundle 已经存在，请编辑现有候选项。";
+    if (error.code === "bundle_invalid") return "ZIP 未通过 bundle 安全校验。";
     return `${error.message}${error.requestId ? `（请求 ${error.requestId}）` : ""}`;
   }
   return "暂时无法连接管理服务。";
@@ -221,6 +221,15 @@ function AdminApp() {
   const [typeCardFile, setTypeCardFile] = useState<File | null>(null);
   const [typeCardName, setTypeCardName] = useState("");
   const [typeCardDescription, setTypeCardDescription] = useState("");
+  const [viewBundles, setViewBundles] = useState<readonly ViewBundleListItem[]>([]);
+  const [viewBundleCursor, setViewBundleCursor] = useState<string | null>(null);
+  const [selectedViewBundle, setSelectedViewBundle] = useState<ViewBundleRecord | null>(null);
+  const [viewBundlesLoading, setViewBundlesLoading] = useState(false);
+  const [uploadViewOpen, setUploadViewOpen] = useState(false);
+  const [editViewOpen, setEditViewOpen] = useState(false);
+  const [viewFile, setViewFile] = useState<File | null>(null);
+  const [viewName, setViewName] = useState("");
+  const [viewDescription, setViewDescription] = useState("");
   const [query, setQuery] = useState("");
   const [enabled, setEnabled] = useState<"all" | "true" | "false">("all");
   const [loading, setLoading] = useState(true);
@@ -285,6 +294,7 @@ function AdminApp() {
       setSelected(await client.getDocumentType(documentType));
       if (tab === "contracts") await loadContracts(documentType);
       if (tab === "cards") await loadTypeCardBundles(documentType);
+      if (tab === "bundles") await loadViewBundles(documentType);
     }
     catch (caught) { setError(errorMessage(caught)); }
     finally { setDetailLoading(false); }
@@ -336,14 +346,36 @@ function AdminApp() {
     finally { setTypeCardBundlesLoading(false); }
   }
 
+  async function loadViewBundles(documentType: string, cursor: string | null = null) {
+    setViewBundlesLoading(true);
+    setError(null);
+    try {
+      const page = await client.listViewBundles(documentType, { limit: 25, cursor: cursor ?? undefined });
+      startTransition(() => setViewBundles(current => cursor ? [...current, ...page.items] : page.items));
+      setViewBundleCursor(page.nextCursor);
+      if (!cursor) setSelectedViewBundle(null);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setViewBundlesLoading(false); }
+  }
+
+  async function openViewBundle(viewBundleId: string) {
+    setViewBundlesLoading(true);
+    setError(null);
+    try { setSelectedViewBundle(await client.getViewBundle(viewBundleId)); }
+    catch (caught) { setError(errorMessage(caught)); }
+    finally { setViewBundlesLoading(false); }
+  }
+
   function changeTypeTab(tab: DocumentTypeTab) {
     if (!selected) return;
     window.history.pushState({}, "", adminRoutePath({ view: "documentTypes", documentType: selected.documentType, tab }));
     setActiveTypeTab(tab);
     setSelectedContract(null);
     setSelectedTypeCardBundle(null);
+    setSelectedViewBundle(null);
     if (tab === "contracts" && contracts.length === 0) void loadContracts(selected.documentType);
     if (tab === "cards" && typeCardBundles.length === 0) void loadTypeCardBundles(selected.documentType);
+    if (tab === "bundles" && viewBundles.length === 0) void loadViewBundles(selected.documentType);
   }
 
   async function uploadTypeCardBundle(event: FormEvent) {
@@ -380,6 +412,44 @@ function AdminApp() {
       setEditTypeCardOpen(false);
       await loadTypeCardBundles(selected.documentType);
       await openTypeCardBundle(selectedTypeCardBundle.typeCardBundleId);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setSaving(false); }
+  }
+
+  async function uploadViewBundle(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !viewFile || !viewName.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await client.uploadViewBundle(viewFile, { name: viewName.trim(), description: viewDescription });
+      setUploadViewOpen(false);
+      setViewFile(null);
+      setViewName("");
+      setViewDescription("");
+      await loadViewBundles(selected.documentType);
+      await openViewBundle(created.viewBundleId);
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { setSaving(false); }
+  }
+
+  function beginEditViewBundle() {
+    if (!selectedViewBundle) return;
+    setViewName(selectedViewBundle.name);
+    setViewDescription(selectedViewBundle.description);
+    setEditViewOpen(true);
+  }
+
+  async function updateViewBundleMetadata(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !selectedViewBundle || !viewName.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await client.updateViewBundleMetadata(selectedViewBundle.viewBundleId, { name: viewName.trim(), description: viewDescription }, selectedViewBundle.etag);
+      setEditViewOpen(false);
+      await loadViewBundles(selected.documentType);
+      await openViewBundle(selectedViewBundle.viewBundleId);
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setSaving(false); }
   }
@@ -585,7 +655,14 @@ function AdminApp() {
                   {typeCardBundleCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadTypeCardBundles(selected.documentType, typeCardBundleCursor)}>加载更多</button></div>}
                   {selectedTypeCardBundle && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>VALIDATED CANDIDATE</span><h3>{selectedTypeCardBundle.name}</h3><p>{selectedTypeCardBundle.description || "没有管理员备注"}</p></div><button className="secondary-button" type="button" onClick={beginEditTypeCardBundle}><Pencil size={15} />编辑信息</button></div><div className="type-card-preview"><img src={new URL(selectedTypeCardBundle.manifest.sampleThumbnail, selectedTypeCardBundle.bundleUrl).href} alt={selectedTypeCardBundle.manifest.locales.en.sampleThumbnailAlt} /><div><span className="preview-icon"><img src={new URL(selectedTypeCardBundle.manifest.icon.kind === "svg" ? selectedTypeCardBundle.manifest.icon.path : selectedTypeCardBundle.manifest.icon.images[128], selectedTypeCardBundle.bundleUrl).href} alt="" /></span><strong>{selectedTypeCardBundle.manifest.locales.en.name}</strong><p>{selectedTypeCardBundle.manifest.locales.en.description}</p></div></div><dl><div><dt>Bundle ID</dt><dd><code>{selectedTypeCardBundle.typeCardBundleId}</code></dd></div><div><dt>Manifest protocol</dt><dd><code>{selectedTypeCardBundle.manifest.protocol}</code></dd></div><div><dt>可用语言</dt><dd className="locale-list"><Languages size={14} />{Object.keys(selectedTypeCardBundle.manifest.locales).join(" · ")}</dd></div><div><dt>Icon</dt><dd><code>{selectedTypeCardBundle.manifest.icon.kind === "svg" ? selectedTypeCardBundle.manifest.icon.path : Object.values(selectedTypeCardBundle.manifest.icon.images).join(", ")}</code></dd></div><div><dt>Sample thumbnail</dt><dd><code>{selectedTypeCardBundle.manifest.sampleThumbnail}</code></dd></div><div><dt>Bundle URL</dt><dd><a href={selectedTypeCardBundle.bundleUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedTypeCardBundle.bundleUrl}</a></dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selectedTypeCardBundle.etag)}</code></dd></div></dl></div>}
                 </section>}
-                {!["config", "contracts", "cards"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>该配置将在对应候选资源 API 上线后接入。</span></div>}
+                {activeTypeTab === "bundles" && <section className="config-section"><div className="section-heading"><div><h3>界面包候选项</h3><p>每个不可变版本包含隔离运行的交互与缩略图入口。</p></div><button className="primary-button" type="button" onClick={() => setUploadViewOpen(true)}><UploadCloud size={16} />上传候选项</button></div>
+                  <div className="bundle-history">{viewBundles.map(bundle => <button className={`bundle-row ${selectedViewBundle?.viewBundleId === bundle.viewBundleId ? "active" : ""}`} type="button" key={bundle.viewBundleId} onClick={() => void openViewBundle(bundle.viewBundleId)}><span className="bundle-mark"><LayoutTemplate size={17} /></span><span><strong>{bundle.name}</strong><code>{bundle.viewBundleId}</code><small>revisions {bundle.supportedDocumentContractIdxs.join(" · ")} · {Math.max(1, Math.ceil(bundle.size / 1024))} KB</small></span><ChevronRight size={16} /></button>)}</div>
+                  {!viewBundlesLoading && viewBundles.length === 0 && <div className="empty-state compact-empty"><LayoutTemplate size={26} /><strong>尚未上传界面包</strong><span>上传 ZIP 后会校验双入口、revision 与全部静态资源。</span></div>}
+                  {viewBundlesLoading && viewBundles.length === 0 && <div className="empty-state compact-empty"><LoaderCircle className="spin" size={24} /><strong>正在读取界面包</strong></div>}
+                  {viewBundleCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadViewBundles(selected.documentType, viewBundleCursor)}>加载更多</button></div>}
+                  {selectedViewBundle && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>VALIDATED CANDIDATE</span><h3>{selectedViewBundle.name}</h3><p>{selectedViewBundle.description || "没有管理员备注"}</p></div><button className="secondary-button" type="button" onClick={beginEditViewBundle}><Pencil size={15} />编辑信息</button></div><dl><div><dt>Bundle ID</dt><dd><code>{selectedViewBundle.viewBundleId}</code></dd></div><div><dt>Manifest protocol</dt><dd><code>{selectedViewBundle.manifest.protocol}</code></dd></div><div><dt>支持 revisions</dt><dd>{selectedViewBundle.manifest.supportedDocumentContractIdxs.map(idx => `revision ${idx}`).join(" · ")}</dd></div><div><dt>交互入口</dt><dd><a href={new URL(selectedViewBundle.manifest.entrypoints.interactive, selectedViewBundle.bundleUrl).href} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedViewBundle.manifest.entrypoints.interactive}</a></dd></div><div><dt>缩略图入口</dt><dd><a href={new URL(selectedViewBundle.manifest.entrypoints.thumbnail, selectedViewBundle.bundleUrl).href} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedViewBundle.manifest.entrypoints.thumbnail}</a></dd></div><div><dt>Bundle URL</dt><dd><a href={selectedViewBundle.bundleUrl} target="_blank" rel="noreferrer"><ExternalLink size={13} />{selectedViewBundle.bundleUrl}</a></dd></div><div><dt>ETag</dt><dd><code>{shortEtag(selectedViewBundle.etag)}</code></dd></div></dl></div>}
+                </section>}
+                {!["config", "contracts", "cards", "bundles"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>该配置将在对应候选资源 API 上线后接入。</span></div>}
               </div>
               <aside className="config-aside"><h3>启用准备度</h3><dl><div><dt>文档契约</dt><dd>{selected.latestDocumentContract ? `revision ${selected.latestDocumentContract.documentContractIdx}` : "缺失"}</dd></div><div><dt>类型卡片包</dt><dd>{selected.typeCardBundle?.name ?? "缺失"}</dd></div><div><dt>视图包</dt><dd>{selected.viewBundle?.name ?? "缺失"}</dd></div><div><dt>处理服务</dt><dd>{selected.builtinOperator?.name ?? "缺失"}</dd></div></dl></aside>
             </div>
@@ -703,6 +780,16 @@ function AdminApp() {
     {editTypeCardOpen && selectedTypeCardBundle && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setEditTypeCardOpen(false); }}>
       <section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-card-title"><div className="modal-header"><div><span>ADMIN METADATA</span><h2 id="edit-card-title">编辑候选项信息</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setEditTypeCardOpen(false)} aria-label="关闭"><X size={18} /></button></div>
         <form onSubmit={updateTypeCardBundleMetadata}><label><span>候选项名称</span><input autoFocus maxLength={256} value={typeCardName} onChange={event => setTypeCardName(event.target.value)} /></label><label><span>管理员备注</span><textarea className="metadata-textarea" maxLength={2048} value={typeCardDescription} onChange={event => setTypeCardDescription(event.target.value)} /></label><p>只更新管理员 metadata；bundle 内容、URL 与 manifest 保持不变。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setEditTypeCardOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !typeCardName.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Pencil size={16} />}保存信息</button></div></form>
+      </section>
+    </div>}
+    {uploadViewOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setUploadViewOpen(false); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="upload-view-title"><div className="modal-header"><div><span>VALIDATE IMMUTABLE BUNDLE</span><h2 id="upload-view-title">上传界面包</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setUploadViewOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <form onSubmit={uploadViewBundle}><label><span>候选项名称</span><input autoFocus maxLength={256} value={viewName} onChange={event => setViewName(event.target.value)} placeholder="例如：Markdown 主界面" /></label><label><span>管理员备注</span><textarea className="metadata-textarea" maxLength={2048} value={viewDescription} onChange={event => setViewDescription(event.target.value)} placeholder="仅供管理员识别，不进入 manifest" /></label><label className="file-control"><span>界面包 ZIP</span><input aria-label="界面包 ZIP" type="file" accept=".zip,application/zip" onChange={event => setViewFile(event.target.files?.[0] ?? null)} /></label><p>服务端将验证双 HTML 入口、已登记 revisions 与静态资源 allowlist；成功后内容不可修改。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setUploadViewOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !viewName.trim() || !viewFile}>{saving ? <LoaderCircle className="spin" size={16} /> : <UploadCloud size={16} />}上传并验证</button></div></form>
+      </section>
+    </div>}
+    {editViewOpen && selectedViewBundle && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setEditViewOpen(false); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-view-title"><div className="modal-header"><div><span>ADMIN METADATA</span><h2 id="edit-view-title">编辑界面包信息</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setEditViewOpen(false)} aria-label="关闭"><X size={18} /></button></div>
+        <form onSubmit={updateViewBundleMetadata}><label><span>候选项名称</span><input autoFocus maxLength={256} value={viewName} onChange={event => setViewName(event.target.value)} /></label><label><span>管理员备注</span><textarea className="metadata-textarea" maxLength={2048} value={viewDescription} onChange={event => setViewDescription(event.target.value)} /></label><p>只更新管理员 metadata；bundle 内容、入口、URL 与 revisions 保持不变。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setEditViewOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !viewName.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Pencil size={16} />}保存信息</button></div></form>
       </section>
     </div>}
   </div>;

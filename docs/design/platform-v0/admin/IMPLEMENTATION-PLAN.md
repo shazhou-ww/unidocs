@@ -6,6 +6,16 @@
 
 ## 当前进展与决策
 
+### View bundle 本地纵向闭环（2026-09-11）
+
+已在本地完成 `uploadViewBundle`、`listViewBundles`、`getViewBundle`、`updateViewBundleMetadata` 纵向闭环：service、D1 repository、migration、HTTP/Worker、R2 ingress、client 与 WebUI 均已接通。本地完整 operation 为 **19/26**，Phase 4 为 Type Card **4/4**、View bundle **4/4**；生产仍为 **15/26**，`0005_view_bundles.sql` 与新 Worker 尚未部署。
+
+- View ZIP 保留全部已扫描资源字节，并按扩展名与实际内容固定 allowlist：严格 UTF-8 HTML/CSS/JS、严格 JSON、安全 SVG、实际 PNG/JPEG/WebP，以及带正确文件签名的 WOFF/WOFF2；未知扩展、伪装图片、非法 UTF-8、BOM/NUL 文本均拒绝。manifest 要求不同 HTML 入口、规范路径、无重复 revisions，supported revisions 必须来自 D1 对 manifest document type 的真实查询。
+- View 对象使用完整内容 SHA-256 身份 `vb_<64 lowercase hex>`，canonical manifest 与全部已验证资源写入 `view-bundles/{id}/`，每个对象携带固定 MIME、SHA-256 和一年 immutable cache metadata。service 在 reservation replay 时不写对象，metadata 更新只改变 name/description/ETag。
+- D1 对 content hash 与 actor/idempotency key 建立唯一 reservation；R2 写完后 candidate、receipt、reservation 消费与 audit 在一个 batch 发布。同 key publish 竞争窗口会再次读取 receipt 后重放，不误报重复内容；该修复也同步覆盖 Type Card。metadata PATCH 使用 If-Match 与内部 revision 条件更新。
+- bundle ingress 仅接受完整 View hash 路径与固定 MIME。HTML CSP 只允许当前 immutable bundle 根路径的 script/style/image/font，禁止 connect/worker/object，使用不含 `allow-same-origin` 的 `sandbox allow-scripts`，并仅允许 Portal origin 嵌入。WebUI 的“界面包”tab 提供候选列表、双入口/revision/URL 详情、ZIP upload 和 metadata 编辑，直达 `?tab=bundles` 可刷新恢复。
+- 验证：portal-service 315 个测试、Cloudflare Portal 118 个测试、Admin client 10 个 transport tests、WebUI 15 个组件测试、真实 D1/HTTP 4 个 View 集成测试、两类 bundle 并发集成测试、相关 typecheck、Worker dry-run 与 `git diff --check` 通过。生产 migration、部署、匿名 API/ingress smoke 和一次真人上传仍待执行。
+
 ### Type Card bundle 纵向闭环（2026-09-11）
 
 已上线 `uploadTypeCardBundle`、`listTypeCardBundles`、`getTypeCardBundle`、`updateTypeCardBundleMetadata`，Admin v1 完整 operation 总数增至 **15/26**，Phase 4 为 Type Card **4/4**、View bundle **0/4**；生产 Worker 版本 `f2faecd8-dfb0-4118-93af-2b4fc6bdd73f`。独立 Portal D1 已应用 `0004_type_card_bundles.sql`，生产 candidate/reservation 初始均为 0 行，部署和 smoke 未自动上传 bundle。
@@ -373,7 +383,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 4：Type Card 与 View bundle
 
-- 当前进度：Type Card 4/4 个 operation 已上线；View bundle 0/4，Phase 合计 4/8。
+- 当前进度：Type Card 4/4 已上线；View bundle 4/4 已在本地完成、生产 0/4，Phase 本地合计 8/8、生产 4/8。
 - [x] 实现有界 ZIP 扫描、zip-slip/zip-bomb/重复路径防护；当前压缩输入最多暂存 8 MiB，不是无限大小流式 ingestion。
 - [x] 校验 Type Card manifest、canonical locale、图标五尺寸文件引用和 sample thumbnail 引用。
 - [x] 校验 Type Card 图标/thumbnail 的真实 PNG/JPEG/WebP 内容、像素尺寸及 SVG 安全性。
@@ -381,7 +391,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [ ] 校验 MIME allowlist、HTML/JS/CSS 及资源加载安全策略；Type Card 图片/manifest allowlist 与隔离 ingress 已完成，View 执行资源仍待实现。
 - [x] 计算 canonical manifest 与资源文件清单的内容身份，验证 Node/Workers 一致性。
 - [ ] 建立 R2 reservation/cleanup，写入不可变对象并持久化 canonical `bundleUrl`；Type Card reservation/write/publish 已完成，过期 reservation 与孤儿对象 GC 尚待实现。
-- [ ] 实现两类 bundle 的 upload/list/get/metadata patch；Type Card 四个 operation 已完成，View 四个 operation 尚待实现。
+- [x] 实现两类 bundle 的 upload/list/get/metadata patch；Type Card 已上线，View 已完成本地纵向闭环并等待部署。
 
 - [ ] **退出条件**：8 个 bundle operation 通过；重复内容、失败清理、不可变缓存 header 和恶意 ZIP fixtures 通过。
 
@@ -415,17 +425,17 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
 - [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
 - [x] 通过正式 Worker adapter 暴露 Document Contract append/list/get 三个 handler，涵盖严格 JSON、并发 idx、幂等和原子 registration/audit 更新。
-- [ ] 暴露其余 11 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
+- [ ] 暴露其余 contract handler，并完成整体 CORS/OpenAPI surface 验证；View 四个 handler 已在本地接入，当前本地剩余 7 个、生产剩余 11 个。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。
 
 ### Phase 7：Admin client 与真实 WebUI
 
-- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、Document Contract append/list/get、Type Card upload/list/get/metadata patch、administrator list/get/add/remove 与 audit list transport。
-- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置、Document Contract、Type Card、管理员和 audit 已上线，View bundle/Operator tab 待真实 API。
+- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、Document Contract append/list/get、Type Card/View bundle upload/list/get/metadata patch、administrator list/get/add/remove 与 audit list transport。
+- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置、Document Contract、Type Card、管理员和 audit 已上线，View bundle tab 已在本地完成，Operator tab 待真实 API。
 - [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用状态、Type Card upload/metadata mutation 状态与稳定错误展示，细粒度上传进度和全部冲突恢复待实现。
-- [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
+- [x] bundle 详情明确展示 interactive/thumbnail 两个入口。
 - [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。
 - [x] 建立 refresh-safe 前端路由；page/detail/tab URL、Worker 鉴权 shell fallback、刷新和前进/后退已通过测试及生产浏览器验收。
 

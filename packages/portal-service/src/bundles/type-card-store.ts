@@ -6,7 +6,7 @@ export const IMMUTABLE_BUNDLE_CACHE_CONTROL = "public, max-age=31536000, immutab
 export interface BundleObjectWrite {
   readonly key: string;
   readonly bytes: Uint8Array;
-  readonly contentType: "application/json" | "image/svg+xml" | "image/png" | "image/jpeg" | "image/webp";
+  readonly contentType: "application/json" | "text/html" | "text/css" | "text/javascript" | "image/svg+xml" | "image/png" | "image/jpeg" | "image/webp" | "font/woff" | "font/woff2";
   readonly cacheControl: string;
   readonly sha256: string;
 }

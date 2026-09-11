@@ -12,6 +12,16 @@ export interface TypeCardBundleAsset extends TypeCardAssetInfo {
   readonly bytes: Uint8Array;
 }
 
+export type ViewBundleContentType = "text/html" | "text/css" | "text/javascript" | "application/json" | "image/svg+xml" | "image/png" | "image/jpeg" | "image/webp" | "font/woff" | "font/woff2";
+
+export interface ViewBundleAsset {
+  readonly path: string;
+  readonly bytes: Uint8Array;
+  readonly contentType: ViewBundleContentType;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
 export interface BundleManifestInspection {
   readonly kind: BundleKind;
   readonly manifest: TypeCardBundleManifestV1 | ViewBundleManifestV1;
@@ -19,13 +29,48 @@ export interface BundleManifestInspection {
   readonly contentHash: string;
   readonly archiveBytes: number;
   readonly files: readonly BundleZipFile[];
-  readonly assets?: readonly TypeCardBundleAsset[];
+  readonly assets?: readonly (TypeCardBundleAsset | ViewBundleAsset)[];
+}
+
+function inspectViewAsset(path: string, bytes: Uint8Array): ViewBundleAsset {
+  const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
+  const textTypes = new Map([
+    [".html", "text/html"],
+    [".css", "text/css"],
+    [".js", "text/javascript"],
+    [".mjs", "text/javascript"],
+  ] as const);
+  const textType = textTypes.get(extension as ".html" | ".css" | ".js" | ".mjs");
+  if (textType) {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (text.includes("\0") || text.startsWith("\ufeff")) throw new BundleZipError();
+    return { path, bytes, contentType: textType, width: null, height: null };
+  }
+  if (extension === ".json") {
+    parseStrictJson(bytes);
+    return { path, bytes, contentType: "application/json", width: null, height: null };
+  }
+  if ([".svg", ".png", ".jpg", ".jpeg", ".webp"].includes(extension)) {
+    return { path, bytes, ...inspectTypeCardAsset(path, bytes) };
+  }
+  if (extension === ".woff" && bytes.length >= 4 && new TextDecoder().decode(bytes.subarray(0, 4)) === "wOFF") {
+    return { path, bytes, contentType: "font/woff", width: null, height: null };
+  }
+  if (extension === ".woff2" && bytes.length >= 4 && new TextDecoder().decode(bytes.subarray(0, 4)) === "wOF2") {
+    return { path, bytes, contentType: "font/woff2", width: null, height: null };
+  }
+  throw new BundleZipError();
 }
 
 export async function inspectBundleManifest(
   source: ReadableStream<Uint8Array>,
-  expected: { readonly kind: BundleKind; readonly documentType?: string; readonly documentContractIdxs: readonly number[] },
+  expected: {
+    readonly kind: BundleKind;
+    readonly documentType?: string;
+    readonly documentContractIdxs: readonly number[] | ((documentType: string) => Promise<readonly number[]>);
+  },
 ): Promise<BundleManifestInspection> {
+  let revisionLookupError: unknown;
   try {
     const manifestPath = expected.kind === "type-card" ? "unidocs-type-card.json" : "unidocs-view.json";
     const otherManifestPath = expected.kind === "type-card" ? "unidocs-view.json" : "unidocs-type-card.json";
@@ -34,7 +79,7 @@ export async function inspectBundleManifest(
     const contents = new Map<string, Uint8Array>();
     const files = await scanBundleZip(source, {}, (file, content) => {
       if (file.path === otherManifestPath) throw new BundleZipError();
-      if (expected.kind === "type-card") contents.set(file.path, content);
+      contents.set(file.path, content);
       if (file.path !== manifestPath) return;
       if (file.size > 65_536) throw new BundleZipError();
       rawManifest = parseStrictJson(content);
@@ -50,13 +95,27 @@ export async function inspectBundleManifest(
       const file = fileIndex.get(path);
       if (!file || file.size === 0 || !extensions.some(extension => path.endsWith(extension))) throw new BundleZipError();
     }
-    let assets: readonly TypeCardBundleAsset[] | undefined;
+    let assets: readonly (TypeCardBundleAsset | ViewBundleAsset)[] | undefined;
     if (manifest.protocol === "unidocs-view-bundle/v1") {
       requireFile(manifest.entrypoints.interactive, [".html"]);
       requireFile(manifest.entrypoints.thumbnail, [".html"]);
       const revisions = new Set(manifest.supportedDocumentContractIdxs);
-      const available = new Set(expected.documentContractIdxs);
+      let documentContractIdxs: readonly number[];
+      try {
+        documentContractIdxs = typeof expected.documentContractIdxs === "function"
+          ? await expected.documentContractIdxs(manifest.documentType)
+          : expected.documentContractIdxs;
+      } catch (error) {
+        revisionLookupError = error;
+        throw error;
+      }
+      const available = new Set(documentContractIdxs);
       if (revisions.size !== manifest.supportedDocumentContractIdxs.length || [...revisions].some(revision => !available.has(revision))) throw new BundleZipError();
+      assets = files.filter(file => file.path !== manifestPath).map(file => {
+        const bytes = contents.get(file.path);
+        if (!bytes) throw new BundleZipError();
+        return inspectViewAsset(file.path, bytes);
+      });
     } else {
       for (const locale of Object.keys(manifest.locales)) {
         if (Intl.getCanonicalLocales(locale)[0] !== locale) throw new BundleZipError();
@@ -91,6 +150,7 @@ export async function inspectBundleManifest(
     const manifestFile = { path: manifestPath, size: new TextEncoder().encode(canonicalManifest).byteLength, sha256: (await schemaHash(manifest)).slice("sha256:".length) };
     return { kind: expected.kind, manifest, canonicalManifest, contentHash, archiveBytes, files: files.map(file => file.path === manifestPath ? manifestFile : file), ...(assets ? { assets } : {}) };
   } catch {
+    if (revisionLookupError !== undefined) throw revisionLookupError;
     throw new BundleZipError();
   }
 }
