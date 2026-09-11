@@ -50,8 +50,17 @@ export function serviceFrontends(names) {
   return names.flatMap(expandServiceTarget).filter(component => component.web);
 }
 
-/** Which stacks can run a given target, and what is missing when they cannot. */
-const SERVICE_PLATFORMS = {
+/**
+ * Which stacks can run a given target, and what is missing when they cannot.
+ *
+ * Keyed by target name and *not* derived from `SERVICE_TARGETS`: a row here is
+ * a claim about an adapter existing, which the registry cannot know. Exported
+ * so the coverage guard in `tests/unit/scripts/services.test.mjs` can check the
+ * two tables name the same targets — a registered target with no row here is
+ * refused by `assertServicesAvailable` with "no adapter is registered", which
+ * is the opposite of the truth.
+ */
+export const SERVICE_PLATFORMS = {
   portal: { cloudflare: true, azure: "packages/azure-portal does not exist yet" },
 };
 

@@ -14,8 +14,28 @@ export const GOOGLE_ISSUER = "https://accounts.google.com";
  */
 export const LOCAL_DEV_ORIGIN_PATTERN = /^http:\/\/(?:127\.0\.0\.1|localhost):\d{1,5}$/;
 
+/**
+ * True only for a *canonical* loopback origin. Self-safe on purpose: the three
+ * call sites in this package each run their own `new URL(x).origin !== x`
+ * first, and they keep doing so, but this is exported API and the whole point
+ * of exporting it is that a fourth site will call it. A fourth site that
+ * trusts the name alone must not accept `http://127.0.0.1:8795@evil.test`, so
+ * the canonicality the callers supply is enforced here too rather than
+ * assumed.
+ *
+ * Consequence worth knowing: a spelling whose canonical form differs is now
+ * false even when the pattern matches it — `http://127.0.0.1:99999` (port out
+ * of range, `new URL` throws) and `http://127.0.0.1:80` (canonically
+ * `http://127.0.0.1`, which the pattern rejects for having no port). Both are
+ * narrowings; the runtime only ever binds an explicit high port.
+ */
 export function isLocalDevOrigin(origin: string): boolean {
-  return LOCAL_DEV_ORIGIN_PATTERN.test(origin);
+  if (!LOCAL_DEV_ORIGIN_PATTERN.test(origin)) return false;
+  try {
+    return new URL(origin).origin === origin;
+  } catch {
+    return false;
+  }
 }
 
 export interface PortalGoogleConfig {

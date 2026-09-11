@@ -353,6 +353,16 @@ export function buildWorkers({
     unsafeDirectSockets: [{ host, port: ports.mockOidc }],
   };
 
+  // NOTE: these bindings are *portal-shaped*, and every service component gets
+  // the same set. With one service in the registry that is invisible; with two
+  // it is wrong — a second service would boot bound to PORTAL_ORIGIN, the
+  // portal's Google client id and PORTAL_BOOTSTRAP_EMAIL, and none of its own.
+  // Making this genuinely per-service means describing each service's bindings
+  // in SERVICE_TARGETS, which is a design change worth making when there is a
+  // second service to design against. Until then the registry-coverage guard in
+  // tests/unit/scripts/services.test.mjs fails the moment a row is added, and
+  // names this as one of the edits.
+  //
   // The portal always points at the real Google. The placeholder credentials
   // mirror the CAS admin BFF's: the config only checks they are non-empty, so
   // the worker boots and serves everything except a completed sign-in. Failing

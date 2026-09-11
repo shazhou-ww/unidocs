@@ -136,3 +136,71 @@ test("naming only a service on Azure still starts every Azure document type", as
   expect(stdout).toContain("Ctrl+C to stop.");
   expect(stderr).toBe("");
 });
+
+/**
+ * Every `STUB spawn` line the run printed, as objects. The frontend loops are
+ * the one place on this branch where live, user-facing behaviour was
+ * refactored, so they are asserted from the outside: what was spawned, in
+ * which package, on which port, and with which gateway URL.
+ */
+function viteSpawns(stdout) {
+  return stdout.split("\n")
+    .filter(line => line.startsWith("STUB spawn "))
+    .map(line => JSON.parse(line.slice("STUB spawn ".length)))
+    .filter(spawned => spawned.args[0] === "vite");
+}
+
+// Deleting the doc-type frontend loop, or dropping GATEWAY_URL from the spawn
+// env, used to leave the whole suite green — and a web-psd whose /gw proxy
+// points nowhere looks like a working dev server until the first API call.
+test("a selected doc type's Vite frontend is started in its own package, with the gateway URL its proxy needs", async () => {
+  const { stdout, stderr } = await runDev(["psd", "--cas", "local", "--fonts", "off"], {
+    platform: "cloudflare",
+    stubs: true,
+  });
+
+  const psd = viteSpawns(stdout).find(spawned => spawned.cwd.endsWith("/packages/web-psd"));
+  expect(psd, `no web-psd Vite spawn in:\n${stdout}`).toBeDefined();
+  expect(psd.args).toEqual(["vite", "--host", "127.0.0.1", "--port", "5173", "--strictPort"]);
+  expect(psd.gatewayUrl).toBe("http://127.0.0.1:8787");
+  expect(stdout).toContain("psd web  http://127.0.0.1:5173");
+  expect(stderr).toBe("");
+});
+
+// The offset exists so both stacks can run at once without fighting over 5173;
+// it is arithmetic on a constant, which is exactly the kind of thing a
+// refactor silently drops.
+test("the Azure stack's doc-type frontend takes the fixed port offset and the Azure gateway", async () => {
+  const { stdout, stderr } = await runDev(["psd", "--cas", "local", "--fonts", "off"], {
+    platform: "azure",
+    stubs: true,
+  });
+
+  const psd = viteSpawns(stdout).find(spawned => spawned.cwd.endsWith("/packages/web-psd"));
+  expect(psd, `no web-psd Vite spawn in:\n${stdout}`).toBeDefined();
+  expect(psd.args).toContain("6173");
+  expect(psd.gatewayUrl).toBe("http://127.0.0.1:41787");
+  expect(stderr).toBe("");
+});
+
+/**
+ * The service frontend loop, exercised against a synthetic component (no
+ * SERVICE_TARGETS row declares `web` yet — see the fixture). It must start the
+ * component on exactly the same terms as a doc-type frontend, including
+ * GATEWAY_URL, and *without* the Azure offset, which does not apply to
+ * Cloudflare-only services.
+ */
+test("a service frontend is started on the same terms as a doc-type one", async () => {
+  const { stdout, stderr } = await runDev(["portal", "--cas", "local", "--fonts", "off"], {
+    platform: "cloudflare",
+    stubs: true,
+    env: { UNIDOCS_TEST_STUB_SERVICE_FRONTEND: "1" },
+  });
+
+  const webui = viteSpawns(stdout).find(spawned => spawned.cwd.endsWith("/packages/stub-webui"));
+  expect(webui, `no service-frontend Vite spawn in:\n${stdout}`).toBeDefined();
+  expect(webui.args).toEqual(["vite", "--host", "127.0.0.1", "--port", "5199", "--strictPort"]);
+  expect(webui.gatewayUrl).toBe("http://127.0.0.1:8787");
+  expect(stdout).toContain("portal-webui web http://127.0.0.1:5199");
+  expect(stderr).toBe("");
+});

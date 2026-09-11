@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { portalGoogleConfigFromGateway } from "../src/index.js";
+import { isLocalDevOrigin, LOCAL_DEV_ORIGIN_PATTERN, portalGoogleConfigFromGateway } from "../src/index.js";
 
 const settings = {
   GATEWAY_OIDC_CLIENT_ID: "gateway-google-client",
@@ -78,4 +78,79 @@ test("the issuer requirement is unchanged by the origin allowance", () => {
   const wrongIssuer = { ...settings, GATEWAY_OIDC_ISSUER: "http://127.0.0.1:8793" };
   expect(() => portalGoogleConfigFromGateway(wrongIssuer, "http://127.0.0.1:8795")).toThrow("Portal requires the Google issuer");
   expect(() => portalGoogleConfigFromGateway(wrongIssuer, "https://unidocs.shazhou.work")).toThrow("Portal requires the Google issuer");
+});
+
+// `isLocalDevOrigin` and the pattern behind it are exported package API, so
+// they are pinned directly here rather than only through
+// `portalGoogleConfigFromGateway` — which rejects most of these on its own
+// canonicality guard and so would keep passing however the predicate rotted.
+
+test("the pattern is anchored at both ends", () => {
+  // Pins the trailing `$` specifically: without it every string below matches,
+  // and a caller that trusts the pattern alone accepts a non-loopback host.
+  // The predicate's own canonicality check would still refuse these, which is
+  // exactly why the anchor needs pinning where the anchor lives.
+  for (const spelling of [
+    "http://127.0.0.1:8795@evil.test",
+    "http://127.0.0.1:8795.evil.test",
+    "http://127.0.0.1:8795/admin",
+    "http://localhost:8795@evil.test",
+    "http://localhost:8795.evil.test",
+  ]) expect(LOCAL_DEV_ORIGIN_PATTERN.test(spelling), spelling).toBe(false);
+  expect(LOCAL_DEV_ORIGIN_PATTERN.test("http://127.0.0.1:8795")).toBe(true);
+  expect(LOCAL_DEV_ORIGIN_PATTERN.test("http://localhost:8795")).toBe(true);
+});
+
+test("isLocalDevOrigin accepts exactly the two spellings the local runtime binds", () => {
+  expect(isLocalDevOrigin("http://127.0.0.1:8795")).toBe(true);
+  expect(isLocalDevOrigin("http://localhost:8795")).toBe(true);
+});
+
+// The hostile sweep, asserted against the predicate itself rather than
+// against a caller that guards it first: userinfo either side of the host,
+// trailing-dot and suffix hostnames, case, IPv6, the shorthand and
+// decimal/octal/hex spellings of 127.0.0.1, out-of-range and malformed ports,
+// whitespace (including a trailing newline — JS `$` is not Perl's), punycode,
+// ideographic dots, non-http schemes, and anything carrying a path, query or
+// fragment.
+test.each([
+  "http://127.0.0.1:8795@evil.test",
+  "http://evil.test@127.0.0.1:8795",
+  "http://user:pass@127.0.0.1:8795",
+  "http://127.0.0.1.:8795",
+  "http://127.0.0.1:8795.evil.test",
+  "http://127.0.0.1.evil.test:8795",
+  "http://LOCALHOST:8795",
+  "http://127.0.0.1:8795 ",
+  " http://127.0.0.1:8795",
+  "http://127.0.0.1:8795\n",
+  "http://[::1]:8795",
+  "http://127.1:8795",
+  "http://2130706433:8795",
+  "http://0x7f000001:8795",
+  "http://0177.0.0.1:8795",
+  "https://127.0.0.1:8795",
+  "http://127.0.0.1:123456",
+  "http://127.0.0.1:99999",
+  "http://127.0.0.1:65536",
+  "http://xn--127-0-0-1.evil.test:8795",
+  "http://127\u30020\u30020\u30021:8795",
+  "http://127.0.0.1:8795/",
+  "http://127.0.0.1:8795/admin",
+  "http://127.0.0.1:8795?next=1",
+  "http://127.0.0.1:8795#fragment",
+  "http://localhost:8795@evil.test",
+  "http://localhost.evil.test:8795",
+  "http://localhost:8795.evil.test",
+  "//127.0.0.1:8795",
+  "http://127.0.0.0.1:8795",
+  "ws://127.0.0.1:8795",
+  "http://127.0.0.1",
+  "http://127.0.0.1:",
+  // Canonically `http://127.0.0.1`, which the pattern refuses for having no
+  // explicit port; the predicate agrees rather than accepting one spelling of
+  // an origin it rejects in the other.
+  "http://127.0.0.1:80",
+])("isLocalDevOrigin refuses %j whatever the caller checked", spelling => {
+  expect(isLocalDevOrigin(spelling)).toBe(false);
 });

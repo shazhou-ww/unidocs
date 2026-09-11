@@ -12,6 +12,8 @@ import {
   CONTROL_DB,
   DOC_TYPES,
   docServicesJson,
+  EDGE_PORT,
+  GATEWAY_PORT,
   GATEWAY_WORKER,
   SERVICE_WORKER,
   MOCK_OIDC_PORT,
@@ -20,7 +22,7 @@ import {
   parseDocTypes,
   resolvePorts,
 } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
-import { PORTAL_PORT, serviceWorkers } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
+import { PORTAL_PORT, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 
 /** Ports every buildWorkers call needs in these tests. */
 const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, edge: 8794 };
@@ -97,17 +99,35 @@ test("resolvePorts only allocates ports for the gateway and selected types", () 
   expect(resolvePorts(["docx"])).toEqual({ gateway: 8787, docx: 8789 });
 });
 
-test("every doc-type port is distinct from the gateway port", () => {
-  const taken = new Map([[8787, "gateway"]]);
-  for (const [name, spec] of Object.entries(DOC_TYPES)) {
-    expect(taken.has(spec.port), `${name} port ${spec.port} collides with ${taken.get(spec.port)}`)
-      .toBe(false);
-    taken.set(spec.port, name);
-    if (spec.web) {
-      expect(taken.has(spec.web.port), `${name}.web port ${spec.web.port} collides with ${taken.get(spec.web.port)}`)
-        .toBe(false);
-      taken.set(spec.web.port, `${name}.web`);
-    }
+/**
+ * Every fixed port the local runtime binds, whichever module declares it.
+ *
+ * `resolvePorts` only covers the gateway, doc types and services, so the
+ * uniqueness check over its output cannot see admin/mockOidc/edge — which are
+ * exactly the three the 879x service band is adjacent to. A collision between
+ * two of these does not surface as a clear message: `startLocalRuntime` probes
+ * the port map with a concurrent `Promise.all(assertPortFree)`, so one probe
+ * binds and the other reports EADDRINUSE, and the reader goes looking through
+ * their process list for a port nothing else is holding.
+ */
+const FIXED_LOCAL_PORTS = [
+  ["gateway", GATEWAY_PORT],
+  ["cas admin", ADMIN_PORT],
+  ["mock OIDC", MOCK_OIDC_PORT],
+  ["cas edge", EDGE_PORT],
+  ...Object.entries(DOC_TYPES).flatMap(([name, spec]) => [
+    [name, spec.port],
+    ...(spec.web ? [[`${name}.web`, spec.web.port]] : []),
+  ]),
+  ...serviceWorkers(Object.keys(SERVICE_TARGETS)).map(component => [component.name, component.port]),
+  ...serviceFrontends(Object.keys(SERVICE_TARGETS)).map(component => [`${component.name}.web`, component.web.port]),
+];
+
+test("every fixed local port is distinct, across doc types, services and the CAS middleware", () => {
+  const taken = new Map();
+  for (const [name, port] of FIXED_LOCAL_PORTS) {
+    expect(taken.has(port), `${name} port ${port} collides with ${taken.get(port)}`).toBe(false);
+    taken.set(port, name);
   }
 });
 

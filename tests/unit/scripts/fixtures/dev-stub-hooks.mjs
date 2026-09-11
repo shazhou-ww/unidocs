@@ -11,6 +11,9 @@
  * Only imports made **by dev.mjs itself** are redirected (`context.parentURL`
  * is checked), so every other module in the graph — `doc-types.mjs`,
  * `services.mjs`, `ports.mjs` — is the real one and keeps its real behaviour.
+ * The two env-gated overrides of `services.mjs` below are the only exceptions,
+ * both off unless a test sets the variable, and both re-export everything they
+ * do not replace.
  *
  * Stubs print a single `STUB <name> <json>` line so the test can assert on the
  * exact arguments a collaborator received.
@@ -32,11 +35,19 @@ export function createServer() {
 `;
 
 /** `execFileSync` stands in for the \`docker info\` probe (present, happy);
- *  \`spawn\` stands in for every Vite dev server. */
+ *  \`spawn\` stands in for every Vite dev server. The line carries `cwd` and the
+ *  injected `GATEWAY_URL` as well as the argv, because those are what the
+ *  frontend loops actually decide: which package, which port, and whether the
+ *  Vite proxy has a gateway to forward to. */
 const CHILD_PROCESS = `
 export function execFileSync() { return ""; }
-export function spawn(command, args) {
-  console.log("STUB spawn " + JSON.stringify([command, ...(args ?? [])]));
+export function spawn(command, args, options) {
+  console.log("STUB spawn " + JSON.stringify({
+    command,
+    args: args ?? [],
+    cwd: options?.cwd ?? null,
+    gatewayUrl: options?.env?.GATEWAY_URL ?? null,
+  }));
   return { on() { return this; }, kill() {} };
 }
 `;
@@ -67,12 +78,30 @@ export * from ${JSON.stringify(real)};
 export async function writeLocalCredentials() { return "/tmp/stub-local-credentials.json"; }
 `;
 
-/** Only with UNIDOCS_TEST_STUB_SERVICE_AVAILABILITY=1: pretends the selected
- *  service is supported everywhere, so the code *after* the availability gate
- *  can be reached on the Azure branch. */
+/**
+ * Two independent, env-gated overrides of the service registry. Both are off
+ * by default, and each is a *named* stand-in for a future the registry does
+ * not contain yet:
+ *
+ * - UNIDOCS_TEST_STUB_SERVICE_AVAILABILITY=1 lifts the availability gate, so
+ *   the code *after* it can be reached on the Azure branch. It only removes an
+ *   earlier refusal; it cannot make a later assertion pass.
+ * - UNIDOCS_TEST_STUB_SERVICE_FRONTEND=1 hands the service frontend loop one
+ *   synthetic component. This one does supply data, deliberately: no service
+ *   in SERVICE_TARGETS declares a `web` block today, so the loop that will
+ *   start admin-portal-webui and tenant-portal-webui has nothing to iterate
+ *   over and every assertion about it would be vacuous. The component names a
+ *   directory and port no real target uses, so a test asserting on it is
+ *   asserting about the loop and nothing else.
+ */
 const SERVICES = (real) => `
 export * from ${JSON.stringify(real)};
-export function assertServicesAvailable() {}
+${process.env.UNIDOCS_TEST_STUB_SERVICE_AVAILABILITY === "1" ? "export function assertServicesAvailable() {}" : ""}
+${process.env.UNIDOCS_TEST_STUB_SERVICE_FRONTEND === "1"
+  ? `export function serviceFrontends(names) {
+  return names.map(name => ({ name: name + "-webui", target: name, web: { dir: "packages/stub-webui", port: 5199 } }));
+}`
+  : ""}
 `;
 
 const COMPOSE_STATUS = `export function composeOwnsPortNow() { return false; }`;
@@ -87,7 +116,8 @@ function stubSourceFor(specifier, realUrl) {
     case "../stacks/unidocs-azure/local/compose-status.mjs": return COMPOSE_STATUS;
     case "./unidocs-dev-config.mjs": return DEV_CONFIG(realUrl);
     case "../stacks/unidocs-cloudflare/local/services.mjs":
-      return process.env.UNIDOCS_TEST_STUB_SERVICE_AVAILABILITY === "1" ? SERVICES(realUrl) : null;
+      return process.env.UNIDOCS_TEST_STUB_SERVICE_AVAILABILITY === "1"
+        || process.env.UNIDOCS_TEST_STUB_SERVICE_FRONTEND === "1" ? SERVICES(realUrl) : null;
     default: return null;
   }
 }
