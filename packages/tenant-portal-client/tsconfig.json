@@ -8,5 +8,9 @@
     "types": []
   },
   "include": ["src"],
-  "references": [{ "path": "../protocol-platform" }]
+  "references": [
+    { "path": "../protocol" },
+    { "path": "../protocol-tenant-portal" },
+    { "path": "../svalue-codec" }
+  ]
 }

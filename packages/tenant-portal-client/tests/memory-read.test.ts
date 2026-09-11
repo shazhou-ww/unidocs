@@ -4,6 +4,7 @@ import { createMemoryTransport } from "../src/memory/transport.js";
 import { createMarkdownTextRange } from "../src/doctypes/markdown.js";
 import { PlatformError } from "../src/errors.js";
 import type { TenantPortalClient } from "../src/client.js";
+import type { MarkdownSnapshot } from "../src/doctypes/markdown.js";
 
 const content = "# 样例\n\n第一段。\n\n第二段。\n";
 
@@ -18,8 +19,8 @@ function seeded() {
         threads: [
           {
             threadId: "th-1",
-            pings: [{ baseVersionIdx: 0, text: "这里能展开吗", location: createMarkdownTextRange({ documentContractIdx: 0, content, start: 7, end: 11 }) }],
-            pongs: [],
+            comments: [{ baseVersionIdx: 0, text: "这里能展开吗", location: createMarkdownTextRange({ documentContractIdx: 0, content, start: 7, end: 11 }) }],
+            replies: [],
           },
         ],
       },
@@ -48,26 +49,34 @@ describe("memory transport 读操作", () => {
     expect((await client.listDocuments({ documentType: "psd" })).items).toHaveLength(0);
   });
 
-  it("getVersion 返回 snapshot 与 parentVersionIdx", async () => {
+  it("getVersion 只给元数据与 parentVersionIdx，不再带 snapshot", async () => {
     const version = await client.getVersion("doc-1", 1);
 
     expect(version.versionIdx).toBe(1);
     expect(version.parentVersionIdx).toBe(0);
-    expect(version.snapshot).toMatchObject({ content: expect.stringContaining("第三段") });
+    expect(version).not.toHaveProperty("snapshot");
+  });
+
+  it("getVersionSnapshot 单独返回该版本的内容", async () => {
+    const snapshot = await client.getVersionSnapshot("doc-1", 1) as unknown as MarkdownSnapshot;
+    expect(snapshot).toMatchObject({ content: expect.stringContaining("第三段") });
+
+    const first = await client.getVersionSnapshot("doc-1", 0) as unknown as MarkdownSnapshot;
+    expect(first.content).toBe(content);
   });
 
   it("首版的 parentVersionIdx 是 null", async () => {
     expect((await client.getVersion("doc-1", 0)).parentVersionIdx).toBeNull();
   });
 
-  it("getThread 返回完整 ping 与 pong 序列", async () => {
+  it("getThread 返回完整 comment 与 reply 序列", async () => {
     const thread = await client.getThread("doc-1", "th-1");
 
     expect(thread.threadId).toBe("th-1");
-    expect(thread.pings).toHaveLength(1);
-    expect(thread.pings[0]).toMatchObject({ pingIdx: 0, baseVersionIdx: 0 });
-    expect(thread.pings[0].content.text).toBe("这里能展开吗");
-    expect(thread.pongs).toHaveLength(0);
+    expect(thread.comments).toHaveLength(1);
+    expect(thread.comments[0]).toMatchObject({ commentIdx: 0, baseVersionIdx: 0 });
+    expect(thread.comments[0].content.text).toBe("这里能展开吗");
+    expect(thread.replies).toHaveLength(0);
   });
 
   it("listThreads 只返回 threadId", async () => {
@@ -82,6 +91,10 @@ describe("memory transport 读操作", () => {
 
   it("不存在的版本返回 not_found", async () => {
     await expect(client.getVersion("doc-1", 99)).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("不存在版本的 snapshot 也返回 not_found", async () => {
+    await expect(client.getVersionSnapshot("doc-1", 99)).rejects.toMatchObject({ code: "not_found" });
   });
 
   it("未知路径返回 not_found 而不是抛异常", async () => {
