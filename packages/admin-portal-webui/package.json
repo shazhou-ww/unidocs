@@ -1,0 +1,33 @@
+{
+  "name": "@unidocs/admin-portal-webui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UniDocs Admin Portal browser application",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf --glob dist \"*.tsbuildinfo\""
+  },
+  "dependencies": {
+    "@unidocs/admin-portal-client": "workspace:*",
+    "@unidocs/protocol-admin-portal": "workspace:*",
+    "lucide-react": "^1.34.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.0",
+    "vitest": "^3.2.0"
+  }
+}

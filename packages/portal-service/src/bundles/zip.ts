@@ -31,6 +31,7 @@ export async function scanBundleZip(
   source: ReadableStream<Uint8Array>,
   budgets: Partial<Record<keyof typeof BUNDLE_ZIP_LIMITS, number>> = {},
   inspectFile?: (file: BundleZipFile, content: Uint8Array) => void | Promise<void>,
+  inspectArchive?: (archiveBytes: number) => void,
 ): Promise<readonly BundleZipFile[]> {
   const limits = { ...BUNDLE_ZIP_LIMITS, ...budgets };
   for (const key of Object.keys(BUNDLE_ZIP_LIMITS) as (keyof typeof BUNDLE_ZIP_LIMITS)[]) {
@@ -44,6 +45,7 @@ export async function scanBundleZip(
       archive.set(chunk, archiveSize);
       archiveSize += chunk.byteLength;
     }
+    inspectArchive?.(archiveSize);
     reader = new ZipReader(new Uint8ArrayReader(archive.subarray(0, archiveSize)), {
       useWebWorkers: false,
       useCompressionStream: true,

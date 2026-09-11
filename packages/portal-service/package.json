@@ -17,8 +17,10 @@
   },
   "dependencies": {
     "@unidocs/protocol-admin-portal": "workspace:*",
+    "@unidocs/protocol-tenant-portal": "workspace:*",
     "@zip.js/zip.js": "^2.13.1",
     "canonicalize": "2.1.0",
+    "fast-xml-parser": "^5.11.1",
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {

@@ -3,7 +3,12 @@ import { createDocumentTypeService, resourceEtag, type AdminContext, type Docume
 
 const context: AdminContext = { memberId: "admin", transport: "session", identity: { issuer: "https://accounts.google.com", subject: "subject", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1000, loginConfirmation: "authorization-code-v1" } };
 function setup() {
-  const repository: DocumentTypeRepository = { create: vi.fn(async command => ({ documentType: command.registration.documentType, etag: command.registration.etag })), get: vi.fn(async () => null), list: vi.fn(async () => ({ items: [], nextCursor: null })) };
+  const repository: DocumentTypeRepository = {
+    create: vi.fn(async command => ({ documentType: command.registration.documentType, etag: command.registration.etag })),
+    update: vi.fn(async command => ({ documentType: command.registration.documentType, etag: command.registration.etag })),
+    get: vi.fn(async () => null), list: vi.fn(async () => ({ items: [], nextCursor: null })),
+    resolveTypeCardBundle: vi.fn(async () => null), resolveViewBundle: vi.fn(async () => null), resolveOperator: vi.fn(async () => null),
+  };
   return { repository, service: createDocumentTypeService(repository, { now: () => new Date("2026-09-10T00:00:00.000Z"), id: () => "00000000-0000-4000-8000-000000000000" }) };
 }
 
@@ -33,4 +38,29 @@ test("get reports invalid identifiers and missing types", async () => {
   const { service } = setup();
   await expect(service.get(context, "../invalid")).rejects.toMatchObject({ code: "invalid_request" });
   await expect(service.get(context, "missing")).rejects.toMatchObject({ code: "not_found" });
+});
+
+test("updates a draft name under its complete registration ETag and emits a scoped audit", async () => {
+  const { repository, service } = setup();
+  const representation = { documentType: "markdown", internalName: "Markdown", enabled: false, latestDocumentContract: null, typeCardBundle: null, viewBundle: null, builtinOperator: null, updatedAt: "2026-09-09T00:00:00.000Z" };
+  const current = { ...representation, etag: await resourceEtag(representation) };
+  vi.mocked(repository.get).mockResolvedValue(current);
+  const result = await service.update(context, "markdown", { internalName: "Markdown documents", reason: "Clarify label" }, "update-key", current.etag, "request-update");
+  const [command] = vi.mocked(repository.update).mock.calls[0];
+  expect(result).toEqual({ documentType: "markdown", etag: command.registration.etag });
+  expect(command).toMatchObject({ expectedEtag: current.etag, registration: { internalName: "Markdown documents", enabled: false } });
+  expect(command.registration.etag).not.toBe(current.etag);
+  expect(command.audits).toMatchObject([{ action: "document_type.internal_name_changed", reason: "Clarify label", requestId: "request-update" }]);
+});
+
+test("leaves the final precondition check to persistence and rejects incomplete enablement", async () => {
+  const { repository, service } = setup();
+  const representation = { documentType: "markdown", internalName: "Markdown", enabled: false, latestDocumentContract: null, typeCardBundle: null, viewBundle: null, builtinOperator: null, updatedAt: "2026-09-09T00:00:00.000Z" };
+  const current = { ...representation, etag: await resourceEtag(representation) };
+  vi.mocked(repository.get).mockResolvedValue(current);
+  await service.update(context, "markdown", { internalName: "New" }, "key", '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"', "request");
+  expect(repository.update).toHaveBeenCalledWith(expect.objectContaining({ expectedEtag: '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"' }));
+  vi.mocked(repository.update).mockClear();
+  await expect(service.update(context, "markdown", { enabled: true }, "key", current.etag, "request")).rejects.toMatchObject({ code: "invalid_request" });
+  expect(repository.update).not.toHaveBeenCalled();
 });

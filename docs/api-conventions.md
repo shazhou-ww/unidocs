@@ -15,9 +15,11 @@ A mutation result may contain only:
 
 Request fields, manifests, schemas, descriptors, and unchanged nested resources are not echoed. A caller that needs the complete current representation follows the mutation with its canonical GET operation.
 
+One shape is exempt. An operation whose whole effect is to append a new immutable record that the server numbers and timestamps may return that record in full. Such a record is the operation's product rather than an echo of the request, so it cannot drift from its canonical GET, and the server-assigned fields are the reason the caller made the request at all. The exemption is narrow: it does not extend to a resource carrying an ETag, where a compact identity plus the new token is exactly what the caller needs next, nor to an operation that also mutates surrounding state. `@unidocs/protocol-tenant-portal` relies on it for document, thread, and ping creation, where the resources have no ETag and a thin result would force a second round trip for data the server just assigned.
+
 Use these status and response shapes consistently:
 
-- `201 Created`: return a compact identity result and an ETag when the resource has mutable metadata.
+- `201 Created`: return a compact identity result and an ETag when the resource has mutable metadata, or the complete record under the immutable-record exemption above.
 - `200 OK` for updates: return the resource identity and new ETag, not the full representation.
 - `204 No Content`: use when a successful operation has no continuation value, such as deletion.
 - Synchronous validation or execution operations may return their complete result when that result is the operation's primary product rather than a stored resource representation.

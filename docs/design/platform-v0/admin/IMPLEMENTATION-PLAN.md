@@ -1,10 +1,112 @@
 # UniDocs Admin Portal Cloudflare 实现计划
 
-状态：实施中，Phase 0 部分完成（2026-09-10）
+状态：实施中，Admin WebUI MVP 已上线（2026-09-11）
 基线：`b58689b`  
 范围：只实现 Cloudflare Admin Portal，不实现 Azure、Tenant Portal、Agent/document 数据面或 thumbnail service。
 
 ## 当前进展与决策
+
+### Type Card bundle 纵向闭环（2026-09-11）
+
+已上线 `uploadTypeCardBundle`、`listTypeCardBundles`、`getTypeCardBundle`、`updateTypeCardBundleMetadata`，Admin v1 完整 operation 总数增至 **15/26**，Phase 4 为 Type Card **4/4**、View bundle **0/4**；生产 Worker 版本 `f2faecd8-dfb0-4118-93af-2b4fc6bdd73f`。独立 Portal D1 已应用 `0004_type_card_bundles.sql`，生产 candidate/reservation 初始均为 0 行，部署和 smoke 未自动上传 bundle。
+
+- service 在 8 MiB 有界 ZIP 内验证 canonical Type Card manifest、BCP 47 locale、引用闭包、PNG/JPEG/WebP 实际结构与像素预算、五尺寸 PNG 图标和受限 SVG；只把 canonical manifest 与已验证图片字节写入内容寻址 R2 key。公开 ID 使用完整 SHA-256：`tb_<64 lowercase hex>`，record 的 `size` 保存原始压缩 ZIP 字节数。
+- D1 reservation 对 content hash 和 actor/idempotency key 唯一。R2 全部写成功后，candidate、idempotency receipt、reservation 消费和 `type_card_bundle.uploaded` audit 才在一个 D1 batch 中发布；重复内容用 409 返回既有 identity。metadata PATCH 通过 If-Match 与内部 revision 原子更新，只改变 name/description/ETag，并原子写 receipt/audit。
+- 独立 R2 bucket `unidocs-portal-bundles`、`BUNDLES` binding 与 `https://bundles.shazhou.work` custom-domain trigger 已部署。ingress 只接受完整 hash Type Card 路径以及 canonical JSON/PNG/JPEG/WebP/SVG，成功响应重新固定 MIME、`nosniff`、sandbox CSP、cross-origin resource policy 和一年 immutable cache；Admin CSP 只额外允许该 origin 的图片。最初选择的三层 hostname `bundles.unidocs.shazhou.work` 在 custom certificate 就绪前持续 TLS 握手失败；生产尚无 candidate，因此改用 zone wildcard 已覆盖的单层 hostname，无既有 `bundleUrl` 兼容负担。新 origin 的 DNS/TLS/Worker 404 smoke 已通过。
+- client 已接入 raw ZIP upload、list/get 和 metadata PATCH。WebUI 按 Admin mock 的“类型卡片包”tab 提供候选列表、upload/validate、manifest/locale/icon/thumbnail 详情、跨 origin 图片预览和 metadata 编辑；直达 `?tab=cards` 的组件测试固定刷新安全路由。
+- 验证：portal-service 182 个测试、Admin client 9 个 transport tests、WebUI 14 个组件测试、Cloudflare Portal 114 个测试、真实 D1/HTTP 4 个 Type Card 集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产匿名 smoke 已确认 `/admin/` 303、Type Card API 401、CSP 包含独立图片 origin，以及 bundle hostname DNS/TLS/404 ingress；一次真人上传、真实对象 fetch 和 audit correlation 尚待验收。
+
+### Type Card bundle 阶段启动约束（2026-09-11）
+
+本阶段启动时按 R2 adapter → D1 record/reservation → API/client/WebUI → migration/Worker/smoke 顺序推进，完整 operation 数为 **11/26**。当前完成状态以上方纵向闭环记录为准。
+
+- 使用独立 Portal R2 bucket，不复用 Gateway/CAS bucket。对象 key 由 canonical bundle content hash 派生，canonical manifest 字节与已验证资源字节不可变；D1 是 bundle metadata、identity、reservation 和 selection 的权威，R2 不充当关系数据库。
+- 上传必须复用现有有界 ZIP 与 Type Card manifest 检查，补齐当前发布门禁：实际 PNG 解码/五尺寸验证、SVG 安全规则、sample thumbnail 实际图片验证、MIME allowlist 和可执行资源拒绝。验证通过不等于发布成功；R2 写失败或 D1 提交失败需有显式 reservation/cleanup，不能伪装成单事务。
+- stable `bundleUrl` 使用 Portal 控制的独立 bundle ingress；在独立 hostname 就绪前不得返回 `/admin` cookie origin 下可执行的不受信任内容。Type Card 仅允许受控图片/manifest 资源，响应固定 MIME、nosniff、immutable cache 和禁止 HTML/script 执行策略。
+- UI 继续参考 Admin mock 的“类型卡片包”tab：候选摘要、上传并验证、manifest 协议/语言/图标/thumbnail 结果、多语言卡片预览、metadata 编辑和后续选择入口；所有数据来自真实 API，不复制 mock candidate state。页面/tab URL 必须继续 refresh-safe。
+- metadata PATCH 只改变 name/description 和 ETag，不改变 content hash、manifest、size 或 bundle URL；upload/patch 继续遵守 CSRF、Idempotency-Key/If-Match、事务内权限复查与原子 audit。重复 content 不创建第二份对象或 candidate。
+
+### 内部开发数据策略（2026-09-11）
+
+当前系统尚未正式上线，`unidocs-portal` D1 与 `unidocs-portal-bundles` R2 中的现有数据均视为可丢弃开发数据。实现未冻结 schema/对象布局时，优先选择干净的数据模型，不为当前测试记录增加复杂的兼容迁移、双写或长期 GC 负担。
+
+- 如重建比向前兼容更清晰，可 drop/recreate Portal 自有 D1 表或清空 Portal R2 objects，并重新执行 migrations/bootstrap；每次破坏性操作前仍要明确报告影响范围和重建步骤，不静默删除。
+- 该授权只覆盖独立 Portal D1/R2，不覆盖 Gateway 的 `unidocs-snapshots`、CAS、文档数据面或其他服务资源；不得因开发数据可丢而降低认证、CSRF、幂等、并发、审计和 bundle 内容安全要求。
+- 正式上线准备阶段必须显式结束此策略：冻结 schema/object key，改为只允许向前兼容 migration，定义 receipt/reservation/孤儿对象保留与 GC SLA，并完成备份/恢复和 rollback 演练。
+
+### Document Contract 纵向闭环（2026-09-11）
+
+已上线 `appendDocumentContract`、`listDocumentContracts`、`getDocumentContract`，Admin v1 完整 operation 总数增至 **11/26**，Phase 3 进度为 **6/7**；生产 Worker 版本 `4608b2d3-fad7-483f-baf7-c69d0974290b`。独立 Portal D1 已应用 `0003_document_contracts.sql`，为 document type 增加 `last_contract_idx` 并建立不可变 paired contract 表/倒序分页索引；migration 后现有 Markdown registration 保持 latest=null、idx=-1，contract 表为空。
+
+- service 严格验证 SValue dialect、format v1、reason 和幂等 key，计算 snapshot/location schema hash 与不含 idx/时间/hash 字段的 paired contract hash。repository 每次竞争尝试读取最新 registration/idx，构建候选 record 和新 registration ETag，再以 `last_contract_idx + current ETag` 双条件原子提交 receipt、idx 分配、contract、registration 与 `document_contract.appended` audit。
+- append 在有限重试内处理 D1 竞争；8 路真实并发测试得到连续零基 revision 0..7，最终 registration/latest/last_contract_idx 一致。相同 key/内容重放原 response，不同 fingerprint 409；重复内容不同 key 拒绝。audit 故障会回滚 receipt、record、counter 和 registration，不留下 idx gap。
+- list 按 revision 倒序稳定 cursor 分页，cursor 绑定 document type；get 返回完整 snapshot/location schema、派生 media type、schema hash、contract hash 和 createdAt。HTTP body 上限 256 KiB，使用严格 JSON parser，拒绝重复/非标准 JSON 和非法 query；认证、CSRF 与 no-store 继续由 BFF 负责。
+- Admin client 已接入 append/list/get。WebUI 按 Admin mock 重构为六 tab 文档类型配置工作区；“文档契约”tab 提供 revision 摘要、完整 schema/hash 详情、cursor 加载和 append 对话框，右侧展示启用准备度；其他候选 tab 在真实 API 上线前只显示明确空状态，不含 mock data。URL `?tab=contracts` 在桌面/移动刷新后保持，append 对话框同时编辑 snapshot/location JSON 和 reason。
+- 验证：portal-service 173 个测试、Admin client 8 个 transport tests、WebUI 13 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 28 个集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产桌面验证六 tab、空 revision 0 状态、append 表单和刷新恢复；390×844 下页面/对话框无横向溢出。部署与 smoke 未创建生产 Contract，等待用户人工提交首个 revision 验收。
+
+### Document Contract 阶段启动约束（2026-09-11）
+
+下一阶段按“先计划 checkpoint，再实现可部署纵向切片”的顺序推进 Document Contract append/list/get；阶段开始前先更新本计划并提交，功能完成后再单独部署、验收和提交。当前完整 operation 数仍为 **8/26**，不因计划或路由骨架提前计数。
+
+- 文档类型配置 UI 必须以 `docs/design/platform-v0/admin/unidocs-admin-mock.html` / `unidocs-admin-mock.js` 为交互参考：详情使用基本信息、文档契约、类型卡片包、界面包、处理服务、变更记录六个 tab；Document Contract 首版对齐 mock 的 revision 摘要、append 表单、schema/hash 信息和右侧启用准备度，但数据全部来自真实 client/API，不复制 mock state 或伪数据。
+- 在扩展文档类型详情前先建立真实前端路由，不再只用 React 内存 `view`。目标 URL 为 `/admin/document-types`、`/admin/document-types/{documentType}?tab=contracts`、`/admin/administrators`、`/admin/audit`；Worker 对这些受保护路径提供 SPA shell，WebUI 从 pathname/query 恢复 page、选中类型和 tab，并用 History API 更新。桌面/移动端刷新、前进/后退必须保持正确位置。
+- 路由不可与 `/admin/api/*`、`/admin/auth/*`、`/admin/login` 或 `/admin/access-denied` 混淆；未知受保护 UI route 返回明确 404 或安全默认页，不能吞掉 API/auth 路径。路由行为需有 BFF/静态资源测试和浏览器刷新验收。
+- Document Contract 持久化继续遵守已验证约束：document-type scoped 零基 idx、append-only、canonical snapshot/location schema hash 与 paired contract hash、同 key 重放、事务内权限复查、idx 分配和 audit 原子提交。公开 list/get 必须从真实 D1 返回稳定 cursor 与完整 schema DTO。
+- refresh-safe 路由基础已部署为 `540f5fc3-ed5a-4135-aec8-ce94d70d1e0b`：Worker 只对固定 `/admin/document-types[/id]`、`/admin/administrators`、`/admin/audit` 路径在鉴权后返回 SPA shell，不吞 API/auth/未知路径；WebUI 从 URL 初始化 page/detail/tab，使用 History API 导航并监听 popstate。生产浏览器已验证审计刷新、管理员→后退恢复审计、文档类型详情 `?tab=contracts` 刷新恢复与无横向溢出；Contract tab 内容尚待下一切片接入。
+
+### Admin audit 查询闭环（2026-09-11）
+
+已上线 `listAdminAuditEvents`，Admin v1 完整 operation 总数增至 **8/26**；生产 Worker 版本 `e3d9cdf3-886b-4117-809f-a383fa5761c6`。WebUI 新增“审计”导航、动作/资源筛选、反向时间列表、cursor 加载更多和事件详情；详情展示 event/request/actor/resource identity、document type、reason 与结构化 details。
+
+- cloud-neutral service 严格验证 protocol query、长度预算和时间范围；D1 adapter 逐请求验证当前管理员/session，按 `(occurred_at DESC, audit_event_id DESC)` 稳定分页。cursor 绑定 actor/action/resource/document type/time 全部筛选条件，换筛选后重放 cursor 返回 400。
+- 同秒事件用复合 cursor 比较，真实 D1 测试固定跨页无丢失、无重复；`occurredFrom` 为包含下界，`occurredTo` 为排除上界。每条数据库行在返回前经过 `AdminAuditEventSchema` 验证，`details_json` 只在存在时解析为公开 details。
+- HTTP 拒绝重复/未知 query 和非法 limit，复用 oRPC/OpenAPI contract，不另建兼容 API。Admin client 编码全部八个筛选/分页字段；任意 401 继续进入统一 session-invalid UI。
+- 验证：portal-service 168 个测试、Admin client 7 个 transport tests、WebUI 10 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 25 个集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产匿名 audit API 为 401；D1 回读现有 10 条事件、5 种动作，未产生测试 mutation。共享浏览器 session 已过期，等待用户重新登录进行 WebUI 人工验收。
+- 审计 UX 后续迭代已部署为 `eeb9d73b-801a-4d78-bcf4-2f9e210cf0f5`：进入审计页时并行读取 active 管理员目录，actor 优先显示 email 本地部分作为可读名称和完整 email，详情保留 member UUID；已删除或无法解析的历史 actor 回退 UUID。筛选顺序调整为“资源 → 动作”，动作选项按资源类型一对多收窄，切换资源会清除不兼容动作并以新筛选重新查询。生产真实事件已验证显示 `shazhou.ww`/`shazhou.ww@gmail.com`，管理员资源只提供四个成员动作，桌面无横向溢出。
+- 审计 i18n 补全已部署为 `e59ca86d-5df7-4538-ab9f-e8fcb52659dc`：协议定义的 21 个审计动作与 7 个资源类型都有明确中文 label，列表、详情和两级下拉不再回退 `type_card_bundle.*` 等机器值。label map 使用完整 `Record`，协议未来新增枚举但 UI 未翻译时 typecheck 会失败。生产浏览器回读全部 option，资源 8 项（含“全部资源”）、动作 22 项（含“全部动作”），机器 label 计数为 0。
+
+### 管理员移除闭环（2026-09-11）
+
+已上线 `removeAdministratorMember`，Admin v1 完整 operation 总数增至 **7/26**；生产 Worker 版本 `036dcee4-ad56-46b5-86e8-43614357e74a`。WebUI 管理员表只对非当前成员显示移除操作，确认框明确目标邮箱和 session 撤销后果；部署与 smoke 不自动删除任何生产成员，需由真人在 WebUI 确认。
+
+- DELETE 要求同源 cookie mutation 的 CSRF、`Idempotency-Key` 和当前成员 `If-Match`。service 生成稳定 fingerprint 与 `administrator.removed` audit；相同 key/请求在首次成功后可重放 204，不会因资源已软删除而误报 404。
+- D1 repository 先用公开完整成员表示验证 ETag，再将内部 revision 放入条件 UPDATE。事务内重新验证操作者及 session，原子提交 receipt、`active=0`/revision 递增、目标全部 session family 撤销、session 删除和 audit；任一步失败全部回滚。
+- 当前成员不能移除自身；移除已绑定成员必须保证事务提交后仍有至少一位 active、已绑定管理员。真实 D1 并发互删测试证明两个管理员同时移除对方时只允许一个成功，最终保留一位已绑定管理员和一个 live session。
+- 错误保持稳定：缺 `If-Match` 为 428，旧 ETag 为 412，自删和最后管理员保护为 409，目标不存在为 404。WebUI 对这些冲突显示可操作中文信息，失败后关闭确认框并要求刷新或调整操作。
+- 验证：portal-service 159 个测试、Admin client 5 个 transport tests、WebUI 7 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 24 个集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产部署后未执行真实 DELETE；共享浏览器 session 在视觉检查前已过期，等待用户重新登录试用验收。
+- 后续 UX 修复已部署为 `770cdb99-a3bf-4427-9b2e-a64a580b2556`：侧栏不再显示依赖按需加载数据的数量徽标，避免管理员 tab 首次打开前错误显示 0；Admin client 对任意受保护请求的 401 统一导航到 `code=session_invalid` 的拒绝页，不再只显示页面内 banner。该页面明确 session 或成员资格已失效，展示 request ID，并提供“退出并返回登录”。当前验证数字为 Admin client 6 个 tests、WebUI 9 个 tests，Cloudflare Portal 112 个 tests 及全仓 typecheck/dry-run 通过。
+
+### 登录、授权与退出四态闭环（2026-09-11）
+
+已按真人反馈重构浏览器认证状态机并部署 Worker 版本 `48ffb028-6a9c-40b1-a8c4-00000836fca2`：未登录、已登录有权限、已登录无权限和 logout 四种状态均有独立且可恢复的 UI/路由行为，不再把登录提示、OIDC 启动、授权拒绝和 session 清理混在同一个跳转中。
+
+- 未登录访问 `/admin/` 时 303 到公开的 `/admin/login` 提示页；只有点击“使用 Google Account 登录”才进入 `/admin/auth/login`。OIDC authorization 固定 `prompt=select_account`，每次都显示 Google 账号选择器，同时保留 PKCE S256、nonce、单次 state 和既有授权码登录确认语义。
+- 有效且有权限的 session 直接进入真实管理页面。生产回读确认 `shazhou.ww@gmail.com`、`yanjiayiceshi@gmail.com` 和 `neko.shazhou.ww@gmail.com` 均为 active、已绑定成员。
+- 浏览器 callback 的 401/403 303 到 `/admin/access-denied`；页面展示安全原因、request ID 和“退出并返回登录”。该操作先尝试 POST logout，再回 `/admin/login`，不会直接重启 OIDC。API 与非 HTML 调用继续返回稳定 JSON。
+- logout 对浏览器保持幂等：有效 session 会撤销 family 并清除 session/CSRF cookie；session 已过期或不存在时，同源 POST 仍返回 204 并清除两枚 cookie。正常退出最终回到 `/admin/login`，不会自动进入 Google。
+- 已处理并发 callback 的陈旧页面竞态：`/admin/login` 和 `/admin/access-denied` 首帧只显示中性的“正在确认登录状态”，先读取 `/admin/auth/session`。若另一个 callback 已建立有效 session，则直接 `replace('/admin/')`；只有 session 探测失败才显示登录或拒绝内容，因此不会闪现错误的“没有管理员权限”。生产浏览器记录的完整标题序列为“正在确认登录状态”→“文档类型”。
+- 验证：Google OIDC 36 个测试、Admin client 4 个 transport tests、WebUI 6 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 22 个集成测试，以及相关 typecheck/build/dry-run 通过。匿名 production smoke 固定 `/admin/`→`/admin/login`、提示页 200、OIDC 303 且 `prompt=select_account`、拒绝页 200、无 session logout 204 且清除两枚 cookie；有效 `shazhou.ww@gmail.com` session 在线回读为 200 并可进入管理页面。
+
+### 管理员首个 API 与 WebUI 闭环（2026-09-11）
+
+已上线 `listAdministratorMembers`、`getAdministratorMember`、`addAdministratorMember`，Admin v1 完整 operation 总数增至 **6/26**；生产 Worker 版本 `1adaa634-9f7f-47d5-a082-93e62446b863`。WebUI 新增管理员导航、真实 allowlist、身份绑定状态、自身标识和添加邮箱对话框；同批保留搜索框 Enter 提交且不显示冗余搜索按钮的交互调整。
+
+- add service 先 trim/lowercase 规范化 Google 邮箱，创建未绑定成员与 canonical ETag；D1 batch 在事务内复查当前管理员/session，并原子提交 actor/operation/key receipt、allowlist 行和 `administrator.added` audit。同 key 同请求重放，不同请求返回 409；已有 active 邮箱返回 `administrator_exists`。
+- list/get 只返回 active 成员，按稳定 member ID cursor 分页；`bound` 来自 issuer/subject 是否已完成绑定，`isSelf` 只出现在列表 DTO。成员时间在写入前固定到 D1 的秒精度，保证 mutation 返回与后续 GET 的 ETag 相同。
+- 生产 allowlist 已加入 `yanjiayiceshi@gmail.com`，成员、receipt 与 audit 通过一次 D1 原子 import 提交并回读均为 1；该账号及随后通过正式 WebUI 添加的 `neko.shazhou.ww@gmail.com` 均已完成身份绑定。邀请前失败的 OAuth state 不可重放，必须从 `/admin/` 重新开始登录。
+- 浏览器 callback 的 401/403 不再显示裸 JSON：带 `Accept: text/html` 的失败导航会 303 到 `/admin/access-denied`，显示安全原因、request ID 和退出操作；API 与非 HTML 调用仍返回原稳定 JSON。拒绝页只读取 session 状态，不调用业务 API，390×844 下无横向或纵向溢出。
+- 最新验证数字与认证 UX 见上方四态闭环记录。生产 WebUI 已回读三位 active、已绑定管理员；搜索按钮不存在且 Enter 查询测试保留。
+
+### Admin WebUI MVP 上线（2026-09-11）
+
+已将首个可用 WebUI 部署到 `https://unidocs.shazhou.work/admin/`，Worker 版本 `90b50031-30d7-4f59-a47f-38468f4ca3b1`。未登录入口继续 303 到现有 Google 登录；登录后根路由不再返回 session JSON，而是返回真实 React WebUI，机器可读 session 保留在 `/admin/auth/session`。
+
+- 新增 `@unidocs/admin-portal-client` 与 `@unidocs/admin-portal-webui`。MVP 使用真实 API 提供 session 展示、文档类型列表/名称与 enabled 筛选、详情检查、创建 disabled 草稿、退出登录，以及 loading/empty/error 状态；不含 mock data。桌面使用紧凑表格与详情面板，移动端使用右下入口和右侧抽屉。
+- client 当前只覆盖 session/logout 和 document type create/list/get/update transport，不声称已完成 26-operation client。mutation 统一发送同源 cookie、CSRF、幂等 key，PATCH 发送 `If-Match`；稳定 API error 带 status/code/requestId。
+- WebUI 由 Vite 构建后生成 Worker 内嵌 asset map。HTML `no-store`，带 hash 的 JS/CSS 为 immutable；`/admin/` 先认证再返回 HTML，静态 asset 不含管理员数据。CSP 仅允许同源脚本、样式和连接，不使用 inline script/style。
+- 同批完成 PATCH document type 的 service/D1/HTTP 并发控制切片：幂等 receipt 在旧 `If-Match` 重试时先重放，D1 事务内条件更新、管理员/session 再授权和 audit 原子提交，旧 ETag 返回 412，缺失 ETag 返回 428。当前 D1 尚无 contract/bundle/Operator 候选表，候选 resolver 明确返回 not found，启用不完整类型会拒绝；因此 PATCH **仍不计为完整 operation**；当前完整总数因管理员三个 operation 上线增至 **6/26**，WebUI 暂不展示重命名/绑定/启用控件。
+- 当时验证：client 2 个测试、WebUI 1 个组件测试、portal-service 149 个测试、Cloudflare Portal 112 个测试、真实 D1/BFF 20 个集成测试及相关 typecheck/build 通过；最新数字见上方管理员闭环记录。Playwright 在 1440×900 与 390×844 验证无横向溢出，移动详情关闭控件可见。生产匿名 smoke：`/admin/` 303、hashed JS 200、session/API 401、主站与 `/ui/` 200。
+- 待真人验收：已登录后检查真实空/已有列表与详情，并按需创建一个生产草稿。WebUI 创建会写真实 D1 数据，不自动启用类型；反馈应优先覆盖信息密度、筛选、详情字段和创建流程。
 
 ### 文档类型首个 API 闭环（2026-09-10）
 
@@ -16,7 +118,7 @@
 - 列表提供 name/ID 文本筛选、enabled 筛选及按稳定 documentType ID 的 cursor 分页；cursor 绑定筛选条件，列表为 summary DTO。当前数据库搜索大小写折叠使用 SQLite lower，非完整 Unicode case folding；跨请求分页不是数据库 snapshot。
 - HTTP 创建 body 限制 16 KiB，复用严格 JSON parser，拒绝重复 key、非标准 JSON、未知创建字段、重复/非法 query；GET 单独启用锁定版本的 Zod query coercion，POST 不进行类型纠正。错误保持稳定 code/requestId，认证和 CSRF 在 BFF 执行，响应 no-store。PATCH、contract、bundle 和 Operator handler 尚未注册。
 - 验证：147 个业务核测试、111 个 Cloudflare 测试、20 个 D1/BFF/HTTP 集成测试、全仓 typecheck 与生产 dry-run 通过。workerd 内完成登录→创建→重放→详情→筛选列表→logout→拒绝旧 cookie 的全链路；线上只做匿名 smoke，读写均 401，主站及 `/ui/` 仍为 200。未用用户 cookie 创建生产测试数据。
-- 已登录用户可访问 `https://unidocs.shazhou.work/admin/api/v1/document-types` 检查真实列表。当前 `/admin/` 仍显示认证 JSON；client 与 WebUI 下一步接入，不能将 API 上线描述为完整管理体验。
+- 已登录用户可访问 `https://unidocs.shazhou.work/admin/api/v1/document-types` 检查真实列表。`/admin/` 已于 2026-09-11 切换为 MVP WebUI，范围与限制见上方最新记录。
 
 以下上线记录按时间保留；当前 operation 数与版本以上述段落为准。
 
@@ -144,7 +246,7 @@ Phase 0 剩余门禁（按第 5 节已确认的认证先行顺序，对应功能
 - 不创建 `@unidocs/tenant-portal-client` 或 `@unidocs/tenant-portal-webui`；
 - 不创建 `@unidocs/azure-portal`，不设计 PostgreSQL/Blob adapter；
 - `@unidocs/portal-service` 本期不依赖 `@unidocs/protocol-platform`；
-- 不实现 tenant、document、version、thread、ping/pong、submission、CAS retain 或 Operator outbox；
+- 不实现 tenant、document、version、thread、comment/reply、submission、CAS retain 或 Operator outbox；
 - 不实现 View Host、View bundle runtime 或 thumbnail 生成服务；本期只验证和托管双入口 View bundle；
 - 不迁移、不复用或重命名现有 `gateway-common`、`web-gateway`、`cloudflare-gateway`、`azure-gateway`；
 - 不提供旧 Admin API 兼容层。
@@ -238,7 +340,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 创建 `portal-service` 和 `cloudflare-portal`。
 - [x] 为上述两包加入 workspace、TypeScript project references、build/test/typecheck/clean scripts。
 - [x] 建立两包单元测试及 Miniflare/workerd 集成 test harness。
-- [ ] 创建 `admin-portal-client`、`admin-portal-webui` 并完成 workspace、TS references 和 scripts 接线。
+- [ ] 创建 `admin-portal-client`、`admin-portal-webui` 并完成 workspace、TS references 和 scripts 接线；两包及 build/test/typecheck scripts 已创建，根 TS project references 与专门依赖边界测试待补。
 - [ ] 以边界测试固定依赖方向，禁止新包依赖旧 Gateway 或 Azure 包；当前实现未引入这些依赖，但尚无专门边界测试。
 - [x] 建立正式认证 Worker 入口、生成 Env、Wrangler 本地配置和打包 dry-run 检查。
 - [ ] 建立 client 和 WebUI test harness。
@@ -259,26 +361,27 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 
 ### Phase 3：文档类型与 Document Contract
 
-- 当前进度：本 Phase 3/7 个 operation、全部 Admin v1 3/26 个 operation 已上线。
+- 当前进度：本 Phase 6/7 个 operation、全部 Admin v1 15/26 个 operation 已上线。
 - [x] 实现并上线 register/list/get document type，使用真实 service/D1/oRPC handler，涵盖鉴权、CSRF、幂等、审计及筛选分页。
 - [ ] 实现 PATCH document type，包括并发 If-Match、候选绑定及启用条件。
-- [ ] 实现 paired contract append/list/get。
+- [x] 实现 paired contract append/list/get，涵盖真实 service/D1/oRPC/client/WebUI、零基并发分配、幂等、原子审计和刷新恢复。
 - [x] 实现 schema/paired contract canonical hash 及测试。
-- [ ] 在真实 append 服务中接入 SValue dialect、零基 idx 和 append-only 校验；协议校验与 D1 分配 spike 已有，handler 尚无。
+- [x] 在真实 append 服务中接入 SValue dialect、零基 idx、append-only 校验与 canonical hashes。
 - [ ] 实现 View/Operator contract 支持交集与 enable 前置条件。
 
 - [ ] **退出条件**：相关 7 个 operation 通过 contract、领域和并发测试。
 
 ### Phase 4：Type Card 与 View bundle
 
+- 当前进度：Type Card 4/4 个 operation 已上线；View bundle 0/4，Phase 合计 4/8。
 - [x] 实现有界 ZIP 扫描、zip-slip/zip-bomb/重复路径防护；当前压缩输入最多暂存 8 MiB，不是无限大小流式 ingestion。
 - [x] 校验 Type Card manifest、canonical locale、图标五尺寸文件引用和 sample thumbnail 引用。
-- [ ] 校验图标/thumbnail 的真实图片内容、像素尺寸及 SVG 安全性。
+- [x] 校验 Type Card 图标/thumbnail 的真实 PNG/JPEG/WebP 内容、像素尺寸及 SVG 安全性。
 - [x] 校验 View 的不同 `interactive`/`thumbnail` 入口、规范路径、文件存在性与已登记 revisions。
-- [ ] 校验 MIME allowlist、HTML/JS/CSS 及资源加载安全策略。
+- [ ] 校验 MIME allowlist、HTML/JS/CSS 及资源加载安全策略；Type Card 图片/manifest allowlist 与隔离 ingress 已完成，View 执行资源仍待实现。
 - [x] 计算 canonical manifest 与资源文件清单的内容身份，验证 Node/Workers 一致性。
-- [ ] 建立 R2 reservation/cleanup，写入不可变对象并持久化 canonical `bundleUrl`。
-- [ ] 实现两类 bundle 的 upload/list/get/metadata patch。
+- [ ] 建立 R2 reservation/cleanup，写入不可变对象并持久化 canonical `bundleUrl`；Type Card reservation/write/publish 已完成，过期 reservation 与孤儿对象 GC 尚待实现。
+- [ ] 实现两类 bundle 的 upload/list/get/metadata patch；Type Card 四个 operation 已完成，View 四个 operation 尚待实现。
 
 - [ ] **退出条件**：8 个 bundle operation 通过；重复内容、失败清理、不可变缓存 header 和恶意 ZIP fixtures 通过。
 
@@ -288,38 +391,43 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 验证第一方 Service Binding 受控传输与完整 I/O deadline；当前为未接入 handler 的实现切片。
 - [ ] 实现外部 Operator 受控出口、签名 probe/回执验证、TTL record 和 candidate creation。
 - [ ] 实现 Operator list/get/metadata patch。
-- [ ] 实现管理员 bootstrap/list/get/add/remove 的真实 application service 与 adapter；已有身份策略和 D1 spike。
-- [ ] 在真实成员 mutation 中实现不可删除自身/最后管理员约束；并发规则已由 D1 spike 验证。
-- [ ] 实现可过滤、稳定 cursor 分页的 Admin audit。
+- [x] 实现管理员 bootstrap/list/get/add/remove 的真实 application service 与 adapter。
+- [x] 在真实成员 mutation 中实现不可删除自身/最后管理员约束，并以真实 D1 并发互删测试固定。
+- [x] 实现可过滤、稳定 cursor 分页的 Admin audit，并接入真实 D1、HTTP、client 与 WebUI 详情。
 
 - [ ] **退出条件**：剩余 11 个 operation 通过；SSRF、过期 validation、成员竞态和审计过滤测试通过，26 个 operation 全部有真实 handler。
 
 ### Phase 6：Cloudflare adapter 与认证入口
 
 - [x] 建立认证部分 D1 migration 和 repository adapter，并通过真实 D1 集成测试。
-- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter。
-- [ ] 建立 R2 adapter、bundle ingress 与独立稳定 bundle origin。
+- [ ] 建立其余 Admin 业务 D1 migrations 和 repository adapter；document type、Document Contract、Type Card、管理员与 audit 已接入，View bundle/Operator 尚待实现。
+- [ ] 建立 R2 adapter、bundle ingress 与独立稳定 bundle origin；Type Card adapter/ingress/custom domain 的 DNS/TLS smoke 已通过，View ingress 尚待实现。
 - [x] 实现 Bearer 优先且失败不 fallback cookie，并通过 Node/workerd 测试。
 - [x] 复用 Gateway Google client 配置，固定 Portal origin 和独立 callback；用户已确认回调登记完成。
 - [x] 实现 OIDC authorization code + PKCE、nonce、浏览器绑定和单次 state port，并通过模拟 Google/workerd 测试。
+- [x] 实现公开登录提示页、Google `prompt=select_account`、浏览器授权拒绝页、幂等 logout 与陈旧 callback 页面无闪烁恢复。
 - [x] 实现 hashed session、`__Host-` cookie、CSRF 和逐请求成员有效性鉴权模块。
 - [x] 接通 D1 state 消费、bootstrap/绑定、session family 创建与登录替换/撤销、BFF logout；当前采用单管理员单活跃 session。
 - [ ] 完成过期登录 state、session 和撤销 family 的有界清理任务。
 - [x] 根据真人失败证据和用户批准，实施独立授权码登录确认时间，不伪造 Google auth_time；保持 Bearer 策略不变。
 - [x] 用户已验收新策略下真实 Google 登录成功；记录本地登录确认，不声称近期密码/MFA 验证。
 - [x] 通过正式 Worker adapter 暴露 document type create/list/get 三个 oRPC/OpenAPI handler，限制同源 cookie 访问并设置安全 headers。
-- [ ] 暴露其余 23 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
+- [x] 通过正式 Worker adapter 暴露 administrator list/get/add/remove 四个 oRPC/OpenAPI handler，涵盖 CSRF、ETag、幂等、重复邮箱冲突、成员保护和原子审计/session 撤销。
+- [x] 通过正式 Worker adapter 暴露 Admin audit list handler，涵盖筛选绑定 cursor、同秒复合分页和 schema 校验。
+- [x] 通过正式 Worker adapter 暴露 Document Contract append/list/get 三个 handler，涵盖严格 JSON、并发 idx、幂等和原子 registration/audit 更新。
+- [ ] 暴露其余 11 个 contract handler，并完成整体 CORS/OpenAPI surface 验证。
 - [x] 生成 Worker binding types 并配置结构化 observability；生产日志采集仍随部署验收。
 
 - [ ] **退出条件**：Miniflare/Worker 集成测试覆盖两种鉴权、全部 mutation precondition、D1 migration 和 R2 round trip。
 
 ### Phase 7：Admin client 与真实 WebUI
 
-- [ ] 完成 26-operation typed client 与 transport tests。
-- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面。
-- [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态。
+- [ ] 完成 26-operation typed client 与 transport tests；当前覆盖 session/logout、document type create/list/get/update、Document Contract append/list/get、Type Card upload/list/get/metadata patch、administrator list/get/add/remove 与 audit list transport。
+- [ ] 将 mock 视觉与交互迁移到真实数据驱动的 React 页面；六 tab 文档类型配置、Document Contract、Type Card、管理员和 audit 已上线，View bundle/Operator tab 待真实 API。
+- [ ] 实现 loading、empty、error、401/session expiry、409、412、428 和上传进度状态；MVP 已有通用状态、Type Card upload/metadata mutation 状态与稳定错误展示，细粒度上传进度和全部冲突恢复待实现。
 - [ ] bundle 详情明确展示 interactive/thumbnail 两个入口。
-- [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性。
+- [ ] 保留键盘操作、焦点恢复、移动端无重叠和基本可访问性；MVP 已验证桌面/移动端无横向溢出及移动详情关闭控件，完整键盘/焦点验收待补。
+- [x] 建立 refresh-safe 前端路由；page/detail/tab URL、Worker 鉴权 shell fallback、刷新和前进/后退已通过测试及生产浏览器验收。
 
 - [ ] **退出条件**：组件测试覆盖主要 workflow；浏览器中可完成类型创建、contract append、bundle 上传/绑定、Operator 配置、启用、成员管理与审计查询。
 
@@ -331,11 +439,11 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 记录认证路由回退方式，保留 Gateway 原 OAuth 与文档 API；回退尚未实际演练。
 - [x] 在 `stacks/unidocs-cloudflare` 增加 Portal 认证部署预检和边界测试；生产发布目前仍由显式 Wrangler 命令执行。
 - [ ] 将 Portal migration/deploy/smoke 接入统一 stack runner，保持默认 Gateway 发布序列不误触 Portal。
-- [x] 配置并部署独立 Worker 名和 D1，复用 `unidocs.shazhou.work`；未替换 Gateway Worker，R2 尚未配置。
-- [ ] 配置独立 R2 与 bundle origin。
+- [x] 配置并部署独立 Worker 名和 D1，复用 `unidocs.shazhou.work`；未替换 Gateway Worker，独立 Portal R2 已绑定。
+- [x] 配置独立 R2 与 bundle origin；bucket、binding、custom-domain trigger 和独立 hostname DNS/TLS/404 smoke 已通过，真实对象 fetch 等待首次人工上传验收。
 - [x] 确认并执行 `/admin`、`/admin/*` 切换，验证主站、`/ui/` 与旧 OAuth discovery 保留。
 - [ ] 实际演练旧后台路由回退；已有无数据删除的书面步骤。
-- [x] smoke 覆盖匿名登录跳转、匿名 API 拒绝、真实 Google 登录和 session 读取。
+- [x] smoke 覆盖匿名登录提示、显式 Google 账号选择、匿名 API 拒绝、授权拒绝 UI、幂等 logout、真实 Google 登录和 session 读取。
 - [ ] smoke 覆盖一次经 client 发起的幂等 mutation、bundle fetch 和 audit correlation；workerd 已覆盖 mutation，但未用生产用户 cookie 自动写数据。
 - [ ] 记录 rollback：Worker 版本回退、向前兼容 migration、不可变 R2 对象保留。
 

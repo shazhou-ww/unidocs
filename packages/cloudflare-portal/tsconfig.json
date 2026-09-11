@@ -8,5 +8,8 @@
     "types": ["node", "@cloudflare/workers-types"]
   },
   "include": ["src"],
-  "references": [{ "path": "../portal-service" }]
+  "references": [
+    { "path": "../portal-service" },
+    { "path": "../protocol-admin-portal" }
+  ]
 }

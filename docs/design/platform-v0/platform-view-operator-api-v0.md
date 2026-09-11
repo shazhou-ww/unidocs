@@ -1,13 +1,13 @@
 # UniDocs Platform、View 与 Operator API v0
 
-状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的公共、Agent 与 Operator 契约位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)，管理员控制面契约位于 [`@unidocs/protocol-admin-portal`](../../../packages/protocol-admin-portal/src/index.ts)。
+状态：目标设计草案，2026-09-09。本文基于[人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)，只定义新的系统边界与 API，不讨论现有系统兼容、迁移或代码复用。可由 TypeScript language server 检查的线契约分三个包：§7 的 tenant HTTP API 位于 [`@unidocs/protocol-tenant-portal`](../../../packages/protocol-tenant-portal/src/index.ts)（contract-first，附生成的 OpenAPI 与中英双语 Scalar 文档），§6 的管理员控制面位于 [`@unidocs/protocol-admin-portal`](../../../packages/protocol-admin-portal/src/index.ts)，§8 View Host RPC、§9 Agent API 与 §10 Operator webhook 位于 [`@unidocs/protocol-platform`](../../../packages/protocol-platform/src/index.ts)。
 
 ## 1. 决策摘要
 
 系统只保留两类可独立部署的服务：
 
 1. **UniDocs Platform**：面向用户、View、管理员和 Agent 的唯一数据权威；
-2. **Operator Agent**：理解具体文档类型并生成 pong 和完整新 snapshot。
+2. **Operator Agent**：理解具体文档类型并生成 reply 和完整新 snapshot。
 
 View 不是第三类服务。每种文档类型可以绑定两个独立的静态资源包：面向创建入口的 **Type Card bundle**，以及运行文档界面的 **View resource bundle**。两者由 Admin 上传并由 Platform 托管在公共 R2 bucket；浏览器只在隔离 iframe 中运行 View bundle，通过 Host RPC 使用 Platform 能力。
 
@@ -42,7 +42,7 @@ flowchart LR
 - 文档身份、类型目录、版本 base forest、comment provenance、current pointer 和审计；
 - snapshot 与附件的内容存储和引用保留；
 - 向已认证的 Web Host 和 Agent 颁发短期 tenant CAS capability；
-- ping/pong 双序列、累计确认水位和 open 状态；
+- comment/reply 双序列、累计确认水位和 open 状态；
 - 不透明的类型化 location；
 - Agent submission 的幂等记录、双重乐观锁和原子提交；
 - operator webhook 的至少一次投递；
@@ -53,10 +53,10 @@ flowchart LR
 - 按文档类型解释 snapshot 和 location；
 - 维护文档级长期 Agent session 及自己的任务队列；
 - 查询 current 内容、历史版本和 thread 上下文；
-- 判断历史版本上的 ping 是否仍适用于 current；
-- 协调冲突，生成 pong；
+- 判断历史版本上的 comment 是否仍适用于 current；
+- 协调冲突，生成 reply；
 - 生成完整新 snapshot；
-- 通过 Platform API 原子提交可选版本和一组 pong；
+- 通过 Platform API 原子提交可选版本和一组 reply；
 - 以最终一致方式编排跨文档修改。
 
 ### 1.4 View bundle 的职责
@@ -64,13 +64,13 @@ flowchart LR
 - 在浏览器中渲染 Platform 下发的 snapshot；
 - 通过 interactive 入口提供完整文档视图，接受滚动位置、缩放和可见区域等类型专用 viewport state；
 - 创建、解释和高亮本类型的 `DocumentLocation`；
-- 展示 thread marker 和 pong result locations；
+- 展示 thread marker 和 reply result locations；
 - 提供类型专用视图工具，例如 PSD 图层与通道控制；
-- 将圈选评论和轻编辑编译成 ping；
+- 将圈选评论和轻编辑编译成 comment；
 - 在本地提供类型专用查看工具和草稿体验。
 - 通过独立 thumbnail 入口在指定尺寸内快速、确定性地渲染 snapshot，供无头浏览器或 `html2canvas` 生成缩略图。
 
-View bundle 不创建正式版本。需要改变正式内容的用户操作最终都成为 ping，由 Agent 生成新 snapshot。
+View bundle 不创建正式版本。需要改变正式内容的用户操作最终都成为 comment，由 Agent 生成新 snapshot。
 
 ## 2. 通用线类型
 
@@ -90,10 +90,10 @@ type DocumentLocationContentType<T extends DocumentType = DocumentType> =
 /** 从 0 开始、文档内单调递增的版本 record ID。 */
 type VersionIdx = number;
 type ThreadId = string;
-/** 从 0 开始、thread 内单调递增的 ping record ID。 */
-type PingIdx = number;
-/** 从 0 开始、thread 内单调递增的 pong record ID。 */
-type PongIdx = number;
+/** 从 0 开始、thread 内单调递增的 comment record ID。 */
+type CommentIdx = number;
+/** 从 0 开始、thread 内单调递增的 reply record ID。 */
+type ReplyIdx = number;
 type SubmissionId = string;
 type ViewBundleId = string;
 type TypeCardBundleId = string;
@@ -148,7 +148,7 @@ type SValueSchema = Readonly<Record<string, JsonValue>> & {
 
 `SValueSchema` 是 JSON Schema 2020-12 的扩展 dialect。普通节点沿用 JSON Schema 关键字；`x-unidocs-sblob: true` 表示该节点匹配一个原子的 `SBlob`，`x-unidocs-blob-content-types` 可约束其逻辑 content type。SBlob 大小上限完全由 UniCAS 规定和执行，dialect 不提供 `x-unidocs-blob-max-size`，提交包含该关键字的 contract 必须拒绝，不能静默忽略。Schema 本身是 JSON，不把内存中的 symbol-branded `SBlob` 伪装成 JSON 对象。
 
-所有文档版本 snapshot、ping/pong 富内容和附件都以 `CasBlobRef` 持久化。其语义与现行 `@unicas/tenant-blob-client` 完全相同：`hash` 是 blob root，`size` 是逻辑总字节数，`contentType` 描述完整逻辑 blob，而不是某个内部 chunk。调用方不能假定 root 是单个 CAS node；大 blob 可以是 blob-index tree。`text` 与 `richContent` 至少一个非空；附件不能替代正文。
+所有文档版本 snapshot、comment/reply 富内容和附件都以 `CasBlobRef` 持久化。其语义与现行 `@unicas/tenant-blob-client` 完全相同：`hash` 是 blob root，`size` 是逻辑总字节数，`contentType` 描述完整逻辑 blob，而不是某个内部 chunk。调用方不能假定 root 是单个 CAS node；大 blob 可以是 blob-index tree。`text` 与 `richContent` 至少一个非空；附件不能替代正文。
 
 ## 3. 文档与协作资源
 
@@ -179,17 +179,25 @@ interface DocumentRecord {
   readonly createdAt: IsoDateTime;
 }
 
+interface AddressedComment {
+  readonly threadId: ThreadId;
+  readonly commentIdx: CommentIdx;
+  readonly baseVersionIdx: VersionIdx;
+}
+
 interface VersionRecord {
   readonly versionIdx: VersionIdx;
   readonly parentVersionIdx: VersionIdx | null;
   readonly documentContractIdx: DocumentContractIdx;
-  readonly snapshot: SValue;
   readonly authorAgentId: string;
+  readonly submissionId: SubmissionId;
+  /** comment provenance；首个版本为空。 */
+  readonly addressedComments: readonly AddressedComment[];
   readonly createdAt: IsoDateTime;
 }
 
-interface PingRecord {
-  readonly pingIdx: PingIdx;
+interface CommentRecord {
+  readonly commentIdx: CommentIdx;
   readonly baseVersionIdx: VersionIdx;
   readonly content: MessageContent;
   readonly location: DocumentLocation | null;
@@ -197,9 +205,9 @@ interface PingRecord {
   readonly createdAt: IsoDateTime;
 }
 
-interface PongRecord {
-  readonly pongIdx: PongIdx;
-  readonly respondThroughPingIdx: PingIdx;
+interface ReplyRecord {
+  readonly replyIdx: ReplyIdx;
+  readonly respondThroughCommentIdx: CommentIdx;
   readonly content: MessageContent;
   readonly resultLocations: readonly DocumentLocation[];
   readonly authorAgentId: string;
@@ -213,24 +221,30 @@ interface ThreadRef {
 
 interface ThreadDetail {
   readonly threadId: ThreadId;
-  readonly pings: readonly PingRecord[];
-  readonly pongs: readonly PongRecord[];
+  readonly comments: readonly CommentRecord[];
+  readonly replies: readonly ReplyRecord[];
 }
 ```
 
-`DocumentContractIdx`、`VersionIdx`、`PingIdx` 和 `PongIdx` 都是从 0 开始的单调递增安全整数，首条 record 分配 0，之后分配当前最大值加 1。`VersionIdx` 同时表达版本 record 身份和出生顺序；`PingIdx` 和 `PongIdx` 分别在各 thread 的序列内分配。`null` 表示尚无 record 或尚未确认，不能用 0 充当 sentinel。所有整数 record 身份使用 `Idx`，字符串身份使用 `Id`，内容哈希使用 `Hash`。
+`DocumentContractIdx`、`VersionIdx`、`CommentIdx` 和 `ReplyIdx` 都是从 0 开始的单调递增安全整数，首条 record 分配 0，之后分配当前最大值加 1。`VersionIdx` 同时表达版本 record 身份和出生顺序；`CommentIdx` 和 `ReplyIdx` 分别在各 thread 的序列内分配。`null` 表示尚无 record 或尚未确认，不能用 0 充当 sentinel。所有整数 record 身份使用 `Idx`，字符串身份使用 `Id`，内容哈希使用 `Hash`。
 
 每个文档类型的 `DocumentContractIdx` 从 0 开始单调递增。一个 revision 是同时包含 snapshot schema 与 location schema 的不可变 JSON，不能只更新其中一项。revision 只能追加，不能修改或删除；最大 idx 只表示最后提交，不是 current，也不是唯一可写 revision。Platform 对两个 schema 分别做 canonical JSON digest；完整 contract digest 覆盖 `documentType`、`formatVersion` 与两个 schema。
 
 `documentType` 必须匹配 MIME-safe slug `[a-z][a-z0-9-]{0,63}`。`formatVersion` 描述 snapshot/location 的线编码，不是 schema revision。v1 从 `(documentType, formatVersion)` 派生两条媒体类型；例如 PSD 使用 `application/vnd.unidocs.psd.snapshot+cbor;version=1` 与 `application/vnd.unidocs.psd.location+json;version=1`。客户端不提交自由 content type。以后只有线编码本身发生不兼容变化时才增加 format version，普通 schema 演进只增加 `DocumentContractIdx`。
 
-location content type 描述 location 对象的规范 JSON 表示；当前它通常嵌在 ping/pong JSON body 中，因此不会成为该 HTTP 请求的顶层 `Content-Type` header，但仍作为 contract record 的明确格式标识。
+location content type 描述 location 对象的规范 JSON 表示；当前它通常嵌在 comment/reply JSON body 中，因此不会成为该 HTTP 请求的顶层 `Content-Type` header，但仍作为 contract record 的明确格式标识。
 
 snapshot 是逻辑文档值 `SValue`，其中的大型二进制内容以 `SBlob` 引用 UniCAS；它不是 snapshot CAS hash。相同 snapshot 仍可因 parent、provenance、作者和创建时间不同而形成不同版本。HTTP 使用 canonical SValue CBOR 编码，Platform 可将编码结果作为内部 CAS 业务根持久化，但该存储引用不进入 `VersionRecord` 公共模型。
 
-`DocumentLocation` 只描述一个指定版本内部的位置，自身不重复携带 `versionIdx`。它携带与该版本相同的 `documentContractIdx`；Location Contract schema 校验 `{ locationType, payload }` 投影。`PingRecord.location` 相对于该 ping 的 `baseVersionIdx`，其 contract idx 必须等于 base version；`PongRecord.resultLocations` 相对于同次 submission 创建的新版本，并使用与新 snapshot 相同的 contract idx。
+snapshot **不内嵌在 `VersionRecord` 里**，而是由独立 operation 读取：`SValue` 携带的原子 `SBlob` 没有 JSON 表示，同一个响应体不可能既是 JSON 又是 canonical SValue CBOR。于是 `VersionRecord` 是纯 JSON 元数据、列表与详情共用同一形状，snapshot 单独走
+`GET /documents/{documentId}/versions/{versionIdx}/snapshot`，响应 `Content-Type` 正是该版本 contract revision 上记录的
+`application/vnd.unidocs.{documentType}.snapshot+cbor;version=1`。版本历史面板因此不必为了画一条父子连线拉下整份 PSD。
 
-`latestPing`、`pongWatermark` 和 `open` 都从两个消息序列计算，不作为独立 API 结构或持久状态。`GET /threads?open=true` 可以在服务端按相同规则过滤，但只返回 `ThreadRef`。每个 ping 都绑定一个已存在的确切版本；首版本产生前不能创建 thread 或追加 ping。
+`VersionRecord` 同时承载两张图：`parentVersionIdx` 是 base parent forest，`addressedComments` 是 comment provenance（§4.2）。后者由 submission 在同一事务内写入（§9.2 规则 10），两者不可互相替代，也不能靠遍历 thread 反查——那要求客户端扫描全部 thread 的 reply。
+
+`DocumentLocation` 只描述一个指定版本内部的位置，自身不重复携带 `versionIdx`。它携带与该版本相同的 `documentContractIdx`；Location Contract schema 校验 `{ locationType, payload }` 投影。`CommentRecord.location` 相对于该 comment 的 `baseVersionIdx`，其 contract idx 必须等于 base version；`ReplyRecord.resultLocations` 相对于同次 submission 创建的新版本，并使用与新 snapshot 相同的 contract idx。
+
+`latestComment`、`replyWatermark` 和 `open` 都从两个消息序列计算，不作为独立 API 结构或持久状态。`GET /threads?open=true` 可以在服务端按相同规则过滤，但只返回 `ThreadRef`。每个 comment 都绑定一个已存在的确切版本；首版本产生前不能创建 thread 或追加 comment。
 
 ## 4. Admin WebUI 调整
 
@@ -275,7 +289,7 @@ Document Contract 没有删除、弃用或“设为当前”操作。无论类�
 
 只有至少一个 Document Contract revision、当前 Type Card bundle、当前 View bundle 和当前 builtin operator 全部存在，且 View/Operator 至少共同支持一个已有 revision 时，才能设置 `enabled = true`。类型卡片的名称、描述、图标和 sample thumbnail 都来自当前 Type Card bundle；Admin 的预览工具初始跟随 Admin UI locale，也可以显式切换 locale，但语言切换控件不属于卡片本身。
 
-当前已打开的 View session 固定启动时的 `viewBundleId`。Admin 切换 bundle 只影响新 session，不热替换正在编辑 ping 草稿的 iframe。
+当前已打开的 View session 固定启动时的 `viewBundleId`。Admin 切换 bundle 只影响新 session，不热替换正在编辑 comment 草稿的 iframe。
 
 ### 4.4 Bundle 上传状态
 
@@ -816,6 +830,7 @@ POST /documents
 GET  /documents/{documentId}
 GET  /documents/{documentId}/versions?cursor=&limit=
 GET  /documents/{documentId}/versions/{versionIdx}
+GET  /documents/{documentId}/versions/{versionIdx}/snapshot
 POST /documents/{documentId}/current-version
 GET  /documents/{documentId}/audit?cursor=&limit=
 ```
@@ -865,8 +880,22 @@ interface MoveCurrentVersionRequest {
 }
 
 type ListPublicDocumentTypesResponse = Page<PublicDocumentType>;
+type DocumentAuditAction = "document.created" | "current_version.moved";
+
+interface DocumentAuditEvent {
+  readonly auditEventId: string;
+  readonly actorId: string;
+  readonly action: DocumentAuditAction;
+  readonly beforeVersionIdx: VersionIdx | null;
+  readonly afterVersionIdx: VersionIdx | null;
+  readonly reason: string | null;
+  readonly requestId: string;
+  readonly occurredAt: IsoDateTime;
+}
+
 type ListDocumentsResponse = Page<DocumentRecord>;
 type ListVersionsResponse = Page<VersionRecord>;
+type ListDocumentAuditEventsResponse = Page<DocumentAuditEvent>;
 ```
 
 单资源成功响应直接返回对应 record，不再包装为 `{ data }` 或 `{ document }`：创建/读取文档和移动 current 返回 `DocumentRecord`，读取版本返回 `VersionRecord`。
@@ -875,15 +904,15 @@ type ListVersionsResponse = Page<VersionRecord>;
 
 数据库保存上传时确认的 immutable canonical `bundleUrl`，并校验其 stable origin、资源类型与内容 ID。bundle origin 迁移必须继续路由旧 URL 或显式迁移记录，读取端不能静默按新配置重算。interactive 与 thumbnail entrypoint URL 不作为独立持久字段；Platform 由 View bundle 的 `bundleUrl` 与 manifest `entrypoints` 分别解析。Type Card 的具体 asset URL 同理由其 `bundleUrl` 与 manifest 相对路径解析。
 
-创建文档只原子地产生名称、稳定文档身份和 `currentVersionIdx = null` 的记录，不创建 thread 或 ping。Platform 随即向 builtin operator 投递 `document.created` 事件；Agent 以 `observedCurrentVersionIdx = null`、`newSnapshot` 和空 `threadUpdates` 提交初始 snapshot 后，文档即可打开。用户确有初始化要求或附件时，在创建后通过普通 thread API 添加，不把 instructions 强制耦合进文档创建。
+创建文档只原子地产生名称、稳定文档身份和 `currentVersionIdx = null` 的记录，不创建 thread 或 comment。Platform 随即向 builtin operator 投递 `document.created` 事件；Agent 以 `observedCurrentVersionIdx = null`、`newSnapshot` 和空 `threadUpdates` 提交初始 snapshot 后，文档即可打开。用户确有初始化要求或附件时，在创建后通过普通 thread API 添加，不把 instructions 强制耦合进文档创建。
 
-### 7.2 Thread 与 ping
+### 7.2 Thread 与 comment
 
 ```text
 GET  /documents/{documentId}/threads?open=&versionIdx=&cursor=&limit=
 GET  /documents/{documentId}/threads/{threadId}
 POST /documents/{documentId}/threads
-POST /documents/{documentId}/threads/{threadId}/pings
+POST /documents/{documentId}/threads/{threadId}/comments
 ```
 
 ```ts
@@ -893,7 +922,7 @@ interface CreateThreadRequest {
   readonly location: DocumentLocation | null;
 }
 
-interface AppendPingRequest {
+interface AppendCommentRequest {
   readonly baseVersionIdx: VersionIdx;
   readonly content: MessageContent;
   readonly location: DocumentLocation | null;
@@ -902,9 +931,9 @@ interface AppendPingRequest {
 type ListThreadsResponse = Page<ThreadRef>;
 ```
 
-创建/读取 thread 直接返回 `ThreadDetail`，追加 ping 直接返回 `PingRecord`。
+创建/读取 thread 直接返回 `ThreadDetail`，追加 comment 直接返回 `CommentRecord`。
 
-Platform 校验 `baseVersionIdx` 指向当前文档中的版本。location 始终相对于同一请求的 `baseVersionIdx`，其 `documentContractIdx` 必须等于 base version，并通过该 revision 的 location schema。Platform 在 thread 内分配下一个 `PingIdx`；创建 thread 和追加 ping 使用 HTTP `Idempotency-Key` 保证重试幂等。
+Platform 校验 `baseVersionIdx` 指向当前文档中的版本。location 始终相对于同一请求的 `baseVersionIdx`，其 `documentContractIdx` 必须等于 base version，并通过该 revision 的 location schema。Platform 在 thread 内分配下一个 `CommentIdx`；创建 thread 和追加 comment 使用 HTTP `Idempotency-Key` 保证重试幂等。
 
 ### 7.3 Tenant CAS capability
 
@@ -934,7 +963,7 @@ capability 只包含 tenant 级 `cas:read` 和 `cas:write`，不包含 `cas:mana
 
 隔离 View iframe 不获得该 JWT，而是继续通过 Host RPC 请求顶层 Platform Web Host 代为执行 `openBlob/storeBlob`。CAS 服务必须为受信任的 Platform Web origins 配置 tenant 数据路由 CORS，并允许 `Authorization`、`Range`、内容上传及 lease 所需 headers；不能使用无约束的 credentialed wildcard origin。
 
-未被 ping、pong 或 version 保留的 blob 只有短 lease。业务 mutation 成功时，仍只有 Platform 后端能以带 `refDomain` 的独立 capability 调用 `CasBlobClient.retain`。前端和 Agent 不能声明业务根。MVP 不提供删除或归档，因此暂不调用 `release`；业务 mutation 失败时不 retain，组成 blob 的节点在 lease 到期后可被 GC。
+未被 comment、reply 或 version 保留的 blob 只有短 lease。业务 mutation 成功时，仍只有 Platform 后端能以带 `refDomain` 的独立 capability 调用 `CasBlobClient.retain`。前端和 Agent 不能声明业务根。MVP 不提供删除或归档，因此暂不调用 `release`；业务 mutation 失败时不 retain，组成 blob 的节点在 lease 到期后可被 GC。
 
 ## 8. View Host RPC
 
@@ -1028,7 +1057,7 @@ interface ViewSetMarkersRequest {
   readonly revision: number;
   readonly markers: readonly {
     readonly threadId: ThreadId;
-    readonly pingIdx: PingIdx;
+    readonly commentIdx: CommentIdx;
     readonly open: boolean;
     readonly location: DocumentLocation;
   }[];
@@ -1074,12 +1103,12 @@ interface HostListThreadsRequest {
   readonly limit: number;
 }
 
-interface HostAppendPingRequest extends AppendPingRequest {
+interface HostAppendCommentRequest extends AppendCommentRequest {
   readonly threadId: ThreadId;
 }
 
 interface HostStoreBlobRequest {
-  readonly purpose: "ping_attachment" | "ping_rich_content" | "view_draft";
+  readonly purpose: "comment_attachment" | "comment_rich_content" | "view_draft";
   readonly contentType: string;
   readonly bytes: ArrayBuffer;
 }
@@ -1095,7 +1124,7 @@ host.readBlob
 host.listThreads
 host.getThread
 host.createThread
-host.appendPing
+host.appendComment
 host.storeBlob
 ```
 
@@ -1115,7 +1144,7 @@ type AgentScope =
   | "cas:read"
   | "cas:lease"
   | "comments:read"
-  | "comments:pong"
+  | "comments:reply"
   | "versions:submit";
 ```
 
@@ -1134,7 +1163,7 @@ POST /cas-capabilities
 
 Agent 先读取 `DocumentRecord.currentVersionIdx`，再按需查询确切版本和 open threads。Platform 不维护第二份聚合工作索引；Agent 根据数量选择逐 thread、分页或 sub-agent 策略。
 
-Agent 从 Platform 取得短期 tenant capability，用服务端 `CasBlobClient.storeBlob` 直连 UniCAS，上传并 lease 候选 snapshot 和 pong 资源。Agent 没有 `retain/release` 权限；只有 submission committed 后，Platform 后端才调用 `retain`。
+Agent 从 Platform 取得短期 tenant capability，用服务端 `CasBlobClient.storeBlob` 直连 UniCAS，上传并 lease 候选 snapshot 和 reply 资源。Agent 没有 `retain/release` 权限；只有 submission committed 后，Platform 后端才调用 `retain`。
 
 ### 9.2 原子 submission
 
@@ -1147,16 +1176,16 @@ GET  /documents/{documentId}/submissions/{submissionId}
 interface AgentSubmissionRequest {
   /** 客户端生成，文档内幂等。 */
   readonly submissionId: SubmissionId;
-  /** 纯 pong 时可省略；创建版本时必填，包括 null 初始状态。 */
+  /** 纯 reply 时可省略；创建版本时必填，包括 null 初始状态。 */
   readonly observedCurrentVersionIdx?: VersionIdx | null;
   /** 创建版本时必填，且必须属于当前可用的配对 revision 集合。 */
   readonly newDocumentContractIdx?: DocumentContractIdx;
   readonly newSnapshot?: SValue;
   readonly threadUpdates: readonly {
     readonly threadId: ThreadId;
-    /** 当前已确认到的 ping；尚无 pong 时为 null。 */
-    readonly observedAcknowledgedPingIdx: PingIdx | null;
-    readonly respondThroughPingIdx: PingIdx;
+    /** 当前已确认到的 comment；尚无 reply 时为 null。 */
+    readonly observedAcknowledgedCommentIdx: CommentIdx | null;
+    readonly respondThroughCommentIdx: CommentIdx;
     readonly content: MessageContent;
     readonly resultLocations: readonly DocumentLocation[];
   }[];
@@ -1167,8 +1196,8 @@ interface SubmissionConflict {
   readonly availableDocumentContractIdxs: readonly DocumentContractIdx[];
   readonly threads: readonly {
     readonly threadId: ThreadId;
-    readonly acknowledgedPingIdx: PingIdx | null;
-    readonly latestPingIdx: PingIdx;
+    readonly acknowledgedCommentIdx: CommentIdx | null;
+    readonly latestCommentIdx: CommentIdx;
   }[];
 }
 
@@ -1176,7 +1205,7 @@ type SubmissionReceipt = {
   readonly submissionId: SubmissionId;
   readonly state: "committed";
   readonly version: VersionRecord | null;
-  readonly pongs: readonly PongRecord[];
+  readonly replies: readonly ReplyRecord[];
   readonly committedAt: IsoDateTime;
 } | {
   readonly submissionId: SubmissionId;
@@ -1184,7 +1213,7 @@ type SubmissionReceipt = {
   readonly reason:
     | "version_conflict"
     | "document_contract_conflict"
-    | "pong_watermark_conflict";
+    | "reply_watermark_conflict";
   readonly conflict: SubmissionConflict;
   readonly rejectedAt: IsoDateTime;
 };
@@ -1197,14 +1226,14 @@ type SubmissionReceipt = {
 
 1. 有 `newSnapshot` 时必须显式携带 `observedCurrentVersionIdx`，并与提交时 current 完全相等；
 2. 有 `newSnapshot` 时必须显式携带 `newDocumentContractIdx`，并属于当前可用 revision 集合；Platform 按该 revision 的 snapshot schema 校验 snapshot；
-3. 每个 update 的 `observedAcknowledgedPingIdx` 与 thread 当前水位完全相等；
-4. `respondThroughPingIdx` 必须在该水位之后且不超过 thread 最新 ping；
+3. 每个 update 的 `observedAcknowledgedCommentIdx` 与 thread 当前水位完全相等；
+4. `respondThroughCommentIdx` 必须在该水位之后且不超过 thread 最新 comment；
 5. 一个 submission 内同一 thread 最多出现一次；
-6. 非空 `resultLocations` 必须同时携带 `newSnapshot`，全部位置都相对于本次创建的新版本，且 `documentContractIdx` 等于 `newDocumentContractIdx`；Platform 按同一 revision 的 location schema 校验 `{ locationType, payload }`；纯 pong 的 `resultLocations` 必须为空；
-7. Platform 只在整个 submission 成功时分配下一个 `VersionIdx` 和各 thread 的下一个 `PongIdx`；幂等重试由 `submissionId` 返回同一 receipt；
-8. 纯 pong 省略 `newSnapshot`、`newDocumentContractIdx` 和 `observedCurrentVersionIdx`；
-9. 任一检查失败，版本、全部 pong、current 和内容持久引用都不变化；
-10. 成功时，版本、pong、thread 水位、provenance 和 current 在同一业务事务中生效；
+6. 非空 `resultLocations` 必须同时携带 `newSnapshot`，全部位置都相对于本次创建的新版本，且 `documentContractIdx` 等于 `newDocumentContractIdx`；Platform 按同一 revision 的 location schema 校验 `{ locationType, payload }`；纯 reply 的 `resultLocations` 必须为空；
+7. Platform 只在整个 submission 成功时分配下一个 `VersionIdx` 和各 thread 的下一个 `ReplyIdx`；幂等重试由 `submissionId` 返回同一 receipt；
+8. 纯 reply 省略 `newSnapshot`、`newDocumentContractIdx` 和 `observedCurrentVersionIdx`；
+9. 任一检查失败，版本、全部 reply、current 和内容持久引用都不变化；
+10. 成功时，版本、reply、thread 水位、provenance 和 current 在同一业务事务中生效；
 11. 网络超时是客户端的 unknown 状态，Agent 必须以同一 `submissionId` 查询或重试，不能生成新 ID 猜测结果。
 
 候选 blob 必须在提交前完成 `storeBlob` 并处于 lease 中。Platform 同步返回并持久化 `committed/rejected` receipt；只有 committed receipt 能作为成功事实。网络断开导致客户端结果未知时，以同一 `submissionId` 查询或重试。
@@ -1226,7 +1255,7 @@ POST {baseUrl}/tenants/{tenantId}/documents/{documentId}
 ```ts
 type OperatorEventReason =
   | "document.created"
-  | "ping.appended"
+  | "comment.appended"
   | "current_version.moved";
 
 interface OperatorWebhookRequest {
@@ -1238,10 +1267,10 @@ interface OperatorWebhookRequest {
   readonly documentType: DocumentType;
   readonly currentVersionIdx: VersionIdx | null;
   /** 增量提示，不是要求本轮全部处理的任务边界。 */
-  readonly newPings: readonly {
+  readonly newComments: readonly {
     readonly threadId: ThreadId;
-    readonly pingIdx: PingIdx;
-    readonly acknowledgedPingIdx: PingIdx | null;
+    readonly commentIdx: CommentIdx;
+    readonly acknowledgedCommentIdx: CommentIdx | null;
   }[];
   readonly occurredAt: IsoDateTime;
 }
@@ -1254,7 +1283,7 @@ interface OperatorWebhookResponse {
 
 `2xx` 只表示 Operator 已接收通知，不表示对应工作已完成。Platform 至少一次投递；Operator 按 `eventId` 去重，按自己的队列处理。事件允许重复、延迟和乱序，Agent 在工作前必须查询 Platform 权威状态。
 
-`document.created` 事件的 `currentVersionIdx` 为 `null`、`newPings` 为空。它通知 Operator 按文档类型和名称生成空白初始 snapshot，不隐式创建协作消息。
+`document.created` 事件的 `currentVersionIdx` 为 `null`、`newComments` 为空。它通知 Operator 按文档类型和名称生成空白初始 snapshot，不隐式创建协作消息。
 
 ### 10.3 鉴权
 
@@ -1281,7 +1310,7 @@ type PlatformErrorCode =
   | "snapshot_contract_conflict"
   | "revision_conflict"
   | "version_conflict"
-  | "pong_watermark_conflict"
+  | "reply_watermark_conflict"
   | "idempotency_conflict"
   | "content_unavailable"
   | "limit_exceeded"
@@ -1293,11 +1322,11 @@ type PlatformErrorCode =
 ### 12.2 幂等
 
 - Admin mutation 使用 `Idempotency-Key`，同 key 不同 body 返回冲突；
-- thread/ping 创建使用 `Idempotency-Key`；
+- 文档、thread 和 comment 创建使用 `Idempotency-Key`；移动 current 不需要，`observedCurrentVersionIdx` 等值锁已使重试安全；
 - submission 使用 `submissionId`；
 - webhook 使用 `eventId`；
 - 二进制 complete 操作绑定 upload 身份和接收 digest；
-- 读取和状态查询不得产生版本、pong 或 root refs 副作用。
+- 读取和状态查询不得产生版本、reply 或 root refs 副作用。
 
 ### 12.3 权限分离
 
@@ -1341,11 +1370,13 @@ type PlatformErrorCode =
 | GET | `/api/v1/tenants/{tenantId}/document-types/{type}/document-contracts/{idx}` | 读取确切 paired contract |
 | POST/GET | `/api/v1/tenants/{tenantId}/documents` | 创建/列出文档 |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}` | 文档与 current/latest |
-| GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions` | 版本浏览 |
+| GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions` | 版本浏览（元数据，含 provenance） |
+| GET | `/api/v1/tenants/{tenantId}/documents/{id}/versions/{idx}/snapshot` | 读取 canonical SValue CBOR snapshot |
 | POST | `/api/v1/tenants/{tenantId}/documents/{id}/current-version` | 审计式移动 current |
+| GET | `/api/v1/tenants/{tenantId}/documents/{id}/audit` | 文档级审计事件 |
 | GET/POST | `/api/v1/tenants/{tenantId}/documents/{id}/threads` | 列出/创建 thread |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}/threads/{threadId}` | thread 双序列 |
-| POST | `/api/v1/tenants/{tenantId}/documents/{id}/threads/{threadId}/pings` | 追加 ping |
+| POST | `/api/v1/tenants/{tenantId}/documents/{id}/threads/{threadId}/comments` | 追加 comment |
 | POST | `/api/v1/tenants/{tenantId}/cas-capabilities` | 颁发前端直连 UniCAS 的短期 tenant JWT |
 
 ### 13.3 Agent
@@ -1353,18 +1384,18 @@ type PlatformErrorCode =
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}/threads...` | 查询完整上下文 |
-| POST | `/api/v1/tenants/{tenantId}/documents/{id}/submissions` | 原子版本/pong 提交 |
+| POST | `/api/v1/tenants/{tenantId}/documents/{id}/submissions` | 原子版本/reply 提交 |
 | GET | `/api/v1/tenants/{tenantId}/documents/{id}/submissions/{id}` | 核实提交结果 |
 | POST | `/api/v1/tenants/{tenantId}/cas-capabilities` | 颁发 Agent 直连 UniCAS 的短期 tenant JWT |
 | POST | `{operatorBaseUrl}/tenants/{tenantId}/documents/{id}` | Platform webhook 通知 |
 
 ## 13. 实施顺序建议
 
-1. 建立新平台核心类型、初始 ping、version/current 和 thread ping/pong 存储；
+1. 建立新平台核心类型、初始 comment、version/current 和 thread comment/reply 存储；
 2. 实现 submission receipt、内容上传和双重乐观锁；
 3. 实现 Type Card/View bundle R2 repository、manifest validator 和隔离静态 ingress；
 4. 替换 Admin 类型目录为草稿 + 两类 bundle + builtin operator 模型；
-5. 实现最小 View Host RPC：load/read/create thread/append ping；
+5. 实现最小 View Host RPC：load/read/create thread/append comment；
 6. 实现 Operator discovery、webhook 和 Agent OAuth API；
 7. 打通首个文档类型的 document.created → webhook → 首版本 → View 渲染闭环；
 8. 增加 result locations 和 current pointer 审计界面。
@@ -1381,13 +1412,13 @@ type PlatformErrorCode =
 | doctype 服务提供显示名称、图标或创建入口元数据 | 版本化 Type Card bundle 提供多语言名称、描述、图标和 sample thumbnail |
 | `/.well-known/unidocs-doctype` 发现 editor、存储身份和能力 | Type Card/View bundle manifest 提供静态能力；`/.well-known/unidocs-operator` 只发现 Operator 身份和协议 |
 | `/url-validations` | `/operator-validations`；bundle 使用上传后的本地验证流程 |
-| editor service 的 `init/import/query/apply/snapshot/export/summary` | 删除；View 本地渲染，用户修改成为 ping，Agent 直接生成完整 snapshot |
+| editor service 的 `init/import/query/apply/snapshot/export/summary` | 删除；View 本地渲染，用户修改成为 comment，Agent 直接生成完整 snapshot |
 | 文档服务维护 session、operation history 和 snapshot | Platform 直接维护 Document、Version、current pointer 和 `CasBlobRef` |
 | Gateway 将 `docId` 路由到 doctype `sessionId` | Platform 以 `tenantId + documentId` 直接授权和定位权威数据 |
-| 用户或 View 提交 operation | Host 提交 `CreateThreadRequest` / `AppendPingRequest` |
+| 用户或 View 提交 operation | Host 提交 `CreateThreadRequest` / `AppendCommentRequest` |
 | 同步 Operator `run/reset` | Platform 至少一次 webhook + Agent 查询 API + 原子 submission API |
-| 人工 resolved 标志 | 由 ping 最新序号和 pong 累计水位派生 open 状态 |
-| 线性 head 与按新旧比较 | current pointer 等值锁 + 每个 thread 的 pong 水位等值锁 |
+| 人工 resolved 标志 | 由 comment 最新序号和 reply 累计水位派生 open 状态 |
+| 线性 head 与按新旧比较 | current pointer 等值锁 + 每个 thread 的 reply 水位等值锁 |
 | editor 页面直接获得服务/数据凭据 | 固定 bundle iframe 只获得 MessageChannel Host RPC |
 | 外部 editor URL 在线回源 | Platform 公共 R2 托管不可变 bundle，独立 bundle origin 分发 |
 
