@@ -365,6 +365,8 @@ describe("tenant API contract", () => {
     expect(html).toContain("<title>UniDocs Tenant API</title>");
     expect(html).toContain("preferredSecurityScheme: 'tenantSession'");
     expect(html).toContain("\"operationId\":\"appendPing\"");
+    // Scalar's "Show more" cannot be undone, so no tag may start collapsed.
+    expect(html).toContain("defaultOpenAllTags: true");
     for (const locale of ReferenceLocales) {
       expect(html).toContain(locale.label);
     }

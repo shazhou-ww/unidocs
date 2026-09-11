@@ -79,6 +79,13 @@
           content: documents[code],
           layout: 'modern',
           theme: 'default',
+          // Scalar's modern layout collapses every tag but the first, and its
+          // "Show more" button hard-codes open:true, so an expanded tag can
+          // never be collapsed again. Opening every tag up front means that
+          // one-way control is never rendered. Individual operations stay
+          // collapsible either way. The option's performance warning is about
+          // large documents; this one has 15 operations.
+          defaultOpenAllTags: true,
           authentication: { preferredSecurityScheme: 'tenantSession' },
           pageTitle: 'UniDocs Tenant API'
         });
