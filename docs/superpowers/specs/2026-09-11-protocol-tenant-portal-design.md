@@ -36,7 +36,7 @@ TypeScript 检查、可生成 client、可生成文档的契约；现在这份�
 ### D1：包边界只覆盖 §7，与 admin-portal 一对一对称
 
 `@unidocs/protocol-tenant-portal` 覆盖 §7「面向 Platform Web Host 的 HTTP API」：
-类型目录、文档 CRUD、版本浏览、移动 current、thread/ping、CAS capability、文档审计。
+类型目录、文档 CRUD、版本浏览、移动 current、thread/comment、CAS capability、文档审计。
 
 不覆盖：
 
@@ -56,7 +56,7 @@ TypeScript 检查、可生成 client、可生成文档的契约；现在这份�
 事实源，依赖另一个协议包会让"哪份是权威"变得含糊。Zod schema 推导出的静态类型
 就是 DTO 的唯一定义。
 
-这意味着 `DocumentRecord` / `PingRecord` / `ThreadDetail` 等在两个包里各有一份定义——
+这意味着 `DocumentRecord` / `CommentRecord` / `ThreadDetail` 等在两个包里各有一份定义——
 与 Admin 包和 protocol-platform 各有一份 `DocumentContractRecord` 是同一种重复，
 已经是本仓接受的形状。
 
@@ -70,12 +70,12 @@ TypeScript 检查、可生成 client、可生成文档的契约；现在这份�
 ```ts
 // view.ts
 readonly "host.createThread": { request: CreateThreadRequest; ... }
-export interface HostAppendPingRequest extends AppendPingRequest { threadId: ThreadId }
+export interface HostAppendCommentRequest extends AppendCommentRequest { threadId: ThreadId }
 ```
 
 处理：文件更名 `platform.ts` → `messages.ts`，只保留 `CreateThreadRequest` 与
-`AppendPingRequest`，文件头注释写明它们是 tenant HTTP 与 View Host RPC 共享的
-ping 创建体。其余全部移除：`PublicTypeCard*`、`PublicTypeCardIcon*`、
+`AppendCommentRequest`，文件头注释写明它们是 tenant HTTP 与 View Host RPC 共享的
+comment 创建体。其余全部移除：`PublicTypeCard*`、`PublicTypeCardIcon*`、
 `PublicDocumentType`、`CreateDocumentRequest`、`MoveCurrentVersionRequest`、
 `CasCapabilityGrant`、`List*Response` 别名、全部 path/query 类型、
 `PlatformEndpointContracts`。
@@ -85,12 +85,12 @@ ping 创建体。其余全部移除：`PublicTypeCard*`、`PublicTypeCardIcon*`�
 ### D4：tenant 的 mutation 返回完整 record，并把这条例外写进 `api-conventions.md`
 
 §7 明写：创建/读取文档和移动 current 返回 `DocumentRecord`，创建 thread 返回
-`ThreadDetail`，追加 ping 返回 `PingRecord`。而 `docs/api-conventions.md` 的规则是
+`ThreadDetail`，追加 comment 返回 `CommentRecord`。而 `docs/api-conventions.md` 的规则是
 「完整读、瘦写」——mutation 只返回继续操作所需的最小结果。
 
 采信 §7。三条理由：
 
-1. 这些写产生的是**服务端分配身份的新建不可变记录**（`pingIdx`、`documentId`、
+1. 这些写产生的是**服务端分配身份的新建不可变记录**（`commentIdx`、`documentId`、
    `createdAt` 都由服务端定），record 本身就是 operation 的直接产物，不存在
    「回显请求字段」导致的漂移——那正是瘦写规则要防的东西；
 2. **tenant 资源没有 ETag**。Admin 的「写→GET」是因为写完必须拿新 ETag 才能继续；
@@ -105,13 +105,13 @@ ping 创建体。其余全部移除：`PublicTypeCard*`、`PublicTypeCardIcon*`�
 
 ### D5：Idempotency-Key 覆盖三个创建型 POST
 
-§12.2 只列了 thread/ping 创建。补上 `POST /documents`：不然网络重试会凭空多出一份文档。
+§12.2 只列了 thread/comment 创建。补上 `POST /documents`：不然网络重试会凭空多出一份文档。
 
 | operation | Idempotency-Key | 理由 |
 | --- | --- | --- |
 | `POST /documents` | 必需 | 重试会重复创建 |
 | `POST .../threads` | 必需 | §12.2 |
-| `POST .../threads/{threadId}/pings` | 必需 | §12.2 |
+| `POST .../threads/{threadId}/comments` | 必需 | §12.2 |
 | `POST .../current-version` | 不要 | `observedCurrentVersionIdx` 等值锁天然幂等 |
 | `POST /cas-capabilities` | 不要 | 签发短期凭据，无持久副作用 |
 
@@ -149,22 +149,22 @@ GET /documents/{documentId}/versions/{versionIdx}/snapshot
 §1.2 把「版本 base forest、comment provenance」列为 Platform 职责，
 `tenant/tenant-webui-v0.md` §2.5 要在版本历史面板里画「这一版回应了哪些评论、
 它们各自基于哪个版本」。但 §7 的线契约读不到它：`VersionRecord` 既没有
-`submissionId` 也没有 addressed pings，客户端只能遍历全部 thread 的 pongs 反查。
+`submissionId` 也没有 addressed comments，客户端只能遍历全部 thread 的 replies 反查。
 
 `VersionRecord` 增两个字段：
 
 ```ts
 readonly submissionId: SubmissionId;
-readonly addressedPings: readonly {
+readonly addressedComments: readonly {
   readonly threadId: ThreadId;
-  readonly pingIdx: PingIdx;
+  readonly commentIdx: CommentIdx;
   readonly baseVersionIdx: VersionIdx;
 }[];
 ```
 
-`submissionId` 恒非空——每个版本都由一次 submission 产生（§9.2 规则 10：版本、pong、
+`submissionId` 恒非空——每个版本都由一次 submission 产生（§9.2 规则 10：版本、reply、
 水位、provenance 在同一业务事务中生效）。首版本（`document.created` 触发）的
-`addressedPings` 是空数组。
+`addressedComments` 是空数组。
 
 `protocol-platform/src/resources.ts` 同步加这两个字段。
 
@@ -210,6 +210,21 @@ interface DocumentAuditEvent {
 和 Agent。`AgentScope` 词表写在 `tenantBearer` 的 description 里——HTTP bearer
 scheme 本身不带 scopes 字段。
 
+### D10：协议词表 comment / reply 取代 ping / pong
+
+Review 中确定。`ping` / `pong` 描述的是"发出—应答"这个握手机制，而人写的那条东西本身就是
+一条评论；设计文档自己也已经在用 `comment provenance`（§4.2 那张 DAG 的正式名字）和
+`comment marker`（View Host RPC 概念）当协议词，内部本来就不自洽。改完之后
+tenant-webui §1 的「一条评论 ↔ 一条 ping」这一行直接消失，因为界面词与协议词重合了。
+
+代价是 `reply` 的名字丢掉了 `pong` 自带的「累计确认」含义——读的人会默认一对一回复，而这
+恰恰是这个机制最容易被误解的地方。补偿手段：字段名保留 `respondThroughCommentIdx` 的
+`through`；并在 schema 字段描述、`ThreadDetail.replies` 描述、`ReplyRecord` 的类型注释、
+`agent-mediated` §5.2 和 tenant-webui §1 各明写一次「一条 reply 通常一次覆盖多条 comment」。
+§5.2 的示例记号也从 `p1/q1` 改成 `c1/r1`。
+
+`thread`、`current`、`snapshot`、`submission` 不变：它们没有等价的日常词。
+
 ## 契约
 
 ### 包结构
@@ -253,7 +268,7 @@ package exports `.` 与 `./openapi.json`；scripts 与 admin 包同名同结构�
 | 11 | GET | `/documents/{documentId}/threads` | `listThreads` | `Page<ThreadRef>` |
 | 12 | POST | `/documents/{documentId}/threads` | `createThread` | 201 `ThreadDetail` |
 | 13 | GET | `/documents/{documentId}/threads/{threadId}` | `getThread` | `ThreadDetail` |
-| 14 | POST | `/documents/{documentId}/threads/{threadId}/pings` | `appendPing` | 201 `PingRecord` |
+| 14 | POST | `/documents/{documentId}/threads/{threadId}/comments` | `appendComment` | 201 `CommentRecord` |
 | 15 | POST | `/cas-capabilities` | `issueCasCapability` | 200 `CasCapabilityGrant` |
 
 query 参数：#3 `documentType` + cursor/limit；#6 #10 cursor/limit；
@@ -266,7 +281,7 @@ export const tenantApiContract = {
   documentTypes: { list, getDocumentContract },
   documents: { list, create, get, moveCurrentVersion, listAudit },
   versions: { list, get, getSnapshot },
-  threads: { list, create, get, appendPing },
+  threads: { list, create, get, appendComment },
   cas: { issueCapability },
 };
 ```
@@ -278,8 +293,8 @@ OpenAPI tag 分组：Document types / Documents / Versions / Threads / Audit / C
 沿用 §7 已有定义的：`PublicTypeCardLocale`、`PublicTypeCardIconSvg`、
 `PublicTypeCardIconPng`、`PublicTypeCard`、`PublicDocumentType`、
 `DocumentContractRecord`、`DocumentRecord`、`CreateDocumentRequest`、
-`MoveCurrentVersionRequest`、`CreateThreadRequest`、`AppendPingRequest`、
-`PingRecord`、`PongRecord`、`ThreadRef`、`ThreadDetail`、`MessageContent`、
+`MoveCurrentVersionRequest`、`CreateThreadRequest`、`AppendCommentRequest`、
+`CommentRecord`、`ReplyRecord`、`ThreadRef`、`ThreadDetail`、`MessageContent`、
 `CasBlobRef`、`DocumentLocation`、`CasCapabilityGrant`、`Page<T>`。
 
 本设计改动的：
@@ -292,9 +307,9 @@ interface VersionRecord {
   readonly documentContractIdx: DocumentContractIdx;
   readonly authorAgentId: string;
   readonly submissionId: SubmissionId;
-  readonly addressedPings: readonly {
+  readonly addressedComments: readonly {
     readonly threadId: ThreadId;
-    readonly pingIdx: PingIdx;
+    readonly commentIdx: CommentIdx;
     readonly baseVersionIdx: VersionIdx;
   }[];
   readonly createdAt: IsoDateTime;
@@ -323,7 +338,7 @@ interface VersionRecord {
 
 不进 tenant contract 的：`upload_expired`、`bundle_invalid`、
 `operator_validation_required`（Admin 面）；`document_contract_conflict`、
-`revision_conflict`、`pong_watermark_conflict`（Agent submission 面）；
+`revision_conflict`、`reply_watermark_conflict`（Agent submission 面）；
 `unsupported_content_type`（tenant 面没有接受非 JSON 请求体的 operation，
 `getVersionSnapshot` 是响应侧媒体类型，不产生这个错误）。
 
@@ -338,7 +353,7 @@ base            INVALID_REQUEST, UNAUTHORIZED, FORBIDDEN, UNAVAILABLE
 + mutation      IDEMPOTENCY_CONFLICT
 createDocument  + DOCUMENT_TYPE_DISABLED, LIMIT_EXCEEDED
 createThread    + NOT_FOUND, LOCATION_CONTRACT_VIOLATION, LIMIT_EXCEEDED, CONTENT_UNAVAILABLE
-appendPing      + 同 createThread
+appendComment      + 同 createThread
 moveCurrent     + NOT_FOUND, VERSION_CONFLICT
 getVersionSnapshot + CONTENT_UNAVAILABLE
 ```
@@ -347,7 +362,7 @@ getVersionSnapshot + CONTENT_UNAVAILABLE
 
 `tests/contract.test.ts`，覆盖：
 
-1. `VersionRecord` 不含 snapshot 字段，`addressedPings` 必填（可为空数组）；
+1. `VersionRecord` 不含 snapshot 字段，`addressedComments` 必填（可为空数组）；
 2. `MoveCurrentVersionRequest.observedCurrentVersionIdx` 接受 `null` 但不可缺省；
 3. `MessageContent` 的 `text` 与 `richContent` 至少一个非空（§2）；
 4. `DocumentLocation.documentContractIdx` 为非负整数；
@@ -365,7 +380,7 @@ getVersionSnapshot + CONTENT_UNAVAILABLE
 
 | 文件 | 改动 |
 | --- | --- |
-| `packages/protocol-platform/src/platform.ts` | → `messages.ts`，只留两个 ping 创建体（D3） |
+| `packages/protocol-platform/src/platform.ts` | → `messages.ts`，只留两个 comment 创建体（D3） |
 | `packages/protocol-platform/src/resources.ts` | `VersionRecord` 去 snapshot、加 provenance（D6/D7） |
 | `packages/protocol-platform/src/index.ts` | 导出随之调整 |
 | `packages/protocol-platform/src/view.ts` | import 路径改 `messages.js` |
@@ -380,12 +395,12 @@ getVersionSnapshot + CONTENT_UNAVAILABLE
 - 不实现任何 handler、持久化或校验器——本包只负责线契约与 DTO 运行时校验；
 - 不动 §8 View Host RPC、§9 Agent API、§10 Operator webhook；
 - 不设计 `tenant-portal-client` / `tenant-portal-webui`；
-- 不碰 §5.1 编辑型 ping、§5.2 子文档评论归属（tenant WebUI 设计已标为未决）；
+- 不碰 §5.1 编辑型 comment、§5.2 子文档评论归属（tenant WebUI 设计已标为未决）；
 - 不做 tenant 登录/回调/session 端点——那是 portal-service 的 BFF，Admin 包同样没有。
 
 ## 实施结果
 
-D1–D9 全部按本文落地。实施中额外确定的两点：
+D1–D10 全部按本文落地。实施中额外确定的两点：
 
 - `getVersionSnapshot` 的响应在 OpenAPI 里标为 `application/cbor` + `contentEncoding: binary`。
   具体的 `application/vnd.unidocs.{documentType}.snapshot+cbor;version=1` 依赖运行时的

@@ -1,7 +1,7 @@
 import type { ContractRouterClient } from "@orpc/contract";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
-  AppendPingRequestSchema,
+  AppendCommentRequestSchema,
   CreateThreadRequestSchema,
   DocumentAuditEventSchema,
   DocumentContractRecordSchema,
@@ -82,7 +82,7 @@ describe("tenant resource schemas", () => {
       documentContractIdx: 0,
       authorAgentId: "op_markdown",
       submissionId: "sub_91",
-      addressedPings: [{ threadId: "th_2", pingIdx: 3, baseVersionIdx: 5 }],
+      addressedComments: [{ threadId: "th_2", commentIdx: 3, baseVersionIdx: 5 }],
       createdAt: "2026-09-11T03:12:00Z",
     };
 
@@ -90,7 +90,7 @@ describe("tenant resource schemas", () => {
     expect(parsed).not.toHaveProperty("snapshot");
     expectTypeOf<VersionRecord>().not.toHaveProperty("snapshot");
 
-    const { addressedPings: _omitted, ...withoutProvenance } = version;
+    const { addressedComments: _omitted, ...withoutProvenance } = version;
     expect(VersionRecordSchema.safeParse(withoutProvenance).success).toBe(false);
   });
 
@@ -101,12 +101,12 @@ describe("tenant resource schemas", () => {
       documentContractIdx: 0,
       authorAgentId: "op_markdown",
       submissionId: "sub_1",
-      addressedPings: [],
+      addressedComments: [],
       createdAt: "2026-09-11T03:12:00Z",
     };
 
     expect(VersionRecordSchema.safeParse(firstVersion).success).toBe(true);
-    expect(VersionRecordSchema.safeParse({ ...firstVersion, addressedPings: null }).success)
+    expect(VersionRecordSchema.safeParse({ ...firstVersion, addressedComments: null }).success)
       .toBe(false);
   });
 
@@ -137,12 +137,12 @@ describe("tenant resource schemas", () => {
     }).success).toBe(false);
   });
 
-  it("anchors thread and ping creation to an existing version", () => {
+  it("anchors thread and comment creation to an existing version", () => {
     const request = { baseVersionIdx: 5, content: textContent, location: markdownLocation };
 
     expect(CreateThreadRequestSchema.safeParse(request).success).toBe(true);
-    expect(AppendPingRequestSchema.safeParse({ ...request, location: null }).success).toBe(true);
-    expect(AppendPingRequestSchema.safeParse({ ...request, baseVersionIdx: -1 }).success)
+    expect(AppendCommentRequestSchema.safeParse({ ...request, location: null }).success).toBe(true);
+    expect(AppendCommentRequestSchema.safeParse({ ...request, baseVersionIdx: -1 }).success)
       .toBe(false);
     const { baseVersionIdx: _omitted, ...withoutBase } = request;
     expect(CreateThreadRequestSchema.safeParse(withoutBase).success).toBe(false);
@@ -276,7 +276,7 @@ describe("tenant API contract", () => {
       .map(({ operation }) => operation.operationId)
       .sort();
 
-    expect(idempotent).toEqual(["appendPing", "createDocument", "createThread"]);
+    expect(idempotent).toEqual(["appendComment", "createDocument", "createThread"]);
   });
 
   it("models Bearer-or-cookie reads and CSRF-protected cookie mutations", async () => {
@@ -312,8 +312,8 @@ describe("tenant API contract", () => {
     expect(errorStatuses(createDocument!)).toContain("409");
     expect(errorStatuses(createDocument!)).toContain("413");
 
-    const appendPing = byOperationId.get("appendPing");
-    expect(errorStatuses(appendPing!)).toContain("422");
+    const appendComment = byOperationId.get("appendComment");
+    expect(errorStatuses(appendComment!)).toContain("422");
 
     const moveCurrentVersion = byOperationId.get("moveCurrentVersion");
     expect(errorStatuses(moveCurrentVersion!)).toContain("409");
@@ -340,7 +340,7 @@ describe("tenant API contract", () => {
     const operationIds = operationEntries(document)
       .map(({ operation }) => operation.operationId ?? "");
 
-    expect(operationIds.some((id) => /resolve|reopen|deletePing|updatePing|withdraw/i.test(id)))
+    expect(operationIds.some((id) => /resolve|reopen|deleteComment|updateComment|withdraw/i.test(id)))
       .toBe(false);
     expect(operationEntries(document).some(({ method }) => method === "delete" || method === "put"))
       .toBe(false);
@@ -364,14 +364,14 @@ describe("tenant API contract", () => {
 
     expect(html).toContain("<title>UniDocs Tenant API</title>");
     expect(html).toContain("preferredSecurityScheme: 'tenantSession'");
-    expect(html).toContain("\"operationId\":\"appendPing\"");
+    expect(html).toContain("\"operationId\":\"appendComment\"");
     // Scalar's "Show more" cannot be undone, so no tag may start collapsed.
     expect(html).toContain("defaultOpenAllTags: true");
     for (const locale of ReferenceLocales) {
       expect(html).toContain(locale.label);
     }
-    expect(html).toContain("向 thread 追加一条 ping");
-    expect(html).toContain("Append a ping to a thread");
+    expect(html).toContain("向 thread 追加一条评论");
+    expect(html).toContain("Append a comment to a thread");
   });
 
   it("escapes markup that would otherwise break out of the inline script", async () => {

@@ -14,7 +14,7 @@
 
 - Platform 是文档、版本、thread、current pointer、审计和 Agent submission 的唯一持久权威。
 - View bundle 在隔离 iframe 中运行，只通过 Host RPC 使用 Platform 能力。
-- Operator Agent 维护自己的任务/session，通过 Platform 查询和原子 submission 生成 pong 与完整 snapshot。
+- Operator Agent 维护自己的任务/session，通过 Platform 查询和原子 submission 生成 reply 与完整 snapshot。
 - 不再引入独立 editor service 或由文档类型服务持有的正式 document session。
 
 ### 文档类型控制面
@@ -42,7 +42,7 @@
 
 ### Document Contract
 
-- `DocumentContractIdx`、`VersionIdx`、`PingIdx` 和 `PongIdx` 均从 0 开始；`null` 表示尚无 record，0 不是 sentinel。
+- `DocumentContractIdx`、`VersionIdx`、`CommentIdx` 和 `ReplyIdx` 均从 0 开始；`null` 表示尚无 record，0 不是 sentinel。
 - 同一不可变 JSON 原子携带 snapshot schema 与 location schema；任一部分失败则整个 append 失败。
 - revision 只能追加，不可修改、删除、弃用、回退或手动设为 current；最大 idx 只表示最后上传。
 - enabled 类型也可随时追加 revision；append 不会改变已有可写集合。
@@ -95,7 +95,7 @@ Platform 管理资源的 ETag 是 canonical resource representation 的强 SHA-2
 
 目前没有实现 Platform HTTP handler、持久化、Document Contract validator 或 bundle validator；Admin 协议包只负责 wire contract、基础 DTO runtime validation 与文档生成。
 
-实现前的逻辑 ER Model 已建立：全局文档类型控制面、管理员/审计、tenant 文档、版本、thread/ping/pong、submission receipt、幂等记录和可靠外部效果 outbox 都有明确实体、复合键与事务边界。R2 只保存不可变 bundle 文件，UniCAS 只保存 snapshot/message blob graph。tenant principal 与文档共享角色仍标为物理 schema 冻结前必须确定的开放决策。
+实现前的逻辑 ER Model 已建立：全局文档类型控制面、管理员/审计、tenant 文档、版本、thread/comment/reply、submission receipt、幂等记录和可靠外部效果 outbox 都有明确实体、复合键与事务边界。R2 只保存不可变 bundle 文件，UniCAS 只保存 snapshot/message blob graph。tenant principal 与文档共享角色仍标为物理 schema 冻结前必须确定的开放决策。
 
 ## 已验证
 

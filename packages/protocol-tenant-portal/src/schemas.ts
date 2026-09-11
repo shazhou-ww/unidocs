@@ -25,10 +25,10 @@ export const DocumentContractIdxSchema = RecordIdxSchema
   .describe("Zero-based paired Document Contract revision within one document type.");
 export const VersionIdxSchema = RecordIdxSchema
   .describe("Zero-based version record identity within one document.");
-export const PingIdxSchema = RecordIdxSchema
-  .describe("Zero-based ping record identity within one thread.");
-export const PongIdxSchema = RecordIdxSchema
-  .describe("Zero-based pong record identity within one thread.");
+export const CommentIdxSchema = RecordIdxSchema
+  .describe("Zero-based comment record identity within one thread.");
+export const ReplyIdxSchema = RecordIdxSchema
+  .describe("Zero-based reply record identity within one thread.");
 
 export const TypeCardIconRasterSizeSchema = z.union([
   z.literal(16),
@@ -242,16 +242,16 @@ export const DocumentRecordSchema = z.object({
 export type DocumentRecord = z.infer<typeof DocumentRecordSchema>;
 
 /**
- * One comment provenance edge: a ping that the owning version responded to, and
- * the version that ping was written against.
+ * One comment provenance edge: a comment that the owning version responded to, and
+ * the version that comment was written against.
  */
-export const AddressedPingSchema = z.object({
-  threadId: IdSchema.describe("Thread containing the addressed ping."),
-  pingIdx: PingIdxSchema.describe("Addressed ping within that thread."),
-  baseVersionIdx: VersionIdxSchema.describe("Version the addressed ping was written against."),
-}).readonly().meta({ id: "AddressedPing" });
+export const AddressedCommentSchema = z.object({
+  threadId: IdSchema.describe("Thread containing the addressed comment."),
+  commentIdx: CommentIdxSchema.describe("Addressed comment within that thread."),
+  baseVersionIdx: VersionIdxSchema.describe("Version the addressed comment was written against."),
+}).readonly().meta({ id: "AddressedComment" });
 
-export type AddressedPing = z.infer<typeof AddressedPingSchema>;
+export type AddressedComment = z.infer<typeof AddressedCommentSchema>;
 
 /**
  * Version metadata. The snapshot itself is canonical SValue CBOR and is read
@@ -259,7 +259,7 @@ export type AddressedPing = z.infer<typeof AddressedPingSchema>;
  * references that have no JSON representation.
  *
  * `parentVersionIdx` records the current pointer observed at commit and is not
- * necessarily `versionIdx - 1`; `addressedPings` is the comment provenance edge
+ * necessarily `versionIdx - 1`; `addressedComments` is the comment provenance edge
  * set, which is a different graph from the base parent forest.
  */
 export const VersionRecordSchema = z.object({
@@ -269,39 +269,39 @@ export const VersionRecordSchema = z.object({
   documentContractIdx: DocumentContractIdxSchema
     .describe("Paired revision validating this snapshot and its result locations."),
   authorAgentId: NonEmptyStringSchema.describe("Agent identity that committed this version."),
-  submissionId: IdSchema.describe("Submission that atomically created this version and its pongs."),
-  addressedPings: z.array(AddressedPingSchema).readonly()
-    .describe("Comment provenance: pings this version responded to; empty for the first version."),
+  submissionId: IdSchema.describe("Submission that atomically created this version and its replies."),
+  addressedComments: z.array(AddressedCommentSchema).readonly()
+    .describe("Comment provenance: comments this version responded to; empty for the first version."),
   createdAt: IsoDateTimeSchema.describe("Time at which the version was committed."),
 }).readonly().meta({ id: "VersionRecord" });
 
 export type VersionRecord = z.infer<typeof VersionRecordSchema>;
 
-export const PingRecordSchema = z.object({
-  pingIdx: PingIdxSchema.describe("Ping identity within its thread."),
-  baseVersionIdx: VersionIdxSchema.describe("Version this ping was written against."),
+export const CommentRecordSchema = z.object({
+  commentIdx: CommentIdxSchema.describe("Comment identity within its thread."),
+  baseVersionIdx: VersionIdxSchema.describe("Version this comment was written against."),
   content: MessageContentSchema.describe("User message body and attachments."),
   location: DocumentLocationSchema.nullable()
     .describe("Anchor relative to baseVersionIdx, or null for a document-level comment."),
-  authorId: IdSchema.describe("User principal that wrote the ping."),
-  createdAt: IsoDateTimeSchema.describe("Time at which the ping was appended."),
-}).readonly().meta({ id: "PingRecord" });
+  authorId: IdSchema.describe("User principal that wrote the comment."),
+  createdAt: IsoDateTimeSchema.describe("Time at which the comment was appended."),
+}).readonly().meta({ id: "CommentRecord" });
 
-export type PingRecord = z.infer<typeof PingRecordSchema>;
+export type CommentRecord = z.infer<typeof CommentRecordSchema>;
 
-export const PongRecordSchema = z.object({
-  pongIdx: PongIdxSchema.describe("Pong identity within its thread."),
-  respondThroughPingIdx: PingIdxSchema
-    .describe("Cumulative acknowledgement watermark this pong advances the thread to."),
+export const ReplyRecordSchema = z.object({
+  replyIdx: ReplyIdxSchema.describe("Reply identity within its thread."),
+  respondThroughCommentIdx: CommentIdxSchema
+    .describe("Cumulative acknowledgement watermark: this reply answers every comment through this index, so one reply commonly covers several comments."),
   content: MessageContentSchema.describe("Agent message body and attachments."),
   resultLocations: z.array(DocumentLocationSchema).readonly()
-    .describe("Locations in the version created by the same submission; empty for a pure pong."),
-  authorAgentId: NonEmptyStringSchema.describe("Agent identity that produced the pong."),
-  submissionId: IdSchema.describe("Submission that committed this pong."),
-  createdAt: IsoDateTimeSchema.describe("Time at which the pong was committed."),
-}).readonly().meta({ id: "PongRecord" });
+    .describe("Locations in the version created by the same submission; empty for a pure reply."),
+  authorAgentId: NonEmptyStringSchema.describe("Agent identity that produced the reply."),
+  submissionId: IdSchema.describe("Submission that committed this reply."),
+  createdAt: IsoDateTimeSchema.describe("Time at which the reply was committed."),
+}).readonly().meta({ id: "ReplyRecord" });
 
-export type PongRecord = z.infer<typeof PongRecordSchema>;
+export type ReplyRecord = z.infer<typeof ReplyRecordSchema>;
 
 export const ThreadRefSchema = z.object({
   threadId: IdSchema.describe("Stable thread identity."),
@@ -311,13 +311,13 @@ export type ThreadRef = z.infer<typeof ThreadRefSchema>;
 
 /**
  * Both message sequences of one thread. `open` is derived as
- * `latestPingIdx > acknowledgedPingIdx` and is never a stored flag, so the
+ * `latestCommentIdx > acknowledgedCommentIdx` and is never a stored flag, so the
  * detail carries no resolved state of its own.
  */
 export const ThreadDetailSchema = z.object({
   threadId: IdSchema.describe("Stable thread identity."),
-  pings: z.array(PingRecordSchema).readonly().describe("Append-only user ping sequence."),
-  pongs: z.array(PongRecordSchema).readonly().describe("Append-only Agent pong sequence."),
+  comments: z.array(CommentRecordSchema).readonly().describe("Append-only user comment sequence."),
+  replies: z.array(ReplyRecordSchema).readonly().describe("Append-only Agent reply sequence; each reply acknowledges a run of comments rather than exactly one."),
 }).readonly().meta({ id: "ThreadDetail" });
 
 export type ThreadDetail = z.infer<typeof ThreadDetailSchema>;
@@ -379,22 +379,22 @@ export const MoveCurrentVersionRequestSchema = z.object({
 export type MoveCurrentVersionRequest = z.infer<typeof MoveCurrentVersionRequestSchema>;
 
 export const CreateThreadRequestSchema = z.object({
-  baseVersionIdx: VersionIdxSchema.describe("Existing version the first ping is written against."),
-  content: MessageContentSchema.describe("First ping body and attachments."),
+  baseVersionIdx: VersionIdxSchema.describe("Existing version the first comment is written against."),
+  content: MessageContentSchema.describe("First comment body and attachments."),
   location: DocumentLocationSchema.nullable()
     .describe("Anchor relative to baseVersionIdx, or null for a document-level thread."),
 }).readonly().meta({ id: "CreateThreadRequest" });
 
 export type CreateThreadRequest = z.infer<typeof CreateThreadRequestSchema>;
 
-export const AppendPingRequestSchema = z.object({
-  baseVersionIdx: VersionIdxSchema.describe("Existing version this ping is written against."),
-  content: MessageContentSchema.describe("Ping body and attachments."),
+export const AppendCommentRequestSchema = z.object({
+  baseVersionIdx: VersionIdxSchema.describe("Existing version this comment is written against."),
+  content: MessageContentSchema.describe("Comment body and attachments."),
   location: DocumentLocationSchema.nullable()
     .describe("Anchor relative to baseVersionIdx, or null for a document-level comment."),
-}).readonly().meta({ id: "AppendPingRequest" });
+}).readonly().meta({ id: "AppendCommentRequest" });
 
-export type AppendPingRequest = z.infer<typeof AppendPingRequestSchema>;
+export type AppendCommentRequest = z.infer<typeof AppendCommentRequestSchema>;
 
 export const PaginationQuerySchema = z.object({
   cursor: CursorSchema.optional().describe("Opaque cursor returned by the previous page."),
@@ -412,9 +412,9 @@ export type ListDocumentsQuery = z.infer<typeof ListDocumentsQuerySchema>;
 
 export const ListThreadsQuerySchema = PaginationQuerySchema.unwrap().extend({
   open: z.boolean().optional()
-    .describe("Filter by derived open state: latest ping beyond the pong watermark."),
+    .describe("Filter by derived open state: latest comment beyond the reply watermark."),
   versionIdx: VersionIdxSchema.optional()
-    .describe("Restrict to threads whose pings are anchored to this version."),
+    .describe("Restrict to threads whose comments are anchored to this version."),
 }).readonly();
 
 export type ListThreadsQuery = z.infer<typeof ListThreadsQuerySchema>;

@@ -1,16 +1,17 @@
 import { oc } from "@orpc/contract";
 import { z } from "zod";
 import {
-  AppendPingRequestSchema,
+  AppendCommentRequestSchema,
   CasCapabilityGrantSchema,
+  CommentRecordSchema,
   CreateDocumentRequestSchema,
   CreateThreadRequestSchema,
   DocumentContractIdxSchema,
   DocumentContractRecordSchema,
   DocumentRecordSchema,
   DocumentTypeSchema,
-  IdSchema,
   IdempotentMutationHeadersSchema,
+  IdSchema,
   ListDocumentAuditEventsResponseSchema,
   ListDocumentsQuerySchema,
   ListDocumentsResponseSchema,
@@ -21,7 +22,6 @@ import {
   MoveCurrentVersionRequestSchema,
   MutationHeadersSchema,
   PaginationQuerySchema,
-  PingRecordSchema,
   SnapshotStreamSchema,
   TenantErrorDataSchema,
   ThreadDetailSchema,
@@ -182,7 +182,7 @@ export const createDocumentContract = idempotentMutationProcedure.errors({
     path: `${TenantApiV1BasePath}/documents`,
     operationId: "createDocument",
     summary: "Create a document",
-    description: "Atomically creates a named document with `currentVersionIdx = null`, then notifies the built-in Operator with `document.created`. No thread or ping is created. The document becomes openable once the Operator commits its first snapshot. Replaying the same idempotency key returns the original `201` result instead of creating a second document.",
+    description: "Atomically creates a named document with `currentVersionIdx = null`, then notifies the built-in Operator with `document.created`. No thread or comment is created. The document becomes openable once the Operator commits its first snapshot. Replaying the same idempotency key returns the original `201` result instead of creating a second document.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["Documents"],
@@ -248,7 +248,7 @@ export const listVersionsContract = resourceReadProcedure
     path: `${TenantApiV1BasePath}/documents/{documentId}/versions`,
     operationId: "listVersions",
     summary: "List version metadata in birth order",
-    description: "Returns cursor-paginated version metadata without snapshots, which is what a version history panel needs: `parentVersionIdx` draws the base parent forest, and `addressedPings` draws the comment provenance graph. Snapshot bytes are read separately, one version at a time.",
+    description: "Returns cursor-paginated version metadata without snapshots, which is what a version history panel needs: `parentVersionIdx` draws the base parent forest, and `addressedComments` draws the comment provenance graph. Snapshot bytes are read separately, one version at a time.",
     inputStructure: "detailed",
     tags: ["Versions"],
   })
@@ -292,7 +292,7 @@ export const listThreadsContract = resourceReadProcedure
     path: `${TenantApiV1BasePath}/documents/{documentId}/threads`,
     operationId: "listThreads",
     summary: "List thread identities",
-    description: "Returns cursor-paginated thread references only. `open` is derived server-side by the same rule the caller would use, `latestPingIdx > acknowledgedPingIdx`; it is not a stored, togglable flag, so there is no resolve or reopen operation anywhere in this API. Full ping and pong sequences come from the item GET operation.",
+    description: "Returns cursor-paginated thread references only. `open` is derived server-side by the same rule the caller would use, `latestCommentIdx > acknowledgedCommentIdx`; it is not a stored, togglable flag, so there is no resolve or reopen operation anywhere in this API. Full comment and reply sequences come from the item GET operation.",
     inputStructure: "detailed",
     tags: ["Threads"],
   })
@@ -307,8 +307,8 @@ export const createThreadContract = messageMutationProcedure
     method: "POST",
     path: `${TenantApiV1BasePath}/documents/{documentId}/threads`,
     operationId: "createThread",
-    summary: "Create a thread with its first ping",
-    description: "Creates a position-anchored thread containing one ping. `baseVersionIdx` must name an existing version of this document, and any location is relative to that version and must carry its `documentContractIdx` and pass that revision's location schema. A ping does not have to be based on current; the Operator decides whether an older comment still applies.",
+    summary: "Create a thread with its first comment",
+    description: "Creates a position-anchored thread containing one comment. `baseVersionIdx` must name an existing version of this document, and any location is relative to that version and must carry its `documentContractIdx` and pass that revision's location schema. A comment does not have to be based on current; the Operator decides whether an older comment still applies.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["Threads"],
@@ -326,20 +326,20 @@ export const getThreadContract = resourceReadProcedure
     path: `${TenantApiV1BasePath}/documents/{documentId}/threads/{threadId}`,
     operationId: "getThread",
     summary: "Read both message sequences of a thread",
-    description: "Returns the complete append-only ping and pong sequences. One pong acknowledges every ping through `respondThroughPingIdx`, so the thread's open state and each ping's handled state are computed from these two sequences rather than stored.",
+    description: "Returns the complete append-only comment and reply sequences. One reply acknowledges every comment through `respondThroughCommentIdx`, so the thread's open state and each comment's handled state are computed from these two sequences rather than stored.",
     inputStructure: "detailed",
     tags: ["Threads"],
   })
   .input(z.object({ params: threadParams }).readonly())
   .output(ThreadDetailSchema);
 
-export const appendPingContract = messageMutationProcedure
+export const appendCommentContract = messageMutationProcedure
   .route({
     method: "POST",
-    path: `${TenantApiV1BasePath}/documents/{documentId}/threads/{threadId}/pings`,
-    operationId: "appendPing",
-    summary: "Append a ping to a thread",
-    description: "Appends one user message to an existing thread and returns the stored record with its assigned `pingIdx`. Appending past the pong watermark re-opens the thread, which is the only way a discussion is reopened. Pings are immutable: there is no edit, delete, or withdraw operation, so a correction is a new ping on the same thread.",
+    path: `${TenantApiV1BasePath}/documents/{documentId}/threads/{threadId}/comments`,
+    operationId: "appendComment",
+    summary: "Append a comment to a thread",
+    description: "Appends one user message to an existing thread and returns the stored record with its assigned `commentIdx`. Appending past the reply watermark re-opens the thread, which is the only way a discussion is reopened. Comments are immutable: there is no edit, delete, or withdraw operation, so a correction is a new comment on the same thread.",
     inputStructure: "detailed",
     successStatus: 201,
     tags: ["Threads"],
@@ -347,9 +347,9 @@ export const appendPingContract = messageMutationProcedure
   .input(z.object({
     params: threadParams,
     headers: IdempotentMutationHeadersSchema,
-    body: AppendPingRequestSchema,
+    body: AppendCommentRequestSchema,
   }).readonly())
-  .output(PingRecordSchema);
+  .output(CommentRecordSchema);
 
 export const issueCasCapabilityContract = tenantProcedure
   .route({
@@ -388,7 +388,7 @@ export const tenantApiContract = {
     list: listThreadsContract,
     create: createThreadContract,
     get: getThreadContract,
-    appendPing: appendPingContract,
+    appendComment: appendCommentContract,
   },
   cas: {
     issueCapability: issueCasCapabilityContract,

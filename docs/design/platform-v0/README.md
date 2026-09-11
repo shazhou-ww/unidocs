@@ -7,7 +7,7 @@
 - [Admin 设计索引](admin/README.md)：管理员控制面状态、WebUI mock、协议与生成文档入口。
 - [Admin 当前任务状态](admin/TASK-STATUS.md)：本轮完成范围、验证结果、未实现边界和下一轮建议。
 - [Tenant TODO](tenant/TODO.md)：面向最终用户的 tenant 体验与 API 后续设计入口。
-- [人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)：评论驱动协作、版本双图、ping/pong 水位和原子 submission 的产品与一致性模型。
+- [人与 Agent 协同编辑文档的新范式](agent-mediated-document-collaboration.md)：评论驱动协作、版本双图、comment/reply 水位和原子 submission 的产品与一致性模型。
 - [Platform、View 与 Operator API v0](platform-view-operator-api-v0.md)：Platform、View bundle、Operator Agent、Admin、Host RPC 和 Agent API 的统一目标契约。
 - [Platform v0 ER Model](platform-er-model-v0.md)：控制面、文档协作、审计、幂等、submission 与 outbox 的逻辑实体关系和事务约束。
 

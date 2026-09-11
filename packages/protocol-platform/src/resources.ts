@@ -1,6 +1,6 @@
 /**
- * Authoritative persisted resource shapes for documents, versions, pings,
- * pongs, and thread query results.
+ * Authoritative persisted resource shapes for documents, versions, comments,
+ * replies, and thread query results.
  */
 import type {
   DocumentContentFormatVersion,
@@ -15,8 +15,8 @@ import type {
   DocumentType,
   IsoDateTime,
   MessageContent,
-  PingIdx,
-  PongIdx,
+  CommentIdx,
+  ReplyIdx,
   SubmissionId,
   ThreadId,
   VersionIdx,
@@ -50,9 +50,9 @@ export interface DocumentRecord {
 }
 
 /** One comment provenance edge recorded by the version that responded to it. */
-export interface AddressedPing {
+export interface AddressedComment {
   readonly threadId: ThreadId;
-  readonly pingIdx: PingIdx;
+  readonly commentIdx: CommentIdx;
   readonly baseVersionIdx: VersionIdx;
 }
 
@@ -61,7 +61,7 @@ export interface AddressedPing {
  * atomic SBlob references that have no JSON representation, so it crosses the
  * wire separately as canonical SValue CBOR.
  *
- * `parentVersionIdx` is the base parent forest; `addressedPings` is comment
+ * `parentVersionIdx` is the base parent forest; `addressedComments` is comment
  * provenance. They are different graphs and neither substitutes for the other.
  */
 export interface VersionRecord {
@@ -70,13 +70,13 @@ export interface VersionRecord {
   readonly documentContractIdx: DocumentContractIdx;
   readonly authorAgentId: string;
   readonly submissionId: SubmissionId;
-  /** Pings this version responded to; empty for the first version. */
-  readonly addressedPings: readonly AddressedPing[];
+  /** Comments this version responded to; empty for the first version. */
+  readonly addressedComments: readonly AddressedComment[];
   readonly createdAt: IsoDateTime;
 }
 
-export interface PingRecord {
-  readonly pingIdx: PingIdx;
+export interface CommentRecord {
+  readonly commentIdx: CommentIdx;
   readonly baseVersionIdx: VersionIdx;
   readonly content: MessageContent;
   readonly location: DocumentLocation | null;
@@ -84,11 +84,12 @@ export interface PingRecord {
   readonly createdAt: IsoDateTime;
 }
 
-export interface PongRecord {
-  readonly pongIdx: PongIdx;
-  readonly respondThroughPingIdx: PingIdx;
+/** One reply acknowledges every comment through respondThroughCommentIdx, so it commonly covers several comments at once. */
+export interface ReplyRecord {
+  readonly replyIdx: ReplyIdx;
+  readonly respondThroughCommentIdx: CommentIdx;
   readonly content: MessageContent;
-  /** Relative to the new version created by this pong's submission. */
+  /** Relative to the new version created by this reply's submission. */
   readonly resultLocations: readonly DocumentLocation[];
   readonly authorAgentId: string;
   readonly submissionId: SubmissionId;
@@ -101,6 +102,6 @@ export interface ThreadRef {
 
 export interface ThreadDetail {
   readonly threadId: ThreadId;
-  readonly pings: readonly PingRecord[];
-  readonly pongs: readonly PongRecord[];
+  readonly comments: readonly CommentRecord[];
+  readonly replies: readonly ReplyRecord[];
 }

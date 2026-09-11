@@ -1307,7 +1307,7 @@
       "post": {
         "operationId": "createDocument",
         "summary": "Create a document",
-        "description": "Atomically creates a named document with `currentVersionIdx = null`, then notifies the built-in Operator with `document.created`. No thread or ping is created. The document becomes openable once the Operator commits its first snapshot. Replaying the same idempotency key returns the original `201` result instead of creating a second document.",
+        "description": "Atomically creates a named document with `currentVersionIdx = null`, then notifies the built-in Operator with `document.created`. No thread or comment is created. The document becomes openable once the Operator commits its first snapshot. Replaying the same idempotency key returns the original `201` result instead of creating a second document.",
         "tags": [
           "Documents"
         ],
@@ -2687,7 +2687,7 @@
       "get": {
         "operationId": "listVersions",
         "summary": "List version metadata in birth order",
-        "description": "Returns cursor-paginated version metadata without snapshots, which is what a version history panel needs: `parentVersionIdx` draws the base parent forest, and `addressedPings` draws the comment provenance graph. Snapshot bytes are read separately, one version at a time.",
+        "description": "Returns cursor-paginated version metadata without snapshots, which is what a version history panel needs: `parentVersionIdx` draws the base parent forest, and `addressedComments` draws the comment provenance graph. Snapshot bytes are read separately, one version at a time.",
         "tags": [
           "Versions"
         ],
@@ -2783,9 +2783,9 @@
                           "submissionId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Submission that atomically created this version and its pongs."
+                            "description": "Submission that atomically created this version and its replies."
                           },
-                          "addressedPings": {
+                          "addressedComments": {
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -2793,30 +2793,30 @@
                                 "threadId": {
                                   "type": "string",
                                   "minLength": 1,
-                                  "description": "Thread containing the addressed ping."
+                                  "description": "Thread containing the addressed comment."
                                 },
-                                "pingIdx": {
+                                "commentIdx": {
                                   "type": "integer",
                                   "minimum": 0,
                                   "maximum": 9007199254740991,
-                                  "description": "Addressed ping within that thread."
+                                  "description": "Addressed comment within that thread."
                                 },
                                 "baseVersionIdx": {
                                   "type": "integer",
                                   "minimum": 0,
                                   "maximum": 9007199254740991,
-                                  "description": "Version the addressed ping was written against."
+                                  "description": "Version the addressed comment was written against."
                                 }
                               },
                               "required": [
                                 "threadId",
-                                "pingIdx",
+                                "commentIdx",
                                 "baseVersionIdx"
                               ],
                               "readOnly": true
                             },
                             "readOnly": true,
-                            "description": "Comment provenance: pings this version responded to; empty for the first version."
+                            "description": "Comment provenance: comments this version responded to; empty for the first version."
                           },
                           "createdAt": {
                             "type": "string",
@@ -2830,7 +2830,7 @@
                           "documentContractIdx",
                           "authorAgentId",
                           "submissionId",
-                          "addressedPings",
+                          "addressedComments",
                           "createdAt"
                         ],
                         "readOnly": true
@@ -3134,9 +3134,9 @@
                     "submissionId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Submission that atomically created this version and its pongs."
+                      "description": "Submission that atomically created this version and its replies."
                     },
-                    "addressedPings": {
+                    "addressedComments": {
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -3144,30 +3144,30 @@
                           "threadId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Thread containing the addressed ping."
+                            "description": "Thread containing the addressed comment."
                           },
-                          "pingIdx": {
+                          "commentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Addressed ping within that thread."
+                            "description": "Addressed comment within that thread."
                           },
                           "baseVersionIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Version the addressed ping was written against."
+                            "description": "Version the addressed comment was written against."
                           }
                         },
                         "required": [
                           "threadId",
-                          "pingIdx",
+                          "commentIdx",
                           "baseVersionIdx"
                         ],
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "Comment provenance: pings this version responded to; empty for the first version."
+                      "description": "Comment provenance: comments this version responded to; empty for the first version."
                     },
                     "createdAt": {
                       "type": "string",
@@ -3181,7 +3181,7 @@
                     "documentContractIdx",
                     "authorAgentId",
                     "submissionId",
-                    "addressedPings",
+                    "addressedComments",
                     "createdAt"
                   ],
                   "readOnly": true
@@ -3672,7 +3672,7 @@
       "get": {
         "operationId": "listThreads",
         "summary": "List thread identities",
-        "description": "Returns cursor-paginated thread references only. `open` is derived server-side by the same rule the caller would use, `latestPingIdx > acknowledgedPingIdx`; it is not a stored, togglable flag, so there is no resolve or reopen operation anywhere in this API. Full ping and pong sequences come from the item GET operation.",
+        "description": "Returns cursor-paginated thread references only. `open` is derived server-side by the same rule the caller would use, `latestCommentIdx > acknowledgedCommentIdx`; it is not a stored, togglable flag, so there is no resolve or reopen operation anywhere in this API. Full comment and reply sequences come from the item GET operation.",
         "tags": [
           "Threads"
         ],
@@ -3725,7 +3725,7 @@
             "in": "query",
             "schema": {
               "type": "boolean",
-              "description": "Filter by derived open state: latest ping beyond the pong watermark."
+              "description": "Filter by derived open state: latest comment beyond the reply watermark."
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -3737,7 +3737,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991,
-              "description": "Restrict to threads whose pings are anchored to this version."
+              "description": "Restrict to threads whose comments are anchored to this version."
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -3984,8 +3984,8 @@
       },
       "post": {
         "operationId": "createThread",
-        "summary": "Create a thread with its first ping",
-        "description": "Creates a position-anchored thread containing one ping. `baseVersionIdx` must name an existing version of this document, and any location is relative to that version and must carry its `documentContractIdx` and pass that revision's location schema. A ping does not have to be based on current; the Operator decides whether an older comment still applies.",
+        "summary": "Create a thread with its first comment",
+        "description": "Creates a position-anchored thread containing one comment. `baseVersionIdx` must name an existing version of this document, and any location is relative to that version and must carry its `documentContractIdx` and pass that revision's location schema. A comment does not have to be based on current; the Operator decides whether an older comment still applies.",
         "tags": [
           "Threads"
         ],
@@ -4042,7 +4042,7 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991,
-                    "description": "Existing version the first ping is written against."
+                    "description": "Existing version the first comment is written against."
                   },
                   "content": {
                     "type": "object",
@@ -4132,7 +4132,7 @@
                       "attachments"
                     ],
                     "readOnly": true,
-                    "description": "First ping body and attachments."
+                    "description": "First comment body and attachments."
                   },
                   "location": {
                     "anyOf": [
@@ -4268,22 +4268,22 @@
                       "minLength": 1,
                       "description": "Stable thread identity."
                     },
-                    "pings": {
+                    "comments": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pingIdx": {
+                          "commentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Ping identity within its thread."
+                            "description": "Comment identity within its thread."
                           },
                           "baseVersionIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Version this ping was written against."
+                            "description": "Version this comment was written against."
                           },
                           "content": {
                             "type": "object",
@@ -4502,16 +4502,16 @@
                           "authorId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "User principal that wrote the ping."
+                            "description": "User principal that wrote the comment."
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "Time at which the ping was appended."
+                            "description": "Time at which the comment was appended."
                           }
                         },
                         "required": [
-                          "pingIdx",
+                          "commentIdx",
                           "baseVersionIdx",
                           "content",
                           "location",
@@ -4521,24 +4521,24 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "Append-only user ping sequence."
+                      "description": "Append-only user comment sequence."
                     },
-                    "pongs": {
+                    "replies": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pongIdx": {
+                          "replyIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Pong identity within its thread."
+                            "description": "Reply identity within its thread."
                           },
-                          "respondThroughPingIdx": {
+                          "respondThroughCommentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Cumulative acknowledgement watermark this pong advances the thread to."
+                            "description": "Cumulative acknowledgement watermark: this reply answers every comment through this index, so one reply commonly covers several comments."
                           },
                           "content": {
                             "type": "object",
@@ -4749,27 +4749,27 @@
                               "readOnly": true
                             },
                             "readOnly": true,
-                            "description": "Locations in the version created by the same submission; empty for a pure pong."
+                            "description": "Locations in the version created by the same submission; empty for a pure reply."
                           },
                           "authorAgentId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Agent identity that produced the pong."
+                            "description": "Agent identity that produced the reply."
                           },
                           "submissionId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Submission that committed this pong."
+                            "description": "Submission that committed this reply."
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "Time at which the pong was committed."
+                            "description": "Time at which the reply was committed."
                           }
                         },
                         "required": [
-                          "pongIdx",
-                          "respondThroughPingIdx",
+                          "replyIdx",
+                          "respondThroughCommentIdx",
                           "content",
                           "resultLocations",
                           "authorAgentId",
@@ -4779,13 +4779,13 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "Append-only Agent pong sequence."
+                      "description": "Append-only Agent reply sequence; each reply acknowledges a run of comments rather than exactly one."
                     }
                   },
                   "required": [
                     "threadId",
-                    "pings",
-                    "pongs"
+                    "comments",
+                    "replies"
                   ],
                   "readOnly": true
                 }
@@ -5113,7 +5113,7 @@
       "get": {
         "operationId": "getThread",
         "summary": "Read both message sequences of a thread",
-        "description": "Returns the complete append-only ping and pong sequences. One pong acknowledges every ping through `respondThroughPingIdx`, so the thread's open state and each ping's handled state are computed from these two sequences rather than stored.",
+        "description": "Returns the complete append-only comment and reply sequences. One reply acknowledges every comment through `respondThroughCommentIdx`, so the thread's open state and each comment's handled state are computed from these two sequences rather than stored.",
         "tags": [
           "Threads"
         ],
@@ -5162,22 +5162,22 @@
                       "minLength": 1,
                       "description": "Stable thread identity."
                     },
-                    "pings": {
+                    "comments": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pingIdx": {
+                          "commentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Ping identity within its thread."
+                            "description": "Comment identity within its thread."
                           },
                           "baseVersionIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Version this ping was written against."
+                            "description": "Version this comment was written against."
                           },
                           "content": {
                             "type": "object",
@@ -5396,16 +5396,16 @@
                           "authorId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "User principal that wrote the ping."
+                            "description": "User principal that wrote the comment."
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "Time at which the ping was appended."
+                            "description": "Time at which the comment was appended."
                           }
                         },
                         "required": [
-                          "pingIdx",
+                          "commentIdx",
                           "baseVersionIdx",
                           "content",
                           "location",
@@ -5415,24 +5415,24 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "Append-only user ping sequence."
+                      "description": "Append-only user comment sequence."
                     },
-                    "pongs": {
+                    "replies": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pongIdx": {
+                          "replyIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Pong identity within its thread."
+                            "description": "Reply identity within its thread."
                           },
-                          "respondThroughPingIdx": {
+                          "respondThroughCommentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "Cumulative acknowledgement watermark this pong advances the thread to."
+                            "description": "Cumulative acknowledgement watermark: this reply answers every comment through this index, so one reply commonly covers several comments."
                           },
                           "content": {
                             "type": "object",
@@ -5643,27 +5643,27 @@
                               "readOnly": true
                             },
                             "readOnly": true,
-                            "description": "Locations in the version created by the same submission; empty for a pure pong."
+                            "description": "Locations in the version created by the same submission; empty for a pure reply."
                           },
                           "authorAgentId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Agent identity that produced the pong."
+                            "description": "Agent identity that produced the reply."
                           },
                           "submissionId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "Submission that committed this pong."
+                            "description": "Submission that committed this reply."
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "Time at which the pong was committed."
+                            "description": "Time at which the reply was committed."
                           }
                         },
                         "required": [
-                          "pongIdx",
-                          "respondThroughPingIdx",
+                          "replyIdx",
+                          "respondThroughCommentIdx",
                           "content",
                           "resultLocations",
                           "authorAgentId",
@@ -5673,13 +5673,13 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "Append-only Agent pong sequence."
+                      "description": "Append-only Agent reply sequence; each reply acknowledges a run of comments rather than exactly one."
                     }
                   },
                   "required": [
                     "threadId",
-                    "pings",
-                    "pongs"
+                    "comments",
+                    "replies"
                   ],
                   "readOnly": true
                 }
@@ -5879,11 +5879,11 @@
         }
       }
     },
-    "/api/v1/tenants/{tenantId}/documents/{documentId}/threads/{threadId}/pings": {
+    "/api/v1/tenants/{tenantId}/documents/{documentId}/threads/{threadId}/comments": {
       "post": {
-        "operationId": "appendPing",
-        "summary": "Append a ping to a thread",
-        "description": "Appends one user message to an existing thread and returns the stored record with its assigned `pingIdx`. Appending past the pong watermark re-opens the thread, which is the only way a discussion is reopened. Pings are immutable: there is no edit, delete, or withdraw operation, so a correction is a new ping on the same thread.",
+        "operationId": "appendComment",
+        "summary": "Append a comment to a thread",
+        "description": "Appends one user message to an existing thread and returns the stored record with its assigned `commentIdx`. Appending past the reply watermark re-opens the thread, which is the only way a discussion is reopened. Comments are immutable: there is no edit, delete, or withdraw operation, so a correction is a new comment on the same thread.",
         "tags": [
           "Threads"
         ],
@@ -5950,7 +5950,7 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991,
-                    "description": "Existing version this ping is written against."
+                    "description": "Existing version this comment is written against."
                   },
                   "content": {
                     "type": "object",
@@ -6040,7 +6040,7 @@
                       "attachments"
                     ],
                     "readOnly": true,
-                    "description": "Ping body and attachments."
+                    "description": "Comment body and attachments."
                   },
                   "location": {
                     "anyOf": [
@@ -6171,17 +6171,17 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "pingIdx": {
+                    "commentIdx": {
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991,
-                      "description": "Ping identity within its thread."
+                      "description": "Comment identity within its thread."
                     },
                     "baseVersionIdx": {
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991,
-                      "description": "Version this ping was written against."
+                      "description": "Version this comment was written against."
                     },
                     "content": {
                       "type": "object",
@@ -6400,16 +6400,16 @@
                     "authorId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "User principal that wrote the ping."
+                      "description": "User principal that wrote the comment."
                     },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time",
-                      "description": "Time at which the ping was appended."
+                      "description": "Time at which the comment was appended."
                     }
                   },
                   "required": [
-                    "pingIdx",
+                    "commentIdx",
                     "baseVersionIdx",
                     "content",
                     "location",

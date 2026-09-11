@@ -1307,7 +1307,7 @@
       "post": {
         "operationId": "createDocument",
         "summary": "创建文档",
-        "description": "原子地创建一份 `currentVersionIdx = null` 的具名文档，随后以 `document.created` 通知内建 Operator。不创建任何 thread 或 ping。Operator 提交首个 snapshot 后文档才可打开。重放同一个 idempotency key 会返回原始的 `201` 结果，而不是再创建一份文档。",
+        "description": "原子地创建一份 `currentVersionIdx = null` 的具名文档，随后以 `document.created` 通知内建 Operator。不创建任何 thread 或评论。Operator 提交首个 snapshot 后文档才可打开。重放同一个 idempotency key 会返回原始的 `201` 结果，而不是再创建一份文档。",
         "tags": [
           "文档"
         ],
@@ -2687,7 +2687,7 @@
       "get": {
         "operationId": "listVersions",
         "summary": "按出生顺序列出版本元数据",
-        "description": "返回 cursor 分页的版本元数据，不含 snapshot——这正是版本历史面板需要的：`parentVersionIdx` 画出 base parent forest，`addressedPings` 画出 comment provenance 图。snapshot 字节单独读取，一次一个版本。",
+        "description": "返回 cursor 分页的版本元数据，不含 snapshot——这正是版本历史面板需要的：`parentVersionIdx` 画出 base parent forest，`addressedComments` 画出 comment provenance 图。snapshot 字节单独读取，一次一个版本。",
         "tags": [
           "版本"
         ],
@@ -2783,9 +2783,9 @@
                           "submissionId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "原子创建本版本及其 pong 的 submission。"
+                            "description": "原子创建本版本及其回复的 submission。"
                           },
-                          "addressedPings": {
+                          "addressedComments": {
                             "type": "array",
                             "items": {
                               "type": "object",
@@ -2793,30 +2793,30 @@
                                 "threadId": {
                                   "type": "string",
                                   "minLength": 1,
-                                  "description": "包含被回应 ping 的 thread。"
+                                  "description": "包含被回应评论的 thread。"
                                 },
-                                "pingIdx": {
+                                "commentIdx": {
                                   "type": "integer",
                                   "minimum": 0,
                                   "maximum": 9007199254740991,
-                                  "description": "该 thread 内被回应的 ping。"
+                                  "description": "该 thread 内被回应的评论。"
                                 },
                                 "baseVersionIdx": {
                                   "type": "integer",
                                   "minimum": 0,
                                   "maximum": 9007199254740991,
-                                  "description": "被回应的 ping 所基于的版本。"
+                                  "description": "被回应的评论所基于的版本。"
                                 }
                               },
                               "required": [
                                 "threadId",
-                                "pingIdx",
+                                "commentIdx",
                                 "baseVersionIdx"
                               ],
                               "readOnly": true
                             },
                             "readOnly": true,
-                            "description": "comment provenance：本版本回应了哪些 ping；首个版本为空。"
+                            "description": "comment provenance：本版本回应了哪些评论；首个版本为空。"
                           },
                           "createdAt": {
                             "type": "string",
@@ -2830,7 +2830,7 @@
                           "documentContractIdx",
                           "authorAgentId",
                           "submissionId",
-                          "addressedPings",
+                          "addressedComments",
                           "createdAt"
                         ],
                         "readOnly": true
@@ -3134,9 +3134,9 @@
                     "submissionId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "原子创建本版本及其 pong 的 submission。"
+                      "description": "原子创建本版本及其回复的 submission。"
                     },
-                    "addressedPings": {
+                    "addressedComments": {
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -3144,30 +3144,30 @@
                           "threadId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "包含被回应 ping 的 thread。"
+                            "description": "包含被回应评论的 thread。"
                           },
-                          "pingIdx": {
+                          "commentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "该 thread 内被回应的 ping。"
+                            "description": "该 thread 内被回应的评论。"
                           },
                           "baseVersionIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "被回应的 ping 所基于的版本。"
+                            "description": "被回应的评论所基于的版本。"
                           }
                         },
                         "required": [
                           "threadId",
-                          "pingIdx",
+                          "commentIdx",
                           "baseVersionIdx"
                         ],
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "comment provenance：本版本回应了哪些 ping；首个版本为空。"
+                      "description": "comment provenance：本版本回应了哪些评论；首个版本为空。"
                     },
                     "createdAt": {
                       "type": "string",
@@ -3181,7 +3181,7 @@
                     "documentContractIdx",
                     "authorAgentId",
                     "submissionId",
-                    "addressedPings",
+                    "addressedComments",
                     "createdAt"
                   ],
                   "readOnly": true
@@ -3672,7 +3672,7 @@
       "get": {
         "operationId": "listThreads",
         "summary": "列出 thread 身份",
-        "description": "只返回 cursor 分页的 thread 引用。`open` 由服务端按调用方同样的规则推导：`latestPingIdx > acknowledgedPingIdx`；它不是可切换的存储标志，因此本 API 任何地方都没有「解决」或「重新打开」操作。完整的 ping 与 pong 序列由单项 GET 返回。",
+        "description": "只返回 cursor 分页的 thread 引用。`open` 由服务端按调用方同样的规则推导：`latestCommentIdx > acknowledgedCommentIdx`；它不是可切换的存储标志，因此本 API 任何地方都没有「解决」或「重新打开」操作。完整的评论与回复序列由单项 GET 返回。",
         "tags": [
           "Thread"
         ],
@@ -3725,7 +3725,7 @@
             "in": "query",
             "schema": {
               "type": "boolean",
-              "description": "按推导出的 open 状态过滤：最新 ping 超过 pong 水位。"
+              "description": "按推导出的 open 状态过滤：最新评论超过回复水位。"
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -3737,7 +3737,7 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991,
-              "description": "只返回 ping 锚定在该版本上的 thread。"
+              "description": "只返回评论锚定在该版本上的 thread。"
             },
             "allowEmptyValue": true,
             "allowReserved": true
@@ -3984,8 +3984,8 @@
       },
       "post": {
         "operationId": "createThread",
-        "summary": "创建 thread 及其首条 ping",
-        "description": "创建一个位置锚定的 thread，内含一条 ping。`baseVersionIdx` 必须指向本文档中已有的版本；location 相对于该版本，必须携带它的 `documentContractIdx` 并通过该 revision 的 location schema。ping 不必基于 current；旧评论是否仍然适用由 Operator 判断。",
+        "summary": "创建 thread 及其首条评论",
+        "description": "创建一个位置锚定的 thread，内含一条评论。`baseVersionIdx` 必须指向本文档中已有的版本；location 相对于该版本，必须携带它的 `documentContractIdx` 并通过该 revision 的 location schema。评论不必基于 current；旧评论是否仍然适用由 Operator 判断。",
         "tags": [
           "Thread"
         ],
@@ -4042,7 +4042,7 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991,
-                    "description": "首条 ping 所基于的已有版本。"
+                    "description": "首条评论所基于的已有版本。"
                   },
                   "content": {
                     "type": "object",
@@ -4132,7 +4132,7 @@
                       "attachments"
                     ],
                     "readOnly": true,
-                    "description": "首条 ping 的正文与附件。"
+                    "description": "首条评论的正文与附件。"
                   },
                   "location": {
                     "anyOf": [
@@ -4268,22 +4268,22 @@
                       "minLength": 1,
                       "description": "稳定的 thread 身份。"
                     },
-                    "pings": {
+                    "comments": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pingIdx": {
+                          "commentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "thread 内的 ping 身份。"
+                            "description": "thread 内的评论身份。"
                           },
                           "baseVersionIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "本条 ping 所基于的版本。"
+                            "description": "本条评论所基于的版本。"
                           },
                           "content": {
                             "type": "object",
@@ -4502,16 +4502,16 @@
                           "authorId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "写下该 ping 的用户 principal。"
+                            "description": "写下该评论的用户 principal。"
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "该 ping 被追加的时间。"
+                            "description": "该评论被追加的时间。"
                           }
                         },
                         "required": [
-                          "pingIdx",
+                          "commentIdx",
                           "baseVersionIdx",
                           "content",
                           "location",
@@ -4521,24 +4521,24 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "只追加的用户 ping 序列。"
+                      "description": "只追加的用户评论序列。"
                     },
-                    "pongs": {
+                    "replies": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pongIdx": {
+                          "replyIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "thread 内的 pong 身份。"
+                            "description": "thread 内的回复身份。"
                           },
-                          "respondThroughPingIdx": {
+                          "respondThroughCommentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "本条 pong 把该 thread 的累计确认水位推进到的位置。"
+                            "description": "累计确认水位：本条回复确认到该序号为止的每一条评论，因此一条回复通常一次覆盖多条评论。"
                           },
                           "content": {
                             "type": "object",
@@ -4749,27 +4749,27 @@
                               "readOnly": true
                             },
                             "readOnly": true,
-                            "description": "同一次 submission 所创建版本内的位置；纯 pong 为空。"
+                            "description": "同一次 submission 所创建版本内的位置；纯回复为空。"
                           },
                           "authorAgentId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "产出该 pong 的 Agent 身份。"
+                            "description": "产出该回复的 Agent 身份。"
                           },
                           "submissionId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "提交该 pong 的 submission。"
+                            "description": "提交该回复的 submission。"
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "该 pong 提交的时间。"
+                            "description": "该回复提交的时间。"
                           }
                         },
                         "required": [
-                          "pongIdx",
-                          "respondThroughPingIdx",
+                          "replyIdx",
+                          "respondThroughCommentIdx",
                           "content",
                           "resultLocations",
                           "authorAgentId",
@@ -4779,13 +4779,13 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "只追加的 Agent pong 序列。"
+                      "description": "只追加的 Agent 回复序列；每条回复确认的是一段连续评论，而不是恰好一条。"
                     }
                   },
                   "required": [
                     "threadId",
-                    "pings",
-                    "pongs"
+                    "comments",
+                    "replies"
                   ],
                   "readOnly": true
                 }
@@ -5113,7 +5113,7 @@
       "get": {
         "operationId": "getThread",
         "summary": "读取 thread 的两条消息序列",
-        "description": "返回完整的只追加 ping 与 pong 序列。一条 pong 通过 `respondThroughPingIdx` 累计确认到某条 ping，因此 thread 的 open 状态和每条 ping 的处理状态都由这两条序列算出，而不是存储。",
+        "description": "返回完整的只追加评论与回复序列。一条回复通过 `respondThroughCommentIdx` 累计确认到某条评论，因此 thread 的 open 状态和每条评论的处理状态都由这两条序列算出，而不是存储。",
         "tags": [
           "Thread"
         ],
@@ -5162,22 +5162,22 @@
                       "minLength": 1,
                       "description": "稳定的 thread 身份。"
                     },
-                    "pings": {
+                    "comments": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pingIdx": {
+                          "commentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "thread 内的 ping 身份。"
+                            "description": "thread 内的评论身份。"
                           },
                           "baseVersionIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "本条 ping 所基于的版本。"
+                            "description": "本条评论所基于的版本。"
                           },
                           "content": {
                             "type": "object",
@@ -5396,16 +5396,16 @@
                           "authorId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "写下该 ping 的用户 principal。"
+                            "description": "写下该评论的用户 principal。"
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "该 ping 被追加的时间。"
+                            "description": "该评论被追加的时间。"
                           }
                         },
                         "required": [
-                          "pingIdx",
+                          "commentIdx",
                           "baseVersionIdx",
                           "content",
                           "location",
@@ -5415,24 +5415,24 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "只追加的用户 ping 序列。"
+                      "description": "只追加的用户评论序列。"
                     },
-                    "pongs": {
+                    "replies": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "pongIdx": {
+                          "replyIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "thread 内的 pong 身份。"
+                            "description": "thread 内的回复身份。"
                           },
-                          "respondThroughPingIdx": {
+                          "respondThroughCommentIdx": {
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991,
-                            "description": "本条 pong 把该 thread 的累计确认水位推进到的位置。"
+                            "description": "累计确认水位：本条回复确认到该序号为止的每一条评论，因此一条回复通常一次覆盖多条评论。"
                           },
                           "content": {
                             "type": "object",
@@ -5643,27 +5643,27 @@
                               "readOnly": true
                             },
                             "readOnly": true,
-                            "description": "同一次 submission 所创建版本内的位置；纯 pong 为空。"
+                            "description": "同一次 submission 所创建版本内的位置；纯回复为空。"
                           },
                           "authorAgentId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "产出该 pong 的 Agent 身份。"
+                            "description": "产出该回复的 Agent 身份。"
                           },
                           "submissionId": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "提交该 pong 的 submission。"
+                            "description": "提交该回复的 submission。"
                           },
                           "createdAt": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "该 pong 提交的时间。"
+                            "description": "该回复提交的时间。"
                           }
                         },
                         "required": [
-                          "pongIdx",
-                          "respondThroughPingIdx",
+                          "replyIdx",
+                          "respondThroughCommentIdx",
                           "content",
                           "resultLocations",
                           "authorAgentId",
@@ -5673,13 +5673,13 @@
                         "readOnly": true
                       },
                       "readOnly": true,
-                      "description": "只追加的 Agent pong 序列。"
+                      "description": "只追加的 Agent 回复序列；每条回复确认的是一段连续评论，而不是恰好一条。"
                     }
                   },
                   "required": [
                     "threadId",
-                    "pings",
-                    "pongs"
+                    "comments",
+                    "replies"
                   ],
                   "readOnly": true
                 }
@@ -5879,11 +5879,11 @@
         }
       }
     },
-    "/api/v1/tenants/{tenantId}/documents/{documentId}/threads/{threadId}/pings": {
+    "/api/v1/tenants/{tenantId}/documents/{documentId}/threads/{threadId}/comments": {
       "post": {
-        "operationId": "appendPing",
-        "summary": "向 thread 追加一条 ping",
-        "description": "向已有 thread 追加一条用户消息，返回带服务端分配的 `pingIdx` 的存储记录。追加到 pong 水位之后会让该 thread 重新变为 open——这是讨论被重新打开的唯一途径。ping 不可变：没有编辑、删除或撤回操作，改正的做法是在同一处追加一条新 ping。",
+        "operationId": "appendComment",
+        "summary": "向 thread 追加一条评论",
+        "description": "向已有 thread 追加一条用户消息，返回带服务端分配的 `commentIdx` 的存储记录。追加到回复水位之后会让该 thread 重新变为 open——这是讨论被重新打开的唯一途径。评论不可变：没有编辑、删除或撤回操作，改正的做法是在同一处追加一条新评论。",
         "tags": [
           "Thread"
         ],
@@ -5950,7 +5950,7 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991,
-                    "description": "本条 ping 所基于的已有版本。"
+                    "description": "本条评论所基于的已有版本。"
                   },
                   "content": {
                     "type": "object",
@@ -6040,7 +6040,7 @@
                       "attachments"
                     ],
                     "readOnly": true,
-                    "description": "ping 正文与附件。"
+                    "description": "评论正文与附件。"
                   },
                   "location": {
                     "anyOf": [
@@ -6171,17 +6171,17 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "pingIdx": {
+                    "commentIdx": {
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991,
-                      "description": "thread 内的 ping 身份。"
+                      "description": "thread 内的评论身份。"
                     },
                     "baseVersionIdx": {
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991,
-                      "description": "本条 ping 所基于的版本。"
+                      "description": "本条评论所基于的版本。"
                     },
                     "content": {
                       "type": "object",
@@ -6400,16 +6400,16 @@
                     "authorId": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "写下该 ping 的用户 principal。"
+                      "description": "写下该评论的用户 principal。"
                     },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time",
-                      "description": "该 ping 被追加的时间。"
+                      "description": "该评论被追加的时间。"
                     }
                   },
                   "required": [
-                    "pingIdx",
+                    "commentIdx",
                     "baseVersionIdx",
                     "content",
                     "location",

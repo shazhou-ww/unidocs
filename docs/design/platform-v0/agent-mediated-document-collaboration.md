@@ -8,10 +8,10 @@
 
 本文采用评论驱动的协作协议：
 
-- 人负责判断和表达意见，主要产出是 ping；
-- Agent 负责理解意见、协调冲突和编辑文档，主要产出是 pong 和可选的新版本；
+- 人负责判断和表达意见，主要产出是 comment；
+- Agent 负责理解意见、协调冲突和编辑文档，主要产出是 reply 和可选的新版本；
 - 平台维护不可变内容、版本关系、评论线程、当前版本指针和提交并发控制，不理解具体文档的编辑语义；
-- 轻量所见即所得编辑在协议层仍被表达为一种编辑型 ping，不恢复逐操作协同。
+- 轻量所见即所得编辑在协议层仍被表达为一种编辑型 comment，不恢复逐操作协同。
 
 这里的目标不是让 Agent 模拟另一位实时编辑者，而是为人和 Agent 建立有节奏、可追溯、允许异步并发的协作协议。
 
@@ -19,11 +19,11 @@
 
 1. **评论驱动**：人的意见是输入，Agent 的处理结果是回复和可选的新版本。
 2. **版本是交付单元**：系统只持久化完整 snapshot，不把 Agent 的中间编辑过程写入版本历史。
-3. **异步且可分批**：平台可随时通知新 ping，Agent 可按能力分批处理，不要求一次清空所有 open threads。
-4. **乐观并发**：任何 Agent 都可尝试提交，平台通过版本指针和 thread pong 水位的乐观锁阻止陈旧结果覆盖新状态。
+3. **异步且可分批**：平台可随时通知新 comment，Agent 可按能力分批处理，不要求一次清空所有 open threads。
+4. **乐观并发**：任何 Agent 都可尝试提交，平台通过版本指针和 thread reply 水位的乐观锁阻止陈旧结果覆盖新状态。
 5. **格式语义下沉**：平台不理解 Markdown 选区、PSD 图层或白板区域；View 与 Agent hook 共同拥有文档类型语义。
 6. **内容与关系分离**：不可变内容进入 CAS；可移动指针、版本关系、thread 顺序和水位进入可变存储。
-7. **反馈闭环优先于单次完美**：冲突检测可以误报或漏报，依靠每批 ping 必须有明确 pong、结果可定位、用户可继续 ping 的闭环纠正。
+7. **反馈闭环优先于单次完美**：冲突检测可以误报或漏报，依靠每批 comment 必须有明确 reply、结果可定位、用户可继续 comment 的闭环纠正。
 
 ## 3. 核心对象
 
@@ -48,9 +48,9 @@ Version 是一次完整内容交付，指向一个不可变 snapshot。每个版
 - 唯一 base parent，即提交时的 current version；
 - 该 snapshot 与其 locations 共用的文档类型 Document Contract revision；
 - snapshot 逻辑值 `SValue`，大型二进制内容通过 `SBlob` 引用；
-- 本次提交所携带的 pong 及其来源 ping，用于追溯修改依据。
+- 本次提交所携带的 reply 及其来源 comment，用于追溯修改依据。
 
-`VersionIdx` 由平台从 0 开始在提交成功时分配，表示出生顺序，不表示祖先顺序。`DocumentContractIdx`、`PingIdx` 和 `PongIdx` 也分别在各自作用域从 0 开始；`null` 才表示尚无记录或水位，0 是合法首项。snapshot 是 `SValue` 而不是 CAS hash；相同内容仍可因 parent、provenance、作者或创建时间不同而形成不同版本。跨文档引用版本时必须同时携带文档身份。
+`VersionIdx` 由平台从 0 开始在提交成功时分配，表示出生顺序，不表示祖先顺序。`DocumentContractIdx`、`CommentIdx` 和 `ReplyIdx` 也分别在各自作用域从 0 开始；`null` 才表示尚无记录或水位，0 是合法首项。snapshot 是 `SValue` 而不是 CAS hash；相同内容仍可因 parent、provenance、作者或创建时间不同而形成不同版本。跨文档引用版本时必须同时携带文档身份。
 
 每个文档类型的 Document Contract revision 单调递增且只追加。每个不可变 contract JSON 原子包含 snapshot schema 与 location schema；任一已提交且受当前 View/Operator 支持的 revision 都可用于创建新数据，最大 idx 只表示最后提交。snapshot schema 使用扩展 JSON Schema 描述 `SValue`，location schema 约束 `{ locationType, payload }`。
 
@@ -77,12 +77,12 @@ current 可以回到任意历史节点，后续提交以该节点为 parent 形�
 
 ### 4.2 Comment provenance DAG
 
-一个新版本可以 address 多个 thread 中的 ping，而这些 ping 可以分别基于多个历史版本。由“新版本处理了哪些基于历史版本的意见”形成 provenance 关系。
+一个新版本可以 address 多个 thread 中的 comment，而这些 comment 可以分别基于多个历史版本。由“新版本处理了哪些基于历史版本的意见”形成 provenance 关系。
 
 因此，“版本 7 基于版本 1、2、3 生成”的准确含义是：
 
 - base parent 只有一个，例如版本 3；
-- 本次提交的 pong 累计确认了分别引用版本 1、2、3 的 ping；
+- 本次提交的 reply 累计确认了分别引用版本 1、2、3 的 comment；
 - 这些 comment provenance 关系构成另一张 DAG。
 
 base parent 决定并发提交基线；comment provenance 解释内容为什么这样变化。两者不可互相替代。
@@ -93,49 +93,49 @@ base parent 决定并发提交基线；comment provenance 解释内容为什么�
 
 每个 thread 由两个各自有序、异步追加的消息序列构成：
 
-- **ping sequence**：只能由用户追加；
-- **pong sequence**：只能由 Agent 追加。
+- **comment sequence**：只能由用户追加；
+- **reply sequence**：只能由 Agent 追加。
 
-用户不接受某个 pong 时，不存在 `reject` 或 `reopen` 操作，只需追加新的 ping。Agent 遇到矛盾意见时也提交 pong，说明冲突并请求相关用户协商；用户通过后续 ping 表达协商结果。
+用户不接受某个 reply 时，不存在 `reject` 或 `reopen` 操作，只需追加新的 comment。Agent 遇到矛盾意见时也提交 reply，说明冲突并请求相关用户协商；用户通过后续 comment 表达协商结果。
 
-`pong` 表示 Agent 已处理，不表示用户接受，也不表示共识已经成立。
+`reply` 表示 Agent 已处理，不表示用户接受，也不表示共识已经成立。
 
 ### 5.2 累计确认水位
 
-每个 pong 指向该 thread 中一个确定的 ping 水位：
+每个 reply 指向该 thread 中一个确定的 comment 水位：
 
 ```text
-ping sequence:  p1, p2, p3
-pong sequence:  q1(through = p2), q2(through = p3)
+comment sequence:  c1, c2, c3
+reply sequence:    r1(through = c2), r2(through = c3)
 ```
 
-`q1` 不是只回应 `p2`，而是累计确认从上一个 pong 水位之后到 `p2` 为止的全部 ping。在示例中，`q1` 同时回应 `p1` 和 `p2`，`q2` 回应 `p3`。
+`r1` 不是只回应 `c2`，而是累计确认从上一个 reply 水位之后到 `c2` 为止的全部 comment。在示例中，`r1` 同时回应 `c1` 和 `c2`，`r2` 回应 `c3`。这正是 `reply` 这个名字看不出来、必须靠 `respondThroughCommentIdx` 明说的那层含义。
 
 由此得到以下约束：
 
-- 一个 pong 可以累计回应同一 thread 内连续的多条 ping；
-- 一个 ping 最终只属于一个 pong 覆盖的确认区间；
-- Agent 不允许跳过较早的未响应 ping，只响应更晚的 ping；
-- pong 水位只能单调前进；
-- 新 ping 可以在 Agent 工作期间继续到达，并自然落在已冻结水位之后。
+- 一个 reply 可以累计回应同一 thread 内连续的多条 comment；
+- 一个 comment 最终只属于一个 reply 覆盖的确认区间；
+- Agent 不允许跳过较早的未响应 comment，只响应更晚的 comment；
+- reply 水位只能单调前进；
+- 新 comment 可以在 Agent 工作期间继续到达，并自然落在已冻结水位之后。
 
 ### 5.3 Open 是派生状态
 
 平台不需要维护可被任意切换的 resolved 标志。thread 是否 open 由两个水位派生：
 
 ```text
-open := latestPingSequence > acknowledgedPingSequence
+open := latestCommentSequence > acknowledgedCommentSequence
 ```
 
-没有新 ping 时，pong 将 thread 推进到 addressed 状态；用户追加 ping 后，thread 自动再次成为 open。
+没有新 comment 时，reply 将 thread 推进到 addressed 状态；用户追加 comment 后，thread 自动再次成为 open。
 
-### 5.4 Ping 的 base version
+### 5.4 Comment 的 base version
 
-每个 ping 记录用户提出意见时正在查看的确切版本。评论不要求基于 current 或 latest version；基于历史版本的 ping 仍然有效。
+每个 comment 记录用户提出意见时正在查看的确切版本。评论不要求基于 current 或 latest version；基于历史版本的 comment 仍然有效。
 
-ping 必须绑定一个已经存在的版本；文档首版本产生前不能创建 thread 或追加 ping。
+comment 必须绑定一个已经存在的版本；文档首版本产生前不能创建 thread 或追加 comment。
 
-Agent 处理时判断该意见是否仍适用于 current 内容。平台不替用户或 Agent 做语义迁移，也不因为 current 已推进而自动作废旧版本上的 ping。
+Agent 处理时判断该意见是否仍适用于 current 内容。平台不替用户或 Agent 做语义迁移，也不因为 current 已推进而自动作废旧版本上的 comment。
 
 ## 6. 通知、operator 与处理节奏
 
@@ -147,15 +147,15 @@ Agent 处理时判断该意见是否仍适用于 current 内容。平台不替�
 https://webhook.host.name/some/prefix/tenants/{tenantId}/documents/{documentId}
 ```
 
-operator 收到通知后，根据 tenant 和 document 路由到对应的长期 Agent session。session 可以查询内容、版本、历史 thread 和 open ping，以理解文档长期演进的上下文。
+operator 收到通知后，根据 tenant 和 document 路由到对应的长期 Agent session。session 可以查询内容、版本、历史 thread 和 open comment，以理解文档长期演进的上下文。
 
 ### 6.2 注册只控制通知路由
 
 operator 注册不构成写入租约或排他权限：
 
-- 平台默认把新增 ping 通知给已注册 hook；
+- 平台默认把新增 comment 通知给已注册 hook；
 - override 只改变平台通知谁；
-- 任何获得授权的 Agent 都可以随时尝试提交 pong 或新版本；
+- 任何获得授权的 Agent 都可以随时尝试提交 reply 或新版本；
 - 写入安全只由提交时的乐观锁保证。
 
 这允许用户切换默认 Agent，也允许多个 Agent 并发尝试处理同一文档，而不需要平台维护 operator ownership epoch。
@@ -164,13 +164,13 @@ operator 注册不构成写入租约或排他权限：
 
 平台与 Agent 共同维护 open comments 的协同状态：
 
-- 平台是持久 ping、pong 和派生 open 状态的权威；
-- 平台可以随时向 webhook 推送新增 ping 或当前任务信息；
+- 平台是持久 comment、reply 和派生 open 状态的权威；
+- 平台可以随时向 webhook 推送新增 comment 或当前任务信息；
 - Agent 自己负责消息排队、批处理、重试和 sub-agent 调度；
 - Agent 可以收到 100 条 open comments，只处理其中 10 条并提交；
 - 剩余 comments 保持 open，后续继续处理。
 
-通知载荷是工作提示，不是要求一次完成的事务边界。Agent 在准备一次具体提交时，冻结本次选择处理的 thread 及其 ping 水位；执行期间追加的 ping 只能进入后续处理轮次。
+通知载荷是工作提示，不是要求一次完成的事务边界。Agent 在准备一次具体提交时，冻结本次选择处理的 thread 及其 comment 水位；执行期间追加的 comment 只能进入后续处理轮次。
 
 ## 7. 原子提交与乐观锁
 
@@ -178,11 +178,11 @@ operator 注册不构成写入租约或排他权限：
 
 Agent 可以提交：
 
-1. 纯 pong，不创建内容版本；
-2. 新版本和一组 pong；
+1. 纯 reply，不创建内容版本；
+2. 新版本和一组 reply；
 3. 只处理部分 open threads，不要求清空平台当前所有 open comments。
 
-如果本轮只需解释、拒绝修改或拉起冲突协商，Agent 应提交纯 pong，不能为了记录对话而创建内容完全相同的新版本。
+如果本轮只需解释、拒绝修改或拉起冲突协商，Agent 应提交纯 reply，不能为了记录对话而创建内容完全相同的新版本。
 
 一次提交可概念化为：
 
@@ -193,37 +193,37 @@ interface AgentSubmission {
   newSnapshot?: SValue;
   threadUpdates: Array<{
     threadId: ThreadId;
-    observedAcknowledgedPingIdx: PingIdx | null;
-    respondThroughPingIdx: PingIdx;
-    pong: PongContent;
+    observedAcknowledgedCommentIdx: CommentIdx | null;
+    respondThroughCommentIdx: CommentIdx;
+    reply: ReplyContent;
     resultLocations: DocumentLocation[];
   }>;
 }
 ```
 
-result location 一律相对于同一 submission 创建的新版本，因此非空时必须同时包含 `newSnapshot`；纯 pong 的 result locations 为空。若包含 `newSnapshot`，则 `observedCurrentVersionIdx` 必填。纯 pong 不依赖 current version，但仍受每个 thread 的已确认 `PingIdx` 水位锁保护。
+result location 一律相对于同一 submission 创建的新版本，因此非空时必须同时包含 `newSnapshot`；纯 reply 的 result locations 为空。若包含 `newSnapshot`，则 `observedCurrentVersionIdx` 必填。纯 reply 不依赖 current version，但仍受每个 thread 的已确认 `CommentIdx` 水位锁保护。
 
 ### 7.2 两类乐观锁
 
 平台在同一原子事务中检查：
 
 1. **版本锁**：若提交新版本，`observedCurrentVersionIdx == currentVersionIdx`；
-2. **thread 锁**：每个 thread 的 `observedAcknowledgedPingIdx == acknowledgedPingIdx`。
+2. **thread 锁**：每个 thread 的 `observedAcknowledgedCommentIdx == acknowledgedCommentIdx`。
 
 这里比较的是相等，而不是版本新旧。current 被所有者回溯到旧版本时，基于较新版本的提交同样失败，因为指针移动本身表达了所有者意图。
 
-thread 锁防止两个 Agent 对同一批 ping 重复作答或意外跨过未读 ping。后到的 Agent 在失败后重新读取 thread，判断是否仍有必要补充回复。
+thread 锁防止两个 Agent 对同一批 comment 重复作答或意外跨过未读 comment。后到的 Agent 在失败后重新读取 thread，判断是否仍有必要补充回复。
 
 ### 7.3 全部成功或全部拒绝
 
-一次提交中的新版本和所有 pong 是一个原子单元：
+一次提交中的新版本和所有 reply 是一个原子单元：
 
 - 任一版本锁或 thread 锁失败，整个提交被拒绝；
-- 被拒绝的版本、pong 和中间内容不留持久化痕迹；
+- 被拒绝的版本、reply 和中间内容不留持久化痕迹；
 - Agent 必须重新读取当前内容和 comments，再决定如何处理；
-- 成功后，平台创建可选的新版本、写入全部 pong、推进相关 thread 水位，并在有新版本时推进 current pointer。
+- 成功后，平台创建可选的新版本、写入全部 reply、推进相关 thread 水位，并在有新版本时推进 current pointer。
 
-执行期间新到达但位于 `respondThroughPing` 之后的 ping 不阻止提交，它们留给下一轮。
+执行期间新到达但位于 `respondThroughComment` 之后的 comment 不阻止提交，它们留给下一轮。
 
 ## 8. Comment location
 
@@ -252,12 +252,12 @@ location schema 与 snapshot schema 位于同一个 Document Contract JSON。Pla
 
 ### 8.2 基数与解释职责
 
-- 一个 ping 可以携带零到多个 locations，用一条意见关联同一版本中的多个位置；
-- 一个 pong 可以关联零到多个 result locations；
-- ping locations 共同表示该意见的上下文；
-- pong locations 表示该批意见在结果中的零个、一个或多个落点；
-- location 自身不携带版本；同一 ping 的所有 locations 均相对于该 ping 的同一个 base version，pong result locations 相对于同一 submission 创建的新版本；
-- 非空 pong result locations 必须随新版本提交，纯 pong 的 result locations 为空。
+- 一个 comment 可以携带零到多个 locations，用一条意见关联同一版本中的多个位置；
+- 一个 reply 可以关联零到多个 result locations；
+- comment locations 共同表示该意见的上下文；
+- reply locations 表示该批意见在结果中的零个、一个或多个落点；
+- location 自身不携带版本；同一 comment 的所有 locations 均相对于该 comment 的同一个 base version，reply result locations 相对于同一 submission 创建的新版本；
+- 非空 reply result locations 必须随新版本提交，纯 reply 的 result locations 为空。
 
 平台保存封套，校验它引用的 contract 与所属版本一致，并按该 revision 的 location schema 和大小限制验证。对应文档类型的 View 与 Agent hook 负责：
 
@@ -278,7 +278,7 @@ location schema 与 snapshot schema 位于同一个 Document Contract JSON。Pla
 - 直接嵌入且尚无独立文档时，按需创建编辑 session；
 - 资源被多篇文档复用时，先评估影响范围，不确定则询问用户是全局修改还是仅修改当前使用处。
 
-跨文档修改不引入分布式事务。每个文档独立提交并接受最终一致性，由 Agent 通过 ping/pong 和补偿动作协调中间状态。
+跨文档修改不引入分布式事务。每个文档独立提交并接受最终一致性，由 Agent 通过 comment/reply 和补偿动作协调中间状态。
 
 ### 9.2 跟随与锁定
 
@@ -307,7 +307,7 @@ location schema 与 snapshot schema 位于同一个 Document Contract JSON。Pla
 
 ### 10.1 不可变内容进入 CAS
 
-完整 snapshot、富媒体、附件以及 ping/pong 的富内容可以使用内容寻址节点保存。相同资源通过 Merkle DAG 共享，避免跨版本重复存储。
+完整 snapshot、富媒体、附件以及 comment/reply 的富内容可以使用内容寻址节点保存。相同资源通过 Merkle DAG 共享，避免跨版本重复存储。
 
 CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 
@@ -322,7 +322,7 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 - 版本 base forest 与 comment provenance；
 - current pointer；
 - pointer 审计日志；
-- thread 的 ping/pong 顺序和累计确认水位；
+- thread 的 comment/reply 顺序和累计确认水位；
 - operator hook 注册；
 - 文档指针反向引用；
 - 归档与恢复状态。
@@ -333,7 +333,7 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 
 版本被归档时，引用该版本的 comment 不应被立即连带归档。热区允许 comment 引用已归档版本，View 将无法直接读取的引用置灰，并可在恢复归档后重新解析。
 
-一个 thread 只有在自身不再从热历史可达时才具备归档条件。具体判定为：thread 中所有消息所引用的版本均已归档。这样不会因为早期 ping 的 base 被归档而丢失仍与较新版本相关的完整决策上下文。
+一个 thread 只有在自身不再从热历史可达时才具备归档条件。具体判定为：thread 中所有消息所引用的版本均已归档。这样不会因为早期 comment 的 base 被归档而丢失仍与较新版本相关的完整决策上下文。
 
 归档是热存储边界，不必等同于永久删除。恢复归档后，原有版本身份和 comment 引用必须重新可解析。
 
@@ -342,13 +342,13 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 ### 11.1 Undo 的边界
 
 - 大版本之间不是 operation undo，而是移动 current pointer；
-- 版本内的人类 undo/redo 只作用于自己的 comment 草稿、编辑型 ping 草稿或其他本地 draft；
-- Agent 修改错误时，用户可以回溯 current，也可以追加 ping 要求改回；
+- 版本内的人类 undo/redo 只作用于自己的 comment 草稿、编辑型 comment 草稿或其他本地 draft；
+- Agent 修改错误时，用户可以回溯 current，也可以追加 comment 要求改回；
 - 系统不存在跨用户、跨大版本的操作级协同 undo。
 
-### 11.2 编辑型 ping
+### 11.2 编辑型 comment
 
-轻量修改仍可保留所见即所得体验。用户在基于特定版本的 View 中直接替换文字、移动对象或调整属性，但发布时由文档类型组件将结果编码为一条编辑型 ping。
+轻量修改仍可保留所见即所得体验。用户在基于特定版本的 View 中直接替换文字、移动对象或调整属性，但发布时由文档类型组件将结果编码为一条编辑型 comment。
 
 用户感知的是即时编辑；平台与 Agent 接收的仍是：
 
@@ -368,9 +368,9 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 - 查询文档身份、文档类型和 current version；
 - 查询任一配对 Document Contract revision；
 - 查询版本关系、审计和确切版本内容；
-- 查询 thread、ping/pong 序列和 open 状态；
-- 追加 ping；
-- 原子提交 pong 和可选的新版本；
+- 查询 thread、comment/reply 序列和 open 状态；
+- 追加 comment；
+- 原子提交 reply 和可选的新版本；
 - 管理跟随或锁定引用；
 - 注册 operator hook 并发送增量通知；
 - 归档、恢复和保留策略所需的关系管理。
@@ -381,7 +381,7 @@ CAS 层不理解节点是正文、图片、comment 还是附件，只提供：
 
 新增文档类型只需要两端能力：
 
-1. **面向人的 View**：渲染版本、采集类型专用 locations、提交 ping，并显示 pong 和结果位置；
+1. **面向人的 View**：渲染版本、采集类型专用 locations、提交 comment，并显示 reply 和结果位置；
 2. **面向 Agent 的 hook 能力**：理解 snapshot、locations 和编辑意图，生成完整新 snapshot。
 
 存储、版本、thread、水位、通知和并发提交协议保持不变。
@@ -394,32 +394,32 @@ sequenceDiagram
   participant P as 平台
   participant A as Agent session
 
-  U->>P: 在历史或 current version 上追加 ping
-  P-->>A: webhook 通知新增 ping
+  U->>P: 在历史或 current version 上追加 comment
+  P-->>A: webhook 通知新增 comment
   Note over A: 排队并选择本轮处理的 threads
-  A->>P: 查询 current、内容、thread 与 pong 水位
+  A->>P: 查询 current、内容、thread 与 reply 水位
   Note over A: 冻结 respond-through 水位并生成结果
-  A->>P: 原子提交新版本（可选）+ pongs
+  A->>P: 原子提交新版本（可选）+ replies
   alt 所有乐观锁匹配
     P-->>A: committed
-    P-->>U: 展示 pong、结果位置和可选新版本
-  else current 或任一 pong 水位变化
+    P-->>U: 展示 reply、结果位置和可选新版本
+  else current 或任一 reply 水位变化
     P-->>A: rejected，不持久化任何提交内容
     A->>P: 重新读取并判断是否仍需处理
   end
 ```
 
-冲突协商走同一流程：Agent 提交说明冲突的纯 pong；相关用户讨论后追加新 ping；Agent 在后续水位再次处理。
+冲突协商走同一流程：Agent 提交说明冲突的纯 reply；相关用户讨论后追加新 comment；Agent 在后续水位再次处理。
 
 ## 14. 核心不变量
 
 1. 每个持久版本都有且只有一个 base parent，根版本除外。
 2. 版本创建只能基于提交时完全相等的 current pointer。
-3. 被拒绝的提交不产生版本、pong 或部分关系。
-4. 每个 thread 的 pong 水位单调前进，且不能跨过未响应 ping。
-5. 一个 pong 只属于一个 thread，但可累计回应该 thread 内连续的多条 ping。
-6. 一个 ping 可有零到多个 locations，且均相对于该 ping 的同一个 base version；一个 pong 可有零到多个 result locations。
-7. Agent 可以只提交 pong，也可以只处理 open comments 的任意子集。
+3. 被拒绝的提交不产生版本、reply 或部分关系。
+4. 每个 thread 的 reply 水位单调前进，且不能跨过未响应 comment。
+5. 一个 reply 只属于一个 thread，但可累计回应该 thread 内连续的多条 comment。
+6. 一个 comment 可有零到多个 locations，且均相对于该 comment 的同一个 base version；一个 reply 可有零到多个 result locations。
+7. Agent 可以只提交 reply，也可以只处理 open comments 的任意子集。
 8. operator 注册只影响通知路由，不授予排他写入权。
 9. current pointer 移动必须审计，且不会隐式删除任何版本。
 10. 文档版本只保证自身 snapshot 与引用值不变，不保证跟随引用的递归内容不变。
@@ -431,7 +431,7 @@ sequenceDiagram
 
 本文已经确定状态模型和一致性边界。实现协议仍需机械化定义以下内容，但不改变上述设计：
 
-- VersionIdx、PingIdx、PongIdx、ThreadId 和水位的线格式；
+- VersionIdx、CommentIdx、ReplyIdx、ThreadId 和水位的线格式；
 - 原子提交的幂等键、重复请求保留期限和结果查询；
 - 乐观锁失败时的稳定错误码及返回的当前水位；
 - webhook 鉴权、签名、重复投递和乱序处理；

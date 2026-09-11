@@ -134,8 +134,6 @@ export const zhTenantApiStrings: Readonly<Record<string, string>> = {
     "文档创建时间。",
   ["Create a document"]:
     "创建文档",
-  ["Atomically creates a named document with `currentVersionIdx = null`, then notifies the built-in Operator with `document.created`. No thread or ping is created. The document becomes openable once the Operator commits its first snapshot. Replaying the same idempotency key returns the original `201` result instead of creating a second document."]:
-    "原子地创建一份 `currentVersionIdx = null` 的具名文档，随后以 `document.created` 通知内建 Operator。不创建任何 thread 或 ping。Operator 提交首个 snapshot 后文档才可打开。重放同一个 idempotency key 会返回原始的 `201` 结果，而不是再创建一份文档。",
   ["Required for session-cookie authentication; omit when authenticating with a Bearer token."]:
     "使用 session cookie 鉴权时必需；使用 Bearer token 时省略。",
   ["Retry identity; reusing a key with a different request is a conflict."]:
@@ -180,8 +178,6 @@ export const zhTenantApiStrings: Readonly<Record<string, string>> = {
     "事件发生时间。",
   ["List version metadata in birth order"]:
     "按出生顺序列出版本元数据",
-  ["Returns cursor-paginated version metadata without snapshots, which is what a version history panel needs: `parentVersionIdx` draws the base parent forest, and `addressedPings` draws the comment provenance graph. Snapshot bytes are read separately, one version at a time."]:
-    "返回 cursor 分页的版本元数据，不含 snapshot——这正是版本历史面板需要的：`parentVersionIdx` 画出 base parent forest，`addressedPings` 画出 comment provenance 图。snapshot 字节单独读取，一次一个版本。",
   ["Version identity and birth order within the document."]:
     "文档内的版本身份与出生顺序。",
   ["Current pointer observed at commit; null only for the first version."]:
@@ -190,16 +186,6 @@ export const zhTenantApiStrings: Readonly<Record<string, string>> = {
     "校验本 snapshot 及其 result location 的配对 revision。",
   ["Agent identity that committed this version."]:
     "提交本版本的 Agent 身份。",
-  ["Submission that atomically created this version and its pongs."]:
-    "原子创建本版本及其 pong 的 submission。",
-  ["Thread containing the addressed ping."]:
-    "包含被回应 ping 的 thread。",
-  ["Addressed ping within that thread."]:
-    "该 thread 内被回应的 ping。",
-  ["Version the addressed ping was written against."]:
-    "被回应的 ping 所基于的版本。",
-  ["Comment provenance: pings this version responded to; empty for the first version."]:
-    "comment provenance：本版本回应了哪些 ping；首个版本为空。",
   ["Time at which the version was committed."]:
     "本版本提交的时间。",
   ["Read one version's metadata"]:
@@ -212,20 +198,8 @@ export const zhTenantApiStrings: Readonly<Record<string, string>> = {
     "以 `application/vnd.unidocs.{documentType}.snapshot+cbor;version=1` 返回版本 snapshot 的规范 SValue CBOR 编码，该媒体类型记录在这一版本的 Document Contract revision 上。SValue 内的大块二进制仍是 SBlob 引用，由调用方持 tenant capability 从 UniCAS 读取。",
   ["List thread identities"]:
     "列出 thread 身份",
-  ["Returns cursor-paginated thread references only. `open` is derived server-side by the same rule the caller would use, `latestPingIdx > acknowledgedPingIdx`; it is not a stored, togglable flag, so there is no resolve or reopen operation anywhere in this API. Full ping and pong sequences come from the item GET operation."]:
-    "只返回 cursor 分页的 thread 引用。`open` 由服务端按调用方同样的规则推导：`latestPingIdx > acknowledgedPingIdx`；它不是可切换的存储标志，因此本 API 任何地方都没有「解决」或「重新打开」操作。完整的 ping 与 pong 序列由单项 GET 返回。",
-  ["Filter by derived open state: latest ping beyond the pong watermark."]:
-    "按推导出的 open 状态过滤：最新 ping 超过 pong 水位。",
-  ["Restrict to threads whose pings are anchored to this version."]:
-    "只返回 ping 锚定在该版本上的 thread。",
   ["Stable thread identity."]:
     "稳定的 thread 身份。",
-  ["Create a thread with its first ping"]:
-    "创建 thread 及其首条 ping",
-  ["Creates a position-anchored thread containing one ping. `baseVersionIdx` must name an existing version of this document, and any location is relative to that version and must carry its `documentContractIdx` and pass that revision's location schema. A ping does not have to be based on current; the Operator decides whether an older comment still applies."]:
-    "创建一个位置锚定的 thread，内含一条 ping。`baseVersionIdx` 必须指向本文档中已有的版本；location 相对于该版本，必须携带它的 `documentContractIdx` 并通过该 revision 的 location schema。ping 不必基于 current；旧评论是否仍然适用由 Operator 判断。",
-  ["Existing version the first ping is written against."]:
-    "首条 ping 所基于的已有版本。",
   ["Plain-text message body, or null."]:
     "纯文本正文，或 null。",
   ["UniCAS blob root hash."]:
@@ -238,8 +212,6 @@ export const zhTenantApiStrings: Readonly<Record<string, string>> = {
     "存于 UniCAS 的富文本正文，或 null。",
   ["Attachments; they never replace the body."]:
     "附件；它们不能替代正文。",
-  ["First ping body and attachments."]:
-    "首条 ping 的正文与附件。",
   ["Paired contract revision whose location schema validates this payload."]:
     "其 location schema 校验本 payload 的配对 contract revision。",
   ["Document-type-specific location kind, for example unidocs.markdown.text-range/v1."]:
@@ -248,50 +220,16 @@ export const zhTenantApiStrings: Readonly<Record<string, string>> = {
     "由 location schema 校验的不透明 location payload。",
   ["Anchor relative to baseVersionIdx, or null for a document-level thread."]:
     "相对于 baseVersionIdx 的锚点；文档级 thread 为 null。",
-  ["Ping identity within its thread."]:
-    "thread 内的 ping 身份。",
-  ["Version this ping was written against."]:
-    "本条 ping 所基于的版本。",
   ["User message body and attachments."]:
     "用户消息正文与附件。",
   ["Anchor relative to baseVersionIdx, or null for a document-level comment."]:
     "相对于 baseVersionIdx 的锚点；文档级评论为 null。",
-  ["User principal that wrote the ping."]:
-    "写下该 ping 的用户 principal。",
-  ["Time at which the ping was appended."]:
-    "该 ping 被追加的时间。",
-  ["Append-only user ping sequence."]:
-    "只追加的用户 ping 序列。",
-  ["Pong identity within its thread."]:
-    "thread 内的 pong 身份。",
-  ["Cumulative acknowledgement watermark this pong advances the thread to."]:
-    "本条 pong 把该 thread 的累计确认水位推进到的位置。",
   ["Agent message body and attachments."]:
     "Agent 消息正文与附件。",
-  ["Locations in the version created by the same submission; empty for a pure pong."]:
-    "同一次 submission 所创建版本内的位置；纯 pong 为空。",
-  ["Agent identity that produced the pong."]:
-    "产出该 pong 的 Agent 身份。",
-  ["Submission that committed this pong."]:
-    "提交该 pong 的 submission。",
-  ["Time at which the pong was committed."]:
-    "该 pong 提交的时间。",
-  ["Append-only Agent pong sequence."]:
-    "只追加的 Agent pong 序列。",
   ["Read both message sequences of a thread"]:
     "读取 thread 的两条消息序列",
-  ["Returns the complete append-only ping and pong sequences. One pong acknowledges every ping through `respondThroughPingIdx`, so the thread's open state and each ping's handled state are computed from these two sequences rather than stored."]:
-    "返回完整的只追加 ping 与 pong 序列。一条 pong 通过 `respondThroughPingIdx` 累计确认到某条 ping，因此 thread 的 open 状态和每条 ping 的处理状态都由这两条序列算出，而不是存储。",
   ["Thread within the document."]:
     "文档内的 thread。",
-  ["Append a ping to a thread"]:
-    "向 thread 追加一条 ping",
-  ["Appends one user message to an existing thread and returns the stored record with its assigned `pingIdx`. Appending past the pong watermark re-opens the thread, which is the only way a discussion is reopened. Pings are immutable: there is no edit, delete, or withdraw operation, so a correction is a new ping on the same thread."]:
-    "向已有 thread 追加一条用户消息，返回带服务端分配的 `pingIdx` 的存储记录。追加到 pong 水位之后会让该 thread 重新变为 open——这是讨论被重新打开的唯一途径。ping 不可变：没有编辑、删除或撤回操作，改正的做法是在同一处追加一条新 ping。",
-  ["Existing version this ping is written against."]:
-    "本条 ping 所基于的已有版本。",
-  ["Ping body and attachments."]:
-    "ping 正文与附件。",
   ["Issue a short-lived direct-UniCAS capability"]:
     "签发直连 UniCAS 的短期 capability",
   ["Returns connection details and a short-lived tenant JWT with `cas:read` and `cas:write` only. The Platform does not proxy CAS node traffic; the caller builds a tenant blob client and reads or writes UniCAS directly. The token is not a Platform API credential, is held in caller memory only, and is never passed into a sandboxed View iframe, which uses Host RPC instead."]:
@@ -308,6 +246,68 @@ export const zhTenantApiStrings: Readonly<Record<string, string>> = {
     "以 Unix 秒时间戳表示的过期时刻。",
   ["Tenant-scoped permissions; never cas:manage or refDomain."]:
     "tenant 级权限；绝不包含 cas:manage 或 refDomain。",
+  ["Atomically creates a named document with `currentVersionIdx = null`, then notifies the built-in Operator with `document.created`. No thread or comment is created. The document becomes openable once the Operator commits its first snapshot. Replaying the same idempotency key returns the original `201` result instead of creating a second document."]:
+    "原子地创建一份 `currentVersionIdx = null` 的具名文档，随后以 `document.created` 通知内建 Operator。不创建任何 thread 或评论。Operator 提交首个 snapshot 后文档才可打开。重放同一个 idempotency key 会返回原始的 `201` 结果，而不是再创建一份文档。",
+  ["Returns cursor-paginated version metadata without snapshots, which is what a version history panel needs: `parentVersionIdx` draws the base parent forest, and `addressedComments` draws the comment provenance graph. Snapshot bytes are read separately, one version at a time."]:
+    "返回 cursor 分页的版本元数据，不含 snapshot——这正是版本历史面板需要的：`parentVersionIdx` 画出 base parent forest，`addressedComments` 画出 comment provenance 图。snapshot 字节单独读取，一次一个版本。",
+  ["Submission that atomically created this version and its replies."]:
+    "原子创建本版本及其回复的 submission。",
+  ["Thread containing the addressed comment."]:
+    "包含被回应评论的 thread。",
+  ["Addressed comment within that thread."]:
+    "该 thread 内被回应的评论。",
+  ["Version the addressed comment was written against."]:
+    "被回应的评论所基于的版本。",
+  ["Comment provenance: comments this version responded to; empty for the first version."]:
+    "comment provenance：本版本回应了哪些评论；首个版本为空。",
+  ["Returns cursor-paginated thread references only. `open` is derived server-side by the same rule the caller would use, `latestCommentIdx > acknowledgedCommentIdx`; it is not a stored, togglable flag, so there is no resolve or reopen operation anywhere in this API. Full comment and reply sequences come from the item GET operation."]:
+    "只返回 cursor 分页的 thread 引用。`open` 由服务端按调用方同样的规则推导：`latestCommentIdx > acknowledgedCommentIdx`；它不是可切换的存储标志，因此本 API 任何地方都没有「解决」或「重新打开」操作。完整的评论与回复序列由单项 GET 返回。",
+  ["Filter by derived open state: latest comment beyond the reply watermark."]:
+    "按推导出的 open 状态过滤：最新评论超过回复水位。",
+  ["Restrict to threads whose comments are anchored to this version."]:
+    "只返回评论锚定在该版本上的 thread。",
+  ["Create a thread with its first comment"]:
+    "创建 thread 及其首条评论",
+  ["Creates a position-anchored thread containing one comment. `baseVersionIdx` must name an existing version of this document, and any location is relative to that version and must carry its `documentContractIdx` and pass that revision's location schema. A comment does not have to be based on current; the Operator decides whether an older comment still applies."]:
+    "创建一个位置锚定的 thread，内含一条评论。`baseVersionIdx` 必须指向本文档中已有的版本；location 相对于该版本，必须携带它的 `documentContractIdx` 并通过该 revision 的 location schema。评论不必基于 current；旧评论是否仍然适用由 Operator 判断。",
+  ["Existing version the first comment is written against."]:
+    "首条评论所基于的已有版本。",
+  ["First comment body and attachments."]:
+    "首条评论的正文与附件。",
+  ["Comment identity within its thread."]:
+    "thread 内的评论身份。",
+  ["Version this comment was written against."]:
+    "本条评论所基于的版本。",
+  ["User principal that wrote the comment."]:
+    "写下该评论的用户 principal。",
+  ["Time at which the comment was appended."]:
+    "该评论被追加的时间。",
+  ["Append-only user comment sequence."]:
+    "只追加的用户评论序列。",
+  ["Reply identity within its thread."]:
+    "thread 内的回复身份。",
+  ["Cumulative acknowledgement watermark: this reply answers every comment through this index, so one reply commonly covers several comments."]:
+    "累计确认水位：本条回复确认到该序号为止的每一条评论，因此一条回复通常一次覆盖多条评论。",
+  ["Locations in the version created by the same submission; empty for a pure reply."]:
+    "同一次 submission 所创建版本内的位置；纯回复为空。",
+  ["Agent identity that produced the reply."]:
+    "产出该回复的 Agent 身份。",
+  ["Submission that committed this reply."]:
+    "提交该回复的 submission。",
+  ["Time at which the reply was committed."]:
+    "该回复提交的时间。",
+  ["Append-only Agent reply sequence; each reply acknowledges a run of comments rather than exactly one."]:
+    "只追加的 Agent 回复序列；每条回复确认的是一段连续评论，而不是恰好一条。",
+  ["Returns the complete append-only comment and reply sequences. One reply acknowledges every comment through `respondThroughCommentIdx`, so the thread's open state and each comment's handled state are computed from these two sequences rather than stored."]:
+    "返回完整的只追加评论与回复序列。一条回复通过 `respondThroughCommentIdx` 累计确认到某条评论，因此 thread 的 open 状态和每条评论的处理状态都由这两条序列算出，而不是存储。",
+  ["Append a comment to a thread"]:
+    "向 thread 追加一条评论",
+  ["Appends one user message to an existing thread and returns the stored record with its assigned `commentIdx`. Appending past the reply watermark re-opens the thread, which is the only way a discussion is reopened. Comments are immutable: there is no edit, delete, or withdraw operation, so a correction is a new comment on the same thread."]:
+    "向已有 thread 追加一条用户消息，返回带服务端分配的 `commentIdx` 的存储记录。追加到回复水位之后会让该 thread 重新变为 open——这是讨论被重新打开的唯一途径。评论不可变：没有编辑、删除或撤回操作，改正的做法是在同一处追加一条新评论。",
+  ["Existing version this comment is written against."]:
+    "本条评论所基于的已有版本。",
+  ["Comment body and attachments."]:
+    "评论正文与附件。",
 };
 
 export const zhTenantApiTranslation = {
