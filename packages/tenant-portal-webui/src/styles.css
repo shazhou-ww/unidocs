@@ -1,27 +1,100 @@
+/**
+ * 视觉基线是 docs/design/unidocs-mock.css（复制为 ./mock-base.css，未改动）。
+ * 本文件只做两件事：补上 mock 没有的分屏对照与讨论面板样式，并复用它的 token。
+ * 不要在这里重复定义 mock 已有的东西。
+ */
+@import "./mock-base.css";
+
 :root {
-  --bg: #fafaf9;
-  --surface: #ffffff;
-  --surface-sunken: #f5f5f4;
-  --border: #e7e5e4;
-  --text: #1c1917;
-  --text-muted: #78716c;
-  --accent-ping: #16a34a;
-  --accent-pong: #d97706;
+  /* 分屏与讨论面板专有，mock 里没有对应物 */
+  --panel-width: 316px;
+  --accent-ping: var(--green);
+  --accent-pong: #b07d2b;
   --accent-stale: #a8a29e;
   --accent-draft: #ca8a04;
-  --panel-width: 316px;
 }
 
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 system-ui, -apple-system, "PingFang SC", sans-serif; }
-
-.device-notice { display: none; }
-@media (max-width: 760px) {
-  .device-notice { display: grid; place-content: center; gap: 8px; min-height: 100dvh; padding: 24px; text-align: center; }
-  .app { display: none; }
-}
+/* ── 正文高亮：评论位置 / Agent 改动位置 / 已过时位置 ───────────────── */
 
 .marker { background: none; color: inherit; border-radius: 2px; padding: 0 1px; }
-.marker-ping { background: color-mix(in srgb, var(--accent-ping) 22%, transparent); box-shadow: inset 0 -2px 0 var(--accent-ping); }
+.marker-ping { background: color-mix(in srgb, var(--accent-ping) 20%, transparent); box-shadow: inset 0 -2px 0 var(--accent-ping); }
 .marker-pong-result { background: color-mix(in srgb, var(--accent-pong) 24%, transparent); box-shadow: inset 0 -2px 0 var(--accent-pong); }
-.marker-stale-ping { background: var(--surface-sunken); outline: 1px dashed var(--accent-stale); outline-offset: 1px; }
+.marker-stale-ping { background: var(--soft); outline: 1px dashed var(--accent-stale); outline-offset: 1px; }
+
+/* ── 分屏对照 ───────────────────────────────────────────────────── */
+
+.content-area { padding: 0; display: grid; grid-template-columns: 1fr; }
+.doc-workspace.compare .content-area { grid-template-columns: 1fr 1fr; }
+
+.pane-wrapper { display: grid; grid-template-rows: auto auto 1fr; min-width: 0; min-height: 0; border-right: 1px solid var(--line); }
+.pane-wrapper:last-of-type { border-right: 0; }
+.pane-base { background: #fbfbf9; }
+
+.pane-label {
+  margin: 0; padding: 9px 22px; font-size: 11px; color: var(--muted);
+  border-bottom: 1px solid var(--line); background: var(--soft);
+  display: flex; align-items: center; gap: 6px;
+}
+.pane-note {
+  margin: 0; padding: 10px 22px; font-size: 11.5px; line-height: 1.7; color: var(--muted);
+  border-bottom: 1px solid var(--line); background: #fdfcf7;
+}
+.pane { overflow: auto; padding: 26px 24px 48px; min-width: 0; }
+
+/* ── 讨论面板 ───────────────────────────────────────────────────── */
+
+.review-panel.thread-panel { width: var(--panel-width); overflow: auto; display: flex; flex-direction: column; }
+.review-panel .review-body { padding: 14px; }
+.thread-filter { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 12px; }
+.thread-filter button {
+  padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--paper); font-size: 11px; cursor: pointer; color: var(--muted);
+}
+.thread-filter button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.thread-card { margin-bottom: 8px; background: var(--paper); border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.thread-card.selected { border-color: #b8c1b4; box-shadow: 0 1px 0 rgba(0,0,0,.03); }
+.thread-card > button { display: grid; gap: 5px; width: 100%; padding: 11px 12px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; }
+.status-open { color: var(--green); font-size: 11px; font-weight: 600; }
+.status-answered { color: var(--muted); font-size: 11px; }
+.thread-excerpt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink); }
+
+.thread-messages { list-style: none; margin: 0; padding: 0 12px 12px; display: grid; gap: 7px; }
+.ping-card, .pong-card { border-radius: 6px; background: var(--soft); }
+.ping-card > button { display: grid; gap: 5px; width: 100%; padding: 9px 10px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; }
+.ping-card.selected { outline: 1px solid var(--green); }
+.ping-card p, .pong-card p { margin: 0; }
+.ping-card footer, .pong-card footer { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 10.5px; margin-top: 5px; }
+.version-badge { padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper); }
+.ping-status { color: var(--muted); }
+.ping-edit { border: 0; background: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0 10px 9px; }
+.ping-edit:hover { color: var(--ink); text-decoration: underline; }
+.pong-card { padding: 9px 10px; }
+.pong-card.pong-plain { border-left: 2px solid var(--accent-stale); }
+.pong-card.pong-versioned { border-left: 2px solid var(--accent-pong); }
+
+/* ── 草稿 ───────────────────────────────────────────────────────── */
+
+.draft-block { padding: 9px 10px; border: 1px dashed var(--accent-draft); border-radius: 6px; background: color-mix(in srgb, var(--accent-draft) 7%, transparent); }
+.draft-origin { margin: 0 0 4px; color: var(--accent-draft); font-size: 10.5px; }
+.draft-text { margin: 0 0 6px; }
+.draft-actions { display: flex; gap: 6px; }
+.draft-count { color: var(--accent-draft); font-size: 11px; }
+.orphaned-drafts { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 7px; }
+
+/* ── 输入框（动作触发，不常驻）────────────────────────────────────── */
+
+.composer { display: grid; gap: 6px; padding: 0 12px 12px; }
+.composer textarea { width: 100%; min-height: 62px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; resize: vertical; background: var(--paper); }
+.composer-actions { display: flex; gap: 6px; }
+.thread-compose { padding: 0 12px 12px; }
+
+/* ── 只读与刷新状态 ─────────────────────────────────────────────── */
+
+.readonly-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; background: var(--paper); }
+.refreshing-badge { color: var(--muted); font-size: 11px; }
+.reload-error-banner { margin: 0; padding: 7px 22px; font-size: 11.5px; color: var(--red); background: #fdf4f3; border-bottom: 1px solid var(--line); }
+
+/* ── 选区提评论的浮动触发器 ─────────────────────────────────────── */
+
+.selection-trigger { position: absolute; z-index: 40; transform: translate(-50%, -120%); }

@@ -53,8 +53,10 @@ export function ThreadPanel(props: {
   });
 
   return (
-    <aside className="thread-panel" role="complementary" aria-label="讨论">
-      <nav className="thread-filter">
+    <aside className="review-panel open thread-panel" role="complementary" aria-label="讨论">
+      <div className="review-heading">
+        <div className="row spread"><h2>讨论与批注</h2></div>
+        <nav className="thread-filter">
         {FILTERS.map((option) => (
           <button
             key={option.value}
@@ -65,7 +67,10 @@ export function ThreadPanel(props: {
             {option.label}
           </button>
         ))}
-      </nav>
+        </nav>
+      </div>
+
+      <div className="review-body">
 
       {props.draftCount > 0 && <p className="draft-count">{props.draftCount} 条未发送</p>}
 
@@ -123,6 +128,7 @@ export function ThreadPanel(props: {
           />
         );
       })}
+      </div>
     </aside>
   );
 }

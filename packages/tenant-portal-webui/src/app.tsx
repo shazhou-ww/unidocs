@@ -4,6 +4,7 @@ import { ClientProvider } from "./client-context.js";
 import { parseRoute, type Route } from "./router.js";
 import { WorkbenchPage } from "./pages/workbench.js";
 import { DocumentPage } from "./pages/document.js";
+import { Sidebar } from "./shell/app-shell.js";
 import "./styles.css";
 
 function useHashRoute(): Route {
@@ -26,9 +27,12 @@ export function App(props: { client: TenantPortalClient }) {
         <p>移动端暂未开放。</p>
       </section>
       <div className="app">
-        {route.kind === "workbench"
-          ? <WorkbenchPage />
-          : <DocumentPage documentId={route.documentId} threadId={route.threadId} pingIdx={route.pingIdx} />}
+        <Sidebar documentCount={null} />
+        <main className="main">
+          {route.kind === "workbench"
+            ? <WorkbenchPage />
+            : <DocumentPage documentId={route.documentId} threadId={route.threadId} pingIdx={route.pingIdx} />}
+        </main>
       </div>
     </ClientProvider>
   );

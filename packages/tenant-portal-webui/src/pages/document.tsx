@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FileText, History as HistoryIcon, Lock as LockIcon } from "lucide-react";
 import type { PingRecord, VersionRecord } from "@unidocs/protocol-platform";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
 import { useClient } from "../client-context.js";
@@ -11,10 +12,10 @@ import { sendDraft } from "../model/send-comment.js";
 import { useDocumentSession } from "../model/use-document.js";
 import { ThreadPanel } from "../panel/thread-panel.js";
 import { routeToHash } from "../router.js";
+import { DocumentCrumb, Topbar } from "../shell/app-shell.js";
 import type { HostImplementation } from "../view/channel.js";
 import type { RoledMarker } from "../view/markers.js";
 import { noopHost, ViewHost } from "../view/view-host.js";
-import "./document.css";
 
 const RIGHT_PANE_NOTE: Readonly<Record<RightPaneDecision["kind"], string | null>> = {
   "pong-result": null,
@@ -260,56 +261,80 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
   const split = ping !== null && baseVersion !== null;
 
   return (
-    <main className="document">
-      <div className="document-top-wrap">
-        <header className="document-top">
-          <h1>{session.document.name}</h1>
-          <span className="readonly-badge">只读 · 内容由 Agent 编辑</span>
+    <>
+      <Topbar>
+        <DocumentCrumb title={session.document.name} />
+        <div className="row" style={{ gap: 8 }}>
+          <span className="readonly-badge">
+            <LockIcon size={11} aria-hidden="true" />
+            只读 · 内容由 Agent 编辑
+          </span>
           {session.loading && <span className="refreshing-badge" aria-live="polite">正在刷新…</span>}
-        </header>
+        </div>
+      </Topbar>
 
-        {/* 已经有内容可看时，一次刷新失败（比如发完评论后紧跟的那次 reload() 网络抖了一下）
-            不清空已有内容——只在这里给个不破坏页面的提示，document 仍然是上一次成功加载的
-            那一份。首次加载失败没有旧内容可留，走的是上面 session.document === null 的整页早退。 */}
-        {session.failure !== null && (
-          <p role="alert" className="reload-error-banner">刷新失败：{session.failure.message}</p>
-        )}
+      <div className="doc-header">
+        <h1 className="doc-title">{session.document.name}</h1>
+        <div className="doc-subtitle">
+          <span className="row" style={{ gap: 4 }}><FileText size={12} aria-hidden="true" />Markdown</span>
+          <span>·</span>
+          <span>
+            {session.document.currentVersionIdx === null
+              ? "初始化中"
+              : `当前 v${session.document.currentVersionIdx}`}
+          </span>
+          <span>·</span>
+          <span>内容由 Agent 编辑，你的产出是评论</span>
+        </div>
       </div>
 
-      <div className={`document-body${split ? " split" : ""}`}>
-        {split && (
-          <div className="pane-wrapper pane-base">
-            <p className="pane-label">基版 v{baseVersion.versionIdx} · 只读</p>
-            <ViewHost
-              // 问题 3：文档切换（同一路由 kind，比如从一篇的「Agent 最新回复」条
-              // 跳到另一篇）不会重新挂载 DocumentPage，ViewHost 内部通道却是挂载时
-              // 建一次就不再变（carry-forward 2）。用带 documentId 的 key 强制在
-              // 文档变化时重建，不然通道会一直绑定在旧文档上。
-              key={`${props.documentId}:base`}
-              label="评论所基于的版本"
-              version={baseVersion}
-              markers={leftMarkers}
-              className="pane"
-              commentable={false}
-            />
-          </div>
-        )}
+      {/* 已经有内容可看时，一次刷新失败（比如发完评论后紧跟的那次 reload() 网络抖了一下）
+          不清空已有内容——只给一条不破坏页面的提示，document 仍是上一次成功加载的那一份。
+          首次加载失败没有旧内容可留，走的是上面 session.document === null 的整页早退。 */}
+      {session.failure !== null && (
+        <p role="alert" className="reload-error-banner">刷新失败：{session.failure.message}</p>
+      )}
 
-        <div className="pane-wrapper">
-          {note !== null && <p className="pane-note">{note}</p>}
-          {session.currentVersion === null
-            ? <p className="muted">这件作品还在初始化，暂时没有可读的版本。</p>
-            : (
+      <div className={`doc-workspace${split ? " compare" : ""}`}>
+        <section className="content-area">
+          {split && (
+            <div className="pane-wrapper pane-base">
+              <p className="pane-label">
+                <HistoryIcon size={11} aria-hidden="true" />
+                基版 v{baseVersion.versionIdx} · 只读
+              </p>
               <ViewHost
-                key={`${props.documentId}:current`}
-                label="当前版本"
-                version={session.currentVersion}
-                markers={rightMarkers}
-                className="pane pane-current"
-                host={viewHost}
+                // 问题 3：文档切换（同一路由 kind，比如从一篇的「Agent 最新回复」条跳到
+                // 另一篇）不会重新挂载 DocumentPage，ViewHost 内部通道却是挂载时建一次
+                // 就不再变（carry-forward 2）。用带 documentId 的 key 强制在文档变化时
+                // 重建，不然通道会一直绑定在旧文档上。
+                key={`${props.documentId}:base`}
+                label="评论所基于的版本"
+                version={baseVersion}
+                markers={leftMarkers}
+                className="pane prose"
+                commentable={false}
               />
-            )}
-        </div>
+            </div>
+          )}
+
+          <div className="pane-wrapper">
+            {split && <p className="pane-label">当前版本</p>}
+            {note !== null && <p className="pane-note">{note}</p>}
+            {session.currentVersion === null
+              ? <p className="muted">这件作品还在初始化，暂时没有可读的版本。</p>
+              : (
+                <ViewHost
+                  key={`${props.documentId}:current`}
+                  label="当前版本"
+                  version={session.currentVersion}
+                  markers={rightMarkers}
+                  className="pane pane-current prose"
+                  host={viewHost}
+                />
+              )}
+          </div>
+        </section>
 
         <ThreadPanel
           threads={session.summary?.threads ?? []}
@@ -341,6 +366,6 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
           onEditFromPing={onEditFromPing}
         />
       </div>
-    </main>
+    </>
   );
 }
