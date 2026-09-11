@@ -12,4 +12,4 @@ export { OperatorDiscoveryError, validateOperatorDiscovery } from "./operators/d
 export { AdminOperationError, createDocumentTypeService } from "./admin/document-types.js";
 export type { DocumentTypeCreateCommand, DocumentTypeRepository, DocumentTypeUpdateCommand } from "./admin/document-types.js";
 export { AdministratorOperationError, createAdministratorService } from "./admin/administrators.js";
-export type { AdministratorAddCommand, AdministratorRepository } from "./admin/administrators.js";
+export type { AdministratorAddCommand, AdministratorRemoveCommand, AdministratorRepository } from "./admin/administrators.js";

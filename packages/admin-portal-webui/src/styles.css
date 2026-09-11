@@ -206,7 +206,8 @@ h1 {
 }
 
 .primary-button,
-.secondary-button {
+.secondary-button,
+.danger-button {
   min-height: 38px;
   display: inline-flex;
   align-items: center;
@@ -238,6 +239,30 @@ h1 {
   border: 1px solid var(--line);
   background: white;
   color: var(--ink);
+}
+
+.danger-button {
+  border: 1px solid #852929;
+  background: #9c2f2f;
+  color: white;
+}
+
+.danger-button:hover {
+  background: #852929;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.danger-icon {
+  color: var(--danger);
+}
+
+.danger-icon:hover {
+  background: #fff0ef;
+  color: #7f2424;
 }
 
 .icon-button {
@@ -717,6 +742,22 @@ tbody tr.selected-row {
   padding: 20px 22px;
 }
 
+.confirm-body {
+  padding: 20px 22px;
+}
+
+.confirm-body>p {
+  margin-bottom: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.confirm-body strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 .modal label span {
   display: block;
   margin-bottom: 7px;
@@ -963,6 +1004,10 @@ tbody tr.selected-row {
 
 .members-table th:nth-child(4) {
   width: 100px;
+}
+
+.members-table th:nth-child(5) {
+  width: 52px;
 }
 
 .members-table tbody tr {

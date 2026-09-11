@@ -12,13 +12,17 @@ import {
 } from "@unidocs/portal-service";
 
 export function createAdministratorsHttp(repository: AdministratorRepository) {
-  const contract = { list: adminApiContract.members.list, get: adminApiContract.members.get, add: adminApiContract.members.add };
+  const contract = { list: adminApiContract.members.list, get: adminApiContract.members.get, add: adminApiContract.members.add, remove: adminApiContract.members.remove };
   const implementation = implement(contract).$context<{ admin: AdminContext; requestId: string }>();
   const service = createAdministratorService(repository);
   const router = {
     list: implementation.list.handler(({ input, context }) => service.list(context.admin, input.query ?? {})),
     get: implementation.get.handler(({ input, context }) => service.get(context.admin, input.params.adminId)),
     add: implementation.add.handler(({ input, context }) => service.add(context.admin, input.body, input.headers["idempotency-key"], context.requestId)),
+    remove: implementation.remove.handler(async ({ input, context }) => {
+      await service.remove(context.admin, input.params.adminId, input.headers["idempotency-key"], input.headers["if-match"], context.requestId);
+      return undefined;
+    }),
   };
   return async (request: Request, admin: AdminContext, requestId: string): Promise<Response> => {
     const url = new URL(request.url);
@@ -29,6 +33,9 @@ export function createAdministratorsHttp(repository: AdministratorRepository) {
       seen.add(name);
     });
     if (invalidQuery) return Response.json({ error: { code: "invalid_request", message: "The query is invalid", requestId } }, { status: 400 });
+    if (request.method === "DELETE" && !request.headers.has("if-match")) {
+      return Response.json({ error: { code: "precondition_required", message: "The If-Match precondition is required", requestId } }, { status: 428 });
+    }
     const handler = new OpenAPIHandler(router, {
       plugins: request.method === "GET" ? [new experimental_ZodSmartCoercionPlugin()] : [],
       interceptors: [async ({ next }) => {
@@ -36,9 +43,12 @@ export function createAdministratorsHttp(repository: AdministratorRepository) {
           return await next();
         } catch (error) {
           if (error instanceof AdministratorOperationError) {
-            throw new ORPCError(error.code.toUpperCase(), { status: {
-              invalid_request: 400, not_found: 404, idempotency_conflict: 409, administrator_exists: 409, forbidden: 403,
-            }[error.code], message: error.message, data: { requestId } });
+            throw new ORPCError(error.code.toUpperCase(), {
+              status: {
+                invalid_request: 400, not_found: 404, idempotency_conflict: 409, administrator_exists: 409, precondition_failed: 412,
+                cannot_remove_self: 409, last_administrator: 409, forbidden: 403,
+              }[error.code], message: error.message, data: { requestId }
+            });
           }
           throw error;
         }

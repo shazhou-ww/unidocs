@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText, LoaderCircle, LogIn, LogOut, Menu, Plus, RefreshCw, Search, ShieldAlert, UserPlus, Users, X } from "lucide-react";
+import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, FileText, LoaderCircle, LogIn, LogOut, Menu, Plus, RefreshCw, Search, ShieldAlert, Trash2, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
 import type { AdministratorMemberListItem, DocumentTypeListItem, DocumentTypeRegistration } from "@unidocs/protocol-admin-portal";
 
@@ -8,6 +8,9 @@ function errorMessage(error: unknown): string {
     if (error.status === 401) return "登录已失效，请重新登录。";
     if (error.code === "idempotency_conflict") return "请求标识已被另一项操作使用。";
     if (error.code === "administrator_exists") return "这个邮箱已经在管理员列表中。";
+    if (error.code === "cannot_remove_self") return "不能移除当前登录的管理员。";
+    if (error.code === "last_administrator") return "不能移除最后一位可登录管理员。";
+    if (error.code === "precondition_failed") return "成员信息已发生变化，请刷新后重试。";
     return `${error.message}${error.requestId ? `（请求 ${error.requestId}）` : ""}`;
   }
   return "暂时无法连接管理服务。";
@@ -117,6 +120,7 @@ function AdminApp() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [memberEmail, setMemberEmail] = useState("");
+  const [memberToRemove, setMemberToRemove] = useState<AdministratorMemberListItem | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
 
   async function loadTypes(nextQuery = query, nextEnabled = enabled) {
@@ -202,6 +206,22 @@ function AdminApp() {
     }
   }
 
+  async function confirmRemoveMember() {
+    if (!memberToRemove) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await client.removeAdministrator(memberToRemove.adminId, memberToRemove.etag);
+      setMemberToRemove(null);
+      await loadMembers();
+    } catch (caught) {
+      setMemberToRemove(null);
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function logout() {
     await logoutToLogin(() => client.logout());
   }
@@ -280,12 +300,13 @@ function AdminApp() {
           <div className="table-region">
             <div className="table-meta"><span>{membersLoading ? "正在同步" : `${members.length} 位管理员`}</span><button className="icon-button bordered" type="button" onClick={() => void loadMembers()} title="刷新" aria-label="刷新管理员"><RefreshCw className={membersLoading ? "spin" : ""} size={17} /></button></div>
             <div className="table-scroll">
-              <table className="members-table"><thead><tr><th>Google 账户</th><th>身份状态</th><th>添加时间</th><th>成员</th></tr></thead>
+              <table className="members-table"><thead><tr><th>Google 账户</th><th>身份状态</th><th>添加时间</th><th>成员</th><th><span className="sr-only">操作</span></th></tr></thead>
                 <tbody>{members.map(member => <tr key={member.adminId}>
                   <td><div className="type-name"><span className="avatar member-avatar" aria-hidden="true">{member.email.slice(0, 1).toUpperCase()}</span><span><strong>{member.email}</strong><code>{member.adminId}</code></span></div></td>
                   <td><span className={`status ${member.bound ? "enabled" : "draft"}`}>{member.bound ? <Check size={13} /> : <CircleDashed size={13} />}{member.bound ? "已绑定" : "等待登录"}</span></td>
                   <td><time dateTime={member.addedAt}>{new Date(member.addedAt).toLocaleDateString("zh-CN")}</time></td>
                   <td>{member.isSelf ? <span className="self-badge">当前账户</span> : <span className="muted">管理员</span>}</td>
+                  <td>{!member.isSelf && <button className="icon-button danger-icon" type="button" onClick={() => setMemberToRemove(member)} title="移除管理员" aria-label={`移除 ${member.email}`}><Trash2 size={16} /></button>}</td>
                 </tr>)}</tbody>
               </table>
               {!membersLoading && members.length === 0 && <div className="empty-state"><Users size={28} /><strong>还没有管理员成员</strong></div>}
@@ -307,6 +328,11 @@ function AdminApp() {
     {addMemberOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setAddMemberOpen(false); }}>
       <section className="modal" role="dialog" aria-modal="true" aria-labelledby="add-member-title"><div className="modal-header"><div><span>ACCESS ALLOWLIST</span><h2 id="add-member-title">添加管理员</h2></div><button className="icon-button" type="button" onClick={() => setAddMemberOpen(false)} aria-label="关闭"><X size={18} /></button></div>
         <form onSubmit={addMember}><label><span>Google 账户邮箱</span><input autoFocus type="email" value={memberEmail} onChange={event => setMemberEmail(event.target.value)} placeholder="name@gmail.com" /></label><p>该账户首次完成 Google 登录后会绑定身份。</p><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setAddMemberOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !memberEmail.trim()}>{saving ? <LoaderCircle className="spin" size={16} /> : <UserPlus size={16} />}添加成员</button></div></form>
+      </section>
+    </div>}
+    {memberToRemove && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setMemberToRemove(null); }}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="remove-member-title"><div className="modal-header"><div><span>REMOVE ACCESS</span><h2 id="remove-member-title">移除管理员</h2></div><button className="icon-button" type="button" disabled={saving} onClick={() => setMemberToRemove(null)} aria-label="关闭"><X size={18} /></button></div>
+        <div className="confirm-body"><p>将移除 <strong>{memberToRemove.email}</strong> 的管理员权限，并立即撤销该成员的活动 session。</p><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setMemberToRemove(null)}>取消</button><button className="danger-button" type="button" disabled={saving} onClick={() => void confirmRemoveMember()}>{saving ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}确认移除</button></div></div>
       </section>
     </div>}
   </div>;

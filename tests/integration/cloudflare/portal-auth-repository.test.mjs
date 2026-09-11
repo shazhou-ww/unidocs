@@ -95,6 +95,55 @@ test("concurrent administrator retries create one member, receipt and audit", as
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.added'").first("count")).toBe(1);
 }, 30_000);
 
+test("administrator DELETE enforces ETag and self protection, revokes target sessions, and replays", async () => {
+  const { context, issued, members, memberService } = await administrators();
+  const added = await memberService.add(context, { email: "second@example.com" }, "add-second", "add-second");
+  const secondIdentity = googleIdentityFromConfirmedLogin({ iss: identity.issuer, sub: "second", email: "second@example.com", email_verified: true }, now);
+  const secondIssued = await repository.completeLogin(secondIdentity, null, "bind-second");
+  const target = await memberService.get(context, added.adminId);
+  const self = await memberService.get(context, context.memberId);
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createAdministratorsHttp(members) });
+  const base = "https://portal.test/admin/api/v1/administrators";
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  const headers = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "idempotency-key": "remove-second", "if-match": target.etag };
+  const headersWithoutPrecondition = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "idempotency-key": "missing-precondition" };
+  expect((await handle(new Request(`${base}/${target.adminId}`, { method: "DELETE", headers: headersWithoutPrecondition }))).status).toBe(428);
+  const stale = await handle(new Request(`${base}/${target.adminId}`, { method: "DELETE", headers: { ...headers, "idempotency-key": "stale-remove", "if-match": '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"' } }));
+  expect(stale.status).toBe(412);
+  expect(await stale.json()).toMatchObject({ error: { code: "precondition_failed" } });
+  const selfRemoval = await handle(new Request(`${base}/${self.adminId}`, { method: "DELETE", headers: { ...headers, "idempotency-key": "self-remove", "if-match": self.etag } }));
+  expect(selfRemoval.status).toBe(409);
+  expect(await selfRemoval.json()).toMatchObject({ error: { code: "cannot_remove_self" } });
+  const remove = () => handle(new Request(`${base}/${target.adminId}`, { method: "DELETE", headers }));
+  expect((await remove()).status).toBe(204);
+  expect((await remove()).status).toBe(204);
+  expect((await handle(new Request(`${base}/${target.adminId}`, { headers: { cookie } }))).status).toBe(404);
+  expect(await repository.findSession(secondIssued.session.sessionHash)).toBeNull();
+  expect(await database.prepare("SELECT active FROM portal_administrators WHERE member_id = ?").bind(target.adminId).first("active")).toBe(0);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'removeAdministratorMember'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.removed'").first("count")).toBe(1);
+}, 30_000);
+
+test("concurrent mutual administrator removal leaves one bound administrator and one live session", async () => {
+  const { context: firstContext, members, memberService } = await administrators();
+  const added = await memberService.add(firstContext, { email: "second@example.com" }, "add-mutual", "add-mutual");
+  const secondIdentity = googleIdentityFromConfirmedLogin({ iss: identity.issuer, sub: "second", email: "second@example.com", email_verified: true }, now);
+  const secondIssued = await repository.completeLogin(secondIdentity, null, "bind-mutual");
+  const secondContext = { memberId: secondIssued.memberId, identity: secondIdentity, transport: "session", sessionHash: secondIssued.session.sessionHash };
+  const secondRecord = await memberService.get(firstContext, added.adminId);
+  const firstRecord = await memberService.get(secondContext, firstContext.memberId);
+  const secondService = createAdministratorService(members);
+  const results = await Promise.allSettled([
+    memberService.remove(firstContext, secondRecord.adminId, "remove-second-mutual", secondRecord.etag, "remove-second-mutual"),
+    secondService.remove(secondContext, firstRecord.adminId, "remove-first-mutual", firstRecord.etag, "remove-first-mutual"),
+  ]);
+  expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators WHERE active = 1 AND subject IS NOT NULL").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_sessions").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.removed'").first("count")).toBe(1);
+}, 30_000);
+
 test("contract HTTP endpoints create/read/list real drafts with authentication, CSRF and retry errors", async () => {
   const { issued, types } = await documentTypes();
   const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");

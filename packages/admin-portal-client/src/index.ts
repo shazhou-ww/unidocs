@@ -38,6 +38,7 @@ export interface AdminPortalClient {
   listAdministrators(query?: { readonly limit?: number; readonly cursor?: string }): Promise<ListAdministratorMembersResponse>;
   getAdministrator(adminId: string): Promise<AdministratorMemberRecord>;
   addAdministrator(body: AddAdministratorMemberRequest, idempotencyKey?: string): Promise<AdministratorMemberMutationResult>;
+  removeAdministrator(adminId: string, ifMatch: string, idempotencyKey?: string): Promise<void>;
 }
 
 export interface AdminPortalClientConfig {
@@ -112,6 +113,9 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
     getAdministrator: adminId => request<AdministratorMemberRecord>(`${AdminApiV1BasePath}/administrators/${encodeURIComponent(adminId)}`),
     addAdministrator: (body, idempotencyKey = createIdempotencyKey()) => request<AdministratorMemberMutationResult>(`${AdminApiV1BasePath}/administrators`, {
       method: "POST", headers: mutationHeaders({ "idempotency-key": idempotencyKey }), body: JSON.stringify(body),
+    }),
+    removeAdministrator: (adminId, ifMatch, idempotencyKey = createIdempotencyKey()) => request<void>(`${AdminApiV1BasePath}/administrators/${encodeURIComponent(adminId)}`, {
+      method: "DELETE", headers: mutationHeaders({ "idempotency-key": idempotencyKey, "if-match": ifMatch }),
     }),
   };
 }

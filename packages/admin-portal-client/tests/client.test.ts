@@ -41,3 +41,15 @@ test("attempts idempotent logout even when no CSRF cookie remains", async () => 
   expect(fetcher).toHaveBeenCalledWith("https://portal.test/admin/auth/logout", expect.objectContaining({ method: "POST", credentials: "include" }));
   expect(new Headers(fetcher.mock.calls[0][1]?.headers).has("x-csrf-token")).toBe(false);
 });
+
+test("removes an administrator with CSRF, idempotency, and If-Match", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+  const client = createAdminPortalClient({ baseUrl: "https://portal.test", fetcher, getCsrfToken: () => "csrf", createIdempotencyKey: () => "remove-key" });
+  await client.removeAdministrator("member/one", '"sha256-member"');
+  expect(String(fetcher.mock.calls[0][0])).toBe("https://portal.test/admin/api/v1/administrators/member%2Fone");
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ method: "DELETE", credentials: "include" });
+  const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+  expect(headers.get("x-csrf-token")).toBe("csrf");
+  expect(headers.get("idempotency-key")).toBe("remove-key");
+  expect(headers.get("if-match")).toBe('"sha256-member"');
+});

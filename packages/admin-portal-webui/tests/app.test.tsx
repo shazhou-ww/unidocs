@@ -44,6 +44,29 @@ test("loads members and submits a new administrator from the navigation", async 
   vi.unstubAllGlobals();
 });
 
+test("confirms removal of another administrator with its current ETag", async () => {
+  const member = { adminId: "member", email: "member@example.com", bound: true, addedBy: "admin", addedAt: "2026-09-11T00:00:00.000Z", etag: '"sha256-member"', isSelf: false };
+  const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.includes("/administrators/member") && init?.method === "DELETE") return new Response(null, { status: 204 });
+    if (url.includes("/administrators")) return Response.json({ items: [member], nextCursor: null });
+    return Response.json({ items: [], nextCursor: null });
+  });
+  Object.defineProperty(document, "cookie", { configurable: true, value: "__Host-unidocs_admin_csrf=csrf" });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: /管理员/ }));
+  await screen.findByText("member@example.com");
+  fireEvent.click(screen.getByRole("button", { name: "移除 member@example.com" }));
+  expect(screen.getByRole("dialog", { name: "移除管理员" })).toHaveTextContent("member@example.com");
+  fireEvent.click(screen.getByRole("button", { name: "确认移除" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/administrators/member"), expect.objectContaining({ method: "DELETE" })));
+  const removeCall = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE")!;
+  expect(new Headers(removeCall[1]?.headers).get("if-match")).toBe(member.etag);
+  vi.unstubAllGlobals();
+});
+
 test("renders a useful access denial only after the session probe fails", async () => {
   window.history.replaceState({}, "", "/admin/access-denied?code=forbidden&requestId=request-1");
   let rejectSession!: (reason: Error) => void;
