@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PingRecord, VersionRecord } from "@unidocs/protocol-platform";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
 import { useClient } from "../client-context.js";
@@ -6,6 +6,7 @@ import { anchorKeyOf, type Draft } from "../drafts/draft-store.js";
 import { useDrafts } from "../drafts/use-drafts.js";
 import { errorText } from "../error-text.js";
 import { decideRightPane, type RightPaneDecision } from "../model/compare.js";
+import { createThreadFromView } from "../model/create-thread-from-view.js";
 import { sendDraft } from "../model/send-comment.js";
 import { useDocumentSession } from "../model/use-document.js";
 import { ThreadPanel } from "../panel/thread-panel.js";
@@ -102,13 +103,41 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
   }, [decision, props.threadId]);
 
   // View 的「添加评论」是唯一能把选区编码成 DocumentLocation 的地方（§3.1），
-  // 所以要给它一个能真的建 thread 的 host。carry-forward 2：ViewHost 的挂载 effect
-  // 只在挂载时读一次 props.host，这个对象因此必须引用稳定，且只能闭包住 client 与
-  // documentId 这两个不会变质的值——否则通道会永远绑死第一次渲染时的 host。
+  // 所以要给它一个能真的建 thread 的 host——而且这个 host 必须和其它发送路径
+  // 同样安全：失败不丢字、重试复用同一个 idempotencyKey（走 createThreadFromView，
+  // 它把草稿系统包了进去，不再直连 client）。
+  //
+  // carry-forward 2：ViewHost 的挂载 effect 只在挂载时读一次 props.host，这个
+  // 对象因此必须引用稳定。但它要用到的 client/currentVersionIdx/saveDraft/
+  // removeDraft/reload 这些值会随渲染变化——放进 useMemo 依赖会让引用又变得不
+  // 稳定。做法是用一个 ref 装这些易变值，每次渲染都更新它，而 memo 化的 host
+  // 闭包只在被调用的那一刻读 ref.current，从不把它们列进依赖数组。
+  const latest = useRef({
+    client,
+    draftsForAnchor: drafts.draftsForAnchor,
+    saveDraft: drafts.saveDraft,
+    removeDraft: drafts.removeDraft,
+    reload: session.reload,
+  });
+  latest.current = {
+    client,
+    draftsForAnchor: drafts.draftsForAnchor,
+    saveDraft: drafts.saveDraft,
+    removeDraft: drafts.removeDraft,
+    reload: session.reload,
+  };
+
   const viewHost: HostImplementation = useMemo(() => ({
     ...noopHost,
-    createThread: async (request) => client.createThread(props.documentId, globalThis.crypto.randomUUID(), request),
-  }), [client, props.documentId]);
+    createThread: (request) => createThreadFromView({
+      client: latest.current.client,
+      documentId: props.documentId,
+      draftsForAnchor: latest.current.draftsForAnchor,
+      saveDraft: latest.current.saveDraft,
+      removeDraft: latest.current.removeDraft,
+      onSent: latest.current.reload,
+    }, request),
+  }), [props.documentId]);
 
   const send = async (draft: Draft) => {
     try {
@@ -235,7 +264,18 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
         {split && (
           <div className="pane-wrapper pane-base">
             <p className="pane-label">基版 v{baseVersion.versionIdx} · 只读</p>
-            <ViewHost label="评论所基于的版本" version={baseVersion} markers={leftMarkers} className="pane" />
+            <ViewHost
+              // 问题 3：文档切换（同一路由 kind，比如从一篇的「Agent 最新回复」条
+              // 跳到另一篇）不会重新挂载 DocumentPage，ViewHost 内部通道却是挂载时
+              // 建一次就不再变（carry-forward 2）。用带 documentId 的 key 强制在
+              // 文档变化时重建，不然通道会一直绑定在旧文档上。
+              key={`${props.documentId}:base`}
+              label="评论所基于的版本"
+              version={baseVersion}
+              markers={leftMarkers}
+              className="pane"
+              commentable={false}
+            />
           </div>
         )}
 
@@ -245,6 +285,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; pin
             ? <p className="muted">这件作品还在初始化，暂时没有可读的版本。</p>
             : (
               <ViewHost
+                key={`${props.documentId}:current`}
                 label="当前版本"
                 version={session.currentVersion}
                 markers={rightMarkers}

@@ -18,6 +18,8 @@ export function ViewHost(props: {
   version: VersionRecord | null;
   markers: readonly RoledMarker[];
   host?: HostImplementation;
+  /** 没有真实 host 的栏位传 false：不装「添加评论」触发器，装了也必然失败（问题 2）。 */
+  commentable?: boolean;
   className?: string;
   onReady?: (channel: ViewChannel) => void;
 }) {
@@ -29,7 +31,7 @@ export function ViewHost(props: {
     if (container === null) return;
 
     const channel = createLocalChannel({
-      view: createMarkdownView({ container }),
+      view: createMarkdownView({ container, commentable: props.commentable ?? true }),
       host: props.host ?? noopHost,
     });
     channelRef.current = channel;
@@ -40,7 +42,8 @@ export function ViewHost(props: {
       channel.dispose();
       channelRef.current = null;
     };
-    // host 与 onReady 的身份变化不应重建 view；只在挂载时建一次。
+    // host、commentable 与 onReady 的身份变化不应重建 view；只在挂载时建一次
+    // （调用方若需要换 host，要靠换 key 强制重挂载整个 ViewHost，见 document.tsx）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

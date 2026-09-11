@@ -1,5 +1,6 @@
 import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import type { HostImplementation } from "../src/view/channel.js";
+import { describe, expect, it, vi } from "vitest";
 import type { VersionRecord } from "@unidocs/protocol-platform";
 import { ViewHost } from "../src/view/view-host.js";
 import type { ViewChannel } from "../src/view/channel.js";
@@ -72,5 +73,85 @@ describe("ViewHost", () => {
     // 链条里原本要发的 loadSnapshot、setMarkers 必须被 cancelled 挡住，
     // 不能再打到已经 dispose 掉的 channel 上。
     expect(calls).toEqual(["initialize", "dispose"]);
+  });
+
+  // 问题 3 的回归测试：ViewHost 的挂载 effect 依赖数组是 []，通道和 host 只在
+  // 首次挂载时建一次。document.tsx 依赖“文档切换时强制重新挂载”来避免通道永远
+  // 绑在旧文档的 host 上——具体做法是给两个 <ViewHost> 都加上带 documentId 的
+  // key。这里直接在 ViewHost 这一层验证该机制本身：key 不变时重渲染不会重建
+  // 通道（对应过去的 bug——props.host 变了也没用）；key 变了才会重建，拿到一个
+  // 全新的通道，旧的那个被 dispose 掉。
+  //
+  // 这条测不到、也不打算测 document.tsx 里 `key={documentId + label}` 这个具体
+  // 表达式本身——端到端验证那一步需要真的通过选区触发 host.createThread，而
+  // jsdom 的 Selection/Range 支持不完整（见 markdown-view.test.ts 里的说明），
+  // 走不通。这里验证的是 document.tsx 那个修法所依赖的底层机制：key 换了，
+  // ViewHost 就会整个重新挂载，从而拿到一个绑定新 host 的全新通道——这个机制
+  // 本身是可以在 jsdom 下完整观测的，不依赖任何几何/选区 API。
+  it("key 不变时重渲染不会重建通道——这正是问题 3 的成因", async () => {
+    const hostA: HostImplementation = {
+      readBlob: async () => { throw new Error("n/a"); },
+      listThreads: async () => ({ items: [], nextCursor: null }),
+      getThread: async () => { throw new Error("n/a"); },
+      createThread: async () => { throw new Error("host A"); },
+      appendPing: async () => { throw new Error("n/a"); },
+      storeBlob: async () => { throw new Error("n/a"); },
+    };
+    const hostB: HostImplementation = { ...hostA, createThread: async () => { throw new Error("host B"); } };
+
+    const ready = vi.fn();
+    const { rerender } = render(<ViewHost label="当前版本" version={version} markers={[]} host={hostA} onReady={ready} />);
+
+    expect(ready).toHaveBeenCalledTimes(1);
+
+    // 换了 host（模拟 document.tsx 里 viewHost 因为文档变了而重算出一个新对象），
+    // 但没换 key——这正是修复前 app.tsx 不带 key 渲染 DocumentPage 时的处境。
+    // 挂载 effect 依赖数组是 []，不会重新跑，onReady 不应该再被调用。
+    rerender(<ViewHost label="当前版本" version={version} markers={[]} host={hostB} onReady={ready} />);
+    await flushMicrotasks();
+
+    expect(ready).toHaveBeenCalledTimes(1);
+  });
+
+  it("key 随文档变化时会强制重新挂载，拿到绑定新 host 的全新通道，旧通道被 dispose", async () => {
+    const hostA: HostImplementation = {
+      readBlob: async () => { throw new Error("n/a"); },
+      listThreads: async () => ({ items: [], nextCursor: null }),
+      getThread: async () => { throw new Error("n/a"); },
+      createThread: async () => { throw new Error("host A"); },
+      appendPing: async () => { throw new Error("n/a"); },
+      storeBlob: async () => { throw new Error("n/a"); },
+    };
+    const hostB: HostImplementation = { ...hostA, createThread: async () => { throw new Error("host B"); } };
+
+    const channels: ViewChannel[] = [];
+    const disposedCalls: string[] = [];
+    const onReady = (channel: ViewChannel) => {
+      channels.push(channel);
+      const original = channel.callView.bind(channel);
+      channel.callView = ((method, request) => {
+        if (method === "dispose") disposedCalls.push(`channel-${channels.length}`);
+        return original(method as never, request as never);
+      }) as typeof channel.callView;
+    };
+
+    const { rerender } = render(
+      <ViewHost key="doc-A" label="当前版本" version={version} markers={[]} host={hostA} onReady={onReady} />,
+    );
+    await flushMicrotasks();
+    expect(channels).toHaveLength(1);
+
+    // 对应 document.tsx 里 key={`${props.documentId}:current`}：documentId 变了，
+    // key 跟着变——这一步强制 React 把整棵子树当成不同的组件实例，卸载旧的、
+    // 挂载一个全新的。
+    rerender(<ViewHost key="doc-B" label="当前版本" version={version} markers={[]} host={hostB} onReady={onReady} />);
+    await flushMicrotasks();
+
+    // 新建了第二个通道，不是复用第一个——绑定的 host 因此也是全新算出来的那个，
+    // 不会再吃到旧文档的 host。
+    expect(channels).toHaveLength(2);
+    expect(channels[1]).not.toBe(channels[0]);
+    // 旧通道在卸载时被 dispose 掉，不会继续悬挂着绑在旧 host 上。
+    expect(disposedCalls).toEqual(["channel-1"]);
   });
 });

@@ -7,10 +7,10 @@ const content = "# 标题\n\n第一段内容。\n\n第二段内容。\n";
 const host = {} as HostImplementation;
 const context = { contextId: "c1", document: {}, viewVersion: null, viewBundleId: "vb", readOnly: true } as never;
 
-function mounted() {
+function mounted(options: { commentable?: boolean } = {}) {
   const container = document.createElement("div");
   document.body.append(container);
-  return { container, view: createMarkdownView({ container }) };
+  return { container, view: createMarkdownView({ container, ...options }) };
 }
 
 describe("MarkdownView", () => {
@@ -241,4 +241,35 @@ describe("MarkdownView", () => {
     expect(container.textContent).toContain("这是较长的原文片段。");
     expect(container.textContent).toContain("第二段。");
   });
+
+  // 问题 2：没有真实 host 的栏位（比如左栏「评论所基于的版本」那种历史版本对照）
+  // 不该装「添加评论」触发器——装了点了也必然失败，是一条死路。jsdom 的 Range 没
+  // 实现 getBoundingClientRect（见 anchorRect 的防御性 try/catch），选区+mouseup
+  // 端到端走不通，所以这里不去模拟一次真实选区，而是直接断言监听器本身有没有被
+  // 注册——这是 commentable 唯一控制的事，断言它就是断言这条修复本身，不依赖
+  // 走不通的几何 API。
+  it("commentable 为 false 时不注册 mouseup 监听（不装选区触发器）", () => {
+    const { container } = mounted();
+    const addSpy = vi.spyOn(container, "addEventListener");
+
+    createMarkdownView({ container, commentable: false });
+
+    expect(addSpy).not.toHaveBeenCalledWith("mouseup", expect.any(Function));
+  });
+
+  it("commentable 默认为 true 时会注册 mouseup 监听（选区触发器由它驱动）", () => {
+    const { container } = mounted();
+    const addSpy = vi.spyOn(container, "addEventListener");
+
+    createMarkdownView({ container });
+
+    expect(addSpy).toHaveBeenCalledWith("mouseup", expect.any(Function));
+  });
+
+  // 注：原本还想再加一条「commentable: false 时，就算容器上真的发生了 mouseup
+  // 也不渲染触发按钮」的端到端断言，但验证时发现它对实现不敏感——jsdom 里不设置
+  // 真实选区直接 dispatch mouseup，currentSelectionRange() 本来就会返回 null
+  // （既有的「有选区才出触发按钮」判断），所以哪怕故意把 commentable 短路成恒为
+  // true，这条断言照样通过，测不出问题。真正能分辨行为的是上面这两条对
+  // addEventListener 的断言，索性不留这条恒真的。
 });

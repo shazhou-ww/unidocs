@@ -87,8 +87,13 @@ function clearMarkers(container: HTMLElement): void {
   container.normalize();
 }
 
-export function createMarkdownView(options: { container: HTMLElement }): MarkdownViewInstance {
+export function createMarkdownView(
+  options: { container: HTMLElement; commentable?: boolean },
+): MarkdownViewInstance {
   const { container } = options;
+  // 没有真实 host 的栏位（比如左栏「评论所基于的版本」那种历史版本对照）不装
+  // 这个触发器——装了也必然发送失败，是一条死路，不是「支持给旧版本评论」。
+  const commentable = options.commentable ?? true;
   // 浮动按钮/输入框用 absolute 定位，要相对这个容器，不是相对整个页面。
   if (container.style.position === "") container.style.position = "relative";
   let source = "";
@@ -123,7 +128,13 @@ export function createMarkdownView(options: { container: HTMLElement }): Markdow
   function anchorRect(): DOMRect | null {
     const selection = window.getSelection();
     if (selection === null || selection.rangeCount === 0) return null;
-    return selection.getRangeAt(0).getBoundingClientRect();
+    try {
+      // 真实浏览器里这一步不会失败；防御性地包一层是因为测试环境（jsdom）的
+      // Range 实现并不完整，选区几何信息在那里可能直接抛错而不是退化返回 0。
+      return selection.getRangeAt(0).getBoundingClientRect();
+    } catch {
+      return null;
+    }
   }
 
   function positionNear(element: HTMLElement, rect: DOMRect): void {
@@ -217,15 +228,17 @@ export function createMarkdownView(options: { container: HTMLElement }): Markdow
     floatingEl = button;
   }
 
-  container.addEventListener("mouseup", () => {
-    // 浮层自己被点击时也会经过这里；此时选区多半已经空了，交给上面各自的
-    // click handler 处理，这里只负责「有新选区才出触发按钮」。
-    const range = currentSelectionRange();
-    if (range === null) { removeFloating(); return; }
-    const rect = anchorRect();
-    if (rect === null) { removeFloating(); return; }
-    showTrigger(range, rect);
-  });
+  if (commentable) {
+    container.addEventListener("mouseup", () => {
+      // 浮层自己被点击时也会经过这里；此时选区多半已经空了，交给上面各自的
+      // click handler 处理，这里只负责「有新选区才出触发按钮」。
+      const range = currentSelectionRange();
+      if (range === null) { removeFloating(); return; }
+      const rect = anchorRect();
+      if (rect === null) { removeFloating(); return; }
+      showTrigger(range, rect);
+    });
+  }
 
   return {
     async initialize(_request: ViewInitializeRequest, hostImpl: HostImplementation): Promise<ViewInitializeResponse> {
