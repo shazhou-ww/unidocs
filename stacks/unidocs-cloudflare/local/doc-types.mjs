@@ -8,6 +8,7 @@
  */
 
 import { join } from "node:path";
+import { SERVICE_TARGETS } from "./services.mjs";
 
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
@@ -132,6 +133,33 @@ export function parseDocTypes(args) {
     if (!selected.includes(arg)) selected.push(arg);
   }
   return selected;
+}
+
+/**
+ * Split positional arguments into document types and service targets.
+ *
+ * They share one argument position because that is how the command reads —
+ * `pnpm dev portal psd` — but they expand along different paths: a document
+ * type becomes an editor/operator pair behind the gateway, a service target
+ * becomes one or more standalone processes. No arguments still means every
+ * document type and no service, which is the historical behaviour.
+ */
+export function parseTargets(args) {
+  if (args.length === 0) return { docTypes: Object.keys(DOC_TYPES), services: [] };
+  const docTypes = [];
+  const services = [];
+  for (const arg of args) {
+    if (Object.hasOwn(DOC_TYPES, arg)) {
+      if (!docTypes.includes(arg)) docTypes.push(arg);
+    } else if (Object.hasOwn(SERVICE_TARGETS, arg)) {
+      if (!services.includes(arg)) services.push(arg);
+    } else {
+      throw new Error(
+        `Unknown target: ${arg}. Document types: ${Object.keys(DOC_TYPES).join(", ")}. Services: ${Object.keys(SERVICE_TARGETS).join(", ")}`,
+      );
+    }
+  }
+  return { docTypes, services };
 }
 
 /** Ports for the gateway plus the selected doc types; overrides win per key. */

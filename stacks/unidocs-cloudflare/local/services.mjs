@@ -1,0 +1,51 @@
+/**
+ * Registry of locally runnable portal components, plus the pure helpers that
+ * expand a selection into worker and frontend descriptors.
+ *
+ * A *target* is what a user types (`pnpm dev portal`); a *component* is one
+ * process. `portal` is an umbrella: it owns the backend service today, and the
+ * admin and tenant WebUIs join it by adding rows here rather than by growing a
+ * second selector.
+ *
+ * Deliberately dependency-free, for the same reason `doc-types.mjs` is: argv is
+ * validated against this table before anything heavy is imported.
+ */
+
+/** Portal backend; kept clear of the gateway/doc-type band (8787-8790). */
+export const PORTAL_PORT = 8795;
+
+export const SERVICE_TARGETS = {
+  portal: [
+    {
+      name: "portal",
+      target: "portal",
+      entry: "packages/cloudflare-portal/src/worker.ts",
+      worker: "unidocs-portal",
+      outfile: "portal.js",
+      port: PORTAL_PORT,
+      /** Applied by the runtime; Miniflare has no migrations runner of its own. */
+      migrations: "packages/cloudflare-portal/migrations",
+      d1Binding: "DB",
+    },
+    // admin-portal-webui and tenant-portal-webui land here as
+    // { name, target: "portal", web: { dir, port } } once those packages exist.
+  ],
+};
+
+export function expandServiceTarget(name) {
+  const components = SERVICE_TARGETS[name];
+  if (!components) {
+    throw new Error(`Unknown service target: ${name}. Available: ${Object.keys(SERVICE_TARGETS).join(", ")}`);
+  }
+  return components;
+}
+
+/** Components of the selected targets that run as a Miniflare worker. */
+export function serviceWorkers(names) {
+  return names.flatMap(expandServiceTarget).filter(component => component.entry);
+}
+
+/** Components of the selected targets that run as a Vite dev server. */
+export function serviceFrontends(names) {
+  return names.flatMap(expandServiceTarget).filter(component => component.web);
+}
