@@ -4,3 +4,15 @@ export type { PlatformRequest, PlatformResponse, PlatformTransport, QueryValue }
 export { createTenantPortalClient } from "./client.js";
 export type { TenantPortalClient } from "./client.js";
 export { createHttpTransport } from "./http-transport.js";
+export {
+  createMarkdownTextRange,
+  MarkdownDocumentType,
+  MarkdownTextRangeLocationType,
+  readMarkdownTextRange,
+  resolveMarkdownTextRange,
+} from "./doctypes/markdown.js";
+export type {
+  MarkdownRangeResolution,
+  MarkdownSnapshot,
+  MarkdownTextRangePayload,
+} from "./doctypes/markdown.js";
