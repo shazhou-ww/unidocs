@@ -127,16 +127,6 @@ nav {
   font-weight: 650;
 }
 
-.nav-item span {
-  margin-left: auto;
-  min-width: 22px;
-  padding: 1px 6px;
-  border: 1px solid #cfd4cd;
-  border-radius: 9px;
-  text-align: center;
-  font-size: 10px;
-}
-
 .account {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 30px;

@@ -53,3 +53,15 @@ test("removes an administrator with CSRF, idempotency, and If-Match", async () =
   expect(headers.get("idempotency-key")).toBe("remove-key");
   expect(headers.get("if-match")).toBe('"sha256-member"');
 });
+
+test("notifies the application before surfacing any unauthorized response", async () => {
+  const onUnauthorized = vi.fn();
+  const client = createAdminPortalClient({
+    fetcher: async () => Response.json({ error: { code: "unauthorized", message: "Session expired", requestId: "request-401" } }, { status: 401 }),
+    onUnauthorized,
+  });
+  const error = await client.listDocumentTypes().catch(value => value);
+  expect(onUnauthorized).toHaveBeenCalledOnce();
+  expect(onUnauthorized).toHaveBeenCalledWith(error);
+  expect(error).toMatchObject({ status: 401, code: "unauthorized", requestId: "request-401" });
+});

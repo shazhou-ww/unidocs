@@ -15,6 +15,7 @@
 - 当前成员不能移除自身；移除已绑定成员必须保证事务提交后仍有至少一位 active、已绑定管理员。真实 D1 并发互删测试证明两个管理员同时移除对方时只允许一个成功，最终保留一位已绑定管理员和一个 live session。
 - 错误保持稳定：缺 `If-Match` 为 428，旧 ETag 为 412，自删和最后管理员保护为 409，目标不存在为 404。WebUI 对这些冲突显示可操作中文信息，失败后关闭确认框并要求刷新或调整操作。
 - 验证：portal-service 159 个测试、Admin client 5 个 transport tests、WebUI 7 个组件测试、Cloudflare Portal 112 个测试、真实 D1/BFF 24 个集成测试、全仓 typecheck、production dry-run 与 `git diff --check` 通过。生产部署后未执行真实 DELETE；共享浏览器 session 在视觉检查前已过期，等待用户重新登录试用验收。
+- 后续 UX 修复已部署为 `770cdb99-a3bf-4427-9b2e-a64a580b2556`：侧栏不再显示依赖按需加载数据的数量徽标，避免管理员 tab 首次打开前错误显示 0；Admin client 对任意受保护请求的 401 统一导航到 `code=session_invalid` 的拒绝页，不再只显示页面内 banner。该页面明确 session 或成员资格已失效，展示 request ID，并提供“退出并返回登录”。当前验证数字为 Admin client 6 个 tests、WebUI 9 个 tests，Cloudflare Portal 112 个 tests 及全仓 typecheck/dry-run 通过。
 
 ### 登录、授权与退出四态闭环（2026-09-11）
 

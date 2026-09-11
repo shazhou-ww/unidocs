@@ -46,6 +46,7 @@ export interface AdminPortalClientConfig {
   readonly fetcher?: typeof fetch;
   readonly getCsrfToken?: () => string | null;
   readonly createIdempotencyKey?: () => string;
+  readonly onUnauthorized?: (error: AdminPortalClientError) => void;
 }
 
 function browserCsrfToken(): string | null {
@@ -68,8 +69,10 @@ export function createAdminPortalClient(config: AdminPortalClientConfig = {}): A
     if (!response.ok) {
       const payload = await response.json().catch(() => null) as { error?: { code?: unknown; message?: unknown; requestId?: unknown } } | null;
       const error = payload?.error;
-      throw new AdminPortalClientError(response.status, typeof error?.code === "string" ? error.code : `http_${response.status}`,
+      const clientError = new AdminPortalClientError(response.status, typeof error?.code === "string" ? error.code : `http_${response.status}`,
         typeof error?.message === "string" ? error.message : "Administrator request failed", typeof error?.requestId === "string" ? error.requestId : response.headers.get("x-request-id"));
+      if (response.status === 401) config.onUnauthorized?.(clientError);
+      throw clientError;
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;

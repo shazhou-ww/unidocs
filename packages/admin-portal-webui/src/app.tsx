@@ -20,6 +20,12 @@ function shortEtag(etag: string): string {
   return etag.length > 24 ? `${etag.slice(0, 18)}...${etag.slice(-5)}` : etag;
 }
 
+export function sessionInvalidPath(error: AdminPortalClientError): string {
+  const params = new URLSearchParams({ code: "session_invalid" });
+  if (error.requestId) params.set("requestId", error.requestId);
+  return `/admin/access-denied?${params}`;
+}
+
 export async function logoutToLogin(logout: () => Promise<void>, navigate: (path: string) => void = path => window.location.assign(path)) {
   try {
     await logout();
@@ -84,6 +90,7 @@ function AccessDenied() {
   const code = params.get("code");
   const requestId = params.get("requestId");
   const forbidden = code === "forbidden";
+  const sessionInvalid = code === "session_invalid";
   const [client] = useState(() => createAdminPortalClient());
   const [session] = useState(() => () => client.session());
   const ready = usePublicPageReady(session);
@@ -93,8 +100,8 @@ function AccessDenied() {
       <div className="brand access-brand"><span className="brand-mark">U</span><span><strong>UniDocs</strong><small>管理控制台</small></span></div>
       <span className="access-icon" aria-hidden="true"><ShieldAlert size={24} /></span>
       <p className="eyebrow">ACCESS NOT GRANTED</p>
-      <h1>{forbidden ? "没有管理员权限" : "登录未完成"}</h1>
-      <p>{forbidden ? "当前 Google 账户尚未加入管理员列表，或成员资格已失效。" : "登录请求已过期或未能通过验证，请重新开始。"}</p>
+      <h1>{sessionInvalid ? "管理员权限已失效" : forbidden ? "没有管理员权限" : "登录未完成"}</h1>
+      <p>{sessionInvalid ? "当前 session 已失效，管理员成员可能已被移除。请退出后重新登录。" : forbidden ? "当前 Google 账户尚未加入管理员列表，或成员资格已失效。" : "登录请求已过期或未能通过验证，请重新开始。"}</p>
       {requestId && <div className="request-reference"><span>请求 ID</span><code>{requestId}</code></div>}
       <button className="primary-button access-action" type="button" onClick={() => void logoutToLogin(() => client.logout())}><LogOut size={17} />退出并返回登录</button>
       <small>需要由现有管理员先将 Google 账户邮箱加入 allowlist。</small>
@@ -103,7 +110,7 @@ function AccessDenied() {
 }
 
 function AdminApp() {
-  const [client] = useState(() => createAdminPortalClient());
+  const [client] = useState(() => createAdminPortalClient({ onUnauthorized: error => window.location.replace(sessionInvalidPath(error)) }));
   const [view, setView] = useState<"documentTypes" | "administrators">("documentTypes");
   const [session, setSession] = useState<AdminPortalSession | null>(null);
   const [items, setItems] = useState<readonly DocumentTypeListItem[]>([]);
@@ -234,8 +241,8 @@ function AdminApp() {
   const navigation = <>
     <div className="brand"><span className="brand-mark">U</span><span><strong>UniDocs</strong><small>管理控制台</small></span></div>
     <nav aria-label="管理导航">
-      <button className={`nav-item ${view === "documentTypes" ? "active" : ""}`} type="button" onClick={() => showView("documentTypes")}><BookOpenText size={17} />文档类型<span>{items.length}</span></button>
-      <button className={`nav-item ${view === "administrators" ? "active" : ""}`} type="button" onClick={() => showView("administrators")}><Users size={17} />管理员<span>{members.length}</span></button>
+      <button className={`nav-item ${view === "documentTypes" ? "active" : ""}`} type="button" onClick={() => showView("documentTypes")}><BookOpenText size={17} />文档类型</button>
+      <button className={`nav-item ${view === "administrators" ? "active" : ""}`} type="button" onClick={() => showView("administrators")}><Users size={17} />管理员</button>
     </nav>
     <div className="account">
       <div className="avatar" aria-hidden="true">{session?.email.slice(0, 1).toUpperCase() || "U"}</div>

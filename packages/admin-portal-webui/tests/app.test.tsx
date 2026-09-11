@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
-import { App, logoutToLogin, returnToAppWhenAuthenticated } from "../src/app.js";
+import { AdminPortalClientError } from "@unidocs/admin-portal-client";
+import { App, logoutToLogin, returnToAppWhenAuthenticated, sessionInvalidPath } from "../src/app.js";
 
 test("loads the signed-in administrator and real empty document type state", async () => {
   const fetchMock = vi.fn<typeof fetch>(async input => {
@@ -14,6 +15,8 @@ test("loads the signed-in administrator and real empty document type state", asy
   expect(await screen.findByText("admin@example.com")).toBeInTheDocument();
   expect(await screen.findByText("没有匹配的文档类型")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "搜索" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "文档类型" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "管理员" })).toBeInTheDocument();
 
   const searchInput = screen.getByRole("textbox", { name: "搜索文档类型" });
   fireEvent.change(searchInput, { target: { value: "markdown" } });
@@ -113,4 +116,22 @@ test("leaves stale denial and login pages when another callback already created 
   expect(destinations).toEqual(["/admin/"]);
   expect(await returnToAppWhenAuthenticated(async () => { throw new Error("not signed in"); }, path => destinations.push(path))).toBe(false);
   expect(destinations).toEqual(["/admin/"]);
+});
+
+test("builds a session-invalid route for protected API authorization loss", () => {
+  expect(sessionInvalidPath(new AdminPortalClientError(401, "unauthorized", "expired", "request-401")))
+    .toBe("/admin/access-denied?code=session_invalid&requestId=request-401");
+  expect(sessionInvalidPath(new AdminPortalClientError(401, "unauthorized", "expired")))
+    .toBe("/admin/access-denied?code=session_invalid");
+});
+
+test("shows an authorization-loss page after its session probe confirms 401", async () => {
+  window.history.replaceState({}, "", "/admin/access-denied?code=session_invalid&requestId=request-removed");
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => Response.json({ error: { code: "unauthorized", message: "Authentication required", requestId: "probe" } }, { status: 401 })));
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "管理员权限已失效" })).toBeInTheDocument();
+  expect(screen.getByText(/成员可能已被移除/)).toBeInTheDocument();
+  expect(screen.getByText("request-removed")).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
+  vi.unstubAllGlobals();
 });
