@@ -23,6 +23,7 @@ export function parseRoute(hash: string): Route {
   const threadId = parts[2];
   if (parts[3] === undefined) return { kind: "document", documentId, threadId };
 
+  if (!/^\d+$/.test(parts[3])) return { kind: "document", documentId, threadId };
   const pingIdx = Number(parts[3]);
   if (!Number.isInteger(pingIdx) || pingIdx < 0) return { kind: "document", documentId, threadId };
   return { kind: "document", documentId, threadId, pingIdx };

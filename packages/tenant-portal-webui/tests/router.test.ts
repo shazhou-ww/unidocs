@@ -28,6 +28,15 @@ describe("parseRoute", () => {
     expect(parseRoute("#/nonsense/x")).toEqual({ kind: "workbench" });
   });
 
+  it("畸形的 pingIdx 片段退化为只带 threadId,不被 Number() 强制转成合法整数", () => {
+    const withoutPingIdx = { kind: "document", documentId: "doc-sample", threadId: "th-open" };
+    expect(parseRoute("#/d/doc-sample/th-open/")).toEqual(withoutPingIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/%20")).toEqual(withoutPingIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/0x2")).toEqual(withoutPingIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/+2")).toEqual(withoutPingIdx);
+    expect(parseRoute("#/d/doc-sample/th-open/1e1")).toEqual(withoutPingIdx);
+  });
+
   it("routeToHash 与 parseRoute 互为逆运算", () => {
     const route = { kind: "document", documentId: "doc one", threadId: "th/1", pingIdx: 0 } as const;
     expect(parseRoute(routeToHash(route))).toEqual(route);
