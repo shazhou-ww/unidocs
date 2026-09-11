@@ -17,6 +17,7 @@
 - Local dev secrets never enter the repository. `.dev.vars` is gitignored; the runtime passes the mock OIDC client id and secret as bindings instead.
 - The existing local mock OIDC provider (`stacks/unicas/local/mock-oidc-worker.mjs`, port `MOCK_OIDC_PORT` 8793) serves discovery and JWKS for its own origin and accepts any `client_id` — it does not validate the secret. Reuse it; do not write a second one.
 - Occupied ports fail fast, matching the existing `assertPortFree` behaviour.
+- `CLAUDE.md` is local-only: it is in `.git/info/exclude` and has never been tracked. Never edit it, never `git add` it, and never `git add -A` from a directory that would sweep it in.
 - Commit messages are English, imperative, and explain the reasoning; do not push or open a PR.
 
 ---
@@ -669,7 +670,7 @@ nothing."
 
 **Files:**
 - Modify: `stacks/unidocs-cloudflare/local/README.md` if one exists, otherwise `stacks/README.md`
-- Modify: `CLAUDE.md` (the `pnpm dev` section is stale — it documents `pnpm dev docx`, which still works, but says nothing about stacks or services)
+- Do **not** touch `CLAUDE.md`. It is listed in `.git/info/exclude` and has never been tracked — it is a local-only file, so editing it here would either be lost or, if force-added, push a private file to the remote. Its `pnpm dev docx` examples are stale, but correcting them is the repository owner's local edit to make.
 
 - [ ] **Step 1: Start it and prove the login path works end to end**
 
@@ -699,7 +700,7 @@ Confirm the printed URL list contains both the portal and the psd worker, and th
 
 Add a short section covering: `pnpm dev portal` and `pnpm dev portal psd`; that `portal` is an umbrella whose WebUI components land later; that the local runtime supplies its own compatibility date, so running `wrangler dev` directly inside `packages/cloudflare-portal` fails against the pinned workerd; and that local login uses the mock OIDC provider, so no Google credentials are needed.
 
-Correct the stale `pnpm dev docx` examples in `CLAUDE.md` to the current stack-aware form while you are there.
+Do not edit `CLAUDE.md` (see the Files list above). If you notice its `pnpm dev` examples are stale, say so in your report instead.
 
 - [ ] **Step 4: Full verification**
 
@@ -713,7 +714,7 @@ git diff --check
 - [ ] **Step 5: Commit**
 
 ```bash
-git add -A stacks docs CLAUDE.md
+git add -A stacks docs
 git commit -m "docs(dev): document the portal dev target
 
 Records the two things a reader cannot derive from the code: that running
