@@ -1,17 +1,17 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "unicas-docs",
+  "name": "shazhou-docs",
   "compatibility_date": "2026-09-11",
   "workers_dev": false,
   "preview_urls": false,
   "routes": [
     {
-      "pattern": "unicas-docs.shazhou.work",
+      "pattern": "docs.shazhou.work",
       "custom_domain": true
     }
   ],
   "assets": {
-    "directory": "../../unicas-packages/docs-webui/dist",
+    "directory": "../../packages/docs-webui/dist",
     "html_handling": "drop-trailing-slash",
     "not_found_handling": "single-page-application"
   }

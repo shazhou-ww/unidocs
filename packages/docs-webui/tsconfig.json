@@ -20,10 +20,10 @@
   ],
   "references": [
     {
-      "path": "../admin-protocol"
+      "path": "../../unicas-packages/admin-protocol"
     },
     {
-      "path": "../tenant-protocol"
+      "path": "../../unicas-packages/tenant-protocol"
     }
   ]
 }

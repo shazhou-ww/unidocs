@@ -10,7 +10,7 @@ describe("UniCAS documentation site", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
-    window.history.replaceState(null, "", "/getting-started");
+    window.history.replaceState(null, "", "/unicas/getting-started");
     window.scrollTo = vi.fn();
   });
 
@@ -28,7 +28,7 @@ describe("UniCAS documentation site", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("link", { name: /Leases and Root Refs/ }));
 
-    expect(window.location.pathname).toBe("/concepts/leases-and-root-refs");
+    expect(window.location.pathname).toBe("/unicas/concepts/leases-and-root-refs");
     expect(screen.getByRole("heading", { name: "Leases and Root Refs" })).toBeInTheDocument();
   });
 });

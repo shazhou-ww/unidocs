@@ -17,7 +17,13 @@ function run(command) {
 run(["pnpm", "--filter", "@unicas/admin-protocol", "docs:generate"]);
 run(["pnpm", "--filter", "@unicas/tenant-protocol", "docs:generate"]);
 
-const child = spawn("pnpm", ["--filter", "@unicas/docs-webui", "dev", "--", ...process.argv.slice(2)], {
+const forwardedArgs = process.argv.slice(2);
+const child = spawn("pnpm", [
+  "--filter",
+  "@unidocs/docs-webui",
+  "dev",
+  ...(forwardedArgs.length > 0 ? ["--", ...forwardedArgs] : []),
+], {
   cwd: ROOT,
   env: process.env,
   stdio: "inherit",
@@ -27,7 +33,7 @@ const child = spawn("pnpm", ["--filter", "@unicas/docs-webui", "dev", "--", ...p
 process.once("SIGINT", () => child.kill("SIGINT"));
 process.once("SIGTERM", () => child.kill("SIGTERM"));
 child.once("error", (error) => {
-  console.error(`Failed to start UniCAS docs: ${error.message}`);
+  console.error(`Failed to start the documentation portal: ${error.message}`);
   process.exitCode = 1;
 });
 child.once("exit", (code, signal) => {

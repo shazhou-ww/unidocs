@@ -1,6 +1,6 @@
-# @unicas/docs-webui
+# @unidocs/docs-webui
 
-Public UniCAS documentation site containing Markdown guides and the Admin and Tenant API references.
+Shared public product documentation portal. UniCAS guides and Admin/Tenant API references are currently published under `/unicas`; UniDocs can be added as a sibling `/unidocs` section.
 
 The package owns presentation only:
 
@@ -14,7 +14,7 @@ The protocol packages remain the source of truth for routes, schemas, field desc
 ## Develop
 
 ```text
-pnpm dev unicas-docs
+pnpm dev docs
 ```
 
 The default local URL is `http://127.0.0.1:4071`.
@@ -22,21 +22,21 @@ The default local URL is `http://127.0.0.1:4071`.
 ## Validate
 
 ```text
-pnpm --filter @unicas/docs-webui typecheck
-pnpm --filter @unicas/docs-webui test
-pnpm --filter @unicas/docs-webui build
+pnpm --filter @unidocs/docs-webui typecheck
+pnpm --filter @unidocs/docs-webui test
+pnpm --filter @unidocs/docs-webui build
 ```
 
 The build refreshes both protocol OpenAPI files before emitting `dist/`.
 
 ## Deploy
 
-Deployment configuration belongs to `stacks/unicas-docs`:
+Deployment configuration belongs to `stacks/docs`:
 
 ```text
-pnpm stack:deploy unicas-docs --dry-run
-pnpm stack:deploy unicas-docs
-pnpm smoke unicas-docs
+pnpm stack:deploy docs --dry-run
+pnpm stack:deploy docs
+pnpm smoke docs
 ```
 
-Production is published independently at `https://unicas-docs.shazhou.work`.
+Production is published independently at `https://docs.shazhou.work`; the UniCAS section begins at `/unicas`.

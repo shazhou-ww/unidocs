@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const DOCS_PACKAGE = "@unicas/docs-webui";
-const CONFIG = "../../stacks/unicas-docs/wrangler.jsonc";
+const DOCS_PACKAGE = "@unidocs/docs-webui";
+const CONFIG = "../../stacks/docs/wrangler.jsonc";
 
 export function parseArgs(argv) {
   const options = { dryRun: false, skipSmoke: false };
@@ -20,7 +20,7 @@ export function deploymentPlan({ skipSmoke = false } = {}) {
     ["pnpm", "--filter", DOCS_PACKAGE, "build"],
     ["pnpm", "--filter", DOCS_PACKAGE, "exec", "wrangler", "deploy", "--config", CONFIG],
   ];
-  if (!skipSmoke) commands.push(["node", "stacks/unicas-docs/deploy/smoke.mjs"]);
+  if (!skipSmoke) commands.push(["node", "stacks/docs/deploy/smoke.mjs"]);
   return commands;
 }
 

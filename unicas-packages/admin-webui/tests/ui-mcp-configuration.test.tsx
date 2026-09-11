@@ -30,7 +30,7 @@ describe("AI tool connection", () => {
     render(<App />);
 
     const docsLink = await screen.findByRole("link", { name: "Open UniCAS documentation" });
-    expect(docsLink).toHaveAttribute("href", "https://unicas-docs.shazhou.work/");
+    expect(docsLink).toHaveAttribute("href", "https://docs.shazhou.work/unicas");
     expect(docsLink).toHaveAttribute("target", "_blank");
     expect(docsLink).toHaveAttribute("rel", "noreferrer");
 

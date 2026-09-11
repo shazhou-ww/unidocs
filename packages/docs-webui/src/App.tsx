@@ -34,7 +34,8 @@ function SiteLink({ path, active, children, onNavigate }: {
 export function App() {
   const path = usePath();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const guide = guides.find((item) => item.path === path) ?? (path === "/" ? guides[0] : undefined);
+  const guide = guides.find((item) => item.path === path)
+    ?? (path === "/" || path === "/unicas" ? guides[0] : undefined);
   const reference = references.find((item) => item.path === path);
 
   useEffect(() => {
@@ -44,7 +45,7 @@ export function App() {
   return (
     <div className={`docs-app${reference ? " reference-route" : ""}`}>
       <header className="site-header">
-        <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigate("/"); }}>
+        <a className="brand" href="/unicas" onClick={(event) => { event.preventDefault(); navigate("/unicas"); }}>
           <span className="brand-mark">U</span>
           <span>UniCAS</span>
           <span className="brand-section">Documentation</span>
@@ -96,7 +97,7 @@ export function App() {
           <div className="not-found">
             <span>404</span>
             <h1>Page not found</h1>
-            <button type="button" onClick={() => navigate("/")}>Return to documentation</button>
+            <button type="button" onClick={() => navigate("/unicas")}>Return to documentation</button>
           </div>
         ) : null}
       </main>

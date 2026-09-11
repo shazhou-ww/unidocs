@@ -13,7 +13,7 @@ export interface ReferenceDefinition {
 
 export const references: readonly ReferenceDefinition[] = [
   {
-    path: "/reference/admin",
+    path: "/unicas/reference/admin",
     title: "Admin API",
     loadDocument: async () => (await import("@unicas/admin-protocol/openapi.json")).default as Record<string, unknown>,
     tagGroups: [
@@ -37,7 +37,7 @@ export const references: readonly ReferenceDefinition[] = [
     ],
   },
   {
-    path: "/reference/tenant",
+    path: "/unicas/reference/tenant",
     title: "Tenant API",
     loadDocument: async () => (await import("@unicas/tenant-protocol/openapi.json")).default as Record<string, unknown>,
     tagGroups: [

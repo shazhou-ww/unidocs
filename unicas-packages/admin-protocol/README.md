@@ -23,7 +23,7 @@ pnpm --filter @unicas/admin-protocol docs:generate
 ```
 
 The generated file is `openapi/admin-v1.openapi.json`. Presentation, guides,
-navigation grouping, and Scalar rendering are owned by `@unicas/docs-webui`,
+navigation grouping, and Scalar rendering are owned by `@unidocs/docs-webui`,
 which consumes the package's `./openapi.json` export.
 
 Validate with:

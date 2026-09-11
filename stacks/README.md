@@ -7,7 +7,7 @@ not the first classification level.
 ```text
 stacks/
   unicas/
-  unicas-docs/
+  docs/
   unidocs-cloudflare/
   unidocs-azure/
 ```
@@ -64,7 +64,7 @@ needs a registered stack credential.
 contains orchestration, deployment assets, environment projection, and local
 composition. Dependencies point from `stacks/` to packages, never the reverse.
 
-See [UniCAS](unicas/README.md), [UniCAS documentation](unicas-docs/README.md),
+See [UniCAS](unicas/README.md), [Shared documentation](docs/README.md),
 [Azure UniDocs](unidocs-azure/README.md), and
 [Cloudflare UniDocs](unidocs-cloudflare/deploy/README.md). Deployment identity,
 runtime secrets, and local variables are documented in
