@@ -3,8 +3,14 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { D1PortalAuthRepository } from "../../../packages/cloudflare-portal/src/auth-repository.ts";
 import { D1DocumentTypeRepository } from "../../../packages/cloudflare-portal/src/document-types-repository.ts";
+import { D1AdministratorRepository } from "../../../packages/cloudflare-portal/src/administrators-repository.ts";
 import { createDocumentTypesHttp } from "../../../packages/cloudflare-portal/src/document-types-http.ts";
-import { createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
+import { createAdministratorsHttp } from "../../../packages/cloudflare-portal/src/administrators-http.ts";
+import { D1AuditEventRepository } from "../../../packages/cloudflare-portal/src/audit-events-repository.ts";
+import { createAuditEventsHttp } from "../../../packages/cloudflare-portal/src/audit-events-http.ts";
+import { D1DocumentContractRepository } from "../../../packages/cloudflare-portal/src/document-contracts-repository.ts";
+import { createDocumentContractsHttp } from "../../../packages/cloudflare-portal/src/document-contracts-http.ts";
+import { createAdministratorService, createAuditEventService, createDocumentContractService, createDocumentTypeService } from "../../../packages/portal-service/src/index.ts";
 import { googleIdentityFromConfirmedLogin } from "../../../packages/portal-service/src/index.ts";
 import { createPortalBff } from "../../../packages/cloudflare-portal/src/bff.ts";
 import { portalGoogleConfigFromGateway } from "../../../packages/cloudflare-portal/src/google-config.ts";
@@ -18,10 +24,12 @@ let repository;
 const now = 1_800_000_000;
 const identity = { issuer: "https://accounts.google.com", subject: "first", email: "first@example.com", authenticatedAt: now };
 beforeEach(async () => {
-  miniflare = new Miniflare(convertV4MiniflareOptions({ workers: [{
-    name: "portal-auth-repository", modules: true, script: "export default { fetch() { return new Response('test'); } };",
-    compatibilityDate: "2026-08-18", d1Databases: { DB: `portal-auth-${crypto.randomUUID()}` },
-  }] }));
+  miniflare = new Miniflare(convertV4MiniflareOptions({
+    workers: [{
+      name: "portal-auth-repository", modules: true, script: "export default { fetch() { return new Response('test'); } };",
+      compatibilityDate: "2026-08-18", d1Databases: { DB: `portal-auth-${crypto.randomUUID()}` },
+    }]
+  }));
   database = await miniflare.getD1Database("DB", "portal-auth-repository");
   const migration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0001_admin_auth.sql", import.meta.url), "utf8");
   await database.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
@@ -39,11 +47,206 @@ test("auth migration initializes independent tables with foreign keys and expiry
 async function documentTypes() {
   const migration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0002_document_types.sql", import.meta.url), "utf8");
   await database.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
+  const contractsMigration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0003_document_contracts.sql", import.meta.url), "utf8");
+  await database.batch(contractsMigration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
   const issued = await repository.completeLogin(identity, identity.email, "bootstrap");
   const context = { memberId: issued.memberId, identity, transport: "session", sessionHash: issued.session.sessionHash };
   const types = new D1DocumentTypeRepository(database, () => now);
   return { context, issued, types, service: createDocumentTypeService(types) };
 }
+
+async function documentContracts() {
+  const setup = await documentTypes();
+  const contracts = new D1DocumentContractRepository(database, () => now);
+  return { ...setup, contracts, contractService: createDocumentContractService(contracts, { now: () => new Date(now * 1000) }) };
+}
+
+async function administrators() {
+  const setup = await documentTypes();
+  const members = new D1AdministratorRepository(database, () => now);
+  return { ...setup, members, memberService: createAdministratorService(members, { now: () => new Date(now * 1000) }) };
+}
+
+test("administrator HTTP endpoints add, replay, read and list an unbound member", async () => {
+  const { issued, members } = await administrators();
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createAdministratorsHttp(members) });
+  const base = "https://portal.test/admin/api/v1/administrators";
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  const headers = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "content-type": "application/json", "idempotency-key": "add-member" };
+  expect((await handle(new Request(base))).status).toBe(401);
+  expect((await handle(new Request(base, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: '{"email":"member@example.com"}' }))).status).toBe(403);
+  const add = () => handle(new Request(base, { method: "POST", headers, body: '{"email":"Member@Example.com"}' }));
+  const added = await add();
+  expect(added.status).toBe(201);
+  const value = await added.json();
+  expect(value).toMatchObject({ adminId: expect.any(String), etag: expect.stringMatching(/^"sha256-/) });
+  expect(await (await add()).json()).toEqual(value);
+  const keyConflict = await handle(new Request(base, { method: "POST", headers, body: '{"email":"other@example.com"}' }));
+  expect(keyConflict.status).toBe(409);
+  expect(await keyConflict.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
+  const duplicate = await handle(new Request(base, { method: "POST", headers: { ...headers, "idempotency-key": "duplicate-email" }, body: '{"email":"member@example.com"}' }));
+  expect(duplicate.status).toBe(409);
+  expect(await duplicate.json()).toMatchObject({ error: { code: "administrator_exists" } });
+  const detail = await handle(new Request(`${base}/${value.adminId}`, { headers: { cookie } }));
+  expect(detail.status).toBe(200);
+  expect(await detail.json()).toMatchObject({ adminId: value.adminId, email: "member@example.com", bound: false, addedBy: expect.any(String), etag: value.etag });
+  const list = await handle(new Request(`${base}?limit=10`, { headers: { cookie } }));
+  expect(list.status).toBe(200);
+  expect(await list.json()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ adminId: value.adminId, email: "member@example.com", bound: false, isSelf: false })]), nextCursor: null });
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators WHERE email = 'member@example.com'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.added'").first("count")).toBe(1);
+});
+
+test("concurrent administrator retries create one member, receipt and audit", async () => {
+  const { context, memberService } = await administrators();
+  const results = await Promise.all(Array.from({ length: 4 }, () => memberService.add(context, { email: "parallel@example.com" }, "parallel-add", "request")));
+  expect(results.every(result => result.adminId === results[0].adminId)).toBe(true);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators WHERE email = 'parallel@example.com'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'addAdministratorMember'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.added'").first("count")).toBe(1);
+}, 30_000);
+
+test("administrator DELETE enforces ETag and self protection, revokes target sessions, and replays", async () => {
+  const { context, issued, members, memberService } = await administrators();
+  const added = await memberService.add(context, { email: "second@example.com" }, "add-second", "add-second");
+  const secondIdentity = googleIdentityFromConfirmedLogin({ iss: identity.issuer, sub: "second", email: "second@example.com", email_verified: true }, now);
+  const secondIssued = await repository.completeLogin(secondIdentity, null, "bind-second");
+  const target = await memberService.get(context, added.adminId);
+  const self = await memberService.get(context, context.memberId);
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createAdministratorsHttp(members) });
+  const base = "https://portal.test/admin/api/v1/administrators";
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  const headers = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "idempotency-key": "remove-second", "if-match": target.etag };
+  const headersWithoutPrecondition = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "idempotency-key": "missing-precondition" };
+  expect((await handle(new Request(`${base}/${target.adminId}`, { method: "DELETE", headers: headersWithoutPrecondition }))).status).toBe(428);
+  const stale = await handle(new Request(`${base}/${target.adminId}`, { method: "DELETE", headers: { ...headers, "idempotency-key": "stale-remove", "if-match": '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"' } }));
+  expect(stale.status).toBe(412);
+  expect(await stale.json()).toMatchObject({ error: { code: "precondition_failed" } });
+  const selfRemoval = await handle(new Request(`${base}/${self.adminId}`, { method: "DELETE", headers: { ...headers, "idempotency-key": "self-remove", "if-match": self.etag } }));
+  expect(selfRemoval.status).toBe(409);
+  expect(await selfRemoval.json()).toMatchObject({ error: { code: "cannot_remove_self" } });
+  const remove = () => handle(new Request(`${base}/${target.adminId}`, { method: "DELETE", headers }));
+  expect((await remove()).status).toBe(204);
+  expect((await remove()).status).toBe(204);
+  expect((await handle(new Request(`${base}/${target.adminId}`, { headers: { cookie } }))).status).toBe(404);
+  expect(await repository.findSession(secondIssued.session.sessionHash)).toBeNull();
+  expect(await database.prepare("SELECT active FROM portal_administrators WHERE member_id = ?").bind(target.adminId).first("active")).toBe(0);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'removeAdministratorMember'").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.removed'").first("count")).toBe(1);
+}, 30_000);
+
+test("concurrent mutual administrator removal leaves one bound administrator and one live session", async () => {
+  const { context: firstContext, members, memberService } = await administrators();
+  const added = await memberService.add(firstContext, { email: "second@example.com" }, "add-mutual", "add-mutual");
+  const secondIdentity = googleIdentityFromConfirmedLogin({ iss: identity.issuer, sub: "second", email: "second@example.com", email_verified: true }, now);
+  const secondIssued = await repository.completeLogin(secondIdentity, null, "bind-mutual");
+  const secondContext = { memberId: secondIssued.memberId, identity: secondIdentity, transport: "session", sessionHash: secondIssued.session.sessionHash };
+  const secondRecord = await memberService.get(firstContext, added.adminId);
+  const firstRecord = await memberService.get(secondContext, firstContext.memberId);
+  const secondService = createAdministratorService(members, { now: () => new Date(now * 1000) });
+  const results = await Promise.allSettled([
+    memberService.remove(firstContext, secondRecord.adminId, "remove-second-mutual", secondRecord.etag, "remove-second-mutual"),
+    secondService.remove(secondContext, firstRecord.adminId, "remove-first-mutual", firstRecord.etag, "remove-first-mutual"),
+  ]);
+  expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators WHERE active = 1 AND subject IS NOT NULL").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_sessions").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.removed'").first("count")).toBe(1);
+}, 30_000);
+
+test("audit events filter and paginate same-second rows without gaps or cursor reuse", async () => {
+  const { context, issued, memberService } = await administrators();
+  await memberService.add(context, { email: "audit-one@example.com" }, "audit-one", "request-one");
+  await memberService.add(context, { email: "audit-two@example.com" }, "audit-two", "request-two");
+  await memberService.add(context, { email: "audit-three@example.com" }, "audit-three", "request-three");
+  const audits = new D1AuditEventRepository(database, () => now);
+  const service = createAuditEventService(audits);
+  const query = { action: "administrator.added", resourceType: "administrator", limit: 2 };
+  const first = await service.list(context, query);
+  expect(first.items).toHaveLength(2);
+  expect(first.nextCursor).toEqual(expect.any(String));
+  const second = await service.list(context, { ...query, cursor: first.nextCursor });
+  expect(second.items).toHaveLength(1);
+  expect(second.nextCursor).toBeNull();
+  expect(new Set([...first.items, ...second.items].map(event => event.auditEventId))).toHaveLength(3);
+  expect([...first.items, ...second.items].map(event => event.requestId).sort()).toEqual(["request-one", "request-three", "request-two"]);
+  await expect(service.list(context, { ...query, actorId: "different", cursor: first.nextCursor })).rejects.toMatchObject({ code: "invalid_request" });
+  const boundary = new Date(now * 1000).toISOString();
+  expect((await service.list(context, { action: "administrator.added", occurredTo: boundary })).items).toEqual([]);
+  expect((await service.list(context, { action: "administrator.added", occurredFrom: boundary })).items).toHaveLength(3);
+
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createAuditEventsHttp(audits) });
+  const base = "https://portal.test/admin/api/v1/audit-events";
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  expect((await handle(new Request(base))).status).toBe(401);
+  const response = await handle(new Request(`${base}?action=administrator.added&resourceType=administrator&limit=2`, { headers: { cookie } }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ items: [{ action: "administrator.added" }, { action: "administrator.added" }], nextCursor: expect.any(String) });
+  expect((await handle(new Request(`${base}?limit=1&limit=2`, { headers: { cookie } }))).status).toBe(400);
+  expect((await handle(new Request(`${base}?unknown=value`, { headers: { cookie } }))).status).toBe(400);
+}, 30_000);
+
+const contractSchema = { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" };
+const contractBody = (variant = "base", reason = "Initial schemas") => ({
+  formatVersion: 1,
+  snapshot: { schema: { ...contractSchema, title: `snapshot-${variant}` } },
+  location: { schema: { ...contractSchema, title: `location-${variant}` } },
+  reason,
+});
+
+test("Document Contract HTTP appends, replays, lists and reads canonical paired revisions", async () => {
+  const { context, issued, service, contracts } = await documentContracts();
+  const created = await service.create(context, { internalName: "Markdown" }, "create-contract-type", "create-contract-type");
+  const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
+  const handle = createPortalBff(config, repository, { bootstrapEmail: null, now: () => now, adminApi: createDocumentContractsHttp(contracts) });
+  const base = `https://portal.test/admin/api/v1/document-types/${created.documentType}/document-contracts`;
+  const cookie = `__Host-unidocs_admin=${issued.token}`;
+  const headers = { cookie, origin: config.origin, "x-csrf-token": issued.csrfToken, "content-type": "application/json", "idempotency-key": "append-contract" };
+  const append = () => handle(new Request(base, { method: "POST", headers, body: JSON.stringify(contractBody()) }));
+  const appended = await append();
+  expect(appended.status).toBe(201);
+  const value = await appended.json();
+  expect(value).toMatchObject({ documentContractIdx: 0, contractHash: expect.stringMatching(/^sha256:/) });
+  expect(await (await append()).json()).toEqual(value);
+  const conflict = await handle(new Request(base, { method: "POST", headers, body: JSON.stringify(contractBody("base", "Different reason")) }));
+  expect(conflict.status).toBe(409);
+  expect(await conflict.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
+  const list = await handle(new Request(`${base}?limit=1`, { headers: { cookie } }));
+  expect(list.status).toBe(200);
+  expect(await list.json()).toMatchObject({ items: [{ documentContractIdx: 0, contractHash: value.contractHash, snapshotSchemaHash: expect.stringMatching(/^sha256:/), locationSchemaHash: expect.stringMatching(/^sha256:/) }], nextCursor: null });
+  const detail = await handle(new Request(`${base}/0`, { headers: { cookie } }));
+  expect(detail.status).toBe(200);
+  expect(await detail.json()).toMatchObject({ documentType: created.documentType, documentContractIdx: 0, snapshot: { schema: contractBody().snapshot.schema }, location: { schema: contractBody().location.schema } });
+  expect((await service.get(context, created.documentType)).latestDocumentContract).toMatchObject({ documentContractIdx: 0, contractHash: value.contractHash });
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'document_contract.appended'").first("count")).toBe(1);
+}, 30_000);
+
+test("concurrent Document Contract appends allocate contiguous revisions and update registration", async () => {
+  const { context, service, contractService } = await documentContracts();
+  const created = await service.create(context, { internalName: "Concurrent" }, "create-concurrent-contract", "create-concurrent-contract");
+  const results = await Promise.all(Array.from({ length: 8 }, (_, index) => contractService.append(context, created.documentType, contractBody(String(index)), `append-${index}`, `append-${index}`)));
+  expect(results.map(result => result.documentContractIdx).sort((left, right) => left - right)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  const registration = await service.get(context, created.documentType);
+  expect(registration.latestDocumentContract?.documentContractIdx).toBe(7);
+  expect(registration.etag).not.toBe(created.etag);
+  expect(await database.prepare("SELECT last_contract_idx FROM portal_document_types WHERE document_type = ?").bind(created.documentType).first("last_contract_idx")).toBe(7);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_document_contracts WHERE document_type = ?").bind(created.documentType).first("count")).toBe(8);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'document_contract.appended'").first("count")).toBe(8);
+}, 30_000);
+
+test("Document Contract audit failure rolls back receipt, record, counter and registration", async () => {
+  const { context, service, contractService } = await documentContracts();
+  const created = await service.create(context, { internalName: "Rollback" }, "create-rollback-contract", "create-rollback-contract");
+  await database.prepare("CREATE TRIGGER reject_contract_audit BEFORE INSERT ON portal_admin_audit WHEN NEW.action = 'document_contract.appended' BEGIN SELECT RAISE(ABORT, 'injected failure'); END").run();
+  await expect(contractService.append(context, created.documentType, contractBody(), "rollback-contract", "rollback-contract")).rejects.toThrow();
+  expect(await database.prepare("SELECT last_contract_idx FROM portal_document_types WHERE document_type = ?").bind(created.documentType).first("last_contract_idx")).toBe(-1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_document_contracts WHERE document_type = ?").bind(created.documentType).first("count")).toBe(0);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'appendDocumentContract'").first("count")).toBe(0);
+  expect((await service.get(context, created.documentType)).latestDocumentContract).toBeNull();
+}, 30_000);
 
 test("contract HTTP endpoints create/read/list real drafts with authentication, CSRF and retry errors", async () => {
   const { issued, types } = await documentTypes();
@@ -67,6 +270,19 @@ test("contract HTTP endpoints create/read/list real drafts with authentication, 
   const read = await handle(new Request(`${base}/${value.documentType}`, { headers: { cookie } }));
   expect(read.status).toBe(200);
   expect(await read.json()).toMatchObject({ documentType: value.documentType, internalName: "Markdown", enabled: false, etag: value.etag });
+  const patchHeaders = { ...headers, "idempotency-key": "http-update", "if-match": value.etag };
+  const update = () => handle(new Request(`${base}/${value.documentType}`, { method: "PATCH", headers: patchHeaders, body: '{"internalName":"Markdown documents","reason":"Clarify name"}' }));
+  const updated = await update();
+  expect(updated.status).toBe(200);
+  const updatedValue = await updated.json();
+  expect(updatedValue).toMatchObject({ documentType: value.documentType, etag: expect.stringMatching(/^"sha256-/) });
+  expect(updatedValue.etag).not.toBe(value.etag);
+  expect(await (await update()).json()).toEqual(updatedValue);
+  const stale = await handle(new Request(`${base}/${value.documentType}`, { method: "PATCH", headers: { ...patchHeaders, "idempotency-key": "stale-update" }, body: '{"internalName":"Stale"}' }));
+  expect(stale.status).toBe(412);
+  expect(await stale.json()).toMatchObject({ error: { code: "precondition_failed" } });
+  expect((await handle(new Request(`${base}/${value.documentType}`, { method: "PATCH", headers, body: '{"internalName":"Missing precondition"}' }))).status).toBe(428);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'document_type.internal_name_changed'").first("count")).toBe(1);
   const list = await handle(new Request(`${base}?enabled=false&limit=1`, { headers: { cookie } }));
   expect(list.status).toBe(200);
   expect(await list.json()).toMatchObject({ items: [{ documentType: value.documentType, latestDocumentContractIdx: null }], nextCursor: null });
@@ -224,10 +440,16 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
     const token = await new SignJWT({ iss: config.issuer, aud: config.clientId, sub: identity.subject, email: identity.email, email_verified: true, iat: now, exp: now + 600, nonce }).setProtectedHeader({ alg: "RS256", kid: "test" }).sign(keys.privateKey);
     return Response.json({ access_token: "discarded", token_type: "Bearer", id_token: token });
   };
-  const handle = createPortalBff(config, repository, { bootstrapEmail: identity.email, now: () => now, googleFetch });
+  const handle = createPortalBff(config, repository, {
+    bootstrapEmail: identity.email, now: () => now, googleFetch,
+    adminUi: () => new Response("<!doctype html><title>Admin UI</title>", { headers: { "content-type": "text/html" } })
+  });
   const entry = await handle(new Request("https://portal.test/admin/"));
   expect(entry.status).toBe(303);
-  expect(entry.headers.get("location")).toBe("https://portal.test/admin/auth/login");
+  expect(entry.headers.get("location")).toBe("https://portal.test/admin/login");
+  const loginPrompt = await handle(new Request("https://portal.test/admin/login", { headers: { accept: "text/html" } }));
+  expect(loginPrompt.status).toBe(200);
+  expect(loginPrompt.headers.get("content-type")).toContain("text/html");
   expect((await handle(new Request("https://portal.test/admin/", { headers: { authorization: "Bearer invalid" } }))).status).toBe(401);
   const start = await handle(new Request("https://portal.test/admin/auth/login"));
   expect(start.status).toBe(303);
@@ -250,6 +472,9 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
   const storedIdentity = JSON.parse(await database.prepare("SELECT identity_json FROM portal_sessions").first("identity_json"));
   expect(storedIdentity).toMatchObject({ authenticatedAt: null, loginConfirmedAt: now, loginConfirmation: "authorization-code-v1" });
   expect((await handle(new Request("https://portal.test/admin/", { headers: { cookie } }))).status).toBe(200);
+  expect((await handle(new Request("https://portal.test/admin/document-types/markdown?tab=contracts", { headers: { cookie } }))).status).toBe(200);
+  expect((await handle(new Request("https://portal.test/admin/administrators", { headers: { cookie } }))).status).toBe(200);
+  expect((await handle(new Request("https://portal.test/admin/audit", { headers: { cookie } }))).status).toBe(200);
   expect(session.headers.get("cache-control")).toBe("no-store");
   const replay = await handle(callback);
   expect(replay.status).toBe(401);
@@ -258,9 +483,21 @@ test("BFF completes Google callback into D1 session, reads identity and enforces
   expect(replayError.error.requestId).toBe(replay.headers.get("X-Request-ID"));
   expect(JSON.stringify(replayError)).not.toContain("fixture-secret");
   expect(JSON.stringify(replayError)).not.toContain(authorization.searchParams.get("state"));
+  const browserReplay = await handle(new Request(callback.url, { headers: { cookie: start.headers.getSetCookie()[0].split(";")[0], accept: "text/html" } }));
+  expect(browserReplay.status).toBe(303);
+  const deniedLocation = new URL(browserReplay.headers.get("location"));
+  expect(deniedLocation.pathname).toBe("/admin/access-denied");
+  expect(deniedLocation.searchParams.get("code")).toBe("unauthorized");
+  expect(deniedLocation.searchParams.get("requestId")).toBe(browserReplay.headers.get("x-request-id"));
+  const deniedPage = await handle(new Request(deniedLocation, { headers: { accept: "text/html" } }));
+  expect(deniedPage.status).toBe(200);
+  expect(deniedPage.headers.get("content-type")).toContain("text/html");
   expect((await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { cookie, origin: config.origin } }))).status).toBe(403);
   expect((await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { cookie, origin: config.origin, "x-csrf-token": csrf } }))).status).toBe(204);
   expect((await handle(new Request("https://portal.test/admin/auth/session", { headers: { cookie } }))).status).toBe(401);
+  const repeatedLogout = await handle(new Request("https://portal.test/admin/auth/logout", { method: "POST", headers: { origin: config.origin } }));
+  expect(repeatedLogout.status).toBe(204);
+  expect(repeatedLogout.headers.getSetCookie()).toEqual(expect.arrayContaining([expect.stringContaining("__Host-unidocs_admin=;"), expect.stringContaining("__Host-unidocs_admin_csrf=;")]));
   expect((await handle(new Request("https://portal.test/admin/auth/logout"))).status).toBe(405);
   expect((await handle(new Request("https://portal.test/admin/api/v1/document-types"))).status).toBe(404);
 });
@@ -333,10 +570,13 @@ test("BFF and repository run together inside workerd across HTTP requests", asyn
     },
     bundle: true, write: false, format: "esm", platform: "browser", target: "es2024", external: ["node:crypto"],
   });
-  const options = nonce => convertV4MiniflareOptions({ workers: [{ name: "portal-bff-runtime", modules: true,
-    script: built.outputFiles[0].text, compatibilityDate: "2026-08-18", compatibilityFlags: ["nodejs_compat"],
-    d1Databases: { DB: "portal-bff-runtime-db" }, bindings: { FIXTURE: { ...fixture, nonce } },
-  }] });
+  const options = nonce => convertV4MiniflareOptions({
+    workers: [{
+      name: "portal-bff-runtime", modules: true,
+      script: built.outputFiles[0].text, compatibilityDate: "2026-08-18", compatibilityFlags: ["nodejs_compat"],
+      d1Databases: { DB: "portal-bff-runtime-db" }, bindings: { FIXTURE: { ...fixture, nonce } },
+    }]
+  });
   const runtime = new Miniflare(options(""));
   try {
     const db = await runtime.getD1Database("DB", "portal-bff-runtime");
