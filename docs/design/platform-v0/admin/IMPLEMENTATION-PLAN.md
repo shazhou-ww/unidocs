@@ -6,6 +6,8 @@
 
 ## 当前进展与决策
 
+下一阶段：为 Agent 提供独立 OAuth 2.1 保护的 remote MCP，实施方案见 [Admin Portal MCP 实现计划](MCP-IMPLEMENTATION-PLAN.md)。该入口不复用浏览器 Admin session，不接受 Google/Gateway token，首次按 read-only canary 发布。
+
 ### Admin v1 与 WebUI 完整闭环（2026-09-11）
 
 已上线剩余 `createOperator`、`listOperators`、`getOperator`、`updateOperatorMetadata` 与完整 `updateDocumentType`，Admin v1 达到 **26/26**。独立 Portal D1 已应用 `0007_operators.sql`，生产 Worker 版本 `73b86398-fd44-4f07-a3d7-589d4a987f2e`。

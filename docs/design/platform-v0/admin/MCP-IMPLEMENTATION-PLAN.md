@@ -1,0 +1,460 @@
+# UniDocs Admin Portal MCP 实现计划
+
+状态：待实施  
+日期：2026-09-12  
+范围：为已上线的 26-operation Admin Portal 增加 OAuth 2.1 保护的 remote MCP；不改变 Tenant/Document 数据面，不把 UniCAS 作为运行时依赖。
+
+## 1. 目标
+
+让 GitHub Copilot、VS Code Agent 和其他支持 remote MCP OAuth 的客户端通过浏览器完成 Google 登录与管理员授权，然后以独立的 UniDocs access token 操作文档类型控制面。
+
+```text
+MCP client
+  -> https://unidocs.shazhou.work/mcp
+  -> Portal OAuth provider
+  -> Admin MCP tool adapter
+  -> @unidocs/portal-service
+  -> Portal D1 / R2 / Operator Service Binding
+```
+
+必须满足：
+
+- Agent 不接触 Admin WebUI cookie、CSRF token、Google token 或 Worker secret；
+- `/mcp` 不接受 Google ID/access token，也不接受 Gateway/Tenant token；
+- OAuth token audience 固定为 `https://unidocs.shazhou.work/mcp`；
+- 每次 tool call 实时复查 `portal_administrators` 中的 active issuer/subject 绑定；移除管理员后立即失效；
+- MCP mutation 与现有 HTTP/WebUI mutation 共享同一 service、repository、幂等、ETag、审计和并发约束；
+- 首次上线先 read-only canary，再分别开启内容 mutation、发布 mutation与管理员安全 mutation。
+
+## 2. 明确不做
+
+- 不让 Agent 复用 `__Host-unidocs_admin` 浏览器 session；
+- 不把 Google client secret、OAuth refresh token 或 HMAC key写入 MCP 配置；
+- 不在 `@unidocs/*` 中依赖 `@unicas/*` 包；只复用已经生产验证的架构模式；
+- 不提供绕过 ETag、确认参数、成员有效性或 enable readiness 的“强制”工具；
+- 不允许 MCP 输入任意 Operator 私网目标或任意公网 fetch；继续只使用部署登记的 Service Binding；
+- 不把 thumbnail、Tenant Portal、document/version/thread/CAS 数据面暴露给 Admin MCP。
+
+## 3. 部署与 origin 边界
+
+按用户决定复用 Admin WebUI origin：
+
+```text
+https://unidocs.shazhou.work/mcp
+```
+
+由 `unidocs-portal` Worker 增加比 Gateway catch-all 更具体的 route，但只接受以下精确路径：
+
+```text
+/mcp
+/.well-known/oauth-protected-resource/mcp
+/.well-known/oauth-authorization-server
+/oauth/admin-mcp/register
+/oauth/admin-mcp/authorize
+/oauth/admin-mcp/google/callback
+/oauth/admin-mcp/token
+/oauth/admin-mcp/revoke
+```
+
+不接管任意 `/oauth/*`，尤其不接管 Gateway 的 `/oauth/unidocs-cloudflare/*`。Portal production routes 只新增 `/mcp`、两个精确 metadata path 和 `/oauth/admin-mcp/*`；其余 `unidocs.shazhou.work/*` 继续由 Gateway 处理，`/admin/*` 继续由 Portal 处理，`bundles.shazhou.work` 继续只承载不可变 bundle。
+
+同源不是安全隔离边界，因此 dispatcher 必须额外强制：
+
+- `/mcp`、token、register、revoke 路由剥离全部 Cookie；
+- authorize/callback 浏览器路由只保留 `__Host-unidocs_admin_mcp_oauth` 与 `__Host-unidocs_admin_mcp_consent`，剥离 `__Host-unidocs_admin` 和 CSRF cookie；
+- MCP OAuth 不读取或创建 Admin WebUI session；Admin BFF 也不读取 MCP cookie；
+- 所有 MCP response 使用 `no-store`、`no-referrer`、`nosniff`；browser consent CSP 不允许第三方脚本；
+- `MCP_ENABLED=false` 可让这些精确路径返回 404，不影响 `/admin/*` 或 Gateway catch-all。
+
+Google client 复用现有 UniDocs client ID/secret，但需额外登记精确 callback：
+
+```text
+https://unidocs.shazhou.work/oauth/admin-mcp/google/callback
+```
+
+## 4. OAuth 2.1 流程
+
+采用已在 UniCAS remote MCP 验证的组件版本与模式：
+
+```text
+@cloudflare/workers-oauth-provider 0.10.3
+@modelcontextprotocol/server 2.0.0
+agents 0.21.0
+zod 4
+```
+
+实现保留在 `@unidocs/cloudflare-portal`，不从 `unicas-packages` import。
+
+流程：
+
+1. client 请求 `/mcp`，收到带 RFC 9728 metadata URL 的 401；
+2. client 读取 protected-resource 与 authorization-server metadata；
+3. public client 通过 RFC 7591 dynamic registration 注册 redirect URI；
+4. `/oauth/admin-mcp/authorize` 要求 authorization code + PKCE S256，禁止 implicit/plain PKCE；
+5. 浏览器进入 Google OIDC，固定 issuer/client/callback，校验 PKCE、nonce、state、签名、issuer/audience/azp、exp/iat 和 verified email；
+6. Google access token 立即丢弃；不签发 Admin WebUI session；
+7. D1 按 issuer/subject 查询已绑定 active administrator，不用 email 临时提升权限；
+8. 显示 UniDocs consent 页面，明确 client name、四类 scope 和高风险能力；
+9. consent POST 需要同源、一次性 CSRF、SameSite cookie；
+10. client 用 code verifier 交换 UniDocs access/refresh token；
+11. `/mcp` 只接受 OAuthProvider 验证过的 bearer token；
+12. 每次 tool call 再用 grant 中的 memberId + issuer + subject 查询 active member。
+
+### Token 生命周期
+
+| 凭据 | 生命周期 | 规则 |
+| --- | ---: | --- |
+| authorization code | 5 分钟 | 单次使用，PKCE S256 |
+| access token | 15 分钟 | audience 绑定 `/mcp` |
+| refresh grant | 8 小时 | refresh token 单次轮换 |
+| OIDC/consent transaction | 10 分钟 | AES-GCM 加密存 OAUTH_KV |
+| dynamic client | 90 天无活动后可清理 | 删除 client 会使其 grant/token 失效 |
+
+支持 RFC 7009 `/oauth/admin-mcp/revoke`。不把 token 存 D1 明文；OAuthProvider 的 client/grant/token hash 使用独立 KV。
+
+## 5. Scope 模型
+
+Scopes 不互相蕴含；client 必须显式请求，consent 页面逐项展示。
+
+| Scope | 能力 |
+| --- | --- |
+| `admin:read` | whoami；所有 list/get；audit 读取 |
+| `admin:content` | append contract；上传/编辑 Type Card/View；Operator validation、创建与 metadata |
+| `admin:publish` | 创建 document type；绑定候选；启用/停用；修改内部名称 |
+| `admin:security` | 添加/移除管理员 |
+
+`update_document_type` 始终需要 `admin:publish`。若请求包含 `enabled`，还必须提供与目标值一致的 `confirmEnabled`。管理员 mutation 只接受 `admin:security`。
+
+## 6. Tool catalog
+
+总计 **27 个工具**：26 个 Admin v1 operation 加 `whoami`。
+
+### Identity 与读取
+
+- `whoami`
+- `list_document_types`
+- `get_document_type`
+- `list_document_contracts`
+- `get_document_contract`
+- `list_type_card_bundles`
+- `get_type_card_bundle`
+- `list_view_bundles`
+- `get_view_bundle`
+- `get_operator_validation`
+- `list_operators`
+- `get_operator`
+- `list_administrators`
+- `get_administrator`
+- `list_admin_audit_events`
+
+以上均需 `admin:read`，设置 `readOnlyHint: true`、`destructiveHint: false`。
+
+### Content candidate mutation
+
+- `append_document_contract`
+- `upload_type_card_bundle`
+- `update_type_card_bundle_metadata`
+- `upload_view_bundle`
+- `update_view_bundle_metadata`
+- `create_operator_validation`
+- `create_operator`
+- `update_operator_metadata`
+
+以上需 `admin:content`。
+
+### Registration/publish mutation
+
+- `create_document_type`
+- `update_document_type`
+
+以上需 `admin:publish`。
+
+### Administrator security mutation
+
+- `add_administrator`
+- `remove_administrator`
+
+以上需 `admin:security`；`remove_administrator` 标记 `destructiveHint: true`。
+
+## 7. Tool 输入规则
+
+### 幂等
+
+所有 create/append/upload/update/remove 工具都要求 Agent 显式提供 `idempotencyKey`，1..128 个 printable ASCII 字符。
+
+MCP server **不自动派生或替换** key。原因：只有调用方知道一次逻辑意图的重试边界；自动从 payload 派生会把两次有意的同内容操作错误合并。
+
+### ETag
+
+以下工具必须显式接收当前 ETag：
+
+- `update_document_type`
+- `update_type_card_bundle_metadata`
+- `update_view_bundle_metadata`
+- `update_operator_metadata`
+- `remove_administrator`
+
+MCP server 不静默预取最新 ETag。412 时返回稳定 `precondition_failed`，提示 Agent重新 get 后由用户/Agent 决定是否重试。
+
+### 高风险确认
+
+- `add_administrator`: `confirmEmail` 必须规范化后等于 `email`；
+- `remove_administrator`: `confirmAdminId` 必须等于目标 ID，`confirmEmail` 必须等于当前 GET 返回邮箱；
+- `update_document_type` 包含 `enabled`: `confirmEnabled` 必须严格等于目标布尔值；
+- 清除当前 Operator: `confirmOperatorId` 必须等于当前绑定 ID；
+- 切换 Type Card/View/Operator 时要求非空 `reason`，继续由业务 audit 保存。
+
+MCP annotations 只是客户端提示，服务端仍强制 scope、确认、ETag、成员资格和 readiness。
+
+### ZIP 上传 v1
+
+MCP JSON-RPC 无标准“读取客户端本地文件”能力。v1 的两个 upload tool 接受：
+
+```text
+base64Zip: 标准 base64（非 data URL）
+```
+
+约束：
+
+- 解码后仍使用现有 8 MiB archive hard limit；
+- encoded string 最大 `11,184,812` 字符，即 `4 * ceil(8 MiB / 3)`；
+- 解码前验证 alphabet、padding 和精确长度，拒绝 whitespace/data URL；
+- 不记录 base64、ZIP bytes、manifest 原文或文件名到日志/audit；
+- 解码后包装为 `ReadableStream<Uint8Array>`，继续走现有 ZIP/manifest/asset/R2 reservation 实现；
+- MCP request body 设置独立有界上限，避免通用 JSON parser 无界读取。
+
+该方式能支持自动化，但不适合模型直接阅读大文件。Phase 2 可增加一次性直传票据：Agent/宿主把本地文件 PUT 到临时 R2 key，再用 tool 提交 ticket；票据绑定 actor/client/hash/size/TTL，publish 后消费。不得让 server fetch 任意 `sourceUrl`。
+
+## 8. MCP 到业务核的调用边界
+
+MCP handler 不通过公网 HTTP 回调自身，也不伪造浏览器 cookie。它直接构造现有 application service/repository：
+
+```text
+OAuth grant props
+  -> resolve active administrator in D1
+  -> AdminContext {
+       transport: "bearer",
+       memberId,
+       identity,
+       caller: { channel: "mcp", oauthClientHandle, toolName }
+     }
+  -> existing create/list/get/update service
+  -> existing D1/R2/Service Binding adapters
+```
+
+WebUI/BFF 构造 `caller.channel = "admin-webui"`。`transport: "bearer"` 只描述凭据传输；caller channel 单独表示审计来源。
+
+每个 tool schema 直接引用或组合 `@unidocs/protocol-admin-portal` 的 Zod schema，避免手写第二套字段约束。tool result 同时返回 machine-readable `structuredContent` 和简短 text，不把内部异常、token、cookie 或 upstream body 回显。
+
+## 9. 审计与可观测性
+
+新增 migration：
+
+```sql
+ALTER TABLE portal_admin_audit
+  ADD COLUMN caller_channel TEXT NOT NULL DEFAULT 'admin-webui'
+  CHECK (caller_channel IN ('admin-webui', 'mcp'));
+ALTER TABLE portal_admin_audit ADD COLUMN oauth_client_handle TEXT;
+ALTER TABLE portal_admin_audit ADD COLUMN tool_name TEXT;
+CREATE INDEX portal_admin_audit_channel_page
+  ON portal_admin_audit(caller_channel, occurred_at DESC, audit_event_id DESC);
+```
+
+所有 mutation repository 的业务写、receipt 与 audit 继续同 batch，并从 `AdminContext.caller` 写入：
+
+- `caller_channel`
+- `oauth_client_handle = sha256(client_id)`，不保存原始 client_id
+- `tool_name`
+
+扩展公开 `AdminAuditEvent` DTO 与筛选 query，使 WebUI/MCP 可按 channel/tool 查询。历史行 migration 默认 `admin-webui`。
+
+每个 MCP tool call 另写结构化 Worker log：requestId、memberId、client handle、tool、scope decision、status、duration；不记录 tool 原始输入。读取调用不写业务 audit，以免将查询流量混入配置变更历史；OAuth grant/revoke 进入独立 auth/security log。
+
+## 10. 文件与包计划
+
+```text
+packages/portal-service/src/mcp/
+  catalog.ts                  27 个工具名、scope、annotations、确认 helper
+  context.ts                  grant -> AdminContext caller attribution
+
+packages/cloudflare-portal/src/mcp/
+  config.ts                   origin、scope、kill switch
+  auth.ts                     Google OIDC + consent + D1 member check
+  server.ts                   McpServer tool handlers
+  worker.ts                   OAuthProvider + createMcpHandler
+  result.ts                   stable service/MCP error mapping
+
+packages/cloudflare-portal/migrations/
+  0008_mcp_audit_attribution.sql
+
+packages/admin-portal-webui/src/
+  mcp-configuration-dialog.tsx
+```
+
+新增依赖只放在 Cloudflare adapter：
+
+```text
+@cloudflare/workers-oauth-provider 0.10.3
+@modelcontextprotocol/server 2.0.0
+agents 0.21.0
+zod 4（仓库已有版本需锁定兼容）
+```
+
+新增 bindings/secrets：
+
+```text
+OAUTH_KV                     独立 namespace: unidocs-admin-mcp-oauth
+OAUTH_STATE_ENCRYPTION_KEY   base64url 32-byte AES key
+```
+
+新增 vars/kill switches：
+
+```text
+MCP_PUBLIC_ORIGIN=https://unidocs.shazhou.work
+MCP_ENABLED=false
+MCP_CONTENT_MUTATIONS_ENABLED=false
+MCP_PUBLISH_MUTATIONS_ENABLED=false
+MCP_SECURITY_MUTATIONS_ENABLED=false
+MCP_ALLOWED_ORIGIN_HOSTNAMES=
+MCP_ADMIN_EMAIL_ALLOWLIST=shazhou.ww@gmail.com
+```
+
+MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer/subject member 为权威。空 allowlist fail closed，不代表所有 Admin 成员自动开放。
+
+## 11. 分阶段实施
+
+### Phase 0：contract 与安全 fixtures
+
+- [ ] 固定 27-tool catalog、scope map、annotations 和 Zod input snapshots；
+- [ ] 固定 OAuth metadata、DCR、PKCE S256、state/cookie/CSRF、token rotation/revoke fixtures；
+- [ ] 固定 member removal 后 access/refresh token 行为；
+- [ ] 固定 caller attribution migration 与每个 mutation audit；
+- [ ] 固定 base64 ZIP 边界、取消和日志脱敏 fixtures。
+
+退出条件：没有未决项会改变 OAuth audience、scope 名、audit schema 或 tool 名。
+
+### Phase 1：read-only remote MCP canary
+
+- [ ] 创建 OAUTH_KV 与精确 `/mcp`、metadata、`/oauth/admin-mcp/*` routes；
+- [ ] 实现 exact-path dispatcher、OAuth discovery/register/authorize/callback/token/revoke；
+- [ ] 实现 consent UI 和 D1 bound-member 检查；
+- [ ] 实现 `whoami` 与 14 个 read tools；
+- [ ] mutations kill switch 全部关闭；
+- [ ] WebUI 增加“连接 AI 工具”对话框，显示 remote MCP URL 和 VS Code 配置；
+- [ ] 用 GitHub Copilot 实测 authorize、tools/list、whoami、list/get、refresh、revoke。
+
+退出条件：仅 allowlist 管理员可授权；删除成员后现有 token 立即无法调用；read tool 不泄漏 Admin cookie/Google token。
+
+### Phase 2：content mutation
+
+- [ ] 接入 8 个 `admin:content` tools；
+- [ ] 显式 idempotency key、ETag 与 base64 ZIP 边界；
+- [ ] 开启 `MCP_CONTENT_MUTATIONS_ENABLED` canary；
+- [ ] 验证一次 validation→Operator candidate、metadata PATCH、bundle upload replay 与 audit attribution。
+
+### Phase 3：publish mutation
+
+- [ ] 接入 create/update document type；
+- [ ] 强制 reason、confirmEnabled、resource compatibility 与完整 ETag；
+- [ ] 开启 `MCP_PUBLISH_MUTATIONS_ENABLED`；
+- [ ] 验证绑定候选、启用、停用和 412 恢复流程。
+
+### Phase 4：admin security mutation
+
+- [ ] 接入 add/remove administrator；
+- [ ] 双确认、不可自删、最后管理员保护继续由 service/repository 强制；
+- [ ] 单独开启 `MCP_SECURITY_MUTATIONS_ENABLED`；
+- [ ] 实测移除成员即时使其 MCP grant 不可用。
+
+### Phase 5：发布门禁与运维
+
+- [ ] OAuth KV client/grant 保留与 90 天 inactive cleanup；
+- [ ] grant/client revoke 运维流程与 MCP 全局 kill switch 演练；
+- [ ] structured logs/dashboard 按 client/tool/status 查询；
+- [ ] route rollback 不删除 D1/KV；
+- [ ] stack runner 独立接入，不让 Gateway 默认发布误触 MCP。
+
+## 12. 验证矩阵
+
+Focused checks：
+
+```text
+pnpm --filter @unidocs/protocol-admin-portal test
+pnpm --filter @unidocs/portal-service test
+pnpm --filter @unidocs/cloudflare-portal test
+pnpm --filter @unidocs/cloudflare-portal typecheck
+pnpm --filter @unidocs/admin-portal-webui test
+pnpm exec vitest run tests/integration/cloudflare/portal-admin-mcp.test.mjs --fileParallelism=false
+```
+
+必须覆盖：
+
+- metadata discovery 与 401 `WWW-Authenticate`；
+- DCR redirect URI 校验、public client、PKCE、code 单次消费；
+- Google callback nonce/issuer/audience/azp/time/email_verified；
+- consent CSRF 与 scope downgrade；
+- access expiry、refresh rotation、revoke、wrong audience；
+- client A token 不能重放 client B grant；
+- active member 每次重查，删除后立即拒绝；
+- read/content/publish/security scope 逐工具拒绝矩阵；
+- mutation kill switches；
+- idempotency replay/conflict、428/412、确认参数；
+- ZIP 精确最大值、非法 base64、ZIP bomb 与取消；
+- MCP mutation 与 business audit 原子，caller attribution 正确；
+- cookies/Google token/Admin session 不进入 MCP request、result、log 或 audit。
+
+合并前继续运行：
+
+```text
+pnpm typecheck
+pnpm test:local
+pnpm check:cas-contract-docs
+git diff --check
+```
+
+## 13. 生产发布顺序
+
+1. 提交计划 checkpoint；
+2. 用户在 Google client 中登记 `https://unidocs.shazhou.work/oauth/admin-mcp/google/callback`；
+3. 创建 `unidocs-admin-mcp-oauth` KV；
+4. 生成并通过 stdin 安装 `OAUTH_STATE_ENCRYPTION_KEY`；
+5. 应用 audit attribution migration；
+6. 部署精确 MCP/OAuth routes，`MCP_ENABLED=true`、三个 mutation switch 全 false、email allowlist 仅当前验收账号；
+7. GitHub Copilot 配置：
+
+```json
+{
+  "servers": {
+    "unidocs-admin": {
+      "type": "http",
+      "url": "https://unidocs.shazhou.work/mcp"
+    }
+  }
+}
+```
+
+1. 真人完成 Google 登录、scope consent、whoami/read、refresh/revoke；
+2. 按 content → publish → security 顺序分三次开启 mutation；
+3. 每次检查 D1 business audit、OAuth structured log 和既有 WebUI/Gateway smoke；
+4. 完成后移除 canary email allowlist，或改为明确的全体 active Admin 策略。
+
+## 14. 回退与事件响应
+
+- `MCP_ENABLED=false`：整个 MCP/OAuth exact-path surface 返回 404；
+- 单类 mutation switch=false：保留 read-only 或较低权限能力；
+- 删除/禁用 OAuth client 或 revoke grant：立即撤销单个 Agent；
+- 移除管理员：每次 tool call 的 D1 重查立即阻止其所有 client；
+- rotate `OAUTH_STATE_ENCRYPTION_KEY`：只使在途 authorize/consent transaction 失效，不解密或暴露 token；
+- route rollback：移除 Portal 的 `/mcp`、metadata 和 `/oauth/admin-mcp/*` routes，不删除 OAUTH_KV 或 Portal D1；Gateway catch-all 自动恢复处理这些路径；
+- suspected token theft：先关闭对应 mutation switches，再 revoke grant/client，按 oauthClientHandle/toolName/requestId 查询日志和 business audit。
+
+## 15. 实施前需要确认
+
+默认建议如下，若无异议即按此执行：
+
+1. MCP 使用 `https://unidocs.shazhou.work/mcp`，OAuth endpoint 固定在 `/oauth/admin-mcp/*`，并强制 cookie stripping；
+2. 使用四个 scope：read/content/publish/security；
+3. v1 暴露全部 27 个工具，ZIP 使用严格 base64；
+4. 所有 mutation 要求显式 idempotency key，不自动生成；
+5. 初始仅 `shazhou.ww@gmail.com` 可完成 MCP OAuth canary；
+6. 首次部署只开放 read tools，mutation 分三阶段开启。
