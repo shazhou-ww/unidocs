@@ -359,6 +359,25 @@ if (useAzure) {
       for (const { label, path } of component.consoles ?? []) {
         console.log(`  ${(label + " console").padEnd(14)} ${runtime.urls[component.name]}${path}`);
       }
+      // An unset bootstrap email is not a default — it is "nobody may sign
+      // in": the worker turns "" into null and `requireBootstrapIdentity`
+      // refuses every identity against a null. Said here because the only
+      // other place it is said is the console telling you, after a complete
+      // round trip through Google, that you have no permission — which reads
+      // like an account problem rather than a missing local setting.
+      //
+      // Read off the running worker rather than recomputed, so it reports the
+      // value that is actually bound however it got there (placeholder file,
+      // `.dev.vars`, or the environment).
+      // `mf` is the Miniflare instance — absent on the Azure path and under
+      // the test stub. The warning is a convenience, so it is skipped rather
+      // than reconstructed from the sources it would have to re-merge.
+      if (!component.devVars || typeof runtime.mf?.getBindings !== "function") continue;
+      const bindings = await runtime.mf.getBindings(component.worker);
+      if (Object.hasOwn(bindings, "PORTAL_BOOTSTRAP_EMAIL") && !bindings.PORTAL_BOOTSTRAP_EMAIL) {
+        console.log(`  ${"".padEnd(14)} ⚠ no administrator is designated — sign-in will be refused.`);
+        console.log(`  ${"".padEnd(14)}   Set PORTAL_BOOTSTRAP_EMAIL in ${component.devVars} and restart.`);
+      }
     }
   }
   // 从 runtime 上读而不是读上面那个变量:只有 Miniflare 这一路真的开了日志
