@@ -3,7 +3,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOC_TYPES, parseTargets } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
-import { assertServicesAvailable, serviceFrontends } from "../stacks/unidocs-cloudflare/local/services.mjs";
+import { assertServicesAvailable, serviceFrontends, serviceWorkers } from "../stacks/unidocs-cloudflare/local/services.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/unidocs-azure/doc-types.mjs";
 import { loadRemoteCasConfig, parseDevArgs, writeLocalCredentials } from "./unidocs-dev-config.mjs";
 import { DEFAULT_FONT_TENANT, ensurePsdFonts } from "./psd-font-bootstrap.mjs";
@@ -352,6 +352,14 @@ if (useAzure) {
   // 一个 service 都没选时整行不打,免得空列表看起来像"起了但没起来"。
   if (services.length > 0) {
     console.log(`Services: ${services.join(" / ")}`);
+    // The WebUIs a service worker serves itself, under a base path. Printed
+    // because the bare origin already on the URL list is a 404 for both — the
+    // port alone does not tell you where to go.
+    for (const component of serviceWorkers(services)) {
+      for (const { label, path } of component.consoles ?? []) {
+        console.log(`  ${(label + " console").padEnd(14)} ${runtime.urls[component.name]}${path}`);
+      }
+    }
   }
   // 从 runtime 上读而不是读上面那个变量:只有 Miniflare 这一路真的开了日志
   // 文件,`runtime.logFile` 是「确实开了」的唯一凭据。

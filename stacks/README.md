@@ -76,12 +76,34 @@ omitted entirely when its list is empty, so `pnpm dev portal` shows no
 `Static registrations:` line at all — an empty list would read as "started and
 failed".
 
-`portal` is an **umbrella target**, not a single process. Today it expands to
-one component, the backend worker. `packages/admin-portal-webui` and
-`packages/tenant-portal-webui` join it by adding rows to `SERVICE_TARGETS` in
-`stacks/unidocs-cloudflare/local/services.mjs` — the same word keeps working,
-and no second selector appears. Only the administrator surface is exposed: the
-tenant business core in `@unidocs/portal-service` has no HTTP adapter yet.
+`portal` is an **umbrella target**, not a single process, but today everything
+it owns runs inside one worker:
+
+```text
+http://127.0.0.1:8795/admin/    administrator console (packages/admin-portal-webui)
+http://127.0.0.1:8795/portal/   tenant console        (packages/tenant-portal-webui)
+http://127.0.0.1:8796/          type-card bundle objects
+```
+
+Neither WebUI is a Vite dev server of its own. `pnpm --filter
+@unidocs/cloudflare-portal build:webui` builds both and writes them into
+`src/ui-assets.generated.ts` and `src/tenant-ui-assets.generated.ts`, which the
+worker serves from its own origin. That is not a packaging preference: the
+admin OAuth callback is pinned to `PORTAL_ORIGIN`, so a UI on another port
+would be cut out of the login round trip. **Rebuild after changing either
+WebUI** — the running worker serves the generated files, not your sources.
+
+Port 8796 is a second port on the same worker, not a second worker.
+`worker.ts` decides a request is a bundle fetch by comparing its origin against
+`BUNDLE_ORIGIN`, so the two must differ; in production it is a separate
+hostname.
+
+Two things are still missing behind the tenant console. It renders against an
+in-memory fixture (`tenant-portal-webui/src/main.tsx` injects
+`createMemoryTransport`), because the tenant business core in
+`@unidocs/portal-service` has no HTTP adapter yet; and it has no sign-in, so
+`serveTenantWebUi` runs ahead of the admin-shaped BFF rather than through it.
+Both change together when the tenant API lands.
 
 ### `wrangler dev` inside `packages/cloudflare-portal` does not work
 

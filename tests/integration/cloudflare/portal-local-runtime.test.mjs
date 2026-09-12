@@ -125,6 +125,31 @@ describe("a fresh portal database", () => {
     await response.body?.cancel();
   });
 
+  // Both WebUIs are compiled into this worker (`build:webui` ->
+  // src/*-ui-assets.generated.ts) and served from its own origin, rather than
+  // from Vite dev servers of their own: the admin OAuth callback is pinned to
+  // PORTAL_ORIGIN, so a UI on another port is cut out of the login round trip.
+  // This reaches the running worker over its own socket, so it fails if the
+  // assets were never generated, the route was never mounted, or the bundle
+  // dropped them.
+  test("serves the tenant WebUI at /portal/ and the admin one at /admin/", async () => {
+    for (const [path, title] of [["/portal/", "我的作品"], ["/admin/login", "UniDocs 管理"]]) {
+      const response = await fetch(`${runtime.urls.portal}${path}`);
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("content-type"), path).toBe("text/html; charset=utf-8");
+      expect(await response.text(), path).toContain(title);
+    }
+  });
+
+  // Hash-routed, so `/portal/d/x` is not a location the app produces. The BFF
+  // answers it, and a 404 is what tells us the static handler declined rather
+  // than swallowing every path under /portal/.
+  test("declines a path the tenant router never produces", async () => {
+    const response = await fetch(`${runtime.urls.portal}/portal/d/doc-1`);
+    expect(response.status).toBe(404);
+    await response.body?.cancel();
+  });
+
   // A distinct origin on the same worker. Equal origins would make every
   // portal request an R2 lookup; an unbound BUNDLE_ORIGIN throws while the
   // worker builds its bundle service, which 503s the portal wholesale.
