@@ -1320,18 +1320,19 @@ tbody tr.selected-row {
 
   .mobile-menu-button {
     position: fixed;
-    right: 18px;
-    bottom: 18px;
+    top: 9px;
+    right: 14px;
+    bottom: auto;
     z-index: 12;
-    width: 46px;
-    height: 46px;
+    width: 38px;
+    height: 38px;
     display: grid;
     place-items: center;
     border: 1px solid #17251e;
-    border-radius: 50%;
+    border-radius: 6px;
     background: var(--ink);
     color: white;
-    box-shadow: 0 8px 24px #1c291f40;
+    box-shadow: none;
   }
 
   .mobile-nav-layer {
@@ -1875,10 +1876,6 @@ tbody tr.selected-row {
 }
 
 @media (max-width: 720px) {
-  .operator-add-panel {
-    padding-bottom: 72px;
-  }
-
   .operator-candidate {
     grid-template-columns: 38px minmax(0, 1fr);
   }
