@@ -76,6 +76,12 @@ export function createPortalBff(config: PortalGoogleConfig, repository: D1Portal
       const code = accessError ? error.code : "internal_error";
       const details = error instanceof GoogleLoginError ? { stage: error.stage, reason: error.reason } : undefined;
       if (details) console.warn(JSON.stringify({ event: "portal_google_login_failed", requestId, ...details }));
+      // Everything else reaches the caller as a bare "Administrator operation
+      // failed" with a requestId and nothing to look the requestId up against.
+      // Name and message only — never the stack, and never the error object,
+      // so a throw from deeper in the login round trip cannot carry the client
+      // secret or a token into the log.
+      else if (!accessError) console.error(JSON.stringify({ event: "portal_operation_failed", requestId, path: url.pathname, name: error instanceof Error ? error.name : typeof error, message: error instanceof Error ? error.message : String(error) }));
       response = Response.json({ error: { code, message: accessError ? error.message : "Administrator operation failed", requestId, ...(details ? { details } : {}) } }, { status: accessError ? code === "unauthorized" ? 401 : 403 : 500 });
       if (accessError && code === "unauthorized" && request.method === "GET" && protectedUi && !request.headers.has("authorization")) {
         response = new Response(null, { status: 303, headers: { Location: `${config.origin}/admin/login` } });

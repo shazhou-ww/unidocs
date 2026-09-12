@@ -87,6 +87,13 @@ describe("Cloudflare administrator authentication", () => {
     { iat: now + 31 }, { iat: now - 3_631 }, { auth_time: now + 31 },
     { email_verified: false }, { azp: "other-client" }, { aud: [audience, "other-client"] },
     { auth_time: undefined }, { exp: undefined }, { nbf: now + 31 },
+    // Proves a loopback-looking issuer is rejected end-to-end — the value a
+    // future local-dev change might plausibly add to the jwtVerify allowlist
+    // at auth.ts:81 by mistake. It does not isolate that allowlist alone:
+    // @unidocs/portal-service's readGoogleIdentity enforces the identical
+    // literal independently, so this case stays green even if the allowlist
+    // itself is loosened (verified by mutation testing — see the report).
+    { iss: "http://127.0.0.1:8793" },
   ])("rejects signed tokens with invalid claims %# without cookie fallback", async overrides => {
     const { ports, authenticate, request } = await setup();
     await expect(authenticate(request({ authorization: `Bearer ${await bearer(overrides)}` }))).rejects.toMatchObject({ code: "unauthorized" });
@@ -141,5 +148,22 @@ describe("Cloudflare administrator authentication", () => {
     ports.findSession.mockResolvedValue(issued.session);
     ports.findMemberById.mockResolvedValue({ ...member, memberId: "replacement" });
     await expect(authenticate(request())).rejects.toMatchObject({ code: "forbidden" });
+  });
+});
+
+describe("Administrator auth configuration", () => {
+  const configPorts = { now: () => now, findSession: async () => null, findMemberById: async () => null, findMemberByIdentity: async () => null };
+
+  // createAdminAuthenticator has its own copy of the origin guard
+  // (independent of portalGoogleConfigFromGateway) — this is what let a
+  // config built for local development still get refused here even after
+  // google-config.ts's own check was relaxed.
+  test("accepts a loopback origin for local development", () => {
+    expect(() => createAdminAuthenticator({ origin: "http://127.0.0.1:8795", audience }, configPorts)).not.toThrow();
+    expect(() => createAdminAuthenticator({ origin: "http://localhost:8795", audience }, configPorts)).not.toThrow();
+  });
+
+  test.each(["http://admin.example.com", "http://127.0.0.1.evil.test:8795"])("refuses a non-loopback http origin %s", authOrigin => {
+    expect(() => createAdminAuthenticator({ origin: authOrigin, audience }, configPorts)).toThrow("Invalid administrator auth configuration");
   });
 });

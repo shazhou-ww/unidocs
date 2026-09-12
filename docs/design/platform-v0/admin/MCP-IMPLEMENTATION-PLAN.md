@@ -326,6 +326,8 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 
 ## 11. 分阶段实施
 
+2026-09-12 合并验证记录：第三至第六批已提交为 `9aae392`。本地整合 `origin/main` 时解决 Google 登录 profile、Worker 分派和生成 WebUI 资源冲突，保留远端 Tenant WebUI 与 WebUI loopback 登录支持，MCP 仍要求 HTTPS。Admin/Tenant WebUI 构建、226 项 Portal 包测试、22 项 MCP 集成、全仓 49 个项目 typecheck 和 CAS 文档检查通过。完整 `test:local` 实际结果为 932 passed、14 failed、10 skipped（9 个失败文件）；包括 Portal 本地 runtime 503、manifest 跨 runtime 比较、compute CAS、PSD 字体及脚本契约测试。失败原因未全部定性，不宣称都是历史问题；远端 push 暂缓，待修复或用户明确确认门禁豁免。未部署，MCP 保持关闭。
+
 当前 checkpoint（2026-09-12）：`d7f4dcf` 已提交前两批工具契约、输入与成员校验、D1 原子审计归因及测试。本次 checkpoint 纳入第三至第六批 dispatcher、OAuth provider 工厂、D1 code/refresh 单次消费、真实成员查询和 MCP OIDC 核心，按用户要求提交并与 remote main 合并。最近验证：22 项 MCP 集成、171 项 Portal 包测试、2 项 WebUI BFF 回归及包级 typecheck 通过。下一步接加密 transaction 存储、consent 和 read-only tools；完整 `test:local` 的历史失败仍需合并后核实。此 checkpoint 不代表可生产发布，MCP 保持关闭。
 
 ### Phase 0：contract 与安全 fixtures

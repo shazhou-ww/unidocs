@@ -130,6 +130,9 @@
     },
     {
       "path": "packages/cloudflare-gateway"
+    },
+    {
+      "path": "packages/tenant-portal-client"
     }
   ]
 }

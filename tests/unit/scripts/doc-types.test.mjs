@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
+  configuredOnly,
   ADMIN_PORT,
   buildWorkers,
   bundleTargets,
@@ -8,9 +10,12 @@ import {
   CAS_AUDIT_READER_KEY,
   CAS_MIDDLEWARE_BUCKET,
   CAS_MIDDLEWARE_DB,
+  COMPATIBILITY_DATE,
   CONTROL_DB,
   DOC_TYPES,
   docServicesJson,
+  EDGE_PORT,
+  GATEWAY_PORT,
   GATEWAY_WORKER,
   SERVICE_WORKER,
   MOCK_OIDC_PORT,
@@ -19,6 +24,7 @@ import {
   parseDocTypes,
   resolvePorts,
 } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
+import { PORTAL_BUNDLE_PORT, PORTAL_PORT, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 
 /** Ports every buildWorkers call needs in these tests. */
 const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, edge: 8794 };
@@ -95,17 +101,50 @@ test("resolvePorts only allocates ports for the gateway and selected types", () 
   expect(resolvePorts(["docx"])).toEqual({ gateway: 8787, docx: 8789 });
 });
 
-test("every doc-type port is distinct from the gateway port", () => {
-  const taken = new Map([[8787, "gateway"]]);
-  for (const [name, spec] of Object.entries(DOC_TYPES)) {
-    expect(taken.has(spec.port), `${name} port ${spec.port} collides with ${taken.get(spec.port)}`)
-      .toBe(false);
-    taken.set(spec.port, name);
-    if (spec.web) {
-      expect(taken.has(spec.web.port), `${name}.web port ${spec.web.port} collides with ${taken.get(spec.web.port)}`)
-        .toBe(false);
-      taken.set(spec.web.port, `${name}.web`);
-    }
+/**
+ * The one fixed port that lives in no registry: `scripts/dev.mjs` spawns the
+ * gateway WebUI's Vite server on a literal, so it is read back out of the
+ * script rather than restated here — a copy would drift the moment the literal
+ * moves. `--strictPort` is part of the match because it is what makes a
+ * collision fatal instead of a silent re-bind on the next port.
+ */
+const GATEWAY_WEB_PORT = (() => {
+  const source = readFileSync(new URL("../../../scripts/dev.mjs", import.meta.url), "utf8");
+  const match = /"--port", "(\d+)", "--strictPort"/.exec(source);
+  if (!match) throw new Error("scripts/dev.mjs no longer spawns the gateway WebUI on a literal port; update FIXED_LOCAL_PORTS.");
+  return Number(match[1]);
+})();
+
+/**
+ * Every fixed port the local runtime binds, whichever module declares it.
+ *
+ * `resolvePorts` only covers the gateway, doc types and services, so the
+ * uniqueness check over its output cannot see admin/mockOidc/edge — which are
+ * exactly the three the 879x service band is adjacent to. A collision between
+ * two of these does not surface as a clear message: `startLocalRuntime` probes
+ * the port map with a concurrent `Promise.all(assertPortFree)`, so one probe
+ * binds and the other reports EADDRINUSE, and the reader goes looking through
+ * their process list for a port nothing else is holding.
+ */
+const FIXED_LOCAL_PORTS = [
+  ["gateway", GATEWAY_PORT],
+  ["web-gateway", GATEWAY_WEB_PORT],
+  ["cas admin", ADMIN_PORT],
+  ["mock OIDC", MOCK_OIDC_PORT],
+  ["cas edge", EDGE_PORT],
+  ...Object.entries(DOC_TYPES).flatMap(([name, spec]) => [
+    [name, spec.port],
+    ...(spec.web ? [[`${name}.web`, spec.web.port]] : []),
+  ]),
+  ...serviceWorkers(Object.keys(SERVICE_TARGETS)).map(component => [component.name, component.port]),
+  ...serviceFrontends(Object.keys(SERVICE_TARGETS)).map(component => [`${component.name}.web`, component.web.port]),
+];
+
+test("every fixed local port is distinct, across doc types, services and the CAS middleware", () => {
+  const taken = new Map();
+  for (const [name, port] of FIXED_LOCAL_PORTS) {
+    expect(taken.has(port), `${name} port ${port} collides with ${taken.get(port)}`).toBe(false);
+    taken.set(port, name);
   }
 });
 
@@ -311,4 +350,197 @@ test("接线:统一服务是公网入口并持有全部 CAS 存储绑定", () =>
     { host: "127.0.0.1", port: ADMIN_PORT },
     { host: "127.0.0.1", port: 8794 },
   ]);
+});
+
+test("selected services contribute their own bundle targets", () => {
+  const withPortal = bundleTargets(["psd"], { services: ["portal"] }).map(target => target.outfile);
+  expect(withPortal).toContain("portal.js");
+  expect(bundleTargets(["psd"]).map(target => target.outfile)).not.toContain("portal.js");
+});
+
+test("service ports are reserved alongside the gateway and document types", () => {
+  const ports = resolvePorts(["psd"], {}, ["portal"]);
+  expect(ports.portal).toBe(serviceWorkers(["portal"])[0].port);
+  expect(new Set(Object.values(ports)).size).toBe(Object.keys(ports).length);
+});
+
+const portalWorker = (extra = {}) => buildWorkers({
+  docTypes: [], host: "127.0.0.1", ports: resolvePorts([], {}, ["portal"]),
+  bundleDir: "/tmp/bundle", services: ["portal"],
+  stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+  ...extra,
+}).find(worker => worker.name === "unidocs-portal");
+
+test("a selected service becomes a Miniflare worker with its D1 binding", () => {
+  const portal = portalWorker();
+  expect(portal).toBeDefined();
+  expect(portal.d1Databases).toMatchObject({ DB: expect.any(String) });
+  // Exact, not /:\d+/: mutating `ports[component.name]` to `ports.gateway`
+  // still yields a loopback URL, and PORTAL_ORIGIN is what the portal turns
+  // into its OAuth redirect URI — the wrong port is a broken sign-in.
+  expect(portal.bindings.PORTAL_ORIGIN).toBe(`http://127.0.0.1:${PORTAL_PORT}`);
+  // The portal always points at the real Google, never the local mock OIDC
+  // provider — see google-config.ts: the mock omits auth_time/email_verified,
+  // which the portal requires.
+  expect(portal.bindings.GATEWAY_OIDC_ISSUER).toBe("https://accounts.google.com");
+  expect(portal.compatibilityDate).toBe(COMPATIBILITY_DATE);
+});
+
+// `packages/cloudflare-portal/src/auth.ts` imports node:crypto's
+// timingSafeEqual, and runtime.mjs leaves `node:*` external for that entry on
+// the strength of this flag. Without it workerd does not degrade — the whole
+// Miniflare process refuses to start (ERR_RUNTIME_FAILURE).
+test("the portal worker runs with nodejs_compat", () => {
+  expect(portalWorker().compatibilityFlags).toEqual(["nodejs_compat"]);
+});
+
+// Without this the worker is built and bound but nothing listens on 8795, so
+// `pnpm dev portal` fails with a connection refused that looks like a port
+// problem. `runtime.urls.portal` is derived from `ports` and keeps working,
+// which is exactly why its absence is silent.
+test("the portal worker listens on its own reserved port, and on the bundle one", () => {
+  expect(portalWorker().unsafeDirectSockets).toEqual([
+    { host: "127.0.0.1", port: PORTAL_PORT },
+    { host: "127.0.0.1", port: PORTAL_BUNDLE_PORT },
+  ]);
+});
+
+// One worker, two origins. `worker.ts` decides a request is a bundle fetch by
+// comparing its origin against BUNDLE_ORIGIN, so the two ports must differ —
+// were they equal, every portal request would be answered out of R2.
+test("the bundle origin is a second port on the portal worker, never the portal's own", () => {
+  expect(PORTAL_BUNDLE_PORT).not.toBe(PORTAL_PORT);
+  expect(portalWorker().bindings.BUNDLE_ORIGIN).toBe(`http://127.0.0.1:${PORTAL_BUNDLE_PORT}`);
+  expect(portalWorker().bindings.PORTAL_ORIGIN).toBe(`http://127.0.0.1:${PORTAL_PORT}`);
+});
+
+// An absent BUNDLES bucket is not a missing feature but a dead portal: the
+// worker constructs its type-card bundle service on every request.
+test("the portal worker binds the R2 bucket its bundle service needs", () => {
+  expect(portalWorker().r2Buckets).toEqual({ BUNDLES: "unidocs-portal-bundles" });
+});
+
+// scriptPath must name the file bundleTargets actually writes. Asserting the
+// literal "portal.js" on both sides would not pin their agreement; deriving
+// the expectation from bundleTargets does.
+test("the portal worker's scriptPath is the file bundleTargets writes", () => {
+  const [component] = serviceWorkers(["portal"]);
+  const target = bundleTargets([], { services: ["portal"] })
+    .find(entry => entry.entry === component.entry);
+  expect(target).toBeDefined();
+  expect(portalWorker().scriptPath).toBe(join("/tmp/bundle", target.outfile));
+});
+
+// The fallbacks are what let the portal boot for a reader who has not
+// registered a loopback redirect URI. worker.ts wraps its handler in a catch
+// that answers `portal_unavailable`, so an empty client id turns every
+// response into a 503 rather than a working sign-in page.
+test("the portal worker boots with placeholder Google credentials", () => {
+  const bindings = portalWorker().bindings;
+  expect(bindings.GATEWAY_OIDC_CLIENT_ID).toBe("unidocs-portal-local");
+  expect(bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("unidocs-portal-local-secret");
+});
+
+test("real Google credentials win over the placeholders", () => {
+  const bindings = portalWorker({
+    googleOidcClientId: "real-client-id",
+    googleOidcClientSecret: "real-client-secret",
+  }).bindings;
+  expect(bindings.GATEWAY_OIDC_CLIENT_ID).toBe("real-client-id");
+  expect(bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("real-client-secret");
+});
+
+// doc-types.mjs is dependency-free and pure by construction, so every
+// environment-derived value is threaded in from runtime.mjs. PORTAL_BOOTSTRAP_EMAIL
+// was the one exception; reading process.env here would make a developer's
+// shell change buildWorkers' output.
+test("the bootstrap email is a parameter, not an ambient environment read", () => {
+  const previous = process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL;
+  process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL = "ambient@example.test";
+  try {
+    expect(portalWorker().bindings.PORTAL_BOOTSTRAP_EMAIL).toBe("");
+    expect(portalWorker({ portalBootstrapEmail: "owner@example.test" }).bindings.PORTAL_BOOTSTRAP_EMAIL)
+      .toBe("owner@example.test");
+  } finally {
+    if (previous === undefined) delete process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL;
+    else process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL = previous;
+  }
+});
+
+test("no selected service leaves the worker list exactly as it was", () => {
+  const base = buildWorkers({
+    docTypes: ["psd"], host: "127.0.0.1", ports: resolvePorts(["psd"]), bundleDir: "/tmp/bundle",
+    stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+  });
+  expect(base.some(worker => worker.name === "unidocs-portal")).toBe(false);
+});
+
+// `.dev.vars` sits between the placeholder credentials and the process
+// environment. Getting this order wrong does not fail loudly — it makes the
+// line a reader typed into the file silently not take effect.
+test("the portal's .dev.vars beats the placeholders and loses to the environment", () => {
+  const fromFile = { portal: { GATEWAY_OIDC_CLIENT_ID: "from-file", GATEWAY_OIDC_CLIENT_SECRET: "secret-from-file" } };
+
+  const withFile = portalWorker({ serviceDevVars: fromFile });
+  expect(withFile.bindings.GATEWAY_OIDC_CLIENT_ID).toBe("from-file");
+  expect(withFile.bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("secret-from-file");
+
+  const withBoth = portalWorker({ serviceDevVars: fromFile, googleOidcClientId: "from-env" });
+  expect(withBoth.bindings.GATEWAY_OIDC_CLIENT_ID).toBe("from-env");
+  // Only the key the environment actually sets is overridden; the other one
+  // still comes from the file rather than reverting to the placeholder.
+  expect(withBoth.bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("secret-from-file");
+});
+
+// Copying .dev.vars.example without filling it in must leave a working portal.
+// The example ships both keys present and empty, and the portal's config check
+// refuses an empty client id by 503-ing every route the worker serves.
+test("keys the .dev.vars names but leaves empty fall back to the placeholders", () => {
+  const worker = portalWorker({ serviceDevVars: { portal: { GATEWAY_OIDC_CLIENT_ID: "", GATEWAY_OIDC_CLIENT_SECRET: "" } } });
+  expect(worker.bindings.GATEWAY_OIDC_CLIENT_ID).toBe("unidocs-portal-local");
+  expect(worker.bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("unidocs-portal-local-secret");
+  expect(configuredOnly({ a: "", b: "x" })).toEqual({ b: "x" });
+});
+
+// The reason the file exists at all. GOOGLE_OIDC_* in the environment is read
+// once and handed to the CAS admin BFF as well, so setting it there moves the
+// console on :4070 off its local mock provider — a side effect nobody
+// configuring the portal asked for. A .dev.vars must not do that.
+test("the portal's .dev.vars leaves the CAS admin BFF on its mock provider", () => {
+  const cas = () => buildWorkers({
+    docTypes: [], host: "127.0.0.1",
+    // BASE_PORTS carries admin/mockOidc/edge, which `resolvePorts` does not
+    // produce — runtime.mjs assigns those separately.
+    ports: { ...BASE_PORTS, ...resolvePorts([], BASE_PORTS, ["portal"]) },
+    bundleDir: "/tmp/bundle", services: ["portal"],
+    stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+    serviceDevVars: { portal: { GATEWAY_OIDC_CLIENT_ID: "from-file", GATEWAY_OIDC_CLIENT_SECRET: "secret-from-file" } },
+  }).find(worker => worker.name === SERVICE_WORKER);
+
+  expect(cas().bindings.OIDC_ISSUER).toBe(`http://127.0.0.1:${MOCK_OIDC_PORT}`);
+  expect(cas().bindings.GOOGLE_OIDC_CLIENT_ID).toBe("unidocs-local-admin");
+});
+
+// PORTAL_BOOTSTRAP_EMAIL was assigned after the .dev.vars spread and so always
+// won — including when unset, where it is "". That made the line documenting it
+// in .dev.vars.example silently do nothing, and an unset bootstrap email is not
+// a default: it is "nobody may sign in", since worker.ts turns "" into null and
+// the bootstrap check refuses every identity against a null.
+test("the bootstrap email can come from .dev.vars, and the environment still wins", () => {
+  const fromFile = { portal: { PORTAL_BOOTSTRAP_EMAIL: "from-file@example.test" } };
+
+  expect(portalWorker({ serviceDevVars: fromFile }).bindings.PORTAL_BOOTSTRAP_EMAIL)
+    .toBe("from-file@example.test");
+  expect(portalWorker({ serviceDevVars: fromFile, portalBootstrapEmail: "from-env@example.test" }).bindings.PORTAL_BOOTSTRAP_EMAIL)
+    .toBe("from-env@example.test");
+  // Unset on both sides stays empty rather than becoming undefined — the
+  // binding has to exist for `env.PORTAL_BOOTSTRAP_EMAIL || null` to read it.
+  expect(portalWorker().bindings.PORTAL_BOOTSTRAP_EMAIL).toBe("");
+  expect(portalWorker({ portalBootstrapEmail: "" }).bindings.PORTAL_BOOTSTRAP_EMAIL).toBe("");
+});
+
+// An empty environment variable used to reach the binding through `??` and
+// 503 the portal the same way. It now reads as "not configured" too.
+test("an empty GOOGLE_OIDC_CLIENT_ID does not blank the placeholder", () => {
+  expect(portalWorker({ googleOidcClientId: "" }).bindings.GATEWAY_OIDC_CLIENT_ID).toBe("unidocs-portal-local");
 });

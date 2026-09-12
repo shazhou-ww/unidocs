@@ -269,3 +269,28 @@ describe("Portal Google authorization-code flow", () => {
     expect(() => portalReturnPath(path)).toThrow();
   });
 });
+
+describe("Portal Google login configuration", () => {
+  const ports = { now: () => 0, put: async () => {}, take: async () => null };
+  const rawConfig = (loginOrigin: string) => ({ issuer: "https://accounts.google.com" as const, clientId: "client", clientSecret: "secret", origin: loginOrigin, redirectUri: `${loginOrigin}/admin/auth/callback` });
+
+  // createPortalGoogleLogin has its own copy of the origin/issuer guard
+  // (independent of portalGoogleConfigFromGateway) — this is what let a
+  // config built for local development still get refused here even after
+  // google-config.ts's own check was relaxed.
+  test("accepts a loopback origin for local development", () => {
+    expect(() => createPortalGoogleLogin(rawConfig("http://127.0.0.1:8795"), ports)).not.toThrow();
+    expect(() => createPortalGoogleLogin(rawConfig("http://localhost:8795"), ports)).not.toThrow();
+  });
+
+  test.each(["http://portal.example", "http://127.0.0.1.evil.test:8795"])("refuses a non-loopback http origin %s", loginOrigin => {
+    expect(() => createPortalGoogleLogin(rawConfig(loginOrigin), ports)).toThrow("Invalid Portal Google configuration");
+  });
+
+  // The origin allowance must not smuggle in an issuer allowance: a loopback
+  // origin is otherwise fully valid here, so this is the case that pins
+  // config.issuer !== GOOGLE_ISSUER staying in the guard on its own.
+  test("refuses a non-Google issuer even for an otherwise-valid loopback origin", () => {
+    expect(() => createPortalGoogleLogin({ ...rawConfig("http://127.0.0.1:8795"), issuer: "http://127.0.0.1:8793" as never }, ports)).toThrow("Invalid Portal Google configuration");
+  });
+});

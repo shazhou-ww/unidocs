@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { AdminAccessError, googleIdentityFromVerifiedClaims, requireBoundAdministrator, requireRecentAuthentication, type AdminContext, type AdminIdentity, type BoundAdministrator } from "@unidocs/portal-service";
+import { isLocalDevOrigin } from "./google-config.js";
 
 export const ADMIN_COOKIE = "__Host-unidocs_admin";
 export const SESSION_TTL_SECONDS = 8 * 60 * 60;
@@ -61,7 +62,10 @@ export function sessionTokenFromCookie(cookie: string | null): string {
 
 export function createAdminAuthenticator(config: { readonly origin: string; readonly audience: string }, dependencies: AdminAuthDependencies) {
   const origin = new URL(config.origin);
-  if (origin.protocol !== "https:" || origin.origin !== config.origin || !config.audience.trim()) throw new TypeError("Invalid administrator auth configuration");
+  // The origin may be a loopback local-dev origin instead of HTTPS — see
+  // isLocalDevOrigin — but Bearer verification below still requires the
+  // Google issuer and Google JWKS, unrelaxed.
+  if ((origin.protocol !== "https:" && !isLocalDevOrigin(config.origin)) || origin.origin !== config.origin || !config.audience.trim()) throw new TypeError("Invalid administrator auth configuration");
   const keys = dependencies.keys ?? createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"), { timeoutDuration: 5_000, cooldownDuration: 30_000, cacheMaxAge: 600_000 });
 
   return async function authenticate(request: Request): Promise<AdminContext> {

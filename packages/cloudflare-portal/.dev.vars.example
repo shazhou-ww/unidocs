@@ -1,0 +1,42 @@
+# Google OAuth client for the admin console's sign-in.
+#
+# Copy to `.dev.vars` (gitignored; this `.example` is committed) and fill in a
+# client from https://console.cloud.google.com/apis/credentials. The local dev
+# runtime (`pnpm dev portal`) reads it and injects these as bindings on the
+# portal worker.
+#
+# You do NOT need this to run the portal. Without it the runtime binds
+# placeholder credentials and every route behaves normally — `/admin/auth/login`
+# still redirects, and Google rejects the placeholder client id when the browser
+# arrives. Only *completing* a sign-in needs a real client.
+#
+# Register this as an authorized redirect URI on that same client:
+#
+#   http://127.0.0.1:8795/admin/auth/callback
+#
+# The names below are the worker's binding names, not the environment variables
+# of the same purpose. `GOOGLE_OIDC_CLIENT_ID` / `GOOGLE_OIDC_CLIENT_SECRET` in
+# the process environment do the same job and override this file — but they are
+# read once and handed to the CAS admin BFF as well, so setting them also moves
+# the console on :4070 off its local mock provider and onto real Google (which
+# then needs a second redirect URI, http://localhost:4070/admin/auth/callback).
+# This file reaches only the portal.
+
+GATEWAY_OIDC_CLIENT_ID=
+GATEWAY_OIDC_CLIENT_SECRET=
+
+# The Google account that becomes the first administrator. Required to get in
+# at all: nobody is an administrator on a fresh database, and sign-in refuses
+# every identity until one is designated here (the console shows "no
+# permission"). Use the same address you sign in to Google with.
+#
+# It is consumed once. The first successful sign-in claims the bootstrap row;
+# after that this line does nothing, and further administrators are added from
+# inside the console. To hand it to a different account instead, stop the dev
+# server and delete `.wrangler/miniflare` at the repository root — that is the
+# local D1 database.
+#
+# Also settable as UNIDOCS_PORTAL_BOOTSTRAP_EMAIL in the environment, which
+# overrides this line.
+
+PORTAL_BOOTSTRAP_EMAIL=

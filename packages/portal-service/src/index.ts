@@ -1,5 +1,6 @@
 export { canonicalJson, contractHash, resourceEtag, schemaHash } from "./identity.js";
 export { parseStrictJson } from "./strict-json.js";
+export { isLocalDevOrigin, LOCAL_DEV_ORIGIN_PATTERN } from "./local-dev-origin.js";
 export { boundedBytes, validateBundlePath } from "./bundles/ingress.js";
 export { BUNDLE_ZIP_LIMITS, BundleZipError, inspectBundleZip } from "./bundles/zip.js";
 export type { BundleZipFile } from "./bundles/zip.js";

@@ -1,7 +1,7 @@
 import * as oauth from "oauth4webapi";
 import { AdminAccessError, boundedBytes, googleIdentityFromConfirmedLogin, requireRecentAuthentication } from "@unidocs/portal-service";
 import { hashSessionSecret } from "./auth.js";
-import type { PortalGoogleConfig } from "./google-config.js";
+import { GOOGLE_ISSUER, isLocalDevOrigin, type PortalGoogleConfig } from "./google-config.js";
 
 export const LOGIN_COOKIE = "__Host-unidocs_admin_login";
 export const MCP_LOGIN_COOKIE = "__Host-unidocs_admin_mcp_oauth";
@@ -77,7 +77,8 @@ function createGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts, 
   readonly defaultReturn: string;
   readonly validateReturn: (value: string) => string;
 }) {
-  if (config.issuer !== "https://accounts.google.com" || new URL(config.origin).origin !== config.origin || !config.origin.startsWith("https:") || config.redirectUri !== `${config.origin}${surface.callbackPath}` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
+  const localWebUi = surface.cookieName === LOGIN_COOKIE && isLocalDevOrigin(config.origin);
+  if (config.issuer !== GOOGLE_ISSUER || new URL(config.origin).origin !== config.origin || (!config.origin.startsWith("https://") && !localWebUi) || config.redirectUri !== `${config.origin}${surface.callbackPath}` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
 
   const boundedFetch: typeof fetch = async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);

@@ -3,7 +3,7 @@ import { createPortalBff } from "./bff.js";
 import { portalGoogleConfigFromGateway } from "./google-config.js";
 import { createDocumentTypesHttp } from "./document-types-http.js";
 import { D1DocumentTypeRepository } from "./document-types-repository.js";
-import { serveAdminWebUi } from "./static-assets.js";
+import { serveAdminWebUi, serveTenantWebUi } from "./static-assets.js";
 import { createAdministratorsHttp } from "./administrators-http.js";
 import { D1AdministratorRepository } from "./administrators-repository.js";
 import { createAuditEventsHttp } from "./audit-events-http.js";
@@ -32,6 +32,18 @@ export default {
       });
       if (mcpResponse) return mcpResponse;
       if (new URL(request.url).origin === env.BUNDLE_ORIGIN) return serveBundleObject(request, env.BUNDLES, env.PORTAL_ORIGIN);
+      // Ahead of the BFF, and ahead of reading the Google settings: the tenant
+      // UI has no login to gate it with (see `serveTenantWebUi`), the
+      // admin-shaped BFF would send an anonymous visitor to `/admin/login`,
+      // and it should still serve on an environment that has no Google client
+      // configured at all.
+      const tenantUi = serveTenantWebUi(request);
+      if (tenantUi) {
+        const requestId = crypto.randomUUID();
+        tenantUi.headers.set("X-Request-ID", requestId);
+        console.log(JSON.stringify({ event: "portal_request", requestId, path: new URL(request.url).pathname, status: tenantUi.status }));
+        return tenantUi;
+      }
       const config = portalGoogleConfigFromGateway({
         GATEWAY_OIDC_CLIENT_ID: env.GATEWAY_OIDC_CLIENT_ID,
         GATEWAY_OIDC_CLIENT_SECRET: env.GATEWAY_OIDC_CLIENT_SECRET,

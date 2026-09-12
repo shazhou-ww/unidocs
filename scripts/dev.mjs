@@ -2,7 +2,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DOC_TYPES, parseDocTypes } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
+import { DOC_TYPES, parseTargets } from "../stacks/unidocs-cloudflare/local/doc-types.mjs";
+import { assertServicesAvailable, serviceFrontends, serviceWorkers } from "../stacks/unidocs-cloudflare/local/services.mjs";
 import { azureDocTypePortBases, readAzureDocTypes } from "../stacks/unidocs-azure/doc-types.mjs";
 import { loadRemoteCasConfig, parseDevArgs, writeLocalCredentials } from "./unidocs-dev-config.mjs";
 import { DEFAULT_FONT_TENANT, ensurePsdFonts } from "./psd-font-bootstrap.mjs";
@@ -10,7 +11,8 @@ import { DEFAULT_FONT_TENANT, ensurePsdFonts } from "./psd-font-bootstrap.mjs";
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 const USAGE =
-  "Usage: pnpm dev <unidocs-cloudflare|unidocs-azure> [docType ...] [--cas <remote|local>] [--fonts <auto|off>]";
+  "Usage: pnpm dev <unidocs-cloudflare|unidocs-azure> [docType|service ...] [--cas <remote|local>] [--fonts <auto|off>]\n" +
+  "  document types: markdown, docx, psd    services: portal";
 
 // 两套栈可以同时跑(docx/psd 的 CAS 过渡形态正需要这一点),那时两个 Vite
 // 都想要同一个端口。给 Azure 侧加一个固定偏移，与端口段本身的分离
@@ -36,8 +38,13 @@ try {
 const positional = devOptions.docTypes;
 
 let docTypes;
+let services;
 try {
-  docTypes = parseDocTypes(positional);
+  ({ docTypes, services } = parseTargets(positional));
+  // Runs here and nowhere later: it decides on argv alone, so an unsupported
+  // selection (`pnpm dev unidocs-azure portal`) must cost nothing — no Docker
+  // probe, no port probe, no heavy import. See the ordering note below.
+  assertServicesAvailable(platform, services);
 } catch (err) {
   console.error(err.message);
   console.error(USAGE);
@@ -90,7 +97,12 @@ if (useAzure) {
   // 两边的 doc type 集合可以不一样,拿 CF 的表当 Azure 的默认值会在 CF 先
   // 支持某个类型时直接把 `pnpm dev unidocs-azure` 打挂。
   azureDocTypeTable = readAzureDocTypes(root);
-  azureDocTypes = positional.length === 0 ? Object.keys(azureDocTypeTable) : docTypes;
+  // 判据是**解析后的** `docTypes`,不是原始的 `positional`:后者把 service 也
+  // 算进"用户选过东西了",于是一条只点名 service 的命令(将来某个 service 被
+  // Azure 支持之后就会出现)会让这里拿到空表,静默地一个 doc type 都不起。
+  // `parseTargets([])` 对空参数返回全部 doc type,所以 `docTypes` 为空只可能
+  // 是"只点了 service",而那正是该退回"起全部"的那一种。
+  azureDocTypes = docTypes.length === 0 ? Object.keys(azureDocTypeTable) : docTypes;
 
 }
 
@@ -269,6 +281,7 @@ if (useAzure) {
   runtime = await startLocalRuntime({
     host: LOCAL_HOST,
     docTypes,
+    services,
     persistPath: join(root, ".wrangler", "miniflare"),
     logLevel: LogLevel.INFO,
     // 这里**不再**传 `bindingDefaults` 给 psd 配回退链 —— 理由同 Azure 那一支
@@ -327,9 +340,46 @@ if (useAzure) {
   }
   console.log(`  azurite  http://127.0.0.1:10000  (connection string: ${backend.BLOB_CONNECTION_STRING})`);
 } else {
-  console.log(
-    `Static registrations: ${docTypes.join(" / ")}`,
-  );
+  // 同 `Services:` 一样的理由,对称处理:`pnpm dev portal` 一个 doc type 都
+  // 没选,空列表("Static registrations: ")看起来正是「起了但没起来」。
+  if (docTypes.length > 0) {
+    console.log(
+      `Static registrations: ${docTypes.join(" / ")}`,
+    );
+  }
+  // 单独一行而不是并进上面那行:那行说的是"网关注册表里有哪些 doc type",
+  // service 不在那张表里(它们不是 doc type,也不参与 docType 路由)。
+  // 一个 service 都没选时整行不打,免得空列表看起来像"起了但没起来"。
+  if (services.length > 0) {
+    console.log(`Services: ${services.join(" / ")}`);
+    // The WebUIs a service worker serves itself, under a base path. Printed
+    // because the bare origin already on the URL list is a 404 for both — the
+    // port alone does not tell you where to go.
+    for (const component of serviceWorkers(services)) {
+      for (const { label, path } of component.consoles ?? []) {
+        console.log(`  ${(label + " console").padEnd(14)} ${runtime.urls[component.name]}${path}`);
+      }
+      // An unset bootstrap email is not a default — it is "nobody may sign
+      // in": the worker turns "" into null and `requireBootstrapIdentity`
+      // refuses every identity against a null. Said here because the only
+      // other place it is said is the console telling you, after a complete
+      // round trip through Google, that you have no permission — which reads
+      // like an account problem rather than a missing local setting.
+      //
+      // Read off the running worker rather than recomputed, so it reports the
+      // value that is actually bound however it got there (placeholder file,
+      // `.dev.vars`, or the environment).
+      // `mf` is the Miniflare instance — absent on the Azure path and under
+      // the test stub. The warning is a convenience, so it is skipped rather
+      // than reconstructed from the sources it would have to re-merge.
+      if (!component.devVars || typeof runtime.mf?.getBindings !== "function") continue;
+      const bindings = await runtime.mf.getBindings(component.worker);
+      if (Object.hasOwn(bindings, "PORTAL_BOOTSTRAP_EMAIL") && !bindings.PORTAL_BOOTSTRAP_EMAIL) {
+        console.log(`  ${"".padEnd(14)} ⚠ no administrator is designated — sign-in will be refused.`);
+        console.log(`  ${"".padEnd(14)}   Set PORTAL_BOOTSTRAP_EMAIL in ${component.devVars} and restart.`);
+      }
+    }
+  }
   // 从 runtime 上读而不是读上面那个变量:只有 Miniflare 这一路真的开了日志
   // 文件,`runtime.logFile` 是「确实开了」的唯一凭据。
   if (runtime.logFile) {
@@ -346,18 +396,33 @@ console.log(`Local credentials (0600, direct-to-service tools): ${backend.creden
 // Runs on both backends: the proxy only needs a gateway URL, and `runtime.urls`
 // has the same shape either way.
 const webChildren = [];
-for (const name of docTypes) {
-  const web = DOC_TYPES[name].web;
-  if (!web) continue;
-  const webPort = web.port + (useAzure ? AZURE_WEB_PORT_OFFSET : 0);
+
+/** One Vite dev server, with the gateway URL its proxy needs. Shared by the
+ *  doc-type loop and the service loop below so a service frontend is started
+ *  on exactly the same terms as a doc-type one — including GATEWAY_URL. */
+function startWebFrontend(label, web, webPort) {
   const child = spawn("npx", ["vite", "--host", LOCAL_HOST, "--port", String(webPort), "--strictPort"], {
     cwd: join(root, web.dir),
     stdio: "inherit",
     env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
   });
-  child.on("error", (err) => console.error(`[${name} web] failed to start:`, err.message));
+  child.on("error", (err) => console.error(`[${label} web] failed to start:`, err.message));
   webChildren.push(child);
-  console.log(`  ${(name + " web").padEnd(8)} http://127.0.0.1:${webPort}`);
+  console.log(`  ${(label + " web").padEnd(8)} http://127.0.0.1:${webPort}`);
+}
+
+for (const name of docTypes) {
+  const web = DOC_TYPES[name].web;
+  if (!web) continue;
+  startWebFrontend(name, web, web.port + (useAzure ? AZURE_WEB_PORT_OFFSET : 0));
+}
+
+// Service frontends (admin-portal-webui / tenant-portal-webui). Empty today —
+// the loop exists so those packages need no wiring beyond a row in
+// `SERVICE_TARGETS`. No Azure offset: services are Cloudflare-only, and
+// `assertServicesAvailable` has already refused the Azure combination above.
+for (const component of serviceFrontends(services)) {
+  startWebFrontend(component.name, component.web, component.web.port);
 }
 
 // The gateway webui (OAuth client + document list) talks to the gateway over

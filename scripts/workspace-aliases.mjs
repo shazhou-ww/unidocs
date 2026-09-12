@@ -31,7 +31,14 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
   "@unidocs/protocol": "packages/protocol/src/index.ts",
   "@unicas/codec": "unicas-packages/codec/src/index.ts",
   "@unicas/tenant-protocol": "unicas-packages/tenant-protocol/src/index.ts",
+  // 两个 openapi.json 子路径:基础包已在表里且指向 .ts,而 esbuild 的 alias
+  // 是前缀重写,不登记就会被改写成 <file>.ts/openapi.json。
+  "@unicas/tenant-protocol/openapi.json":
+    "unicas-packages/tenant-protocol/openapi/tenant-v1.openapi.json",
   "@unicas/admin-protocol": "unicas-packages/admin-protocol/src/index.ts",
+  "@unicas/admin-protocol/openapi.json":
+    "unicas-packages/admin-protocol/openapi/admin-v1.openapi.json",
+  "@unicas/tenant-browser-cache": "unicas-packages/tenant-browser-cache/src/index.ts",
   "@unicas/service": "unicas-packages/service/src/index.ts",
   "@unicas/service-cloudflare": "unicas-packages/service-cloudflare/src/worker.ts",
   "@unicas/control-auth": "unicas-packages/control-auth/src/index.ts",
@@ -58,6 +65,17 @@ const WORKSPACE_PACKAGE_ENTRYPOINTS = {
     "packages/fonts-builtin/fonts/NotoSans-Regular.ttf",
   "@unidocs/fonts-builtin/fonts/NotoSansSC-Regular.subset.otf":
     "packages/fonts-builtin/fonts/NotoSansSC-Regular.subset.otf",
+  "@unidocs/protocol-admin-portal": "packages/protocol-admin-portal/src/index.ts",
+  "@unidocs/protocol-admin-portal/openapi.json":
+    "packages/protocol-admin-portal/openapi/admin-v1.openapi.json",
+  "@unidocs/admin-portal-client": "packages/admin-portal-client/src/index.ts",
+  "@unidocs/protocol-tenant-portal": "packages/protocol-tenant-portal/src/index.ts",
+  "@unidocs/protocol-tenant-portal/openapi.json":
+    "packages/protocol-tenant-portal/openapi/tenant-v1.openapi.json",
+  "@unidocs/tenant-portal-client": "packages/tenant-portal-client/src/index.ts",
+  "@unidocs/protocol-doctype": "packages/protocol-doctype/src/index.ts",
+  "@unidocs/protocol-platform": "packages/protocol-platform/src/index.ts",
+  "@unidocs/portal-service": "packages/portal-service/src/index.ts",
   "@unidocs/azure-sdk": "packages/azure-sdk/src/index.ts",
   "@unidocs/cloudflare-sdk": "packages/cloudflare-sdk/src/index.ts",
   "@unidocs/doctype-markdown": "packages/doctype-markdown/src/index.ts",

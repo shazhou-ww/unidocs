@@ -8,6 +8,7 @@
  */
 
 import { join } from "node:path";
+import { SERVICE_TARGETS, serviceWorkers } from "./services.mjs";
 
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
@@ -134,19 +135,119 @@ export function parseDocTypes(args) {
   return selected;
 }
 
+/**
+ * Split positional arguments into document types and service targets.
+ *
+ * They share one argument position because that is how the command reads —
+ * `pnpm dev portal psd` — but they expand along different paths: a document
+ * type becomes an editor/operator pair behind the gateway, a service target
+ * becomes one or more standalone processes. No arguments still means every
+ * document type and no service, which is the historical behaviour.
+ */
+export function parseTargets(args) {
+  if (args.length === 0) return { docTypes: Object.keys(DOC_TYPES), services: [] };
+  const docTypes = [];
+  const services = [];
+  for (const arg of args) {
+    if (Object.hasOwn(DOC_TYPES, arg)) {
+      if (!docTypes.includes(arg)) docTypes.push(arg);
+    } else if (Object.hasOwn(SERVICE_TARGETS, arg)) {
+      if (!services.includes(arg)) services.push(arg);
+    } else {
+      throw new Error(
+        `Unknown target: ${arg}. Document types: ${Object.keys(DOC_TYPES).join(", ")}. Services: ${Object.keys(SERVICE_TARGETS).join(", ")}`,
+      );
+    }
+  }
+  return { docTypes, services };
+}
+
 /** Ports for the gateway plus the selected doc types; overrides win per key. */
-export function resolvePorts(docTypes, overrides = {}) {
+export function resolvePorts(docTypes, overrides = {}, services = []) {
   const ports = { gateway: overrides.gateway ?? GATEWAY_PORT };
   for (const name of docTypes) {
     ports[name] = overrides[name] ?? DOC_TYPES[name].port;
   }
+  for (const component of serviceWorkers(services)) {
+    ports[component.name] = overrides[component.name] ?? component.port;
+    // A second port on the same worker, not a second worker — see
+    // PORTAL_BUNDLE_PORT. It goes in the map so it is printed with the rest
+    // and, more importantly, checked for being free alongside them.
+    if (component.bundlePort) {
+      const key = `${component.name}Bundles`;
+      ports[key] = overrides[key] ?? component.bundlePort;
+    }
+  }
   return ports;
 }
 
+/**
+ * Drop the keys a `.dev.vars` file names but leaves empty.
+ *
+ * `.dev.vars.example` ships `GATEWAY_OIDC_CLIENT_ID=` with nothing after the
+ * `=`, so a reader fills it in by typing rather than by also remembering to
+ * uncomment. Without this, copying the example and filling in *neither* line
+ * would overwrite the working placeholder credentials with empty strings — and
+ * the portal's config check refuses those, which does not disable sign-in but
+ * 503s every route the worker has. An empty value means "not configured here",
+ * never "configured as empty".
+ */
+export function configuredOnly(vars = {}) {
+  return Object.fromEntries(Object.entries(vars).filter(([, value]) => value !== ""));
+}
+
+/** The unified UniCAS service's bundle entry; see `serviceWorker` below. */
+export const CAS_SERVICE_ENTRY = "unicas-packages/service-cloudflare/src/worker.ts";
+
+/**
+ * Every bundle entry whose Miniflare worker declares
+ * `compatibilityFlags: ["nodejs_compat"]` — derived from the same two places
+ * `buildWorkers` takes them from, never restated:
+ *
+ * - `CAS_SERVICE_ENTRY`, the unified UniCAS service (`serviceWorker`);
+ * - every `SERVICE_TARGETS` component with an entry (`serviceWorkerConfigs`),
+ *   which gets the flag unconditionally — so a new service row lands here for
+ *   free instead of needing a second edit somewhere else.
+ */
+export const NODE_COMPAT_ENTRIES = [
+  CAS_SERVICE_ENTRY,
+  ...serviceWorkers(Object.keys(SERVICE_TARGETS)).map(component => component.entry),
+];
+
+/**
+ * The esbuild `external` list for one bundle entry (see `bundleWorker` in
+ * runtime.mjs).
+ *
+ * Two different reasons, deliberately not one list:
+ *
+ * - `cloudflare:workers` is a workerd *built-in* module. It resolves at
+ *   runtime on every worker, with no compatibility flag involved, so esbuild
+ *   must leave it alone for every entry — there is nothing to bundle and no
+ *   condition to check. Scoping it to a path list is what broke
+ *   `packages/cloudflare-gateway/src/worker.ts` (esbuild: `Could not resolve
+ *   "cloudflare:workers"`) the moment platform-document-do.ts started
+ *   importing `DurableObject` from it. The gateway is bundled on
+ *   *every* `pnpm dev`, so that one unresolved import took the entire local
+ *   runtime down, for every target. Keep this unconditional.
+ * - `node:*` is the opposite: workerd resolves those only under
+ *   `nodejs_compat`, so it stays scoped to the entries that declare that flag.
+ *   Externalizing it everywhere would turn a missing flag from a build error
+ *   into a runtime one. The portal needs it for `node:crypto`'s
+ *   `timingSafeEqual` (auth.ts).
+ *
+ * `bundleWorker` passes `join(ROOT, entry)`, so the match is a suffix/substring
+ * one on a forward-slash-normalized path rather than a prefix anchor.
+ */
+export function bundleExternals(entry) {
+  const path = entry.replaceAll("\\", "/");
+  const nodeCompat = NODE_COMPAT_ENTRIES.some(candidate => path.includes(candidate));
+  return nodeCompat ? ["cloudflare:workers", "node:*"] : ["cloudflare:workers"];
+}
+
 /** Entry point of every worker that needs bundling for the given selection. */
-export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = true } = {}) {
+export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddleware = true, services = [] } = {}) {
   const serviceTargets = [
-    { entry: "unicas-packages/service-cloudflare/src/worker.ts", outfile: "cas-service.js" },
+    { entry: CAS_SERVICE_ENTRY, outfile: "cas-service.js" },
   ];
   if (casMiddlewareOnly) {
     return [
@@ -164,6 +265,7 @@ export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddlewa
       entry: DOC_TYPES[name].entry,
       outfile: `${name}.js`,
     })),
+    ...serviceWorkers(services).map(component => ({ entry: component.entry, outfile: component.outfile })),
   ];
 }
 
@@ -196,10 +298,15 @@ export function buildWorkers({
   googleOidcClientId,
   googleOidcClientSecret,
   googleOidcIssuer,
+  portalBootstrapEmail = "",
   casMiddlewareOnly = false,
   casMiddleware = false,
   casOrigin,
   gatewayOAuth,
+  services = [],
+  // Per-service `.dev.vars`, keyed by component name — the portal's Google
+  // client secret. Read in runtime.mjs (this module does no I/O).
+  serviceDevVars = {},
 }) {
   if (!stackFixture) {
     throw new Error("stackFixture is required for the stack local runtime");
@@ -270,6 +377,66 @@ export function buildWorkers({
     compatibilityDate: COMPATIBILITY_DATE,
     unsafeDirectSockets: [{ host, port: ports.mockOidc }],
   };
+
+  // NOTE: these bindings are *portal-shaped*, and every service component gets
+  // the same set. With one service in the registry that is invisible; with two
+  // it is wrong — a second service would boot bound to PORTAL_ORIGIN, the
+  // portal's Google client id and PORTAL_BOOTSTRAP_EMAIL, and none of its own.
+  // Making this genuinely per-service means describing each service's bindings
+  // in SERVICE_TARGETS, which is a design change worth making when there is a
+  // second service to design against. Until then the registry-coverage guard in
+  // tests/unit/scripts/services.test.mjs fails the moment a row is added, and
+  // names this as one of the edits.
+  //
+  // The portal always points at the real Google. The placeholder credentials
+  // mirror the CAS admin BFF's: the config only checks they are non-empty, so
+  // the worker boots and serves everything except a completed sign-in. Failing
+  // closed instead would make `pnpm dev portal` useless to anyone who has not
+  // registered a loopback redirect URI, which is most readers most of the time.
+  // Same precedence `mergeDocBindings` pins for doc types: placeholders are
+  // only what nobody configured, `.dev.vars` beats them, and the process
+  // environment beats both. Only keys that are actually set take part, or an
+  // unset variable would overwrite a line the reader wrote in the file.
+  const serviceEnvOverrides = {};
+  if (googleOidcClientId) serviceEnvOverrides.GATEWAY_OIDC_CLIENT_ID = googleOidcClientId;
+  if (googleOidcClientSecret) serviceEnvOverrides.GATEWAY_OIDC_CLIENT_SECRET = googleOidcClientSecret;
+  // PORTAL_BOOTSTRAP_EMAIL belongs in this layer for the same reason the two
+  // above do. It used to be assigned *after* the `.dev.vars` spread, which
+  // made the line in `.dev.vars.example` documenting it silently do nothing:
+  // unset, it is "", and "" is what overwrote whatever the reader wrote.
+  if (portalBootstrapEmail) serviceEnvOverrides.PORTAL_BOOTSTRAP_EMAIL = portalBootstrapEmail;
+
+  const serviceWorkerConfigs = serviceWorkers(services).map(component => ({
+    name: component.worker,
+    modules: true,
+    scriptPath: join(bundleDir, component.outfile),
+    compatibilityDate: COMPATIBILITY_DATE,
+    compatibilityFlags: ["nodejs_compat"],
+    bindings: {
+      PORTAL_ORIGIN: `http://${host}:${ports[component.name]}`,
+      // Always the real Google: the portal requires auth_time and
+      // email_verified, which the local mock provider does not issue.
+      GATEWAY_OIDC_ISSUER: "https://accounts.google.com",
+      GATEWAY_OIDC_CLIENT_ID: "unidocs-portal-local",
+      GATEWAY_OIDC_CLIENT_SECRET: "unidocs-portal-local-secret",
+      // Empty means "nobody is designated": `worker.ts` turns "" into null and
+      // the bootstrap check refuses every identity against a null.
+      PORTAL_BOOTSTRAP_EMAIL: "",
+      ...configuredOnly(serviceDevVars[component.name]),
+      ...serviceEnvOverrides,
+      // Not optional, despite only the bundle routes reading it: the worker
+      // builds its type-card bundle service on every request, and an absent
+      // BUNDLE_ORIGIN throws there before any route is chosen — turning the
+      // whole portal, admin sign-in included, into a blanket 503.
+      ...(component.bundlePort ? { BUNDLE_ORIGIN: `http://${host}:${ports[`${component.name}Bundles`]}` } : {}),
+    },
+    d1Databases: { [component.d1Binding]: component.worker },
+    ...(component.r2Binding ? { r2Buckets: { [component.r2Binding]: `${component.worker}-bundles` } } : {}),
+    unsafeDirectSockets: [
+      { host, port: ports[component.name] },
+      ...(component.bundlePort ? [{ host, port: ports[`${component.name}Bundles`] }] : []),
+    ],
+  }));
 
   if (casMiddlewareOnly) {
     return [
@@ -379,6 +546,8 @@ export function buildWorkers({
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }
+
+  workers.push(...serviceWorkerConfigs);
 
   return workers;
 }
