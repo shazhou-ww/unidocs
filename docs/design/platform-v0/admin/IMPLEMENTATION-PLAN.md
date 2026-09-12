@@ -14,6 +14,7 @@
 - document type PATCH 已接入持久 Operator resolver，并在启用或保持启用时要求真实 Document Contract、Type Card、View、Operator 齐全且 View/Operator 对至少一个已登记 revision 有交集。不兼容资源不能使类型进入或停留在 enabled 状态。
 - WebUI 的“处理服务”tab 已覆盖 discovery/signature validation、刷新恢复、validation 转持久候选、候选 list/get、metadata 编辑、绑定/解绑；Type Card/View 详情可绑定候选，基本信息可启用/停用，右侧持续展示完整准备度。所有 mutation 继续使用 CSRF、Idempotency-Key 与 If-Match，无 mock candidate state。
 - 验证：portal-service 329 个测试、Cloudflare Portal 119 个测试、Admin client 12 个 transport tests、WebUI 16 个组件测试、真实 D1 validation/Operator 集成测试 5 个、全仓 typecheck、WebUI build 与 production dry-run 通过。生产匿名 `/operators`、`/operator-validations` 均为 401，后台 303、Markdown discovery 200/强 ETag、主站与 `/ui/` 200；smoke 后 validation/operator/receipt/success audit 均为 0。真人可从文档类型“处理服务”tab 执行验证→保存候选→绑定，再在“基本信息”启用；这些操作会写真实生产 D1，尚未自动代为执行。
+- Operator UX 后续对齐已部署为 `c99fa558-58ea-4daf-b1cf-997526ba5352`：tab 以多候选列表为主，候选行直接显示当前状态、设为当前和 metadata 编辑入口；“添加操作代理”独立展开 validation→登记流程，验证成功不自动切换当前项。修复了误嵌套 CSS，页面 input/textarea 统一继承站点字体、尺寸和 focus ring；移动导航移至右上 header，不再遮挡页面操作。线上 390×844 与桌面实页验证均无横向溢出或控件重叠。
 
 ### Operator 签名 probe wire checkpoint（2026-09-11）
 
