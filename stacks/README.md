@@ -140,17 +140,28 @@ mock — because the portal requires `auth_time` and `email_verified`, which the
 local mock provider does not issue. Only *completing* a sign-in needs real
 credentials:
 
-- `GOOGLE_OIDC_CLIENT_ID` and `GOOGLE_OIDC_CLIENT_SECRET` in the environment
-  (the runtime reads them from `process.env` and passes them through), and
+- a Google OAuth client, configured in **either** place below, and
 - `http://127.0.0.1:8795/admin/auth/callback` registered as an authorized
   redirect URI on that same client.
+
+**Preferred: `packages/cloudflare-portal/.dev.vars`** (gitignored; copy
+`.dev.vars.example` next to it and fill in the two empty values). The runtime
+merges it into the portal worker's bindings and nothing else. A key the file
+names but leaves empty reads as "not configured" and falls back to the
+placeholder, so copying the example without filling it in leaves a working
+portal rather than a 503.
+
+**Or `GOOGLE_OIDC_CLIENT_ID` / `GOOGLE_OIDC_CLIENT_SECRET` in the
+environment**, which override the file — but read the side effect below before
+choosing them.
 
 Without them `/admin/auth/login` still redirects, and Google rejects the
 placeholder client id when the browser arrives.
 
-**Setting them is not portal-local.** The same two variables are read once, in
-`runtime.mjs`, and handed to both the portal *and* the CAS admin BFF. Setting
-either one (`buildWorkers` checks them with `||`, not `&&`) flips the admin
+**The environment variables are not portal-local.** (The `.dev.vars` file is —
+this whole paragraph is the reason to prefer it.) The same two variables are
+read once, in `runtime.mjs`, and handed to both the portal *and* the CAS admin
+BFF. Setting either one (`buildWorkers` checks them with `||`, not `&&`) flips the admin
 BFF's `OIDC_ISSUER` off the local mock provider on :8793 and onto
 `https://accounts.google.com` — or onto `GOOGLE_OIDC_ISSUER`, if that is set
 too — and gives it the portal's client id and secret in place of its own

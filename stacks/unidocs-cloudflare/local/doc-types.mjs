@@ -181,6 +181,21 @@ export function resolvePorts(docTypes, overrides = {}, services = []) {
   return ports;
 }
 
+/**
+ * Drop the keys a `.dev.vars` file names but leaves empty.
+ *
+ * `.dev.vars.example` ships `GATEWAY_OIDC_CLIENT_ID=` with nothing after the
+ * `=`, so a reader fills it in by typing rather than by also remembering to
+ * uncomment. Without this, copying the example and filling in *neither* line
+ * would overwrite the working placeholder credentials with empty strings — and
+ * the portal's config check refuses those, which does not disable sign-in but
+ * 503s every route the worker has. An empty value means "not configured here",
+ * never "configured as empty".
+ */
+export function configuredOnly(vars = {}) {
+  return Object.fromEntries(Object.entries(vars).filter(([, value]) => value !== ""));
+}
+
 /** The unified UniCAS service's bundle entry; see `serviceWorker` below. */
 export const CAS_SERVICE_ENTRY = "unicas-packages/service-cloudflare/src/worker.ts";
 
@@ -289,6 +304,9 @@ export function buildWorkers({
   casOrigin,
   gatewayOAuth,
   services = [],
+  // Per-service `.dev.vars`, keyed by component name — the portal's Google
+  // client secret. Read in runtime.mjs (this module does no I/O).
+  serviceDevVars = {},
 }) {
   if (!stackFixture) {
     throw new Error("stackFixture is required for the stack local runtime");
@@ -375,6 +393,14 @@ export function buildWorkers({
   // the worker boots and serves everything except a completed sign-in. Failing
   // closed instead would make `pnpm dev portal` useless to anyone who has not
   // registered a loopback redirect URI, which is most readers most of the time.
+  // Same precedence `mergeDocBindings` pins for doc types: placeholders are
+  // only what nobody configured, `.dev.vars` beats them, and the process
+  // environment beats both. Only keys that are actually set take part, or an
+  // unset variable would overwrite a line the reader wrote in the file.
+  const googleFromEnv = {};
+  if (googleOidcClientId) googleFromEnv.GATEWAY_OIDC_CLIENT_ID = googleOidcClientId;
+  if (googleOidcClientSecret) googleFromEnv.GATEWAY_OIDC_CLIENT_SECRET = googleOidcClientSecret;
+
   const serviceWorkerConfigs = serviceWorkers(services).map(component => ({
     name: component.worker,
     modules: true,
@@ -386,8 +412,10 @@ export function buildWorkers({
       // Always the real Google: the portal requires auth_time and
       // email_verified, which the local mock provider does not issue.
       GATEWAY_OIDC_ISSUER: "https://accounts.google.com",
-      GATEWAY_OIDC_CLIENT_ID: googleOidcClientId ?? "unidocs-portal-local",
-      GATEWAY_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "unidocs-portal-local-secret",
+      GATEWAY_OIDC_CLIENT_ID: "unidocs-portal-local",
+      GATEWAY_OIDC_CLIENT_SECRET: "unidocs-portal-local-secret",
+      ...configuredOnly(serviceDevVars[component.name]),
+      ...googleFromEnv,
       PORTAL_BOOTSTRAP_EMAIL: portalBootstrapEmail,
       // Not optional, despite only the bundle routes reading it: the worker
       // builds its type-card bundle service on every request, and an absent

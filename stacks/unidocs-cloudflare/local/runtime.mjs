@@ -497,6 +497,14 @@ export async function startLocalRuntime({
       processEnv: processDocBindings,
     });
   }
+  // Same for the service workers: the portal's Google client lives in its own
+  // .dev.vars rather than the process environment, so configuring it does not
+  // also move the CAS admin BFF off its local mock provider. Never log these.
+  const serviceDevVars = {};
+  for (const component of serviceWorkers(services)) {
+    if (!component.devVars) continue;
+    serviceDevVars[component.name] = await readDevVars(join(ROOT, component.devVars));
+  }
   const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 
   const devLog = logFile ? openDevLog(logFile) : null;
@@ -541,6 +549,7 @@ export async function startLocalRuntime({
           casOrigin,
           gatewayOAuth,
           services,
+          serviceDevVars,
         }),
       }),
     );

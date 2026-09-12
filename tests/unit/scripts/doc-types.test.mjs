@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
+  configuredOnly,
   ADMIN_PORT,
   buildWorkers,
   bundleTargets,
@@ -472,4 +473,56 @@ test("no selected service leaves the worker list exactly as it was", () => {
     stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
   });
   expect(base.some(worker => worker.name === "unidocs-portal")).toBe(false);
+});
+
+// `.dev.vars` sits between the placeholder credentials and the process
+// environment. Getting this order wrong does not fail loudly — it makes the
+// line a reader typed into the file silently not take effect.
+test("the portal's .dev.vars beats the placeholders and loses to the environment", () => {
+  const fromFile = { portal: { GATEWAY_OIDC_CLIENT_ID: "from-file", GATEWAY_OIDC_CLIENT_SECRET: "secret-from-file" } };
+
+  const withFile = portalWorker({ serviceDevVars: fromFile });
+  expect(withFile.bindings.GATEWAY_OIDC_CLIENT_ID).toBe("from-file");
+  expect(withFile.bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("secret-from-file");
+
+  const withBoth = portalWorker({ serviceDevVars: fromFile, googleOidcClientId: "from-env" });
+  expect(withBoth.bindings.GATEWAY_OIDC_CLIENT_ID).toBe("from-env");
+  // Only the key the environment actually sets is overridden; the other one
+  // still comes from the file rather than reverting to the placeholder.
+  expect(withBoth.bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("secret-from-file");
+});
+
+// Copying .dev.vars.example without filling it in must leave a working portal.
+// The example ships both keys present and empty, and the portal's config check
+// refuses an empty client id by 503-ing every route the worker serves.
+test("keys the .dev.vars names but leaves empty fall back to the placeholders", () => {
+  const worker = portalWorker({ serviceDevVars: { portal: { GATEWAY_OIDC_CLIENT_ID: "", GATEWAY_OIDC_CLIENT_SECRET: "" } } });
+  expect(worker.bindings.GATEWAY_OIDC_CLIENT_ID).toBe("unidocs-portal-local");
+  expect(worker.bindings.GATEWAY_OIDC_CLIENT_SECRET).toBe("unidocs-portal-local-secret");
+  expect(configuredOnly({ a: "", b: "x" })).toEqual({ b: "x" });
+});
+
+// The reason the file exists at all. GOOGLE_OIDC_* in the environment is read
+// once and handed to the CAS admin BFF as well, so setting it there moves the
+// console on :4070 off its local mock provider — a side effect nobody
+// configuring the portal asked for. A .dev.vars must not do that.
+test("the portal's .dev.vars leaves the CAS admin BFF on its mock provider", () => {
+  const cas = () => buildWorkers({
+    docTypes: [], host: "127.0.0.1",
+    // BASE_PORTS carries admin/mockOidc/edge, which `resolvePorts` does not
+    // produce — runtime.mjs assigns those separately.
+    ports: { ...BASE_PORTS, ...resolvePorts([], BASE_PORTS, ["portal"]) },
+    bundleDir: "/tmp/bundle", services: ["portal"],
+    stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+    serviceDevVars: { portal: { GATEWAY_OIDC_CLIENT_ID: "from-file", GATEWAY_OIDC_CLIENT_SECRET: "secret-from-file" } },
+  }).find(worker => worker.name === SERVICE_WORKER);
+
+  expect(cas().bindings.OIDC_ISSUER).toBe(`http://127.0.0.1:${MOCK_OIDC_PORT}`);
+  expect(cas().bindings.GOOGLE_OIDC_CLIENT_ID).toBe("unidocs-local-admin");
+});
+
+// An empty environment variable used to reach the binding through `??` and
+// 503 the portal the same way. It now reads as "not configured" too.
+test("an empty GOOGLE_OIDC_CLIENT_ID does not blank the placeholder", () => {
+  expect(portalWorker({ googleOidcClientId: "" }).bindings.GATEWAY_OIDC_CLIENT_ID).toBe("unidocs-portal-local");
 });

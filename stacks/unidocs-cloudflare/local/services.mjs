@@ -41,6 +41,17 @@ export const SERVICE_TARGETS = {
       r2Binding: "BUNDLES",
       bundlePort: PORTAL_BUNDLE_PORT,
       /**
+       * Optional .dev.vars file merged into this worker's bindings — the
+       * Google OAuth client the admin sign-in completes against. Not
+       * committed; see .dev.vars.example next to it.
+       *
+       * Worth knowing over the GOOGLE_OIDC_* environment variables, which do
+       * the same job: those are read once and handed to the CAS admin BFF as
+       * well, so setting them moves the console on :4070 off its local mock
+       * provider too. This file reaches only the portal.
+       */
+      devVars: "packages/cloudflare-portal/.dev.vars",
+      /**
        * Browser entry points this worker serves, printed by `pnpm dev`.
        * Neither is discoverable from the port alone: both WebUIs are mounted
        * under a base path, so the bare origin is a 404.
