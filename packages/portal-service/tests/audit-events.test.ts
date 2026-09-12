@@ -26,6 +26,9 @@ test.each([
   { resourceType: "unknown" },
   { documentType: "../invalid" },
   { actorId: "a".repeat(257) },
+  { callerChannel: "unknown" },
+  { toolName: "x".repeat(129) },
+  { toolName: "invalid tool" },
   { cursor: "a".repeat(2049) },
   { occurredFrom: "2026-09-12T00:00:00.000Z", occurredTo: "2026-09-11T00:00:00.000Z" },
 ])("rejects invalid audit query %#", async query => {

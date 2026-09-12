@@ -6,7 +6,7 @@ import { D1PortalAuthRepository } from "../../../packages/cloudflare-portal/src/
 import { D1DocumentTypeRepository } from "../../../packages/cloudflare-portal/src/document-types-repository.ts";
 import { D1ViewBundleRepository } from "../../../packages/cloudflare-portal/src/view-bundles-repository.ts";
 import { createViewBundlesHttp } from "../../../packages/cloudflare-portal/src/view-bundles-http.ts";
-import { createDocumentTypeService, createViewBundleService } from "../../../packages/portal-service/src/index.ts";
+import { adminMcpZipStream, createDocumentTypeService, createViewBundleService } from "../../../packages/portal-service/src/index.ts";
 
 let miniflare;
 let database;
@@ -26,7 +26,7 @@ beforeEach(async () => {
     }],
   }));
   database = await miniflare.getD1Database("DB", "portal-view-bundles");
-  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql", "0005_view_bundles.sql"]) await migrate(name);
+  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql", "0005_view_bundles.sql", "0008_mcp_audit_attribution.sql"]) await migrate(name);
 });
 
 afterEach(async () => { await miniflare?.dispose(); });
@@ -76,6 +76,23 @@ test("publishes a validated candidate with receipt, consumed reservation, and au
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_view_bundle_reservations").first("count")).toBe(0);
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'uploadViewBundle'").first("count")).toBe(1);
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'view_bundle.uploaded'").first("count")).toBe(1);
+});
+
+test("MCP View upload and metadata retain attribution on replay without ZIP input in audit", async () => {
+  const { context, service } = await setup();
+  const caller = { memberId: context.memberId, identity, transport: "bearer", caller: { channel: "mcp", oauthClientHandle: "a".repeat(64), toolName: "upload_view_bundle" } };
+  const encoded = Buffer.from(await archive()).toString("base64");
+  const upload = () => service.upload(caller, { name: "MCP", description: "" }, adminMcpZipStream(encoded), "mcp-upload", "upload-request");
+  const created = await upload();
+  expect(await upload()).toEqual(created);
+  const metadataCaller = { ...caller, caller: { ...caller.caller, toolName: "update_view_bundle_metadata" } };
+  const update = () => service.updateMetadata(metadataCaller, created.viewBundleId, { name: "Next", description: "" }, "mcp-update", created.etag, "update-request");
+  expect(await update()).toEqual(await update());
+  const rows = (await database.prepare("SELECT caller_channel, oauth_client_handle, tool_name, details_json FROM portal_admin_audit WHERE caller_channel = 'mcp' ORDER BY tool_name").all()).results;
+  expect(rows.map(row => row.tool_name)).toEqual(["update_view_bundle_metadata", "upload_view_bundle"]);
+  expect(rows.every(row => row.oauth_client_handle === "a".repeat(64))).toBe(true);
+  expect(JSON.stringify(rows)).not.toContain(encoded);
+  expect(JSON.stringify(rows)).not.toContain("view.html");
 });
 
 test("concurrent same-key uploads publish one candidate and replay one result", async () => {

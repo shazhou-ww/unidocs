@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { auditAttribution } from "./audit-attribution.js";
 import { AdministratorMemberRecordSchema, type AdministratorMemberRecord, type ListAdministratorMembersResponse } from "@unidocs/protocol-admin-portal";
 import {
   AdministratorOperationError,
@@ -74,9 +75,9 @@ export class D1AdministratorRepository implements AdministratorRepository {
           (member_id, email, added_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
           .bind(member.adminId, member.email, context.memberId, occurredAt, occurredAt),
         this.database.prepare(`INSERT INTO portal_admin_audit
-          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-          VALUES (?, ?, ?, 'administrator', ?, ?, ?, NULL, NULL, NULL)`)
-          .bind(audit.auditEventId, context.memberId, audit.action, member.adminId, occurredAt, audit.requestId),
+          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+          VALUES (?, ?, ?, 'administrator', ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
+          .bind(audit.auditEventId, context.memberId, audit.action, member.adminId, occurredAt, audit.requestId, ...auditAttribution(context)),
       ]);
       return response;
     } catch (error) {
@@ -130,9 +131,9 @@ export class D1AdministratorRepository implements AdministratorRepository {
         this.database.prepare("UPDATE portal_session_families SET revoked_at = ? WHERE member_id = ? AND revoked_at IS NULL").bind(occurredAt, adminId),
         this.database.prepare("DELETE FROM portal_sessions WHERE family_id IN (SELECT family_id FROM portal_session_families WHERE member_id = ?)").bind(adminId),
         this.database.prepare(`INSERT INTO portal_admin_audit
-          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-          VALUES (?, ?, ?, 'administrator', ?, ?, ?, NULL, NULL, NULL)`)
-          .bind(audit.auditEventId, context.memberId, audit.action, adminId, occurredAt, audit.requestId),
+          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+          VALUES (?, ?, ?, 'administrator', ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
+          .bind(audit.auditEventId, context.memberId, audit.action, adminId, occurredAt, audit.requestId, ...auditAttribution(context)),
       ]);
     } catch (error) {
       if (await replay()) return;

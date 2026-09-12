@@ -1,6 +1,7 @@
 # UniDocs Admin Portal MCP 实现计划
 
-状态：待实施  
+状态：实施中（Phase 0 工具契约与原子审计归因完成，OAuth fixtures 待实现，尚未开放 remote MCP）
+
 日期：2026-09-12  
 范围：为已上线的 26-operation Admin Portal 增加 OAuth 2.1 保护的 remote MCP；不改变 Tenant/Document 数据面，不把 UniCAS 作为运行时依赖。
 
@@ -323,13 +324,37 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 
 ## 11. 分阶段实施
 
+当前 checkpoint（2026-09-12）：提交前两批工具契约、输入与成员校验、D1 原子审计归因及测试。已通过 571 项相关包测试、48 项 D1/workerd 集成与全仓 typecheck；完整 `test:local` 仍有下述失败。下一步实现 exact-path dispatcher 与 cookie 隔离，再接 OAuth provider 和 read-only tools。此 checkpoint 不代表可生产发布。
+
 ### Phase 0：contract 与安全 fixtures
 
-- [ ] 固定 27-tool catalog、scope map、annotations 和 Zod input snapshots；
+- [x] 固定 27-tool catalog、scope map、annotations 和 Zod input snapshots；
 - [ ] 固定 OAuth metadata、DCR、PKCE S256、state/cookie/CSRF、token rotation/revoke fixtures；
 - [ ] 固定 member removal 后 access/refresh token 行为；
-- [ ] 固定 caller attribution migration 与每个 mutation audit；
+- [x] 固定 caller attribution migration 与每个 mutation audit；
 - [ ] 固定 base64 ZIP 边界、取消和日志脱敏 fixtures。
+
+2026-09-12 首批实现进度：
+
+- `packages/protocol-admin-portal/src/mcp.ts` 组合现有业务 schema，固定全部 27 个工具的输入、JSON schema 指纹快照、显式幂等键、5 类 ETag 入参和高风险确认字段；拒绝未知 transport credential 与 `sourceUrl` 字段。
+- `packages/portal-service/src/mcp/catalog.ts` 固定 scope/annotations，并测试四类 scope 不互相蕴含、全局及三类 mutation 开关独立拒绝；尚未连接 Worker 环境变量。
+- `packages/portal-service/src/mcp/input.ts` 提供基于当前资源的确认 helper，以及标准 base64 的有界、惰性、可取消 ZIP 解码。测试覆盖精确 8 MiB、非规范 padding、相同编码长度的超限输入、现有 ZIP bomb 校验；完整 request body 限制与 Worker 日志脱敏仍待 adapter 接入。
+- `packages/portal-service/src/mcp/context.ts` 接受可信 OAuth adapter 已验证的 grant，每次重新读取 active member，核对 memberId/issuer/subject，并用当前成员邮箱执行 fail-closed canary；仅生成 client ID 的 SHA-256 caller handle，不创建 session。该 helper 本身不验证 bearer token，尚无 access/refresh token 集成。
+- `AdminContext.caller` 已增加可选归因类型；后续第二批已接入 D1 migration、repository 原子 audit 写入、公开 audit DTO/filter 和 WebUI session caller 标记。
+- 共享 Admin service 的幂等键字符范围已对齐 printable ASCII（含空格），原样传入 repository，不自动生成或 trim；Tenant service 不变。
+- 后续 mutation adapter 必须在适当位置处理已提交 receipt/replay，再进行当前状态确认，不能用预取当前 ETag 替换调用方 ETag，也不能让成功后的重试因资源已变更或删除而丢失原有幂等语义。
+- 首批本地验证：protocol 全部 46 项、portal-service 全部 402 项测试通过，两个包的 source/test typecheck 通过。尚未运行 remote MCP/Copilot 验收或生产部署。
+
+2026-09-12 第二批实现进度：
+
+- 新增 `0008_mcp_audit_attribution.sql`，历史行默认 `admin-webui`，新增 channel 分页索引；仅在本地 D1 测试应用，未执行生产 migration。
+- 全部 12 个 mutation 的现有 audit INSERT 已在原业务 batch 内写入 caller channel、client hash、tool name；Operator validation 失败审计同样归因。不增加第二次写入，不改变业务、receipt、ETag 或成员有效性 guard。
+- `audit-attribution.ts` 校验 MCP bearer transport、64 位小写 SHA-256 hex client handle 与 catalog 工具名。旧调用方缺少 caller 时保留 `admin-webui` 默认值，浏览器 session authenticator 显式标记 WebUI 来源。
+- 公开 audit DTO 增加兼容旧 producer 的可选归因字段，新 D1 reader 始终返回这些字段。HTTP/MCP audit query 支持 `callerChannel` 和 `toolName`，cursor 绑定这两个过滤条件；Admin OpenAPI 与 MCP schema 快照已更新。WebUI 审计页面的可视化筛选控件仍未新增。
+- 本地回归覆盖所有 mutation 归因、跨 client 重试保留首次归因、删除后重放、审计失败回滚、channel/tool 分页隔离、ZIP/上游错误不进入新增审计内容，以及既有 WebUI/workerd 路径。
+- 第二批验证：三个相关包共 571 项测试、四组 D1/workerd 集成共 48 项测试、全仓 47 个项目 typecheck 通过。OAuth discovery/授权/token/refresh/revoke、MCP transport、浏览器 consent 与生产发布仍未接入。
+- 完整 `pnpm test:local` 已尝试但未通过：日志出现 Gateway 测试打包无法解析 `cloudflare:workers`、workspace alias 缺项、compute CAS redirect 断言、PSD 字体脚本断言及 esbuild 异常输出。本批未修改这些实现，不将其混入 MCP 审计改动；该合并门禁仍阻塞。CAS 文档检查通过，`git diff --check` 无错误。
+- 部署本批 repository 代码前必须先应用 migration 0008；回退 Worker 代码不需要删除新增 D1 列或历史审计数据。
 
 退出条件：没有未决项会改变 OAuth audience、scope 名、audit schema 或 tool 名。
 

@@ -6,7 +6,7 @@ import { D1PortalAuthRepository } from "../../../packages/cloudflare-portal/src/
 import { D1DocumentTypeRepository } from "../../../packages/cloudflare-portal/src/document-types-repository.ts";
 import { D1TypeCardBundleRepository } from "../../../packages/cloudflare-portal/src/type-card-bundles-repository.ts";
 import { createTypeCardBundlesHttp } from "../../../packages/cloudflare-portal/src/type-card-bundles-http.ts";
-import { createDocumentTypeService, createTypeCardBundleService } from "../../../packages/portal-service/src/index.ts";
+import { adminMcpZipStream, createDocumentTypeService, createTypeCardBundleService } from "../../../packages/portal-service/src/index.ts";
 
 let miniflare;
 let database;
@@ -26,7 +26,7 @@ beforeEach(async () => {
     }],
   }));
   database = await miniflare.getD1Database("DB", "portal-type-card-bundles");
-  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql"]) await migrate(name);
+  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql", "0008_mcp_audit_attribution.sql"]) await migrate(name);
 });
 
 afterEach(async () => { await miniflare?.dispose(); });
@@ -81,6 +81,23 @@ test("concurrent same-key uploads publish one candidate, receipt, and audit", as
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'uploadTypeCardBundle'").first("count")).toBe(1);
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'type_card_bundle.uploaded'").first("count")).toBe(1);
 }, 30_000);
+
+test("MCP Type Card upload and metadata retain attribution on replay without ZIP input in audit", async () => {
+  const { context, service } = await setup();
+  const caller = { memberId: context.memberId, identity, transport: "bearer", caller: { channel: "mcp", oauthClientHandle: "a".repeat(64), toolName: "upload_type_card_bundle" } };
+  const encoded = Buffer.from(await archive("dt-markdown")).toString("base64");
+  const upload = () => service.upload(caller, { name: "MCP", description: "" }, adminMcpZipStream(encoded), "mcp-upload", "upload-request");
+  const created = await upload();
+  expect(await upload()).toEqual(created);
+  const metadataCaller = { ...caller, caller: { ...caller.caller, toolName: "update_type_card_bundle_metadata" } };
+  const update = () => service.updateMetadata(metadataCaller, created.typeCardBundleId, { name: "Next", description: "" }, "mcp-update", created.etag, "update-request");
+  expect(await update()).toEqual(await update());
+  const rows = (await database.prepare("SELECT caller_channel, oauth_client_handle, tool_name, details_json FROM portal_admin_audit WHERE caller_channel = 'mcp' ORDER BY tool_name").all()).results;
+  expect(rows.map(row => row.tool_name)).toEqual(["update_type_card_bundle_metadata", "upload_type_card_bundle"]);
+  expect(rows.every(row => row.oauth_client_handle === "a".repeat(64))).toBe(true);
+  expect(JSON.stringify(rows)).not.toContain(encoded);
+  expect(JSON.stringify(rows)).not.toContain("icon.svg");
+});
 
 test("duplicate content reports the existing identity and does not publish another candidate", async () => {
   const { context, service } = await setup();

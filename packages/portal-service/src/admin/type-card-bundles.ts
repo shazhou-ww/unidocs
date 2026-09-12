@@ -74,7 +74,7 @@ export interface TypeCardBundleRepository {
 }
 
 function validKey(key: string) {
-  return /^[\x21-\x7e]{1,128}$/.test(key);
+  return /^[\x20-\x7e]{1,128}$/.test(key);
 }
 
 export function typeCardBundleIdentity(contentHash: string) {

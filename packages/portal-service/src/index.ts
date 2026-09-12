@@ -12,7 +12,12 @@ export type { BundleObjectStore, BundleObjectWrite, StoredTypeCardBundle } from 
 export { storeViewBundleObjects } from "./bundles/view-store.js";
 export type { StoredViewBundle } from "./bundles/view-store.js";
 export { AdminAccessError, googleIdentityFromVerifiedClaims, normalizeAdministratorEmail, requireBootstrapIdentity, requireBoundAdministrator, requireRecentAuthentication } from "./auth/administrator.js";
-export type { AdminContext, AdminIdentity, BoundAdministrator } from "./auth/administrator.js";
+export type { AdminCaller, AdminContext, AdminIdentity, BoundAdministrator } from "./auth/administrator.js";
+export { ADMIN_MCP_CATALOG, ADMIN_MCP_SCOPES, requireAdminMcpToolAccess } from "./mcp/catalog.js";
+export type { AdminMcpPolicy, AdminMcpScope, AdminMcpToolName } from "./mcp/catalog.js";
+export { resolveAdminMcpContext } from "./mcp/context.js";
+export type { AdminMcpMember, VerifiedAdminMcpGrant } from "./mcp/context.js";
+export { AdminMcpInputError, adminMcpZipStream, requireAdminMcpDocumentTypeConfirmation, requireAdminMcpRemovalConfirmation } from "./mcp/input.js";
 export { adminConfirmationTime, googleIdentityFromConfirmedLogin, validateAdminIdentity } from "./auth/administrator.js";
 export { OperatorDiscoveryError, validateOperatorDiscovery } from "./operators/discovery.js";
 export { OperatorProbeError, createOperatorProbeRequest, signOperatorProbeReceipt, verifyOperatorProbeReceipt, verifyOperatorProbeRequest } from "./operators/probe.js";

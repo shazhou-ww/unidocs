@@ -55,7 +55,7 @@ export function createDocumentContractService(repository: DocumentContractReposi
       const parsed = AppendDocumentContractRequestSchema.safeParse(body);
       if (!DocumentTypeSchema.safeParse(documentType).success || !parsed.success || typeof body !== "object" || body === null || Array.isArray(body)
         || Object.keys(body).some(field => !["formatVersion", "snapshot", "location", "reason"].includes(field))
-        || parsed.data.reason.length > 2048 || !/^[\x21-\x7e]{1,128}$/.test(key)) {
+        || parsed.data.reason.length > 2048 || !/^[\x20-\x7e]{1,128}$/.test(key)) {
         throw new DocumentContractOperationError("invalid_request");
       }
       const timestamp = new Date(Math.floor(now().getTime() / 1000) * 1000).toISOString();

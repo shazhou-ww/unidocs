@@ -29,7 +29,7 @@ test.each([{}, { internalName: "" }, { internalName: "   " }, { internalName: "a
   expect(repository.create).not.toHaveBeenCalled();
 });
 
-test.each(["", "space key", "a".repeat(129), "non-ascii-\u00e9"])("rejects unbounded or invalid idempotency key %s", async key => {
+test.each(["", "tab\tkey", "a".repeat(129), "non-ascii-\u00e9"])("rejects unbounded or invalid idempotency key %s", async key => {
   const { service } = setup();
   await expect(service.create(context, { internalName: "Markdown" }, key, "request")).rejects.toMatchObject({ code: "invalid_request" });
 });
@@ -81,4 +81,10 @@ test("enables only when the selected View and Operator share an existing contrac
   await expect(service.update(context, "markdown", { enabled: true }, "enable", current.etag, "request-enable")).resolves.toMatchObject({ documentType: "markdown" });
   vi.mocked(repository.resolveOperator).mockResolvedValue({ ...operator, descriptor: { ...operator.descriptor, supportedDocumentContracts: { markdown: [1] } } });
   await expect(service.update(context, "markdown", { builtinOperatorId: "op_one", enabled: true }, "incompatible", current.etag, "request-incompatible")).rejects.toMatchObject({ code: "invalid_request" });
+});
+
+test("preserves printable ASCII idempotency keys verbatim", async () => {
+  const { service, repository } = setup();
+  await service.create(context, { internalName: "Markdown" }, " intent with spaces ", "request");
+  expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({ key: " intent with spaces " }));
 });

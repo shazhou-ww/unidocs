@@ -1,4 +1,5 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
+import { auditAttribution } from "./audit-attribution.js";
 import { OperatorValidationSchema, type OperatorValidation } from "@unidocs/protocol-admin-portal";
 import {
   OperatorValidationOperationError,
@@ -59,10 +60,10 @@ export class D1OperatorValidationRepository implements OperatorValidationReposit
           (validation_id, actor_id, document_type, record_json, validated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`)
           .bind(command.validation.validationId, command.context.memberId, command.validation.documentType, JSON.stringify(command.validation), validatedAt, expiresAt),
         this.database.prepare(`INSERT INTO portal_admin_audit
-          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-          VALUES (?, ?, 'operator.validation_passed', 'operator_validation', ?, ?, ?, ?, NULL, ?)`)
+          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+          VALUES (?, ?, 'operator.validation_passed', 'operator_validation', ?, ?, ?, ?, NULL, ?, ?, ?, ?)`)
           .bind(command.auditEventId, command.context.memberId, command.validation.validationId, validatedAt, command.requestId, command.validation.documentType,
-            JSON.stringify({ baseUrl: command.validation.baseUrl, declaredOperatorId: command.validation.descriptor.declaredOperatorId, expectedConfigEtag: command.validation.expectedConfigEtag })),
+            JSON.stringify({ baseUrl: command.validation.baseUrl, declaredOperatorId: command.validation.descriptor.declaredOperatorId, expectedConfigEtag: command.validation.expectedConfigEtag }), ...auditAttribution(command.context)),
       ]);
       return command.validation;
     } catch (error) {
@@ -77,10 +78,10 @@ export class D1OperatorValidationRepository implements OperatorValidationReposit
       this.authorityGuardStatement(command.context),
       this.database.prepare("DELETE FROM portal_mutation_guard"),
       this.database.prepare(`INSERT INTO portal_admin_audit
-        (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-        VALUES (?, ?, 'operator.validation_failed', 'operator_validation', ?, ?, ?, ?, NULL, ?)`)
+        (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+        VALUES (?, ?, 'operator.validation_failed', 'operator_validation', ?, ?, ?, ?, NULL, ?, ?, ?, ?)`)
         .bind(command.auditEventId, command.context.memberId, command.requestId, Math.floor(Date.parse(command.occurredAt) / 1000), command.requestId,
-          command.documentType, JSON.stringify({ phase: command.phase })),
+          command.documentType, JSON.stringify({ phase: command.phase }), ...auditAttribution(command.context)),
     ]);
   }
 

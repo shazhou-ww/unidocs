@@ -105,6 +105,6 @@ export function createAdminAuthenticator(config: { readonly origin: string; read
     }
     const member = requireBoundAdministrator(session.identity, await dependencies.findMemberById(session.memberId));
     if (member.memberId !== session.memberId) throw new AdminAccessError("forbidden");
-    return { memberId: member.memberId, identity: session.identity, transport: "session", sessionHash: hash };
+    return { memberId: member.memberId, identity: session.identity, transport: "session", sessionHash: hash, caller: { channel: "admin-webui" } };
   };
 }

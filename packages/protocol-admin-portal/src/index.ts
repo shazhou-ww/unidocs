@@ -1,6 +1,8 @@
 /**
  * Public entrypoint for UniDocs administrator control-plane contracts.
  */
+export { ADMIN_MCP_ZIP_MAX_BYTES, ADMIN_MCP_ZIP_MAX_BASE64_LENGTH, AdminMcpBase64ZipSchema, AdminMcpIdempotencyKeySchema, AdminMcpInputSchemas, isAdminMcpBase64Zip } from "./mcp.js";
+export type { AdminMcpToolInput } from "./mcp.js";
 export {
   DocumentContentFormatVersion,
   DocumentTypePattern,

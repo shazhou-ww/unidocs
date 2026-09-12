@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { auditAttribution } from "./audit-attribution.js";
 import { AdminOperationError, schemaHash, type AdminContext, type DocumentTypeCreateCommand, type DocumentTypeRepository, type DocumentTypeUpdateCommand } from "@unidocs/portal-service";
 import { DocumentTypeRegistrationSchema, DocumentTypeSchema, ListDocumentTypesQuerySchema, OperatorRecordSchema, TypeCardBundleRecordSchema, ViewBundleRecordSchema, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
 
@@ -45,9 +46,9 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
           (document_type, internal_name, enabled, registration_json, created_at) VALUES (?, ?, ?, ?, ?)`)
           .bind(registration.documentType, registration.internalName, registration.enabled ? 1 : 0, JSON.stringify(registration), registration.updatedAt),
         this.database.prepare(`INSERT INTO portal_admin_audit
-          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`)
-          .bind(audit.auditEventId, context.memberId, audit.action, audit.resourceType, audit.resourceId, Math.floor(Date.parse(audit.occurredAt) / 1000), audit.requestId, audit.documentType, audit.reason),
+          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`)
+          .bind(audit.auditEventId, context.memberId, audit.action, audit.resourceType, audit.resourceId, Math.floor(Date.parse(audit.occurredAt) / 1000), audit.requestId, audit.documentType, audit.reason, ...auditAttribution(context)),
       ]);
       return response;
     } catch (error) {
@@ -72,10 +73,10 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
     if (previous) return previous;
     const response = { documentType: registration.documentType, etag: registration.etag };
     const auditStatements = audits.map(audit => this.database.prepare(`INSERT INTO portal_admin_audit
-      (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(audit.auditEventId, context.memberId, audit.action, audit.resourceType, audit.resourceId, Math.floor(Date.parse(audit.occurredAt) / 1000), audit.requestId,
-        audit.documentType, audit.reason, audit.details === undefined ? null : JSON.stringify(audit.details)));
+        audit.documentType, audit.reason, audit.details === undefined ? null : JSON.stringify(audit.details), ...auditAttribution(context)));
     try {
       await this.database.batch([
         this.database.prepare(`INSERT INTO portal_mutation_guard SELECT CASE WHEN EXISTS

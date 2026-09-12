@@ -43,7 +43,7 @@ export interface OperatorRepository {
   list(context: AdminContext, query: ListBundlesQuery): Promise<ListOperatorsResponse>;
 }
 
-function validKey(key: string) { return /^[\x21-\x7e]{1,128}$/.test(key); }
+function validKey(key: string) { return /^[\x20-\x7e]{1,128}$/.test(key); }
 
 export function createOperatorService(repository: OperatorRepository, options: { readonly now?: () => Date; readonly id?: () => string } = {}) {
   const now = options.now ?? (() => new Date());

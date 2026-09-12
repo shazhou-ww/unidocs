@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
-import { AdminAccessError } from "@unidocs/portal-service";
+import { AdminAccessError, type AdminContext } from "@unidocs/portal-service";
+import { auditAttribution } from "../src/audit-attribution.js";
 import { ADMIN_COOKIE, SESSION_TTL_SECONDS, clearedAdminCookie, createAdminAuthenticator, createAdminSession, hashSessionSecret } from "../src/index.js";
 
 const now = 1_800_000_000;
@@ -39,6 +40,20 @@ async function setup() {
 }
 
 describe("Cloudflare administrator authentication", () => {
+  test("audit attribution defaults legacy callers and rejects malformed MCP attribution", () => {
+    const context: AdminContext = { memberId: "member", identity, transport: "bearer" };
+    const caller = { channel: "mcp" as const, oauthClientHandle: "a".repeat(64), toolName: "create_document_type" };
+    expect(auditAttribution(context)).toEqual(["admin-webui", null, null]);
+    expect(auditAttribution({ ...context, caller: { channel: "admin-webui" } })).toEqual(["admin-webui", null, null]);
+    expect(auditAttribution({ ...context, caller })).toEqual(["mcp", "a".repeat(64), "create_document_type"]);
+    for (const invalid of [
+      { ...context, transport: "session" as const, caller },
+      { ...context, caller: { ...caller, oauthClientHandle: "raw-client-id" } },
+      { ...context, caller: { ...caller, toolName: "constructor" } },
+      { ...context, caller: { ...caller, toolName: "unknown_tool" } },
+    ]) expect(() => auditAttribution(invalid)).toThrow(AdminAccessError);
+  });
+
   test("issues independent random secrets, stores only hashes and sets host-only secure cookies", async () => {
     const { issued } = await setup();
     expect(issued.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -89,7 +104,7 @@ describe("Cloudflare administrator authentication", () => {
 
   test("cookie reads need no CSRF and mutations require both origin and matching CSRF", async () => {
     const { authenticate, request } = await setup();
-    await expect(authenticate(request({}, "POST"))).resolves.toMatchObject({ transport: "session" });
+    await expect(authenticate(request({}, "POST"))).resolves.toMatchObject({ transport: "session", caller: { channel: "admin-webui" } });
     await expect(authenticate(request({ "x-csrf-token": "", origin: "" }, "GET"))).resolves.toMatchObject({ transport: "session" });
     const invalidHeaders: Record<string, string>[] = [{ origin: "https://evil.example" }, { origin: "null" }, { origin: "" }, { "x-csrf-token": "" }, { "x-csrf-token": "a".repeat(43) }, { "sec-fetch-site": "cross-site" }];
     for (const headers of invalidHeaders) {

@@ -27,7 +27,7 @@ beforeEach(async () => {
     compatibilityDate: "2026-08-18", d1Databases: { DB: `portal-operator-validation-${crypto.randomUUID()}` },
   }] }));
   database = await miniflare.getD1Database("DB", "portal-operator-validations");
-  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql", "0005_view_bundles.sql", "0006_operator_validations.sql", "0007_operators.sql"]) await migrate(name);
+  for (const name of ["0001_admin_auth.sql", "0002_document_types.sql", "0003_document_contracts.sql", "0004_type_card_bundles.sql", "0005_view_bundles.sql", "0006_operator_validations.sql", "0007_operators.sql", "0008_mcp_audit_attribution.sql"]) await migrate(name);
 });
 
 afterEach(async () => { await miniflare?.dispose(); });
@@ -71,6 +71,30 @@ test("hides expired validation records", async () => {
   const validation = await service.validate(context, { baseUrl: "https://operator.test", expectedDocumentType: "dt-markdown", expectedConfigEtag: null }, "validate-one", "request-one");
   expect(await repository.get(context, validation.validationId, new Date((now + 899) * 1000).toISOString())).not.toBeNull();
   expect(await repository.get(context, validation.validationId, new Date((now + 900) * 1000).toISOString())).toBeNull();
+});
+
+test("MCP Operator validation, creation and metadata keep atomic caller attribution", async () => {
+  const { context, service: validationService, transport } = await setup();
+  const caller = toolName => ({ memberId: context.memberId, identity, transport: "bearer", caller: { channel: "mcp", oauthClientHandle: "a".repeat(64), toolName } });
+  const request = { baseUrl: "https://operator.test", expectedDocumentType: "dt-markdown", expectedConfigEtag: null };
+  const validation = await validationService.validate(caller("create_operator_validation"), request, "mcp-validation", "validation-request");
+  expect(await validationService.validate(caller("create_operator_validation"), request, "mcp-validation", "retry-validation")).toEqual(validation);
+  expect(transport.discovery).toHaveBeenCalledOnce();
+  const operators = createOperatorService(new D1OperatorRepository(database, () => now), { now: () => new Date(now * 1000) });
+  const body = { validationId: validation.validationId, name: "MCP", description: "" };
+  const created = await operators.create(caller("create_operator"), body, "mcp-create", "create-request");
+  expect(await operators.create(caller("create_operator"), body, "mcp-create", "retry-create")).toEqual(created);
+  const update = () => operators.updateMetadata(caller("update_operator_metadata"), created.operatorId, { name: "Next", description: "" }, "mcp-update", created.etag, "update-request");
+  expect(await update()).toEqual(await update());
+  transport.discovery.mockRejectedValue(new Error("private upstream response"));
+  await expect(validationService.validate(caller("create_operator_validation"), request, "mcp-failure", "failure-request")).rejects.toMatchObject({ code: "operator_validation_failed" });
+  const rows = (await database.prepare("SELECT action, caller_channel, oauth_client_handle, tool_name, details_json FROM portal_admin_audit WHERE caller_channel = 'mcp' ORDER BY action").all()).results;
+  expect(rows.map(({ action, tool_name }) => [action, tool_name])).toEqual([
+    ["operator.created", "create_operator"], ["operator.metadata_changed", "update_operator_metadata"],
+    ["operator.validation_failed", "create_operator_validation"], ["operator.validation_passed", "create_operator_validation"],
+  ]);
+  expect(rows.every(row => row.oauth_client_handle === "a".repeat(64))).toBe(true);
+  expect(JSON.stringify(rows)).not.toContain("private upstream response");
 });
 
 test("invalid proof creates only a bounded failure audit", async () => {

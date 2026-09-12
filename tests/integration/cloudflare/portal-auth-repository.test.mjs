@@ -44,11 +44,26 @@ test("auth migration initializes independent tables with foreign keys and expiry
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_mutation_guard").first("count")).toBe(0);
 });
 
+async function mcpAuditMigration() {
+  const migration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0008_mcp_audit_attribution.sql", import.meta.url), "utf8");
+  await database.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
+}
+
+test("MCP audit migration preserves historical attribution and rejects unknown channels", async () => {
+  await repository.completeLogin(identity, identity.email, "historical-bootstrap");
+  await mcpAuditMigration();
+  expect(await database.prepare("SELECT caller_channel, oauth_client_handle, tool_name FROM portal_admin_audit").first()).toEqual({
+    caller_channel: "admin-webui", oauth_client_handle: null, tool_name: null,
+  });
+  await expect(database.prepare("UPDATE portal_admin_audit SET caller_channel = 'unknown'").run()).rejects.toThrow();
+});
+
 async function documentTypes() {
   const migration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0002_document_types.sql", import.meta.url), "utf8");
   await database.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
   const contractsMigration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0003_document_contracts.sql", import.meta.url), "utf8");
   await database.batch(contractsMigration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
+  await mcpAuditMigration();
   const issued = await repository.completeLogin(identity, identity.email, "bootstrap");
   const context = { memberId: issued.memberId, identity, transport: "session", sessionHash: issued.session.sessionHash };
   const types = new D1DocumentTypeRepository(database, () => now);
@@ -66,6 +81,76 @@ async function administrators() {
   const members = new D1AdministratorRepository(database, () => now);
   return { ...setup, members, memberService: createAdministratorService(members, { now: () => new Date(now * 1000) }) };
 }
+
+function mcpContext(context, toolName, clientHandle = "a".repeat(64)) {
+  return { memberId: context.memberId, identity: context.identity, transport: "bearer",
+    caller: { channel: "mcp", oauthClientHandle: clientHandle, toolName } };
+}
+
+test("MCP document type audit is atomic, attributed and unchanged by cross-client replay", async () => {
+  const { context, service } = await documentTypes();
+  const caller = mcpContext(context, "create_document_type");
+  const created = await service.create(caller, { internalName: "MCP type" }, "mcp-create", "mcp-request");
+  expect(await service.create(mcpContext(context, "create_document_type", "b".repeat(64)), { internalName: "MCP type" }, "mcp-create", "retry-request")).toEqual(created);
+  const row = await database.prepare("SELECT caller_channel, oauth_client_handle, tool_name, request_id FROM portal_admin_audit WHERE action = 'document_type.registered'").first();
+  expect(row).toEqual({ caller_channel: "mcp", oauth_client_handle: "a".repeat(64), tool_name: "create_document_type", request_id: "mcp-request" });
+  const updated = await service.update(mcpContext(context, "update_document_type"), created.documentType, { internalName: "Renamed" }, "mcp-update", created.etag, "update-request");
+  expect(await service.update(mcpContext(context, "update_document_type"), created.documentType, { internalName: "Renamed" }, "mcp-update", created.etag, "retry-update")).toEqual(updated);
+  expect(await database.prepare("SELECT caller_channel, tool_name FROM portal_admin_audit WHERE action = 'document_type.internal_name_changed'").first()).toEqual({ caller_channel: "mcp", tool_name: "update_document_type" });
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE caller_channel = 'mcp'").first("count")).toBe(2);
+  await database.prepare("CREATE TRIGGER reject_mcp_audit BEFORE INSERT ON portal_admin_audit WHEN NEW.caller_channel = 'mcp' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END").run();
+  await expect(service.create(caller, { internalName: "Rollback" }, "mcp-rollback", "rollback-request")).rejects.toThrow();
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_document_types").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE key = 'mcp-rollback'").first("count")).toBe(0);
+});
+
+test("MCP audit filters round-trip through HTTP and bind pagination to channel and tool", async () => {
+  const { context, service } = await documentTypes();
+  await service.create(context, { internalName: "WebUI" }, "web-create", "web-request");
+  for (const key of ["mcp-one", "mcp-two"]) await service.create(mcpContext(context, "create_document_type"), { internalName: key }, key, key);
+  const audits = new D1AuditEventRepository(database, () => now);
+  const query = { callerChannel: "mcp", toolName: "create_document_type", limit: 1 };
+  const first = await audits.list(context, query);
+  expect(first.items).toHaveLength(1);
+  expect(first.items[0]).toMatchObject({ callerChannel: "mcp", toolName: "create_document_type", oauthClientHandle: "a".repeat(64) });
+  const second = await audits.list(context, { ...query, cursor: first.nextCursor });
+  expect(second.items).toHaveLength(1);
+  expect(second.items[0].auditEventId).not.toBe(first.items[0].auditEventId);
+  expect(second.nextCursor).toBeNull();
+  for (const changed of [{ callerChannel: "admin-webui" }, { toolName: "update_document_type" }]) {
+    await expect(audits.list(context, { ...query, ...changed, cursor: first.nextCursor })).rejects.toMatchObject({ code: "invalid_request" });
+  }
+  const web = await audits.list(context, { callerChannel: "admin-webui" });
+  expect(web.items).toHaveLength(2);
+  expect(web.items.every(item => item.oauthClientHandle === null && item.toolName === null)).toBe(true);
+  const handle = createAuditEventsHttp(audits);
+  const response = await handle(new Request("https://portal.test/admin/api/v1/audit-events?callerChannel=mcp&toolName=create_document_type"), context, "audit-read");
+  expect(response.status).toBe(200);
+  expect((await response.json()).items).toHaveLength(2);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit").first("count")).toBe(4);
+  expect((await handle(new Request("https://portal.test/admin/api/v1/audit-events?callerChannel=unknown"), context, "invalid-read")).status).toBe(400);
+});
+
+test("MCP administrator and contract mutations attribute audit and preserve replay", async () => {
+  const { context, memberService, service } = await administrators();
+  const added = await memberService.add(mcpContext(context, "add_administrator"), { email: "mcp-invite@example.com" }, "mcp-add", "add-request");
+  expect(await memberService.add(mcpContext(context, "add_administrator"), { email: "mcp-invite@example.com" }, "mcp-add", "retry-add")).toEqual(added);
+  const target = await memberService.get(context, added.adminId);
+  await memberService.remove(mcpContext(context, "remove_administrator"), added.adminId, "mcp-remove", target.etag, "remove-request");
+  await memberService.remove(mcpContext(context, "remove_administrator"), added.adminId, "mcp-remove", target.etag, "retry-remove");
+  const draft = await service.create(context, { internalName: "Contracts" }, "contract-draft", "draft-request");
+  const contracts = createDocumentContractService(new D1DocumentContractRepository(database, () => now));
+  const schema = { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" };
+  const body = { formatVersion: 1, snapshot: { schema }, location: { schema }, reason: "First contract" };
+  const appended = await contracts.append(mcpContext(context, "append_document_contract"), draft.documentType, body, "mcp-append", "append-request");
+  expect(await contracts.append(mcpContext(context, "append_document_contract"), draft.documentType, body, "mcp-append", "retry-append")).toEqual(appended);
+  const rows = (await database.prepare("SELECT action, caller_channel, oauth_client_handle, tool_name FROM portal_admin_audit WHERE caller_channel = 'mcp' ORDER BY action").all()).results;
+  expect(rows).toEqual([
+    { action: "administrator.added", caller_channel: "mcp", oauth_client_handle: "a".repeat(64), tool_name: "add_administrator" },
+    { action: "administrator.removed", caller_channel: "mcp", oauth_client_handle: "a".repeat(64), tool_name: "remove_administrator" },
+    { action: "document_contract.appended", caller_channel: "mcp", oauth_client_handle: "a".repeat(64), tool_name: "append_document_contract" },
+  ]);
+});
 
 test("administrator HTTP endpoints add, replay, read and list an unbound member", async () => {
   const { issued, members } = await administrators();
@@ -584,6 +669,8 @@ test("BFF and repository run together inside workerd across HTTP requests", asyn
     await db.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => db.prepare(statement)));
     const typesMigration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0002_document_types.sql", import.meta.url), "utf8");
     await db.batch(typesMigration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => db.prepare(statement)));
+    const attributionMigration = await readFile(new URL("../../../packages/cloudflare-portal/migrations/0008_mcp_audit_attribution.sql", import.meta.url), "utf8");
+    await db.batch(attributionMigration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => db.prepare(statement)));
     const start = await runtime.dispatchFetch("https://portal.test/admin/auth/login", { redirect: "manual" });
     expect(start.status).toBe(303);
     const target = new URL(start.headers.get("location"));

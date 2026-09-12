@@ -143,6 +143,9 @@ export const AdminAuditEventSchema = z.object({
   occurredAt: IsoDateTimeSchema.describe("Time at which the operation committed or failed."),
   requestId: IdSchema.describe("Request correlation identity."),
   reason: z.string().nullable().describe("Administrator-provided reason when applicable."),
+  callerChannel: z.enum(["admin-webui", "mcp"]).optional().describe("Calling channel; legacy producers may omit attribution."),
+  oauthClientHandle: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional().describe("SHA-256 of the OAuth client ID, or null for Admin WebUI calls."),
+  toolName: z.string().regex(/^[a-z][a-z0-9_]{0,127}$/).nullable().optional().describe("MCP tool name, or null for Admin WebUI calls."),
   details: JsonValueSchema.optional().describe("Action-specific non-secret audit details."),
 }).readonly().meta({ id: "AdminAuditEvent" });
 
@@ -542,6 +545,8 @@ export const ListDocumentTypesQuerySchema = PaginationQuerySchema.unwrap().exten
 export type ListDocumentTypesQuery = z.infer<typeof ListDocumentTypesQuerySchema>;
 
 export const ListAdminAuditEventsQuerySchema = PaginationQuerySchema.unwrap().extend({
+  callerChannel: z.enum(["admin-webui", "mcp"]).optional().describe("Restrict events to one calling channel."),
+  toolName: z.string().regex(/^[a-z][a-z0-9_]{0,127}$/).optional().describe("Restrict events to one MCP tool name."),
   actorId: IdSchema.optional().describe("Restrict events to one administrator principal."),
   action: AdminAuditActionSchema.optional().describe("Restrict events to one audit action."),
   resourceType: AdminAuditResourceTypeSchema.optional()

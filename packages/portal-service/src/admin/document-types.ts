@@ -46,7 +46,7 @@ export function createDocumentTypeService(repository: DocumentTypeRepository, op
   return {
     async create(context: AdminContext, body: unknown, key: string, requestId: string) {
       const parsed = CreateDocumentTypeRequestSchema.safeParse(body);
-      if (!parsed.success || typeof body !== "object" || body === null || Object.keys(body).some(field => field !== "internalName") || !parsed.data.internalName.trim() || parsed.data.internalName.length > 256 || !/^[\x21-\x7e]{1,128}$/.test(key)) throw new AdminOperationError("invalid_request");
+      if (!parsed.success || typeof body !== "object" || body === null || Object.keys(body).some(field => field !== "internalName") || !parsed.data.internalName.trim() || parsed.data.internalName.length > 256 || !/^[\x20-\x7e]{1,128}$/.test(key)) throw new AdminOperationError("invalid_request");
       const timestamp = now().toISOString();
       const representation = {
         documentType: DocumentTypeSchema.parse(`dt-${id()}`), internalName: parsed.data.internalName,
@@ -72,7 +72,7 @@ export function createDocumentTypeService(repository: DocumentTypeRepository, op
       const allowedFields = ["internalName", "typeCardBundleId", "viewBundleId", "builtinOperatorId", "enabled", "reason"];
       if (!parsed.success || typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).some(field => !allowedFields.includes(field))
         || (parsed.data.internalName !== undefined && (!parsed.data.internalName.trim() || parsed.data.internalName.length > 256))
-        || !/^[\x21-\x7e]{1,128}$/.test(key) || !EtagSchema.safeParse(expectedEtag).success) throw new AdminOperationError("invalid_request");
+        || !/^[\x20-\x7e]{1,128}$/.test(key) || !EtagSchema.safeParse(expectedEtag).success) throw new AdminOperationError("invalid_request");
       if (!DocumentTypeSchema.safeParse(documentType).success) throw new AdminOperationError("invalid_request");
       const current = await repository.get(context, documentType);
       if (!current) throw new AdminOperationError("not_found");

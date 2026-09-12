@@ -21,7 +21,14 @@ export interface AdminContext {
   readonly identity: AdminIdentity;
   readonly transport: "bearer" | "session";
   readonly sessionHash?: string;
+  readonly caller?: AdminCaller;
 }
+
+export type AdminCaller = { readonly channel: "admin-webui" } | {
+  readonly channel: "mcp";
+  readonly oauthClientHandle: string;
+  readonly toolName: string;
+};
 
 export interface BoundAdministrator {
   readonly memberId: string;

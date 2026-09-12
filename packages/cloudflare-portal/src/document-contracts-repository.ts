@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { auditAttribution } from "./audit-attribution.js";
 import {
   DocumentContractListItemSchema,
   DocumentContractRecordSchema,
@@ -82,10 +83,10 @@ export class D1DocumentContractRepository implements DocumentContractRepository 
             (document_type, document_contract_idx, contract_hash, record_json, created_at) VALUES (?, ?, ?, ?, ?)`)
             .bind(command.documentType, nextIdx, command.contractHash, JSON.stringify(record), Math.floor(Date.parse(command.occurredAt) / 1000)),
           this.database.prepare(`INSERT INTO portal_admin_audit
-            (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-            VALUES (?, ?, 'document_contract.appended', 'document_contract', ?, ?, ?, ?, ?, ?)`)
+            (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+            VALUES (?, ?, 'document_contract.appended', 'document_contract', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
             .bind(command.auditEventId, command.context.memberId, `${command.documentType}:${nextIdx}`, Math.floor(Date.parse(command.occurredAt) / 1000), command.requestId,
-              command.documentType, command.request.reason, JSON.stringify({ documentContractIdx: nextIdx, contractHash: command.contractHash })),
+              command.documentType, command.request.reason, JSON.stringify({ documentContractIdx: nextIdx, contractHash: command.contractHash }), ...auditAttribution(command.context)),
         ]);
         return response;
       } catch (error) {

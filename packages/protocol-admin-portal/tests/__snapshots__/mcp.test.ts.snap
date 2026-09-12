@@ -1,0 +1,33 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`pins all tool input JSON schema fingerprints 1`] = `
+{
+  "add_administrator": "2ed690f2c05e3adec5e30ad51ae59e5d98051bec375b522f1fea75f08a8cc857",
+  "append_document_contract": "fe7c8cc67f163bf09d9e9784d534bddbf7703e2a621ddd9838d78ccfe5c63e8b",
+  "create_document_type": "80a7ed6a5bce998aee8c13af10665acc842e64141835d418de8dc97d5bfa25e8",
+  "create_operator": "139cffc851a1cd058bb8ec5e7da1a2ba06399bc73b5322b8bb1fe6b9714d17c8",
+  "create_operator_validation": "1adf4d0f2e7a93f0e576735f094fc0c12724572f5ff5eb3eddf2857d0c3200b8",
+  "get_administrator": "3d671c4b10f10237a05126b90c7afcf0d47bdcdeeb24746783ef58be31dcdeef",
+  "get_document_contract": "51dbbf38df3244e8c42d2b0d9dbd66e01b1243e6a52dd5fb2d0cf0b04d6a281d",
+  "get_document_type": "80a1dfcf0de5a4505f22aaa097e24337aa75c90d3d4a1431a9a1c1ecb446b54a",
+  "get_operator": "99955d9749601a05b2e28e8b141b0d85497a22e11a5296c2b8056d3bb791e8c4",
+  "get_operator_validation": "409a32976d74667dd8dec7e90ab72809cbc4cee665d61eaa196fc818c30f3412",
+  "get_type_card_bundle": "d76f1c13d70fb9d2699ef58aa89495f26a38f6dbce1b34771d7667e23d2ce1c1",
+  "get_view_bundle": "c18c2d79f2a3c273d39b9a366d57f2173c93b1fe19f2af4e7d3e96d4e68e3c9d",
+  "list_admin_audit_events": "131e60bbc838cc8cb2d76beb01c8baa650706bb813dd0641f96a586c62941c26",
+  "list_administrators": "026d94fc463076067918977706c7fd9561976405c3a287cffd500f75d52af60f",
+  "list_document_contracts": "dcd6b161b3b13052a83423268447022a214a18bd6eb10f232629b63a572a60ff",
+  "list_document_types": "f899e2724d5a898c3ee7af5cb8ce35469d8f5553883e116951dd8c51d18aa91c",
+  "list_operators": "673ce8f8f5e08ab402a5e567c3eb0967f2edb767039a457f1189cb6d053fca2b",
+  "list_type_card_bundles": "673ce8f8f5e08ab402a5e567c3eb0967f2edb767039a457f1189cb6d053fca2b",
+  "list_view_bundles": "673ce8f8f5e08ab402a5e567c3eb0967f2edb767039a457f1189cb6d053fca2b",
+  "remove_administrator": "b8b9b97930f3e5296e889b0d8a909954667cdfd313c6ad0742078e21256b0833",
+  "update_document_type": "c6d8332217277245c6eef4135c601db1881d6aeee0dd777feb15f46be22a942b",
+  "update_operator_metadata": "d9b6c39a7015bb3e4f45d456b50f07e99fc90b0c571111c0db9b00cf8dc2880a",
+  "update_type_card_bundle_metadata": "873a624bd4502c4aba016e801650d09c378c8e06d44a329cb7f92ae6fe9b7aef",
+  "update_view_bundle_metadata": "1bf0bd3f5b4861f9bfacdedef0e96783e77a15ed85150d3fea00dbb4277a0684",
+  "upload_type_card_bundle": "d033e82fa58005e0b85802b6d108f7cd35a3d5df131c7f4ca5987a9c0dcba919",
+  "upload_view_bundle": "d033e82fa58005e0b85802b6d108f7cd35a3d5df131c7f4ca5987a9c0dcba919",
+  "whoami": "25c7d85c859a6f78f6f4e83edf2d3073645b7c71d2832348387882a6833b1834",
+}
+`;

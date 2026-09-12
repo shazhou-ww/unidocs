@@ -58,7 +58,7 @@ export function createAdministratorService(repository: AdministratorRepository, 
   return {
     async add(context: AdminContext, body: unknown, key: string, requestId: string) {
       if (typeof body !== "object" || body === null || Array.isArray(body)
-        || Object.keys(body).some(field => field !== "email") || !/^[\x21-\x7e]{1,128}$/.test(key)) {
+        || Object.keys(body).some(field => field !== "email") || !/^[\x20-\x7e]{1,128}$/.test(key)) {
         throw new AdministratorOperationError("invalid_request");
       }
       let email: string;
@@ -94,7 +94,7 @@ export function createAdministratorService(repository: AdministratorRepository, 
     },
     async remove(context: AdminContext, adminId: string, key: string, expectedEtag: string, requestId: string) {
       if (typeof adminId !== "string" || !adminId || adminId.length > 256
-        || !/^[\x21-\x7e]{1,128}$/.test(key) || !/^"sha256-[A-Za-z0-9_-]{43}"$/.test(expectedEtag)) {
+        || !/^[\x20-\x7e]{1,128}$/.test(key) || !/^"sha256-[A-Za-z0-9_-]{43}"$/.test(expectedEtag)) {
         throw new AdministratorOperationError("invalid_request");
       }
       const timestamp = new Date(Math.floor(now().getTime() / 1000) * 1000).toISOString();

@@ -18,6 +18,9 @@ interface AuditRow {
   document_type: string | null;
   reason: string | null;
   details_json: string | null;
+  caller_channel: string;
+  oauth_client_handle: string | null;
+  tool_name: string | null;
 }
 
 export class D1AuditEventRepository implements AuditEventRepository {
@@ -35,6 +38,8 @@ export class D1AuditEventRepository implements AuditEventRepository {
     await this.authorize(context);
     const limit = query.limit ?? 25;
     const scope = await schemaHash({
+      callerChannel: query.callerChannel ?? null,
+      toolName: query.toolName ?? null,
       actorId: query.actorId ?? null,
       action: query.action ?? null,
       resourceType: query.resourceType ?? null,
@@ -61,11 +66,14 @@ export class D1AuditEventRepository implements AuditEventRepository {
     const result = await this.database.prepare(`SELECT * FROM portal_admin_audit
       WHERE (? IS NULL OR actor_id = ?) AND (? IS NULL OR action = ?) AND (? IS NULL OR resource_type = ?)
       AND (? IS NULL OR document_type = ?) AND (? IS NULL OR occurred_at >= ?) AND (? IS NULL OR occurred_at < ?)
+      AND (? IS NULL OR caller_channel = ?) AND (? IS NULL OR tool_name = ?)
       AND (? IS NULL OR occurred_at < ? OR (occurred_at = ? AND audit_event_id < ?))
       ORDER BY occurred_at DESC, audit_event_id DESC LIMIT ?`)
       .bind(query.actorId ?? null, query.actorId ?? null, query.action ?? null, query.action ?? null,
         query.resourceType ?? null, query.resourceType ?? null, query.documentType ?? null, query.documentType ?? null,
-        occurredFrom, occurredFrom, occurredTo, occurredTo, cursorTime, cursorTime, cursorTime, cursorId, limit + 1)
+        occurredFrom, occurredFrom, occurredTo, occurredTo,
+        query.callerChannel ?? null, query.callerChannel ?? null, query.toolName ?? null, query.toolName ?? null,
+        cursorTime, cursorTime, cursorTime, cursorId, limit + 1)
       .all<AuditRow>();
     const page = result.results.slice(0, limit);
     const items: AdminAuditEvent[] = page.map(row => AdminAuditEventSchema.parse({
@@ -78,6 +86,9 @@ export class D1AuditEventRepository implements AuditEventRepository {
       occurredAt: new Date(row.occurred_at * 1000).toISOString(),
       requestId: row.request_id,
       reason: row.reason,
+      callerChannel: row.caller_channel,
+      oauthClientHandle: row.oauth_client_handle,
+      toolName: row.tool_name,
       ...(row.details_json === null ? {} : { details: JSON.parse(row.details_json) }),
     }));
     const last = page.at(-1);

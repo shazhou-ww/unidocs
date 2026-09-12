@@ -52,7 +52,7 @@ test("builds an idempotent conditional administrator removal command", async () 
 
 test.each([
   ["", "key", '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"'],
-  ["member", "space key", '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"'],
+  ["member", "tab\tkey", '"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"'],
   ["member", "key", "invalid"],
 ])("rejects invalid removal preconditions %#", async (adminId, key, etag) => {
   const { repository, service } = setup();

@@ -1,3 +1,4 @@
+import { auditAttribution } from "./audit-attribution.js";
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import {
   ViewBundleListItemSchema,
@@ -135,10 +136,10 @@ export class D1ViewBundleRepository implements ViewBundleRepository {
         this.database.prepare("INSERT INTO portal_mutation_guard SELECT changes()"),
         this.database.prepare("DELETE FROM portal_mutation_guard"),
         this.database.prepare(`INSERT INTO portal_admin_audit
-          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-          VALUES (?, ?, 'view_bundle.uploaded', 'view_bundle', ?, ?, ?, ?, NULL, ?)`)
+          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+          VALUES (?, ?, 'view_bundle.uploaded', 'view_bundle', ?, ?, ?, ?, NULL, ?, ?, ?, ?)`)
           .bind(command.auditEventId, command.context.memberId, command.viewBundleId, occurredAt, command.requestId, command.documentType,
-            JSON.stringify({ contentHash: command.contentHash, size: command.record.size, bundleUrl: command.record.bundleUrl })),
+            JSON.stringify({ contentHash: command.contentHash, size: command.record.size, bundleUrl: command.record.bundleUrl }), ...auditAttribution(command.context)),
       ]);
       return response;
     } catch (error) {
@@ -173,10 +174,10 @@ export class D1ViewBundleRepository implements ViewBundleRepository {
         this.database.prepare("INSERT INTO portal_mutation_guard SELECT changes()"),
         this.database.prepare("DELETE FROM portal_mutation_guard"),
         this.database.prepare(`INSERT INTO portal_admin_audit
-          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
-          VALUES (?, ?, 'view_bundle.metadata_changed', 'view_bundle', ?, ?, ?, ?, NULL, ?)`)
+          (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json, caller_channel, oauth_client_handle, tool_name)
+          VALUES (?, ?, 'view_bundle.metadata_changed', 'view_bundle', ?, ?, ?, ?, NULL, ?, ?, ?, ?)`)
           .bind(command.auditEventId, command.context.memberId, command.viewBundleId, Math.floor(Date.parse(command.occurredAt) / 1000), command.requestId,
-            current.manifest.documentType, JSON.stringify({ before: { name: current.name, description: current.description }, after: command.request })),
+            current.manifest.documentType, JSON.stringify({ before: { name: current.name, description: current.description }, after: command.request }), ...auditAttribution(command.context)),
       ]);
       return response;
     } catch (error) {

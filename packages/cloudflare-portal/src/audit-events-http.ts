@@ -4,7 +4,7 @@ import { experimental_ZodSmartCoercionPlugin } from "@orpc/zod/zod4";
 import { adminApiContract } from "@unidocs/protocol-admin-portal";
 import { AuditOperationError, createAuditEventService, type AdminContext, type AuditEventRepository } from "@unidocs/portal-service";
 
-const queryNames = new Set(["actorId", "action", "resourceType", "documentType", "occurredFrom", "occurredTo", "limit", "cursor"]);
+const queryNames = new Set(["actorId", "action", "resourceType", "documentType", "occurredFrom", "occurredTo", "limit", "cursor", "callerChannel", "toolName"]);
 
 export function createAuditEventsHttp(repository: AuditEventRepository) {
   const contract = { list: adminApiContract.audit.list };

@@ -9935,6 +9935,31 @@
             "allowReserved": true
           },
           {
+            "name": "callerChannel",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "admin-webui",
+                "mcp"
+              ],
+              "type": "string",
+              "description": "Restrict events to one calling channel."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
+            "name": "toolName",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,127}$",
+              "description": "Restrict events to one MCP tool name."
+            },
+            "allowEmptyValue": true,
+            "allowReserved": true
+          },
+          {
             "name": "actorId",
             "in": "query",
             "schema": {
@@ -10134,6 +10159,38 @@
                               }
                             ],
                             "description": "Administrator-provided reason when applicable."
+                          },
+                          "callerChannel": {
+                            "enum": [
+                              "admin-webui",
+                              "mcp"
+                            ],
+                            "type": "string",
+                            "description": "Calling channel; legacy producers may omit attribution."
+                          },
+                          "oauthClientHandle": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "SHA-256 of the OAuth client ID, or null for Admin WebUI calls."
+                          },
+                          "toolName": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{0,127}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "MCP tool name, or null for Admin WebUI calls."
                           },
                           "details": {
                             "anyOf": [
