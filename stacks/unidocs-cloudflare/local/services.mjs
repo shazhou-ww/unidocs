@@ -14,6 +14,17 @@
 /** Portal backend; kept clear of the gateway/doc-type band (8787-8790). */
 export const PORTAL_PORT = 8795;
 
+/**
+ * Where the portal serves type-card bundle objects.
+ *
+ * It must not be `PORTAL_PORT`: `worker.ts` decides a request is a bundle
+ * fetch by comparing `new URL(request.url).origin` against `BUNDLE_ORIGIN`, so
+ * one origin for both would answer every portal request out of the R2 bucket.
+ * Production gives it a separate hostname on the same worker; locally that is
+ * a second port on the same worker.
+ */
+export const PORTAL_BUNDLE_PORT = 8796;
+
 export const SERVICE_TARGETS = {
   portal: [
     {
@@ -26,9 +37,24 @@ export const SERVICE_TARGETS = {
       /** Applied by the runtime; Miniflare has no migrations runner of its own. */
       migrations: "packages/cloudflare-portal/migrations",
       d1Binding: "DB",
+      /** Type-card bundle objects: an R2 bucket reached on its own origin. */
+      r2Binding: "BUNDLES",
+      bundlePort: PORTAL_BUNDLE_PORT,
+      /**
+       * Browser entry points this worker serves, printed by `pnpm dev`.
+       * Neither is discoverable from the port alone: both WebUIs are mounted
+       * under a base path, so the bare origin is a 404.
+       */
+      consoles: [
+        { label: "admin", path: "/admin/" },
+        { label: "tenant", path: "/portal/" },
+      ],
     },
-    // admin-portal-webui and tenant-portal-webui land here as
-    // { name, target: "portal", web: { dir, port } } once those packages exist.
+    // No frontend rows: both WebUIs are compiled into the worker above
+    // (`build:webui` -> src/*-ui-assets.generated.ts) and served from its own
+    // origin at /admin/ and /portal/. They are not separate dev servers,
+    // because the admin OAuth callback is pinned to PORTAL_ORIGIN and a UI on
+    // another port would be cut out of the login round trip.
   ],
 };
 

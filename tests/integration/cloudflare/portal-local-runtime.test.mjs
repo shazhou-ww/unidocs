@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,10 +14,10 @@ import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runt
  * can be deleted without any unit test noticing.
  */
 
-const PORTS = { gateway: 19187, admin: 19192, mockOidc: 19193, edge: 19194, portal: 19195 };
+const PORTS = { gateway: 19187, admin: 19192, mockOidc: 19193, edge: 19194, portal: 19195, portalBundles: 19196 };
 const BOOTSTRAP_EMAIL = "portal-bootstrap@example.test";
 
-/** Every table the portal's two committed migrations declare. */
+/** Every table the portal's committed migrations declare. */
 const PORTAL_TABLES = [
   "portal_admin_audit",
   "portal_administrators",
@@ -32,6 +32,14 @@ const PORTAL_TABLES = [
 ];
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+// Read from the directory rather than listed: every migration the portal gains
+// has to appear in this ledger, and a hand-written list makes adding one look
+// like a test failure in the runtime that applies them.
+const MIGRATION_FILES = (await readdir(join(ROOT, "packages/cloudflare-portal/migrations")))
+  .filter(name => name.endsWith(".sql"))
+  .sort();
+
 
 let persistPath;
 let previousBootstrapEmail;
@@ -90,14 +98,12 @@ describe("a fresh portal database", () => {
     for (const table of PORTAL_TABLES) expect(names).toContain(table);
   });
 
-  test("applied both migration files, in filename order", async () => {
+  test("applied every migration file, in filename order", async () => {
     const ledger = await db.prepare(
       "SELECT name FROM _unidocs_service_migrations ORDER BY name",
     ).all();
-    expect((ledger.results ?? []).map(row => row.name)).toEqual([
-      "0001_admin_auth.sql",
-      "0002_document_types.sql",
-    ]);
+    expect((ledger.results ?? []).map(row => row.name)).toEqual(MIGRATION_FILES);
+    expect(MIGRATION_FILES.length).toBeGreaterThan(1);
     // 0002 ALTERs a table 0001 creates, so these columns only exist if the
     // files ran in order and every statement inside them was applied.
     const columns = await db.prepare("PRAGMA table_info(portal_admin_audit)").all();
@@ -116,6 +122,18 @@ describe("a fresh portal database", () => {
     const response = await fetch(`${runtime.urls.portal}/admin/auth/login`, { redirect: "manual" });
     expect(response.status).toBe(303);
     expect(response.headers.get("location") ?? "").toMatch(/^https:\/\/accounts\.google\.com\//);
+    await response.body?.cancel();
+  });
+
+  // A distinct origin on the same worker. Equal origins would make every
+  // portal request an R2 lookup; an unbound BUNDLE_ORIGIN throws while the
+  // worker builds its bundle service, which 503s the portal wholesale.
+  test("binds a bundle origin that is a second port, not the portal's own", async () => {
+    const bindings = await runtime.mf.getBindings("unidocs-portal");
+    expect(bindings.BUNDLE_ORIGIN).toBe(`http://127.0.0.1:${PORTS.portalBundles}`);
+    expect(bindings.BUNDLE_ORIGIN).not.toBe(bindings.PORTAL_ORIGIN);
+    const response = await fetch(`http://127.0.0.1:${PORTS.portalBundles}/missing-object`);
+    expect(response.status).toBe(404);
     await response.body?.cancel();
   });
 
@@ -145,10 +163,7 @@ describe("a second boot on the same portal database", () => {
       const ledger = await db.prepare(
         "SELECT name, applied_at FROM _unidocs_service_migrations ORDER BY name",
       ).all();
-      expect((ledger.results ?? []).map(row => row.name)).toEqual([
-        "0001_admin_auth.sql",
-        "0002_document_types.sql",
-      ]);
+      expect((ledger.results ?? []).map(row => row.name)).toEqual(MIGRATION_FILES);
       const names = await tableNames(db);
       for (const table of PORTAL_TABLES) expect(names).toContain(table);
     } finally {

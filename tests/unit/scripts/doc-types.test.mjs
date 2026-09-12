@@ -23,7 +23,7 @@ import {
   parseDocTypes,
   resolvePorts,
 } from "../../../stacks/unidocs-cloudflare/local/doc-types.mjs";
-import { PORTAL_PORT, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
+import { PORTAL_BUNDLE_PORT, PORTAL_PORT, serviceFrontends, serviceWorkers, SERVICE_TARGETS } from "../../../stacks/unidocs-cloudflare/local/services.mjs";
 
 /** Ports every buildWorkers call needs in these tests. */
 const BASE_PORTS = { gateway: 8787, admin: ADMIN_PORT, mockOidc: MOCK_OIDC_PORT, edge: 8794 };
@@ -397,8 +397,26 @@ test("the portal worker runs with nodejs_compat", () => {
 // `pnpm dev portal` fails with a connection refused that looks like a port
 // problem. `runtime.urls.portal` is derived from `ports` and keeps working,
 // which is exactly why its absence is silent.
-test("the portal worker listens on its own reserved port", () => {
-  expect(portalWorker().unsafeDirectSockets).toEqual([{ host: "127.0.0.1", port: PORTAL_PORT }]);
+test("the portal worker listens on its own reserved port, and on the bundle one", () => {
+  expect(portalWorker().unsafeDirectSockets).toEqual([
+    { host: "127.0.0.1", port: PORTAL_PORT },
+    { host: "127.0.0.1", port: PORTAL_BUNDLE_PORT },
+  ]);
+});
+
+// One worker, two origins. `worker.ts` decides a request is a bundle fetch by
+// comparing its origin against BUNDLE_ORIGIN, so the two ports must differ —
+// were they equal, every portal request would be answered out of R2.
+test("the bundle origin is a second port on the portal worker, never the portal's own", () => {
+  expect(PORTAL_BUNDLE_PORT).not.toBe(PORTAL_PORT);
+  expect(portalWorker().bindings.BUNDLE_ORIGIN).toBe(`http://127.0.0.1:${PORTAL_BUNDLE_PORT}`);
+  expect(portalWorker().bindings.PORTAL_ORIGIN).toBe(`http://127.0.0.1:${PORTAL_PORT}`);
+});
+
+// An absent BUNDLES bucket is not a missing feature but a dead portal: the
+// worker constructs its type-card bundle service on every request.
+test("the portal worker binds the R2 bucket its bundle service needs", () => {
+  expect(portalWorker().r2Buckets).toEqual({ BUNDLES: "unidocs-portal-bundles" });
 });
 
 // scriptPath must name the file bundleTargets actually writes. Asserting the

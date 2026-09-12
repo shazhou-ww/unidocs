@@ -170,6 +170,13 @@ export function resolvePorts(docTypes, overrides = {}, services = []) {
   }
   for (const component of serviceWorkers(services)) {
     ports[component.name] = overrides[component.name] ?? component.port;
+    // A second port on the same worker, not a second worker — see
+    // PORTAL_BUNDLE_PORT. It goes in the map so it is printed with the rest
+    // and, more importantly, checked for being free alongside them.
+    if (component.bundlePort) {
+      const key = `${component.name}Bundles`;
+      ports[key] = overrides[key] ?? component.bundlePort;
+    }
   }
   return ports;
 }
@@ -382,9 +389,18 @@ export function buildWorkers({
       GATEWAY_OIDC_CLIENT_ID: googleOidcClientId ?? "unidocs-portal-local",
       GATEWAY_OIDC_CLIENT_SECRET: googleOidcClientSecret ?? "unidocs-portal-local-secret",
       PORTAL_BOOTSTRAP_EMAIL: portalBootstrapEmail,
+      // Not optional, despite only the bundle routes reading it: the worker
+      // builds its type-card bundle service on every request, and an absent
+      // BUNDLE_ORIGIN throws there before any route is chosen — turning the
+      // whole portal, admin sign-in included, into a blanket 503.
+      ...(component.bundlePort ? { BUNDLE_ORIGIN: `http://${host}:${ports[`${component.name}Bundles`]}` } : {}),
     },
     d1Databases: { [component.d1Binding]: component.worker },
-    unsafeDirectSockets: [{ host, port: ports[component.name] }],
+    ...(component.r2Binding ? { r2Buckets: { [component.r2Binding]: `${component.worker}-bundles` } } : {}),
+    unsafeDirectSockets: [
+      { host, port: ports[component.name] },
+      ...(component.bundlePort ? [{ host, port: ports[`${component.name}Bundles`] }] : []),
+    ],
   }));
 
   if (casMiddlewareOnly) {
