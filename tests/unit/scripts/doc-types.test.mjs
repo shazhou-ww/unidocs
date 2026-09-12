@@ -521,6 +521,24 @@ test("the portal's .dev.vars leaves the CAS admin BFF on its mock provider", () 
   expect(cas().bindings.GOOGLE_OIDC_CLIENT_ID).toBe("unidocs-local-admin");
 });
 
+// PORTAL_BOOTSTRAP_EMAIL was assigned after the .dev.vars spread and so always
+// won — including when unset, where it is "". That made the line documenting it
+// in .dev.vars.example silently do nothing, and an unset bootstrap email is not
+// a default: it is "nobody may sign in", since worker.ts turns "" into null and
+// the bootstrap check refuses every identity against a null.
+test("the bootstrap email can come from .dev.vars, and the environment still wins", () => {
+  const fromFile = { portal: { PORTAL_BOOTSTRAP_EMAIL: "from-file@example.test" } };
+
+  expect(portalWorker({ serviceDevVars: fromFile }).bindings.PORTAL_BOOTSTRAP_EMAIL)
+    .toBe("from-file@example.test");
+  expect(portalWorker({ serviceDevVars: fromFile, portalBootstrapEmail: "from-env@example.test" }).bindings.PORTAL_BOOTSTRAP_EMAIL)
+    .toBe("from-env@example.test");
+  // Unset on both sides stays empty rather than becoming undefined — the
+  // binding has to exist for `env.PORTAL_BOOTSTRAP_EMAIL || null` to read it.
+  expect(portalWorker().bindings.PORTAL_BOOTSTRAP_EMAIL).toBe("");
+  expect(portalWorker({ portalBootstrapEmail: "" }).bindings.PORTAL_BOOTSTRAP_EMAIL).toBe("");
+});
+
 // An empty environment variable used to reach the binding through `??` and
 // 503 the portal the same way. It now reads as "not configured" too.
 test("an empty GOOGLE_OIDC_CLIENT_ID does not blank the placeholder", () => {

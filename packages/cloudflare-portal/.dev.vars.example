@@ -25,6 +25,18 @@
 GATEWAY_OIDC_CLIENT_ID=
 GATEWAY_OIDC_CLIENT_SECRET=
 
-# The account that becomes the first administrator on a fresh database. Also
-# settable as UNIDOCS_PORTAL_BOOTSTRAP_EMAIL in the environment.
-# PORTAL_BOOTSTRAP_EMAIL=you@example.com
+# The Google account that becomes the first administrator. Required to get in
+# at all: nobody is an administrator on a fresh database, and sign-in refuses
+# every identity until one is designated here (the console shows "no
+# permission"). Use the same address you sign in to Google with.
+#
+# It is consumed once. The first successful sign-in claims the bootstrap row;
+# after that this line does nothing, and further administrators are added from
+# inside the console. To hand it to a different account instead, stop the dev
+# server and delete `.wrangler/miniflare` at the repository root — that is the
+# local D1 database.
+#
+# Also settable as UNIDOCS_PORTAL_BOOTSTRAP_EMAIL in the environment, which
+# overrides this line.
+
+PORTAL_BOOTSTRAP_EMAIL=

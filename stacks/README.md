@@ -158,6 +158,21 @@ choosing them.
 Without them `/admin/auth/login` still redirects, and Google rejects the
 placeholder client id when the browser arrives.
 
+### Signing in needs a bootstrap administrator too
+
+A real Google client gets you *through* Google and then refused by the portal —
+the console says you have no permission. Nobody is an administrator on a fresh
+database, so `completeLogin` has no bound member and no invitation to match, and
+falls through to `requireBootstrapIdentity`, which refuses every identity until
+one address is designated. Set `PORTAL_BOOTSTRAP_EMAIL` (in the same
+`.dev.vars`, or `UNIDOCS_PORTAL_BOOTSTRAP_EMAIL` in the environment) to the
+Google account you sign in with.
+
+It is consumed once: the first successful sign-in claims the `portal_bootstrap`
+row, after which the setting does nothing and further administrators are added
+through the console. To hand it to a different account instead, stop the dev
+server and delete `.wrangler/miniflare` — the local D1 database.
+
 **The environment variables are not portal-local.** (The `.dev.vars` file is —
 this whole paragraph is the reason to prefer it.) The same two variables are
 read once, in `runtime.mjs`, and handed to both the portal *and* the CAS admin

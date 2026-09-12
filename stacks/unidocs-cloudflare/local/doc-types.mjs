@@ -397,9 +397,14 @@ export function buildWorkers({
   // only what nobody configured, `.dev.vars` beats them, and the process
   // environment beats both. Only keys that are actually set take part, or an
   // unset variable would overwrite a line the reader wrote in the file.
-  const googleFromEnv = {};
-  if (googleOidcClientId) googleFromEnv.GATEWAY_OIDC_CLIENT_ID = googleOidcClientId;
-  if (googleOidcClientSecret) googleFromEnv.GATEWAY_OIDC_CLIENT_SECRET = googleOidcClientSecret;
+  const serviceEnvOverrides = {};
+  if (googleOidcClientId) serviceEnvOverrides.GATEWAY_OIDC_CLIENT_ID = googleOidcClientId;
+  if (googleOidcClientSecret) serviceEnvOverrides.GATEWAY_OIDC_CLIENT_SECRET = googleOidcClientSecret;
+  // PORTAL_BOOTSTRAP_EMAIL belongs in this layer for the same reason the two
+  // above do. It used to be assigned *after* the `.dev.vars` spread, which
+  // made the line in `.dev.vars.example` documenting it silently do nothing:
+  // unset, it is "", and "" is what overwrote whatever the reader wrote.
+  if (portalBootstrapEmail) serviceEnvOverrides.PORTAL_BOOTSTRAP_EMAIL = portalBootstrapEmail;
 
   const serviceWorkerConfigs = serviceWorkers(services).map(component => ({
     name: component.worker,
@@ -414,9 +419,11 @@ export function buildWorkers({
       GATEWAY_OIDC_ISSUER: "https://accounts.google.com",
       GATEWAY_OIDC_CLIENT_ID: "unidocs-portal-local",
       GATEWAY_OIDC_CLIENT_SECRET: "unidocs-portal-local-secret",
+      // Empty means "nobody is designated": `worker.ts` turns "" into null and
+      // the bootstrap check refuses every identity against a null.
+      PORTAL_BOOTSTRAP_EMAIL: "",
       ...configuredOnly(serviceDevVars[component.name]),
-      ...googleFromEnv,
-      PORTAL_BOOTSTRAP_EMAIL: portalBootstrapEmail,
+      ...serviceEnvOverrides,
       // Not optional, despite only the bundle routes reading it: the worker
       // builds its type-card bundle service on every request, and an absent
       // BUNDLE_ORIGIN throws there before any route is chosen — turning the
